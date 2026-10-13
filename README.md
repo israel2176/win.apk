@@ -29,6 +29,8 @@ background, there is no Linux kernel running underneath, and nothing is interpre
 instruction-by-instruction. Mac.apk implements the Android application environment
 on top of macOS directly. [How it works →](https://github.com/kksimp/Mac.apk-Releases/wiki/How-Mac.apk-Works)
 
+![How an Android app runs on your Mac: the app code, native code and resources in an APK go through Mac.apk and come out as a real Mac app](images/how-mac-apk-works-overview.png)
+
 ## 📖 [Read the wiki →](https://github.com/kksimp/Mac.apk-Releases/wiki)
 
 | | |
@@ -58,6 +60,8 @@ on top of macOS directly. [How it works →](https://github.com/kksimp/Mac.apk-R
    approve the macOS prompt.
 4. Double-click any `.apk` (or `.apkm`, `.xapk`, `.apks`, `.apkx`), or drag it onto
    the Mac.apk window.
+
+![Installing an Android app in four steps: pick an app, confirm, it becomes a Mac app, first launch](images/installing-an-app.png)
 
 **The first launch of any app is slow** (up to a minute for a large one) while
 Mac.apk prepares it. Later launches are fast. Full details, updating, and the app
