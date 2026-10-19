@@ -543,7 +543,7 @@ fi
 # (no launcher env) still shows the Mac.apk tile instead of a blank/
 # generic Dock entry. The .app build copies the same master into
 # Resources/ via build_launcher.sh.
-ICON_SRC="$RT_DIR/../mac_apk_icon_512.png"
+ICON_SRC="$RT_DIR/../images/mac_apk_icon_512.png"
 if [[ -f "$ICON_SRC" ]]; then
     cp "$ICON_SRC" "$BIN/macapk_default_icon.png"
 fi

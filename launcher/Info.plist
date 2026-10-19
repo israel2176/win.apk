@@ -48,7 +48,7 @@
     <string>APPL</string>
     <!--
       App icon. build_launcher.sh generates AppIcon.icns from the 512px
-      master (mac_apk_icon_512.png) into Contents/Resources/ at build
+      master (images/mac_apk_icon_512.png) into Contents/Resources/ at build
       time, so the launcher shows the Mac.apk icon in the Dock/Finder.
       The same art is also bundled (as macapk_default_icon.png) next to
       the runtime so a launched app with no icon of its own gets it too.

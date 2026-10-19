@@ -185,7 +185,7 @@ for icon in "AppIcon.icns" "macapk_default_icon.png"; do
         echo "  icon present: Resources/$icon"
     else
         echo "  WARN: Resources/$icon MISSING from the dist bundle --" \
-             "check scripts/build_launcher.sh and mac_apk_icon_512.png at the repo root."
+             "check scripts/build_launcher.sh and images/mac_apk_icon_512.png."
     fi
 done
 
