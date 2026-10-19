@@ -5,6 +5,7 @@
 [![Latest release](https://img.shields.io/github/v/release/kksimp/Mac.apk-Releases?label=latest&color=6c5ce7)](../../releases/latest)
 [![License: Personal Use](https://img.shields.io/badge/license-Personal%20Use-blue)](LICENSE)
 [![Signed and notarized](https://img.shields.io/badge/signed-notarized%20by%20Apple-000000)](https://github.com/kksimp/Mac.apk-Releases/wiki/Installation)
+[![Sponsor](https://img.shields.io/badge/sponsor-kksimp-ea4aaa?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/kksimp)
 
 ### 📱 [Which apps work? See the compatibility list →](COMPATIBILITY.md)
 
