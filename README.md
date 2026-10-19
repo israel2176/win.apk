@@ -74,7 +74,7 @@ stores are in the [Installation](https://github.com/kksimp/Mac.apk/wiki/Installa
 > Trash deletes its saves; uninstall from the Mac.apk control panel instead.
 > [More →](https://github.com/kksimp/Mac.apk/wiki/Managing-Apps)
 
-## Known issues in v1.0.1732
+## Known issues in v1.0.2237
 
 See [Known issues](https://github.com/kksimp/Mac.apk/wiki/Known-Issues) for this release, and the
 [compatibility list](COMPATIBILITY.md) for every app tested by hand.
