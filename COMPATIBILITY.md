@@ -1,8 +1,8 @@
 # Mac.apk App Compatibility
 
-Which Android apps run on Mac.apk, tested by hand on a Mac. Updated 2026-10-06.
+Which Android apps run on Mac.apk, tested by hand on a Mac. Updated 2026-10-19.
 
-**65 apps tested:** ✅ 52 work · ⚠️ 10 partly work · ❌ 3 don't work yet
+**65 apps tested:** ✅ 51 work · ⚠️ 10 partly work · ❌ 4 don't work yet
 
 **Legend:** ✅ yes · ⚠️ partly · ❌ not yet · ❔ not tested yet. **Works** means you can use the app or play the game; **Sound** means its audio plays. An app tested at more than one version has a row for each, newest first.
 
@@ -28,15 +28,18 @@ Which Android apps run on Mac.apk, tested by hand on a Mac. Updated 2026-10-06.
 | **Crossy Road** | 7.11.1 | ✅ | ✅ |  |
 | **Dumb Ways to Die** | 36.1.22 | ✅ | ✅ |  |
 | **Duolingo** | 6.82.3 | ⚠️ | ❔ | Can't make a new account or log in |
-| **Efteling** | 5.24.0 | ❌ | ❔ | Stuck on welcome screen. |
+| **Efteling** | 5.25.0 | ❌ | ❔ | Stuck on welcome screen. |
+| **Efteling** | 5.24.0 | ❌ | ❔ |  |
 | **F-Droid** | 1.23.2 | ✅ | ❔ | Updating Mindustry from F-Droid and then opening it from F-Droid WORKS (install + cross-app launch). |
 | **Feudal Tactics** | 1.5.2 | ✅ | ✅ |  |
 | **Flappy Bird** | 1.3 | ✅ | ✅ |  |
 | **Frozen Bubble** | 4.4 | ✅ | ✅ |  |
 | **Fruit Ninja** | 3.95.5 | ✅ | ✅ |  |
 | **Gallery** | 1.13.1 | ❌ | ❔ | Needs file permissions fixed. |
+| **Geometry Dash Lite** | 2.2.147 | ✅ | ✅ |  |
 | **Geometry Dash Lite** | 2.2.11 | ✅ | ✅ |  |
 | **Geometry Dash Meltdown** | 2.2.147 | ⚠️ | ✅ | Full-screen ads now play, but they still break the game afterwards. |
+| **Hill Climb Racing** | 1.71.1 | ❌ | ✅ | Draws its screen: ❌. 1.71.1 crashes at startup (found by the update check); 1.68.1 worked. |
 | **Hill Climb Racing** | 1.68.1 | ✅ | ✅ |  |
 | **Hill Climb Racing** | 1.43.0 | ✅ | ✅ |  |
 | **Hill Climb Racing** | 1.8.1 | ✅ | ✅ |  |
@@ -47,6 +50,7 @@ Which Android apps run on Mac.apk, tested by hand on a Mac. Updated 2026-10-06.
 | **mGrađani** | 1.0.18 | ✅ | ❔ | Icon: ❔. NIAS login page works since Mac.apk v1.0.1723 (it was blank before). |
 | **Mindustry** | 8-fdroid-160.5 | ✅ | ✅ | Online multiplayer currently inop |
 | **Mindustry** | 8-fdroid-158 | ✅ | ✅ |  |
+| **Minecraft** | 1.26.52.3 | ✅ | ❔ | Multiplayer works (joined a server). |
 | **Minecraft** | 1.26.45.1 | ✅ | ✅ | Boots, renders and Xbox sign-in works. |
 | **NewPipe** | 0.29.0 | ⚠️ | ✅ | Some videos play with sound only and buffer constantly |
 | **Now in Android** | 0.1.2 | ✅ | ✅ |  |
@@ -71,7 +75,8 @@ Which Android apps run on Mac.apk, tested by hand on a Mac. Updated 2026-10-06.
 | **Super Retro Mega Wars** | 0.32.5 | ✅ | ✅ |  |
 | **Telegram** | 12.9.1 | ✅ | ❔ |  |
 | **Temple Run 2** | 1.133.0 | ✅ | ✅ | Loading crash fixed in v1.0.1726. Tilt Control steers the runner. |
-| **Thunderbird** | 21.0 | ⚠️ | ❔ | Sign in with Google works but log in to Thunderbird fails. |
+| **Thunderbird** | 23.1 | ⚠️ | ❔ | Sign in with Google works but log in to Thunderbird fails. |
+| **Thunderbird** | 21.0 | ⚠️ | ❔ |  |
 | **TIC-80** | 1.01.00 | ✅ | ✅ |  |
 | **Unciv** | 4.20.10 | ✅ | ✅ |  |
 | **Unit Converter Ultimate** | 5.7.3 | ✅ | ❔ |  |
