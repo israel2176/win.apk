@@ -48,7 +48,7 @@ on top of macOS directly. [How it works →](https://github.com/kksimp/Mac.apk/w
 | | |
 |---|---|
 | **macOS 26.4 (Tahoe) or newer** | Required. macOS 27 works from v1.0.1702 |
-| **Apple Silicon** | M1, M2, M3, M4 or newer. Intel Macs are not supported |
+| **Apple Silicon** | Any Apple Silicon Mac, including MacBook Neo. Intel Macs are not supported |
 | **Disk** | ~280 MB for Mac.apk. Each installed app takes roughly 1.5 to 3 times its APK size |
 
 ## Quick start
