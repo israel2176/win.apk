@@ -528,7 +528,7 @@ fi
 # macapk_default_icon.png so a launched app that ships no icon of its own
 # still gets the Mac.apk tile (the runtime resolves MACAPK_DEFAULT_ICON /
 # exe-relative) instead of a blank Dock entry.
-ICON_SRC="$PROJECT_DIR/mac_apk_icon_512.png"
+ICON_SRC="$PROJECT_DIR/images/mac_apk_icon_512.png"
 if [ -f "$ICON_SRC" ]; then
     ICONSET_PARENT="$(mktemp -d)"
     ICONSET="$ICONSET_PARENT/AppIcon.iconset"
