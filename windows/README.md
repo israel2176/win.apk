@@ -90,8 +90,9 @@ runtime/bin/winapk-runtime.exe --apk app.apk --jdk "$JAVA_HOME"
 as `base.apk` plus `split_*.apk` under `%LOCALAPPDATA%\Win.apk\app`. The app
 opens in its own window, with its own icon, and takes mouse, wheel and keyboard input
 (Escape is Android's Back). Java-only apps work this way, including OpenGL
-from Java (`GLSurfaceView`, libGDX) on ANGLE; apps that draw with OpenGL from
-their own native code do not render yet. App data goes to `%LOCALAPPDATA%\Win.apk`.
+from Java (`GLSurfaceView`, libGDX) on ANGLE, and so do apps that draw with
+OpenGL ES from their own native code through a SurfaceView (SDL games);
+`NativeActivity` apps and native audio (OpenSL ES, AAudio) are not there yet. App data goes to `%LOCALAPPDATA%\Win.apk`.
 
 For tests, `WINAPK_HEADLESS=1` runs without a window,
 `WINAPK_HEADLESS_FRAME=frame.bmp` saves the last frame the app drew, and
