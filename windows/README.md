@@ -84,8 +84,12 @@ library (`launcher/launcher_main.cpp`, the counterpart of upstream's
   `winapk-runtime --install-only` (which also renders the app's icon and
   resolves its name), and given Start menu and desktop shortcuts with its own
   icon.
-- **Running and removing:** double-click an app to run it, or right-click to
-  remove it.
+- **Running and managing:** double-click an app to run it; right-click for Get
+  Info, shortcuts, its files and log, updating it from a newer APK,
+  reinstalling or removing it. Typing searches the library.
+- **Settings** (the gear): light or dark theme, the default app for `.apk`
+  files, the phone's screen size and orientation, desktop shortcuts, and the
+  logs and app data folders.
 
 The package holds the runtime, a Java runtime, ANGLE and `README.txt`, which
 says what works, where app data and logs are, and what to attach to a bug
