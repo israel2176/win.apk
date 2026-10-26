@@ -1,4 +1,7 @@
-// guest_libs.h -- an app's own x86_64 native libraries, loaded into the runtime.
+// guest_libs.h -- an app's own native libraries, loaded into the runtime:
+// x86_64 ones run natively, arm64-v8a ones (when the app has no x86_64 build)
+// through the arm64 interpreter (winapk/arm64_guest.h). Nothing below depends
+// on which: the linker, the bind hook and the guest JNIEnv are the same.
 //
 // Upstream's class loader hands each lib<name>.so of the app to a translator
 // that writes a host library the JVM can System.load(); on the Mac that is a

@@ -262,6 +262,14 @@ void* make_tagged_zero_stub(void* handler, const void* tag) {
     return pool().place(e.bytes());
 }
 
+void* make_r10_jump(void* target, uint64_t r10) {
+    Emitter e;
+    e.mov_imm64(10, r10);
+    e.mov_imm64(R11, reinterpret_cast<uint64_t>(target));
+    e.u8(0x41); e.u8(0xff); e.u8(0xe3);  // jmp r11
+    return pool().place(e.bytes());
+}
+
 uint64_t sysv_va_next_gp(SysVVaList* va) {
     uint64_t v;
     if (va->gp_offset < 48) {

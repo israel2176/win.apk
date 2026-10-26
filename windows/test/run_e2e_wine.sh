@@ -27,3 +27,6 @@ cmake --build "$BUILD/host" --target winapk-jvm-run
 # 3. Run it, with the JDK on the Windows PATH so jvm.dll and its deps resolve.
 WINEPATH="$JDK/bin;$JDK/bin/server" WINEDEBUG=-all "$WINE" "$BUILD/host/winapk-jvm-run.exe" \
     "$BUILD/e2e/libwinapk_jni_guest.so" "$BUILD/e2e/classes"
+# The same test with the arm64 build of the library, through the interpreter.
+WINEPATH="$JDK/bin;$JDK/bin/server" WINEDEBUG=-all "$WINE" "$BUILD/host/winapk-jvm-run.exe" \
+    "$BUILD/e2e/arm64/libwinapk_jni_guest.so" "$BUILD/e2e/classes"

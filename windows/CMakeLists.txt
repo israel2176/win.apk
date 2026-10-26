@@ -39,6 +39,9 @@ add_library(winapk_loader STATIC
   src/bionic/looper.cpp
   src/abi_thunk.cpp
   src/linker.cpp
+  src/arm64/arm64_cpu.cpp
+  src/arm64/arm64_simd.cpp
+  src/arm64/arm64_guest.cpp
 )
 target_include_directories(winapk_loader PUBLIC include PRIVATE src)
 # WaitOnAddress (the shim's futexes), BCryptGenRandom (arc4random), Winsock.
@@ -47,6 +50,8 @@ target_compile_definitions(winapk_loader PUBLIC WIN32_LEAN_AND_MEAN NOMINMAX)
 if(NOT MSVC)
   target_compile_options(winapk_loader PRIVATE -Wall -Wextra)
 endif()
+# The arm64 interpreter's 16-byte exclusives and CASP use cmpxchg16b.
+set_source_files_properties(src/arm64/arm64_cpu.cpp PROPERTIES COMPILE_OPTIONS "-mcx16")
 
 add_executable(winapk-elfrun tools/elfrun_main.cpp)
 target_link_libraries(winapk-elfrun PRIVATE winapk_loader)
@@ -60,12 +65,20 @@ target_link_libraries(winapk-linker-test PRIVATE winapk_loader)
 add_executable(winapk-bionic-test test/bionic_test.cpp)
 target_link_libraries(winapk-bionic-test PRIVATE winapk_loader)
 
+# The arm64 interpreter and bridge (M10): test/arm64_test.cpp runs
+# test/guest/arm64_isa.c both as arm64 guest code and natively and compares.
+add_executable(winapk-arm64-test test/arm64_test.cpp)
+target_link_libraries(winapk-arm64-test PRIVATE winapk_loader)
+target_include_directories(winapk-arm64-test PRIVATE test/guest)
+target_compile_options(winapk-arm64-test PRIVATE -mcx16)
+
 if(MINGW)
   # One self-contained .exe: no libstdc++/libgcc/winpthread DLLs next to it.
   target_link_options(winapk-elfrun PRIVATE -static)
   target_link_options(winapk-thunk-test PRIVATE -static)
   target_link_options(winapk-linker-test PRIVATE -static)
   target_link_options(winapk-bionic-test PRIVATE -static)
+  target_link_options(winapk-arm64-test PRIVATE -static)
 endif()
 
 # The JNI bridge needs jni.h + win32/jni_md.h. Point WINAPK_JNI_INCLUDE at a

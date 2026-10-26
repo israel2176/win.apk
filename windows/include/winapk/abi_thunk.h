@@ -58,6 +58,11 @@ void* make_sysv_variadic_entry(int named, void* handler);
 // first call can be reported by name instead of failing as UnsatisfiedLinkError.
 void* make_tagged_zero_stub(void* handler, const void* tag);
 
+// Code that sets r10 to `r10` and jumps to `target`, leaving every argument
+// register and the stack as its caller left them. The arm64 bridge uses it to
+// give a guest function a host-callable entry point (arm64_guest.h).
+void* make_r10_jump(void* target, uint64_t r10);
+
 // The x86-64 psABI va_list (one element of the __va_list_tag array).
 struct SysVVaList {
     uint32_t gp_offset;        // next GP register slot in reg_save_area (< 48)

@@ -18,7 +18,7 @@ permissions:
 
 jobs:
   guest:
-    name: Android x86_64 test libraries
+    name: Android x86_64 and arm64 test libraries
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -38,7 +38,9 @@ jobs:
           path: |
             ${{ runner.temp }}/guest/*.so
             ${{ runner.temp }}/guest/link/*.so
+            ${{ runner.temp }}/guest/arm64/*.so
             ${{ runner.temp }}/guest/e2e/libwinapk_jni_guest.so
+            ${{ runner.temp }}/guest/e2e/arm64/libwinapk_jni_guest.so
             ${{ runner.temp }}/guest/e2e/classes/**
 
   windows:
@@ -82,6 +84,8 @@ jobs:
         run: ./build/winapk-elfrun.exe guest/libwinapk_poc_guest.so guest/libwinapk_poc_guest_packed.so
       - name: Run the guest linker test
         run: ./build/winapk-linker-test.exe guest/link
+      - name: Run the arm64 interpreter test
+        run: ./build/winapk-arm64-test.exe guest/arm64
       - name: Run the Bionic shim test
         run: |
           mkdir -p bionic-scratch
@@ -92,6 +96,10 @@ jobs:
         run: |
           export PATH="$(cygpath -u "$JAVA_HOME")/bin/server:$(cygpath -u "$JAVA_HOME")/bin:$PATH"
           ./build/winapk-jvm-run.exe guest/e2e/libwinapk_jni_guest.so guest/e2e/classes
+      - name: Run the real-JVM end-to-end test with the arm64 library
+        run: |
+          export PATH="$(cygpath -u "$JAVA_HOME")/bin/server:$(cygpath -u "$JAVA_HOME")/bin:$PATH"
+          ./build/winapk-jvm-run.exe guest/e2e/arm64/libwinapk_jni_guest.so guest/e2e/classes
       # M1 smoke test: stage the runtime, boot a small open-source Java-only
       # APK headless and check that it presents frames.
       - uses: actions/cache@v4

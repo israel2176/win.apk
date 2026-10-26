@@ -14,13 +14,17 @@ What works
   go through ANGLE on Direct3D 11; without a usable GPU, a software renderer
   takes over.
 - Apps that ship x86_64 native libraries (lib/x86_64/*.so).
+- Apps that only have 64-bit ARM native libraries (lib/arm64-v8a), through
+  an ARM interpreter. This is experimental and much slower than native code:
+  apps whose native code does a little work at a time are fine, heavy games
+  are not playable.
 - Sound from Java through AudioTrack and SoundPool (WAV, Ogg, MP3), saving
   data (files, SharedPreferences, SQLite), the clipboard, file open/save
   dialogs and game controllers.
 
 What does not work yet
 ----------------------
-- Apps that only have ARM native libraries (lib/arm64-v8a only).
+- Apps that only have 32-bit ARM native libraries (lib/armeabi-v7a).
 - NativeActivity games (pure C/C++ apps without a Java activity).
 - MediaPlayer and sound from native code (OpenSL ES, AAudio), video
   playback, the camera, WebView (web pages inside apps), location.

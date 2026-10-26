@@ -1,4 +1,5 @@
-// jni_guest.c -- the Android x86_64 JNI library for the end-to-end test.
+// jni_guest.c -- the Android x86_64 (and arm64) JNI library for the
+// end-to-end test.
 //
 // Built for x86_64-linux-android with a real jni.h (see android_jni_md.h), so
 // it uses the JNIEnv exactly as a real Android app would: the C form, where
@@ -8,19 +9,30 @@
 // Java_WinApkJniTest_nativeAdd(env, clazz, a, b) returns (a + b) plus the
 // result of calling WinApkJniTest.javaMultiply(a, b) back through JNI -- so it
 // drives the native-method thunk (host->guest), the guest JNIEnv, and a
-// variadic CallStaticIntMethod (guest->host).
+// variadic CallStaticIntMethod and its CallStaticIntMethodV form (guest->host).
 //
 // JNI_OnLoad registers nativeMix itself, the way many apps bind their natives,
 // so that path goes through the guest's RegisterNatives.
 
 #include <jni.h>
 
+// What the NDK's C++ JNIEnv methods do: take the arguments as ... and pass
+// the function's own va_list to the ...V form.
+static jint call_static_int(JNIEnv* env, jclass clazz, jmethodID mid, ...) {
+    va_list ap;
+    va_start(ap, mid);
+    jint r = (*env)->CallStaticIntMethodV(env, clazz, mid, ap);
+    va_end(ap);
+    return r;
+}
+
 JNIEXPORT jint JNICALL Java_WinApkJniTest_nativeAdd(JNIEnv* env, jclass clazz, jint a, jint b) {
     jint sum = a + b;
     jmethodID mul = (*env)->GetStaticMethodID(env, clazz, "javaMultiply", "(II)I");
     if (!mul) return sum;  // exception pending; let Java see it
     jint product = (*env)->CallStaticIntMethod(env, clazz, mul, a, b);
-    return sum + product;
+    jint product_v = call_static_int(env, clazz, mul, a, b);
+    return sum + (product == product_v ? product : -1000);
 }
 
 // Mixed integer and floating-point arguments, so the thunk built from the

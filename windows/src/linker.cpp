@@ -51,6 +51,14 @@ std::string file_name_of(const std::string& name) {
 // ANSI code page on Windows.
 std::filesystem::path utf8_path(const std::string& s) { return std::filesystem::u8path(s); }
 
+std::string machine_name(uint16_t machine) {
+    switch (machine) {
+        case elf::kEmX86_64: return "EM_X86_64 (62)";
+        case elf::kEmAarch64: return "EM_AARCH64 (183)";
+        default: return "e_machine " + std::to_string(machine);
+    }
+}
+
 std::string normalized(const std::filesystem::path& p) {
     std::error_code ec;
     std::filesystem::path c = std::filesystem::weakly_canonical(p, ec);
@@ -186,6 +194,12 @@ GuestLibrary* GuestLinker::open(const std::string& requested, int flags, std::st
             *error = "cannot load \"" + path.u8string() + "\": " + why;
             return nullptr;
         }
+        // bionic's check: a dependency has to be built for the same ABI.
+        if (needed_by && img->machine() != needed_by->image->machine()) {
+            *error = "\"" + path.u8string() + "\" is for " + machine_name(img->machine()) + " instead of " +
+                     machine_name(needed_by->image->machine()) + ": needed by " + needed_by->file;
+            return nullptr;
+        }
         auto lib = std::make_unique<GuestLibrary>();
         lib->path = path;
         lib->file = path.u8string();
@@ -218,10 +232,11 @@ GuestLibrary* GuestLinker::open(const std::string& requested, int flags, std::st
     }
 
     // Phase 2: link. Every new library resolves against the same scope: the
-    // global group, then the root's tree.
+    // global group, then the root's tree. Global libraries of the other ABI
+    // (an x86_64 and an arm64 library in one process) are not visible.
     std::vector<GuestLibrary*> globals;
     for (const auto& l : libs_) {
-        if (l->global) globals.push_back(l.get());
+        if (l->global && l->image->machine() == root->image->machine()) globals.push_back(l.get());
     }
     const std::vector<GuestLibrary*> group = local_group(root);
     SymbolResolver scope = [&](const char* sym) -> void* {

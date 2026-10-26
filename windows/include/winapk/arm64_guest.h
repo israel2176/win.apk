@@ -1,0 +1,81 @@
+// arm64_guest.h -- running Android arm64-v8a code inside the Windows x64 host
+// (milestone M10, stage 1). The CPU itself is in arm64_cpu.h; this is the
+// bridge around it.
+//
+// Where guest code enters the system (PORTING.md, D8) nothing changes for the
+// rest of the runtime: ElfImage loads an arm64 library like an x86_64 one,
+// GuestLinker links it, and every call between the two worlds keeps the System
+// V convention the x86_64 path already uses. The bridge converts at the edge:
+//
+//   * guest -> host: an arm64 library's imports are bound to the same System V
+//     host functions an x86_64 library gets (the Bionic shim, libdl, GL, ...).
+//     When the interpreter branches to an address that is not arm64 code, it
+//     calls that address as a System V function: x0-x5 go to rdi..r9, x6, x7
+//     and the guest's stack arguments to the host stack, v0-v7 to xmm0-xmm7
+//     (with al = 8 for variadic callees); rax/rdx/xmm0 come back as x0/x1/v0.
+//     That covers every function whose arguments are scalars or pointers,
+//     variadic ones included. The one argument type the two conventions lay
+//     out differently is va_list: functions that take one (vsnprintf, the JNI
+//     ...V forms) are registered with register_va_list_function and get the
+//     guest's AAPCS64 va_list rewritten as a System V one.
+//
+//   * host -> guest: arm64 code is mapped without execute permission, so a
+//     host call into it (a callback the guest registered: qsort comparators,
+//     pthread_create start routines, JNI natives, JNI_OnLoad, atexit
+//     handlers, ...) raises an execute fault. A vectored exception handler
+//     turns that fault into a call through the interpreter, with the System V
+//     arguments moved into AAPCS64 registers. No callback needs to be known in
+//     advance. host_callable() gives the same entry without the fault, for hot
+//     paths such as native-method thunks.
+//
+// Each host thread that runs guest code gets its own CPU state, a 4 MiB guest
+// stack and bionic's TLS slot array (TPIDR_EL0, with the stack guard in slot 5),
+// created on first use and freed when the thread exits. Guest -> host -> guest
+// nesting (a qsort comparator inside qsort inside guest code) continues on the
+// same guest stack.
+//
+// setjmp and longjmp are the exception to "every import is a host function":
+// they save and restore guest registers, so the bridge implements them itself
+// (guest_intrinsic).
+//
+// Not supported yet: arguments or results passed by value as structs larger
+// than 16 bytes or as floating-point aggregates (the conventions disagree;
+// libc and JNI have none), raw system calls (SVC), and ELF TLS through TLSDESC
+// (apps built for API 29+ that use thread_local; emulated TLS works).
+
+#pragma once
+
+#include <cstddef>
+#include <cstdint>
+
+namespace winapk::arm64 {
+
+// Installs the interpreter hooks and the exception handler. Called by the
+// loader before the first arm64 image runs; safe to call more than once.
+void init();
+
+// The executable segments of a loaded arm64 image. The interpreter runs only
+// inside registered ranges; everything else is a host call.
+void register_code(const void* start, size_t size);
+void unregister_code(const void* start);
+bool is_guest_code(const void* p);
+
+// Calls the guest function at `fn` on the calling thread with up to eight
+// integer or pointer arguments, and returns x0.
+uint64_t call(const void* fn, const uint64_t* args = nullptr, size_t nargs = 0);
+
+// A System V entry point for the guest function at `fn` (cached per address),
+// or `fn` itself if it is not arm64 code.
+void* host_callable(void* fn);
+
+// `host_fn` takes a va_list as argument number `index` (0-based); calls from
+// guest code get it converted from AAPCS64 to System V.
+void register_va_list_function(const void* host_fn, unsigned index);
+
+// What an arm64 library's import of `name` binds to when no host function
+// can stand in for it, because it works on the caller's registers (setjmp,
+// longjmp and their variants); nullptr for every other name. The loader asks
+// this before the linker's resolver.
+void* guest_intrinsic(const char* name);
+
+}  // namespace winapk::arm64

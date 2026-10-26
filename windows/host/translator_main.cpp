@@ -6,7 +6,8 @@
 //
 // Upstream's class loader runs it once per app library and System.load()s the
 // output. On the Mac it wraps the ELF in a Mach-O. Here nothing needs
-// translating: x86_64 code runs as it is, loaded by the runtime's ELF linker.
+// translating ahead of time: x86_64 code runs as it is and arm64 code through
+// the interpreter, both loaded by the runtime's ELF linker.
 // The output is a copy of winapk-guest-stub.dll (next to this program) plus
 // <out>.source naming the .so (UTF-8); see host/guest_libs.h. The other
 // options are accepted and ignored.

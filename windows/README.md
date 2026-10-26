@@ -15,7 +15,7 @@ fall into three groups:
 |---|---|
 | Java/Kotlin only (no `.so`) | Run on HotSpot like on the Mac. Needs only the host layer (window, input, ANGLE on D3D11, audio). |
 | Ship `lib/x86_64/*.so` | Load the x86_64 libraries natively with the loader in this directory. Full speed. |
-| ARM-only native code | Needs dynamic binary translation (dynarmic, 0BSD). This is a research track and comes last. |
+| ARM-only native code | `lib/arm64-v8a` runs through the arm64 interpreter in this directory (M10, stage 1): correct but much slower than native. A JIT (dynarmic, 0BSD) is the next stage. 32-bit `armeabi-v7a` is not supported. |
 
 ## What is here
 
@@ -35,6 +35,7 @@ fall into three groups:
 | `include/winapk/jni_variadic.h`, `src/jni_variadic.cpp` | The variadic `Call<T>Method` / `...V` / `NewObject` bridge (31 families, one template keyed on the `...A` slot): reads the argument stream against the method signature and repacks it into the `jvalue[]` of HotSpot's A-form. Needs a `SignatureProvider` (JVMTI-backed in the real host, a map in tests) |
 | `include/winapk/linker.h`, `src/linker.cpp` | The guest linker: loads a library with its `DT_NEEDED` tree (bionic's lookup order, system libraries answered by the shim), keeps the registry of loaded images, and implements the guest's `dlopen`, `dlsym`, `dladdr`, `dlerror` and `dlclose`. `test/linker_test.cpp` (`winapk-linker-test`) checks it against `test/guest/link_guest.c` |
 | `include/winapk/jni_bind.h`, `src/jni_bind.cpp` | Binding guest natives into HotSpot: the guest `RegisterNatives` slot wraps each function in a thunk, and a JVMTI `NativeMethodBind` hook does the same for natives bound by name. Also the cached JVMTI signature provider |
+| `include/winapk/arm64_cpu.h`, `src/arm64/` | The arm64 track (M10): an AArch64 interpreter (`arm64_cpu.cpp` for integer, memory and branches, `arm64_simd.cpp` for FP and NEON) and its bridge to the host (`arm64_guest.cpp`, `include/winapk/arm64_guest.h`): AAPCS64 to System V calls into the shim, `va_list` conversion, host calls into guest code through an execute-fault handler, per-thread guest stacks and TLS. `ElfImage` loads arm64 libraries with it. `test/arm64_test.cpp` (`winapk-arm64-test`) checks the interpreter against the same C code built for the host, and the bridge against `test/guest/arm64_bridge_guest.c` |
 | `host/` | `winapk-runtime.exe`, the host that runs an APK: DEX conversion, the in-process JVM, the host natives (window and input, `NativeOs`, `NativeLooper`, `NativeImageCodec` with libwebp and WIC, `NativeAudio` on WASAPI; the rest are still stubs), app native libraries (`guest_libs.cpp`), and `Boot.run`. `test/audio_test.cpp` (`winapk-audio-test`) checks the audio backend |
 | `scripts/` | `build_java.sh` (upstream's Java runtime with a stock JDK), `build_framework_res.sh` (the platform resource APK) and `stage_runtime.sh` (a runnable `bin/` + `lib/` folder) |
 | `tools/jvmrun_main.cpp` | `winapk-jvm-run`: the real-JVM end-to-end test. Creates a HotSpot JVM, loads an Android x86_64 `.so` through the guest linker, runs its `JNI_OnLoad` (which registers a native itself), binds a second native through the `NativeMethodBind` hook, and calls both from Java; one of them calls back into Java through the guest `JNIEnv`. `test/guest/jni_guest.c` and `test/java/WinApkJniTest.java` are its inputs; `test/build_e2e.sh` builds them and `test/run_e2e_wine.sh` runs it under Wine |
@@ -129,11 +130,15 @@ Linux, `windows/test/run_app_wine.sh` boots an APK headless under Wine.
 
 The goal is the whole of Mac.apk on Windows x64: every Mac piece ported or
 replaced with its Windows counterpart (PORTING.md section 4 lists them one by
-one), then x86_64 apps at full speed, then ARM-only apps through translation.
+one), then x86_64 apps at full speed, then ARM-only apps through translation
+(started: arm64-v8a runs through an interpreter; a JIT is next).
 
 Done so far:
 
 - The loader, linker, ELF TLS and the JNI bridge for Android x86_64 libraries.
+- arm64-v8a libraries through an interpreter, when an app has no x86_64
+  build: the same loader, linker and JNI bridge, checked in CI against the
+  host and in a real JVM.
 - The Bionic shim: about 520 libc functions (threads, files, sockets,
   epoll, `ALooper`, printf and scanf), on the UCRT and Win32.
 - The host: the window and input, `NativeOs`, `NativeLooper`, images (libwebp,
@@ -147,7 +152,7 @@ Done so far:
 Next, in order: OpenSL ES and AAudio for native sound, `NativeActivity`,
 `NativeMedia` (MediaPlayer and video on Media Foundation), WebView2, the
 camera and location, signals through vectored exception handling, then the
-launcher (M8) and ARM translation (D8).
+launcher (M8) and a JIT for ARM code (M10).
 
 `PORTING.md` holds the design decisions, the technical findings, the known
 gaps, and the milestone plan up to a production release.
@@ -194,6 +199,9 @@ Windows hook is unavoidable, and every such change is listed here:
   `MacApkPackageManager.java`: the device ABI is the host's, so x86_64 on
   Windows x64, and the native library directory includes `lib/x86_64`. On the
   Mac nothing changes. `Boot.java` also looks for `bin/macapk-translator.exe`.
+  On an x86_64 host `Build.SUPPORTED_ABIS` also lists arm64-v8a, which runs
+  through the interpreter, as an x86_64 Android device with an ARM
+  translator reports it.
 - `runtime/java/android/content/Context.java`: `getDatabasePath` also takes a
   drive-letter path as absolute, so a database named by its full path is not
   nested inside `databases\`.

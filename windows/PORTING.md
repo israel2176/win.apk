@@ -60,7 +60,8 @@ None of this carries over directly to x64:
      loaded by a new x86_64 ELF loader. Many games ship x86-64 builds because
      Google Play Games for PC prefers them.
    - Apps that ship only ARM libraries need binary translation. That is a
-     separate research track (milestone M10).
+     separate research track (milestone M10). Its first stage, an
+     interpreter for arm64-v8a code, is in place (section 4).
 2. Android x86_64 code uses the System V AMD64 calling convention. Windows uses
    the Microsoft x64 convention. Every call between guest code and the host has
    to be bridged, including every JNI call in both directions.
@@ -116,12 +117,19 @@ runner before it is merged. Merge with rebase to keep history linear.
 D8. Get x86_64 apps working end to end first (Java-only, then apps with
 x86_64 libraries); ARM support (M10) comes after that. To keep that door open
 without building anything for it now, guest code enters the system in exactly
-three places: the loader (`ElfImage`, which refuses arm64 libraries with a
-clear message), the linker's image registry (`GuestLinker`) and native-method
-binding (`jni_bind`). An ARM backend would plug in there and nowhere else, so
-new code must not call guest functions or inspect guest images around them.
-An APK that ships only ARM libraries has to be reported as such to the user,
+three places: the loader (`ElfImage`), the linker's image registry
+(`GuestLinker`) and native-method binding (`jni_bind`). An ARM backend would
+plug in there and nowhere else, so new code must not call guest functions or
+inspect guest images around them. An APK that ships only ARM libraries the
+port cannot run (32-bit armeabi-v7a) has to be reported as such to the user,
 not fail somewhere later.
+
+The arm64 backend (M10, stage 1) kept to this: `ElfImage` loads arm64
+libraries and registers their text with the interpreter, `jni_bind` asks it
+for an entry point, and everything else still sees System V functions. Host
+code that calls an arm64 function pointer it was handed (a callback) needs no
+change at all: arm64 text is never mapped executable, and the execute fault
+is turned into a call through the interpreter (`src/arm64/arm64_guest.cpp`).
 
 ## 4. Current state
 
@@ -143,6 +151,8 @@ Everything in this section is merged on `main` and tested in CI on
 | `src/guest_jni.cpp` | Guest `JNIEnv` and `JavaVM`: one shared System V table that forwards into HotSpot, a guest env per thread, and `GetEnv`, `AttachCurrentThread` and `DetachCurrentThread` |
 | `src/jni_variadic.cpp` | The `Call<T>Method`, `Call<T>MethodV` and `NewObject` families. Reads the argument stream against the method signature and calls HotSpot's `Call<T>MethodA` form |
 | `src/jni_bind.cpp` | Binds guest natives into HotSpot: the guest `RegisterNatives` slot wraps each function in a thunk, and a JVMTI `NativeMethodBind` hook swaps guest addresses for thunks. Thunks are cached per function and signature. Also the cached JVMTI signature provider |
+| `include/winapk/arm64_cpu.h`, `src/arm64/arm64_cpu.cpp`, `src/arm64/arm64_simd.cpp` | M10, stage 1: an AArch64 (A64) interpreter. The base integer ISA, branches (PAC and BTI hints as no-ops), every load/store form, exclusives as compare-and-swap, acquire/release, the LSE atomics, scalar FP with Arm's saturating conversions, and the Advanced SIMD forms compilers emit for C and C++. Unimplemented encodings stop the guest with their address |
+| `include/winapk/arm64_guest.h`, `src/arm64/arm64_guest.cpp` | The arm64 bridge: per-thread CPU state, a 4 MiB guest stack and bionic's TLS slots; guest calls to host (System V) functions with AAPCS64 arguments moved to System V registers and stack, and AAPCS64 `va_list`s rewritten for the functions that take one (the printf family, the JNI `...V` forms); host calls into guest code through an execute-fault handler, or `host_callable()` thunks |
 | `java/com/winapk/tools/AppInstall.java` | `winapk-tools.jar`: installs an APK or a split bundle (`.apkm`, `.xapk`, `.apks`) in the device layout upstream reads, `data/app/~~<nonce>/<package>-<nonce>/` with `base.apk` (a hard link for a plain APK), `split_<name>.apk` (chosen as upstream's `SelectBundleApks` does) and the host ABI's libraries in `lib/<isa>/` |
 | `host/guest_libs.cpp`, `host/guest_stub.cpp`, `host/translator_main.cpp` | An app's x86_64 native libraries (M4): `macapk-translator.exe` copies `winapk-guest-stub.dll` per library, the stub's `JNI_OnLoad` loads the ELF through the linker, `NativeLibrary.findEntry0` resolves natives by name, missing system functions become reporting stubs |
 | `host/runtime_main.cpp` | `winapk-runtime`, the host that runs an APK: installs the app first (above, once per input file), converts its DEX with upstream's converter (cached), creates the JVM in-process with upstream's options, binds the host natives and calls `Boot.run` |
@@ -164,7 +174,8 @@ Everything in this section is merged on `main` and tested in CI on
 | `winapk-jni-variadic-test` | The variadic bridge works for all four call kinds (virtual, static, nonvirtual, `NewObject`), for int, long, object, float and double arguments, through both `...` and `va_list` |
 | `winapk-linker-test` | A four-library tree (root, a `DT_NEEDED` cycle between two libraries, and a plugin opened at runtime) loads through the linker: constructors run dependencies first, symbols resolve across the cycle, `dlsym` on a library finds its dependencies' symbols, the registry tells guest from host addresses, and the guest's `dlopen`, `dlsym`, `dlerror` and `dladdr` behave like bionic's |
 | `winapk-bionic-test` | `test/guest/bionic_guest.c` exercises the shim from guest code: string and ctype functions, `strerror` with Linux numbering, `snprintf` through the System V `va_list` (integers, floats, strings, `%n`, `*` widths), `sscanf` (64-bit `%ld`, sets, skips), mutexes, condition variables and threads, keys with destructors, files and `stat`, directories, `FILE` I/O, ELF TLS across threads (`.tdata` and `.tbss`, local- and general-dynamic), system properties, UTF-8 conversion and locales, `syscall` (futex wait, wake and timeout), an 8 GiB `PROT_NONE` reservation opened by `mprotect`, `environ`, Android paths under the android root, pipes and eventfd with `poll` and `epoll` across threads, loopback TCP sockets, `socketpair`, `getaddrinfo`, `ALooper` callbacks and wakes, `setenv`/`getenv`, clocks, `mmap` and `sysconf` |
-| `winapk-jvm-run` | With a real HotSpot JVM: a library loaded through the linker runs its `JNI_OnLoad`, which registers `nativeMix` through the guest `RegisterNatives`; `nativeAdd` is handed to HotSpot as a raw guest address and the `NativeMethodBind` hook has to replace it. Both are called from Java, and `nativeAdd` calls back into Java through a variadic `CallStaticIntMethod`. `nativeAdd(3, 4)` must return 19 |
+| `winapk-jvm-run` | With a real HotSpot JVM: a library loaded through the linker runs its `JNI_OnLoad`, which registers `nativeMix` through the guest `RegisterNatives`; `nativeAdd` is handed to HotSpot as a raw guest address and the `NativeMethodBind` hook has to replace it. Both are called from Java, and `nativeAdd` calls back into Java through a variadic `CallStaticIntMethod` and through `CallStaticIntMethodV` with its own `va_list`. `nativeAdd(3, 4)` must return 19. CI runs it twice: with the x86_64 build of the library and with the arm64 build, through the interpreter |
+| `winapk-arm64-test` | The arm64 interpreter against the host: `test/guest/arm64_isa.c` (integer, bitfield, division, 128-bit, atomics with and without LSE, scalar FP and conversions, half precision, auto-vectorized NEON loops) is built into the test and into three arm64 libraries (-O2, -O3, -O3 with ARMv8.1), and every function must return the same bits both ways. Then `test/guest/arm64_bridge_guest.c`: constructors, the stack protector, libc calls, variadic `snprintf` with stack arguments, the guest's `va_list` given to `vsnprintf`, a guest comparator in host `qsort` (also nested), four `pthread_create` threads, `__cxa_atexit`, and calls with ten integer and two double arguments in both directions |
 | `winapk-gl-test` | ANGLE (WARP or SwiftShader on CI) makes a context through `gl_surface`, clears and scissor-clears a pbuffer, and the read-back frame has the right colors, top row first |
 | Headless boot (CI) | `winapk-runtime` boots the F-Droid Sudoku APK on `windows-latest`: DEX conversion, `Application.onCreate`, the first activity resumed, and 30 frames presented. The log and the last frame are a CI artifact |
 
@@ -621,9 +632,12 @@ applies on Windows, where `FileDescriptor` holds a `handle`.
 
 ### Product
 
-- Many APKs ship only ARM libraries. Users will need x86_64 variants, which
-  APK mirrors often publish, and the installer has to pick the x86_64 split out
-  of `.apkm`, `.xapk` and `.apks` bundles.
+- Many APKs ship only ARM libraries. arm64-v8a ones now run through the
+  interpreter, but an interpreter is one to two orders of magnitude slower
+  than native code: fine for libraries that do a little work per call
+  (parsers, crypto, small engines), not for games. The installer prefers an
+  x86_64 build whenever the APK or bundle has one. 32-bit armeabi-v7a-only
+  apps do not run.
 - Windows Defender and SmartScreen may flag a process that writes and then runs
   code. Builds need code signing and testing against Defender.
 - Upstream commits almost daily. Merging at least monthly keeps conflicts
@@ -832,6 +846,25 @@ double-clicking it.
 Exit: version 1.0.
 
 ### M10. ARM-only apps (optional research, 6 to 12 months or more)
+
+Stage 1 is done: arm64-v8a libraries load and run through an interpreter
+(`src/arm64/`), with the host bridge generic enough that no host function
+needs a hand-written wrapper (calls in both directions, callbacks, threads,
+`va_list`, JNI). The installer falls back to an APK's arm64-v8a libraries
+when it has no x86_64 ones, and `Build.SUPPORTED_ABIS` lists both. What is
+left:
+
+- Speed: a JIT behind the same `Cpu` state and hooks. dynarmic (0BSD) is
+  still the candidate; the interpreter stays as the reference the
+  differential test checks it against.
+- ELF TLS through TLSDESC (libraries built for API 29 or later that use
+  `thread_local`), raw `SVC` system calls, and signals (a guest `SIGSEGV`
+  handler, Unity's and Mono's null checks).
+- Structs larger than 16 bytes and floating-point aggregates passed by value
+  across the boundary (no libc or JNI function has them; some NDK APIs do).
+- A32/T32 for armeabi-v7a-only apps.
+
+The original plan:
 
 - dynarmic (0BSD license) for A64 and A32 code on x64, sharing the address
   space with the host.

@@ -341,8 +341,9 @@ jboolean JNICALL Cocoa_hostHideWindowsForQuit(JNIEnv*, jclass) {
     return window_running() ? JNI_TRUE : JNI_FALSE;
 }
 
-// Upstream shows "Translating <lib>..." while it translates ARM code; x86_64
-// libraries load without translation, so there is nothing to show.
+// Upstream shows "Translating <lib>..." while it translates ARM code ahead of
+// time. Here x86_64 libraries need no translation and arm64 ones are
+// interpreted as they run, so there is nothing to show.
 void JNICALL Cocoa_showTranslationOverlay(JNIEnv*, jclass, jstring) {}
 void JNICALL Cocoa_updateTranslationOverlay(JNIEnv*, jclass, jstring) {}
 void JNICALL Cocoa_hideTranslationOverlay(JNIEnv*, jclass) {}
