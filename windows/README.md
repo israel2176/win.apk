@@ -87,7 +87,9 @@ library (`launcher/launcher_main.cpp`, the counterpart of upstream's
 - **Running and managing:** double-click an app to run it; right-click for Get
   Info, shortcuts, its files and log, updating it from a newer APK,
   reinstalling or removing it. Typing searches the library.
-- **Settings** (the gear): light or dark theme, the default app for `.apk`
+- **Hebrew:** the library is in Hebrew, laid out right to left, when Windows
+  is; the settings can pick English or Hebrew instead.
+- **Settings** (the gear): language, light or dark theme, the default app for `.apk`
   files, the phone's screen size and orientation, desktop shortcuts, and the
   logs and app data folders.
 
