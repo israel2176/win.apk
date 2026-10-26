@@ -1,5 +1,5 @@
-// elf_loader.h -- loads an Android x86_64 ELF shared object into a Windows
-// process and makes it callable.
+// elf_loader.h -- loads an Android x86_64 or arm64 ELF shared object into a
+// Windows process and makes it callable.
 //
 // This is the x86_64 counterpart of runtime/translator/src/arm64_native.cpp:
 // it does what Android's dynamic linker would do at dlopen() time, then hands
@@ -14,8 +14,16 @@
 //   4. set per-page protections, resolve IRELATIVE, then seal PT_GNU_RELRO.
 //   5. run DT_INIT and DT_INIT_ARRAY.
 //
+// An arm64 (EM_AARCH64) library goes through the same steps, with three
+// differences (milestone M10, arm64_guest.h): its executable segments are
+// mapped readable but not executable and registered with the arm64
+// interpreter, step 2 does not apply, and its IRELATIVE resolvers,
+// constructors and destructors run through the interpreter. Everything that
+// calls into it afterwards keeps using System V pointers.
+//
 // Not handled yet (the loader fails with a clear message instead):
-//   * static ELF TLS (R_X86_64_TPOFF64); dynamic TLS is in elf_tls.h.
+//   * static ELF TLS (R_X86_64_TPOFF64); dynamic TLS is in elf_tls.h. On
+//     arm64, ELF TLS (TLSDESC) is not supported yet; emulated TLS is.
 //   * DT_NEEDED between guest libraries is reported, not followed: the caller's
 //     resolver decides what an undefined symbol binds to. GuestLinker
 //     (linker.h) is the caller that follows it.
@@ -116,6 +124,9 @@ public:
     bool symbol_at(const void* p, const char** name, void** start) const;
 
     const std::filesystem::path& path() const { return path_; }
+    // elf::kEmX86_64 or elf::kEmAarch64.
+    uint16_t machine() const { return machine_; }
+    bool is_arm64() const { return machine_ == elf::kEmAarch64; }
     const void* base() const { return mem_; }
     const std::string& soname() const { return soname_; }
     const std::vector<std::string>& needed() const { return needed_; }
@@ -135,6 +146,8 @@ private:
                            std::string* error);
     bool protect_segments(std::string* error);
     bool apply_irelative(std::string* error);
+    void register_arm64_code();
+    void call_init_function(uint64_t fn, bool with_args) const;
     void seal_relro();
     void run_initializers();
     void run_finalizers();
@@ -145,6 +158,8 @@ private:
     }
 
     uint8_t* mem_ = nullptr;
+    uint16_t machine_ = elf::kEmX86_64;
+    std::vector<const void*> arm64_code_;  // registered with the interpreter
     bool owns_mem_ = true;    // false when loaded into a caller's reserved range
     size_t size_ = 0;
     uintptr_t bias_ = 0;     // runtime address = bias_ + ELF vaddr

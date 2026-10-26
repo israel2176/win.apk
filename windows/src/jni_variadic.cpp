@@ -3,6 +3,7 @@
 #include "winapk/jni_variadic.h"
 
 #include "winapk/abi_thunk.h"
+#include "winapk/arm64_guest.h"
 #include "winapk/guest_abi.h"
 #include "winapk/guest_jni.h"
 
@@ -111,9 +112,13 @@ void install_variadic_slots(JNINativeInterface_* table, SignatureProvider provid
 #define WINAPK_JNI_CALL(Name, AForm, Named)                               \
     *reinterpret_cast<void**>(&table->Name) = make_sysv_variadic_entry(   \
         (Named), reinterpret_cast<void*>(&VarBridge<&JNINativeInterface_::AForm>::fn));
-#define WINAPK_JNI_CALLV(Name, AForm, Named) \
-    *reinterpret_cast<void**>(&table->Name) = \
-        reinterpret_cast<void*>(&VarBridge<&JNINativeInterface_::AForm>::fn);
+// The ...V forms take the guest's va_list right after the `Named` fixed
+// arguments; arm64 guests pass an AAPCS64 one, which the arm64 bridge
+// rewrites as the System V va_list the bridge reads (arm64_guest.h).
+#define WINAPK_JNI_CALLV(Name, AForm, Named)                                  \
+    *reinterpret_cast<void**>(&table->Name) =                                 \
+        reinterpret_cast<void*>(&VarBridge<&JNINativeInterface_::AForm>::fn); \
+    arm64::register_va_list_function(reinterpret_cast<void*>(&VarBridge<&JNINativeInterface_::AForm>::fn), (Named));
 #include "jni_slots.inc"
 #undef WINAPK_JNI_RESERVED
 #undef WINAPK_JNI_PLAIN

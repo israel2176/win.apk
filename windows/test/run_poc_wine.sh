@@ -24,3 +24,4 @@ WINEDEBUG=-all "$WINE" "$BUILD/host/winapk-elfrun.exe" \
     "$BUILD/guest/libwinapk_poc_guest.so" \
     "$BUILD/guest/libwinapk_poc_guest_packed.so"
 WINEDEBUG=-all "$WINE" "$BUILD/host/winapk-linker-test.exe" "$BUILD/guest/link"
+WINEDEBUG=-all "$WINE" "$BUILD/host/winapk-arm64-test.exe" "$BUILD/guest/arm64"

@@ -216,7 +216,8 @@ bool install_app(Options* o, const fs::path& android_root) {
         std::fprintf(stderr, "[win.apk] installing the app (once per install)...\n");
         const int rc = run_process(quoted(o->jdk / "bin" / "java.exe") + L" -cp " +
                                    quoted(o->lib / "winapk-tools.jar") + L" com.winapk.tools.AppInstall " +
-                                   quoted(o->apk) + L" " + quoted(android_root) + L" x86_64 " + quoted(record));
+                                   quoted(o->apk) + L" " + quoted(android_root) + L" x86_64,arm64-v8a " +
+                                   quoted(record));
         base = rc == 0 ? installed() : fs::path();
         if (base.empty()) {
             std::fprintf(stderr, "[win.apk] installing the app failed (exit code %d)\n", rc);

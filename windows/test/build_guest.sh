@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# build_guest.sh -- builds the PoC Android x86_64 libraries with plain clang + lld.
+# build_guest.sh -- builds the PoC Android x86_64 (and arm64) libraries with
+# plain clang + lld.
 #
 # No NDK needed: the guest declares its libc imports by hand and links with
 # -nostdlib, so its undefined symbols are left for the Win.apk loader.
@@ -62,7 +63,31 @@ link_lib ROOT libwinapk_link_root -L"$LINK" -L"$STUBS" -lwinapk_link_mid -lc -ld
 "$CC" "${COMMON[@]}" -fno-emulated-tls -Wl,-soname,libwinapk_bionic_guest.so \
     -o "$OUT/libwinapk_bionic_guest.so" "$HERE/guest/bionic_guest.c"
 
+# The arm64 interpreter's test libraries (winapk-arm64-test, milestone M10).
+# arm64_isa.c three ways (the test compares each against the same code built
+# for the host), and the bridge library against the Bionic shim. Atomics are
+# inlined (-mno-outline-atomics): the outline helpers live in libgcc, which
+# -nostdlib leaves out.
+ARM64_OUT="$OUT/arm64"
+mkdir -p "$ARM64_OUT"
+ARM64=(
+    --target=aarch64-linux-android24
+    -fPIC -ffreestanding -nostdlib -shared -fuse-ld=lld
+    -fvisibility=hidden -Wl,-z,relro -Wl,-z,now
+)
+"$CC" "${ARM64[@]}" -O2 -mno-outline-atomics -Wl,-soname,libwinapk_arm64_isa_O2.so \
+    -o "$ARM64_OUT/libwinapk_arm64_isa_O2.so" "$HERE/guest/arm64_isa.c"
+"$CC" "${ARM64[@]}" -O3 -mno-outline-atomics -Wl,-soname,libwinapk_arm64_isa_O3.so \
+    -o "$ARM64_OUT/libwinapk_arm64_isa_O3.so" "$HERE/guest/arm64_isa.c"
+"$CC" "${ARM64[@]}" -O3 -march=armv8.1-a -Wl,-soname,libwinapk_arm64_isa_lse.so \
+    -o "$ARM64_OUT/libwinapk_arm64_isa_lse.so" "$HERE/guest/arm64_isa.c"
+"$CC" "${ARM64[@]}" -O2 -fstack-protector-all -mno-outline-atomics \
+    -Wl,--pack-dyn-relocs=android+relr -Wl,--use-android-relr-tags \
+    -Wl,-soname,libwinapk_arm64_bridge.so \
+    -o "$ARM64_OUT/libwinapk_arm64_bridge.so" "$HERE/guest/arm64_bridge_guest.c"
+
 echo "[build_guest] $OUT/libwinapk_poc_guest.so"
 echo "[build_guest] $OUT/libwinapk_poc_guest_packed.so"
 echo "[build_guest] $LINK/libwinapk_link_{root,mid,base,plugin}.so"
 echo "[build_guest] $OUT/libwinapk_bionic_guest.so"
+echo "[build_guest] $ARM64_OUT/libwinapk_arm64_{isa_O2,isa_O3,isa_lse,bridge}.so"
