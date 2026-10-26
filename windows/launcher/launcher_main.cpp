@@ -6,7 +6,7 @@
 // grid of the installed apps with their icons. A gear opens the settings
 // sheet, right-click > Get Info opens an app's sheet. The window is drawn
 // with GDI+ and follows Windows' light or dark mode (or the one picked in
-// the settings).
+// the settings), in English or, laid out right to left, in Hebrew.
 //
 // An APK dropped on the window, chosen in the drop zone, double-clicked in
 // Explorer (the launcher registers itself for .apk files) or passed on the
@@ -83,6 +83,213 @@ float px(float v) { return v * g_dpi / 96.0f; }
 int ipx(float v) { return static_cast<int>(std::lround(px(v))); }
 
 // ---------------------------------------------------------------------------
+// Language: English, or Hebrew laid out right to left
+
+bool g_rtl = false;    // Hebrew: every window is mirrored (WS_EX_LAYOUTRTL) and its text reads right to left
+float g_paint_w = 0;   // the width being painted, to put text and pictures back in a mirrored layout
+
+DWORD setting(const wchar_t* name, DWORD fallback);
+
+void pick_language() {
+    const DWORD pref = setting(L"Language", 0);  // 0 as Windows, 1 English, 2 Hebrew
+    g_rtl = pref == 2 || (pref == 0 && PRIMARYLANGID(GetUserDefaultUILanguage()) == LANG_HEBREW);
+}
+
+// The Hebrew for an English string, keyed by the English itself.
+const wchar_t* tr(const wchar_t* en) {
+    static const std::map<std::wstring, const wchar_t*> he = {
+        {L"Run Android apps natively on Windows", L"הרצת אפליקציות Android ישירות ב-Windows"},
+        {L"Drop to install", L"שחרר כדי להתקין"},
+        {L"Win.apk keeps its own copy, so the download can go", L"Win.apk שומרת עותק משלה, כך שאפשר למחוק את ההורדה"},
+        {L"Installing…", L"מתקין…"},
+        {L"Installing {0} of {1}…", L"מתקין {0} מתוך {1}…"},
+        {L"Installing {0} of {1}", L"מתקין {0} מתוך {1}"},
+        {L"Installing", L"מתקין"},
+        {L"Unpacking manifest, icon, and assets", L"פורס את המניפסט, הסמל והמשאבים"},
+        {L"{0}  ·  the first install of an app takes up to a minute", L"{0}  ·  ההתקנה הראשונה של אפליקציה נמשכת עד דקה"},
+        {L"Drop an APK here to install", L"גרור לכאן קובץ APK כדי להתקין"},
+        {L"or click to choose a file  ·  .apk .apkm .xapk .apks", L"או לחץ כדי לבחור קובץ  ·  apk, apkm, xapk, apks"},
+        {L"Installed apps", L"אפליקציות מותקנות"},
+        {L"Add app", L"הוספת אפליקציה"},
+        {L"No apps match “{0}”", L"אין אפליקציות שתואמות ל„{0}”"},
+        {L"Press Esc in the search box to show every app.", L"הקש Esc בתיבת החיפוש כדי להציג את כל האפליקציות."},
+        {L"No apps installed yet.", L"עדיין לא הותקנו אפליקציות."},
+        {L"Drop an APK above (or click it to choose one) to install one, then open it from here.", L"גרור קובץ APK לאזור שלמעלה (או לחץ עליו כדי לבחור קובץ) כדי להתקין, ואז פתח את האפליקציה מכאן."},
+        {L"Logs", L"לוגים"},
+        {L"Stop", L"עצירה"},
+        {L"Drop an APK above to install your first app", L"גרור קובץ APK לאזור שלמעלה כדי להתקין את האפליקציה הראשונה"},
+        {L"Double-click to open  ·  right-click for options  ·  drop an APK above to add more", L"לחיצה כפולה לפתיחה  ·  לחיצה ימנית לאפשרויות  ·  גרירת APK למעלה להוספה"},
+        {L"{0} apps are running", L"{0} אפליקציות פועלות"},
+        {L"{0} is running", L"{0} פועלת"},
+        {L"{0} app", L"אפליקציה אחת"},
+        {L"{0} apps", L"{0} אפליקציות"},
+        {L"The log may say why:\n{0}", L"ייתכן שהלוג מסביר למה:\n{0}"},
+        {L"Open the log", L"פתיחת הלוג"},
+        {L"Android apps", L"אפליקציות Android"},
+        {L"All files", L"כל הקבצים"},
+        {L"Install an Android app", L"התקנת אפליקציית Android"},
+        {L"Installing {0}…", L"מתקין את {0}…"},
+        {L"{0} is still being installed.", L"{0} עדיין בהתקנה."},
+        {L"{0} is already open.", L"{0} כבר פתוחה."},
+        {L"Opening {0}…", L"פותח את {0}…"},
+        {L"Remove {0}?", L"להסיר את {0}?"},
+        {L"Its shortcuts go too. What the app saved stays, so installing it again picks up where it left off.", L"גם קיצורי הדרך שלה יוסרו. מה שהאפליקציה שמרה נשאר, כך שהתקנה מחדש תמשיך מאותה נקודה."},
+        {L"Remove", L"הסרה"},
+        {L"{0} was removed.", L"{0} הוסרה."},
+        {L"Update {0} from an APK", L"עדכון {0} מקובץ APK"},
+        {L"Done", L"סיום"},
+        {L"Theme", L"ערכת צבעים"},
+        {L"Match Windows", L"כמו ב-Windows"},
+        {L"Light", L"בהירה"},
+        {L"Dark", L"כהה"},
+        {L"Appearance", L"מראה"},
+        {L"Language", L"שפה"},
+        {L"Open Android app files with Win.apk", L"פתיחת קובצי אפליקציות Android עם Win.apk"},
+        {L"Default", L"ברירת מחדל"},
+        {L"Make default", L"הגדרה כברירת מחדל"},
+        {L"File types", L"סוגי קבצים"},
+        {L"Covers .apk, .apkm, .xapk and .apks. Double-clicking one in Explorer installs it and opens it.", L"כולל קובצי apk, apkm, xapk ו-apks. לחיצה כפולה על קובץ כזה בסייר הקבצים מתקינה אותו ופותחת אותו."},
+        {L"Screen size", L"גודל מסך"},
+        {L"Auto (fits the screen)", L"אוטומטי (מותאם למסך)"},
+        {L"320 × 480  (small, older apps)", L"320 × 480  (קטן, לאפליקציות ישנות)"},
+        {L"360 × 640  (5\" phone)", L"360 × 640  (טלפון 5 אינץ')"},
+        {L"360 × 780  (6.5\" phone)", L"360 × 780  (טלפון 6.5 אינץ')"},
+        {L"480 × 800  (6\" HDPI)", L"480 × 800  (‏6 אינץ' HDPI)"},
+        {L"540 × 960  (large phone)", L"540 × 960  (טלפון גדול)"},
+        {L"600 × 960  (7\" tablet)", L"600 × 960  (טאבלט 7 אינץ')"},
+        {L"800 × 1280  (10\" tablet)", L"800 × 1280  (טאבלט 10 אינץ')"},
+        {L"Orientation", L"כיוון"},
+        {L"Portrait", L"לאורך"},
+        {L"Landscape", L"לרוחב"},
+        {L"Screen", L"מסך"},
+        {L"Used the next time an app opens, from here or from its shortcut. Sizes are in dp, as on a phone.", L"יחול בפעם הבאה שאפליקציה תיפתח, מכאן או מקיצור הדרך שלה. הגדלים ביחידות dp, כמו בטלפון."},
+        {L"Desktop shortcut for new apps", L"קיצור דרך בשולחן העבודה לאפליקציות חדשות"},
+        {L"Every app also gets one in Start > Win.apk Apps.", L"כל אפליקציה מקבלת גם קיצור דרך בתפריט התחל > Win.apk Apps."},
+        {L"Shortcuts", L"קיצורי דרך"},
+        {L"Make the Start menu shortcuts of every app again, with their icons.", L"יצירה מחדש של קיצורי הדרך בתפריט התחל לכל האפליקציות, עם הסמלים שלהן."},
+        {L"Recreate", L"יצירה מחדש"},
+        {L"The Start menu shortcuts were made again.", L"קיצורי הדרך בתפריט התחל נוצרו מחדש."},
+        {L"Diagnostics", L"אבחון"},
+        {L"install-<app>.log records each install, last-run.log the app opened last.", L"הקובץ install-<app>.log מתעד כל התקנה, והקובץ last-run.log את האפליקציה שנפתחה אחרונה."},
+        {L"View logs", L"הצגת הלוגים"},
+        {L"Logs folder", L"תיקיית הלוגים"},
+        {L"Open folder", L"פתיחת התיקייה"},
+        {L"Attach the log to a bug report: it says what the runtime did and where it stopped.", L"צרף את הלוג לדיווח על באג: הוא מראה מה סביבת ההרצה עשתה והיכן נעצרה."},
+        {L"Saves, caches and files", L"שמירות, מטמון וקבצים"},
+        {L"Each installed app keeps its data here. Removing an app keeps what it saved.", L"כל אפליקציה מותקנת שומרת כאן את הנתונים שלה. הסרת אפליקציה משאירה את מה שהיא שמרה."},
+        {L"App data", L"נתוני אפליקציות"},
+        {L"Version {0}", L"גרסה {0}"},
+        {L"An unofficial port of Mac.apk to Windows. Not affiliated with or endorsed by the Mac.apk project.", L"הסבה לא רשמית של Mac.apk ל-Windows. אינה קשורה לפרויקט Mac.apk ואינה מאושרת על ידו."},
+        {L"About", L"אודות"},
+        {L"Remove all apps", L"הסרת כל האפליקציות"},
+        {L"Their shortcuts go too. What they saved stays.", L"גם קיצורי הדרך שלהן יוסרו. מה שהן שמרו נשאר."},
+        {L"Remove all…", L"הסרת הכול…"},
+        {L"Remove all", L"הסרת הכול"},
+        {L"Remove all {0} apps?", L"להסיר את כל {0} האפליקציות?"},
+        {L"Every app was removed.", L"כל האפליקציות הוסרו."},
+        {L"Settings", L"הגדרות"},
+        {L"{0}  ·  Android app", L"{0}  ·  אפליקציית Android"},
+        {L"Identity", L"זיהוי"},
+        {L"Name", L"שם"},
+        {L"Library name", L"שם בספרייה"},
+        {L"Installed", L"הותקנה"},
+        {L"Storage", L"אחסון"},
+        {L"Source APK  ·  {0}", L"קובץ ה-APK המקורי  ·  {0}"},
+        {L"App files  ·  {0}", L"קבצי האפליקציה  ·  {0}"},
+        {L"Show", L"הצגה"},
+        {L"Open", L"פתיחה"},
+        {L"Install log", L"לוג ההתקנה"},
+        {L"View", L"הצגה"},
+        {L"Open {0}", L"פתיחת {0}"},
+        {L"Desktop shortcut", L"קיצור דרך בשולחן העבודה"},
+        {L"Put a shortcut to the app on the desktop.", L"הוספת קיצור דרך לאפליקציה בשולחן העבודה."},
+        {L"Create", L"יצירה"},
+        {L"A shortcut to {0} is on the desktop.", L"קיצור דרך ל-{0} נמצא בשולחן העבודה."},
+        {L"Update from APK", L"עדכון מקובץ APK"},
+        {L"Install a newer version over this one. Saves stay.", L"התקנת גרסה חדשה יותר במקום הנוכחית. השמירות נשארות."},
+        {L"Choose…", L"בחירה…"},
+        {L"Reinstall", L"התקנה מחדש"},
+        {L"Convert the app again from its APK.", L"המרת האפליקציה מחדש מקובץ ה-APK שלה."},
+        {L"Its shortcuts go too. What the app saved stays.", L"גם קיצורי הדרך שלה יוסרו. מה שהאפליקציה שמרה נשאר."},
+        {L"Remove…", L"הסרה…"},
+        {L"Actions", L"פעולות"},
+        {L"Each app is converted for Windows once. That takes up to a minute.", L"כל אפליקציה מומרת ל-Windows פעם אחת. זה נמשך עד דקה."},
+        {L"{0} is ready", L"{0} מוכנה"},
+        {L"All set", L"הכול מוכן"},
+        {L"{0} app is in the library and in Start > Win.apk Apps.", L"האפליקציה נמצאת בספרייה ובתפריט התחל > Win.apk Apps."},
+        {L"{0} apps are in the library and in Start > Win.apk Apps.", L"{0} אפליקציות נמצאות בספרייה ובתפריט התחל > Win.apk Apps."},
+        {L"The install failed", L"ההתקנה נכשלה"},
+        {L"Some installs failed", L"חלק מההתקנות נכשלו"},
+        {L"{0} of {1} could not be installed. The log says why.", L"{0} מתוך {1} לא הותקנו. הלוג מסביר למה."},
+        {L"Waiting", L"ממתינה"},
+        {L"Converting  ·  {0}", L"ממירה  ·  {0}"},
+        {L"Installed in {0}", L"הותקנה תוך {0}"},
+        {L"Failed after {0}", L"נכשלה אחרי {0}"},
+        {L"View log", L"הצגת הלוג"},
+        {L"Log  ·  {0}", L"לוג  ·  {0}"},
+        {L"Log", L"לוג"},
+        {L"Starting the runtime…", L"מפעיל את סביבת ההרצה…"},
+        {L"The install's output appears here.", L"הפלט של ההתקנה יופיע כאן."},
+        {L"Hide", L"הסתרה"},
+        {L"Open full log", L"פתיחת הלוג המלא"},
+        {L"Last run", L"הרצה אחרונה"},
+        {L"Install  ·  {0}", L"התקנה  ·  {0}"},
+        {L"No app has run yet. This log is written when one does.", L"עדיין לא הורצה אף אפליקציה. הלוג ייכתב כשאחת תורץ."},
+        {L"This log is written the next time the app is installed.", L"הלוג ייכתב בפעם הבאה שהאפליקציה תותקן."},
+        {L"Live", L"חי"},
+        {L"Copy", L"העתקה"},
+        {L"Notepad", L"פנקס רשימות"},
+        {L"Folder", L"תיקייה"},
+        {L"The log was copied.", L"הלוג הועתק."},
+        {L"&Open", L"פתיחה"},
+        {L"Get &Info…", L"מידע…"},
+        {L"Create &desktop shortcut", L"יצירת קיצור דרך בשולחן העבודה"},
+        {L"Show the &APK in Explorer", L"הצגת קובץ ה-APK בסייר הקבצים"},
+        {L"Open the app's &files", L"פתיחת קבצי האפליקציה"},
+        {L"Show the last &log", L"הצגת הלוג האחרון"},
+        {L"&Update from APK…", L"עדכון מקובץ APK…"},
+        {L"Rein&stall", L"התקנה מחדש"},
+        {L"&Remove…", L"הסרה…"},
+        {L"Search apps", L"חיפוש אפליקציות"},
+        {L"Installing - Win.apk", L"התקנה - Win.apk"},
+        {L"Logs - Win.apk", L"לוגים - Win.apk"},
+        {L"{0} is installed: it is in the Start menu and on the desktop.", L"{0} הותקנה: היא בתפריט התחל ובשולחן העבודה."},
+        {L"{0} is installed: it is in the Start menu.", L"{0} הותקנה: היא בתפריט התחל."},
+        {L"Installing {0}… The first install of an app takes up to a minute.", L"מתקין את {0}… ההתקנה הראשונה של אפליקציה נמשכת עד דקה."},
+        {L"Installing {0} failed.", L"ההתקנה של {0} נכשלה."},
+        {L"Installing {0} failed", L"ההתקנה של {0} נכשלה"},
+        {L"{0} was stopped.", L"{0} נעצרה."},
+        {L"{0} stopped with an error.", L"{0} נעצרה עם שגיאה."},
+        {L"{0} stopped with an error", L"{0} נעצרה עם שגיאה"},
+        {L"The app stopped with an error.\n\nThe log is in:\n{0}", L"האפליקציה נעצרה עם שגיאה.\n\nהלוג נמצא ב:\n{0}"},
+        {L"bytes", L"בתים"},
+        {L"unknown", L"לא ידוע"}
+    };
+    if (!g_rtl) return en;
+    const auto it = he.find(en);
+    return it == he.end() ? en : it->second;
+}
+
+// tr(en) with {0}, {1}... replaced by `args`.
+std::wstring fmt(const wchar_t* en, std::initializer_list<std::wstring> args) {
+    std::wstring s = tr(en);
+    size_t i = 0;
+    for (const std::wstring& a : args) {
+        const std::wstring key = L"{" + std::to_wstring(i++) + L"}";
+        const size_t at = s.find(key);
+        if (at != std::wstring::npos) s.replace(at, key.size(), a);
+    }
+    return s;
+}
+
+std::wstring app_count(size_t n) { return fmt(n == 1 ? L"{0} app" : L"{0} apps", {std::to_wstring(n)}); }
+DWORD layout_style() { return g_rtl ? WS_EX_LAYOUTRTL : 0; }
+// A popup's flags; `anchored` popups open under a box whose start edge is the point.
+UINT menu_flags(bool anchored) {
+    return g_rtl ? TPM_LAYOUTRTL | (anchored ? TPM_RIGHTALIGN : 0u) : (anchored ? TPM_LEFTALIGN : 0u);
+}
+
+// ---------------------------------------------------------------------------
 // Paths
 
 fs::path exe_path() {
@@ -142,7 +349,7 @@ std::wstring lower(std::wstring s) {
 }
 
 std::wstring format_bytes(uintmax_t n) {
-    const wchar_t* units[] = {L"bytes", L"KB", L"MB", L"GB"};
+    const wchar_t* units[] = {tr(L"bytes"), L"KB", L"MB", L"GB"};
     double v = static_cast<double>(n);
     int u = 0;
     while (v >= 1024 && u < 3) v /= 1024, ++u;
@@ -169,7 +376,7 @@ std::wstring file_date(const fs::path& p) {
         !FileTimeToSystemTime(&a.ftLastWriteTime, &utc) ||
         !SystemTimeToTzSpecificLocalTime(nullptr, &utc, &local) ||
         !GetDateFormatEx(LOCALE_NAME_USER_DEFAULT, DATE_LONGDATE, &local, nullptr, buf, 128, nullptr)) {
-        return L"unknown";
+        return tr(L"unknown");
     }
     return buf;
 }
@@ -649,8 +856,10 @@ void stroke_round(Graphics& g, const RectF& r, float rad, const Color& c, float 
 
 enum Align { kLeft, kCenter, kRight };
 
+// In Hebrew the layout is mirrored, so the text is drawn without the mirror,
+// right to left, in the mirrored place; `ltr` keeps it left to right (logs).
 void draw_text(Graphics& g, const std::wstring& s, const Gdiplus::Font* f, const Color& c, const RectF& r,
-               Align align = kLeft, bool wrap = false, bool vcenter = true) {
+               Align align = kLeft, bool wrap = false, bool vcenter = true, bool ltr = false) {
     Gdiplus::StringFormat sf;
     sf.SetAlignment(align == kLeft     ? Gdiplus::StringAlignmentNear
                     : align == kCenter ? Gdiplus::StringAlignmentCenter
@@ -659,7 +868,29 @@ void draw_text(Graphics& g, const std::wstring& s, const Gdiplus::Font* f, const
     sf.SetTrimming(wrap ? Gdiplus::StringTrimmingEllipsisWord : Gdiplus::StringTrimmingEllipsisCharacter);
     sf.SetFormatFlags(wrap ? Gdiplus::StringFormatFlagsLineLimit : Gdiplus::StringFormatFlagsNoWrap);
     Gdiplus::SolidBrush b(c);
-    g.DrawString(s.c_str(), static_cast<INT>(s.size()), f, r, &sf, &b);
+    if (!g_rtl) {
+        g.DrawString(s.c_str(), static_cast<INT>(s.size()), f, r, &sf, &b);
+        return;
+    }
+    if (!ltr) sf.SetFormatFlags(sf.GetFormatFlags() | Gdiplus::StringFormatFlagsDirectionRightToLeft);
+    Gdiplus::Matrix saved;
+    g.GetTransform(&saved);
+    g.ResetTransform();
+    g.DrawString(s.c_str(), static_cast<INT>(s.size()), f, RectF(g_paint_w - r.GetRight(), r.Y, r.Width, r.Height),
+                 &sf, &b);
+    g.SetTransform(&saved);
+}
+
+void draw_image(Graphics& g, Gdiplus::Image* img, const RectF& r) {
+    if (!g_rtl) {
+        g.DrawImage(img, r);
+        return;
+    }
+    Gdiplus::Matrix saved;
+    g.GetTransform(&saved);
+    g.ResetTransform();
+    g.DrawImage(img, RectF(g_paint_w - r.GetRight(), r.Y, r.Width, r.Height));
+    g.SetTransform(&saved);
 }
 
 float text_width(Graphics& g, const std::wstring& s, const Gdiplus::Font* f) {
@@ -714,15 +945,21 @@ void buffered_paint(HWND hwnd, Draw draw) {
     HDC mem = CreateCompatibleDC(dc);
     HBITMAP bmp = CreateCompatibleBitmap(dc, (std::max)(1L, rc.right), (std::max)(1L, rc.bottom));
     HGDIOBJ old = SelectObject(mem, bmp);
+    SetLayout(mem, 0);
+    g_paint_w = static_cast<float>(rc.right);
     {
         Graphics g(mem);
+        if (g_rtl) {  // mirror the layout; draw_text and draw_image put text and pictures back the right way round
+            Gdiplus::Matrix mirror(-1, 0, 0, 1, g_paint_w, 0);
+            g.SetTransform(&mirror);
+        }
         g.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
         g.SetTextRenderingHint(Gdiplus::TextRenderingHintClearTypeGridFit);
         g.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
         g.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHalf);
         draw(g, static_cast<float>(rc.right), static_cast<float>(rc.bottom));
     }
-    BitBlt(dc, 0, 0, rc.right, rc.bottom, mem, 0, 0, SRCCOPY);
+    BitBlt(dc, 0, 0, rc.right, rc.bottom, mem, 0, 0, SRCCOPY | (g_rtl ? NOMIRRORBITMAP : 0));
     SelectObject(mem, old);
     DeleteObject(bmp);
     DeleteDC(mem);
@@ -831,7 +1068,7 @@ Gdiplus::Bitmap* icon_for(const App& app) {
 void draw_app_icon(Graphics& g, const App* app, const std::wstring& label, const RectF& r) {
     fill_round(g, RectF(r.X, r.Y + px(2), r.Width, r.Height), r.Width * 0.22f, Color(g_t.dark ? 90 : 30, 0, 0, 0));
     if (Gdiplus::Bitmap* bmp = app ? icon_for(*app) : nullptr) {
-        g.DrawImage(bmp, r);
+        draw_image(g, bmp, r);
     } else {
         draw_monogram(g, r, label,
                       r.Width >= px(72)   ? g_f.monogram.get()
@@ -962,7 +1199,7 @@ Hit hit_test(float x, float y) {
 
 void paint_header(Graphics& g, float W) {
     draw_text(g, L"Win.apk", g_f.title.get(), g_t.text, RectF(0, px(20), W, px(38)), kCenter);
-    draw_text(g, L"Run Android apps natively on Windows", g_f.tagline.get(), g_t.text2, RectF(0, px(58), W, px(22)),
+    draw_text(g, tr(L"Run Android apps natively on Windows"), g_f.tagline.get(), g_t.text2, RectF(0, px(58), W, px(22)),
               kCenter);
     const bool hot = g_hot.kind == kHitGear;
     if (hot) fill_round(g, g_l.gear, px(8), g_t.hover);
@@ -990,17 +1227,18 @@ void paint_drop_zone(Graphics& g) {
               RectF(r.X, cy - px(50), r.Width, px(44)), kCenter);
     std::wstring title, sub;
     if (g_drag_over) {
-        title = L"Drop to install";
-        sub = L"Win.apk keeps its own copy, so the download can go";
+        title = tr(L"Drop to install");
+        sub = tr(L"Win.apk keeps its own copy, so the download can go");
     } else if (busy) {
-        title = g_batch_total > 1 ? L"Installing " + std::to_wstring((std::min)(g_batch_done + 1, g_batch_total)) +
-                                        L" of " + std::to_wstring(g_batch_total) + L"…"
-                                  : L"Installing…";
-        sub = g_current.empty() ? L"Unpacking manifest, icon, and assets"
-                                : g_current + L"  ·  the first install of an app takes up to a minute";
+        title = g_batch_total > 1 ? fmt(L"Installing {0} of {1}…",
+                                        {std::to_wstring((std::min)(g_batch_done + 1, g_batch_total)),
+                                         std::to_wstring(g_batch_total)})
+                                  : std::wstring(tr(L"Installing…"));
+        sub = g_current.empty() ? tr(L"Unpacking manifest, icon, and assets")
+                                : fmt(L"{0}  ·  the first install of an app takes up to a minute", {g_current});
     } else {
-        title = L"Drop an APK here to install";
-        sub = L"or click to choose a file  ·  .apk .apkm .xapk .apks";
+        title = tr(L"Drop an APK here to install");
+        sub = tr(L"or click to choose a file  ·  .apk .apkm .xapk .apks");
     }
     draw_text(g, title, g_f.body_semi.get(), ink, RectF(r.X + px(16), cy, r.Width - px(32), px(22)), kCenter);
     draw_text(g, sub, g_f.caption.get(), g_t.text2, RectF(r.X + px(16), cy + px(22), r.Width - px(32), px(18)),
@@ -1019,7 +1257,7 @@ void paint_drop_zone(Graphics& g) {
 
 void paint_section(Graphics& g) {
     const RectF& r = g_l.section;
-    const std::wstring title = L"Installed apps";
+    const std::wstring title = tr(L"Installed apps");
     const float tw = text_width(g, title, g_f.section.get());
     draw_text(g, title, g_f.section.get(), g_t.text, RectF(r.X, r.Y, tw + px(4), r.Height));
     const std::wstring count = std::to_wstring(g_apps.size());
@@ -1056,7 +1294,7 @@ void paint_tile(Graphics& g, int i) {
         const float cx = box.X + s / 2, cy = box.Y + s / 2, a = px(10);
         g.DrawLine(&plus, cx - a, cy, cx + a, cy);
         g.DrawLine(&plus, cx, cy - a, cx, cy + a);
-        draw_text(g, L"Add app", g_f.tile.get(), g_t.text2,
+        draw_text(g, tr(L"Add app"), g_f.tile.get(), g_t.text2,
                   RectF(r.X + px(6), box.GetBottom() + px(17), r.Width - px(12), px(20)), kCenter);
         return;
     }
@@ -1093,11 +1331,11 @@ void paint_grid(Graphics& g) {
         const float cy = gr.Y + (std::min)(gr.Height / 2, px(110));
         std::wstring title, sub;
         if (q[0]) {
-            title = L"No apps match “" + std::wstring(q) + L"”";
-            sub = L"Press Esc in the search box to show every app.";
+            title = fmt(L"No apps match “{0}”", {q});
+            sub = tr(L"Press Esc in the search box to show every app.");
         } else {
-            title = L"No apps installed yet.";
-            sub = L"Drop an APK above (or click it to choose one) to install one, then open it from here.";
+            title = tr(L"No apps installed yet.");
+            sub = tr(L"Drop an APK above (or click it to choose one) to install one, then open it from here.");
         }
         draw_text(g, q[0] ? kGlyphSearch : kGlyphApps, g_f.glyph48.get(), with_alpha(g_t.text2, 150),
                   RectF(gr.X, cy - px(70), gr.Width, px(60)), kCenter);
@@ -1140,27 +1378,27 @@ void paint_footer(Graphics& g, float W) {
     g.FillRectangle(&bar, r);
     Gdiplus::Pen line(g_t.border, 1);
     g.DrawLine(&line, 0.0f, r.Y, W, r.Y);
-    draw_chip(g, g_l.logs, L"\uE8A5", L"Logs", g_t.text2, g_hot.kind == kHitLogs);
+    draw_chip(g, g_l.logs, L"\uE8A5", tr(L"Logs"), g_t.text2, g_hot.kind == kHitLogs);
     const App* running = running_app();
-    if (running) draw_chip(g, g_l.stop, kGlyphStop, L"Stop", g_t.danger, g_hot.kind == kHitStop);
+    if (running) draw_chip(g, g_l.stop, kGlyphStop, tr(L"Stop"), g_t.danger, g_hot.kind == kHitStop);
     const float right = running ? g_l.stop.X : g_l.logs.X;
 
     const std::wstring hint = g_apps.empty()
-                                  ? L"Drop an APK above to install your first app"
-                                  : L"Double-click to open  ·  right-click for options  ·  drop an APK above to add more";
+                                  ? tr(L"Drop an APK above to install your first app")
+                                  : tr(L"Double-click to open  ·  right-click for options  ·  drop an APK above to add more");
     const bool hinted = g_status.empty() || g_status_kind == kHint;
     const Color c = hinted || g_status_kind == kInfo ? g_t.text2
                     : g_status_kind == kSuccess       ? g_t.success
                                                       : g_t.danger;
-    const std::wstring count = std::to_wstring(g_apps.size()) + (g_apps.size() == 1 ? L" app" : L" apps");
+    const std::wstring count = app_count(g_apps.size());
     const float cw = text_width(g, count, g_f.caption.get()) + px(4);
     float x = px(16);
     std::wstring text = hinted ? hint : g_status;
     if (running && (hinted || g_status_kind == kInfo)) {
         spinner(g, RectF(x, r.Y + r.Height / 2 - px(6), px(12), px(12)), g_t.accent, px(2));
         x += px(20);
-        text = g_running.size() > 1 ? std::to_wstring(g_running.size()) + L" apps are running"
-                                    : running->label + L" is running";
+        text = g_running.size() > 1 ? fmt(L"{0} apps are running", {std::to_wstring(g_running.size())})
+                                    : fmt(L"{0} is running", {running->label});
     } else if (!hinted && g_status_kind != kInfo) {
         Gdiplus::SolidBrush dot(c);
         g.FillEllipse(&dot, x, r.Y + r.Height / 2 - px(3), px(6), px(6));
@@ -1193,7 +1431,7 @@ int task_dialog(const std::wstring& main, const std::wstring& content, PCWSTR ic
     c.cbSize = sizeof(c);
     c.hwndParent = owner();
     c.hInstance = g_inst;
-    c.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION | TDF_POSITION_RELATIVE_TO_WINDOW;
+    c.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION | TDF_POSITION_RELATIVE_TO_WINDOW | (g_rtl ? TDF_RTL_LAYOUT : 0);
     c.pszWindowTitle = L"Win.apk";
     c.pszMainIcon = icon;
     c.pszMainInstruction = main.c_str();
@@ -1211,7 +1449,7 @@ bool confirm(const std::wstring& main, const std::wstring& content, const wchar_
 }
 
 void failed_with_log(const std::wstring& main, const fs::path& log) {
-    if (task_dialog(main, L"The log may say why:\n" + log.wstring(), TD_ERROR_ICON, {{100, L"Open the log"}},
+    if (task_dialog(main, fmt(L"The log may say why:\n{0}", {log.wstring()}), TD_ERROR_ICON, {{100, tr(L"Open the log")}},
                     false) == 100) {
         show_logs(log);
     }
@@ -1221,7 +1459,7 @@ std::vector<fs::path> pick_files(bool multiple, const wchar_t* title) {
     std::vector<fs::path> out;
     IFileOpenDialog* dlg = nullptr;
     if (FAILED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dlg)))) return out;
-    const COMDLG_FILTERSPEC types[] = {{L"Android apps", L"*.apk;*.apkm;*.xapk;*.apks"}, {L"All files", L"*.*"}};
+    const COMDLG_FILTERSPEC types[] = {{tr(L"Android apps"), L"*.apk;*.apkm;*.xapk;*.apks"}, {tr(L"All files"), L"*.*"}};
     dlg->SetFileTypes(2, types);
     dlg->SetTitle(title);
     DWORD opts = 0;
@@ -1258,7 +1496,7 @@ void install(const fs::path& source, bool run_after, std::wstring name = L"", fs
     ++g_batch_total;
     g_pending.push_back(name);
     g_jobs.push_back({name});
-    set_status(L"Installing " + name + L"…", kInfo);
+    set_status(fmt(L"Installing {0}…", {name}), kInfo);
     CloseHandle(CreateThread(nullptr, 0, install_thread, new InstallJob{source, name, replaces, run_after}, 0,
                              nullptr));
     update_timer();
@@ -1267,29 +1505,28 @@ void install(const fs::path& source, bool run_after, std::wstring name = L"", fs
 }
 
 void add_from_dialog() {
-    for (const fs::path& p : pick_files(true, L"Install an Android app")) install(p, false);
+    for (const fs::path& p : pick_files(true, tr(L"Install an Android app"))) install(p, false);
 }
 
 void launch(const App& app) {
     if (is_pending(app.name)) {
-        set_status(app.label + L" is still being installed.", kInfo);
+        set_status(fmt(L"{0} is still being installed.", {app.label}), kInfo);
         return;
     }
     if (g_running.count(app.name)) {
-        set_status(app.label + L" is already open.", kInfo);
+        set_status(fmt(L"{0} is already open.", {app.label}), kInfo);
         return;
     }
     g_running.insert(app.name);
-    set_status(L"Opening " + app.label + L"…", kInfo);
+    set_status(fmt(L"Opening {0}…", {app.label}), kInfo);
     CloseHandle(CreateThread(nullptr, 0, run_thread, new RunJob{app.name, app.apk}, 0, nullptr));
     update_timer();
 }
 
 bool remove_app(const App& app, bool ask) {
-    if (ask && !confirm(L"Remove " + app.label + L"?",
-                        L"Its shortcuts go too. What the app saved stays, so installing it again picks up where "
-                        L"it left off.",
-                        L"Remove")) {
+    if (ask && !confirm(fmt(L"Remove {0}?", {app.label}),
+                        tr(L"Its shortcuts go too. What the app saved stays, so installing it again picks up where it left off."),
+                        tr(L"Remove"))) {
         return false;
     }
     const App copy = app;  // `app` may point into g_apps, which refresh() replaces
@@ -1302,13 +1539,13 @@ bool remove_app(const App& app, bool ask) {
     fs::remove(data_dir() / L"android" / L"data" / L"app" / (L"." + copy.name + L".installed"), ec);
     if (ask) {
         refresh();
-        set_status(copy.label + L" was removed.", kInfo);
+        set_status(fmt(L"{0} was removed.", {copy.label}), kInfo);
     }
     return true;
 }
 
 void update_from_apk(const App& app) {
-    const auto files = pick_files(false, (L"Update " + app.label + L" from an APK").c_str());
+    const auto files = pick_files(false, fmt(L"Update {0} from an APK", {app.label}).c_str());
     if (!files.empty()) install(files[0], false, app.name, app.apk);
 }
 
@@ -1485,7 +1722,7 @@ void paint_sheet(Sheet& s, Graphics& g, float W, float H) {
     Gdiplus::Pen line(g_t.border, 1);
     g.DrawLine(&line, 0.0f, s.view_h, W, s.view_h);
     s.done = RectF(W - m - px(100), s.view_h + (foot - px(34)) / 2, px(100), px(34));
-    draw_button(g, s.done, L"Done", s.hot == -2, true, false);
+    draw_button(g, s.done, tr(L"Done"), s.hot == -2, true, false);
 }
 
 int sheet_hit(const Sheet& s, float x, float y) {
@@ -1518,7 +1755,7 @@ void sheet_click(Sheet& s, int hit) {
         }
         POINT pt{static_cast<LONG>(t.r.X), static_cast<LONG>(t.r.GetBottom() + px(2))};
         ClientToScreen(s.hwnd, &pt);
-        const int pick = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN, pt.x, pt.y, 0, s.hwnd,
+        const int pick = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_TOPALIGN | menu_flags(true), pt.x, pt.y, 0, s.hwnd,
                                         nullptr);
         DestroyMenu(menu);
         if (pick > 0) row.act(pick - 1);
@@ -1591,7 +1828,7 @@ void run_sheet(Sheet sheet) {
     GetWindowRect(g_main, &mr);
     const int w = ipx(580), h = (std::min)(ipx(680), static_cast<int>(mr.bottom - mr.top) - ipx(20));
     const int x = mr.left + (mr.right - mr.left - w) / 2, y = mr.top + (mr.bottom - mr.top - h) / 2;
-    sheet.hwnd = CreateWindowExW(0, L"WinApkSheet", sheet.title.c_str(), WS_POPUP | WS_CAPTION | WS_SYSMENU, x, y,
+    sheet.hwnd = CreateWindowExW(layout_style(), L"WinApkSheet", sheet.title.c_str(), WS_POPUP | WS_CAPTION | WS_SYSMENU, x, y,
                                  w, (std::max)(h, ipx(360)), g_main, nullptr, g_inst, &sheet);
     if (!sheet.hwnd) {
         g_sheet = nullptr;
@@ -1638,92 +1875,99 @@ Row text_row(std::wstring title, std::wstring value, std::wstring detail = L"") 
 }
 
 void apply_theme();
+void apply_language();
 
 std::vector<Section> settings_sections() {
     std::vector<Section> out;
 
     Row theme;
     theme.kind = Row::kChoice;
-    theme.title = L"Theme";
-    theme.choices = {L"Match Windows", L"Light", L"Dark"};
+    theme.title = tr(L"Theme");
+    theme.choices = {tr(L"Match Windows"), tr(L"Light"), tr(L"Dark")};
     theme.choice = static_cast<int>((std::min)(setting(L"Theme", 0), 2ul));
     theme.act = [](int i) {
         set_setting(L"Theme", static_cast<DWORD>(i));
         apply_theme();
     };
-    out.push_back({L"Appearance", {theme}, L""});
+    Row lang;
+    lang.kind = Row::kChoice;
+    lang.title = tr(L"Language");
+    lang.choices = {tr(L"Match Windows"), L"English", L"עברית"};
+    lang.choice = static_cast<int>((std::min)(setting(L"Language", 0), 2ul));
+    lang.act = [](int i) {
+        set_setting(L"Language", static_cast<DWORD>(i));
+        apply_language();
+    };
+    out.push_back({tr(L"Appearance"), {theme, lang}, L""});
 
     Row types;
     if (is_default_handler()) {
-        types = text_row(L"Open Android app files with Win.apk", L"Default");
+        types = text_row(tr(L"Open Android app files with Win.apk"), tr(L"Default"));
         types.check = true;
     } else {
-        types = button_row(L"Open Android app files with Win.apk", L"", L"Make default", [] {
+        types = button_row(tr(L"Open Android app files with Win.apk"), L"", tr(L"Make default"), [] {
             register_file_types(true);
         });
     }
-    out.push_back({L"File types", {types},
-                   L"Covers .apk, .apkm, .xapk and .apks. Double-clicking one in Explorer installs it and opens "
-                   L"it."});
+    out.push_back({tr(L"File types"), {types},
+                   tr(L"Covers .apk, .apkm, .xapk and .apks. Double-clicking one in Explorer installs it and opens it.")});
 
     Row size;
     size.kind = Row::kChoice;
-    size.title = L"Screen size";
-    for (const auto& p : kPhonePresets) size.choices.push_back(p.label);
+    size.title = tr(L"Screen size");
+    for (const auto& p : kPhonePresets) size.choices.push_back(tr(p.label));
     size.choice = static_cast<int>(setting(L"PhoneSize", 0));
     if (size.choice >= static_cast<int>(size.choices.size())) size.choice = 0;
     size.act = [](int i) { set_setting(L"PhoneSize", static_cast<DWORD>(i)); };
     Row orient;
     orient.kind = Row::kChoice;
-    orient.title = L"Orientation";
-    orient.choices = {L"Portrait", L"Landscape"};
+    orient.title = tr(L"Orientation");
+    orient.choices = {tr(L"Portrait"), tr(L"Landscape")};
     orient.choice = setting(L"Landscape", 0) ? 1 : 0;
     orient.act = [](int i) { set_setting(L"Landscape", static_cast<DWORD>(i)); };
-    out.push_back({L"Screen", {size, orient},
-                   L"Used the next time an app opens, from here or from its shortcut. Sizes are in dp, as on a "
-                   L"phone."});
+    out.push_back({tr(L"Screen"), {size, orient},
+                   tr(L"Used the next time an app opens, from here or from its shortcut. Sizes are in dp, as on a phone.")});
 
     Row desktop;
     desktop.kind = Row::kToggle;
-    desktop.title = L"Desktop shortcut for new apps";
-    desktop.detail = L"Every app also gets one in Start > Win.apk Apps.";
+    desktop.title = tr(L"Desktop shortcut for new apps");
+    desktop.detail = tr(L"Every app also gets one in Start > Win.apk Apps.");
     desktop.on = setting(L"DesktopShortcut", 1) != 0;
     desktop.act = [](int on) { set_setting(L"DesktopShortcut", static_cast<DWORD>(on)); };
-    Row redo = button_row(L"Shortcuts", L"Make the Start menu shortcuts of every app again, with their icons.",
-                          L"Recreate", [] {
+    Row redo = button_row(tr(L"Shortcuts"), tr(L"Make the Start menu shortcuts of every app again, with their icons."),
+                          tr(L"Recreate"), [] {
                               for (const App& a : g_apps) make_app_shortcuts(a, false);
-                              set_status(L"The Start menu shortcuts were made again.", kSuccess);
+                              set_status(tr(L"The Start menu shortcuts were made again."), kSuccess);
                           });
-    out.push_back({L"Shortcuts", {desktop, redo}, L""});
+    out.push_back({tr(L"Shortcuts"), {desktop, redo}, L""});
 
-    out.push_back({L"Logs",
-                   {button_row(L"Diagnostics",
-                               L"install-<app>.log records each install, last-run.log the app opened last.",
-                               L"View logs", [] { show_logs(last_run_log()); }),
-                    button_row(L"Logs folder", logs_dir().wstring(), L"Open folder", [] { open_path(logs_dir()); })},
-                   L"Attach the log to a bug report: it says what the runtime did and where it stopped."});
-    out.push_back({L"App data",
-                   {button_row(L"Saves, caches and files",
-                               L"Each installed app keeps its data here. Removing an app keeps what it saved.",
-                               L"Open folder", [] { open_path(data_dir()); })},
+    out.push_back({tr(L"Logs"),
+                   {button_row(tr(L"Diagnostics"),
+                               tr(L"install-<app>.log records each install, last-run.log the app opened last."),
+                               tr(L"View logs"), [] { show_logs(last_run_log()); }),
+                    button_row(tr(L"Logs folder"), logs_dir().wstring(), tr(L"Open folder"), [] { open_path(logs_dir()); })},
+                   tr(L"Attach the log to a bug report: it says what the runtime did and where it stopped.")});
+    out.push_back({tr(L"App data"),
+                   {button_row(tr(L"Saves, caches and files"),
+                               tr(L"Each installed app keeps its data here. Removing an app keeps what it saved."),
+                               tr(L"Open folder"), [] { open_path(data_dir()); })},
                    L""});
 
-    Section about{L"About", {text_row(L"Win.apk", L"Version " + version(),
-                                      L"An unofficial port of Mac.apk to Windows. Not affiliated with or endorsed "
-                                      L"by the Mac.apk project.")},
+    Section about{tr(L"About"), {text_row(L"Win.apk", fmt(L"Version {0}", {version()}),
+                                      tr(L"An unofficial port of Mac.apk to Windows. Not affiliated with or endorsed by the Mac.apk project."))},
                   L""};
     if (!g_apps.empty()) {
-        about.rows.push_back(button_row(L"Remove all apps", L"Their shortcuts go too. What they saved stays.",
-                                        L"Remove all…", [] {
-                                            if (!confirm(L"Remove all " + std::to_wstring(g_apps.size()) + L" apps?",
-                                                         L"Their shortcuts go too. What they saved stays.",
-                                                         L"Remove all")) {
+        about.rows.push_back(button_row(tr(L"Remove all apps"), tr(L"Their shortcuts go too. What they saved stays."),
+                                        tr(L"Remove all…"), [] {
+                                            if (!confirm(fmt(L"Remove all {0} apps?", {std::to_wstring(g_apps.size())}),
+                                                         tr(L"Their shortcuts go too. What they saved stays."),
+                                                         tr(L"Remove all"))) {
                                                 return;
                                             }
                                             const std::vector<App> apps = g_apps;
                                             for (const App& a : apps) remove_app(a, false);
                                             refresh();
-                                            set_status(L"Every app was removed.", kInfo);
+                                            set_status(tr(L"Every app was removed."), kInfo);
                                         },
                                         true));
     }
@@ -1733,7 +1977,7 @@ std::vector<Section> settings_sections() {
 
 void show_settings() {
     Sheet s;
-    s.title = L"Settings";
+    s.title = tr(L"Settings");
     s.build = settings_sections;
     run_sheet(std::move(s));
 }
@@ -1748,45 +1992,45 @@ void show_info(const App& app) {
     s.title = a.label;
     s.hero_app = a.name;
     s.hero_title = a.label;
-    s.hero_sub = a.name + L"  ·  Android app";
+    s.hero_sub = fmt(L"{0}  ·  Android app", {a.name});
     s.build = [a, apk_size, files_size, installed] {
         std::vector<Section> out;
-        out.push_back({L"Identity",
-                       {text_row(L"Name", a.label), text_row(L"Library name", a.name),
-                        text_row(L"Installed", installed)},
+        out.push_back({tr(L"Identity"),
+                       {text_row(tr(L"Name"), a.label), text_row(tr(L"Library name"), a.name),
+                        text_row(tr(L"Installed"), installed)},
                        L""});
-        out.push_back({L"Storage",
-                       {button_row(L"Source APK  ·  " + apk_size, a.apk.wstring(), L"Show",
+        out.push_back({tr(L"Storage"),
+                       {button_row(fmt(L"Source APK  ·  {0}", {apk_size}), a.apk.wstring(), tr(L"Show"),
                                    [a] { show_in_explorer(a.apk); }),
-                        button_row(L"App files  ·  " + files_size, app_dir(a.name).wstring(), L"Open",
+                        button_row(fmt(L"App files  ·  {0}", {files_size}), app_dir(a.name).wstring(), tr(L"Open"),
                                    [a] { open_path(app_dir(a.name)); }),
-                        button_row(L"Install log", install_log(a.name).wstring(), L"View",
+                        button_row(tr(L"Install log"), install_log(a.name).wstring(), tr(L"View"),
                                    [a] { show_logs(install_log(a.name)); })},
                        L""});
-        Row open = button_row(L"Open " + a.label, L"", L"Open", [a] {
+        Row open = button_row(fmt(L"Open {0}", {a.label}), L"", tr(L"Open"), [a] {
             close_sheet();
             if (const App* cur = find_app(a.name)) launch(*cur);
         });
         open.primary = true;
-        out.push_back({L"Actions",
+        out.push_back({tr(L"Actions"),
                        {open,
-                        button_row(L"Desktop shortcut", L"Put a shortcut to the app on the desktop.", L"Create",
+                        button_row(tr(L"Desktop shortcut"), tr(L"Put a shortcut to the app on the desktop."), tr(L"Create"),
                                    [a] {
                                        make_app_shortcuts(a, true);
-                                       set_status(L"A shortcut to " + a.label + L" is on the desktop.", kSuccess);
+                                       set_status(fmt(L"A shortcut to {0} is on the desktop.", {a.label}), kSuccess);
                                    }),
-                        button_row(L"Update from APK", L"Install a newer version over this one. Saves stay.",
-                                   L"Choose…",
+                        button_row(tr(L"Update from APK"), tr(L"Install a newer version over this one. Saves stay."),
+                                   tr(L"Choose…"),
                                    [a] {
                                        update_from_apk(a);
                                        if (is_pending(a.name)) close_sheet();
                                    }),
-                        button_row(L"Reinstall", L"Convert the app again from its APK.", L"Reinstall",
+                        button_row(tr(L"Reinstall"), tr(L"Convert the app again from its APK."), tr(L"Reinstall"),
                                    [a] {
                                        close_sheet();
                                        install(a.apk, false, a.name);
                                    }),
-                        button_row(L"Remove", L"Its shortcuts go too. What the app saved stays.", L"Remove…",
+                        button_row(tr(L"Remove"), tr(L"Its shortcuts go too. What the app saved stays."), tr(L"Remove…"),
                                    [a] {
                                        if (remove_app(a, true)) close_sheet();
                                    },
@@ -1866,7 +2110,7 @@ HWND open_tool_window(const wchar_t* cls, const wchar_t* title, int w, int h) {
     RECT mr;
     GetWindowRect(g_main, &mr);
     const int x = mr.left + (mr.right - mr.left - w) / 2, y = mr.top + (std::max)(0L, (mr.bottom - mr.top - h) / 2);
-    HWND hwnd = CreateWindowExW(0, cls, title, WS_OVERLAPPEDWINDOW & ~WS_MAXIMIZEBOX, x, y, w, h, g_main, nullptr,
+    HWND hwnd = CreateWindowExW(layout_style(), cls, title, WS_OVERLAPPEDWINDOW & ~WS_MAXIMIZEBOX, x, y, w, h, g_main, nullptr,
                                 g_inst, nullptr);
     if (hwnd) {
         theme_window(hwnd);
@@ -1912,18 +2156,20 @@ void paint_install(Graphics& g, float W, float H) {
 
     std::wstring title, sub;
     if (!finished) {
-        title = total > 1 ? L"Installing " + std::to_wstring((std::min)(done + failed + 1, total)) + L" of " +
-                                std::to_wstring(total)
-                          : L"Installing";
-        sub = L"Each app is converted for Windows once. That takes up to a minute.";
+        title = total > 1 ? fmt(L"Installing {0} of {1}",
+                                {std::to_wstring((std::min)(done + failed + 1, total)), std::to_wstring(total)})
+                          : std::wstring(tr(L"Installing"));
+        sub = tr(L"Each app is converted for Windows once. That takes up to a minute.");
     } else if (failed == 0) {
         const App* app = total == 1 ? find_app(g_jobs[0].name) : nullptr;
-        title = app ? app->label + L" is ready" : L"All set";
-        sub = std::to_wstring(done) + (done == 1 ? L" app is" : L" apps are") +
-              L" in the library and in Start > Win.apk Apps.";
+        title = app ? fmt(L"{0} is ready", {app->label}) : std::wstring(tr(L"All set"));
+        sub = fmt(done == 1 ? L"{0} app is in the library and in Start > Win.apk Apps."
+                            : L"{0} apps are in the library and in Start > Win.apk Apps.",
+                  {std::to_wstring(done)});
     } else {
-        title = failed == total ? L"The install failed" : L"Some installs failed";
-        sub = std::to_wstring(failed) + L" of " + std::to_wstring(total) + L" could not be installed. The log says why.";
+        title = failed == total ? tr(L"The install failed") : tr(L"Some installs failed");
+        sub = fmt(L"{0} of {1} could not be installed. The log says why.",
+                  {std::to_wstring(failed), std::to_wstring(total)});
     }
     float y = px(22);
     const RectF badge(m, y, px(44), px(44));
@@ -1963,10 +2209,10 @@ void paint_install(Graphics& g, float W, float H) {
         draw_app_icon(g, app, label, RectF(r.X + px(14), r.Y + px(10), px(40), px(40)));
         std::wstring state;
         switch (j.state) {
-            case Job::kWaiting: state = L"Waiting"; break;
-            case Job::kInstalling: state = L"Converting  ·  " + duration(now - j.start); break;
-            case Job::kDone: state = L"Installed in " + duration(j.end - j.start); break;
-            case Job::kFailed: state = L"Failed after " + duration(j.end - j.start); break;
+            case Job::kWaiting: state = tr(L"Waiting"); break;
+            case Job::kInstalling: state = fmt(L"Converting  ·  {0}", {duration(now - j.start)}); break;
+            case Job::kDone: state = fmt(L"Installed in {0}", {duration(j.end - j.start)}); break;
+            case Job::kFailed: state = fmt(L"Failed after {0}", {duration(j.end - j.start)}); break;
         }
         const float tx = r.X + px(66), tw = r.Width - px(66) - px(120);
         draw_text(g, label, g_f.body_semi.get(), g_t.text, RectF(tx, r.Y + px(10), tw, px(20)));
@@ -1979,7 +2225,7 @@ void paint_install(Graphics& g, float W, float H) {
         } else if (j.state == Job::kInstalling) {
             spinner(g, RectF(right.GetRight() - px(20), right.Y + px(5), px(20), px(20)), g_t.accent, px(2.5f));
         } else {
-            draw_button(g, right, j.state == Job::kDone ? L"Open" : L"View log", g_iv.hot == act, false,
+            draw_button(g, right, j.state == Job::kDone ? tr(L"Open") : tr(L"View log"), g_iv.hot == act, false,
                         j.state == Job::kFailed);
             g_iv.targets.push_back({right, act});
         }
@@ -1988,7 +2234,7 @@ void paint_install(Graphics& g, float W, float H) {
     y += rows * rh + px(20);
 
     const Job* lj = log_job();
-    draw_text(g, lj ? L"Log  ·  " + lj->name : L"Log", g_f.caption_semi.get(), g_t.text2,
+    draw_text(g, lj ? fmt(L"Log  ·  {0}", {lj->name}) : std::wstring(tr(L"Log")), g_f.caption_semi.get(), g_t.text2,
               RectF(m + px(4), y, cw, px(18)));
     y += px(24);
     const RectF box(m, y, cw, H - foot - px(18) - y);
@@ -1998,7 +2244,7 @@ void paint_install(Graphics& g, float W, float H) {
         const float lh = px(17);
         const size_t fit = static_cast<size_t>((std::max)(0.0f, (box.Height - px(20)) / lh));
         if (g_iv.log.empty()) {
-            draw_text(g, lj ? L"Starting the runtime…" : L"The install's output appears here.", g_f.caption.get(),
+            draw_text(g, lj ? tr(L"Starting the runtime…") : tr(L"The install's output appears here."), g_f.caption.get(),
                       g_t.text2, box, kCenter);
         } else {
             const size_t from = g_iv.log.size() > fit ? g_iv.log.size() - fit : 0;
@@ -2007,7 +2253,7 @@ void paint_install(Graphics& g, float W, float H) {
                 const std::wstring& l = g_iv.log[i];
                 const bool bad = l.find(L"rror") != std::wstring::npos || l.find(L"xception") != std::wstring::npos;
                 draw_text(g, l, g_f.mono.get(), bad ? g_t.danger : g_t.text2,
-                          RectF(box.X + px(12), ly, box.Width - px(24), lh));
+                          RectF(box.X + px(12), ly, box.Width - px(24), lh), kLeft, false, true, true);
             }
         }
     }
@@ -2017,11 +2263,11 @@ void paint_install(Graphics& g, float W, float H) {
     Gdiplus::Pen line(g_t.border, 1);
     g.DrawLine(&line, 0.0f, H - foot, W, H - foot);
     const RectF close(W - m - px(100), H - foot + (foot - px(34)) / 2, px(100), px(34));
-    draw_button(g, close, finished ? L"Done" : L"Hide", g_iv.hot == kActClose, true, false);
+    draw_button(g, close, finished ? tr(L"Done") : tr(L"Hide"), g_iv.hot == kActClose, true, false);
     g_iv.targets.push_back({close, kActClose});
     if (lj) {
         const RectF full(m, close.Y, px(140), px(34));
-        draw_button(g, full, L"Open full log", g_iv.hot == kActLog, false, false);
+        draw_button(g, full, tr(L"Open full log"), g_iv.hot == kActLog, false, false);
         g_iv.targets.push_back({full, kActLog});
     }
 }
@@ -2090,7 +2336,7 @@ void show_install_window() {
         InvalidateRect(g_install_wnd, nullptr, FALSE);
         return;
     }
-    g_install_wnd = open_tool_window(L"WinApkInstall", L"Installing - Win.apk", ipx(540), ipx(600));
+    g_install_wnd = open_tool_window(L"WinApkInstall", tr(L"Installing - Win.apk"), ipx(540), ipx(600));
 }
 
 // ---------------------------------------------------------------------------
@@ -2108,8 +2354,8 @@ enum { kLogPick = 1, kLogCopy, kLogNotepad, kLogFolder };
 
 std::wstring log_title(const fs::path& p) {
     const std::wstring stem = p.stem().wstring();
-    if (stem == L"last-run") return L"Last run";
-    if (stem.rfind(L"install-", 0) == 0) return L"Install  ·  " + stem.substr(8);
+    if (stem == L"last-run") return tr(L"Last run");
+    if (stem.rfind(L"install-", 0) == 0) return fmt(L"Install  ·  {0}", {stem.substr(8)});
     return stem;
 }
 
@@ -2132,8 +2378,8 @@ void load_log(bool force) {
     g_lv.size = ec ? 0 : size;
     std::wstring text;
     if (ec) {
-        text = g_lv.path.stem() == L"last-run" ? L"No app has run yet. This log is written when one does."
-                                               : L"This log is written the next time the app is installed.";
+        text = g_lv.path.stem() == L"last-run" ? tr(L"No app has run yet. This log is written when one does.")
+                                               : tr(L"This log is written the next time the app is installed.");
     } else {
         const std::wstring raw = utf8_to_wide(read_tail(g_lv.path, 1 << 20));
         text.reserve(raw.size() + raw.size() / 32);
@@ -2163,7 +2409,7 @@ void paint_logs(Graphics& g, float W, float H) {
     g.Clear(g_t.bg);
     g_lv.targets.clear();
     const float m = px(20);
-    draw_text(g, L"Logs", g_f.hero.get(), g_t.text, RectF(m, px(14), px(70), px(36)));
+    draw_text(g, tr(L"Logs"), g_f.hero.get(), g_t.text, RectF(m, px(14), px(70), px(36)));
     const RectF pick(m + px(76), px(16), (std::min)(px(300), W * 0.4f), px(32));
     fill_round(g, pick, px(6), g_lv.hot == kLogPick ? g_t.hover : mix(g_t.card, g_t.hover, 0.55f));
     stroke_round(g, pick, px(6), g_t.border);
@@ -2172,8 +2418,8 @@ void paint_logs(Graphics& g, float W, float H) {
               kCenter);
     g_lv.targets.push_back({pick, kLogPick});
     float x = W - m;
-    for (auto [label, act] : {std::pair<const wchar_t*, int>{L"Folder", kLogFolder}, {L"Notepad", kLogNotepad},
-                              {L"Copy", kLogCopy}}) {
+    for (auto [label, act] : {std::pair<const wchar_t*, int>{tr(L"Folder"), kLogFolder}, {tr(L"Notepad"), kLogNotepad},
+                              {tr(L"Copy"), kLogCopy}}) {
         const float w = text_width(g, label, g_f.body_semi.get()) + px(32);
         x -= w;
         const RectF r(x, px(16), w, px(32));
@@ -2193,7 +2439,7 @@ void paint_logs(Graphics& g, float W, float H) {
         g.FillEllipse(&dot, fx, H - px(20) - px(3), px(6), px(6));
         fx += px(14);
     }
-    const std::wstring info = (live ? L"Live  ·  " : L"") + format_bytes(g_lv.size) + L"  ·  " + g_lv.path.wstring();
+    const std::wstring info = (live ? std::wstring(tr(L"Live")) + L"  ·  " : std::wstring()) + format_bytes(g_lv.size) + L"  ·  " + g_lv.path.wstring();
     draw_text(g, info, g_f.caption.get(), g_t.text2, RectF(fx, H - px(40), W - fx - m, px(40)));
 }
 
@@ -2208,7 +2454,7 @@ void log_action(HWND hwnd, int act) {
         const RectF& r = g_lv.targets[0].first;
         POINT pt{static_cast<LONG>(r.X), static_cast<LONG>(r.GetBottom() + px(2))};
         ClientToScreen(hwnd, &pt);
-        const int pick = TrackPopupMenu(menu, TPM_RETURNCMD, pt.x, pt.y, 0, hwnd, nullptr);
+        const int pick = TrackPopupMenu(menu, TPM_RETURNCMD | menu_flags(true), pt.x, pt.y, 0, hwnd, nullptr);
         DestroyMenu(menu);
         if (pick > 0) {
             g_lv.path = files[static_cast<size_t>(pick - 1)];
@@ -2226,7 +2472,7 @@ void log_action(HWND hwnd, int act) {
         EmptyClipboard();
         if (!SetClipboardData(CF_UNICODETEXT, mem)) GlobalFree(mem);
         CloseClipboard();
-        set_status(L"The log was copied.", kSuccess);
+        set_status(tr(L"The log was copied."), kSuccess);
     } else if (act == kLogNotepad) {
         open_log(g_lv.path);
     } else if (act == kLogFolder) {
@@ -2290,7 +2536,7 @@ LRESULT CALLBACK log_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 void show_logs(const fs::path& log) {
     g_lv.path = log;
     if (!g_log_wnd) {
-        g_log_wnd = open_tool_window(L"WinApkLogs", L"Logs - Win.apk", ipx(860), ipx(620));
+        g_log_wnd = open_tool_window(L"WinApkLogs", tr(L"Logs - Win.apk"), ipx(860), ipx(620));
         if (!g_log_wnd) return;
     } else {
         ShowWindow(g_log_wnd, SW_RESTORE);
@@ -2401,22 +2647,22 @@ void apply_theme() {
 
 void show_context_menu(const App& app, POINT pt) {
     HMENU menu = CreatePopupMenu();
-    AppendMenuW(menu, MF_STRING, kCmdOpen, L"&Open");
-    AppendMenuW(menu, MF_STRING, kCmdInfo, L"Get &Info…");
+    AppendMenuW(menu, MF_STRING, kCmdOpen, tr(L"&Open"));
+    AppendMenuW(menu, MF_STRING, kCmdInfo, tr(L"Get &Info…"));
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, MF_STRING, kCmdShortcut, L"Create &desktop shortcut");
-    AppendMenuW(menu, MF_STRING, kCmdShowApk, L"Show the &APK in Explorer");
-    AppendMenuW(menu, MF_STRING, kCmdAppFolder, L"Open the app's &files");
-    AppendMenuW(menu, MF_STRING, kCmdLog, L"Show the last &log");
+    AppendMenuW(menu, MF_STRING, kCmdShortcut, tr(L"Create &desktop shortcut"));
+    AppendMenuW(menu, MF_STRING, kCmdShowApk, tr(L"Show the &APK in Explorer"));
+    AppendMenuW(menu, MF_STRING, kCmdAppFolder, tr(L"Open the app's &files"));
+    AppendMenuW(menu, MF_STRING, kCmdLog, tr(L"Show the last &log"));
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, MF_STRING, kCmdUpdate, L"&Update from APK…");
-    AppendMenuW(menu, MF_STRING, kCmdReinstall, L"Rein&stall");
-    AppendMenuW(menu, MF_STRING, kCmdRemove, L"&Remove…");
+    AppendMenuW(menu, MF_STRING, kCmdUpdate, tr(L"&Update from APK…"));
+    AppendMenuW(menu, MF_STRING, kCmdReinstall, tr(L"Rein&stall"));
+    AppendMenuW(menu, MF_STRING, kCmdRemove, tr(L"&Remove…"));
     SetMenuDefaultItem(menu, kCmdOpen, FALSE);
     if (is_pending(app.name)) {
         for (int id : {kCmdOpen, kCmdUpdate, kCmdReinstall, kCmdRemove}) EnableMenuItem(menu, id, MF_GRAYED);
     }
-    TrackPopupMenu(menu, TPM_RIGHTBUTTON, pt.x, pt.y, 0, g_main, nullptr);
+    TrackPopupMenu(menu, TPM_RIGHTBUTTON | menu_flags(false), pt.x, pt.y, 0, g_main, nullptr);
     DestroyMenu(menu);
 }
 
@@ -2429,7 +2675,7 @@ void command(int id) {
         case kCmdInfo: show_info(a); break;
         case kCmdShortcut:
             make_app_shortcuts(a, true);
-            set_status(L"A shortcut to " + a.label + L" is on the desktop.", kSuccess);
+            set_status(fmt(L"A shortcut to {0} is on the desktop.", {a.label}), kSuccess);
             break;
         case kCmdShowApk: show_in_explorer(a.apk); break;
         case kCmdAppFolder: open_path(app_dir(a.name)); break;
@@ -2468,6 +2714,37 @@ LRESULT CALLBACK search_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp, UINT_PTR
     return DefSubclassProc(hwnd, msg, wp, lp);
 }
 
+// The search box, made again when the language changes so it takes the new direction.
+void create_search() {
+    wchar_t text[256] = {};
+    if (g_search) {
+        GetWindowTextW(g_search, text, 256);
+        DestroyWindow(g_search);
+    }
+    g_search = CreateWindowExW(g_rtl ? WS_EX_RTLREADING : 0, L"EDIT", text, WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
+                               0, 0, 0, 0, g_main, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdSearch)), g_inst,
+                               nullptr);
+    SendMessageW(g_search, WM_SETFONT, reinterpret_cast<WPARAM>(g_edit_font), FALSE);
+    SendMessageW(g_search, EM_SETCUEBANNER, FALSE, reinterpret_cast<LPARAM>(tr(L"Search apps")));
+    SetWindowSubclass(g_search, search_proc, 1, 0);
+}
+
+void apply_language() {
+    pick_language();
+    for (HWND w : {g_main, sheet_hwnd(), g_install_wnd}) {
+        if (!w) continue;
+        const LONG_PTR ex = GetWindowLongPtrW(w, GWL_EXSTYLE);
+        SetWindowLongPtrW(w, GWL_EXSTYLE, g_rtl ? (ex | WS_EX_LAYOUTRTL) : (ex & ~WS_EX_LAYOUTRTL));
+        SetWindowPos(w, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
+        InvalidateRect(w, nullptr, FALSE);
+    }
+    if (sheet_hwnd()) SetWindowTextW(sheet_hwnd(), tr(L"Settings"));  // the language is picked there
+    if (g_install_wnd) SetWindowTextW(g_install_wnd, tr(L"Installing - Win.apk"));
+    if (g_log_wnd) DestroyWindow(g_log_wnd);
+    create_search();
+    rebuild_tiles();
+}
+
 void set_hot(const Hit& h) {
     if (h == g_hot) return;
     g_hot = h;
@@ -2480,11 +2757,7 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             g_main = hwnd;
             g_dpi = static_cast<float>(GetDpiForWindow(hwnd));
             make_fonts();
-            g_search = CreateWindowExW(0, L"EDIT", L"", WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL, 0, 0, 0, 0, hwnd,
-                                       reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdSearch)), g_inst, nullptr);
-            SendMessageW(g_search, WM_SETFONT, reinterpret_cast<WPARAM>(g_edit_font), FALSE);
-            SendMessageW(g_search, EM_SETCUEBANNER, FALSE, reinterpret_cast<LPARAM>(L"Search apps"));
-            SetWindowSubclass(g_search, search_proc, 1, 0);
+            create_search();
             apply_theme();
             g_drop_target = new DropTarget;
             RegisterDragDrop(hwnd, g_drop_target);
@@ -2678,7 +2951,7 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 }
             }
             if (g_install_wnd) InvalidateRect(g_install_wnd, nullptr, FALSE);
-            set_status(L"Installing " + *name + L"… The first install of an app takes up to a minute.", kInfo);
+            set_status(fmt(L"Installing {0}… The first install of an app takes up to a minute.", {*name}), kInfo);
             return 0;
         }
         case kInstalled: {
@@ -2700,15 +2973,17 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (wp & 1) {
                 const std::wstring label = label_of(*name);
                 select_app(*name);
-                set_status(label + L" is installed: it is in the Start menu" +
-                               (setting(L"DesktopShortcut", 1) ? L" and on the desktop." : L"."),
+                set_status(fmt(setting(L"DesktopShortcut", 1)
+                                   ? L"{0} is installed: it is in the Start menu and on the desktop."
+                                   : L"{0} is installed: it is in the Start menu.",
+                               {label}),
                            kSuccess);
                 if (wp & 2) {
                     if (const App* a = find_app(*name)) launch(*a);
                 }
             } else {
-                set_status(L"Installing " + *name + L" failed.", kError);
-                if (!g_install_wnd) failed_with_log(L"Installing " + *name + L" failed", install_log(*name));
+                set_status(fmt(L"Installing {0} failed.", {*name}), kError);
+                if (!g_install_wnd) failed_with_log(fmt(L"Installing {0} failed", {*name}), install_log(*name));
             }
             return 0;
         }
@@ -2718,12 +2993,12 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             update_timer();
             const std::wstring label = label_of(*name);
             if (g_stopping.erase(*name)) {
-                set_status(label + L" was stopped.", kInfo);
+                set_status(fmt(L"{0} was stopped.", {label}), kInfo);
             } else if (wp) {
                 set_status(L"", kHint);
             } else {
-                set_status(label + L" stopped with an error.", kError);
-                failed_with_log(label + L" stopped with an error", last_run_log());
+                set_status(fmt(L"{0} stopped with an error.", {label}), kError);
+                failed_with_log(fmt(L"{0} stopped with an error", {label}), last_run_log());
             }
             return 0;
         }
@@ -2751,7 +3026,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
     // A shortcut: run the app, and only show anything if it fails.
     if (argc >= 3 && wcscmp(argv[1], L"--run") == 0) {
         if (!run_and_wait(argv[2])) {
-            const std::wstring text = L"The app stopped with an error.\n\nThe log is in:\n" + last_run_log().wstring();
+            const std::wstring text = fmt(L"The app stopped with an error.\n\nThe log is in:\n{0}", {last_run_log().wstring()});
             MessageBoxW(nullptr, text.c_str(), L"Win.apk", MB_OK | MB_ICONWARNING);
             return 1;
         }
@@ -2764,6 +3039,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
     Gdiplus::GdiplusStartupInput gsi;
     Gdiplus::GdiplusStartup(&gdiplus, &gsi, nullptr);
     integrate_with_windows();
+    pick_language();
     pick_theme();
     theme_menus();
 
@@ -2789,7 +3065,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
     sc.lpszClassName = L"WinApkLogs";
     RegisterClassExW(&sc);
     const UINT dpi = GetDpiForSystem();
-    HWND hwnd = CreateWindowExW(0, wc.lpszClassName, L"Win.apk", WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
+    HWND hwnd = CreateWindowExW(layout_style(), wc.lpszClassName, L"Win.apk", WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
                                 CW_USEDEFAULT, CW_USEDEFAULT, MulDiv(980, static_cast<int>(dpi), 96),
                                 MulDiv(720, static_cast<int>(dpi), 96), nullptr, nullptr, inst, nullptr);
     ShowWindow(hwnd, show);
