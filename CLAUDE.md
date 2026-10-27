@@ -54,8 +54,13 @@ painting, dialogs, actions, sheets (Settings, Get Info: `Row`/`Section` model,
   `x86_64-w64-mingw32-g++-posix -std=c++17 -Wall -Wextra -Wno-missing-field-initializers -DUNICODE -D_UNICODE -D_WIN32_WINNT=0x0A00 -municode -mwindows -static windows/launcher/launcher_main.cpp l.res -o Win.apk.exe -lcomctl32 -lshell32 -lole32 -luuid -lgdiplus -ldwmapi -luxtheme -lgdi32`.
 - Looking at the UI: `apt-get install wine64 xvfb xdotool`; Wine is in
   `/usr/lib/wine` (`wine64`). Run under `Xvfb :9`, screenshot with
-  `import -window root`. Wine lacks Segoe fonts, so icon glyphs show as boxes;
-  that is expected.
+  `import -window root`. Wine lacks Segoe fonts, so icon glyphs show as boxes.
+  For the README screenshots (`docs/images/`), stand-in fonts were dropped into
+  the prefix's `C:\windows\Fonts`: Open Sans instanced and renamed "Segoe UI" /
+  "Segoe UI Semibold" (fontTools), and a "Segoe Fluent Icons" built from
+  Fluent UI System Icons SVGs on the same code points (it needs name IDs 3, 4
+  and 6 or Wine's GDI+ will not find it). Wine's GDI+ does no bidi, so Hebrew
+  screenshots come out wrong: take those on Windows.
 - Full build and tests: `windows/README.md`, "Build and run".
 
 ## Conventions
