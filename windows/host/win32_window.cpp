@@ -257,9 +257,35 @@ void refit(HWND hwnd) {
     fit_window(hwnd, MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), window_dpi(hwnd), nullptr, true);
 }
 
+// A right-to-left user (Hebrew, Arabic, Persian...) gets the window Windows
+// gives right-to-left programs: WS_EX_LAYOUTRTL mirrors the frame, so the
+// icon and title sit at the top right and the close button at the top left.
+// The mirroring stops at the frame: the app draws its own right-to-left
+// layout, so painting turns the DC's mirroring off, and mouse positions,
+// which Windows then measures from the right edge, are measured from the
+// left again. WINAPK_WINDOW_RTL=1 or =0 overrides the locale.
+bool g_rtl_window = false;
+
+bool rtl_user() {
+    if (const char* e = std::getenv("WINAPK_WINDOW_RTL")) return e[0] == '1';
+    DWORD layout = 0;
+    return GetLocaleInfoEx(LOCALE_NAME_USER_DEFAULT, LOCALE_IREADINGLAYOUT | LOCALE_RETURN_NUMBER,
+                           reinterpret_cast<LPWSTR>(&layout), sizeof(layout) / sizeof(wchar_t)) > 0 &&
+           layout == 1;
+}
+
+// A client x from a mouse message, left to right.
+int client_x(HWND hwnd, int x) {
+    if (!g_rtl_window) return x;
+    RECT client;
+    GetClientRect(hwnd, &client);
+    return client.right - 1 - x;
+}
+
 void paint(HWND hwnd) {
     PAINTSTRUCT ps;
     HDC dc = BeginPaint(hwnd, &ps);
+    if (g_rtl_window) SetLayout(dc, 0);  // the app's frame as it is, not mirrored
     RECT client;
     GetClientRect(hwnd, &client);
     {
@@ -289,7 +315,7 @@ void send_pointer(HWND hwnd, int action, LPARAM lp) {
     RECT client;
     GetClientRect(hwnd, &client);
     if (client.right <= 0 || client.bottom <= 0) return;
-    const float x = static_cast<float>(static_cast<short>(LOWORD(lp)));
+    const float x = static_cast<float>(client_x(hwnd, static_cast<short>(LOWORD(lp))));
     const float y = static_cast<float>(static_cast<short>(HIWORD(lp)));
     g_input->pointer(action, x, y, static_cast<float>(client.right), static_cast<float>(client.bottom));
 }
@@ -315,6 +341,7 @@ void send_wheel(HWND hwnd, WPARAM wp, LPARAM lp, bool horizontal) {
     if (client.right <= 0 || client.bottom <= 0) return;
     POINT p{static_cast<short>(LOWORD(lp)), static_cast<short>(HIWORD(lp))};  // screen coordinates
     ScreenToClient(hwnd, &p);
+    p.x = client_x(hwnd, p.x);
     const float w = static_cast<float>(client.right), h = static_cast<float>(client.bottom);
     // Client pixels per point, along the scroll axis.
     const float per_point = horizontal ? w / static_cast<float>(g_phone_w) : h / static_cast<float>(g_phone_h);
@@ -555,7 +582,8 @@ DWORD WINAPI ui_thread(void* param) {
     wc.lpszClassName = kClassName;
     RegisterClassExW(&wc);
     const SIZE s = outer_size(g_plan.dpi, target_scale(g_plan.dpi, work_area(g_plan.monitor)));
-    g_hwnd = CreateWindowExW(0, kClassName, L"Win.apk", kStyle, CW_USEDEFAULT, CW_USEDEFAULT, s.cx, s.cy, nullptr,
+    g_rtl_window = rtl_user();
+    g_hwnd = CreateWindowExW(g_rtl_window ? (WS_EX_LAYOUTRTL | WS_EX_NOINHERITLAYOUT) : 0, kClassName, L"Win.apk", kStyle, CW_USEDEFAULT, CW_USEDEFAULT, s.cx, s.cy, nullptr,
                              nullptr, wc.hInstance, nullptr);
     if (g_hwnd) {
         // CW_USEDEFAULT cascades the window down the primary monitor. It

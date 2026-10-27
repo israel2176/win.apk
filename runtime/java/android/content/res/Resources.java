@@ -5501,8 +5501,12 @@ public class Resources {
                 java.lang.reflect.Method m = macapkResourceIndex.getClass()
                     .getMethod("idOfName", String.class, String.class, String.class);
                 Object id = m.invoke(macapkResourceIndex, name, defType, defPackage);
-                if (id instanceof Integer) return (Integer) id;
+                if (id instanceof Integer && (Integer) id != 0) return (Integer) id;
             } catch (Throwable ignored) {}
+        }
+        if (System.getenv("MACAPK_TRACE_GETID") != null) {
+            com.macapk.loader.NativeLog.i("Mac.apk.Res", "getIdentifier(" + name + ", " + defType + ", "
+                + defPackage + ") -> 0" + (macapkResourceIndex == null ? " (no index)" : ""));
         }
         return 0;
     }

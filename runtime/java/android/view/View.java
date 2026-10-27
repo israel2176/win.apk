@@ -3590,11 +3590,22 @@ public class View implements android.graphics.drawable.Drawable.Callback,
     private int mRawLayoutDirection = LAYOUT_DIRECTION_INHERIT;
     private int mResolvedLayoutDirection = LAYOUT_DIRECTION_LTR;
     /** AOSP getLayoutDirection(): the RESOLVED direction, LTR or RTL only. */
-    public int  getLayoutDirection() { return mResolvedLayoutDirection; }
+    /** The resolved direction. A view in a tree that has not resolved yet does
+     *  so now: AOSP resolves a view's direction when it is attached, so by the
+     *  time a parent measures, every child already answers. Here a view
+     *  resolved only in its own measure(), and a parent that asks its
+     *  children first -- ConstraintLayout resolves their LayoutParams in its
+     *  onMeasure -- got LTR from the ones not measured yet: in an RTL locale
+     *  half of a layout was mirrored (WhatsApp's numbered lists, the number on
+     *  the left over its text). */
+    public int  getLayoutDirection() {
+        if (!rtlPropertiesResolved && parent != null) resolveRtlPropertiesIfNeeded();
+        return mResolvedLayoutDirection;
+    }
     /** AOSP getRawLayoutDirection(): the attribute as set, incl. INHERIT/LOCALE. */
     public int  getRawLayoutDirection() { return mRawLayoutDirection; }
     /** AOSP isLayoutRtl(). */
-    public boolean isLayoutRtl() { return mResolvedLayoutDirection == LAYOUT_DIRECTION_RTL; }
+    public boolean isLayoutRtl() { return getLayoutDirection() == LAYOUT_DIRECTION_RTL; }
     /** AOSP setLayoutDirection: store the raw value, drop the old resolution,
      *  re-resolve, then requestLayout + invalidate (every RTL-derived property
      *  depends on the direction). */
