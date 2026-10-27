@@ -3,6 +3,7 @@
 
 #include "winapk/elf_loader.h"
 
+#include "winapk/arm64_aot.h"
 #include "winapk/arm64_guest.h"
 #include "winapk/elf64_defs.h"
 #include "winapk/elf_tls.h"
@@ -691,11 +692,16 @@ void ElfImage::seal_relro() {
 }
 
 void ElfImage::register_arm64_code() {
+    uint64_t text_hash = 0xcbf29ce484222325ull;
     for (const Segment& s : loads_) {
         if (!(s.flags & kPfX) || s.memsz == 0) continue;
         arm64::register_code(at<const void>(s.vaddr), s.memsz);
         arm64_code_.push_back(at<const void>(s.vaddr));
+        if (s.filesz) text_hash = arm64::aot_hash(at<const uint8_t>(s.vaddr), s.filesz, text_hash);
     }
+    // The code translated at install time, if the installer made it (still
+    // unrelocated here, as winapk-aot read it).
+    arm64::aot_load(path_.u8string().c_str(), bias_, text_hash);
 }
 
 // DT_INIT_ARRAY entries are called as fn(argc, argv, envp); DT_INIT,

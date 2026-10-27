@@ -43,6 +43,7 @@ add_library(winapk_loader STATIC
   src/arm64/arm64_simd.cpp
   src/arm64/arm64_guest.cpp
   src/arm64/arm64_jit.cpp
+  src/arm64/arm64_aot.cpp
 )
 target_include_directories(winapk_loader PUBLIC include PRIVATE src)
 # WaitOnAddress (the shim's futexes), BCryptGenRandom (arc4random), Winsock.
@@ -105,6 +106,11 @@ target_link_libraries(winapk-arm64-test PRIVATE winapk_loader)
 target_include_directories(winapk-arm64-test PRIVATE test/guest)
 target_compile_options(winapk-arm64-test PRIVATE -mcx16)
 
+# The ahead-of-time translator (include/winapk/arm64_aot.h): arm64 .so -> C,
+# which the installer compiles into <lib>.so.aot.dll.
+add_executable(winapk-aot tools/arm64_aot_main.cpp)
+target_include_directories(winapk-aot PRIVATE include)
+
 if(MINGW)
   # One self-contained .exe: no libstdc++/libgcc/winpthread DLLs next to it.
   target_link_options(winapk-elfrun PRIVATE -static)
@@ -112,6 +118,7 @@ if(MINGW)
   target_link_options(winapk-linker-test PRIVATE -static)
   target_link_options(winapk-bionic-test PRIVATE -static)
   target_link_options(winapk-arm64-test PRIVATE -static)
+  target_link_options(winapk-aot PRIVATE -static)
 endif()
 
 # The JNI bridge needs jni.h + win32/jni_md.h. Point WINAPK_JNI_INCLUDE at a

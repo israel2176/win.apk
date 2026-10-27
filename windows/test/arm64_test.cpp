@@ -243,9 +243,12 @@ void run_speed(winapk::GuestLinker& linker,
     static const Bench kBenches[] = {BENCHES(BENCH_CASE)};
 #undef BENCH_CASE
     size_t results = 0, results_ok = 0;
-    const bool jit = engines.back().first == Engine::kJit;
+    const Engine last = engines.back().first;
     std::printf("  %-10s %9s", "", "native");
-    if (jit) std::printf(" %15s %9s  where the JIT's time goes", "JIT", "first");
+    for (const auto& e : engines) {
+        if (e.first != Engine::kInterpreter) std::printf(" %15s", e.second);
+    }
+    if (last != Engine::kInterpreter) std::printf(" %9s  where the %s's time goes", "first", engines.back().second);
     std::printf("\n");
     for (const Bench& b : kBenches) {
         void* fn = sym(linker, lib, b.name);
@@ -273,7 +276,7 @@ void run_speed(winapk::GuestLinker& linker,
             std::printf(" %7.1fms %5.1fx", ms, native_ms > 0 ? ms / native_ms : 0.0);
             matches.push_back(got == want);
         }
-        if (jit) {
+        if (last != Engine::kInterpreter) {
             winapk::arm64::set_profiling(true);
             const winapk::arm64::Stats s0 = winapk::arm64::stats();
             const uint64_t args[3] = {b.iterations, seed, 0};
@@ -289,6 +292,11 @@ void run_speed(winapk::GuestLinker& linker,
                         static_cast<unsigned long long>(s1.guest_entries - s0.guest_entries - 1),
                         static_cast<unsigned long long>(s1.jit_exits - s0.jit_exits),
                         static_cast<unsigned long long>(s1.interp_insns - s0.interp_insns));
+            if (last == Engine::kAot) {
+                std::printf(", AOT %llu entries %llu bails",
+                            static_cast<unsigned long long>(s1.aot_entries - s0.aot_entries),
+                            static_cast<unsigned long long>(s1.aot_bails - s0.aot_bails));
+            }
         }
         std::printf("\n");
         for (size_t i = 0; i < engines.size(); ++i) {
@@ -314,8 +322,9 @@ int main(int argc, char** argv) {
     config.host = winapk::mini_bionic_resolve;
     winapk::GuestLinker linker(config);
 
-    // Every check on each engine the build has: the interpreter, then the
-    // JIT (dynarmic) when it is built in.
+    // Every check on each engine the build has: the interpreter, the JIT
+    // (dynarmic) when it is built in, and the code translated ahead of time
+    // (the <lib>.so.aot.dll files next to the libraries, when present).
     std::vector<std::pair<winapk::arm64::Engine, const char*>> engines = {
         {winapk::arm64::Engine::kInterpreter, "interpreter"}};
     if (winapk::arm64::set_engine(winapk::arm64::Engine::kJit)) {
@@ -323,6 +332,7 @@ int main(int argc, char** argv) {
     } else {
         std::printf("(this build has no JIT: -DWINAPK_ARM64_JIT=ON adds it)\n");
     }
+    engines.push_back({winapk::arm64::Engine::kAot, "AOT"});
     for (const auto& e : engines) {
         winapk::arm64::set_engine(e.first);
         std::printf("\n==== Win.apk arm64, %s ====\n", e.second);

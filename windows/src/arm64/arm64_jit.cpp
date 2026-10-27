@@ -232,6 +232,9 @@ private:
     // ---- dynarmic's callbacks ----
 
     std::optional<uint32_t> MemoryReadCode(VAddr vaddr) override {
+        // Code translated at install time is not translated again: the
+        // fetch fails, and ExceptionRaised runs the translation.
+        if (hooks().aot_entry && hooks().aot_entry(vaddr)) return std::nullopt;
         uint64_t lo, hi;
         if (!hooks().code_range(vaddr, &lo, &hi) || vaddr + 4 > hi) return std::nullopt;
         return load<uint32_t>(vaddr);
@@ -273,7 +276,15 @@ private:
     void ExceptionRaised(VAddr pc, Exception exception) override {
         switch (exception) {
             case Exception::NoExecuteFault:
-                if (pc != cpu_.stop_pc && !(hooks().full_state_call && hooks().full_state_call(pc))) {
+                if (AotFn fn = pc != cpu_.stop_pc && hooks().aot_entry ? hooks().aot_entry(pc) : nullptr) {
+                    // Into a translated function, with the whole state: it
+                    // leaves c.pc where the JIT goes on (its return address,
+                    // or where it stopped).
+                    save_state(cpu_);
+                    cpu_.pc = pc;
+                    fn(&cpu_);
+                    load_state(cpu_);
+                } else if (pc != cpu_.stop_pc && !(hooks().full_state_call && hooks().full_state_call(pc))) {
                     host_call_in_place(pc);
                 } else {
                     halt(Pending::kHostCall, pc);

@@ -1,0 +1,83 @@
+// arm64_aot.h -- arm64 code translated ahead of time, at install time.
+//
+// winapk-aot (tools/arm64_aot_main.cpp) reads an arm64-v8a .so and writes C:
+// one C function per guest function, with the guest registers as local
+// variables, so the C compiler allocates registers and optimizes across a
+// whole function (what a JIT translating block by block, with the registers
+// in memory between blocks, cannot do). The installer compiles that C with
+// clang (-O2, for the CPU it runs on) into `<lib>.so.aot.dll` next to the
+// library. When the loader maps the library it loads the DLL, and the bridge
+// runs translated functions natively.
+//
+// The translation never has to be complete. A translated function returns
+// kAotDone when the guest function returns (c->pc is then its return
+// address), or kAotBail with the whole guest state in *c and c->pc where
+// execution continues: a branch to an address the translator could not
+// follow, guest code outside the DLL, longjmp. The JIT then runs from c->pc,
+// and everything above it in the guest call (the C frames of translated
+// callers return kAotBail too, without touching *c). Instructions the
+// translator does not emit natively go through the interpreter one at a time
+// (AotRuntime::step), with the registers written back around them.
+//
+// Calls follow the AAPCS64: across a call, the translated caller keeps its
+// own copies of the callee-saved registers and reloads only x0-x7 and
+// v0-v7, which is what a compiled callee may change.
+
+#pragma once
+
+#include "winapk/arm64_cpu.h"
+
+#include <cstddef>
+#include <cstdint>
+
+namespace winapk::arm64 {
+
+constexpr uint32_t kAotVersion = 1;
+constexpr uint32_t kAotDone = 0;
+constexpr uint32_t kAotBail = 1;
+
+// Filled in by the runtime before any translated code runs.
+struct AotRuntime {
+    // A call or jump to `target` (an address the translation does not know
+    // statically: BLR, BR, a branch out of the library). c->x[30] is the
+    // guest return address. Returns kAotDone when the call has returned.
+    uint32_t (*branch)(Cpu* c, uint64_t target);
+    // Executes the instruction at c->pc through the interpreter.
+    void (*step)(Cpu* c);
+};
+
+struct AotEntry {
+    uint64_t vaddr;  // ELF virtual address of a translated function
+    AotFn fn;
+};
+
+// The DLL's one export, `winapk_aot_module`.
+struct AotModule {
+    uint32_t version;
+    uint32_t layout[4];    // sizeof(Cpu) prefix the code uses: offsets of sp, nzcv, tpidr, v
+    uint64_t text_hash;    // FNV-1a of the library's executable segments (file bytes)
+    uint64_t* base;        // the library's load bias, set by the runtime
+    AotRuntime* runtime;   // set by the runtime
+    const AotEntry* entries;
+    uint64_t count;
+};
+
+// FNV-1a 64, as winapk-aot computes text_hash.
+inline uint64_t aot_hash(const uint8_t* p, size_t n, uint64_t h = 0xcbf29ce484222325ull) {
+    for (size_t i = 0; i < n; ++i) h = (h ^ p[i]) * 0x100000001b3ull;
+    return h;
+}
+
+// Loads `<so_path>.aot.dll` for an arm64 library mapped at `bias` whose
+// executable segments hash to `text_hash`; false if there is none or it
+// does not match (built for another version of the library or of Win.apk).
+bool aot_load(const char* so_path, uint64_t bias, uint64_t text_hash);
+
+// The translated function at guest address `pc`, if any (and AOT is on).
+AotFn aot_lookup(uint64_t pc);
+
+// Runs a translated function on c (c->pc is its entry). kAotDone when the
+// guest function returned; kAotBail to continue from c->pc.
+uint32_t aot_run(AotFn fn, Cpu* c);
+
+}  // namespace winapk::arm64
