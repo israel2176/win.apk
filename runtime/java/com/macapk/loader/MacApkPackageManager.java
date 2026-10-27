@@ -5318,14 +5318,31 @@ public final class MacApkPackageManager extends PackageManager {
     /** A boolean `<application>` attribute with AOSP's default for an undeclared
      *  one. The binary manifest renders TYPE_INT_BOOLEAN as "true"/"false"; the
      *  apktool decode writes the same spellings. */
+    private static boolean macapkRtlLogged;
+
     private boolean appAttrBool(String name, boolean def) {
         String v = appAttr(name);
         if (v == null) return def;
         if ("true".equalsIgnoreCase(v))  return true;
         if ("false".equalsIgnoreCase(v)) return false;
-        // A reference or an int-encoded boolean ("1"/"0").
-        if ("1".equals(v)) return true;
-        if ("0".equals(v)) return false;
+        // A reference to a bool resource ("@bool/x", "@0x7f05..."), which the
+        // parser hands on as the reference: resolved against the app's table,
+        // as PackageParser's TypedArray.getBoolean does. Apps that pick
+        // supportsRtl per configuration (WhatsApp) declare it this way, and
+        // reading the default false left every one of them mirrored nowhere.
+        if (v.charAt(0) == '@') {
+            try {
+                int id = resolveResRef(v, "bool");
+                Object idx = android.content.res.Resources.macapkGetResourceIndex();
+                if (id != 0 && idx instanceof ResourceIndex) {
+                    Boolean b = ((ResourceIndex) idx).getBoolById(id);
+                    if (b != null) return b;
+                }
+            } catch (Throwable ignored) {}
+            return def;
+        }
+        // An int-encoded boolean: any nonzero value is true (aapt writes -1).
+        try { return Long.parseLong(v) != 0; } catch (NumberFormatException ignored) {}
         return def;
     }
 
@@ -5401,7 +5418,13 @@ public final class MacApkPackageManager extends PackageManager {
         if (appAttrBool("hardwareAccelerated", targetSdk >= 14))
             f |= ApplicationInfo.FLAG_HARDWARE_ACCELERATED;
         // android:supportsRtl defaults to false regardless of targetSdk.
-        if (appAttrBool("supportsRtl", false))        f |= ApplicationInfo.FLAG_SUPPORTS_RTL;
+        final boolean rtl = appAttrBool("supportsRtl", false);
+        if (rtl) f |= ApplicationInfo.FLAG_SUPPORTS_RTL;
+        if (!macapkRtlLogged) {
+            macapkRtlLogged = true;
+            NativeLog.i("Mac.apk.PM", "supportsRtl=\"" + appAttr("supportsRtl") + "\" -> " + rtl
+                      + (android.content.res.Resources.macapkGetResourceIndex() == null ? " (no resource index yet)" : ""));
+        }
         // android:usesCleartextTraffic defaults to true BELOW targetSdk 28 and
         // false from 28 (Pie) on. Mac.apk enforces no cleartext policy, but the
         // flag is what an app's own networking layer reads to decide whether to

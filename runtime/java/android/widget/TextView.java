@@ -4588,6 +4588,17 @@ public class TextView extends View
             }
             int[] pieces = android.text.MacApkBidi.visualPieces(line.substring(0, visLen), bounds, nb,
                     android.text.MacApkBidi.isRtlParagraph(sp, srcStart));
+            if (System.getenv("MACAPK_TRACE_BIDI") != null) {
+                StringBuilder t = new StringBuilder("bidi line rtlPara=")
+                        .append(android.text.MacApkBidi.isRtlParagraph(sp, srcStart)).append(" :");
+                for (int q = 0; q < Math.min(visLen, 24); q++) t.append(String.format(" %04x", (int) line.charAt(q)));
+                t.append(" | pieces");
+                for (int k = 0; k < pieces.length; k += 3) {
+                    t.append(" [").append(pieces[k]).append(',').append(pieces[k + 1]).append(" L").append(pieces[k + 2])
+                     .append(" w=").append(p.measureText(line.substring(pieces[k], pieces[k + 1]))).append(']');
+                }
+                com.macapk.loader.NativeLog.i("Mac.apk.Bidi", t.toString());
+            }
             for (int k = 0; k < pieces.length; k += 3) {
                 int rs = srcStart + pieces[k], re = srcStart + pieces[k + 1];
                 p.set(mDrawBase);
