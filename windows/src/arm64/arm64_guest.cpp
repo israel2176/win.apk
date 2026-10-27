@@ -4,6 +4,7 @@
 #include "winapk/arm64_guest.h"
 
 #include "winapk/abi_thunk.h"
+#include "winapk/arm64_aot.h"
 #include "winapk/arm64_cpu.h"
 #include "winapk/guest_abi.h"
 #include "winapk/linker.h"
@@ -222,6 +223,8 @@ void add(Stats& to, const Stats& s) {
     to.host_calls += s.host_calls;
     to.jit_exits += s.jit_exits;
     to.interp_insns += s.interp_insns;
+    to.aot_entries += s.aot_entries;
+    to.aot_bails += s.aot_bails;
     to.run_ns += s.run_ns;
     to.host_ns += s.host_ns;
 }
@@ -278,20 +281,28 @@ struct ThreadState {
     }
 };
 
-// WINAPK_ARM64_ENGINE=interp runs everything through the interpreter, for
-// comparing the two engines on an app.
+// WINAPK_ARM64_ENGINE=interp, =jit or =aot, for comparing the engines on an app.
 Engine initial_engine() {
     char buf[16];
     const DWORD n = GetEnvironmentVariableA("WINAPK_ARM64_ENGINE", buf, sizeof buf);
     if (n > 0 && n < sizeof buf && std::strcmp(buf, "interp") == 0) return Engine::kInterpreter;
-    return jit_built() ? Engine::kJit : Engine::kInterpreter;
+    if (n > 0 && n < sizeof buf && std::strcmp(buf, "jit") == 0 && jit_built()) return Engine::kJit;
+    return Engine::kAot;
 }
 
 std::atomic<Engine> g_engine{initial_engine()};
 
 // Runs ts.cpu from its pc until it returns to its stop_pc.
 void execute(ThreadState& ts) {
-    if (g_engine.load(std::memory_order_relaxed) == Engine::kJit) {
+    const Engine engine = g_engine.load(std::memory_order_relaxed);
+    if (engine == Engine::kAot) {
+        if (AotFn fn = aot_lookup(ts.cpu.pc)) {
+            ++ts.stats.aot_entries;
+            if (aot_run(fn, &ts.cpu) == kAotDone) return;  // returned to stop_pc
+            ++ts.stats.aot_bails;                          // on from ts.cpu.pc
+        }
+    }
+    if (engine != Engine::kInterpreter && jit_built()) {
         if (ts.jits_running == ts.jits.size() && !ts.jit_failed) {
             std::unique_ptr<JitEngine> jit = make_jit_engine(ts.cpu, ts.jits.empty());
             if (jit) ts.jits.push_back(std::move(jit));
@@ -597,6 +608,11 @@ void register_shim_functions() {
 // argument and result ones: setjmp and longjmp (and the null-pointer fault,
 // which reports them). The JIT stops for these and makes every other host
 // call from inside its generated code (Hooks::full_state_call).
+// Hooks::aot_entry: translated code, while the engine uses it.
+AotFn aot_entry(uint64_t pc) {
+    return g_engine.load(std::memory_order_relaxed) == Engine::kAot ? aot_lookup(pc) : nullptr;
+}
+
 bool full_state_call(uint64_t target) {
     const uint64_t base = reinterpret_cast<uint64_t>(g_intrinsics);
     return target == 0 || (target >= base && target < base + kIntrinsicCount);
@@ -609,10 +625,13 @@ void print_stats() {
     const double run_ms = static_cast<double>(s.run_ns) / 1e6, host_ms = static_cast<double>(s.host_ns) / 1e6;
     std::fprintf(stderr,
                  "[win.apk] arm64 stats (%s): %.1f ms in guest calls, of which %.1f ms in host functions and %.1f ms "
-                 "in arm64 code; %llu guest entries, %llu host calls, %llu JIT exits, %llu interpreted instructions\n",
-                 engine() == Engine::kJit ? "JIT" : "interpreter", run_ms, host_ms, run_ms - host_ms,
-                 static_cast<unsigned long long>(s.guest_entries), static_cast<unsigned long long>(s.host_calls),
-                 static_cast<unsigned long long>(s.jit_exits), static_cast<unsigned long long>(s.interp_insns));
+                 "in arm64 code; %llu guest entries (%llu into AOT code, %llu of them went on in the JIT), "
+                 "%llu host calls, %llu JIT exits, %llu interpreted instructions\n",
+                 engine() == Engine::kAot ? "AOT" : engine() == Engine::kJit ? "JIT" : "interpreter", run_ms, host_ms,
+                 run_ms - host_ms, static_cast<unsigned long long>(s.guest_entries),
+                 static_cast<unsigned long long>(s.aot_entries), static_cast<unsigned long long>(s.aot_bails),
+                 static_cast<unsigned long long>(s.host_calls), static_cast<unsigned long long>(s.jit_exits),
+                 static_cast<unsigned long long>(s.interp_insns));
     std::fflush(stderr);
 }
 
@@ -639,6 +658,7 @@ void init() {
         h.code_range = code_range;
         h.host_call = host_call;
         h.full_state_call = full_state_call;
+        h.aot_entry = aot_entry;
         h.svc = svc;
         h.fault = fault;
         set_hooks(h);

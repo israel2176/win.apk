@@ -68,6 +68,9 @@ struct Cpu {
     void* user = nullptr;
 };
 
+// A function translated ahead of time (arm64_aot.h).
+using AotFn = uint32_t (*)(Cpu* c);
+
 struct Hooks {
     // The executable guest range containing `pc`, or false if `pc` is not
     // guest code. run() caches the range, so this is called once per jump
@@ -82,6 +85,9 @@ struct Hooks {
     // The JIT makes the other host calls from inside its generated code with
     // just those registers, instead of stopping and copying the whole state.
     bool (*full_state_call)(uint64_t target) = nullptr;
+    // The translated function at `pc`, when AOT code is in use (arm64_aot.h).
+    // The JIT runs it in place of translating that code itself.
+    AotFn (*aot_entry)(uint64_t pc) = nullptr;
     // SVC #imm. Android apps do not make raw system calls, but libraries
     // that inline a few (Unity's, some anti-tamper code) exist.
     void (*svc)(Cpu& c, uint32_t imm) = nullptr;

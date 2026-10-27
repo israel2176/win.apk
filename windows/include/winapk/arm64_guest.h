@@ -72,11 +72,13 @@ void* host_callable(void* fn);
 // guest code get it converted from AAPCS64 to System V.
 void register_va_list_function(const void* host_fn, unsigned index);
 
-// The engine that runs guest code: the JIT (dynarmic, arm64_jit.h) when the
-// build has it, else the interpreter. WINAPK_ARM64_ENGINE=interp chooses the
-// interpreter. set_engine returns false if the JIT is not built in. Threads
-// pick the engine up the next time they enter guest code.
-enum class Engine { kInterpreter, kJit };
+// The engine that runs guest code. kAot, the default: the code translated at
+// install time (arm64_aot.h) where a library has it, and for the rest the JIT
+// (dynarmic, arm64_jit.h) when the build has it, else the interpreter.
+// WINAPK_ARM64_ENGINE=interp, =jit or =aot chooses. set_engine returns false
+// if the JIT is not built in. Threads pick the engine up the next time they
+// enter guest code; code the JIT has already translated stays as it is.
+enum class Engine { kInterpreter, kJit, kAot };
 bool set_engine(Engine e);
 Engine engine();
 
@@ -89,6 +91,8 @@ struct Stats {
     uint64_t host_calls = 0;     // guest -> host calls
     uint64_t jit_exits = 0;      // returns from JIT code to its run loop
     uint64_t interp_insns = 0;   // instructions the JIT handed to the interpreter
+    uint64_t aot_entries = 0;    // guest calls that started in translated code
+    uint64_t aot_bails = 0;      // ... and went on in the JIT or the interpreter
     uint64_t run_ns = 0;         // time in outermost guest calls, host calls included
     uint64_t host_ns = 0;        // time in host functions, guest callbacks they make excluded
 };
