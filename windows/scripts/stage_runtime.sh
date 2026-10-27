@@ -5,6 +5,7 @@
 #   <out>/bin/winapk-runtime.exe
 #   <out>/bin/macapk-translator.exe, winapk-guest-stub.dll (app native libraries)
 #   <out>/bin/libEGL.dll, libGLESv2.dll, ... (ANGLE, for GL; fetch_angle.sh)
+#   <out>/bin/WebView2Loader.dll      (WebView2, for web content; fetch_webview2.sh)
 #   <out>/bin/tools/framework-res.apk
 #   <out>/lib/*.jar, java_base_patch/, jdk_unsupported_patch/
 #
@@ -25,9 +26,12 @@ OUT="$(cd -- "$OUT" && pwd)"
 "$HERE/build_java.sh" "$OUT"
 "$HERE/build_framework_res.sh" "$OUT/bin/tools/framework-res.apk"
 cp -f "$BUILD/winapk-runtime.exe" "$BUILD/macapk-translator.exe" "$BUILD/winapk-guest-stub.dll" "$OUT/bin/"
+# The install-time arm64 translator (used when clang is there too).
+if [[ -f "$BUILD/winapk-aot.exe" ]]; then cp -f "$BUILD/winapk-aot.exe" "$OUT/bin/"; fi
 cp -f "$BUILD/Win.apk.exe" "$OUT/"
 # The tile an app without an icon gets in the library.
 cp -f "$HERE/../launcher/winapk.png" "$OUT/bin/"
 "$HERE/fetch_angle.sh" "$OUT/bin"
+"$HERE/fetch_webview2.sh" "$OUT/bin"
 rm -rf "$OUT/.build"  # build_java.sh's scratch, not part of the runtime
 echo "[stage] runtime staged in $OUT"

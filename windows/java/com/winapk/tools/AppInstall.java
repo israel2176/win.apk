@@ -2,7 +2,7 @@
 // leaves it, for the Windows host.
 //
 //     java -cp winapk-tools.jar com.winapk.tools.AppInstall
-//          <app.apk|.apkm|.xapk|.apks> <android root> <abi> <record file>
+//          <app.apk|.apkm|.xapk|.apks> <android root> <abi>[,<abi>...] <record file>
 //
 // Upstream's runtime reads an installed app in the layout `pm install` leaves
 // on a device, and only recognizes it there (runtime/java/com/macapk/loader/
@@ -23,9 +23,12 @@
 //    bundletool) is unpacked; which APKs make up the app is decided exactly
 //    as upstream's SelectBundleApks decides it, and each split gets the name
 //    the device installer gives it.
-//  - The native libraries of the host's ABI, from the base and every split,
-//    go to lib/<isa>/ (Android's own extraction; libraries for other ABIs
-//    are left in the APKs).
+//  - The native libraries of one ABI, from the base and every split, go to
+//    lib/<isa>/ (Android's own extraction; libraries for other ABIs are left
+//    in the APKs). The ABI is the first of the given list the app has
+//    libraries for, as a device picks from its SUPPORTED_ABIS: the host
+//    passes x86_64,arm64-v8a, so an app's x86_64 build is used when it has
+//    one and its arm64 build (run through the interpreter) otherwise.
 //
 // The installed base.apk's path is written to the record file, which the host
 // reads back and also uses to tell an install is current.
@@ -64,8 +67,25 @@ public final class AppInstall {
     static final String NAME_NONCE = "Qm4c4pk0Zx9AbC1dEfGh8Q==";
 
     public static void main(String[] args) {
+        // AppInstall --package <app> <out file>: only the package name, for the
+        // launcher's install helper, which must know which app an install
+        // replaces before it asks the user and installs it.
+        if (args.length == 3 && args[0].equals("--package")) {
+            try {
+                String pkg = packageOf(Paths.get(args[1]));
+                if (pkg == null) {
+                    System.err.println("[install] no package name in " + args[1]);
+                    System.exit(3);
+                }
+                Files.writeString(Paths.get(args[2]), pkg, StandardCharsets.UTF_8);
+                System.exit(0);
+            } catch (IOException e) {
+                System.err.println("[install] " + e);
+                System.exit(1);
+            }
+        }
         if (args.length != 4) {
-            System.err.println("usage: AppInstall <app> <android root> <abi> <record file>");
+            System.err.println("usage: AppInstall <app> <android root> <abi>[,<abi>...] <record file>");
             System.exit(2);
         }
         try {
@@ -76,7 +96,7 @@ public final class AppInstall {
         }
     }
 
-    static int install(Path source, Path androidRoot, String abi, Path record) throws IOException {
+    static int install(Path source, Path androidRoot, String abis, Path record) throws IOException {
         // A fixed name: only one install runs at a time, and a random one
         // would cost a SecureRandom seed for nothing.
         Path staging = androidRoot.resolve(".installing");
@@ -104,6 +124,17 @@ public final class AppInstall {
             Files.move(staging, dir);
             staging = null;
 
+            String[] preference = abis.split(",");
+            String abi = preference[0];
+            choose:
+            for (String candidate : preference) {
+                for (Path m : members) {
+                    if (hasLibs(dir.resolve(m.getFileName()), candidate)) {
+                        abi = candidate;
+                        break choose;
+                    }
+                }
+            }
             int libs = 0;
             Path libDir = dir.resolve("lib").resolve(isaOf(abi));
             for (Path m : members) libs += extractLibs(dir.resolve(m.getFileName()), abi, libDir);
@@ -152,6 +183,18 @@ public final class AppInstall {
         return true;
     }
 
+    /** Whether one APK has lib/<abi>/*.so. */
+    static boolean hasLibs(Path apk, String abi) throws IOException {
+        String prefix = "lib/" + abi + "/";
+        try (ZipFile zip = new ZipFile(apk.toFile())) {
+            for (Enumeration<? extends ZipEntry> e = zip.entries(); e.hasMoreElements(); ) {
+                String name = e.nextElement().getName();
+                if (name.startsWith(prefix) && name.endsWith(".so")) return true;
+            }
+        }
+        return false;
+    }
+
     /** lib/<abi>/*.so of one APK into libDir; returns how many. */
     static int extractLibs(Path apk, String abi, Path libDir) throws IOException {
         int n = 0;
@@ -183,6 +226,19 @@ public final class AppInstall {
     }
 
     // ---- the package name, from the binary AndroidManifest.xml ------------------
+
+    /** The package of an APK or a bundle (whose base APK is unpacked to a
+     *  scratch folder next to it and removed again). */
+    static String packageOf(Path source) throws IOException {
+        if (source.getFileName().toString().toLowerCase().endsWith(".apk")) return packageName(source);
+        Path scratch = Files.createTempDirectory(source.toAbsolutePath().getParent(), ".package-");
+        try {
+            List<Path> members = new ArrayList<>();
+            return unpackBundle(source, scratch, members) && !members.isEmpty() ? packageName(members.get(0)) : null;
+        } finally {
+            deleteTree(scratch);
+        }
+    }
 
     /** The `package` attribute of the manifest's root element. */
     static String packageName(Path apk) throws IOException {

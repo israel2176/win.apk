@@ -32,15 +32,16 @@ jobs:
         with:
           msystem: CLANG64
           update: true
-          install: unzip zip
+          install: unzip zip git
           pacboy: >-
             clang:p
             cmake:p
             ninja:p
+            boost:p
       - name: Build
         run: |
           cmake -S windows -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=clang++ \
-            -DWINAPK_JNI_INCLUDE="$(cygpath -u "$JAVA_HOME")/include"
+            -DWINAPK_JNI_INCLUDE="$(cygpath -u "$JAVA_HOME")/include" -DWINAPK_ARM64_JIT=ON
           cmake --build build
       - uses: actions/cache@v4
         with:
