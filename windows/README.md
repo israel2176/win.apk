@@ -2,8 +2,11 @@
 
 Win.apk is an unofficial port of [Mac.apk](https://github.com/kksimp/Mac.apk) to
 Windows on Intel/AMD (x64). It is not affiliated with or endorsed by the Mac.apk
-project or Voltare. Everything outside `windows/` is the upstream tree. It is kept
-as close to upstream as possible so that `git merge upstream/main` stays cheap.
+project or Voltare. Win.apk's code lives in `windows/`; `runtime/` (the Android
+framework in Java and the shared native sources) comes from upstream and is kept
+close to it so that upstream fixes can still be merged. The macOS-only parts of
+upstream (the Swift launcher, the Mac build scripts, the prebuilt Mac libraries
+and the Mac documentation) are not in this repository.
 
 ## Why x64 is a different problem from the Mac
 
@@ -166,11 +169,11 @@ git fetch upstream
 git merge upstream/main
 ```
 
-Win.apk code lives under `windows/`. Upstream files are changed only where a
-Windows hook is unavoidable, and every such change is listed here:
+Upstream's macOS-only files were removed here, so a merge that touches them
+stops with a modify/delete conflict: keep them deleted (`git rm` the file).
+Files in `runtime/` are changed only where a Windows hook is unavoidable, and
+every such change is listed here:
 
-- `.github/workflows/cla.yml`: the CLA job runs only in `kksimp/Mac.apk`.
-- `README.md`: a Win.apk section at the top.
 - `runtime/java/android/content/res/Resources.java`: `getIntArray` resolves the
   items of a typed `<array>` (for example a list of color references) instead
   of returning an empty array. Not Windows-specific; worth offering upstream.

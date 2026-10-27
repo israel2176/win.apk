@@ -4,16 +4,9 @@
 # run's summary page; logs and last frames are an artifact.
 name: Compatibility sweep
 
+# Runs on pull requests and by hand only: no runs on merges or on a schedule.
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '17 3 * * 1'   # Mondays
-  push:
-    branches: [main]
-    paths:
-      - 'windows/**'
-      - 'runtime/java/**'
-      - '.github/workflows/compat-sweep.yml'
   pull_request:
     paths:
       - 'windows/**'
