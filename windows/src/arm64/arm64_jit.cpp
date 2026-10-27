@@ -73,6 +73,17 @@ void give_slot(int slot) {
     g_slots_used[static_cast<size_t>(slot)] = false;
 }
 
+// WINAPK_ARM64_JIT_INPLACE=0: every host call halts the JIT and goes through
+// run() with the whole state, as before host calls were made in place (for
+// telling a bug there from one elsewhere).
+bool in_place_calls() {
+    static const bool on = [] {
+        const char* v = std::getenv("WINAPK_ARM64_JIT_INPLACE");
+        return !(v && std::strcmp(v, "0") == 0);
+    }();
+    return on;
+}
+
 bool exact_nans() {
     static const bool exact = [] {
         const char* v = std::getenv("WINAPK_ARM64_FP");
@@ -284,7 +295,7 @@ private:
                     cpu_.pc = pc;
                     fn(&cpu_);
                     load_state(cpu_);
-                } else if (pc != cpu_.stop_pc && !(hooks().full_state_call && hooks().full_state_call(pc))) {
+                } else if (in_place_calls() && pc != cpu_.stop_pc && !(hooks().full_state_call && hooks().full_state_call(pc))) {
                     host_call_in_place(pc);
                 } else {
                     halt(Pending::kHostCall, pc);

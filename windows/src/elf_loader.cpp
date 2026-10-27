@@ -392,6 +392,10 @@ bool ElfImage::apply_relocations(const SymbolResolver& resolve, const TlsSymbolR
                 *out = reinterpret_cast<uint64_t>(intrinsic);
                 return true;
             }
+            if (void* wrapper = arm64::abi_override(name)) {
+                *out = reinterpret_cast<uint64_t>(wrapper);
+                return true;
+            }
         }
         if (void* host = resolve(name)) {
             *out = reinterpret_cast<uint64_t>(host);

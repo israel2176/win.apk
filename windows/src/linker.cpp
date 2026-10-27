@@ -162,23 +162,7 @@ GuestLibrary* GuestLinker::open(const std::string& requested, int flags, std::st
         if (flags & kRtldGlobal) l->global = true;
         return l;
     }
-    if (is_system_library(file_name_of(name))) {
-        // The host has no AAudio (audio is OpenSL ES, host/native_opensles):
-        // audio libraries (FMOD, Oboe) probe for it with dlopen and fall back
-        // to OpenSL ES when that fails, as on a device older than Android
-        // 8.1, but trust dlsym once it works. (The host resolver answers every
-        // name, with a stub returning 0 for those it lacks, so it cannot say.)
-        if (file_name_of(name) == "libaaudio.so") {
-            static bool said = false;
-            if (!said) {
-                said = true;
-                std::fprintf(stderr, "[win.apk] dlopen(libaaudio.so): no AAudio on Windows yet, refused (OpenSL ES is)\n");
-            }
-            *error = "dlopen failed: library \"libaaudio.so\" not found";
-            return nullptr;
-        }
-        return system_.get();
-    }
+    if (is_system_library(file_name_of(name))) return system_.get();
     if (flags & kRtldNoLoad) {
         *error = "library \"" + name + "\" wasn't loaded and RTLD_NOLOAD prevented it";
         return nullptr;
