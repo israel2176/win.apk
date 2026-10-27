@@ -18,6 +18,10 @@
 //     arguments and floating point, constructors, the stack protector, and
 //     setjmp/longjmp.
 //
+//   * Speed, with test/guest/arm64_bench.c (built into this program too):
+//     each benchmark natively and on each engine, the JIT's translation cost,
+//     and where its time goes (arm64_guest.h, Stats).
+//
 // Exit code: the number of failed checks.
 
 #include "winapk/arm64_guest.h"
@@ -25,17 +29,22 @@
 #include "winapk/linker.h"
 #include "winapk/mini_bionic.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cinttypes>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <functional>
 #include <string>
 #include <utility>
 #include <vector>
 
 #define ISA_EXPORT static __attribute__((noinline, used))
 #include "arm64_isa.c"
+#define BENCH_HOST
+#define BENCH_EXPORT static __attribute__((noinline, used))
+#include "arm64_bench.c"
 
 namespace {
 
@@ -188,35 +197,109 @@ void run_bridge(winapk::GuestLinker& linker, const char* file) {
     check("the handler ran from the host's atexit list", call0("arm64_exit_count") == exits_before + 7);
 }
 
-// The same loop natively and on each engine: the results must agree, and
-// the times say what each engine costs (informational, no threshold: CI
-// machines vary too much).
+// The benchmarks of arm64_bench.c natively and on each engine. The results
+// must agree; the times are informational (no threshold: CI machines vary too
+// much). For each benchmark:
+//
+//   * native and the JIT, warm (best of three runs), and their ratio. The
+//     interpreter, about 80 times slower, runs 1/kInterpScale of the
+//     iterations and is checked for its result only.
+//   * first: how much longer the JIT's first call takes than a warm one, on
+//     code it has not seen: mostly translation, the cost that translating at
+//     install time would take off the app's start.
+//   * where the JIT's time goes, from a profiled run: host functions versus
+//     arm64 code, and the transitions and fallbacks per run.
+constexpr uint64_t kInterpScale = 32;
+
+double time_ms(const std::function<uint64_t()>& body, uint64_t* result) {
+    const auto t0 = std::chrono::steady_clock::now();
+    *result = body();
+    return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+}
+
+double best_ms(const std::function<uint64_t()>& body, uint64_t* result) {
+    double best = 0;
+    for (int i = 0; i < 3; ++i) {
+        const double ms = time_ms(body, result);
+        if (i == 0 || ms < best) best = ms;
+    }
+    return best;
+}
+
 void run_speed(winapk::GuestLinker& linker,
                const std::vector<std::pair<winapk::arm64::Engine, const char*>>& engines) {
-    std::printf("\n==== speed (isa_bench, 3,000,000 iterations) ====\n");
+    using winapk::arm64::Engine;
+    std::printf("\n==== speed (libwinapk_arm64_bench.so, -O2; ratios to native) ====\n");
     std::string error;
-    void* lib = linker.open("libwinapk_arm64_isa_O2.so", winapk::GuestLinker::kRtldNow, &error);
-    void* fn = lib ? linker.lookup(lib, "isa_bench", nullptr, &error) : nullptr;
-    check("isa_bench found", fn != nullptr, error);
-    if (!fn) return;
-    const uint64_t args[3] = {3000000, 12345, 678};
-    auto time = [](auto&& body, uint64_t* result) {
-        const auto t0 = std::chrono::steady_clock::now();
-        *result = body();
-        return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    void* lib = linker.open("libwinapk_arm64_bench.so", winapk::GuestLinker::kRtldNow, &error);
+    check("open libwinapk_arm64_bench.so", lib != nullptr, error);
+    if (!lib) return;
+    struct Bench {
+        const char* name;
+        IsaFn native;
+        uint64_t iterations;
     };
-    uint64_t want = 0;
-    const double native_ms = time([&] { return isa_bench(args[0], args[1], args[2]); }, &want);
-    std::printf("  native:      %8.1f ms\n", native_ms);
-    for (const auto& e : engines) {
-        winapk::arm64::set_engine(e.first);
-        uint64_t got = 0;
-        winapk::arm64::call(fn, args, 3);  // warm up (the JIT compiles here)
-        const double ms = time([&] { return winapk::arm64::call(fn, args, 3); }, &got);
-        std::printf("  %-12s %8.1f ms (%.1fx native)\n", (std::string(e.second) + ":").c_str(), ms,
-                    native_ms > 0 ? ms / native_ms : 0.0);
-        check((std::string("isa_bench on the ") + e.second + " matches native").c_str(), got == want);
+#define BENCH_CASE(name, n) {#name, &name, n},
+    static const Bench kBenches[] = {BENCHES(BENCH_CASE)};
+#undef BENCH_CASE
+    size_t results = 0, results_ok = 0;
+    const bool jit = engines.back().first == Engine::kJit;
+    std::printf("  %-10s %9s", "", "native");
+    if (jit) std::printf(" %15s %9s  where the JIT's time goes", "JIT", "first");
+    std::printf("\n");
+    for (const Bench& b : kBenches) {
+        void* fn = sym(linker, lib, b.name);
+        if (!fn) continue;
+        const uint64_t seed = 12345;
+        uint64_t want = 0;
+        const double native_ms = best_ms([&] { return b.native(b.iterations, seed, 0); }, &want);
+        const uint64_t want_scaled = b.native(b.iterations / kInterpScale, seed, 0);
+        std::printf("  %-10s %7.1fms", b.name + 6, native_ms);
+        double first_ms = 0;
+        std::vector<bool> matches;
+        for (const auto& e : engines) {
+            winapk::arm64::set_engine(e.first);
+            uint64_t got = 0;
+            if (e.first == Engine::kInterpreter) {
+                const uint64_t args[3] = {b.iterations / kInterpScale, seed, 0};
+                got = winapk::arm64::call(fn, args, 3);
+                matches.push_back(got == want_scaled);
+                continue;
+            }
+            const uint64_t args[3] = {b.iterations, seed, 0};
+            const double cold = time_ms([&] { return winapk::arm64::call(fn, args, 3); }, &got);
+            const double ms = best_ms([&] { return winapk::arm64::call(fn, args, 3); }, &got);
+            first_ms = cold - ms;
+            std::printf(" %7.1fms %5.1fx", ms, native_ms > 0 ? ms / native_ms : 0.0);
+            matches.push_back(got == want);
+        }
+        if (jit) {
+            winapk::arm64::set_profiling(true);
+            const winapk::arm64::Stats s0 = winapk::arm64::stats();
+            const uint64_t args[3] = {b.iterations, seed, 0};
+            uint64_t got = 0;
+            time_ms([&] { return winapk::arm64::call(fn, args, 3); }, &got);
+            const winapk::arm64::Stats s1 = winapk::arm64::stats();
+            winapk::arm64::set_profiling(false);
+            const double run = static_cast<double>(s1.run_ns - s0.run_ns);
+            const double host = static_cast<double>(s1.host_ns - s0.host_ns);
+            std::printf(" %7.2fms  host %4.1f%%, %llu host calls, %llu callbacks, %llu exits, %llu interpreted",
+                        first_ms, run > 0 ? 100 * host / run : 0.0,
+                        static_cast<unsigned long long>(s1.host_calls - s0.host_calls),
+                        static_cast<unsigned long long>(s1.guest_entries - s0.guest_entries - 1),
+                        static_cast<unsigned long long>(s1.jit_exits - s0.jit_exits),
+                        static_cast<unsigned long long>(s1.interp_insns - s0.interp_insns));
+        }
+        std::printf("\n");
+        for (size_t i = 0; i < engines.size(); ++i) {
+            if (!matches[i])
+                check((std::string(b.name) + " on the " + engines[i].second + " matches native").c_str(), false);
+        }
+        results_ok += std::count(matches.begin(), matches.end(), true);
+        results += matches.size();
     }
+    check("every benchmark result matches native", results_ok == results,
+          std::to_string(results_ok) + " of " + std::to_string(results));
 }
 
 }  // namespace

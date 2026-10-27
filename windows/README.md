@@ -140,7 +140,9 @@ Done so far:
   when an app has no x86_64 build: the same loader, linker and JNI bridge,
   checked in CI against the host and in a real JVM. CMake option
   `-DWINAPK_ARM64_JIT=ON` (CI and releases) fetches dynarmic;
-  `WINAPK_ARM64_ENGINE=interp` forces the interpreter.
+  `WINAPK_ARM64_ENGINE=interp` forces the interpreter, and
+  `WINAPK_ARM64_STATS=1` prints at exit where the guest's time went (host
+  functions versus arm64 code, transitions, interpreter fallbacks).
 - The Bionic shim: about 520 libc functions (threads, files, sockets,
   epoll, `ALooper`, printf and scanf), on the UCRT and Win32.
 - The host: the window and input, `NativeOs`, `NativeLooper`, images (libwebp,

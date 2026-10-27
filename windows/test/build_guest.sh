@@ -85,9 +85,12 @@ ARM64=(
     -Wl,--pack-dyn-relocs=android+relr -Wl,--use-android-relr-tags \
     -Wl,-soname,libwinapk_arm64_bridge.so \
     -o "$ARM64_OUT/libwinapk_arm64_bridge.so" "$HERE/guest/arm64_bridge_guest.c"
+# The engines' benchmarks, -O2 like an app's release build.
+"$CC" "${ARM64[@]}" -O2 -mno-outline-atomics -Wl,-soname,libwinapk_arm64_bench.so \
+    -o "$ARM64_OUT/libwinapk_arm64_bench.so" "$HERE/guest/arm64_bench.c"
 
 echo "[build_guest] $OUT/libwinapk_poc_guest.so"
 echo "[build_guest] $OUT/libwinapk_poc_guest_packed.so"
 echo "[build_guest] $LINK/libwinapk_link_{root,mid,base,plugin}.so"
 echo "[build_guest] $OUT/libwinapk_bionic_guest.so"
-echo "[build_guest] $ARM64_OUT/libwinapk_arm64_{isa_O2,isa_O3,isa_lse,bridge}.so"
+echo "[build_guest] $ARM64_OUT/libwinapk_arm64_{isa_O2,isa_O3,isa_lse,bridge,bench}.so"
