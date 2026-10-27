@@ -1,5 +1,5 @@
 // guest_stub.cpp -- winapk-guest-stub.dll, the host library that stands for one
-// of an app's x86_64 native libraries (see guest_libs.h).
+// of an app's native libraries, x86_64 or arm64 (see guest_libs.h).
 //
 // macapk-translator.exe copies this DLL once per app library, so the JVM sees
 // a separate module for each, as it would for the libraries themselves. It has

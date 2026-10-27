@@ -2,7 +2,8 @@
 //
 // Windows has no <elf.h>, so the layouts are spelled out here. Field names
 // and constant values follow the System V gABI and the x86-64 psABI exactly,
-// so anything here can be checked against `readelf` output one-to-one.
+// so anything here can be checked against `readelf` output one-to-one. The
+// AArch64 relocation types follow Arm's "ELF for the Arm 64-bit Architecture".
 
 #pragma once
 
@@ -137,5 +138,18 @@ constexpr uint32_t kRX86_64_DtpMod64 = 16;
 constexpr uint32_t kRX86_64_DtpOff64 = 17;
 constexpr uint32_t kRX86_64_TpOff64 = 18;
 constexpr uint32_t kRX86_64_IRelative = 37;
+
+// AArch64 ELF ABI relocation types (arm64-v8a libraries, run through the
+// interpreter in arm64_cpu.h).
+constexpr uint32_t kRAarch64_None = 0;
+constexpr uint32_t kRAarch64_Abs64 = 257;
+constexpr uint32_t kRAarch64_GlobDat = 1025;
+constexpr uint32_t kRAarch64_JumpSlot = 1026;
+constexpr uint32_t kRAarch64_Relative = 1027;
+constexpr uint32_t kRAarch64_TlsDtpMod64 = 1028;
+constexpr uint32_t kRAarch64_TlsDtpRel64 = 1029;
+constexpr uint32_t kRAarch64_TlsTpRel64 = 1030;
+constexpr uint32_t kRAarch64_TlsDesc = 1031;
+constexpr uint32_t kRAarch64_IRelative = 1032;
 
 }  // namespace winapk::elf

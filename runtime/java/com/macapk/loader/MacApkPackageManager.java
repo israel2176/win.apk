@@ -182,7 +182,9 @@ public final class MacApkPackageManager extends PackageManager {
         // This is NOT a fabricated app: we really can open the URL, via
         // NSWorkspace. It advertises no capability we cannot honour -- note
         // resolveService stays null for CustomTabsService, which is what makes
-        // AppAuth set useCustomTab=false and fall back to plain ACTION_VIEW.
+        // AppAuth set useCustomTab=false and fall back to plain ACTION_VIEW --
+        // unless the runtime shows browser tabs itself (HostBrowserTab: a
+        // WebView2 window on Windows), where it answers HostCustomTabsService.
         if (MACAPK_HOST_PACKAGE.equals(packageName)) {
             PackageInfo hi = new PackageInfo();
             hi.packageName = MACAPK_HOST_PACKAGE;
@@ -192,6 +194,10 @@ public final class MacApkPackageManager extends PackageManager {
             hi.signatures = new android.content.pm.Signature[] {
                 new android.content.pm.Signature(new byte[0])
             };
+            // API 28+ callers read signingInfo instead (GET_SIGNING_CERTIFICATES):
+            // androidx.browser's Token.create(<browser>) for a TWA, Spotify's
+            // challenge launcher among them, dereferences it unchecked.
+            hi.signingInfo = new android.content.pm.SigningInfo(hi.signatures);
             android.content.pm.ApplicationInfo hai =
                 new android.content.pm.ApplicationInfo();
             hai.packageName = MACAPK_HOST_PACKAGE;
@@ -2782,11 +2788,16 @@ public final class MacApkPackageManager extends PackageManager {
         // The host rows are appended AFTER the app rows even though
         // MACAPK_PM_RESOLVE_ORDER sorts those: on a device they would take part
         // in RESOLVE_PRIORITY_SORTER, and a system browser wins a tie on
-        // `system`, but whether the app's own row would tie depends on the
-        // `<data android:host>` match category, which Manifest does not parse yet
-        // (docs/pm-intent-resolution-scope-and-matchdata_2026-09-26.md
-        // section 3). Sorting them in before that lands would hand resolveActivity
-        // to the browser for every app with an https deep link. Tracked in
+        // `system`. With the `<data>` authority modelled
+        // (MACAPK_INTENT_DATA_MATCH, macapkFrameworkFilter) an app's deep-link
+        // row for a web URI matched one of its declared hosts, i.e. with
+        // MATCH_CATEGORY_HOST or better, which outranks a browser's scheme-only
+        // MATCH_CATEGORY_SCHEME, so for those "app rows first" is also the
+        // sorter's order (only an app whose http filter names no host -- a
+        // browser itself -- would tie). And a URI on no declared host -- androidx.browser's
+        // and AppAuth's host-less "which apps are browsers?" probe included --
+        // lists the browser row alone, so an app with https deep links no
+        // longer looks like a browser to itself. Tracked in
         // docs/pm-service-selector-and-resolver-order_2026-09-26.md.
         //
         // ⚠ The host rows are OTHER PACKAGES (com.macapk.host,
@@ -3248,16 +3259,21 @@ public final class MacApkPackageManager extends PackageManager {
      *  install failure, so no such filter exists on a device. Treating it as
      *  "matches nothing" is the conservative reading; dropping only the bad
      *  type would widen the filter into an untyped one, the opposite error.
+     *  The same holds for a port that is not a number (AuthorityEntry's
+     *  Integer.parseInt throws) and a pathAdvancedPattern / sspAdvancedPattern
+     *  that PatternMatcher rejects (IllegalArgumentException).
      *
-     *  ⚠ NOT YET MODELLED: <data> host / port / path* / ssp*. Manifest's
-     *  IntentFilterEntry does not parse them, so a filter that names a scheme
-     *  still matches every authority of that scheme -- over-permissive in the
-     *  same direction as before, never newly restrictive. The IntentFilter
-     *  below already implements matchDataAuthority / hasDataPath /
-     *  hasDataSchemeSpecificPart; the follow-up is only to parse those
-     *  attributes and add them here (addDataAuthority / addDataPath /
-     *  addDataSchemeSpecificPart). Written up in
-     *  docs/pm-intent-resolution-scope-and-matchdata_2026-09-26.md. */
+     *  The `<data>` authority, path and ssp constraints (MACAPK_INTENT_DATA_MATCH,
+     *  default ON) are added exactly as ParsedIntentInfoUtils.parseData adds
+     *  them -- addDataSchemeSpecificPart, addDataAuthority(host, port),
+     *  addDataPath -- so IntentFilter.matchData applies AOSP's rules: a filter
+     *  that names hosts matches only a URI whose host is one of them ("*." a
+     *  suffix, "*" any non-null host), with the port when one is given, and
+     *  then only a path one of its path patterns accepts. A URI with no host
+     *  (Uri.fromParts("http", "", null), androidx.browser's / AppAuth's
+     *  "which apps are browsers?" probe) matches no such filter, so an app's
+     *  own https deep links no longer make it look like a browser. "0"
+     *  restores the scheme-only filter (any authority of a declared scheme). */
     private static android.content.IntentFilter macapkFrameworkFilter(Manifest.IntentFilterEntry f,
                                                                       java.util.List<String> schemes,
                                                                       java.util.List<String> types) {
@@ -3270,9 +3286,35 @@ public final class MacApkPackageManager extends PackageManager {
         } catch (android.content.IntentFilter.MalformedMimeTypeException bad) {
             return null;
         }
+        if (macapkIntentDataUriMatch()) {
+            try {
+                for (Manifest.DataPattern p : f.ssps) {
+                    real.addDataSchemeSpecificPart(macapkResolvedDataValue(p.value), p.type);
+                }
+                for (int i = 0; i < f.hosts.size(); i++) {
+                    String port = f.ports.get(i);
+                    real.addDataAuthority(macapkResolvedDataValue(f.hosts.get(i)),
+                            port != null ? macapkResolvedDataValue(port) : null);
+                }
+                for (Manifest.DataPattern p : f.paths) {
+                    real.addDataPath(macapkResolvedDataValue(p.value), p.type);
+                }
+            } catch (RuntimeException bad) {
+                return null;
+            }
+        }
         real.setPriority(f.priority);
         return real;
     }
+
+    /** MACAPK_INTENT_DATA_MATCH (default ON): manifest filters carry their
+     *  `<data>` host / port / path* / ssp* constraints into matching (see
+     *  macapkFrameworkFilter). "0" matches on scheme and type alone, as before. */
+    static boolean macapkIntentDataUriMatch() {
+        return INTENT_DATA_URI_MATCH;
+    }
+    private static final boolean INTENT_DATA_URI_MATCH =
+            !"0".equals(System.getenv("MACAPK_INTENT_DATA_MATCH"));
 
     /** MACAPK_PM_INTENT_DATA_RESREF (default ON; only consulted on the
      *  MACAPK_PM_INTENT_MATCH_DATA path, so MATCH_DATA=0 also restores the raw
@@ -4564,7 +4606,7 @@ public final class MacApkPackageManager extends PackageManager {
         // toActivityInfo already did this; these two were simply missed.
         info.applicationInfo = makeAppInfo(flags);
         info.name        = entry.name;
-        info.authority   = entry.authorities;
+        info.authority   = entry.resolvedAuthorities(null);
         info.packageName = this.packageName;
         // The MANIFEST value, never the runtime-resolved one. AOSP puts the
         // manifest value in the info object (PackageInfoUtils.java:829) and applies
@@ -4598,9 +4640,10 @@ public final class MacApkPackageManager extends PackageManager {
     @Override public ProviderInfo resolveContentProvider(String authority, int flags) {
         if (authority == null) return null;
         for (Manifest.ProviderEntry entry : providers.values()) {
-            if (entry.authorities == null) continue;
+            final String authorities = entry.resolvedAuthorities(null);
+            if (authorities == null) continue;
             boolean match = false;
-            for (String a : entry.authorities.split(";")) {
+            for (String a : authorities.split(";")) {
                 if (authority.equals(a.trim())) { match = true; break; }
             }
             if (!match) continue;
@@ -4620,7 +4663,7 @@ public final class MacApkPackageManager extends PackageManager {
             // toActivityInfo already did this; these two were simply missed.
             info.applicationInfo = makeAppInfo(flags);
             info.name        = entry.name;
-            info.authority   = entry.authorities;
+            info.authority   = authorities;
             info.packageName = this.packageName;
             // The MANIFEST value, never the runtime-resolved one. AOSP puts the
             // manifest value in the info object (PackageInfoUtils.java:829) and applies
@@ -5275,14 +5318,31 @@ public final class MacApkPackageManager extends PackageManager {
     /** A boolean `<application>` attribute with AOSP's default for an undeclared
      *  one. The binary manifest renders TYPE_INT_BOOLEAN as "true"/"false"; the
      *  apktool decode writes the same spellings. */
+    private static boolean macapkRtlLogged;
+
     private boolean appAttrBool(String name, boolean def) {
         String v = appAttr(name);
         if (v == null) return def;
         if ("true".equalsIgnoreCase(v))  return true;
         if ("false".equalsIgnoreCase(v)) return false;
-        // A reference or an int-encoded boolean ("1"/"0").
-        if ("1".equals(v)) return true;
-        if ("0".equals(v)) return false;
+        // A reference to a bool resource ("@bool/x", "@0x7f05..."), which the
+        // parser hands on as the reference: resolved against the app's table,
+        // as PackageParser's TypedArray.getBoolean does. Apps that pick
+        // supportsRtl per configuration (WhatsApp) declare it this way, and
+        // reading the default false left every one of them mirrored nowhere.
+        if (v.charAt(0) == '@') {
+            try {
+                int id = resolveResRef(v, "bool");
+                Object idx = android.content.res.Resources.macapkGetResourceIndex();
+                if (id != 0 && idx instanceof ResourceIndex) {
+                    Boolean b = ((ResourceIndex) idx).getBoolById(id);
+                    if (b != null) return b;
+                }
+            } catch (Throwable ignored) {}
+            return def;
+        }
+        // An int-encoded boolean: any nonzero value is true (aapt writes -1).
+        try { return Long.parseLong(v) != 0; } catch (NumberFormatException ignored) {}
         return def;
     }
 
@@ -5358,7 +5418,13 @@ public final class MacApkPackageManager extends PackageManager {
         if (appAttrBool("hardwareAccelerated", targetSdk >= 14))
             f |= ApplicationInfo.FLAG_HARDWARE_ACCELERATED;
         // android:supportsRtl defaults to false regardless of targetSdk.
-        if (appAttrBool("supportsRtl", false))        f |= ApplicationInfo.FLAG_SUPPORTS_RTL;
+        final boolean rtl = appAttrBool("supportsRtl", false);
+        if (rtl) f |= ApplicationInfo.FLAG_SUPPORTS_RTL;
+        if (!macapkRtlLogged) {
+            macapkRtlLogged = true;
+            NativeLog.i("Mac.apk.PM", "supportsRtl=\"" + appAttr("supportsRtl") + "\" -> " + rtl
+                      + (android.content.res.Resources.macapkGetResourceIndex() == null ? " (no resource index yet)" : ""));
+        }
         // android:usesCleartextTraffic defaults to true BELOW targetSdk 28 and
         // false from 28 (Pie) on. Mac.apk enforces no cleartext policy, but the
         // flag is what an app's own networking layer reads to decide whether to
@@ -5772,6 +5838,7 @@ public final class MacApkPackageManager extends PackageManager {
         if (ri == null) ri = macapkResolveGmsMeasurementService(intent);
         if (ri == null) ri = macapkResolveGmsIdentityService(intent);
         if (ri == null) ri = macapkResolveGmsLocationService(intent);
+        if (ri == null) ri = macapkResolveCustomTabsService(intent);
         if (ri != null) out.add(ri);
         if (intent == null) return out;
 
@@ -5860,6 +5927,7 @@ public final class MacApkPackageManager extends PackageManager {
         if (ri == null) ri = macapkResolveGmsMeasurementService(intent);
         if (ri == null) ri = macapkResolveGmsIdentityService(intent);
         if (ri == null) ri = macapkResolveGmsLocationService(intent);
+        if (ri == null) ri = macapkResolveCustomTabsService(intent);
         if (ri != null) return ri;
         // Fall through to the hosted package's own services (v1.0.1177). This
         // is the call firebase-messaging's ServiceStarter makes to locate the
@@ -5869,6 +5937,39 @@ public final class MacApkPackageManager extends PackageManager {
         // filter matcher activities and receivers use.
         List<ResolveInfo> all = queryIntentServices(intent, flags);
         return all.isEmpty() ? null : all.get(0);
+    }
+
+    /** The host browser row's Custom Tabs service (HostCustomTabsService),
+     *  only where the runtime shows browser tabs itself. Matches the action,
+     *  and the package or component when the caller names one, like the
+     *  licensing service below. The filter (GET_RESOLVED_FILTER) carries the
+     *  action alone: no TrustedWebActivities category, so a TWA launcher uses
+     *  Custom Tab mode. */
+    private ResolveInfo macapkResolveCustomTabsService(Intent intent) {
+        if (intent == null || !HostCustomTabsService.ACTION.equals(intent.getAction())) return null;
+        String want = intent.getPackage();
+        if (want != null && !MACAPK_HOST_PACKAGE.equals(want)) return null;
+        ComponentName explicit = intent.getComponent();
+        if (explicit != null && !MACAPK_HOST_PACKAGE.equals(explicit.getPackageName())) return null;
+        if (!HostBrowserTab.available()) return null;
+        android.content.pm.ServiceInfo si = new android.content.pm.ServiceInfo();
+        si.packageName = MACAPK_HOST_PACKAGE;
+        si.name = HostCustomTabsService.class.getName();
+        si.exported = true;
+        si.enabled = true;
+        android.content.pm.ApplicationInfo app = new android.content.pm.ApplicationInfo();
+        app.packageName = MACAPK_HOST_PACKAGE;
+        app.enabled = true;
+        si.applicationInfo = app;
+        android.content.IntentFilter f = new android.content.IntentFilter();
+        f.addAction(HostCustomTabsService.ACTION);
+        ResolveInfo ri = new ResolveInfo();
+        ri.serviceInfo = si;
+        ri.filter = f;
+        ri.resolvePackageName = MACAPK_HOST_PACKAGE;
+        ri.isDefault = true;
+        ri.match = android.content.IntentFilter.MATCH_CATEGORY_EMPTY;
+        return ri;
     }
 
     /** The one implicit service Intent Mac.apk can answer. Matches on ACTION

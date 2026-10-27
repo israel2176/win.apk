@@ -1,7 +1,10 @@
-// elf_loader.cpp -- Android x86_64 ELF loader for Windows. See elf_loader.h.
+// elf_loader.cpp -- Android x86_64 and arm64 ELF loader for Windows. See
+// elf_loader.h.
 
 #include "winapk/elf_loader.h"
 
+#include "winapk/arm64_aot.h"
+#include "winapk/arm64_guest.h"
 #include "winapk/elf64_defs.h"
 #include "winapk/elf_tls.h"
 #include "winapk/fs_tls_patch.h"
@@ -126,11 +129,10 @@ std::unique_ptr<ElfImage> ElfImage::map(const std::filesystem::path& path, std::
         *error = "not a little-endian ELF64 file (32-bit x86 is not supported)";
         return nullptr;
     }
-    if (eh.e_machine != kEmX86_64) {
-        *error = eh.e_machine == kEmAarch64
-                     ? std::string("this is an arm64 library; Win.apk on x64 loads only x86_64 "
-                                   "libraries (ARM needs the translation track)")
-                     : "unsupported e_machine " + std::to_string(eh.e_machine);
+    if (eh.e_machine != kEmX86_64 && eh.e_machine != kEmAarch64) {
+        *error = eh.e_machine == 40 ? std::string("this is a 32-bit ARM library (armeabi-v7a); Win.apk runs "
+                                                  "x86_64 and arm64-v8a libraries")
+                                    : "unsupported e_machine " + std::to_string(eh.e_machine);
         return nullptr;
     }
     if (eh.e_type != kEtDyn) {
@@ -146,6 +148,7 @@ std::unique_ptr<ElfImage> ElfImage::map(const std::filesystem::path& path, std::
     std::unique_ptr<ElfImage> img(new ElfImage());
     img->path_ = path;
     img->options_ = options;
+    img->machine_ = eh.e_machine;
     for (int i = 0; i < eh.e_phnum; ++i) {
         Phdr ph;
         std::memcpy(&ph, file.data() + eh.e_phoff + i * sizeof(Phdr), sizeof(ph));
@@ -196,7 +199,9 @@ std::unique_ptr<ElfImage> ElfImage::map(const std::filesystem::path& path, std::
                                                img->tls_memsz_, img->tls_align_);
     }
 
-    if (options.patch_fs_stack_guard) {
+    if (img->is_arm64()) {
+        img->register_arm64_code();
+    } else if (options.patch_fs_stack_guard) {
         for (const Segment& s : img->loads_) {
             if (s.flags & kPfX) {
                 img->fs_sites_patched_ +=
@@ -226,6 +231,7 @@ void ElfImage::initialize() {
 
 ElfImage::~ElfImage() {
     if (initialized_) run_finalizers();
+    for (const void* start : arm64_code_) arm64::unregister_code(start);
     if (tls_module_) tls_unregister_module(tls_module_);
     if (mem_ && owns_mem_) VirtualFree(mem_, 0, MEM_RELEASE);
 }
@@ -381,6 +387,16 @@ bool ElfImage::apply_relocations(const SymbolResolver& resolve, const TlsSymbolR
             *out = bias_ + s.st_value;
             return true;
         }
+        if (is_arm64()) {
+            if (void* intrinsic = arm64::guest_intrinsic(name)) {
+                *out = reinterpret_cast<uint64_t>(intrinsic);
+                return true;
+            }
+            if (void* wrapper = arm64::abi_override(name)) {
+                *out = reinterpret_cast<uint64_t>(wrapper);
+                return true;
+            }
+        }
         if (void* host = resolve(name)) {
             *out = reinterpret_cast<uint64_t>(host);
             return true;
@@ -420,7 +436,54 @@ bool ElfImage::apply_relocations(const SymbolResolver& resolve, const TlsSymbolR
         return false;
     };
 
+    auto apply_arm64 = [&](const Rela& r) -> bool {
+        const uint32_t type = r_type(r.r_info);
+        if (type == kRAarch64_None) return true;
+        if (!in_image(r.r_offset, sizeof(uint64_t))) {
+            fatal = "relocation target " + hex(r.r_offset) + " outside the image";
+            return false;
+        }
+        uint64_t* where = at<uint64_t>(r.r_offset);
+        uint64_t s = 0;
+        switch (type) {
+            case kRAarch64_Relative:
+                *where = bias_ + r.r_addend;
+                break;
+            case kRAarch64_Abs64:
+            case kRAarch64_GlobDat:
+            case kRAarch64_JumpSlot:
+                if (!symbol_value(r_sym(r.r_info), &s)) return false;
+                *where = s + r.r_addend;
+                break;
+            case kRAarch64_IRelative:
+                irelative_slots_.push_back(r.r_offset);
+                irelative_addends_.push_back(r.r_addend);
+                break;
+            case kRAarch64_TlsDtpMod64:
+            case kRAarch64_TlsDtpRel64: {
+                size_t module = 0;
+                uint64_t offset = 0;
+                if (!tls_symbol_value(r_sym(r.r_info), &module, &offset)) return false;
+                *where = type == kRAarch64_TlsDtpMod64 ? module : offset + r.r_addend;
+                break;
+            }
+            case kRAarch64_TlsDesc:
+                fatal = "ELF TLS through TLSDESC (thread_local in a library built for API 29+) is not "
+                        "supported for arm64 yet";
+                return false;
+            case kRAarch64_TlsTpRel64:
+                fatal = "static ELF TLS (R_AARCH64_TLS_TPREL64) is not supported";
+                return false;
+            default:
+                fatal = "unsupported arm64 relocation type " + std::to_string(type);
+                return false;
+        }
+        ++relocs_applied_;
+        return true;
+    };
+
     auto apply = [&](const Rela& r) -> bool {
+        if (is_arm64()) return apply_arm64(r);
         const uint32_t type = r_type(r.r_info);
         if (type == kRX86_64_None) return true;
         if (!in_image(r.r_offset, sizeof(uint64_t))) {
@@ -584,7 +647,11 @@ bool ElfImage::protect_segments(std::string* error) {
     for (const Segment& s : loads_) {
         const size_t first = (page_down(s.vaddr) - lo_vaddr_) / kPage;
         const size_t last = (page_up(s.vaddr + s.memsz) - lo_vaddr_) / kPage;
-        for (size_t p = first; p < last; ++p) flags[p] |= s.flags & (kPfR | kPfW | kPfX);
+        // arm64 text is read by the interpreter, never executed by the host:
+        // keeping it non-executable is also what routes host calls into it
+        // through the exception handler (arm64_guest.h).
+        const uint32_t allowed = is_arm64() ? (kPfR | kPfW) : (kPfR | kPfW | kPfX);
+        for (size_t p = first; p < last; ++p) flags[p] |= s.flags & allowed;
     }
     size_t run = 0;
     for (size_t p = 1; p <= npages; ++p) {
@@ -601,10 +668,17 @@ bool ElfImage::protect_segments(std::string* error) {
 
 bool ElfImage::apply_irelative(std::string* error) {
     for (size_t i = 0; i < irelative_slots_.size(); ++i) {
-        auto resolver = reinterpret_cast<GuestIRelativeResolver>(bias_ + irelative_addends_[i]);
         uint64_t* where = at<uint64_t>(irelative_slots_[i]);
         // The slot sits in a writable segment (GOT / data); RELRO is sealed later.
-        *where = reinterpret_cast<uint64_t>(resolver());
+        if (is_arm64()) {
+            // bionic passes (AT_HWCAP | _IFUNC_ARG_HWCAP, &arg); no optional
+            // CPU features are reported, so resolvers pick their plain code.
+            const uint64_t args[2] = {uint64_t{1} << 62, 0};
+            *where = arm64::call(reinterpret_cast<const void*>(bias_ + irelative_addends_[i]), args, 2);
+        } else {
+            auto resolver = reinterpret_cast<GuestIRelativeResolver>(bias_ + irelative_addends_[i]);
+            *where = reinterpret_cast<uint64_t>(resolver());
+        }
         ++relocs_applied_;
     }
     (void)error;
@@ -621,16 +695,42 @@ void ElfImage::seal_relro() {
     VirtualProtect(at<uint8_t>(start), end - start, PAGE_READONLY, &old);
 }
 
-void ElfImage::run_initializers() {
+void ElfImage::register_arm64_code() {
+    uint64_t text_hash = 0xcbf29ce484222325ull;
+    for (const Segment& s : loads_) {
+        if (!(s.flags & kPfX) || s.memsz == 0) continue;
+        arm64::register_code(at<const void>(s.vaddr), s.memsz);
+        arm64_code_.push_back(at<const void>(s.vaddr));
+        if (s.filesz) text_hash = arm64::aot_hash(at<const uint8_t>(s.vaddr), s.filesz, text_hash);
+    }
+    // The code translated at install time, if the installer made it (still
+    // unrelocated here, as winapk-aot read it).
+    arm64::aot_load(path_.u8string().c_str(), bias_, text_hash);
+}
+
+// DT_INIT_ARRAY entries are called as fn(argc, argv, envp); DT_INIT,
+// DT_FINI and DT_FINI_ARRAY entries take nothing.
+void ElfImage::call_init_function(uint64_t fn, bool with_args) const {
     static char* empty_argv[] = {nullptr};
     static char* empty_envp[] = {nullptr};
-    if (init_) reinterpret_cast<GuestVoidFn>(bias_ + init_)();
+    if (is_arm64()) {
+        const uint64_t args[3] = {0, reinterpret_cast<uint64_t>(empty_argv), reinterpret_cast<uint64_t>(empty_envp)};
+        arm64::call(reinterpret_cast<const void*>(fn), args, with_args ? 3 : 0);
+    } else if (with_args) {
+        reinterpret_cast<GuestInitFn>(fn)(0, empty_argv, empty_envp);
+    } else {
+        reinterpret_cast<GuestVoidFn>(fn)();
+    }
+}
+
+void ElfImage::run_initializers() {
+    if (init_) call_init_function(bias_ + init_, false);
     if (init_array_ && init_arraysz_ && in_image(init_array_, init_arraysz_)) {
         const uint64_t* fns = at<const uint64_t>(init_array_);
         for (uint64_t i = 0; i < init_arraysz_ / 8; ++i) {
             // 0 and -1 are placeholders some toolchains leave in the array.
             if (fns[i] == 0 || fns[i] == UINT64_MAX) continue;
-            reinterpret_cast<GuestInitFn>(fns[i])(0, empty_argv, empty_envp);
+            call_init_function(fns[i], true);
         }
     }
     initialized_ = true;
@@ -641,10 +741,10 @@ void ElfImage::run_finalizers() {
         const uint64_t* fns = at<const uint64_t>(fini_array_);
         for (uint64_t i = fini_arraysz_ / 8; i-- > 0;) {
             if (fns[i] == 0 || fns[i] == UINT64_MAX) continue;
-            reinterpret_cast<GuestVoidFn>(fns[i])();
+            call_init_function(fns[i], false);
         }
     }
-    if (fini_) reinterpret_cast<GuestVoidFn>(bias_ + fini_)();
+    if (fini_) call_init_function(bias_ + fini_, false);
     initialized_ = false;
 }
 

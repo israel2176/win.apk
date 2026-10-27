@@ -8,6 +8,9 @@
 // install does for its library. The name is <application android:label>,
 // resolved against the app's resources the same way, and goes to
 // <app dir>/label.txt (UTF-8); the package name stands in when there is none.
+// <app dir>/package.txt names the package, its versionCode and versionName,
+// one per line: the launcher's installed-apps registry, which PackageManager
+// answers stores from (F-Droid's Install -> Open), is built from it.
 
 package com.winapk.tools;
 
@@ -31,6 +34,9 @@ public final class AppMeta {
         try {
             Manifest mf = Manifest.parse(new File(""), apkPath);
             pkg = mf.packageName;
+            String version = (mf.versionNameRaw != null ? mf.versionNameRaw : "").replace('\n', ' ');
+            Files.write(new File(appDir, "package.txt").toPath(),
+                    (pkg + "\n" + mf.versionCode + "\n" + version + "\n").getBytes(StandardCharsets.UTF_8));
             label = resolve(mf.applicationLabel, apkPath, pkg);
         } catch (Throwable t) {
             System.err.println("[win.apk] reading the app's name failed: " + t);

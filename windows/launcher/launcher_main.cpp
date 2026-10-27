@@ -29,6 +29,17 @@
 //   Win.apk.exe                      the library
 //   Win.apk.exe <app.apk>            install, then run it
 //   Win.apk.exe --run <library apk>  run an installed app (what shortcuts do)
+//   Win.apk.exe install --apk <file> --source android [--requestor-label <app>] --json
+//   Win.apk.exe uninstall --package <name> --source android [--requestor-label <app>] --json
+//
+// The last two are the install helper, upstream's macapk-installhelper: an app
+// that installs apps (F-Droid, through PackageInstaller) hands its APK to
+// PackageInstallerBackend, which runs this program. It asks the user, installs
+// as above, and keeps installed_apps.json, the installed-apps registry that
+// PackageManager answers apps from, so a store sees what it installed. Its
+// output keeps the helper's contract: "[helper] progress <fraction> <stage>"
+// lines, then one JSON object; exit 0 done, 2 bad arguments, 3 declined,
+// 5 failed, 6 not an app.
 
 #include <windows.h>
 #include <commctrl.h>
@@ -68,6 +79,7 @@ using Gdiplus::SizeF;
 constexpr UINT kInstalled = WM_APP + 1;       // wParam: ok | run after << 1, lParam: new std::wstring (the name)
 constexpr UINT kRunExited = WM_APP + 2;       // wParam: ok, lParam: new std::wstring (the app's name)
 constexpr UINT kInstallStarted = WM_APP + 3;  // lParam: new std::wstring (the app's name)
+constexpr UINT kRefresh = WM_APP + 4;         // the install helper changed the library
 constexpr UINT_PTR kAnimTimer = 1;
 constexpr int kIdSearch = 100;
 enum Cmd { kCmdOpen = 200, kCmdInfo, kCmdShortcut, kCmdShowApk, kCmdAppFolder, kCmdLog, kCmdReinstall, kCmdUpdate,
@@ -262,6 +274,10 @@ const wchar_t* tr(const wchar_t* en) {
         {L"{0} stopped with an error.", L"{0} נעצרה עם שגיאה."},
         {L"{0} stopped with an error", L"{0} נעצרה עם שגיאה"},
         {L"The app stopped with an error.\n\nThe log is in:\n{0}", L"האפליקציה נעצרה עם שגיאה.\n\nהלוג נמצא ב:\n{0}"},
+        {L"An app", L"אפליקציה"},
+        {L"{0} wants to remove {1}.\n\nRemove it?", L"{0} מבקשת להסיר את {1}.\n\nלהסיר?"},
+        {L"{0} wants to update {1} ({2}).\n\nUpdate it?", L"{0} מבקשת לעדכן את {1} ({2}).\n\nלעדכן?"},
+        {L"{0} wants to install {1}.\n\nInstall it?", L"{0} מבקשת להתקין את {1}.\n\nלהתקין?"},
         {L"bytes", L"בתים"},
         {L"unknown", L"לא ידוע"}
     };
@@ -535,6 +551,8 @@ struct App {
 };
 
 fs::path label_file(const std::wstring& name) { return library_dir() / (name + L".label"); }
+// The app's package, versionCode and versionName, one per line (AppMeta's package.txt).
+fs::path package_file(const std::wstring& name) { return library_dir() / (name + L".package"); }
 fs::path shortcut_icon(const std::wstring& name) { return library_dir() / (name + L".ico"); }
 
 std::wstring label_of(const std::wstring& name) {
@@ -678,24 +696,38 @@ struct InstallJob {
 
 SRWLOCK g_install_lock = SRWLOCK_INIT;  // one install at a time: each one is a JVM converting the whole app
 
+void write_registry();
+
+// Copies `source` into the library as <name><ext> and installs it there: the
+// install, the code conversion, the name, icon and package, the shortcuts.
+// `replaces` is the app's previous APK, removed once the new one is in.
+bool install_into_library(const fs::path& source, const std::wstring& name, const fs::path& replaces,
+                          fs::path* installed) {
+    std::error_code ec;
+    fs::create_directories(library_dir(), ec);
+    const fs::path target = library_dir() / (name + source.extension().wstring());
+    bool ok = fs::equivalent(source, target, ec) || CopyFileW(source.c_str(), target.c_str(), FALSE) != 0;
+    if (ok) {
+        HANDLE p = start_runtime(L"--apk \"" + target.wstring() + L"\" --install-only", install_log(name));
+        ok = p && wait_exit(p) == 0 &&
+             MoveFileExW((app_dir(name) / L"label.txt").c_str(), label_file(name).c_str(),
+                         MOVEFILE_REPLACE_EXISTING | MOVEFILE_COPY_ALLOWED) != 0;
+        if (ok) MoveFileExW((app_dir(name) / L"package.txt").c_str(), package_file(name).c_str(),
+                            MOVEFILE_REPLACE_EXISTING | MOVEFILE_COPY_ALLOWED);
+    }
+    if (ok && !replaces.empty() && replaces != target) fs::remove(replaces, ec);
+    if (ok) make_app_shortcuts({name, label_of(name), target}, setting(L"DesktopShortcut", 1) != 0);
+    write_registry();
+    if (installed) *installed = target;
+    return ok;
+}
+
 DWORD WINAPI install_thread(void* param) {
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     std::unique_ptr<InstallJob> job(static_cast<InstallJob*>(param));
     AcquireSRWLockExclusive(&g_install_lock);
     PostMessageW(g_main, kInstallStarted, 0, reinterpret_cast<LPARAM>(new std::wstring(job->name)));
-    std::error_code ec;
-    fs::create_directories(library_dir(), ec);
-    const fs::path target = library_dir() / (job->name + job->source.extension().wstring());
-    bool ok = fs::equivalent(job->source, target, ec) ||
-              CopyFileW(job->source.c_str(), target.c_str(), FALSE) != 0;
-    if (ok) {
-        HANDLE p = start_runtime(L"--apk \"" + target.wstring() + L"\" --install-only", install_log(job->name));
-        ok = p && wait_exit(p) == 0 &&
-             MoveFileExW((app_dir(job->name) / L"label.txt").c_str(), label_file(job->name).c_str(),
-                         MOVEFILE_REPLACE_EXISTING | MOVEFILE_COPY_ALLOWED) != 0;
-    }
-    if (ok && !job->replaces.empty() && job->replaces != target) fs::remove(job->replaces, ec);
-    if (ok) make_app_shortcuts({job->name, label_of(job->name), target}, setting(L"DesktopShortcut", 1) != 0);
+    const bool ok = install_into_library(job->source, job->name, job->replaces, nullptr);
     ReleaseSRWLockExclusive(&g_install_lock);
     PostMessageW(g_main, kInstalled, (ok ? 1 : 0) | (job->run_after ? 2 : 0),
                  reinterpret_cast<LPARAM>(new std::wstring(job->name)));
@@ -1534,9 +1566,11 @@ bool remove_app(const App& app, bool ask) {
     remove_app_shortcuts(copy);
     fs::remove(copy.apk, ec);
     fs::remove(label_file(copy.name), ec);
+    fs::remove(package_file(copy.name), ec);
     fs::remove(shortcut_icon(copy.name), ec);
     fs::remove_all(app_dir(copy.name), ec);
     fs::remove(data_dir() / L"android" / L"data" / L"app" / (L"." + copy.name + L".installed"), ec);
+    write_registry();
     if (ask) {
         refresh();
         set_status(fmt(L"{0} was removed.", {copy.label}), kInfo);
@@ -3003,6 +3037,9 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             }
             return 0;
         }
+        case kRefresh:
+            refresh();
+            return 0;
         case WM_GETMINMAXINFO:
             reinterpret_cast<MINMAXINFO*>(lp)->ptMinTrackSize = {ipx(560), ipx(520)};
             return 0;
@@ -3013,6 +3050,228 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
     }
     return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+// ---------------------------------------------------------------------------
+// The installed-apps registry
+
+std::string wide_to_utf8(const std::wstring& w) {
+    const int n = WideCharToMultiByte(CP_UTF8, 0, w.data(), static_cast<int>(w.size()), nullptr, 0, nullptr, nullptr);
+    std::string s(static_cast<size_t>(n > 0 ? n : 0), '\0');
+    if (n > 0) WideCharToMultiByte(CP_UTF8, 0, w.data(), static_cast<int>(w.size()), &s[0], n, nullptr, nullptr);
+    return s;
+}
+
+std::string json_string(const std::string& s) {
+    std::string out = "\"";
+    for (const unsigned char c : s) {
+        if (c == '"' || c == '\\') {
+            out += '\\';
+            out += static_cast<char>(c);
+        } else if (c < 0x20) {
+            char buf[8];
+            std::snprintf(buf, sizeof buf, "\\u%04x", c);
+            out += buf;
+        } else {
+            out += static_cast<char>(c);
+        }
+    }
+    return out + "\"";
+}
+
+// The lines of library\<name>.package: package, versionCode, versionName.
+std::vector<std::string> package_of(const std::wstring& name) {
+    std::ifstream f(package_file(name), std::ios::binary);
+    std::vector<std::string> lines;
+    for (std::string line; std::getline(f, line);) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        lines.push_back(line);
+    }
+    return lines;
+}
+
+std::string iso_time(const fs::path& p) {
+    WIN32_FILE_ATTRIBUTE_DATA a;
+    SYSTEMTIME t{};
+    if (!GetFileAttributesExW(p.c_str(), GetFileExInfoStandard, &a) || !FileTimeToSystemTime(&a.ftLastWriteTime, &t))
+        return "";
+    char buf[32];
+    std::snprintf(buf, sizeof buf, "%04u-%02u-%02uT%02u:%02u:%02uZ", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute,
+                  t.wSecond);
+    return buf;
+}
+
+// <data>\installed_apps.json, upstream's registry (launcher/InstallCore.swift
+// RegistryStore, schema 2) as MacApkPackageManager.InstalledRegistry reads
+// it: one row per library app whose package is known. Rewritten whole, to a
+// temporary file then renamed, so a reader sees an old or a new file.
+void write_registry() {
+    std::string out = "{\"schema\":2,\"apps\":[";
+    bool first = true;
+    std::vector<std::string> seen;  // one row per package, as on a device
+    for (const App& app : library()) {
+        const std::vector<std::string> p = package_of(app.name);
+        if (p.empty() || p[0].empty()) continue;
+        if (std::find(seen.begin(), seen.end(), p[0]) != seen.end()) continue;
+        seen.push_back(p[0]);
+        const std::string when = iso_time(package_file(app.name));
+        out += first ? "\n" : ",\n";
+        first = false;
+        out += "{\"package\":" + json_string(p[0]) + ",\"label\":" + json_string(wide_to_utf8(app.label)) +
+               ",\"versionCode\":" + std::to_string(p.size() > 1 ? std::atoll(p[1].c_str()) : 0) +
+               ",\"versionName\":" + json_string(p.size() > 2 ? p[2] : "") +
+               ",\"apkPath\":" + json_string(wide_to_utf8(app.apk.wstring())) +
+               ",\"bundlePath\":" + json_string(wide_to_utf8(app.apk.wstring())) +
+               ",\"dirName\":" + json_string(wide_to_utf8(app.name)) + ",\"state\":\"installed\"" +
+               ",\"installedAt\":" + json_string(when) + ",\"updatedAt\":" + json_string(when) + "}";
+    }
+    out += "\n]}\n";
+    std::error_code ec;
+    fs::create_directories(data_dir(), ec);
+    const fs::path file = data_dir() / L"installed_apps.json";
+    const fs::path tmp = data_dir() / L"installed_apps.json.tmp";
+    {
+        std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
+        f << out;
+        if (!f) return;
+    }
+    MoveFileExW(tmp.c_str(), file.c_str(), MOVEFILE_REPLACE_EXISTING);
+}
+
+// Apps installed before the library recorded packages get theirs read now,
+// in the background, so the registry knows them too. (Only the name: the
+// version comes with the app's next install.)
+DWORD WINAPI backfill_thread(void*) {
+    bool changed = false;
+    std::error_code ec;
+    for (const App& app : library()) {
+        if (fs::exists(package_file(app.name), ec)) continue;
+        HANDLE p = start_runtime(L"--apk \"" + app.apk.wstring() + L"\" --package-to \"" +
+                                     package_file(app.name).wstring() + L"\"",
+                                 logs_dir() / L"package-backfill.log");
+        if (p && wait_exit(p) == 0) changed = true;
+        else fs::remove(package_file(app.name), ec);
+    }
+    if (changed) write_registry();
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// The install helper
+
+// The helper's output goes where its caller pointed it (a transcript file
+// PackageInstallerBackend reads), in UTF-8.
+void helper_say(const std::string& line) {
+    HANDLE out = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (out == nullptr || out == INVALID_HANDLE_VALUE) return;
+    const std::string s = line + "\n";
+    DWORD n = 0;
+    WriteFile(out, s.data(), static_cast<DWORD>(s.size()), &n, nullptr);
+}
+
+void helper_progress(double fraction, const char* stage) {
+    char buf[64];
+    std::snprintf(buf, sizeof buf, "[helper] progress %.2f %s", fraction, stage);
+    helper_say(buf);
+}
+
+int helper_fail(int code, const char* stage, const std::string& message) {
+    helper_say("{\"ok\":false,\"stage\":" + json_string(stage) + ",\"message\":" + json_string(message) + "}");
+    return code;
+}
+
+// The library app that holds `pkg`, or null.
+const App* find_package(const std::vector<App>& apps, const std::string& pkg) {
+    for (const App& app : apps) {
+        const std::vector<std::string> p = package_of(app.name);
+        if (!p.empty() && p[0] == pkg) return &app;
+    }
+    return nullptr;
+}
+
+// Asks the user, as the Mac's helper does before it acts for an app. A no is
+// exit 3, which the installer reports as STATUS_FAILURE_ABORTED.
+bool helper_consent(const std::wstring& text) {
+    const UINT rtl = g_rtl ? MB_RTLREADING | MB_RIGHT : 0;
+    return MessageBoxW(nullptr, text.c_str(), L"Win.apk",
+                       MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2 | MB_TOPMOST | MB_SETFOREGROUND | rtl) == IDYES;
+}
+
+void notify_library() {
+    if (HWND w = FindWindowW(L"WinApkLibrary", nullptr)) PostMessageW(w, kRefresh, 0, 0);
+}
+
+int helper_main(int argc, wchar_t** argv) {
+    const std::wstring verb = argv[1];
+    std::wstring apk, package, source, requestor;
+    for (int i = 2; i < argc; ++i) {
+        const std::wstring a = argv[i];
+        auto value = [&](std::wstring* out) {
+            if (i + 1 >= argc) return false;
+            *out = argv[++i];
+            return true;
+        };
+        bool ok = true;
+        if (a == L"--apk") ok = value(&apk);
+        else if (a == L"--package") ok = value(&package);
+        else if (a == L"--source") ok = value(&source);
+        else if (a == L"--requestor-label") ok = value(&requestor);
+        else if (a == L"--json") {}
+        else ok = false;
+        if (!ok) return helper_fail(2, "args", "unknown argument " + wide_to_utf8(a));
+    }
+    if (source != L"android") return helper_fail(2, "args", "--source android is required");
+    const std::wstring who = requestor.empty() ? tr(L"An app") : requestor;
+    const std::vector<App> apps = library();
+
+    if (verb == L"uninstall") {
+        const App* app = package.empty() ? nullptr : find_package(apps, wide_to_utf8(package));
+        if (!app) return helper_fail(5, "lookup", "not installed: " + wide_to_utf8(package));
+        if (!helper_consent(fmt(L"{0} wants to remove {1}.\n\nRemove it?", {who, app->label})))
+            return helper_fail(3, "consent", "declined");
+        remove_app(*app, false);
+        notify_library();
+        helper_say("{\"ok\":true,\"package\":" + json_string(wide_to_utf8(package)) + ",\"dataRemoved\":\"false\"}");
+        return 0;
+    }
+
+    std::error_code ec;
+    if (apk.empty() || !fs::is_regular_file(apk, ec)) return helper_fail(2, "args", "no --apk file");
+    if (!is_app_file(apk)) return helper_fail(6, "invalid-apk", "not an .apk/.apkm/.xapk/.apks");
+
+    // Which app this is decides what it replaces, so it is read first.
+    const fs::path pkg_out = data_dir() / L"staging" / (L"package-" + std::to_wstring(GetCurrentProcessId()) + L".txt");
+    fs::create_directories(pkg_out.parent_path(), ec);
+    HANDLE probe = start_runtime(L"--apk \"" + apk + L"\" --package-to \"" + pkg_out.wstring() + L"\"",
+                                 logs_dir() / L"install-helper.log");
+    std::string pkg;
+    if (probe && wait_exit(probe) == 0) {
+        std::ifstream f(pkg_out, std::ios::binary);
+        std::getline(f, pkg);
+    }
+    fs::remove(pkg_out, ec);
+    if (pkg.empty()) return helper_fail(6, "invalid-apk", "no package name in the app");
+    helper_progress(0.05, "parsed");
+
+    const App* existing = find_package(apps, pkg);
+    const bool update = existing != nullptr;
+    const std::wstring wpkg = utf8_to_wide(pkg);
+    const std::wstring question =
+        update ? fmt(L"{0} wants to update {1} ({2}).\n\nUpdate it?", {who, existing->label, wpkg})
+               : fmt(L"{0} wants to install {1}.\n\nInstall it?", {who, wpkg});
+    if (!helper_consent(question)) return helper_fail(3, "consent", "declined");
+    helper_progress(0.1, "consented");
+
+    const std::wstring name = update ? existing->name : file_name_safe(wpkg);
+    if (!install_into_library(apk, name, update ? existing->apk : fs::path(), nullptr)) {
+        return helper_fail(5, "install", "installing failed; the log is " +
+                                             wide_to_utf8(install_log(name).wstring()));
+    }
+    helper_progress(1.0, "installed");
+    notify_library();
+    helper_say("{\"ok\":true,\"package\":" + json_string(pkg) + ",\"wasUpdate\":\"" + (update ? "true" : "false") +
+               "\"}");
+    return 0;
 }
 
 }  // namespace
@@ -3034,12 +3293,23 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
         return 0;
     }
 
+    // The install helper, for apps that install apps.
+    if (argc >= 2 && (wcscmp(argv[1], L"install") == 0 || wcscmp(argv[1], L"uninstall") == 0)) {
+        pick_language();
+        const int code = helper_main(argc, argv);
+        LocalFree(argv);
+        OleUninitialize();
+        return code;
+    }
+
     INITCOMMONCONTROLSEX icc{sizeof(icc), ICC_STANDARD_CLASSES};
     InitCommonControlsEx(&icc);
     ULONG_PTR gdiplus = 0;
     Gdiplus::GdiplusStartupInput gsi;
     Gdiplus::GdiplusStartup(&gdiplus, &gsi, nullptr);
     integrate_with_windows();
+    write_registry();  // apps installed before the registry existed, or by an older launcher
+    if (HANDLE t = CreateThread(nullptr, 0, backfill_thread, nullptr, 0, nullptr)) CloseHandle(t);
     pick_language();
     pick_theme();
     theme_menus();
