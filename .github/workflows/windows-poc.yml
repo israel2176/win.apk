@@ -2,11 +2,9 @@
 # build the loader on a real Windows x64 runner and run the checks there.
 name: Windows PoC
 
+# Runs on pull requests and by hand, not on pushes: a merge does not build a
+# package. Releases come only from windows-release.yml, run by hand.
 on:
-  push:
-    paths:
-      - 'windows/**'
-      - '.github/workflows/windows-poc.yml'
   pull_request:
     paths:
       - 'windows/**'
