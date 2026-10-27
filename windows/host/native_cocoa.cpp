@@ -44,8 +44,7 @@ namespace {
 
 // The phone the app is shown, in dp. Upstream's cocoa_bridge.mm starts from
 // 360x640, a 16:9 phone; choose_phone_size() makes it 360x800 (9:20, the most
-// common phone screen today and about the shape upstream's Mac launcher picks)
-// when the screen has room.
+// common phone screen today and about the shape upstream's Mac launcher picks).
 std::atomic<int> g_phone_w{360};
 std::atomic<int> g_phone_h{640};
 std::atomic<jlong> g_next_handle{1};
@@ -156,32 +155,12 @@ bool headless_requested() {
     return e && *e && *e != '0';
 }
 
-// WINAPK_PHONE_SIZE=<width>x<height>, in dp, sets the phone outright.
-// Malformed or out-of-range values are ignored.
-bool apply_phone_size_override() {
-    const char* e = std::getenv("WINAPK_PHONE_SIZE");
-    if (!e || !*e) return false;
-    int w = 0, h = 0;
-    char x = 0;
-    if (std::sscanf(e, "%d%c%d", &w, &x, &h) != 3 || (x != 'x' && x != 'X')) return false;
-    if (w < 200 || h < 200 || w > 4000 || h > 4000) return false;
-    g_phone_w = w;
-    g_phone_h = h;
-    return true;
-}
+float device_density(JNIEnv* env);
 
-// 360x800 unless the window would not fit the work area, then as tall as fits,
-// but not shorter than upstream's 640. Apps lay out for today's tall phones:
-// at 640 WhatsApp's welcome screen centres its content up under the top bar,
-// and the content then takes the taps meant for the bar's overflow button.
 void choose_phone_size() {
-    if (apply_phone_size_override()) return;
-    constexpr int kTall = 800, kShort = 640;
-    int h = kTall;
-    if (!headless_requested()) {
-        const int fit = window_max_phone_height();
-        if (fit > 0 && fit < h) h = fit > kShort ? fit : kShort;
-    }
+    int w = 0, h = 0;
+    launch_phone_size(&w, &h);
+    g_phone_w = w;
     g_phone_h = h;
 }
 
@@ -211,7 +190,7 @@ jboolean JNICALL Cocoa_init(JNIEnv* env, jclass) {
     choose_phone_size();
     if (headless_requested()) {
         std::fprintf(stderr, "[win.apk] WINAPK_HEADLESS is set; running without a window\n");
-    } else if (!window_start(g_phone_w, g_phone_h, &g_java_input)) {
+    } else if (!window_start(g_phone_w, g_phone_h, device_density(env), &g_java_input)) {
         std::fprintf(stderr, "[win.apk] no desktop to open a window on; running headless\n");
     }
     apply_app_icon();
@@ -315,11 +294,32 @@ jboolean JNICALL Cocoa_openHostUrl(JNIEnv* env, jclass, jstring url) {
     return r > 32 ? JNI_TRUE : JNI_FALSE;
 }
 
-// Custom URL schemes for the app (OAuth redirects) need the scheme registered
-// and a running instance to forward to; until then the intake answers
-// "unavailable", which HostUrlIntake treats as no host routing.
+// URLs the host hands to this app, as upstream's kAEGetURL Apple Event queues
+// the ones the macOS browser sends: here, the ones the in-runtime browser tab
+// (native_browser_tab.cpp) does not load because the app's own manifest takes
+// them. queue_host_url adds one and rings HostUrlIntake.macapkOnHostUrl, whose
+// drain (on the app's main thread) takes them all from here and delivers each
+// as the browser's ACTION_VIEW intent. Custom URL schemes are not registered
+// with Windows, so nothing outside the runtime adds to this queue.
+std::mutex g_host_urls_lock;
+std::vector<std::wstring> g_host_urls;
+jclass g_intake_cls = nullptr;
+jmethodID g_intake_on_url = nullptr;
+
 jobjectArray JNICALL Cocoa_takeHostUrls(JNIEnv* env, jclass) {
-    return env->NewObjectArray(0, env->FindClass("java/lang/String"), nullptr);
+    std::vector<std::wstring> urls;
+    {
+        std::lock_guard<std::mutex> hold(g_host_urls_lock);
+        urls.swap(g_host_urls);
+    }
+    jclass string_cls = env->FindClass("java/lang/String");
+    jobjectArray out = env->NewObjectArray(static_cast<jsize>(urls.size()), string_cls, nullptr);
+    for (size_t i = 0; out && i < urls.size(); ++i) {
+        jstring s = env->NewString(reinterpret_cast<const jchar*>(urls[i].data()), static_cast<jsize>(urls[i].size()));
+        env->SetObjectArrayElement(out, static_cast<jsize>(i), s);
+        env->DeleteLocalRef(s);
+    }
+    return out;
 }
 jobjectArray JNICALL Cocoa_urlSchemeHandlers(JNIEnv*, jclass, jstring) { return nullptr; }
 jint JNICALL Cocoa_setUrlSchemeDefault(JNIEnv*, jclass, jstring, jstring) { return -1; }
@@ -897,6 +897,11 @@ bool content_pixel_size(int* w, int* h) {
     return *w > 0 && *h > 0;
 }
 
+void phone_size_dp(int* w, int* h) {
+    *w = g_phone_w.load();
+    *h = g_phone_h.load();
+}
+
 void guest_frame_present(const uint32_t* argb, int w, int h) {
     if (g_guest_last_ms.exchange(GetTickCount64()) == 0) {
         std::fprintf(stderr, "[win.apk] native window: first frame from the app's native code (%dx%d)\n", w, h);
@@ -1032,9 +1037,59 @@ const HostMethod kMethods[] = {
 
 HostMethods native_cocoa_methods() { return {kMethods, sizeof(kMethods) / sizeof(kMethods[0])}; }
 
+// WINAPK_PHONE_SIZE=<width>x<height>, in dp, sets the phone outright; else it
+// is 360x800. Apps lay out for today's tall phones: at upstream's 640 dp
+// WhatsApp's welcome screen centres its content up under the top bar, and the
+// content then takes the taps meant for the bar's overflow button. A screen
+// too small for the window gets a lower density (win32_window.h), never a
+// shorter phone. Malformed or out-of-range values are ignored.
+void launch_phone_size(int* w, int* h) {
+    *w = 360;
+    *h = 800;
+    const char* e = std::getenv("WINAPK_PHONE_SIZE");
+    if (!e || !*e) return;
+    int pw = 0, ph = 0;
+    char x = 0;
+    if (std::sscanf(e, "%d%c%d", &pw, &x, &ph) != 3 || (x != 'x' && x != 'X')) return;
+    if (pw < 200 || ph < 200 || pw > 4000 || ph > 4000) return;
+    *w = pw;
+    *h = ph;
+}
+
 void set_app_dir(const std::wstring& dir) {
     std::lock_guard<std::mutex> hold(g_icon_lock);
     g_icon_path = dir + L"\\icon.png";
+}
+
+void prepare_host_url_queue(JNIEnv* env) {
+    std::lock_guard<std::mutex> hold(g_host_urls_lock);
+    if (g_intake_cls) return;
+    jclass cls = env->FindClass("com/macapk/loader/HostUrlIntake");
+    if (cls) {
+        g_intake_on_url = env->GetStaticMethodID(cls, "macapkOnHostUrl", "()V");
+        if (g_intake_on_url) g_intake_cls = static_cast<jclass>(env->NewGlobalRef(cls));
+        env->DeleteLocalRef(cls);
+    }
+    if (env->ExceptionCheck()) {
+        env->ExceptionDescribe();
+        env->ExceptionClear();
+    }
+}
+
+void queue_host_url(JNIEnv* env, const std::wstring& url) {
+    jclass cls = nullptr;
+    {
+        std::lock_guard<std::mutex> hold(g_host_urls_lock);
+        g_host_urls.push_back(url);
+        cls = g_intake_cls;
+    }
+    if (!env || !cls) return;
+    env->CallStaticVoidMethod(cls, g_intake_on_url);
+    if (env->ExceptionCheck()) {
+        std::fprintf(stderr, "[win.apk] exception in HostUrlIntake.macapkOnHostUrl:\n");
+        env->ExceptionDescribe();
+        env->ExceptionClear();
+    }
 }
 
 }  // namespace winapk::host

@@ -804,6 +804,7 @@ public final class Boot {
 
     public static void run(String apkPath, String appJar, String appDir, String manifestPath) {
         bootClock("Boot.run entered");
+        installHostTrustAnchors();
         prefetchFrameworkResources();
         // MACAPK_BOOTSPEED_OVERLAP defers the AWT init to the resource-index
         // build below (buildResourceIndexWhileAwtInits) so the two overlap. Not
@@ -2569,6 +2570,7 @@ public final class Boot {
         //   MACAPK_LAUNCH_ACTIVITY=<class>  (leading '.' => prefix package)
         //   MACAPK_LAUNCH_ACTION=<action>   (optional; default ACTION_MAIN)
         //   MACAPK_LAUNCH_EXTRAS=k1=v1;k2=v2 (optional; String extras)
+        //   MACAPK_LAUNCH_DATA=<uri>        (optional; the data Uri, `am start -d`)
         {
             String ovAct = System.getenv("MACAPK_LAUNCH_ACTIVITY");
             if (ovAct != null && !ovAct.isEmpty()) {
@@ -2588,8 +2590,11 @@ public final class Boot {
                         }
                     }
                 }
+                String data = System.getenv("MACAPK_LAUNCH_DATA");
+                if (data != null && !data.isEmpty()) intent.setData(android.net.Uri.parse(data));
                 NativeLog.i(TAG, "launch override -> " + cls
                         + " action=" + intent.getAction()
+                        + " data=" + intent.getDataString()
                         + " extras=" + extras);
             }
         }
@@ -2804,6 +2809,78 @@ public final class Boot {
     // task). Recurses `depth` times before dispatching attachBaseContext, so the
     // app's attachBaseContext (and any executeVM it invokes) runs under a deeper
     // Java call stack. Distinct frame per recursion (real method frames).
+    /** The Application's real base Context (ContextWrapper's private field),
+     *  read directly so an app that overrides getBaseContext() -- WhatsApp's
+     *  AppShell returns null there until its own attachBaseContext runs -- does
+     *  not make Boot skip dispatching attachBaseContext, which would leave the
+     *  app's AppContext unset and every onCreate throwing. Falls back to the
+     *  public getter if the field moves. */
+    private static android.content.Context macapkRawBaseContext(android.app.Application application) {
+        try {
+            java.lang.reflect.Field f = android.content.ContextWrapper.class.getDeclaredField("baseContext");
+            f.setAccessible(true);
+            return (android.content.Context) f.get(application);
+        } catch (Throwable t) {
+            return application.getBaseContext();
+        }
+    }
+
+    /**
+     * On Windows, the trust anchors every TLS connection checks against are the
+     * JDK's CAs AND the ones Windows itself trusts. On a device the system store
+     * holds what the user's device trusts; on a PC that is the Windows root
+     * store, which also holds the root of a filtering proxy (NetFree), a
+     * company's TLS inspection or a locally installed CA. With the JDK's
+     * cacerts alone every app connection behind such a proxy failed with "PKIX
+     * path building failed". The Windows store alone is not enough either: it
+     * fetches public roots on demand, so one it never needed may be missing.
+     *
+     * The merged set is written to a PKCS12 file and made the JVM's default
+     * trust store, before anything initialises TLS: apps (OkHttp, Volley,
+     * Conscrypt-style code) build their trust managers from
+     * TrustManagerFactory.init((KeyStore) null), which reads exactly that
+     * default. An explicit javax.net.ssl.trustStore is left alone.
+     */
+    private static void installHostTrustAnchors() {
+        if (!System.getProperty("os.name", "").startsWith("Windows")) return;
+        if (System.getProperty("javax.net.ssl.trustStore") != null) return;
+        try {
+            java.security.KeyStore merged = java.security.KeyStore.getInstance("PKCS12");
+            merged.load(null, null);
+            int n = 0;
+            javax.net.ssl.TrustManagerFactory jdk = javax.net.ssl.TrustManagerFactory.getInstance(
+                javax.net.ssl.TrustManagerFactory.getDefaultAlgorithm());
+            jdk.init((java.security.KeyStore) null);
+            for (javax.net.ssl.TrustManager tm : jdk.getTrustManagers()) {
+                if (!(tm instanceof javax.net.ssl.X509TrustManager)) continue;
+                for (java.security.cert.X509Certificate c : ((javax.net.ssl.X509TrustManager) tm).getAcceptedIssuers()) {
+                    merged.setCertificateEntry("jdk-" + (n++), c);
+                }
+            }
+            int fromWindows = 0;
+            java.security.KeyStore win = java.security.KeyStore.getInstance("Windows-ROOT");
+            win.load(null, null);
+            for (java.util.Enumeration<String> e = win.aliases(); e.hasMoreElements();) {
+                java.security.cert.Certificate c = win.getCertificate(e.nextElement());
+                if (c == null || merged.getCertificateAlias(c) != null) continue;
+                merged.setCertificateEntry("windows-" + (fromWindows++), c);
+            }
+            java.io.File file = java.io.File.createTempFile("winapk-trust-", ".p12");
+            file.deleteOnExit();
+            char[] password = "winapk".toCharArray();
+            try (java.io.FileOutputStream out = new java.io.FileOutputStream(file)) {
+                merged.store(out, password);
+            }
+            System.setProperty("javax.net.ssl.trustStore", file.getAbsolutePath());
+            System.setProperty("javax.net.ssl.trustStoreType", "PKCS12");
+            System.setProperty("javax.net.ssl.trustStorePassword", "winapk");
+            NativeLog.i(TAG, "TLS trust anchors: " + n + " from the JDK + " + fromWindows
+                      + " more that Windows trusts");
+        } catch (Throwable t) {
+            NativeLog.w(TAG, "TLS trust anchors: kept the JDK's (" + t + ")");
+        }
+    }
+
     private static void macapkStackPad(android.app.Application app,
                                        android.content.Context base, int depth) {
         if (depth <= 0) { app.macapkAttachBaseContext(base); return; }
@@ -3682,8 +3759,11 @@ public final class Boot {
                     (android.content.ContentProvider) instance;
                 android.content.pm.ProviderInfo info =
                     new android.content.pm.ProviderInfo();
+                // The STRING a "@string/x" android:authorities names, as AOSP's
+                // parser hands it on (Manifest.ProviderEntry.resolvedAuthorities).
+                final String authorities = entry.resolvedAuthorities(application.getResources());
                 info.name        = entry.name;
-                info.authority   = entry.authorities;
+                info.authority   = authorities;
                 info.packageName = application.getPackageName();
                 info.initOrder   = entry.initOrder;
                 info.exported    = entry.exported;
@@ -3714,9 +3794,9 @@ public final class Boot {
                 // against a content:// URI actually dispatch to this
                 // provider. Manifest-driven (authorities come straight
                 // from android:authorities), so it is app-agnostic.
-                if (entry.authorities != null && !entry.authorities.isEmpty()) {
+                if (authorities != null && !authorities.isEmpty()) {
                     android.content.ContentProviderRegistry.register(
-                        entry.authorities, provider);
+                        authorities, provider);
                 }
             } catch (ClassNotFoundException cnf) {
                 // Many APKs declare optional providers (different

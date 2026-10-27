@@ -11,6 +11,8 @@
 
 cmake_minimum_required(VERSION 3.20)
 project(winapk LANGUAGES CXX)
+# Resource scripts: the programs' manifests and icons.
+enable_language(RC)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -37,6 +39,7 @@ add_library(winapk_loader STATIC
   src/bionic/fd.cpp
   src/bionic/socket.cpp
   src/bionic/looper.cpp
+  src/bionic/zlib.cpp
   src/abi_thunk.cpp
   src/linker.cpp
   src/arm64/arm64_cpu.cpp
@@ -49,6 +52,12 @@ add_library(winapk_loader STATIC
 target_include_directories(winapk_loader PUBLIC include PRIVATE src)
 # WaitOnAddress (the shim's futexes), BCryptGenRandom (arc4random), Winsock.
 target_link_libraries(winapk_loader PUBLIC synchronization bcrypt ws2_32)
+# zlib behind the guest's libz.so (src/bionic/zlib.cpp), linked statically
+# like everything else: MSYS2's mingw-w64-clang-x86_64-zlib, or
+# libz-mingw-w64-dev when cross-compiling on Linux.
+set(ZLIB_USE_STATIC_LIBS ON)
+find_package(ZLIB REQUIRED)
+target_link_libraries(winapk_loader PUBLIC ZLIB::ZLIB)
 target_compile_definitions(winapk_loader PUBLIC WIN32_LEAN_AND_MEAN NOMINMAX)
 if(NOT MSVC)
   target_compile_options(winapk_loader PRIVATE -Wall -Wextra)
@@ -127,8 +136,20 @@ endif()
 # JDK-free, so the elf-loader and thunk targets build without a JDK.
 set(WINAPK_JNI_INCLUDE "" CACHE PATH "JDK include dir (contains jni.h and win32/jni_md.h)")
 if(WINAPK_JNI_INCLUDE)
-  add_library(winapk_jni STATIC src/guest_jni.cpp src/jni_variadic.cpp src/jni_bind.cpp)
+  # libjnigraphics (src/jnigraphics.cpp) is upstream's AndroidBitmap section of
+  # its bionic_shim.cpp, cut out at build time like the GL bindings below.
+  set(WINAPK_BITMAP_UPSTREAM ${CMAKE_BINARY_DIR}/jnigraphics/bitmap_upstream.inc)
+  add_custom_command(
+    OUTPUT ${WINAPK_BITMAP_UPSTREAM}
+    COMMAND ${CMAKE_COMMAND} -DUPSTREAM=${CMAKE_CURRENT_SOURCE_DIR}/../runtime/translator/src/bionic_shim.cpp
+            -DOUT=${WINAPK_BITMAP_UPSTREAM} -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/extract_bitmap.cmake
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/../runtime/translator/src/bionic_shim.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/cmake/extract_bitmap.cmake
+    COMMENT "Extracting upstream's libjnigraphics")
+  add_library(winapk_jni STATIC src/guest_jni.cpp src/jni_variadic.cpp src/jni_bind.cpp src/jnigraphics.cpp
+                                ${WINAPK_BITMAP_UPSTREAM})
   target_include_directories(winapk_jni PUBLIC include "${WINAPK_JNI_INCLUDE}" "${WINAPK_JNI_INCLUDE}/win32")
+  target_include_directories(winapk_jni PRIVATE ${CMAKE_BINARY_DIR}/jnigraphics)
   target_link_libraries(winapk_jni PUBLIC winapk_loader)
 
   add_executable(winapk-jni-test test/jni_wrapper_test.cpp)
@@ -201,10 +222,25 @@ if(WINAPK_JNI_INCLUDE)
                               host/audio_decode.cpp host/native_clipboard.cpp
                               host/native_wallpaper.cpp host/native_picker.cpp
                               host/native_gamepad.cpp host/native_icu.cpp
-                              host/native_audio_input.cpp host/native_photos.cpp)
+                              host/native_audio_input.cpp host/native_photos.cpp
+                              host/webview2_host.cpp host/native_browser_tab.cpp host/native_webview.cpp
+                              host/runtime.rc)
   target_link_libraries(winapk-runtime PRIVATE winapk_jni winapk_sqlite webpdecoder winapk_stb_vorbis windowscodecs
                         ole32 mfplat mfreadwrite mfuuid shlwapi advapi32 shell32 uuid)
   target_include_directories(winapk-runtime PRIVATE ${WINAPK_WEBP_DIR}/src)
+  # WebView2 (host/webview2_host.h): the SDK's header to build against, from
+  # scripts/fetch_webview2.sh; its WebView2Loader.dll is staged next to the
+  # runtime and loaded at run time, so nothing is linked.
+  set(WINAPK_WEBVIEW2_SDK ${CMAKE_CURRENT_SOURCE_DIR}/../thirdparty/webview2-sdk)
+  if(NOT EXISTS ${WINAPK_WEBVIEW2_SDK}/include/WebView2.h)
+    find_program(WINAPK_BASH bash REQUIRED)
+    execute_process(COMMAND ${WINAPK_BASH} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/fetch_webview2.sh
+                    RESULT_VARIABLE _wv2_rc)
+    if(NOT _wv2_rc EQUAL 0 OR NOT EXISTS ${WINAPK_WEBVIEW2_SDK}/include/WebView2.h)
+      message(FATAL_ERROR "windows/scripts/fetch_webview2.sh could not fetch the WebView2 SDK")
+    endif()
+  endif()
+  target_include_directories(winapk-runtime SYSTEM PRIVATE ${WINAPK_WEBVIEW2_SDK}/include)
   target_compile_options(winapk-runtime PRIVATE -Wall -Wextra)
   # GL (M6): upstream's android.opengl bindings, cut out of its Mac
   # native_methods.cpp at build time and compiled against the Khronos headers;
@@ -219,7 +255,7 @@ if(WINAPK_JNI_INCLUDE)
     COMMENT "Extracting upstream's GL bindings")
   target_sources(winapk-runtime PRIVATE host/gl/gl_loader.cpp host/gl/gl_stubs.cpp host/gl/gl_bridges.cpp
                  host/gl/gl_surface.cpp host/gl/guest_gl.cpp host/native_window.cpp host/native_asset.cpp
-                 host/native_opensles.cpp host/native_aaudio.cpp
+                 host/native_opensles.cpp host/native_aaudio.cpp host/native_media.cpp
                  ${WINAPK_GL_UPSTREAM})
   target_include_directories(winapk-runtime PRIVATE host third_party/khronos ${CMAKE_BINARY_DIR}/gl
                              ${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src)
@@ -251,7 +287,7 @@ if(WINAPK_JNI_INCLUDE)
   add_library(winapk-guest-stub SHARED host/guest_stub.cpp)
   set_target_properties(winapk-guest-stub PROPERTIES PREFIX "")
   target_include_directories(winapk-guest-stub PRIVATE "${WINAPK_JNI_INCLUDE}" "${WINAPK_JNI_INCLUDE}/win32")
-  add_executable(macapk-translator host/translator_main.cpp)
+  add_executable(macapk-translator host/translator_main.cpp host/runtime.rc)
   add_dependencies(winapk-runtime winapk-guest-stub macapk-translator)
 
   if(MINGW)
@@ -269,7 +305,6 @@ endif()
 # Win.apk.exe, the app library (launcher/launcher_main.cpp): installs APKs,
 # lists them, gives each a Start menu and desktop shortcut, and runs them
 # through winapk-runtime.
-enable_language(RC)
 add_executable(winapk-launcher WIN32 launcher/launcher_main.cpp launcher/launcher.rc)
 set_target_properties(winapk-launcher PROPERTIES OUTPUT_NAME "Win.apk")
 target_compile_definitions(winapk-launcher PRIVATE UNICODE _UNICODE _WIN32_WINNT=0x0A00 WINVER=0x0A00)

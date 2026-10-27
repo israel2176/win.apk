@@ -145,7 +145,8 @@ Everything in this section is merged on `main` and tested in CI on
 | `src/elf_loader.cpp` | Loads Android x86_64 shared objects: copies PT_LOAD segments; applies RELA, RELR (`DT_RELR` and `DT_ANDROID_RELR`) and Android APS2 packed relocations; sets per-page protections; resolves IRELATIVE; seals PT_GNU_RELRO; runs `DT_INIT` and `DT_INIT_ARRAY`; looks up exports and the symbol covering an address. The map, link and initialize phases can run separately |
 | `src/linker.cpp` | The guest linker: loads a library with its `DT_NEEDED` tree in bionic's order (map all, link all, constructors dependencies first), answers system libraries from the shim, keeps the registry of loaded images, and provides the guest's `dlopen`, `android_dlopen_ext`, `dlsym` (with `RTLD_DEFAULT` and `RTLD_NEXT`), `dlclose`, `dlerror` and `dladdr` |
 | `src/fs_tls_patch.cpp` | Rewrites Bionic stack-guard loads (`%fs:0x28`) to `%gs:0x28` |
-| `src/mini_bionic.cpp`, `src/bionic/` | The Windows Bionic shim. `mini_bionic.cpp` holds the core (malloc family, `__stack_chk_fail`, `__cxa_atexit`, `qsort` with a guest comparator, Linux `errno` translation from the UCRT and Win32) and merges the module tables: `string.cpp` (string.h, ctype, 32-bit `wchar_t`, `strto*`, FORTIFY `_chk`), `printf.cpp` (a printf engine reading the System V `va_list`, the printf family and liblog's variadic calls), `pthread.cpp` (futex-style mutexes, condition variables, rwlocks, once, keys and threads on `WaitOnAddress` over bionic's struct layouts, plus semaphores), `stdio.cpp` (file descriptors, `stat` in bionic's layout, directories, `FILE`), `paths.cpp` (Android's absolute paths under the android root, `/system/fonts`, `/dev/null`), `fd.cpp` (descriptors that are not files: pipes, eventfd and epoll as objects with one readiness counter; `poll`, `select`, `epoll_wait` over all descriptors), `socket.cpp` (BSD sockets on Winsock with Linux's constants translated, `getaddrinfo`, `inet_*`), `looper.cpp` (the NDK's `ALooper`), `locale.cpp` (the C and C.UTF-8 locales libc++ builds on, UTF-8 conversion, `<wctype.h>`, more `<wchar.h>`; the `*_l` functions are aliases) and `misc.cpp` (clocks and time, `mmap` on `VirtualAlloc` with `PROT_NONE` as a reservation, system properties, the guest environment and `environ`, `syscall` for futex and friends, `sysconf`, `uname`, `getauxval`, `arc4random`, libm) |
+| `src/mini_bionic.cpp`, `src/bionic/` | The Windows Bionic shim. `mini_bionic.cpp` holds the core (malloc family, `__stack_chk_fail`, `__cxa_atexit`, `qsort` with a guest comparator, Linux `errno` translation from the UCRT and Win32) and merges the module tables: `string.cpp` (string.h, ctype, 32-bit `wchar_t`, `strto*`, FORTIFY `_chk`), `printf.cpp` (a printf engine reading the System V `va_list`, the printf family and liblog's variadic calls), `pthread.cpp` (futex-style mutexes, condition variables, rwlocks, once, keys and threads on `WaitOnAddress` over bionic's struct layouts, plus semaphores), `stdio.cpp` (file descriptors, `stat` and `statfs` in bionic's layouts, directories, `FILE`), `paths.cpp` (Android's absolute paths under the android root, `/system/fonts`, `/dev/null`), `fd.cpp` (descriptors that are not files: pipes, eventfd and epoll as objects with one readiness counter; `poll`, `select`, `epoll_wait` over all descriptors), `socket.cpp` (BSD sockets on Winsock with Linux's constants translated, `getaddrinfo`, `inet_*`), `looper.cpp` (the NDK's `ALooper`), `zlib.cpp` (`libz.so` on the real zlib, linked statically: each guest `z_stream`, 112 bytes on LP64, gets an 88-byte host one, with the fields copied in and out on every call, 64-bit totals, and guest `zalloc`/`zfree`), `locale.cpp` (the C and C.UTF-8 locales libc++ builds on, UTF-8 conversion, `<wctype.h>`, more `<wchar.h>`; the `*_l` functions are aliases) and `misc.cpp` (clocks and time, `mmap` on `VirtualAlloc` with `PROT_NONE` as a reservation, system properties, the guest environment and `environ`, `syscall` for futex and friends, `sysconf`, `uname`, `getauxval`, `arc4random`, the rand48 family, `getopt` on the CRT's own, libm) |
+| `src/jnigraphics.cpp` | libjnigraphics (`AndroidBitmap_getInfo`, `lockPixels`, `unlockPixels`): upstream's section of `bionic_shim.cpp` on its `android.graphics.Bitmap`, cut out at build time (`cmake/extract_bitmap.cmake`) behind System V entry points |
 | `src/abi_thunk.cpp` | Small x86-64 code emitter. Produces native-method thunks (Microsoft x64 caller to System V guest, built from a Java signature, swapping in the guest `JNIEnv*`) and System V variadic entry stubs |
 | `tools/gen_jni_slots.py`, `src/jni_slots.inc` | Generated list of the 235 `JNINativeInterface_` slots, each tagged as plain, variadic or `va_list`, with the matching `...A` slot for the variadic ones |
 | `src/guest_jni.cpp` | Guest `JNIEnv` and `JavaVM`: one shared System V table that forwards into HotSpot, a guest env per thread, and `GetEnv`, `AttachCurrentThread` and `DetachCurrentThread` |
@@ -224,7 +225,7 @@ implements in `runtime/src`; on Windows `windows/host/native_*.cpp`):
 | `GamepadBridge` | 1 | `gamecontroller_bridge.mm` | `host/native_gamepad.cpp`: XInput controllers, polled | done (no rumble or player LED) | - |
 | `CameraBridge` | 30 | `camera_capture.mm` | Media Foundation capture | not started | 3 |
 | `MediaStoreProvider` | 7 | `photos_bridge.mm` | `host/native_photos.cpp`: the Pictures and Videos folders, shell thumbnails | done | - |
-| `MacApkWebViewBridge` | 29 | `webview_bridge.mm` | WebView2 | not started | 2 |
+| `MacApkWebViewBridge` | 29 | `webview_bridge.mm` | WebView2 | done (`native_webview.cpp`; Custom Tabs: `HostBrowserTab`) | 2 |
 | `NativeSignIn` | 2 | `gms_signin.mm` | a browser sign-in window | not started | later |
 | `NativeActivity`, `InputQueue` | 22 + 5 | `bionic_shim_nativeactivity.cpp` | with M4/M6 | not started | 2 |
 | Firebase C++ helpers (4 classes) | 4 | the app's own native code | with M4 | - | - |
@@ -255,9 +256,10 @@ implements in `runtime/src`; on Windows `windows/host/native_*.cpp`):
 | `bionic_shim_vulkan.cpp` | 401 | Vulkan over MoltenVK | the system Vulkan loader (M6) | not started |
 | `bionic_shim_cacerts.cpp` | 218 | CA store from the Mac's roots | the Windows root store | not started |
 | `bionic_shim_forkwatch.cpp`, `_elfexec.cpp`, `elfexec_main.cpp` | 1,471 | forked and shipped executables | later (M5) | not started |
-| `media_ndk.cpp` | 701 | NDK `AMediaCodec` | port with `NativeMedia` | not started |
+| `media_ndk.cpp` | 701 | NDK `AMediaCodec` | port with `NativeMedia`; `host/native_media.cpp` has the `AMEDIAFORMAT_KEY_*` strings | keys only |
 | `bionic_shim.cpp`: `ANativeWindow_*`, `AAssetManager_*` | - | libandroid's native window and assets | `host/native_window.cpp`, `host/native_asset.cpp` (assets through Java's AssetManager; no native APK index yet) | done |
-| `bionic_shim.cpp`: OpenSL ES | - | libOpenSLES on the audio mixer | `host/native_opensles.cpp`: reports the engine unsupported | not started |
+| `bionic_shim.cpp`: OpenSL ES | - | libOpenSLES on the audio mixer | `host/native_opensles.cpp`: reports the engine unsupported; the `SL_IID_*` interface IDs are real | not started |
+| `bionic_shim.cpp`: libjnigraphics | - | `AndroidBitmap_*` | `src/jnigraphics.cpp`: upstream's section, extracted at build time | done |
 | `pairip_*`, `art_jni_offsets.h` | 5,286 | Play Integrity emulation | later | - |
 | `arm32_lifter.cpp`, `bionic_shim_arm32*.cpp`, `bionic_shim_gles1.cpp`, `elf_reader.cpp`, `elf64_reader.cpp` | 19,296 | ARM translation | n/a (D8: the ARM stage) | - |
 
@@ -785,7 +787,8 @@ normal `System.loadLibrary` path.
   that Unity and Mono rely on, and chaining with HotSpot's handler).
 - `fork` failing with `EAGAIN`.
 - `/proc` emulation for the common reads (`self/maps`, `cpuinfo`).
-- Locale, liblog including its variadic functions, libm and libz.
+- Locale, liblog including its variadic functions, libm and libz (libz is
+  done: `src/bionic/zlib.cpp`).
 - FS-relative rewriting with a decoder (dynamic ELF TLS is done).
 
 Upstream's `bionic_shim.cpp` is the behavioral reference. It records many
@@ -897,7 +900,7 @@ Exit: one ARM-only game is playable at an acceptable speed.
 ### Local setup on Linux
 
 ```sh
-sudo apt install clang lld cmake ninja-build mingw-w64 wine64
+sudo apt install clang lld cmake ninja-build mingw-w64 libz-mingw-w64-dev wine64
 ```
 
 You also need a Windows JDK (for example the Temurin 21 zip) for `jvm.dll`,
@@ -921,7 +924,7 @@ You also need a Windows JDK (for example the Temurin 21 zip) for `jvm.dll`,
 ### Local setup on Windows
 
 Install MSYS2, open the CLANG64 shell, run
-`pacman -S mingw-w64-clang-x86_64-{clang,cmake,ninja}`, and install a JDK.
+`pacman -S mingw-w64-clang-x86_64-{clang,cmake,ninja,zlib}`, and install a JDK.
 Build with CMake as described in `windows/README.md`.
 
 ### CI
