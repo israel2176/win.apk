@@ -192,11 +192,18 @@ bool convert_dex(const Options& o, const fs::path& app_dir, fs::path* jar) {
 // (com.winapk.tools.AppInstall). Done once per input file; a small record next
 // to the installs names the result. Afterwards the app is the installed
 // base.apk.
+//
+// WINAPK_ABIS overrides the ABI list (WINAPK_ABIS=arm64-v8a runs an app's
+// arm64 build although it has an x86_64 one, for comparing the two); an
+// override gets its own install.
 bool install_app(Options* o, const fs::path& android_root) {
     std::error_code ec;
     const fs::path apps = android_root / "data" / "app";
     fs::create_directories(apps, ec);
-    const fs::path record = apps / (L"." + o->apk.stem().wstring() + L".installed");
+    std::wstring abis = env_var(L"WINAPK_ABIS");
+    const std::wstring tag = abis.empty() ? L"" : L"." + abis;
+    if (abis.empty()) abis = L"x86_64,arm64-v8a";
+    const fs::path record = apps / (L"." + o->apk.stem().wstring() + tag + L".installed");
     auto installed = [&]() -> fs::path {
         if (!fs::exists(record, ec) || fs::last_write_time(record, ec) < fs::last_write_time(o->apk, ec)) return {};
         FILE* f = _wfopen(record.c_str(), L"rb");
@@ -216,7 +223,7 @@ bool install_app(Options* o, const fs::path& android_root) {
         std::fprintf(stderr, "[win.apk] installing the app (once per install)...\n");
         const int rc = run_process(quoted(o->jdk / "bin" / "java.exe") + L" -cp " +
                                    quoted(o->lib / "winapk-tools.jar") + L" com.winapk.tools.AppInstall " +
-                                   quoted(o->apk) + L" " + quoted(android_root) + L" x86_64,arm64-v8a " +
+                                   quoted(o->apk) + L" " + quoted(android_root) + L" " + abis + L" " +
                                    quoted(record));
         base = rc == 0 ? installed() : fs::path();
         if (base.empty()) {
@@ -226,6 +233,44 @@ bool install_app(Options* o, const fs::path& android_root) {
     }
     o->apk = base;
     return true;
+}
+
+// Step 1b: translate the app's arm64 libraries ahead of time
+// (include/winapk/arm64_aot.h): winapk-aot writes C, clang compiles it for
+// this CPU into <lib>.so.aot.dll, which the loader then picks up. Done once
+// per library; without winapk-aot or clang (WINAPK_AOT_CLANG, clang\bin\clang.exe
+// beside bin\, or the PATH) the libraries run on the JIT as before.
+void translate_arm64(const fs::path& base) {
+    std::error_code ec;
+    const fs::path libs = base.parent_path() / "lib" / "arm64";
+    const fs::path aot = exe_dir() / "winapk-aot.exe";
+    if (!fs::is_directory(libs, ec) || !fs::exists(aot, ec)) return;
+    fs::path clang = env_var(L"WINAPK_AOT_CLANG");
+    if (clang.empty() && fs::exists(exe_dir().parent_path() / "clang" / "bin" / "clang.exe", ec)) {
+        clang = exe_dir().parent_path() / "clang" / "bin" / "clang.exe";
+    }
+    if (clang.empty()) clang = L"clang.exe";
+    for (const auto& e : fs::directory_iterator(libs, ec)) {
+        const fs::path so = e.path();
+        if (so.extension() != L".so") continue;
+        const fs::path c = so.wstring() + L".aot.c", dll = so.wstring() + L".aot.dll";
+        if (fs::exists(dll, ec) && fs::last_write_time(dll, ec) >= fs::last_write_time(so, ec)) continue;
+        std::fprintf(stderr, "[win.apk] translating %s for this CPU (once per install)...\n",
+                     utf8(so.filename().wstring()).c_str());
+        const ULONGLONG t0 = GetTickCount64();
+        int rc = run_process(quoted(aot) + L" " + quoted(so) + L" " + quoted(c));
+        if (rc == 0) {
+            rc = run_process(quoted(clang) + L" -O2 -march=native -shared -fno-strict-aliasing -w -o " + quoted(dll) +
+                             L" " + quoted(c));
+        }
+        fs::remove(c, ec);
+        if (rc != 0) {
+            fs::remove(dll, ec);
+            std::fprintf(stderr, "[win.apk] translation failed (exit code %d); the JIT runs it\n", rc);
+            continue;
+        }
+        std::fprintf(stderr, "[win.apk] translated in %.1f s\n", static_cast<double>(GetTickCount64() - t0) / 1000);
+    }
 }
 
 struct BootArgs {
@@ -458,6 +503,7 @@ int wmain(int argc, wchar_t** argv) {
         return 1;
     }
     if (!install_app(&b.options, b.options.data / "android")) return 1;
+    translate_arm64(b.options.apk);
     if (!convert_dex(b.options, b.app_dir, &b.app_jar)) return 1;
 
     // Upstream runs the JVM with -Xss16m; give the creating thread as much.

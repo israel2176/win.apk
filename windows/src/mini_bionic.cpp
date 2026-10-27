@@ -174,6 +174,31 @@ WINAPK_GUEST_ABI void g_cxa_finalize(void* dso) {
     for (const AtexitEntry& e : run) e.fn(e.arg);
 }
 
+// ---- __cxa_guard_*: function-local statics ------------------------------------
+// The Itanium C++ ABI's guards (libc++abi's, which an app that links the C++
+// runtime as a system library imports from it). The guard's first byte says
+// "initialized"; acquire returns 1 when the caller must run the initializer,
+// holding a lock that release or abort drops. One recursive lock for all
+// guards: an initializer may itself initialize other statics.
+std::recursive_mutex g_guard_lock;
+
+WINAPK_GUEST_ABI int g_cxa_guard_acquire(uint64_t* guard) {
+    if (__atomic_load_n(reinterpret_cast<uint8_t*>(guard), __ATOMIC_ACQUIRE)) return 0;
+    g_guard_lock.lock();
+    if (*reinterpret_cast<uint8_t*>(guard)) {
+        g_guard_lock.unlock();
+        return 0;
+    }
+    return 1;
+}
+
+WINAPK_GUEST_ABI void g_cxa_guard_release(uint64_t* guard) {
+    __atomic_store_n(reinterpret_cast<uint8_t*>(guard), uint8_t{1}, __ATOMIC_RELEASE);
+    g_guard_lock.unlock();
+}
+
+WINAPK_GUEST_ABI void g_cxa_guard_abort(uint64_t*) { g_guard_lock.unlock(); }
+
 // ---- qsort: a guest callback invoked from host code -------------------------
 // The CRT's qsort calls its comparator with the Microsoft ABI. The guest's
 // comparator expects System V. An ms_abi trampoline reads the guest pointer
@@ -219,6 +244,9 @@ const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("__errno", g_errno),
     WINAPK_SHIM("__cxa_atexit", g_cxa_atexit),
     WINAPK_SHIM("__cxa_finalize", g_cxa_finalize),
+    WINAPK_SHIM("__cxa_guard_acquire", g_cxa_guard_acquire),
+    WINAPK_SHIM("__cxa_guard_release", g_cxa_guard_release),
+    WINAPK_SHIM("__cxa_guard_abort", g_cxa_guard_abort),
     WINAPK_SHIM("qsort", g_qsort),
     WINAPK_SHIM("__tls_get_addr", winapk::tls_get_addr),
 };

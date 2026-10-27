@@ -2,7 +2,7 @@
 // of time, for the installer to compile into `<lib>.so.aot.dll` (see
 // include/winapk/arm64_aot.h for how the runtime uses it).
 //
-//   winapk-aot <lib.so> <out.c>
+//   winapk-aot <lib.so> <out.c> [parts]   (parts: out.c.1.c ..., to compile in parallel)
 //
 // Functions are found from the symbol tables and, transitively, from the
 // targets of BL; each is decoded by following its branches. In the C, every
@@ -22,6 +22,7 @@
 
 #include "winapk/arm64_aot.h"
 
+#include <algorithm>
 #include <cinttypes>
 #include <cstdarg>
 #include <cstdio>
@@ -304,8 +305,10 @@ typedef struct {
     uint64_t count;
 } AotModule;
 
-static uint64_t aot_base;
-static AotRuntime aot_rt;
+// Defined once, in the file with the module table (the code may be split
+// across several files compiled in parallel).
+extern uint64_t aot_base;
+extern AotRuntime aot_rt;
 
 // Guest memory: unaligned, and volatile so that the C compiler keeps every
 // access, in order, as the guest's own synchronization expects.
@@ -2037,7 +2040,7 @@ std::string Emitter::function(size_t* interpreted) {
     out += "#define FLUSH_ALL() do {" + flush_all + " } while (0)\n";
     out += "#define RELOAD_ALL() do {" + reload_all + " } while (0)\n";
     out += "#define RELOAD_CALL() do {" + reload_call + " } while (0)\n";
-    out += "static uint32_t " + name + "(Cpu* restrict c) {\n";
+    out += "uint32_t " + name + "(Cpu* restrict c) {\n";
     out += "    const uint64_t B = aot_base;\n";
     for (unsigned n = 0; n < 32; ++n) {
         if (!(used_x_ >> n & 1)) continue;
@@ -2059,10 +2062,11 @@ std::string Emitter::function(size_t* interpreted) {
 }  // namespace
 
 int main(int argc, char** argv) {
-    if (argc != 3) {
-        std::fprintf(stderr, "usage: winapk-aot <lib.so> <out.c>\n");
+    if (argc != 3 && argc != 4) {
+        std::fprintf(stderr, "usage: winapk-aot <lib.so> <out.c> [parts]\n");
         return 2;
     }
+    const size_t parts = argc == 4 ? static_cast<size_t>(std::max(1, std::atoi(argv[3]))) : 1;
     Image img;
     std::string error;
     if (!read_image(argv[1], &img, &error)) {
@@ -2097,32 +2101,46 @@ int main(int argc, char** argv) {
     std::set<uint64_t> translated;
     for (const auto& f : functions) translated.insert(f.first);
 
-    std::string out = kPrelude;
-    for (uint64_t e : translated) out += fmt("static uint32_t F_%" PRIx64 "(Cpu* restrict c);\n", e);
-    out += "\n";
-    size_t insns = 0, interpreted = 0;
+    // The C: with `parts` > 1, out.c holds the module table and
+    // out.c.1.c .. out.c.<parts>.c the functions, balanced by instruction
+    // count, for compiling in parallel.
+    std::string protos;
+    for (uint64_t e : translated) protos += fmt("uint32_t F_%" PRIx64 "(Cpu* restrict c);\n", e);
+    std::vector<std::string> bodies(parts);
+    size_t insns = 0, interpreted = 0, total = 0;
+    for (const auto& f : functions) total += f.second.insns.size();
     for (const auto& f : functions) {
         Emitter em(img, f.second, translated);
         size_t n = 0;
-        out += em.function(&n);
+        const size_t part = std::min(parts - 1, total ? insns * parts / total : 0);
+        bodies[part] += em.function(&n);
         insns += f.second.insns.size();
         interpreted += n;
     }
-    out += "static const AotEntry entries[] = {\n";
-    for (uint64_t e : translated) out += fmt("    {0x%" PRIx64 "ull, F_%" PRIx64 "},\n", e, e);
-    out += "};\n\n";
-    out += "__declspec(dllexport) const AotModule winapk_aot_module = {\n";
-    out += fmt("    %u, {offsetof(Cpu, sp), offsetof(Cpu, nzcv), offsetof(Cpu, tpidr), offsetof(Cpu, v)},\n",
-               winapk::arm64::kAotVersion);
-    out += fmt("    0x%" PRIx64 "ull, &aot_base, &aot_rt, entries, sizeof entries / sizeof entries[0],\n",
-               img.text_hash);
-    out += "};\n";
+    std::string table = "uint64_t aot_base;\nAotRuntime aot_rt;\n\nstatic const AotEntry entries[] = {\n";
+    for (uint64_t e : translated) table += fmt("    {0x%" PRIx64 "ull, F_%" PRIx64 "},\n", e, e);
+    table += "};\n\n";
+    table += "__declspec(dllexport) const AotModule winapk_aot_module = {\n";
+    table += fmt("    %u, {offsetof(Cpu, sp), offsetof(Cpu, nzcv), offsetof(Cpu, tpidr), offsetof(Cpu, v)},\n",
+                 winapk::arm64::kAotVersion);
+    table += fmt("    0x%" PRIx64 "ull, &aot_base, &aot_rt, entries, sizeof entries / sizeof entries[0],\n",
+                 img.text_hash);
+    table += "};\n";
 
-    std::ofstream o(argv[2], std::ios::binary);
-    o << out;
-    if (!o) {
-        std::fprintf(stderr, "winapk-aot: cannot write %s\n", argv[2]);
-        return 1;
+    auto write = [&](const std::string& path, const std::string& text) {
+        std::ofstream o(path, std::ios::binary);
+        o << text;
+        if (!o) std::fprintf(stderr, "winapk-aot: cannot write %s\n", path.c_str());
+        return static_cast<bool>(o);
+    };
+    const std::string head = std::string(kPrelude) + protos + "\n";
+    if (parts == 1) {
+        if (!write(argv[2], head + bodies[0] + table)) return 1;
+    } else {
+        if (!write(argv[2], head + table)) return 1;
+        for (size_t i = 0; i < parts; ++i) {
+            if (!write(fmt("%s.%zu.c", argv[2], i + 1), head + bodies[i])) return 1;
+        }
     }
     std::fprintf(stderr, "winapk-aot: %s: %zu functions, %zu instructions, %zu through the interpreter (%.1f%%)%s\n",
                  argv[1], functions.size(), insns, interpreted,

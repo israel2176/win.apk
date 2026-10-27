@@ -25,6 +25,8 @@ OUT="$(cd -- "$OUT" && pwd)"
 "$HERE/build_java.sh" "$OUT"
 "$HERE/build_framework_res.sh" "$OUT/bin/tools/framework-res.apk"
 cp -f "$BUILD/winapk-runtime.exe" "$BUILD/macapk-translator.exe" "$BUILD/winapk-guest-stub.dll" "$OUT/bin/"
+# The install-time arm64 translator (used when clang is there too).
+if [[ -f "$BUILD/winapk-aot.exe" ]]; then cp -f "$BUILD/winapk-aot.exe" "$OUT/bin/"; fi
 cp -f "$BUILD/Win.apk.exe" "$OUT/"
 # The tile an app without an icon gets in the library.
 cp -f "$HERE/../launcher/winapk.png" "$OUT/bin/"
