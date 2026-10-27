@@ -2,8 +2,11 @@
 
 Win.apk is an unofficial port of [Mac.apk](https://github.com/kksimp/Mac.apk) to
 Windows on Intel/AMD (x64). It is not affiliated with or endorsed by the Mac.apk
-project or Voltare. Everything outside `windows/` is the upstream tree. It is kept
-as close to upstream as possible so that `git merge upstream/main` stays cheap.
+project or Voltare. Win.apk's code lives in `windows/`; `runtime/` (the Android
+framework in Java and the shared native sources) comes from upstream and is kept
+close to it so that upstream fixes can still be merged. The macOS-only parts of
+upstream (the Swift launcher, the Mac build scripts, the prebuilt Mac libraries
+and the Mac documentation) are not in this repository.
 
 ## Why x64 is a different problem from the Mac
 
@@ -84,8 +87,14 @@ library (`launcher/launcher_main.cpp`, the counterpart of upstream's
   `winapk-runtime --install-only` (which also renders the app's icon and
   resolves its name), and given Start menu and desktop shortcuts with its own
   icon.
-- **Running and removing:** double-click an app to run it, or right-click to
-  remove it.
+- **Running and managing:** double-click an app to run it; right-click for Get
+  Info, shortcuts, its files and log, updating it from a newer APK,
+  reinstalling or removing it. Typing searches the library.
+- **Hebrew:** the library is in Hebrew, laid out right to left, when Windows
+  is; the settings can pick English or Hebrew instead.
+- **Settings** (the gear): language, light or dark theme, the default app for `.apk`
+  files, the phone's screen size and orientation, desktop shortcuts, and the
+  logs and app data folders.
 
 The package holds the runtime, a Java runtime, ANGLE and `README.txt`, which
 says what works, where app data and logs are, and what to attach to a bug
@@ -160,11 +169,11 @@ git fetch upstream
 git merge upstream/main
 ```
 
-Win.apk code lives under `windows/`. Upstream files are changed only where a
-Windows hook is unavoidable, and every such change is listed here:
+Upstream's macOS-only files were removed here, so a merge that touches them
+stops with a modify/delete conflict: keep them deleted (`git rm` the file).
+Files in `runtime/` are changed only where a Windows hook is unavoidable, and
+every such change is listed here:
 
-- `.github/workflows/cla.yml`: the CLA job runs only in `kksimp/Mac.apk`.
-- `README.md`: a Win.apk section at the top.
 - `runtime/java/android/content/res/Resources.java`: `getIntArray` resolves the
   items of a typed `<array>` (for example a list of color references) instead
   of returning an empty array. Not Windows-specific; worth offering upstream.
