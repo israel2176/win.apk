@@ -80,6 +80,21 @@ enum class Engine { kInterpreter, kJit };
 bool set_engine(Engine e);
 Engine engine();
 
+// Where guest time goes: totals for threads that have exited plus the
+// calling thread. The counts are always kept; the times only while profiling
+// is on (set_profiling, or WINAPK_ARM64_STATS=1, which also prints these
+// totals to stderr when the process exits).
+struct Stats {
+    uint64_t guest_entries = 0;  // host -> guest calls (call(), callbacks, JNI natives)
+    uint64_t host_calls = 0;     // guest -> host calls
+    uint64_t jit_exits = 0;      // returns from JIT code to its run loop
+    uint64_t interp_insns = 0;   // instructions the JIT handed to the interpreter
+    uint64_t run_ns = 0;         // time in outermost guest calls, host calls included
+    uint64_t host_ns = 0;        // time in host functions, guest callbacks they make excluded
+};
+Stats stats();
+void set_profiling(bool on);
+
 // What an arm64 library's import of `name` binds to when no host function
 // can stand in for it, because it works on the caller's registers (setjmp,
 // longjmp and their variants); nullptr for every other name. The loader asks

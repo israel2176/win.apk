@@ -21,6 +21,12 @@ public:
     // Runs from c.pc until c.pc == c.stop_pc, like run(c): branches out of
     // guest code go to Hooks::host_call, SVC to Hooks::svc.
     virtual void run(Cpu& c) = 0;
+
+    // For stats() (arm64_guest.h): returns from generated code to run() (host
+    // calls, interpreter fallbacks, SVCs and dynarmic's own halts), and the
+    // instructions handed to the interpreter.
+    uint64_t exits = 0;
+    uint64_t interp_insns = 0;
 };
 
 // A JIT for one host thread, whose TPIDR_EL0 is c.tpidr (read in place, so

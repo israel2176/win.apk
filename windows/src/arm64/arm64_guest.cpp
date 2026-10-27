@@ -197,6 +197,34 @@ bool code_range(uint64_t pc, uint64_t* lo, uint64_t* hi) {
     return found;
 }
 
+// ---- stats --------------------------------------------------------------------
+
+std::atomic<bool> g_profiling{false};
+
+uint64_t now_ns() {
+    static const int64_t freq = [] {
+        LARGE_INTEGER f;
+        QueryPerformanceFrequency(&f);
+        return f.QuadPart;
+    }();
+    LARGE_INTEGER t;
+    QueryPerformanceCounter(&t);
+    return static_cast<uint64_t>(t.QuadPart / freq * 1000000000 + t.QuadPart % freq * 1000000000 / freq);
+}
+
+// Totals of the threads that have exited.
+std::mutex g_stats_lock;
+Stats g_exited;
+
+void add(Stats& to, const Stats& s) {
+    to.guest_entries += s.guest_entries;
+    to.host_calls += s.host_calls;
+    to.jit_exits += s.jit_exits;
+    to.interp_insns += s.interp_insns;
+    to.run_ns += s.run_ns;
+    to.host_ns += s.host_ns;
+}
+
 // ---- per-thread guest state -----------------------------------------------------
 
 struct ThreadState {
@@ -209,6 +237,20 @@ struct ThreadState {
     // bionic's TLS slots for arm64 start at index -1 (TLS_SLOT_BIONIC_TLS);
     // TPIDR_EL0 points at slot 0, the stack guard is slot 5.
     uint64_t tls[24] = {};
+    // This thread's counts and times (the JIT keeps its own), and the time
+    // spent in guest callbacks under the host call now running, which that
+    // call's host time leaves out.
+    Stats stats;
+    uint64_t callback_ns = 0;
+
+    Stats totals() const {
+        Stats s = stats;
+        if (jit) {
+            s.jit_exits += jit->exits;
+            s.interp_insns += jit->interp_insns;
+        }
+        return s;
+    }
 
     ThreadState() {
         stack = static_cast<uint8_t*>(VirtualAlloc(nullptr, kStackGuard + kGuestStack, MEM_RESERVE, PAGE_NOACCESS));
@@ -221,6 +263,10 @@ struct ThreadState {
         tls[1 + 5] = 0x5eed5eedc0ffee00ull ^ (reinterpret_cast<uint64_t>(this) << 8);
     }
     ~ThreadState() {
+        {
+            std::lock_guard<std::mutex> hold(g_stats_lock);
+            add(g_exited, totals());
+        }
         jit.reset();
         if (stack) VirtualFree(stack, 0, MEM_RELEASE);
     }
@@ -411,7 +457,16 @@ void host_call(Cpu& c, uint64_t target) {
     f.stack = stack;
     f.nstack = 2 + kGuestStackWords;
     const uint64_t lr = c.x[30];
-    winapk_arm64_call_sysv(reinterpret_cast<const void*>(target), &f);
+    ThreadState& ts = *t_state;  // host_call runs only under run_guest
+    ++ts.stats.host_calls;
+    if (g_profiling.load(std::memory_order_relaxed)) {
+        const uint64_t callbacks0 = ts.callback_ns;
+        const uint64_t t0 = now_ns();
+        winapk_arm64_call_sysv(reinterpret_cast<const void*>(target), &f);
+        ts.stats.host_ns += now_ns() - t0 - (ts.callback_ns - callbacks0);
+    } else {
+        winapk_arm64_call_sysv(reinterpret_cast<const void*>(target), &f);
+    }
     c.x[0] = f.rax;
     c.x[1] = f.rdx;
     c.v[0] = VReg{};
@@ -443,8 +498,21 @@ void run_guest(ThreadState& ts, uint64_t pc, const uint64_t gpr[8], const uint64
     c.x[30] = c.stop_pc = return_address();
     c.pc = pc;
     c.excl_valid = false;
+    ++ts.stats.guest_entries;
     ++ts.depth;
-    execute(ts);
+    if (g_profiling.load(std::memory_order_relaxed)) {
+        // A callback's time counts against the host call it runs under, so
+        // that call's host time leaves it out; the callbacks below this one
+        // are inside it already.
+        const uint64_t callbacks0 = ts.callback_ns;
+        const uint64_t t0 = now_ns();
+        execute(ts);
+        const uint64_t dt = now_ns() - t0;
+        ts.callback_ns = callbacks0 + dt;
+        if (!nested) ts.stats.run_ns += dt;
+    } else {
+        execute(ts);
+    }
     --ts.depth;
     *x0 = c.x[0];
     if (x1) *x1 = c.x[1];
@@ -486,6 +554,20 @@ void register_shim_va_list_functions() {
     }
 }
 
+// WINAPK_ARM64_STATS=1: the totals at exit, for finding where an app's time
+// goes. Threads still running then are not counted.
+void print_stats() {
+    const Stats s = stats();
+    const double run_ms = static_cast<double>(s.run_ns) / 1e6, host_ms = static_cast<double>(s.host_ns) / 1e6;
+    std::fprintf(stderr,
+                 "[win.apk] arm64 stats (%s): %.1f ms in guest calls, of which %.1f ms in host functions and %.1f ms "
+                 "in arm64 code; %llu guest entries, %llu host calls, %llu JIT exits, %llu interpreted instructions\n",
+                 engine() == Engine::kJit ? "JIT" : "interpreter", run_ms, host_ms, run_ms - host_ms,
+                 static_cast<unsigned long long>(s.guest_entries), static_cast<unsigned long long>(s.host_calls),
+                 static_cast<unsigned long long>(s.jit_exits), static_cast<unsigned long long>(s.interp_insns));
+    std::fflush(stderr);
+}
+
 }  // namespace
 
 }  // namespace winapk::arm64
@@ -513,6 +595,10 @@ void init() {
         set_hooks(h);
         g_veh = AddVectoredExceptionHandler(1, execute_fault_handler);
         register_shim_va_list_functions();
+        if (GetEnvironmentVariableA("WINAPK_ARM64_STATS", nullptr, 0) > 0) {
+            set_profiling(true);
+            std::atexit(print_stats);
+        }
         return true;
     }();
     (void)done;
@@ -560,6 +646,18 @@ bool set_engine(Engine e) {
 }
 
 Engine engine() { return g_engine.load(); }
+
+Stats stats() {
+    Stats s;
+    {
+        std::lock_guard<std::mutex> hold(g_stats_lock);
+        s = g_exited;
+    }
+    if (t_state) add(s, t_state->totals());
+    return s;
+}
+
+void set_profiling(bool on) { g_profiling.store(on); }
 
 uint64_t call(const void* fn, const uint64_t* args, size_t nargs) {
     init();

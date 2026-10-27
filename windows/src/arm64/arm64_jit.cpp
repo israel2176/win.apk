@@ -115,6 +115,7 @@ public:
         for (;;) {
             pending_ = Pending::kNone;
             jit_->Run();
+            ++exits;
             jit_->ClearHalt(kHalt);
             save_state(c);
             switch (pending_) {
@@ -130,6 +131,7 @@ public:
                         uint64_t lo, hi;
                         if (c.pc == c.stop_pc || !hooks().code_range(c.pc, &lo, &hi)) break;
                         step(c);
+                        ++interp_insns;
                     }
                     if (c.pc == c.stop_pc) return;
                     break;
