@@ -26,7 +26,7 @@ fall into three groups:
 | `src/elf_loader.cpp` | Android x86_64 ELF loader: segments, RELA/RELR/APS2 relocations, protections, RELRO, init/fini |
 | `src/elf_tls.cpp` | Dynamic ELF TLS for guest libraries: module ids, `__tls_get_addr`, a block per thread and module |
 | `src/fs_tls_patch.cpp` | Rewrites the Bionic stack guard `%fs:0x28` to `%gs:0x28` (`NT_TIB.ArbitraryUserPointer`) |
-| `src/mini_bionic.cpp`, `src/bionic/` | The Windows Bionic shim (sysv_abi functions over the UCRT and Win32): strings, printf, pthread, files, time, `mmap`, system properties and the environment, Android paths, pipes/eventfd/epoll, sockets on Winsock, `ALooper`. `test/bionic_test.cpp` (`winapk-bionic-test`) checks it against `test/guest/bionic_guest.c` |
+| `src/mini_bionic.cpp`, `src/bionic/` | The Windows Bionic shim (sysv_abi functions over the UCRT and Win32): strings, printf, pthread, files, time, `mmap`, system properties and the environment, Android paths, pipes/eventfd/epoll, sockets on Winsock, `ALooper`, and `libz.so` on a statically linked zlib. `test/bionic_test.cpp` (`winapk-bionic-test`) checks it against `test/guest/bionic_guest.c` |
 | `tools/elfrun_main.cpp` | `winapk-elfrun`: loads `.so` files and runs the PoC checks |
 | `test/guest/poc_guest.c` | The Android x86_64 test library |
 | `include/winapk/abi_thunk.h`, `src/abi_thunk.cpp` | Runtime machine-code thunks for the JNI bridge: native-method thunks from Microsoft x64 callers to System V code (built per Java signature) and the System V variadic `va_list` entry stub |
@@ -50,7 +50,7 @@ on the main thread and on new threads.
 On Windows ([MSYS2](https://www.msys2.org/), CLANG64 shell):
 
 ```sh
-pacman -S mingw-w64-clang-x86_64-{clang,cmake,ninja}
+pacman -S mingw-w64-clang-x86_64-{clang,cmake,ninja,zlib}
 cmake -S windows -B build -G Ninja && cmake --build build
 ./build/winapk-elfrun.exe path/to/libwinapk_poc_guest.so
 ```
@@ -116,11 +116,59 @@ from Java (`GLSurfaceView`, libGDX) on ANGLE, and so do apps that draw with
 OpenGL ES from their own native code through a SurfaceView (SDL games);
 `NativeActivity` apps and native audio (OpenSL ES, AAudio) are not there yet. App data goes to `%LOCALAPPDATA%\Win.apk`.
 
-The app sees a 360x800 dp phone, the most common phone screen, made shorter
-(down to 360x640) when the window would not fit the screen's work area.
-`WINAPK_PHONE_SIZE=412x915` sets another size, in dp.
+The runtime and the app data may live in folders with names in any language,
+whatever "Language for non-Unicode programs" is set to: the runtime's manifest
+makes its ANSI code page UTF-8 (Windows 10 1903 and later), which is how the
+JVM gets such paths whole, and the steps that run in a separate JVM (install,
+DEX conversion) run in a child of `winapk-runtime.exe` rather than `java.exe`.
+Older Windows ignores the manifest; there the runtime passes the JVM 8.3 short
+names, which covers the app data, but the runtime's own folder needs plain
+letters (the JDK loads its DLLs by their long names).
 
-For tests, `WINAPK_HEADLESS=1` runs without a window,
+The app sees a 360x800 dp phone, the most common phone screen.
+`WINAPK_PHONE_SIZE=412x915` sets another size, in dp. The window shows the
+phone at the monitor's scale. When the whole window, title bar included, would
+not fit the monitor's work area (the screen without the taskbar), the app gets
+a lower density instead, so it keeps its dp size and still draws at the
+window's own pixel size. The window is fitted again when it moves to another
+monitor or the taskbar changes. `WINAPK_DENSITY` (a dpi) overrides the density.
+
+### Web content (WebView2)
+
+Web pages an app shows run in Microsoft Edge WebView2, the counterpart of
+upstream's WKWebView. It needs the WebView2 Runtime, which Windows 11 and most
+Windows 10 machines already have; `WebView2Loader.dll`, the SDK's
+redistributable loader, sits next to `winapk-runtime.exe`
+(`windows/scripts/fetch_webview2.sh`). Without the runtime, without the loader,
+headless, or with `WINAPK_WEBVIEW2=0`, web links open in the system browser as
+before, and the log says so once.
+
+- A Custom Tab or Trusted Web Activity launch (androidx.browser's
+  `CustomTabsIntent`, AppAuth's sign-in, a TWA launcher) opens a tab window over
+  the app: close, back and the URL on a toolbar, the page title as the window
+  title. As in a Custom Tab on a phone, every navigation is checked against the
+  app's own manifest: a page that goes to a URL the app handles (an OAuth or
+  sign-in callback, as a custom scheme or an `https` App Link) is not loaded but
+  delivered to the app as the browser's `ACTION_VIEW` intent, and the tab
+  closes. Other pages keep loading in the tab. The browser row the
+  PackageManager lists (`com.macapk.host`) answers androidx.browser's Custom
+  Tabs service, so apps that look for one choose a Custom Tab.
+- A plain link (an "open in browser", a Privacy Policy link) still opens in the
+  system browser: on a phone that is the user's browser app too.
+- An app's own `android.webkit.WebView`s show the page in the app window, at
+  the view's place, behind the app's views drawn over it: upstream's Java
+  WebView runs unchanged on WebView2 (`native_webview.cpp`), with
+  `WebViewClient`, `WebChromeClient`, `evaluateJavascript`,
+  `addJavascriptInterface` (a synchronous call, as on a device),
+  `CookieManager`, `loadData` and `loadDataWithBaseURL`.
+- Cookies and storage are the app's own, in `app_webview2` in its data
+  directory, kept between runs; the browser tab has a profile of its own
+  there.
+
+For tests, `WINAPK_TEST_WORKAREA=1366x728` stands in for the work area, in
+pixels (`1366x728-0+0` puts it at the top right of the real one;
+`@file` reads the value from a file at every fit),
+`WINAPK_HEADLESS=1` runs without a window,
 `WINAPK_HEADLESS_FRAME=frame.bmp` saves the last frame the app drew, and
 `WINAPK_HEADLESS_EXIT_AFTER_FRAMES=30` exits that many display frames after the
 first one the app presents (an idle app counts too). On
@@ -214,6 +262,17 @@ Windows hook is unavoidable, and every such change is listed here:
   virtual back camera delivers dark-grey frames, so screens built around a
   preview open and their other controls work. `MACAPK_VIRTUAL_CAMERA=0` turns
   it off. On the Mac a real camera always wins.
+- `runtime/java/com/macapk/loader/ActivityHost.java` and
+  `MacApkPackageManager.java`: a Custom Tab launch opens in
+  `HostBrowserTab` (new, with `HostCustomTabsService`) when the host has a
+  browser tab of its own, and the host browser row then answers the Custom Tabs
+  service; its PackageInfo carries `signingInfo`. On the Mac, which has no such
+  tab, nothing changes but the `signingInfo`.
+- `runtime/java/android/webkit/WebView.java`: with a modal window above a
+  WebView, the occluder rects sent to the engine add that window's bounds
+  after the whole-view rect, so an engine that shows the page over the canvas
+  (Windows) can keep the dialog visible. The union, which the Mac's hit test
+  uses, is unchanged.
 
 ## License
 

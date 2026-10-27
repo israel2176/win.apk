@@ -20,7 +20,10 @@
 #include "winapk/mini_bionic.h"
 
 #include "native_asset.h"
+#include "winapk/jnigraphics.h"
+
 #include "native_aaudio.h"
+#include "native_media.h"
 #include "native_opensles.h"
 #include "native_window.h"
 
@@ -165,7 +168,9 @@ void* resolve_system(const char* name) {
     if (void* p = winapk::host::native_window_resolve(name)) return p;
     if (void* p = winapk::host::native_asset_resolve(name)) return p;
     if (void* p = winapk::host::native_aaudio_resolve(name)) return p;
-    return winapk::host::native_opensles_resolve(name);
+    if (void* p = winapk::host::native_media_resolve(name)) return p;
+    if (void* p = winapk::host::native_opensles_resolve(name)) return p;
+    return winapk::jnigraphics_resolve(name);
 }
 
 const winapk::host::HostMethod kLinkerMethods[] = {

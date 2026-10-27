@@ -13,6 +13,7 @@
 //   5. Call com.macapk.loader.Boot.run.
 //
 //   winapk-runtime --apk <file.apk> [--data <dir>] [--jdk <dir>] [--lib <dir>] [--install-only]
+//   winapk-runtime --java-main --jdk <dir> --cp <jar> <class> [args...]   (internal: run_java)
 //
 // --install-only stops after step 2 plus the launcher's metadata: the app's
 // icon and name in <app dir>/icon.png and label.txt (com.winapk.tools.AppMeta,
@@ -21,9 +22,20 @@
 //
 // App data lives under %LOCALAPPDATA%\Win.apk unless --data says otherwise.
 // There is no window yet (milestone M2); what the app does shows in the log.
+//
+// Paths may hold any character, whatever "Language for non-Unicode programs"
+// is set to (a user name in Hebrew on an English system, say). The program
+// uses the wide Windows calls for its own files, and its manifest
+// (runtime.manifest) sets the process's ANSI code page to UTF-8 on Windows 10
+// 1903 and later, which is how the JVM, which reads paths in that code page,
+// gets them whole. Older systems get the paths in a form the code page can
+// hold (jvm_path). The steps that run in a child JVM run in a child of this
+// program (--java-main), not in java.exe, which reads its own location and
+// its arguments in the ANSI code page.
 
 #include "guest_libs.h"
 #include "host_natives.h"
+#include "win32_window.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -71,22 +83,112 @@ fs::path exe_dir() {
     return fs::path(std::wstring(buf, n)).parent_path();
 }
 
-// HotSpot reads option strings in the ANSI code page, so a path with
-// characters outside it (a user name in Hebrew, say) would not survive. The
-// short 8.3 form is plain ASCII; NTFS has it unless the volume disabled it.
-std::string jvm_path(const fs::path& p) {
-    const std::wstring w = p.wstring();
-    bool ascii = true;
-    for (wchar_t c : w) ascii = ascii && c < 0x80;
-    if (ascii) return utf8(w);
-    wchar_t buf[MAX_PATH * 4];
-    const DWORD n = GetShortPathNameW(w.c_str(), buf, MAX_PATH * 4);
-    if (n == 0 || n >= MAX_PATH * 4) {
-        std::fprintf(stderr, "[win.apk] warning: no ASCII short name for %s; the JVM may not find it\n",
-                     utf8(w).c_str());
-        return utf8(w);
+// `w` in the process's ANSI code page, when every character of it survives
+// the round trip. Under the manifest's UTF-8 code page that is always so.
+bool to_ansi(const std::wstring& w, std::string* out) {
+    if (GetACP() == CP_UTF8) {
+        *out = utf8(w);
+        return true;
     }
-    return utf8(std::wstring(buf, n));
+    out->clear();
+    if (w.empty()) return true;
+    BOOL lossy = FALSE;
+    const int n = WideCharToMultiByte(CP_ACP, WC_NO_BEST_FIT_CHARS, w.data(), static_cast<int>(w.size()), nullptr,
+                                      0, nullptr, &lossy);
+    if (n <= 0 || lossy) return false;
+    std::string s(static_cast<size_t>(n), '\0');
+    WideCharToMultiByte(CP_ACP, WC_NO_BEST_FIT_CHARS, w.data(), static_cast<int>(w.size()), &s[0], n, nullptr,
+                        &lossy);
+    if (lossy) return false;
+    *out = std::move(s);
+    return true;
+}
+
+// A form of the existing path `p` that the ANSI code page can hold: `p`
+// itself when it can, else its 8.3 short form (plain ASCII; NTFS has it
+// unless the volume turned short names off). `p` when neither works, with
+// *ok false.
+fs::path ansi_safe(const fs::path& p, bool* ok = nullptr) {
+    std::string bytes;
+    if (ok) *ok = true;
+    if (to_ansi(p.wstring(), &bytes)) return p;
+    wchar_t buf[MAX_PATH * 4];
+    const DWORD n = GetShortPathNameW(p.c_str(), buf, MAX_PATH * 4);
+    if (n > 0 && n < MAX_PATH * 4 && to_ansi(std::wstring(buf, n), &bytes)) return fs::path(std::wstring(buf, n));
+    if (ok) *ok = false;
+    return p;
+}
+
+// A path for a JVM option: HotSpot reads option strings, and opens the files
+// they name, in the ANSI code page.
+std::string jvm_path(const fs::path& p) {
+    bool ok = true;
+    const fs::path safe = ansi_safe(p, &ok);
+    std::string bytes;
+    if (ok && to_ansi(safe.wstring(), &bytes)) return bytes;
+    std::fprintf(stderr,
+                 "[win.apk] warning: %s has characters the ANSI code page (%u) cannot hold and no short name; "
+                 "the JVM may not find it. Windows 10 1903 or later, or a folder with plain letters, avoids this.\n",
+                 utf8(p.wstring()).c_str(), GetACP());
+    return utf8(p.wstring());
+}
+
+// One argument for a command line, quoted the way CommandLineToArgvW and the
+// C runtime split it again.
+std::wstring quoted(const std::wstring& a) {
+    std::wstring q = L"\"";
+    size_t slashes = 0;
+    for (wchar_t c : a) {
+        if (c == L'\\') {
+            ++slashes;
+            continue;
+        }
+        q.append(c == L'"' ? slashes * 2 + 1 : slashes, L'\\');
+        slashes = 0;
+        q += c;
+    }
+    q.append(slashes * 2, L'\\');
+    return q + L"\"";
+}
+std::wstring quoted(const fs::path& p) { return quoted(p.wstring()); }
+
+// Loads the JDK's jvm.dll. HotSpot finds java.dll and the rest of the JDK from
+// jvm.dll's own path, which it reads in the ANSI code page, so the DLL is
+// loaded by a path that code page can hold.
+HMODULE load_jvm(const fs::path& jdk) {
+    const fs::path home = ansi_safe(jdk);
+    // jvm.dll needs the DLLs next to java.exe (the VC runtime among them).
+    SetDllDirectoryW((home / "bin").c_str());
+    HMODULE jvm = LoadLibraryW((home / "bin" / "server" / "jvm.dll").c_str());
+    if (!jvm) std::fprintf(stderr, "[win.apk] cannot load jvm.dll (error %lu)\n", GetLastError());
+    return jvm;
+}
+
+using CreateVmFn = jint(JNICALL*)(JavaVM**, void**, void*);
+
+bool create_vm(HMODULE jvm, std::vector<std::string>& opts, JavaVM** vm, JNIEnv** env) {
+    auto create = reinterpret_cast<CreateVmFn>(GetProcAddress(jvm, "JNI_CreateJavaVM"));
+    if (!create) return false;
+    std::vector<JavaVMOption> jopts(opts.size());
+    for (size_t i = 0; i < opts.size(); ++i) {
+        jopts[i].optionString = &opts[i][0];
+        jopts[i].extraInfo = nullptr;
+    }
+    JavaVMInitArgs args{};
+    args.version = JNI_VERSION_21;
+    args.nOptions = static_cast<jint>(jopts.size());
+    args.options = jopts.data();
+    args.ignoreUnrecognized = JNI_FALSE;
+    if (create(vm, reinterpret_cast<void**>(env), &args) != JNI_OK) {
+        std::fprintf(stderr, "[win.apk] JNI_CreateJavaVM failed\n");
+        return false;
+    }
+    return true;
+}
+
+// A Java string straight from UTF-16, so any character survives.
+jstring jstring_of(JNIEnv* env, const std::wstring& w) {
+    return env->NewString(reinterpret_cast<const jchar*>(w.data()), static_cast<jsize>(w.size()));
 }
 
 bool parse_args(int argc, wchar_t** argv, Options* o) {
@@ -144,12 +246,27 @@ bool resolve_paths(Options* o) {
     return true;
 }
 
-// Runs a command line and returns its exit code, or -1 if it did not start.
-int run_process(std::wstring cmdline) {
+// Runs `main_class` from `jar` with `args` in a child JVM, as
+// `java -cp <jar> <main_class> <args>` would, and returns its exit code, or -1
+// if it did not start. The child is this program (--java-main), not the JDK's
+// java.exe: java.exe finds java.dll from its own path and parses its
+// arguments in the ANSI code page, so under a folder with characters outside
+// it it stopped at "could not find java.dll", and an argument such as the
+// data folder reached Java as "?". The child gets the arguments as UTF-16
+// Java strings, and its own default heap, as java.exe did: the DEX converter
+// needs more than the app's 1 GiB for large apps.
+int run_java(const Options& o, const fs::path& jar, const wchar_t* main_class, const std::vector<std::wstring>& args) {
+    wchar_t self[32768];
+    const DWORD n = GetModuleFileNameW(nullptr, self, 32768);
+    if (n == 0 || n >= 32768) return -1;
+    std::wstring cmdline = quoted(std::wstring(self, n)) + L" --java-main --jdk " + quoted(o.jdk) + L" --cp " +
+                           quoted(jar) + L" " + main_class;
+    for (const std::wstring& a : args) cmdline += L" " + quoted(a);
+    std::fflush(stderr);  // our lines first, then the child's
     STARTUPINFOW si{};
     si.cb = sizeof(si);
     PROCESS_INFORMATION pi{};
-    if (!CreateProcessW(nullptr, &cmdline[0], nullptr, nullptr, TRUE, 0, nullptr, nullptr, &si, &pi)) {
+    if (!CreateProcessW(self, &cmdline[0], nullptr, nullptr, TRUE, 0, nullptr, nullptr, &si, &pi)) {
         return -1;
     }
     WaitForSingleObject(pi.hProcess, INFINITE);
@@ -160,7 +277,21 @@ int run_process(std::wstring cmdline) {
     return static_cast<int>(code);
 }
 
-std::wstring quoted(const fs::path& p) { return L"\"" + p.wstring() + L"\""; }
+// Runs a command line (a tool that is not Java: winapk-aot, clang) and returns
+// its exit code, or -1 if it did not start.
+int run_process(std::wstring cmdline) {
+    std::fflush(stderr);
+    STARTUPINFOW si{};
+    si.cb = sizeof(si);
+    PROCESS_INFORMATION pi{};
+    if (!CreateProcessW(nullptr, &cmdline[0], nullptr, nullptr, TRUE, 0, nullptr, nullptr, &si, &pi)) return -1;
+    WaitForSingleObject(pi.hProcess, INFINITE);
+    DWORD code = 1;
+    GetExitCodeProcess(pi.hProcess, &code);
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    return static_cast<int>(code);
+}
 
 // ---- which converter made the cached code -----------------------------------
 //
@@ -307,8 +438,7 @@ bool convert_dex(const Options& o, const fs::path& app_dir, fs::path* jar) {
     if (!why) return true;
     std::fprintf(stderr, "[win.apk] converting the app's code (%s)...\n", why);
     const fs::path tmp = app_dir / "classes.jar.tmp";
-    const int rc = run_process(quoted(o.jdk / "bin" / "java.exe") + L" -cp " + quoted(o.lib / "macapk-loader.jar") +
-                               L" com.macapk.dex.Main " + quoted(o.apk) + L" " + quoted(tmp));
+    const int rc = run_java(o, o.lib / "macapk-loader.jar", L"com.macapk.dex.Main", {o.apk.wstring(), tmp.wstring()});
     if (rc == 3) {
         jar->clear();
         return true;
@@ -373,10 +503,8 @@ bool install_app(Options* o, const fs::path& android_root) {
     fs::path base = installed();
     if (base.empty()) {
         std::fprintf(stderr, "[win.apk] installing the app (once per install)...\n");
-        const int rc = run_process(quoted(o->jdk / "bin" / "java.exe") + L" -cp " +
-                                   quoted(o->lib / "winapk-tools.jar") + L" com.winapk.tools.AppInstall " +
-                                   quoted(o->apk) + L" " + quoted(android_root) + L" " + abis + L" " +
-                                   quoted(record));
+        const int rc = run_java(*o, o->lib / "winapk-tools.jar", L"com.winapk.tools.AppInstall",
+                                {o->apk.wstring(), android_root.wstring(), abis, record.wstring()});
         base = rc == 0 ? installed() : fs::path();
         if (base.empty()) {
             std::fprintf(stderr, "[win.apk] installing the app failed (exit code %d)\n", rc);
@@ -432,23 +560,20 @@ struct BootArgs {
 };
 
 // The display density, as upstream derives it from the Mac screen's point
-// scale (Retina 2x = 320 dpi): Windows' scale for the main monitor x 160, so
-// 100% is 160 (mdpi), 150% is 240 (hdpi), 200% is 320 (xhdpi). The app then
-// draws at exactly the window's pixel size and nothing is stretched or shrunk.
-// Headless runs (tests, CI) keep upstream's 320 so their frames stay 720x1280;
-// WINAPK_DENSITY (a dpi) overrides both.
+// scale (Retina 2x = 320 dpi): the Windows scale of the monitor the app opens
+// on x 160, so 100% is 160 (mdpi), 150% is 240 (hdpi), 200% is 320 (xhdpi).
+// When the whole window would not fit that monitor's work area, the scale is
+// lowered until it does (win32_window.h, window_plan): the app keeps its dp
+// size and draws at exactly the window's pixel size, so nothing is stretched
+// or shrunk. Headless runs (tests, CI) keep upstream's 320 so their frames
+// stay 720x1280; WINAPK_DENSITY (a dpi) overrides both.
 int display_density_dpi() {
     const std::wstring forced = env_var(L"WINAPK_DENSITY");
     if (!forced.empty()) return _wtoi(forced.c_str());
     if (!env_var(L"WINAPK_HEADLESS").empty()) return 320;
-    using DpiAwareFn = BOOL(WINAPI*)(HANDLE);
-    using SystemDpiFn = UINT(WINAPI*)();
-    HMODULE user32 = GetModuleHandleW(L"user32.dll");
-    auto aware = reinterpret_cast<DpiAwareFn>(GetProcAddress(user32, "SetProcessDpiAwarenessContext"));
-    auto system_dpi = reinterpret_cast<SystemDpiFn>(GetProcAddress(user32, "GetDpiForSystem"));
-    if (aware) aware(reinterpret_cast<HANDLE>(-4));  // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
-    const UINT dpi = system_dpi ? system_dpi() : 96;
-    return std::clamp(static_cast<int>(dpi * 160 / 96), 120, 640);
+    int w = 0, h = 0;
+    winapk::host::launch_phone_size(&w, &h);
+    return winapk::host::window_density_dpi(winapk::host::window_plan(w, h));
 }
 
 std::vector<std::string> jvm_options(const BootArgs& b) {
@@ -507,40 +632,120 @@ void check_exception(JNIEnv* env, const char* what) {
     env->ExceptionClear();
 }
 
+// One line on how paths reach the JVM: the ANSI code page (65001 is UTF-8,
+// which the manifest asks for) and the encoding the JVM takes file names in
+// (sun.jnu.encoding).
+void report_path_encoding(JNIEnv* env) {
+    std::string jnu = "?";
+    jclass sys = env->FindClass("java/lang/System");
+    jmethodID get = sys ? env->GetStaticMethodID(sys, "getProperty", "(Ljava/lang/String;)Ljava/lang/String;")
+                        : nullptr;
+    jstring v = get ? static_cast<jstring>(
+                          env->CallStaticObjectMethod(sys, get, env->NewStringUTF("sun.jnu.encoding")))
+                    : nullptr;
+    if (env->ExceptionCheck()) env->ExceptionClear();
+    if (v) {
+        const char* c = env->GetStringUTFChars(v, nullptr);
+        if (c) {
+            jnu = c;
+            env->ReleaseStringUTFChars(v, c);
+        }
+    }
+    std::fprintf(stderr, "[win.apk] ANSI code page %u; the JVM takes file names in %s\n", GetACP(), jnu.c_str());
+}
+
+// winapk-runtime --java-main --jdk <dir> --cp <jar> <class> [args...]
+//
+// `java -cp <jar> <class> args...` for run_java: creates a JVM with the
+// default options (heap and all) and calls <class>.main with the arguments
+// as UTF-16 Java strings. A System.exit in main ends the process with its
+// code; otherwise the exit code is 0, or 1 when main throws, as with java.exe.
+struct JavaMainArgs {
+    fs::path jdk, cp;
+    std::string main_class;  // binary name with '/', "com/macapk/dex/Main"
+    std::vector<std::wstring> args;
+    int result = 1;
+};
+
+DWORD WINAPI java_main_thread(void* param) {
+    auto* a = static_cast<JavaMainArgs*>(param);
+    HMODULE jvm = load_jvm(a->jdk);
+    if (!jvm) return 1;
+    std::vector<std::string> opts{"-Djava.class.path=" + jvm_path(a->cp)};
+    JavaVM* vm = nullptr;
+    JNIEnv* env = nullptr;
+    if (!create_vm(jvm, opts, &vm, &env)) return 1;
+    jclass cls = env->FindClass(a->main_class.c_str());
+    jmethodID main = cls ? env->GetStaticMethodID(cls, "main", "([Ljava/lang/String;)V") : nullptr;
+    if (!main) {
+        check_exception(env, "the main class lookup");
+        std::fprintf(stderr, "[win.apk] no main method in %s\n", a->main_class.c_str());
+        return 1;
+    }
+    jobjectArray args =
+        env->NewObjectArray(static_cast<jsize>(a->args.size()), env->FindClass("java/lang/String"), nullptr);
+    for (size_t i = 0; i < a->args.size(); ++i) {
+        env->SetObjectArrayElement(args, static_cast<jsize>(i), jstring_of(env, a->args[i]));
+    }
+    env->CallStaticVoidMethod(cls, main, args);
+    const bool threw = env->ExceptionCheck();
+    if (threw) {
+        // As java.exe reports it: the thread's uncaught exception handler
+        // prints "Exception in thread "main" ...".
+        jthrowable t = env->ExceptionOccurred();
+        env->ExceptionClear();
+        jclass thread_cls = env->FindClass("java/lang/Thread");
+        jmethodID current = env->GetStaticMethodID(thread_cls, "currentThread", "()Ljava/lang/Thread;");
+        jmethodID dispatch = env->GetMethodID(thread_cls, "dispatchUncaughtException", "(Ljava/lang/Throwable;)V");
+        jobject self = current ? env->CallStaticObjectMethod(thread_cls, current) : nullptr;
+        if (self && dispatch) env->CallVoidMethod(self, dispatch, t);
+        if (env->ExceptionCheck()) env->ExceptionDescribe();
+        env->ExceptionClear();
+    }
+    vm->DestroyJavaVM();  // waits for the program's other threads, as java.exe does
+    a->result = threw ? 1 : 0;
+    return 0;
+}
+
+int java_main(int argc, wchar_t** argv) {
+    JavaMainArgs a;
+    int i = 2;
+    for (; i + 1 < argc; i += 2) {
+        const std::wstring k = argv[i];
+        if (k == L"--jdk") a.jdk = argv[i + 1];
+        else if (k == L"--cp") a.cp = argv[i + 1];
+        else break;
+    }
+    if (a.jdk.empty() || a.cp.empty() || i >= argc) {
+        std::fprintf(stderr, "usage: winapk-runtime --java-main --jdk <dir> --cp <jar> <class> [args...]\n");
+        return 2;
+    }
+    a.main_class = utf8(argv[i++]);
+    std::replace(a.main_class.begin(), a.main_class.end(), '.', '/');
+    for (; i < argc; ++i) a.args.emplace_back(argv[i]);
+    // HotSpot's main thread is the one that creates the VM: give it at least
+    // java.exe's room.
+    HANDLE t = CreateThread(nullptr, 64 * 1024 * 1024, java_main_thread, &a, STACK_SIZE_PARAM_IS_A_RESERVATION,
+                            nullptr);
+    if (!t) return 1;
+    WaitForSingleObject(t, INFINITE);
+    CloseHandle(t);
+    std::fflush(stderr);
+    return a.result;
+}
+
 // Steps 3 to 5, on the large-stack thread.
 DWORD WINAPI boot_thread(void* param) {
     auto* b = static_cast<BootArgs*>(param);
     const Options& o = b->options;
 
-    // jvm.dll needs the DLLs next to java.exe (the VC runtime among them).
-    SetDllDirectoryW((o.jdk / "bin").wstring().c_str());
-    HMODULE jvm = LoadLibraryW((o.jdk / "bin" / "server" / "jvm.dll").wstring().c_str());
-    if (!jvm) {
-        std::fprintf(stderr, "[win.apk] cannot load jvm.dll (error %lu)\n", GetLastError());
-        return 1;
-    }
-    using CreateVm = jint(JNICALL*)(JavaVM**, void**, void*);
-    auto create = reinterpret_cast<CreateVm>(GetProcAddress(jvm, "JNI_CreateJavaVM"));
-    if (!create) return 1;
-
+    HMODULE jvm = load_jvm(o.jdk);
+    if (!jvm) return 1;
     std::vector<std::string> opts = jvm_options(*b);
-    std::vector<JavaVMOption> jopts(opts.size());
-    for (size_t i = 0; i < opts.size(); ++i) {
-        jopts[i].optionString = &opts[i][0];
-        jopts[i].extraInfo = nullptr;
-    }
-    JavaVMInitArgs args{};
-    args.version = JNI_VERSION_21;
-    args.nOptions = static_cast<jint>(jopts.size());
-    args.options = jopts.data();
-    args.ignoreUnrecognized = JNI_FALSE;
-
     JavaVM* vm = nullptr;
     JNIEnv* env = nullptr;
-    if (create(&vm, reinterpret_cast<void**>(&env), &args) != JNI_OK) {
-        std::fprintf(stderr, "[win.apk] JNI_CreateJavaVM failed\n");
-        return 1;
-    }
+    if (!create_vm(jvm, opts, &vm, &env)) return 1;
+    report_path_encoding(env);
     jvmtiEnv* jvmti = nullptr;
     if (vm->GetEnv(reinterpret_cast<void**>(&jvmti), JVMTI_VERSION_1_2) != JNI_OK) {
         std::fprintf(stderr, "[win.apk] no JVMTI\n");
@@ -562,9 +767,7 @@ DWORD WINAPI boot_thread(void* param) {
     macapk::sqlite::RegisterNativeSqliteMethods(env);
     check_exception(env, "RegisterNativeSqliteMethods");
 
-    // Java strings take UTF-8 here (modified UTF-8 is identical outside NUL
-    // and supplementary characters, which paths do not contain).
-    auto jstr = [&](const fs::path& p) { return env->NewStringUTF(utf8(p.wstring()).c_str()); };
+    auto jstr = [&](const fs::path& p) { return jstring_of(env, p.wstring()); };
 
     if (o.install_only) {
         jclass meta = env->FindClass("com/winapk/tools/AppMeta");
@@ -629,6 +832,7 @@ void buffer_stderr() {
 
 int wmain(int argc, wchar_t** argv) {
     buffer_stderr();
+    if (argc > 1 && std::wstring(argv[1]) == L"--java-main") return java_main(argc, argv);
     BootArgs b;
     if (!parse_args(argc, argv, &b.options)) {
         std::fprintf(stderr, "usage: winapk-runtime --apk <file.apk|.apkm|.xapk|.apks> [--data <dir>] [--jdk <dir>] [--lib <dir>] "

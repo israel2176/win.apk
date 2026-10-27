@@ -812,10 +812,18 @@ public class View implements android.graphics.drawable.Drawable.Callback,
         // Key learned structurally via setTag rather than from the table (so we
         // have no interface name for it): unchanged behaviour.
         if (iface == null) return true;
+        ClassLoader cl = owner.getClass().getClassLoader();
+        java.util.Set<String> missing;
+        synchronized (sOwnerIfaceMissing) {
+            missing = sOwnerIfaceMissing.computeIfAbsent(cl,
+                k -> java.util.concurrent.ConcurrentHashMap.newKeySet());
+        }
+        if (missing.contains(iface)) return true;  // renamed: looked up once
         Class<?> ic;
         try {
-            ic = Class.forName(iface, false, owner.getClass().getClassLoader());
+            ic = Class.forName(iface, false, cl);
         } catch (Throwable renamedOrAbsent) {
+            missing.add(iface);
             return true; // cannot decide; see the R8 note above
         }
         if (ic.isInstance(owner)) return true;
@@ -855,6 +863,11 @@ public class View implements android.graphics.drawable.Drawable.Callback,
         new java.util.concurrent.ConcurrentHashMap<>();
     private static final java.util.Set<Integer> sOwnerRefusedKeys =
         java.util.Collections.synchronizedSet(new java.util.HashSet<Integer>());
+    /** Per loader, the owner interface names it cannot resolve (an R8-renamed
+     *  app). getTag(ownerKey) runs per frame, and each miss was a Class.forName
+     *  plus a ClassNotFound log line. */
+    private static final java.util.Map<ClassLoader, java.util.Set<String>> sOwnerIfaceMissing =
+        new java.util.WeakHashMap<>();
     private static final boolean OWNER_TRACE = System.getenv("MACAPK_OWNER_TRACE") != null;
     private static boolean sWarnedOwnerFallback = false;
     /** THE androidx view-tree owner families. This table is the SINGLE place any
@@ -1150,9 +1163,11 @@ public class View implements android.graphics.drawable.Drawable.Callback,
     private static final java.util.Map<Class<?>, Boolean> sOwnerTagClassCache =
         new java.util.concurrent.ConcurrentHashMap<>();
     private static volatile Class<?> sLifecycleStateCls = null;
-    /** Resolve androidx.lifecycle.Lifecycle$State rename-proof. Cache SUCCESS only
-     *  (never a permanent failure -- the class may not be loaded yet). Try the
-     *  value's classloader, then the current activity's (the app classloader). */
+    /** Resolve androidx.lifecycle.Lifecycle$State rename-proof. The class is
+     *  cached once found; a miss is remembered only per loader (a framework
+     *  view's loader cannot see androidx, but the app's loader, tried next, may
+     *  -- so a miss is never cached as a global answer). Try the value's
+     *  classloader, then the current activity's (the app classloader). */
     private static Class<?> lifecycleStateClass(ClassLoader cl) {
         Class<?> c = sLifecycleStateCls;
         if (c != null) return c;
@@ -1167,10 +1182,18 @@ public class View implements android.graphics.drawable.Drawable.Callback,
         return c;
     }
     private static Class<?> tryLoadLifecycleState(ClassLoader cl) {
-        if (cl == null) return null;
+        if (cl == null || sNoLifecycleStateName.containsKey(cl)) return null;
         try { return Class.forName("androidx.lifecycle.Lifecycle$State", false, cl); }
-        catch (Throwable t) { return null; }
+        catch (Throwable t) {
+            // A loader that cannot find the name now never will (R8 renamed it,
+            // as in Spotify): remember that per loader, or every setTag and
+            // owner-key getTag repeats the lookup and its ClassNotFound line.
+            sNoLifecycleStateName.put(cl, Boolean.TRUE);
+            return null;
+        }
     }
+    private static final java.util.Map<ClassLoader, Boolean> sNoLifecycleStateName =
+        java.util.Collections.synchronizedMap(new java.util.WeakHashMap<ClassLoader, Boolean>());
     private static boolean returnsLifecycleState(Class<?> t, Class<?> stateCls) {
         if (t == null || t.isPrimitive() || t == Object.class) return false;
         try {
@@ -4044,8 +4067,38 @@ public class View implements android.graphics.drawable.Drawable.Callback,
     private OnKeyListener onKeyListener;
     public void setOnKeyListener(OnKeyListener l) { this.onKeyListener = l; }
 
-    public void transformMatrixToLocal(android.graphics.Matrix matrix) {}
-    public void transformMatrixToGlobal(android.graphics.Matrix matrix) {}
+    /** AOSP View.transformMatrixToGlobal (android16-release View.java): the
+     *  parent's mapping, then the parent's scroll, then this view's position
+     *  and its own transform -- the matrix form of transformFromViewToWindowSpace.
+     *  The root adds nothing: window space is screen space here (the same
+     *  identity getLocationOnScreen relies on). These were no-ops, and androidx
+     *  Compose builds its view-to-window matrix from exactly this call
+     *  (CalculateMatrixToWindowApi29), so positionInWindow / boundsInWindow of
+     *  anything in a ComposeView not at the window origin came back relative to
+     *  that ComposeView -- e.g. an anchor in a bottom bar read y=0, not its
+     *  window y. Touch was unaffected: Compose re-derives its window offset
+     *  from each MotionEvent's raw-minus-local. */
+    public void transformMatrixToGlobal(android.graphics.Matrix matrix) {
+        final ViewParent p = getParent();
+        if (p instanceof View) {
+            final View vp = (View) p;
+            vp.transformMatrixToGlobal(matrix);
+            matrix.preTranslate(-vp.getScrollX(), -vp.getScrollY());
+        }
+        matrix.preTranslate(getLeft(), getTop());
+        if (macapkHasAnyTransform() && !hasIdentityMatrix()) matrix.preConcat(getMatrix());
+    }
+    /** AOSP View.transformMatrixToLocal: the inverse walk of the above. */
+    public void transformMatrixToLocal(android.graphics.Matrix matrix) {
+        final ViewParent p = getParent();
+        if (p instanceof View) {
+            final View vp = (View) p;
+            vp.transformMatrixToLocal(matrix);
+            matrix.postTranslate(vp.getScrollX(), vp.getScrollY());
+        }
+        matrix.postTranslate(-getLeft(), -getTop());
+        if (macapkHasAnyTransform() && !hasIdentityMatrix()) matrix.postConcat(getInverseMatrix());
+    }
 
     public void buildLayer() {}
 
@@ -4409,6 +4462,23 @@ public class View implements android.graphics.drawable.Drawable.Callback,
     }
     /** AOSP `View.isPaddingResolved()` (View.java:20208-20210). */
     boolean isPaddingResolved() { return mPaddingResolved; }
+    /** LayoutInflater: android:paddingStart / paddingEnd from the XML or its
+     *  style, kept RELATIVE as AOSP's constructor keeps them (mUserPaddingStart/
+     *  End, :6272-6287) and resolved against the layout direction by
+     *  resolvePadding -- now and again whenever the direction resolves. Pass
+     *  Integer.MIN_VALUE for an edge the XML does not set. The inflater used to
+     *  write start into paddingLeft and end into paddingRight, so under RTL
+     *  every relative padding sat on the wrong side (AppCompat's popup menu
+     *  items: paddingEnd on the right, the title pushed against the left edge). */
+    void macapkSetXmlRelativePadding(int start, int end) {
+        if (start != UNDEFINED_PADDING) mUserPaddingStart = start;
+        if (end != UNDEFINED_PADDING) mUserPaddingEnd = end;
+        mUserPaddingLeftInitial = paddingLeft;
+        mUserPaddingRightInitial = paddingRight;
+        mPaddingResolved = false;
+        resolvePadding();
+    }
+
     /** AOSP `View.setPaddingRelative` (android-11.0.0_r48 View.java:24378-24398).
      *  Material's RelativePadding.applyToView calls this to push
      *  WindowInsets-derived padding back onto the view; without it,
@@ -4957,9 +5027,15 @@ public class View implements android.graphics.drawable.Drawable.Callback,
             onMeasure(wSpec, hSpec);
         } catch (Throwable t) {
             if (warnedMeasureThrowClasses.add(getClass().getName())) {
+                // The specs and where the throw came from: logged once per class,
+                // this line is all there is to go on afterwards.
+                StringBuilder where = new StringBuilder();
+                StackTraceElement[] st = t.getStackTrace();
+                for (int i = 0; i < st.length && i < 16; i++) where.append("\n\tat ").append(st[i]);
                 com.macapk.loader.NativeLog.w("View",
                     "onMeasure threw on " + getClass().getName() + ": " + t
-                    + " -- measuring as " + w + "x" + h + ", tree continues");
+                    + " -- measuring as " + w + "x" + h + " (" + MeasureSpec.toString(wSpec)
+                    + ", " + MeasureSpec.toString(hSpec) + "), tree continues" + where);
             }
             // A ComposeView that threw because its owner wasn't reachable should
             // retry composition creation on a later pass; queue it.
@@ -5875,9 +5951,16 @@ public class View implements android.graphics.drawable.Drawable.Callback,
         // content underneath.
         //
         // v1.0.128: theme-aware fill via `?attr/colorSurface`.
+        // A TOOLBAR is not filled (MACAPK_TOOLBAR_CHROME): AOSP's Toolbar has
+        // no default background, so one without a background is transparent
+        // and shows whatever is behind it -- typically its AppBarLayout, whose
+        // style background (?attr/colorPrimary, Material's
+        // MaterialShapeDrawable included) is drawn. Filling the Toolbar with
+        // colorSurface painted a white band over that colour: PalGate's blue
+        // app bar came out white and its white "OK" button vanished into it.
         if (name.endsWith("AppBarLayout")
-            || name.endsWith("Toolbar")
-            || name.endsWith("MaterialToolbar")) {
+            || (MACAPK_TOOLBAR_CHROME
+                && (name.endsWith("Toolbar") || name.endsWith("MaterialToolbar")))) {
             int fill = backgroundColor;
             if ((fill & 0xFF000000) != 0) return; // already opaque
             // Honor an EXPLICIT background (incl. transparent). F-Droid's
@@ -5895,6 +5978,10 @@ public class View implements android.graphics.drawable.Drawable.Callback,
             return;
         }
     }
+    /** Gate: MACAPK_TOOLBAR_CHROME=1 restores the colorSurface fill behind a
+     *  Toolbar / MaterialToolbar with no background (see macapkPaintMaterialChrome). */
+    static final boolean MACAPK_TOOLBAR_CHROME =
+        "1".equals(System.getenv("MACAPK_TOOLBAR_CHROME"));
     protected void onDraw(android.graphics.Canvas canvas)      {}
     protected void dispatchDraw(android.graphics.Canvas canvas) {}
 
@@ -6046,6 +6133,12 @@ public class View implements android.graphics.drawable.Drawable.Callback,
                     && o.mMode == android.graphics.Outline.MODE_ROUND_RECT
                     && o.mRadius > 0f) {
                 return o.mRadius;
+            }
+            // A rect with mixed corner radii is a PATH outline; its largest
+            // radius gives a round rect inside it (Outline.macapkPathShadowRadius).
+            if (o.mMode == android.graphics.Outline.MODE_PATH
+                    && o.macapkPathShadowRadius > 0f) {
+                return o.macapkPathShadowRadius;
             }
         } catch (Throwable ignored) {}
         return -1f;
@@ -7187,6 +7280,16 @@ public class View implements android.graphics.drawable.Drawable.Callback,
         if (!android.os.Looper.MACAPK_REAL_LOOPER) return;
         mDrawableStateDirty = true;
         drawableStateChanged();
+        // AOSP View.refreshDrawableState (android14 View.java:23683-23691):
+        //     ViewParent parent = mParent;
+        //     if (parent != null) parent.childDrawableStateChanged(this);
+        // This is how a group with addStatesFromChildren (TextInputLayout and
+        // its inputFrame) learns that its EditText became focused, so the box
+        // stroke and the floating label switch to the focused colors.
+        ViewParent p = parent;
+        if (p != null) {
+            try { p.childDrawableStateChanged(this); } catch (Throwable ignored) {}
+        }
     }
 
     protected int[] onCreateDrawableState(int extraSpace) {
