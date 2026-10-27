@@ -25,6 +25,7 @@
 #include <cinttypes>
 #include <cstdarg>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <map>
@@ -287,7 +288,12 @@ typedef struct {
     uint64_t tpidr;
     _Alignas(16) uint64_t v[32][2];
 } Cpu;
-typedef struct { uint32_t (*branch)(Cpu* c, uint64_t target); void (*step)(Cpu* c); } AotRuntime;
+typedef struct {
+    uint32_t (*branch)(Cpu* c, uint64_t target);
+    void (*step)(Cpu* c);
+    uint32_t (*plain)(uint64_t target);
+    void (__attribute__((sysv_abi)) *call_sysv)(const void* fn, void* frame);
+} AotRuntime;
 typedef struct { uint64_t vaddr; uint32_t (*fn)(Cpu* c); } AotEntry;
 typedef struct {
     uint32_t version, layout[4];
@@ -346,7 +352,149 @@ INL uint64_t sdiv32(uint64_t a, uint64_t b) {
     const int32_t x = (int32_t)a, y = (int32_t)b;
     return y == 0 ? 0 : y == -1 ? (uint32_t)(0u - (uint32_t)x) : (uint32_t)(x / y);
 }
+
+// SIMD&FP registers and their lane views.
+#define VEC(T, n, name) typedef T name __attribute__((vector_size(n)));
+VEC(uint64_t, 16, v2u64) VEC(int64_t, 16, v2i64) VEC(uint32_t, 16, v4u32) VEC(int32_t, 16, v4i32)
+VEC(uint16_t, 16, v8u16) VEC(int16_t, 16, v8i16) VEC(uint8_t, 16, v16u8) VEC(int8_t, 16, v16i8)
+VEC(float, 16, v4f32) VEC(double, 16, v2f64)
+VEC(uint32_t, 8, v2u32) VEC(int32_t, 8, v2i32) VEC(uint16_t, 8, v4u16) VEC(int16_t, 8, v4i16)
+VEC(uint8_t, 8, v8u8) VEC(int8_t, 8, v8i8) VEC(float, 8, v2f32)
+VEC(uint16_t, 32, v16u16) VEC(int16_t, 32, v16i16) VEC(uint32_t, 32, v8u32) VEC(int32_t, 32, v8i32)
+VEC(uint64_t, 32, v4u64) VEC(int64_t, 32, v4i64)
+INL v2u64 lo64(v2u64 v) { return (v2u64){v[0], 0}; }
+
+INL float f32(uint64_t b) { const uint32_t w = (uint32_t)b; float f; __builtin_memcpy(&f, &w, 4); return f; }
+INL double f64(uint64_t b) { double d; __builtin_memcpy(&d, &b, 8); return d; }
+INL uint64_t b32(float f) { uint32_t w; __builtin_memcpy(&w, &f, 4); return w; }
+INL uint64_t b64(double d) { uint64_t w; __builtin_memcpy(&w, &d, 8); return w; }
+
+// FPToFixed on an already rounded value: saturating, NaN -> 0, as on Arm.
+INL uint64_t sat_s64(double r) {
+    if (r != r) return 0;
+    if (r >= 9223372036854775808.0) return 0x7fffffffffffffffull;
+    if (r < -9223372036854775808.0) return 0x8000000000000000ull;
+    return (uint64_t)(int64_t)r;
+}
+INL uint64_t sat_s32(double r) {
+    if (r != r) return 0;
+    if (r >= 2147483648.0) return 0x7fffffff;
+    if (r < -2147483648.0) return 0x80000000;
+    return (uint32_t)(int32_t)r;
+}
+INL uint64_t sat_u64(double r) {
+    if (r != r || r <= 0) return 0;
+    if (r >= 18446744073709551616.0) return ~0ull;
+    return (uint64_t)r;
+}
+INL uint64_t sat_u32(double r) {
+    if (r != r || r <= 0) return 0;
+    if (r >= 4294967296.0) return 0xffffffff;
+    return (uint32_t)r;
+}
+// Arm's FMAX/FMIN (NaN in, NaN out; +0 > -0) and FMAXNM/FMINNM (a NaN loses).
+#define FMINMAX(T, sfx)                                                                              \
+    INL T fmax_##sfx(T a, T b) {                                                                     \
+        if (a != a || b != b) return a + b;                                                          \
+        if (a == 0 && b == 0) return __builtin_signbit(a) ? b : a;                                   \
+        return a > b ? a : b;                                                                        \
+    }                                                                                                \
+    INL T fmin_##sfx(T a, T b) {                                                                     \
+        if (a != a || b != b) return a + b;                                                          \
+        if (a == 0 && b == 0) return __builtin_signbit(a) ? a : b;                                   \
+        return a < b ? a : b;                                                                        \
+    }                                                                                                \
+    INL T fmaxnm_##sfx(T a, T b) { return a != a && b == b ? b : b != b && a == a ? a : fmax_##sfx(a, b); } \
+    INL T fminnm_##sfx(T a, T b) { return a != a && b == b ? b : b != b && a == a ? a : fmin_##sfx(a, b); }
+FMINMAX(float, f) FMINMAX(double, d)
+
+// A direct call of a plain host function (AotRuntime::plain) with the
+// guest's argument registers and stack words in *c (as the bridge's
+// host_call passes them), results back into *c.
+typedef struct {
+    uint64_t gpr[6], fpr[8];
+    const uint64_t* stack;
+    uint64_t nstack, rax, rdx, xmm0, xmm1;
+} SysvFrame;
+static __attribute__((noinline)) void host_call(Cpu* restrict c, uint64_t target) {
+    SysvFrame f;
+    uint64_t stk[16];
+    for (int i = 0; i < 6; ++i) f.gpr[i] = c->x[i];
+    for (int i = 0; i < 8; ++i) f.fpr[i] = c->v[i][0];
+    stk[0] = c->x[6];
+    stk[1] = c->x[7];
+    __builtin_memcpy(stk + 2, (const void*)(uintptr_t)c->sp, 14 * 8);
+    f.stack = stk;
+    f.nstack = 16;
+    aot_rt.call_sysv((const void*)(uintptr_t)target, &f);
+    c->x[0] = f.rax;
+    c->x[1] = f.rdx;
+    c->v[0][0] = f.xmm0; c->v[0][1] = 0;
+    c->v[1][0] = f.xmm1; c->v[1][1] = 0;
+}
+// A call through the runtime, remembering at the call site a target that
+// turned out to be a plain host function: the next call to it is direct.
+#define CALL_SITE(st, t)                                                           \
+    do {                                                                           \
+        static uint64_t site;                                                      \
+        if ((t) == __atomic_load_n(&site, __ATOMIC_RELAXED)) {                     \
+            host_call(c, (t));                                                     \
+            (st) = 0;                                                              \
+        } else {                                                                   \
+            (st) = aot_rt.branch(c, (t));                                          \
+            if ((st) == 0 && aot_rt.plain(t)) __atomic_store_n(&site, (t), __ATOMIC_RELAXED); \
+        }                                                                          \
+    } while (0)
 )";
+
+// Lane types of the generated C, by element bits.
+const char* ut(unsigned eb) { return eb == 8 ? "v16u8" : eb == 16 ? "v8u16" : eb == 32 ? "v4u32" : "v2u64"; }
+const char* st(unsigned eb) { return eb == 8 ? "v16i8" : eb == 16 ? "v8i16" : eb == 32 ? "v4i32" : "v2i64"; }
+const char* ft(unsigned eb) { return eb == 32 ? "v4f32" : "v2f64"; }
+const char* et(unsigned eb, bool sgn) {
+    static const char* kU[] = {"uint8_t", "uint16_t", "uint32_t", "uint64_t"};
+    static const char* kS[] = {"int8_t", "int16_t", "int32_t", "int64_t"};
+    const unsigned i = eb == 8 ? 0 : eb == 16 ? 1 : eb == 32 ? 2 : 3;
+    return sgn ? kS[i] : kU[i];
+}
+// The 32-byte types the widening reductions need.
+const char* wide32(unsigned eb, bool sgn) {
+    if (eb == 16) return sgn ? "v16i16" : "v16u16";
+    if (eb == 32) return sgn ? "v8i32" : "v8u32";
+    return sgn ? "v4i64" : "v4u64";
+}
+std::string shuffle(const char* type, const std::string& a, const std::string& b, const std::vector<unsigned>& idx) {
+    std::string s = std::string("__builtin_shufflevector((") + type + ")(" + a + "), (" + type + ")(" + b + ")";
+    for (unsigned i : idx) s += fmt(", %u", i);
+    return s + ")";
+}
+std::vector<unsigned> iota(unsigned from, unsigned n, unsigned step = 1) {
+    std::vector<unsigned> v;
+    for (unsigned i = 0; i < n; ++i) v.push_back(from + i * step);
+    return v;
+}
+// Pads a lane list to `lanes` (the rest is cleared by lo64 or unused).
+std::vector<unsigned> pad(std::vector<unsigned> v, unsigned lanes) {
+    while (v.size() < lanes) v.push_back(v.empty() ? 0 : v[0]);
+    return v;
+}
+
+uint64_t vfp_expand_imm(unsigned imm8, unsigned ebits) {
+    const uint64_t a = (imm8 >> 7) & 1, b = (imm8 >> 6) & 1, cd = (imm8 >> 4) & 3, efgh = imm8 & 15;
+    if (ebits == 32) {
+        const uint64_t exp = ((b ^ 1) << 7) | ((b ? 0x1f : 0) << 2) | cd;
+        return (a << 31) | (exp << 23) | (efgh << 19);
+    }
+    const uint64_t exp = ((b ^ 1) << 10) | ((b ? 0xff : 0) << 2) | cd;
+    return (a << 63) | (exp << 52) | (efgh << 48);
+}
+
+// Round to integral in the operand's precision: 0 nearest-even, 1 +inf,
+// 2 -inf, 3 zero, 4 nearest-away (the interpreter's Rounding order).
+std::string round_expr(const std::string& v, unsigned type, unsigned mode) {
+    static const char* kFns[] = {"nearbyint", "ceil", "floor", "trunc", "round"};
+    return fmt("__builtin_%s%s(%s)", kFns[mode], type ? "" : "f", v.c_str());
+}
 
 class Emitter {
 public:
@@ -384,18 +532,23 @@ private:
     void wxsp(unsigned n, const std::string& v, bool sf) {
         line(reg(n) + (sf ? " = (uint64_t)(" + v + ");" : " = (uint64_t)(uint32_t)(" + v + ");"));
     }
-    std::string vl(unsigned n) {
+    // SIMD&FP registers: one 128-bit vector each (v2u64), so that clang keeps
+    // them in XMM registers and lowers lane operations to SSE/AVX.
+    std::string vr(unsigned n) {
         used_v_ |= 1u << n;
-        return fmt("V%uL", n);
+        return fmt("V%u", n);
     }
-    std::string vh(unsigned n) {
-        used_v_ |= 1u << n;
-        return fmt("V%uH", n);
-    }
+    std::string vl(unsigned n) { return vr(n) + "[0]"; }
+    std::string vh(unsigned n) { return vr(n) + "[1]"; }
     void wv(unsigned n, const std::string& lo, const std::string& hi) {
-        used_v_ |= 1u << n;
         written_v_ |= 1u << n;
-        line(fmt("V%uL = (uint64_t)(%s); V%uH = (uint64_t)(%s);", n, lo.c_str(), n, hi.c_str()));
+        line(vr(n) + " = (v2u64){(uint64_t)(" + lo + "), (uint64_t)(" + hi + ")};");
+    }
+    // A whole-register result, any 16-byte vector type; `bytes` 8 clears the
+    // upper half, as every write of a 64-bit vector or a scalar does.
+    void wq(unsigned n, const std::string& v, unsigned bytes = 16) {
+        written_v_ |= 1u << n;
+        line(vr(n) + (bytes == 16 ? " = (v2u64)(" + v + ");" : " = lo64((v2u64)(" + v + "));"));
     }
     const char* flags() {
         flags_written_ = true;
@@ -454,7 +607,7 @@ private:
         if (direct && translated_.count(direct)) {
             line(fmt("    const uint32_t st = F_%" PRIx64 "(c);", direct));
         } else {
-            line("    const uint32_t st = aot_rt.branch(c, t);");
+            line("    uint32_t st; c->pc = t; CALL_SITE(st, t);");
         }
         line("    if (st) return st;");
         line("    RELOAD_CALL();");
@@ -463,6 +616,7 @@ private:
     }
     void interpret(uint64_t va) {
         ++interpreted_;
+        if (std::getenv("WINAPK_AOT_LIST")) std::fprintf(stderr, "interpreted 0x%" PRIx64 "\n", va);
         line(flush(true) + " c->pc = " + addr(va) + "; aot_rt.step(c); RELOAD_ALL();");
         line("if (c->pc != " + addr(va + 4) + ") return 1;");
     }
@@ -474,6 +628,26 @@ private:
     bool ldst_register(uint32_t insn);
     bool ldst_pair(uint32_t insn);
     bool system(uint32_t insn);
+
+    // SIMD&FP data processing (arm64_simd.cpp's groups).
+    std::string fpv(unsigned n, unsigned type) { return (type ? "f64(" : "f32(") + vl(n) + ")"; }
+    void wfp(unsigned n, unsigned type, const std::string& v) { wv(n, (type ? "b64(" : "b32(") + v + ")", "0"); }
+    bool simd(uint32_t insn);
+    bool fp_data(uint32_t insn);
+    bool fp_three_source(uint32_t insn);
+    bool v_three_same(uint32_t insn);
+    bool v_three_different(uint32_t insn);
+    bool v_two_reg_misc(uint32_t insn);
+    bool v_across(uint32_t insn);
+    bool v_copy(uint32_t insn, bool scalar);
+    bool v_permute(uint32_t insn);
+    bool v_extract(uint32_t insn);
+    bool v_modified_imm(uint32_t insn);
+    bool v_shift_imm(uint32_t insn);
+    bool v_by_element(uint32_t insn);
+    bool s_three_same(uint32_t insn);
+    bool s_pairwise(uint32_t insn);
+    bool structures(uint32_t insn);
 
     const Image& img_;
     const Function& f_;
@@ -529,7 +703,8 @@ bool Emitter::branch(uint64_t va, uint32_t insn) {
             line("    switch (t - B) {");
             for (uint64_t l : f_.labels) line(fmt("        case 0x%" PRIx64 "ull: goto L_%" PRIx64 ";", l, l));
             line("    }");
-            line("    " + flush(true) + " c->pc = t; return aot_rt.branch(c, t);");
+            line("    " + flush(true) + " c->pc = t;");
+            line("    { uint32_t st; CALL_SITE(st, t); if (st == 0) c->pc = c->x[30]; return st; }");
             line("}");
             return true;
         }
@@ -933,6 +1108,7 @@ bool Emitter::ldst_pair(uint32_t insn) {
 }
 
 bool Emitter::loads_stores(uint32_t insn, uint64_t va) {
+    if ((insn & 0xbf000000) == 0x0c000000 || (insn & 0xbf000000) == 0x0d000000) return structures(insn);
     if ((insn & 0x3f000000) == 0x08000000) return false;  // exclusives, acquire/release: the interpreter
     if ((insn & 0x3b000000) == 0x18000000) {  // LDR (literal)
         const uint64_t a = va + static_cast<uint64_t>(sext(field(insn, 23, 5), 19) << 2);
@@ -972,6 +1148,841 @@ bool Emitter::system(uint32_t insn) {
     return false;
 }
 
+// ---- SIMD&FP ---------------------------------------------------------------------
+//
+// Each case follows its counterpart in src/arm64/arm64_simd.cpp; whatever is
+// not here (half precision, saturating and rounding forms, tables, LD3/LD4,
+// most scalar AdvSIMD) goes through the interpreter.
+
+bool Emitter::simd(uint32_t insn) {
+    if ((insn & 0x5f200000) == 0x1e200000) return fp_data(insn);
+    if ((insn & 0x5f200000) == 0x1e000000) return false;  // fixed-point conversions
+    if ((insn & 0x5f000000) == 0x1f000000) return fp_three_source(insn);
+    if ((insn & 0x9f200400) == 0x0e200400) return v_three_same(insn);
+    if ((insn & 0x9f200c00) == 0x0e200000) return v_three_different(insn);
+    if ((insn & 0x9f3e0c00) == 0x0e200800) return v_two_reg_misc(insn);
+    if ((insn & 0x9f3e0c00) == 0x0e300800) return v_across(insn);
+    if ((insn & 0x9fe08400) == 0x0e000400) return v_copy(insn, false);
+    if ((insn & 0xbf208c00) == 0x0e000800) return v_permute(insn);
+    if ((insn & 0xbf208c00) == 0x0e000000) return false;  // TBL/TBX
+    if ((insn & 0xbfe08400) == 0x2e000000) return v_extract(insn);
+    if ((insn & 0x9ff80400) == 0x0f000400) return v_modified_imm(insn);
+    if ((insn & 0x9f800400) == 0x0f000400) return v_shift_imm(insn);
+    if ((insn & 0x9f000400) == 0x0f000000) return v_by_element(insn);
+    if ((insn & 0xdf200400) == 0x5e200400) return s_three_same(insn);
+    if ((insn & 0xdf3e0c00) == 0x5e300800) return s_pairwise(insn);
+    if ((insn & 0xdfe08400) == 0x5e000400) return v_copy(insn, true);
+    return false;
+}
+
+bool Emitter::fp_data(uint32_t insn) {
+    const unsigned type = field(insn, 23, 22);
+    const unsigned rd = field(insn, 4, 0), rn = field(insn, 9, 5), rm = field(insn, 20, 16);
+    const std::string T = type ? "double" : "float";
+    if (field(insn, 15, 10) == 0) {  // conversions between FP and integer
+        const bool sf = bit(insn, 31);
+        const unsigned rmode = field(insn, 20, 19), opcode = field(insn, 18, 16);
+        if (opcode == 6 || opcode == 7) {  // FMOV general <-> FP
+            if (type == 2) {
+                if (!sf || rmode != 1) return false;
+            } else if (rmode != 0 || type == 3 || (type == 0 && sf) || (type == 1 && !sf)) {
+                return false;
+            }
+            if (opcode == 6) {
+                if (rmode == 1) wx(rd, vh(rn), true);
+                else wx(rd, sf ? vl(rn) : "(uint32_t)" + vl(rn), true);
+            } else if (rmode == 1) {
+                wv(rd, vl(rd), rx(rn));
+            } else {
+                wv(rd, sf ? rx(rn) : "(uint32_t)" + rx(rn), "0");
+            }
+            return true;
+        }
+        if (type > 1) return false;
+        if (opcode == 2 || opcode == 3) {  // SCVTF, UCVTF
+            if (rmode != 0) return false;
+            const std::string cast = opcode == 3 ? (sf ? "(uint64_t)" : "(uint32_t)") : (sf ? "(int64_t)" : "(int32_t)");
+            wfp(rd, type, "(" + T + ")(" + cast + rx(rn) + ")");
+            return true;
+        }
+        unsigned mode;
+        bool uns;
+        if (opcode <= 1) {  // FCVT{N,P,M,Z}{S,U}
+            mode = rmode;
+            uns = opcode == 1;
+        } else if ((opcode == 4 || opcode == 5) && rmode == 0) {  // FCVTA{S,U}
+            mode = 4;
+            uns = opcode == 5;
+        } else {
+            return false;
+        }
+        wx(rd, fmt("sat_%c%u(%s)", uns ? 'u' : 's', sf ? 64 : 32, round_expr(fpv(rn, type), type, mode).c_str()),
+           true);
+        return true;
+    }
+    if (type > 1) return false;
+    const char* sfx = type ? "d" : "f";
+    switch (field(insn, 11, 10)) {
+        case 1: return false;  // FCCMP
+        case 2: {
+            const std::string a = fpv(rn, type), b = fpv(rm, type);
+            std::string r;
+            switch (field(insn, 15, 12)) {
+                case 0: r = a + " * " + b; break;
+                case 1: r = a + " / " + b; break;
+                case 2: r = a + " + " + b; break;
+                case 3: r = a + " - " + b; break;
+                case 4: r = fmt("fmax_%s(%s, %s)", sfx, a.c_str(), b.c_str()); break;
+                case 5: r = fmt("fmin_%s(%s, %s)", sfx, a.c_str(), b.c_str()); break;
+                case 6: r = fmt("fmaxnm_%s(%s, %s)", sfx, a.c_str(), b.c_str()); break;
+                case 7: r = fmt("fminnm_%s(%s, %s)", sfx, a.c_str(), b.c_str()); break;
+                case 8: r = "-(" + a + " * " + b + ")"; break;
+                default: return false;
+            }
+            wfp(rd, type, "(" + T + ")(" + r + ")");
+            return true;
+        }
+        case 3:  // FCSEL
+            wv(rd, "(" + cond(field(insn, 15, 12)) + " ? " + vl(rn) + " : " + vl(rm) + ") & " + hex(mask(type ? 64 : 32)),
+               "0");
+            return true;
+        default: break;
+    }
+    if (field(insn, 12, 10) == 4) {  // FMOV (scalar, immediate)
+        if (field(insn, 9, 5) != 0) return false;
+        wv(rd, hex(vfp_expand_imm(field(insn, 20, 13), type ? 64 : 32)), "0");
+        return true;
+    }
+    if (field(insn, 13, 10) == 8) {  // FCMP, FCMPE
+        const bool zero = bit(insn, 3);
+        flags_written_ = true;
+        line("{ const double a = " + fpv(rn, type) + ", b = " + (zero ? std::string("0.0") : fpv(rm, type)) + ";");
+        line("  if (a != a || b != b) { FN = 0; FZ = 0; FC = 1; FV = 1; }");
+        line("  else if (a == b) { FN = 0; FZ = 1; FC = 1; FV = 0; }");
+        line("  else if (a < b) { FN = 1; FZ = 0; FC = 0; FV = 0; }");
+        line("  else { FN = 0; FZ = 0; FC = 1; FV = 0; } }");
+        return true;
+    }
+    if (field(insn, 14, 10) == 0x10) {  // one-source
+        const unsigned opcode = field(insn, 20, 15);
+        const std::string a = fpv(rn, type);
+        if (opcode >= 4 && opcode <= 7) {  // FCVT between single and double
+            const unsigned to = opcode & 3;
+            if (to == type || to > 1) return false;
+            wfp(rd, to, std::string(to ? "(double)" : "(float)") + a);
+            return true;
+        }
+        std::string r;
+        switch (opcode) {
+            case 0: wv(rd, vl(rn) + " & " + hex(mask(type ? 64 : 32)), "0"); return true;  // FMOV (register)
+            case 1: r = fmt("__builtin_fabs%s(%s)", type ? "" : "f", a.c_str()); break;
+            case 2: r = "-" + a; break;
+            case 3: r = fmt("__builtin_sqrt%s(%s)", type ? "" : "f", a.c_str()); break;
+            case 8: r = round_expr(a, type, 0); break;
+            case 9: r = round_expr(a, type, 1); break;
+            case 10: r = round_expr(a, type, 2); break;
+            case 11: r = round_expr(a, type, 3); break;
+            case 12: r = round_expr(a, type, 4); break;
+            case 14: case 15: r = round_expr(a, type, 0); break;
+            default: return false;
+        }
+        wfp(rd, type, "(" + T + ")(" + r + ")");
+        return true;
+    }
+    return false;
+}
+
+bool Emitter::fp_three_source(uint32_t insn) {
+    const unsigned type = field(insn, 23, 22);
+    if (type > 1) return false;
+    const bool o1 = bit(insn, 21), o0 = bit(insn, 15);
+    const unsigned rd = field(insn, 4, 0), rn = field(insn, 9, 5), rm = field(insn, 20, 16), ra = field(insn, 14, 10);
+    // FMADD: a + n*m; FMSUB: a - n*m; FNMADD: -a - n*m; FNMSUB: -a + n*m. All fused.
+    const bool neg_n = o0 != o1, neg_a = o1;
+    wfp(rd, type, fmt("__builtin_fma%s(%s%s, %s, %s%s)", type ? "" : "f", neg_n ? "-" : "", fpv(rn, type).c_str(),
+                      fpv(rm, type).c_str(), neg_a ? "-" : "", fpv(ra, type).c_str()));
+    return true;
+}
+
+bool Emitter::v_three_same(uint32_t insn) {
+    const bool q = bit(insn, 30), u = bit(insn, 29);
+    const unsigned size = field(insn, 23, 22), opcode = field(insn, 15, 11);
+    const unsigned rm = field(insn, 20, 16), rn = field(insn, 9, 5), rd = field(insn, 4, 0);
+    const unsigned bytes = q ? 16 : 8;
+    const std::string a = vr(rn), b = vr(rm), d = vr(rd);
+
+    if (opcode >= 0x18) {  // floating point
+        const bool hi = size & 2;
+        const unsigned eb = (size & 1) ? 64 : 32;
+        if (eb == 64 && !q) return false;
+        const std::string F = ft(eb), FA = "((" + F + ")" + a + ")", FB = "((" + F + ")" + b + ")",
+                          FD = "((" + F + ")" + d + ")";
+        const char* sfx = eb == 64 ? "d" : "f";
+        const char* one = eb == 64 ? "" : "f";
+        const unsigned key = (u << 6) | (hi << 5) | opcode, lanes = 128 / eb;
+        auto per_lane = [&](const char* fn, const std::string& x, const std::string& y) {
+            std::string r = "(" + F + "){";
+            for (unsigned i = 0; i < lanes; ++i) r += fmt("%s%s_%s(%s[%u], %s[%u])", i ? ", " : "", fn, sfx, x.c_str(), i, y.c_str(), i);
+            return r + "}";
+        };
+        std::string r;
+        switch (key) {
+            case 0x1a: r = FA + " + " + FB; break;
+            case 0x3a: r = FA + " - " + FB; break;
+            case 0x1b: case 0x5b: r = FA + " * " + FB; break;
+            case 0x5f: r = FA + " / " + FB; break;
+            case 0x19: r = "__builtin_elementwise_fma(" + FA + ", " + FB + ", " + FD + ")"; break;
+            case 0x39: r = "__builtin_elementwise_fma(-" + FA + ", " + FB + ", " + FD + ")"; break;
+            case 0x7a: r = "__builtin_elementwise_abs(" + FA + " - " + FB + ")"; break;
+            case 0x1c: r = "(" + FA + " == " + FB + ")"; break;
+            case 0x5c: r = "(" + FA + " >= " + FB + ")"; break;
+            case 0x7c: r = "(" + FA + " > " + FB + ")"; break;
+            case 0x5d: r = "(__builtin_elementwise_abs(" + FA + ") >= __builtin_elementwise_abs(" + FB + "))"; break;
+            case 0x7d: r = "(__builtin_elementwise_abs(" + FA + ") > __builtin_elementwise_abs(" + FB + "))"; break;
+            case 0x1f: r = fmt("(2.0%s - %s * %s)", one, FA.c_str(), FB.c_str()); break;
+            case 0x3f: r = fmt("((3.0%s - %s * %s) / 2.0%s)", one, FA.c_str(), FB.c_str(), one); break;
+            case 0x1e: r = per_lane("fmax", FA, FB); break;
+            case 0x3e: r = per_lane("fmin", FA, FB); break;
+            case 0x18: r = per_lane("fmaxnm", FA, FB); break;
+            case 0x38: r = per_lane("fminnm", FA, FB); break;
+            case 0x5a: case 0x5e: case 0x7e: case 0x58: case 0x78: {  // pairwise
+                const unsigned n = bytes * 8 / eb;  // result lanes
+                std::vector<unsigned> even, odd;
+                for (unsigned i = 0; i < n; ++i) {
+                    const unsigned src = (i < n / 2 ? 0 : lanes) + (i % (n / 2)) * 2;
+                    even.push_back(src);
+                    odd.push_back(src + 1);
+                }
+                const std::string ev = shuffle(F.c_str(), a, b, pad(even, lanes)),
+                                  od = shuffle(F.c_str(), a, b, pad(odd, lanes));
+                line("{ const " + F + " pe = " + ev + ", po = " + od + ";");
+                switch (key) {
+                    case 0x5a: wq(rd, "pe + po", bytes); break;
+                    case 0x5e: wq(rd, per_lane("fmax", "pe", "po"), bytes); break;
+                    case 0x7e: wq(rd, per_lane("fmin", "pe", "po"), bytes); break;
+                    case 0x58: wq(rd, per_lane("fmaxnm", "pe", "po"), bytes); break;
+                    default: wq(rd, per_lane("fminnm", "pe", "po"), bytes); break;
+                }
+                line("}");
+                return true;
+            }
+            default: return false;
+        }
+        wq(rd, r, bytes);
+        return true;
+    }
+
+    if (opcode == 3) {  // bitwise: AND BIC ORR ORN / EOR BSL BIT BIF
+        std::string r;
+        switch ((u << 2) | size) {
+            case 0: r = a + " & " + b; break;
+            case 1: r = a + " & ~" + b; break;
+            case 2: r = a + " | " + b; break;
+            case 3: r = a + " | ~" + b; break;
+            case 4: r = a + " ^ " + b; break;
+            case 5: r = "(" + d + " & " + a + ") | (~" + d + " & " + b + ")"; break;  // BSL
+            case 6: r = "(" + b + " & " + a + ") | (~" + b + " & " + d + ")"; break;  // BIT
+            default: r = "(~" + b + " & " + a + ") | (" + b + " & " + d + ")"; break;  // BIF
+        }
+        wq(rd, r, bytes);
+        return true;
+    }
+    const unsigned eb = 8u << size;
+    if (size == 3 && !q) return false;
+    const std::string U = ut(eb), S = st(eb);
+    const std::string UA = "((" + U + ")" + a + ")", UB = "((" + U + ")" + b + ")", UD = "((" + U + ")" + d + ")";
+    const std::string SA = "((" + S + ")" + a + ")", SB = "((" + S + ")" + b + ")";
+    std::string r;
+    switch (opcode) {
+        case 0x10: r = u ? UA + " - " + UB : UA + " + " + UB; break;
+        case 0x11: r = u ? "(" + UA + " == " + UB + ")" : "((" + UA + " & " + UB + ") != 0)"; break;
+        case 0x06: r = u ? "(" + UA + " > " + UB + ")" : "(" + SA + " > " + SB + ")"; break;
+        case 0x07: r = u ? "(" + UA + " >= " + UB + ")" : "(" + SA + " >= " + SB + ")"; break;
+        case 0x0c: r = u ? "__builtin_elementwise_max(" + UA + ", " + UB + ")" : "__builtin_elementwise_max(" + SA + ", " + SB + ")"; break;
+        case 0x0d: r = u ? "__builtin_elementwise_min(" + UA + ", " + UB + ")" : "__builtin_elementwise_min(" + SA + ", " + SB + ")"; break;
+        case 0x12: r = u ? UD + " - " + UA + " * " + UB : UD + " + " + UA + " * " + UB; break;
+        case 0x13: if (u) return false; r = UA + " * " + UB; break;
+        case 0x17: {  // ADDP
+            if (u) return false;
+            const unsigned lanes = 128 / eb, n = bytes * 8 / eb;
+            std::vector<unsigned> even, odd;
+            for (unsigned i = 0; i < n; ++i) {
+                const unsigned src = (i < n / 2 ? 0 : lanes) + (i % (n / 2)) * 2;
+                even.push_back(src);
+                odd.push_back(src + 1);
+            }
+            r = shuffle(U.c_str(), a, b, pad(even, lanes)) + " + " + shuffle(U.c_str(), a, b, pad(odd, lanes));
+            break;
+        }
+        default: return false;
+    }
+    wq(rd, r, bytes);
+    return true;
+}
+
+bool Emitter::v_three_different(uint32_t insn) {
+    const bool q = bit(insn, 30), u = bit(insn, 29);
+    const unsigned size = field(insn, 23, 22), opcode = field(insn, 15, 12);
+    const unsigned rm = field(insn, 20, 16), rn = field(insn, 9, 5), rd = field(insn, 4, 0);
+    if (size == 3) return false;
+    const unsigned eb = 8u << size, wb = eb * 2, n = 64 / eb, off = q ? n : 0;
+    const std::string N = u ? ut(eb) : st(eb), W = u ? ut(wb) : st(wb);
+    auto widen = [&](const std::string& v) {
+        return "__builtin_convertvector(" + shuffle(N.c_str(), v, v, iota(off, n)) + ", " + W + ")";
+    };
+    const std::string NA = widen(vr(rn)), NB = widen(vr(rm));
+    const std::string WA = "((" + W + ")" + vr(rn) + ")", WD = "((" + W + ")" + vr(rd) + ")";
+    std::string r;
+    switch (opcode) {
+        case 0x0: r = NA + " + " + NB; break;
+        case 0x1: r = WA + " + " + NB; break;
+        case 0x2: r = NA + " - " + NB; break;
+        case 0x3: r = WA + " - " + NB; break;
+        case 0x8: r = WD + " + " + NA + " * " + NB; break;
+        case 0xa: r = WD + " - " + NA + " * " + NB; break;
+        case 0xc: r = NA + " * " + NB; break;
+        case 0x7: r = "__builtin_elementwise_max(" + NA + ", " + NB + ") - __builtin_elementwise_min(" + NA + ", " + NB + ")"; break;
+        case 0x5: r = WD + " + (__builtin_elementwise_max(" + NA + ", " + NB + ") - __builtin_elementwise_min(" + NA + ", " + NB + "))"; break;
+        default: return false;
+    }
+    wq(rd, r);
+    return true;
+}
+
+bool Emitter::v_two_reg_misc(uint32_t insn) {
+    const bool q = bit(insn, 30), u = bit(insn, 29);
+    const unsigned size = field(insn, 23, 22), opcode = field(insn, 16, 12);
+    const unsigned rn = field(insn, 9, 5), rd = field(insn, 4, 0);
+    const unsigned bytes = q ? 16 : 8;
+    const std::string a = vr(rn);
+    const bool fp = (opcode >= 0x0c && opcode <= 0x0f && (size & 2)) || opcode >= 0x16;
+    if (fp) {
+        const unsigned eb = (size & 1) ? 64 : 32;
+        const bool hi = size & 2;
+        if (opcode == 0x16) {  // FCVTN/FCVTN2, double -> single
+            if (hi || !(size & 1)) return false;
+            const std::string conv = "__builtin_convertvector((v2f64)" + a + ", v2f32)";
+            line("{ const v2f32 cv = " + conv + ";");
+            line("  const v4f32 c4 = __builtin_shufflevector(cv, cv, 0, 1, 0, 1);");
+            if (q) wq(rd, "__builtin_shufflevector((v4f32)" + vr(rd) + ", c4, 0, 1, 4, 5)");
+            else wq(rd, "c4", 8);
+            line("}");
+            return true;
+        }
+        if (opcode == 0x17 && !u) {  // FCVTL/FCVTL2, single -> double
+            if (hi || !(size & 1)) return false;
+            wq(rd, "__builtin_convertvector(__builtin_shufflevector((v4f32)" + a + ", (v4f32)" + a +
+                       (q ? ", 2, 3)" : ", 0, 1)") + ", v2f64)");
+            return true;
+        }
+        if (eb == 64 && !q) return false;
+        const std::string F = ft(eb), U = ut(eb), S = st(eb), FA = "((" + F + ")" + a + ")";
+        const char* one = eb == 64 ? "" : "f";
+        const unsigned key = (u << 6) | (hi << 5) | opcode;
+        std::string r;
+        auto cvt = [&](unsigned mode, bool uns) {
+            const unsigned n = 128 / eb;
+            std::string s = "(" + U + "){";
+            for (unsigned i = 0; i < n; ++i) {
+                s += fmt("%ssat_%c%u(%s)", i ? ", " : "", uns ? 'u' : 's', eb,
+                         round_expr(fmt("%s[%u]", FA.c_str(), i), eb == 64, mode).c_str());
+            }
+            return s + "}";
+        };
+        switch (key) {
+            case 0x2c: r = fmt("(%s > 0.0%s)", FA.c_str(), one); break;
+            case 0x2d: r = fmt("(%s == 0.0%s)", FA.c_str(), one); break;
+            case 0x2e: r = fmt("(%s < 0.0%s)", FA.c_str(), one); break;
+            case 0x6c: r = fmt("(%s >= 0.0%s)", FA.c_str(), one); break;
+            case 0x6d: r = fmt("(%s <= 0.0%s)", FA.c_str(), one); break;
+            case 0x2f: r = "((" + U + ")" + a + " & " + hex(mask(eb - 1)) + ")"; break;
+            case 0x6f: r = "((" + U + ")" + a + " ^ " + hex(uint64_t{1} << (eb - 1)) + ")"; break;
+            case 0x7f: r = "__builtin_elementwise_sqrt(" + FA + ")"; break;
+            case 0x18: case 0x59: case 0x79: r = "__builtin_elementwise_roundeven(" + FA + ")"; break;
+            case 0x38: r = "__builtin_elementwise_ceil(" + FA + ")"; break;
+            case 0x19: r = "__builtin_elementwise_floor(" + FA + ")"; break;
+            case 0x39: r = "__builtin_elementwise_trunc(" + FA + ")"; break;
+            case 0x58: r = "__builtin_elementwise_round(" + FA + ")"; break;
+            case 0x1d: r = "__builtin_convertvector((" + S + ")" + a + ", " + F + ")"; break;
+            case 0x5d: r = "__builtin_convertvector((" + U + ")" + a + ", " + F + ")"; break;
+            case 0x1a: case 0x5a: r = cvt(0, u); break;
+            case 0x3a: case 0x7a: r = cvt(1, u); break;
+            case 0x1b: case 0x5b: r = cvt(2, u); break;
+            case 0x3b: case 0x7b: r = cvt(3, u); break;
+            case 0x1c: case 0x5c: r = cvt(4, u); break;
+            case 0x3d: case 0x3f: r = fmt("(1.0%s / %s)", one, FA.c_str()); break;
+            case 0x7d: r = fmt("(1.0%s / __builtin_elementwise_sqrt(%s))", one, FA.c_str()); break;
+            default: return false;
+        }
+        wq(rd, r, bytes);
+        return true;
+    }
+
+    const unsigned eb = 8u << size;
+    const std::string U = ut(eb), S = st(eb), UA = "((" + U + ")" + a + ")", SA = "((" + S + ")" + a + ")";
+    const unsigned lanes = 128 / eb;
+    if (opcode == 0x12 && !u) {  // XTN/XTN2: the low half of each wide element
+        if (size == 3) return false;
+        const unsigned n = 64 / eb;
+        if (q) {
+            std::vector<unsigned> idx = iota(0, n);
+            for (unsigned i = 0; i < n; ++i) idx.push_back(lanes + 2 * i);
+            wq(rd, shuffle(U.c_str(), vr(rd), a, idx));
+        } else {
+            wq(rd, shuffle(U.c_str(), a, a, pad(iota(0, n, 2), lanes)), 8);
+        }
+        return true;
+    }
+    if (opcode <= 0x01) {  // REV64 / REV32 / REV16
+        const unsigned group = opcode == 1 ? 16 : (u ? 32 : 64);
+        if (eb >= group) return false;
+        const unsigned per = group / eb, n = bytes * 8 / eb;
+        std::vector<unsigned> idx;
+        for (unsigned i = 0; i < n; ++i) idx.push_back((i / per) * per + (per - 1 - i % per));
+        wq(rd, shuffle(U.c_str(), a, a, pad(idx, lanes)), bytes);
+        return true;
+    }
+    if (opcode == 0x05) {
+        if (size == 0) {
+            wq(rd, u ? "~" + a : "__builtin_elementwise_popcount((v16u8)" + a + ")", bytes);  // NOT, CNT
+            return true;
+        }
+        if (u && size == 1) {  // RBIT (per byte)
+            wq(rd, "__builtin_elementwise_bitreverse((v16u8)" + a + ")", bytes);
+            return true;
+        }
+        return false;
+    }
+    if (size == 3 && !q) return false;
+    std::string r;
+    switch ((u << 5) | opcode) {
+        case 0x08: r = "(" + SA + " > 0)"; break;
+        case 0x09: r = "(" + SA + " == 0)"; break;
+        case 0x0a: r = "(" + SA + " < 0)"; break;
+        case 0x28: r = "(" + SA + " >= 0)"; break;
+        case 0x29: r = "(" + SA + " <= 0)"; break;
+        case 0x0b: r = "__builtin_elementwise_abs(" + SA + ")"; break;
+        case 0x2b: r = "(0 - " + UA + ")"; break;
+        default: return false;
+    }
+    wq(rd, r, bytes);
+    return true;
+}
+
+bool Emitter::v_across(uint32_t insn) {
+    const bool q = bit(insn, 30), u = bit(insn, 29);
+    const unsigned size = field(insn, 23, 22), opcode = field(insn, 16, 12);
+    const unsigned rn = field(insn, 9, 5), rd = field(insn, 4, 0);
+    if (size == 3 || (size == 2 && !q)) return false;
+    const unsigned eb = 8u << size, n = (q ? 16 : 8) * 8 / eb;
+    const std::string T = u ? ut(eb) : st(eb), a = vr(rn);
+    const std::string src = q ? "((" + T + ")" + a + ")" : shuffle(T.c_str(), a, a, iota(0, n));
+    std::string r;
+    unsigned obits = eb;
+    switch (opcode) {
+        case 0x1b: if (u) return false; r = "__builtin_reduce_add(" + src + ")"; break;  // ADDV
+        case 0x0a: r = "__builtin_reduce_max(" + src + ")"; break;                         // SMAXV/UMAXV
+        case 0x1a: r = "__builtin_reduce_min(" + src + ")"; break;                         // SMINV/UMINV
+        case 0x03: {  // SADDLV/UADDLV
+            obits = eb * 2;
+            const std::string W = n * obits > 128 ? wide32(obits, !u) : (u ? ut(obits) : st(obits));
+            r = "__builtin_reduce_add(__builtin_convertvector(" + src + ", " + W + "))";
+            break;
+        }
+        default: return false;
+    }
+    wv(rd, fmt("(uint64_t)(%s)%s & %s", et(obits, !u), r.c_str(), hex(mask(obits)).c_str()), "0");
+    return true;
+}
+
+bool Emitter::v_copy(uint32_t insn, bool scalar) {
+    const bool q = bit(insn, 30), op = bit(insn, 29);
+    const unsigned imm5 = field(insn, 20, 16), imm4 = field(insn, 14, 11);
+    const unsigned rn = field(insn, 9, 5), rd = field(insn, 4, 0);
+    if ((imm5 & 0xf) == 0) return false;
+    const unsigned sz = __builtin_ctz(imm5), eb = 8u << sz, index = imm5 >> (sz + 1);
+    const std::string U = ut(eb), S = st(eb);
+    const std::string elem = fmt("((%s)%s)[%u]", U.c_str(), vr(rn).c_str(), index);
+    if (scalar) {  // DUP (element), scalar
+        if (op || imm4 != 0) return false;
+        wv(rd, "(uint64_t)" + elem, "0");
+        return true;
+    }
+    if (op) {  // INS (element)
+        if (!q) return false;
+        line("{ " + U + " t = (" + U + ")" + vr(rd) + "; t[" + std::to_string(index) + "] = " +
+             fmt("((%s)%s)[%u]", U.c_str(), vr(rn).c_str(), imm4 >> sz) + ";");
+        wq(rd, "t");
+        line("}");
+        return true;
+    }
+    switch (imm4) {
+        case 0:  // DUP (element)
+            if (sz == 3 && !q) return false;
+            wq(rd, "(" + U + "){} + " + elem, q ? 16 : 8);
+            return true;
+        case 1:  // DUP (general)
+            if (sz == 3 && !q) return false;
+            wq(rd, "(" + U + "){} + (" + et(eb, false) + ")" + rx(rn), q ? 16 : 8);
+            return true;
+        case 3:  // INS (general)
+            line("{ " + U + " t = (" + U + ")" + vr(rd) + "; t[" + std::to_string(index) + "] = (" + et(eb, false) +
+                 ")" + rx(rn) + ";");
+            wq(rd, "t");
+            line("}");
+            return true;
+        case 5:  // SMOV
+            wx(rd, fmt("(uint64_t)(int64_t)((%s)%s)[%u]", S.c_str(), vr(rn).c_str(), index), q);
+            return true;
+        case 7:  // UMOV
+            wx(rd, "(uint64_t)" + elem, true);
+            return true;
+        default:
+            return false;
+    }
+}
+
+bool Emitter::v_permute(uint32_t insn) {
+    const bool q = bit(insn, 30);
+    const unsigned size = field(insn, 23, 22), opcode = field(insn, 14, 12);
+    if (size == 3 && !q) return false;
+    const unsigned eb = 8u << size, lanes = 128 / eb, n = (q ? 16 : 8) * 8 / eb, half = n / 2;
+    const unsigned part = (opcode >> 2) & 1;
+    std::vector<unsigned> idx;
+    for (unsigned i = 0; i < n; ++i) {
+        switch (opcode & 3) {
+            case 1: {  // UZP1/UZP2
+                const unsigned src = 2 * i + part;
+                idx.push_back(src < n ? src : lanes + src - n);
+                break;
+            }
+            case 2: {  // TRN1/TRN2
+                const unsigned pair = i & ~1u;
+                idx.push_back((i & 1) ? lanes + pair + part : pair + part);
+                break;
+            }
+            case 3: {  // ZIP1/ZIP2
+                const unsigned src = part * half + i / 2;
+                idx.push_back((i & 1) ? lanes + src : src);
+                break;
+            }
+            default: return false;
+        }
+    }
+    wq(field(insn, 4, 0), shuffle(ut(eb), vr(field(insn, 9, 5)), vr(field(insn, 20, 16)), pad(idx, lanes)),
+       q ? 16 : 8);
+    return true;
+}
+
+bool Emitter::v_extract(uint32_t insn) {  // EXT
+    const bool q = bit(insn, 30);
+    const unsigned imm4 = field(insn, 14, 11), bytes = q ? 16 : 8;
+    if (!q && imm4 >= 8) return false;
+    std::vector<unsigned> idx;
+    for (unsigned j = imm4; j < imm4 + bytes; ++j) idx.push_back(j < bytes ? j : 16 + (j - bytes));
+    wq(field(insn, 4, 0), shuffle("v16u8", vr(field(insn, 9, 5)), vr(field(insn, 20, 16)), pad(idx, 16)), bytes);
+    return true;
+}
+
+bool Emitter::v_modified_imm(uint32_t insn) {
+    const bool q = bit(insn, 30), op = bit(insn, 29);
+    const unsigned cmode = field(insn, 15, 12), rd = field(insn, 4, 0);
+    if (bit(insn, 11)) return false;  // FMOV (vector, half precision)
+    const uint64_t imm8 = (field(insn, 18, 16) << 5) | field(insn, 9, 5);
+    uint64_t imm;
+    switch (cmode >> 1) {
+        case 0: imm = imm8; imm |= imm << 32; break;
+        case 1: imm = imm8 << 8; imm |= imm << 32; break;
+        case 2: imm = imm8 << 16; imm |= imm << 32; break;
+        case 3: imm = imm8 << 24; imm |= imm << 32; break;
+        case 4: imm = imm8; imm |= imm << 16; imm |= imm << 32; break;
+        case 5: imm = imm8 << 8; imm |= imm << 16; imm |= imm << 32; break;
+        case 6:
+            imm = (cmode & 1) ? ((imm8 << 16) | 0xffff) : ((imm8 << 8) | 0xff);
+            imm |= imm << 32;
+            break;
+        default:
+            if (!(cmode & 1) && !op) {
+                imm = imm8 * 0x0101010101010101ull;
+            } else if (!(cmode & 1) && op) {
+                imm = 0;
+                for (unsigned i = 0; i < 8; ++i)
+                    if ((imm8 >> i) & 1) imm |= uint64_t{0xff} << (8 * i);
+            } else if (!op) {
+                imm = vfp_expand_imm(unsigned(imm8), 32);
+                imm |= imm << 32;
+            } else {
+                if (!q) return false;
+                imm = vfp_expand_imm(unsigned(imm8), 64);
+            }
+            break;
+    }
+    const std::string k = "(v2u64){" + hex(imm) + ", " + hex(imm) + "}";
+    const bool orr_bic = (cmode < 12) && (cmode & 1);
+    std::string r;
+    if (orr_bic) r = op ? vr(rd) + " & ~" + k : vr(rd) + " | " + k;
+    else if (op && cmode != 14 && cmode != 15) r = "~" + k;  // MVNI
+    else r = k;
+    wq(rd, r, q ? 16 : 8);
+    return true;
+}
+
+bool Emitter::v_shift_imm(uint32_t insn) {
+    const bool q = bit(insn, 30), u = bit(insn, 29);
+    const unsigned immh = field(insn, 22, 19), immb = field(insn, 18, 16), opcode = field(insn, 15, 11);
+    const unsigned rn = field(insn, 9, 5), rd = field(insn, 4, 0);
+    if (immh == 0) return false;
+    const unsigned eb = 8u << (31 - __builtin_clz(immh)), immhb = (immh << 3) | immb;
+    const unsigned rshift = 2 * eb - immhb, lshift = immhb - eb, lanes = 128 / eb;
+    const std::string a = vr(rn), d = vr(rd), U = ut(eb), S = st(eb);
+    const std::string UA = "((" + U + ")" + a + ")", SA = "((" + S + ")" + a + ")", UD = "((" + U + ")" + d + ")";
+    if (opcode == 0x10 && !u) {  // SHRN/SHRN2: eb is the narrow size
+        if (eb == 64) return false;
+        const unsigned n = 64 / eb;
+        line(fmt("{ const %s sh = (%s)%s >> %u;", ut(2 * eb), ut(2 * eb), a.c_str(), rshift));
+        if (q) {
+            std::vector<unsigned> idx = iota(0, n);
+            for (unsigned i = 0; i < n; ++i) idx.push_back(lanes + 2 * i);
+            wq(rd, shuffle(U.c_str(), d, "sh", idx));
+        } else {
+            wq(rd, shuffle(U.c_str(), "sh", "sh", pad(iota(0, n, 2), lanes)), 8);
+        }
+        line("}");
+        return true;
+    }
+    if (opcode == 0x14) {  // SSHLL/USHLL (SXTL/UXTL) and the "2" forms
+        if (eb == 64) return false;
+        const unsigned n = 64 / eb, base = q ? n : 0;
+        const std::string N = u ? U : S, W = u ? ut(2 * eb) : st(2 * eb);
+        // widened (sign- or zero-extended), then shifted as unsigned
+        wq(rd, std::string("((") + ut(2 * eb) + ")__builtin_convertvector(" + shuffle(N.c_str(), a, a, iota(base, n)) +
+                   ", " + W + ") << " + std::to_string(lshift) + ")");
+        return true;
+    }
+    if (eb == 64 && !q) return false;
+    const unsigned bytes = q ? 16 : 8;
+    const std::string shr = rshift == eb ? (u ? "((" + U + "){})" : "(" + SA + " >> " + std::to_string(eb - 1) + ")")
+                                         : (u ? "(" + UA + " >> " : "(" + SA + " >> ") + std::to_string(rshift) + ")";
+    switch (opcode) {
+        case 0x00: wq(rd, shr, bytes); return true;                         // SSHR/USHR
+        case 0x02: wq(rd, UD + " + (" + U + ")" + shr, bytes); return true;  // SSRA/USRA
+        case 0x0a:
+            if (!u) {  // SHL
+                wq(rd, UA + " << " + std::to_string(lshift), bytes);
+            } else {  // SLI
+                wq(rd, "(" + UD + " & " + hex(mask(lshift)) + ") | (" + UA + " << " + std::to_string(lshift) + ")",
+                   bytes);
+            }
+            return true;
+        case 0x08: {  // SRI
+            if (!u) return false;
+            const uint64_t m = mask(eb), keep = rshift == eb ? m : ~(m >> rshift) & m;
+            const std::string moved = rshift == eb ? "0" : "(" + UA + " >> " + std::to_string(rshift) + ")";
+            wq(rd, "(" + UD + " & " + hex(keep) + ") | " + moved, bytes);
+            return true;
+        }
+        default:
+            return false;
+    }
+}
+
+bool Emitter::v_by_element(uint32_t insn) {
+    const bool q = bit(insn, 30), u = bit(insn, 29);
+    const unsigned size = field(insn, 23, 22), opcode = field(insn, 15, 12);
+    const unsigned l = bit(insn, 21), mbit = bit(insn, 20), h = bit(insn, 11);
+    const unsigned rn = field(insn, 9, 5), rd = field(insn, 4, 0);
+    const unsigned bytes = q ? 16 : 8;
+    unsigned rm = field(insn, 19, 16), index;
+    if (opcode == 0x1 || opcode == 0x5 || opcode == 0x9) {  // FMLA, FMLS, FMUL
+        if (size < 2) return false;
+        const bool dbl = size & 1;
+        if (dbl && l) return false;
+        index = dbl ? h : (h << 1) | l;
+        rm |= mbit << 4;
+        if (dbl && !q) return false;
+        const std::string F = ft(dbl ? 64 : 32), FA = "((" + F + ")" + vr(rn) + ")", FD = "((" + F + ")" + vr(rd) + ")";
+        const std::string y = fmt("((%s){} + ((%s)%s)[%u])", F.c_str(), F.c_str(), vr(rm).c_str(), index);
+        std::string r;
+        if (opcode == 1) r = "__builtin_elementwise_fma(" + FA + ", " + y + ", " + FD + ")";
+        else if (opcode == 5) r = "__builtin_elementwise_fma(-" + FA + ", " + y + ", " + FD + ")";
+        else r = FA + " * " + y;
+        wq(rd, r, bytes);
+        return true;
+    }
+    unsigned eb;
+    if (size == 1) {
+        index = (h << 2) | (l << 1) | mbit;
+        eb = 16;
+    } else if (size == 2) {
+        index = (h << 1) | l;
+        rm |= mbit << 4;
+        eb = 32;
+    } else {
+        return false;
+    }
+    if (opcode == 0x2 || opcode == 0x6 || opcode == 0xa) {  // SMLAL/UMLAL, SMLSL/UMLSL, SMULL/UMULL (+2)
+        const unsigned n = 64 / eb, base = q ? n : 0, wb = 2 * eb;
+        const std::string N = u ? ut(eb) : st(eb), W = u ? ut(wb) : st(wb);
+        const std::string x = "__builtin_convertvector(" + shuffle(N.c_str(), vr(rn), vr(rn), iota(base, n)) + ", " + W + ")";
+        const std::string y = fmt("((%s){} + (%s)((%s)%s)[%u])", W.c_str(), et(wb, !u), N.c_str(), vr(rm).c_str(), index);
+        const std::string acc = "((" + W + ")" + vr(rd) + ")";
+        std::string r;
+        if (opcode == 0x2) r = acc + " + " + x + " * " + y;
+        else if (opcode == 0x6) r = acc + " - " + x + " * " + y;
+        else r = x + " * " + y;
+        wq(rd, r);
+        return true;
+    }
+    const std::string U = ut(eb), UA = "((" + U + ")" + vr(rn) + ")", UD = "((" + U + ")" + vr(rd) + ")";
+    const std::string y = fmt("((%s){} + ((%s)%s)[%u])", U.c_str(), U.c_str(), vr(rm).c_str(), index);
+    std::string r;
+    switch (opcode) {
+        case 0x0: if (!u) return false; r = UD + " + " + UA + " * " + y; break;  // MLA
+        case 0x4: if (!u) return false; r = UD + " - " + UA + " * " + y; break;  // MLS
+        case 0x8: if (u) return false; r = UA + " * " + y; break;                // MUL
+        default: return false;
+    }
+    wq(rd, r, bytes);
+    return true;
+}
+
+bool Emitter::s_three_same(uint32_t insn) {  // scalar, 64-bit integer forms only
+    const bool u = bit(insn, 29);
+    const unsigned size = field(insn, 23, 22), opcode = field(insn, 15, 11);
+    const unsigned rm = field(insn, 20, 16), rn = field(insn, 9, 5), rd = field(insn, 4, 0);
+    if (size != 3 || opcode >= 0x18) return false;
+    const std::string a = vl(rn), b = vl(rm);
+    std::string r;
+    switch (opcode) {
+        case 0x10: r = u ? a + " - " + b : a + " + " + b; break;
+        case 0x11: r = u ? "(" + a + " == " + b + " ? ~0ull : 0)" : "((" + a + " & " + b + ") ? ~0ull : 0)"; break;
+        case 0x06: r = u ? "(" + a + " > " + b + " ? ~0ull : 0)" : "((int64_t)" + a + " > (int64_t)" + b + " ? ~0ull : 0)"; break;
+        case 0x07: r = u ? "(" + a + " >= " + b + " ? ~0ull : 0)" : "((int64_t)" + a + " >= (int64_t)" + b + " ? ~0ull : 0)"; break;
+        default: return false;
+    }
+    wv(rd, r, "0");
+    return true;
+}
+
+bool Emitter::s_pairwise(uint32_t insn) {
+    const bool u = bit(insn, 29);
+    const unsigned size = field(insn, 23, 22), opcode = field(insn, 16, 12);
+    const unsigned rn = field(insn, 9, 5), rd = field(insn, 4, 0);
+    if (!u && opcode == 0x1b && size == 3) {  // ADDP Dd, Vn.2D
+        wv(rd, vl(rn) + " + " + vh(rn), "0");
+        return true;
+    }
+    if (!u || opcode != 0x0d || (size & 2)) return false;  // FADDP only
+    if (size & 1) wv(rd, "b64(f64(" + vl(rn) + ") + f64(" + vh(rn) + "))", "0");
+    else wv(rd, "b32(f32(" + vl(rn) + ") + f32(" + vl(rn) + " >> 32))", "0");
+    return true;
+}
+
+// LD1/ST1 (1-4 registers), LD2/ST2, and LD1/ST1/LD1R of one lane.
+bool Emitter::structures(uint32_t insn) {
+    const bool q = bit(insn, 30), l = bit(insn, 22), post = bit(insn, 23);
+    const unsigned rm = field(insn, 20, 16), rn = field(insn, 9, 5), rt = field(insn, 4, 0);
+    const unsigned bytes = q ? 16 : 8;
+    unsigned total;
+    line("{ const uint64_t base = " + rxsp(rn) + ";");
+    if (!bit(insn, 24)) {  // multiple structures
+        const unsigned opcode = field(insn, 15, 12), size = field(insn, 11, 10);
+        unsigned regs, selem;
+        switch (opcode) {
+            case 0x2: regs = 4; selem = 1; break;
+            case 0x6: regs = 3; selem = 1; break;
+            case 0x7: regs = 1; selem = 1; break;
+            case 0xa: regs = 2; selem = 1; break;
+            case 0x8: regs = 2; selem = 2; break;
+            default: body_.resize(body_.rfind("    {")); return false;
+        }
+        if (size == 3 && !q && selem != 1) {
+            body_.resize(body_.rfind("    {"));
+            return false;
+        }
+        const unsigned eb = 8u << size, lanes = 128 / eb, n = bytes * 8 / eb;
+        auto ld = [&](unsigned off) {
+            return q ? fmt("(v2u64){LD64(base + %u), LD64(base + %u)}", off, off + 8)
+                     : fmt("(v2u64){LD64(base + %u), 0}", off);
+        };
+        if (selem == 1) {
+            for (unsigned i = 0; i < regs; ++i) {
+                const unsigned t = (rt + i) % 32;
+                if (l) {
+                    wq(t, ld(i * bytes));
+                } else if (q) {
+                    line(fmt("  ST64(base + %u, %s); ST64(base + %u, %s);", i * 16, vl(t).c_str(), i * 16 + 8,
+                             vh(t).c_str()));
+                } else {
+                    line(fmt("  ST64(base + %u, %s);", i * 8, vl(t).c_str()));
+                }
+            }
+        } else {  // LD2/ST2: elements alternate between the two registers
+            const unsigned t0 = rt, t1 = (rt + 1) % 32;
+            if (l) {
+                if (q) {
+                    line("  const v2u64 m0 = " + ld(0) + ", m1 = " + ld(16) + ";");
+                    wq(t0, shuffle(ut(eb), "m0", "m1", iota(0, lanes, 2)));
+                    wq(t1, shuffle(ut(eb), "m0", "m1", iota(1, lanes, 2)));
+                } else {
+                    line("  const v2u64 m0 = (v2u64){LD64(base), LD64(base + 8)};");
+                    wq(t0, shuffle(ut(eb), "m0", "m0", pad(iota(0, n, 2), lanes)), 8);
+                    wq(t1, shuffle(ut(eb), "m0", "m0", pad(iota(1, n, 2), lanes)), 8);
+                }
+            } else {
+                std::vector<unsigned> zip1, zip2;
+                for (unsigned i = 0; i < lanes; ++i) {
+                    zip1.push_back((i & 1) ? lanes + i / 2 : i / 2);
+                    zip2.push_back((i & 1) ? lanes + lanes / 2 + i / 2 : lanes / 2 + i / 2);
+                }
+                line("  const v2u64 z0 = (v2u64)" + shuffle(ut(eb), vr(t0), vr(t1), zip1) + ";");
+                line("  ST64(base, z0[0]); ST64(base + 8, z0[1]);");
+                if (q) {
+                    line("  const v2u64 z1 = (v2u64)" + shuffle(ut(eb), vr(t0), vr(t1), zip2) + ";");
+                    line("  ST64(base + 16, z1[0]); ST64(base + 24, z1[1]);");
+                }
+            }
+        }
+        total = regs * bytes;
+    } else {  // single structure
+        const unsigned opcode = field(insn, 15, 13), size = field(insn, 11, 10);
+        const bool s = bit(insn, 12), r = bit(insn, 21);
+        const unsigned selem = (((opcode & 1) << 1) | r) + 1;
+        unsigned scale = opcode >> 1, index = 0;
+        bool replicate = false, ok = selem == 1;
+        switch (scale) {
+            case 0: index = (q << 3) | (s << 2) | size; break;
+            case 1: ok = ok && !(size & 1); index = (q << 2) | (s << 1) | (size >> 1); break;
+            case 2:
+                if (size & 2) ok = false;
+                else if (size == 0) index = (q << 1) | s;
+                else { ok = ok && !s; index = q; scale = 3; }
+                break;
+            default: ok = ok && l && !s; scale = size; replicate = true; break;
+        }
+        if (!ok) {
+            body_.resize(body_.rfind("    {"));
+            return false;
+        }
+        const unsigned eb = 8u << scale;
+        static const char* kLd[] = {"LD8", "LD16", "LD32", "LD64"};
+        static const char* kSt[] = {"ST8", "ST16", "ST32", "ST64"};
+        const std::string U = ut(eb);
+        if (replicate) {
+            wq(rt, "(" + U + "){} + (" + et(eb, false) + ")" + kLd[scale] + "(base)", bytes);
+        } else if (l) {
+            line("  " + U + " t = (" + U + ")" + vr(rt) + "; t[" + std::to_string(index) + "] = " + kLd[scale] + "(base);");
+            wq(rt, "t");
+        } else {
+            line(fmt("  %s(base, ((%s)%s)[%u]);", kSt[scale], U.c_str(), vr(rt).c_str(), index));
+        }
+        total = eb / 8;
+    }
+    if (post) line("  " + reg(rn) + " = base + " + (rm == 31 ? hex(total) : rx(rm)) + ";");
+    line("}");
+    return true;
+}
+
 std::string Emitter::function(size_t* interpreted) {
     for (uint64_t va : f_.insns) {
         if (f_.labels.count(va)) body_ += fmt("L_%" PRIx64 ":;\n", va);
@@ -986,6 +1997,7 @@ std::string Emitter::function(size_t* interpreted) {
                 case 0xa: case 0xb: done = ((insn & 0xffc00000) == 0xd5000000) && system(insn); break;
                 case 0x4: case 0x6: case 0xc: case 0xe: done = loads_stores(insn, va); break;
                 case 0x5: case 0xd: done = dp_register(insn); break;
+                case 0x7: case 0xf: done = simd(insn); break;
                 default: break;
             }
         }
@@ -1007,9 +2019,9 @@ std::string Emitter::function(size_t* interpreted) {
     }
     for (unsigned n = 0; n < 32; ++n) {
         if (!(used_v_ >> n & 1)) continue;
-        if (written_v_ >> n & 1) flush += fmt(" c->v[%u][0] = V%uL; c->v[%u][1] = V%uH;", n, n, n, n);
-        reload_all += fmt(" V%uL = c->v[%u][0]; V%uH = c->v[%u][1];", n, n, n, n);
-        if (n < 8) reload_call += fmt(" V%uL = c->v[%u][0]; V%uH = c->v[%u][1];", n, n, n, n);
+        if (written_v_ >> n & 1) flush += fmt(" *(v2u64*)c->v[%u] = V%u;", n, n);
+        reload_all += fmt(" V%u = *(v2u64*)c->v[%u];", n, n);
+        if (n < 8) reload_call += fmt(" V%u = *(v2u64*)c->v[%u];", n, n);
     }
     const bool has_flags = flags_used_ || flags_written_;
     std::string flush_all = flush;
@@ -1032,7 +2044,7 @@ std::string Emitter::function(size_t* interpreted) {
         out += n == 31 ? "    uint64_t SP = c->sp;\n" : fmt("    uint64_t X%u = c->x[%u];\n", n, n);
     }
     for (unsigned n = 0; n < 32; ++n) {
-        if (used_v_ >> n & 1) out += fmt("    uint64_t V%uL = c->v[%u][0], V%uH = c->v[%u][1];\n", n, n, n, n);
+        if (used_v_ >> n & 1) out += fmt("    v2u64 V%u = *(v2u64*)c->v[%u];\n", n, n);
     }
     if (has_flags) {
         out += "    uint8_t FN = (c->nzcv >> 31) & 1, FZ = (c->nzcv >> 30) & 1, FC = (c->nzcv >> 29) & 1,"

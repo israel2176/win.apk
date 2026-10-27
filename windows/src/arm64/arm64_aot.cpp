@@ -3,6 +3,7 @@
 
 #include "winapk/arm64_aot.h"
 
+#include <atomic>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -10,12 +11,18 @@
 
 #include <windows.h>
 
+extern "C" __attribute__((sysv_abi)) void winapk_arm64_call_sysv(const void* fn, void* frame);  // arm64_guest.cpp
+
 namespace winapk::arm64 {
 
 namespace {
 
-SRWLOCK g_lock = SRWLOCK_INIT;
-std::unordered_map<uint64_t, AotFn> g_functions;  // guest address -> translated function
+// Guest address -> translated function. Read on every entry, written when a
+// library loads: readers take the current map without a lock, a load
+// publishes a new one (the old ones stay, as readers may still hold them).
+using FunctionMap = std::unordered_map<uint64_t, AotFn>;
+SRWLOCK g_load_lock = SRWLOCK_INIT;
+std::atomic<const FunctionMap*> g_functions{new FunctionMap};
 
 // A call or jump the translation could not resolve statically.
 uint32_t runtime_branch(Cpu* c, uint64_t target) {
@@ -38,6 +45,8 @@ uint32_t runtime_branch(Cpu* c, uint64_t target) {
 }
 
 void runtime_step(Cpu* c) { step(*c); }
+
+uint32_t runtime_plain(uint64_t target) { return hooks().plain_host && hooks().plain_host(target); }
 
 }  // namespace
 
@@ -66,18 +75,20 @@ bool aot_load(const char* so_path, uint64_t bias, uint64_t text_hash) {
     *m->base = bias;
     m->runtime->branch = runtime_branch;
     m->runtime->step = runtime_step;
-    AcquireSRWLockExclusive(&g_lock);
-    for (uint64_t i = 0; i < m->count; ++i) g_functions[bias + m->entries[i].vaddr] = m->entries[i].fn;
-    ReleaseSRWLockExclusive(&g_lock);
+    m->runtime->plain = runtime_plain;
+    m->runtime->call_sysv = winapk_arm64_call_sysv;
+    AcquireSRWLockExclusive(&g_load_lock);
+    auto* next = new FunctionMap(*g_functions.load());
+    for (uint64_t i = 0; i < m->count; ++i) (*next)[bias + m->entries[i].vaddr] = m->entries[i].fn;
+    g_functions.store(next, std::memory_order_release);
+    ReleaseSRWLockExclusive(&g_load_lock);
     return true;
 }
 
 AotFn aot_lookup(uint64_t pc) {
-    AcquireSRWLockShared(&g_lock);
-    auto it = g_functions.find(pc);
-    const AotFn fn = it == g_functions.end() ? nullptr : it->second;
-    ReleaseSRWLockShared(&g_lock);
-    return fn;
+    const FunctionMap* map = g_functions.load(std::memory_order_acquire);
+    auto it = map->find(pc);
+    return it == map->end() ? nullptr : it->second;
 }
 
 uint32_t aot_run(AotFn fn, Cpu* c) { return fn(c); }

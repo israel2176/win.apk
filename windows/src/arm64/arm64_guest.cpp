@@ -608,14 +608,22 @@ void register_shim_functions() {
 // argument and result ones: setjmp and longjmp (and the null-pointer fault,
 // which reports them). The JIT stops for these and makes every other host
 // call from inside its generated code (Hooks::full_state_call).
-// Hooks::aot_entry: translated code, while the engine uses it.
-AotFn aot_entry(uint64_t pc) {
-    return g_engine.load(std::memory_order_relaxed) == Engine::kAot ? aot_lookup(pc) : nullptr;
-}
-
 bool full_state_call(uint64_t target) {
     const uint64_t base = reinterpret_cast<uint64_t>(g_intrinsics);
     return target == 0 || (target >= base && target < base + kIntrinsicCount);
+}
+
+// Hooks::plain_host.
+bool plain_host(uint64_t target) {
+    uint64_t lo, hi;
+    if (full_state_call(target) || code_range(target, &lo, &hi)) return false;
+    const HostFunction info = host_function(target);
+    return info.va_list < 0 && info.guest_fn_args == 0;
+}
+
+// Hooks::aot_entry: translated code, while the engine uses it.
+AotFn aot_entry(uint64_t pc) {
+    return g_engine.load(std::memory_order_relaxed) == Engine::kAot ? aot_lookup(pc) : nullptr;
 }
 
 // WINAPK_ARM64_STATS=1: the totals at exit, for finding where an app's time
@@ -659,6 +667,7 @@ void init() {
         h.host_call = host_call;
         h.full_state_call = full_state_call;
         h.aot_entry = aot_entry;
+        h.plain_host = plain_host;
         h.svc = svc;
         h.fault = fault;
         set_hooks(h);

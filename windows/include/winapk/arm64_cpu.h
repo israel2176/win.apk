@@ -88,6 +88,10 @@ struct Hooks {
     // The translated function at `pc`, when AOT code is in use (arm64_aot.h).
     // The JIT runs it in place of translating that code itself.
     AotFn (*aot_entry)(uint64_t pc) = nullptr;
+    // A host function whose arguments the bridge passes as they are (no
+    // va_list, no guest callback to wrap, not setjmp/longjmp): translated
+    // code calls it without going through host_call.
+    bool (*plain_host)(uint64_t target) = nullptr;
     // SVC #imm. Android apps do not make raw system calls, but libraries
     // that inline a few (Unity's, some anti-tamper code) exist.
     void (*svc)(Cpu& c, uint32_t imm) = nullptr;
