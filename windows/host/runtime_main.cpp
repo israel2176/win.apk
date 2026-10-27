@@ -13,6 +13,7 @@
 //   5. Call com.macapk.loader.Boot.run.
 //
 //   winapk-runtime --apk <file.apk> [--data <dir>] [--jdk <dir>] [--lib <dir>] [--install-only]
+//   winapk-runtime --apk <app> --package-to <file>   (the launcher's install helper: the package name)
 //   winapk-runtime --java-main --jdk <dir> --cp <jar> <class> [args...]   (internal: run_java)
 //
 // --install-only stops after step 2 plus the launcher's metadata: the app's
@@ -61,6 +62,7 @@ namespace {
 struct Options {
     fs::path apk, data, jdk, lib;
     bool install_only = false;
+    fs::path package_to;  // --package-to: write the app's package name there and stop
 };
 
 std::string utf8(const std::wstring& w) {
@@ -205,6 +207,7 @@ bool parse_args(int argc, wchar_t** argv, Options* o) {
         else if (a == L"--jdk") ok = value(&o->jdk);
         else if (a == L"--lib") ok = value(&o->lib);
         else if (a == L"--install-only") o->install_only = true;
+        else if (a == L"--package-to") ok = value(&o->package_to);
         else ok = false;
         if (!ok) return false;
     }
@@ -836,10 +839,31 @@ int wmain(int argc, wchar_t** argv) {
     BootArgs b;
     if (!parse_args(argc, argv, &b.options)) {
         std::fprintf(stderr, "usage: winapk-runtime --apk <file.apk|.apkm|.xapk|.apks> [--data <dir>] [--jdk <dir>] [--lib <dir>] "
-                     "[--install-only]\n");
+                     "[--install-only] [--package-to <file>]\n");
         return 2;
     }
     if (!resolve_paths(&b.options)) return 2;
+    if (!b.options.package_to.empty()) {
+        return run_java(b.options, b.options.lib / "winapk-tools.jar", L"com.winapk.tools.AppInstall",
+                        {L"--package", b.options.apk.wstring(), b.options.package_to.wstring()});
+    }
+
+    // F-Droid and other stores install through PackageInstaller, which hands
+    // the APK to the install helper (PackageInstallerBackend), as on the Mac:
+    // here the helper is the launcher, Win.apk.exe install --apk ... It keeps
+    // the installed-apps registry PackageManager answers from, and stages
+    // under the data folder.
+    {
+        std::error_code ec0;
+        const fs::path launcher = exe_dir().parent_path() / L"Win.apk.exe";
+        if (env_var(L"MACAPK_INSTALLHELPER").empty() && fs::is_regular_file(launcher, ec0))
+            SetEnvironmentVariableW(L"MACAPK_INSTALLHELPER", launcher.c_str());
+        if (env_var(L"MACAPK_PM_REGISTRY_FILE").empty())
+            SetEnvironmentVariableW(L"MACAPK_PM_REGISTRY_FILE",
+                                    (b.options.data / L"installed_apps.json").c_str());
+        if (env_var(L"MACAPK_STAGING_DIR").empty())
+            SetEnvironmentVariableW(L"MACAPK_STAGING_DIR", (b.options.data / L"staging").c_str());
+    }
 
     // "All files access" (MANAGE_EXTERNAL_STORAGE) is granted on the Mac by
     // macapk-installhelper's consent dialog, which signs the answer into a
