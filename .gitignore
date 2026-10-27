@@ -23,7 +23,6 @@ cache/
 logs/
 *.log
 *.tmp
-launcher/BuildInfo.generated.swift
 __pycache__/
 *.py[cod]
 

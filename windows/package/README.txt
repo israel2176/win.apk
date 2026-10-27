@@ -36,12 +36,18 @@ Adding and running apps
 -----------------------
 Open Win.apk: it shows your app library.
 - Add an app: drag an .apk (or an .apkm, .xapk or .apks bundle) onto the
-  window, click "Add app...", or double-click the .apk in Explorer.
-  Installing takes up to a minute, once per app.
+  window, click the drop zone or the "Add app" tile, or double-click the
+  .apk in Explorer. Installing takes up to a minute, once per app; a window
+  shows its progress and its log.
 - Each installed app gets its own icon in the library, in the Start menu
-  (Start > Win.apk Apps) and on the desktop.
-- Double-click an app to open it. Right-click for more: a new desktop
-  shortcut, the last log, or removing the app.
+  (Start > Win.apk Apps) and, unless turned off in the settings, on the
+  desktop.
+- Double-click an app to open it. Right-click for more: Get Info, a desktop
+  shortcut, its files and log, updating it from a newer APK, reinstalling or
+  removing it. Typing searches the library.
+- The gear opens the settings: language (English or Hebrew), theme, the
+  phone's screen size and orientation, and more. "Logs" at the bottom shows
+  the logs as they are written.
 
 In an app, the mouse is your finger and the wheel scrolls. Android's Back
 is Escape, Alt+Left, or the mouse's back side button. Close the app's window to quit. Apps from F-Droid
