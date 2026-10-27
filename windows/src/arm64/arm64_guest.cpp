@@ -355,6 +355,11 @@ void fault(Cpu& c, uint32_t insn, const char* what) {
 }
 
 void svc(Cpu& c, uint32_t) {
+    uint64_t result;
+    if (linux_syscall(c.x[8], c.x, &result)) {  // arm64_abi.cpp
+        c.x[0] = result;
+        return;
+    }
     std::fprintf(stderr, "[win.apk] arm64 guest made a raw Linux system call %llu at %s; not supported\n",
                  static_cast<unsigned long long>(c.x[8]), where(c.pc - 4).c_str());
     std::fflush(stderr);

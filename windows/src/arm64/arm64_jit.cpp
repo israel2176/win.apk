@@ -73,9 +73,14 @@ void give_slot(int slot) {
     g_slots_used[static_cast<size_t>(slot)] = false;
 }
 
-// WINAPK_ARM64_JIT_INPLACE=0: every host call halts the JIT and goes through
-// run() with the whole state, as before host calls were made in place (for
-// telling a bug there from one elsewhere).
+// Host calls from inside the generated code: on unless
+// WINAPK_ARM64_JIT_INPLACE=0, which halts the JIT for every host call and
+// goes through run() with the whole state. Each way has an app that fails
+// and the other way runs (WhatsApp needs in place, Hill Climb Racing ran with
+// halting), one run each: an open bug, perhaps a race, not yet told apart.
+// Differences worth knowing: in place, the host function runs with the
+// guest's MXCSR (dynarmic switches it only on leaving Run) and with JIT
+// frames, which have no unwind data, on the stack.
 bool in_place_calls() {
     static const bool on = [] {
         const char* v = std::getenv("WINAPK_ARM64_JIT_INPLACE");
