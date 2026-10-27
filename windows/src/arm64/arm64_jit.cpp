@@ -73,6 +73,14 @@ void give_slot(int slot) {
     g_slots_used[static_cast<size_t>(slot)] = false;
 }
 
+bool exact_nans() {
+    static const bool exact = [] {
+        const char* v = std::getenv("WINAPK_ARM64_FP");
+        return v && std::strcmp(v, "exact") == 0;
+    }();
+    return exact;
+}
+
 template <typename T> T load(VAddr a) {
     T v;
     std::memcpy(&v, reinterpret_cast<const void*>(a), sizeof(T));
@@ -105,6 +113,15 @@ public:
         conf.define_unpredictable_behaviour = true;
         conf.cntfrq_el0 = 1000000000;  // CNTVCT_EL0 counts nanoseconds, as in the interpreter
         conf.code_cache_size = code_cache_size;
+        // A NaN result may be x86's NaN rather than the one Arm would give
+        // (payload and sign): every other result is the same, and dynarmic
+        // then skips the NaN fix-up after each floating-point instruction
+        // and uses the host's FMA as it is. WINAPK_ARM64_FP=exact keeps
+        // Arm's NaNs.
+        if (!exact_nans()) {
+            conf.unsafe_optimizations = true;
+            conf.optimizations |= Dynarmic::OptimizationFlag::Unsafe_InaccurateNaN;
+        }
         jit_.reset(new Dynarmic::A64::Jit(conf));
     }
 
