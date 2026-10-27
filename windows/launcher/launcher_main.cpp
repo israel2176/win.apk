@@ -2397,6 +2397,7 @@ void load_log(bool force) {
         const int len = GetWindowTextLengthW(g_log_edit);
         SendMessageW(g_log_edit, EM_SETSEL, len, len);
         SendMessageW(g_log_edit, EM_SCROLLCARET, 0, 0);
+        SendMessageW(g_log_edit, WM_HSCROLL, SB_LEFT, 0);  // the caret's scroll may have moved sideways too
     } else {
         SendMessageW(g_log_edit, EM_LINESCROLL, 0, first);
     }
