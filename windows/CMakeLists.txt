@@ -73,6 +73,11 @@ if(WINAPK_ARM64_JIT)
     GIT_SUBMODULES externals/fmt externals/mcl externals/robin-map externals/xbyak externals/zycore externals/zydis
     EXCLUDE_FROM_ALL)
   FetchContent_MakeAvailable(dynarmic)
+  # The fmt dynarmic bundles calls malloc/free without <cstdlib>, which
+  # current libc++ no longer pulls in through other headers.
+  if(TARGET fmt)
+    target_compile_options(fmt PUBLIC $<$<COMPILE_LANGUAGE:CXX>:-include cstdlib>)
+  endif()
   target_link_libraries(winapk_loader PRIVATE dynarmic)
   set_source_files_properties(src/arm64/arm64_jit.cpp PROPERTIES
     COMPILE_DEFINITIONS WINAPK_HAVE_DYNARMIC=1 COMPILE_OPTIONS "-std=gnu++20;-mcx16")
