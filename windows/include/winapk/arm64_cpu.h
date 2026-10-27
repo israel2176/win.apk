@@ -77,6 +77,11 @@ struct Hooks {
     // Called with c.pc == target; it makes the call and sets c.pc to where the
     // guest continues (normally c.x[30]).
     void (*host_call)(Cpu& c, uint64_t target) = nullptr;
+    // Whether host_call(c, target) needs more of `c` than x0-x7, x30, sp and
+    // v0-v7, or changes more than x0, x1, v0, v1 and pc (setjmp, longjmp).
+    // The JIT makes the other host calls from inside its generated code with
+    // just those registers, instead of stopping and copying the whole state.
+    bool (*full_state_call)(uint64_t target) = nullptr;
     // SVC #imm. Android apps do not make raw system calls, but libraries
     // that inline a few (Unity's, some anti-tamper code) exist.
     void (*svc)(Cpu& c, uint32_t imm) = nullptr;

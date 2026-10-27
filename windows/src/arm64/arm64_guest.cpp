@@ -18,6 +18,7 @@
 #include <cstring>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -232,8 +233,13 @@ struct ThreadState {
     uint8_t* stack = nullptr;
     uint64_t stack_top = 0;
     int depth = 0;  // nested runs on this thread
-    std::unique_ptr<JitEngine> jit;  // created on first use; reads cpu.tpidr in place
-    bool jit_tried = false;
+    // JIT engines, created on first use; they read cpu.tpidr in place. The
+    // JIT makes host calls from inside its generated code, so a guest
+    // callback under one (a qsort comparator) cannot run on that engine and
+    // takes the next: one per nesting level in use.
+    std::vector<std::unique_ptr<JitEngine>> jits;
+    size_t jits_running = 0;
+    bool jit_failed = false;  // no exclusive-monitor slot left: interpret
     // bionic's TLS slots for arm64 start at index -1 (TLS_SLOT_BIONIC_TLS);
     // TPIDR_EL0 points at slot 0, the stack guard is slot 5.
     uint64_t tls[24] = {};
@@ -245,7 +251,7 @@ struct ThreadState {
 
     Stats totals() const {
         Stats s = stats;
-        if (jit) {
+        for (const auto& jit : jits) {
             s.jit_exits += jit->exits;
             s.interp_insns += jit->interp_insns;
         }
@@ -267,7 +273,7 @@ struct ThreadState {
             std::lock_guard<std::mutex> hold(g_stats_lock);
             add(g_exited, totals());
         }
-        jit.reset();
+        jits.clear();
         if (stack) VirtualFree(stack, 0, MEM_RELEASE);
     }
 };
@@ -286,12 +292,16 @@ std::atomic<Engine> g_engine{initial_engine()};
 // Runs ts.cpu from its pc until it returns to its stop_pc.
 void execute(ThreadState& ts) {
     if (g_engine.load(std::memory_order_relaxed) == Engine::kJit) {
-        if (!ts.jit_tried) {
-            ts.jit_tried = true;
-            ts.jit = make_jit_engine(ts.cpu);
+        if (ts.jits_running == ts.jits.size() && !ts.jit_failed) {
+            std::unique_ptr<JitEngine> jit = make_jit_engine(ts.cpu, ts.jits.empty());
+            if (jit) ts.jits.push_back(std::move(jit));
+            else ts.jit_failed = true;
         }
-        if (ts.jit) {
-            ts.jit->run(ts.cpu);
+        if (ts.jits_running < ts.jits.size()) {
+            JitEngine& jit = *ts.jits[ts.jits_running];
+            ++ts.jits_running;
+            jit.run(ts.cpu);
+            --ts.jits_running;
             return;
         }
     }
@@ -380,14 +390,23 @@ void convert_va_list(const AapcsVaList* a, SysvVaStorage* s) {
     s->va.reg_save_area = s->reg_save;
 }
 
-SRWLOCK g_va_lock = SRWLOCK_INIT;
-std::unordered_map<uint64_t, unsigned> g_va_functions;
+// Host functions whose arguments the bridge rewrites: a va_list to convert,
+// or guest function pointers to hand over as host_callable() entries, so the
+// host calls them without an execute fault (an exception costs microseconds;
+// qsort calls its comparator a million times).
+struct HostFunction {
+    int va_list = -1;           // argument index, or -1
+    uint8_t guest_fn_args = 0;  // bit i: argument i is a guest function pointer
+};
 
-int va_list_index(uint64_t fn) {
-    AcquireSRWLockShared(&g_va_lock);
-    auto it = g_va_functions.find(fn);
-    const int r = it == g_va_functions.end() ? -1 : static_cast<int>(it->second);
-    ReleaseSRWLockShared(&g_va_lock);
+SRWLOCK g_host_functions_lock = SRWLOCK_INIT;
+std::unordered_map<uint64_t, HostFunction> g_host_functions;
+
+HostFunction host_function(uint64_t fn) {
+    AcquireSRWLockShared(&g_host_functions_lock);
+    auto it = g_host_functions.find(fn);
+    const HostFunction r = it == g_host_functions.end() ? HostFunction{} : it->second;
+    ReleaseSRWLockShared(&g_host_functions_lock);
     return r;
 }
 
@@ -443,10 +462,15 @@ void host_call(Cpu& c, uint64_t target) {
     uint64_t gpr[8];
     std::memcpy(gpr, c.x, sizeof gpr);
     SysvVaStorage va;
-    const int va_index = va_list_index(target);
-    if (va_index >= 0 && va_index < 8) {
-        convert_va_list(reinterpret_cast<const AapcsVaList*>(gpr[va_index]), &va);
-        gpr[va_index] = reinterpret_cast<uint64_t>(&va.va);
+    const HostFunction info = host_function(target);
+    if (info.va_list >= 0 && info.va_list < 8) {
+        convert_va_list(reinterpret_cast<const AapcsVaList*>(gpr[info.va_list]), &va);
+        gpr[info.va_list] = reinterpret_cast<uint64_t>(&va.va);
+    }
+    for (int i = 0; info.guest_fn_args >> i; ++i) {
+        if ((info.guest_fn_args >> i) & 1) {
+            gpr[i] = reinterpret_cast<uint64_t>(host_callable(reinterpret_cast<void*>(gpr[i])));
+        }
     }
     std::memcpy(f.gpr, gpr, sizeof f.gpr);
     for (int i = 0; i < 8; ++i) f.fpr[i] = c.v[i].d[0];
@@ -482,8 +506,8 @@ void run_guest(ThreadState& ts, uint64_t pc, const uint64_t gpr[8], const uint64
                size_t nstack, uint64_t* x0, uint64_t* x1, uint64_t* d0) {
     Cpu& c = ts.cpu;
     const bool nested = ts.depth > 0;
-    std::unique_ptr<Cpu> saved;
-    if (nested) saved.reset(new Cpu(c));
+    std::optional<Cpu> saved;
+    if (nested) saved.emplace(c);
     uint64_t sp = nested ? c.sp : ts.stack_top;
     if (nstack) {
         sp = (sp - 8 * nstack) & ~uint64_t{15};
@@ -539,8 +563,8 @@ LONG CALLBACK execute_fault_handler(EXCEPTION_POINTERS* ep) {
     return EXCEPTION_CONTINUE_EXECUTION;
 }
 
-// The functions of the Bionic shim that take a va_list.
-void register_shim_va_list_functions() {
+// The functions of the Bionic shim that take a va_list or a guest callback.
+void register_shim_functions() {
     static const struct {
         const char* name;
         unsigned index;
@@ -552,6 +576,30 @@ void register_shim_va_list_functions() {
     for (const auto& f : kVaList) {
         if (void* p = mini_bionic_resolve(f.name)) register_va_list_function(p, f.index);
     }
+    // And those that take a guest callback, with its argument index.
+    static const struct {
+        const char* name;
+        unsigned index;
+    } kCallbacks[] = {
+        {"qsort", 3}, {"pthread_create", 2}, {"pthread_once", 1}, {"pthread_key_create", 1},
+        {"__cxa_atexit", 0}, {"__system_property_read_callback", 1}, {"ALooper_addFd", 4},
+    };
+    for (const auto& f : kCallbacks) {
+        void* p = mini_bionic_resolve(f.name);
+        if (!p) continue;
+        AcquireSRWLockExclusive(&g_host_functions_lock);
+        g_host_functions[reinterpret_cast<uint64_t>(p)].guest_fn_args |= static_cast<uint8_t>(1u << f.index);
+        ReleaseSRWLockExclusive(&g_host_functions_lock);
+    }
+}
+
+// A host call that reads or writes more of the guest's registers than the
+// argument and result ones: setjmp and longjmp (and the null-pointer fault,
+// which reports them). The JIT stops for these and makes every other host
+// call from inside its generated code (Hooks::full_state_call).
+bool full_state_call(uint64_t target) {
+    const uint64_t base = reinterpret_cast<uint64_t>(g_intrinsics);
+    return target == 0 || (target >= base && target < base + kIntrinsicCount);
 }
 
 // WINAPK_ARM64_STATS=1: the totals at exit, for finding where an app's time
@@ -590,11 +638,12 @@ void init() {
         Hooks h;
         h.code_range = code_range;
         h.host_call = host_call;
+        h.full_state_call = full_state_call;
         h.svc = svc;
         h.fault = fault;
         set_hooks(h);
         g_veh = AddVectoredExceptionHandler(1, execute_fault_handler);
-        register_shim_va_list_functions();
+        register_shim_functions();
         if (GetEnvironmentVariableA("WINAPK_ARM64_STATS", nullptr, 0) > 0) {
             set_profiling(true);
             std::atexit(print_stats);
@@ -683,9 +732,9 @@ void* host_callable(void* fn) {
 }
 
 void register_va_list_function(const void* host_fn, unsigned index) {
-    AcquireSRWLockExclusive(&g_va_lock);
-    g_va_functions[reinterpret_cast<uint64_t>(host_fn)] = index;
-    ReleaseSRWLockExclusive(&g_va_lock);
+    AcquireSRWLockExclusive(&g_host_functions_lock);
+    g_host_functions[reinterpret_cast<uint64_t>(host_fn)].va_list = static_cast<int>(index);
+    ReleaseSRWLockExclusive(&g_host_functions_lock);
 }
 
 }  // namespace winapk::arm64
