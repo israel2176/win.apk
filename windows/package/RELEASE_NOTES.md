@@ -8,7 +8,7 @@ A pre-release for testing: Win.apk runs Android apps on Windows 10/11 x64.
 ## What works
 - **Java/Kotlin apps:** each opens in its own window, with mouse, wheel and keyboard input. Back is Escape, Alt+Left or the mouse's back button.
 - **OpenGL ES:** works from Java (`GLSurfaceView`, libGDX) and from an app's native code through a SurfaceView (SDL games). It runs on ANGLE (Direct3D 11), falling back to WARP or SwiftShader without a GPU.
-- **Native libraries:** apps that ship `lib/x86_64` libraries load them natively.
+- **Native libraries:** apps that ship `lib/x86_64` libraries load them natively. Apps that only ship `lib/arm64-v8a` libraries run them through an ARM interpreter: correct, but much slower than native code (experimental; heavy games will not be playable).
 - **Sound from Java:** AudioTrack and SoundPool, for WAV, Ogg and MP3.
 - **Storage:** files, SharedPreferences and SQLite.
 - **Desktop services:** clipboard, file pickers and game controllers.
@@ -16,7 +16,7 @@ A pre-release for testing: Win.apk runs Android apps on Windows 10/11 x64.
 In the automated sweep of open-source apps, about 33 of 38 draw their first screen.
 
 ## Not yet
-- ARM-only native code.
+- Native code for 32-bit ARM only (`armeabi-v7a`).
 - NativeActivity games.
 - MediaPlayer and native audio (OpenSL ES and AAudio).
 - Video, camera, WebView and location.

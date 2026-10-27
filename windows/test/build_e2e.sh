@@ -8,7 +8,8 @@
 # <jni-include-dir>  a JDK include dir containing jni.h (any OS; only the
 #                    headers are read, to compile the Android guest against).
 # <javac>            a javac to compile WinApkJniTest.java (JDK 21+).
-# <out-dir>          receives libwinapk_jni_guest.so and classes/.
+# <out-dir>          receives libwinapk_jni_guest.so, arm64/libwinapk_jni_guest.so
+#                    and classes/.
 
 set -euo pipefail
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
@@ -33,5 +34,12 @@ printf '#ifndef _WINAPK_STUB_STDIO_H\n#define _WINAPK_STUB_STDIO_H\ntypedef stru
     -I "$OUT/guestinc" -Wl,-soname,libwinapk_jni_guest.so \
     -o "$OUT/libwinapk_jni_guest.so" "$HERE/guest/jni_guest.c"
 
+# The same library for arm64-v8a, run through the arm64 interpreter (M10).
+mkdir -p "$OUT/arm64"
+"$CC" --target=aarch64-linux-android24 -fPIC -O2 -fvisibility=hidden -nostdlib -shared -fuse-ld=lld \
+    -I "$OUT/guestinc" -Wl,-soname,libwinapk_jni_guest.so \
+    -o "$OUT/arm64/libwinapk_jni_guest.so" "$HERE/guest/jni_guest.c"
+
 echo "[build_e2e] $OUT/libwinapk_jni_guest.so"
+echo "[build_e2e] $OUT/arm64/libwinapk_jni_guest.so"
 echo "[build_e2e] $OUT/classes/WinApkJniTest.class"

@@ -1,4 +1,5 @@
-// guest_libs.cpp -- loads an app's x86_64 native libraries; see guest_libs.h.
+// guest_libs.cpp -- loads an app's x86_64 or arm64 native libraries; see
+// guest_libs.h.
 
 #include "guest_libs.h"
 
@@ -12,12 +13,17 @@
 #include <windows.h>
 
 #include "winapk/abi_thunk.h"
+#include "winapk/arm64_guest.h"
 #include "winapk/guest_jni.h"
 #include "winapk/jni_bind.h"
 #include "winapk/linker.h"
 #include "winapk/mini_bionic.h"
 
 #include "native_asset.h"
+#include "winapk/jnigraphics.h"
+
+#include "native_aaudio.h"
+#include "native_media.h"
 #include "native_opensles.h"
 #include "native_window.h"
 
@@ -154,14 +160,17 @@ jstring JNICALL link_only(JNIEnv* env, jclass, jstring path) {
 }
 
 // The system libraries' functions: the Bionic shim's, then libEGL/libGLES and
-// libandroid's native window and assets and libOpenSLES, which live with the
-// host's GL, window, Java and audio.
+// libandroid's native window and assets, libOpenSLES and libaaudio, which
+// live with the host's GL, window, Java and audio.
 void* resolve_system(const char* name) {
     if (void* p = winapk::mini_bionic_resolve(name)) return p;
     if (void* p = winapk::host::guest_gl_resolve(name)) return p;
     if (void* p = winapk::host::native_window_resolve(name)) return p;
     if (void* p = winapk::host::native_asset_resolve(name)) return p;
-    return winapk::host::native_opensles_resolve(name);
+    if (void* p = winapk::host::native_aaudio_resolve(name)) return p;
+    if (void* p = winapk::host::native_media_resolve(name)) return p;
+    if (void* p = winapk::host::native_opensles_resolve(name)) return p;
+    return winapk::jnigraphics_resolve(name);
 }
 
 const winapk::host::HostMethod kLinkerMethods[] = {
@@ -227,7 +236,8 @@ extern "C" jint winapk_guest_library_loaded(JavaVM*, void* module, const wchar_t
     std::string error;
     auto on_load = reinterpret_cast<OnLoad>(g_linker->lookup(lib, "JNI_OnLoad", nullptr, &error));
     if (!on_load) return JNI_VERSION_1_6;
-    const jint version = on_load(g_guest_vm, nullptr);
+    const jint version =
+        reinterpret_cast<OnLoad>(winapk::arm64::host_callable(reinterpret_cast<void*>(on_load)))(g_guest_vm, nullptr);
     // JNI_OnLoad's address lets a guest crash address in a log be mapped
     // back to the library (its st_value gives the load bias).
     std::fprintf(stderr, "[win.apk] %s: JNI_OnLoad (at %p) returned 0x%x\n", utf8(source_of(stub_path)).c_str(),

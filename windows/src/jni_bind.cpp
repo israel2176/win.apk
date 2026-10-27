@@ -2,6 +2,7 @@
 
 #include "winapk/jni_bind.h"
 
+#include "winapk/arm64_guest.h"
 #include "winapk/guest_jni.h"
 
 #include <cstdio>
@@ -92,7 +93,9 @@ void* guest_native_thunk(void* fn, const char* sig) {
     auto key = std::make_pair(fn, std::string(sig));
     auto it = g_thunks.find(key);
     if (it != g_thunks.end()) return it->second;
-    void* thunk = make_jni_native_thunk(fn, kinds.data(), kinds.size(),
+    // An arm64 native gets its System V entry into the interpreter here, so
+    // HotSpot's calls do not go through the execute-fault path each time.
+    void* thunk = make_jni_native_thunk(arm64::host_callable(fn), kinds.data(), kinds.size(),
                                         reinterpret_cast<void*>(&guest_env_wrapping));
     if (thunk) g_thunks.emplace(std::move(key), thunk);
     return thunk;

@@ -1,6 +1,8 @@
-// linker.h -- the guest dynamic linker: loads Android x86_64 libraries together
-// with their DT_NEEDED dependencies, keeps a registry of what is loaded, and
-// implements the guest's libdl (dlopen, dlsym, dladdr, ...).
+// linker.h -- the guest dynamic linker: loads Android x86_64 or arm64
+// libraries together with their DT_NEEDED dependencies, keeps a registry of
+// what is loaded, and implements the guest's libdl (dlopen, dlsym, dladdr, ...).
+// A dependency must have the same ABI as the library that needs it, as on
+// Android.
 //
 // ElfImage (elf_loader.h) loads one library. GuestLinker does what bionic's
 // linker does around that:
