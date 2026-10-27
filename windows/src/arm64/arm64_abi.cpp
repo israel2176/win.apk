@@ -19,6 +19,8 @@
 
 #include <cstdint>
 #include <cstring>
+#include <mutex>
+#include <set>
 #include <vector>
 
 namespace winapk::arm64 {
@@ -151,7 +153,156 @@ WINAPK_GUEST_ABI int a64_epoll_pwait(int epfd, Arm64EpollEvent* events, int max,
     return n > 0 ? copy_events(n, x, events) : n;
 }
 
+// ---- code the guest writes itself ----------------------------------------------
+//
+// Memory an arm64 caller maps or protects executable holds arm64 code it is
+// about to write and run: a JIT of its own (Mono, LuaJIT, V8), or a
+// trampoline (Facebook's force_dlopen writes one over a string gai_strerror
+// returned, so a call it makes appears to come from libc). The bridge runs
+// only registered ranges as guest code, and would call anything else as a
+// host function, so such ranges are registered here, and dropped again when
+// unmapped or made non-executable. (An x86_64 caller's code runs natively and
+// needs none of this, which is why it is only for arm64 imports.)
+
+constexpr int kProtExec = 4;
+constexpr uint64_t kPage = 4096;
+
+// Only ranges registered here are ever dropped: an app that makes a page of
+// a loaded library's own code writable for a moment must not unregister the
+// library.
+std::mutex g_exec_lock;
+std::set<uint64_t> g_exec_ranges;  // starts of the ranges track_exec registered
+
+void track_exec(void* addr, size_t len, int prot) {
+    if (!addr || !len) return;
+    const uint64_t lo = reinterpret_cast<uint64_t>(addr) & ~(kPage - 1);
+    const uint64_t hi = (reinterpret_cast<uint64_t>(addr) + len + kPage - 1) & ~(kPage - 1);
+    void* start = reinterpret_cast<void*>(lo);
+    std::lock_guard<std::mutex> hold(g_exec_lock);
+    if (prot & kProtExec) {
+        if (is_guest_code(start)) return;
+        register_code(start, hi - lo);
+        g_exec_ranges.insert(lo);
+    } else if (g_exec_ranges.erase(lo)) {
+        unregister_code(start);
+    }
+}
+
+using Mmap = void*(WINAPK_GUEST_ABI*)(void*, size_t, int, int, int, int64_t);
+using Mprotect = int(WINAPK_GUEST_ABI*)(void*, size_t, int);
+using Munmap = int(WINAPK_GUEST_ABI*)(void*, size_t);
+
+WINAPK_GUEST_ABI void* a64_mmap(void* addr, size_t len, int prot, int flags, int fd, int64_t off) {
+    static const auto fn = shim<Mmap>("mmap");
+    void* p = fn(addr, len, prot, flags, fd, off);
+    if (p != reinterpret_cast<void*>(-1) && (prot & kProtExec)) track_exec(p, len, prot);
+    return p;
+}
+
+WINAPK_GUEST_ABI int a64_mprotect(void* addr, size_t len, int prot) {
+    static const auto fn = shim<Mprotect>("mprotect");
+    const int r = fn(addr, len, prot);
+    if (r == 0) track_exec(addr, len, prot);
+    return r;
+}
+
+WINAPK_GUEST_ABI int a64_munmap(void* addr, size_t len) {
+    static const auto fn = shim<Munmap>("munmap");
+    const int r = fn(addr, len);
+    if (r == 0) track_exec(addr, len, 0);
+    return r;
+}
+
+// ---- system call numbers --------------------------------------------------------
+//
+// The shim's syscall() takes x86_64's numbers (futex 202, gettid 186...), and
+// arm64 uses asm-generic's (futex 98, gettid 178...): an arm64 library's
+// syscall(SYS_futex, ...) named another call. Both its syscall() import and
+// its raw SVCs come here, are renumbered for the shim, and a few calls the
+// shim's syscall() does not take go to its libc functions. The signal calls
+// answer 0, as the shim's sigaction() family does: there are no guest
+// signals yet.
+
+using Syscall = int64_t(WINAPK_GUEST_ABI*)(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t);
+using Fn3 = int64_t(WINAPK_GUEST_ABI*)(int64_t, int64_t, int64_t);
+using Fn4 = int64_t(WINAPK_GUEST_ABI*)(int64_t, int64_t, int64_t, int64_t);
+
+bool known_syscall(uint64_t nr) {
+    switch (nr) {
+        case 98: case 178: case 172: case 124: case 278: case 113: case 233: case 283:   // via the shim's syscall()
+        case 56: case 57: case 62: case 63: case 64: case 79: case 80: case 93: case 94:  // via libc functions
+        case 96: case 132: case 134: case 135: case 167:
+            return true;
+        default:
+            return false;
+    }
+}
+
+// libc's convention: -1 and errno on failure.
+int64_t do_syscall(uint64_t nr, const uint64_t a[6]) {
+    static const auto shim_syscall = shim<Syscall>("syscall");
+    auto via = [&](int64_t x86) {
+        return shim_syscall(x86, static_cast<int64_t>(a[0]), static_cast<int64_t>(a[1]), static_cast<int64_t>(a[2]),
+                            static_cast<int64_t>(a[3]), static_cast<int64_t>(a[4]));
+    };
+    auto fn3 = [&](const char* name) {
+        const auto f = shim<Fn3>(name);
+        return f(static_cast<int64_t>(a[0]), static_cast<int64_t>(a[1]), static_cast<int64_t>(a[2]));
+    };
+    switch (nr) {
+        case 98: return via(202);   // futex
+        case 178: return via(186);  // gettid
+        case 172: return via(39);   // getpid
+        case 124: return via(24);   // sched_yield
+        case 278: return via(318);  // getrandom
+        case 113: return via(228);  // clock_gettime
+        case 233: return via(28);   // madvise
+        case 283: return via(324);  // membarrier
+        case 96: return via(186);   // set_tid_address: returns the caller's tid
+        case 56: {  // openat: as open() for AT_FDCWD or an absolute path (the shim has no openat)
+            const char* path = reinterpret_cast<const char*>(a[1]);
+            if (static_cast<int>(a[0]) != -100 && !(path && path[0] == '/')) {
+                *shim<int*(WINAPK_GUEST_ABI*)()>("__errno")() = 38;  // ENOSYS
+                return -1;
+            }
+            const auto f = shim<Fn3>("open");
+            return f(static_cast<int64_t>(a[1]), static_cast<int64_t>(a[2]), static_cast<int64_t>(a[3]));
+        }
+        case 57: return shim<int64_t(WINAPK_GUEST_ABI*)(int64_t)>("close")(static_cast<int64_t>(a[0]));
+        case 62: return fn3("lseek");
+        case 63: return fn3("read");
+        case 64: return fn3("write");
+        case 79:
+            return a64_fstatat(static_cast<int>(a[0]), reinterpret_cast<const char*>(a[1]),
+                               reinterpret_cast<Arm64Stat*>(a[2]), static_cast<int>(a[3]));
+        case 80: return a64_fstat(static_cast<int>(a[0]), reinterpret_cast<Arm64Stat*>(a[1]));
+        case 93: case 94:
+            shim<void(WINAPK_GUEST_ABI*)(int64_t)>("_exit")(static_cast<int64_t>(a[0]));
+            return 0;
+        default:  // sigaltstack, rt_sigaction, rt_sigprocmask, prctl
+            return 0;
+    }
+}
+
+WINAPK_GUEST_ABI int64_t a64_syscall(int64_t nr, int64_t a0, int64_t a1, int64_t a2, int64_t a3, int64_t a4) {
+    const uint64_t a[6] = {static_cast<uint64_t>(a0), static_cast<uint64_t>(a1), static_cast<uint64_t>(a2),
+                           static_cast<uint64_t>(a3), static_cast<uint64_t>(a4), 0};
+    if (!known_syscall(static_cast<uint64_t>(nr))) {
+        *shim<int*(WINAPK_GUEST_ABI*)()>("__errno")() = 38;  // ENOSYS
+        return -1;
+    }
+    return do_syscall(static_cast<uint64_t>(nr), a);
+}
+
 }  // namespace
+
+bool linux_syscall(uint64_t nr, const uint64_t args[6], uint64_t* result) {
+    if (!known_syscall(nr)) return false;
+    const int64_t r = do_syscall(nr, args);
+    // The kernel's convention: -errno on failure.
+    *result = static_cast<uint64_t>(r == -1 ? -static_cast<int64_t>(*shim<int*(WINAPK_GUEST_ABI*)()>("__errno")()) : r);
+    return true;
+}
 
 void* abi_override(const char* name) {
     static const struct {
@@ -169,6 +320,11 @@ void* abi_override(const char* name) {
         {"epoll_ctl", reinterpret_cast<void*>(&a64_epoll_ctl)},
         {"epoll_wait", reinterpret_cast<void*>(&a64_epoll_wait)},
         {"epoll_pwait", reinterpret_cast<void*>(&a64_epoll_pwait)},
+        {"syscall", reinterpret_cast<void*>(&a64_syscall)},
+        {"mmap", reinterpret_cast<void*>(&a64_mmap)},
+        {"mmap64", reinterpret_cast<void*>(&a64_mmap)},
+        {"mprotect", reinterpret_cast<void*>(&a64_mprotect)},
+        {"munmap", reinterpret_cast<void*>(&a64_munmap)},
     };
     for (const auto& o : kOverrides) {
         if (std::strcmp(o.name, name) == 0) return mini_bionic_resolve(name) ? o.fn : nullptr;

@@ -547,6 +547,40 @@ WINAPK_GUEST_ABI int g_dl_iterate_phdr(DlIterateCallback cb, void* data) {
     return 0;
 }
 
+// ---- the linker's own entry points ------------------------------------------
+//
+// Bionic's libdl.so is a thin layer over the linker's __loader_* functions,
+// each taking the caller's address as its last argument (the linker picks
+// the caller's namespace by it); libdl exports them too. Facebook's
+// force_dlopen (WhatsApp, Instagram, Messenger, fbjni apps) looks
+// __loader_dlopen up with dlsym and calls it with an address inside libc, to
+// load past the app's namespace. There are no namespaces here, so the
+// caller only matters for RTLD_NEXT.
+
+WINAPK_GUEST_ABI void* g_loader_dlopen(const char* name, int flags, const void*) { return g_dlopen(name, flags); }
+
+WINAPK_GUEST_ABI void* g_loader_android_dlopen_ext(const char* name, int flags, const void* extinfo, const void*) {
+    return g_android_dlopen_ext(name, flags, extinfo);
+}
+
+WINAPK_GUEST_ABI void* g_loader_dlsym(void* handle, const char* name, const void* caller) {
+    GuestLinker* linker = GuestLinker::process();
+    if (!linker || !name) {
+        set_dlerror("dlsym", linker ? "symbol name is null" : "no guest linker");
+        return nullptr;
+    }
+    std::string error;
+    void* p = linker->lookup(handle, name, caller, &error);
+    if (!p) set_dlerror("dlsym", error);
+    return p;
+}
+
+// Symbol versions are not tracked: the default version is the one there is.
+WINAPK_GUEST_ABI void* g_dlvsym(void* handle, const char* name, const char*) { return g_dlsym(handle, name); }
+WINAPK_GUEST_ABI void* g_loader_dlvsym(void* handle, const char* name, const char*, const void* caller) {
+    return g_loader_dlsym(handle, name, caller);
+}
+
 struct LibdlSymbol {
     const char* name;
     void* addr;
@@ -562,6 +596,15 @@ const LibdlSymbol kLibdl[] = {
     WINAPK_LIBDL("dlerror", g_dlerror),
     WINAPK_LIBDL("dladdr", g_dladdr),
     WINAPK_LIBDL("dl_iterate_phdr", g_dl_iterate_phdr),
+    WINAPK_LIBDL("dlvsym", g_dlvsym),
+    WINAPK_LIBDL("__loader_dlopen", g_loader_dlopen),
+    WINAPK_LIBDL("__loader_android_dlopen_ext", g_loader_android_dlopen_ext),
+    WINAPK_LIBDL("__loader_dlsym", g_loader_dlsym),
+    WINAPK_LIBDL("__loader_dlvsym", g_loader_dlvsym),
+    WINAPK_LIBDL("__loader_dlclose", g_dlclose),
+    WINAPK_LIBDL("__loader_dlerror", g_dlerror),
+    WINAPK_LIBDL("__loader_dladdr", g_dladdr),
+    WINAPK_LIBDL("__loader_dl_iterate_phdr", g_dl_iterate_phdr),
 };
 
 #undef WINAPK_LIBDL

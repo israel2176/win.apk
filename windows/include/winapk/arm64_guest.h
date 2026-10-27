@@ -111,4 +111,9 @@ void* guest_intrinsic(const char* name);
 // other name. Asked after guest_intrinsic.
 void* abi_override(const char* name);
 
+// A raw Linux system call (SVC #0) from arm64 code: number `nr` (x8),
+// arguments x0-x5. False if it is not one the shim can answer; otherwise
+// *result is what the kernel would return (-errno on failure).
+bool linux_syscall(uint64_t nr, const uint64_t args[6], uint64_t* result);
+
 }  // namespace winapk::arm64
