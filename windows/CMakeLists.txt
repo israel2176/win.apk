@@ -42,6 +42,7 @@ add_library(winapk_loader STATIC
   src/arm64/arm64_cpu.cpp
   src/arm64/arm64_simd.cpp
   src/arm64/arm64_guest.cpp
+  src/arm64/arm64_jit.cpp
 )
 target_include_directories(winapk_loader PUBLIC include PRIVATE src)
 # WaitOnAddress (the shim's futexes), BCryptGenRandom (arc4random), Winsock.
@@ -52,6 +53,30 @@ if(NOT MSVC)
 endif()
 # The arm64 interpreter's 16-byte exclusives and CASP use cmpxchg16b.
 set_source_files_properties(src/arm64/arm64_cpu.cpp PROPERTIES COMPILE_OPTIONS "-mcx16")
+
+# The arm64 JIT (src/arm64/arm64_jit.h): dynarmic, 0BSD, from the fork the
+# Azahar project maintains, pinned to a commit with the submodules it builds
+# with. It needs Boost's headers (MSYS2: pacboy boost:p). Off by default so
+# the loader still builds with nothing but a compiler; CI and releases turn
+# it on. Without it, arm64 code runs through the interpreter alone.
+option(WINAPK_ARM64_JIT "Build the arm64 JIT (fetches dynarmic, needs Boost headers)" OFF)
+if(WINAPK_ARM64_JIT)
+  enable_language(C)  # Zydis, dynarmic's disassembler, is C
+  include(FetchContent)
+  set(DYNARMIC_TESTS OFF CACHE BOOL "" FORCE)
+  set(DYNARMIC_WARNINGS_AS_ERRORS OFF CACHE BOOL "" FORCE)
+  set(DYNARMIC_USE_PRECOMPILED_HEADERS OFF CACHE BOOL "" FORCE)
+  set(DYNARMIC_FRONTENDS "A64" CACHE STRING "" FORCE)
+  FetchContent_Declare(dynarmic
+    GIT_REPOSITORY https://github.com/azahar-emu/dynarmic.git
+    GIT_TAG a46601580d5512d324104f985b5f0209dc980ddc
+    GIT_SUBMODULES externals/fmt externals/mcl externals/robin-map externals/xbyak externals/zycore externals/zydis
+    EXCLUDE_FROM_ALL)
+  FetchContent_MakeAvailable(dynarmic)
+  target_link_libraries(winapk_loader PRIVATE dynarmic)
+  set_source_files_properties(src/arm64/arm64_jit.cpp PROPERTIES
+    COMPILE_DEFINITIONS WINAPK_HAVE_DYNARMIC=1 COMPILE_OPTIONS "-std=gnu++20;-mcx16")
+endif()
 
 add_executable(winapk-elfrun tools/elfrun_main.cpp)
 target_link_libraries(winapk-elfrun PRIVATE winapk_loader)
