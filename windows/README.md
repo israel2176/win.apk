@@ -15,7 +15,7 @@ fall into three groups:
 |---|---|
 | Java/Kotlin only (no `.so`) | Run on HotSpot like on the Mac. Needs only the host layer (window, input, ANGLE on D3D11, audio). |
 | Ship `lib/x86_64/*.so` | Load the x86_64 libraries natively with the loader in this directory. Full speed. |
-| ARM-only native code | `lib/arm64-v8a` runs through the arm64 interpreter in this directory (M10, stage 1): correct but much slower than native. A JIT (dynarmic, 0BSD) is the next stage. 32-bit `armeabi-v7a` is not supported. |
+| ARM-only native code | `lib/arm64-v8a` runs through the arm64 JIT (dynarmic, 0BSD) in this directory, about 2.6x native time on CI's benchmark; the interpreter (about 80x) checks it and takes the instructions dynarmic does not translate. 32-bit `armeabi-v7a` is not supported. |
 
 ## What is here
 
@@ -136,9 +136,11 @@ one), then x86_64 apps at full speed, then ARM-only apps through translation
 Done so far:
 
 - The loader, linker, ELF TLS and the JNI bridge for Android x86_64 libraries.
-- arm64-v8a libraries through an interpreter, when an app has no x86_64
-  build: the same loader, linker and JNI bridge, checked in CI against the
-  host and in a real JVM.
+- arm64-v8a libraries through a JIT (dynarmic) backed by an interpreter,
+  when an app has no x86_64 build: the same loader, linker and JNI bridge,
+  checked in CI against the host and in a real JVM. CMake option
+  `-DWINAPK_ARM64_JIT=ON` (CI and releases) fetches dynarmic;
+  `WINAPK_ARM64_ENGINE=interp` forces the interpreter.
 - The Bionic shim: about 520 libc functions (threads, files, sockets,
   epoll, `ALooper`, printf and scanf), on the UCRT and Win32.
 - The host: the window and input, `NativeOs`, `NativeLooper`, images (libwebp,

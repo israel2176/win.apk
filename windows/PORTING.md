@@ -854,9 +854,12 @@ needs a hand-written wrapper (calls in both directions, callbacks, threads,
 when it has no x86_64 ones, and `Build.SUPPORTED_ABIS` lists both. What is
 left:
 
-- Speed: a JIT behind the same `Cpu` state and hooks. dynarmic (0BSD) is
-  still the candidate; the interpreter stays as the reference the
-  differential test checks it against.
+- Speed: done with a JIT behind the same `Cpu` state and hooks
+  (`src/arm64/arm64_jit.cpp`, dynarmic from the azahar-emu fork, fastmem over
+  the shared address space). On CI's benchmark: native 5.5 ms, interpreter
+  450 ms (82x), JIT 14 ms (2.6x). Every differential and bridge check runs
+  on both engines. Next: keep translated code on disk and translate at
+  install time, so the first run is as fast as later ones.
 - ELF TLS through TLSDESC (libraries built for API 29 or later that use
   `thread_local`), raw `SVC` system calls, and signals (a guest `SIGSEGV`
   handler, Unity's and Mono's null checks).
