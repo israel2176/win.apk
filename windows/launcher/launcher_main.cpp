@@ -76,7 +76,7 @@ using Gdiplus::GraphicsPath;
 using Gdiplus::RectF;
 using Gdiplus::SizeF;
 
-constexpr UINT kInstalled = WM_APP + 1;       // wParam: ok | run after << 1, lParam: new std::wstring (the name)
+constexpr UINT kInstalled = WM_APP + 1;       // wParam: ok | run after << 1 | running << 2, lParam: new std::wstring (the name)
 constexpr UINT kRunExited = WM_APP + 2;       // wParam: ok, lParam: new std::wstring (the app's name)
 constexpr UINT kInstallStarted = WM_APP + 3;  // lParam: new std::wstring (the app's name)
 constexpr UINT kRefresh = WM_APP + 4;         // the install helper changed the library
@@ -275,6 +275,7 @@ const wchar_t* tr(const wchar_t* en) {
         {L"{0} stopped with an error", L"{0} נעצרה עם שגיאה"},
         {L"The app stopped with an error.\n\nThe log is in:\n{0}", L"האפליקציה נעצרה עם שגיאה.\n\nהלוג נמצא ב:\n{0}"},
         {L"An app", L"אפליקציה"},
+        {L"Close {0} before updating it.", L"יש לסגור את {0} לפני העדכון."},
         {L"{0} wants to remove {1}.\n\nRemove it?", L"{0} מבקשת להסיר את {1}.\n\nלהסיר?"},
         {L"{0} wants to update {1} ({2}).\n\nUpdate it?", L"{0} מבקשת לעדכן את {1} ({2}).\n\nלעדכן?"},
         {L"{0} wants to install {1}.\n\nInstall it?", L"{0} מבקשת להתקין את {1}.\n\nלהתקין?"},
@@ -698,18 +699,45 @@ SRWLOCK g_install_lock = SRWLOCK_INIT;  // one install at a time: each one is a 
 
 void write_registry();
 
+// Whether the app is running: winapk-runtime holds a named mutex keyed on
+// the app's data folder for as long as it runs the app (claim_single_instance
+// in host/runtime_main.cpp; the key is made the same way here).
+bool app_running(const std::wstring& name) {
+    std::error_code ec;
+    std::wstring key = fs::absolute(app_dir(name), ec).lexically_normal().wstring();
+    if (ec) key = app_dir(name).wstring();
+    while (!key.empty() && (key.back() == L'\\' || key.back() == L'/')) key.pop_back();
+    for (wchar_t& c : key) c = static_cast<wchar_t>(towlower(c == L'/' ? L'\\' : c));
+    uint64_t h = 1469598103934665603ull;  // FNV-1a over the UTF-16 units
+    for (const wchar_t c : key) h = (h ^ static_cast<uint16_t>(c)) * 1099511628211ull;
+    wchar_t mutex[48];
+    swprintf(mutex, 48, L"Local\\WinApk-app-%016llx", static_cast<unsigned long long>(h));
+    HANDLE m = OpenMutexW(SYNCHRONIZE, FALSE, mutex);
+    if (!m) return false;
+    const DWORD w = WaitForSingleObject(m, 0);
+    if (w == WAIT_OBJECT_0 || w == WAIT_ABANDONED) ReleaseMutex(m);
+    CloseHandle(m);
+    return w == WAIT_TIMEOUT;
+}
+
 // Copies `source` into the library as <name><ext> and installs it there: the
 // install, the code conversion, the name, icon and package, the shortcuts.
-// `replaces` is the app's previous APK, removed once the new one is in.
+// `replaces` is the app's previous APK, removed once the new one is in. An
+// app that is running is left alone (its files are in use): false, with
+// `*running` set.
 bool install_into_library(const fs::path& source, const std::wstring& name, const fs::path& replaces,
-                          fs::path* installed) {
+                          bool* running) {
+    *running = app_running(name);
+    if (*running) return false;
     std::error_code ec;
     fs::create_directories(library_dir(), ec);
     const fs::path target = library_dir() / (name + source.extension().wstring());
     bool ok = fs::equivalent(source, target, ec) || CopyFileW(source.c_str(), target.c_str(), FALSE) != 0;
     if (ok) {
         HANDLE p = start_runtime(L"--apk \"" + target.wstring() + L"\" --install-only", install_log(name));
-        ok = p && wait_exit(p) == 0 &&
+        const DWORD code = p ? wait_exit(p) : 1;
+        *running = code == 3;  // the app was started meanwhile
+        ok = code == 0 &&
              MoveFileExW((app_dir(name) / L"label.txt").c_str(), label_file(name).c_str(),
                          MOVEFILE_REPLACE_EXISTING | MOVEFILE_COPY_ALLOWED) != 0;
         if (ok) MoveFileExW((app_dir(name) / L"package.txt").c_str(), package_file(name).c_str(),
@@ -718,7 +746,6 @@ bool install_into_library(const fs::path& source, const std::wstring& name, cons
     if (ok && !replaces.empty() && replaces != target) fs::remove(replaces, ec);
     if (ok) make_app_shortcuts({name, label_of(name), target}, setting(L"DesktopShortcut", 1) != 0);
     write_registry();
-    if (installed) *installed = target;
     return ok;
 }
 
@@ -727,9 +754,10 @@ DWORD WINAPI install_thread(void* param) {
     std::unique_ptr<InstallJob> job(static_cast<InstallJob*>(param));
     AcquireSRWLockExclusive(&g_install_lock);
     PostMessageW(g_main, kInstallStarted, 0, reinterpret_cast<LPARAM>(new std::wstring(job->name)));
-    const bool ok = install_into_library(job->source, job->name, job->replaces, nullptr);
+    bool running = false;
+    const bool ok = install_into_library(job->source, job->name, job->replaces, &running);
     ReleaseSRWLockExclusive(&g_install_lock);
-    PostMessageW(g_main, kInstalled, (ok ? 1 : 0) | (job->run_after ? 2 : 0),
+    PostMessageW(g_main, kInstalled, (ok ? 1 : 0) | (job->run_after ? 2 : 0) | (running ? 4 : 0),
                  reinterpret_cast<LPARAM>(new std::wstring(job->name)));
     CoUninitialize();
     return 0;
@@ -3016,6 +3044,8 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 if (wp & 2) {
                     if (const App* a = find_app(*name)) launch(*a);
                 }
+            } else if (wp & 4) {
+                set_status(fmt(L"Close {0} before updating it.", {label_of(*name)}), kError);
             } else {
                 set_status(fmt(L"Installing {0} failed.", {*name}), kError);
                 if (!g_install_wnd) failed_with_log(fmt(L"Installing {0} failed", {*name}), install_log(*name));
@@ -3263,7 +3293,9 @@ int helper_main(int argc, wchar_t** argv) {
     helper_progress(0.1, "consented");
 
     const std::wstring name = update ? existing->name : file_name_safe(wpkg);
-    if (!install_into_library(apk, name, update ? existing->apk : fs::path(), nullptr)) {
+    bool running = false;
+    if (!install_into_library(apk, name, update ? existing->apk : fs::path(), &running)) {
+        if (running) return helper_fail(5, "install", "the app is running; close it, then update it");
         return helper_fail(5, "install", "installing failed; the log is " +
                                              wide_to_utf8(install_log(name).wstring()));
     }

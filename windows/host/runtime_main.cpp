@@ -16,6 +16,11 @@
 //   winapk-runtime --apk <app> --package-to <file>   (the launcher's install helper: the package name)
 //   winapk-runtime --java-main --jdk <dir> --cp <jar> <class> [args...]   (internal: run_java)
 //
+// One runtime runs an app at a time, as on the Mac, where the app's stub holds
+// a lock and a second launch brings the running app forward: a second start
+// of the same app shows the running one's window and exits 0, and a second
+// --install-only (an update while the app runs) exits 3 and changes nothing.
+//
 // --install-only stops after step 2 plus the launcher's metadata: the app's
 // icon and name in <app dir>/icon.png and label.txt (com.winapk.tools.AppMeta,
 // in a JVM with the host natives but no app running), which is what the
@@ -39,8 +44,10 @@
 #include "win32_window.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <cwctype>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -806,6 +813,91 @@ DWORD WINAPI boot_thread(void* param) {
     return 0;
 }
 
+// One runtime per app at a time. Two runtimes on the same app share its
+// databases, preferences and, for a messenger, its identity keys: SQLite's
+// locking keeps the files intact only as far as each process expects to be
+// alone, and an app's own state (a message counter, a ratchet) breaks at once.
+// Upstream's app stub holds run/<app>.pid for the runtime's life and a second
+// launch only activates the running app; a shortcut, the library and a script
+// here could each start a second copy.
+//
+// The lock is a named mutex keyed on the app's data folder (absolute,
+// lower-cased), held until the process exits; a mutex left by a process that
+// died counts as free (WAIT_ABANDONED). Next to it, a named mapping holds the
+// holder's process id, so a second start can find the holder's window.
+// WINAPK_ALLOW_SECOND_INSTANCE=1 turns the check off.
+std::wstring instance_key(const fs::path& app_dir) {
+    std::error_code ec;
+    std::wstring key = fs::absolute(app_dir, ec).lexically_normal().wstring();
+    if (ec) key = app_dir.wstring();
+    while (!key.empty() && (key.back() == L'\\' || key.back() == L'/')) key.pop_back();
+    for (wchar_t& c : key) c = static_cast<wchar_t>(towlower(c == L'/' ? L'\\' : c));
+    uint64_t h = 1469598103934665603ull;  // FNV-1a over the UTF-16 units
+    for (const wchar_t c : key) h = (h ^ static_cast<uint16_t>(c)) * 1099511628211ull;
+    wchar_t name[48];
+    swprintf(name, 48, L"Local\\WinApk-app-%016llx", static_cast<unsigned long long>(h));
+    return name;
+}
+
+bool claim_single_instance(const std::wstring& key) {
+    if (!env_var(L"WINAPK_ALLOW_SECOND_INSTANCE").empty()) return true;
+    HANDLE m = CreateMutexW(nullptr, FALSE, key.c_str());
+    if (!m) return true;  // no lock to be had: do not block the start
+    const DWORD w = WaitForSingleObject(m, 0);
+    if (w != WAIT_OBJECT_0 && w != WAIT_ABANDONED) {
+        CloseHandle(m);
+        return false;
+    }
+    // Held until exit, like the mapping that names us.
+    if (HANDLE map = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, sizeof(DWORD),
+                                        (key + L"-pid").c_str())) {
+        if (auto* pid = static_cast<DWORD*>(MapViewOfFile(map, FILE_MAP_WRITE, 0, 0, sizeof(DWORD))))
+            *pid = GetCurrentProcessId();
+    }
+    return true;
+}
+
+struct WindowSearch {
+    DWORD pid;
+    HWND found;
+};
+
+BOOL CALLBACK find_app_window(HWND w, LPARAM lp) {
+    auto* f = reinterpret_cast<WindowSearch*>(lp);
+    DWORD pid = 0;
+    GetWindowThreadProcessId(w, &pid);
+    wchar_t cls[32] = {};
+    GetClassNameW(w, cls, 32);
+    if (pid != f->pid || !IsWindowVisible(w) || wcscmp(cls, L"WinApkAppWindow") != 0) return TRUE;
+    f->found = w;
+    return FALSE;
+}
+
+// Brings the running copy's window forward. It may still be starting, with
+// no window yet, so this waits a little for one.
+void activate_running(const std::wstring& key) {
+    HANDLE map = OpenFileMappingW(FILE_MAP_READ, FALSE, (key + L"-pid").c_str());
+    if (!map) return;
+    DWORD pid = 0;
+    if (const auto* p = static_cast<const DWORD*>(MapViewOfFile(map, FILE_MAP_READ, 0, 0, sizeof(DWORD)))) {
+        pid = *p;
+        UnmapViewOfFile(p);
+    }
+    CloseHandle(map);
+    if (!pid) return;
+    AllowSetForegroundWindow(pid);
+    for (int i = 0; i < 60; ++i) {
+        WindowSearch f{pid, nullptr};
+        EnumWindows(find_app_window, reinterpret_cast<LPARAM>(&f));
+        if (f.found) {
+            if (IsIconic(f.found)) ShowWindow(f.found, SW_RESTORE);
+            SetForegroundWindow(f.found);
+            return;
+        }
+        Sleep(250);
+    }
+}
+
 }  // namespace
 
 // stderr is unbuffered in the UCRT, and an unbuffered fprintf hands the
@@ -881,6 +973,14 @@ int wmain(int argc, wchar_t** argv) {
     if (ec) {
         std::fprintf(stderr, "[win.apk] cannot create %s\n", utf8(b.app_dir.wstring()).c_str());
         return 1;
+    }
+    const std::wstring instance = instance_key(b.app_dir);
+    if (!claim_single_instance(instance)) {
+        std::fprintf(stderr, "[win.apk] %s is already running; not starting a second copy\n",
+                     utf8(b.app_dir.filename().wstring()).c_str());
+        if (b.options.install_only) return 3;
+        if (env_var(L"WINAPK_HEADLESS").empty()) activate_running(instance);
+        return 0;
     }
     if (!install_app(&b.options, b.options.data / "android")) return 1;
     translate_arm64(b.options.apk);
