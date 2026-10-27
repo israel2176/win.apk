@@ -67,6 +67,23 @@ public final class AppInstall {
     static final String NAME_NONCE = "Qm4c4pk0Zx9AbC1dEfGh8Q==";
 
     public static void main(String[] args) {
+        // AppInstall --package <app> <out file>: only the package name, for the
+        // launcher's install helper, which must know which app an install
+        // replaces before it asks the user and installs it.
+        if (args.length == 3 && args[0].equals("--package")) {
+            try {
+                String pkg = packageOf(Paths.get(args[1]));
+                if (pkg == null) {
+                    System.err.println("[install] no package name in " + args[1]);
+                    System.exit(3);
+                }
+                Files.writeString(Paths.get(args[2]), pkg, StandardCharsets.UTF_8);
+                System.exit(0);
+            } catch (IOException e) {
+                System.err.println("[install] " + e);
+                System.exit(1);
+            }
+        }
         if (args.length != 4) {
             System.err.println("usage: AppInstall <app> <android root> <abi>[,<abi>...] <record file>");
             System.exit(2);
@@ -209,6 +226,19 @@ public final class AppInstall {
     }
 
     // ---- the package name, from the binary AndroidManifest.xml ------------------
+
+    /** The package of an APK or a bundle (whose base APK is unpacked to a
+     *  scratch folder next to it and removed again). */
+    static String packageOf(Path source) throws IOException {
+        if (source.getFileName().toString().toLowerCase().endsWith(".apk")) return packageName(source);
+        Path scratch = Files.createTempDirectory(source.toAbsolutePath().getParent(), ".package-");
+        try {
+            List<Path> members = new ArrayList<>();
+            return unpackBundle(source, scratch, members) && !members.isEmpty() ? packageName(members.get(0)) : null;
+        } finally {
+            deleteTree(scratch);
+        }
+    }
 
     /** The `package` attribute of the manifest's root element. */
     static String packageName(Path apk) throws IOException {

@@ -1440,8 +1440,13 @@ public final class PackageInstallerBackend {
      *  sweep (launcher/InstallCore.swift) cleans day-old leftovers here, so an
      *  interrupted session never accumulates. */
     public static File stagingRoot() throws IOException {
-        File dir = new File(System.getProperty("user.home"),
-                "Library/Application Support/Mac.apk/staging");
+        // MACAPK_STAGING_DIR: a host whose library lives elsewhere (Win.apk's
+        // runtime sets it to <data>\staging, next to its install helper's
+        // library).
+        String override = System.getenv("MACAPK_STAGING_DIR");
+        File dir = (override != null && !override.isEmpty()) ? new File(override)
+                : new File(System.getProperty("user.home"),
+                        "Library/Application Support/Mac.apk/staging");
         if (!dir.isDirectory() && !dir.mkdirs()) {
             throw new IOException("cannot create staging dir " + dir);
         }
