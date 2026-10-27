@@ -858,8 +858,20 @@ left:
   (`src/arm64/arm64_jit.cpp`, dynarmic from the azahar-emu fork, fastmem over
   the shared address space). On CI's benchmark: native 5.5 ms, interpreter
   450 ms (82x), JIT 14 ms (2.6x). Every differential and bridge check runs
-  on both engines. Next: keep translated code on disk and translate at
-  install time, so the first run is as fast as later ones.
+  on both engines.
+- Speed, second step: translation at install time (`tools/arm64_aot_main.cpp`,
+  `src/arm64/arm64_aot.cpp`). Each guest function becomes a C function with
+  the guest registers as locals, compiled by clang into `<lib>.so.aot.dll`;
+  the JIT runs what the translation cannot follow (unknown branch targets,
+  code without a translation, longjmp), and the interpreter the few
+  instructions not translated natively. Calls into plain host functions go
+  straight to them, cached per call site. Benchmark (local, ratio to native):
+  compute 1.0x (JIT 2.9x), float/NEON 1.3x (6.5x), indirect calls 1.2x
+  (2.9x), memory 0.9x (1.1x), small libc calls 2.0x (5.4x), qsort with a guest
+  comparator 5.7x (17.9x). Every check runs on the three engines. Next: the
+  installer step (it needs clang, or LLVM linked in), jump tables (BR into
+  the function now leaves it), exclusives and LSE atomics without the
+  interpreter, and coverage on real apps' libraries.
 - ELF TLS through TLSDESC (libraries built for API 29 or later that use
   `thread_local`), raw `SVC` system calls, and signals (a guest `SIGSEGV`
   handler, Unity's and Mono's null checks).

@@ -15,7 +15,7 @@ fall into three groups:
 |---|---|
 | Java/Kotlin only (no `.so`) | Run on HotSpot like on the Mac. Needs only the host layer (window, input, ANGLE on D3D11, audio). |
 | Ship `lib/x86_64/*.so` | Load the x86_64 libraries natively with the loader in this directory. Full speed. |
-| ARM-only native code | `lib/arm64-v8a` runs through the arm64 JIT (dynarmic, 0BSD) in this directory, about 2.6x native time on CI's benchmark; the interpreter (about 80x) checks it and takes the instructions dynarmic does not translate. 32-bit `armeabi-v7a` is not supported. |
+| ARM-only native code | `lib/arm64-v8a` is translated to x86-64 at install time (`winapk-aot`, see `include/winapk/arm64_aot.h`): integer code runs at about native speed, floating point and NEON at about 1.3x, calls into the host at about 2x. What the translation cannot follow runs through the arm64 JIT (dynarmic, 0BSD), about 2.6-6x; the interpreter (about 80x) checks both. 32-bit `armeabi-v7a` is not supported. |
 
 ## What is here
 

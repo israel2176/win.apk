@@ -32,7 +32,7 @@
 
 namespace winapk::arm64 {
 
-constexpr uint32_t kAotVersion = 1;
+constexpr uint32_t kAotVersion = 2;
 constexpr uint32_t kAotDone = 0;
 constexpr uint32_t kAotBail = 1;
 
@@ -44,6 +44,13 @@ struct AotRuntime {
     uint32_t (*branch)(Cpu* c, uint64_t target);
     // Executes the instruction at c->pc through the interpreter.
     void (*step)(Cpu* c);
+    // Whether `target` is a host function translated code may call directly
+    // through call_sysv: no va_list or guest callback among its arguments,
+    // not setjmp/longjmp (Hooks::plain_host). Call sites cache the answer.
+    uint32_t (*plain)(uint64_t target);
+    // The bridge's System V call (winapk_arm64_call_sysv): the argument
+    // registers and stack words in, rax/rdx/xmm0/xmm1 out.
+    void(__attribute__((sysv_abi)) * call_sysv)(const void* fn, void* frame);
 };
 
 struct AotEntry {

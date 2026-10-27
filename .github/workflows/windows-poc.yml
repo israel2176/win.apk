@@ -85,7 +85,13 @@ jobs:
         run: ./build/winapk-elfrun.exe guest/libwinapk_poc_guest.so guest/libwinapk_poc_guest_packed.so
       - name: Run the guest linker test
         run: ./build/winapk-linker-test.exe guest/link
-      - name: Run the arm64 interpreter test
+      - name: Translate the arm64 test libraries ahead of time (as the installer does)
+        run: |
+          for so in guest/arm64/*.so; do
+            ./build/winapk-aot.exe "$so" "$so.aot.c"
+            clang -O2 -march=x86-64-v2 -shared -fno-strict-aliasing -w -o "$so.aot.dll" "$so.aot.c"
+          done
+      - name: Run the arm64 test (interpreter, JIT, AOT)
         run: ./build/winapk-arm64-test.exe guest/arm64
       - name: Run the Bionic shim test
         run: |
