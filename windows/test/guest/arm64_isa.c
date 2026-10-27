@@ -529,6 +529,20 @@ ISA_EXPORT u64 isa_memset_copy(u64 a, u64 b, u64 c) {
     return r;
 }
 
+// A longer workload for the speed comparison between the engines (not in
+// ISA_TESTS): a mix of multiplies, shifts, loads and stores.
+ISA_EXPORT u64 isa_bench(u64 iterations, u64 seed, u64 c) {
+    u32 table[64];
+    for (int i = 0; i < 64; ++i) table[i] = (u32)(seed * (u64)(i + 1) + c);
+    u64 h = seed;
+    for (u64 i = 0; i < iterations; ++i) {
+        h = h * 6364136223846793005ull + 1442695040888963407ull;
+        table[i & 63] ^= (u32)(h >> 33);
+        h ^= table[(i * 7) & 63];
+    }
+    return h;
+}
+
 // The list the test walks (name, function).
 #define ISA_TESTS(X)       \
     X(isa_arith)           \

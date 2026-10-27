@@ -9,7 +9,10 @@
 #include "winapk/linker.h"
 #include "winapk/mini_bionic.h"
 
+#include "arm64_jit.h"
+
 #include <algorithm>
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -201,6 +204,8 @@ struct ThreadState {
     uint8_t* stack = nullptr;
     uint64_t stack_top = 0;
     int depth = 0;  // nested runs on this thread
+    std::unique_ptr<JitEngine> jit;  // created on first use; reads cpu.tpidr in place
+    bool jit_tried = false;
     // bionic's TLS slots for arm64 start at index -1 (TLS_SLOT_BIONIC_TLS);
     // TPIDR_EL0 points at slot 0, the stack guard is slot 5.
     uint64_t tls[24] = {};
@@ -216,9 +221,36 @@ struct ThreadState {
         tls[1 + 5] = 0x5eed5eedc0ffee00ull ^ (reinterpret_cast<uint64_t>(this) << 8);
     }
     ~ThreadState() {
+        jit.reset();
         if (stack) VirtualFree(stack, 0, MEM_RELEASE);
     }
 };
+
+// WINAPK_ARM64_ENGINE=interp runs everything through the interpreter, for
+// comparing the two engines on an app.
+Engine initial_engine() {
+    char buf[16];
+    const DWORD n = GetEnvironmentVariableA("WINAPK_ARM64_ENGINE", buf, sizeof buf);
+    if (n > 0 && n < sizeof buf && std::strcmp(buf, "interp") == 0) return Engine::kInterpreter;
+    return jit_built() ? Engine::kJit : Engine::kInterpreter;
+}
+
+std::atomic<Engine> g_engine{initial_engine()};
+
+// Runs ts.cpu from its pc until it returns to its stop_pc.
+void execute(ThreadState& ts) {
+    if (g_engine.load(std::memory_order_relaxed) == Engine::kJit) {
+        if (!ts.jit_tried) {
+            ts.jit_tried = true;
+            ts.jit = make_jit_engine(ts.cpu);
+        }
+        if (ts.jit) {
+            ts.jit->run(ts.cpu);
+            return;
+        }
+    }
+    run(ts.cpu);
+}
 
 thread_local std::unique_ptr<ThreadState> t_state;
 
@@ -412,7 +444,7 @@ void run_guest(ThreadState& ts, uint64_t pc, const uint64_t gpr[8], const uint64
     c.pc = pc;
     c.excl_valid = false;
     ++ts.depth;
-    run(c);
+    execute(ts);
     --ts.depth;
     *x0 = c.x[0];
     if (x1) *x1 = c.x[1];
@@ -520,6 +552,14 @@ void* guest_intrinsic(const char* name) {
     }
     return nullptr;
 }
+
+bool set_engine(Engine e) {
+    if (e == Engine::kJit && !jit_built()) return false;
+    g_engine.store(e);
+    return true;
+}
+
+Engine engine() { return g_engine.load(); }
 
 uint64_t call(const void* fn, const uint64_t* args, size_t nargs) {
     init();

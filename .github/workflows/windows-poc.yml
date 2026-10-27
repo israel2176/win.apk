@@ -60,11 +60,12 @@ jobs:
         with:
           msystem: CLANG64
           update: true
-          install: unzip zip
+          install: unzip zip git
           pacboy: >-
             clang:p
             cmake:p
             ninja:p
+            boost:p
       - uses: actions/download-artifact@v4
         with:
           name: guest-libs
@@ -72,7 +73,7 @@ jobs:
       - name: Build (loader, thunks, JNI wrapper)
         run: |
           cmake -S windows -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=clang++ \
-            -DWINAPK_JNI_INCLUDE="$(cygpath -u "$JAVA_HOME")/include"
+            -DWINAPK_JNI_INCLUDE="$(cygpath -u "$JAVA_HOME")/include" -DWINAPK_ARM64_JIT=ON
           cmake --build build
       - name: Run the ABI thunk test
         run: ./build/winapk-thunk-test.exe

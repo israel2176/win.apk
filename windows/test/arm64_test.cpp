@@ -25,11 +25,14 @@
 #include "winapk/linker.h"
 #include "winapk/mini_bionic.h"
 
+#include <chrono>
 #include <cinttypes>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <utility>
+#include <vector>
 
 #define ISA_EXPORT static __attribute__((noinline, used))
 #include "arm64_isa.c"
@@ -179,9 +182,41 @@ void run_bridge(winapk::GuestLinker& linker, const char* file) {
     check("setjmp/longjmp across three guest frames", call0("arm64_setjmp") == 421239,
           std::to_string(call0("arm64_setjmp")));
 
+    const int exits_before = call0("arm64_exit_count");
     check("__cxa_atexit with a guest handler", call0("arm64_register_atexit") == 0);
     winapk::mini_bionic_run_atexit();
-    check("the handler ran from the host's atexit list", call0("arm64_exit_count") == 7);
+    check("the handler ran from the host's atexit list", call0("arm64_exit_count") == exits_before + 7);
+}
+
+// The same loop natively and on each engine: the results must agree, and
+// the times say what each engine costs (informational, no threshold: CI
+// machines vary too much).
+void run_speed(winapk::GuestLinker& linker,
+               const std::vector<std::pair<winapk::arm64::Engine, const char*>>& engines) {
+    std::printf("\n==== speed (isa_bench, 3,000,000 iterations) ====\n");
+    std::string error;
+    void* lib = linker.open("libwinapk_arm64_isa_O2.so", winapk::GuestLinker::kRtldNow, &error);
+    void* fn = lib ? linker.lookup(lib, "isa_bench", nullptr, &error) : nullptr;
+    check("isa_bench found", fn != nullptr, error);
+    if (!fn) return;
+    const uint64_t args[3] = {3000000, 12345, 678};
+    auto time = [](auto&& body, uint64_t* result) {
+        const auto t0 = std::chrono::steady_clock::now();
+        *result = body();
+        return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    };
+    uint64_t want = 0;
+    const double native_ms = time([&] { return isa_bench(args[0], args[1], args[2]); }, &want);
+    std::printf("  native:      %8.1f ms\n", native_ms);
+    for (const auto& e : engines) {
+        winapk::arm64::set_engine(e.first);
+        uint64_t got = 0;
+        winapk::arm64::call(fn, args, 3);  // warm up (the JIT compiles here)
+        const double ms = time([&] { return winapk::arm64::call(fn, args, 3); }, &got);
+        std::printf("  %-12s %8.1f ms (%.1fx native)\n", (std::string(e.second) + ":").c_str(), ms,
+                    native_ms > 0 ? ms / native_ms : 0.0);
+        check((std::string("isa_bench on the ") + e.second + " matches native").c_str(), got == want);
+    }
 }
 
 }  // namespace
@@ -191,16 +226,29 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "usage: winapk-arm64-test <dir with libwinapk_arm64_*.so>\n");
         return 2;
     }
-    std::printf("Win.apk arm64 interpreter\n");
     winapk::LinkerConfig config;
     config.search_paths.push_back(std::filesystem::u8path(argv[1]));
     config.host = winapk::mini_bionic_resolve;
     winapk::GuestLinker linker(config);
 
-    run_isa(linker, "libwinapk_arm64_isa_O2.so");
-    run_isa(linker, "libwinapk_arm64_isa_O3.so");
-    run_isa(linker, "libwinapk_arm64_isa_lse.so");
-    run_bridge(linker, "libwinapk_arm64_bridge.so");
+    // Every check on each engine the build has: the interpreter, then the
+    // JIT (dynarmic) when it is built in.
+    std::vector<std::pair<winapk::arm64::Engine, const char*>> engines = {
+        {winapk::arm64::Engine::kInterpreter, "interpreter"}};
+    if (winapk::arm64::set_engine(winapk::arm64::Engine::kJit)) {
+        engines.push_back({winapk::arm64::Engine::kJit, "JIT"});
+    } else {
+        std::printf("(this build has no JIT: -DWINAPK_ARM64_JIT=ON adds it)\n");
+    }
+    for (const auto& e : engines) {
+        winapk::arm64::set_engine(e.first);
+        std::printf("\n==== Win.apk arm64, %s ====\n", e.second);
+        run_isa(linker, "libwinapk_arm64_isa_O2.so");
+        run_isa(linker, "libwinapk_arm64_isa_O3.so");
+        run_isa(linker, "libwinapk_arm64_isa_lse.so");
+        run_bridge(linker, "libwinapk_arm64_bridge.so");
+    }
+    run_speed(linker, engines);
 
     std::printf("\n%s: %d failure(s)\n", g_failures ? "FAILED" : "OK", g_failures);
     return g_failures;

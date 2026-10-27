@@ -72,6 +72,14 @@ void* host_callable(void* fn);
 // guest code get it converted from AAPCS64 to System V.
 void register_va_list_function(const void* host_fn, unsigned index);
 
+// The engine that runs guest code: the JIT (dynarmic, arm64_jit.h) when the
+// build has it, else the interpreter. WINAPK_ARM64_ENGINE=interp chooses the
+// interpreter. set_engine returns false if the JIT is not built in. Threads
+// pick the engine up the next time they enter guest code.
+enum class Engine { kInterpreter, kJit };
+bool set_engine(Engine e);
+Engine engine();
+
 // What an arm64 library's import of `name` binds to when no host function
 // can stand in for it, because it works on the caller's registers (setjmp,
 // longjmp and their variants); nullptr for every other name. The loader asks
