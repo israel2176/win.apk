@@ -105,4 +105,10 @@ void set_profiling(bool on);
 // this before the linker's resolver.
 void* guest_intrinsic(const char* name);
 
+// What an arm64 library's import of `name` binds to instead of the Bionic
+// shim's function, when arm64 lays out one of its structs differently from
+// x86_64 (struct stat, struct epoll_event; arm64_abi.cpp); nullptr for every
+// other name. Asked after guest_intrinsic.
+void* abi_override(const char* name);
+
 }  // namespace winapk::arm64

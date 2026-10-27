@@ -2204,7 +2204,9 @@ public final class Boot {
                 // would kill the process, but Mac.apk logs and continues so one
                 // unsupported line in an override cannot cost us the whole launch.
                 try {
-                    android.content.Context appBase = application.getBaseContext();
+                    // The field, not getBaseContext(): an app may override that
+                    // (WhatsApp's returns null until this very dispatch has run).
+                    android.content.Context appBase = application.macapkRawBaseContext();
                     if (appBase != null) {
                         // DIAGNOSTIC (MACAPK_STACK_PAD=<n>, default OFF): dispatch
                         // attachBaseContext through <n> extra nested frames so
@@ -2241,7 +2243,7 @@ public final class Boot {
                         // on it; see Application.java's constructor comment). Put
                         // it back rather than let a single override reintroduce a
                         // fixed bug process-wide.
-                        if (application.getBaseContext() == null) {
+                        if (application.macapkRawBaseContext() == null) {
                             application.macapkAttachBaseContext(appBase);
                             NativeLog.w(TAG, application.getClass().getName()
                                       + ".attachBaseContext nulled the base Context"

@@ -466,6 +466,46 @@ bool run_intrinsic(Cpu& c, uint64_t target) {
 
 // ---- guest -> host ----------------------------------------------------------------
 
+// WINAPK_ARM64_STACKWATCH=1: which host functions write into the guest's
+// stack above its sp, and how far. A host function that writes more of a
+// struct than bionic's layout has (the guest passed a stack object) corrupts
+// the caller's frame: saved registers, the stack protector's canary. Each
+// target is reported when its furthest write grows, as an offset into
+// winapk-runtime.exe (llvm-symbolizer names it).
+bool stack_watch() {
+    static const bool on = GetEnvironmentVariableA("WINAPK_ARM64_STACKWATCH", nullptr, 0) > 0;
+    return on;
+}
+
+template <typename Call> void watch_stack_around(const Cpu& c, uint64_t target, Call call) {
+    constexpr size_t kWindow = 4096;
+    const ThreadState& ts = *t_state;
+    const uint64_t top = ts.stack_top + kStackSlack;
+    if (c.sp >= top || c.sp < reinterpret_cast<uint64_t>(ts.stack)) {  // a nested run's stack: not watched
+        call();
+        return;
+    }
+    const size_t n = std::min<uint64_t>(kWindow, top - c.sp);
+    std::vector<uint8_t> before(reinterpret_cast<const uint8_t*>(c.sp), reinterpret_cast<const uint8_t*>(c.sp) + n);
+    call();
+    const auto* now = reinterpret_cast<const uint8_t*>(c.sp);
+    size_t hi = 0;
+    for (size_t i = 0; i < n; ++i) {
+        if (now[i] != before[i]) hi = i + 1;
+    }
+    if (!hi) return;
+    static std::mutex lock;
+    static std::unordered_map<uint64_t, size_t> furthest;
+    std::lock_guard<std::mutex> hold(lock);
+    size_t& f = furthest[target];
+    if (hi <= f) return;
+    f = hi;
+    const uint64_t base = reinterpret_cast<uint64_t>(GetModuleHandleW(nullptr));
+    std::fprintf(stderr, "[win.apk] stackwatch: host function exe+0x%llx wrote up to sp+%zu (called from %s)\n",
+                 static_cast<unsigned long long>(target - base), hi, where(c.x[30]).c_str());
+    std::fflush(stderr);
+}
+
 void host_call(Cpu& c, uint64_t target) {
     if (target == 0) fault(c, 0, "call through a null function pointer");
     if (run_intrinsic(c, target)) return;
@@ -499,6 +539,8 @@ void host_call(Cpu& c, uint64_t target) {
         const uint64_t t0 = now_ns();
         winapk_arm64_call_sysv(reinterpret_cast<const void*>(target), &f);
         ts.stats.host_ns += now_ns() - t0 - (ts.callback_ns - callbacks0);
+    } else if (stack_watch()) {
+        watch_stack_around(c, target, [&] { winapk_arm64_call_sysv(reinterpret_cast<const void*>(target), &f); });
     } else {
         winapk_arm64_call_sysv(reinterpret_cast<const void*>(target), &f);
     }
@@ -563,12 +605,57 @@ PVOID g_veh = nullptr;
 // the stack and its arguments are still in registers.
 LONG CALLBACK execute_fault_handler(EXCEPTION_POINTERS* ep) {
     const EXCEPTION_RECORD* r = ep->ExceptionRecord;
-    if (r->ExceptionCode != EXCEPTION_ACCESS_VIOLATION || r->NumberParameters < 2 ||
-        r->ExceptionInformation[0] != 8 /* EXCEPTION_EXECUTE_FAULT */) {
+    if (r->ExceptionCode != EXCEPTION_ACCESS_VIOLATION || r->NumberParameters < 2) return EXCEPTION_CONTINUE_SEARCH;
+    if (r->ExceptionInformation[0] != 8 /* EXCEPTION_EXECUTE_FAULT */) {
+        // WINAPK_ARM64_FAULTS=1, with the interpreter (whose pc is exact):
+        // name the guest instruction behind a bad load or store before the
+        // process goes down. Off by default: the JVM and the JIT's fastmem
+        // take access violations on purpose.
+        static const bool trace = GetEnvironmentVariableA("WINAPK_ARM64_FAULTS", nullptr, 0) > 0;
+        // ... and any bad access from the runtime's own code (not the JVM's
+        // or the JIT's, which take them on purpose), with where it happened.
+        const uint64_t base = reinterpret_cast<uint64_t>(GetModuleHandleW(nullptr));
+        const uint64_t rip = ep->ContextRecord->Rip;
+        if (trace && rip - base < 0x1000000) {
+            std::fprintf(stderr, "[win.apk] access violation: %s 0x%llx at exe+0x%llx (caller exe+0x%llx)%s%s\n",
+                         r->ExceptionInformation[0] ? "write to" : "read of",
+                         static_cast<unsigned long long>(r->ExceptionInformation[1]),
+                         static_cast<unsigned long long>(rip - base),
+                         static_cast<unsigned long long>(*reinterpret_cast<const uint64_t*>(ep->ContextRecord->Rsp) - base),
+                         t_state ? "; guest lr " : "", t_state ? where(t_state->cpu.x[30]).c_str() : "");
+            std::fflush(stderr);
+        }
+        if (trace && t_state && t_state->depth > 0 && g_engine.load() == Engine::kInterpreter) {
+            const Cpu& c = t_state->cpu;
+            std::fprintf(stderr, "[win.apk] arm64 guest memory fault: %s 0x%llx at %s (lr %s)\n",
+                         r->ExceptionInformation[0] ? "write to" : "read of",
+                         static_cast<unsigned long long>(r->ExceptionInformation[1]), where(c.pc).c_str(),
+                         where(c.x[30]).c_str());
+            for (int i = 0; i < 31; ++i) {
+                std::fprintf(stderr, "  x%-2d %016llx%s", i, static_cast<unsigned long long>(c.x[i]), i % 4 == 3 ? "\n" : "");
+            }
+            std::fprintf(stderr, "  sp  %016llx\n", static_cast<unsigned long long>(c.sp));
+            std::fflush(stderr);
+        }
         return EXCEPTION_CONTINUE_SEARCH;
     }
     CONTEXT* ctx = ep->ContextRecord;
-    if (!is_guest_code(reinterpret_cast<const void*>(ctx->Rip))) return EXCEPTION_CONTINUE_SEARCH;
+    if (!is_guest_code(reinterpret_cast<const void*>(ctx->Rip))) {
+        // WINAPK_ARM64_FAULTS=1: a jump into memory that is not code at all,
+        // and the guest call it came from (the last guest -> host call's lr).
+        static const bool trace = GetEnvironmentVariableA("WINAPK_ARM64_FAULTS", nullptr, 0) > 0;
+        if (trace) {
+            const uint64_t base = reinterpret_cast<uint64_t>(GetModuleHandleW(nullptr));
+            const uint64_t ret = *reinterpret_cast<const uint64_t*>(ctx->Rsp);  // the caller, for a call
+            std::fprintf(stderr,
+                         "[win.apk] execute fault at 0x%llx (exe+0x%llx), called from 0x%llx (exe+0x%llx); guest lr %s\n",
+                         static_cast<unsigned long long>(ctx->Rip), static_cast<unsigned long long>(ctx->Rip - base),
+                         static_cast<unsigned long long>(ret), static_cast<unsigned long long>(ret - base),
+                         t_state ? where(t_state->cpu.x[30]).c_str() : "(no guest state on this thread)");
+            std::fflush(stderr);
+        }
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
     ctx->R10 = ctx->Rip;
     ctx->Rip = reinterpret_cast<DWORD64>(&winapk_arm64_sysv_entry);
     return EXCEPTION_CONTINUE_EXECUTION;
