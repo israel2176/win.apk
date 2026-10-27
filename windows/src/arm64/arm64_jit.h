@@ -32,7 +32,12 @@ public:
 // A JIT for one host thread, whose TPIDR_EL0 is c.tpidr (read in place, so
 // `c` must outlive the engine). nullptr if the JIT is not built in or all
 // exclusive-monitor slots are taken; the caller then interprets.
-std::unique_ptr<JitEngine> make_jit_engine(Cpu& c);
+//
+// The engine makes host calls from inside its generated code (see
+// Hooks::full_state_call), so guest code the host function calls back into
+// must run on another engine: the bridge keeps one per nesting level. The
+// first (`outermost`) gets the large code cache; the others run callbacks.
+std::unique_ptr<JitEngine> make_jit_engine(Cpu& c, bool outermost = true);
 
 // Whether this build has the JIT.
 bool jit_built();

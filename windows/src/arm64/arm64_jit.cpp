@@ -6,13 +6,16 @@
 // dynarmic recompile the block with the memory callbacks below, which then
 // fault in the host as the interpreter would.
 //
-// The JIT never calls the host itself. When the guest branches to an
-// address outside registered guest code, the code fetch fails
-// (MemoryReadCode returns nothing), dynarmic raises NoExecuteFault, and the
-// callback halts execution. run() then makes the host call through the same
-// Hooks::host_call the interpreter uses, reloads the state and runs on. The
-// return address the bridge gives every guest call is such an address, which
-// is how run() stops.
+// When the guest branches to an address outside registered guest code, the
+// code fetch fails (MemoryReadCode returns nothing) and dynarmic raises
+// NoExecuteFault. That ends an empty block, so dynarmic's copy of the guest
+// registers is complete at that point: the callback makes the host call
+// right there, through the same Hooks::host_call the interpreter uses, with
+// only the argument registers copied out and the results back, and sets the
+// PC the block continues at (the return address). Only setjmp, longjmp and
+// the return to the bridge (the return address it gives every guest call,
+// which is how run() stops) halt execution and go through run() with the
+// whole state.
 
 #include "arm64_jit.h"
 
@@ -84,7 +87,7 @@ template <typename T> bool cas(VAddr a, T desired, T expected) {
 
 class DynarmicEngine final : public JitEngine, private Dynarmic::A64::UserCallbacks {
 public:
-    DynarmicEngine(Cpu& c, int slot) : slot_(slot) {
+    DynarmicEngine(Cpu& c, int slot, size_t code_cache_size) : cpu_(c), slot_(slot) {
         Dynarmic::A64::UserConfig conf;
         conf.callbacks = this;
         conf.processor_id = static_cast<size_t>(slot);
@@ -101,7 +104,7 @@ public:
         conf.hook_data_cache_operations = true;
         conf.define_unpredictable_behaviour = true;
         conf.cntfrq_el0 = 1000000000;  // CNTVCT_EL0 counts nanoseconds, as in the interpreter
-        conf.code_cache_size = 64 * 1024 * 1024;
+        conf.code_cache_size = code_cache_size;
         jit_.reset(new Dynarmic::A64::Jit(conf));
     }
 
@@ -181,6 +184,27 @@ private:
         c.excl_valid = false;
     }
 
+    // A host call from inside the generated code (see the top of this file).
+    // Guest code the host function calls back into runs on another engine.
+    void host_call_in_place(VAddr target) {
+        Cpu& c = cpu_;
+        for (size_t i = 0; i < 8; ++i) {
+            c.x[i] = jit_->GetRegister(i);
+            const Vector v = jit_->GetVector(i);
+            c.v[i].d[0] = v[0];
+            c.v[i].d[1] = v[1];
+        }
+        c.x[30] = jit_->GetRegister(30);
+        c.sp = jit_->GetSP();
+        c.pc = target;
+        hooks().host_call(c, target);
+        jit_->SetRegister(0, c.x[0]);
+        jit_->SetRegister(1, c.x[1]);
+        jit_->SetVector(0, {c.v[0].d[0], c.v[0].d[1]});
+        jit_->SetVector(1, {c.v[1].d[0], c.v[1].d[1]});
+        jit_->SetPC(c.pc);
+    }
+
     void halt(Pending p, uint64_t target, size_t count = 1) {
         pending_ = p;
         target_ = target;
@@ -232,7 +256,11 @@ private:
     void ExceptionRaised(VAddr pc, Exception exception) override {
         switch (exception) {
             case Exception::NoExecuteFault:
-                halt(Pending::kHostCall, pc);
+                if (pc != cpu_.stop_pc && !(hooks().full_state_call && hooks().full_state_call(pc))) {
+                    host_call_in_place(pc);
+                } else {
+                    halt(Pending::kHostCall, pc);
+                }
                 break;
             case Exception::Breakpoint: {
                 Cpu c;
@@ -275,6 +303,7 @@ private:
     }
 
     std::unique_ptr<Dynarmic::A64::Jit> jit_;
+    Cpu& cpu_;
     int slot_;
     Pending pending_ = Pending::kNone;
     uint64_t target_ = 0;
@@ -286,10 +315,11 @@ const uint64_t DynarmicEngine::kZero = 0;
 
 }  // namespace
 
-std::unique_ptr<JitEngine> make_jit_engine(Cpu& c) {
+std::unique_ptr<JitEngine> make_jit_engine(Cpu& c, bool outermost) {
     const int slot = take_slot();
     if (slot < 0) return nullptr;
-    return std::unique_ptr<JitEngine>(new DynarmicEngine(c, slot));
+    const size_t cache = (outermost ? 64 : 16) * size_t{1024 * 1024};
+    return std::unique_ptr<JitEngine>(new DynarmicEngine(c, slot, cache));
 }
 
 bool jit_built() { return true; }
@@ -300,7 +330,7 @@ bool jit_built() { return true; }
 
 namespace winapk::arm64 {
 
-std::unique_ptr<JitEngine> make_jit_engine(Cpu&) { return nullptr; }
+std::unique_ptr<JitEngine> make_jit_engine(Cpu&, bool) { return nullptr; }
 bool jit_built() { return false; }
 
 }  // namespace winapk::arm64
