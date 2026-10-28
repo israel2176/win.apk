@@ -73,6 +73,22 @@ public final class Manifest {
      *  v1.0.1653. */
     static final boolean PROVIDER_EXPORTED_LEGACY =
         !"0".equals(System.getenv("MACAPK_MANIFEST_PROVIDER_EXPORTED_LEGACY"));
+    /** MACAPK_MANIFEST_FEATURE_SPLITS (default ON): the components a FEATURE
+     *  split declares (`<manifest android:isFeatureSplit="true" split="...">`)
+     *  belong to the package, as AOSP ParsingPackageUtils.parseSplitApplication
+     *  files a split's activity / receiver / service / provider /
+     *  activity-alias into the same ParsingPackage as the base's. Chrome ships
+     *  only 3 activities in base.apk; ChromeTabbedActivity and its
+     *  MAIN/LAUNCHER alias `com.google.android.apps.chrome.Main` live in
+     *  split_chrome.apk, so without the merge the package had no launchable
+     *  activity. Config splits carry no components and are skipped. =0 reads
+     *  the base manifest alone, as before. */
+    static final boolean FEATURE_SPLITS =
+        !"0".equals(System.getenv("MACAPK_MANIFEST_FEATURE_SPLITS"));
+    /** The split-application child tags AOSP parseSplitApplication keeps. */
+    private static final java.util.Set<String> SPLIT_COMPONENT_TAGS =
+        new java.util.HashSet<>(java.util.Arrays.asList(
+            "activity", "activity-alias", "receiver", "service", "provider"));
     /** ParsingUtils.DEFAULT_MIN_SDK_VERSION / DEFAULT_TARGET_SDK_VERSION
      *  (android14 services/core/.../pm/pkg/parsing/ParsingUtils.java:52,54),
      *  also PackageParser.java:178-179. PackageImpl initialises its fields to
@@ -1013,6 +1029,9 @@ public final class Manifest {
             doc = db.parse(xml);
         }
         Element root = doc.getDocumentElement();
+        if (FEATURE_SPLITS && apkPath != null && !apkPath.isEmpty()) {
+            mergeFeatureSplits(doc, root, apkPath);
+        }
 
         String pkg = root.getAttribute("package");
         if (pkg == null || pkg.isEmpty()) pkg = "com.macapk.unknown";
@@ -2136,6 +2155,53 @@ public final class Manifest {
             }
             return level;
         }
+    }
+
+    /** Append the components of every installed feature split beside
+     *  {@code apkPath} (an installed base.apk) to the base's `<application>`,
+     *  in split-name order, so every walk below sees one package. A split
+     *  whose manifest cannot be read, names another package, or is not a
+     *  feature split contributes nothing. See FEATURE_SPLITS. */
+    private static void mergeFeatureSplits(Document doc, Element root, String apkPath) {
+        java.util.List<File> splits = InstalledSplits.splitsOf(new File(apkPath));
+        if (splits.isEmpty()) return;
+        Element app = firstChildElement(root, "application");
+        if (app == null) return;
+        String pkg = root.getAttribute("package");
+        for (File split : splits) {
+            Document sd;
+            try (java.util.zip.ZipFile zf = new java.util.zip.ZipFile(split)) {
+                java.util.zip.ZipEntry e = zf.getEntry("AndroidManifest.xml");
+                if (e == null) continue;
+                try (java.io.InputStream in = zf.getInputStream(e)) {
+                    sd = BinaryXmlParser.parse(in.readAllBytes());
+                }
+            } catch (Throwable t) {
+                NativeLog.w(TAG, "split manifest unreadable: " + split.getName() + ": " + t);
+                continue;
+            }
+            Element sroot = sd.getDocumentElement();
+            if (!"true".equalsIgnoreCase(sroot.getAttributeNS(ANDROID_NS, "isFeatureSplit"))) continue;
+            if (!pkg.isEmpty() && !pkg.equals(sroot.getAttribute("package"))) continue;
+            Element sapp = firstChildElement(sroot, "application");
+            if (sapp == null) continue;
+            int merged = 0;
+            for (Node n = sapp.getFirstChild(); n != null; n = n.getNextSibling()) {
+                if (n.getNodeType() != Node.ELEMENT_NODE) continue;
+                if (!SPLIT_COMPONENT_TAGS.contains(n.getNodeName())) continue;
+                app.appendChild(doc.importNode(n, true));
+                ++merged;
+            }
+            NativeLog.i(TAG, "feature split " + sroot.getAttribute("split")
+                      + ": merged " + merged + " component(s)");
+        }
+    }
+
+    private static Element firstChildElement(Element parent, String tag) {
+        for (Node n = parent.getFirstChild(); n != null; n = n.getNextSibling()) {
+            if (n.getNodeType() == Node.ELEMENT_NODE && tag.equals(n.getNodeName())) return (Element) n;
+        }
+        return null;
     }
 
     /** v1.0.127: shared component-walker for <activity> and

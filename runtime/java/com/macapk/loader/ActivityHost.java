@@ -3601,12 +3601,23 @@ public final class ActivityHost {
         // cold launch and non-null for a relaunch, and an app distinguishes
         // "first run" from "recreated" purely by this argument.
         Bundle launchState = sRelaunchState;
+        // AOSP Activity.performCreate: dispatchActivityPreCreated, onCreate (whose
+        // super dispatches onActivityCreated), dispatchActivityPostCreated -- all
+        // before a finish() in onCreate tears the activity down (Application.CREATED_ORDER).
+        if (Application.CREATED_ORDER && app != null) app.dispatchActivityPreCreated(activity, launchState);
         sCreating = activity;
         try {
             runTolerant(activity, "onCreate", new Class<?>[]{Bundle.class},
                     new Object[]{launchState});
         } finally {
             sCreating = null;
+        }
+        if (Application.CREATED_ORDER && app != null) {
+            if (!activity.macapkCreatedDispatched) {
+                activity.macapkCreatedDispatched = true;
+                app.dispatchActivityCreatedOnly(activity, launchState);
+            }
+            app.dispatchActivityPostCreated(activity, launchState);
         }
         // A finish() during onCreate only marked the activity (see sCreating);
         // its teardown runs now that onCreate has returned, as on AOSP.
@@ -3730,7 +3741,7 @@ public final class ActivityHost {
         // activity's own registry). Without this, ProcessLifecycleOwner stays below
         // STARTED and foreground-gated SDKs (Play Games AutomaticGamesAuthenticator)
         // never trigger -> the game bootstrap hangs before LoadScene.
-        if (app != null) app.dispatchActivityCreated(activity, null);
+        if (app != null && !Application.CREATED_ORDER) app.dispatchActivityCreated(activity, null);
         // Report each phase to the activity's fragment manager (AOSP
         // Activity.performStart/performResume call mFragments.dispatchX
         // the same way; ActivityHost is our ActivityThread analogue).
@@ -4975,18 +4986,45 @@ public final class ActivityHost {
         }
     }
 
+    /** MACAPK_LIFECYCLE_SKIP_UNLINKABLE (default ON). getDeclaredMethod
+     *  resolves EVERY signature the class declares, so one method naming a
+     *  framework type we lack (a newer-API override, e.g. Chrome 155's
+     *  onHandoffActivityDataRequested(HandoffActivityDataRequestInfo))
+     *  threw NoClassDefFoundError and the callback never ran. Skip such a
+     *  class and take the method from a superclass instead: Method.invoke of
+     *  a non-private method dispatches virtually, so the app's override still
+     *  runs. =0 lets the LinkageError fail the callback, as before. */
+    private static final boolean SKIP_UNLINKABLE =
+        !"0".equals(System.getenv("MACAPK_LIFECYCLE_SKIP_UNLINKABLE"));
+
     private static void invokeLifecycle(Object target, String name,
                                         Class<?>[] sig, Object[] args) throws Exception {
         Class<?> c = target.getClass();
+        boolean skipped = false;
         while (c != null) {
+            Method m;
             try {
-                Method m = c.getDeclaredMethod(name, sig);
-                m.setAccessible(true);
-                m.invoke(target, args);
-                return;
+                m = c.getDeclaredMethod(name, sig);
             } catch (NoSuchMethodException ignored) {
                 c = c.getSuperclass();
+                continue;
+            } catch (LinkageError e) {
+                if (!SKIP_UNLINKABLE || c.getSuperclass() == null) throw e;
+                NativeLog.w(TAG, name + ": cannot introspect " + c.getName() + " (" + e
+                          + "), using a superclass declaration");
+                c = c.getSuperclass();
+                skipped = true;
+                continue;
             }
+            if (skipped && java.lang.reflect.Modifier.isPrivate(m.getModifiers())) {
+                // A private method does not dispatch virtually, so after skipping
+                // an unlinkable subclass it is not the override to run.
+                c = c.getSuperclass();
+                continue;
+            }
+            m.setAccessible(true);
+            m.invoke(target, args);
+            return;
         }
     }
 }
