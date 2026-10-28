@@ -272,10 +272,19 @@ every such change is listed here:
   drive-letter path as absolute, so a database named by its full path is not
   nested inside `databases\`.
 - `runtime/java/com/macapk/loader/CameraBridge.java`: when the capture natives
-  are unbound or report no device (Windows has no capture backend yet), one
-  virtual back camera delivers dark-grey frames, so screens built around a
-  preview open and their other controls work. `MACAPK_VIRTUAL_CAMERA=0` turns
-  it off. On the Mac a real camera always wins.
+  are unbound or report no device (no webcam, or camera access is off in
+  Windows privacy settings; the webcams themselves come from
+  `windows/host/native_camera.cpp`), one virtual back camera delivers
+  dark-grey frames, so screens built around a preview open and their other
+  controls work. `MACAPK_VIRTUAL_CAMERA=0` turns it off. A real camera always
+  wins.
+- `runtime/java/android/view/SurfaceView.java`: a SurfaceView laid out larger
+  than its window (a center-cropped camera preview) whose holder has no GL
+  consumer yet (no renderer, not a `GLSurfaceView`, not the native-window
+  owner) reports the view's size and gets `surfaceChanged` for it, as AOSP
+  always does. Apps that start their camera preview only after that
+  `surfaceChanged` waited forever. `MACAPK_SV_OVERSIZE_HOLDER=0` turns it off.
+  Not Windows-specific.
 - `runtime/java/com/macapk/loader/ActivityHost.java` and
   `MacApkPackageManager.java`: a Custom Tab launch opens in
   `HostBrowserTab` (new, with `HostCustomTabsService`) when the host has a
