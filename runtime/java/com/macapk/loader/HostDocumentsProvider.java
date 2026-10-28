@@ -816,7 +816,12 @@ public final class HostDocumentsProvider extends DocumentsProvider {
         File[] files = dir.listFiles();
         if (files == null) return;
         for (File f : files) {
-            if (!Files.isSymbolicLink(f.toPath()) && f.isDirectory()) deleteContentsNoFollow(f);
+            // isLink also covers a Windows junction (a pnpm node_modules entry in
+            // the user's Downloads, say): deleting the junction removes the link,
+            // never the files of the folder it leads to.
+            if (!com.macapk.loader.SharedStorage.isLink(f.toPath(), null) && f.isDirectory()) {
+                deleteContentsNoFollow(f);
+            }
             if (!f.delete()) android.util.Log.w(TAG, "Failed to delete " + f);
         }
     }

@@ -41,6 +41,7 @@
 
 #include "guest_libs.h"
 #include "host_natives.h"
+#include "user_folders.h"
 #include "win32_window.h"
 
 #include <algorithm>
@@ -69,6 +70,7 @@ namespace {
 struct Options {
     fs::path apk, data, jdk, lib;
     bool install_only = false;
+    bool default_data = false;  // no --data: the user's own library, not a test's scratch folder
     fs::path package_to;  // --package-to: write the app's package name there and stop
 };
 
@@ -252,6 +254,7 @@ bool resolve_paths(Options* o) {
             return false;
         }
         o->data = fs::path(local) / L"Win.apk";
+        o->default_data = true;
     }
     return true;
 }
@@ -900,6 +903,36 @@ void activate_running(const std::wstring& key) {
 
 }  // namespace
 
+// The volume's Download, Pictures, Documents, Music and Movies are the user's
+// Windows folders (user_folders.h). Only for the user's own library: a run
+// with --data (tests, the compat sweep, CI) must never touch real folders.
+// MACAPK_USER_FOLDERS decides when set (=0 changes nothing, as upstream);
+// otherwise the launcher's Settings switch (UserFolders, default on), whose
+// off undoes the junctions so it visibly does what it says.
+void map_shared_folders(const Options& o) {
+    if (!o.default_data) return;
+    using winapk::host::UserFolderMode;
+    UserFolderMode mode = UserFolderMode::kMap;
+    const std::wstring forced = env_var(L"MACAPK_USER_FOLDERS");
+    if (!forced.empty()) {
+        if (forced[0] == L'0') mode = UserFolderMode::kKeep;
+    } else {
+        DWORD on = 1, size = sizeof on;
+        if (RegGetValueW(HKEY_CURRENT_USER, L"Software\\Win.apk", L"UserFolders", RRF_RT_REG_DWORD, nullptr, &on,
+                         &size) == ERROR_SUCCESS &&
+            on == 0) {
+            mode = UserFolderMode::kUnmap;
+        }
+    }
+    const fs::path android_root = o.data / "android";
+    const auto mapped =
+        winapk::host::map_user_folders(android_root / "sdcard", winapk::host::user_folders(),
+                                       android_root / "data" / "system" / "storage" / "usermap-journal.tsv", mode);
+    // Set even when empty: its presence tells the Java side the host owns the
+    // mapping, so SharedStorage.mapUserFolders never runs here.
+    SetEnvironmentVariableW(L"WINAPK_USER_FOLDER_TARGETS", winapk::host::user_folder_env(mapped).c_str());
+}
+
 // stderr is unbuffered in the UCRT, and an unbuffered fprintf hands the
 // stream ONE CHARACTER per WriteFile: measured 564 us per 150-byte log line
 // against 9 us for the same line through a buffer, all of it under the stream
@@ -962,9 +995,13 @@ int wmain(int argc, wchar_t** argv) {
     // store SpecialAccessStore reads. Windows has no such helper yet, so a
     // grant could never be given and apps that need it (AnkiDroid) stop at
     // their permission screen. Until it exists, every app holds the access,
-    // which is upstream's own answer before that helper (the switch below);
-    // shared storage here is a folder of the user's own under the data dir.
+    // which is upstream's own answer before that helper (the switch below).
+    // With the user's folders mapped (map_shared_folders) that means every app
+    // can read and write Downloads, Documents, Pictures, Music and Videos, as
+    // any Windows program can.
     if (env_var(L"MACAPK_ALLFILES_HONEST").empty()) SetEnvironmentVariableW(L"MACAPK_ALLFILES_HONEST", L"0");
+
+    if (!b.options.install_only) map_shared_folders(b.options);
 
     std::error_code ec;
     b.app_dir = b.options.data / "apps" / b.options.apk.stem();

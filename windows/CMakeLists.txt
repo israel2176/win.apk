@@ -224,7 +224,7 @@ if(WINAPK_JNI_INCLUDE)
                               host/native_gamepad.cpp host/native_icu.cpp
                               host/native_audio_input.cpp host/native_photos.cpp
                               host/webview2_host.cpp host/native_browser_tab.cpp host/native_webview.cpp
-                              host/native_camera.cpp host/native_radios.cpp
+                              host/native_camera.cpp host/native_radios.cpp host/user_folders.cpp
                               host/runtime.rc)
   target_link_libraries(winapk-runtime PRIVATE winapk_jni winapk_sqlite webpdecoder winapk_stb_vorbis windowscodecs
                         ole32 mf mfplat mfreadwrite mfuuid shlwapi advapi32 shell32 uuid wlanapi bthprops)
@@ -281,6 +281,11 @@ if(WINAPK_JNI_INCLUDE)
   add_executable(winapk-audio-test test/audio_test.cpp host/audio_engine.cpp host/audio_decode.cpp)
   target_link_libraries(winapk-audio-test PRIVATE winapk_stb_vorbis ole32 mfplat mfreadwrite mfuuid shlwapi)
   target_link_options(winapk-audio-test PRIVATE -static)
+
+  # The shared-folder junctions on a scratch volume (test/user_folders_test.cpp).
+  add_executable(winapk-user-folders-test test/user_folders_test.cpp host/user_folders.cpp)
+  target_link_libraries(winapk-user-folders-test PRIVATE shell32 ole32 uuid)
+  target_link_options(winapk-user-folders-test PRIVATE -static)
 
   # An app's native libraries (milestone M4, host/guest_libs.h): the stub DLL
   # that stands for each one and the translator that copies it. Built with the
