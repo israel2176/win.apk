@@ -300,6 +300,15 @@ every such change is listed here:
   always does. Apps that start their camera preview only after that
   `surfaceChanged` waited forever. `MACAPK_SV_OVERSIZE_HOLDER=0` turns it off.
   Not Windows-specific.
+- `runtime/java/com/macapk/loader/HostRadios.java` (new), with
+  `android/net/wifi/WifiManager.java`, `WifiInfo.java`,
+  `android/bluetooth/BluetoothAdapter.java`, `BluetoothDevice.java` and
+  `MacApkPackageManager.java`: the host's Wi-Fi (state, connection, scan
+  results, `SCAN_RESULTS_AVAILABLE_ACTION`) and Bluetooth radio (on/off, name,
+  paired devices; no connections) reach the app, from
+  `windows/host/native_radios.cpp`; `android.hardware.bluetooth` is declared
+  when there is a radio. A host without these natives (the Mac) keeps the old
+  answers.
 - `runtime/java/com/macapk/loader/ActivityHost.java` and
   `MacApkPackageManager.java`: a Custom Tab launch opens in
   `HostBrowserTab` (new, with `HostCustomTabsService`) when the host has a
