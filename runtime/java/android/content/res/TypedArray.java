@@ -1583,8 +1583,20 @@ public class TypedArray implements AutoCloseable {
                 return android.util.TypedValue.complexToDimensionPixelSize(rec.data, macapkMetrics());
             }
         }
-        return px != null ? (int) (float) px : def;
+        if (px == null) return def;
+        // AOSP getDimensionPixelSize = TypedValue.complexToDimensionPixelSize:
+        // round to nearest, and a non-zero size never collapses to 0 px. This
+        // truncated, so every sub-pixel literal (0.5dp hairline dividers,
+        // borders, stroke widths at 1x) became 0 and was not drawn, and 1.5dp
+        // came out 1 px instead of 2. getDimensionPixelOffset (truncation) is a
+        // separate method. MACAPK_DIM_PIXEL_SIZE=0 restores the truncation.
+        if (!MACAPK_DIM_PIXEL_SIZE) return (int) (float) px;
+        int res = (int) (px + (px >= 0 ? 0.5f : -0.5f));
+        if (res != 0) return res;
+        return px == 0f ? 0 : (px > 0f ? 1 : -1);
     }
+    static final boolean MACAPK_DIM_PIXEL_SIZE =
+            !"0".equals(System.getenv("MACAPK_DIM_PIXEL_SIZE"));
 
     /** MACAPK_TA_ATTR_DIMEN (default ON). A style item that is a THEME
      *  REFERENCE to a dimension ("?android:actionBarSize", the minHeight of
@@ -1669,7 +1681,24 @@ public class TypedArray implements AutoCloseable {
             return v == null ? null : v.toString();
         } catch (Throwable t) { return null; }
     }
-    public int getDimensionPixelOffset(int index, int def){ return getDimensionPixelSize(index, def); }
+    /** AOSP getDimensionPixelOffset = complexToDimensionPixelOffset: TRUNCATE.
+     *  It used to share getDimensionPixelSize, which was itself truncating;
+     *  now that Size rounds (MACAPK_DIM_PIXEL_SIZE), Offset keeps its own
+     *  truncation, exactly the answer it always gave. */
+    public int getDimensionPixelOffset(int index, int def) {
+        if (!MACAPK_DIM_PIXEL_SIZE) return getDimensionPixelSize(index, def);
+        String v = macapkRawValueAt(index);
+        if (v == null) return def;
+        Float px = macapkParseDimenToPx(v);
+        if (px == null) {
+            android.util.TypedValue rec = macapkAttrDimenRecord(index, v);
+            if (rec != null) {
+                return android.util.TypedValue.complexToDimensionPixelOffset(rec.data, macapkMetrics());
+            }
+            return def;
+        }
+        return (int) (float) px;
+    }
     public float getDimension(int index, float def)       {
         String v = macapkRawValueAt(index);
         if (v == null) return def;
