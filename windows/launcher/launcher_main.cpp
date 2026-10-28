@@ -201,6 +201,11 @@ const wchar_t* tr(const wchar_t* en) {
         {L"Open folder", L"פתיחת התיקייה"},
         {L"Attach the log to a bug report: it says what the runtime did and where it stopped.", L"צרף את הלוג לדיווח על באג: הוא מראה מה סביבת ההרצה עשתה והיכן נעצרה."},
         {L"Saves, caches and files", L"שמירות, מטמון וקבצים"},
+        {L"Use my Windows folders", L"שימוש בתיקיות של Windows"},
+        {L"Apps save to and open from your Downloads, Pictures, Documents, Music and Videos. Off: each folder is empty "
+         L"for apps again, and your files stay where they are.",
+         L"אפליקציות שומרות ופותחות קבצים מהתיקיות 'הורדות', 'תמונות', 'מסמכים', 'מוזיקה' ו'סרטונים'. כבוי: התיקיות "
+         L"ריקות שוב בשביל האפליקציות, והקבצים שלך נשארים במקומם."},
         {L"Each installed app keeps its data here. Removing an app keeps what it saved.", L"כל אפליקציה מותקנת שומרת כאן את הנתונים שלה. הסרת אפליקציה משאירה את מה שהיא שמרה."},
         {L"App data", L"נתוני אפליקציות"},
         {L"Version {0}", L"גרסה {0}"},
@@ -3178,10 +3183,18 @@ std::vector<Section> settings_sections() {
                                tr(L"View logs"), [] { show_logs(last_run_log()); }),
                     button_row(tr(L"Logs folder"), logs_dir().wstring(), tr(L"Open folder"), [] { open_path(logs_dir()); })},
                    tr(L"Attach the log to a bug report: it says what the runtime did and where it stopped.")});
+    // Read by the runtime when an app opens (runtime_main.cpp, map_shared_folders).
+    Row folders;
+    folders.kind = Row::kToggle;
+    folders.title = tr(L"Use my Windows folders");
+    folders.detail = tr(L"Apps save to and open from your Downloads, Pictures, Documents, Music and Videos. Off: each "
+                        L"folder is empty for apps again, and your files stay where they are.");
+    folders.on = setting(L"UserFolders", 1) != 0;
+    folders.act = [](int on) { set_setting(L"UserFolders", static_cast<DWORD>(on)); };
     out.push_back({tr(L"App data"),
-                   {button_row(tr(L"Saves, caches and files"),
-                               tr(L"Each installed app keeps its data here. Removing an app keeps what it saved."),
-                               tr(L"Open folder"), [] { open_path(data_dir()); })},
+                   {folders, button_row(tr(L"Saves, caches and files"),
+                                        tr(L"Each installed app keeps its data here. Removing an app keeps what it saved."),
+                                        tr(L"Open folder"), [] { open_path(data_dir()); })},
                    L""});
 
     Section about{tr(L"About"), {text_row(L"Win.apk", fmt(L"Version {0}", {version()}),
@@ -3774,16 +3787,15 @@ void log_action(HWND hwnd, int act) {
 LRESULT CALLBACK log_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
         case WM_CREATE:
-            g_log_edit = CreateWindowExW(0, L"EDIT", L"",
-                                         WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_HSCROLL | ES_MULTILINE | ES_READONLY |
-                                             ES_AUTOVSCROLL | ES_AUTOHSCROLL | ES_NOHIDESEL,
+            // A log is English, paths and stack traces: it reads left to right, lines flush left, with its
+            // scroll bar on the right, also in a Hebrew window. A child takes the mirrored layout of its
+            // parent when it is created, and Windows keeps an edit as it was made (taking WS_EX_LAYOUTRTL off
+            // afterwards still leaves the lines on the right), so the window stops passing it on first.
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, GetWindowLongPtrW(hwnd, GWL_EXSTYLE) | WS_EX_NOINHERITLAYOUT);
+            g_log_edit = CreateWindowExW(WS_EX_LTRREADING | WS_EX_LEFT | WS_EX_RIGHTSCROLLBAR, L"EDIT", L"",
+                                         WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_HSCROLL | ES_LEFT | ES_MULTILINE |
+                                             ES_READONLY | ES_AUTOVSCROLL | ES_AUTOHSCROLL | ES_NOHIDESEL,
                                          0, 0, 0, 0, hwnd, nullptr, g_inst, nullptr);
-            // The edit inherits the mirrored layout of a Hebrew window; a log is English, paths and stack
-            // traces, so it reads left to right with its scroll bar on the right.
-            SetWindowLongPtrW(g_log_edit, GWL_EXSTYLE,
-                              GetWindowLongPtrW(g_log_edit, GWL_EXSTYLE) &
-                                  ~static_cast<LONG_PTR>(WS_EX_LAYOUTRTL | WS_EX_RTLREADING | WS_EX_RIGHT |
-                                                         WS_EX_LEFTSCROLLBAR));
             SendMessageW(g_log_edit, WM_SETFONT, reinterpret_cast<WPARAM>(g_mono_font), FALSE);
             SendMessageW(g_log_edit, EM_SETLIMITTEXT, 0, 0);
             SetWindowTheme(g_log_edit, g_t.dark ? L"DarkMode_Explorer" : L"Explorer", nullptr);
