@@ -141,6 +141,12 @@ not fit the monitor's work area (the screen without the taskbar), the app gets
 a lower density instead, so it keeps its dp size and still draws at the
 window's own pixel size. The window is fitted again when it moves to another
 monitor or the taskbar changes. `WINAPK_DENSITY` (a dpi) overrides the density.
+A window maximized or resized to another shape keeps the app's size and
+shows the phone at the largest size with its own aspect, centred, with black
+bars around it, as upstream's letterbox container does: a portrait app
+maximized on a wide screen is a phone in the middle, scaled to the screen
+height. Clicks on the bars go nowhere. `MACAPK_LETTERBOX=0` stretches the
+phone over the whole window instead, as before.
 
 An app runs once at a time, as on the Mac: starting it again (a shortcut, the
 library) brings the running app's window forward, and updating it while it
@@ -193,14 +199,22 @@ Linux, `windows/test/run_app_wine.sh` boots an APK headless under Wine.
 The goal is the whole of Mac.apk on Windows x64: every Mac piece ported or
 replaced with its Windows counterpart (PORTING.md section 4 lists them one by
 one), then x86_64 apps at full speed, then ARM-only apps through translation
-(started: arm64-v8a runs through an interpreter; a JIT is next).
+(arm64-v8a is supported: translated ahead of time, with a JIT fallback;
+32-bit armeabi-v7a is not).
 
 Done so far:
 
 - The loader, linker, ELF TLS and the JNI bridge for Android x86_64 libraries.
-- arm64-v8a libraries through a JIT (dynarmic) backed by an interpreter,
-  when an app has no x86_64 build: the same loader, linker and JNI bridge,
-  checked in CI against the host and in a real JVM. CMake option
+- arm64-v8a libraries, when an app has no x86_64 build (apps install with
+  the ABIs `x86_64,arm64-v8a`; `WINAPK_ABIS` overrides): the same loader,
+  linker and JNI bridge, checked in CI against the host and in a real JVM.
+  At install (`translate_arm64` in `host/runtime_main.cpp`) `winapk-aot`
+  turns each `lib/arm64/*.so` into C and clang (`WINAPK_AOT_CLANG`,
+  `<install>\clang\bin\clang.exe` or the PATH; the launcher also finds an
+  LLVM or MSYS2 clang) compiles it with `-O2 -march=native` into
+  `<lib>.so.aot.dll`, once per install. Code the translation cannot follow,
+  or a library whose translation failed or found no clang, runs through a
+  JIT (dynarmic) backed by an interpreter. CMake option
   `-DWINAPK_ARM64_JIT=ON` (CI and releases) fetches dynarmic;
   `WINAPK_ARM64_ENGINE=interp` forces the interpreter, and
   `WINAPK_ARM64_STATS=1` prints at exit where the guest's time went (host
@@ -218,7 +232,8 @@ Done so far:
 Next, in order: OpenSL ES and AAudio for native sound, `NativeActivity`,
 `NativeMedia` (MediaPlayer and video on Media Foundation), WebView2, the
 camera and location, signals through vectored exception handling, then the
-launcher (M8) and a JIT for ARM code (M10).
+launcher (M8). ARM code (M10) is translated ahead of time, with the JIT as
+the fallback.
 
 `PORTING.md` holds the design decisions, the technical findings, the known
 gaps, and the milestone plan up to a production release.
@@ -265,9 +280,9 @@ every such change is listed here:
   `MacApkPackageManager.java`: the device ABI is the host's, so x86_64 on
   Windows x64, and the native library directory includes `lib/x86_64`. On the
   Mac nothing changes. `Boot.java` also looks for `bin/macapk-translator.exe`.
-  On an x86_64 host `Build.SUPPORTED_ABIS` also lists arm64-v8a, which runs
-  through the interpreter, as an x86_64 Android device with an ARM
-  translator reports it.
+  On an x86_64 host `Build.SUPPORTED_ABIS` also lists arm64-v8a, which is
+  translated to x86-64 (ahead of time, with a JIT fallback), as an x86_64
+  Android device with an ARM translator reports it.
 - `runtime/java/android/content/Context.java`: `getDatabasePath` also takes a
   drive-letter path as absolute, so a database named by its full path is not
   nested inside `databases\`.

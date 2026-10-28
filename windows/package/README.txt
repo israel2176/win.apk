@@ -14,10 +14,12 @@ What works
   go through ANGLE on Direct3D 11; without a usable GPU, a software renderer
   takes over.
 - Apps that ship x86_64 native libraries (lib/x86_64/*.so).
-- Apps that only have 64-bit ARM native libraries (lib/arm64-v8a), through
-  an ARM interpreter. This is experimental and much slower than native code:
-  apps whose native code does a little work at a time are fine, heavy games
-  are not playable.
+- Apps that only have 64-bit ARM native libraries (lib/arm64-v8a). When
+  such an app is installed, its ARM code is translated to x64 once
+  (winapk-aot, then compiled with clang for your CPU) and runs at close to
+  native speed. Without clang, or for code the translation cannot follow,
+  an ARM JIT runs it instead, more slowly. Apps are installed with the ABIs
+  x86_64 and arm64-v8a, so an app's x86_64 build is used when it has one.
 - Sound from Java through AudioTrack and SoundPool (WAV, Ogg, MP3), saving
   data (files, SharedPreferences, SQLite), the clipboard, file open/save
   dialogs and game controllers.
