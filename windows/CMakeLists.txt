@@ -224,9 +224,10 @@ if(WINAPK_JNI_INCLUDE)
                               host/native_gamepad.cpp host/native_icu.cpp
                               host/native_audio_input.cpp host/native_photos.cpp
                               host/webview2_host.cpp host/native_browser_tab.cpp host/native_webview.cpp
+                              host/native_camera.cpp host/native_radios.cpp
                               host/runtime.rc)
   target_link_libraries(winapk-runtime PRIVATE winapk_jni winapk_sqlite webpdecoder winapk_stb_vorbis windowscodecs
-                        ole32 mfplat mfreadwrite mfuuid shlwapi advapi32 shell32 uuid)
+                        ole32 mf mfplat mfreadwrite mfuuid shlwapi advapi32 shell32 uuid wlanapi bthprops)
   target_include_directories(winapk-runtime PRIVATE ${WINAPK_WEBP_DIR}/src)
   # WebView2 (host/webview2_host.h): the SDK's header to build against, from
   # scripts/fetch_webview2.sh; its WebView2Loader.dll is staged next to the

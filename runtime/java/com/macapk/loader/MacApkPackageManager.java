@@ -4222,11 +4222,17 @@ public final class MacApkPackageManager extends PackageManager {
         // opt-out). The answer is still PROBED off networksetup's hardware-port
         // table rather than assumed -- see MacApkHostNetwork.hasWifiHardware.
         try {
-            if (android.net.ConnectivityManager.macapkHostHasWifiHardware())
+            if (android.net.ConnectivityManager.macapkHostHasWifiHardware()
+                    || HostRadios.wifiState() >= 0)
                 f.add("android.hardware.wifi");
         } catch (Throwable t) {
             f.add("android.hardware.wifi");
         }
+        // FEATURE_BLUETOOTH: only when the host reports a radio, which is also
+        // when BluetoothAdapter.getDefaultAdapter() is non-null. Not LE: there
+        // is no LE scanner behind BluetoothLeScanner, and an app that sees
+        // bluetooth_le goes looking for devices it can never find.
+        if (HostRadios.bluetoothRadio() != null) f.add("android.hardware.bluetooth");
         // FEATURE_RAM_NORMAL ("android.hardware.ram.normal"). AOSP's doc
         // string ties it to exactly one call: "The device's
         // ActivityManager.isLowRamDevice() method returns false." That method
