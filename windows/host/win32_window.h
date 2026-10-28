@@ -59,6 +59,10 @@ void window_set_phone_size(int phone_w, int phone_h);
 // The app moved its task to the back or front (Activity.moveTaskToBack).
 // The app window, for dialogs it owns (nullptr headless or before start).
 void* window_handle();
+// Where in the client area the phone is shown, in client pixels: all of it,
+// or a centred rect with the phone's aspect when the window has another shape
+// (maximized), with black bars around it. False when there is no window.
+bool window_phone_rect(int* x, int* y, int* w, int* h);
 void window_minimize();
 void window_hide();
 void window_restore();

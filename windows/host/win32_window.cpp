@@ -282,12 +282,66 @@ int client_x(HWND hwnd, int x) {
     return client.right - 1 - x;
 }
 
+// ---- the phone inside the client area -------------------------------------
+//
+// Maximized, snapped or dragged to another shape, the client area no longer
+// has the phone's aspect, and the app keeps its size (the window never resizes
+// the app). Stretching the frame over the client area squashed a portrait app
+// across a wide screen. Upstream shows the app at the largest size with the
+// phone's aspect, centred in a black container (cocoa_bridge.mm, the letterbox
+// container and MacApkAspectFitRect; black is AOSP's letterbox background), so
+// a portrait app maximized is a phone in the middle of the screen, scaled to
+// its height. Mouse input and child windows (WebView) use the same rect.
+// MACAPK_LETTERBOX=0 stretches the frame over the whole client area again.
+
+bool letterbox_enabled() {
+    static const bool on = [] {
+        const char* e = std::getenv("MACAPK_LETTERBOX");
+        return !(e && e[0] == '0');
+    }();
+    return on;
+}
+
+RECT phone_rect(const RECT& client) {
+    const int cw = client.right, ch = client.bottom;
+    if (!letterbox_enabled() || cw <= 0 || ch <= 0 || g_phone_w <= 0 || g_phone_h <= 0) return client;
+    int w = cw, h = MulDiv(cw, g_phone_h, g_phone_w);
+    if (h > ch) {
+        h = ch;
+        w = MulDiv(ch, g_phone_w, g_phone_h);
+    }
+    // A fitted window has the phone's aspect up to rounding; bars a pixel or
+    // two wide would only show as a dark edge.
+    if (cw - w <= 2 && ch - h <= 2) return client;
+    const int x = (cw - w) / 2, y = (ch - h) / 2;
+    return RECT{x, y, x + w, y + h};
+}
+
+RECT client_phone_rect(HWND hwnd) {
+    RECT client{};
+    GetClientRect(hwnd, &client);
+    return phone_rect(client);
+}
+
+// Paints the client area outside `inner` black.
+void paint_bars(HDC dc, const RECT& client, const RECT& inner) {
+    const RECT bars[] = {{0, 0, client.right, inner.top},
+                         {0, inner.bottom, client.right, client.bottom},
+                         {0, inner.top, inner.left, inner.bottom},
+                         {inner.right, inner.top, client.right, inner.bottom}};
+    for (const RECT& r : bars) {
+        if (r.right > r.left && r.bottom > r.top) FillRect(dc, &r, static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
+    }
+}
+
 void paint(HWND hwnd) {
     PAINTSTRUCT ps;
     HDC dc = BeginPaint(hwnd, &ps);
     if (g_rtl_window) SetLayout(dc, 0);  // the app's frame as it is, not mirrored
     RECT client;
     GetClientRect(hwnd, &client);
+    const RECT phone = phone_rect(client);
+    paint_bars(dc, client, phone);
     {
         std::lock_guard<std::mutex> hold(g_frame_lock);
         if (g_frame_w > 0 && g_frame_h > 0) {
@@ -300,24 +354,31 @@ void paint(HWND hwnd) {
             bi.bmiHeader.biCompression = BI_RGB;
             SetStretchBltMode(dc, HALFTONE);
             SetBrushOrgEx(dc, 0, 0, nullptr);
-            StretchDIBits(dc, 0, 0, client.right, client.bottom, 0, 0, g_frame_w, g_frame_h, composed_frame(), &bi,
-                          DIB_RGB_COLORS, SRCCOPY);
+            StretchDIBits(dc, phone.left, phone.top, phone.right - phone.left, phone.bottom - phone.top, 0, 0,
+                          g_frame_w, g_frame_h, composed_frame(), &bi, DIB_RGB_COLORS, SRCCOPY);
         } else {
             HBRUSH brush = CreateSolidBrush(g_background);
-            FillRect(dc, &client, brush);
+            FillRect(dc, &phone, brush);
             DeleteObject(brush);
         }
     }
     EndPaint(hwnd, &ps);
 }
 
+// Whether a mouse message's position lies on the phone (not on a bar).
+bool on_phone(HWND hwnd, LPARAM lp) {
+    const RECT phone = client_phone_rect(hwnd);
+    const POINT p{client_x(hwnd, static_cast<short>(LOWORD(lp))), static_cast<short>(HIWORD(lp))};
+    return PtInRect(&phone, p) != FALSE;
+}
+
 void send_pointer(HWND hwnd, int action, LPARAM lp) {
-    RECT client;
-    GetClientRect(hwnd, &client);
-    if (client.right <= 0 || client.bottom <= 0) return;
-    const float x = static_cast<float>(client_x(hwnd, static_cast<short>(LOWORD(lp))));
-    const float y = static_cast<float>(static_cast<short>(HIWORD(lp)));
-    g_input->pointer(action, x, y, static_cast<float>(client.right), static_cast<float>(client.bottom));
+    const RECT phone = client_phone_rect(hwnd);
+    if (phone.right <= phone.left || phone.bottom <= phone.top) return;
+    const float x = static_cast<float>(client_x(hwnd, static_cast<short>(LOWORD(lp))) - phone.left);
+    const float y = static_cast<float>(static_cast<short>(HIWORD(lp)) - phone.top);
+    g_input->pointer(action, x, y, static_cast<float>(phone.right - phone.left),
+                     static_cast<float>(phone.bottom - phone.top));
 }
 
 // A wheel step becomes a short drag, as upstream turns a mouse wheel into
@@ -336,13 +397,15 @@ void send_wheel(HWND hwnd, WPARAM wp, LPARAM lp, bool horizontal) {
     if (lines == WHEEL_PAGESCROLL || lines == 0) lines = 3;
     const float notches = static_cast<float>(GET_WHEEL_DELTA_WPARAM(wp)) / WHEEL_DELTA;
     const float points = notches * static_cast<float>(lines) * 16.0f * scale;
-    RECT client;
-    GetClientRect(hwnd, &client);
-    if (client.right <= 0 || client.bottom <= 0) return;
+    const RECT phone = client_phone_rect(hwnd);
+    if (phone.right <= phone.left || phone.bottom <= phone.top) return;
     POINT p{static_cast<short>(LOWORD(lp)), static_cast<short>(HIWORD(lp))};  // screen coordinates
     ScreenToClient(hwnd, &p);
     p.x = client_x(hwnd, p.x);
-    const float w = static_cast<float>(client.right), h = static_cast<float>(client.bottom);
+    if (!PtInRect(&phone, p)) return;  // over a bar
+    p.x -= phone.left;
+    p.y -= phone.top;
+    const float w = static_cast<float>(phone.right - phone.left), h = static_cast<float>(phone.bottom - phone.top);
     // Client pixels per point, along the scroll axis.
     const float per_point = horizontal ? w / static_cast<float>(g_phone_w) : h / static_cast<float>(g_phone_h);
     // A scrolling view takes the gesture over on the first move past the touch
@@ -430,6 +493,7 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             // WebView placed in the window (native_webview.cpp). Only in the
             // active window: SetFocus would activate an inactive one.
             if (GetActiveWindow() == hwnd && GetFocus() != hwnd) SetFocus(hwnd);
+            if (!on_phone(hwnd, lp)) return 0;  // a letterbox bar: nothing of the app is there
             SetCapture(hwnd);
             g_pointer_down = true;
             send_pointer(hwnd, 0, lp);
@@ -524,7 +588,9 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             const bool first = !shown;
             shown = true;
             if ((first && !started_without_activation()) || (!first && foreground_is_ours())) {
-                ShowWindow(hwnd, SW_SHOWNORMAL);
+                // Every activity the app starts shows the window again;
+                // SW_SHOWNORMAL would take a maximized window out of it.
+                ShowWindow(hwnd, IsZoomed(hwnd) ? SW_SHOW : SW_SHOWNORMAL);
                 SetForegroundWindow(hwnd);
             } else if (!IsWindowVisible(hwnd)) {
                 ShowWindow(hwnd, SW_SHOWNOACTIVATE);
@@ -536,7 +602,10 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 ShowWindow(hwnd, IsIconic(hwnd) ? SW_SHOWNOACTIVATE : SW_SHOWNA);
                 return 0;
             }
-            ShowWindow(hwnd, static_cast<int>(wp));
+            // SW_RESTORE brings a minimized window back as it was, but turns
+            // a maximized one back to its normal size: a task brought to the
+            // front stays maximized.
+            ShowWindow(hwnd, wp == SW_RESTORE && IsZoomed(hwnd) ? SW_SHOW : static_cast<int>(wp));
             if (wp == SW_RESTORE) SetForegroundWindow(hwnd);
             return 0;
         case kMsgResize:  // the app turned the phone
@@ -558,6 +627,9 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             }
             // A fit that came while minimized or maximized.
             if (wp == SIZE_RESTORED && g_refit_pending) PostMessageW(hwnd, kMsgResize, 0, 0);
+            // The phone moves to the new centre: Windows would repaint only
+            // the newly uncovered part.
+            if (wp != SIZE_MINIMIZED) InvalidateRect(hwnd, nullptr, FALSE);
             break;
         }
         default:
@@ -767,6 +839,16 @@ void window_set_phone_size(int phone_w, int phone_h) {
 }
 
 void* window_handle() { return g_hwnd; }
+
+bool window_phone_rect(int* x, int* y, int* w, int* h) {
+    if (!g_hwnd) return false;
+    const RECT r = client_phone_rect(g_hwnd);
+    *x = r.left;
+    *y = r.top;
+    *w = r.right - r.left;
+    *h = r.bottom - r.top;
+    return *w > 0 && *h > 0;
+}
 
 void window_hide() {
     if (g_hwnd) PostMessageW(g_hwnd, kMsgShowState, SW_HIDE, 0);
