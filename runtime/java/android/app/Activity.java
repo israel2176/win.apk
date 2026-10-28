@@ -327,7 +327,18 @@ public class Activity extends ContextThemeWrapper
     /** AOSP android14 Activity.onCreate (:1698-1740) ends its fragment work
      *  with "mFragments.dispatchCreate();" (:1719), which moves the platform
      *  FragmentManager to CREATED. See macapkDispatchFragmentCreate. */
-    protected void onCreate(Bundle savedInstanceState) { macapkDispatchFragmentCreate(); }
+    protected void onCreate(Bundle savedInstanceState) {
+        // AOSP Activity.onCreate: getApplication().dispatchActivityCreated(this, ...).
+        // See Application.CREATED_ORDER; ActivityHost sends it itself when an
+        // override never calls super.
+        if (Application.CREATED_ORDER && application != null && !macapkCreatedDispatched) {
+            macapkCreatedDispatched = true;
+            application.dispatchActivityCreatedOnly(this, savedInstanceState);
+        }
+        macapkDispatchFragmentCreate();
+    }
+    /** Set once onActivityCreated has gone out for this activity (Application.CREATED_ORDER). */
+    public boolean macapkCreatedDispatched;
     protected void onStart()          {}
     protected void onResume()         {}
     protected void onPostResume()     {}
