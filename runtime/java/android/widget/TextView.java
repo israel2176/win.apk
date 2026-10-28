@@ -311,6 +311,10 @@ public class TextView extends View
         macapkApplyInputTypeAttrs(a);
         macapkInitCaret(a);
         macapkInstallDefaultMovement();
+        // AOSP's constructor ends with setText(text, bufferType), which calls
+        // onTextChanged(text, 0, 0, len) even for empty text: a subclass that
+        // caches state there (com.chaos.view.PinView) has it before the first draw.
+        macapkSelfOnTextChanged(text, 0, 0, text != null ? text.length() : 0);
     }
 
     // ------------------------------------------------------------------
@@ -1092,6 +1096,7 @@ public class TextView extends View
         // before anything else (TextView.java:7349), so maxLength / textAllCaps
         // apply to programmatic setText too, not just typed input.
         n = macapkApplyFilters(n);
+        n = macapkApplyBufferType(n);
         CharSequence old = this.text;
         if (TW_TRACE && getClass().getSimpleName().contains("CalculatorResult")) {
             com.macapk.loader.NativeLog.i("Mac.apk.TW",
@@ -1127,6 +1132,7 @@ public class TextView extends View
                 for (android.text.TextWatcher w : textWatchers) {
                     try { w.onTextChanged(n, 0, oldLen, n.length()); } catch (Throwable ignored) {}
                 }
+                macapkSelfOnTextChanged(n, 0, oldLen, n.length());
                 if (n instanceof android.text.Editable) {
                     for (android.text.TextWatcher w : textWatchers) {
                         try { w.afterTextChanged((android.text.Editable) n); } catch (Throwable ignored) {}
@@ -1136,6 +1142,7 @@ public class TextView extends View
         } else {
             macapkSetTextInternal(n);
             macapkInitializeMovement();
+            macapkSelfOnTextChanged(n, 0, old != null ? old.length() : 0, n.length());
         }
         // AOSP setText (:7166-7167): the movement method initializes the new
         // buffer (ArrowKeyMovementMethod -> selection 0) BEFORE
@@ -2255,7 +2262,10 @@ public class TextView extends View
             for (android.text.TextWatcher w : new java.util.ArrayList<>(textWatchers))
                 try { w.beforeTextChanged(buf, oldLen, 0, added); } catch (Throwable ignored) {}
         }
-        if (added > 0) { try { buf.append(add, addStart, addEnd); } catch (Throwable ignored) {} }
+        mSelfChangeSuppress++;
+        try {
+            if (added > 0) { try { buf.append(add, addStart, addEnd); } catch (Throwable ignored) {} }
+        } finally { mSelfChangeSuppress--; }
         // append() mutates the Editable IN PLACE, so `text` may already BE
         // `buf` -- but mTransformed is a snapshot taken at the last setText and
         // does not observe in-place edits (PasswordCharSequence wraps the
@@ -2266,6 +2276,9 @@ public class TextView extends View
         if (fire) {
             for (android.text.TextWatcher w : new java.util.ArrayList<>(textWatchers))
                 try { w.onTextChanged(buf, oldLen, 0, added); } catch (Throwable ignored) {}
+        }
+        if (added > 0) macapkSelfOnTextChanged(buf, oldLen, 0, added);
+        if (fire) {
             for (android.text.TextWatcher w : new java.util.ArrayList<>(textWatchers))
                 try { w.afterTextChanged(buf); } catch (Throwable ignored) {}
             firingWatchers = false;
@@ -2769,10 +2782,13 @@ public class TextView extends View
             mCachedEditableSrc = mCachedEditable;
             // AOSP handleTextChanged -> updateAfterEdit (:12424-12439).
             try { macapkUpdateAfterEdit(); } catch (Throwable ignored) {}
-            if (firingWatchers || textWatchers == null) return;
-            for (android.text.TextWatcher w : new java.util.ArrayList<>(textWatchers)) {
-                try { w.onTextChanged(s, start, before, count); } catch (Throwable ignored) {}
+            if (!firingWatchers && textWatchers != null) {
+                for (android.text.TextWatcher w : new java.util.ArrayList<>(textWatchers)) {
+                    try { w.onTextChanged(s, start, before, count); } catch (Throwable ignored) {}
+                }
             }
+            // AOSP handleTextChanged: sendOnTextChanged, then the view's own hook.
+            if (mSelfChangeSuppress == 0) macapkSelfOnTextChanged(s, start, before, count);
         }
         @Override public void afterTextChanged(android.text.Editable b) {
             if (b != mCachedEditable) return;
@@ -2902,6 +2918,9 @@ public class TextView extends View
         if (fire) {
             for (android.text.TextWatcher w : new java.util.ArrayList<>(textWatchers))
                 try { w.onTextChanged(text, 0, old.length(), text.length()); } catch (Throwable ignore) {}
+        }
+        macapkSelfOnTextChanged(text, 0, old.length(), text.length());
+        if (fire) {
             android.text.Editable e = getEditableText();
             for (android.text.TextWatcher w : new java.util.ArrayList<>(textWatchers))
                 try { w.afterTextChanged(e); } catch (Throwable ignore) {}
@@ -3153,10 +3172,12 @@ public class TextView extends View
             for (android.text.TextWatcher w : new java.util.ArrayList<>(textWatchers))
                 try { w.beforeTextChanged(buf, a, removed, added); } catch (Throwable ignored) {}
         }
+        mSelfChangeSuppress++;
         try {
             if (added > 0) buf.replace(a, b, ins);
             else if (removed > 0) buf.delete(a, b);
-        } catch (Throwable ignored) {}
+        } catch (Throwable ignored) {
+        } finally { mSelfChangeSuppress--; }
         // The buffer BECOMES the text (append()'s rule): the ChangeWatcher does
         // this itself when it is on the buffer, and must not be relied on, since
         // only a default-editable view or one with a key listener carries it.
@@ -3173,6 +3194,9 @@ public class TextView extends View
         if (fire) {
             for (android.text.TextWatcher w : new java.util.ArrayList<>(textWatchers))
                 try { w.onTextChanged(buf, a, removed, added); } catch (Throwable ignored) {}
+        }
+        if (added > 0 || removed > 0) macapkSelfOnTextChanged(buf, a, removed, added);
+        if (fire) {
             for (android.text.TextWatcher w : new java.util.ArrayList<>(textWatchers))
                 try { w.afterTextChanged(buf); } catch (Throwable ignored) {}
             firingWatchers = false;
@@ -6622,7 +6646,28 @@ public class TextView extends View
     public void setText(CharSequence t, BufferType type) {
         // AOSP setText (:7052-7054): an EDITABLE buffer creates the Editor.
         if (type == BufferType.EDITABLE) createEditorIfNeeded();
+        if (type != null) mBufferType = type;
         setText(t);
+    }
+    /** AOSP mBufferType: the type of the LAST setText(text, type); the
+     *  one-argument setText reuses it (setText(text) -> setText(text,
+     *  mBufferType)), and a SPANNABLE buffer is stored as a Spannable
+     *  (mSpannableFactory.newSpannable, :7069-7071). We kept the caller's
+     *  String, so `setText(s, SPANNABLE); ((Spannable) getText()).setSpan(..)`
+     *  -- a common way to style part of a label -- threw ClassCastException
+     *  (Paz Yellow's TwoBoldNumbersPriceView constructor, 2026-10-28). EDITABLE
+     *  keeps this tree's own editable path. MACAPK_TEXT_BUFFER_TYPE=0 restores
+     *  storing the text as given. */
+    static final boolean MACAPK_TEXT_BUFFER_TYPE =
+        !"0".equals(System.getenv("MACAPK_TEXT_BUFFER_TYPE"));
+    private BufferType mBufferType = BufferType.NORMAL;
+    private CharSequence macapkApplyBufferType(CharSequence n) {
+        if (MACAPK_TEXT_BUFFER_TYPE && mBufferType == BufferType.SPANNABLE
+                && !(n instanceof android.text.Spannable)) {
+            try { return android.text.Spannable.Factory.getInstance().newSpannable(n); }
+            catch (Throwable ignored) {}
+        }
+        return n;
     }
     public void setTextIsSelectable(boolean selectable) {}
     /** AOSP :8398 getPrivateImeOptions reads Editor.InputContentType.
@@ -6667,6 +6712,28 @@ public class TextView extends View
     // and onLayout/onMeasure are protected -- override them on demand.
     public void onConfigurationChanged(android.content.res.Configuration newConfig) {}
     protected void onTextChanged(CharSequence text, int start, int lengthBefore, int lengthAfter) {}
+
+    /** AOSP calls the overridable onTextChanged hook on EVERY text change, with
+     *  or without TextWatchers: setText (TextView.java:7182-7183,
+     *  sendOnTextChanged then onTextChanged), the constructor's initial
+     *  setText(text, bufferType), and in-place edits via
+     *  ChangeWatcher -> handleTextChanged (:10840-10845). This tree declared the
+     *  hook but never called it, so a custom field that keeps its state there
+     *  never saw a change. Measured 2026-10-28 on Paz Yellow's SMS code screen:
+     *  com.chaos.view.PinView caches its display string only in onTextChanged,
+     *  so it stayed null, every onDraw threw NPE (no boxes drawn) and typed
+     *  digits never appeared. MACAPK_TEXT_SELF_ON_CHANGED=0 restores the old
+     *  behaviour. */
+    static final boolean MACAPK_TEXT_SELF_ON_CHANGED =
+        !"0".equals(System.getenv("MACAPK_TEXT_SELF_ON_CHANGED"));
+    /** >0 while an explicit edit path (append, keystroke) mutates the buffer
+     *  in place: it calls the hook itself afterwards, so the buffer's
+     *  ChangeWatcher must not call it a second time for the same edit. */
+    private int mSelfChangeSuppress;
+    private void macapkSelfOnTextChanged(CharSequence t, int start, int before, int after) {
+        if (!MACAPK_TEXT_SELF_ON_CHANGED) return;
+        try { onTextChanged(t, start, before, after); } catch (Throwable ignored) {}
+    }
 
     // -------- v1.0.116 AOSP audit batch --------
     // Per cs.android.com/.../frameworks/base/core/java/android/widget/TextView.java:

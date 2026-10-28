@@ -273,6 +273,11 @@ const wchar_t* tr(const wchar_t* en) {
         {L"{0} was stopped.", L"{0} נעצרה."},
         {L"{0} stopped with an error.", L"{0} נעצרה עם שגיאה."},
         {L"{0} stopped with an error", L"{0} נעצרה עם שגיאה"},
+        {L"{0} closed before it showed a window.", L"{0} נסגרה לפני שהציגה חלון."},
+        {L"{0} closed before it showed a window", L"{0} נסגרה לפני שהציגה חלון"},
+        {L"What the log says", L"מה כתוב בלוג"},
+        {L"This APK has no native code for this app (lib/arm64-v8a). Install the full bundle (.apkm, .xapk or .apks) that includes the arm64-v8a part.",
+         L"ב-APK הזה חסר הקוד המקורי של האפליקציה (lib/arm64-v8a). יש להתקין את החבילה המלאה (.apkm, .xapk או .apks) שכוללת את החלק arm64-v8a."},
         {L"The app stopped with an error.\n\nThe log is in:\n{0}", L"האפליקציה נעצרה עם שגיאה.\n\nהלוג נמצא ב:\n{0}"},
         {L"An app", L"אפליקציה"},
         {L"Close {0} before updating it.", L"יש לסגור את {0} לפני העדכון."},
@@ -618,10 +623,37 @@ void remove_app_shortcuts(const App& app) {
 // ---------------------------------------------------------------------------
 // Running and installing
 
+// The runtime compiles an app's arm64 code with clang (WINAPK_AOT_CLANG, Win.apk\clang, or the PATH);
+// without one it falls back to the slower JIT. A clang installed elsewhere, by MSYS2 or the LLVM
+// installer, is handed over so the code conversion works without changing the PATH.
+void apply_aot_clang_env() {
+    wchar_t have[8];
+    if (GetEnvironmentVariableW(L"WINAPK_AOT_CLANG", have, 8) > 0) return;
+    std::error_code ec;
+    if (fs::exists(root() / L"clang" / L"bin" / L"clang.exe", ec)) return;
+    if (SearchPathW(nullptr, L"clang.exe", nullptr, 0, nullptr, nullptr) > 0) return;
+    std::vector<fs::path> candidates;
+    for (const wchar_t* var : {L"ProgramFiles", L"ProgramW6432"}) {
+        wchar_t dir[MAX_PATH];
+        if (GetEnvironmentVariableW(var, dir, MAX_PATH) > 0) {
+            candidates.push_back(fs::path(dir) / L"LLVM\\bin\\clang.exe");
+        }
+    }
+    candidates.push_back(L"C:\\msys64\\clang64\\bin\\clang.exe");
+    candidates.push_back(L"C:\\msys64\\ucrt64\\bin\\clang.exe");
+    for (const auto& c : candidates) {
+        if (fs::exists(c, ec)) {
+            SetEnvironmentVariableW(L"WINAPK_AOT_CLANG", c.c_str());
+            return;
+        }
+    }
+}
+
 HANDLE start_runtime(const std::wstring& args, const fs::path& log) {
     std::error_code ec;
     fs::create_directories(log.parent_path(), ec);
     apply_runtime_env();
+    apply_aot_clang_env();
     SECURITY_ATTRIBUTES sa{sizeof(sa), nullptr, TRUE};
     HANDLE out = CreateFileW(log.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_DELETE, &sa, CREATE_ALWAYS,
                              FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -1486,7 +1518,7 @@ void update_timer() {
 // Dialogs
 
 int task_dialog(const std::wstring& main, const std::wstring& content, PCWSTR icon,
-                std::vector<TASKDIALOG_BUTTON> buttons, bool cancel) {
+                std::vector<TASKDIALOG_BUTTON> buttons, bool cancel, const std::wstring& details = {}) {
     TASKDIALOGCONFIG c{};
     c.cbSize = sizeof(c);
     c.hwndParent = owner();
@@ -1499,6 +1531,12 @@ int task_dialog(const std::wstring& main, const std::wstring& content, PCWSTR ic
     c.cButtons = static_cast<UINT>(buttons.size());
     c.pButtons = buttons.data();
     c.dwCommonButtons = cancel ? TDCBF_CANCEL_BUTTON : TDCBF_CLOSE_BUTTON;
+    if (!details.empty()) {
+        c.pszExpandedInformation = details.c_str();
+        c.pszExpandedControlText = tr(L"What the log says");
+        c.pszCollapsedControlText = c.pszExpandedControlText;
+        c.dwFlags |= TDF_EXPANDED_BY_DEFAULT;
+    }
     int pressed = 0;
     if (FAILED(TaskDialogIndirect(&c, &pressed, nullptr, nullptr))) return 0;
     return pressed;
@@ -1508,10 +1546,66 @@ bool confirm(const std::wstring& main, const std::wstring& content, const wchar_
     return task_dialog(main, content, TD_WARNING_ICON, {{IDOK, action}}, true) == IDOK;
 }
 
-void failed_with_log(const std::wstring& main, const fs::path& log) {
-    if (task_dialog(main, fmt(L"The log may say why:\n{0}", {log.wstring()}), TD_ERROR_ICON, {{100, tr(L"Open the log")}},
-                    false) == 100) {
-        show_logs(log);
+std::string read_tail(const fs::path& p, size_t max_bytes);
+
+// The lines of a log that say why an app failed: its errors, exceptions and the exit. Each line starts
+// with a left-to-right mark, so a Hebrew (mirrored) dialog keeps an English log line's own order.
+std::wstring log_summary(const fs::path& log, bool* no_native_code) {
+    std::vector<std::wstring> hits;
+    const std::wstring raw = utf8_to_wide(read_tail(log, 256 * 1024));
+    size_t at = 0;
+    while (at < raw.size()) {
+        size_t end = raw.find(L'\n', at);
+        if (end == std::wstring::npos) end = raw.size();
+        std::wstring l = raw.substr(at, end - at);
+        at = end + 1;
+        if (!l.empty() && l.back() == L'\r') l.pop_back();
+        if (l.find(L"not shipped in this APK") != std::wstring::npos) *no_native_code = true;
+        const bool why = l.rfind(L"[E]", 0) == 0 || l.rfind(L"[F]", 0) == 0 || l.find(L"FATAL") != std::wstring::npos ||
+                         l.find(L"Exception:") != std::wstring::npos || l.find(L"Error:") != std::wstring::npos ||
+                         l.find(L"System.exit(") != std::wstring::npos;
+        if (!why) continue;
+        if (l.size() > 220) l = l.substr(0, 220) + L"\x2026";
+        hits.push_back(std::move(l));
+    }
+    std::wstring out;
+    for (size_t i = hits.size() > 12 ? hits.size() - 12 : 0; i < hits.size(); ++i) out += L"\x200E" + hits[i] + L"\n";
+    if (!out.empty()) out.pop_back();
+    return out;
+}
+
+// Whether the run got as far as drawing: the runtime logs its first presented frame. An app that exits
+// cleanly before that (an APK without its native code, a check that gives up) failed to open all the same.
+bool log_shows_window(const fs::path& log) {
+    HANDLE f = CreateFileW(log.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                           OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return true;  // nothing to go on: don't call it a failure
+    static const std::string kMark = "] first frame";
+    std::string buf, chunk(1 << 20, '\0');
+    bool found = false;
+    DWORD got = 0;
+    while (!found && ReadFile(f, &chunk[0], static_cast<DWORD>(chunk.size()), &got, nullptr) && got > 0) {
+        buf.append(chunk, 0, got);
+        found = buf.find(kMark) != std::string::npos ||
+                buf.find("native window: first frame") != std::string::npos;
+        if (buf.size() > kMark.size() + 64) buf.erase(0, buf.size() - (kMark.size() + 64));  // keep the seam
+    }
+    CloseHandle(f);
+    return found;
+}
+
+void failed_with_log(const std::wstring& main, const fs::path& log, bool in_notepad = false) {
+    bool no_native_code = false;
+    const std::wstring details = log_summary(log, &no_native_code);
+    std::wstring content = fmt(L"The log may say why:\n{0}", {log.wstring()});
+    if (no_native_code) {
+        content = std::wstring(tr(L"This APK has no native code for this app (lib/arm64-v8a). Install the full bundle "
+                                  L"(.apkm, .xapk or .apks) that includes the arm64-v8a part.")) +
+                  L"\n\n" + content;
+    }
+    if (task_dialog(main, content, TD_ERROR_ICON, {{100, tr(L"Open the log")}}, false, details) == 100) {
+        if (in_notepad) open_log(log);
+        else show_logs(log);
     }
 }
 
@@ -2552,6 +2646,12 @@ LRESULT CALLBACK log_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                                          WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_HSCROLL | ES_MULTILINE | ES_READONLY |
                                              ES_AUTOVSCROLL | ES_AUTOHSCROLL | ES_NOHIDESEL,
                                          0, 0, 0, 0, hwnd, nullptr, g_inst, nullptr);
+            // The edit inherits the mirrored layout of a Hebrew window; a log is English, paths and stack
+            // traces, so it reads left to right with its scroll bar on the right.
+            SetWindowLongPtrW(g_log_edit, GWL_EXSTYLE,
+                              GetWindowLongPtrW(g_log_edit, GWL_EXSTYLE) &
+                                  ~static_cast<LONG_PTR>(WS_EX_LAYOUTRTL | WS_EX_RTLREADING | WS_EX_RIGHT |
+                                                         WS_EX_LEFTSCROLLBAR));
             SendMessageW(g_log_edit, WM_SETFONT, reinterpret_cast<WPARAM>(g_mono_font), FALSE);
             SendMessageW(g_log_edit, EM_SETLIMITTEXT, 0, 0);
             SetWindowTheme(g_log_edit, g_t.dark ? L"DarkMode_Explorer" : L"Explorer", nullptr);
@@ -3059,8 +3159,11 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             const std::wstring label = label_of(*name);
             if (g_stopping.erase(*name)) {
                 set_status(fmt(L"{0} was stopped.", {label}), kInfo);
-            } else if (wp) {
+            } else if (wp && log_shows_window(last_run_log())) {
                 set_status(L"", kHint);
+            } else if (wp) {
+                set_status(fmt(L"{0} closed before it showed a window.", {label}), kError);
+                failed_with_log(fmt(L"{0} closed before it showed a window", {label}), last_run_log());
             } else {
                 set_status(fmt(L"{0} stopped with an error.", {label}), kError);
                 failed_with_log(fmt(L"{0} stopped with an error", {label}), last_run_log());
@@ -3317,9 +3420,14 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
 
     // A shortcut: run the app, and only show anything if it fails.
     if (argc >= 3 && wcscmp(argv[1], L"--run") == 0) {
+        pick_language();
+        const std::wstring label = label_of(fs::path(argv[2]).stem().wstring());
         if (!run_and_wait(argv[2])) {
-            const std::wstring text = fmt(L"The app stopped with an error.\n\nThe log is in:\n{0}", {last_run_log().wstring()});
-            MessageBoxW(nullptr, text.c_str(), L"Win.apk", MB_OK | MB_ICONWARNING);
+            failed_with_log(fmt(L"{0} stopped with an error", {label}), last_run_log(), true);
+            return 1;
+        }
+        if (!log_shows_window(last_run_log())) {
+            failed_with_log(fmt(L"{0} closed before it showed a window", {label}), last_run_log(), true);
             return 1;
         }
         return 0;
