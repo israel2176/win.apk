@@ -2,7 +2,7 @@ A pre-release for testing: Win.apk runs Android apps on Windows 10/11 x64.
 
 ## Getting started
 - **Install:** run `Win.apk-Setup.exe`. It installs per user, with no administrator rights, and puts Win.apk in the Start menu. If you'd rather not install, unzip `Win.apk-windows-x64.zip` and start `Win.apk.exe`.
-- **Add apps:** drag `.apk` files onto the Win.apk window, or double-click them in Explorer. Each app gets its own icon in the library, the Start menu and the desktop.
+- **Add apps:** get them from the **Store** tab (F-Droid's free and open-source apps: search, Install, Update), drag `.apk` files onto the Win.apk window, or double-click them in Explorer. Each app gets its own icon in the library, the Start menu and the desktop.
 - **Included:** Java and ANGLE. `README.txt` has the details.
 
 ## What works

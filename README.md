@@ -23,6 +23,7 @@ go through ANGLE on Direct3D 11.
 - [Requirements](#requirements)
 - [Install](#install)
 - [Add an app](#add-an-app)
+- [The Store](#the-store)
 - [Open and manage apps](#open-and-manage-apps)
 - [Settings](#settings)
 - [Hebrew and right-to-left](#hebrew-and-right-to-left)
@@ -40,6 +41,9 @@ go through ANGLE on Direct3D 11.
 - **One library for your Android apps.** Drop an APK on the window to install
   it; every app gets a tile with its own icon, a Start menu shortcut and,
   if you want, a desktop shortcut.
+- **A built-in store.** The Store tab lists the free and open-source apps on
+  [F-Droid](https://f-droid.org) that run here: search, pick a category,
+  click **Install**.
 - **Bundles too.** Split APKs as `.apkm`, `.xapk` and `.apks` install like a
   plain `.apk`.
 - **Install progress you can see.** A window shows each app in the queue, how
@@ -101,8 +105,28 @@ A window follows the progress:
 | ![The install window: Reader converting, with the install log below](docs/images/install-progress.png) | ![The install window when the install finished: "Reader is ready", with an Open button](docs/images/install-done.png) |
 
 You can hide the window at any time; the drop zone and the app's tile keep
-showing the progress. Good apps to start with come from
-[F-Droid](https://f-droid.org): free, open source, and usually Java-only.
+showing the progress.
+
+## The Store
+
+The **Store** tab, next to **Library** at the top of the window (Ctrl+2;
+Ctrl+1 goes back), is [F-Droid](https://f-droid.org)'s catalog of free and
+open-source apps, usually Java-only and a good place to start. It lists the
+apps whose native code runs here (x86_64, or arm64 through translation),
+newest updates first; type to search, or pick a category.
+
+- **Install** downloads the app from f-droid.org, checks it against the
+  SHA-256 in F-Droid's index (a file that does not match is not installed)
+  and installs it like a dropped APK. The card shows the download and the
+  install; then its button says **Open**.
+- **Update** shows when F-Droid has a newer version of an app you have, by
+  package, however you installed it. What the app saved stays.
+- Click a card for its version, size, license and a link to its F-Droid page.
+
+The first time, the Store downloads F-Droid's index (about 15 MB) and keeps a
+summary of it; after that it opens at once and checks for new apps every few
+hours in the background (F5 checks now). Win.apk opens on the Store while the
+library is empty.
 
 ## Open and manage apps
 
@@ -206,6 +230,7 @@ translation, the last step of the plan in
 | Each app's converted code, icon and name | `%LOCALAPPDATA%\Win.apk\apps\<app>` |
 | What the apps save | `%LOCALAPPDATA%\Win.apk\android` |
 | Logs | `%LOCALAPPDATA%\Win.apk\logs` |
+| The Store's catalog and icons | `%LOCALAPPDATA%\Win.apk\store` |
 | Settings | `HKEY_CURRENT_USER\Software\Win.apk` |
 | Start menu shortcuts | Start → Win.apk Apps |
 
