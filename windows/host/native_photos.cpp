@@ -140,6 +140,14 @@ const std::vector<Asset>& scan() {
     ComScope com;
     std::vector<Asset> assets;
     std::wstring pictures = known_folder(FOLDERID_Pictures), videos = known_folder(FOLDERID_Videos);
+    // A folder the volume maps (user_folders.h) is already in MediaStore as
+    // /sdcard/Pictures or /sdcard/Movies; listing it here as well would show
+    // every picture twice, once more under DCIM/Camera.
+    wchar_t mapped[32768];
+    const DWORD n = GetEnvironmentVariableW(L"WINAPK_USER_FOLDER_TARGETS", mapped, 32768);
+    const std::wstring targets = L"|" + std::wstring(mapped, n < 32768 ? n : 0);
+    if (targets.find(L"|Pictures=") != std::wstring::npos) pictures.clear();
+    if (targets.find(L"|Movies=") != std::wstring::npos) videos.clear();
     if (!pictures.empty()) walk(pictures, 0, &assets);
     if (!videos.empty() && videos != pictures) walk(videos, 0, &assets);
     // The generation changes whenever a file appears, goes or changes.
