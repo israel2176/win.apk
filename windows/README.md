@@ -306,6 +306,30 @@ every such change is listed here:
   `<size>`) round and keep a non-zero size at least 1 px, as AOSP does, so
   0.5dp hairlines and borders are drawn; `getDimensionPixelOffset` still
   truncates. Not Windows-specific.
+- `runtime/java/com/macapk/loader/Manifest.java`: the components of installed
+  feature splits (`isFeatureSplit="true"`) are merged into the package, as
+  AOSP `parseSplitApplication` does. Chrome keeps its launcher alias and
+  `ChromeTabbedActivity` in `split_chrome.apk`, and was rejected with "no
+  launchable activity". `MACAPK_MANIFEST_FEATURE_SPLITS=0` reads the base alone.
+  Not Windows-specific.
+- `runtime/java/android/app/HandoffActivityData.java`,
+  `HandoffActivityDataRequestInfo.java` (new, API 37 type-only placeholders)
+  and `com/macapk/loader/ActivityHost.java`: an activity overriding a newer-API
+  callback no longer fails every lifecycle call with `NoClassDefFoundError`;
+  a class whose methods cannot be resolved is skipped in favour of the
+  superclass declaration, which still dispatches to the override
+  (`MACAPK_LIFECYCLE_SKIP_UNLINKABLE=0` turns that off). Not Windows-specific.
+- `runtime/java/android/app/Application.java` (`AppBaseContext`): has the
+  `mClassLoader` field of AOSP `ContextImpl`, and `getClassLoader` returns it
+  when set; Chromium sets it reflectively for isolated splits
+  (`MACAPK_CONTEXT_MCLASSLOADER=0` ignores it). Not Windows-specific.
+- `runtime/java/android/app/Application.java`, `Activity.java` and
+  `com/macapk/loader/ActivityHost.java`: `onActivityPreCreated` goes out before
+  `onCreate`, `onActivityCreated` from `Activity.onCreate` (or after it when
+  the override skips super), and `onActivityPostCreated` before a `finish()` in
+  `onCreate` tears the activity down, as AOSP does. Chromium's
+  `ApplicationStatus` depends on it. `MACAPK_LIFECYCLE_CREATED_ORDER=0` restores
+  the old order. Not Windows-specific.
 
 ## License
 
