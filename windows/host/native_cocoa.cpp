@@ -520,6 +520,10 @@ struct LayerPlace {
     int key;
     long long packed;  // 0: the surface is gone; -1: not shown; else x,y,w,h (16 bits each)
     bool on_top;
+    // A placement is a rect, not a sign: x and y are signed, so a surface
+    // starting left of the window (a center-cropped camera preview) packs to a
+    // NEGATIVE value, and only the two sentinels mean "nothing to draw".
+    bool shown() const { return packed != 0 && packed != -1; }
 };
 
 // Where each surface is now, asked of its SurfaceView. Outside g_comp_lock: it
@@ -539,7 +543,7 @@ std::vector<LayerPlace> pull_layer_places(JNIEnv* env) {
             env->ExceptionClear();
             pl.packed = -1;
         }
-        if (pl.packed > 0 && g_sv_on_top) {
+        if (pl.shown() && g_sv_on_top) {
             pl.on_top = env->CallStaticBooleanMethod(g_sv_cls, g_sv_on_top, pl.key) == JNI_TRUE;
             if (env->ExceptionCheck()) env->ExceptionClear();
         }
@@ -599,7 +603,7 @@ void compose_and_present(JNIEnv* env) {
     }
     auto draw_layers = [&](bool on_top) {
         for (const auto& pl : places) {
-            if (pl.packed <= 0 || pl.on_top != on_top) continue;
+            if (!pl.shown() || pl.on_top != on_top) continue;
             auto it = g_surface_layers.find(pl.key);
             if (it == g_surface_layers.end() || it->second.px.empty()) continue;
             const auto u = static_cast<unsigned long long>(pl.packed);
