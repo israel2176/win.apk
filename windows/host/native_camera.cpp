@@ -3,8 +3,8 @@
 // AVFoundation). camera2, android.hardware.Camera, ImageReader and
 // SurfaceTexture sit on top of these natives in runtime/java.
 //
-// Devices are the video capture sources MFEnumDeviceSources lists; the camera
-// id the app sees is the index into that list. A source reader with advanced
+// Devices are the video capture sources MFEnumDeviceSources lists, each offered
+// to the app as a back and a front camera (see kRolesPerDevice). A source reader with advanced
 // video processing turns whatever the device sends (YUY2, MJPG, NV12...) into
 // NV12, which a capture thread copies into a frame of our own: Y rows, then
 // interleaved CbCr rows, both `stride` bytes wide. That is the semiplanar
@@ -52,7 +52,7 @@ namespace winapk::host {
 namespace {
 
 // CameraBridge constants (AOSP's LENS_FACING_FRONT; AVAuthorizationStatus).
-constexpr jint kFacingFront = 0;
+constexpr jint kFacingFront = 0, kFacingBack = 1;
 constexpr jint kAuthDenied = 2, kAuthAuthorized = 3;
 constexpr DWORD kStream = static_cast<DWORD>(MF_SOURCE_READER_FIRST_VIDEO_STREAM);
 
@@ -105,7 +105,8 @@ std::string utf8(const wchar_t* w) {
 // your camera" (NonPackaged). Either one set to Deny makes the device fail to
 // open, so it is reported as denied up front instead.
 bool camera_allowed() {
-    const wchar_t* base = L"Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\webcam";
+    const wchar_t* base =
+        L"Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\webcam";
     const wchar_t* desktop =
         L"Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\webcam\\NonPackaged";
     const std::pair<HKEY, const wchar_t*> keys[] = {
@@ -245,7 +246,8 @@ void refresh_devices(bool force) {
         IMFActivate** list = nullptr;
         UINT32 count = 0;
         if (FAILED(MFCreateAttributes(&attrs, 1)) ||
-            FAILED(attrs->SetGUID(MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE, MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID)) ||
+            FAILED(attrs->SetGUID(MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE,
+                                  MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID)) ||
             FAILED(MFEnumDeviceSources(attrs.p, &list, &count))) {
             return;
         }
@@ -279,11 +281,27 @@ void refresh_devices(bool force) {
     g_devices = std::move(found);
 }
 
-// A copy of device `index`, its formats probed. False if there is no such device.
+// Every webcam is offered twice: camera 2k faces BACK and 2k+1 faces FRONT,
+// both streaming the same device. A phone has both and apps are written for
+// that: QR scanners and CameraX's DEFAULT_BACK_CAMERA ask for the back lens
+// (Camera.open() returns null without one), selfie and video-call screens for
+// the front. A PC's single webcam serves both roles; Windows shares the device
+// between the two if an app opens both.
+constexpr int kRolesPerDevice = 2;
+
+// The webcam behind camera `index`, or -1. Under g_devices_lock.
+int physical_index(int index) {
+    return index >= 0 && static_cast<size_t>(index / kRolesPerDevice) < g_devices.size() ? index / kRolesPerDevice
+                                                                                            : -1;
+}
+
+// A copy of the webcam behind camera `index`, its formats probed. False if
+// there is no such camera.
 bool device_at(int index, Device* out) {
     std::lock_guard<std::mutex> hold(g_devices_lock);
-    if (index < 0 || static_cast<size_t>(index) >= g_devices.size()) return false;
-    Device& d = g_devices[static_cast<size_t>(index)];
+    const int phys = physical_index(index);
+    if (phys < 0) return false;
+    Device& d = g_devices[static_cast<size_t>(phys)];
     if (!d.probed) {
         d.formats = probe_formats(d.link);
         // A device that failed to open (in use exclusively, unplugged) is
@@ -717,25 +735,30 @@ jint JNICALL Cam_deviceCount(JNIEnv*, jclass) {
     std::lock_guard<std::mutex> hold(g_devices_lock);
     static std::atomic<int> reported{-1};
     if (reported.exchange(static_cast<int>(g_devices.size())) != static_cast<int>(g_devices.size())) {
-        std::fprintf(stderr, "[camera] %zu camera(s)\n", g_devices.size());
+        std::fprintf(stderr, "[camera] %zu webcam(s), each offered as a back and a front camera\n", g_devices.size());
     }
-    return static_cast<jint>(g_devices.size());
+    return static_cast<jint>(g_devices.size() * kRolesPerDevice);
 }
 
+// The id and name carry the role, so the two cameras of one webcam stay
+// distinct (camera2 caches characteristics by id).
 jstring device_string(JNIEnv* env, jint index, std::string Device::*field) {
     std::lock_guard<std::mutex> hold(g_devices_lock);
-    if (index < 0 || static_cast<size_t>(index) >= g_devices.size()) return nullptr;
-    return env->NewStringUTF((g_devices[static_cast<size_t>(index)].*field).c_str());
+    const int phys = physical_index(index);
+    if (phys < 0) return nullptr;
+    const bool back = index % kRolesPerDevice == 0;
+    const bool id = field == &Device::id;
+    const std::string s = g_devices[static_cast<size_t>(phys)].*field +
+                          (id ? (back ? "#back" : "#front") : (back ? " (back)" : " (front)"));
+    return env->NewStringUTF(s.c_str());
 }
 jstring JNICALL Cam_deviceId(JNIEnv* env, jclass, jint index) { return device_string(env, index, &Device::id); }
 jstring JNICALL Cam_deviceName(JNIEnv* env, jclass, jint index) { return device_string(env, index, &Device::name); }
 
-// A PC's webcam -- built into the lid or clipped onto the monitor -- looks at
-// the user, which is Android's FRONT. Windows has no reliable "rear" signal for
-// a desktop camera, and claiming a back lens would send apps looking for one.
 jint JNICALL Cam_deviceFacing(JNIEnv*, jclass, jint index) {
     std::lock_guard<std::mutex> hold(g_devices_lock);
-    return index >= 0 && static_cast<size_t>(index) < g_devices.size() ? kFacingFront : -1;
+    if (physical_index(index) < 0) return -1;
+    return index % kRolesPerDevice == 0 ? kFacingBack : kFacingFront;
 }
 // The sensor does not turn with the screen, so no preview rotation is implied.
 jint JNICALL Cam_sensorOrientation(JNIEnv*, jclass, jint) { return 0; }
