@@ -4109,12 +4109,13 @@ public class Resources {
                     break;
                 }
                 case "stroke":
-                    gd.setStroke(macapkDimAttr(c, "width", 0, theme),
+                    gd.setStroke(macapkDimSizeAttr(c, "width", 0, theme),
                         macapkResolveColorString(
                             c.getAttributeNS(MACAPK_ANDROID_NS, "color"), 0, theme));
                     break;
                 case "size":
-                    gd.setSize(macapkDimAttr(c, "width", -1, theme), macapkDimAttr(c, "height", -1, theme));
+                    gd.setSize(macapkDimSizeAttr(c, "width", -1, theme),
+                            macapkDimSizeAttr(c, "height", -1, theme));
                     break;
                 case "gradient": {
                     // v1.0.499: a <shape> with a <gradient> (and no <solid>) was
@@ -4203,6 +4204,29 @@ public class Resources {
         }
         Float px = macapkParseDimenString(v);
         return px != null ? (int) (float) px : def;
+    }
+
+    /** macapkDimAttr for an attribute AOSP reads with getDimensionPixelSize
+     *  (GradientDrawable <stroke android:width>, <size>): round to nearest, and
+     *  a non-zero value never becomes 0 px (TypedValue.complexToDimensionPixelSize:
+     *  `res != 0 ? res : value == 0 ? 0 : value > 0 ? 1 : -1`). The truncating
+     *  read above turned a 0.5dp hairline at 1x into a 0 px stroke, which is not
+     *  drawn: underline-only input fields (a stroked rectangle with negative
+     *  left/top/right insets; Paz Yellow's phone field, 2026-10-28) showed no
+     *  line at all. MACAPK_DIM_PIXEL_SIZE=0 restores the truncation. */
+    static final boolean MACAPK_DIM_PIXEL_SIZE =
+            !"0".equals(System.getenv("MACAPK_DIM_PIXEL_SIZE"));
+    private int macapkDimSizeAttr(org.w3c.dom.Element e, String name, int def, Theme theme) {
+        String v = e.getAttributeNS(MACAPK_ANDROID_NS, name);
+        if (!MACAPK_DIM_PIXEL_SIZE || v == null || v.isEmpty()
+                || v.trim().startsWith("?") || v.startsWith("@")) {
+            return macapkDimAttr(e, name, def, theme);   // the reference paths already round
+        }
+        Float px = macapkParseDimenString(v);
+        if (px == null) return def;
+        int res = (int) (px + (px >= 0 ? 0.5f : -0.5f));
+        if (res != 0) return res;
+        return px == 0f ? 0 : (px > 0f ? 1 : -1);
     }
 
     /** A `?attr` dimension: the theme's value for the attribute (chased through

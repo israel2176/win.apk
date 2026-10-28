@@ -287,6 +287,25 @@ every such change is listed here:
   after the whole-view rect, so an engine that shows the page over the canvas
   (Windows) can keep the dialog visible. The union, which the Mac's hit test
   uses, is unchanged.
+- `runtime/java/android/widget/TextView.java`: the protected `onTextChanged`
+  hook is called on every text change (constructor, `setText`, typing,
+  `append`, in-place edits), with or without `TextWatcher`s, as AOSP does. It
+  was declared but never called, so custom fields that keep their state there
+  (an SMS-code `PinView`) drew nothing and ignored typing. Also
+  `setText(text, BufferType.SPANNABLE)` stores a `Spannable`, and the type
+  sticks for later `setText` calls, so `(Spannable) getText()` works. Not
+  Windows-specific; worth offering upstream.
+- `runtime/java/android/view/Window.java`: the eight activity-transition
+  getters and setters keep their values and default to the theme's
+  transitions (`windowActivityTransitions`), as AOSP `PhoneWindow` does,
+  instead of always returning null; apps that add a listener to
+  `getSharedElementEnterTransition()` no longer crash in `onCreate`. Not
+  Windows-specific.
+- `runtime/java/android/content/res/TypedArray.java` and `Resources.java`:
+  `getDimensionPixelSize` (and a drawable's `<stroke android:width>` /
+  `<size>`) round and keep a non-zero size at least 1 px, as AOSP does, so
+  0.5dp hairlines and borders are drawn; `getDimensionPixelOffset` still
+  truncates. Not Windows-specific.
 
 ## License
 
