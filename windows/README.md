@@ -142,6 +142,11 @@ a lower density instead, so it keeps its dp size and still draws at the
 window's own pixel size. The window is fitted again when it moves to another
 monitor or the taskbar changes. `WINAPK_DENSITY` (a dpi) overrides the density.
 
+An app runs once at a time, as on the Mac: starting it again (a shortcut, the
+library) brings the running app's window forward, and updating it while it
+runs is refused until it is closed. `WINAPK_ALLOW_SECOND_INSTANCE=1` turns the
+check off.
+
 ### Web content (WebView2)
 
 Web pages an app shows run in Microsoft Edge WebView2, the counterpart of
