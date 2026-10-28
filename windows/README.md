@@ -185,6 +185,18 @@ before, and the log says so once.
   directory, kept between runs; the browser tab has a profile of its own
   there.
 
+Shared storage is the user's own folders, as on a phone: `/sdcard/Download`,
+`Pictures`, `Documents`, `Music` and `Movies` are junctions to Windows'
+Downloads, Pictures, Documents, Music and Videos (wherever they are
+redirected), made before the app starts; what an app had saved there moves in
+first, never over a file of the user's (a clash comes in as
+`name (from Android).ext`; every move is logged in
+`android\data\system\storage\usermap-journal.tsv`). DCIM stays the
+volume's own. Only for the library in `%LOCALAPPDATA%\Win.apk`, never with
+`--data`. Settings > App data > "Use my Windows folders" (`UserFolders`) off
+turns each folder back into an empty one of the volume, files left in place;
+`MACAPK_USER_FOLDERS=0` changes nothing either way.
+
 For tests, `WINAPK_TEST_WORKAREA=1366x728` stands in for the work area, in
 pixels (`1366x728-0+0` puts it at the top right of the real one;
 `@file` reads the value from a file at every fit),
@@ -339,6 +351,19 @@ every such change is listed here:
   `<size>`) round and keep a non-zero size at least 1 px, as AOSP does, so
   0.5dp hairlines and borders are drawn; `getDimensionPixelOffset` still
   truncates. Not Windows-specific.
+- `runtime/java/com/macapk/loader/SharedStorage.java`,
+  `android/provider/MediaStoreProvider.java`,
+  `android/app/usage/StorageStatsManager.java` and
+  `com/macapk/loader/HostDocumentsProvider.java`: the volume's Download,
+  Pictures, Documents, Music and Movies are junctions to the user's Windows
+  folders, made by the host (`windows/host/user_folders.cpp`, named in
+  `WINAPK_USER_FOLDER_TARGETS`). Java sees a junction as a plain directory, so
+  these recognise it (`isJunction`, `isHostFolderMapping`, `isLink`): MediaStore
+  keeps upstream's privacy filter and walk cache for them and indexes at most
+  10,000 files per folder, breadth first (`walkHostFolder`); no walk, size or
+  delete follows a junction inside a folder; and `mapUserFolders` stays off when
+  the host maps, since it would merge a junction into itself. On the Mac nothing
+  changes.
 
 ## License
 
