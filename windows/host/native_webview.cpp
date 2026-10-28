@@ -266,9 +266,13 @@ void place(View* v) {
         v->placed_visible = false;
         return;
     }
-    const double sx = static_cast<double>(client.right) / v->sw, sy = static_cast<double>(client.bottom) / v->sh;
-    RECT r{static_cast<LONG>(v->x * sx + 0.5), static_cast<LONG>(v->y * sy + 0.5),
-           static_cast<LONG>((v->x + v->w) * sx + 0.5), static_cast<LONG>((v->y + v->h) * sy + 0.5)};
+    // The page goes over the app's pixels, which fill the client area or, in a
+    // maximized window, a centred phone-shaped part of it.
+    int lx = 0, ly = 0, lw = client.right, lh = client.bottom;
+    window_phone_rect(&lx, &ly, &lw, &lh);
+    const double sx = static_cast<double>(lw) / v->sw, sy = static_cast<double>(lh) / v->sh;
+    RECT r{static_cast<LONG>(lx + v->x * sx + 0.5), static_cast<LONG>(ly + v->y * sy + 0.5),
+           static_cast<LONG>(lx + (v->x + v->w) * sx + 0.5), static_cast<LONG>(ly + (v->y + v->h) * sy + 0.5)};
     const bool show = v->visible && r.right > r.left && r.bottom > r.top && !IsIconic(app);
     v->placed_client_w = client.right;
     v->placed_client_h = client.bottom;
@@ -300,8 +304,9 @@ void place(View* v) {
     EnableWindow(v->host, modal ? FALSE : TRUE);
     for (size_t k = first; k + 3 < v->occluders.size(); k += 4) {
         const int ox = v->occluders[k], oy = v->occluders[k + 1], ow = v->occluders[k + 2], oh = v->occluders[k + 3];
-        RECT o{static_cast<LONG>(ox * sx + 0.5) - r.left, static_cast<LONG>(oy * sy + 0.5) - r.top,
-               static_cast<LONG>((ox + ow) * sx + 0.5) - r.left, static_cast<LONG>((oy + oh) * sy + 0.5) - r.top};
+        RECT o{static_cast<LONG>(lx + ox * sx + 0.5) - r.left, static_cast<LONG>(ly + oy * sy + 0.5) - r.top,
+               static_cast<LONG>(lx + (ox + ow) * sx + 0.5) - r.left,
+               static_cast<LONG>(ly + (oy + oh) * sy + 0.5) - r.top};
         HRGN cut = CreateRectRgnIndirect(&o);
         CombineRgn(rgn, rgn, cut, RGN_DIFF);
         DeleteObject(cut);
@@ -310,7 +315,7 @@ void place(View* v) {
     if (v->controller) {
         RECT b{0, 0, r.right - r.left, r.bottom - r.top};
         v->controller->put_Bounds(b);
-        // One CSS pixel per dp: the window shows client.right / phone-width px
+        // One CSS pixel per dp: the window shows the phone's pixel width / phone-width px
         // per dp, and WebView2 already scales by the monitor's DPI.
         int pw = 0, ph = 0;
         phone_size_dp(&pw, &ph);
@@ -319,7 +324,7 @@ void place(View* v) {
             reinterpret_cast<void*>(GetProcAddress(GetModuleHandleW(L"user32.dll"), "GetDpiForWindow")));
         const UINT dpi = dpi_for ? dpi_for(v->host) : 96;
         if (pw > 0 && dpi > 0) {
-            const double zoom = (static_cast<double>(client.right) / pw) / (dpi / 96.0);
+            const double zoom = (static_cast<double>(lw) / pw) / (dpi / 96.0);
             if (zoom > 0.1 && std::abs(zoom - v->zoom) > 0.001) {
                 v->controller->put_ZoomFactor(zoom);
                 v->zoom = zoom;
