@@ -3774,16 +3774,15 @@ void log_action(HWND hwnd, int act) {
 LRESULT CALLBACK log_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
         case WM_CREATE:
-            g_log_edit = CreateWindowExW(0, L"EDIT", L"",
-                                         WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_HSCROLL | ES_MULTILINE | ES_READONLY |
-                                             ES_AUTOVSCROLL | ES_AUTOHSCROLL | ES_NOHIDESEL,
+            // A log is English, paths and stack traces: it reads left to right, lines flush left, with its
+            // scroll bar on the right, also in a Hebrew window. A child takes the mirrored layout of its
+            // parent when it is created, and Windows keeps an edit as it was made (taking WS_EX_LAYOUTRTL off
+            // afterwards still leaves the lines on the right), so the window stops passing it on first.
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, GetWindowLongPtrW(hwnd, GWL_EXSTYLE) | WS_EX_NOINHERITLAYOUT);
+            g_log_edit = CreateWindowExW(WS_EX_LTRREADING | WS_EX_LEFT | WS_EX_RIGHTSCROLLBAR, L"EDIT", L"",
+                                         WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_HSCROLL | ES_LEFT | ES_MULTILINE |
+                                             ES_READONLY | ES_AUTOVSCROLL | ES_AUTOHSCROLL | ES_NOHIDESEL,
                                          0, 0, 0, 0, hwnd, nullptr, g_inst, nullptr);
-            // The edit inherits the mirrored layout of a Hebrew window; a log is English, paths and stack
-            // traces, so it reads left to right with its scroll bar on the right.
-            SetWindowLongPtrW(g_log_edit, GWL_EXSTYLE,
-                              GetWindowLongPtrW(g_log_edit, GWL_EXSTYLE) &
-                                  ~static_cast<LONG_PTR>(WS_EX_LAYOUTRTL | WS_EX_RTLREADING | WS_EX_RIGHT |
-                                                         WS_EX_LEFTSCROLLBAR));
             SendMessageW(g_log_edit, WM_SETFONT, reinterpret_cast<WPARAM>(g_mono_font), FALSE);
             SendMessageW(g_log_edit, EM_SETLIMITTEXT, 0, 0);
             SetWindowTheme(g_log_edit, g_t.dark ? L"DarkMode_Explorer" : L"Explorer", nullptr);
