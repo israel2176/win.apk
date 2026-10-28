@@ -26,6 +26,12 @@
 // if it stops with an error the log can be opened. The screen size and
 // orientation picked in the settings reach the runtime as WINAPK_PHONE_SIZE.
 //
+// The Store tab, next to the library, is F-Droid's catalog (f-droid.org,
+// free and open-source apps): its index is fetched in the background and
+// kept as store\catalog.tsv, searchable and by category. Install downloads
+// the APK, checks it against the index's SHA-256 and installs it as above;
+// an app the library already has (by package) is updated in place.
+//
 //   Win.apk.exe                      the library
 //   Win.apk.exe <app.apk>            install, then run it
 //   Win.apk.exe --run <library apk>  run an installed app (what shortcuts do)
@@ -50,6 +56,8 @@
 #include <shobjidl.h>
 #include <uxtheme.h>
 #include <windowsx.h>
+#include <winhttp.h>
+#include <bcrypt.h>
 
 #include <algorithm>
 #include <cmath>
@@ -80,6 +88,11 @@ constexpr UINT kInstalled = WM_APP + 1;       // wParam: ok | run after << 1 | r
 constexpr UINT kRunExited = WM_APP + 2;       // wParam: ok, lParam: new std::wstring (the app's name)
 constexpr UINT kInstallStarted = WM_APP + 3;  // lParam: new std::wstring (the app's name)
 constexpr UINT kRefresh = WM_APP + 4;         // the install helper changed the library
+constexpr UINT kStoreCatalog = WM_APP + 5;    // wParam: kCatalogList (lParam: new std::vector<StoreApp>), Done, Failed
+constexpr UINT kStoreProgress = WM_APP + 6;   // wParam: KB of the catalog received so far
+constexpr UINT kStoreIcon = WM_APP + 7;       // wParam: kIconFailed, Saved, Dropped; lParam: new std::string (package)
+constexpr UINT kStoreDownload = WM_APP + 8;   // wParam: percent, lParam: new std::string (package)
+constexpr UINT kStoreDownloaded = WM_APP + 9; // wParam: ok, lParam: new Download
 constexpr UINT_PTR kAnimTimer = 1;
 constexpr int kIdSearch = 100;
 enum Cmd { kCmdOpen = 200, kCmdInfo, kCmdShortcut, kCmdShowApk, kCmdAppFolder, kCmdLog, kCmdReinstall, kCmdUpdate,
@@ -126,7 +139,7 @@ const wchar_t* tr(const wchar_t* en) {
         {L"No apps match “{0}”", L"אין אפליקציות שתואמות ל„{0}”"},
         {L"Press Esc in the search box to show every app.", L"הקש Esc בתיבת החיפוש כדי להציג את כל האפליקציות."},
         {L"No apps installed yet.", L"עדיין לא הותקנו אפליקציות."},
-        {L"Drop an APK above (or click it to choose one) to install one, then open it from here.", L"גרור קובץ APK לאזור שלמעלה (או לחץ עליו כדי לבחור קובץ) כדי להתקין, ואז פתח את האפליקציה מכאן."},
+        {L"Drop an APK above, or get apps from the Store, then open them from here.", L"גרור קובץ APK לאזור שלמעלה, או הורד אפליקציות מהחנות, ואז פתח אותן מכאן."},
         {L"Logs", L"לוגים"},
         {L"Stop", L"עצירה"},
         {L"Drop an APK above to install your first app", L"גרור קובץ APK לאזור שלמעלה כדי להתקין את האפליקציה הראשונה"},
@@ -280,6 +293,37 @@ const wchar_t* tr(const wchar_t* en) {
         {L"{0} wants to update {1} ({2}).\n\nUpdate it?", L"{0} מבקשת לעדכן את {1} ({2}).\n\nלעדכן?"},
         {L"{0} wants to install {1}.\n\nInstall it?", L"{0} מבקשת להתקין את {1}.\n\nלהתקין?"},
         {L"bytes", L"בתים"},
+        {L"Library", L"ספרייה"},
+        {L"Store", L"חנות"},
+        {L"Search F-Droid", L"חיפוש ב-F-Droid"},
+        {L"All categories", L"כל הקטגוריות"},
+        {L"Install", L"התקנה"},
+        {L"Update", L"עדכון"},
+        {L"Getting the app catalog from F-Droid…", L"מוריד את קטלוג האפליקציות מ-F-Droid…"},
+        {L"{0} MB so far. This happens once; later the store opens at once.", L"{0} MB עד עכשיו. זה קורה פעם אחת; בהמשך החנות תיפתח מיד."},
+        {L"Checking F-Droid for new apps…", L"בודק אם יש אפליקציות חדשות ב-F-Droid…"},
+        {L"F-Droid could not be reached", L"לא ניתן להתחבר ל-F-Droid"},
+        {L"Check the internet connection, then try again.", L"בדוק את החיבור לאינטרנט ונסה שוב."},
+        {L"Try again", L"ניסיון חוזר"},
+        {L"Try other words, or every category.", L"נסה מילים אחרות, או את כל הקטגוריות."},
+        {L"Free and open-source apps from f-droid.org  ·  Install adds the app to your library", L"אפליקציות חינמיות בקוד פתוח מ-f-droid.org  ·  התקנה מוסיפה את האפליקציה לספרייה"},
+        {L"Downloading {0}…", L"מוריד את {0}…"},
+        {L"Downloading…", L"מוריד…"},
+        {L"Downloading {0} failed. Check the internet connection, then try again.", L"ההורדה של {0} נכשלה. בדוק את החיבור לאינטרנט ונסה שוב."},
+        {L"F-Droid could not be checked for new apps.", L"לא ניתן היה לבדוק אם יש אפליקציות חדשות ב-F-Droid."},
+        {L"Details", L"פרטים"},
+        {L"Version", L"גרסה"},
+        {L"Size", L"גודל"},
+        {L"Updated", L"עודכנה"},
+        {L"License", L"רישיון"},
+        {L"Categories", L"קטגוריות"},
+        {L"Package", L"חבילה"},
+        {L"Install {0}", L"התקנת {0}"},
+        {L"Update {0}", L"עדכון {0}"},
+        {L"Downloaded from F-Droid and checked, then added to the library.", L"מורדת מ-F-Droid ונבדקת, ואז נוספת לספרייה."},
+        {L"A newer version is out. Saves stay.", L"יצאה גרסה חדשה יותר. השמירות נשארות."},
+        {L"F-Droid page", L"הדף ב-F-Droid"},
+        {L"The app's description, screenshots and source code.", L"התיאור של האפליקציה, צילומי מסך וקוד המקור."},
         {L"unknown", L"לא ידוע"}
     };
     if (!g_rtl) return en;
@@ -352,6 +396,13 @@ std::wstring utf8_to_wide(const std::string& s) {
     return w;
 }
 
+std::string wide_to_utf8(const std::wstring& w) {
+    const int n = WideCharToMultiByte(CP_UTF8, 0, w.data(), static_cast<int>(w.size()), nullptr, 0, nullptr, nullptr);
+    std::string s(static_cast<size_t>(n > 0 ? n : 0), '\0');
+    if (n > 0) WideCharToMultiByte(CP_UTF8, 0, w.data(), static_cast<int>(w.size()), &s[0], n, nullptr, nullptr);
+    return s;
+}
+
 std::wstring file_name_safe(std::wstring s) {
     for (auto& c : s) {
         if (c < 32 || wcschr(L"<>:\"/\\|?*", c)) c = L'_';
@@ -385,17 +436,28 @@ uintmax_t folder_size(const fs::path& dir) {
     return total;
 }
 
-std::wstring file_date(const fs::path& p) {
-    WIN32_FILE_ATTRIBUTE_DATA a{};
+std::wstring long_date(const FILETIME& when) {
     SYSTEMTIME utc, local;
     wchar_t buf[128] = {};
-    if (!GetFileAttributesExW(p.c_str(), GetFileExInfoStandard, &a) ||
-        !FileTimeToSystemTime(&a.ftLastWriteTime, &utc) ||
-        !SystemTimeToTzSpecificLocalTime(nullptr, &utc, &local) ||
+    if (!FileTimeToSystemTime(&when, &utc) || !SystemTimeToTzSpecificLocalTime(nullptr, &utc, &local) ||
         !GetDateFormatEx(LOCALE_NAME_USER_DEFAULT, DATE_LONGDATE, &local, nullptr, buf, 128, nullptr)) {
         return tr(L"unknown");
     }
     return buf;
+}
+
+std::wstring file_date(const fs::path& p) {
+    WIN32_FILE_ATTRIBUTE_DATA a{};
+    return GetFileAttributesExW(p.c_str(), GetFileExInfoStandard, &a) ? long_date(a.ftLastWriteTime) : tr(L"unknown");
+}
+
+// FILETIME counts 100 ns from 1601, Java's milliseconds from 1970.
+constexpr unsigned long long kUnixEpochFiletime = 116444736000000000ull;
+
+std::wstring java_date(long long ms) {
+    if (ms <= 0) return tr(L"unknown");
+    const unsigned long long t = kUnixEpochFiletime + static_cast<unsigned long long>(ms) * 10000;
+    return long_date(FILETIME{static_cast<DWORD>(t), static_cast<DWORD>(t >> 32)});
 }
 
 // The version in launcher.rc, read from the program's own resource.
@@ -693,6 +755,7 @@ struct InstallJob {
     std::wstring name;
     fs::path replaces;  // the app's previous APK, when it is updated from one with another extension
     bool run_after;
+    bool temporary;     // the store's download, removed once it is in the library
 };
 
 SRWLOCK g_install_lock = SRWLOCK_INIT;  // one install at a time: each one is a JVM converting the whole app
@@ -757,9 +820,616 @@ DWORD WINAPI install_thread(void* param) {
     bool running = false;
     const bool ok = install_into_library(job->source, job->name, job->replaces, &running);
     ReleaseSRWLockExclusive(&g_install_lock);
+    std::error_code ec;
+    if (job->temporary) fs::remove(job->source, ec);
     PostMessageW(g_main, kInstalled, (ok ? 1 : 0) | (job->run_after ? 2 : 0) | (running ? 4 : 0),
                  reinterpret_cast<LPARAM>(new std::wstring(job->name)));
     CoUninitialize();
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// The store: F-Droid's catalog, its icons and its APKs
+
+constexpr wchar_t kRepo[] = L"https://f-droid.org/repo/";
+// In 100 ns units; f-droid.org publishes a few times a day.
+constexpr unsigned long long kCatalogMaxAge = 6ull * 3600 * 10000000;
+
+fs::path store_dir() { return data_dir() / L"store"; }
+fs::path catalog_file() { return store_dir() / L"catalog.tsv"; }
+fs::path catalog_etag_file() { return store_dir() / L"catalog.etag"; }
+fs::path store_icon_file(const std::string& pkg) { return store_dir() / L"icons" / (utf8_to_wide(pkg) + L".png"); }
+fs::path downloads_dir() { return store_dir() / L"downloads"; }
+
+struct StoreApp {
+    std::string pkg, icon, apk, sha256;  // icon: a URL; apk: the file's name in the repo
+    std::wstring name, summary, name_he, summary_he, version, license;
+    std::vector<std::wstring> categories;
+    long long code = 0, size = 0, updated = 0;  // versionCode, bytes, ms since 1970
+};
+
+// One WinHTTP session for the program, so the icons' requests reuse their
+// connections to f-droid.org rather than each making its own.
+HINTERNET http_session() {
+    static const HINTERNET session = [] {
+        HINTERNET s = WinHttpOpen(L"Win.apk", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME,
+                                  WINHTTP_NO_PROXY_BYPASS, 0);
+        if (!s) {  // before Windows 8.1
+            s = WinHttpOpen(L"Win.apk", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME,
+                            WINHTTP_NO_PROXY_BYPASS, 0);
+        }
+        if (s) {
+            DWORD decompress = WINHTTP_DECOMPRESSION_FLAG_ALL;  // the catalog is 70 MB of JSON, a fifth of that gzipped
+            WinHttpSetOption(s, WINHTTP_OPTION_DECOMPRESSION, &decompress, sizeof(decompress));
+            DWORD per_server = 8;
+            WinHttpSetOption(s, WINHTTP_OPTION_MAX_CONNS_PER_SERVER, &per_server, sizeof(per_server));
+            WinHttpSetTimeouts(s, 15000, 15000, 30000, 60000);
+        }
+        return s;
+    }();
+    return session;
+}
+
+// GETs `url` into `out`, through <out>.part so a broken download never looks
+// whole. With an `etag` the server may answer 304, not modified. `progress`
+// gets the bytes so far and the total (0 when unknown). Returns the HTTP
+// status, 0 when the server could not be reached or the body broke off.
+int http_get(const std::wstring& url, const fs::path& out, const std::wstring& etag, std::wstring* new_etag,
+             const std::function<void(uint64_t, uint64_t)>& progress) {
+    URL_COMPONENTS uc{};
+    uc.dwStructSize = sizeof(uc);
+    uc.dwHostNameLength = uc.dwUrlPathLength = uc.dwExtraInfoLength = static_cast<DWORD>(-1);
+    if (!WinHttpCrackUrl(url.c_str(), 0, 0, &uc)) return 0;
+    const std::wstring host(uc.lpszHostName, uc.dwHostNameLength);
+    const std::wstring path = std::wstring(uc.lpszUrlPath, uc.dwUrlPathLength) +
+                              std::wstring(uc.lpszExtraInfo, uc.dwExtraInfoLength);
+    HINTERNET session = http_session();
+    if (!session) return 0;
+    HINTERNET connection = WinHttpConnect(session, host.c_str(), uc.nPort, 0);
+    HINTERNET request = connection ? WinHttpOpenRequest(connection, L"GET", path.c_str(), nullptr, WINHTTP_NO_REFERER,
+                                                        WINHTTP_DEFAULT_ACCEPT_TYPES,
+                                                        uc.nScheme == INTERNET_SCHEME_HTTPS ? WINHTTP_FLAG_SECURE : 0)
+                                   : nullptr;
+    int status = 0;
+    const std::wstring header = etag.empty() ? L"" : L"If-None-Match: " + etag;
+    if (request &&
+        WinHttpSendRequest(request, header.empty() ? WINHTTP_NO_ADDITIONAL_HEADERS : header.c_str(),
+                           header.empty() ? 0 : static_cast<DWORD>(-1), WINHTTP_NO_REQUEST_DATA, 0, 0, 0) &&
+        WinHttpReceiveResponse(request, nullptr)) {
+        DWORD code = 0, size = sizeof(code);
+        WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+                            WINHTTP_HEADER_NAME_BY_INDEX, &code, &size, WINHTTP_NO_HEADER_INDEX);
+        status = static_cast<int>(code);
+        if (status == 200) {
+            DWORD total = 0;
+            size = sizeof(total);
+            WinHttpQueryHeaders(request, WINHTTP_QUERY_CONTENT_LENGTH | WINHTTP_QUERY_FLAG_NUMBER,
+                                WINHTTP_HEADER_NAME_BY_INDEX, &total, &size, WINHTTP_NO_HEADER_INDEX);
+            if (new_etag) {
+                wchar_t tag[256] = {};
+                size = sizeof(tag);
+                if (WinHttpQueryHeaders(request, WINHTTP_QUERY_ETAG, WINHTTP_HEADER_NAME_BY_INDEX, tag, &size,
+                                        WINHTTP_NO_HEADER_INDEX)) {
+                    *new_etag = tag;
+                }
+            }
+            std::error_code ec;
+            fs::create_directories(out.parent_path(), ec);
+            const fs::path part = out.wstring() + L".part";
+            HANDLE f =
+                CreateFileW(part.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+            bool ok = f != INVALID_HANDLE_VALUE;
+            uint64_t got = 0;
+            std::vector<char> buf(1 << 16);
+            for (DWORD n = 0; ok; got += n) {
+                ok = WinHttpReadData(request, buf.data(), static_cast<DWORD>(buf.size()), &n) != 0;
+                if (!ok || n == 0) break;
+                DWORD written = 0;
+                ok = WriteFile(f, buf.data(), n, &written, nullptr) && written == n;
+                if (ok && progress) progress(got + n, total);
+            }
+            if (f != INVALID_HANDLE_VALUE) CloseHandle(f);
+            ok = ok && got > 0 && MoveFileExW(part.c_str(), out.c_str(), MOVEFILE_REPLACE_EXISTING) != 0;
+            if (!ok) {
+                fs::remove(part, ec);
+                status = 0;
+            }
+        }
+    }
+    if (request) WinHttpCloseHandle(request);
+    if (connection) WinHttpCloseHandle(connection);
+    return status;
+}
+
+// The file's SHA-256 in lower-case hex, as F-Droid's index gives it.
+std::string sha256_of(const fs::path& file) {
+    std::string out;
+    BCRYPT_ALG_HANDLE alg = nullptr;
+    BCRYPT_HASH_HANDLE hash = nullptr;
+    HANDLE f = CreateFileW(file.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL,
+                           nullptr);
+    if (f != INVALID_HANDLE_VALUE &&
+        BCRYPT_SUCCESS(BCryptOpenAlgorithmProvider(&alg, BCRYPT_SHA256_ALGORITHM, nullptr, 0)) &&
+        BCRYPT_SUCCESS(BCryptCreateHash(alg, &hash, nullptr, 0, nullptr, 0, 0))) {
+        std::vector<UCHAR> buf(1 << 16);
+        DWORD n = 0;
+        bool ok = true;
+        while (ok && ReadFile(f, buf.data(), static_cast<DWORD>(buf.size()), &n, nullptr) && n > 0) {
+            ok = BCRYPT_SUCCESS(BCryptHashData(hash, buf.data(), n, 0));
+        }
+        UCHAR digest[32];
+        if (ok && BCRYPT_SUCCESS(BCryptFinishHash(hash, digest, sizeof(digest), 0))) {
+            for (const UCHAR b : digest) {
+                char hex[3];
+                std::snprintf(hex, sizeof hex, "%02x", b);
+                out += hex;
+            }
+        }
+    }
+    if (hash) BCryptDestroyHash(hash);
+    if (alg) BCryptCloseAlgorithmProvider(alg, 0);
+    if (f != INVALID_HANDLE_VALUE) CloseHandle(f);
+    return out;
+}
+
+// A pull parser for the one JSON file the store reads, F-Droid's
+// index-v1.json: it walks the 70 MB once without building a tree, and the
+// callers keep only the fields the store shows.
+struct Json {
+    const char* p;
+    const char* end;
+    bool ok = true;
+
+    void ws() {
+        while (p < end && (*p == ' ' || *p == '\n' || *p == '\r' || *p == '\t')) ++p;
+    }
+    bool eat(char c) {
+        ws();
+        if (p >= end || *p != c) return false;
+        ++p;
+        return true;
+    }
+    unsigned hex4() {
+        unsigned v = 0;
+        for (int i = 0; i < 4; ++i, ++p) {
+            if (p >= end || !isxdigit(static_cast<unsigned char>(*p))) {
+                ok = false;
+                return 0;
+            }
+            const char c = *p;
+            v = v * 16 + static_cast<unsigned>(c >= '0' && c <= '9' ? c - '0' : (c | 0x20) - 'a' + 10);
+        }
+        return v;
+    }
+    static void put_utf8(std::string* out, unsigned cp) {
+        if (cp < 0x80) {
+            *out += static_cast<char>(cp);
+        } else if (cp < 0x800) {
+            *out += static_cast<char>(0xC0 | (cp >> 6));
+            *out += static_cast<char>(0x80 | (cp & 0x3F));
+        } else if (cp < 0x10000) {
+            *out += static_cast<char>(0xE0 | (cp >> 12));
+            *out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+            *out += static_cast<char>(0x80 | (cp & 0x3F));
+        } else {
+            *out += static_cast<char>(0xF0 | (cp >> 18));
+            *out += static_cast<char>(0x80 | ((cp >> 12) & 0x3F));
+            *out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+            *out += static_cast<char>(0x80 | (cp & 0x3F));
+        }
+    }
+    // A string with its escapes decoded; `out` may be null to skip it.
+    void str(std::string* out) {
+        if (!eat('"')) {
+            ok = false;
+            return;
+        }
+        while (ok && p < end && *p != '"') {
+            if (*p != '\\') {
+                if (out) *out += *p;
+                ++p;
+                continue;
+            }
+            if (++p >= end) break;
+            const char e = *p++;
+            if (e == 'u') {
+                unsigned cp = hex4();
+                if (cp >= 0xD800 && cp < 0xDC00 && end - p >= 6 && p[0] == '\\' && p[1] == 'u') {
+                    p += 2;
+                    const unsigned lo = hex4();
+                    cp = lo >= 0xDC00 && lo < 0xE000 ? 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00) : 0xFFFD;
+                }
+                if (out) put_utf8(out, cp);
+            } else if (out) {
+                *out += e == 'n' ? '\n' : e == 't' ? '\t' : e == 'r' ? '\r' : e == 'b' ? '\b' : e == 'f' ? '\f' : e;
+            }
+        }
+        if (p >= end) ok = false;
+        else ++p;
+    }
+    // A string, number, true, false or null, as its text.
+    void scalar(std::string* out) {
+        ws();
+        if (p < end && *p == '"') return str(out);
+        const char* from = p;
+        while (p < end && !strchr(",}] \n\r\t", *p)) ++p;
+        if (p == from) ok = false;
+        else if (out) out->assign(from, p);
+    }
+    template <class Each>
+    void object(Each each) {
+        if (!eat('{')) {
+            ok = false;
+            return;
+        }
+        if (eat('}')) return;
+        std::string key;
+        do {
+            key.clear();
+            str(&key);
+            if (!ok || !eat(':')) {
+                ok = false;
+                return;
+            }
+            each(key);
+        } while (ok && eat(','));
+        if (ok && !eat('}')) ok = false;
+    }
+    template <class Each>
+    void array(Each each) {
+        if (!eat('[')) {
+            ok = false;
+            return;
+        }
+        if (eat(']')) return;
+        do each();
+        while (ok && eat(','));
+        if (ok && !eat(']')) ok = false;
+    }
+    void skip() {
+        ws();
+        if (p < end && *p == '{') object([this](const std::string&) { skip(); });
+        else if (p < end && *p == '[') array([this] { skip(); });
+        else scalar(nullptr);
+    }
+    std::vector<std::string> strings() {
+        std::vector<std::string> out;
+        array([&] {
+            out.emplace_back();
+            str(&out.back());
+        });
+        return out;
+    }
+};
+
+// One APK of an app in the index.
+struct IndexApk {
+    std::string file, sha256, version;
+    long long code = 0, size = 0;
+    bool arm_only = false;  // native code for arm64 and not x86_64: it runs, translated, but an x86_64 build is better
+};
+
+// The fields of index-v1.json's app entry the store keeps; the names and
+// summaries per language come from `localized` when the entry has none of
+// its own.
+struct IndexApp {
+    std::string pkg, name, summary, name_he, summary_he, icon, license, suggested, updated;
+    std::vector<std::string> categories;
+};
+
+void read_index_app(Json& j, IndexApp* a) {
+    std::string top_icon, any_icon_lang, any_icon;
+    std::map<std::string, std::pair<std::string, std::string>> names;  // language: name, summary
+    j.object([&](const std::string& k) {
+        if (k == "packageName") j.str(&a->pkg);
+        else if (k == "name") j.str(&a->name);
+        else if (k == "summary") j.str(&a->summary);
+        else if (k == "icon") j.str(&top_icon);
+        else if (k == "license") j.str(&a->license);
+        else if (k == "suggestedVersionCode") j.scalar(&a->suggested);
+        else if (k == "lastUpdated") j.scalar(&a->updated);
+        else if (k == "categories") a->categories = j.strings();
+        else if (k == "localized") {
+            j.object([&](const std::string& lang) {
+                std::string name, summary, icon;
+                j.object([&](const std::string& f) {
+                    if (f == "name") j.str(&name);
+                    else if (f == "summary") j.str(&summary);
+                    else if (f == "icon") j.str(&icon);
+                    else j.skip();
+                });
+                if (!icon.empty() && (any_icon.empty() || lang == "en-US")) any_icon_lang = lang, any_icon = icon;
+                names[lang] = {name, summary};
+            });
+        } else {
+            j.skip();
+        }
+    });
+    auto pick = [&](std::string* out, bool summary, std::initializer_list<const char*> langs, bool any) {
+        for (const char* lang : langs) {
+            const auto it = names.find(lang);
+            const std::string& v = it == names.end() ? std::string() : summary ? it->second.second : it->second.first;
+            if (out->empty() && !v.empty()) *out = v;
+        }
+        for (const auto& n : names) {
+            if (!any || !out->empty()) break;
+            *out = summary ? n.second.second : n.second.first;
+        }
+    };
+    pick(&a->name, false, {"en-US", "en", "en-GB"}, true);
+    pick(&a->summary, true, {"en-US", "en", "en-GB"}, true);
+    pick(&a->name_he, false, {"he", "iw", "he-IL", "iw-IL"}, false);
+    pick(&a->summary_he, true, {"he", "iw", "he-IL", "iw-IL"}, false);
+    if (!top_icon.empty()) a->icon = wide_to_utf8(kRepo) + "icons-240/" + top_icon;
+    else if (!any_icon.empty()) a->icon = wide_to_utf8(kRepo) + a->pkg + "/" + any_icon_lang + "/" + any_icon;
+}
+
+// An APK entry; false when it cannot run here: native code for neither
+// x86_64 nor arm64-v8a (Win.apk translates arm64), or no SHA-256 to check.
+bool read_index_apk(Json& j, IndexApk* apk) {
+    std::string hash_type, code, size;
+    std::vector<std::string> abis;
+    j.object([&](const std::string& k) {
+        if (k == "apkName") j.str(&apk->file);
+        else if (k == "hash") j.str(&apk->sha256);
+        else if (k == "hashType") j.str(&hash_type);
+        else if (k == "versionName") j.str(&apk->version);
+        else if (k == "versionCode") j.scalar(&code);
+        else if (k == "size") j.scalar(&size);
+        else if (k == "nativecode") abis = j.strings();
+        else j.skip();
+    });
+    apk->code = std::atoll(code.c_str());
+    apk->size = std::atoll(size.c_str());
+    const bool x64 = std::find(abis.begin(), abis.end(), "x86_64") != abis.end();
+    const bool arm64 = std::find(abis.begin(), abis.end(), "arm64-v8a") != abis.end();
+    apk->arm_only = arm64 && !x64;
+    return (abis.empty() || x64 || arm64) && hash_type == "sha256" && apk->sha256.size() == 64 && !apk->file.empty();
+}
+
+std::string tsv_field(std::string s) {
+    for (char& c : s) {
+        if (c == '\t' || c == '\n' || c == '\r') c = ' ';
+    }
+    return s;
+}
+
+// Turns index-v1.json into catalog.tsv: a line per app that can run here,
+// with the APK the store installs. That is F-Droid's suggested version (the
+// newest, unless it marks a newer one as not ready) and, where an app is
+// built per ABI, its x86_64 build. Returns the number of apps.
+size_t convert_index(const fs::path& json_file, const fs::path& out) {
+    std::string json;
+    {
+        std::ifstream f(json_file, std::ios::binary);
+        json.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+    }
+    Json j{json.data(), json.data() + json.size()};
+    std::vector<IndexApp> apps;
+    std::map<std::string, std::vector<IndexApk>> apks;
+    j.object([&](const std::string& key) {
+        if (key == "apps") {
+            j.array([&] {
+                apps.emplace_back();
+                read_index_app(j, &apps.back());
+            });
+        } else if (key == "packages") {
+            j.object([&](const std::string& pkg) {
+                std::vector<IndexApk>& list = apks[pkg];
+                j.array([&] {
+                    IndexApk apk;
+                    if (read_index_apk(j, &apk)) list.push_back(apk);
+                });
+            });
+        } else {
+            j.skip();
+        }
+    });
+    if (!j.ok) return 0;
+    std::string text = "winapk-catalog 1\n";
+    size_t count = 0;
+    for (const IndexApp& a : apps) {
+        const auto it = apks.find(a.pkg);
+        if (a.pkg.empty() || a.name.empty() || it == apks.end() || it->second.empty()) continue;
+        const long long suggested = std::atoll(a.suggested.c_str());
+        const IndexApk* best = nullptr;
+        for (int pass = 0; pass < 2 && !best; ++pass) {  // the suggested version or older, else any
+            for (const IndexApk& apk : it->second) {
+                if (pass == 0 && suggested > 0 && apk.code > suggested) continue;
+                if (!best || apk.code > best->code) best = &apk;
+            }
+        }
+        if (best->arm_only) {
+            for (const IndexApk& apk : it->second) {
+                if (!apk.arm_only && apk.version == best->version) best = &apk;
+            }
+        }
+        std::string cats;
+        for (const std::string& c : a.categories) cats += (cats.empty() ? "" : ";") + c;
+        const std::string fields[] = {a.pkg, std::to_string(best->code), std::to_string(best->size), a.updated,
+                                      best->file, best->sha256, a.icon, best->version, a.license, cats,
+                                      a.name, a.summary, a.name_he, a.summary_he};
+        for (size_t i = 0; i < std::size(fields); ++i) text += (i ? "\t" : "") + tsv_field(fields[i]);
+        text += "\n";
+        ++count;
+    }
+    const fs::path tmp = out.wstring() + L".tmp";
+    {
+        std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
+        f << text;
+        if (!f) return 0;
+    }
+    return count && MoveFileExW(tmp.c_str(), out.c_str(), MOVEFILE_REPLACE_EXISTING) ? count : 0;
+}
+
+std::vector<StoreApp> read_catalog() {
+    std::vector<StoreApp> out;
+    std::ifstream f(catalog_file(), std::ios::binary);
+    std::string line;
+    if (!std::getline(f, line) || line != "winapk-catalog 1") return out;
+    while (std::getline(f, line)) {
+        std::vector<std::string> v;
+        for (size_t from = 0;;) {
+            const size_t tab = line.find('\t', from);
+            v.push_back(line.substr(from, tab == std::string::npos ? std::string::npos : tab - from));
+            if (tab == std::string::npos) break;
+            from = tab + 1;
+        }
+        if (v.size() != 14) continue;
+        StoreApp a;
+        a.pkg = v[0];
+        a.code = std::atoll(v[1].c_str());
+        a.size = std::atoll(v[2].c_str());
+        a.updated = std::atoll(v[3].c_str());
+        a.apk = v[4];
+        a.sha256 = v[5];
+        a.icon = v[6];
+        a.version = utf8_to_wide(v[7]);
+        a.license = utf8_to_wide(v[8]);
+        for (size_t from = 0; from < v[9].size();) {
+            const size_t semi = (std::min)(v[9].find(';', from), v[9].size());
+            a.categories.push_back(utf8_to_wide(v[9].substr(from, semi - from)));
+            from = semi + 1;
+        }
+        a.name = utf8_to_wide(v[10]);
+        a.summary = utf8_to_wide(v[11]);
+        a.name_he = utf8_to_wide(v[12]);
+        a.summary_he = utf8_to_wide(v[13]);
+        out.push_back(std::move(a));
+    }
+    return out;
+}
+
+unsigned long long file_age(const fs::path& p) {
+    WIN32_FILE_ATTRIBUTE_DATA a{};
+    if (!GetFileAttributesExW(p.c_str(), GetFileExInfoStandard, &a)) return ~0ull;
+    FILETIME now;
+    GetSystemTimeAsFileTime(&now);
+    const auto t = [](const FILETIME& f) {
+        return (static_cast<unsigned long long>(f.dwHighDateTime) << 32) | f.dwLowDateTime;
+    };
+    return t(now) > t(a.ftLastWriteTime) ? t(now) - t(a.ftLastWriteTime) : 0;
+}
+
+void touch(const fs::path& p) {
+    HANDLE f = CreateFileW(p.c_str(), FILE_WRITE_ATTRIBUTES, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return;
+    FILETIME now;
+    GetSystemTimeAsFileTime(&now);
+    SetFileTime(f, nullptr, nullptr, &now);
+    CloseHandle(f);
+}
+
+enum { kCatalogList, kCatalogDone, kCatalogFailed };
+
+// Shows the catalog kept from last time, then fetches F-Droid's index when
+// that is older than kCatalogMaxAge (or `param` asks to), unless the server
+// says it has not changed.
+DWORD WINAPI catalog_thread(void* param) {
+    const bool force = param != nullptr;
+    std::error_code ec;
+    fs::create_directories(store_dir(), ec);
+    const bool have = fs::exists(catalog_file(), ec);
+    if (have) {
+        PostMessageW(g_main, kStoreCatalog, kCatalogList,
+                     reinterpret_cast<LPARAM>(new std::vector<StoreApp>(read_catalog())));
+    }
+    int result = kCatalogDone;
+    if (!have || force || file_age(catalog_file()) > kCatalogMaxAge) {
+        std::wstring etag, new_etag;
+        if (have) {
+            std::ifstream f(catalog_etag_file(), std::ios::binary);
+            std::string s;
+            std::getline(f, s);
+            etag = utf8_to_wide(s);
+        }
+        const fs::path raw = store_dir() / L"index-v1.json";
+        ULONGLONG last = 0;
+        const int status = http_get(std::wstring(kRepo) + L"index-v1.json", raw, etag, &new_etag,
+                                    [&](uint64_t got, uint64_t) {
+                                        if (GetTickCount64() - last < 100) return;
+                                        last = GetTickCount64();
+                                        PostMessageW(g_main, kStoreProgress, static_cast<WPARAM>(got >> 10), 0);
+                                    });
+        if (status == 304) {
+            touch(catalog_file());
+        } else if (status == 200 && convert_index(raw, catalog_file())) {
+            std::ofstream(catalog_etag_file(), std::ios::binary | std::ios::trunc) << wide_to_utf8(new_etag);
+            PostMessageW(g_main, kStoreCatalog, kCatalogList,
+                         reinterpret_cast<LPARAM>(new std::vector<StoreApp>(read_catalog())));
+        } else {
+            result = kCatalogFailed;
+        }
+        fs::remove(raw, ec);
+    }
+    PostMessageW(g_main, kStoreCatalog, result, 0);
+    return 0;
+}
+
+enum { kIconFailed, kIconSaved, kIconDropped };
+
+// Icons are fetched by a few threads from a queue, the newest request first:
+// the cards on screen now come before those scrolled past.
+SRWLOCK g_icon_lock = SRWLOCK_INIT;
+CONDITION_VARIABLE g_icon_wake = CONDITION_VARIABLE_INIT;
+std::vector<std::pair<std::string, std::string>> g_icon_queue;  // package, URL
+int g_icon_threads = 0;
+
+DWORD WINAPI icon_thread(void*) {
+    for (;;) {
+        AcquireSRWLockExclusive(&g_icon_lock);
+        while (g_icon_queue.empty()) SleepConditionVariableSRW(&g_icon_wake, &g_icon_lock, INFINITE, 0);
+        const auto [pkg, url] = g_icon_queue.back();
+        g_icon_queue.pop_back();
+        ReleaseSRWLockExclusive(&g_icon_lock);
+        const bool ok = http_get(utf8_to_wide(url), store_icon_file(pkg), L"", nullptr, {}) == 200;
+        PostMessageW(g_main, kStoreIcon, ok ? kIconSaved : kIconFailed, reinterpret_cast<LPARAM>(new std::string(pkg)));
+    }
+}
+
+void request_icon(const std::string& pkg, const std::string& url) {
+    AcquireSRWLockExclusive(&g_icon_lock);
+    g_icon_queue.emplace_back(pkg, url);
+    if (g_icon_queue.size() > 48) {  // long scrolled past: asked for again if it comes back into view
+        PostMessageW(g_main, kStoreIcon, kIconDropped,
+                     reinterpret_cast<LPARAM>(new std::string(g_icon_queue.front().first)));
+        g_icon_queue.erase(g_icon_queue.begin());
+    }
+    if (g_icon_threads < 4) {
+        if (HANDLE t = CreateThread(nullptr, 0, icon_thread, nullptr, 0, nullptr)) {
+            CloseHandle(t);
+            ++g_icon_threads;
+        }
+    }
+    ReleaseSRWLockExclusive(&g_icon_lock);
+    WakeConditionVariable(&g_icon_wake);
+}
+
+struct Download {
+    std::string pkg, sha256;
+    std::wstring url, label;
+    fs::path file;
+};
+
+SRWLOCK g_download_lock = SRWLOCK_INIT;  // one download at a time; the installs after them go one at a time too
+
+DWORD WINAPI download_thread(void* param) {
+    std::unique_ptr<Download> d(static_cast<Download*>(param));
+    AcquireSRWLockExclusive(&g_download_lock);
+    int shown = -1;
+    const int status = http_get(d->url, d->file, L"", nullptr, [&](uint64_t got, uint64_t total) {
+        const int pct = total ? static_cast<int>((std::min)(got * 100 / total, uint64_t{99})) : 0;
+        if (pct == shown) return;
+        shown = pct;
+        PostMessageW(g_main, kStoreDownload, static_cast<WPARAM>(pct),
+                     reinterpret_cast<LPARAM>(new std::string(d->pkg)));
+    });
+    // The APK must be the one F-Droid's index names; anything else is not installed.
+    const bool ok = status == 200 && sha256_of(d->file) == d->sha256;
+    std::error_code ec;
+    if (!ok) fs::remove(d->file, ec);
+    ReleaseSRWLockExclusive(&g_download_lock);
+    PostMessageW(g_main, kStoreDownloaded, ok, reinterpret_cast<LPARAM>(d.release()));
     return 0;
 }
 
@@ -855,7 +1525,8 @@ std::unique_ptr<Gdiplus::Font> glyph_font(float size) {
 // Segoe Fluent Icons / MDL2 Assets code points.
 constexpr wchar_t kGlyphSettings[] = L"\uE713", kGlyphDownload[] = L"\uE896", kGlyphSearch[] = L"\uE721",
                   kGlyphChevron[] = L"\uE70D", kGlyphCheck[] = L"\uE73E", kGlyphApps[] = L"\uE71D",
-                  kGlyphError[] = L"\uE783", kGlyphClock[] = L"\uE823", kGlyphStop[] = L"\uE71A";
+                  kGlyphError[] = L"\uE783", kGlyphClock[] = L"\uE823", kGlyphStop[] = L"\uE71A",
+                  kGlyphLibrary[] = L"\uE8F1", kGlyphStore[] = L"\uE719";
 
 void make_fonts() {
     g_f.title = font(26, true);
@@ -1051,6 +1722,7 @@ struct Job {
     ULONGLONG start = 0, end = 0;
 };
 std::vector<Job> g_jobs;                   // this batch of installs, for the install window
+std::map<std::wstring, std::wstring> g_job_labels;  // installs that are not in the library yet: their names to show
 HWND g_install_wnd, g_log_wnd, g_log_edit;
 std::map<std::wstring, std::unique_ptr<Gdiplus::Bitmap>> g_icons;  // rounded, at the grid's size; null: no icon
 std::wstring g_selected;
@@ -1059,7 +1731,26 @@ StatusKind g_status_kind = kHint;
 float g_scroll = 0;
 bool g_drag_over = false, g_tracking = false;
 
-enum HitKind { kHitNone, kHitGear, kHitDrop, kHitTile, kHitThumb, kHitTrack, kHitStop, kHitLogs };
+// The library and the store share the window's search box and scrolling;
+// the view not shown keeps its own query and scroll position here.
+enum View { kLibraryView, kStoreView } g_view = kLibraryView;
+std::wstring g_other_query;
+float g_other_scroll = 0;
+
+struct StoreState {
+    std::vector<StoreApp> apps;  // the catalog, the most recently updated first
+    std::vector<int> shown;      // what the grid shows: the search and the category applied
+    std::wstring category;       // empty: every category
+    bool started = false, loading = false, failed = false;
+    uint64_t got_kb = 0;
+    std::map<std::string, std::pair<std::wstring, long long>> installed;  // package: library name, versionCode
+    std::map<std::string, int> downloads;                                  // package: percent, -1 waiting
+    std::map<std::string, std::unique_ptr<Gdiplus::Bitmap>> icons;         // rounded; null: none
+    std::set<std::string> icon_wait;                                       // being fetched
+} g_store;
+
+enum HitKind { kHitNone, kHitGear, kHitDrop, kHitTile, kHitThumb, kHitTrack, kHitStop, kHitLogs, kHitTab, kHitCategory,
+               kHitCard, kHitCardButton, kHitRetry };
 struct Hit {
     HitKind kind = kHitNone;
     int tile = -1;
@@ -1070,9 +1761,9 @@ bool g_thumb_drag = false;
 float g_thumb_y0 = 0, g_thumb_scroll0 = 0;
 
 struct Layout {
-    RectF gear, drop, section, search, grid, footer, logs, stop;
+    RectF gear, tabs, drop, section, search, category, grid, footer, logs, stop, retry;
     int cols = 1;
-    float tile_w = 0, tile_h = 0, gap = 0, content_h = 0, max_scroll = 0;
+    float tile_w = 0, tile_h = 0, gap = 0, content_h = 0, max_scroll = 0;  // the library's tiles or the store's cards
 } g_l;
 
 struct Sheet;
@@ -1093,15 +1784,12 @@ const App* find_app(const std::wstring& name) {
     return nullptr;
 }
 
-Gdiplus::Bitmap* icon_for(const App& app) {
-    auto it = g_icons.find(app.name);
-    if (it != g_icons.end()) return it->second.get();
+// The picture in `png` at s x s, with the icons' rounded corners; null if there is none.
+std::unique_ptr<Gdiplus::Bitmap> rounded_icon(const fs::path& png, int s) {
     std::unique_ptr<Gdiplus::Bitmap> out;
-    const fs::path png = app_dir(app.name) / L"icon.png";
     std::error_code ec;
     if (fs::exists(png, ec)) {
         Gdiplus::Bitmap src(png.c_str());
-        const int s = ipx(72);
         if (src.GetLastStatus() == Gdiplus::Ok && src.GetWidth() > 0) {
             Gdiplus::Bitmap scaled(s, s, PixelFormat32bppPARGB);
             {
@@ -1120,14 +1808,22 @@ Gdiplus::Bitmap* icon_for(const App& app) {
             g.FillPath(&brush, &p);
         }
     }
+    return out;
+}
+
+Gdiplus::Bitmap* icon_for(const App& app) {
+    auto it = g_icons.find(app.name);
+    if (it != g_icons.end()) return it->second.get();
+    std::unique_ptr<Gdiplus::Bitmap> out = rounded_icon(app_dir(app.name) / L"icon.png", ipx(72));
     Gdiplus::Bitmap* raw = out.get();
     g_icons[app.name] = std::move(out);
     return raw;
 }
 
-void draw_app_icon(Graphics& g, const App* app, const std::wstring& label, const RectF& r) {
+// An icon with its shadow; the monogram stands in when there is no picture.
+void draw_icon(Graphics& g, Gdiplus::Bitmap* bmp, const std::wstring& label, const RectF& r) {
     fill_round(g, RectF(r.X, r.Y + px(2), r.Width, r.Height), r.Width * 0.22f, Color(g_t.dark ? 90 : 30, 0, 0, 0));
-    if (Gdiplus::Bitmap* bmp = app ? icon_for(*app) : nullptr) {
+    if (bmp) {
         draw_image(g, bmp, r);
     } else {
         draw_monogram(g, r, label,
@@ -1137,10 +1833,72 @@ void draw_app_icon(Graphics& g, const App* app, const std::wstring& label, const
     }
 }
 
+void draw_app_icon(Graphics& g, const App* app, const std::wstring& label, const RectF& r) {
+    draw_icon(g, app ? icon_for(*app) : nullptr, label, r);
+}
+
+// The name an install shows before the app is in the library: the store's
+// name for it, else the library name.
+std::wstring job_label(const std::wstring& name) {
+    if (const App* a = find_app(name)) return a->label;
+    const auto it = g_job_labels.find(name);
+    return it == g_job_labels.end() ? name : it->second;
+}
+
 void set_status(const std::wstring& text, StatusKind kind) {
     g_status = text;
     g_status_kind = kind;
     InvalidateRect(g_main, nullptr, FALSE);
+}
+
+// A store app's name and summary in Hebrew when F-Droid has them.
+const std::wstring& store_name(const StoreApp& a) { return g_rtl && !a.name_he.empty() ? a.name_he : a.name; }
+const std::wstring& store_summary(const StoreApp& a) {
+    return g_rtl && !a.summary_he.empty() ? a.summary_he : a.summary;
+}
+
+// The icon kept from the store, fetched the first time a card asks for it; null meanwhile.
+Gdiplus::Bitmap* store_icon(const StoreApp& a) {
+    const auto it = g_store.icons.find(a.pkg);
+    if (it != g_store.icons.end()) return it->second.get();
+    if (g_store.icon_wait.count(a.pkg)) return nullptr;
+    std::error_code ec;
+    if (a.icon.empty() || fs::exists(store_icon_file(a.pkg), ec)) {
+        Gdiplus::Bitmap* raw = (g_store.icons[a.pkg] = rounded_icon(store_icon_file(a.pkg), ipx(56))).get();
+        return raw;
+    }
+    g_store.icon_wait.insert(a.pkg);
+    request_icon(a.pkg, a.icon);
+    return nullptr;
+}
+
+std::vector<std::string> package_of(const std::wstring& name);
+
+// Which packages the library has, and at which version, for the store's buttons.
+void scan_installed() {
+    g_store.installed.clear();
+    for (const App& app : g_apps) {
+        const std::vector<std::string> p = package_of(app.name);
+        if (p.empty() || p[0].empty()) continue;
+        g_store.installed[p[0]] = {app.name, p.size() > 1 ? std::atoll(p[1].c_str()) : 0};
+    }
+}
+
+enum Offer { kOfferInstall, kOfferUpdate, kOfferOpen, kOfferDownloading, kOfferInstalling };
+
+// What the store offers for an app: to install it, update it (the library's
+// version is older; unknown counts as current) or open it, or its progress.
+Offer offer_for(const StoreApp& a, int* percent = nullptr) {
+    const auto dl = g_store.downloads.find(a.pkg);
+    if (dl != g_store.downloads.end()) {
+        if (percent) *percent = dl->second;
+        return kOfferDownloading;
+    }
+    const auto it = g_store.installed.find(a.pkg);
+    const std::wstring name = it != g_store.installed.end() ? it->second.first : file_name_safe(utf8_to_wide(a.pkg));
+    if (is_pending(name)) return kOfferInstalling;
+    if (it == g_store.installed.end()) return kOfferInstall;
+    return it->second.second > 0 && a.code > it->second.second ? kOfferUpdate : kOfferOpen;
 }
 
 // ---------------------------------------------------------------------------
@@ -1148,8 +1906,14 @@ void set_status(const std::wstring& text, StatusKind kind) {
 
 RectF tile_rect(int i) {
     const int col = i % g_l.cols, row = i / g_l.cols;
-    return RectF(g_l.grid.X + col * (g_l.tile_w + g_l.gap), g_l.grid.Y + px(4) + row * (g_l.tile_h + g_l.gap) - g_scroll,
+    const float x0 = g_l.grid.X + (g_view == kStoreView ? px(8) : 0);
+    return RectF(x0 + col * (g_l.tile_w + g_l.gap), g_l.grid.Y + px(4) + row * (g_l.tile_h + g_l.gap) - g_scroll,
                  g_l.tile_w, g_l.tile_h);
+}
+
+// The store card's button, in its bottom corner.
+RectF card_button(const RectF& card) {
+    return RectF(card.GetRight() - px(14) - px(104), card.GetBottom() - px(12) - px(30), px(104), px(30));
 }
 
 RectF thumb_rect() {
@@ -1165,21 +1929,36 @@ void compute_layout() {
     RECT rc;
     GetClientRect(g_main, &rc);
     const float W = static_cast<float>(rc.right), H = static_cast<float>(rc.bottom), m = px(28);
+    const bool store = g_view == kStoreView;
     g_l.gear = RectF(W - m - px(36), px(24), px(36), px(36));
+    g_l.tabs = RectF(m, px(26), px(216), px(32));
     g_l.drop = RectF(m, px(100), W - 2 * m, px(124));
-    g_l.section = RectF(m, g_l.drop.GetBottom() + px(18), W - 2 * m, px(36));
-    const float search_w = (std::min)(px(260), g_l.section.Width * 0.45f);
+    g_l.section = RectF(m, store ? px(96) : g_l.drop.GetBottom() + px(18), W - 2 * m, px(36));
+    const float search_w = (std::min)(px(260), g_l.section.Width * 0.4f);
     g_l.search = RectF(g_l.section.GetRight() - search_w, g_l.section.Y + px(2), search_w, px(32));
+    const float category_w = (std::min)(px(190), g_l.section.Width * 0.28f);
+    g_l.category = RectF(g_l.search.X - px(10) - category_w, g_l.search.Y, category_w, px(32));
     g_l.footer = RectF(0, H - px(34), W, px(34));
     g_l.logs = RectF(W - px(10) - px(76), g_l.footer.Y + px(5), px(76), px(24));
     g_l.stop = RectF(g_l.logs.X - px(6) - px(72), g_l.logs.Y, px(72), px(24));
     const float top = g_l.section.GetBottom() + px(8);
     g_l.grid = RectF(m - px(8), top, W - 2 * m + px(16), (std::max)(0.0f, g_l.footer.Y - top));
-    g_l.tile_w = px(124);
-    g_l.tile_h = px(138);
-    g_l.gap = px(6);
-    g_l.cols = (std::max)(1, static_cast<int>((g_l.grid.Width - px(10) + g_l.gap) / (g_l.tile_w + g_l.gap)));
-    const int rows = (static_cast<int>(g_tiles.size()) + g_l.cols - 1) / g_l.cols;
+    g_l.retry = RectF(g_l.grid.X + g_l.grid.Width / 2 - px(60),
+                      g_l.grid.Y + (std::min)(g_l.grid.Height / 2, px(110)) + px(66), px(120), px(34));
+    size_t items = g_tiles.size();
+    if (store) {  // cards, as many across as fit at 300 px or more
+        g_l.gap = px(10);
+        g_l.tile_h = px(112);
+        g_l.cols = (std::max)(1, static_cast<int>((g_l.grid.Width - px(26) + g_l.gap) / (px(300) + g_l.gap)));
+        g_l.tile_w = (g_l.grid.Width - px(26) - (g_l.cols - 1) * g_l.gap) / g_l.cols;
+        items = g_store.shown.size();
+    } else {
+        g_l.tile_w = px(124);
+        g_l.tile_h = px(138);
+        g_l.gap = px(6);
+        g_l.cols = (std::max)(1, static_cast<int>((g_l.grid.Width - px(10) + g_l.gap) / (g_l.tile_w + g_l.gap)));
+    }
+    const int rows = (static_cast<int>(items) + g_l.cols - 1) / g_l.cols;
     g_l.content_h = rows ? rows * (g_l.tile_h + g_l.gap) - g_l.gap + px(12) : 0;
     g_l.max_scroll = (std::max)(0.0f, g_l.content_h - g_l.grid.Height);
     clamp_scroll();
@@ -1189,10 +1968,45 @@ void compute_layout() {
                static_cast<int>(g_l.search.Width - px(44)), edit_h, TRUE);
 }
 
-void rebuild_tiles() {
+std::wstring query(View view) {
+    if (view != g_view) return g_other_query;
     wchar_t buf[256] = {};
     GetWindowTextW(g_search, buf, 256);
-    const std::wstring q = lower(buf);
+    return buf;
+}
+
+// The store's cards for the search and category: by name first (the exact
+// name, those starting with the words, then those containing them), then by summary or
+// package; with no search, the most recently updated first.
+void rebuild_store() {
+    const std::wstring q = lower(query(kStoreView));
+    std::vector<std::pair<int, int>> ranked;  // rank, index
+    for (size_t i = 0; i < g_store.apps.size(); ++i) {
+        const StoreApp& a = g_store.apps[i];
+        if (!g_store.category.empty() &&
+            std::find(a.categories.begin(), a.categories.end(), g_store.category) == a.categories.end()) {
+            continue;
+        }
+        int rank = 0;
+        if (!q.empty()) {
+            const std::wstring name = lower(store_name(a));
+            const size_t at = name.find(q);
+            if (name == q) rank = 0;
+            else if (at == 0) rank = 1;
+            else if (at != std::wstring::npos || lower(a.name).find(q) != std::wstring::npos) rank = 2;
+            else if (lower(store_summary(a)).find(q) != std::wstring::npos ||
+                     lower(utf8_to_wide(a.pkg)).find(q) != std::wstring::npos) rank = 3;
+            else continue;
+        }
+        ranked.emplace_back(rank, static_cast<int>(i));
+    }
+    std::stable_sort(ranked.begin(), ranked.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+    g_store.shown.clear();
+    for (const auto& r : ranked) g_store.shown.push_back(r.second);
+}
+
+void rebuild_tiles() {
+    const std::wstring q = lower(query(kLibraryView));
     auto matches = [&](const std::wstring& a, const std::wstring& b) {
         return q.empty() || lower(a).find(q) != std::wstring::npos || lower(b).find(q) != std::wstring::npos;
     };
@@ -1205,12 +2019,14 @@ void rebuild_tiles() {
         if (matches(g_apps[i].label, g_apps[i].name)) g_tiles.push_back({static_cast<int>(i), L""});
     }
     if (q.empty() && !g_apps.empty()) g_tiles.push_back({kAddTile, L""});
+    rebuild_store();
     compute_layout();
     InvalidateRect(g_main, nullptr, FALSE);
 }
 
 void refresh() {
     g_apps = library();
+    scan_installed();
     g_icons.clear();
     if (!find_app(g_selected)) g_selected.clear();
     rebuild_tiles();
@@ -1233,20 +2049,33 @@ void ensure_visible(int tile) {
 
 void select_app(const std::wstring& name) {
     g_selected = name;
-    ensure_visible(tile_of(name));
+    if (g_view == kLibraryView) ensure_visible(tile_of(name));
     InvalidateRect(g_main, nullptr, FALSE);
 }
 
 const App* selected() { return g_selected.empty() ? nullptr : find_app(g_selected); }
 
 Hit hit_test(float x, float y) {
+    const bool store = g_view == kStoreView;
     if (contains(g_l.gear, x, y)) return {kHitGear, -1};
-    if (contains(g_l.drop, x, y)) return {kHitDrop, -1};
+    if (contains(g_l.tabs, x, y)) return {kHitTab, x < g_l.tabs.X + g_l.tabs.Width / 2 ? 0 : 1};
+    if (!store && contains(g_l.drop, x, y)) return {kHitDrop, -1};
+    if (store && !g_store.apps.empty() && contains(g_l.category, x, y)) return {kHitCategory, -1};
     if (contains(g_l.logs, x, y)) return {kHitLogs, -1};
     if (!g_running.empty() && contains(g_l.stop, x, y)) return {kHitStop, -1};
     if (!contains(g_l.grid, x, y)) return {};
     if (g_l.max_scroll > 0 && x >= g_l.grid.GetRight() - px(12)) {
         return {contains(inset(thumb_rect(), -px(4), 0), x, y) ? kHitThumb : kHitTrack, -1};
+    }
+    if (store) {
+        if (g_store.apps.empty() && g_store.failed && contains(g_l.retry, x, y)) return {kHitRetry, -1};
+        const int col = static_cast<int>((x - g_l.grid.X - px(8)) / (g_l.tile_w + g_l.gap));
+        const int row = static_cast<int>((y - g_l.grid.Y - px(4) + g_scroll) / (g_l.tile_h + g_l.gap));
+        const int i = row * g_l.cols + col;
+        if (col < 0 || col >= g_l.cols || row < 0 || i >= static_cast<int>(g_store.shown.size())) return {};
+        const RectF r = tile_rect(i);
+        if (!contains(r, x, y)) return {};
+        return {contains(card_button(r), x, y) ? kHitCardButton : kHitCard, i};
     }
     for (size_t i = 0; i < g_tiles.size(); ++i) {
         if (contains(tile_rect(static_cast<int>(i)), x, y)) return {kHitTile, static_cast<int>(i)};
@@ -1257,10 +2086,39 @@ Hit hit_test(float x, float y) {
 // ---------------------------------------------------------------------------
 // Painting the library
 
+// Library | Store, a segmented control at the start of the header.
+void paint_tabs(Graphics& g) {
+    const RectF& r = g_l.tabs;
+    fill_round(g, r, px(9), g_t.dark ? mix(g_t.bg, g_t.card, 0.7f) : mix(g_t.bg, g_t.border, 0.55f));
+    const float seg_w = (r.Width - px(6)) / 2;
+    const std::pair<const wchar_t*, const wchar_t*> tabs[] = {{kGlyphLibrary, L"Library"}, {kGlyphStore, L"Store"}};
+    for (int i = 0; i < 2; ++i) {
+        const RectF seg(r.X + px(3) + i * seg_w, r.Y + px(3), seg_w, r.Height - px(6));
+        const bool on = (i == 1) == (g_view == kStoreView);
+        const bool hot = g_hot.kind == kHitTab && g_hot.tile == i;
+        if (on) {
+            fill_round(g, seg, px(7), g_t.dark ? g_t.hover : kWhite);
+            if (!g_t.dark) stroke_round(g, seg, px(7), with_alpha(g_t.border, 200));
+        } else if (hot) {
+            fill_round(g, seg, px(7), with_alpha(g_t.hover, g_t.dark ? 140 : 200));
+        }
+        const std::wstring text = tr(tabs[i].second);
+        const Gdiplus::Font* f = on ? g_f.body_semi.get() : g_f.body.get();
+        const float tw = text_width(g, text, f);
+        const float x = seg.X + (seg.Width - tw - px(22)) / 2;
+        draw_text(g, tabs[i].first, g_f.glyph12.get(), on ? g_t.accent : g_t.text2, RectF(x, seg.Y, px(16), seg.Height),
+                  kCenter);
+        draw_text(g, text, f, on || hot ? g_t.text : g_t.text2, RectF(x + px(22), seg.Y, tw + px(4), seg.Height));
+    }
+}
+
 void paint_header(Graphics& g, float W) {
     draw_text(g, L"Win.apk", g_f.title.get(), g_t.text, RectF(0, px(20), W, px(38)), kCenter);
-    draw_text(g, tr(L"Run Android apps natively on Windows"), g_f.tagline.get(), g_t.text2, RectF(0, px(58), W, px(22)),
-              kCenter);
+    if (g_view == kLibraryView) {
+        draw_text(g, tr(L"Run Android apps natively on Windows"), g_f.tagline.get(), g_t.text2,
+                  RectF(0, px(58), W, px(22)), kCenter);
+    }
+    paint_tabs(g);
     const bool hot = g_hot.kind == kHitGear;
     if (hot) fill_round(g, g_l.gear, px(8), g_t.hover);
     draw_text(g, kGlyphSettings, g_f.glyph16.get(), hot ? g_t.text : g_t.text2, g_l.gear, kCenter);
@@ -1295,7 +2153,8 @@ void paint_drop_zone(Graphics& g) {
                                          std::to_wstring(g_batch_total)})
                                   : std::wstring(tr(L"Installing…"));
         sub = g_current.empty() ? tr(L"Unpacking manifest, icon, and assets")
-                                : fmt(L"{0}  ·  the first install of an app takes up to a minute", {g_current});
+                                : fmt(L"{0}  ·  the first install of an app takes up to a minute",
+                                      {job_label(g_current)});
     } else {
         title = tr(L"Drop an APK here to install");
         sub = tr(L"or click to choose a file  ·  .apk .apkm .xapk .apks");
@@ -1315,22 +2174,36 @@ void paint_drop_zone(Graphics& g) {
     }
 }
 
-void paint_section(Graphics& g) {
+// The section's title and a count beside it; returns where the count ends.
+float paint_section_title(Graphics& g, const std::wstring& title, size_t n) {
     const RectF& r = g_l.section;
-    const std::wstring title = tr(L"Installed apps");
     const float tw = text_width(g, title, g_f.section.get());
     draw_text(g, title, g_f.section.get(), g_t.text, RectF(r.X, r.Y, tw + px(4), r.Height));
-    const std::wstring count = std::to_wstring(g_apps.size());
+    const std::wstring count = std::to_wstring(n);
     const float cw = (std::max)(px(24), text_width(g, count, g_f.caption_semi.get()) + px(12));
     const RectF pill(r.X + tw + px(8), r.Y + (r.Height - px(20)) / 2, cw, px(20));
     fill_round(g, pill, px(10), g_t.dark ? g_t.hover : mix(g_t.bg, g_t.border, 0.6f));
     draw_text(g, count, g_f.caption_semi.get(), g_t.text2, pill, kCenter);
+    return pill.GetRight();
+}
 
+void paint_search_box(Graphics& g) {
     const bool focused = GetFocus() == g_search;
     fill_round(g, g_l.search, px(8), g_t.card);
     stroke_round(g, g_l.search, px(8), focused ? g_t.accent : g_t.border, focused ? px(1.5f) : 1);
     draw_text(g, kGlyphSearch, g_f.glyph12.get(), g_t.text2,
               RectF(g_l.search.X + px(10), g_l.search.Y, px(16), g_l.search.Height), kCenter);
+}
+
+void paint_section(Graphics& g) {
+    paint_section_title(g, tr(L"Installed apps"), g_apps.size());
+    paint_search_box(g);
+}
+
+void paint_scrollbar(Graphics& g, bool nearby) {
+    if (g_l.max_scroll <= 0) return;
+    const bool active = g_thumb_drag || g_hot.kind == kHitThumb || g_hot.kind == kHitTrack;
+    fill_round(g, thumb_rect(), px(3), with_alpha(g_t.text2, active ? 200 : nearby ? 120 : 70));
 }
 
 void paint_tile(Graphics& g, int i) {
@@ -1367,7 +2240,7 @@ void paint_tile(Graphics& g, int i) {
     } else if (hot) {
         fill_round(g, r, px(12), g_t.hover);
     }
-    const std::wstring& label = app ? app->label : t.job;
+    const std::wstring label = app ? app->label : job_label(t.job);
     const float s = px(72);
     const RectF ir(r.X + (r.Width - s) / 2, r.Y + px(14), s, s);
     draw_app_icon(g, app, label, ir);
@@ -1395,7 +2268,7 @@ void paint_grid(Graphics& g) {
             sub = tr(L"Press Esc in the search box to show every app.");
         } else {
             title = tr(L"No apps installed yet.");
-            sub = tr(L"Drop an APK above (or click it to choose one) to install one, then open it from here.");
+            sub = tr(L"Drop an APK above, or get apps from the Store, then open them from here.");
         }
         draw_text(g, q[0] ? kGlyphSearch : kGlyphApps, g_f.glyph48.get(), with_alpha(g_t.text2, 150),
                   RectF(gr.X, cy - px(70), gr.Width, px(60)), kCenter);
@@ -1411,11 +2284,122 @@ void paint_grid(Graphics& g) {
         Gdiplus::Pen line(g_t.border, 1);
         g.DrawLine(&line, gr.X + px(8), gr.Y, gr.GetRight() - px(8), gr.Y);
     }
-    if (g_l.max_scroll > 0) {
-        const bool active = g_thumb_drag || g_hot.kind == kHitThumb || g_hot.kind == kHitTrack;
-        const bool nearby = g_hot.kind == kHitTile || active;
-        fill_round(g, thumb_rect(), px(3), with_alpha(g_t.text2, active ? 200 : nearby ? 120 : 70));
+    paint_scrollbar(g, g_hot.kind == kHitTile);
+}
+
+// The store's heading: F-Droid and the count, the catalog's state, the category and the search.
+void paint_store_section(Graphics& g) {
+    float x = paint_section_title(g, L"F-Droid", g_store.shown.size()) + px(14);
+    const RectF& r = g_l.section;
+    if (g_store.loading && !g_store.apps.empty()) {
+        spinner(g, RectF(x, r.Y + r.Height / 2 - px(6), px(12), px(12)), g_t.accent, px(2));
+        draw_text(g, tr(L"Checking F-Droid for new apps…"), g_f.caption.get(), g_t.text2,
+                  RectF(x + px(20), r.Y, (std::max)(0.0f, g_l.category.X - x - px(28)), r.Height));
     }
+    if (!g_store.apps.empty()) {
+        const RectF& c = g_l.category;
+        const bool hot = g_hot.kind == kHitCategory;
+        fill_round(g, c, px(8), hot ? g_t.hover : g_t.card);
+        stroke_round(g, c, px(8), g_store.category.empty() ? g_t.border : g_t.accent);
+        const std::wstring text = g_store.category.empty() ? tr(L"All categories") : g_store.category;
+        draw_text(g, text, g_f.body.get(), g_store.category.empty() ? g_t.text2 : g_t.text,
+                  RectF(c.X + px(12), c.Y, c.Width - px(40), c.Height));
+        draw_text(g, kGlyphChevron, g_f.glyph12.get(), g_t.text2, RectF(c.GetRight() - px(30), c.Y, px(22), c.Height),
+                  kCenter);
+    }
+    paint_search_box(g);
+}
+
+void paint_card(Graphics& g, int i) {
+    const RectF r = tile_rect(i);
+    if (r.GetBottom() < g_l.grid.Y || r.Y > g_l.grid.GetBottom()) return;
+    const StoreApp& a = g_store.apps[static_cast<size_t>(g_store.shown[static_cast<size_t>(i)])];
+    const bool hot = (g_hot.kind == kHitCard || g_hot.kind == kHitCardButton) && g_hot.tile == i;
+    fill_round(g, r, px(12), hot ? mix(g_t.card, g_t.hover, 0.5f) : g_t.card);
+    stroke_round(g, r, px(12), hot ? mix(g_t.border, g_t.accent, 0.35f) : g_t.border);
+    const float s = px(56);
+    const RectF ir(r.X + px(14), r.Y + px(14), s, s);
+    draw_icon(g, store_icon(a), store_name(a), ir);
+    const float tx = ir.GetRight() + px(14), tw = r.GetRight() - px(14) - tx;
+    draw_text(g, store_name(a), g_f.body_semi.get(), g_t.text, RectF(tx, r.Y + px(12), tw, px(22)));
+    draw_text(g, store_summary(a), g_f.caption.get(), g_t.text2, RectF(tx, r.Y + px(35), tw, px(34)), kLeft, true,
+              false);
+    const RectF b = card_button(r);
+    std::wstring meta = a.version;
+    if (a.size > 0) meta += (meta.empty() ? L"" : L"  ·  ") + format_bytes(static_cast<uintmax_t>(a.size));
+    draw_text(g, meta, g_f.caption.get(), with_alpha(g_t.text2, 200),
+              RectF(r.X + px(14), b.Y, b.X - r.X - px(24), b.Height));
+    int percent = 0;
+    const bool on_button = g_hot.kind == kHitCardButton && g_hot.tile == i;
+    switch (offer_for(a, &percent)) {
+        case kOfferInstall: draw_button(g, b, tr(L"Install"), on_button, true, false); break;
+        case kOfferUpdate: draw_button(g, b, tr(L"Update"), on_button, true, false); break;
+        case kOfferOpen: draw_button(g, b, tr(L"Open"), on_button, false, false); break;
+        case kOfferDownloading: {
+            fill_round(g, b, px(6), with_alpha(g_t.accent, g_t.dark ? 40 : 24));
+            if (percent > 0) {
+                const RectF bar(b.X, b.Y, b.Width * static_cast<float>(percent) / 100.0f, b.Height);
+                g.SetClip(bar, Gdiplus::CombineModeIntersect);
+                fill_round(g, b, px(6), with_alpha(g_t.accent, g_t.dark ? 120 : 80));
+                g.SetClip(g_l.grid);
+            }
+            draw_text(g, percent > 0 ? std::to_wstring(percent) + L"%" : std::wstring(tr(L"Waiting")),
+                      g_f.caption_semi.get(), g_t.text, b, kCenter);
+            break;
+        }
+        case kOfferInstalling: {
+            spinner(g, RectF(b.X + px(10), b.Y + b.Height / 2 - px(7), px(14), px(14)), g_t.accent, px(2));
+            draw_text(g, tr(L"Installing…"), g_f.caption.get(), g_t.text2,
+                      RectF(b.X + px(30), b.Y, b.Width - px(30), b.Height));
+            break;
+        }
+    }
+}
+
+void paint_store_grid(Graphics& g) {
+    const RectF& gr = g_l.grid;
+    if (g_store.shown.empty()) {
+        const float cy = gr.Y + (std::min)(gr.Height / 2, px(110));
+        const std::wstring q = query(kStoreView);
+        std::wstring title, sub;
+        const wchar_t* glyph = kGlyphStore;
+        if (g_store.apps.empty() && (g_store.loading || !g_store.started)) {
+            spinner(g, RectF(gr.X + gr.Width / 2 - px(20), cy - px(58), px(40), px(40)), g_t.accent, px(3.5f));
+            glyph = nullptr;
+            title = tr(L"Getting the app catalog from F-Droid…");
+            wchar_t mb[32];
+            swprintf(mb, 32, L"%.1f", static_cast<double>(g_store.got_kb) / 1024.0);
+            sub = fmt(L"{0} MB so far. This happens once; later the store opens at once.", {mb});
+        } else if (g_store.apps.empty()) {
+            glyph = kGlyphError;
+            title = tr(L"F-Droid could not be reached");
+            sub = tr(L"Check the internet connection, then try again.");
+            draw_button(g, g_l.retry, tr(L"Try again"), g_hot.kind == kHitRetry, true, false);
+        } else {
+            glyph = kGlyphSearch;
+            title = fmt(L"No apps match “{0}”", {q.empty() ? g_store.category : q});
+            sub = tr(L"Try other words, or every category.");
+        }
+        if (glyph) {
+            draw_text(g, glyph, g_f.glyph48.get(), with_alpha(g_t.text2, 150),
+                      RectF(gr.X, cy - px(70), gr.Width, px(60)), kCenter);
+        }
+        draw_text(g, title, g_f.body_semi.get(), g_t.text, RectF(gr.X, cy, gr.Width, px(24)), kCenter);
+        draw_text(g, sub, g_f.caption.get(), g_t.text2, RectF(gr.X + px(24), cy + px(24), gr.Width - px(48), px(36)),
+                  kCenter, true, false);
+        return;
+    }
+    g.SetClip(gr);
+    const int first_row = (std::max)(0, static_cast<int>(g_scroll / (g_l.tile_h + g_l.gap)));
+    const int last = (std::min)(static_cast<int>(g_store.shown.size()),
+                                (first_row + static_cast<int>(gr.Height / (g_l.tile_h + g_l.gap)) + 2) * g_l.cols);
+    for (int i = first_row * g_l.cols; i < last; ++i) paint_card(g, i);
+    g.ResetClip();
+    if (g_scroll > 0) {
+        Gdiplus::Pen line(g_t.border, 1);
+        g.DrawLine(&line, gr.X + px(8), gr.Y, gr.GetRight() - px(8), gr.Y);
+    }
+    paint_scrollbar(g, g_hot.kind == kHitCard || g_hot.kind == kHitCardButton);
 }
 
 // A small borderless button with a glyph, for the footer.
@@ -1443,14 +2427,16 @@ void paint_footer(Graphics& g, float W) {
     if (running) draw_chip(g, g_l.stop, kGlyphStop, tr(L"Stop"), g_t.danger, g_hot.kind == kHitStop);
     const float right = running ? g_l.stop.X : g_l.logs.X;
 
-    const std::wstring hint = g_apps.empty()
-                                  ? tr(L"Drop an APK above to install your first app")
-                                  : tr(L"Double-click to open  ·  right-click for options  ·  drop an APK above to add more");
+    const bool store = g_view == kStoreView;
+    const std::wstring hint =
+        store            ? tr(L"Free and open-source apps from f-droid.org  ·  Install adds the app to your library")
+        : g_apps.empty() ? tr(L"Drop an APK above to install your first app")
+                         : tr(L"Double-click to open  ·  right-click for options  ·  drop an APK above to add more");
     const bool hinted = g_status.empty() || g_status_kind == kHint;
     const Color c = hinted || g_status_kind == kInfo ? g_t.text2
                     : g_status_kind == kSuccess       ? g_t.success
                                                       : g_t.danger;
-    const std::wstring count = app_count(g_apps.size());
+    const std::wstring count = app_count(store ? g_store.shown.size() : g_apps.size());
     const float cw = text_width(g, count, g_f.caption.get()) + px(4);
     float x = px(16);
     std::wstring text = hinted ? hint : g_status;
@@ -1471,14 +2457,21 @@ void paint_footer(Graphics& g, float W) {
 void paint_main(Graphics& g, float W, float) {
     g.Clear(g_t.bg);
     paint_header(g, W);
-    paint_drop_zone(g);
-    paint_section(g);
-    paint_grid(g);
+    if (g_view == kStoreView) {
+        paint_store_section(g);
+        paint_store_grid(g);
+    } else {
+        paint_drop_zone(g);
+        paint_section(g);
+        paint_grid(g);
+    }
     paint_footer(g, W);
 }
 
 void update_timer() {
-    if (!g_pending.empty() || !g_running.empty()) SetTimer(g_main, kAnimTimer, 16, nullptr);
+    if (!g_pending.empty() || !g_running.empty() || (g_view == kStoreView && g_store.loading)) {
+        SetTimer(g_main, kAnimTimer, 16, nullptr);
+    }
     else KillTimer(g_main, kAnimTimer);
 }
 
@@ -1547,7 +2540,11 @@ std::vector<fs::path> pick_files(bool multiple, const wchar_t* title) {
 // ---------------------------------------------------------------------------
 // Actions
 
-void install(const fs::path& source, bool run_after, std::wstring name = L"", fs::path replaces = {}) {
+// Queues an install. The store's (`from_store`) installs a download it then
+// removes, and shows its progress on the app's card rather than in the
+// install window.
+void install(const fs::path& source, bool run_after, std::wstring name = L"", fs::path replaces = {},
+             bool from_store = false) {
     if (name.empty()) name = file_name_safe(source.stem().wstring());
     if (g_pending.empty()) {
         g_batch_total = g_batch_done = 0;
@@ -1556,12 +2553,12 @@ void install(const fs::path& source, bool run_after, std::wstring name = L"", fs
     ++g_batch_total;
     g_pending.push_back(name);
     g_jobs.push_back({name});
-    set_status(fmt(L"Installing {0}…", {name}), kInfo);
-    CloseHandle(CreateThread(nullptr, 0, install_thread, new InstallJob{source, name, replaces, run_after}, 0,
-                             nullptr));
+    set_status(fmt(L"Installing {0}…", {job_label(name)}), kInfo);
+    CloseHandle(CreateThread(nullptr, 0, install_thread, new InstallJob{source, name, replaces, run_after, from_store},
+                             0, nullptr));
     update_timer();
     rebuild_tiles();
-    show_install_window();
+    if (!from_store || g_install_wnd) show_install_window();
 }
 
 void add_from_dialog() {
@@ -1611,6 +2608,82 @@ void update_from_apk(const App& app) {
     if (!files.empty()) install(files[0], false, app.name, app.apk);
 }
 
+// Fetches the catalog: the one kept from last time at once, F-Droid's when
+// that is old or `force` asks for it.
+void store_start(bool force) {
+    if (g_store.loading) return;
+    g_store.started = g_store.loading = true;
+    g_store.failed = false;
+    g_store.got_kb = 0;
+    if (HANDLE t = CreateThread(nullptr, 0, catalog_thread, force ? &g_store : nullptr, 0, nullptr)) CloseHandle(t);
+    else g_store.loading = false;
+    update_timer();
+    InvalidateRect(g_main, nullptr, FALSE);
+}
+
+// The card's button: install or update the app (download, check, then the
+// library's install), or open it.
+void store_get(const StoreApp& a) {
+    const Offer offer = offer_for(a);
+    if (offer == kOfferOpen) {
+        const auto it = g_store.installed.find(a.pkg);
+        if (const App* app = it == g_store.installed.end() ? nullptr : find_app(it->second.first)) launch(*app);
+        return;
+    }
+    if (offer != kOfferInstall && offer != kOfferUpdate) return;
+    g_store.downloads[a.pkg] = -1;
+    CloseHandle(CreateThread(nullptr, 0, download_thread,
+                             new Download{a.pkg, a.sha256, std::wstring(kRepo) + utf8_to_wide(a.apk), store_name(a),
+                                          downloads_dir() / utf8_to_wide(a.apk)},
+                             0, nullptr));
+    set_status(fmt(L"Downloading {0}…", {store_name(a)}), kInfo);
+    InvalidateRect(g_main, nullptr, FALSE);
+}
+
+// A download is in and checked: it is installed as the app the library has
+// with that package, if any, else as a new one named after the package.
+void store_downloaded(const Download& d, bool ok) {
+    g_store.downloads.erase(d.pkg);
+    if (!ok) {
+        set_status(fmt(L"Downloading {0} failed. Check the internet connection, then try again.", {d.label}), kError);
+        return;
+    }
+    const auto it = g_store.installed.find(d.pkg);
+    const App* existing = it == g_store.installed.end() ? nullptr : find_app(it->second.first);
+    const std::wstring name = existing ? existing->name : file_name_safe(utf8_to_wide(d.pkg));
+    if (!existing) g_job_labels[name] = d.label;
+    install(d.file, false, name, existing ? existing->apk : fs::path(), true);
+}
+
+// The categories, in a menu of a few columns so that a hundred of them fit.
+void choose_category() {
+    std::set<std::wstring, bool (*)(const std::wstring&, const std::wstring&)> all(
+        [](const std::wstring& a, const std::wstring& b) {
+            return CompareStringEx(LOCALE_NAME_USER_DEFAULT, NORM_IGNORECASE, a.c_str(), -1, b.c_str(), -1, nullptr,
+                                   nullptr, 0) == CSTR_LESS_THAN;
+        });
+    for (const StoreApp& a : g_store.apps) all.insert(a.categories.begin(), a.categories.end());
+    const std::vector<std::wstring> list(all.begin(), all.end());
+    HMENU menu = CreatePopupMenu();
+    AppendMenuW(menu, MF_STRING | (g_store.category.empty() ? MF_CHECKED : 0), 1, tr(L"All categories"));
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    const size_t per_column = (std::max)(size_t{20}, (list.size() + 4) / 5);
+    for (size_t i = 0; i < list.size(); ++i) {
+        const UINT flags = MF_STRING | (list[i] == g_store.category ? MF_CHECKED : 0) |
+                           (i > 0 && i % per_column == 0 ? MF_MENUBARBREAK : 0);
+        AppendMenuW(menu, flags, i + 2, list[i].c_str());
+    }
+    POINT pt{static_cast<LONG>(g_l.category.X), static_cast<LONG>(g_l.category.GetBottom() + px(2))};
+    ClientToScreen(g_main, &pt);
+    const int pick = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_TOPALIGN | menu_flags(true), pt.x, pt.y, 0, g_main,
+                                    nullptr);
+    DestroyMenu(menu);
+    if (pick <= 0) return;
+    g_store.category = pick == 1 ? L"" : list[static_cast<size_t>(pick - 2)];
+    g_scroll = 0;
+    rebuild_tiles();
+}
+
 // ---------------------------------------------------------------------------
 // Sheets: the settings and Get Info windows, drawn like upstream's grouped forms
 
@@ -1632,6 +2705,7 @@ struct Section {
 struct Sheet {
     std::wstring title;
     std::wstring hero_app, hero_title, hero_sub;  // Get Info's heading: the app's icon, name and package
+    Gdiplus::Bitmap* hero_icon = nullptr;         // a store app's icon, for one not in the library
     std::function<std::vector<Section>()> build;
     std::vector<Section> sections;
     HWND hwnd = nullptr;
@@ -1714,7 +2788,8 @@ void paint_sheet(Sheet& s, Graphics& g, float W, float H) {
     float y = px(20) - s.scroll;
     if (!s.hero_title.empty()) {
         const RectF ir(m, y, px(64), px(64));
-        draw_app_icon(g, find_app(s.hero_app), s.hero_title, ir);
+        if (s.hero_icon || s.hero_app.empty()) draw_icon(g, s.hero_icon, s.hero_title, ir);
+        else draw_app_icon(g, find_app(s.hero_app), s.hero_title, ir);
         draw_text(g, s.hero_title, g_f.hero.get(), g_t.text, RectF(m + px(80), y + px(6), cw - px(80), px(30)));
         draw_text(g, s.hero_sub, g_f.caption.get(), g_t.text2, RectF(m + px(80), y + px(36), cw - px(80), px(20)));
         y += px(88);
@@ -2103,6 +3178,63 @@ void show_info(const App& app) {
     run_sheet(std::move(s));
 }
 
+// A store app's details, and its install, update or open.
+void show_store_info(const StoreApp& app) {
+    const StoreApp a = app;  // the catalog may be replaced while the sheet is open
+    Sheet s;
+    s.title = store_name(a);
+    s.hero_title = store_name(a);
+    s.hero_sub = store_summary(a);
+    s.hero_icon = store_icon(app);
+    s.build = [a] {
+        std::wstring cats;
+        for (const std::wstring& c : a.categories) cats += (cats.empty() ? L"" : L", ") + c;
+        std::vector<Section> out;
+        out.push_back({tr(L"Details"),
+                       {text_row(tr(L"Version"), a.version),
+                        text_row(tr(L"Size"), format_bytes(static_cast<uintmax_t>(a.size))),
+                        text_row(tr(L"Updated"), java_date(a.updated)), text_row(tr(L"License"), a.license),
+                        text_row(tr(L"Categories"), cats), text_row(tr(L"Package"), utf8_to_wide(a.pkg))},
+                       L""});
+        Row get;
+        switch (offer_for(a)) {
+            case kOfferInstall:
+            case kOfferUpdate: {
+                const bool update = offer_for(a) == kOfferUpdate;
+                get = button_row(fmt(update ? L"Update {0}" : L"Install {0}", {store_name(a)}),
+                                 tr(update ? L"A newer version is out. Saves stay."
+                                           : L"Downloaded from F-Droid and checked, then added to the library."),
+                                 tr(update ? L"Update" : L"Install"), [a] {
+                                     store_get(a);
+                                     close_sheet();
+                                 });
+                get.primary = true;
+                break;
+            }
+            case kOfferOpen:
+                get = button_row(fmt(L"Open {0}", {store_name(a)}), L"", tr(L"Open"), [a] {
+                    close_sheet();
+                    store_get(a);
+                });
+                get.primary = true;
+                break;
+            case kOfferDownloading: get = text_row(store_name(a), tr(L"Downloading…")); break;
+            case kOfferInstalling: get = text_row(store_name(a), tr(L"Installing…")); break;
+        }
+        const std::wstring page = L"https://f-droid.org/packages/" + utf8_to_wide(a.pkg) + L"/";
+        out.push_back({tr(L"Actions"),
+                       {get, button_row(tr(L"F-Droid page"), tr(L"The app's description, screenshots and source code."),
+                                        tr(L"Open"),
+                                        [page] {
+                                            ShellExecuteW(nullptr, L"open", page.c_str(), nullptr, nullptr,
+                                                          SW_SHOWNORMAL);
+                                        })},
+                       L""});
+        return out;
+    };
+    run_sheet(std::move(s));
+}
+
 // ---------------------------------------------------------------------------
 // Shared by the install and log windows
 
@@ -2267,7 +3399,7 @@ void paint_install(Graphics& g, float W, float H) {
             g.DrawLine(&line, r.X + px(66), r.Y, r.GetRight() - px(14), r.Y);
         }
         const App* app = find_app(j.name);
-        const std::wstring label = app ? app->label : j.name;
+        const std::wstring label = job_label(j.name);
         draw_app_icon(g, app, label, RectF(r.X + px(14), r.Y + px(10), px(40), px(40)));
         std::wstring state;
         switch (j.state) {
@@ -2628,6 +3760,8 @@ std::vector<fs::path> dropped_files(IDataObject* data) {
     return out;
 }
 
+void set_view(View view);
+
 class DropTarget : public IDropTarget {
 public:
     virtual ~DropTarget() = default;
@@ -2648,6 +3782,7 @@ public:
     }
     HRESULT STDMETHODCALLTYPE DragEnter(IDataObject* data, DWORD, POINTL, DWORD* effect) override {
         accept_ = !g_sheet && !dropped_files(data).empty();
+        if (accept_) set_view(kLibraryView);  // where the drop zone is
         set_over(accept_);
         *effect = accept_ ? DROPEFFECT_COPY : DROPEFFECT_NONE;
         return S_OK;
@@ -2770,7 +3905,7 @@ LRESULT CALLBACK search_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp, UINT_PTR
     }
     if (msg == WM_KEYDOWN && (wp == VK_DOWN || wp == VK_RETURN)) {
         SetFocus(g_main);
-        if (!selected()) move_selection(0, 0);
+        if (g_view == kLibraryView && !selected()) move_selection(0, 0);
         return 0;
     }
     if (msg == WM_CHAR && (wp == VK_RETURN || wp == VK_ESCAPE)) return 0;  // no beep
@@ -2788,8 +3923,27 @@ void create_search() {
                                0, 0, 0, 0, g_main, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdSearch)), g_inst,
                                nullptr);
     SendMessageW(g_search, WM_SETFONT, reinterpret_cast<WPARAM>(g_edit_font), FALSE);
-    SendMessageW(g_search, EM_SETCUEBANNER, FALSE, reinterpret_cast<LPARAM>(tr(L"Search apps")));
+    SendMessageW(g_search, EM_SETCUEBANNER, FALSE,
+                 reinterpret_cast<LPARAM>(tr(g_view == kStoreView ? L"Search F-Droid" : L"Search apps")));
     SetWindowSubclass(g_search, search_proc, 1, 0);
+}
+
+void set_view(View view) {
+    if (view == g_view) return;
+    const std::wstring shown_query = query(g_view);
+    g_view = view;
+    std::swap(g_scroll, g_other_scroll);
+    const float scroll = g_scroll;
+    SetWindowTextW(g_search, g_other_query.c_str());  // its EN_CHANGE starts at the top; this view keeps its place
+    g_other_query = shown_query;
+    g_scroll = scroll;
+    SendMessageW(g_search, EM_SETCUEBANNER, FALSE,
+                 reinterpret_cast<LPARAM>(tr(view == kStoreView ? L"Search F-Droid" : L"Search apps")));
+    InvalidateRect(g_search, nullptr, TRUE);  // an empty box shows the new cue only when it is drawn again
+    g_hot = {};
+    if (view == kStoreView && !g_store.started) store_start(false);
+    rebuild_tiles();
+    update_timer();
 }
 
 void apply_language() {
@@ -2836,6 +3990,7 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             make_fonts();
             SendMessageW(g_search, WM_SETFONT, reinterpret_cast<WPARAM>(g_edit_font), FALSE);
             g_icons.clear();
+            g_store.icons.clear();
             const RECT* r = reinterpret_cast<const RECT*>(lp);
             SetWindowPos(hwnd, nullptr, r->left, r->top, r->right - r->left, r->bottom - r->top,
                          SWP_NOZORDER | SWP_NOACTIVATE);
@@ -2889,7 +4044,8 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_SETCURSOR:
             if (LOWORD(lp) == HTCLIENT && reinterpret_cast<HWND>(wp) == hwnd) {
                 const bool hand = g_hot.kind == kHitGear || g_hot.kind == kHitDrop || g_hot.kind == kHitLogs ||
-                                  g_hot.kind == kHitStop ||
+                                  g_hot.kind == kHitStop || g_hot.kind == kHitTab || g_hot.kind == kHitCategory ||
+                                  g_hot.kind == kHitCard || g_hot.kind == kHitCardButton || g_hot.kind == kHitRetry ||
                                   (g_hot.kind == kHitTile && g_tiles[static_cast<size_t>(g_hot.tile)].app == kAddTile);
                 SetCursor(LoadCursorW(nullptr, hand ? IDC_HAND : IDC_ARROW));
                 return TRUE;
@@ -2901,6 +4057,17 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             const Hit h = hit_test(x, y);
             switch (h.kind) {
                 case kHitGear: show_settings(); break;
+                case kHitTab: set_view(h.tile == 1 ? kStoreView : kLibraryView); break;
+                case kHitCategory: choose_category(); break;
+                case kHitRetry: store_start(true); break;
+                case kHitCardButton:
+                case kHitCard: {
+                    // a copy: opening the app or the sheet runs messages that may replace the catalog
+                    const StoreApp a = g_store.apps[static_cast<size_t>(g_store.shown[static_cast<size_t>(h.tile)])];
+                    if (h.kind == kHitCardButton) store_get(a);
+                    else show_store_info(a);
+                    break;
+                }
                 case kHitLogs: {
                     const auto logs = log_files();
                     show_logs(logs.empty() ? last_run_log() : logs.front());
@@ -2978,6 +4145,28 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         case WM_KEYDOWN: {
             const bool ctrl = GetKeyState(VK_CONTROL) < 0;
+            if (ctrl && (wp == '1' || wp == '2')) {
+                set_view(wp == '2' ? kStoreView : kLibraryView);
+                return 0;
+            }
+            if (g_view == kStoreView) {
+                switch (wp) {
+                    case VK_UP:
+                    case VK_DOWN:
+                    case VK_PRIOR:
+                    case VK_NEXT: {
+                        const float page = wp == VK_PRIOR || wp == VK_NEXT ? g_l.grid.Height * 0.9f : px(60);
+                        g_scroll += wp == VK_UP || wp == VK_PRIOR ? -page : page;
+                        clamp_scroll();
+                        InvalidateRect(hwnd, nullptr, FALSE);
+                        return 0;
+                    }
+                    case VK_F5: store_start(true); return 0;
+                    case 'F': if (ctrl) SetFocus(g_search); return 0;
+                    case VK_OEM_COMMA: if (ctrl) show_settings(); return 0;
+                }
+                break;
+            }
             switch (wp) {
                 case VK_LEFT: move_selection(-1, 0); return 0;
                 case VK_RIGHT: move_selection(1, 0); return 0;
@@ -3014,7 +4203,8 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 }
             }
             if (g_install_wnd) InvalidateRect(g_install_wnd, nullptr, FALSE);
-            set_status(fmt(L"Installing {0}… The first install of an app takes up to a minute.", {*name}), kInfo);
+            set_status(fmt(L"Installing {0}… The first install of an app takes up to a minute.", {job_label(*name)}),
+                       kInfo);
             return 0;
         }
         case kInstalled: {
@@ -3047,9 +4237,12 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             } else if (wp & 4) {
                 set_status(fmt(L"Close {0} before updating it.", {label_of(*name)}), kError);
             } else {
-                set_status(fmt(L"Installing {0} failed.", {*name}), kError);
-                if (!g_install_wnd) failed_with_log(fmt(L"Installing {0} failed", {*name}), install_log(*name));
+                set_status(fmt(L"Installing {0} failed.", {job_label(*name)}), kError);
+                if (!g_install_wnd) {
+                    failed_with_log(fmt(L"Installing {0} failed", {job_label(*name)}), install_log(*name));
+                }
             }
+            if (g_pending.empty()) g_job_labels.clear();
             return 0;
         }
         case kRunExited: {
@@ -3070,8 +4263,46 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case kRefresh:
             refresh();
             return 0;
+        case kStoreCatalog:
+            if (wp == kCatalogList) {
+                std::unique_ptr<std::vector<StoreApp>> list(reinterpret_cast<std::vector<StoreApp>*>(lp));
+                g_store.apps = std::move(*list);
+                std::stable_sort(g_store.apps.begin(), g_store.apps.end(),
+                                 [](const StoreApp& a, const StoreApp& b) { return a.updated > b.updated; });
+                rebuild_tiles();
+            } else {
+                g_store.loading = false;
+                g_store.failed = wp == kCatalogFailed;
+                if (g_store.failed && !g_store.apps.empty() && g_view == kStoreView) {
+                    set_status(tr(L"F-Droid could not be checked for new apps."), kError);
+                }
+                update_timer();
+                InvalidateRect(hwnd, nullptr, FALSE);
+            }
+            return 0;
+        case kStoreProgress:
+            g_store.got_kb = wp;
+            return 0;
+        case kStoreIcon: {
+            std::unique_ptr<std::string> pkg(reinterpret_cast<std::string*>(lp));
+            g_store.icon_wait.erase(*pkg);
+            if (wp == kIconFailed) g_store.icons[*pkg] = nullptr;  // the monogram, for this session
+            if (g_view == kStoreView) InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
+        }
+        case kStoreDownload: {
+            std::unique_ptr<std::string> pkg(reinterpret_cast<std::string*>(lp));
+            g_store.downloads[*pkg] = static_cast<int>(wp);
+            InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
+        }
+        case kStoreDownloaded: {
+            std::unique_ptr<Download> d(reinterpret_cast<Download*>(lp));
+            store_downloaded(*d, wp != 0);
+            return 0;
+        }
         case WM_GETMINMAXINFO:
-            reinterpret_cast<MINMAXINFO*>(lp)->ptMinTrackSize = {ipx(560), ipx(520)};
+            reinterpret_cast<MINMAXINFO*>(lp)->ptMinTrackSize = {ipx(680), ipx(520)};
             return 0;
         case WM_DESTROY:
             RevokeDragDrop(hwnd);
@@ -3084,13 +4315,6 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
 // ---------------------------------------------------------------------------
 // The installed-apps registry
-
-std::string wide_to_utf8(const std::wstring& w) {
-    const int n = WideCharToMultiByte(CP_UTF8, 0, w.data(), static_cast<int>(w.size()), nullptr, 0, nullptr, nullptr);
-    std::string s(static_cast<size_t>(n > 0 ? n : 0), '\0');
-    if (n > 0) WideCharToMultiByte(CP_UTF8, 0, w.data(), static_cast<int>(w.size()), &s[0], n, nullptr, nullptr);
-    return s;
-}
 
 std::string json_string(const std::string& s) {
     std::string out = "\"";
@@ -3182,7 +4406,10 @@ DWORD WINAPI backfill_thread(void*) {
         if (p && wait_exit(p) == 0) changed = true;
         else fs::remove(package_file(app.name), ec);
     }
-    if (changed) write_registry();
+    if (changed) {
+        write_registry();
+        if (g_main) PostMessageW(g_main, kRefresh, 0, 0);  // the store sees these packages as installed
+    }
     return 0;
 }
 
@@ -3378,6 +4605,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
         if (is_app_file(argv[i])) install(argv[i], true);
     }
     LocalFree(argv);
+    if (g_apps.empty() && g_pending.empty()) set_view(kStoreView);  // nothing installed yet: where apps come from
 
     MSG m;
     while (GetMessageW(&m, nullptr, 0, 0) > 0) {

@@ -43,6 +43,10 @@ Open Win.apk: it shows your app library.
   window, click the drop zone or the "Add app" tile, or double-click the
   .apk in Explorer. Installing takes up to a minute, once per app; a window
   shows its progress and its log.
+- Or get one from the Store tab, at the top of the window: the free and
+  open-source apps of F-Droid (f-droid.org). Search or pick a category, then
+  click Install; the download is checked against F-Droid's index before it
+  is installed. Update shows when F-Droid has a newer version of an app.
 - Each installed app gets its own icon in the library, in the Start menu
   (Start > Win.apk Apps) and, unless turned off in the settings, on the
   desktop.
@@ -55,7 +59,7 @@ Open Win.apk: it shows your app library.
 
 In an app, the mouse is your finger and the wheel scrolls. Android's Back
 is Escape, Alt+Left, or the mouse's back side button. Close the app's window to quit. Apps from F-Droid
-(f-droid.org) are a good place to start: they are free, open source, and
+(the Store tab) are a good place to start: they are free, open source, and
 usually Java-only.
 
 Where things are
