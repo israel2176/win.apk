@@ -186,16 +186,26 @@ the clipboard). The most useful lines:
 
 | Works | Not yet |
 |---|---|
-| Java/Kotlin apps, in their own window, with mouse, wheel and keyboard | Apps with ARM-only native code (`lib/arm64-v8a` only) |
+| Java/Kotlin apps, in their own window, with mouse, wheel and keyboard | Apps with 32-bit ARM native code only (`lib/armeabi-v7a`) |
 | OpenGL ES from Java (`GLSurfaceView`, libGDX) and from native code (SDL games) | `NativeActivity` games |
 | Apps that ship `lib/x86_64` native libraries | MediaPlayer, OpenSL ES and AAudio |
+| Apps with ARM native code only (`lib/arm64-v8a`), translated to x64 (below) | |
 | Sound from Java (AudioTrack, SoundPool: WAV, Ogg, MP3) | Video, camera, WebView, location |
 | Files, SharedPreferences, SQLite, clipboard, file pickers, game controllers | Google Play services (sign-in, purchases, maps) |
 
 Why the split: Android phones are ARM, while these PCs are x64. Java code
-and x86_64 libraries run directly; ARM-only native code needs binary
-translation, the last step of the plan in
-[`windows/PORTING.md`](windows/PORTING.md).
+and x86_64 libraries run directly. An app's 64-bit ARM libraries
+(`lib/arm64-v8a`) are translated to x64 once, when the app is
+installed: `winapk-aot` turns each library into C and clang compiles it
+for your CPU (`<lib>.so.aot.dll`, next to the library). That code runs at
+close to native speed. What the translation cannot follow, or every library
+when no clang is found, runs through an ARM JIT instead, which is slower.
+Apps are installed with the ABIs `x86_64,arm64-v8a`, so an app's x86_64 build
+is used when it has one. 32-bit ARM (`armeabi-v7a`) is not supported.
+
+The translation needs clang: Win.apk uses `WINAPK_AOT_CLANG`, a
+`clang\bin\clang.exe` in Win.apk's folder, a `clang.exe` on the PATH, or an
+LLVM or MSYS2 (`C:\msys64\clang64`) install, in that order.
 
 ## Where your data lives
 
