@@ -139,6 +139,7 @@ public final class SharedStorage {
         String name = link.getName();
         for (String[] m : USER_FOLDER_MAP) {
             if (!m[0].equals(name)) continue;
+            if (!java.nio.file.Files.isSymbolicLink(link.toPath())) return isHostFolderMapping(link);
             try {
                 java.nio.file.Path target = java.nio.file.Files.readSymbolicLink(link.toPath());
                 return target.equals(new File(HOST_HOME, m[1]).toPath());
@@ -147,6 +148,138 @@ public final class SharedStorage {
             }
         }
         return false;
+    }
+
+    // ---- the Windows host's junctions (Win.apk) ------------------------------
+    //
+    // On Windows the host maps the same five folders before the JVM starts
+    // (windows/host/user_folders.cpp), with directory junctions: a symlink
+    // needs Developer Mode or an administrator there, a junction does not.
+    // Java reports a junction as a plain directory (isSymbolicLink false,
+    // readSymbolicLink throws), so without the code below MediaStore would
+    // walk the user's whole Downloads as a volume folder, with no privacy
+    // filter and no cache, and a recursive walk or delete would follow any
+    // junction inside it. The host names what it mapped in
+    // WINAPK_USER_FOLDER_TARGETS ("Download=C:\Users\me\Downloads|..."); its
+    // presence also means the host owns the mapping (mapUserFolders).
+
+    private static volatile java.util.Map<String, String> sHostTargets;
+
+    /** WINAPK_USER_FOLDER_TARGETS as volume name -> host folder, or null when
+     *  the host set none (the Mac, or a run on a scratch data folder). */
+    static java.util.Map<String, String> hostFolderTargets() {
+        java.util.Map<String, String> m = sHostTargets;
+        if (m == null) {
+            m = new java.util.HashMap<>();
+            String e = System.getenv("WINAPK_USER_FOLDER_TARGETS");
+            if (e != null) {
+                for (String part : e.split("\\|")) {
+                    int eq = part.indexOf('=');
+                    if (eq > 0 && eq < part.length() - 1) m.put(part.substring(0, eq), part.substring(eq + 1));
+                }
+            }
+            sHostTargets = m;
+        }
+        return m.isEmpty() ? null : m;
+    }
+
+    /** True when the host, not this class, maps the user's folders. */
+    static boolean hostMapsUserFolders() {
+        return File.separatorChar == '\\' || System.getenv("WINAPK_USER_FOLDER_TARGETS") != null;
+    }
+
+    /** True when `f`, a root-level volume entry, is one of the host's
+     *  junctions: a name the host reported, resolving to exactly the folder it
+     *  reported (toRealPath follows a junction). */
+    public static boolean isHostFolderMapping(File f) {
+        java.util.Map<String, String> m = hostFolderTargets();
+        if (m == null) return false;
+        String target = m.get(f.getName());
+        if (target == null || !isJunction(f.toPath())) return false;
+        try {
+            return f.toPath().toRealPath().equals(java.nio.file.Paths.get(target).toRealPath());
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /** True for a directory junction (or another directory reparse point that
+     *  is not a symlink): HotSpot on Windows reports one as isDirectory() AND
+     *  isOther() when links are not followed. Always false on the Mac. */
+    public static boolean isJunction(java.nio.file.Path p) {
+        try {
+            java.nio.file.attribute.BasicFileAttributes a = java.nio.file.Files.readAttributes(p,
+                    java.nio.file.attribute.BasicFileAttributes.class, java.nio.file.LinkOption.NOFOLLOW_LINKS);
+            return a.isDirectory() && a.isOther();
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /** True when `p` is a link a walk or a delete must not descend: a symlink,
+     *  or a junction that leads somewhere other than where it stands. OneDrive's
+     *  cloud placeholders are reparse points too but resolve to themselves, so
+     *  they stay real folders. `a` is p's attributes read without following
+     *  links (a walk has them), or null to read them here. */
+    public static boolean isLink(java.nio.file.Path p, java.nio.file.attribute.BasicFileAttributes a) {
+        try {
+            if (a == null) {
+                a = java.nio.file.Files.readAttributes(p, java.nio.file.attribute.BasicFileAttributes.class,
+                        java.nio.file.LinkOption.NOFOLLOW_LINKS);
+            }
+            if (a.isSymbolicLink()) return true;
+            if (!a.isDirectory() || !a.isOther()) return false;
+            java.nio.file.Path parent = p.toAbsolutePath().getParent();
+            if (parent == null) return false;
+            return !p.toRealPath().toString().equalsIgnoreCase(
+                    parent.toRealPath().resolve(p.getFileName().toString()).toString());
+        } catch (Throwable t) {
+            return true;                            // cannot tell: do not follow it
+        }
+    }
+
+    /** Breadth-first walk of a folder the host mapped, for MediaStore's scan
+     *  and StorageStatsManager's size: shallow files first, at most `limit`
+     *  of them (Long.MAX_VALUE: all). A user's Downloads can hold whole source
+     *  trees (measured: 495,000 files, 6,000 of them in its top two levels), so
+     *  an unbounded scan there stalls every MediaStore query; breadth first
+     *  keeps what the user sees in the folder. Skips names starting with ".",
+     *  Windows hidden or system entries (desktop.ini) and links, and descends
+     *  only where `enter` agrees. Entries come with the attributes the
+     *  directory listing already read, so a file costs no extra system call.
+     *  Lambdas, not visitor classes: a new framework class moves FRAMEWORK_ID.
+     *  @return how many files were passed to onFile. Never throws. */
+    public static long walkHostFolder(java.nio.file.Path top, long limit,
+            java.util.function.Predicate<java.nio.file.Path> enter,
+            java.util.function.BiConsumer<java.nio.file.Path, java.nio.file.attribute.BasicFileAttributes> onFile) {
+        java.util.ArrayDeque<java.nio.file.Path> dirs = new java.util.ArrayDeque<>();
+        dirs.add(top);
+        long[] n = {0};
+        while (!dirs.isEmpty() && n[0] < limit) {
+            java.nio.file.Path dir = dirs.poll();
+            // maxDepth 1: the listing's own entries only, each with the
+            // attributes FindNextFile returned (FileTreeWalker uses them as is).
+            try (java.util.stream.Stream<java.nio.file.Path> s = java.nio.file.Files.find(dir, 1, (p, a) -> {
+                if (p.equals(dir) || n[0] >= limit) return false;
+                if (p.getFileName().toString().startsWith(".")) return false;
+                if (a instanceof java.nio.file.attribute.DosFileAttributes) {
+                    java.nio.file.attribute.DosFileAttributes d = (java.nio.file.attribute.DosFileAttributes) a;
+                    if (d.isHidden() || d.isSystem()) return false;
+                }
+                if (a.isDirectory()) {
+                    if (!isLink(p, a) && enter.test(p)) dirs.add(p);
+                } else if (a.isRegularFile()) {
+                    n[0]++;
+                    onFile.accept(p, a);
+                }
+                return false;
+            })) {
+                s.forEach(p -> { });
+            } catch (Throwable t) {
+                // An unreadable folder (access denied) is skipped, as listFiles() == null is.
+            }
+        }
+        return n[0];
     }
 
     /** Volume folder name -> folder under the host home. DCIM: see above. */
@@ -198,6 +331,10 @@ public final class SharedStorage {
      *  @return links created this call, or -1 when nothing ran. Never throws. */
     public static synchronized int mapUserFolders() {
         if (!userFoldersEnabled()) return -1;
+        // Win.apk: the host made junctions before the JVM started. This code
+        // would see each as a real folder and "merge" the user's folder into
+        // itself, renaming every file in it.
+        if (hostMapsUserFolders()) return -1;
         try {
             String[] id = SpecialAccessStore.selfIdentity();
             if (id == null) return -1;              // not an installed bundle
@@ -222,6 +359,10 @@ public final class SharedStorage {
             try {
                 if (!java.nio.file.Files.isDirectory(target)) {
                     logQuiet("user folder " + target + " missing; " + m[0] + " stays in the volume");
+                    continue;
+                }
+                if (isJunction(link)) {
+                    logQuiet("left alone: " + link + " is a junction (the Windows host's)");
                     continue;
                 }
                 if (java.nio.file.Files.isSymbolicLink(link)) {
