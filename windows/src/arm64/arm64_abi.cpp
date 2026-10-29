@@ -232,6 +232,7 @@ bool known_syscall(uint64_t nr) {
         case 98: case 178: case 172: case 124: case 278: case 113: case 233: case 283:   // via the shim's syscall()
         case 56: case 57: case 62: case 63: case 64: case 79: case 80: case 93: case 94:  // via libc functions
         case 96: case 132: case 134: case 135: case 167:
+        case 48: case 129: case 130: case 131:  // faccessat; kill, tkill, tgkill
             return true;
         default:
             return false;
@@ -259,6 +260,20 @@ int64_t do_syscall(uint64_t nr, const uint64_t a[6]) {
         case 233: return via(28);   // madvise
         case 283: return via(324);  // membarrier
         case 96: return via(186);   // set_tid_address: returns the caller's tid
+        case 48: {  // faccessat
+            const auto f = shim<int64_t(WINAPK_GUEST_ABI*)(int64_t, int64_t, int64_t, int64_t)>("faccessat");
+            return f(static_cast<int64_t>(a[0]), static_cast<int64_t>(a[1]), static_cast<int64_t>(a[2]),
+                     static_cast<int64_t>(a[3]));
+        }
+        case 129: {  // kill
+            const auto f = shim<int64_t(WINAPK_GUEST_ABI*)(int64_t, int64_t)>("kill");
+            return f(static_cast<int64_t>(a[0]), static_cast<int64_t>(a[1]));
+        }
+        // tkill(tid, sig), tgkill(tgid, tid, sig): the threads are this
+        // process's own, and no signal is delivered on Windows (sigaction
+        // records handlers, it does not install them); signal 0, the check
+        // that a thread is alive, is the common use and is answered yes.
+        case 130: case 131: return 0;
         case 56: {  // openat: as open() for AT_FDCWD or an absolute path (the shim has no openat)
             const char* path = reinterpret_cast<const char*>(a[1]);
             if (static_cast<int>(a[0]) != -100 && !(path && path[0] == '/')) {

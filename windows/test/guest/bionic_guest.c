@@ -831,6 +831,65 @@ static void test_misc(void) {
     check("sysconf(_SC_PAGESIZE)", sysconf(0x27) == 4096, 0);
 }
 
+// Signals are never delivered on Windows, but what the calls set must read
+// back (crash reporters chain to the handler they replace), and libgen,
+// fnmatch and mkstemp. See src/bionic/signal.cpp.
+struct guest_sigaction {
+    void (*handler)(int);
+    unsigned long flags, restorer, mask;  // 32 bytes, as on LP64 bionic
+};
+struct guest_stack {
+    void* sp;
+    int flags;
+    unsigned long size;
+};
+int sigemptyset(unsigned long*);
+int sigaddset(unsigned long*, int);
+int sigismember(const unsigned long*, int);
+int sigaction(int, const struct guest_sigaction*, struct guest_sigaction*);
+int sigaltstack(const struct guest_stack*, struct guest_stack*);
+int sigprocmask(int, const unsigned long*, unsigned long*);
+int timer_create(int, void*, void**);
+char* dirname(const char*);
+char* basename(const char*);
+int fnmatch(const char*, const char*, int);
+int mkstemp(char*);
+static void on_signal(int sig) { (void)sig; }
+
+static void test_signals_and_paths(const char* dir) {
+    unsigned long set;
+    check("sigemptyset/sigaddset/sigismember",
+          sigemptyset(&set) == 0 && sigaddset(&set, 11) == 0 && sigismember(&set, 11) == 1 &&
+              sigismember(&set, 6) == 0 && set == (1UL << 10),
+          0);
+    struct guest_sigaction act = {on_signal, 0x08000000, 0, 0}, old;
+    memset(&old, 0x55, sizeof old);
+    int first = sigaction(11, &act, &old);
+    check("sigaction reports SIG_DFL first, all of it zeroed", first == 0 && old.handler == 0 && old.flags == 0, 0);
+    struct guest_sigaction back;
+    check("sigaction reports the handler set before",
+          sigaction(11, 0, &back) == 0 && back.handler == on_signal && back.flags == 0x08000000, 0);
+    struct guest_stack ss;
+    memset(&ss, 0x55, sizeof ss);
+    check("sigaltstack reports SS_DISABLE before one is set", sigaltstack(0, &ss) == 0 && ss.flags == 2, 0);
+    unsigned long block = 1UL << 1, was = 99;
+    sigprocmask(0, &block, 0);  // SIG_BLOCK
+    check("sigprocmask keeps the thread's mask", sigprocmask(2, 0, &was) == 0 && was == block, 0);
+    sigprocmask(2, &set, 0);
+    void* timer = 0;
+    check("timer_create gives an id", timer_create(1, 0, &timer) == 0 && timer != 0, 0);
+    check("dirname", strcmp(dirname("/data/app/lib.so"), "/data/app") == 0 && strcmp(dirname("lib.so"), ".") == 0 &&
+                         strcmp(dirname("/lib.so"), "/") == 0, 0);
+    check("basename", strcmp(basename("/data/app/lib.so/"), "lib.so") == 0, 0);
+    check("fnmatch", fnmatch("*.so", "libc.so", 0) == 0 && fnmatch("lib[a-c]?.so", "libcx.so", 0) == 0 &&
+                         fnmatch("*.so", "lib/c.so", 2) != 0 && fnmatch("[!a]*", "abc", 0) != 0, 0);
+    char path[512];
+    snprintf(path, sizeof path, "%s/tmpXXXXXX", dir);
+    const int fd = mkstemp(path);
+    check("mkstemp creates a new file", fd >= 0 && strcmp(path + strlen(path) - 6, "XXXXXX") != 0, path);
+    if (fd >= 0) close(fd);
+}
+
 EXPORT int bionic_test(const char* dir) {
     printf("Bionic shim, from guest code\n");
     test_printf();
@@ -845,5 +904,6 @@ EXPORT int bionic_test(const char* dir) {
     test_zlib(dir);
     test_rand48_statfs_getopt(dir);
     test_misc();
+    test_signals_and_paths(dir);
     return failures;
 }

@@ -3,6 +3,7 @@
 
 #include "winapk/arm64_aot.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cinttypes>
 #include <cstdio>
@@ -10,6 +11,7 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -72,6 +74,69 @@ std::filesystem::path sibling(const std::string& so, const char* suffix) {
 }
 
 bool load_dll(const std::filesystem::path& dll, uint64_t bias, uint64_t text_hash);
+
+// ---- naming a fault in translated code ---------------------------------------------
+// A bad guest pointer in translated code is a native access violation in the
+// DLL, and the process died with only "c0000005 in <lib>.so.aot.dll+offset"
+// in the Windows event log. Each loaded DLL's range and functions are kept
+// so a fault can be reported as the guest function it is in; the handler
+// only reports (once per place), and the fault goes on to whoever handles it.
+struct LoadedDll {
+    uint64_t lo, hi;
+    std::string so;
+    std::vector<std::pair<uint64_t, uint64_t>> fns;  // (host address, guest vaddr), sorted
+};
+SRWLOCK g_dlls_lock = SRWLOCK_INIT;
+std::vector<LoadedDll>* g_dlls = new std::vector<LoadedDll>;
+
+LONG CALLBACK report_aot_fault(EXCEPTION_POINTERS* e) {
+    if (e->ExceptionRecord->ExceptionCode != EXCEPTION_ACCESS_VIOLATION) return EXCEPTION_CONTINUE_SEARCH;
+    const uint64_t rip = e->ContextRecord->Rip;
+    char line[512] = {};
+    AcquireSRWLockShared(&g_dlls_lock);
+    for (const LoadedDll& d : *g_dlls) {
+        if (rip < d.lo || rip >= d.hi) continue;
+        auto it = std::upper_bound(d.fns.begin(), d.fns.end(), std::make_pair(rip, UINT64_MAX));
+        const ULONG_PTR* info = e->ExceptionRecord->ExceptionInformation;
+        if (it == d.fns.begin()) break;
+        --it;
+        std::snprintf(line, sizeof line,
+                      "[win.apk] arm64 AOT: access violation %s 0x%llx in %s, guest function 0x%llx "
+                      "(translated code +0x%llx)\n",
+                      info[0] == 1 ? "writing" : info[0] == 8 ? "executing" : "reading",
+                      static_cast<unsigned long long>(info[1]), d.so.c_str(),
+                      static_cast<unsigned long long>(it->second), static_cast<unsigned long long>(rip - it->first));
+        break;
+    }
+    ReleaseSRWLockShared(&g_dlls_lock);
+    if (line[0]) {
+        static std::atomic<uint64_t> last{0};
+        if (last.exchange(rip) != rip) {  // not again for a fault that repeats
+            DWORD n;
+            WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(std::strlen(line)), &n, nullptr);
+        }
+    }
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
+void remember_dll(HMODULE h, const AotModule* m, const std::filesystem::path& dll) {
+    static std::once_flag handler;
+    std::call_once(handler, [] { AddVectoredExceptionHandler(0, report_aot_fault); });
+    const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(h);
+    const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(reinterpret_cast<const uint8_t*>(h) + dos->e_lfanew);
+    LoadedDll d;
+    d.lo = reinterpret_cast<uint64_t>(h);
+    d.hi = d.lo + nt->OptionalHeader.SizeOfImage;
+    d.so = dll.stem().u8string();  // <lib>.so.aot.dll -> <lib>.so.aot
+    if (d.so.size() > 4 && d.so.compare(d.so.size() - 4, 4, ".aot") == 0) d.so.resize(d.so.size() - 4);
+    for (uint64_t i = 0; i < m->count; ++i) {
+        d.fns.emplace_back(reinterpret_cast<uint64_t>(m->entries[i].fn), m->entries[i].vaddr);
+    }
+    std::sort(d.fns.begin(), d.fns.end());
+    AcquireSRWLockExclusive(&g_dlls_lock);
+    g_dlls->push_back(std::move(d));
+    ReleaseSRWLockExclusive(&g_dlls_lock);
+}
 
 }  // namespace
 
@@ -222,6 +287,7 @@ bool load_dll(const std::filesystem::path& dll, uint64_t bias, uint64_t text_has
     for (uint64_t i = 0; i < m->count; ++i) (*next)[bias + m->entries[i].vaddr] = m->entries[i].fn;
     g_functions.store(next, std::memory_order_release);
     ReleaseSRWLockExclusive(&g_load_lock);
+    remember_dll(h, m, dll);
     std::fprintf(stderr, "[win.apk] arm64 AOT: %s: %llu translated functions\n", dll.filename().u8string().c_str(),
                  static_cast<unsigned long long>(m->count));
     return true;
