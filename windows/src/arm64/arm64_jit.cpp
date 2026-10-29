@@ -22,6 +22,7 @@
 #ifdef WINAPK_HAVE_DYNARMIC
 
 #include "arm64_internal.h"
+#include "winapk/arm64_aot.h"
 
 #include <dynarmic/interface/A64/a64.h>
 #include <dynarmic/interface/A64/config.h>
@@ -253,6 +254,9 @@ private:
         if (hooks().aot_entry && hooks().aot_entry(vaddr)) return std::nullopt;
         uint64_t lo, hi;
         if (!hooks().code_range(vaddr, &lo, &hi) || vaddr + 4 > hi) return std::nullopt;
+        // Each block is fetched once, when dynarmic compiles it: the code
+        // that runs, for the translation's profile (arm64_aot.h, "Profiles").
+        aot_profile_hit(vaddr);
         return load<uint32_t>(vaddr);
     }
 

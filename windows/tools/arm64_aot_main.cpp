@@ -2,7 +2,14 @@
 // of time, for the installer to compile into `<lib>.so.aot.dll` (see
 // include/winapk/arm64_aot.h for how the runtime uses it).
 //
-//   winapk-aot <lib.so> <out.c> [parts]   (parts: out.c.1.c ..., to compile in parallel)
+//   winapk-aot <lib.so> <out.c> [parts] [--profile <file>] [--full-below <insns>]
+//
+// parts: out.c.1.c ..., to compile in parallel (fewer when the library is
+// small). With --profile, a library of more than --full-below instructions
+// is translated only where the profile says code ran (see
+// include/winapk/arm64_aot.h, "Profiles"). Exit code 0: translated whole;
+// 4: translated where the profile says code ran; 3: nothing ran yet, so
+// nothing was written.
 //
 // Functions are found from the symbol tables and, transitively, from the
 // targets of BL; each is decoded by following its branches. In the C, every
@@ -23,12 +30,14 @@
 #include "winapk/arm64_aot.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cinttypes>
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <iterator>
 #include <map>
 #include <set>
 #include <string>
@@ -2059,14 +2068,40 @@ std::string Emitter::function(size_t* interpreted) {
     return out;
 }
 
+// A profile's addresses (library vaddrs), when it was written for this build
+// of the library; see arm64_aot.h, "Profiles".
+bool read_profile(const char* path, uint64_t text_hash, std::set<uint64_t>* hits) {
+    std::ifstream in(path, std::ios::binary);
+    std::string line;
+    if (!in || !std::getline(in, line)) return false;
+    unsigned long long hash = 0;
+    if (std::sscanf(line.c_str(), "winapk-aot-profile 1 %llx", &hash) != 1 || hash != text_hash) return false;
+    while (std::getline(in, line)) {
+        if (!line.empty()) hits->insert(std::strtoull(line.c_str(), nullptr, 16));
+    }
+    return true;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
-    if (argc != 3 && argc != 4) {
-        std::fprintf(stderr, "usage: winapk-aot <lib.so> <out.c> [parts]\n");
+    const char* usage = "usage: winapk-aot <lib.so> <out.c> [parts] [--profile <file>] [--full-below <insns>]\n";
+    if (argc < 3) {
+        std::fprintf(stderr, "%s", usage);
         return 2;
     }
-    const size_t parts = argc == 4 ? static_cast<size_t>(std::max(1, std::atoi(argv[3]))) : 1;
+    size_t parts = 1, full_below = 0;
+    const char* profile = nullptr;
+    for (int i = 3; i < argc; ++i) {
+        const std::string a = argv[i];
+        if (a == "--profile" && i + 1 < argc) profile = argv[++i];
+        else if (a == "--full-below" && i + 1 < argc) full_below = std::strtoull(argv[++i], nullptr, 10);
+        else if (i == 3 && std::isdigit(static_cast<unsigned char>(a[0]))) parts = std::max(1, std::atoi(argv[i]));
+        else {
+            std::fprintf(stderr, "%s", usage);
+            return 2;
+        }
+    }
     Image img;
     std::string error;
     if (!read_image(argv[1], &img, &error)) {
@@ -2098,23 +2133,60 @@ int main(int argc, char** argv) {
             if (entries.insert(t).second) work.push_back(t);
         }
     }
+    size_t total = 0;
+    for (const auto& f : functions) total += f.second.insns.size();
+
+    // A large library with a profile: only the functions code ran in. The
+    // rest stays with the JIT, as untranslated code always does.
+    const bool by_profile = profile && total > full_below;
+    if (by_profile) {
+        std::set<uint64_t> hits;
+        if (!read_profile(profile, img.text_hash, &hits)) hits.clear();
+        const size_t all = functions.size();
+        for (auto it = functions.begin(); it != functions.end();) {
+            const std::set<uint64_t>& in = it->second.insns;
+            auto h = hits.lower_bound(in.empty() ? 0 : *in.begin());
+            bool ran = false;
+            for (; h != hits.end() && !in.empty() && *h <= *in.rbegin(); ++h) {
+                if (in.count(*h)) {
+                    ran = true;
+                    break;
+                }
+            }
+            it = ran ? std::next(it) : functions.erase(it);
+        }
+        total = 0;
+        for (const auto& f : functions) total += f.second.insns.size();
+        std::fprintf(stderr, "winapk-aot: %s: profile: %zu of %zu functions ran\n", argv[1], functions.size(), all);
+        if (functions.empty()) return 3;
+    }
     std::set<uint64_t> translated;
     for (const auto& f : functions) translated.insert(f.first);
 
     // The C: with `parts` > 1, out.c holds the module table and
     // out.c.1.c .. out.c.<parts>.c the functions, balanced by instruction
-    // count, for compiling in parallel.
+    // count, for compiling in parallel. A part under ~20000 instructions
+    // costs clang more in fixed overhead than it saves.
+    parts = std::max<size_t>(1, std::min(parts, (total + 19999) / 20000));
     std::string protos;
     for (uint64_t e : translated) protos += fmt("uint32_t F_%" PRIx64 "(Cpu* restrict c);\n", e);
     std::vector<std::string> bodies(parts);
-    size_t insns = 0, interpreted = 0, total = 0;
-    for (const auto& f : functions) total += f.second.insns.size();
-    for (const auto& f : functions) {
-        Emitter em(img, f.second, translated);
+    // Largest functions first, each to the part with the fewest instructions
+    // so far: a few huge functions (clang's time grows faster than their
+    // size) land in different parts instead of holding one up.
+    std::vector<const Function*> order;
+    for (const auto& f : functions) order.push_back(&f.second);
+    std::stable_sort(order.begin(), order.end(),
+                     [](const Function* a, const Function* b) { return a->insns.size() > b->insns.size(); });
+    std::vector<size_t> load(parts, 0);
+    size_t insns = 0, interpreted = 0;
+    for (const Function* f : order) {
+        Emitter em(img, *f, translated);
         size_t n = 0;
-        const size_t part = std::min(parts - 1, total ? insns * parts / total : 0);
+        const size_t part = static_cast<size_t>(std::min_element(load.begin(), load.end()) - load.begin());
         bodies[part] += em.function(&n);
-        insns += f.second.insns.size();
+        load[part] += f->insns.size();
+        insns += f->insns.size();
         interpreted += n;
     }
     std::string table = "uint64_t aot_base;\nAotRuntime aot_rt;\n\nstatic const AotEntry entries[] = {\n";
@@ -2146,5 +2218,5 @@ int main(int argc, char** argv) {
                  argv[1], functions.size(), insns, interpreted,
                  insns ? 100.0 * static_cast<double>(interpreted) / static_cast<double>(insns) : 0.0,
                  skipped ? fmt(", %zu too large to translate", skipped).c_str() : "");
-    return 0;
+    return by_profile ? 4 : 0;
 }
