@@ -229,8 +229,11 @@ Done so far:
   instructions is translated only where the JIT's profile
   (`<lib>.so.aot.profile`) says code ran, and again as that grows; a
   translation finished while the app runs is loaded at once (see
-  `include/winapk/arm64_aot.h`, "Profiles"). Code without a translation
-  runs through a JIT (dynarmic) backed by an interpreter. CMake option
+  `include/winapk/arm64_aot.h`, "Profiles"). Functions of more than 4000
+  instructions are compiled unoptimized (clang's time on them grows far
+  faster than their size), and whole translations are shared between apps
+  through `<data>\aot-cache`, keyed by the library's code. Code without a
+  translation runs through a JIT (dynarmic) backed by an interpreter. CMake option
   `-DWINAPK_ARM64_JIT=ON` (CI and releases) fetches dynarmic;
   `WINAPK_ARM64_ENGINE=interp` forces the interpreter, and
   `WINAPK_ARM64_STATS=1` prints at exit where the guest's time went (host

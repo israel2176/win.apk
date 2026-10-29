@@ -3,6 +3,7 @@
 // include/winapk/arm64_aot.h for how the runtime uses it).
 //
 //   winapk-aot <lib.so> <out.c> [parts] [--profile <file>] [--full-below <insns>]
+//   winapk-aot --hash <lib.so>
 //
 // parts: out.c.1.c ..., to compile in parallel (fewer when the library is
 // small). With --profile, a library of more than --full-below instructions
@@ -234,6 +235,10 @@ struct Function {
 };
 
 constexpr size_t kMaxInsns = 100000;
+
+// Functions above this many instructions are compiled without optimization
+// (Emitter::function). WINAPK_AOT_OPTNONE_INSNS overrides it, for measuring.
+size_t g_optnone_insns = 4000;
 
 // Follows the branches of the function at f->entry. BL targets go to `calls`.
 bool discover(const Image& img, const std::set<uint64_t>& entries, Function* f, std::set<uint64_t>* calls) {
@@ -2049,6 +2054,13 @@ std::string Emitter::function(size_t* interpreted) {
     out += "#define FLUSH_ALL() do {" + flush_all + " } while (0)\n";
     out += "#define RELOAD_ALL() do {" + reload_all + " } while (0)\n";
     out += "#define RELOAD_CALL() do {" + reload_call + " } while (0)\n";
+    // A huge function costs clang far more than its size (time grows faster
+    // than the number of blocks): one of 10K+ instructions in
+    // libjuicebox_sdk_jni.so took 200 s at -O1, 12.6 s unoptimized. So, as
+    // other static recompilers do, those few are not optimized; they still
+    // run natively, with the guest registers in stack slots, as the JIT
+    // keeps them in memory.
+    if (f_.insns.size() > g_optnone_insns) out += "__attribute__((optnone, noinline)) ";
     out += "uint32_t " + name + "(Cpu* restrict c) {\n";
     out += "    const uint64_t B = aot_base;\n";
     for (unsigned n = 0; n < 32; ++n) {
@@ -2085,7 +2097,18 @@ bool read_profile(const char* path, uint64_t text_hash, std::set<uint64_t>* hits
 }  // namespace
 
 int main(int argc, char** argv) {
-    const char* usage = "usage: winapk-aot <lib.so> <out.c> [parts] [--profile <file>] [--full-below <insns>]\n";
+    const char* usage = "usage: winapk-aot <lib.so> <out.c> [parts] [--profile <file>] [--full-below <insns>]\n"
+                        "       winapk-aot --hash <lib.so>   (prints the text hash a translation is keyed by)\n";
+    if (argc == 3 && std::string(argv[1]) == "--hash") {
+        Image img;
+        std::string error;
+        if (!read_image(argv[2], &img, &error)) {
+            std::fprintf(stderr, "winapk-aot: %s: %s\n", argv[2], error.c_str());
+            return 1;
+        }
+        std::printf("%016" PRIx64 "\n", img.text_hash);
+        return 0;
+    }
     if (argc < 3) {
         std::fprintf(stderr, "%s", usage);
         return 2;
@@ -2102,6 +2125,7 @@ int main(int argc, char** argv) {
             return 2;
         }
     }
+    if (const char* t = std::getenv("WINAPK_AOT_OPTNONE_INSNS")) g_optnone_insns = std::strtoull(t, nullptr, 10);
     Image img;
     std::string error;
     if (!read_image(argv[1], &img, &error)) {
@@ -2214,9 +2238,16 @@ int main(int argc, char** argv) {
             if (!write(fmt("%s.%zu.c", argv[2], i + 1), head + bodies[i])) return 1;
         }
     }
-    std::fprintf(stderr, "winapk-aot: %s: %zu functions, %zu instructions, %zu through the interpreter (%.1f%%)%s\n",
+    size_t largest = 0, unoptimized = 0;
+    for (const Function* f : order) {
+        largest = std::max(largest, f->insns.size());
+        if (f->insns.size() > g_optnone_insns) ++unoptimized;
+    }
+    std::fprintf(stderr,
+                 "winapk-aot: %s: %zu functions, %zu instructions, %zu through the interpreter (%.1f%%), "
+                 "largest function %zu instructions, %zu unoptimized%s\n",
                  argv[1], functions.size(), insns, interpreted,
-                 insns ? 100.0 * static_cast<double>(interpreted) / static_cast<double>(insns) : 0.0,
-                 skipped ? fmt(", %zu too large to translate", skipped).c_str() : "");
+                 insns ? 100.0 * static_cast<double>(interpreted) / static_cast<double>(insns) : 0.0, largest,
+                 unoptimized, skipped ? fmt(", %zu too large to translate", skipped).c_str() : "");
     return by_profile ? 4 : 0;
 }
