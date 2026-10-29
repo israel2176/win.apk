@@ -928,8 +928,11 @@ struct AotWatch {
 DWORD WINAPI aot_watch_thread(void* param) {
     const AotWatch w = *static_cast<AotWatch*>(param);
     delete static_cast<AotWatch*>(param);
-    for (DWORD wait = 20000;; wait = 30000) {
-        Sleep(wait);
+    // Every 2 s for the first half minute (a flush with nothing new writes
+    // nothing): an app that stops early (Waze, ten seconds in) still leaves
+    // the profile of what ran. Then every 30 s.
+    for (int tick = 0;; ++tick) {
+        Sleep(tick < 15 ? 2000 : 30000);
         if (winapk::arm64::aot_profile_flush() > 0 && any_aot_work(w.libs)) start_aot_worker(w.libs, w.log, w.cache);
         winapk::arm64::aot_load_pending();
     }
