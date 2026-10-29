@@ -4,10 +4,16 @@
 #include "winapk/arm64_aot.h"
 
 #include <atomic>
+#include <cinttypes>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <memory>
+#include <string>
 #include <unordered_map>
+#include <unordered_set>
+#include <vector>
 
 #include <windows.h>
 
@@ -48,10 +54,144 @@ void runtime_step(Cpu* c) { step(*c); }
 
 uint32_t runtime_plain(uint64_t target) { return hooks().plain_host && hooks().plain_host(target); }
 
+// Every arm64 library mapped, for the profile and for translations that
+// arrive while the app runs. Guarded by g_libs_lock.
+struct Library {
+    std::string so;  // UTF-8
+    uint64_t bias = 0, text_hash = 0, lo = 0, hi = 0;
+    bool translated = false;      // a DLL is loaded for it
+    bool profile_read = false;    // the profile file's addresses are in `seen`
+    std::unordered_set<uint64_t> seen;  // library vaddrs recorded (this run and the file)
+    std::vector<uint64_t> pending;      // recorded, not in the file yet
+};
+SRWLOCK g_libs_lock = SRWLOCK_INIT;
+std::vector<std::unique_ptr<Library>> g_libs;
+
+std::filesystem::path sibling(const std::string& so, const char* suffix) {
+    return std::filesystem::u8path(so + suffix);
+}
+
+bool load_dll(const std::filesystem::path& dll, uint64_t bias, uint64_t text_hash);
+
 }  // namespace
 
-bool aot_load(const char* so_path, uint64_t bias, uint64_t text_hash) {
-    const std::filesystem::path dll = std::filesystem::u8path(std::string(so_path) + ".aot.dll");
+bool aot_load(const char* so_path, uint64_t bias, uint64_t text_hash, uint64_t code_lo, uint64_t code_hi) {
+    auto lib = std::make_unique<Library>();
+    lib->so = so_path;
+    lib->bias = bias;
+    lib->text_hash = text_hash;
+    lib->lo = code_lo;
+    lib->hi = code_hi;
+    lib->translated = load_dll(sibling(lib->so, ".aot.dll"), bias, text_hash);
+    const bool translated = lib->translated;
+    AcquireSRWLockExclusive(&g_libs_lock);
+    g_libs.push_back(std::move(lib));
+    ReleaseSRWLockExclusive(&g_libs_lock);
+    return translated;
+}
+
+void aot_profile_hit(uint64_t pc) {
+    AcquireSRWLockExclusive(&g_libs_lock);
+    for (const auto& lib : g_libs) {
+        if (pc < lib->lo || pc >= lib->hi) continue;
+        if (lib->seen.insert(pc - lib->bias).second) lib->pending.push_back(pc - lib->bias);
+        break;
+    }
+    ReleaseSRWLockExclusive(&g_libs_lock);
+}
+
+size_t aot_profile_flush() {
+    struct Batch {
+        Library* lib;
+        std::string so;
+        uint64_t text_hash;
+        bool read;
+        std::vector<uint64_t> hits;
+    };
+    std::vector<Batch> batches;
+    AcquireSRWLockExclusive(&g_libs_lock);
+    for (const auto& lib : g_libs) {
+        if (lib->pending.empty()) continue;
+        batches.push_back({lib.get(), lib->so, lib->text_hash, lib->profile_read, std::move(lib->pending)});
+        lib->pending.clear();
+        lib->profile_read = true;
+    }
+    ReleaseSRWLockExclusive(&g_libs_lock);
+
+    size_t grew = 0;
+    char header[64];
+    for (Batch& b : batches) {
+        const std::filesystem::path path = sibling(b.so, ".aot.profile");
+        std::snprintf(header, sizeof header, "winapk-aot-profile 1 %" PRIx64, b.text_hash);
+        bool fresh = true;  // no usable file: start one
+        if (!b.read) {
+            // First write this run: what earlier runs recorded is not news.
+            std::ifstream in(path, std::ios::binary);
+            std::string line;
+            if (in && std::getline(in, line) && line == header) {
+                fresh = false;
+                std::unordered_set<uint64_t> old;
+                while (std::getline(in, line)) {
+                    if (!line.empty()) old.insert(std::strtoull(line.c_str(), nullptr, 16));
+                }
+                std::vector<uint64_t> news;
+                for (uint64_t h : b.hits) {
+                    if (!old.count(h)) news.push_back(h);
+                }
+                b.hits.swap(news);
+                AcquireSRWLockExclusive(&g_libs_lock);
+                b.lib->seen.insert(old.begin(), old.end());
+                ReleaseSRWLockExclusive(&g_libs_lock);
+            }
+        } else {
+            fresh = false;
+        }
+        if (b.hits.empty() && !fresh) continue;
+        std::ofstream out(path, fresh ? std::ios::binary | std::ios::trunc : std::ios::binary | std::ios::app);
+        if (fresh) out << header << '\n';
+        char row[24];
+        for (uint64_t h : b.hits) {
+            std::snprintf(row, sizeof row, "%" PRIx64 "\n", h);
+            out << row;
+        }
+        if (out && !b.hits.empty()) ++grew;
+    }
+    return grew;
+}
+
+size_t aot_load_pending() {
+    struct Want {
+        Library* lib;
+        std::string so;
+        uint64_t bias, text_hash;
+    };
+    std::vector<Want> want;
+    AcquireSRWLockShared(&g_libs_lock);
+    for (const auto& lib : g_libs) {
+        if (!lib->translated) want.push_back({lib.get(), lib->so, lib->bias, lib->text_hash});
+    }
+    ReleaseSRWLockShared(&g_libs_lock);
+    size_t loaded = 0;
+    for (const Want& w : want) {
+        std::error_code ec;
+        bool ok = false;
+        for (const char* suffix : {".aot.dll", ".aot.dll.new"}) {
+            const std::filesystem::path dll = sibling(w.so, suffix);
+            if (std::filesystem::exists(dll, ec) && (ok = load_dll(dll, w.bias, w.text_hash))) break;
+        }
+        if (!ok) continue;
+        AcquireSRWLockExclusive(&g_libs_lock);
+        w.lib->translated = true;
+        ReleaseSRWLockExclusive(&g_libs_lock);
+        std::fprintf(stderr, "[win.apk] arm64 AOT: %s: translation loaded while the app runs\n", w.so.c_str());
+        ++loaded;
+    }
+    return loaded;
+}
+
+namespace {
+
+bool load_dll(const std::filesystem::path& dll, uint64_t bias, uint64_t text_hash) {
     std::error_code ec;
     if (!std::filesystem::exists(dll, ec)) return false;
     HMODULE h = LoadLibraryW(dll.wstring().c_str());
@@ -82,8 +222,12 @@ bool aot_load(const char* so_path, uint64_t bias, uint64_t text_hash) {
     for (uint64_t i = 0; i < m->count; ++i) (*next)[bias + m->entries[i].vaddr] = m->entries[i].fn;
     g_functions.store(next, std::memory_order_release);
     ReleaseSRWLockExclusive(&g_load_lock);
+    std::fprintf(stderr, "[win.apk] arm64 AOT: %s: %llu translated functions\n", dll.filename().u8string().c_str(),
+                 static_cast<unsigned long long>(m->count));
     return true;
 }
+
+}  // namespace
 
 AotFn aot_lookup(uint64_t pc) {
     const FunctionMap* map = g_functions.load(std::memory_order_acquire);
