@@ -84,7 +84,9 @@ are the most useful:
 
 Java is included (Eclipse Temurin 21, in the jre folder), and so is ANGLE
 (bin\libEGL.dll, bin\libGLESv2.dll, Chromium's build; licenses in
-bin\licenses). Nothing else needs to be installed.
+bin\licenses), and the parts of LLVM's clang that translate apps' ARM code
+for your processor (the clang folder, licenses in clang\licenses). Nothing
+else needs to be installed.
 
 License: AGPL-3.0, like Mac.apk. Source: the repository this build came
 from. Win.apk is not affiliated with the Mac.apk project.

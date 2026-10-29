@@ -219,17 +219,21 @@ the clipboard). The most useful lines:
 
 Why the split: Android phones are ARM, while these PCs are x64. Java code
 and x86_64 libraries run directly. An app's 64-bit ARM libraries
-(`lib/arm64-v8a`) are translated to x64 once, when the app is
-installed: `winapk-aot` turns each library into C and clang compiles it
-for your CPU (`<lib>.so.aot.dll`, next to the library). That code runs at
-close to native speed. What the translation cannot follow, or every library
-when no clang is found, runs through an ARM JIT instead, which is slower.
+(`lib/arm64-v8a`) are translated to x64 in the background: `winapk-aot`
+turns each library into C and clang compiles it for your CPU
+(`<lib>.so.aot.dll`, next to the library), on all but one core. The app
+does not wait: it starts at once on an ARM JIT, which is slower, and each
+library switches to its translation as soon as it is ready, even while the
+app runs. Large libraries are translated only where the app's code actually
+ran, and more as you use the app. Translated code runs at close to native
+speed.
 Apps are installed with the ABIs `x86_64,arm64-v8a`, so an app's x86_64 build
 is used when it has one. 32-bit ARM (`armeabi-v7a`) is not supported.
 
-The translation needs clang: Win.apk uses `WINAPK_AOT_CLANG`, a
-`clang\bin\clang.exe` in Win.apk's folder, a `clang.exe` on the PATH, or an
-LLVM or MSYS2 (`C:\msys64\clang64`) install, in that order.
+The translation uses clang, which comes with Win.apk (the `clang` folder,
+about 230 MB). To use another, set `WINAPK_AOT_CLANG` to its `clang.exe`;
+without the bundled one, Win.apk also looks on the PATH and for an LLVM or
+MSYS2 (`C:\msys64\clang64`) install.
 
 ## Where your data lives
 

@@ -220,13 +220,20 @@ Done so far:
 - arm64-v8a libraries, when an app has no x86_64 build (apps install with
   the ABIs `x86_64,arm64-v8a`; `WINAPK_ABIS` overrides): the same loader,
   linker and JNI bridge, checked in CI against the host and in a real JVM.
-  At install (`translate_arm64` in `host/runtime_main.cpp`) `winapk-aot`
-  turns each `lib/arm64/*.so` into C and clang (`WINAPK_AOT_CLANG`,
+  In the background (`prepare_arm64` and `winapk-runtime --aot-translate`
+  in `host/runtime_main.cpp`; nothing waits for it) `winapk-aot` turns each
+  `lib/arm64/*.so` into C, in parts, and clang (`WINAPK_AOT_CLANG`,
   `<install>\clang\bin\clang.exe` or the PATH; the launcher also finds an
-  LLVM or MSYS2 clang) compiles it with `-O2 -march=native` into
-  `<lib>.so.aot.dll`, once per install. Code the translation cannot follow,
-  or a library whose translation failed or found no clang, runs through a
-  JIT (dynarmic) backed by an interpreter. CMake option
+  LLVM or MSYS2 clang) compiles the parts in parallel with
+  `-O1 -march=native` into `<lib>.so.aot.dll`. A library of more than 400K
+  instructions is translated only where the JIT's profile
+  (`<lib>.so.aot.profile`) says code ran, and again as that grows; a
+  translation finished while the app runs is loaded at once (see
+  `include/winapk/arm64_aot.h`, "Profiles"). Functions of more than 4000
+  instructions are compiled unoptimized (clang's time on them grows far
+  faster than their size), and whole translations are shared between apps
+  through `<data>\aot-cache`, keyed by the library's code. Code without a
+  translation runs through a JIT (dynarmic) backed by an interpreter. CMake option
   `-DWINAPK_ARM64_JIT=ON` (CI and releases) fetches dynarmic;
   `WINAPK_ARM64_ENGINE=interp` forces the interpreter, and
   `WINAPK_ARM64_STATS=1` prints at exit where the guest's time went (host

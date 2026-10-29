@@ -20,6 +20,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -360,10 +361,21 @@ void svc(Cpu& c, uint32_t) {
         c.x[0] = result;
         return;
     }
-    std::fprintf(stderr, "[win.apk] arm64 guest made a raw Linux system call %llu at %s; not supported\n",
-                 static_cast<unsigned long long>(c.x[8]), where(c.pc - 4).c_str());
-    std::fflush(stderr);
-    std::abort();
+    // As a kernel without the call would: ENOSYS, which code that probes for
+    // newer calls handles. Reported once per call number.
+    static std::mutex lock;
+    static std::set<uint64_t> reported;
+    {
+        std::lock_guard<std::mutex> hold(lock);
+        if (reported.insert(c.x[8]).second) {
+            std::fprintf(stderr,
+                         "[win.apk] arm64 guest made a raw Linux system call %llu at %s; not supported, "
+                         "returning ENOSYS\n",
+                         static_cast<unsigned long long>(c.x[8]), where(c.pc - 4).c_str());
+            std::fflush(stderr);
+        }
+    }
+    c.x[0] = static_cast<uint64_t>(-38);  // -ENOSYS
 }
 
 // ---- va_list ------------------------------------------------------------------

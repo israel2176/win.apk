@@ -697,15 +697,18 @@ void ElfImage::seal_relro() {
 
 void ElfImage::register_arm64_code() {
     uint64_t text_hash = 0xcbf29ce484222325ull;
+    uint64_t code_lo = UINT64_MAX, code_hi = 0;
     for (const Segment& s : loads_) {
         if (!(s.flags & kPfX) || s.memsz == 0) continue;
         arm64::register_code(at<const void>(s.vaddr), s.memsz);
         arm64_code_.push_back(at<const void>(s.vaddr));
         if (s.filesz) text_hash = arm64::aot_hash(at<const uint8_t>(s.vaddr), s.filesz, text_hash);
+        code_lo = std::min(code_lo, reinterpret_cast<uint64_t>(at<const void>(s.vaddr)));
+        code_hi = std::max(code_hi, reinterpret_cast<uint64_t>(at<const void>(s.vaddr)) + s.memsz);
     }
-    // The code translated at install time, if the installer made it (still
-    // unrelocated here, as winapk-aot read it).
-    arm64::aot_load(path_.u8string().c_str(), bias_, text_hash);
+    // The code translated ahead of time, if there is a translation yet
+    // (still unrelocated here, as winapk-aot read it).
+    arm64::aot_load(path_.u8string().c_str(), bias_, text_hash, code_lo, code_hi);
 }
 
 // DT_INIT_ARRAY entries are called as fn(argc, argv, envp); DT_INIT,

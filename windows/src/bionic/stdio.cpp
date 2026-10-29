@@ -272,7 +272,15 @@ WINAPK_GUEST_ABI int g_fcntl(int fd, int cmd, int64_t arg) {
         case 1030: return g_dup(fd);                   // F_DUPFD_CLOEXEC
         case 1: case 2: case 4: return 0;              // F_GETFD, F_SETFD, F_SETFL
         case 3: return kORdWr;                         // F_GETFL
-        case 5: case 6: case 7: return 0;              // F_GETLK, F_SETLK, F_SETLKW
+        // Locks are always granted, so F_GETLK answers that nothing holds
+        // one: l_type, the struct flock's first field on both ABIs, is
+        // F_UNLCK. Left as the caller set it, SQLite's own VFS (an app's
+        // bundled libsqlite3) saw a lock it never got and failed with
+        // SQLITE_PROTOCOL ("locking protocol" in X).
+        case 5:                                        // F_GETLK
+            if (arg) *reinterpret_cast<int16_t*>(arg) = 2;
+            return 0;
+        case 6: case 7: return 0;                      // F_SETLK, F_SETLKW
         default: (void)arg; *guest_errno() = kEINVAL; return -1;
     }
 }
@@ -559,6 +567,27 @@ WINAPK_GUEST_ABI char* g_realpath(const char* path, char* out) {
 WINAPK_GUEST_ABI int g_chmod(const char*, unsigned) { return 0; }
 WINAPK_GUEST_ABI int g_fchmod(int, unsigned) { return 0; }
 WINAPK_GUEST_ABI unsigned g_umask(unsigned) { return 022; }
+WINAPK_GUEST_ABI unsigned g_umask_chk(unsigned mode) { return g_umask(mode); }
+
+// mkstemp/mkostemp: the template's trailing XXXXXX replaced until a new file
+// can be created (O_EXCL), as bionic does; the path goes through g_open, so
+// guest paths map as for any other open.
+WINAPK_GUEST_ABI int g_mkostemp(char* tmpl, int flags) {
+    const size_t n = tmpl ? std::strlen(tmpl) : 0;
+    if (n < 6 || std::strcmp(tmpl + n - 6, "XXXXXX") != 0) return *guest_errno() = kEINVAL, -1;
+    static const char kChars[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    uint64_t seed = GetTickCount64() ^ (static_cast<uint64_t>(GetCurrentThreadId()) << 32);
+    for (int attempt = 0; attempt < 100; ++attempt) {
+        for (size_t i = n - 6; i < n; ++i) {
+            seed = seed * 6364136223846793005ull + 1442695040888963407ull;
+            tmpl[i] = kChars[(seed >> 33) % (sizeof kChars - 1)];
+        }
+        const int fd = g_open(tmpl, kORdWr | kOCreat | kOExcl | (flags & ~(kOCreat | kOExcl | 03)), 0600);
+        if (fd >= 0 || *guest_errno() != 17) return fd;  // EEXIST: try another name
+    }
+    return -1;
+}
+WINAPK_GUEST_ABI int g_mkstemp(char* tmpl) { return g_mkostemp(tmpl, 0); }
 
 // ---- directories -------------------------------------------------------------------------
 // Bionic's struct dirent on x86_64.
@@ -801,6 +830,11 @@ const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("chmod", g_chmod),
     WINAPK_SHIM("fchmod", g_fchmod),
     WINAPK_SHIM("umask", g_umask),
+    WINAPK_SHIM("__umask_chk", g_umask_chk),
+    WINAPK_SHIM("mkstemp", g_mkstemp),
+    WINAPK_SHIM("mkstemp64", g_mkstemp),
+    WINAPK_SHIM("mkostemp", g_mkostemp),
+    WINAPK_SHIM("mkostemp64", g_mkostemp),
     WINAPK_SHIM("opendir", g_opendir),
     WINAPK_SHIM("readdir", g_readdir),
     WINAPK_SHIM("readdir64", g_readdir),
