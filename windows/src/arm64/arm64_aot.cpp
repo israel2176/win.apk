@@ -75,15 +75,45 @@ std::filesystem::path sibling(const std::string& so, const char* suffix) {
 
 bool load_dll(const std::filesystem::path& dll, uint64_t bias, uint64_t text_hash);
 
+// Whether the library's translation crashed before (see report_aot_fault).
+bool marked_bad(const std::string& so) {
+    std::ifstream in(sibling(so, ".aot.stamp"), std::ios::binary);
+    char kind[4] = {};
+    return in.read(kind, 3) && std::strcmp(kind, "bad") == 0;
+}
+
 // ---- naming a fault in translated code ---------------------------------------------
 // A bad guest pointer in translated code is a native access violation in the
 // DLL, and the process died with only "c0000005 in <lib>.so.aot.dll+offset"
 // in the Windows event log. Each loaded DLL's range and functions are kept
 // so a fault can be reported as the guest function it is in; the handler
-// only reports (once per place), and the fault goes on to whoever handles it.
+// reports it (once per place) and lets the fault go on to whoever handles it.
+//
+// It also marks the library's translation bad (<lib>.so.aot.stamp "bad"):
+// from the next start the JIT runs that library and the worker leaves it
+// alone (runtime_main.cpp, aot_needs_work), so a translation bug costs one
+// crash instead of every start. The JIT runs the same code correctly
+// (Waze's libcrashlytics-common.so: translated, it crashed ten seconds in;
+// on the JIT, Waze runs).
+//
+// TODO(aot): fix the translation instead of falling back. The case found:
+// libcrashlytics-common.so (Waze 5.26.5), base::StringPrintf(const char*,
+// ...) at vaddr 0x106398, a variadic function; its translated code writes to
+// 0xe9 at +0x1a1. Suspect the prologue that spills x1-x7/q0-q7 to the
+// va_list save area (stores relative to SP, or the FP/SIMD half guarded by
+// a test of w8), or how va_start's pointers are formed. Reproduce with
+// winapk-aot on that library and the arm64 differential test, with a
+// variadic guest function added to test/guest/arm64_isa.c.
+// TODO(aot): second case, same app: libwaze.so, guest function 0x4035494
+// (stripped; it runs among the library's 2184 initializers), writes to 0x8
+// at +0xf9 (+0x88 in an older, -O2 build). Find what the guest reads as 0
+// there that the JIT does not.
+// TODO(aot): a "bad" stamp is kept until the library changes; it should
+// also be retried when winapk-aot changes (as the shared cache's key does).
 struct LoadedDll {
     uint64_t lo, hi;
-    std::string so;
+    std::string so;      // file name, for the message
+    std::wstring stamp;  // <lib>.so.aot.stamp
     std::vector<std::pair<uint64_t, uint64_t>> fns;  // (host address, guest vaddr), sorted
 };
 SRWLOCK g_dlls_lock = SRWLOCK_INIT;
@@ -93,6 +123,7 @@ LONG CALLBACK report_aot_fault(EXCEPTION_POINTERS* e) {
     if (e->ExceptionRecord->ExceptionCode != EXCEPTION_ACCESS_VIOLATION) return EXCEPTION_CONTINUE_SEARCH;
     const uint64_t rip = e->ContextRecord->Rip;
     char line[512] = {};
+    std::wstring stamp;
     AcquireSRWLockShared(&g_dlls_lock);
     for (const LoadedDll& d : *g_dlls) {
         if (rip < d.lo || rip >= d.hi) continue;
@@ -100,6 +131,7 @@ LONG CALLBACK report_aot_fault(EXCEPTION_POINTERS* e) {
         const ULONG_PTR* info = e->ExceptionRecord->ExceptionInformation;
         if (it == d.fns.begin()) break;
         --it;
+        stamp = d.stamp;
         std::snprintf(line, sizeof line,
                       "[win.apk] arm64 AOT: access violation %s 0x%llx in %s, guest function 0x%llx "
                       "(translated code +0x%llx)\n",
@@ -114,6 +146,18 @@ LONG CALLBACK report_aot_fault(EXCEPTION_POINTERS* e) {
         if (last.exchange(rip) != rip) {  // not again for a fault that repeats
             DWORD n;
             WriteFile(GetStdHandle(STD_ERROR_HANDLE), line, static_cast<DWORD>(std::strlen(line)), &n, nullptr);
+            if (!stamp.empty()) {
+                HANDLE f = CreateFileW(stamp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL,
+                                       nullptr);
+                if (f != INVALID_HANDLE_VALUE) {
+                    WriteFile(f, "bad 0\n", 6, &n, nullptr);
+                    CloseHandle(f);
+                }
+                static const char kNote[] =
+                    "[win.apk] arm64 AOT: that translation is marked bad; from the next start the JIT runs the "
+                    "library\n";
+                WriteFile(GetStdHandle(STD_ERROR_HANDLE), kNote, sizeof kNote - 1, &n, nullptr);
+            }
         }
     }
     return EXCEPTION_CONTINUE_SEARCH;
@@ -129,6 +173,12 @@ void remember_dll(HMODULE h, const AotModule* m, const std::filesystem::path& dl
     d.hi = d.lo + nt->OptionalHeader.SizeOfImage;
     d.so = dll.stem().u8string();  // <lib>.so.aot.dll -> <lib>.so.aot
     if (d.so.size() > 4 && d.so.compare(d.so.size() - 4, 4, ".aot") == 0) d.so.resize(d.so.size() - 4);
+    std::wstring base = dll.wstring();  // <lib>.so.aot.dll or <lib>.so.aot.dll.new
+    for (const wchar_t* suffix : {L".new", L".aot.dll"}) {
+        const size_t n = std::wcslen(suffix);
+        if (base.size() > n && base.compare(base.size() - n, n, suffix) == 0) base.resize(base.size() - n);
+    }
+    d.stamp = base + L".aot.stamp";
     for (uint64_t i = 0; i < m->count; ++i) {
         d.fns.emplace_back(reinterpret_cast<uint64_t>(m->entries[i].fn), m->entries[i].vaddr);
     }
@@ -147,7 +197,12 @@ bool aot_load(const char* so_path, uint64_t bias, uint64_t text_hash, uint64_t c
     lib->text_hash = text_hash;
     lib->lo = code_lo;
     lib->hi = code_hi;
-    lib->translated = load_dll(sibling(lib->so, ".aot.dll"), bias, text_hash);
+    if (marked_bad(lib->so)) {
+        std::fprintf(stderr, "[win.apk] arm64 AOT: %s: its translation crashed before; the JIT runs it\n",
+                     std::filesystem::u8path(lib->so).filename().u8string().c_str());
+    } else {
+        lib->translated = load_dll(sibling(lib->so, ".aot.dll"), bias, text_hash);
+    }
     const bool translated = lib->translated;
     AcquireSRWLockExclusive(&g_libs_lock);
     g_libs.push_back(std::move(lib));
@@ -233,7 +288,7 @@ size_t aot_load_pending() {
     std::vector<Want> want;
     AcquireSRWLockShared(&g_libs_lock);
     for (const auto& lib : g_libs) {
-        if (!lib->translated) want.push_back({lib.get(), lib->so, lib->bias, lib->text_hash});
+        if (!lib->translated && !marked_bad(lib->so)) want.push_back({lib.get(), lib->so, lib->bias, lib->text_hash});
     }
     ReleaseSRWLockShared(&g_libs_lock);
     size_t loaded = 0;

@@ -550,8 +550,9 @@ bool install_app(Options* o, const fs::path& android_root) {
 // <lib>.so.aot.stamp says what the last translation used: "full",
 // "profile <lines>" (the profile's line count then), "wait <lines>" (too
 // large without a profile, or failed: tried again when the profile grows),
-// or "skip" (not an arm64 ELF file: packed or encrypted, loaded by the app's
-// own code). A DLL without a stamp is a whole translation from before stamps.
+// "skip" (not an arm64 ELF file: packed or encrypted, loaded by the app's
+// own code), or "bad" (its translation crashed: the loader marks it, and the
+// JIT runs the library; see arm64_aot.cpp). A DLL without a stamp is a whole translation from before stamps.
 //
 // Many apps ship the same libraries (libc++_shared.so, libcrashlytics.so,
 // SQLite, ...). As Windows on ARM's translation cache and Box64's DynaCache
@@ -625,7 +626,7 @@ bool newer_than(const fs::path& a, const fs::path& b) {
 bool aot_needs_work(const fs::path& so) {
     const bool have = newer_than(with_suffix(so, L".aot.dll"), so) || newer_than(with_suffix(so, L".aot.dll.new"), so);
     const AotStamp stamp = read_aot_stamp(so);
-    if (stamp.kind == "skip") return !newer_than(with_suffix(so, L".aot.stamp"), so);
+    if (stamp.kind == "skip" || stamp.kind == "bad") return !newer_than(with_suffix(so, L".aot.stamp"), so);
     auto grown = [&] {
         const size_t p = profile_lines(so);
         return p >= stamp.lines + std::max<size_t>(200, stamp.lines / 10);
