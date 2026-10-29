@@ -22,6 +22,18 @@
 // Calls follow the AAPCS64: across a call, the translated caller keeps its
 // own copies of the callee-saved registers and reloads only x0-x7 and
 // v0-v7, which is what a compiled callee may change.
+//
+// Profiles. Compiling a whole large library takes clang most of an hour
+// (libwaze.so: 1.5M instructions), most of it for code the app never runs.
+// So, as ART does with its profile-guided compiles, nothing waits for the
+// translation: the app starts on the JIT, the JIT records which code it
+// compiled (aot_profile_hit), and that goes to `<lib>.so.aot.profile`
+// (aot_profile_flush): a header line `winapk-aot-profile 1 <text_hash>`,
+// then one library vaddr per line, in hex. A background translation
+// (winapk-runtime --aot-translate) compiles a small library whole and a large
+// one only where its profile says code ran, again as the profile grows. A
+// translation finished while the app runs is loaded at once
+// (aot_load_pending), for the functions not entered yet.
 
 #pragma once
 
@@ -78,7 +90,20 @@ inline uint64_t aot_hash(const uint8_t* p, size_t n, uint64_t h = 0xcbf29ce48422
 // Loads `<so_path>.aot.dll` for an arm64 library mapped at `bias` whose
 // executable segments hash to `text_hash`; false if there is none or it
 // does not match (built for another version of the library or of Win.apk).
-bool aot_load(const char* so_path, uint64_t bias, uint64_t text_hash);
+// [code_lo, code_hi) is the library's code, for the profile.
+bool aot_load(const char* so_path, uint64_t bias, uint64_t text_hash, uint64_t code_lo, uint64_t code_hi);
+
+// The JIT compiled guest code at `pc`: recorded for the library's profile.
+void aot_profile_hit(uint64_t pc);
+
+// Appends the addresses recorded since the last call to each library's
+// profile. Returns how many profiles grew.
+size_t aot_profile_flush();
+
+// Loads translations a background translation finished since the libraries
+// were mapped (`<lib>.so.aot.dll`, or `.aot.dll.new` while an older one is in
+// use). Returns how many it loaded.
+size_t aot_load_pending();
 
 // The translated function at guest address `pc`, if any (and AOT is on).
 AotFn aot_lookup(uint64_t pc);

@@ -47,6 +47,7 @@ ShimTable printf_symbols();   // printf.cpp: the printf family and liblog's form
 ShimTable pthread_symbols();  // pthread.cpp: threads, mutexes, conditions, keys, once
 ShimTable stdio_symbols();    // stdio.cpp: FILE, file descriptors, directories, stat
 ShimTable misc_symbols();     // misc.cpp: time, sysconf, system properties, environment, math
+ShimTable signal_symbols();   // signal.cpp: sigaction, sigaltstack, masks, POSIX timers (state kept, none delivered)
 ShimTable fd_symbols();       // fd.cpp: pipe, eventfd, poll, select, epoll
 ShimTable socket_symbols();
 ShimTable looper_symbols();   // looper.cpp: the NDK's ALooper   // socket.cpp: BSD sockets on Winsock, getaddrinfo, inet_*

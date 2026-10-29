@@ -199,6 +199,49 @@ WINAPK_GUEST_ABI void g_cxa_guard_release(uint64_t* guard) {
 
 WINAPK_GUEST_ABI void g_cxa_guard_abort(uint64_t*) { g_guard_lock.unlock(); }
 
+// ---- operator new / delete: Android's libstdc++.so ---------------------------
+// A library linked against the system C++ runtime (NEEDED libstdc++.so, as
+// Starling's DexProtector libalice.so is) imports the global operators from
+// it, as it does __cxa_guard_*. Without them `new` returned 0 and the first
+// store through it crashed. Same heap as malloc/free, which guest code mixes
+// with them. No C++ exception can cross into the guest, so a failed
+// allocation stops the program as an unhandled std::bad_alloc would.
+WINAPK_GUEST_ABI void* g_operator_new(size_t n) {
+    if (void* p = std::malloc(n ? n : 1)) return p;
+    std::fprintf(stderr, "[win.apk] guest operator new(%zu): out of memory\n", n);
+    std::fflush(stderr);
+    std::abort();
+}
+WINAPK_GUEST_ABI void* g_operator_new_nothrow(size_t n, const void*) { return std::malloc(n ? n : 1); }
+WINAPK_GUEST_ABI void* g_operator_new_aligned(size_t n, size_t align) {
+    if (void* p = aligned_block(align, n ? n : 1)) return p;
+    std::fprintf(stderr, "[win.apk] guest operator new(%zu, align %zu): out of memory\n", n, align);
+    std::fflush(stderr);
+    std::abort();
+}
+WINAPK_GUEST_ABI void g_operator_delete(void* p) { g_free(p); }
+WINAPK_GUEST_ABI void g_operator_delete_extra(void* p, size_t) { g_free(p); }  // sized, aligned, nothrow
+
+[[noreturn]] WINAPK_GUEST_ABI void g_cxa_pure_virtual() {
+    std::fprintf(stderr, "[win.apk] guest called a pure virtual function\n");
+    std::fflush(stderr);
+    std::abort();
+}
+
+// ---- assert ---------------------------------------------------------------------
+// Bionic's assert() calls these, which never return. A stub that returned 0
+// let the code run on past the failed check, into a crash with no message
+// (ChatGPT's libopenai_xplat_export.so); now the check's message is in the log.
+[[noreturn]] WINAPK_GUEST_ABI void g_assert2(const char* file, int line, const char* function, const char* failed) {
+    std::fprintf(stderr, "[win.apk] guest assertion failed: %s:%d: %s: %s\n", file ? file : "?", line,
+                 function ? function : "?", failed ? failed : "?");
+    std::fflush(stderr);
+    std::abort();
+}
+[[noreturn]] WINAPK_GUEST_ABI void g_assert(const char* file, int line, const char* failed) {
+    g_assert2(file, line, nullptr, failed);
+}
+
 // ---- qsort: a guest callback invoked from host code -------------------------
 // The CRT's qsort calls its comparator with the Microsoft ABI. The guest's
 // comparator expects System V. An ms_abi trampoline reads the guest pointer
@@ -247,6 +290,25 @@ const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("__cxa_guard_acquire", g_cxa_guard_acquire),
     WINAPK_SHIM("__cxa_guard_release", g_cxa_guard_release),
     WINAPK_SHIM("__cxa_guard_abort", g_cxa_guard_abort),
+    WINAPK_SHIM("__cxa_pure_virtual", g_cxa_pure_virtual),
+    WINAPK_SHIM("_Znwm", g_operator_new),
+    WINAPK_SHIM("_Znam", g_operator_new),
+    WINAPK_SHIM("_ZnwmRKSt9nothrow_t", g_operator_new_nothrow),
+    WINAPK_SHIM("_ZnamRKSt9nothrow_t", g_operator_new_nothrow),
+    WINAPK_SHIM("_ZnwmSt11align_val_t", g_operator_new_aligned),
+    WINAPK_SHIM("_ZnamSt11align_val_t", g_operator_new_aligned),
+    WINAPK_SHIM("_ZdlPv", g_operator_delete),
+    WINAPK_SHIM("_ZdaPv", g_operator_delete),
+    WINAPK_SHIM("_ZdlPvm", g_operator_delete_extra),
+    WINAPK_SHIM("_ZdaPvm", g_operator_delete_extra),
+    WINAPK_SHIM("_ZdlPvRKSt9nothrow_t", g_operator_delete_extra),
+    WINAPK_SHIM("_ZdaPvRKSt9nothrow_t", g_operator_delete_extra),
+    WINAPK_SHIM("_ZdlPvSt11align_val_t", g_operator_delete_extra),
+    WINAPK_SHIM("_ZdaPvSt11align_val_t", g_operator_delete_extra),
+    WINAPK_SHIM("_ZdlPvmSt11align_val_t", g_operator_delete_extra),
+    WINAPK_SHIM("_ZdaPvmSt11align_val_t", g_operator_delete_extra),
+    WINAPK_SHIM("__assert", g_assert),
+    WINAPK_SHIM("__assert2", g_assert2),
     WINAPK_SHIM("qsort", g_qsort),
     WINAPK_SHIM("__tls_get_addr", winapk::tls_get_addr),
 };
@@ -353,7 +415,7 @@ void* mini_bionic_resolve(const char* name) {
         };
         add(kSymbols, sizeof(kSymbols) / sizeof(kSymbols[0]));
         for (ShimTable t : {bionic::string_symbols(), bionic::printf_symbols(), bionic::pthread_symbols(),
-                            bionic::stdio_symbols(), bionic::misc_symbols(),
+                            bionic::stdio_symbols(), bionic::misc_symbols(), bionic::signal_symbols(),
                             bionic::locale_symbols(), bionic::fd_symbols(),
                             bionic::socket_symbols(), bionic::looper_symbols(),
                             bionic::zlib_symbols()}) {

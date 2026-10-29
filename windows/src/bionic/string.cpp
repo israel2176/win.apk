@@ -346,6 +346,98 @@ WINAPK_GUEST_ABI void* g_memchr_chk(const void* s, int c, size_t n, size_t sn) {
     return const_cast<void*>(std::memchr(s, c, n));
 }
 
+// ---- <libgen.h>: bionic's dirname and basename leave their argument alone and
+// answer in a per-thread buffer, as POSIX allows.
+WINAPK_GUEST_ABI char* g_dirname(const char* path) {
+    static thread_local char buf[4096];
+    if (!path || !*path) return std::strcpy(buf, ".");
+    size_t end = std::strlen(path);
+    while (end > 1 && path[end - 1] == '/') --end;  // trailing slashes
+    while (end > 0 && path[end - 1] != '/') --end;   // the last component
+    if (end == 0) return std::strcpy(buf, ".");
+    while (end > 1 && path[end - 1] == '/') --end;  // the slashes before it
+    if (end >= sizeof buf) return *guest_errno() = kENAMETOOLONG, nullptr;
+    std::memcpy(buf, path, end);
+    buf[end] = '\0';
+    return buf;
+}
+WINAPK_GUEST_ABI char* g_basename(const char* path) {
+    static thread_local char buf[4096];
+    if (!path || !*path) return std::strcpy(buf, ".");
+    size_t end = std::strlen(path);
+    while (end > 1 && path[end - 1] == '/') --end;
+    size_t start = end;
+    while (start > 0 && path[start - 1] != '/') --start;
+    if (end - start >= sizeof buf) return *guest_errno() = kENAMETOOLONG, nullptr;
+    std::memcpy(buf, path + start, end - start);
+    buf[end - start] = '\0';
+    return buf;
+}
+// GNU basename (<string.h>): the text after the last slash, in place.
+WINAPK_GUEST_ABI const char* g_gnu_basename(const char* path) {
+    const char* slash = std::strrchr(path, '/');
+    return slash ? slash + 1 : path;
+}
+
+// ---- fnmatch: shell wildcards (*, ?, [...] with ! or ^ and ranges, \ escapes) ----
+constexpr int kFnmNoescape = 0x01, kFnmPathname = 0x02, kFnmPeriod = 0x04, kFnmCasefold = 0x10;
+
+bool fn_match(const char* p, const char* s, const char* start, int flags) {
+    auto fold = [&](unsigned char c) { return (flags & kFnmCasefold) ? std::tolower(c) : c; };
+    auto leading_dot = [&](const char* at) {
+        return (flags & kFnmPeriod) && *at == '.' &&
+               (at == start || ((flags & kFnmPathname) && at[-1] == '/'));
+    };
+    for (; *p; ++p, ++s) {
+        switch (*p) {
+            case '?':
+                if (!*s || ((flags & kFnmPathname) && *s == '/') || leading_dot(s)) return false;
+                break;
+            case '*': {
+                while (p[1] == '*') ++p;
+                if (leading_dot(s)) return false;
+                for (const char* t = s;; ++t) {
+                    if (fn_match(p + 1, t, start, flags)) return true;
+                    if (!*t || ((flags & kFnmPathname) && *t == '/')) return false;
+                }
+            }
+            case '[': {
+                if (!*s || ((flags & kFnmPathname) && *s == '/') || leading_dot(s)) return false;
+                const char* q = p + 1;
+                const bool negate = *q == '!' || *q == '^';
+                if (negate) ++q;
+                bool hit = false;
+                const char* first = q;
+                for (; *q && (*q != ']' || q == first); ++q) {
+                    unsigned char lo = static_cast<unsigned char>(*q), hi = lo;
+                    if (q[1] == '-' && q[2] && q[2] != ']') {
+                        hi = static_cast<unsigned char>(q[2]);
+                        q += 2;
+                    }
+                    const int c = fold(static_cast<unsigned char>(*s));
+                    if (c >= fold(lo) && c <= fold(hi)) hit = true;
+                }
+                if (*q != ']') {  // no closing bracket: a literal '['
+                    if (*s != '[') return false;
+                    break;
+                }
+                if (hit == negate) return false;
+                p = q;
+                break;
+            }
+            case '\\':
+                if (!(flags & kFnmNoescape) && p[1]) ++p;
+                [[fallthrough]];
+            default:
+                if (fold(static_cast<unsigned char>(*p)) != fold(static_cast<unsigned char>(*s))) return false;
+        }
+    }
+    return *s == '\0';
+}
+WINAPK_GUEST_ABI int g_fnmatch(const char* pattern, const char* string, int flags) {
+    return fn_match(pattern, string, string, flags) ? 0 : 1;  // FNM_NOMATCH
+}
+
 }  // namespace
 
 const char* errno_text(int e) {
@@ -358,6 +450,10 @@ const char* errno_text(int e) {
 namespace {
 
 const ShimSymbol kSymbols[] = {
+    WINAPK_SHIM("dirname", g_dirname),
+    WINAPK_SHIM("basename", g_basename),
+    WINAPK_SHIM("__gnu_basename", g_gnu_basename),
+    WINAPK_SHIM("fnmatch", g_fnmatch),
     WINAPK_SHIM("memchr", g_memchr),
     WINAPK_SHIM("memrchr", g_memrchr),
     WINAPK_SHIM("memmem", g_memmem),
