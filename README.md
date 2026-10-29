@@ -226,13 +226,14 @@ does not wait: it starts at once on an ARM JIT, which is slower, and each
 library switches to its translation as soon as it is ready, even while the
 app runs. Large libraries are translated only where the app's code actually
 ran, and more as you use the app. Translated code runs at close to native
-speed. Without clang, everything stays on the JIT.
+speed.
 Apps are installed with the ABIs `x86_64,arm64-v8a`, so an app's x86_64 build
 is used when it has one. 32-bit ARM (`armeabi-v7a`) is not supported.
 
-The translation needs clang: Win.apk uses `WINAPK_AOT_CLANG`, a
-`clang\bin\clang.exe` in Win.apk's folder, a `clang.exe` on the PATH, or an
-LLVM or MSYS2 (`C:\msys64\clang64`) install, in that order.
+The translation uses clang, which comes with Win.apk (the `clang` folder,
+about 230 MB). To use another, set `WINAPK_AOT_CLANG` to its `clang.exe`;
+without the bundled one, Win.apk also looks on the PATH and for an LLVM or
+MSYS2 (`C:\msys64\clang64`) install.
 
 ## Where your data lives
 
