@@ -323,3 +323,8 @@ It also builds on [ANGLE](https://chromium.googlesource.com/angle/angle),
 ## License
 
 [AGPL-3.0](LICENSE).
+
+
+## UCRT Windows CD support
+
+This build exposes Windows optical drives through android.hardware.usb as Bulk-Only Mass Storage devices. CBW commands are translated to Windows SCSI pass-through, including chunked READ CD. The existing Windows document picker and URI grant layer provide Windows file open/save access to guest Android apps.

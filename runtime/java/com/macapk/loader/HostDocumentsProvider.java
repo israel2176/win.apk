@@ -286,23 +286,65 @@ public final class HostDocumentsProvider extends DocumentsProvider {
      *  .getDocIdForFile, relative to the granted root instead of the volume). */
     private static String docIdFor(Resolved in, File file) throws FileNotFoundException {
         if (in.token == null) throw new FileNotFoundException("not in a tree: " + file);
-        String rootPath = in.root.getAbsolutePath();
-        String path = file.getAbsolutePath();
-        if (path.equals(rootPath)) return in.token;
-        if (!path.startsWith(rootPath.endsWith("/") ? rootPath : rootPath + "/")) {
+
+        // File.getAbsolutePath() returns backslash-separated paths on Windows.
+        // The old implementation appended a literal '/', so a child such as
+        // C:\Users\name\Music\song.m4a never matched the granted root
+        // C:\Users\name\Music. Canonicalize first, use the platform-aware
+        // containment helper, then store the relative part in the provider's
+        // stable forward-slash document-id format.
+        final File canonicalRoot;
+        final File canonicalFile;
+        try {
+            canonicalRoot = in.root.getCanonicalFile();
+            canonicalFile = file.getCanonicalFile();
+        } catch (IOException e) {
+            FileNotFoundException failure = new FileNotFoundException(
+                    "Failed to canonicalize tree child " + file);
+            failure.initCause(e);
+            throw failure;
+        }
+
+        String rootPath = canonicalRoot.getPath();
+        String path = canonicalFile.getPath();
+        if (samePath(rootPath, path)) return in.token;
+        if (!contains(rootPath, path)) {
             throw new FileNotFoundException("Failed to find root that contains " + path);
         }
+
         String rel = path.substring(rootPath.length());
-        while (rel.startsWith("/")) rel = rel.substring(1);
+        while (rel.startsWith("/") || rel.startsWith("\\")) rel = rel.substring(1);
+        rel = rel.replace('\\', '/');
+        if (rel.isEmpty()) return in.token;
         return in.token + "/" + rel;
     }
 
     /** android.os.FileUtils.contains(String, String) (android14-release
      *  core/java/android/os/FileUtils.java:916-925). Both paths canonical. */
     static boolean contains(String dirPath, String filePath) {
-        if (dirPath.equals(filePath)) return true;
-        if (!dirPath.endsWith("/")) dirPath += "/";
-        return filePath.startsWith(dirPath);
+        String dir = normalizedHostPath(dirPath);
+        String file = normalizedHostPath(filePath);
+        if (samePath(dir, file)) return true;
+        if (!dir.endsWith("/")) dir += "/";
+        return isWindowsHost()
+                ? file.toLowerCase(Locale.ROOT).startsWith(dir.toLowerCase(Locale.ROOT))
+                : file.startsWith(dir);
+    }
+
+    /** Normalize only for host-path comparison. Document ids themselves always
+     *  retain '/'. Windows paths are case-insensitive; Unix paths are not. */
+    private static String normalizedHostPath(String path) {
+        return path == null ? "" : path.replace('\\', '/');
+    }
+
+    private static boolean samePath(String first, String second) {
+        String a = normalizedHostPath(first);
+        String b = normalizedHostPath(second);
+        return isWindowsHost() ? a.equalsIgnoreCase(b) : a.equals(b);
+    }
+
+    private static boolean isWindowsHost() {
+        return File.separatorChar == '\\';
     }
 
     /** The write half of the pick's grant. On a device an app without a write
