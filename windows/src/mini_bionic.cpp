@@ -66,6 +66,19 @@ bool take_aligned(void* p, AlignedBlock* out) {
     return true;
 }
 
+// malloc_usable_size: what the block can hold. Skia and Dart's allocator ask,
+// and a 0 makes them treat every block as full. The UCRT's _msize answers for
+// a plain block; an over-aligned one holds what it was asked for.
+WINAPK_GUEST_ABI size_t g_malloc_usable_size(const void* p) {
+    if (!p) return 0;
+    if (g_aligned_count.load(std::memory_order_relaxed) != 0) {
+        std::lock_guard<std::mutex> hold(g_aligned_lock);
+        auto it = g_aligned.find(const_cast<void*>(p));
+        if (it != g_aligned.end()) return it->second.size;
+    }
+    return _msize(const_cast<void*>(p));
+}
+
 WINAPK_GUEST_ABI void* g_realloc(void* p, size_t n) {
     AlignedBlock b;
     if (p && take_aligned(p, &b)) {
@@ -272,6 +285,7 @@ const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("aligned_alloc", g_aligned_alloc),
     WINAPK_SHIM("valloc", g_valloc),
     WINAPK_SHIM("pvalloc", g_valloc),
+    WINAPK_SHIM("malloc_usable_size", g_malloc_usable_size),
     WINAPK_SHIM("memcpy", g_memcpy),
     WINAPK_SHIM("memmove", g_memmove),
     WINAPK_SHIM("memset", g_memset),
