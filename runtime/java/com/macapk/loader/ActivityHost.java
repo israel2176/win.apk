@@ -2545,6 +2545,12 @@ public final class ActivityHost {
         if (isDial && uri != null && uri.startsWith("tel:")) {
             return new HostAction(HostAction.Kind.OPEN_URL, uri);
         }
+        // Settings' location screen (an app's "turn on location"): the host's
+        // own location settings, where the host names one (Windows).
+        if (android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS.equals(action)) {
+            String settings = LocationBridge.hostSettingsUrl();
+            if (settings != null) return new HostAction(HostAction.Kind.OPEN_URL, settings);
+        }
         // The package installer's surface. On a device these resolve to the
         // platform packageinstaller app (android-9.0.0_r1 packages/apps/
         // PackageInstaller/AndroidManifest.xml: .InstallStart takes
