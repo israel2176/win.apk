@@ -42,7 +42,7 @@ import urllib.request
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 STUB_RE = re.compile(r"native not implemented on Windows yet, returning 0: (\S+)")
-# "[W] Mac.apk.ActivityHost: onCreate threw java.lang.Foo: msg -- continuing"
+# "[W] Win.apk.ActivityHost: onCreate threw java.lang.Foo: msg -- continuing"
 THREW_RE = re.compile(r"threw ([\w.$]+(?:Exception|Error))(?::\s*(.*?))?(?: -- continuing)?$")
 # A bare stack-trace head: "java.lang.IllegalStateException: msg"
 TRACE_RE = re.compile(r"^([a-z][\w.]*\.[A-Z][\w$]*(?:Exception|Error))(?::\s*(.*))?$")
