@@ -316,4 +316,4 @@ add_executable(winapk-launcher WIN32 launcher/launcher_main.cpp launcher/launche
 set_target_properties(winapk-launcher PROPERTIES OUTPUT_NAME "Win.apk")
 target_compile_definitions(winapk-launcher PRIVATE UNICODE _UNICODE _WIN32_WINNT=0x0A00 WINVER=0x0A00)
 target_link_options(winapk-launcher PRIVATE -municode -static)
-target_link_libraries(winapk-launcher PRIVATE comctl32 shell32 ole32 uuid gdiplus dwmapi uxtheme gdi32 winhttp bcrypt)
+target_link_libraries(winapk-launcher PRIVATE comctl32 shell32 ole32 uuid gdiplus dwmapi uxtheme gdi32 winhttp bcrypt crypt32)

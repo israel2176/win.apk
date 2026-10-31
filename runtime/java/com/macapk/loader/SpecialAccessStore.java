@@ -142,8 +142,21 @@ public final class SpecialAccessStore {
     private static final File STORE_FILE = defaultStoreFile();
     public static File storeFile() { return STORE_FILE; }
     static File defaultStoreFile() {
+        if (windowsHost()) return new File(windowsDataDir(), "appops/app-ops.json");
         return new File(SharedStorage.hostHome(),
                 "Library/Application Support/Mac.apk/appops/app-ops.json");
+    }
+
+    /** Win.apk: the store, its key and the registry live in the host's data
+     *  folder (%LOCALAPPDATA%\Win.apk), the parent of the android root the host
+     *  pins with -Dmacapk.android.root before any guest code runs. The helper
+     *  there is the launcher (Win.apk.exe runtime-permission / special-access /
+     *  app-details), which writes them as macapk-installhelper does here. */
+    static boolean windowsHost() { return File.separatorChar == '\\'; }
+    static File windowsDataDir() {
+        File root = new File(SharedStorage.androidRoot()).getAbsoluteFile();
+        File parent = root.getParentFile();
+        return parent != null ? parent : root;
     }
     static File publicKeyFile() {
         File dir = STORE_FILE.getParentFile();
@@ -158,6 +171,7 @@ public final class SpecialAccessStore {
      *  the whole home with -Duser.home. */
     static File registryFile() { return defaultRegistryFile(); }
     static File defaultRegistryFile() {
+        if (windowsHost()) return new File(windowsDataDir(), "installed_apps.json");
         return new File(SharedStorage.hostHome(),
                 "Library/Application Support/Mac.apk/installed_apps.json");
     }
@@ -413,6 +427,11 @@ public final class SpecialAccessStore {
         if (!reg.isFile()) return null;
         String root = normalizeDir(SharedStorage.androidRoot());
         String running = runningPackage();
+        // Win.apk: every app shares one android root and the registry keeps one
+        // row per package (the launcher's write_registry), so the row is the
+        // running package's; without a known package there is no identity.
+        final boolean windows = windowsHost();
+        if (windows && running == null) return null;
         try {
             String text = new String(java.nio.file.Files.readAllBytes(reg.toPath()),
                                      StandardCharsets.UTF_8).trim();
@@ -427,7 +446,7 @@ public final class SpecialAccessStore {
                 if (!"installed".equals(a.optString("state", "installed"))) continue;
                 String bundle = a.optString("bundlePath", "");
                 if (bundle.isEmpty()) continue;
-                if (!root.equals(normalizeDir(bundle + "/Contents/android"))) continue;
+                if (!windows && !root.equals(normalizeDir(bundle + "/Contents/android"))) continue;
                 String pkg = a.optString("package", "");
                 if (pkg.isEmpty() || (running != null && !running.equals(pkg))) continue;
                 String dirName = a.optString("dirName", "");
