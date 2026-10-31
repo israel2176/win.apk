@@ -7,6 +7,8 @@ A pre-release for testing: Win.apk runs Android apps on Windows 10/11 x64.
 
 ## What works
 - **Java/Kotlin apps:** each opens in its own window, with mouse, wheel and keyboard input. Back is Escape, Alt+Left or the mouse's back button.
+- **Resizable windows:** drag an edge, maximize or snap an app's window and the app lays itself out for the new size, as an Android desktop window does (an app that fixed its orientation keeps it, with black bars). Each app remembers its size; Get Info resets it.
+- **In Hebrew or English:** Setup and the library follow the Windows display language; Hebrew is laid out right to left.
 - **OpenGL ES:** works from Java (`GLSurfaceView`, libGDX) and from an app's native code through a SurfaceView (SDL games). It runs on ANGLE (Direct3D 11), falling back to WARP or SwiftShader without a GPU.
 - **Native libraries:** apps that ship `lib/x86_64` libraries load them natively. Apps that only ship `lib/arm64-v8a` libraries are supported: their ARM code is translated to x64 in the background (`winapk-aot`, compiled with clang for your CPU, in parallel) and runs at close to native speed. Apps open at once on an ARM JIT and switch to the translated code as it becomes ready; large libraries are translated only where the app's code ran. Installs use the ABIs `x86_64,arm64-v8a`.
 - **Sound from Java:** AudioTrack and SoundPool, for WAV, Ogg and MP3.

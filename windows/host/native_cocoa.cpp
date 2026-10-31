@@ -47,6 +47,51 @@ namespace {
 // common phone screen today and about the shape upstream's Mac launcher picks).
 std::atomic<int> g_phone_w{360};
 std::atomic<int> g_phone_h{640};
+
+// Each app keeps the window size the user last gave it, in dp, as
+// <data>\library\<name>.window ("<w>x<h>"; beside the library's other files on
+// the app, since the app's first run moves unknown files out of apps\<name>).
+// launch_phone_size prefers it to the settings' screen size; the library's Get
+// Info resets it.
+std::mutex g_app_dir_lock;
+std::wstring g_app_dir;  // <data>\apps\<name>, from set_app_dir
+
+std::wstring window_size_file() {
+    std::lock_guard<std::mutex> hold(g_app_dir_lock);
+    const size_t name = g_app_dir.find_last_of(L"\\/");
+    if (name == std::wstring::npos) return L"";
+    const size_t apps = name == 0 ? std::wstring::npos : g_app_dir.find_last_of(L"\\/", name - 1);
+    if (apps == std::wstring::npos) return L"";
+    return g_app_dir.substr(0, apps) + L"\\library\\" + g_app_dir.substr(name + 1) + L".window";
+}
+
+void save_window_size(int w, int h) {
+    const std::wstring file = window_size_file();
+    if (file.empty()) return;
+    const std::string text = std::to_string(w) + "x" + std::to_string(h) + "\n";
+    HANDLE f = CreateFileW(file.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return;
+    DWORD n = 0;
+    WriteFile(f, text.data(), static_cast<DWORD>(text.size()), &n, nullptr);
+    CloseHandle(f);
+}
+
+bool saved_window_size(int* w, int* h) {
+    const std::wstring file = window_size_file();
+    if (file.empty()) return false;
+    HANDLE f = CreateFileW(file.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return false;
+    char buf[32] = {};
+    DWORD n = 0;
+    ReadFile(f, buf, sizeof(buf) - 1, &n, nullptr);
+    CloseHandle(f);
+    int pw = 0, ph = 0;
+    if (std::sscanf(buf, "%dx%d", &pw, &ph) != 2 || pw < 200 || ph < 200 || pw > 4000 || ph > 4000) return false;
+    *w = pw;
+    *h = ph;
+    return true;
+}
+
 std::atomic<jlong> g_next_handle{1};
 std::atomic<long> g_frames{0};
 
@@ -133,6 +178,14 @@ public:
         if (!host || !to_front) return;
         env->CallStaticVoidMethod(host, to_front);
         report_input_exception(env);
+    }
+    // The render thread sees the new phone size on its next tick and reports
+    // it (DisplayConfig, then surfaceChanged); the size is kept for the app's
+    // next start.
+    void resized(int w_dp, int h_dp) override {
+        g_phone_w = w_dp;
+        g_phone_h = h_dp;
+        save_window_size(w_dp, h_dp);
     }
 };
 
@@ -223,14 +276,17 @@ void JNICALL Cocoa_applyRequestedOrientation(JNIEnv*, jclass, jboolean landscape
     const int lo = a < b ? a : b, hi = a < b ? b : a;
     g_phone_w = landscape ? hi : lo;
     g_phone_h = landscape ? lo : hi;
+    window_set_orientation_lock(landscape ? 2 : 1);
     window_set_phone_size(g_phone_w, g_phone_h);
 }
 
 // ActivityInfo.screenOrientation: the landscape and portrait families turn
-// the phone; the rest (unspecified, sensor, behind...) leave it as it is.
+// the phone and fix that shape for a window the user resizes; the rest
+// (unspecified, sensor, behind...) leave the phone as it is and free it.
 void apply_screen_orientation(jint o) {
     if (o == 0 || o == 6 || o == 8 || o == 11) Cocoa_applyRequestedOrientation(nullptr, nullptr, JNI_TRUE);
     else if (o == 1 || o == 7 || o == 9 || o == 12) Cocoa_applyRequestedOrientation(nullptr, nullptr, JNI_FALSE);
+    else window_set_orientation_lock(0);
 }
 void JNICALL Cocoa_applyWindowOrientation(JNIEnv*, jclass, jint o) { apply_screen_orientation(o); }
 void JNICALL Cocoa_applyWindowOrientationFor(JNIEnv*, jclass, jstring, jint, jint o, jint) {
@@ -739,9 +795,39 @@ DWORD WINAPI render_thread(void*) {
     const jmethodID changed = env->GetMethodID(cls, "macapkSurfaceChanged", "(II)V");
     const jmethodID draw = env->GetMethodID(cls, "macapkDrawFrame", "()V");
     env->DeleteLocalRef(cls);
+    // A new phone size is a display change (DisplayConfig, upstream's
+    // v1.0.1637 model): it is noted first, and the renderers hear the new
+    // surface size only once the Configuration and DisplayMetrics describe it
+    // (macapkNoteSurfaceSize answers true), as cocoa_bridge.mm holds its
+    // re-fire, so a surface is never re-created against the old
+    // configuration. Bounded: after ~0.5 s the size goes out anyway. The
+    // first size is Boot's own, which it seeds from the canvas.
+    jclass display = env->FindClass("com/macapk/loader/DisplayConfig");
+    const jmethodID note = display ? env->GetStaticMethodID(display, "macapkNoteSurfaceSize", "(II)Z") : nullptr;
+    if (env->ExceptionCheck()) env->ExceptionClear();
+    if (display) display = static_cast<jclass>(env->NewGlobalRef(display));
+    int shown_w = 0, shown_h = 0, held = 0;
     for (;;) {
         Sleep(16);
-        const int w = static_cast<int>(g_phone_w * density + 0.5f), h = static_cast<int>(g_phone_h * density + 0.5f);
+        int w = static_cast<int>(g_phone_w * density + 0.5f), h = static_cast<int>(g_phone_h * density + 0.5f);
+        if (w != shown_w || h != shown_h) {
+            bool committed = shown_w == 0 || !note;
+            if (!committed) {
+                committed = env->CallStaticBooleanMethod(display, note, w, h) == JNI_TRUE;
+                if (env->ExceptionCheck()) {
+                    env->ExceptionClear();
+                    committed = true;
+                }
+            }
+            if (committed || ++held > 30) {
+                shown_w = w;
+                shown_h = h;
+                held = 0;
+            } else {
+                w = shown_w;
+                h = shown_h;
+            }
+        }
         g_content_w = w;
         g_content_h = h;
         if (g_guest_last_ms.load() != 0) pull_guest_layer_z(env);
@@ -1071,10 +1157,12 @@ HostMethods native_cocoa_methods() { return {kMethods, sizeof(kMethods) / sizeof
 // WhatsApp's welcome screen centres its content up under the top bar, and the
 // content then takes the taps meant for the bar's overflow button. A screen
 // too small for the window gets a lower density (win32_window.h), never a
-// shorter phone. Malformed or out-of-range values are ignored.
+// shorter phone. Malformed or out-of-range values are ignored. The window size
+// the user last gave this app (save_window_size) comes before both.
 void launch_phone_size(int* w, int* h) {
     *w = 360;
     *h = 800;
+    if (saved_window_size(w, h)) return;
     const char* e = std::getenv("WINAPK_PHONE_SIZE");
     if (!e || !*e) return;
     int pw = 0, ph = 0;
@@ -1086,6 +1174,10 @@ void launch_phone_size(int* w, int* h) {
 }
 
 void set_app_dir(const std::wstring& dir) {
+    {
+        std::lock_guard<std::mutex> hold(g_app_dir_lock);
+        g_app_dir = dir;
+    }
     std::lock_guard<std::mutex> hold(g_icon_lock);
     g_icon_path = dir + L"\\icon.png";
 }

@@ -18,14 +18,14 @@ whole) only when a task needs them.
 | `windows/java/` | Windows-only Java (`com/winapk/tools/AppMeta.java`: writes `icon.png` + `label.txt` at install) |
 | `windows/scripts/` | `build_java.sh` (builds `runtime/java` with a stock JDK), `stage_runtime.sh` (runnable `bin/`+`lib/`), `fetch_angle.sh`, `build_framework_res.sh` |
 | `windows/test/` | Unit tests (`*_test.cpp`), guest libs (`guest/`), Wine runners (`run_*_wine.sh`), `compat/` (app sweep: `apps.txt`, `sweep.py`) |
-| `windows/package/` | Installer (`winapk.iss`, Inno Setup), `README.txt` and `RELEASE_NOTES.md` shipped in the package |
+| `windows/package/` | Installer (`winapk.iss`, Inno Setup; English or Hebrew by the Windows display language, UTF-8 with BOM), `README.txt` and `RELEASE_NOTES.md` shipped in the package |
 | `windows/CMakeLists.txt` | All Windows targets. Pulls `runtime/src/native_methods.cpp` (GL bridges) and `native_sqlite.cpp` from upstream |
 | `runtime/java/` | The Android framework in Java (~3000 files) + `com/macapk/loader/` (Boot, ActivityHost, package manager...). Names say macapk: that is upstream's, keep them |
 | `runtime/src/`, `runtime/translator/` | Upstream native sources; Windows uses only the two files above |
 | `scripts/build_framework_res.sh` | The platform resource APK (called by `windows/scripts/`) |
 | `.github/workflows/` | `windows-poc.yml` (build + tests + package, on PRs and by hand), `compat-sweep.yml` (app sweep, PRs and by hand), `windows-release.yml` (release, by hand only) |
 
-Data at run time: `%LOCALAPPDATA%\Win.apk\` (`library\` APKs + `.label`, `apps\<name>\`, `android\`, `logs\last-run.log`, `logs\install-<name>.log`, `store\` the Store tab's F-Droid catalog.tsv + icons, `installed_apps.json` the registry, `appops\` the signed permission grants: app-ops.json, signing-key.pub, signing-key.p256 under DPAPI). Settings: `HKCU\Software\Win.apk` (`Theme`, `Language`, `PhoneSize`, `Landscape`, `DesktopShortcut`). Runtime env: `WINAPK_PHONE_SIZE=WxH` (dp), `WINAPK_HEADLESS=1`, `WINAPK_HEADLESS_FRAME`, `WINAPK_HEADLESS_EXIT_AFTER_FRAMES`.
+Data at run time: `%LOCALAPPDATA%\Win.apk\` (`library\` APKs + `.label`, `apps\<name>\`, `android\`, `logs\last-run.log`, `logs\install-<name>.log`, `store\` the Store tab's F-Droid catalog.tsv + icons, `installed_apps.json` the registry, `appops\` the signed permission grants: app-ops.json, signing-key.pub, signing-key.p256 under DPAPI). Settings: `HKCU\Software\Win.apk` (`Theme`, `Language`, `PhoneSize`, `Landscape`, `DesktopShortcut`). Each app's window size, once the user resizes it: `library\<name>.window` (dp, wins over the setting). Runtime env: `WINAPK_PHONE_SIZE=WxH` (dp), `WINAPK_RESIZABLE=0` (the window letterboxes instead of resizing the app), `WINAPK_HEADLESS=1`, `WINAPK_HEADLESS_FRAME`, `WINAPK_HEADLESS_EXIT_AFTER_FRAMES`.
 
 ## The launcher (`windows/launcher/launcher_main.cpp`)
 
