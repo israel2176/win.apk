@@ -106,12 +106,45 @@ void JNICALL mock_SetIntArrayRegion(JNIEnv* env, jintArray a, jsize start, jsize
     g_rec.region_buf = buf;
 }
 
+// Classes are small integers. 1 declares everything. 5 extends 6 extends 7;
+// only 6 declares "<init>()V", as Object does for a class with no no-argument
+// constructor. A miss leaves an exception pending, as HotSpot does.
+constexpr uintptr_t kNoSuchMethod = 0xE77;
+jthrowable g_pending = nullptr;
+int g_thrown = 0;
+
 jmethodID JNICALL mock_GetMethodID(JNIEnv* env, jclass c, const char* name, const char* sig) {
     note(env, "GetMethodID");
     g_rec.mid_name = name;
     g_rec.mid_sig = sig;
-    return reinterpret_cast<jmethodID>(0xABCD);
+    const uintptr_t k = reinterpret_cast<uintptr_t>(c);
+    if (k == 1) return reinterpret_cast<jmethodID>(0xABCD);
+    if (k == 6 && std::strcmp(name, "<init>") == 0 && std::strcmp(sig, "()V") == 0) {
+        return reinterpret_cast<jmethodID>(0x6666);
+    }
+    g_pending = reinterpret_cast<jthrowable>(kNoSuchMethod);
+    return nullptr;
 }
+jclass JNICALL mock_GetSuperclass(JNIEnv* env, jclass c) {
+    note(env, "GetSuperclass");
+    const uintptr_t k = reinterpret_cast<uintptr_t>(c);
+    return (k == 5 || k == 6) ? reinterpret_cast<jclass>(k + 1) : nullptr;
+}
+jthrowable JNICALL mock_ExceptionOccurred(JNIEnv* env) {
+    note(env, "ExceptionOccurred");
+    return g_pending;
+}
+void JNICALL mock_ExceptionClear(JNIEnv* env) {
+    note(env, "ExceptionClear");
+    g_pending = nullptr;
+}
+jint JNICALL mock_Throw(JNIEnv* env, jthrowable t) {
+    note(env, "Throw");
+    g_pending = t;
+    ++g_thrown;
+    return 0;
+}
+void JNICALL mock_DeleteLocalRef(JNIEnv* env, jobject) { note(env, "DeleteLocalRef"); }
 
 // mock JavaVM
 jint JNICALL mock_vm_GetEnv(JavaVM*, void** penv, jint) {
@@ -135,6 +168,11 @@ void build_mock() {
     g_mock_table.GetByteField = mock_GetByteField;
     g_mock_table.SetIntArrayRegion = mock_SetIntArrayRegion;
     g_mock_table.GetMethodID = mock_GetMethodID;
+    g_mock_table.GetSuperclass = mock_GetSuperclass;
+    g_mock_table.ExceptionOccurred = mock_ExceptionOccurred;
+    g_mock_table.ExceptionClear = mock_ExceptionClear;
+    g_mock_table.Throw = mock_Throw;
+    g_mock_table.DeleteLocalRef = mock_DeleteLocalRef;
     g_mock_env.functions = &g_mock_table;
 
     std::memset(&g_mock_invoke, 0, sizeof(g_mock_invoke));
@@ -240,6 +278,27 @@ int main() {
               m == reinterpret_cast<jmethodID>(0xABCD) &&
                   std::strcmp(g_rec.mid_name, "<init>") == 0 &&
                   std::strcmp(g_rec.mid_sig, "()V") == 0);
+
+        // ART semantics: a constructor only a superclass declares is found
+        // there, and the miss in the class itself leaves nothing pending.
+        g_pending = nullptr;
+        g_thrown = 0;
+        m = fn(genv, reinterpret_cast<jclass>(5), "<init>", "()V");
+        check("GetMethodID finds an inherited constructor (ART)",
+              m == reinterpret_cast<jmethodID>(0x6666) && !g_pending && g_thrown == 0);
+
+        // No ancestor has it: the class's own NoSuchMethodError is rethrown.
+        m = fn(genv, reinterpret_cast<jclass>(5), "<init>", "(I)V");
+        check("GetMethodID keeps the error when no ancestor has the constructor",
+              !m && g_pending == reinterpret_cast<jthrowable>(kNoSuchMethod) && g_thrown == 1);
+
+        // Other methods are HotSpot's lookup alone, error left as it was.
+        g_pending = nullptr;
+        g_thrown = 0;
+        m = fn(genv, reinterpret_cast<jclass>(5), "run", "()V");
+        check("GetMethodID does not retry a missing non-constructor",
+              !m && g_pending == reinterpret_cast<jthrowable>(kNoSuchMethod) && g_thrown == 0);
+        g_pending = nullptr;
     }
 
     check("every forwarded slot saw the host env (env translation)", g_rec.env_ok);
