@@ -265,9 +265,10 @@ public class MediaPlayer implements AudioRouting, VolumeAutomation {
     private volatile boolean mWatcherLive;
     private void startCompletionWatcher() {
         final OnCompletionListener l = onCompletion;
-        // Watch if there's a completion listener OR a gapless-chained next
-        // player to start. A looping track never completes, so no watcher.
-        if ((l == null && nextPlayer == null) || looping) return;
+        // Watch looping tracks too. Most backends loop natively, but some
+        // decoded formats can still report EOS. The watcher then seeks to zero
+        // and restarts without delivering onCompletion.
+        if (l == null && nextPlayer == null && !looping) return;
         // Every start() -- including a resume from pause -- used to spawn a
         // fresh watcher, so a track paused and resumed twice had three threads
         // racing to fire onCompletion once each. Claimed AFTER the checks
@@ -301,7 +302,19 @@ public class MediaPlayer implements AudioRouting, VolumeAutomation {
                     // PLAYING track with no watcher, so the next completion never
                     // fires and the playlist stops after one advance.
                     mWatcherLive = false;
-                    if (started && !looping) {
+                    if (started && looping) {
+                        // Backend-independent repeat fallback. setLooping(true)
+                        // is also forwarded to native audio, so this path runs
+                        // only when that backend unexpectedly reaches EOS.
+                        try {
+                            com.macapk.loader.NativeAudio.nativeMpSeek(handle, 0);
+                            com.macapk.loader.NativeAudio.nativeMpSetLooping(handle, true);
+                            com.macapk.loader.NativeAudio.nativeMpStart(handle);
+                            started = true;
+                            mUserPaused = false;
+                            startCompletionWatcher();
+                        } catch (Throwable ignore) {}
+                    } else if (started) {
                         // Gapless chain: auto-start the next player (AOSP
                         // setNextMediaPlayer semantics) before notifying.
                         MediaPlayer np = nextPlayer;

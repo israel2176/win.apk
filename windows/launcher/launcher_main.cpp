@@ -378,7 +378,17 @@ const wchar_t* tr(const wchar_t* en) {
         {L"Installing - Win.apk", L"インストール中 - Win.apk"}, {L"Logs - Win.apk", L"ログ - Win.apk"},
         {L"The log may say why:\n{0}", L"ログに原因が記録されている可能性があります：\n{0}"},
         {L"No apps found.", L"アプリが見つかりません。"},
-        {L"Drop an APK above to install your first app", L"上にAPKをドロップして最初のアプリをインストール"}
+        {L"Drop an APK above to install your first app", L"上にAPKをドロップして最初のアプリをインストール"},
+        {L"Appearance", L"外観"}, {L"Theme", L"テーマ"}, {L"Language", L"言語"},
+        {L"File types", L"ファイルの種類"},
+        {L"Covers .apk, .apkm, .xapk and .apks. Double-clicking one in Explorer installs it and opens it.", L".apk、.apkm、.xapk、.apksに対応します。エクスプローラーでダブルクリックするとインストールして起動します。"},
+        {L"Screen", L"画面"}, {L"Screen size", L"画面サイズ"}, {L"Orientation", L"画面の向き"},
+        {L"Used the next time an app opens, from here or from its shortcut. Sizes are in dp, as on a phone.", L"次回アプリをここまたはショートカットから開いたときに使用します。サイズの単位はスマートフォンと同じdpです。"},
+        {L"Shortcuts", L"ショートカット"}, {L"Desktop shortcut for new apps", L"新しいアプリのデスクトップショートカット"},
+        {L"Every app also gets one in Start > Win.apk Apps.", L"各アプリはスタートメニューの「Win.apk Apps」にも追加されます。"},
+        {L"Installed apps", L"インストール済みアプリ"}, {L"Library", L"ライブラリ"},
+        {L"Stop", L"停止"}, {L"Logs", L"ログ"}, {L"Done", L"完了"},
+        {L"Auto (fits the screen)", L"自動（画面に合わせる）"}, {L"Portrait", L"縦向き"}, {L"Landscape", L"横向き"}
     };
     if (g_japanese) {
         const auto ji = ja.find(en);
@@ -3158,7 +3168,7 @@ Row text_row(std::wstring title, std::wstring value, std::wstring detail = L"") 
 }
 
 void apply_theme();
-void apply_language();
+void apply_language(bool keep_selected = false);
 
 std::vector<Section> settings_sections() {
     std::vector<Section> out;
@@ -3178,8 +3188,13 @@ std::vector<Section> settings_sections() {
     lang.choices = {tr(L"Match Windows"), L"English", L"עברית", L"日本語"};
     lang.choice = static_cast<int>((std::min)(setting(L"Language", 0), 3ul));
     lang.act = [](int i) {
+        // Apply the selected value immediately. Reading the registry again here
+        // could leave the live UI in English when persistence was delayed or
+        // denied, even though the choice row already displayed Japanese.
+        g_rtl = i == 2;
+        g_japanese = i == 3;
         set_setting(L"Language", static_cast<DWORD>(i));
-        apply_language();
+        apply_language(true);
     };
     out.push_back({tr(L"Appearance"), {theme, lang}, L""});
 
@@ -4105,8 +4120,8 @@ void set_view(View view) {
     update_timer();
 }
 
-void apply_language() {
-    pick_language();
+void apply_language(bool keep_selected) {
+    if (!keep_selected) pick_language();
     for (HWND w : {g_main, sheet_hwnd(), g_install_wnd}) {
         if (!w) continue;
         const LONG_PTR ex = GetWindowLongPtrW(w, GWL_EXSTYLE);
