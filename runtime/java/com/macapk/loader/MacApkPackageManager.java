@@ -4233,6 +4233,14 @@ public final class MacApkPackageManager extends PackageManager {
         // is no LE scanner behind BluetoothLeScanner, and an app that sees
         // bluetooth_le goes looking for devices it can never find.
         if (HostRadios.bluetoothRadio() != null) f.add("android.hardware.bluetooth");
+        // FEATURE_LOCATION and its network form: when the host's location is
+        // bridged (LocationBridge), which is when LocationManager's providers
+        // can deliver. Not .gps: a PC rarely has a GPS receiver, and Windows
+        // does not say which source a fix came from.
+        if (LocationBridge.available()) {
+            f.add("android.hardware.location");
+            f.add("android.hardware.location.network");
+        }
         // FEATURE_RAM_NORMAL ("android.hardware.ram.normal"). AOSP's doc
         // string ties it to exactly one call: "The device's
         // ActivityManager.isLowRamDevice() method returns false." That method

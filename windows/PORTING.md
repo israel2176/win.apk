@@ -221,7 +221,7 @@ implements in `runtime/src`; on Windows `windows/host/native_*.cpp`):
 | `HostIcu` | 2 | `icu_host_bridge.cpp` | `host/native_icu.cpp` on Windows' `icu.dll` (1903 and later) | done | - |
 | `HostWallpaper` | 2 | `wallpaper_bridge.mm` | `host/native_wallpaper.cpp`: the desktop wallpaper and its placement style, through WIC | done | - |
 | `AudioInputBridge` | 10 | `audio_input.mm` | `host/native_audio_input.cpp`: WASAPI capture resampled to the app's format; the privacy switch is the permission | done | - |
-| `LocationBridge` | 11 | `location_bridge.mm` | `Windows.Devices.Geolocation` | not started | 3 |
+| `LocationBridge` | 12 | `location_bridge.mm` | `host/native_location.cpp`: `Windows.Devices.Geolocation` through its ABI; Windows' privacy settings (the consent store) are the host authorization | done | - |
 | `GamepadBridge` | 1 | `gamecontroller_bridge.mm` | `host/native_gamepad.cpp`: XInput controllers, polled | done (no rumble or player LED) | - |
 | `CameraBridge` | 30 | `camera_capture.mm` | Media Foundation capture | not started | 3 |
 | `MediaStoreProvider` | 7 | `photos_bridge.mm` | `host/native_photos.cpp`: the Pictures and Videos folders, shell thumbnails | done | - |

@@ -319,6 +319,15 @@ every such change is listed here:
   always does. Apps that start their camera preview only after that
   `surfaceChanged` waited forever. `MACAPK_SV_OVERSIZE_HOLDER=0` turns it off.
   Not Windows-specific.
+- `runtime/java/com/macapk/loader/LocationBridge.java`, `SpecialAccessHandler.java`,
+  `ActivityHost.java` and `MacApkPackageManager.java`: the host may name its
+  location settings page (`nativeHostSettingsUrl`; Windows:
+  `ms-settings:privacy-location`, from `windows/host/native_location.cpp`).
+  `Settings.ACTION_LOCATION_SOURCE_SETTINGS` opens it, and so does a location
+  request the host itself refuses (location off for apps in Windows), once per
+  run. `android.hardware.location` and `.network` are declared when the
+  location is bridged. On the Mac, which binds no such native, nothing changes
+  but the two features.
 - `runtime/java/com/macapk/loader/HostRadios.java` (new), with
   `android/net/wifi/WifiManager.java`, `WifiInfo.java`,
   `android/bluetooth/BluetoothAdapter.java`, `BluetoothDevice.java` and

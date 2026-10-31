@@ -46,6 +46,7 @@ public final class LocationBridge {
     private static native void nativeRequestAuth();
     private static native void nativeStart(boolean reduced);
     private static native void nativeStop();
+    private static native String nativeHostSettingsUrl();
 
     /** What LocationManager hears from the host. Called on the AppKit thread:
      *  an implementation must only record and post, never block. */
@@ -204,6 +205,18 @@ public final class LocationBridge {
             }
         }
         return authStatus();
+    }
+
+    /** The URL of the host's own location settings (Windows:
+     *  ms-settings:privacy-location), or null when the host has none to offer
+     *  (the Mac binds no such native). */
+    public static String hostSettingsUrl() {
+        if (!available()) return null;
+        try {
+            return nativeHostSettingsUrl();
+        } catch (Throwable t) {
+            return null;
+        }
     }
 
     /** Start (or re-aim) CoreLocation updates. Fixes arrive via the Sink. */

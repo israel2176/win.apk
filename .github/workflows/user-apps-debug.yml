@@ -1,0 +1,82 @@
+# TEMPORARY (to be removed before merge): boots three APKs a user reported as
+# failing, headless on a Windows runner, and prints what blocks them.
+name: User apps debug
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/user-apps-debug.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  debug:
+    name: Boot the reported apps
+    runs-on: windows-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: CLANG64
+          update: true
+          install: unzip zip git
+          pacboy: >-
+            clang:p
+            cmake:p
+            ninja:p
+            boost:p
+      - uses: actions/cache@v4
+        with:
+          path: thirdparty/framework-res
+          key: framework-res-v2-${{ hashFiles('scripts/build_framework_res.sh', 'windows/scripts/build_framework_res.sh') }}
+      - uses: actions/cache@v4
+        with:
+          path: thirdparty/angle-win
+          key: angle-${{ hashFiles('windows/scripts/fetch_angle.sh') }}
+      - name: Build and stage the runtime
+        run: |
+          cmake -S windows -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=clang++ \
+            -DWINAPK_JNI_INCLUDE="$(cygpath -u "$JAVA_HOME")/include" -DWINAPK_ARM64_JIT=ON
+          cmake --build build --target winapk-runtime winapk-launcher
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          windows/scripts/stage_runtime.sh build runtime
+      - name: Fetch the reported APKs
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force user-apks | Out-Null
+          $base = "https://send.magicode.me/send-file/file"
+          Invoke-WebRequest "$base/2b5ee28dbe7927d2954a4b171608b3728fd0909e/download" -OutFile user-apks/citycar_280.apk
+          Invoke-WebRequest "$base/2e7b9572f3e110c4088ed50e8f85259ab8cfd406/download" -OutFile user-apks/moovit_1807.apk
+          Invoke-WebRequest "$base/87238e698d1fa8327f4c7bafd05aa1a2f4029bcd/download" -OutFile user-apks/levi_120005.apk
+          "citycar 280`nmoovit 1807`nlevi 120005" | Set-Content user-apps.txt
+      - name: Run them
+        shell: pwsh
+        run: |
+          python windows/test/compat/sweep.py --runtime runtime --jdk "$env:JAVA_HOME" --apps user-apps.txt `
+            --apks user-apks --out sweep --frames 200 --timeout 300
+          Get-Content sweep/report.md
+          foreach ($a in "citycar", "moovit", "levi") {
+            Write-Output "===================== ${a} problems ====================="
+            Select-String -Path "sweep/logs/$a.log" -Pattern "\[E\]|\[W\]|Exception|Error|not implemented|cannot load|FATAL|crash" |
+              Select-Object -First 250 | ForEach-Object { $_.Line }
+            Write-Output "===================== ${a} last 120 lines ====================="
+            Get-Content "sweep/logs/$a.log" -Tail 120
+          }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: user-apps-debug
+          path: |
+            sweep/report.md
+            sweep/logs/
+            sweep/frames/
