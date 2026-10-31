@@ -37,6 +37,7 @@
 //   Win.apk.exe --run <library apk>  run an installed app (what shortcuts do)
 //   Win.apk.exe install --apk <file> --source android [--requestor-label <app>] --json
 //   Win.apk.exe uninstall --package <name> --source android [--requestor-label <app>] --json
+//   Win.apk.exe runtime-permission | special-access | app-details ... --source android --json
 //
 // The last two are the install helper, upstream's macapk-installhelper: an app
 // that installs apps (F-Droid, through PackageInstaller) hands its APK to
@@ -45,7 +46,8 @@
 // PackageManager answers apps from, so a store sees what it installed. Its
 // output keeps the helper's contract: "[helper] progress <fraction> <stage>"
 // lines, then one JSON object; exit 0 done, 2 bad arguments, 3 declined,
-// 5 failed, 6 not an app.
+// 5 failed, 6 not an app. The third line is the permission dialogs (see
+// "Permissions" below).
 
 #include <windows.h>
 #include <commctrl.h>
@@ -58,6 +60,9 @@
 #include <windowsx.h>
 #include <winhttp.h>
 #include <bcrypt.h>
+#include <tlhelp32.h>
+#include <wincrypt.h>
+#include <winternl.h>
 
 #include <algorithm>
 #include <cmath>
@@ -187,7 +192,12 @@ const wchar_t* tr(const wchar_t* en) {
         {L"Portrait", L"לאורך"},
         {L"Landscape", L"לרוחב"},
         {L"Screen", L"מסך"},
-        {L"Used the next time an app opens, from here or from its shortcut. Sizes are in dp, as on a phone.", L"יחול בפעם הבאה שאפליקציה תיפתח, מכאן או מקיצור הדרך שלה. הגדלים ביחידות dp, כמו בטלפון."},
+        {L"Used the next time an app opens, from here or from its shortcut. Sizes are in dp, as on a phone. An app's "
+         L"window can be resized or maximized, and the app then lays itself out for that size and keeps it (Get Info "
+         L"resets it).",
+         L"יחול בפעם הבאה שאפליקציה תיפתח, מכאן או מקיצור הדרך שלה. הגדלים ביחידות dp, כמו בטלפון. אפשר לשנות את גודל "
+         L"החלון של אפליקציה או להגדיל אותו למסך מלא, והאפליקציה תתאים את עצמה לגודל הזה ותזכור אותו (במסך הפרטים "
+         L"אפשר לאפס)."},
         {L"Desktop shortcut for new apps", L"קיצור דרך בשולחן העבודה לאפליקציות חדשות"},
         {L"Every app also gets one in Start > Win.apk Apps.", L"כל אפליקציה מקבלת גם קיצור דרך בתפריט התחל > Win.apk Apps."},
         {L"Shortcuts", L"קיצורי דרך"},
@@ -334,7 +344,62 @@ const wchar_t* tr(const wchar_t* en) {
         {L"A newer version is out. Saves stay.", L"יצאה גרסה חדשה יותר. השמירות נשארות."},
         {L"F-Droid page", L"הדף ב-F-Droid"},
         {L"The app's description, screenshots and source code.", L"התיאור של האפליקציה, צילומי מסך וקוד המקור."},
-        {L"unknown", L"לא ידוע"}
+        {L"unknown", L"לא ידוע"},
+        {L"Allow {0} to access this device's location?", L"לאפשר ל-{0} לגשת למיקום של המכשיר?"},
+        {L"Allow {0} to access photos, videos, music, audio, and other files on this device?",
+         L"לאפשר ל-{0} גישה לתמונות, לסרטונים, למוזיקה, לאודיו ולקבצים אחרים במכשיר?"},
+        {L"Allow {0} to access photos, videos, music, and audio on this device?",
+         L"לאפשר ל-{0} גישה לתמונות, לסרטונים, למוזיקה ולאודיו במכשיר?"},
+        {L"Allow {0} to access music and audio on this device?", L"לאפשר ל-{0} גישה למוזיקה ולאודיו במכשיר?"},
+        {L"Allow {0} to access photos and videos on this device?", L"לאפשר ל-{0} גישה לתמונות ולסרטונים במכשיר?"},
+        {L"Allow {0} to access photos, media, and files on your device?",
+         L"לאפשר ל-{0} גישה לתמונות, למדיה ולקבצים במכשיר?"},
+        {L"This is Android's permission request for {0}, kept by Win.apk. You can change it later in the app's App "
+         L"info, or in Win.apk under Get Info.",
+         L"זו בקשת ההרשאה של Android עבור {0}, ש-Win.apk שומרת. אפשר לשנות אותה אחר כך במסך פרטי האפליקציה שלה, או "
+         L"ב-Win.apk תחת פרטים."},
+        {L"The location comes from Windows' location services.", L"המיקום מגיע משירותי המיקום של Windows."},
+        {L"Allow", L"אפשר"},
+        {L"Only approximate", L"רק מיקום משוער"},
+        {L"Don't allow", L"אל תאפשר"},
+        {L"Allow {0} access to manage all files?", L"לאפשר ל-{0} גישה לניהול כל הקבצים?"},
+        {L"Allow {0} to manage media?", L"לאפשר ל-{0} לנהל מדיה?"},
+        {L"Allow this app to read, modify and delete all files on this device or any connected storage volumes. If "
+         L"granted, app may access files without your explicit knowledge. On Windows that is your Downloads, "
+         L"Documents, Pictures, Music and Videos folders.",
+         L"האפליקציה תוכל לקרוא, לשנות ולמחוק את כל הקבצים במכשיר ובכל אמצעי אחסון מחובר. אם הגישה תאושר, האפליקציה "
+         L"עשויה לגשת לקבצים בלי ידיעתך. ב-Windows אלה תיקיות ההורדות, המסמכים, התמונות, המוזיקה והסרטונים שלך."},
+        {L"If allowed, this app can modify or delete media files created with other apps without asking you. App must "
+         L"have permission to access files and media.",
+         L"אם תאשר, האפליקציה תוכל לשנות או למחוק קובצי מדיה שנוצרו באפליקציות אחרות בלי לשאול אותך. האפליקציה צריכה "
+         L"גם הרשאת גישה לקבצים ולמדיה."},
+        {L"Currently allowed.", L"כרגע מותר."},
+        {L"Currently not allowed.", L"כרגע לא מותר."},
+        {L"Photos and videos", L"תמונות וסרטונים"},
+        {L"Music and audio", L"מוזיקה ואודיו"},
+        {L"Files and media", L"קבצים ומדיה"},
+        {L"Files", L"קבצים"},
+        {L"Photos, videos, music, and audio", L"תמונות, סרטונים, מוזיקה ואודיו"},
+        {L"Location", L"מיקום"},
+        {L"All files access", L"גישה לכל הקבצים"},
+        {L"Media management", L"ניהול מדיה"},
+        {L"Allowed", L"מותר"},
+        {L"Not allowed", L"לא מותר"},
+        {L"App info: {0}", L"פרטי האפליקציה: {0}"},
+        {L"This app has no permissions Win.apk asks about.", L"לאפליקציה הזו אין הרשאות ש-Win.apk שואלת עליהן."},
+        {L"Click a permission to turn it on or off, then OK. Turning a permission off stops the app, as Android does.",
+         L"לחץ על הרשאה כדי להפעיל או לכבות אותה, ואז על אישור. כיבוי הרשאה עוצר את האפליקציה, כמו ב-Android."},
+        {L"The permission could not be changed: {0}", L"לא ניתן היה לשנות את ההרשאה: {0}"},
+        {L"Permissions", L"הרשאות"},
+        {L"Reset permissions", L"איפוס הרשאות"},
+        {L"The app asks again the next time it needs them.", L"האפליקציה תשאל שוב בפעם הבאה שתצטרך אותן."},
+        {L"Reset", L"איפוס"},
+        {L"Window", L"חלון"},
+        {L"Window size  ·  {0} × {1} dp", L"גודל החלון  ·  {0} × {1} dp"},
+        {L"The size you last gave the app's window. Reset, it opens at the settings' screen size again.",
+         L"הגודל האחרון שנתת לחלון של האפליקציה. אחרי איפוס היא תיפתח שוב בגודל המסך שבהגדרות."},
+        {L"{0} opens at the settings' screen size again.", L"{0} תיפתח שוב בגודל המסך שבהגדרות."},
+        {L"{0} will ask for its permissions again.", L"{0} תשאל שוב על ההרשאות שלה."}
     };
     if (!g_rtl) return en;
     const auto it = he.find(en);
@@ -2679,6 +2744,9 @@ void launch(const App& app) {
     update_timer();
 }
 
+void appops_forget(const std::string& pkg);
+std::vector<std::string> package_of(const std::wstring& name);
+
 bool remove_app(const App& app, bool ask) {
     if (ask && !confirm(fmt(L"Remove {0}?", {app.label}),
                         tr(L"Its shortcuts go too. What the app saved stays, so installing it again picks up where it left off."),
@@ -2687,11 +2755,21 @@ bool remove_app(const App& app, bool ask) {
     }
     const App copy = app;  // `app` may point into g_apps, which refresh() replaces
     std::error_code ec;
+    // Its permissions go with it, unless another copy in the library is the same package.
+    if (const std::vector<std::string> pkg = package_of(copy.name); !pkg.empty()) {
+        bool other = false;
+        for (const App& a : library()) {
+            const std::vector<std::string> p = a.name == copy.name ? std::vector<std::string>{} : package_of(a.name);
+            other = other || (!p.empty() && p[0] == pkg[0]);
+        }
+        if (!other) appops_forget(pkg[0]);
+    }
     remove_app_shortcuts(copy);
     fs::remove(copy.apk, ec);
     fs::remove(label_file(copy.name), ec);
     fs::remove(package_file(copy.name), ec);
     fs::remove(shortcut_icon(copy.name), ec);
+    fs::remove(library_dir() / (copy.name + L".window"), ec);
     fs::remove_all(app_dir(copy.name), ec);
     fs::remove(data_dir() / L"android" / L"data" / L"app" / (L"." + copy.name + L".installed"), ec);
     write_registry();
@@ -3162,7 +3240,9 @@ std::vector<Section> settings_sections() {
     orient.choice = setting(L"Landscape", 0) ? 1 : 0;
     orient.act = [](int i) { set_setting(L"Landscape", static_cast<DWORD>(i)); };
     out.push_back({tr(L"Screen"), {size, orient},
-                   tr(L"Used the next time an app opens, from here or from its shortcut. Sizes are in dp, as on a phone.")});
+                   tr(L"Used the next time an app opens, from here or from its shortcut. Sizes are in dp, as on a "
+                      L"phone. An app's window can be resized or maximized, and the app then lays itself out for that "
+                      L"size and keeps it (Get Info resets it).")});
 
     Row desktop;
     desktop.kind = Row::kToggle;
@@ -3226,6 +3306,8 @@ void show_settings() {
     run_sheet(std::move(s));
 }
 
+std::vector<Row> permission_rows(const App& a);
+
 void show_info(const App& app) {
     const App a = app;
     std::error_code ec;
@@ -3243,6 +3325,29 @@ void show_info(const App& app) {
                        {text_row(tr(L"Name"), a.label), text_row(tr(L"Library name"), a.name),
                         text_row(tr(L"Installed"), installed)},
                        L""});
+        if (std::vector<Row> perms = permission_rows(a); !perms.empty())
+            out.push_back({tr(L"Permissions"), std::move(perms), L""});
+        // The size the user last gave the app's window (the runtime keeps it
+        // as library\<name>.window, in dp).
+        if (std::ifstream f(library_dir() / (a.name + L".window")); f) {
+            int w = 0, h = 0;
+            char x = 0;
+            if (f >> w >> x >> h && w > 0 && h > 0) {
+                out.push_back({tr(L"Window"),
+                               {button_row(fmt(L"Window size  ·  {0} × {1} dp", {std::to_wstring(w), std::to_wstring(h)}),
+                                           tr(L"The size you last gave the app's window. Reset, it opens at the "
+                                              L"settings' screen size again."),
+                                           tr(L"Reset"), [a] {
+                                               std::error_code ec;
+                                               fs::remove(library_dir() / (a.name + L".window"), ec);
+                                               set_status(fmt(L"{0} opens at the settings' screen size again.",
+                                                              {a.label}),
+                                                          kSuccess);
+                                               close_sheet();
+                                           })},
+                               L""});
+            }
+        }
         out.push_back({tr(L"Storage"),
                        {button_row(fmt(L"Source APK  ·  {0}", {apk_size}), a.apk.wstring(), tr(L"Show"),
                                    [a] { show_in_explorer(a.apk); }),
@@ -4648,6 +4753,1154 @@ int helper_main(int argc, wchar_t** argv) {
     return 0;
 }
 
+// ---------------------------------------------------------------------------
+// Permissions: the app-ops store and the permission dialogs
+//
+// Android asks the user before an app may read shared storage or the location
+// (the runtime permissions), or manage all files or media (the special-access
+// switches in Settings). The runtime (SpecialAccessHandler) asks through this
+// program, as upstream asks through macapk-installhelper
+// (launcher/InstallHelperMain.swift RuntimePermission, SpecialAccess and
+// app-details):
+//
+//   Win.apk.exe runtime-permission --source android --level <api> (--prompt <kind> | --auto)
+//               --perm <p>... [--member <p>...] [--partial <p>...] --json
+//   Win.apk.exe special-access --op <op> --source android --json
+//   Win.apk.exe app-details --source android --level <api> [--group <NAME>=<p>,<p>...] [--op <op>...] --json
+//
+// The app asking is the parent process (winapk-runtime.exe, whose --apk names
+// the library file), never an argument. The answer is the user's, in a task
+// dialog over the app's window, and is signed into <data>\appops\app-ops.json
+// with an ECDSA P-256 key whose private half is kept beside it under DPAPI;
+// SpecialAccessStore believes only the entries its public key verifies. The
+// payload, the store's layout and the state tokens are upstream's
+// (InstallCore.swift AppOpsStore), keyed by package + installedAt, so a
+// reinstall starts with no grant. Exit: 0 granted, 2 bad arguments, 3 denied,
+// 4 no answer, 5 no identity or the store failed, 6 an --auto grant refused.
+//
+// The library's Get Info sheet shows the same grants and can change or forget
+// them (by "panel", as upstream's control panel).
+
+namespace appops {
+
+const std::string kReadExternal = "android.permission.READ_EXTERNAL_STORAGE";
+const std::string kWriteExternal = "android.permission.WRITE_EXTERNAL_STORAGE";
+const std::string kMediaLocation = "android.permission.ACCESS_MEDIA_LOCATION";
+const std::string kImages = "android.permission.READ_MEDIA_IMAGES";
+const std::string kVideo = "android.permission.READ_MEDIA_VIDEO";
+const std::string kAudio = "android.permission.READ_MEDIA_AUDIO";
+const std::string kUserSelected = "android.permission.READ_MEDIA_VISUAL_USER_SELECTED";
+const std::string kFine = "android.permission.ACCESS_FINE_LOCATION";
+const std::string kCoarse = "android.permission.ACCESS_COARSE_LOCATION";
+const std::string kAllFiles = "android:manage_external_storage";
+const std::string kManageMedia = "android:manage_media";
+const char* const kPayloadTag = "macapk-appops/3";
+const char* const kLegacyTag = "macapk-appops/2";
+
+bool is_storage(const std::string& p) {
+    return p == kReadExternal || p == kWriteExternal || p == kMediaLocation || p == kImages || p == kVideo ||
+           p == kAudio || p == kUserSelected;
+}
+bool is_location(const std::string& p) { return p == kFine || p == kCoarse; }
+bool is_op(const std::string& op) { return op == kAllFiles || op == kManageMedia; }
+bool is_state(const std::string& s) {
+    return s == "granted" || s == "granted_fixed" || s == "denied" || s == "denied_fixed";
+}
+bool is_granted(const std::string& s) { return s == "granted" || s == "granted_fixed"; }
+
+fs::path dir() { return data_dir() / L"appops"; }
+fs::path store_file() { return dir() / L"app-ops.json"; }
+fs::path key_file() { return dir() / L"signing-key.p256"; }
+fs::path pub_file() { return dir() / L"signing-key.pub"; }
+
+// ---- bytes -------------------------------------------------------------------
+
+using Bytes = std::vector<unsigned char>;
+
+std::string base64(const Bytes& b) {
+    static const char* abc = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string out;
+    for (size_t i = 0; i < b.size(); i += 3) {
+        const unsigned v = (b[i] << 16) | ((i + 1 < b.size() ? b[i + 1] : 0) << 8) | (i + 2 < b.size() ? b[i + 2] : 0);
+        out += abc[(v >> 18) & 63];
+        out += abc[(v >> 12) & 63];
+        out += i + 1 < b.size() ? abc[(v >> 6) & 63] : '=';
+        out += i + 2 < b.size() ? abc[v & 63] : '=';
+    }
+    return out;
+}
+
+bool unbase64(const std::string& s, Bytes* out) {
+    out->clear();
+    unsigned v = 0;
+    int bits = 0;
+    for (const char c : s) {
+        int d;
+        if (c >= 'A' && c <= 'Z') d = c - 'A';
+        else if (c >= 'a' && c <= 'z') d = c - 'a' + 26;
+        else if (c >= '0' && c <= '9') d = c - '0' + 52;
+        else if (c == '+') d = 62;
+        else if (c == '/') d = 63;
+        else if (c == '=' || c == '\n' || c == '\r' || c == ' ') continue;
+        else return false;
+        v = (v << 6) | static_cast<unsigned>(d);
+        bits += 6;
+        if (bits >= 8) {
+            bits -= 8;
+            out->push_back(static_cast<unsigned char>((v >> bits) & 0xFF));
+        }
+    }
+    return true;
+}
+
+bool read_bytes(const fs::path& p, Bytes* out) {
+    std::ifstream f(p, std::ios::binary);
+    if (!f) return false;
+    out->assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+    return true;
+}
+
+// Written to a temporary file and renamed over the old one, so a reader sees
+// the old file or the new one.
+bool write_bytes(const fs::path& p, const void* data, size_t n) {
+    const fs::path tmp = p.parent_path() / (L"." + p.filename().wstring() + L".tmp." +
+                                            std::to_wstring(GetCurrentProcessId()));
+    {
+        std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
+        f.write(static_cast<const char*>(data), static_cast<std::streamsize>(n));
+        if (!f) return false;
+    }
+    if (MoveFileExW(tmp.c_str(), p.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) return true;
+    std::error_code ec;
+    fs::remove(tmp, ec);
+    return false;
+}
+
+// ---- the key -------------------------------------------------------------------
+
+// A P-256 key pair from BCrypt: the private half for signing, kept in
+// signing-key.p256 as a BCRYPT_ECCPRIVATE_BLOB under DPAPI (this Windows user
+// only); the public half beside it as base64 of an X.509 SubjectPublicKeyInfo,
+// which is what SpecialAccessStore.loadPublicKey reads.
+struct Key {
+    BCRYPT_ALG_HANDLE alg = nullptr;
+    BCRYPT_KEY_HANDLE key = nullptr;
+    Key() { BCryptOpenAlgorithmProvider(&alg, BCRYPT_ECDSA_P256_ALGORITHM, nullptr, 0); }
+    ~Key() {
+        if (key) BCryptDestroyKey(key);
+        if (alg) BCryptCloseAlgorithmProvider(alg, 0);
+    }
+    Key(const Key&) = delete;
+    Key& operator=(const Key&) = delete;
+
+    Bytes blob(const wchar_t* type) const {
+        ULONG n = 0;
+        if (!key || BCryptExportKey(key, nullptr, type, nullptr, 0, &n, 0) != 0) return {};
+        Bytes b(n);
+        if (BCryptExportKey(key, nullptr, type, b.data(), n, &n, 0) != 0) return {};
+        b.resize(n);
+        return b;
+    }
+    // The SubjectPublicKeyInfo: the fixed id-ecPublicKey / prime256v1 header,
+    // then the uncompressed point 04 || X || Y.
+    Bytes spki() const {
+        const Bytes pub = blob(BCRYPT_ECCPUBLIC_BLOB);
+        if (pub.size() != sizeof(BCRYPT_ECCKEY_BLOB) + 64) return {};
+        Bytes out = {0x30, 0x59, 0x30, 0x13, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, 0x06,
+                     0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07, 0x03, 0x42, 0x00, 0x04};
+        out.insert(out.end(), pub.begin() + sizeof(BCRYPT_ECCKEY_BLOB), pub.end());
+        return out;
+    }
+};
+
+Bytes sha256(const std::string& data) {
+    Bytes h(32);
+    BCRYPT_ALG_HANDLE a = nullptr;
+    if (BCryptOpenAlgorithmProvider(&a, BCRYPT_SHA256_ALGORITHM, nullptr, 0) != 0) return {};
+    const bool ok = BCryptHash(a, nullptr, 0, reinterpret_cast<PUCHAR>(const_cast<char*>(data.data())),
+                               static_cast<ULONG>(data.size()), h.data(), 32) == 0;
+    BCryptCloseAlgorithmProvider(a, 0);
+    return ok ? h : Bytes{};
+}
+
+// BCrypt signs as r || s; Java's SHA256withECDSA wants the DER SEQUENCE of two
+// INTEGERs, as CryptoKit's derRepresentation gives upstream.
+Bytes der_of(const Bytes& rs) {
+    auto integer = [](const unsigned char* p) {
+        size_t i = 0;
+        while (i < 31 && p[i] == 0) ++i;
+        Bytes v(p + i, p + 32);
+        if (v[0] & 0x80) v.insert(v.begin(), 0);
+        v.insert(v.begin(), static_cast<unsigned char>(v.size()));
+        v.insert(v.begin(), 0x02);
+        return v;
+    };
+    Bytes r = integer(rs.data()), s = integer(rs.data() + 32);
+    Bytes out = {0x30, static_cast<unsigned char>(r.size() + s.size())};
+    out.insert(out.end(), r.begin(), r.end());
+    out.insert(out.end(), s.begin(), s.end());
+    return out;
+}
+
+bool rs_of(const Bytes& der, Bytes* rs) {
+    rs->assign(64, 0);
+    size_t i = 2;
+    if (der.size() < 8 || der[0] != 0x30 || der[1] != der.size() - 2) return false;
+    for (int part = 0; part < 2; ++part) {
+        if (i + 2 > der.size() || der[i] != 0x02) return false;
+        size_t n = der[i + 1];
+        i += 2;
+        if (i + n > der.size() || n == 0) return false;
+        const unsigned char* p = der.data() + i;
+        while (n > 32 && *p == 0) ++p, --n;
+        if (n > 32) return false;
+        std::copy(p, p + n, rs->begin() + part * 32 + (32 - n));
+        i += der[i - 1];
+    }
+    return i == der.size();
+}
+
+std::string sign(const Key& k, const std::string& payload) {
+    const Bytes h = sha256(payload);
+    Bytes rs(64);
+    ULONG n = 0;
+    if (h.empty() || BCryptSignHash(k.key, nullptr, const_cast<PUCHAR>(h.data()), 32, rs.data(), 64, &n, 0) != 0 ||
+        n != 64)
+        return "";
+    return base64(der_of(rs));
+}
+
+bool verify(const Key& k, const std::string& payload, const std::string& sig) {
+    Bytes der, rs;
+    if (!unbase64(sig, &der) || !rs_of(der, &rs)) return false;
+    const Bytes h = sha256(payload);
+    return !h.empty() && BCryptVerifySignature(k.key, nullptr, const_cast<PUCHAR>(h.data()), 32, rs.data(), 64, 0) == 0;
+}
+
+bool load_key(Key* k) {
+    Bytes sealed;
+    if (!k->alg || !read_bytes(key_file(), &sealed)) return false;
+    DATA_BLOB in{static_cast<DWORD>(sealed.size()), sealed.data()}, out{};
+    if (!CryptUnprotectData(&in, nullptr, nullptr, nullptr, nullptr, CRYPTPROTECT_UI_FORBIDDEN, &out)) return false;
+    const bool ok = BCryptImportKeyPair(k->alg, nullptr, BCRYPT_ECCPRIVATE_BLOB, &k->key, out.pbData, out.cbData, 0) == 0;
+    SecureZeroMemory(out.pbData, out.cbData);
+    LocalFree(out.pbData);
+    return ok;
+}
+
+// The key, made on first use. A new key cannot verify what the old one signed,
+// so the store starts over with it, as upstream's loadOrCreateKey does.
+bool load_or_create_key(Key* k, std::string* why) {
+    std::error_code ec;
+    fs::create_directories(dir(), ec);
+    if (!load_key(k)) {
+        if (!k->alg || BCryptGenerateKeyPair(k->alg, &k->key, 256, 0) != 0 || BCryptFinalizeKeyPair(k->key, 0) != 0) {
+            *why = "could not make a signing key";
+            return false;
+        }
+        Bytes priv = k->blob(BCRYPT_ECCPRIVATE_BLOB);
+        DATA_BLOB in{static_cast<DWORD>(priv.size()), priv.data()}, out{};
+        const bool sealed = CryptProtectData(&in, L"Win.apk app-ops signing key", nullptr, nullptr, nullptr,
+                                             CRYPTPROTECT_UI_FORBIDDEN, &out);
+        SecureZeroMemory(priv.data(), priv.size());
+        if (!sealed) {
+            *why = "could not protect the signing key";
+            return false;
+        }
+        const bool wrote = write_bytes(key_file(), out.pbData, out.cbData);
+        LocalFree(out.pbData);
+        if (!wrote) {
+            *why = "could not write " + wide_to_utf8(key_file().wstring());
+            return false;
+        }
+        if (fs::exists(store_file(), ec)) {
+            const std::string empty = "{\n  \"apps\" : {\n\n  },\n  \"version\" : 2\n}\n";
+            write_bytes(store_file(), empty.data(), empty.size());
+        }
+    }
+    const std::string pub = base64(k->spki()) + "\n";
+    Bytes have;
+    if (!read_bytes(pub_file(), &have) || std::string(have.begin(), have.end()) != pub) {
+        if (pub.size() < 8 || !write_bytes(pub_file(), pub.data(), pub.size())) {
+            *why = "could not write " + wide_to_utf8(pub_file().wstring());
+            return false;
+        }
+    }
+    return true;
+}
+
+// ---- the store -----------------------------------------------------------------
+
+struct Entry {
+    std::string package, installed_at, updated_at, by, sig;
+    std::map<std::string, std::string> ops, perms;
+    bool has_perms = false;  // an S1 (/2) entry has no "perms" object at all
+};
+using Store = std::map<std::string, Entry>;  // package@installedAt -> entry
+
+std::string key_of(const std::string& pkg, const std::string& installed_at) { return pkg + "@" + installed_at; }
+
+// SpecialAccessStore.canonicalPayload, byte for byte.
+bool payload(const char* tag, const Entry& e, std::string* out) {
+    auto bad = [](const std::string& s) { return s.find('\n') != std::string::npos; };
+    if (bad(e.package) || bad(e.installed_at) || bad(e.updated_at) || bad(e.by)) return false;
+    std::string s = std::string(tag) + "\npackage=" + e.package + "\ninstalledAt=" + e.installed_at + "\n";
+    for (const auto& [k, v] : e.ops) {
+        if (bad(k) || bad(v)) return false;
+        s += "op:" + k + "=" + v + "\n";
+    }
+    for (const auto& [k, v] : e.perms) {
+        if (bad(k) || bad(v)) return false;
+        s += "perm:" + k + "=" + v + "\n";
+    }
+    *out = s + "updatedAt=" + e.updated_at + "\nby=" + e.by + "\n";
+    return true;
+}
+
+bool genuine(const Key& k, const Entry& e) {
+    std::string p;
+    if (e.sig.empty()) return false;
+    if (payload(kPayloadTag, e, &p) && verify(k, p, e.sig)) return true;
+    if (e.has_perms) return false;
+    return payload(kLegacyTag, e, &p) && verify(k, p, e.sig);
+}
+
+Store read_store() {
+    Store out;
+    Bytes raw;
+    if (!read_bytes(store_file(), &raw)) return out;
+    const std::string text(raw.begin(), raw.end());
+    Json j{text.data(), text.data() + text.size()};
+    std::string version;
+    Store apps;
+    j.object([&](const std::string& k) {
+        if (k == "version") return j.scalar(&version);
+        if (k != "apps") return j.skip();
+        j.object([&](const std::string& id) {
+            Entry e;
+            j.object([&](const std::string& f) {
+                if (f == "package") j.str(&e.package);
+                else if (f == "installedAt") j.str(&e.installed_at);
+                else if (f == "updatedAt") j.str(&e.updated_at);
+                else if (f == "by") j.str(&e.by);
+                else if (f == "sig") j.str(&e.sig);
+                else if (f == "ops" || f == "perms") {
+                    auto& m = f == "ops" ? e.ops : e.perms;
+                    if (f == "perms") e.has_perms = true;
+                    j.object([&](const std::string& name) { j.str(&m[name]); });
+                } else {
+                    j.skip();
+                }
+            });
+            apps[id] = e;
+        });
+    });
+    if (j.ok && version == "2") out = std::move(apps);
+    return out;
+}
+
+bool write_store(const Store& s) {
+    auto map_json = [](const std::map<std::string, std::string>& m) {
+        std::string o = "{";
+        bool first = true;
+        for (const auto& [k, v] : m) {
+            o += (first ? "\n        " : ",\n        ") + json_string(k) + " : " + json_string(v);
+            first = false;
+        }
+        return o + (first ? "}" : "\n      }");
+    };
+    std::string o = "{\n  \"apps\" : {";
+    bool first = true;
+    for (const auto& [id, e] : s) {
+        o += (first ? "\n" : ",\n") + std::string("    ") + json_string(id) + " : {\n";
+        first = false;
+        o += "      \"by\" : " + json_string(e.by) + ",\n";
+        o += "      \"installedAt\" : " + json_string(e.installed_at) + ",\n";
+        o += "      \"ops\" : " + map_json(e.ops) + ",\n";
+        o += "      \"package\" : " + json_string(e.package) + ",\n";
+        if (e.has_perms) o += "      \"perms\" : " + map_json(e.perms) + ",\n";
+        o += "      \"sig\" : " + json_string(e.sig) + ",\n";
+        o += "      \"updatedAt\" : " + json_string(e.updated_at) + "\n    }";
+    }
+    o += "\n  },\n  \"version\" : 2\n}\n";
+    return write_bytes(store_file(), o.data(), o.size());
+}
+
+// One writer at a time, across processes: a lock on app-ops.json.lock.
+struct Lock {
+    HANDLE h = INVALID_HANDLE_VALUE;
+    bool held = false;
+    explicit Lock(DWORD timeout_ms) {
+        std::error_code ec;
+        fs::create_directories(dir(), ec);
+        h = CreateFileW((dir() / L"app-ops.json.lock").c_str(), GENERIC_READ | GENERIC_WRITE,
+                        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_ALWAYS,
+                        FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (h == INVALID_HANDLE_VALUE) return;
+        for (DWORD waited = 0;; waited += 50) {
+            OVERLAPPED o{};
+            if (LockFileEx(h, LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, &o)) {
+                held = true;
+                return;
+            }
+            if (waited >= timeout_ms) return;
+            Sleep(50);
+        }
+    }
+    ~Lock() {
+        if (held) {
+            OVERLAPPED o{};
+            UnlockFileEx(h, 0, 1, 0, &o);
+        }
+        if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
+    }
+};
+
+std::string now_iso() {
+    SYSTEMTIME t;
+    GetSystemTime(&t);
+    char buf[32];
+    std::snprintf(buf, sizeof buf, "%04u-%02u-%02uT%02u:%02u:%02uZ", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute,
+                  t.wSecond);
+    return buf;
+}
+
+// Who the grant is for: a row of installed_apps.json.
+struct Identity {
+    std::string package, installed_at, label, dir_name;
+};
+
+// The verified entry for `id`, or an empty one (nothing stored, or nothing genuine).
+Entry stored(const Identity& id) {
+    Key k;
+    if (!load_key(&k)) return {};
+    const Store s = read_store();
+    const auto it = s.find(key_of(id.package, id.installed_at));
+    if (it == s.end() || it->second.package != id.package || it->second.installed_at != id.installed_at ||
+        !genuine(k, it->second))
+        return {};
+    return it->second;
+}
+
+std::map<std::string, std::string> permissions(const Identity& id) {
+    std::map<std::string, std::string> out;
+    for (const auto& [p, st] : stored(id).perms)
+        if ((is_storage(p) || is_location(p)) && is_state(st)) out[p] = st;
+    return out;
+}
+
+// The stored mode of `op` ("allow" or "deny"), or "" when none is.
+std::string mode(const Identity& id, const std::string& op) {
+    const Entry e = stored(id);
+    const auto it = e.ops.find(op);
+    return it == e.ops.end() ? "" : it->second;
+}
+
+// Records `perms` and `ops` changes for `id`, keeping what a genuine entry
+// already holds, and signs the result (upstream's setPermissions / setMode).
+bool record(const Identity& id, const std::map<std::string, std::string>& perms,
+            const std::map<std::string, std::string>& ops, const std::string& by, std::string* why) {
+    for (const auto& [p, st] : perms) {
+        if (!(is_storage(p) || is_location(p)) || !is_state(st)) {
+            *why = "refusing to sign " + p + "=" + st;
+            return false;
+        }
+    }
+    for (const auto& [op, m] : ops) {
+        if (!is_op(op) || (m != "allow" && m != "deny")) {
+            *why = "refusing to sign " + op + "=" + m;
+            return false;
+        }
+    }
+    Lock lock(10000);
+    if (!lock.held) {
+        *why = "could not lock the store";
+        return false;
+    }
+    Key k;
+    if (!load_or_create_key(&k, why)) return false;
+    Store s = read_store();
+    const std::string key = key_of(id.package, id.installed_at);
+    Entry e;
+    if (const auto it = s.find(key); it != s.end() && it->second.package == id.package &&
+                                     it->second.installed_at == id.installed_at && genuine(k, it->second))
+        e = it->second;
+    e.package = id.package;
+    e.installed_at = id.installed_at;
+    for (const auto& [p, st] : perms) e.perms[p] = st;
+    for (const auto& [op, m] : ops) e.ops[op] = m;
+    e.has_perms = true;
+    e.updated_at = now_iso();
+    e.by = by;
+    std::string p;
+    if (!payload(kPayloadTag, e, &p) || (e.sig = sign(k, p)).empty()) {
+        *why = "could not sign the entry for " + key;
+        return false;
+    }
+    s[key] = e;
+    if (!write_store(s)) {
+        *why = "could not write " + wide_to_utf8(store_file().wstring());
+        return false;
+    }
+    return true;
+}
+
+// Removes every grant of `pkg` (the app left the library: a reinstall starts
+// with none, as AOSP clears app-ops on uninstall).
+void forget(const std::string& pkg) {
+    std::error_code ec;
+    if (pkg.empty() || !fs::exists(store_file(), ec)) return;
+    Lock lock(2000);
+    if (!lock.held) return;
+    Store s = read_store();
+    bool changed = false;
+    for (auto it = s.begin(); it != s.end();) {
+        if (it->second.package == pkg) {
+            it = s.erase(it);
+            changed = true;
+        } else {
+            ++it;
+        }
+    }
+    if (changed) write_store(s);
+}
+
+// The registry row of `pkg` (write_registry keeps one per package).
+bool identity_of(const std::string& pkg, Identity* id) {
+    Bytes raw;
+    if (pkg.empty() || !read_bytes(data_dir() / L"installed_apps.json", &raw)) return false;
+    const std::string text(raw.begin(), raw.end());
+    Json j{text.data(), text.data() + text.size()};
+    int found = 0;
+    j.object([&](const std::string& k) {
+        if (k != "apps") return j.skip();
+        j.array([&] {
+            Identity row;
+            std::string state;  // Json::str appends; a row without one is installed
+            j.object([&](const std::string& f) {
+                if (f == "package") j.str(&row.package);
+                else if (f == "installedAt") j.str(&row.installed_at);
+                else if (f == "label") j.str(&row.label);
+                else if (f == "dirName") j.str(&row.dir_name);
+                else if (f == "state") j.str(&state);
+                else j.skip();
+            });
+            if (row.package == pkg && (state.empty() || state == "installed") && !row.installed_at.empty()) {
+                ++found;
+                *id = row;
+            }
+        });
+    });
+    return j.ok && found == 1;
+}
+
+// ---- the caller ----------------------------------------------------------------
+
+struct Caller {
+    Identity id;
+    std::wstring name;  // the library name, for the icon
+    DWORD pid = 0;
+};
+
+std::wstring command_line_of(HANDLE process) {
+    using Query = LONG(NTAPI*)(HANDLE, ULONG, PVOID, ULONG, PULONG);
+    const auto query = reinterpret_cast<Query>(
+        reinterpret_cast<void*>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtQueryInformationProcess")));
+    if (!query) return L"";
+    std::vector<unsigned char> buf(64 * 1024);
+    ULONG n = 0;
+    constexpr ULONG kProcessCommandLineInformation = 60;
+    if (query(process, kProcessCommandLineInformation, buf.data(), static_cast<ULONG>(buf.size()), &n) != 0)
+        return L"";
+    const auto* s = reinterpret_cast<const UNICODE_STRING*>(buf.data());
+    return s->Buffer ? std::wstring(s->Buffer, s->Length / sizeof(wchar_t)) : L"";
+}
+
+// The app asking: our parent must be a winapk-runtime.exe that started before
+// us (not a reused process id), and its --apk a library app whose package has
+// one registry row. Nothing the app passes in its arguments is believed.
+bool resolve(Caller* c, std::string* why) {
+    const DWORD self = GetCurrentProcessId();
+    DWORD parent = 0;
+    if (HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0); snap != INVALID_HANDLE_VALUE) {
+        PROCESSENTRY32W pe{sizeof(pe)};
+        for (BOOL more = Process32FirstW(snap, &pe); more; more = Process32NextW(snap, &pe))
+            if (pe.th32ProcessID == self) parent = pe.th32ParentProcessID;
+        CloseHandle(snap);
+    }
+    HANDLE p = parent ? OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, parent) : nullptr;
+    if (!p) {
+        *why = "the parent process cannot be opened";
+        return false;
+    }
+    wchar_t image[MAX_PATH * 2];
+    DWORD len = MAX_PATH * 2;
+    const bool named = QueryFullProcessImageNameW(p, 0, image, &len) &&
+                       _wcsicmp(fs::path(image).filename().c_str(), L"winapk-runtime.exe") == 0;
+    FILETIME pc{}, sc{}, x1, x2, x3;
+    const bool older = GetProcessTimes(p, &pc, &x1, &x2, &x3) &&
+                       GetProcessTimes(GetCurrentProcess(), &sc, &x1, &x2, &x3) && CompareFileTime(&pc, &sc) <= 0;
+    const std::wstring cmd = named && older ? command_line_of(p) : L"";
+    CloseHandle(p);
+    if (!named || !older) {
+        *why = "the parent process is not an app run by Win.apk";
+        return false;
+    }
+    int argc = 0;
+    wchar_t** argv = CommandLineToArgvW(cmd.c_str(), &argc);
+    fs::path apk;
+    for (int i = 1; argv && i + 1 < argc; ++i)
+        if (wcscmp(argv[i], L"--apk") == 0) apk = argv[i + 1];
+    if (argv) LocalFree(argv);
+    std::error_code ec;
+    for (const App& app : library()) {
+        if (apk.empty() || !fs::equivalent(app.apk, apk, ec)) continue;
+        const std::vector<std::string> pkg = package_of(app.name);
+        if (pkg.empty() || !identity_of(pkg[0], &c->id)) {
+            *why = "no single registry row for " + wide_to_utf8(app.name);
+            return false;
+        }
+        if (c->id.label.empty()) c->id.label = wide_to_utf8(app.label);
+        c->name = app.name;
+        c->pid = parent;
+        return true;
+    }
+    *why = "the parent runs no library app (" + wide_to_utf8(apk.wstring()) + ")";
+    return false;
+}
+
+// ---- the dialog ----------------------------------------------------------------
+
+struct Ask {
+    const Caller* caller = nullptr;
+    HWND app_window = nullptr;
+    HICON icon = nullptr;
+};
+
+BOOL CALLBACK find_app_window(HWND w, LPARAM lp) {
+    auto* a = reinterpret_cast<Ask*>(lp);
+    DWORD pid = 0;
+    GetWindowThreadProcessId(w, &pid);
+    if (pid == a->caller->pid && IsWindowVisible(w) && !GetWindow(w, GW_OWNER)) {
+        a->app_window = w;
+        return FALSE;
+    }
+    return TRUE;
+}
+
+constexpr int kAnswerAllow = 100, kAnswerDeny = 101, kAnswerSelect = 102;
+constexpr UINT kAskTimeoutMs = 300 * 1000;  // upstream's alert timeout: no answer, nothing changes
+
+HRESULT CALLBACK ask_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM, LONG_PTR ref) {
+    const auto* a = reinterpret_cast<const Ask*>(ref);
+    if (msg == TDN_CREATED) {
+        // Not owned by the app's window (that would tie two processes' input
+        // together); centred over it and kept above it instead.
+        RECT d, w;
+        GetWindowRect(hwnd, &d);
+        if (a->app_window && GetWindowRect(a->app_window, &w)) {
+            const int x = (w.left + w.right - (d.right - d.left)) / 2, y = (w.top + w.bottom - (d.bottom - d.top)) / 2;
+            SetWindowPos(hwnd, HWND_TOPMOST, x, std::max(static_cast<int>(w.top), y), 0, 0, SWP_NOSIZE);
+        } else {
+            SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+        }
+        SetForegroundWindow(hwnd);
+    } else if (msg == TDN_TIMER && wp >= kAskTimeoutMs) {
+        SendMessageW(hwnd, TDM_CLICK_BUTTON, IDCANCEL, 0);
+    }
+    return S_OK;
+}
+
+// Asks, and returns the button pressed: 0 when the dialog was closed or timed out.
+int ask(const Caller& c, const std::wstring& main, const std::wstring& content,
+        const std::vector<std::pair<int, std::wstring>>& choices, int default_id) {
+    Ask a;
+    a.caller = &c;
+    EnumWindows(find_app_window, reinterpret_cast<LPARAM>(&a));
+    const int px = GetSystemMetrics(SM_CXICON) * 3 / 2;
+    a.icon = static_cast<HICON>(LoadImageW(nullptr, shortcut_icon(c.name).c_str(), IMAGE_ICON, px, px, LR_LOADFROMFILE));
+    std::vector<TASKDIALOG_BUTTON> buttons;
+    for (const auto& [id, text] : choices) buttons.push_back({id, text.c_str()});
+    TASKDIALOGCONFIG cfg{};
+    cfg.cbSize = sizeof(cfg);
+    cfg.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION | TDF_CALLBACK_TIMER | (g_rtl ? TDF_RTL_LAYOUT : 0) |
+                  (a.icon ? TDF_USE_HICON_MAIN : 0);
+    cfg.pszWindowTitle = L"Win.apk";
+    if (a.icon) cfg.hMainIcon = a.icon;
+    else cfg.pszMainIcon = TD_INFORMATION_ICON;
+    cfg.pszMainInstruction = main.c_str();
+    cfg.pszContent = content.c_str();
+    cfg.cButtons = static_cast<UINT>(buttons.size());
+    cfg.pButtons = buttons.data();
+    cfg.nDefaultButton = default_id;
+    cfg.pfCallback = ask_proc;
+    cfg.lpCallbackData = reinterpret_cast<LONG_PTR>(&a);
+    int pressed = 0;
+    if (FAILED(TaskDialogIndirect(&cfg, &pressed, nullptr, nullptr))) pressed = 0;
+    if (a.icon) DestroyIcon(a.icon);
+    for (const auto& [id, text] : choices)
+        if (pressed == id) return pressed;
+    return 0;  // closed, timed out, or a button this question did not offer
+}
+
+std::wstring quoted(const Identity& id) {
+    return L"“" + utf8_to_wide(id.label.empty() ? id.package : id.label) + L"”";
+}
+
+// ---- runtime-permission ----------------------------------------------------------
+
+// The group a permission's dialog belongs to (PermissionMapping.kt :94-117).
+std::string group_of(const std::string& p, int level) {
+    if (is_location(p)) return "location";
+    if (p == kReadExternal || p == kWriteExternal) return "storage";
+    if (p == kMediaLocation) return level < 33 ? "storage" : "visual";
+    if (p == kAudio) return "aural";
+    return "visual";
+}
+
+// The permissions whose grant means the group is granted; MUST agree with
+// SpecialAccessStore.PermModel.groupFullyGranted (the photo-picker prompt is
+// off, as upstream's: USER_SELECTED never counts).
+std::set<std::string> anchors(const std::string& g, int level) {
+    if (g == "storage")
+        return level < 33 ? std::set<std::string>{kReadExternal, kWriteExternal, kMediaLocation}
+                          : std::set<std::string>{kReadExternal, kWriteExternal};
+    if (g == "aural") return {kAudio};
+    if (g == "location") return {kFine, kCoarse};
+    return {kImages, kVideo, kMediaLocation};
+}
+
+// GrantPermissionsViewModel's silent grant into a group that is already granted.
+bool auto_grant_allowed(const std::vector<std::string>& perms, const std::map<std::string, std::string>& cur,
+                        int level) {
+    if (perms.empty()) return false;
+    for (const std::string& p : perms) {
+        bool any = false;
+        for (const std::string& a : anchors(group_of(p, level), level)) {
+            const auto it = cur.find(a);
+            any = any || (it != cur.end() && is_granted(it->second));
+        }
+        if (!any) return false;
+    }
+    return true;
+}
+
+// What an answer writes, only the tokens that change (onPermissionGrantResult,
+// GrantPermissionsViewModel.kt :678-770): Allow grants every permission asked
+// for; Don't allow denies them, fixed when the group had been answered before;
+// "Only approximate" grants COARSE and denies FINE.
+std::map<std::string, std::string> changes(int answer, const std::vector<std::string>& perms,
+                                           const std::vector<std::string>& members,
+                                           const std::vector<std::string>& partial,
+                                           const std::map<std::string, std::string>& cur) {
+    bool user_set = false;
+    for (const auto* list : {&members, &perms})
+        for (const std::string& p : *list) user_set = user_set || cur.count(p);
+    const std::string denied = user_set ? "denied_fixed" : "denied";
+    std::map<std::string, std::string> want;
+    for (const std::string& p : perms) {
+        const bool part = std::find(partial.begin(), partial.end(), p) != partial.end();
+        if (answer == kAnswerAllow) want[p] = "granted";
+        else if (answer == kAnswerSelect) want[p] = part ? "granted" : denied;
+        else if (answer == kAnswerDeny) want[p] = denied;
+    }
+    for (auto it = want.begin(); it != want.end();) {
+        const auto c = cur.find(it->first);
+        it = c != cur.end() && c->second == it->second ? want.erase(it) : std::next(it);
+    }
+    return want;
+}
+
+// The question, worded from the permissions (PermissionController strings.xml).
+std::wstring question(const Identity& id, const std::string& prompt, const std::vector<std::string>& perms,
+                      int level) {
+    const std::wstring who = quoted(id);
+    if (prompt == "location") return fmt(L"Allow {0} to access this device's location?", {who});
+    if (prompt == "supergroup_pre_q")
+        return fmt(L"Allow {0} to access photos, videos, music, audio, and other files on this device?", {who});
+    std::set<std::string> groups;
+    for (const std::string& p : perms) groups.insert(group_of(p, level));
+    if (prompt == "supergroup_q_to_s" || groups.size() > 1)
+        return fmt(L"Allow {0} to access photos, videos, music, and audio on this device?", {who});
+    const std::string g = groups.empty() ? "storage" : *groups.begin();
+    if (g == "aural") return fmt(L"Allow {0} to access music and audio on this device?", {who});
+    if (g == "visual") return fmt(L"Allow {0} to access photos and videos on this device?", {who});
+    return fmt(L"Allow {0} to access photos, media, and files on your device?", {who});
+}
+
+void emit(std::initializer_list<std::pair<const char*, std::string>> fields) {
+    std::string o = "{";
+    for (const auto& [k, v] : fields) o += (o.size() > 1 ? "," : "") + json_string(k) + ":" + json_string(v);
+    helper_say(o + "}");
+}
+
+int usage(const std::string& message) {
+    emit({{"status", "error"}, {"message", message}});
+    return 2;
+}
+
+int refused(const std::string& why) {
+    emit({{"status", "identity_refused"}, {"message", why}});
+    return 5;
+}
+
+int runtime_permission(int level, const std::string& prompt, bool automatic, const std::vector<std::string>& perms,
+                       const std::vector<std::string>& members, const std::vector<std::string>& partial) {
+    const bool location = prompt == "location";
+    auto known = [&](const std::string& p) { return location ? is_location(p) : is_storage(p); };
+    if (perms.empty() || !std::all_of(perms.begin(), perms.end(), known) ||
+        !std::all_of(members.begin(), members.end(), known))
+        return usage(location ? "--prompt location takes only location runtime permissions"
+                              : "--perm/--member must name storage runtime permissions");
+    for (const std::string& p : partial)
+        if (!location || p != kCoarse || std::find(perms.begin(), perms.end(), p) == perms.end())
+            return usage("--partial is only ACCESS_COARSE_LOCATION with --prompt location, and one of the --perm values"
+                         " (there is no photo picker: Allow means allow all)");
+    static const std::set<std::string> offered = {"basic", "supergroup_pre_q", "supergroup_q_to_s", "location"};
+    if (!automatic && !offered.count(prompt))
+        return usage("--prompt must be basic, supergroup_pre_q, supergroup_q_to_s or location (or --auto)");
+    if (level < 23) return usage("--level must be the presented API level");
+    Caller c;
+    std::string why;
+    if (!resolve(&c, &why)) return refused(why);
+    const std::map<std::string, std::string> cur = permissions(c.id);
+    if (automatic) {
+        if (!auto_grant_allowed(perms, cur, level)) {
+            emit({{"status", "refused"}, {"message", "--auto needs a granted permission in the same group"}});
+            return 6;
+        }
+        std::map<std::string, std::string> grant;
+        for (const std::string& p : perms)
+            if (!cur.count(p) || cur.at(p) != "granted") grant[p] = "granted";
+        if (!grant.empty() && !record(c.id, grant, {}, "helper", &why)) {
+            emit({{"status", "error"}, {"message", "could not record the grant: " + why}});
+            return 5;
+        }
+        emit({{"status", "auto_granted"}, {"dirName", c.id.dir_name}});
+        return 0;
+    }
+    std::wstring body = fmt(L"This is Android's permission request for {0}, kept by Win.apk. You can change it later in "
+                            L"the app's App info, or in Win.apk under Get Info.",
+                            {quoted(c.id)});
+    if (location) body += L"\n\n" + std::wstring(tr(L"The location comes from Windows' location services."));
+    std::vector<std::pair<int, std::wstring>> choices = {{kAnswerAllow, tr(L"Allow")}};
+    if (!partial.empty()) choices.push_back({kAnswerSelect, tr(L"Only approximate")});
+    choices.push_back({kAnswerDeny, tr(L"Don't allow")});
+    const int answer = ask(c, question(c.id, prompt, perms, level), body, choices, kAnswerDeny);
+    if (answer == 0) {
+        emit({{"status", "timeout"}, {"message", "the dialog was closed without an answer; nothing changed"}});
+        return 4;
+    }
+    const auto want = changes(answer, perms, members, partial, cur);
+    if (!want.empty() && !record(c.id, want, {}, "helper", &why)) {
+        emit({{"status", "error"}, {"message", "could not record the answer: " + why}});
+        return 5;
+    }
+    if (answer == kAnswerDeny) {
+        emit({{"status", "denied"}, {"dirName", c.id.dir_name}});
+        return 3;
+    }
+    emit({{"status", answer == kAnswerAllow ? "granted" : "partial"}, {"dirName", c.id.dir_name}});
+    return 0;
+}
+
+// ---- special-access ----------------------------------------------------------------
+
+// Settings' "All files access" / "Media management" switch for the app. The
+// default button keeps the current state, as upstream's alert's Return does.
+int special_access(const std::string& op) {
+    if (!is_op(op)) return usage("--op must be " + kAllFiles + " or " + kManageMedia);
+    Caller c;
+    std::string why;
+    if (!resolve(&c, &why)) return refused(why);
+    const std::string current = mode(c.id, op);
+    const bool files = op == kAllFiles;
+    const std::wstring main = files ? fmt(L"Allow {0} access to manage all files?", {quoted(c.id)})
+                                    : fmt(L"Allow {0} to manage media?", {quoted(c.id)});
+    std::wstring body = files ? tr(L"Allow this app to read, modify and delete all files on this device or any "
+                                   L"connected storage volumes. If granted, app may access files without your "
+                                   L"explicit knowledge. On Windows that is your Downloads, Documents, Pictures, "
+                                   L"Music and Videos folders.")
+                              : tr(L"If allowed, this app can modify or delete media files created with other apps "
+                                   L"without asking you. App must have permission to access files and media.");
+    body += L"\n\n";
+    body += current == "allow" ? tr(L"Currently allowed.") : tr(L"Currently not allowed.");
+    const int answer = ask(c, main, body, {{kAnswerAllow, tr(L"Allow")}, {kAnswerDeny, tr(L"Don't allow")}},
+                           current == "allow" ? kAnswerAllow : kAnswerDeny);
+    if (answer == 0) {
+        emit({{"status", "timeout"},
+              {"op", op},
+              {"message", "the dialog was closed without an answer; nothing changed"}});
+        return 4;
+    }
+    const std::string want = answer == kAnswerAllow ? "allow" : "deny";
+    // "Don't allow" writes only to turn an allowed switch off.
+    if (want != current && (want == "allow" || current == "allow") && !record(c.id, {}, {{op, want}}, "helper", &why)) {
+        emit({{"status", "error"}, {"message", "could not record the answer: " + why}});
+        return 5;
+    }
+    emit({{"status", want == "allow" ? "allowed" : "denied"}, {"op", op}, {"dirName", c.id.dir_name}});
+    return want == "allow" ? 0 : 3;
+}
+
+// ---- app-details --------------------------------------------------------------------
+
+// One line of the App info dialog: a permission group or a special-access op.
+struct Item {
+    std::wstring title;
+    std::vector<std::string> perms;  // a group's permissions
+    std::string op;                  // or an op
+    bool on = false, was = false;
+};
+
+std::wstring group_title(const std::string& name, int level) {
+    if (name == "READ_MEDIA_VISUAL") return tr(L"Photos and videos");
+    if (name == "READ_MEDIA_AURAL") return tr(L"Music and audio");
+    if (name == "STORAGE") return level < 33 ? tr(L"Files and media") : tr(L"Files");
+    return tr(L"Photos, videos, music, and audio");
+}
+
+std::wstring op_title(const std::string& op) {
+    return op == kAllFiles ? tr(L"All files access") : tr(L"Media management");
+}
+
+struct Details {
+    const Caller* caller;
+    std::vector<Item>* items;
+    std::wstring main, content;
+    std::vector<std::wstring> texts;
+    std::vector<TASKDIALOG_BUTTON> buttons;
+    TASKDIALOGCONFIG cfg{};
+    Ask ask;
+};
+
+HRESULT CALLBACK details_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp, LONG_PTR ref);
+
+// The dialog's page for the items as they are now: one command link per item
+// ("Photos and videos" / "Allowed"), which turns it on or off.
+void build_details(Details* d) {
+    d->texts.clear();
+    d->buttons.clear();
+    for (const Item& it : *d->items)
+        d->texts.push_back(it.title + L"\n" + (it.on ? tr(L"Allowed") : tr(L"Not allowed")));
+    for (size_t i = 0; i < d->texts.size(); ++i) d->buttons.push_back({static_cast<int>(200 + i), d->texts[i].c_str()});
+    TASKDIALOGCONFIG& c = d->cfg;
+    c = TASKDIALOGCONFIG{};
+    c.cbSize = sizeof(c);
+    c.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION | TDF_CALLBACK_TIMER | TDF_USE_COMMAND_LINKS |
+                (g_rtl ? TDF_RTL_LAYOUT : 0) | (d->ask.icon ? TDF_USE_HICON_MAIN : 0);
+    c.pszWindowTitle = L"Win.apk";
+    if (d->ask.icon) c.hMainIcon = d->ask.icon;
+    else c.pszMainIcon = TD_INFORMATION_ICON;
+    c.pszMainInstruction = d->main.c_str();
+    c.pszContent = d->content.c_str();
+    c.cButtons = static_cast<UINT>(d->buttons.size());
+    c.pButtons = d->buttons.data();
+    c.dwCommonButtons = d->items->empty() ? TDCBF_CLOSE_BUTTON : TDCBF_OK_BUTTON | TDCBF_CANCEL_BUTTON;
+    c.nDefaultButton = d->items->empty() ? IDCLOSE : IDOK;
+    c.pfCallback = details_proc;
+    c.lpCallbackData = reinterpret_cast<LONG_PTR>(d);
+}
+
+HRESULT CALLBACK details_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp, LONG_PTR ref) {
+    auto* d = reinterpret_cast<Details*>(ref);
+    if (msg == TDN_BUTTON_CLICKED && wp >= 200 && wp < 200 + d->items->size()) {
+        Item& it = (*d->items)[wp - 200];
+        it.on = !it.on;
+        build_details(d);
+        SendMessageW(hwnd, TDM_NAVIGATE_PAGE, 0, reinterpret_cast<LPARAM>(&d->cfg));
+        return S_FALSE;  // stay open
+    }
+    if (msg == TDN_NAVIGATED) return S_OK;
+    return ask_proc(hwnd, msg, wp, lp, reinterpret_cast<LONG_PTR>(&d->ask));
+}
+
+int app_details(int level, const std::vector<std::string>& groups, const std::vector<std::string>& ops) {
+    if (level < 23) return usage("--level must be the presented API level");
+    Caller c;
+    std::string why;
+    if (!resolve(&c, &why)) return refused(why);
+    const auto cur = permissions(c.id);
+    std::vector<Item> items;
+    static const std::set<std::string> names = {"STORAGE", "READ_MEDIA_VISUAL", "READ_MEDIA_AURAL",
+                                                "storage-supergroup"};
+    for (const std::string& spec : groups) {
+        const size_t eq = spec.find('=');
+        Item it;
+        if (eq == std::string::npos || !names.count(spec.substr(0, eq))) return usage("bad --group " + spec);
+        for (size_t at = eq + 1; at <= spec.size();) {
+            const size_t comma = std::min(spec.find(',', at), spec.size());
+            if (comma > at) it.perms.push_back(spec.substr(at, comma - at));
+            at = comma + 1;
+        }
+        if (it.perms.empty() || !std::all_of(it.perms.begin(), it.perms.end(), is_storage))
+            return usage("bad --group " + spec);
+        std::set<std::string> anchor;
+        for (const std::string& p : it.perms)
+            for (const std::string& a : anchors(group_of(p, level), level)) anchor.insert(a);
+        for (const std::string& p : it.perms)
+            it.on = it.on || (anchor.count(p) && cur.count(p) && is_granted(cur.at(p)));
+        it.title = group_title(spec.substr(0, eq), level);
+        it.was = it.on;
+        items.push_back(it);
+    }
+    for (const std::string& op : ops) {
+        if (!is_op(op)) return usage("bad --op " + op);
+        Item it;
+        it.op = op;
+        it.title = op_title(op);
+        it.on = it.was = mode(c.id, op) == "allow";
+        items.push_back(it);
+    }
+    Details d;
+    d.caller = &c;
+    d.items = &items;
+    d.ask.caller = &c;
+    EnumWindows(find_app_window, reinterpret_cast<LPARAM>(&d.ask));
+    const int px = GetSystemMetrics(SM_CXICON) * 3 / 2;
+    d.ask.icon = static_cast<HICON>(
+        LoadImageW(nullptr, shortcut_icon(c.name).c_str(), IMAGE_ICON, px, px, LR_LOADFROMFILE));
+    d.main = fmt(L"App info: {0}", {utf8_to_wide(c.id.label.empty() ? c.id.package : c.id.label)});
+    d.content = items.empty()
+                    ? std::wstring(tr(L"This app has no permissions Win.apk asks about."))
+                    : std::wstring(tr(L"Click a permission to turn it on or off, then OK. Turning a permission off "
+                                      L"stops the app, as Android does."));
+    build_details(&d);
+    int pressed = 0;
+    if (FAILED(TaskDialogIndirect(&d.cfg, &pressed, nullptr, nullptr))) pressed = 0;
+    if (d.ask.icon) DestroyIcon(d.ask.icon);
+    if (pressed != IDOK) {
+        emit({{"status", pressed == IDCANCEL ? "cancelled" : "done"}, {"changed", "no"}});
+        return 0;
+    }
+    std::map<std::string, std::string> perms, opm;
+    for (const Item& it : items) {
+        if (it.on == it.was) continue;
+        if (!it.op.empty()) opm[it.op] = it.on ? "allow" : "deny";
+        for (const std::string& p : it.perms) {
+            const std::string want = it.on ? "granted" : "denied";
+            if (!cur.count(p) || cur.at(p) != want) perms[p] = want;
+        }
+    }
+    if ((!perms.empty() || !opm.empty()) && !record(c.id, perms, opm, "helper", &why)) {
+        emit({{"status", "error"}, {"message", "could not record the change: " + why}});
+        return 5;
+    }
+    emit({{"status", "done"}, {"changed", perms.empty() && opm.empty() ? "no" : "yes"}});
+    return 0;
+}
+
+// ---- the library's side --------------------------------------------------------------
+
+// The grants Get Info shows for an app: each stored permission group and op.
+struct Grant {
+    std::wstring title;
+    std::vector<std::string> perms;
+    std::string op;
+    bool on = false;
+};
+
+std::vector<Grant> grants_of(const Identity& id) {
+    const Entry e = stored(id);
+    std::vector<Grant> out;
+    struct G {
+        const wchar_t* title;
+        std::vector<std::string> perms;
+    };
+    const G table[] = {{L"Files and media", {kReadExternal, kWriteExternal}},
+                       {L"Photos and videos", {kImages, kVideo, kMediaLocation, kUserSelected}},
+                       {L"Music and audio", {kAudio}},
+                       {L"Location", {kFine, kCoarse}}};
+    for (const G& g : table) {
+        Grant gr;
+        gr.title = tr(g.title);
+        for (const std::string& p : g.perms) {
+            const auto it = e.perms.find(p);
+            if (it == e.perms.end()) continue;
+            gr.perms.push_back(p);
+            gr.on = gr.on || is_granted(it->second);
+        }
+        if (!gr.perms.empty()) out.push_back(gr);
+    }
+    for (const std::string& op : {kAllFiles, kManageMedia}) {
+        const auto it = e.ops.find(op);
+        if (it != e.ops.end()) out.push_back({op_title(op), {}, op, it->second == "allow"});
+    }
+    return out;
+}
+
+}  // namespace appops
+
+void appops_forget(const std::string& pkg) { appops::forget(pkg); }
+
+// The Get Info sheet's permissions: each grant as a switch, and a reset that
+// forgets them all, so the app asks again.
+std::vector<Row> permission_rows(const App& a) {
+    std::vector<Row> rows;
+    const std::vector<std::string> pkg = package_of(a.name);
+    appops::Identity id;
+    if (pkg.empty() || !appops::identity_of(pkg[0], &id)) return rows;
+    for (const appops::Grant& g : appops::grants_of(id)) {
+        Row r;
+        r.kind = Row::kToggle;
+        r.title = g.title;
+        r.on = g.on;
+        r.act = [id, g](int on) {
+            std::map<std::string, std::string> perms, ops;
+            for (const std::string& p : g.perms) perms[p] = on ? "granted" : "denied";
+            if (!g.op.empty()) ops[g.op] = on ? "allow" : "deny";
+            std::string why;
+            if (!appops::record(id, perms, ops, "panel", &why))
+                set_status(fmt(L"The permission could not be changed: {0}", {utf8_to_wide(why)}), kError);
+        };
+        rows.push_back(r);
+    }
+    if (!rows.empty()) {
+        rows.push_back(button_row(tr(L"Reset permissions"), tr(L"The app asks again the next time it needs them."),
+                                  tr(L"Reset"), [a, pkg] {
+                                      appops::forget(pkg[0]);
+                                      set_status(fmt(L"{0} will ask for its permissions again.", {a.label}), kSuccess);
+                                      close_sheet();
+                                  }));
+    }
+    return rows;
+}
+
+int permission_main(int argc, wchar_t** argv) {
+    const std::wstring verb = argv[1];
+    std::string source, prompt;
+    std::vector<std::string> perms, members, partial, groups, ops;
+    int level = 0;
+    bool automatic = false;
+    for (int i = 2; i < argc; ++i) {
+        const std::wstring a = argv[i];
+        const bool has = i + 1 < argc;
+        auto next = [&] { return wide_to_utf8(argv[++i]); };
+        if (a == L"--source" && has) source = next();
+        else if (a == L"--prompt" && has) prompt = next();
+        else if (a == L"--perm" && has) perms.push_back(next());
+        else if (a == L"--member" && has) members.push_back(next());
+        else if (a == L"--partial" && has) partial.push_back(next());
+        else if (a == L"--group" && has) groups.push_back(next());
+        else if (a == L"--op" && has) ops.push_back(next());
+        else if (a == L"--level" && has) level = std::atoi(next().c_str());
+        else if (a == L"--auto") automatic = true;
+        else if (a == L"--json") {}
+        else return appops::usage("unknown argument " + wide_to_utf8(a));
+    }
+    // Only an app asks (the runtime passes it as a constant). No flag skips
+    // the user's answer.
+    if (source != "android")
+        return appops::usage(wide_to_utf8(verb) + " is only asked for by an app (--source android)");
+    if (verb == L"runtime-permission")
+        return appops::runtime_permission(level, prompt, automatic, perms, members, partial);
+    if (verb == L"special-access") {
+        if (ops.size() != 1) return appops::usage("--op takes one op");
+        return appops::special_access(ops[0]);
+    }
+    return appops::app_details(level, groups, ops);
+}
+
 }  // namespace
 
 int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
@@ -4676,6 +5929,16 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
     if (argc >= 2 && (wcscmp(argv[1], L"install") == 0 || wcscmp(argv[1], L"uninstall") == 0)) {
         pick_language();
         const int code = helper_main(argc, argv);
+        LocalFree(argv);
+        OleUninitialize();
+        return code;
+    }
+
+    // The permission dialogs, for apps that ask for permissions.
+    if (argc >= 2 && (wcscmp(argv[1], L"runtime-permission") == 0 || wcscmp(argv[1], L"special-access") == 0 ||
+                      wcscmp(argv[1], L"app-details") == 0)) {
+        pick_language();
+        const int code = permission_main(argc, argv);
         LocalFree(argv);
         OleUninitialize();
         return code;

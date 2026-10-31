@@ -113,6 +113,10 @@ float g_surface_scale = 1.0f;  // px per dp of the frames (the app's density / 1
 HMONITOR g_fit_monitor = nullptr;  // the monitor the window was last fitted for
 bool g_in_size_move = false;
 bool g_refit_pending = false;  // a fit came while minimized or maximized
+bool g_fitting = false;        // our own SetWindowPos: its WM_SIZE is not the user's
+float g_shown_scale = 1.0f;    // px per dp the window shows the phone at (the last fit)
+SIZE g_move_start{};           // the client size when a drag began
+int g_orientation_lock = 0;    // 0 any, 1 portrait, 2 landscape (window_set_orientation_lock)
 
 UINT monitor_dpi(HMONITOR mon) {
     using GetDpiForMonitorFn = HRESULT(WINAPI*)(HMONITOR, int, UINT*, UINT*);
@@ -238,7 +242,10 @@ void fit_window(HWND hwnd, HMONITOR mon, UINT dpi, const RECT* at, bool keep_ins
         x = std::max(std::min(x, wa.right - m - s.cx), wa.left + m);
         y = std::max(std::min(y, wa.bottom - m - s.cy), wa.top + m);
     }
+    g_shown_scale = scale;
+    g_fitting = true;
     SetWindowPos(hwnd, nullptr, x, y, s.cx, s.cy, SWP_NOZORDER | SWP_NOACTIVATE);
+    g_fitting = false;
     static float s_logged = 0;
     static SIZE s_logged_size{};
     if (scale != s_logged || s.cx != s_logged_size.cx || s.cy != s_logged_size.cy) {
@@ -284,9 +291,10 @@ int client_x(HWND hwnd, int x) {
 
 // ---- the phone inside the client area -------------------------------------
 //
-// Maximized, snapped or dragged to another shape, the client area no longer
-// has the phone's aspect, and the app keeps its size (the window never resizes
-// the app). Stretching the frame over the client area squashed a portrait app
+// While an edge is dragged, for an app that fixed the other orientation, or
+// with WINAPK_RESIZABLE=0, the client area does not have the phone's aspect
+// and the app keeps its size (see "the app follows the window" below for the
+// rest). Stretching the frame over the client area squashed a portrait app
 // across a wide screen. Upstream shows the app at the largest size with the
 // phone's aspect, centred in a black container (cocoa_bridge.mm, the letterbox
 // container and MacApkAspectFitRect; black is AOSP's letterbox background), so
@@ -321,6 +329,56 @@ RECT client_phone_rect(HWND hwnd) {
     RECT client{};
     GetClientRect(hwnd, &client);
     return phone_rect(client);
+}
+
+// ---- the app follows the window -------------------------------------------
+//
+// A window the user resizes -- an edge dragged, maximized, snapped -- is a
+// resized display for the app, as an Android desktop (freeform) window is:
+// the phone becomes the client area's size in dp at the scale the window
+// shows it at, and the app hears a display change (the render thread reports
+// the new surface size to DisplayConfig, which updates the Configuration and
+// lays the views out again) instead of having its old frame magnified.
+// Only the user's own size counts: the window's fits (another monitor, the
+// work area, the app turning the phone) keep the app's size. An app that
+// fixed its orientation keeps its shape when the window takes the other one:
+// it gets the largest box of its own aspect in the client area, letterboxed,
+// as Android letterboxes a fixed-orientation app on a large screen -- and
+// still draws at that box's size, never a magnified frame. During a drag the
+// frame is scaled; the app follows when the drag ends. WINAPK_RESIZABLE=0
+// keeps the phone's size for good, as before.
+
+constexpr int kMinDp = 240;  // the smallest display the window gives an app
+
+bool resizable_enabled() {
+    static const bool on = [] {
+        const char* e = std::getenv("WINAPK_RESIZABLE");
+        return !(e && e[0] == '0');
+    }();
+    return on;
+}
+
+void follow_client(HWND hwnd) {
+    if (!resizable_enabled() || g_fitting || IsIconic(hwnd) || g_shown_scale <= 0) return;
+    RECT c{};
+    GetClientRect(hwnd, &c);
+    double cw = c.right, ch = c.bottom;
+    if ((g_orientation_lock == 1 && cw > ch) || (g_orientation_lock == 2 && ch > cw)) {
+        // The largest box of the phone's aspect: the client's full height
+        // (portrait in a wide window) or full width (landscape in a tall one).
+        const double aspect = static_cast<double>(g_phone_w) / static_cast<double>(g_phone_h);
+        if (cw / ch > aspect) cw = ch * aspect;
+        else ch = cw / aspect;
+    }
+    const int w = std::max(kMinDp, static_cast<int>(std::lround(cw / g_shown_scale)));
+    const int h = std::max(kMinDp, static_cast<int>(std::lround(ch / g_shown_scale)));
+    if (w == g_phone_w && h == g_phone_h) return;
+    std::fprintf(stderr, "[win.apk] window resized: the app's display is %dx%d dp (was %dx%d)\n", w, h, g_phone_w,
+                 g_phone_h);
+    g_phone_w = w;
+    g_phone_h = h;
+    if (g_input) g_input->resized(w, h);
+    InvalidateRect(hwnd, nullptr, FALSE);
 }
 
 // Paints the client area outside `inner` black.
@@ -554,13 +612,32 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             fit_window(hwnd, MonitorFromRect(r, MONITOR_DEFAULTTONEAREST), HIWORD(wp), r, !g_in_size_move);
             return 0;
         }
-        case WM_ENTERSIZEMOVE:
+        case WM_ENTERSIZEMOVE: {
             g_in_size_move = true;
+            RECT c{};
+            GetClientRect(hwnd, &c);
+            g_move_start = SIZE{c.right, c.bottom};
             break;
-        case WM_EXITSIZEMOVE:
+        }
+        case WM_EXITSIZEMOVE: {
             g_in_size_move = false;
+            // A drag that changed the size (an edge, or Snap at the end of a move).
+            RECT c{};
+            GetClientRect(hwnd, &c);
+            if (c.right != g_move_start.cx || c.bottom != g_move_start.cy) follow_client(hwnd);
             if (MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) != g_fit_monitor) refit(hwnd);
             break;
+        }
+        // The smallest window: kMinDp a side at the scale it shows the app at.
+        case WM_GETMINMAXINFO: {
+            if (!resizable_enabled()) break;
+            const int px = client_px(kMinDp, g_shown_scale);
+            RECT r{0, 0, px, px};
+            adjust_for_dpi(&r, window_dpi(hwnd));
+            auto* mm = reinterpret_cast<MINMAXINFO*>(lp);
+            mm->ptMinTrackSize = POINT{r.right - r.left, r.bottom - r.top};
+            return 0;
+        }
         // Moved to another monitor without a drag (Win+Shift+Arrow, a
         // program): fitted for that monitor's work area.
         case WM_WINDOWPOSCHANGED:
@@ -625,8 +702,14 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 minimized = false;
                 g_input->restored();
             }
-            // A fit that came while minimized or maximized.
+            // Maximized, restored or snapped without a drag (Win+Arrow, the
+            // title bar's buttons): the app follows. Not our own fits, nor the
+            // sizes the window gets before its first fit.
+            // A fit that came while minimized or maximized (the app turned the
+            // phone) goes first: the window takes the phone's new shape.
             if (wp == SIZE_RESTORED && g_refit_pending) PostMessageW(hwnd, kMsgResize, 0, 0);
+            else if ((wp == SIZE_MAXIMIZED || wp == SIZE_RESTORED) && !g_in_size_move && g_fit_monitor)
+                follow_client(hwnd);
             // The phone moves to the new centre: Windows would repaint only
             // the newly uncovered part.
             if (wp != SIZE_MINIMIZED) InvalidateRect(hwnd, nullptr, FALSE);
@@ -837,6 +920,8 @@ void window_set_phone_size(int phone_w, int phone_h) {
     g_phone_h = phone_h;
     if (g_hwnd) PostMessageW(g_hwnd, kMsgResize, 0, 0);
 }
+
+void window_set_orientation_lock(int lock) { g_orientation_lock = lock; }
 
 void* window_handle() { return g_hwnd; }
 

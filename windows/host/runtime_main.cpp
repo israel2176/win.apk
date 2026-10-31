@@ -1365,6 +1365,16 @@ void buffer_stderr() {
 
 int wmain(int argc, wchar_t** argv) {
     buffer_stderr();
+    // A relaunch (Cocoa_exitProcess) starts before the old process has ended:
+    // wait for it, so the single-instance claim below finds the app gone.
+    if (const std::wstring after = env_var(L"WINAPK_RELAUNCH_AFTER"); !after.empty()) {
+        SetEnvironmentVariableW(L"WINAPK_RELAUNCH_AFTER", nullptr);
+        const DWORD pid = static_cast<DWORD>(std::wcstoul(after.c_str(), nullptr, 10));
+        if (HANDLE old = OpenProcess(SYNCHRONIZE, FALSE, pid)) {
+            WaitForSingleObject(old, 15000);
+            CloseHandle(old);
+        }
+    }
     if (argc > 1 && std::wstring(argv[1]) == L"--java-main") return java_main(argc, argv);
     if ((argc == 3 || (argc == 5 && std::wstring(argv[3]) == L"--cache")) && std::wstring(argv[1]) == L"--aot-translate")
         return aot_translate_main(argv[2], argc == 5 ? fs::path(argv[4]) : fs::path());
@@ -1397,16 +1407,13 @@ int wmain(int argc, wchar_t** argv) {
             SetEnvironmentVariableW(L"MACAPK_STAGING_DIR", (b.options.data / L"staging").c_str());
     }
 
-    // "All files access" (MANAGE_EXTERNAL_STORAGE) is granted on the Mac by
-    // macapk-installhelper's consent dialog, which signs the answer into a
-    // store SpecialAccessStore reads. Windows has no such helper yet, so a
-    // grant could never be given and apps that need it (AnkiDroid) stop at
-    // their permission screen. Until it exists, every app holds the access,
-    // which is upstream's own answer before that helper (the switch below).
-    // With the user's folders mapped (map_shared_folders) that means every app
-    // can read and write Downloads, Documents, Pictures, Music and Videos, as
-    // any Windows program can.
-    if (env_var(L"MACAPK_ALLFILES_HONEST").empty()) SetEnvironmentVariableW(L"MACAPK_ALLFILES_HONEST", L"0");
+    // Permissions ask as on a device: the storage and location runtime
+    // permissions, "All files access" and "Media management" are answered by
+    // the launcher's permission dialogs (Win.apk.exe runtime-permission,
+    // special-access, app-details), which sign the answer into
+    // <data>\appops\app-ops.json for SpecialAccessStore, as
+    // macapk-installhelper does on the Mac. MACAPK_ALLFILES_HONEST=0 still
+    // restores the old answer: every app holds all files access.
 
     if (!b.options.install_only) map_shared_folders(b.options);
 

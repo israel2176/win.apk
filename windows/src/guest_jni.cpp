@@ -4,8 +4,10 @@
 //
 //   * non-variadic (WINAPK_JNI_PLAIN): forwarded by a single template whose
 //     signature is deduced from the JNINativeInterface_ field itself, so every
-//     one of them is generated, not hand-written. RegisterNatives is the one
-//     exception: it wraps the guest's function pointers first (jni_bind.h).
+//     one of them is generated, not hand-written. The exceptions:
+//     RegisterNatives wraps the guest's function pointers first (jni_bind.h),
+//     GetJavaVM hands out the guest VM, and GetMethodID finds constructors
+//     the way ART does.
 //   * the Call<T>Method(env, obj, mid, ...) families (WINAPK_JNI_CALL) and
 //     their va_list variants (WINAPK_JNI_CALLV): bridged by jni_variadic.cpp
 //     once a signature provider is set, a loud-abort stub until then.
@@ -22,6 +24,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 
 namespace winapk {
 
@@ -87,6 +90,33 @@ struct Slot<Field> {
     std::abort();
 }
 
+// GetMethodID as ART does it for constructors. ART resolves every method,
+// "<init>" included, through the class and then its superclasses
+// (Class::FindClassMethod), so a constructor only an ancestor declares is
+// found, and NewObject then builds the subclass with it. HotSpot looks for
+// "<init>" in the class alone and throws NoSuchMethodError. Waze's libwaze
+// asks HOVPermitDescriptor, which has only (String, String), for "()V" during
+// startup: on a device that is Object's constructor; here the error escaped
+// NativeManager.onlineInit and the app never started.
+WINAPK_GUEST_ABI jmethodID guest_get_method_id(JNIEnv* genv, jclass cls, const char* name, const char* sig) {
+    GuestEnv* g = guest_env_from(genv);
+    JNIEnv* env = g ? g->host : genv;
+    jmethodID m = env->GetMethodID(cls, name, sig);
+    if (m || !name || std::strcmp(name, "<init>") != 0) return m;
+    jthrowable error = env->ExceptionOccurred();
+    env->ExceptionClear();
+    for (jclass c = env->GetSuperclass(cls); c && !m;) {
+        m = env->GetMethodID(c, name, sig);
+        env->ExceptionClear();
+        jclass super = m ? nullptr : env->GetSuperclass(c);
+        env->DeleteLocalRef(c);
+        c = super;
+    }
+    if (!m && error) env->Throw(error);  // no ancestor has it either: HotSpot's error stands
+    if (error) env->DeleteLocalRef(error);
+    return m;
+}
+
 // GetJavaVM hands the guest the guest JavaVM (System V slots), never HotSpot's:
 // a guest that calls (*vm)->GetEnv on HotSpot's own table passes System V
 // arguments to a Microsoft x64 function and faults inside jni_GetEnv.
@@ -111,10 +141,11 @@ void build_guest_table() {
 #undef WINAPK_JNI_CALL
 #undef WINAPK_JNI_CALLV
 
-    // The one plain slot that cannot just forward: the function pointers the
+    // The plain slots that cannot just forward. The function pointers the
     // guest registers are System V and need a thunk each (jni_bind.h).
     *reinterpret_cast<void**>(&t.RegisterNatives) = reinterpret_cast<void*>(&guest_register_natives);
     *reinterpret_cast<void**>(&t.GetJavaVM) = reinterpret_cast<void*>(&guest_get_java_vm);
+    *reinterpret_cast<void**>(&t.GetMethodID) = reinterpret_cast<void*>(&guest_get_method_id);
 }
 
 // Updates this thread's guest env to wrap `host` and returns it as a JNIEnv*.
