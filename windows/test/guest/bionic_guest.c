@@ -325,9 +325,9 @@ static void test_event_fds(void) {
     struct epoll_event tev = {1, 7};
     check("timerfd_create + epoll_ctl ADD", tfd >= 0 && ep2 >= 0 && epoll_ctl(ep2, 1, tfd, &tev) == 0, 0);
     check("a disarmed timerfd reads EAGAIN", read(tfd, &v, 8) == -1 && *__errno() == 11, 0);
-    struct itimerspec its = {{0, 0}, {0, 30000000}};  // once, in 30 ms
+    struct itimerspec its = {0, 0, 0, 30000000};  // once, in 30 ms
     check("timerfd_settime", timerfd_settime(tfd, 0, &its, 0) == 0, 0);
-    struct itimerspec left = {{0, 0}, {0, 0}};
+    struct itimerspec left = {0, 0, 0, 0};
     check("timerfd_gettime shows it armed", timerfd_gettime(tfd, &left) == 0 && left.value_sec == 0 &&
               left.value_nsec > 0 && left.value_nsec <= 30000000, 0);
     check("epoll_wait sleeps until the timer is not due", epoll_wait(ep2, out, 4, 5) == 0, 0);
