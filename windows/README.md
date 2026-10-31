@@ -395,6 +395,14 @@ every such change is listed here:
   `onCreate` tears the activity down, as AOSP does. Chromium's
   `ApplicationStatus` depends on it. `MACAPK_LIFECYCLE_CREATED_ORDER=0` restores
   the old order. Not Windows-specific.
+- `runtime/java/com/macapk/loader/SpecialAccessStore.java`: on Windows the
+  app-ops store (`appops\app-ops.json`, `signing-key.pub`) and the registry
+  (`installed_apps.json`) are read from the data folder, the parent of the
+  android root, and an app's identity is the registry's one row for the
+  running package (every app shares the android root here). The launcher is
+  the helper that writes the store (`Win.apk.exe runtime-permission`,
+  `special-access`, `app-details`, in `launcher/launcher_main.cpp`), with
+  upstream's payload and tokens. On the Mac nothing changes.
 
 ## License
 
