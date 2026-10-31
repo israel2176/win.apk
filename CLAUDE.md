@@ -25,7 +25,7 @@ whole) only when a task needs them.
 | `scripts/build_framework_res.sh` | The platform resource APK (called by `windows/scripts/`) |
 | `.github/workflows/` | `windows-poc.yml` (build + tests + package, on PRs and by hand), `compat-sweep.yml` (app sweep, PRs and by hand), `windows-release.yml` (release, by hand only) |
 
-Data at run time: `%LOCALAPPDATA%\Win.apk\` (`library\` APKs + `.label`, `apps\<name>\`, `android\`, `logs\last-run.log`, `logs\install-<name>.log`, `store\` the Store tab's F-Droid catalog.tsv + icons). Settings: `HKCU\Software\Win.apk` (`Theme`, `Language`, `PhoneSize`, `Landscape`, `DesktopShortcut`). Runtime env: `WINAPK_PHONE_SIZE=WxH` (dp), `WINAPK_HEADLESS=1`, `WINAPK_HEADLESS_FRAME`, `WINAPK_HEADLESS_EXIT_AFTER_FRAMES`.
+Data at run time: `%LOCALAPPDATA%\Win.apk\` (`library\` APKs + `.label`, `apps\<name>\`, `android\`, `logs\last-run.log`, `logs\install-<name>.log`, `store\` the Store tab's F-Droid catalog.tsv + icons, `installed_apps.json` the registry, `appops\` the signed permission grants: app-ops.json, signing-key.pub, signing-key.p256 under DPAPI). Settings: `HKCU\Software\Win.apk` (`Theme`, `Language`, `PhoneSize`, `Landscape`, `DesktopShortcut`). Runtime env: `WINAPK_PHONE_SIZE=WxH` (dp), `WINAPK_HEADLESS=1`, `WINAPK_HEADLESS_FRAME`, `WINAPK_HEADLESS_EXIT_AFTER_FRAMES`.
 
 ## The launcher (`windows/launcher/launcher_main.cpp`)
 
@@ -35,7 +35,11 @@ shortcuts), library, running/installing (threads post `kInstalled`,
 -> `store\catalog.tsv`, icon and download threads posting `kStore*`), theme + drawing helpers, state, layout,
 painting, dialogs, actions, sheets (Settings, Get Info: `Row`/`Section` model,
 `run_sheet` modal loop, the Store's app sheet), install window, log window, drag and drop
-(`IDropTarget`), main `wnd_proc`, `wWinMain`.
+(`IDropTarget`), main `wnd_proc`, the installed-apps registry, the install
+helper (`install`/`uninstall` verbs), permissions (`namespace appops`: the
+signed app-ops store and the `runtime-permission`, `special-access`,
+`app-details` dialogs the runtime asks through, upstream's
+macapk-installhelper verbs; Get Info's Permissions rows), `wWinMain`.
 
 - Every user-visible string goes through `tr(L"English")` or
   `fmt(L"... {0} ...", {args})`; add the Hebrew to the table in `tr()`.
@@ -52,7 +56,7 @@ painting, dialogs, actions, sheets (Settings, Get Info: `Row`/`Section` model,
 - Quick launcher-only compile check on Linux (no full CMake needed):
   `apt-get install g++-mingw-w64-x86-64-posix`, then
   `x86_64-w64-mingw32-windres windows/launcher/launcher.rc -O coff -o l.res` and
-  `x86_64-w64-mingw32-g++-posix -std=c++17 -Wall -Wextra -Wno-missing-field-initializers -DUNICODE -D_UNICODE -D_WIN32_WINNT=0x0A00 -municode -mwindows -static windows/launcher/launcher_main.cpp l.res -o Win.apk.exe -lcomctl32 -lshell32 -lole32 -luuid -lgdiplus -ldwmapi -luxtheme -lgdi32 -lwinhttp -lbcrypt`.
+  `x86_64-w64-mingw32-g++-posix -std=c++17 -Wall -Wextra -Wno-missing-field-initializers -DUNICODE -D_UNICODE -D_WIN32_WINNT=0x0A00 -municode -mwindows -static windows/launcher/launcher_main.cpp l.res -o Win.apk.exe -lcomctl32 -lshell32 -lole32 -luuid -lgdiplus -ldwmapi -luxtheme -lgdi32 -lwinhttp -lbcrypt -lcrypt32`.
 - Looking at the UI: `apt-get install wine64 xvfb xdotool`; Wine is in
   `/usr/lib/wine` (`wine64`). Run under `Xvfb :9`, screenshot with
   `import -window root`. Wine lacks Segoe fonts, so icon glyphs show as boxes.

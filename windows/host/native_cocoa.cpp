@@ -836,7 +836,32 @@ void JNICALL Cocoa_runLoop(JNIEnv*, jclass) {
 
 // Upstream ends the process with _exit: no Java shutdown, no atexit. The
 // Windows equivalent is TerminateProcess on ourselves.
-void JNICALL Cocoa_exitProcess(JNIEnv*, jclass, jint code, jstring) {
+// A non-null `relaunch` (the file of intents MacApkProcessExit marshals for a
+// ProcessPhoenix-style restart, or SpecialAccessHandler's after a permission
+// was turned off) asks for the app to come back once this process is gone, as
+// the ActivityManager restarts it. The same command line starts again, at the
+// app's launcher activity (the intents in the file are not replayed), and
+// waits for this process to end before it claims the app's single instance
+// (WINAPK_RELAUNCH_AFTER, runtime_main.cpp).
+void JNICALL Cocoa_exitProcess(JNIEnv*, jclass, jint code, jstring relaunch) {
+    if (relaunch) {
+        SetEnvironmentVariableW(L"WINAPK_RELAUNCH_AFTER", std::to_wstring(GetCurrentProcessId()).c_str());
+        std::wstring cmd = GetCommandLineW();
+        STARTUPINFOW si{};
+        si.cb = sizeof(si);
+        si.dwFlags = STARTF_USESTDHANDLES;  // the same log
+        si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+        si.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
+        si.hStdError = GetStdHandle(STD_ERROR_HANDLE);
+        PROCESS_INFORMATION pi{};
+        std::fprintf(stderr, "[win.apk] relaunching the app after it ends\n");
+        if (CreateProcessW(nullptr, cmd.data(), nullptr, nullptr, TRUE, 0, nullptr, nullptr, &si, &pi)) {
+            CloseHandle(pi.hThread);
+            CloseHandle(pi.hProcess);
+        } else {
+            std::fprintf(stderr, "[win.apk] the relaunch failed (error %lu)\n", GetLastError());
+        }
+    }
     std::fflush(stdout);
     std::fflush(stderr);
     TerminateProcess(GetCurrentProcess(), static_cast<UINT>(code));
