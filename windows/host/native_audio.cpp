@@ -31,6 +31,8 @@ struct Player {
     std::shared_ptr<au::Voice> voice;
     float left = 1, right = 1;
     bool looping = false;
+    bool started = false; // start() was requested and stop() has not been called
+    bool paused = false;
     double position = 0;  // seconds; where the next start begins
 };
 std::map<jlong, Player> g_players;
@@ -255,6 +257,8 @@ jboolean JNICALL Mp_setSource(JNIEnv* env, jclass, jlong h, jbyteArray data, jin
         p.voice.reset();
         p.clip = clip;
         p.position = 0;
+        p.started = false;
+        p.paused = false;
         found = true;
     });
     return found ? JNI_TRUE : JNI_FALSE;
@@ -262,6 +266,8 @@ jboolean JNICALL Mp_setSource(JNIEnv* env, jclass, jlong h, jbyteArray data, jin
 void JNICALL Mp_start(JNIEnv*, jclass, jlong h) {
     with_player(h, [](Player& p) {
         if (!p.clip) return;
+        p.started = true;
+        p.paused = false;
         if (p.voice && !au::voice_finished(p.voice.get())) {
             au::voice_set_paused(p.voice.get(), false);
             return;
@@ -277,6 +283,7 @@ void JNICALL Mp_pause(JNIEnv*, jclass, jlong h) {
     with_player(h, [](Player& p) {
         if (!p.voice) return;
         p.position = au::voice_position(p.voice.get());
+        p.paused = true;
         au::voice_set_paused(p.voice.get(), true);
     });
 }
@@ -285,6 +292,8 @@ void JNICALL Mp_stop(JNIEnv*, jclass, jlong h) {
         if (p.voice) au::voice_stop(p.voice.get());
         p.voice.reset();
         p.position = 0;
+        p.started = false;
+        p.paused = false;
     });
 }
 void JNICALL Mp_seek(JNIEnv*, jclass, jlong h, jint ms) {
@@ -296,7 +305,15 @@ void JNICALL Mp_seek(JNIEnv*, jclass, jlong h, jint ms) {
 void JNICALL Mp_setLooping(JNIEnv*, jclass, jlong h, jboolean loop) {
     with_player(h, [loop](Player& p) {
         p.looping = loop == JNI_TRUE;
-        if (p.voice) au::voice_set_loop(p.voice.get(), p.looping ? -1 : 0);
+        if (!p.voice) return;
+        if (p.looping && p.started && au::voice_finished(p.voice.get())) {
+            // A voice that already reached EOS has been removed from the mixer;
+            // changing its loop counter cannot revive it. Recreate it at frame 0.
+            p.position = 0;
+            p.voice = au::voice_start(p.clip, p.left, p.right, -1, 1.0f, p.paused);
+        } else {
+            au::voice_set_loop(p.voice.get(), p.looping ? -1 : 0);
+        }
     });
 }
 void JNICALL Mp_setVolume(JNIEnv*, jclass, jlong h, jfloat l, jfloat r) {

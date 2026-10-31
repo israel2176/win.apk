@@ -110,8 +110,10 @@ int ipx(float v) { return static_cast<int>(std::lround(px(v))); }
 // ---------------------------------------------------------------------------
 // Language: Windows default, English, Hebrew RTL, or Japanese
 
+enum class UiLanguage { English, Hebrew, Japanese };
+UiLanguage g_ui_language = UiLanguage::English;
 bool g_rtl = false;    // Hebrew: every window is mirrored (WS_EX_LAYOUTRTL) and its text reads right to left
-bool g_japanese = false;
+bool g_japanese = false; // kept for compatibility with existing paint paths
 float g_paint_w = 0;   // the width being painted, to put text and pictures back in a mirrored layout
 
 DWORD setting(const wchar_t* name, DWORD fallback);
@@ -119,8 +121,11 @@ DWORD setting(const wchar_t* name, DWORD fallback);
 void pick_language() {
     const DWORD pref = setting(L"Language", 0);  // 0 Windows, 1 English, 2 Hebrew, 3 Japanese
     const LANGID ui = GetUserDefaultUILanguage();
-    g_rtl = pref == 2 || (pref == 0 && PRIMARYLANGID(ui) == LANG_HEBREW);
-    g_japanese = pref == 3 || (pref == 0 && PRIMARYLANGID(ui) == LANG_JAPANESE);
+    const bool hebrew = pref == 2 || (pref == 0 && PRIMARYLANGID(ui) == LANG_HEBREW);
+    const bool japanese = pref == 3 || (pref == 0 && PRIMARYLANGID(ui) == LANG_JAPANESE);
+    g_ui_language = japanese ? UiLanguage::Japanese : (hebrew ? UiLanguage::Hebrew : UiLanguage::English);
+    g_rtl = g_ui_language == UiLanguage::Hebrew;
+    g_japanese = g_ui_language == UiLanguage::Japanese;
 }
 
 // The Hebrew for an English string, keyed by the English itself.
@@ -379,6 +384,18 @@ const wchar_t* tr(const wchar_t* en) {
         {L"The log may say why:\n{0}", L"ログに原因が記録されている可能性があります：\n{0}"},
         {L"No apps found.", L"アプリが見つかりません。"},
         {L"Drop an APK above to install your first app", L"上にAPKをドロップして最初のアプリをインストール"},
+        {L"Diagnostics", L"診断"}, {L"View logs", L"ログを表示"}, {L"Logs folder", L"ログフォルダー"},
+        {L"Attach the log to a bug report: it says what the runtime did and where it stopped.", L"不具合報告にはログを添付してください。ランタイムの処理内容と停止位置を確認できます。"},
+        {L"install-<app>.log records each install, last-run.log the app opened last.", L"install-<app>.logには各インストール、last-run.logには最後に開いたアプリの記録が保存されます。"},
+        {L"Make default", L"既定にする"}, {L"Use my Windows folders", L"Windowsのフォルダーを使用"},
+        {L"Saves, caches and files", L"保存データ、キャッシュ、ファイル"},
+        {L"Each installed app keeps its data here. Removing an app keeps what it saved.", L"インストールした各アプリのデータをここに保存します。アプリを削除しても保存データは残ります。"},
+        {L"Make the Start menu shortcuts of every app again, with their icons.", L"すべてのアプリのスタートメニューショートカットをアイコン付きで再作成します。"},
+        {L"The Start menu shortcuts were made again.", L"スタートメニューのショートカットを再作成しました。"},
+        {L"Remove all", L"すべて削除"}, {L"Remove all…", L"すべて削除…"},
+        {L"Their shortcuts go too. What they saved stays.", L"ショートカットも削除されますが、保存データは残ります。"},
+        {L"Every app was removed.", L"すべてのアプリを削除しました。"},
+        {L"An unofficial port of Mac.apk to Windows. Not affiliated with or endorsed by the Mac.apk project.", L"Mac.apkをWindowsへ移植した非公式版です。Mac.apkプロジェクトとの提携や承認関係はありません。"},
         {L"Appearance", L"外観"}, {L"Theme", L"テーマ"}, {L"Language", L"言語"},
         {L"File types", L"ファイルの種類"},
         {L"Covers .apk, .apkm, .xapk and .apks. Double-clicking one in Explorer installs it and opens it.", L".apk、.apkm、.xapk、.apksに対応します。エクスプローラーでダブルクリックするとインストールして起動します。"},
@@ -390,12 +407,12 @@ const wchar_t* tr(const wchar_t* en) {
         {L"Stop", L"停止"}, {L"Logs", L"ログ"}, {L"Done", L"完了"},
         {L"Auto (fits the screen)", L"自動（画面に合わせる）"}, {L"Portrait", L"縦向き"}, {L"Landscape", L"横向き"}
     };
-    if (g_japanese) {
+    if (g_ui_language == UiLanguage::Japanese) {
         const auto ji = ja.find(en);
         return ji == ja.end() ? en : ji->second;
     }
     const auto it = he.find(en);
-    return g_rtl && it != he.end() ? it->second : en;
+    return g_ui_language == UiLanguage::Hebrew && it != he.end() ? it->second : en;
 }
 
 // tr(en) with {0}, {1}... replaced by `args`.
@@ -3191,8 +3208,9 @@ std::vector<Section> settings_sections() {
         // Apply the selected value immediately. Reading the registry again here
         // could leave the live UI in English when persistence was delayed or
         // denied, even though the choice row already displayed Japanese.
-        g_rtl = i == 2;
-        g_japanese = i == 3;
+        g_ui_language = i == 3 ? UiLanguage::Japanese : (i == 2 ? UiLanguage::Hebrew : UiLanguage::English);
+        g_rtl = g_ui_language == UiLanguage::Hebrew;
+        g_japanese = g_ui_language == UiLanguage::Japanese;
         set_setting(L"Language", static_cast<DWORD>(i));
         apply_language(true);
     };

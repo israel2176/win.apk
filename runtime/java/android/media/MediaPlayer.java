@@ -229,6 +229,9 @@ public class MediaPlayer implements AudioRouting, VolumeAutomation {
     public void setLooping(boolean looping) {
         this.looping = looping;
         if (handle != 0) com.macapk.loader.NativeAudio.nativeMpSetLooping(handle, looping);
+        // Apps commonly enable repeat after start(). If no completion listener
+        // existed at start time, there was no watcher to recover a backend EOS.
+        if (looping && handle != 0 && !mUserPaused) startCompletionWatcher();
     }
     public boolean isLooping() { return looping; }
     // AOSP API-21 audio routing config. Mac.apk has one audio output, so
@@ -264,11 +267,10 @@ public class MediaPlayer implements AudioRouting, VolumeAutomation {
     // on its own (not looping, not user-stopped) fire onCompletion once.
     private volatile boolean mWatcherLive;
     private void startCompletionWatcher() {
-        final OnCompletionListener l = onCompletion;
         // Watch looping tracks too. Most backends loop natively, but some
         // decoded formats can still report EOS. The watcher then seeks to zero
         // and restarts without delivering onCompletion.
-        if (l == null && nextPlayer == null && !looping) return;
+        if (onCompletion == null && nextPlayer == null && !looping) return;
         // Every start() -- including a resume from pause -- used to spawn a
         // fresh watcher, so a track paused and resumed twice had three threads
         // racing to fire onCompletion once each. Claimed AFTER the checks
@@ -319,6 +321,9 @@ public class MediaPlayer implements AudioRouting, VolumeAutomation {
                         // setNextMediaPlayer semantics) before notifying.
                         MediaPlayer np = nextPlayer;
                         if (np != null) { try { np.start(); } catch (Throwable ignore) {} }
+                        // Read the listener at completion time. Applications may
+                        // replace it after playback starts.
+                        OnCompletionListener l = onCompletion;
                         if (l != null) { try { l.onCompletion(MediaPlayer.this); } catch (Throwable ignore) {} }
                     }
                 } catch (Throwable ignore) {
@@ -379,7 +384,10 @@ public class MediaPlayer implements AudioRouting, VolumeAutomation {
     }
 
     public void setOnPreparedListener(OnPreparedListener l)   { onPrepared = l; }
-    public void setOnCompletionListener(OnCompletionListener l){ onCompletion = l; }
+    public void setOnCompletionListener(OnCompletionListener l) {
+        onCompletion = l;
+        if (l != null && handle != 0 && !mUserPaused) startCompletionWatcher();
+    }
     public void setOnErrorListener(OnErrorListener l)         { onError = l; }
     public void setOnInfoListener(OnInfoListener l)           { onInfo = l; }
     public interface OnPreparedListener  { void onPrepared(MediaPlayer mp); }
