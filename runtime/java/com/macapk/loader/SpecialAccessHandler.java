@@ -575,12 +575,28 @@ public final class SpecialAccessHandler {
                     + " no macOS prompt, the app sees location disabled");
             return;
         }
+        if (LocationBridge.refused()) {
+            // The host itself refuses this app (Windows: location access is off
+            // for apps or for this program). Where the host has a settings page
+            // for that, open it once, so allowing the app here is not a dead end.
+            String settings = LocationBridge.hostSettingsUrl();
+            if (settings != null && HOST_SETTINGS_SHOWN.compareAndSet(false, true)) {
+                NativeLog.i(TAG, "requestPermissions(location): the host refuses location;"
+                        + " opening " + settings);
+                ActivityHost.openHostNow(settings, "location settings", false);
+            }
+            return;
+        }
         if (LocationBridge.authStatus() != LocationBridge.AUTH_NOT_DETERMINED) return;
         NativeLog.i(TAG, "requestPermissions(location): showing the macOS location prompt");
         int st = LocationBridge.requestAuthorizationAndWait(LOCATION_PROMPT_WAIT_MS);
         NativeLog.i(TAG, "  macOS location answer: status " + st
                 + (LocationBridge.reducedAccuracy() ? " (approximate only)" : ""));
     }
+
+    /** The host's location settings are opened at most once per process. */
+    private static final java.util.concurrent.atomic.AtomicBoolean HOST_SETTINGS_SHOWN =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
 
     private static boolean declares(Activity requester, String perm) throws Exception {
         android.content.pm.PackageInfo pi = requester.getPackageManager().getPackageInfo(
