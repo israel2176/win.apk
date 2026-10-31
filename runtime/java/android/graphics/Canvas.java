@@ -4472,8 +4472,29 @@ public class Canvas {
         if (g == null || path == null || !REAL_CLIP) return true;
         java.awt.Shape s = path.macapkShape();
         if (s == null) return true;
-        g.clip(s);
+        macapkIntersectClip(s);
         return true;
+    }
+    private int macapkIntersectClip(java.awt.Shape s) {
+        if (!(s instanceof java.awt.geom.Rectangle2D)) {
+            java.awt.Shape cur = g.getClip();
+            if (cur != null && !(cur instanceof java.awt.geom.Rectangle2D)) {
+                try {
+                    if (cur.contains(s.getBounds2D())) { g.setClip(s); return 1; }
+                    if (s.contains(cur.getBounds2D())) return 1;
+                    double sc=1.0; try { sc=Math.max(1e-6,Math.sqrt(Math.abs(g.getTransform().getDeterminant()))); } catch(Throwable ignored) {}
+                    double flat=0.25/sc;
+                    java.awt.geom.Area a=new java.awt.geom.Area(macapkFlattenClip(cur,flat));
+                    a.intersect(new java.awt.geom.Area(macapkFlattenClip(s,flat)));
+                    g.setClip(a); return 2;
+                } catch(Throwable ignored) {}
+            }
+        }
+        g.clip(s); return 0;
+    }
+    private static java.awt.Shape macapkFlattenClip(java.awt.Shape s,double f) {
+        java.awt.geom.Path2D.Double p=new java.awt.geom.Path2D.Double();
+        p.append(s.getPathIterator(null,f),false); return p;
     }
     public boolean getClipBounds(Rect bounds) {
         if (bounds == null) return true;

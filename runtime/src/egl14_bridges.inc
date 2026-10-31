@@ -587,7 +587,8 @@ jboolean EGL14_eglChooseConfig(JNIEnv* env, jclass, jobject dpy,
     MEGLint n = 0;
     // Copy, not pin: the boxConfig loop below runs while `al` is in scope.
     IntAttribs al(env, attribs, attOff);
-    const MEGLint* alist = al.get();
+    static_assert(sizeof(jint) == sizeof(MEGLint), "jint and EGLint must both be 32-bit");
+    const MEGLint* alist = reinterpret_cast<const MEGLint*>(al.get());
     MEGLBoolean r = p(egl_h(env, dpy), alist, configs ? tmp.data() : nullptr, cfgSize, &n);
     if (num) { AttribGuard g(env, num); if (g.base) g.base[numOff] = n; }
     if (configs && r) {
@@ -637,7 +638,8 @@ jobject EGL14_eglCreatePbufferSurface(JNIEnv* env, jclass, jobject dpy, jobject 
     if (!gl3_check_offset(env, attribs, attOff, "eglCreatePbufferSurface: attrib_list offset out of range"))
         return boxSurface(env, nullptr);
     IntAttribs al(env, attribs, attOff);   // copy, not pin: egl_h + boxSurface below
-    const MEGLint* alist = al.get();
+    static_assert(sizeof(jint) == sizeof(MEGLint), "jint and EGLint must both be 32-bit");
+    const MEGLint* alist = reinterpret_cast<const MEGLint*>(al.get());
     void* s = p ? p(egl_h(env, dpy), egl_h(env, cfg), alist) : nullptr;
     return boxSurface(env, s);
 }
@@ -697,7 +699,8 @@ jobject EGL14_eglCreatePbufferFromClientBuffer(JNIEnv* env, jclass, jobject dpy,
     if (!gl3_check_offset(env, attribs, attOff, "eglCreatePbufferFromClientBuffer: attrib_list offset out of range"))
         return boxSurface(env, nullptr);
     IntAttribs al(env, attribs, attOff);   // copy, not pin: egl_h + boxSurface below
-    const MEGLint* alist = al.get();
+    static_assert(sizeof(jint) == sizeof(MEGLint), "jint and EGLint must both be 32-bit");
+    const MEGLint* alist = reinterpret_cast<const MEGLint*>(al.get());
     void* s = p ? p(egl_h(env, dpy), buftype,
                     reinterpret_cast<void*>(static_cast<intptr_t>(buffer)),
                     egl_h(env, cfg), alist) : nullptr;
@@ -729,7 +732,8 @@ jobject EGL14_eglCreateContext(JNIEnv* env, jclass, jobject dpy, jobject cfg,
     if (!gl3_check_offset(env, attribs, attOff, "eglCreateContext: attrib_list offset out of range"))
         return boxContext(env, nullptr);
     IntAttribs al(env, attribs, attOff);   // copy, not pin: egl_h + boxContext below
-    const MEGLint* alist = al.get();
+    static_assert(sizeof(jint) == sizeof(MEGLint), "jint and EGLint must both be 32-bit");
+    const MEGLint* alist = reinterpret_cast<const MEGLint*>(al.get());
     void* c = p ? p(egl_h(env, dpy), egl_h(env, cfg), egl_h(env, share), alist) : nullptr;
     return boxContext(env, c);
 }

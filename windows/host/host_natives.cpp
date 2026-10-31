@@ -53,6 +53,7 @@ const char* const kHostClasses[] = {
     "com.macapk.loader.LocationBridge",
     "com.macapk.loader.NativeAudio",
     "com.macapk.loader.NativeCocoa",
+    "com.macapk.loader.NativeD2D",
     "com.macapk.loader.NativeGles",
     "com.macapk.loader.NativeImageCodec",
     "com.macapk.loader.NativeLinker",
@@ -102,6 +103,7 @@ const HostMethods kProviders[] = {
     native_camera_methods(),
     native_radios_methods(),
     native_usb_cd_methods(),
+    native_d2d_methods(),
 };
 
 const JNINativeMethod* implementation_of(const char* clazz, const char* name, const char* sig) {

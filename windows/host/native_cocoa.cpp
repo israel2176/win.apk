@@ -36,6 +36,7 @@
 #include "gl/gl_surface.h"
 #include "native_window.h"
 #include "win32_window.h"
+#include "gstreamer_present.h"
 #include "winapk/mini_bionic.h"
 
 namespace winapk::host {
@@ -964,8 +965,11 @@ void JNICALL Cocoa_presentBitmap(JNIEnv* env, jclass, jintArray argb, jint w, ji
     // While the app's native code shows frames, its next one brings this along.
     // With a GL content view or a surface on screen, the tree is their overlay.
     if (!guest_live()) {
-        if (composite_active()) composite_tree_frame(env, reinterpret_cast<const uint32_t*>(px), w, h);
-        else present_pixels(reinterpret_cast<const uint32_t*>(px), w, h);
+        if (composite_active()) {
+            composite_tree_frame(env, reinterpret_cast<const uint32_t*>(px), w, h);
+        } else if (!gstreamer_present_frame(reinterpret_cast<const uint32_t*>(px), w, h)) {
+            present_pixels(reinterpret_cast<const uint32_t*>(px), w, h);
+        }
     }
     env->ReleaseIntArrayElements(argb, px, JNI_ABORT);
 }

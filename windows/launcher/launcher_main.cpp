@@ -108,16 +108,19 @@ float px(float v) { return v * g_dpi / 96.0f; }
 int ipx(float v) { return static_cast<int>(std::lround(px(v))); }
 
 // ---------------------------------------------------------------------------
-// Language: English, or Hebrew laid out right to left
+// Language: Windows default, English, Hebrew RTL, or Japanese
 
 bool g_rtl = false;    // Hebrew: every window is mirrored (WS_EX_LAYOUTRTL) and its text reads right to left
+bool g_japanese = false;
 float g_paint_w = 0;   // the width being painted, to put text and pictures back in a mirrored layout
 
 DWORD setting(const wchar_t* name, DWORD fallback);
 
 void pick_language() {
-    const DWORD pref = setting(L"Language", 0);  // 0 as Windows, 1 English, 2 Hebrew
-    g_rtl = pref == 2 || (pref == 0 && PRIMARYLANGID(GetUserDefaultUILanguage()) == LANG_HEBREW);
+    const DWORD pref = setting(L"Language", 0);  // 0 Windows, 1 English, 2 Hebrew, 3 Japanese
+    const LANGID ui = GetUserDefaultUILanguage();
+    g_rtl = pref == 2 || (pref == 0 && PRIMARYLANGID(ui) == LANG_HEBREW);
+    g_japanese = pref == 3 || (pref == 0 && PRIMARYLANGID(ui) == LANG_JAPANESE);
 }
 
 // The Hebrew for an English string, keyed by the English itself.
@@ -337,8 +340,38 @@ const wchar_t* tr(const wchar_t* en) {
         {L"unknown", L"לא ידוע"}
     };
     if (!g_rtl) return en;
+    static const std::map<std::wstring, const wchar_t*> ja = {
+        {L"Run Android apps natively on Windows", L"AndroidアプリをWindows上でネイティブ実行"},
+        {L"Drop to install", L"ドロップしてインストール"}, {L"Installing…", L"インストール中…"},
+        {L"Installing", L"インストール中"}, {L"Drop an APK here to install", L"APKをここにドロップしてインストール"},
+        {L"Search apps", L"アプリを検索"}, {L"No apps installed yet.", L"インストール済みのアプリはありません。"},
+        {L"Logs", L"ログ"}, {L"Stop", L"停止"}, {L"Open the log", L"ログを開く"},
+        {L"Android apps", L"Androidアプリ"}, {L"All files", L"すべてのファイル"},
+        {L"Install an Android app", L"Androidアプリをインストール"}, {L"Opening {0}…", L"{0}を起動しています…"},
+        {L"Remove {0}?", L"{0}を削除しますか？"}, {L"Remove", L"削除"}, {L"Done", L"完了"},
+        {L"Theme", L"テーマ"}, {L"Match Windows", L"Windowsに合わせる"}, {L"Light", L"ライト"}, {L"Dark", L"ダーク"},
+        {L"Appearance", L"外観"}, {L"Language", L"言語"}, {L"Settings", L"設定"},
+        {L"Library", L"ライブラリ"}, {L"Store", L"ストア"}, {L"Install", L"インストール"},
+        {L"Update", L"更新"}, {L"Details", L"詳細"}, {L"Version", L"バージョン"},
+        {L"Try again", L"再試行"}, {L"All categories", L"すべてのカテゴリ"}, {L"Downloading…", L"ダウンロード中…"},
+        {L"Open", L"開く"}, {L"Cancel", L"キャンセル"}, {L"Close", L"閉じる"}, {L"Save", L"保存"},
+        {L"What the log says", L"ログの内容"}, {L"An app", L"アプリ"},
+        {L"{0} was stopped.", L"{0}を停止しました。"}, {L"{0} stopped with an error.", L"{0}がエラーで停止しました。"},
+        {L"{0} stopped with an error", L"{0}がエラーで停止しました"},
+        {L"Installing {0} failed.", L"{0}のインストールに失敗しました。"},
+        {L"Installing {0} failed", L"{0}のインストールに失敗しました"},
+        {L"Open Android app files with Win.apk", L"AndroidアプリファイルをWin.apkで開く"},
+        {L"Window size", L"ウィンドウサイズ"}, {L"Orientation", L"画面の向き"},
+        {L"Portrait", L"縦向き"}, {L"Landscape", L"横向き"}, {L"Automatic", L"自動"},
+        {L"Show the last &log", L"最後のログを表示"}, {L"Create &desktop shortcut", L"デスクトップショートカットを作成"},
+        {L"&Remove…", L"削除…"}, {L"Rein&stall", L"再インストール"}, {L"&Update from APK…", L"APKから更新…"}
+    };
+    if (g_japanese) {
+        const auto ji = ja.find(en);
+        return ji == ja.end() ? en : ji->second;
+    }
     const auto it = he.find(en);
-    return it == he.end() ? en : it->second;
+    return g_rtl && it != he.end() ? it->second : en;
 }
 
 // tr(en) with {0}, {1}... replaced by `args`.
@@ -3128,8 +3161,8 @@ std::vector<Section> settings_sections() {
     Row lang;
     lang.kind = Row::kChoice;
     lang.title = tr(L"Language");
-    lang.choices = {tr(L"Match Windows"), L"English", L"עברית"};
-    lang.choice = static_cast<int>((std::min)(setting(L"Language", 0), 2ul));
+    lang.choices = {tr(L"Match Windows"), L"English", L"עברית", L"日本語"};
+    lang.choice = static_cast<int>((std::min)(setting(L"Language", 0), 3ul));
     lang.act = [](int i) {
         set_setting(L"Language", static_cast<DWORD>(i));
         apply_language();
@@ -4364,11 +4397,10 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             const std::wstring label = label_of(*name);
             if (g_stopping.erase(*name)) {
                 set_status(fmt(L"{0} was stopped.", {label}), kInfo);
-            } else if (wp && log_shows_window(last_run_log())) {
-                set_status(L"", kHint);
             } else if (wp) {
-                set_status(fmt(L"{0} closed before it showed a window.", {label}), kError);
-                failed_with_log(fmt(L"{0} closed before it showed a window", {label}), last_run_log());
+                // Exit code 0 is a normal app exit. Do not infer startup failure from
+                // the final log after the window and graphics resources were destroyed.
+                set_status(L"", kHint);
             } else {
                 set_status(fmt(L"{0} stopped with an error.", {label}), kError);
                 failed_with_log(fmt(L"{0} stopped with an error", {label}), last_run_log());
@@ -4665,10 +4697,9 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
             failed_with_log(fmt(L"{0} stopped with an error", {label}), last_run_log(), true);
             return 1;
         }
-        if (!log_shows_window(last_run_log())) {
-            failed_with_log(fmt(L"{0} closed before it showed a window", {label}), last_run_log(), true);
-            return 1;
-        }
+        // run_and_wait returning true means the runtime exited normally. A missing
+        // window marker after shutdown is not an error because the log may be flushed
+        // after the HWND and Direct2D/DXGI resources have already been released.
         return 0;
     }
 

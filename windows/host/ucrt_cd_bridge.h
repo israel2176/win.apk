@@ -5,10 +5,14 @@
 #include <stdint.h>
 
 #ifdef _WIN32
-  #ifdef UCRT_CD_BRIDGE_BUILD
-    #define UCRT_CD_API __declspec(dllexport)
+  #if defined(UCRT_CD_BRIDGE_DLL)
+    #if defined(UCRT_CD_BRIDGE_BUILD)
+      #define UCRT_CD_API __declspec(dllexport)
+    #else
+      #define UCRT_CD_API __declspec(dllimport)
+    #endif
   #else
-    #define UCRT_CD_API __declspec(dllimport)
+    #define UCRT_CD_API
   #endif
   #define UCRT_CD_CALL __cdecl
 #else

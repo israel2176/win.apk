@@ -217,7 +217,7 @@ if(WINAPK_JNI_INCLUDE)
   # The host that runs an APK (milestone M1). Like winapk-jvm-run it loads
   # jvm.dll at runtime.
   add_executable(winapk-runtime host/runtime_main.cpp host/host_natives.cpp host/native_log.cpp
-                              host/native_cocoa.cpp host/win32_window.cpp host/guest_libs.cpp
+                              host/native_cocoa.cpp host/gstreamer_present.cpp host/win32_window.cpp host/guest_libs.cpp
                               host/native_os.cpp host/native_image.cpp
                               host/native_looper.cpp host/native_audio.cpp host/audio_engine.cpp
                               host/audio_decode.cpp host/native_clipboard.cpp
@@ -225,11 +225,26 @@ if(WINAPK_JNI_INCLUDE)
                               host/native_gamepad.cpp host/native_icu.cpp
                               host/native_audio_input.cpp host/native_photos.cpp
                               host/webview2_host.cpp host/native_browser_tab.cpp host/native_webview.cpp
-                              host/native_camera.cpp host/native_radios.cpp host/native_usb_cd.cpp host/ucrt_cd_bridge.cpp host/user_folders.cpp
+                              host/native_camera.cpp host/native_radios.cpp host/native_usb_cd.cpp host/ucrt_cd_bridge.cpp host/user_folders.cpp host/native_d2d.cpp
                               host/runtime.rc)
   target_link_libraries(winapk-runtime PRIVATE setupapi winapk_jni winapk_sqlite webpdecoder winapk_stb_vorbis windowscodecs
-                        ole32 mf mfplat mfreadwrite mfuuid shlwapi advapi32 shell32 uuid wlanapi bthprops)
+                        ole32 d2d1 dwrite d3d11 dxgi mf mfplat mfreadwrite mfuuid shlwapi advapi32 shell32 uuid wlanapi bthprops)
   target_include_directories(winapk-runtime PRIVATE ${WINAPK_WEBP_DIR}/src)
+  # Stage 1 GStreamer presenter: appsrc -> leaky queue -> D3D11 upload/sink.
+  # Keep the original presenter as a compiled/runtime fallback when GStreamer
+  # or its d3d11 plugin is unavailable.
+  find_package(PkgConfig QUIET)
+  if(PkgConfig_FOUND)
+    pkg_check_modules(WINAPK_GSTREAMER QUIET IMPORTED_TARGET
+      gstreamer-1.0 gstreamer-app-1.0 gstreamer-video-1.0)
+  endif()
+  if(WINAPK_GSTREAMER_FOUND)
+    target_compile_definitions(winapk-runtime PRIVATE WINAPK_HAVE_GSTREAMER=1)
+    target_link_libraries(winapk-runtime PRIVATE PkgConfig::WINAPK_GSTREAMER)
+    message(STATUS "Win.apk GStreamer D3D11 presenter: enabled")
+  else()
+    message(WARNING "GStreamer development packages not found; Win32 presenter fallback only")
+  endif()
   # WebView2 (host/webview2_host.h): the SDK's header to build against, from
   # scripts/fetch_webview2.sh; its WebView2Loader.dll is staged next to the
   # runtime and loaded at run time, so nothing is linked.
@@ -300,7 +315,14 @@ if(WINAPK_JNI_INCLUDE)
   if(MINGW)
     target_link_options(winapk-guest-stub PRIVATE -static)
     target_link_options(macapk-translator PRIVATE -static -municode)
-    target_link_options(winapk-runtime PRIVATE -static -municode)
+    # MSYS2 GStreamer ships shared import libraries/plugins. Keep the old
+    # fully-static runtime when GStreamer was not found, and use dynamic
+    # linkage only for the GStreamer-enabled runtime.
+    if(WINAPK_GSTREAMER_FOUND)
+      target_link_options(winapk-runtime PRIVATE -municode)
+    else()
+      target_link_options(winapk-runtime PRIVATE -static -municode)
+    endif()
     target_link_options(winapk-jni-test PRIVATE -static)
     target_link_options(winapk-jni-variadic-test PRIVATE -static)
     target_link_options(winapk-jvm-run PRIVATE -static)
