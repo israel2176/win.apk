@@ -341,9 +341,12 @@ RECT client_phone_rect(HWND hwnd) {
 // lays the views out again) instead of having its old frame magnified.
 // Only the user's own size counts: the window's fits (another monitor, the
 // work area, the app turning the phone) keep the app's size. An app that
-// fixed its orientation keeps its size when the window takes the other shape,
-// letterboxed. During a drag the frame is scaled; the app follows when the
-// drag ends. WINAPK_RESIZABLE=0 keeps the phone's size for good, as before.
+// fixed its orientation keeps its shape when the window takes the other one:
+// it gets the largest box of its own aspect in the client area, letterboxed,
+// as Android letterboxes a fixed-orientation app on a large screen -- and
+// still draws at that box's size, never a magnified frame. During a drag the
+// frame is scaled; the app follows when the drag ends. WINAPK_RESIZABLE=0
+// keeps the phone's size for good, as before.
 
 constexpr int kMinDp = 240;  // the smallest display the window gives an app
 
@@ -359,9 +362,16 @@ void follow_client(HWND hwnd) {
     if (!resizable_enabled() || g_fitting || IsIconic(hwnd) || g_shown_scale <= 0) return;
     RECT c{};
     GetClientRect(hwnd, &c);
-    const int w = std::max(kMinDp, static_cast<int>(std::lround(c.right / g_shown_scale)));
-    const int h = std::max(kMinDp, static_cast<int>(std::lround(c.bottom / g_shown_scale)));
-    if ((g_orientation_lock == 1 && w > h) || (g_orientation_lock == 2 && h > w)) return;
+    double cw = c.right, ch = c.bottom;
+    if ((g_orientation_lock == 1 && cw > ch) || (g_orientation_lock == 2 && ch > cw)) {
+        // The largest box of the phone's aspect: the client's full height
+        // (portrait in a wide window) or full width (landscape in a tall one).
+        const double aspect = static_cast<double>(g_phone_w) / static_cast<double>(g_phone_h);
+        if (cw / ch > aspect) cw = ch * aspect;
+        else ch = cw / aspect;
+    }
+    const int w = std::max(kMinDp, static_cast<int>(std::lround(cw / g_shown_scale)));
+    const int h = std::max(kMinDp, static_cast<int>(std::lround(ch / g_shown_scale)));
     if (w == g_phone_w && h == g_phone_h) return;
     std::fprintf(stderr, "[win.apk] window resized: the app's display is %dx%d dp (was %dx%d)\n", w, h, g_phone_w,
                  g_phone_h);
