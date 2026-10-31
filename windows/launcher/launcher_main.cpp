@@ -192,7 +192,12 @@ const wchar_t* tr(const wchar_t* en) {
         {L"Portrait", L"לאורך"},
         {L"Landscape", L"לרוחב"},
         {L"Screen", L"מסך"},
-        {L"Used the next time an app opens, from here or from its shortcut. Sizes are in dp, as on a phone.", L"יחול בפעם הבאה שאפליקציה תיפתח, מכאן או מקיצור הדרך שלה. הגדלים ביחידות dp, כמו בטלפון."},
+        {L"Used the next time an app opens, from here or from its shortcut. Sizes are in dp, as on a phone. An app's "
+         L"window can be resized or maximized, and the app then lays itself out for that size and keeps it (Get Info "
+         L"resets it).",
+         L"יחול בפעם הבאה שאפליקציה תיפתח, מכאן או מקיצור הדרך שלה. הגדלים ביחידות dp, כמו בטלפון. אפשר לשנות את גודל "
+         L"החלון של אפליקציה או להגדיל אותו למסך מלא, והאפליקציה תתאים את עצמה לגודל הזה ותזכור אותו (במסך הפרטים "
+         L"אפשר לאפס)."},
         {L"Desktop shortcut for new apps", L"קיצור דרך בשולחן העבודה לאפליקציות חדשות"},
         {L"Every app also gets one in Start > Win.apk Apps.", L"כל אפליקציה מקבלת גם קיצור דרך בתפריט התחל > Win.apk Apps."},
         {L"Shortcuts", L"קיצורי דרך"},
@@ -389,6 +394,11 @@ const wchar_t* tr(const wchar_t* en) {
         {L"Reset permissions", L"איפוס הרשאות"},
         {L"The app asks again the next time it needs them.", L"האפליקציה תשאל שוב בפעם הבאה שתצטרך אותן."},
         {L"Reset", L"איפוס"},
+        {L"Window", L"חלון"},
+        {L"Window size  ·  {0} × {1} dp", L"גודל החלון  ·  {0} × {1} dp"},
+        {L"The size you last gave the app's window. Reset, it opens at the settings' screen size again.",
+         L"הגודל האחרון שנתת לחלון של האפליקציה. אחרי איפוס היא תיפתח שוב בגודל המסך שבהגדרות."},
+        {L"{0} opens at the settings' screen size again.", L"{0} תיפתח שוב בגודל המסך שבהגדרות."},
         {L"{0} will ask for its permissions again.", L"{0} תשאל שוב על ההרשאות שלה."}
     };
     if (!g_rtl) return en;
@@ -2759,6 +2769,7 @@ bool remove_app(const App& app, bool ask) {
     fs::remove(label_file(copy.name), ec);
     fs::remove(package_file(copy.name), ec);
     fs::remove(shortcut_icon(copy.name), ec);
+    fs::remove(library_dir() / (copy.name + L".window"), ec);
     fs::remove_all(app_dir(copy.name), ec);
     fs::remove(data_dir() / L"android" / L"data" / L"app" / (L"." + copy.name + L".installed"), ec);
     write_registry();
@@ -3229,7 +3240,9 @@ std::vector<Section> settings_sections() {
     orient.choice = setting(L"Landscape", 0) ? 1 : 0;
     orient.act = [](int i) { set_setting(L"Landscape", static_cast<DWORD>(i)); };
     out.push_back({tr(L"Screen"), {size, orient},
-                   tr(L"Used the next time an app opens, from here or from its shortcut. Sizes are in dp, as on a phone.")});
+                   tr(L"Used the next time an app opens, from here or from its shortcut. Sizes are in dp, as on a "
+                      L"phone. An app's window can be resized or maximized, and the app then lays itself out for that "
+                      L"size and keeps it (Get Info resets it).")});
 
     Row desktop;
     desktop.kind = Row::kToggle;
@@ -3314,6 +3327,27 @@ void show_info(const App& app) {
                        L""});
         if (std::vector<Row> perms = permission_rows(a); !perms.empty())
             out.push_back({tr(L"Permissions"), std::move(perms), L""});
+        // The size the user last gave the app's window (the runtime keeps it
+        // as library\<name>.window, in dp).
+        if (std::ifstream f(library_dir() / (a.name + L".window")); f) {
+            int w = 0, h = 0;
+            char x = 0;
+            if (f >> w >> x >> h && w > 0 && h > 0) {
+                out.push_back({tr(L"Window"),
+                               {button_row(fmt(L"Window size  ·  {0} × {1} dp", {std::to_wstring(w), std::to_wstring(h)}),
+                                           tr(L"The size you last gave the app's window. Reset, it opens at the "
+                                              L"settings' screen size again."),
+                                           tr(L"Reset"), [a] {
+                                               std::error_code ec;
+                                               fs::remove(library_dir() / (a.name + L".window"), ec);
+                                               set_status(fmt(L"{0} opens at the settings' screen size again.",
+                                                              {a.label}),
+                                                          kSuccess);
+                                               close_sheet();
+                                           })},
+                               L""});
+            }
+        }
         out.push_back({tr(L"Storage"),
                        {button_row(fmt(L"Source APK  ·  {0}", {apk_size}), a.apk.wstring(), tr(L"Show"),
                                    [a] { show_in_explorer(a.apk); }),

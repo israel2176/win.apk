@@ -30,6 +30,10 @@ public:
     // The window came back from being minimized (taskbar, Alt+Tab): upstream's
     // unhide observer, which brings back a task the app sent to the back.
     virtual void restored() {}
+    // The user gave the window another size (an edge dragged, maximized,
+    // snapped): the app's display is now w by h dp, as an Android desktop
+    // window's is.
+    virtual void resized(int /*w_dp*/, int /*h_dp*/) {}
 };
 
 // The scale, in pixels per dp, the window will open at for a phone of phone_w
@@ -55,6 +59,10 @@ bool window_running();
 void window_show();
 void window_set_title(const std::string& utf8);
 void window_set_phone_size(int phone_w, int phone_h);
+// The orientation the app asked for: 0 any, 1 portrait, 2 landscape. A window
+// resized to the other shape keeps the app's size, letterboxed, as Android
+// letterboxes a fixed-orientation app on a large screen.
+void window_set_orientation_lock(int lock);
 
 // The app moved its task to the back or front (Activity.moveTaskToBack).
 // The app window, for dialogs it owns (nullptr headless or before start).
