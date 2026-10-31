@@ -249,6 +249,107 @@ final class MacApkWebViewBridge {
         }
     }
 
+    // ---- WebViewClient.shouldInterceptRequest (called by native) -----------
+    //
+    // On a device every request is first offered to shouldInterceptRequest on a
+    // background thread; Cordova and Capacitor serve their app that way
+    // (WebViewAssetLoader, https://localhost/...). An engine that can hold a
+    // request open (Windows: WebView2's WebResourceRequested deferral) asks
+    // macapkWantsIntercept first, so views whose client does not override the
+    // method never pay for the round trip, then macapkInterceptRequest on a
+    // worker thread. Engines that cannot (the Mac's) never call either.
+
+    private static final java.util.concurrent.ConcurrentHashMap<Class<?>, Boolean> sInterceptors =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** Does this class override either shouldInterceptRequest below WebViewClient? */
+    static boolean overridesIntercept(Class<?> k) {
+        Boolean known = sInterceptors.get(k);
+        if (known != null) return known;
+        boolean found = false;
+        for (Class<?> c = k; c != null && c != WebViewClient.class && !found; c = c.getSuperclass()) {
+            for (java.lang.reflect.Method m : c.getDeclaredMethods()) {
+                if (!m.getName().equals("shouldInterceptRequest")) continue;
+                Class<?>[] p = m.getParameterTypes();
+                if (p.length == 2 && p[0] == WebView.class
+                        && (p[1] == WebResourceRequest.class || p[1] == String.class)) {
+                    found = true;
+                    break;
+                }
+            }
+        }
+        sInterceptors.put(k, found);
+        return found;
+    }
+
+    /** Called by native for every request of the view: should it be offered? */
+    static boolean macapkWantsIntercept(int viewId) {
+        WebView wv = viewFor(viewId);
+        if (wv == null) return false;
+        WebViewClient c = wv.getWebViewClient();
+        return c != null && overridesIntercept(c.getClass());
+    }
+
+    /** Called by native on a "WebViewIntercept" thread. `headers` is
+     *  "Name: value\n" lines. Returns null to let the request go to the network,
+     *  else {meta, body}: meta is "status\nreason\n" then the response headers
+     *  as "Name: value\r\n" lines (Content-Type first), body the whole data. */
+    static Object[] macapkInterceptRequest(int viewId, String url, String method, String headers,
+                                           boolean mainFrame) {
+        WebView wv = viewFor(viewId);
+        if (wv == null) return null;
+        WebResourceResponse r;
+        try {
+            r = wv.macapkShouldInterceptRequest(url, method, parseHeaders(headers), mainFrame);
+        } catch (Throwable t) {
+            com.macapk.loader.NativeLog.w("WebView", "shouldInterceptRequest threw: " + t);
+            return null;
+        }
+        if (r == null) return null;
+        byte[] body = new byte[0];
+        java.io.InputStream in = r.getData();
+        if (in != null) {
+            try (java.io.InputStream data = in) {
+                body = data.readAllBytes();
+            } catch (Throwable t) {
+                com.macapk.loader.NativeLog.w("WebView", "intercepted response for "
+                        + url + " could not be read: " + t);
+                return new Object[] { "500\nInternal Server Error\n", new byte[0] };
+            }
+        }
+        StringBuilder meta = new StringBuilder();
+        int status = r.getStatusCode() > 0 ? r.getStatusCode() : 200;
+        String reason = r.getReasonPhrase() != null && !r.getReasonPhrase().isEmpty()
+                ? r.getReasonPhrase() : "OK";
+        meta.append(status).append('\n').append(reason).append('\n');
+        boolean typed = false;
+        Map<String, String> h = r.getResponseHeaders();
+        if (h != null) {
+            for (Map.Entry<String, String> e : h.entrySet()) {
+                if (e.getKey() == null || e.getValue() == null) continue;
+                if (e.getKey().equalsIgnoreCase("Content-Type")) typed = true;
+                meta.append(e.getKey()).append(": ").append(e.getValue()).append("\r\n");
+            }
+        }
+        if (!typed && r.getMimeType() != null && !r.getMimeType().isEmpty()) {
+            String type = r.getMimeType();
+            if (r.getEncoding() != null && !r.getEncoding().isEmpty()) type += "; charset=" + r.getEncoding();
+            meta.append("Content-Type: ").append(type).append("\r\n");
+        }
+        return new Object[] { meta.toString(), body };
+    }
+
+    private static Map<String, String> parseHeaders(String headers) {
+        Map<String, String> out = new java.util.LinkedHashMap<>();
+        if (headers == null) return out;
+        for (String line : headers.split("\n")) {
+            int colon = line.indexOf(':');
+            if (colon <= 0) continue;
+            out.put(line.substring(0, colon).trim(), line.substring(colon + 1).trim());
+        }
+        return out;
+    }
+
     // ---- file:///android_asset/ + file:///android_res/ (called by native) ---
     //
     // The Java half of the macapk-asset scheme handler (webview_bridge.mm,

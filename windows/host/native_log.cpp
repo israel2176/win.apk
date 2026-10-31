@@ -4,6 +4,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 
 #include <windows.h>
 
@@ -26,7 +27,10 @@ void JNICALL Log_print(JNIEnv* env, jclass, jint level, jstring tag_j, jstring m
     const char* tag = tag_j ? env->GetStringUTFChars(tag_j, nullptr) : "";
     const char* msg = msg_j ? env->GetStringUTFChars(msg_j, nullptr) : "";
     const char* lv = level <= 2 ? "V" : level == 3 ? "D" : level == 4 ? "I" : level == 5 ? "W" : "E";
-    std::fprintf(stderr, "[%s] %s: %s\n", lv, tag, msg);
+    // Upstream's tags name the Mac port ("Mac.apk.ActivityHost"); the log the
+    // user reads here is Win.apk's. Only the printed tag changes.
+    const bool mac_tag = std::strncmp(tag, "Mac.apk", 7) == 0;
+    std::fprintf(stderr, "[%s] %s%s: %s\n", lv, mac_tag ? "Win.apk" : "", mac_tag ? tag + 7 : tag, msg);
     // stderr is buffered (runtime_main.cpp, buffer_stderr): warnings and errors
     // go out at once, so the lines before a crash are on disk.
     if (level >= 5) std::fflush(stderr);

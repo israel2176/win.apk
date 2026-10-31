@@ -52,6 +52,7 @@ HostMethods native_browser_tab_methods(); // native_browser_tab.cpp
 HostMethods native_webview_methods();   // native_webview.cpp
 HostMethods native_camera_methods();    // native_camera.cpp
 HostMethods native_radios_methods();    // native_radios.cpp
+HostMethods native_location_methods();  // native_location.cpp
 
 // The app's directory under the data directory, where Boot renders the
 // launcher icon (icon.png) that becomes the window's icon. native_cocoa.cpp.

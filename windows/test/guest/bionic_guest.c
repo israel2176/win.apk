@@ -273,6 +273,10 @@ int epoll_ctl(int, int, int, struct epoll_event*);
 int epoll_wait(int, struct epoll_event*, int, int);
 int fcntl(int, int, ...);
 int usleep(unsigned);
+struct itimerspec { long interval_sec, interval_nsec, value_sec, value_nsec; };
+int timerfd_create(int, int);
+int timerfd_settime(int, int, const struct itimerspec*, struct itimerspec*);
+int timerfd_gettime(int, struct itimerspec*);
 
 static int g_wake_fd;
 static void* waker(void* arg) {
@@ -281,6 +285,18 @@ static void* waker(void* arg) {
     unsigned long one = 1;
     write(g_wake_fd, &one, 8);
     return 0;
+}
+
+size_t malloc_usable_size(const void*);
+int posix_memalign(void**, size_t, size_t);
+static void test_malloc_usable_size(void) {
+    void* p = malloc(100);
+    check("malloc_usable_size of a malloc block is at least its size", p && malloc_usable_size(p) >= 100, 0);
+    free(p);
+    void* q = 0;
+    check("malloc_usable_size of a posix_memalign(64) block", posix_memalign(&q, 64, 200) == 0 && q &&
+              malloc_usable_size(q) >= 200, 0);
+    free(q);
 }
 
 static void test_event_fds(void) {
@@ -314,6 +330,26 @@ static void test_event_fds(void) {
     check("epoll_wait times out once drained", epoll_wait(ep, out, 4, 10) == 0, 0);
     close(ep);
     close(efd);
+
+    // timerfd: Flutter's message loop sleeps on one in epoll_wait.
+    const int tfd = timerfd_create(1, 04000);  // CLOCK_MONOTONIC, TFD_NONBLOCK
+    const int ep2 = epoll_create1(0);
+    struct epoll_event tev = {1, 7};
+    check("timerfd_create + epoll_ctl ADD", tfd >= 0 && ep2 >= 0 && epoll_ctl(ep2, 1, tfd, &tev) == 0, 0);
+    check("a disarmed timerfd reads EAGAIN", read(tfd, &v, 8) == -1 && *__errno() == 11, 0);
+    struct itimerspec its = {0, 0, 0, 30000000};  // once, in 30 ms
+    check("timerfd_settime", timerfd_settime(tfd, 0, &its, 0) == 0, 0);
+    struct itimerspec left = {0, 0, 0, 0};
+    check("timerfd_gettime shows it armed", timerfd_gettime(tfd, &left) == 0 && left.value_sec == 0 &&
+              left.value_nsec > 0 && left.value_nsec <= 30000000, 0);
+    check("epoll_wait sleeps until the timer is not due", epoll_wait(ep2, out, 4, 5) == 0, 0);
+    const int tn = epoll_wait(ep2, out, 4, 2000);
+    check("epoll_wait wakes when the timer fires", tn == 1 && out[0].data == 7, 0);
+    v = 0;
+    check("timerfd read returns one expiration", read(tfd, &v, 8) == 8 && v == 1, 0);
+    check("a one-shot timerfd is disarmed after it fired", read(tfd, &v, 8) == -1 && *__errno() == 11, 0);
+    close(ep2);
+    close(tfd);
 }
 
 // Sockets on Winsock: a loopback TCP exchange, IPv6 addresses, name lookup.
@@ -897,6 +933,7 @@ EXPORT int bionic_test(const char* dir) {
     test_threads();
     test_tls();
     test_locale_and_syscall();
+    test_malloc_usable_size();
     test_event_fds();
     test_sockets();
     test_looper();

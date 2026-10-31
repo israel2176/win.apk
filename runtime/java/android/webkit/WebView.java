@@ -1619,6 +1619,27 @@ public class WebView extends android.widget.AbsoluteLayout
         }
     }
 
+    /** WebViewClient.shouldInterceptRequest for a request the engine holds
+     *  open (MacApkWebViewBridge.macapkInterceptRequest). Off the UI thread, as
+     *  on a device. */
+    WebResourceResponse macapkShouldInterceptRequest(String reqUrl, String method,
+                                                     final Map<String, String> headers,
+                                                     final boolean mainFrame) {
+        WebViewClient client = getWebViewClient();
+        if (client == null || reqUrl == null) return null;
+        final Uri uri = Uri.parse(reqUrl);
+        final String m = method != null ? method : "GET";
+        WebResourceRequest req = new WebResourceRequest() {
+            @Override public Uri getUrl() { return uri; }
+            @Override public boolean isForMainFrame() { return mainFrame; }
+            @Override public boolean isRedirect() { return false; }
+            @Override public boolean hasGesture() { return false; }
+            @Override public String getMethod() { return m; }
+            @Override public Map<String, String> getRequestHeaders() { return headers; }
+        };
+        return client.shouldInterceptRequest(this, req);
+    }
+
     private WebResourceRequest macapkMakeRequest(String reqUrl, String method,
                                                  String flags) {
         final Uri uri = reqUrl != null ? Uri.parse(reqUrl) : null;

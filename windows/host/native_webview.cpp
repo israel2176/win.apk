@@ -33,6 +33,11 @@
 //    which postMessage could not give. Other alert/confirm/prompt dialogs go
 //    to WebChromeClient the same way.
 //
+//  * WebViewClient.shouldInterceptRequest: every request of a view whose
+//    client overrides it is held (a WebResourceRequested deferral) while the
+//    app's method runs on a "WebViewIntercept" thread; its response is served
+//    instead of the network. Cordova/Capacitor apps load from it.
+//
 //  * file:///android_asset/ pages are copied to real files by
 //    MacApkWebViewBridge.macapkMaterializeAssetPage (upstream's own helper)
 //    and loaded from there; URLs that go back to Java are mapped back.
@@ -95,6 +100,7 @@ constexpr UINT_PTR kFollowTimer = 1;
 
 jclass g_bridge = nullptr;
 jmethodID g_on_event = nullptr, g_on_real_input = nullptr, g_on_js_bridge = nullptr, g_materialize = nullptr;
+jmethodID g_wants_intercept = nullptr, g_on_intercept = nullptr;
 jclass g_tab_cls = nullptr;
 jmethodID g_data_folder = nullptr;
 
@@ -113,6 +119,13 @@ void resolve_java(JNIEnv* env) {
             g_on_js_bridge = env->GetStaticMethodID(g_bridge, "onJsBridgeCall", "(ILjava/lang/String;)Ljava/lang/String;");
             g_materialize = env->GetStaticMethodID(g_bridge, "macapkMaterializeAssetPage",
                                                    "(ILjava/lang/String;)[Ljava/lang/String;");
+            // Absent on a runtime without them: requests then go to the network.
+            g_wants_intercept = env->GetStaticMethodID(g_bridge, "macapkWantsIntercept", "(I)Z");
+            if (env->ExceptionCheck()) env->ExceptionClear();
+            g_on_intercept = env->GetStaticMethodID(
+                g_bridge, "macapkInterceptRequest",
+                "(ILjava/lang/String;Ljava/lang/String;Ljava/lang/String;Z)[Ljava/lang/Object;");
+            if (env->ExceptionCheck()) env->ExceptionClear();
         }
         if (env->ExceptionCheck()) env->ExceptionClear();
         jclass t = env->FindClass("com/macapk/loader/HostBrowserTab");
@@ -513,6 +526,177 @@ void queue_bridge_call(int view, int dialog, std::wstring payload) {
     g_bridge_cv.notify_one();
 }
 
+// ---- shouldInterceptRequest ------------------------------------------------------
+//
+// On a device every request a WebView makes is first offered to
+// WebViewClient.shouldInterceptRequest, on a background thread, and a response
+// the app returns is used instead of the network. Cordova and Capacitor serve
+// their whole app that way (WebViewAssetLoader: https://localhost/... from the
+// APK's assets); without it the page fails with net::ERR_FAILED. Here a
+// request is deferred, the app's method runs on one of a few "WebViewIntercept"
+// threads, and the answer completes the deferral on the WebView2 thread. Only
+// views whose client overrides the method are asked, so other pages load as
+// fast as before.
+
+struct InterceptCall {
+    int id;
+    int view;
+    std::wstring url, method, headers;
+    bool main_frame;
+};
+struct PendingIntercept {
+    ComPtr<ICoreWebView2WebResourceRequestedEventArgs> args;
+    ComPtr<ICoreWebView2Deferral> deferral;
+    ComPtr<ICoreWebView2Environment> env;
+};
+std::map<int, PendingIntercept> g_intercepts;  // WebView2 thread only
+std::atomic<int> g_next_intercept{1};
+std::mutex g_intercept_lock;
+std::condition_variable g_intercept_cv;
+std::deque<InterceptCall> g_intercept_calls;
+constexpr int kInterceptThreads = 4;
+
+// The app's answer: none (go to the network), or a whole response.
+struct InterceptAnswer {
+    bool have = false;
+    int status = 200;
+    std::wstring reason = L"OK", headers;
+    std::string body;
+};
+
+void finish_intercept(int id, const InterceptAnswer& ans) {
+    auto it = g_intercepts.find(id);
+    if (it == g_intercepts.end()) return;
+    PendingIntercept p = it->second;
+    g_intercepts.erase(it);
+    if (ans.have && p.env) {
+        IStream* body = SHCreateMemStream(reinterpret_cast<const BYTE*>(ans.body.data()),
+                                          static_cast<UINT>(ans.body.size()));
+        ComPtr<ICoreWebView2WebResourceResponse> resp;
+        p.env->CreateWebResourceResponse(body, ans.status, ans.reason.c_str(), ans.headers.c_str(), resp.put());
+        if (body) body->Release();
+        if (resp) p.args->put_Response(resp.get());
+    }
+    p.deferral->Complete();
+}
+
+// {meta, body}: meta is "status\nreason\nName: value\r\nName: value...".
+InterceptAnswer read_answer(JNIEnv* env, jobjectArray r) {
+    InterceptAnswer ans;
+    if (!r || env->GetArrayLength(r) < 2) return ans;
+    auto meta = static_cast<jstring>(env->GetObjectArrayElement(r, 0));
+    auto body = static_cast<jbyteArray>(env->GetObjectArrayElement(r, 1));
+    const std::wstring m = wv2::from_jstring(env, meta);
+    const size_t a = m.find(L'\n'), b = a == std::wstring::npos ? a : m.find(L'\n', a + 1);
+    if (b != std::wstring::npos) {
+        ans.have = true;
+        ans.status = _wtoi(m.substr(0, a).c_str());
+        if (ans.status < 100 || ans.status > 599) ans.status = 200;
+        ans.reason = m.substr(a + 1, b - a - 1);
+        if (ans.reason.empty()) ans.reason = L"OK";
+        ans.headers = m.substr(b + 1);
+        if (body) {
+            const jsize n = env->GetArrayLength(body);
+            ans.body.resize(static_cast<size_t>(n));
+            if (n > 0) env->GetByteArrayRegion(body, 0, n, reinterpret_cast<jbyte*>(&ans.body[0]));
+        }
+    }
+    if (meta) env->DeleteLocalRef(meta);
+    if (body) env->DeleteLocalRef(body);
+    return ans;
+}
+
+void intercept_thread() {
+    JNIEnv* env = nullptr;
+    JavaVMAttachArgs args{JNI_VERSION_1_6, const_cast<char*>("WebViewIntercept"), nullptr};
+    if (!g_vm || g_vm->AttachCurrentThreadAsDaemon(reinterpret_cast<void**>(&env), &args) != JNI_OK) return;
+    for (;;) {
+        InterceptCall call;
+        {
+            std::unique_lock<std::mutex> hold(g_intercept_lock);
+            g_intercept_cv.wait(hold, [] { return !g_intercept_calls.empty(); });
+            call = std::move(g_intercept_calls.front());
+            g_intercept_calls.pop_front();
+        }
+        InterceptAnswer ans;
+        if (g_on_intercept) {
+            jstring u = wv2::to_jstring(env, call.url);
+            jstring m = wv2::to_jstring(env, call.method);
+            jstring h = wv2::to_jstring(env, call.headers);
+            auto r = static_cast<jobjectArray>(env->CallStaticObjectMethod(
+                g_bridge, g_on_intercept, call.view, u, m, h, call.main_frame ? JNI_TRUE : JNI_FALSE));
+            if (!wv2::check_java(env, "MacApkWebViewBridge.macapkInterceptRequest")) ans = read_answer(env, r);
+            env->DeleteLocalRef(u);
+            env->DeleteLocalRef(m);
+            env->DeleteLocalRef(h);
+            if (r) env->DeleteLocalRef(r);
+        }
+        const int id = call.id;
+        wv2::post([id, ans] { finish_intercept(id, ans); });
+    }
+}
+
+// Does this view's WebViewClient override shouldInterceptRequest? WebView2 thread.
+bool wants_intercept(int view) {
+    JNIEnv* env = wv2::env();
+    if (!env || !g_wants_intercept || !g_on_intercept || !g_vm) return false;
+    const jboolean r = env->CallStaticBooleanMethod(g_bridge, g_wants_intercept, view);
+    if (wv2::check_java(env, "MacApkWebViewBridge.macapkWantsIntercept")) return false;
+    return r == JNI_TRUE;
+}
+
+// The request's headers as "Name: value\n" lines.
+std::wstring request_headers(ICoreWebView2WebResourceRequest* req) {
+    std::wstring out;
+    ComPtr<ICoreWebView2HttpRequestHeaders> h;
+    if (!req || FAILED(req->get_Headers(h.put())) || !h) return out;
+    ComPtr<ICoreWebView2HttpHeadersCollectionIterator> it;
+    if (FAILED(h->GetIterator(it.put())) || !it) return out;
+    BOOL has = FALSE;
+    while (SUCCEEDED(it->get_HasCurrentHeader(&has)) && has) {
+        LPWSTR name = nullptr, value = nullptr;
+        if (SUCCEEDED(it->GetCurrentHeader(&name, &value))) {
+            out += wv2::take_co_string(name) + L": " + wv2::take_co_string(value) + L"\n";
+        }
+        BOOL more = FALSE;
+        if (FAILED(it->MoveNext(&more)) || !more) break;
+    }
+    return out;
+}
+
+// Offers the request to the app; true when it was deferred for that.
+bool offer_to_app(View* v, ICoreWebView2WebResourceRequestedEventArgs* a, ICoreWebView2WebResourceRequest* req,
+                  const std::wstring& uri, bool main_frame, ICoreWebView2Environment* env) {
+    const std::wstring scheme = wv2::scheme_of(uri);
+    if (scheme != L"http" && scheme != L"https" && scheme != L"file") return false;
+    if (!wants_intercept(v->id)) return false;
+    PendingIntercept p;
+    p.args = ComPtr<ICoreWebView2WebResourceRequestedEventArgs>::retain(a);
+    p.env = ComPtr<ICoreWebView2Environment>::retain(env);
+    if (FAILED(a->GetDeferral(p.deferral.put())) || !p.deferral) return false;
+    InterceptCall call;
+    call.id = g_next_intercept.fetch_add(1);
+    call.view = v->id;
+    call.url = guest_url(v, uri);
+    LPWSTR method = nullptr;
+    if (req) req->get_Method(&method);
+    call.method = wv2::take_co_string(method);
+    if (call.method.empty()) call.method = L"GET";
+    call.headers = request_headers(req);
+    call.main_frame = main_frame;
+    g_intercepts[call.id] = p;
+    static std::once_flag once;
+    std::call_once(once, [] {
+        for (int i = 0; i < kInterceptThreads; ++i) std::thread(intercept_thread).detach();
+    });
+    {
+        std::lock_guard<std::mutex> hold(g_intercept_lock);
+        g_intercept_calls.push_back(std::move(call));
+    }
+    g_intercept_cv.notify_one();
+    return true;
+}
+
 void hook(View* v) {
     const int id = v->id;
     EventRegistrationToken tok;
@@ -741,7 +925,8 @@ void hook(View* v) {
             &tok);
     }
     // A loadDataWithBaseURL document with a web base is served for that URL,
-    // so the page has the base's origin, as on a device.
+    // so the page has the base's origin, as on a device; then the app's
+    // shouldInterceptRequest (see offer_to_app).
     v->wv->add_WebResourceRequested(
         wv2::handler<ICoreWebView2WebResourceRequestedEventHandler>(
             IID_ICoreWebView2WebResourceRequestedEventHandler,
@@ -755,10 +940,14 @@ void hook(View* v) {
                 const std::wstring uri = wv2::take_co_string(raw);
                 COREWEBVIEW2_WEB_RESOURCE_CONTEXT ctx = COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL;
                 a->get_ResourceContext(&ctx);
-                if (ctx != COREWEBVIEW2_WEB_RESOURCE_CONTEXT_DOCUMENT) return S_OK;
                 ComPtr<ICoreWebView2Environment> env;
                 if (auto v2 = v->wv.query<ICoreWebView2_2>(IID_ICoreWebView2_2)) v2->get_Environment(env.put());
                 if (!env) return S_OK;
+                const bool document = ctx == COREWEBVIEW2_WEB_RESOURCE_CONTEXT_DOCUMENT;
+                if (!document) {
+                    offer_to_app(v, a, req.get(), uri, false, env.get());
+                    return S_OK;
+                }
                 for (auto r = v->refused.begin(); r != v->refused.end(); ++r) {
                     if (*r != uri) continue;
                     v->refused.erase(r);
@@ -767,7 +956,10 @@ void hook(View* v) {
                     if (none) a->put_Response(none.get());
                     return S_OK;
                 }
-                if (v->data_base.empty() || uri != v->data_base) return S_OK;
+                if (v->data_base.empty() || uri != v->data_base) {
+                    offer_to_app(v, a, req.get(), uri, true, env.get());
+                    return S_OK;
+                }
                 IStream* body = SHCreateMemStream(reinterpret_cast<const BYTE*>(v->data_bytes.data()),
                                                   static_cast<UINT>(v->data_bytes.size()));
                 const std::wstring headers = L"Content-Type: " + v->data_mime;
@@ -781,7 +973,8 @@ void hook(View* v) {
             })
             .get(),
         &tok);
-    v->wv->AddWebResourceRequestedFilter(L"*", COREWEBVIEW2_WEB_RESOURCE_CONTEXT_DOCUMENT);
+    // Every request: the app's shouldInterceptRequest sees subresources too.
+    v->wv->AddWebResourceRequestedFilter(L"*", COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL);
     v->controller->add_GotFocus(
         wv2::handler<ICoreWebView2FocusChangedEventHandler>(
             IID_ICoreWebView2FocusChangedEventHandler,

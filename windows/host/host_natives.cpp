@@ -100,6 +100,7 @@ const HostMethods kProviders[] = {
     native_webview_methods(),
     native_camera_methods(),
     native_radios_methods(),
+    native_location_methods(),
 };
 
 const JNINativeMethod* implementation_of(const char* clazz, const char* name, const char* sig) {
