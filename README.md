@@ -26,7 +26,7 @@ go through ANGLE on Direct3D 11.
 - [The Store](#the-store)
 - [Open and manage apps](#open-and-manage-apps)
 - [Settings](#settings)
-- [Hebrew and right-to-left](#hebrew-and-right-to-left)
+- [Languages and right-to-left support](#languages-and-right-to-left-support)
 - [Logs and reporting a problem](#logs-and-reporting-a-problem)
 - [What works](#what-works)
 - [Where your data lives](#where-your-data-lives)
@@ -52,7 +52,7 @@ go through ANGLE on Direct3D 11.
   app's files, remove it (what it saved stays).
 - **Live log viewer** for every install and run.
 - **Light and dark themes**, following Windows or set by hand.
-- **English and Hebrew**, with a full right-to-left layout in Hebrew.
+- **English, Japanese, and Hebrew**, with automatic Windows-language matching and a full right-to-left layout in Hebrew.
 - **Phone size and orientation** for apps, set once in the settings.
 - **Per-user install.** No administrator rights, nothing outside your user
   profile.
@@ -163,7 +163,7 @@ Click the gear at the top right.
 | Setting | What it does |
 |---|---|
 | **Theme** | Match Windows, Light or Dark |
-| **Language** | Match Windows, English or Hebrew |
+| **Language** | Match Windows, English, Japanese, or Hebrew |
 | **Open Android app files with Win.apk** | Makes Win.apk the default for `.apk`, `.apkm`, `.xapk` and `.apks` |
 | **Screen size** | The phone screen apps see, in dp. **Auto** fits the screen (360 × 800 or shorter) |
 | **Orientation** | Portrait or landscape |
@@ -178,13 +178,16 @@ The dark theme:
 
 ![The library in the dark theme](docs/images/dark.png)
 
-## Hebrew and right-to-left
+## Languages and right-to-left support
 
-Win.apk speaks English and Hebrew. When Windows' display language is Hebrew,
-it opens in Hebrew; otherwise pick **Language → עברית** in the settings, and
-it switches at once. In Hebrew every window is laid out right to left: the
-library, the settings, Get Info, the install window, menus and dialogs. Logs
-stay left to right.
+Win.apk supports English, Japanese, and Hebrew. With **Language → Match Windows**,
+the launcher follows the Windows display language when a supported translation
+is available. You can also select **English**, **日本語**, or **עברית** manually in
+Settings, and the choice is saved for future launches.
+
+Hebrew uses a complete right-to-left layout across the library, Settings,
+Get Info, installation windows, menus, and dialogs. Diagnostic logs remain
+left to right so that paths, stack traces, and technical output stay readable.
 
 ## Logs and reporting a problem
 
@@ -271,28 +274,69 @@ bin\winapk-runtime.exe --apk app.apk [--install-only] [--data <dir>] [--jdk <dir
 
 ## Build from source
 
-Win.apk builds with **clang only** (MSVC cannot emit the System V calls Android
-code needs). On Windows, in an [MSYS2](https://www.msys2.org/) **CLANG64**
-shell:
+Win.apk can be built on Windows in the **MSYS2 UCRT64** environment. UCRT64
+uses the `/ucrt64` toolchain prefix and the Windows Universal C Runtime. Do not
+build the project from the plain MSYS shell, and do not mix libraries or build
+artifacts from another MSYS2 environment into the same build directory.
 
-```sh
-pacman -S mingw-w64-clang-x86_64-{clang,cmake,ninja}
-cmake -S windows -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build build
+### Prerequisites
+
+1. Install [MSYS2](https://www.msys2.org/).
+2. Open **MSYS2 UCRT64** from the Windows Start menu.
+3. Update MSYS2 and install the required build tools:
+
+```bash
+pacman -Syu
+pacman -S --needed   git   make   mingw-w64-ucrt-x86_64-toolchain   mingw-w64-ucrt-x86_64-clang   mingw-w64-ucrt-x86_64-cmake   mingw-w64-ucrt-x86_64-ninja
 ```
 
-That builds the loader, the tests, `winapk-runtime.exe` and `Win.apk.exe`.
-The Android framework is Java, built with a stock JDK by
-`windows/scripts/build_java.sh`; `windows/scripts/stage_runtime.sh` puts
-everything into a runnable folder. On Linux you can cross-compile and run the
-tests under Wine. [`windows/README.md`](windows/README.md) has every step,
-the tests and the CI.
+If `pacman -Syu` asks you to close the terminal, close it, reopen **MSYS2
+UCRT64**, and run `pacman -Syu` again before installing the remaining packages.
+A stock JDK must also be available to build the Java framework.
 
-**Releases** are made by running the **Windows release** workflow by hand
-(Actions → Windows release → Run workflow) with a tag such as
-`v0.2.0-preview`. It builds on Windows, smoke-tests the package, builds the
-installer with Inno Setup and publishes a pre-release. Nothing is released
-automatically.
+Verify that the correct environment is active:
+
+```bash
+printf '%s\n' "$MSYSTEM"
+```
+
+The output must be:
+
+```text
+UCRT64
+```
+
+### Build
+
+From the repository root, run:
+
+```bash
+./build.sh
+```
+
+`build.sh` is the supported entry point for a normal local build. It performs
+the project's native and Java build and staging steps and produces the runnable
+output. You do not need to invoke CMake manually for the standard build.
+
+If the executable bit was removed while unpacking or copying the repository,
+run the script explicitly through Bash:
+
+```bash
+bash build.sh
+```
+
+Do not reuse a build directory created under **CLANG64**, **MINGW64**, or any
+other toolchain. Remove that old build directory first, then run `./build.sh`
+again from UCRT64.
+
+For lower-level build details, tests, CI behavior, and troubleshooting, see
+[windows/README.md](windows/README.md).
+
+**Releases** are made by running the **Windows release** workflow manually
+(Actions → Windows release → Run workflow) with a version tag such as
+`v0.2.0-preview`. The workflow builds on Windows, smoke-tests the package,
+builds the installer with Inno Setup, and publishes a pre-release. Nothing is
+released automatically.
 
 ## Repository layout
 
