@@ -66,11 +66,12 @@ jobs:
             --apks user-apks --out sweep --frames 200 --timeout 300
           Get-Content sweep/report.md
           foreach ($a in "citycar", "moovit", "levi") {
+            $log = Get-Content "sweep/logs/${a}.log" | Where-Object { $_ -notmatch "AppCl: (loadClass|findClass)\(" }
             Write-Output "===================== ${a} problems ====================="
-            Select-String -Path "sweep/logs/$a.log" -Pattern "\[E\]|\[W\]|Exception|Error|not implemented|cannot load|FATAL|crash" |
-              Select-Object -First 250 | ForEach-Object { $_.Line }
-            Write-Output "===================== ${a} last 120 lines ====================="
-            Get-Content "sweep/logs/$a.log" -Tail 120
+            $log | Select-String -Context 2,12 -Pattern "\[E\]|Exception|Error:|not implemented|cannot load|FATAL|crash|signal|guest fault" |
+              Select-Object -First 60 | ForEach-Object { $_.ToString() }
+            Write-Output "===================== ${a} last 80 lines ====================="
+            $log | Select-Object -Last 80
           }
       - uses: actions/upload-artifact@v4
         if: always()
