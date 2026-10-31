@@ -1,5 +1,5 @@
-// fd.cpp -- descriptors that are not files: pipes, eventfds and epoll, and
-// the waits over all descriptors (poll, select, epoll_wait).
+// fd.cpp -- descriptors that are not files: pipes, eventfds, timerfds and
+// epoll, and the waits over all descriptors (poll, select, epoll_wait).
 //
 // The UCRT's descriptors are files. Its pipes (_pipe) cannot be waited on,
 // and Android code waits on descriptors all the time: ALooper and every event
@@ -229,6 +229,111 @@ private:
     std::mutex lock_;
     uint64_t count_;
     bool semaphore_;
+};
+
+// ---- timerfd ----------------------------------------------------------------------------
+// Flutter's engine (fml's message loop) and other event loops arm one of these
+// and sleep in epoll_wait until it fires. Time passing is not a notification,
+// so the waits re-check it (needs_polling) while it is armed.
+struct GuestItimerspec {
+    int64_t interval_sec, interval_nsec, value_sec, value_nsec;
+};
+
+int64_t clock_now_ns(int clock) {
+    if (clock == 0 || clock == 5 || clock == 8) {  // REALTIME, REALTIME_COARSE, REALTIME_ALARM
+        FILETIME ft;
+        GetSystemTimePreciseAsFileTime(&ft);
+        const int64_t t = (static_cast<int64_t>(ft.dwHighDateTime) << 32) | ft.dwLowDateTime;
+        return (t - 116444736000000000LL) * 100;
+    }
+    static const int64_t freq = [] {
+        LARGE_INTEGER f;
+        QueryPerformanceFrequency(&f);
+        return f.QuadPart;
+    }();
+    LARGE_INTEGER c;
+    QueryPerformanceCounter(&c);
+    return static_cast<int64_t>(c.QuadPart / freq * 1000000000LL + (c.QuadPart % freq) * 1000000000LL / freq);
+}
+
+class TimerFd final : public FdObject {
+public:
+    explicit TimerFd(int clock) : clock_(clock) {}
+    int64_t read(void* buf, size_t n) override {
+        if (n < 8) {
+            *guest_errno() = kEINVAL;
+            return -1;
+        }
+        for (;;) {
+            const uint32_t seen = g_generation.load();
+            int64_t wait_ns;
+            {
+                std::lock_guard<std::mutex> hold(lock_);
+                const int64_t now = clock_now_ns(clock_);
+                const uint64_t count = expirations(now);
+                if (count > 0) {
+                    next_ = interval_ ? next_ + static_cast<int64_t>(count) * interval_ : 0;
+                    std::memcpy(buf, &count, 8);
+                    return 8;
+                }
+                wait_ns = next_ ? next_ - now : -1;
+            }
+            if (nonblocking) {
+                *guest_errno() = kEAGAIN;
+                return -1;
+            }
+            wait_for_change(seen, wait_ns < 0 ? INFINITE : static_cast<DWORD>(wait_ns / 1000000 + 1));
+        }
+    }
+    short ready(short events) override {
+        std::lock_guard<std::mutex> hold(lock_);
+        return static_cast<short>((events & kPollIn) && expirations(clock_now_ns(clock_)) ? kPollIn : 0);
+    }
+    bool needs_polling() const override { return true; }
+    int set(int flags, const GuestItimerspec* v, GuestItimerspec* old) {
+        if (!v || v->value_nsec < 0 || v->value_nsec >= 1000000000 || v->interval_nsec < 0 ||
+            v->interval_nsec >= 1000000000) {
+            *guest_errno() = kEINVAL;
+            return -1;
+        }
+        {
+            std::lock_guard<std::mutex> hold(lock_);
+            const int64_t now = clock_now_ns(clock_);
+            if (old) get_locked(now, old);
+            const int64_t value = v->value_sec * 1000000000LL + v->value_nsec;
+            interval_ = v->interval_sec * 1000000000LL + v->interval_nsec;
+            if (value == 0) {
+                next_ = 0;
+            } else {
+                next_ = (flags & 1) ? value : now + value;  // TFD_TIMER_ABSTIME
+                if (next_ == 0) next_ = 1;
+            }
+        }
+        fd_notify();
+        return 0;
+    }
+    int get(GuestItimerspec* out) {
+        std::lock_guard<std::mutex> hold(lock_);
+        get_locked(clock_now_ns(clock_), out);
+        return 0;
+    }
+
+private:
+    uint64_t expirations(int64_t now) const {
+        if (!next_ || now < next_) return 0;
+        return 1 + (interval_ ? static_cast<uint64_t>((now - next_) / interval_) : 0);
+    }
+    void get_locked(int64_t now, GuestItimerspec* out) const {
+        int64_t left = next_ ? std::max<int64_t>(next_ - now, 1) : 0;
+        out->interval_sec = interval_ / 1000000000LL;
+        out->interval_nsec = interval_ % 1000000000LL;
+        out->value_sec = left / 1000000000LL;
+        out->value_nsec = left % 1000000000LL;
+    }
+    std::mutex lock_;
+    int clock_;
+    int64_t next_ = 0;      // the next expiry on clock_, ns; 0 disarmed
+    int64_t interval_ = 0;  // ns; 0 one-shot
 };
 
 // ---- checking any descriptor ---------------------------------------------------------------
@@ -478,12 +583,41 @@ WINAPK_GUEST_ABI int g_eventfd_write(int fd, uint64_t value) {
     return o && o->write(&value, 8) == 8 ? 0 : -1;
 }
 
+WINAPK_GUEST_ABI int g_timerfd_create(int clock, int flags) {
+    if (clock != 0 && clock != 1 && clock != 7 && clock != 8 && clock != 9) {  // + BOOTTIME(_ALARM)
+        *guest_errno() = kEINVAL;
+        return -1;
+    }
+    auto t = std::make_shared<TimerFd>(clock);
+    t->nonblocking = (flags & kONonblock) != 0;
+    return fd_install(t);
+}
+WINAPK_GUEST_ABI int g_timerfd_settime(int fd, int flags, const GuestItimerspec* v, GuestItimerspec* old) {
+    auto t = std::dynamic_pointer_cast<TimerFd>(fd_object(fd));
+    if (!t) {
+        *guest_errno() = kEINVAL;
+        return -1;
+    }
+    return t->set(flags, v, old);
+}
+WINAPK_GUEST_ABI int g_timerfd_gettime(int fd, GuestItimerspec* out) {
+    auto t = std::dynamic_pointer_cast<TimerFd>(fd_object(fd));
+    if (!t || !out) {
+        *guest_errno() = kEINVAL;
+        return -1;
+    }
+    return t->get(out);
+}
+
 const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("pipe", g_pipe),
     WINAPK_SHIM("pipe2", g_pipe2),
     WINAPK_SHIM("eventfd", g_eventfd),
     WINAPK_SHIM("eventfd_read", g_eventfd_read),
     WINAPK_SHIM("eventfd_write", g_eventfd_write),
+    WINAPK_SHIM("timerfd_create", g_timerfd_create),
+    WINAPK_SHIM("timerfd_settime", g_timerfd_settime),
+    WINAPK_SHIM("timerfd_gettime", g_timerfd_gettime),
     WINAPK_SHIM("poll", g_poll),
     WINAPK_SHIM("ppoll", g_ppoll),
     WINAPK_SHIM("select", g_select),

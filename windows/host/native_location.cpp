@@ -121,8 +121,8 @@ constexpr GUID kIidUnknown = {0x00000000, 0x0000, 0x0000, {0xc0, 0x00, 0x00, 0x0
 constexpr GUID kIidPositionHandler = {0xdf3c6164, 0x4e7b, 0x5e8e, {0x9a, 0x7e, 0x13, 0xda, 0x05, 0x9d, 0xec, 0x1e}};
 constexpr GUID kIidStatusHandler = {0x97fcf582, 0xde6b, 0x5cd3, {0x96, 0x90, 0xe2, 0xec, 0xbb, 0x66, 0xda, 0x4d}};
 
-// PositionStatus.
-constexpr int kStatusReady = 0, kStatusDisabled = 3, kStatusNotAvailable = 5;
+// PositionStatus (Ready 0, Initializing 1, NoData 2 need no handling).
+constexpr int kStatusDisabled = 3, kStatusNotAvailable = 5;
 // PositionAccuracy.
 constexpr int kAccuracyDefault = 0, kAccuracyHigh = 1;
 // LocationBridge.AUTH_*.
