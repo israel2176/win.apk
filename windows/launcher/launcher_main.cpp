@@ -364,7 +364,21 @@ const wchar_t* tr(const wchar_t* en) {
         {L"Window size", L"ウィンドウサイズ"}, {L"Orientation", L"画面の向き"},
         {L"Portrait", L"縦向き"}, {L"Landscape", L"横向き"}, {L"Automatic", L"自動"},
         {L"Show the last &log", L"最後のログを表示"}, {L"Create &desktop shortcut", L"デスクトップショートカットを作成"},
-        {L"&Remove…", L"削除…"}, {L"Rein&stall", L"再インストール"}, {L"&Update from APK…", L"APKから更新…"}
+        {L"&Remove…", L"削除…"}, {L"Rein&stall", L"再インストール"}, {L"&Update from APK…", L"APKから更新…"},
+        {L"Default", L"既定"}, {L"Screen", L"画面"}, {L"Screen size", L"画面サイズ"},
+        {L"Auto (fits the screen)", L"自動（画面に合わせる）"},
+        {L"Desktop shortcut for new apps", L"新しいアプリのデスクトップショートカット"},
+        {L"Create", L"作成"}, {L"Recreate", L"再作成"}, {L"Shortcuts", L"ショートカット"},
+        {L"App data", L"アプリデータ"}, {L"Open folder", L"フォルダーを開く"},
+        {L"Remove all apps", L"すべてのアプリを削除"}, {L"About", L"このアプリについて"},
+        {L"Copy", L"コピー"}, {L"Notepad", L"メモ帳"}, {L"Folder", L"フォルダー"},
+        {L"Open app", L"アプリを開く"}, {L"Add app", L"アプリを追加"},
+        {L"Get Info", L"情報を見る"}, {L"Open the app's files", L"アプリのファイルを開く"},
+        {L"Show the APK in Explorer", L"APKをエクスプローラーで表示"},
+        {L"Installing - Win.apk", L"インストール中 - Win.apk"}, {L"Logs - Win.apk", L"ログ - Win.apk"},
+        {L"The log may say why:\n{0}", L"ログに原因が記録されている可能性があります：\n{0}"},
+        {L"No apps found.", L"アプリが見つかりません。"},
+        {L"Drop an APK above to install your first app", L"上にAPKをドロップして最初のアプリをインストール"}
     };
     if (g_japanese) {
         const auto ji = ja.find(en);
@@ -4100,7 +4114,17 @@ void apply_language() {
         SetWindowPos(w, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
         InvalidateRect(w, nullptr, FALSE);
     }
-    if (sheet_hwnd()) SetWindowTextW(sheet_hwnd(), tr(L"Settings"));  // the language is picked there
+    if (g_sheet && g_sheet->hwnd) {
+        // Section and Row labels are materialized when a sheet opens. Rebuild
+        // them after changing the language; repainting the old rows only kept
+        // the previous English/Hebrew strings on screen.
+        if (g_sheet->build) g_sheet->sections = g_sheet->build();
+        g_sheet->targets.clear();
+        g_sheet->scroll = 0;
+        g_sheet->content_h = 0;
+        SetWindowTextW(g_sheet->hwnd, tr(L"Settings"));
+        InvalidateRect(g_sheet->hwnd, nullptr, TRUE);
+    }
     if (g_install_wnd) SetWindowTextW(g_install_wnd, tr(L"Installing - Win.apk"));
     if (g_log_wnd) DestroyWindow(g_log_wnd);
     create_search();
