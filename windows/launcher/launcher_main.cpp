@@ -407,12 +407,26 @@ const wchar_t* tr(const wchar_t* en) {
         {L"Stop", L"停止"}, {L"Logs", L"ログ"}, {L"Done", L"完了"},
         {L"Auto (fits the screen)", L"自動（画面に合わせる）"}, {L"Portrait", L"縦向き"}, {L"Landscape", L"横向き"}
     };
-    if (g_ui_language == UiLanguage::Japanese) {
+    // The choice row is built directly from the persisted Language DWORD.
+    // Use that same value as an authoritative fallback for Japanese lookup.
+    // This avoids the state split where the row shows Japanese (Language=3)
+    // while a stale in-memory enum still makes tr() return English.
+    const DWORD pref = setting(L"Language", 0);
+    const LANGID ui = GetUserDefaultUILanguage();
+    const bool useJapanese =
+        g_ui_language == UiLanguage::Japanese ||
+        pref == 3 ||
+        (pref == 0 && PRIMARYLANGID(ui) == LANG_JAPANESE);
+    if (useJapanese) {
         const auto ji = ja.find(en);
         return ji == ja.end() ? en : ji->second;
     }
+    const bool useHebrew =
+        g_ui_language == UiLanguage::Hebrew ||
+        pref == 2 ||
+        (pref == 0 && PRIMARYLANGID(ui) == LANG_HEBREW);
     const auto it = he.find(en);
-    return g_ui_language == UiLanguage::Hebrew && it != he.end() ? it->second : en;
+    return useHebrew && it != he.end() ? it->second : en;
 }
 
 // tr(en) with {0}, {1}... replaced by `args`.
@@ -3212,6 +3226,7 @@ std::vector<Section> settings_sections() {
         g_rtl = g_ui_language == UiLanguage::Hebrew;
         g_japanese = g_ui_language == UiLanguage::Japanese;
         set_setting(L"Language", static_cast<DWORD>(i));
+        pick_language();
         apply_language(true);
     };
     out.push_back({tr(L"Appearance"), {theme, lang}, L""});
