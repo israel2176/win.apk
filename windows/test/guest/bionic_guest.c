@@ -287,6 +287,18 @@ static void* waker(void* arg) {
     return 0;
 }
 
+size_t malloc_usable_size(const void*);
+int posix_memalign(void**, size_t, size_t);
+static void test_malloc_usable_size(void) {
+    void* p = malloc(100);
+    check("malloc_usable_size of a malloc block is at least its size", p && malloc_usable_size(p) >= 100, 0);
+    free(p);
+    void* q = 0;
+    check("malloc_usable_size of a posix_memalign(64) block", posix_memalign(&q, 64, 200) == 0 && q &&
+              malloc_usable_size(q) >= 200, 0);
+    free(q);
+}
+
 static void test_event_fds(void) {
     int p[2];
     char b[16] = {0};
@@ -921,6 +933,7 @@ EXPORT int bionic_test(const char* dir) {
     test_threads();
     test_tls();
     test_locale_and_syscall();
+    test_malloc_usable_size();
     test_event_fds();
     test_sockets();
     test_looper();
