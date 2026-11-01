@@ -182,15 +182,13 @@ Everything in this section is merged on `main` and tested in CI on
 
 ### Not there yet
 
-A Java-only app runs in a window and takes mouse and keyboard input, but it is
-drawn in software and scaled with GDI. Java OpenGL (`GLSurfaceView`, libGDX)
-renders on ANGLE, read back into the window, and so does OpenGL ES from an
-app's own `.so` through an `ANativeWindow` (SDL games; `NativeActivity` apps
-not yet). SQLite works. Audio and most
-other host natives are stubs. The
-libc shim covers about twenty functions plus libdl, and HotSpot cannot yet
-find a guest library through `System.loadLibrary` (see the stub DLL note in
-section 6).
+The component table above predates most of the host: `windows/README.md`
+("Status and next steps") is the current list of what works, and
+`windows/host/` the current set of natives (one file per Java class, named in
+`host_natives.h`). What is still missing, as of 2026-11: video playback (MediaPlayer's video
+and the NDK media API), Vulkan, sensors, a crash handler and minidumps, W^X
+thunks with unwind tables, code signing, 32-bit `armeabi-v7a`, and Google
+Play services. Section 7 has the finer gaps.
 
 ### Mac code inventory
 
@@ -609,11 +607,13 @@ applies on Windows, where `FileDescriptor` holds a `handle`.
   was linked with `-Bsymbolic`.
 - Constructors run with the linker lock held. Bionic does the same, so a
   constructor that waits on a thread calling `dlopen` deadlocks on both.
-- Variadic libc functions (the `printf` family, `__android_log_print`) are not
-  bridged yet.
-- There are no signals. Mapping Windows exceptions to an Android `ucontext_t`
-  has to account for the System V red zone, because Windows does not preserve
-  the 128 bytes below rsp when it dispatches an exception.
+- Signals are recorded, not delivered: `src/bionic/signal.cpp` keeps what
+  `sigaction`, `sigaltstack`, `sigprocmask` and the POSIX timers were given
+  and answers from it, which is what crash reporters need at load. No handler
+  ever runs. Delivering a fault to one means mapping a Windows exception to an
+  Android `ucontext_t`, and that has to account for the System V red zone,
+  because Windows does not preserve the 128 bytes below rsp when it
+  dispatches an exception.
 - Android code does not probe the stack, so guest threads need fully committed
   stacks.
 - `errno` values are Linux numbers. Every shim function that sets `errno` has
@@ -634,14 +634,19 @@ applies on Windows, where `FileDescriptor` holds a `handle`.
 
 ### Product
 
-- Many APKs ship only ARM libraries. arm64-v8a ones now run through the
-  interpreter, but an interpreter is one to two orders of magnitude slower
-  than native code: fine for libraries that do a little work per call
-  (parsers, crypto, small engines), not for games. The installer prefers an
-  x86_64 build whenever the APK or bundle has one. 32-bit armeabi-v7a-only
-  apps do not run.
+- Many APKs ship only ARM libraries. arm64-v8a ones are translated ahead of
+  time (`src/arm64/arm64_aot.cpp`, with clang) and run close to native speed;
+  code the translation cannot follow runs on the JIT, 3 to 6 times slower. Two
+  translation bugs are known and fall back to the JIT for the whole library
+  (the `TODO(aot)` notes in `arm64_aot.cpp`: a variadic function in Waze's
+  libcrashlytics-common.so, and an initializer in libwaze.so). The installer
+  prefers an x86_64 build whenever the APK or bundle has one. 32-bit
+  armeabi-v7a-only apps do not run.
 - Windows Defender and SmartScreen may flag a process that writes and then runs
-  code. Builds need code signing and testing against Defender.
+  code, and the installer is not signed: SmartScreen warns on every install.
+  Builds need code signing and testing against Defender.
+- There is no crash handler: a crash leaves `logs\last-run.log` and HotSpot's
+  `hs_err` file, no minidump.
 - Permissions (`launcher_main.cpp` `namespace appops`, `SpecialAccessStore`,
   `RuntimePermissionGroups`): every dangerous group and the four grantable
   special-access ops behave as on Android (ask, deny, deny for good, auto
@@ -669,7 +674,7 @@ applies on Windows, where `FileDescriptor` holds a `handle`.
   - Notifications themselves are not shown yet (`NotificationManager.notify`
     is a sink), so the Notifications grant decides only what the app is told.
 - Upstream commits almost daily. Merging at least monthly keeps conflicts
-  small.
+  small; `windows/README.md` lists every `runtime/` change to carry over.
 
 ## 8. Roadmap to production
 

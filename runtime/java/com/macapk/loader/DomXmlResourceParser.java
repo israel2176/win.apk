@@ -251,8 +251,17 @@ public final class DomXmlResourceParser
             }
             return t == IGNORABLE_WHITESPACE ? TEXT : t;
         }
-        cursor = Math.min(cursor + 1, events.size());
-        int t = getEventType();
+        // The resource contract is AOSP's XmlBlock over aapt-compiled XML, where
+        // whitespace-only text and comments do not exist (aapt2 drops both), so
+        // next() reports neither; a parser over text XML (apktool-decoded
+        // resources, raw files) saw them as IGNORABLE_WHITESPACE and COMMENT
+        // events, which a loop written for a device (eventType != END_TAG, then
+        // nextText()) does not expect.
+        int t;
+        do {
+            cursor = Math.min(cursor + 1, events.size());
+            t = getEventType();
+        } while (t == IGNORABLE_WHITESPACE || t == COMMENT || t == PROCESSING_INSTRUCTION || t == DOCDECL);
         // Diagnostic (env-gated): dump the pull-event stream so we can
         // see exactly what a consumer's parse loop saw.
         if (System.getenv("MACAPK_TRACE_XMLPULL") != null) {
