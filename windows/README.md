@@ -297,6 +297,18 @@ every such change is listed here:
 - `runtime/java/com/macapk/loader/FragmentInflaterFactory.java`: a fragment in
   a layout is hosted by the activity the inflater belongs to, which also works
   during the first activity's `onCreate`. Not Windows-specific.
+- `runtime/java/com/macapk/loader/DomXmlResourceParser.java` and
+  `BinaryXmlParser.java`: the resource parser's `next()` skips whitespace-only
+  text and comments, as the device's parser over aapt-compiled XML never sees
+  them (a `while (next() != END_TAG) nextText()` loop over a text-form resource
+  threw "nextText not on START_TAG"), and the compiled-XML reader keeps text
+  chunks, so an element's content (`<key>` in a media-browser allow list) is no
+  longer empty. Not Windows-specific; worth offering upstream.
+- `runtime/java/android/provider/MediaStoreProvider.java`: a projection may
+  hold an aggregate over a known column (`COUNT(is_music)`, `COUNT(*)`,
+  `MAX(date_added)`) or an alias (`_data AS path`), as MediaProvider's
+  projection greylist allows; before, the aggregate was answered as a NULL
+  column and a COUNT over an empty table had no row. Not Windows-specific.
 - `runtime/java/android/security/keystore/AndroidKeyStoreKeyFactorySpi.java`:
   delegates to the other providers only, instead of recursing into itself
   until the stack overflows. Not Windows-specific.
