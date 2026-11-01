@@ -141,6 +141,16 @@ jobs:
           cp="$(cygpath -w runtime/lib/macapk-loader.jar);$(cygpath -w build/sep-test)"
           "$JAVA_HOME/bin/java" -cp "$cp" FileSeparatorRewriteTest
           MACAPK_ANDROID_FILE_SEPARATOR=0 "$JAVA_HOME/bin/java" -cp "$cp" FileSeparatorRewriteTest off
+      - name: Run the permission model test
+        run: |
+          # SpecialAccessStore.GroupModel, the decision model behind every
+          # dangerous permission group the launcher asks about, against
+          # PermissionController's rules (grant, deny, deny twice, auto grant,
+          # background permissions, legacy targets, App info rows).
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          cp="$(cygpath -w runtime/lib/macapk-loader.jar);$(cygpath -w runtime/lib/android-framework.jar)"
+          "$JAVA_HOME/bin/javac" -cp "$cp" -d build/perm-test windows/test/java/PermissionModelTest.java
+          "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/perm-test)" PermissionModelTest
       - name: Run the GL test
         run: |
           # It needs ANGLE next to it, which staging just put in runtime/bin.

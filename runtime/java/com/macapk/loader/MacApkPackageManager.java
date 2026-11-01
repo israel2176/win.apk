@@ -409,10 +409,15 @@ public final class MacApkPackageManager extends PackageManager {
                     // Stage S5: a storage runtime permission carries the bit
                     // only while it is granted -- the same answer
                     // checkPermission gives (SpecialAccessStore's model).
+                    // Location and every other asked group the same way
+                    // (checkPermission's own branches, so the bit and the
+                    // answer cannot disagree).
                     for (int i = 0; i < grants.length; i++) {
                         String rp = requested.get(i);
-                        Boolean storage = SpecialAccessStore.storagePermissionGranted(rp);
-                        boolean held = storage != null ? storage : !macapkNeverGranted(rp);
+                        Boolean asked = SpecialAccessStore.storagePermissionGranted(rp);
+                        if (asked == null) asked = locationPermissionGranted(rp);
+                        if (asked == null) asked = SpecialAccessStore.trackedPermissionGranted(rp);
+                        boolean held = asked != null ? asked : !macapkNeverGranted(rp);
                         grants[i] = held ? PackageInfo.REQUESTED_PERMISSION_GRANTED : 0;
                     }
                     info.requestedPermissionsFlags = grants;
@@ -3868,6 +3873,17 @@ public final class MacApkPackageManager extends PackageManager {
             return location ? PackageManager.PERMISSION_GRANTED
                             : PackageManager.PERMISSION_DENIED;
         }
+        // Every other dangerous group (camera, microphone, contacts, calendar,
+        // phone, call log, SMS, notifications, nearby devices, physical
+        // activity, body sensors, the background permissions), where the
+        // helper asks about them (SpecialAccessStore.allPermsAsk, Win.apk):
+        // DENIED until the user allows the group, as on a device. null keeps
+        // the install-time rule below, which is the Mac's answer today.
+        Boolean tracked = SpecialAccessStore.trackedPermissionGranted(permName);
+        if (tracked != null) {
+            return tracked ? PackageManager.PERMISSION_GRANTED
+                           : PackageManager.PERMISSION_DENIED;
+        }
         return declaredPermissions().contains(permName)
             ? PackageManager.PERMISSION_GRANTED
             : PackageManager.PERMISSION_DENIED;
@@ -4002,6 +4018,16 @@ public final class MacApkPackageManager extends PackageManager {
             throw new SecurityException(
                 "Need to declare android.permission.REQUEST_INSTALL_PACKAGES"
                 + " to call this api");
+        }
+        // Where "Install unknown apps" is a special access the user grants
+        // (SpecialAccessStore.allPermsAsk, Win.apk), AOSP's answer: false
+        // for an app targeting below O, else the user's switch (op 66). The
+        // install itself is still confirmed per app by the helper, as the
+        // packageinstaller's own "Do you want to install" dialog is.
+        Boolean allowed = SpecialAccessStore.installsAllowed();
+        if (allowed != null) {
+            if (targetSdk > 0 && targetSdk < 26) return false;
+            return allowed;
         }
         return true;
     }

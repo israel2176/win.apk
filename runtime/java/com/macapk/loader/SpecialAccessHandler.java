@@ -88,6 +88,30 @@ public final class SpecialAccessHandler {
     static final String ACTION_MANAGE_APP_ALL_FILES =
             "android.settings.MANAGE_APP_ALL_FILES_ACCESS_PERMISSION";
     static final String ACTION_REQUEST_MANAGE_MEDIA = "android.settings.REQUEST_MANAGE_MEDIA";
+    /** The other two special-access switches a third-party app can send the
+     *  user to (Settings AndroidManifest.xml android14: Settings$Draw
+     *  OverlaySettingsActivity / AppDrawOverlaySettingsActivity take
+     *  MANAGE_OVERLAY_PERMISSION without and with package: data;
+     *  Settings$ManageExternalSourcesActivity takes MANAGE_UNKNOWN_APP_SOURCES
+     *  either way). Asked where the helper knows them (allPermsAsk). */
+    static final String ACTION_MANAGE_OVERLAY = "android.settings.action.MANAGE_OVERLAY_PERMISSION";
+    static final String ACTION_MANAGE_UNKNOWN_SOURCES = "android.settings.MANAGE_UNKNOWN_APP_SOURCES";
+    /** Settings screens for access this host cannot grant (no notification
+     *  feed of other apps to listen to, no accessibility framework, no usage
+     *  history of other apps, no Do Not Disturb) or has nothing to restrict
+     *  (battery optimization, exact alarms, system settings). A device shows a
+     *  Settings screen; here the helper shows a dialog that says so and
+     *  records nothing, and the round-trip (pause / resume, RESULT_CANCELED)
+     *  is the one the app expects. The "op" strings are ours, never stored. */
+    static final String INFO_PREFIX = "winapk:";
+    static final String INFO_NOTIFICATION_LISTENER = INFO_PREFIX + "notification_listener";
+    static final String INFO_ACCESSIBILITY = INFO_PREFIX + "accessibility";
+    static final String INFO_USAGE_ACCESS = INFO_PREFIX + "usage_access";
+    static final String INFO_NOTIFICATION_POLICY = INFO_PREFIX + "notification_policy";
+    static final String INFO_BATTERY = INFO_PREFIX + "battery";
+    static final String INFO_EXACT_ALARM = INFO_PREFIX + "exact_alarm";
+    static final String INFO_WRITE_SETTINGS = INFO_PREFIX + "write_settings";
+    static boolean isInfoOp(String op) { return op != null && op.startsWith(INFO_PREFIX); }
     /** The resolution row's package: AOSP's Settings, so
      *  `resolveActivity(...).activityInfo.packageName` names the app a device
      *  names. Deliberately not ours (see MacApkPackageManager's host row). */
@@ -193,7 +217,31 @@ public final class SpecialAccessHandler {
             case ACTION_REQUEST_MANAGE_MEDIA:
                 perApp = true;  list = true;  op = SpecialAccessStore.OP_MANAGE_MEDIA; break;
             default:
-                return null;
+                if (!SpecialAccessStore.allPermsAsk()) return null;
+                switch (action) {
+                    case ACTION_MANAGE_OVERLAY:
+                        perApp = true; list = true; op = SpecialAccessStore.OP_SYSTEM_ALERT_WINDOW; break;
+                    case ACTION_MANAGE_UNKNOWN_SOURCES:
+                        perApp = true; list = true; op = SpecialAccessStore.OP_REQUEST_INSTALL_PACKAGES; break;
+                    case "android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS":
+                        perApp = false; list = true; op = INFO_NOTIFICATION_LISTENER; break;
+                    case "android.settings.ACCESSIBILITY_SETTINGS":
+                        perApp = false; list = true; op = INFO_ACCESSIBILITY; break;
+                    case "android.settings.USAGE_ACCESS_SETTINGS":
+                        perApp = true; list = true; op = INFO_USAGE_ACCESS; break;
+                    case "android.settings.NOTIFICATION_POLICY_ACCESS_SETTINGS":
+                        perApp = false; list = true; op = INFO_NOTIFICATION_POLICY; break;
+                    case "android.settings.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS":
+                        perApp = true; list = false; op = INFO_BATTERY; break;
+                    case "android.settings.IGNORE_BATTERY_OPTIMIZATION_SETTINGS":
+                        perApp = false; list = true; op = INFO_BATTERY; break;
+                    case "android.settings.REQUEST_SCHEDULE_EXACT_ALARM":
+                        perApp = true; list = true; op = INFO_EXACT_ALARM; break;
+                    case "android.settings.action.MANAGE_WRITE_SETTINGS":
+                        perApp = true; list = true; op = INFO_WRITE_SETTINGS; break;
+                    default:
+                        return null;
+                }
         }
         // Categories: every category on the intent must be in the filter's set,
         // which is {DEFAULT} (IntentFilter.matchCategories).
@@ -223,8 +271,36 @@ public final class SpecialAccessHandler {
         if (ACTION_MANAGE_ALL_FILES.equals(action)) {
             return "com.android.settings.Settings$ManageExternalStorageActivity";
         }
-        return hasData ? "com.android.settings.Settings$AppMediaManagementAppsActivity"
-                       : "com.android.settings.Settings$MediaManagementAppsActivity";
+        if (ACTION_REQUEST_MANAGE_MEDIA.equals(action)) {
+            return hasData ? "com.android.settings.Settings$AppMediaManagementAppsActivity"
+                           : "com.android.settings.Settings$MediaManagementAppsActivity";
+        }
+        if (action == null) action = "";
+        switch (action) {
+            case ACTION_MANAGE_OVERLAY:
+                return hasData ? "com.android.settings.Settings$AppDrawOverlaySettingsActivity"
+                               : "com.android.settings.Settings$DrawOverlaySettingsActivity";
+            case ACTION_MANAGE_UNKNOWN_SOURCES:
+                return "com.android.settings.Settings$ManageExternalSourcesActivity";
+            case "android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS":
+                return "com.android.settings.Settings$NotificationAccessSettingsActivity";
+            case "android.settings.ACCESSIBILITY_SETTINGS":
+                return "com.android.settings.Settings$AccessibilitySettingsActivity";
+            case "android.settings.USAGE_ACCESS_SETTINGS":
+                return "com.android.settings.Settings$UsageAccessSettingsActivity";
+            case "android.settings.NOTIFICATION_POLICY_ACCESS_SETTINGS":
+                return "com.android.settings.Settings$ZenAccessSettingsActivity";
+            case "android.settings.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS":
+                return "com.android.settings.fuelgauge.RequestIgnoreBatteryOptimizations";
+            case "android.settings.IGNORE_BATTERY_OPTIMIZATION_SETTINGS":
+                return "com.android.settings.Settings$HighPowerApplicationsActivity";
+            case "android.settings.REQUEST_SCHEDULE_EXACT_ALARM":
+                return "com.android.settings.Settings$AlarmsAndRemindersActivity";
+            case "android.settings.action.MANAGE_WRITE_SETTINGS":
+                return "com.android.settings.Settings$WriteSettingsActivity";
+            default:
+                return "com.android.settings.Settings";
+        }
     }
 
     /** The ResolveInfo PackageManager reports for a matching intent: AOSP's
@@ -308,6 +384,28 @@ public final class SpecialAccessHandler {
     /** The slow half, on the macapk-special-access thread. */
     private static void perform(String op, String self, Activity.MacApkHostResult token,
                                 Cover cover) throws Exception {
+        if (isInfoOp(op)) {
+            // Nothing to grant or read back: the dialog only tells the user
+            // what this host can and cannot do. The battery dialog answers
+            // RESULT_OK, as a device's does once the app is exempt (it is,
+            // always: PowerManager.isIgnoringBatteryOptimizations is true).
+            java.io.File helper = PackageInstallerBackend.locateHelper();
+            if (helper == null) {
+                NativeLog.e(TAG, "macapk-installhelper not found; the Settings screen cannot be"
+                        + " shown");
+            } else {
+                PackageInstallerBackend.HelperResult r =
+                        PackageInstallerBackend.runSpecialAccessHelper(helper, op);
+                NativeLog.i(TAG, "helper exit " + r.exit + " status=" + r.jsonField("status")
+                        + PackageInstallerBackend.helperReason(r));
+            }
+            if (INFO_BATTERY.equals(op)) {
+                finishWithResult(cover, token, Activity.RESULT_OK, null);
+            } else {
+                finishCancelled(token, cover);
+            }
+            return;
+        }
         // An app that does not DECLARE the permission gets Settings' screen with
         // its switch DISABLED (AppStateAppOpsBridge.java:314-322: permissionDeclared
         // false -> the switch cannot be turned on), so the user cannot grant
@@ -458,6 +556,7 @@ public final class SpecialAccessHandler {
         int lvl;
         try { lvl = android.os.Build.VERSION.SDK_INT; } catch (Throwable t) { lvl = 30; }
         askLocation(requester, req, lvl);
+        askGroups(req);
         SpecialAccessStore.invalidate();
         SpecialAccessStore.PermModel m = SpecialAccessStore.liveModel();
         if (m == null) return currentGrants(requester, req);
@@ -598,6 +697,64 @@ public final class SpecialAccessHandler {
     private static final java.util.concurrent.atomic.AtomicBoolean HOST_SETTINGS_SHOWN =
             new java.util.concurrent.atomic.AtomicBoolean(false);
 
+    /** Every other dangerous group's dialogs (SpecialAccessStore.GroupModel,
+     *  where allPermsAsk): one `runtime-permission --prompt <group>` per
+     *  group that needs one, in the request's order, then the "all the time"
+     *  prompt of a background permission once its foreground is granted. An
+     *  AUTO grant the helper refuses becomes the dialog, as the storage plan's
+     *  does; a FIXED group gets nothing, as on a device. */
+    static void askGroups(String[] req) {
+        SpecialAccessStore.invalidate();
+        SpecialAccessStore.GroupModel g = SpecialAccessStore.liveGroupModel();
+        if (g == null) return;
+        java.util.List<SpecialAccessStore.PermModel.Step> plan = g.plan(req);
+        if (plan.isEmpty()) return;
+        NativeLog.i(TAG, "requestPermissions " + java.util.Arrays.toString(req)
+                + " at API " + g.level + " (targetSdk " + g.target + "): groups plan " + plan);
+        java.io.File helper = PackageInstallerBackend.locateHelper();
+        if (helper == null) {
+            NativeLog.e(TAG, "macapk-installhelper not found; the permission dialog cannot"
+                    + " be shown, nothing changes");
+            return;
+        }
+        for (SpecialAccessStore.PermModel.Step s : plan) {
+            if ("FIXED".equals(s.kind)) {
+                NativeLog.i(TAG, "  " + s + ": no dialog");
+                continue;
+            }
+            if ("BACKGROUND".equals(s.kind)) {
+                // The foreground answer above decides whether this is asked
+                // at all (LocationGrantBehavior: background without foreground
+                // is dropped from the request).
+                SpecialAccessStore.invalidate();
+                SpecialAccessStore.GroupModel now = SpecialAccessStore.liveGroupModel();
+                String b = s.perms.iterator().next();
+                if (now == null || !now.foregroundGranted(b) || now.granted(b)) {
+                    NativeLog.i(TAG, "  " + s + ": no dialog (foreground not granted, or already granted)");
+                    continue;
+                }
+            }
+            try {
+                HelperRun r = runHelperVerb(permissionHelperArgv(helper, g.level, s));
+                NativeLog.i(TAG, "  " + s + ": helper exit " + r.exit + " " + r.lastLine());
+                SpecialAccessStore.invalidate();
+                if ("AUTO".equals(s.kind) && r.exit == HELPER_EXIT_AUTO_REFUSED) {
+                    SpecialAccessStore.GroupModel now = SpecialAccessStore.liveGroupModel();
+                    if (now == null || now.groupUserFixed(s.group)) continue;
+                    SpecialAccessStore.PermModel.Step ask = new SpecialAccessStore.PermModel.Step(
+                            "PROMPT", s.group, RuntimePermissionGroups.promptName(s.group),
+                            s.perms, s.members, null);
+                    r = runHelperVerb(permissionHelperArgv(helper, now.level, ask));
+                    NativeLog.i(TAG, "  " + ask + " (the helper refused " + s + "): helper exit "
+                            + r.exit + " " + r.lastLine());
+                    SpecialAccessStore.invalidate();
+                }
+            } catch (Throwable t) {
+                NativeLog.e(TAG, "permission dialog failed: " + t);
+            }
+        }
+    }
+
     private static boolean declares(Activity requester, String perm) throws Exception {
         android.content.pm.PackageInfo pi = requester.getPackageManager().getPackageInfo(
                 requester.getPackageName(), android.content.pm.PackageManager.GET_PERMISSIONS);
@@ -628,7 +785,7 @@ public final class SpecialAccessHandler {
             argv.add("--auto");
         } else {
             argv.add("--prompt");
-            argv.add(s.prompt);
+            argv.add(s.prompt);   // PROMPT and BACKGROUND name their dialog
         }
         for (String p : s.perms) { argv.add("--perm"); argv.add(p); }
         for (String p : s.members) { argv.add("--member"); argv.add(p); }
@@ -720,12 +877,22 @@ public final class SpecialAccessHandler {
     static boolean isAppDetailsIntent(Intent intent) {
         if (intent == null || !APP_DETAILS) return false;
         String action = intent.getAction();
-        if (!ACTION_APP_DETAILS.equals(action) && !ACTION_AUTO_REVOKE.equals(action)) return false;
         java.util.Set<String> cats = intent.getCategories();
         if (cats != null) {
             for (String c : cats) if (!Intent.CATEGORY_DEFAULT.equals(c)) return false;
         }
         if (intent.getType() != null) return false;
+        // The app's notification settings (Settings$AppNotificationSettings
+        // Activity, no data; the package rides in EXTRA_APP_PACKAGE): from T
+        // its "All notifications" switch is the POST_NOTIFICATIONS permission,
+        // which App info's Notifications row is here. Where that group is
+        // asked about (allPermsAsk).
+        if (("android.settings.APP_NOTIFICATION_SETTINGS".equals(action)
+                    || "android.settings.CHANNEL_NOTIFICATION_SETTINGS".equals(action))
+                && SpecialAccessStore.allPermsAsk()) {
+            return intent.getData() == null;
+        }
+        if (!ACTION_APP_DETAILS.equals(action) && !ACTION_AUTO_REVOKE.equals(action)) return false;
         Uri data = intent.getData();
         return data != null && "package".equals(data.getScheme());
     }
@@ -832,10 +999,21 @@ public final class SpecialAccessHandler {
         SpecialAccessStore.invalidate();
         SpecialAccessStore.PermModel m = SpecialAccessStore.liveModel();
         java.util.LinkedHashMap<String, java.util.Set<String>> groups = appDetailsGroups(m);
+        // Location, and every other asked group (GroupModel), after storage.
+        if (LocationBridge.available() && SpecialAccessStore.mediaPermsAsk() && m != null
+                && !m.legacyInstallGrant()) {
+            java.util.Set<String> loc = new java.util.LinkedHashSet<>();
+            for (String p : new String[] { SpecialAccessStore.PERM_ACCESS_FINE_LOCATION,
+                                           SpecialAccessStore.PERM_ACCESS_COARSE_LOCATION }) {
+                if (SpecialAccessStore.declaresPermission(p)) loc.add(p);
+            }
+            if (!loc.isEmpty()) groups.put("location", loc);
+        }
+        SpecialAccessStore.GroupModel gm = SpecialAccessStore.liveGroupModel();
+        if (gm != null) groups.putAll(gm.appDetailsGroups());
         java.util.List<String> ops = new java.util.ArrayList<>();
         if (SpecialAccessStore.honest()) {
-            for (String op : new String[] { SpecialAccessStore.OP_MANAGE_EXTERNAL_STORAGE,
-                                            SpecialAccessStore.OP_MANAGE_MEDIA }) {
+            for (String op : SpecialAccessStore.specialOps()) {
                 if (SpecialAccessStore.declaresPermission(SpecialAccessStore.permissionForOp(op))) {
                     ops.add(op);
                 }
@@ -873,6 +1051,12 @@ public final class SpecialAccessHandler {
                                                         java.util.List<String> ops) {
         java.util.Map<String, Boolean> out = new java.util.TreeMap<>();
         if (m != null) for (String p : m.requested) out.put(p, m.granted(p));
+        for (String p : new String[] { SpecialAccessStore.PERM_ACCESS_FINE_LOCATION,
+                                       SpecialAccessStore.PERM_ACCESS_COARSE_LOCATION }) {
+            if (SpecialAccessStore.declaresPermission(p)) out.put(p, SpecialAccessStore.locationGranted(p));
+        }
+        SpecialAccessStore.GroupModel gm = SpecialAccessStore.liveGroupModel();
+        if (gm != null) for (String p : gm.requested) out.put(p, gm.granted(p));
         for (String op : ops) {
             out.put(op, SpecialAccessStore.specialOpMode(op) == SpecialAccessStore.MODE_ALLOWED);
         }

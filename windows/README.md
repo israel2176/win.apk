@@ -160,6 +160,37 @@ library) brings the running app's window forward, and updating it while it
 runs is refused until it is closed. `WINAPK_ALLOW_SECOND_INSTANCE=1` turns the
 check off.
 
+### Permissions
+
+Apps ask for permissions as on Android. Every dangerous group is a runtime
+permission the user answers in a Windows dialog over the app, drawn by the
+launcher (`Win.apk.exe runtime-permission`, run by the runtime as upstream runs
+macapk-installhelper; the app is identified from the parent process, never
+from arguments): storage and media, location (with "Only approximate", and
+"all the time" asked separately once the foreground is granted), camera,
+microphone, contacts, calendar, phone, call logs, SMS, notifications, nearby
+devices, physical activity and body sensors. Allow grants the group; Don't
+allow denies it, and a second refusal denies it for good (no more dialogs;
+`shouldShowRequestPermissionRationale` is true only between the two); a
+permission in a group that already has a granted member is granted silently.
+A pre-M app holds what it declares, and legacy targets get the platform's
+implicit grants (notifications below T, the Bluetooth split below S, and so
+on). The answer is signed into `%LOCALAPPDATA%\Win.apk\appops\app-ops.json`
+(ECDSA P-256; the private key under DPAPI), which the runtime verifies and
+never writes; it survives restarts and updates, and is forgotten when the
+app is removed. The special access the user can grant in Settings on a device
+has the same dialog here (`special-access`): All files access, Media
+management, Display over other apps and Install unknown apps; the Settings
+screens for access Windows cannot provide (notification access,
+accessibility, usage access, Do Not Disturb) say so and grant nothing, as do
+those for what Win.apk never restricts (battery optimization, exact alarms,
+system settings). The app's App info screen (`app-details`) and Get Info in
+the library turn each group on or off or reset them; taking a permission
+away ends the app, as Android does. `MACAPK_ALL_PERMS_ASK=0` returns the
+groups beyond storage and location to the install-time rule (declared ==
+held), the Mac's behaviour; `MACAPK_MEDIA_PERMS_ASK=0` and
+`MACAPK_ALLFILES_HONEST=0` keep their upstream meaning.
+
 ### Web content (WebView2)
 
 Web pages an app shows run in Microsoft Edge WebView2, the counterpart of
@@ -463,6 +494,27 @@ every such change is listed here:
   the helper that writes the store (`Win.apk.exe runtime-permission`,
   `special-access`, `app-details`, in `launcher/launcher_main.cpp`), with
   upstream's payload and tokens. On the Mac nothing changes.
+- Every dangerous permission group, gated on `SpecialAccessStore.allPermsAsk()`
+  (Windows, unless `MACAPK_ALL_PERMS_ASK=0`; the Mac's helper knows only
+  storage and location, so there nothing changes): the group table
+  `com/macapk/loader/RuntimePermissionGroups.java` (new) and
+  `SpecialAccessStore.GroupModel` (granted, rationale, the dialogs to show,
+  App info's rows, the background permissions); `MacApkPackageManager.
+  checkPermission` and `GET_PERMISSIONS` flags answer from it, and
+  `canRequestPackageInstalls` from the "Install unknown apps" op;
+  `SpecialAccessHandler` runs one `runtime-permission --prompt <group>` per
+  group, resolves `MANAGE_OVERLAY_PERMISSION`, `MANAGE_UNKNOWN_APP_SOURCES`,
+  the notification / accessibility / usage / DND / battery / alarm / write-
+  settings screens and `APP_NOTIFICATION_SETTINGS`, and lists location and
+  the groups in App info; `android/app/AppOpsManager.java` keeps each
+  runtime-permission op in step with its permission (MODE_IGNORED when
+  denied) and answers op 24 / op 66 from the store;
+  `android/provider/Settings.java` `canDrawOverlays`, `android/app/
+  NotificationManager.java` `areNotificationsEnabled`, `MacApkWindowManager`
+  (a system-alert window type without the grant throws BadTokenException),
+  `android/hardware/Camera.java`, `camera2/CameraManager.java` and
+  `AudioInputBridge` honour the Android permission before the Windows
+  privacy switch.
 - `runtime/java/com/macapk/loader/ActivityHost.java`: without the AOSP window
   policy (Windows), an activity that owns the window box asks the host for its
   manifest's `screenOrientation` at launch (`NativeCocoa.applyWindowOrientation`,

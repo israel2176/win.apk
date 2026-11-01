@@ -647,6 +647,32 @@ applies on Windows, where `FileDescriptor` holds a `handle`.
   Builds need code signing and testing against Defender.
 - There is no crash handler: a crash leaves `logs\last-run.log` and HotSpot's
   `hs_err` file, no minidump.
+- Permissions (`launcher_main.cpp` `namespace appops`, `SpecialAccessStore`,
+  `RuntimePermissionGroups`): every dangerous group and the four grantable
+  special-access ops behave as on Android (ask, deny, deny for good, auto
+  grant, revoke, reset, persistence, signing). What is not Android's yet:
+  - The photo picker: "Select photos and videos" is not offered (upstream's
+    `PHOTO_PICKER_PROMPT_ENABLED` is off until a picker exists); Allow means
+    all photos.
+  - Location has no "Only while using the app" versus "Allow all the time"
+    three-way: Allow is a while-in-use grant, and the background permission
+    is a second dialog of its own once the foreground is granted. On R+ a
+    device sends the app to Settings for it instead; here the dialog shows
+    even when the app asked for both in one request.
+  - Notification access, accessibility services, usage access and Do Not
+    Disturb access cannot be granted: Windows has no feed of other apps'
+    notifications, no Android accessibility framework, one app per process
+    and no DND. Their Settings screens open a dialog that says so and
+    returns RESULT_CANCELED. Battery optimization, exact alarms and "modify
+    system settings" are never restricted, and their screens say that.
+  - The data behind contacts, calendar, phone, SMS, Bluetooth and sensors
+    does not exist on Windows: a granted app finds no contacts, no SIM, no
+    devices and no readings (the dialog says so). Those providers answer
+    empty rather than throwing SecurityException for a denied caller.
+  - A pre-M app's permissions cannot be toggled in App info (a device sets
+    the app-op; here App info lists nothing for it).
+  - Notifications themselves are not shown yet (`NotificationManager.notify`
+    is a sink), so the Notifications grant decides only what the app is told.
 - Upstream commits almost daily. Merging at least monthly keeps conflicts
   small; `windows/README.md` lists every `runtime/` change to carry over.
 

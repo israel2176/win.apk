@@ -202,6 +202,14 @@ public class Camera {
      * camera may be opened now.
      */
     private static boolean authorizeForOpen() {
+        // The Android CAMERA permission, where the host asks for it
+        // (SpecialAccessStore.allPermsAsk); the host's own switch after it.
+        if (Boolean.FALSE.equals(com.macapk.loader.SpecialAccessStore.holds(
+                "android.permission.CAMERA"))) {
+            System.err.println("[" + TAG + "] open() refused: the app does not hold"
+                    + " android.permission.CAMERA");
+            return false;
+        }
         int st = CameraBridge.getAuthStatus();
         if (st == CameraBridge.AUTH_AUTHORIZED) return true;
         if (st == CameraBridge.AUTH_DENIED || st == CameraBridge.AUTH_RESTRICTED) {

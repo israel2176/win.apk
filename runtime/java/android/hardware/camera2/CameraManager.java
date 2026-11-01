@@ -119,6 +119,15 @@ public final class CameraManager {
         }
         CameraBackend.requireKnownCameraId(cameraId);
 
+        // The Android CAMERA permission itself, where the host asks for it
+        // (SpecialAccessStore.allPermsAsk): the camera service checks it
+        // before the device's own privacy switch, with this same exception.
+        if (Boolean.FALSE.equals(com.macapk.loader.SpecialAccessStore.holds(
+                "android.permission.CAMERA"))) {
+            CameraBackend.warn("openCamera(" + cameraId
+                    + ") refused: the app does not hold android.permission.CAMERA");
+            throw new SecurityException("Lacking privileges to access camera service");
+        }
         if (CameraBackend.authDecidedDenied()) {
             CameraBackend.warn("openCamera(" + cameraId
                     + ") refused: macOS camera access is denied for this application."

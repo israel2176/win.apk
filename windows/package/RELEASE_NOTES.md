@@ -18,7 +18,7 @@ A pre-release for testing: Win.apk runs Android apps on Windows 10/11 x64.
 - **Location:** `LocationManager` on Windows' own location service, behind Windows' privacy settings.
 - **Camera:** webcams through CameraX and the Camera2 API; a virtual camera when there is none.
 - **Storage:** files, SharedPreferences and SQLite. Shared storage (Pictures, Downloads, Documents...) is the user's own Windows folders.
-- **Permissions:** apps ask for storage, "All files access" and "Media management" as on Android, in a Windows dialog over the app (Allow / Don't allow, and "don't ask again" after a second refusal). An app's App info screen, or Get Info in the library, turns them on or off or resets them.
+- **Permissions:** apps ask for every permission as on Android, in a Windows dialog over the app (Allow / Don't allow, and "don't ask again" after a second refusal): storage and media, location (precise or approximate, and "all the time" separately), camera, microphone, contacts, calendar, phone, call logs, SMS, notifications, nearby devices, physical activity and body sensors, plus the special access of "All files access", "Media management", "Display over other apps" and "Install unknown apps". Nothing is granted without asking; the answers survive restarts and updates. An app's App info screen, or Get Info in the library, turns each one on or off or resets them, and an app whose permission is taken away is stopped, as on Android.
 - **Desktop services:** clipboard, file pickers and game controllers.
 
 In the automated sweep of open-source apps, 36 of 38 draw their first screen.
