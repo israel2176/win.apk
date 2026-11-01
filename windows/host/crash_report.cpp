@@ -64,8 +64,11 @@ bool in_guest(const void* addr) {
 // HotSpot's JIT faults on purpose (implicit null checks, safepoint polls) and
 // handles its own; those are in code no module owns, or in jvm.dll. A fault
 // is worth a line when it is in a guest image, or in a module outside the JVM
-// and Windows: the runtime's own, ANGLE's, a stub DLL.
-bool worth_reporting(const void* rip) {
+// and Windows: the runtime's own, ANGLE's, a stub DLL. A fault in a Windows
+// DLL is reported too when `windows_too` (Pixel Wheels died in one on a
+// thread without guest frames and the log said nothing), but never counts as
+// a frame of the stack scan.
+bool worth_reporting(const void* rip, bool windows_too = false) {
     if (in_guest(rip)) return true;
     HMODULE mod = nullptr;
     if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
@@ -80,6 +83,7 @@ bool worth_reporting(const void* rip) {
         if (!path[i]) break;
     }
     if (std::wcsstr(lower, L"\\jvm.dll") || std::wcsstr(lower, L"\\java.dll")) return false;
+    if (windows_too) return true;
     wchar_t windir[MAX_PATH];
     const UINT wn = GetSystemWindowsDirectoryW(windir, MAX_PATH);
     if (wn && wn < MAX_PATH) {
@@ -134,7 +138,9 @@ LONG CALLBACK report_fault(EXCEPTION_POINTERS* e) {
     // the shim called with the guest's arguments (Pixel Wheels died in one
     // with nothing in the log).
     const bool own = worth_reporting(reinterpret_cast<const void*>(rip));
-    if (!own && scan_frames(rsp, false) == 0) return EXCEPTION_CONTINUE_SEARCH;
+    if (!own && scan_frames(rsp, false) == 0 && !worth_reporting(reinterpret_cast<const void*>(rip), true)) {
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
     {
         std::lock_guard<std::mutex> hold(g_lock);
         if (!g_reported.insert(rip).second) return EXCEPTION_CONTINUE_SEARCH;
