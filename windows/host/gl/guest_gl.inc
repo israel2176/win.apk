@@ -89,9 +89,7 @@ extern "C" void GL_APIENTRY glTranslatex(GLfixed x, GLfixed y, GLfixed z);
 extern "C" void GL_APIENTRY glVertexPointer(GLint size, GLenum type, GLsizei stride, const void *pointer);
 
 WINAPK_GUEST_ABI EGLBoolean guest_eglBindAPI(EGLenum api) { return eglBindAPI(api); }
-WINAPK_GUEST_ABI EGLBoolean guest_eglBindTexImage(EGLDisplay dpy, EGLSurface surface, EGLint buffer) { return eglBindTexImage(dpy, surface, buffer); }
 WINAPK_GUEST_ABI EGLint guest_eglClientWaitSync(EGLDisplay dpy, EGLSync sync, EGLint flags, EGLTime timeout) { return eglClientWaitSync(dpy, sync, flags, timeout); }
-WINAPK_GUEST_ABI EGLBoolean guest_eglCopyBuffers(EGLDisplay dpy, EGLSurface surface, EGLNativePixmapType target) { return eglCopyBuffers(dpy, surface, target); }
 WINAPK_GUEST_ABI EGLContext guest_eglCreateContext(EGLDisplay dpy, EGLConfig config, EGLContext share_context, const EGLint *attrib_list) { return eglCreateContext(dpy, config, share_context, attrib_list); }
 WINAPK_GUEST_ABI EGLImage guest_eglCreateImage(EGLDisplay dpy, EGLContext ctx, EGLenum target, EGLClientBuffer buffer, const EGLAttrib *attrib_list) { return eglCreateImage(dpy, ctx, target, buffer, attrib_list); }
 WINAPK_GUEST_ABI EGLSurface guest_eglCreatePbufferFromClientBuffer(EGLDisplay dpy, EGLenum buftype, EGLClientBuffer buffer, EGLConfig config, const EGLint *attrib_list) { return eglCreatePbufferFromClientBuffer(dpy, buftype, buffer, config, attrib_list); }
@@ -106,16 +104,12 @@ WINAPK_GUEST_ABI EGLBoolean guest_eglGetConfigAttrib(EGLDisplay dpy, EGLConfig c
 WINAPK_GUEST_ABI EGLBoolean guest_eglGetConfigs(EGLDisplay dpy, EGLConfig *configs, EGLint config_size, EGLint *num_config) { return eglGetConfigs(dpy, configs, config_size, num_config); }
 WINAPK_GUEST_ABI EGLContext guest_eglGetCurrentContext(void) { return eglGetCurrentContext(); }
 WINAPK_GUEST_ABI EGLDisplay guest_eglGetCurrentDisplay(void) { return eglGetCurrentDisplay(); }
-WINAPK_GUEST_ABI EGLSurface guest_eglGetCurrentSurface(EGLint readdraw) { return eglGetCurrentSurface(readdraw); }
 WINAPK_GUEST_ABI EGLint guest_eglGetError(void) { return eglGetError(); }
 WINAPK_GUEST_ABI EGLBoolean guest_eglGetSyncAttrib(EGLDisplay dpy, EGLSync sync, EGLint attribute, EGLAttrib *value) { return eglGetSyncAttrib(dpy, sync, attribute, value); }
-WINAPK_GUEST_ABI EGLBoolean guest_eglMakeCurrent(EGLDisplay dpy, EGLSurface draw, EGLSurface read, EGLContext ctx) { return eglMakeCurrent(dpy, draw, read, ctx); }
 WINAPK_GUEST_ABI EGLenum guest_eglQueryAPI(void) { return eglQueryAPI(); }
 WINAPK_GUEST_ABI EGLBoolean guest_eglQueryContext(EGLDisplay dpy, EGLContext ctx, EGLint attribute, EGLint *value) { return eglQueryContext(dpy, ctx, attribute, value); }
 WINAPK_GUEST_ABI const char * guest_eglQueryString(EGLDisplay dpy, EGLint name) { return eglQueryString(dpy, name); }
-WINAPK_GUEST_ABI EGLBoolean guest_eglReleaseTexImage(EGLDisplay dpy, EGLSurface surface, EGLint buffer) { return eglReleaseTexImage(dpy, surface, buffer); }
 WINAPK_GUEST_ABI EGLBoolean guest_eglReleaseThread(void) { return eglReleaseThread(); }
-WINAPK_GUEST_ABI EGLBoolean guest_eglSurfaceAttrib(EGLDisplay dpy, EGLSurface surface, EGLint attribute, EGLint value) { return eglSurfaceAttrib(dpy, surface, attribute, value); }
 WINAPK_GUEST_ABI EGLBoolean guest_eglSwapInterval(EGLDisplay dpy, EGLint interval) { return eglSwapInterval(dpy, interval); }
 WINAPK_GUEST_ABI EGLBoolean guest_eglWaitClient(void) { return eglWaitClient(); }
 WINAPK_GUEST_ABI EGLBoolean guest_eglWaitGL(void) { return eglWaitGL(); }
@@ -1110,9 +1104,7 @@ WINAPK_GUEST_ABI void guest_glWindowRectanglesEXT(GLenum mode, GLsizei count, co
 
 #define WINAPK_GUEST_GL_SYMBOLS \
     {"eglBindAPI", reinterpret_cast<void*>(&guest_eglBindAPI)}, \
-    {"eglBindTexImage", reinterpret_cast<void*>(&guest_eglBindTexImage)}, \
     {"eglClientWaitSync", reinterpret_cast<void*>(&guest_eglClientWaitSync)}, \
-    {"eglCopyBuffers", reinterpret_cast<void*>(&guest_eglCopyBuffers)}, \
     {"eglCreateContext", reinterpret_cast<void*>(&guest_eglCreateContext)}, \
     {"eglCreateImage", reinterpret_cast<void*>(&guest_eglCreateImage)}, \
     {"eglCreatePbufferFromClientBuffer", reinterpret_cast<void*>(&guest_eglCreatePbufferFromClientBuffer)}, \
@@ -1127,16 +1119,12 @@ WINAPK_GUEST_ABI void guest_glWindowRectanglesEXT(GLenum mode, GLsizei count, co
     {"eglGetConfigs", reinterpret_cast<void*>(&guest_eglGetConfigs)}, \
     {"eglGetCurrentContext", reinterpret_cast<void*>(&guest_eglGetCurrentContext)}, \
     {"eglGetCurrentDisplay", reinterpret_cast<void*>(&guest_eglGetCurrentDisplay)}, \
-    {"eglGetCurrentSurface", reinterpret_cast<void*>(&guest_eglGetCurrentSurface)}, \
     {"eglGetError", reinterpret_cast<void*>(&guest_eglGetError)}, \
     {"eglGetSyncAttrib", reinterpret_cast<void*>(&guest_eglGetSyncAttrib)}, \
-    {"eglMakeCurrent", reinterpret_cast<void*>(&guest_eglMakeCurrent)}, \
     {"eglQueryAPI", reinterpret_cast<void*>(&guest_eglQueryAPI)}, \
     {"eglQueryContext", reinterpret_cast<void*>(&guest_eglQueryContext)}, \
     {"eglQueryString", reinterpret_cast<void*>(&guest_eglQueryString)}, \
-    {"eglReleaseTexImage", reinterpret_cast<void*>(&guest_eglReleaseTexImage)}, \
     {"eglReleaseThread", reinterpret_cast<void*>(&guest_eglReleaseThread)}, \
-    {"eglSurfaceAttrib", reinterpret_cast<void*>(&guest_eglSurfaceAttrib)}, \
     {"eglSwapInterval", reinterpret_cast<void*>(&guest_eglSwapInterval)}, \
     {"eglWaitClient", reinterpret_cast<void*>(&guest_eglWaitClient)}, \
     {"eglWaitGL", reinterpret_cast<void*>(&guest_eglWaitGL)}, \
