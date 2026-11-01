@@ -108,8 +108,13 @@ bool marked_bad(const std::string& so) {
 // (stripped; it runs among the library's 2184 initializers), writes to 0x8
 // at +0xf9 (+0x88 in an older, -O2 build). Find what the guest reads as 0
 // there that the JIT does not.
-// TODO(aot): a "bad" stamp is kept until the library changes; it should
-// also be retried when winapk-aot changes (as the shared cache's key does).
+// A "bad" stamp is kept until the library changes or kAotVersion is raised
+// (runtime_main.cpp, aot_needs_work).
+//
+// Not caught here: a translation bug that hands a host function bad
+// arguments faults in that function, outside the DLL. City Car's
+// libflutter.so did (memmove, from a dropped `cmp` result; arm64_aot.h,
+// "Calls"), and crashed on every start.
 struct LoadedDll {
     uint64_t lo, hi;
     std::string so;      // file name, for the message
@@ -150,7 +155,9 @@ LONG CALLBACK report_aot_fault(EXCEPTION_POINTERS* e) {
                 HANDLE f = CreateFileW(stamp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL,
                                        nullptr);
                 if (f != INVALID_HANDLE_VALUE) {
-                    WriteFile(f, "bad 0\n", 6, &n, nullptr);
+                    char bad[32];
+                    const int len = std::snprintf(bad, sizeof bad, "bad 0 %u\n", kAotVersion);
+                    WriteFile(f, bad, static_cast<DWORD>(len), &n, nullptr);
                     CloseHandle(f);
                 }
                 static const char kNote[] =

@@ -860,6 +860,15 @@ static void test_misc(void) {
     int opened = big != (char*)-1 && mprotect(big + (1UL << 32), 65536, 3) == 0;
     if (opened) big[(1UL << 32) + 10] = 5;
     check("mmap reserves 8 GiB with PROT_NONE; mprotect commits a piece", opened && big[(1UL << 32) + 10] == 5, 0);
+    // The Dart VM's heap: pieces of the reservation mapped in place with
+    // MAP_FIXED, read-write and back to PROT_NONE; each mapping is fresh zeros.
+    char* page = big != (char*)-1 ? big + (1UL << 33) - (1UL << 19) : (char*)-1;
+    char* rw = page != (char*)-1 ? mmap(page, 1UL << 19, 3, 0x32, -1, 0) : (char*)-1;  // MAP_FIXED
+    int in_place = rw == page;
+    if (in_place) rw[4096] = 9;
+    in_place = in_place && rw[4096] == 9 && mmap(page, 1UL << 19, 0, 0x4032, -1, 0) == page &&  // PROT_NONE
+               mmap(page, 1UL << 19, 3, 0x32, -1, 0) == page && page[4096] == 0;
+    check("mmap MAP_FIXED inside a PROT_NONE reservation maps there, zeroed", in_place, 0);
     if (big != (char*)-1) munmap(big, 1UL << 33);
     int found = 0;
     for (char** e = environ; e && *e; ++e) found |= strcmp(*e, "WINAPK_TEST=yes") == 0;
