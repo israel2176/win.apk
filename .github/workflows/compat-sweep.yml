@@ -20,7 +20,7 @@ jobs:
   sweep:
     name: Boot the app corpus
     runs-on: windows-latest
-    timeout-minutes: 120
+    timeout-minutes: 180
     defaults:
       run:
         shell: msys2 {0}
@@ -63,7 +63,7 @@ jobs:
         shell: pwsh
         run: |
           python windows/test/compat/sweep.py --runtime runtime --jdk "$env:JAVA_HOME" `
-            --apks apk-cache --out sweep --frames 60 --timeout 180
+            --apks apk-cache --out sweep --frames 150 --timeout 180
           Get-Content sweep/report.md | Add-Content $env:GITHUB_STEP_SUMMARY
       - uses: actions/upload-artifact@v4
         if: always()

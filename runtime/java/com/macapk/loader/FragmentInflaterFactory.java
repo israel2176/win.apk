@@ -151,7 +151,10 @@ public final class FragmentInflaterFactory implements LayoutInflater.Factory2 {
             }
 
             Object fm = FragmentLifecycle.getHostFragmentManager(activity);
-            if (fm == null) return null;   // fragment-less app / no support FM
+            // No support FM found by name (a fragment-less app, or an R8 build
+            // that renamed it): the activity's own onCreateView override still
+            // reaches it, see activityOnCreateView.
+            if (fm == null) return activityOnCreateView(activity, parent, name, context, attrs);
             // Host on the APP's own (androidx/support) FragmentManager. If all we
             // can find is our framework android.app manager, this tag is not an
             // androidx one we can place there -- mirror FragmentActivity's
@@ -165,8 +168,9 @@ public final class FragmentInflaterFactory implements LayoutInflater.Factory2 {
                     return frameworkOnCreateView(activity, parent, name, context, attrs);
                 }
                 NativeLog.w(TAG, "host FM for <" + name + "> is not app-loaded ("
-                    + fm.getClass().getName() + ") -- skipping instantiate (likely R8-renamed app FM not findable by name)");
-                return null;
+                    + fm.getClass().getName() + ") -- asking the activity's own onCreateView"
+                    + " (likely R8-renamed app FM not findable by name)");
+                return activityOnCreateView(activity, parent, name, context, attrs);
             }
 
             // PREFERRED PATH for a FragmentContainerView[android:name] tag: call
@@ -213,6 +217,35 @@ public final class FragmentInflaterFactory implements LayoutInflater.Factory2 {
      *  mFragments.onCreateView (Activity.java:7355). Returns the fragment's own
      *  view, or null if it could not be hosted (the inflater then substitutes
      *  its placeholder, and FragmentManagerImpl has already logged why). */
+    /** AOSP's own route for the tag: the activity IS its window inflater's
+     *  private factory, and androidx FragmentActivity overrides
+     *  Activity.onCreateView(View, String, Context, AttributeSet) to hand the
+     *  tag to its FragmentManager's FragmentLayoutInflaterFactory, which builds
+     *  a FragmentContainerView[android:name] with the live manager. An override
+     *  of a framework method keeps its name under R8, so this works where the
+     *  manager could not be found by name: Auxio and Tremotesf (R8-minified,
+     *  Navigation's NavHostFragment in a FragmentContainerView) had the view's
+     *  2-arg constructor throw "must be within a FragmentActivity" instead.
+     *  Null when the activity has no such override (a plain android.app
+     *  Activity: its base implementation was already tried) or it declines. */
+    private static View activityOnCreateView(Activity activity, View parent, String name,
+                                             Context context, AttributeSet attrs) {
+        try {
+            java.lang.reflect.Method m = activity.getClass().getMethod("onCreateView",
+                    View.class, String.class, Context.class, AttributeSet.class);
+            if (m.getDeclaringClass() == Activity.class) return null;
+            View v = activity.onCreateView(parent, name, context, attrs);
+            if (v != null) {
+                NativeLog.i(TAG, "M0: <" + name + "> hosted through "
+                    + m.getDeclaringClass().getName() + ".onCreateView");
+            }
+            return v;
+        } catch (Throwable t) {
+            NativeLog.w(TAG, "activity.onCreateView('" + name + "') threw " + t);
+            return null;
+        }
+    }
+
     /** The Activity a context is, or wraps (ContextThemeWrapper and friends). */
     private static Activity activityOf(Context context) {
         for (int depth = 0; context != null && depth < 32; depth++) {

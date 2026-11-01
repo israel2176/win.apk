@@ -837,7 +837,8 @@ public final class MediaStoreProvider extends android.content.ContentProvider {
         for (int i = 0; i < cols.length; i++) {
             if (i > 0) sql.append(',');
             String c = cols[i];
-            if (sub.cols.contains(c)) sql.append(c);
+            String expr = projectionExpr(c, sub.cols);
+            if (expr != null) sql.append(expr);
             else if (isSafeIdentifier(c)) sql.append("NULL AS \"").append(c).append('"');
             else sql.append("NULL AS unsupported_column");
         }
@@ -1184,8 +1185,9 @@ public final class MediaStoreProvider extends android.content.ContentProvider {
         String[] selectCols = new String[cols.length];
         for (int i = 0; i < cols.length; i++) {
             String c = cols[i];
-            if (COLUMN_SET.contains(c)) {
-                selectCols[i] = c;
+            String expr = projectionExpr(c, COLUMN_SET);
+            if (expr != null) {
+                selectCols[i] = expr;
             } else if (isSafeIdentifier(c)) {
                 selectCols[i] = "NULL AS \"" + c + "\"";
             } else {
@@ -1209,6 +1211,36 @@ public final class MediaStoreProvider extends android.content.ContentProvider {
         }
         return result;
     }
+
+    /** A projection entry SQLite may evaluate: a known column, or one of the
+     *  shapes AOSP's MediaProvider lets through its projection greylist
+     *  (MediaProvider.sGreylist, android14-release): an aggregate over a known
+     *  column or `*` (`COUNT(*)`, `count(is_music)`, `COUNT(DISTINCT album_id)`,
+     *  `MAX(date_added)`, `SUM(_size)`), and a known column with an alias
+     *  (`_data AS path`). Null for anything else, which the callers answer as an
+     *  honest NULL column. Vanilla Music counts its library with
+     *  `projection = {"COUNT(is_music)"}` and read index 0 of an empty cursor
+     *  while the aggregate was a NULL column. */
+    private static String projectionExpr(String c, java.util.Collection<String> known) {
+        if (c == null) return null;
+        String s = c.trim();
+        if (known.contains(s)) return s;
+        java.util.regex.Matcher m = AGGREGATE_RE.matcher(s);
+        if (m.matches()) {
+            String fn = m.group(1).toUpperCase(Locale.ROOT);
+            String arg = m.group(3);
+            if (!"*".equals(arg) && !known.contains(arg)) return null;
+            if ("*".equals(arg) && !"COUNT".equals(fn)) return null;
+            return fn + "(" + (m.group(2) != null ? "DISTINCT " : "") + arg + ")";
+        }
+        m = ALIAS_RE.matcher(s);
+        if (m.matches() && known.contains(m.group(1))) return m.group(1) + " AS \"" + m.group(2) + "\"";
+        return null;
+    }
+    private static final java.util.regex.Pattern AGGREGATE_RE = java.util.regex.Pattern.compile(
+        "(?i)(COUNT|MAX|MIN|SUM|AVG|TOTAL)\\s*\\(\\s*(DISTINCT\\s+)?(\\*|[A-Za-z_][A-Za-z0-9_]*)\\s*\\)");
+    private static final java.util.regex.Pattern ALIAS_RE = java.util.regex.Pattern.compile(
+        "(?i)([A-Za-z_][A-Za-z0-9_]*)\\s+AS\\s+([A-Za-z_][A-Za-z0-9_]*)");
 
     private static boolean isSafeIdentifier(String s) {
         if (s == null || s.isEmpty()) return false;

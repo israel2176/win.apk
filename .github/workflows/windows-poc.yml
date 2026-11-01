@@ -159,6 +159,21 @@ jobs:
           timeout 600 ./runtime/bin/winapk-runtime.exe --apk sudoku.apk --jdk "$JAVA_HOME" --data "$(cygpath -w "$PWD/appdata")" \
             > boot.log 2>&1 || { tail -n 200 boot.log; exit 1; }
           grep -E "first frame presented|frames presented" boot.log
+      - name: Run the GMS layer's CLI
+        run: |
+          # winapk-runtime --gms: a JVM with the framework jars and the host
+          # natives bound, no app (upstream's macapk-runtime --gms). selftest
+          # checks the platform certificate and the wire codecs; status shows
+          # the store, which must be under --data (MACAPK_GMS_DIR).
+          data="$(cygpath -w "$PWD/appdata")"
+          timeout 300 ./runtime/bin/winapk-runtime.exe --jdk "$JAVA_HOME" --data "$data" --gms selftest \
+            > gms.log 2> gms-err.log || { cat gms.log; tail -n 100 gms-err.log; exit 1; }
+          cat gms.log
+          grep -q "protobuf codec      : OK" gms.log
+          timeout 300 ./runtime/bin/winapk-runtime.exe --jdk "$JAVA_HOME" --data "$data" --gms status \
+            > gms-status.log 2>> gms-err.log || { cat gms-status.log; tail -n 100 gms-err.log; exit 1; }
+          cat gms-status.log
+          grep -F "gms dir        : $data\\gms" gms-status.log
       - name: Boot an APK in a window
         run: |
           # The runner has a desktop session, so this exercises the Win32

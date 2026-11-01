@@ -51,7 +51,16 @@
 //
 //     T.<init>(D) { super(D); }
 //
-// -- and re-point the call site at `T.<init>(D)`. When R8 skipped SEVERAL levels
+// -- and re-point the call site at `T.<init>(D)`. The same constructor is
+// synthesised for the third shape R8 leaves behind: the call site still NAMES
+// the allocated class (`new-instance T; invoke-direct T.<init>(D)`, or a
+// constructor's own `super.<init>(D)`), but T has no `<init>(D)` any more --
+// often no class_data at all. ART resolves a constructor like any method, up
+// the superclass chain (ClassLinker::ResolveMethod -> Class::FindClassMethod),
+// and runs the ancestor's; the JVM throws NoSuchMethodError at the first `new`
+// (measured: NetGuard 2.337, 170 such sites; androidx.activity.ComponentActivity
+// could not be constructed, nor androidx.startup's StartupException). Here the
+// site stays as it is and T gets the chain. When R8 skipped SEVERAL levels
 // (its favourite trick is to name java/lang/Object directly) the same thing is
 // synthesised for every class between T and S, so each forwarding constructor
 // calls its own DIRECT superclass, which is what JVMS 4.9.2 requires. The
@@ -138,7 +147,7 @@ final class InitRepointPlan {
         this.authorised = authorised;
     }
 
-    boolean isEmpty() { return authorised.isEmpty(); }
+    boolean isEmpty() { return authorised.isEmpty() && synthesise.isEmpty(); }
 
     /**
      * Constructors to synthesise on {@code internalName}, sorted so the emitted
@@ -211,6 +220,10 @@ final class InitRepointPlan {
         // Candidate (startClass, namedOwner, descriptor) triples. Sorted so a
         // debug dump is stable; correctness does not depend on the order.
         final Map<String, Candidate> candidates = new TreeMap<>();
+        // class -> own descriptor -> super descriptor. A TreeMap because the
+        // emitted method order must not depend on discovery order.
+        Map<String, TreeMap<String, String>> synth = new HashMap<>();
+        Builder b = new Builder(byName, synth);
         for (DexClass c : byName.values()) {
             // Released at the bottom of this iteration. transientCode below is
             // careful not to memoize a code_item for the same reason, but that
@@ -232,28 +245,33 @@ final class InitRepointPlan {
                 scanMethod(decoded, m, code, (offset, uninitThis, allocated, ref) -> {
                     String start = uninitThis ? c.superclassName() : allocated;
                     if (start == null) return;
-                    String owner = DexFile.internalName(ref.declaringClass());
+                    String named = DexFile.internalName(ref.declaringClass());
                     String desc = ref.proto().descriptor();
-                    candidates.computeIfAbsent(start + ' ' + owner + ' ' + desc,
-                                    k -> new Candidate(start, owner, desc))
-                              .referrers.add(c.name());
-                });
+                    // The third shape (file header): a site naming the class
+                    // itself, which lacks the constructor, plans the chain to the
+                    // ancestor ART would resolve it to; the site needs no
+                    // re-pointing, so it is not recorded under `named`.
+                    final String owner = named.equals(start) ? b.declaringAncestor(start, desc) : named;
+                    if (owner == null) return;
+                    Candidate cand = candidates.computeIfAbsent(start + ' ' + owner + ' ' + desc,
+                                    k -> new Candidate(start, owner, desc));
+                    cand.referrers.add(c.name());
+                    if (!named.equals(start)) cand.namedAs.add(named);
+                }, true);
             }
             c.releaseMembers();
         }
 
-        // class -> own descriptor -> super descriptor. A TreeMap because the
-        // emitted method order must not depend on discovery order.
-        Map<String, TreeMap<String, String>> synth = new HashMap<>();
         Map<String, String> authorised = new HashMap<>();
-        Builder b = new Builder(byName, synth);
         // Candidates are walked in sorted order so that the rare case of two of
         // them competing for one synthesised descriptor resolves identically on
         // every run.
         for (Candidate cand : candidates.values()) {
             String callDescriptor = b.plan(cand.start, cand.namedOwner, cand.desc, cand.referrers);
             if (callDescriptor == null) continue;
-            authorised.put(cand.start + ' ' + cand.desc + ' ' + cand.namedOwner, callDescriptor);
+            for (String named : cand.namedAs) {
+                authorised.put(cand.start + ' ' + cand.desc + ' ' + named, callDescriptor);
+            }
         }
         // The chain walk above re-parses each ancestor's class_data looking for
         // an existing <init>, which re-memoizes it. The plan itself is nothing
@@ -264,7 +282,7 @@ final class InitRepointPlan {
         for (DexClass c : byName.values()) {
             c.releaseMembers();
         }
-        if (authorised.isEmpty()) return NONE;
+        if (authorised.isEmpty() && synth.isEmpty()) return NONE;
         // Freeze: read from every worker thread once conversion starts.
         Map<String, List<Forward>> frozen = new HashMap<>(synth.size() * 2);
         for (Map.Entry<String, TreeMap<String, String>> e : synth.entrySet()) {
@@ -312,6 +330,10 @@ final class InitRepointPlan {
     private static final class Candidate {
         final String start, namedOwner, desc;
         final java.util.TreeSet<String> referrers = new java.util.TreeSet<>();
+        /** The ancestors the call sites name (re-pointed sites only); each needs
+         *  an authorised entry. A site naming the allocated class itself is
+         *  left alone and adds nothing here. */
+        final java.util.TreeSet<String> namedAs = new java.util.TreeSet<>();
         Candidate(String start, String namedOwner, String desc) {
             this.start = start;
             this.namedOwner = namedOwner;
@@ -682,6 +704,41 @@ final class InitRepointPlan {
         }
 
         /**
+         * R8's stand-in for a class missing from its classpath: class data holding
+         * a {@code <clinit>} that throws NoClassDefFoundError and nothing else.
+         * The real class comes from the platform at run time, so its absent
+         * constructors prove nothing. A class with NO class data is not a stub:
+         * it is a class R8 emptied, constructor included.
+         */
+        boolean looksLikeMissingClassStub(DexClass c) {
+            if (!c.hasClassData() || !c.fields().isEmpty()) return false;
+            List<DexMethod> ms = c.methods();
+            return ms.size() == 1 && "<clinit>".equals(ms.get(0).name());
+        }
+
+        /**
+         * The class ART resolves {@code cls.<init>(desc)} to when {@code cls}
+         * itself does not declare it: the nearest superclass that does, or the
+         * first one outside the session (a platform class, which has it or ART
+         * would have failed too). Null when {@code cls} declares it, is not ours,
+         * or the chain cannot be followed (an interface, a missing-class stub).
+         */
+        String declaringAncestor(String cls, String desc) {
+            DexClass c = byName.get(cls);
+            if (c == null || c.isInterface() || findConstructor(c, desc) != null) return null;
+            if (looksLikeMissingClassStub(c)) return null;
+            String cur = c.superclassName();
+            for (int guard = 0; guard < 256 && cur != null; guard++) {
+                DexClass s = byName.get(cur);
+                if (s == null) return cur;
+                if (findConstructor(s, desc) != null) return cur;
+                if (s.isInterface() || looksLikeMissingClassStub(s)) return null;
+                cur = s.superclassName();
+            }
+            return null;
+        }
+
+        /**
          * The class {@code c}'s existing {@code <init>(desc)} forwards to when
          * its whole body is {@code invoke-direct {p0..pn}, X.<init>(desc)}
          * followed by {@code return-void}, else null.
@@ -800,6 +857,17 @@ final class InitRepointPlan {
      */
     static void scanMethod(Instruction[] decoded, DexMethod method, DexCode code,
                            SiteVisitor visitor) {
+        scanMethod(decoded, method, code, visitor, false);
+    }
+
+    /**
+     * @param selfNamed also report a site that names the allocated class itself
+     *                  (or, in a constructor, the direct superclass), which the
+     *                  plan builder checks for a deleted constructor; the
+     *                  translator, whose sites are already correct, does not.
+     */
+    static void scanMethod(Instruction[] decoded, DexMethod method, DexCode code,
+                           SiteVisitor visitor, boolean selfNamed) {
         if (code == null) return;
         DexFile dex = method.declaringClass().dex();
         String ownerName = method.declaringClass().name();
@@ -828,10 +896,10 @@ final class InitRepointPlan {
                 if (UNINIT_THIS.equals(alloc)) {
                     // uninitializedThis: legal only for the current class (a
                     // this(...) delegation) or its DIRECT superclass.
-                    if (!named.equals(ownerName) && !named.equals(superName)) {
+                    if (!named.equals(ownerName) && (selfNamed || !named.equals(superName))) {
                         visitor.site(in.address(), true, null, ref);
                     }
-                } else if (alloc != null && !alloc.equals(named)) {
+                } else if (alloc != null && (selfNamed || !alloc.equals(named))) {
                     visitor.site(in.address(), false, alloc, ref);
                 }
                 continue;
