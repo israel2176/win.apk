@@ -59,6 +59,9 @@ Open Win.apk: it shows your app library.
 - Double-click an app to open it. Right-click for more: Get Info, a desktop
   shortcut, its files and log, updating it from a newer APK, reinstalling or
   removing it. Typing searches the library.
+- Apps open in landscape, like your screen. Right-click an app and pick
+  "Open in portrait" (or "Open in landscape") to turn just that one the
+  other way; an app that only works one way always opens that way.
 - The gear opens the settings: language (English or Hebrew), theme, the
   phone's screen size and orientation, and more. "Logs" at the bottom shows
   the logs as they are written.

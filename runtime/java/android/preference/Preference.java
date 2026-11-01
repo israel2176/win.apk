@@ -262,8 +262,13 @@ public class Preference implements Comparable<Preference> {
         android.content.res.TypedArray a = null;
         try {
             a = context.obtainStyledAttributes(attrs, new int[] { android.R.attr.defaultValue });
-            return onGetDefaultValue(a, 0);
+            Object v = onGetDefaultValue(a, 0);
+            com.macapk.loader.NativeLog.i("Mac.apk.Preference", getClass().getName()
+                + ".onGetDefaultValue(TypedArray) -> " + (v == null ? "null" : v.getClass().getSimpleName()));
+            return v;
         } catch (Throwable t) {
+            com.macapk.loader.NativeLog.w("Mac.apk.Preference", getClass().getName()
+                + ".onGetDefaultValue(TypedArray) failed, using the String default: " + t);
             return null;
         } finally {
             if (a != null) { try { a.recycle(); } catch (Throwable ignored) { } }
