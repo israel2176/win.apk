@@ -13,7 +13,7 @@ whole) only when a task needs them.
 | Path | What |
 |---|---|
 | `windows/src/`, `windows/include/winapk/` | ELF loader, linker, ELF TLS, `%fs` patch, ABI thunks, guest JNI. `src/bionic/` + `mini_bionic.cpp`: the Bionic libc shim (~520 functions, `sysv_abi`) |
-| `windows/host/` | The runtime host: `runtime_main.cpp` (winapk-runtime.exe: args `--apk --data --jdk --lib --install-only`), `win32_window.cpp` (window, input), `native_*.cpp` (the Java natives: `native_cocoa.cpp` = window/phone size/icon, audio, clipboard, gamepad, ICU, images, OpenSL ES...), `gl/` |
+| `windows/host/` | The runtime host: `runtime_main.cpp` (winapk-runtime.exe: args `--apk --data --jdk --lib --install-only`), `win32_window.cpp` (window, input), `native_*.cpp` (the Java natives: `native_cocoa.cpp` = window/phone size/icon, audio, clipboard, gamepad, ICU, images, OpenSL ES, `native_activity.cpp` = NativeActivity + the NDK input queue and AConfiguration...), `gl/` |
 | `windows/launcher/launcher_main.cpp` | `Win.apk.exe`, the library app (one file, GDI+ custom-drawn). See below |
 | `windows/java/` | Windows-only Java (`com/winapk/tools/AppMeta.java`: writes `icon.png` + `label.txt` at install) |
 | `windows/scripts/` | `build_java.sh` (builds `runtime/java` with a stock JDK), `stage_runtime.sh` (runnable `bin/`+`lib/`), `fetch_angle.sh`, `build_framework_res.sh` |
