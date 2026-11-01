@@ -43,6 +43,8 @@ SOURCES = [
 GUEST_OVERRIDES = {
     "eglGetDisplay", "eglGetPlatformDisplay", "eglInitialize", "eglTerminate", "eglChooseConfig",
     "eglCreateWindowSurface", "eglCreatePlatformWindowSurface", "eglDestroySurface", "eglSwapBuffers", "eglQuerySurface",
+    "eglMakeCurrent", "eglGetCurrentSurface", "eglSurfaceAttrib", "eglBindTexImage", "eglReleaseTexImage",
+    "eglCopyBuffers",
     "eglGetProcAddress", "glDebugMessageCallback", "glDebugMessageCallbackKHR",
 }
 
