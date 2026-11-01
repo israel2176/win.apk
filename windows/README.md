@@ -146,14 +146,28 @@ The app sees a 360x800 dp phone, the most common phone screen.
 phone at the monitor's scale. When the whole window, title bar included, would
 not fit the monitor's work area (the screen without the taskbar), the app gets
 a lower density instead, so it keeps its dp size and still draws at the
-window's own pixel size. The window is fitted again when it moves to another
-monitor or the taskbar changes. `WINAPK_DENSITY` (a dpi) overrides the density.
-A window maximized or resized to another shape keeps the app's size and
-shows the phone at the largest size with its own aspect, centred, with black
-bars around it, as upstream's letterbox container does: a portrait app
-maximized on a wide screen is a phone in the middle, scaled to the screen
-height. Clicks on the bars go nowhere. `MACAPK_LETTERBOX=0` stretches the
-phone over the whole window instead, as before.
+window's own pixel size. `WINAPK_DENSITY` (a dpi) overrides the density.
+
+The window is the app's display, as an Android desktop window is. Resizing
+it -- dragging an edge, maximizing, snapping -- gives the app a display of the
+new size: its surface is the window's client area in pixels, the Configuration
+and DisplayMetrics follow (`DisplayConfig`), the views are laid out again and
+every GL surface and native window hears `surfaceChanged`. The app follows
+each step of a drag, and frames are shown pixel for pixel: an old frame is
+never stretched to the new size, it stays unscaled until the app has drawn
+the new one. An app that fixed its orientation keeps its shape in a window of
+the other one: it gets the largest box of its aspect, centred, with black bars
+around it, as Android letterboxes a fixed-orientation app on a large screen,
+and draws at that box's size. Clicks on the bars go nowhere. The size the user
+settles on is kept per app (`library\<name>.window`, in dp) for the next
+start; the library's Get Info resets it. `WINAPK_RESIZABLE=0` keeps the
+phone's size for good and shows it letterboxed in whatever size the window
+gets; `MACAPK_LETTERBOX=0` then stretches it over the whole window.
+
+The density stays what it was at launch. On a monitor with another scale the
+window keeps its size in physical terms and the frames are resampled to it,
+the one case a frame is scaled by design (PORTING.md, "Display", on why a
+density change is not done yet).
 
 An app runs once at a time, as on the Mac: starting it again (a shortcut, the
 library) brings the running app's window forward, and updating it while it

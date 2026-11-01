@@ -9,10 +9,10 @@
 //   * eglGetDisplay hands out the framework's own display, so the app shares
 //     its ANGLE backend, and eglTerminate leaves it running;
 //   * a window surface is a pbuffer that holds the native window
-//     (native_window.h) in either orientation, and eglSwapBuffers reads the
-//     window's part back and presents it as
-//     the guest layer: the readback upstream's "offscreen decouple" path does,
-//     here the only path;
+//     (native_window.h) in either orientation, grown when the window outgrows
+//     it (the user resized the window), and eglSwapBuffers reads the window's
+//     part back and presents it as the guest layer: the readback upstream's
+//     "offscreen decouple" path does, here the only path;
 //   * eglChooseConfig asks for pbuffer configs instead of window ones and drops
 //     the Android-only attributes ANGLE rejects (upstream drops
 //     EGL_RECORDABLE_ANDROID too);
@@ -53,18 +53,93 @@ constexpr EGLint kRecordableAndroid = 0x3142, kFramebufferTargetAndroid = 0x3147
 // as SDL does) without a new surface: the app sees the live window size from
 // eglQuerySurface, draws from the bottom-left corner (GL's origin), and that
 // corner is what eglSwapBuffers reads back.
+//
+// The window can also grow past the pbuffer: the user drags the window's
+// edge or maximizes it, and the app's surface (the window's size in pixels,
+// win32_window.h) grows with it. On Android the EGLSurface is the window and
+// simply has the new size. Here the pbuffer behind the handle is replaced by
+// a larger one (grow), on the app's own GL thread, in eglMakeCurrent or
+// eglSwapBuffers: the handle the app holds -- the first pbuffer, kept alive
+// so that ANGLE never hands its address out again -- stays the same, and the
+// EGL calls that take a surface translate it to the pbuffer behind it
+// (real_of). Until the growth the frame is read from the part that fits; one
+// frame is cut, the next is whole.
 struct WindowSurface {
     const void* window = nullptr;
+    EGLConfig config = nullptr;
+    EGLSurface real = EGL_NO_SURFACE;  // the pbuffer behind the handle; the handle itself at first
     int side = 0;
 };
 
-void live_size(const WindowSurface& ws, int* w, int* h) {
+// The window's size: what the app should draw (eglQuerySurface) and what the
+// surface has to hold.
+void window_size(const WindowSurface& ws, int* w, int* h) {
     if (!native_window_buffer_size(ws.window, w, h)) *w = *h = ws.side;
+}
+
+// The part of the window the pbuffer holds, which is what a frame reads back.
+void live_size(const WindowSurface& ws, int* w, int* h) {
+    window_size(ws, w, h);
     *w = *w < ws.side ? *w : ws.side;
     *h = *h < ws.side ? *h : ws.side;
 }
 std::mutex g_lock;
-std::unordered_map<EGLSurface, WindowSurface> g_window_surfaces;
+std::unordered_map<EGLSurface, WindowSurface> g_window_surfaces;  // by the handle the app holds
+
+// The pbuffer behind a surface handle; other surfaces are their own.
+EGLSurface real_of(EGLSurface handle) {
+    std::lock_guard<std::mutex> hold(g_lock);
+    auto it = g_window_surfaces.find(handle);
+    return it == g_window_surfaces.end() ? handle : it->second.real;
+}
+
+// The handle whose pbuffer `real` is; other surfaces are their own.
+EGLSurface handle_of(EGLSurface real) {
+    std::lock_guard<std::mutex> hold(g_lock);
+    for (const auto& [handle, ws] : g_window_surfaces) {
+        if (ws.real == real) return handle;
+    }
+    return real;
+}
+
+// A pbuffer side for a window of w x h: the longer side, in steps of 256 so
+// that a drag does not make one per pixel, and never smaller than before.
+int side_for(int w, int h, int at_least) {
+    const int need = (w > h ? w : h) + 255 & ~255;
+    return need > at_least ? need : at_least;
+}
+
+// Replaces the pbuffer behind `handle` by one that holds the window when the
+// window outgrew it. g_lock held. When the old pbuffer is current on this
+// thread (eglSwapBuffers), the new one takes its place; eglMakeCurrent makes
+// the new one current itself right after.
+void grow(EGLDisplay dpy, EGLSurface handle, WindowSurface& ws) {
+    int w = 0, h = 0;
+    window_size(ws, &w, &h);
+    if (w <= ws.side && h <= ws.side) return;
+    const int side = side_for(w, h, ws.side);
+    const EGLint attribs[] = {EGL_WIDTH, side, EGL_HEIGHT, side, EGL_NONE};
+    EGLSurface s = eglCreatePbufferSurface(dpy, ws.config, attribs);
+    if (s == EGL_NO_SURFACE) {
+        std::fprintf(stderr, "[win.apk] GL: the app's window surface could not grow to %dx%d (0x%x)\n", side, side,
+                     eglGetError());
+        return;
+    }
+    const EGLSurface draw = eglGetCurrentSurface(EGL_DRAW), read = eglGetCurrentSurface(EGL_READ);
+    if (draw == ws.real || read == ws.real) {
+        if (!eglMakeCurrent(dpy, draw == ws.real ? s : draw, read == ws.real ? s : read, eglGetCurrentContext())) {
+            std::fprintf(stderr, "[win.apk] GL: the grown window surface could not be made current (0x%x)\n",
+                         eglGetError());
+            eglDestroySurface(dpy, s);
+            return;
+        }
+    }
+    if (ws.real != handle) eglDestroySurface(dpy, ws.real);
+    std::fprintf(stderr, "[win.apk] GL: the app's window surface grew to a %dx%d pbuffer for a %dx%d window\n", side,
+                 side, w, h);
+    ws.real = s;
+    ws.side = side;
+}
 
 EGLDisplay shared_display() { return static_cast<EGLDisplay>(gl_shared_display()); }
 
@@ -122,7 +197,7 @@ EGLSurface create_window_surface(EGLDisplay dpy, EGLConfig config, const void* w
         std::fprintf(stderr, "[win.apk] GL: eglCreateWindowSurface on a window the runtime did not make\n");
         return EGL_NO_SURFACE;
     }
-    const int side = w > h ? w : h;
+    const int side = side_for(w, h, 0);
     const EGLint attribs[] = {EGL_WIDTH, side, EGL_HEIGHT, side, EGL_NONE};
     EGLSurface s = eglCreatePbufferSurface(dpy, config, attribs);
     if (s == EGL_NO_SURFACE) {
@@ -132,7 +207,7 @@ EGLSurface create_window_surface(EGLDisplay dpy, EGLConfig config, const void* w
     std::fprintf(stderr, "[win.apk] GL: the app's window surface is a %dx%d pbuffer, showing %dx%d\n", side, side, w,
                  h);
     std::lock_guard<std::mutex> hold(g_lock);
-    g_window_surfaces[s] = WindowSurface{window, side};
+    g_window_surfaces[s] = WindowSurface{window, config, s, side};
     return s;
 }
 
@@ -154,9 +229,45 @@ WINAPK_GUEST_ABI EGLSurface guest_eglCreatePlatformWindowSurfaceEXT(EGLDisplay d
 WINAPK_GUEST_ABI EGLBoolean guest_eglDestroySurface(EGLDisplay dpy, EGLSurface surface) {
     {
         std::lock_guard<std::mutex> hold(g_lock);
-        g_window_surfaces.erase(surface);
+        auto it = g_window_surfaces.find(surface);
+        if (it != g_window_surfaces.end()) {
+            if (it->second.real != surface) eglDestroySurface(dpy, it->second.real);
+            g_window_surfaces.erase(it);
+        }
     }
     return eglDestroySurface(dpy, surface);
+}
+
+// The surfaces are translated to the pbuffers behind them; a window surface
+// that the window outgrew is grown first, so the app draws its next frame
+// whole (its eglQuerySurface already reports the window's size).
+WINAPK_GUEST_ABI EGLBoolean guest_eglMakeCurrent(EGLDisplay dpy, EGLSurface draw, EGLSurface read, EGLContext ctx) {
+    std::lock_guard<std::mutex> hold(g_lock);
+    auto d = g_window_surfaces.find(draw), r = g_window_surfaces.find(read);
+    if (d != g_window_surfaces.end() && ctx != EGL_NO_CONTEXT) grow(dpy, draw, d->second);
+    return eglMakeCurrent(dpy, d == g_window_surfaces.end() ? draw : d->second.real,
+                          r == g_window_surfaces.end() ? read : r->second.real, ctx);
+}
+
+WINAPK_GUEST_ABI EGLSurface guest_eglGetCurrentSurface(EGLint readdraw) {
+    return handle_of(eglGetCurrentSurface(readdraw));
+}
+
+WINAPK_GUEST_ABI EGLBoolean guest_eglSurfaceAttrib(EGLDisplay dpy, EGLSurface surface, EGLint attribute,
+                                                   EGLint value) {
+    return eglSurfaceAttrib(dpy, real_of(surface), attribute, value);
+}
+
+WINAPK_GUEST_ABI EGLBoolean guest_eglBindTexImage(EGLDisplay dpy, EGLSurface surface, EGLint buffer) {
+    return eglBindTexImage(dpy, real_of(surface), buffer);
+}
+
+WINAPK_GUEST_ABI EGLBoolean guest_eglReleaseTexImage(EGLDisplay dpy, EGLSurface surface, EGLint buffer) {
+    return eglReleaseTexImage(dpy, real_of(surface), buffer);
+}
+
+WINAPK_GUEST_ABI EGLBoolean guest_eglCopyBuffers(EGLDisplay dpy, EGLSurface surface, EGLNativePixmapType target) {
+    return eglCopyBuffers(dpy, real_of(surface), target);
 }
 
 WINAPK_GUEST_ABI EGLBoolean guest_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface) {
@@ -169,33 +280,42 @@ WINAPK_GUEST_ABI EGLBoolean guest_eglSwapBuffers(EGLDisplay dpy, EGLSurface surf
     }
     // Only the current surface can be read; EGL requires it to be current to
     // swap anyway.
-    if (eglGetCurrentSurface(EGL_DRAW) != surface) return EGL_TRUE;
+    if (eglGetCurrentSurface(EGL_DRAW) != ws.real) return EGL_TRUE;
     int w = 0, h = 0;
     live_size(ws, &w, &h);
     thread_local std::vector<uint32_t> argb;
     gl_read_current(&argb, w, h);
     guest_frame_present(argb.data(), w, h);
+    // The window outgrew the pbuffer (this frame was read from the part that
+    // fits): the next frame gets one that holds it.
+    int ww = 0, wh = 0;
+    window_size(ws, &ww, &wh);
+    if (ww > ws.side || wh > ws.side) {
+        std::lock_guard<std::mutex> hold(g_lock);
+        auto it = g_window_surfaces.find(surface);
+        if (it != g_window_surfaces.end()) grow(dpy, surface, it->second);
+    }
     return EGL_TRUE;
 }
 
-// A window surface's size is the window's (see WindowSurface).
+// A window surface's size is the window's (see WindowSurface), whether or not
+// the pbuffer behind it holds all of it yet.
 WINAPK_GUEST_ABI EGLBoolean guest_eglQuerySurface(EGLDisplay dpy, EGLSurface surface, EGLint attribute,
                                                   EGLint* value) {
-    if (attribute == EGL_WIDTH || attribute == EGL_HEIGHT) {
-        WindowSurface ws;
-        {
-            std::lock_guard<std::mutex> hold(g_lock);
-            auto it = g_window_surfaces.find(surface);
-            if (it != g_window_surfaces.end()) ws = it->second;
-        }
-        if (ws.window && value) {
-            int w = 0, h = 0;
-            live_size(ws, &w, &h);
-            *value = attribute == EGL_WIDTH ? w : h;
-            return EGL_TRUE;
-        }
+    WindowSurface ws;
+    {
+        std::lock_guard<std::mutex> hold(g_lock);
+        auto it = g_window_surfaces.find(surface);
+        if (it != g_window_surfaces.end()) ws = it->second;
     }
-    return eglQuerySurface(dpy, surface, attribute, value);
+    if (ws.window && (attribute == EGL_WIDTH || attribute == EGL_HEIGHT)) {
+        if (!value) return EGL_FALSE;
+        int w = 0, h = 0;
+        window_size(ws, &w, &h);
+        *value = attribute == EGL_WIDTH ? w : h;
+        return EGL_TRUE;
+    }
+    return eglQuerySurface(dpy, ws.window ? ws.real : surface, attribute, value);
 }
 
 WINAPK_GUEST_ABI EGLBoolean guest_eglSwapBuffersWithDamage(EGLDisplay dpy, EGLSurface surface, const EGLint*,
@@ -250,6 +370,12 @@ const std::unordered_map<std::string, void*>& symbols() {
         WINAPK_GUEST_GL(eglCreatePlatformWindowSurface),
         WINAPK_GUEST_GL(eglCreatePlatformWindowSurfaceEXT),
         WINAPK_GUEST_GL(eglDestroySurface),
+        WINAPK_GUEST_GL(eglMakeCurrent),
+        WINAPK_GUEST_GL(eglGetCurrentSurface),
+        WINAPK_GUEST_GL(eglSurfaceAttrib),
+        WINAPK_GUEST_GL(eglBindTexImage),
+        WINAPK_GUEST_GL(eglReleaseTexImage),
+        WINAPK_GUEST_GL(eglCopyBuffers),
         WINAPK_GUEST_GL(eglSwapBuffers),
         WINAPK_GUEST_GL(eglQuerySurface),
         {"eglSwapBuffersWithDamageKHR", reinterpret_cast<void*>(&guest_eglSwapBuffersWithDamage)},
