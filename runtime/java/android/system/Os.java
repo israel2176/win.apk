@@ -103,6 +103,44 @@ public class Os {
         int r = com.macapk.loader.NativeOs.unsetenv(name);
         if (r < 0) throw new ErrnoException("unsetenv", -r);
     }
+    /** AOSP Os.chmod / fchmod -> Libcore.os (chmod(2)). The POSIX bits are
+     *  applied where the file system has them; on Windows (NTFS) there are
+     *  none to set, and AOSP's own behaviour on such a volume (FAT sdcards:
+     *  the mode is ignored) is to succeed, so the call succeeds. Key Mapper's
+     *  start-up ran it on its own files directory and died on the missing
+     *  method. */
+    public static void chmod(String path, int mode) throws ErrnoException {
+        if (path == null) throw new ErrnoException("chmod", OsConstants.EINVAL);
+        java.nio.file.Path p = java.nio.file.Paths.get(path);
+        if (!java.nio.file.Files.exists(p)) throw new ErrnoException("chmod", OsConstants.ENOENT);
+        try {
+            if (p.getFileSystem().supportedFileAttributeViews().contains("posix")) {
+                java.util.Set<java.nio.file.attribute.PosixFilePermission> perms =
+                        java.util.EnumSet.noneOf(java.nio.file.attribute.PosixFilePermission.class);
+                java.nio.file.attribute.PosixFilePermission[] bits = {
+                    java.nio.file.attribute.PosixFilePermission.OTHERS_EXECUTE,
+                    java.nio.file.attribute.PosixFilePermission.OTHERS_WRITE,
+                    java.nio.file.attribute.PosixFilePermission.OTHERS_READ,
+                    java.nio.file.attribute.PosixFilePermission.GROUP_EXECUTE,
+                    java.nio.file.attribute.PosixFilePermission.GROUP_WRITE,
+                    java.nio.file.attribute.PosixFilePermission.GROUP_READ,
+                    java.nio.file.attribute.PosixFilePermission.OWNER_EXECUTE,
+                    java.nio.file.attribute.PosixFilePermission.OWNER_WRITE,
+                    java.nio.file.attribute.PosixFilePermission.OWNER_READ,
+                };
+                for (int i = 0; i < bits.length; i++) if ((mode & (1 << i)) != 0) perms.add(bits[i]);
+                java.nio.file.Files.setPosixFilePermissions(p, perms);
+            }
+        } catch (java.io.IOException | UnsupportedOperationException e) {
+            throw new ErrnoException("chmod", OsConstants.EACCES);
+        }
+    }
+
+    public static void fchmod(java.io.FileDescriptor fd, int mode) throws ErrnoException {
+        if (fd == null || !fd.valid()) throw new ErrnoException("fchmod", OsConstants.EBADF);
+        // The descriptor names no path here; the bits would not apply anyway.
+    }
+
     public static String gethostname() {
         try { return java.net.InetAddress.getLocalHost().getHostName(); }
         catch (Throwable t) { return "localhost"; }
