@@ -108,8 +108,9 @@ const char* code_name(DWORD code) {
 // The frames above `rsp`: guest code has no unwind tables, so the stack is
 // scanned for values that are code addresses in a guest image or a reportable
 // module. Return addresses stand out; the rest is noise a reader can discount.
-// Returns how many were found; `print` false only counts guest ones.
-int scan_frames(uint64_t rsp, bool print) {
+// Returns how many were found; `print` false only counts guest ones, `all`
+// prints every module's frames (the JVM's and Windows' too).
+int scan_frames(uint64_t rsp, bool print, bool all = false) {
     MEMORY_BASIC_INFORMATION mbi{};
     if (!VirtualQuery(reinterpret_cast<const void*>(rsp), &mbi, sizeof(mbi)) || mbi.State != MEM_COMMIT) return 0;
     const auto* top = reinterpret_cast<const uint64_t*>(rsp);
@@ -118,7 +119,7 @@ int scan_frames(uint64_t rsp, bool print) {
     for (const uint64_t* p = top; p < end && p < top + 4096 && found < 12; ++p) {
         const void* v = reinterpret_cast<const void*>(*p);
         if (!v) continue;
-        if (print ? !worth_reporting(v) : !in_guest(v)) continue;
+        if (!all && (print ? !worth_reporting(v) : !in_guest(v))) continue;
         char frame[512];
         if (!describe(v, frame, sizeof(frame))) continue;
         if (print) std::fprintf(stderr, "[win.apk]   stack[%+lld]: %s\n", static_cast<long long>((p - top) * 8), frame);
@@ -167,6 +168,28 @@ LONG CALLBACK report_fault(EXCEPTION_POINTERS* e) {
     return EXCEPTION_CONTINUE_SEARCH;
 }
 
+// Nothing handled the fault and the process ends when this returns: HotSpot
+// passed on it (a thread without Java frames, or a fault it did not own), so
+// say where it was whatever module holds it. Pixel Wheels ended with
+// 0xC0000005 and not a line: the vectored handler above had kept quiet, the
+// fault being in a module it leaves to the JVM. The previous filter (HotSpot's,
+// which writes hs_err for the faults it recognises) runs after.
+LPTOP_LEVEL_EXCEPTION_FILTER g_previous_filter;
+
+LONG WINAPI report_unhandled(EXCEPTION_POINTERS* e) {
+    const DWORD code = e->ExceptionRecord->ExceptionCode;
+    const char* name = code_name(code);
+    if (!name) name = "exception";
+    const auto rip = static_cast<uint64_t>(e->ContextRecord->Rip);
+    char where[512] = "?";
+    describe(reinterpret_cast<const void*>(rip), where, sizeof(where));
+    std::fprintf(stderr, "[win.apk] crash: unhandled %s (0x%08lx) at %s (rip 0x%llx, thread %lu); the process ends\n", name,
+                 static_cast<unsigned long>(code), where, static_cast<unsigned long long>(rip), GetCurrentThreadId());
+    if (code != EXCEPTION_STACK_OVERFLOW) scan_frames(static_cast<uint64_t>(e->ContextRecord->Rsp), true, true);
+    std::fflush(stderr);
+    return g_previous_filter ? g_previous_filter(e) : EXCEPTION_CONTINUE_SEARCH;
+}
+
 void on_abort(int) {
     std::fputs("[win.apk] host abort(): the runtime's own code or a host library called abort\n", stderr);
     void* frames[32];
@@ -199,9 +222,15 @@ void install_crash_report() {
     static std::once_flag once;
     std::call_once(once, [] {
         AddVectoredExceptionHandler(0, report_fault);  // 0: after every handler added before it
+        g_previous_filter = SetUnhandledExceptionFilter(report_unhandled);
         signal(SIGABRT, on_abort);
         std::set_terminate(on_terminate);
     });
+}
+
+void rearm_crash_report() {
+    LPTOP_LEVEL_EXCEPTION_FILTER previous = SetUnhandledExceptionFilter(report_unhandled);
+    if (previous != report_unhandled) g_previous_filter = previous;
 }
 
 }  // namespace winapk::host

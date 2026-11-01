@@ -200,6 +200,7 @@ bool create_vm(HMODULE jvm, std::vector<std::string>& opts, JavaVM** vm, JNIEnv*
         std::fprintf(stderr, "[win.apk] JNI_CreateJavaVM failed\n");
         return false;
     }
+    winapk::host::rearm_crash_report();  // HotSpot installed its own unhandled-exception filter
     return true;
 }
 
@@ -1429,6 +1430,15 @@ DWORD WINAPI stderr_flusher(void*) {
 }
 
 void buffer_stderr() {
+    // A headless run (the sweep, the tests) wants every line the moment it is
+    // written: an exit through a library's own C runtime, or a kill, drops
+    // what is buffered, and those last lines are what the log is read for
+    // (VLC's run ended with nothing after a class load). Speed matters there
+    // less than the line that says why.
+    if (!env_var(L"WINAPK_HEADLESS").empty()) {
+        std::setvbuf(stderr, nullptr, _IONBF, 0);
+        return;
+    }
     static char buf[1 << 16];
     std::setvbuf(stderr, buf, _IOFBF, sizeof buf);
     HANDLE t = CreateThread(nullptr, 64 * 1024, stderr_flusher, nullptr, STACK_SIZE_PARAM_IS_A_RESERVATION, nullptr);
