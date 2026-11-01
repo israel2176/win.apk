@@ -606,35 +606,40 @@ private:
         return fmt("((uint64_t)%s(%s) << %u)", kCasts[option & 7], v.c_str(), sh);
     }
 
-    // Writes back what others may read: before calls (flags excluded: the
-    // AAPCS64 does not keep them across calls) and with the flags before the
-    // interpreter or a jump that may leave the function.
-    std::string flush(bool with_flags) { return with_flags ? "FLUSH_ALL();" : "FLUSH();"; }
+    // Writes back what others may read, flags included, before a call, a
+    // return, the interpreter or a jump that may leave the function; RELOAD
+    // takes all of it back. Compiled code needs less (the AAPCS64 keeps x19-x29
+    // across a call and nothing returns flags), but LLVM's machine outliner
+    // turns any repeated sequence into a function: one that ends in `cmp` and
+    // `ret` for a `b.cond` after the call (Flutter's libflutter.so: the stack
+    // check, ldr/ldr/cmp, whose flags were dropped at the `ret`, so the caller
+    // took the wrong branch and crashed in memmove), one that reads the
+    // caller's flags or restores its x19-x28.
+    std::string flush() { return "FLUSH();"; }
     // A jump to `t` outside this function: a tail call, or the runtime.
     std::string exit_str(uint64_t t) {
-        if (translated_.count(t)) return flush(false) + fmt(" return F_%" PRIx64 "(c);", t);
-        return flush(true) + " c->pc = " + addr(t) + "; return aot_rt.branch(c, " + addr(t) + ");";
+        if (translated_.count(t)) return flush() + fmt(" return F_%" PRIx64 "(c);", t);
+        return flush() + " c->pc = " + addr(t) + "; return aot_rt.branch(c, " + addr(t) + ");";
     }
     void exit_to(uint64_t t) { line(exit_str(t)); }
     void call_to(const std::string& target_expr, uint64_t direct, uint64_t ret) {
         wx(30, addr(ret), true);
         line("{");
         line("    const uint64_t t = " + target_expr + ";");
-        line("    " + flush(false));
+        line("    " + flush());
         if (direct && translated_.count(direct)) {
             line(fmt("    const uint32_t st = F_%" PRIx64 "(c);", direct));
         } else {
             line("    uint32_t st; c->pc = t; CALL_SITE(st, t);");
         }
         line("    if (st) return st;");
-        line("    RELOAD_CALL();");
+        line("    RELOAD();");
         line("}");
-        reload_call_used_ = true;
     }
     void interpret(uint64_t va) {
         ++interpreted_;
         if (std::getenv("WINAPK_AOT_LIST")) std::fprintf(stderr, "interpreted 0x%" PRIx64 "\n", va);
-        line(flush(true) + " c->pc = " + addr(va) + "; aot_rt.step(c); RELOAD_ALL();");
+        line(flush() + " c->pc = " + addr(va) + "; aot_rt.step(c); RELOAD();");
         line("if (c->pc != " + addr(va + 4) + ") return 1;");
     }
 
@@ -672,7 +677,7 @@ private:
     std::string body_;
     uint64_t used_x_ = 0, written_x_ = 0;  // bit 31: SP
     uint32_t used_v_ = 0, written_v_ = 0;
-    bool flags_used_ = false, flags_written_ = false, reload_call_used_ = false;
+    bool flags_used_ = false, flags_written_ = false;
     size_t interpreted_ = 0;
 };
 
@@ -720,13 +725,13 @@ bool Emitter::branch(uint64_t va, uint32_t insn) {
             line("    switch (t - B) {");
             for (uint64_t l : f_.labels) line(fmt("        case 0x%" PRIx64 "ull: goto L_%" PRIx64 ";", l, l));
             line("    }");
-            line("    " + flush(true) + " c->pc = t;");
+            line("    " + flush() + " c->pc = t;");
             line("    { uint32_t st; CALL_SITE(st, t); if (st == 0) c->pc = c->x[30]; return st; }");
             line("}");
             return true;
         }
         case Flow::kRet:
-            line("{ const uint64_t t = " + rx(field(insn, 9, 5)) + "; " + flush(false) +
+            line("{ const uint64_t t = " + rx(field(insn, 9, 5)) + "; " + flush() +
                  " c->pc = t; return 0; }");
             return true;
     }
@@ -2026,34 +2031,29 @@ std::string Emitter::function(size_t* interpreted) {
     // Declarations and the write-back macros, now that the body says what it uses.
     std::string out;
     const std::string name = fmt("F_%" PRIx64, f_.entry);
-    std::string flush, reload_all, reload_call;
+    std::string flush, reload;
     for (unsigned n = 0; n < 32; ++n) {
         if (!(used_x_ >> n & 1)) continue;
         const std::string r = n == 31 ? "SP" : fmt("X%u", n), slot = n == 31 ? "c->sp" : fmt("c->x[%u]", n);
         if (written_x_ >> n & 1) flush += " " + slot + " = " + r + ";";
-        reload_all += " " + r + " = " + slot + ";";
-        if (n < 8) reload_call += " " + r + " = " + slot + ";";
+        reload += " " + r + " = " + slot + ";";
     }
     for (unsigned n = 0; n < 32; ++n) {
         if (!(used_v_ >> n & 1)) continue;
         if (written_v_ >> n & 1) flush += fmt(" *(v2u64*)c->v[%u] = V%u;", n, n);
-        reload_all += fmt(" V%u = *(v2u64*)c->v[%u];", n, n);
-        if (n < 8) reload_call += fmt(" V%u = *(v2u64*)c->v[%u];", n, n);
+        reload += fmt(" V%u = *(v2u64*)c->v[%u];", n, n);
     }
     const bool has_flags = flags_used_ || flags_written_;
-    std::string flush_all = flush;
     if (flags_written_) {
-        flush_all += " c->nzcv = ((uint32_t)FN << 31) | ((uint32_t)FZ << 30) | ((uint32_t)FC << 29) | "
-                     "((uint32_t)FV << 28);";
+        flush += " c->nzcv = ((uint32_t)FN << 31) | ((uint32_t)FZ << 30) | ((uint32_t)FC << 29) | "
+                 "((uint32_t)FV << 28);";
     }
     if (has_flags) {
-        reload_all += " FN = (c->nzcv >> 31) & 1; FZ = (c->nzcv >> 30) & 1; FC = (c->nzcv >> 29) & 1;"
-                      " FV = (c->nzcv >> 28) & 1;";
+        reload += " FN = (c->nzcv >> 31) & 1; FZ = (c->nzcv >> 30) & 1; FC = (c->nzcv >> 29) & 1;"
+                  " FV = (c->nzcv >> 28) & 1;";
     }
     out += "#define FLUSH() do {" + flush + " } while (0)\n";
-    out += "#define FLUSH_ALL() do {" + flush_all + " } while (0)\n";
-    out += "#define RELOAD_ALL() do {" + reload_all + " } while (0)\n";
-    out += "#define RELOAD_CALL() do {" + reload_call + " } while (0)\n";
+    out += "#define RELOAD() do {" + reload + " } while (0)\n";
     // A huge function costs clang far more than its size (time grows faster
     // than the number of blocks): one of 10K+ instructions in
     // libjuicebox_sdk_jni.so took 200 s at -O1, 12.6 s unoptimized. So, as
@@ -2076,7 +2076,7 @@ std::string Emitter::function(size_t* interpreted) {
     }
     out += fmt("    goto L_%" PRIx64 ";\n", f_.entry);
     out += body_;
-    out += "}\n#undef FLUSH\n#undef FLUSH_ALL\n#undef RELOAD_ALL\n#undef RELOAD_CALL\n\n";
+    out += "}\n#undef FLUSH\n#undef RELOAD\n\n";
     return out;
 }
 

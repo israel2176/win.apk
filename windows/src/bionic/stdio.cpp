@@ -844,16 +844,8 @@ WINAPK_GUEST_ABI int64_t g_readlink_chk(const char* path, char* buf, size_t size
     return g_readlink(path, buf, std::min(size, buf_size));
 }
 WINAPK_GUEST_ABI int64_t g_readlinkat(int dirfd, const char* path, char* buf, size_t size) {
-    if (!path || path[0] == '/' || path[0] == '\\' || (path[0] && path[1] == ':') || dirfd == kAtFdCwd) {
-        return g_readlink(path, buf, size);
-    }
-    const std::wstring dir = dir_of_fd(dirfd);
-    if (dir.empty()) {
-        *guest_errno() = 9;  // EBADF
-        return -1;
-    }
-    const std::string joined = narrow(dir.c_str()) + "\\" + path;
-    return g_readlink(joined.c_str(), buf, size);
+    std::string p;
+    return at_path(dirfd, path, &p) ? g_readlink(p.c_str(), buf, size) : -1;
 }
 // lstat: stat, except that a link is reported as one. The proc links have no
 // file of their own, so they get a link's mode and the target's length.
@@ -875,23 +867,12 @@ WINAPK_GUEST_ABI int g_lstat(const char* path, GuestStat* g) {
     }
     return rc;
 }
-// unlinkat and __openat_2 (openat's FORTIFY form without a mode): the same
-// joins as openat.
+// unlinkat: the same joins as openat (at_path).
 WINAPK_GUEST_ABI int g_unlinkat(int dirfd, const char* path, int flags) {
-    std::string joined;
-    const char* p = path;
-    if (path && path[0] != '/' && path[0] != '\\' && !(path[0] && path[1] == ':') && dirfd != kAtFdCwd) {
-        const std::wstring dir = dir_of_fd(dirfd);
-        if (dir.empty()) {
-            *guest_errno() = 9;  // EBADF
-            return -1;
-        }
-        joined = narrow(dir.c_str()) + "\\" + path;
-        p = joined.c_str();
-    }
-    return (flags & 0x200) ? g_rmdir(p) : g_unlink(p);  // AT_REMOVEDIR
+    std::string p;
+    if (!at_path(dirfd, path, &p)) return -1;
+    return (flags & 0x200) ? g_rmdir(p.c_str()) : g_unlink(p.c_str());  // AT_REMOVEDIR
 }
-WINAPK_GUEST_ABI int g_openat_2(int dirfd, const char* path, int flags) { return g_openat(dirfd, path, flags, 0); }
 
 // ---- FILE streams ----------------------------------------------------------------------------
 // Bionic's mode letters, less "e" (O_CLOEXEC); the CRT stream is always binary,
@@ -1037,6 +1018,22 @@ WINAPK_GUEST_ABI char* g_fgets_chk(char* s, int n, void* f, size_t bn) {
     }
     return g_fgets(s, n, f);
 }
+// Bionic's FORTIFY fread/fwrite: the buffer must hold size * count bytes.
+bool fits_fortify(size_t sz, size_t n, size_t bn) { return n == 0 || sz <= bn / n; }
+WINAPK_GUEST_ABI size_t g_fread_chk(void* buf, size_t sz, size_t n, void* f, size_t bn) {
+    if (!fits_fortify(sz, n, bn)) {
+        std::fprintf(stderr, "[win.apk] guest FORTIFY: fread: prevented buffer overflow\n");
+        std::abort();
+    }
+    return g_fread(buf, sz, n, f);
+}
+WINAPK_GUEST_ABI size_t g_fwrite_chk(const void* buf, size_t sz, size_t n, void* f, size_t bn) {
+    if (!fits_fortify(sz, n, bn)) {
+        std::fprintf(stderr, "[win.apk] guest FORTIFY: fwrite: prevented buffer over-read\n");
+        std::abort();
+    }
+    return g_fwrite(buf, sz, n, f);
+}
 WINAPK_GUEST_ABI int g_fgetc(void* f) { return std::fgetc(host_file(f)); }
 WINAPK_GUEST_ABI int g_ungetc(int c, void* f) { return std::ungetc(c, host_file(f)); }
 WINAPK_GUEST_ABI int g_fflush(void* f) { return std::fflush(f ? host_file(f) : nullptr); }
@@ -1126,7 +1123,6 @@ const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("__readlink_chk", g_readlink_chk),
     WINAPK_SHIM("readlinkat", g_readlinkat),
     WINAPK_SHIM("unlinkat", g_unlinkat),
-    WINAPK_SHIM("__openat_2", g_openat_2),
     WINAPK_SHIM("fstat", g_fstat),
     WINAPK_SHIM("fstat64", g_fstat),
     WINAPK_SHIM("fstatat", g_fstatat),
@@ -1181,6 +1177,8 @@ const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("putchar", g_putchar),
     WINAPK_SHIM("fgets", g_fgets),
     WINAPK_SHIM("__fgets_chk", g_fgets_chk),
+    WINAPK_SHIM("__fread_chk", g_fread_chk),
+    WINAPK_SHIM("__fwrite_chk", g_fwrite_chk),
     WINAPK_SHIM("fgetc", g_fgetc),
     WINAPK_SHIM("getc", g_fgetc),
     WINAPK_SHIM("ungetc", g_ungetc),

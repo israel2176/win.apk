@@ -164,6 +164,7 @@ void run_bridge(winapk::GuestLinker& linker, const char* file) {
     check("__android_log_print", call0("arm64_log_print") > 0);
 
     check("guest comparator called by the host's qsort", call0("arm64_qsort") == -3912);
+    check("guest comparator called by the host's bsearch", call0("arm64_bsearch") == 325);
     check("guest -> host -> guest -> host (qsort comparator calling snprintf)", call0("arm64_nested") == 10004);
     int64_t want_threads = 0;
     for (int64_t n = 100; n < 104; ++n) want_threads += n * (n + 1) * (2 * n + 1) / 6;
@@ -175,6 +176,17 @@ void run_bridge(winapk::GuestLinker& linker, const char* file) {
                                                int64_t, int64_t, double, double);
     if (auto* many = reinterpret_cast<ManyFn>(fn("arm64_many_args"))) {
         check("host -> guest: 10 integer + 2 double arguments", many(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 0.5, 0.25) == 685);
+    }
+    using JniSizedFn = int64_t(WINAPK_GUEST_ABI*)(
+        int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t,
+        int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t,
+        int64_t, int64_t, int64_t, const int64_t*, const int64_t*);
+    if (auto* jni_sized = reinterpret_cast<JniSizedFn>(fn("arm64_jni_sized"))) {
+        // Each argument i is i + 1, so the sum is the sum of (i + 1)^2 for i < 29.
+        const int64_t a27 = 28, a28 = 29;
+        check("host -> guest: 29 integer arguments, 21 on the stack (Flutter's nativeSetViewportMetrics)",
+              jni_sized(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26,
+                        27, &a27, &a28) == 8555);
     }
     using ScaleFn = double(WINAPK_GUEST_ABI*)(double, float, int);
     if (auto* scale = reinterpret_cast<ScaleFn>(fn("arm64_scale"))) {

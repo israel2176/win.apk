@@ -19,9 +19,10 @@
 // translator does not emit natively go through the interpreter one at a time
 // (AotRuntime::step), with the registers written back around them.
 //
-// Calls follow the AAPCS64: across a call, the translated caller keeps its
-// own copies of the callee-saved registers and reloads only x0-x7 and
-// v0-v7, which is what a compiled callee may change.
+// Calls do not assume the AAPCS64: the caller writes back its registers and
+// the flags before a call and reloads all of them after it, as the callee
+// does at its return. LLVM's machine outliner makes functions that return
+// flags, read the caller's, or restore its callee-saved registers.
 //
 // Profiles. Compiling a whole large library takes clang most of an hour
 // (libwaze.so: 1.5M instructions), most of it for code the app never runs.
@@ -44,7 +45,9 @@
 
 namespace winapk::arm64 {
 
-constexpr uint32_t kAotVersion = 2;
+// Raised when translated code changes meaning: the loader ignores an older
+// DLL and the stamp (runtime_main.cpp) has it translated again.
+constexpr uint32_t kAotVersion = 3;
 constexpr uint32_t kAotDone = 0;
 constexpr uint32_t kAotBail = 1;
 
