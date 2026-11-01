@@ -20,13 +20,14 @@ A pre-release for testing: Win.apk runs Android apps on Windows 10/11 x64.
 - **Storage:** files, SharedPreferences and SQLite. Shared storage (Pictures, Downloads, Documents...) is the user's own Windows folders.
 - **Permissions:** apps ask for storage, "All files access" and "Media management" as on Android, in a Windows dialog over the app (Allow / Don't allow, and "don't ask again" after a second refusal). An app's App info screen, or Get Info in the library, turns them on or off or resets them.
 - **Desktop services:** clipboard, file pickers and game controllers.
+- **Google sign-in and Play services:** apps that sign in with Google, check a Play licence, use Firebase Analytics or Cloud Messaging, or ask Play services for location get Win.apk's own in-process stand-ins, as on the Mac. Signing in opens Google's own page in a window of its own (it needs the WebView2 Runtime); Win.apk never sees the password. Settings > Google account adds and removes the account.
 
 In the automated sweep of open-source apps, 36 of 38 draw their first screen.
 
 ## Not yet
 - Native code for 32-bit ARM only (`armeabi-v7a`).
 - Vulkan.
-- Google Play services.
+- Play Store features: in-app purchases, Play Integrity, and the Maps SDK's map.
 
 ## Reporting
 Please include the app's name and version, and attach `%LOCALAPPDATA%\Win.apk\logs\last-run.log`.

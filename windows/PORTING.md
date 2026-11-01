@@ -224,7 +224,7 @@ implements in `runtime/src`; on Windows `windows/host/native_*.cpp`):
 | `CameraBridge` | 30 | `camera_capture.mm` | Media Foundation capture | not started | 3 |
 | `MediaStoreProvider` | 7 | `photos_bridge.mm` | `host/native_photos.cpp`: the Pictures and Videos folders, shell thumbnails | done | - |
 | `MacApkWebViewBridge` | 29 | `webview_bridge.mm` | WebView2 | done (`native_webview.cpp`; Custom Tabs: `HostBrowserTab`) | 2 |
-| `NativeSignIn` | 2 | `gms_signin.mm` | a browser sign-in window | not started | later |
+| `NativeSignIn` | 2 | `gms_signin.mm` | `host/native_signin.cpp`: Google's EmbeddedSetup page in a WebView2 window with an in-private profile, the `oauth_token` cookie read back | done (needs the WebView2 Runtime) | - |
 | `NativeActivity`, `InputQueue` | 22 + 5 | `bionic_shim_nativeactivity.cpp` | with M4/M6 | not started | 2 |
 | Firebase C++ helpers (4 classes) | 4 | the app's own native code | with M4 | - | - |
 
@@ -232,7 +232,7 @@ implements in `runtime/src`; on Windows `windows/host/native_*.cpp`):
 
 | Mac source | Lines | What it does | Windows | Status |
 |---|---|---|---|---|
-| `main.cpp` | 3,890 | launcher entry: install, convert, start the JVM | `host/runtime_main.cpp` | done for Java apps |
+| `main.cpp` | 3,890 | launcher entry: install, convert, start the JVM, `--gms` | `host/runtime_main.cpp` (`--gms` too) | done for Java apps |
 | `jvm_loader.cpp` | 792 | in-process HotSpot | `host/runtime_main.cpp` | done |
 | `apk_unpacker.cpp` | 4,473 | install layout, split bundles, DEX conversion | `java/.../AppInstall.java` + the upstream converter | done |
 | `window_policy.cpp`, `window_traits.cpp` | 3,009 | window shape per activity, orientation, resize | `win32_window.cpp` | phone size only |
@@ -647,6 +647,22 @@ applies on Windows, where `FileDescriptor` holds a `handle`.
   Builds need code signing and testing against Defender.
 - There is no crash handler: a crash leaves `logs\last-run.log` and HotSpot's
   `hs_err` file, no minidump.
+- Google Play services are upstream's in-process stand-ins (section 4 names
+  the host pieces; `README.md`, "Google Play services", what works). Where
+  Windows differs from the Mac, and why:
+  - The sign-in window is WebView2 with an in-private profile where the Mac
+    has a WKWebView with a non-persistent data store: the same page, user
+    agent and cookie check. It needs the WebView2 Runtime, 2022 or later
+    (private profiles); without it, or headless, `NativeSignIn` answers as
+    cancelled, where the Mac always has a window. The Mac launcher's
+    Accounts panel is the library's Settings > Google account.
+  - The GMS state is a plain file under `%LOCALAPPDATA%\Win.apk\gms`
+    (user-private by the profile's ACL), as the Mac's default is a 0600 file;
+    the Mac's opt-in Keychain store has no counterpart (DPAPI would be the
+    one, and is not worth it while the default is a file on both).
+  - The sign-in round trip has been built against upstream's design and the
+    CLI's `selftest` and `status` run in CI; a sign-in with a real Google
+    account takes a person at a Windows PC and has not been part of CI.
 - Upstream commits almost daily. Merging at least monthly keeps conflicts
   small; `windows/README.md` lists every `runtime/` change to carry over.
 
@@ -819,7 +835,9 @@ Exit: x86_64 games from the compatibility list are playable.
 - Media Foundation for video decoding and the camera, libvpx for VP8 and VP9.
 - `Windows.Devices.Geolocation` for location.
 - GameInput or XInput for gamepads.
-- Google sign-in through the system browser.
+- Google sign-in: done, in a WebView2 window of its own (`native_signin.cpp`)
+  rather than the system browser, which cannot serve Google's device flow
+  nor hand back its cookie.
 - Accent color for Material You theming.
 
 Exit: apps that only partly work today reach parity with Mac.apk.
