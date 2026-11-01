@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
@@ -753,12 +754,16 @@ WINAPK_GUEST_ABI int g_getopt_long_only(int argc, char* const* argv, const char*
 
 // ---- process exit -------------------------------------------------------------------------
 [[noreturn]] WINAPK_GUEST_ABI void g_exit(int code) {
+    std::fprintf(stderr, "[win.apk] guest called exit(%d)\n", code);
+    std::fflush(stderr);
     mini_bionic_run_atexit();
     std::fflush(nullptr);
     TerminateProcess(GetCurrentProcess(), static_cast<UINT>(code));
     std::abort();
 }
 [[noreturn]] WINAPK_GUEST_ABI void g__exit(int code) {
+    std::fprintf(stderr, "[win.apk] guest called _exit(%d)\n", code);
+    std::fflush(stderr);
     TerminateProcess(GetCurrentProcess(), static_cast<UINT>(code));
     std::abort();
 }
@@ -814,7 +819,70 @@ WINAPK_GUEST_ABI int m_isnanf(float x) { return std::isnan(x); }
 
 #define M(name) WINAPK_SHIM(#name, m_##name), WINAPK_SHIM(#name "f", m_##name##f)
 
+// ---- scheduling policy and the passwd database ---------------------------------
+//
+// sched_getscheduler and the priority range: everything runs as SCHED_OTHER
+// (0), whose priority range on Linux is 0..0; SCHED_FIFO (1) and SCHED_RR (2)
+// span 1..99. ffmpeg and Hermes size thread priorities from these; the stub's
+// 0 for both ends made the range empty.
+WINAPK_GUEST_ABI int g_sched_getscheduler(int) { return 0; }
+WINAPK_GUEST_ABI int g_sched_get_priority_min(int policy) { return policy == 1 || policy == 2 ? 1 : 0; }
+WINAPK_GUEST_ABI int g_sched_get_priority_max(int policy) { return policy == 1 || policy == 2 ? 99 : 0; }
+
+// getpwuid(_r): the app's own user, as Android names it (u0_a<n> for uid
+// 10000+n; android.os.Process.getUidForName agrees). Bionic's LP64 struct
+// passwd: pw_name, pw_passwd, pw_uid, pw_gid, pw_gecos, pw_dir, pw_shell.
+struct GuestPasswd {
+    char* pw_name;
+    char* pw_passwd;
+    uint32_t pw_uid;
+    uint32_t pw_gid;
+    char* pw_gecos;
+    char* pw_dir;
+    char* pw_shell;
+};
+int fill_passwd(uint32_t uid, GuestPasswd* pwd, char* buf, size_t buflen) {
+    char name[32];
+    if (uid >= 10000 && uid < 20000) std::snprintf(name, sizeof(name), "u0_a%u", uid - 10000);
+    else if (uid == 0) std::snprintf(name, sizeof(name), "root");
+    else std::snprintf(name, sizeof(name), "uid_%u", uid);
+    const char* dir = "/data";
+    const char* shell = "/system/bin/sh";
+    const size_t need = std::strlen(name) + 1 + std::strlen(dir) + 1 + std::strlen(shell) + 1 + 1;
+    if (buflen < need) return 34;  // ERANGE
+    char* p = buf;
+    pwd->pw_name = p;
+    p = std::strcpy(p, name) + std::strlen(name) + 1;
+    pwd->pw_passwd = p;
+    *p++ = '\0';
+    pwd->pw_uid = uid;
+    pwd->pw_gid = uid;
+    pwd->pw_gecos = pwd->pw_passwd;
+    pwd->pw_dir = p;
+    p = std::strcpy(p, dir) + std::strlen(dir) + 1;
+    pwd->pw_shell = p;
+    std::strcpy(p, shell);
+    return 0;
+}
+WINAPK_GUEST_ABI int g_getpwuid_r(uint32_t uid, GuestPasswd* pwd, char* buf, size_t buflen, GuestPasswd** result) {
+    if (result) *result = nullptr;
+    if (!pwd || !buf) return 22;  // EINVAL
+    const int rc = fill_passwd(uid, pwd, buf, buflen);
+    if (rc == 0 && result) *result = pwd;
+    return rc;
+}
+WINAPK_GUEST_ABI GuestPasswd* g_getpwuid(uint32_t uid) {
+    thread_local GuestPasswd pwd;
+    thread_local char buf[128];
+    return fill_passwd(uid, &pwd, buf, sizeof(buf)) == 0 ? &pwd : nullptr;
+}
+
 const ShimSymbol kSymbols[] = {
+    WINAPK_SHIM("sched_getscheduler", g_sched_getscheduler),
+    WINAPK_SHIM("sched_get_priority_min", g_sched_get_priority_min),
+    WINAPK_SHIM("sched_get_priority_max", g_sched_get_priority_max),
+    WINAPK_SHIM("getpwuid_r", g_getpwuid_r),
+    WINAPK_SHIM("getpwuid", g_getpwuid),
     WINAPK_SHIM("clock_gettime", g_clock_gettime),
     WINAPK_SHIM("clock_getres", g_clock_getres),
     WINAPK_SHIM("gettimeofday", g_gettimeofday),
