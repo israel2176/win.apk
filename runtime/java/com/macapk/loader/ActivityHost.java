@@ -1866,6 +1866,19 @@ public final class ActivityHost {
         incoming.macapkSeedWindowRecord(component, token, manifest, false, owns);
         if (!windowPolicyAosp()) {
             if (owns) sWindowBoxOwner = new java.lang.ref.WeakReference<>(incoming);
+            // Win.apk: without the AOSP window policy nothing else turns the
+            // phone for the manifest's orientation, and the library opens
+            // apps landscape, so a portrait-only (or landscape-only) activity
+            // asks for its shape here as Activity.setRequestedOrientation
+            // would; the other values leave the phone as it was started. A
+            // host without the native keeps the old behaviour.
+            if (owns) {
+                try {
+                    NativeCocoa.applyWindowOrientation(manifest);
+                } catch (Throwable t) {
+                    NativeLog.w(TAG, "window: manifest orientation " + manifest + " for " + component + ": " + t);
+                }
+            }
             return;
         }
         final Activity covered = owns ? boxOwner() : null;   // the incoming is not pushed yet

@@ -102,6 +102,7 @@ const HostMethods kProviders[] = {
     native_radios_methods(),
     native_location_methods(),
     native_activity_methods(),
+    native_signin_methods(),
 };
 
 const JNINativeMethod* implementation_of(const char* clazz, const char* name, const char* sig) {

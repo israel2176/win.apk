@@ -13,7 +13,7 @@ whole) only when a task needs them.
 | Path | What |
 |---|---|
 | `windows/src/`, `windows/include/winapk/` | ELF loader, linker, ELF TLS, `%fs` patch, ABI thunks, guest JNI. `src/bionic/` + `mini_bionic.cpp`: the Bionic libc shim (~520 functions, `sysv_abi`) |
-| `windows/host/` | The runtime host: `runtime_main.cpp` (winapk-runtime.exe: args `--apk --data --jdk --lib --install-only`), `win32_window.cpp` (window, input), `native_*.cpp` (the Java natives: `native_cocoa.cpp` = window/phone size/icon, audio, clipboard, gamepad, ICU, images, OpenSL ES, `native_activity.cpp` = NativeActivity + the NDK input queue and AConfiguration...), `gl/` |
+| `windows/host/` | The runtime host: `runtime_main.cpp` (winapk-runtime.exe: args `--apk --data --jdk --lib --install-only`, `--gms <cmd>` runs `com.macapk.gms.GmsCli` with no app), `win32_window.cpp` (window, input), `native_*.cpp` (the Java natives: `native_cocoa.cpp` = window/phone size/icon, audio, clipboard, gamepad, ICU, images, OpenSL ES, `native_activity.cpp` = NativeActivity + the NDK input queue and AConfiguration..., `native_signin.cpp` = the Google sign-in window on WebView2), `gl/` |
 | `windows/launcher/launcher_main.cpp` | `Win.apk.exe`, the library app (one file, GDI+ custom-drawn). See below |
 | `windows/java/` | Windows-only Java (`com/winapk/tools/AppMeta.java`: writes `icon.png` + `label.txt` at install; `java_base_patch/`: Win.apk's own `java.base` overlay, `java/io/WinNTFileSystem.java` nests a drive-absolute child under its parent as Android does, compiled with upstream's `runtime/java_base_patch`) |
 | `windows/scripts/` | `build_java.sh` (builds `runtime/java` with a stock JDK), `stage_runtime.sh` (runnable `bin/`+`lib/`), `fetch_angle.sh`, `build_framework_res.sh` |
@@ -25,7 +25,7 @@ whole) only when a task needs them.
 | `scripts/build_framework_res.sh` | The platform resource APK (called by `windows/scripts/`) |
 | `.github/workflows/` | `windows-poc.yml` (build + tests + package, on PRs and by hand), `compat-sweep.yml` (app sweep, PRs and by hand), `windows-release.yml` (release, by hand only) |
 
-Data at run time: `%LOCALAPPDATA%\Win.apk\` (`library\` APKs + `.label`, `apps\<name>\`, `android\`, `logs\last-run.log`, `logs\install-<name>.log`, `store\` the Store tab's F-Droid catalog.tsv + icons, `installed_apps.json` the registry, `appops\` the signed permission grants: app-ops.json, signing-key.pub, signing-key.p256 under DPAPI). Settings: `HKCU\Software\Win.apk` (`Theme`, `Language`, `PhoneSize`, `Landscape`, `DesktopShortcut`). Each app's window size, once the user resizes it: `library\<name>.window` (dp, wins over the setting). Runtime env: `WINAPK_PHONE_SIZE=WxH` (dp), `WINAPK_RESIZABLE=0` (the window letterboxes instead of resizing the app), `WINAPK_HEADLESS=1`, `WINAPK_HEADLESS_FRAME`, `WINAPK_HEADLESS_EXIT_AFTER_FRAMES`.
+Data at run time: `%LOCALAPPDATA%\Win.apk\` (`library\` APKs + `.label`, `apps\<name>\`, `android\`, `logs\last-run.log`, `logs\install-<name>.log`, `store\` the Store tab's F-Droid catalog.tsv + icons, `installed_apps.json` the registry, `appops\` the signed permission grants: app-ops.json, signing-key.pub, signing-key.p256 under DPAPI, `gms\` the Google account and its tokens: gms_state.properties, the `accounts.present` marker the launcher checks). Settings: `HKCU\Software\Win.apk` (`Theme`, `Language`, `PhoneSize`, `Landscape` (absent = 1, landscape; 0 = portrait), `DesktopShortcut`). Per app, beside its APK: `library\<name>.label`, `.package` (package, versionCode, versionName, and the launched activity's manifest `screenOrientation`), `.orientation` (`portrait` / `landscape`, the right-click override for that app only; wins over `Landscape`, but an orientation the manifest fixes wins over both), `.window` (dp, the window size once the user resizes it; wins over the size setting, dropped when the orientation is flipped). Runtime env: `WINAPK_PHONE_SIZE=WxH` (dp), `WINAPK_RESIZABLE=0` (the window letterboxes instead of resizing the app), `WINAPK_HEADLESS=1`, `WINAPK_HEADLESS_FRAME`, `WINAPK_HEADLESS_EXIT_AFTER_FRAMES`.
 
 ## The launcher (`windows/launcher/launcher_main.cpp`)
 
@@ -41,6 +41,9 @@ signed app-ops store and the `runtime-permission`, `special-access`,
 `app-details` dialogs the runtime asks through, upstream's
 macapk-installhelper verbs; Get Info's Permissions rows), `wWinMain`.
 
+- Settings > Google account asks `winapk-runtime --gms accounts|signin-window|signout`
+  (`run_gms`, stdout captured, stderr in `logs\gms.log`); exit codes 0 done,
+  1 error, 2 cancelled.
 - Every user-visible string goes through `tr(L"English")` or
   `fmt(L"... {0} ...", {args})`; add the Hebrew to the table in `tr()`.
 - Hebrew = RTL: windows get `WS_EX_LAYOUTRTL`, `buffered_paint` mirrors the

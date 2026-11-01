@@ -7,6 +7,7 @@ A pre-release for testing: Win.apk runs Android apps on Windows 10/11 x64.
 
 ## What works
 - **Java/Kotlin apps:** each opens in its own window, with mouse, wheel and keyboard input. Back is Escape, Alt+Left or the mouse's back button.
+- **Landscape by default:** apps open in landscape, the shape of a PC screen (an 800 × 360 dp phone), unless the settings say portrait. Right-click an app > "Open in portrait" / "Open in landscape" turns just that app the other way, and it stays that way; Get Info shows the choice. An app that requires portrait (or landscape) in its manifest always opens that way.
 - **Resizable windows:** drag an edge, maximize or snap an app's window and the app lays itself out for the new size, as an Android desktop window does (an app that fixed its orientation keeps it, with black bars). Each app remembers its size; Get Info resets it.
 - **In Hebrew or English:** Setup and the library follow the Windows display language; Hebrew is laid out right to left.
 - **OpenGL ES:** works from Java (`GLSurfaceView`, libGDX) and from an app's native code through a SurfaceView (SDL games). It runs on ANGLE (Direct3D 11), falling back to WARP or SwiftShader without a GPU.
@@ -19,13 +20,14 @@ A pre-release for testing: Win.apk runs Android apps on Windows 10/11 x64.
 - **Storage:** files, SharedPreferences and SQLite. Shared storage (Pictures, Downloads, Documents...) is the user's own Windows folders.
 - **Permissions:** apps ask for storage, "All files access" and "Media management" as on Android, in a Windows dialog over the app (Allow / Don't allow, and "don't ask again" after a second refusal). An app's App info screen, or Get Info in the library, turns them on or off or resets them.
 - **Desktop services:** clipboard, file pickers and game controllers.
+- **Google sign-in and Play services:** apps that sign in with Google, check a Play licence, use Firebase Analytics or Cloud Messaging, or ask Play services for location get Win.apk's own in-process stand-ins, as on the Mac. Signing in opens Google's own page in a window of its own (it needs the WebView2 Runtime); Win.apk never sees the password. Settings > Google account adds and removes the account.
 
 In the automated sweep of open-source apps, 36 of 38 draw their first screen.
 
 ## Not yet
 - Native code for 32-bit ARM only (`armeabi-v7a`).
 - Vulkan.
-- Google Play services.
+- Play Store features: in-app purchases, Play Integrity, and the Maps SDK's map.
 
 ## Reporting
 Please include the app's name and version, and attach `%LOCALAPPDATA%\Win.apk\logs\last-run.log`.
