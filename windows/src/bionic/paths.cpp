@@ -10,6 +10,9 @@
 //
 //   /system/etc/fonts.xml, /system/fonts/...  -> the fonts directory Boot wrote
 //                                                (setSystemFontsDir)
+//   /system/etc/security/cacerts,
+//   /apex/com.android.conscrypt/cacerts       -> the CA store cacerts.cpp builds
+//                                                from the roots Windows trusts
 //   /dev/null                                 -> NUL
 //   any other /...                            -> <android root>/...
 //
@@ -50,6 +53,16 @@ std::wstring trimmed(std::wstring w) {
 
 bool starts_with(const char* s, const char* prefix) { return std::strncmp(s, prefix, std::strlen(prefix)) == 0; }
 
+// What follows Android's CA store directory in `p` ("" or "/<name>"), or null
+// when `p` is not in it.
+const char* cacerts_rest(const char* p) {
+    for (const char* dir : {"/system/etc/security/cacerts", "/apex/com.android.conscrypt/cacerts"}) {
+        const size_t n = std::strlen(dir);
+        if (std::strncmp(p, dir, n) == 0 && (p[n] == 0 || p[n] == '/')) return p + n;
+    }
+    return nullptr;
+}
+
 }  // namespace
 
 std::wstring host_path(const char* p) {
@@ -71,6 +84,15 @@ std::wstring host_path(const char* p) {
     // A host path (drive letter, UNC, relative): as it is.
     if (p[0] != '/' || p[1] == '/') return to_wide(p, len);
     if (std::strcmp(p, "/dev/null") == 0) return L"NUL";
+    if (const char* rest = cacerts_rest(p)) {
+        std::wstring root;
+        {
+            std::lock_guard<std::mutex> hold(g_lock);
+            root = g_android_root;
+        }
+        const std::wstring dir = android_cacerts_dir(root);
+        if (!dir.empty()) return dir + to_wide(rest, std::strlen(rest));
+    }
 
     std::lock_guard<std::mutex> hold(g_lock);
     if (!g_fonts_dir.empty()) {
