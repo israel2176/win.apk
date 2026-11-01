@@ -41,6 +41,7 @@ add_library(winapk_loader STATIC
   src/bionic/socket.cpp
   src/bionic/looper.cpp
   src/bionic/zlib.cpp
+  src/bionic/setjmp.cpp
   src/abi_thunk.cpp
   src/linker.cpp
   src/arm64/arm64_cpu.cpp
