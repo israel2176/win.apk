@@ -721,6 +721,146 @@ WINAPK_GUEST_ABI int64_t g_pathconf(const char*, int name) {
 }
 WINAPK_GUEST_ABI int64_t g_fpathconf(int, int name) { return g_pathconf(nullptr, name); }
 
+// ---- symbolic links -----------------------------------------------------------
+//
+// /proc/self/exe is the one link every Android process has, and Dart's VM
+// (Flutter) resolves it at start: lstat64, S_ISLNK, readlink. With lstat
+// failing (no such file) the engine's error path copied a -1 byte count off
+// its stack and died (LocalSend). So lstat shows it as a link, readlink
+// answers the runtime's own executable, /proc/self/fd/<n> the descriptor's
+// file, and a path that is a Windows symbolic link or junction its target;
+// anything else is not a link (EINVAL), as on Linux.
+bool is_proc_self_exe(const char* path) {
+    if (!path || std::strncmp(path, "/proc/", 6) != 0) return false;
+    const char* p = path + 6;
+    if (std::strncmp(p, "self", 4) == 0) p += 4;
+    else while (*p >= '0' && *p <= '9') ++p;
+    return std::strcmp(p, "/exe") == 0;
+}
+int proc_self_fd(const char* path) {  // /proc/self/fd/<n> -> n, else -1
+    if (!path || std::strncmp(path, "/proc/", 6) != 0) return -1;
+    const char* p = path + 6;
+    if (std::strncmp(p, "self", 4) == 0) p += 4;
+    else while (*p >= '0' && *p <= '9') ++p;
+    if (std::strncmp(p, "/fd/", 4) != 0) return -1;
+    p += 4;
+    if (!*p) return -1;
+    int fd = 0;
+    for (; *p; ++p) {
+        if (*p < '0' || *p > '9') return -1;
+        fd = fd * 10 + (*p - '0');
+    }
+    return fd;
+}
+std::wstring final_path_of_handle(HANDLE h) {
+    wchar_t buf[2048];
+    const DWORD n = GetFinalPathNameByHandleW(h, buf, 2048, FILE_NAME_NORMALIZED);
+    if (n == 0 || n >= 2048) return {};
+    std::wstring p(buf, n);
+    if (p.rfind(L"\\\\?\\", 0) == 0) p.erase(0, 4);
+    return p;
+}
+// The link target as a host path, or empty with errno set.
+std::wstring link_target(const char* path) {
+    if (is_proc_self_exe(path)) {
+        wchar_t exe[MAX_PATH];
+        const DWORD n = GetModuleFileNameW(nullptr, exe, MAX_PATH);
+        return n ? std::wstring(exe, n) : std::wstring();
+    }
+    if (const int fd = proc_self_fd(path); fd >= 0) {
+        HANDLE h = reinterpret_cast<HANDLE>(_get_osfhandle(fd));
+        if (h == INVALID_HANDLE_VALUE) {
+            *guest_errno() = 9;  // EBADF
+            return {};
+        }
+        return final_path_of_handle(h);
+    }
+    const std::wstring w = host_path(path);
+    const DWORD a = GetFileAttributesW(w.c_str());
+    if (a == INVALID_FILE_ATTRIBUTES) {
+        set_errno_from_win32(GetLastError());
+        return {};
+    }
+    if (!(a & FILE_ATTRIBUTE_REPARSE_POINT)) {
+        *guest_errno() = kEINVAL;  // not a link
+        return {};
+    }
+    HANDLE h = CreateFileW(w.c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+                           FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    if (h == INVALID_HANDLE_VALUE) {
+        set_errno_from_win32(GetLastError());
+        return {};
+    }
+    std::wstring target = final_path_of_handle(h);
+    CloseHandle(h);
+    if (target.empty()) *guest_errno() = kEINVAL;
+    return target;
+}
+WINAPK_GUEST_ABI int64_t g_readlink(const char* path, char* buf, size_t size) {
+    if (!path || !buf) {
+        *guest_errno() = 14;  // EFAULT
+        return -1;
+    }
+    const std::wstring target = link_target(path);
+    if (target.empty()) return -1;
+    const std::string s = narrow(target.c_str());
+    const size_t n = std::min(size, s.size());
+    std::memcpy(buf, s.data(), n);  // no terminator, as readlink(2) has none
+    return static_cast<int64_t>(n);
+}
+WINAPK_GUEST_ABI int64_t g_readlink_chk(const char* path, char* buf, size_t size, size_t buf_size) {
+    return g_readlink(path, buf, std::min(size, buf_size));
+}
+WINAPK_GUEST_ABI int64_t g_readlinkat(int dirfd, const char* path, char* buf, size_t size) {
+    if (!path || path[0] == '/' || path[0] == '\\' || (path[0] && path[1] == ':') || dirfd == kAtFdCwd) {
+        return g_readlink(path, buf, size);
+    }
+    const std::wstring dir = dir_of_fd(dirfd);
+    if (dir.empty()) {
+        *guest_errno() = 9;  // EBADF
+        return -1;
+    }
+    const std::string joined = narrow(dir.c_str()) + "\\" + path;
+    return g_readlink(joined.c_str(), buf, size);
+}
+// lstat: stat, except that a link is reported as one. The proc links have no
+// file of their own, so they get a link's mode and the target's length.
+WINAPK_GUEST_ABI int g_lstat(const char* path, GuestStat* g) {
+    if (is_proc_self_exe(path) || proc_self_fd(path) >= 0) {
+        const std::wstring target = link_target(path);
+        if (target.empty()) return -1;
+        std::memset(g, 0, sizeof(*g));
+        g->st_mode = 0120777;  // S_IFLNK | 0777
+        g->st_nlink = 1;
+        g->st_size = static_cast<int64_t>(narrow(target.c_str()).size());
+        g->st_blksize = 4096;
+        return 0;
+    }
+    const int rc = g_stat(path, g);
+    if (rc == 0) {
+        const DWORD a = GetFileAttributesW(host_path(path).c_str());
+        if (a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_REPARSE_POINT)) g->st_mode = (g->st_mode & 0777) | 0120000;
+    }
+    return rc;
+}
+// unlinkat and __openat_2 (openat's FORTIFY form without a mode): the same
+// joins as openat.
+WINAPK_GUEST_ABI int g_unlinkat(int dirfd, const char* path, int flags) {
+    std::string joined;
+    const char* p = path;
+    if (path && path[0] != '/' && path[0] != '\\' && !(path[0] && path[1] == ':') && dirfd != kAtFdCwd) {
+        const std::wstring dir = dir_of_fd(dirfd);
+        if (dir.empty()) {
+            *guest_errno() = 9;  // EBADF
+            return -1;
+        }
+        joined = narrow(dir.c_str()) + "\\" + path;
+        p = joined.c_str();
+    }
+    return (flags & 0x200) ? g_rmdir(p) : g_unlink(p);  // AT_REMOVEDIR
+}
+WINAPK_GUEST_ABI int g_openat_2(int dirfd, const char* path, int flags) { return g_openat(dirfd, path, flags, 0); }
+
 // ---- FILE streams ----------------------------------------------------------------------------
 // Bionic's mode letters, less "e" (O_CLOEXEC); the CRT stream is always binary,
 // as Linux's are.
@@ -945,8 +1085,13 @@ const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("ioctl", g_ioctl),
     WINAPK_SHIM("stat", g_stat),
     WINAPK_SHIM("stat64", g_stat),
-    WINAPK_SHIM("lstat", g_stat),
-    WINAPK_SHIM("lstat64", g_stat),
+    WINAPK_SHIM("lstat", g_lstat),
+    WINAPK_SHIM("lstat64", g_lstat),
+    WINAPK_SHIM("readlink", g_readlink),
+    WINAPK_SHIM("__readlink_chk", g_readlink_chk),
+    WINAPK_SHIM("readlinkat", g_readlinkat),
+    WINAPK_SHIM("unlinkat", g_unlinkat),
+    WINAPK_SHIM("__openat_2", g_openat_2),
     WINAPK_SHIM("fstat", g_fstat),
     WINAPK_SHIM("fstat64", g_fstat),
     WINAPK_SHIM("fstatat", g_fstatat),
