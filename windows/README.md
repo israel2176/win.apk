@@ -146,14 +146,28 @@ The app sees a 360x800 dp phone, the most common phone screen.
 phone at the monitor's scale. When the whole window, title bar included, would
 not fit the monitor's work area (the screen without the taskbar), the app gets
 a lower density instead, so it keeps its dp size and still draws at the
-window's own pixel size. The window is fitted again when it moves to another
-monitor or the taskbar changes. `WINAPK_DENSITY` (a dpi) overrides the density.
-A window maximized or resized to another shape keeps the app's size and
-shows the phone at the largest size with its own aspect, centred, with black
-bars around it, as upstream's letterbox container does: a portrait app
-maximized on a wide screen is a phone in the middle, scaled to the screen
-height. Clicks on the bars go nowhere. `MACAPK_LETTERBOX=0` stretches the
-phone over the whole window instead, as before.
+window's own pixel size. `WINAPK_DENSITY` (a dpi) overrides the density.
+
+The window is the app's display, as an Android desktop window is. Resizing
+it -- dragging an edge, maximizing, snapping -- gives the app a display of the
+new size: its surface is the window's client area in pixels, the Configuration
+and DisplayMetrics follow (`DisplayConfig`), the views are laid out again and
+every GL surface and native window hears `surfaceChanged`. The app follows
+each step of a drag, and frames are shown pixel for pixel: an old frame is
+never stretched to the new size, it stays unscaled until the app has drawn
+the new one. An app that fixed its orientation keeps its shape in a window of
+the other one: it gets the largest box of its aspect, centred, with black bars
+around it, as Android letterboxes a fixed-orientation app on a large screen,
+and draws at that box's size. Clicks on the bars go nowhere. The size the user
+settles on is kept per app (`library\<name>.window`, in dp) for the next
+start; the library's Get Info resets it. `WINAPK_RESIZABLE=0` keeps the
+phone's size for good and shows it letterboxed in whatever size the window
+gets; `MACAPK_LETTERBOX=0` then stretches it over the whole window.
+
+The density stays what it was at launch. On a monitor with another scale the
+window keeps its size in physical terms and the frames are resampled to it,
+the one case a frame is scaled by design (PORTING.md, "Display", on why a
+density change is not done yet).
 
 An app runs once at a time, as on the Mac: starting it again (a shortcut, the
 library) brings the running app's window forward, and updating it while it
@@ -223,6 +237,57 @@ before, and the log says so once.
   directory, kept between runs; the browser tab has a profile of its own
   there.
 
+### Google Play services
+
+Apps that depend on Play services get upstream's stand-ins, the same Java on
+Windows as on the Mac: `GoogleApiAvailability` answers that the services are
+there (`com.macapk.loader.PlayServices`), the client APIs under
+`runtime/java/com/google/android/gms/` (tasks, common, auth, location, ads,
+appset, cast, games, maps, nearby, safetynet, wallet, wearable...) are
+in-process, and `runtime/java/com/macapk/gms/` holds the services behind
+them. What they need from the host on Windows:
+
+- **Google sign-in.** The account chooser (`GoogleSignIn`, Credential
+  Manager's Google ID and Sign in with Google options, One Tap,
+  `AccountManager` for `com.google` accounts) is upstream's. Its "Add an
+  account", a licence check that needs an account, and the library's
+  Settings > Google account open the Google sign-in window
+  (`host/native_signin.cpp`, upstream's `gms_signin.mm`): Google's own
+  EmbeddedSetup page in a WebView2 window of its own, in an in-private
+  profile, with the Android WebView user agent that makes Google serve the
+  device flow. The `oauth_token` cookie the finished flow sets is exchanged
+  for a master token (`GoogleAuthClient`); the password never reaches
+  Win.apk. It needs the WebView2 Runtime (2022 or later, for private
+  profiles); headless, or without WebView2, the ask is answered as
+  cancelled, as a headless run on the Mac answers it.
+- **Play licensing** (`PlayLicenseClient`), **Firebase Cloud Messaging**
+  (`GcmRegisterClient`, the push channel in `McsClient`, which honours
+  `WINAPK_PROXY=socks5://host:port`), **Firebase Analytics**
+  (`MeasurementBrokerService` hands the app its own measurement service) and
+  the **fused location provider** (`GmsLocationService` on `LocationBridge`,
+  Windows' geolocation) are upstream's Java and need no further host piece.
+- The layer's state (the account, its tokens, the checkin identity) is
+  `%LOCALAPPDATA%\Win.apk\gms\gms_state.properties`, next to the
+  installed-apps registry as upstream keeps it next to its own
+  (`MACAPK_GMS_DIR` moves it); a file in the user's own profile where
+  upstream has a 0600 file. Upstream's opt-in Keychain store
+  (`MACAPK_GMS_KEYCHAIN=1`, the `security` tool) has no counterpart here.
+- `winapk-runtime --gms <command> [args]`, after the other options, is
+  upstream's `macapk-runtime --gms`: `status`, `selftest`, `accounts`,
+  `signin-window`, `signout`, `checkin`, `license <pkg> <versionCode>`,
+  `gcmtoken` and the rest of `com.macapk.gms.GmsCli`, with no app. The
+  library's Settings > Google account lists the accounts, adds one and signs
+  out through it.
+- Upstream's switches apply: `MACAPK_GMS_PRESENT=0` restores the
+  services-absent contract, `MACAPK_GMS_FCM=0` the push backend's,
+  `MACAPK_GMS_SIGNIN=0` the sign-in chooser's, `MACAPK_GMS_LOCATION=0` the
+  location provider's.
+
+Not Play-certified, as upstream: no Google signing certificate, no installed
+`com.google.android.gms` package (an app that verifies its signature finds
+none), no Play Integrity or SafetyNet attestation, Play Billing answers
+`BILLING_UNAVAILABLE`, and the Maps SDK lays out a blank map.
+
 Shared storage is the user's own folders, as on a phone: `/sdcard/Download`,
 `Pictures`, `Documents`, `Music` and `Movies` are junctions to Windows'
 Downloads, Pictures, Documents, Music and Videos (wherever they are
@@ -291,6 +356,8 @@ Done so far:
 - The app library (`Win.apk.exe`) with shortcuts per app, the Store (F-Droid),
   the installer (`package/winapk.iss`, English and Hebrew) and the release
   workflow.
+- Google Play services as upstream provides them: the Google sign-in window
+  on WebView2, `winapk-runtime --gms`, the library's Google account setting.
 
 Next, in order: video (MediaPlayer and the NDK media API on Media
 Foundation), Vulkan (`VK_KHR_win32_surface`), sensors, W^X thunks with unwind

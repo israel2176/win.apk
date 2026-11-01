@@ -23,6 +23,10 @@ What works
 - Sound from Java through AudioTrack and SoundPool (WAV, Ogg, MP3), saving
   data (files, SharedPreferences, SQLite), the clipboard, file open/save
   dialogs and game controllers.
+- Google sign-in and the Play services apps use for licences, push
+  notifications, Firebase Analytics and location. Signing in opens Google's
+  own page in a window (it needs the WebView2 Runtime, which Windows 11 and
+  most Windows 10 PCs have); Settings > Google account adds the account.
 
 What does not work yet
 ----------------------
@@ -30,7 +34,7 @@ What does not work yet
 - NativeActivity games (pure C/C++ apps without a Java activity).
 - MediaPlayer and sound from native code (OpenSL ES, AAudio), video
   playback, the camera, WebView (web pages inside apps), location.
-- Google Play services (sign-in, in-app purchases, maps).
+- Play Store features: in-app purchases, Play Integrity, Google Maps.
 
 Installing Win.apk
 ------------------
@@ -78,9 +82,12 @@ keeps the apps too. Delete %LOCALAPPDATA%\Win.apk to start from scratch.
 
 Reporting a problem
 -------------------
-If an app does not start or misbehaves, the last log says why. Please note
-the app's name and version and attach last-run.log. These lines in the log
-are the most useful:
+If an app does not start or misbehaves, the last log says why. Please open
+an issue on GitHub (the "An app does not work" template) with the app's name,
+version and where it came from, the exact steps that lead to the problem, a
+screenshot of the app at that point, and last-run.log attached whole. The
+repository's docs\APPS.md lists common apps and the problems already known.
+These lines in the log are the most useful:
   "native not implemented"            a Windows piece that is missing
   "not implemented on Windows yet"    a system function an app's native code needs
   "Exception" or "FATAL"              the app crashed

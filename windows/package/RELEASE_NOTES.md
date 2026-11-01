@@ -20,13 +20,14 @@ A pre-release for testing: Win.apk runs Android apps on Windows 10/11 x64.
 - **Storage:** files, SharedPreferences and SQLite. Shared storage (Pictures, Downloads, Documents...) is the user's own Windows folders.
 - **Permissions:** apps ask for every permission as on Android, in a Windows dialog over the app (Allow / Don't allow, and "don't ask again" after a second refusal): storage and media, location (precise or approximate, and "all the time" separately), camera, microphone, contacts, calendar, phone, call logs, SMS, notifications, nearby devices, physical activity and body sensors, plus the special access of "All files access", "Media management", "Display over other apps" and "Install unknown apps". Nothing is granted without asking; the answers survive restarts and updates. An app's App info screen, or Get Info in the library, turns each one on or off or resets them, and an app whose permission is taken away is stopped, as on Android.
 - **Desktop services:** clipboard, file pickers and game controllers.
+- **Google sign-in and Play services:** apps that sign in with Google, check a Play licence, use Firebase Analytics or Cloud Messaging, or ask Play services for location get Win.apk's own in-process stand-ins, as on the Mac. Signing in opens Google's own page in a window of its own (it needs the WebView2 Runtime); Win.apk never sees the password. Settings > Google account adds and removes the account.
 
 In the automated sweep of open-source apps, 36 of 38 draw their first screen.
 
 ## Not yet
 - Native code for 32-bit ARM only (`armeabi-v7a`).
 - Vulkan.
-- Google Play services.
+- Play Store features: in-app purchases, Play Integrity, and the Maps SDK's map.
 
 ## Reporting
-Please include the app's name and version, and attach `%LOCALAPPDATA%\Win.apk\logs\last-run.log`.
+Open an issue on GitHub with the "An app does not work" template. Please include the app's name, version and where it came from, the exact steps to reproduce the problem, a screenshot of the app at the point it goes wrong, and attach `%LOCALAPPDATA%\Win.apk\logs\last-run.log` (the whole file). `docs/APPS.md` in the repository lists common apps and the problems already known. If Win.apk is useful to you, a star on the repository helps.
