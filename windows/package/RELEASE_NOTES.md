@@ -26,4 +26,4 @@ In the automated sweep of open-source apps, about 33 of 38 draw their first scre
 - Google Play services.
 
 ## Reporting
-Please include the app's name and version, and attach `%LOCALAPPDATA%\Win.apk\logs\last-run.log`.
+Open an issue on GitHub with the "An app does not work" template. Please include the app's name, version and where it came from, the exact steps to reproduce the problem, a screenshot of the app at the point it goes wrong, and attach `%LOCALAPPDATA%\Win.apk\logs\last-run.log` (the whole file). `docs/APPS.md` in the repository lists common apps and the problems already known. If Win.apk is useful to you, a star on the repository helps.
