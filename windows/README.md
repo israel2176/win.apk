@@ -185,6 +185,57 @@ before, and the log says so once.
   directory, kept between runs; the browser tab has a profile of its own
   there.
 
+### Google Play services
+
+Apps that depend on Play services get upstream's stand-ins, the same Java on
+Windows as on the Mac: `GoogleApiAvailability` answers that the services are
+there (`com.macapk.loader.PlayServices`), the client APIs under
+`runtime/java/com/google/android/gms/` (tasks, common, auth, location, ads,
+appset, cast, games, maps, nearby, safetynet, wallet, wearable...) are
+in-process, and `runtime/java/com/macapk/gms/` holds the services behind
+them. What they need from the host on Windows:
+
+- **Google sign-in.** The account chooser (`GoogleSignIn`, Credential
+  Manager's Google ID and Sign in with Google options, One Tap,
+  `AccountManager` for `com.google` accounts) is upstream's. Its "Add an
+  account", a licence check that needs an account, and the library's
+  Settings > Google account open the Google sign-in window
+  (`host/native_signin.cpp`, upstream's `gms_signin.mm`): Google's own
+  EmbeddedSetup page in a WebView2 window of its own, in an in-private
+  profile, with the Android WebView user agent that makes Google serve the
+  device flow. The `oauth_token` cookie the finished flow sets is exchanged
+  for a master token (`GoogleAuthClient`); the password never reaches
+  Win.apk. It needs the WebView2 Runtime (2022 or later, for private
+  profiles); headless, or without WebView2, the ask is answered as
+  cancelled, as a headless run on the Mac answers it.
+- **Play licensing** (`PlayLicenseClient`), **Firebase Cloud Messaging**
+  (`GcmRegisterClient`, the push channel in `McsClient`, which honours
+  `WINAPK_PROXY=socks5://host:port`), **Firebase Analytics**
+  (`MeasurementBrokerService` hands the app its own measurement service) and
+  the **fused location provider** (`GmsLocationService` on `LocationBridge`,
+  Windows' geolocation) are upstream's Java and need no further host piece.
+- The layer's state (the account, its tokens, the checkin identity) is
+  `%LOCALAPPDATA%\Win.apk\gms\gms_state.properties`, next to the
+  installed-apps registry as upstream keeps it next to its own
+  (`MACAPK_GMS_DIR` moves it); a file in the user's own profile where
+  upstream has a 0600 file. Upstream's opt-in Keychain store
+  (`MACAPK_GMS_KEYCHAIN=1`, the `security` tool) has no counterpart here.
+- `winapk-runtime --gms <command> [args]`, after the other options, is
+  upstream's `macapk-runtime --gms`: `status`, `selftest`, `accounts`,
+  `signin-window`, `signout`, `checkin`, `license <pkg> <versionCode>`,
+  `gcmtoken` and the rest of `com.macapk.gms.GmsCli`, with no app. The
+  library's Settings > Google account lists the accounts, adds one and signs
+  out through it.
+- Upstream's switches apply: `MACAPK_GMS_PRESENT=0` restores the
+  services-absent contract, `MACAPK_GMS_FCM=0` the push backend's,
+  `MACAPK_GMS_SIGNIN=0` the sign-in chooser's, `MACAPK_GMS_LOCATION=0` the
+  location provider's.
+
+Not Play-certified, as upstream: no Google signing certificate, no installed
+`com.google.android.gms` package (an app that verifies its signature finds
+none), no Play Integrity or SafetyNet attestation, Play Billing answers
+`BILLING_UNAVAILABLE`, and the Maps SDK lays out a blank map.
+
 Shared storage is the user's own folders, as on a phone: `/sdcard/Download`,
 `Pictures`, `Documents`, `Music` and `Movies` are junctions to Windows'
 Downloads, Pictures, Documents, Music and Videos (wherever they are
@@ -247,6 +298,8 @@ Done so far:
   EGL window surfaces), plus libandroid's assets.
 - The app library (`Win.apk.exe`) with shortcuts per app, the installer
   (`package/winapk.iss`) and the release workflow.
+- Google Play services as upstream provides them: the Google sign-in window
+  on WebView2, `winapk-runtime --gms`, the library's Google account setting.
 
 Next, in order: OpenSL ES and AAudio for native sound, `NativeActivity`,
 `NativeMedia` (MediaPlayer and video on Media Foundation), WebView2, the

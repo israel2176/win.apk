@@ -98,6 +98,7 @@ constexpr UINT kStoreProgress = WM_APP + 6;   // wParam: KB of the catalog recei
 constexpr UINT kStoreIcon = WM_APP + 7;       // wParam: kIconFailed, Saved, Dropped; lParam: new std::string (package)
 constexpr UINT kStoreDownload = WM_APP + 8;   // wParam: percent, lParam: new std::string (package)
 constexpr UINT kStoreDownloaded = WM_APP + 9; // wParam: ok, lParam: new Download
+constexpr UINT kGmsDone = WM_APP + 10;       // the Google sign-in window closed; wParam: exit code, lParam: new std::wstring (stdout)
 constexpr UINT_PTR kAnimTimer = 1;
 constexpr int kIdSearch = 100;
 enum Cmd { kCmdOpen = 200, kCmdInfo, kCmdShortcut, kCmdShowApk, kCmdAppFolder, kCmdLog, kCmdReinstall, kCmdUpdate,
@@ -218,6 +219,28 @@ const wchar_t* tr(const wchar_t* en) {
          L"ריקות שוב בשביל האפליקציות, והקבצים שלך נשארים במקומם."},
         {L"Each installed app keeps its data here. Removing an app keeps what it saved.", L"כל אפליקציה מותקנת שומרת כאן את הנתונים שלה. הסרת אפליקציה משאירה את מה שהיא שמרה."},
         {L"App data", L"נתוני אפליקציות"},
+        {L"Google account", L"חשבון Google"},
+        {L"Signing in…", L"מתחבר…"},
+        {L"Finish signing in in the Google window, or close it.", L"השלם את הכניסה בחלון של Google, או סגור אותו."},
+        {L"Sign out", L"יציאה מהחשבון"},
+        {L"Sign in with Google", L"כניסה עם Google"},
+        {L"Add another account", L"הוספת חשבון נוסף"},
+        {L"Apps that sign in with Google, check a Play licence or get push notifications use the account added here.",
+         L"אפליקציות שנכנסות עם Google, בודקות רישיון Play או מקבלות התראות push משתמשות בחשבון שמוסיפים כאן."},
+        {L"Sign in…", L"כניסה…"},
+        {L"The sign-in happens on Google's own page, in a window of its own: Win.apk never sees the password. The "
+         L"account's tokens stay in the app data on this PC.",
+         L"הכניסה מתבצעת בדף של Google עצמה, בחלון נפרד: Win.apk לעולם לא רואה את הסיסמה. האסימונים של החשבון "
+         L"נשמרים בנתוני האפליקציות במחשב הזה."},
+        {L"Sign out of {0}?", L"לצאת מהחשבון {0}?"},
+        {L"Win.apk forgets the account and its tokens on this PC. Apps that used it ask again.",
+         L"Win.apk תשכח את החשבון ואת האסימונים שלו במחשב הזה. אפליקציות שהשתמשו בו יבקשו שוב."},
+        {L"{0} was signed out.", L"{0} יצא מהחשבון."},
+        {L"Could not sign out", L"היציאה מהחשבון נכשלה"},
+        {L"Signed in to Google.", L"הכניסה ל-Google הושלמה."},
+        {L"Signed in as {0}.", L"נכנסת בתור {0}."},
+        {L"No account was added.", L"לא נוסף חשבון."},
+        {L"Could not sign in to Google", L"הכניסה ל-Google נכשלה"},
         {L"Version {0}", L"גרסה {0}"},
         {L"An unofficial port of Mac.apk to Windows. Not affiliated with or endorsed by the Mac.apk project.", L"הסבה לא רשמית של Mac.apk ל-Windows. אינה קשורה לפרויקט Mac.apk ואינה מאושרת על ידו."},
         {L"About", L"אודות"},
@@ -3191,6 +3214,156 @@ Row text_row(std::wstring title, std::wstring value, std::wstring detail = L"") 
 void apply_theme();
 void apply_language();
 
+// ---- The Google account (upstream's Accounts panel) --------------------------
+//
+// Apps that sign in with Google, check a Play licence or register for push
+// use the account the GMS layer (runtime/java/com/macapk/gms) holds. The
+// layer's state is the runtime's (<data>\gms, MACAPK_GMS_DIR): the launcher
+// never reads the credentials file, it asks `winapk-runtime --gms` as
+// Mac.apk's launcher asks `macapk-runtime --gms`. The exit codes are
+// GmsCli.run's contract: 0 done, 1 an ERROR line, 2 cancelled. The one cheap
+// answer is the `accounts.present` marker GmsStore keeps next to its file:
+// present iff an account is signed in, which decides whether opening Settings
+// pays a JVM start for the account list.
+
+fs::path gms_dir() { return data_dir() / L"gms"; }
+fs::path gms_log() { return logs_dir() / L"gms.log"; }
+
+bool google_account_present() {
+    std::error_code ec;
+    return fs::exists(gms_dir() / L"accounts.present", ec);
+}
+
+// Runs winapk-runtime --gms <args>, its stdout into *out (UTF-8, as the
+// runtime's manifest makes the code page) and its stderr into logs\gms.log.
+// The exit code, or -1 when it did not start.
+int run_gms(const std::wstring& args, std::wstring* out) {
+    std::error_code ec;
+    fs::create_directories(logs_dir(), ec);
+    SECURITY_ATTRIBUTES sa{sizeof(sa), nullptr, TRUE};
+    HANDLE read = nullptr, write = nullptr;
+    if (!CreatePipe(&read, &write, &sa, 0)) return -1;
+    SetHandleInformation(read, HANDLE_FLAG_INHERIT, 0);
+    HANDLE err = CreateFileW(gms_log().c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_DELETE, &sa, CREATE_ALWAYS,
+                             FILE_ATTRIBUTE_NORMAL, nullptr);
+    STARTUPINFOW si{};
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdOutput = write;
+    si.hStdError = err != INVALID_HANDLE_VALUE ? err : write;
+    si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+    std::wstring cmd = L"\"" + runtime_exe().wstring() + L"\" --gms " + args;
+    PROCESS_INFORMATION pi{};
+    const BOOL ok = CreateProcessW(nullptr, &cmd[0], nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr,
+                                   root().c_str(), &si, &pi);
+    CloseHandle(write);
+    if (err != INVALID_HANDLE_VALUE) CloseHandle(err);
+    std::string bytes;
+    if (ok) {
+        char buf[4096];
+        DWORD n = 0;
+        while (ReadFile(read, buf, sizeof buf, &n, nullptr) && n > 0) bytes.append(buf, n);
+    }
+    CloseHandle(read);
+    if (!ok) return -1;
+    if (out) *out = utf8_to_wide(bytes);
+    CloseHandle(pi.hThread);
+    return static_cast<int>(wait_exit(pi.hProcess));
+}
+
+// One argument for the runtime's command line, as CommandLineToArgvW splits it.
+std::wstring gms_arg(const std::wstring& a) {
+    std::wstring q = L"\"";
+    size_t slashes = 0;
+    for (wchar_t c : a) {
+        if (c == L'\\') {
+            ++slashes;
+            continue;
+        }
+        q.append(c == L'"' ? slashes * 2 + 1 : slashes, L'\\');
+        slashes = 0;
+        q += c;
+    }
+    q.append(slashes * 2, L'\\');
+    return q + L"\"";
+}
+
+// The signed-in accounts: `ACCOUNT<tab>email<tab>services` lines from
+// `--gms accounts`. Only asked when the marker says there is one.
+std::vector<std::wstring> google_accounts() {
+    std::vector<std::wstring> out;
+    if (!google_account_present()) return out;
+    std::wstring text;
+    if (run_gms(L"accounts", &text) != 0) return out;
+    size_t at = 0;
+    while (at < text.size()) {
+        size_t end = text.find(L'\n', at);
+        if (end == std::wstring::npos) end = text.size();
+        std::wstring line = text.substr(at, end - at);
+        at = end + 1;
+        if (!line.empty() && line.back() == L'\r') line.pop_back();
+        if (line.rfind(L"ACCOUNT\t", 0) != 0) continue;
+        const size_t tab = line.find(L'\t', 8);
+        out.push_back(line.substr(8, tab == std::wstring::npos ? std::wstring::npos : tab - 8));
+    }
+    return out;
+}
+
+// The sign-in window is the runtime's (--gms signin-window: Google's own
+// page in a WebView2 window; the launcher never sees the password). It takes
+// as long as the user takes, so it runs on a thread and reports to the
+// library's window, which rebuilds the Settings sheet if it is still open.
+bool g_gms_busy = false;
+
+DWORD WINAPI gms_signin_thread(void*) {
+    auto* out = new std::wstring();
+    const int code = run_gms(L"signin-window", out);
+    PostMessageW(g_main, kGmsDone, static_cast<WPARAM>(static_cast<unsigned>(code)), reinterpret_cast<LPARAM>(out));
+    return 0;
+}
+
+void start_google_signin() {
+    if (g_gms_busy) return;
+    g_gms_busy = true;
+    HANDLE t = CreateThread(nullptr, 0, gms_signin_thread, nullptr, 0, nullptr);
+    if (t) CloseHandle(t);
+    else g_gms_busy = false;
+}
+
+void google_signout(const std::wstring& account) {
+    if (!confirm(fmt(L"Sign out of {0}?", {account}),
+                 tr(L"Win.apk forgets the account and its tokens on this PC. Apps that used it ask again."),
+                 tr(L"Sign out"))) {
+        return;
+    }
+    std::wstring text;
+    if (run_gms(L"signout " + gms_arg(account), &text) == 0) {
+        set_status(fmt(L"{0} was signed out.", {account}), kInfo);
+    } else {
+        failed_with_log(tr(L"Could not sign out"), gms_log());
+    }
+}
+
+Section google_account_section() {
+    Section sec{tr(L"Google account"), {}, L""};
+    if (g_gms_busy) {
+        sec.rows.push_back(text_row(tr(L"Google account"), tr(L"Signing in…"),
+                                    tr(L"Finish signing in in the Google window, or close it.")));
+    } else {
+        const std::vector<std::wstring> accounts = google_accounts();
+        for (const std::wstring& a : accounts) {
+            sec.rows.push_back(button_row(a, L"", tr(L"Sign out"), [a] { google_signout(a); }, true));
+        }
+        sec.rows.push_back(button_row(accounts.empty() ? tr(L"Sign in with Google") : tr(L"Add another account"),
+                                      tr(L"Apps that sign in with Google, check a Play licence or get push "
+                                         L"notifications use the account added here."),
+                                      tr(L"Sign in…"), [] { start_google_signin(); }));
+    }
+    sec.footer = tr(L"The sign-in happens on Google's own page, in a window of its own: Win.apk never sees the "
+                    L"password. The account's tokens stay in the app data on this PC.");
+    return sec;
+}
+
 std::vector<Section> settings_sections() {
     std::vector<Section> out;
 
@@ -3263,6 +3436,8 @@ std::vector<Section> settings_sections() {
                                tr(L"View logs"), [] { show_logs(last_run_log()); }),
                     button_row(tr(L"Logs folder"), logs_dir().wstring(), tr(L"Open folder"), [] { open_path(logs_dir()); })},
                    tr(L"Attach the log to a bug report: it says what the runtime did and where it stopped.")});
+    out.push_back(google_account_section());
+
     // Read by the runtime when an app opens (runtime_main.cpp, map_shared_folders).
     Row folders;
     folders.kind = Row::kToggle;
@@ -4483,6 +4658,28 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case kRefresh:
             refresh();
             return 0;
+        case kGmsDone: {
+            std::unique_ptr<std::wstring> out(reinterpret_cast<std::wstring*>(lp));
+            g_gms_busy = false;
+            const int code = static_cast<int>(static_cast<unsigned>(wp));
+            if (code == 0) {
+                // "SIGNED_IN<tab>email" is the last line that matters.
+                std::wstring email;
+                if (const size_t at = out->find(L"SIGNED_IN\t"); at != std::wstring::npos) {
+                    email = out->substr(at + 10, out->find_first_of(L"\r\n", at) - at - 10);
+                }
+                set_status(email.empty() ? tr(L"Signed in to Google.") : fmt(L"Signed in as {0}.", {email}), kSuccess);
+            } else if (code == 2) {
+                set_status(tr(L"No account was added."), kInfo);
+            } else {
+                failed_with_log(tr(L"Could not sign in to Google"), gms_log());
+            }
+            if (g_sheet && IsWindow(g_sheet->hwnd)) {
+                g_sheet->sections = g_sheet->build();
+                InvalidateRect(g_sheet->hwnd, nullptr, FALSE);
+            }
+            return 0;
+        }
         case kStoreCatalog:
             if (wp == kCatalogList) {
                 std::unique_ptr<std::vector<StoreApp>> list(reinterpret_cast<std::vector<StoreApp>*>(lp));
