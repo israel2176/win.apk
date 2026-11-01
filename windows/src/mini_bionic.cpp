@@ -271,19 +271,10 @@ WINAPK_GUEST_ABI void g_qsort(void* base, size_t n, size_t size, GuestCompare cm
     std::qsort(base, n, size, host_compare_trampoline);
     t_guest_compare = saved;
 }
-// bsearch, the same way. Missing, it returned 0 ("not found") for keys that
-// are there, and Flutter's engine read through that null after its first
-// frame (City Car).
-WINAPK_GUEST_ABI void* g_bsearch(const void* key, const void* base, size_t n, size_t size, GuestCompare cmp) {
-    GuestCompare saved = t_guest_compare;
-    t_guest_compare = cmp;
-    void* r = std::bsearch(key, base, n, size, host_compare_trampoline);
-    t_guest_compare = saved;
-    return r;
-}
 
 // bsearch, the same way. BoringSSL's error-string and cipher tables are
-// searched with it; the stub's null left Conscrypt (DAVx5) faulting at start.
+// searched with it; the stub's null left Conscrypt (DAVx5) faulting at start,
+// and Flutter's engine after its first frame (City Car).
 WINAPK_GUEST_ABI void* g_bsearch(const void* key, const void* base, size_t n, size_t size, GuestCompare cmp) {
     GuestCompare saved = t_guest_compare;
     t_guest_compare = cmp;
@@ -345,7 +336,6 @@ const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("__assert", g_assert),
     WINAPK_SHIM("__assert2", g_assert2),
     WINAPK_SHIM("qsort", g_qsort),
-    WINAPK_SHIM("bsearch", g_bsearch),
     WINAPK_SHIM("__tls_get_addr", winapk::tls_get_addr),
 };
 
