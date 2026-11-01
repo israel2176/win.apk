@@ -15,7 +15,7 @@ whole) only when a task needs them.
 | `windows/src/`, `windows/include/winapk/` | ELF loader, linker, ELF TLS, `%fs` patch, ABI thunks, guest JNI. `src/bionic/` + `mini_bionic.cpp`: the Bionic libc shim (~520 functions, `sysv_abi`) |
 | `windows/host/` | The runtime host: `runtime_main.cpp` (winapk-runtime.exe: args `--apk --data --jdk --lib --install-only`), `win32_window.cpp` (window, input), `native_*.cpp` (the Java natives: `native_cocoa.cpp` = window/phone size/icon, audio, clipboard, gamepad, ICU, images, OpenSL ES, `native_activity.cpp` = NativeActivity + the NDK input queue and AConfiguration...), `gl/` |
 | `windows/launcher/launcher_main.cpp` | `Win.apk.exe`, the library app (one file, GDI+ custom-drawn). See below |
-| `windows/java/` | Windows-only Java (`com/winapk/tools/AppMeta.java`: writes `icon.png` + `label.txt` at install) |
+| `windows/java/` | Windows-only Java (`com/winapk/tools/AppMeta.java`: writes `icon.png` + `label.txt` at install; `java_base_patch/`: Win.apk's own `java.base` overlay, `java/io/WinNTFileSystem.java` nests a drive-absolute child under its parent as Android does, compiled with upstream's `runtime/java_base_patch`) |
 | `windows/scripts/` | `build_java.sh` (builds `runtime/java` with a stock JDK), `stage_runtime.sh` (runnable `bin/`+`lib/`), `fetch_angle.sh`, `build_framework_res.sh` |
 | `windows/test/` | Unit tests (`*_test.cpp`), guest libs (`guest/`), Wine runners (`run_*_wine.sh`), `compat/` (app sweep: `apps.txt`, `sweep.py`) |
 | `windows/package/` | Installer (`winapk.iss`, Inno Setup; English or Hebrew by the Windows display language, UTF-8 with BOM), `README.txt` and `RELEASE_NOTES.md` shipped in the package |
