@@ -39,7 +39,9 @@ painting, dialogs, actions, sheets (Settings, Get Info: `Row`/`Section` model,
 helper (`install`/`uninstall` verbs), permissions (`namespace appops`: the
 signed app-ops store and the `runtime-permission`, `special-access`,
 `app-details` dialogs the runtime asks through, upstream's
-macapk-installhelper verbs; Get Info's Permissions rows), `wWinMain`.
+macapk-installhelper verbs, for every dangerous group: `kGroupRows` must match
+`runtime/java/com/macapk/loader/RuntimePermissionGroups.java`; Get Info's
+Permissions rows, which stop a running app on revoke), `wWinMain`.
 
 - Settings > Google account asks `winapk-runtime --gms accounts|signin-window|signout`
   (`run_gms`, stdout captured, stderr in `logs\gms.log`); exit codes 0 done,
