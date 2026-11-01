@@ -227,7 +227,8 @@ if(WINAPK_JNI_INCLUDE)
                               host/native_audio_input.cpp host/native_photos.cpp
                               host/webview2_host.cpp host/native_browser_tab.cpp host/native_webview.cpp
                               host/native_camera.cpp host/native_radios.cpp host/native_location.cpp
-                              host/user_folders.cpp
+                              host/native_signin.cpp
+                              host/user_folders.cpp host/crash_report.cpp
                               host/runtime.rc)
   target_link_libraries(winapk-runtime PRIVATE winapk_jni winapk_sqlite webpdecoder winapk_stb_vorbis windowscodecs
                         ole32 mf mfplat mfreadwrite mfuuid shlwapi advapi32 shell32 uuid wlanapi bthprops winmm)
