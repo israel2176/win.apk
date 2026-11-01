@@ -14,10 +14,14 @@
 #include "winapk/linker.h"
 
 #include <cerrno>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <map>
+#include <mutex>
 #include <string>
+#include <vector>
 
 #include <direct.h>
 #include <fcntl.h>
@@ -729,6 +733,26 @@ WINAPK_GUEST_ABI int g_closedir(GuestDir* d) {
 }
 WINAPK_GUEST_ABI void g_rewinddir(GuestDir*) {}
 
+// ---- pathconf ------------------------------------------------------------------
+// pathconf's answers for a local file system (<bits/posix_limits.h> values);
+// a name this does not know is "no limit", -1 with errno untouched, as the
+// manual allows.
+WINAPK_GUEST_ABI int64_t g_pathconf(const char*, int name) {
+    switch (name) {
+        case 0: return 127;   // _PC_LINK_MAX
+        case 1: return 255;   // _PC_MAX_CANON
+        case 2: return 255;   // _PC_MAX_INPUT
+        case 3: return 255;   // _PC_NAME_MAX
+        case 4: return 4096;  // _PC_PATH_MAX
+        case 5: return 4096;  // _PC_PIPE_BUF
+        case 6: return 1;     // _PC_CHOWN_RESTRICTED
+        case 7: return 1;     // _PC_NO_TRUNC
+        case 8: return 0;     // _PC_VDISABLE
+        default: return -1;
+    }
+}
+WINAPK_GUEST_ABI int64_t g_fpathconf(int, int name) { return g_pathconf(nullptr, name); }
+
 // ---- FILE streams ----------------------------------------------------------------------------
 // Bionic's mode letters, less "e" (O_CLOEXEC); the CRT stream is always binary,
 // as Linux's are.
@@ -794,7 +818,70 @@ WINAPK_GUEST_ABI FILE* g_freopen(const char* path, const char* mode, void* f) {
     if (!r) set_errno_from_crt(errno);
     return r;
 }
-WINAPK_GUEST_ABI int g_fclose(void* f) { return std::fclose(host_file(f)) ? fail_crt() : 0; }
+// ---- funopen ------------------------------------------------------------------
+//
+// BSD's FILE over callbacks, which bionic has and SDL's and some games' asset
+// readers use (a FILE over an AAsset). The CRT's FILE cannot run callbacks,
+// so a read-only stream is snapshotted through readfn into a temporary file,
+// which seeks and reads as the stream would; its closefn runs at fclose. A
+// writable stream (writefn) is not supported and fails with ENOSYS. Alex vs
+// Bus opened its data files this way and, with a null FILE, quit at once.
+using FunopenRead = int(WINAPK_GUEST_ABI*)(void*, char*, int);
+using FunopenWrite = int(WINAPK_GUEST_ABI*)(void*, const char*, int);
+using FunopenClose = int(WINAPK_GUEST_ABI*)(void*);
+struct FunopenFile {
+    void* cookie;
+    FunopenClose closefn;
+};
+std::mutex g_funopen_lock;
+std::map<FILE*, FunopenFile> g_funopen_files;
+
+WINAPK_GUEST_ABI FILE* g_funopen(void* cookie, FunopenRead readfn, FunopenWrite writefn, void* /*seekfn*/,
+                                 FunopenClose closefn) {
+    if (!readfn || writefn) {
+        *guest_errno() = 38;  // ENOSYS
+        return nullptr;
+    }
+    wchar_t dir[MAX_PATH + 1], name[MAX_PATH + 1];
+    if (!GetTempPathW(MAX_PATH, dir) || !GetTempFileNameW(dir, L"fun", 0, name)) {
+        *guest_errno() = 5;  // EIO
+        return nullptr;
+    }
+    FILE* f = _wfopen(name, L"w+bD");  // D: deleted when closed
+    if (!f) {
+        set_errno_from_crt(errno);
+        DeleteFileW(name);
+        return nullptr;
+    }
+    std::vector<char> buf(64 * 1024);
+    for (;;) {
+        const int n = readfn(cookie, buf.data(), static_cast<int>(buf.size()));
+        if (n <= 0) break;
+        std::fwrite(buf.data(), 1, static_cast<size_t>(n), f);
+    }
+    std::rewind(f);
+    std::lock_guard<std::mutex> hold(g_funopen_lock);
+    g_funopen_files[f] = {cookie, closefn};
+    return f;
+}
+
+WINAPK_GUEST_ABI int g_fclose(void* f) {
+    FILE* file = host_file(f);
+    FunopenFile fun{};
+    bool is_funopen = false;
+    {
+        std::lock_guard<std::mutex> hold(g_funopen_lock);
+        auto it = g_funopen_files.find(file);
+        if (it != g_funopen_files.end()) {
+            fun = it->second;
+            g_funopen_files.erase(it);
+            is_funopen = true;
+        }
+    }
+    const int rc = std::fclose(file) ? fail_crt() : 0;
+    if (is_funopen && fun.closefn) fun.closefn(fun.cookie);
+    return rc;
+}
 WINAPK_GUEST_ABI size_t g_fread(void* buf, size_t sz, size_t n, void* f) { return std::fread(buf, sz, n, host_file(f)); }
 WINAPK_GUEST_ABI size_t g_fwrite(const void* buf, size_t sz, size_t n, void* f) {
     return std::fwrite(buf, sz, n, host_file(f));
@@ -929,6 +1016,9 @@ const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("opendir", g_opendir),
     WINAPK_SHIM("fdopendir", g_fdopendir),
     WINAPK_SHIM("dirfd", g_dirfd),
+    WINAPK_SHIM("pathconf", g_pathconf),
+    WINAPK_SHIM("fpathconf", g_fpathconf),
+    WINAPK_SHIM("funopen", g_funopen),
     WINAPK_SHIM("readdir", g_readdir),
     WINAPK_SHIM("readdir64", g_readdir),
     WINAPK_SHIM("closedir", g_closedir),
