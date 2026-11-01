@@ -865,6 +865,22 @@ WINAPK_GUEST_ABI char* g_fgets_chk(char* s, int n, void* f, size_t bn) {
     }
     return g_fgets(s, n, f);
 }
+// Bionic's FORTIFY fread/fwrite: the buffer must hold size * count bytes.
+bool fits_fortify(size_t sz, size_t n, size_t bn) { return n == 0 || sz <= bn / n; }
+WINAPK_GUEST_ABI size_t g_fread_chk(void* buf, size_t sz, size_t n, void* f, size_t bn) {
+    if (!fits_fortify(sz, n, bn)) {
+        std::fprintf(stderr, "[win.apk] guest FORTIFY: fread: prevented buffer overflow\n");
+        std::abort();
+    }
+    return g_fread(buf, sz, n, f);
+}
+WINAPK_GUEST_ABI size_t g_fwrite_chk(const void* buf, size_t sz, size_t n, void* f, size_t bn) {
+    if (!fits_fortify(sz, n, bn)) {
+        std::fprintf(stderr, "[win.apk] guest FORTIFY: fwrite: prevented buffer over-read\n");
+        std::abort();
+    }
+    return g_fwrite(buf, sz, n, f);
+}
 WINAPK_GUEST_ABI int g_fgetc(void* f) { return std::fgetc(host_file(f)); }
 WINAPK_GUEST_ABI int g_ungetc(int c, void* f) { return std::ungetc(c, host_file(f)); }
 WINAPK_GUEST_ABI int g_fflush(void* f) { return std::fflush(f ? host_file(f) : nullptr); }
@@ -1001,6 +1017,8 @@ const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("putchar", g_putchar),
     WINAPK_SHIM("fgets", g_fgets),
     WINAPK_SHIM("__fgets_chk", g_fgets_chk),
+    WINAPK_SHIM("__fread_chk", g_fread_chk),
+    WINAPK_SHIM("__fwrite_chk", g_fwrite_chk),
     WINAPK_SHIM("fgetc", g_fgetc),
     WINAPK_SHIM("getc", g_fgetc),
     WINAPK_SHIM("ungetc", g_ungetc),

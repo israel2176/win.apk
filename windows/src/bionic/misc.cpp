@@ -11,6 +11,7 @@
 
 #include "winapk/mini_bionic.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -263,20 +264,54 @@ DWORD win_protect(int prot) {
 std::mutex g_maps_lock;
 std::map<uintptr_t, size_t> g_maps;  // reservations made here, by base
 
+// MAP_FIXED over address space the process already holds: a guest reserves a
+// range with PROT_NONE and maps pieces of it in place. The Dart VM does this
+// for every page of its compressed-pointer heap (a 4 GB-aligned reservation;
+// Flutter apps). VirtualAlloc cannot reserve what is reserved, so the pages
+// are committed, or for PROT_NONE decommitted, where they are; Linux hands out
+// fresh zero pages there, so committed ones are decommitted first. False when
+// any of the range is free or not private memory: the caller maps it anew.
+bool map_in_place(void* addr, size_t len, bool commit) {
+    uint8_t* const lo = static_cast<uint8_t*>(addr);
+    uint8_t* const hi = lo + len;
+    for (uint8_t* p = lo; p < hi;) {
+        MEMORY_BASIC_INFORMATION mbi;
+        if (!VirtualQuery(p, &mbi, sizeof mbi) || mbi.State == MEM_FREE || mbi.Type != MEM_PRIVATE) return false;
+        p = static_cast<uint8_t*>(mbi.BaseAddress) + mbi.RegionSize;
+    }
+    // Region by region: VirtualFree and VirtualAlloc work within one allocation.
+    for (uint8_t* p = lo; p < hi;) {
+        MEMORY_BASIC_INFORMATION mbi;
+        VirtualQuery(p, &mbi, sizeof mbi);
+        uint8_t* const end = std::min(hi, static_cast<uint8_t*>(mbi.BaseAddress) + mbi.RegionSize);
+        const size_t n = static_cast<size_t>(end - p);
+        if (mbi.State == MEM_COMMIT) VirtualFree(p, n, MEM_DECOMMIT);
+        if (commit && !VirtualAlloc(p, n, MEM_COMMIT, PAGE_READWRITE)) return false;
+        p = end;
+    }
+    return true;
+}
+
 WINAPK_GUEST_ABI void* g_mmap(void* addr, size_t len, int prot, int flags, int fd, int64_t off) {
     void* const kFailed = reinterpret_cast<void*>(-1);
     if (len == 0) {
         *guest_errno() = kEINVAL;
         return kFailed;
     }
-    void* want = (flags & 0x10) ? addr : nullptr;
+    // MAP_FIXED maps at addr or fails; a mapping somewhere else would leave
+    // the guest writing to the address it asked for.
+    const bool fixed = flags & 0x10;
+    void* want = fixed ? addr : nullptr;
     const bool anonymous = (flags & 0x20) || fd < 0;
-    if (prot == 0 && anonymous) {
+    void* p = nullptr;
+    if (fixed && map_in_place(addr, len, prot != 0 || !anonymous)) {
+        if (prot == 0 && anonymous) return addr;
+        p = addr;
+    } else if (prot == 0 && anonymous) {
         // An address-space reservation (allocators reserve gigabytes this way
-        // and commit pieces with mprotect). Only reserving keeps it off the
-        // commit charge, as Linux's overcommit does.
+        // and commit pieces with mprotect or MAP_FIXED). Only reserving keeps
+        // it off the commit charge, as Linux's overcommit does.
         void* r = VirtualAlloc(want, len, MEM_RESERVE, PAGE_NOACCESS);
-        if (!r && want) r = VirtualAlloc(nullptr, len, MEM_RESERVE, PAGE_NOACCESS);
         if (!r) {
             *guest_errno() = kENOMEM;
             return kFailed;
@@ -284,14 +319,16 @@ WINAPK_GUEST_ABI void* g_mmap(void* addr, size_t len, int prot, int flags, int f
         std::lock_guard<std::mutex> hold(g_maps_lock);
         g_maps[reinterpret_cast<uintptr_t>(r)] = len;
         return r;
-    }
-    // The pages are committed read-write first so a file's contents can be
-    // copied in; the requested protection follows.
-    void* p = VirtualAlloc(want, len, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
-    if (!p && want) p = VirtualAlloc(nullptr, len, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
-    if (!p) {
-        *guest_errno() = kENOMEM;
-        return kFailed;
+    } else {
+        // The pages are committed read-write first so a file's contents can
+        // be copied in; the requested protection follows.
+        p = VirtualAlloc(want, len, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        if (!p) {
+            *guest_errno() = kENOMEM;
+            return kFailed;
+        }
+        std::lock_guard<std::mutex> hold(g_maps_lock);
+        g_maps[reinterpret_cast<uintptr_t>(p)] = len;
     }
     if (!(flags & 0x20) && fd >= 0) {
         // A file mapping: a private copy of the file's bytes. Writes are not
@@ -310,8 +347,6 @@ WINAPK_GUEST_ABI void* g_mmap(void* addr, size_t len, int prot, int flags, int f
     }
     DWORD old;
     VirtualProtect(p, len, win_protect(prot), &old);
-    std::lock_guard<std::mutex> hold(g_maps_lock);
-    g_maps[reinterpret_cast<uintptr_t>(p)] = len;
     return p;
 }
 WINAPK_GUEST_ABI int g_munmap(void* addr, size_t len) {

@@ -543,6 +543,46 @@ ISA_EXPORT u64 isa_bench(u64 iterations, u64 seed, u64 c) {
     return h;
 }
 
+// Calls to what LLVM's machine outliner makes: functions outside the AAPCS64
+// that return flags (`cmp`, `ret`, and a `b.cond` after the call: Flutter's
+// stack check), read the caller's flags, or set a register the caller keeps.
+#if defined(__aarch64__)
+__asm__(".text\n"
+        ".p2align 2\n"
+        "isa_outlined_cmp:\n"
+        "    cmp x0, x1\n"
+        "    ret\n"
+        "isa_outlined_csel:\n"
+        "    csel x0, x2, x3, lo\n"
+        "    ret\n"
+        "isa_outlined_x19:\n"
+        "    add x19, x0, x2\n"
+        "    ret\n");
+ISA_EXPORT u64 isa_outlined(u64 a, u64 b, u64 c) {
+    register u64 x0 __asm__("x0") = a;
+    register u64 x1 __asm__("x1") = b;
+    register u64 x2 __asm__("x2") = c;
+    register u64 x3 __asm__("x3") = a ^ c;
+    __asm__ volatile("stp x19, x30, [sp, #-16]!\n"
+                     "bl isa_outlined_cmp\n"
+                     "cset x4, lo\n"
+                     "cmp x2, x0\n"
+                     "bl isa_outlined_csel\n"
+                     "bl isa_outlined_x19\n"
+                     "add x0, x19, x4, lsl #1\n"
+                     "ldp x19, x30, [sp], #16\n"
+                     : "+r"(x0)
+                     : "r"(x1), "r"(x2), "r"(x3)
+                     : "x4", "x30", "cc", "memory");
+    return x0;
+}
+#else
+ISA_EXPORT u64 isa_outlined(u64 a, u64 b, u64 c) {
+    const u64 below = a < b;
+    return (c < a ? c : a ^ c) + c + (below << 1);
+}
+#endif
+
 // The list the test walks (name, function).
 #define ISA_TESTS(X)       \
     X(isa_arith)           \
@@ -559,6 +599,7 @@ ISA_EXPORT u64 isa_bench(u64 iterations, u64 seed, u64 c) {
     X(isa_memory)          \
     X(isa_struct)          \
     X(isa_calls)           \
+    X(isa_outlined)        \
     X(isa_recursion)       \
     X(isa_atomics)         \
     X(isa_atomic128)       \
