@@ -99,6 +99,8 @@ jobs:
         run: ./build/winapk-audio-test.exe "$(cygpath -w "$PWD/windows/test/audio")"
       - name: Run the shared-folder mapping test
         run: ./build/winapk-user-folders-test.exe "$(cygpath -w "$PWD")"
+      - name: Run the window geometry test
+        run: ./build/winapk-window-test.exe
       - name: Run the real-JVM end-to-end test
         run: |
           export PATH="$(cygpath -u "$JAVA_HOME")/bin/server:$(cygpath -u "$JAVA_HOME")/bin:$PATH"
@@ -163,11 +165,18 @@ jobs:
         run: |
           # The runner has a desktop session, so this exercises the Win32
           # window: it must open (no headless fallback) and receive frames.
-          export WINAPK_HEADLESS_EXIT_AFTER_FRAMES=30
+          # A second after the first frame the window resizes itself to a
+          # 400x600 px client area (WINAPK_TEST_RESIZE), as if the user had,
+          # and the app must lay itself out and draw at that size within the
+          # run (240 ticks, 4 s): the frame is shown pixel for pixel, never a
+          # stretched old one.
+          export WINAPK_HEADLESS_EXIT_AFTER_FRAMES=240 WINAPK_TEST_RESIZE=400x600
           timeout 600 ./runtime/bin/winapk-runtime.exe --apk sudoku.apk --jdk "$JAVA_HOME" --data "$(cygpath -w "$PWD/appdata")" \
             > window.log 2>&1 || { tail -n 200 window.log; exit 1; }
           if grep -E "running headless|running without a window" window.log; then exit 1; fi
           grep -E "frames presented" window.log
+          grep -E "\[win.apk\] (window|window resized|resize):" window.log
+          grep -E "resize: the app drew at 400x600 px" window.log
       # A ready-to-run folder for trying apps by hand: the staged runtime (with
       # Win.apk.exe, the app library) and a Java runtime.
       - name: Package a preview

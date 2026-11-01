@@ -221,6 +221,11 @@ bool native_window_buffer_size(const void* window, int* w, int* h) {
     return true;
 }
 
+bool native_window_has_geometry() {
+    std::lock_guard<std::mutex> hold(g_lock);
+    return g_window.buf_w > 0 && g_window.buf_h > 0;
+}
+
 void* native_window_resolve(const char* name) {
     auto it = kSymbols.find(name);
     return it == kSymbols.end() ? nullptr : it->second;

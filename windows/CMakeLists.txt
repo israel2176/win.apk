@@ -230,7 +230,7 @@ if(WINAPK_JNI_INCLUDE)
                               host/user_folders.cpp
                               host/runtime.rc)
   target_link_libraries(winapk-runtime PRIVATE winapk_jni winapk_sqlite webpdecoder winapk_stb_vorbis windowscodecs
-                        ole32 mf mfplat mfreadwrite mfuuid shlwapi advapi32 shell32 uuid wlanapi bthprops)
+                        ole32 mf mfplat mfreadwrite mfuuid shlwapi advapi32 shell32 uuid wlanapi bthprops winmm)
   target_include_directories(winapk-runtime PRIVATE ${WINAPK_WEBP_DIR}/src)
   # WebView2 (host/webview2_host.h): the SDK's header to build against, from
   # scripts/fetch_webview2.sh; its WebView2Loader.dll is staged next to the
@@ -290,6 +290,12 @@ if(WINAPK_JNI_INCLUDE)
   add_executable(winapk-user-folders-test test/user_folders_test.cpp host/user_folders.cpp)
   target_link_libraries(winapk-user-folders-test PRIVATE shell32 ole32 uuid)
   target_link_options(winapk-user-folders-test PRIVATE -static)
+
+  # The app window's geometry: the box the app draws in and how a frame is
+  # shown in it (test/window_test.cpp), without a window.
+  add_executable(winapk-window-test test/window_test.cpp host/win32_window.cpp)
+  target_link_libraries(winapk-window-test PRIVATE windowscodecs ole32 uuid gdi32 user32)
+  target_link_options(winapk-window-test PRIVATE -static)
 
   # An app's native libraries (milestone M4, host/guest_libs.h): the stub DLL
   # that stands for each one and the translator that copies it. Built with the
