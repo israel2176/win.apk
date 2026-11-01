@@ -52,8 +52,9 @@ add_library(winapk_loader STATIC
   src/arm64/arm64_abi.cpp
 )
 target_include_directories(winapk_loader PUBLIC include PRIVATE src)
-# WaitOnAddress (the shim's futexes), BCryptGenRandom (arc4random), Winsock.
-target_link_libraries(winapk_loader PUBLIC synchronization bcrypt ws2_32)
+# WaitOnAddress (the shim's futexes), BCryptGenRandom (arc4random), Winsock,
+# GetAdaptersAddresses (getifaddrs).
+target_link_libraries(winapk_loader PUBLIC synchronization bcrypt ws2_32 iphlpapi)
 # zlib behind the guest's libz.so (src/bionic/zlib.cpp), linked statically
 # like everything else: MSYS2's mingw-w64-clang-x86_64-zlib, or
 # libz-mingw-w64-dev when cross-compiling on Linux.

@@ -30,6 +30,7 @@
 #include <ws2tcpip.h>
 #include <afunix.h>
 #include <windows.h>
+#include <iphlpapi.h>
 
 namespace winapk::bionic {
 
@@ -620,6 +621,133 @@ WINAPK_GUEST_ABI uint32_t g_htonl(uint32_t v) { return _byteswap_ulong(v); }
 WINAPK_GUEST_ABI uint16_t g_htons(uint16_t v) { return _byteswap_ushort(v); }
 WINAPK_GUEST_ABI unsigned g_if_nametoindex(const char*) { return 0; }
 
+// ---- getifaddrs -----------------------------------------------------------------------
+// Linux's struct ifaddrs (x86_64 layout), built from GetAdaptersAddresses.
+// Only adapters that are up are listed (Windows carries a dozen down virtual
+// ones, which apps that ignore ifa_flags would show), under Linux-shaped
+// names (lo, eth0, wlan0) since apps display them. A sockaddr carries the
+// guest's family. The stub that returned 0 without filling *out left
+// LocalSend's Rust walking an uninitialised list, and it died on it.
+struct GuestIfaddrs {
+    GuestIfaddrs* ifa_next;
+    char* ifa_name;
+    unsigned ifa_flags;
+    void* ifa_addr;
+    void* ifa_netmask;
+    void* ifa_broadaddr;
+    void* ifa_data;
+};
+struct IfaddrsNode {
+    GuestIfaddrs ifa;  // first, so a GuestIfaddrs* is the node
+    char name[16];     // IFNAMSIZ
+    sockaddr_storage addr, netmask, broadcast;
+};
+constexpr unsigned kIffUp = 0x1, kIffBroadcast = 0x2, kIffLoopback = 0x8, kIffPointToPoint = 0x10, kIffRunning = 0x40,
+                   kIffMulticast = 0x1000;
+
+WINAPK_GUEST_ABI void g_freeifaddrs(GuestIfaddrs* p) {
+    while (p) {
+        auto* node = reinterpret_cast<IfaddrsNode*>(p);
+        p = p->ifa_next;
+        delete node;
+    }
+}
+
+WINAPK_GUEST_ABI int g_getifaddrs(GuestIfaddrs** out) {
+    if (!out) {
+        *guest_errno() = kEINVAL;
+        return -1;
+    }
+    ULONG size = 16 * 1024;
+    std::vector<char> buf;
+    ULONG rc = ERROR_BUFFER_OVERFLOW;
+    for (int tries = 0; tries < 3 && rc == ERROR_BUFFER_OVERFLOW; ++tries) {
+        buf.resize(size);
+        rc = GetAdaptersAddresses(AF_UNSPEC,
+                                  GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER |
+                                      GAA_FLAG_SKIP_FRIENDLY_NAME,
+                                  nullptr, reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buf.data()), &size);
+    }
+    if (rc != NO_ERROR && rc != ERROR_NO_DATA) {
+        *guest_errno() = kEIO;
+        return -1;
+    }
+    GuestIfaddrs* head = nullptr;
+    GuestIfaddrs** tail = &head;
+    int eth = 0, wlan = 0, tun = 0;
+    const auto* adapters = rc == NO_ERROR ? reinterpret_cast<const IP_ADAPTER_ADDRESSES*>(buf.data()) : nullptr;
+    for (const IP_ADAPTER_ADDRESSES* a = adapters; a; a = a->Next) {
+        if (a->OperStatus != IfOperStatusUp) continue;
+        const bool loopback = a->IfType == IF_TYPE_SOFTWARE_LOOPBACK;
+        const bool p2p = a->IfType == IF_TYPE_PPP || a->IfType == IF_TYPE_TUNNEL;
+        char name[16];
+        if (loopback) {
+            std::snprintf(name, sizeof name, "lo");
+        } else if (a->IfType == IF_TYPE_IEEE80211) {
+            std::snprintf(name, sizeof name, "wlan%d", wlan++);
+        } else if (p2p) {
+            std::snprintf(name, sizeof name, "tun%d", tun++);
+        } else {
+            std::snprintf(name, sizeof name, "eth%d", eth++);
+        }
+        unsigned flags = kIffUp | kIffRunning;
+        if (loopback) {
+            flags |= kIffLoopback;
+        } else if (p2p) {
+            flags |= kIffPointToPoint;
+        } else {
+            flags |= kIffBroadcast;
+        }
+        if (!(a->Flags & IP_ADAPTER_NO_MULTICAST)) flags |= kIffMulticast;
+        for (const IP_ADAPTER_UNICAST_ADDRESS* u = a->FirstUnicastAddress; u; u = u->Next) {
+            const sockaddr* sa = u->Address.lpSockaddr;
+            if (!sa || (sa->sa_family != AF_INET && sa->sa_family != AF_INET6)) continue;
+            auto* node = new (std::nothrow) IfaddrsNode{};
+            if (!node) {
+                g_freeifaddrs(head);
+                *guest_errno() = kENOMEM;
+                return -1;
+            }
+            std::memcpy(node->name, name, sizeof name);
+            node->ifa.ifa_name = node->name;
+            node->ifa.ifa_flags = flags;
+            node->ifa.ifa_addr = &node->addr;
+            node->ifa.ifa_netmask = &node->netmask;
+            const unsigned prefix = u->OnLinkPrefixLength;
+            if (sa->sa_family == AF_INET) {
+                sockaddr_in addr = *reinterpret_cast<const sockaddr_in*>(sa);
+                addr.sin_port = 0;
+                sockaddr_in mask{};
+                mask.sin_family = AF_INET;
+                mask.sin_addr.s_addr = prefix >= 32 ? 0xffffffffu : prefix == 0 ? 0u : htonl(~0u << (32 - prefix));
+                std::memcpy(&node->addr, &addr, sizeof addr);
+                std::memcpy(&node->netmask, &mask, sizeof mask);
+                if (!loopback && !p2p) {
+                    sockaddr_in bcast = mask;
+                    bcast.sin_addr.s_addr = addr.sin_addr.s_addr | ~mask.sin_addr.s_addr;
+                    std::memcpy(&node->broadcast, &bcast, sizeof bcast);
+                    node->ifa.ifa_broadaddr = &node->broadcast;
+                }
+            } else {
+                sockaddr_in6 addr = *reinterpret_cast<const sockaddr_in6*>(sa);
+                addr.sin6_family = static_cast<ADDRESS_FAMILY>(kLinuxAfInet6);
+                addr.sin6_port = 0;
+                sockaddr_in6 mask{};
+                mask.sin6_family = static_cast<ADDRESS_FAMILY>(kLinuxAfInet6);
+                for (unsigned bit = 0; bit < 128 && bit < prefix; ++bit) {
+                    mask.sin6_addr.s6_addr[bit / 8] |= static_cast<unsigned char>(0x80 >> (bit % 8));
+                }
+                std::memcpy(&node->addr, &addr, sizeof addr);
+                std::memcpy(&node->netmask, &mask, sizeof mask);
+            }
+            *tail = &node->ifa;
+            tail = &node->ifa.ifa_next;
+        }
+    }
+    *out = head;
+    return 0;
+}
+
 const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("socket", g_socket),
     WINAPK_SHIM("socketpair", g_socketpair),
@@ -656,6 +784,8 @@ const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("htons", g_htons),
     WINAPK_SHIM("ntohs", g_htons),
     WINAPK_SHIM("if_nametoindex", g_if_nametoindex),
+    WINAPK_SHIM("getifaddrs", g_getifaddrs),
+    WINAPK_SHIM("freeifaddrs", g_freeifaddrs),
 };
 
 }  // namespace

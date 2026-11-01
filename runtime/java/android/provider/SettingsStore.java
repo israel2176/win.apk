@@ -75,9 +75,17 @@ final class SettingsStore {
     }
 
     // Seed the values real Android ships non-empty: the three animation
-    // scales default to 1.0, and Secure.ANDROID_ID gets a stable random
-    // 64-bit hex id on first run (persisted so it stays constant).
+    // scales default to 1.0, Secure.ANDROID_ID gets a stable random 64-bit hex
+    // id on first run (persisted so it stays constant), and
+    // Secure.DEFAULT_INPUT_METHOD names the host keyboard: a device always has
+    // a current IME, and apps read the id without a null check (Key Mapper's
+    // Application.onCreate NPEd on it). The component is the one
+    // InputMethodManager describes as the host keyboard; no package of that
+    // name is installed, as for a system IME an app has no access to.
+    static final String HOST_INPUT_METHOD = "com.macapk.loader/.HostKeyboard";
     private static void seedDefaults(Properties p) {
+        if (!p.containsKey(NS_SECURE + "default_input_method"))
+            p.setProperty(NS_SECURE + "default_input_method", HOST_INPUT_METHOD);
         if (!p.containsKey(NS_GLOBAL + "animator_duration_scale"))
             p.setProperty(NS_GLOBAL + "animator_duration_scale", "1.0");
         if (!p.containsKey(NS_GLOBAL + "transition_animation_scale"))
