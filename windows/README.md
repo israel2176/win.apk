@@ -91,11 +91,18 @@ library (`launcher/launcher_main.cpp`, the counterpart of upstream's
 - **Running and managing:** double-click an app to run it; right-click for Get
   Info, shortcuts, its files and log, updating it from a newer APK,
   reinstalling or removing it. Typing searches the library.
+- **Orientation:** apps open in landscape, the shape of a PC screen, unless the
+  settings say portrait. Right-click > "Open in portrait" / "Open in
+  landscape" turns one app the other way, for that app only
+  (`library\<name>.orientation`); Get Info shows the choice and can hand it
+  back to the settings. An app whose manifest fixes the orientation of its
+  launched activity always opens that way, and the menu entry says so.
 - **Hebrew:** the library is in Hebrew, laid out right to left, when Windows
   is; the settings can pick English or Hebrew instead.
 - **Settings** (the gear): language, light or dark theme, the default app for `.apk`
-  files, the phone's screen size and orientation, desktop shortcuts, and the
-  logs and app data folders.
+  files, the phone's screen size and orientation (`HKCU\Software\Win.apk`;
+  `Landscape` absent means landscape, an explicit 0 from an earlier version
+  still means portrait), desktop shortcuts, and the logs and app data folders.
 
 The package holds the runtime, a Java runtime, ANGLE and `README.txt`, which
 says what works, where app data and logs are, and what to attach to a bug
@@ -508,6 +515,12 @@ every such change is listed here:
   `android/hardware/Camera.java`, `camera2/CameraManager.java` and
   `AudioInputBridge` honour the Android permission before the Windows
   privacy switch.
+- `runtime/java/com/macapk/loader/ActivityHost.java`: without the AOSP window
+  policy (Windows), an activity that owns the window box asks the host for its
+  manifest's `screenOrientation` at launch (`NativeCocoa.applyWindowOrientation`,
+  the same native the policy's branch uses), so a portrait-only app opens
+  portrait although the library opens apps landscape. A host without the
+  native keeps the old behaviour.
 
 ## License
 

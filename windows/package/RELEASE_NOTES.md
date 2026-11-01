@@ -7,6 +7,7 @@ A pre-release for testing: Win.apk runs Android apps on Windows 10/11 x64.
 
 ## What works
 - **Java/Kotlin apps:** each opens in its own window, with mouse, wheel and keyboard input. Back is Escape, Alt+Left or the mouse's back button.
+- **Landscape by default:** apps open in landscape, the shape of a PC screen (an 800 × 360 dp phone), unless the settings say portrait. Right-click an app > "Open in portrait" / "Open in landscape" turns just that app the other way, and it stays that way; Get Info shows the choice. An app that requires portrait (or landscape) in its manifest always opens that way.
 - **Resizable windows:** drag an edge, maximize or snap an app's window and the app lays itself out for the new size, as an Android desktop window does (an app that fixed its orientation keeps it, with black bars). Each app remembers its size; Get Info resets it.
 - **In Hebrew or English:** Setup and the library follow the Windows display language; Hebrew is laid out right to left.
 - **OpenGL ES:** works from Java (`GLSurfaceView`, libGDX) and from an app's native code through a SurfaceView (SDL games). It runs on ANGLE (Direct3D 11), falling back to WARP or SwiftShader without a GPU.
