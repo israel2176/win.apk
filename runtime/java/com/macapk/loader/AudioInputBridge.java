@@ -96,6 +96,14 @@ public final class AudioInputBridge {
     public static long open(int sampleRate, int channels, int encoding,
                             int bufferFrames) {
         if (!available()) return 0L;
+        // The Android RECORD_AUDIO permission, where the host asks for it
+        // (SpecialAccessStore.allPermsAsk): AudioFlinger refuses the record
+        // track, so AudioRecord stays STATE_UNINITIALIZED -- the same failure
+        // a device gives without the permission.
+        if (Boolean.FALSE.equals(SpecialAccessStore.holds("android.permission.RECORD_AUDIO"))) {
+            NativeLog.w("AudioInput", "open refused: the app does not hold android.permission.RECORD_AUDIO");
+            return 0L;
+        }
         try {
             return nativeOpen(sampleRate, channels, encoding, bufferFrames);
         } catch (Throwable t) {
