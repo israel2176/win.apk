@@ -311,6 +311,18 @@ every such change is listed here:
   superclass chain and HotSpot refuses with NoSuchMethodError. NetGuard's
   main activity and androidx.startup failed on it (170 such sites in one
   DEX). Not Windows-specific; worth offering upstream.
+- `runtime/java/android/system/Os.java`: `chmod` and `fchmod` (Key Mapper
+  died at start on the missing method). Not Windows-specific.
+- `runtime/java/android/preference/Preference.java`: an app subclass that
+  overrides `onGetDefaultValue(TypedArray, int)` gets it called, with a
+  TypedArray holding `android:defaultValue`; the String the AttributeSet twin
+  reads broke DroidFish's ColorPickerPreference with a ClassCastException. Not
+  Windows-specific.
+- `runtime/java/com/macapk/loader/FragmentInflaterFactory.java`: a
+  `FragmentContainerView[android:name]` whose app FragmentManager cannot be
+  found by name (R8 renamed it) goes through the activity's own
+  `onCreateView` override, AOSP's route, instead of the view's 2-arg
+  constructor, which throws (Auxio, Tremotesf). Not Windows-specific.
 - `runtime/java/android/provider/MediaStoreProvider.java`: a projection may
   hold an aggregate over a known column (`COUNT(is_music)`, `COUNT(*)`,
   `MAX(date_added)`) or an alias (`_data AS path`), as MediaProvider's
