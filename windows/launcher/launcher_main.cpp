@@ -25,6 +25,10 @@
 // Double-clicking an app runs it (winapk-runtime --apk, without a console);
 // if it stops with an error the log can be opened. The screen size and
 // orientation picked in the settings reach the runtime as WINAPK_PHONE_SIZE.
+// Apps open in landscape, the shape of a PC screen, unless the settings say
+// portrait; right-click > Open in portrait / landscape turns one app the
+// other way (library\<name>.orientation), and an app whose manifest fixes
+// its launched activity's orientation always gets that one.
 //
 // The Store tab, next to the library, is F-Droid's catalog (f-droid.org,
 // free and open-source apps): its index is fetched in the background and
@@ -98,10 +102,11 @@ constexpr UINT kStoreProgress = WM_APP + 6;   // wParam: KB of the catalog recei
 constexpr UINT kStoreIcon = WM_APP + 7;       // wParam: kIconFailed, Saved, Dropped; lParam: new std::string (package)
 constexpr UINT kStoreDownload = WM_APP + 8;   // wParam: percent, lParam: new std::string (package)
 constexpr UINT kStoreDownloaded = WM_APP + 9; // wParam: ok, lParam: new Download
+constexpr UINT kGmsDone = WM_APP + 10;       // the Google sign-in window closed; wParam: exit code, lParam: new std::wstring (stdout)
 constexpr UINT_PTR kAnimTimer = 1;
 constexpr int kIdSearch = 100;
 enum Cmd { kCmdOpen = 200, kCmdInfo, kCmdShortcut, kCmdShowApk, kCmdAppFolder, kCmdLog, kCmdReinstall, kCmdUpdate,
-           kCmdRemove };
+           kCmdRemove, kCmdOrientation };
 
 HINSTANCE g_inst;
 HWND g_main, g_search;
@@ -194,10 +199,12 @@ const wchar_t* tr(const wchar_t* en) {
         {L"Screen", L"מסך"},
         {L"Used the next time an app opens, from here or from its shortcut. Sizes are in dp, as on a phone. An app's "
          L"window can be resized or maximized, and the app then lays itself out for that size and keeps it (Get Info "
-         L"resets it).",
+         L"resets it). Right-click an app to open just that one the other way; an app that requires one orientation "
+         L"always gets it.",
          L"יחול בפעם הבאה שאפליקציה תיפתח, מכאן או מקיצור הדרך שלה. הגדלים ביחידות dp, כמו בטלפון. אפשר לשנות את גודל "
          L"החלון של אפליקציה או להגדיל אותו למסך מלא, והאפליקציה תתאים את עצמה לגודל הזה ותזכור אותו (במסך הפרטים "
-         L"אפשר לאפס)."},
+         L"אפשר לאפס). לחיצה ימנית על אפליקציה פותחת רק אותה בכיוון השני; אפליקציה שדורשת כיוון מסוים תמיד "
+         L"תקבל אותו."},
         {L"Desktop shortcut for new apps", L"קיצור דרך בשולחן העבודה לאפליקציות חדשות"},
         {L"Every app also gets one in Start > Win.apk Apps.", L"כל אפליקציה מקבלת גם קיצור דרך בתפריט התחל > Win.apk Apps."},
         {L"Shortcuts", L"קיצורי דרך"},
@@ -218,6 +225,28 @@ const wchar_t* tr(const wchar_t* en) {
          L"ריקות שוב בשביל האפליקציות, והקבצים שלך נשארים במקומם."},
         {L"Each installed app keeps its data here. Removing an app keeps what it saved.", L"כל אפליקציה מותקנת שומרת כאן את הנתונים שלה. הסרת אפליקציה משאירה את מה שהיא שמרה."},
         {L"App data", L"נתוני אפליקציות"},
+        {L"Google account", L"חשבון Google"},
+        {L"Signing in…", L"מתחבר…"},
+        {L"Finish signing in in the Google window, or close it.", L"השלם את הכניסה בחלון של Google, או סגור אותו."},
+        {L"Sign out", L"יציאה מהחשבון"},
+        {L"Sign in with Google", L"כניסה עם Google"},
+        {L"Add another account", L"הוספת חשבון נוסף"},
+        {L"Apps that sign in with Google, check a Play licence or get push notifications use the account added here.",
+         L"אפליקציות שנכנסות עם Google, בודקות רישיון Play או מקבלות התראות push משתמשות בחשבון שמוסיפים כאן."},
+        {L"Sign in…", L"כניסה…"},
+        {L"The sign-in happens on Google's own page, in a window of its own: Win.apk never sees the password. The "
+         L"account's tokens stay in the app data on this PC.",
+         L"הכניסה מתבצעת בדף של Google עצמה, בחלון נפרד: Win.apk לעולם לא רואה את הסיסמה. האסימונים של החשבון "
+         L"נשמרים בנתוני האפליקציות במחשב הזה."},
+        {L"Sign out of {0}?", L"לצאת מהחשבון {0}?"},
+        {L"Win.apk forgets the account and its tokens on this PC. Apps that used it ask again.",
+         L"Win.apk תשכח את החשבון ואת האסימונים שלו במחשב הזה. אפליקציות שהשתמשו בו יבקשו שוב."},
+        {L"{0} was signed out.", L"{0} יצא מהחשבון."},
+        {L"Could not sign out", L"היציאה מהחשבון נכשלה"},
+        {L"Signed in to Google.", L"הכניסה ל-Google הושלמה."},
+        {L"Signed in as {0}.", L"נכנסת בתור {0}."},
+        {L"No account was added.", L"לא נוסף חשבון."},
+        {L"Could not sign in to Google", L"הכניסה ל-Google נכשלה"},
         {L"Version {0}", L"גרסה {0}"},
         {L"An unofficial port of Mac.apk to Windows. Not affiliated with or endorsed by the Mac.apk project.", L"הסבה לא רשמית של Mac.apk ל-Windows. אינה קשורה לפרויקט Mac.apk ואינה מאושרת על ידו."},
         {L"About", L"אודות"},
@@ -283,6 +312,17 @@ const wchar_t* tr(const wchar_t* en) {
         {L"The log was copied.", L"הלוג הועתק."},
         {L"&Open", L"פתיחה"},
         {L"Get &Info…", L"מידע…"},
+        {L"Open in &portrait", L"פתיחה לאורך"},
+        {L"Open in &landscape", L"פתיחה לרוחב"},
+        {L"Always portrait (the app requires it)", L"תמיד לאורך (האפליקציה דורשת זאת)"},
+        {L"Always landscape (the app requires it)", L"תמיד לרוחב (האפליקציה דורשת זאת)"},
+        {L"Portrait (the app requires it)", L"לאורך (האפליקציה דורשת זאת)"},
+        {L"Landscape (the app requires it)", L"לרוחב (האפליקציה דורשת זאת)"},
+        {L"Settings' default", L"ברירת המחדל שבהגדרות"},
+        {L"The settings' default is landscape.", L"ברירת המחדל שבהגדרות היא לרוחב."},
+        {L"The settings' default is portrait.", L"ברירת המחדל שבהגדרות היא לאורך."},
+        {L"{0} opens in landscape from now on.", L"{0} תיפתח לרוחב מעתה."},
+        {L"{0} opens in portrait from now on.", L"{0} תיפתח לאורך מעתה."},
         {L"Create &desktop shortcut", L"יצירת קיצור דרך בשולחן העבודה"},
         {L"Show the &APK in Explorer", L"הצגת קובץ ה-APK בסייר הקבצים"},
         {L"Open the app's &files", L"פתיחת קבצי האפליקציה"},
@@ -599,18 +639,82 @@ const PhonePreset kPhonePresets[] = {
     {L"800 × 1280  (10\" tablet)", 800, 1280},
 };
 
-// The settings' screen size and orientation, for the runtime started from
-// here (it inherits this process's environment). "Auto" leaves whatever
-// WINAPK_PHONE_SIZE the user set themselves.
-void apply_runtime_env() {
-    const DWORD i = setting(L"PhoneSize", 0);
-    const bool landscape = setting(L"Landscape", 0) != 0;
-    if (i == 0 || i >= std::size(kPhonePresets)) {
-        if (landscape) SetEnvironmentVariableW(L"WINAPK_PHONE_SIZE", L"800x360");
+// The orientation apps open in. The settings' default is landscape, the
+// shape of a PC screen: `Landscape` absent means landscape (earlier versions
+// opened portrait, so an explicit 0 from them still means portrait). An app can be
+// turned the other way on its own, and an app whose manifest fixes the
+// orientation of its launched activity gets that whatever was picked.
+enum Orientation { kOrientUnset = -1, kPortrait = 0, kLandscape = 1 };
+
+bool landscape_default() { return setting(L"Landscape", 1) != 0; }
+
+std::vector<std::string> package_of(const std::wstring& name);
+
+// The user's choice for one app, library\<name>.orientation ("portrait" or
+// "landscape"; beside the app's other library files, as the window size is).
+fs::path orientation_file(const std::wstring& name) { return library_dir() / (name + L".orientation"); }
+
+int app_orientation(const std::wstring& name) {
+    std::ifstream f(orientation_file(name));
+    std::string s;
+    f >> s;
+    return s == "landscape" ? kLandscape : s == "portrait" ? kPortrait : kOrientUnset;
+}
+
+void set_app_orientation(const std::wstring& name, int o) {
+    std::error_code ec;
+    if (o == kOrientUnset) {
+        fs::remove(orientation_file(name), ec);
         return;
     }
-    int w = kPhonePresets[i].w, h = kPhonePresets[i].h;
-    if (landscape) std::swap(w, h);
+    std::ofstream f(orientation_file(name), std::ios::trunc);
+    f << (o == kLandscape ? "landscape" : "portrait") << "\n";
+}
+
+// The orientation the app's manifest fixes for its launched activity (the
+// fourth line of library\<name>.package, AppMeta's ActivityInfo
+// screenOrientation): the landscape and portrait families, as the runtime
+// reads them (apply_screen_orientation); kOrientUnset when it fixes none, or
+// the app was installed before the line was written.
+int manifest_orientation(const std::wstring& name) {
+    const std::vector<std::string> lines = package_of(name);
+    if (lines.size() < 4) return kOrientUnset;
+    const int o = std::atoi(lines[3].c_str());
+    if (o == 0 || o == 6 || o == 8 || o == 11) return kLandscape;
+    if (o == 1 || o == 7 || o == 9 || o == 12) return kPortrait;
+    return kOrientUnset;
+}
+
+// What the app opens in: what its manifest fixes, else its own choice, else the settings'.
+int effective_orientation(const std::wstring& name) {
+    if (const int m = manifest_orientation(name); m != kOrientUnset) return m;
+    if (const int o = app_orientation(name); o != kOrientUnset) return o;
+    return landscape_default() ? kLandscape : kPortrait;
+}
+
+// The settings' screen size and the app's orientation, for the runtime
+// started from here (it inherits this process's environment). "Auto" leaves
+// whatever WINAPK_PHONE_SIZE the user set themselves, turned to the
+// orientation; `name` empty (an install) takes the settings' orientation.
+void apply_runtime_env(const std::wstring& name) {
+    const DWORD i = setting(L"PhoneSize", 0);
+    const bool landscape = (name.empty() ? landscape_default() : effective_orientation(name) == kLandscape);
+    int w = 360, h = 800;
+    if (i == 0 || i >= std::size(kPhonePresets)) {
+        wchar_t own[64];
+        if (GetEnvironmentVariableW(L"WINAPK_PHONE_SIZE", own, 64) > 0) {
+            int ow = 0, oh = 0;
+            wchar_t x = 0;
+            if (swscanf(own, L"%d%c%d", &ow, &x, &oh) == 3 && ow > 0 && oh > 0) {
+                w = ow;
+                h = oh;
+            }
+        }
+    } else {
+        w = kPhonePresets[i].w;
+        h = kPhonePresets[i].h;
+    }
+    if (landscape != (w > h)) std::swap(w, h);
     SetEnvironmentVariableW(L"WINAPK_PHONE_SIZE", (std::to_wstring(w) + L"x" + std::to_wstring(h)).c_str());
 }
 
@@ -781,10 +885,11 @@ void apply_aot_clang_env() {
     }
 }
 
-HANDLE start_runtime(const std::wstring& args, const fs::path& log) {
+// `name` is the app the runtime opens, for its orientation; empty for an install.
+HANDLE start_runtime(const std::wstring& args, const fs::path& log, const std::wstring& name = L"") {
     std::error_code ec;
     fs::create_directories(log.parent_path(), ec);
-    apply_runtime_env();
+    apply_runtime_env(name);
     apply_aot_clang_env();
     SECURITY_ATTRIBUTES sa{sizeof(sa), nullptr, TRUE};
     HANDLE out = CreateFileW(log.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_DELETE, &sa, CREATE_ALWAYS,
@@ -813,7 +918,7 @@ DWORD wait_exit(HANDLE process) {
 }
 
 bool run_and_wait(const fs::path& apk) {
-    HANDLE p = start_runtime(L"--apk \"" + apk.wstring() + L"\"", last_run_log());
+    HANDLE p = start_runtime(L"--apk \"" + apk.wstring() + L"\"", last_run_log(), apk.stem().wstring());
     return p && wait_exit(p) == 0;
 }
 
@@ -827,7 +932,7 @@ std::map<std::wstring, HANDLE> g_procs;  // the runtimes of apps started from th
 
 DWORD WINAPI run_thread(void* param) {
     std::unique_ptr<RunJob> job(static_cast<RunJob*>(param));
-    HANDLE p = start_runtime(L"--apk \"" + job->apk.wstring() + L"\"", last_run_log());
+    HANDLE p = start_runtime(L"--apk \"" + job->apk.wstring() + L"\"", last_run_log(), job->name);
     DWORD code = 1;
     if (p) {
         AcquireSRWLockExclusive(&g_proc_lock);
@@ -2770,6 +2875,7 @@ bool remove_app(const App& app, bool ask) {
     fs::remove(package_file(copy.name), ec);
     fs::remove(shortcut_icon(copy.name), ec);
     fs::remove(library_dir() / (copy.name + L".window"), ec);
+    fs::remove(orientation_file(copy.name), ec);
     fs::remove_all(app_dir(copy.name), ec);
     fs::remove(data_dir() / L"android" / L"data" / L"app" / (L"." + copy.name + L".installed"), ec);
     write_registry();
@@ -2783,6 +2889,25 @@ bool remove_app(const App& app, bool ask) {
 void update_from_apk(const App& app) {
     const auto files = pick_files(false, fmt(L"Update {0} from an APK", {app.label}).c_str());
     if (!files.empty()) install(files[0], false, app.name, app.apk);
+}
+
+// Opens this app in the given orientation from now on (kOrientUnset: the
+// settings' again). The window size the user gave it was for the other
+// shape, so it goes too, and the app opens at the settings' screen size.
+void set_orientation(const App& app, int o) {
+    std::error_code ec;
+    set_app_orientation(app.name, o);
+    fs::remove(library_dir() / (app.name + L".window"), ec);
+    const int now = effective_orientation(app.name);
+    set_status(fmt(now == kLandscape ? L"{0} opens in landscape from now on." : L"{0} opens in portrait from now on.",
+                   {app.label}),
+               kSuccess);
+}
+
+// Right-click > Open in portrait / landscape: the other way from what it gets now.
+void flip_orientation(const App& app) {
+    if (manifest_orientation(app.name) != kOrientUnset) return;  // the app decides
+    set_orientation(app, effective_orientation(app.name) == kLandscape ? kPortrait : kLandscape);
 }
 
 // Fetches the catalog: the one kept from last time at once, F-Droid's when
@@ -3191,6 +3316,156 @@ Row text_row(std::wstring title, std::wstring value, std::wstring detail = L"") 
 void apply_theme();
 void apply_language();
 
+// ---- The Google account (upstream's Accounts panel) --------------------------
+//
+// Apps that sign in with Google, check a Play licence or register for push
+// use the account the GMS layer (runtime/java/com/macapk/gms) holds. The
+// layer's state is the runtime's (<data>\gms, MACAPK_GMS_DIR): the launcher
+// never reads the credentials file, it asks `winapk-runtime --gms` as
+// Mac.apk's launcher asks `macapk-runtime --gms`. The exit codes are
+// GmsCli.run's contract: 0 done, 1 an ERROR line, 2 cancelled. The one cheap
+// answer is the `accounts.present` marker GmsStore keeps next to its file:
+// present iff an account is signed in, which decides whether opening Settings
+// pays a JVM start for the account list.
+
+fs::path gms_dir() { return data_dir() / L"gms"; }
+fs::path gms_log() { return logs_dir() / L"gms.log"; }
+
+bool google_account_present() {
+    std::error_code ec;
+    return fs::exists(gms_dir() / L"accounts.present", ec);
+}
+
+// Runs winapk-runtime --gms <args>, its stdout into *out (UTF-8, as the
+// runtime's manifest makes the code page) and its stderr into logs\gms.log.
+// The exit code, or -1 when it did not start.
+int run_gms(const std::wstring& args, std::wstring* out) {
+    std::error_code ec;
+    fs::create_directories(logs_dir(), ec);
+    SECURITY_ATTRIBUTES sa{sizeof(sa), nullptr, TRUE};
+    HANDLE read = nullptr, write = nullptr;
+    if (!CreatePipe(&read, &write, &sa, 0)) return -1;
+    SetHandleInformation(read, HANDLE_FLAG_INHERIT, 0);
+    HANDLE err = CreateFileW(gms_log().c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_DELETE, &sa, CREATE_ALWAYS,
+                             FILE_ATTRIBUTE_NORMAL, nullptr);
+    STARTUPINFOW si{};
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdOutput = write;
+    si.hStdError = err != INVALID_HANDLE_VALUE ? err : write;
+    si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+    std::wstring cmd = L"\"" + runtime_exe().wstring() + L"\" --gms " + args;
+    PROCESS_INFORMATION pi{};
+    const BOOL ok = CreateProcessW(nullptr, &cmd[0], nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr,
+                                   root().c_str(), &si, &pi);
+    CloseHandle(write);
+    if (err != INVALID_HANDLE_VALUE) CloseHandle(err);
+    std::string bytes;
+    if (ok) {
+        char buf[4096];
+        DWORD n = 0;
+        while (ReadFile(read, buf, sizeof buf, &n, nullptr) && n > 0) bytes.append(buf, n);
+    }
+    CloseHandle(read);
+    if (!ok) return -1;
+    if (out) *out = utf8_to_wide(bytes);
+    CloseHandle(pi.hThread);
+    return static_cast<int>(wait_exit(pi.hProcess));
+}
+
+// One argument for the runtime's command line, as CommandLineToArgvW splits it.
+std::wstring gms_arg(const std::wstring& a) {
+    std::wstring q = L"\"";
+    size_t slashes = 0;
+    for (wchar_t c : a) {
+        if (c == L'\\') {
+            ++slashes;
+            continue;
+        }
+        q.append(c == L'"' ? slashes * 2 + 1 : slashes, L'\\');
+        slashes = 0;
+        q += c;
+    }
+    q.append(slashes * 2, L'\\');
+    return q + L"\"";
+}
+
+// The signed-in accounts: `ACCOUNT<tab>email<tab>services` lines from
+// `--gms accounts`. Only asked when the marker says there is one.
+std::vector<std::wstring> google_accounts() {
+    std::vector<std::wstring> out;
+    if (!google_account_present()) return out;
+    std::wstring text;
+    if (run_gms(L"accounts", &text) != 0) return out;
+    size_t at = 0;
+    while (at < text.size()) {
+        size_t end = text.find(L'\n', at);
+        if (end == std::wstring::npos) end = text.size();
+        std::wstring line = text.substr(at, end - at);
+        at = end + 1;
+        if (!line.empty() && line.back() == L'\r') line.pop_back();
+        if (line.rfind(L"ACCOUNT\t", 0) != 0) continue;
+        const size_t tab = line.find(L'\t', 8);
+        out.push_back(line.substr(8, tab == std::wstring::npos ? std::wstring::npos : tab - 8));
+    }
+    return out;
+}
+
+// The sign-in window is the runtime's (--gms signin-window: Google's own
+// page in a WebView2 window; the launcher never sees the password). It takes
+// as long as the user takes, so it runs on a thread and reports to the
+// library's window, which rebuilds the Settings sheet if it is still open.
+bool g_gms_busy = false;
+
+DWORD WINAPI gms_signin_thread(void*) {
+    auto* out = new std::wstring();
+    const int code = run_gms(L"signin-window", out);
+    PostMessageW(g_main, kGmsDone, static_cast<WPARAM>(static_cast<unsigned>(code)), reinterpret_cast<LPARAM>(out));
+    return 0;
+}
+
+void start_google_signin() {
+    if (g_gms_busy) return;
+    g_gms_busy = true;
+    HANDLE t = CreateThread(nullptr, 0, gms_signin_thread, nullptr, 0, nullptr);
+    if (t) CloseHandle(t);
+    else g_gms_busy = false;
+}
+
+void google_signout(const std::wstring& account) {
+    if (!confirm(fmt(L"Sign out of {0}?", {account}),
+                 tr(L"Win.apk forgets the account and its tokens on this PC. Apps that used it ask again."),
+                 tr(L"Sign out"))) {
+        return;
+    }
+    std::wstring text;
+    if (run_gms(L"signout " + gms_arg(account), &text) == 0) {
+        set_status(fmt(L"{0} was signed out.", {account}), kInfo);
+    } else {
+        failed_with_log(tr(L"Could not sign out"), gms_log());
+    }
+}
+
+Section google_account_section() {
+    Section sec{tr(L"Google account"), {}, L""};
+    if (g_gms_busy) {
+        sec.rows.push_back(text_row(tr(L"Google account"), tr(L"Signing in…"),
+                                    tr(L"Finish signing in in the Google window, or close it.")));
+    } else {
+        const std::vector<std::wstring> accounts = google_accounts();
+        for (const std::wstring& a : accounts) {
+            sec.rows.push_back(button_row(a, L"", tr(L"Sign out"), [a] { google_signout(a); }, true));
+        }
+        sec.rows.push_back(button_row(accounts.empty() ? tr(L"Sign in with Google") : tr(L"Add another account"),
+                                      tr(L"Apps that sign in with Google, check a Play licence or get push "
+                                         L"notifications use the account added here."),
+                                      tr(L"Sign in…"), [] { start_google_signin(); }));
+    }
+    sec.footer = tr(L"The sign-in happens on Google's own page, in a window of its own: Win.apk never sees the "
+                    L"password. The account's tokens stay in the app data on this PC.");
+    return sec;
+}
+
 std::vector<Section> settings_sections() {
     std::vector<Section> out;
 
@@ -3237,12 +3512,13 @@ std::vector<Section> settings_sections() {
     orient.kind = Row::kChoice;
     orient.title = tr(L"Orientation");
     orient.choices = {tr(L"Portrait"), tr(L"Landscape")};
-    orient.choice = setting(L"Landscape", 0) ? 1 : 0;
+    orient.choice = landscape_default() ? 1 : 0;
     orient.act = [](int i) { set_setting(L"Landscape", static_cast<DWORD>(i)); };
     out.push_back({tr(L"Screen"), {size, orient},
                    tr(L"Used the next time an app opens, from here or from its shortcut. Sizes are in dp, as on a "
                       L"phone. An app's window can be resized or maximized, and the app then lays itself out for that "
-                      L"size and keeps it (Get Info resets it).")});
+                      L"size and keeps it (Get Info resets it). Right-click an app to open just that one the other "
+                      L"way; an app that requires one orientation always gets it.")});
 
     Row desktop;
     desktop.kind = Row::kToggle;
@@ -3263,6 +3539,8 @@ std::vector<Section> settings_sections() {
                                tr(L"View logs"), [] { show_logs(last_run_log()); }),
                     button_row(tr(L"Logs folder"), logs_dir().wstring(), tr(L"Open folder"), [] { open_path(logs_dir()); })},
                    tr(L"Attach the log to a bug report: it says what the runtime did and where it stopped.")});
+    out.push_back(google_account_section());
+
     // Read by the runtime when an app opens (runtime_main.cpp, map_shared_folders).
     Row folders;
     folders.kind = Row::kToggle;
@@ -3327,27 +3605,43 @@ void show_info(const App& app) {
                        L""});
         if (std::vector<Row> perms = permission_rows(a); !perms.empty())
             out.push_back({tr(L"Permissions"), std::move(perms), L""});
+        // The orientation the app opens in: what its manifest fixes, or the
+        // user's choice for it (the context menu's) over the settings'.
+        std::vector<Row> window;
+        if (const int fixed = manifest_orientation(a.name); fixed != kOrientUnset) {
+            window.push_back(text_row(tr(L"Orientation"), tr(fixed == kLandscape ? L"Landscape (the app requires it)"
+                                                                                 : L"Portrait (the app requires it)")));
+        } else {
+            Row orient;
+            orient.kind = Row::kChoice;
+            orient.title = tr(L"Orientation");
+            orient.detail = tr(landscape_default() ? L"The settings' default is landscape."
+                                                   : L"The settings' default is portrait.");
+            orient.choices = {tr(L"Settings' default"), tr(L"Portrait"), tr(L"Landscape")};
+            orient.choice = app_orientation(a.name) == kOrientUnset ? 0 : app_orientation(a.name) == kLandscape ? 2 : 1;
+            orient.act = [a](int i) { set_orientation(a, i == 0 ? kOrientUnset : i == 2 ? kLandscape : kPortrait); };
+            window.push_back(orient);
+        }
         // The size the user last gave the app's window (the runtime keeps it
         // as library\<name>.window, in dp).
         if (std::ifstream f(library_dir() / (a.name + L".window")); f) {
             int w = 0, h = 0;
             char x = 0;
             if (f >> w >> x >> h && w > 0 && h > 0) {
-                out.push_back({tr(L"Window"),
-                               {button_row(fmt(L"Window size  ·  {0} × {1} dp", {std::to_wstring(w), std::to_wstring(h)}),
-                                           tr(L"The size you last gave the app's window. Reset, it opens at the "
-                                              L"settings' screen size again."),
-                                           tr(L"Reset"), [a] {
-                                               std::error_code ec;
-                                               fs::remove(library_dir() / (a.name + L".window"), ec);
-                                               set_status(fmt(L"{0} opens at the settings' screen size again.",
-                                                              {a.label}),
-                                                          kSuccess);
-                                               close_sheet();
-                                           })},
-                               L""});
+                window.push_back(
+                    button_row(fmt(L"Window size  ·  {0} × {1} dp", {std::to_wstring(w), std::to_wstring(h)}),
+                               tr(L"The size you last gave the app's window. Reset, it opens at the "
+                                  L"settings' screen size again."),
+                               tr(L"Reset"), [a] {
+                                   std::error_code ec;
+                                   fs::remove(library_dir() / (a.name + L".window"), ec);
+                                   set_status(fmt(L"{0} opens at the settings' screen size again.", {a.label}),
+                                              kSuccess);
+                                   close_sheet();
+                               }));
             }
         }
+        out.push_back({tr(L"Window"), std::move(window), L""});
         out.push_back({tr(L"Storage"),
                        {button_row(fmt(L"Source APK  ·  {0}", {apk_size}), a.apk.wstring(), tr(L"Show"),
                                    [a] { show_in_explorer(a.apk); }),
@@ -4064,6 +4358,14 @@ void show_context_menu(const App& app, POINT pt) {
     HMENU menu = CreatePopupMenu();
     AppendMenuW(menu, MF_STRING, kCmdOpen, tr(L"&Open"));
     AppendMenuW(menu, MF_STRING, kCmdInfo, tr(L"Get &Info…"));
+    if (const int fixed = manifest_orientation(app.name); fixed != kOrientUnset) {
+        AppendMenuW(menu, MF_STRING | MF_GRAYED, kCmdOrientation,
+                    tr(fixed == kLandscape ? L"Always landscape (the app requires it)"
+                                           : L"Always portrait (the app requires it)"));
+    } else {
+        AppendMenuW(menu, MF_STRING, kCmdOrientation,
+                    tr(effective_orientation(app.name) == kLandscape ? L"Open in &portrait" : L"Open in &landscape"));
+    }
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, kCmdShortcut, tr(L"Create &desktop shortcut"));
     AppendMenuW(menu, MF_STRING, kCmdShowApk, tr(L"Show the &APK in Explorer"));
@@ -4088,6 +4390,7 @@ void command(int id) {
     switch (id) {
         case kCmdOpen: launch(a); break;
         case kCmdInfo: show_info(a); break;
+        case kCmdOrientation: flip_orientation(a); break;
         case kCmdShortcut:
             make_app_shortcuts(a, true);
             set_status(fmt(L"A shortcut to {0} is on the desktop.", {a.label}), kSuccess);
@@ -4483,6 +4786,28 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case kRefresh:
             refresh();
             return 0;
+        case kGmsDone: {
+            std::unique_ptr<std::wstring> out(reinterpret_cast<std::wstring*>(lp));
+            g_gms_busy = false;
+            const int code = static_cast<int>(static_cast<unsigned>(wp));
+            if (code == 0) {
+                // "SIGNED_IN<tab>email" is the last line that matters.
+                std::wstring email;
+                if (const size_t at = out->find(L"SIGNED_IN\t"); at != std::wstring::npos) {
+                    email = out->substr(at + 10, out->find_first_of(L"\r\n", at) - at - 10);
+                }
+                set_status(email.empty() ? tr(L"Signed in to Google.") : fmt(L"Signed in as {0}.", {email}), kSuccess);
+            } else if (code == 2) {
+                set_status(tr(L"No account was added."), kInfo);
+            } else {
+                failed_with_log(tr(L"Could not sign in to Google"), gms_log());
+            }
+            if (g_sheet && IsWindow(g_sheet->hwnd)) {
+                g_sheet->sections = g_sheet->build();
+                InvalidateRect(g_sheet->hwnd, nullptr, FALSE);
+            }
+            return 0;
+        }
         case kStoreCatalog:
             if (wp == kCatalogList) {
                 std::unique_ptr<std::vector<StoreApp>> list(reinterpret_cast<std::vector<StoreApp>*>(lp));
