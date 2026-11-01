@@ -5,6 +5,10 @@
 [![Latest release](https://img.shields.io/github/v/release/israel2176/win.apk?include_prereleases&label=release&color=6c5ce7)](../../releases)
 [![Platform: Windows 10/11 x64](https://img.shields.io/badge/platform-Windows%2010%2F11%20x64-0078d4)](#requirements)
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
+[![Star the repository](https://img.shields.io/github/stars/israel2176/win.apk?style=flat&label=stars&color=f1c40f)](../../stargazers)
+
+If Win.apk is useful to you, please **star the repository** (⭐ at the top of
+the page): it helps other people find it and tells us what to keep working on.
 
 Win.apk installs Android apps (`.apk`, `.apkm`, `.xapk`, `.apks`) and runs each
 one in its own window, with its own icon in the Start menu. There is no
@@ -196,9 +200,14 @@ any of Win.apk's logs and follows the end as the runtime writes it:
 - `last-run.log` is the app opened most recently.
 - `install-<app>.log` is that app's install.
 
-If an app does not start or misbehaves, [open an issue](../../issues/new) with
-the app's name and version, what happened, and the log (**Copy** puts it on
-the clipboard). The most useful lines:
+If an app does not start or misbehaves, first look in
+[`docs/APPS.md`](docs/APPS.md), the list of common apps and the problems
+already known. Then [open an issue](../../issues/new/choose) with the "An app
+does not work" template: the app's name, version and where it came from, the
+exact steps to reproduce it, a screenshot of the app at the point it goes
+wrong, and the whole log (**Copy** puts it on the clipboard).
+[`CONTRIBUTING.md`](CONTRIBUTING.md) says what makes a report fixable. The
+most useful lines in a log:
 
 | Line | Meaning |
 |---|---|
@@ -216,6 +225,9 @@ the clipboard). The most useful lines:
 | Apps with ARM native code only (`lib/arm64-v8a`), translated to x64 (below) | |
 | Sound from Java (AudioTrack, SoundPool: WAV, Ogg, MP3) | Video, camera, WebView, location |
 | Files, SharedPreferences, SQLite, clipboard, file pickers, game controllers | Google Play services (sign-in, purchases, maps) |
+
+Particular apps, and problems by kind of app, are in
+[`docs/APPS.md`](docs/APPS.md); please add the apps you try.
 
 Why the split: Android phones are ARM, while these PCs are x64. Java code
 and x86_64 libraries run directly. An app's 64-bit ARM libraries
@@ -301,7 +313,7 @@ automatically.
 | `windows/` | Win.apk itself: the ELF loader and Bionic shim, the JNI bridge, the Windows host (window, input, ANGLE, audio), the runtime, the library app (`windows/launcher/`), the installer (`windows/package/`) and the tests |
 | `runtime/` | The Android framework in Java and shared native sources, from Mac.apk |
 | `scripts/build_framework_res.sh` | Builds the platform resource APK |
-| `docs/` | The images in this README |
+| `docs/` | The images in this README, and [`APPS.md`](docs/APPS.md), the apps and known issues list |
 | `.github/workflows/` | Checks on pull requests, and the release workflow (run by hand) |
 
 Design notes, findings and the milestone plan are in
