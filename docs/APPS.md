@@ -33,6 +33,7 @@ first column says what to look for in the app or its log.
 | `not implemented on Windows yet` in the log | A libc function the app's native code needs that the Bionic shim does not have yet | Open an issue with the log: adding one is usually small | None |
 | `native not implemented` in the log | A piece of the Android host that is still missing | Open an issue with the log | None |
 | `[win.apk] cannot load <library>` in the log | A native library the loader could not load (packed, encrypted, or for another ABI) | Open an issue with the log and the APK's `lib/` folders | None |
+| The app looks like a phone turned on its side, or opens narrow when you wanted it wide | Apps open in landscape by default, the shape of a PC screen; an app whose manifest fixes portrait opens portrait | Expected | Right-click the app > "Open in portrait" or "Open in landscape", for that app only; Settings > Screen > Orientation for all of them. An app that requires one orientation always gets it, and its menu entry says so |
 | Windows Defender or SmartScreen warns about Win.apk or an app | Win.apk writes and then runs translated code, and the preview builds are not code-signed | Known; the preview builds are not signed yet | Allow it |
 
 ## Apps
