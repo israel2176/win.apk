@@ -7,7 +7,9 @@
 #   <out>/lib/macapk-loader.jar       boot code and the DEX-to-JVM converter
 #   <out>/lib/bcprov-jdk18on-1.79.jar the "BC" security provider Android has
 #   <out>/lib/winapk-tools.jar        Windows-side helpers (windows/java)
-#   <out>/lib/java_base_patch/        classes patched into java.base
+#   <out>/lib/java_base_patch/        classes patched into java.base (upstream's
+#                                     runtime/java_base_patch and Win.apk's
+#                                     windows/java/java_base_patch)
 #   <out>/lib/jdk_unsupported_patch/  classes patched into jdk.unsupported
 #
 #   windows/scripts/build_java.sh [out]       (default: windows/build/runtime)
@@ -79,18 +81,27 @@ if [[ -d "$RT/net_spi" ]]; then
     fi
 fi
 
-# Classes the JDK only accepts from inside its own modules.
-patch_module() {  # patch_module <module> <source dir> <out dir>
-    local module="$1" src="$2" dst="$3"
-    [[ -d "$src" ]] || return 0
-    echo "[build_java] compiling ${src#"$RT"/} (--patch-module $module)..."
+# Classes the JDK only accepts from inside its own modules: upstream's
+# overlay, plus Win.apk's own under windows/java (java.base only), compiled
+# together into one directory the runtime hands to --patch-module.
+patch_module() {  # patch_module <module> <out dir> <source dir>...
+    local module="$1" dst="$2" src dirs="" sep=":"
+    shift 2
+    command -v cygpath > /dev/null 2>&1 && sep=";"  # javac on Windows splits on ';'
+    : > "$WORK/$module.list"
+    for src in "$@"; do
+        [[ -d "$src" ]] || continue
+        echo "[build_java] compiling ${src#"$RT"/} (--patch-module $module)..."
+        find "$src" -name '*.java' | sort | native_paths >> "$WORK/$module.list"
+        dirs="${dirs:+$dirs$sep}$(native_path "$src")"
+    done
+    [[ -s "$WORK/$module.list" ]] || return 0
     rm -rf "$dst"
     mkdir -p "$dst"
-    find "$src" -name '*.java' | sort | native_paths > "$WORK/$module.list"
-    "$JAVAC" -nowarn --patch-module "$module=$(native_path "$src")" -d "$dst" @"$WORK/$module.list"
+    "$JAVAC" -nowarn --patch-module "$module=$dirs" -d "$dst" @"$WORK/$module.list"
 }
-patch_module java.base "$RT/java_base_patch" "$LIB/java_base_patch"
-patch_module jdk.unsupported "$RT/jdk_unsupported_patch" "$LIB/jdk_unsupported_patch"
+patch_module java.base "$LIB/java_base_patch" "$RT/java_base_patch" "$HERE/../java/java_base_patch"
+patch_module jdk.unsupported "$LIB/jdk_unsupported_patch" "$RT/jdk_unsupported_patch"
 
 # Shipped key-bind profiles are classpath resources of the loader jar.
 if [[ -d "$RT/java/com/macapk/loader/keybinds" ]]; then
@@ -117,7 +128,8 @@ echo "[build_java] compiling windows/java..."
 TOOLS="$WORK/tools"
 rm -rf "$TOOLS"
 mkdir -p "$TOOLS"
-find "$HERE/../java" -name '*.java' | sort | native_paths > "$WORK/tools.list"
+# java_base_patch is an overlay of java.base (compiled above), not a tool.
+find "$HERE/../java" -name '*.java' -not -path '*/java_base_patch/*' | sort | native_paths > "$WORK/tools.list"
 # AppMeta calls into the framework and the loader, compiled into $TMP above.
 "$JAVAC" -d "$TOOLS" --release 21 -cp "$(native_path "$TMP")" @"$WORK/tools.list"
 ( cd "$TOOLS" && "$JAR" --create --file "$LIB/winapk-tools.jar" . )

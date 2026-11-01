@@ -64,8 +64,7 @@ int bytes_per_pixel(int32_t format) { return format == kRgb565 ? 2 : format == k
 
 // ---- the guest's ANativeWindow_* ---------------------------------------------
 
-WINAPK_GUEST_ABI void* ANativeWindow_fromSurface(JNIEnv* guest_env, jobject surface) {
-    JNIEnv* env = winapk::host_env_of(guest_env);
+void* from_surface(JNIEnv* env, jobject surface) {
     if (!env || !surface) return nullptr;
     {
         std::lock_guard<std::mutex> hold(g_lock);
@@ -80,6 +79,10 @@ WINAPK_GUEST_ABI void* ANativeWindow_fromSurface(JNIEnv* guest_env, jobject surf
     if (env->ExceptionCheck()) env->ExceptionClear();
     if (cls) env->DeleteLocalRef(cls);
     return &g_window;
+}
+
+WINAPK_GUEST_ABI void* ANativeWindow_fromSurface(JNIEnv* guest_env, jobject surface) {
+    return from_surface(winapk::host_env_of(guest_env), surface);
 }
 
 WINAPK_GUEST_ABI jobject ANativeWindow_toSurface(JNIEnv* guest_env, void* window) {
@@ -222,5 +225,7 @@ void* native_window_resolve(const char* name) {
     auto it = kSymbols.find(name);
     return it == kSymbols.end() ? nullptr : it->second;
 }
+
+void* native_window_for_surface(JNIEnv* env, jobject surface) { return from_surface(env, surface); }
 
 }  // namespace winapk::host

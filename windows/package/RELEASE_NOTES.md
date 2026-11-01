@@ -11,18 +11,20 @@ A pre-release for testing: Win.apk runs Android apps on Windows 10/11 x64.
 - **In Hebrew or English:** Setup and the library follow the Windows display language; Hebrew is laid out right to left.
 - **OpenGL ES:** works from Java (`GLSurfaceView`, libGDX) and from an app's native code through a SurfaceView (SDL games). It runs on ANGLE (Direct3D 11), falling back to WARP or SwiftShader without a GPU.
 - **Native libraries:** apps that ship `lib/x86_64` libraries load them natively. Apps that only ship `lib/arm64-v8a` libraries are supported: their ARM code is translated to x64 in the background (`winapk-aot`, compiled with clang for your CPU, in parallel) and runs at close to native speed. Apps open at once on an ARM JIT and switch to the translated code as it becomes ready; large libraries are translated only where the app's code ran. Installs use the ABIs `x86_64,arm64-v8a`.
-- **Sound from Java:** AudioTrack and SoundPool, for WAV, Ogg and MP3.
-- **Storage:** files, SharedPreferences and SQLite.
+- **Sound:** AudioTrack, SoundPool and MediaPlayer audio from Java (WAV, Ogg, MP3, AAC and whatever Windows decodes), and OpenSL ES and AAudio from native code. Video playback is not there yet.
+- **Games in native code:** `NativeActivity` apps (android_native_app_glue, and engines built on it) get their window, input queue and configuration as on Android.
+- **Web content:** WebView on WebView2 (Microsoft Edge), with `shouldInterceptRequest` for Cordova and Capacitor apps.
+- **Location:** `LocationManager` on Windows' own location service, behind Windows' privacy settings.
+- **Camera:** webcams through CameraX and the Camera2 API; a virtual camera when there is none.
+- **Storage:** files, SharedPreferences and SQLite. Shared storage (Pictures, Downloads, Documents...) is the user's own Windows folders.
 - **Permissions:** apps ask for storage, "All files access" and "Media management" as on Android, in a Windows dialog over the app (Allow / Don't allow, and "don't ask again" after a second refusal). An app's App info screen, or Get Info in the library, turns them on or off or resets them.
 - **Desktop services:** clipboard, file pickers and game controllers.
 
-In the automated sweep of open-source apps, about 33 of 38 draw their first screen.
+In the automated sweep of open-source apps, 36 of 38 draw their first screen.
 
 ## Not yet
 - Native code for 32-bit ARM only (`armeabi-v7a`).
-- NativeActivity games.
-- MediaPlayer and native audio (OpenSL ES and AAudio).
-- Video, camera, WebView and location.
+- Vulkan.
 - Google Play services.
 
 ## Reporting
