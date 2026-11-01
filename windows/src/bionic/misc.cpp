@@ -892,7 +892,100 @@ WINAPK_GUEST_ABI GuestPasswd* g_getpwuid(uint32_t uid) {
     return fill_passwd(uid, &pwd, buf, sizeof(buf)) == 0 ? &pwd : nullptr;
 }
 
+// ---- <search.h>: tsearch and friends ----------------------------------------
+//
+// A plain binary search tree, as bionic's: the node's first member is the
+// key, which is what a caller reads through the returned pointer. The
+// comparator and twalk's action are the guest's, called as System V
+// functions (an arm64 guest's through the bridge).
+struct TNode {
+    const void* key;
+    TNode* left;
+    TNode* right;
+};
+using TCompare = int(WINAPK_GUEST_ABI*)(const void*, const void*);
+using TAction = void(WINAPK_GUEST_ABI*)(const void*, int, int);  // node, VISIT, level
+WINAPK_GUEST_ABI void* g_tsearch(const void* key, void** rootp, TCompare cmp) {
+    if (!rootp || !cmp) return nullptr;
+    TNode** p = reinterpret_cast<TNode**>(rootp);
+    while (*p) {
+        const int c = cmp(key, (*p)->key);
+        if (c == 0) return *p;
+        p = c < 0 ? &(*p)->left : &(*p)->right;
+    }
+    *p = new TNode{key, nullptr, nullptr};
+    return *p;
+}
+WINAPK_GUEST_ABI void* g_tfind(const void* key, void* const* rootp, TCompare cmp) {
+    if (!rootp || !cmp) return nullptr;
+    TNode* n = static_cast<TNode*>(*rootp);
+    while (n) {
+        const int c = cmp(key, n->key);
+        if (c == 0) return n;
+        n = c < 0 ? n->left : n->right;
+    }
+    return nullptr;
+}
+WINAPK_GUEST_ABI void* g_tdelete(const void* key, void** rootp, TCompare cmp) {
+    if (!rootp || !*rootp || !cmp) return nullptr;
+    TNode** p = reinterpret_cast<TNode**>(rootp);
+    TNode* parent = nullptr;
+    while (*p) {
+        const int c = cmp(key, (*p)->key);
+        if (c == 0) break;
+        parent = *p;
+        p = c < 0 ? &(*p)->left : &(*p)->right;
+    }
+    TNode* n = *p;
+    if (!n) return nullptr;
+    if (!n->left) {
+        *p = n->right;
+    } else if (!n->right) {
+        *p = n->left;
+    } else {
+        // Two children: the in-order successor takes the node's place.
+        TNode** s = &n->right;
+        while ((*s)->left) s = &(*s)->left;
+        TNode* succ = *s;
+        *s = succ->right;
+        succ->left = n->left;
+        succ->right = n->right;
+        *p = succ;
+    }
+    delete n;
+    return parent ? static_cast<void*>(parent) : static_cast<void*>(rootp);  // the parent, or "the root went"
+}
+void twalk_from(const TNode* n, TAction action, int level) {
+    if (!n) return;
+    if (!n->left && !n->right) {
+        action(n, 3, level);  // leaf
+        return;
+    }
+    action(n, 0, level);  // preorder
+    twalk_from(n->left, action, level + 1);
+    action(n, 1, level);  // postorder
+    twalk_from(n->right, action, level + 1);
+    action(n, 2, level);  // endorder
+}
+WINAPK_GUEST_ABI void g_twalk(const void* root, TAction action) {
+    if (root && action) twalk_from(static_cast<const TNode*>(root), action, 0);
+}
+using TFree = void(WINAPK_GUEST_ABI*)(void*);
+void tdestroy_from(TNode* n, TFree free_node) {
+    if (!n) return;
+    tdestroy_from(n->left, free_node);
+    tdestroy_from(n->right, free_node);
+    if (free_node) free_node(const_cast<void*>(n->key));
+    delete n;
+}
+WINAPK_GUEST_ABI void g_tdestroy(void* root, TFree free_node) { tdestroy_from(static_cast<TNode*>(root), free_node); }
+
 const ShimSymbol kSymbols[] = {
+    WINAPK_SHIM("tsearch", g_tsearch),
+    WINAPK_SHIM("tfind", g_tfind),
+    WINAPK_SHIM("tdelete", g_tdelete),
+    WINAPK_SHIM("twalk", g_twalk),
+    WINAPK_SHIM("tdestroy", g_tdestroy),
     WINAPK_SHIM("sched_getscheduler", g_sched_getscheduler),
     WINAPK_SHIM("sched_get_priority_min", g_sched_get_priority_min),
     WINAPK_SHIM("sched_get_priority_max", g_sched_get_priority_max),
