@@ -432,7 +432,7 @@ void* mini_bionic_resolve(const char* name) {
                             bionic::stdio_symbols(), bionic::misc_symbols(), bionic::signal_symbols(),
                             bionic::locale_symbols(), bionic::fd_symbols(),
                             bionic::socket_symbols(), bionic::looper_symbols(),
-                            bionic::zlib_symbols()}) {
+                            bionic::zlib_symbols(), bionic::setjmp_symbols()}) {
             add(t.symbols, t.count);
         }
         return m;
