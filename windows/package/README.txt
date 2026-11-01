@@ -78,9 +78,12 @@ keeps the apps too. Delete %LOCALAPPDATA%\Win.apk to start from scratch.
 
 Reporting a problem
 -------------------
-If an app does not start or misbehaves, the last log says why. Please note
-the app's name and version and attach last-run.log. These lines in the log
-are the most useful:
+If an app does not start or misbehaves, the last log says why. Please open
+an issue on GitHub (the "An app does not work" template) with the app's name,
+version and where it came from, the exact steps that lead to the problem, a
+screenshot of the app at that point, and last-run.log attached whole. The
+repository's docs\APPS.md lists common apps and the problems already known.
+These lines in the log are the most useful:
   "native not implemented"            a Windows piece that is missing
   "not implemented on Windows yet"    a system function an app's native code needs
   "Exception" or "FATAL"              the app crashed
