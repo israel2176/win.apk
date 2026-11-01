@@ -5,6 +5,16 @@ you learned to [`docs/APPS.md`](docs/APPS.md), or send code. And if Win.apk is
 useful to you, please **star the repository** (the ⭐ at the top of the page):
 it helps other people find it and tells us what to keep working on.
 
+- [Report a problem](#report-a-problem)
+- [Add an app to the list](#add-an-app-to-the-list)
+- [Send code](#send-code)
+  - [Before you start](#before-you-start)
+  - [The pull request](#the-pull-request)
+  - [How the code is meant to work](#how-the-code-is-meant-to-work)
+  - [Documentation](#documentation)
+  - [Out of scope](#out-of-scope)
+- [Security problems](#security-problems)
+
 ## Report a problem
 
 [Open an issue](../../issues/new/choose) with the "An app does not work"
@@ -39,7 +49,7 @@ The most useful lines in a log:
 |---|---|
 | `native not implemented` | A Windows piece that is still missing |
 | `not implemented on Windows yet` | A system function the app's native code needs |
-| `UnsatisfiedLinkError` or `dlopen` failed | A native library did not load (often ARM-only, see `docs/APPS.md`) |
+| `[win.apk] cannot load <library>` or `UnsatisfiedLinkError` | A native library did not load (often ARM-only: see `docs/APPS.md`) |
 | `Exception` or `FATAL` | The app crashed; the lines after it say where |
 | `[win.apk]` | A message from Win.apk itself |
 
@@ -109,6 +119,24 @@ over.
 - **Comments explain why.** Especially for ABI work: put the Bionic and Windows
   layouts side by side above a shim.
 - **Style:** C++17, clang only, 120 columns, matching the file around you.
+
+### Documentation
+
+A change is done when the documents that describe it are updated in the same
+pull request. Where things are written down:
+
+| Document | What it covers |
+|---|---|
+| [`README.md`](README.md) | What Win.apk is and how to use it: install, the Store, settings, logs, what works |
+| [`windows/README.md`](windows/README.md) | Building, running and testing; every change made under `runtime/` |
+| [`windows/PORTING.md`](windows/PORTING.md) | Design, findings and the milestone plan |
+| [`docs/APPS.md`](docs/APPS.md) | Apps that were tried, and known issues by kind of app |
+| [`windows/package/RELEASE_NOTES.md`](windows/package/RELEASE_NOTES.md), [`README.txt`](windows/package/README.txt) | What a user of a release sees: new since last time, and the shipped read-me |
+| [`CLAUDE.md`](CLAUDE.md) | The map of the repository and its conventions, for people and for AI assistants |
+
+Write for the reader who was not there: say what a thing does and why, in
+plain sentences, and keep the Hebrew side of a user-facing text in step with
+the English.
 
 ### Out of scope
 

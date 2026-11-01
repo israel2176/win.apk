@@ -37,6 +37,7 @@ go through ANGLE on Direct3D 11.
 - [Command line](#command-line)
 - [Build from source](#build-from-source)
 - [Repository layout](#repository-layout)
+- [Contributing](#contributing)
 - [Credits](#credits)
 - [License](#license)
 
@@ -317,9 +318,23 @@ automatically.
 | `.github/workflows/` | Checks on pull requests, and the release workflow (run by hand) |
 
 Design notes, findings and the milestone plan are in
-[`windows/PORTING.md`](windows/PORTING.md). Contributions are welcome: see
-[`CONTRIBUTING.md`](CONTRIBUTING.md). Security problems: see
-[`SECURITY.md`](SECURITY.md).
+[`windows/PORTING.md`](windows/PORTING.md).
+
+## Contributing
+
+- **Report how an app runs:** [open an issue](../../issues/new/choose) with
+  the "An app does not work" form. It asks for the versions, the exact steps,
+  a screenshot and the whole log, which is what makes a report fixable.
+  Hebrew is fine.
+- **Add an app to the list:** [`docs/APPS.md`](docs/APPS.md) has a row
+  template; a row needs a real run of that version.
+- **Send code:** [`CONTRIBUTING.md`](CONTRIBUTING.md) has the rules (behave
+  like Android, no app-specific code, Windows code in `windows/`), the
+  pull-request steps and the documents to update.
+- **Security problems:** [`SECURITY.md`](SECURITY.md), not a public issue.
+
+If Win.apk is useful to you, a ⭐ star on the repository helps other people
+find it.
 
 ## Credits
 

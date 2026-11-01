@@ -7,6 +7,15 @@ request or in an issue (see [CONTRIBUTING.md](../CONTRIBUTING.md), "Add an app
 to the list"). If an app you care about runs well, a ⭐ star on the repository
 tells us so.
 
+- [Known issues by kind of app](#known-issues-by-kind-of-app)
+- [Apps](#apps)
+  - [Adding a row](#adding-a-row)
+
+**Status words used below:** *Works* (the main screens are usable), *Partly*
+(opens, but something in the notes does not work), *Boots* (draws its first
+screen in an automated run; nobody has used it), *Does not start* (installs,
+then shows no window or crashes at once), *Does not install*.
+
 ## Known issues by kind of app
 
 These come from how Win.apk is built; they are not specific to one app. The
@@ -23,13 +32,13 @@ first column says what to look for in the app or its log.
 | Sign in with Google, in-app purchases, Google Maps | Google Play services | Not there: sign-in, purchases and maps that need it do not work. The rest of the app may | Use the app's own account or an open-source build without Play services (F-Droid) |
 | `not implemented on Windows yet` in the log | A libc function the app's native code needs that the Bionic shim does not have yet | Open an issue with the log: adding one is usually small | None |
 | `native not implemented` in the log | A piece of the Android host that is still missing | Open an issue with the log | None |
+| `[win.apk] cannot load <library>` in the log | A native library the loader could not load (packed, encrypted, or for another ABI) | Open an issue with the log and the APK's `lib/` folders | None |
 | Windows Defender or SmartScreen warns about Win.apk or an app | Win.apk writes and then runs translated code, and the preview builds are not code-signed | Known; the preview builds are not signed yet | Allow it |
 
 ## Apps
 
-One row per app and version that someone actually ran. "Works" means the
-app opens and its main screens are usable; say what does not in the notes.
-Newest test first within an app.
+One row per app and version that someone actually ran; say what does not
+work in the notes. Newest test first within an app.
 
 | App | Version | Source | Status | Notes | Tested | Issue |
 |---|---|---|---|---|---|---|
@@ -58,11 +67,9 @@ Copy this line into the table, newest test first for the same app:
 | App name | version (`package.name`) | F-Droid / APKMirror / the app's site | Works / Partly / Does not start | what works, what does not, in one line | YYYY-MM-DD | #123 |
 ```
 
-- **Version:** the one the library shows under Get Info > Version, and the
-  package name so two apps with the same name are not confused.
-- **Status:** *Works* (main screens usable), *Partly* (opens, but something in
-  the notes does not work), *Does not start* (installs but shows no window or
-  crashes at once), *Does not install*.
+- **Version:** as the app's own About screen or its F-Droid page shows it,
+  and the package name, so two apps with the same name are not confused.
+- **Status:** one of the words at the top of this page.
 - **Tested:** the date, and the Win.apk version if it is not the latest
   release.
 - **Issue:** the issue number for anything that does not work, so the row and
