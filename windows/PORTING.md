@@ -252,7 +252,7 @@ implements in `runtime/src`; on Windows `windows/host/native_*.cpp`):
 | `bionic_shim_sigchain.cpp`, `_signal.cpp` | 1,913 | signals and chaining with the JVM | vectored exception handling (M5) | not started |
 | `bionic_shim_sensors.cpp` | 540 | NDK sensors | port as is (M5) | not started |
 | `bionic_shim_vulkan.cpp` | 401 | Vulkan over MoltenVK | the system Vulkan loader (M6) | not started |
-| `bionic_shim_cacerts.cpp` | 218 | CA store from the Mac's roots | the Windows root store | not started |
+| `bionic_shim_cacerts.cpp` | 218 | CA store from the Mac's roots | `src/bionic/cacerts.cpp`: the roots Windows trusts (user, machine, policy; less Disallowed and expired) plus the JDK's | done |
 | `bionic_shim_forkwatch.cpp`, `_elfexec.cpp`, `elfexec_main.cpp` | 1,471 | forked and shipped executables | later (M5) | not started |
 | `media_ndk.cpp` | 701 | NDK `AMediaCodec` | port with `NativeMedia`; `host/native_media.cpp` has the `AMEDIAFORMAT_KEY_*` strings | keys only |
 | `bionic_shim.cpp`: `ANativeWindow_*`, `AAssetManager_*` | - | libandroid's native window and assets | `host/native_window.cpp`, `host/native_asset.cpp` (assets through Java's AssetManager; no native APK index yet) | done |

@@ -16,6 +16,47 @@
 #include <cstdio>
 #include <string>
 
+#include <windows.h>
+#include <wincrypt.h>
+
+namespace {
+
+// "<subject_hash_old> <first base64 line>" of a root in the user's Root store
+// that Windows accepts for TLS (in date, no purposes set on it), for the guest
+// to find in /system/etc/security/cacerts. Computed with CryptoAPI, apart from
+// the shim's own DER reading. Empty if the store has none.
+std::string windows_root_for_guest() {
+    std::string out;
+    HCERTSTORE store = CertOpenSystemStoreW(0, L"ROOT");
+    if (!store) return out;
+    for (PCCERT_CONTEXT c = nullptr; out.empty() && (c = CertEnumCertificatesInStore(store, c));) {
+        DWORD size = 0;
+        if (CertVerifyTimeValidity(nullptr, c->pCertInfo) != 0 ||
+            CertGetEnhancedKeyUsage(c, CERT_FIND_PROP_ONLY_ENHKEY_USAGE_FLAG, nullptr, &size)) {
+            continue;
+        }
+        BYTE md5[16];
+        DWORD n = sizeof md5;
+        if (!CryptHashCertificate2(L"MD5", 0, nullptr, c->pCertInfo->Subject.pbData, c->pCertInfo->Subject.cbData,
+                                   md5, &n)) {
+            continue;
+        }
+        DWORD len = 0;
+        const DWORD flags = CRYPT_STRING_BASE64 | CRYPT_STRING_NOCRLF;
+        if (!CryptBinaryToStringA(c->pbCertEncoded, c->cbCertEncoded, flags, nullptr, &len)) continue;
+        std::string b64(len, ' ');
+        if (!CryptBinaryToStringA(c->pbCertEncoded, c->cbCertEncoded, flags, &b64[0], &len)) continue;
+        char hash[16];
+        std::snprintf(hash, sizeof hash, "%02x%02x%02x%02x", md5[3], md5[2], md5[1], md5[0]);
+        out = std::string(hash) + " " + b64.substr(0, 64);
+        CertFreeCertificateContext(c);
+    }
+    CertCloseStore(store, 0);
+    return out;
+}
+
+}  // namespace
+
 int main(int argc, char** argv) {
     if (argc < 3) {
         std::fprintf(stderr, "usage: winapk-bionic-test <libwinapk_bionic_guest.so> <scratch dir>\n");
@@ -39,6 +80,8 @@ int main(int argc, char** argv) {
     // Guest "/x" paths resolve under the scratch directory, as under the
     // android root in the runtime.
     winapk::set_android_root(argv[2]);
+    const std::string root = windows_root_for_guest();
+    if (!root.empty()) winapk::bionic_setenv("WINAPK_TEST_CACERT", root.c_str(), 1);
     const int failures = test(argv[2]);
     std::fflush(stdout);
     std::printf("\n%s: %d failure(s)\n", failures ? "FAILED" : "OK", failures);
