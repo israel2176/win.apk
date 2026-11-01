@@ -9,8 +9,8 @@
 //
 // Drawing is driven from here, as on the Mac, where the display link calls the
 // renderer the app's window registered (setRenderer) once per vsync: here a
-// 60 Hz thread does it. Frames come back through presentFrame or
-// presentBitmap. With WINAPK_HEADLESS_FRAME set to a
+// thread ticking at a steady 60 Hz does it. Frames come back through
+// presentFrame or presentBitmap. With WINAPK_HEADLESS_FRAME set to a
 // file path, the latest one is written there as a BMP, which is how a headless
 // run shows that the app really drew something. WINAPK_HEADLESS_EXIT_AFTER_FRAMES
 // ends the process with exit code 0 that many display frames after the first
@@ -31,6 +31,7 @@
 #include <string>
 
 #include <windows.h>
+#include <mmsystem.h>
 #include <shellapi.h>
 
 #include "gl/gl_surface.h"
@@ -47,6 +48,26 @@ namespace {
 // common phone screen today and about the shape upstream's Mac launcher picks).
 std::atomic<int> g_phone_w{360};
 std::atomic<int> g_phone_h{640};
+// The app's surface, in pixels: what the render thread asks every renderer to
+// draw at, and the size the window shows pixel for pixel. The phone size
+// times the density until the user resizes the window; from then on the
+// window's own box (win32_window.h, WindowInput::resized), with the dp
+// derived from it, so a frame is never a pixel off the window.
+std::atomic<int> g_surface_w{0};
+std::atomic<int> g_surface_h{0};
+std::atomic<float> g_density{0.0f};  // px per dp, once Java has said (device_density)
+
+int px_of(int dp) { return static_cast<int>(static_cast<float>(dp) * g_density.load() + 0.5f); }
+
+// The phone's size in dp, set by the app or the launch: the surface follows.
+void set_phone_dp(int w, int h) {
+    g_phone_w = w;
+    g_phone_h = h;
+    if (g_density.load() > 0) {
+        g_surface_w = px_of(w);
+        g_surface_h = px_of(h);
+    }
+}
 
 // Each app keeps the window size the user last gave it, in dp, as
 // <data>\library\<name>.window ("<w>x<h>"; beside the library's other files on
@@ -123,11 +144,18 @@ void report_input_exception(JNIEnv* env) {
 class JavaInput : public WindowInput {
 public:
     // TouchDispatcher.dispatch takes AppKit view coordinates: points, origin at
-    // the bottom left. The window is the phone scaled to the client area.
+    // the bottom left; it multiplies them by backingScale (the density) for the
+    // surface pixel. The view is the surface in points -- its pixels over the
+    // density, not the rounded dp, so a touch lands on the surface pixel it
+    // was made on when the window shows the surface pixel for pixel.
     void pointer(int action, float x, float y, float view_w, float view_h) override {
         JNIEnv* env = ui_thread_env();
         if (!env || !g_dispatcher || view_w <= 0 || view_h <= 0) return;
-        const float pw = static_cast<float>(g_phone_w), ph = static_cast<float>(g_phone_h);
+        const float d = g_density.load() > 0 ? g_density.load() : 1.0f;
+        const float pw = g_surface_w.load() > 0 ? static_cast<float>(g_surface_w.load()) / d
+                                                : static_cast<float>(g_phone_w.load());
+        const float ph = g_surface_h.load() > 0 ? static_cast<float>(g_surface_h.load()) / d
+                                                : static_cast<float>(g_phone_h.load());
         const float px = x * pw / view_w;
         const float py = ph - y * ph / view_h;
         env->CallVoidMethod(g_dispatcher, g_dispatch_mid, action, px, py, pw, ph);
@@ -179,14 +207,16 @@ public:
         env->CallStaticVoidMethod(host, to_front);
         report_input_exception(env);
     }
-    // The render thread sees the new phone size on its next tick and reports
-    // it (DisplayConfig, then surfaceChanged); the size is kept for the app's
-    // next start.
-    void resized(int w_dp, int h_dp) override {
+    // The render thread sees the new surface size on its next tick and reports
+    // it (DisplayConfig, then surfaceChanged to every renderer).
+    void resized(int w_dp, int h_dp, int w_px, int h_px) override {
         g_phone_w = w_dp;
         g_phone_h = h_dp;
-        save_window_size(w_dp, h_dp);
+        g_surface_w = w_px;
+        g_surface_h = h_px;
     }
+    // A size the user settled on is kept for the app's next start.
+    void remember_size(int w_dp, int h_dp) override { save_window_size(w_dp, h_dp); }
 };
 
 JavaInput g_java_input;
@@ -213,8 +243,7 @@ float device_density(JNIEnv* env);
 void choose_phone_size() {
     int w = 0, h = 0;
     launch_phone_size(&w, &h);
-    g_phone_w = w;
-    g_phone_h = h;
+    set_phone_dp(w, h);
 }
 
 // ---- the app icon -----------------------------------------------------------
@@ -240,10 +269,11 @@ void apply_app_icon() {
 
 jboolean JNICALL Cocoa_init(JNIEnv* env, jclass) {
     env->GetJavaVM(&g_vm);
+    g_density = device_density(env);
     choose_phone_size();
     if (headless_requested()) {
         std::fprintf(stderr, "[win.apk] WINAPK_HEADLESS is set; running without a window\n");
-    } else if (!window_start(g_phone_w, g_phone_h, device_density(env), &g_java_input)) {
+    } else if (!window_start(g_phone_w, g_phone_h, g_density.load(), &g_java_input)) {
         std::fprintf(stderr, "[win.apk] no desktop to open a window on; running headless\n");
     }
     apply_app_icon();
@@ -251,8 +281,7 @@ jboolean JNICALL Cocoa_init(JNIEnv* env, jclass) {
 }
 
 void JNICALL Cocoa_setPhoneSize(JNIEnv*, jclass, jint w, jint h) {
-    if (w > 0) g_phone_w = w;
-    if (h > 0) g_phone_h = h;
+    set_phone_dp(w > 0 ? w : g_phone_w.load(), h > 0 ? h : g_phone_h.load());
     window_set_phone_size(g_phone_w, g_phone_h);
 }
 
@@ -274,9 +303,10 @@ jfloat JNICALL Cocoa_backingScale(JNIEnv* env, jclass) {
 void JNICALL Cocoa_applyRequestedOrientation(JNIEnv*, jclass, jboolean landscape) {
     const int a = g_phone_w, b = g_phone_h;
     const int lo = a < b ? a : b, hi = a < b ? b : a;
-    g_phone_w = landscape ? hi : lo;
-    g_phone_h = landscape ? lo : hi;
     window_set_orientation_lock(landscape ? 2 : 1);
+    set_phone_dp(landscape ? hi : lo, landscape ? lo : hi);
+    // Also when the phone already has that shape: the lock alone changes the
+    // box a maximized window gives the app.
     window_set_phone_size(g_phone_w, g_phone_h);
 }
 
@@ -655,7 +685,10 @@ void compose_and_present(JNIEnv* env) {
     g_comp_out.assign(static_cast<size_t>(W) * H, 0xff000000u);
     uint32_t* out = g_comp_out.data();
     if (!g_comp_gl.empty() && is_gl_view(g_content_view.load())) {
-        blit_scaled(out, W, H, g_comp_gl.data(), g_comp_gl_w, g_comp_gl_h, 0, 0, W, H);
+        // Both are drawn at the surface size. One from before a resize is
+        // copied as it is (the next tick draws it at the new size), never
+        // stretched to pretend otherwise.
+        blit_scaled(out, W, H, g_comp_gl.data(), g_comp_gl_w, g_comp_gl_h, 0, 0, g_comp_gl_w, g_comp_gl_h);
     }
     auto draw_layers = [&](bool on_top) {
         for (const auto& pl : places) {
@@ -783,11 +816,52 @@ void pull_guest_layer_z(JNIEnv* env) {
     if (env->ExceptionCheck()) env->ExceptionClear();
 }
 
+// The 60 Hz tick. Sleep(16) ran at the scheduler's granularity -- 15.6 ms
+// by default, so a tick every one or two of those: 40 to 60 frames a second,
+// unevenly. A high-resolution waitable timer (Windows 10 1803 and later;
+// the multimedia timer's 1 ms resolution stands in before that) wakes the
+// thread at the next multiple of 1/60 s. A tick that overran its slot starts
+// the next one at once; it is not made up for.
+class TickClock {
+public:
+    TickClock() {
+        QueryPerformanceFrequency(&freq_);
+        QueryPerformanceCounter(&next_);
+        timer_ = CreateWaitableTimerExW(nullptr, nullptr, 0x00000002 /* HIGH_RESOLUTION */, TIMER_ALL_ACCESS);
+        if (!timer_) {
+            timer_ = CreateWaitableTimerExW(nullptr, nullptr, 0, TIMER_ALL_ACCESS);
+            timeBeginPeriod(1);
+        }
+    }
+    void wait() {
+        next_.QuadPart += freq_.QuadPart / 60;
+        LARGE_INTEGER now;
+        QueryPerformanceCounter(&now);
+        if (next_.QuadPart <= now.QuadPart) {
+            next_ = now;  // behind: tick now, on a fresh schedule
+            return;
+        }
+        if (!timer_) {
+            Sleep(static_cast<DWORD>((next_.QuadPart - now.QuadPart) * 1000 / freq_.QuadPart));
+            return;
+        }
+        LARGE_INTEGER due;
+        due.QuadPart = -((next_.QuadPart - now.QuadPart) * 10000000LL / freq_.QuadPart);
+        if (due.QuadPart >= 0) due.QuadPart = -1;
+        SetWaitableTimer(timer_, &due, 0, nullptr, nullptr, FALSE);
+        WaitForSingleObject(timer_, INFINITE);
+    }
+
+private:
+    HANDLE timer_ = nullptr;
+    LARGE_INTEGER freq_{}, next_{};
+};
+
 DWORD WINAPI render_thread(void*) {
     JNIEnv* env = nullptr;
     JavaVMAttachArgs args{JNI_VERSION_1_6, const_cast<char*>("winapk-render"), nullptr};
     if (g_vm->AttachCurrentThreadAsDaemon(reinterpret_cast<void**>(&env), &args) != JNI_OK) return 1;
-    const float density = device_density(env);
+    if (g_density.load() <= 0) g_density = device_density(env);
     const char* e = std::getenv("WINAPK_HEADLESS_EXIT_AFTER_FRAMES");
     const long exit_after = (e && *e) ? std::atol(e) : 0L;
     long ticks_since_first = 0;
@@ -806,11 +880,24 @@ DWORD WINAPI render_thread(void*) {
     const jmethodID note = display ? env->GetStaticMethodID(display, "macapkNoteSurfaceSize", "(II)Z") : nullptr;
     if (env->ExceptionCheck()) env->ExceptionClear();
     if (display) display = static_cast<jclass>(env->NewGlobalRef(display));
-    int shown_w = 0, shown_h = 0, held = 0;
+    int shown_w = 0, shown_h = 0, asked_w = 0, asked_h = 0, held = 0;
+    TickClock clock;
     for (;;) {
-        Sleep(16);
-        int w = static_cast<int>(g_phone_w * density + 0.5f), h = static_cast<int>(g_phone_h * density + 0.5f);
+        clock.wait();
+        // The surface: the window's box in pixels, or the phone at the density.
+        int w = g_surface_w.load(), h = g_surface_h.load();
+        if (w <= 0 || h <= 0) {
+            w = px_of(g_phone_w.load());
+            h = px_of(g_phone_h.load());
+        }
         if (w != shown_w || h != shown_h) {
+            // The bound is per size: a drag brings a new one every few ticks,
+            // and each gets its own wait for the commit.
+            if (w != asked_w || h != asked_h) {
+                asked_w = w;
+                asked_h = h;
+                held = 0;
+            }
             bool committed = shown_w == 0 || !note;
             if (!committed) {
                 committed = env->CallStaticBooleanMethod(display, note, w, h) == JNI_TRUE;
@@ -1025,15 +1112,21 @@ void guest_frame_present(const uint32_t* argb, int w, int h) {
         present_pixels(argb, w, h);
         return;
     }
-    // The view tree over the guest frame, scaled to the tree's size: where the
-    // tree is transparent (the SurfaceView's hole) the guest shows.
+    // The view tree over the guest frame: where the tree is transparent (the
+    // SurfaceView's hole) the guest shows. Both are the surface's size; an app
+    // that set its own buffer geometry (a game rendering at a lower
+    // resolution) is scaled up to the tree, as Android's compositor scales
+    // its buffer to the window. Otherwise a size they disagree on means one
+    // of them is from before a resize: the guest's frame goes out alone, at
+    // its own size (the window shows it unscaled), and the next frame of
+    // each brings them together.
     thread_local std::vector<uint32_t> out;
     int tw = 0, th = 0;
     {
         std::lock_guard<std::mutex> hold(g_tree_lock);
         tw = g_tree_w;
         th = g_tree_h;
-        if (tw <= 0 || th <= 0) {
+        if (tw <= 0 || th <= 0 || ((tw != w || th != h) && !native_window_has_geometry())) {
             present_pixels(argb, w, h);
             return;
         }
