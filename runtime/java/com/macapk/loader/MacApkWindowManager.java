@@ -27,6 +27,23 @@ public final class MacApkWindowManager implements WindowManager {
         // GLSurfaceView GLThread). Same demand here, before anything is added.
         // MACAPK_GL_THREAD_NO_LOOPER; docs/gl-thread-has-no-looper_2026-10-01.md
         android.os.Handler.macapkRequireLooperOnGlThread();
+        // WindowManagerService.addWindow: a system-alert window type
+        // (TYPE_PHONE 2002, TYPE_SYSTEM_ALERT 2003, TYPE_SYSTEM_OVERLAY 2006,
+        // TYPE_PRIORITY_PHONE 2007, TYPE_SYSTEM_ERROR 2010 and their
+        // replacement TYPE_APPLICATION_OVERLAY 2038) needs the "Display over
+        // other apps" grant, else ADD_PERMISSION_DENIED -> BadTokenException.
+        // Checked only where that grant is the user's (Settings.canDrawOverlays
+        // reads the app-ops store); elsewhere every overlay is composited, as
+        // before.
+        if (params instanceof WindowManager.LayoutParams) {
+            int type = ((WindowManager.LayoutParams) params).type;
+            boolean alert = type == 2002 || type == 2003 || type == 2006 || type == 2007 || type == 2010
+                    || type == 2038;
+            if (alert && Boolean.FALSE.equals(SpecialAccessStore.overlaysAllowed())) {
+                throw new WindowManager.BadTokenException("Unable to add window " + view
+                        + " -- permission denied for window type " + type);
+            }
+        }
         WindowOverlayStack.add(view, params);
     }
     @Override public void updateViewLayout(View view, ViewGroup.LayoutParams params) {
