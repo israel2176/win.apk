@@ -72,6 +72,13 @@ int stat(const char*, struct stat*);
 typedef struct DIR DIR;
 struct dirent { unsigned long d_ino; long d_off; unsigned short d_reclen; unsigned char d_type; char d_name[256]; };
 DIR* opendir(const char*);
+DIR* fdopendir(int);
+int dirfd(DIR*);
+int openat(int, const char*, int, ...);
+int __openat_2(int, const char*, int);
+int fstatat(int, const char*, struct stat*, int);
+int mkdirat(int, const char*, unsigned);
+int strncmp(const char*, const char*, size_t);
 struct dirent* readdir(DIR*);
 int closedir(DIR*);
 typedef struct FILE FILE;
@@ -926,6 +933,67 @@ static void test_signals_and_paths(const char* dir) {
     if (fd >= 0) close(fd);
 }
 
+// ---- *at() calls and Android's CA store ----------------------------------------
+// Dart's dart:io opens every file with openat and lists directories with
+// fdopendir; its TLS loads /system/etc/security/cacerts that way. The runner
+// sets WINAPK_TEST_CACERT to "<subject_hash_old> <first base64 line>" of a
+// root from the Windows store, computed with CryptoAPI.
+static void test_at_and_cacerts(const char* dir) {
+    char sub[512], path[512], buf[256];
+    snprintf(sub, sizeof sub, "%s/bionic_at_dir", dir);
+    mkdir(sub, 0755);
+    snprintf(path, sizeof path, "%s/at.txt", sub);
+    int fd = open(path, 01 | 0100 | 01000, 0644);
+    if (fd >= 0) { write(fd, "at!\n", 4); close(fd); }
+    const int dfd = open(sub, 0200000);  // O_DIRECTORY
+    check("open(O_DIRECTORY)", dfd >= 0, 0);
+    fd = openat(dfd, "at.txt", 0);
+    memset(buf, 0, sizeof buf);
+    check("openat relative to a directory descriptor", fd >= 0 && read(fd, buf, 4) == 4 && strcmp(buf, "at!\n") == 0,
+          buf);
+    if (fd >= 0) close(fd);
+    fd = __openat_2(-100, path, 0);  // AT_FDCWD
+    check("__openat_2 with AT_FDCWD", fd >= 0, 0);
+    if (fd >= 0) close(fd);
+    struct stat st;
+    check("fstatat relative to a directory descriptor", fstatat(dfd, "at.txt", &st, 0) == 0 && st.size == 4, 0);
+    check("openat of a missing file sets ENOENT", openat(dfd, "missing", 0) < 0 && *__errno() == 2, 0);
+    snprintf(path, sizeof path, "%s/made", sub);
+    check("mkdirat relative to a directory descriptor", mkdirat(dfd, "made", 0755) == 0 && stat(path, &st) == 0 &&
+                                                            (st.mode & 0170000) == 0040000, 0);
+    rmdir(path);
+    snprintf(path, sizeof path, "%s/at.txt", sub);
+    DIR* d = fdopendir(dfd);
+    int found = 0;
+    for (struct dirent* e; d && (e = readdir(d));) found |= strcmp(e->d_name, "at.txt") == 0;
+    check("fdopendir lists the directory", found, 0);
+    check("dirfd gives fdopendir's descriptor", d && dirfd(d) == dfd, 0);
+    if (d) closedir(d);  // closes dfd
+    unlink(path);
+    rmdir(sub);
+
+    const int cfd = openat(-100, "/system/etc/security/cacerts", 0200000 | 02000000);  // O_DIRECTORY | O_CLOEXEC
+    check("/system/etc/security/cacerts opens", cfd >= 0, 0);
+    d = cfd >= 0 ? fdopendir(cfd) : 0;
+    int roots = 0, match = 0;
+    const char* want = getenv("WINAPK_TEST_CACERT");
+    for (struct dirent* e; d && (e = readdir(d));) {
+        if (e->d_name[0] == '.') continue;
+        ++roots;
+        if (!want || strncmp(e->d_name, want, 8) != 0 || e->d_name[8] != '.') continue;
+        fd = openat(dirfd(d), e->d_name, 0);
+        memset(buf, 0, sizeof buf);
+        if (fd >= 0 && read(fd, buf, sizeof buf - 1) > 0 && strstr(buf, want + 9)) match = 1;
+        if (fd >= 0) close(fd);
+    }
+    if (d) closedir(d);
+    snprintf(buf, sizeof buf, "%d roots", roots);
+    check("the CA store has the roots Windows trusts", roots > 0, buf);
+    check("a root from the Windows store is there, named <subject_hash_old>.N", want && match, want);
+    check("the Android 14 spelling (/apex/com.android.conscrypt/cacerts) is the same store",
+          stat("/apex/com.android.conscrypt/cacerts", &st) == 0 && (st.mode & 0170000) == 0040000, 0);
+}
+
 EXPORT int bionic_test(const char* dir) {
     printf("Bionic shim, from guest code\n");
     test_printf();
@@ -938,6 +1006,7 @@ EXPORT int bionic_test(const char* dir) {
     test_sockets();
     test_looper();
     test_files(dir);
+    test_at_and_cacerts(dir);
     test_zlib(dir);
     test_rand48_statfs_getopt(dir);
     test_misc();
