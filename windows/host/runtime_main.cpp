@@ -553,6 +553,8 @@ bool install_app(Options* o, const fs::path& android_root) {
 // "skip" (not an arm64 ELF file: packed or encrypted, loaded by the app's
 // own code), or "bad" (its translation crashed: the loader marks it, and the
 // JIT runs the library; see arm64_aot.cpp). A DLL without a stamp is a whole translation from before stamps.
+// The stamp ends with the kAotVersion it was made with; another one means
+// translate again.
 //
 // Many apps ship the same libraries (libc++_shared.so, libcrashlytics.so,
 // SQLite, ...). As Windows on ARM's translation cache and Box64's DynaCache
@@ -594,6 +596,7 @@ size_t profile_lines(const fs::path& so) {
 struct AotStamp {
     std::string kind;  // "full", "profile", "wait", or "" (none)
     size_t lines = 0;
+    unsigned version = 0;  // the kAotVersion it was made with; 0 before stamps had one
 };
 
 AotStamp read_aot_stamp(const fs::path& so) {
@@ -602,9 +605,11 @@ AotStamp read_aot_stamp(const fs::path& so) {
     if (!f) return s;
     char kind[16] = {};
     unsigned long long lines = 0;
-    if (std::fscanf(f, "%15s %llu", kind, &lines) >= 1) {
+    unsigned version = 0;
+    if (std::fscanf(f, "%15s %llu %u", kind, &lines, &version) >= 1) {
         s.kind = kind;
         s.lines = static_cast<size_t>(lines);
+        s.version = version;
     }
     std::fclose(f);
     return s;
@@ -612,7 +617,7 @@ AotStamp read_aot_stamp(const fs::path& so) {
 
 void write_aot_stamp(const fs::path& so, const char* kind, size_t lines) {
     if (FILE* f = _wfopen(with_suffix(so, L".aot.stamp").c_str(), L"wb")) {
-        std::fprintf(f, "%s %zu\n", kind, lines);
+        std::fprintf(f, "%s %zu %u\n", kind, lines, winapk::arm64::kAotVersion);
         std::fclose(f);
     }
 }
@@ -626,6 +631,10 @@ bool newer_than(const fs::path& a, const fs::path& b) {
 bool aot_needs_work(const fs::path& so) {
     const bool have = newer_than(with_suffix(so, L".aot.dll"), so) || newer_than(with_suffix(so, L".aot.dll.new"), so);
     const AotStamp stamp = read_aot_stamp(so);
+    // Made by an older winapk-aot: the loader ignores that DLL, and a "bad"
+    // one may have been the translator's fault (City Car's libflutter.so).
+    if (have && stamp.version != winapk::arm64::kAotVersion) return true;
+    if (stamp.kind == "bad" && stamp.version != winapk::arm64::kAotVersion) return true;
     if (stamp.kind == "skip" || stamp.kind == "bad") return !newer_than(with_suffix(so, L".aot.stamp"), so);
     auto grown = [&] {
         const size_t p = profile_lines(so);

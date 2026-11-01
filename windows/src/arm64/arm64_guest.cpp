@@ -169,8 +169,13 @@ constexpr size_t kStackSlack = 1024;
 // Guest stack words passed on to a host function after x6 and x7 (AAPCS64
 // stack arguments become System V stack arguments in the same order).
 constexpr size_t kGuestStackWords = 14;
-// Caller stack words a callback passes on to the guest after x6 and x7.
-constexpr size_t kCallbackStackWords = 8;
+// Caller stack words a callback passes on to the guest after x6 and x7: how
+// many it was given is not known, so enough for a JNI native with many
+// arguments. Flutter's FlutterJNI.nativeSetViewportMetrics has 29 (21 on the
+// stack); with 8 its three int[] came from past them, and GetArrayLength
+// crashed in the JVM after the first frame (City Car). Fewer when the host
+// thread's stack ends sooner (dispatch).
+constexpr size_t kCallbackStackWords = 64;
 
 // run() stops when the guest returns here. It is never guest code and never
 // called: only its address matters.
@@ -696,7 +701,7 @@ void register_shim_functions() {
         const char* name;
         unsigned index;
     } kCallbacks[] = {
-        {"qsort", 3}, {"pthread_create", 2}, {"pthread_once", 1}, {"pthread_key_create", 1},
+        {"qsort", 3}, {"bsearch", 4}, {"pthread_create", 2}, {"pthread_once", 1}, {"pthread_key_create", 1},
         {"__cxa_atexit", 0}, {"__system_property_read_callback", 1}, {"ALooper_addFd", 4},
     };
     for (const auto& f : kCallbacks) {
@@ -758,7 +763,12 @@ extern "C" WINAPK_GUEST_ABI void winapk_arm64_dispatch(uint64_t pc, CallbackFram
     std::memcpy(gpr, frame->gpr, sizeof frame->gpr);
     gpr[6] = frame->stack_args[0];
     gpr[7] = frame->stack_args[1];
-    run_guest(ts, pc, gpr, frame->fpr, frame->stack_args + 2, kCallbackStackWords, &frame->rax, &frame->rdx,
+    const uint64_t* words = frame->stack_args + 2;
+    const ULONG_PTR at = reinterpret_cast<ULONG_PTR>(words);
+    ULONG_PTR low = 0, high = 0;
+    GetCurrentThreadStackLimits(&low, &high);
+    const size_t left = high > at ? (high - at) / 8 : 0;
+    run_guest(ts, pc, gpr, frame->fpr, words, std::min(kCallbackStackWords, left), &frame->rax, &frame->rdx,
               &frame->xmm0);
 }
 
