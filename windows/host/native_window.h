@@ -12,6 +12,8 @@
 #include <cstddef>
 #include <cstdint>
 
+#include <jni.h>
+
 namespace winapk::host {
 
 // The size an EGL surface or a locked buffer on `window` has: the buffer
@@ -30,6 +32,10 @@ bool content_pixel_size(int* w, int* h);
 // The guest-callable libandroid/libnativewindow functions (ANativeWindow_*),
 // by name; null for other names.
 void* native_window_resolve(const char* name);
+
+// ANativeWindow_fromSurface for host code (`env` is HotSpot's): the native
+// window for `surface`, whose SurfaceView now composites under the window.
+void* native_window_for_surface(JNIEnv* env, jobject surface);
 
 // The guest-callable libEGL/libGLESv*, by name (guest_gl.cpp); null for other
 // names.

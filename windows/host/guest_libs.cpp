@@ -23,6 +23,7 @@
 #include "winapk/jnigraphics.h"
 
 #include "native_aaudio.h"
+#include "native_activity.h"
 #include "native_media.h"
 #include "native_opensles.h"
 #include "native_window.h"
@@ -160,13 +161,15 @@ jstring JNICALL link_only(JNIEnv* env, jclass, jstring path) {
 }
 
 // The system libraries' functions: the Bionic shim's, then libEGL/libGLES and
-// libandroid's native window and assets, libOpenSLES and libaaudio, which
-// live with the host's GL, window, Java and audio.
+// libandroid's native window, assets, activity, input and configuration,
+// libOpenSLES and libaaudio, which live with the host's GL, window, Java and
+// audio.
 void* resolve_system(const char* name) {
     if (void* p = winapk::mini_bionic_resolve(name)) return p;
     if (void* p = winapk::host::guest_gl_resolve(name)) return p;
     if (void* p = winapk::host::native_window_resolve(name)) return p;
     if (void* p = winapk::host::native_asset_resolve(name)) return p;
+    if (void* p = winapk::host::native_activity_resolve(name)) return p;
     if (void* p = winapk::host::native_aaudio_resolve(name)) return p;
     if (void* p = winapk::host::native_media_resolve(name)) return p;
     if (void* p = winapk::host::native_opensles_resolve(name)) return p;
@@ -218,6 +221,35 @@ bool guest_libs_init(JNIEnv* env, jvmtiEnv* jvmti) {
 
 HostMethods native_linker_methods() {
     return {kLinkerMethods, sizeof(kLinkerMethods) / sizeof(kLinkerMethods[0])};
+}
+
+void* guest_library_open(const std::wstring& path, std::string* error) {
+    if (!g_linker) {
+        if (error) *error = "the guest linker is not initialized";
+        return nullptr;
+    }
+    // A stub copy names its ELF in <stub>.source; anything else is the ELF.
+    const std::wstring so = source_of(path);
+    if (!so.empty()) {
+        winapk::GuestLibrary* lib = open_for_stub(path);
+        if (!lib && error) *error = "cannot load " + utf8(so) + " (see the log)";
+        return lib;
+    }
+    std::string err;
+    winapk::GuestLibrary* lib = g_linker->open(utf8(path), winapk::GuestLinker::kRtldNow, &err);
+    if (!lib) {
+        std::fprintf(stderr, "[win.apk] cannot load %s: %s\n", utf8(path).c_str(), err.c_str());
+        if (error) *error = err;
+    }
+    return lib;
+}
+
+void* guest_library_symbol(void* library, const char* name, std::string* error) {
+    if (!g_linker || !library || !name) return nullptr;
+    std::string err;
+    void* p = g_linker->lookup(library, name, nullptr, &err);
+    if (!p && error) *error = err;
+    return p;
 }
 
 }  // namespace winapk::host

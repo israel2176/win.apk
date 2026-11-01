@@ -30,6 +30,8 @@
 
 #pragma once
 
+#include <string>
+
 #include <jni.h>
 #include <jvmti.h>
 
@@ -43,6 +45,16 @@ bool guest_libs_init(JNIEnv* env, jvmtiEnv* jvmti);
 
 // com.macapk.loader.NativeLinker.
 HostMethods native_linker_methods();
+
+// The guest library at `path`, loaded (or found) with its dependencies and
+// constructors but without its JNI_OnLoad, as dlopen does: `path` is a stub
+// copy with a .source sidecar (findLibrary's answer) or an ELF. Null with the
+// error otherwise. The handle is the linker's.
+void* guest_library_open(const std::wstring& path, std::string* error);
+
+// A symbol of that library, its dependency tree included, as dlsym on an
+// Android handle; null with the error if there is none.
+void* guest_library_symbol(void* library, const char* name, std::string* error);
 
 }  // namespace winapk::host
 

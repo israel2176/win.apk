@@ -91,11 +91,18 @@ library (`launcher/launcher_main.cpp`, the counterpart of upstream's
 - **Running and managing:** double-click an app to run it; right-click for Get
   Info, shortcuts, its files and log, updating it from a newer APK,
   reinstalling or removing it. Typing searches the library.
+- **Orientation:** apps open in landscape, the shape of a PC screen, unless the
+  settings say portrait. Right-click > "Open in portrait" / "Open in
+  landscape" turns one app the other way, for that app only
+  (`library\<name>.orientation`); Get Info shows the choice and can hand it
+  back to the settings. An app whose manifest fixes the orientation of its
+  launched activity always opens that way, and the menu entry says so.
 - **Hebrew:** the library is in Hebrew, laid out right to left, when Windows
   is; the settings can pick English or Hebrew instead.
 - **Settings** (the gear): language, light or dark theme, the default app for `.apk`
-  files, the phone's screen size and orientation, desktop shortcuts, and the
-  logs and app data folders.
+  files, the phone's screen size and orientation (`HKCU\Software\Win.apk`;
+  `Landscape` absent means landscape, an explicit 0 from an earlier version
+  still means portrait), desktop shortcuts, and the logs and app data folders.
 
 The package holds the runtime, a Java runtime, ANGLE and `README.txt`, which
 says what works, where app data and logs are, and what to attach to a bug
@@ -241,18 +248,24 @@ Done so far:
 - The Bionic shim: about 520 libc functions (threads, files, sockets,
   epoll, `ALooper`, printf and scanf), on the UCRT and Win32.
 - The host: the window and input, `NativeOs`, `NativeLooper`, images (libwebp,
-  WIC), audio (WASAPI), clipboard, file pickers, game controllers, ICU,
-  SQLite.
+  WIC), audio (WASAPI: AudioTrack, SoundPool, MediaPlayer's audio, OpenSL ES,
+  AAudio, recording; Media Foundation decodes), clipboard, file pickers, game
+  controllers, ICU, SQLite, WebView on WebView2, the camera (Media Foundation
+  capture), location (`Windows.Devices.Geolocation`), the radios' state,
+  photos and wallpapers, the user's own folders as shared storage, and
+  Android's permission dialogs (through the launcher's helper).
 - OpenGL ES on ANGLE, from Java and from app native code (`ANativeWindow`,
-  EGL window surfaces), plus libandroid's assets.
-- The app library (`Win.apk.exe`) with shortcuts per app, the installer
-  (`package/winapk.iss`) and the release workflow.
+  EGL window surfaces), plus libandroid's assets, and `NativeActivity` with
+  the NDK input queue and `AConfiguration` (`host/native_activity.cpp`).
+- The app library (`Win.apk.exe`) with shortcuts per app, the Store (F-Droid),
+  the installer (`package/winapk.iss`, English and Hebrew) and the release
+  workflow.
 
-Next, in order: OpenSL ES and AAudio for native sound, `NativeActivity`,
-`NativeMedia` (MediaPlayer and video on Media Foundation), WebView2, the
-camera and location, signals through vectored exception handling, then the
-launcher (M8). ARM code (M10) is translated ahead of time, with the JIT as
-the fallback.
+Next, in order: video (MediaPlayer and the NDK media API on Media
+Foundation), Vulkan (`VK_KHR_win32_surface`), sensors, W^X thunks with unwind
+tables and a crash handler (M9), code signing, then a wider compatibility
+corpus. ARM code (M10) is translated ahead of time, with the JIT
+as the fallback; 32-bit `armeabi-v7a` stays unsupported.
 
 `PORTING.md` holds the design decisions, the technical findings, the known
 gaps, and the milestone plan up to a production release.
@@ -291,6 +304,37 @@ every such change is listed here:
 - `runtime/java/com/macapk/loader/FragmentInflaterFactory.java`: a fragment in
   a layout is hosted by the activity the inflater belongs to, which also works
   during the first activity's `onCreate`. Not Windows-specific.
+- `runtime/java/com/macapk/loader/DomXmlResourceParser.java` and
+  `BinaryXmlParser.java`: the resource parser's `next()` skips whitespace-only
+  text and comments, as the device's parser over aapt-compiled XML never sees
+  them (a `while (next() != END_TAG) nextText()` loop over a text-form resource
+  threw "nextText not on START_TAG"), and the compiled-XML reader keeps text
+  chunks, so an element's content (`<key>` in a media-browser allow list) is no
+  longer empty. Not Windows-specific; worth offering upstream.
+- `runtime/java/com/macapk/dex/InitRepointPlan.java`: the DEX converter also
+  synthesises the constructor R8 deleted when the call site still names the
+  allocated class (`new-instance T; invoke-direct T.<init>(D)` with no
+  `T.<init>(D)` left, often no class data at all), which ART resolves up the
+  superclass chain and HotSpot refuses with NoSuchMethodError. NetGuard's
+  main activity and androidx.startup failed on it (170 such sites in one
+  DEX). Not Windows-specific; worth offering upstream.
+- `runtime/java/android/system/Os.java`: `chmod` and `fchmod` (Key Mapper
+  died at start on the missing method). Not Windows-specific.
+- `runtime/java/android/preference/Preference.java`: an app subclass that
+  overrides `onGetDefaultValue(TypedArray, int)` gets it called, with a
+  TypedArray holding `android:defaultValue`; the String the AttributeSet twin
+  reads broke DroidFish's ColorPickerPreference with a ClassCastException. Not
+  Windows-specific.
+- `runtime/java/com/macapk/loader/FragmentInflaterFactory.java`: a
+  `FragmentContainerView[android:name]` whose app FragmentManager cannot be
+  found by name (R8 renamed it) goes through the activity's own
+  `onCreateView` override, AOSP's route, instead of the view's 2-arg
+  constructor, which throws (Auxio, Tremotesf). Not Windows-specific.
+- `runtime/java/android/provider/MediaStoreProvider.java`: a projection may
+  hold an aggregate over a known column (`COUNT(is_music)`, `COUNT(*)`,
+  `MAX(date_added)`) or an alias (`_data AS path`), as MediaProvider's
+  projection greylist allows; before, the aggregate was answered as a NULL
+  column and a COUNT over an empty table had no row. Not Windows-specific.
 - `runtime/java/android/security/keystore/AndroidKeyStoreKeyFactorySpi.java`:
   delegates to the other providers only, instead of recursing into itself
   until the stack overflows. Not Windows-specific.
@@ -419,6 +463,12 @@ every such change is listed here:
   the helper that writes the store (`Win.apk.exe runtime-permission`,
   `special-access`, `app-details`, in `launcher/launcher_main.cpp`), with
   upstream's payload and tokens. On the Mac nothing changes.
+- `runtime/java/com/macapk/loader/ActivityHost.java`: without the AOSP window
+  policy (Windows), an activity that owns the window box asks the host for its
+  manifest's `screenOrientation` at launch (`NativeCocoa.applyWindowOrientation`,
+  the same native the policy's branch uses), so a portrait-only app opens
+  portrait although the library opens apps landscape. A host without the
+  native keeps the old behaviour.
 
 ## License
 
