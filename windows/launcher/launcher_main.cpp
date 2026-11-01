@@ -112,6 +112,8 @@ int ipx(float v) { return static_cast<int>(std::lround(px(v))); }
 
 enum class UiLanguage { English, Hebrew, Japanese };
 UiLanguage g_ui_language = UiLanguage::English;
+DWORD g_language_pref = 0; // 0 Windows, 1 English, 2 Hebrew, 3 Japanese
+int g_live_language = -1; // -1: use persisted preference; otherwise 0..3
 bool g_rtl = false;    // Hebrew: every window is mirrored (WS_EX_LAYOUTRTL) and its text reads right to left
 bool g_japanese = false; // kept for compatibility with existing paint paths
 float g_paint_w = 0;   // the width being painted, to put text and pictures back in a mirrored layout
@@ -119,7 +121,10 @@ float g_paint_w = 0;   // the width being painted, to put text and pictures back
 DWORD setting(const wchar_t* name, DWORD fallback);
 
 void pick_language() {
-    const DWORD pref = setting(L"Language", 0);  // 0 Windows, 1 English, 2 Hebrew, 3 Japanese
+    const DWORD pref = g_live_language >= 0
+        ? static_cast<DWORD>(g_live_language)
+        : (std::min)(setting(L"Language", 0), 3ul);
+    g_language_pref = pref;
     const LANGID ui = GetUserDefaultUILanguage();
     const bool hebrew = pref == 2 || (pref == 0 && PRIMARYLANGID(ui) == LANG_HEBREW);
     const bool japanese = pref == 3 || (pref == 0 && PRIMARYLANGID(ui) == LANG_JAPANESE);
@@ -344,90 +349,156 @@ const wchar_t* tr(const wchar_t* en) {
         {L"The app's description, screenshots and source code.", L"התיאור של האפליקציה, צילומי מסך וקוד המקור."},
         {L"unknown", L"לא ידוע"}
     };
-    if (!g_rtl) return en;
-    static const std::map<std::wstring, const wchar_t*> ja = {
-        {L"Run Android apps natively on Windows", L"AndroidアプリをWindows上でネイティブ実行"},
-        {L"Drop to install", L"ドロップしてインストール"}, {L"Installing…", L"インストール中…"},
-        {L"Installing", L"インストール中"}, {L"Drop an APK here to install", L"APKをここにドロップしてインストール"},
-        {L"Search apps", L"アプリを検索"}, {L"No apps installed yet.", L"インストール済みのアプリはありません。"},
-        {L"Logs", L"ログ"}, {L"Stop", L"停止"}, {L"Open the log", L"ログを開く"},
-        {L"Android apps", L"Androidアプリ"}, {L"All files", L"すべてのファイル"},
-        {L"Install an Android app", L"Androidアプリをインストール"}, {L"Opening {0}…", L"{0}を起動しています…"},
-        {L"Remove {0}?", L"{0}を削除しますか？"}, {L"Remove", L"削除"}, {L"Done", L"完了"},
-        {L"Theme", L"テーマ"}, {L"Match Windows", L"Windowsに合わせる"}, {L"Light", L"ライト"}, {L"Dark", L"ダーク"},
-        {L"Appearance", L"外観"}, {L"Language", L"言語"}, {L"Settings", L"設定"},
-        {L"Library", L"ライブラリ"}, {L"Store", L"ストア"}, {L"Install", L"インストール"},
-        {L"Update", L"更新"}, {L"Details", L"詳細"}, {L"Version", L"バージョン"},
-        {L"Try again", L"再試行"}, {L"All categories", L"すべてのカテゴリ"}, {L"Downloading…", L"ダウンロード中…"},
-        {L"Open", L"開く"}, {L"Cancel", L"キャンセル"}, {L"Close", L"閉じる"}, {L"Save", L"保存"},
-        {L"What the log says", L"ログの内容"}, {L"An app", L"アプリ"},
-        {L"{0} was stopped.", L"{0}を停止しました。"}, {L"{0} stopped with an error.", L"{0}がエラーで停止しました。"},
-        {L"{0} stopped with an error", L"{0}がエラーで停止しました"},
-        {L"Installing {0} failed.", L"{0}のインストールに失敗しました。"},
-        {L"Installing {0} failed", L"{0}のインストールに失敗しました"},
-        {L"Open Android app files with Win.apk", L"AndroidアプリファイルをWin.apkで開く"},
-        {L"Window size", L"ウィンドウサイズ"}, {L"Orientation", L"画面の向き"},
-        {L"Portrait", L"縦向き"}, {L"Landscape", L"横向き"}, {L"Automatic", L"自動"},
-        {L"Show the last &log", L"最後のログを表示"}, {L"Create &desktop shortcut", L"デスクトップショートカットを作成"},
-        {L"&Remove…", L"削除…"}, {L"Rein&stall", L"再インストール"}, {L"&Update from APK…", L"APKから更新…"},
-        {L"Default", L"既定"}, {L"Screen", L"画面"}, {L"Screen size", L"画面サイズ"},
-        {L"Auto (fits the screen)", L"自動（画面に合わせる）"},
-        {L"Desktop shortcut for new apps", L"新しいアプリのデスクトップショートカット"},
-        {L"Create", L"作成"}, {L"Recreate", L"再作成"}, {L"Shortcuts", L"ショートカット"},
-        {L"App data", L"アプリデータ"}, {L"Open folder", L"フォルダーを開く"},
-        {L"Remove all apps", L"すべてのアプリを削除"}, {L"About", L"このアプリについて"},
-        {L"Copy", L"コピー"}, {L"Notepad", L"メモ帳"}, {L"Folder", L"フォルダー"},
-        {L"Open app", L"アプリを開く"}, {L"Add app", L"アプリを追加"},
-        {L"Get Info", L"情報を見る"}, {L"Open the app's files", L"アプリのファイルを開く"},
-        {L"Show the APK in Explorer", L"APKをエクスプローラーで表示"},
-        {L"Installing - Win.apk", L"インストール中 - Win.apk"}, {L"Logs - Win.apk", L"ログ - Win.apk"},
-        {L"The log may say why:\n{0}", L"ログに原因が記録されている可能性があります：\n{0}"},
-        {L"No apps found.", L"アプリが見つかりません。"},
-        {L"Drop an APK above to install your first app", L"上にAPKをドロップして最初のアプリをインストール"},
-        {L"Diagnostics", L"診断"}, {L"View logs", L"ログを表示"}, {L"Logs folder", L"ログフォルダー"},
-        {L"Attach the log to a bug report: it says what the runtime did and where it stopped.", L"不具合報告にはログを添付してください。ランタイムの処理内容と停止位置を確認できます。"},
-        {L"install-<app>.log records each install, last-run.log the app opened last.", L"install-<app>.logには各インストール、last-run.logには最後に開いたアプリの記録が保存されます。"},
-        {L"Make default", L"既定にする"}, {L"Use my Windows folders", L"Windowsのフォルダーを使用"},
-        {L"Saves, caches and files", L"保存データ、キャッシュ、ファイル"},
-        {L"Each installed app keeps its data here. Removing an app keeps what it saved.", L"インストールした各アプリのデータをここに保存します。アプリを削除しても保存データは残ります。"},
-        {L"Make the Start menu shortcuts of every app again, with their icons.", L"すべてのアプリのスタートメニューショートカットをアイコン付きで再作成します。"},
-        {L"The Start menu shortcuts were made again.", L"スタートメニューのショートカットを再作成しました。"},
-        {L"Remove all", L"すべて削除"}, {L"Remove all…", L"すべて削除…"},
-        {L"Their shortcuts go too. What they saved stays.", L"ショートカットも削除されますが、保存データは残ります。"},
-        {L"Every app was removed.", L"すべてのアプリを削除しました。"},
-        {L"An unofficial port of Mac.apk to Windows. Not affiliated with or endorsed by the Mac.apk project.", L"Mac.apkをWindowsへ移植した非公式版です。Mac.apkプロジェクトとの提携や承認関係はありません。"},
-        {L"Appearance", L"外観"}, {L"Theme", L"テーマ"}, {L"Language", L"言語"},
-        {L"File types", L"ファイルの種類"},
-        {L"Covers .apk, .apkm, .xapk and .apks. Double-clicking one in Explorer installs it and opens it.", L".apk、.apkm、.xapk、.apksに対応します。エクスプローラーでダブルクリックするとインストールして起動します。"},
-        {L"Screen", L"画面"}, {L"Screen size", L"画面サイズ"}, {L"Orientation", L"画面の向き"},
-        {L"Used the next time an app opens, from here or from its shortcut. Sizes are in dp, as on a phone.", L"次回アプリをここまたはショートカットから開いたときに使用します。サイズの単位はスマートフォンと同じdpです。"},
-        {L"Shortcuts", L"ショートカット"}, {L"Desktop shortcut for new apps", L"新しいアプリのデスクトップショートカット"},
-        {L"Every app also gets one in Start > Win.apk Apps.", L"各アプリはスタートメニューの「Win.apk Apps」にも追加されます。"},
-        {L"Installed apps", L"インストール済みアプリ"}, {L"Library", L"ライブラリ"},
-        {L"Stop", L"停止"}, {L"Logs", L"ログ"}, {L"Done", L"完了"},
-        {L"Auto (fits the screen)", L"自動（画面に合わせる）"}, {L"Portrait", L"縦向き"}, {L"Landscape", L"横向き"}
-    };
-    // The choice row is built directly from the persisted Language DWORD.
-    // Use that same value as an authoritative fallback for Japanese lookup.
-    // This avoids the state split where the row shows Japanese (Language=3)
-    // while a stale in-memory enum still makes tr() return English.
-    const DWORD pref = setting(L"Language", 0);
-    const LANGID ui = GetUserDefaultUILanguage();
-    const bool useJapanese =
-        g_ui_language == UiLanguage::Japanese ||
-        pref == 3 ||
-        (pref == 0 && PRIMARYLANGID(ui) == LANG_JAPANESE);
-    if (useJapanese) {
-        const auto ji = ja.find(en);
-        return ji == ja.end() ? en : ji->second;
+    if (g_ui_language == UiLanguage::Japanese) {
+        if (wcscmp(en, L"bytes") == 0) return L"バイト";
+        if (wcscmp(en, L"unknown") == 0) return L"不明";
+        if (wcscmp(en, L"Run Android apps natively on Windows") == 0) return L"AndroidアプリをWindows上でネイティブ実行";
+        if (wcscmp(en, L"Drop to install") == 0) return L"ドロップしてインストール";
+        if (wcscmp(en, L"Win.apk keeps its own copy, so the download can go") == 0) return L"Win.apkがコピーを保持するため、ダウンロード元は削除できます";
+        if (wcscmp(en, L"Installing…") == 0) return L"インストール中…";
+        if (wcscmp(en, L"Unpacking manifest, icon, and assets") == 0) return L"マニフェスト、アイコン、アセットを展開中";
+        if (wcscmp(en, L"Drop an APK here to install") == 0) return L"APKをここにドロップしてインストール";
+        if (wcscmp(en, L"or click to choose a file  ·  .apk .apkm .xapk .apks") == 0) return L"またはクリックしてファイルを選択  ·  .apk .apkm .xapk .apks";
+        if (wcscmp(en, L"Installed apps") == 0) return L"インストール済みアプリ";
+        if (wcscmp(en, L"Add app") == 0) return L"アプリを追加";
+        if (wcscmp(en, L"Press Esc in the search box to show every app.") == 0) return L"検索欄でEscを押すと、すべてのアプリを表示します。";
+        if (wcscmp(en, L"No apps installed yet.") == 0) return L"インストール済みのアプリはありません。";
+        if (wcscmp(en, L"Drop an APK above, or get apps from the Store, then open them from here.") == 0) return L"上にAPKをドロップするか、ストアからアプリを入手して、ここから開いてください。";
+        if (wcscmp(en, L"Checking F-Droid for new apps…") == 0) return L"F-Droidで新しいアプリを確認しています…";
+        if (wcscmp(en, L"All categories") == 0) return L"すべてのカテゴリ";
+        if (wcscmp(en, L"Install") == 0) return L"インストール";
+        if (wcscmp(en, L"Update") == 0) return L"更新";
+        if (wcscmp(en, L"Open") == 0) return L"開く";
+        if (wcscmp(en, L"Waiting") == 0) return L"待機中";
+        if (wcscmp(en, L"Getting the app catalog from F-Droid…") == 0) return L"F-Droidからアプリ一覧を取得しています…";
+        if (wcscmp(en, L"F-Droid could not be reached") == 0) return L"F-Droidに接続できませんでした";
+        if (wcscmp(en, L"Check the internet connection, then try again.") == 0) return L"インターネット接続を確認して、もう一度お試しください。";
+        if (wcscmp(en, L"Try again") == 0) return L"再試行";
+        if (wcscmp(en, L"Try other words, or every category.") == 0) return L"別の語句またはすべてのカテゴリーをお試しください。";
+        if (wcscmp(en, L"Logs") == 0) return L"ログ";
+        if (wcscmp(en, L"Stop") == 0) return L"停止";
+        if (wcscmp(en, L"Free and open-source apps from f-droid.org  ·  Install adds the app to your library") == 0) return L"f-droid.orgの無料オープンソースアプリ  ·  インストールするとライブラリに追加されます";
+        if (wcscmp(en, L"Drop an APK above to install your first app") == 0) return L"上にAPKをドロップして最初のアプリをインストール";
+        if (wcscmp(en, L"Double-click to open  ·  right-click for options  ·  drop an APK above to add more") == 0) return L"ダブルクリックで開く  ·  右クリックでオプション  ·  上にAPKをドロップして追加";
+        if (wcscmp(en, L"What the log says") == 0) return L"ログの内容";
+        if (wcscmp(en, L"Open the log") == 0) return L"ログを開く";
+        if (wcscmp(en, L"Android apps") == 0) return L"Androidアプリ";
+        if (wcscmp(en, L"All files") == 0) return L"すべてのファイル";
+        if (wcscmp(en, L"Install an Android app") == 0) return L"Androidアプリをインストール";
+        if (wcscmp(en, L"Its shortcuts go too. What the app saved stays, so installing it again picks up where it left off.") == 0) return L"ショートカットも削除されます。保存データは残るため、再インストールすると続きから使用できます。";
+        if (wcscmp(en, L"Remove") == 0) return L"削除";
+        if (wcscmp(en, L"Done") == 0) return L"完了";
+        if (wcscmp(en, L"Theme") == 0) return L"テーマ";
+        if (wcscmp(en, L"Match Windows") == 0) return L"Windowsに合わせる";
+        if (wcscmp(en, L"Light") == 0) return L"ライト";
+        if (wcscmp(en, L"Dark") == 0) return L"ダーク";
+        if (wcscmp(en, L"Language") == 0) return L"言語";
+        if (wcscmp(en, L"Appearance") == 0) return L"外観";
+        if (wcscmp(en, L"Open Android app files with Win.apk") == 0) return L"AndroidアプリファイルをWin.apkで開く";
+        if (wcscmp(en, L"Default") == 0) return L"既定";
+        if (wcscmp(en, L"Make default") == 0) return L"既定にする";
+        if (wcscmp(en, L"File types") == 0) return L"ファイルの種類";
+        if (wcscmp(en, L"Covers .apk, .apkm, .xapk and .apks. Double-clicking one in Explorer installs it and opens it.") == 0) return L".apk、.apkm、.xapk、.apksに対応します。エクスプローラーでダブルクリックするとインストールして起動します。";
+        if (wcscmp(en, L"Screen size") == 0) return L"画面サイズ";
+        if (wcscmp(en, L"Orientation") == 0) return L"画面の向き";
+        if (wcscmp(en, L"Portrait") == 0) return L"縦向き";
+        if (wcscmp(en, L"Landscape") == 0) return L"横向き";
+        if (wcscmp(en, L"Screen") == 0) return L"画面";
+        if (wcscmp(en, L"Used the next time an app opens, from here or from its shortcut. Sizes are in dp, as on a phone.") == 0) return L"次回アプリをここまたはショートカットから開いたときに使用します。サイズの単位はスマートフォンと同じdpです。";
+        if (wcscmp(en, L"Desktop shortcut for new apps") == 0) return L"新しいアプリのデスクトップショートカット";
+        if (wcscmp(en, L"Every app also gets one in Start > Win.apk Apps.") == 0) return L"各アプリはスタートメニューの「Win.apk Apps」にも追加されます。";
+        if (wcscmp(en, L"Shortcuts") == 0) return L"ショートカット";
+        if (wcscmp(en, L"Make the Start menu shortcuts of every app again, with their icons.") == 0) return L"すべてのアプリのスタートメニューショートカットをアイコン付きで再作成します。";
+        if (wcscmp(en, L"Recreate") == 0) return L"再作成";
+        if (wcscmp(en, L"The Start menu shortcuts were made again.") == 0) return L"スタートメニューのショートカットを再作成しました。";
+        if (wcscmp(en, L"Diagnostics") == 0) return L"診断";
+        if (wcscmp(en, L"install-<app>.log records each install, last-run.log the app opened last.") == 0) return L"install-<app>.logには各インストール、last-run.logには最後に開いたアプリの記録が保存されます。";
+        if (wcscmp(en, L"View logs") == 0) return L"ログを表示";
+        if (wcscmp(en, L"Logs folder") == 0) return L"ログフォルダー";
+        if (wcscmp(en, L"Open folder") == 0) return L"フォルダーを開く";
+        if (wcscmp(en, L"Attach the log to a bug report: it says what the runtime did and where it stopped.") == 0) return L"不具合報告にはログを添付してください。ランタイムの処理内容と停止位置を確認できます。";
+        if (wcscmp(en, L"Use my Windows folders") == 0) return L"Windowsのフォルダーを使用";
+        if (wcscmp(en, L"App data") == 0) return L"アプリデータ";
+        if (wcscmp(en, L"Saves, caches and files") == 0) return L"保存データ、キャッシュ、ファイル";
+        if (wcscmp(en, L"Each installed app keeps its data here. Removing an app keeps what it saved.") == 0) return L"インストールした各アプリのデータをここに保存します。アプリを削除しても保存データは残ります。";
+        if (wcscmp(en, L"About") == 0) return L"このアプリについて";
+        if (wcscmp(en, L"An unofficial port of Mac.apk to Windows. Not affiliated with or endorsed by the Mac.apk project.") == 0) return L"Mac.apkをWindowsへ移植した非公式版です。Mac.apkプロジェクトとの提携や承認関係はありません。";
+        if (wcscmp(en, L"Remove all apps") == 0) return L"すべてのアプリを削除";
+        if (wcscmp(en, L"Their shortcuts go too. What they saved stays.") == 0) return L"ショートカットも削除されますが、保存データは残ります。";
+        if (wcscmp(en, L"Remove all…") == 0) return L"すべて削除…";
+        if (wcscmp(en, L"Remove all") == 0) return L"すべて削除";
+        if (wcscmp(en, L"Every app was removed.") == 0) return L"すべてのアプリを削除しました。";
+        if (wcscmp(en, L"Settings") == 0) return L"設定";
+        if (wcscmp(en, L"Identity") == 0) return L"識別情報";
+        if (wcscmp(en, L"Name") == 0) return L"名前";
+        if (wcscmp(en, L"Library name") == 0) return L"ライブラリ名";
+        if (wcscmp(en, L"Installed") == 0) return L"インストール済み";
+        if (wcscmp(en, L"Storage") == 0) return L"ストレージ";
+        if (wcscmp(en, L"Show") == 0) return L"表示";
+        if (wcscmp(en, L"Install log") == 0) return L"インストールログ";
+        if (wcscmp(en, L"View") == 0) return L"表示";
+        if (wcscmp(en, L"Actions") == 0) return L"操作";
+        if (wcscmp(en, L"Desktop shortcut") == 0) return L"デスクトップショートカット";
+        if (wcscmp(en, L"Put a shortcut to the app on the desktop.") == 0) return L"アプリのショートカットをデスクトップに作成します。";
+        if (wcscmp(en, L"Create") == 0) return L"作成";
+        if (wcscmp(en, L"Update from APK") == 0) return L"APKから更新";
+        if (wcscmp(en, L"Install a newer version over this one. Saves stay.") == 0) return L"新しいバージョンを上書きインストールします。保存データは維持されます。";
+        if (wcscmp(en, L"Choose…") == 0) return L"選択…";
+        if (wcscmp(en, L"Reinstall") == 0) return L"再インストール";
+        if (wcscmp(en, L"Convert the app again from its APK.") == 0) return L"APKからアプリを再変換します。";
+        if (wcscmp(en, L"Its shortcuts go too. What the app saved stays.") == 0) return L"ショートカットも削除されます。保存データは残ります。";
+        if (wcscmp(en, L"Remove…") == 0) return L"削除…";
+        if (wcscmp(en, L"Details") == 0) return L"詳細";
+        if (wcscmp(en, L"Version") == 0) return L"バージョン";
+        if (wcscmp(en, L"Size") == 0) return L"サイズ";
+        if (wcscmp(en, L"Updated") == 0) return L"更新済み";
+        if (wcscmp(en, L"License") == 0) return L"ライセンス";
+        if (wcscmp(en, L"Categories") == 0) return L"カテゴリー";
+        if (wcscmp(en, L"Package") == 0) return L"パッケージ";
+        if (wcscmp(en, L"Downloading…") == 0) return L"ダウンロード中…";
+        if (wcscmp(en, L"F-Droid page") == 0) return L"F-Droidページ";
+        if (wcscmp(en, L"The app's description, screenshots and source code.") == 0) return L"アプリの説明、スクリーンショット、ソースコード。";
+        if (wcscmp(en, L"Installing") == 0) return L"インストール中";
+        if (wcscmp(en, L"Each app is converted for Windows once. That takes up to a minute.") == 0) return L"各アプリはWindows向けに一度だけ変換されます。最大1分ほどかかります。";
+        if (wcscmp(en, L"All set") == 0) return L"準備完了";
+        if (wcscmp(en, L"The install failed") == 0) return L"インストールに失敗しました";
+        if (wcscmp(en, L"Some installs failed") == 0) return L"一部のインストールに失敗しました";
+        if (wcscmp(en, L"View log") == 0) return L"ログを表示";
+        if (wcscmp(en, L"Log") == 0) return L"ログ";
+        if (wcscmp(en, L"Starting the runtime…") == 0) return L"ランタイムを起動しています…";
+        if (wcscmp(en, L"The install's output appears here.") == 0) return L"インストールの出力がここに表示されます。";
+        if (wcscmp(en, L"Hide") == 0) return L"非表示";
+        if (wcscmp(en, L"Open full log") == 0) return L"完全なログを開く";
+        if (wcscmp(en, L"Installing - Win.apk") == 0) return L"インストール中 - Win.apk";
+        if (wcscmp(en, L"Last run") == 0) return L"最終実行";
+        if (wcscmp(en, L"No app has run yet. This log is written when one does.") == 0) return L"まだアプリは実行されていません。実行時にこのログへ記録されます。";
+        if (wcscmp(en, L"This log is written the next time the app is installed.") == 0) return L"次回アプリをインストールしたときに、このログへ記録されます。";
+        if (wcscmp(en, L"Folder") == 0) return L"フォルダー";
+        if (wcscmp(en, L"Notepad") == 0) return L"メモ帳";
+        if (wcscmp(en, L"Copy") == 0) return L"コピー";
+        if (wcscmp(en, L"Live") == 0) return L"実行中";
+        if (wcscmp(en, L"The log was copied.") == 0) return L"ログをコピーしました。";
+        if (wcscmp(en, L"Logs - Win.apk") == 0) return L"ログ - Win.apk";
+        if (wcscmp(en, L"&Open") == 0) return L"開く(&O)";
+        if (wcscmp(en, L"Get &Info…") == 0) return L"情報を取得(&I)…";
+        if (wcscmp(en, L"Create &desktop shortcut") == 0) return L"デスクトップショートカットを作成";
+        if (wcscmp(en, L"Show the &APK in Explorer") == 0) return L"APKをエクスプローラーで表示(&A)";
+        if (wcscmp(en, L"Open the app's &files") == 0) return L"アプリのファイルを開く(&F)";
+        if (wcscmp(en, L"Show the last &log") == 0) return L"最後のログを表示";
+        if (wcscmp(en, L"&Update from APK…") == 0) return L"APKから更新…";
+        if (wcscmp(en, L"Rein&stall") == 0) return L"再インストール";
+        if (wcscmp(en, L"&Remove…") == 0) return L"削除…";
+        if (wcscmp(en, L"F-Droid could not be checked for new apps.") == 0) return L"F-Droidで新しいアプリを確認できませんでした。";
+        if (wcscmp(en, L"An app") == 0) return L"アプリ";
+        return en;
     }
-    const bool useHebrew =
-        g_ui_language == UiLanguage::Hebrew ||
-        pref == 2 ||
-        (pref == 0 && PRIMARYLANGID(ui) == LANG_HEBREW);
-    const auto it = he.find(en);
-    return useHebrew && it != he.end() ? it->second : en;
+    if (g_ui_language == UiLanguage::Hebrew) {
+        const auto it = he.find(en);
+        return it == he.end() ? en : it->second;
+    }
+    return en;
 }
+
 
 // tr(en) with {0}, {1}... replaced by `args`.
 std::wstring fmt(const wchar_t* en, std::initializer_list<std::wstring> args) {
@@ -3086,7 +3157,11 @@ void sheet_click(Sheet& s, int hit) {
     }
     if (g_sheet == &s && IsWindow(s.hwnd)) {
         s.sections = s.build();
-        InvalidateRect(s.hwnd, nullptr, FALSE);
+        s.targets.clear();
+        s.hot = -1;
+        s.content_h = 0;
+        InvalidateRect(s.hwnd, nullptr, TRUE);
+        UpdateWindow(s.hwnd);
     }
 }
 
@@ -3217,17 +3292,19 @@ std::vector<Section> settings_sections() {
     lang.kind = Row::kChoice;
     lang.title = tr(L"Language");
     lang.choices = {tr(L"Match Windows"), L"English", L"עברית", L"日本語"};
-    lang.choice = static_cast<int>((std::min)(setting(L"Language", 0), 3ul));
+    lang.choice = static_cast<int>(g_language_pref);
     lang.act = [](int i) {
-        // Apply the selected value immediately. Reading the registry again here
-        // could leave the live UI in English when persistence was delayed or
-        // denied, even though the choice row already displayed Japanese.
-        g_ui_language = i == 3 ? UiLanguage::Japanese : (i == 2 ? UiLanguage::Hebrew : UiLanguage::English);
+        const DWORD selected = static_cast<DWORD>(i);
+        g_live_language = i;
+        g_language_pref = selected;
+        g_ui_language = i == 3 ? UiLanguage::Japanese
+                               : (i == 2 ? UiLanguage::Hebrew : UiLanguage::English);
         g_rtl = g_ui_language == UiLanguage::Hebrew;
         g_japanese = g_ui_language == UiLanguage::Japanese;
-        set_setting(L"Language", static_cast<DWORD>(i));
-        pick_language();
+        set_setting(L"Language", selected);
         apply_language(true);
+        if (g_sheet && g_sheet->hwnd) UpdateWindow(g_sheet->hwnd);
+        if (g_main) UpdateWindow(g_main);
     };
     out.push_back({tr(L"Appearance"), {theme, lang}, L""});
 
@@ -4172,6 +4249,7 @@ void apply_language(bool keep_selected) {
         g_sheet->content_h = 0;
         SetWindowTextW(g_sheet->hwnd, tr(L"Settings"));
         InvalidateRect(g_sheet->hwnd, nullptr, TRUE);
+        UpdateWindow(g_sheet->hwnd);
     }
     if (g_install_wnd) SetWindowTextW(g_install_wnd, tr(L"Installing - Win.apk"));
     if (g_log_wnd) DestroyWindow(g_log_wnd);
@@ -4189,6 +4267,11 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
         case WM_CREATE: {
             g_main = hwnd;
+            pick_language();
+            // Load Language before creating any cached/main-window text.
+            // Without this, g_language_pref remained its default 0 and an
+            // explicitly selected Japanese GUI was painted in English.
+            pick_language();
             g_dpi = static_cast<float>(GetDpiForWindow(hwnd));
             make_fonts();
             create_search();

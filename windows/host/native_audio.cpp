@@ -269,14 +269,12 @@ void JNICALL Mp_start(JNIEnv*, jclass, jlong h) {
         p.started = true;
         p.paused = false;
         if (p.voice && !au::voice_finished(p.voice.get())) {
+            au::voice_set_loop(p.voice.get(), p.looping ? -1 : 0);
             au::voice_set_paused(p.voice.get(), false);
             return;
         }
-        // Fresh, or played to the end: (re)start from the remembered position.
-        if (p.voice && p.position * p.clip->rate >= static_cast<double>(p.clip->frames())) p.position = 0;
-        p.voice = au::voice_start(p.clip, p.left, p.right, p.looping ? -1 : 0, 1.0f, true);
-        au::voice_seek(p.voice.get(), p.position);
-        au::voice_set_paused(p.voice.get(), false);
+        p.position = 0;
+        p.voice = au::voice_start(p.clip, p.left, p.right, p.looping ? -1 : 0, 1.0f, false);
     });
 }
 void JNICALL Mp_pause(JNIEnv*, jclass, jlong h) {
@@ -298,7 +296,7 @@ void JNICALL Mp_stop(JNIEnv*, jclass, jlong h) {
 }
 void JNICALL Mp_seek(JNIEnv*, jclass, jlong h, jint ms) {
     with_player(h, [ms](Player& p) {
-        p.position = ms / 1000.0;
+        p.position = (std::max)(jint{0}, ms) / 1000.0;
         if (p.voice && !au::voice_finished(p.voice.get())) au::voice_seek(p.voice.get(), p.position);
     });
 }
@@ -307,8 +305,6 @@ void JNICALL Mp_setLooping(JNIEnv*, jclass, jlong h, jboolean loop) {
         p.looping = loop == JNI_TRUE;
         if (!p.voice) return;
         if (p.looping && p.started && au::voice_finished(p.voice.get())) {
-            // A voice that already reached EOS has been removed from the mixer;
-            // changing its loop counter cannot revive it. Recreate it at frame 0.
             p.position = 0;
             p.voice = au::voice_start(p.clip, p.left, p.right, -1, 1.0f, p.paused);
         } else {
