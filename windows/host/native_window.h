@@ -20,6 +20,10 @@ namespace winapk::host {
 // geometry the app set, else the content area in pixels. False if `window`
 // is not the runtime's native window.
 bool native_window_buffer_size(const void* window, int* w, int* h);
+// Whether the app set a buffer geometry of its own (ANativeWindow_setBuffersGeometry
+// with a size): its frames are then scaled to the window, as Android's
+// compositor scales such a buffer; otherwise they are the window's size.
+bool native_window_has_geometry();
 
 // A frame from the app's native code for the window, 0xAARRGGBB rows, top row
 // first. Any thread (native_cocoa.cpp).

@@ -29,7 +29,7 @@ fall into three groups:
 | `src/elf_loader.cpp` | Android x86_64 ELF loader: segments, RELA/RELR/APS2 relocations, protections, RELRO, init/fini |
 | `src/elf_tls.cpp` | Dynamic ELF TLS for guest libraries: module ids, `__tls_get_addr`, a block per thread and module |
 | `src/fs_tls_patch.cpp` | Rewrites the Bionic stack guard `%fs:0x28` to `%gs:0x28` (`NT_TIB.ArbitraryUserPointer`) |
-| `src/mini_bionic.cpp`, `src/bionic/` | The Windows Bionic shim (sysv_abi functions over the UCRT and Win32): strings, printf, pthread, files, time, `mmap`, system properties and the environment, Android paths, pipes/eventfd/epoll, sockets on Winsock, `ALooper`, and `libz.so` on a statically linked zlib. `test/bionic_test.cpp` (`winapk-bionic-test`) checks it against `test/guest/bionic_guest.c` |
+| `src/mini_bionic.cpp`, `src/bionic/` | The Windows Bionic shim (sysv_abi functions over the UCRT and Win32): strings, printf, pthread, files, time, `mmap`, system properties and the environment, Android paths, the system CA store (`cacerts.cpp`: the roots Windows trusts), pipes/eventfd/epoll, sockets on Winsock, `ALooper`, and `libz.so` on a statically linked zlib. `test/bionic_test.cpp` (`winapk-bionic-test`) checks it against `test/guest/bionic_guest.c` |
 | `tools/elfrun_main.cpp` | `winapk-elfrun`: loads `.so` files and runs the PoC checks |
 | `test/guest/poc_guest.c` | The Android x86_64 test library |
 | `include/winapk/abi_thunk.h`, `src/abi_thunk.cpp` | Runtime machine-code thunks for the JNI bridge: native-method thunks from Microsoft x64 callers to System V code (built per Java signature) and the System V variadic `va_list` entry stub |
@@ -146,19 +146,64 @@ The app sees a 360x800 dp phone, the most common phone screen.
 phone at the monitor's scale. When the whole window, title bar included, would
 not fit the monitor's work area (the screen without the taskbar), the app gets
 a lower density instead, so it keeps its dp size and still draws at the
-window's own pixel size. The window is fitted again when it moves to another
-monitor or the taskbar changes. `WINAPK_DENSITY` (a dpi) overrides the density.
-A window maximized or resized to another shape keeps the app's size and
-shows the phone at the largest size with its own aspect, centred, with black
-bars around it, as upstream's letterbox container does: a portrait app
-maximized on a wide screen is a phone in the middle, scaled to the screen
-height. Clicks on the bars go nowhere. `MACAPK_LETTERBOX=0` stretches the
-phone over the whole window instead, as before.
+window's own pixel size. `WINAPK_DENSITY` (a dpi) overrides the density.
+
+The window is the app's display, as an Android desktop window is. Resizing
+it -- dragging an edge, maximizing, snapping -- gives the app a display of the
+new size: its surface is the window's client area in pixels, the Configuration
+and DisplayMetrics follow (`DisplayConfig`), the views are laid out again and
+every GL surface and native window hears `surfaceChanged`. The app follows
+each step of a drag, and frames are shown pixel for pixel: an old frame is
+never stretched to the new size, it stays unscaled until the app has drawn
+the new one. An app that fixed its orientation keeps its shape in a window of
+the other one: it gets the largest box of its aspect, centred, with black bars
+around it, as Android letterboxes a fixed-orientation app on a large screen,
+and draws at that box's size. Clicks on the bars go nowhere. The size the user
+settles on is kept per app (`library\<name>.window`, in dp) for the next
+start; the library's Get Info resets it. `WINAPK_RESIZABLE=0` keeps the
+phone's size for good and shows it letterboxed in whatever size the window
+gets; `MACAPK_LETTERBOX=0` then stretches it over the whole window.
+
+The density stays what it was at launch. On a monitor with another scale the
+window keeps its size in physical terms and the frames are resampled to it,
+the one case a frame is scaled by design (PORTING.md, "Display", on why a
+density change is not done yet).
 
 An app runs once at a time, as on the Mac: starting it again (a shortcut, the
 library) brings the running app's window forward, and updating it while it
 runs is refused until it is closed. `WINAPK_ALLOW_SECOND_INSTANCE=1` turns the
 check off.
+
+### Permissions
+
+Apps ask for permissions as on Android. Every dangerous group is a runtime
+permission the user answers in a Windows dialog over the app, drawn by the
+launcher (`Win.apk.exe runtime-permission`, run by the runtime as upstream runs
+macapk-installhelper; the app is identified from the parent process, never
+from arguments): storage and media, location (with "Only approximate", and
+"all the time" asked separately once the foreground is granted), camera,
+microphone, contacts, calendar, phone, call logs, SMS, notifications, nearby
+devices, physical activity and body sensors. Allow grants the group; Don't
+allow denies it, and a second refusal denies it for good (no more dialogs;
+`shouldShowRequestPermissionRationale` is true only between the two); a
+permission in a group that already has a granted member is granted silently.
+A pre-M app holds what it declares, and legacy targets get the platform's
+implicit grants (notifications below T, the Bluetooth split below S, and so
+on). The answer is signed into `%LOCALAPPDATA%\Win.apk\appops\app-ops.json`
+(ECDSA P-256; the private key under DPAPI), which the runtime verifies and
+never writes; it survives restarts and updates, and is forgotten when the
+app is removed. The special access the user can grant in Settings on a device
+has the same dialog here (`special-access`): All files access, Media
+management, Display over other apps and Install unknown apps; the Settings
+screens for access Windows cannot provide (notification access,
+accessibility, usage access, Do Not Disturb) say so and grant nothing, as do
+those for what Win.apk never restricts (battery optimization, exact alarms,
+system settings). The app's App info screen (`app-details`) and Get Info in
+the library turn each group on or off or reset them; taking a permission
+away ends the app, as Android does. `MACAPK_ALL_PERMS_ASK=0` returns the
+groups beyond storage and location to the install-time rule (declared ==
+held), the Mac's behaviour; `MACAPK_MEDIA_PERMS_ASK=0` and
+`MACAPK_ALLFILES_HONEST=0` keep their upstream meaning.
 
 ### Web content (WebView2)
 
@@ -516,6 +561,27 @@ every such change is listed here:
   the helper that writes the store (`Win.apk.exe runtime-permission`,
   `special-access`, `app-details`, in `launcher/launcher_main.cpp`), with
   upstream's payload and tokens. On the Mac nothing changes.
+- Every dangerous permission group, gated on `SpecialAccessStore.allPermsAsk()`
+  (Windows, unless `MACAPK_ALL_PERMS_ASK=0`; the Mac's helper knows only
+  storage and location, so there nothing changes): the group table
+  `com/macapk/loader/RuntimePermissionGroups.java` (new) and
+  `SpecialAccessStore.GroupModel` (granted, rationale, the dialogs to show,
+  App info's rows, the background permissions); `MacApkPackageManager.
+  checkPermission` and `GET_PERMISSIONS` flags answer from it, and
+  `canRequestPackageInstalls` from the "Install unknown apps" op;
+  `SpecialAccessHandler` runs one `runtime-permission --prompt <group>` per
+  group, resolves `MANAGE_OVERLAY_PERMISSION`, `MANAGE_UNKNOWN_APP_SOURCES`,
+  the notification / accessibility / usage / DND / battery / alarm / write-
+  settings screens and `APP_NOTIFICATION_SETTINGS`, and lists location and
+  the groups in App info; `android/app/AppOpsManager.java` keeps each
+  runtime-permission op in step with its permission (MODE_IGNORED when
+  denied) and answers op 24 / op 66 from the store;
+  `android/provider/Settings.java` `canDrawOverlays`, `android/app/
+  NotificationManager.java` `areNotificationsEnabled`, `MacApkWindowManager`
+  (a system-alert window type without the grant throws BadTokenException),
+  `android/hardware/Camera.java`, `camera2/CameraManager.java` and
+  `AudioInputBridge` honour the Android permission before the Windows
+  privacy switch.
 - `runtime/java/com/macapk/loader/ActivityHost.java`: without the AOSP window
   policy (Windows), an activity that owns the window box asks the host for its
   manifest's `screenOrientation` at launch (`NativeCocoa.applyWindowOrientation`,

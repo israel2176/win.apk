@@ -252,7 +252,7 @@ implements in `runtime/src`; on Windows `windows/host/native_*.cpp`):
 | `bionic_shim_sigchain.cpp`, `_signal.cpp` | 1,913 | signals and chaining with the JVM | vectored exception handling (M5) | not started |
 | `bionic_shim_sensors.cpp` | 540 | NDK sensors | port as is (M5) | not started |
 | `bionic_shim_vulkan.cpp` | 401 | Vulkan over MoltenVK | the system Vulkan loader (M6) | not started |
-| `bionic_shim_cacerts.cpp` | 218 | CA store from the Mac's roots | the Windows root store | not started |
+| `bionic_shim_cacerts.cpp` | 218 | CA store from the Mac's roots | `src/bionic/cacerts.cpp`: the roots Windows trusts (user, machine, policy; less Disallowed and expired) plus the JDK's | done |
 | `bionic_shim_forkwatch.cpp`, `_elfexec.cpp`, `elfexec_main.cpp` | 1,471 | forked and shipped executables | later (M5) | not started |
 | `media_ndk.cpp` | 701 | NDK `AMediaCodec` | port with `NativeMedia`; `host/native_media.cpp` has the `AMEDIAFORMAT_KEY_*` strings | keys only |
 | `bionic_shim.cpp`: `ANativeWindow_*`, `AAssetManager_*` | - | libandroid's native window and assets | `host/native_window.cpp`, `host/native_asset.cpp` (assets through Java's AssetManager; no native APK index yet) | done |
@@ -632,6 +632,82 @@ applies on Windows, where `FileDescriptor` holds a `handle`.
 - A thread's guest env is not cleaned up when the thread exits. This needs a
   fiber-local-storage callback.
 
+### Display
+
+How the display path works now, after a review of resizing and presentation
+(`host/win32_window.cpp`, `host/native_cocoa.cpp`, `host/gl/guest_gl.cpp`):
+
+- The pixels are the authority. The app's surface is the pixel size of the
+  box the window shows it in (the client area, or the letterbox inside it);
+  the dp are derived from it, as `DisplayConfig.compute` derives the
+  Configuration's dp from the surface. Before, the window rounded the client
+  area to dp and the render thread multiplied the dp back by the density, so
+  after a drag the frame could be a pixel or two off the client area and GDI
+  resampled it (a 452 px client at 1.25 px/dp made a 453 px frame): soft text
+  after every resize. Now a frame at the surface's size is copied pixel for
+  pixel; a frame from before a resize is shown unscaled at the top left, with
+  the window background where it does not reach, until the app draws the new
+  one (`window_frame_present`); a frame is scaled only when the app is meant to
+  draw at another size (a monitor with another scale, `WINAPK_RESIZABLE=0`).
+  Touch goes to Java as the surface in points (pixels over the density), so a
+  click lands on the pixel it was made on.
+- The app follows every step of a drag, as an Android freeform window does,
+  not only the end; `DisplayConfig.macapkNoteSurfaceSize` serializes the
+  commits (one at a time, the newest size wins), and the render thread's
+  bound on waiting for a commit is per size, so a size announced before its
+  configuration (the Unity-freeze order noted in `DisplayConfig`) needs a
+  commit to take over half a second. A maximized window stays maximized when
+  the app turns the phone or fixes its orientation: the box takes the new
+  shape (a portrait column becomes the full width) and the app follows it;
+  before, the fit was deferred to the next restore and then sized the window
+  to the maximized dp. A window too big for another monitor's work area is
+  made smaller and the app follows it, instead of being shown resampled.
+- The composite never stretches: the content GL view's frame and the view
+  tree, or an app's native frames and the tree, are blended only when they
+  agree on the size; one from before a resize goes out alone, unscaled, and
+  the next frame of each brings them together. A native app that set its own
+  buffer geometry (`ANativeWindow_setBuffersGeometry` with a size, a game
+  rendering at a lower resolution) is still scaled to the window, as Android's
+  compositor scales such a buffer; that scaling is nearest-neighbour.
+- An app's EGL window surface grows with the window. It is a pbuffer as long
+  as the window's longer side; a maximized window outgrew it and the frame
+  was cut to the pbuffer's corner. Now `eglMakeCurrent` and `eglSwapBuffers`
+  replace the pbuffer behind the app's handle with a larger one (in steps of
+  256 px, never smaller), translating the handle in every EGL call that takes
+  a surface; the first pbuffer stays alive so that ANGLE never hands its
+  address out for another surface. The frame drawn as the window grew is cut
+  once; the next is whole.
+- The render tick is a steady 60 Hz on a high-resolution waitable timer.
+  `Sleep(16)` ran at the scheduler's 15.6 ms granularity: 40 to 60 frames a
+  second, uneven, and a GL game's `onDrawFrame` with it.
+- `WINAPK_TEST_RESIZE=<w>x<h>` resizes the window to a client area of that
+  many pixels a second after the first frame; CI's "Boot an APK in a window"
+  uses it and requires the "resize: the app drew at 400x600 px" log line,
+  which also times the app's re-layout. `winapk-window-test` checks the two
+  pure decisions (the box, how a frame is shown) without a window.
+
+Still open:
+
+- The density is a process constant. On a monitor with another scale
+  (`WM_DPICHANGED`) the window keeps its size in physical terms and the frames
+  are resampled, as a system-DPI-aware Windows program is bitmap-stretched.
+  Android treats it as a density configuration change and relaunches
+  activities that do not declare `density`. Here `DisplayMetrics
+  .DENSITY_DEVICE_STABLE` and `macapkDeviceDensity()` are read by hundreds of
+  framework call sites, `DisplayConfig.compute` keeps the density on purpose,
+  and the relaunch path (`MACAPK_RESIZE_RELAUNCH`) is off and untried on
+  native engines; a live density change needs those first.
+- The window is painted with GDI from a readback of every frame (the GL views
+  and the app's native frames included) and DWM composites it: no tearing,
+  but a copy per frame and no vsync. A DXGI swap chain on the window with
+  ANGLE rendering into it would remove the copy; the letterbox, the overlay
+  and the stale-frame rule would move into it.
+- An app that fixed its orientation and runs in a maximized window gets a
+  centred box; Android also offers a user-aspect-ratio override there, which
+  the record's own orientation stands in for (`windowOverrideOrientation`).
+- Scaled native buffers (a set buffer geometry) are sampled nearest-neighbour
+  in the composite; bilinear would match Android for non-integer ratios.
+
 ### Product
 
 - Many APKs ship only ARM libraries. arm64-v8a ones are translated ahead of
@@ -647,6 +723,32 @@ applies on Windows, where `FileDescriptor` holds a `handle`.
   Builds need code signing and testing against Defender.
 - There is no crash handler: a crash leaves `logs\last-run.log` and HotSpot's
   `hs_err` file, no minidump.
+- Permissions (`launcher_main.cpp` `namespace appops`, `SpecialAccessStore`,
+  `RuntimePermissionGroups`): every dangerous group and the four grantable
+  special-access ops behave as on Android (ask, deny, deny for good, auto
+  grant, revoke, reset, persistence, signing). What is not Android's yet:
+  - The photo picker: "Select photos and videos" is not offered (upstream's
+    `PHOTO_PICKER_PROMPT_ENABLED` is off until a picker exists); Allow means
+    all photos.
+  - Location has no "Only while using the app" versus "Allow all the time"
+    three-way: Allow is a while-in-use grant, and the background permission
+    is a second dialog of its own once the foreground is granted. On R+ a
+    device sends the app to Settings for it instead; here the dialog shows
+    even when the app asked for both in one request.
+  - Notification access, accessibility services, usage access and Do Not
+    Disturb access cannot be granted: Windows has no feed of other apps'
+    notifications, no Android accessibility framework, one app per process
+    and no DND. Their Settings screens open a dialog that says so and
+    returns RESULT_CANCELED. Battery optimization, exact alarms and "modify
+    system settings" are never restricted, and their screens say that.
+  - The data behind contacts, calendar, phone, SMS, Bluetooth and sensors
+    does not exist on Windows: a granted app finds no contacts, no SIM, no
+    devices and no readings (the dialog says so). Those providers answer
+    empty rather than throwing SecurityException for a denied caller.
+  - A pre-M app's permissions cannot be toggled in App info (a device sets
+    the app-op; here App info lists nothing for it).
+  - Notifications themselves are not shown yet (`NotificationManager.notify`
+    is a sink), so the Notifications grant decides only what the app is told.
 - Google Play services are upstream's in-process stand-ins (section 4 names
   the host pieces; `README.md`, "Google Play services", what works). Where
   Windows differs from the Mac, and why:
@@ -706,9 +808,12 @@ Status: the software path is done. A Java-only app draws into a Win32 window
 and responds to the mouse, the wheel and the keyboard (checked with the F-Droid
 Coffee app: toggle, navigation, a settings switch, Back). OpenGL from Java runs
 on ANGLE, from Java and from an app's native code (see "OpenGL" below; checked
-with Klooni, a libGDX game, and Tensy, an SDL 3 game). Remaining: sharper text on high-DPI screens (the surface is fixed at
-density 2 and scaled), window resizing and orientation polish, dark mode, and
-vsync instead of the fixed 60 Hz tick.
+with Klooni, a libGDX game, and Tensy, an SDL 3 game). The display path is
+per-monitor DPI aware (the density comes from the monitor's scale), the app
+follows the window's size as an Android desktop window does, and frames are
+shown pixel for pixel (section 7, "Display", for the model and what is left).
+Remaining: dark mode, and vsync (a swap chain on the window) instead of the
+60 Hz tick.
 
 - Implement the 54 natives of `NativeCocoa` on Win32: window creation, DPI
   scaling, resizing and orientation, mouse, keyboard, touchpad and touch input,

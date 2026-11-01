@@ -64,8 +64,11 @@ bool in_guest(const void* addr) {
 // HotSpot's JIT faults on purpose (implicit null checks, safepoint polls) and
 // handles its own; those are in code no module owns, or in jvm.dll. A fault
 // is worth a line when it is in a guest image, or in a module outside the JVM
-// and Windows: the runtime's own, ANGLE's, a stub DLL.
-bool worth_reporting(const void* rip) {
+// and Windows: the runtime's own, ANGLE's, a stub DLL. A fault in a Windows
+// DLL is reported too when `windows_too` (Pixel Wheels died in one on a
+// thread without guest frames and the log said nothing), but never counts as
+// a frame of the stack scan.
+bool worth_reporting(const void* rip, bool windows_too = false) {
     if (in_guest(rip)) return true;
     HMODULE mod = nullptr;
     if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
@@ -80,6 +83,7 @@ bool worth_reporting(const void* rip) {
         if (!path[i]) break;
     }
     if (std::wcsstr(lower, L"\\jvm.dll") || std::wcsstr(lower, L"\\java.dll")) return false;
+    if (windows_too) return true;
     wchar_t windir[MAX_PATH];
     const UINT wn = GetSystemWindowsDirectoryW(windir, MAX_PATH);
     if (wn && wn < MAX_PATH) {
@@ -101,12 +105,42 @@ const char* code_name(DWORD code) {
     }
 }
 
+// The frames above `rsp`: guest code has no unwind tables, so the stack is
+// scanned for values that are code addresses in a guest image or a reportable
+// module. Return addresses stand out; the rest is noise a reader can discount.
+// Returns how many were found; `print` false only counts guest ones.
+int scan_frames(uint64_t rsp, bool print) {
+    MEMORY_BASIC_INFORMATION mbi{};
+    if (!VirtualQuery(reinterpret_cast<const void*>(rsp), &mbi, sizeof(mbi)) || mbi.State != MEM_COMMIT) return 0;
+    const auto* top = reinterpret_cast<const uint64_t*>(rsp);
+    const auto* end = reinterpret_cast<const uint64_t*>(static_cast<const char*>(mbi.BaseAddress) + mbi.RegionSize);
+    int found = 0;
+    for (const uint64_t* p = top; p < end && p < top + 4096 && found < 12; ++p) {
+        const void* v = reinterpret_cast<const void*>(*p);
+        if (!v) continue;
+        if (print ? !worth_reporting(v) : !in_guest(v)) continue;
+        char frame[512];
+        if (!describe(v, frame, sizeof(frame))) continue;
+        if (print) std::fprintf(stderr, "[win.apk]   stack[%+lld]: %s\n", static_cast<long long>((p - top) * 8), frame);
+        ++found;
+    }
+    return found;
+}
+
 LONG CALLBACK report_fault(EXCEPTION_POINTERS* e) {
     const DWORD code = e->ExceptionRecord->ExceptionCode;
     const char* name = code_name(code);
     if (!name) return EXCEPTION_CONTINUE_SEARCH;
     const auto rip = static_cast<uint64_t>(e->ContextRecord->Rip);
-    if (!worth_reporting(reinterpret_cast<const void*>(rip))) return EXCEPTION_CONTINUE_SEARCH;
+    const auto rsp = static_cast<uint64_t>(e->ContextRecord->Rsp);
+    // A fault inside a Windows DLL or the JVM is the JVM's own business unless
+    // guest code is on the stack: memcpy on a guest pointer, a host function
+    // the shim called with the guest's arguments (Pixel Wheels died in one
+    // with nothing in the log).
+    const bool own = worth_reporting(reinterpret_cast<const void*>(rip));
+    if (!own && scan_frames(rsp, false) == 0 && !worth_reporting(reinterpret_cast<const void*>(rip), true)) {
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
     {
         std::lock_guard<std::mutex> hold(g_lock);
         if (!g_reported.insert(rip).second) return EXCEPTION_CONTINUE_SEARCH;
@@ -118,32 +152,17 @@ LONG CALLBACK report_fault(EXCEPTION_POINTERS* e) {
         const char* kind = e->ExceptionRecord->ExceptionInformation[0] == 0   ? "reading"
                            : e->ExceptionRecord->ExceptionInformation[0] == 1 ? "writing"
                                                                               : "executing";
-        std::snprintf(line, sizeof(line), "[win.apk] crash: %s %s 0x%llx at %s (rip 0x%llx, thread %lu)\n", name, kind,
-                      static_cast<unsigned long long>(e->ExceptionRecord->ExceptionInformation[1]), where,
-                      static_cast<unsigned long long>(rip), GetCurrentThreadId());
+        std::snprintf(line, sizeof(line), "[win.apk] crash: %s %s 0x%llx at %s%s (rip 0x%llx, thread %lu)\n", name,
+                      kind, static_cast<unsigned long long>(e->ExceptionRecord->ExceptionInformation[1]), where,
+                      own ? "" : " (a host function, called from guest code)", static_cast<unsigned long long>(rip),
+                      GetCurrentThreadId());
     } else {
-        std::snprintf(line, sizeof(line), "[win.apk] crash: %s at %s (rip 0x%llx, thread %lu)\n", name, where,
-                      static_cast<unsigned long long>(rip), GetCurrentThreadId());
+        std::snprintf(line, sizeof(line), "[win.apk] crash: %s at %s%s (rip 0x%llx, thread %lu)\n", name, where,
+                      own ? "" : " (a host function, called from guest code)", static_cast<unsigned long long>(rip),
+                      GetCurrentThreadId());
     }
     std::fputs(line, stderr);
-    // The frames: guest code has no unwind tables, so the stack is scanned for
-    // values that are code addresses in a guest image or a reportable module.
-    // Return addresses stand out; the rest is noise a reader can discount.
-    const auto rsp = static_cast<uint64_t>(e->ContextRecord->Rsp);
-    MEMORY_BASIC_INFORMATION mbi{};
-    if (VirtualQuery(reinterpret_cast<const void*>(rsp), &mbi, sizeof(mbi)) && mbi.State == MEM_COMMIT) {
-        const auto* top = reinterpret_cast<const uint64_t*>(rsp);
-        const auto* end = reinterpret_cast<const uint64_t*>(static_cast<const char*>(mbi.BaseAddress) + mbi.RegionSize);
-        int printed = 0;
-        for (const uint64_t* p = top; p < end && p < top + 4096 && printed < 12; ++p) {
-            const void* v = reinterpret_cast<const void*>(*p);
-            if (!v || !worth_reporting(v)) continue;
-            char frame[512];
-            if (!describe(v, frame, sizeof(frame))) continue;
-            std::fprintf(stderr, "[win.apk]   stack[%+lld]: %s\n", static_cast<long long>((p - top) * 8), frame);
-            ++printed;
-        }
-    }
+    scan_frames(rsp, true);
     std::fflush(stderr);
     return EXCEPTION_CONTINUE_SEARCH;
 }

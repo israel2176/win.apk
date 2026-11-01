@@ -75,6 +75,16 @@ public final class SpecialAccessStore {
     public static final String PERM_MANAGE_EXTERNAL_STORAGE =
             "android.permission.MANAGE_EXTERNAL_STORAGE";
     public static final String PERM_MANAGE_MEDIA = "android.permission.MANAGE_MEDIA";
+    /** The two other special-access ops a third-party app can be granted in
+     *  Settings and nowhere else (AppOpsManager.java android14 :1950 / :2240):
+     *  op 24 SYSTEM_ALERT_WINDOW ("Display over other apps") and op 66
+     *  REQUEST_INSTALL_PACKAGES ("Install unknown apps"). Both rows default to
+     *  MODE_DEFAULT; Settings writes MODE_ALLOWED / MODE_ERRORED. Asked only
+     *  where the helper knows them (allPermsAsk). */
+    public static final String OP_SYSTEM_ALERT_WINDOW = "android:system_alert_window";
+    public static final String OP_REQUEST_INSTALL_PACKAGES = "android:request_install_packages";
+    public static final String PERM_SYSTEM_ALERT_WINDOW = "android.permission.SYSTEM_ALERT_WINDOW";
+    public static final String PERM_REQUEST_INSTALL_PACKAGES = "android.permission.REQUEST_INSTALL_PACKAGES";
     private static final String PERM_READ_EXTERNAL  = "android.permission.READ_EXTERNAL_STORAGE";
     private static final String PERM_WRITE_EXTERNAL = "android.permission.WRITE_EXTERNAL_STORAGE";
 
@@ -126,6 +136,23 @@ public final class SpecialAccessStore {
      *  declared MANAGE_* permission, canManageMedia false, the Settings
      *  special-access intents unresolved, setMode a silent sink. */
     public static boolean honest() { return HONEST; }
+
+    private static final boolean ALL_PERMS_ASK;
+    static {
+        String e = System.getenv("MACAPK_ALL_PERMS_ASK");
+        ALL_PERMS_ASK = windowsHost() && (e == null || e.isEmpty() || e.charAt(0) != '0');
+    }
+
+    /** Every dangerous permission group is asked like Android, not only the
+     *  storage family and location (RuntimePermissionGroups), and "Display
+     *  over other apps" / "Install unknown apps" are special access the user
+     *  grants: ON where the helper knows those verbs. That is Win.apk's
+     *  launcher (Win.apk.exe runtime-permission --prompt camera ...); the
+     *  Mac's macapk-installhelper does not, so there the install-time rule
+     *  (declared == held) stays, unchanged. MACAPK_ALL_PERMS_ASK=0 turns it
+     *  off on Windows too (the labelled bisect gate; also honest() and
+     *  mediaPermsAsk() gate it, as they gate the rest). */
+    public static boolean allPermsAsk() { return ALL_PERMS_ASK && HONEST && MEDIA_PERMS_ASK; }
 
     // ---- where things live -----------------------------------------------
 
@@ -258,14 +285,16 @@ public final class SpecialAccessStore {
             }
             java.util.Map<String, Integer> modes = new java.util.HashMap<>();
             org.json.JSONObject ops = e.optJSONObject("ops");
-            for (String op : new String[] { OP_MANAGE_EXTERNAL_STORAGE, OP_MANAGE_MEDIA }) {
+            for (String op : new String[] { OP_MANAGE_EXTERNAL_STORAGE, OP_MANAGE_MEDIA,
+                                            OP_SYSTEM_ALERT_WINDOW, OP_REQUEST_INSTALL_PACKAGES }) {
                 String m = ops != null ? ops.optString(op, "") : "";
                 if ("allow".equals(m)) modes.put(op, MODE_ALLOWED);
                 else if ("deny".equals(m)) modes.put(op, MODE_ERRORED);
             }
-            // Stage S5: only the storage runtime permissions, and only a state
-            // the helper can write; anything else reads as "never set" (it is
-            // still covered by the signature, which verifyEntry checked).
+            // Stage S5: only the runtime permissions a helper asks about, and
+            // only a state the helper can write; anything else reads as "never
+            // set" (it is still covered by the signature, which verifyEntry
+            // checked).
             java.util.Map<String, String> perms = new java.util.TreeMap<>();
             org.json.JSONObject pj = e.optJSONObject("perms");
             if (pj != null) {
@@ -273,7 +302,8 @@ public final class SpecialAccessStore {
                 while (it.hasNext()) {
                     String p = it.next();
                     String st = pj.optString(p, "");
-                    if ((isStoragePermission(p) || isLocationPermission(p))
+                    if ((isStoragePermission(p) || isLocationPermission(p)
+                                || RuntimePermissionGroups.isTracked(p))
                             && PERM_STATES.contains(st)) {
                         perms.put(p, st);
                     }
@@ -534,10 +564,56 @@ public final class SpecialAccessStore {
     }
 
     /** The permission whose declaration enables op 92 / op 110's Settings
-     *  switch (AppOpsManager.java:2647 / :2692 opToPermission), else null. */
+     *  switch (AppOpsManager.java:2647 / :2692 opToPermission), else null;
+     *  op 24 / op 66 the same (:1950 / :2240) where allPermsAsk. */
     public static String permissionForOp(String op) {
-        return OP_MANAGE_EXTERNAL_STORAGE.equals(op) ? PERM_MANAGE_EXTERNAL_STORAGE
-             : OP_MANAGE_MEDIA.equals(op) ? PERM_MANAGE_MEDIA : null;
+        if (OP_MANAGE_EXTERNAL_STORAGE.equals(op)) return PERM_MANAGE_EXTERNAL_STORAGE;
+        if (OP_MANAGE_MEDIA.equals(op)) return PERM_MANAGE_MEDIA;
+        if (allPermsAsk()) {
+            if (OP_SYSTEM_ALERT_WINDOW.equals(op)) return PERM_SYSTEM_ALERT_WINDOW;
+            if (OP_REQUEST_INSTALL_PACKAGES.equals(op)) return PERM_REQUEST_INSTALL_PACKAGES;
+        }
+        return null;
+    }
+
+    /** The special-access ops the user can grant on this host. */
+    public static java.util.List<String> specialOps() {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        out.add(OP_MANAGE_EXTERNAL_STORAGE);
+        out.add(OP_MANAGE_MEDIA);
+        if (allPermsAsk()) {
+            out.add(OP_SYSTEM_ALERT_WINDOW);
+            out.add(OP_REQUEST_INSTALL_PACKAGES);
+        }
+        return out;
+    }
+
+    /** Settings.canDrawOverlays: AppOpsService's answer for op 24 for a
+     *  third-party app -- the stored mode; a never-set op reads MODE_DEFAULT,
+     *  which canDrawOverlays treats as "no" for an app targeting M+ (the
+     *  permission is not held) and "yes" for one below M (granted at install,
+     *  the op's legacy default, AppOpsManager.java :1950 and PermissionManager
+     *  ServiceImpl's pre-M grant). null when this is not our question (gate
+     *  off): the caller keeps its own rule. */
+    public static Boolean overlaysAllowed() {
+        if (!allPermsAsk()) return null;
+        if (!declaresPermission(PERM_SYSTEM_ALERT_WINDOW)) return Boolean.FALSE;
+        Manifest m = Boot.macapkManifest();
+        if (m != null && m.targetSdk > 0 && m.targetSdk < 23 && storedMode(OP_SYSTEM_ALERT_WINDOW) < 0) {
+            return Boolean.TRUE;
+        }
+        return specialOpMode(OP_SYSTEM_ALERT_WINDOW) == MODE_ALLOWED;
+    }
+
+    /** PackageManager.canRequestPackageInstalls for a declaring app targeting
+     *  O+: PackageManagerService.canRequestPackageInstallsInternal reads op 66
+     *  through its ExternalSourcesPolicy -- ALLOWED is trusted, ERRORED is
+     *  not, DEFAULT falls through to checkUidPermission of a signature|appop
+     *  permission no third-party app holds, i.e. false until the user turns
+     *  "Install unknown apps" on. null when not our question. */
+    public static Boolean installsAllowed() {
+        if (!allPermsAsk()) return null;
+        return specialOpMode(OP_REQUEST_INSTALL_PACKAGES) == MODE_ALLOWED;
     }
 
     /** True when the running app's manifest requests `perm` (after AOSP's
@@ -1161,8 +1237,232 @@ public final class SpecialAccessStore {
         // PermissionManagerServiceImpl.shouldShowRequestPermissionRationale: the
         // user answered "Don't allow" once (USER_SET) but not twice (USER_FIXED).
         if (isLocationPermission(perm)) return ST_DENIED.equals(snapshot().perms.get(perm));
+        if (RuntimePermissionGroups.isTracked(perm)) {
+            GroupModel g = liveGroupModel();
+            return g != null && g.rationale(perm);
+        }
         PermModel m = liveModel();
         return m != null && m.rationale(perm);
+    }
+
+    // ==== Every other dangerous group, asked like Android (allPermsAsk) ======
+    //
+    // The same tokens, store and helper as the storage family, for the groups
+    // RuntimePermissionGroups lists. The model is deliberately simpler than
+    // PermModel's: no photo picker, no supergroup, one prompt per group plus a
+    // separate "all the time" prompt for a background permission
+    // (GrantPermissionsViewModel's location / sensors background handling:
+    // the background permission is dropped from a request while its
+    // foreground is not granted, and never granted without it).
+
+    public static final class GroupModel {
+        final int level, target;
+        /** What the manifest declares, every family. */
+        final java.util.Set<String> declaredAll;
+        /** The tracked permissions requested: declared + implicit splits. */
+        final java.util.Set<String> requested;
+        final java.util.Map<String, String> state;
+        /** The foreground location grants, from the location model (two
+         *  gates on the Mac; here the per-app token). */
+        final boolean fineGranted, coarseGranted;
+
+        public GroupModel(int level, int target, java.util.Collection<String> declaredAll,
+                          java.util.Map<String, String> state, boolean targetResolved) {
+            this.level = level;
+            this.target = !targetResolved ? 10000 : target;
+            java.util.Set<String> d = new java.util.LinkedHashSet<>();
+            if (declaredAll != null) for (String p : declaredAll) if (p != null) d.add(p);
+            this.declaredAll = java.util.Collections.unmodifiableSet(d);
+            java.util.Set<String> req = new java.util.LinkedHashSet<>();
+            for (String p : RuntimePermissionGroups.all()) {
+                if (d.contains(p) || !RuntimePermissionGroups.implicitSources(p, this.target, d).isEmpty()
+                        || RuntimePermissionGroups.notificationsPreGranted(p, this.target)) {
+                    req.add(p);
+                }
+            }
+            this.requested = java.util.Collections.unmodifiableSet(req);
+            this.state = state != null ? state : java.util.Collections.<String, String>emptyMap();
+            this.fineGranted = tokGranted(this.state.get(PERM_ACCESS_FINE_LOCATION));
+            this.coarseGranted = tokGranted(this.state.get(PERM_ACCESS_COARSE_LOCATION));
+        }
+
+        String tok(String p) { return requested.contains(p) ? state.get(p) : null; }
+
+        boolean legacyInstallGrant() { return target < 23; }
+
+        boolean defined(String p) { return level >= RuntimePermissionGroups.sinceLevel(p); }
+
+        /** checkPermission for a tracked permission. */
+        public boolean granted(String p) {
+            if (!RuntimePermissionGroups.isTracked(p) || !requested.contains(p) || !defined(p)) return false;
+            if (legacyInstallGrant()) return true;
+            if (RuntimePermissionGroups.notificationsPreGranted(p, target)) return true;
+            if (RuntimePermissionGroups.isBackground(p)) {
+                // Never without a foreground grant; implicit (legacy target)
+                // ones follow it, declared ones also need their own answer.
+                boolean fg = false;
+                for (String f : RuntimePermissionGroups.foregroundOf(p)) {
+                    if (PERM_ACCESS_FINE_LOCATION.equals(f)) fg |= fineGranted;
+                    else if (PERM_ACCESS_COARSE_LOCATION.equals(f)) fg |= coarseGranted;
+                    else fg |= granted(f);
+                }
+                if (!fg) return false;
+                return declaredAll.contains(p) ? tokGranted(tok(p)) : true;
+            }
+            java.util.List<String> sources = RuntimePermissionGroups.implicitSources(p, target, declaredAll);
+            if (!declaredAll.contains(p) && !sources.isEmpty()) {
+                // Implicit only: held when a source is (a normal source is).
+                for (String s : sources) {
+                    if (!RuntimePermissionGroups.isTracked(s) || granted(s)) return true;
+                }
+                return false;
+            }
+            return tokGranted(tok(p));
+        }
+
+        /** shouldShowRequestPermissionRationale: USER_SET and not USER_FIXED. */
+        public boolean rationale(String p) {
+            if (granted(p) || !requested.contains(p) || !defined(p) || legacyInstallGrant()) return false;
+            String t = tok(p);
+            return tokUserSet(t) && !tokFixed(t);
+        }
+
+        /** The requested foreground members of `group` at this level. */
+        java.util.Set<String> members(String group) {
+            java.util.Set<String> out = new java.util.LinkedHashSet<>();
+            for (String p : requested) {
+                if (RuntimePermissionGroups.isBackground(p) || !defined(p)) continue;
+                if (group.equals(RuntimePermissionGroups.groupOf(p, level))) out.add(p);
+            }
+            return out;
+        }
+
+        boolean groupFullyGranted(String group) {
+            for (String p : members(group)) if (granted(p)) return true;
+            return false;
+        }
+        boolean groupUserFixed(String group) {
+            for (String p : members(group)) if (tokFixed(tok(p))) return true;
+            return false;
+        }
+
+        /** The groups App info lists: every group with a requested member the
+         *  user can answer, name -> members (background permissions become
+         *  their own "<group>_background" row). Nothing for a pre-M app. */
+        public java.util.LinkedHashMap<String, java.util.Set<String>> appDetailsGroups() {
+            java.util.LinkedHashMap<String, java.util.Set<String>> out = new java.util.LinkedHashMap<>();
+            if (legacyInstallGrant()) return out;
+            for (String p : requested) {
+                if (!defined(p) || RuntimePermissionGroups.notificationsPreGranted(p, target)) continue;
+                if (RuntimePermissionGroups.isBackground(p)) {
+                    if (declaredAll.contains(p)) {
+                        out.put(RuntimePermissionGroups.backgroundPromptName(p),
+                                new java.util.LinkedHashSet<>(java.util.Collections.singletonList(p)));
+                    }
+                    continue;
+                }
+                String g = RuntimePermissionGroups.groupOf(p, level);
+                if (g == null) continue;
+                String name = RuntimePermissionGroups.promptName(g);
+                if (!out.containsKey(name)) out.put(name, members(g));
+            }
+            return out;
+        }
+
+        /** What GrantPermissionsActivity would show for `request`, in first-
+         *  request order: per group PROMPT (a dialog), AUTO (a silent grant
+         *  into a group with a granted member), FIXED (no UI: denied twice) or
+         *  nothing (granted, or not grantable). A background permission is a
+         *  PROMPT of its own after its group, run only while a foreground
+         *  permission is granted (the handler re-checks, as the helper does). */
+        public java.util.List<PermModel.Step> plan(String[] request) {
+            java.util.List<PermModel.Step> out = new java.util.ArrayList<>();
+            if (request == null || legacyInstallGrant()) return out;
+            java.util.LinkedHashMap<String, java.util.LinkedHashSet<String>> byGroup = new java.util.LinkedHashMap<>();
+            java.util.LinkedHashSet<String> backgrounds = new java.util.LinkedHashSet<>();
+            for (String p : request) {
+                if (!RuntimePermissionGroups.isTracked(p) || !requested.contains(p) || !defined(p)) continue;
+                if (RuntimePermissionGroups.notificationsPreGranted(p, target)) continue;
+                if (RuntimePermissionGroups.isBackground(p)) {
+                    if (declaredAll.contains(p)) backgrounds.add(p);
+                    continue;
+                }
+                if (!declaredAll.contains(p)) continue;   // implicit: follows its source, no dialog
+                String g = RuntimePermissionGroups.groupOf(p, level);
+                if (g != null) byGroup.computeIfAbsent(g, k -> new java.util.LinkedHashSet<>()).add(p);
+            }
+            for (java.util.Map.Entry<String, java.util.LinkedHashSet<String>> e : byGroup.entrySet()) {
+                String g = e.getKey();
+                java.util.Set<String> members = members(g);
+                java.util.LinkedHashSet<String> missing = new java.util.LinkedHashSet<>();
+                for (String p : e.getValue()) if (!granted(p)) missing.add(p);
+                if (missing.isEmpty()) continue;
+                if (groupFullyGranted(g)) {
+                    out.add(new PermModel.Step("AUTO", g, null, missing, members, null));
+                } else if (groupUserFixed(g)) {
+                    out.add(new PermModel.Step("FIXED", g, null, missing, members, null));
+                } else {
+                    out.add(new PermModel.Step("PROMPT", g, RuntimePermissionGroups.promptName(g),
+                                               missing, members, null));
+                }
+            }
+            for (String b : backgrounds) {
+                if (granted(b)) continue;
+                java.util.Set<String> one = new java.util.LinkedHashSet<>(java.util.Collections.singletonList(b));
+                String g = RuntimePermissionGroups.groupOf(b, level);
+                if (tokFixed(tok(b))) {
+                    out.add(new PermModel.Step("FIXED", g, null, one, one, null));
+                } else {
+                    out.add(new PermModel.Step("BACKGROUND", g,
+                                               RuntimePermissionGroups.backgroundPromptName(b), one, one, null));
+                }
+            }
+            return out;
+        }
+
+        /** A background step's precondition: a granted foreground permission. */
+        public boolean foregroundGranted(String background) {
+            for (String f : RuntimePermissionGroups.foregroundOf(background)) {
+                if (PERM_ACCESS_FINE_LOCATION.equals(f) ? fineGranted
+                        : PERM_ACCESS_COARSE_LOCATION.equals(f) ? coarseGranted : granted(f)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+    }
+
+    /** The group model for the running app, or null when it does not apply
+     *  (gate off, no manifest). */
+    public static GroupModel liveGroupModel() {
+        if (!allPermsAsk()) return null;
+        Manifest m = Boot.macapkManifest();
+        if (m == null) return null;
+        java.util.List<String> declared = new java.util.ArrayList<>();
+        for (Manifest.UsesPermissionEntry e : m.usesPermissions) if (e.name != null) declared.add(e.name);
+        int level;
+        try { level = android.os.Build.VERSION.SDK_INT; } catch (Throwable t) { level = 29; }
+        boolean resolved = Manifest.TARGETSDK_ZERO ? m.targetSdk >= 0 : m.targetSdk > 0;
+        return new GroupModel(level, m.targetSdk, declared, snapshot().perms, resolved);
+    }
+
+    /** checkPermission's answer for a tracked permission: TRUE / FALSE, or
+     *  null when this model does not decide it. */
+    public static Boolean trackedPermissionGranted(String perm) {
+        if (!RuntimePermissionGroups.isTracked(perm)) return null;
+        GroupModel g = liveGroupModel();
+        return g == null ? null : g.granted(perm);
+    }
+
+    /** Whether the running app HOLDS a runtime permission this class models
+     *  (storage or a tracked group; location is MacApkPackageManager's, with
+     *  its host gate). null = not modelled here: the caller keeps its rule.
+     *  For the framework's own gates (CameraManager, AudioRecord, the
+     *  notification switch), which on a device check the permission before
+     *  touching the hardware. */
+    public static Boolean holds(String perm) {
+        Boolean s = storagePermissionGranted(perm);
+        return s != null ? s : trackedPermissionGranted(perm);
     }
 
     /** The stored token for `perm` (for logs and the handler's revoke check). */

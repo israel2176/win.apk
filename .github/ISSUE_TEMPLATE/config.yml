@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security problem
+    url: https://github.com/israel2176/win.apk/blob/main/SECURITY.md
+    about: Please do not open a public issue for a security problem; SECURITY.md says where to send it.
+  - name: Apps and known issues
+    url: https://github.com/israel2176/win.apk/blob/main/docs/APPS.md
+    about: Common apps, how they run, and the problems already known, before you open an issue.
