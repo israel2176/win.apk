@@ -47,6 +47,9 @@ namespace {
 // common phone screen today and about the shape upstream's Mac launcher picks).
 std::atomic<int> g_phone_w{360};
 std::atomic<int> g_phone_h{640};
+// Whether the app was started landscape (the library opens apps that way
+// unless told otherwise): what an UNSPECIFIED request returns the phone to.
+std::atomic<bool> g_launch_landscape{false};
 
 // Each app keeps the window size the user last gave it, in dp, as
 // <data>\library\<name>.window ("<w>x<h>"; beside the library's other files on
@@ -215,6 +218,7 @@ void choose_phone_size() {
     launch_phone_size(&w, &h);
     g_phone_w = w;
     g_phone_h = h;
+    g_launch_landscape = w > h;
 }
 
 // ---- the app icon -----------------------------------------------------------
@@ -292,10 +296,12 @@ void JNICALL Cocoa_applyWindowOrientation(JNIEnv*, jclass, jint o) { apply_scree
 void JNICALL Cocoa_applyWindowOrientationFor(JNIEnv*, jclass, jstring, jint, jint o, jint) {
     apply_screen_orientation(o);
 }
-// The user rotation is the boot orientation, portrait (there is no Cmd+R
-// rotation here).
+// The user rotation is the orientation the app was started in (the library's
+// choice for it: landscape unless the settings or the app's own entry say
+// portrait; there is no Cmd+R rotation here), and the window is free again.
 void JNICALL Cocoa_restoreUserOrientation(JNIEnv*, jclass) {
-    Cocoa_applyRequestedOrientation(nullptr, nullptr, JNI_FALSE);
+    Cocoa_applyRequestedOrientation(nullptr, nullptr, g_launch_landscape ? JNI_TRUE : JNI_FALSE);
+    window_set_orientation_lock(0);
 }
 // No user aspect-ratio override exists here, so the record's own orientation stands.
 jint JNICALL Cocoa_windowOverrideOrientation(JNIEnv*, jclass, jstring, jint record) { return record; }
