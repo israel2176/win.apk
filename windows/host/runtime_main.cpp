@@ -39,6 +39,7 @@
 // program (--java-main), not in java.exe, which reads its own location and
 // its arguments in the ANSI code page.
 
+#include "crash_report.h"
 #include "guest_libs.h"
 #include "host_natives.h"
 #include "user_folders.h"
@@ -1365,6 +1366,7 @@ void buffer_stderr() {
 
 int wmain(int argc, wchar_t** argv) {
     buffer_stderr();
+    winapk::host::install_crash_report();
     // A relaunch (Cocoa_exitProcess) starts before the old process has ended:
     // wait for it, so the single-instance claim below finds the app gone.
     if (const std::wstring after = env_var(L"WINAPK_RELAUNCH_AFTER"); !after.empty()) {
