@@ -304,6 +304,13 @@ every such change is listed here:
   threw "nextText not on START_TAG"), and the compiled-XML reader keeps text
   chunks, so an element's content (`<key>` in a media-browser allow list) is no
   longer empty. Not Windows-specific; worth offering upstream.
+- `runtime/java/com/macapk/dex/InitRepointPlan.java`: the DEX converter also
+  synthesises the constructor R8 deleted when the call site still names the
+  allocated class (`new-instance T; invoke-direct T.<init>(D)` with no
+  `T.<init>(D)` left, often no class data at all), which ART resolves up the
+  superclass chain and HotSpot refuses with NoSuchMethodError. NetGuard's
+  main activity and androidx.startup failed on it (170 such sites in one
+  DEX). Not Windows-specific; worth offering upstream.
 - `runtime/java/android/provider/MediaStoreProvider.java`: a projection may
   hold an aggregate over a known column (`COUNT(is_music)`, `COUNT(*)`,
   `MAX(date_added)`) or an alias (`_data AS path`), as MediaProvider's
