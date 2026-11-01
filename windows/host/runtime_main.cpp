@@ -76,6 +76,8 @@ struct Options {
     bool install_only = false;
     bool default_data = false;  // no --data: the user's own library, not a test's scratch folder
     fs::path package_to;  // --package-to: write the app's package name there and stop
+    bool gms = false;     // --gms <subcommand> [args]: com.macapk.gms.GmsCli, no app
+    std::vector<std::wstring> gms_args;
 };
 
 std::string utf8(const std::wstring& w) {
@@ -221,19 +223,27 @@ bool parse_args(int argc, wchar_t** argv, Options* o) {
         else if (a == L"--lib") ok = value(&o->lib);
         else if (a == L"--install-only") o->install_only = true;
         else if (a == L"--package-to") ok = value(&o->package_to);
-        else ok = false;
+        else if (a == L"--gms") {
+            // Everything after --gms belongs to the subcommand, verbatim, as
+            // upstream's CliArgs::gms_args.
+            o->gms = true;
+            for (int j = i + 1; j < argc; ++j) o->gms_args.emplace_back(argv[j]);
+            break;
+        } else ok = false;
         if (!ok) return false;
     }
-    return !o->apk.empty();
+    return !o->apk.empty() || o->gms;
 }
 
 // Fills in whatever the command line left out, and checks it exists.
 bool resolve_paths(Options* o) {
     std::error_code ec;
-    o->apk = fs::absolute(o->apk, ec);
-    if (!fs::is_regular_file(o->apk, ec)) {
-        std::fprintf(stderr, "[win.apk] no such APK: %s\n", utf8(o->apk.wstring()).c_str());
-        return false;
+    if (!o->gms) {
+        o->apk = fs::absolute(o->apk, ec);
+        if (!fs::is_regular_file(o->apk, ec)) {
+            std::fprintf(stderr, "[win.apk] no such APK: %s\n", utf8(o->apk.wstring()).c_str());
+            return false;
+        }
     }
     const fs::path root = exe_dir().parent_path();
     if (o->lib.empty()) o->lib = root / "lib";
@@ -1153,6 +1163,64 @@ int java_main(int argc, wchar_t** argv) {
     return a.result;
 }
 
+// winapk-runtime --gms <subcommand> [args]: upstream's `macapk-runtime --gms`
+// (runtime/src/main.cpp, RunGmsCommand). A JVM with the framework and loader
+// jars and no app, the host natives bound (`--gms signin-window` shows the
+// Google sign-in window through NativeSignIn; `accounts` needs none), and the
+// arguments handed to com.macapk.gms.GmsCli.run, the one entry point every
+// GMS operation has. Its exit code is a contract the launcher's Settings
+// reads: 0 done, 1 an `ERROR\t<message>` line was printed, 2 cancelled or
+// wrong arguments. The process exits without a VM shutdown, as upstream: a
+// sign-in run has WebView2's processes behind it and nothing needs a shutdown
+// hook (GmsStore writes its file on every mutation).
+DWORD WINAPI gms_thread(void* param) {
+    auto* b = static_cast<BootArgs*>(param);
+    const Options& o = b->options;
+    b->result = 1;
+    HMODULE jvm = load_jvm(o.jdk);
+    if (!jvm) return 1;
+    std::vector<std::string> opts = jvm_options(*b);
+    JavaVM* vm = nullptr;
+    JNIEnv* env = nullptr;
+    if (!create_vm(jvm, opts, &vm, &env)) return 1;
+    jvmtiEnv* jvmti = nullptr;
+    if (vm->GetEnv(reinterpret_cast<void**>(&jvmti), JVMTI_VERSION_1_2) != JNI_OK) {
+        std::fprintf(stderr, "[win.apk] no JVMTI\n");
+        return 1;
+    }
+    winapk::host::NativeStats stats;
+    if (!winapk::host::register_host_natives(env, jvmti, &stats)) {
+        std::fprintf(stderr, "[win.apk] binding host natives failed\n");
+        return 1;
+    }
+    macapk::sqlite::RegisterNativeSqliteMethods(env);
+    check_exception(env, "RegisterNativeSqliteMethods");
+
+    jclass cli = env->FindClass("com/macapk/gms/GmsCli");
+    jmethodID run = cli ? env->GetStaticMethodID(cli, "run", "([Ljava/lang/String;)I") : nullptr;
+    if (!run) {
+        check_exception(env, "GmsCli.run lookup");
+        std::fprintf(stderr, "ERROR\tcom.macapk.gms.GmsCli.run(String[])int is missing from the framework jars\n");
+        std::fflush(stderr);
+        TerminateProcess(GetCurrentProcess(), 1);
+    }
+    jobjectArray args = env->NewObjectArray(static_cast<jsize>(o.gms_args.size()), env->FindClass("java/lang/String"),
+                                            nullptr);
+    for (size_t i = 0; i < o.gms_args.size(); ++i) {
+        env->SetObjectArrayElement(args, static_cast<jsize>(i), jstring_of(env, o.gms_args[i]));
+    }
+    jint rc = env->CallStaticIntMethod(cli, run, args);
+    if (env->ExceptionCheck()) {
+        env->ExceptionDescribe();
+        env->ExceptionClear();
+        rc = 1;
+    }
+    std::fflush(stdout);
+    std::fflush(stderr);
+    TerminateProcess(GetCurrentProcess(), static_cast<UINT>(rc));
+    return 0;
+}
+
 // Steps 3 to 5, on the large-stack thread.
 DWORD WINAPI boot_thread(void* param) {
     auto* b = static_cast<BootArgs*>(param);
@@ -1383,7 +1451,8 @@ int wmain(int argc, wchar_t** argv) {
     BootArgs b;
     if (!parse_args(argc, argv, &b.options)) {
         std::fprintf(stderr, "usage: winapk-runtime --apk <file.apk|.apkm|.xapk|.apks> [--data <dir>] [--jdk <dir>] [--lib <dir>] "
-                     "[--install-only] [--package-to <file>]\n");
+                     "[--install-only] [--package-to <file>]\n"
+                     "       winapk-runtime [--data <dir>] [--jdk <dir>] [--lib <dir>] --gms <subcommand> [args]\n");
         return 2;
     }
     if (!resolve_paths(&b.options)) return 2;
@@ -1407,6 +1476,22 @@ int wmain(int argc, wchar_t** argv) {
                                     (b.options.data / L"installed_apps.json").c_str());
         if (env_var(L"MACAPK_STAGING_DIR").empty())
             SetEnvironmentVariableW(L"MACAPK_STAGING_DIR", (b.options.data / L"staging").c_str());
+        // The GMS layer's state (the signed-in Google account, its tokens, the
+        // checkin identity: com.macapk.gms.GmsStore) next to the registry, as
+        // upstream keeps it next to installed_apps.json; its default is a Mac
+        // path under the home directory.
+        if (env_var(L"MACAPK_GMS_DIR").empty())
+            SetEnvironmentVariableW(L"MACAPK_GMS_DIR", (b.options.data / L"gms").c_str());
+    }
+
+    // --gms: a JVM, the GMS classes and no app. Before anything APK-shaped.
+    if (b.options.gms) {
+        HANDLE t = CreateThread(nullptr, 64 * 1024 * 1024, gms_thread, &b, STACK_SIZE_PARAM_IS_A_RESERVATION,
+                                nullptr);
+        if (!t) return 1;
+        WaitForSingleObject(t, INFINITE);
+        CloseHandle(t);
+        return b.result;
     }
 
     // Permissions ask as on a device: the storage and location runtime
