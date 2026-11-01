@@ -213,6 +213,13 @@ public final class Settings {
      *  point), so this evaluates true, consistent with that established
      *  blanket-grant model rather than a second hardcoded constant here. */
     public static boolean canDrawOverlays(Context context) {
+        // Where "Display over other apps" is a special access the user grants
+        // (SpecialAccessStore.allPermsAsk, Win.apk: the launcher's dialog, the
+        // answer signed into the app-ops store), the FIRST disjunct is read
+        // for real: op 24's stored mode, false until allowed for an app
+        // targeting M+. The rest of this method is the Mac's answer.
+        Boolean asked = com.macapk.loader.SpecialAccessStore.overlaysAllowed();
+        if (asked != null) return asked;
         // AOSP: `isCallingPackageAllowedToDrawOverlays(context, uid, pkg, true)
         //        || context.checkSelfPermission(SYSTEM_APPLICATION_OVERLAY) == GRANTED`
         // The FIRST disjunct is the one that answers true on a real device: it

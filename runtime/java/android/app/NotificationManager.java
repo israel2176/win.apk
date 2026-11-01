@@ -86,7 +86,21 @@ public class NotificationManager {
         return new ArrayList<>(channelGroups);
     }
 
-    public boolean areNotificationsEnabled() { return true; }
+    /** AOSP areNotificationsEnabled: NotificationManagerService's per-app
+     *  switch, which from T IS the POST_NOTIFICATIONS runtime permission for
+     *  an app targeting T+ (pre-granted below T until the user turns it off).
+     *  Where the host asks about that permission (SpecialAccessStore.
+     *  allPermsAsk), it answers; otherwise, as before, notifications are on. */
+    public boolean areNotificationsEnabled() {
+        try {
+            if (android.os.Build.VERSION.SDK_INT >= 33) {
+                Boolean held = com.macapk.loader.SpecialAccessStore.holds(
+                        "android.permission.POST_NOTIFICATIONS");
+                if (held != null) return held;
+            }
+        } catch (Throwable ignored) { }
+        return true;
+    }
     public int getCurrentInterruptionFilter() { return INTERRUPTION_FILTER_ALL; }
     public void setInterruptionFilter(int filter) {}
     public int getImportance() { return IMPORTANCE_DEFAULT; }

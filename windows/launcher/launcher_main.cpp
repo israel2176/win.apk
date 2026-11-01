@@ -399,7 +399,75 @@ const wchar_t* tr(const wchar_t* en) {
         {L"The size you last gave the app's window. Reset, it opens at the settings' screen size again.",
          L"הגודל האחרון שנתת לחלון של האפליקציה. אחרי איפוס היא תיפתח שוב בגודל המסך שבהגדרות."},
         {L"{0} opens at the settings' screen size again.", L"{0} תיפתח שוב בגודל המסך שבהגדרות."},
-        {L"{0} will ask for its permissions again.", L"{0} תשאל שוב על ההרשאות שלה."}
+        {L"{0} will ask for its permissions again.", L"{0} תשאל שוב על ההרשאות שלה."},
+        // The other permission groups (PermissionController's wording).
+        {L"Allow {0} to access this device's location all the time?", L"לאפשר ל-{0} לגשת למיקום המכשיר כל הזמן?"},
+        {L"Allow {0} to take pictures and record video?", L"לאפשר ל-{0} לצלם תמונות ולהקליט וידאו?"},
+        {L"Allow {0} to record audio?", L"לאפשר ל-{0} להקליט אודיו?"},
+        {L"Allow {0} to access your contacts?", L"לאפשר ל-{0} לגשת לאנשי הקשר שלך?"},
+        {L"Allow {0} to access your calendar?", L"לאפשר ל-{0} לגשת ליומן שלך?"},
+        {L"Allow {0} to make and manage phone calls?", L"לאפשר ל-{0} לבצע ולנהל שיחות טלפון?"},
+        {L"Allow {0} to access your phone call logs?", L"לאפשר ל-{0} לגשת ליומני השיחות שלך?"},
+        {L"Allow {0} to send and view SMS messages?", L"לאפשר ל-{0} לשלוח ולהציג הודעות SMS?"},
+        {L"Allow {0} to send you notifications?", L"לאפשר ל-{0} לשלוח לך התראות?"},
+        {L"Allow {0} to find, connect to, and determine the relative position of nearby devices?",
+         L"לאפשר ל-{0} לאתר מכשירים בקרבת מקום, להתחבר אליהם ולקבוע את מיקומם היחסי?"},
+        {L"Allow {0} to access your physical activity?", L"לאפשר ל-{0} לגשת לנתוני הפעילות הגופנית שלך?"},
+        {L"Allow {0} to access sensor data about your vital signs?", L"לאפשר ל-{0} לגשת לנתוני חיישנים על הסימנים החיוניים שלך?"},
+        {L"Allow {0} to access sensor data about your vital signs all the time?",
+         L"לאפשר ל-{0} לגשת לנתוני חיישנים על הסימנים החיוניים שלך כל הזמן?"},
+        {L"Windows' camera privacy settings apply as well.", L"גם הגדרות הפרטיות של המצלמה ב-Windows חלות."},
+        {L"Windows' microphone privacy settings apply as well.", L"גם הגדרות הפרטיות של המיקרופון ב-Windows חלות."},
+        {L"Win.apk does not show notifications yet; this only decides what the app is told.",
+         L"Win.apk עדיין לא מציגה התראות; זה קובע רק מה האפליקציה תדע."},
+        {L"Win.apk has no contacts, calendar, phone or SMS data of its own; the app will find none.",
+         L"ל-Win.apk אין אנשי קשר, יומן, טלפון או הודעות SMS משלה; האפליקציה לא תמצא כאלה."},
+        {L"Win.apk has no Bluetooth yet; the app will find no devices.", L"ל-Win.apk עדיין אין Bluetooth; האפליקציה לא תמצא מכשירים."},
+        {L"This PC has no such sensors; the app will get no readings.", L"במחשב הזה אין חיישנים כאלה; האפליקציה לא תקבל מדידות."},
+        {L"Location, all the time", L"מיקום, כל הזמן"},
+        {L"Camera", L"מצלמה"},
+        {L"Microphone", L"מיקרופון"},
+        {L"Contacts", L"אנשי קשר"},
+        {L"Calendar", L"יומן"},
+        {L"Phone", L"טלפון"},
+        {L"Call logs", L"יומני שיחות"},
+        {L"SMS", L"SMS"},
+        {L"Notifications", L"התראות"},
+        {L"Nearby devices", L"מכשירים בקרבת מקום"},
+        {L"Physical activity", L"פעילות גופנית"},
+        {L"Body sensors", L"חיישני גוף"},
+        {L"Body sensors, all the time", L"חיישני גוף, כל הזמן"},
+        {L"Display over other apps", L"הצגה מעל אפליקציות אחרות"},
+        {L"Install unknown apps", L"התקנת אפליקציות לא מוכרות"},
+        {L"Allow {0} to display over other apps?", L"לאפשר ל-{0} להציג מעל אפליקציות אחרות?"},
+        {L"This app can appear on top of other apps' content. On Windows an Android app draws such windows inside its own window.",
+         L"האפליקציה הזו יכולה להופיע מעל תוכן של אפליקציות אחרות. ב-Windows אפליקציית Android מציירת חלונות כאלה בתוך החלון שלה."},
+        {L"Allow {0} to install unknown apps?", L"לאפשר ל-{0} להתקין אפליקציות לא מוכרות?"},
+        {L"Your PC and personal data are more vulnerable to attack by unknown apps. By allowing this, you agree that you are responsible for any damage to your PC or loss of data that may result from their use. Win.apk still asks you before each install.",
+         L"המחשב והנתונים האישיים שלך פגיעים יותר להתקפה מצד אפליקציות לא מוכרות. באישור זה אתה מסכים שאתה אחראי לכל נזק למחשב או לאובדן נתונים שעלולים להיגרם משימוש בהן. Win.apk עדיין תשאל אותך לפני כל התקנה."},
+        {L"Close", L"סגור"},
+        {L"Notification access", L"גישה להתראות"},
+        {L"Win.apk can't give {0} notification access. Windows has no feed of other apps' notifications for an Android app to read.",
+         L"Win.apk לא יכולה לתת ל-{0} גישה להתראות. ב-Windows אין זרם התראות של אפליקציות אחרות שאפליקציית Android תוכל לקרוא."},
+        {L"Accessibility", L"נגישות"},
+        {L"Win.apk can't run {0} as an accessibility service. There is no Android accessibility framework on Windows for it to observe or act through.",
+         L"Win.apk לא יכולה להריץ את {0} כשירות נגישות. ב-Windows אין מסגרת נגישות של Android שדרכה יוכל לצפות או לפעול."},
+        {L"Usage access", L"גישה לנתוני שימוש"},
+        {L"Win.apk can't give {0} usage access. Each Android app runs on its own here, so there is no usage history of other apps to read.",
+         L"Win.apk לא יכולה לתת ל-{0} גישה לנתוני שימוש. כל אפליקציית Android רצה כאן בנפרד, כך שאין היסטוריית שימוש של אפליקציות אחרות לקרוא."},
+        {L"Do Not Disturb access", L"גישה למצב נא לא להפריע"},
+        {L"Win.apk has no Do Not Disturb mode for {0} to control.", L"ב-Win.apk אין מצב נא לא להפריע ש-{0} תוכל לשלוט בו."},
+        {L"Battery optimization", L"אופטימיזציית סוללה"},
+        {L"Win.apk never limits {0} in the background, so it already runs unrestricted.",
+         L"Win.apk אף פעם לא מגבילה את {0} ברקע, כך שהיא כבר רצה ללא הגבלה."},
+        {L"Alarms and reminders", L"התראות ותזכורות"},
+        {L"Win.apk lets {0} schedule exact alarms; there is nothing to turn on.",
+         L"Win.apk מאפשרת ל-{0} לתזמן התראות מדויקות; אין מה להפעיל."},
+        {L"Modify system settings", L"שינוי הגדרות מערכת"},
+        {L"There are no Android system settings for {0} to modify on Windows; it is treated as allowed.",
+         L"ב-Windows אין הגדרות מערכת של Android ש-{0} תוכל לשנות; זה נחשב כמותר."},
+        {L"{0} was stopped, as Android does when a permission is revoked.",
+         L"{0} נעצרה, כפי ש-Android עושה כשהרשאה נשללת."}
     };
     if (!g_rtl) return en;
     const auto it = he.find(en);
@@ -4792,17 +4860,100 @@ const std::string kAudio = "android.permission.READ_MEDIA_AUDIO";
 const std::string kUserSelected = "android.permission.READ_MEDIA_VISUAL_USER_SELECTED";
 const std::string kFine = "android.permission.ACCESS_FINE_LOCATION";
 const std::string kCoarse = "android.permission.ACCESS_COARSE_LOCATION";
+const std::string kBackgroundLocation = "android.permission.ACCESS_BACKGROUND_LOCATION";
+const std::string kBodySensors = "android.permission.BODY_SENSORS";
+const std::string kBodySensorsBackground = "android.permission.BODY_SENSORS_BACKGROUND";
 const std::string kAllFiles = "android:manage_external_storage";
 const std::string kManageMedia = "android:manage_media";
+const std::string kOverlay = "android:system_alert_window";
+const std::string kInstallApps = "android:request_install_packages";
 const char* const kPayloadTag = "macapk-appops/3";
 const char* const kLegacyTag = "macapk-appops/2";
+
+// Every other dangerous permission, with the group it is asked under (the
+// prompt's name, RuntimePermissionGroups.promptName) and the API level that
+// defines it; the call-log trio is "phone" below API 28. The two "all the
+// time" permissions are groups of their own, asked after their foreground
+// group. MUST agree with runtime/java/com/macapk/loader/RuntimePermissionGroups.
+struct PermRow {
+    const char* perm;
+    const char* group;
+    int since;
+};
+const PermRow kGroupRows[] = {
+    {"android.permission.READ_CONTACTS", "contacts", 1},
+    {"android.permission.WRITE_CONTACTS", "contacts", 1},
+    {"android.permission.GET_ACCOUNTS", "contacts", 1},
+    {"android.permission.READ_CALENDAR", "calendar", 1},
+    {"android.permission.WRITE_CALENDAR", "calendar", 1},
+    {"android.permission.SEND_SMS", "sms", 1},
+    {"android.permission.RECEIVE_SMS", "sms", 1},
+    {"android.permission.READ_SMS", "sms", 1},
+    {"android.permission.RECEIVE_WAP_PUSH", "sms", 1},
+    {"android.permission.RECEIVE_MMS", "sms", 1},
+    {"android.permission.READ_CELL_BROADCASTS", "sms", 1},
+    {"android.permission.RECORD_AUDIO", "microphone", 1},
+    {"android.permission.ACTIVITY_RECOGNITION", "activity_recognition", 29},
+    {"android.permission.CAMERA", "camera", 1},
+    {"android.permission.READ_CALL_LOG", "call_log", 16},
+    {"android.permission.WRITE_CALL_LOG", "call_log", 16},
+    {"android.permission.PROCESS_OUTGOING_CALLS", "call_log", 1},
+    {"android.permission.READ_PHONE_STATE", "phone", 1},
+    {"android.permission.READ_PHONE_NUMBERS", "phone", 26},
+    {"android.permission.CALL_PHONE", "phone", 1},
+    {"android.permission.ADD_VOICEMAIL", "phone", 14},
+    {"android.permission.USE_SIP", "phone", 9},
+    {"android.permission.ANSWER_PHONE_CALLS", "phone", 26},
+    {"android.permission.ACCEPT_HANDOVER", "phone", 28},
+    {"android.permission.BODY_SENSORS", "sensors", 20},
+    {"android.permission.BODY_SENSORS_BACKGROUND", "sensors_background", 33},
+    {"android.permission.BLUETOOTH_ADVERTISE", "nearby_devices", 31},
+    {"android.permission.BLUETOOTH_CONNECT", "nearby_devices", 31},
+    {"android.permission.BLUETOOTH_SCAN", "nearby_devices", 31},
+    {"android.permission.UWB_RANGING", "nearby_devices", 31},
+    {"android.permission.NEARBY_WIFI_DEVICES", "nearby_devices", 33},
+    {"android.permission.POST_NOTIFICATIONS", "notifications", 33},
+    {"android.permission.ACCESS_BACKGROUND_LOCATION", "location_background", 29},
+};
 
 bool is_storage(const std::string& p) {
     return p == kReadExternal || p == kWriteExternal || p == kMediaLocation || p == kImages || p == kVideo ||
            p == kAudio || p == kUserSelected;
 }
 bool is_location(const std::string& p) { return p == kFine || p == kCoarse; }
-bool is_op(const std::string& op) { return op == kAllFiles || op == kManageMedia; }
+const PermRow* group_row(const std::string& p) {
+    for (const PermRow& r : kGroupRows)
+        if (p == r.perm) return &r;
+    return nullptr;
+}
+// The group `p` is asked under at `level`, or "" when the level does not define it.
+std::string group_name(const std::string& p, int level) {
+    const PermRow* r = group_row(p);
+    if (!r || level < r->since) return "";
+    if (std::string(r->group) == "call_log" && level < 28) return "phone";
+    return r->group;
+}
+bool is_group_perm(const std::string& p) { return group_row(p) != nullptr; }
+bool is_group_name(const std::string& g) {
+    for (const PermRow& r : kGroupRows)
+        if (g == r.group) return true;
+    return false;
+}
+// Every runtime permission a dialog can answer.
+bool is_runtime_perm(const std::string& p) { return is_storage(p) || is_location(p) || is_group_perm(p); }
+// The foreground permissions an "all the time" one depends on.
+std::vector<std::string> foreground_of(const std::string& background) {
+    if (background == kBackgroundLocation) return {kFine, kCoarse};
+    if (background == kBodySensorsBackground) return {kBodySensors};
+    return {};
+}
+bool is_op(const std::string& op) {
+    return op == kAllFiles || op == kManageMedia || op == kOverlay || op == kInstallApps;
+}
+// Settings screens for access this host cannot grant, or has nothing to
+// restrict: the dialog informs and records nothing (SpecialAccessHandler's
+// INFO_* ops).
+bool is_info_op(const std::string& op) { return op.rfind("winapk:", 0) == 0; }
 bool is_state(const std::string& s) {
     return s == "granted" || s == "granted_fixed" || s == "denied" || s == "denied_fixed";
 }
@@ -5185,7 +5336,7 @@ Entry stored(const Identity& id) {
 std::map<std::string, std::string> permissions(const Identity& id) {
     std::map<std::string, std::string> out;
     for (const auto& [p, st] : stored(id).perms)
-        if ((is_storage(p) || is_location(p)) && is_state(st)) out[p] = st;
+        if (is_runtime_perm(p) && is_state(st)) out[p] = st;
     return out;
 }
 
@@ -5201,7 +5352,7 @@ std::string mode(const Identity& id, const std::string& op) {
 bool record(const Identity& id, const std::map<std::string, std::string>& perms,
             const std::map<std::string, std::string>& ops, const std::string& by, std::string* why) {
     for (const auto& [p, st] : perms) {
-        if (!(is_storage(p) || is_location(p)) || !is_state(st)) {
+        if (!is_runtime_perm(p) || !is_state(st)) {
             *why = "refusing to sign " + p + "=" + st;
             return false;
         }
@@ -5316,6 +5467,40 @@ std::wstring command_line_of(HANDLE process) {
     return s->Buffer ? std::wstring(s->Buffer, s->Length / sizeof(wchar_t)) : L"";
 }
 
+// The app's --apk, from a winapk-runtime.exe's command line; empty when it is
+// not one.
+fs::path apk_of_command_line(const std::wstring& cmd) {
+    int argc = 0;
+    wchar_t** argv = CommandLineToArgvW(cmd.c_str(), &argc);
+    fs::path apk;
+    for (int i = 1; argv && i + 1 < argc; ++i)
+        if (wcscmp(argv[i], L"--apk") == 0) apk = argv[i + 1];
+    if (argv) LocalFree(argv);
+    return apk;
+}
+
+// Ends the runtime running `apk`, whoever started it (the library window, a
+// shortcut's Win.apk.exe --run): Android kills a process whose runtime
+// permission or all-files access was taken away, and the app comes back
+// clean when opened again. True when one was found.
+bool stop_runtime_of(const fs::path& apk) {
+    bool stopped = false;
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap == INVALID_HANDLE_VALUE) return false;
+    PROCESSENTRY32W pe{sizeof(pe)};
+    std::error_code ec;
+    for (BOOL more = Process32FirstW(snap, &pe); more; more = Process32NextW(snap, &pe)) {
+        if (_wcsicmp(pe.szExeFile, L"winapk-runtime.exe") != 0) continue;
+        HANDLE p = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE, FALSE, pe.th32ProcessID);
+        if (!p) continue;
+        const fs::path theirs = apk_of_command_line(command_line_of(p));
+        if (!theirs.empty() && fs::equivalent(theirs, apk, ec) && TerminateProcess(p, 1)) stopped = true;
+        CloseHandle(p);
+    }
+    CloseHandle(snap);
+    return stopped;
+}
+
 // The app asking: our parent must be a winapk-runtime.exe that started before
 // us (not a reused process id), and its --apk a library app whose package has
 // one registry row. Nothing the app passes in its arguments is believed.
@@ -5346,12 +5531,7 @@ bool resolve(Caller* c, std::string* why) {
         *why = "the parent process is not an app run by Win.apk";
         return false;
     }
-    int argc = 0;
-    wchar_t** argv = CommandLineToArgvW(cmd.c_str(), &argc);
-    fs::path apk;
-    for (int i = 1; argv && i + 1 < argc; ++i)
-        if (wcscmp(argv[i], L"--apk") == 0) apk = argv[i + 1];
-    if (argv) LocalFree(argv);
+    const fs::path apk = apk_of_command_line(cmd);
     std::error_code ec;
     for (const App& app : library()) {
         if (apk.empty() || !fs::equivalent(app.apk, apk, ec)) continue;
@@ -5449,9 +5629,11 @@ std::wstring quoted(const Identity& id) {
 
 // ---- runtime-permission ----------------------------------------------------------
 
-// The group a permission's dialog belongs to (PermissionMapping.kt :94-117).
+// The group a permission's dialog belongs to (PermissionMapping.kt :94-150):
+// the storage family's three, location, or one of kGroupRows'.
 std::string group_of(const std::string& p, int level) {
     if (is_location(p)) return "location";
+    if (is_group_perm(p)) return group_name(p, level);
     if (p == kReadExternal || p == kWriteExternal) return "storage";
     if (p == kMediaLocation) return level < 33 ? "storage" : "visual";
     if (p == kAudio) return "aural";
@@ -5460,13 +5642,20 @@ std::string group_of(const std::string& p, int level) {
 
 // The permissions whose grant means the group is granted; MUST agree with
 // SpecialAccessStore.PermModel.groupFullyGranted (the photo-picker prompt is
-// off, as upstream's: USER_SELECTED never counts).
+// off, as upstream's: USER_SELECTED never counts) and GroupModel's (any
+// member of the group).
 std::set<std::string> anchors(const std::string& g, int level) {
     if (g == "storage")
         return level < 33 ? std::set<std::string>{kReadExternal, kWriteExternal, kMediaLocation}
                           : std::set<std::string>{kReadExternal, kWriteExternal};
     if (g == "aural") return {kAudio};
     if (g == "location") return {kFine, kCoarse};
+    if (is_group_name(g)) {
+        std::set<std::string> out;
+        for (const PermRow& r : kGroupRows)
+            if (group_name(r.perm, level) == g) out.insert(r.perm);
+        return out;
+    }
     return {kImages, kVideo, kMediaLocation};
 }
 
@@ -5516,6 +5705,22 @@ std::wstring question(const Identity& id, const std::string& prompt, const std::
                       int level) {
     const std::wstring who = quoted(id);
     if (prompt == "location") return fmt(L"Allow {0} to access this device's location?", {who});
+    if (prompt == "location_background")
+        return fmt(L"Allow {0} to access this device's location all the time?", {who});
+    if (prompt == "camera") return fmt(L"Allow {0} to take pictures and record video?", {who});
+    if (prompt == "microphone") return fmt(L"Allow {0} to record audio?", {who});
+    if (prompt == "contacts") return fmt(L"Allow {0} to access your contacts?", {who});
+    if (prompt == "calendar") return fmt(L"Allow {0} to access your calendar?", {who});
+    if (prompt == "phone") return fmt(L"Allow {0} to make and manage phone calls?", {who});
+    if (prompt == "call_log") return fmt(L"Allow {0} to access your phone call logs?", {who});
+    if (prompt == "sms") return fmt(L"Allow {0} to send and view SMS messages?", {who});
+    if (prompt == "notifications") return fmt(L"Allow {0} to send you notifications?", {who});
+    if (prompt == "nearby_devices")
+        return fmt(L"Allow {0} to find, connect to, and determine the relative position of nearby devices?", {who});
+    if (prompt == "activity_recognition") return fmt(L"Allow {0} to access your physical activity?", {who});
+    if (prompt == "sensors") return fmt(L"Allow {0} to access sensor data about your vital signs?", {who});
+    if (prompt == "sensors_background")
+        return fmt(L"Allow {0} to access sensor data about your vital signs all the time?", {who});
     if (prompt == "supergroup_pre_q")
         return fmt(L"Allow {0} to access photos, videos, music, audio, and other files on this device?", {who});
     std::set<std::string> groups;
@@ -5546,24 +5751,47 @@ int refused(const std::string& why) {
 
 int runtime_permission(int level, const std::string& prompt, bool automatic, const std::vector<std::string>& perms,
                        const std::vector<std::string>& members, const std::vector<std::string>& partial) {
+    if (level < 23) return usage("--level must be the presented API level");
     const bool location = prompt == "location";
-    auto known = [&](const std::string& p) { return location ? is_location(p) : is_storage(p); };
+    // An --auto request names no prompt: its family is its permissions'.
+    const bool group = is_group_name(prompt) || (automatic && !perms.empty() && is_group_perm(perms[0]));
+    auto known = [&](const std::string& p) {
+        if (location) return is_location(p);
+        if (group) return is_group_perm(p) && (automatic || group_name(p, level) == prompt);
+        return is_storage(p);
+    };
     if (perms.empty() || !std::all_of(perms.begin(), perms.end(), known) ||
         !std::all_of(members.begin(), members.end(), known))
         return usage(location ? "--prompt location takes only location runtime permissions"
+                     : group  ? "--perm/--member must name runtime permissions of the --prompt group at --level"
                               : "--perm/--member must name storage runtime permissions");
     for (const std::string& p : partial)
         if (!location || p != kCoarse || std::find(perms.begin(), perms.end(), p) == perms.end())
             return usage("--partial is only ACCESS_COARSE_LOCATION with --prompt location, and one of the --perm values"
                          " (there is no photo picker: Allow means allow all)");
     static const std::set<std::string> offered = {"basic", "supergroup_pre_q", "supergroup_q_to_s", "location"};
-    if (!automatic && !offered.count(prompt))
-        return usage("--prompt must be basic, supergroup_pre_q, supergroup_q_to_s or location (or --auto)");
-    if (level < 23) return usage("--level must be the presented API level");
+    if (!automatic && !offered.count(prompt) && !is_group_name(prompt))
+        return usage("--prompt must be basic, supergroup_pre_q, supergroup_q_to_s, location or a permission group"
+                     " (or --auto)");
     Caller c;
     std::string why;
     if (!resolve(&c, &why)) return refused(why);
     const std::map<std::string, std::string> cur = permissions(c.id);
+    // An "all the time" permission is never granted without its foreground
+    // one (LocationGrantBehavior drops it from the request); the runtime
+    // checks the same before asking, this is the helper's own reading.
+    for (const std::string& p : perms) {
+        const std::vector<std::string> fg = foreground_of(p);
+        if (fg.empty()) continue;
+        const bool any = std::any_of(fg.begin(), fg.end(), [&](const std::string& f) {
+            const auto it = cur.find(f);
+            return it != cur.end() && is_granted(it->second);
+        });
+        if (!any) {
+            emit({{"status", "refused"}, {"message", p + " needs a granted foreground permission first"}});
+            return 6;
+        }
+    }
     if (automatic) {
         if (!auto_grant_allowed(perms, cur, level)) {
             emit({{"status", "refused"}, {"message", "--auto needs a granted permission in the same group"}});
@@ -5582,7 +5810,19 @@ int runtime_permission(int level, const std::string& prompt, bool automatic, con
     std::wstring body = fmt(L"This is Android's permission request for {0}, kept by Win.apk. You can change it later in "
                             L"the app's App info, or in Win.apk under Get Info.",
                             {quoted(c.id)});
-    if (location) body += L"\n\n" + std::wstring(tr(L"The location comes from Windows' location services."));
+    // What stands behind the grant on this host, where it is not obvious.
+    const wchar_t* note = nullptr;
+    if (location || prompt == "location_background") note = L"The location comes from Windows' location services.";
+    else if (prompt == "camera") note = L"Windows' camera privacy settings apply as well.";
+    else if (prompt == "microphone") note = L"Windows' microphone privacy settings apply as well.";
+    else if (prompt == "notifications") note = L"Win.apk does not show notifications yet; this only decides what the app is told.";
+    else if (prompt == "contacts" || prompt == "calendar" || prompt == "phone" || prompt == "call_log" ||
+             prompt == "sms")
+        note = L"Win.apk has no contacts, calendar, phone or SMS data of its own; the app will find none.";
+    else if (prompt == "nearby_devices") note = L"Win.apk has no Bluetooth yet; the app will find no devices.";
+    else if (prompt == "activity_recognition" || prompt == "sensors" || prompt == "sensors_background")
+        note = L"This PC has no such sensors; the app will get no readings.";
+    if (note) body += L"\n\n" + std::wstring(tr(note));
     std::vector<std::pair<int, std::wstring>> choices = {{kAnswerAllow, tr(L"Allow")}};
     if (!partial.empty()) choices.push_back({kAnswerSelect, tr(L"Only approximate")});
     choices.push_back({kAnswerDeny, tr(L"Don't allow")});
@@ -5606,23 +5846,81 @@ int runtime_permission(int level, const std::string& prompt, bool automatic, con
 
 // ---- special-access ----------------------------------------------------------------
 
-// Settings' "All files access" / "Media management" switch for the app. The
-// default button keeps the current state, as upstream's alert's Return does.
+// A Settings screen for access this host cannot grant (notification access,
+// accessibility, usage access, Do Not Disturb) or does not restrict (battery
+// optimization, exact alarms, system settings): the dialog says so, with one
+// button, and nothing is recorded.
+int special_access_info(const Caller& c, const std::string& op) {
+    const std::wstring who = quoted(c.id);
+    std::wstring main, body;
+    if (op == "winapk:notification_listener") {
+        main = tr(L"Notification access");
+        body = fmt(L"Win.apk can't give {0} notification access. Windows has no feed of other apps' notifications "
+                   L"for an Android app to read.",
+                   {who});
+    } else if (op == "winapk:accessibility") {
+        main = tr(L"Accessibility");
+        body = fmt(L"Win.apk can't run {0} as an accessibility service. There is no Android accessibility "
+                   L"framework on Windows for it to observe or act through.",
+                   {who});
+    } else if (op == "winapk:usage_access") {
+        main = tr(L"Usage access");
+        body = fmt(L"Win.apk can't give {0} usage access. Each Android app runs on its own here, so there is no "
+                   L"usage history of other apps to read.",
+                   {who});
+    } else if (op == "winapk:notification_policy") {
+        main = tr(L"Do Not Disturb access");
+        body = fmt(L"Win.apk has no Do Not Disturb mode for {0} to control.", {who});
+    } else if (op == "winapk:battery") {
+        main = tr(L"Battery optimization");
+        body = fmt(L"Win.apk never limits {0} in the background, so it already runs unrestricted.", {who});
+    } else if (op == "winapk:exact_alarm") {
+        main = tr(L"Alarms and reminders");
+        body = fmt(L"Win.apk lets {0} schedule exact alarms; there is nothing to turn on.", {who});
+    } else if (op == "winapk:write_settings") {
+        main = tr(L"Modify system settings");
+        body = fmt(L"There are no Android system settings for {0} to modify on Windows; it is treated as allowed.",
+                   {who});
+    } else {
+        return usage("unknown --op " + op);
+    }
+    ask(c, main, body, {{kAnswerDeny, tr(L"Close")}}, kAnswerDeny);
+    emit({{"status", "info"}, {"op", op}, {"dirName", c.id.dir_name}});
+    return 0;
+}
+
+// Settings' "All files access" / "Media management" / "Display over other
+// apps" / "Install unknown apps" switch for the app. The default button keeps
+// the current state, as upstream's alert's Return does.
 int special_access(const std::string& op) {
-    if (!is_op(op)) return usage("--op must be " + kAllFiles + " or " + kManageMedia);
+    if (!is_op(op) && !is_info_op(op))
+        return usage("--op must be " + kAllFiles + ", " + kManageMedia + ", " + kOverlay + " or " + kInstallApps);
     Caller c;
     std::string why;
     if (!resolve(&c, &why)) return refused(why);
+    if (is_info_op(op)) return special_access_info(c, op);
     const std::string current = mode(c.id, op);
     const bool files = op == kAllFiles;
-    const std::wstring main = files ? fmt(L"Allow {0} access to manage all files?", {quoted(c.id)})
-                                    : fmt(L"Allow {0} to manage media?", {quoted(c.id)});
-    std::wstring body = files ? tr(L"Allow this app to read, modify and delete all files on this device or any "
-                                   L"connected storage volumes. If granted, app may access files without your "
-                                   L"explicit knowledge. On Windows that is your Downloads, Documents, Pictures, "
-                                   L"Music and Videos folders.")
-                              : tr(L"If allowed, this app can modify or delete media files created with other apps "
-                                   L"without asking you. App must have permission to access files and media.");
+    std::wstring main, body;
+    if (files) {
+        main = fmt(L"Allow {0} access to manage all files?", {quoted(c.id)});
+        body = tr(L"Allow this app to read, modify and delete all files on this device or any connected storage "
+                  L"volumes. If granted, app may access files without your explicit knowledge. On Windows that is "
+                  L"your Downloads, Documents, Pictures, Music and Videos folders.");
+    } else if (op == kManageMedia) {
+        main = fmt(L"Allow {0} to manage media?", {quoted(c.id)});
+        body = tr(L"If allowed, this app can modify or delete media files created with other apps without asking "
+                  L"you. App must have permission to access files and media.");
+    } else if (op == kOverlay) {
+        main = fmt(L"Allow {0} to display over other apps?", {quoted(c.id)});
+        body = tr(L"This app can appear on top of other apps' content. On Windows an Android app draws such "
+                  L"windows inside its own window.");
+    } else {
+        main = fmt(L"Allow {0} to install unknown apps?", {quoted(c.id)});
+        body = tr(L"Your PC and personal data are more vulnerable to attack by unknown apps. By allowing this, you "
+                  L"agree that you are responsible for any damage to your PC or loss of data that may result from "
+                  L"their use. Win.apk still asks you before each install.");
+    }
     body += L"\n\n";
     body += current == "allow" ? tr(L"Currently allowed.") : tr(L"Currently not allowed.");
     const int answer = ask(c, main, body, {{kAnswerAllow, tr(L"Allow")}, {kAnswerDeny, tr(L"Don't allow")}},
@@ -5653,15 +5951,34 @@ struct Item {
     bool on = false, was = false;
 };
 
+// A group's name in App info and Get Info (Settings' permission-group labels).
 std::wstring group_title(const std::string& name, int level) {
     if (name == "READ_MEDIA_VISUAL") return tr(L"Photos and videos");
     if (name == "READ_MEDIA_AURAL") return tr(L"Music and audio");
     if (name == "STORAGE") return level < 33 ? tr(L"Files and media") : tr(L"Files");
-    return tr(L"Photos, videos, music, and audio");
+    if (name == "storage-supergroup") return tr(L"Photos, videos, music, and audio");
+    if (name == "location") return tr(L"Location");
+    if (name == "location_background") return tr(L"Location, all the time");
+    if (name == "camera") return tr(L"Camera");
+    if (name == "microphone") return tr(L"Microphone");
+    if (name == "contacts") return tr(L"Contacts");
+    if (name == "calendar") return tr(L"Calendar");
+    if (name == "phone") return tr(L"Phone");
+    if (name == "call_log") return tr(L"Call logs");
+    if (name == "sms") return tr(L"SMS");
+    if (name == "notifications") return tr(L"Notifications");
+    if (name == "nearby_devices") return tr(L"Nearby devices");
+    if (name == "activity_recognition") return tr(L"Physical activity");
+    if (name == "sensors") return tr(L"Body sensors");
+    if (name == "sensors_background") return tr(L"Body sensors, all the time");
+    return utf8_to_wide(name);
 }
 
 std::wstring op_title(const std::string& op) {
-    return op == kAllFiles ? tr(L"All files access") : tr(L"Media management");
+    if (op == kAllFiles) return tr(L"All files access");
+    if (op == kManageMedia) return tr(L"Media management");
+    if (op == kOverlay) return tr(L"Display over other apps");
+    return tr(L"Install unknown apps");
 }
 
 struct Details {
@@ -5722,25 +6039,34 @@ int app_details(int level, const std::vector<std::string>& groups, const std::ve
     if (!resolve(&c, &why)) return refused(why);
     const auto cur = permissions(c.id);
     std::vector<Item> items;
-    static const std::set<std::string> names = {"STORAGE", "READ_MEDIA_VISUAL", "READ_MEDIA_AURAL",
-                                                "storage-supergroup"};
+    static const std::set<std::string> storage_names = {"STORAGE", "READ_MEDIA_VISUAL", "READ_MEDIA_AURAL",
+                                                        "storage-supergroup"};
     for (const std::string& spec : groups) {
         const size_t eq = spec.find('=');
         Item it;
-        if (eq == std::string::npos || !names.count(spec.substr(0, eq))) return usage("bad --group " + spec);
+        if (eq == std::string::npos) return usage("bad --group " + spec);
+        const std::string name = spec.substr(0, eq);
         for (size_t at = eq + 1; at <= spec.size();) {
             const size_t comma = std::min(spec.find(',', at), spec.size());
             if (comma > at) it.perms.push_back(spec.substr(at, comma - at));
             at = comma + 1;
         }
-        if (it.perms.empty() || !std::all_of(it.perms.begin(), it.perms.end(), is_storage))
+        // A row's permissions are its group's: the storage names take storage
+        // permissions, "location" the two foreground ones, a group of
+        // kGroupRows its members at this level.
+        auto belongs = [&](const std::string& p) {
+            if (storage_names.count(name)) return is_storage(p);
+            if (name == "location") return is_location(p);
+            return is_group_name(name) && group_name(p, level) == name;
+        };
+        if (it.perms.empty() || !std::all_of(it.perms.begin(), it.perms.end(), belongs))
             return usage("bad --group " + spec);
         std::set<std::string> anchor;
         for (const std::string& p : it.perms)
             for (const std::string& a : anchors(group_of(p, level), level)) anchor.insert(a);
         for (const std::string& p : it.perms)
             it.on = it.on || (anchor.count(p) && cur.count(p) && is_granted(cur.at(p)));
-        it.title = group_title(spec.substr(0, eq), level);
+        it.title = group_title(name, level);
         it.was = it.on;
         items.push_back(it);
     }
@@ -5807,13 +6133,25 @@ std::vector<Grant> grants_of(const Identity& id) {
         const wchar_t* title;
         std::vector<std::string> perms;
     };
-    const G table[] = {{L"Files and media", {kReadExternal, kWriteExternal}},
-                       {L"Photos and videos", {kImages, kVideo, kMediaLocation, kUserSelected}},
-                       {L"Music and audio", {kAudio}},
-                       {L"Location", {kFine, kCoarse}}};
+    std::vector<G> table = {{L"Files and media", {kReadExternal, kWriteExternal}},
+                            {L"Photos and videos", {kImages, kVideo, kMediaLocation, kUserSelected}},
+                            {L"Music and audio", {kAudio}},
+                            {L"Location", {kFine, kCoarse}}};
+    // Then every group of kGroupRows, in the table's order of first mention.
+    for (const PermRow& r : kGroupRows) {
+        G* g = nullptr;
+        for (G& have : table)
+            if (have.perms.size() && group_row(have.perms[0]) && std::string(group_row(have.perms[0])->group) == r.group)
+                g = &have;
+        if (!g) {
+            table.push_back({L"", {}});
+            g = &table.back();
+        }
+        g->perms.push_back(r.perm);
+    }
     for (const G& g : table) {
         Grant gr;
-        gr.title = tr(g.title);
+        gr.title = g.title[0] ? tr(g.title) : group_title(group_row(g.perms[0])->group, 10000);
         for (const std::string& p : g.perms) {
             const auto it = e.perms.find(p);
             if (it == e.perms.end()) continue;
@@ -5822,11 +6160,20 @@ std::vector<Grant> grants_of(const Identity& id) {
         }
         if (!gr.perms.empty()) out.push_back(gr);
     }
-    for (const std::string& op : {kAllFiles, kManageMedia}) {
+    for (const std::string& op : {kAllFiles, kManageMedia, kOverlay, kInstallApps}) {
         const auto it = e.ops.find(op);
         if (it != e.ops.end()) out.push_back({op_title(op), {}, op, it->second == "allow"});
     }
     return out;
+}
+
+// Get Info took a grant away: Android ends a process whose runtime permission
+// or all-files access was revoked (killUid, killAppForOpChange), and so does
+// this, whoever started the app. Media management, overlays and installing
+// have no kill rule on a device.
+void revoked(const App& a, const std::string& op) {
+    if (op == kManageMedia || op == kOverlay || op == kInstallApps) return;
+    if (stop_runtime_of(a.apk)) set_status(fmt(L"{0} was stopped, as Android does when a permission is revoked.", {a.label}), kInfo);
 }
 
 }  // namespace appops
@@ -5845,21 +6192,25 @@ std::vector<Row> permission_rows(const App& a) {
         r.kind = Row::kToggle;
         r.title = g.title;
         r.on = g.on;
-        r.act = [id, g](int on) {
+        r.act = [a, id, g](int on) {
             std::map<std::string, std::string> perms, ops;
             for (const std::string& p : g.perms) perms[p] = on ? "granted" : "denied";
             if (!g.op.empty()) ops[g.op] = on ? "allow" : "deny";
             std::string why;
             if (!appops::record(id, perms, ops, "panel", &why))
                 set_status(fmt(L"The permission could not be changed: {0}", {utf8_to_wide(why)}), kError);
+            else if (!on && g.on) appops::revoked(a, g.op);
         };
         rows.push_back(r);
     }
     if (!rows.empty()) {
+        bool any_on = false;
+        for (const Row& r : rows) any_on = any_on || r.on;
         rows.push_back(button_row(tr(L"Reset permissions"), tr(L"The app asks again the next time it needs them."),
-                                  tr(L"Reset"), [a, pkg] {
+                                  tr(L"Reset"), [a, pkg, any_on] {
                                       appops::forget(pkg[0]);
                                       set_status(fmt(L"{0} will ask for its permissions again.", {a.label}), kSuccess);
+                                      if (any_on) appops::revoked(a, "");
                                       close_sheet();
                                   }));
     }
