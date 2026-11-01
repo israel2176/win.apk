@@ -215,7 +215,13 @@ public class Preference implements Comparable<Preference> {
         // which every subclass here overrides in lockstep with its
         // onGetDefaultValue(TypedArray, int).
         if (PreferenceAttrs.has(attrs, "defaultValue")) {
-            mDefaultValue = onGetDefaultValue(attrs);
+            // An APP subclass overrides the TypedArray form, never our twin:
+            // DroidFish's ColorPickerPreference reads a.getColor(index) there and
+            // then casts the default to Integer, which the twin's String broke
+            // with ClassCastException. Such a subclass gets a TypedArray holding
+            // just android:defaultValue, the one entry AOSP's call reads.
+            Object typed = macapkTypedDefaultValue(context, attrs);
+            mDefaultValue = typed != null ? typed : onGetDefaultValue(attrs);
         }
 
         mShouldDisableView =
@@ -228,6 +234,45 @@ public class Preference implements Comparable<Preference> {
         }
         mIconSpaceReserved =
                 PreferenceAttrs.bool(context, attrs, "iconSpaceReserved", mIconSpaceReserved);
+    }
+
+    /** AOSP's `onGetDefaultValue(TypedArray, int)` result when the concrete
+     *  class overrides it outside this package (an app's own Preference), else
+     *  null. */
+    private Object macapkTypedDefaultValue(Context context, AttributeSet attrs) {
+        if (context == null) return null;
+        try {
+            java.lang.reflect.Method m = getClass().getMethod("onGetDefaultValue",
+                    android.content.res.TypedArray.class, int.class);
+            Class<?> decl = m.getDeclaringClass();
+            if (decl.getName().startsWith("android.preference.")) return null;
+        } catch (NoSuchMethodException e) {
+            // protected in the app's class: walk the hierarchy by hand
+            Class<?> decl = null;
+            for (Class<?> c = getClass(); c != null && decl == null; c = c.getSuperclass()) {
+                try {
+                    c.getDeclaredMethod("onGetDefaultValue", android.content.res.TypedArray.class, int.class);
+                    decl = c;
+                } catch (NoSuchMethodException ignored) { }
+            }
+            if (decl == null || decl.getName().startsWith("android.preference.")) return null;
+        } catch (RuntimeException e) {
+            return null;
+        }
+        android.content.res.TypedArray a = null;
+        try {
+            a = context.obtainStyledAttributes(attrs, new int[] { android.R.attr.defaultValue });
+            Object v = onGetDefaultValue(a, 0);
+            com.macapk.loader.NativeLog.i("Mac.apk.Preference", getClass().getName()
+                + ".onGetDefaultValue(TypedArray) -> " + (v == null ? "null" : v.getClass().getSimpleName()));
+            return v;
+        } catch (Throwable t) {
+            com.macapk.loader.NativeLog.w("Mac.apk.Preference", getClass().getName()
+                + ".onGetDefaultValue(TypedArray) failed, using the String default: " + t);
+            return null;
+        } finally {
+            if (a != null) { try { a.recycle(); } catch (Throwable ignored) { } }
+        }
     }
 
     /** The AttributeSet twin of AOSP's `onGetDefaultValue(TypedArray, int)`.

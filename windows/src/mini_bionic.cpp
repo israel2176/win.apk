@@ -272,6 +272,16 @@ WINAPK_GUEST_ABI void g_qsort(void* base, size_t n, size_t size, GuestCompare cm
     t_guest_compare = saved;
 }
 
+// bsearch, the same way. BoringSSL's error-string and cipher tables are
+// searched with it; the stub's null left Conscrypt (DAVx5) faulting at start.
+WINAPK_GUEST_ABI void* g_bsearch(const void* key, const void* base, size_t n, size_t size, GuestCompare cmp) {
+    GuestCompare saved = t_guest_compare;
+    t_guest_compare = cmp;
+    void* r = std::bsearch(key, base, n, size, host_compare_trampoline);
+    t_guest_compare = saved;
+    return r;
+}
+
 using bionic::ShimSymbol;
 using bionic::ShimTable;
 
@@ -286,6 +296,7 @@ const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("valloc", g_valloc),
     WINAPK_SHIM("pvalloc", g_valloc),
     WINAPK_SHIM("malloc_usable_size", g_malloc_usable_size),
+    WINAPK_SHIM("bsearch", g_bsearch),
     WINAPK_SHIM("memcpy", g_memcpy),
     WINAPK_SHIM("memmove", g_memmove),
     WINAPK_SHIM("memset", g_memset),
@@ -432,7 +443,7 @@ void* mini_bionic_resolve(const char* name) {
                             bionic::stdio_symbols(), bionic::misc_symbols(), bionic::signal_symbols(),
                             bionic::locale_symbols(), bionic::fd_symbols(),
                             bionic::socket_symbols(), bionic::looper_symbols(),
-                            bionic::zlib_symbols()}) {
+                            bionic::zlib_symbols(), bionic::setjmp_symbols()}) {
             add(t.symbols, t.count);
         }
         return m;
