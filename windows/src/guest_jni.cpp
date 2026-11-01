@@ -117,6 +117,33 @@ WINAPK_GUEST_ABI jmethodID guest_get_method_id(JNIEnv* genv, jclass cls, const c
     return m;
 }
 
+// GetFieldID with upstream's one field alias (bionic_shim_jni_bare.cpp,
+// macapk_field_alias): Android's libcore renamed java.io.FileDescriptor's
+// private int from `fd` to `descriptor`, and native code reads it by name
+// (Conscrypt's NativeCrypto, SDL's asset opener, ffmpeg-based players).
+// HotSpot has `fd`, so the lookup failed with NoSuchFieldError pending, and a
+// guest that skips the check went on with a null field id: Conscrypt printed
+// "could not find field descriptor" and aborted DAVx5 at start. The alias is
+// tried only on a miss, only for that exact class, name and signature.
+WINAPK_GUEST_ABI jfieldID guest_get_field_id(JNIEnv* genv, jclass cls, const char* name, const char* sig) {
+    GuestEnv* g = guest_env_from(genv);
+    JNIEnv* env = g ? g->host : genv;
+    jfieldID f = env->GetFieldID(cls, name, sig);
+    if (f || !name || !sig || std::strcmp(name, "descriptor") != 0 || std::strcmp(sig, "I") != 0) return f;
+    jthrowable error = env->ExceptionOccurred();
+    env->ExceptionClear();
+    bool is_fd_class = false;
+    if (jclass fd_class = env->FindClass("java/io/FileDescriptor")) {
+        is_fd_class = env->IsSameObject(cls, fd_class);
+        env->DeleteLocalRef(fd_class);
+    }
+    env->ExceptionClear();
+    if (is_fd_class) f = env->GetFieldID(cls, "fd", sig);
+    if (!f && error) env->Throw(error);
+    if (error) env->DeleteLocalRef(error);
+    return f;
+}
+
 // GetJavaVM hands the guest the guest JavaVM (System V slots), never HotSpot's:
 // a guest that calls (*vm)->GetEnv on HotSpot's own table passes System V
 // arguments to a Microsoft x64 function and faults inside jni_GetEnv.
@@ -146,6 +173,7 @@ void build_guest_table() {
     *reinterpret_cast<void**>(&t.RegisterNatives) = reinterpret_cast<void*>(&guest_register_natives);
     *reinterpret_cast<void**>(&t.GetJavaVM) = reinterpret_cast<void*>(&guest_get_java_vm);
     *reinterpret_cast<void**>(&t.GetMethodID) = reinterpret_cast<void*>(&guest_get_method_id);
+    *reinterpret_cast<void**>(&t.GetFieldID) = reinterpret_cast<void*>(&guest_get_field_id);
 }
 
 // Updates this thread's guest env to wrap `host` and returns it as a JNIEnv*.

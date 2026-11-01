@@ -8,7 +8,9 @@ blocks them, ranked by how many apps each problem affects.
 
 For each app it runs winapk-runtime with WINAPK_HEADLESS=1 and a fresh data
 directory, waits for --frames presented frames (or the timeout), and keeps the
-log and the last frame. Each run gets one status:
+log and the last frame. apps.txt lists "package versionCode", with the APK's
+file name as a third field when it is not <package>_<versionCode>.apk. Each run
+gets one status:
 
     drew      ran its frames, and the last frame has real content
     blank     ran its frames, but the last frame is one or two colors
@@ -60,14 +62,17 @@ def read_apps(path, only):
         line = line.split("#", 1)[0].strip()
         if not line:
             continue
-        pkg, version = line.split()
+        fields = line.split()
+        pkg, version = fields[0], fields[1]
         if only and pkg not in only:
             continue
-        apps.append((pkg, version))
+        # The file is <package>_<versionCode>.apk unless the line names it (a
+        # few builds carry a commit hash in the name).
+        apps.append((pkg, version, fields[2] if len(fields) > 2 else f"{pkg}_{version}.apk"))
     return apps
 
 
-def fetch(pkg, version, cache):
+def fetch(pkg, version, name, cache):
     os.makedirs(cache, exist_ok=True)
     path = os.path.join(cache, f"{pkg}_{version}.apk")
     if os.path.exists(path):
@@ -75,7 +80,7 @@ def fetch(pkg, version, cache):
     for base in ("repo", "archive"):
         try:
             tmp = path + ".part"
-            urllib.request.urlretrieve(f"https://f-droid.org/{base}/{pkg}_{version}.apk", tmp)
+            urllib.request.urlretrieve(f"https://f-droid.org/{base}/{name}", tmp)
             os.replace(tmp, path)
             return path
         except Exception:
@@ -256,8 +261,8 @@ def main():
     cache = args.apks or os.path.join(out, "apks")
     only = set(filter(None, args.only.split(",")))
     results = []
-    for pkg, version in read_apps(args.apps, only):
-        apk = fetch(pkg, version, cache)
+    for pkg, version, name in read_apps(args.apps, only):
+        apk = fetch(pkg, version, name, cache)
         if not apk:
             print(f"[sweep] {pkg}: download failed", flush=True)
             continue
