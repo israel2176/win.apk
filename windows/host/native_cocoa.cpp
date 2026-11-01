@@ -936,6 +936,8 @@ void JNICALL Cocoa_runLoop(JNIEnv*, jclass) {
 // waits for this process to end before it claims the app's single instance
 // (WINAPK_RELAUNCH_AFTER, runtime_main.cpp).
 void JNICALL Cocoa_exitProcess(JNIEnv*, jclass, jint code, jstring relaunch) {
+    std::fprintf(stderr, "[win.apk] exitProcess(%d)%s\n", static_cast<int>(code), relaunch ? " with a relaunch" : "");
+    std::fflush(stderr);
     if (relaunch) {
         SetEnvironmentVariableW(L"WINAPK_RELAUNCH_AFTER", std::to_wstring(GetCurrentProcessId()).c_str());
         std::wstring cmd = GetCommandLineW();

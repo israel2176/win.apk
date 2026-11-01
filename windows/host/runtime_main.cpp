@@ -1418,9 +1418,12 @@ void map_shared_folders(const Options& o) {
 // So stderr gets a 64 KB buffer, flushed every 200 ms by a background thread,
 // at once for warnings and errors (NativeLog), and on the exit paths that
 // already flush. A hard crash can lose at most the last 200 ms of INFO lines.
+// 50 ms: an abort in a library with its own C runtime (ANGLE's) ends the
+// process without flushing ours, and the log's last lines are the ones that
+// say why. VLC's run ended that way with nothing after a class load.
 DWORD WINAPI stderr_flusher(void*) {
     for (;;) {
-        Sleep(200);
+        Sleep(50);
         std::fflush(stderr);
     }
 }
