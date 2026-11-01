@@ -25,6 +25,10 @@
 // Double-clicking an app runs it (winapk-runtime --apk, without a console);
 // if it stops with an error the log can be opened. The screen size and
 // orientation picked in the settings reach the runtime as WINAPK_PHONE_SIZE.
+// Apps open in landscape, the shape of a PC screen, unless the settings say
+// portrait; right-click > Open in portrait / landscape turns one app the
+// other way (library\<name>.orientation), and an app whose manifest fixes
+// its launched activity's orientation always gets that one.
 //
 // The Store tab, next to the library, is F-Droid's catalog (f-droid.org,
 // free and open-source apps): its index is fetched in the background and
@@ -102,7 +106,7 @@ constexpr UINT kGmsDone = WM_APP + 10;       // the Google sign-in window closed
 constexpr UINT_PTR kAnimTimer = 1;
 constexpr int kIdSearch = 100;
 enum Cmd { kCmdOpen = 200, kCmdInfo, kCmdShortcut, kCmdShowApk, kCmdAppFolder, kCmdLog, kCmdReinstall, kCmdUpdate,
-           kCmdRemove };
+           kCmdRemove, kCmdOrientation };
 
 HINSTANCE g_inst;
 HWND g_main, g_search;
@@ -195,10 +199,12 @@ const wchar_t* tr(const wchar_t* en) {
         {L"Screen", L"מסך"},
         {L"Used the next time an app opens, from here or from its shortcut. Sizes are in dp, as on a phone. An app's "
          L"window can be resized or maximized, and the app then lays itself out for that size and keeps it (Get Info "
-         L"resets it).",
+         L"resets it). Right-click an app to open just that one the other way; an app that requires one orientation "
+         L"always gets it.",
          L"יחול בפעם הבאה שאפליקציה תיפתח, מכאן או מקיצור הדרך שלה. הגדלים ביחידות dp, כמו בטלפון. אפשר לשנות את גודל "
          L"החלון של אפליקציה או להגדיל אותו למסך מלא, והאפליקציה תתאים את עצמה לגודל הזה ותזכור אותו (במסך הפרטים "
-         L"אפשר לאפס)."},
+         L"אפשר לאפס). לחיצה ימנית על אפליקציה פותחת רק אותה בכיוון השני; אפליקציה שדורשת כיוון מסוים תמיד "
+         L"תקבל אותו."},
         {L"Desktop shortcut for new apps", L"קיצור דרך בשולחן העבודה לאפליקציות חדשות"},
         {L"Every app also gets one in Start > Win.apk Apps.", L"כל אפליקציה מקבלת גם קיצור דרך בתפריט התחל > Win.apk Apps."},
         {L"Shortcuts", L"קיצורי דרך"},
@@ -306,6 +312,17 @@ const wchar_t* tr(const wchar_t* en) {
         {L"The log was copied.", L"הלוג הועתק."},
         {L"&Open", L"פתיחה"},
         {L"Get &Info…", L"מידע…"},
+        {L"Open in &portrait", L"פתיחה לאורך"},
+        {L"Open in &landscape", L"פתיחה לרוחב"},
+        {L"Always portrait (the app requires it)", L"תמיד לאורך (האפליקציה דורשת זאת)"},
+        {L"Always landscape (the app requires it)", L"תמיד לרוחב (האפליקציה דורשת זאת)"},
+        {L"Portrait (the app requires it)", L"לאורך (האפליקציה דורשת זאת)"},
+        {L"Landscape (the app requires it)", L"לרוחב (האפליקציה דורשת זאת)"},
+        {L"Settings' default", L"ברירת המחדל שבהגדרות"},
+        {L"The settings' default is landscape.", L"ברירת המחדל שבהגדרות היא לרוחב."},
+        {L"The settings' default is portrait.", L"ברירת המחדל שבהגדרות היא לאורך."},
+        {L"{0} opens in landscape from now on.", L"{0} תיפתח לרוחב מעתה."},
+        {L"{0} opens in portrait from now on.", L"{0} תיפתח לאורך מעתה."},
         {L"Create &desktop shortcut", L"יצירת קיצור דרך בשולחן העבודה"},
         {L"Show the &APK in Explorer", L"הצגת קובץ ה-APK בסייר הקבצים"},
         {L"Open the app's &files", L"פתיחת קבצי האפליקציה"},
@@ -622,18 +639,82 @@ const PhonePreset kPhonePresets[] = {
     {L"800 × 1280  (10\" tablet)", 800, 1280},
 };
 
-// The settings' screen size and orientation, for the runtime started from
-// here (it inherits this process's environment). "Auto" leaves whatever
-// WINAPK_PHONE_SIZE the user set themselves.
-void apply_runtime_env() {
-    const DWORD i = setting(L"PhoneSize", 0);
-    const bool landscape = setting(L"Landscape", 0) != 0;
-    if (i == 0 || i >= std::size(kPhonePresets)) {
-        if (landscape) SetEnvironmentVariableW(L"WINAPK_PHONE_SIZE", L"800x360");
+// The orientation apps open in. The settings' default is landscape, the
+// shape of a PC screen: `Landscape` absent means landscape (earlier versions
+// opened portrait, so an explicit 0 from them still means portrait). An app can be
+// turned the other way on its own, and an app whose manifest fixes the
+// orientation of its launched activity gets that whatever was picked.
+enum Orientation { kOrientUnset = -1, kPortrait = 0, kLandscape = 1 };
+
+bool landscape_default() { return setting(L"Landscape", 1) != 0; }
+
+std::vector<std::string> package_of(const std::wstring& name);
+
+// The user's choice for one app, library\<name>.orientation ("portrait" or
+// "landscape"; beside the app's other library files, as the window size is).
+fs::path orientation_file(const std::wstring& name) { return library_dir() / (name + L".orientation"); }
+
+int app_orientation(const std::wstring& name) {
+    std::ifstream f(orientation_file(name));
+    std::string s;
+    f >> s;
+    return s == "landscape" ? kLandscape : s == "portrait" ? kPortrait : kOrientUnset;
+}
+
+void set_app_orientation(const std::wstring& name, int o) {
+    std::error_code ec;
+    if (o == kOrientUnset) {
+        fs::remove(orientation_file(name), ec);
         return;
     }
-    int w = kPhonePresets[i].w, h = kPhonePresets[i].h;
-    if (landscape) std::swap(w, h);
+    std::ofstream f(orientation_file(name), std::ios::trunc);
+    f << (o == kLandscape ? "landscape" : "portrait") << "\n";
+}
+
+// The orientation the app's manifest fixes for its launched activity (the
+// fourth line of library\<name>.package, AppMeta's ActivityInfo
+// screenOrientation): the landscape and portrait families, as the runtime
+// reads them (apply_screen_orientation); kOrientUnset when it fixes none, or
+// the app was installed before the line was written.
+int manifest_orientation(const std::wstring& name) {
+    const std::vector<std::string> lines = package_of(name);
+    if (lines.size() < 4) return kOrientUnset;
+    const int o = std::atoi(lines[3].c_str());
+    if (o == 0 || o == 6 || o == 8 || o == 11) return kLandscape;
+    if (o == 1 || o == 7 || o == 9 || o == 12) return kPortrait;
+    return kOrientUnset;
+}
+
+// What the app opens in: what its manifest fixes, else its own choice, else the settings'.
+int effective_orientation(const std::wstring& name) {
+    if (const int m = manifest_orientation(name); m != kOrientUnset) return m;
+    if (const int o = app_orientation(name); o != kOrientUnset) return o;
+    return landscape_default() ? kLandscape : kPortrait;
+}
+
+// The settings' screen size and the app's orientation, for the runtime
+// started from here (it inherits this process's environment). "Auto" leaves
+// whatever WINAPK_PHONE_SIZE the user set themselves, turned to the
+// orientation; `name` empty (an install) takes the settings' orientation.
+void apply_runtime_env(const std::wstring& name) {
+    const DWORD i = setting(L"PhoneSize", 0);
+    const bool landscape = (name.empty() ? landscape_default() : effective_orientation(name) == kLandscape);
+    int w = 360, h = 800;
+    if (i == 0 || i >= std::size(kPhonePresets)) {
+        wchar_t own[64];
+        if (GetEnvironmentVariableW(L"WINAPK_PHONE_SIZE", own, 64) > 0) {
+            int ow = 0, oh = 0;
+            wchar_t x = 0;
+            if (swscanf(own, L"%d%c%d", &ow, &x, &oh) == 3 && ow > 0 && oh > 0) {
+                w = ow;
+                h = oh;
+            }
+        }
+    } else {
+        w = kPhonePresets[i].w;
+        h = kPhonePresets[i].h;
+    }
+    if (landscape != (w > h)) std::swap(w, h);
     SetEnvironmentVariableW(L"WINAPK_PHONE_SIZE", (std::to_wstring(w) + L"x" + std::to_wstring(h)).c_str());
 }
 
@@ -804,10 +885,11 @@ void apply_aot_clang_env() {
     }
 }
 
-HANDLE start_runtime(const std::wstring& args, const fs::path& log) {
+// `name` is the app the runtime opens, for its orientation; empty for an install.
+HANDLE start_runtime(const std::wstring& args, const fs::path& log, const std::wstring& name = L"") {
     std::error_code ec;
     fs::create_directories(log.parent_path(), ec);
-    apply_runtime_env();
+    apply_runtime_env(name);
     apply_aot_clang_env();
     SECURITY_ATTRIBUTES sa{sizeof(sa), nullptr, TRUE};
     HANDLE out = CreateFileW(log.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_DELETE, &sa, CREATE_ALWAYS,
@@ -836,7 +918,7 @@ DWORD wait_exit(HANDLE process) {
 }
 
 bool run_and_wait(const fs::path& apk) {
-    HANDLE p = start_runtime(L"--apk \"" + apk.wstring() + L"\"", last_run_log());
+    HANDLE p = start_runtime(L"--apk \"" + apk.wstring() + L"\"", last_run_log(), apk.stem().wstring());
     return p && wait_exit(p) == 0;
 }
 
@@ -850,7 +932,7 @@ std::map<std::wstring, HANDLE> g_procs;  // the runtimes of apps started from th
 
 DWORD WINAPI run_thread(void* param) {
     std::unique_ptr<RunJob> job(static_cast<RunJob*>(param));
-    HANDLE p = start_runtime(L"--apk \"" + job->apk.wstring() + L"\"", last_run_log());
+    HANDLE p = start_runtime(L"--apk \"" + job->apk.wstring() + L"\"", last_run_log(), job->name);
     DWORD code = 1;
     if (p) {
         AcquireSRWLockExclusive(&g_proc_lock);
@@ -2793,6 +2875,7 @@ bool remove_app(const App& app, bool ask) {
     fs::remove(package_file(copy.name), ec);
     fs::remove(shortcut_icon(copy.name), ec);
     fs::remove(library_dir() / (copy.name + L".window"), ec);
+    fs::remove(orientation_file(copy.name), ec);
     fs::remove_all(app_dir(copy.name), ec);
     fs::remove(data_dir() / L"android" / L"data" / L"app" / (L"." + copy.name + L".installed"), ec);
     write_registry();
@@ -2806,6 +2889,25 @@ bool remove_app(const App& app, bool ask) {
 void update_from_apk(const App& app) {
     const auto files = pick_files(false, fmt(L"Update {0} from an APK", {app.label}).c_str());
     if (!files.empty()) install(files[0], false, app.name, app.apk);
+}
+
+// Opens this app in the given orientation from now on (kOrientUnset: the
+// settings' again). The window size the user gave it was for the other
+// shape, so it goes too, and the app opens at the settings' screen size.
+void set_orientation(const App& app, int o) {
+    std::error_code ec;
+    set_app_orientation(app.name, o);
+    fs::remove(library_dir() / (app.name + L".window"), ec);
+    const int now = effective_orientation(app.name);
+    set_status(fmt(now == kLandscape ? L"{0} opens in landscape from now on." : L"{0} opens in portrait from now on.",
+                   {app.label}),
+               kSuccess);
+}
+
+// Right-click > Open in portrait / landscape: the other way from what it gets now.
+void flip_orientation(const App& app) {
+    if (manifest_orientation(app.name) != kOrientUnset) return;  // the app decides
+    set_orientation(app, effective_orientation(app.name) == kLandscape ? kPortrait : kLandscape);
 }
 
 // Fetches the catalog: the one kept from last time at once, F-Droid's when
@@ -3410,12 +3512,13 @@ std::vector<Section> settings_sections() {
     orient.kind = Row::kChoice;
     orient.title = tr(L"Orientation");
     orient.choices = {tr(L"Portrait"), tr(L"Landscape")};
-    orient.choice = setting(L"Landscape", 0) ? 1 : 0;
+    orient.choice = landscape_default() ? 1 : 0;
     orient.act = [](int i) { set_setting(L"Landscape", static_cast<DWORD>(i)); };
     out.push_back({tr(L"Screen"), {size, orient},
                    tr(L"Used the next time an app opens, from here or from its shortcut. Sizes are in dp, as on a "
                       L"phone. An app's window can be resized or maximized, and the app then lays itself out for that "
-                      L"size and keeps it (Get Info resets it).")});
+                      L"size and keeps it (Get Info resets it). Right-click an app to open just that one the other "
+                      L"way; an app that requires one orientation always gets it.")});
 
     Row desktop;
     desktop.kind = Row::kToggle;
@@ -3502,27 +3605,43 @@ void show_info(const App& app) {
                        L""});
         if (std::vector<Row> perms = permission_rows(a); !perms.empty())
             out.push_back({tr(L"Permissions"), std::move(perms), L""});
+        // The orientation the app opens in: what its manifest fixes, or the
+        // user's choice for it (the context menu's) over the settings'.
+        std::vector<Row> window;
+        if (const int fixed = manifest_orientation(a.name); fixed != kOrientUnset) {
+            window.push_back(text_row(tr(L"Orientation"), tr(fixed == kLandscape ? L"Landscape (the app requires it)"
+                                                                                 : L"Portrait (the app requires it)")));
+        } else {
+            Row orient;
+            orient.kind = Row::kChoice;
+            orient.title = tr(L"Orientation");
+            orient.detail = tr(landscape_default() ? L"The settings' default is landscape."
+                                                   : L"The settings' default is portrait.");
+            orient.choices = {tr(L"Settings' default"), tr(L"Portrait"), tr(L"Landscape")};
+            orient.choice = app_orientation(a.name) == kOrientUnset ? 0 : app_orientation(a.name) == kLandscape ? 2 : 1;
+            orient.act = [a](int i) { set_orientation(a, i == 0 ? kOrientUnset : i == 2 ? kLandscape : kPortrait); };
+            window.push_back(orient);
+        }
         // The size the user last gave the app's window (the runtime keeps it
         // as library\<name>.window, in dp).
         if (std::ifstream f(library_dir() / (a.name + L".window")); f) {
             int w = 0, h = 0;
             char x = 0;
             if (f >> w >> x >> h && w > 0 && h > 0) {
-                out.push_back({tr(L"Window"),
-                               {button_row(fmt(L"Window size  ·  {0} × {1} dp", {std::to_wstring(w), std::to_wstring(h)}),
-                                           tr(L"The size you last gave the app's window. Reset, it opens at the "
-                                              L"settings' screen size again."),
-                                           tr(L"Reset"), [a] {
-                                               std::error_code ec;
-                                               fs::remove(library_dir() / (a.name + L".window"), ec);
-                                               set_status(fmt(L"{0} opens at the settings' screen size again.",
-                                                              {a.label}),
-                                                          kSuccess);
-                                               close_sheet();
-                                           })},
-                               L""});
+                window.push_back(
+                    button_row(fmt(L"Window size  ·  {0} × {1} dp", {std::to_wstring(w), std::to_wstring(h)}),
+                               tr(L"The size you last gave the app's window. Reset, it opens at the "
+                                  L"settings' screen size again."),
+                               tr(L"Reset"), [a] {
+                                   std::error_code ec;
+                                   fs::remove(library_dir() / (a.name + L".window"), ec);
+                                   set_status(fmt(L"{0} opens at the settings' screen size again.", {a.label}),
+                                              kSuccess);
+                                   close_sheet();
+                               }));
             }
         }
+        out.push_back({tr(L"Window"), std::move(window), L""});
         out.push_back({tr(L"Storage"),
                        {button_row(fmt(L"Source APK  ·  {0}", {apk_size}), a.apk.wstring(), tr(L"Show"),
                                    [a] { show_in_explorer(a.apk); }),
@@ -4239,6 +4358,14 @@ void show_context_menu(const App& app, POINT pt) {
     HMENU menu = CreatePopupMenu();
     AppendMenuW(menu, MF_STRING, kCmdOpen, tr(L"&Open"));
     AppendMenuW(menu, MF_STRING, kCmdInfo, tr(L"Get &Info…"));
+    if (const int fixed = manifest_orientation(app.name); fixed != kOrientUnset) {
+        AppendMenuW(menu, MF_STRING | MF_GRAYED, kCmdOrientation,
+                    tr(fixed == kLandscape ? L"Always landscape (the app requires it)"
+                                           : L"Always portrait (the app requires it)"));
+    } else {
+        AppendMenuW(menu, MF_STRING, kCmdOrientation,
+                    tr(effective_orientation(app.name) == kLandscape ? L"Open in &portrait" : L"Open in &landscape"));
+    }
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, kCmdShortcut, tr(L"Create &desktop shortcut"));
     AppendMenuW(menu, MF_STRING, kCmdShowApk, tr(L"Show the &APK in Explorer"));
@@ -4263,6 +4390,7 @@ void command(int id) {
     switch (id) {
         case kCmdOpen: launch(a); break;
         case kCmdInfo: show_info(a); break;
+        case kCmdOrientation: flip_orientation(a); break;
         case kCmdShortcut:
             make_app_shortcuts(a, true);
             set_status(fmt(L"A shortcut to {0} is on the desktop.", {a.label}), kSuccess);

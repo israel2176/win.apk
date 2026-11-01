@@ -10,7 +10,11 @@
 // <app dir>/label.txt (UTF-8); the package name stands in when there is none.
 // <app dir>/package.txt names the package, its versionCode and versionName,
 // one per line: the launcher's installed-apps registry, which PackageManager
-// answers stores from (F-Droid's Install -> Open), is built from it.
+// answers stores from (F-Droid's Install -> Open), is built from it. A fourth
+// line is the launched activity's android:screenOrientation (the
+// ActivityInfo.SCREEN_ORIENTATION_* number, -1 when it declares none), so the
+// library knows before starting the app whether it insists on portrait or
+// landscape: such an app opens that way whatever the user picked.
 
 package com.winapk.tools;
 
@@ -36,7 +40,8 @@ public final class AppMeta {
             pkg = mf.packageName;
             String version = (mf.versionNameRaw != null ? mf.versionNameRaw : "").replace('\n', ' ');
             Files.write(new File(appDir, "package.txt").toPath(),
-                    (pkg + "\n" + mf.versionCode + "\n" + version + "\n").getBytes(StandardCharsets.UTF_8));
+                    (pkg + "\n" + mf.versionCode + "\n" + version + "\n" + launchOrientation(mf) + "\n")
+                            .getBytes(StandardCharsets.UTF_8));
             label = resolve(mf.applicationLabel, apkPath, pkg);
         } catch (Throwable t) {
             System.err.println("[win.apk] reading the app's name failed: " + t);
@@ -48,6 +53,23 @@ public final class AppMeta {
         } catch (Exception e) {
             System.err.println("[win.apk] writing label.txt failed: " + e);
         }
+    }
+
+    // The android:screenOrientation of the activity the launcher starts (the
+    // real activity's when an <activity-alias> is the launcher entry),
+    // SCREEN_ORIENTATION_UNSPECIFIED (-1) when unknown.
+    static int launchOrientation(Manifest mf) {
+        if (mf.launchableActivity == null || mf.activities == null) return -1;
+        Manifest.ActivityEntry e = mf.activities.get(mf.launchableActivity);
+        if (e == null) {
+            for (Manifest.ActivityEntry x : mf.activities.values()) {
+                if (mf.launchableActivity.equals(x.name) || mf.launchableActivity.equals(x.targetActivity)) {
+                    e = x;
+                    break;
+                }
+            }
+        }
+        return e != null ? e.screenOrientation : -1;
     }
 
     // A literal label stays as it is; "@0x7f..." or "@string/name" is looked up.
