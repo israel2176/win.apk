@@ -67,6 +67,10 @@ public class AppOpsManager {
     public static final String OPSTR_ACCESS_MEDIA_LOCATION  = "android:access_media_location";
     public static final String OPSTR_BODY_SENSORS           = "android:body_sensors";
     public static final String OPSTR_ACTIVITY_RECOGNITION   = "android:activity_recognition";
+    // The other special-access op a third-party app can be granted
+    // (AppOpsManager.java android14 :2240), "Install unknown apps";
+    // OPSTR_SYSTEM_ALERT_WINDOW ("Display over other apps") is further down.
+    public static final String OPSTR_REQUEST_INSTALL_PACKAGES = "android:request_install_packages";
 
     // ---- Stage S1: the storage op rows, AOSP verbatim ----------------------
     // Values from frameworks/base/core/java/android/app/AppOpsManager.java
@@ -211,6 +215,27 @@ public class AppOpsManager {
             case "android.permission.ACCESS_MEDIA_LOCATION":  return OPSTR_ACCESS_MEDIA_LOCATION;
             case "android.permission.BODY_SENSORS":           return OPSTR_BODY_SENSORS;
             case "android.permission.ACTIVITY_RECOGNITION":   return OPSTR_ACTIVITY_RECOGNITION;
+            case "android.permission.SYSTEM_ALERT_WINDOW":    return OPSTR_SYSTEM_ALERT_WINDOW;
+            case "android.permission.REQUEST_INSTALL_PACKAGES": return OPSTR_REQUEST_INSTALL_PACKAGES;
+            // The rest of the runtime-permission rows (AppOpsManager.java
+            // android14 sAppOpInfos, setPermission edges), so AppOpsManagerCompat
+            // callers see the op of every asked group.
+            case "android.permission.READ_CALENDAR":          return OPSTR_READ_CALENDAR;
+            case "android.permission.WRITE_CALENDAR":         return OPSTR_WRITE_CALENDAR;
+            case "android.permission.READ_CALL_LOG":          return OPSTR_READ_CALL_LOG;
+            case "android.permission.WRITE_CALL_LOG":         return OPSTR_WRITE_CALL_LOG;
+            case "android.permission.PROCESS_OUTGOING_CALLS": return OPSTR_PROCESS_OUTGOING_CALLS;
+            case "android.permission.READ_PHONE_NUMBERS":     return OPSTR_READ_PHONE_NUMBERS;
+            case "android.permission.CALL_PHONE":             return OPSTR_CALL_PHONE;
+            case "android.permission.ADD_VOICEMAIL":          return OPSTR_ADD_VOICEMAIL;
+            case "android.permission.USE_SIP":                return OPSTR_USE_SIP;
+            case "android.permission.ANSWER_PHONE_CALLS":     return OPSTR_ANSWER_PHONE_CALLS;
+            case "android.permission.SEND_SMS":               return OPSTR_SEND_SMS;
+            case "android.permission.RECEIVE_SMS":            return OPSTR_RECEIVE_SMS;
+            case "android.permission.READ_SMS":               return OPSTR_READ_SMS;
+            case "android.permission.RECEIVE_MMS":            return OPSTR_RECEIVE_MMS;
+            case "android.permission.RECEIVE_WAP_PUSH":       return OPSTR_RECEIVE_WAP_PUSH;
+            case "android.permission.READ_CELL_BROADCASTS":   return OPSTR_READ_CELL_BROADCASTS;
             default: break;
         }
         // Stage S1: the storage rows' setPermission edges (AppOpsManager.java
@@ -228,6 +253,41 @@ public class AppOpsManager {
             case "android.permission.MANAGE_MEDIA":       return OPSTR_MANAGE_MEDIA;
             case "android.permission.READ_MEDIA_VISUAL_USER_SELECTED":
                 return OPSTR_READ_MEDIA_VISUAL_USER_SELECTED;
+            default: return null;
+        }
+    }
+
+    /** AOSP opToPermission for the runtime-permission ops macapkModeFor keys
+     *  on (the inverse of permissionToOp's first table). */
+    private static String macapkOpToPermission(String op) {
+        switch (op) {
+            case OPSTR_CAMERA:              return "android.permission.CAMERA";
+            case OPSTR_RECORD_AUDIO:        return "android.permission.RECORD_AUDIO";
+            case OPSTR_READ_CONTACTS:       return "android.permission.READ_CONTACTS";
+            case OPSTR_WRITE_CONTACTS:      return "android.permission.WRITE_CONTACTS";
+            case OPSTR_READ_PHONE_STATE:    return "android.permission.READ_PHONE_STATE";
+            case OPSTR_POST_NOTIFICATION:   return "android.permission.POST_NOTIFICATIONS";
+            case OPSTR_BLUETOOTH_SCAN:      return "android.permission.BLUETOOTH_SCAN";
+            case OPSTR_BLUETOOTH_CONNECT:   return "android.permission.BLUETOOTH_CONNECT";
+            case OPSTR_BLUETOOTH_ADVERTISE: return "android.permission.BLUETOOTH_ADVERTISE";
+            case OPSTR_BODY_SENSORS:        return "android.permission.BODY_SENSORS";
+            case OPSTR_ACTIVITY_RECOGNITION: return "android.permission.ACTIVITY_RECOGNITION";
+            case OPSTR_READ_CALENDAR:       return "android.permission.READ_CALENDAR";
+            case OPSTR_WRITE_CALENDAR:      return "android.permission.WRITE_CALENDAR";
+            case OPSTR_READ_CALL_LOG:       return "android.permission.READ_CALL_LOG";
+            case OPSTR_WRITE_CALL_LOG:      return "android.permission.WRITE_CALL_LOG";
+            case OPSTR_PROCESS_OUTGOING_CALLS: return "android.permission.PROCESS_OUTGOING_CALLS";
+            case OPSTR_READ_PHONE_NUMBERS:  return "android.permission.READ_PHONE_NUMBERS";
+            case OPSTR_CALL_PHONE:          return "android.permission.CALL_PHONE";
+            case OPSTR_ADD_VOICEMAIL:       return "android.permission.ADD_VOICEMAIL";
+            case OPSTR_USE_SIP:             return "android.permission.USE_SIP";
+            case OPSTR_ANSWER_PHONE_CALLS:  return "android.permission.ANSWER_PHONE_CALLS";
+            case OPSTR_SEND_SMS:            return "android.permission.SEND_SMS";
+            case OPSTR_RECEIVE_SMS:         return "android.permission.RECEIVE_SMS";
+            case OPSTR_READ_SMS:            return "android.permission.READ_SMS";
+            case OPSTR_RECEIVE_MMS:         return "android.permission.RECEIVE_MMS";
+            case OPSTR_RECEIVE_WAP_PUSH:    return "android.permission.RECEIVE_WAP_PUSH";
+            case OPSTR_READ_CELL_BROADCASTS: return "android.permission.READ_CELL_BROADCASTS";
             default: return null;
         }
     }
@@ -261,6 +321,55 @@ public class AppOpsManager {
             case OPSTR_MANAGE_EXTERNAL_STORAGE:
             case OPSTR_MANAGE_MEDIA:
                 return com.macapk.loader.SpecialAccessStore.specialOpMode(op);
+            // "Display over other apps" / "Install unknown apps" (op 24 / op
+            // 66): the same, where the host asks about them; else the pre-
+            // change MODE_ALLOWED.
+            case OPSTR_SYSTEM_ALERT_WINDOW:
+            case OPSTR_REQUEST_INSTALL_PACKAGES:
+                return com.macapk.loader.SpecialAccessStore.allPermsAsk()
+                        ? com.macapk.loader.SpecialAccessStore.specialOpMode(op) : MODE_ALLOWED;
+            // The ops behind the runtime permissions the host asks about
+            // (camera, record audio, contacts, ...): PermissionPolicyService
+            // keeps each in step with its permission -- MODE_ALLOWED while
+            // granted, MODE_IGNORED once the user denied it (the no-throw
+            // "do nothing" answer an app-op denial gives), so an app that
+            // checks the op instead of the permission (AppOpsManagerCompat)
+            // gets the same answer. An op whose permission the app never
+            // requested keeps the row default.
+            case OPSTR_CAMERA:
+            case OPSTR_RECORD_AUDIO:
+            case OPSTR_READ_CONTACTS:
+            case OPSTR_WRITE_CONTACTS:
+            case OPSTR_READ_PHONE_STATE:
+            case OPSTR_POST_NOTIFICATION:
+            case OPSTR_BLUETOOTH_SCAN:
+            case OPSTR_BLUETOOTH_CONNECT:
+            case OPSTR_BLUETOOTH_ADVERTISE:
+            case OPSTR_BODY_SENSORS:
+            case OPSTR_ACTIVITY_RECOGNITION:
+            case OPSTR_READ_CALENDAR:
+            case OPSTR_WRITE_CALENDAR:
+            case OPSTR_READ_CALL_LOG:
+            case OPSTR_WRITE_CALL_LOG:
+            case OPSTR_PROCESS_OUTGOING_CALLS:
+            case OPSTR_READ_PHONE_NUMBERS:
+            case OPSTR_CALL_PHONE:
+            case OPSTR_ADD_VOICEMAIL:
+            case OPSTR_USE_SIP:
+            case OPSTR_ANSWER_PHONE_CALLS:
+            case OPSTR_SEND_SMS:
+            case OPSTR_RECEIVE_SMS:
+            case OPSTR_READ_SMS:
+            case OPSTR_RECEIVE_MMS:
+            case OPSTR_RECEIVE_WAP_PUSH:
+            case OPSTR_READ_CELL_BROADCASTS: {
+                String perm = macapkOpToPermission(op);
+                Boolean held = perm == null ? null
+                        : com.macapk.loader.SpecialAccessStore.trackedPermissionGranted(perm);
+                if (held == null || held) return MODE_ALLOWED;
+                return com.macapk.loader.SpecialAccessStore.declaresPermission(perm)
+                        ? MODE_IGNORED : MODE_ALLOWED;
+            }
             // Set by PermissionPolicyService at install from the manifest; see
             // SpecialAccessStore.legacyStorageMode for the exact rule.
             case OPSTR_LEGACY_STORAGE:
