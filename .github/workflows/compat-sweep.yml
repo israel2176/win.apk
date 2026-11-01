@@ -20,7 +20,7 @@ jobs:
   sweep:
     name: Boot the app corpus
     runs-on: windows-latest
-    timeout-minutes: 120
+    timeout-minutes: 180
     defaults:
       run:
         shell: msys2 {0}
