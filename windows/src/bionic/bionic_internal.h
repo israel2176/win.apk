@@ -92,6 +92,11 @@ std::string format_va(const char* fmt, SysVVaList* va);
 // mapped under the android root; see paths.cpp).
 std::wstring host_path(const char* guest_path);
 
+// cacerts.cpp: the host directory that answers Android's system CA store
+// (/system/etc/security/cacerts), built from the roots Windows trusts on the
+// first call; empty when it is turned off or could not be built.
+std::wstring android_cacerts_dir(const std::wstring& android_root);
+
 // ---- descriptors that are not files (fd.cpp) -------------------------------------
 // Pipes, eventfds, epoll instances and sockets. Each holds a CRT descriptor
 // number of its own (open on NUL), so numbers never collide with files, and

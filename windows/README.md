@@ -29,7 +29,7 @@ fall into three groups:
 | `src/elf_loader.cpp` | Android x86_64 ELF loader: segments, RELA/RELR/APS2 relocations, protections, RELRO, init/fini |
 | `src/elf_tls.cpp` | Dynamic ELF TLS for guest libraries: module ids, `__tls_get_addr`, a block per thread and module |
 | `src/fs_tls_patch.cpp` | Rewrites the Bionic stack guard `%fs:0x28` to `%gs:0x28` (`NT_TIB.ArbitraryUserPointer`) |
-| `src/mini_bionic.cpp`, `src/bionic/` | The Windows Bionic shim (sysv_abi functions over the UCRT and Win32): strings, printf, pthread, files, time, `mmap`, system properties and the environment, Android paths, pipes/eventfd/epoll, sockets on Winsock, `ALooper`, and `libz.so` on a statically linked zlib. `test/bionic_test.cpp` (`winapk-bionic-test`) checks it against `test/guest/bionic_guest.c` |
+| `src/mini_bionic.cpp`, `src/bionic/` | The Windows Bionic shim (sysv_abi functions over the UCRT and Win32): strings, printf, pthread, files, time, `mmap`, system properties and the environment, Android paths, the system CA store (`cacerts.cpp`: the roots Windows trusts), pipes/eventfd/epoll, sockets on Winsock, `ALooper`, and `libz.so` on a statically linked zlib. `test/bionic_test.cpp` (`winapk-bionic-test`) checks it against `test/guest/bionic_guest.c` |
 | `tools/elfrun_main.cpp` | `winapk-elfrun`: loads `.so` files and runs the PoC checks |
 | `test/guest/poc_guest.c` | The Android x86_64 test library |
 | `include/winapk/abi_thunk.h`, `src/abi_thunk.cpp` | Runtime machine-code thunks for the JNI bridge: native-method thunks from Microsoft x64 callers to System V code (built per Java signature) and the System V variadic `va_list` entry stub |
