@@ -263,6 +263,20 @@ DWORD win_protect(int prot) {
 std::mutex g_maps_lock;
 std::map<uintptr_t, size_t> g_maps;  // reservations made here, by base
 
+// Whether [addr, addr + len) lies in address space this process already
+// holds (reserved or committed), as a MAP_FIXED request inside an earlier
+// mapping does.
+bool held(void* addr, size_t len) {
+    const char* p = static_cast<const char*>(addr);
+    const char* end = p + len;
+    while (p < end) {
+        MEMORY_BASIC_INFORMATION mbi;
+        if (!VirtualQuery(p, &mbi, sizeof(mbi)) || mbi.State == MEM_FREE) return false;
+        p = static_cast<const char*>(mbi.BaseAddress) + mbi.RegionSize;
+    }
+    return true;
+}
+
 WINAPK_GUEST_ABI void* g_mmap(void* addr, size_t len, int prot, int flags, int fd, int64_t off) {
     void* const kFailed = reinterpret_cast<void*>(-1);
     if (len == 0) {
@@ -271,6 +285,42 @@ WINAPK_GUEST_ABI void* g_mmap(void* addr, size_t len, int prot, int flags, int f
     }
     void* want = (flags & 0x10) ? addr : nullptr;
     const bool anonymous = (flags & 0x20) || fd < 0;
+    // MAP_FIXED inside a mapping this process holds replaces those pages in
+    // place: Linux allows it and runtimes build on it. Dart's VM (Flutter)
+    // reserves its 4 GB compressed heap with PROT_NONE and then maps each
+    // page it uses with MAP_FIXED and PROT_READ|WRITE inside it; Windows
+    // cannot reserve what is reserved, so the request used to land elsewhere
+    // while the VM wrote where it had asked (an access violation at a 4 GB
+    // aligned address: LocalSend). Here the pages are committed (or, for
+    // PROT_NONE, decommitted) where they are, zeroed as a fresh anonymous
+    // mapping is, and given the protection asked for.
+    if (want && held(want, len)) {
+        if (prot == 0 && anonymous) {
+            VirtualFree(want, len, MEM_DECOMMIT);
+            return want;
+        }
+        if (!VirtualAlloc(want, len, MEM_COMMIT, PAGE_READWRITE)) {
+            *guest_errno() = kENOMEM;
+            return kFailed;
+        }
+        std::memset(want, 0, len);
+        if (!anonymous && fd >= 0) {
+            const int64_t at = _lseeki64(fd, 0, SEEK_CUR);
+            if (_lseeki64(fd, off, SEEK_SET) >= 0) {
+                size_t done = 0;
+                while (done < len) {
+                    const int r = _read(fd, static_cast<char*>(want) + done,
+                                        static_cast<unsigned>((len - done) > 0x40000000 ? 0x40000000 : len - done));
+                    if (r <= 0) break;
+                    done += static_cast<size_t>(r);
+                }
+            }
+            if (at >= 0) _lseeki64(fd, at, SEEK_SET);
+        }
+        DWORD old;
+        VirtualProtect(want, len, win_protect(prot), &old);
+        return want;
+    }
     if (prot == 0 && anonymous) {
         // An address-space reservation (allocators reserve gigabytes this way
         // and commit pieces with mprotect). Only reserving keeps it off the
