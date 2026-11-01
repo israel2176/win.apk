@@ -241,18 +241,24 @@ Done so far:
 - The Bionic shim: about 520 libc functions (threads, files, sockets,
   epoll, `ALooper`, printf and scanf), on the UCRT and Win32.
 - The host: the window and input, `NativeOs`, `NativeLooper`, images (libwebp,
-  WIC), audio (WASAPI), clipboard, file pickers, game controllers, ICU,
-  SQLite.
+  WIC), audio (WASAPI: AudioTrack, SoundPool, MediaPlayer's audio, OpenSL ES,
+  AAudio, recording; Media Foundation decodes), clipboard, file pickers, game
+  controllers, ICU, SQLite, WebView on WebView2, the camera (Media Foundation
+  capture), location (`Windows.Devices.Geolocation`), the radios' state,
+  photos and wallpapers, the user's own folders as shared storage, and
+  Android's permission dialogs (through the launcher's helper).
 - OpenGL ES on ANGLE, from Java and from app native code (`ANativeWindow`,
-  EGL window surfaces), plus libandroid's assets.
-- The app library (`Win.apk.exe`) with shortcuts per app, the installer
-  (`package/winapk.iss`) and the release workflow.
+  EGL window surfaces), plus libandroid's assets, and `NativeActivity` with
+  the NDK input queue and `AConfiguration` (`host/native_activity.cpp`).
+- The app library (`Win.apk.exe`) with shortcuts per app, the Store (F-Droid),
+  the installer (`package/winapk.iss`, English and Hebrew) and the release
+  workflow.
 
-Next, in order: OpenSL ES and AAudio for native sound, `NativeActivity`,
-`NativeMedia` (MediaPlayer and video on Media Foundation), WebView2, the
-camera and location, signals through vectored exception handling, then the
-launcher (M8). ARM code (M10) is translated ahead of time, with the JIT as
-the fallback.
+Next, in order: video (MediaPlayer and the NDK media API on Media
+Foundation), Vulkan (`VK_KHR_win32_surface`), sensors, W^X thunks with unwind
+tables and a crash handler (M9), code signing, then a wider compatibility
+corpus. ARM code (M10) is translated ahead of time, with the JIT
+as the fallback; 32-bit `armeabi-v7a` stays unsupported.
 
 `PORTING.md` holds the design decisions, the technical findings, the known
 gaps, and the milestone plan up to a production release.
