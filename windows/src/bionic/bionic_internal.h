@@ -46,6 +46,7 @@ ShimTable string_symbols();   // string.cpp: <string.h>, <stdlib.h> conversions,
 ShimTable printf_symbols();   // printf.cpp: the printf family and liblog's formatted entry points
 ShimTable pthread_symbols();  // pthread.cpp: threads, mutexes, conditions, keys, once
 ShimTable stdio_symbols();    // stdio.cpp: FILE, file descriptors, directories, stat
+ShimTable setjmp_symbols();   // setjmp.cpp: setjmp and longjmp for x86_64 guests
 ShimTable misc_symbols();     // misc.cpp: time, sysconf, system properties, environment, math
 ShimTable signal_symbols();   // signal.cpp: sigaction, sigaltstack, masks, POSIX timers (state kept, none delivered)
 ShimTable fd_symbols();       // fd.cpp: pipe, eventfd, poll, select, epoll

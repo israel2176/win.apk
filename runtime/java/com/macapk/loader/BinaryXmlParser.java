@@ -312,7 +312,21 @@ public final class BinaryXmlParser {
                 case RES_XML_END_ELEMENT:
                     if (!stack.isEmpty()) stack.pop();
                     break;
-                case RES_XML_CDATA:
+                case RES_XML_CDATA: {
+                    // ResXMLTree_cdataExt: the text's string-pool index, then
+                    // its Res_value. aapt2 keeps only non-blank text, as one
+                    // node per run, so this is the element's content (the
+                    // certificate inside <key> in a media-browser allow list,
+                    // the body of a <string> in res/xml). Dropped before, every
+                    // such element read back as empty.
+                    int ext = off + headerSize;
+                    int textIdx = ext + 4 <= total ? i32(ext) : -1;
+                    if (textIdx >= 0 && !stack.isEmpty()) {
+                        String text = poolStr(textIdx);
+                        if (!text.isEmpty()) stack.peek().appendChild(doc.createTextNode(text));
+                    }
+                    break;
+                }
                 default:
                     break;
             }

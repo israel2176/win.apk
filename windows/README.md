@@ -241,18 +241,24 @@ Done so far:
 - The Bionic shim: about 520 libc functions (threads, files, sockets,
   epoll, `ALooper`, printf and scanf), on the UCRT and Win32.
 - The host: the window and input, `NativeOs`, `NativeLooper`, images (libwebp,
-  WIC), audio (WASAPI), clipboard, file pickers, game controllers, ICU,
-  SQLite.
+  WIC), audio (WASAPI: AudioTrack, SoundPool, MediaPlayer's audio, OpenSL ES,
+  AAudio, recording; Media Foundation decodes), clipboard, file pickers, game
+  controllers, ICU, SQLite, WebView on WebView2, the camera (Media Foundation
+  capture), location (`Windows.Devices.Geolocation`), the radios' state,
+  photos and wallpapers, the user's own folders as shared storage, and
+  Android's permission dialogs (through the launcher's helper).
 - OpenGL ES on ANGLE, from Java and from app native code (`ANativeWindow`,
-  EGL window surfaces), plus libandroid's assets.
-- The app library (`Win.apk.exe`) with shortcuts per app, the installer
-  (`package/winapk.iss`) and the release workflow.
+  EGL window surfaces), plus libandroid's assets, and `NativeActivity` with
+  the NDK input queue and `AConfiguration` (`host/native_activity.cpp`).
+- The app library (`Win.apk.exe`) with shortcuts per app, the Store (F-Droid),
+  the installer (`package/winapk.iss`, English and Hebrew) and the release
+  workflow.
 
-Next, in order: OpenSL ES and AAudio for native sound, `NativeActivity`,
-`NativeMedia` (MediaPlayer and video on Media Foundation), WebView2, the
-camera and location, signals through vectored exception handling, then the
-launcher (M8). ARM code (M10) is translated ahead of time, with the JIT as
-the fallback.
+Next, in order: video (MediaPlayer and the NDK media API on Media
+Foundation), Vulkan (`VK_KHR_win32_surface`), sensors, W^X thunks with unwind
+tables and a crash handler (M9), code signing, then a wider compatibility
+corpus. ARM code (M10) is translated ahead of time, with the JIT
+as the fallback; 32-bit `armeabi-v7a` stays unsupported.
 
 `PORTING.md` holds the design decisions, the technical findings, the known
 gaps, and the milestone plan up to a production release.
@@ -291,6 +297,37 @@ every such change is listed here:
 - `runtime/java/com/macapk/loader/FragmentInflaterFactory.java`: a fragment in
   a layout is hosted by the activity the inflater belongs to, which also works
   during the first activity's `onCreate`. Not Windows-specific.
+- `runtime/java/com/macapk/loader/DomXmlResourceParser.java` and
+  `BinaryXmlParser.java`: the resource parser's `next()` skips whitespace-only
+  text and comments, as the device's parser over aapt-compiled XML never sees
+  them (a `while (next() != END_TAG) nextText()` loop over a text-form resource
+  threw "nextText not on START_TAG"), and the compiled-XML reader keeps text
+  chunks, so an element's content (`<key>` in a media-browser allow list) is no
+  longer empty. Not Windows-specific; worth offering upstream.
+- `runtime/java/com/macapk/dex/InitRepointPlan.java`: the DEX converter also
+  synthesises the constructor R8 deleted when the call site still names the
+  allocated class (`new-instance T; invoke-direct T.<init>(D)` with no
+  `T.<init>(D)` left, often no class data at all), which ART resolves up the
+  superclass chain and HotSpot refuses with NoSuchMethodError. NetGuard's
+  main activity and androidx.startup failed on it (170 such sites in one
+  DEX). Not Windows-specific; worth offering upstream.
+- `runtime/java/android/system/Os.java`: `chmod` and `fchmod` (Key Mapper
+  died at start on the missing method). Not Windows-specific.
+- `runtime/java/android/preference/Preference.java`: an app subclass that
+  overrides `onGetDefaultValue(TypedArray, int)` gets it called, with a
+  TypedArray holding `android:defaultValue`; the String the AttributeSet twin
+  reads broke DroidFish's ColorPickerPreference with a ClassCastException. Not
+  Windows-specific.
+- `runtime/java/com/macapk/loader/FragmentInflaterFactory.java`: a
+  `FragmentContainerView[android:name]` whose app FragmentManager cannot be
+  found by name (R8 renamed it) goes through the activity's own
+  `onCreateView` override, AOSP's route, instead of the view's 2-arg
+  constructor, which throws (Auxio, Tremotesf). Not Windows-specific.
+- `runtime/java/android/provider/MediaStoreProvider.java`: a projection may
+  hold an aggregate over a known column (`COUNT(is_music)`, `COUNT(*)`,
+  `MAX(date_added)`) or an alias (`_data AS path`), as MediaProvider's
+  projection greylist allows; before, the aggregate was answered as a NULL
+  column and a COUNT over an empty table had no row. Not Windows-specific.
 - `runtime/java/android/security/keystore/AndroidKeyStoreKeyFactorySpi.java`:
   delegates to the other providers only, instead of recursing into itself
   until the stack overflows. Not Windows-specific.
