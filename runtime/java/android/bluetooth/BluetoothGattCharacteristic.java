@@ -65,6 +65,15 @@ public class BluetoothGattCharacteristic implements android.os.Parcelable {
         mPermissions = permissions;
     }
 
+    /** AOSP's hidden constructor for a discovered characteristic: the
+     *  instance id is its attribute handle on the device (BluetoothGatt). */
+    BluetoothGattCharacteristic(UUID uuid, int instanceId, int properties, int permissions) {
+        mUuid = uuid;
+        mInstanceId = instanceId;
+        mProperties = properties;
+        mPermissions = permissions;
+    }
+
     public UUID getUuid() { return mUuid; }
     public int getInstanceId() { return mInstanceId; }
     public BluetoothGattService getService() { return mService; }

@@ -29,6 +29,14 @@ public class BluetoothGattService implements android.os.Parcelable {
         mServiceType = serviceType;
     }
 
+    /** AOSP's hidden constructor for a discovered service: the instance id
+     *  is the service's attribute handle on the device (BluetoothGatt). */
+    BluetoothGattService(BluetoothDevice device, UUID uuid, int instanceId, int serviceType) {
+        mUuid = uuid;
+        mInstanceId = instanceId;
+        mServiceType = serviceType;
+    }
+
     public UUID getUuid() { return mUuid; }
     public int getInstanceId() { return mInstanceId; }
     public int getType() { return mServiceType; }

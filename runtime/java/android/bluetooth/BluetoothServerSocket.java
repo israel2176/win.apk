@@ -1,37 +1,71 @@
-// android.bluetooth.BluetoothServerSocket -- a listening Bluetooth socket.
+// android.bluetooth.BluetoothServerSocket -- a listening RFCOMM socket.
 //
-// Mac.apk exposes no Bluetooth bridge, so nothing can ever be accepted.
-// accept() throws IOException, which is AOSP's own documented failure ("on
-// error, for example this socket has already been closed") and the only answer
-// that does not leave a server thread blocked forever on a link that cannot
-// exist. Every factory that would produce one (BluetoothAdapter.listenUsing*)
-// already throws for the same reason.
+// On a host that talks to devices (com.macapk.loader.HostBluetooth; Win.apk)
+// the socket listens on a free channel, published under the service UUID in
+// SDP so a phone's createRfcommSocketToServiceRecord finds it, and accept()
+// hands out connected BluetoothSockets. close() ends an accept blocked on
+// another thread with an IOException, as on Android.
+//
+// Without such a host (the Mac) BluetoothAdapter.listenUsing* throws, so
+// nothing ever constructs one that could accept.
 //
 // Mirrors frameworks/base/core/java/android/bluetooth/BluetoothServerSocket.java.
 package android.bluetooth;
+
+import com.macapk.loader.HostBluetooth;
 
 import java.io.Closeable;
 import java.io.IOException;
 
 public class BluetoothServerSocket implements Closeable {
 
-    public BluetoothServerSocket() {}
+    private final String mServiceName;
+    private long mHandle;  // the host's, 0 once closed
+    private boolean mClosed;
+
+    public BluetoothServerSocket() {
+        mServiceName = null;
+        mClosed = true;
+    }
+
+    BluetoothServerSocket(String serviceName, long handle) {
+        mServiceName = serviceName;
+        mHandle = handle;
+    }
 
     public BluetoothSocket accept() throws IOException { return accept(-1); }
 
+    /** AOSP: blocks for a connection, IOException on error (this socket
+     *  closed) or when `timeout` ms (>= 0) pass without one. */
     public BluetoothSocket accept(int timeout) throws IOException {
-        throw new IOException("Mac.apk: no Bluetooth radio");
+        long h;
+        synchronized (this) {
+            if (mClosed) throw new IOException("Mac.apk: no Bluetooth radio");
+            h = mHandle;
+        }
+        long s = HostBluetooth.rfcommAccept(h, timeout < 0 ? -1 : timeout);
+        if (s == 0) throw new IOException("accept timed out");
+        String address = HostBluetooth.rfcommRemoteAddress(s);
+        return new BluetoothSocket(s, address != null ? new BluetoothDevice(address) : null);
     }
 
     /** AOSP returns the assigned L2CAP PSM, or throws when the socket is not
-     *  an L2CAP listener. No socket is ever bound, so 0 -- which is not a
-     *  valid PSM, so it cannot be mistaken for one. */
+     *  an L2CAP listener. These are RFCOMM, so 0 -- which is not a valid PSM,
+     *  so it cannot be mistaken for one. */
     public int getPsm() { return 0; }
 
     @Override public String toString() {
-        return "ServiceName: null Type: RFCOMM ServerSocket: null";
+        return "ServiceName: " + mServiceName + " Type: RFCOMM ServerSocket: " + (mClosed ? "closed" : "listening");
     }
 
-    /** A close of something never opened: genuinely a no-op. */
-    @Override public void close() throws IOException {}
+    @Override public void close() throws IOException {
+        long h;
+        synchronized (this) {
+            if (mClosed) return;
+            mClosed = true;
+            h = mHandle;
+            mHandle = 0;
+        }
+        if (h != 0) HostBluetooth.rfcommClose(h);
+    }
 }
