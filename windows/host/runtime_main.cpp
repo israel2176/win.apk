@@ -334,8 +334,8 @@ int run_process(std::wstring cmdline) {
 // (runtime/scripts/build_ids.py), the id hashes the converter's entries'
 // names, lengths and CRC-32s from the jar's central directory: a rebuild of
 // the same sources, or a change to the framework or the loader only, keeps
-// the jars. (After 5566brs/win.apk 67f7f16.) The name starts with ".macapk",
-// so Boot's code-dir scan leaves the file here.
+// the jars. The name starts with ".macapk", so Boot's code-dir scan leaves
+// the file here.
 
 // "<size>:<last write time>" of a file, or "" when it cannot be read.
 std::string file_id(const fs::path& p) {

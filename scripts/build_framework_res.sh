@@ -59,7 +59,7 @@ OUT_DIR="$PROJECT_DIR/thirdparty/framework-res"
 
 # Pinned AOSP tag the default build comes from. android-11.0.0_r48 is an
 # Android 11 (API 30) release tag, matching both the fwprobe golden AVD and
-# the fleet's pixel-reference emulator (the only system image on this box).
+# the pixel-reference emulator image the oracle runs on.
 API_LEVEL=30
 AOSP_TAG="android-11.0.0_r48"
 VERSION_NAME="11"
@@ -85,9 +85,9 @@ if [ -z "$AAPT2" ]; then
         [ -x "$bt" ] && AAPT2="$bt"
     done
 fi
-# The SDK was deleted from this machine on 2026-08-31 (CLAUDE.md); the
-# Homebrew apktool keg ships a macOS aapt2 (2.20) inside its jar, which is
-# what built the shipped API-36 apk (v1.0.1589). Extracted on demand.
+# Without an SDK, the Homebrew apktool keg ships a macOS aapt2 (2.20) inside
+# its jar, which is what built the shipped API-36 apk (v1.0.1589). Extracted
+# on demand.
 if [ -z "$AAPT2" ]; then
     KEG_JAR="$(ls -t /opt/homebrew/Cellar/apktool/*/libexec/apktool_*.jar 2>/dev/null | head -1)"
     if [ -n "$KEG_JAR" ] && unzip -l "$KEG_JAR" 2>/dev/null | grep -q "prebuilt/macosx/aapt2"; then
