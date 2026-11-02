@@ -73,8 +73,10 @@ struct Player::Impl {
     // Lock held. At the end of the last picture and the last sound. The mixer
     // interpolates between neighbouring samples, so it holds the last frame
     // written back and the position stops one short of frames_written.
+    // Not while a seek is pending: eos, the queue and frames_written are still
+    // the old pass's until the pump has done it (seek then start at once).
     void note_completion() {
-        if (state == kPlaying && eos && queue.empty() &&
+        if (state == kPlaying && seek_request_us < 0 && eos && queue.empty() &&
             (!audio || au::stream_position(audio.get()) + 1 >= frames_written)) {
             state = kCompleted;
             wall_base_us = duration_us;
