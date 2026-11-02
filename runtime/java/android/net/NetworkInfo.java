@@ -1,8 +1,9 @@
 // android.net.NetworkInfo -- the "current network" snapshot returned
-// by ConnectivityManager.
+// by ConnectivityManager, and the EXTRA_NETWORK_INFO of WifiManager's
+// NETWORK_STATE_CHANGED_ACTION, which is why it is Parcelable as on AOSP.
 package android.net;
 
-public class NetworkInfo {
+public class NetworkInfo implements android.os.Parcelable {
     public enum State { CONNECTED, CONNECTING, DISCONNECTED, DISCONNECTING, UNKNOWN }
 
     private final int type;
@@ -34,11 +35,46 @@ public class NetworkInfo {
     public boolean isConnectedOrConnecting() { return state == State.CONNECTED || state == State.CONNECTING; }
     public boolean isAvailable()       { return true; }
     public boolean isRoaming()         { return false; }
-    public DetailedState getDetailedState() { return DetailedState.CONNECTED; }
+    public DetailedState getDetailedState() {
+        switch (state) {
+        case CONNECTING: return DetailedState.CONNECTING;
+        case DISCONNECTING: return DetailedState.DISCONNECTING;
+        case DISCONNECTED: return DetailedState.DISCONNECTED;
+        case UNKNOWN: return DetailedState.IDLE;
+        default: return DetailedState.CONNECTED;
+        }
+    }
 
     public enum DetailedState {
         IDLE, SCANNING, CONNECTING, AUTHENTICATING, OBTAINING_IPADDR,
         CONNECTED, SUSPENDED, DISCONNECTING, DISCONNECTED, FAILED, BLOCKED, VERIFYING_POOR_LINK,
         CAPTIVE_PORTAL_CHECK
     }
+
+    @Override public String toString() {
+        return "[type: " + getTypeName() + ", state: " + state + ", detailed: " + getDetailedState() + "]";
+    }
+
+    // PARCELABLE on AOSP: the type and the state round-trip.
+    @Override public int describeContents() { return 0; }
+
+    @Override public void writeToParcel(android.os.Parcel dest, int flags) {
+        dest.writeInt(type);
+        dest.writeString(state.name());
+    }
+
+    public static final Creator<NetworkInfo> CREATOR = new Creator<NetworkInfo>() {
+        @Override public NetworkInfo createFromParcel(android.os.Parcel in) {
+            int type = in.readInt();
+            State state;
+            try {
+                state = State.valueOf(in.readString());
+            } catch (IllegalArgumentException | NullPointerException e) {
+                state = State.UNKNOWN;
+            }
+            return new NetworkInfo(type, state);
+        }
+
+        @Override public NetworkInfo[] newArray(int size) { return new NetworkInfo[size]; }
+    };
 }

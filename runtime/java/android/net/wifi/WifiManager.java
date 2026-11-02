@@ -44,7 +44,99 @@ public class WifiManager {
     private final WifiInfo info = new WifiInfo();
     private final DhcpInfo dhcp = new DhcpInfo();
 
-    public WifiManager() {}
+    public WifiManager() { startEvents(); }
+
+    // ---- the host's events (HostRadios.wifiEvent) -> the broadcasts ----------
+    //
+    // One thread for the process, started with the first WifiManager, turns
+    // the host's Wi-Fi notifications into WIFI_STATE_CHANGED_ACTION,
+    // NETWORK_STATE_CHANGED_ACTION (with EXTRA_NETWORK_INFO), RSSI_CHANGED_ACTION
+    // and SCAN_RESULTS_AVAILABLE_ACTION, as WifiStateMachine sends them. A host
+    // that reports no events (wifiEvent() < 0) gets no thread and the old
+    // answers (startScan's timer).
+
+    private static final Object sEventsLock = new Object();
+    private static boolean sEventsStarted;
+    private static boolean sEventsReported;  // the host answers wifiEvent
+
+    private static void startEvents() {
+        synchronized (sEventsLock) {
+            if (sEventsStarted) return;
+            sEventsStarted = true;
+            int first = com.macapk.loader.HostRadios.wifiEvent(0);
+            if (first < 0) return;
+            sEventsReported = true;
+        }
+        Thread t = new Thread(WifiManager::pumpEvents, "wifi-events");
+        t.setDaemon(true);
+        t.start();
+    }
+
+    private static boolean eventsReported() {
+        synchronized (sEventsLock) { return sEventsReported; }
+    }
+
+    private static void pumpEvents() {
+        int lastState = -1;
+        long lastRssiAt = 0;
+        for (;;) {
+            int e = com.macapk.loader.HostRadios.wifiEvent(10000);
+            if (e < 0) return;
+            if (e == 0) continue;
+            android.content.Context ctx = android.app.ActivityThread.currentApplication();
+            if (ctx == null) continue;
+            try {
+                WifiManager wm = (WifiManager) ctx.getSystemService(android.content.Context.WIFI_SERVICE);
+                if (wm == null) wm = new WifiManager();
+                switch (e) {
+                case com.macapk.loader.HostRadios.WIFI_EVENT_STATE: {
+                    int state = wm.getWifiState();
+                    android.content.Intent i = new android.content.Intent(WIFI_STATE_CHANGED_ACTION);
+                    i.putExtra(EXTRA_WIFI_STATE, state);
+                    i.putExtra(EXTRA_PREVIOUS_WIFI_STATE, lastState < 0 ? WIFI_STATE_UNKNOWN : lastState);
+                    lastState = state;
+                    ctx.sendBroadcast(i);
+                    break;
+                }
+                case com.macapk.loader.HostRadios.WIFI_EVENT_CONNECTED:
+                case com.macapk.loader.HostRadios.WIFI_EVENT_DISCONNECTED: {
+                    boolean up = e == com.macapk.loader.HostRadios.WIFI_EVENT_CONNECTED;
+                    android.content.Intent i = new android.content.Intent(NETWORK_STATE_CHANGED_ACTION);
+                    i.putExtra(EXTRA_NETWORK_INFO, new android.net.NetworkInfo(
+                            android.net.ConnectivityManager.TYPE_WIFI,
+                            up ? android.net.NetworkInfo.State.CONNECTED : android.net.NetworkInfo.State.DISCONNECTED));
+                    if (up) i.putExtra(EXTRA_BSSID, wm.getConnectionInfo().getBSSID());
+                    ctx.sendBroadcast(i);
+                    android.content.Intent s = new android.content.Intent(SUPPLICANT_CONNECTION_CHANGE_ACTION);
+                    s.putExtra(EXTRA_SUPPLICANT_CONNECTED, up);
+                    ctx.sendBroadcast(s);
+                    break;
+                }
+                case com.macapk.loader.HostRadios.WIFI_EVENT_SIGNAL: {
+                    // WifiStateMachine polls the RSSI every three seconds
+                    // and reports changes; the host reports every change.
+                    long now = android.os.SystemClock.elapsedRealtime();
+                    if (now - lastRssiAt < 3000) break;
+                    lastRssiAt = now;
+                    android.content.Intent i = new android.content.Intent(RSSI_CHANGED_ACTION);
+                    i.putExtra(EXTRA_NEW_RSSI, wm.getConnectionInfo().getRssi());
+                    ctx.sendBroadcast(i);
+                    break;
+                }
+                case com.macapk.loader.HostRadios.WIFI_EVENT_SCAN: {
+                    android.content.Intent i = new android.content.Intent(SCAN_RESULTS_AVAILABLE_ACTION);
+                    i.putExtra(EXTRA_RESULTS_UPDATED, true);
+                    ctx.sendBroadcast(i);
+                    break;
+                }
+                default:
+                    break;
+                }
+            } catch (Throwable t) {
+                android.util.Log.w("WifiManager", "wifi event " + e + " not delivered", t);
+            }
+        }
+    }
 
     // ---- the host's radio (com.macapk.loader.HostRadios) -------------------
     //
@@ -95,10 +187,22 @@ public class WifiManager {
         }
     }
 
-    // AOSP: getDhcpInfo returns the current DHCP-supplied connection
-    // info as a DhcpInfo (all fields are zero on macOS since we don't
-    // expose underlying DHCP state).
-    public DhcpInfo getDhcpInfo()             { return dhcp; }
+    /** AOSP: the connection's DHCP-supplied configuration. The host's
+     *  interface configuration when it reports one (HostRadios.wifiDhcp:
+     *  Windows does); all zero otherwise (the Mac, or not connected). */
+    public DhcpInfo getDhcpInfo() {
+        int[] d = com.macapk.loader.HostRadios.wifiDhcp();
+        if (d == null || d.length < 7) return dhcp;
+        DhcpInfo out = new DhcpInfo();
+        out.ipAddress = d[0];
+        out.gateway = d[1];
+        out.netmask = d[2];
+        out.dns1 = d[3];
+        out.dns2 = d[4];
+        out.serverAddress = d[5];
+        out.leaseDuration = d[6];
+        return out;
+    }
 
     public List<ScanResult> getScanResults() {
         String[] r = com.macapk.loader.HostRadios.wifiScanResults();
@@ -119,10 +223,12 @@ public class WifiManager {
     }
 
     /** AOSP: the results arrive later, announced by SCAN_RESULTS_AVAILABLE_ACTION
-     *  (EXTRA_RESULTS_UPDATED). Windows finishes a scan within about four
-     *  seconds, so the broadcast follows then. */
+     *  (EXTRA_RESULTS_UPDATED): when the host says the scan finished
+     *  (pumpEvents), or, on a host that reports no events, after the four
+     *  seconds Windows takes. */
     public boolean startScan() {
         if (!com.macapk.loader.HostRadios.wifiStartScan()) return false;
+        if (eventsReported()) return true;
         Thread t = new Thread(() -> {
             try {
                 Thread.sleep(4000L);

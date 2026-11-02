@@ -103,6 +103,8 @@ jobs:
         run: ./build/winapk-user-folders-test.exe "$(cygpath -w "$PWD")"
       - name: Run the window geometry test
         run: ./build/winapk-window-test.exe
+      - name: Run the Bluetooth host test
+        run: ./build/winapk-bluetooth-test.exe
       - name: Run the real-JVM end-to-end test
         run: |
           export PATH="$(cygpath -u "$JAVA_HOME")/bin/server:$(cygpath -u "$JAVA_HOME")/bin:$PATH"
@@ -155,6 +157,14 @@ jobs:
           cp="$(cygpath -w runtime/lib/macapk-loader.jar);$(cygpath -w runtime/lib/android-framework.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/perm-test windows/test/java/PermissionModelTest.java
           "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/perm-test)" PermissionModelTest
+      - name: Run the scan record test
+        run: |
+          # android.bluetooth.le.ScanRecord's parser over the advertising bytes
+          # the LE scan delivers, and ScanFilter over the result.
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          cp="$(cygpath -w runtime/lib/android-framework.jar)"
+          "$JAVA_HOME/bin/javac" -cp "$cp" -d build/scan-test windows/test/java/ScanRecordTest.java
+          "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/scan-test)" ScanRecordTest
       - name: Run the GL test
         run: |
           # It needs ANGLE next to it, which staging just put in runtime/bin.

@@ -78,6 +78,14 @@ What works
   own page in a window; Win.apk never sees the password. Settings > Google
   account adds or removes the account.
 - English and Hebrew, laid out right to left in Hebrew.
+- Wi-Fi: whether it is on, the current network and the scan results
+  (network names need location access for desktop apps in Windows'
+  privacy settings, as they need the location permission on Android).
+- Bluetooth: the paired devices, serial (RFCOMM) connections to them and
+  from them, Bluetooth LE scans and connections (reading, writing and
+  notifications), with the Nearby devices permission the app asks for.
+  Pair devices in Windows Settings first; apps cannot pair or discover
+  classic devices, advertise, or use the audio and input profiles.
 
 What does not work yet
 ----------------------

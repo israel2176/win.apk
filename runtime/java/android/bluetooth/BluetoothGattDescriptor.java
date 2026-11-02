@@ -26,6 +26,9 @@ public class BluetoothGattDescriptor implements android.os.Parcelable {
 
     private final UUID mUuid;
     private final int mPermissions;
+    // AOSP's hidden instance id: the descriptor's attribute handle on the
+    // device (BluetoothGatt), 0 for one the app built.
+    private final int mInstanceId;
     private byte[] mValue;
     // Back-pointer to the owning characteristic, set by
     // BluetoothGattCharacteristic.addDescriptor (mirrors AOSP; see the
@@ -36,9 +39,18 @@ public class BluetoothGattDescriptor implements android.os.Parcelable {
     public BluetoothGattDescriptor(UUID uuid, int permissions) {
         mUuid = uuid;
         mPermissions = permissions;
+        mInstanceId = 0;
+    }
+
+    BluetoothGattDescriptor(UUID uuid, int instanceId, int permissions) {
+        mUuid = uuid;
+        mPermissions = permissions;
+        mInstanceId = instanceId;
     }
 
     public UUID getUuid() { return mUuid; }
+    /** @hide on AOSP. */
+    public int getInstanceId() { return mInstanceId; }
     public int getPermissions() { return mPermissions; }
     public BluetoothGattCharacteristic getCharacteristic() { return mCharacteristic; }
     /** Package-private: only BluetoothGattCharacteristic.addDescriptor sets

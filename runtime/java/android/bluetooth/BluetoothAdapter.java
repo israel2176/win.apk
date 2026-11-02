@@ -2,11 +2,13 @@
 //
 // The host's Bluetooth radio, when the host reports one
 // (com.macapk.loader.HostRadios; Win.apk does): its name, whether it is on,
-// and the paired devices. Nothing here talks to a device (discovery, LE scans,
-// sockets and profiles answer "not possible"), so an app can show the
-// Bluetooth state and the paired list but not connect. With no radio --
-// or on a host that does not report one (the Mac) -- getDefaultAdapter() is
-// null, AOSP's answer for a device without Bluetooth, which real apps handle.
+// and the paired devices. A host that also talks to devices
+// (com.macapk.loader.HostBluetooth; Win.apk) gets the RFCOMM server sockets
+// here and the LE scanner; classic discovery (startDiscovery), the profiles
+// (A2DP, headset...) and LE advertising still answer "not possible". With no
+// radio -- or on a host that does not report one (the Mac) --
+// getDefaultAdapter() is null, AOSP's answer for a device without Bluetooth,
+// which real apps handle.
 package android.bluetooth;
 
 public class BluetoothAdapter {
@@ -100,10 +102,13 @@ public class BluetoothAdapter {
     public boolean startDiscovery() { return false; }
     public int getScanMode() { return SCAN_MODE_NONE; }
 
-    /** AOSP: the paired devices, empty while the adapter is off. */
+    /** AOSP: the paired devices, empty while the adapter is off; with it on,
+     *  a SecurityException without BLUETOOTH_CONNECT, as the service gives. */
     public java.util.Set<BluetoothDevice> getBondedDevices() {
         java.util.Set<BluetoothDevice> out = new java.util.HashSet<>();
-        String[] b = isEnabled() ? com.macapk.loader.HostRadios.bluetoothBonded() : null;
+        if (!isEnabled()) return out;
+        com.macapk.loader.HostBluetooth.enforceConnect("getBondedDevices");
+        String[] b = com.macapk.loader.HostRadios.bluetoothBonded();
         for (int i = 0; b != null && i + 2 < b.length; i += 3) {
             int cod = 0;
             try { cod = Integer.parseInt(b[i + 2]); } catch (NumberFormatException ignored) {}
@@ -131,16 +136,17 @@ public class BluetoothAdapter {
         return new BluetoothDevice(sb.toString());
     }
 
+    /** AOSP: the LE scanner, null while the adapter is off. It scans when the
+     *  host does (HostBluetooth); otherwise its scans fail at once. */
     public android.bluetooth.le.BluetoothLeScanner getBluetoothLeScanner() {
-        return new android.bluetooth.le.BluetoothLeScanner();
+        return isEnabled() ? new android.bluetooth.le.BluetoothLeScanner() : null;
     }
 
     /**
-     * Null, matching getBluetoothLeScanner() above: there is no Bluetooth
-     * bridge, so there is no advertiser. AOSP returns null here whenever the
-     * adapter is off or the controller cannot advertise, so callers already
-     * handle it -- and a non-null advertiser would let an app believe it had
-     * started broadcasting.
+     * Null: advertising (the PC as a peripheral) is not bridged. AOSP returns
+     * null here whenever the adapter is off or the controller cannot
+     * advertise, so callers already handle it -- and a non-null advertiser
+     * would let an app believe it had started broadcasting.
      */
     public android.bluetooth.le.BluetoothLeAdvertiser getBluetoothLeAdvertiser() {
         return null;
@@ -201,15 +207,29 @@ public class BluetoothAdapter {
 
     public void closeProfileProxy(int profile, BluetoothProfile proxy) {}
 
+    /** AOSP: a listening RFCOMM socket on a free channel, published under
+     *  `uuid` in SDP (BluetoothServerSocket); IOException when the host has
+     *  no sockets, SecurityException without BLUETOOTH_CONNECT. */
     public BluetoothServerSocket listenUsingInsecureRfcommWithServiceRecord(String name, java.util.UUID uuid)
             throws java.io.IOException {
-        throw new java.io.IOException("Mac.apk: no Bluetooth radio");
+        return listen(name, uuid, false);
     }
 
     /** @see #listenUsingInsecureRfcommWithServiceRecord -- same, secure. */
     public BluetoothServerSocket listenUsingRfcommWithServiceRecord(String name,
             java.util.UUID uuid) throws java.io.IOException {
-        throw new java.io.IOException("Mac.apk: no Bluetooth radio");
+        return listen(name, uuid, true);
+    }
+
+    private BluetoothServerSocket listen(String name, java.util.UUID uuid, boolean secure)
+            throws java.io.IOException {
+        if (uuid == null) throw new java.io.IOException("uuid is null");
+        if (!isEnabled() || !com.macapk.loader.HostBluetooth.rfcommAvailable()) {
+            throw new java.io.IOException("Mac.apk: no Bluetooth radio");
+        }
+        com.macapk.loader.HostBluetooth.enforceConnect("listenUsingRfcommWithServiceRecord");
+        return new BluetoothServerSocket(name,
+                com.macapk.loader.HostBluetooth.rfcommListen(name != null ? name : "", uuid.toString(), secure));
     }
 
     /** L2CAP channel listen (API 29). No radio, so the same honest IOException
