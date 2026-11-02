@@ -227,7 +227,8 @@ if(WINAPK_JNI_INCLUDE)
                               host/native_gamepad.cpp host/native_icu.cpp
                               host/native_audio_input.cpp host/native_photos.cpp
                               host/webview2_host.cpp host/native_browser_tab.cpp host/native_webview.cpp
-                              host/native_camera.cpp host/native_radios.cpp host/native_location.cpp
+                              host/native_camera.cpp host/native_radios.cpp host/native_bluetooth.cpp
+                              host/native_location.cpp
                               host/native_signin.cpp
                               host/user_folders.cpp host/crash_report.cpp
                               host/runtime.rc)
@@ -292,6 +293,12 @@ if(WINAPK_JNI_INCLUDE)
   add_executable(winapk-user-folders-test test/user_folders_test.cpp host/user_folders.cpp)
   target_link_libraries(winapk-user-folders-test PRIVATE shell32 ole32 uuid)
   target_link_options(winapk-user-folders-test PRIVATE -static)
+
+  # The pure parts of the Bluetooth host (test/bluetooth_test.cpp): the WinRT
+  # parameterized IIDs, addresses, UUIDs and advertisement bytes, no radio.
+  add_executable(winapk-bluetooth-test test/bluetooth_test.cpp)
+  target_include_directories(winapk-bluetooth-test PRIVATE host)
+  target_link_options(winapk-bluetooth-test PRIVATE -static)
 
   # The app window's geometry: the box the app draws in and how a frame is
   # shown in it (test/window_test.cpp), without a window.
