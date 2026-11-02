@@ -1468,6 +1468,9 @@ int wmain(int argc, wchar_t** argv) {
         return 2;
     }
     if (!resolve_paths(&b.options)) return 2;
+    // A crash from here on also leaves logs\crash-<app>-<time>.dmp.
+    winapk::host::set_crash_dump_location(b.options.data / "logs",
+                                          b.options.apk.empty() ? L"runtime" : b.options.apk.stem().wstring());
     if (!b.options.package_to.empty()) {
         return run_java(b.options, b.options.lib / "winapk-tools.jar", L"com.winapk.tools.AppInstall",
                         {L"--package", b.options.apk.wstring(), b.options.package_to.wstring()});
