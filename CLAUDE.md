@@ -4,19 +4,24 @@ Runs Android apps on Windows x64 as normal Windows programs: Java on HotSpot,
 x86_64 `.so` files loaded by our own ELF loader over a Bionic shim, graphics on
 ANGLE (D3D11). Started as a port of Mac.apk; its `runtime/` comes from there.
 Read this file instead of re-mapping the repository; open
-`windows/README.md` (build, tests, the list of `runtime/` changes) or
-`windows/PORTING.md` (design and plan, ~950 lines: grep it, don't read it
-whole) only when a task needs them.
+`docs/ARCHITECTURE.md` (how the layers work, an install and a run step by
+step), `docs/USER_GUIDE.md` (what the user sees and every setting),
+`windows/README.md` (build, tests, env vars, the list of `runtime/` changes)
+or `windows/PORTING.md` (design decisions, findings and the milestone plan,
+~1100 lines: grep it, don't read it whole) only when a task needs them. The
+docs must match the code: a change to a flag, a file name, a setting or what
+works is also a change to the document that names it.
 
 ## Layout
 
 | Path | What |
 |---|---|
 | `windows/src/`, `windows/include/winapk/` | ELF loader, linker, ELF TLS, `%fs` patch, ABI thunks, guest JNI. `src/bionic/` + `mini_bionic.cpp`: the Bionic libc shim (~520 functions, `sysv_abi`) |
-| `windows/host/` | The runtime host: `runtime_main.cpp` (winapk-runtime.exe: args `--apk --data --jdk --lib --install-only`, `--gms <cmd>` runs `com.macapk.gms.GmsCli` with no app), `win32_window.cpp` (window, input), `native_*.cpp` (the Java natives: `native_cocoa.cpp` = window/phone size/icon, audio, clipboard, gamepad, ICU, images, OpenSL ES, `native_activity.cpp` = NativeActivity + the NDK input queue and AConfiguration..., `native_signin.cpp` = the Google sign-in window on WebView2), `gl/` |
+| `windows/host/` | The runtime host: `runtime_main.cpp` (winapk-runtime.exe: args `--apk --data --jdk --lib --install-only`, `--gms <cmd>` runs `com.macapk.gms.GmsCli` with no app, `--aot-translate` the background arm64 translation), `win32_window.cpp` (window, input), `native_*.cpp` (the Java natives, one file per class: `native_cocoa.cpp` = window/phone size/icon, `native_audio.cpp` = AudioTrack/SoundPool/MediaPlayer audio on WASAPI, `native_aaudio.cpp` = AAudio (real), `native_opensles.cpp` = OpenSL ES (a stub: the engine reports unsupported), `native_media.cpp` = only the NDK media key strings (no video), `native_activity.cpp` = NativeActivity + the NDK input queue and AConfiguration, `native_webview.cpp` + `webview2_host.cpp` = WebView on WebView2, `native_camera.cpp`, `native_location.cpp`, `native_radios.cpp`, `native_signin.cpp` = the Google sign-in window on WebView2, clipboard, picker, gamepad, ICU, images, photos, wallpaper), `gl/`, `user_folders.cpp` (shared storage junctions) |
 | `windows/launcher/launcher_main.cpp` | `Win.apk.exe`, the library app (one file, GDI+ custom-drawn). See below |
 | `windows/java/` | Windows-only Java (`com/winapk/tools/AppMeta.java`: writes `icon.png` + `label.txt` at install; `java_base_patch/`: Win.apk's own `java.base` overlay, `java/io/WinNTFileSystem.java` nests a drive-absolute child under its parent as Android does, compiled with upstream's `runtime/java_base_patch`) |
-| `windows/scripts/` | `build_java.sh` (builds `runtime/java` with a stock JDK), `stage_runtime.sh` (runnable `bin/`+`lib/`), `fetch_angle.sh`, `build_framework_res.sh` |
+| `windows/scripts/` | `build_java.sh` (builds `runtime/java` with a stock JDK), `stage_runtime.sh` (runnable `bin/`+`lib/`+`clang/`), `fetch_angle.sh`, `fetch_webview2.sh`, `stage_clang.sh`, `build_framework_res.sh` |
+| `docs/` | `USER_GUIDE.md` (every user-visible behaviour and setting), `ARCHITECTURE.md` (the layers, install and run step by step, data on disk, CI), `APPS.md` (known issues by kind of app, apps tried), `images/` (README screenshots) |
 | `windows/test/` | Unit tests (`*_test.cpp`), guest libs (`guest/`), Wine runners (`run_*_wine.sh`), `compat/` (app sweep: `apps.txt`, `sweep.py`) |
 | `windows/package/` | Installer (`winapk.iss`, Inno Setup; English or Hebrew by the Windows display language, UTF-8 with BOM), `README.txt` and `RELEASE_NOTES.md` shipped in the package |
 | `windows/CMakeLists.txt` | All Windows targets. Pulls `runtime/src/native_methods.cpp` (GL bridges) and `native_sqlite.cpp` from upstream |
@@ -25,7 +30,7 @@ whole) only when a task needs them.
 | `scripts/build_framework_res.sh` | The platform resource APK (called by `windows/scripts/`) |
 | `.github/workflows/` | `windows-poc.yml` (build + tests + package, on PRs and by hand), `compat-sweep.yml` (app sweep, PRs and by hand), `windows-release.yml` (release, by hand only) |
 
-Data at run time: `%LOCALAPPDATA%\Win.apk\` (`library\` APKs + `.label`, `apps\<name>\`, `android\`, `logs\last-run.log`, `logs\install-<name>.log`, `store\` the Store tab's F-Droid catalog.tsv + icons, `installed_apps.json` the registry, `appops\` the signed permission grants: app-ops.json, signing-key.pub, signing-key.p256 under DPAPI, `gms\` the Google account and its tokens: gms_state.properties, the `accounts.present` marker the launcher checks). Settings: `HKCU\Software\Win.apk` (`Theme`, `Language`, `PhoneSize`, `Landscape` (absent = 1, landscape; 0 = portrait), `DesktopShortcut`). Per app, beside its APK: `library\<name>.label`, `.package` (package, versionCode, versionName, and the launched activity's manifest `screenOrientation`), `.orientation` (`portrait` / `landscape`, the right-click override for that app only; wins over `Landscape`, but an orientation the manifest fixes wins over both), `.window` (dp, the window size once the user resizes it; wins over the size setting, dropped when the orientation is flipped). Runtime env: `WINAPK_PHONE_SIZE=WxH` (dp), `WINAPK_RESIZABLE=0` (the window letterboxes instead of resizing the app), `WINAPK_HEADLESS=1`, `WINAPK_HEADLESS_FRAME`, `WINAPK_HEADLESS_EXIT_AFTER_FRAMES`.
+Data at run time: `%LOCALAPPDATA%\Win.apk\` (`library\` APKs + `.label`, `apps\<name>\`, `android\`, `logs\last-run.log`, `logs\install-<name>.log`, `store\` the Store tab's F-Droid catalog.tsv + icons, `installed_apps.json` the registry, `appops\` the signed permission grants: app-ops.json, signing-key.pub, signing-key.p256 under DPAPI, `gms\` the Google account and its tokens: gms_state.properties, the `accounts.present` marker the launcher checks, `aot-cache\` whole arm64 translations shared between apps, `staging\` the install helper's). Settings: `HKCU\Software\Win.apk` (`Theme`, `Language`, `PhoneSize`, `Landscape` (absent = 1, landscape; 0 = portrait), `DesktopShortcut`, `UserFolders` (absent = 1: shared storage is the user's Windows folders; the runtime reads it too)). Per app, beside its APK: `library\<name>.label`, `.package` (package, versionCode, versionName, and the launched activity's manifest `screenOrientation`), `.orientation` (`portrait` / `landscape`, the right-click override for that app only; wins over `Landscape`, but an orientation the manifest fixes wins over both), `.window` (dp, the window size once the user resizes it; wins over the size setting, dropped when the orientation is flipped). Runtime env: `WINAPK_PHONE_SIZE=WxH` (dp), `WINAPK_RESIZABLE=0` (the window letterboxes instead of resizing the app), `WINAPK_HEADLESS=1`, `WINAPK_HEADLESS_FRAME`, `WINAPK_HEADLESS_EXIT_AFTER_FRAMES`.
 
 ## The launcher (`windows/launcher/launcher_main.cpp`)
 
