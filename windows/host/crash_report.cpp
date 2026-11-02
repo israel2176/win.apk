@@ -2,6 +2,7 @@
 
 #include "crash_report.h"
 
+#include <algorithm>
 #include <csignal>
 #include <cstdio>
 #include <cstring>
@@ -9,10 +10,14 @@
 #include <mutex>
 #include <set>
 #include <string>
+#include <vector>
 
 #include <windows.h>
 
+#include <dbghelp.h>
+
 #include "winapk/linker.h"
+#include "winapk/mini_bionic.h"
 
 namespace winapk::host {
 
@@ -20,6 +25,75 @@ namespace {
 
 std::mutex g_lock;
 std::set<uint64_t> g_reported;  // one report per faulting address
+
+// ---- minidumps ------------------------------------------------------------------
+
+constexpr int kDumpsKept = 3;
+using WriteDump = BOOL(WINAPI*)(HANDLE, DWORD, HANDLE, MINIDUMP_TYPE, PMINIDUMP_EXCEPTION_INFORMATION,
+                                PMINIDUMP_USER_STREAM_INFORMATION, PMINIDUMP_CALLBACK_INFORMATION);
+WriteDump g_write_dump = nullptr;
+std::wstring g_dump_dir;
+std::wstring g_dump_app;
+
+struct DumpJob {
+    EXCEPTION_POINTERS* exception;  // may be null (abort)
+    DWORD thread;
+    wchar_t path[MAX_PATH];
+    bool ok;
+};
+
+// Older dumps of the same app beyond the newest kDumpsKept: the name carries
+// the time, so the names sort by age.
+void prune_dumps() {
+    std::vector<std::wstring> names;
+    WIN32_FIND_DATAW f;
+    HANDLE h = FindFirstFileW((g_dump_dir + L"\\crash-" + g_dump_app + L"-*.dmp").c_str(), &f);
+    if (h == INVALID_HANDLE_VALUE) return;
+    do {
+        names.push_back(f.cFileName);
+    } while (FindNextFileW(h, &f));
+    FindClose(h);
+    std::sort(names.begin(), names.end());
+    for (size_t i = 0; i + kDumpsKept < names.size(); ++i) DeleteFileW((g_dump_dir + L"\\" + names[i]).c_str());
+}
+
+// On its own thread: the faulting thread's stack stays as it was for the dump
+// (and may be the last page before a stack overflow).
+DWORD WINAPI dump_thread(void* p) {
+    auto* job = static_cast<DumpJob*>(p);
+    SYSTEMTIME t;
+    GetLocalTime(&t);
+    _snwprintf(job->path, MAX_PATH, L"%ls\\crash-%ls-%04u%02u%02u-%02u%02u%02u.dmp", g_dump_dir.c_str(),
+               g_dump_app.c_str(), t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond);
+    HANDLE file = CreateFileW(job->path, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return 0;
+    MINIDUMP_EXCEPTION_INFORMATION ex{};
+    ex.ThreadId = job->thread;
+    ex.ExceptionPointers = job->exception;
+    ex.ClientPointers = FALSE;
+    const auto type = static_cast<MINIDUMP_TYPE>(MiniDumpNormal | MiniDumpWithIndirectlyReferencedMemory |
+                                                 MiniDumpWithThreadInfo | MiniDumpWithUnloadedModules);
+    job->ok = g_write_dump(GetCurrentProcess(), GetCurrentProcessId(), file, type, job->exception ? &ex : nullptr,
+                           nullptr, nullptr) != FALSE;
+    CloseHandle(file);
+    if (!job->ok) DeleteFileW(job->path);
+    prune_dumps();
+    return 0;
+}
+
+// Writes the dump and puts its path in `path` (UTF-8); false if there is no
+// dump location, dbghelp is missing or the write failed.
+bool write_minidump(EXCEPTION_POINTERS* e, char* path, size_t n) {
+    if (!g_write_dump || g_dump_dir.empty()) return false;
+    DumpJob job{e, GetCurrentThreadId(), {}, false};
+    HANDLE t = CreateThread(nullptr, 256 * 1024, dump_thread, &job, 0, nullptr);
+    if (!t) return false;
+    WaitForSingleObject(t, 120000);
+    CloseHandle(t);
+    if (!job.ok) return false;
+    WideCharToMultiByte(CP_UTF8, 0, job.path, -1, path, static_cast<int>(n), nullptr, nullptr);
+    return true;
+}
 
 // "libfoo.so+0x1234 (symbol)" for a guest address, "bar.dll+0x1234" for a host
 // one, "" for neither. Must not allocate much: it runs inside the handler.
@@ -164,18 +238,33 @@ LONG CALLBACK report_fault(EXCEPTION_POINTERS* e) {
     std::fputs(line, stderr);
     scan_frames(rsp, true);
     std::fflush(stderr);
+    char dump[MAX_PATH * 3];
+    if (write_minidump(e, dump, sizeof(dump))) {
+        std::fprintf(stderr, "[win.apk] crash dump: %s (faulting module %s); attach it to a GitHub issue\n", dump, where);
+        std::fflush(stderr);
+    }
     return EXCEPTION_CONTINUE_SEARCH;
 }
 
 void on_abort(int) {
-    std::fputs("[win.apk] host abort(): the runtime's own code or a host library called abort\n", stderr);
+    std::fputs("[win.apk] abort(): the lines above say who called it (guest code through the shim, or the host)\n",
+               stderr);
     void* frames[32];
     const USHORT n = RtlCaptureStackBackTrace(0, 32, frames, nullptr);
+    char top[512] = "?";
     for (USHORT i = 0; i < n; ++i) {
         char where[512];
-        if (describe(frames[i], where, sizeof(where))) std::fprintf(stderr, "[win.apk]   #%u %s\n", i, where);
+        if (describe(frames[i], where, sizeof(where))) {
+            std::fprintf(stderr, "[win.apk]   #%u %s\n", i, where);
+            if (top[0] == '?') std::snprintf(top, sizeof top, "%s", where);
+        }
     }
     std::fflush(stderr);
+    char dump[MAX_PATH * 3];
+    if (write_minidump(nullptr, dump, sizeof(dump))) {
+        std::fprintf(stderr, "[win.apk] crash dump: %s (abort from %s); attach it to a GitHub issue\n", dump, top);
+        std::fflush(stderr);
+    }
     signal(SIGABRT, SIG_DFL);
     raise(SIGABRT);
 }
@@ -198,10 +287,27 @@ void on_terminate() {
 void install_crash_report() {
     static std::once_flag once;
     std::call_once(once, [] {
-        AddVectoredExceptionHandler(0, report_fault);  // 0: after every handler added before it
+        // The guest's signal handlers first (the shim's vectored handler),
+        // then the report: 0 appends, so order of installation is order of
+        // dispatch, and a fault a guest handler recovers from is never
+        // reported.
+        winapk::guest_signals_install();
+        AddVectoredExceptionHandler(0, report_fault);
         signal(SIGABRT, on_abort);
         std::set_terminate(on_terminate);
     });
+}
+
+void set_crash_dump_location(const std::filesystem::path& dir, const std::wstring& app) {
+    g_dump_dir = dir.wstring();
+    g_dump_app = app;
+    for (wchar_t& c : g_dump_app) {
+        if (std::wcschr(L"\\/:*?\"<>|", c)) c = L'_';
+    }
+    if (!g_write_dump) {
+        if (HMODULE dbghelp = LoadLibraryW(L"dbghelp.dll"))
+            g_write_dump = reinterpret_cast<WriteDump>(GetProcAddress(dbghelp, "MiniDumpWriteDump"));
+    }
 }
 
 }  // namespace winapk::host

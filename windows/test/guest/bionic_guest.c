@@ -883,12 +883,14 @@ static void test_misc(void) {
     check("sysconf(_SC_PAGESIZE)", sysconf(0x27) == 4096, 0);
 }
 
-// Signals are never delivered on Windows, but what the calls set must read
-// back (crash reporters chain to the handler they replace), and libgen,
-// fnmatch and mkstemp. See src/bionic/signal.cpp.
-struct guest_sigaction {
-    void (*handler)(int);
-    unsigned long flags, restorer, mask;  // 32 bytes, as on LP64 bionic
+// What the signal calls set must read back (crash reporters chain to the
+// handler they replace), and libgen, fnmatch and mkstemp. Delivery is
+// test_signal_delivery below. See src/bionic/signal.cpp.
+struct guest_sigaction {  // Bionic LP64: sa_flags first (bits/signal_types.h)
+    int flags, pad;
+    void* handler;
+    unsigned long mask;
+    void* restorer;
 };
 struct guest_stack {
     void* sp;
@@ -914,20 +916,22 @@ static void test_signals_and_paths(const char* dir) {
           sigemptyset(&set) == 0 && sigaddset(&set, 11) == 0 && sigismember(&set, 11) == 1 &&
               sigismember(&set, 6) == 0 && set == (1UL << 10),
           0);
-    struct guest_sigaction act = {on_signal, 0x08000000, 0, 0}, old;
+    struct guest_sigaction act = {0x08000000, 0, (void*)on_signal, 0, 0}, old;
     memset(&old, 0x55, sizeof old);
     int first = sigaction(11, &act, &old);
     check("sigaction reports SIG_DFL first, all of it zeroed", first == 0 && old.handler == 0 && old.flags == 0, 0);
     struct guest_sigaction back;
     check("sigaction reports the handler set before",
-          sigaction(11, 0, &back) == 0 && back.handler == on_signal && back.flags == 0x08000000, 0);
+          sigaction(11, 0, &back) == 0 && back.handler == (void*)on_signal && back.flags == 0x08000000, 0);
+    sigaction(11, &old, 0);  // back to SIG_DFL: a real fault must reach the crash path, not on_signal
     struct guest_stack ss;
     memset(&ss, 0x55, sizeof ss);
     check("sigaltstack reports SS_DISABLE before one is set", sigaltstack(0, &ss) == 0 && ss.flags == 2, 0);
     unsigned long block = 1UL << 1, was = 99;
     sigprocmask(0, &block, 0);  // SIG_BLOCK
     check("sigprocmask keeps the thread's mask", sigprocmask(2, 0, &was) == 0 && was == block, 0);
-    sigprocmask(2, &set, 0);
+    unsigned long none = 0;
+    sigprocmask(2, &none, 0);  // SIG_SETMASK: a blocked SIGSEGV would turn a later fault into a crash
     void* timer = 0;
     check("timer_create gives an id", timer_create(1, 0, &timer) == 0 && timer != 0, 0);
     check("dirname", strcmp(dirname("/data/app/lib.so"), "/data/app") == 0 && strcmp(dirname("lib.so"), ".") == 0 &&
@@ -940,6 +944,230 @@ static void test_signals_and_paths(const char* dir) {
     const int fd = mkstemp(path);
     check("mkstemp creates a new file", fd >= 0 && strcmp(path + strlen(path) - 6, "XXXXXX") != 0, path);
     if (fd >= 0) close(fd);
+}
+
+// ---- signal delivery ---------------------------------------------------------------
+// Faults reach the handler sigaction installed, with Linux's siginfo_t and
+// ucontext_t, on the alternate stack when asked, and what the handler leaves
+// in the ucontext is what the thread resumes with (Mono and Dart redirect
+// rip; a guard-page scheme fixes the mapping and returns). raise(), kill()
+// and pthread_kill deliver to the calling thread at once and to another
+// thread by injection; sa_mask, SA_NODEFER, SA_RESETHAND and a blocked
+// signal's pending delivery behave as on Linux.
+int raise(int);
+int kill(int, int);
+int getpid(void);
+int sched_yield(void);
+int pthread_kill(pthread_t, int);
+int sigsetjmp(long*, int);
+void siglongjmp(long*, int);
+void abort(void);
+void (*signal(int, void (*)(int)))(int);
+
+typedef struct {  // siginfo_t: the union is 8-aligned, at +16
+    int signo, err, code, pad;
+    union {
+        struct {
+            int pid;
+            unsigned uid;
+        } kill;
+        void* addr;
+    } u;
+    char fill[104];
+} guest_siginfo;
+typedef struct {  // ucontext_t, x86_64: gregs at +40, REG_RSP 15, REG_RIP 16
+    unsigned long flags;
+    void* link;
+    struct guest_stack stack;
+    unsigned long gregs[23];
+    void* fpregs;
+    unsigned long reserved1[8];
+    unsigned long sigmask;
+    char padding[120];
+    char fpregs_mem[512];
+} guest_ucontext;
+#define REG_RSP 15
+#define REG_RIP 16
+#define SA_SIGINFO 4
+#define SA_ONSTACK 0x08000000
+#define SA_NODEFER 0x40000000
+#define SA_RESETHAND 0x80000000
+
+static volatile int g_sig_seen, g_sig_code, g_sig_pid, g_sig_uc_ok, g_alt_flags, g_alt_ucflags;
+static void* g_sig_addr;
+static void* g_alt_local;
+static void* g_alt_ucsp;
+static unsigned long g_sig_mask_inside;
+
+static void on_info(int sig, guest_siginfo* info, void* ucp) {
+    guest_ucontext* uc = ucp;
+    int local;
+    struct guest_stack q;
+    g_sig_seen = sig;
+    g_sig_code = info->code;
+    g_sig_pid = info->u.kill.pid;
+    g_sig_uc_ok = uc && uc->gregs[REG_RIP] != 0 && uc->gregs[REG_RSP] != 0;
+    sigprocmask(0, 0, &g_sig_mask_inside);
+    g_alt_local = &local;
+    sigaltstack(0, &q);
+    g_alt_flags = q.flags;
+    g_alt_ucsp = uc->stack.sp;
+    g_alt_ucflags = uc->stack.flags;
+}
+static void on_plain(int sig) { g_sig_seen = sig; }
+
+// A leaf with its return address at [rsp] (no frame, no stack protector): a
+// handler that redirects rip to recovered_leaf makes it return 77 instead.
+__attribute__((noinline, no_stack_protector)) static int recovered_leaf(void) { return 77; }
+__attribute__((noinline, no_stack_protector)) static int bad_leaf(void) { return *(volatile int*)16; }
+static volatile int g_segv_count;
+static void on_segv_redirect(int sig, guest_siginfo* info, void* ucp) {
+    guest_ucontext* uc = ucp;
+    (void)sig;
+    ++g_segv_count;
+    g_sig_code = info->code;
+    g_sig_addr = info->u.addr;
+    uc->gregs[REG_RIP] = (unsigned long)&recovered_leaf;
+}
+
+static void* g_fix_page;
+static void on_segv_fix(int sig, guest_siginfo* info, void* uc) {
+    (void)sig;
+    (void)uc;
+    ++g_segv_count;
+    g_sig_code = info->code;
+    if (info->u.addr == g_fix_page) mprotect(g_fix_page, 4096, 3);  // PROT_READ | PROT_WRITE
+}
+
+static volatile int g_worker_go, g_worker_hit, g_worker_tid, g_handler_tid;
+static void on_usr1_thread(int sig) {
+    (void)sig;
+    g_handler_tid = gettid();
+    g_worker_hit = 1;
+}
+static void* signal_worker(void* arg) {
+    (void)arg;
+    g_worker_tid = gettid();
+    g_worker_go = 1;
+    for (int i = 0; i < 20000000 && !g_worker_hit; ++i) sched_yield();
+    return 0;
+}
+
+static long g_jmp[11];  // sigjmp_buf
+static void on_abrt(int sig) {
+    (void)sig;
+    siglongjmp(g_jmp, 1);
+}
+
+static void test_signal_delivery(void) {
+    unsigned long none = 0, mask = 99;
+    struct guest_sigaction sa = {SA_SIGINFO, 0, (void*)on_segv_redirect, 0, 0}, back;
+    sigprocmask(2, &none, 0);
+    sigaction(11, &sa, 0);
+    g_segv_count = 0;
+    int r = bad_leaf();
+    check("a SIGSEGV handler sees si_addr and si_code and redirects rip", r == 77 && g_segv_count == 1 &&
+                                                                              g_sig_addr == (void*)16 && g_sig_code == 1, 0);
+    g_fix_page = mmap(0, 4096, 0, 0x22, -1, 0);  // PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS
+    sa.handler = (void*)on_segv_fix;
+    sigaction(11, &sa, 0);
+    g_segv_count = 0;
+    int v = g_fix_page != (void*)-1 ? *(volatile int*)g_fix_page : -1;
+    check("a SIGSEGV handler that fixes the mapping returns to the retried load", v == 0 && g_segv_count == 1 &&
+                                                                                      (g_sig_code == 1 || g_sig_code == 2), 0);
+    if (g_fix_page != (void*)-1) munmap(g_fix_page, 4096);
+    struct guest_sigaction dfl = {0, 0, 0, 0, 0};
+    sigaction(11, &dfl, 0);
+
+    sa.handler = (void*)on_info;
+    sa.mask = 1UL << 11;  // SIGUSR2 in sa_mask
+    sigaction(10, &sa, 0);
+    g_sig_seen = 0;
+    raise(10);
+    check("raise(SIGUSR1) runs the handler before returning, with siginfo and ucontext",
+          g_sig_seen == 10 && g_sig_code == -6 && g_sig_pid == getpid() && g_sig_uc_ok, 0);
+    check("the handler runs with the signal and sa_mask blocked",
+          (g_sig_mask_inside & (1UL << 9)) && (g_sig_mask_inside & (1UL << 11)), 0);
+    sigprocmask(0, 0, &mask);
+    check("the mask is restored after the handler", mask == 0, 0);
+    sa.flags = SA_SIGINFO | SA_NODEFER;
+    sa.mask = 0;
+    sigaction(10, &sa, 0);
+    raise(10);
+    check("SA_NODEFER leaves the signal unblocked in the handler", !(g_sig_mask_inside & (1UL << 9)), 0);
+    sa.flags = SA_SIGINFO | SA_RESETHAND;
+    sigaction(10, &sa, 0);
+    g_sig_seen = 0;
+    raise(10);
+    check("SA_RESETHAND: one delivery, then SIG_DFL",
+          g_sig_seen == 10 && sigaction(10, 0, &back) == 0 && back.handler == 0, 0);
+
+    sa.flags = SA_SIGINFO;
+    sigaction(10, &sa, 0);
+    unsigned long usr1 = 1UL << 9;
+    sigprocmask(0, &usr1, 0);  // SIG_BLOCK
+    g_sig_seen = 0;
+    raise(10);
+    int held = g_sig_seen == 0;
+    sigprocmask(1, &usr1, 0);  // SIG_UNBLOCK
+    check("a blocked signal stays pending until sigprocmask unblocks it", held && g_sig_seen == 10, 0);
+
+    signal(12, on_plain);
+    check("signal() installs SA_RESTART | SA_ONSTACK", sigaction(12, 0, &back) == 0 && back.handler == (void*)on_plain &&
+                                                           back.flags == 0x18000000, 0);
+    g_sig_seen = 0;
+    kill(getpid(), 12);
+    check("kill(getpid(), SIGUSR2) runs the handler", g_sig_seen == 12, 0);
+
+    char* alt = malloc(65536);
+    struct guest_stack ss = {alt, 0, 65536}, off = {0, 2, 0};
+    sa.flags = SA_SIGINFO | SA_ONSTACK;
+    sigaction(10, &sa, 0);
+    check("sigaltstack accepts a 64 KiB stack", sigaltstack(&ss, 0) == 0, 0);
+    g_alt_local = 0;
+    raise(10);
+    check("SA_ONSTACK runs the handler on the alternate stack, SS_ONSTACK while there",
+          (char*)g_alt_local >= alt && (char*)g_alt_local < alt + 65536 && g_alt_flags == 1 && g_alt_ucsp == alt &&
+              g_alt_ucflags == 0,
+          0);
+    sigaltstack(&off, 0);
+    sa.flags = SA_SIGINFO;
+    sigaction(10, &sa, 0);
+    raise(10);
+    check("without SA_ONSTACK the handler runs on the thread's stack",
+          !((char*)g_alt_local >= alt && (char*)g_alt_local < alt + 65536) && g_alt_flags == 2, 0);
+    free(alt);
+
+    pthread_t w;
+    g_worker_go = g_worker_hit = 0;
+    pthread_create(&w, 0, signal_worker, 0);
+    while (!g_worker_go) sched_yield();
+    signal(10, on_usr1_thread);
+    int rc = pthread_kill(w, 10);
+    pthread_join(w, 0);
+    char detail[96];
+    snprintf(detail, sizeof detail, "rc %d, hit %d, handler on %d, worker %d", rc, g_worker_hit, g_handler_tid,
+             g_worker_tid);
+    check("pthread_kill delivers SIGUSR1 on the target thread, by injection",
+          rc == 0 && g_worker_hit && g_handler_tid == g_worker_tid, detail);
+
+    signal(6, on_abrt);
+    int reached = 0;
+    if (sigsetjmp(g_jmp, 1) == 0) {
+        abort();
+    } else {
+        reached = 1;
+    }
+    sigprocmask(0, 0, &mask);
+    check("abort() reaches the SIGABRT handler, which siglongjmps out; sigsetjmp(1) restored the mask",
+          reached && mask == 0, 0);
+    signal(6, 0);
+    sigaction(10, &sa, 0);
+    g_sig_seen = 0;
+    raise(10);
+    check("delivery works again after the longjmp", g_sig_seen == 10, 0);
+    sigaction(10, &dfl, 0);
+    sigaction(12, &dfl, 0);
 }
 
 // ---- *at() calls and Android's CA store ----------------------------------------
@@ -1020,5 +1248,6 @@ EXPORT int bionic_test(const char* dir) {
     test_rand48_statfs_getopt(dir);
     test_misc();
     test_signals_and_paths(dir);
+    test_signal_delivery();
     return failures;
 }

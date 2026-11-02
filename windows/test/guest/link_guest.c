@@ -4,7 +4,7 @@
 //   WINAPK_LINK_ROOT    libwinapk_link_root.so    needs mid, libc.so, libdl.so
 //   WINAPK_LINK_MID     libwinapk_link_mid.so     needs base, liblog.so
 //   WINAPK_LINK_BASE    libwinapk_link_base.so    needs mid (a DT_NEEDED cycle)
-//   WINAPK_LINK_PLUGIN  libwinapk_link_plugin.so  no dependencies; dlopen'ed by root
+//   WINAPK_LINK_PLUGIN  libwinapk_link_plugin.so  no dependencies; dlopen'ed and dlclose'd by root
 //
 // build_guest.sh links them against stub system libraries so the DT_NEEDED
 // entries look like an NDK build's. The cycle is real: base is linked against
@@ -65,6 +65,7 @@ char* dlerror(void);
 int dladdr(const void*, Dl_info*);
 
 #define RTLD_NOW 2
+#define RTLD_NOLOAD 4
 #define RTLD_DEFAULT ((void*)0)
 
 int link_mid_seen(void);
@@ -118,8 +119,65 @@ EXPORT int link_root_rtld_default(void) {
     return 1;
 }
 
+// dlclose unloads: the plugin's destructor and its __cxa_atexit entry run
+// (sink: +1 and +10), RTLD_NOLOAD no longer finds it, and the next dlopen
+// starts it afresh (its data back to the constructor's value, a new TLS
+// block). 1 on success, else the step that failed.
+EXPORT int link_root_dlclose_cycle(void) {
+    void* h = dlopen("libwinapk_link_plugin.so", RTLD_NOW);
+    if (!h) return -1;
+    int sink = 0;
+    void (*set_sink)(int*) = (void (*)(int*))dlsym(h, "link_plugin_set_fini_sink");
+    void (*poke)(void) = (void (*)(void))dlsym(h, "link_plugin_poke");
+    int (*bump)(void) = (int (*)(void))dlsym(h, "link_plugin_tls_bump");
+    int (*peek)(void) = (int (*)(void))dlsym(h, "link_plugin_peek");
+    if (!set_sink || !poke || !bump || !peek) return -2;
+    set_sink(&sink);
+    poke();
+    if (bump() != 4 || bump() != 5) return -3;
+    if (dlclose(h) != 0) return -4;
+    if (sink != 11) return -5;
+    if (dlopen("libwinapk_link_plugin.so", RTLD_NOLOAD)) return -6;
+    h = dlopen("libwinapk_link_plugin.so", RTLD_NOW);
+    if (!h) return -7;
+    peek = (int (*)(void))dlsym(h, "link_plugin_peek");
+    bump = (int (*)(void))dlsym(h, "link_plugin_tls_bump");
+    if (!peek || !bump) return -8;
+    if (peek() != 0) return -9;
+    if (bump() != 4) return -10;
+    dlclose(h);
+    return 1;
+}
+
 #elif defined(WINAPK_LINK_PLUGIN)
 
+int __cxa_atexit(void (*)(void*), void*, void*);
+int __cxa_thread_atexit_impl(void (*)(void*), void*, void*);
+
+// Any address inside the image stands for __dso_handle (there is no crtbegin
+// in a -nostdlib build).
+static char g_dso_anchor;
+static int g_poked;
+static int* g_fini_sink;
+static __thread int t_plugin = 3;
+
+__attribute__((constructor)) static void plugin_init(void) { g_poked = (int)strlen(""); }
+__attribute__((destructor)) static void plugin_fini(void) {
+    if (g_fini_sink) *g_fini_sink += 1;
+}
+static void atexit_entry(void* p) { *(int*)p += 10; }
+static void thread_dtor(void* p) { *(int*)p += 100; }
+
 EXPORT int link_plugin_square(int v) { return v * v; }
+EXPORT void link_plugin_set_fini_sink(int* sink) {
+    g_fini_sink = sink;
+    __cxa_atexit(atexit_entry, sink, &g_dso_anchor);
+}
+EXPORT void link_plugin_poke(void) { g_poked = 5; }
+EXPORT int link_plugin_peek(void) { return g_poked; }
+EXPORT int link_plugin_tls_bump(void) { return ++t_plugin; }
+// A C++ thread_local destructor for the calling thread, which keeps the
+// plugin loaded until that thread exits.
+EXPORT void link_plugin_register_thread_dtor(int* sink) { __cxa_thread_atexit_impl(thread_dtor, sink, &g_dso_anchor); }
 
 #endif

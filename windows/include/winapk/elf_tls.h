@@ -10,8 +10,15 @@
 // thread's block for a module is allocated on its first access, from the
 // module's initialization image (.tdata, then zeroed .tbss), and freed when
 // the thread exits (an FLS callback, so it also covers threads the guest did
-// not create through pthread_create). Module ids are never reused: a block of
-// an unloaded module is simply not handed out again.
+// not create through pthread_create) or when the module is unregistered
+// (dlclose): every thread's block for it is freed then, so a module id can be
+// handed out again once its library is gone.
+//
+// C++ thread_local destructors (Bionic's __cxa_thread_atexit_impl) are kept
+// here too, next to the blocks their objects live in: a thread runs them,
+// newest first, before its blocks are freed. Each registration tells the
+// linker (tls_set_dso_hooks) which library it belongs to, so that library is
+// not unmapped while a thread still has one of its destructors to run.
 //
 // Not supported: the static (initial-exec and local-exec) models, which read
 // %fs:0 directly and need R_X86_64_TPOFF64. Bionic only allows those in the
@@ -33,13 +40,27 @@ struct TlsIndex {
 };
 
 // Registers a module's TLS template. `image` must stay valid (and hold the
-// relocated .tdata) for as long as the module is loaded. Returns its id (>= 1).
+// relocated .tdata) for as long as the module is loaded. Returns its id
+// (>= 1), or 0 when every id is in use.
 size_t tls_register_module(const void* image, size_t filesz, size_t memsz, size_t align);
-// Stops handing out blocks for `id`. Blocks threads already hold are freed
-// when those threads exit.
+// Frees every thread's block for `id` and makes the id available again. A
+// thread still running the module's code is the app's bug, as on Android.
 void tls_unregister_module(size_t id);
 
 // The guest's `__tls_get_addr`.
 WINAPK_GUEST_ABI void* tls_get_addr(const TlsIndex* index);
+
+// __cxa_thread_atexit_impl: `fn` (System V, one argument) runs with `obj` when
+// the calling thread exits; `dso` is an address inside the library the
+// destructor belongs to (its __dso_handle).
+void tls_thread_atexit(void* fn, void* obj, void* dso);
+// Runs the calling thread's registered destructors now (pthread_exit does
+// this before the key destructors; the FLS callback catches the rest).
+void tls_run_thread_dtors();
+// Told of every registration and of every destructor that has run, with the
+// `dso` it was registered with. The linker keeps the library loaded between
+// the two. Either may be null.
+using TlsDsoHook = void (*)(const void* dso);
+void tls_set_dso_hooks(TlsDsoHook added, TlsDsoHook removed);
 
 }  // namespace winapk

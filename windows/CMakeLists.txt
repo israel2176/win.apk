@@ -113,6 +113,13 @@ target_link_libraries(winapk-linker-test PRIVATE winapk_loader)
 add_executable(winapk-bionic-test test/bionic_test.cpp)
 target_link_libraries(winapk-bionic-test PRIVATE winapk_loader)
 
+# The runtime's crash path (host/crash_report.cpp: guest handlers first, then
+# the report and a minidump), test/crash_report_test.cpp. dbghelp is loaded
+# at run time.
+add_executable(winapk-crash-test test/crash_report_test.cpp host/crash_report.cpp)
+target_include_directories(winapk-crash-test PRIVATE host)
+target_link_libraries(winapk-crash-test PRIVATE winapk_loader)
+
 # The arm64 interpreter and bridge: test/arm64_test.cpp runs
 # test/guest/arm64_isa.c both as arm64 guest code and natively and compares.
 add_executable(winapk-arm64-test test/arm64_test.cpp)
@@ -131,6 +138,7 @@ if(MINGW)
   target_link_options(winapk-thunk-test PRIVATE -static)
   target_link_options(winapk-linker-test PRIVATE -static)
   target_link_options(winapk-bionic-test PRIVATE -static)
+  target_link_options(winapk-crash-test PRIVATE -static -municode)
   target_link_options(winapk-arm64-test PRIVATE -static)
   target_link_options(winapk-aot PRIVATE -static)
 endif()

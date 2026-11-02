@@ -72,6 +72,15 @@ void JNICALL on_native_method_bind(jvmtiEnv* jvmti, JNIEnv*, jthread, jmethodID 
 
 }  // namespace
 
+void guest_native_thunks_forget(const void* base, size_t size) {
+    const auto lo = reinterpret_cast<uintptr_t>(base);
+    std::lock_guard<std::mutex> hold(g_thunk_lock);
+    for (auto it = g_thunks.begin(); it != g_thunks.end();) {
+        const auto fn = reinterpret_cast<uintptr_t>(it->first.first);
+        it = (fn >= lo && fn - lo < size) ? g_thunks.erase(it) : std::next(it);
+    }
+}
+
 bool jni_arg_kinds(const char* sig, std::vector<ArgKind>* out) {
     out->assign({ArgKind::Word, ArgKind::Word});
     if (!sig || *sig != '(') return false;

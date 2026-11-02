@@ -521,10 +521,22 @@ WINAPK_GUEST_ABI int g_getpid() { return static_cast<int>(GetCurrentProcessId())
 WINAPK_GUEST_ABI int g_getppid() { return 1; }
 // An app's uid: AID_APP_START (10000) and up; the same for every id here.
 WINAPK_GUEST_ABI uint32_t g_getuid() { return 10100; }
+// kill(getpid()) and the process-group forms land on the calling thread, as
+// a process-directed signal lands on whichever thread does not block it.
+// Other processes are not the app's to signal here.
 WINAPK_GUEST_ABI int g_kill(int pid, int sig) {
-    if (pid == g_getpid() && (sig == 9 || sig == 15)) TerminateProcess(GetCurrentProcess(), 128 + sig);
+    if (pid != g_getpid() && pid != 0 && pid != -1) return *guest_errno() = kESRCH, -1;
+    const int err = signal_send(0, sig);
+    if (err) return *guest_errno() = err, -1;
     return 0;
 }
+WINAPK_GUEST_ABI int g_tgkill(int tgid, int tid, int sig) {
+    if (tgid != g_getpid() && tgid != -1) return *guest_errno() = kESRCH, -1;
+    const int err = signal_send(static_cast<uint32_t>(tid), sig);
+    if (err) return *guest_errno() = err, -1;
+    return 0;
+}
+WINAPK_GUEST_ABI int g_tkill(int tid, int sig) { return g_tgkill(-1, tid, sig); }
 
 struct GuestRlimit {
     uint64_t cur, max;
@@ -647,6 +659,8 @@ WINAPK_GUEST_ABI int64_t g_syscall(int64_t nr, int64_t a, int64_t b, int64_t c, 
                                      reinterpret_cast<const GuestTimespec*>(d));
         case 186: return static_cast<int64_t>(GetCurrentThreadId());  // gettid
         case 39: return g_getpid();
+        case 200: return g_tkill(static_cast<int>(a), static_cast<int>(b));
+        case 234: return g_tgkill(static_cast<int>(a), static_cast<int>(b), static_cast<int>(c));
         case 24: SwitchToThread(); return 0;  // sched_yield
         case 318: return g_getrandom(reinterpret_cast<void*>(a), static_cast<size_t>(b), 0);
         case 228: return g_clock_gettime(static_cast<int>(a), reinterpret_cast<GuestTimespec*>(b));
@@ -1028,6 +1042,8 @@ const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("getgid", g_getuid),
     WINAPK_SHIM("getegid", g_getuid),
     WINAPK_SHIM("kill", g_kill),
+    WINAPK_SHIM("tgkill", g_tgkill),
+    WINAPK_SHIM("tkill", g_tkill),
     WINAPK_SHIM("getrlimit", g_getrlimit),
     WINAPK_SHIM("getrlimit64", g_getrlimit),
     WINAPK_SHIM("setrlimit", g_setrlimit),

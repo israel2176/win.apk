@@ -93,6 +93,10 @@ public:
               const TlsSymbolResolver& resolve_tls = {});
     // initialize: step 5. Runs once; does nothing before link() succeeded.
     void initialize();
+    // DT_FINI_ARRAY (last entry first) and DT_FINI, once, if initialize() ran:
+    // what dlclose does before unmapping. The destructor runs them too if
+    // nobody did.
+    void finalize();
     bool linked() const { return linked_; }
     bool initialized() const { return initialized_; }
 

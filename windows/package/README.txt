@@ -115,6 +115,7 @@ Installed apps:  %LOCALAPPDATA%\Win.apk\library
 App data:        %LOCALAPPDATA%\Win.apk\android
 Logs:            %LOCALAPPDATA%\Win.apk\logs  (last-run.log is the app
                  opened last, install-<app>.log is an install)
+Crash dumps:     %LOCALAPPDATA%\Win.apk\logs\crash-<app>-<date>.dmp (the last three per app)
 Settings:        HKEY_CURRENT_USER\Software\Win.apk
 
 Removing an app from the library keeps what it saved; uninstalling Win.apk
@@ -133,6 +134,8 @@ detail. These lines in the log are the most useful:
   "not implemented on Windows yet"    a system function an app's native code needs
   "cannot load <library>"             a native library did not load
   "Exception" or "FATAL"              the app crashed
+  "crash:" and "crash dump:"          the app's native code crashed; the dump
+                                      named there is worth attaching too
 
 Apps run with your Windows user account's rights, without a phone-style
 sandbox: install only apps you trust.

@@ -375,6 +375,7 @@ folder (`%LOCALAPPDATA%\Win.apk\logs`).
 | `gms.log` | The Google account operations run from the settings |
 | `install-helper.log`, `package-backfill.log` | Installs an app itself asked for (F-Droid installing another app), and library maintenance |
 | `hs_err_pid<n>.log` | A crash report from the Java VM, if the VM itself crashed |
+| `crash-<app>-<date>.dmp` | A minidump of the app's process when its native code crashed (the last three per app); attach it to an issue with the log |
 
 ## Removing apps and uninstalling
 
@@ -464,6 +465,7 @@ the end of `last-run.log`. The most useful lines:
 | `not implemented on Windows yet` (about a system function) | A C library function the app's native code needs that the Bionic shim does not have yet |
 | `[win.apk] cannot load <library>` or `UnsatisfiedLinkError` | A native library did not load: 32-bit ARM only, packed or encrypted, or for another CPU |
 | `Exception` or `FATAL` | The app crashed; the lines after it say where |
+| `[win.apk] crash:` and `crash dump:` | The app's native code crashed: the library and offset, and the minidump written for it, which is worth attaching too |
 | `[win.apk]` | A message from Win.apk itself |
 
 Then look in [`APPS.md`](APPS.md) for the app or the kind of problem, and
@@ -483,8 +485,11 @@ to `bin` in Win.apk's folder.
 **No sound from a native game.** Games whose engine plays audio through
 OpenSL ES get no sound yet; AAudio works.
 
-**Video does not play.** Video playback is not implemented yet. Audio from
-MediaPlayer plays.
+**Video does not play.** `MediaPlayer`, `VideoView` and ExoPlayer play what
+Windows decodes: H.264 with AAC always; HEVC, VP9 and AV1 only with
+Microsoft's codec packs from the Store. A stream whose audio is Opus, Vorbis
+or FLAC plays without sound in an ExoPlayer app (pick one with AAC), and
+video from an app's native code (the NDK's `AMediaCodec`) is not there yet.
 
 **Windows Defender or SmartScreen warns.** Preview builds are not
 code-signed, and Win.apk writes and then runs translated code, which some
