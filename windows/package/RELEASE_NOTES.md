@@ -12,7 +12,8 @@ A pre-release for testing: Win.apk runs Android apps on Windows 10/11 x64.
 - **In Hebrew or English:** Setup and the library follow the Windows display language; Hebrew is laid out right to left.
 - **OpenGL ES:** works from Java (`GLSurfaceView`, libGDX) and from an app's native code through a SurfaceView (SDL games). It runs on ANGLE (Direct3D 11), falling back to WARP or SwiftShader without a GPU.
 - **Native libraries:** apps that ship `lib/x86_64` libraries load them natively. Apps that only ship `lib/arm64-v8a` libraries are supported: their ARM code is translated to x64 in the background (`winapk-aot`, compiled with clang for your CPU, in parallel) and runs at close to native speed. Apps open at once on an ARM JIT and switch to the translated code as it becomes ready; large libraries are translated only where the app's code ran. Installs use the ABIs `x86_64,arm64-v8a`.
-- **Sound:** AudioTrack, SoundPool and MediaPlayer audio from Java (WAV, Ogg, MP3, AAC and whatever Windows decodes), and OpenSL ES and AAudio from native code. Video playback is not there yet.
+- **Sound:** AudioTrack, SoundPool and MediaPlayer audio from Java (WAV, Ogg, MP3, AAC and whatever Windows decodes), and OpenSL ES and AAudio from native code.
+- **Video:** `MediaPlayer` and `VideoView` play MP4, MOV and other files Windows decodes (H.264 and AAC always; HEVC, VP9 and AV1 with the Microsoft codec packs from the Store), from a file or an http(s) URL, into the app's `SurfaceView` or `TextureView`, with the sound in step, pause, seeking and looping, and the aspect ratio and scaling mode the app asks for. ExoPlayer, media3 and other `MediaCodec` players decode H.264 video (HEVC, VP9, VP8 and AV1 when installed) and AAC or MP3 audio the same way. All of it on Media Foundation, so it needs the Windows "Media Feature Pack" on N editions.
 - **Games in native code:** `NativeActivity` apps (android_native_app_glue, and engines built on it) get their window, input queue and configuration as on Android.
 - **Web content:** WebView on WebView2 (Microsoft Edge), with `shouldInterceptRequest` for Cordova and Capacitor apps.
 - **Location:** `LocationManager` on Windows' own location service, behind Windows' privacy settings.
@@ -26,6 +27,7 @@ In the automated sweep of open-source apps, 36 of 38 draw their first screen.
 
 ## Not yet
 - Native code for 32-bit ARM only (`armeabi-v7a`).
+- Video from an app's native code (the NDK's `AMediaCodec` and `AMediaExtractor`), and Opus, Vorbis or FLAC audio tracks through `MediaCodec` (an ExoPlayer app that picks such a track stays silent: choose one with AAC audio). `MediaExtractor` reports no tracks.
 - Vulkan.
 - Play Store features: in-app purchases, Play Integrity, and the Maps SDK's map.
 

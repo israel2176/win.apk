@@ -39,7 +39,7 @@ fall into three groups:
 | `include/winapk/linker.h`, `src/linker.cpp` | The guest linker: loads a library with its `DT_NEEDED` tree (bionic's lookup order, system libraries answered by the shim), keeps the registry of loaded images, and implements the guest's `dlopen`, `dlsym`, `dladdr`, `dlerror` and `dlclose`. `test/linker_test.cpp` (`winapk-linker-test`) checks it against `test/guest/link_guest.c` |
 | `include/winapk/jni_bind.h`, `src/jni_bind.cpp` | Binding guest natives into HotSpot: the guest `RegisterNatives` slot wraps each function in a thunk, and a JVMTI `NativeMethodBind` hook does the same for natives bound by name. Also the cached JVMTI signature provider |
 | `include/winapk/arm64_cpu.h`, `src/arm64/` | The arm64 track (M10): an AArch64 interpreter (`arm64_cpu.cpp` for integer, memory and branches, `arm64_simd.cpp` for FP and NEON) and its bridge to the host (`arm64_guest.cpp`, `include/winapk/arm64_guest.h`): AAPCS64 to System V calls into the shim, `va_list` conversion, host calls into guest code through an execute-fault handler, per-thread guest stacks and TLS. `ElfImage` loads arm64 libraries with it. `test/arm64_test.cpp` (`winapk-arm64-test`) checks the interpreter against the same C code built for the host, and the bridge against `test/guest/arm64_bridge_guest.c` |
-| `host/` | `winapk-runtime.exe`, the host that runs an APK: DEX conversion, the in-process JVM, the host natives (window and input, `NativeOs`, `NativeLooper`, `NativeImageCodec` with libwebp and WIC, `NativeAudio` on WASAPI; the rest are still stubs), app native libraries (`guest_libs.cpp`), and `Boot.run`. `test/audio_test.cpp` (`winapk-audio-test`) checks the audio backend |
+| `host/` | `winapk-runtime.exe`, the host that runs an APK: DEX conversion, the in-process JVM, the host natives (window and input, `NativeOs`, `NativeLooper`, `NativeImageCodec` with libwebp and WIC, `NativeAudio` on WASAPI, `NativeMedia` and `HostVideo` on Media Foundation (`video_decode.cpp`: the decoders and the source reader, `video_player.cpp`: MediaPlayer's player, `native_media_video.cpp`: their JNI); the rest are still stubs), app native libraries (`guest_libs.cpp`), and `Boot.run`. `test/audio_test.cpp` (`winapk-audio-test`) checks the audio backend, `test/video_test.cpp` (`winapk-video-test`) the video one against `test/video/color.mp4` |
 | `scripts/` | `build_java.sh` (upstream's Java runtime with a stock JDK), `build_framework_res.sh` (the platform resource APK) and `stage_runtime.sh` (a runnable `bin/` + `lib/` folder) |
 | `tools/jvmrun_main.cpp` | `winapk-jvm-run`: the real-JVM end-to-end test. Creates a HotSpot JVM, loads an Android x86_64 `.so` through the guest linker, runs its `JNI_OnLoad` (which registers a native itself), binds a second native through the `NativeMethodBind` hook, and calls both from Java; one of them calls back into Java through the guest `JNIEnv`. `test/guest/jni_guest.c` and `test/java/WinApkJniTest.java` are its inputs; `test/build_e2e.sh` builds them and `test/run_e2e_wine.sh` runs it under Wine |
 
@@ -345,7 +345,12 @@ Done so far:
   epoll, `ALooper`, printf and scanf), on the UCRT and Win32.
 - The host: the window and input, `NativeOs`, `NativeLooper`, images (libwebp,
   WIC), audio (WASAPI: AudioTrack, SoundPool, MediaPlayer's audio, OpenSL ES,
-  AAudio, recording; Media Foundation decodes), clipboard, file pickers, game
+  AAudio, recording; Media Foundation decodes), video (Media Foundation:
+  `MediaPlayer`/`VideoView` demuxed, decoded and paced to their sound by
+  `host/video_player.cpp`, shown through the SurfaceView's per-surface layer
+  or the TextureView's SurfaceTexture; `MediaCodec`'s H.264/HEVC/VP9/VP8/AV1
+  and AAC/MP3 decoders on the synchronous decoder MFTs, `host/video_decode.cpp`),
+  clipboard, file pickers, game
   controllers, ICU, SQLite, WebView on WebView2, the camera (Media Foundation
   capture), location (`Windows.Devices.Geolocation`), the radios' state,
   photos and wallpapers, the user's own folders as shared storage, and
@@ -359,8 +364,8 @@ Done so far:
 - Google Play services as upstream provides them: the Google sign-in window
   on WebView2, `winapk-runtime --gms`, the library's Google account setting.
 
-Next, in order: video (MediaPlayer and the NDK media API on Media
-Foundation), Vulkan (`VK_KHR_win32_surface`), sensors, W^X thunks with unwind
+Next, in order: the NDK media API (`AMediaCodec`, `AMediaExtractor`) on the
+same decoders, `MediaExtractor`, Vulkan (`VK_KHR_win32_surface`), sensors, W^X thunks with unwind
 tables and a crash handler (M9), code signing, then a wider compatibility
 corpus. ARM code (M10) is translated ahead of time, with the JIT
 as the fallback; 32-bit `armeabi-v7a` stays unsupported.
@@ -588,6 +593,32 @@ every such change is listed here:
   the same native the policy's branch uses), so a portrait-only app opens
   portrait although the library opens apps landscape. A host without the
   native keeps the old behaviour.
+
+- `runtime/java/com/macapk/loader/HostVideo.java` (new): MediaPlayer's video
+  player on the host (`windows/host/native_media_video.cpp`): a thread pulls
+  each picture when the host says it is due and shows it where the app's
+  Surface points (a SurfaceView's own layer through
+  `SurfaceView.macapkPresentVideoFrame`, new, public; a SurfaceTexture's
+  producer queue; else the window), with `setVideoScalingMode`'s cropping.
+  Also `presentDecodedFrame`, which the host's `NativeMedia.nativeVidRender`
+  calls back to find MediaCodec's registered SurfaceView sink or
+  SurfaceTexture target (the Mac's video plane does the same lookups in
+  native code), and `vpxBuiltIn`: whether libvpx is built in (the Mac) or
+  VP8/VP9 are the host's, listed by `nativeVideoSupportedMimes` when present.
+  `MediaCodec.isVideoMimeSupported` and `MediaCodecList`'s libvpx provider
+  ask it instead of assuming libvpx. On the Mac every native is unbound and
+  nothing changes.
+- `runtime/java/android/media/MediaPlayer.java`: `setDataSource(path)` and a
+  `file:`/`http(s):` Uri keep the path (read at `prepare`, so a video is not
+  slurped into memory and a URL is streamed); `prepare` tries
+  `HostVideo.Player` first and, for a source with a video track, every
+  transport call, `getVideoWidth/Height`, `setDisplay`/`setSurface`,
+  `setVideoScalingMode` and `onVideoSizeChanged` go to it; an audio-only
+  source, or a host without the player, keeps the audio path as it was.
+- `runtime/java/android/widget/VideoView.java`: binds the player to its
+  holder (`setDisplay`), measures to the video's aspect ratio
+  (`onMeasure`), and keeps a `start()`/`seekTo()` made before the player is
+  prepared for `onPrepared`, as AOSP does. Not Windows-specific.
 
 ## License
 

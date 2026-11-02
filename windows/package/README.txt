@@ -20,7 +20,12 @@ What works
   native speed. Without clang, or for code the translation cannot follow,
   an ARM JIT runs it instead, more slowly. Apps are installed with the ABIs
   x86_64 and arm64-v8a, so an app's x86_64 build is used when it has one.
-- Sound from Java through AudioTrack and SoundPool (WAV, Ogg, MP3), saving
+- Sound (AudioTrack, SoundPool, MediaPlayer; OpenSL ES and AAudio from
+  native code) and video: MediaPlayer and VideoView play MP4 and other
+  files Windows decodes (H.264 and AAC always; HEVC, VP9 and AV1 with the
+  Microsoft codec packs from the Store), from a file or a web address, with
+  the sound in step; ExoPlayer and other MediaCodec players decode H.264
+  video and AAC or MP3 audio the same way. Saving
   data (files, SharedPreferences, SQLite), the clipboard, file open/save
   dialogs and game controllers.
 - Google sign-in and the Play services apps use for licences, push
@@ -32,8 +37,9 @@ What does not work yet
 ----------------------
 - Apps that only have 32-bit ARM native libraries (lib/armeabi-v7a).
 - NativeActivity games (pure C/C++ apps without a Java activity).
-- MediaPlayer and sound from native code (OpenSL ES, AAudio), video
-  playback, the camera, WebView (web pages inside apps), location.
+- Video from an app's own native code (the NDK's AMediaCodec), and Opus,
+  Vorbis or FLAC audio tracks played through MediaCodec (ExoPlayer apps
+  stay silent on such a track; choose one with AAC audio).
 - Play Store features: in-app purchases, Play Integrity, Google Maps.
 
 Installing Win.apk

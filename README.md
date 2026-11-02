@@ -222,9 +222,10 @@ most useful lines in a log:
 |---|---|
 | Java/Kotlin apps, in their own window, with mouse, wheel and keyboard | Apps with 32-bit ARM native code only (`lib/armeabi-v7a`) |
 | OpenGL ES from Java (`GLSurfaceView`, libGDX) and from native code (SDL games) | `NativeActivity` games |
-| Apps that ship `lib/x86_64` native libraries | MediaPlayer, OpenSL ES and AAudio |
+| Apps that ship `lib/x86_64` native libraries | Video from an app's native code (the NDK's `AMediaCodec`) |
 | Apps with ARM native code only (`lib/arm64-v8a`), translated to x64 (below) | |
-| Sound from Java (AudioTrack, SoundPool: WAV, Ogg, MP3) | Video, camera, WebView, location |
+| Sound (AudioTrack, SoundPool, MediaPlayer; OpenSL ES and AAudio from native code) | Opus, Vorbis and FLAC audio through `MediaCodec` (ExoPlayer picks such a track and stays silent) |
+| Video: `MediaPlayer` and `VideoView` play MP4 (H.264 + AAC) and whatever Windows decodes, from a file or an http(s) URL; ExoPlayer and other `MediaCodec` players decode H.264 (HEVC, VP9, AV1 with their Microsoft codec packs) and AAC/MP3 | Vulkan |
 | Files, SharedPreferences, SQLite, clipboard, file pickers, game controllers | Google Play services (sign-in, purchases, maps) |
 
 Particular apps, and problems by kind of app, are in
