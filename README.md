@@ -113,7 +113,7 @@ the Google account, logs and troubleshooting.
 | OpenGL ES from Java (`GLSurfaceView`, libGDX) and from native code (SDL games); `NativeActivity` apps | Vulkan |
 | Apps that ship `lib/x86_64` libraries (loaded directly), and apps with only `lib/arm64-v8a` libraries (translated) | Video playback (MediaPlayer video, ExoPlayer, the NDK media API) |
 | Sound: AudioTrack, SoundPool and MediaPlayer audio from Java; AAudio from native code; the microphone | OpenSL ES from native code (engines that use it get no sound) |
-| Files, SharedPreferences, SQLite; shared storage mapped to your Windows folders | Sensors (accelerometer and the like) |
+| Files, SharedPreferences, SQLite; shared storage mapped to your Windows folders | Real sensors: the accelerometer and the others report a still, flat phone |
 | WebView and Custom Tabs on WebView2 | Play Store features: in-app purchases, Play Integrity, the Maps SDK's map |
 | Webcams, location, clipboard, file pickers, game controllers | Notifications: an app may post them, but they are not shown |
 | Permission dialogs for every Android permission group | |

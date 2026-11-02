@@ -84,7 +84,8 @@ What does not work yet
 - Apps that only have 32-bit ARM native libraries (lib/armeabi-v7a).
 - Video playback (MediaPlayer video, ExoPlayer).
 - OpenSL ES from native code: games whose engine uses it get no sound.
-- Vulkan, and sensors such as the accelerometer.
+- Vulkan, and real sensor input: the accelerometer and the others report a
+  phone lying still.
 - Play Store features: in-app purchases, Play Integrity, Google Maps.
 - Notifications: an app may post them, but they are not shown.
 

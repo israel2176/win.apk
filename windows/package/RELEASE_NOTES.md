@@ -27,7 +27,7 @@ The compatibility sweep (`windows/test/compat/`) boots about 90 open-source apps
 - Native code for 32-bit ARM only (`armeabi-v7a`).
 - Video playback (MediaPlayer video, ExoPlayer, the NDK media API).
 - OpenSL ES from native code: engines that use it get no sound.
-- Vulkan, and sensors.
+- Vulkan, and real sensor input (the accelerometer and the others report a phone lying still).
 - Play Store features: in-app purchases, Play Integrity, the Maps SDK's map.
 - Notifications are accepted but not shown.
 

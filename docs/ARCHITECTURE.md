@@ -350,7 +350,7 @@ how CI boots apps.
 | `NativeActivity`, the NDK input queue, `AConfiguration` | A port of upstream's, over the guest linker and the shim's `ALooper` | `native_activity.cpp` |
 | Shared storage | The volume's Download, Pictures, Documents, Music and Movies are junctions to the user's Windows folders | `user_folders.cpp` |
 
-Sensors are not implemented.
+There is no sensor hardware behind `SensorManager`: the framework (upstream's Java) synthesizes a still, flat phone, so the accelerometer reports gravity, the gyroscope zero, and tilt-control apps keep their input instead of finding no sensors.
 
 ### The launcher
 
@@ -514,7 +514,7 @@ Three GitHub Actions workflows, none of which runs on a push to `main`:
 
 ## What is not there
 
-As of this writing: video playback, OpenSL ES, Vulkan, sensors, signal
+As of this writing: video playback, OpenSL ES, Vulkan, real sensor input, signal
 delivery to guest handlers (they are recorded, not run), static ELF TLS,
 `dlclose` unloading, a crash handler with minidumps, W^X thunk pools with
 unwind tables, code signing, 32-bit ARM, notifications shown to the user,
