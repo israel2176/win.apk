@@ -85,6 +85,10 @@ jobs:
         run: ./build/winapk-elfrun.exe guest/libwinapk_poc_guest.so guest/libwinapk_poc_guest_packed.so
       - name: Run the guest linker test
         run: ./build/winapk-linker-test.exe guest/link
+      - name: Run the crash report test (a guest handler declines, a minidump is written)
+        run: |
+          mkdir -p crash-scratch
+          ./build/winapk-crash-test.exe "$(cygpath -w "$PWD/crash-scratch")"
       - name: Translate the arm64 test libraries ahead of time (as the installer does)
         run: |
           for so in guest/arm64/*.so; do

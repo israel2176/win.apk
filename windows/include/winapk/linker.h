@@ -25,10 +25,19 @@
 //     The addresses it returns are raw System V addresses: a guest that calls
 //     another library's JNI_OnLoad itself (Unity's libmain does) gets the real
 //     function.
+//   * dlclose: each dlopen (and each open() by the host, for a library
+//     System.load gave the JVM) is a reference; a C++ thread_local destructor
+//     registered from a library is one too until it has run. When the last
+//     reference goes, the library is unloaded unless it was opened with
+//     RTLD_NODELETE: DT_FINI_ARRAY and DT_FINI run (last initialized first),
+//     its __cxa_atexit entries, the unload hooks (the JNI thunk cache, the
+//     host's tables), its TLS blocks are freed on every thread, and the
+//     dependencies nothing else needs go the same way, as bionic's
+//     soinfo_unload does. A later dlopen maps and initializes it afresh.
+//     Thunks already built for its functions stay in the thunk pool (a bump
+//     allocator; a few dozen bytes each), unreferenced.
 //
 // Not done yet:
-//   * dlclose never unloads. Libraries stay mapped until the process exits,
-//     as if every library were RTLD_NODELETE.
 //   * linker namespaces and android_dlopen_ext's extinfo (loading from an fd
 //     or from inside the APK) are ignored.
 
@@ -40,6 +49,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 namespace winapk {
@@ -69,7 +79,8 @@ public:
     static constexpr int kRtldNoDelete = 0x1000;
 
     // The guest's libdl functions act on the process linker. Constructing a
-    // GuestLinker makes it the process linker; there can be one at a time.
+    // GuestLinker makes it the process linker; there can be one at a time. It
+    // also installs guest signal delivery (mini_bionic.h).
     explicit GuestLinker(LinkerConfig config);
     ~GuestLinker();  // runs finalizers, last-initialized first
 
@@ -92,6 +103,17 @@ public:
     };
     GuestLibrary* open(const std::string& name, int flags, std::string* error,
                        const Placement* placement = nullptr);
+
+    // dlclose semantics: drops one reference to `handle`, unloading the library
+    // (see above) when it was the last. Returns 0, or -1 with `error` set for
+    // a handle open() never returned. The system and main handles are no-ops.
+    int close(void* handle, std::string* error);
+
+    // Called, with the linker's lock held, for every image about to be
+    // unloaded, before its memory goes: whoever caches addresses into guest
+    // images drops them here.
+    using UnloadHook = void (*)(const ElfImage* image, void* context);
+    void add_unload_hook(UnloadHook hook, void* context);
 
     // What dlopen(nullptr) returns: a handle that searches like RTLD_DEFAULT.
     void* main_handle() const { return main_.get(); }
@@ -139,6 +161,12 @@ public:
 
 private:
     GuestLibrary* find_loaded(const std::string& name) const;
+    GuestLibrary* library_containing(const void* addr) const;
+    std::unordered_set<GuestLibrary*> alive() const;
+    void unload_if_unreferenced(GuestLibrary* lib);
+    void unload(GuestLibrary* root, const std::unordered_set<GuestLibrary*>& kept);
+    static void on_thread_dtor_added(const void* dso);
+    static void on_thread_dtor_removed(const void* dso);
     std::filesystem::path locate(const std::string& name, const std::filesystem::path& near) const;
     std::vector<GuestLibrary*> local_group(GuestLibrary* root) const;
     void* find_in(GuestLibrary* lib, const char* name) const;
@@ -151,6 +179,11 @@ private:
     std::vector<GuestLibrary*> init_order_;
     std::unique_ptr<GuestLibrary> system_;  // every system library
     std::unique_ptr<GuestLibrary> main_;    // dlopen(nullptr)
+    struct Hook {
+        UnloadHook fn;
+        void* context;
+    };
+    std::vector<Hook> unload_hooks_;
 };
 
 // Host address of a libdl function (dlopen, dlsym, dlclose, dlerror, dladdr,

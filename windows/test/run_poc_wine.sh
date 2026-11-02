@@ -26,3 +26,6 @@ WINEDEBUG=-all "$WINE" "$BUILD/host/winapk-elfrun.exe" \
     "$BUILD/guest/libwinapk_poc_guest_packed.so"
 WINEDEBUG=-all "$WINE" "$BUILD/host/winapk-linker-test.exe" "$BUILD/guest/link"
 WINEDEBUG=-all "$WINE" "$BUILD/host/winapk-arm64-test.exe" "$BUILD/guest/arm64"
+SCRATCH="$BUILD/scratch"
+mkdir -p "$SCRATCH"
+WINEDEBUG=-all "$WINE" "$BUILD/host/winapk-crash-test.exe" "$(WINEDEBUG=-all "$WINE" winepath -w "$SCRATCH")"

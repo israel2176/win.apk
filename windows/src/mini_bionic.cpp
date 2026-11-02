@@ -145,17 +145,19 @@ WINAPK_GUEST_ABI int g_android_log_write(int prio, const char* tag, const char* 
 }
 
 // ---- stack protector / abort ----------------------------------------------
-[[noreturn]] WINAPK_GUEST_ABI void g_stack_chk_fail() {
-    std::fprintf(stderr, "[win.apk] guest stack corruption detected (__stack_chk_fail)\n");
+// abort() is raise(SIGABRT): the guest's handler (a crash reporter's) runs
+// first; if it returns, the default action ends the process through the
+// host's abort, which writes the crash report and the minidump.
+[[noreturn]] void guest_abort(const char* why) {
+    std::fprintf(stderr, "[win.apk] %s\n", why);
     std::fflush(stderr);
+    bionic::signal_send(0, 6);  // SIGABRT
     std::abort();
 }
 
-[[noreturn]] WINAPK_GUEST_ABI void g_abort() {
-    std::fprintf(stderr, "[win.apk] guest called abort()\n");
-    std::fflush(stderr);
-    std::abort();
-}
+[[noreturn]] WINAPK_GUEST_ABI void g_stack_chk_fail() { guest_abort("guest stack corruption detected (__stack_chk_fail)"); }
+
+[[noreturn]] WINAPK_GUEST_ABI void g_abort() { guest_abort("guest called abort()"); }
 
 // ---- errno ----------------------------------------------------------------
 // Bionic's errno is `*__errno()`, in Linux numbering; see bionic_internal.h.
@@ -185,6 +187,16 @@ WINAPK_GUEST_ABI void g_cxa_finalize(void* dso) {
         }
     }
     for (const AtexitEntry& e : run) e.fn(e.arg);
+}
+
+// C++ thread_local destructors: Bionic's __cxa_thread_atexit_impl, kept with
+// the thread's ELF TLS blocks (elf_tls.h) so the destructor runs before the
+// block its object lives in is freed, and the library holding the destructor
+// stays loaded until then (the linker counts it as a reference).
+using GuestThreadDtor = void(WINAPK_GUEST_ABI*)(void*);
+WINAPK_GUEST_ABI int g_cxa_thread_atexit_impl(GuestThreadDtor fn, void* obj, void* dso) {
+    tls_thread_atexit(reinterpret_cast<void*>(fn), obj, dso);
+    return 0;
 }
 
 // ---- __cxa_guard_*: function-local statics ------------------------------------
@@ -313,6 +325,7 @@ const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("__errno", g_errno),
     WINAPK_SHIM("__cxa_atexit", g_cxa_atexit),
     WINAPK_SHIM("__cxa_finalize", g_cxa_finalize),
+    WINAPK_SHIM("__cxa_thread_atexit_impl", g_cxa_thread_atexit_impl),
     WINAPK_SHIM("__cxa_guard_acquire", g_cxa_guard_acquire),
     WINAPK_SHIM("__cxa_guard_release", g_cxa_guard_release),
     WINAPK_SHIM("__cxa_guard_abort", g_cxa_guard_abort),
@@ -454,5 +467,21 @@ void* mini_bionic_resolve(const char* name) {
 }
 
 void mini_bionic_run_atexit() { g_cxa_finalize(nullptr); }
+
+void mini_bionic_run_atexit_in(const void* base, size_t size) {
+    const auto lo = reinterpret_cast<uintptr_t>(base);
+    std::vector<AtexitEntry> run;
+    {
+        std::lock_guard<std::mutex> lock(g_atexit_lock);
+        for (size_t i = g_atexit.size(); i-- > 0;) {
+            const auto dso = reinterpret_cast<uintptr_t>(g_atexit[i].dso);
+            if (dso >= lo && dso - lo < size) {
+                run.push_back(g_atexit[i]);
+                g_atexit.erase(g_atexit.begin() + static_cast<ptrdiff_t>(i));
+            }
+        }
+    }
+    for (const AtexitEntry& e : run) e.fn(e.arg);
+}
 
 }  // namespace winapk

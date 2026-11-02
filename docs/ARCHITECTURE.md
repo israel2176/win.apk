@@ -147,8 +147,14 @@ dependencies first), answers system libraries (`libc.so`, `libm.so`,
 `libdl.so`, `liblog.so`, `libz.so`, `libandroid.so`, `libEGL.so`,
 `libGLESv2.so`...) from the shim, keeps the registry of loaded images, and
 implements the guest's `dlopen`, `android_dlopen_ext`, `dlsym` (with
-`RTLD_DEFAULT` and `RTLD_NEXT`), `dladdr`, `dlerror` and `dlclose`
-(libraries stay mapped until exit). A system function the shim lacks is bound
+`RTLD_DEFAULT` and `RTLD_NEXT`), `dladdr`, `dlerror` and `dlclose`. A
+library is reference counted and unloaded when its last reference goes
+(`DT_FINI_ARRAY` and `DT_FINI` run, leftover `__cxa_atexit` entries and
+every thread's TLS block for it are released, its native-method thunk
+cache entries dropped, the mapping freed), unless `RTLD_NODELETE`, a
+pending `thread_local` destructor or another loaded library still holds it;
+thunk code stays in the pool. A library the JVM loaded keeps the JVM's
+reference, as on Android. A system function the shim lacks is bound
 to a stub that reports its name on first call and returns 0, so the library
 still loads and the log names the next function to write. A missing system
 *variable* is bound to zeroed memory instead, since code reads through it.
@@ -187,7 +193,7 @@ functions, every one declared with the System V calling convention
 | `looper.cpp` | The NDK's `ALooper` |
 | `misc.cpp` | Clocks and time, `mmap` on `VirtualAlloc` (with `PROT_NONE` as a reservation), system properties, the guest environment, `syscall` for futex and friends, `sysconf`, `uname`, `getauxval`, libm |
 | `locale.cpp` | The C and C.UTF-8 locales libc++ builds on, UTF-8 conversion, `wctype.h` |
-| `signal.cpp` | `sigaction`, `sigaltstack`, `sigprocmask` and POSIX timers: recorded and read back, never delivered (crash reporters need this at load) |
+| `signal.cpp` | Signals delivered to guest handlers: a vectored exception handler maps access violations, illegal instructions, divide errors and breakpoints to SIGSEGV/SIGBUS/SIGILL/SIGFPE/SIGTRAP and calls the handler with Bionic's `siginfo_t` and `ucontext_t` (registers written back, so a handler can fix the fault or redirect `rip`); `SA_SIGINFO`, `SA_ONSTACK` with `sigaltstack`, `SA_RESETHAND`, `SA_NODEFER`, `sa_mask`; `raise`, `kill`, `tgkill`, `abort` synchronously, `pthread_kill` by suspending the target and injecting the call; a handler that declines three times leaves the fault to the crash report. Not delivered: faults in HotSpot or in Windows DLLs, faults in arm64 guest code, handlers in arm64 libraries. POSIX timers do not fire |
 | `setjmp.cpp` | `setjmp` and `longjmp` for guest code |
 | `cacerts.cpp` | Android's `/system/etc/security/cacerts` built from the roots Windows trusts plus the JDK's |
 | `zlib.cpp` | `libz.so` on a statically linked zlib, with the guest's `z_stream` layout converted on every call |
@@ -514,10 +520,9 @@ Three GitHub Actions workflows, none of which runs on a push to `main`:
 
 ## What is not there
 
-As of this writing: video playback, OpenSL ES, Vulkan, real sensor input, signal
-delivery to guest handlers (they are recorded, not run), static ELF TLS,
-`dlclose` unloading, a crash handler with minidumps, W^X thunk pools with
-unwind tables, code signing, 32-bit ARM, notifications shown to the user,
+As of this writing: video playback, OpenSL ES, Vulkan, real sensor input,
+signal delivery for faults in arm64 guest code and handlers in arm64
+libraries, POSIX timers, static ELF TLS, W^X thunk pools with unwind tables, code signing, 32-bit ARM, notifications shown to the user,
 and the Play Store features listed above. `windows/PORTING.md`, section 7,
 has the finer gaps and section 8 the plan.
 
