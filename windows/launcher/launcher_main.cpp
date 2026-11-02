@@ -1849,7 +1849,7 @@ void theme_menus() {
 // tiles' labels; glyphs come in the sizes the controls use.
 struct Fonts {
     std::unique_ptr<Gdiplus::Font> title, body, body_semi, caption, caption_semi, tile, monogram, monogram_small,
-        glyph12, glyph16, glyph48, mono;
+        glyph12, glyph16, glyph24, glyph48, mono;
 } g_f;
 
 // The first of `families` that is installed, else the generic one.
@@ -1898,6 +1898,7 @@ void make_fonts() {
     g_f.monogram_small = font(26, true);
     g_f.glyph12 = glyph_font(12);
     g_f.glyph16 = glyph_font(16);
+    g_f.glyph24 = glyph_font(24);
     g_f.glyph48 = glyph_font(48);
     g_f.mono = font_from({L"Cascadia Mono", L"Consolas"}, Gdiplus::FontFamily::GenericMonospace(), 12,
                          Gdiplus::FontStyleRegular);
@@ -3244,8 +3245,10 @@ struct Section {
 
 struct Sheet {
     std::wstring title;
-    std::wstring hero_app, hero_title, hero_sub;  // Get Info's heading: the app's icon, name and package
-    Gdiplus::Bitmap* hero_icon = nullptr;         // a store app's icon, for one not in the library
+    std::wstring hero_title, hero_sub;      // the heading: an app's name and package, or the sheet's own
+    std::wstring hero_app;                  // the library app whose icon heads it
+    Gdiplus::Bitmap* hero_icon = nullptr;   // or a store app's icon, for one not in the library
+    const wchar_t* hero_glyph = nullptr;    // or a glyph in an accent badge (Settings)
     std::function<std::vector<Section>()> build;
     std::vector<Section> sections;
     HWND hwnd = nullptr;
@@ -3255,10 +3258,14 @@ struct Sheet {
         int section, row;
     };
     std::vector<Target> targets;
-    RectF done;
-    int hot = -1;  // index into targets, -2 the Done button
-    bool tracking = false;
+    RectF done, thumb;
+    int hot = -1;    // index into targets, kSheetDone the Done button, kSheetThumb the scrollbar
+    int focus = -1;  // the target reached with Tab, which shows a focus ring; kSheetDone for Done
+    bool tracking = false, thumb_drag = false;
+    float thumb_y0 = 0, thumb_scroll0 = 0;
 };
+
+constexpr int kSheetDone = -2, kSheetThumb = -3;
 
 HWND sheet_hwnd() { return g_sheet ? g_sheet->hwnd : nullptr; }
 
@@ -3289,18 +3296,18 @@ void paint_control(Graphics& g, const Row& row, const RectF& r, bool hot) {
     switch (row.kind) {
         case Row::kButton: draw_button(g, r, row.value, hot, row.primary, row.destructive); break;
         case Row::kToggle: {
-            fill_round(g, r, r.Height / 2, row.on ? (hot ? mix(g_t.accent, kWhite, 0.1f) : g_t.accent)
+            fill_round(g, r, r.Height / 2, row.on ? (hot ? mix(g_t.accent, g_t.dark ? kWhite : kBlack, 0.1f) : g_t.accent)
                                                   : (hot ? g_t.hover : g_t.card));
             if (!row.on) stroke_round(g, r, r.Height / 2, g_t.text2);
             const float k = row.on ? r.Height - px(8) : r.Height - px(10);
             const float kx = row.on ? r.GetRight() - k - px(4) : r.X + px(5);
-            Gdiplus::SolidBrush knob(row.on ? kWhite : g_t.text2);
+            Gdiplus::SolidBrush knob(row.on ? g_t.accent_text : g_t.text2);
             g.FillEllipse(&knob, kx, r.Y + (r.Height - k) / 2, k, k);
             break;
         }
         case Row::kChoice: {
-            fill_round(g, r, px(6), hot ? g_t.hover : mix(g_t.card, g_t.hover, 0.55f));
-            stroke_round(g, r, px(6), g_t.border);
+            fill_round(g, r, px(kRadiusControl), hot ? g_t.hover : g_t.card);
+            stroke_round(g, r, px(kRadiusControl), g_t.border);
             const std::wstring& v = row.choices.empty() ? std::wstring() : row.choices[static_cast<size_t>(row.choice)];
             draw_text(g, v, g_f.body.get(), g_t.text, RectF(r.X + px(12), r.Y, r.Width - px(40), r.Height));
             draw_text(g, kGlyphChevron, g_f.glyph12.get(), g_t.text2,
@@ -3319,26 +3326,36 @@ void paint_control(Graphics& g, const Row& row, const RectF& r, bool hot) {
     }
 }
 
+float sheet_max_scroll(const Sheet& s) { return (std::max)(0.0f, s.content_h - s.view_h); }
+
 void paint_sheet(Sheet& s, Graphics& g, float W, float H) {
     g.Clear(g_t.bg);
     s.targets.clear();
     const float m = px(24), pad = px(16), foot = px(64), cw = W - 2 * m;
     s.view_h = H - foot;
-    g.SetClip(RectF(0, 0, W, s.view_h));
-    float y = px(20) - s.scroll;
+    s.scroll = (std::min)(s.scroll, sheet_max_scroll(s));
+    const RectF view(0, 0, W, s.view_h);
+    g.SetClip(view);
+    float y = px(24) - s.scroll;
     if (!s.hero_title.empty()) {
-        const RectF ir(m, y, px(64), px(64));
-        if (s.hero_icon || s.hero_app.empty()) draw_icon(g, s.hero_icon, s.hero_title, ir);
-        else draw_app_icon(g, find_app(s.hero_app), s.hero_title, ir);
-        draw_text(g, s.hero_title, g_f.title.get(), g_t.text, RectF(m + px(80), y + px(6), cw - px(80), px(30)));
-        draw_text(g, s.hero_sub, g_f.caption.get(), g_t.text2, RectF(m + px(80), y + px(36), cw - px(80), px(20)));
-        y += px(88);
+        const RectF ir(m, y, px(56), px(56));
+        if (s.hero_glyph) {
+            fill_round(g, ir, px(12), with_alpha(g_t.accent, g_t.dark ? 60 : 28));
+            draw_text(g, s.hero_glyph, g_f.glyph24.get(), g_t.accent, ir, kCenter);
+        } else if (s.hero_icon || s.hero_app.empty()) {
+            draw_icon(g, s.hero_icon, s.hero_title, ir);
+        } else {
+            draw_app_icon(g, find_app(s.hero_app), s.hero_title, ir);
+        }
+        draw_text(g, s.hero_title, g_f.title.get(), g_t.text, RectF(m + px(72), y + px(2), cw - px(72), px(28)));
+        draw_text(g, s.hero_sub, g_f.caption.get(), g_t.text2, RectF(m + px(72), y + px(32), cw - px(72), px(20)));
+        y += px(80);
     }
     for (size_t si = 0; si < s.sections.size(); ++si) {
         const Section& sec = s.sections[si];
         if (!sec.title.empty()) {
-            draw_text(g, sec.title, g_f.caption_semi.get(), g_t.text2, RectF(m + px(4), y, cw, px(20)));
-            y += px(24);
+            draw_text(g, sec.title, g_f.body_semi.get(), g_t.text, RectF(m, y, cw, px(22)));
+            y += px(28);
         }
         std::vector<float> heights;
         std::vector<SizeF> controls;
@@ -3353,15 +3370,27 @@ void paint_sheet(Sheet& s, Graphics& g, float W, float H) {
             total += heights.back();
         }
         const RectF card(m, y, cw, total);
-        fill_round(g, card, px(10), g_t.card);
-        stroke_round(g, card, px(10), g_t.border);
+        fill_round(g, card, px(kRadiusCard), g_t.card);
         float ry = y;
         for (size_t ri = 0; ri < sec.rows.size(); ++ri) {
             const Row& row = sec.rows[ri];
             const SizeF c = controls[ri];
             const float h = heights[ri];
+            const RectF rr(m, ry, cw, h);
+            // A switch takes the whole row (its label turns it too); a button or a list only itself.
+            const bool interactive = row.kind != Row::kText;
+            const int index = static_cast<int>(s.targets.size());
+            const bool hot = interactive && s.hot == index, focused = interactive && s.focus == index;
+            if (row.kind == Row::kToggle && hot) {
+                GraphicsPath clip;
+                rounded(clip, card, px(kRadiusCard));
+                g.SetClip(&clip, Gdiplus::CombineModeIntersect);
+                Gdiplus::SolidBrush b(g_t.hover);
+                g.FillRectangle(&b, rr);
+                g.SetClip(view);
+            }
             if (ri > 0) {
-                Gdiplus::Pen line(g_t.border, 1);
+                Gdiplus::Pen line(g_t.divider, 1);
                 g.DrawLine(&line, m + pad, ry, m + cw - pad, ry);
             }
             const float tw = cw - 2 * pad - (c.Width > 0 ? c.Width + px(16) : 0);
@@ -3375,13 +3404,14 @@ void paint_sheet(Sheet& s, Graphics& g, float W, float H) {
             }
             if (c.Width > 0) {
                 const RectF cr(m + cw - pad - c.Width, ry + (h - c.Height) / 2, c.Width, c.Height);
-                const bool interactive = row.kind != Row::kText;
-                const bool hot = interactive && s.hot == static_cast<int>(s.targets.size());
                 paint_control(g, row, cr, hot);
-                if (interactive) s.targets.push_back({cr, static_cast<int>(si), static_cast<int>(ri)});
+                if (focused) draw_focus_ring(g, cr, row.kind == Row::kToggle ? cr.Height / 2 : px(kRadiusControl));
+                if (interactive) s.targets.push_back({row.kind == Row::kToggle ? rr : cr, static_cast<int>(si),
+                                                      static_cast<int>(ri)});
             }
             ry += h;
         }
+        stroke_round(g, card, px(kRadiusCard), g_t.border);
         y = ry + px(8);
         if (!sec.footer.empty()) {
             const float fh = text_height(g, sec.footer, g_f.caption.get(), cw - px(8));
@@ -3389,30 +3419,48 @@ void paint_sheet(Sheet& s, Graphics& g, float W, float H) {
                       true, false);
             y += fh + px(4);
         }
-        y += px(18);
+        y += px(20);
     }
-    s.content_h = y + s.scroll;
+    s.content_h = y + s.scroll + px(4);
     g.ResetClip();
 
-    Gdiplus::SolidBrush bar(g_t.dark ? mix(g_t.bg, kBlack, 0.15f) : mix(g_t.bg, kWhite, 0.5f));
+    // The scrollbar, when the sections do not fit.
+    if (s.content_h > s.view_h) {
+        const float h = (std::max)(px(36), s.view_h * s.view_h / s.content_h);
+        const float ty = px(4) + (s.view_h - px(8) - h) * s.scroll / sheet_max_scroll(s);
+        s.thumb = RectF(W - px(8), ty, px(6), h);
+        const bool active = s.thumb_drag || s.hot == kSheetThumb;
+        fill_round(g, s.thumb, px(3), with_alpha(g_t.text2, active ? 200 : 90));
+        if (s.scroll > 0) {
+            Gdiplus::Pen line(g_t.border, 1);
+            g.DrawLine(&line, m, 0.0f, W - m, 0.0f);
+        }
+    } else {
+        s.thumb = RectF();
+    }
+
+    Gdiplus::SolidBrush bar(g_t.layer);
     g.FillRectangle(&bar, RectF(0, s.view_h, W, foot));
     Gdiplus::Pen line(g_t.border, 1);
     g.DrawLine(&line, 0.0f, s.view_h, W, s.view_h);
-    s.done = RectF(W - m - px(100), s.view_h + (foot - px(34)) / 2, px(100), px(34));
-    draw_button(g, s.done, tr(L"Done"), s.hot == -2, true, false);
+    s.done = RectF(W - m - px(100), s.view_h + (foot - px(32)) / 2, px(100), px(32));
+    draw_button(g, s.done, tr(L"Done"), s.hot == kSheetDone, true, false);
+    if (s.focus == kSheetDone) draw_focus_ring(g, s.done, px(kRadiusControl));
 }
 
 int sheet_hit(const Sheet& s, float x, float y) {
-    if (contains(s.done, x, y)) return -2;
+    if (contains(s.done, x, y)) return kSheetDone;
     if (y >= s.view_h) return -1;
+    if (s.thumb.Width > 0 && contains(inset(s.thumb, -px(4), 0), x, y)) return kSheetThumb;
     for (size_t i = 0; i < s.targets.size(); ++i) {
         if (contains(s.targets[i].r, x, y)) return static_cast<int>(i);
     }
     return -1;
 }
 
+// Activates a target: the Done button, a button row, a switch, or a list (its menu opens under the control).
 void sheet_click(Sheet& s, int hit) {
-    if (hit == -2) {
+    if (hit == kSheetDone) {
         close_sheet();
         return;
     }
@@ -3443,6 +3491,26 @@ void sheet_click(Sheet& s, int hit) {
     }
 }
 
+void sheet_scroll(Sheet& s, float by) {
+    s.scroll = (std::max)(0.0f, (std::min)(s.scroll + by, sheet_max_scroll(s)));
+    InvalidateRect(s.hwnd, nullptr, FALSE);
+}
+
+// Tab moves the keyboard focus through the controls and on to Done, and brings the one reached into view.
+void sheet_tab(Sheet& s, bool back) {
+    const int n = static_cast<int>(s.targets.size());
+    int f = s.focus;
+    if (back) f = f == kSheetDone ? n - 1 : f < 0 ? kSheetDone : f == 0 ? kSheetDone : f - 1;
+    else f = f == kSheetDone ? (n ? 0 : kSheetDone) : f < 0 ? (n ? 0 : kSheetDone) : f + 1 >= n ? kSheetDone : f + 1;
+    s.focus = f;
+    if (f >= 0) {
+        const RectF& r = s.targets[static_cast<size_t>(f)].r;
+        if (r.Y < px(8)) sheet_scroll(s, r.Y - px(8));
+        else if (r.GetBottom() > s.view_h - px(8)) sheet_scroll(s, r.GetBottom() - (s.view_h - px(8)));
+    }
+    InvalidateRect(s.hwnd, nullptr, FALSE);
+}
+
 LRESULT CALLBACK sheet_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     auto* s = reinterpret_cast<Sheet*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
     switch (msg) {
@@ -3459,7 +3527,14 @@ LRESULT CALLBACK sheet_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 TRACKMOUSEEVENT tme{sizeof(tme), TME_LEAVE, hwnd, 0};
                 s->tracking = TrackMouseEvent(&tme);
             }
-            const int hot = sheet_hit(*s, static_cast<float>(GET_X_LPARAM(lp)), static_cast<float>(GET_Y_LPARAM(lp)));
+            const float y = static_cast<float>(GET_Y_LPARAM(lp));
+            if (s->thumb_drag) {
+                const float room = s->view_h - px(8) - s->thumb.Height;
+                if (room > 0) s->scroll = s->thumb_scroll0 + (y - s->thumb_y0) * sheet_max_scroll(*s) / room;
+                sheet_scroll(*s, 0);
+                return 0;
+            }
+            const int hot = sheet_hit(*s, static_cast<float>(GET_X_LPARAM(lp)), y);
             if (hot != s->hot) {
                 s->hot = hot;
                 InvalidateRect(hwnd, nullptr, FALSE);
@@ -3473,21 +3548,50 @@ LRESULT CALLBACK sheet_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         case WM_SETCURSOR:
             if (LOWORD(lp) == HTCLIENT) {
-                SetCursor(LoadCursorW(nullptr, s->hot != -1 ? IDC_HAND : IDC_ARROW));
+                SetCursor(LoadCursorW(nullptr, s->hot != -1 && s->hot != kSheetThumb ? IDC_HAND : IDC_ARROW));
                 return TRUE;
             }
             break;
-        case WM_LBUTTONUP:
-            sheet_click(*s, sheet_hit(*s, static_cast<float>(GET_X_LPARAM(lp)), static_cast<float>(GET_Y_LPARAM(lp))));
-            return 0;
-        case WM_MOUSEWHEEL: {
-            s->scroll -= GET_WHEEL_DELTA_WPARAM(wp) / 120.0f * px(60);
-            s->scroll = (std::max)(0.0f, (std::min)(s->scroll, (std::max)(0.0f, s->content_h - s->view_h)));
+        case WM_LBUTTONDOWN: {
+            s->focus = -1;  // the mouse takes over: no focus ring
+            const int hit = sheet_hit(*s, static_cast<float>(GET_X_LPARAM(lp)), static_cast<float>(GET_Y_LPARAM(lp)));
+            if (hit == kSheetThumb) {
+                s->thumb_drag = true;
+                s->thumb_y0 = static_cast<float>(GET_Y_LPARAM(lp));
+                s->thumb_scroll0 = s->scroll;
+                SetCapture(hwnd);
+            }
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         }
+        case WM_LBUTTONUP:
+            if (s->thumb_drag) {
+                s->thumb_drag = false;
+                ReleaseCapture();
+                InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
+            sheet_click(*s, sheet_hit(*s, static_cast<float>(GET_X_LPARAM(lp)), static_cast<float>(GET_Y_LPARAM(lp))));
+            return 0;
+        case WM_MOUSEWHEEL: sheet_scroll(*s, -GET_WHEEL_DELTA_WPARAM(wp) / 120.0f * px(60)); return 0;
         case WM_KEYDOWN:
-            if (wp == VK_ESCAPE || wp == VK_RETURN) close_sheet();
+            switch (wp) {
+                case VK_ESCAPE: close_sheet(); return 0;
+                case VK_TAB: sheet_tab(*s, GetKeyState(VK_SHIFT) < 0); return 0;
+                case VK_RETURN:
+                    if (s->focus >= 0) sheet_click(*s, s->focus);
+                    else close_sheet();
+                    return 0;
+                case VK_SPACE:
+                    if (s->focus != -1) sheet_click(*s, s->focus);
+                    return 0;
+                case VK_UP: sheet_scroll(*s, -px(48)); return 0;
+                case VK_DOWN: sheet_scroll(*s, px(48)); return 0;
+                case VK_PRIOR: sheet_scroll(*s, -s->view_h * 0.9f); return 0;
+                case VK_NEXT: sheet_scroll(*s, s->view_h * 0.9f); return 0;
+                case VK_HOME: sheet_scroll(*s, -s->scroll); return 0;
+                case VK_END: sheet_scroll(*s, sheet_max_scroll(*s)); return 0;
+            }
             return 0;
         case WM_CLOSE:
             close_sheet();
@@ -3503,10 +3607,10 @@ void run_sheet(Sheet sheet) {
     sheet.sections = sheet.build();
     RECT mr;
     GetWindowRect(g_main, &mr);
-    const int w = ipx(580), h = (std::min)(ipx(680), static_cast<int>(mr.bottom - mr.top) - ipx(20));
+    const int w = ipx(600), h = (std::min)(ipx(700), static_cast<int>(mr.bottom - mr.top) - ipx(20));
     const int x = mr.left + (mr.right - mr.left - w) / 2, y = mr.top + (mr.bottom - mr.top - h) / 2;
     sheet.hwnd = CreateWindowExW(layout_style(), L"WinApkSheet", sheet.title.c_str(), WS_POPUP | WS_CAPTION | WS_SYSMENU, x, y,
-                                 w, (std::max)(h, ipx(360)), g_main, nullptr, g_inst, &sheet);
+                                 w, (std::max)(h, ipx(400)), g_main, nullptr, g_inst, &sheet);
     if (!sheet.hwnd) {
         g_sheet = nullptr;
         return;
@@ -3818,6 +3922,9 @@ std::vector<Section> settings_sections() {
 void show_settings() {
     Sheet s;
     s.title = tr(L"Settings");
+    s.hero_title = s.title;
+    s.hero_sub = L"Win.apk " + version();
+    s.hero_glyph = kGlyphSettings;
     s.build = settings_sections;
     run_sheet(std::move(s));
 }
