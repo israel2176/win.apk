@@ -1,5 +1,7 @@
-# Win.apk phase-1 PoC: build the Android x86_64 test libraries on Linux, then
-# build the loader on a real Windows x64 runner and run the checks there.
+# Win.apk's build and tests: the Android x86_64 and arm64 test libraries are
+# built on Linux, then everything is built with clang on a real Windows x64
+# runner, the unit tests run, an APK boots headless and in a window, and the
+# result is packaged (the same folder a release ships).
 name: Windows PoC
 
 # Runs on pull requests and by hand, not on pushes: a merge does not build a

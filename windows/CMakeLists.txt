@@ -1,4 +1,5 @@
-# Win.apk -- Windows x64 port. Phase 1: the Android x86_64 ELF loader PoC.
+# Win.apk -- Windows x64 port: the ELF loader and Bionic shim, the arm64
+# engines, the runtime host, the launcher and their tests.
 #
 # Needs clang targeting Windows x64:
 #   * on Windows: MSYS2 CLANG64 (what CI uses)
@@ -112,7 +113,7 @@ target_link_libraries(winapk-linker-test PRIVATE winapk_loader)
 add_executable(winapk-bionic-test test/bionic_test.cpp)
 target_link_libraries(winapk-bionic-test PRIVATE winapk_loader)
 
-# The arm64 interpreter and bridge (M10): test/arm64_test.cpp runs
+# The arm64 interpreter and bridge: test/arm64_test.cpp runs
 # test/guest/arm64_isa.c both as arm64 guest code and natively and compares.
 add_executable(winapk-arm64-test test/arm64_test.cpp)
 target_link_libraries(winapk-arm64-test PRIVATE winapk_loader)
@@ -216,8 +217,8 @@ if(WINAPK_JNI_INCLUDE)
   add_library(winapk_stb_vorbis STATIC ${WINAPK_STB_VORBIS})
   target_compile_options(winapk_stb_vorbis PRIVATE -w)
 
-  # The host that runs an APK (milestone M1). Like winapk-jvm-run it loads
-  # jvm.dll at runtime.
+  # The host that runs an APK. Like winapk-jvm-run it loads jvm.dll at
+  # runtime.
   add_executable(winapk-runtime host/runtime_main.cpp host/host_natives.cpp host/native_log.cpp
                               host/native_cocoa.cpp host/win32_window.cpp host/guest_libs.cpp
                               host/native_os.cpp host/native_image.cpp
@@ -248,7 +249,7 @@ if(WINAPK_JNI_INCLUDE)
   endif()
   target_include_directories(winapk-runtime SYSTEM PRIVATE ${WINAPK_WEBVIEW2_SDK}/include)
   target_compile_options(winapk-runtime PRIVATE -Wall -Wextra)
-  # GL (M6): upstream's android.opengl bindings, cut out of its Mac
+  # GL: upstream's android.opengl bindings, cut out of its Mac
   # native_methods.cpp at build time and compiled against the Khronos headers;
   # ANGLE is loaded at run time (host/gl/gl_loader.h).
   set(WINAPK_GL_UPSTREAM ${CMAKE_BINARY_DIR}/gl/gl_upstream.inc)
@@ -299,7 +300,7 @@ if(WINAPK_JNI_INCLUDE)
   target_link_libraries(winapk-window-test PRIVATE windowscodecs ole32 uuid gdi32 user32)
   target_link_options(winapk-window-test PRIVATE -static)
 
-  # An app's native libraries (milestone M4, host/guest_libs.h): the stub DLL
+  # An app's native libraries (host/guest_libs.h): the stub DLL
   # that stands for each one and the translator that copies it. Built with the
   # runtime, which loads them.
   add_library(winapk-guest-stub SHARED host/guest_stub.cpp)

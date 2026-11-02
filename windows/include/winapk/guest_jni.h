@@ -12,18 +12,17 @@
 // guest_jni.cpp), so all ~206 non-variadic slots are one line each in the
 // generated jni_slots.inc.
 //
-// Scope of this slice:
-//   * every non-variadic JNINativeInterface_ slot forwards correctly;
+// What the guest view provides:
+//   * every non-variadic JNINativeInterface_ slot forwards to HotSpot's;
 //   * one guest JNIEnv per host thread, recovered from the JNIEnv* the guest
 //     holds;
 //   * the JavaVM wrapper's GetEnv / AttachCurrentThread(AsDaemon) hand back
 //     the calling thread's guest JNIEnv (creating it on first attach),
-//     DetachCurrentThread tears it down, DestroyJavaVM is a no-op.
-// Deferred to the next slice (left as a loud-abort stub for now):
+//     DetachCurrentThread tears it down, DestroyJavaVM is a no-op;
 //   * the variadic Call<T>Method(env, obj, mid, ...) / ...V / NewObject
 //     families, which need the method signature to repack arguments into the
-//     Call<T>MethodA jvalue[] form. The SysV variadic entry stub they build on
-//     is already in abi_thunk.cpp.
+//     Call<T>MethodA jvalue[] form (jni_variadic.h), once a signature
+//     provider is registered; until then those slots are a loud-abort stub.
 
 #pragma once
 

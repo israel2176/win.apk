@@ -1,4 +1,5 @@
-// elfrun_main.cpp -- winapk-elfrun, the phase-1 proof of concept.
+// elfrun_main.cpp -- winapk-elfrun, the ELF loader's check program (the
+// project's first proof of concept, still run by CI).
 //
 // Loads Android x86_64 shared objects with the Win.apk ELF loader and checks
 // what has to hold before anything bigger is built on top of it:

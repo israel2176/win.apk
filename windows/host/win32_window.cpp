@@ -882,8 +882,9 @@ DWORD WINAPI ui_thread(void* param) {
     RegisterClassExW(&wc);
     const SIZE s = outer_size(g_plan.dpi, target_scale(g_plan.dpi, work_area(g_plan.monitor)));
     g_rtl_window = rtl_user();
-    g_hwnd = CreateWindowExW(g_rtl_window ? (WS_EX_LAYOUTRTL | WS_EX_NOINHERITLAYOUT) : 0, kClassName, L"Win.apk", kStyle, CW_USEDEFAULT, CW_USEDEFAULT, s.cx, s.cy, nullptr,
-                             nullptr, wc.hInstance, nullptr);
+    g_hwnd = CreateWindowExW(g_rtl_window ? (WS_EX_LAYOUTRTL | WS_EX_NOINHERITLAYOUT) : 0, kClassName, L"Win.apk",
+                             kStyle, CW_USEDEFAULT, CW_USEDEFAULT, s.cx, s.cy, nullptr, nullptr, wc.hInstance,
+                             nullptr);
     if (g_hwnd) {
         // CW_USEDEFAULT cascades the window down the primary monitor. It
         // opens on the monitor the plan was made for (where the user started

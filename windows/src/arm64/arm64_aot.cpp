@@ -96,7 +96,7 @@ bool marked_bad(const std::string& so) {
 // (Waze's libcrashlytics-common.so: translated, it crashed ten seconds in;
 // on the JIT, Waze runs).
 //
-// TODO(aot): fix the translation instead of falling back. The case found:
+// Open translation bugs, worth fixing instead of falling back. The case found:
 // libcrashlytics-common.so (Waze 5.26.5), base::StringPrintf(const char*,
 // ...) at vaddr 0x106398, a variadic function; its translated code writes to
 // 0xe9 at +0x1a1. Suspect the prologue that spills x1-x7/q0-q7 to the
@@ -104,7 +104,7 @@ bool marked_bad(const std::string& so) {
 // a test of w8), or how va_start's pointers are formed. Reproduce with
 // winapk-aot on that library and the arm64 differential test, with a
 // variadic guest function added to test/guest/arm64_isa.c.
-// TODO(aot): second case, same app: libwaze.so, guest function 0x4035494
+// Second case, same app: libwaze.so, guest function 0x4035494
 // (stripped; it runs among the library's 2184 initializers), writes to 0x8
 // at +0xf9 (+0x88 in an older, -O2 build). Find what the guest reads as 0
 // there that the JIT does not.

@@ -20,8 +20,9 @@ gets one status:
 It then collects, per app, the host natives that were called while still
 stubbed, the exceptions Java logged, a HotSpot crash file if there was one,
 and for the app's own native code the system functions it called that the
-shim does not have yet and the libraries that could not be loaded, and writes report.json and report.md with the problems sorted by the
-number of apps they appear in. That ranking is what decides what to fix next:
+shim does not have yet and the libraries that could not be loaded, and writes
+report.json and report.md with the problems sorted by the number of apps they
+appear in. That ranking is what decides what to fix next:
 a fix to the framework or the host helps every app the problem shows up in.
 
 Paths given to the runtime are made Windows paths with `winepath -w` when

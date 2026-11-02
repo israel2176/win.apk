@@ -1,6 +1,6 @@
-// arm64_guest.h -- running Android arm64-v8a code inside the Windows x64 host
-// (milestone M10, stage 1). The CPU itself is in arm64_cpu.h; this is the
-// bridge around it.
+// arm64_guest.h -- running Android arm64-v8a code inside the Windows x64 host.
+// The engines are in arm64_cpu.h, arm64_jit.h and arm64_aot.h; this is the
+// bridge around them.
 //
 // Where guest code enters the system (PORTING.md, D8) nothing changes for the
 // rest of the runtime: ElfImage loads an arm64 library like an x86_64 one,

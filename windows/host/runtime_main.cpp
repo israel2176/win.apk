@@ -27,7 +27,8 @@
 // launcher (launcher/) runs when an APK is added to the library.
 //
 // App data lives under %LOCALAPPDATA%\Win.apk unless --data says otherwise.
-// There is no window yet (milestone M2); what the app does shows in the log.
+// The app's window is win32_window.h's; with WINAPK_HEADLESS=1 there is none
+// and what the app does shows in the log.
 //
 // Paths may hold any character, whatever "Language for non-Unicode programs"
 // is set to (a user name in Hebrew on an English system, say). The program
@@ -1424,12 +1425,13 @@ void map_shared_folders(const Options& o) {
 // boot had its main thread in NativeLog.print for most of the samples it was
 // not idle in: the first frame took 48 to 76 s, and about 5 s with this.
 //
-// So stderr gets a 64 KB buffer, flushed every 200 ms by a background thread,
+// So stderr gets a 64 KB buffer, flushed every 50 ms by a background thread,
 // at once for warnings and errors (NativeLog), and on the exit paths that
-// already flush. A hard crash can lose at most the last 200 ms of INFO lines.
-// 50 ms: an abort in a library with its own C runtime (ANGLE's) ends the
-// process without flushing ours, and the log's last lines are the ones that
-// say why. VLC's run ended that way with nothing after a class load.
+// already flush. A hard crash can lose at most the last 50 ms of INFO lines;
+// the interval is that short because an abort in a library with its own C
+// runtime (ANGLE's) ends the process without flushing ours, and the log's
+// last lines are the ones that say why (VLC's run ended that way with
+// nothing after a class load).
 DWORD WINAPI stderr_flusher(void*) {
     for (;;) {
         Sleep(50);

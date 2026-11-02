@@ -34,7 +34,7 @@ printf '#ifndef _WINAPK_STUB_STDIO_H\n#define _WINAPK_STUB_STDIO_H\ntypedef stru
     -I "$OUT/guestinc" -Wl,-soname,libwinapk_jni_guest.so \
     -o "$OUT/libwinapk_jni_guest.so" "$HERE/guest/jni_guest.c"
 
-# The same library for arm64-v8a, run through the arm64 interpreter (M10).
+# The same library for arm64-v8a, run through the arm64 engines.
 mkdir -p "$OUT/arm64"
 "$CC" --target=aarch64-linux-android24 -fPIC -O2 -fvisibility=hidden -nostdlib -shared -fuse-ld=lld \
     -I "$OUT/guestinc" -Wl,-soname,libwinapk_jni_guest.so \

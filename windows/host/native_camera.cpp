@@ -4,7 +4,8 @@
 // SurfaceTexture sit on top of these natives in runtime/java.
 //
 // Devices are the video capture sources MFEnumDeviceSources lists, each offered
-// to the app as a back and a front camera (see kRolesPerDevice). A source reader with advanced
+// to the app as a back and a front camera (see kRolesPerDevice). A source
+// reader with advanced
 // video processing turns whatever the device sends (YUY2, MJPG, NV12...) into
 // NV12, which a capture thread copies into a frame of our own: Y rows, then
 // interleaved CbCr rows, both `stride` bytes wide. That is the semiplanar
