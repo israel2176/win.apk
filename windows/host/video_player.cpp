@@ -70,10 +70,12 @@ struct Player::Impl {
         return wall_base_us + (state == kPlaying ? (au::nano_time() - wall_start_ns) / 1000 : 0);
     }
 
-    // Lock held. At the end of the last picture and the last sound.
+    // Lock held. At the end of the last picture and the last sound. The mixer
+    // interpolates between neighbouring samples, so it holds the last frame
+    // written back and the position stops one short of frames_written.
     void note_completion() {
         if (state == kPlaying && eos && queue.empty() &&
-            (!audio || au::stream_position(audio.get()) >= frames_written)) {
+            (!audio || au::stream_position(audio.get()) + 1 >= frames_written)) {
             state = kCompleted;
             wall_base_us = duration_us;
             consumer.notify_all();
