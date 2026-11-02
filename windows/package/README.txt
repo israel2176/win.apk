@@ -78,6 +78,12 @@ What works
   own page in a window; Win.apk never sees the password. Settings > Google
   account adds or removes the account.
 - English and Hebrew, laid out right to left in Hebrew.
+- Notifications: what an app posts shows as a Windows notification, with
+  the app's name and icon, and stays in the Action Center until dismissed;
+  quiet ones (a low-importance channel) go there without popping up.
+  Clicking one brings the app to the front and opens what a tap would on
+  Android, while the app is running. An app made for Android 13 or later
+  asks for the notification permission first.
 
 What does not work yet
 ----------------------
@@ -87,7 +93,6 @@ What does not work yet
 - Vulkan, and real sensor input: the accelerometer and the others report a
   phone lying still.
 - Play Store features: in-app purchases, Play Integrity, Google Maps.
-- Notifications: an app may post them, but they are not shown.
 
 Where things are
 ----------------
