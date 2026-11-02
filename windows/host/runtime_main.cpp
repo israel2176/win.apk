@@ -1519,6 +1519,8 @@ int wmain(int argc, wchar_t** argv) {
     std::error_code ec;
     b.app_dir = b.options.data / "apps" / b.options.apk.stem();
     winapk::host::set_app_dir(b.app_dir.wstring());
+    // Before the window: the taskbar and the notifications go by it.
+    if (!b.options.install_only) winapk::host::set_app_user_model_id(b.options.apk.stem().wstring());
     fs::create_directories(b.app_dir, ec);
     if (ec) {
         std::fprintf(stderr, "[win.apk] cannot create %s\n", utf8(b.app_dir.wstring()).c_str());

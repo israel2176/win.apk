@@ -39,7 +39,7 @@ fall into three groups:
 | `include/winapk/linker.h`, `src/linker.cpp` | The guest linker: loads a library with its `DT_NEEDED` tree (bionic's lookup order, system libraries answered by the shim), keeps the registry of loaded images, and implements the guest's `dlopen`, `dlsym`, `dladdr`, `dlerror` and `dlclose`. `test/linker_test.cpp` (`winapk-linker-test`) checks it against `test/guest/link_guest.c` |
 | `include/winapk/jni_bind.h`, `src/jni_bind.cpp` | Binding guest natives into HotSpot: the guest `RegisterNatives` slot wraps each function in a thunk, and a JVMTI `NativeMethodBind` hook does the same for natives bound by name. Also the cached JVMTI signature provider |
 | `include/winapk/arm64_cpu.h`, `src/arm64/` | The arm64 track (M10): an AArch64 interpreter (`arm64_cpu.cpp` for integer, memory and branches, `arm64_simd.cpp` for FP and NEON) and its bridge to the host (`arm64_guest.cpp`, `include/winapk/arm64_guest.h`): AAPCS64 to System V calls into the shim, `va_list` conversion, host calls into guest code through an execute-fault handler, per-thread guest stacks and TLS. `ElfImage` loads arm64 libraries with it. `test/arm64_test.cpp` (`winapk-arm64-test`) checks the interpreter against the same C code built for the host, and the bridge against `test/guest/arm64_bridge_guest.c` |
-| `host/` | `winapk-runtime.exe`, the host that runs an APK: DEX conversion, the in-process JVM, the host natives (window and input, `NativeOs`, `NativeLooper`, `NativeImageCodec` with libwebp and WIC, `NativeAudio` on WASAPI; the rest are still stubs), app native libraries (`guest_libs.cpp`), and `Boot.run`. `test/audio_test.cpp` (`winapk-audio-test`) checks the audio backend |
+| `host/` | `winapk-runtime.exe`, the host that runs an APK: DEX conversion, the in-process JVM, the host natives (window and input, `NativeOs`, `NativeLooper`, `NativeImageCodec` with libwebp and WIC, `NativeAudio` on WASAPI, `HostNotifications` as Windows toasts in `native_notifications.cpp`; the rest are still stubs), app native libraries (`guest_libs.cpp`), and `Boot.run`. `test/audio_test.cpp` (`winapk-audio-test`) checks the audio backend |
 | `scripts/` | `build_java.sh` (upstream's Java runtime with a stock JDK), `build_framework_res.sh` (the platform resource APK) and `stage_runtime.sh` (a runnable `bin/` + `lib/` folder) |
 | `tools/jvmrun_main.cpp` | `winapk-jvm-run`: the real-JVM end-to-end test. Creates a HotSpot JVM, loads an Android x86_64 `.so` through the guest linker, runs its `JNI_OnLoad` (which registers a native itself), binds a second native through the `NativeMethodBind` hook, and calls both from Java; one of them calls back into Java through the guest `JNIEnv`. `test/guest/jni_guest.c` and `test/java/WinApkJniTest.java` are its inputs; `test/build_e2e.sh` builds them and `test/run_e2e_wine.sh` runs it under Wine |
 
@@ -588,6 +588,18 @@ every such change is listed here:
   the same native the policy's branch uses), so a portrait-only app opens
   portrait although the library opens apps landscape. A host without the
   native keeps the old behaviour.
+- `runtime/java/com/macapk/loader/HostNotifications.java` (new) and
+  `android/app/NotificationManager.java`: `notify`, `cancel` and `cancelAll`
+  reach the host (Windows: `windows/host/native_notifications.cpp`, toasts in
+  the Action Center with the app's name and icon; a click brings the window
+  forward and sends the `contentIntent`), once `areNotificationsEnabled`
+  (POST_NOTIFICATIONS, pre-granted below T) and the channel's importance let
+  the notification through; LOW and MIN do not pop up. The channel list is
+  one per process, as the service's is. A host without the natives (the Mac)
+  shows nothing, as before. `android/app/Notification.java`: `Style.addExtras`
+  as AOSP has it, so a built notification's extras carry `BigTextStyle`'s
+  text, `InboxStyle`'s lines and `MessagingStyle`'s messages (as lines) under
+  the `EXTRA_*` keys; the styles kept nothing before. Not Windows-specific.
 
 ## License
 
