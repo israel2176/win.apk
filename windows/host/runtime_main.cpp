@@ -1459,6 +1459,7 @@ void buffer_stderr() {
 int wmain(int argc, wchar_t** argv) {
     buffer_stderr();
     winapk::host::install_crash_report();
+    winapk::host::take_launcher_ready_event();
     // A relaunch (Cocoa_exitProcess) starts before the old process has ended:
     // wait for it, so the single-instance claim below finds the app gone.
     if (const std::wstring after = env_var(L"WINAPK_RELAUNCH_AFTER"); !after.empty()) {
@@ -1547,6 +1548,7 @@ int wmain(int argc, wchar_t** argv) {
                      utf8(b.app_dir.filename().wstring()).c_str());
         if (b.options.install_only) return 3;
         if (env_var(L"WINAPK_HEADLESS").empty()) activate_running(instance);
+        winapk::host::signal_launcher_ready();  // the running copy is what the user sees
         return 0;
     }
     if (!install_app(&b.options, b.options.data / "android")) return 1;

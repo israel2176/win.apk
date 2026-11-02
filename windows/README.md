@@ -150,6 +150,7 @@ The user-facing ones (`WINAPK_PHONE_SIZE`, `WINAPK_RESIZABLE`,
 | `WINAPK_HEADLESS=1` | No window; `WINAPK_HEADLESS_FRAME=<file.bmp>` saves the last frame and `WINAPK_HEADLESS_EXIT_AFTER_FRAMES=<n>` exits after that many presented frames (an idle app counts too) |
 | `WINAPK_TEST_WORKAREA=<w>x<h>[+<x>+<y>]` | Stands in for the monitor's work area, in pixels; `@file` reads the value from a file at every fit |
 | `WINAPK_TEST_RESIZE=<w>x<h>` | A second after the first frame, resizes the window to a client area of that many pixels (CI's "Boot an APK in a window") |
+| `WINAPK_READY_EVENT=<handle>` | Set by the launcher, not by hand: an inherited event handle, as a decimal number, that the runtime sets once its window has painted the app's first frame (the launch splash waits for it) |
 | `WINAPK_DENSITY=<dpi>` | Overrides the density the app sees |
 | `WINAPK_WINDOW_RTL=1` or `0` | Overrides the locale's reading layout for the app window's frame |
 | `WINAPK_ANGLE_BACKEND=d3d11` or `swiftshader` | Forces a graphics backend (the default is a GPU, then WARP, then SwiftShader) |

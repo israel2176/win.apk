@@ -38,12 +38,13 @@ Android installer does.
 
 Any of these starts an install:
 
-- drag one or more files onto the Win.apk window;
-- click the drop zone or the **Add app** tile and choose files;
-- double-click an app file in Explorer (see [Shortcuts and file types](#shortcuts-and-file-types));
-- click **Install** in the [Store](#the-store);
-- run `Win.apk.exe <file>` from a command line, which installs the app and
-  then opens it.
+- double-click an app file in Explorer (see [Shortcuts and file types](#shortcuts-and-file-types)).
+  Only the install window opens, not the library;
+- drag one or more files onto the library window;
+- click **Add app** in the library's toolbar (or press Ctrl+O) and choose files;
+- click **Install** on an app's card in the [Store](#the-store);
+- run `Win.apk.exe <file>` from a command line, which is the same as
+  double-clicking it.
 
 What happens during an install:
 
@@ -59,14 +60,30 @@ What happens during an install:
    **Start > Win.apk Apps** and, unless turned off in the settings, a desktop
    shortcut.
 
-Installs run one at a time. A window shows the queue, each app's progress and
-its install log as it is written; you can hide it, and the library keeps
-showing the progress on the app's tile. If an install fails, the window says
-so and offers the log.
+Installs run one at a time, in a small install window:
+
+- While it works, the window shows the app's icon and name (the file's name
+  until the app's own is read, near the end), a moving bar and one line on
+  what it is doing: **Installing…**, then **Converting the app's code. This
+  happens once.**, then **Getting the app's name and icon…**.
+- **Show details** opens the install's log as it is written; the window
+  remembers whether it was open.
+- Files opened while an install is under way, from Explorer or by dragging,
+  join the same window: the one being installed is at the top, the others
+  below it with their state.
+- **Cancel** (or closing the window) stops the install after asking. What was
+  not installed yet is left out; an app that was being updated keeps its
+  previous version.
+- When it is done: **Open** starts the app, **Close** closes the window, and
+  **Show in library** opens the library with the app selected. With several
+  apps each one has its own **Open**.
+- When it fails: one sentence on why, **Show log** (the install log, in the
+  window) and **Copy details** (the reason, Win.apk's version and the end of
+  the log, for a bug report).
 
 Two apps with the same library name (the app's label) cannot coexist: a
 second install of the same app replaces the first and keeps the app's data.
-The right-click menu's **Update from APK** does the same deliberately.
+An app's details page has **Update from a file** to do the same deliberately.
 
 ### Native code and CPU architectures
 
@@ -107,27 +124,40 @@ architecture, the x86_64 one is used. Type to search, or pick a category.
 - **Install** downloads the APK from f-droid.org, checks it against the
   SHA-256 hash in F-Droid's index (a file that does not match is not
   installed) and installs it like a dropped file. The card shows the download
-  and the install; then its button says **Open**.
+  and the install; then it says **Installed**, and the app opens from the
+  library.
 - **Update** appears when F-Droid has a newer version (by version code) of an
   app you have with the same package name, however you installed it. The
   app's data stays.
-- Click a card for the app's version, size, license and a link to its
-  F-Droid page.
+- Click a card for the app's details page: whether it is in your library, its
+  version, size, license and categories, and a link to its F-Droid page.
+  **Back** (the arrow, Esc or Alt+Left) returns to the Store.
 
 The first time, the Store downloads F-Droid's index (tens of megabytes) and
 keeps a summary of it in `%LOCALAPPDATA%\Win.apk\store\catalog.tsv`. After
 that it opens at once and checks for a newer index in the background when
-the saved one is more than six hours old; **F5** checks now. While the
-library is empty, Win.apk opens on the Store.
+the saved one is more than six hours old; **F5** or the refresh button
+checks now.
 
 The Store needs an internet connection and reaches only f-droid.org. The
 downloaded APK is deleted after the install.
 
 ## Running an app
 
-Open an app by double-clicking its tile, pressing Enter on it, or using its
-Start menu or desktop shortcut. The library shows which apps are running;
-**Stop** closes the selected one.
+Open an app by double-clicking its tile (or selecting it and pressing Enter),
+from its right-click menu, or with its Start menu or desktop shortcut.
+
+A launch window with the app's icon shows at once and stays until the app's
+own window is up, the way a phone shows a splash screen. A start that takes
+long says why: **Converting the app's code. This happens once.** when the
+app's code changed, or **Still starting** after twenty seconds. Esc or the
+✕ in its corner cancels the start. If the app ends before its window is up,
+or later with an error, the same window turns into a short message
+(**Wiz didn't start**, **Wiz stopped with an error**) with **Show log**.
+
+The library marks a running app with a green badge on its tile and counts
+them under its title. **Stop** in the tile's right-click menu, or on the
+app's details page, closes the app at once.
 
 In an app:
 
@@ -151,6 +181,10 @@ AAC audio where the app lets you.
 An app runs once at a time. Starting it again (from a shortcut or the
 library) brings the running window to the front.
 
+Closing the library while an app it started is still running, or while an
+install is under way, only hides it: Win.apk stays until those finish, so it
+can still report an app that stops with an error.
+
 Apps run with your Windows user account's permissions. There is no
 phone-style sandbox: install only apps you trust ([`SECURITY.md`](../SECURITY.md)).
 
@@ -158,56 +192,57 @@ phone-style sandbox: install only apps you trust ([`SECURITY.md`](../SECURITY.md
 
 | Keys | Action |
 |---|---|
-| Arrow keys | Move between apps |
+| Arrow keys, Home, End, Page Up/Down | Move between apps |
 | Enter | Open the selected app |
-| Delete | Remove the selected app (asks first) |
-| Typing, Ctrl+F | Search the library; Esc shows every app again |
+| Alt+Enter | The selected app's details |
+| Menu key, Shift+F10 | The selected app's right-click menu |
+| Typing, Ctrl+F | Search the library or the Store; Esc shows everything again |
 | Ctrl+O | Add an app from a file |
-| Ctrl+I | Get Info for the selected app |
-| Ctrl+1, Ctrl+2 | The Library and Store tabs |
-| F5 | Refresh the library, or check F-Droid for new apps in the Store |
+| Ctrl+1, Ctrl+2 | The Library and the Store |
 | Ctrl+, | Settings |
+| Ctrl+L | The log window, on the newest log |
+| F5 | In the Store: check F-Droid for new apps |
+| Esc, Backspace, Alt+Left, the mouse's back button | On a details page: back |
+| Tab, Space, Enter | On a page: move between its controls and use them |
 
 ## Managing an app
 
-Right-click an app's tile for:
+Right-click an app's tile for **Open**, **Stop** (while it runs),
+**App details** and **Remove**.
 
-| Action | What it does |
+**App details** (also Alt+Enter) is a page in the library, with a back arrow:
+
+| Section | What it holds |
 |---|---|
-| **Open** | Starts the app |
-| **Get Info** | The app's details, permissions, orientation and window size, where its files are and how big they are, its install log |
-| **Open in portrait** / **Open in landscape** | Turns this one app the other way from the settings' default. For an app whose manifest fixes its orientation the entry is disabled and says so |
-| **Create desktop shortcut** | Adds a desktop shortcut with the app's icon |
-| **Show the APK in Explorer** | Opens the library folder with the app's APK selected |
-| **Open the app's files** | Opens the app's folder under `apps\` |
-| **Show the last log** | Opens the log viewer on `last-run.log` |
-| **Update from APK** | Installs a newer (or any other) version over this one. The app's saved data stays. Refused while the app runs |
-| **Reinstall** | Converts the app again from its APK, for a broken install |
-| **Remove** | Deletes the app and its shortcuts. What it saved stays, so installing it again picks up where it left off |
+| Window | **Orientation**: the settings' default, portrait or landscape for this app only (an app whose manifest fixes one says so instead). **Window size**: the size the app's window was last given, with **Reset** |
+| Permissions | A switch per permission the app was asked for or granted, and **Reset permissions**; see [Permissions](#permissions) |
+| Shortcut | **Desktop shortcut**: adds or removes the app's desktop shortcut. The Start menu one is always there |
+| Storage | **The app's file**: its size, and **Show** opens Explorer on it. **Converted code**: the app's folder under `apps\` |
+| Manage | **Stop** (while it runs), **Update from a file** (installs a newer, or any other, version over this one; what the app saved stays; refused while the app runs) and **Remove** |
 
-**Get Info** also lets you change the app's permissions (see
-[Permissions](#permissions)), choose its orientation, and reset the window
-size it remembered.
+Each action has one place: the details page, plus the right-click menu for
+the four above. The install log and the run log are in the log window
+(**Settings > Troubleshooting > Open logs**, Ctrl+L).
 
 ## Settings
 
-The gear opens the settings. Each one takes effect the next time an app
-opens unless noted.
+**Settings**, at the bottom of the navigation pane (or Ctrl+,), is a page of
+its own. Each setting takes effect the next time an app opens unless noted.
 
 | Section | Setting | What it does |
 |---|---|---|
 | Appearance | **Theme** | Match Windows, Light or Dark. Applies at once |
 | Appearance | **Language** | Match Windows, English or Hebrew. Applies at once; see [Hebrew and right-to-left](#hebrew-and-right-to-left) |
-| File types | **Open Android app files with Win.apk** | Makes Win.apk the default program for `.apk`, `.apkm`, `.xapk` and `.apks` |
-| Screen | **Screen size** | The phone screen apps see, in dp (density-independent pixels, as on a phone). **Auto** is 360 × 800 dp, or the size given by `WINAPK_PHONE_SIZE` when that variable is set. Presets range from 320 × 480 to a 10-inch tablet |
-| Screen | **Orientation** | Portrait or landscape, for every app that has no choice of its own. The default is landscape, the shape of a PC screen |
-| Shortcuts | **Desktop shortcut for new apps** | Every app gets a Start menu shortcut; this adds one on the desktop too |
-| Shortcuts | **Recreate** | Makes every app's Start menu shortcut again, with its icon |
-| Logs | **View logs**, **Open folder** | The log viewer and the logs folder |
+| Apps | **Screen size** | The phone screen apps see, in dp (density-independent pixels, as on a phone). **Auto** is 360 × 800 dp, or the size given by `WINAPK_PHONE_SIZE` when that variable is set. Presets range from 320 × 480 to a 10-inch tablet |
+| Apps | **Orientation** | Portrait or landscape, for every app that has no choice of its own. The default is landscape, the shape of a PC screen |
+| Apps | **Use my Windows folders** | On: apps' shared storage (Downloads, Pictures, Documents, Music, Movies) is your own Windows folders. Off: each is an empty folder of Win.apk's own, and your files stay where they are. See [Shared storage](#shared-storage) |
+| Apps | **Desktop shortcut for new apps** | Every app gets a Start menu shortcut; this adds one on the desktop too |
+| Apps | **Open .apk, .apkm, .xapk and .apks files with Win.apk** | Makes Win.apk the default program for the four formats |
 | Google account | **Sign in**, **Add another account**, **Sign out** | See [Google account](#google-account) |
-| App data | **Use my Windows folders** | On: apps' shared storage (Downloads, Pictures, Documents, Music, Movies) is your own Windows folders. Off: each is an empty folder of Win.apk's own, and your files stay where they are. See [Shared storage](#shared-storage) |
-| App data | **Open folder** | Opens `%LOCALAPPDATA%\Win.apk` |
-| About | **Version**, **Remove all apps** | The version, and a button that removes every app (their data stays) |
+| Troubleshooting | **Logs** | Opens the log window |
+| Troubleshooting | **App data** | Opens `%LOCALAPPDATA%\Win.apk` |
+| Troubleshooting | **Remove all apps** | Removes every app (what they saved stays) |
+| About | | The version |
 
 Settings are stored under `HKEY_CURRENT_USER\Software\Win.apk`.
 
@@ -217,8 +252,7 @@ An app opens in the orientation decided by these rules, first match wins:
 
 1. The orientation the app's manifest fixes for its first activity (a
    portrait-only game always opens portrait).
-2. The app's own choice from right-click > **Open in portrait / landscape**,
-   or Get Info.
+2. The app's own choice on its details page (**Window > Orientation**).
 3. The **Orientation** setting (landscape by default).
 
 The **Screen size** setting gives the phone's dimensions in dp; the
@@ -233,17 +267,17 @@ shape in a window of the other one: it is drawn in the largest box of its
 aspect, centred, with black bars around it.
 
 The size you settle on is remembered per app and used the next time the app
-opens, before the Screen size setting. Get Info shows it and can reset it;
-choosing another orientation for the app also forgets it.
+opens, before the Screen size setting. The app's details page shows it and
+can reset it; choosing another orientation for the app also forgets it.
 
 ## Hebrew and right-to-left
 
 Win.apk speaks English and Hebrew. When the Windows display language is
 Hebrew, the installer and the library open in Hebrew; otherwise pick
 **Language > עברית** in the settings, and the library switches at once. In
-Hebrew every window of the library is laid out right to left: the library,
-the settings, Get Info, the install window, menus and dialogs. Logs stay left
-to right.
+Hebrew every window of Win.apk is laid out right to left: the library, its
+pages, the install window, the launch window, the permission questions, menus
+and dialogs. Logs stay left to right.
 
 An app's window follows Windows' reading layout for right-to-left users: its
 title bar is mirrored, while the app draws its own layout as it would on a
@@ -252,26 +286,31 @@ phone.
 ## Shortcuts and file types
 
 - Every installed app gets a shortcut in **Start > Win.apk Apps** with its
-  own icon. The shortcut starts the app through Win.apk.
+  own icon. The shortcut starts the app through Win.apk, with the launch
+  window.
 - A desktop shortcut is added too when **Desktop shortcut for new apps** is
-  on, and can be added later from the right-click menu.
+  on; an app's details page adds or removes it later.
 - The installer makes `.apk` files open with Win.apk. The setting
-  **Open Android app files with Win.apk** extends that to `.apkm`, `.xapk` and
-  `.apks`, and takes the `.apk` association back if another program took it.
-  Double-clicking such a file installs the app and opens it.
-- **Shortcuts > Recreate** rebuilds every Start menu shortcut, for example
-  after moving Win.apk.
+  **Open .apk, .apkm, .xapk and .apks files with Win.apk** extends that to the
+  other three, and takes the `.apk` association back if another program took
+  it. Double-clicking such a file opens the install window.
+- When Win.apk is updated, it writes every app's Start menu and desktop
+  shortcuts again once, so they carry what the new version needs.
 
 ## Permissions
 
 Apps ask for permissions as on Android. When an app requests a dangerous
-permission group, a Windows dialog opens over the app:
+permission group, a small window opens over the app with its icon and name,
+one question ("Allow Wiz to access this PC's location?"), at most a line on
+what it means on a PC, and two buttons:
 
 - **Allow** grants the group. **Don't allow** denies it; a second refusal
-  denies it for good and the app is not asked again.
-- Location offers **Only approximate**, and an app that wants location in the
-  background is asked for that separately once the foreground permission is
-  granted.
+  denies it for good and the app is not asked again. Enter means Don't allow,
+  so a stray key never grants anything; Esc or closing the window answers
+  nothing.
+- Location has a **Precise location** switch: off, Allow grants only the
+  approximate location. An app that wants location in the background is
+  asked for that separately once the foreground permission is granted.
 - A permission in a group that already has a granted member is granted
   without asking, as Android does.
 - Apps built for Android 5 and older hold what they declare, as on a device.
@@ -280,7 +319,7 @@ The groups: storage and media (photos and videos, music and audio, files),
 location, camera, microphone, contacts, calendar, phone, call logs, SMS,
 notifications, nearby devices, physical activity and body sensors.
 
-The special access a device grants in its Settings app has the same dialog
+The special access a device grants in its Settings app has the same window
 here: **All files access**, **Media management**, **Display over other apps**
 and **Install unknown apps**. For access Windows cannot provide (notification
 access, accessibility services, usage access, Do Not Disturb access), the
@@ -291,9 +330,10 @@ already has it.
 Your answers are kept per app, signed, in `%LOCALAPPDATA%\Win.apk\appops`,
 and survive restarts and updates. Removing the app forgets them. To change a
 permission later, use the app's own **App info** screen (an app that opens
-its settings page lands there) or **Get Info > Permissions** in the library:
-click a permission to turn it on or off, or **Reset** them all. Turning a
-permission off stops the app if it is running, as Android does.
+its settings page lands there: a switch per permission, then **Done**) or
+**Permissions** on the app's details page in the library, where **Reset
+permissions** forgets them all. Turning a permission off stops the app if it
+is running, as Android does.
 
 Granting a permission does not create the data behind it: a PC has no
 contacts, SIM, SMS or sensors, so an app that is granted those finds them
@@ -363,15 +403,19 @@ are.
 
 ## Logs
 
-**Logs** at the bottom of the library opens the log viewer, which shows any
-of Win.apk's logs and follows the end as it is written. **Copy** puts the log
-on the clipboard, **Notepad** opens it there, **Folder** opens the logs
-folder (`%LOCALAPPDATA%\Win.apk\logs`).
+The log window (**Settings > Troubleshooting > Open logs**, or Ctrl+L) shows
+any of Win.apk's logs and follows the end as it is written. Pick the log at
+the top left ("Wiz · last run", "Wiz · install", "Google sign-in"…), search
+it (every match is marked; Enter or F3 goes to the next, Shift+F3 back),
+**Copy** it to the clipboard, or **Open folder** to see the file in Explorer
+(`%LOCALAPPDATA%\Win.apk\logs`). Error lines are in red. The install window
+and the launch window open the right log themselves when something fails.
 
 | File | What it records |
 |---|---|
-| `last-run.log` | The app opened most recently |
-| `install-<app>.log` | That app's install or reinstall |
+| `run-<app>.log` | That app's last run; `run-<app>.1.log` is the run before it |
+| `last-run.log` | The app opened most recently (a second name for its `run-<app>.log`) |
+| `install-<app>.log` | That app's install or update |
 | `gms.log` | The Google account operations run from the settings |
 | `install-helper.log`, `package-backfill.log` | Installs an app itself asked for (F-Droid installing another app), and library maintenance |
 | `hs_err_pid<n>.log` | A crash report from the Java VM, if the VM itself crashed |
@@ -379,10 +423,15 @@ folder (`%LOCALAPPDATA%\Win.apk\logs`).
 
 ## Removing apps and uninstalling
 
-- **Remove** (right-click, or Delete) deletes the app's APK, converted code,
-  icon and shortcuts, and forgets its permissions. What the app saved under
-  `android\` stays, so installing it again picks up where it left off.
-- **Settings > About > Remove all apps** does that for every app.
+- **Remove** (on the app's details page or its right-click menu) asks first,
+  then deletes the app's APK, converted code, icon and shortcuts, and forgets
+  its permissions. What the app saved stays, so installing it again picks up
+  where it left off, unless you tick **Also delete what the app saved**:
+  then its data folder (`android\data\data\<package>`) and its folders in
+  shared storage (`Android\data` and `Android\obb`) go too, as uninstalling
+  does on a phone. Your own files in your Windows folders are never touched.
+- **Settings > Troubleshooting > Remove all apps** removes every app (what they
+  saved stays).
 - Uninstalling Win.apk (Windows Settings > Apps) removes the program, the
   Start menu shortcuts and the `.apk` association, and keeps
   `%LOCALAPPDATA%\Win.apk`. Delete that folder to remove the apps, their data,
@@ -403,16 +452,20 @@ folder (`%LOCALAPPDATA%\Win.apk\logs`).
 | Permission grants | `%LOCALAPPDATA%\Win.apk\appops` |
 | The Google account and its tokens | `%LOCALAPPDATA%\Win.apk\gms` |
 | Shared ARM translations | `%LOCALAPPDATA%\Win.apk\aot-cache` |
-| Settings | `HKEY_CURRENT_USER\Software\Win.apk` |
+| Settings | `HKEY_CURRENT_USER\Software\Win.apk` (`Theme`, `Language`, `PhoneSize`, `Landscape`, `DesktopShortcut`, `UserFolders`, `InstallDetails`, and the library window's size) |
 | Start menu shortcuts | `Start > Win.apk Apps` |
 
 ## Command line
 
 ```bat
 Win.apk.exe                          :: the library
-Win.apk.exe app.apk                  :: install app.apk, then open it
-Win.apk.exe --run <library apk>      :: open an installed app (what its shortcuts do)
+Win.apk.exe app.apk [more files]     :: the install window only, for these files
+Win.apk.exe --run <library apk>      :: open an installed app, with its launch window (what its shortcuts do)
 ```
+
+One Win.apk serves everything: a second start hands its files, or its wish
+to see the library, to the one already running, so files opened together
+share one install window.
 
 The runtime can also be run directly, for testing:
 
@@ -456,8 +509,9 @@ development and testing.
 
 ## Troubleshooting
 
-**The app does not start, or stops with an error.** Open **Logs** and read
-the end of `last-run.log`. The most useful lines:
+**The app does not start, or stops with an error.** Click **Show log** in
+the launch window, or open the log window (Ctrl+L) on the app's last run.
+The most useful lines:
 
 | Line | Meaning |
 |---|---|
@@ -472,8 +526,9 @@ Then look in [`APPS.md`](APPS.md) for the app or the kind of problem, and
 [open an issue](../../../issues/new/choose) with the app's name, version and
 source, the exact steps, a screenshot and the whole log.
 
-**The install failed.** The install window offers the log
-(`install-<app>.log`). An APK with only 32-bit ARM libraries cannot be
+**The install failed.** The install window says why in a sentence; **Show
+log** opens `install-<app>.log`, and **Copy details** copies what a bug
+report needs. An APK with only 32-bit ARM libraries cannot be
 installed; a Store entry that says the APK has no native code for this PC
 needs the full bundle instead.
 
@@ -496,9 +551,9 @@ code-signed, and Win.apk writes and then runs translated code, which some
 scanners flag. Allow it if you trust the download.
 
 **Text or layout is wrong in the app.** Try another Screen size preset, or
-turn the app the other way (right-click > Open in portrait / landscape). A
+turn the app the other way (its details page, **Window > Orientation**). A
 screenshot plus the log makes a good report.
 
 **The app asks for something Windows cannot give** (notification access,
-accessibility, usage access). The dialog explains this and the app is told
-no; the rest of the app usually works.
+accessibility, usage access). The window explains this in a sentence and the
+app is told no; the rest of the app usually works.

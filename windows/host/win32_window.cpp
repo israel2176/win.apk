@@ -3,6 +3,7 @@
 #include "win32_window.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -30,6 +31,8 @@ constexpr int kMetaAltOn = 0x2;
 constexpr int kMetaCtrlOn = 0x1000;
 
 HWND g_hwnd = nullptr;
+HANDLE g_ready_event = nullptr;  // the launcher's (take_launcher_ready_event)
+std::atomic<bool> g_ready_signalled{false};
 WindowInput* g_input = nullptr;
 int g_phone_w = 360, g_phone_h = 640;  // the phone, in dp: the app's display size
 SIZE g_surface{};                      // the size, in pixels, the app is asked to draw at (its surface)
@@ -521,6 +524,8 @@ void paint(HWND hwnd) {
     ExcludeClipRect(dc, box.left, box.top, box.right, box.bottom);
     fill(dc, client, RGB(0, 0, 0));
     EndPaint(hwnd, &ps);
+    // The app's first frame is on screen: the launcher's splash can go.
+    if (g_frame_w > 0 && IsWindowVisible(hwnd)) signal_launcher_ready();
 }
 
 // Whether a mouse message's position lies on the app (not on a bar).
@@ -1077,6 +1082,24 @@ bool window_set_icon_png(const std::wstring& path) {
     s_big = big;
     s_small = small;
     return true;
+}
+
+void take_launcher_ready_event() {
+    wchar_t buf[32];
+    const DWORD n = GetEnvironmentVariableW(L"WINAPK_READY_EVENT", buf, 32);
+    SetEnvironmentVariableW(L"WINAPK_READY_EVENT", nullptr);  // not for the JVM's or the translator's children
+    if (n == 0 || n >= 32) return;
+    g_ready_event = reinterpret_cast<HANDLE>(static_cast<uintptr_t>(wcstoull(buf, nullptr, 10)));
+    // The handle stays in this process: the processes it starts must not hold the launcher's event.
+    if (g_ready_event) SetHandleInformation(g_ready_event, HANDLE_FLAG_INHERIT, 0);
+}
+
+void signal_launcher_ready() {
+    if (g_ready_signalled.exchange(true)) return;
+    if (!g_ready_event) return;
+    SetEvent(g_ready_event);
+    std::fprintf(stderr, "[win.apk] the window is up: the launcher was told\n");
+    std::fflush(stderr);
 }
 
 void window_show() {

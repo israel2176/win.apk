@@ -369,8 +369,17 @@ by copying them into `library\` and running `winapk-runtime --install-only`,
 gives each app its shortcuts, runs apps (`winapk-runtime --apk`), shows
 their logs, and holds the Store (F-Droid's `index-v1.json` summarized to
 `store\catalog.tsv`, downloads checked against the index's SHA-256), the
-settings and Get Info. Every user-visible string is in English and Hebrew,
-and in Hebrew the windows are laid out right to left.
+settings and each app's details. Every user-visible string is in English and
+Hebrew, and in Hebrew the windows are laid out right to left.
+
+One `Win.apk.exe` process serves the library, the install window and the
+launch splashes. A second start (Explorer opens one per selected file) hands
+its files, or its wish to see the library, to the running one in a
+`WM_COPYDATA` and exits, so files opened together share one install window.
+The library window is created hidden and shown only when asked for: an APK
+opened from Explorer shows only the install window, a shortcut only the
+splash. A process whose library is hidden exits once it has nothing left to
+show or wait for.
 
 ### The install helper and the installed-apps registry
 
@@ -421,9 +430,11 @@ Billing answers `BILLING_UNAVAILABLE`, the Maps SDK lays out a blank map.
 
 ## An install, step by step
 
-1. The launcher copies the file into `library\<name>.apk` and starts
-   `winapk-runtime --apk <that file> --install-only`, logging to
-   `logs\install-<name>.log`.
+1. The launcher copies the file into `library\<name>.apk` (an update moves the
+   previous APK aside, and puts it back if the install fails or is cancelled)
+   and starts `winapk-runtime --apk <that file> --install-only`, logging to
+   `logs\install-<name>.log`. The install window reads that log for its
+   status line.
 2. `com.winapk.tools.AppInstall` (in a child JVM) unpacks the app into the
    device layout under `android\data\app\~~<nonce>\<package>-<nonce>\`:
    `base.apk` (a hard link for a plain APK), `split_<name>.apk` chosen as
@@ -446,13 +457,20 @@ Billing answers `BILLING_UNAVAILABLE`, the Maps SDK lays out a blank map.
 
 ## A run, step by step
 
-1. The launcher (or a shortcut: `Win.apk.exe --run <library apk>`) sets
-   `WINAPK_PHONE_SIZE` from the Screen size setting and the app's effective
-   orientation, and starts `winapk-runtime --apk <library apk>` with its
-   output in `logs\last-run.log`.
+1. The launcher (or a shortcut: `Win.apk.exe --run <library apk>`) shows the
+   app's splash at once, sets `WINAPK_PHONE_SIZE` from the Screen size
+   setting and the app's effective orientation, and starts
+   `winapk-runtime --apk <library apk>` with its output in
+   `logs\run-<name>.log` (the previous run's kept as `run-<name>.1.log`;
+   `last-run.log` is a hard link to the newest). It passes
+   `WINAPK_READY_EVENT`, an inherited event handle, and waits for the event
+   or the process: the runtime sets the event once its window has painted
+   the app's first frame (`win32_window.cpp`, `signal_launcher_ready`), and
+   the splash goes. If the process ends first, the splash says the app did
+   not start, with Show log.
 2. The runtime takes a named mutex keyed on the app's data folder. If another
-   copy holds it, the running window is brought forward and this process
-   exits.
+   copy holds it, the running window is brought forward, the ready event is
+   set, and this process exits.
 3. The install and DEX conversion are checked (cached, so this is quick), and
    shared storage is mapped to the user's folders if the setting is on.
 4. HotSpot is created in-process on a thread with a large stack; JVMTI is
@@ -481,7 +499,7 @@ default; `--data` moves it for a direct run):
 | `library\<name>.apk`, `.label`, `.package`, `.orientation`, `.window` | The user's copy of each app and the launcher's per-app files |
 | `apps\<name>\` | `classes.jar`, `.macapk-dex-stamp`, `icon.png`, `label.txt`, `package.txt` |
 | `android\` | The Android file system: `data\app\` (installed packages, with `lib\<isa>\` and the `.so.aot.*` translation files), `data\data\<package>\` (app data), the shared-storage volume |
-| `logs\` | `last-run.log`, `install-<name>.log`, `gms.log`, `install-helper.log`, `package-backfill.log`, `hs_err_pid*.log` |
+| `logs\` | `run-<name>.log` and `run-<name>.1.log`, `last-run.log` (a hard link to the newest run log), `install-<name>.log`, `gms.log`, `install-helper.log`, `package-backfill.log`, `hs_err_pid*.log` |
 | `store\` | `catalog.tsv`, `catalog.etag`, `icons\`, `downloads\` |
 | `installed_apps.json` | The installed-apps registry the package manager answers from |
 | `appops\` | `app-ops.json`, `signing-key.pub`, `signing-key.p256` |
@@ -491,7 +509,9 @@ default; `--data` moves it for a direct run):
 
 Settings live in `HKCU\Software\Win.apk`: `Theme`, `Language`, `PhoneSize`,
 `Landscape` (absent means landscape; 0 means portrait), `DesktopShortcut`,
-`UserFolders`.
+`UserFolders`, `InstallDetails` (the install window shows its log),
+`ShortcutVersion`, and the library window's `WindowWidth`, `WindowHeight` and
+`WindowMaximized`.
 
 ## Build, tests and CI
 
