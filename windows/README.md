@@ -29,17 +29,17 @@ fall into three groups:
 | `src/elf_loader.cpp` | Android x86_64 ELF loader: segments, RELA/RELR/APS2 relocations, protections, RELRO, init/fini |
 | `src/elf_tls.cpp` | Dynamic ELF TLS for guest libraries: module ids, `__tls_get_addr`, a block per thread and module |
 | `src/fs_tls_patch.cpp` | Rewrites the Bionic stack guard `%fs:0x28` to `%gs:0x28` (`NT_TIB.ArbitraryUserPointer`) |
-| `src/mini_bionic.cpp`, `src/bionic/` | The Windows Bionic shim (sysv_abi functions over the UCRT and Win32): strings, printf, pthread, files, time, `mmap`, system properties and the environment, Android paths, the system CA store (`cacerts.cpp`: the roots Windows trusts), pipes/eventfd/epoll, sockets on Winsock, `ALooper`, and `libz.so` on a statically linked zlib. `test/bionic_test.cpp` (`winapk-bionic-test`) checks it against `test/guest/bionic_guest.c` |
+| `src/mini_bionic.cpp`, `src/bionic/` | The Windows Bionic shim (sysv_abi functions over the UCRT and Win32): strings, printf, pthread, files, time, `mmap`, system properties and the environment, Android paths, the system CA store (`cacerts.cpp`: the roots Windows trusts), pipes/eventfd/epoll, sockets on Winsock, `ALooper`, signals (`signal.cpp`: `sigaction` handlers get faults through a vectored exception handler with a Bionic `siginfo_t`/`ucontext_t`, `raise`/`kill`/`pthread_kill` deliver by a call or by injection into the target thread), and `libz.so` on a statically linked zlib. `test/bionic_test.cpp` (`winapk-bionic-test`) checks it against `test/guest/bionic_guest.c` |
 | `tools/elfrun_main.cpp` | `winapk-elfrun`: loads `.so` files and runs the PoC checks |
 | `test/guest/poc_guest.c` | The Android x86_64 test library |
 | `include/winapk/abi_thunk.h`, `src/abi_thunk.cpp` | Runtime machine-code thunks for the JNI bridge: native-method thunks from Microsoft x64 callers to System V code (built per Java signature) and the System V variadic `va_list` entry stub |
 | `tools/gen_jni_slots.py`, `src/jni_slots.inc` | Generated `JNINativeInterface_` slot table (235 slots) the guest `JNIEnv` wrapper is built from |
 | `include/winapk/guest_jni.h`, `src/guest_jni.cpp` | The guest `JNIEnv`/`JavaVM` wrapper: per-thread guest env, a generic System V forwarder into HotSpot's table for every non-variadic slot, and `GetEnv`/`Attach`/`Detach`. Needs a JDK's `jni.h` at build time (`-DWINAPK_JNI_INCLUDE=$JAVA_HOME/include`) |
 | `include/winapk/jni_variadic.h`, `src/jni_variadic.cpp` | The variadic `Call<T>Method` / `...V` / `NewObject` bridge (31 families, one template keyed on the `...A` slot): reads the argument stream against the method signature and repacks it into the `jvalue[]` of HotSpot's A-form. Needs a `SignatureProvider` (JVMTI-backed in the real host, a map in tests) |
-| `include/winapk/linker.h`, `src/linker.cpp` | The guest linker: loads a library with its `DT_NEEDED` tree (bionic's lookup order, system libraries answered by the shim), keeps the registry of loaded images, and implements the guest's `dlopen`, `dlsym`, `dladdr`, `dlerror` and `dlclose`. `test/linker_test.cpp` (`winapk-linker-test`) checks it against `test/guest/link_guest.c` |
+| `include/winapk/linker.h`, `src/linker.cpp` | The guest linker: loads a library with its `DT_NEEDED` tree (bionic's lookup order, system libraries answered by the shim), keeps the registry of loaded images, and implements the guest's `dlopen`, `dlsym`, `dladdr`, `dlerror` and `dlclose` (reference counted; the last close runs the finalizers, frees the TLS and unmaps, dependencies included, unless `RTLD_NODELETE`). `test/linker_test.cpp` (`winapk-linker-test`) checks it against `test/guest/link_guest.c` |
 | `include/winapk/jni_bind.h`, `src/jni_bind.cpp` | Binding guest natives into HotSpot: the guest `RegisterNatives` slot wraps each function in a thunk, and a JVMTI `NativeMethodBind` hook does the same for natives bound by name. Also the cached JVMTI signature provider |
 | `include/winapk/arm64_cpu.h`, `src/arm64/` | The arm64 track (M10): an AArch64 interpreter (`arm64_cpu.cpp` for integer, memory and branches, `arm64_simd.cpp` for FP and NEON) and its bridge to the host (`arm64_guest.cpp`, `include/winapk/arm64_guest.h`): AAPCS64 to System V calls into the shim, `va_list` conversion, host calls into guest code through an execute-fault handler, per-thread guest stacks and TLS. `ElfImage` loads arm64 libraries with it. `test/arm64_test.cpp` (`winapk-arm64-test`) checks the interpreter against the same C code built for the host, and the bridge against `test/guest/arm64_bridge_guest.c` |
-| `host/` | `winapk-runtime.exe`, the host that runs an APK: DEX conversion, the in-process JVM, the host natives (window and input, `NativeOs`, `NativeLooper`, `NativeImageCodec` with libwebp and WIC, `NativeAudio` on WASAPI; the rest are still stubs), app native libraries (`guest_libs.cpp`), and `Boot.run`. `test/audio_test.cpp` (`winapk-audio-test`) checks the audio backend |
+| `host/` | `winapk-runtime.exe`, the host that runs an APK: DEX conversion, the in-process JVM, the host natives (window and input, `NativeOs`, `NativeLooper`, `NativeImageCodec` with libwebp and WIC, `NativeAudio` on WASAPI; the rest are still stubs), app native libraries (`guest_libs.cpp`), and `Boot.run`. `test/audio_test.cpp` (`winapk-audio-test`) checks the audio backend. `crash_report.cpp`: after the guest's signal handlers decline, the crash line (module and offset, the frames on the stack) and a minidump in `logs\crash-<app>-<time>.dmp`; `test/crash_report_test.cpp` (`winapk-crash-test`) runs it on a child process |
 | `scripts/` | `build_java.sh` (upstream's Java runtime with a stock JDK), `build_framework_res.sh` (the platform resource APK) and `stage_runtime.sh` (a runnable `bin/` + `lib/` folder) |
 | `tools/jvmrun_main.cpp` | `winapk-jvm-run`: the real-JVM end-to-end test. Creates a HotSpot JVM, loads an Android x86_64 `.so` through the guest linker, runs its `JNI_OnLoad` (which registers a native itself), binds a second native through the `NativeMethodBind` hook, and calls both from Java; one of them calls back into Java through the guest `JNIEnv`. `test/guest/jni_guest.c` and `test/java/WinApkJniTest.java` are its inputs; `test/build_e2e.sh` builds them and `test/run_e2e_wine.sh` runs it under Wine |
 
@@ -61,7 +61,9 @@ cmake -S windows -B build -G Ninja && cmake --build build
 The guest libraries are built with plain clang + lld, so no NDK is needed:
 `windows/test/build_guest.sh`.
 
-On Linux (cross-compile, run under Wine): `windows/test/run_poc_wine.sh`.
+On Linux (cross-compile, run under Wine): `windows/test/run_poc_wine.sh`
+(the loader, linker, arm64 and crash-report tests; the toolchain file adds
+`-femulated-tls` and winpthreads, which GCC's mingw-w64 libstdc++ needs).
 
 The JNI library and its tests (`winapk-jni-test`, `winapk-jni-variadic-test`,
 `winapk-jvm-run`) build only when CMake is given a JDK's include directory:
@@ -361,8 +363,7 @@ Done so far:
 
 Next, in order: video (MediaPlayer and the NDK media API on Media
 Foundation), Vulkan (`VK_KHR_win32_surface`), sensors, W^X thunks with unwind
-tables and a crash handler (M9), code signing, then a wider compatibility
-corpus. ARM code (M10) is translated ahead of time, with the JIT
+tables (M9), code signing, then a wider compatibility corpus. ARM code (M10) is translated ahead of time, with the JIT
 as the fallback; 32-bit `armeabi-v7a` stays unsupported.
 
 `PORTING.md` holds the design decisions, the technical findings, the known

@@ -186,9 +186,9 @@ The component table above predates most of the host: `windows/README.md`
 ("Status and next steps") is the current list of what works, and
 `windows/host/` the current set of natives (one file per Java class, named in
 `host_natives.h`). What is still missing, as of 2026-11: video playback (MediaPlayer's video
-and the NDK media API), Vulkan, sensors, a crash handler and minidumps, W^X
-thunks with unwind tables, code signing, 32-bit `armeabi-v7a`, and Google
-Play services. Section 7 has the finer gaps.
+and the NDK media API), Vulkan, sensors, W^X thunks with unwind tables, code
+signing, 32-bit `armeabi-v7a`, and Google Play services. Section 7 has the
+finer gaps.
 
 ### Mac code inventory
 
@@ -249,7 +249,7 @@ implements in `runtime/src`; on Windows `windows/host/native_*.cpp`):
 | `main.cpp` (translator CLI) | 9,744 | `.so` to a host library | `host/translator_main.cpp` + `host/guest_stub.cpp` | done |
 | `bionic_shim.cpp` | 66,962 | Android's libc, libdl, liblog, libm, libandroid... on Darwin | `src/mini_bionic.cpp` and `src/bionic/` on the Windows CRT and Win32 (M5) | about 520 functions |
 | `bionic_shim_jni_bare.cpp`, `_jni_cxxwrap.cpp` | 1,119 | variadic JNI calls | `src/jni_variadic.cpp` | done |
-| `bionic_shim_sigchain.cpp`, `_signal.cpp` | 1,913 | signals and chaining with the JVM | vectored exception handling (M5) | not started |
+| `bionic_shim_sigchain.cpp`, `_signal.cpp` | 1,913 | signals and chaining with the JVM | `src/bionic/signal.cpp`: delivery on vectored exception handling, injection for pthread_kill (M5) | done for x86_64 guests; handlers in arm64 libraries are not called |
 | `bionic_shim_sensors.cpp` | 540 | NDK sensors | port as is (M5) | not started |
 | `bionic_shim_vulkan.cpp` | 401 | Vulkan over MoltenVK | the system Vulkan loader (M6) | not started |
 | `bionic_shim_cacerts.cpp` | 218 | CA store from the Mac's roots | `src/bionic/cacerts.cpp`: the roots Windows trusts (user, machine, policy; less Disallowed and expired) plus the JDK's | done |
@@ -598,22 +598,44 @@ applies on Windows, where `FileDescriptor` holds a `handle`.
   other FS-relative accesses are not rewritten. This needs a decoder-driven
   pass (Zydis, MIT license). The current scanner only matches the exact
   stack-guard encodings and could also match data bytes.
-- `dlclose` never unloads; libraries stay mapped until exit, as if loaded
-  with `RTLD_NODELETE`. Linker namespaces and `android_dlopen_ext`'s
-  `extinfo` (loading from a file descriptor or straight from the APK) are
-  ignored.
+- `dlclose` unloads (`src/linker.cpp`): a library goes when its last
+  reference is dropped (dlopen handles, the host's `open()` for a library the
+  JVM `System.load`ed, pending C++ `thread_local` destructors), unless it was
+  opened with `RTLD_NODELETE`: `DT_FINI_ARRAY` and `DT_FINI` run, its
+  `__cxa_atexit` entries, the unload hooks (the JNI thunk cache, the host's
+  stub-module table), its TLS blocks are freed on every thread, and the
+  dependencies nothing else holds go with it, cycles included. What stays:
+  the thunks already built for its functions (the pool is a bump allocator
+  that never frees; they are a few dozen bytes each and unreferenced). Linker
+  namespaces and `android_dlopen_ext`'s `extinfo` (loading from a file
+  descriptor or straight from the APK) are ignored.
 - A library's references to symbols it defines itself are bound directly, so
   another library cannot interpose them. Bionic allows that unless the library
   was linked with `-Bsymbolic`.
 - Constructors run with the linker lock held. Bionic does the same, so a
   constructor that waits on a thread calling `dlopen` deadlocks on both.
-- Signals are recorded, not delivered: `src/bionic/signal.cpp` keeps what
-  `sigaction`, `sigaltstack`, `sigprocmask` and the POSIX timers were given
-  and answers from it, which is what crash reporters need at load. No handler
-  ever runs. Delivering a fault to one means mapping a Windows exception to an
-  Android `ucontext_t`, and that has to account for the System V red zone,
-  because Windows does not preserve the 128 bytes below rsp when it
-  dispatches an exception.
+- Signals are delivered (`src/bionic/signal.cpp`): a fault in guest code, or
+  in a host function with a guest frame on the stack, reaches the guest's
+  `sigaction` handler through a vectored exception handler as SIGSEGV, SIGBUS,
+  SIGILL, SIGFPE or SIGTRAP, with a Linux `siginfo_t` and an x86_64 Bionic
+  `ucontext_t` (gregs and the FXSAVE image, written back on return, so a
+  handler can move rip or fix a mapping and resume), on the `sigaltstack`
+  when `SA_ONSTACK` asks; `sa_mask`, `SA_NODEFER` and `SA_RESETHAND` behave as
+  on Linux. `raise`, `kill(getpid())`, `tgkill` and `abort` deliver to the
+  calling thread at once; `pthread_kill` to another thread by suspending it
+  and injecting the call (its registers are parked on its own stack and
+  restored with `RtlRestoreContext`); a blocked signal waits in the thread's
+  pending set. A handler that returns three times without moving past the
+  same fault, a `SIG_DFL`/`SIG_IGN` action, or a fault while the signal is
+  blocked, is the crash path (section "Product": the crash report and the
+  minidump). Not delivered: HotSpot's own faults (JIT code, jvm.dll, which
+  its structured exception handler takes afterwards), faults in arm64 guest
+  code, and handlers that live in an arm64 library (they would need an arm64
+  `ucontext_t`). Known residual: Windows writes the exception record below
+  the faulting rsp, so the System V red zone of the interrupted frame is
+  clobbered before any handler runs; a leaf that resumes at the same
+  instruction with live data there misbehaves (redirecting rip, or fixing a
+  mapping, is unaffected). POSIX timers are still recorded only.
 - Android code does not probe the stack, so guest threads need fully committed
   stacks.
 - `errno` values are Linux numbers. Every shim function that sets `errno` has
@@ -721,8 +743,14 @@ Still open:
 - Windows Defender and SmartScreen may flag a process that writes and then runs
   code, and the installer is not signed: SmartScreen warns on every install.
   Builds need code signing and testing against Defender.
-- There is no crash handler: a crash leaves `logs\last-run.log` and HotSpot's
-  `hs_err` file, no minidump.
+- The crash handler (`host/crash_report.cpp`): after the guest's own signal
+  handlers decline, the report names the faulting module and offset
+  (`libfoo.so+0x1234 (symbol+0x12)`), lists the guest and host frames it finds
+  on the stack, writes `logs\crash-<app>-<yyyymmdd-hhmmss>.dmp`
+  (`MiniDumpWriteDump` with indirectly referenced memory, thread info and
+  unloaded modules; the newest three per app are kept) and logs the file's
+  path, so a user can attach it to an issue. The host's own `abort` writes
+  one too. HotSpot's `hs_err` file still covers its own faults.
 - Permissions (`launcher_main.cpp` `namespace appops`, `SpecialAccessStore`,
   `RuntimePermissionGroups`): every dangerous group and the four grantable
   special-access ops behave as on Android (ask, deny, deny for good, auto
@@ -910,7 +938,8 @@ normal `System.loadLibrary` path.
 - `mmap`, `mprotect` and `madvise` on `VirtualAlloc` and friends.
 - Time and clocks, `errno` translation, `dlopen` and `dlsym`.
 - Signals on vectored exception handling (`sigaction`, the SIGSEGV handlers
-  that Unity and Mono rely on, and chaining with HotSpot's handler).
+  that Unity and Mono rely on, and chaining with HotSpot's handler): done,
+  section 7.
 - `fork` failing with `EAGAIN`.
 - `/proc` emulation for the common reads (`self/maps`, `cpuinfo`).
 - Locale, liblog including its variadic functions, libm and libz (libz is
@@ -965,7 +994,8 @@ double-clicking it.
 ### M9. Hardening and release (4 to 8 weeks)
 
 - W^X thunk pool and unwind tables (section 7).
-- A crash handler that writes a minidump and the app log.
+- A crash handler that writes a minidump and the app log: done (section 7,
+  "Product").
 - Code signing and Defender/SmartScreen testing.
 - A compatibility list and a regression corpus of open-source APKs run in CI.
 - A security review. Apps run with the user's rights and without a sandbox,

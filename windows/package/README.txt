@@ -76,6 +76,7 @@ Where things are
 Installed apps:  %LOCALAPPDATA%\Win.apk\library
 App data:        %LOCALAPPDATA%\Win.apk\android
 Last log:        %LOCALAPPDATA%\Win.apk\logs\last-run.log
+Crash dumps:     %LOCALAPPDATA%\Win.apk\logs\crash-<app>-<date>.dmp (the last three per app)
 
 Removing an app from the library keeps what it saved; uninstalling Win.apk
 keeps the apps too. Delete %LOCALAPPDATA%\Win.apk to start from scratch.
@@ -91,6 +92,8 @@ These lines in the log are the most useful:
   "native not implemented"            a Windows piece that is missing
   "not implemented on Windows yet"    a system function an app's native code needs
   "Exception" or "FATAL"              the app crashed
+  "crash:" and "crash dump:"          the app's native code crashed; the dump
+                                      named there is worth attaching too
 
 Java is included (Eclipse Temurin 21, in the jre folder), and so is ANGLE
 (bin\libEGL.dll, bin\libGLESv2.dll, Chromium's build; licenses in
