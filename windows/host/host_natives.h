@@ -55,6 +55,7 @@ HostMethods native_radios_methods();    // native_radios.cpp
 HostMethods native_location_methods();  // native_location.cpp
 HostMethods native_activity_methods();  // native_activity.cpp
 HostMethods native_signin_methods();    // native_signin.cpp
+HostMethods native_media_video_methods(); // native_media_video.cpp (NativeMedia video + HostVideo)
 
 // The app's directory under the data directory, where Boot renders the
 // launcher icon (icon.png) that becomes the window's icon. native_cocoa.cpp.
