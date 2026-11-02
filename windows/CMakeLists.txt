@@ -230,7 +230,7 @@ if(WINAPK_JNI_INCLUDE)
                               host/webview2_host.cpp host/native_browser_tab.cpp host/native_webview.cpp
                               host/native_camera.cpp host/native_radios.cpp host/native_bluetooth.cpp
                               host/native_location.cpp
-                              host/native_signin.cpp
+                              host/native_signin.cpp host/native_notifications.cpp
                               host/user_folders.cpp host/crash_report.cpp
                               host/runtime.rc)
   target_link_libraries(winapk-runtime PRIVATE winapk_jni winapk_sqlite webpdecoder winapk_stb_vorbis windowscodecs
@@ -264,6 +264,7 @@ if(WINAPK_JNI_INCLUDE)
   target_sources(winapk-runtime PRIVATE host/gl/gl_loader.cpp host/gl/gl_stubs.cpp host/gl/gl_bridges.cpp
                  host/gl/gl_surface.cpp host/gl/guest_gl.cpp host/native_window.cpp host/native_asset.cpp
                  host/native_opensles.cpp host/native_aaudio.cpp host/native_media.cpp
+                 host/video_decode.cpp host/video_player.cpp host/native_media_video.cpp
                  host/native_activity.cpp
                  ${WINAPK_GL_UPSTREAM})
   target_include_directories(winapk-runtime PRIVATE host third_party/khronos ${CMAKE_BINARY_DIR}/gl
@@ -289,6 +290,13 @@ if(WINAPK_JNI_INCLUDE)
   add_executable(winapk-audio-test test/audio_test.cpp host/audio_engine.cpp host/audio_decode.cpp)
   target_link_libraries(winapk-audio-test PRIVATE winapk_stb_vorbis ole32 mfplat mfreadwrite mfuuid shlwapi)
   target_link_options(winapk-audio-test PRIVATE -static)
+
+  # Video on Media Foundation without a JVM (test/video_test.cpp): the
+  # converter, the decoder, the source and the player on test/video/color.mp4.
+  add_executable(winapk-video-test test/video_test.cpp host/video_decode.cpp host/video_player.cpp
+                 host/audio_engine.cpp)
+  target_link_libraries(winapk-video-test PRIVATE ole32 mf mfplat mfreadwrite mfuuid shlwapi)
+  target_link_options(winapk-video-test PRIVATE -static)
 
   # The shared-folder junctions on a scratch volume (test/user_folders_test.cpp).
   add_executable(winapk-user-folders-test test/user_folders_test.cpp host/user_folders.cpp)

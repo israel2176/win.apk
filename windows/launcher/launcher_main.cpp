@@ -824,7 +824,36 @@ void register_file_types(bool force) {
     SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);
 }
 
-bool make_shortcut(const fs::path& lnk, const std::wstring& args, const fs::path& icon, const std::wstring& what) {
+// The AppUserModelID of an app's process and of its Start menu shortcut: the
+// runtime gives its process the id (SetCurrentProcessExplicitAppUserModelID)
+// and the shortcut carries it (System.AppUserModel.ID), which is how a classic
+// program's notifications (toasts) get the shortcut's name and icon in the
+// Action Center, and its window the shortcut's identity on the taskbar.
+// Derived from the library name alone; windows/host/native_notifications.cpp
+// (app_user_model_id) computes the very same string: keep them in step.
+// Letters, digits, '.', '-' and '_' pass; anything else becomes '_' and a hash
+// of the whole name is appended, so names that differ only there stay apart;
+// at most 128 characters and no spaces, as the id's rules say.
+std::wstring app_user_model_id(const std::wstring& name) {
+    std::wstring id = L"WinApk.App.";
+    bool mangled = false;
+    uint64_t hash = 14695981039346656037ULL;  // FNV-1a
+    for (wchar_t c : name) {
+        hash = (hash ^ static_cast<uint64_t>(c)) * 1099511628211ULL;
+        const bool plain = (c >= L'0' && c <= L'9') || (c >= L'A' && c <= L'Z') || (c >= L'a' && c <= L'z') ||
+                           c == L'.' || c == L'-' || c == L'_';
+        id += plain ? c : L'_';
+        mangled = mangled || !plain;
+    }
+    if (mangled || id.size() > 100) {
+        id = id.substr(0, 100) + L'.';
+        for (int i = 60; i >= 0; i -= 4) id += L"0123456789abcdef"[(hash >> i) & 0xf];
+    }
+    return id;
+}
+
+bool make_shortcut(const fs::path& lnk, const std::wstring& args, const fs::path& icon, const std::wstring& what,
+                   const std::wstring& aumid) {
     IShellLinkW* link = nullptr;
     if (FAILED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&link)))) return false;
     link->SetPath(exe_path().c_str());
@@ -832,6 +861,20 @@ bool make_shortcut(const fs::path& lnk, const std::wstring& args, const fs::path
     link->SetWorkingDirectory(root().c_str());
     link->SetDescription(what.c_str());
     if (!icon.empty()) link->SetIconLocation(icon.c_str(), 0);
+    if (!aumid.empty()) {
+        // System.AppUserModel.ID (propkey.h's PKEY_AppUserModel_ID, spelled out
+        // so no property-system library is needed).
+        static const PROPERTYKEY kAppUserModelId = {
+            {0x9f4c2855, 0x9f79, 0x4b39, {0xa8, 0xd0, 0xe1, 0xd4, 0x2d, 0xe1, 0xd5, 0xf3}}, 5};
+        IPropertyStore* props = nullptr;
+        if (SUCCEEDED(link->QueryInterface(IID_IPropertyStore, reinterpret_cast<void**>(&props))) && props) {
+            PROPVARIANT v{};
+            v.vt = VT_LPWSTR;
+            v.pwszVal = const_cast<wchar_t*>(aumid.c_str());  // read, not freed: no PropVariantClear
+            if (SUCCEEDED(props->SetValue(kAppUserModelId, v))) props->Commit();
+            props->Release();
+        }
+    }
     IPersistFile* file = nullptr;
     bool ok = SUCCEEDED(link->QueryInterface(IID_PPV_ARGS(&file)));
     if (ok) {
@@ -847,7 +890,7 @@ bool make_shortcut(const fs::path& lnk, const std::wstring& args, const fs::path
 void integrate_with_windows() {
     const fs::path self = known_folder(FOLDERID_Programs) / L"Win.apk.lnk";
     std::error_code ec;
-    if (!fs::exists(self, ec)) make_shortcut(self, L"", fs::path(), L"Android apps on Windows");
+    if (!fs::exists(self, ec)) make_shortcut(self, L"", fs::path(), L"Android apps on Windows", L"");
     register_file_types(false);
 }
 
@@ -911,9 +954,11 @@ void make_app_shortcuts(const App& app, bool desktop) {
     const bool has_icon = write_ico(app_dir(app.name) / L"icon.png", ico);
     const std::wstring file = file_name_safe(app.label) + L".lnk";
     const std::wstring what = app.label + L" (Android app, Win.apk)";
-    make_shortcut(start_menu_apps() / file, run_args(app.apk), has_icon ? ico : fs::path(), what);
+    const std::wstring aumid = app_user_model_id(app.name);
+    make_shortcut(start_menu_apps() / file, run_args(app.apk), has_icon ? ico : fs::path(), what, aumid);
     if (desktop) {
-        make_shortcut(known_folder(FOLDERID_Desktop) / file, run_args(app.apk), has_icon ? ico : fs::path(), what);
+        make_shortcut(known_folder(FOLDERID_Desktop) / file, run_args(app.apk), has_icon ? ico : fs::path(), what,
+                      aumid);
     }
 }
 
@@ -922,6 +967,22 @@ void remove_app_shortcuts(const App& app) {
     const std::wstring file = file_name_safe(app.label) + L".lnk";
     fs::remove(start_menu_apps() / file, ec);
     fs::remove(known_folder(FOLDERID_Desktop) / file, ec);
+}
+
+// Shortcuts written by an older launcher lack the AppUserModelID, without which
+// an app's notifications show no name or icon: once (the ShortcutVersion
+// setting), every app's shortcuts are written again. Bump the version when
+// what a shortcut holds changes.
+constexpr DWORD kShortcutVersion = 1;
+
+void refresh_app_shortcuts() {
+    if (setting(L"ShortcutVersion", 0) >= kShortcutVersion) return;
+    std::error_code ec;
+    for (const App& app : library()) {
+        const fs::path desktop = known_folder(FOLDERID_Desktop) / (file_name_safe(app.label) + L".lnk");
+        make_app_shortcuts(app, fs::exists(desktop, ec));
+    }
+    set_setting(L"ShortcutVersion", kShortcutVersion);
 }
 
 // ---------------------------------------------------------------------------
@@ -6626,6 +6687,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
     Gdiplus::GdiplusStartupInput gsi;
     Gdiplus::GdiplusStartup(&gdiplus, &gsi, nullptr);
     integrate_with_windows();
+    refresh_app_shortcuts();
     write_registry();  // apps installed before the registry existed, or by an older launcher
     if (HANDLE t = CreateThread(nullptr, 0, backfill_thread, nullptr, 0, nullptr)) CloseHandle(t);
     pick_language();

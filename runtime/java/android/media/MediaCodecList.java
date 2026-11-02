@@ -551,6 +551,9 @@ public final class MediaCodecList {
 
         public List<HostCodecCapability> getHostCodecCapabilities() {
             List<HostCodecCapability> out = new ArrayList<HostCodecCapability>(2);
+            // Without the built-in libvpx (Windows) the host's own VP8/VP9
+            // decoders, when it has them, come through VideoToolboxDecoders.
+            if (!com.macapk.loader.HostVideo.vpxBuiltIn()) return out;
             for (String mime : new String[] { MIME_VP8, MIME_VP9 }) {
                 if (PROFILE_LEVELS) {
                     // AOSP's own declaration for this same library:

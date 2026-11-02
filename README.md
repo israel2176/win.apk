@@ -111,13 +111,15 @@ the Google account, logs and troubleshooting.
 |---|---|
 | Java and Kotlin apps, each in its own resizable window, with mouse, wheel and keyboard | Apps with only 32-bit ARM native code (`lib/armeabi-v7a`) |
 | OpenGL ES from Java (`GLSurfaceView`, libGDX) and from native code (SDL games); `NativeActivity` apps | Vulkan |
-| Apps that ship `lib/x86_64` libraries (loaded directly), and apps with only `lib/arm64-v8a` libraries (translated) | Video playback (MediaPlayer video, ExoPlayer, the NDK media API) |
+| Apps that ship `lib/x86_64` libraries (loaded directly), and apps with only `lib/arm64-v8a` libraries (translated) | Video from an app's own native code (the NDK's `AMediaCodec`), `MediaExtractor`, and Opus, Vorbis or FLAC audio through `MediaCodec` (an ExoPlayer stream with such audio stays silent) |
+| Video: `MediaPlayer` and `VideoView` play MP4, MOV and other files Windows decodes (H.264 and AAC always; HEVC, VP9 and AV1 with Microsoft's codec packs), from a file or an http(s) URL, with the sound in step, seeking and looping; ExoPlayer and other `MediaCodec` players decode H.264 video and AAC/MP3 audio the same way | |
 | Sound: AudioTrack, SoundPool and MediaPlayer audio from Java; AAudio from native code; the microphone | OpenSL ES from native code (engines that use it get no sound) |
 | Files, SharedPreferences, SQLite; shared storage mapped to your Windows folders | Real sensors: the accelerometer and the others report a still, flat phone |
 | WebView and Custom Tabs on WebView2 | Play Store features: in-app purchases, Play Integrity, the Maps SDK's map |
 | Wi-Fi state, the current network, the DHCP configuration and scan results (network names need Windows' location access) | Connecting the PC to a Wi-Fi network for the app |
 | Bluetooth: the paired devices, serial (RFCOMM) connections both ways, LE scans and the GATT client (read, write, notifications) | Classic discovery and pairing from the app, LE advertising and the GATT server, the audio and HID profiles |
-| Webcams, location, clipboard, file pickers, game controllers | Notifications: an app may post them, but they are not shown |
+| Webcams, location, clipboard, file pickers, game controllers | |
+| Notifications, shown as Windows notifications with the app's name and icon; a click opens the app while it runs | |
 | Permission dialogs for every Android permission group | |
 | Google sign-in, and the Play services apps use for licences, push messages, Firebase Analytics and location | |
 

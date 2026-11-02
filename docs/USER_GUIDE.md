@@ -140,6 +140,14 @@ In an app:
 | Close the window | The app quits |
 | Resize, maximize or snap the window | A display of the new size; the app lays itself out again |
 
+Video plays: `MediaPlayer` and `VideoView` show MP4, MOV and other files
+Windows can decode (H.264 and AAC always; HEVC, VP9 and AV1 once Microsoft's
+codec packs are installed from the Microsoft Store), from a file or a web
+address, with the sound in step, seeking and looping. Players built on
+`MediaCodec`, such as ExoPlayer, decode H.264 video with AAC or MP3 audio;
+a stream whose audio is Opus, Vorbis or FLAC stays silent, so pick one with
+AAC audio where the app lets you.
+
 An app runs once at a time. Starting it again (from a shortcut or the
 library) brings the running window to the front.
 
@@ -293,6 +301,16 @@ empty. The camera and microphone use the PC's webcam and microphone, behind
 Windows' own privacy switches (Settings > Privacy). Location comes from
 Windows' location service; when Windows denies it, Win.apk opens the Windows
 location settings page once per run.
+
+## Notifications
+
+An app's notifications appear as Windows notifications, with the app's name
+and icon, and stay in the Action Center until dismissed. Notifications on a
+low-importance channel go to the Action Center without popping up. Clicking
+one brings the app forward and opens what a tap would open on Android, as
+long as the app is running. Apps made for Android 13 or later ask for the
+notification permission first; Windows' own notification settings apply on
+top of that. Action buttons on notifications are not shown.
 
 ## Google account
 
