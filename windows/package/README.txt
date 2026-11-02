@@ -20,9 +20,12 @@ What works
   native speed. Without clang, or for code the translation cannot follow,
   an ARM JIT runs it instead, more slowly. Apps are installed with the ABIs
   x86_64 and arm64-v8a, so an app's x86_64 build is used when it has one.
-- Sound from Java through AudioTrack and SoundPool (WAV, Ogg, MP3), saving
-  data (files, SharedPreferences, SQLite), the clipboard, file open/save
-  dialogs and game controllers.
+- Sound from Java through AudioTrack, SoundPool and MediaPlayer (WAV, Ogg,
+  MP3, AAC and whatever Windows decodes) and from native code through
+  AAudio; saving data (files, SharedPreferences, SQLite), the clipboard,
+  file open/save dialogs, game controllers, the camera, location and
+  WebView (web pages inside apps, on the WebView2 Runtime).
+- NativeActivity games (C/C++ apps on android_native_app_glue).
 - Google sign-in and the Play services apps use for licences, push
   notifications, Firebase Analytics and location. Signing in opens Google's
   own page in a window (it needs the WebView2 Runtime, which Windows 11 and
@@ -31,9 +34,8 @@ What works
 What does not work yet
 ----------------------
 - Apps that only have 32-bit ARM native libraries (lib/armeabi-v7a).
-- NativeActivity games (pure C/C++ apps without a Java activity).
-- MediaPlayer and sound from native code (OpenSL ES, AAudio), video
-  playback, the camera, WebView (web pages inside apps), location.
+- Sound through OpenSL ES (games that use it run without sound) and video
+  playback.
 - Play Store features: in-app purchases, Play Integrity, Google Maps.
 
 Installing Win.apk
@@ -67,9 +69,9 @@ Open Win.apk: it shows your app library.
   the logs as they are written.
 
 In an app, the mouse is your finger and the wheel scrolls. Android's Back
-is Escape, Alt+Left, or the mouse's back side button. Close the app's window to quit. Apps from F-Droid
-(the Store tab) are a good place to start: they are free, open source, and
-usually Java-only.
+is Escape, Alt+Left, or the mouse's back side button. Close the app's
+window to quit. Apps from F-Droid (the Store tab) are a good place to
+start: they are free, open source, and usually Java-only.
 
 Where things are
 ----------------

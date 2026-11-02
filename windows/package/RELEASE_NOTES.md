@@ -12,7 +12,7 @@ A pre-release for testing: Win.apk runs Android apps on Windows 10/11 x64.
 - **In Hebrew or English:** Setup and the library follow the Windows display language; Hebrew is laid out right to left.
 - **OpenGL ES:** works from Java (`GLSurfaceView`, libGDX) and from an app's native code through a SurfaceView (SDL games). It runs on ANGLE (Direct3D 11), falling back to WARP or SwiftShader without a GPU.
 - **Native libraries:** apps that ship `lib/x86_64` libraries load them natively. Apps that only ship `lib/arm64-v8a` libraries are supported: their ARM code is translated to x64 in the background (`winapk-aot`, compiled with clang for your CPU, in parallel) and runs at close to native speed. Apps open at once on an ARM JIT and switch to the translated code as it becomes ready; large libraries are translated only where the app's code ran. Installs use the ABIs `x86_64,arm64-v8a`.
-- **Sound:** AudioTrack, SoundPool and MediaPlayer audio from Java (WAV, Ogg, MP3, AAC and whatever Windows decodes), and OpenSL ES and AAudio from native code. Video playback is not there yet.
+- **Sound:** AudioTrack, SoundPool and MediaPlayer audio from Java (WAV, Ogg, MP3, AAC and whatever Windows decodes), and AAudio from native code. OpenSL ES is not there yet (its engine reports itself unsupported, so games that use it run without sound), nor is video playback.
 - **Games in native code:** `NativeActivity` apps (android_native_app_glue, and engines built on it) get their window, input queue and configuration as on Android.
 - **Web content:** WebView on WebView2 (Microsoft Edge), with `shouldInterceptRequest` for Cordova and Capacitor apps.
 - **Location:** `LocationManager` on Windows' own location service, behind Windows' privacy settings.
