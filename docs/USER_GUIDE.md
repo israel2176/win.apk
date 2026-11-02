@@ -140,6 +140,14 @@ In an app:
 | Close the window | The app quits |
 | Resize, maximize or snap the window | A display of the new size; the app lays itself out again |
 
+Video plays: `MediaPlayer` and `VideoView` show MP4, MOV and other files
+Windows can decode (H.264 and AAC always; HEVC, VP9 and AV1 once Microsoft's
+codec packs are installed from the Microsoft Store), from a file or a web
+address, with the sound in step, seeking and looping. Players built on
+`MediaCodec`, such as ExoPlayer, decode H.264 video with AAC or MP3 audio;
+a stream whose audio is Opus, Vorbis or FLAC stays silent, so pick one with
+AAC audio where the app lets you.
+
 An app runs once at a time. Starting it again (from a shortcut or the
 library) brings the running window to the front.
 
@@ -294,6 +302,16 @@ Windows' own privacy switches (Settings > Privacy). Location comes from
 Windows' location service; when Windows denies it, Win.apk opens the Windows
 location settings page once per run.
 
+## Notifications
+
+An app's notifications appear as Windows notifications, with the app's name
+and icon, and stay in the Action Center until dismissed. Notifications on a
+low-importance channel go to the Action Center without popping up. Clicking
+one brings the app forward and opens what a tap would open on Android, as
+long as the app is running. Apps made for Android 13 or later ask for the
+notification permission first; Windows' own notification settings apply on
+top of that. Action buttons on notifications are not shown.
+
 ## Google account
 
 Apps that use Google Play services get Win.apk's own in-process stand-ins,
@@ -313,6 +331,21 @@ window themselves, through their "Add an account" flow.
 
 Google sign-in needs the WebView2 Runtime (a 2022 or later version). Without
 it the sign-in is cancelled and the log says why.
+
+## Wi-Fi and Bluetooth
+
+Apps see the PC's Wi-Fi: whether it is on, the current network with its
+signal and address, and scan results. Network names and scan results need
+location access for desktop apps in Windows' privacy settings, the same way
+Android needs the location permission. An app cannot connect the PC to a
+network.
+
+Bluetooth works with devices you have paired in Windows Settings: an app can
+open a serial (RFCOMM) connection to one, or listen for one to connect to the
+PC, scan for Bluetooth LE devices and connect to them (reading, writing and
+notifications), after it asks for the Nearby devices permission. Apps cannot
+pair or discover classic devices themselves, advertise, act as a GATT server,
+or use the audio and input profiles.
 
 ## Shared storage
 
@@ -452,8 +485,11 @@ to `bin` in Win.apk's folder.
 **No sound from a native game.** Games whose engine plays audio through
 OpenSL ES get no sound yet; AAudio works.
 
-**Video does not play.** Video playback is not implemented yet. Audio from
-MediaPlayer plays.
+**Video does not play.** `MediaPlayer`, `VideoView` and ExoPlayer play what
+Windows decodes: H.264 with AAC always; HEVC, VP9 and AV1 only with
+Microsoft's codec packs from the Store. A stream whose audio is Opus, Vorbis
+or FLAC plays without sound in an ExoPlayer app (pick one with AAC), and
+video from an app's native code (the NDK's `AMediaCodec`) is not there yet.
 
 **Windows Defender or SmartScreen warns.** Preview builds are not
 code-signed, and Win.apk writes and then runs translated code, which some

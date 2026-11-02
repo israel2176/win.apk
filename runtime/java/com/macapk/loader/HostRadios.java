@@ -54,6 +54,36 @@ public final class HostRadios {
         }
     }
 
+    /** The Wi-Fi interface's IPv4 configuration, {ip, gateway, netmask,
+     *  dns1, dns2, DHCP server, lease seconds} as DhcpInfo's ints (the
+     *  address bytes least significant first), or null when not connected or
+     *  not known. */
+    public static int[] wifiDhcp() {
+        try {
+            return nativeWifiDhcp();
+        } catch (UnsatisfiedLinkError e) {
+            return null;
+        }
+    }
+
+    /** WifiManager's broadcasts: wifiEvent's answers. */
+    public static final int WIFI_EVENT_STATE = 1;         // the radio or an interface came or went
+    public static final int WIFI_EVENT_CONNECTED = 2;
+    public static final int WIFI_EVENT_DISCONNECTED = 3;
+    public static final int WIFI_EVENT_SIGNAL = 4;        // the signal strength changed
+    public static final int WIFI_EVENT_SCAN = 5;          // a scan finished: new scan results
+
+    /** The next Wi-Fi event (WIFI_EVENT_*), 0 when `timeoutMs` passed without
+     *  one, -1 when the host does not report them (then there is nothing to
+     *  wait for). */
+    public static int wifiEvent(int timeoutMs) {
+        try {
+            return nativeWifiEvent(timeoutMs);
+        } catch (UnsatisfiedLinkError e) {
+            return -1;
+        }
+    }
+
     /** The host's Bluetooth radio, {name, address "AA:BB:..", "1" when on else
      *  "0"}, or null when there is none or it is not known. */
     public static String[] bluetoothRadio() {
@@ -78,6 +108,8 @@ public final class HostRadios {
     private static native String[] nativeWifiConnection();
     private static native String[] nativeWifiScanResults();
     private static native boolean nativeWifiStartScan();
+    private static native int[] nativeWifiDhcp();
+    private static native int nativeWifiEvent(int timeoutMs);
     private static native String[] nativeBluetoothRadio();
     private static native String[] nativeBluetoothBonded();
 }

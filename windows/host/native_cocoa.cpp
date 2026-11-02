@@ -1284,6 +1284,11 @@ void set_app_dir(const std::wstring& dir) {
     g_icon_path = dir + L"\\icon.png";
 }
 
+std::wstring app_dir() {
+    std::lock_guard<std::mutex> hold(g_app_dir_lock);
+    return g_app_dir;
+}
+
 void prepare_host_url_queue(JNIEnv* env) {
     std::lock_guard<std::mutex> hold(g_host_urls_lock);
     if (g_intake_cls) return;

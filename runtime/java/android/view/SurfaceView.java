@@ -3585,6 +3585,22 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
         }
     }
 
+    /** Win.apk (windows/host): a decoded video picture for the holder Surface
+     *  {@code s} -- or, with null, for the registered video sink -- shown
+     *  through the owning view's own per-surface layer at its rect, below
+     *  the window, which then punches its hole (the lockCanvas route of
+     *  macapkPresentThroughSurfaceLayer; the Mac shows these through its video
+     *  plane instead). False when no SurfaceView owns the Surface or the
+     *  runtime has no per-surface layer: the caller shows it another way. */
+    public static boolean macapkPresentVideoFrame(android.view.Surface s, int[] argb, int w, int h) {
+        SurfaceView v = s != null ? s.macapkGetOwnerSurfaceView() : null;
+        if (v == null && s == null) {
+            java.lang.ref.WeakReference<SurfaceView> ref = sVideoSinkView;
+            v = ref != null ? ref.get() : null;
+        }
+        return v != null && v.macapkPresentThroughSurfaceLayer(argb, w, h);
+    }
+
     /** The active video sink's on-screen rect in SURFACE pixels, packed
      *  (x << 48) | (y << 32) | (w << 16) | h with each field a SIGNED 16-bit
      *  value (x/y go negative when the view is scrolled partly off-screen).
