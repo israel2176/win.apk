@@ -412,7 +412,7 @@ public:
         return static_cast<ULONG>(n);
     }
     // The delegate's own method, the first after IUnknown's.
-    HRESULT STDMETHODCALLTYPE Invoke(IInspectable* sender, IInspectable* /*args*/) {
+    virtual HRESULT STDMETHODCALLTYPE Invoke(IInspectable* sender, IInspectable* /*args*/) {
         IToastNotification* toast = nullptr;
         if (sender) sender->QueryInterface(kIidToastNotification, reinterpret_cast<void**>(&toast));
         forget(key_, toast);  // Windows takes a clicked toast off the Action Center
