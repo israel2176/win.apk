@@ -288,6 +288,13 @@ if(WINAPK_JNI_INCLUDE)
   target_link_libraries(winapk-audio-test PRIVATE winapk_stb_vorbis ole32 mfplat mfreadwrite mfuuid shlwapi)
   target_link_options(winapk-audio-test PRIVATE -static)
 
+  # Video on Media Foundation without a JVM (test/video_test.cpp): the
+  # converter, the decoder, the source and the player on test/video/color.mp4.
+  add_executable(winapk-video-test test/video_test.cpp host/video_decode.cpp host/video_player.cpp
+                 host/audio_engine.cpp)
+  target_link_libraries(winapk-video-test PRIVATE ole32 mf mfplat mfreadwrite mfuuid shlwapi)
+  target_link_options(winapk-video-test PRIVATE -static)
+
   # The shared-folder junctions on a scratch volume (test/user_folders_test.cpp).
   add_executable(winapk-user-folders-test test/user_folders_test.cpp host/user_folders.cpp)
   target_link_libraries(winapk-user-folders-test PRIVATE shell32 ole32 uuid)
