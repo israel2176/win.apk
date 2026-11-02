@@ -23,6 +23,12 @@ What works
 - Sound from Java through AudioTrack and SoundPool (WAV, Ogg, MP3), saving
   data (files, SharedPreferences, SQLite), the clipboard, file open/save
   dialogs and game controllers.
+- Notifications. What an app posts shows as a Windows notification, with the
+  app's name and icon, and stays in the Action Center (the notification
+  centre) until dismissed; quiet ones (a low-importance channel) go there
+  without popping up. Clicking one brings the app to the front and opens what
+  a tap would on Android, while the app is running. An app made for Android
+  13 or later asks for the notification permission first, as on a phone.
 - Google sign-in and the Play services apps use for licences, push
   notifications, Firebase Analytics and location. Signing in opens Google's
   own page in a window (it needs the WebView2 Runtime, which Windows 11 and

@@ -226,6 +226,7 @@ most useful lines in a log:
 | Apps with ARM native code only (`lib/arm64-v8a`), translated to x64 (below) | |
 | Sound from Java (AudioTrack, SoundPool: WAV, Ogg, MP3) | Video, camera, WebView, location |
 | Files, SharedPreferences, SQLite, clipboard, file pickers, game controllers | Google Play services (sign-in, purchases, maps) |
+| Notifications, as Windows notifications in the Action Center with the app's name and icon; a click opens the app | |
 
 Particular apps, and problems by kind of app, are in
 [`docs/APPS.md`](docs/APPS.md); please add the apps you try.
