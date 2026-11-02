@@ -15,6 +15,8 @@
 
 #include "bionic_internal.h"
 
+#include "winapk/elf_tls.h"
+
 #include <atomic>
 #include <cstdio>
 #include <cstring>
@@ -357,6 +359,8 @@ Thread* self_record() {
 
 [[noreturn]] void finish_thread(Thread* t, void* result) {
     t->result = result;
+    // Bionic's order: C++ thread_local destructors, then the key destructors.
+    tls_run_thread_dtors();
     run_key_destructors();
     if (t->detached.load()) {
         CloseHandle(t->handle);

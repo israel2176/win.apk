@@ -2,9 +2,12 @@
 
 #include "winapk/linker.h"
 
+#include "winapk/elf_tls.h"
 #include "winapk/guest_abi.h"
 #include "winapk/mini_bionic.h"
 
+#include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <unordered_set>
 
@@ -17,6 +20,8 @@ struct GuestLibrary {
     std::filesystem::path path;
     std::vector<GuestLibrary*> needed;  // direct DT_NEEDED, in order
     bool global = false;
+    bool nodelete = false;      // RTLD_NODELETE: sticks, as in bionic
+    int ref_count = 0;          // dlopen handles out, plus thread_local destructors pending
     bool init_started = false;  // guards constructor recursion on cycles
 };
 
@@ -74,13 +79,20 @@ GuestLinker::GuestLinker(LinkerConfig config)
     main_->name = "<main>";
     g_process_linker = this;
     guest_signals_install();
+    tls_set_dso_hooks(&on_thread_dtor_added, &on_thread_dtor_removed);
 }
 
 GuestLinker::~GuestLinker() {
     std::lock_guard<std::recursive_mutex> hold(lock_);
+    tls_set_dso_hooks(nullptr, nullptr);
     for (auto it = init_order_.rbegin(); it != init_order_.rend(); ++it) (*it)->image.reset();
     libs_.clear();
     if (g_process_linker == this) g_process_linker = nullptr;
+}
+
+void GuestLinker::add_unload_hook(UnloadHook hook, void* context) {
+    std::lock_guard<std::recursive_mutex> hold(lock_);
+    unload_hooks_.push_back({hook, context});
 }
 
 GuestLinker* GuestLinker::process() { return g_process_linker; }
@@ -162,6 +174,8 @@ GuestLibrary* GuestLinker::open(const std::string& requested, int flags, std::st
 
     if (GuestLibrary* l = find_loaded(name)) {
         if (flags & kRtldGlobal) l->global = true;
+        if (flags & kRtldNoDelete) l->nodelete = true;
+        ++l->ref_count;
         return l;
     }
     if (is_system_library(file_name_of(name))) return system_.get();
@@ -278,9 +292,111 @@ GuestLibrary* GuestLinker::open(const std::string& requested, int flags, std::st
     // Phase 3: register, then run constructors. Registration comes first so a
     // constructor that calls dlopen or dladdr on its own library sees it.
     if (flags & kRtldGlobal) root->global = true;
+    if (flags & kRtldNoDelete) root->nodelete = true;
+    root->ref_count = 1;  // the dependencies are held by root's DT_NEEDED alone
     for (auto& l : fresh) libs_.push_back(std::move(l));
     run_constructors(root);
     return root;
+}
+
+// ---- unloading -----------------------------------------------------------------
+
+GuestLibrary* GuestLinker::library_containing(const void* addr) const {
+    for (const auto& l : libs_) {
+        if (l->image->contains(addr)) return l.get();
+    }
+    return nullptr;
+}
+
+// The libraries something keeps alive: every one with a handle out or
+// RTLD_NODELETE, and what those need, transitively. Anything else is only
+// held by libraries that are themselves going (a DT_NEEDED cycle, for one).
+std::unordered_set<GuestLibrary*> GuestLinker::alive() const {
+    std::unordered_set<GuestLibrary*> out;
+    std::vector<GuestLibrary*> todo;
+    for (const auto& l : libs_) {
+        if ((l->ref_count > 0 || l->nodelete) && out.insert(l.get()).second) todo.push_back(l.get());
+    }
+    while (!todo.empty()) {
+        GuestLibrary* l = todo.back();
+        todo.pop_back();
+        for (GuestLibrary* dep : l->needed) {
+            if (dep != system_.get() && out.insert(dep).second) todo.push_back(dep);
+        }
+    }
+    return out;
+}
+
+void GuestLinker::unload_if_unreferenced(GuestLibrary* lib) {
+    if (lib->ref_count > 0 || lib->nodelete) return;
+    const std::unordered_set<GuestLibrary*> kept = alive();
+    if (!kept.count(lib)) unload(lib, kept);
+}
+
+// Unloads `root` and, with it, every dependency that is held by nothing else:
+// no handle, no RTLD_NODELETE, no DT_NEEDED from a library that stays
+// (bionic's soinfo_unload). Destructors run with the lock held, as
+// constructors do; a destructor that calls dlopen is fine (the lock is
+// recursive), one that waits on another thread's dlopen is not, on Android
+// either.
+void GuestLinker::unload(GuestLibrary* root, const std::unordered_set<GuestLibrary*>& kept) {
+    std::vector<GuestLibrary*> gone{root};
+    auto in_gone = [&](const GuestLibrary* l) { return std::find(gone.begin(), gone.end(), l) != gone.end(); };
+    for (size_t i = 0; i < gone.size(); ++i) {
+        for (GuestLibrary* dep : gone[i]->needed) {
+            if (dep == system_.get() || in_gone(dep) || kept.count(dep)) continue;
+            gone.push_back(dep);
+        }
+    }
+    // Finalizers, the last initialized first; then whatever __cxa_atexit
+    // still holds for the image, and the caches that point into it.
+    for (auto it = init_order_.rbegin(); it != init_order_.rend(); ++it) {
+        if (in_gone(*it)) (*it)->image->finalize();
+    }
+    for (GuestLibrary* l : gone) {
+        mini_bionic_run_atexit_in(l->image->base(), l->image->mapped_size());
+        for (const Hook& h : unload_hooks_) h.fn(l->image.get(), h.context);
+        std::fprintf(stderr, "[win.apk] dlclose: unloaded %s\n", l->name.c_str());
+    }
+    init_order_.erase(std::remove_if(init_order_.begin(), init_order_.end(), in_gone), init_order_.end());
+    // Dropping the GuestLibrary unmaps the image and frees its TLS on every
+    // thread (ElfImage's destructor).
+    libs_.erase(std::remove_if(libs_.begin(), libs_.end(),
+                               [&](const std::unique_ptr<GuestLibrary>& l) { return in_gone(l.get()); }),
+                libs_.end());
+}
+
+int GuestLinker::close(void* handle, std::string* error) {
+    std::lock_guard<std::recursive_mutex> hold(lock_);
+    if (handle == system_.get() || handle == main_.get()) return 0;
+    if (!is_handle(handle)) {
+        if (error) *error = "invalid handle";
+        return -1;
+    }
+    auto* lib = static_cast<GuestLibrary*>(handle);
+    if (lib->ref_count > 0) --lib->ref_count;  // bionic tolerates one dlclose too many
+    unload_if_unreferenced(lib);
+    return 0;
+}
+
+// A thread_local destructor registered from a library holds it: the thread
+// that runs the destructor later needs the code. Both run on whichever thread
+// registers or exits, with the lock taken here.
+void GuestLinker::on_thread_dtor_added(const void* dso) {
+    GuestLinker* linker = process();
+    if (!linker) return;
+    std::lock_guard<std::recursive_mutex> hold(linker->lock_);
+    if (GuestLibrary* lib = linker->library_containing(dso)) ++lib->ref_count;
+}
+
+void GuestLinker::on_thread_dtor_removed(const void* dso) {
+    GuestLinker* linker = process();
+    if (!linker) return;
+    std::lock_guard<std::recursive_mutex> hold(linker->lock_);
+    GuestLibrary* lib = linker->library_containing(dso);
+    if (!lib) return;
+    if (lib->ref_count > 0) --lib->ref_count;
+    linker->unload_if_unreferenced(lib);
 }
 
 void GuestLinker::run_constructors(GuestLibrary* lib) {
@@ -494,8 +610,19 @@ WINAPK_GUEST_ABI void* g_dlsym(void* handle, const char* name) {
     return p;
 }
 
-// Libraries are never unloaded (see linker.h), so there is nothing to undo.
-WINAPK_GUEST_ABI int g_dlclose(void* /*handle*/) { return 0; }
+WINAPK_GUEST_ABI int g_dlclose(void* handle) {
+    GuestLinker* linker = GuestLinker::process();
+    if (!linker) {
+        set_dlerror("dlclose", "no guest linker");
+        return -1;
+    }
+    std::string error;
+    if (linker->close(handle, &error) != 0) {
+        set_dlerror("dlclose", error);
+        return -1;
+    }
+    return 0;
+}
 
 WINAPK_GUEST_ABI char* g_dlerror() {
     if (!t_dlerror_set) return nullptr;

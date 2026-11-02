@@ -6,7 +6,9 @@
 // The tree is root -> mid -> base -> mid (a cycle), with libc, libdl and
 // liblog as system dependencies, and a plugin that root dlopens at runtime.
 // The checks cover DT_NEEDED loading, constructor order, symbol lookup through
-// the local group, the guest's libdl, and the image registry.
+// the local group, the guest's libdl, the image registry, and dlclose:
+// reference counts, destructors, TLS, RTLD_NODELETE, thread_local
+// destructors holding a library, and dependencies going with their root.
 //
 // Exit code: the number of failed checks.
 
@@ -16,6 +18,8 @@
 
 #include <cstdio>
 #include <string>
+
+#include <windows.h>
 
 namespace {
 
@@ -43,6 +47,37 @@ int call(winapk::GuestLinker& linker, void* handle, const char* name) {
         return -1000;
     }
     return fn();
+}
+
+constexpr const char* kPlugin = "libwinapk_link_plugin.so";
+
+// A successful dlopen(RTLD_NOLOAD) is a reference too, so it is closed again.
+bool loaded(winapk::GuestLinker& linker, const char* name) {
+    std::string error;
+    void* h = linker.open(name, winapk::GuestLinker::kRtldNoLoad, &error);
+    if (h) linker.close(h, &error);
+    return h != nullptr;
+}
+
+// A host thread that registers a thread_local destructor from the plugin and
+// then waits: the plugin must stay loaded until it exits.
+struct DtorJob {
+    winapk::GuestLinker* linker;
+    void* plugin;
+    int sink = 0;
+    HANDLE registered, go;
+};
+
+DWORD WINAPI dtor_thread(void* p) {
+    auto* job = static_cast<DtorJob*>(p);
+    using Register = void(WINAPK_GUEST_ABI*)(int*);
+    std::string error;
+    auto reg = reinterpret_cast<Register>(job->linker->lookup(job->plugin, "link_plugin_register_thread_dtor", nullptr,
+                                                               &error));
+    if (reg) reg(&job->sink);
+    SetEvent(job->registered);
+    WaitForSingleObject(job->go, INFINITE);
+    return 0;
 }
 
 }  // namespace
@@ -86,11 +121,11 @@ int main(int argc, char** argv) {
               linker.open("libwinapk_link_mid.so", 0, &error) != nullptr &&
               linker.images().size() == 3);
 
-    check("RTLD_NOLOAD does not load the plugin",
-          linker.open("libwinapk_link_plugin.so", winapk::GuestLinker::kRtldNoLoad, &error) == nullptr);
+    check("RTLD_NOLOAD does not load the plugin", !loaded(linker, kPlugin));
     expect_eq("guest dlopen + dlsym", call(linker, root, "link_root_dlopen"), 81);
-    check("the plugin is loaded now",
-          linker.open("libwinapk_link_plugin.so", winapk::GuestLinker::kRtldNoLoad, &error) != nullptr);
+    check("the guest's dlclose unloaded the plugin again", !loaded(linker, kPlugin) && linker.images().size() == 3);
+    expect_eq("dlclose runs DT_FINI and __cxa_atexit, frees TLS; dlopen again starts fresh",
+              call(linker, root, "link_root_dlclose_cycle"), 1);
     expect_eq("guest dlerror after a failed dlopen", call(linker, root, "link_root_dlerror"), 1);
     expect_eq("guest dladdr", call(linker, root, "link_root_dladdr"), 1);
     expect_eq("guest dlsym(RTLD_DEFAULT)", call(linker, root, "link_root_rtld_default"), 1);
@@ -104,6 +139,63 @@ int main(int argc, char** argv) {
           linker.open("libwinapk_missing.so", 0, &error) == nullptr &&
               error.find("not found") != std::string::npos,
           error);
+
+    // dlclose from the host's side: reference counts and the registry.
+    void* plugin = linker.open(kPlugin, winapk::GuestLinker::kRtldNow, &error);
+    void* square = plugin ? linker.lookup(plugin, "link_plugin_square", nullptr, &error) : nullptr;
+    check("open the plugin from the host", plugin && square, error);
+    check("opened twice and closed once, the plugin stays loaded",
+          linker.open(kPlugin, 0, &error) == plugin && linker.close(plugin, &error) == 0 && loaded(linker, kPlugin) &&
+              linker.image_containing(square) != nullptr);
+    check("the last close unloads it: the registry forgets its addresses",
+          linker.close(plugin, &error) == 0 && !loaded(linker, kPlugin) && linker.image_containing(square) == nullptr &&
+              linker.images().size() == 3);
+    check("dlclose of a bad handle fails", linker.close(&error, &error) == -1 && error == "invalid handle", error);
+
+    // A thread_local destructor registered on another thread holds the
+    // plugin past dlclose, until that thread exits.
+    plugin = linker.open(kPlugin, winapk::GuestLinker::kRtldNow, &error);
+    int fini = 0;
+    using SetSink = void(WINAPK_GUEST_ABI*)(int*);
+    if (auto set_sink = reinterpret_cast<SetSink>(linker.lookup(plugin, "link_plugin_set_fini_sink", nullptr, &error)))
+        set_sink(&fini);
+    DtorJob job{&linker, plugin, 0, CreateEventW(nullptr, TRUE, FALSE, nullptr), CreateEventW(nullptr, TRUE, FALSE, nullptr)};
+    HANDLE t = CreateThread(nullptr, 0, dtor_thread, &job, 0, nullptr);
+    WaitForSingleObject(job.registered, INFINITE);
+    check("dlclose with a thread_local destructor pending keeps the plugin loaded",
+          linker.close(plugin, &error) == 0 && loaded(linker, kPlugin) && fini == 0 && job.sink == 0);
+    SetEvent(job.go);
+    WaitForSingleObject(t, INFINITE);
+    CloseHandle(t);
+    CloseHandle(job.registered);
+    CloseHandle(job.go);
+    check("the thread's exit runs the destructor and unloads the plugin (DT_FINI and __cxa_atexit ran)",
+          !loaded(linker, kPlugin) && job.sink == 100 && fini == 11,
+          "sink " + std::to_string(job.sink) + ", fini " + std::to_string(fini));
+
+    // RTLD_NODELETE sticks.
+    void* kept = linker.open(kPlugin, winapk::GuestLinker::kRtldNow | winapk::GuestLinker::kRtldNoDelete, &error);
+    check("RTLD_NODELETE: dlclose leaves the plugin loaded",
+          kept && linker.close(kept, &error) == 0 && loaded(linker, kPlugin) && linker.images().size() == 4);
+
+    // root was opened twice above (once here, once by "opening root again"),
+    // mid once: when every handle is gone, the whole tree goes.
+    linker.close(root, &error);
+    check("root stays while a handle to it is out", loaded(linker, "libwinapk_link_root.so"));
+    linker.close(root, &error);
+    check("closing the last handle to root keeps mid, which has a handle of its own, and base, which mid needs",
+          !loaded(linker, "libwinapk_link_root.so") && loaded(linker, "libwinapk_link_mid.so") &&
+              loaded(linker, "libwinapk_link_base.so") && linker.images().size() == 3);
+    void* mid = linker.open("libwinapk_link_mid.so", winapk::GuestLinker::kRtldNoLoad, &error);  // a second handle
+    linker.close(mid, &error);
+    linker.close(mid, &error);
+    check("closing mid unloads mid and base (the cycle) too; only the RTLD_NODELETE plugin stays",
+          !loaded(linker, "libwinapk_link_mid.so") && !loaded(linker, "libwinapk_link_base.so") &&
+              linker.images().size() == 1);
+    error.clear();
+    root = linker.open("libwinapk_link_root.so", winapk::GuestLinker::kRtldNow, &error);
+    check("root loads again", root != nullptr, error);
+    if (root) expect_eq("its constructors ran again, dependencies first", call(linker, root, "link_root_init_order"), 42);
 
     std::printf("\n%s: %d failure(s)\n", g_failures ? "FAILED" : "OK", g_failures);
     return g_failures;

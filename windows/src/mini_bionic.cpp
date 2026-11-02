@@ -189,6 +189,16 @@ WINAPK_GUEST_ABI void g_cxa_finalize(void* dso) {
     for (const AtexitEntry& e : run) e.fn(e.arg);
 }
 
+// C++ thread_local destructors: Bionic's __cxa_thread_atexit_impl, kept with
+// the thread's ELF TLS blocks (elf_tls.h) so the destructor runs before the
+// block its object lives in is freed, and the library holding the destructor
+// stays loaded until then (the linker counts it as a reference).
+using GuestThreadDtor = void(WINAPK_GUEST_ABI*)(void*);
+WINAPK_GUEST_ABI int g_cxa_thread_atexit_impl(GuestThreadDtor fn, void* obj, void* dso) {
+    tls_thread_atexit(reinterpret_cast<void*>(fn), obj, dso);
+    return 0;
+}
+
 // ---- __cxa_guard_*: function-local statics ------------------------------------
 // The Itanium C++ ABI's guards (libc++abi's, which an app that links the C++
 // runtime as a system library imports from it). The guard's first byte says
@@ -315,6 +325,7 @@ const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("__errno", g_errno),
     WINAPK_SHIM("__cxa_atexit", g_cxa_atexit),
     WINAPK_SHIM("__cxa_finalize", g_cxa_finalize),
+    WINAPK_SHIM("__cxa_thread_atexit_impl", g_cxa_thread_atexit_impl),
     WINAPK_SHIM("__cxa_guard_acquire", g_cxa_guard_acquire),
     WINAPK_SHIM("__cxa_guard_release", g_cxa_guard_release),
     WINAPK_SHIM("__cxa_guard_abort", g_cxa_guard_abort),
@@ -456,5 +467,21 @@ void* mini_bionic_resolve(const char* name) {
 }
 
 void mini_bionic_run_atexit() { g_cxa_finalize(nullptr); }
+
+void mini_bionic_run_atexit_in(const void* base, size_t size) {
+    const auto lo = reinterpret_cast<uintptr_t>(base);
+    std::vector<AtexitEntry> run;
+    {
+        std::lock_guard<std::mutex> lock(g_atexit_lock);
+        for (size_t i = g_atexit.size(); i-- > 0;) {
+            const auto dso = reinterpret_cast<uintptr_t>(g_atexit[i].dso);
+            if (dso >= lo && dso - lo < size) {
+                run.push_back(g_atexit[i]);
+                g_atexit.erase(g_atexit.begin() + static_cast<ptrdiff_t>(i));
+            }
+        }
+    }
+    for (const AtexitEntry& e : run) e.fn(e.arg);
+}
 
 }  // namespace winapk

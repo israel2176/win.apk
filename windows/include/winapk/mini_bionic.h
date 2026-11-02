@@ -21,6 +21,11 @@ void* mini_bionic_resolve(const char* name);
 
 // Runs the destructors guest code registered with __cxa_atexit, newest first.
 void mini_bionic_run_atexit();
+// The same for the entries whose DSO handle lies in [base, base + size): what
+// dlclose owes a library before it is unmapped (its crtbegin's __on_dlclose
+// runs them from DT_FINI_ARRAY; this catches a library without one, and
+// keeps no pointer into unmapped memory for process exit).
+void mini_bionic_run_atexit_in(const void* base, size_t size);
 
 // Installs the vectored exception handler that delivers faults to guest
 // signal handlers (src/bionic/signal.cpp). Idempotent; the guest linker's

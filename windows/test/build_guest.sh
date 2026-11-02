@@ -44,10 +44,11 @@ mkdir -p "$LINK" "$STUBS"
 for lib in libc libdl liblog libz; do
     "$CC" "${COMMON[@]}" -Wl,-soname,$lib.so -o "$STUBS/$lib.so" -x c /dev/null
 done
+# Real ELF TLS (the plugin has a __thread variable dlclose must free).
 link_lib() {  # link_lib <part> <name> [linker args...]
     local part="$1" name="$2"
     shift 2
-    "$CC" "${COMMON[@]}" -DWINAPK_LINK_$part -Wl,-soname,$name.so -Wl,--no-as-needed \
+    "$CC" "${COMMON[@]}" -fno-emulated-tls -DWINAPK_LINK_$part -Wl,-soname,$name.so -Wl,--no-as-needed \
         -o "$LINK/$name.so" "$HERE/guest/link_guest.c" "$@"
 }
 # base and mid need each other: link base against a placeholder that only
