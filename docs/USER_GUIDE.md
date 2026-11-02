@@ -302,6 +302,16 @@ Windows' own privacy switches (Settings > Privacy). Location comes from
 Windows' location service; when Windows denies it, Win.apk opens the Windows
 location settings page once per run.
 
+## Notifications
+
+An app's notifications appear as Windows notifications, with the app's name
+and icon, and stay in the Action Center until dismissed. Notifications on a
+low-importance channel go to the Action Center without popping up. Clicking
+one brings the app forward and opens what a tap would open on Android, as
+long as the app is running. Apps made for Android 13 or later ask for the
+notification permission first; Windows' own notification settings apply on
+top of that. Action buttons on notifications are not shown.
+
 ## Google account
 
 Apps that use Google Play services get Win.apk's own in-process stand-ins,

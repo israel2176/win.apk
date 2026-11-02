@@ -450,6 +450,18 @@ every such change is listed here:
   `android/hardware/Camera.java`, `camera2/CameraManager.java` and
   `AudioInputBridge` honour the Android permission before the Windows
   privacy switch.
+- `runtime/java/com/macapk/loader/HostNotifications.java` (new) and
+  `android/app/NotificationManager.java`: `notify`, `cancel` and `cancelAll`
+  reach the host (Windows: `windows/host/native_notifications.cpp`, toasts in
+  the Action Center with the app's name and icon; a click brings the window
+  forward and sends the `contentIntent`), once `areNotificationsEnabled`
+  (POST_NOTIFICATIONS, pre-granted below T) and the channel's importance let
+  the notification through; LOW and MIN do not pop up. The channel list is
+  one per process, as the service's is. A host without the natives (the Mac)
+  shows nothing, as before. `android/app/Notification.java`: `Style.addExtras`
+  as AOSP has it, so a built notification's extras carry `BigTextStyle`'s
+  text, `InboxStyle`'s lines and `MessagingStyle`'s messages (as lines) under
+  the `EXTRA_*` keys; the styles kept nothing before. Not Windows-specific.
 - `runtime/java/com/macapk/loader/ActivityHost.java`: without the AOSP window
   policy (Windows), an activity that owns the window box asks the host for its
   manifest's `screenOrientation` at launch (`NativeCocoa.applyWindowOrientation`,

@@ -705,6 +705,7 @@ public class Notification implements android.os.Parcelable {
             ex.putBoolean(EXTRA_CHRONOMETER_COUNT_DOWN, mChronometerCountDown);
             ex.putBoolean(EXTRA_COLORIZED, mColorized);
             if (!mPeople.isEmpty()) ex.putStringArray(EXTRA_PEOPLE, mPeople.toArray(new String[0]));
+            if (mStyle != null) mStyle.addExtras(ex);  // AOSP: the style's big form, under its EXTRA_* keys
             n.extras = ex;
             return n;
         }
@@ -732,6 +733,16 @@ public class Notification implements android.os.Parcelable {
         protected boolean mSummaryTextSet;
         public void setBuilder(Builder builder) { mBuilder = builder; }
         public Notification build() { return mBuilder != null ? mBuilder.build() : new Notification(); }
+
+        /** AOSP Style.addExtras(Bundle): the big form's title and summary into
+         *  the built notification's extras, under the EXTRA_* keys, for whoever
+         *  shows it (the host's notifications read them); each style adds its
+         *  own text (EXTRA_BIG_TEXT, EXTRA_TEXT_LINES). Builder.build calls it. */
+        public void addExtras(android.os.Bundle extras) {
+            if (mSummaryTextSet) extras.putCharSequence(EXTRA_SUMMARY_TEXT, mSummaryText);
+            if (mBigContentTitle != null) extras.putCharSequence(EXTRA_TITLE_BIG, mBigContentTitle);
+            extras.putString(EXTRA_TEMPLATE, getClass().getName());
+        }
 
         // ---- AOSP API-36 surface completion ----
         // These four are PROTECTED in AOSP: a custom Style subclass (which apps
@@ -901,11 +912,16 @@ public class Notification implements android.os.Parcelable {
         }
     }
     public static class BigTextStyle extends Style {
+        private CharSequence mBigText;
         public BigTextStyle() {}
         public BigTextStyle(Builder builder) { setBuilder(builder); }
-        public BigTextStyle bigText(CharSequence text) { return this; }
-        public BigTextStyle setBigContentTitle(CharSequence title) { return this; }
-        public BigTextStyle setSummaryText(CharSequence summary) { return this; }
+        public BigTextStyle bigText(CharSequence text) { mBigText = text; return this; }
+        public BigTextStyle setBigContentTitle(CharSequence title) { internalSetBigContentTitle(title); return this; }
+        public BigTextStyle setSummaryText(CharSequence summary) { internalSetSummaryText(summary); return this; }
+        @Override public void addExtras(android.os.Bundle extras) {
+            super.addExtras(extras);
+            if (mBigText != null) extras.putCharSequence(EXTRA_BIG_TEXT, mBigText);
+        }
     }
     public static class BigPictureStyle extends Style {
         public BigPictureStyle() {}
@@ -920,11 +936,16 @@ public class Notification implements android.os.Parcelable {
         public BigPictureStyle showBigPictureWhenCollapsed(boolean show) { return this; }
     }
     public static class InboxStyle extends Style {
+        private final java.util.ArrayList<CharSequence> mTexts = new java.util.ArrayList<>();
         public InboxStyle() {}
         public InboxStyle(Builder builder) { setBuilder(builder); }
-        public InboxStyle addLine(CharSequence cs) { return this; }
-        public InboxStyle setBigContentTitle(CharSequence title) { return this; }
-        public InboxStyle setSummaryText(CharSequence summary) { return this; }
+        public InboxStyle addLine(CharSequence cs) { if (cs != null) mTexts.add(cs); return this; }
+        public InboxStyle setBigContentTitle(CharSequence title) { internalSetBigContentTitle(title); return this; }
+        public InboxStyle setSummaryText(CharSequence summary) { internalSetSummaryText(summary); return this; }
+        @Override public void addExtras(android.os.Bundle extras) {
+            super.addExtras(extras);
+            if (!mTexts.isEmpty()) extras.putCharSequenceArray(EXTRA_TEXT_LINES, mTexts.toArray(new CharSequence[0]));
+        }
     }
     public static class MessagingStyle extends Style {
 
@@ -961,6 +982,20 @@ public class Notification implements android.os.Parcelable {
         public MessagingStyle addMessage(CharSequence text, long timestamp, Person sender) { mMessages.add(new Message(text, timestamp, sender)); return this; }
         public MessagingStyle addMessage(CharSequence text, long timestamp, CharSequence sender) { mMessages.add(new Message(text, timestamp, sender)); return this; }
         public MessagingStyle addMessage(Message message) { if (message != null) mMessages.add(message); return this; }
+        /** The conversation as the collapsed template shows it: the title, and
+         *  the messages as "sender: text" lines (AOSP keeps them as Bundles
+         *  under EXTRA_MESSAGES; the text lines are what a host can show). */
+        @Override public void addExtras(android.os.Bundle extras) {
+            super.addExtras(extras);
+            if (mConversationTitle != null) extras.putCharSequence(EXTRA_TITLE_BIG, mConversationTitle);
+            if (mMessages.isEmpty()) return;
+            java.util.ArrayList<CharSequence> lines = new java.util.ArrayList<>();
+            for (Message m : mMessages) {
+                CharSequence who = m.getSenderPerson() != null ? m.getSenderPerson().getName() : m.getSender();
+                lines.add(who != null && who.length() > 0 ? who + ": " + m.getText() : m.getText());
+            }
+            extras.putCharSequenceArray(EXTRA_TEXT_LINES, lines.toArray(new CharSequence[0]));
+        }
         /** AOSP addHistoricMessage(Message): "Adds a Message for display at the
          *  top of the Notification... intended to provide historical context."
          *  Was a no-op with no storage, so getHistoricMessages (added below)
