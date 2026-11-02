@@ -312,7 +312,8 @@ public final class HostBluetooth {
 
     /** gattNext's kinds. */
     public static final int GATT_CONNECTION = 1;   // status, new state (0 disconnected, 2 connected)
-    public static final int GATT_SERVICES = 2;     // status; tree: "S" uuid handle, "C" uuid handle properties, "D" uuid handle
+    public static final int GATT_SERVICES = 2;     // status; tree: "S" uuid handle, "C" uuid handle properties,
+                                                   // "D" uuid handle
     public static final int GATT_CHAR_READ = 3;    // status, characteristic; value
     public static final int GATT_CHAR_WRITE = 4;   // status, characteristic
     public static final int GATT_CHAR_CHANGED = 5; // characteristic; value

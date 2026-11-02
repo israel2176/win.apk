@@ -261,13 +261,14 @@ jintArray JNICALL Radio_wifiDhcp(JNIEnv* env, jclass) {
     std::vector<char> buf(size);
     const ULONG flags = GAA_FLAG_INCLUDE_GATEWAYS | GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST |
                         GAA_FLAG_SKIP_FRIENDLY_NAME;
-    ULONG rc = GetAdaptersAddresses(AF_INET, flags, nullptr, reinterpret_cast<IP_ADAPTER_ADDRESSES_LH*>(buf.data()), &size);
+    auto adapters = [&] { return reinterpret_cast<IP_ADAPTER_ADDRESSES_LH*>(buf.data()); };
+    ULONG rc = GetAdaptersAddresses(AF_INET, flags, nullptr, adapters(), &size);
     if (rc == ERROR_BUFFER_OVERFLOW) {
         buf.resize(size);
-        rc = GetAdaptersAddresses(AF_INET, flags, nullptr, reinterpret_cast<IP_ADAPTER_ADDRESSES_LH*>(buf.data()), &size);
+        rc = GetAdaptersAddresses(AF_INET, flags, nullptr, adapters(), &size);
     }
     if (rc != NO_ERROR) return nullptr;
-    for (const IP_ADAPTER_ADDRESSES_LH* a = reinterpret_cast<IP_ADAPTER_ADDRESSES_LH*>(buf.data()); a; a = a->Next) {
+    for (const IP_ADAPTER_ADDRESSES_LH* a = adapters(); a; a = a->Next) {
         if (!a->AdapterName || _stricmp(a->AdapterName, name.c_str()) != 0) continue;
         jint v[7] = {};
         if (a->FirstUnicastAddress) {

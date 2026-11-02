@@ -131,7 +131,8 @@ public final class BluetoothGatt implements BluetoothProfile {
     }
 
     public boolean readCharacteristic(BluetoothGattCharacteristic characteristic) {
-        if (characteristic == null || (characteristic.getProperties() & BluetoothGattCharacteristic.PROPERTY_READ) == 0) {
+        if (characteristic == null
+                || (characteristic.getProperties() & BluetoothGattCharacteristic.PROPERTY_READ) == 0) {
             return false;
         }
         if (!begin()) return false;
@@ -151,16 +152,21 @@ public final class BluetoothGatt implements BluetoothProfile {
     /** API 33: GATT_SUCCESS when the write was queued, else why not (AOSP's
      *  BluetoothStatusCodes; GATT_FAILURE stands for them here). */
     public int writeCharacteristic(BluetoothGattCharacteristic characteristic, byte[] value, int writeType) {
-        if (characteristic == null || value == null) throw new IllegalArgumentException("characteristic or value is null");
+        if (characteristic == null || value == null) {
+            throw new IllegalArgumentException("characteristic or value is null");
+        }
         int props = characteristic.getProperties();
-        if ((props & (BluetoothGattCharacteristic.PROPERTY_WRITE | BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE
+        if ((props & (BluetoothGattCharacteristic.PROPERTY_WRITE
+                | BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE
                 | BluetoothGattCharacteristic.PROPERTY_SIGNED_WRITE)) == 0) {
             return GATT_WRITE_NOT_PERMITTED;
         }
         if (!begin()) return GATT_FAILURE;
         characteristic.setValue(value);
         boolean withResponse = writeType != BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE;
-        if (HostBluetooth.gattWrite(mHandle, characteristic.getInstanceId(), 0, value, withResponse)) return GATT_SUCCESS;
+        if (HostBluetooth.gattWrite(mHandle, characteristic.getInstanceId(), 0, value, withResponse)) {
+            return GATT_SUCCESS;
+        }
         end();
         return GATT_FAILURE;
     }
@@ -168,7 +174,8 @@ public final class BluetoothGatt implements BluetoothProfile {
     public boolean readDescriptor(BluetoothGattDescriptor descriptor) {
         if (descriptor == null || descriptor.getCharacteristic() == null) return false;
         if (!begin()) return false;
-        if (HostBluetooth.gattRead(mHandle, descriptor.getCharacteristic().getInstanceId(), descriptor.getInstanceId())) {
+        if (HostBluetooth.gattRead(mHandle, descriptor.getCharacteristic().getInstanceId(),
+                descriptor.getInstanceId())) {
             return true;
         }
         end();

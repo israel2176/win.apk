@@ -90,9 +90,11 @@ int main() {
     check("parse braces", bt::guid_parse("{6E400001-B5A3-F393-E0A9-E50E24DCCA9E}", &g) && g.data1 == 0x6E400001 &&
                               g.data2 == 0xB5A3 && g.data3 == 0xF393 && g.data4[0] == 0xE0 && g.data4[1] == 0xA9);
     check("text", bt::guid_text(g) == "6e400001-b5a3-f393-e0a9-e50e24dcca9e");
-    check("round trip", bt::guid_parse(bt::guid_text(g), &g) && bt::guid_text(g) == "6e400001-b5a3-f393-e0a9-e50e24dcca9e");
+    check("round trip",
+          bt::guid_parse(bt::guid_text(g), &g) && bt::guid_text(g) == "6e400001-b5a3-f393-e0a9-e50e24dcca9e");
     check("16-bit", bt::guid_text(bt::bluetooth_uuid(0x180F)) == "0000180f-0000-1000-8000-00805f9b34fb");
-    check("16-bit equals parsed", bt::guid_parse("0000180F-0000-1000-8000-00805F9B34FB", &g) && g == bt::bluetooth_uuid(0x180F));
+    check("16-bit equals parsed",
+          bt::guid_parse("0000180F-0000-1000-8000-00805F9B34FB", &g) && g == bt::bluetooth_uuid(0x180F));
     check("not a uuid", !bt::guid_parse("hello", &g) && !bt::guid_parse("00001101-0000-1000-8000-00805F9B34F", &g));
 
     std::printf("addresses\n");
@@ -115,8 +117,9 @@ int main() {
                                        'H',  'R',  'M',  0x05, 0xFF, 0x4C, 0x00, 0x02, 0x15};
     check("wire form", bt::advertisement_bytes(sections) == want);
     check("empty", bt::advertisement_bytes({}).empty());
-    check("oversized section left out", bt::advertisement_bytes({{0x16, std::vector<uint8_t>(255, 1)}, {0x01, {0x06}}}) ==
-                                            std::vector<uint8_t>({0x02, 0x01, 0x06}));
+    check("oversized section left out",
+          bt::advertisement_bytes({{0x16, std::vector<uint8_t>(255, 1)}, {0x01, {0x06}}}) ==
+              std::vector<uint8_t>({0x02, 0x01, 0x06}));
 
     std::printf("%s\n", g_failures ? "FAILED" : "OK");
     return g_failures ? 1 : 0;

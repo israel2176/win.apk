@@ -74,7 +74,8 @@ public final class ScanRecordTest {
         // name, and zero padding after the data, as a phone's 62-byte record.
         byte[] uart = new byte[62];
         byte[] uartData = bytes(
-                0x11, 0x07, 0x9E, 0xCA, 0xDC, 0x24, 0x0E, 0xE5, 0xA9, 0xE0, 0x93, 0xF3, 0xA3, 0xB5, 0x01, 0x00, 0x40, 0x6E,
+                0x11, 0x07, 0x9E, 0xCA, 0xDC, 0x24, 0x0E, 0xE5, 0xA9, 0xE0, 0x93, 0xF3, 0xA3, 0xB5, 0x01, 0x00,
+                0x40, 0x6E,
                 0x03, 0x08, 'N', 'U');
         System.arraycopy(uartData, 0, uart, 0, uartData.length);
         r = ScanRecord.parseFromBytes(uart);
@@ -89,7 +90,8 @@ public final class ScanRecordTest {
                 && r.getServiceUuids().get(0).equals(ParcelUuid.fromString("12345678-0000-1000-8000-00805F9B34FB")),
                 "32-bit service UUID");
         check(r.getServiceSolicitationUuids() != null
-                && r.getServiceSolicitationUuids().get(0).equals(ParcelUuid.fromString("0000180F-0000-1000-8000-00805F9B34FB")),
+                && r.getServiceSolicitationUuids().get(0)
+                        .equals(ParcelUuid.fromString("0000180F-0000-1000-8000-00805F9B34FB")),
                 "16-bit solicitation UUID");
 
         // Malformed: a length past the end. The bytes are kept, nothing else.
@@ -107,7 +109,8 @@ public final class ScanRecordTest {
         check(!new ScanFilter.Builder().setServiceUuid(ParcelUuid.fromString("00001800-0000-1000-8000-00805F9B34FB"))
                 .build().matches(result), "filter by another UUID does not");
         check(new ScanFilter.Builder().setDeviceName("HRM").build().matches(result), "filter by name");
-        check(new ScanFilter.Builder().setDeviceAddress("A4:C1:38:9E:00:7F").build().matches(result), "filter by address");
+        check(new ScanFilter.Builder().setDeviceAddress("A4:C1:38:9E:00:7F").build().matches(result),
+                "filter by address");
         check(new ScanFilter.Builder().setServiceData(ParcelUuid.fromString("0000180F-0000-1000-8000-00805F9B34FB"),
                 bytes(0x64)).build().matches(result), "filter by service data prefix");
         ScanResult beaconResult = new ScanResult(new android.bluetooth.BluetoothDevice("A4:C1:38:9E:00:80"),

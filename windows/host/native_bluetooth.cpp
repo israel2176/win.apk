@@ -96,7 +96,9 @@ std::string jstring_utf8(JNIEnv* env, jstring s) {
 
 jbyteArray to_java_bytes(JNIEnv* env, const std::vector<uint8_t>& v) {
     jbyteArray a = env->NewByteArray(static_cast<jsize>(v.size()));
-    if (a && !v.empty()) env->SetByteArrayRegion(a, 0, static_cast<jsize>(v.size()), reinterpret_cast<const jbyte*>(v.data()));
+    if (a && !v.empty()) {
+        env->SetByteArrayRegion(a, 0, static_cast<jsize>(v.size()), reinterpret_cast<const jbyte*>(v.data()));
+    }
     return a;
 }
 
@@ -126,8 +128,9 @@ bool winsock() {
 
 std::string wsa_text(int err) {
     wchar_t* msg = nullptr;
-    const DWORD n = FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
-                                   nullptr, static_cast<DWORD>(err), 0, reinterpret_cast<wchar_t*>(&msg), 0, nullptr);
+    const DWORD flags = FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS;
+    const DWORD n =
+        FormatMessageW(flags, nullptr, static_cast<DWORD>(err), 0, reinterpret_cast<wchar_t*>(&msg), 0, nullptr);
     std::string text = n ? utf8(msg, n) : "";
     if (msg) LocalFree(msg);
     while (!text.empty() && (text.back() == '\n' || text.back() == '\r' || text.back() == ' ')) text.pop_back();
@@ -542,7 +545,8 @@ struct IBluetoothLEDevice3 : IInspectable {
     virtual HRESULT STDMETHODCALLTYPE GetGattServicesAsync(IAsyncOp<IGattDeviceServicesResult*>** op) = 0;
     virtual HRESULT STDMETHODCALLTYPE GetGattServicesWithCacheModeAsync(int cache_mode,
                                                                         IAsyncOp<IGattDeviceServicesResult*>** op) = 0;
-    virtual HRESULT STDMETHODCALLTYPE GetGattServicesForUuidAsync(GUID uuid, IAsyncOp<IGattDeviceServicesResult*>** op) = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetGattServicesForUuidAsync(GUID uuid,
+                                                                 IAsyncOp<IGattDeviceServicesResult*>** op) = 0;
     virtual HRESULT STDMETHODCALLTYPE GetGattServicesForUuidWithCacheModeAsync(
         GUID uuid, int cache_mode, IAsyncOp<IGattDeviceServicesResult*>** op) = 0;
 };
@@ -577,8 +581,8 @@ struct IGattDeviceService3 : IInspectable {
     virtual HRESULT STDMETHODCALLTYPE RequestAccessAsync(IAsyncOp<int>** op) = 0;
     virtual HRESULT STDMETHODCALLTYPE OpenAsync(int sharing_mode, IAsyncOp<int>** op) = 0;
     virtual HRESULT STDMETHODCALLTYPE GetCharacteristicsAsync(IAsyncOp<IGattCharacteristicsResult*>** op) = 0;
-    virtual HRESULT STDMETHODCALLTYPE GetCharacteristicsWithCacheModeAsync(int cache_mode,
-                                                                           IAsyncOp<IGattCharacteristicsResult*>** op) = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetCharacteristicsWithCacheModeAsync(
+        int cache_mode, IAsyncOp<IGattCharacteristicsResult*>** op) = 0;
 };
 
 struct IGattCharacteristicsResult : IInspectable {
@@ -610,11 +614,11 @@ struct IGattCharacteristic : IInspectable {
 
 struct IGattCharacteristic3 : IInspectable {
     virtual HRESULT STDMETHODCALLTYPE GetDescriptorsAsync(IAsyncOp<IGattDescriptorsResult*>** op) = 0;
-    virtual HRESULT STDMETHODCALLTYPE GetDescriptorsWithCacheModeAsync(int cache_mode,
-                                                                       IAsyncOp<IGattDescriptorsResult*>** op) = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetDescriptorsWithCacheModeAsync(
+        int cache_mode, IAsyncOp<IGattDescriptorsResult*>** op) = 0;
     virtual HRESULT STDMETHODCALLTYPE GetDescriptorsForUuidAsync(GUID uuid, IAsyncOp<IGattDescriptorsResult*>** op) = 0;
-    virtual HRESULT STDMETHODCALLTYPE GetDescriptorsForUuidWithCacheModeAsync(GUID uuid, int cache_mode,
-                                                                              IAsyncOp<IGattDescriptorsResult*>** op) = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetDescriptorsForUuidWithCacheModeAsync(
+        GUID uuid, int cache_mode, IAsyncOp<IGattDescriptorsResult*>** op) = 0;
     virtual HRESULT STDMETHODCALLTYPE WriteValueWithResultAsync(IBuffer* value, IAsyncOp<IGattWriteResult*>** op) = 0;
     virtual HRESULT STDMETHODCALLTYPE WriteValueWithResultAndOptionAsync(IBuffer* value, int option,
                                                                          IAsyncOp<IGattWriteResult*>** op) = 0;
@@ -741,7 +745,8 @@ constexpr GUID kIidLeDevice = {0xb5ee2f7b, 0x4ad8, 0x4642, {0xac, 0x48, 0x80, 0x
 constexpr GUID kIidLeDevice3 = {0xaee9e493, 0x44ac, 0x40dc, {0xaf, 0x33, 0xb2, 0xc1, 0x3c, 0x01, 0xca, 0x46}};
 constexpr GUID kIidServicesResult = {0x171dd3ee, 0x016d, 0x419d, {0x83, 0x8a, 0x57, 0x6c, 0xf4, 0x75, 0xa3, 0xd8}};
 constexpr GUID kIidService3 = {0xb293a950, 0x0c53, 0x437c, {0xa9, 0xb3, 0x5c, 0x32, 0x10, 0xc6, 0xe5, 0x69}};
-constexpr GUID kIidCharacteristicsResult = {0x1194945c, 0xb257, 0x4f3e, {0x9d, 0xb7, 0xf6, 0x8b, 0xc9, 0xa9, 0xae, 0xf2}};
+constexpr GUID kIidCharacteristicsResult = {0x1194945c, 0xb257, 0x4f3e,
+                                             {0x9d, 0xb7, 0xf6, 0x8b, 0xc9, 0xa9, 0xae, 0xf2}};
 constexpr GUID kIidCharacteristic = {0x59cb50c1, 0x5934, 0x4f68, {0xa1, 0x98, 0xeb, 0x86, 0x4f, 0xa4, 0x4e, 0x6b}};
 constexpr GUID kIidCharacteristic3 = {0x3f3c663e, 0x93d4, 0x406b, {0xb8, 0x17, 0xdb, 0x81, 0xf8, 0xed, 0x53, 0xb3}};
 constexpr GUID kIidDescriptorsResult = {0x9bc091f3, 0x95e7, 0x4489, {0x8d, 0x25, 0xff, 0x81, 0x95, 0x5a, 0x57, 0xb9}};
@@ -770,35 +775,32 @@ bt::Guid completed_handler_iid(const std::string& result) {
     return bt::parameterized_iid("pinterface({fcdcf02c-e5d8-4478-915a-4d90b74b83a5};" + result + ")");
 }
 
+// A runtime class's signature, from its namespace prefix, name and default
+// interface.
+std::string rc(const char* prefix, const char* name, const GUID& default_interface) {
+    return bt::class_signature(std::string(prefix) + name, from_guid(default_interface));
+}
+
+const char kDevices[] = "Windows.Devices.Bluetooth.";
+
 struct Iids {
-    bt::Guid received = event_handler_iid(bt::class_signature(std::string(kAdv) + "BluetoothLEAdvertisementWatcher",
-                                                              from_guid(kIidWatcher)),
-                                          bt::class_signature(std::string(kAdv) + "BluetoothLEAdvertisementReceivedEventArgs",
-                                                              from_guid(kIidReceivedArgs)));
-    bt::Guid stopped = event_handler_iid(bt::class_signature(std::string(kAdv) + "BluetoothLEAdvertisementWatcher",
-                                                             from_guid(kIidWatcher)),
-                                         bt::class_signature(std::string(kAdv) + "BluetoothLEAdvertisementWatcherStoppedEventArgs",
-                                                             from_guid(kIidStoppedArgs)));
-    bt::Guid value_changed = event_handler_iid(bt::class_signature(std::string(kGatt) + "GattCharacteristic",
-                                                                   from_guid(kIidCharacteristic)),
-                                               bt::class_signature(std::string(kGatt) + "GattValueChangedEventArgs",
-                                                                   from_guid(kIidValueChangedArgs)));
-    bt::Guid connection_changed = event_handler_iid(
-        bt::class_signature("Windows.Devices.Bluetooth.BluetoothLEDevice", from_guid(kIidLeDevice)), "cinterface(IInspectable)");
-    bt::Guid device_done =
-        completed_handler_iid(bt::class_signature("Windows.Devices.Bluetooth.BluetoothLEDevice", from_guid(kIidLeDevice)));
-    bt::Guid services_done =
-        completed_handler_iid(bt::class_signature(std::string(kGatt) + "GattDeviceServicesResult", from_guid(kIidServicesResult)));
-    bt::Guid characteristics_done = completed_handler_iid(
-        bt::class_signature(std::string(kGatt) + "GattCharacteristicsResult", from_guid(kIidCharacteristicsResult)));
-    bt::Guid descriptors_done = completed_handler_iid(
-        bt::class_signature(std::string(kGatt) + "GattDescriptorsResult", from_guid(kIidDescriptorsResult)));
-    bt::Guid read_done =
-        completed_handler_iid(bt::class_signature(std::string(kGatt) + "GattReadResult", from_guid(kIidReadResult)));
-    bt::Guid write_done =
-        completed_handler_iid(bt::class_signature(std::string(kGatt) + "GattWriteResult", from_guid(kIidWriteResult)));
-    bt::Guid cccd_read_done = completed_handler_iid(bt::class_signature(
-        std::string(kGatt) + "GattReadClientCharacteristicConfigurationDescriptorResult", from_guid(kIidReadCccdResult)));
+    bt::Guid received = event_handler_iid(rc(kAdv, "BluetoothLEAdvertisementWatcher", kIidWatcher),
+                                          rc(kAdv, "BluetoothLEAdvertisementReceivedEventArgs", kIidReceivedArgs));
+    bt::Guid stopped = event_handler_iid(rc(kAdv, "BluetoothLEAdvertisementWatcher", kIidWatcher),
+                                         rc(kAdv, "BluetoothLEAdvertisementWatcherStoppedEventArgs", kIidStoppedArgs));
+    bt::Guid value_changed = event_handler_iid(rc(kGatt, "GattCharacteristic", kIidCharacteristic),
+                                               rc(kGatt, "GattValueChangedEventArgs", kIidValueChangedArgs));
+    bt::Guid connection_changed =
+        event_handler_iid(rc(kDevices, "BluetoothLEDevice", kIidLeDevice), "cinterface(IInspectable)");
+    bt::Guid device_done = completed_handler_iid(rc(kDevices, "BluetoothLEDevice", kIidLeDevice));
+    bt::Guid services_done = completed_handler_iid(rc(kGatt, "GattDeviceServicesResult", kIidServicesResult));
+    bt::Guid characteristics_done =
+        completed_handler_iid(rc(kGatt, "GattCharacteristicsResult", kIidCharacteristicsResult));
+    bt::Guid descriptors_done = completed_handler_iid(rc(kGatt, "GattDescriptorsResult", kIidDescriptorsResult));
+    bt::Guid read_done = completed_handler_iid(rc(kGatt, "GattReadResult", kIidReadResult));
+    bt::Guid write_done = completed_handler_iid(rc(kGatt, "GattWriteResult", kIidWriteResult));
+    bt::Guid cccd_read_done = completed_handler_iid(
+        rc(kGatt, "GattReadClientCharacteristicConfigurationDescriptorResult", kIidReadCccdResult));
     bt::Guid status_done = completed_handler_iid(std::string("enum(") + kGatt + "GattCommunicationStatus;i4)");
 };
 
@@ -1073,7 +1075,7 @@ void push_scan_event(ScanEvent e) {
 }
 
 void on_advertisement(IInspectable* args_obj) {
-    IBluetoothLEAdvertisementReceivedEventArgs* args = query<IBluetoothLEAdvertisementReceivedEventArgs>(args_obj, kIidReceivedArgs);
+    auto* args = query<IBluetoothLEAdvertisementReceivedEventArgs>(args_obj, kIidReceivedArgs);
     if (!args) return;
     ScanEvent e;
     INT16 rssi = 0;
@@ -1085,14 +1087,16 @@ void on_advertisement(IInspectable* args_obj) {
     e.legacy = type != 5;
     e.connectable = type == 0 || type == 1;
     bool scan_response = type == 4;
-    IBluetoothLEAdvertisementReceivedEventArgs2* args2 = query<IBluetoothLEAdvertisementReceivedEventArgs2>(args, kIidReceivedArgs2);
+    auto* args2 = query<IBluetoothLEAdvertisementReceivedEventArgs2>(args, kIidReceivedArgs2);
     if (args2) {
         WinRtBool b = 0;
         if (SUCCEEDED(args2->get_IsConnectable(&b))) e.connectable = b != 0;
         if (SUCCEEDED(args2->get_IsScanResponse(&b))) scan_response = b != 0;
         IReference<INT16>* tx = nullptr;
         INT16 dbm = 0;
-        if (SUCCEEDED(args2->get_TransmitPowerLevelInDBm(&tx)) && tx && SUCCEEDED(tx->get_Value(&dbm))) e.tx_power = dbm;
+        if (SUCCEEDED(args2->get_TransmitPowerLevelInDBm(&tx)) && tx && SUCCEEDED(tx->get_Value(&dbm))) {
+            e.tx_power = dbm;
+        }
         release(tx);
         release(args2);
     }
@@ -1171,8 +1175,8 @@ void scan_worker() {
         }
         int answer = 0;
         if (!watcher) {
-            watcher = rt.activate<IBluetoothLEAdvertisementWatcher>(L"Windows.Devices.Bluetooth.Advertisement.BluetoothLEAdvertisementWatcher",
-                                                                    kIidWatcher);
+            watcher = rt.activate<IBluetoothLEAdvertisementWatcher>(
+                L"Windows.Devices.Bluetooth.Advertisement.BluetoothLEAdvertisementWatcher", kIidWatcher);
             if (watcher) {
                 watcher->put_ScanningMode(1);  // active: scan responses carry the names
                 IBluetoothLEAdvertisementWatcher2* w2 = query<IBluetoothLEAdvertisementWatcher2>(watcher, kIidWatcher2);
@@ -1184,8 +1188,8 @@ void scan_worker() {
                     on_advertisement(static_cast<IInspectable*>(args));
                 });
                 on_stopped = new Delegate(iids().stopped, [](IInspectable*, void* args_obj) {
-                    IBluetoothLEAdvertisementWatcherStoppedEventArgs* args =
-                        query<IBluetoothLEAdvertisementWatcherStoppedEventArgs>(static_cast<IInspectable*>(args_obj), kIidStoppedArgs);
+                    auto* args = query<IBluetoothLEAdvertisementWatcherStoppedEventArgs>(
+                        static_cast<IInspectable*>(args_obj), kIidStoppedArgs);
                     int error = 0;
                     if (args) {
                         args->get_Error(&error);
@@ -1253,8 +1257,8 @@ jboolean JNICALL Bt_leAvailable(JNIEnv*, jclass) {
         bool ok = false;
         std::thread([&ok] {
             combase().init_thread();
-            IBluetoothLEDeviceStatics* statics =
-                combase().factory<IBluetoothLEDeviceStatics>(L"Windows.Devices.Bluetooth.BluetoothLEDevice", kIidLeDeviceStatics);
+            IBluetoothLEDeviceStatics* statics = combase().factory<IBluetoothLEDeviceStatics>(
+                L"Windows.Devices.Bluetooth.BluetoothLEDevice", kIidLeDeviceStatics);
             ok = statics != nullptr;
             release(statics);
         }).join();
@@ -1477,8 +1481,8 @@ void release_device(Connection& c) {
 // One connection attempt: the device object, then the services (uncached, so
 // the stack actually connects). True when the link is up.
 bool connect_once(Connection& c) {
-    IBluetoothLEDeviceStatics* statics =
-        combase().factory<IBluetoothLEDeviceStatics>(L"Windows.Devices.Bluetooth.BluetoothLEDevice", kIidLeDeviceStatics);
+    IBluetoothLEDeviceStatics* statics = combase().factory<IBluetoothLEDeviceStatics>(
+        L"Windows.Devices.Bluetooth.BluetoothLEDevice", kIidLeDeviceStatics);
     if (!statics) return false;
     IAsyncOp<IBluetoothLEDevice*>* op = nullptr;
     if (FAILED(statics->FromBluetoothAddressAsync(c.address, &op))) op = nullptr;
@@ -1506,7 +1510,8 @@ bool connect_once(Connection& c) {
     if (FAILED(c.device->add_ConnectionStatusChanged(c.on_status, &c.status_token))) release(c.on_status);
     IAsyncOp<IGattDeviceServicesResult*>* services_op = nullptr;
     if (FAILED(c.device3->GetGattServicesWithCacheModeAsync(kCacheUncached, &services_op))) services_op = nullptr;
-    IGattDeviceServicesResult* result = await_result<IGattDeviceServicesResult>(services_op, iids().services_done, kTimeoutConnect);
+    IGattDeviceServicesResult* result =
+        await_result<IGattDeviceServicesResult>(services_op, iids().services_done, kTimeoutConnect);
     int status = -1;
     if (result) {
         result->get_Status(&status);
@@ -1565,7 +1570,8 @@ void do_discover(Connection& c) {
         if (s3) {
             IAsyncOp<IGattCharacteristicsResult*>* op = nullptr;
             if (FAILED(s3->GetCharacteristicsAsync(&op))) op = nullptr;
-            IGattCharacteristicsResult* r = await_result<IGattCharacteristicsResult>(op, iids().characteristics_done, kTimeoutOp);
+            IGattCharacteristicsResult* r =
+                await_result<IGattCharacteristicsResult>(op, iids().characteristics_done, kTimeoutOp);
             int status = -1;
             if (r) {
                 r->get_Status(&status);
@@ -1597,7 +1603,8 @@ void do_discover(Connection& c) {
             if (c3) {
                 IAsyncOp<IGattDescriptorsResult*>* op = nullptr;
                 if (FAILED(c3->GetDescriptorsAsync(&op))) op = nullptr;
-                IGattDescriptorsResult* r = await_result<IGattDescriptorsResult>(op, iids().descriptors_done, kTimeoutOp);
+                IGattDescriptorsResult* r =
+                    await_result<IGattDescriptorsResult>(op, iids().descriptors_done, kTimeoutOp);
                 int status = -1;
                 if (r) {
                     r->get_Status(&status);
@@ -1743,12 +1750,16 @@ void do_write(Connection& c, const Command& cmd) {
             IGattCharacteristic3* c3 = query<IGattCharacteristic3>(ch->characteristic, kIidCharacteristic3);
             if (c3) {
                 IAsyncOp<IGattWriteResult*>* op = nullptr;
-                if (FAILED(c3->WriteClientCharacteristicConfigurationDescriptorWithResultAsync(cccd, &op))) op = nullptr;
+                if (FAILED(c3->WriteClientCharacteristicConfigurationDescriptorWithResultAsync(cccd, &op))) {
+                    op = nullptr;
+                }
                 status = write_status(await_result<IGattWriteResult>(op, iids().write_done, kTimeoutOp));
                 c3->Release();
             } else {
                 IAsyncOp<int>* op = nullptr;
-                if (FAILED(ch->characteristic->WriteClientCharacteristicConfigurationDescriptorAsync(cccd, &op))) op = nullptr;
+                if (FAILED(ch->characteristic->WriteClientCharacteristicConfigurationDescriptorAsync(cccd, &op))) {
+                    op = nullptr;
+                }
                 status = gatt_status(await_int(op, iids().status_done, kTimeoutOp), nullptr);
             }
         } else if (d && d->descriptor) {
@@ -1798,7 +1809,7 @@ void do_notify(Connection& c, const Command& cmd) {
     std::weak_ptr<Connection> self = c.self;
     const int handle = ch->handle;
     ch->on_changed = new Delegate(iids().value_changed, [self, handle](IInspectable*, void* args_obj) {
-        IGattValueChangedEventArgs* args = query<IGattValueChangedEventArgs>(static_cast<IInspectable*>(args_obj), kIidValueChangedArgs);
+        auto* args = query<IGattValueChangedEventArgs>(static_cast<IInspectable*>(args_obj), kIidValueChangedArgs);
         if (!args) return;
         IBuffer* b = nullptr;
         Event e{kEvCharChanged, kGattSuccess, handle, 0, {}, {}};
@@ -1818,7 +1829,9 @@ void do_mtu(Connection& c) {
         IGattDeviceService3* s3 = query<IGattDeviceService3>(c.services[0].service, kIidService3);
         IGattSession* session = nullptr;
         UINT16 pdu = 0;
-        if (s3 && SUCCEEDED(s3->get_Session(&session)) && session && SUCCEEDED(session->get_MaxPduSize(&pdu)) && pdu) mtu = pdu;
+        if (s3 && SUCCEEDED(s3->get_Session(&session)) && session && SUCCEEDED(session->get_MaxPduSize(&pdu)) && pdu) {
+            mtu = pdu;
+        }
         release(session);
         release(s3);
     }
@@ -1948,7 +1961,9 @@ jobjectArray JNICALL Bt_gattNext(JNIEnv* env, jclass, jlong h, jint timeout_ms) 
     Event e;
     {
         std::unique_lock<std::mutex> l(c->lock);
-        if (!c->wake.wait_for(l, std::chrono::milliseconds(timeout_ms), [&] { return !c->events.empty(); })) return nullptr;
+        if (!c->wake.wait_for(l, std::chrono::milliseconds(timeout_ms), [&] { return !c->events.empty(); })) {
+            return nullptr;
+        }
         e = std::move(c->events.front());
         c->events.pop_front();
     }
