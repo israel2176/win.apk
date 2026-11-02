@@ -4224,7 +4224,8 @@ void paint_install(Graphics& g, float W, float H) {
     } else {
         Gdiplus::SolidBrush b(failed ? g_t.danger : g_t.success);
         g.FillEllipse(&b, badge);
-        draw_text(g, failed ? L"" : kGlyphCheck, g_f.glyph16.get(), kWhite, badge, kCenter);
+        if (failed) draw_text(g, L"!", g_f.title.get(), kWhite, badge, kCenter);
+        else draw_text(g, kGlyphCheck, g_f.glyph16.get(), kWhite, badge, kCenter);
     }
     draw_text(g, title, g_f.title.get(), g_t.text, RectF(m + px(60), y - px(2), cw - px(60), px(28)));
     draw_text(g, sub, g_f.caption.get(), g_t.text2, RectF(m + px(60), y + px(26), cw - px(60), px(20)));
@@ -4233,8 +4234,8 @@ void paint_install(Graphics& g, float W, float H) {
     const float rh = px(60);
     const int rows = (std::max)(1, (std::min)(total, static_cast<int>((H * 0.45f) / rh)));
     const RectF card(m, y, cw, rows * rh);
-    fill_round(g, card, px(10), g_t.card);
-    stroke_round(g, card, px(10), g_t.border);
+    fill_round(g, card, px(kRadiusCard), g_t.card);
+    stroke_round(g, card, px(kRadiusCard), g_t.border);
     g.SetClip(card);
     const int first = (std::max)(0, (std::min)(total - rows, [&] {  // keep the active install in view
         for (int i = 0; i < total; ++i) {
@@ -4246,7 +4247,7 @@ void paint_install(Graphics& g, float W, float H) {
         const Job& j = g_jobs[static_cast<size_t>(i)];
         const RectF r(m, y + (i - first) * rh, cw, rh);
         if (i > first) {
-            Gdiplus::Pen line(g_t.border, 1);
+            Gdiplus::Pen line(g_t.divider, 1);
             g.DrawLine(&line, r.X + px(66), r.Y, r.GetRight() - px(14), r.Y);
         }
         const App* app = find_app(j.name);
@@ -4284,8 +4285,8 @@ void paint_install(Graphics& g, float W, float H) {
     y += px(24);
     const RectF box(m, y, cw, H - foot - px(18) - y);
     if (box.Height > px(48)) {
-        fill_round(g, box, px(10), code_bg());
-        stroke_round(g, box, px(10), g_t.border);
+        fill_round(g, box, px(kRadiusCard), code_bg());
+        stroke_round(g, box, px(kRadiusCard), g_t.border);
         const float lh = px(17);
         const size_t fit = static_cast<size_t>((std::max)(0.0f, (box.Height - px(20)) / lh));
         if (g_iv.log.empty()) {
@@ -4303,15 +4304,15 @@ void paint_install(Graphics& g, float W, float H) {
         }
     }
 
-    Gdiplus::SolidBrush bar(g_t.dark ? mix(g_t.bg, kBlack, 0.15f) : mix(g_t.bg, kWhite, 0.5f));
+    Gdiplus::SolidBrush bar(g_t.layer);
     g.FillRectangle(&bar, RectF(0, H - foot, W, foot));
     Gdiplus::Pen line(g_t.border, 1);
     g.DrawLine(&line, 0.0f, H - foot, W, H - foot);
-    const RectF close(W - m - px(100), H - foot + (foot - px(34)) / 2, px(100), px(34));
+    const RectF close(W - m - px(100), H - foot + (foot - px(32)) / 2, px(100), px(32));
     draw_button(g, close, finished ? tr(L"Done") : tr(L"Hide"), g_iv.hot == kActClose, true, false);
     g_iv.targets.push_back({close, kActClose});
     if (lj) {
-        const RectF full(m, close.Y, px(140), px(34));
+        const RectF full(m, close.Y, px(140), px(32));
         draw_button(g, full, tr(L"Open full log"), g_iv.hot == kActLog, false, false);
         g_iv.targets.push_back({full, kActLog});
     }
@@ -4457,8 +4458,8 @@ void paint_logs(Graphics& g, float W, float H) {
     const float m = px(20);
     draw_text(g, tr(L"Logs"), g_f.title.get(), g_t.text, RectF(m, px(14), px(70), px(36)));
     const RectF pick(m + px(76), px(16), (std::min)(px(300), W * 0.4f), px(32));
-    fill_round(g, pick, px(6), g_lv.hot == kLogPick ? g_t.hover : mix(g_t.card, g_t.hover, 0.55f));
-    stroke_round(g, pick, px(6), g_t.border);
+    fill_round(g, pick, px(kRadiusControl), g_lv.hot == kLogPick ? g_t.hover : g_t.card);
+    stroke_round(g, pick, px(kRadiusControl), g_t.border);
     draw_text(g, log_title(g_lv.path), g_f.body.get(), g_t.text, RectF(pick.X + px(12), pick.Y, pick.Width - px(40), pick.Height));
     draw_text(g, kGlyphChevron, g_f.glyph12.get(), g_t.text2, RectF(pick.GetRight() - px(30), pick.Y, px(22), pick.Height),
               kCenter);
@@ -4476,8 +4477,8 @@ void paint_logs(Graphics& g, float W, float H) {
         x -= px(8);
     }
     const RectF box = log_text_rect(W, H);
-    fill_round(g, box, px(10), code_bg());
-    stroke_round(g, box, px(10), g_t.border);
+    fill_round(g, box, px(kRadiusCard), code_bg());
+    stroke_round(g, box, px(kRadiusCard), g_t.border);
     const bool live = !g_running.empty() || !g_pending.empty();
     float fx = m;
     if (live) {
