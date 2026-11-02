@@ -106,7 +106,7 @@ void test_source(const std::wstring& path) {
     auto src = vd::Source::open(path);
     check("source opens", src != nullptr);
     if (!src) return;
-    char detail[128];
+    char detail[256];
     std::snprintf(detail, sizeof(detail), "%dx%d, %lld us, audio %d Hz x%d", src->width(), src->height(),
                   static_cast<long long>(src->duration_us()), src->audio_rate(), src->audio_channels());
     check("source describes the file",
@@ -246,7 +246,7 @@ void test_player(const std::wstring& path) {
     }
     const int worst = errors.empty() ? 0 : *std::max_element(errors.begin(), errors.end(),
                                                                [](int a, int b) { return std::abs(a) < std::abs(b); });
-    char detail[128];
+    char detail[256];
     std::snprintf(detail, sizeof(detail), "%d pictures, worst timing error %d ms, last pts %lld", frames, worst,
                   static_cast<long long>(last_pts));
     // The sound buffers a quarter second ahead; a picture may wait for the
@@ -276,15 +276,25 @@ void test_player(const std::wstring& path) {
     frames = 0;
     bool wrapped = false;
     last_pts = -1;
-    const auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);
+    const auto loop_t0 = std::chrono::steady_clock::now();
+    const auto until = loop_t0 + std::chrono::milliseconds(1500);
+    std::string trace;  // what came out and when, for a failure's report
     while (std::chrono::steady_clock::now() < until) {
         auto f = player->await_frame(500, &released);
-        if (!f) continue;
+        const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - loop_t0);
+        if (!f) {
+            trace += " null@" + std::to_string(ms.count()) + "(pos " + std::to_string(player->position_ms()) +
+                     (player->playing() ? " playing)" : " stopped)");
+            continue;
+        }
         ++frames;
         if (f->pts_us < last_pts) wrapped = true;
         last_pts = f->pts_us;
+        if (frames <= 3 || frames % 10 == 0) trace += " " + std::to_string(f->pts_us / 1000) + "@" + std::to_string(ms.count());
     }
-    check("player loops", wrapped && frames >= 15 && player->playing(), std::to_string(frames));
+    std::snprintf(detail, sizeof(detail), "%d frames, wrapped %d, playing %d, position %d;%s", frames, wrapped ? 1 : 0,
+                  player->playing() ? 1 : 0, player->position_ms(), trace.substr(0, 60).c_str());
+    check("player loops", wrapped && frames >= 15 && player->playing(), detail);
     player->pause();
     check("player pauses", !player->playing() && !player->await_frame(100, &released));
     player->release();
