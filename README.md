@@ -226,6 +226,8 @@ most useful lines in a log:
 | Apps with ARM native code only (`lib/arm64-v8a`), translated to x64 (below) | |
 | Sound from Java (AudioTrack, SoundPool: WAV, Ogg, MP3) | Video, camera, WebView, location |
 | Files, SharedPreferences, SQLite, clipboard, file pickers, game controllers | Google Play services (sign-in, purchases, maps) |
+| Wi-Fi state, the current network and scan results (SSIDs need Windows' location access) | Connecting to Wi-Fi networks for the app |
+| Bluetooth: the paired devices, serial (RFCOMM) connections both ways, LE scans and the GATT client (read, write, notifications) | Classic discovery and pairing, LE advertising and the GATT server, the audio and HID profiles |
 
 Particular apps, and problems by kind of app, are in
 [`docs/APPS.md`](docs/APPS.md); please add the apps you try.

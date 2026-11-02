@@ -486,6 +486,24 @@ every such change is listed here:
   `windows/host/native_radios.cpp`; `android.hardware.bluetooth` is declared
   when there is a radio. A host without these natives (the Mac) keeps the old
   answers.
+- `runtime/java/com/macapk/loader/HostBluetooth.java` (new), with
+  `android/bluetooth/BluetoothSocket.java`, `BluetoothServerSocket.java`,
+  `BluetoothDevice.java`, `BluetoothAdapter.java`, `BluetoothGatt.java`,
+  `BluetoothGattService.java`, `BluetoothGattCharacteristic.java`,
+  `BluetoothGattDescriptor.java` (the hidden instance-id constructors),
+  `android/bluetooth/le/BluetoothLeScanner.java`, `ScanRecord.java` (AOSP's
+  parser) and `MacApkPackageManager.java`: talking to Bluetooth devices
+  through the host, from `windows/host/native_bluetooth.cpp`: RFCOMM sockets
+  both ways (Winsock AF_BTH, the SDP query and record), LE scans (the
+  advertisement watcher) and the GATT client (services, reads, writes,
+  notifications, MTU). The permission checks are AOSP's: `BLUETOOTH_CONNECT`
+  / `BLUETOOTH_SCAN` (implied by `BLUETOOTH` / `BLUETOOTH_ADMIN` below API
+  31) throw `SecurityException` when missing, scan results need the location
+  permission unless the scan is `neverForLocation` (`PackageInfo` now carries
+  that flag). `android.hardware.bluetooth_le` is declared when the host
+  scans. A host without these natives (the Mac) keeps the old answers: the
+  sockets' "no Bluetooth radio", a GATT client that reports the failure, a
+  scan that fails.
 - `runtime/java/com/macapk/loader/ActivityHost.java` and
   `MacApkPackageManager.java`: a Custom Tab launch opens in
   `HostBrowserTab` (new, with `HostCustomTabsService`) when the host has a
