@@ -519,8 +519,11 @@ WINAPK_GUEST_ABI int g_getattr_np(Thread* t, GuestAttr* a) {
     return 0;
 }
 
-// Signals are not delivered to threads on Windows yet.
-WINAPK_GUEST_ABI int g_kill(Thread*, int sig) { return sig == 0 ? 0 : kENOSYS; }
+// pthread_kill: tgkill on the thread's id (signal.cpp delivers or injects).
+WINAPK_GUEST_ABI int g_kill(Thread* t, int sig) {
+    if (!t) return kESRCH;
+    return signal_send(t->tid, sig);
+}
 WINAPK_GUEST_ABI int g_atfork(void*, void*, void*) { return 0; }
 WINAPK_GUEST_ABI int g_sched_yield() { SwitchToThread(); return 0; }
 WINAPK_GUEST_ABI int g_setschedparam(Thread*, int, const int32_t*) { return 0; }
@@ -652,6 +655,10 @@ const ShimSymbol kSymbols[] = {
 };
 
 }  // namespace
+
+uint32_t thread_id_of(const void* pthread) {
+    return pthread ? static_cast<const Thread*>(pthread)->tid : 0;
+}
 
 ShimTable pthread_symbols() { return WINAPK_SHIM_TABLE(kSymbols); }
 

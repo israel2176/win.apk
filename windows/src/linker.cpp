@@ -3,6 +3,7 @@
 #include "winapk/linker.h"
 
 #include "winapk/guest_abi.h"
+#include "winapk/mini_bionic.h"
 
 #include <cstring>
 #include <unordered_set>
@@ -72,6 +73,7 @@ GuestLinker::GuestLinker(LinkerConfig config)
     system_->name = "<system>";
     main_->name = "<main>";
     g_process_linker = this;
+    guest_signals_install();
 }
 
 GuestLinker::~GuestLinker() {

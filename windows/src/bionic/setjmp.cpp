@@ -11,8 +11,10 @@
 // Only the registers the System V ABI keeps across a call need saving (rbx,
 // rbp, r12-r15, rsp and the return address); the rest are the caller's to
 // lose. Bionic's x86_64 jmp_buf is 11 longs; the slots used are the
-// runtime's own, since only these functions read them. The signal mask is not
-// saved: the guest has no signals (signal.cpp).
+// runtime's own, since only these functions read them. sigsetjmp(buf, 1)
+// also saves the thread's signal mask and siglongjmp restores it, as on
+// Linux: a handler that longjmps out of a fault would otherwise leave the
+// signal blocked for good (signal.cpp).
 
 #include "bionic_internal.h"
 
@@ -26,7 +28,13 @@ namespace {
 
 // jmp_buf layout: [0] rbx, [1] rbp, [2] r12, [3] r13, [4] r14, [5] r15,
 // [6] rsp after return, [7] return address, [8] a magic (0x5e7a3b1c0f2d4a69)
-// that longjmp checks.
+// that longjmp checks, [9] the signal mask, [10] 1 if [9] was saved.
+
+// Microsoft x64 helpers the naked functions call: callee-saved rdi and rsi
+// survive the call, and the caller's own registers are not saved yet (setjmp)
+// or not restored yet (longjmp) when it happens.
+extern "C" uint64_t winapk_sig_mask_get() { return signal_mask_of_current_thread(); }
+extern "C" void winapk_sig_mask_set(uint64_t mask) { signal_set_mask_of_current_thread(mask); }
 extern "C" __attribute__((naked, sysv_abi)) int g_setjmp(int64_t*) {
     __asm__ volatile(
         "movq %%rbx, 0(%%rdi)\n"
@@ -41,13 +49,37 @@ extern "C" __attribute__((naked, sysv_abi)) int g_setjmp(int64_t*) {
         "movq %%rax, 56(%%rdi)\n"
         "movabsq $0x5e7a3b1c0f2d4a69, %%rax\n"
         "movq %%rax, 64(%%rdi)\n"
+        "movq $0, 80(%%rdi)\n"
         "xorl %%eax, %%eax\n"
         "ret\n" ::: "memory");
 }
 
-// sigsetjmp(buf, savesigs): the same, the mask being nothing to save.
+// sigsetjmp(buf, savesigs): the mask first (the call clobbers nothing setjmp
+// saves), then setjmp, which clears the saved flag; set it after.
 extern "C" __attribute__((naked, sysv_abi)) int g_sigsetjmp(int64_t*, int) {
-    __asm__ volatile("jmp g_setjmp\n");
+    __asm__ volatile(
+        "testl %%esi, %%esi\n"
+        "jz g_setjmp\n"
+        "subq $40, %%rsp\n"  // shadow space; rsp was 8 mod 16 at entry
+        "call winapk_sig_mask_get\n"
+        "addq $40, %%rsp\n"
+        "movq %%rax, 72(%%rdi)\n"
+        // The tail: what g_setjmp does, with the saved flag set.
+        "movq %%rbx, 0(%%rdi)\n"
+        "movq %%rbp, 8(%%rdi)\n"
+        "movq %%r12, 16(%%rdi)\n"
+        "movq %%r13, 24(%%rdi)\n"
+        "movq %%r14, 32(%%rdi)\n"
+        "movq %%r15, 40(%%rdi)\n"
+        "leaq 8(%%rsp), %%rax\n"
+        "movq %%rax, 48(%%rdi)\n"
+        "movq (%%rsp), %%rax\n"
+        "movq %%rax, 56(%%rdi)\n"
+        "movabsq $0x5e7a3b1c0f2d4a69, %%rax\n"
+        "movq %%rax, 64(%%rdi)\n"
+        "movq $1, 80(%%rdi)\n"
+        "xorl %%eax, %%eax\n"
+        "ret\n" ::: "memory");
 }
 
 void longjmp_bad(int64_t* buf) {
@@ -62,6 +94,15 @@ extern "C" __attribute__((naked, sysv_abi)) void g_longjmp(int64_t*, int) {
         "movabsq $0x5e7a3b1c0f2d4a69, %%rax\n"
         "cmpq %%rax, 64(%%rdi)\n"
         "jne 1f\n"
+        "cmpq $1, 80(%%rdi)\n"  // siglongjmp after sigsetjmp(buf, 1): the mask back first
+        "jne 3f\n"
+        "pushq %%rsi\n"
+        "subq $32, %%rsp\n"  // shadow space; rsp was 8 mod 16 at entry, the push made it 0
+        "movq 72(%%rdi), %%rcx\n"
+        "call winapk_sig_mask_set\n"
+        "addq $32, %%rsp\n"
+        "popq %%rsi\n"
+        "3:\n"
         "movl %%esi, %%eax\n"
         "testl %%eax, %%eax\n"
         "jnz 2f\n"

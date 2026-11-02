@@ -145,17 +145,19 @@ WINAPK_GUEST_ABI int g_android_log_write(int prio, const char* tag, const char* 
 }
 
 // ---- stack protector / abort ----------------------------------------------
-[[noreturn]] WINAPK_GUEST_ABI void g_stack_chk_fail() {
-    std::fprintf(stderr, "[win.apk] guest stack corruption detected (__stack_chk_fail)\n");
+// abort() is raise(SIGABRT): the guest's handler (a crash reporter's) runs
+// first; if it returns, the default action ends the process through the
+// host's abort, which writes the crash report and the minidump.
+[[noreturn]] void guest_abort(const char* why) {
+    std::fprintf(stderr, "[win.apk] %s\n", why);
     std::fflush(stderr);
+    bionic::signal_send(0, 6);  // SIGABRT
     std::abort();
 }
 
-[[noreturn]] WINAPK_GUEST_ABI void g_abort() {
-    std::fprintf(stderr, "[win.apk] guest called abort()\n");
-    std::fflush(stderr);
-    std::abort();
-}
+[[noreturn]] WINAPK_GUEST_ABI void g_stack_chk_fail() { guest_abort("guest stack corruption detected (__stack_chk_fail)"); }
+
+[[noreturn]] WINAPK_GUEST_ABI void g_abort() { guest_abort("guest called abort()"); }
 
 // ---- errno ----------------------------------------------------------------
 // Bionic's errno is `*__errno()`, in Linux numbering; see bionic_internal.h.
