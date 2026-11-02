@@ -17,6 +17,13 @@ import java.io.InputStream;
 public class MediaPlayer implements AudioRouting, VolumeAutomation {
     private long handle;
     private byte[] pendingSource;     // bytes captured at setDataSource
+    private String pendingPath;       // a path or http(s) URL instead, read at prepare
+    // Win.apk: a source with a video track plays through the host's video
+    // player (com.macapk.loader.HostVideo); audio-only sources, and every
+    // source on a host without one, keep the audio path below.
+    private com.macapk.loader.HostVideo.Player video;
+    private android.view.Surface videoSurface;
+    private int videoScalingMode = 1;  // VIDEO_SCALING_MODE_SCALE_TO_FIT
     private boolean prepared;
     private boolean looping;
     private float volL = 1.0f, volR = 1.0f;
@@ -55,11 +62,21 @@ public class MediaPlayer implements AudioRouting, VolumeAutomation {
 
     public void setDataSource(String path) {
         com.macapk.loader.AudioTrace.hit("MediaPlayer.setDataSource(path)", path);
-        try { pendingSource = readAll(new FileInputStream(path)); }
-        catch (Throwable t) { pendingSource = null; }
+        // Read at prepare(): a video is not slurped into memory, and a URL is
+        // streamed by the host's player.
+        pendingPath = path;
+        pendingSource = null;
     }
     public void setDataSource(android.content.Context ctx, android.net.Uri uri) {
         com.macapk.loader.AudioTrace.hit("MediaPlayer.setDataSource(uri)", String.valueOf(uri));
+        pendingPath = null;
+        String scheme = uri != null ? uri.getScheme() : null;
+        if (uri != null && (scheme == null || "file".equals(scheme) || "http".equals(scheme)
+                || "https".equals(scheme))) {
+            pendingPath = scheme == null || "file".equals(scheme) ? uri.getPath() : uri.toString();
+            pendingSource = null;
+            if (pendingPath != null) return;
+        }
         try {
             InputStream in = null;
             try { in = ctx.getContentResolver().openInputStream(uri); }
@@ -111,6 +128,23 @@ public class MediaPlayer implements AudioRouting, VolumeAutomation {
 
     public void prepare() {
         com.macapk.loader.AudioTrace.hit("MediaPlayer.prepare");
+        releaseVideo();
+        video = com.macapk.loader.HostVideo.Player.open(pendingPath, pendingSource);
+        if (video != null) {
+            prepared = true;
+            video.setLooping(looping);
+            video.setVolume(volL * mShaperScale, volR * mShaperScale);
+            video.setVideoScalingMode(videoScalingMode);
+            video.setSurface(videoSurface);
+            // AOSP reports the size while preparing, before onPrepared.
+            OnVideoSizeChangedListener l = onVideoSizeChanged;
+            if (l != null) {
+                try { l.onVideoSizeChanged(this, video.getVideoWidth(), video.getVideoHeight()); }
+                catch (Throwable ignore) {}
+            }
+            return;
+        }
+        if (pendingSource == null && pendingPath != null) pendingSource = readPath(pendingPath);
         ensureHandle();
         if (handle != 0 && pendingSource != null) {
             prepared = com.macapk.loader.NativeAudio.nativeMpSetSource(
@@ -153,6 +187,18 @@ public class MediaPlayer implements AudioRouting, VolumeAutomation {
         }, "mediaplayer-prepare").start();
     }
 
+    private static byte[] readPath(String path) {
+        try {
+            if (path.startsWith("http://") || path.startsWith("https://")) {
+                return readAll(new java.net.URL(path).openStream());
+            }
+            return readAll(new FileInputStream(path));
+        } catch (Throwable t) { return null; }
+    }
+    private void releaseVideo() {
+        if (video != null) { video.release(); video = null; }
+    }
+
     private void ensureHandle() {
         if (handle == 0) {
             try { handle = com.macapk.loader.NativeAudio.nativeMpCreate(); }
@@ -162,6 +208,12 @@ public class MediaPlayer implements AudioRouting, VolumeAutomation {
 
     public void start() {
         com.macapk.loader.AudioTrace.hit("MediaPlayer.start");
+        if (video != null) {
+            mUserPaused = false;
+            video.start();
+            startCompletionWatcher();
+            return;
+        }
         if (handle != 0) {
             mUserPaused = false;
             com.macapk.loader.NativeAudio.nativeMpStart(handle);
@@ -177,34 +229,44 @@ public class MediaPlayer implements AudioRouting, VolumeAutomation {
     private volatile boolean mUserPaused;
     public void pause()  {
         mUserPaused = true;
+        if (video != null) { video.pause(); return; }
         if (handle != 0) com.macapk.loader.NativeAudio.nativeMpPause(handle);
     }
     public void stop()   {
         mUserPaused = true;
+        if (video != null) { video.stop(); return; }
         if (handle != 0) com.macapk.loader.NativeAudio.nativeMpStop(handle);
     }
     public void reset()  {
+        releaseVideo();
         if (handle != 0) com.macapk.loader.NativeAudio.nativeMpStop(handle);
         prepared = false;
         pendingSource = null;
+        pendingPath = null;
     }
     public void release() {
+        releaseVideo();
         if (handle != 0) { com.macapk.loader.NativeAudio.nativeMpRelease(handle); handle = 0; }
         prepared = false;
         pendingSource = null;
+        pendingPath = null;
     }
     public boolean isPlaying() {
+        if (video != null) return video.isPlaying();
         return handle != 0 && com.macapk.loader.NativeAudio.nativeMpIsPlaying(handle);
     }
     public int getDuration() {
+        if (video != null) return video.getDuration();
         return handle != 0 ? com.macapk.loader.NativeAudio.nativeMpDuration(handle) : 0;
     }
     public int getCurrentPosition() {
+        if (video != null) return video.getCurrentPosition();
         return handle != 0 ? com.macapk.loader.NativeAudio.nativeMpPosition(handle) : 0;
     }
     public void seekTo(int msec) {
-        if (handle == 0) return;
-        com.macapk.loader.NativeAudio.nativeMpSeek(handle, msec);
+        if (video != null) video.seekTo(msec);
+        else if (handle == 0) return;
+        else com.macapk.loader.NativeAudio.nativeMpSeek(handle, msec);
         // AOSP: "the OnSeekCompleteListener.onSeekComplete() callback will be
         // invoked when the seek is completed." Before this fix the listener
         // was accepted by setOnSeekCompleteListener but NEVER invoked, so any
@@ -228,6 +290,7 @@ public class MediaPlayer implements AudioRouting, VolumeAutomation {
     }
     public void setLooping(boolean looping) {
         this.looping = looping;
+        if (video != null) video.setLooping(looping);
         if (handle != 0) com.macapk.loader.NativeAudio.nativeMpSetLooping(handle, looping);
     }
     public boolean isLooping() { return looping; }
@@ -245,6 +308,7 @@ public class MediaPlayer implements AudioRouting, VolumeAutomation {
         // overwritten by it, the way AOSP composes the two in the mixer -- see
         // createVolumeShaper below. mShaperScale is 1.0 when no shaper is
         // running, so the ordinary path is unchanged.
+        if (video != null) video.setVolume(left * mShaperScale, right * mShaperScale);
         if (handle != 0) {
             com.macapk.loader.NativeAudio.nativeMpSetVolume(handle,
                     left * mShaperScale, right * mShaperScale);
@@ -401,16 +465,24 @@ public class MediaPlayer implements AudioRouting, VolumeAutomation {
     private OnBufferingUpdateListener  onBufferingUpdate;
     private OnVideoSizeChangedListener onVideoSizeChanged;
 
-    public int getVideoWidth()  { return 0; }
-    public int getVideoHeight() { return 0; }
+    public int getVideoWidth()  { return video != null ? video.getVideoWidth() : 0; }
+    public int getVideoHeight() { return video != null ? video.getVideoHeight() : 0; }
     // Published descriptors are (Landroid/view/SurfaceHolder;)V and
     // (Landroid/view/Surface;)V. The prior Object signatures compiled but did
     // not match the descriptor a guest emits for setDisplay(holder), so the JNI
-    // method lookup threw NoSuchMethodError. No video backend yet, so accept and
-    // ignore -- but the descriptor must match for the call to resolve.
-    public void setDisplay(android.view.SurfaceHolder surfaceHolder) {}
-    public void setSurface(android.view.Surface surface) {}
-    public void setVideoScalingMode(int mode) {}
+    // method lookup threw NoSuchMethodError. The Surface is where the host's
+    // video player (if any) shows its pictures; it may be set at any time.
+    public void setDisplay(android.view.SurfaceHolder surfaceHolder) {
+        setSurface(surfaceHolder != null ? surfaceHolder.getSurface() : null);
+    }
+    public void setSurface(android.view.Surface surface) {
+        videoSurface = surface;
+        if (video != null) video.setSurface(surface);
+    }
+    public void setVideoScalingMode(int mode) {
+        videoScalingMode = mode;
+        if (video != null) video.setVideoScalingMode(mode);
+    }
     public void setScreenOnWhilePlaying(boolean screenOn) {}
     public void setWakeMode(android.content.Context context, int mode) {}
     // Stored so getPlaybackParams() reads back what was actually configured
