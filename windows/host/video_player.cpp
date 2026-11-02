@@ -208,6 +208,14 @@ struct Player::Impl {
         }
         src->seek(target);
         hold.lock();
+        // start() may have set kPlaying (and played the stream) between the
+        // state read above and the pause: then the stream must play again, or
+        // the clock never moves and no picture after the first is ever due.
+        if (audio && st != kPlaying && state == kPlaying) {
+            hold.unlock();
+            au::stream_play(audio.get());
+            hold.lock();
+        }
         seek_request_us = -1;
         consumer.notify_all();
     }
