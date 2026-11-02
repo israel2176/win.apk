@@ -30,24 +30,43 @@ works is also a change to the document that names it.
 | `scripts/build_framework_res.sh` | The platform resource APK (called by `windows/scripts/`) |
 | `.github/workflows/` | `windows-poc.yml` (build + tests + package, on PRs and by hand), `compat-sweep.yml` (app sweep, PRs and by hand), `windows-release.yml` (release, by hand only) |
 
-Data at run time: `%LOCALAPPDATA%\Win.apk\` (`library\` APKs + `.label`, `apps\<name>\`, `android\`, `logs\last-run.log`, `logs\install-<name>.log`, `logs\crash-<name>-<time>.dmp` (minidumps, the last three per app), `store\` the Store tab's F-Droid catalog.tsv + icons, `installed_apps.json` the registry, `appops\` the signed permission grants: app-ops.json, signing-key.pub, signing-key.p256 under DPAPI, `gms\` the Google account and its tokens: gms_state.properties, the `accounts.present` marker the launcher checks, `aot-cache\` whole arm64 translations shared between apps, `staging\` the install helper's, `apps\<name>\notifications\` the large icons of notifications on show). Settings: `HKCU\Software\Win.apk` (`Theme`, `Language`, `PhoneSize`, `Landscape` (absent = 1, landscape; 0 = portrait), `DesktopShortcut`, `ShortcutVersion` (below `kShortcutVersion` the launcher rewrites every app's shortcuts once at start), `UserFolders` (absent = 1: shared storage is the user's Windows folders; the runtime reads it too)). Per app, beside its APK: `library\<name>.label`, `.package` (package, versionCode, versionName, and the launched activity's manifest `screenOrientation`), `.orientation` (`portrait` / `landscape`, the right-click override for that app only; wins over `Landscape`, but an orientation the manifest fixes wins over both), `.window` (dp, the window size once the user resizes it; wins over the size setting, dropped when the orientation is flipped). Runtime env: `WINAPK_PHONE_SIZE=WxH` (dp), `WINAPK_RESIZABLE=0` (the window letterboxes instead of resizing the app), `WINAPK_HEADLESS=1`, `WINAPK_HEADLESS_FRAME`, `WINAPK_HEADLESS_EXIT_AFTER_FRAMES`.
+Data at run time: `%LOCALAPPDATA%\Win.apk\` (`library\` APKs + `.label`, `apps\<name>\`, `android\`, `logs\run-<name>.log` (each app's last run; `.1.log` the one before; `last-run.log` is a hard link to the newest), `logs\install-<name>.log`, `logs\crash-<name>-<time>.dmp` (minidumps, the last three per app), `store\` the Store tab's F-Droid catalog.tsv + icons, `installed_apps.json` the registry, `appops\` the signed permission grants: app-ops.json, signing-key.pub, signing-key.p256 under DPAPI, `gms\` the Google account and its tokens: gms_state.properties, the `accounts.present` marker the launcher checks, `aot-cache\` whole arm64 translations shared between apps, `staging\` the install helper's, `apps\<name>\notifications\` the large icons of notifications on show). Settings: `HKCU\Software\Win.apk` (`Theme`, `Language`, `PhoneSize`, `Landscape` (absent = 1, landscape; 0 = portrait), `DesktopShortcut`, `ShortcutVersion` (below `kShortcutVersion` the launcher rewrites every app's shortcuts once at start), `UserFolders` (absent = 1: shared storage is the user's Windows folders; the runtime reads it too), `InstallDetails` (the install window shows its log), `WindowWidth`, `WindowHeight`, `WindowMaximized` (the library window, in DIPs)). Per app, beside its APK: `library\<name>.label`, `.package` (package, versionCode, versionName, and the launched activity's manifest `screenOrientation`), `.orientation` (`portrait` / `landscape`, the right-click override for that app only; wins over `Landscape`, but an orientation the manifest fixes wins over both), `.window` (dp, the window size once the user resizes it; wins over the size setting, dropped when the orientation is flipped). Runtime env: `WINAPK_READY_EVENT=<handle>` (the launch handshake: an inherited event the runtime sets once the app's window has painted its first frame, or a second start brought the running copy forward; `win32_window.h`), `WINAPK_PHONE_SIZE=WxH` (dp), `WINAPK_RESIZABLE=0` (the window letterboxes instead of resizing the app), `WINAPK_HEADLESS=1`, `WINAPK_HEADLESS_FRAME`, `WINAPK_HEADLESS_EXIT_AFTER_FRAMES`.
 
 ## The launcher (`windows/launcher/launcher_main.cpp`)
 
 Sections in order: paths, settings (registry), Windows integration (file types,
-shortcuts), library, running/installing (threads post `kInstalled`,
-`kInstallStarted`, `kRunExited`), the store (WinHTTP, F-Droid's index-v1.json
--> `store\catalog.tsv`, icon and download threads posting `kStore*`), theme + drawing helpers, state, layout,
-painting, dialogs, actions, sheets (Settings, Get Info: `Row`/`Section` model,
-`run_sheet` modal loop, the Store's app sheet), install window, log window, drag and drop
-(`IDropTarget`), main `wnd_proc`, the installed-apps registry, the install
-helper (`install`/`uninstall` verbs), permissions (`namespace appops`: the
-signed app-ops store and the `runtime-permission`, `special-access`,
-`app-details` dialogs the runtime asks through, upstream's
-macapk-installhelper verbs, for every dangerous group: `kGroupRows` must match
-`runtime/java/com/macapk/loader/RuntimePermissionGroups.java`; Get Info's
-Permissions rows, which stop a running app on revoke), `wWinMain`.
+shortcuts), library, running/installing (`start_runtime` gives a child only the
+handles it lists; threads post `kInstalled`, `kInstallStarted`, `kRunReady`,
+`kRunExited`), the store (WinHTTP, F-Droid's index-v1.json -> `store\catalog.tsv`,
+icon and download threads posting `kStore*`), theme + drawing helpers, state,
+layout, painting (the InfoBar replaces a status bar), dialogs, actions (install
+with Cancel, launch, Remove with "also delete what the app saved"), pages
+(Settings, App details, a Store app's details: `Row`/`Section`/`Page`, drawn in
+the content layer by `paint_page`, `open_page`), install window, log window
+(RichEdit), launch splash, drag and drop (`IDropTarget`), main `wnd_proc`, the
+installed-apps registry, the install helper (`install`/`uninstall` verbs),
+permissions (`namespace appops`: the signed app-ops store and the
+`runtime-permission`, `special-access`, `app-details` questions the runtime asks
+through, upstream's macapk-installhelper verbs, drawn by `run_prompt`, for every
+dangerous group: `kGroupRows` must match
+`runtime/java/com/macapk/loader/RuntimePermissionGroups.java`; the details
+page's Permissions rows, which stop a running app on revoke), single instance
+(`forward_to_running`, `maybe_quit`), `wWinMain`.
 
+- One process serves the library, the install window and the splashes. A
+  second `Win.apk.exe` hands its files (or "show the library") to the first
+  in a `WM_COPYDATA` and exits; Explorer's one-process-per-file starts meet on
+  the `Local\WinApk-launcher` mutex. The library window always exists but is
+  shown only when asked for: an APK from Explorer shows only the install
+  window, `--run` only the splash. The hidden process quits when nothing is
+  left (`maybe_quit`).
+- Launching: `launch()` shows the splash at once; `run_thread` passes
+  `WINAPK_READY_EVENT` and waits on it or the process. Ready closes the splash;
+  an exit first turns it into the error with Show log.
+- One home per action: the tile's menu is Open, Stop, App details, Remove;
+  everything else per app is on the App details page; logs are in the log
+  window (Settings > Troubleshooting, Ctrl+L) and in the failure states of the
+  install window and the splash. Don't add a second way to an action.
 - Settings > Google account asks `winapk-runtime --gms accounts|signin-window|signout`
   (`run_gms`, stdout captured, stderr in `logs\gms.log`); exit codes 0 done,
   1 error, 2 cancelled.

@@ -3,15 +3,15 @@
 // The Windows counterpart of upstream's launcher (launcher/*.swift), laid out
 // as a Windows 11 app: a navigation pane (Library, Store, Settings), the
 // page's title and toolbar (search, Add app) over a grid of the installed
-// apps with their icons, and a status bar. The whole window takes a dropped
-// APK; an empty library shows a drop target instead of the grid. Right-click
-// > Get Info opens an app's sheet. The window is drawn with GDI+ and follows
-// Windows' light or dark mode (or the one picked in the settings), in English
-// or, laid out right to left, in Hebrew.
+// apps with their icons, and an InfoBar for what just happened. Settings and
+// an app's details are pages in the same content layer. The whole window
+// takes a dropped APK. The windows are drawn with GDI+ and follow Windows'
+// light or dark mode (or the one picked in the settings), in English or, laid
+// out right to left, in Hebrew.
 //
 // An APK dropped on the window, chosen through Add app, double-clicked in
 // Explorer (the launcher registers itself for .apk files) or passed on the
-// command line is installed, one at a time:
+// command line is installed, one at a time, in a small install window:
 //
 //   1. copied into %LOCALAPPDATA%\Win.apk\library, so the app stays when the
 //      download is deleted;
@@ -23,13 +23,18 @@
 //      off in the settings, a desktop shortcut, with the app's own icon, that
 //      start it through this program.
 //
-// Double-clicking an app runs it (winapk-runtime --apk, without a console);
-// if it stops with an error the log can be opened. The screen size and
-// orientation picked in the settings reach the runtime as WINAPK_PHONE_SIZE.
-// Apps open in landscape, the shape of a PC screen, unless the settings say
-// portrait; right-click > Open in portrait / landscape turns one app the
-// other way (library\<name>.orientation), and an app whose manifest fixes
-// its launched activity's orientation always gets that one.
+// One process serves it all: another start hands its files to the one
+// running (forward_to_running), and an APK from Explorer shows only the
+// install window, not the library.
+//
+// Double-clicking an app runs it (winapk-runtime --apk, without a console)
+// behind a splash that stays until the runtime says its window is up
+// (WINAPK_READY_EVENT); if the app ends first the splash says so, with the
+// log. The screen size and orientation picked in the settings reach the
+// runtime as WINAPK_PHONE_SIZE. Apps open in landscape, the shape of a PC
+// screen, unless the settings say portrait; an app's details page turns one
+// app the other way (library\<name>.orientation), and an app whose manifest
+// fixes its launched activity's orientation always gets that one.
 //
 // The Store tab, next to the library, is F-Droid's catalog (f-droid.org,
 // free and open-source apps): its index is fetched in the background and
@@ -38,7 +43,7 @@
 // an app the library already has (by package) is updated in place.
 //
 //   Win.apk.exe                      the library
-//   Win.apk.exe <app.apk>            install, then run it
+//   Win.apk.exe <app.apk> [...]      the install window, for these files
 //   Win.apk.exe --run <library apk>  run an installed app (what shortcuts do)
 //   Win.apk.exe install --apk <file> --source android [--requestor-label <app>] --json
 //   Win.apk.exe uninstall --package <name> --source android [--requestor-label <app>] --json
@@ -141,37 +146,24 @@ const wchar_t* tr(const wchar_t* en) {
         {L"Win.apk keeps its own copy, so the download can go", L"Win.apk שומרת עותק משלה, כך שאפשר למחוק את ההורדה"},
         {L"Installing…", L"מתקין…"},
         {L"Installing {0} of {1}", L"מתקין {0} מתוך {1}"},
-        {L"Installing", L"מתקין"},
-        {L"Drop an APK here to install", L"גרור לכאן קובץ APK כדי להתקין"},
-        {L"or click to choose a file  ·  .apk .apkm .xapk .apks", L"או לחץ כדי לבחור קובץ  ·  apk, apkm, xapk, apks"},
         {L"Add app", L"הוספת אפליקציה"},
         {L"No apps match “{0}”", L"אין אפליקציות שתואמות ל„{0}”"},
         {L"Press Esc in the search box to show every app.", L"הקש Esc בתיבת החיפוש כדי להציג את כל האפליקציות."},
         {L"No apps installed yet", L"עדיין לא הותקנו אפליקציות"},
         {L"Logs", L"לוגים"},
         {L"Stop", L"עצירה"},
-        {L"Drop an APK anywhere in this window to install your first app", L"גרור קובץ APK לכל מקום בחלון כדי להתקין את האפליקציה הראשונה"},
-        {L"Double-click to open  ·  right-click for options  ·  drop an APK anywhere to add more", L"לחיצה כפולה לפתיחה  ·  לחיצה ימנית לאפשרויות  ·  גרירת APK לכל מקום בחלון להוספה"},
         {L"{0} running", L"{0} פועלות"},
         {L"Running", L"פועלת"},
-        {L"Browse the Store", L"עיון בחנות"},
         {L"Clear the search", L"ניקוי החיפוש"},
         {L"Check F-Droid for new apps", L"בדיקת אפליקציות חדשות ב-F-Droid"},
-        {L"{0} apps are running", L"{0} אפליקציות פועלות"},
-        {L"{0} is running", L"{0} פועלת"},
         {L"{0} app", L"אפליקציה אחת"},
         {L"{0} apps", L"{0} אפליקציות"},
-        {L"The log may say why:\n{0}", L"ייתכן שהלוג מסביר למה:\n{0}"},
-        {L"Open the log", L"פתיחת הלוג"},
         {L"Android apps", L"אפליקציות Android"},
         {L"All files", L"כל הקבצים"},
         {L"Install an Android app", L"התקנת אפליקציית Android"},
         {L"Installing {0}…", L"מתקין את {0}…"},
         {L"{0} is still being installed.", L"{0} עדיין בהתקנה."},
-        {L"{0} is already open.", L"{0} כבר פתוחה."},
-        {L"Opening {0}…", L"פותח את {0}…"},
         {L"Remove {0}?", L"להסיר את {0}?"},
-        {L"Its shortcuts go too. What the app saved stays, so installing it again picks up where it left off.", L"גם קיצורי הדרך שלה יוסרו. מה שהאפליקציה שמרה נשאר, כך שהתקנה מחדש תמשיך מאותה נקודה."},
         {L"Remove", L"הסרה"},
         {L"{0} was removed.", L"{0} הוסרה."},
         {L"Update {0} from an APK", L"עדכון {0} מקובץ APK"},
@@ -182,11 +174,8 @@ const wchar_t* tr(const wchar_t* en) {
         {L"Dark", L"כהה"},
         {L"Appearance", L"מראה"},
         {L"Language", L"שפה"},
-        {L"Open Android app files with Win.apk", L"פתיחת קובצי אפליקציות Android עם Win.apk"},
         {L"Default", L"ברירת מחדל"},
         {L"Make default", L"הגדרה כברירת מחדל"},
-        {L"File types", L"סוגי קבצים"},
-        {L"Covers .apk, .apkm, .xapk and .apks. Double-clicking one in Explorer installs it and opens it.", L"כולל קובצי apk, apkm, xapk ו-apks. לחיצה כפולה על קובץ כזה בסייר הקבצים מתקינה אותו ופותחת אותו."},
         {L"Screen size", L"גודל מסך"},
         {L"Auto (fits the screen)", L"אוטומטי (מותאם למסך)"},
         {L"320 × 480  (small, older apps)", L"320 × 480  (קטן, לאפליקציות ישנות)"},
@@ -199,34 +188,10 @@ const wchar_t* tr(const wchar_t* en) {
         {L"Orientation", L"כיוון"},
         {L"Portrait", L"לאורך"},
         {L"Landscape", L"לרוחב"},
-        {L"Screen", L"מסך"},
-        {L"Used the next time an app opens, from here or from its shortcut. Sizes are in dp, as on a phone. An app's "
-         L"window can be resized or maximized, and the app then lays itself out for that size and keeps it (Get Info "
-         L"resets it). Right-click an app to open just that one the other way; an app that requires one orientation "
-         L"always gets it.",
-         L"יחול בפעם הבאה שאפליקציה תיפתח, מכאן או מקיצור הדרך שלה. הגדלים ביחידות dp, כמו בטלפון. אפשר לשנות את גודל "
-         L"החלון של אפליקציה או להגדיל אותו למסך מלא, והאפליקציה תתאים את עצמה לגודל הזה ותזכור אותו (במסך הפרטים "
-         L"אפשר לאפס). לחיצה ימנית על אפליקציה פותחת רק אותה בכיוון השני; אפליקציה שדורשת כיוון מסוים תמיד "
-         L"תקבל אותו."},
         {L"Desktop shortcut for new apps", L"קיצור דרך בשולחן העבודה לאפליקציות חדשות"},
         {L"Every app also gets one in Start > Win.apk Apps.", L"כל אפליקציה מקבלת גם קיצור דרך בתפריט התחל > Win.apk Apps."},
-        {L"Shortcuts", L"קיצורי דרך"},
-        {L"Make the Start menu shortcuts of every app again, with their icons.", L"יצירה מחדש של קיצורי הדרך בתפריט התחל לכל האפליקציות, עם הסמלים שלהן."},
-        {L"Recreate", L"יצירה מחדש"},
-        {L"The Start menu shortcuts were made again.", L"קיצורי הדרך בתפריט התחל נוצרו מחדש."},
-        {L"Diagnostics", L"אבחון"},
-        {L"install-<app>.log records each install, last-run.log the app opened last.", L"הקובץ install-<app>.log מתעד כל התקנה, והקובץ last-run.log את האפליקציה שנפתחה אחרונה."},
-        {L"View logs", L"הצגת הלוגים"},
-        {L"Logs folder", L"תיקיית הלוגים"},
         {L"Open folder", L"פתיחת התיקייה"},
-        {L"Attach the log to a bug report: it says what the runtime did and where it stopped.", L"צרף את הלוג לדיווח על באג: הוא מראה מה סביבת ההרצה עשתה והיכן נעצרה."},
-        {L"Saves, caches and files", L"שמירות, מטמון וקבצים"},
         {L"Use my Windows folders", L"שימוש בתיקיות של Windows"},
-        {L"Apps save to and open from your Downloads, Pictures, Documents, Music and Videos. Off: each folder is empty "
-         L"for apps again, and your files stay where they are.",
-         L"אפליקציות שומרות ופותחות קבצים מהתיקיות 'הורדות', 'תמונות', 'מסמכים', 'מוזיקה' ו'סרטונים'. כבוי: התיקיות "
-         L"ריקות שוב בשביל האפליקציות, והקבצים שלך נשארים במקומם."},
-        {L"Each installed app keeps its data here. Removing an app keeps what it saved.", L"כל אפליקציה מותקנת שומרת כאן את הנתונים שלה. הסרת אפליקציה משאירה את מה שהיא שמרה."},
         {L"App data", L"נתוני אפליקציות"},
         {L"Google account", L"חשבון Google"},
         {L"Signing in…", L"מתחבר…"},
@@ -260,65 +225,17 @@ const wchar_t* tr(const wchar_t* en) {
         {L"Remove all {0} apps?", L"להסיר את כל {0} האפליקציות?"},
         {L"Every app was removed.", L"כל האפליקציות הוסרו."},
         {L"Settings", L"הגדרות"},
-        {L"{0}  ·  Android app", L"{0}  ·  אפליקציית Android"},
-        {L"Identity", L"זיהוי"},
-        {L"Name", L"שם"},
-        {L"Library name", L"שם בספרייה"},
         {L"Installed", L"הותקנה"},
         {L"Storage", L"אחסון"},
-        {L"Source APK  ·  {0}", L"קובץ ה-APK המקורי  ·  {0}"},
-        {L"App files  ·  {0}", L"קבצי האפליקציה  ·  {0}"},
         {L"Show", L"הצגה"},
         {L"Open", L"פתיחה"},
-        {L"Install log", L"לוג ההתקנה"},
-        {L"View", L"הצגה"},
-        {L"Open {0}", L"פתיחת {0}"},
         {L"Desktop shortcut", L"קיצור דרך בשולחן העבודה"},
-        {L"Put a shortcut to the app on the desktop.", L"הוספת קיצור דרך לאפליקציה בשולחן העבודה."},
-        {L"Create", L"יצירה"},
-        {L"A shortcut to {0} is on the desktop.", L"קיצור דרך ל-{0} נמצא בשולחן העבודה."},
-        {L"Update from APK", L"עדכון מקובץ APK"},
-        {L"Install a newer version over this one. Saves stay.", L"התקנת גרסה חדשה יותר במקום הנוכחית. השמירות נשארות."},
         {L"Choose…", L"בחירה…"},
-        {L"Reinstall", L"התקנה מחדש"},
-        {L"Convert the app again from its APK.", L"המרת האפליקציה מחדש מקובץ ה-APK שלה."},
-        {L"Its shortcuts go too. What the app saved stays.", L"גם קיצורי הדרך שלה יוסרו. מה שהאפליקציה שמרה נשאר."},
         {L"Remove…", L"הסרה…"},
-        {L"Actions", L"פעולות"},
-        {L"Each app is converted for Windows once. That takes up to a minute.", L"כל אפליקציה מומרת ל-Windows פעם אחת. זה נמשך עד דקה."},
         {L"{0} is ready", L"{0} מוכנה"},
-        {L"All set", L"הכול מוכן"},
-        {L"{0} app is in the library and in Start > Win.apk Apps.", L"האפליקציה נמצאת בספרייה ובתפריט התחל > Win.apk Apps."},
-        {L"{0} apps are in the library and in Start > Win.apk Apps.", L"{0} אפליקציות נמצאות בספרייה ובתפריט התחל > Win.apk Apps."},
-        {L"The install failed", L"ההתקנה נכשלה"},
-        {L"Some installs failed", L"חלק מההתקנות נכשלו"},
-        {L"{0} of {1} could not be installed. The log says why.", L"{0} מתוך {1} לא הותקנו. הלוג מסביר למה."},
         {L"Waiting", L"ממתינה"},
-        {L"Converting  ·  {0}", L"ממירה  ·  {0}"},
-        {L"Installed in {0}", L"הותקנה תוך {0}"},
-        {L"Failed after {0}", L"נכשלה אחרי {0}"},
-        {L"View log", L"הצגת הלוג"},
-        {L"Log  ·  {0}", L"לוג  ·  {0}"},
-        {L"Log", L"לוג"},
-        {L"Starting the runtime…", L"מפעיל את סביבת ההרצה…"},
-        {L"The install's output appears here.", L"הפלט של ההתקנה יופיע כאן."},
-        {L"Hide", L"הסתרה"},
-        {L"Open full log", L"פתיחת הלוג המלא"},
-        {L"Last run", L"הרצה אחרונה"},
-        {L"Install  ·  {0}", L"התקנה  ·  {0}"},
-        {L"No app has run yet. This log is written when one does.", L"עדיין לא הורצה אף אפליקציה. הלוג ייכתב כשאחת תורץ."},
-        {L"This log is written the next time the app is installed.", L"הלוג ייכתב בפעם הבאה שהאפליקציה תותקן."},
-        {L"Live", L"חי"},
         {L"Copy", L"העתקה"},
-        {L"Notepad", L"פנקס רשימות"},
-        {L"Folder", L"תיקייה"},
-        {L"The log was copied.", L"הלוג הועתק."},
         {L"&Open", L"פתיחה"},
-        {L"Get &Info…", L"מידע…"},
-        {L"Open in &portrait", L"פתיחה לאורך"},
-        {L"Open in &landscape", L"פתיחה לרוחב"},
-        {L"Always portrait (the app requires it)", L"תמיד לאורך (האפליקציה דורשת זאת)"},
-        {L"Always landscape (the app requires it)", L"תמיד לרוחב (האפליקציה דורשת זאת)"},
         {L"Portrait (the app requires it)", L"לאורך (האפליקציה דורשת זאת)"},
         {L"Landscape (the app requires it)", L"לרוחב (האפליקציה דורשת זאת)"},
         {L"Settings' default", L"ברירת המחדל שבהגדרות"},
@@ -326,31 +243,11 @@ const wchar_t* tr(const wchar_t* en) {
         {L"The settings' default is portrait.", L"ברירת המחדל שבהגדרות היא לאורך."},
         {L"{0} opens in landscape from now on.", L"{0} תיפתח לרוחב מעתה."},
         {L"{0} opens in portrait from now on.", L"{0} תיפתח לאורך מעתה."},
-        {L"Create &desktop shortcut", L"יצירת קיצור דרך בשולחן העבודה"},
-        {L"Show the &APK in Explorer", L"הצגת קובץ ה-APK בסייר הקבצים"},
-        {L"Open the app's &files", L"פתיחת קבצי האפליקציה"},
-        {L"Show the last &log", L"הצגת הלוג האחרון"},
-        {L"&Update from APK…", L"עדכון מקובץ APK…"},
-        {L"Rein&stall", L"התקנה מחדש"},
         {L"&Remove…", L"הסרה…"},
         {L"Search apps", L"חיפוש אפליקציות"},
-        {L"Installing - Win.apk", L"התקנה - Win.apk"},
-        {L"Logs - Win.apk", L"לוגים - Win.apk"},
-        {L"{0} is installed: it is in the Start menu and on the desktop.", L"{0} הותקנה: היא בתפריט התחל ובשולחן העבודה."},
-        {L"{0} is installed: it is in the Start menu.", L"{0} הותקנה: היא בתפריט התחל."},
-        {L"Installing {0}… The first install of an app takes up to a minute.", L"מתקין את {0}… ההתקנה הראשונה של אפליקציה נמשכת עד דקה."},
-        {L"Installing {0} failed.", L"ההתקנה של {0} נכשלה."},
-        {L"Installing {0} failed", L"ההתקנה של {0} נכשלה"},
-        {L"{0} was stopped.", L"{0} נעצרה."},
-        {L"{0} stopped with an error.", L"{0} נעצרה עם שגיאה."},
         {L"{0} stopped with an error", L"{0} נעצרה עם שגיאה"},
-        {L"{0} closed before it showed a window.", L"{0} נסגרה לפני שהציגה חלון."},
-        {L"{0} closed before it showed a window", L"{0} נסגרה לפני שהציגה חלון"},
         {L"What the log says", L"מה כתוב בלוג"},
-        {L"This APK has no native code for this app (lib/arm64-v8a). Install the full bundle (.apkm, .xapk or .apks) that includes the arm64-v8a part.",
-         L"ב-APK הזה חסר הקוד המקורי של האפליקציה (lib/arm64-v8a). יש להתקין את החבילה המלאה (.apkm, .xapk או .apks) שכוללת את החלק arm64-v8a."},
         {L"An app", L"אפליקציה"},
-        {L"Close {0} before updating it.", L"יש לסגור את {0} לפני העדכון."},
         {L"{0} wants to remove {1}.\n\nRemove it?", L"{0} מבקשת להסיר את {1}.\n\nלהסיר?"},
         {L"{0} wants to update {1} ({2}).\n\nUpdate it?", L"{0} מבקשת לעדכן את {1} ({2}).\n\nלעדכן?"},
         {L"{0} wants to install {1}.\n\nInstall it?", L"{0} מבקשת להתקין את {1}.\n\nלהתקין?"},
@@ -368,7 +265,6 @@ const wchar_t* tr(const wchar_t* en) {
         {L"Check the internet connection, then try again.", L"בדוק את החיבור לאינטרנט ונסה שוב."},
         {L"Try again", L"ניסיון חוזר"},
         {L"Try other words, or every category.", L"נסה מילים אחרות, או את כל הקטגוריות."},
-        {L"Free and open-source apps from f-droid.org  ·  Install adds the app to your library", L"אפליקציות חינמיות בקוד פתוח מ-f-droid.org  ·  התקנה מוסיפה את האפליקציה לספרייה"},
         {L"Downloading {0}…", L"מוריד את {0}…"},
         {L"Downloading…", L"מוריד…"},
         {L"Downloading {0} failed. Check the internet connection, then try again.", L"ההורדה של {0} נכשלה. בדוק את החיבור לאינטרנט ונסה שוב."},
@@ -380,43 +276,12 @@ const wchar_t* tr(const wchar_t* en) {
         {L"License", L"רישיון"},
         {L"Categories", L"קטגוריות"},
         {L"Package", L"חבילה"},
-        {L"Install {0}", L"התקנת {0}"},
-        {L"Update {0}", L"עדכון {0}"},
-        {L"Downloaded from F-Droid and checked, then added to the library.", L"מורדת מ-F-Droid ונבדקת, ואז נוספת לספרייה."},
-        {L"A newer version is out. Saves stay.", L"יצאה גרסה חדשה יותר. השמירות נשארות."},
         {L"F-Droid page", L"הדף ב-F-Droid"},
         {L"The app's description, screenshots and source code.", L"התיאור של האפליקציה, צילומי מסך וקוד המקור."},
         {L"unknown", L"לא ידוע"},
-        {L"Allow {0} to access this device's location?", L"לאפשר ל-{0} לגשת למיקום של המכשיר?"},
-        {L"Allow {0} to access photos, videos, music, audio, and other files on this device?",
-         L"לאפשר ל-{0} גישה לתמונות, לסרטונים, למוזיקה, לאודיו ולקבצים אחרים במכשיר?"},
-        {L"Allow {0} to access photos, videos, music, and audio on this device?",
-         L"לאפשר ל-{0} גישה לתמונות, לסרטונים, למוזיקה ולאודיו במכשיר?"},
-        {L"Allow {0} to access music and audio on this device?", L"לאפשר ל-{0} גישה למוזיקה ולאודיו במכשיר?"},
-        {L"Allow {0} to access photos and videos on this device?", L"לאפשר ל-{0} גישה לתמונות ולסרטונים במכשיר?"},
-        {L"Allow {0} to access photos, media, and files on your device?",
-         L"לאפשר ל-{0} גישה לתמונות, למדיה ולקבצים במכשיר?"},
-        {L"This is Android's permission request for {0}, kept by Win.apk. You can change it later in the app's App "
-         L"info, or in Win.apk under Get Info.",
-         L"זו בקשת ההרשאה של Android עבור {0}, ש-Win.apk שומרת. אפשר לשנות אותה אחר כך במסך פרטי האפליקציה שלה, או "
-         L"ב-Win.apk תחת פרטים."},
-        {L"The location comes from Windows' location services.", L"המיקום מגיע משירותי המיקום של Windows."},
         {L"Allow", L"אפשר"},
-        {L"Only approximate", L"רק מיקום משוער"},
         {L"Don't allow", L"אל תאפשר"},
-        {L"Allow {0} access to manage all files?", L"לאפשר ל-{0} גישה לניהול כל הקבצים?"},
         {L"Allow {0} to manage media?", L"לאפשר ל-{0} לנהל מדיה?"},
-        {L"Allow this app to read, modify and delete all files on this device or any connected storage volumes. If "
-         L"granted, app may access files without your explicit knowledge. On Windows that is your Downloads, "
-         L"Documents, Pictures, Music and Videos folders.",
-         L"האפליקציה תוכל לקרוא, לשנות ולמחוק את כל הקבצים במכשיר ובכל אמצעי אחסון מחובר. אם הגישה תאושר, האפליקציה "
-         L"עשויה לגשת לקבצים בלי ידיעתך. ב-Windows אלה תיקיות ההורדות, המסמכים, התמונות, המוזיקה והסרטונים שלך."},
-        {L"If allowed, this app can modify or delete media files created with other apps without asking you. App must "
-         L"have permission to access files and media.",
-         L"אם תאשר, האפליקציה תוכל לשנות או למחוק קובצי מדיה שנוצרו באפליקציות אחרות בלי לשאול אותך. האפליקציה צריכה "
-         L"גם הרשאת גישה לקבצים ולמדיה."},
-        {L"Currently allowed.", L"כרגע מותר."},
-        {L"Currently not allowed.", L"כרגע לא מותר."},
         {L"Photos and videos", L"תמונות וסרטונים"},
         {L"Music and audio", L"מוזיקה ואודיו"},
         {L"Files and media", L"קבצים ומדיה"},
@@ -425,12 +290,6 @@ const wchar_t* tr(const wchar_t* en) {
         {L"Location", L"מיקום"},
         {L"All files access", L"גישה לכל הקבצים"},
         {L"Media management", L"ניהול מדיה"},
-        {L"Allowed", L"מותר"},
-        {L"Not allowed", L"לא מותר"},
-        {L"App info: {0}", L"פרטי האפליקציה: {0}"},
-        {L"This app has no permissions Win.apk asks about.", L"לאפליקציה הזו אין הרשאות ש-Win.apk שואלת עליהן."},
-        {L"Click a permission to turn it on or off, then OK. Turning a permission off stops the app, as Android does.",
-         L"לחץ על הרשאה כדי להפעיל או לכבות אותה, ואז על אישור. כיבוי הרשאה עוצר את האפליקציה, כמו ב-Android."},
         {L"The permission could not be changed: {0}", L"לא ניתן היה לשנות את ההרשאה: {0}"},
         {L"Permissions", L"הרשאות"},
         {L"Reset permissions", L"איפוס הרשאות"},
@@ -442,8 +301,6 @@ const wchar_t* tr(const wchar_t* en) {
          L"הגודל האחרון שנתת לחלון של האפליקציה. אחרי איפוס היא תיפתח שוב בגודל המסך שבהגדרות."},
         {L"{0} opens at the settings' screen size again.", L"{0} תיפתח שוב בגודל המסך שבהגדרות."},
         {L"{0} will ask for its permissions again.", L"{0} תשאל שוב על ההרשאות שלה."},
-        // The other permission groups (PermissionController's wording).
-        {L"Allow {0} to access this device's location all the time?", L"לאפשר ל-{0} לגשת למיקום המכשיר כל הזמן?"},
         {L"Allow {0} to take pictures and record video?", L"לאפשר ל-{0} לצלם תמונות ולהקליט וידאו?"},
         {L"Allow {0} to record audio?", L"לאפשר ל-{0} להקליט אודיו?"},
         {L"Allow {0} to access your contacts?", L"לאפשר ל-{0} לגשת לאנשי הקשר שלך?"},
@@ -458,14 +315,6 @@ const wchar_t* tr(const wchar_t* en) {
         {L"Allow {0} to access sensor data about your vital signs?", L"לאפשר ל-{0} לגשת לנתוני חיישנים על הסימנים החיוניים שלך?"},
         {L"Allow {0} to access sensor data about your vital signs all the time?",
          L"לאפשר ל-{0} לגשת לנתוני חיישנים על הסימנים החיוניים שלך כל הזמן?"},
-        {L"Windows' camera privacy settings apply as well.", L"גם הגדרות הפרטיות של המצלמה ב-Windows חלות."},
-        {L"Windows' microphone privacy settings apply as well.", L"גם הגדרות הפרטיות של המיקרופון ב-Windows חלות."},
-        {L"Win.apk does not show notifications yet; this only decides what the app is told.",
-         L"Win.apk עדיין לא מציגה התראות; זה קובע רק מה האפליקציה תדע."},
-        {L"Win.apk has no contacts, calendar, phone or SMS data of its own; the app will find none.",
-         L"ל-Win.apk אין אנשי קשר, יומן, טלפון או הודעות SMS משלה; האפליקציה לא תמצא כאלה."},
-        {L"Win.apk has no Bluetooth yet; the app will find no devices.", L"ל-Win.apk עדיין אין Bluetooth; האפליקציה לא תמצא מכשירים."},
-        {L"This PC has no such sensors; the app will get no readings.", L"במחשב הזה אין חיישנים כאלה; האפליקציה לא תקבל מדידות."},
         {L"Location, all the time", L"מיקום, כל הזמן"},
         {L"Camera", L"מצלמה"},
         {L"Microphone", L"מיקרופון"},
@@ -482,11 +331,6 @@ const wchar_t* tr(const wchar_t* en) {
         {L"Display over other apps", L"הצגה מעל אפליקציות אחרות"},
         {L"Install unknown apps", L"התקנת אפליקציות לא מוכרות"},
         {L"Allow {0} to display over other apps?", L"לאפשר ל-{0} להציג מעל אפליקציות אחרות?"},
-        {L"This app can appear on top of other apps' content. On Windows an Android app draws such windows inside its own window.",
-         L"האפליקציה הזו יכולה להופיע מעל תוכן של אפליקציות אחרות. ב-Windows אפליקציית Android מציירת חלונות כאלה בתוך החלון שלה."},
-        {L"Allow {0} to install unknown apps?", L"לאפשר ל-{0} להתקין אפליקציות לא מוכרות?"},
-        {L"Your PC and personal data are more vulnerable to attack by unknown apps. By allowing this, you agree that you are responsible for any damage to your PC or loss of data that may result from their use. Win.apk still asks you before each install.",
-         L"המחשב והנתונים האישיים שלך פגיעים יותר להתקפה מצד אפליקציות לא מוכרות. באישור זה אתה מסכים שאתה אחראי לכל נזק למחשב או לאובדן נתונים שעלולים להיגרם משימוש בהן. Win.apk עדיין תשאל אותך לפני כל התקנה."},
         {L"Close", L"סגור"},
         {L"Notification access", L"גישה להתראות"},
         {L"Win.apk can't give {0} notification access. Windows has no feed of other apps' notifications for an Android app to read.",
@@ -509,7 +353,112 @@ const wchar_t* tr(const wchar_t* en) {
         {L"There are no Android system settings for {0} to modify on Windows; it is treated as allowed.",
          L"ב-Windows אין הגדרות מערכת של Android ש-{0} תוכל לשנות; זה נחשב כמותר."},
         {L"{0} was stopped, as Android does when a permission is revoked.",
-         L"{0} נעצרה, כפי ש-Android עושה כשהרשאה נשללת."}
+         L"{0} נעצרה, כפי ש-Android עושה כשהרשאה נשללת."},
+        {L"&Stop", L"&עצירה"},
+        {L"A newer version is out", L"יש גרסה חדשה יותר"},
+        {L"Allow {0} to access music and audio on this PC?", L"לאפשר ל-{0} גישה למוזיקה ולאודיו במחשב הזה?"},
+        {L"Allow {0} to access photos and videos on this PC?", L"לאפשר ל-{0} גישה לתמונות ולסרטונים במחשב הזה?"},
+        {L"Allow {0} to access photos, media, and files on this PC?", L"לאפשר ל-{0} גישה לתמונות, למדיה ולקבצים במחשב הזה?"},
+        {L"Allow {0} to access photos, videos, music, and audio on this PC?", L"לאפשר ל-{0} גישה לתמונות, לסרטונים, למוזיקה ולאודיו במחשב הזה?"},
+        {L"Allow {0} to access photos, videos, music, audio, and other files on this PC?", L"לאפשר ל-{0} גישה לתמונות, לסרטונים, למוזיקה, לאודיו ולקבצים אחרים במחשב הזה?"},
+        {L"Allow {0} to access this PC's location all the time?", L"לאפשר ל-{0} גישה למיקום של המחשב הזה כל הזמן?"},
+        {L"Allow {0} to access this PC's location?", L"לאפשר ל-{0} גישה למיקום של המחשב הזה?"},
+        {L"Allow {0} to install other apps?", L"לאפשר ל-{0} להתקין אפליקציות אחרות?"},
+        {L"Allow {0} to manage all files?", L"לאפשר ל-{0} לנהל את כל הקבצים?"},
+        {L"Also delete what the app saved (accounts, settings, files)", L"למחוק גם את מה שהאפליקציה שמרה (חשבונות, הגדרות, קבצים)"},
+        {L"App &details", L"&פרטי האפליקציה"},
+        {L"Apps", L"אפליקציות"},
+        {L"Apps save to and open from your Downloads, Pictures, Documents, Music and Videos.", L"אפליקציות שומרות בתיקיות ההורדות, התמונות, המסמכים, המוזיקה והסרטונים שלך, ופותחות מהן."},
+        {L"Apps that need one orientation always get it. An app's details can turn just that one.", L"אפליקציה שצריכה כיוון מסוים תמיד מקבלת אותו. בפרטי האפליקציה אפשר לסובב רק אותה."},
+        {L"Cancel", L"ביטול"},
+        {L"Cancelled", L"בוטלה"},
+        {L"Close {0} first, then install it again.", L"קודם סגור את {0}, ואז התקן אותה שוב."},
+        {L"Close {0} first, then remove it.", L"קודם סגור את {0}, ואז הסר אותה."},
+        {L"Closes the app at once, as Force stop does on a phone.", L"סוגר את האפליקציה מיד, כמו \"עצירה בכפייה\" בטלפון."},
+        {L"Converted code  ·  {0}", L"הקוד המומר  ·  {0}"},
+        {L"Copy details", L"העתקת הפרטים"},
+        {L"Couldn't install", L"ההתקנה נכשלה"},
+        {L"Couldn't install {0}", L"לא ניתן היה להתקין את {0}"},
+        {L"Drop an Android app here", L"גרור לכאן אפליקציית Android"},
+        {L"Each one that failed says why below.", L"ליד כל אחת שנכשלה כתוב למה."},
+        {L"Enter", L"Enter"},
+        {L"Google did not answer. Check the internet connection, then try again.", L"Google לא ענתה. בדוק את החיבור לאינטרנט ונסה שוב."},
+        {L"Google sign-in", L"כניסה ל-Google"},
+        {L"Hide details", L"הסתרת הפרטים"},
+        {L"In dp, as on a phone. An app whose window you resize keeps its own size.", L"ב-dp, כמו בטלפון. אפליקציה שהגדלת או הקטנת את החלון שלה שומרת על הגודל שלה."},
+        {L"In your library", L"בספרייה שלך"},
+        {L"Install a newer version over this one. What it saved stays.", L"התקנת גרסה חדשה יותר מעל זו. מה שהאפליקציה שמרה נשאר."},
+        {L"Installing {0}", L"מתקין את {0}"},
+        {L"Installs asked for by apps", L"התקנות שאפליקציות ביקשו"},
+        {L"It can change or delete photos, videos and music that other apps made, without asking you.", L"היא תוכל לשנות או למחוק תמונות, סרטונים ומוזיקה שאפליקציות אחרות יצרו, בלי לשאול אותך."},
+        {L"It can read, change and delete every file in your Downloads, Pictures, Documents, Music and Videos.", L"היא תוכל לקרוא, לשנות ולמחוק כל קובץ בתיקיות ההורדות, התמונות, המסמכים, המוזיקה והסרטונים שלך."},
+        {L"It's in the Start menu and on the desktop.", L"היא בתפריט התחל ובשולחן העבודה."},
+        {L"It's in the Start menu.", L"היא בתפריט התחל."},
+        {L"Its shortcuts go too. Unless you tick the box, what the app saved stays, so installing it again picks up where it left off.", L"גם קיצורי הדרך שלה יוסרו. אם לא תסמן את התיבה, מה שהאפליקציה שמרה נשאר, כך שהתקנה מחדש תמשיך מאיפה שהפסיקה."},
+        {L"Keep installing", L"המשך להתקין"},
+        {L"Log - Win.apk", L"לוג - Win.apk"},
+        {L"Manage", L"ניהול"},
+        {L"No matches", L"אין התאמות"},
+        {L"Not installed", L"לא מותקנת"},
+        {L"OK", L"אישור"},
+        {L"On Windows such windows stay inside the app's own window.", L"ב-Windows חלונות כאלה נשארים בתוך החלון של האפליקציה."},
+        {L"Open .apk, .apkm, .xapk and .apks files with Win.apk", L"פתיחת קובצי ‎.apk, ‎.apkm, ‎.xapk ו-‎.apks באמצעות Win.apk"},
+        {L"Open logs", L"פתיחת הלוגים"},
+        {L"Precise location", L"מיקום מדויק"},
+        {L"Ready", L"מוכנה"},
+        {L"Search the log", L"חיפוש בלוג"},
+        {L"Shortcut", L"קיצור דרך"},
+        {L"Show details", L"הצגת הפרטים"},
+        {L"Show in library", L"הצגה בספרייה"},
+        {L"Show log", L"הצגת הלוג"},
+        {L"Starting…", L"מתחיל…"},
+        {L"Still starting. The first start can take a minute.", L"עדיין מתחיל. ההפעלה הראשונה יכולה להימשך דקה."},
+        {L"Stop installing", L"עצירת ההתקנה"},
+        {L"Stop installing?", L"לעצור את ההתקנה?"},
+        {L"The app closed before it showed a window.", L"האפליקציה נסגרה לפני שהציגה חלון."},
+        {L"The app is in Start > Win.apk Apps either way.", L"האפליקציה נמצאת בכל מקרה בתפריט התחל > Win.apk Apps."},
+        {L"The app stopped with an error.", L"האפליקציה נעצרה עם שגיאה."},
+        {L"The app's file  ·  {0}", L"קובץ האפליקציה  ·  {0}"},
+        {L"The install was cancelled.", L"ההתקנה בוטלה."},
+        {L"The install was cancelled. The app stays as it was.", L"ההתקנה בוטלה. האפליקציה נשארת כפי שהייתה."},
+        {L"They're in the Start menu.", L"הן בתפריט התחל."},
+        {L"This app has no permissions to set.", L"לאפליקציה הזו אין הרשאות להגדיר."},
+        {L"This file has no code for PCs. Install the full bundle (.apkm, .xapk or .apks) that includes the arm64-v8a part.", L"בקובץ הזה אין קוד למחשב. התקן את החבילה המלאה (‎.apkm, ‎.xapk או ‎.apks) שכוללת את החלק arm64-v8a."},
+        {L"This log is written the next time the app is opened or installed.", L"הלוג הזה ייכתב בפעם הבאה שהאפליקציה תיפתח או תותקן."},
+        {L"Troubleshooting", L"פתרון בעיות"},
+        {L"Turning a permission off closes {0}.", L"כיבוי הרשאה סוגר את {0}."},
+        {L"Update from a file", L"עדכון מקובץ"},
+        {L"What Win.apk did when it installed or opened an app. Attach them to a bug report.", L"מה Win.apk עשתה כשהתקינה או פתחה אפליקציה. צרף אותם לדיווח על באג."},
+        {L"What every app has saved.", L"מה שכל אפליקציה שמרה."},
+        {L"What was not installed yet is left out. An app that was being updated stays as it was.", L"מה שעוד לא הותקן לא יותקן. אפליקציה שהתעדכנה נשארת כפי שהייתה."},
+        {L"Win.apk could not convert this app. The log says where it stopped.", L"Win.apk לא הצליחה להמיר את האפליקציה הזו. בלוג כתוב איפה זה נעצר."},
+        {L"Win.apk still asks you before each app it installs.", L"Win.apk עדיין תשאל אותך לפני כל אפליקציה שתותקן."},
+        {L"Win.apk's runtime is missing. Install Win.apk again.", L"סביבת ההרצה של Win.apk חסרה. התקן את Win.apk מחדש."},
+        {L"You can also delete what the app saved.", L"אפשר למחוק גם את מה שהאפליקציה שמרה."},
+        {L"or choose Add app  ·  .apk .apkm .xapk .apks", L"או בחר \"הוספת אפליקציה\"  ·  apk, apkm, xapk, apks"},
+        {L"{0}  ·  install", L"{0}  ·  התקנה"},
+        {L"{0}  ·  last run", L"{0}  ·  הפעלה אחרונה"},
+        {L"{0}  ·  run before", L"{0}  ·  ההפעלה הקודמת"},
+        {L"{0} and what it saved were removed.", L"{0} ומה שהיא שמרה הוסרו."},
+        {L"{0} apps are ready", L"{0} אפליקציות מוכנות"},
+        {L"{0} could not be installed.", L"לא ניתן היה להתקין את {0}."},
+        {L"{0} didn't start", L"{0} לא נפתחה"},
+        {L"{0} is installed.", L"{0} הותקנה."},
+        {L"{0} of {1}", L"{0} מתוך {1}"},
+        {L"{0} of {1} apps are installed", L"{0} מתוך {1} אפליקציות הותקנו"},
+        {L"{0} was not installed", L"{0} לא הותקנה"},
+        {L"{0}'s permissions", L"ההרשאות של {0}"},
+        {L"Preparing…", L"מתכונן…"},
+        {L"Converting the app's code. This happens once.", L"ממיר את קוד האפליקציה. זה קורה פעם אחת."},
+        {L"Getting the app's name and icon…", L"קורא את שם האפליקציה והסמל שלה…"},
+        {L"Getting the app ready. This happens once.", L"מכין את האפליקציה. זה קורה פעם אחת."},
+        {L"Windows' location settings apply too.", L"גם הגדרות המיקום של Windows חלות."},
+        {L"Windows' camera settings apply too.", L"גם הגדרות המצלמה של Windows חלות."},
+        {L"Windows' microphone settings apply too.", L"גם הגדרות המיקרופון של Windows חלות."},
+        {L"They show as Windows notifications.", L"הן יוצגו כהתראות של Windows."},
+        {L"This PC has none of these for the app to find.", L"אין במחשב הזה דבר כזה שהאפליקציה תוכל למצוא."},
+        {L"This PC has no such sensors.", L"אין במחשב הזה חיישנים כאלה."},
+        {L"These are the Bluetooth devices near this PC.", L"אלה מכשירי ה-Bluetooth שליד המחשב הזה."}
     };
     if (!g_rtl) return en;
     const auto it = he.find(en);
@@ -1055,18 +1004,20 @@ HANDLE start_runtime(const std::wstring& args, const fs::path& log, const std::w
     si.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
     si.StartupInfo.hStdOutput = si.StartupInfo.hStdError = out;
     if (listed) si.lpAttributeList = attrs;
-    // The environment as it is now, plus the event: a block of NUL-separated strings ending in two NULs.
-    std::wstring env;
+    // The environment as it is now, plus the event: NUL-separated strings, sorted as Windows keeps them,
+    // ending in two NULs.
+    std::vector<std::wstring> vars;
     if (wchar_t* block = GetEnvironmentStringsW()) {
         for (const wchar_t* e = block; *e; e += wcslen(e) + 1) {
-            if (_wcsnicmp(e, L"WINAPK_READY_EVENT=", 19) != 0) env.append(e).push_back(L'\0');
+            if (_wcsnicmp(e, L"WINAPK_READY_EVENT=", 19) != 0) vars.emplace_back(e);
         }
         FreeEnvironmentStringsW(block);
     }
-    if (ready) {
-        env += L"WINAPK_READY_EVENT=" + std::to_wstring(reinterpret_cast<uintptr_t>(ready));
-        env.push_back(L'\0');
-    }
+    if (ready) vars.push_back(L"WINAPK_READY_EVENT=" + std::to_wstring(reinterpret_cast<uintptr_t>(ready)));
+    std::stable_sort(vars.begin(), vars.end(),
+                     [](const std::wstring& a, const std::wstring& b) { return _wcsicmp(a.c_str(), b.c_str()) < 0; });
+    std::wstring env;
+    for (const std::wstring& v : vars) env.append(v).push_back(L'\0');
     env.push_back(L'\0');
     std::wstring cmd = L"\"" + runtime_exe().wstring() + L"\" " + args;
     PROCESS_INFORMATION pi{};
@@ -2734,7 +2685,9 @@ void paint_rail(Graphics& g) {
     const Item items[] = {{kGlyphLibrary, L"Library"}, {kGlyphStore, L"Store"}, {kGlyphSettings, L"Settings"}};
     for (int i = 0; i < 3; ++i) {
         const RectF& it = g_l.nav[i];
-        const bool on = (i == kNavLibrary && g_view == kLibraryView) || (i == kNavStore && g_view == kStoreView);
+        const bool on = (i == kNavLibrary && (g_view == kLibraryView || g_view == kAppView)) ||
+                        (i == kNavStore && (g_view == kStoreView || g_view == kStoreAppView)) ||
+                        (i == kNavSettings && g_view == kSettingsView);
         const bool hot = g_hot.kind == kHitNav && g_hot.tile == i;
         if (on || hot) fill_round(g, it, px(kRadiusControl), mix(g_t.bg, g_t.text, on ? 0.07f : 0.04f));
         if (on) fill_round(g, RectF(it.X, it.Y + (it.Height - px(16)) / 2, px(3), px(16)), px(1.5f), g_t.accent);
@@ -4483,7 +4436,7 @@ void paint_install(Graphics& g, float W, float H) {
     }
     g_iv.need_h = y + px(4) + foot;
 
-    // The footer's buttons, the default one at the end.
+    // The footer's buttons, right-aligned; the default one first, as Windows' dialogs order them.
     const float fy = H - foot;
     Gdiplus::SolidBrush bar(g_t.layer);
     g.FillRectangle(&bar, RectF(0, fy, W, foot));
@@ -4502,12 +4455,12 @@ void paint_install(Graphics& g, float W, float H) {
         button(tr(L"Cancel"), kActCancel, false);
     } else {
         const bool single_ok = hero && hero->state == Job::kDone;
-        if (single_ok) button(tr(L"Open"), kActOpen, true);
-        button(tr(L"Close"), kActClose, !single_ok);
         if (any_failed && hero && hero->state == Job::kFailed) {
-            button(tr(L"Show log"), kActShowLog, false);
             button(tr(L"Copy details"), kActCopy, false);
+            button(tr(L"Show log"), kActShowLog, false);
         }
+        button(tr(L"Close"), kActClose, !single_ok);
+        if (single_ok) button(tr(L"Open"), kActOpen, true);
         if (done > 0) draw_link(g, tr(L"Show in library"), m, fy, foot, g_iv.hot == kActLibrary, kActLibrary);
     }
 }
@@ -4572,9 +4525,8 @@ void install_action(HWND hwnd, int act) {
         const Job* hero = hero_job();
         const App* a = hero ? find_app(hero->name) : nullptr;
         if (a) {
-            const App copy = *a;
+            launch(*a);  // first: with the library hidden, closing this window last must not end the process
             DestroyWindow(hwnd);
-            launch(copy);
         }
     } else if (act == kActDetails) {
         g_iv.details = !g_iv.details;
@@ -4592,10 +4544,10 @@ void install_action(HWND hwnd, int act) {
         std::wstring pick;
         for (const Job& j : g_jobs)
             if (j.state == Job::kDone) pick = j.name;
-        DestroyWindow(hwnd);
         show_library(SW_SHOWDEFAULT);
         set_view(kLibraryView);
         if (!pick.empty()) select_app(pick);
+        DestroyWindow(hwnd);
     } else if (act >= kActRowLog) {
         const size_t i = static_cast<size_t>(act - kActRowLog);
         if (i < g_jobs.size()) {
@@ -4627,6 +4579,9 @@ void poll_install(HWND hwnd) {
         std::wstring who = g_iv.log_name;
         if (who.empty() || installs_active()) {
             if (const Job* hero = hero_job()) who = hero->name;
+        }
+        for (auto it = g_jobs.rbegin(); who.empty() && it != g_jobs.rend(); ++it) {  // a finished batch: the last one's
+            if (it->state != Job::kWaiting) who = it->name;
         }
         g_iv.log = who.empty() ? std::vector<std::wstring>{} : last_lines(install_log(who), 40);
     }
@@ -4956,6 +4911,10 @@ void layout_logs(HWND hwnd) {
     GetClientRect(hwnd, &rc);
     const int top = ipx(kLogTools) + 1;
     MoveWindow(g_log_edit, 0, top, rc.right, (std::max)(0L, rc.bottom - top), TRUE);
+    RECT text;  // some room around the text
+    GetClientRect(g_log_edit, &text);
+    InflateRect(&text, -ipx(12), -ipx(8));
+    SendMessageW(g_log_edit, EM_SETRECT, 0, reinterpret_cast<LPARAM>(&text));
     // The search edit sits inside the frame paint_logs draws: after the picker, before the buttons.
     HDC dc = GetDC(hwnd);
     float buttons = 0;
@@ -5040,7 +4999,6 @@ LRESULT CALLBACK log_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                                          0, 0, 0, 0, hwnd, nullptr, g_inst, nullptr);
             SendMessageW(g_log_edit, EM_EXLIMITTEXT, 0, 64 << 20);
             SendMessageW(g_log_edit, EM_SETBKGNDCOLOR, 0, colorref(code_bg()));
-            SendMessageW(g_log_edit, EM_SETRECT, 0, 0);
             CHARFORMAT2W cf{};
             cf.cbSize = sizeof(cf);
             cf.dwMask = CFM_FACE | CFM_SIZE | CFM_COLOR;
@@ -5052,8 +5010,6 @@ LRESULT CALLBACK log_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             SendMessageW(g_log_edit, EM_SETCHARFORMAT, SCF_ALL, reinterpret_cast<LPARAM>(&cf));
             SendMessageW(g_log_edit, EM_SETCHARFORMAT, SCF_DEFAULT, reinterpret_cast<LPARAM>(&cf));
             SetWindowTheme(g_log_edit, g_t.dark ? L"DarkMode_Explorer" : L"Explorer", nullptr);
-            // Some room around the text.
-            SendMessageW(g_log_edit, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELPARAM(ipx(12), ipx(12)));
             g_lv.search = CreateWindowExW(g_rtl ? WS_EX_RTLREADING : 0, L"EDIT", L"", WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
                                           0, 0, 0, 0, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdLogSearch)),
                                           g_inst, nullptr);
@@ -5205,8 +5161,8 @@ void paint_splash(Splash& s, Graphics& g, float W, float H) {
     }
     draw_text(g, sub, g_f.caption.get(), g_t.text2, RectF(m, px(178), W - 2 * m, px(54)), kCenter, true, false);
     if (s.failed) {
-        const float bw = px(112), by = H - px(24) - px(32);
-        const RectF log((W - 2 * bw - px(8)) / 2, by, bw, px(32)), close(log.GetRight() + px(8), by, bw, px(32));
+        const float bw = px(112), by = H - px(22) - px(32);
+        const RectF close((W - 2 * bw - px(8)) / 2, by, bw, px(32)), log(close.GetRight() + px(8), by, bw, px(32));
         draw_button(g, log, tr(L"Show log"), s.hot == kSplashLog, false, false);
         draw_button(g, close, tr(L"Close"), s.hot == kSplashClose, true, false);
         s.targets.push_back({log, kSplashLog});
@@ -5214,7 +5170,7 @@ void paint_splash(Splash& s, Graphics& g, float W, float H) {
     } else {
         // Three dots that brighten in turn.
         const float t = static_cast<float>(GetTickCount64() % 1200) / 1200.0f, d = px(7), gap = px(8);
-        const float x0 = (W - 3 * d - 2 * gap) / 2, y = px(258);
+        const float x0 = (W - 3 * d - 2 * gap) / 2, y = H - px(52);
         for (int i = 0; i < 3; ++i) {
             float phase = t - i * 0.17f;
             phase -= std::floor(phase);
@@ -5312,7 +5268,7 @@ Splash* show_splash(const std::wstring& name) {
     MONITORINFO mi{sizeof(mi)};
     GetMonitorInfoW(MonitorFromPoint(cursor, MONITOR_DEFAULTTOPRIMARY), &mi);
     const RECT& wa = mi.rcWork;
-    const int w = ipx(300), h = ipx(340);
+    const int w = ipx(300), h = ipx(300);
     const App* app = find_app(name);
     HWND hwnd = CreateWindowExW(layout_style(), L"WinApkSplash", (app ? app->label : name).c_str(), WS_POPUP,
                                 wa.left + (wa.right - wa.left - w) / 2, wa.top + (wa.bottom - wa.top - h) / 2, w, h,

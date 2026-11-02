@@ -24,10 +24,11 @@ Runtime, which Windows 11 and most Windows 10 PCs already have.
 Adding and running apps
 -----------------------
 Open Win.apk: it shows your app library and the Store.
-- Add an app: drag an .apk (or an .apkm, .xapk or .apks bundle) onto the
-  window, click the drop zone or the "Add app" tile, or double-click the
-  file in Explorer. The first install of an app converts its code, which
-  takes up to a minute; a window shows the progress and the log.
+- Add an app: double-click an .apk (or an .apkm, .xapk or .apks bundle) in
+  Explorer, drag it onto the library, or click "Add app". A small install
+  window shows the app's icon, its name and what it is doing; the first
+  install of an app converts its code, which takes up to a minute. "Show
+  details" shows the log. At the end: Open, Close, or Show in library.
 - Or get one from the Store tab: the free and open-source apps of F-Droid
   (f-droid.org), usually Java-only and a good place to start. Search or
   pick a category, then click Install; the download is checked against
@@ -36,21 +37,25 @@ Open Win.apk: it shows your app library and the Store.
 - Each app gets its own icon in the library, in the Start menu
   (Start > Win.apk Apps) and, unless turned off in the settings, on the
   desktop.
-- Double-click an app to open it. Right-click for more: Get Info,
-  Open in portrait / landscape, a desktop shortcut, its files and log,
-  Update from APK, Reinstall and Remove. Typing searches the library.
-- The gear opens the settings: theme, language (English or Hebrew), the
-  phone's screen size and orientation, shortcuts, the Google account, and
-  whether apps use your Windows folders. "Logs" at the bottom shows the
-  logs as they are written.
+- Double-click an app to open it: a launch window with its icon shows
+  until the app's window is up, and says why if it does not start.
+  Right-click an app for Open, Stop, App details and Remove. App details
+  holds the rest: the orientation and window size, permissions, the
+  desktop shortcut, its files, Update from a file. Remove can also delete
+  what the app saved. Typing searches the library.
+- Settings, at the bottom of the left pane: theme, language (English or
+  Hebrew), the phone's screen size and orientation, whether apps use your
+  Windows folders, the desktop shortcut for new apps, the Google account,
+  and the logs (Ctrl+L), with search, Copy and Open folder.
 
 In an app, the mouse is your finger and the wheel scrolls. Android's Back
 is Escape, Alt+Left or the mouse's back button. Resize or maximize the
 window and the app lays itself out for the new size. Close the window to
 quit.
 
-Apps ask for permissions as on Android, in a dialog over the app. Get Info
-in the library, or the app's own App info screen, changes them later.
+Apps ask for permissions as on Android: a small window over the app with
+its icon, one question and Allow / Don't allow. The app's details page in
+the library, or the app's own App info screen, changes them later.
 
 What works
 ----------
@@ -113,21 +118,22 @@ Where things are
 ----------------
 Installed apps:  %LOCALAPPDATA%\Win.apk\library
 App data:        %LOCALAPPDATA%\Win.apk\android
-Logs:            %LOCALAPPDATA%\Win.apk\logs  (last-run.log is the app
-                 opened last, install-<app>.log is an install)
+Logs:            %LOCALAPPDATA%\Win.apk\logs  (run-<app>.log is an app's
+                 last run, last-run.log the app opened last,
+                 install-<app>.log an install)
 Crash dumps:     %LOCALAPPDATA%\Win.apk\logs\crash-<app>-<date>.dmp (the last three per app)
 Settings:        HKEY_CURRENT_USER\Software\Win.apk
 
-Removing an app from the library keeps what it saved; uninstalling Win.apk
-keeps the apps too. Delete %LOCALAPPDATA%\Win.apk to start from scratch.
+Removing an app from the library keeps what it saved unless you tick "Also
+delete what the app saved"; uninstalling Win.apk keeps the apps too. Delete %LOCALAPPDATA%\Win.apk to start from scratch.
 
 Reporting a problem
 -------------------
 If an app does not start or misbehaves, the last log says why. Please open
 an issue on GitHub (the "An app does not work" template) with the app's
 name, version and where it came from, the exact steps that lead to the
-problem, a screenshot of the app at that point, and last-run.log attached
-whole. The repository's docs\APPS.md lists common apps and the problems
+problem, a screenshot of the app at that point, and the app's log attached
+whole (Show log in the launch window, or run-<app>.log). The repository's docs\APPS.md lists common apps and the problems
 already known, and docs\USER_GUIDE.md explains everything above in more
 detail. These lines in the log are the most useful:
   "native not implemented"            a Windows piece that is missing
