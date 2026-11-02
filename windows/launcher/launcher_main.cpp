@@ -1,14 +1,15 @@
 // launcher_main.cpp -- Win.apk.exe, the app library.
 //
 // The Windows counterpart of upstream's launcher (launcher/*.swift), laid out
-// the way upstream's SwiftUI window is: a centred title, a drop zone that
-// installs whatever is dropped on (or chosen through) it, and a searchable
-// grid of the installed apps with their icons. A gear opens the settings
-// sheet, right-click > Get Info opens an app's sheet. The window is drawn
-// with GDI+ and follows Windows' light or dark mode (or the one picked in
-// the settings), in English or, laid out right to left, in Hebrew.
+// as a Windows 11 app: a navigation pane (Library, Store, Settings), the
+// page's title and toolbar (search, Add app) over a grid of the installed
+// apps with their icons, and a status bar. The whole window takes a dropped
+// APK; an empty library shows a drop target instead of the grid. Right-click
+// > Get Info opens an app's sheet. The window is drawn with GDI+ and follows
+// Windows' light or dark mode (or the one picked in the settings), in English
+// or, laid out right to left, in Hebrew.
 //
-// An APK dropped on the window, chosen in the drop zone, double-clicked in
+// An APK dropped on the window, chosen through Add app, double-clicked in
 // Explorer (the launcher registers itself for .apk files) or passed on the
 // command line is installed, one at a time:
 //
@@ -133,27 +134,27 @@ void pick_language() {
 // The Hebrew for an English string, keyed by the English itself.
 const wchar_t* tr(const wchar_t* en) {
     static const std::map<std::wstring, const wchar_t*> he = {
-        {L"Run Android apps natively on Windows", L"הרצת אפליקציות Android ישירות ב-Windows"},
         {L"Drop to install", L"שחרר כדי להתקין"},
         {L"Win.apk keeps its own copy, so the download can go", L"Win.apk שומרת עותק משלה, כך שאפשר למחוק את ההורדה"},
         {L"Installing…", L"מתקין…"},
-        {L"Installing {0} of {1}…", L"מתקין {0} מתוך {1}…"},
         {L"Installing {0} of {1}", L"מתקין {0} מתוך {1}"},
         {L"Installing", L"מתקין"},
-        {L"Unpacking manifest, icon, and assets", L"פורס את המניפסט, הסמל והמשאבים"},
-        {L"{0}  ·  the first install of an app takes up to a minute", L"{0}  ·  ההתקנה הראשונה של אפליקציה נמשכת עד דקה"},
         {L"Drop an APK here to install", L"גרור לכאן קובץ APK כדי להתקין"},
         {L"or click to choose a file  ·  .apk .apkm .xapk .apks", L"או לחץ כדי לבחור קובץ  ·  apk, apkm, xapk, apks"},
-        {L"Installed apps", L"אפליקציות מותקנות"},
         {L"Add app", L"הוספת אפליקציה"},
         {L"No apps match “{0}”", L"אין אפליקציות שתואמות ל„{0}”"},
         {L"Press Esc in the search box to show every app.", L"הקש Esc בתיבת החיפוש כדי להציג את כל האפליקציות."},
-        {L"No apps installed yet.", L"עדיין לא הותקנו אפליקציות."},
-        {L"Drop an APK above, or get apps from the Store, then open them from here.", L"גרור קובץ APK לאזור שלמעלה, או הורד אפליקציות מהחנות, ואז פתח אותן מכאן."},
+        {L"No apps installed yet", L"עדיין לא הותקנו אפליקציות"},
         {L"Logs", L"לוגים"},
         {L"Stop", L"עצירה"},
-        {L"Drop an APK above to install your first app", L"גרור קובץ APK לאזור שלמעלה כדי להתקין את האפליקציה הראשונה"},
-        {L"Double-click to open  ·  right-click for options  ·  drop an APK above to add more", L"לחיצה כפולה לפתיחה  ·  לחיצה ימנית לאפשרויות  ·  גרירת APK למעלה להוספה"},
+        {L"Drop an APK anywhere in this window to install your first app", L"גרור קובץ APK לכל מקום בחלון כדי להתקין את האפליקציה הראשונה"},
+        {L"Double-click to open  ·  right-click for options  ·  drop an APK anywhere to add more", L"לחיצה כפולה לפתיחה  ·  לחיצה ימנית לאפשרויות  ·  גרירת APK לכל מקום בחלון להוספה"},
+        {L"{0} running", L"{0} פועלות"},
+        {L"Running", L"פועלת"},
+        {L"Browse the Store", L"עיון בחנות"},
+        {L"Clear the search", L"ניקוי החיפוש"},
+        {L"Check F-Droid for new apps", L"בדיקת אפליקציות חדשות ב-F-Droid"},
+        {L"Free and open-source apps from f-droid.org", L"אפליקציות חינמיות בקוד פתוח מ-f-droid.org"},
         {L"{0} apps are running", L"{0} אפליקציות פועלות"},
         {L"{0} is running", L"{0} פועלת"},
         {L"{0} app", L"אפליקציה אחת"},
@@ -346,7 +347,6 @@ const wchar_t* tr(const wchar_t* en) {
         {L"What the log says", L"מה כתוב בלוג"},
         {L"This APK has no native code for this app (lib/arm64-v8a). Install the full bundle (.apkm, .xapk or .apks) that includes the arm64-v8a part.",
          L"ב-APK הזה חסר הקוד המקורי של האפליקציה (lib/arm64-v8a). יש להתקין את החבילה המלאה (.apkm, .xapk או .apks) שכוללת את החלק arm64-v8a."},
-        {L"The app stopped with an error.\n\nThe log is in:\n{0}", L"האפליקציה נעצרה עם שגיאה.\n\nהלוג נמצא ב:\n{0}"},
         {L"An app", L"אפליקציה"},
         {L"Close {0} before updating it.", L"יש לסגור את {0} לפני העדכון."},
         {L"{0} wants to remove {1}.\n\nRemove it?", L"{0} מבקשת להסיר את {1}.\n\nלהסיר?"},
@@ -1771,10 +1771,26 @@ DWORD WINAPI download_thread(void* param) {
 
 // ---------------------------------------------------------------------------
 // Theme and drawing
+//
+// Spacing follows a 4 px scale (4, 8, 12, 16, 24, 32), radii are kRadius*,
+// and every colour is one of the theme's tokens, so light and dark stay
+// consistent. Everything is in device-independent pixels through px().
+
+constexpr float kRadiusControl = 6, kRadiusCard = 8, kRadiusTile = 10;
 
 struct Theme {
     bool dark;
-    Color bg, card, hover, border, text, text2, accent, danger, success;
+    Color bg;           // the window: the navigation pane and the status bar
+    Color layer;        // the content area, a surface over bg (Windows 11's layer)
+    Color card;         // cards and controls on the layer
+    Color hover;        // a hovered control or tile
+    Color border;       // outlines of cards and controls
+    Color divider;      // hairlines inside a card
+    Color text, text2;  // primary and secondary text
+    Color text3;        // placeholders and disabled text
+    Color accent;       // the one accent colour: selection, primary buttons, progress
+    Color accent_text;  // text on the accent
+    Color danger, success;
 };
 
 Color hex(uint32_t v, BYTE a = 255) { return Color(a, (v >> 16) & 255, (v >> 8) & 255, v & 255); }
@@ -1798,10 +1814,14 @@ bool windows_uses_dark() {
 void pick_theme() {
     const DWORD pref = setting(L"Theme", 0);  // 0 as Windows, 1 light, 2 dark
     const bool dark = pref == 2 || (pref == 0 && windows_uses_dark());
-    g_t = dark ? Theme{true, hex(0x1C1C21), hex(0x28282F), hex(0x33333B), hex(0x3B3B44), hex(0xF2F2F7),
-                       hex(0x9D9DA6), hex(0x8E80FF), hex(0xFF6B6B), hex(0x6CCB5F)}
-               : Theme{false, hex(0xF4F4F7), hex(0xFFFFFF), hex(0xE9E9EF), hex(0xDCDCE3), hex(0x1C1C1E),
-                       hex(0x6E6E76), hex(0x6C5CE7), hex(0xC42B1C), hex(0x0F7B0F)};
+    // Windows 11's own neutrals; the accent is the blue of the program's icon,
+    // on dark backgrounds the lighter tint Windows uses there, with dark text.
+    g_t = dark ? Theme{true,         hex(0x202020), hex(0x272727), hex(0x2D2D2D), hex(0x383838), hex(0x3D3D3D),
+                       hex(0x363636), hex(0xFFFFFF), hex(0xC9C9C9), hex(0x8A8A8A), hex(0x4CC2FF), hex(0x0B1A26),
+                       hex(0xFF99A4), hex(0x6CCB5F)}
+               : Theme{false,        hex(0xF3F3F3), hex(0xFBFBFB), hex(0xFFFFFF), hex(0xEDEDED), hex(0xE1E1E1),
+                       hex(0xECECEC), hex(0x1B1B1B), hex(0x5C5C5C), hex(0x9A9A9A), hex(0x1569C7), hex(0xFFFFFF),
+                       hex(0xC42B1C), hex(0x0F7B0F)};
 }
 
 // Dark title bar and, on Windows 11, a caption the colour of the window.
@@ -1825,9 +1845,11 @@ void theme_menus() {
     if (flush) flush();
 }
 
+// The type scale: title (page and sheet headings), body, caption, and the
+// tiles' labels; glyphs come in the sizes the controls use.
 struct Fonts {
-    std::unique_ptr<Gdiplus::Font> title, tagline, body, body_semi, caption, caption_semi, section, tile, hero,
-        monogram, monogram_small, glyph12, glyph16, glyph34, glyph48, mono;
+    std::unique_ptr<Gdiplus::Font> title, body, body_semi, caption, caption_semi, tile, monogram, monogram_small,
+        glyph12, glyph16, glyph48, mono;
 } g_f;
 
 // The first of `families` that is installed, else the generic one.
@@ -1860,25 +1882,22 @@ std::unique_ptr<Gdiplus::Font> glyph_font(float size) {
 
 // Segoe Fluent Icons / MDL2 Assets code points.
 constexpr wchar_t kGlyphSettings[] = L"\uE713", kGlyphDownload[] = L"\uE896", kGlyphSearch[] = L"\uE721",
-                  kGlyphChevron[] = L"\uE70D", kGlyphCheck[] = L"\uE73E", kGlyphApps[] = L"\uE71D",
-                  kGlyphError[] = L"\uE783", kGlyphClock[] = L"\uE823", kGlyphStop[] = L"\uE71A",
-                  kGlyphLibrary[] = L"\uE8F1", kGlyphStore[] = L"\uE719";
+                  kGlyphChevron[] = L"\uE70D", kGlyphCheck[] = L"\uE73E", kGlyphError[] = L"\uE783",
+                  kGlyphClock[] = L"\uE823", kGlyphStop[] = L"\uE71A", kGlyphLibrary[] = L"\uE8F1",
+                  kGlyphStore[] = L"\uE719", kGlyphAdd[] = L"\uE710", kGlyphRefresh[] = L"\uE72C",
+                  kGlyphClear[] = L"\uE894", kGlyphLog[] = L"\uE8A5";
 
 void make_fonts() {
-    g_f.title = font(26, true);
-    g_f.tagline = font(13.5f);
+    g_f.title = font(20, true);
     g_f.body = font(14);
     g_f.body_semi = font(14, true);
     g_f.caption = font(12);
     g_f.caption_semi = font(12, true);
-    g_f.section = font(16, true);
     g_f.tile = font(13);
-    g_f.hero = font(20, true);
     g_f.monogram = font(30, true);
     g_f.monogram_small = font(26, true);
     g_f.glyph12 = glyph_font(12);
     g_f.glyph16 = glyph_font(16);
-    g_f.glyph34 = glyph_font(34);
     g_f.glyph48 = glyph_font(48);
     g_f.mono = font_from({L"Cascadia Mono", L"Consolas"}, Gdiplus::FontFamily::GenericMonospace(), 12,
                          Gdiplus::FontStyleRegular);
@@ -1993,13 +2012,45 @@ void draw_monogram(Graphics& g, const RectF& r, const std::wstring& label, const
     draw_text(g, ch, f, kWhite, r, kCenter);
 }
 
-void draw_button(Graphics& g, const RectF& r, const std::wstring& text, bool hot, bool primary, bool destructive) {
-    const Color fill = primary ? (hot ? mix(g_t.accent, g_t.dark ? kWhite : kBlack, 0.12f) : g_t.accent)
-                               : (hot ? g_t.hover : mix(g_t.card, g_t.hover, 0.55f));
-    fill_round(g, r, px(6), fill);
-    if (!primary) stroke_round(g, r, px(6), g_t.border);
-    draw_text(g, text, primary ? g_f.body_semi.get() : g_f.body.get(),
-              primary ? kWhite : destructive ? g_t.danger : g_t.text, r, kCenter);
+// A standard, accent (primary) or destructive button; `glyph` goes before the text.
+void draw_button(Graphics& g, const RectF& r, const std::wstring& text, bool hot, bool primary, bool destructive,
+                 const wchar_t* glyph = nullptr) {
+    const Color fill = primary ? (hot ? mix(g_t.accent, g_t.dark ? kWhite : kBlack, 0.1f) : g_t.accent)
+                               : (hot ? g_t.hover : g_t.card);
+    fill_round(g, r, px(kRadiusControl), fill);
+    if (!primary) stroke_round(g, r, px(kRadiusControl), g_t.border);
+    const Color ink = primary ? g_t.accent_text : destructive ? g_t.danger : g_t.text;
+    const Gdiplus::Font* f = primary ? g_f.body_semi.get() : g_f.body.get();
+    if (!glyph) {
+        draw_text(g, text, f, ink, r, kCenter);
+        return;
+    }
+    const float tw = text_width(g, text, f), x = r.X + (r.Width - tw - px(22)) / 2;
+    draw_text(g, glyph, g_f.glyph12.get(), ink, RectF(x, r.Y, px(16), r.Height), kCenter);
+    draw_text(g, text, f, ink, RectF(x + px(22), r.Y, tw + px(4), r.Height));
+}
+
+// A square button that is only a glyph (it gets a tooltip).
+void draw_icon_button(Graphics& g, const RectF& r, const wchar_t* glyph, bool hot, const Color& ink) {
+    if (hot) fill_round(g, r, px(kRadiusControl), g_t.hover);
+    draw_text(g, glyph, g_f.glyph16.get(), ink, r, kCenter);
+}
+
+// Windows' keyboard focus ring: two strokes, the outer one the text colour.
+void draw_focus_ring(Graphics& g, const RectF& r, float rad) {
+    stroke_round(g, inset(r, -px(3), -px(3)), rad + px(3), g_t.text, px(2));
+    stroke_round(g, inset(r, -px(1), -px(1)), rad + px(1), g_t.layer, px(2));
+}
+
+// An indeterminate progress line, as Windows' ProgressBar draws it.
+void draw_progress_line(Graphics& g, const RectF& track) {
+    fill_round(g, track, track.Height / 2, with_alpha(g_t.accent, 50));
+    const float t = static_cast<float>(GetTickCount64() % 1600) / 1600.0f;
+    const float seg = track.Width * 0.3f;
+    float x0 = track.X + (track.Width + seg) * t - seg, x1 = x0 + seg;
+    x0 = (std::max)(x0, track.X);
+    x1 = (std::min)(x1, track.GetRight());
+    if (x1 > x0) fill_round(g, RectF(x0, track.Y, x1 - x0, track.Height), track.Height / 2, g_t.accent);
 }
 
 // Renders a buffered WM_PAINT through `draw(graphics, width, height)`.
@@ -2038,10 +2089,8 @@ void buffered_paint(HWND hwnd, Draw draw) {
 
 enum StatusKind { kHint, kInfo, kSuccess, kError };
 
-constexpr int kAddTile = -2;
-
 struct Tile {
-    int app;           // index into g_apps, -1 for an app still being installed, kAddTile for "Add app"
+    int app;           // index into g_apps, -1 for an app still being installed
     std::wstring job;  // that app's name
 };
 
@@ -2059,13 +2108,15 @@ struct Job {
 };
 std::vector<Job> g_jobs;                   // this batch of installs, for the install window
 std::map<std::wstring, std::wstring> g_job_labels;  // installs that are not in the library yet: their names to show
-HWND g_install_wnd, g_log_wnd, g_log_edit;
+HWND g_install_wnd, g_log_wnd, g_log_edit, g_tip;
 std::map<std::wstring, std::unique_ptr<Gdiplus::Bitmap>> g_icons;  // rounded, at the grid's size; null: no icon
+std::unique_ptr<Gdiplus::Bitmap> g_brand;  // the program's icon, for the navigation pane
 std::wstring g_selected;
 std::wstring g_status;
 StatusKind g_status_kind = kHint;
 float g_scroll = 0;
 bool g_drag_over = false, g_tracking = false;
+bool g_focus_visible = false;  // the selection was reached with the keyboard: it shows a focus ring
 
 // The library and the store share the window's search box and scrolling;
 // the view not shown keeps its own query and scroll position here.
@@ -2085,8 +2136,10 @@ struct StoreState {
     std::set<std::string> icon_wait;                                       // being fetched
 } g_store;
 
-enum HitKind { kHitNone, kHitGear, kHitDrop, kHitTile, kHitThumb, kHitTrack, kHitStop, kHitLogs, kHitTab, kHitCategory,
-               kHitCard, kHitCardButton, kHitRetry };
+// What the mouse is over. kHitNav's `tile` is the pane's item: 0 Library, 1 Store, 2 Settings.
+enum HitKind { kHitNone, kHitNav, kHitAdd, kHitClear, kHitRefresh, kHitDrop, kHitBrowse, kHitTile, kHitThumb,
+               kHitTrack, kHitStop, kHitLogs, kHitCategory, kHitCard, kHitCardButton, kHitRetry };
+enum NavItem { kNavLibrary, kNavStore, kNavSettings };
 struct Hit {
     HitKind kind = kHitNone;
     int tile = -1;
@@ -2096,8 +2149,13 @@ Hit g_hot;
 bool g_thumb_drag = false;
 float g_thumb_y0 = 0, g_thumb_scroll0 = 0;
 
+// The window: a navigation pane (Library, Store, Settings at the bottom), the
+// content layer beside it with the page's title and toolbar above the grid,
+// and the status bar along the bottom.
 struct Layout {
-    RectF gear, tabs, drop, section, search, category, grid, footer, logs, stop, retry;
+    RectF rail, nav[3], content, title, search, clear, add, category, refresh, progress, grid, footer, logs, stop,
+        drop, browse, retry;
+    bool compact = false;  // a narrow window: the pane shows icons only
     int cols = 1;
     float tile_w = 0, tile_h = 0, gap = 0, content_h = 0, max_scroll = 0;  // the library's tiles or the store's cards
 } g_l;
@@ -2147,6 +2205,36 @@ std::unique_ptr<Gdiplus::Bitmap> rounded_icon(const fs::path& png, int s) {
     return out;
 }
 
+// The program's icon (launcher.rc's PNG) for the pane, at the pane's size.
+Gdiplus::Bitmap* brand_icon() {
+    if (g_brand) return g_brand.get();
+    HRSRC res = FindResourceW(nullptr, MAKEINTRESOURCEW(2), RT_RCDATA);
+    HGLOBAL mem = res ? LoadResource(nullptr, res) : nullptr;
+    const void* bytes = mem ? LockResource(mem) : nullptr;
+    const DWORD size = res ? SizeofResource(nullptr, res) : 0;
+    if (!bytes || !size) return nullptr;
+    HGLOBAL copy = GlobalAlloc(GMEM_MOVEABLE, size);
+    if (!copy) return nullptr;
+    memcpy(GlobalLock(copy), bytes, size);
+    GlobalUnlock(copy);
+    IStream* stream = nullptr;
+    if (SUCCEEDED(CreateStreamOnHGlobal(copy, TRUE, &stream))) {  // the stream frees `copy`
+        Gdiplus::Bitmap src(stream);
+        if (src.GetLastStatus() == Gdiplus::Ok) {
+            const int s = ipx(24);
+            g_brand = std::make_unique<Gdiplus::Bitmap>(s, s, PixelFormat32bppPARGB);
+            Graphics g(g_brand.get());
+            g.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
+            g.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHighQuality);
+            g.DrawImage(&src, 0, 0, s, s);
+        }
+        stream->Release();
+    } else {
+        GlobalFree(copy);
+    }
+    return g_brand.get();
+}
+
 Gdiplus::Bitmap* icon_for(const App& app) {
     auto it = g_icons.find(app.name);
     if (it != g_icons.end()) return it->second.get();
@@ -2165,7 +2253,7 @@ void draw_icon(Graphics& g, Gdiplus::Bitmap* bmp, const std::wstring& label, con
         draw_monogram(g, r, label,
                       r.Width >= px(72)   ? g_f.monogram.get()
                       : r.Width >= px(56) ? g_f.monogram_small.get()
-                                          : g_f.section.get());
+                                          : g_f.body_semi.get());
     }
 }
 
@@ -2208,8 +2296,6 @@ Gdiplus::Bitmap* store_icon(const StoreApp& a) {
     return nullptr;
 }
 
-std::vector<std::string> package_of(const std::wstring& name);
-
 // Which packages the library has, and at which version, for the store's buttons.
 void scan_installed() {
     g_store.installed.clear();
@@ -2242,14 +2328,13 @@ Offer offer_for(const StoreApp& a, int* percent = nullptr) {
 
 RectF tile_rect(int i) {
     const int col = i % g_l.cols, row = i / g_l.cols;
-    const float x0 = g_l.grid.X + (g_view == kStoreView ? px(8) : 0);
-    return RectF(x0 + col * (g_l.tile_w + g_l.gap), g_l.grid.Y + px(4) + row * (g_l.tile_h + g_l.gap) - g_scroll,
-                 g_l.tile_w, g_l.tile_h);
+    return RectF(g_l.grid.X + px(8) + col * (g_l.tile_w + g_l.gap),
+                 g_l.grid.Y + px(4) + row * (g_l.tile_h + g_l.gap) - g_scroll, g_l.tile_w, g_l.tile_h);
 }
 
 // The store card's button, in its bottom corner.
 RectF card_button(const RectF& card) {
-    return RectF(card.GetRight() - px(14) - px(104), card.GetBottom() - px(12) - px(30), px(104), px(30));
+    return RectF(card.GetRight() - px(16) - px(104), card.GetBottom() - px(12) - px(32), px(104), px(32));
 }
 
 RectF thumb_rect() {
@@ -2261,47 +2346,90 @@ RectF thumb_rect() {
 
 void clamp_scroll() { g_scroll = (std::max)(0.0f, (std::min)(g_scroll, g_l.max_scroll)); }
 
+// A text's width outside a paint, for the layout, measured on the window's own DC.
+float measure(const std::wstring& s, const Gdiplus::Font* f) {
+    if (!f) return 0;
+    HDC dc = GetDC(g_main);
+    float w = 0;
+    {
+        Graphics g(dc);
+        w = text_width(g, s, f);
+    }
+    ReleaseDC(g_main, dc);
+    return w;
+}
+
 void compute_layout() {
     RECT rc;
     GetClientRect(g_main, &rc);
-    const float W = static_cast<float>(rc.right), H = static_cast<float>(rc.bottom), m = px(28);
+    const float W = static_cast<float>(rc.right), H = static_cast<float>(rc.bottom);
     const bool store = g_view == kStoreView;
-    g_l.gear = RectF(W - m - px(36), px(24), px(36), px(36));
-    g_l.tabs = RectF(m, px(26), px(216), px(32));
-    g_l.drop = RectF(m, px(100), W - 2 * m, px(124));
-    g_l.section = RectF(m, store ? px(96) : g_l.drop.GetBottom() + px(18), W - 2 * m, px(36));
-    const float search_w = (std::min)(px(260), g_l.section.Width * 0.4f);
-    g_l.search = RectF(g_l.section.GetRight() - search_w, g_l.section.Y + px(2), search_w, px(32));
-    const float category_w = (std::min)(px(190), g_l.section.Width * 0.28f);
-    g_l.category = RectF(g_l.search.X - px(10) - category_w, g_l.search.Y, category_w, px(32));
-    g_l.footer = RectF(0, H - px(34), W, px(34));
-    g_l.logs = RectF(W - px(10) - px(76), g_l.footer.Y + px(5), px(76), px(24));
-    g_l.stop = RectF(g_l.logs.X - px(6) - px(72), g_l.logs.Y, px(72), px(24));
-    const float top = g_l.section.GetBottom() + px(8);
-    g_l.grid = RectF(m - px(8), top, W - 2 * m + px(16), (std::max)(0.0f, g_l.footer.Y - top));
+    const float foot = px(32);
+    g_l.footer = RectF(0, H - foot, W, foot);
+    g_l.logs = RectF(W - px(12) - px(76), g_l.footer.Y + px(4), px(76), px(24));
+    g_l.stop = RectF(g_l.logs.X - px(4) - px(72), g_l.logs.Y, px(72), px(24));
+
+    // The pane: the brand row, Library and Store, Settings at the bottom.
+    g_l.compact = W < px(900);
+    const float rail_w = g_l.compact ? px(56) : px(200);
+    g_l.rail = RectF(0, 0, rail_w, g_l.footer.Y);
+    const float item_h = px(36), item_w = rail_w - px(16);
+    for (int i = 0; i < 2; ++i) g_l.nav[i] = RectF(px(8), px(60) + i * (item_h + px(4)), item_w, item_h);
+    g_l.nav[kNavSettings] = RectF(px(8), g_l.rail.GetBottom() - px(12) - item_h, item_w, item_h);
+
+    // The content layer: the title block with the toolbar's controls at its end, the grid below.
+    g_l.content = RectF(rail_w, 0, W - rail_w, g_l.footer.Y);
+    const float m = px(24), cx = g_l.content.X + m, cw = g_l.content.Width - 2 * m;
+    g_l.title = RectF(cx, px(20), cw, px(44));
+    const float ch = px(32), cy = g_l.title.Y + (g_l.title.Height - ch) / 2;
+    float right = cx + cw;
+    if (store) {
+        g_l.refresh = RectF(right - ch, cy, ch, ch);
+        right = g_l.refresh.X - px(8);
+        const float category_w = g_store.apps.empty() ? 0 : (std::min)(px(180), cw * 0.28f);  // none without a catalog
+        g_l.category = RectF(right - category_w, cy, category_w, ch);
+        if (category_w > 0) right = g_l.category.X - px(8);
+    } else {
+        const float add_w = measure(tr(L"Add app"), g_f.body_semi.get()) + px(50);
+        g_l.add = RectF(right - add_w, cy, add_w, ch);
+        right = g_l.add.X - px(8);
+    }
+    const float search_w = (std::min)(px(260), (std::max)(px(120), right - cx - px(220)));
+    g_l.search = RectF(right - search_w, cy, search_w, ch);
+    g_l.clear = RectF(g_l.search.GetRight() - px(30), cy + px(2), px(28), ch - px(4));
+    g_l.progress = RectF(cx, g_l.title.GetBottom() + px(8), cw, px(3));
+    const float top = g_l.title.GetBottom() + px(16);
+    g_l.grid = RectF(cx - px(8), top, cw + px(16), (std::max)(0.0f, g_l.content.GetBottom() - top));
+
+    // The empty library's drop card and its Store button, and the store's Try again.
+    const float dw = (std::min)(px(520), g_l.grid.Width - px(32)), dh = px(200);
+    const float dy = g_l.grid.Y + (std::max)(px(8), (g_l.grid.Height - dh - px(64)) / 2 - px(20));
+    g_l.drop = RectF(g_l.grid.X + (g_l.grid.Width - dw) / 2, dy, dw, dh);
+    g_l.browse = RectF(g_l.drop.X + (dw - px(160)) / 2, g_l.drop.GetBottom() + px(16), px(160), ch);
     g_l.retry = RectF(g_l.grid.X + g_l.grid.Width / 2 - px(60),
-                      g_l.grid.Y + (std::min)(g_l.grid.Height / 2, px(110)) + px(66), px(120), px(34));
+                      g_l.grid.Y + (std::min)(g_l.grid.Height / 2, px(110)) + px(66), px(120), ch);
+
     size_t items = g_tiles.size();
     if (store) {  // cards, as many across as fit at 300 px or more
-        g_l.gap = px(10);
+        g_l.gap = px(8);
         g_l.tile_h = px(112);
         g_l.cols = (std::max)(1, static_cast<int>((g_l.grid.Width - px(26) + g_l.gap) / (px(300) + g_l.gap)));
         g_l.tile_w = (g_l.grid.Width - px(26) - (g_l.cols - 1) * g_l.gap) / g_l.cols;
         items = g_store.shown.size();
     } else {
-        g_l.tile_w = px(124);
-        g_l.tile_h = px(138);
-        g_l.gap = px(6);
-        g_l.cols = (std::max)(1, static_cast<int>((g_l.grid.Width - px(10) + g_l.gap) / (g_l.tile_w + g_l.gap)));
+        g_l.tile_w = px(112);
+        g_l.tile_h = px(132);
+        g_l.gap = px(8);
+        g_l.cols = (std::max)(1, static_cast<int>((g_l.grid.Width - px(26) + g_l.gap) / (g_l.tile_w + g_l.gap)));
     }
     const int rows = (static_cast<int>(items) + g_l.cols - 1) / g_l.cols;
     g_l.content_h = rows ? rows * (g_l.tile_h + g_l.gap) - g_l.gap + px(12) : 0;
     g_l.max_scroll = (std::max)(0.0f, g_l.content_h - g_l.grid.Height);
     clamp_scroll();
     const int edit_h = ipx(20);
-    MoveWindow(g_search, static_cast<int>(g_l.search.X + px(34)),
+    MoveWindow(g_search, static_cast<int>(g_l.search.X + px(32)),
                static_cast<int>(g_l.search.Y + (g_l.search.Height - edit_h) / 2),
-               static_cast<int>(g_l.search.Width - px(44)), edit_h, TRUE);
+               static_cast<int>(g_l.search.Width - px(32) - px(30)), edit_h, TRUE);
 }
 
 std::wstring query(View view) {
@@ -2354,7 +2482,6 @@ void rebuild_tiles() {
     for (size_t i = 0; i < g_apps.size(); ++i) {
         if (matches(g_apps[i].label, g_apps[i].name)) g_tiles.push_back({static_cast<int>(i), L""});
     }
-    if (q.empty() && !g_apps.empty()) g_tiles.push_back({kAddTile, L""});
     rebuild_store();
     compute_layout();
     InvalidateRect(g_main, nullptr, FALSE);
@@ -2391,15 +2518,26 @@ void select_app(const std::wstring& name) {
 
 const App* selected() { return g_selected.empty() ? nullptr : find_app(g_selected); }
 
+// The empty library's drop card is shown when nothing is installed, queued or searched for.
+bool empty_library() { return g_view == kLibraryView && g_tiles.empty() && query(kLibraryView).empty(); }
+
 Hit hit_test(float x, float y) {
     const bool store = g_view == kStoreView;
-    if (contains(g_l.gear, x, y)) return {kHitGear, -1};
-    if (contains(g_l.tabs, x, y)) return {kHitTab, x < g_l.tabs.X + g_l.tabs.Width / 2 ? 0 : 1};
-    if (!store && contains(g_l.drop, x, y)) return {kHitDrop, -1};
+    for (int i = 0; i < 3; ++i) {
+        if (contains(g_l.nav[i], x, y)) return {kHitNav, i};
+    }
+    if (!query(g_view).empty() && contains(g_l.clear, x, y)) return {kHitClear, -1};
+    if (!store && contains(g_l.add, x, y)) return {kHitAdd, -1};
+    if (store && contains(g_l.refresh, x, y)) return {kHitRefresh, -1};
     if (store && !g_store.apps.empty() && contains(g_l.category, x, y)) return {kHitCategory, -1};
     if (contains(g_l.logs, x, y)) return {kHitLogs, -1};
     if (!g_running.empty() && contains(g_l.stop, x, y)) return {kHitStop, -1};
     if (!contains(g_l.grid, x, y)) return {};
+    if (empty_library()) {
+        if (contains(g_l.drop, x, y)) return {kHitDrop, -1};
+        if (contains(g_l.browse, x, y)) return {kHitBrowse, -1};
+        return {};
+    }
     if (g_l.max_scroll > 0 && x >= g_l.grid.GetRight() - px(12)) {
         return {contains(inset(thumb_rect(), -px(4), 0), x, y) ? kHitThumb : kHitTrack, -1};
     }
@@ -2422,118 +2560,103 @@ Hit hit_test(float x, float y) {
 // ---------------------------------------------------------------------------
 // Painting the library
 
-// Library | Store, a segmented control at the start of the header.
-void paint_tabs(Graphics& g) {
-    const RectF& r = g_l.tabs;
-    fill_round(g, r, px(9), g_t.dark ? mix(g_t.bg, g_t.card, 0.7f) : mix(g_t.bg, g_t.border, 0.55f));
-    const float seg_w = (r.Width - px(6)) / 2;
-    const std::pair<const wchar_t*, const wchar_t*> tabs[] = {{kGlyphLibrary, L"Library"}, {kGlyphStore, L"Store"}};
-    for (int i = 0; i < 2; ++i) {
-        const RectF seg(r.X + px(3) + i * seg_w, r.Y + px(3), seg_w, r.Height - px(6));
-        const bool on = (i == 1) == (g_view == kStoreView);
-        const bool hot = g_hot.kind == kHitTab && g_hot.tile == i;
-        if (on) {
-            fill_round(g, seg, px(7), g_t.dark ? g_t.hover : kWhite);
-            if (!g_t.dark) stroke_round(g, seg, px(7), with_alpha(g_t.border, 200));
-        } else if (hot) {
-            fill_round(g, seg, px(7), with_alpha(g_t.hover, g_t.dark ? 140 : 200));
+// The navigation pane: the brand, Library and Store, and Settings at the bottom.
+void paint_rail(Graphics& g) {
+    const RectF& r = g_l.rail;
+    if (Gdiplus::Bitmap* brand = brand_icon()) {
+        const float s = px(24);
+        draw_image(g, brand, RectF(g_l.compact ? (r.Width - s) / 2 : px(16), px(16), s, s));
+    }
+    if (!g_l.compact) {
+        draw_text(g, L"Win.apk", g_f.body_semi.get(), g_t.text, RectF(px(48), px(14), r.Width - px(56), px(28)));
+    }
+    struct Item {
+        const wchar_t* glyph;
+        const wchar_t* label;
+    };
+    const Item items[] = {{kGlyphLibrary, L"Library"}, {kGlyphStore, L"Store"}, {kGlyphSettings, L"Settings"}};
+    for (int i = 0; i < 3; ++i) {
+        const RectF& it = g_l.nav[i];
+        const bool on = (i == kNavLibrary && g_view == kLibraryView) || (i == kNavStore && g_view == kStoreView);
+        const bool hot = g_hot.kind == kHitNav && g_hot.tile == i;
+        if (on || hot) fill_round(g, it, px(kRadiusControl), mix(g_t.bg, g_t.text, on ? 0.07f : 0.04f));
+        if (on) fill_round(g, RectF(it.X, it.Y + (it.Height - px(16)) / 2, px(3), px(16)), px(1.5f), g_t.accent);
+        const Color ink = on || hot ? g_t.text : g_t.text2;
+        const float gx = g_l.compact ? it.X + (it.Width - px(16)) / 2 : it.X + px(12);
+        draw_text(g, items[i].glyph, g_f.glyph16.get(), ink, RectF(gx, it.Y, px(16), it.Height), kCenter);
+        if (!g_l.compact) {
+            draw_text(g, tr(items[i].label), on ? g_f.body_semi.get() : g_f.body.get(), ink,
+                      RectF(it.X + px(40), it.Y, it.Width - px(48), it.Height));
         }
-        const std::wstring text = tr(tabs[i].second);
-        const Gdiplus::Font* f = on ? g_f.body_semi.get() : g_f.body.get();
-        const float tw = text_width(g, text, f);
-        const float x = seg.X + (seg.Width - tw - px(22)) / 2;
-        draw_text(g, tabs[i].first, g_f.glyph12.get(), on ? g_t.accent : g_t.text2, RectF(x, seg.Y, px(16), seg.Height),
-                  kCenter);
-        draw_text(g, text, f, on || hot ? g_t.text : g_t.text2, RectF(x + px(22), seg.Y, tw + px(4), seg.Height));
     }
 }
 
-void paint_header(Graphics& g, float W) {
-    draw_text(g, L"Win.apk", g_f.title.get(), g_t.text, RectF(0, px(20), W, px(38)), kCenter);
-    if (g_view == kLibraryView) {
-        draw_text(g, tr(L"Run Android apps natively on Windows"), g_f.tagline.get(), g_t.text2,
-                  RectF(0, px(58), W, px(22)), kCenter);
-    }
-    paint_tabs(g);
-    const bool hot = g_hot.kind == kHitGear;
-    if (hot) fill_round(g, g_l.gear, px(8), g_t.hover);
-    draw_text(g, kGlyphSettings, g_f.glyph16.get(), hot ? g_t.text : g_t.text2, g_l.gear, kCenter);
-}
-
-void paint_drop_zone(Graphics& g) {
-    const RectF& r = g_l.drop;
-    const bool hot = g_hot.kind == kHitDrop;
-    const bool busy = !g_pending.empty();
-    Color fill = g_t.card;
-    if (g_drag_over) fill = mix(g_t.card, g_t.accent, g_t.dark ? 0.22f : 0.12f);
-    else if (hot) fill = mix(g_t.card, g_t.accent, g_t.dark ? 0.08f : 0.04f);
-    fill_round(g, r, px(14), fill);
-    GraphicsPath p;
-    rounded(p, inset(r, px(1), px(1)), px(13));
-    Gdiplus::Pen pen(g_drag_over || hot ? g_t.accent : with_alpha(g_t.text2, 120), px(1.5f));
-    const Gdiplus::REAL dashes[] = {4, 3};
-    pen.SetDashPattern(dashes, 2);
-    g.DrawPath(&pen, &p);
-
-    const Color ink = g_drag_over ? g_t.accent : g_t.text;
-    const float cy = r.Y + r.Height / 2;
-    draw_text(g, kGlyphDownload, g_f.glyph34.get(), busy || g_drag_over ? g_t.accent : with_alpha(ink, 220),
-              RectF(r.X, cy - px(50), r.Width, px(44)), kCenter);
-    std::wstring title, sub;
-    if (g_drag_over) {
-        title = tr(L"Drop to install");
-        sub = tr(L"Win.apk keeps its own copy, so the download can go");
-    } else if (busy) {
-        title = g_batch_total > 1 ? fmt(L"Installing {0} of {1}…",
-                                        {std::to_wstring((std::min)(g_batch_done + 1, g_batch_total)),
-                                         std::to_wstring(g_batch_total)})
-                                  : std::wstring(tr(L"Installing…"));
-        sub = g_current.empty() ? tr(L"Unpacking manifest, icon, and assets")
-                                : fmt(L"{0}  ·  the first install of an app takes up to a minute",
-                                      {job_label(g_current)});
-    } else {
-        title = tr(L"Drop an APK here to install");
-        sub = tr(L"or click to choose a file  ·  .apk .apkm .xapk .apks");
-    }
-    draw_text(g, title, g_f.body_semi.get(), ink, RectF(r.X + px(16), cy, r.Width - px(32), px(22)), kCenter);
-    draw_text(g, sub, g_f.caption.get(), g_t.text2, RectF(r.X + px(16), cy + px(22), r.Width - px(32), px(18)),
-              kCenter);
-    if (busy) {  // indeterminate bar along the bottom edge
-        const RectF track(r.X + r.Width * 0.3f, r.GetBottom() - px(14), r.Width * 0.4f, px(4));
-        fill_round(g, track, px(2), with_alpha(g_t.accent, 40));
-        const float t = static_cast<float>(GetTickCount64() % 1400) / 1400.0f;
-        const float seg = track.Width * 0.35f;
-        float x0 = track.X + (track.Width + seg) * t - seg, x1 = x0 + seg;
-        x0 = (std::max)(x0, track.X);
-        x1 = (std::min)(x1, track.GetRight());
-        if (x1 > x0) fill_round(g, RectF(x0, track.Y, x1 - x0, track.Height), px(2), g_t.accent);
-    }
-}
-
-// The section's title and a count beside it; returns where the count ends.
-float paint_section_title(Graphics& g, const std::wstring& title, size_t n) {
-    const RectF& r = g_l.section;
-    const float tw = text_width(g, title, g_f.section.get());
-    draw_text(g, title, g_f.section.get(), g_t.text, RectF(r.X, r.Y, tw + px(4), r.Height));
-    const std::wstring count = std::to_wstring(n);
-    const float cw = (std::max)(px(24), text_width(g, count, g_f.caption_semi.get()) + px(12));
-    const RectF pill(r.X + tw + px(8), r.Y + (r.Height - px(20)) / 2, cw, px(20));
-    fill_round(g, pill, px(10), g_t.dark ? g_t.hover : mix(g_t.bg, g_t.border, 0.6f));
-    draw_text(g, count, g_f.caption_semi.get(), g_t.text2, pill, kCenter);
-    return pill.GetRight();
+// The content layer: a lighter surface with a rounded corner towards the pane, as Windows 11 lays out.
+void paint_layer(Graphics& g) {
+    const RectF& c = g_l.content;
+    const RectF card(c.X, c.Y + px(8), c.Width + px(16), c.Height + px(16));  // its other corners are off-screen
+    g.SetClip(c);
+    fill_round(g, card, px(kRadiusCard), g_t.layer);
+    stroke_round(g, card, px(kRadiusCard), g_t.border);
+    g.ResetClip();
 }
 
 void paint_search_box(Graphics& g) {
     const bool focused = GetFocus() == g_search;
-    fill_round(g, g_l.search, px(8), g_t.card);
-    stroke_round(g, g_l.search, px(8), focused ? g_t.accent : g_t.border, focused ? px(1.5f) : 1);
+    fill_round(g, g_l.search, px(kRadiusControl), g_t.card);
+    stroke_round(g, g_l.search, px(kRadiusControl), focused ? g_t.accent : g_t.border, focused ? px(1.5f) : 1);
     draw_text(g, kGlyphSearch, g_f.glyph12.get(), g_t.text2,
               RectF(g_l.search.X + px(10), g_l.search.Y, px(16), g_l.search.Height), kCenter);
+    if (!query(g_view).empty()) {
+        const bool hot = g_hot.kind == kHitClear;
+        if (hot) fill_round(g, g_l.clear, px(4), g_t.hover);
+        draw_text(g, kGlyphClear, g_f.glyph12.get(), hot ? g_t.text : g_t.text2, g_l.clear, kCenter);
+    }
 }
 
-void paint_section(Graphics& g) {
-    paint_section_title(g, tr(L"Installed apps"), g_apps.size());
+// The page's title and what it holds, with the toolbar's controls at the end of the row.
+void paint_toolbar(Graphics& g) {
+    const RectF& t = g_l.title;
+    const bool store = g_view == kStoreView;
+    std::wstring sub;
+    if (store) {
+        if (g_store.apps.empty() && (g_store.loading || !g_store.started)) sub = tr(L"Getting the app catalog from F-Droid…");
+        else if (g_store.apps.empty()) sub = tr(L"F-Droid could not be reached");
+        else if (g_store.loading) sub = tr(L"Checking F-Droid for new apps…");
+        else sub = app_count(g_store.shown.size()) + L"  ·  " + tr(L"Free and open-source apps from f-droid.org");
+    } else {
+        sub = g_apps.empty() ? std::wstring(tr(L"No apps installed yet")) : app_count(g_apps.size());
+        if (!g_running.empty()) sub += L"  ·  " + fmt(L"{0} running", {std::to_wstring(g_running.size())});
+        if (!g_current.empty()) sub += L"  ·  " + fmt(L"Installing {0}…", {job_label(g_current)});
+    }
+    const float tw = (std::max)(px(60), g_l.search.X - t.X - px(16));
+    draw_text(g, tr(store ? L"Store" : L"Library"), g_f.title.get(), g_t.text, RectF(t.X, t.Y, tw, px(26)));
+    draw_text(g, sub, g_f.caption.get(), g_t.text2, RectF(t.X, t.Y + px(26), tw, px(18)));
     paint_search_box(g);
+    if (store) {
+        if (!g_store.apps.empty()) {
+            const RectF& c = g_l.category;
+            const bool hot = g_hot.kind == kHitCategory;
+            fill_round(g, c, px(kRadiusControl), hot ? g_t.hover : g_t.card);
+            stroke_round(g, c, px(kRadiusControl), g_store.category.empty() ? g_t.border : g_t.accent);
+            const std::wstring text = g_store.category.empty() ? tr(L"All categories") : g_store.category;
+            draw_text(g, text, g_f.body.get(), g_store.category.empty() ? g_t.text2 : g_t.text,
+                      RectF(c.X + px(12), c.Y, c.Width - px(40), c.Height));
+            draw_text(g, kGlyphChevron, g_f.glyph12.get(), g_t.text2,
+                      RectF(c.GetRight() - px(30), c.Y, px(22), c.Height), kCenter);
+        }
+        if (g_store.loading && !g_store.apps.empty()) {
+            spinner(g, inset(g_l.refresh, px(8), px(8)), g_t.accent, px(2));
+        } else {
+            draw_icon_button(g, g_l.refresh, kGlyphRefresh, g_hot.kind == kHitRefresh, g_t.text2);
+        }
+    } else {
+        draw_button(g, g_l.add, tr(L"Add app"), g_hot.kind == kHitAdd, true, false, kGlyphAdd);
+    }
+    // Work in progress runs along the toolbar's bottom edge.
+    if ((!store && !g_pending.empty()) || (store && g_store.loading && !g_store.apps.empty())) {
+        draw_progress_line(g, g_l.progress);
+    }
 }
 
 void paint_scrollbar(Graphics& g, bool nearby) {
@@ -2546,71 +2669,78 @@ void paint_tile(Graphics& g, int i) {
     const RectF r = tile_rect(i);
     if (r.GetBottom() < g_l.grid.Y || r.Y > g_l.grid.GetBottom()) return;
     const Tile& t = g_tiles[static_cast<size_t>(i)];
-    const bool hot_tile = g_hot.kind == kHitTile && g_hot.tile == i;
-    if (t.app == kAddTile) {
-        if (hot_tile) fill_round(g, r, px(12), g_t.hover);
-        const float s = px(56);
-        const RectF box(r.X + (r.Width - s) / 2, r.Y + px(22), s, s);
-        GraphicsPath p;
-        rounded(p, box, px(14));
-        Gdiplus::Pen dash(hot_tile ? g_t.accent : with_alpha(g_t.text2, 140), px(1.5f));
-        const Gdiplus::REAL dashes[] = {3, 3};
-        dash.SetDashPattern(dashes, 2);
-        g.DrawPath(&dash, &p);
-        Gdiplus::Pen plus(hot_tile ? g_t.accent : g_t.text2, px(2));
-        plus.SetStartCap(Gdiplus::LineCapRound);
-        plus.SetEndCap(Gdiplus::LineCapRound);
-        const float cx = box.X + s / 2, cy = box.Y + s / 2, a = px(10);
-        g.DrawLine(&plus, cx - a, cy, cx + a, cy);
-        g.DrawLine(&plus, cx, cy - a, cx, cy + a);
-        draw_text(g, tr(L"Add app"), g_f.tile.get(), g_t.text2,
-                  RectF(r.X + px(6), box.GetBottom() + px(17), r.Width - px(12), px(20)), kCenter);
-        return;
-    }
     const App* app = t.app >= 0 ? &g_apps[static_cast<size_t>(t.app)] : nullptr;
     const bool sel = app && app->name == g_selected;
     const bool hot = g_hot.kind == kHitTile && g_hot.tile == i;
+    const bool running = app && g_running.count(app->name);
     if (sel) {
-        fill_round(g, r, px(12), with_alpha(g_t.accent, g_t.dark ? 64 : 34));
-        stroke_round(g, r, px(12), with_alpha(g_t.accent, 150));
+        fill_round(g, r, px(kRadiusTile), with_alpha(g_t.accent, g_t.dark ? 56 : 30));
+        stroke_round(g, r, px(kRadiusTile), with_alpha(g_t.accent, 170));
+        if (g_focus_visible && GetFocus() == g_main) draw_focus_ring(g, r, px(kRadiusTile));
     } else if (hot) {
-        fill_round(g, r, px(12), g_t.hover);
+        fill_round(g, r, px(kRadiusTile), g_t.card);
+        stroke_round(g, r, px(kRadiusTile), g_t.border);
     }
     const std::wstring label = app ? app->label : job_label(t.job);
     const float s = px(72);
-    const RectF ir(r.X + (r.Width - s) / 2, r.Y + px(14), s, s);
+    const RectF ir(r.X + (r.Width - s) / 2, r.Y + px(12), s, s);
     draw_app_icon(g, app, label, ir);
     if (!app || is_pending(app->name)) {
         fill_round(g, ir, s * 0.22f, Color(130, 0, 0, 0));
         spinner(g, inset(ir, s * 0.3f, s * 0.3f), kWhite, px(3));
     }
-    draw_text(g, label, g_f.tile.get(), app ? g_t.text : g_t.text2,
-              RectF(r.X + px(6), ir.GetBottom() + px(9), r.Width - px(12), px(36)), kCenter, true, false);
-    if (app && g_running.count(app->name)) {
-        Gdiplus::SolidBrush dot(g_t.accent);
-        g.FillEllipse(&dot, r.X + r.Width / 2 - px(3), r.GetBottom() - px(9), px(6), px(6));
+    if (running) {  // a badge on the icon's corner, ringed in the layer's colour so it stands off the picture
+        const float d = px(16);
+        const RectF badge(ir.GetRight() - d + px(4), ir.GetBottom() - d + px(4), d, d);
+        Gdiplus::SolidBrush ring(sel ? mix(g_t.layer, g_t.accent, g_t.dark ? 0.22f : 0.12f) : hot ? g_t.card : g_t.layer);
+        g.FillEllipse(&ring, badge);
+        Gdiplus::SolidBrush dot(g_t.success);
+        g.FillEllipse(&dot, inset(badge, px(3), px(3)));
     }
+    draw_text(g, label, g_f.tile.get(), app ? g_t.text : g_t.text2,
+              RectF(r.X + px(6), ir.GetBottom() + px(8), r.Width - px(12), px(36)), kCenter, true, false);
+}
+
+// The middle of an empty grid: a glyph, a line and a word of advice.
+void paint_empty(Graphics& g, const wchar_t* glyph, const std::wstring& title, const std::wstring& sub) {
+    const RectF& gr = g_l.grid;
+    const float cy = gr.Y + (std::min)(gr.Height / 2, px(110));
+    if (glyph) {
+        draw_text(g, glyph, g_f.glyph48.get(), with_alpha(g_t.text2, 150), RectF(gr.X, cy - px(70), gr.Width, px(60)),
+                  kCenter);
+    }
+    draw_text(g, title, g_f.body_semi.get(), g_t.text, RectF(gr.X, cy, gr.Width, px(24)), kCenter);
+    draw_text(g, sub, g_f.caption.get(), g_t.text2, RectF(gr.X + px(24), cy + px(24), gr.Width - px(48), px(36)),
+              kCenter, true, false);
+}
+
+// Nothing installed yet: a large drop target that also opens the file dialog, and the way to the Store.
+void paint_drop_card(Graphics& g) {
+    const RectF& r = g_l.drop;
+    const bool hot = g_hot.kind == kHitDrop;
+    fill_round(g, r, px(kRadiusTile), hot ? mix(g_t.card, g_t.accent, g_t.dark ? 0.1f : 0.05f) : g_t.card);
+    GraphicsPath p;
+    rounded(p, inset(r, px(1), px(1)), px(kRadiusTile) - 1);
+    Gdiplus::Pen pen(hot ? g_t.accent : with_alpha(g_t.text2, 140), px(1.5f));
+    const Gdiplus::REAL dashes[] = {4, 3};
+    pen.SetDashPattern(dashes, 2);
+    g.DrawPath(&pen, &p);
+    const float cy = r.Y + r.Height / 2;
+    draw_text(g, kGlyphDownload, g_f.glyph48.get(), hot ? g_t.accent : with_alpha(g_t.text2, 200),
+              RectF(r.X, cy - px(66), r.Width, px(56)), kCenter);
+    draw_text(g, tr(L"Drop an APK here to install"), g_f.body_semi.get(), g_t.text,
+              RectF(r.X + px(16), cy + px(2), r.Width - px(32), px(24)), kCenter);
+    draw_text(g, tr(L"or click to choose a file  ·  .apk .apkm .xapk .apks"), g_f.caption.get(), g_t.text2,
+              RectF(r.X + px(16), cy + px(26), r.Width - px(32), px(20)), kCenter);
+    draw_button(g, g_l.browse, tr(L"Browse the Store"), g_hot.kind == kHitBrowse, false, false, kGlyphStore);
 }
 
 void paint_grid(Graphics& g) {
     const RectF& gr = g_l.grid;
     if (g_tiles.empty()) {
-        wchar_t q[256] = {};
-        GetWindowTextW(g_search, q, 256);
-        const float cy = gr.Y + (std::min)(gr.Height / 2, px(110));
-        std::wstring title, sub;
-        if (q[0]) {
-            title = fmt(L"No apps match “{0}”", {q});
-            sub = tr(L"Press Esc in the search box to show every app.");
-        } else {
-            title = tr(L"No apps installed yet.");
-            sub = tr(L"Drop an APK above, or get apps from the Store, then open them from here.");
-        }
-        draw_text(g, q[0] ? kGlyphSearch : kGlyphApps, g_f.glyph48.get(), with_alpha(g_t.text2, 150),
-                  RectF(gr.X, cy - px(70), gr.Width, px(60)), kCenter);
-        draw_text(g, title, g_f.body_semi.get(), g_t.text, RectF(gr.X, cy, gr.Width, px(24)), kCenter);
-        draw_text(g, sub, g_f.caption.get(), g_t.text2, RectF(gr.X + px(24), cy + px(24), gr.Width - px(48), px(36)),
-                  kCenter, true, false);
+        const std::wstring q = query(kLibraryView);
+        if (q.empty()) paint_drop_card(g);
+        else paint_empty(g, kGlyphSearch, fmt(L"No apps match “{0}”", {q}), tr(L"Press Esc in the search box to show every app."));
         return;
     }
     g.SetClip(gr);
@@ -2623,48 +2753,24 @@ void paint_grid(Graphics& g) {
     paint_scrollbar(g, g_hot.kind == kHitTile);
 }
 
-// The store's heading: F-Droid and the count, the catalog's state, the category and the search.
-void paint_store_section(Graphics& g) {
-    float x = paint_section_title(g, L"F-Droid", g_store.shown.size()) + px(14);
-    const RectF& r = g_l.section;
-    if (g_store.loading && !g_store.apps.empty()) {
-        spinner(g, RectF(x, r.Y + r.Height / 2 - px(6), px(12), px(12)), g_t.accent, px(2));
-        draw_text(g, tr(L"Checking F-Droid for new apps…"), g_f.caption.get(), g_t.text2,
-                  RectF(x + px(20), r.Y, (std::max)(0.0f, g_l.category.X - x - px(28)), r.Height));
-    }
-    if (!g_store.apps.empty()) {
-        const RectF& c = g_l.category;
-        const bool hot = g_hot.kind == kHitCategory;
-        fill_round(g, c, px(8), hot ? g_t.hover : g_t.card);
-        stroke_round(g, c, px(8), g_store.category.empty() ? g_t.border : g_t.accent);
-        const std::wstring text = g_store.category.empty() ? tr(L"All categories") : g_store.category;
-        draw_text(g, text, g_f.body.get(), g_store.category.empty() ? g_t.text2 : g_t.text,
-                  RectF(c.X + px(12), c.Y, c.Width - px(40), c.Height));
-        draw_text(g, kGlyphChevron, g_f.glyph12.get(), g_t.text2, RectF(c.GetRight() - px(30), c.Y, px(22), c.Height),
-                  kCenter);
-    }
-    paint_search_box(g);
-}
-
 void paint_card(Graphics& g, int i) {
     const RectF r = tile_rect(i);
     if (r.GetBottom() < g_l.grid.Y || r.Y > g_l.grid.GetBottom()) return;
     const StoreApp& a = g_store.apps[static_cast<size_t>(g_store.shown[static_cast<size_t>(i)])];
     const bool hot = (g_hot.kind == kHitCard || g_hot.kind == kHitCardButton) && g_hot.tile == i;
-    fill_round(g, r, px(12), hot ? mix(g_t.card, g_t.hover, 0.5f) : g_t.card);
-    stroke_round(g, r, px(12), hot ? mix(g_t.border, g_t.accent, 0.35f) : g_t.border);
+    fill_round(g, r, px(kRadiusCard), hot ? mix(g_t.card, g_t.hover, 0.5f) : g_t.card);
+    stroke_round(g, r, px(kRadiusCard), hot ? mix(g_t.border, g_t.accent, 0.4f) : g_t.border);
     const float s = px(56);
-    const RectF ir(r.X + px(14), r.Y + px(14), s, s);
+    const RectF ir(r.X + px(16), r.Y + px(16), s, s);
     draw_icon(g, store_icon(a), store_name(a), ir);
-    const float tx = ir.GetRight() + px(14), tw = r.GetRight() - px(14) - tx;
-    draw_text(g, store_name(a), g_f.body_semi.get(), g_t.text, RectF(tx, r.Y + px(12), tw, px(22)));
-    draw_text(g, store_summary(a), g_f.caption.get(), g_t.text2, RectF(tx, r.Y + px(35), tw, px(34)), kLeft, true,
+    const float tx = ir.GetRight() + px(16), tw = r.GetRight() - px(16) - tx;
+    draw_text(g, store_name(a), g_f.body_semi.get(), g_t.text, RectF(tx, r.Y + px(14), tw, px(22)));
+    draw_text(g, store_summary(a), g_f.caption.get(), g_t.text2, RectF(tx, r.Y + px(37), tw, px(34)), kLeft, true,
               false);
     const RectF b = card_button(r);
     std::wstring meta = a.version;
     if (a.size > 0) meta += (meta.empty() ? L"" : L"  ·  ") + format_bytes(static_cast<uintmax_t>(a.size));
-    draw_text(g, meta, g_f.caption.get(), with_alpha(g_t.text2, 200),
-              RectF(r.X + px(14), b.Y, b.X - r.X - px(24), b.Height));
+    draw_text(g, meta, g_f.caption.get(), g_t.text2, RectF(r.X + px(16), b.Y, b.X - r.X - px(24), b.Height));
     int percent = 0;
     const bool on_button = g_hot.kind == kHitCardButton && g_hot.tile == i;
     switch (offer_for(a, &percent)) {
@@ -2672,11 +2778,11 @@ void paint_card(Graphics& g, int i) {
         case kOfferUpdate: draw_button(g, b, tr(L"Update"), on_button, true, false); break;
         case kOfferOpen: draw_button(g, b, tr(L"Open"), on_button, false, false); break;
         case kOfferDownloading: {
-            fill_round(g, b, px(6), with_alpha(g_t.accent, g_t.dark ? 40 : 24));
+            fill_round(g, b, px(kRadiusControl), with_alpha(g_t.accent, g_t.dark ? 40 : 24));
             if (percent > 0) {
                 const RectF bar(b.X, b.Y, b.Width * static_cast<float>(percent) / 100.0f, b.Height);
                 g.SetClip(bar, Gdiplus::CombineModeIntersect);
-                fill_round(g, b, px(6), with_alpha(g_t.accent, g_t.dark ? 120 : 80));
+                fill_round(g, b, px(kRadiusControl), with_alpha(g_t.accent, g_t.dark ? 120 : 80));
                 g.SetClip(g_l.grid);
             }
             draw_text(g, percent > 0 ? std::to_wstring(percent) + L"%" : std::wstring(tr(L"Waiting")),
@@ -2695,34 +2801,22 @@ void paint_card(Graphics& g, int i) {
 void paint_store_grid(Graphics& g) {
     const RectF& gr = g_l.grid;
     if (g_store.shown.empty()) {
-        const float cy = gr.Y + (std::min)(gr.Height / 2, px(110));
         const std::wstring q = query(kStoreView);
-        std::wstring title, sub;
-        const wchar_t* glyph = kGlyphStore;
         if (g_store.apps.empty() && (g_store.loading || !g_store.started)) {
+            const float cy = gr.Y + (std::min)(gr.Height / 2, px(110));
             spinner(g, RectF(gr.X + gr.Width / 2 - px(20), cy - px(58), px(40), px(40)), g_t.accent, px(3.5f));
-            glyph = nullptr;
-            title = tr(L"Getting the app catalog from F-Droid…");
             wchar_t mb[32];
             swprintf(mb, 32, L"%.1f", static_cast<double>(g_store.got_kb) / 1024.0);
-            sub = fmt(L"{0} MB so far. This happens once; later the store opens at once.", {mb});
+            paint_empty(g, nullptr, tr(L"Getting the app catalog from F-Droid…"),
+                        fmt(L"{0} MB so far. This happens once; later the store opens at once.", {mb}));
         } else if (g_store.apps.empty()) {
-            glyph = kGlyphError;
-            title = tr(L"F-Droid could not be reached");
-            sub = tr(L"Check the internet connection, then try again.");
+            paint_empty(g, kGlyphError, tr(L"F-Droid could not be reached"),
+                        tr(L"Check the internet connection, then try again."));
             draw_button(g, g_l.retry, tr(L"Try again"), g_hot.kind == kHitRetry, true, false);
         } else {
-            glyph = kGlyphSearch;
-            title = fmt(L"No apps match “{0}”", {q.empty() ? g_store.category : q});
-            sub = tr(L"Try other words, or every category.");
+            paint_empty(g, kGlyphSearch, fmt(L"No apps match “{0}”", {q.empty() ? g_store.category : q}),
+                        tr(L"Try other words, or every category."));
         }
-        if (glyph) {
-            draw_text(g, glyph, g_f.glyph48.get(), with_alpha(g_t.text2, 150),
-                      RectF(gr.X, cy - px(70), gr.Width, px(60)), kCenter);
-        }
-        draw_text(g, title, g_f.body_semi.get(), g_t.text, RectF(gr.X, cy, gr.Width, px(24)), kCenter);
-        draw_text(g, sub, g_f.caption.get(), g_t.text2, RectF(gr.X + px(24), cy + px(24), gr.Width - px(48), px(36)),
-                  kCenter, true, false);
         return;
     }
     g.SetClip(gr);
@@ -2738,9 +2832,29 @@ void paint_store_grid(Graphics& g) {
     paint_scrollbar(g, g_hot.kind == kHitCard || g_hot.kind == kHitCardButton);
 }
 
-// A small borderless button with a glyph, for the footer.
+// While a file is dragged over the window the whole content area is the drop target.
+void paint_drop_overlay(Graphics& g) {
+    const RectF& c = g_l.content;
+    Gdiplus::SolidBrush veil(with_alpha(g_t.layer, 225));
+    g.FillRectangle(&veil, c);
+    const RectF r = inset(c, px(16), px(16));
+    fill_round(g, r, px(kRadiusTile), with_alpha(g_t.accent, g_t.dark ? 40 : 22));
+    GraphicsPath p;
+    rounded(p, inset(r, px(1), px(1)), px(kRadiusTile) - 1);
+    Gdiplus::Pen pen(g_t.accent, px(2));
+    const Gdiplus::REAL dashes[] = {4, 3};
+    pen.SetDashPattern(dashes, 2);
+    g.DrawPath(&pen, &p);
+    const float cy = r.Y + r.Height / 2;
+    draw_text(g, kGlyphDownload, g_f.glyph48.get(), g_t.accent, RectF(r.X, cy - px(76), r.Width, px(60)), kCenter);
+    draw_text(g, tr(L"Drop to install"), g_f.title.get(), g_t.text, RectF(r.X, cy - px(8), r.Width, px(30)), kCenter);
+    draw_text(g, tr(L"Win.apk keeps its own copy, so the download can go"), g_f.body.get(), g_t.text2,
+              RectF(r.X, cy + px(24), r.Width, px(24)), kCenter);
+}
+
+// A small borderless button with a glyph, for the status bar.
 void draw_chip(Graphics& g, const RectF& r, const wchar_t* glyph, const std::wstring& text, const Color& c, bool hot) {
-    if (hot) fill_round(g, r, px(6), g_t.hover);
+    if (hot) fill_round(g, r, px(4), g_t.hover);
     const float tw = text_width(g, text, g_f.caption.get());
     const float x = r.X + (r.Width - tw - px(18)) / 2;
     draw_text(g, glyph, g_f.glyph12.get(), c, RectF(x, r.Y, px(14), r.Height), kCenter);
@@ -2752,13 +2866,14 @@ const App* running_app() {
     return g_running.empty() ? nullptr : find_app(*g_running.begin());
 }
 
+// The status bar: what just happened or a hint, and Stop and Logs at the end.
 void paint_footer(Graphics& g, float W) {
     const RectF& r = g_l.footer;
-    Gdiplus::SolidBrush bar(g_t.dark ? mix(g_t.bg, kBlack, 0.15f) : mix(g_t.bg, kWhite, 0.5f));
+    Gdiplus::SolidBrush bar(g_t.bg);
     g.FillRectangle(&bar, r);
     Gdiplus::Pen line(g_t.border, 1);
     g.DrawLine(&line, 0.0f, r.Y, W, r.Y);
-    draw_chip(g, g_l.logs, L"\uE8A5", tr(L"Logs"), g_t.text2, g_hot.kind == kHitLogs);
+    draw_chip(g, g_l.logs, kGlyphLog, tr(L"Logs"), g_t.text2, g_hot.kind == kHitLogs);
     const App* running = running_app();
     if (running) draw_chip(g, g_l.stop, kGlyphStop, tr(L"Stop"), g_t.danger, g_hot.kind == kHitStop);
     const float right = running ? g_l.stop.X : g_l.logs.X;
@@ -2766,14 +2881,12 @@ void paint_footer(Graphics& g, float W) {
     const bool store = g_view == kStoreView;
     const std::wstring hint =
         store            ? tr(L"Free and open-source apps from f-droid.org  ·  Install adds the app to your library")
-        : g_apps.empty() ? tr(L"Drop an APK above to install your first app")
-                         : tr(L"Double-click to open  ·  right-click for options  ·  drop an APK above to add more");
+        : g_apps.empty() ? tr(L"Drop an APK anywhere in this window to install your first app")
+                         : tr(L"Double-click to open  ·  right-click for options  ·  drop an APK anywhere to add more");
     const bool hinted = g_status.empty() || g_status_kind == kHint;
     const Color c = hinted || g_status_kind == kInfo ? g_t.text2
                     : g_status_kind == kSuccess       ? g_t.success
                                                       : g_t.danger;
-    const std::wstring count = app_count(store ? g_store.shown.size() : g_apps.size());
-    const float cw = text_width(g, count, g_f.caption.get()) + px(4);
     float x = px(16);
     std::wstring text = hinted ? hint : g_status;
     if (running && (hinted || g_status_kind == kInfo)) {
@@ -2786,21 +2899,17 @@ void paint_footer(Graphics& g, float W) {
         g.FillEllipse(&dot, x, r.Y + r.Height / 2 - px(3), px(6), px(6));
         x += px(14);
     }
-    draw_text(g, text, g_f.caption.get(), running ? g_t.text : c, RectF(x, r.Y, right - x - cw - px(24), r.Height));
-    draw_text(g, count, g_f.caption.get(), g_t.text2, RectF(right - px(12) - cw, r.Y, cw, r.Height), kRight);
+    draw_text(g, text, g_f.caption.get(), running ? g_t.text : c, RectF(x, r.Y, right - x - px(12), r.Height));
 }
 
 void paint_main(Graphics& g, float W, float) {
     g.Clear(g_t.bg);
-    paint_header(g, W);
-    if (g_view == kStoreView) {
-        paint_store_section(g);
-        paint_store_grid(g);
-    } else {
-        paint_drop_zone(g);
-        paint_section(g);
-        paint_grid(g);
-    }
+    paint_rail(g);
+    paint_layer(g);
+    paint_toolbar(g);
+    if (g_view == kStoreView) paint_store_grid(g);
+    else paint_grid(g);
+    if (g_drag_over) paint_drop_overlay(g);
     paint_footer(g, W);
 }
 
@@ -3221,7 +3330,7 @@ void paint_sheet(Sheet& s, Graphics& g, float W, float H) {
         const RectF ir(m, y, px(64), px(64));
         if (s.hero_icon || s.hero_app.empty()) draw_icon(g, s.hero_icon, s.hero_title, ir);
         else draw_app_icon(g, find_app(s.hero_app), s.hero_title, ir);
-        draw_text(g, s.hero_title, g_f.hero.get(), g_t.text, RectF(m + px(80), y + px(6), cw - px(80), px(30)));
+        draw_text(g, s.hero_title, g_f.title.get(), g_t.text, RectF(m + px(80), y + px(6), cw - px(80), px(30)));
         draw_text(g, s.hero_sub, g_f.caption.get(), g_t.text2, RectF(m + px(80), y + px(36), cw - px(80), px(20)));
         y += px(88);
     }
@@ -4010,7 +4119,7 @@ void paint_install(Graphics& g, float W, float H) {
         g.FillEllipse(&b, badge);
         draw_text(g, failed ? L"" : kGlyphCheck, g_f.glyph16.get(), kWhite, badge, kCenter);
     }
-    draw_text(g, title, g_f.hero.get(), g_t.text, RectF(m + px(60), y - px(2), cw - px(60), px(28)));
+    draw_text(g, title, g_f.title.get(), g_t.text, RectF(m + px(60), y - px(2), cw - px(60), px(28)));
     draw_text(g, sub, g_f.caption.get(), g_t.text2, RectF(m + px(60), y + px(26), cw - px(60), px(20)));
     y += px(70);
 
@@ -4239,7 +4348,7 @@ void paint_logs(Graphics& g, float W, float H) {
     g.Clear(g_t.bg);
     g_lv.targets.clear();
     const float m = px(20);
-    draw_text(g, tr(L"Logs"), g_f.hero.get(), g_t.text, RectF(m, px(14), px(70), px(36)));
+    draw_text(g, tr(L"Logs"), g_f.title.get(), g_t.text, RectF(m, px(14), px(70), px(36)));
     const RectF pick(m + px(76), px(16), (std::min)(px(300), W * 0.4f), px(32));
     fill_round(g, pick, px(6), g_lv.hot == kLogPick ? g_t.hover : mix(g_t.card, g_t.hover, 0.55f));
     stroke_round(g, pick, px(6), g_t.border);
@@ -4422,7 +4531,7 @@ public:
     }
     HRESULT STDMETHODCALLTYPE DragEnter(IDataObject* data, DWORD, POINTL, DWORD* effect) override {
         accept_ = !g_sheet && !dropped_files(data).empty();
-        if (accept_) set_view(kLibraryView);  // where the drop zone is
+        if (accept_) set_view(kLibraryView);  // the drop overlay is the library's
         set_over(accept_);
         *effect = accept_ ? DROPEFFECT_COPY : DROPEFFECT_NONE;
         return S_OK;
@@ -4533,17 +4642,54 @@ void command(int id) {
     }
 }
 
-void move_selection(int dx, int dy) {
-    int i = tile_of(g_selected);
-    if (i < 0) {
+// Moves the selection by tiles (dx) and rows (dy) from the keyboard; `to` jumps to a tile instead.
+void move_selection(int dx, int dy, int to = -1) {
+    int i = to >= 0 ? to : tile_of(g_selected);
+    if (to < 0 && i < 0) {
         for (size_t t = 0; t < g_tiles.size() && i < 0; ++t) {
             if (g_tiles[t].app >= 0) i = static_cast<int>(t);
         }
-    } else {
+    } else if (to < 0) {
         i += dx + dy * g_l.cols;
+        if (dy != 0 && i >= static_cast<int>(g_tiles.size())) i = static_cast<int>(g_tiles.size()) - 1;
     }
     if (i < 0 || i >= static_cast<int>(g_tiles.size()) || g_tiles[static_cast<size_t>(i)].app < 0) return;
+    g_focus_visible = true;
     select_app(g_apps[static_cast<size_t>(g_tiles[static_cast<size_t>(i)].app)].name);
+}
+
+// What a tooltip says for a control that is only a glyph, or a tile whose name may be cut short.
+std::wstring tooltip_text(const Hit& h) {
+    switch (h.kind) {
+        case kHitNav:
+            if (!g_l.compact) return L"";
+            return tr(h.tile == kNavLibrary ? L"Library" : h.tile == kNavStore ? L"Store" : L"Settings");
+        case kHitClear: return tr(L"Clear the search");
+        case kHitRefresh: return tr(L"Check F-Droid for new apps");
+        case kHitTile: {
+            const Tile& t = g_tiles[static_cast<size_t>(h.tile)];
+            if (t.app < 0) return fmt(L"Installing {0}…", {job_label(t.job)});
+            const App& a = g_apps[static_cast<size_t>(t.app)];
+            return g_running.count(a.name) ? a.label + L"  ·  " + tr(L"Running") : a.label;
+        }
+        default: return L"";
+    }
+}
+
+// One tooltip for the window; its text is asked for (TTN_GETDISPINFO) from what the mouse is over.
+void create_tooltip() {
+    if (g_tip) DestroyWindow(g_tip);
+    g_tip = CreateWindowExW(WS_EX_TOPMOST | layout_style() | (g_rtl ? WS_EX_RTLREADING : 0), TOOLTIPS_CLASSW, nullptr,
+                            WS_POPUP | TTS_NOPREFIX | TTS_ALWAYSTIP, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
+                            CW_USEDEFAULT, g_main, nullptr, g_inst, nullptr);
+    if (!g_tip) return;
+    TOOLINFOW ti{sizeof(ti)};
+    ti.uFlags = TTF_SUBCLASS | TTF_IDISHWND;
+    ti.hwnd = g_main;
+    ti.uId = reinterpret_cast<UINT_PTR>(g_main);
+    ti.lpszText = LPSTR_TEXTCALLBACK;
+    SendMessageW(g_tip, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&ti));
+    SendMessageW(g_tip, TTM_SETMAXTIPWIDTH, 0, ipx(320));
 }
 
 LRESULT CALLBACK search_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp, UINT_PTR, DWORD_PTR) {
@@ -4608,13 +4754,25 @@ void apply_language() {
     if (g_install_wnd) SetWindowTextW(g_install_wnd, tr(L"Installing - Win.apk"));
     if (g_log_wnd) DestroyWindow(g_log_wnd);
     create_search();
+    create_tooltip();
     rebuild_tiles();
 }
 
 void set_hot(const Hit& h) {
     if (h == g_hot) return;
     g_hot = h;
+    if (g_tip) SendMessageW(g_tip, TTM_POP, 0, 0);  // the next hover asks for the new target's text
     InvalidateRect(g_main, nullptr, FALSE);
+}
+
+// The window's size is kept between runs, in DIPs so a DPI change does not grow it.
+void save_window_size() {
+    WINDOWPLACEMENT wp{sizeof(wp)};
+    if (!GetWindowPlacement(g_main, &wp)) return;
+    const int dpi = static_cast<int>(g_dpi);
+    set_setting(L"WindowWidth", static_cast<DWORD>(MulDiv(wp.rcNormalPosition.right - wp.rcNormalPosition.left, 96, dpi)));
+    set_setting(L"WindowHeight", static_cast<DWORD>(MulDiv(wp.rcNormalPosition.bottom - wp.rcNormalPosition.top, 96, dpi)));
+    set_setting(L"WindowMaximized", wp.showCmd == SW_SHOWMAXIMIZED ? 1 : 0);
 }
 
 LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
@@ -4624,6 +4782,7 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             g_dpi = static_cast<float>(GetDpiForWindow(hwnd));
             make_fonts();
             create_search();
+            create_tooltip();
             apply_theme();
             g_drop_target = new DropTarget;
             RegisterDragDrop(hwnd, g_drop_target);
@@ -4640,6 +4799,7 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             SendMessageW(g_search, WM_SETFONT, reinterpret_cast<WPARAM>(g_edit_font), FALSE);
             g_icons.clear();
             g_store.icons.clear();
+            g_brand.reset();
             const RECT* r = reinterpret_cast<const RECT*>(lp);
             SetWindowPos(hwnd, nullptr, r->left, r->top, r->right - r->left, r->bottom - r->top,
                          SWP_NOZORDER | SWP_NOACTIVATE);
@@ -4658,6 +4818,16 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             SetTextColor(reinterpret_cast<HDC>(wp), colorref(g_t.text));
             SetBkColor(reinterpret_cast<HDC>(wp), colorref(g_t.card));
             return reinterpret_cast<LRESULT>(g_edit_brush);
+        case WM_NOTIFY:
+            if (reinterpret_cast<NMHDR*>(lp)->code == TTN_GETDISPINFOW) {
+                static wchar_t text[256];
+                const std::wstring tip = tooltip_text(g_hot);
+                wcsncpy(text, tip.c_str(), 255);
+                text[255] = 0;
+                reinterpret_cast<NMTTDISPINFOW*>(lp)->lpszText = text;
+                return 0;
+            }
+            break;
         case WM_COMMAND:
             if (LOWORD(wp) == kIdSearch) {
                 if (HIWORD(wp) == EN_CHANGE) {
@@ -4692,23 +4862,34 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         case WM_SETCURSOR:
             if (LOWORD(lp) == HTCLIENT && reinterpret_cast<HWND>(wp) == hwnd) {
-                const bool hand = g_hot.kind == kHitGear || g_hot.kind == kHitDrop || g_hot.kind == kHitLogs ||
-                                  g_hot.kind == kHitStop || g_hot.kind == kHitTab || g_hot.kind == kHitCategory ||
-                                  g_hot.kind == kHitCard || g_hot.kind == kHitCardButton || g_hot.kind == kHitRetry ||
-                                  (g_hot.kind == kHitTile && g_tiles[static_cast<size_t>(g_hot.tile)].app == kAddTile);
+                const bool hand = g_hot.kind == kHitNav || g_hot.kind == kHitAdd || g_hot.kind == kHitClear ||
+                                  g_hot.kind == kHitRefresh || g_hot.kind == kHitDrop || g_hot.kind == kHitBrowse ||
+                                  g_hot.kind == kHitLogs || g_hot.kind == kHitStop || g_hot.kind == kHitCategory ||
+                                  g_hot.kind == kHitCard || g_hot.kind == kHitCardButton || g_hot.kind == kHitRetry;
                 SetCursor(LoadCursorW(nullptr, hand ? IDC_HAND : IDC_ARROW));
                 return TRUE;
             }
             break;
         case WM_LBUTTONDOWN: {
             SetFocus(hwnd);
+            g_focus_visible = false;
             const float x = static_cast<float>(GET_X_LPARAM(lp)), y = static_cast<float>(GET_Y_LPARAM(lp));
             const Hit h = hit_test(x, y);
             switch (h.kind) {
-                case kHitGear: show_settings(); break;
-                case kHitTab: set_view(h.tile == 1 ? kStoreView : kLibraryView); break;
-                case kHitCategory: choose_category(); break;
+                case kHitNav:
+                    if (h.tile == kNavSettings) show_settings();
+                    else set_view(h.tile == kNavStore ? kStoreView : kLibraryView);
+                    break;
+                case kHitAdd:
+                case kHitDrop: add_from_dialog(); break;
+                case kHitBrowse: set_view(kStoreView); break;
+                case kHitClear:
+                    SetWindowTextW(g_search, L"");
+                    SetFocus(g_search);
+                    break;
+                case kHitRefresh:
                 case kHitRetry: store_start(true); break;
+                case kHitCategory: choose_category(); break;
                 case kHitCardButton:
                 case kHitCard: {
                     // a copy: opening the app or the sheet runs messages that may replace the catalog
@@ -4727,7 +4908,6 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                         if (stop_process(a->name)) g_stopping.insert(a->name);
                     }
                     break;
-                case kHitDrop: add_from_dialog(); break;
                 case kHitThumb:
                     g_thumb_drag = true;
                     g_thumb_y0 = y;
@@ -4742,7 +4922,6 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 case kHitTile: {
                     const Tile& t = g_tiles[static_cast<size_t>(h.tile)];
                     if (t.app >= 0) select_app(g_apps[static_cast<size_t>(t.app)].name);
-                    else if (t.app == kAddTile) add_from_dialog();
                     break;
                 }
                 case kHitNone:
@@ -4792,10 +4971,21 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             clamp_scroll();
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
+        case WM_SYSKEYDOWN:
+            if (wp == VK_RETURN && selected()) {  // Alt+Enter, as Explorer's properties
+                show_info(*selected());
+                return 0;
+            }
+            break;
         case WM_KEYDOWN: {
             const bool ctrl = GetKeyState(VK_CONTROL) < 0;
             if (ctrl && (wp == '1' || wp == '2')) {
                 set_view(wp == '2' ? kStoreView : kLibraryView);
+                return 0;
+            }
+            if (ctrl && wp == 'L') {
+                const auto logs = log_files();
+                show_logs(logs.empty() ? last_run_log() : logs.front());
                 return 0;
             }
             if (g_view == kStoreView) {
@@ -4817,10 +5007,18 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 break;
             }
             switch (wp) {
-                case VK_LEFT: move_selection(-1, 0); return 0;
-                case VK_RIGHT: move_selection(1, 0); return 0;
+                case VK_LEFT: move_selection(g_rtl ? 1 : -1, 0); return 0;
+                case VK_RIGHT: move_selection(g_rtl ? -1 : 1, 0); return 0;
                 case VK_UP: move_selection(0, -1); return 0;
                 case VK_DOWN: move_selection(0, 1); return 0;
+                case VK_PRIOR:
+                case VK_NEXT: {
+                    const int rows = (std::max)(1, static_cast<int>(g_l.grid.Height / (g_l.tile_h + g_l.gap)));
+                    move_selection(0, wp == VK_PRIOR ? -rows : rows);
+                    return 0;
+                }
+                case VK_HOME: move_selection(0, 0, 0); return 0;
+                case VK_END: move_selection(0, 0, static_cast<int>(g_tiles.size()) - 1); return 0;
                 case VK_RETURN: if (const App* a = selected()) launch(*a); return 0;
                 case VK_DELETE: if (const App* a = selected()) remove_app(*a, true); return 0;
                 case VK_F5: refresh(); return 0;
@@ -4978,6 +5176,9 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_GETMINMAXINFO:
             reinterpret_cast<MINMAXINFO*>(lp)->ptMinTrackSize = {ipx(680), ipx(520)};
             return 0;
+        case WM_CLOSE:
+            save_window_size();
+            break;
         case WM_DESTROY:
             RevokeDragDrop(hwnd);
             if (g_drop_target) g_drop_target->Release();
@@ -6715,18 +6916,21 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
     sc.lpfnWndProc = log_proc;
     sc.lpszClassName = L"WinApkLogs";
     RegisterClassExW(&sc);
-    const UINT dpi = GetDpiForSystem();
+    // The size from last time, within the screen; 980 x 720 the first time.
+    const int dpi = static_cast<int>(GetDpiForSystem());
+    const int w = (std::min)(GetSystemMetrics(SM_CXSCREEN),
+                             MulDiv((std::max)(680, static_cast<int>(setting(L"WindowWidth", 980))), dpi, 96));
+    const int h = (std::min)(GetSystemMetrics(SM_CYSCREEN),
+                             MulDiv((std::max)(520, static_cast<int>(setting(L"WindowHeight", 720))), dpi, 96));
     HWND hwnd = CreateWindowExW(layout_style(), wc.lpszClassName, L"Win.apk", WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
-                                CW_USEDEFAULT, CW_USEDEFAULT, MulDiv(980, static_cast<int>(dpi), 96),
-                                MulDiv(720, static_cast<int>(dpi), 96), nullptr, nullptr, inst, nullptr);
-    ShowWindow(hwnd, show);
+                                CW_USEDEFAULT, CW_USEDEFAULT, w, h, nullptr, nullptr, inst, nullptr);
+    ShowWindow(hwnd, show == SW_SHOWDEFAULT && setting(L"WindowMaximized", 0) ? SW_SHOWMAXIMIZED : show);
 
     // An .apk opened from Explorer, or dropped on the program: install and run.
     for (int i = 1; i < argc; ++i) {
         if (is_app_file(argv[i])) install(argv[i], true);
     }
     LocalFree(argv);
-    if (g_apps.empty() && g_pending.empty()) set_view(kStoreView);  // nothing installed yet: where apps come from
 
     MSG m;
     while (GetMessageW(&m, nullptr, 0, 0) > 0) {

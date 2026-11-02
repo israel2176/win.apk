@@ -3,6 +3,7 @@
 #include <winver.h>
 
 1 ICON "winapk.ico"
+2 RCDATA "winapk.png"
 1 24 "launcher.manifest"
 
 VS_VERSION_INFO VERSIONINFO
