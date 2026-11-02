@@ -485,7 +485,15 @@ every such change is listed here:
   paired devices; no connections) reach the app, from
   `windows/host/native_radios.cpp`; `android.hardware.bluetooth` is declared
   when there is a radio. A host without these natives (the Mac) keeps the old
-  answers.
+  answers. Also the interface's DHCP configuration (`getDhcpInfo`:
+  gateway, netmask, DNS, server, lease) and the host's Wi-Fi notifications
+  (`HostRadios.wifiEvent`), which one thread turns into
+  `WIFI_STATE_CHANGED_ACTION`, `NETWORK_STATE_CHANGED_ACTION` (with
+  `EXTRA_NETWORK_INFO`: `android/net/NetworkInfo.java` is now Parcelable,
+  as on AOSP, and its detailed state follows its state),
+  `SUPPLICANT_CONNECTION_CHANGE_ACTION`, `RSSI_CHANGED_ACTION` and
+  `SCAN_RESULTS_AVAILABLE_ACTION` when a scan finishes (the fixed timer
+  stays for a host without events).
 - `runtime/java/com/macapk/loader/HostBluetooth.java` (new), with
   `android/bluetooth/BluetoothSocket.java`, `BluetoothServerSocket.java`,
   `BluetoothDevice.java`, `BluetoothAdapter.java`, `BluetoothGatt.java`,

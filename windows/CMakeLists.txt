@@ -233,7 +233,7 @@ if(WINAPK_JNI_INCLUDE)
                               host/user_folders.cpp host/crash_report.cpp
                               host/runtime.rc)
   target_link_libraries(winapk-runtime PRIVATE winapk_jni winapk_sqlite webpdecoder winapk_stb_vorbis windowscodecs
-                        ole32 mf mfplat mfreadwrite mfuuid shlwapi advapi32 shell32 uuid wlanapi bthprops winmm)
+                        ole32 mf mfplat mfreadwrite mfuuid shlwapi advapi32 shell32 uuid wlanapi iphlpapi bthprops winmm)
   target_include_directories(winapk-runtime PRIVATE ${WINAPK_WEBP_DIR}/src)
   # WebView2 (host/webview2_host.h): the SDK's header to build against, from
   # scripts/fetch_webview2.sh; its WebView2Loader.dll is staged next to the
