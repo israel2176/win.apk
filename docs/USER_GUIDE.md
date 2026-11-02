@@ -140,6 +140,14 @@ In an app:
 | Close the window | The app quits |
 | Resize, maximize or snap the window | A display of the new size; the app lays itself out again |
 
+Video plays: `MediaPlayer` and `VideoView` show MP4, MOV and other files
+Windows can decode (H.264 and AAC always; HEVC, VP9 and AV1 once Microsoft's
+codec packs are installed from the Microsoft Store), from a file or a web
+address, with the sound in step, seeking and looping. Players built on
+`MediaCodec`, such as ExoPlayer, decode H.264 video with AAC or MP3 audio;
+a stream whose audio is Opus, Vorbis or FLAC stays silent, so pick one with
+AAC audio where the app lets you.
+
 An app runs once at a time. Starting it again (from a shortcut or the
 library) brings the running window to the front.
 

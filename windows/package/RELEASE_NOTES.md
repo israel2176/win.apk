@@ -14,6 +14,7 @@ A pre-release for testing: Win.apk runs Android apps on Windows 10/11 x64 as ord
 - **Games in native code:** `NativeActivity` apps get their window, input queue and configuration as on Android.
 - **Native libraries:** apps that ship `lib/x86_64` libraries load them directly. Apps that only ship `lib/arm64-v8a` libraries have their ARM code translated to x64 in the background (`winapk-aot`, compiled with clang for your CPU). The app opens at once on an ARM JIT and switches to the translated code as it becomes ready; large libraries are translated only where the app's code ran.
 - **Sound:** AudioTrack, SoundPool and MediaPlayer audio from Java (WAV, Ogg, MP3, AAC and what Windows decodes), AAudio from native code, and the microphone.
+- **Video:** `MediaPlayer` and `VideoView` play MP4, MOV and other files Windows decodes (H.264 and AAC always; HEVC, VP9 and AV1 with Microsoft's codec packs), from a file or an http(s) URL, into the app's `SurfaceView` or `TextureView`, with the sound in step, pause, seeking and looping. ExoPlayer and other `MediaCodec` players decode H.264 video and AAC/MP3 audio on the same Media Foundation decoders.
 - **Web content:** WebView and Custom Tabs on WebView2 (Microsoft Edge), including `shouldInterceptRequest` for Cordova and Capacitor apps.
 - **Camera and location:** webcams through the Camera, camera2 and CameraX APIs (a virtual camera when there is none); location from Windows' location service, behind Windows' privacy settings.
 - **Storage:** files, SharedPreferences and SQLite. Shared storage (Downloads, Pictures, Documents, Music, Movies) is your own Windows folders; a setting turns that off.
@@ -26,7 +27,7 @@ The compatibility sweep (`windows/test/compat/`) boots about 90 open-source apps
 
 ## Not yet
 - Native code for 32-bit ARM only (`armeabi-v7a`).
-- Video playback (MediaPlayer video, ExoPlayer, the NDK media API).
+- Video from an app's native code (the NDK's `AMediaCodec` and `AMediaExtractor`), `MediaExtractor`, and Opus, Vorbis or FLAC audio through `MediaCodec` (an ExoPlayer stream with such audio stays silent).
 - OpenSL ES from native code: engines that use it get no sound.
 - Vulkan, and real sensor input (the accelerometer and the others report a phone lying still).
 - Play Store features: in-app purchases, Play Integrity, the Maps SDK's map.

@@ -68,6 +68,11 @@ What works
 - Sound: AudioTrack, SoundPool and MediaPlayer audio from Java (WAV, Ogg,
   MP3, AAC and what Windows decodes), AAudio from native code, and the
   microphone.
+- Video: MediaPlayer and VideoView play MP4, MOV and other files Windows
+  decodes (H.264 and AAC always; HEVC, VP9 and AV1 with the Microsoft codec
+  packs from the Store), from a file or a web address, with the sound in
+  step; ExoPlayer and other MediaCodec players decode H.264 video and AAC
+  or MP3 audio the same way.
 - Saving data (files, SharedPreferences, SQLite). Downloads, Pictures,
   Documents, Music and Movies are your own Windows folders.
 - Web pages inside apps (WebView) and Custom Tabs, on WebView2.
@@ -88,7 +93,9 @@ What works
 What does not work yet
 ----------------------
 - Apps that only have 32-bit ARM native libraries (lib/armeabi-v7a).
-- Video playback (MediaPlayer video, ExoPlayer).
+- Video from an app's own native code (the NDK's AMediaCodec), and Opus,
+  Vorbis or FLAC audio through MediaCodec (an ExoPlayer stream with such
+  audio stays silent; choose one with AAC audio).
 - OpenSL ES from native code: games whose engine uses it get no sound.
 - Vulkan, and real sensor input: the accelerometer and the others report a
   phone lying still.

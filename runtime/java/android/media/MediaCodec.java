@@ -487,8 +487,9 @@ public final class MediaCodec {
     // NativeMedia methods rather than keep a second, hand-maintained list
     // that could drift from what this class actually opens a decoder for.
     private static boolean isVideoMimeSupported(String mime) {
-        if (MIME_VP8.equals(mime)) return true;   // libvpx: always present, see isVp8()'s doc
-        if (MIME_VP9.equals(mime)) return true;   // libvpx: always present, see isVp9()'s doc
+        // libvpx: always present where it is built in (see isVp8()'s doc); a
+        // host without it (Windows) lists them below only when it decodes them.
+        if ((MIME_VP8.equals(mime) || MIME_VP9.equals(mime)) && com.macapk.loader.HostVideo.vpxBuiltIn()) return true;
         String[] mimes = com.macapk.loader.NativeMedia.nativeVideoSupportedMimes();
         if (mimes == null) return false;
         for (String m : mimes) if (m.equals(mime)) return true;
