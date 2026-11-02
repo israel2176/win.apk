@@ -96,6 +96,19 @@ void* missing_object(const char* name) {
     return block;
 }
 
+// A guest library is being unloaded (dlclose brought its last reference
+// down): the thunks HotSpot was handed for its functions and the stub-module
+// entry that named it must not outlive it. A library the JVM System.load()ed
+// keeps the JVM's reference, so this only happens for one the app dlopen'ed
+// itself.
+void on_guest_unload(const winapk::ElfImage* image, void*) {
+    winapk::guest_native_thunks_forget(image->base(), image->mapped_size());
+    std::lock_guard<std::mutex> hold(g_lock);
+    for (auto it = g_by_module.begin(); it != g_by_module.end();) {
+        it = winapk::GuestLinker::image_of(it->second) == image ? g_by_module.erase(it) : std::next(it);
+    }
+}
+
 // ---- the app library behind a stub module -----------------------------------
 
 // The .so a stub copy stands for: the translator writes its path, UTF-8, to
@@ -202,6 +215,7 @@ bool guest_libs_init(JNIEnv* env, jvmtiEnv* jvmti) {
     config.load.unresolved = missing_stub;
     config.load.unresolved_object = missing_object;
     g_linker = std::make_unique<winapk::GuestLinker>(config);
+    g_linker->add_unload_hook(on_guest_unload, nullptr);
 
     // HotSpot's lookup of a native method by name ends in this static native.
     HMODULE java_dll = GetModuleHandleW(L"java.dll");

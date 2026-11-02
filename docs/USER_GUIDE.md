@@ -140,6 +140,14 @@ In an app:
 | Close the window | The app quits |
 | Resize, maximize or snap the window | A display of the new size; the app lays itself out again |
 
+Video plays: `MediaPlayer` and `VideoView` show MP4, MOV and other files
+Windows can decode (H.264 and AAC always; HEVC, VP9 and AV1 once Microsoft's
+codec packs are installed from the Microsoft Store), from a file or a web
+address, with the sound in step, seeking and looping. Players built on
+`MediaCodec`, such as ExoPlayer, decode H.264 video with AAC or MP3 audio;
+a stream whose audio is Opus, Vorbis or FLAC stays silent, so pick one with
+AAC audio where the app lets you.
+
 An app runs once at a time. Starting it again (from a shortcut or the
 library) brings the running window to the front.
 
@@ -324,6 +332,21 @@ window themselves, through their "Add an account" flow.
 Google sign-in needs the WebView2 Runtime (a 2022 or later version). Without
 it the sign-in is cancelled and the log says why.
 
+## Wi-Fi and Bluetooth
+
+Apps see the PC's Wi-Fi: whether it is on, the current network with its
+signal and address, and scan results. Network names and scan results need
+location access for desktop apps in Windows' privacy settings, the same way
+Android needs the location permission. An app cannot connect the PC to a
+network.
+
+Bluetooth works with devices you have paired in Windows Settings: an app can
+open a serial (RFCOMM) connection to one, or listen for one to connect to the
+PC, scan for Bluetooth LE devices and connect to them (reading, writing and
+notifications), after it asks for the Nearby devices permission. Apps cannot
+pair or discover classic devices themselves, advertise, act as a GATT server,
+or use the audio and input profiles.
+
 ## Shared storage
 
 On a phone, apps share folders such as Download and Pictures. Here those
@@ -352,6 +375,7 @@ folder (`%LOCALAPPDATA%\Win.apk\logs`).
 | `gms.log` | The Google account operations run from the settings |
 | `install-helper.log`, `package-backfill.log` | Installs an app itself asked for (F-Droid installing another app), and library maintenance |
 | `hs_err_pid<n>.log` | A crash report from the Java VM, if the VM itself crashed |
+| `crash-<app>-<date>.dmp` | A minidump of the app's process when its native code crashed (the last three per app); attach it to an issue with the log |
 
 ## Removing apps and uninstalling
 
@@ -441,6 +465,7 @@ the end of `last-run.log`. The most useful lines:
 | `not implemented on Windows yet` (about a system function) | A C library function the app's native code needs that the Bionic shim does not have yet |
 | `[win.apk] cannot load <library>` or `UnsatisfiedLinkError` | A native library did not load: 32-bit ARM only, packed or encrypted, or for another CPU |
 | `Exception` or `FATAL` | The app crashed; the lines after it say where |
+| `[win.apk] crash:` and `crash dump:` | The app's native code crashed: the library and offset, and the minidump written for it, which is worth attaching too |
 | `[win.apk]` | A message from Win.apk itself |
 
 Then look in [`APPS.md`](APPS.md) for the app or the kind of problem, and
@@ -460,8 +485,11 @@ to `bin` in Win.apk's folder.
 **No sound from a native game.** Games whose engine plays audio through
 OpenSL ES get no sound yet; AAudio works.
 
-**Video does not play.** Video playback is not implemented yet. Audio from
-MediaPlayer plays.
+**Video does not play.** `MediaPlayer`, `VideoView` and ExoPlayer play what
+Windows decodes: H.264 with AAC always; HEVC, VP9 and AV1 only with
+Microsoft's codec packs from the Store. A stream whose audio is Opus, Vorbis
+or FLAC plays without sound in an ExoPlayer app (pick one with AAC), and
+video from an app's native code (the NDK's `AMediaCodec`) is not there yet.
 
 **Windows Defender or SmartScreen warns.** Preview builds are not
 code-signed, and Win.apk writes and then runs translated code, which some

@@ -85,6 +85,10 @@ jobs:
         run: ./build/winapk-elfrun.exe guest/libwinapk_poc_guest.so guest/libwinapk_poc_guest_packed.so
       - name: Run the guest linker test
         run: ./build/winapk-linker-test.exe guest/link
+      - name: Run the crash report test (a guest handler declines, a minidump is written)
+        run: |
+          mkdir -p crash-scratch
+          ./build/winapk-crash-test.exe "$(cygpath -w "$PWD/crash-scratch")"
       - name: Translate the arm64 test libraries ahead of time (as the installer does)
         run: |
           for so in guest/arm64/*.so; do
@@ -99,10 +103,14 @@ jobs:
           ./build/winapk-bionic-test.exe guest/libwinapk_bionic_guest.so "$(cygpath -w "$PWD/bionic-scratch")"
       - name: Run the audio backend test
         run: ./build/winapk-audio-test.exe "$(cygpath -w "$PWD/windows/test/audio")"
+      - name: Run the video backend test
+        run: ./build/winapk-video-test.exe "$(cygpath -w "$PWD/windows/test/video")"
       - name: Run the shared-folder mapping test
         run: ./build/winapk-user-folders-test.exe "$(cygpath -w "$PWD")"
       - name: Run the window geometry test
         run: ./build/winapk-window-test.exe
+      - name: Run the Bluetooth host test
+        run: ./build/winapk-bluetooth-test.exe
       - name: Run the real-JVM end-to-end test
         run: |
           export PATH="$(cygpath -u "$JAVA_HOME")/bin/server:$(cygpath -u "$JAVA_HOME")/bin:$PATH"
@@ -155,6 +163,14 @@ jobs:
           cp="$(cygpath -w runtime/lib/macapk-loader.jar);$(cygpath -w runtime/lib/android-framework.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/perm-test windows/test/java/PermissionModelTest.java
           "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/perm-test)" PermissionModelTest
+      - name: Run the scan record test
+        run: |
+          # android.bluetooth.le.ScanRecord's parser over the advertising bytes
+          # the LE scan delivers, and ScanFilter over the result.
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          cp="$(cygpath -w runtime/lib/android-framework.jar)"
+          "$JAVA_HOME/bin/javac" -cp "$cp" -d build/scan-test windows/test/java/ScanRecordTest.java
+          "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/scan-test)" ScanRecordTest
       - name: Run the GL test
         run: |
           # It needs ANGLE next to it, which staging just put in runtime/bin.

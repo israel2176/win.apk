@@ -8,20 +8,32 @@
 // (ACCESS_FINE_LOCATION); without it the calls fail and the app sees what an
 // Android app without that permission sees: "<unknown ssid>" and no networks.
 //
-// Bluetooth is the classic (BR/EDR) API: the radio, whether it is on, and the
-// paired devices. Talking to devices (RFCOMM, GATT) is not offered.
+// The Wi-Fi interface's DHCP configuration comes from the IP helper
+// (GetAdaptersAddresses), and the Wi-Fi notifications (connected, scan
+// done, signal, radio) from WlanRegisterNotification, queued for a Java
+// thread that turns them into WifiManager's broadcasts.
+//
+// Bluetooth here is the classic (BR/EDR) API: the radio, whether it is on,
+// and the paired devices. Talking to devices (RFCOMM, LE scans, GATT) is
+// native_bluetooth.cpp's.
 
 #include "host_natives.h"
 
 #include <algorithm>
+#include <chrono>
+#include <condition_variable>
 #include <cstdio>
 #include <cstring>
+#include <deque>
 #include <mutex>
 #include <string>
 #include <vector>
 
+#include <winsock2.h>
+#include <ws2tcpip.h>
 #include <windows.h>
 #include <bluetoothapis.h>
+#include <iphlpapi.h>
 #include <wlanapi.h>
 
 namespace winapk::host {
@@ -226,6 +238,125 @@ jboolean JNICALL Radio_wifiStartScan(JNIEnv*, jclass) {
     return WlanScan(wlan(), &guid, nullptr, nullptr, nullptr) == ERROR_SUCCESS ? JNI_TRUE : JNI_FALSE;
 }
 
+// An IPv4 address as Android's DhcpInfo / WifiInfo int: the address bytes
+// in order, least significant first, which is in_addr's memory read as one.
+jint ipv4_int(const SOCKET_ADDRESS& a) {
+    if (!a.lpSockaddr || a.lpSockaddr->sa_family != AF_INET) return 0;
+    jint v;
+    std::memcpy(&v, &reinterpret_cast<const sockaddr_in*>(a.lpSockaddr)->sin_addr, sizeof v);
+    return v;
+}
+
+// The Wi-Fi interface's IPv4 configuration, {ip, gateway, netmask, dns1,
+// dns2, DHCP server, lease seconds} in DhcpInfo's form; null when not
+// connected. The adapter is the one whose name is the interface GUID.
+jintArray JNICALL Radio_wifiDhcp(JNIEnv* env, jclass) {
+    GUID guid;
+    WLAN_INTERFACE_STATE state;
+    if (!wifi_interface(&guid, &state) || state != wlan_interface_state_connected) return nullptr;
+    wchar_t wname[64] = {};
+    StringFromGUID2(guid, wname, 64);
+    const std::string name = utf8(wname);
+    ULONG size = 16 * 1024;
+    std::vector<char> buf(size);
+    const ULONG flags = GAA_FLAG_INCLUDE_GATEWAYS | GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST |
+                        GAA_FLAG_SKIP_FRIENDLY_NAME;
+    auto adapters = [&] { return reinterpret_cast<IP_ADAPTER_ADDRESSES_LH*>(buf.data()); };
+    ULONG rc = GetAdaptersAddresses(AF_INET, flags, nullptr, adapters(), &size);
+    if (rc == ERROR_BUFFER_OVERFLOW) {
+        buf.resize(size);
+        rc = GetAdaptersAddresses(AF_INET, flags, nullptr, adapters(), &size);
+    }
+    if (rc != NO_ERROR) return nullptr;
+    for (const IP_ADAPTER_ADDRESSES_LH* a = adapters(); a; a = a->Next) {
+        if (!a->AdapterName || _stricmp(a->AdapterName, name.c_str()) != 0) continue;
+        jint v[7] = {};
+        if (a->FirstUnicastAddress) {
+            const IP_ADAPTER_UNICAST_ADDRESS_LH* u = a->FirstUnicastAddress;
+            v[0] = ipv4_int(u->Address);
+            // The prefix length as a mask, in the same byte order.
+            const int prefix = u->OnLinkPrefixLength;
+            unsigned mask = 0;
+            for (int i = 0; i < 4; ++i) {
+                const int bits = std::min(8, std::max(0, prefix - 8 * i));
+                const unsigned byte = bits ? (0xFFu << (8 - bits)) & 0xFFu : 0;
+                mask |= byte << (8 * i);
+            }
+            v[2] = static_cast<jint>(mask);
+            v[6] = static_cast<jint>(std::min<ULONG>(u->LeaseLifetime, 0x7FFFFFFF));
+        }
+        if (a->FirstGatewayAddress) v[1] = ipv4_int(a->FirstGatewayAddress->Address);
+        int dns = 0;
+        for (const IP_ADAPTER_DNS_SERVER_ADDRESS_XP* d = a->FirstDnsServerAddress; d && dns < 2; d = d->Next) {
+            const jint ip = ipv4_int(d->Address);
+            if (ip) v[3 + dns++] = ip;
+        }
+        if (a->Flags & IP_ADAPTER_DHCP_ENABLED) v[5] = ipv4_int(a->Dhcpv4Server);
+        jintArray out = env->NewIntArray(7);
+        if (out) env->SetIntArrayRegion(out, 0, 7, v);
+        return out;
+    }
+    return nullptr;
+}
+
+// ---- Wi-Fi notifications ---------------------------------------------------------
+
+// What WifiManager turns into its broadcasts (HostRadios.WIFI_EVENT_*).
+constexpr jint kEventState = 1, kEventConnected = 2, kEventDisconnected = 3, kEventSignal = 4, kEventScan = 5;
+
+std::mutex g_wifi_event_lock;
+std::condition_variable g_wifi_event_wake;
+std::deque<jint> g_wifi_events;
+bool g_wifi_events_registered = false;
+
+// The notification source WLAN_NOTIFICATION_SOURCE_MSM's codes the header
+// here lacks (WLAN_NOTIFICATION_MSM).
+constexpr DWORD kMsmRadioStateChange = 7, kMsmSignalQualityChange = 8;
+
+void CALLBACK on_wlan_notification(PWLAN_NOTIFICATION_DATA data, PVOID) {
+    jint code = 0;
+    if (data->NotificationSource == WLAN_NOTIFICATION_SOURCE_ACM) {
+        switch (data->NotificationCode) {
+        case wlan_notification_acm_scan_complete: code = kEventScan; break;
+        case wlan_notification_acm_connection_complete: code = kEventConnected; break;
+        case wlan_notification_acm_disconnected: code = kEventDisconnected; break;
+        case wlan_notification_acm_interface_arrival:
+        case wlan_notification_acm_interface_removal: code = kEventState; break;
+        default: break;
+        }
+    } else if (data->NotificationSource == WLAN_NOTIFICATION_SOURCE_MSM) {
+        if (data->NotificationCode == kMsmRadioStateChange) code = kEventState;
+        if (data->NotificationCode == kMsmSignalQualityChange) code = kEventSignal;
+    }
+    if (!code) return;
+    std::lock_guard<std::mutex> l(g_wifi_event_lock);
+    // A burst of the same event is one event to the app.
+    if (!g_wifi_events.empty() && g_wifi_events.back() == code) return;
+    g_wifi_events.push_back(code);
+    g_wifi_event_wake.notify_all();
+}
+
+// The next Wi-Fi event, 0 when `timeout_ms` passed without one, -1 when the
+// host cannot report them (no Wi-Fi service).
+jint JNICALL Radio_wifiEvent(JNIEnv*, jclass, jint timeout_ms) {
+    std::unique_lock<std::mutex> l(g_wifi_event_lock);
+    if (!g_wifi_events_registered) {
+        HANDLE h = wlan();
+        DWORD previous = 0;
+        if (!h || WlanRegisterNotification(h, WLAN_NOTIFICATION_SOURCE_ACM | WLAN_NOTIFICATION_SOURCE_MSM, TRUE,
+                                           on_wlan_notification, nullptr, nullptr, &previous) != ERROR_SUCCESS) {
+            return -1;
+        }
+        g_wifi_events_registered = true;
+    }
+    if (!g_wifi_event_wake.wait_for(l, std::chrono::milliseconds(timeout_ms), [] { return !g_wifi_events.empty(); })) {
+        return 0;
+    }
+    const jint code = g_wifi_events.front();
+    g_wifi_events.pop_front();
+    return code;
+}
+
 // ---- Bluetooth ----------------------------------------------------------------
 
 // Android writes the address most significant byte first; Windows stores it
@@ -289,6 +420,8 @@ const HostMethod kMethods[] = {
     WINAPK_HOST_NATIVE(kCls, "nativeWifiConnection", "()[Ljava/lang/String;", Radio_wifiConnection),
     WINAPK_HOST_NATIVE(kCls, "nativeWifiScanResults", "()[Ljava/lang/String;", Radio_wifiScanResults),
     WINAPK_HOST_NATIVE(kCls, "nativeWifiStartScan", "()Z", Radio_wifiStartScan),
+    WINAPK_HOST_NATIVE(kCls, "nativeWifiDhcp", "()[I", Radio_wifiDhcp),
+    WINAPK_HOST_NATIVE(kCls, "nativeWifiEvent", "(I)I", Radio_wifiEvent),
     WINAPK_HOST_NATIVE(kCls, "nativeBluetoothRadio", "()[Ljava/lang/String;", Radio_bluetoothRadio),
     WINAPK_HOST_NATIVE(kCls, "nativeBluetoothBonded", "()[Ljava/lang/String;", Radio_bluetoothBonded),
 };

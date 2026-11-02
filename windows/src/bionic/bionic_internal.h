@@ -48,7 +48,7 @@ ShimTable pthread_symbols();  // pthread.cpp: threads, mutexes, conditions, keys
 ShimTable stdio_symbols();    // stdio.cpp: FILE, file descriptors, directories, stat
 ShimTable setjmp_symbols();   // setjmp.cpp: setjmp and longjmp for x86_64 guests
 ShimTable misc_symbols();     // misc.cpp: time, sysconf, system properties, environment, math
-ShimTable signal_symbols();   // signal.cpp: sigaction, sigaltstack, masks, POSIX timers (state kept, none delivered)
+ShimTable signal_symbols();   // signal.cpp: sigaction, sigaltstack, masks, delivery of faults and self-sent signals
 ShimTable fd_symbols();       // fd.cpp: pipe, eventfd, poll, select, epoll
 ShimTable socket_symbols();   // socket.cpp: BSD sockets on Winsock, getaddrinfo, inet_*
 ShimTable looper_symbols();   // looper.cpp: the NDK's ALooper
@@ -71,9 +71,20 @@ int linux_errno(int crt_errno);
 constexpr int kEPERM = 1, kENOENT = 2, kEINTR = 4, kEIO = 5, kEBADF = 9, kEAGAIN = 11, kENOMEM = 12,
               kEACCES = 13, kEFAULT = 14, kEBUSY = 16, kEEXIST = 17, kENOTDIR = 20, kEISDIR = 21,
               kEINVAL = 22, kEMFILE = 24, kENOSPC = 28, kESPIPE = 29, kERANGE = 34, kEDEADLK = 35,
-              kENAMETOOLONG = 36, kENOSYS = 38, kENOTEMPTY = 39, kETIMEDOUT = 110, kENOTSUP = 95;
+              kENAMETOOLONG = 36, kENOSYS = 38, kENOTEMPTY = 39, kETIMEDOUT = 110, kENOTSUP = 95, kESRCH = 3;
 
 // ---- shared between modules ---------------------------------------------------
+
+// signal.cpp: sends `sig` to the thread with Windows id `tid` (0: the calling
+// thread) the way tgkill does: delivered now if it is this thread, injected
+// into the other one otherwise. Returns 0 or a Linux errno.
+int signal_send(uint32_t tid, int sig);
+// The calling thread's blocked set, for sigsetjmp/siglongjmp (setjmp.cpp).
+uint64_t signal_mask_of_current_thread();
+void signal_set_mask_of_current_thread(uint64_t mask);
+
+// pthread.cpp: the Windows thread id behind a guest pthread_t (0 if null).
+uint32_t thread_id_of(const void* pthread);
 
 // strerror's text for a Linux errno value (string.cpp).
 const char* errno_text(int linux_errno);

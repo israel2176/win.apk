@@ -197,6 +197,10 @@ std::unique_ptr<ElfImage> ElfImage::map(const std::filesystem::path& path, std::
         // has relocated it in place.
         img->tls_module_ = tls_register_module(img->at<const void>(img->tls_vaddr_), img->tls_filesz_,
                                                img->tls_memsz_, img->tls_align_);
+        if (!img->tls_module_) {
+            *error = "too many libraries with TLS are loaded at once";
+            return nullptr;
+        }
     }
 
     if (img->is_arm64()) {
@@ -227,6 +231,9 @@ bool ElfImage::link(const SymbolResolver& resolve, std::string* error,
 
 void ElfImage::initialize() {
     if (linked_ && !initialized_) run_initializers();
+}
+void ElfImage::finalize() {
+    if (initialized_) run_finalizers();
 }
 
 ElfImage::~ElfImage() {

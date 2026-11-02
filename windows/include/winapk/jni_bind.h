@@ -43,6 +43,11 @@ bool jni_arg_kinds(const char* sig, std::vector<ArgKind>* out);
 // pool is exhausted. The same (fn, sig) always gets the same thunk.
 void* guest_native_thunk(void* fn, const char* sig);
 
+// Forgets the thunks for functions in [base, base + size): a library was
+// unloaded, and the next one mapped there must get thunks of its own. The
+// thunk code stays in the pool (it never frees) but nothing refers to it.
+void guest_native_thunks_forget(const void* base, size_t size);
+
 // The guest table's RegisterNatives slot (System V, called by guest code).
 WINAPK_GUEST_ABI jint guest_register_natives(JNIEnv* env, jclass clazz, const JNINativeMethod* methods,
                                              jint count);

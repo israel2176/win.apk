@@ -100,7 +100,7 @@ and `-DWINAPK_JNI_INCLUDE=<windows-jdk>/include`. The scripts under
 
 | Script | What it does |
 |---|---|
-| `windows/test/run_poc_wine.sh` | Builds the loader and the guest libraries and runs the PoC checks under Wine |
+| `windows/test/run_poc_wine.sh` | Builds the loader and the guest libraries and runs the loader, linker, arm64 and crash-report tests under Wine. The toolchain file adds `-femulated-tls` and winpthreads, which GCC's mingw-w64 libstdc++ needs |
 | `WINAPK_WIN_JDK=<windows-jdk> windows/test/run_e2e_wine.sh` | Builds and runs the real-JVM end-to-end test, with the x86_64 and the arm64 guest library (`WINAPK_HOST_JAVAC` picks the javac) |
 | `WINAPK_WIN_JDK=<windows-jdk> windows/test/run_app_wine.sh app.apk [frames]` | Stages the runtime and boots an APK headless (needs `curl` and `unzip` for the first resource build); leaves `windows/build/frame.bmp` and `boot.log` |
 | `windows/test/build_guest.sh [out]`, `build_e2e.sh <jni include> <javac> <out>` | Build the guest test libraries alone |
@@ -178,6 +178,10 @@ Every test is a program built by CMake; `windows-poc.yml` runs each of them on
 | Program | What it checks |
 |---|---|
 | `winapk-elfrun <poc.so> <poc_packed.so>` | Two builds of the Android test library (plain RELA, and APS2 + RELR) load and run: argument passing across the ABI boundary, RELATIVE and `R_X86_64_64` relocations, constructors, shim calls, stack-protected code on new threads, a guest comparator in host `qsort`, a host callback from guest code |
+| `winapk-crash-test` | The crash path of `host/crash_report.cpp`: a child with a guest SIGSEGV handler that declines three times, then the report line with the faulting module and offset, a minidump (`MDMP`) in the logs folder, pruning to the last three |
+| `winapk-bluetooth-test` | The Bluetooth host's pure parts without a radio: SHA-1 against the FIPS vectors, the parameterized WinRT interface ids derived from type signatures against five published ones, UUID and address conversions, advertisement bytes |
+| `ScanRecordTest` (`test/java/`) | `ScanRecord`'s advertisement parser and `ScanFilter` against the built jars |
+| `winapk-video-test <test/video dir>` | The Media Foundation video backend without a JVM: the YUV converter, a decoder MFT, the source reader and the player on `test/video/color.mp4` (1 s of H.264 + AAC); decoder checks are skipped where no H.264 MFT exists |
 | `winapk-thunk-test` | Native-method thunks with mixed, stack-overflowing and narrow arguments; the variadic entry stub's `va_list`; the tagged zero stub |
 | `winapk-jni-test`, `winapk-jni-variadic-test` | The guest `JNIEnv` against a mock JVM; the variadic bridge for all four call kinds and every argument type, through `...` and `va_list` |
 | `winapk-linker-test <dir>` | A four-library tree with a `DT_NEEDED` cycle and a runtime plugin: constructor order, symbol resolution, `dlsym` scopes, the guest's `dlopen`, `dlsym`, `dlerror` and `dladdr` |
@@ -360,7 +364,33 @@ every such change is listed here:
   paired devices; no connections) reach the app, from
   `windows/host/native_radios.cpp`; `android.hardware.bluetooth` is declared
   when there is a radio. A host without these natives (the Mac) keeps the old
-  answers.
+  answers. Also the interface's DHCP configuration (`getDhcpInfo`:
+  gateway, netmask, DNS, server, lease) and the host's Wi-Fi notifications
+  (`HostRadios.wifiEvent`), which one thread turns into
+  `WIFI_STATE_CHANGED_ACTION`, `NETWORK_STATE_CHANGED_ACTION` (with
+  `EXTRA_NETWORK_INFO`: `android/net/NetworkInfo.java` is now Parcelable,
+  as on AOSP, and its detailed state follows its state),
+  `SUPPLICANT_CONNECTION_CHANGE_ACTION`, `RSSI_CHANGED_ACTION` and
+  `SCAN_RESULTS_AVAILABLE_ACTION` when a scan finishes (the fixed timer
+  stays for a host without events).
+- `runtime/java/com/macapk/loader/HostBluetooth.java` (new), with
+  `android/bluetooth/BluetoothSocket.java`, `BluetoothServerSocket.java`,
+  `BluetoothDevice.java`, `BluetoothAdapter.java`, `BluetoothGatt.java`,
+  `BluetoothGattService.java`, `BluetoothGattCharacteristic.java`,
+  `BluetoothGattDescriptor.java` (the hidden instance-id constructors),
+  `android/bluetooth/le/BluetoothLeScanner.java`, `ScanRecord.java` (AOSP's
+  parser) and `MacApkPackageManager.java`: talking to Bluetooth devices
+  through the host, from `windows/host/native_bluetooth.cpp`: RFCOMM sockets
+  both ways (Winsock AF_BTH, the SDP query and record), LE scans (the
+  advertisement watcher) and the GATT client (services, reads, writes,
+  notifications, MTU). The permission checks are AOSP's: `BLUETOOTH_CONNECT`
+  / `BLUETOOTH_SCAN` (implied by `BLUETOOTH` / `BLUETOOTH_ADMIN` below API
+  31) throw `SecurityException` when missing, scan results need the location
+  permission unless the scan is `neverForLocation` (`PackageInfo` now carries
+  that flag). `android.hardware.bluetooth_le` is declared when the host
+  scans. A host without these natives (the Mac) keeps the old answers: the
+  sockets' "no Bluetooth radio", a GATT client that reports the failure, a
+  scan that fails.
 - `runtime/java/com/macapk/loader/ActivityHost.java` and
   `MacApkPackageManager.java`: a Custom Tab launch opens in
   `HostBrowserTab` (new, with `HostCustomTabsService`) when the host has a
@@ -475,6 +505,32 @@ every such change is listed here:
   the same native the policy's branch uses), so a portrait-only app opens
   portrait although the library opens apps landscape. A host without the
   native keeps the old behaviour.
+
+- `runtime/java/com/macapk/loader/HostVideo.java` (new): MediaPlayer's video
+  player on the host (`windows/host/native_media_video.cpp`): a thread pulls
+  each picture when the host says it is due and shows it where the app's
+  Surface points (a SurfaceView's own layer through
+  `SurfaceView.macapkPresentVideoFrame`, new, public; a SurfaceTexture's
+  producer queue; else the window), with `setVideoScalingMode`'s cropping.
+  Also `presentDecodedFrame`, which the host's `NativeMedia.nativeVidRender`
+  calls back to find MediaCodec's registered SurfaceView sink or
+  SurfaceTexture target (the Mac's video plane does the same lookups in
+  native code), and `vpxBuiltIn`: whether libvpx is built in (the Mac) or
+  VP8/VP9 are the host's, listed by `nativeVideoSupportedMimes` when present.
+  `MediaCodec.isVideoMimeSupported` and `MediaCodecList`'s libvpx provider
+  ask it instead of assuming libvpx. On the Mac every native is unbound and
+  nothing changes.
+- `runtime/java/android/media/MediaPlayer.java`: `setDataSource(path)` and a
+  `file:`/`http(s):` Uri keep the path (read at `prepare`, so a video is not
+  slurped into memory and a URL is streamed); `prepare` tries
+  `HostVideo.Player` first and, for a source with a video track, every
+  transport call, `getVideoWidth/Height`, `setDisplay`/`setSurface`,
+  `setVideoScalingMode` and `onVideoSizeChanged` go to it; an audio-only
+  source, or a host without the player, keeps the audio path as it was.
+- `runtime/java/android/widget/VideoView.java`: binds the player to its
+  holder (`setDisplay`), measures to the video's aspect ratio
+  (`onMeasure`), and keeps a `start()`/`seekTo()` made before the player is
+  prepared for `onPrepared`, as AOSP does. Not Windows-specific.
 
 ## License
 
