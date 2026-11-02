@@ -108,8 +108,20 @@ SRC="$WORK/src"
 # archives, so this is ~20 MB instead of a multi-GB frameworks/base clone).
 if [ ! -f "$SRC/AndroidManifest.xml" ]; then
     echo "[1/4] fetching frameworks/base/core/res @ $AOSP_TAG ..."
-    curl -sSL -o "$TARBALL" \
-        "https://android.googlesource.com/platform/frameworks/base/+archive/refs/tags/$AOSP_TAG/core/res.tar.gz"
+    # googlesource answers a busy moment with an HTML page and a 429 or 5xx:
+    # -f turns that into a curl failure, --retry tries again, and the gzip
+    # check below catches a page that still came back with 200.
+    url="https://android.googlesource.com/platform/frameworks/base/+archive/refs/tags/$AOSP_TAG/core/res.tar.gz"
+    for attempt in 1 2 3 4 5; do
+        rm -f "$TARBALL"
+        if curl -fsSL --retry 3 --retry-delay 5 --retry-all-errors -o "$TARBALL" "$url" \
+            && gzip -t "$TARBALL" 2>/dev/null; then
+            break
+        fi
+        [ "$attempt" -lt 5 ] || { echo "could not fetch a gzip archive from $url" >&2; exit 1; }
+        echo "[1/4] fetch attempt $attempt failed; retrying in $((attempt * 10)) s ..."
+        sleep $((attempt * 10))
+    done
     mkdir -p "$SRC"
     tar -xzf "$TARBALL" -C "$SRC"
     [ -f "$SRC/MODULE_LICENSE_APACHE2" ] || {
