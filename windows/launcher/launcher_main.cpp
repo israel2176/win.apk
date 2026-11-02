@@ -154,7 +154,6 @@ const wchar_t* tr(const wchar_t* en) {
         {L"Browse the Store", L"עיון בחנות"},
         {L"Clear the search", L"ניקוי החיפוש"},
         {L"Check F-Droid for new apps", L"בדיקת אפליקציות חדשות ב-F-Droid"},
-        {L"Free and open-source apps from f-droid.org", L"אפליקציות חינמיות בקוד פתוח מ-f-droid.org"},
         {L"{0} apps are running", L"{0} אפליקציות פועלות"},
         {L"{0} is running", L"{0} פועלת"},
         {L"{0} app", L"אפליקציה אחת"},
@@ -2621,10 +2620,12 @@ void paint_toolbar(Graphics& g) {
     const bool store = g_view == kStoreView;
     std::wstring sub;
     if (store) {
-        if (g_store.apps.empty() && (g_store.loading || !g_store.started)) sub = tr(L"Getting the app catalog from F-Droid…");
+        if (g_store.apps.empty() && (g_store.loading || !g_store.started)) {
+            sub = tr(L"Getting the app catalog from F-Droid…");
+        }
         else if (g_store.apps.empty()) sub = tr(L"F-Droid could not be reached");
         else if (g_store.loading) sub = tr(L"Checking F-Droid for new apps…");
-        else sub = app_count(g_store.shown.size()) + L"  ·  " + tr(L"Free and open-source apps from f-droid.org");
+        else sub = app_count(g_store.shown.size()) + L"  ·  f-droid.org";
     } else {
         sub = g_apps.empty() ? std::wstring(tr(L"No apps installed yet")) : app_count(g_apps.size());
         if (!g_running.empty()) sub += L"  ·  " + fmt(L"{0} running", {std::to_wstring(g_running.size())});
@@ -2690,13 +2691,17 @@ void paint_tile(Graphics& g, int i) {
         fill_round(g, ir, s * 0.22f, Color(130, 0, 0, 0));
         spinner(g, inset(ir, s * 0.3f, s * 0.3f), kWhite, px(3));
     }
-    if (running) {  // a badge on the icon's corner, ringed in the layer's colour so it stands off the picture
-        const float d = px(16);
-        const RectF badge(ir.GetRight() - d + px(4), ir.GetBottom() - d + px(4), d, d);
-        Gdiplus::SolidBrush ring(sel ? mix(g_t.layer, g_t.accent, g_t.dark ? 0.22f : 0.12f) : hot ? g_t.card : g_t.layer);
+    if (running) {  // a badge on the icon's corner, ringed in the tile's colour so it stands off the picture
+        const float d = px(22);
+        const RectF badge(ir.GetRight() - d + px(6), ir.GetBottom() - d + px(6), d, d);
+        Gdiplus::SolidBrush ring(sel   ? mix(g_t.layer, g_t.accent, g_t.dark ? 0.22f : 0.12f)
+                                 : hot ? g_t.card
+                                       : g_t.layer);
         g.FillEllipse(&ring, badge);
         Gdiplus::SolidBrush dot(g_t.success);
         g.FillEllipse(&dot, inset(badge, px(3), px(3)));
+        Gdiplus::SolidBrush core(kWhite);
+        g.FillEllipse(&core, inset(badge, px(8), px(8)));
     }
     draw_text(g, label, g_f.tile.get(), app ? g_t.text : g_t.text2,
               RectF(r.X + px(6), ir.GetBottom() + px(8), r.Width - px(12), px(36)), kCenter, true, false);
@@ -2741,7 +2746,8 @@ void paint_grid(Graphics& g) {
     if (g_tiles.empty()) {
         const std::wstring q = query(kLibraryView);
         if (q.empty()) paint_drop_card(g);
-        else paint_empty(g, kGlyphSearch, fmt(L"No apps match “{0}”", {q}), tr(L"Press Esc in the search box to show every app."));
+        else paint_empty(g, kGlyphSearch, fmt(L"No apps match “{0}”", {q}),
+                         tr(L"Press Esc in the search box to show every app."));
         return;
     }
     g.SetClip(gr);
@@ -2883,7 +2889,8 @@ void paint_footer(Graphics& g, float W) {
     const std::wstring hint =
         store            ? tr(L"Free and open-source apps from f-droid.org  ·  Install adds the app to your library")
         : g_apps.empty() ? tr(L"Drop an APK anywhere in this window to install your first app")
-                         : tr(L"Double-click to open  ·  right-click for options  ·  drop an APK anywhere to add more");
+                         : tr(L"Double-click to open  ·  right-click for options  ·  drop an APK anywhere to add "
+                              L"more");
     const bool hinted = g_status.empty() || g_status_kind == kHint;
     const Color c = hinted || g_status_kind == kInfo ? g_t.text2
                     : g_status_kind == kSuccess       ? g_t.success
@@ -3296,8 +3303,8 @@ void paint_control(Graphics& g, const Row& row, const RectF& r, bool hot) {
     switch (row.kind) {
         case Row::kButton: draw_button(g, r, row.value, hot, row.primary, row.destructive); break;
         case Row::kToggle: {
-            fill_round(g, r, r.Height / 2, row.on ? (hot ? mix(g_t.accent, g_t.dark ? kWhite : kBlack, 0.1f) : g_t.accent)
-                                                  : (hot ? g_t.hover : g_t.card));
+            const Color on = hot ? mix(g_t.accent, g_t.dark ? kWhite : kBlack, 0.1f) : g_t.accent;
+            fill_round(g, r, r.Height / 2, row.on ? on : hot ? g_t.hover : g_t.card);
             if (!row.on) stroke_round(g, r, r.Height / 2, g_t.text2);
             const float k = row.on ? r.Height - px(8) : r.Height - px(10);
             const float kx = row.on ? r.GetRight() - k - px(4) : r.X + px(5);
@@ -4878,8 +4885,9 @@ void save_window_size() {
     WINDOWPLACEMENT wp{sizeof(wp)};
     if (!GetWindowPlacement(g_main, &wp)) return;
     const int dpi = static_cast<int>(g_dpi);
-    set_setting(L"WindowWidth", static_cast<DWORD>(MulDiv(wp.rcNormalPosition.right - wp.rcNormalPosition.left, 96, dpi)));
-    set_setting(L"WindowHeight", static_cast<DWORD>(MulDiv(wp.rcNormalPosition.bottom - wp.rcNormalPosition.top, 96, dpi)));
+    const RECT& r = wp.rcNormalPosition;
+    set_setting(L"WindowWidth", static_cast<DWORD>(MulDiv(r.right - r.left, 96, dpi)));
+    set_setting(L"WindowHeight", static_cast<DWORD>(MulDiv(r.bottom - r.top, 96, dpi)));
     set_setting(L"WindowMaximized", wp.showCmd == SW_SHOWMAXIMIZED ? 1 : 0);
 }
 
