@@ -96,7 +96,7 @@ constexpr Sxword kDtFiniArraySz = 28;
 constexpr Sxword kDtRelrSz = 35;
 constexpr Sxword kDtRelr = 36;
 constexpr Sxword kDtGnuHash = 0x6ffffef5;
-// Android's packed relocations (APS2). Not decoded yet; the loader reports them.
+// Android's packed relocations (APS2), decoded in elf_loader.cpp.
 constexpr Sxword kDtAndroidRela = 0x60000011;
 constexpr Sxword kDtAndroidRelaSz = 0x60000012;
 

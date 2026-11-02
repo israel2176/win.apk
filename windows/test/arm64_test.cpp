@@ -1,5 +1,5 @@
-// arm64_test.cpp -- winapk-arm64-test: the arm64 interpreter and its bridge to
-// the Windows host (milestone M10, stage 1).
+// arm64_test.cpp -- winapk-arm64-test: the arm64 engines and their bridge to
+// the Windows host.
 //
 //   winapk-arm64-test <dir with libwinapk_arm64_*.so>
 //

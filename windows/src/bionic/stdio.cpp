@@ -572,8 +572,9 @@ WINAPK_GUEST_ABI int g_mkdirat(int dirfd, const char* path, unsigned mode) {
 }
 WINAPK_GUEST_ABI int g_rmdir(const char* path) { return _wrmdir(host_path(path).c_str()) < 0 ? fail_crt() : 0; }
 WINAPK_GUEST_ABI int g_unlink(const char* path) {
-    // POSIX unlinks an open file; Windows needs it shared for delete, which
-    // the CRT does not ask for, so fall back to delete-on-close semantics.
+    // POSIX unlinks an open file; Windows deletes one only when every open
+    // handle shares delete access, and otherwise reports EBUSY
+    // (ERROR_SHARING_VIOLATION) through set_errno_from_win32.
     const std::wstring w = host_path(path);
     if (DeleteFileW(w.c_str())) return 0;
     set_errno_from_win32(GetLastError());

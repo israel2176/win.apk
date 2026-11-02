@@ -15,7 +15,7 @@
 //   5. run DT_INIT and DT_INIT_ARRAY.
 //
 // An arm64 (EM_AARCH64) library goes through the same steps, with three
-// differences (milestone M10, arm64_guest.h): its executable segments are
+// differences (arm64_guest.h): its executable segments are
 // mapped readable but not executable and registered with the arm64
 // interpreter, step 2 does not apply, and its IRELATIVE resolvers,
 // constructors and destructors run through the interpreter. Everything that
@@ -40,7 +40,6 @@
 #include <vector>
 
 #include "winapk/elf64_defs.h"
-#include <vector>
 
 namespace winapk {
 

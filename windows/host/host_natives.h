@@ -34,7 +34,7 @@ struct HostMethods {
 
 // The implementations, one file per Java class.
 HostMethods native_log_methods();    // native_log.cpp
-HostMethods native_cocoa_methods();  // native_cocoa.cpp (headless for now)
+HostMethods native_cocoa_methods();  // native_cocoa.cpp
 HostMethods native_linker_methods(); // guest_libs.cpp
 HostMethods native_os_methods();     // native_os.cpp
 HostMethods native_image_methods();  // native_image.cpp

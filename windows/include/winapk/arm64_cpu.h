@@ -1,10 +1,11 @@
 // arm64_cpu.h -- an AArch64 (A64) user-mode CPU for running Android arm64-v8a
-// code on an x64 host. Milestone M10, stage 1 (see PORTING.md).
+// code on an x64 host.
 //
 // This is an interpreter: it decodes and executes one instruction at a time.
-// It is the correctness baseline the ARM track is built on, not the final
-// engine: a JIT (dynarmic, 0BSD) can replace run() later without changing the
-// state layout below or anything in arm64_guest.h.
+// It is the correctness baseline the other engines are checked against: the
+// JIT (dynarmic, arm64_jit.h) and the ahead-of-time translation (arm64_aot.h)
+// share the state layout below and hand it the instructions they do not
+// translate.
 //
 // Guest and host share one address space. Android arm64 and Windows x64 are
 // both LP64 and little-endian, so a guest pointer is a host pointer and guest

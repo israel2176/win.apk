@@ -404,8 +404,10 @@ WINAPK_GUEST_ABI int g_attr_setstacksize(GuestAttr* a, size_t n) {
     return 0;
 }
 WINAPK_GUEST_ABI int g_attr_getstacksize(const GuestAttr* a, size_t* n) { *n = a->stack_size; return 0; }
+// A caller-provided stack cannot be used (CreateThread allocates its own);
+// its size is honoured, and getstack reads back what was set.
 WINAPK_GUEST_ABI int g_attr_setstack(GuestAttr* a, void* base, size_t n) {
-    a->stack_base = base;  // a caller-provided stack cannot be honoured; its size is
+    a->stack_base = base;
     a->stack_size = n;
     return 0;
 }
