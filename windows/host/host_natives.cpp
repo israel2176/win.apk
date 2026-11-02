@@ -48,6 +48,7 @@ const char* const kHostClasses[] = {
     "com.macapk.loader.DocumentPickerHandler",
     "com.macapk.loader.GamepadBridge",
     "com.macapk.loader.HostBrowserTab",
+    "com.macapk.loader.HostNotifications",
     "com.macapk.loader.HostRadios",
     "com.macapk.loader.LocationBridge",
     "com.macapk.loader.NativeAudio",
@@ -103,6 +104,7 @@ const HostMethods kProviders[] = {
     native_location_methods(),
     native_activity_methods(),
     native_signin_methods(),
+    native_notifications_methods(),
 };
 
 const JNINativeMethod* implementation_of(const char* clazz, const char* name, const char* sig) {

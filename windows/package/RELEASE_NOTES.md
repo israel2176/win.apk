@@ -18,6 +18,7 @@ A pre-release for testing: Win.apk runs Android apps on Windows 10/11 x64 as ord
 - **Camera and location:** webcams through the Camera, camera2 and CameraX APIs (a virtual camera when there is none); location from Windows' location service, behind Windows' privacy settings.
 - **Storage:** files, SharedPreferences and SQLite. Shared storage (Downloads, Pictures, Documents, Music, Movies) is your own Windows folders; a setting turns that off.
 - **Permissions:** apps ask for every permission group as on Android, in a dialog over the app (Allow / Don't allow, and no more asking after a second refusal): storage and media, location (precise or approximate, and "all the time" separately), camera, microphone, contacts, calendar, phone, call logs, SMS, notifications, nearby devices, physical activity and body sensors, plus "All files access", "Media management", "Display over other apps" and "Install unknown apps". The answers survive restarts and updates. An app's App info screen, or Get Info in the library, turns each one on or off or resets them; taking a permission away stops the app, as on Android.
+- **Notifications:** what an app posts shows as a Windows notification in the Action Center, with the app's name and icon, its text, large icon and progress bar; a low-importance channel's go there without popping up, and cancel removes them. Clicking one brings the app forward and opens what a tap would on Android, while the app is running.
 - **Google sign-in and Play services:** apps that sign in with Google, check a Play licence, use Firebase Analytics or Cloud Messaging, or ask Play services for location get Win.apk's own in-process stand-ins, as on the Mac. Signing in opens Google's own page in a window of its own (it needs the WebView2 Runtime); Win.apk never sees the password. Settings > Google account adds and removes the account.
 - **Desktop services:** clipboard, file pickers and game controllers.
 
@@ -29,7 +30,7 @@ The compatibility sweep (`windows/test/compat/`) boots about 90 open-source apps
 - OpenSL ES from native code: engines that use it get no sound.
 - Vulkan, and real sensor input (the accelerometer and the others report a phone lying still).
 - Play Store features: in-app purchases, Play Integrity, the Maps SDK's map.
-- Notifications are accepted but not shown.
+- Notification action buttons are not shown.
 
 ## Reporting
 Open an issue on GitHub with the "An app does not work" template. Please include the app's name, version and where it came from, the exact steps to reproduce the problem, a screenshot of the app at the point it goes wrong, and attach `%LOCALAPPDATA%\Win.apk\logs\last-run.log` (the whole file). `docs/APPS.md` in the repository lists common apps and the problems already known. If Win.apk is useful to you, a star on the repository helps.

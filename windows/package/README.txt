@@ -87,7 +87,12 @@ What does not work yet
 - Vulkan, and real sensor input: the accelerometer and the others report a
   phone lying still.
 - Play Store features: in-app purchases, Play Integrity, Google Maps.
-- Notifications: an app may post them, but they are not shown.
+- Notifications: what an app posts shows as a Windows notification, with
+  the app's name and icon, and stays in the Action Center until dismissed;
+  quiet ones (a low-importance channel) go there without popping up.
+  Clicking one brings the app to the front and opens what a tap would on
+  Android, while the app is running. An app made for Android 13 or later
+  asks for the notification permission first.
 
 Where things are
 ----------------

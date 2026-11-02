@@ -337,6 +337,7 @@ how CI boots apps.
 | Microphone (AudioRecord) | WASAPI capture, resampled to the app's format | `native_audio_input.cpp` |
 | Video (MediaPlayer video, MediaCodec, the NDK media API) | Not implemented; only the `AMEDIAFORMAT_KEY_*` strings exist so libraries link | `native_media.cpp` |
 | Images | libwebp for WebP, WIC for the rest | `native_image.cpp` |
+| Notifications | `NotificationManager` posts to `HostNotifications`, whose natives show Windows.UI.Notifications toasts (WinRT C ABI, combase loaded at run time) under the app's AppUserModelID, which the launcher writes on the app's Start menu shortcut; a click comes back through `HostNotifications.onActivated` and `PendingIntent.send()` | `native_notifications.cpp` |
 | WebView, Custom Tabs | Microsoft Edge WebView2, shown in the app window behind the views drawn over it; `shouldInterceptRequest`, JavaScript interfaces, cookies; a Custom Tab is a tab window whose navigations are checked against the app's manifest | `native_webview.cpp`, `webview2_host.cpp`, `native_browser_tab.cpp` |
 | Camera (camera2, Camera, CameraX) | Media Foundation capture, each webcam offered as a back and a front camera; a virtual camera when there is none | `native_camera.cpp` |
 | Location | `Windows.Devices.Geolocation`; Windows' privacy settings are the authorization | `native_location.cpp` |
@@ -517,7 +518,7 @@ Three GitHub Actions workflows, none of which runs on a push to `main`:
 As of this writing: video playback, OpenSL ES, Vulkan, real sensor input, signal
 delivery to guest handlers (they are recorded, not run), static ELF TLS,
 `dlclose` unloading, a crash handler with minidumps, W^X thunk pools with
-unwind tables, code signing, 32-bit ARM, notifications shown to the user,
+unwind tables, code signing, 32-bit ARM, notification action buttons,
 and the Play Store features listed above. `windows/PORTING.md`, section 7,
 has the finer gaps and section 8 the plan.
 
