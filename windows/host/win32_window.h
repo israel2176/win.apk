@@ -123,6 +123,15 @@ void window_clear_overlay();
 // Keeps the window out of screenshots and screen sharing (FLAG_SECURE).
 void window_set_secure(bool secure);
 
+// The launcher's launch handshake. Win.apk.exe shows a splash while an app
+// starts and passes WINAPK_READY_EVENT, an inherited event handle written as a
+// decimal number. take_launcher_ready_event (at start) takes it out of the
+// environment; signal_launcher_ready sets it once: when the window has painted
+// the app's first frame, or when a second start brought the running copy's
+// window forward. Without the variable both do nothing (headless runs, tests).
+void take_launcher_ready_event();
+void signal_launcher_ready();
+
 // Translates a Windows virtual key to an Android KEYCODE_* (0 if none), as
 // upstream's host_keymap.h does for macOS key codes.
 int android_key_code(unsigned vk, wchar_t ch);
