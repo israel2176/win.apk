@@ -441,6 +441,10 @@ public final class ActivityHost {
     private static Activity sCreating;
     /** An activity that finished during its onCreate, torn down after it. */
     private static Activity sTeardownAfterCreate;
+    /** The activity whose onResume/onPostResume performLaunch is running. */
+    private static Activity sResuming;
+    /** An activity that finished during its onResume, torn down after onPostResume. */
+    private static Activity sTeardownAfterResume;
 
     static final boolean FINISH_ON_MAIN =
         !"0".equals(System.getenv("MACAPK_FINISH_ON_MAIN"));
@@ -497,6 +501,15 @@ public final class ActivityHost {
         // then keeps inflating fragments. performLaunch runs it after onCreate.
         if (a == sCreating) {
             sTeardownAfterCreate = a;
+            return;
+        }
+        // finish() inside onResume: AOSP's Activity.performResume still runs
+        // mFragments.dispatchResume and onPostResume on the live activity; the
+        // destroy is a later transaction. Tearing down here nulled the androidx
+        // FragmentManager's host under onPostResume ("No activity"). Measured:
+        // sgtpuzzles' GamePlay.onResume -> onNewIntent -> navigateUpTo.
+        if (a == sResuming) {
+            sTeardownAfterResume = a;
             return;
         }
         boolean wasTop = !stack.isEmpty() && stack.peek() == a;
@@ -3850,15 +3863,30 @@ public final class ActivityHost {
             return;
         }
         resumeFinalState(activity);
-        runTolerant(activity, "onResume", new Class<?>[0], new Object[0]);
-        driveLifecycleTo(activity, "RESUMED");
-        // AOSP ActivityThread.handleResumeActivity calls onPostResume after
-        // performResume (onResume) once the activity is resumed. AppCompat
-        // finalizes its resumed ActionBar/menu state here. v1.0.418.
-        runTolerant(activity, "onPostResume", new Class<?>[0], new Object[0]);
-        if (app != null) app.dispatchActivityResumed(activity);
-        activity.macapkDispatchFragmentState(
-            android.app.FragmentManagerImpl.RESUMED);
+        sResuming = activity;
+        try {
+            runTolerant(activity, "onResume", new Class<?>[0], new Object[0]);
+            driveLifecycleTo(activity, "RESUMED");
+            // AOSP ActivityThread.handleResumeActivity calls onPostResume after
+            // performResume (onResume) once the activity is resumed. AppCompat
+            // finalizes its resumed ActionBar/menu state here. v1.0.418.
+            runTolerant(activity, "onPostResume", new Class<?>[0], new Object[0]);
+            if (app != null) app.dispatchActivityResumed(activity);
+            activity.macapkDispatchFragmentState(
+                android.app.FragmentManagerImpl.RESUMED);
+        } finally {
+            sResuming = null;
+        }
+        // A finish() during onResume only marked the activity (see sResuming);
+        // its teardown runs now that the resume burst is over, as on AOSP, and
+        // the window steps below belong to the activity it revealed.
+        if (activity.isFinishing() && sTeardownAfterResume == activity) {
+            sTeardownAfterResume = null;
+            NativeLog.i(TAG, className + " called finish() during onResume --"
+                + " torn down after onPostResume (AOSP destroys it in a later transaction).");
+            onActivityFinished(activity);
+            return;
+        }
         // handleResumeActivity's window step, after performResume returned.
         addEmptyWindowIfNeeded(activity);
         // Launch burst complete: from here on, surfaceCreated delivery is

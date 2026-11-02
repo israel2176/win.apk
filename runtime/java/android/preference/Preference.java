@@ -277,13 +277,14 @@ public class Preference implements Comparable<Preference> {
 
     /** The AttributeSet twin of AOSP's `onGetDefaultValue(TypedArray, int)`.
      *  Same dispatch, same per-subclass typing; see the constructor for why the
-     *  TypedArray form cannot be used. The base class reads a plain string,
-     *  matching AOSP's Preference.onGetDefaultValue, which returns null -- we
-     *  return the string because a Preference with a declared defaultValue and
-     *  no subclass override is a plain-string preference in every case that
-     *  reaches here. */
+     *  TypedArray form cannot be used. The base class returns null, as AOSP's
+     *  Preference.onGetDefaultValue does: a subclass that overrides neither form
+     *  (DroidFish's ColorPickerPreference, whose onSetInitialValue casts the
+     *  default to Integer) then never sees onSetInitialValue(false, default) at
+     *  all, which is what dispatchSetInitialValue does on a device. Returning
+     *  the raw string here handed such a class a String it could not cast. */
     Object onGetDefaultValue(AttributeSet attrs) {
-        return PreferenceAttrs.string(mContext, attrs, "defaultValue");
+        return null;
     }
 
     public Preference(Context context, AttributeSet attrs, int defStyleAttr) {

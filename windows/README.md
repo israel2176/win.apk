@@ -269,7 +269,13 @@ every such change is listed here:
   `setContentView` of a `<merge>` layout works. Not Windows-specific.
 - `runtime/java/com/macapk/loader/ActivityHost.java`: an activity that calls
   `finish()` in its own `onCreate` is torn down after `onCreate` returns, as on
-  AOSP, not in the middle of it. Not Windows-specific.
+  AOSP, not in the middle of it; one that calls it in `onResume` after
+  `onPostResume` (AOSP destroys it in a later transaction; tearing it down
+  inside `onResume` nulled the FragmentManager's host under `onPostResume`,
+  "No activity" in sgtpuzzles). Not Windows-specific.
+- `runtime/java/android/provider/SettingsStore.java`: `Secure.DEFAULT_INPUT_METHOD`
+  is seeded with the host keyboard's component, as a device always has a
+  current IME (Key Mapper read it without a null check). Not Windows-specific.
 - `runtime/java/com/macapk/loader/FragmentInflaterFactory.java`: a fragment in
   a layout is hosted by the activity the inflater belongs to, which also works
   during the first activity's `onCreate`. Not Windows-specific.
@@ -291,9 +297,11 @@ every such change is listed here:
   died at start on the missing method). Not Windows-specific.
 - `runtime/java/android/preference/Preference.java`: an app subclass that
   overrides `onGetDefaultValue(TypedArray, int)` gets it called, with a
-  TypedArray holding `android:defaultValue`; the String the AttributeSet twin
-  reads broke DroidFish's ColorPickerPreference with a ClassCastException. Not
-  Windows-specific.
+  TypedArray holding `android:defaultValue`, and one that overrides neither
+  form gets no default at all, as AOSP's base `onGetDefaultValue` returns null
+  (the raw String the base twin returned broke DroidFish's
+  ColorPickerPreference, which casts the default to Integer, with a
+  ClassCastException). Not Windows-specific.
 - `runtime/java/com/macapk/loader/FragmentInflaterFactory.java`: a
   `FragmentContainerView[android:name]` whose app FragmentManager cannot be
   found by name (R8 renamed it) goes through the activity's own

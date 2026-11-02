@@ -946,8 +946,10 @@ WINAPK_GUEST_ABI FILE* g_freopen(const char* path, const char* mode, void* f) {
 // readers use (a FILE over an AAsset). The CRT's FILE cannot run callbacks,
 // so a read-only stream is snapshotted through readfn into a temporary file,
 // which seeks and reads as the stream would; its closefn runs at fclose. A
-// writable stream (writefn) is not supported and fails with ENOSYS. Alex vs
-// Bus opened its data files this way and, with a null FILE, quit at once.
+// writefn is accepted but never called: raylib's android_fopen passes one that
+// only returns EACCES, and refusing it was a null FILE for every asset (Alex
+// vs Bus: "Failed to load graphics"). Writes land in the snapshot, unseen by
+// the stream, which no asset reader does.
 using FunopenRead = int(WINAPK_GUEST_ABI*)(void*, char*, int);
 using FunopenWrite = int(WINAPK_GUEST_ABI*)(void*, const char*, int);
 using FunopenClose = int(WINAPK_GUEST_ABI*)(void*);
@@ -958,10 +960,10 @@ struct FunopenFile {
 std::mutex g_funopen_lock;
 std::map<FILE*, FunopenFile> g_funopen_files;
 
-WINAPK_GUEST_ABI FILE* g_funopen(void* cookie, FunopenRead readfn, FunopenWrite writefn, void* /*seekfn*/,
+WINAPK_GUEST_ABI FILE* g_funopen(void* cookie, FunopenRead readfn, FunopenWrite /*writefn*/, void* /*seekfn*/,
                                  FunopenClose closefn) {
-    if (!readfn || writefn) {
-        *guest_errno() = 38;  // ENOSYS
+    if (!readfn) {
+        *guest_errno() = 22;  // EINVAL
         return nullptr;
     }
     wchar_t dir[MAX_PATH + 1], name[MAX_PATH + 1];
