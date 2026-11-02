@@ -16,9 +16,10 @@ through ANGLE on Direct3D 11.
 Win.apk is an unofficial port of [Mac.apk](https://github.com/kksimp/Mac.apk)
 to Windows x64. It is not affiliated with or endorsed by the Mac.apk project.
 
-> **Early preview.** Many Java and Kotlin apps run well; native-heavy apps and
-> games are partly there. See [What works](#what-works) and
-> [`docs/APPS.md`](docs/APPS.md) before you try an app.
+> **Early preview.** Only a few apps have been used by hand, and most features
+> have not yet been tried with real apps on a real PC. See
+> [What works](#what-works) and [`docs/APPS.md`](docs/APPS.md) before you try
+> an app.
 
 ![The Win.apk library: a drop zone for installing apps above a grid of installed apps](docs/images/library.png)
 
@@ -107,26 +108,49 @@ the Google account, logs and troubleshooting.
 
 ## What works
 
-| Works | Not yet |
-|---|---|
-| Java and Kotlin apps, each in its own resizable window, with mouse, wheel and keyboard | Apps with only 32-bit ARM native code (`lib/armeabi-v7a`) |
-| OpenGL ES from Java (`GLSurfaceView`, libGDX) and from native code (SDL games); `NativeActivity` apps | Vulkan |
-| Apps that ship `lib/x86_64` libraries (loaded directly), and apps with only `lib/arm64-v8a` libraries (translated) | Video from an app's own native code (the NDK's `AMediaCodec`), `MediaExtractor`, and Opus, Vorbis or FLAC audio through `MediaCodec` (an ExoPlayer stream with such audio stays silent) |
-| Video: `MediaPlayer` and `VideoView` play MP4, MOV and other files Windows decodes (H.264 and AAC always; HEVC, VP9 and AV1 with Microsoft's codec packs), from a file or an http(s) URL, with the sound in step, seeking and looping; ExoPlayer and other `MediaCodec` players decode H.264 video and AAC/MP3 audio the same way | |
-| Sound: AudioTrack, SoundPool and MediaPlayer audio from Java; AAudio from native code; the microphone | OpenSL ES from native code (engines that use it get no sound) |
-| Files, SharedPreferences, SQLite; shared storage mapped to your Windows folders | Real sensors: the accelerometer and the others report a still, flat phone |
-| WebView and Custom Tabs on WebView2 | Play Store features: in-app purchases, Play Integrity, the Maps SDK's map |
-| Wi-Fi state, the current network, the DHCP configuration and scan results (network names need Windows' location access) | Connecting the PC to a Wi-Fi network for the app |
-| Bluetooth: the paired devices, serial (RFCOMM) connections both ways, LE scans and the GATT client (read, write, notifications) | Classic discovery and pairing from the app, LE advertising and the GATT server, the audio and HID profiles |
-| Webcams, location, clipboard, file pickers, game controllers | |
-| Notifications, shown as Windows notifications with the app's name and icon; a click opens the app while it runs | |
-| Permission dialogs for every Android permission group | |
-| Google sign-in, and the Play services apps use for licences, push messages, Firebase Analytics and location | |
+Win.apk is a preview. Most of what it can do has been written and passes
+automated tests on Windows, but has not yet been used with real apps on real
+PCs. The table says how far each part has been checked:
 
-Every row has a counterpart in the code; the
-[architecture document](docs/ARCHITECTURE.md) says where.
-[`docs/APPS.md`](docs/APPS.md) lists known issues by kind of app and the apps
-people have tried; please add yours.
+- **Used:** a person ran an app that needs it and it worked
+  ([`docs/APPS.md`](docs/APPS.md) has the apps).
+- **Boots:** apps that need it draw their first screen in the automated
+  sweep, headless; nobody has used them.
+- **Untested:** the code is there and its unit tests pass on Windows, but no
+  app has been run with it on a real PC. Expect it to fail; an issue with the
+  log helps most here.
+
+| Part | Status | Notes |
+|---|---|---|
+| Java and Kotlin apps in their own window, mouse, wheel and keyboard | Used | Klooni, Tensy |
+| OpenGL ES from Java (`GLSurfaceView`, libGDX) | Used | Klooni |
+| OpenGL ES from native code (SDL), `lib/x86_64` libraries | Used | Tensy |
+| Installing and starting ordinary apps | Boots | The sweep of about 90 F-Droid apps; most draw their first screen, which does not mean they are usable |
+| Apps with only `lib/arm64-v8a` libraries (ARM translated to x64) | Boots | A few apps in the sweep; slow until the translation is ready |
+| `NativeActivity` games | Boots | |
+| Sound: AudioTrack, SoundPool, MediaPlayer audio, AAudio, the microphone | Untested | Unit tests decode WAV, Ogg and MP3 and play them |
+| Video: `MediaPlayer`, `VideoView`, ExoPlayer (H.264 + AAC) | Untested | Added in [#60](https://github.com/israel2176/win.apk/pull/60); the unit test plays a one-second clip. Not in the v0.6.0 download |
+| Notifications as Windows notifications | Untested | Added in [#59](https://github.com/israel2176/win.apk/pull/59). Not in the v0.6.0 download |
+| Bluetooth (paired devices, RFCOMM, LE, GATT client) and Wi-Fi state | Untested | Added in [#61](https://github.com/israel2176/win.apk/pull/61); never run against a real radio. Not in the v0.6.0 download |
+| Native crash handlers, `dlclose`, minidumps | Untested | Added in [#62](https://github.com/israel2176/win.apk/pull/62). Not in the v0.6.0 download |
+| WebView and Custom Tabs on WebView2 | Untested | |
+| Camera, location, clipboard, file pickers, game controllers | Untested | |
+| Permission dialogs | Untested | |
+| Google sign-in and the Play services stand-ins | Untested | |
+| Files, SharedPreferences, SQLite, shared storage in your Windows folders | Boots | Apps in the sweep that store data start |
+
+**Not there at all:** 32-bit ARM only apps (`lib/armeabi-v7a`); Vulkan;
+OpenSL ES from native code (no sound); the NDK media API (`AMediaCodec`),
+`MediaExtractor`, Opus/Vorbis/FLAC through `MediaCodec`; real sensors (they
+report a still, flat phone); in-app purchases, Play Integrity and the Maps
+SDK's map; connecting the PC to a Wi-Fi network; Bluetooth pairing,
+discovery, advertising, the GATT server, audio and HID profiles; notification
+action buttons.
+
+If something marked Used or Boots does not work for you, or something marked
+Untested does, please [open an issue](../../issues/new/choose) or add a row to
+[`docs/APPS.md`](docs/APPS.md). The [architecture document](docs/ARCHITECTURE.md)
+says where each part is in the code.
 
 ## Where your data lives
 
