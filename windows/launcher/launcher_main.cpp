@@ -64,6 +64,7 @@
 #include <uxtheme.h>
 #include <windowsx.h>
 #include <winhttp.h>
+#include <richedit.h>
 #include <bcrypt.h>
 #include <tlhelp32.h>
 #include <wincrypt.h>
@@ -94,8 +95,8 @@ using Gdiplus::GraphicsPath;
 using Gdiplus::RectF;
 using Gdiplus::SizeF;
 
-constexpr UINT kInstalled = WM_APP + 1;       // wParam: ok | run after << 1 | running << 2, lParam: new std::wstring (the name)
-constexpr UINT kRunExited = WM_APP + 2;       // wParam: ok, lParam: new std::wstring (the app's name)
+constexpr UINT kInstalled = WM_APP + 1;       // wParam: ok | running << 2 | cancelled << 3, lParam: new std::wstring (the name)
+constexpr UINT kRunExited = WM_APP + 2;       // wParam: exit code 0 | was ready << 1, lParam: new std::wstring (the app's name)
 constexpr UINT kInstallStarted = WM_APP + 3;  // lParam: new std::wstring (the app's name)
 constexpr UINT kRefresh = WM_APP + 4;         // the install helper changed the library
 constexpr UINT kStoreCatalog = WM_APP + 5;    // wParam: kCatalogList (lParam: new std::vector<StoreApp>), Done, Failed
@@ -104,10 +105,12 @@ constexpr UINT kStoreIcon = WM_APP + 7;       // wParam: kIconFailed, Saved, Dro
 constexpr UINT kStoreDownload = WM_APP + 8;   // wParam: percent, lParam: new std::string (package)
 constexpr UINT kStoreDownloaded = WM_APP + 9; // wParam: ok, lParam: new Download
 constexpr UINT kGmsDone = WM_APP + 10;       // the Google sign-in window closed; wParam: exit code, lParam: new std::wstring (stdout)
+constexpr UINT kRunReady = WM_APP + 11;       // the app's window is up; lParam: new std::wstring (the app's name)
+constexpr UINT_PTR kInfoBarTimer = 2;  // the InfoBar closes itself
+constexpr ULONG_PTR kCopyOpen = 0x57415031;  // WM_COPYDATA from another start of Win.apk.exe (forward_to_running)
 constexpr UINT_PTR kAnimTimer = 1;
 constexpr int kIdSearch = 100;
-enum Cmd { kCmdOpen = 200, kCmdInfo, kCmdShortcut, kCmdShowApk, kCmdAppFolder, kCmdLog, kCmdReinstall, kCmdUpdate,
-           kCmdRemove, kCmdOrientation };
+enum Cmd { kCmdOpen = 200, kCmdStop, kCmdInfo, kCmdRemove };
 
 HINSTANCE g_inst;
 HWND g_main, g_search;
@@ -552,6 +555,8 @@ fs::path library_dir() { return data_dir() / L"library"; }
 fs::path app_dir(const std::wstring& name) { return data_dir() / L"apps" / name; }
 fs::path logs_dir() { return data_dir() / L"logs"; }
 fs::path last_run_log() { return logs_dir() / L"last-run.log"; }
+fs::path run_log(const std::wstring& name) { return logs_dir() / (L"run-" + name + L".log"); }
+fs::path previous_run_log(const std::wstring& name) { return logs_dir() / (L"run-" + name + L".1.log"); }
 fs::path install_log(const std::wstring& name) { return logs_dir() / (L"install-" + name + L".log"); }
 
 fs::path known_folder(REFKNOWNFOLDERID id) {
@@ -628,11 +633,6 @@ std::wstring long_date(const FILETIME& when) {
     return buf;
 }
 
-std::wstring file_date(const fs::path& p) {
-    WIN32_FILE_ATTRIBUTE_DATA a{};
-    return GetFileAttributesExW(p.c_str(), GetFileExInfoStandard, &a) ? long_date(a.ftLastWriteTime) : tr(L"unknown");
-}
-
 // FILETIME counts 100 ns from 1601, Java's milliseconds from 1970.
 constexpr unsigned long long kUnixEpochFiletime = 116444736000000000ull;
 
@@ -668,8 +668,21 @@ void show_in_explorer(const fs::path& p) {
     ShellExecuteW(nullptr, L"open", L"explorer.exe", args.c_str(), nullptr, SW_SHOWNORMAL);
 }
 
-void open_log(const fs::path& log) {
-    ShellExecuteW(nullptr, L"open", L"notepad.exe", log.c_str(), nullptr, SW_SHOWNORMAL);
+// Puts `text` on the clipboard.
+bool copy_text(HWND owner, const std::wstring& text) {
+    HGLOBAL mem = GlobalAlloc(GMEM_MOVEABLE, (text.size() + 1) * sizeof(wchar_t));
+    if (!mem) return false;
+    memcpy(GlobalLock(mem), text.c_str(), (text.size() + 1) * sizeof(wchar_t));
+    GlobalUnlock(mem);
+    if (!OpenClipboard(owner)) {
+        GlobalFree(mem);
+        return false;
+    }
+    EmptyClipboard();
+    const bool ok = SetClipboardData(CF_UNICODETEXT, mem) != nullptr;
+    if (!ok) GlobalFree(mem);
+    CloseClipboard();
+    return ok;
 }
 
 // ---------------------------------------------------------------------------
@@ -1013,26 +1026,59 @@ void apply_aot_clang_env() {
     }
 }
 
-// `name` is the app the runtime opens, for its orientation; empty for an install.
-HANDLE start_runtime(const std::wstring& args, const fs::path& log, const std::wstring& name = L"") {
+// `name` is the app the runtime opens, for its orientation; empty for an install. The runtime's
+// stdout and stderr go to `log` (none: NUL). `ready`, when given, is the launch handshake's event
+// (win32_window.h, take_launcher_ready_event): the child gets it, and only it and the log, through
+// an explicit handle list, as WINAPK_READY_EVENT in an environment block of its own, so two starts
+// at once do not see each other's.
+HANDLE start_runtime(const std::wstring& args, const fs::path& log, const std::wstring& name = L"",
+                     HANDLE ready = nullptr) {
     std::error_code ec;
-    fs::create_directories(log.parent_path(), ec);
+    if (!log.empty()) fs::create_directories(log.parent_path(), ec);
     apply_runtime_env(name);
     apply_aot_clang_env();
     SECURITY_ATTRIBUTES sa{sizeof(sa), nullptr, TRUE};
-    HANDLE out = CreateFileW(log.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_DELETE, &sa, CREATE_ALWAYS,
-                             FILE_ATTRIBUTE_NORMAL, nullptr);
-    STARTUPINFOW si{};
-    si.cb = sizeof(si);
-    si.dwFlags = STARTF_USESTDHANDLES;
-    si.hStdOutput = si.hStdError = out;
-    si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+    HANDLE out = CreateFileW(log.empty() ? L"NUL" : log.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_DELETE,
+                             &sa, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    std::vector<HANDLE> inherit;
+    if (out != INVALID_HANDLE_VALUE) inherit.push_back(out);
+    if (ready) inherit.push_back(ready);
+    SIZE_T attr_size = 0;
+    InitializeProcThreadAttributeList(nullptr, 1, 0, &attr_size);
+    std::vector<BYTE> attr_buf(attr_size);
+    auto* attrs = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(attr_buf.data());
+    const bool listed = !inherit.empty() && InitializeProcThreadAttributeList(attrs, 1, 0, &attr_size) &&
+                        UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, inherit.data(),
+                                                  inherit.size() * sizeof(HANDLE), nullptr, nullptr);
+    STARTUPINFOEXW si{};
+    si.StartupInfo.cb = sizeof(si);
+    si.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+    si.StartupInfo.hStdOutput = si.StartupInfo.hStdError = out;
+    if (listed) si.lpAttributeList = attrs;
+    // The environment as it is now, plus the event: a block of NUL-separated strings ending in two NULs.
+    std::wstring env;
+    if (wchar_t* block = GetEnvironmentStringsW()) {
+        for (const wchar_t* e = block; *e; e += wcslen(e) + 1) {
+            if (_wcsnicmp(e, L"WINAPK_READY_EVENT=", 19) != 0) env.append(e).push_back(L'\0');
+        }
+        FreeEnvironmentStringsW(block);
+    }
+    if (ready) {
+        env += L"WINAPK_READY_EVENT=" + std::to_wstring(reinterpret_cast<uintptr_t>(ready));
+        env.push_back(L'\0');
+    }
+    env.push_back(L'\0');
     std::wstring cmd = L"\"" + runtime_exe().wstring() + L"\" " + args;
     PROCESS_INFORMATION pi{};
-    const BOOL ok = CreateProcessW(nullptr, &cmd[0], nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr,
-                                   root().c_str(), &si, &pi);
+    const BOOL ok = CreateProcessW(nullptr, &cmd[0], nullptr, nullptr, TRUE,
+                                   CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT |
+                                       (listed ? EXTENDED_STARTUPINFO_PRESENT : 0),
+                                   &env[0], root().c_str(), &si.StartupInfo, &pi);
+    if (listed) DeleteProcThreadAttributeList(attrs);
     if (out != INVALID_HANDLE_VALUE) CloseHandle(out);
     if (!ok) return nullptr;
+    // The app's window may take the foreground from the splash.
+    AllowSetForegroundWindow(pi.dwProcessId);
     CloseHandle(pi.hThread);
     return pi.hProcess;
 }
@@ -1045,9 +1091,24 @@ DWORD wait_exit(HANDLE process) {
     return code;
 }
 
-bool run_and_wait(const fs::path& apk) {
-    HANDLE p = start_runtime(L"--apk \"" + apk.wstring() + L"\"", last_run_log(), apk.stem().wstring());
-    return p && wait_exit(p) == 0;
+bool app_running(const std::wstring& name);
+
+// Where a run of the app logs: logs\run-<name>.log, the run before it kept as run-<name>.1.log.
+// last-run.log is a hard link to the newest, so "the log of the app opened last" stays one file.
+// A second start of an app that is running only brings it forward: its log goes nowhere, so
+// the running one's stays whole.
+fs::path start_run_log(const std::wstring& name) {
+    if (app_running(name)) return {};
+    const fs::path log = run_log(name);
+    std::error_code ec;
+    fs::create_directories(logs_dir(), ec);
+    MoveFileExW(log.c_str(), previous_run_log(name).c_str(), MOVEFILE_REPLACE_EXISTING);
+    HANDLE f = CreateFileW(log.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                           nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f != INVALID_HANDLE_VALUE) CloseHandle(f);
+    DeleteFileW(last_run_log().c_str());
+    CreateHardLinkW(last_run_log().c_str(), log.c_str(), nullptr);
+    return log;
 }
 
 struct RunJob {
@@ -1056,16 +1117,27 @@ struct RunJob {
 };
 
 SRWLOCK g_proc_lock = SRWLOCK_INIT;
-std::map<std::wstring, HANDLE> g_procs;  // the runtimes of apps started from the library, for Stop
+std::map<std::wstring, HANDLE> g_procs;  // the runtimes of apps started from here, for Stop
 
+// Runs the app and reports to the library's window: kRunReady when its window is up (the
+// handshake's event), then kRunExited with the exit code. The splash waits for the first.
 DWORD WINAPI run_thread(void* param) {
     std::unique_ptr<RunJob> job(static_cast<RunJob*>(param));
-    HANDLE p = start_runtime(L"--apk \"" + job->apk.wstring() + L"\"", last_run_log(), job->name);
+    SECURITY_ATTRIBUTES sa{sizeof(sa), nullptr, TRUE};
+    HANDLE ready = CreateEventW(&sa, TRUE, FALSE, nullptr);
+    HANDLE p = start_runtime(L"--apk \"" + job->apk.wstring() + L"\"", start_run_log(job->name), job->name, ready);
     DWORD code = 1;
+    bool was_ready = false;
     if (p) {
         AcquireSRWLockExclusive(&g_proc_lock);
         g_procs[job->name] = p;
         ReleaseSRWLockExclusive(&g_proc_lock);
+        HANDLE both[2] = {ready, p};
+        // Index 0 wins when both are set: an app that was already running signals, then exits.
+        if (ready && WaitForMultipleObjects(2, both, FALSE, INFINITE) == WAIT_OBJECT_0) {
+            was_ready = true;
+            PostMessageW(g_main, kRunReady, 0, reinterpret_cast<LPARAM>(new std::wstring(job->name)));
+        }
         WaitForSingleObject(p, INFINITE);
         GetExitCodeProcess(p, &code);
         AcquireSRWLockExclusive(&g_proc_lock);
@@ -1073,7 +1145,9 @@ DWORD WINAPI run_thread(void* param) {
         ReleaseSRWLockExclusive(&g_proc_lock);
         CloseHandle(p);
     }
-    PostMessageW(g_main, kRunExited, code == 0, reinterpret_cast<LPARAM>(new std::wstring(job->name)));
+    if (ready) CloseHandle(ready);
+    PostMessageW(g_main, kRunExited, (code == 0 ? 1 : 0) | (was_ready ? 2 : 0),
+                 reinterpret_cast<LPARAM>(new std::wstring(job->name)));
     return 0;
 }
 
@@ -1089,11 +1163,28 @@ struct InstallJob {
     fs::path source;
     std::wstring name;
     fs::path replaces;  // the app's previous APK, when it is updated from one with another extension
-    bool run_after;
     bool temporary;     // the store's download, removed once it is in the library
 };
 
 SRWLOCK g_install_lock = SRWLOCK_INIT;  // one install at a time: each one is a JVM converting the whole app
+SRWLOCK g_cancel_lock = SRWLOCK_INIT;   // guards the two below
+HANDLE g_install_process = nullptr;     // the runtime converting the current install, for Cancel
+std::set<std::wstring> g_cancelled;     // installs the user cancelled: not started, or stopped
+
+bool cancelled(const std::wstring& name) {
+    AcquireSRWLockShared(&g_cancel_lock);
+    const bool c = g_cancelled.count(name) > 0;
+    ReleaseSRWLockShared(&g_cancel_lock);
+    return c;
+}
+
+// Cancels the install of `name`: one still waiting does not start, the one under way is stopped.
+void cancel_install(const std::wstring& name, bool current) {
+    AcquireSRWLockExclusive(&g_cancel_lock);
+    g_cancelled.insert(name);
+    if (current && g_install_process) TerminateProcess(g_install_process, 1);
+    ReleaseSRWLockExclusive(&g_cancel_lock);
+}
 
 void write_registry();
 
@@ -1118,11 +1209,14 @@ bool app_running(const std::wstring& name) {
     return w == WAIT_TIMEOUT;
 }
 
+void remove_app_files(const std::wstring& name);
+
 // Copies `source` into the library as <name><ext> and installs it there: the
 // install, the code conversion, the name, icon and package, the shortcuts.
 // `replaces` is the app's previous APK, removed once the new one is in. An
 // app that is running is left alone (its files are in use): false, with
-// `*running` set.
+// `*running` set. An update that fails or is cancelled puts the previous APK
+// back; a new app that does leaves nothing behind.
 bool install_into_library(const fs::path& source, const std::wstring& name, const fs::path& replaces,
                           bool* running) {
     *running = app_running(name);
@@ -1130,19 +1224,43 @@ bool install_into_library(const fs::path& source, const std::wstring& name, cons
     std::error_code ec;
     fs::create_directories(library_dir(), ec);
     const fs::path target = library_dir() / (name + source.extension().wstring());
-    bool ok = fs::equivalent(source, target, ec) || CopyFileW(source.c_str(), target.c_str(), FALSE) != 0;
+    const bool update = fs::exists(label_file(name), ec);
+    const fs::path kept = target.wstring() + L".previous";
+    const bool same = fs::equivalent(source, target, ec);
+    const bool backed_up = !same && fs::exists(target, ec) &&
+                           MoveFileExW(target.c_str(), kept.c_str(), MOVEFILE_REPLACE_EXISTING) != 0;
+    bool ok = same || CopyFileW(source.c_str(), target.c_str(), FALSE) != 0;
     if (ok) {
         HANDLE p = start_runtime(L"--apk \"" + target.wstring() + L"\" --install-only", install_log(name));
-        const DWORD code = p ? wait_exit(p) : 1;
+        AcquireSRWLockExclusive(&g_cancel_lock);
+        g_install_process = p;
+        if (p && g_cancelled.count(name)) TerminateProcess(p, 1);  // cancelled while it was starting
+        ReleaseSRWLockExclusive(&g_cancel_lock);
+        DWORD code = 1;
+        if (p) {
+            WaitForSingleObject(p, INFINITE);
+            GetExitCodeProcess(p, &code);
+        }
+        AcquireSRWLockExclusive(&g_cancel_lock);
+        g_install_process = nullptr;
+        ReleaseSRWLockExclusive(&g_cancel_lock);
+        if (p) CloseHandle(p);
         *running = code == 3;  // the app was started meanwhile
-        ok = code == 0 &&
+        ok = code == 0 && !cancelled(name) &&
              MoveFileExW((app_dir(name) / L"label.txt").c_str(), label_file(name).c_str(),
                          MOVEFILE_REPLACE_EXISTING | MOVEFILE_COPY_ALLOWED) != 0;
         if (ok) MoveFileExW((app_dir(name) / L"package.txt").c_str(), package_file(name).c_str(),
                             MOVEFILE_REPLACE_EXISTING | MOVEFILE_COPY_ALLOWED);
     }
-    if (ok && !replaces.empty() && replaces != target) fs::remove(replaces, ec);
-    if (ok) make_app_shortcuts({name, label_of(name), target}, setting(L"DesktopShortcut", 1) != 0);
+    if (ok) {
+        if (backed_up) fs::remove(kept, ec);
+        if (!replaces.empty() && replaces != target) fs::remove(replaces, ec);
+        make_app_shortcuts({name, label_of(name), target}, setting(L"DesktopShortcut", 1) != 0);
+    } else if (!same) {
+        fs::remove(target, ec);
+        if (backed_up) MoveFileExW(kept.c_str(), target.c_str(), MOVEFILE_REPLACE_EXISTING);
+        else if (!update) remove_app_files(name);
+    }
     write_registry();
     return ok;
 }
@@ -1151,13 +1269,20 @@ DWORD WINAPI install_thread(void* param) {
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     std::unique_ptr<InstallJob> job(static_cast<InstallJob*>(param));
     AcquireSRWLockExclusive(&g_install_lock);
-    PostMessageW(g_main, kInstallStarted, 0, reinterpret_cast<LPARAM>(new std::wstring(job->name)));
-    bool running = false;
-    const bool ok = install_into_library(job->source, job->name, job->replaces, &running);
+    bool ok = false, running = false;
+    const bool skipped = cancelled(job->name);
+    if (!skipped) {
+        PostMessageW(g_main, kInstallStarted, 0, reinterpret_cast<LPARAM>(new std::wstring(job->name)));
+        ok = install_into_library(job->source, job->name, job->replaces, &running);
+    }
+    const bool was_cancelled = cancelled(job->name);
+    AcquireSRWLockExclusive(&g_cancel_lock);
+    g_cancelled.erase(job->name);
+    ReleaseSRWLockExclusive(&g_cancel_lock);
     ReleaseSRWLockExclusive(&g_install_lock);
     std::error_code ec;
     if (job->temporary) fs::remove(job->source, ec);
-    PostMessageW(g_main, kInstalled, (ok ? 1 : 0) | (job->run_after ? 2 : 0) | (running ? 4 : 0),
+    PostMessageW(g_main, kInstalled, (ok ? 1 : 0) | (running ? 4 : 0) | (was_cancelled ? 8 : 0),
                  reinterpret_cast<LPARAM>(new std::wstring(job->name)));
     CoUninitialize();
     return 0;
@@ -1884,7 +2009,8 @@ constexpr wchar_t kGlyphSettings[] = L"\uE713", kGlyphDownload[] = L"\uE896", kG
                   kGlyphChevron[] = L"\uE70D", kGlyphCheck[] = L"\uE73E", kGlyphError[] = L"\uE783",
                   kGlyphClock[] = L"\uE823", kGlyphStop[] = L"\uE71A", kGlyphLibrary[] = L"\uE8F1",
                   kGlyphStore[] = L"\uE719", kGlyphAdd[] = L"\uE710", kGlyphRefresh[] = L"\uE72C",
-                  kGlyphClear[] = L"\uE894", kGlyphLog[] = L"\uE8A5";
+                  kGlyphClear[] = L"\uE894", kGlyphLog[] = L"\uE8A5", kGlyphPackage[] = L"\uE7B8",
+                  kGlyphChevronUp[] = L"\uE70E", kGlyphBack[] = L"\uE72B", kGlyphForward[] = L"\uE72A";
 
 void make_fonts() {
     g_f.title = font(20, true);
@@ -2103,8 +2229,13 @@ std::set<std::wstring> g_running;          // apps started from this window that
 std::set<std::wstring> g_stopping;         // running apps the user stopped: their exit is not an error
 struct Job {
     std::wstring name;
-    enum State { kWaiting, kInstalling, kDone, kFailed } state = kWaiting;
+    enum State { kWaiting, kInstalling, kDone, kFailed, kCancelled } state = kWaiting;
     ULONGLONG start = 0, end = 0;
+    std::wstring file;    // the file it came from, its name until the app's own is known
+    bool update = false;  // the library had the app already
+    int phase = 0;        // how far the install log says it got (install_phase)
+    std::wstring reason;  // why it failed, in a sentence
+    std::shared_ptr<Gdiplus::Bitmap> icon;  // the app's icon once the install has written it
 };
 std::vector<Job> g_jobs;                   // this batch of installs, for the install window
 std::map<std::wstring, std::wstring> g_job_labels;  // installs that are not in the library yet: their names to show
@@ -2120,9 +2251,10 @@ bool g_focus_visible = false;  // the selection was reached with the keyboard: i
 
 // The library and the store share the window's search box and scrolling;
 // the view not shown keeps its own query and scroll position here.
-enum View { kLibraryView, kStoreView } g_view = kLibraryView;
-std::wstring g_other_query;
-float g_other_scroll = 0;
+enum View { kLibraryView, kStoreView, kSettingsView, kAppView, kStoreAppView } g_view = kLibraryView;
+void set_view(View view);
+std::map<View, std::wstring> g_queries;  // the search of a grid view not shown
+std::map<View, float> g_scrolls;         // and its scroll position
 
 struct StoreState {
     std::vector<StoreApp> apps;  // the catalog, the most recently updated first
@@ -2137,8 +2269,8 @@ struct StoreState {
 } g_store;
 
 // What the mouse is over. kHitNav's `tile` is the pane's item: 0 Library, 1 Store, 2 Settings.
-enum HitKind { kHitNone, kHitNav, kHitAdd, kHitClear, kHitRefresh, kHitDrop, kHitBrowse, kHitTile, kHitThumb,
-               kHitTrack, kHitStop, kHitLogs, kHitCategory, kHitCard, kHitCardButton, kHitRetry };
+enum HitKind { kHitNone, kHitNav, kHitAdd, kHitClear, kHitRefresh, kHitTile, kHitThumb, kHitTrack, kHitCategory,
+               kHitCard, kHitCardButton, kHitRetry, kHitInfoClose, kHitBack, kHitPage };
 enum NavItem { kNavLibrary, kNavStore, kNavSettings };
 struct Hit {
     HitKind kind = kHitNone;
@@ -2149,23 +2281,25 @@ Hit g_hot;
 bool g_thumb_drag = false;
 float g_thumb_y0 = 0, g_thumb_scroll0 = 0;
 
-// The window: a navigation pane (Library, Store, Settings at the bottom), the
-// content layer beside it with the page's title and toolbar above the grid,
-// and the status bar along the bottom.
+// The window: a navigation pane (Library, Store, Settings at the bottom) and
+// the content layer beside it, with the page's title and toolbar above the
+// grid, or a page (Settings, an app's details) in its place.
 struct Layout {
-    RectF rail, nav[3], content, title, search, clear, add, category, refresh, progress, grid, footer, logs, stop,
-        drop, browse, retry;
+    RectF rail, nav[3], content, title, search, clear, add, category, refresh, progress, grid, drop, retry, infobar,
+        info_close;
     bool compact = false;  // a narrow window: the pane shows icons only
     int cols = 1;
     float tile_w = 0, tile_h = 0, gap = 0, content_h = 0, max_scroll = 0;  // the library's tiles or the store's cards
 } g_l;
 
-struct Sheet;
-Sheet* g_sheet = nullptr;
-HWND sheet_hwnd();
-HWND owner() { return sheet_hwnd() ? sheet_hwnd() : g_main; }
+HWND owner() { return g_main; }
 void show_logs(const fs::path& log);
 void show_install_window();
+void fit_install_window();
+std::wstring install_failure_reason(const fs::path& log);
+void show_library(int show);
+void maybe_quit();
+struct Splash;
 
 bool is_pending(const std::wstring& name) {
     return std::find(g_pending.begin(), g_pending.end(), name) != g_pending.end();
@@ -2269,9 +2403,13 @@ std::wstring job_label(const std::wstring& name) {
     return it == g_job_labels.end() ? name : it->second;
 }
 
-void set_status(const std::wstring& text, StatusKind kind) {
+// Shows a message in the InfoBar; a success or a note closes itself after six seconds.
+void info(const std::wstring& text, StatusKind kind) {
     g_status = text;
     g_status_kind = kind;
+    if (!g_main) return;
+    if (kind == kError || text.empty()) KillTimer(g_main, kInfoBarTimer);
+    else SetTimer(g_main, kInfoBarTimer, 6000, nullptr);
     InvalidateRect(g_main, nullptr, FALSE);
 }
 
@@ -2364,21 +2502,17 @@ void compute_layout() {
     GetClientRect(g_main, &rc);
     const float W = static_cast<float>(rc.right), H = static_cast<float>(rc.bottom);
     const bool store = g_view == kStoreView;
-    const float foot = px(32);
-    g_l.footer = RectF(0, H - foot, W, foot);
-    g_l.logs = RectF(W - px(12) - px(76), g_l.footer.Y + px(4), px(76), px(24));
-    g_l.stop = RectF(g_l.logs.X - px(4) - px(72), g_l.logs.Y, px(72), px(24));
 
     // The pane: the brand row, Library and Store, Settings at the bottom.
     g_l.compact = W < px(900);
     const float rail_w = g_l.compact ? px(56) : px(200);
-    g_l.rail = RectF(0, 0, rail_w, g_l.footer.Y);
+    g_l.rail = RectF(0, 0, rail_w, H);
     const float item_h = px(36), item_w = rail_w - px(16);
     for (int i = 0; i < 2; ++i) g_l.nav[i] = RectF(px(8), px(60) + i * (item_h + px(4)), item_w, item_h);
     g_l.nav[kNavSettings] = RectF(px(8), g_l.rail.GetBottom() - px(12) - item_h, item_w, item_h);
 
     // The content layer: the title block with the toolbar's controls at its end, the grid below.
-    g_l.content = RectF(rail_w, 0, W - rail_w, g_l.footer.Y);
+    g_l.content = RectF(rail_w, 0, W - rail_w, H);
     const float m = px(24), cx = g_l.content.X + m, cw = g_l.content.Width - 2 * m;
     g_l.title = RectF(cx, px(20), cw, px(44));
     const float ch = px(32), cy = g_l.title.Y + (g_l.title.Height - ch) / 2;
@@ -2401,11 +2535,14 @@ void compute_layout() {
     const float top = g_l.title.GetBottom() + px(16);
     g_l.grid = RectF(cx - px(8), top, cw + px(16), (std::max)(0.0f, g_l.content.GetBottom() - top));
 
-    // The empty library's drop card and its Store button, and the store's Try again.
+    // The empty library's drop card, and the store's Try again.
     const float dw = (std::min)(px(520), g_l.grid.Width - px(32)), dh = px(200);
-    const float dy = g_l.grid.Y + (std::max)(px(8), (g_l.grid.Height - dh - px(64)) / 2 - px(20));
+    const float dy = g_l.grid.Y + (std::max)(px(8), (g_l.grid.Height - dh) / 2 - px(40));
     g_l.drop = RectF(g_l.grid.X + (g_l.grid.Width - dw) / 2, dy, dw, dh);
-    g_l.browse = RectF(g_l.drop.X + (dw - px(160)) / 2, g_l.drop.GetBottom() + px(16), px(160), ch);
+    // The InfoBar: a message at the bottom of the content, over what is there.
+    const float iw = (std::min)(px(560), cw);
+    g_l.infobar = RectF(cx + (cw - iw) / 2, H - px(16) - px(48), iw, px(48));
+    g_l.info_close = RectF(g_l.infobar.GetRight() - px(40), g_l.infobar.Y + px(8), px(32), px(32));
     g_l.retry = RectF(g_l.grid.X + g_l.grid.Width / 2 - px(60),
                       g_l.grid.Y + (std::min)(g_l.grid.Height / 2, px(110)) + px(66), px(120), ch);
 
@@ -2433,7 +2570,7 @@ void compute_layout() {
 }
 
 std::wstring query(View view) {
-    if (view != g_view) return g_other_query;
+    if (view != g_view) return g_queries[view];
     wchar_t buf[256] = {};
     GetWindowTextW(g_search, buf, 256);
     return buf;
@@ -2487,7 +2624,21 @@ void rebuild_tiles() {
     InvalidateRect(g_main, nullptr, FALSE);
 }
 
+// What the library folder holds, in one number that changes when an app is added, removed or renamed.
+uint64_t library_stamp() {
+    uint64_t h = 1469598103934665603ull;
+    std::error_code ec;
+    for (const auto& e : fs::directory_iterator(library_dir(), ec)) {
+        const uint64_t t = static_cast<uint64_t>(e.last_write_time(ec).time_since_epoch().count());
+        for (const wchar_t c : e.path().filename().wstring()) h = (h ^ static_cast<uint16_t>(c)) * 1099511628211ull;
+        h = (h ^ t) * 1099511628211ull;
+    }
+    return h;
+}
+uint64_t g_library_stamp = 0;
+
 void refresh() {
+    g_library_stamp = library_stamp();
     g_apps = library();
     scan_installed();
     g_icons.clear();
@@ -2521,23 +2672,26 @@ const App* selected() { return g_selected.empty() ? nullptr : find_app(g_selecte
 // The empty library's drop card is shown when nothing is installed, queued or searched for.
 bool empty_library() { return g_view == kLibraryView && g_tiles.empty() && query(kLibraryView).empty(); }
 
+bool page_view() { return g_view == kSettingsView || g_view == kAppView || g_view == kStoreAppView; }
+
 Hit hit_test(float x, float y) {
     const bool store = g_view == kStoreView;
     for (int i = 0; i < 3; ++i) {
         if (contains(g_l.nav[i], x, y)) return {kHitNav, i};
     }
+    if (!g_status.empty() && contains(g_l.infobar, x, y)) {
+        return {contains(g_l.info_close, x, y) ? kHitInfoClose : kHitNone, -1};
+    }
+    if (page_view()) {
+        if (contains(g_l.content, x, y)) return {kHitPage, -1};
+        return {};
+    }
     if (!query(g_view).empty() && contains(g_l.clear, x, y)) return {kHitClear, -1};
     if (!store && contains(g_l.add, x, y)) return {kHitAdd, -1};
     if (store && contains(g_l.refresh, x, y)) return {kHitRefresh, -1};
     if (store && !g_store.apps.empty() && contains(g_l.category, x, y)) return {kHitCategory, -1};
-    if (contains(g_l.logs, x, y)) return {kHitLogs, -1};
-    if (!g_running.empty() && contains(g_l.stop, x, y)) return {kHitStop, -1};
     if (!contains(g_l.grid, x, y)) return {};
-    if (empty_library()) {
-        if (contains(g_l.drop, x, y)) return {kHitDrop, -1};
-        if (contains(g_l.browse, x, y)) return {kHitBrowse, -1};
-        return {};
-    }
+    if (empty_library()) return {};
     if (g_l.max_scroll > 0 && x >= g_l.grid.GetRight() - px(12)) {
         return {contains(inset(thumb_rect(), -px(4), 0), x, y) ? kHitThumb : kHitTrack, -1};
     }
@@ -2549,7 +2703,10 @@ Hit hit_test(float x, float y) {
         if (col < 0 || col >= g_l.cols || row < 0 || i >= static_cast<int>(g_store.shown.size())) return {};
         const RectF r = tile_rect(i);
         if (!contains(r, x, y)) return {};
-        return {contains(card_button(r), x, y) ? kHitCardButton : kHitCard, i};
+        const StoreApp& a = g_store.apps[static_cast<size_t>(g_store.shown[static_cast<size_t>(i)])];
+        const Offer offer = offer_for(a);
+        const bool button = offer == kOfferInstall || offer == kOfferUpdate;
+        return {button && contains(card_button(r), x, y) ? kHitCardButton : kHitCard, i};
     }
     for (size_t i = 0; i < g_tiles.size(); ++i) {
         if (contains(tile_rect(static_cast<int>(i)), x, y)) return {kHitTile, static_cast<int>(i)};
@@ -2720,25 +2877,23 @@ void paint_empty(Graphics& g, const wchar_t* glyph, const std::wstring& title, c
               kCenter, true, false);
 }
 
-// Nothing installed yet: a large drop target that also opens the file dialog, and the way to the Store.
+// Nothing installed yet: a card that says how to add the first app (Add app is in the toolbar).
 void paint_drop_card(Graphics& g) {
     const RectF& r = g_l.drop;
-    const bool hot = g_hot.kind == kHitDrop;
-    fill_round(g, r, px(kRadiusTile), hot ? mix(g_t.card, g_t.accent, g_t.dark ? 0.1f : 0.05f) : g_t.card);
+    fill_round(g, r, px(kRadiusTile), g_t.card);
     GraphicsPath p;
     rounded(p, inset(r, px(1), px(1)), px(kRadiusTile) - 1);
-    Gdiplus::Pen pen(hot ? g_t.accent : with_alpha(g_t.text2, 140), px(1.5f));
+    Gdiplus::Pen pen(with_alpha(g_t.text2, 140), px(1.5f));
     const Gdiplus::REAL dashes[] = {4, 3};
     pen.SetDashPattern(dashes, 2);
     g.DrawPath(&pen, &p);
     const float cy = r.Y + r.Height / 2;
-    draw_text(g, kGlyphDownload, g_f.glyph48.get(), hot ? g_t.accent : with_alpha(g_t.text2, 200),
-              RectF(r.X, cy - px(66), r.Width, px(56)), kCenter);
-    draw_text(g, tr(L"Drop an APK here to install"), g_f.body_semi.get(), g_t.text,
+    draw_text(g, kGlyphDownload, g_f.glyph48.get(), with_alpha(g_t.text2, 200), RectF(r.X, cy - px(66), r.Width, px(56)),
+              kCenter);
+    draw_text(g, tr(L"Drop an Android app here"), g_f.body_semi.get(), g_t.text,
               RectF(r.X + px(16), cy + px(2), r.Width - px(32), px(24)), kCenter);
-    draw_text(g, tr(L"or click to choose a file  ·  .apk .apkm .xapk .apks"), g_f.caption.get(), g_t.text2,
+    draw_text(g, tr(L"or choose Add app  ·  .apk .apkm .xapk .apks"), g_f.caption.get(), g_t.text2,
               RectF(r.X + px(16), cy + px(26), r.Width - px(32), px(20)), kCenter);
-    draw_button(g, g_l.browse, tr(L"Browse the Store"), g_hot.kind == kHitBrowse, false, false, kGlyphStore);
 }
 
 void paint_grid(Graphics& g) {
@@ -2783,7 +2938,10 @@ void paint_card(Graphics& g, int i) {
     switch (offer_for(a, &percent)) {
         case kOfferInstall: draw_button(g, b, tr(L"Install"), on_button, true, false); break;
         case kOfferUpdate: draw_button(g, b, tr(L"Update"), on_button, true, false); break;
-        case kOfferOpen: draw_button(g, b, tr(L"Open"), on_button, false, false); break;
+        case kOfferOpen:  // installed: the library opens it
+            draw_text(g, kGlyphCheck, g_f.glyph12.get(), g_t.success, RectF(b.X, b.Y, px(20), b.Height), kCenter);
+            draw_text(g, tr(L"Installed"), g_f.caption.get(), g_t.text2, RectF(b.X + px(22), b.Y, b.Width - px(22), b.Height));
+            break;
         case kOfferDownloading: {
             fill_round(g, b, px(kRadiusControl), with_alpha(g_t.accent, g_t.dark ? 40 : 24));
             if (percent > 0) {
@@ -2859,66 +3017,41 @@ void paint_drop_overlay(Graphics& g) {
               RectF(r.X, cy + px(24), r.Width, px(24)), kCenter);
 }
 
-// A small borderless button with a glyph, for the status bar.
-void draw_chip(Graphics& g, const RectF& r, const wchar_t* glyph, const std::wstring& text, const Color& c, bool hot) {
-    if (hot) fill_round(g, r, px(4), g_t.hover);
-    const float tw = text_width(g, text, g_f.caption.get());
-    const float x = r.X + (r.Width - tw - px(18)) / 2;
-    draw_text(g, glyph, g_f.glyph12.get(), c, RectF(x, r.Y, px(14), r.Height), kCenter);
-    draw_text(g, text, g_f.caption.get(), c, RectF(x + px(18), r.Y, tw + px(2), r.Height));
+// The InfoBar: what just happened, at the bottom of the content, until it closes itself (a success or a
+// note, after a few seconds) or is closed (an error).
+void paint_infobar(Graphics& g) {
+    if (g_status.empty()) return;
+    const RectF& r = g_l.infobar;
+    fill_round(g, RectF(r.X, r.Y + px(2), r.Width, r.Height), px(kRadiusCard), Color(g_t.dark ? 90 : 26, 0, 0, 0));
+    const Color tint = g_status_kind == kError ? g_t.danger : g_status_kind == kSuccess ? g_t.success : g_t.accent;
+    fill_round(g, r, px(kRadiusCard), mix(g_t.card, tint, g_t.dark ? 0.16f : 0.08f));
+    stroke_round(g, r, px(kRadiusCard), mix(g_t.border, tint, 0.35f));
+    const RectF dot(r.X + px(16), r.Y + (r.Height - px(16)) / 2, px(16), px(16));
+    Gdiplus::SolidBrush b(tint);
+    g.FillEllipse(&b, dot);
+    draw_text(g, g_status_kind == kError ? L"!" : g_status_kind == kSuccess ? kGlyphCheck : L"i",
+              g_status_kind == kSuccess ? g_f.glyph12.get() : g_f.caption_semi.get(), kWhite, dot, kCenter);
+    draw_text(g, g_status, g_f.body.get(), g_t.text, RectF(dot.GetRight() + px(12), r.Y, r.Width - px(96), r.Height));
+    const bool hot = g_hot.kind == kHitInfoClose;
+    if (hot) fill_round(g, g_l.info_close, px(kRadiusControl), g_t.hover);
+    draw_text(g, kGlyphClear, g_f.glyph12.get(), g_t.text2, g_l.info_close, kCenter);
 }
 
-const App* running_app() {
-    if (const App* a = selected(); a && g_running.count(a->name)) return a;
-    return g_running.empty() ? nullptr : find_app(*g_running.begin());
-}
+void paint_page(Graphics& g);
 
-// The status bar: what just happened or a hint, and Stop and Logs at the end.
-void paint_footer(Graphics& g, float W) {
-    const RectF& r = g_l.footer;
-    Gdiplus::SolidBrush bar(g_t.bg);
-    g.FillRectangle(&bar, r);
-    Gdiplus::Pen line(g_t.border, 1);
-    g.DrawLine(&line, 0.0f, r.Y, W, r.Y);
-    draw_chip(g, g_l.logs, kGlyphLog, tr(L"Logs"), g_t.text2, g_hot.kind == kHitLogs);
-    const App* running = running_app();
-    if (running) draw_chip(g, g_l.stop, kGlyphStop, tr(L"Stop"), g_t.danger, g_hot.kind == kHitStop);
-    const float right = running ? g_l.stop.X : g_l.logs.X;
-
-    const bool store = g_view == kStoreView;
-    const std::wstring hint =
-        store            ? tr(L"Free and open-source apps from f-droid.org  ·  Install adds the app to your library")
-        : g_apps.empty() ? tr(L"Drop an APK anywhere in this window to install your first app")
-                         : tr(L"Double-click to open  ·  right-click for options  ·  drop an APK anywhere to add "
-                              L"more");
-    const bool hinted = g_status.empty() || g_status_kind == kHint;
-    const Color c = hinted || g_status_kind == kInfo ? g_t.text2
-                    : g_status_kind == kSuccess       ? g_t.success
-                                                      : g_t.danger;
-    float x = px(16);
-    std::wstring text = hinted ? hint : g_status;
-    if (running && (hinted || g_status_kind == kInfo)) {
-        spinner(g, RectF(x, r.Y + r.Height / 2 - px(6), px(12), px(12)), g_t.accent, px(2));
-        x += px(20);
-        text = g_running.size() > 1 ? fmt(L"{0} apps are running", {std::to_wstring(g_running.size())})
-                                    : fmt(L"{0} is running", {running->label});
-    } else if (!hinted && g_status_kind != kInfo) {
-        Gdiplus::SolidBrush dot(c);
-        g.FillEllipse(&dot, x, r.Y + r.Height / 2 - px(3), px(6), px(6));
-        x += px(14);
-    }
-    draw_text(g, text, g_f.caption.get(), running ? g_t.text : c, RectF(x, r.Y, right - x - px(12), r.Height));
-}
-
-void paint_main(Graphics& g, float W, float) {
+void paint_main(Graphics& g, float, float) {
     g.Clear(g_t.bg);
     paint_rail(g);
     paint_layer(g);
-    paint_toolbar(g);
-    if (g_view == kStoreView) paint_store_grid(g);
-    else paint_grid(g);
+    if (page_view()) {
+        paint_page(g);
+    } else {
+        paint_toolbar(g);
+        if (g_view == kStoreView) paint_store_grid(g);
+        else paint_grid(g);
+    }
     if (g_drag_over) paint_drop_overlay(g);
-    paint_footer(g, W);
+    paint_infobar(g);
 }
 
 void update_timer() {
@@ -2988,39 +3121,9 @@ std::wstring log_summary(const fs::path& log, bool* no_native_code) {
     return out;
 }
 
-// Whether the run got as far as drawing: the runtime logs its first presented frame. An app that exits
-// cleanly before that (an APK without its native code, a check that gives up) failed to open all the same.
-bool log_shows_window(const fs::path& log) {
-    HANDLE f = CreateFileW(log.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
-                           OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (f == INVALID_HANDLE_VALUE) return true;  // nothing to go on: don't call it a failure
-    static const std::string kMark = "] first frame";
-    std::string buf, chunk(1 << 20, '\0');
-    bool found = false;
-    DWORD got = 0;
-    while (!found && ReadFile(f, &chunk[0], static_cast<DWORD>(chunk.size()), &got, nullptr) && got > 0) {
-        buf.append(chunk, 0, got);
-        found = buf.find(kMark) != std::string::npos ||
-                buf.find("native window: first frame") != std::string::npos;
-        if (buf.size() > kMark.size() + 64) buf.erase(0, buf.size() - (kMark.size() + 64));  // keep the seam
-    }
-    CloseHandle(f);
-    return found;
-}
-
-void failed_with_log(const std::wstring& main, const fs::path& log, bool in_notepad = false) {
-    bool no_native_code = false;
-    const std::wstring details = log_summary(log, &no_native_code);
-    std::wstring content = fmt(L"The log may say why:\n{0}", {log.wstring()});
-    if (no_native_code) {
-        content = std::wstring(tr(L"This APK has no native code for this app (lib/arm64-v8a). Install the full bundle "
-                                  L"(.apkm, .xapk or .apks) that includes the arm64-v8a part.")) +
-                  L"\n\n" + content;
-    }
-    if (task_dialog(main, content, TD_ERROR_ICON, {{100, tr(L"Open the log")}}, false, details) == 100) {
-        if (in_notepad) open_log(log);
-        else show_logs(log);
-    }
+// An error the user can do nothing about but read: the sentence, and Show log.
+void error_with_log(const std::wstring& main, const std::wstring& content, const fs::path& log) {
+    if (task_dialog(main, content, TD_ERROR_ICON, {{100, tr(L"Show log")}}, false) == 100) show_logs(log);
 }
 
 std::vector<fs::path> pick_files(bool multiple, const wchar_t* title) {
@@ -3058,83 +3161,196 @@ std::vector<fs::path> pick_files(bool multiple, const wchar_t* title) {
 // Queues an install. The store's (`from_store`) installs a download it then
 // removes, and shows its progress on the app's card rather than in the
 // install window.
-void install(const fs::path& source, bool run_after, std::wstring name = L"", fs::path replaces = {},
-             bool from_store = false) {
+void install(const fs::path& source, std::wstring name = L"", fs::path replaces = {}, bool from_store = false) {
     if (name.empty()) name = file_name_safe(source.stem().wstring());
+    if (is_pending(name)) return;  // the same file twice
     if (g_pending.empty()) {
         g_batch_total = g_batch_done = 0;
-        g_jobs.clear();
+        if (!g_install_wnd) g_jobs.clear();
     }
     ++g_batch_total;
     g_pending.push_back(name);
-    g_jobs.push_back({name});
-    set_status(fmt(L"Installing {0}…", {job_label(name)}), kInfo);
-    CloseHandle(CreateThread(nullptr, 0, install_thread, new InstallJob{source, name, replaces, run_after, from_store},
-                             0, nullptr));
+    Job job{name};
+    job.file = source.filename().wstring();
+    job.update = find_app(name) != nullptr;
+    g_jobs.push_back(job);
+    CloseHandle(CreateThread(nullptr, 0, install_thread, new InstallJob{source, name, replaces, from_store}, 0,
+                             nullptr));
     update_timer();
     rebuild_tiles();
     if (!from_store || g_install_wnd) show_install_window();
 }
 
 void add_from_dialog() {
-    for (const fs::path& p : pick_files(true, tr(L"Install an Android app"))) install(p, false);
+    for (const fs::path& p : pick_files(true, tr(L"Install an Android app"))) install(p);
 }
 
+Splash* show_splash(const std::wstring& name);
+void info(const std::wstring& text, StatusKind kind);
+
+// Brings the window of an app started from here to the front.
+void bring_forward(const std::wstring& name) {
+    AcquireSRWLockShared(&g_proc_lock);
+    const auto it = g_procs.find(name);
+    const DWORD pid = it == g_procs.end() ? 0 : GetProcessId(it->second);
+    ReleaseSRWLockShared(&g_proc_lock);
+    struct Find {
+        DWORD pid;
+        HWND found;
+    } f{pid, nullptr};
+    if (pid) {
+        EnumWindows([](HWND w, LPARAM lp) -> BOOL {
+            auto* f = reinterpret_cast<Find*>(lp);
+            DWORD p = 0;
+            GetWindowThreadProcessId(w, &p);
+            if (p != f->pid || !IsWindowVisible(w) || GetWindow(w, GW_OWNER)) return TRUE;
+            f->found = w;
+            return FALSE;
+        }, reinterpret_cast<LPARAM>(&f));
+    }
+    if (f.found) {
+        if (IsIconic(f.found)) ShowWindow(f.found, SW_RESTORE);
+        SetForegroundWindow(f.found);
+    }
+}
+
+// Opens the app: its splash at once, the runtime on a thread (run_thread), which reports back.
 void launch(const App& app) {
     if (is_pending(app.name)) {
-        set_status(fmt(L"{0} is still being installed.", {app.label}), kInfo);
+        info(fmt(L"{0} is still being installed.", {app.label}), kInfo);
         return;
     }
     if (g_running.count(app.name)) {
-        set_status(fmt(L"{0} is already open.", {app.label}), kInfo);
+        bring_forward(app.name);
         return;
     }
     g_running.insert(app.name);
-    set_status(fmt(L"Opening {0}…", {app.label}), kInfo);
+    show_splash(app.name);
     CloseHandle(CreateThread(nullptr, 0, run_thread, new RunJob{app.name, app.apk}, 0, nullptr));
     update_timer();
 }
 
 void appops_forget(const std::string& pkg);
 std::vector<std::string> package_of(const std::wstring& name);
+namespace appops {
+bool stop_runtime_of(const fs::path& apk);
+}
 
-bool remove_app(const App& app, bool ask) {
-    if (ask && !confirm(fmt(L"Remove {0}?", {app.label}),
-                        tr(L"Its shortcuts go too. What the app saved stays, so installing it again picks up where it left off."),
-                        tr(L"Remove"))) {
-        return false;
+// Deletes a folder and what is in it without going through a junction or link inside it (the
+// shared-storage folders are junctions to the user's own folders): the link goes, not its target.
+void remove_tree(const fs::path& dir) {
+    const DWORD attrs = GetFileAttributesW(dir.c_str());
+    if (attrs == INVALID_FILE_ATTRIBUTES) return;
+    if (!(attrs & FILE_ATTRIBUTE_DIRECTORY)) {
+        SetFileAttributesW(dir.c_str(), FILE_ATTRIBUTE_NORMAL);
+        DeleteFileW(dir.c_str());
+        return;
     }
+    if (!(attrs & FILE_ATTRIBUTE_REPARSE_POINT)) {
+        WIN32_FIND_DATAW fd;
+        HANDLE h = FindFirstFileW((dir / L"*").c_str(), &fd);
+        if (h != INVALID_HANDLE_VALUE) {
+            do {
+                if (wcscmp(fd.cFileName, L".") != 0 && wcscmp(fd.cFileName, L"..") != 0) remove_tree(dir / fd.cFileName);
+            } while (FindNextFileW(h, &fd));
+            FindClose(h);
+        }
+    }
+    RemoveDirectoryW(dir.c_str());
+}
+
+// The app's own files: its library entry, converted code and shortcuts' icon. What it saved stays.
+void remove_app_files(const std::wstring& name) {
+    std::error_code ec;
+    fs::remove(label_file(name), ec);
+    fs::remove(package_file(name), ec);
+    fs::remove(shortcut_icon(name), ec);
+    fs::remove(library_dir() / (name + L".window"), ec);
+    fs::remove(orientation_file(name), ec);
+    remove_tree(app_dir(name));
+    fs::remove(data_dir() / L"android" / L"data" / L"app" / (L"." + name + L".installed"), ec);
+}
+
+// What the app saved, as Android's "Clear storage" and uninstall take it: its data folder
+// (android\data\data\<package>, and the <package>_<version> folders older runs made) and its folders
+// in shared storage (Android\data and Android\obb).
+void remove_app_data(const std::string& pkg) {
+    if (pkg.empty() || pkg.find_first_of("/\\:") != std::string::npos || pkg == "." || pkg == "..") return;
+    const std::wstring p = utf8_to_wide(pkg);
+    const fs::path android = data_dir() / L"android";
+    remove_tree(android / L"data" / L"data" / p);
+    std::error_code ec;
+    for (const auto& e : fs::directory_iterator(android / L"data" / L"data", ec)) {
+        if (e.path().filename().wstring().rfind(p + L"_", 0) == 0) remove_tree(e.path());
+    }
+    remove_tree(android / L"sdcard" / L"Android" / L"data" / p);
+    remove_tree(android / L"sdcard" / L"Android" / L"obb" / p);
+}
+
+// Asks before removing: Remove, with a box for what the app saved (off: it stays, so
+// installing the app again picks up where it left off).
+bool confirm_remove(const App& a, bool* with_data) {
+    TASKDIALOGCONFIG c{};
+    c.cbSize = sizeof(c);
+    c.hwndParent = owner();
+    c.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION | TDF_POSITION_RELATIVE_TO_WINDOW | (g_rtl ? TDF_RTL_LAYOUT : 0);
+    c.pszWindowTitle = L"Win.apk";
+    c.pszMainIcon = TD_WARNING_ICON;
+    const std::wstring main = fmt(L"Remove {0}?", {a.label});
+    const std::wstring content = tr(L"Its shortcuts go too. Unless you tick the box, what the app saved stays, so "
+                                    L"installing it again picks up where it left off.");
+    c.pszMainInstruction = main.c_str();
+    c.pszContent = content.c_str();
+    const std::wstring check = tr(L"Also delete what the app saved (accounts, settings, files)");
+    c.pszVerificationText = check.c_str();
+    const std::wstring remove_text = tr(L"Remove");
+    const TASKDIALOG_BUTTON buttons[] = {{IDOK, remove_text.c_str()}};
+    c.cButtons = 1;
+    c.pButtons = buttons;
+    c.dwCommonButtons = TDCBF_CANCEL_BUTTON;
+    c.nDefaultButton = IDCANCEL;
+    int pressed = 0;
+    BOOL checked = FALSE;
+    if (FAILED(TaskDialogIndirect(&c, &pressed, nullptr, &checked)) || pressed != IDOK) return false;
+    *with_data = checked != FALSE;
+    return true;
+}
+
+// Removes the app (asking first when `ask`); `with_data` also deletes what it saved.
+bool remove_app(const App& app, bool ask, bool with_data = false) {
+    if (ask && !confirm_remove(app, &with_data)) return false;
     const App copy = app;  // `app` may point into g_apps, which refresh() replaces
     std::error_code ec;
+    if (app_running(copy.name) && !appops::stop_runtime_of(copy.apk)) {
+        info(fmt(L"Close {0} first, then remove it.", {copy.label}), kError);
+        return false;
+    }
     // Its permissions go with it, unless another copy in the library is the same package.
-    if (const std::vector<std::string> pkg = package_of(copy.name); !pkg.empty()) {
+    const std::vector<std::string> pkg = package_of(copy.name);
+    if (!pkg.empty()) {
         bool other = false;
         for (const App& a : library()) {
             const std::vector<std::string> p = a.name == copy.name ? std::vector<std::string>{} : package_of(a.name);
             other = other || (!p.empty() && p[0] == pkg[0]);
         }
         if (!other) appops_forget(pkg[0]);
+        if (!other && with_data) remove_app_data(pkg[0]);
     }
     remove_app_shortcuts(copy);
     fs::remove(copy.apk, ec);
-    fs::remove(label_file(copy.name), ec);
-    fs::remove(package_file(copy.name), ec);
-    fs::remove(shortcut_icon(copy.name), ec);
-    fs::remove(library_dir() / (copy.name + L".window"), ec);
-    fs::remove(orientation_file(copy.name), ec);
-    fs::remove_all(app_dir(copy.name), ec);
-    fs::remove(data_dir() / L"android" / L"data" / L"app" / (L"." + copy.name + L".installed"), ec);
+    remove_app_files(copy.name);
     write_registry();
     if (ask) {
         refresh();
-        set_status(fmt(L"{0} was removed.", {copy.label}), kInfo);
+        if (g_view == kAppView) set_view(kLibraryView);
+        info(fmt(with_data ? L"{0} and what it saved were removed." : L"{0} was removed.", {copy.label}), kInfo);
     }
     return true;
 }
 
 void update_from_apk(const App& app) {
     const auto files = pick_files(false, fmt(L"Update {0} from an APK", {app.label}).c_str());
-    if (!files.empty()) install(files[0], false, app.name, app.apk);
+    if (!files.empty()) install(files[0], app.name, app.apk);
 }
 
 // Opens this app in the given orientation from now on (kOrientUnset: the
@@ -3145,15 +3361,9 @@ void set_orientation(const App& app, int o) {
     set_app_orientation(app.name, o);
     fs::remove(library_dir() / (app.name + L".window"), ec);
     const int now = effective_orientation(app.name);
-    set_status(fmt(now == kLandscape ? L"{0} opens in landscape from now on." : L"{0} opens in portrait from now on.",
+    info(fmt(now == kLandscape ? L"{0} opens in landscape from now on." : L"{0} opens in portrait from now on.",
                    {app.label}),
                kSuccess);
-}
-
-// Right-click > Open in portrait / landscape: the other way from what it gets now.
-void flip_orientation(const App& app) {
-    if (manifest_orientation(app.name) != kOrientUnset) return;  // the app decides
-    set_orientation(app, effective_orientation(app.name) == kLandscape ? kPortrait : kLandscape);
 }
 
 // Fetches the catalog: the one kept from last time at once, F-Droid's when
@@ -3170,21 +3380,16 @@ void store_start(bool force) {
 }
 
 // The card's button: install or update the app (download, check, then the
-// library's install), or open it.
+// library's install).
 void store_get(const StoreApp& a) {
     const Offer offer = offer_for(a);
-    if (offer == kOfferOpen) {
-        const auto it = g_store.installed.find(a.pkg);
-        if (const App* app = it == g_store.installed.end() ? nullptr : find_app(it->second.first)) launch(*app);
-        return;
-    }
     if (offer != kOfferInstall && offer != kOfferUpdate) return;
     g_store.downloads[a.pkg] = -1;
     CloseHandle(CreateThread(nullptr, 0, download_thread,
                              new Download{a.pkg, a.sha256, std::wstring(kRepo) + utf8_to_wide(a.apk), store_name(a),
                                           downloads_dir() / utf8_to_wide(a.apk)},
                              0, nullptr));
-    set_status(fmt(L"Downloading {0}…", {store_name(a)}), kInfo);
+    info(fmt(L"Downloading {0}…", {store_name(a)}), kInfo);
     InvalidateRect(g_main, nullptr, FALSE);
 }
 
@@ -3193,14 +3398,14 @@ void store_get(const StoreApp& a) {
 void store_downloaded(const Download& d, bool ok) {
     g_store.downloads.erase(d.pkg);
     if (!ok) {
-        set_status(fmt(L"Downloading {0} failed. Check the internet connection, then try again.", {d.label}), kError);
+        info(fmt(L"Downloading {0} failed. Check the internet connection, then try again.", {d.label}), kError);
         return;
     }
     const auto it = g_store.installed.find(d.pkg);
     const App* existing = it == g_store.installed.end() ? nullptr : find_app(it->second.first);
     const std::wstring name = existing ? existing->name : file_name_safe(utf8_to_wide(d.pkg));
     if (!existing) g_job_labels[name] = d.label;
-    install(d.file, false, name, existing ? existing->apk : fs::path(), true);
+    install(d.file, name, existing ? existing->apk : fs::path(), true);
 }
 
 // The categories, in a menu of a few columns so that a hundred of them fit.
@@ -3233,7 +3438,9 @@ void choose_category() {
 }
 
 // ---------------------------------------------------------------------------
-// Sheets: the settings and Get Info windows, drawn like upstream's grouped forms
+// Pages: Settings, an app's details and a store app's details, drawn in the
+// content layer in place of the grid, as rows grouped in cards (Windows 11's
+// Settings, upstream's grouped forms).
 
 struct Row {
     enum Kind { kText, kButton, kToggle, kChoice } kind = kText;
@@ -3250,37 +3457,29 @@ struct Section {
     std::wstring footer;
 };
 
-struct Sheet {
-    std::wstring title;
-    std::wstring hero_title, hero_sub;      // the heading: an app's name and package, or the sheet's own
-    std::wstring hero_app;                  // the library app whose icon heads it
-    Gdiplus::Bitmap* hero_icon = nullptr;   // or a store app's icon, for one not in the library
-    const wchar_t* hero_glyph = nullptr;    // or a glyph in an accent badge (Settings)
+struct Page {
+    std::wstring title, sub;                   // the heading: Settings, or the app's name and what it is
+    std::wstring app;                          // the library app whose icon heads it
+    std::function<Gdiplus::Bitmap*()> icon;    // or a store app's icon
+    bool back = false;                         // a details page: the arrow goes back to `from`
+    View from = kLibraryView;
     std::function<std::vector<Section>()> build;
     std::vector<Section> sections;
-    HWND hwnd = nullptr;
-    float scroll = 0, content_h = 0, view_h = 0;
+    float scroll = 0, content_h = 0;
     struct Target {
         RectF r;
         int section, row;
     };
     std::vector<Target> targets;
-    RectF done, thumb;
-    int hot = -1;    // index into targets, kSheetDone the Done button, kSheetThumb the scrollbar
-    int focus = -1;  // the target reached with Tab, which shows a focus ring; kSheetDone for Done
-    bool tracking = false, thumb_drag = false;
+    RectF back_r, thumb, view;
+    int hot = -1;    // index into targets, kPageBack, kPageThumb
+    int focus = -1;  // the target reached with Tab: it shows a focus ring
+    bool thumb_drag = false;
     float thumb_y0 = 0, thumb_scroll0 = 0;
-};
+    int generation = 0;  // a new page was opened: an action's rebuild is not for it
+} g_page;
 
-constexpr int kSheetDone = -2, kSheetThumb = -3;
-
-HWND sheet_hwnd() { return g_sheet ? g_sheet->hwnd : nullptr; }
-
-void close_sheet() {
-    if (!g_sheet || !g_sheet->hwnd) return;
-    EnableWindow(g_main, TRUE);  // before the sheet goes, so Windows activates the library and not another app
-    DestroyWindow(g_sheet->hwnd);
-}
+constexpr int kPageBack = -2, kPageThumb = -3;
 
 SizeF control_size(Graphics& g, const Row& row) {
     switch (row.kind) {
@@ -3333,31 +3532,38 @@ void paint_control(Graphics& g, const Row& row, const RectF& r, bool hot) {
     }
 }
 
-float sheet_max_scroll(const Sheet& s) { return (std::max)(0.0f, s.content_h - s.view_h); }
+float page_max_scroll() { return (std::max)(0.0f, g_page.content_h - g_page.view.Height); }
 
-void paint_sheet(Sheet& s, Graphics& g, float W, float H) {
-    g.Clear(g_t.bg);
+void paint_page(Graphics& g) {
+    Page& s = g_page;
     s.targets.clear();
-    const float m = px(24), pad = px(16), foot = px(64), cw = W - 2 * m;
-    s.view_h = H - foot;
-    s.scroll = (std::min)(s.scroll, sheet_max_scroll(s));
-    const RectF view(0, 0, W, s.view_h);
-    g.SetClip(view);
-    float y = px(24) - s.scroll;
-    if (!s.hero_title.empty()) {
-        const RectF ir(m, y, px(56), px(56));
-        if (s.hero_glyph) {
-            fill_round(g, ir, px(12), with_alpha(g_t.accent, g_t.dark ? 60 : 28));
-            draw_text(g, s.hero_glyph, g_f.glyph24.get(), g_t.accent, ir, kCenter);
-        } else if (s.hero_icon || s.hero_app.empty()) {
-            draw_icon(g, s.hero_icon, s.hero_title, ir);
-        } else {
-            draw_app_icon(g, find_app(s.hero_app), s.hero_title, ir);
-        }
-        draw_text(g, s.hero_title, g_f.title.get(), g_t.text, RectF(m + px(72), y + px(2), cw - px(72), px(28)));
-        draw_text(g, s.hero_sub, g_f.caption.get(), g_t.text2, RectF(m + px(72), y + px(32), cw - px(72), px(20)));
-        y += px(80);
+    const RectF& c = g_l.content;
+    const float m = c.X + px(28), pad = px(16);
+    const float cw = (std::min)(px(860), c.Width - px(56));
+    float x = m;
+    if (s.back) {
+        s.back_r = RectF(m - px(6), px(22), px(36), px(36));
+        draw_icon_button(g, s.back_r, g_rtl ? kGlyphForward : kGlyphBack, s.hot == kPageBack, g_t.text);
+        if (s.focus == kPageBack) draw_focus_ring(g, s.back_r, px(kRadiusControl));
+        x += px(44);
+    } else {
+        s.back_r = RectF();
     }
+    float header = px(64);
+    if (!s.app.empty() || s.icon) {
+        const RectF ir(x, px(18), px(48), px(48));
+        if (s.icon) draw_icon(g, s.icon(), s.title, ir);
+        else draw_app_icon(g, find_app(s.app), s.title, ir);
+        draw_text(g, s.title, g_f.title.get(), g_t.text, RectF(ir.GetRight() + px(14), px(18), c.GetRight() - ir.GetRight() - px(40), px(28)));
+        draw_text(g, s.sub, g_f.caption.get(), g_t.text2, RectF(ir.GetRight() + px(14), px(46), c.GetRight() - ir.GetRight() - px(40), px(20)));
+        header = px(82);
+    } else {
+        draw_text(g, s.title, g_f.title.get(), g_t.text, RectF(x, px(24), cw, px(28)));
+    }
+    s.view = RectF(c.X, header, c.Width, (std::max)(0.0f, c.GetBottom() - header));
+    s.scroll = (std::min)(s.scroll, page_max_scroll());
+    g.SetClip(s.view);
+    float y = s.view.Y + px(8) - s.scroll;
     for (size_t si = 0; si < s.sections.size(); ++si) {
         const Section& sec = s.sections[si];
         if (!sec.title.empty()) {
@@ -3368,12 +3574,12 @@ void paint_sheet(Sheet& s, Graphics& g, float W, float H) {
         std::vector<SizeF> controls;
         float total = 0;
         for (const Row& row : sec.rows) {
-            const SizeF c = control_size(g, row);
-            const float tw = cw - 2 * pad - (c.Width > 0 ? c.Width + px(16) : 0);
+            const SizeF cs = control_size(g, row);
+            const float tw = cw - 2 * pad - (cs.Width > 0 ? cs.Width + px(16) : 0);
             float h = px(20);
             if (!row.detail.empty()) h += px(2) + text_height(g, row.detail, g_f.caption.get(), tw);
-            heights.push_back((std::max)(px(52), h + px(24)));
-            controls.push_back(c);
+            heights.push_back((std::max)(px(56), h + px(24)));
+            controls.push_back(cs);
             total += heights.back();
         }
         const RectF card(m, y, cw, total);
@@ -3381,7 +3587,7 @@ void paint_sheet(Sheet& s, Graphics& g, float W, float H) {
         float ry = y;
         for (size_t ri = 0; ri < sec.rows.size(); ++ri) {
             const Row& row = sec.rows[ri];
-            const SizeF c = controls[ri];
+            const SizeF cs = controls[ri];
             const float h = heights[ri];
             const RectF rr(m, ry, cw, h);
             // A switch takes the whole row (its label turns it too); a button or a list only itself.
@@ -3394,13 +3600,13 @@ void paint_sheet(Sheet& s, Graphics& g, float W, float H) {
                 g.SetClip(&clip, Gdiplus::CombineModeIntersect);
                 Gdiplus::SolidBrush b(g_t.hover);
                 g.FillRectangle(&b, rr);
-                g.SetClip(view);
+                g.SetClip(s.view);
             }
             if (ri > 0) {
                 Gdiplus::Pen line(g_t.divider, 1);
                 g.DrawLine(&line, m + pad, ry, m + cw - pad, ry);
             }
-            const float tw = cw - 2 * pad - (c.Width > 0 ? c.Width + px(16) : 0);
+            const float tw = cw - 2 * pad - (cs.Width > 0 ? cs.Width + px(16) : 0);
             const float dh = row.detail.empty() ? 0 : px(2) + text_height(g, row.detail, g_f.caption.get(), tw);
             const float ty = ry + (h - px(20) - dh) / 2;
             draw_text(g, row.title, g_f.body.get(), row.destructive && row.kind == Row::kText ? g_t.danger : g_t.text,
@@ -3409,8 +3615,8 @@ void paint_sheet(Sheet& s, Graphics& g, float W, float H) {
                 draw_text(g, row.detail, g_f.caption.get(), g_t.text2, RectF(m + pad, ty + px(22), tw, dh + px(2)),
                           kLeft, true, false);
             }
-            if (c.Width > 0) {
-                const RectF cr(m + cw - pad - c.Width, ry + (h - c.Height) / 2, c.Width, c.Height);
+            if (cs.Width > 0) {
+                const RectF cr(m + cw - pad - cs.Width, ry + (h - cs.Height) / 2, cs.Width, cs.Height);
                 paint_control(g, row, cr, hot);
                 if (focused) draw_focus_ring(g, cr, row.kind == Row::kToggle ? cr.Height / 2 : px(kRadiusControl));
                 if (interactive) s.targets.push_back({row.kind == Row::kToggle ? rr : cr, static_cast<int>(si),
@@ -3428,53 +3634,61 @@ void paint_sheet(Sheet& s, Graphics& g, float W, float H) {
         }
         y += px(20);
     }
-    s.content_h = y + s.scroll + px(4);
+    s.content_h = y + s.scroll - s.view.Y + px(56);  // room for the InfoBar at the end
     g.ResetClip();
-
-    // The scrollbar, when the sections do not fit.
-    if (s.content_h > s.view_h) {
-        const float h = (std::max)(px(36), s.view_h * s.view_h / s.content_h);
-        const float ty = px(4) + (s.view_h - px(8) - h) * s.scroll / sheet_max_scroll(s);
-        s.thumb = RectF(W - px(8), ty, px(6), h);
-        const bool active = s.thumb_drag || s.hot == kSheetThumb;
-        fill_round(g, s.thumb, px(3), with_alpha(g_t.text2, active ? 200 : 90));
+    if (s.content_h > s.view.Height) {
+        const float h = (std::max)(px(36), s.view.Height * s.view.Height / s.content_h);
+        const float ty = s.view.Y + px(4) + (s.view.Height - px(8) - h) * s.scroll / page_max_scroll();
+        s.thumb = RectF(c.GetRight() - px(10), ty, px(6), h);
+        fill_round(g, s.thumb, px(3), with_alpha(g_t.text2, s.thumb_drag || s.hot == kPageThumb ? 200 : 90));
         if (s.scroll > 0) {
             Gdiplus::Pen line(g_t.border, 1);
-            g.DrawLine(&line, m, 0.0f, W - m, 0.0f);
+            g.DrawLine(&line, c.X + px(16), s.view.Y, c.GetRight() - px(16), s.view.Y);
         }
     } else {
         s.thumb = RectF();
     }
-
-    Gdiplus::SolidBrush bar(g_t.layer);
-    g.FillRectangle(&bar, RectF(0, s.view_h, W, foot));
-    Gdiplus::Pen line(g_t.border, 1);
-    g.DrawLine(&line, 0.0f, s.view_h, W, s.view_h);
-    s.done = RectF(W - m - px(100), s.view_h + (foot - px(32)) / 2, px(100), px(32));
-    draw_button(g, s.done, tr(L"Done"), s.hot == kSheetDone, true, false);
-    if (s.focus == kSheetDone) draw_focus_ring(g, s.done, px(kRadiusControl));
 }
 
-int sheet_hit(const Sheet& s, float x, float y) {
-    if (contains(s.done, x, y)) return kSheetDone;
-    if (y >= s.view_h) return -1;
-    if (s.thumb.Width > 0 && contains(inset(s.thumb, -px(4), 0), x, y)) return kSheetThumb;
+int page_hit(float x, float y) {
+    const Page& s = g_page;
+    if (s.back && contains(s.back_r, x, y)) return kPageBack;
+    if (!contains(s.view, x, y)) return -1;
+    if (s.thumb.Width > 0 && contains(inset(s.thumb, -px(4), 0), x, y)) return kPageThumb;
     for (size_t i = 0; i < s.targets.size(); ++i) {
         if (contains(s.targets[i].r, x, y)) return static_cast<int>(i);
     }
     return -1;
 }
 
-// Activates a target: the Done button, a button row, a switch, or a list (its menu opens under the control).
-void sheet_click(Sheet& s, int hit) {
-    if (hit == kSheetDone) {
-        close_sheet();
+void page_scroll(float by) {
+    g_page.scroll = (std::max)(0.0f, (std::min)(g_page.scroll + by, page_max_scroll()));
+    InvalidateRect(g_main, nullptr, FALSE);
+}
+
+// Builds the page again from what is true now (after an action, or when the language changed).
+void rebuild_page() {
+    if (!page_view() || !g_page.build) return;
+    g_page.sections = g_page.build();
+    InvalidateRect(g_main, nullptr, FALSE);
+}
+
+void page_back() {
+    if (g_page.back) set_view(g_page.from);
+}
+
+// Activates a target: the back arrow, a button row, a switch, or a list (its menu opens under the control).
+void page_click(int hit) {
+    Page& s = g_page;
+    if (hit == kPageBack) {
+        page_back();
         return;
     }
     if (hit < 0 || hit >= static_cast<int>(s.targets.size())) return;
-    const Sheet::Target t = s.targets[static_cast<size_t>(hit)];
+    const Page::Target t = s.targets[static_cast<size_t>(hit)];
     const Row row = s.sections[static_cast<size_t>(t.section)].rows[static_cast<size_t>(t.row)];  // act may rebuild
     if (!row.act) return;
+    const int generation = s.generation;
     if (row.kind == Row::kButton) {
         row.act(0);
     } else if (row.kind == Row::kToggle) {
@@ -3486,160 +3700,41 @@ void sheet_click(Sheet& s, int hit) {
                         row.choices[i].c_str());
         }
         POINT pt{static_cast<LONG>(t.r.X), static_cast<LONG>(t.r.GetBottom() + px(2))};
-        ClientToScreen(s.hwnd, &pt);
-        const int pick = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_TOPALIGN | menu_flags(true), pt.x, pt.y, 0, s.hwnd,
+        ClientToScreen(g_main, &pt);
+        const int pick = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_TOPALIGN | menu_flags(true), pt.x, pt.y, 0, g_main,
                                         nullptr);
         DestroyMenu(menu);
         if (pick > 0) row.act(pick - 1);
     }
-    if (g_sheet == &s && IsWindow(s.hwnd)) {
-        s.sections = s.build();
-        InvalidateRect(s.hwnd, nullptr, FALSE);
-    }
+    if (g_page.generation == generation) rebuild_page();
 }
 
-void sheet_scroll(Sheet& s, float by) {
-    s.scroll = (std::max)(0.0f, (std::min)(s.scroll + by, sheet_max_scroll(s)));
-    InvalidateRect(s.hwnd, nullptr, FALSE);
-}
-
-// Tab moves the keyboard focus through the controls and on to Done, and brings the one reached into view.
-void sheet_tab(Sheet& s, bool back) {
-    const int n = static_cast<int>(s.targets.size());
-    int f = s.focus;
-    if (back) f = f == kSheetDone ? n - 1 : f < 0 ? kSheetDone : f == 0 ? kSheetDone : f - 1;
-    else f = f == kSheetDone ? (n ? 0 : kSheetDone) : f < 0 ? (n ? 0 : kSheetDone) : f + 1 >= n ? kSheetDone : f + 1;
-    s.focus = f;
-    if (f >= 0) {
-        const RectF& r = s.targets[static_cast<size_t>(f)].r;
-        if (r.Y < px(8)) sheet_scroll(s, r.Y - px(8));
-        else if (r.GetBottom() > s.view_h - px(8)) sheet_scroll(s, r.GetBottom() - (s.view_h - px(8)));
+// Tab moves the keyboard focus through the back arrow and the controls, and brings the one reached into view.
+void page_tab(bool back) {
+    Page& s = g_page;
+    std::vector<int> order;
+    if (s.back) order.push_back(kPageBack);
+    for (size_t i = 0; i < s.targets.size(); ++i) order.push_back(static_cast<int>(i));
+    if (order.empty()) return;
+    const auto it = std::find(order.begin(), order.end(), s.focus);
+    int i = it == order.end() ? (back ? static_cast<int>(order.size()) : -1) : static_cast<int>(it - order.begin());
+    i = back ? i - 1 : i + 1;
+    i = (i % static_cast<int>(order.size()) + static_cast<int>(order.size())) % static_cast<int>(order.size());
+    s.focus = order[static_cast<size_t>(i)];
+    if (s.focus >= 0) {
+        const RectF& r = s.targets[static_cast<size_t>(s.focus)].r;
+        if (r.Y < s.view.Y + px(8)) page_scroll(r.Y - s.view.Y - px(8));
+        else if (r.GetBottom() > s.view.GetBottom() - px(64)) page_scroll(r.GetBottom() - (s.view.GetBottom() - px(64)));
     }
-    InvalidateRect(s.hwnd, nullptr, FALSE);
-}
-
-LRESULT CALLBACK sheet_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
-    auto* s = reinterpret_cast<Sheet*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
-    switch (msg) {
-        case WM_NCCREATE:
-            SetWindowLongPtrW(hwnd, GWLP_USERDATA,
-                              reinterpret_cast<LONG_PTR>(reinterpret_cast<CREATESTRUCTW*>(lp)->lpCreateParams));
-            break;
-        case WM_ERASEBKGND: return 1;
-        case WM_PAINT:
-            buffered_paint(hwnd, [&](Graphics& g, float w, float h) { paint_sheet(*s, g, w, h); });
-            return 0;
-        case WM_MOUSEMOVE: {
-            if (!s->tracking) {
-                TRACKMOUSEEVENT tme{sizeof(tme), TME_LEAVE, hwnd, 0};
-                s->tracking = TrackMouseEvent(&tme);
-            }
-            const float y = static_cast<float>(GET_Y_LPARAM(lp));
-            if (s->thumb_drag) {
-                const float room = s->view_h - px(8) - s->thumb.Height;
-                if (room > 0) s->scroll = s->thumb_scroll0 + (y - s->thumb_y0) * sheet_max_scroll(*s) / room;
-                sheet_scroll(*s, 0);
-                return 0;
-            }
-            const int hot = sheet_hit(*s, static_cast<float>(GET_X_LPARAM(lp)), y);
-            if (hot != s->hot) {
-                s->hot = hot;
-                InvalidateRect(hwnd, nullptr, FALSE);
-            }
-            return 0;
-        }
-        case WM_MOUSELEAVE:
-            s->tracking = false;
-            s->hot = -1;
-            InvalidateRect(hwnd, nullptr, FALSE);
-            return 0;
-        case WM_SETCURSOR:
-            if (LOWORD(lp) == HTCLIENT) {
-                SetCursor(LoadCursorW(nullptr, s->hot != -1 && s->hot != kSheetThumb ? IDC_HAND : IDC_ARROW));
-                return TRUE;
-            }
-            break;
-        case WM_LBUTTONDOWN: {
-            s->focus = -1;  // the mouse takes over: no focus ring
-            const int hit = sheet_hit(*s, static_cast<float>(GET_X_LPARAM(lp)), static_cast<float>(GET_Y_LPARAM(lp)));
-            if (hit == kSheetThumb) {
-                s->thumb_drag = true;
-                s->thumb_y0 = static_cast<float>(GET_Y_LPARAM(lp));
-                s->thumb_scroll0 = s->scroll;
-                SetCapture(hwnd);
-            }
-            InvalidateRect(hwnd, nullptr, FALSE);
-            return 0;
-        }
-        case WM_LBUTTONUP:
-            if (s->thumb_drag) {
-                s->thumb_drag = false;
-                ReleaseCapture();
-                InvalidateRect(hwnd, nullptr, FALSE);
-                return 0;
-            }
-            sheet_click(*s, sheet_hit(*s, static_cast<float>(GET_X_LPARAM(lp)), static_cast<float>(GET_Y_LPARAM(lp))));
-            return 0;
-        case WM_MOUSEWHEEL: sheet_scroll(*s, -GET_WHEEL_DELTA_WPARAM(wp) / 120.0f * px(60)); return 0;
-        case WM_KEYDOWN:
-            switch (wp) {
-                case VK_ESCAPE: close_sheet(); return 0;
-                case VK_TAB: sheet_tab(*s, GetKeyState(VK_SHIFT) < 0); return 0;
-                case VK_RETURN:
-                    if (s->focus >= 0) sheet_click(*s, s->focus);
-                    else close_sheet();
-                    return 0;
-                case VK_SPACE:
-                    if (s->focus != -1) sheet_click(*s, s->focus);
-                    return 0;
-                case VK_UP: sheet_scroll(*s, -px(48)); return 0;
-                case VK_DOWN: sheet_scroll(*s, px(48)); return 0;
-                case VK_PRIOR: sheet_scroll(*s, -s->view_h * 0.9f); return 0;
-                case VK_NEXT: sheet_scroll(*s, s->view_h * 0.9f); return 0;
-                case VK_HOME: sheet_scroll(*s, -s->scroll); return 0;
-                case VK_END: sheet_scroll(*s, sheet_max_scroll(*s)); return 0;
-            }
-            return 0;
-        case WM_CLOSE:
-            close_sheet();
-            return 0;
-    }
-    return DefWindowProcW(hwnd, msg, wp, lp);
-}
-
-// Shows a sheet over the library and returns when it is closed.
-void run_sheet(Sheet sheet) {
-    if (g_sheet) return;
-    g_sheet = &sheet;
-    sheet.sections = sheet.build();
-    RECT mr;
-    GetWindowRect(g_main, &mr);
-    const int w = ipx(600), h = (std::min)(ipx(700), static_cast<int>(mr.bottom - mr.top) - ipx(20));
-    const int x = mr.left + (mr.right - mr.left - w) / 2, y = mr.top + (mr.bottom - mr.top - h) / 2;
-    sheet.hwnd = CreateWindowExW(layout_style(), L"WinApkSheet", sheet.title.c_str(), WS_POPUP | WS_CAPTION | WS_SYSMENU, x, y,
-                                 w, (std::max)(h, ipx(400)), g_main, nullptr, g_inst, &sheet);
-    if (!sheet.hwnd) {
-        g_sheet = nullptr;
-        return;
-    }
-    theme_window(sheet.hwnd);
-    EnableWindow(g_main, FALSE);
-    ShowWindow(sheet.hwnd, SW_SHOW);
-    MSG m;
-    while (IsWindow(sheet.hwnd)) {
-        const BOOL got = GetMessageW(&m, nullptr, 0, 0);
-        if (got <= 0) {
-            PostQuitMessage(static_cast<int>(m.wParam));
-            close_sheet();
-            break;
-        }
-        TranslateMessage(&m);
-        DispatchMessageW(&m);
-    }
-    EnableWindow(g_main, TRUE);
-    g_sheet = nullptr;
-    SetActiveWindow(g_main);
     InvalidateRect(g_main, nullptr, FALSE);
+}
+
+// Opens a page in the content layer.
+void open_page(View view, Page page) {
+    page.generation = g_page.generation + 1;
+    g_page = std::move(page);
+    g_page.sections = g_page.build();
+    set_view(view);
 }
 
 Row button_row(std::wstring title, std::wstring detail, std::wstring button, std::function<void()> act,
@@ -3789,9 +3884,9 @@ void google_signout(const std::wstring& account) {
     }
     std::wstring text;
     if (run_gms(L"signout " + gms_arg(account), &text) == 0) {
-        set_status(fmt(L"{0} was signed out.", {account}), kInfo);
+        info(fmt(L"{0} was signed out.", {account}), kInfo);
     } else {
-        failed_with_log(tr(L"Could not sign out"), gms_log());
+        error_with_log(tr(L"Could not sign out"), tr(L"Google did not answer. Check the internet connection, then try again."), gms_log());
     }
 }
 
@@ -3838,21 +3933,10 @@ std::vector<Section> settings_sections() {
     };
     out.push_back({tr(L"Appearance"), {theme, lang}, L""});
 
-    Row types;
-    if (is_default_handler()) {
-        types = text_row(tr(L"Open Android app files with Win.apk"), tr(L"Default"));
-        types.check = true;
-    } else {
-        types = button_row(tr(L"Open Android app files with Win.apk"), L"", tr(L"Make default"), [] {
-            register_file_types(true);
-        });
-    }
-    out.push_back({tr(L"File types"), {types},
-                   tr(L"Covers .apk, .apkm, .xapk and .apks. Double-clicking one in Explorer installs it and opens it.")});
-
     Row size;
     size.kind = Row::kChoice;
     size.title = tr(L"Screen size");
+    size.detail = tr(L"In dp, as on a phone. An app whose window you resize keeps its own size.");
     for (const auto& p : kPhonePresets) size.choices.push_back(tr(p.label));
     size.choice = static_cast<int>(setting(L"PhoneSize", 0));
     if (size.choice >= static_cast<int>(size.choices.size())) size.choice = 0;
@@ -3860,105 +3944,95 @@ std::vector<Section> settings_sections() {
     Row orient;
     orient.kind = Row::kChoice;
     orient.title = tr(L"Orientation");
+    orient.detail = tr(L"Apps that need one orientation always get it. An app's details can turn just that one.");
     orient.choices = {tr(L"Portrait"), tr(L"Landscape")};
     orient.choice = landscape_default() ? 1 : 0;
     orient.act = [](int i) { set_setting(L"Landscape", static_cast<DWORD>(i)); };
-    out.push_back({tr(L"Screen"), {size, orient},
-                   tr(L"Used the next time an app opens, from here or from its shortcut. Sizes are in dp, as on a "
-                      L"phone. An app's window can be resized or maximized, and the app then lays itself out for that "
-                      L"size and keeps it (Get Info resets it). Right-click an app to open just that one the other "
-                      L"way; an app that requires one orientation always gets it.")});
-
+    // Read by the runtime when an app opens (runtime_main.cpp, map_shared_folders).
+    Row folders;
+    folders.kind = Row::kToggle;
+    folders.title = tr(L"Use my Windows folders");
+    folders.detail = tr(L"Apps save to and open from your Downloads, Pictures, Documents, Music and Videos.");
+    folders.on = setting(L"UserFolders", 1) != 0;
+    folders.act = [](int on) { set_setting(L"UserFolders", static_cast<DWORD>(on)); };
     Row desktop;
     desktop.kind = Row::kToggle;
     desktop.title = tr(L"Desktop shortcut for new apps");
     desktop.detail = tr(L"Every app also gets one in Start > Win.apk Apps.");
     desktop.on = setting(L"DesktopShortcut", 1) != 0;
     desktop.act = [](int on) { set_setting(L"DesktopShortcut", static_cast<DWORD>(on)); };
-    Row redo = button_row(tr(L"Shortcuts"), tr(L"Make the Start menu shortcuts of every app again, with their icons."),
-                          tr(L"Recreate"), [] {
-                              for (const App& a : g_apps) make_app_shortcuts(a, false);
-                              set_status(tr(L"The Start menu shortcuts were made again."), kSuccess);
-                          });
-    out.push_back({tr(L"Shortcuts"), {desktop, redo}, L""});
+    Row types;
+    if (is_default_handler()) {
+        types = text_row(tr(L"Open .apk, .apkm, .xapk and .apks files with Win.apk"), tr(L"Default"));
+        types.check = true;
+    } else {
+        types = button_row(tr(L"Open .apk, .apkm, .xapk and .apks files with Win.apk"), L"", tr(L"Make default"),
+                           [] { register_file_types(true); });
+    }
+    out.push_back({tr(L"Apps"), {size, orient, folders, desktop, types}, L""});
 
-    out.push_back({tr(L"Logs"),
-                   {button_row(tr(L"Diagnostics"),
-                               tr(L"install-<app>.log records each install, last-run.log the app opened last."),
-                               tr(L"View logs"), [] { show_logs(last_run_log()); }),
-                    button_row(tr(L"Logs folder"), logs_dir().wstring(), tr(L"Open folder"), [] { open_path(logs_dir()); })},
-                   tr(L"Attach the log to a bug report: it says what the runtime did and where it stopped.")});
     out.push_back(google_account_section());
 
-    // Read by the runtime when an app opens (runtime_main.cpp, map_shared_folders).
-    Row folders;
-    folders.kind = Row::kToggle;
-    folders.title = tr(L"Use my Windows folders");
-    folders.detail = tr(L"Apps save to and open from your Downloads, Pictures, Documents, Music and Videos. Off: each "
-                        L"folder is empty for apps again, and your files stay where they are.");
-    folders.on = setting(L"UserFolders", 1) != 0;
-    folders.act = [](int on) { set_setting(L"UserFolders", static_cast<DWORD>(on)); };
-    out.push_back({tr(L"App data"),
-                   {folders, button_row(tr(L"Saves, caches and files"),
-                                        tr(L"Each installed app keeps its data here. Removing an app keeps what it saved."),
-                                        tr(L"Open folder"), [] { open_path(data_dir()); })},
-                   L""});
-
-    Section about{tr(L"About"), {text_row(L"Win.apk", fmt(L"Version {0}", {version()}),
-                                      tr(L"An unofficial port of Mac.apk to Windows. Not affiliated with or endorsed by the Mac.apk project."))},
-                  L""};
+    std::vector<Row> trouble = {
+        button_row(tr(L"Logs"), tr(L"What Win.apk did when it installed or opened an app. Attach them to a bug report."),
+                   tr(L"Open logs"), [] { show_logs({}); }),
+        button_row(tr(L"App data"), tr(L"What every app has saved."), tr(L"Open folder"),
+                   [] { open_path(data_dir()); })};
     if (!g_apps.empty()) {
-        about.rows.push_back(button_row(tr(L"Remove all apps"), tr(L"Their shortcuts go too. What they saved stays."),
-                                        tr(L"Remove all…"), [] {
-                                            if (!confirm(fmt(L"Remove all {0} apps?", {std::to_wstring(g_apps.size())}),
-                                                         tr(L"Their shortcuts go too. What they saved stays."),
-                                                         tr(L"Remove all"))) {
-                                                return;
-                                            }
-                                            const std::vector<App> apps = g_apps;
-                                            for (const App& a : apps) remove_app(a, false);
-                                            refresh();
-                                            set_status(tr(L"Every app was removed."), kInfo);
-                                        },
-                                        true));
+        trouble.push_back(button_row(tr(L"Remove all apps"), tr(L"Their shortcuts go too. What they saved stays."),
+                                     tr(L"Remove all…"), [] {
+                                         if (!confirm(fmt(L"Remove all {0} apps?", {std::to_wstring(g_apps.size())}),
+                                                      tr(L"Their shortcuts go too. What they saved stays."),
+                                                      tr(L"Remove all"))) {
+                                             return;
+                                         }
+                                         const std::vector<App> apps = g_apps;
+                                         for (const App& a : apps) remove_app(a, false);
+                                         refresh();
+                                         info(tr(L"Every app was removed."), kInfo);
+                                     },
+                                     true));
     }
-    out.push_back(std::move(about));
+    out.push_back({tr(L"Troubleshooting"), std::move(trouble), L""});
+
+    out.push_back({tr(L"About"),
+                   {text_row(L"Win.apk", fmt(L"Version {0}", {version()}),
+                             tr(L"An unofficial port of Mac.apk to Windows. Not affiliated with or endorsed by the "
+                                L"Mac.apk project."))},
+                   L""});
     return out;
 }
 
 void show_settings() {
-    Sheet s;
-    s.title = tr(L"Settings");
-    s.hero_title = s.title;
-    s.hero_sub = L"Win.apk " + version();
-    s.hero_glyph = kGlyphSettings;
-    s.build = settings_sections;
-    run_sheet(std::move(s));
+    Page p;
+    p.title = tr(L"Settings");
+    p.build = settings_sections;
+    open_page(kSettingsView, std::move(p));
 }
 
 std::vector<Row> permission_rows(const App& a);
 
+fs::path desktop_shortcut(const App& a) {
+    return known_folder(FOLDERID_Desktop) / (file_name_safe(a.label) + L".lnk");
+}
+
+// An app's details: how it opens, its permissions, its shortcut and files, and Stop, Update, Remove.
 void show_info(const App& app) {
     const App a = app;
     std::error_code ec;
     const std::wstring apk_size = format_bytes(fs::file_size(a.apk, ec));
     const std::wstring files_size = format_bytes(folder_size(app_dir(a.name)));
-    const std::wstring installed = file_date(label_file(a.name));
-    Sheet s;
-    s.title = a.label;
-    s.hero_app = a.name;
-    s.hero_title = a.label;
-    s.hero_sub = fmt(L"{0}  ·  Android app", {a.name});
-    s.build = [a, apk_size, files_size, installed] {
+    const std::vector<std::string> pkg = package_of(a.name);
+    Page p;
+    p.app = a.name;
+    p.title = a.label;
+    if (pkg.size() > 2 && !pkg[2].empty()) p.sub = fmt(L"Version {0}", {utf8_to_wide(pkg[2])}) + L"  ·  ";
+    p.sub += pkg.empty() ? a.name : utf8_to_wide(pkg[0]);
+    p.back = true;
+    p.from = kLibraryView;
+    p.build = [a, apk_size, files_size] {
         std::vector<Section> out;
-        out.push_back({tr(L"Identity"),
-                       {text_row(tr(L"Name"), a.label), text_row(tr(L"Library name"), a.name),
-                        text_row(tr(L"Installed"), installed)},
-                       L""});
-        if (std::vector<Row> perms = permission_rows(a); !perms.empty())
-            out.push_back({tr(L"Permissions"), std::move(perms), L""});
-        // The orientation the app opens in: what its manifest fixes, or the
-        // user's choice for it (the context menu's) over the settings'.
+        // The orientation the app opens in: what its manifest fixes, or the user's choice for it over the settings'.
         std::vector<Row> window;
         if (const int fixed = manifest_orientation(a.name); fixed != kOrientUnset) {
             window.push_back(text_row(tr(L"Orientation"), tr(fixed == kLandscape ? L"Landscape (the app requires it)"
@@ -3974,123 +4048,103 @@ void show_info(const App& app) {
             orient.act = [a](int i) { set_orientation(a, i == 0 ? kOrientUnset : i == 2 ? kLandscape : kPortrait); };
             window.push_back(orient);
         }
-        // The size the user last gave the app's window (the runtime keeps it
-        // as library\<name>.window, in dp).
+        // The size the user last gave the app's window (the runtime keeps it as library\<name>.window, in dp).
         if (std::ifstream f(library_dir() / (a.name + L".window")); f) {
             int w = 0, h = 0;
             char x = 0;
             if (f >> w >> x >> h && w > 0 && h > 0) {
-                window.push_back(
-                    button_row(fmt(L"Window size  ·  {0} × {1} dp", {std::to_wstring(w), std::to_wstring(h)}),
-                               tr(L"The size you last gave the app's window. Reset, it opens at the "
-                                  L"settings' screen size again."),
-                               tr(L"Reset"), [a] {
-                                   std::error_code ec;
-                                   fs::remove(library_dir() / (a.name + L".window"), ec);
-                                   set_status(fmt(L"{0} opens at the settings' screen size again.", {a.label}),
-                                              kSuccess);
-                                   close_sheet();
-                               }));
+                window.push_back(button_row(fmt(L"Window size  ·  {0} × {1} dp", {std::to_wstring(w), std::to_wstring(h)}),
+                                            tr(L"The size you last gave the app's window. Reset, it opens at the "
+                                               L"settings' screen size again."),
+                                            tr(L"Reset"), [a] {
+                                                std::error_code ec;
+                                                fs::remove(library_dir() / (a.name + L".window"), ec);
+                                                info(fmt(L"{0} opens at the settings' screen size again.", {a.label}),
+                                                     kSuccess);
+                                            }));
             }
         }
         out.push_back({tr(L"Window"), std::move(window), L""});
+        if (std::vector<Row> perms = permission_rows(a); !perms.empty())
+            out.push_back({tr(L"Permissions"), std::move(perms), L""});
+        Row desktop;
+        desktop.kind = Row::kToggle;
+        desktop.title = tr(L"Desktop shortcut");
+        desktop.detail = tr(L"The app is in Start > Win.apk Apps either way.");
+        std::error_code ec;
+        desktop.on = fs::exists(desktop_shortcut(a), ec);
+        desktop.act = [a](int on) {
+            if (on) {
+                make_app_shortcuts(a, true);
+            } else {
+                std::error_code ec;
+                fs::remove(desktop_shortcut(a), ec);
+            }
+        };
+        out.push_back({tr(L"Shortcut"), {desktop}, L""});
         out.push_back({tr(L"Storage"),
-                       {button_row(fmt(L"Source APK  ·  {0}", {apk_size}), a.apk.wstring(), tr(L"Show"),
+                       {button_row(fmt(L"The app's file  ·  {0}", {apk_size}), a.apk.wstring(), tr(L"Show"),
                                    [a] { show_in_explorer(a.apk); }),
-                        button_row(fmt(L"App files  ·  {0}", {files_size}), app_dir(a.name).wstring(), tr(L"Open"),
-                                   [a] { open_path(app_dir(a.name)); }),
-                        button_row(tr(L"Install log"), install_log(a.name).wstring(), tr(L"View"),
-                                   [a] { show_logs(install_log(a.name)); })},
+                        button_row(fmt(L"Converted code  ·  {0}", {files_size}), app_dir(a.name).wstring(), tr(L"Open"),
+                                   [a] { open_path(app_dir(a.name)); })},
                        L""});
-        Row open = button_row(fmt(L"Open {0}", {a.label}), L"", tr(L"Open"), [a] {
-            close_sheet();
-            if (const App* cur = find_app(a.name)) launch(*cur);
-        });
-        open.primary = true;
-        out.push_back({tr(L"Actions"),
-                       {open,
-                        button_row(tr(L"Desktop shortcut"), tr(L"Put a shortcut to the app on the desktop."), tr(L"Create"),
-                                   [a] {
-                                       make_app_shortcuts(a, true);
-                                       set_status(fmt(L"A shortcut to {0} is on the desktop.", {a.label}), kSuccess);
-                                   }),
-                        button_row(tr(L"Update from APK"), tr(L"Install a newer version over this one. Saves stay."),
-                                   tr(L"Choose…"),
-                                   [a] {
-                                       update_from_apk(a);
-                                       if (is_pending(a.name)) close_sheet();
-                                   }),
-                        button_row(tr(L"Reinstall"), tr(L"Convert the app again from its APK."), tr(L"Reinstall"),
-                                   [a] {
-                                       close_sheet();
-                                       install(a.apk, false, a.name);
-                                   }),
-                        button_row(tr(L"Remove"), tr(L"Its shortcuts go too. What the app saved stays."), tr(L"Remove…"),
-                                   [a] {
-                                       if (remove_app(a, true)) close_sheet();
-                                   },
-                                   true)},
-                       L""});
+        std::vector<Row> manage;
+        if (g_running.count(a.name) || app_running(a.name)) {
+            manage.push_back(button_row(tr(L"Stop"), tr(L"Closes the app at once, as Force stop does on a phone."),
+                                        tr(L"Stop"), [a] {
+                                            if (stop_process(a.name)) g_stopping.insert(a.name);
+                                            else appops::stop_runtime_of(a.apk);
+                                        }));
+        }
+        manage.push_back(button_row(tr(L"Update from a file"), tr(L"Install a newer version over this one. What it saved stays."),
+                                    tr(L"Choose…"), [a] { update_from_apk(a); }));
+        manage.push_back(button_row(tr(L"Remove"), tr(L"You can also delete what the app saved."), tr(L"Remove…"),
+                                    [a] { remove_app(a, true); }, true));
+        out.push_back({tr(L"Manage"), std::move(manage), L""});
         return out;
     };
-    run_sheet(std::move(s));
+    open_page(kAppView, std::move(p));
 }
 
-// A store app's details, and its install, update or open.
+// A store app's details. Install and Update are the card's button; this says where the app stands.
 void show_store_info(const StoreApp& app) {
-    const StoreApp a = app;  // the catalog may be replaced while the sheet is open
-    Sheet s;
-    s.title = store_name(a);
-    s.hero_title = store_name(a);
-    s.hero_sub = store_summary(a);
-    s.hero_icon = store_icon(app);
-    s.build = [a] {
+    const StoreApp a = app;  // the catalog may be replaced while the page is open
+    Page p;
+    p.title = store_name(a);
+    p.sub = store_summary(a);
+    p.icon = [a] { return store_icon(a); };
+    p.back = true;
+    p.from = kStoreView;
+    p.build = [a] {
         std::wstring cats;
         for (const std::wstring& c : a.categories) cats += (cats.empty() ? L"" : L", ") + c;
+        std::wstring state;
+        int percent = 0;
+        switch (offer_for(a, &percent)) {
+            case kOfferInstall: state = tr(L"Not installed"); break;
+            case kOfferUpdate: state = tr(L"A newer version is out"); break;
+            case kOfferOpen: state = tr(L"Installed"); break;
+            case kOfferDownloading: state = tr(L"Downloading…"); break;
+            case kOfferInstalling: state = tr(L"Installing…"); break;
+        }
         std::vector<Section> out;
         out.push_back({tr(L"Details"),
-                       {text_row(tr(L"Version"), a.version),
+                       {text_row(tr(L"In your library"), state), text_row(tr(L"Version"), a.version),
                         text_row(tr(L"Size"), format_bytes(static_cast<uintmax_t>(a.size))),
                         text_row(tr(L"Updated"), java_date(a.updated)), text_row(tr(L"License"), a.license),
                         text_row(tr(L"Categories"), cats), text_row(tr(L"Package"), utf8_to_wide(a.pkg))},
                        L""});
-        Row get;
-        switch (offer_for(a)) {
-            case kOfferInstall:
-            case kOfferUpdate: {
-                const bool update = offer_for(a) == kOfferUpdate;
-                get = button_row(fmt(update ? L"Update {0}" : L"Install {0}", {store_name(a)}),
-                                 tr(update ? L"A newer version is out. Saves stay."
-                                           : L"Downloaded from F-Droid and checked, then added to the library."),
-                                 tr(update ? L"Update" : L"Install"), [a] {
-                                     store_get(a);
-                                     close_sheet();
-                                 });
-                get.primary = true;
-                break;
-            }
-            case kOfferOpen:
-                get = button_row(fmt(L"Open {0}", {store_name(a)}), L"", tr(L"Open"), [a] {
-                    close_sheet();
-                    store_get(a);
-                });
-                get.primary = true;
-                break;
-            case kOfferDownloading: get = text_row(store_name(a), tr(L"Downloading…")); break;
-            case kOfferInstalling: get = text_row(store_name(a), tr(L"Installing…")); break;
-        }
         const std::wstring page = L"https://f-droid.org/packages/" + utf8_to_wide(a.pkg) + L"/";
-        out.push_back({tr(L"Actions"),
-                       {get, button_row(tr(L"F-Droid page"), tr(L"The app's description, screenshots and source code."),
-                                        tr(L"Open"),
-                                        [page] {
-                                            ShellExecuteW(nullptr, L"open", page.c_str(), nullptr, nullptr,
-                                                          SW_SHOWNORMAL);
-                                        })},
+        out.push_back({L"",
+                       {button_row(tr(L"F-Droid page"), tr(L"The app's description, screenshots and source code."),
+                                   tr(L"Open"),
+                                   [page] {
+                                       ShellExecuteW(nullptr, L"open", page.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+                                   })},
                        L""});
         return out;
     };
-    run_sheet(std::move(s));
+    open_page(kStoreAppView, std::move(p));
 }
 
 // ---------------------------------------------------------------------------
@@ -4128,13 +4182,6 @@ std::vector<std::wstring> last_lines(const fs::path& p, size_t n) {
     return lines;
 }
 
-std::wstring duration(ULONGLONG ms) {
-    const ULONGLONG s = ms / 1000;
-    wchar_t buf[32];
-    swprintf(buf, 32, L"%llu:%02llu", s / 60, s % 60);
-    return buf;
-}
-
 using Targets = std::vector<std::pair<RectF, int>>;
 
 int find_target(const Targets& targets, LPARAM lp) {
@@ -4158,203 +4205,464 @@ bool track_hot(HWND hwnd, LPARAM lp, const Targets& targets, int* hot, bool* tra
     return true;
 }
 
-HWND open_tool_window(const wchar_t* cls, const wchar_t* title, int w, int h) {
+// A window of its own: over the library when it is shown, and owned by it (no taskbar button of
+// its own); else in the middle of the screen with the mouse, with a taskbar button.
+HWND open_tool_window(const wchar_t* cls, const wchar_t* title, int w, int h,
+                      DWORD style = WS_OVERLAPPEDWINDOW & ~WS_MAXIMIZEBOX) {
+    const bool over_library = g_main && IsWindowVisible(g_main) && !IsIconic(g_main);
     RECT mr;
-    GetWindowRect(g_main, &mr);
+    if (over_library) {
+        GetWindowRect(g_main, &mr);
+    } else {
+        POINT cursor;
+        GetCursorPos(&cursor);
+        MONITORINFO mi{sizeof(mi)};
+        GetMonitorInfoW(MonitorFromPoint(cursor, MONITOR_DEFAULTTOPRIMARY), &mi);
+        mr = mi.rcWork;
+    }
     const int x = mr.left + (mr.right - mr.left - w) / 2, y = mr.top + (std::max)(0L, (mr.bottom - mr.top - h) / 2);
-    HWND hwnd = CreateWindowExW(layout_style(), cls, title, WS_OVERLAPPEDWINDOW & ~WS_MAXIMIZEBOX, x, y, w, h, g_main, nullptr,
-                                g_inst, nullptr);
+    HWND hwnd = CreateWindowExW(layout_style(), cls, title, style, x, y, w, h, over_library ? g_main : nullptr,
+                                nullptr, g_inst, nullptr);
     if (hwnd) {
         theme_window(hwnd);
         ShowWindow(hwnd, SW_SHOW);
+        SetForegroundWindow(hwnd);
     }
     return hwnd;
 }
 
 // ---------------------------------------------------------------------------
-// The install window: the queue, each app's progress, and its log as it is written
+// The install window: a small card with the app's icon and name, a moving bar
+// and one line of plain status; the queue under it when several files came;
+// the log behind "Show details". At the end: Open, Close, Show in library; on
+// a failure the reason, Show log and Copy details. Opening an APK from
+// Explorer shows only this window (wWinMain).
 
 struct InstallView {
     Targets targets;
     int hot = 0;
     bool tracking = false;
+    bool details = false;          // the log is shown (the InstallDetails setting)
+    std::wstring log_name;         // whose log the details show; empty: the one being installed
     std::vector<std::wstring> log;
-    fs::path log_path;
     ULONGLONG log_read = 0;
+    float need_h = 0;              // the height the last paint wanted, for fit_install_window
 } g_iv;
 
-enum { kActClose = 1, kActLog = 2, kActOpen = 1000, kActJobLog = 2000 };
+enum { kActClose = 1, kActCancel, kActOpen, kActDetails, kActCopy, kActShowLog, kActLibrary, kActRowOpen = 1000,
+       kActRowLog = 2000 };
+constexpr UINT kFitInstall = WM_APP + 20;
 
-// The install being converted, else the one that finished last.
-const Job* log_job() {
-    for (const Job& j : g_jobs) {
-        if (j.state == Job::kInstalling) return &j;
+// How far an install got, from the lines the runtime writes: 0 starting, 1 installing, 2 converting the
+// code, 3 reading the name and icon.
+int install_phase(const fs::path& log) {
+    const std::string tail = read_tail(log, 128 * 1024);
+    if (tail.find("host natives:") != std::string::npos) return 3;
+    if (tail.find("converting the app's code") != std::string::npos) return 2;
+    if (tail.find("installing the app (once per install)") != std::string::npos) return 1;
+    return 0;
+}
+
+const wchar_t* phase_text(int phase) {
+    switch (phase) {
+        case 1: return L"Installing…";
+        case 2: return L"Converting the app's code. This happens once.";
+        case 3: return L"Getting the app's name and icon…";
+        default: return L"Preparing…";
     }
-    for (auto it = g_jobs.rbegin(); it != g_jobs.rend(); ++it) {
-        if (it->state != Job::kWaiting) return &*it;
+}
+
+std::wstring install_failure_reason(const fs::path& log) {
+    bool no_native_code = false;
+    log_summary(log, &no_native_code);
+    if (no_native_code) {
+        return tr(L"This file has no code for PCs. Install the full bundle (.apkm, .xapk or .apks) that includes "
+                  L"the arm64-v8a part.");
     }
+    std::error_code ec;
+    if (!fs::exists(runtime_exe(), ec)) return tr(L"Win.apk's runtime is missing. Install Win.apk again.");
+    return tr(L"Win.apk could not convert this app. The log says where it stopped.");
+}
+
+// The name to show for an install: the app's own once known, else the file's.
+std::wstring job_title(const Job& j) {
+    if (find_app(j.name) || g_job_labels.count(j.name)) return job_label(j.name);
+    return j.file.empty() ? j.name : j.file;
+}
+
+Gdiplus::Bitmap* job_icon(Job& j) {
+    if (j.icon) return j.icon.get();
+    if (const App* a = find_app(j.name)) return icon_for(*a);
     return nullptr;
+}
+
+bool installs_active() {
+    for (const Job& j : g_jobs)
+        if (j.state == Job::kWaiting || j.state == Job::kInstalling) return true;
+    return false;
+}
+
+// The job the card is about: the one being installed, else the only one, else none (a summary).
+Job* hero_job() {
+    for (Job& j : g_jobs)
+        if (j.state == Job::kInstalling) return &j;
+    for (Job& j : g_jobs)
+        if (j.state == Job::kWaiting) return &j;
+    return g_jobs.size() == 1 ? &g_jobs[0] : nullptr;
+}
+
+// An app's icon at `r`; a neutral tile with a package glyph while it has none.
+void draw_job_icon(Graphics& g, Job& j, const RectF& r) {
+    if (Gdiplus::Bitmap* bmp = job_icon(j)) {
+        draw_icon(g, bmp, job_title(j), r);
+        return;
+    }
+    fill_round(g, r, r.Width * 0.22f, g_t.hover);
+    draw_text(g, kGlyphPackage, r.Width >= px(56) ? g_f.glyph24.get() : g_f.glyph16.get(), g_t.text3, r, kCenter);
+}
+
+void draw_badge(Graphics& g, const RectF& icon, bool ok, float size) {
+    const RectF b(icon.GetRight() - size * 0.75f, icon.GetBottom() - size * 0.75f, size, size);
+    Gdiplus::SolidBrush ring(g_t.bg), dot(ok ? g_t.success : g_t.danger);
+    g.FillEllipse(&ring, inset(b, -px(2), -px(2)));
+    g.FillEllipse(&dot, b);
+    if (ok) draw_text(g, kGlyphCheck, g_f.glyph12.get(), kWhite, b, kCenter);
+    else draw_text(g, L"!", g_f.body_semi.get(), kWhite, b, kCenter);
+}
+
+// A text link: accent text with a chevron, for the window's secondary ways on.
+float draw_link(Graphics& g, const std::wstring& text, float x, float y, float h, bool hot, int act, Align align = kLeft) {
+    const float w = text_width(g, text, g_f.body.get()) + px(4);
+    const RectF r(align == kRight ? x - w : x, y, w, h);
+    draw_text(g, text, g_f.body.get(), hot ? mix(g_t.accent, g_t.text, 0.3f) : g_t.accent, r);
+    g_iv.targets.push_back({r, act});
+    return r.Width;
 }
 
 void paint_install(Graphics& g, float W, float H) {
     g.Clear(g_t.bg);
     g_iv.targets.clear();
     const float m = px(24), foot = px(64), cw = W - 2 * m;
-    int done = 0, failed = 0;
-    for (const Job& j : g_jobs) done += j.state == Job::kDone, failed += j.state == Job::kFailed;
+    int done = 0, failed = 0, cancelled_n = 0;
+    for (const Job& j : g_jobs) {
+        done += j.state == Job::kDone;
+        failed += j.state == Job::kFailed;
+        cancelled_n += j.state == Job::kCancelled;
+    }
     const int total = static_cast<int>(g_jobs.size());
-    const bool finished = g_pending.empty();
-    const ULONGLONG now = GetTickCount64();
+    const bool active = installs_active();
+    Job* hero = hero_job();
 
+    // The card: the job's icon, name and status, or the summary of a finished batch.
+    float y = px(20);
+    const RectF ir(m, y, px(64), px(64));
+    const float tx = m + px(80), tw = cw - px(80);
     std::wstring title, sub;
-    if (!finished) {
-        title = total > 1 ? fmt(L"Installing {0} of {1}",
-                                {std::to_wstring((std::min)(done + failed + 1, total)), std::to_wstring(total)})
-                          : std::wstring(tr(L"Installing"));
-        sub = tr(L"Each app is converted for Windows once. That takes up to a minute.");
-    } else if (failed == 0) {
-        const App* app = total == 1 ? find_app(g_jobs[0].name) : nullptr;
-        title = app ? fmt(L"{0} is ready", {app->label}) : std::wstring(tr(L"All set"));
-        sub = fmt(done == 1 ? L"{0} app is in the library and in Start > Win.apk Apps."
-                            : L"{0} apps are in the library and in Start > Win.apk Apps.",
-                  {std::to_wstring(done)});
+    Color sub_ink = g_t.text2;
+    if (hero) {
+        draw_job_icon(g, *hero, ir);
+        const std::wstring name = job_title(*hero);
+        switch (hero->state) {
+            case Job::kWaiting:
+            case Job::kInstalling:
+                title = name;
+                sub = tr(phase_text(hero->phase));
+                break;
+            case Job::kDone:
+                title = fmt(L"{0} is ready", {name});
+                sub = tr(setting(L"DesktopShortcut", 1) ? L"It's in the Start menu and on the desktop."
+                                                         : L"It's in the Start menu.");
+                draw_badge(g, ir, true, px(24));
+                break;
+            case Job::kFailed:
+                title = fmt(L"Couldn't install {0}", {name});
+                sub = hero->reason;
+                draw_badge(g, ir, false, px(24));
+                break;
+            case Job::kCancelled:
+                title = fmt(L"{0} was not installed", {name});
+                sub = tr(hero->update ? L"The install was cancelled. The app stays as it was."
+                                      : L"The install was cancelled.");
+                break;
+        }
     } else {
-        title = failed == total ? tr(L"The install failed") : tr(L"Some installs failed");
-        sub = fmt(L"{0} of {1} could not be installed. The log says why.",
-                  {std::to_wstring(failed), std::to_wstring(total)});
+        const bool ok = failed == 0;
+        fill_round(g, ir, px(32), with_alpha(ok ? g_t.success : g_t.danger, g_t.dark ? 60 : 30));
+        draw_text(g, ok ? kGlyphCheck : L"!", ok ? g_f.glyph24.get() : g_f.title.get(), ok ? g_t.success : g_t.danger,
+                  ir, kCenter);
+        title = failed == 0 ? fmt(L"{0} apps are ready", {std::to_wstring(done)})
+                            : fmt(L"{0} of {1} apps are installed", {std::to_wstring(done), std::to_wstring(total)});
+        sub = tr(failed == 0 ? L"They're in the Start menu." : L"Each one that failed says why below.");
     }
-    float y = px(22);
-    const RectF badge(m, y, px(44), px(44));
-    if (!finished) {
-        fill_round(g, badge, px(22), with_alpha(g_t.accent, g_t.dark ? 50 : 28));
-        spinner(g, inset(badge, px(10), px(10)), g_t.accent, px(3));
-    } else {
-        Gdiplus::SolidBrush b(failed ? g_t.danger : g_t.success);
-        g.FillEllipse(&b, badge);
-        if (failed) draw_text(g, L"!", g_f.title.get(), kWhite, badge, kCenter);
-        else draw_text(g, kGlyphCheck, g_f.glyph16.get(), kWhite, badge, kCenter);
+    draw_text(g, title, g_f.title.get(), g_t.text, RectF(tx, y + px(2), tw, px(28)));
+    const float sh = (std::max)(px(18), text_height(g, sub, g_f.caption.get(), tw) + px(2));
+    draw_text(g, sub, g_f.caption.get(), sub_ink, RectF(tx, y + px(32), tw, sh), kLeft, true, false);
+    float hero_bottom = y + px(32) + sh;
+    if (hero && (hero->state == Job::kWaiting || hero->state == Job::kInstalling)) {
+        draw_progress_line(g, RectF(tx, hero_bottom + px(8), tw, px(4)));
+        hero_bottom += px(12);
     }
-    draw_text(g, title, g_f.title.get(), g_t.text, RectF(m + px(60), y - px(2), cw - px(60), px(28)));
-    draw_text(g, sub, g_f.caption.get(), g_t.text2, RectF(m + px(60), y + px(26), cw - px(60), px(20)));
-    y += px(70);
+    y = (std::max)(ir.GetBottom(), hero_bottom) + px(16);
 
-    const float rh = px(60);
-    const int rows = (std::max)(1, (std::min)(total, static_cast<int>((H * 0.45f) / rh)));
-    const RectF card(m, y, cw, rows * rh);
-    fill_round(g, card, px(kRadiusCard), g_t.card);
-    stroke_round(g, card, px(kRadiusCard), g_t.border);
-    g.SetClip(card);
-    const int first = (std::max)(0, (std::min)(total - rows, [&] {  // keep the active install in view
-        for (int i = 0; i < total; ++i) {
-            if (g_jobs[static_cast<size_t>(i)].state == Job::kInstalling) return i - rows + 2;
+    // The others in this batch, the newest last; at most five.
+    std::vector<int> rows;
+    for (int i = 0; i < total; ++i)
+        if (&g_jobs[static_cast<size_t>(i)] != hero) rows.push_back(i);
+    if (rows.size() > 5) rows.erase(rows.begin(), rows.end() - 5);
+    if (!rows.empty() && total > 1) {
+        const float rh = px(48);
+        const RectF card(m, y, cw, rh * rows.size());
+        fill_round(g, card, px(kRadiusCard), g_t.card);
+        for (size_t k = 0; k < rows.size(); ++k) {
+            Job& j = g_jobs[static_cast<size_t>(rows[k])];
+            const RectF r(m, y + k * rh, cw, rh);
+            if (k > 0) {
+                Gdiplus::Pen line(g_t.divider, 1);
+                g.DrawLine(&line, r.X + px(56), r.Y, r.GetRight() - px(12), r.Y);
+            }
+            draw_job_icon(g, j, RectF(r.X + px(12), r.Y + px(8), px(32), px(32)));
+            std::wstring state;
+            Color ink = g_t.text2;
+            switch (j.state) {
+                case Job::kWaiting: state = tr(L"Waiting"); break;
+                case Job::kInstalling: state = tr(phase_text(j.phase)); break;
+                case Job::kDone: state = tr(L"Ready"); break;
+                case Job::kFailed: state = tr(L"Couldn't install"); ink = g_t.danger; break;
+                case Job::kCancelled: state = tr(L"Cancelled"); break;
+            }
+            const float rx = r.X + px(56), rw = r.Width - px(56) - px(110);
+            draw_text(g, job_title(j), g_f.body_semi.get(), g_t.text, RectF(rx, r.Y + px(6), rw, px(20)));
+            draw_text(g, state, g_f.caption.get(), ink, RectF(rx, r.Y + px(25), rw, px(17)));
+            const float right = r.GetRight() - px(14);
+            if (j.state == Job::kDone) {
+                draw_link(g, tr(L"Open"), right, r.Y, rh, g_iv.hot == kActRowOpen + rows[k], kActRowOpen + rows[k], kRight);
+            } else if (j.state == Job::kFailed) {
+                draw_link(g, tr(L"Show log"), right, r.Y, rh, g_iv.hot == kActRowLog + rows[k], kActRowLog + rows[k],
+                          kRight);
+            } else if (j.state == Job::kWaiting) {
+                draw_text(g, kGlyphClock, g_f.glyph16.get(), g_t.text3, RectF(right - px(20), r.Y, px(20), rh), kCenter);
+            } else if (j.state == Job::kInstalling) {
+                spinner(g, RectF(right - px(18), r.Y + (rh - px(16)) / 2, px(16), px(16)), g_t.accent, px(2));
+            }
         }
-        return total - rows;
-    }()));
-    for (int i = first; i < total && i < first + rows; ++i) {
-        const Job& j = g_jobs[static_cast<size_t>(i)];
-        const RectF r(m, y + (i - first) * rh, cw, rh);
-        if (i > first) {
-            Gdiplus::Pen line(g_t.divider, 1);
-            g.DrawLine(&line, r.X + px(66), r.Y, r.GetRight() - px(14), r.Y);
-        }
-        const App* app = find_app(j.name);
-        const std::wstring label = job_label(j.name);
-        draw_app_icon(g, app, label, RectF(r.X + px(14), r.Y + px(10), px(40), px(40)));
-        std::wstring state;
-        switch (j.state) {
-            case Job::kWaiting: state = tr(L"Waiting"); break;
-            case Job::kInstalling: state = fmt(L"Converting  ·  {0}", {duration(now - j.start)}); break;
-            case Job::kDone: state = fmt(L"Installed in {0}", {duration(j.end - j.start)}); break;
-            case Job::kFailed: state = fmt(L"Failed after {0}", {duration(j.end - j.start)}); break;
-        }
-        const float tx = r.X + px(66), tw = r.Width - px(66) - px(120);
-        draw_text(g, label, g_f.body_semi.get(), g_t.text, RectF(tx, r.Y + px(10), tw, px(20)));
-        draw_text(g, state, g_f.caption.get(), j.state == Job::kFailed ? g_t.danger : g_t.text2,
-                  RectF(tx, r.Y + px(31), tw, px(18)));
-        const RectF right(r.GetRight() - px(14) - px(96), r.Y + (rh - px(30)) / 2, px(96), px(30));
-        const int act = j.state == Job::kDone ? kActOpen + i : j.state == Job::kFailed ? kActJobLog + i : 0;
-        if (j.state == Job::kWaiting) {
-            draw_text(g, kGlyphClock, g_f.glyph16.get(), g_t.text2, right, kRight);
-        } else if (j.state == Job::kInstalling) {
-            spinner(g, RectF(right.GetRight() - px(20), right.Y + px(5), px(20), px(20)), g_t.accent, px(2.5f));
-        } else {
-            draw_button(g, right, j.state == Job::kDone ? tr(L"Open") : tr(L"View log"), g_iv.hot == act, false,
-                        j.state == Job::kFailed);
-            g_iv.targets.push_back({right, act});
-        }
+        stroke_round(g, card, px(kRadiusCard), g_t.border);
+        y += card.Height + px(12);
     }
-    g.ResetClip();
-    y += rows * rh + px(20);
 
-    const Job* lj = log_job();
-    draw_text(g, lj ? fmt(L"Log  ·  {0}", {lj->name}) : std::wstring(tr(L"Log")), g_f.caption_semi.get(), g_t.text2,
-              RectF(m + px(4), y, cw, px(18)));
-    y += px(24);
-    const RectF box(m, y, cw, H - foot - px(18) - y);
-    if (box.Height > px(48)) {
-        fill_round(g, box, px(kRadiusCard), code_bg());
-        stroke_round(g, box, px(kRadiusCard), g_t.border);
-        const float lh = px(17);
-        const size_t fit = static_cast<size_t>((std::max)(0.0f, (box.Height - px(20)) / lh));
+    // Show details: the log of the install the card is about, or the one asked for.
+    const bool any_failed = failed > 0;
+    const std::wstring details_text = tr(g_iv.details ? L"Hide details" : L"Show details");
+    {
+        const float lw = text_width(g, details_text, g_f.body.get()) + px(20);
+        const RectF r(m, y, lw, px(24));
+        draw_text(g, g_iv.details ? kGlyphChevronUp : kGlyphChevron, g_f.glyph12.get(),
+                  g_iv.hot == kActDetails ? g_t.text : g_t.text2, RectF(r.X, r.Y, px(14), r.Height), kCenter);
+        draw_text(g, details_text, g_f.body.get(), g_iv.hot == kActDetails ? g_t.text : g_t.text2,
+                  RectF(r.X + px(18), r.Y, lw, r.Height));
+        g_iv.targets.push_back({r, kActDetails});
+        y += px(30);
+    }
+    if (g_iv.details) {
+        const float lh = px(16);
+        const RectF box(m, y, cw, lh * 10 + px(16));
+        fill_round(g, box, px(kRadiusControl), code_bg());
+        stroke_round(g, box, px(kRadiusControl), g_t.border);
         if (g_iv.log.empty()) {
-            draw_text(g, lj ? tr(L"Starting the runtime…") : tr(L"The install's output appears here."), g_f.caption.get(),
-                      g_t.text2, box, kCenter);
+            draw_text(g, tr(L"Starting…"), g_f.caption.get(), g_t.text2, box, kCenter);
         } else {
-            const size_t from = g_iv.log.size() > fit ? g_iv.log.size() - fit : 0;
-            float ly = box.Y + px(10);
+            const size_t from = g_iv.log.size() > 10 ? g_iv.log.size() - 10 : 0;
+            float ly = box.Y + px(8);
             for (size_t i = from; i < g_iv.log.size(); ++i, ly += lh) {
                 const std::wstring& l = g_iv.log[i];
                 const bool bad = l.find(L"rror") != std::wstring::npos || l.find(L"xception") != std::wstring::npos;
                 draw_text(g, l, g_f.mono.get(), bad ? g_t.danger : g_t.text2,
-                          RectF(box.X + px(12), ly, box.Width - px(24), lh), kLeft, false, true, true);
+                          RectF(box.X + px(10), ly, box.Width - px(20), lh), kLeft, false, true, true);
             }
         }
+        y += box.Height + px(12);
     }
+    g_iv.need_h = y + px(4) + foot;
 
+    // The footer's buttons, the default one at the end.
+    const float fy = H - foot;
     Gdiplus::SolidBrush bar(g_t.layer);
-    g.FillRectangle(&bar, RectF(0, H - foot, W, foot));
+    g.FillRectangle(&bar, RectF(0, fy, W, foot));
     Gdiplus::Pen line(g_t.border, 1);
-    g.DrawLine(&line, 0.0f, H - foot, W, H - foot);
-    const RectF close(W - m - px(100), H - foot + (foot - px(32)) / 2, px(100), px(32));
-    draw_button(g, close, finished ? tr(L"Done") : tr(L"Hide"), g_iv.hot == kActClose, true, false);
-    g_iv.targets.push_back({close, kActClose});
-    if (lj) {
-        const RectF full(m, close.Y, px(140), px(32));
-        draw_button(g, full, tr(L"Open full log"), g_iv.hot == kActLog, false, false);
-        g_iv.targets.push_back({full, kActLog});
+    g.DrawLine(&line, 0.0f, fy, W, fy);
+    float right = W - m;
+    const float by = fy + (foot - px(32)) / 2;
+    auto button = [&](const std::wstring& text, int act, bool primary) {
+        const float bw = (std::max)(px(96), text_width(g, text, primary ? g_f.body_semi.get() : g_f.body.get()) + px(32));
+        const RectF r(right - bw, by, bw, px(32));
+        draw_button(g, r, text, g_iv.hot == act, primary, false);
+        g_iv.targets.push_back({r, act});
+        right -= bw + px(8);
+    };
+    if (active) {
+        button(tr(L"Cancel"), kActCancel, false);
+    } else {
+        const bool single_ok = hero && hero->state == Job::kDone;
+        if (single_ok) button(tr(L"Open"), kActOpen, true);
+        button(tr(L"Close"), kActClose, !single_ok);
+        if (any_failed && hero && hero->state == Job::kFailed) {
+            button(tr(L"Show log"), kActShowLog, false);
+            button(tr(L"Copy details"), kActCopy, false);
+        }
+        if (done > 0) draw_link(g, tr(L"Show in library"), m, fy, foot, g_iv.hot == kActLibrary, kActLibrary);
+    }
+}
+
+void fit_install_window() {
+    if (g_install_wnd) PostMessageW(g_install_wnd, kFitInstall, 0, 0);
+}
+
+// The window's title: what it is doing, for the taskbar.
+std::wstring install_title() {
+    const Job* hero = hero_job();
+    int done = 0;
+    for (const Job& j : g_jobs) done += j.state != Job::kWaiting && j.state != Job::kInstalling;
+    if (installs_active()) {
+        if (g_jobs.size() > 1) {
+            return fmt(L"Installing {0} of {1}", {std::to_wstring((std::min)(done + 1, static_cast<int>(g_jobs.size()))),
+                                                  std::to_wstring(g_jobs.size())});
+        }
+        return fmt(L"Installing {0}", {hero ? job_title(*hero) : std::wstring()});
+    }
+    return hero ? job_title(*hero) : std::wstring(L"Win.apk");
+}
+
+// Copy details: what a bug report needs, the reason and the end of the log.
+void copy_install_details(HWND hwnd, const Job& j) {
+    std::wstring text = L"Win.apk " + version() + L"\r\n" + fmt(L"Couldn't install {0}", {job_title(j)}) + L"\r\n" +
+                        j.reason + L"\r\n\r\n";
+    for (const std::wstring& l : last_lines(install_log(j.name), 200)) text += l + L"\r\n";
+    copy_text(hwnd, text);
+}
+
+bool ask_stop_installing(HWND hwnd) {
+    TASKDIALOGCONFIG c{};
+    c.cbSize = sizeof(c);
+    c.hwndParent = hwnd;
+    c.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION | TDF_POSITION_RELATIVE_TO_WINDOW | (g_rtl ? TDF_RTL_LAYOUT : 0);
+    c.pszWindowTitle = L"Win.apk";
+    const std::wstring main = tr(L"Stop installing?");
+    const std::wstring content = tr(L"What was not installed yet is left out. An app that was being updated stays as it was.");
+    c.pszMainInstruction = main.c_str();
+    c.pszContent = content.c_str();
+    const TASKDIALOG_BUTTON buttons[] = {{IDOK, tr(L"Stop installing")}, {IDCANCEL, tr(L"Keep installing")}};
+    c.cButtons = 2;
+    c.pButtons = buttons;
+    c.nDefaultButton = IDCANCEL;
+    int pressed = 0;
+    return SUCCEEDED(TaskDialogIndirect(&c, &pressed, nullptr, nullptr)) && pressed == IDOK;
+}
+
+void cancel_all_installs() {
+    for (const Job& j : g_jobs) {
+        if (j.state == Job::kWaiting || j.state == Job::kInstalling) cancel_install(j.name, j.state == Job::kInstalling);
     }
 }
 
 void install_action(HWND hwnd, int act) {
     if (act == kActClose) {
         DestroyWindow(hwnd);
-    } else if (act == kActLog) {
-        if (const Job* j = log_job()) show_logs(install_log(j->name));
-    } else if (act >= kActJobLog) {
-        const size_t i = static_cast<size_t>(act - kActJobLog);
-        if (i < g_jobs.size()) show_logs(install_log(g_jobs[i].name));
-    } else if (act >= kActOpen) {
-        const size_t i = static_cast<size_t>(act - kActOpen);
+    } else if (act == kActCancel) {
+        if (ask_stop_installing(hwnd)) cancel_all_installs();
+    } else if (act == kActOpen) {
+        const Job* hero = hero_job();
+        const App* a = hero ? find_app(hero->name) : nullptr;
+        if (a) {
+            const App copy = *a;
+            DestroyWindow(hwnd);
+            launch(copy);
+        }
+    } else if (act == kActDetails) {
+        g_iv.details = !g_iv.details;
+        set_setting(L"InstallDetails", g_iv.details ? 1 : 0);
+        g_iv.log_read = 0;
+        fit_install_window();
+    } else if (act == kActShowLog) {
+        g_iv.details = true;
+        if (const Job* hero = hero_job()) g_iv.log_name = hero->name;
+        g_iv.log_read = 0;
+        fit_install_window();
+    } else if (act == kActCopy) {
+        if (const Job* hero = hero_job()) copy_install_details(hwnd, *hero);
+    } else if (act == kActLibrary) {
+        std::wstring pick;
+        for (const Job& j : g_jobs)
+            if (j.state == Job::kDone) pick = j.name;
+        DestroyWindow(hwnd);
+        show_library(SW_SHOWDEFAULT);
+        set_view(kLibraryView);
+        if (!pick.empty()) select_app(pick);
+    } else if (act >= kActRowLog) {
+        const size_t i = static_cast<size_t>(act - kActRowLog);
+        if (i < g_jobs.size()) {
+            g_iv.details = true;
+            g_iv.log_name = g_jobs[i].name;
+            g_iv.log_read = 0;
+            fit_install_window();
+        }
+    } else if (act >= kActRowOpen) {
+        const size_t i = static_cast<size_t>(act - kActRowOpen);
         if (i < g_jobs.size()) {
             if (const App* a = find_app(g_jobs[i].name)) launch(*a);
         }
     }
+    InvalidateRect(hwnd, nullptr, FALSE);
+}
+
+// Every 400 ms: the install's step and icon from what it has written, and the log when it is shown.
+void poll_install(HWND hwnd) {
+    for (Job& j : g_jobs) {
+        if (j.state != Job::kInstalling) continue;
+        j.phase = (std::max)(j.phase, install_phase(install_log(j.name)));
+        if (!j.icon && !find_app(j.name)) {
+            std::error_code ec;
+            if (fs::exists(app_dir(j.name) / L"icon.png", ec)) j.icon = rounded_icon(app_dir(j.name) / L"icon.png", ipx(64));
+        }
+    }
+    if (g_iv.details) {
+        std::wstring who = g_iv.log_name;
+        if (who.empty() || installs_active()) {
+            if (const Job* hero = hero_job()) who = hero->name;
+        }
+        g_iv.log = who.empty() ? std::vector<std::wstring>{} : last_lines(install_log(who), 40);
+    }
+    g_iv.log_read = GetTickCount64();
+    SetWindowTextW(hwnd, install_title().c_str());
 }
 
 LRESULT CALLBACK install_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
-        case WM_CREATE: SetTimer(hwnd, 1, 33, nullptr); return 0;
+        case WM_CREATE:
+            SetTimer(hwnd, 1, 33, nullptr);
+            return 0;
         case WM_ERASEBKGND: return 1;
-        case WM_PAINT: buffered_paint(hwnd, paint_install); return 0;
-        case WM_TIMER: {
-            const Job* j = log_job();
-            if (j && GetTickCount64() - g_iv.log_read > 400) {
-                g_iv.log = last_lines(install_log(j->name), 80);
-                g_iv.log_read = GetTickCount64();
-            } else if (!j) {
-                g_iv.log.clear();
+        case WM_PAINT: {
+            RECT rc;
+            GetClientRect(hwnd, &rc);
+            buffered_paint(hwnd, paint_install);
+            if (std::fabs(g_iv.need_h - static_cast<float>(rc.bottom)) > 1) fit_install_window();
+            return 0;
+        }
+        case kFitInstall: {
+            RECT wr, rc;
+            GetWindowRect(hwnd, &wr);
+            GetClientRect(hwnd, &rc);
+            const int want = static_cast<int>(std::lround(g_iv.need_h));
+            if (want > 0 && want != rc.bottom) {
+                SetWindowPos(hwnd, nullptr, 0, 0, wr.right - wr.left, (wr.bottom - wr.top) - rc.bottom + want,
+                             SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
             }
-            if (!g_pending.empty() || g_iv.log_read + 1000 > GetTickCount64()) InvalidateRect(hwnd, nullptr, FALSE);
+            InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
+        }
+        case WM_TIMER: {
+            const bool active = installs_active();
+            if (GetTickCount64() - g_iv.log_read > 400) poll_install(hwnd);
+            if (active) InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         }
         case WM_MOUSEMOVE: track_hot(hwnd, lp, g_iv.targets, &g_iv.hot, &g_iv.tracking); return 0;
@@ -4371,14 +4679,24 @@ LRESULT CALLBACK install_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             break;
         case WM_LBUTTONUP: install_action(hwnd, find_target(g_iv.targets, lp)); return 0;
         case WM_KEYDOWN:
-            if (wp == VK_ESCAPE || wp == VK_RETURN) DestroyWindow(hwnd);
+            if (wp == VK_ESCAPE) {
+                install_action(hwnd, installs_active() ? kActCancel : kActClose);
+            } else if (wp == VK_RETURN && !installs_active()) {
+                const Job* hero = hero_job();
+                install_action(hwnd, hero && hero->state == Job::kDone ? kActOpen : kActClose);
+            }
             return 0;
-        case WM_GETMINMAXINFO:
-            reinterpret_cast<MINMAXINFO*>(lp)->ptMinTrackSize = {ipx(420), ipx(440)};
-            return 0;
+        case WM_CLOSE:
+            if (installs_active()) {
+                if (ask_stop_installing(hwnd)) cancel_all_installs();
+                return 0;  // the window stays to show the result
+            }
+            break;
         case WM_DESTROY:
             g_install_wnd = nullptr;
             g_iv = InstallView{};
+            if (g_pending.empty()) g_jobs.clear();
+            maybe_quit();
             return 0;
     }
     return DefWindowProcW(hwnd, msg, wp, lp);
@@ -4386,37 +4704,67 @@ LRESULT CALLBACK install_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
 void show_install_window() {
     if (g_install_wnd) {
-        InvalidateRect(g_install_wnd, nullptr, FALSE);
+        poll_install(g_install_wnd);
+        fit_install_window();
+        if (IsIconic(g_install_wnd)) ShowWindow(g_install_wnd, SW_RESTORE);
+        SetForegroundWindow(g_install_wnd);
         return;
     }
-    g_install_wnd = open_tool_window(L"WinApkInstall", tr(L"Installing - Win.apk"), ipx(540), ipx(600));
+    g_iv.details = setting(L"InstallDetails", 0) != 0;
+    g_install_wnd = open_tool_window(L"WinApkInstall", install_title().c_str(), ipx(440), ipx(200),
+                                     WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX);
+    if (g_install_wnd) {
+        poll_install(g_install_wnd);
+        fit_install_window();
+    }
 }
 
 // ---------------------------------------------------------------------------
-// The log window: any of the logs, following the end as the runtime writes it
+// The log window: which log, search, Copy and Open folder, and the log itself
+// in a read-only RichEdit (Windows' own msftedit.dll) that follows the end as
+// the runtime writes it, with error lines and search matches marked.
 
 struct LogView {
     fs::path path;
-    uintmax_t size = static_cast<uintmax_t>(-1);
+    uintmax_t read = 0;           // bytes of the file shown so far (whole lines)
+    bool missing = false;
+    HWND search = nullptr;
+    std::wstring query;
+    std::vector<std::pair<LONG, LONG>> matches;  // character ranges
+    int current = -1;
     Targets targets;
     int hot = 0;
     bool tracking = false;
 } g_lv;
 
-enum { kLogPick = 1, kLogCopy, kLogNotepad, kLogFolder };
+enum { kLogPick = 1, kLogCopy, kLogFolder };
+constexpr int kIdLogSearch = 101;
 
+// What the picker calls a log: the app and which log, in words.
 std::wstring log_title(const fs::path& p) {
     const std::wstring stem = p.stem().wstring();
-    if (stem == L"last-run") return tr(L"Last run");
-    if (stem.rfind(L"install-", 0) == 0) return fmt(L"Install  ·  {0}", {stem.substr(8)});
+    auto ends = [&](const std::wstring& suffix) {
+        return stem.size() > suffix.size() && stem.compare(stem.size() - suffix.size(), suffix.size(), suffix) == 0;
+    };
+    if (stem.rfind(L"run-", 0) == 0) {
+        if (ends(L".1")) return fmt(L"{0}  ·  run before", {label_of(stem.substr(4, stem.size() - 6))});
+        return fmt(L"{0}  ·  last run", {label_of(stem.substr(4))});
+    }
+    if (stem.rfind(L"install-", 0) == 0 && stem != L"install-helper") {
+        return fmt(L"{0}  ·  install", {label_of(stem.substr(8))});
+    }
+    if (stem == L"gms") return tr(L"Google sign-in");
+    if (stem == L"install-helper") return tr(L"Installs asked for by apps");
     return stem;
 }
 
+// The logs, the newest first; last-run.log is a second name for one of them, so it is left out.
 std::vector<fs::path> log_files() {
     std::vector<std::pair<fs::file_time_type, fs::path>> found;
     std::error_code ec;
     for (const auto& e : fs::directory_iterator(logs_dir(), ec)) {
-        if (e.path().extension() == L".log") found.push_back({e.last_write_time(ec), e.path()});
+        if (e.path().extension() == L".log" && e.path().filename() != L"last-run.log")
+            found.push_back({e.last_write_time(ec), e.path()});
     }
     std::sort(found.begin(), found.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
     std::vector<fs::path> out;
@@ -4424,77 +4772,221 @@ std::vector<fs::path> log_files() {
     return out;
 }
 
-void load_log(bool force) {
-    std::error_code ec;
-    const uintmax_t size = fs::file_size(g_lv.path, ec);
-    if (!force && (ec ? 0 : size) == g_lv.size) return;
-    g_lv.size = ec ? 0 : size;
-    std::wstring text;
-    if (ec) {
-        text = g_lv.path.stem() == L"last-run" ? tr(L"No app has run yet. This log is written when one does.")
-                                               : tr(L"This log is written the next time the app is installed.");
-    } else {
-        const std::wstring raw = utf8_to_wide(read_tail(g_lv.path, 1 << 20));
-        text.reserve(raw.size() + raw.size() / 32);
-        for (wchar_t c : raw) {
-            if (c == L'\n') text += L"\r\n";
-            else if (c != L'\r') text += c;
+bool error_line(const std::wstring& l) {
+    return l.find(L"rror") != std::wstring::npos || l.find(L"xception") != std::wstring::npos ||
+           l.rfind(L"[E]", 0) == 0 || l.rfind(L"[F]", 0) == 0 || l.find(L"FATAL") != std::wstring::npos;
+}
+
+void log_format(LONG from, LONG to, COLORREF color, bool back, COLORREF back_color = 0) {
+    CHARRANGE cr{from, to};
+    SendMessageW(g_log_edit, EM_EXSETSEL, 0, reinterpret_cast<LPARAM>(&cr));
+    CHARFORMAT2W cf{};
+    cf.cbSize = sizeof(cf);
+    if (back) {
+        cf.dwMask = CFM_BACKCOLOR;
+        cf.crBackColor = back_color;
+        if (back_color == CLR_DEFAULT) {
+            cf.dwEffects = CFE_AUTOBACKCOLOR;
+            cf.crBackColor = 0;
         }
-    }
-    SCROLLINFO si{sizeof(si), SIF_ALL};
-    GetScrollInfo(g_log_edit, SB_VERT, &si);
-    const bool at_end = force || si.nPos + static_cast<int>(si.nPage) >= si.nMax;
-    const LRESULT first = SendMessageW(g_log_edit, EM_GETFIRSTVISIBLELINE, 0, 0);
-    SetWindowTextW(g_log_edit, text.c_str());
-    if (at_end) {
-        const int len = GetWindowTextLengthW(g_log_edit);
-        SendMessageW(g_log_edit, EM_SETSEL, len, len);
-        SendMessageW(g_log_edit, EM_SCROLLCARET, 0, 0);
-        SendMessageW(g_log_edit, WM_HSCROLL, SB_LEFT, 0);  // the caret's scroll may have moved sideways too
     } else {
-        SendMessageW(g_log_edit, EM_LINESCROLL, 0, first);
+        cf.dwMask = CFM_COLOR;
+        cf.crTextColor = color;
     }
+    SendMessageW(g_log_edit, EM_SETCHARFORMAT, SCF_SELECTION, reinterpret_cast<LPARAM>(&cf));
+}
+
+// Marks every match of the search and selects the current one.
+void log_mark_matches(bool keep_current) {
+    SendMessageW(g_log_edit, WM_SETREDRAW, FALSE, 0);
+    CHARRANGE keep{};
+    SendMessageW(g_log_edit, EM_EXGETSEL, 0, reinterpret_cast<LPARAM>(&keep));
+    for (const auto& m : g_lv.matches) log_format(m.first, m.second, 0, true, CLR_DEFAULT);
+    g_lv.matches.clear();
+    if (!g_lv.query.empty()) {
+        FINDTEXTEXW ft{};
+        ft.chrg = {0, -1};
+        ft.lpstrText = g_lv.query.c_str();
+        while (g_lv.matches.size() < 5000) {
+            const LRESULT at = SendMessageW(g_log_edit, EM_FINDTEXTEXW, FR_DOWN, reinterpret_cast<LPARAM>(&ft));
+            if (at < 0) break;
+            g_lv.matches.push_back({ft.chrgText.cpMin, ft.chrgText.cpMax});
+            ft.chrg.cpMin = ft.chrgText.cpMax;
+        }
+        const COLORREF hl = g_t.dark ? RGB(110, 90, 20) : RGB(255, 230, 140);
+        for (const auto& m : g_lv.matches) log_format(m.first, m.second, 0, true, hl);
+    }
+    if (!keep_current || g_lv.current >= static_cast<int>(g_lv.matches.size())) g_lv.current = g_lv.matches.empty() ? -1 : 0;
+    SendMessageW(g_log_edit, EM_EXSETSEL, 0, reinterpret_cast<LPARAM>(&keep));
+    SendMessageW(g_log_edit, WM_SETREDRAW, TRUE, 0);
+    InvalidateRect(g_log_edit, nullptr, TRUE);
     InvalidateRect(g_log_wnd, nullptr, FALSE);
 }
 
-RectF log_text_rect(float W, float H) { return RectF(px(20), px(64), W - px(40), H - px(64) - px(40)); }
+void log_go_to_match(int step) {
+    if (g_lv.matches.empty()) return;
+    const int n = static_cast<int>(g_lv.matches.size());
+    g_lv.current = ((g_lv.current < 0 ? 0 : g_lv.current + step) % n + n) % n;
+    const auto& m = g_lv.matches[static_cast<size_t>(g_lv.current)];
+    CHARRANGE cr{m.first, m.second};
+    SendMessageW(g_log_edit, EM_EXSETSEL, 0, reinterpret_cast<LPARAM>(&cr));
+    SendMessageW(g_log_edit, EM_SCROLLCARET, 0, 0);
+    InvalidateRect(g_log_wnd, nullptr, FALSE);
+}
+
+// Reads what the file gained since last time (the whole file when `force`, or when it was started
+// again and shrank), appends it and marks its error lines. The view stays at the end if it was there.
+void load_log(bool force) {
+    std::error_code ec;
+    const bool exists = fs::exists(g_lv.path, ec);
+    const uintmax_t size = exists ? fs::file_size(g_lv.path, ec) : 0;
+    if (!force && exists == !g_lv.missing && size == g_lv.read) return;
+    if (force || size < g_lv.read || !exists || g_lv.missing) {
+        SetWindowTextW(g_log_edit, L"");
+        g_lv.read = 0;
+        g_lv.matches.clear();
+    }
+    g_lv.missing = !exists;
+    if (!exists) {
+        SetWindowTextW(g_log_edit, tr(L"This log is written the next time the app is opened or installed."));
+        InvalidateRect(g_log_wnd, nullptr, FALSE);
+        return;
+    }
+    // At most the last megabyte at first; then only whole new lines.
+    const uintmax_t from = g_lv.read == 0 && size > (1u << 20) ? size - (1u << 20) : g_lv.read;
+    std::string bytes;
+    HANDLE f = CreateFileW(g_lv.path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                           nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return;
+    LARGE_INTEGER at{};
+    at.QuadPart = static_cast<LONGLONG>(from);
+    SetFilePointerEx(f, at, nullptr, FILE_BEGIN);
+    bytes.resize(static_cast<size_t>(size - from));
+    DWORD got = 0;
+    if (!bytes.empty()) ReadFile(f, &bytes[0], static_cast<DWORD>(bytes.size()), &got, nullptr);
+    CloseHandle(f);
+    bytes.resize(got);
+    const size_t last_nl = bytes.rfind('\n');
+    if (last_nl == std::string::npos) return;  // no whole line yet
+    bytes.resize(last_nl + 1);
+    if (g_lv.read == 0 && from > 0) bytes.erase(0, bytes.find('\n') + 1);  // the first line was cut
+    g_lv.read = from + last_nl + 1;
+    std::wstring text;
+    const std::wstring raw = utf8_to_wide(bytes);
+    text.reserve(raw.size());
+    for (wchar_t c : raw) {
+        if (c != L'\r') text += c == L'\n' ? L'\r' : c;  // RichEdit's line end
+    }
+
+    SCROLLINFO si{sizeof(si), SIF_ALL};
+    GetScrollInfo(g_log_edit, SB_VERT, &si);
+    const bool at_end = force || si.nPos + static_cast<int>(si.nPage) >= si.nMax - 2;
+    SendMessageW(g_log_edit, WM_SETREDRAW, FALSE, 0);
+    CHARRANGE keep{};
+    SendMessageW(g_log_edit, EM_EXGETSEL, 0, reinterpret_cast<LPARAM>(&keep));
+    const LONG start = GetWindowTextLengthW(g_log_edit);
+    CHARRANGE end{start, start};
+    SendMessageW(g_log_edit, EM_EXSETSEL, 0, reinterpret_cast<LPARAM>(&end));
+    SendMessageW(g_log_edit, EM_REPLACESEL, FALSE, reinterpret_cast<LPARAM>(text.c_str()));
+    // The new lines that report errors, in the error colour.
+    LONG pos = start;
+    size_t line_at = 0;
+    while (line_at < text.size()) {
+        size_t nl = text.find(L'\r', line_at);
+        if (nl == std::wstring::npos) nl = text.size();
+        if (error_line(text.substr(line_at, nl - line_at)))
+            log_format(pos, pos + static_cast<LONG>(nl - line_at), colorref(g_t.danger), false);
+        pos += static_cast<LONG>(nl - line_at + 1);
+        line_at = nl + 1;
+    }
+    SendMessageW(g_log_edit, EM_EXSETSEL, 0, reinterpret_cast<LPARAM>(&keep));
+    SendMessageW(g_log_edit, WM_SETREDRAW, TRUE, 0);
+    if (!g_lv.query.empty()) log_mark_matches(true);
+    if (at_end) {
+        SendMessageW(g_log_edit, WM_VSCROLL, SB_BOTTOM, 0);
+    }
+    InvalidateRect(g_log_edit, nullptr, TRUE);
+    InvalidateRect(g_log_wnd, nullptr, FALSE);
+}
+
+constexpr float kLogTools = 56;
 
 void paint_logs(Graphics& g, float W, float H) {
-    g.Clear(g_t.bg);
+    g.Clear(g_t.layer);
     g_lv.targets.clear();
-    const float m = px(20);
-    draw_text(g, tr(L"Logs"), g_f.title.get(), g_t.text, RectF(m, px(14), px(70), px(36)));
-    const RectF pick(m + px(76), px(16), (std::min)(px(300), W * 0.4f), px(32));
+    const float m = px(16), ch = px(32), cy = (px(kLogTools) - ch) / 2;
+    // The picker: which log.
+    const RectF pick(m, cy, (std::min)(px(280), W * 0.34f), ch);
     fill_round(g, pick, px(kRadiusControl), g_lv.hot == kLogPick ? g_t.hover : g_t.card);
     stroke_round(g, pick, px(kRadiusControl), g_t.border);
-    draw_text(g, log_title(g_lv.path), g_f.body.get(), g_t.text, RectF(pick.X + px(12), pick.Y, pick.Width - px(40), pick.Height));
-    draw_text(g, kGlyphChevron, g_f.glyph12.get(), g_t.text2, RectF(pick.GetRight() - px(30), pick.Y, px(22), pick.Height),
+    draw_text(g, log_title(g_lv.path), g_f.body.get(), g_t.text, RectF(pick.X + px(12), pick.Y, pick.Width - px(40), ch));
+    draw_text(g, kGlyphChevron, g_f.glyph12.get(), g_t.text2, RectF(pick.GetRight() - px(30), pick.Y, px(22), ch),
               kCenter);
     g_lv.targets.push_back({pick, kLogPick});
+    // Copy and Open folder at the end.
     float x = W - m;
-    for (auto [label, act] : {std::pair<const wchar_t*, int>{tr(L"Folder"), kLogFolder}, {tr(L"Notepad"), kLogNotepad},
-                              {tr(L"Copy"), kLogCopy}}) {
-        const float w = text_width(g, label, g_f.body_semi.get()) + px(32);
+    for (auto [label, act] : {std::pair<const wchar_t*, int>{tr(L"Open folder"), kLogFolder}, {tr(L"Copy"), kLogCopy}}) {
+        const float w = text_width(g, label, g_f.body.get()) + px(32);
         x -= w;
-        const RectF r(x, px(16), w, px(32));
-        if (r.X > pick.GetRight() + px(8)) {
-            draw_button(g, r, label, g_lv.hot == act, false, false);
-            g_lv.targets.push_back({r, act});
-        }
+        const RectF r(x, cy, w, ch);
+        draw_button(g, r, label, g_lv.hot == act, false, false);
+        g_lv.targets.push_back({r, act});
         x -= px(8);
     }
-    const RectF box = log_text_rect(W, H);
-    fill_round(g, box, px(kRadiusCard), code_bg());
-    stroke_round(g, box, px(kRadiusCard), g_t.border);
-    const bool live = !g_running.empty() || !g_pending.empty();
-    float fx = m;
-    if (live) {
-        Gdiplus::SolidBrush dot(g_t.success);
-        g.FillEllipse(&dot, fx, H - px(20) - px(3), px(6), px(6));
-        fx += px(14);
+    // The search box between them (the edit is a child; this is its frame), with the match count.
+    const RectF box(pick.GetRight() + px(12), cy, (std::max)(px(80), x - px(4) - pick.GetRight() - px(12)), ch);
+    const bool focused = GetFocus() == g_lv.search;
+    fill_round(g, box, px(kRadiusControl), g_t.card);
+    stroke_round(g, box, px(kRadiusControl), focused ? g_t.accent : g_t.border, focused ? px(1.5f) : 1);
+    draw_text(g, kGlyphSearch, g_f.glyph12.get(), g_t.text2, RectF(box.X + px(10), box.Y, px(16), ch), kCenter);
+    if (!g_lv.query.empty()) {
+        const std::wstring count = g_lv.matches.empty()
+                                       ? std::wstring(tr(L"No matches"))
+                                       : fmt(L"{0} of {1}", {std::to_wstring(g_lv.current + 1),
+                                                             std::to_wstring(g_lv.matches.size())});
+        draw_text(g, count, g_f.caption.get(), g_t.text2, RectF(box.GetRight() - px(96), box.Y, px(88), ch), kRight);
     }
-    const std::wstring info = (live ? std::wstring(tr(L"Live")) + L"  ·  " : std::wstring()) + format_bytes(g_lv.size) + L"  ·  " + g_lv.path.wstring();
-    draw_text(g, info, g_f.caption.get(), g_t.text2, RectF(fx, H - px(40), W - fx - m, px(40)));
+    Gdiplus::Pen line(g_t.border, 1);
+    g.DrawLine(&line, 0.0f, px(kLogTools), W, px(kLogTools));
+    (void)H;
+}
+
+void layout_logs(HWND hwnd) {
+    RECT rc;
+    GetClientRect(hwnd, &rc);
+    const int top = ipx(kLogTools) + 1;
+    MoveWindow(g_log_edit, 0, top, rc.right, (std::max)(0L, rc.bottom - top), TRUE);
+    // The search edit sits inside the frame paint_logs draws: after the picker, before the buttons.
+    HDC dc = GetDC(hwnd);
+    float buttons = 0;
+    {
+        Graphics g(dc);
+        for (const wchar_t* label : {tr(L"Open folder"), tr(L"Copy")}) buttons += text_width(g, label, g_f.body.get()) + px(40);
+    }
+    ReleaseDC(hwnd, dc);
+    const float W = static_cast<float>(rc.right), m = px(16);
+    const float pick_r = m + (std::min)(px(280), W * 0.34f);
+    const float bx = pick_r + px(12), bw = (std::max)(px(80), W - m - buttons - px(4) - bx);
+    const int eh = ipx(20);
+    MoveWindow(g_lv.search, static_cast<int>(bx + px(32)), static_cast<int>((px(kLogTools) - eh) / 2),
+               static_cast<int>(bw - px(32) - px(100)), eh, TRUE);
+}
+
+LRESULT CALLBACK log_search_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp, UINT_PTR, DWORD_PTR) {
+    if (msg == WM_KEYDOWN) {
+        const bool shift = GetKeyState(VK_SHIFT) < 0;
+        if (wp == VK_RETURN || wp == VK_F3) {
+            log_go_to_match(shift ? -1 : 1);
+            return 0;
+        }
+        if (wp == VK_ESCAPE) {
+            if (GetWindowTextLengthW(hwnd) > 0) SetWindowTextW(hwnd, L"");
+            else DestroyWindow(g_log_wnd);
+            return 0;
+        }
+    }
+    if (msg == WM_CHAR && (wp == VK_RETURN || wp == VK_ESCAPE)) return 0;  // no beep
+    return DefSubclassProc(hwnd, msg, wp, lp);
 }
 
 void log_action(HWND hwnd, int act) {
@@ -4516,19 +5008,16 @@ void log_action(HWND hwnd, int act) {
         }
     } else if (act == kLogCopy) {
         const int len = GetWindowTextLengthW(g_log_edit);
-        HGLOBAL mem = GlobalAlloc(GMEM_MOVEABLE, (static_cast<size_t>(len) + 1) * sizeof(wchar_t));
-        if (!mem || !OpenClipboard(hwnd)) {
-            if (mem) GlobalFree(mem);
-            return;
+        std::wstring text(static_cast<size_t>(len) + 1, L'\0');
+        GetWindowTextW(g_log_edit, &text[0], len + 1);
+        text.resize(static_cast<size_t>(len));
+        std::wstring crlf;
+        crlf.reserve(text.size() + text.size() / 32);
+        for (wchar_t c : text) {
+            if (c == L'\r') crlf += L"\r\n";
+            else crlf += c;
         }
-        GetWindowTextW(g_log_edit, static_cast<wchar_t*>(GlobalLock(mem)), len + 1);
-        GlobalUnlock(mem);
-        EmptyClipboard();
-        if (!SetClipboardData(CF_UNICODETEXT, mem)) GlobalFree(mem);
-        CloseClipboard();
-        set_status(tr(L"The log was copied."), kSuccess);
-    } else if (act == kLogNotepad) {
-        open_log(g_lv.path);
+        copy_text(hwnd, crlf);
     } else if (act == kLogFolder) {
         std::error_code ec;
         if (fs::exists(g_lv.path, ec)) show_in_explorer(g_lv.path);
@@ -4538,34 +5027,62 @@ void log_action(HWND hwnd, int act) {
 
 LRESULT CALLBACK log_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
-        case WM_CREATE:
-            // A log is English, paths and stack traces: it reads left to right, lines flush left, with its
-            // scroll bar on the right, also in a Hebrew window. A child takes the mirrored layout of its
-            // parent when it is created, and Windows keeps an edit as it was made (taking WS_EX_LAYOUTRTL off
-            // afterwards still leaves the lines on the right), so the window stops passing it on first.
+        case WM_CREATE: {
+            // A log is English, paths and stack traces: it reads left to right with its scroll bar on the right,
+            // also in a Hebrew window. A child takes its parent's mirrored layout when it is made, so the
+            // window stops passing it on first.
             SetWindowLongPtrW(hwnd, GWL_EXSTYLE, GetWindowLongPtrW(hwnd, GWL_EXSTYLE) | WS_EX_NOINHERITLAYOUT);
-            g_log_edit = CreateWindowExW(WS_EX_LTRREADING | WS_EX_LEFT | WS_EX_RIGHTSCROLLBAR, L"EDIT", L"",
+            static HMODULE richedit = LoadLibraryW(L"Msftedit.dll");
+            (void)richedit;
+            g_log_edit = CreateWindowExW(WS_EX_LTRREADING | WS_EX_LEFT | WS_EX_RIGHTSCROLLBAR, MSFTEDIT_CLASS, L"",
                                          WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_HSCROLL | ES_LEFT | ES_MULTILINE |
                                              ES_READONLY | ES_AUTOVSCROLL | ES_AUTOHSCROLL | ES_NOHIDESEL,
                                          0, 0, 0, 0, hwnd, nullptr, g_inst, nullptr);
-            SendMessageW(g_log_edit, WM_SETFONT, reinterpret_cast<WPARAM>(g_mono_font), FALSE);
-            SendMessageW(g_log_edit, EM_SETLIMITTEXT, 0, 0);
+            SendMessageW(g_log_edit, EM_EXLIMITTEXT, 0, 64 << 20);
+            SendMessageW(g_log_edit, EM_SETBKGNDCOLOR, 0, colorref(code_bg()));
+            SendMessageW(g_log_edit, EM_SETRECT, 0, 0);
+            CHARFORMAT2W cf{};
+            cf.cbSize = sizeof(cf);
+            cf.dwMask = CFM_FACE | CFM_SIZE | CFM_COLOR;
+            cf.yHeight = 200;  // 10 pt, in twips
+            cf.crTextColor = colorref(g_t.text);
+            Gdiplus::FontFamily cascadia(L"Cascadia Mono");
+            wcscpy(cf.szFaceName, cascadia.GetLastStatus() == Gdiplus::Ok && cascadia.IsAvailable() ? L"Cascadia Mono"
+                                                                                                   : L"Consolas");
+            SendMessageW(g_log_edit, EM_SETCHARFORMAT, SCF_ALL, reinterpret_cast<LPARAM>(&cf));
+            SendMessageW(g_log_edit, EM_SETCHARFORMAT, SCF_DEFAULT, reinterpret_cast<LPARAM>(&cf));
             SetWindowTheme(g_log_edit, g_t.dark ? L"DarkMode_Explorer" : L"Explorer", nullptr);
+            // Some room around the text.
+            SendMessageW(g_log_edit, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELPARAM(ipx(12), ipx(12)));
+            g_lv.search = CreateWindowExW(g_rtl ? WS_EX_RTLREADING : 0, L"EDIT", L"", WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
+                                          0, 0, 0, 0, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdLogSearch)),
+                                          g_inst, nullptr);
+            SendMessageW(g_lv.search, WM_SETFONT, reinterpret_cast<WPARAM>(g_edit_font), FALSE);
+            SendMessageW(g_lv.search, EM_SETCUEBANNER, FALSE, reinterpret_cast<LPARAM>(tr(L"Search the log")));
+            SetWindowSubclass(g_lv.search, log_search_proc, 1, 0);
             SetTimer(hwnd, 1, 700, nullptr);
             return 0;
-        case WM_SIZE: {
-            const RectF r = inset(log_text_rect(LOWORD(lp), HIWORD(lp)), px(10), px(8));
-            MoveWindow(g_log_edit, static_cast<int>(r.X), static_cast<int>(r.Y), static_cast<int>(r.Width),
-                       static_cast<int>(r.Height), TRUE);
-            InvalidateRect(hwnd, nullptr, FALSE);
-            return 0;
         }
+        case WM_SIZE: layout_logs(hwnd); InvalidateRect(hwnd, nullptr, FALSE); return 0;
         case WM_ERASEBKGND: return 1;
         case WM_PAINT: buffered_paint(hwnd, paint_logs); return 0;
-        case WM_CTLCOLORSTATIC:  // a read-only edit asks with this one
+        case WM_CTLCOLOREDIT:
             SetTextColor(reinterpret_cast<HDC>(wp), colorref(g_t.text));
-            SetBkColor(reinterpret_cast<HDC>(wp), colorref(code_bg()));
-            return reinterpret_cast<LRESULT>(g_code_brush);
+            SetBkColor(reinterpret_cast<HDC>(wp), colorref(g_t.card));
+            return reinterpret_cast<LRESULT>(g_edit_brush);
+        case WM_COMMAND:
+            if (LOWORD(wp) == kIdLogSearch) {
+                if (HIWORD(wp) == EN_CHANGE) {
+                    wchar_t buf[256] = {};
+                    GetWindowTextW(g_lv.search, buf, 256);
+                    g_lv.query = buf;
+                    log_mark_matches(false);
+                    if (!g_lv.matches.empty()) log_go_to_match(0);
+                } else if (HIWORD(wp) == EN_SETFOCUS || HIWORD(wp) == EN_KILLFOCUS) {
+                    InvalidateRect(hwnd, nullptr, FALSE);
+                }
+            }
+            return 0;
         case WM_TIMER: load_log(false); return 0;
         case WM_MOUSEMOVE: track_hot(hwnd, lp, g_lv.targets, &g_lv.hot, &g_lv.tracking); return 0;
         case WM_MOUSELEAVE:
@@ -4580,28 +5097,259 @@ LRESULT CALLBACK log_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             }
             break;
         case WM_LBUTTONUP: log_action(hwnd, find_target(g_lv.targets, lp)); return 0;
+        case WM_ACTIVATE:
+            if (LOWORD(wp) != WA_INACTIVE) SetFocus(g_lv.search);
+            return 0;
         case WM_GETMINMAXINFO:
             reinterpret_cast<MINMAXINFO*>(lp)->ptMinTrackSize = {ipx(560), ipx(360)};
             return 0;
         case WM_DESTROY:
             g_log_wnd = g_log_edit = nullptr;
-            g_lv.targets.clear();
-            g_lv.hot = 0;
+            g_lv = LogView{};
+            maybe_quit();
             return 0;
     }
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
 
+// The log window on `log`; the newest log when none is named.
 void show_logs(const fs::path& log) {
-    g_lv.path = log;
+    fs::path path = log;
+    if (path.empty()) {
+        const auto files = log_files();
+        path = files.empty() ? last_run_log() : files.front();
+    }
+    g_lv.path = path;
     if (!g_log_wnd) {
-        g_log_wnd = open_tool_window(L"WinApkLogs", tr(L"Logs - Win.apk"), ipx(860), ipx(620));
+        g_log_wnd = open_tool_window(L"WinApkLogs", tr(L"Log - Win.apk"), ipx(860), ipx(620));
         if (!g_log_wnd) return;
+        layout_logs(g_log_wnd);
     } else {
         ShowWindow(g_log_wnd, SW_RESTORE);
         SetForegroundWindow(g_log_wnd);
     }
     load_log(true);
+}
+
+// ---------------------------------------------------------------------------
+// The launch splash: shown the moment an app is opened, as a phone shows one,
+// until the app's own window is up (the runtime's ready event, kRunReady).
+// If the app ends first it turns into a short error with Show log.
+
+struct Splash {
+    std::wstring name;
+    HWND hwnd = nullptr;
+    ULONGLONG start = 0, phase_read = 0;
+    const wchar_t* phase = nullptr;  // what the run log says it is doing; null: starting
+    bool failed = false;
+    std::wstring error_title, error_text;
+    fs::path log;  // Show log's
+    Targets targets;
+    int hot = 0;
+    bool tracking = false;
+};
+
+std::map<std::wstring, std::unique_ptr<Splash>> g_splashes;
+enum { kSplashClose = 1, kSplashLog = 2, kSplashCancel = 3 };
+
+void maybe_quit();
+
+Splash* splash_of(HWND hwnd) { return reinterpret_cast<Splash*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA)); }
+
+// The step of a start that takes long, from the lines the runtime writes; null when there is none to tell.
+const wchar_t* run_phase(const fs::path& log) {
+    const std::string tail = read_tail(log, 64 * 1024);
+    if (tail.find("converting the app's code") != std::string::npos &&
+        tail.find("host natives:") == std::string::npos) {
+        return L"Converting the app's code. This happens once.";
+    }
+    if (tail.find("installing the app (once per install)") != std::string::npos &&
+        tail.find("host natives:") == std::string::npos) {
+        return L"Getting the app ready. This happens once.";
+    }
+    return nullptr;
+}
+
+// Why the app did not come up, in a sentence: the log's own reason when it has a known one.
+std::wstring failure_reason(const fs::path& log, bool clean_exit) {
+    bool no_native_code = false;
+    log_summary(log, &no_native_code);
+    if (no_native_code) {
+        return tr(L"This file has no code for PCs. Install the full bundle (.apkm, .xapk or .apks) that includes "
+                  L"the arm64-v8a part.");
+    }
+    return tr(clean_exit ? L"The app closed before it showed a window." : L"The app stopped with an error.");
+}
+
+void paint_splash(Splash& s, Graphics& g, float W, float H) {
+    g.Clear(g_t.layer);
+    s.targets.clear();
+    const App* app = find_app(s.name);
+    const std::wstring label = app ? app->label : job_label(s.name);
+    const float is = px(88);
+    const RectF ir((W - is) / 2, px(40), is, is);
+    draw_app_icon(g, app, label, ir);
+    if (s.failed) {
+        const RectF badge(ir.GetRight() - px(20), ir.GetBottom() - px(20), px(26), px(26));
+        Gdiplus::SolidBrush ring(g_t.layer), dot(g_t.danger);
+        g.FillEllipse(&ring, inset(badge, -px(2), -px(2)));
+        g.FillEllipse(&dot, badge);
+        draw_text(g, L"!", g_f.body_semi.get(), kWhite, badge, kCenter);
+    }
+    const float m = px(24);
+    draw_text(g, s.failed ? s.error_title : label, g_f.title.get(), g_t.text, RectF(m, px(144), W - 2 * m, px(30)),
+              kCenter);
+    std::wstring sub = s.failed ? s.error_text : std::wstring(tr(s.phase ? s.phase : L"Starting…"));
+    if (!s.failed && !s.phase && GetTickCount64() - s.start > 20000) {
+        sub = tr(L"Still starting. The first start can take a minute.");
+    }
+    draw_text(g, sub, g_f.caption.get(), g_t.text2, RectF(m, px(178), W - 2 * m, px(54)), kCenter, true, false);
+    if (s.failed) {
+        const float bw = px(112), by = H - px(24) - px(32);
+        const RectF log((W - 2 * bw - px(8)) / 2, by, bw, px(32)), close(log.GetRight() + px(8), by, bw, px(32));
+        draw_button(g, log, tr(L"Show log"), s.hot == kSplashLog, false, false);
+        draw_button(g, close, tr(L"Close"), s.hot == kSplashClose, true, false);
+        s.targets.push_back({log, kSplashLog});
+        s.targets.push_back({close, kSplashClose});
+    } else {
+        // Three dots that brighten in turn.
+        const float t = static_cast<float>(GetTickCount64() % 1200) / 1200.0f, d = px(7), gap = px(8);
+        const float x0 = (W - 3 * d - 2 * gap) / 2, y = px(258);
+        for (int i = 0; i < 3; ++i) {
+            float phase = t - i * 0.17f;
+            phase -= std::floor(phase);
+            const float lit = phase < 0.4f ? std::sin(phase / 0.4f * 3.14159f) : 0.0f;
+            Gdiplus::SolidBrush b(with_alpha(g_t.accent, static_cast<BYTE>(70 + 185 * lit)));
+            g.FillEllipse(&b, x0 + i * (d + gap), y, d, d);
+        }
+        const RectF cancel(W - px(40), px(8), px(32), px(32));
+        if (s.hot == kSplashCancel) fill_round(g, cancel, px(kRadiusControl), g_t.hover);
+        draw_text(g, kGlyphClear, g_f.glyph12.get(), g_t.text2, cancel, kCenter);
+        s.targets.push_back({cancel, kSplashCancel});
+    }
+    stroke_round(g, RectF(0.5f, 0.5f, W - 1, H - 1), px(8), g_t.border);
+}
+
+void splash_action(Splash& s, int act) {
+    if (act == kSplashLog) {
+        show_logs(s.log);
+        DestroyWindow(s.hwnd);
+    } else if (act == kSplashClose) {
+        DestroyWindow(s.hwnd);
+    } else if (act == kSplashCancel) {
+        if (stop_process(s.name)) g_stopping.insert(s.name);
+        DestroyWindow(s.hwnd);
+    }
+}
+
+LRESULT CALLBACK splash_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    Splash* s = splash_of(hwnd);
+    switch (msg) {
+        case WM_NCCREATE:
+            SetWindowLongPtrW(hwnd, GWLP_USERDATA,
+                              reinterpret_cast<LONG_PTR>(reinterpret_cast<CREATESTRUCTW*>(lp)->lpCreateParams));
+            break;
+        case WM_CREATE: SetTimer(hwnd, 1, 40, nullptr); return 0;
+        case WM_ERASEBKGND: return 1;
+        case WM_PAINT:
+            buffered_paint(hwnd, [&](Graphics& g, float w, float h) { paint_splash(*s, g, w, h); });
+            return 0;
+        case WM_TIMER:
+            if (!s->failed && GetTickCount64() - s->phase_read > 500) {
+                s->phase = run_phase(run_log(s->name));
+                s->phase_read = GetTickCount64();
+            }
+            if (!s->failed) InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
+        case WM_NCHITTEST: {  // drag it by anything that is not a button
+            POINT pt{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
+            ScreenToClient(hwnd, &pt);
+            if (g_rtl) {
+                RECT rc;
+                GetClientRect(hwnd, &rc);
+                pt.x = rc.right - pt.x;
+            }
+            for (const auto& t : s->targets)
+                if (contains(t.first, static_cast<float>(pt.x), static_cast<float>(pt.y))) return HTCLIENT;
+            return HTCAPTION;
+        }
+        case WM_MOUSEMOVE: track_hot(hwnd, lp, s->targets, &s->hot, &s->tracking); return 0;
+        case WM_MOUSELEAVE:
+            s->tracking = false;
+            s->hot = 0;
+            InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
+        case WM_SETCURSOR:
+            if (LOWORD(lp) == HTCLIENT) {
+                SetCursor(LoadCursorW(nullptr, s->hot ? IDC_HAND : IDC_ARROW));
+                return TRUE;
+            }
+            break;
+        case WM_LBUTTONUP: splash_action(*s, find_target(s->targets, lp)); return 0;
+        case WM_KEYDOWN:
+            if (wp == VK_ESCAPE) splash_action(*s, s->failed ? kSplashClose : kSplashCancel);
+            else if (wp == VK_RETURN && s->failed) splash_action(*s, kSplashClose);
+            return 0;
+        case WM_DESTROY: {
+            const std::wstring name = s->name;
+            g_splashes.erase(name);  // frees *s
+            maybe_quit();
+            return 0;
+        }
+    }
+    return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+// The splash for `name`, made now, in the middle of the screen the app will open on.
+Splash* show_splash(const std::wstring& name) {
+    if (auto it = g_splashes.find(name); it != g_splashes.end()) return it->second.get();
+    auto s = std::make_unique<Splash>();
+    s->name = name;
+    s->start = GetTickCount64();
+    s->log = run_log(name);
+    POINT cursor;
+    GetCursorPos(&cursor);
+    MONITORINFO mi{sizeof(mi)};
+    GetMonitorInfoW(MonitorFromPoint(cursor, MONITOR_DEFAULTTOPRIMARY), &mi);
+    const RECT& wa = mi.rcWork;
+    const int w = ipx(300), h = ipx(340);
+    const App* app = find_app(name);
+    HWND hwnd = CreateWindowExW(layout_style(), L"WinApkSplash", (app ? app->label : name).c_str(), WS_POPUP,
+                                wa.left + (wa.right - wa.left - w) / 2, wa.top + (wa.bottom - wa.top - h) / 2, w, h,
+                                nullptr, nullptr, g_inst, s.get());
+    if (!hwnd) return nullptr;
+    s->hwnd = hwnd;
+    const int corner = 2;  // DWMWCP_ROUND, Windows 11
+    DwmSetWindowAttribute(hwnd, 33 /* DWMWA_WINDOW_CORNER_PREFERENCE */, &corner, sizeof(corner));
+    theme_window(hwnd);
+    const int ip = GetSystemMetrics(SM_CXICON);
+    if (auto icon = static_cast<HICON>(LoadImageW(nullptr, shortcut_icon(name).c_str(), IMAGE_ICON, ip, ip,
+                                                  LR_LOADFROMFILE))) {
+        SendMessageW(hwnd, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(icon));
+    }
+    Splash* raw = s.get();
+    g_splashes[name] = std::move(s);
+    ShowWindow(hwnd, SW_SHOW);
+    UpdateWindow(hwnd);
+    SetForegroundWindow(hwnd);
+    return raw;
+}
+
+// The splash turned into the error: the one still up, else a new one (an app that failed after its window was up).
+void splash_failed(const std::wstring& name, const std::wstring& title, const std::wstring& text) {
+    Splash* s = show_splash(name);
+    if (!s) return;
+    s->failed = true;
+    s->error_title = title;
+    s->error_text = text;
+    s->log = run_log(name);
+    InvalidateRect(s->hwnd, nullptr, FALSE);
+    SetForegroundWindow(s->hwnd);
+}
+
+void close_splash(const std::wstring& name) {
+    const auto it = g_splashes.find(name);
+    if (it != g_splashes.end() && !it->second->failed) DestroyWindow(it->second->hwnd);
 }
 
 // ---------------------------------------------------------------------------
@@ -4645,7 +5393,7 @@ public:
         return static_cast<ULONG>(n);
     }
     HRESULT STDMETHODCALLTYPE DragEnter(IDataObject* data, DWORD, POINTL, DWORD* effect) override {
-        accept_ = !g_sheet && !dropped_files(data).empty();
+        accept_ = !dropped_files(data).empty();
         if (accept_) set_view(kLibraryView);  // the drop overlay is the library's
         set_over(accept_);
         *effect = accept_ ? DROPEFFECT_COPY : DROPEFFECT_NONE;
@@ -4663,7 +5411,7 @@ public:
         set_over(false);
         *effect = accept_ ? DROPEFFECT_COPY : DROPEFFECT_NONE;
         if (accept_) {
-            for (const fs::path& p : dropped_files(data)) install(p, false);
+            for (const fs::path& p : dropped_files(data)) install(p);
         }
         return S_OK;
     }
@@ -4685,10 +5433,6 @@ DropTarget* g_drop_target;
 void apply_theme() {
     pick_theme();
     theme_window(g_main);
-    if (sheet_hwnd()) {
-        theme_window(sheet_hwnd());
-        InvalidateRect(sheet_hwnd(), nullptr, FALSE);
-    }
     theme_menus();
     if (g_edit_brush) DeleteObject(g_edit_brush);
     g_edit_brush = CreateSolidBrush(colorref(g_t.card));
@@ -4699,38 +5443,26 @@ void apply_theme() {
         theme_window(w);
         InvalidateRect(w, nullptr, FALSE);
     }
-    if (g_log_edit) {
-        SetWindowTheme(g_log_edit, g_t.dark ? L"DarkMode_Explorer" : L"Explorer", nullptr);
-        InvalidateRect(g_log_edit, nullptr, TRUE);
+    if (g_log_wnd) {  // the log's colours are set in its text: open it again
+        const fs::path path = g_lv.path;
+        DestroyWindow(g_log_wnd);
+        show_logs(path);
     }
     InvalidateRect(g_main, nullptr, FALSE);
     InvalidateRect(g_search, nullptr, TRUE);
 }
 
+// The tile's menu: Open, Stop while it runs, App details, Remove. Everything else is on the details page.
 void show_context_menu(const App& app, POINT pt) {
     HMENU menu = CreatePopupMenu();
-    AppendMenuW(menu, MF_STRING, kCmdOpen, tr(L"&Open"));
-    AppendMenuW(menu, MF_STRING, kCmdInfo, tr(L"Get &Info…"));
-    if (const int fixed = manifest_orientation(app.name); fixed != kOrientUnset) {
-        AppendMenuW(menu, MF_STRING | MF_GRAYED, kCmdOrientation,
-                    tr(fixed == kLandscape ? L"Always landscape (the app requires it)"
-                                           : L"Always portrait (the app requires it)"));
-    } else {
-        AppendMenuW(menu, MF_STRING, kCmdOrientation,
-                    tr(effective_orientation(app.name) == kLandscape ? L"Open in &portrait" : L"Open in &landscape"));
-    }
+    AppendMenuW(menu, MF_STRING, kCmdOpen, (std::wstring(tr(L"&Open")) + L"\t" + tr(L"Enter")).c_str());
+    if (g_running.count(app.name) || app_running(app.name)) AppendMenuW(menu, MF_STRING, kCmdStop, tr(L"&Stop"));
+    AppendMenuW(menu, MF_STRING, kCmdInfo, (std::wstring(tr(L"App &details")) + L"\tAlt+Enter").c_str());
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, MF_STRING, kCmdShortcut, tr(L"Create &desktop shortcut"));
-    AppendMenuW(menu, MF_STRING, kCmdShowApk, tr(L"Show the &APK in Explorer"));
-    AppendMenuW(menu, MF_STRING, kCmdAppFolder, tr(L"Open the app's &files"));
-    AppendMenuW(menu, MF_STRING, kCmdLog, tr(L"Show the last &log"));
-    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, MF_STRING, kCmdUpdate, tr(L"&Update from APK…"));
-    AppendMenuW(menu, MF_STRING, kCmdReinstall, tr(L"Rein&stall"));
     AppendMenuW(menu, MF_STRING, kCmdRemove, tr(L"&Remove…"));
     SetMenuDefaultItem(menu, kCmdOpen, FALSE);
     if (is_pending(app.name)) {
-        for (int id : {kCmdOpen, kCmdUpdate, kCmdReinstall, kCmdRemove}) EnableMenuItem(menu, id, MF_GRAYED);
+        for (int id : {kCmdOpen, kCmdRemove}) EnableMenuItem(menu, id, MF_GRAYED);
     }
     TrackPopupMenu(menu, TPM_RIGHTBUTTON | menu_flags(false), pt.x, pt.y, 0, g_main, nullptr);
     DestroyMenu(menu);
@@ -4742,17 +5474,11 @@ void command(int id) {
     const App a = *sel;
     switch (id) {
         case kCmdOpen: launch(a); break;
-        case kCmdInfo: show_info(a); break;
-        case kCmdOrientation: flip_orientation(a); break;
-        case kCmdShortcut:
-            make_app_shortcuts(a, true);
-            set_status(fmt(L"A shortcut to {0} is on the desktop.", {a.label}), kSuccess);
+        case kCmdStop:
+            if (stop_process(a.name)) g_stopping.insert(a.name);
+            else appops::stop_runtime_of(a.apk);
             break;
-        case kCmdShowApk: show_in_explorer(a.apk); break;
-        case kCmdAppFolder: open_path(app_dir(a.name)); break;
-        case kCmdLog: show_logs(last_run_log()); break;
-        case kCmdUpdate: update_from_apk(a); break;
-        case kCmdReinstall: install(a.apk, false, a.name); break;
+        case kCmdInfo: show_info(a); break;
         case kCmdRemove: remove_app(a, true); break;
     }
 }
@@ -4838,39 +5564,54 @@ void create_search() {
     SetWindowSubclass(g_search, search_proc, 1, 0);
 }
 
+bool grid_view(View v) { return v == kLibraryView || v == kStoreView; }
+
+// Shows a view. The library and the store share the search box and the scrolling: each keeps its own
+// query and place. A page (Settings, an app's details) hides the search box.
 void set_view(View view) {
-    if (view == g_view) return;
-    const std::wstring shown_query = query(g_view);
+    if (view == g_view && grid_view(view)) return;
+    if (grid_view(g_view)) {
+        g_queries[g_view] = query(g_view);
+        g_scrolls[g_view] = g_scroll;
+    }
     g_view = view;
-    std::swap(g_scroll, g_other_scroll);
-    const float scroll = g_scroll;
-    SetWindowTextW(g_search, g_other_query.c_str());  // its EN_CHANGE starts at the top; this view keeps its place
-    g_other_query = shown_query;
-    g_scroll = scroll;
-    SendMessageW(g_search, EM_SETCUEBANNER, FALSE,
-                 reinterpret_cast<LPARAM>(tr(view == kStoreView ? L"Search F-Droid" : L"Search apps")));
-    InvalidateRect(g_search, nullptr, TRUE);  // an empty box shows the new cue only when it is drawn again
     g_hot = {};
-    if (view == kStoreView && !g_store.started) store_start(false);
+    if (grid_view(view)) {
+        const float scroll = g_scrolls[view];
+        SetWindowTextW(g_search, g_queries[view].c_str());  // its EN_CHANGE starts at the top; this view keeps its place
+        g_scroll = scroll;
+        SendMessageW(g_search, EM_SETCUEBANNER, FALSE,
+                     reinterpret_cast<LPARAM>(tr(view == kStoreView ? L"Search F-Droid" : L"Search apps")));
+        ShowWindow(g_search, SW_SHOW);
+        InvalidateRect(g_search, nullptr, TRUE);  // an empty box shows the new cue only when it is drawn again
+        if (view == kStoreView && !g_store.started) store_start(false);
+    } else {
+        if (GetFocus() == g_search) SetFocus(g_main);
+        ShowWindow(g_search, SW_HIDE);
+        g_page.scroll = 0;
+        g_page.hot = g_page.focus = -1;
+    }
     rebuild_tiles();
     update_timer();
 }
 
 void apply_language() {
     pick_language();
-    for (HWND w : {g_main, sheet_hwnd(), g_install_wnd}) {
+    for (HWND w : {g_main, g_install_wnd}) {
         if (!w) continue;
         const LONG_PTR ex = GetWindowLongPtrW(w, GWL_EXSTYLE);
         SetWindowLongPtrW(w, GWL_EXSTYLE, g_rtl ? (ex | WS_EX_LAYOUTRTL) : (ex & ~WS_EX_LAYOUTRTL));
         SetWindowPos(w, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
         InvalidateRect(w, nullptr, FALSE);
     }
-    if (sheet_hwnd()) SetWindowTextW(sheet_hwnd(), tr(L"Settings"));  // the language is picked there
-    if (g_install_wnd) SetWindowTextW(g_install_wnd, tr(L"Installing - Win.apk"));
+    if (g_install_wnd) SetWindowTextW(g_install_wnd, install_title().c_str());
     if (g_log_wnd) DestroyWindow(g_log_wnd);
     create_search();
     create_tooltip();
-    rebuild_tiles();
+    // A page holds its words: Settings (where the language is picked) is made again, a details page goes back.
+    if (g_view == kSettingsView) show_settings();
+    else if (page_view()) set_view(g_page.from);
+    else rebuild_tiles();
 }
 
 void set_hot(const Hit& h) {
@@ -4927,9 +5668,6 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             break;
         case WM_ERASEBKGND: return 1;
         case WM_PAINT: buffered_paint(hwnd, paint_main); return 0;
-        case WM_TIMER:
-            if (wp == kAnimTimer) InvalidateRect(hwnd, nullptr, FALSE);
-            return 0;
         case WM_CTLCOLOREDIT:
             SetTextColor(reinterpret_cast<HDC>(wp), colorref(g_t.text));
             SetBkColor(reinterpret_cast<HDC>(wp), colorref(g_t.card));
@@ -4962,6 +5700,12 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 TRACKMOUSEEVENT tme{sizeof(tme), TME_LEAVE, hwnd, 0};
                 g_tracking = TrackMouseEvent(&tme);
             }
+            if (g_page.thumb_drag && page_view()) {
+                const float room = g_page.view.Height - px(8) - g_page.thumb.Height;
+                if (room > 0) g_page.scroll = g_page.thumb_scroll0 + (y - g_page.thumb_y0) * page_max_scroll() / room;
+                page_scroll(0);
+                return 0;
+            }
             if (g_thumb_drag) {
                 const float room = g_l.grid.Height - thumb_rect().Height;
                 if (room > 0) g_scroll = g_thumb_scroll0 + (y - g_thumb_y0) * g_l.max_scroll / room;
@@ -4969,23 +5713,39 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 InvalidateRect(hwnd, nullptr, FALSE);
                 return 0;
             }
-            set_hot(hit_test(x, y));
+            const Hit h = hit_test(x, y);
+            if (page_view()) {
+                const int ph = h.kind == kHitPage ? page_hit(x, y) : -1;
+                if (ph != g_page.hot) {
+                    g_page.hot = ph;
+                    InvalidateRect(hwnd, nullptr, FALSE);
+                }
+            }
+            set_hot(h);
             return 0;
         }
         case WM_MOUSELEAVE:
             g_tracking = false;
-            if (!g_thumb_drag) set_hot({});
+            if (!g_thumb_drag && !g_page.thumb_drag) {
+                g_page.hot = -1;
+                set_hot({});
+            }
             return 0;
         case WM_SETCURSOR:
             if (LOWORD(lp) == HTCLIENT && reinterpret_cast<HWND>(wp) == hwnd) {
                 const bool hand = g_hot.kind == kHitNav || g_hot.kind == kHitAdd || g_hot.kind == kHitClear ||
-                                  g_hot.kind == kHitRefresh || g_hot.kind == kHitDrop || g_hot.kind == kHitBrowse ||
-                                  g_hot.kind == kHitLogs || g_hot.kind == kHitStop || g_hot.kind == kHitCategory ||
-                                  g_hot.kind == kHitCard || g_hot.kind == kHitCardButton || g_hot.kind == kHitRetry;
+                                  g_hot.kind == kHitRefresh || g_hot.kind == kHitCategory || g_hot.kind == kHitCard ||
+                                  g_hot.kind == kHitCardButton || g_hot.kind == kHitRetry ||
+                                  g_hot.kind == kHitInfoClose ||
+                                  (g_hot.kind == kHitPage && g_page.hot != -1 && g_page.hot != kPageThumb);
                 SetCursor(LoadCursorW(nullptr, hand ? IDC_HAND : IDC_ARROW));
                 return TRUE;
             }
             break;
+        case WM_TIMER:
+            if (wp == kAnimTimer) InvalidateRect(hwnd, nullptr, FALSE);
+            if (wp == kInfoBarTimer) info(L"", kInfo);
+            return 0;
         case WM_LBUTTONDOWN: {
             SetFocus(hwnd);
             g_focus_visible = false;
@@ -4996,9 +5756,7 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     if (h.tile == kNavSettings) show_settings();
                     else set_view(h.tile == kNavStore ? kStoreView : kLibraryView);
                     break;
-                case kHitAdd:
-                case kHitDrop: add_from_dialog(); break;
-                case kHitBrowse: set_view(kStoreView); break;
+                case kHitAdd: add_from_dialog(); break;
                 case kHitClear:
                     SetWindowTextW(g_search, L"");
                     SetFocus(g_search);
@@ -5006,24 +5764,26 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 case kHitRefresh:
                 case kHitRetry: store_start(true); break;
                 case kHitCategory: choose_category(); break;
+                case kHitInfoClose: info(L"", kInfo); break;
+                case kHitPage: {
+                    g_page.focus = -1;  // the mouse takes over: no focus ring
+                    if (page_hit(x, y) == kPageThumb) {
+                        g_page.thumb_drag = true;
+                        g_page.thumb_y0 = y;
+                        g_page.thumb_scroll0 = g_page.scroll;
+                        SetCapture(hwnd);
+                    }
+                    InvalidateRect(hwnd, nullptr, FALSE);
+                    break;
+                }
                 case kHitCardButton:
                 case kHitCard: {
-                    // a copy: opening the app or the sheet runs messages that may replace the catalog
+                    // a copy: opening the app or the page runs messages that may replace the catalog
                     const StoreApp a = g_store.apps[static_cast<size_t>(g_store.shown[static_cast<size_t>(h.tile)])];
                     if (h.kind == kHitCardButton) store_get(a);
                     else show_store_info(a);
                     break;
                 }
-                case kHitLogs: {
-                    const auto logs = log_files();
-                    show_logs(logs.empty() ? last_run_log() : logs.front());
-                    break;
-                }
-                case kHitStop:
-                    if (const App* a = running_app()) {
-                        if (stop_process(a->name)) g_stopping.insert(a->name);
-                    }
-                    break;
                 case kHitThumb:
                     g_thumb_drag = true;
                     g_thumb_y0 = y;
@@ -5041,25 +5801,37 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     break;
                 }
                 case kHitNone:
+                case kHitBack:
                     g_selected.clear();
                     InvalidateRect(hwnd, nullptr, FALSE);
                     break;
             }
             return 0;
         }
-        case WM_LBUTTONUP:
+        case WM_LBUTTONUP: {
+            const float x = static_cast<float>(GET_X_LPARAM(lp)), y = static_cast<float>(GET_Y_LPARAM(lp));
+            if (g_page.thumb_drag) {
+                g_page.thumb_drag = false;
+                ReleaseCapture();
+                InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
             if (g_thumb_drag) {
                 g_thumb_drag = false;
                 ReleaseCapture();
-                set_hot(hit_test(static_cast<float>(GET_X_LPARAM(lp)), static_cast<float>(GET_Y_LPARAM(lp))));
+                set_hot(hit_test(x, y));
+                return 0;
             }
+            if (page_view() && hit_test(x, y).kind == kHitPage) page_click(page_hit(x, y));
             return 0;
+        }
+        case WM_XBUTTONUP:  // the mouse's Back button
+            if (GET_XBUTTON_WPARAM(wp) == XBUTTON1 && page_view()) page_back();
+            return TRUE;
         case WM_LBUTTONDBLCLK: {
             const Hit h = hit_test(static_cast<float>(GET_X_LPARAM(lp)), static_cast<float>(GET_Y_LPARAM(lp)));
             if (h.kind == kHitTile && g_tiles[static_cast<size_t>(h.tile)].app >= 0) {
                 launch(g_apps[static_cast<size_t>(g_tiles[static_cast<size_t>(h.tile)].app)]);
-            } else if (h.kind == kHitDrop) {
-                add_from_dialog();
             }
             return 0;
         }
@@ -5074,7 +5846,7 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         }
         case WM_CONTEXTMENU:
-            if (GET_X_LPARAM(lp) == -1 && selected()) {  // the keyboard's menu key
+            if (GET_X_LPARAM(lp) == -1 && g_view == kLibraryView && selected()) {  // the keyboard's menu key
                 const RectF r = tile_rect(tile_of(g_selected));
                 POINT pt{static_cast<LONG>(r.X + r.Width / 2), static_cast<LONG>(r.Y + r.Height / 2)};
                 ClientToScreen(hwnd, &pt);
@@ -5083,13 +5855,21 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             }
             break;
         case WM_MOUSEWHEEL:
+            if (page_view()) {
+                page_scroll(-GET_WHEEL_DELTA_WPARAM(wp) / 120.0f * px(60));
+                return 0;
+            }
             g_scroll -= GET_WHEEL_DELTA_WPARAM(wp) / 120.0f * px(60);
             clamp_scroll();
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         case WM_SYSKEYDOWN:
-            if (wp == VK_RETURN && selected()) {  // Alt+Enter, as Explorer's properties
+            if (wp == VK_RETURN && g_view == kLibraryView && selected()) {  // Alt+Enter, as Explorer's properties
                 show_info(*selected());
+                return 0;
+            }
+            if (wp == VK_LEFT && page_view()) {  // Alt+Left: back
+                page_back();
                 return 0;
             }
             break;
@@ -5099,9 +5879,38 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 set_view(wp == '2' ? kStoreView : kLibraryView);
                 return 0;
             }
+            if (ctrl && wp == VK_OEM_COMMA) {
+                show_settings();
+                return 0;
+            }
             if (ctrl && wp == 'L') {
-                const auto logs = log_files();
-                show_logs(logs.empty() ? last_run_log() : logs.front());
+                show_logs({});
+                return 0;
+            }
+            if (ctrl && wp == 'O') {
+                add_from_dialog();
+                return 0;
+            }
+            if (page_view()) {
+                switch (wp) {
+                    case VK_ESCAPE:
+                    case VK_BACK: page_back(); return 0;
+                    case VK_TAB: page_tab(GetKeyState(VK_SHIFT) < 0); return 0;
+                    case VK_RETURN:
+                    case VK_SPACE:
+                        if (g_page.focus != -1) page_click(g_page.focus);
+                        return 0;
+                    case VK_UP: page_scroll(-px(48)); return 0;
+                    case VK_DOWN: page_scroll(px(48)); return 0;
+                    case VK_PRIOR: page_scroll(-g_page.view.Height * 0.9f); return 0;
+                    case VK_NEXT: page_scroll(g_page.view.Height * 0.9f); return 0;
+                    case VK_HOME: page_scroll(-g_page.scroll); return 0;
+                    case VK_END: page_scroll(page_max_scroll()); return 0;
+                }
+                return 0;
+            }
+            if (ctrl && wp == 'F') {
+                SetFocus(g_search);
                 return 0;
             }
             if (g_view == kStoreView) {
@@ -5117,8 +5926,6 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                         return 0;
                     }
                     case VK_F5: store_start(true); return 0;
-                    case 'F': if (ctrl) SetFocus(g_search); return 0;
-                    case VK_OEM_COMMA: if (ctrl) show_settings(); return 0;
                 }
                 break;
             }
@@ -5136,21 +5943,15 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 case VK_HOME: move_selection(0, 0, 0); return 0;
                 case VK_END: move_selection(0, 0, static_cast<int>(g_tiles.size()) - 1); return 0;
                 case VK_RETURN: if (const App* a = selected()) launch(*a); return 0;
-                case VK_DELETE: if (const App* a = selected()) remove_app(*a, true); return 0;
-                case VK_F5: refresh(); return 0;
                 case VK_ESCAPE:
                     g_selected.clear();
                     InvalidateRect(hwnd, nullptr, FALSE);
                     return 0;
-                case 'F': if (ctrl) SetFocus(g_search); return 0;
-                case 'O': if (ctrl) add_from_dialog(); return 0;
-                case 'I': if (ctrl && selected()) show_info(*selected()); return 0;
-                case VK_OEM_COMMA: if (ctrl) show_settings(); return 0;
             }
             break;
         }
-        case WM_CHAR:  // typing in the library searches it
-            if (wp > 32 && GetKeyState(VK_CONTROL) >= 0) {
+        case WM_CHAR:  // typing in the library or the store searches it
+            if (wp > 32 && GetKeyState(VK_CONTROL) >= 0 && grid_view(g_view)) {
                 SetFocus(g_search);
                 SendMessageW(g_search, WM_CHAR, wp, lp);
             }
@@ -5166,8 +5967,7 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 }
             }
             if (g_install_wnd) InvalidateRect(g_install_wnd, nullptr, FALSE);
-            set_status(fmt(L"Installing {0}… The first install of an app takes up to a minute.", {job_label(*name)}),
-                       kInfo);
+            InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         }
         case kInstalled: {
@@ -5176,54 +5976,53 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (it != g_pending.end()) g_pending.erase(it);
             ++g_batch_done;
             if (g_pending.empty()) g_current.clear();
-            for (Job& j : g_jobs) {
-                if (j.name == *name && j.state == Job::kInstalling) {
-                    j.state = (wp & 1) ? Job::kDone : Job::kFailed;
-                    j.end = GetTickCount64();
-                    break;
-                }
-            }
-            if (g_install_wnd) InvalidateRect(g_install_wnd, nullptr, FALSE);
-            update_timer();
             refresh();
+            for (Job& j : g_jobs) {
+                if (j.name != *name || (j.state != Job::kInstalling && j.state != Job::kWaiting)) continue;
+                j.state = (wp & 8) ? Job::kCancelled : (wp & 1) ? Job::kDone : Job::kFailed;
+                j.end = GetTickCount64();
+                if (j.state == Job::kFailed) {
+                    j.reason = (wp & 4) ? fmt(L"Close {0} first, then install it again.", {job_label(*name)})
+                                        : install_failure_reason(install_log(*name));
+                }
+                break;
+            }
+            if (g_install_wnd) {
+                fit_install_window();
+                InvalidateRect(g_install_wnd, nullptr, FALSE);
+            }
+            update_timer();
             if (wp & 1) {
-                const std::wstring label = label_of(*name);
                 select_app(*name);
-                set_status(fmt(setting(L"DesktopShortcut", 1)
-                                   ? L"{0} is installed: it is in the Start menu and on the desktop."
-                                   : L"{0} is installed: it is in the Start menu.",
-                               {label}),
-                           kSuccess);
-                if (wp & 2) {
-                    if (const App* a = find_app(*name)) launch(*a);
-                }
-            } else if (wp & 4) {
-                set_status(fmt(L"Close {0} before updating it.", {label_of(*name)}), kError);
-            } else {
-                set_status(fmt(L"Installing {0} failed.", {job_label(*name)}), kError);
-                if (!g_install_wnd) {
-                    failed_with_log(fmt(L"Installing {0} failed", {job_label(*name)}), install_log(*name));
-                }
+                // A store install has no install window: the library says it.
+                if (!g_install_wnd) info(fmt(L"{0} is installed.", {label_of(*name)}), kSuccess);
+            } else if (!(wp & 8) && !g_install_wnd) {
+                info(fmt(L"{0} could not be installed.", {job_label(*name)}), kError);
             }
             if (g_pending.empty()) g_job_labels.clear();
+            maybe_quit();
+            return 0;
+        }
+        case kRunReady: {
+            std::unique_ptr<std::wstring> name(reinterpret_cast<std::wstring*>(lp));
+            close_splash(*name);
             return 0;
         }
         case kRunExited: {
             std::unique_ptr<std::wstring> name(reinterpret_cast<std::wstring*>(lp));
             g_running.erase(*name);
             update_timer();
+            InvalidateRect(hwnd, nullptr, FALSE);
             const std::wstring label = label_of(*name);
+            const bool clean = (wp & 1) != 0, was_ready = (wp & 2) != 0;
             if (g_stopping.erase(*name)) {
-                set_status(fmt(L"{0} was stopped.", {label}), kInfo);
-            } else if (wp && log_shows_window(last_run_log())) {
-                set_status(L"", kHint);
-            } else if (wp) {
-                set_status(fmt(L"{0} closed before it showed a window.", {label}), kError);
-                failed_with_log(fmt(L"{0} closed before it showed a window", {label}), last_run_log());
-            } else {
-                set_status(fmt(L"{0} stopped with an error.", {label}), kError);
-                failed_with_log(fmt(L"{0} stopped with an error", {label}), last_run_log());
+                close_splash(*name);
+            } else if (!was_ready) {
+                splash_failed(*name, fmt(L"{0} didn't start", {label}), failure_reason(run_log(*name), clean));
+            } else if (!clean) {
+                splash_failed(*name, fmt(L"{0} stopped with an error", {label}), failure_reason(run_log(*name), false));
             }
+            maybe_quit();
             return 0;
         }
         case kRefresh:
@@ -5239,16 +6038,13 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 if (const size_t at = out->find(L"SIGNED_IN\t"); at != std::wstring::npos) {
                     email = out->substr(at + 10, out->find_first_of(L"\r\n", at) - at - 10);
                 }
-                set_status(email.empty() ? tr(L"Signed in to Google.") : fmt(L"Signed in as {0}.", {email}), kSuccess);
+                info(email.empty() ? tr(L"Signed in to Google.") : fmt(L"Signed in as {0}.", {email}), kSuccess);
             } else if (code == 2) {
-                set_status(tr(L"No account was added."), kInfo);
+                info(tr(L"No account was added."), kInfo);
             } else {
-                failed_with_log(tr(L"Could not sign in to Google"), gms_log());
+                error_with_log(tr(L"Could not sign in to Google"), tr(L"Google did not answer. Check the internet connection, then try again."), gms_log());
             }
-            if (g_sheet && IsWindow(g_sheet->hwnd)) {
-                g_sheet->sections = g_sheet->build();
-                InvalidateRect(g_sheet->hwnd, nullptr, FALSE);
-            }
+            if (g_view == kSettingsView) rebuild_page();
             return 0;
         }
         case kStoreCatalog:
@@ -5262,7 +6058,7 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 g_store.loading = false;
                 g_store.failed = wp == kCatalogFailed;
                 if (g_store.failed && !g_store.apps.empty() && g_view == kStoreView) {
-                    set_status(tr(L"F-Droid could not be checked for new apps."), kError);
+                    info(tr(L"F-Droid could not be checked for new apps."), kError);
                 }
                 update_timer();
                 InvalidateRect(hwnd, nullptr, FALSE);
@@ -5292,8 +6088,31 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_GETMINMAXINFO:
             reinterpret_cast<MINMAXINFO*>(lp)->ptMinTrackSize = {ipx(680), ipx(520)};
             return 0;
+        case WM_COPYDATA: {
+            const auto* cds = reinterpret_cast<const COPYDATASTRUCT*>(lp);
+            if (cds->dwData != kCopyOpen || cds->cbData < sizeof(wchar_t)) return FALSE;
+            const std::wstring text(static_cast<const wchar_t*>(cds->lpData), cds->cbData / sizeof(wchar_t) - 1);
+            size_t at = text.find(L'\n');
+            while (at != std::wstring::npos) {
+                const size_t end = text.find(L'\n', at + 1);
+                const fs::path f = text.substr(at + 1, end == std::wstring::npos ? std::wstring::npos : end - at - 1);
+                if (is_app_file(f)) install(f);
+                at = end;
+            }
+            if (!text.empty() && text[0] == L'L') show_library(SW_SHOWDEFAULT);
+            return TRUE;
+        }
+        case WM_ACTIVATEAPP:  // another program (an app's store, the install helper) may have changed the library
+            if (wp && IsWindowVisible(hwnd) && g_pending.empty() && library_stamp() != g_library_stamp) refresh();
+            break;
         case WM_CLOSE:
             save_window_size();
+            // Work still under way (an install, a splash) keeps the process; the library only hides.
+            if (g_install_wnd || !g_pending.empty() || !g_splashes.empty() || g_log_wnd || !g_running.empty()) {
+                ShowWindow(hwnd, SW_HIDE);
+                maybe_quit();
+                return 0;
+            }
             break;
         case WM_DESTROY:
             RevokeDragDrop(hwnd);
@@ -6253,82 +7072,269 @@ bool resolve(Caller* c, std::string* why) {
 }
 
 // ---- the dialog ----------------------------------------------------------------
+//
+// One window for every question an app asks, in Win.apk's theme: the app's
+// icon and name, one question, at most a line saying what it means here,
+// switches when there is something to pick, and the buttons. Not owned by
+// the app's window (that would tie two processes' input together); centred
+// over it and kept above it instead. No answer in five minutes (upstream's
+// alert timeout) changes nothing.
 
-struct Ask {
-    const Caller* caller = nullptr;
-    HWND app_window = nullptr;
-    HICON icon = nullptr;
+constexpr int kAnswerAllow = 100, kAnswerDeny = 101, kAnswerSelect = 102;
+constexpr UINT kAskTimeoutMs = 300 * 1000;
+
+struct Prompt {
+    std::wstring app, question, note;
+    std::unique_ptr<Gdiplus::Bitmap> icon;
+    struct Switch {
+        std::wstring title;
+        bool on;
+    };
+    std::vector<Switch> switches;
+    std::vector<std::pair<int, std::wstring>> buttons;  // the first is the accent one
+    bool footer = false;   // the buttons in a footer at the end (a list of switches), else stacked full width
+    int default_id = 0;    // Enter
+    int pressed = 0;       // the answer; 0: closed or timed out
+    HWND window = nullptr, near_window = nullptr;
+    Targets targets;       // ids: a button's own, or 1 + index for a switch
+    int hot = 0, focus = 0;
+    bool tracking = false;
+    float need_h = 0;
 };
 
+// Lays the prompt out, and draws it when `draw`; returns the height it needs.
+float layout_prompt(Graphics& g, Prompt& p, float W, bool draw) {
+    if (draw) g.Clear(g_t.layer);
+    p.targets.clear();
+    const float m = px(24), cw = W - 2 * m;
+    float y = px(20);
+    const RectF ir(m, y, px(40), px(40));
+    if (draw) {
+        draw_icon(g, p.icon.get(), p.app, ir);
+        draw_text(g, p.app, g_f.body.get(), g_t.text2, RectF(ir.GetRight() + px(12), y, cw - px(52), ir.Height));
+    }
+    y = ir.GetBottom() + px(14);
+    const float qh = text_height(g, p.question, g_f.title.get(), cw) + px(2);
+    if (draw) draw_text(g, p.question, g_f.title.get(), g_t.text, RectF(m, y, cw, qh), kLeft, true, false);
+    y += qh + px(6);
+    if (!p.note.empty()) {
+        const float nh = text_height(g, p.note, g_f.caption.get(), cw) + px(2);
+        if (draw) draw_text(g, p.note, g_f.caption.get(), g_t.text2, RectF(m, y, cw, nh), kLeft, true, false);
+        y += nh;
+    }
+    if (!p.switches.empty()) {
+        y += px(14);
+        const float rh = px(44);
+        const RectF card(m, y, cw, rh * p.switches.size());
+        if (draw) fill_round(g, card, px(kRadiusCard), g_t.card);
+        for (size_t i = 0; i < p.switches.size(); ++i) {
+            const RectF r(m, y + i * rh, cw, rh);
+            const int id = 1 + static_cast<int>(i);
+            p.targets.push_back({r, id});
+            if (!draw) continue;
+            if (p.hot == id) {
+                GraphicsPath clip;
+                rounded(clip, card, px(kRadiusCard));
+                g.SetClip(&clip);
+                Gdiplus::SolidBrush b(g_t.hover);
+                g.FillRectangle(&b, r);
+                g.ResetClip();
+            }
+            if (i > 0) {
+                Gdiplus::Pen line(g_t.divider, 1);
+                g.DrawLine(&line, r.X + px(14), r.Y, r.GetRight() - px(14), r.Y);
+            }
+            draw_text(g, p.switches[i].title, g_f.body.get(), g_t.text, RectF(r.X + px(14), r.Y, r.Width - px(80), rh));
+            Row sw;
+            sw.kind = Row::kToggle;
+            sw.on = p.switches[i].on;
+            const RectF sr(r.GetRight() - px(14) - px(44), r.Y + (rh - px(22)) / 2, px(44), px(22));
+            paint_control(g, sw, sr, p.hot == id);
+            if (p.focus == id) draw_focus_ring(g, sr, sr.Height / 2);
+        }
+        if (draw) stroke_round(g, card, px(kRadiusCard), g_t.border);
+        y += card.Height;
+    }
+    if (p.footer) {
+        y += px(20);
+        const float foot = px(64);
+        if (draw) {
+            Gdiplus::SolidBrush bar(g_t.bg);
+            g.FillRectangle(&bar, RectF(0, y, W, foot));
+            Gdiplus::Pen line(g_t.border, 1);
+            g.DrawLine(&line, 0.0f, y, W, y);
+        }
+        float right = W - m;
+        for (size_t i = p.buttons.size(); i-- > 0;) {  // the accent one at the end
+            const RectF r(right - px(100), y + (foot - px(32)) / 2, px(100), px(32));
+            p.targets.push_back({r, p.buttons[i].first});
+            if (draw) {
+                draw_button(g, r, p.buttons[i].second, p.hot == p.buttons[i].first, i == 0, false);
+                if (p.focus == p.buttons[i].first) draw_focus_ring(g, r, px(kRadiusControl));
+            }
+            right -= px(108);
+        }
+        return y + foot;
+    }
+    y += px(22);
+    for (size_t i = 0; i < p.buttons.size(); ++i) {
+        const RectF r(m, y, cw, px(34));
+        p.targets.push_back({r, p.buttons[i].first});
+        if (draw) {
+            draw_button(g, r, p.buttons[i].second, p.hot == p.buttons[i].first, i == 0, false);
+            if (p.focus == p.buttons[i].first) draw_focus_ring(g, r, px(kRadiusControl));
+        }
+        y += px(42);
+    }
+    return y + px(14);
+}
+
+void prompt_answer(Prompt& p, int id) {
+    if (id <= 0) return;
+    if (id <= static_cast<int>(p.switches.size())) {
+        p.switches[static_cast<size_t>(id - 1)].on = !p.switches[static_cast<size_t>(id - 1)].on;
+        InvalidateRect(p.window, nullptr, FALSE);
+        return;
+    }
+    p.pressed = id;
+    DestroyWindow(p.window);
+}
+
+LRESULT CALLBACK prompt_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    auto* p = reinterpret_cast<Prompt*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    switch (msg) {
+        case WM_NCCREATE:
+            SetWindowLongPtrW(hwnd, GWLP_USERDATA,
+                              reinterpret_cast<LONG_PTR>(reinterpret_cast<CREATESTRUCTW*>(lp)->lpCreateParams));
+            break;
+        case WM_ERASEBKGND: return 1;
+        case WM_PAINT:
+            buffered_paint(hwnd, [&](Graphics& g, float w, float) { layout_prompt(g, *p, w, true); });
+            return 0;
+        case WM_MOUSEMOVE: track_hot(hwnd, lp, p->targets, &p->hot, &p->tracking); return 0;
+        case WM_MOUSELEAVE:
+            p->tracking = false;
+            p->hot = 0;
+            InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
+        case WM_SETCURSOR:
+            if (LOWORD(lp) == HTCLIENT) {
+                SetCursor(LoadCursorW(nullptr, p->hot ? IDC_HAND : IDC_ARROW));
+                return TRUE;
+            }
+            break;
+        case WM_LBUTTONDOWN: p->focus = 0; return 0;
+        case WM_LBUTTONUP: prompt_answer(*p, find_target(p->targets, lp)); return 0;
+        case WM_KEYDOWN:
+            if (wp == VK_ESCAPE) {
+                DestroyWindow(hwnd);
+            } else if (wp == VK_RETURN) {
+                prompt_answer(*p, p->focus ? p->focus : p->default_id);
+            } else if (wp == VK_SPACE && p->focus) {
+                prompt_answer(*p, p->focus);
+            } else if (wp == VK_TAB || wp == VK_UP || wp == VK_DOWN) {
+                std::vector<int> ids;
+                for (const auto& t : p->targets) ids.push_back(t.second);
+                if (!ids.empty()) {
+                    const bool back = wp == VK_UP || (wp == VK_TAB && GetKeyState(VK_SHIFT) < 0);
+                    const auto it = std::find(ids.begin(), ids.end(), p->focus);
+                    int i = it == ids.end() ? (back ? 0 : -1) : static_cast<int>(it - ids.begin());
+                    i = ((back ? i - 1 : i + 1) % static_cast<int>(ids.size()) + static_cast<int>(ids.size())) %
+                        static_cast<int>(ids.size());
+                    p->focus = ids[static_cast<size_t>(i)];
+                    InvalidateRect(hwnd, nullptr, FALSE);
+                }
+            }
+            return 0;
+        case WM_TIMER: DestroyWindow(hwnd); return 0;  // no answer in time: nothing changes
+        case WM_DESTROY: p->window = nullptr; return 0;
+    }
+    return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
 BOOL CALLBACK find_app_window(HWND w, LPARAM lp) {
-    auto* a = reinterpret_cast<Ask*>(lp);
+    auto* p = reinterpret_cast<Prompt*>(lp);
     DWORD pid = 0;
     GetWindowThreadProcessId(w, &pid);
-    if (pid == a->caller->pid && IsWindowVisible(w) && !GetWindow(w, GW_OWNER)) {
-        a->app_window = w;
+    if (pid == static_cast<DWORD>(reinterpret_cast<uintptr_t>(p->near_window)) && IsWindowVisible(w) &&
+        !GetWindow(w, GW_OWNER)) {
+        p->near_window = w;
         return FALSE;
     }
     return TRUE;
 }
 
-constexpr int kAnswerAllow = 100, kAnswerDeny = 101, kAnswerSelect = 102;
-constexpr UINT kAskTimeoutMs = 300 * 1000;  // upstream's alert timeout: no answer, nothing changes
-
-HRESULT CALLBACK ask_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM, LONG_PTR ref) {
-    const auto* a = reinterpret_cast<const Ask*>(ref);
-    if (msg == TDN_CREATED) {
-        // Not owned by the app's window (that would tie two processes' input
-        // together); centred over it and kept above it instead.
-        RECT d, w;
-        GetWindowRect(hwnd, &d);
-        if (a->app_window && GetWindowRect(a->app_window, &w)) {
-            const int x = (w.left + w.right - (d.right - d.left)) / 2, y = (w.top + w.bottom - (d.bottom - d.top)) / 2;
-            SetWindowPos(hwnd, HWND_TOPMOST, x, std::max(static_cast<int>(w.top), y), 0, 0, SWP_NOSIZE);
-        } else {
-            SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
-        }
-        SetForegroundWindow(hwnd);
-    } else if (msg == TDN_TIMER && wp >= kAskTimeoutMs) {
-        SendMessageW(hwnd, TDM_CLICK_BUTTON, IDCANCEL, 0);
+// Shows the prompt over the window of process `pid` and returns the button pressed (0: none).
+int run_prompt(Prompt& p, DWORD pid) {
+    static bool registered = false;
+    if (!registered) {
+        WNDCLASSEXW wc{sizeof(wc)};
+        wc.lpfnWndProc = prompt_proc;
+        wc.hInstance = g_inst;
+        wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+        wc.hIcon = LoadIconW(g_inst, MAKEINTRESOURCEW(1));
+        wc.lpszClassName = L"WinApkPrompt";
+        RegisterClassExW(&wc);
+        registered = true;
     }
-    return S_OK;
+    p.near_window = reinterpret_cast<HWND>(static_cast<uintptr_t>(pid));
+    EnumWindows(find_app_window, reinterpret_cast<LPARAM>(&p));
+    if (reinterpret_cast<uintptr_t>(p.near_window) == pid) p.near_window = nullptr;  // no window found
+    const int w = ipx(400);
+    HDC dc = GetDC(nullptr);
+    float need = 0;
+    {
+        Graphics g(dc);
+        need = layout_prompt(g, p, static_cast<float>(w), false);
+    }
+    ReleaseDC(nullptr, dc);
+    const DWORD style = WS_POPUP | WS_CAPTION | WS_SYSMENU;
+    RECT frame{0, 0, w, static_cast<LONG>(std::lround(need))};
+    AdjustWindowRectEx(&frame, style, FALSE, layout_style());
+    const int fw = frame.right - frame.left, fh = frame.bottom - frame.top;
+    RECT near_r;
+    if (!p.near_window || !GetWindowRect(p.near_window, &near_r)) {
+        MONITORINFO mi{sizeof(mi)};
+        POINT cursor;
+        GetCursorPos(&cursor);
+        GetMonitorInfoW(MonitorFromPoint(cursor, MONITOR_DEFAULTTOPRIMARY), &mi);
+        near_r = mi.rcWork;
+    }
+    const int x = (near_r.left + near_r.right - fw) / 2;
+    const int y = (std::max)(static_cast<int>(near_r.top), static_cast<int>((near_r.top + near_r.bottom - fh) / 2));
+    p.window = CreateWindowExW(layout_style() | WS_EX_TOPMOST, L"WinApkPrompt", p.app.c_str(), style, x, y, fw, fh,
+                               nullptr, nullptr, g_inst, &p);
+    if (!p.window) return 0;
+    theme_window(p.window);
+    SetTimer(p.window, 1, kAskTimeoutMs, nullptr);
+    ShowWindow(p.window, SW_SHOW);
+    SetForegroundWindow(p.window);
+    MSG m;
+    while (p.window && GetMessageW(&m, nullptr, 0, 0) > 0) {
+        TranslateMessage(&m);
+        DispatchMessageW(&m);
+    }
+    return p.pressed;
 }
 
-// Asks, and returns the button pressed: 0 when the dialog was closed or timed out.
-int ask(const Caller& c, const std::wstring& main, const std::wstring& content,
-        const std::vector<std::pair<int, std::wstring>>& choices, int default_id) {
-    Ask a;
-    a.caller = &c;
-    EnumWindows(find_app_window, reinterpret_cast<LPARAM>(&a));
-    const int px = GetSystemMetrics(SM_CXICON) * 3 / 2;
-    a.icon = static_cast<HICON>(LoadImageW(nullptr, shortcut_icon(c.name).c_str(), IMAGE_ICON, px, px, LR_LOADFROMFILE));
-    std::vector<TASKDIALOG_BUTTON> buttons;
-    for (const auto& [id, text] : choices) buttons.push_back({id, text.c_str()});
-    TASKDIALOGCONFIG cfg{};
-    cfg.cbSize = sizeof(cfg);
-    cfg.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION | TDF_CALLBACK_TIMER | (g_rtl ? TDF_RTL_LAYOUT : 0) |
-                  (a.icon ? TDF_USE_HICON_MAIN : 0);
-    cfg.pszWindowTitle = L"Win.apk";
-    if (a.icon) cfg.hMainIcon = a.icon;
-    else cfg.pszMainIcon = TD_INFORMATION_ICON;
-    cfg.pszMainInstruction = main.c_str();
-    cfg.pszContent = content.c_str();
-    cfg.cButtons = static_cast<UINT>(buttons.size());
-    cfg.pButtons = buttons.data();
-    cfg.nDefaultButton = default_id;
-    cfg.pfCallback = ask_proc;
-    cfg.lpCallbackData = reinterpret_cast<LONG_PTR>(&a);
-    int pressed = 0;
-    if (FAILED(TaskDialogIndirect(&cfg, &pressed, nullptr, nullptr))) pressed = 0;
-    if (a.icon) DestroyIcon(a.icon);
-    for (const auto& [id, text] : choices)
-        if (pressed == id) return pressed;
-    return 0;  // closed, timed out, or a button this question did not offer
+// A question with buttons (the first is the accent one), as the app `c`: its name and icon head it.
+int ask(const Caller& c, const std::wstring& question, const std::wstring& note,
+        const std::vector<std::pair<int, std::wstring>>& choices, int default_id,
+        std::vector<Prompt::Switch>* switches = nullptr) {
+    Prompt p;
+    p.app = utf8_to_wide(c.id.label.empty() ? c.id.package : c.id.label);
+    p.icon = rounded_icon(app_dir(c.name) / L"icon.png", ipx(40));
+    p.question = question;
+    p.note = note;
+    p.buttons = choices;
+    p.default_id = default_id;
+    if (switches) p.switches = *switches;
+    const int pressed = run_prompt(p, c.pid);
+    if (switches) *switches = p.switches;
+    return pressed;
 }
 
-std::wstring quoted(const Identity& id) {
-    return L"“" + utf8_to_wide(id.label.empty() ? id.package : id.label) + L"”";
-}
+std::wstring quoted(const Identity& id) { return utf8_to_wide(id.label.empty() ? id.package : id.label); }
 
 // ---- runtime-permission ----------------------------------------------------------
 
@@ -6407,9 +7413,9 @@ std::map<std::string, std::string> changes(int answer, const std::vector<std::st
 std::wstring question(const Identity& id, const std::string& prompt, const std::vector<std::string>& perms,
                       int level) {
     const std::wstring who = quoted(id);
-    if (prompt == "location") return fmt(L"Allow {0} to access this device's location?", {who});
+    if (prompt == "location") return fmt(L"Allow {0} to access this PC's location?", {who});
     if (prompt == "location_background")
-        return fmt(L"Allow {0} to access this device's location all the time?", {who});
+        return fmt(L"Allow {0} to access this PC's location all the time?", {who});
     if (prompt == "camera") return fmt(L"Allow {0} to take pictures and record video?", {who});
     if (prompt == "microphone") return fmt(L"Allow {0} to record audio?", {who});
     if (prompt == "contacts") return fmt(L"Allow {0} to access your contacts?", {who});
@@ -6425,15 +7431,15 @@ std::wstring question(const Identity& id, const std::string& prompt, const std::
     if (prompt == "sensors_background")
         return fmt(L"Allow {0} to access sensor data about your vital signs all the time?", {who});
     if (prompt == "supergroup_pre_q")
-        return fmt(L"Allow {0} to access photos, videos, music, audio, and other files on this device?", {who});
+        return fmt(L"Allow {0} to access photos, videos, music, audio, and other files on this PC?", {who});
     std::set<std::string> groups;
     for (const std::string& p : perms) groups.insert(group_of(p, level));
     if (prompt == "supergroup_q_to_s" || groups.size() > 1)
-        return fmt(L"Allow {0} to access photos, videos, music, and audio on this device?", {who});
+        return fmt(L"Allow {0} to access photos, videos, music, and audio on this PC?", {who});
     const std::string g = groups.empty() ? "storage" : *groups.begin();
-    if (g == "aural") return fmt(L"Allow {0} to access music and audio on this device?", {who});
-    if (g == "visual") return fmt(L"Allow {0} to access photos and videos on this device?", {who});
-    return fmt(L"Allow {0} to access photos, media, and files on your device?", {who});
+    if (g == "aural") return fmt(L"Allow {0} to access music and audio on this PC?", {who});
+    if (g == "visual") return fmt(L"Allow {0} to access photos and videos on this PC?", {who});
+    return fmt(L"Allow {0} to access photos, media, and files on this PC?", {who});
 }
 
 void emit(std::initializer_list<std::pair<const char*, std::string>> fields) {
@@ -6510,26 +7516,24 @@ int runtime_permission(int level, const std::string& prompt, bool automatic, con
         emit({{"status", "auto_granted"}, {"dirName", c.id.dir_name}});
         return 0;
     }
-    std::wstring body = fmt(L"This is Android's permission request for {0}, kept by Win.apk. You can change it later in "
-                            L"the app's App info, or in Win.apk under Get Info.",
-                            {quoted(c.id)});
-    // What stands behind the grant on this host, where it is not obvious.
+    // What stands behind the grant on this PC, where it is not what the user would guess.
     const wchar_t* note = nullptr;
-    if (location || prompt == "location_background") note = L"The location comes from Windows' location services.";
-    else if (prompt == "camera") note = L"Windows' camera privacy settings apply as well.";
-    else if (prompt == "microphone") note = L"Windows' microphone privacy settings apply as well.";
-    else if (prompt == "notifications") note = L"Win.apk does not show notifications yet; this only decides what the app is told.";
+    if (location || prompt == "location_background") note = L"Windows' location settings apply too.";
+    else if (prompt == "camera") note = L"Windows' camera settings apply too.";
+    else if (prompt == "microphone") note = L"Windows' microphone settings apply too.";
+    else if (prompt == "notifications") note = L"They show as Windows notifications.";
     else if (prompt == "contacts" || prompt == "calendar" || prompt == "phone" || prompt == "call_log" ||
              prompt == "sms")
-        note = L"Win.apk has no contacts, calendar, phone or SMS data of its own; the app will find none.";
-    else if (prompt == "nearby_devices") note = L"Win.apk has no Bluetooth yet; the app will find no devices.";
+        note = L"This PC has none of these for the app to find.";
     else if (prompt == "activity_recognition" || prompt == "sensors" || prompt == "sensors_background")
-        note = L"This PC has no such sensors; the app will get no readings.";
-    if (note) body += L"\n\n" + std::wstring(tr(note));
-    std::vector<std::pair<int, std::wstring>> choices = {{kAnswerAllow, tr(L"Allow")}};
-    if (!partial.empty()) choices.push_back({kAnswerSelect, tr(L"Only approximate")});
-    choices.push_back({kAnswerDeny, tr(L"Don't allow")});
-    const int answer = ask(c, question(c.id, prompt, perms, level), body, choices, kAnswerDeny);
+        note = L"This PC has no such sensors.";
+    else if (prompt == "nearby_devices") note = L"These are the Bluetooth devices near this PC.";
+    // Location's "Only approximate" is the Precise switch, as Android 12 asks it.
+    std::vector<Prompt::Switch> precise;
+    if (!partial.empty()) precise.push_back({tr(L"Precise location"), true});
+    int answer = ask(c, question(c.id, prompt, perms, level), note ? tr(note) : L"",
+                     {{kAnswerAllow, tr(L"Allow")}, {kAnswerDeny, tr(L"Don't allow")}}, kAnswerDeny, &precise);
+    if (answer == kAnswerAllow && !precise.empty() && !precise[0].on) answer = kAnswerSelect;
     if (answer == 0) {
         emit({{"status", "timeout"}, {"message", "the dialog was closed without an answer; nothing changed"}});
         return 4;
@@ -6587,7 +7591,7 @@ int special_access_info(const Caller& c, const std::string& op) {
     } else {
         return usage("unknown --op " + op);
     }
-    ask(c, main, body, {{kAnswerDeny, tr(L"Close")}}, kAnswerDeny);
+    ask(c, main, body, {{kAnswerDeny, tr(L"OK")}}, kAnswerDeny);
     emit({{"status", "info"}, {"op", op}, {"dirName", c.id.dir_name}});
     return 0;
 }
@@ -6606,26 +7610,20 @@ int special_access(const std::string& op) {
     const bool files = op == kAllFiles;
     std::wstring main, body;
     if (files) {
-        main = fmt(L"Allow {0} access to manage all files?", {quoted(c.id)});
-        body = tr(L"Allow this app to read, modify and delete all files on this device or any connected storage "
-                  L"volumes. If granted, app may access files without your explicit knowledge. On Windows that is "
-                  L"your Downloads, Documents, Pictures, Music and Videos folders.");
+        main = fmt(L"Allow {0} to manage all files?", {quoted(c.id)});
+        body = tr(L"It can read, change and delete every file in your Downloads, Pictures, Documents, Music and "
+                  L"Videos.");
     } else if (op == kManageMedia) {
         main = fmt(L"Allow {0} to manage media?", {quoted(c.id)});
-        body = tr(L"If allowed, this app can modify or delete media files created with other apps without asking "
-                  L"you. App must have permission to access files and media.");
+        body = tr(L"It can change or delete photos, videos and music that other apps made, without asking you.");
     } else if (op == kOverlay) {
         main = fmt(L"Allow {0} to display over other apps?", {quoted(c.id)});
-        body = tr(L"This app can appear on top of other apps' content. On Windows an Android app draws such "
-                  L"windows inside its own window.");
+        body = tr(L"On Windows such windows stay inside the app's own window.");
     } else {
-        main = fmt(L"Allow {0} to install unknown apps?", {quoted(c.id)});
-        body = tr(L"Your PC and personal data are more vulnerable to attack by unknown apps. By allowing this, you "
-                  L"agree that you are responsible for any damage to your PC or loss of data that may result from "
-                  L"their use. Win.apk still asks you before each install.");
+        main = fmt(L"Allow {0} to install other apps?", {quoted(c.id)});
+        body = tr(L"Win.apk still asks you before each app it installs.");
     }
-    body += L"\n\n";
-    body += current == "allow" ? tr(L"Currently allowed.") : tr(L"Currently not allowed.");
+    // Enter keeps what is set now.
     const int answer = ask(c, main, body, {{kAnswerAllow, tr(L"Allow")}, {kAnswerDeny, tr(L"Don't allow")}},
                            current == "allow" ? kAnswerAllow : kAnswerDeny);
     if (answer == 0) {
@@ -6684,57 +7682,6 @@ std::wstring op_title(const std::string& op) {
     return tr(L"Install unknown apps");
 }
 
-struct Details {
-    const Caller* caller;
-    std::vector<Item>* items;
-    std::wstring main, content;
-    std::vector<std::wstring> texts;
-    std::vector<TASKDIALOG_BUTTON> buttons;
-    TASKDIALOGCONFIG cfg{};
-    Ask ask;
-};
-
-HRESULT CALLBACK details_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp, LONG_PTR ref);
-
-// The dialog's page for the items as they are now: one command link per item
-// ("Photos and videos" / "Allowed"), which turns it on or off.
-void build_details(Details* d) {
-    d->texts.clear();
-    d->buttons.clear();
-    for (const Item& it : *d->items)
-        d->texts.push_back(it.title + L"\n" + (it.on ? tr(L"Allowed") : tr(L"Not allowed")));
-    for (size_t i = 0; i < d->texts.size(); ++i) d->buttons.push_back({static_cast<int>(200 + i), d->texts[i].c_str()});
-    TASKDIALOGCONFIG& c = d->cfg;
-    c = TASKDIALOGCONFIG{};
-    c.cbSize = sizeof(c);
-    c.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION | TDF_CALLBACK_TIMER | TDF_USE_COMMAND_LINKS |
-                (g_rtl ? TDF_RTL_LAYOUT : 0) | (d->ask.icon ? TDF_USE_HICON_MAIN : 0);
-    c.pszWindowTitle = L"Win.apk";
-    if (d->ask.icon) c.hMainIcon = d->ask.icon;
-    else c.pszMainIcon = TD_INFORMATION_ICON;
-    c.pszMainInstruction = d->main.c_str();
-    c.pszContent = d->content.c_str();
-    c.cButtons = static_cast<UINT>(d->buttons.size());
-    c.pButtons = d->buttons.data();
-    c.dwCommonButtons = d->items->empty() ? TDCBF_CLOSE_BUTTON : TDCBF_OK_BUTTON | TDCBF_CANCEL_BUTTON;
-    c.nDefaultButton = d->items->empty() ? IDCLOSE : IDOK;
-    c.pfCallback = details_proc;
-    c.lpCallbackData = reinterpret_cast<LONG_PTR>(d);
-}
-
-HRESULT CALLBACK details_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp, LONG_PTR ref) {
-    auto* d = reinterpret_cast<Details*>(ref);
-    if (msg == TDN_BUTTON_CLICKED && wp >= 200 && wp < 200 + d->items->size()) {
-        Item& it = (*d->items)[wp - 200];
-        it.on = !it.on;
-        build_details(d);
-        SendMessageW(hwnd, TDM_NAVIGATE_PAGE, 0, reinterpret_cast<LPARAM>(&d->cfg));
-        return S_FALSE;  // stay open
-    }
-    if (msg == TDN_NAVIGATED) return S_OK;
-    return ask_proc(hwnd, msg, wp, lp, reinterpret_cast<LONG_PTR>(&d->ask));
-}
-
 int app_details(int level, const std::vector<std::string>& groups, const std::vector<std::string>& ops) {
     if (level < 23) return usage("--level must be the presented API level");
     Caller c;
@@ -6781,25 +7728,25 @@ int app_details(int level, const std::vector<std::string>& groups, const std::ve
         it.on = it.was = mode(c.id, op) == "allow";
         items.push_back(it);
     }
-    Details d;
-    d.caller = &c;
-    d.items = &items;
-    d.ask.caller = &c;
-    EnumWindows(find_app_window, reinterpret_cast<LPARAM>(&d.ask));
-    const int px = GetSystemMetrics(SM_CXICON) * 3 / 2;
-    d.ask.icon = static_cast<HICON>(
-        LoadImageW(nullptr, shortcut_icon(c.name).c_str(), IMAGE_ICON, px, px, LR_LOADFROMFILE));
-    d.main = fmt(L"App info: {0}", {utf8_to_wide(c.id.label.empty() ? c.id.package : c.id.label)});
-    d.content = items.empty()
-                    ? std::wstring(tr(L"This app has no permissions Win.apk asks about."))
-                    : std::wstring(tr(L"Click a permission to turn it on or off, then OK. Turning a permission off "
-                                      L"stops the app, as Android does."));
-    build_details(&d);
-    int pressed = 0;
-    if (FAILED(TaskDialogIndirect(&d.cfg, &pressed, nullptr, nullptr))) pressed = 0;
-    if (d.ask.icon) DestroyIcon(d.ask.icon);
-    if (pressed != IDOK) {
-        emit({{"status", pressed == IDCANCEL ? "cancelled" : "done"}, {"changed", "no"}});
+    // One switch per item, and Done / Cancel: what changed is written on Done.
+    Prompt pr;
+    pr.app = utf8_to_wide(c.id.label.empty() ? c.id.package : c.id.label);
+    pr.icon = rounded_icon(app_dir(c.name) / L"icon.png", ipx(40));
+    pr.question = fmt(L"{0}'s permissions", {pr.app});
+    if (items.empty()) {
+        pr.note = tr(L"This app has no permissions to set.");
+        pr.buttons = {{IDOK, tr(L"OK")}};
+    } else {
+        pr.note = fmt(L"Turning a permission off closes {0}.", {pr.app});
+        for (const Item& it : items) pr.switches.push_back({it.title, it.on});
+        pr.buttons = {{IDOK, tr(L"Done")}, {IDCANCEL, tr(L"Cancel")}};
+        pr.footer = true;
+    }
+    pr.default_id = IDOK;
+    const int pressed = run_prompt(pr, c.pid);
+    for (size_t i = 0; i < items.size() && i < pr.switches.size(); ++i) items[i].on = pr.switches[i].on;
+    if (pressed != IDOK || items.empty()) {
+        emit({{"status", pressed == IDOK ? "done" : "cancelled"}, {"changed", "no"}});
         return 0;
     }
     std::map<std::string, std::string> perms, opm;
@@ -6876,7 +7823,7 @@ std::vector<Grant> grants_of(const Identity& id) {
 // have no kill rule on a device.
 void revoked(const App& a, const std::string& op) {
     if (op == kManageMedia || op == kOverlay || op == kInstallApps) return;
-    if (stop_runtime_of(a.apk)) set_status(fmt(L"{0} was stopped, as Android does when a permission is revoked.", {a.label}), kInfo);
+    if (stop_runtime_of(a.apk)) info(fmt(L"{0} was stopped, as Android does when a permission is revoked.", {a.label}), kInfo);
 }
 
 }  // namespace appops
@@ -6901,7 +7848,7 @@ std::vector<Row> permission_rows(const App& a) {
             if (!g.op.empty()) ops[g.op] = on ? "allow" : "deny";
             std::string why;
             if (!appops::record(id, perms, ops, "panel", &why))
-                set_status(fmt(L"The permission could not be changed: {0}", {utf8_to_wide(why)}), kError);
+                info(fmt(L"The permission could not be changed: {0}", {utf8_to_wide(why)}), kError);
             else if (!on && g.on) appops::revoked(a, g.op);
         };
         rows.push_back(r);
@@ -6912,9 +7859,8 @@ std::vector<Row> permission_rows(const App& a) {
         rows.push_back(button_row(tr(L"Reset permissions"), tr(L"The app asks again the next time it needs them."),
                                   tr(L"Reset"), [a, pkg, any_on] {
                                       appops::forget(pkg[0]);
-                                      set_status(fmt(L"{0} will ask for its permissions again.", {a.label}), kSuccess);
+                                      info(fmt(L"{0} will ask for its permissions again.", {a.label}), kSuccess);
                                       if (any_on) appops::revoked(a, "");
-                                      close_sheet();
                                   }));
     }
     return rows;
@@ -6955,6 +7901,54 @@ int permission_main(int argc, wchar_t** argv) {
     return appops::app_details(level, groups, ops);
 }
 
+// One Win.apk.exe serves the library, the install window and the splashes: another start hands
+// its files (or its wish to see the library) to it in a WM_COPYDATA, as one string of paths
+// separated by '\n', led by "L" for "show the library" or "F" for files only.
+
+bool forward_to_running(bool show_library, const std::vector<fs::path>& files) {
+    // Explorer starts one process per selected file, all at once: the first takes the mutex and makes the
+    // window, the others wait for that window to hand their file over.
+    HANDLE mutex = CreateMutexW(nullptr, FALSE, L"Local\\WinApk-launcher");
+    const bool first = mutex && GetLastError() != ERROR_ALREADY_EXISTS;
+    HWND other = FindWindowW(L"WinApkLibrary", nullptr);
+    for (int i = 0; !other && !first && i < 200; ++i) {  // up to 10 s
+        Sleep(50);
+        other = FindWindowW(L"WinApkLibrary", nullptr);
+    }
+    if (!other) return false;  // keep the mutex (leaked on purpose) for as long as this process serves
+    std::wstring text = show_library ? L"L" : L"F";
+    for (const fs::path& f : files) text += L"\n" + fs::absolute(f).wstring();
+    DWORD pid = 0;
+    GetWindowThreadProcessId(other, &pid);
+    AllowSetForegroundWindow(pid);
+    COPYDATASTRUCT cds{kCopyOpen, static_cast<DWORD>((text.size() + 1) * sizeof(wchar_t)), &text[0]};
+    DWORD_PTR result = 0;
+    const bool sent = SendMessageTimeoutW(other, WM_COPYDATA, 0, reinterpret_cast<LPARAM>(&cds), SMTO_ABORTIFHUNG,
+                                          10000, &result) && result;
+    if (mutex) CloseHandle(mutex);
+    return sent;
+}
+
+// The library window as it was last left: its size and whether it was maximized.
+void show_library(int show) {
+    if (IsWindowVisible(g_main)) {
+        if (IsIconic(g_main)) ShowWindow(g_main, SW_RESTORE);
+    } else {
+        ShowWindow(g_main, show == SW_SHOWDEFAULT && setting(L"WindowMaximized", 0) ? SW_SHOWMAXIMIZED
+                           : show == SW_SHOWDEFAULT                               ? SW_SHOWNORMAL
+                                                                                  : show);
+    }
+    SetForegroundWindow(g_main);
+}
+
+// When the library is not shown, the process lives only for what it is doing: an install window,
+// a splash, an app it started (to report how it ended), the log window.
+void maybe_quit() {
+    if (!g_main || IsWindowVisible(g_main)) return;
+    if (g_install_wnd || g_log_wnd || !g_splashes.empty() || !g_running.empty() || !g_pending.empty()) return;
+    DestroyWindow(g_main);
+}
+
 }  // namespace
 
 int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
@@ -6963,21 +7957,6 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
     OleInitialize(nullptr);
     int argc = 0;
     wchar_t** argv = CommandLineToArgvW(GetCommandLineW(), &argc);
-
-    // A shortcut: run the app, and only show anything if it fails.
-    if (argc >= 3 && wcscmp(argv[1], L"--run") == 0) {
-        pick_language();
-        const std::wstring label = label_of(fs::path(argv[2]).stem().wstring());
-        if (!run_and_wait(argv[2])) {
-            failed_with_log(fmt(L"{0} stopped with an error", {label}), last_run_log(), true);
-            return 1;
-        }
-        if (!log_shows_window(last_run_log())) {
-            failed_with_log(fmt(L"{0} closed before it showed a window", {label}), last_run_log(), true);
-            return 1;
-        }
-        return 0;
-    }
 
     // The install helper, for apps that install apps.
     if (argc >= 2 && (wcscmp(argv[1], L"install") == 0 || wcscmp(argv[1], L"uninstall") == 0)) {
@@ -6988,14 +7967,22 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
         return code;
     }
 
-    // The permission dialogs, for apps that ask for permissions.
-    if (argc >= 2 && (wcscmp(argv[1], L"runtime-permission") == 0 || wcscmp(argv[1], L"special-access") == 0 ||
-                      wcscmp(argv[1], L"app-details") == 0)) {
-        pick_language();
-        const int code = permission_main(argc, argv);
-        LocalFree(argv);
-        OleUninitialize();
-        return code;
+    // What this start is for: a shortcut's app (--run), files to install, or the library.
+    fs::path run_apk;
+    std::vector<fs::path> files;
+    const bool permission = argc >= 2 && (wcscmp(argv[1], L"runtime-permission") == 0 ||
+                                          wcscmp(argv[1], L"special-access") == 0 ||
+                                          wcscmp(argv[1], L"app-details") == 0);
+    if (argc >= 3 && wcscmp(argv[1], L"--run") == 0) {
+        run_apk = argv[2];
+    } else if (!permission) {
+        for (int i = 1; i < argc; ++i)
+            if (is_app_file(argv[i])) files.emplace_back(argv[i]);
+        if (forward_to_running(files.empty(), files)) {
+            LocalFree(argv);
+            OleUninitialize();
+            return 0;
+        }
     }
 
     INITCOMMONCONTROLSEX icc{sizeof(icc), ICC_STANDARD_CLASSES};
@@ -7003,12 +7990,27 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
     ULONG_PTR gdiplus = 0;
     Gdiplus::GdiplusStartupInput gsi;
     Gdiplus::GdiplusStartup(&gdiplus, &gsi, nullptr);
-    integrate_with_windows();
-    refresh_app_shortcuts();
-    write_registry();  // apps installed before the registry existed, or by an older launcher
-    if (HANDLE t = CreateThread(nullptr, 0, backfill_thread, nullptr, 0, nullptr)) CloseHandle(t);
     pick_language();
     pick_theme();
+
+    // The permission dialogs, for apps that ask for permissions.
+    if (permission) {
+        g_dpi = static_cast<float>(GetDpiForSystem());
+        make_fonts();
+        const int code = permission_main(argc, argv);
+        LocalFree(argv);
+        g_f = Fonts{};
+        Gdiplus::GdiplusShutdown(gdiplus);
+        OleUninitialize();
+        return code;
+    }
+
+    if (run_apk.empty()) {
+        integrate_with_windows();
+        refresh_app_shortcuts();
+        write_registry();  // apps installed before the registry existed, or by an older launcher
+        if (HANDLE t = CreateThread(nullptr, 0, backfill_thread, nullptr, 0, nullptr)) CloseHandle(t);
+    }
     theme_menus();
 
     WNDCLASSEXW wc{sizeof(wc)};
@@ -7020,31 +8022,39 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
     wc.lpszClassName = L"WinApkLibrary";
     RegisterClassExW(&wc);
     WNDCLASSEXW sc{sizeof(sc)};
-    sc.lpfnWndProc = sheet_proc;
     sc.hInstance = inst;
     sc.hIcon = wc.hIcon;
     sc.hCursor = wc.hCursor;
-    sc.lpszClassName = L"WinApkSheet";
-    RegisterClassExW(&sc);
     sc.lpfnWndProc = install_proc;
     sc.lpszClassName = L"WinApkInstall";
     RegisterClassExW(&sc);
     sc.lpfnWndProc = log_proc;
     sc.lpszClassName = L"WinApkLogs";
     RegisterClassExW(&sc);
-    // The size from last time, within the screen; 980 x 720 the first time.
+    sc.lpfnWndProc = splash_proc;
+    sc.lpszClassName = L"WinApkSplash";
+    sc.style = CS_DROPSHADOW;
+    RegisterClassExW(&sc);
+    // The size from last time, within the screen; 980 x 720 the first time. The window is made
+    // hidden: an install from Explorer or a shortcut's start shows it only when asked for.
     const int dpi = static_cast<int>(GetDpiForSystem());
     const int w = (std::min)(GetSystemMetrics(SM_CXSCREEN),
                              MulDiv((std::max)(680, static_cast<int>(setting(L"WindowWidth", 980))), dpi, 96));
     const int h = (std::min)(GetSystemMetrics(SM_CYSCREEN),
                              MulDiv((std::max)(520, static_cast<int>(setting(L"WindowHeight", 720))), dpi, 96));
-    HWND hwnd = CreateWindowExW(layout_style(), wc.lpszClassName, L"Win.apk", WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
-                                CW_USEDEFAULT, CW_USEDEFAULT, w, h, nullptr, nullptr, inst, nullptr);
-    ShowWindow(hwnd, show == SW_SHOWDEFAULT && setting(L"WindowMaximized", 0) ? SW_SHOWMAXIMIZED : show);
+    CreateWindowExW(layout_style(), wc.lpszClassName, L"Win.apk", WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
+                    CW_USEDEFAULT, CW_USEDEFAULT, w, h, nullptr, nullptr, inst, nullptr);
 
-    // An .apk opened from Explorer, or dropped on the program: install and run.
-    for (int i = 1; i < argc; ++i) {
-        if (is_app_file(argv[i])) install(argv[i], true);
+    if (!run_apk.empty()) {
+        // A shortcut: the app, with its splash; nothing else unless it fails.
+        const std::wstring name = run_apk.stem().wstring();
+        const App* app = find_app(name);
+        launch(app ? *app : App{name, label_of(name), run_apk});
+    } else if (!files.empty()) {
+        // Opened from Explorer, or dropped on the program: only the install window.
+        for (const fs::path& f : files) install(f);
+    } else {
+        show_library(show);
     }
     LocalFree(argv);
 
