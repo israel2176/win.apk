@@ -227,7 +227,9 @@ struct Player::Impl {
         hold.unlock();
         src->seek(0);
         hold.lock();
-        video_eos = audio_eos = false;
+        // eos too: it is left over when looping was turned on after the end,
+        // and note_completion would otherwise complete the new pass at once.
+        video_eos = audio_eos = eos = false;
         drop_before_us = 0;
         segment++;
         anchor_pending = true;
