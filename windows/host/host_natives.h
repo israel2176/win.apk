@@ -34,7 +34,7 @@ struct HostMethods {
 
 // The implementations, one file per Java class.
 HostMethods native_log_methods();    // native_log.cpp
-HostMethods native_cocoa_methods();  // native_cocoa.cpp (headless for now)
+HostMethods native_cocoa_methods();  // native_cocoa.cpp
 HostMethods native_linker_methods(); // guest_libs.cpp
 HostMethods native_os_methods();     // native_os.cpp
 HostMethods native_image_methods();  // native_image.cpp
@@ -55,10 +55,20 @@ HostMethods native_radios_methods();    // native_radios.cpp
 HostMethods native_location_methods();  // native_location.cpp
 HostMethods native_activity_methods();  // native_activity.cpp
 HostMethods native_signin_methods();    // native_signin.cpp
+HostMethods native_notifications_methods();  // native_notifications.cpp
 
 // The app's directory under the data directory, where Boot renders the
 // launcher icon (icon.png) that becomes the window's icon. native_cocoa.cpp.
 void set_app_dir(const std::wstring& dir);
+// That directory (empty before set_app_dir). native_cocoa.cpp.
+std::wstring app_dir();
+
+// Gives the process the AppUserModelID of the app named `app_name` (its
+// library name), before any window exists: what Windows credits the app's
+// notifications (toasts) and its taskbar button to. The launcher writes the
+// app's Start menu shortcut with the same id, which is where Windows takes the
+// name and icon from. native_notifications.cpp.
+void set_app_user_model_id(const std::wstring& app_name);
 
 // A URL the host hands to the app (NativeCocoa.takeHostUrls): queued, then
 // HostUrlIntake.macapkOnHostUrl is called on `env`'s thread so the intake

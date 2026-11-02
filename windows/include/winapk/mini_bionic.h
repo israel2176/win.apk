@@ -1,4 +1,4 @@
-// mini_bionic.h -- the first slice of the Windows Bionic shim.
+// mini_bionic.h -- the Windows Bionic shim: its core and the name lookup.
 //
 // The macOS shim (runtime/translator/src/bionic_shim.cpp) exports Bionic's
 // names straight out of a dylib, because there an Android arm64 caller and a

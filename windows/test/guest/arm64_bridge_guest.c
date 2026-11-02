@@ -21,6 +21,7 @@ int strcmp(const char*, const char*);
 int snprintf(char*, size_t, const char*, ...);
 int vsnprintf(char*, size_t, const char*, va_list);
 void qsort(void*, size_t, size_t, int (*)(const void*, const void*));
+void* bsearch(const void*, const void*, size_t, size_t, int (*)(const void*, const void*));
 int* __errno(void);
 int __android_log_write(int prio, const char* tag, const char* text);
 int __android_log_print(int prio, const char* tag, const char* fmt, ...);
@@ -111,6 +112,19 @@ EXPORT int arm64_qsort(void) {
     return v[0] * 1000 + v[9];  // -4 * 1000 + 88 = -3912
 }
 
+// bsearch with a guest comparator, for every key from -5 to 90: each of the
+// ten values found at its index, nothing else found.
+EXPORT int arm64_bsearch(void) {
+    static const int v[] = {-4, 1, 3, 7, 13, 19, 21, 42, 56, 88};
+    int r = 0;
+    for (int key = -5; key <= 90; ++key) {
+        const int* hit = bsearch(&key, v, 10, sizeof(int), compare_ints);
+        if (hit && *hit != key) return -1;
+        if (hit) r += (int)(hit - v) * 7 + 1;
+    }
+    return r;  // 7 * (0 + 1 + ... + 9) + 10 = 325
+}
+
 // A comparator that itself calls the host: guest -> host -> guest -> host.
 static int compare_by_text(const void* a, const void* b) {
     char x[16], y[16];
@@ -160,6 +174,18 @@ EXPORT int arm64_exit_count(void) { return g_exit_count; }
 EXPORT long arm64_many_args(long a, long b, long c, long d, long e, long f, long g, long h, long i, long j,
                             double x, double y) {
     return a + 2 * b + 3 * c + 4 * d + 5 * e + 6 * f + 7 * g + 8 * h + 9 * i + 10 * j + (long)(x * 100 + y * 1000);
+}
+
+// As many integer arguments as Flutter's FlutterJNI.nativeSetViewportMetrics
+// (29: 21 of them on the stack), the last ones pointers like its int[].
+EXPORT long arm64_jni_sized(long a0, long a1, long a2, long a3, long a4, long a5, long a6, long a7, long a8, long a9,
+                            long a10, long a11, long a12, long a13, long a14, long a15, long a16, long a17, long a18,
+                            long a19, long a20, long a21, long a22, long a23, long a24, long a25, long a26,
+                            const long* p27, const long* p28) {
+    long r = a0 + 2 * a1 + 3 * a2 + 4 * a3 + 5 * a4 + 6 * a5 + 7 * a6 + 8 * a7 + 9 * a8 + 10 * a9;
+    r += 11 * a10 + 12 * a11 + 13 * a12 + 14 * a13 + 15 * a14 + 16 * a15 + 17 * a16 + 18 * a17 + 19 * a18;
+    r += 20 * a19 + 21 * a20 + 22 * a21 + 23 * a22 + 24 * a23 + 25 * a24 + 26 * a25 + 27 * a26;
+    return r + 28 * *p27 + 29 * *p28;
 }
 
 EXPORT double arm64_scale(double x, float y, int n) { return x * y * n; }

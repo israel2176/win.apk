@@ -3,7 +3,8 @@
 //   winapk-audio-test <dir with tone.wav, tone.ogg, tone.mp3>
 //
 // The three files are the same half-second 440 Hz tone at ffmpeg's default
-// amplitude of 1/8 (test/audio, made with ffmpeg's sine source). Checks: each decodes to about 0.5 s; an AudioTrack-style stream
+// amplitude of 1/8 (test/audio, made with ffmpeg's sine source). Checks: each
+// decodes to about 0.5 s; an AudioTrack-style stream
 // takes a blocking write, plays it out and reports position and timestamps;
 // a clip voice finishes on time. Without an audio device the mixer keeps time
 // silently, so this runs on CI machines too.

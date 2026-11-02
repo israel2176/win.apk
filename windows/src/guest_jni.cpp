@@ -6,8 +6,8 @@
 //     signature is deduced from the JNINativeInterface_ field itself, so every
 //     one of them is generated, not hand-written. The exceptions:
 //     RegisterNatives wraps the guest's function pointers first (jni_bind.h),
-//     GetJavaVM hands out the guest VM, and GetMethodID finds constructors
-//     the way ART does.
+//     GetJavaVM hands out the guest VM, GetMethodID finds constructors the
+//     way ART does, and GetFieldID knows libcore's one renamed field.
 //   * the Call<T>Method(env, obj, mid, ...) families (WINAPK_JNI_CALL) and
 //     their va_list variants (WINAPK_JNI_CALLV): bridged by jni_variadic.cpp
 //     once a signature provider is set, a loud-abort stub until then.
@@ -64,9 +64,9 @@ GuestEnv* guest_env_from(JNIEnv* genv) {
 
 // The generic forwarder. The partial specialization deduces (R, A...) from the
 // JNINativeInterface_ field, so one template covers every non-variadic slot.
-// The host env comes from the guest env the slot was called through; a later
-// slice may instead take it from the calling thread (the upstream ARM32 model),
-// which tolerates engines that cache one env globally.
+// The host env comes from the guest env the slot was called through, not from
+// the calling thread as in upstream's ARM32 model (which tolerates engines
+// that cache one env globally).
 template <auto Field>
 struct Slot;
 
@@ -79,13 +79,14 @@ struct Slot<Field> {
     }
 };
 
-// Slot stub for the deferred variadic Call<T>Method families. Declared with
-// fixed parameters (not `...`): a System V caller cleans up its own stack, so
-// the ignored variadic arguments are harmless, and we never read them.
+// Slot stub for the variadic Call<T>Method families before a signature
+// provider is set (guest_jni_set_signature_provider). Declared with fixed
+// parameters (not `...`): a System V caller cleans up its own stack, so the
+// ignored variadic arguments are harmless, and they are never read.
 [[noreturn]] WINAPK_GUEST_ABI void unimplemented_variadic(JNIEnv*) {
     std::fprintf(stderr,
-                 "[win.apk] a guest called a variadic JNI Call*Method, which Win.apk does not "
-                 "bridge yet (next slice)\n");
+                 "[win.apk] a guest called a variadic JNI Call*Method before the signature "
+                 "provider was set\n");
     std::fflush(stderr);
     std::abort();
 }

@@ -59,7 +59,7 @@ OUT_DIR="$PROJECT_DIR/thirdparty/framework-res"
 
 # Pinned AOSP tag the default build comes from. android-11.0.0_r48 is an
 # Android 11 (API 30) release tag, matching both the fwprobe golden AVD and
-# the fleet's pixel-reference emulator (the only system image on this box).
+# the pixel-reference emulator image the oracle runs on.
 API_LEVEL=30
 AOSP_TAG="android-11.0.0_r48"
 VERSION_NAME="11"
@@ -85,9 +85,9 @@ if [ -z "$AAPT2" ]; then
         [ -x "$bt" ] && AAPT2="$bt"
     done
 fi
-# The SDK was deleted from this machine on 2026-08-31 (CLAUDE.md); the
-# Homebrew apktool keg ships a macOS aapt2 (2.20) inside its jar, which is
-# what built the shipped API-36 apk (v1.0.1589). Extracted on demand.
+# Without an SDK, the Homebrew apktool keg ships a macOS aapt2 (2.20) inside
+# its jar, which is what built the shipped API-36 apk (v1.0.1589). Extracted
+# on demand.
 if [ -z "$AAPT2" ]; then
     KEG_JAR="$(ls -t /opt/homebrew/Cellar/apktool/*/libexec/apktool_*.jar 2>/dev/null | head -1)"
     if [ -n "$KEG_JAR" ] && unzip -l "$KEG_JAR" 2>/dev/null | grep -q "prebuilt/macosx/aapt2"; then
@@ -108,8 +108,20 @@ SRC="$WORK/src"
 # archives, so this is ~20 MB instead of a multi-GB frameworks/base clone).
 if [ ! -f "$SRC/AndroidManifest.xml" ]; then
     echo "[1/4] fetching frameworks/base/core/res @ $AOSP_TAG ..."
-    curl -sSL -o "$TARBALL" \
-        "https://android.googlesource.com/platform/frameworks/base/+archive/refs/tags/$AOSP_TAG/core/res.tar.gz"
+    # googlesource answers a busy moment with an HTML page and a 429 or 5xx:
+    # -f turns that into a curl failure, --retry tries again, and the gzip
+    # check below catches a page that still came back with 200.
+    url="https://android.googlesource.com/platform/frameworks/base/+archive/refs/tags/$AOSP_TAG/core/res.tar.gz"
+    for attempt in 1 2 3 4 5; do
+        rm -f "$TARBALL"
+        if curl -fsSL --retry 3 --retry-delay 5 --retry-all-errors -o "$TARBALL" "$url" \
+            && gzip -t "$TARBALL" 2>/dev/null; then
+            break
+        fi
+        [ "$attempt" -lt 5 ] || { echo "could not fetch a gzip archive from $url" >&2; exit 1; }
+        echo "[1/4] fetch attempt $attempt failed; retrying in $((attempt * 10)) s ..."
+        sleep $((attempt * 10))
+    done
     mkdir -p "$SRC"
     tar -xzf "$TARBALL" -C "$SRC"
     [ -f "$SRC/MODULE_LICENSE_APACHE2" ] || {

@@ -143,14 +143,59 @@ bool is_random_device(const char* path) {
     return path && (std::strcmp(path, "/dev/urandom") == 0 || std::strcmp(path, "/dev/random") == 0);
 }
 
+// The host path of what descriptor `fd` has open (a directory, for the *at()
+// calls and fdopendir): Windows knows it from the handle. False with errno set.
+bool fd_host_path(int fd, std::wstring* out) {
+    const HANDLE h = fd_object(fd) ? INVALID_HANDLE_VALUE : reinterpret_cast<HANDLE>(_get_osfhandle(fd));
+    if (h == INVALID_HANDLE_VALUE) {
+        *guest_errno() = kEBADF;
+        return false;
+    }
+    wchar_t buf[MAX_PATH * 4];
+    const DWORD n = GetFinalPathNameByHandleW(h, buf, MAX_PATH * 4, FILE_NAME_NORMALIZED | VOLUME_NAME_DOS);
+    if (n == 0 || n >= MAX_PATH * 4) {
+        *guest_errno() = kENOTDIR;
+        return false;
+    }
+    // "\\?\C:\dir" or "\\?\UNC\server\share\dir": the prefix goes, because
+    // under it a '/' in the guest's part of a joined path is no separator.
+    out->assign(buf, n);
+    if (out->compare(0, 8, L"\\\\?\\UNC\\") == 0) out->replace(0, 8, L"\\\\");
+    else if (out->compare(0, 4, L"\\\\?\\") == 0) out->erase(0, 4);
+    return true;
+}
+
+// The *at() calls: the file `path` names relative to the directory open as
+// `dirfd`, as a path g_open and friends take. With AT_FDCWD (-100) or an
+// absolute path that is `path` itself; otherwise the directory's host path
+// joined with it. Dart's dart:io opens every file this way. False with errno set.
+bool at_path(int dirfd, const char* path, std::string* out) {
+    if (!path) {
+        *guest_errno() = kEFAULT;
+        return false;
+    }
+    if (dirfd == -100 || path[0] == '/' || (path[0] && path[1] == ':')) {
+        *out = path;
+        return true;
+    }
+    std::wstring dir;
+    if (!fd_host_path(dirfd, &dir)) return false;
+    *out = narrow(dir.c_str());
+    if (path[0]) *out += '\\' + std::string(path);
+    return true;
+}
+
 // open() is variadic (its mode is the third argument only with O_CREAT), but a
 // variadic int travels in the same register as a fixed one.
 WINAPK_GUEST_ABI int g_open(const char* path, int flags, unsigned mode) {
     if (is_random_device(path)) return fd_install(std::make_shared<RandomDevice>());
     if (is_proc_maps(path)) return open_temp_with(proc_maps_text());
     const std::wstring w = host_path(path);
-    if (flags & kODirectory) {
-        const DWORD a = GetFileAttributesW(w.c_str());
+    // Linux opens a directory read-only without O_DIRECTORY too (O_PATH or
+    // plain O_RDONLY, then fstat or fdopendir); _wopen would refuse it.
+    const DWORD a = GetFileAttributesW(w.c_str());
+    const bool read_only = (flags & (kOWrOnly | kORdWr | kOCreat)) == 0;
+    if ((flags & kODirectory) || (read_only && a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_DIRECTORY))) {
         if (a == INVALID_FILE_ATTRIBUTES) {
             set_errno_from_win32(GetLastError());
             return -1;
@@ -173,6 +218,11 @@ WINAPK_GUEST_ABI int g_open(const char* path, int flags, unsigned mode) {
     return fd < 0 ? fail_crt() : fd;
 }
 WINAPK_GUEST_ABI int g_open_2(const char* path, int flags) { return g_open(path, flags, 0); }
+WINAPK_GUEST_ABI int g_openat(int dirfd, const char* path, int flags, unsigned mode) {
+    std::string p;
+    return at_path(dirfd, path, &p) ? g_open(p.c_str(), flags, mode) : -1;
+}
+WINAPK_GUEST_ABI int g_openat_2(int dirfd, const char* path, int flags) { return g_openat(dirfd, path, flags, 0); }
 WINAPK_GUEST_ABI int g_creat(const char* path, unsigned mode) { return g_open(path, kOWrOnly | kOCreat | kOTrunc, mode); }
 // Pipes, eventfds, epoll and sockets are objects (fd.cpp); each descriptor
 // call checks for one first.
@@ -499,26 +549,32 @@ WINAPK_GUEST_ABI int g_fstatfs(int fd, GuestStatfs* out) {
     return g_fstatvfs(fd, &v) < 0 ? -1 : to_statfs(v, out);
 }
 
-// AT_FDCWD (-100) with a path, the common case of the *at() calls.
-WINAPK_GUEST_ABI int g_fstatat(int dirfd, const char* path, GuestStat* g, int) {
-    if (dirfd != -100 && path && path[0] != '/' && !(path[0] && path[1] == ':')) {
-        *guest_errno() = kENOSYS;
-        return -1;
-    }
-    return g_stat(path, g);
+// AT_EMPTY_PATH (0x1000) with "" is fstat of `dirfd` itself.
+WINAPK_GUEST_ABI int g_fstatat(int dirfd, const char* path, GuestStat* g, int flags) {
+    if ((flags & 0x1000) && path && !path[0] && dirfd != -100) return g_fstat(dirfd, g);
+    std::string p;
+    return at_path(dirfd, path, &p) ? g_stat(p.c_str(), g) : -1;
 }
 WINAPK_GUEST_ABI int g_access(const char* path, int mode) {
     // _waccess knows no X_OK (1); anything readable counts.
     return _waccess(host_path(path).c_str(), mode & 6) < 0 ? fail_crt() : 0;
 }
-WINAPK_GUEST_ABI int g_faccessat(int, const char* path, int mode, int) { return g_access(path, mode); }
+WINAPK_GUEST_ABI int g_faccessat(int dirfd, const char* path, int mode, int) {
+    std::string p;
+    return at_path(dirfd, path, &p) ? g_access(p.c_str(), mode) : -1;
+}
 
 // ---- the file system -------------------------------------------------------------------
 WINAPK_GUEST_ABI int g_mkdir(const char* path, unsigned) { return _wmkdir(host_path(path).c_str()) < 0 ? fail_crt() : 0; }
+WINAPK_GUEST_ABI int g_mkdirat(int dirfd, const char* path, unsigned mode) {
+    std::string p;
+    return at_path(dirfd, path, &p) ? g_mkdir(p.c_str(), mode) : -1;
+}
 WINAPK_GUEST_ABI int g_rmdir(const char* path) { return _wrmdir(host_path(path).c_str()) < 0 ? fail_crt() : 0; }
 WINAPK_GUEST_ABI int g_unlink(const char* path) {
-    // POSIX unlinks an open file; Windows needs it shared for delete, which
-    // the CRT does not ask for, so fall back to delete-on-close semantics.
+    // POSIX unlinks an open file; Windows deletes one only when every open
+    // handle shares delete access, and otherwise reports EBUSY
+    // (ERROR_SHARING_VIOLATION) through set_errno_from_win32.
     const std::wstring w = host_path(path);
     if (DeleteFileW(w.c_str())) return 0;
     set_errno_from_win32(GetLastError());
@@ -616,10 +672,12 @@ struct GuestDir {
     bool pending = false;  // `data` holds an entry not handed out yet
     int64_t offset = 0;
     GuestDirent entry;
+    std::wstring path;  // the host directory
+    int fd = -1;        // its descriptor (fdopendir, dirfd), closed with it
 };
 
-WINAPK_GUEST_ABI GuestDir* g_opendir(const char* path) {
-    std::wstring pattern = host_path(path);
+GuestDir* open_dir(std::wstring path) {
+    std::wstring pattern = path;
     if (!pattern.empty() && pattern.back() != L'/' && pattern.back() != L'\\') pattern += L'\\';
     pattern += L'*';
     auto* d = new GuestDir();
@@ -630,7 +688,27 @@ WINAPK_GUEST_ABI GuestDir* g_opendir(const char* path) {
         return nullptr;
     }
     d->pending = true;
+    d->path = std::move(path);
     return d;
+}
+
+WINAPK_GUEST_ABI GuestDir* g_opendir(const char* path) { return open_dir(host_path(path)); }
+// fdopendir: the DIR owns `fd` from here on (closedir closes it).
+WINAPK_GUEST_ABI GuestDir* g_fdopendir(int fd) {
+    std::wstring path;
+    if (!fd_host_path(fd, &path)) return nullptr;
+    GuestDir* d = open_dir(std::move(path));
+    if (d) d->fd = fd;
+    return d;
+}
+// dirfd: a directory descriptor for the *at() calls, opened on first use.
+WINAPK_GUEST_ABI int g_dirfd(GuestDir* d) {
+    if (!d) {
+        *guest_errno() = kEINVAL;
+        return -1;
+    }
+    if (d->fd < 0) d->fd = g_open(narrow(d->path.c_str()).c_str(), kODirectory, 0);
+    return d->fd;
 }
 WINAPK_GUEST_ABI GuestDirent* g_readdir(GuestDir* d) {
     if (!d) return nullptr;
@@ -650,58 +728,13 @@ WINAPK_GUEST_ABI GuestDirent* g_readdir(GuestDir* d) {
 WINAPK_GUEST_ABI int g_closedir(GuestDir* d) {
     if (!d) return -1;
     if (d->find != INVALID_HANDLE_VALUE) FindClose(d->find);
+    if (d->fd >= 0) g_close(d->fd);
     delete d;
     return 0;
 }
 WINAPK_GUEST_ABI void g_rewinddir(GuestDir*) {}
 
-// ---- *at() calls and pathconf ---------------------------------------------------
-constexpr int kAtFdCwd = -100;  // AT_FDCWD
-
-// The directory a descriptor from open(O_DIRECTORY) names (a handle, see
-// g_open), as a host path; empty for anything else.
-std::wstring dir_of_fd(int fd) {
-    HANDLE h = reinterpret_cast<HANDLE>(_get_osfhandle(fd));
-    if (h == INVALID_HANDLE_VALUE) return {};
-    wchar_t buf[2048];
-    const DWORD n = GetFinalPathNameByHandleW(h, buf, 2048, FILE_NAME_NORMALIZED);
-    if (n == 0 || n >= 2048) return {};
-    std::wstring p(buf, n);
-    if (p.rfind(L"\\\\?\\", 0) == 0) p.erase(0, 4);
-    return p;
-}
-
-// openat: an absolute path, or one relative to the working directory, is
-// open(); a relative one is joined onto the directory descriptor's path.
-WINAPK_GUEST_ABI int g_openat(int dirfd, const char* path, int flags, unsigned mode) {
-    if (!path) {
-        *guest_errno() = 14;  // EFAULT
-        return -1;
-    }
-    if (path[0] == '/' || path[0] == '\\' || (path[0] && path[1] == ':') || dirfd == kAtFdCwd) {
-        return g_open(path, flags, mode);
-    }
-    const std::wstring dir = dir_of_fd(dirfd);
-    if (dir.empty()) {
-        *guest_errno() = 9;  // EBADF
-        return -1;
-    }
-    const std::string joined = narrow(dir.c_str()) + "\\" + path;
-    return g_open(joined.c_str(), flags, mode);
-}
-
-// fdopendir takes the descriptor over: closedir ends it.
-WINAPK_GUEST_ABI GuestDir* g_fdopendir(int fd) {
-    const std::wstring dir = dir_of_fd(fd);
-    if (dir.empty()) {
-        *guest_errno() = kENOTDIR;
-        return nullptr;
-    }
-    GuestDir* d = g_opendir(narrow(dir.c_str()).c_str());
-    if (d) _close(fd);
-    return d;
-}
-
+// ---- pathconf ------------------------------------------------------------------
 // pathconf's answers for a local file system (<bits/posix_limits.h> values);
 // a name this does not know is "no limit", -1 with errno untouched, as the
 // manual allows.
@@ -812,16 +845,8 @@ WINAPK_GUEST_ABI int64_t g_readlink_chk(const char* path, char* buf, size_t size
     return g_readlink(path, buf, std::min(size, buf_size));
 }
 WINAPK_GUEST_ABI int64_t g_readlinkat(int dirfd, const char* path, char* buf, size_t size) {
-    if (!path || path[0] == '/' || path[0] == '\\' || (path[0] && path[1] == ':') || dirfd == kAtFdCwd) {
-        return g_readlink(path, buf, size);
-    }
-    const std::wstring dir = dir_of_fd(dirfd);
-    if (dir.empty()) {
-        *guest_errno() = 9;  // EBADF
-        return -1;
-    }
-    const std::string joined = narrow(dir.c_str()) + "\\" + path;
-    return g_readlink(joined.c_str(), buf, size);
+    std::string p;
+    return at_path(dirfd, path, &p) ? g_readlink(p.c_str(), buf, size) : -1;
 }
 // lstat: stat, except that a link is reported as one. The proc links have no
 // file of their own, so they get a link's mode and the target's length.
@@ -843,23 +868,12 @@ WINAPK_GUEST_ABI int g_lstat(const char* path, GuestStat* g) {
     }
     return rc;
 }
-// unlinkat and __openat_2 (openat's FORTIFY form without a mode): the same
-// joins as openat.
+// unlinkat: the same joins as openat (at_path).
 WINAPK_GUEST_ABI int g_unlinkat(int dirfd, const char* path, int flags) {
-    std::string joined;
-    const char* p = path;
-    if (path && path[0] != '/' && path[0] != '\\' && !(path[0] && path[1] == ':') && dirfd != kAtFdCwd) {
-        const std::wstring dir = dir_of_fd(dirfd);
-        if (dir.empty()) {
-            *guest_errno() = 9;  // EBADF
-            return -1;
-        }
-        joined = narrow(dir.c_str()) + "\\" + path;
-        p = joined.c_str();
-    }
-    return (flags & 0x200) ? g_rmdir(p) : g_unlink(p);  // AT_REMOVEDIR
+    std::string p;
+    if (!at_path(dirfd, path, &p)) return -1;
+    return (flags & 0x200) ? g_rmdir(p.c_str()) : g_unlink(p.c_str());  // AT_REMOVEDIR
 }
-WINAPK_GUEST_ABI int g_openat_2(int dirfd, const char* path, int flags) { return g_openat(dirfd, path, flags, 0); }
 
 // ---- FILE streams ----------------------------------------------------------------------------
 // Bionic's mode letters, less "e" (O_CLOEXEC); the CRT stream is always binary,
@@ -1007,6 +1021,22 @@ WINAPK_GUEST_ABI char* g_fgets_chk(char* s, int n, void* f, size_t bn) {
     }
     return g_fgets(s, n, f);
 }
+// Bionic's FORTIFY fread/fwrite: the buffer must hold size * count bytes.
+bool fits_fortify(size_t sz, size_t n, size_t bn) { return n == 0 || sz <= bn / n; }
+WINAPK_GUEST_ABI size_t g_fread_chk(void* buf, size_t sz, size_t n, void* f, size_t bn) {
+    if (!fits_fortify(sz, n, bn)) {
+        std::fprintf(stderr, "[win.apk] guest FORTIFY: fread: prevented buffer overflow\n");
+        std::abort();
+    }
+    return g_fread(buf, sz, n, f);
+}
+WINAPK_GUEST_ABI size_t g_fwrite_chk(const void* buf, size_t sz, size_t n, void* f, size_t bn) {
+    if (!fits_fortify(sz, n, bn)) {
+        std::fprintf(stderr, "[win.apk] guest FORTIFY: fwrite: prevented buffer over-read\n");
+        std::abort();
+    }
+    return g_fwrite(buf, sz, n, f);
+}
 WINAPK_GUEST_ABI int g_fgetc(void* f) { return std::fgetc(host_file(f)); }
 WINAPK_GUEST_ABI int g_ungetc(int c, void* f) { return std::ungetc(c, host_file(f)); }
 WINAPK_GUEST_ABI int g_fflush(void* f) { return std::fflush(f ? host_file(f) : nullptr); }
@@ -1061,6 +1091,9 @@ const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("open", g_open),
     WINAPK_SHIM("open64", g_open),
     WINAPK_SHIM("__open_2", g_open_2),
+    WINAPK_SHIM("openat", g_openat),
+    WINAPK_SHIM("openat64", g_openat),
+    WINAPK_SHIM("__openat_2", g_openat_2),
     WINAPK_SHIM("creat", g_creat),
     WINAPK_SHIM("close", g_close),
     WINAPK_SHIM("read", g_read),
@@ -1093,7 +1126,6 @@ const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("__readlink_chk", g_readlink_chk),
     WINAPK_SHIM("readlinkat", g_readlinkat),
     WINAPK_SHIM("unlinkat", g_unlinkat),
-    WINAPK_SHIM("__openat_2", g_openat_2),
     WINAPK_SHIM("fstat", g_fstat),
     WINAPK_SHIM("fstat64", g_fstat),
     WINAPK_SHIM("fstatat", g_fstatat),
@@ -1109,6 +1141,7 @@ const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("access", g_access),
     WINAPK_SHIM("faccessat", g_faccessat),
     WINAPK_SHIM("mkdir", g_mkdir),
+    WINAPK_SHIM("mkdirat", g_mkdirat),
     WINAPK_SHIM("rmdir", g_rmdir),
     WINAPK_SHIM("unlink", g_unlink),
     WINAPK_SHIM("rename", g_rename),
@@ -1126,8 +1159,7 @@ const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("mkostemp64", g_mkostemp),
     WINAPK_SHIM("opendir", g_opendir),
     WINAPK_SHIM("fdopendir", g_fdopendir),
-    WINAPK_SHIM("openat", g_openat),
-    WINAPK_SHIM("openat64", g_openat),
+    WINAPK_SHIM("dirfd", g_dirfd),
     WINAPK_SHIM("pathconf", g_pathconf),
     WINAPK_SHIM("fpathconf", g_fpathconf),
     WINAPK_SHIM("funopen", g_funopen),
@@ -1148,6 +1180,8 @@ const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("putchar", g_putchar),
     WINAPK_SHIM("fgets", g_fgets),
     WINAPK_SHIM("__fgets_chk", g_fgets_chk),
+    WINAPK_SHIM("__fread_chk", g_fread_chk),
+    WINAPK_SHIM("__fwrite_chk", g_fwrite_chk),
     WINAPK_SHIM("fgetc", g_fgetc),
     WINAPK_SHIM("getc", g_fgetc),
     WINAPK_SHIM("ungetc", g_ungetc),

@@ -4,8 +4,15 @@ This document records what has been learned while porting Mac.apk to Windows
 x64, the decisions that follow from it, the state of the code under `windows/`,
 and the work that remains before a production release. It is meant for whoever
 continues the work, so it prefers concrete facts and file names over narrative.
-`windows/README.md` covers building and running; this file covers the why and
-the what next.
+`windows/README.md` covers building and running, `docs/ARCHITECTURE.md` is
+the current overview of how the port works; this file covers the why and the
+what next.
+
+How to read it: sections 1 to 3, 5, 6 and 10 are reference and stay valid.
+Section 4 was written as the first components landed and is kept as that
+record; its inventory tables say which Mac pieces have a Windows counterpart
+today. Section 7 is the current list of gaps. Each milestone in section 8
+starts with a **Status** line saying what is done and what is still planned.
 
 Contents
 
@@ -83,10 +90,11 @@ D1. Target Windows x64 with an x86_64 guest ABI. ARM-only apps come later, if
 at all.
 
 D2. Leave the upstream tree alone. All Windows code lives under `windows/`. The
-upstream files changed so far are listed in `windows/README.md`; apart from
-the CLA job and the top-level README, the only one is a framework bug fix in
-`Resources.java` that is not Windows-specific. Every future change to an upstream file must be listed in
-`windows/README.md`. This keeps `git merge upstream/main` cheap.
+upstream files changed so far are listed in `windows/README.md` ("Changes to
+the upstream tree"): each is a hook Windows needs, or a framework fix that is
+not Windows-specific and worth offering upstream. Every future change to an
+upstream file must be listed there. This keeps `git merge upstream/main`
+cheap.
 
 D3. Use clang only. MSVC cannot emit System V calls. MinGW GCC 13 accepts
 `__attribute__((sysv_abi))` but emits broken SEH unwind directives for such
@@ -182,13 +190,15 @@ Everything in this section is merged on `main` and tested in CI on
 
 ### Not there yet
 
-The component table above predates most of the host: `windows/README.md`
-("Status and next steps") is the current list of what works, and
-`windows/host/` the current set of natives (one file per Java class, named in
-`host_natives.h`). What is still missing, as of 2026-11: video playback (MediaPlayer's video
-and the NDK media API), Vulkan, sensors, a crash handler and minidumps, W^X
-thunks with unwind tables, code signing, 32-bit `armeabi-v7a`, and Google
-Play services. Section 7 has the finer gaps.
+The component table above predates most of the host: `docs/ARCHITECTURE.md`
+is the current description of what works, and `windows/host/` the current
+set of natives (one file per Java class, named in `host_natives.h`). What is
+still missing, as of 2026-11: video playback (MediaPlayer's video and the NDK
+media API), OpenSL ES, Vulkan, sensors, signal delivery to guest handlers, a
+crash handler and minidumps, W^X thunks with unwind tables, code signing,
+32-bit `armeabi-v7a`, and the Play Store features Google Play services
+cannot stand in for (purchases, Play Integrity, the Maps SDK's map). Section 7
+has the finer gaps.
 
 ### Mac code inventory
 
@@ -221,11 +231,11 @@ implements in `runtime/src`; on Windows `windows/host/native_*.cpp`):
 | `AudioInputBridge` | 10 | `audio_input.mm` | `host/native_audio_input.cpp`: WASAPI capture resampled to the app's format; the privacy switch is the permission | done | - |
 | `LocationBridge` | 12 | `location_bridge.mm` | `host/native_location.cpp`: `Windows.Devices.Geolocation` through its ABI; Windows' privacy settings (the consent store) are the host authorization | done | - |
 | `GamepadBridge` | 1 | `gamecontroller_bridge.mm` | `host/native_gamepad.cpp`: XInput controllers, polled | done (no rumble or player LED) | - |
-| `CameraBridge` | 30 | `camera_capture.mm` | Media Foundation capture | not started | 3 |
+| `CameraBridge` | 30 | `camera_capture.mm` | `host/native_camera.cpp`: Media Foundation capture, each webcam as a back and a front camera; a virtual camera from `CameraBridge.java` when there is none | done | - |
 | `MediaStoreProvider` | 7 | `photos_bridge.mm` | `host/native_photos.cpp`: the Pictures and Videos folders, shell thumbnails | done | - |
 | `MacApkWebViewBridge` | 29 | `webview_bridge.mm` | WebView2 | done (`native_webview.cpp`; Custom Tabs: `HostBrowserTab`) | 2 |
 | `NativeSignIn` | 2 | `gms_signin.mm` | `host/native_signin.cpp`: Google's EmbeddedSetup page in a WebView2 window with an in-private profile, the `oauth_token` cookie read back | done (needs the WebView2 Runtime) | - |
-| `NativeActivity`, `InputQueue` | 22 + 5 | `bionic_shim_nativeactivity.cpp` | with M4/M6 | not started | 2 |
+| `NativeActivity`, `InputQueue` | 22 + 5 | `bionic_shim_nativeactivity.cpp` | `host/native_activity.cpp`: the activity callbacks, the NDK input queue and `AConfiguration` over the guest linker and the shim's `ALooper` | done | - |
 | Firebase C++ helpers (4 classes) | 4 | the app's own native code | with M4 | - | - |
 
 **Other host code** (`runtime/src`):
@@ -235,7 +245,7 @@ implements in `runtime/src`; on Windows `windows/host/native_*.cpp`):
 | `main.cpp` | 3,890 | launcher entry: install, convert, start the JVM, `--gms` | `host/runtime_main.cpp` (`--gms` too) | done for Java apps |
 | `jvm_loader.cpp` | 792 | in-process HotSpot | `host/runtime_main.cpp` | done |
 | `apk_unpacker.cpp` | 4,473 | install layout, split bundles, DEX conversion | `java/.../AppInstall.java` + the upstream converter | done |
-| `window_policy.cpp`, `window_traits.cpp` | 3,009 | window shape per activity, orientation, resize | `win32_window.cpp` | phone size only |
+| `window_policy.cpp`, `window_traits.cpp` | 3,009 | window shape per activity, orientation, resize | `win32_window.cpp`, `DisplayConfig` (section 7, "Display") | resizing, orientation and the letterbox done; no per-activity window shape |
 | `apk_native_exec.cpp` | 509 | APK-shipped executables | later (M5) | not started |
 | `app_process_group.cpp` | 66 | child processes die with the app | Job objects | not started |
 | `app_native_stub.cpp` | 19 | no-op library for unloadable `.so` | not needed: a library that cannot load fails as on Android | - |
@@ -249,10 +259,10 @@ implements in `runtime/src`; on Windows `windows/host/native_*.cpp`):
 | `main.cpp` (translator CLI) | 9,744 | `.so` to a host library | `host/translator_main.cpp` + `host/guest_stub.cpp` | done |
 | `bionic_shim.cpp` | 66,962 | Android's libc, libdl, liblog, libm, libandroid... on Darwin | `src/mini_bionic.cpp` and `src/bionic/` on the Windows CRT and Win32 (M5) | about 520 functions |
 | `bionic_shim_jni_bare.cpp`, `_jni_cxxwrap.cpp` | 1,119 | variadic JNI calls | `src/jni_variadic.cpp` | done |
-| `bionic_shim_sigchain.cpp`, `_signal.cpp` | 1,913 | signals and chaining with the JVM | vectored exception handling (M5) | not started |
+| `bionic_shim_sigchain.cpp`, `_signal.cpp` | 1,913 | signals and chaining with the JVM | `src/bionic/signal.cpp` records what `sigaction`, `sigaltstack` and the timers are given; delivery through vectored exception handling (M5) | recorded, not delivered |
 | `bionic_shim_sensors.cpp` | 540 | NDK sensors | port as is (M5) | not started |
 | `bionic_shim_vulkan.cpp` | 401 | Vulkan over MoltenVK | the system Vulkan loader (M6) | not started |
-| `bionic_shim_cacerts.cpp` | 218 | CA store from the Mac's roots | the Windows root store | not started |
+| `bionic_shim_cacerts.cpp` | 218 | CA store from the Mac's roots | `src/bionic/cacerts.cpp`: the roots Windows trusts (user, machine, policy; less Disallowed and expired) plus the JDK's | done |
 | `bionic_shim_forkwatch.cpp`, `_elfexec.cpp`, `elfexec_main.cpp` | 1,471 | forked and shipped executables | later (M5) | not started |
 | `media_ndk.cpp` | 701 | NDK `AMediaCodec` | port with `NativeMedia`; `host/native_media.cpp` has the `AMEDIAFORMAT_KEY_*` strings | keys only |
 | `bionic_shim.cpp`: `ANativeWindow_*`, `AAssetManager_*` | - | libandroid's native window and assets | `host/native_window.cpp`, `host/native_asset.cpp` (assets through Java's AssetManager; no native APK index yet) | done |
@@ -750,8 +760,8 @@ Still open:
   - Notifications themselves are not shown yet (`NotificationManager.notify`
     is a sink), so the Notifications grant decides only what the app is told.
 - Google Play services are upstream's in-process stand-ins (section 4 names
-  the host pieces; `README.md`, "Google Play services", what works). Where
-  Windows differs from the Mac, and why:
+  the host pieces; `docs/ARCHITECTURE.md`, "Google Play services", what
+  works). Where Windows differs from the Mac, and why:
   - The sign-in window is WebView2 with an in-private profile where the Mac
     has a WKWebView with a non-persistent data store: the same page, user
     agent and cookie check. It needs the WebView2 Runtime, 2022 or later
@@ -861,7 +871,9 @@ Exit: Java-only apps from the compatibility list draw and respond to input
 
 ### M3. Audio, storage and basic services (3 to 5 weeks)
 
-Status: SQLite is done (`NativeSqlite`).
+Status: done. `NativeAudio` on WASAPI (AudioTrack, SoundPool, MediaPlayer's
+audio, recording), `NativeSqlite`, `NativeOs`, the clipboard, the document
+picker, per-app logs. `NativeMedia`'s video side is not (M7).
 
 - `NativeAudio` (40 natives) on WASAPI, `NativeSqlite`, `NativeOs`, clipboard,
   the document picker (`IFileOpenDialog`), and the basic parts of
@@ -902,6 +914,11 @@ normal `System.loadLibrary` path.
 
 ### M5. Bionic shim (3 to 5 months; the largest milestone)
 
+Status: mostly done (about 520 functions; section 4 lists the files). Still
+planned: delivering signals to guest handlers, `fork` and shipped
+executables, `/proc` emulation, static ELF TLS, FS-relative rewriting with a
+decoder. Section 7, "Loader and shim", has the details.
+
 - One file-descriptor table for files, sockets and pipes.
 - File semantics: POSIX-style delete and rename of open files, path
   translation, case handling.
@@ -925,6 +942,11 @@ engine runtime, load and initialize.
 
 ### M6. Native graphics, audio and app types (6 to 10 weeks)
 
+Status: guest EGL and GLES (`host/gl/guest_gl.cpp`), `NativeActivity`
+(`host/native_activity.cpp`) and AAudio (`host/native_aaudio.cpp`) are done.
+Still planned: OpenSL ES (`host/native_opensles.cpp` reports the engine
+unsupported), Vulkan, sensors, `GameActivity`.
+
 - Guest EGL and GLES bridged to ANGLE, using upstream's generated GLES bridge
   tables as the starting point.
 - Vulkan through `VK_KHR_win32_surface`.
@@ -935,6 +957,10 @@ engine runtime, load and initialize.
 Exit: x86_64 games from the compatibility list are playable.
 
 ### M7. System services (6 to 10 weeks, can overlap with M5 and M6)
+
+Status: WebView2, the camera (Media Foundation capture), location, XInput
+gamepads and Google sign-in are done. Still planned: video decoding (Media
+Foundation, libvpx), the accent color.
 
 - WebView2 behind `android.webkit`.
 - Media Foundation for video decoding and the camera, libvpx for VP8 and VP9.
@@ -948,6 +974,14 @@ Exit: x86_64 games from the compatibility list are playable.
 Exit: apps that only partly work today reach parity with Mac.apk.
 
 ### M8. Packaging and Windows integration (4 to 6 weeks)
+
+Status: done, differently from the plan below. The library is a Win32 and
+GDI+ program (`launcher/launcher_main.cpp`), not WinUI or WPF; the installer
+is Inno Setup (`package/winapk.iss`); each app gets Start menu and desktop
+shortcuts that start it through `Win.apk.exe --run` (no stub executable per
+app); the four file types are associated; apps can be updated from an APK,
+reinstalled and removed, and the library has a Store (F-Droid). Still
+planned: an update check for the runtime itself.
 
 - A control panel (WinUI 3 or WPF).
 - An installer (MSIX or Inno Setup).
@@ -963,6 +997,10 @@ Exit: a user without technical knowledge installs Win.apk and then an APK by
 double-clicking it.
 
 ### M9. Hardening and release (4 to 8 weeks)
+
+Status: not started, apart from the compatibility corpus in CI
+(`compat-sweep.yml`, `test/compat/`) and the release pipeline
+(`windows-release.yml`, unsigned pre-releases).
 
 - W^X thunk pool and unwind tables (section 7).
 - A crash handler that writes a minidump and the app log.
@@ -999,10 +1037,11 @@ left:
   straight to them, cached per call site. Benchmark (local, ratio to native):
   compute 1.0x (JIT 2.9x), float/NEON 1.3x (6.5x), indirect calls 1.2x
   (2.9x), memory 0.9x (1.1x), small libc calls 2.0x (5.4x), qsort with a guest
-  comparator 5.7x (17.9x). Every check runs on the three engines. Next: the
-  installer step (it needs clang, or LLVM linked in), jump tables (BR into
-  the function now leaves it), exclusives and LSE atomics without the
-  interpreter, and coverage on real apps' libraries.
+  comparator 5.7x (17.9x). Every check runs on the three engines. The
+  installer step is done (`winapk-runtime --aot-translate` in the background,
+  with the clang the package ships; `include/winapk/arm64_aot.h`). Still
+  open: jump tables (BR into the function now leaves it), exclusives and LSE
+  atomics without the interpreter, and coverage on real apps' libraries.
 - ELF TLS through TLSDESC (libraries built for API 29 or later that use
   `thread_local`), raw `SVC` system calls, and signals (a guest `SIGSEGV`
   handler, Unity's and Mono's null checks).

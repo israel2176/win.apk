@@ -293,7 +293,6 @@ void JNICALL Cocoa_setPhoneSize(JNIEnv*, jclass, jint w, jint h) {
 jint JNICALL Cocoa_phoneWidth(JNIEnv*, jclass) { return g_phone_w; }
 jint JNICALL Cocoa_phoneHeight(JNIEnv*, jclass) { return g_phone_h; }
 jint JNICALL Cocoa_displayHz(JNIEnv*, jclass) { return 60; }
-float device_density(JNIEnv* env);
 
 // Surface pixels per point. TouchDispatcher multiplies view points by it, and
 // the surface is the phone size at the device density, so the two must agree.
@@ -435,8 +434,9 @@ jboolean JNICALL Cocoa_hostHideWindowsForQuit(JNIEnv*, jclass) {
 }
 
 // Upstream shows "Translating <lib>..." while it translates ARM code ahead of
-// time. Here x86_64 libraries need no translation and arm64 ones are
-// interpreted as they run, so there is nothing to show.
+// time. Here x86_64 libraries need no translation and arm64 ones run on the
+// JIT while a background process translates them (runtime_main.cpp), so
+// there is nothing to show.
 void JNICALL Cocoa_showTranslationOverlay(JNIEnv*, jclass, jstring) {}
 void JNICALL Cocoa_updateTranslationOverlay(JNIEnv*, jclass, jstring) {}
 void JNICALL Cocoa_hideTranslationOverlay(JNIEnv*, jclass) {}
@@ -1007,9 +1007,9 @@ void JNICALL Cocoa_releaseRenderer(JNIEnv* env, jclass, jlong view) {
     g_renderers.erase(it);
 }
 
-// Upstream hands the boot thread to [NSApp run] here. Headless, there is
-// nothing to run, and the app's own threads carry on; the process ends through
-// exitProcess.
+// Upstream hands the boot thread to [NSApp run] here. The window has a UI
+// thread of its own (win32_window.cpp), so there is nothing to run: the app's
+// own threads carry on, and the process ends through exitProcess.
 void JNICALL Cocoa_runLoop(JNIEnv*, jclass) {
     for (;;) Sleep(INFINITE);
 }
@@ -1282,6 +1282,11 @@ void set_app_dir(const std::wstring& dir) {
     }
     std::lock_guard<std::mutex> hold(g_icon_lock);
     g_icon_path = dir + L"\\icon.png";
+}
+
+std::wstring app_dir() {
+    std::lock_guard<std::mutex> hold(g_app_dir_lock);
+    return g_app_dir;
 }
 
 void prepare_host_url_queue(JNIEnv* env) {

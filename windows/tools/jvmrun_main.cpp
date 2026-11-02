@@ -9,8 +9,8 @@
 //   * nativeAdd is handed to HotSpot as a raw guest address, and the JVMTI
 //     NativeMethodBind hook has to replace it with a thunk. This stands in for
 //     HotSpot binding a Java_* symbol by name, which goes through the same
-//     event (the per-library stub DLL that makes HotSpot find the name is not
-//     built yet).
+//     event (in the runtime, through the per-library stub DLL of
+//     host/guest_libs.h).
 //
 // nativeAdd calls back into Java (WinApkJniTest.javaMultiply) through the
 // guest JNIEnv, so nativeAdd(3, 4) returns (3 + 4) + (3 * 4) = 19 only if the

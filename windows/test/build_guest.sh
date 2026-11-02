@@ -63,7 +63,7 @@ link_lib ROOT libwinapk_link_root -L"$LINK" -L"$STUBS" -lwinapk_link_mid -lc -ld
 "$CC" "${COMMON[@]}" -fno-emulated-tls -Wl,-soname,libwinapk_bionic_guest.so \
     -o "$OUT/libwinapk_bionic_guest.so" "$HERE/guest/bionic_guest.c" -L"$STUBS" -Wl,--no-as-needed -lz
 
-# The arm64 interpreter's test libraries (winapk-arm64-test, milestone M10).
+# The arm64 engines' test libraries (winapk-arm64-test).
 # arm64_isa.c three ways (the test compares each against the same code built
 # for the host), and the bridge library against the Bionic shim. Atomics are
 # inlined (-mno-outline-atomics): the outline helpers live in libgcc, which

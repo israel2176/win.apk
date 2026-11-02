@@ -27,7 +27,8 @@
 // launcher (launcher/) runs when an APK is added to the library.
 //
 // App data lives under %LOCALAPPDATA%\Win.apk unless --data says otherwise.
-// There is no window yet (milestone M2); what the app does shows in the log.
+// The app's window is win32_window.h's; with WINAPK_HEADLESS=1 there is none
+// and what the app does shows in the log.
 //
 // Paths may hold any character, whatever "Language for non-Unicode programs"
 // is set to (a user name in Hebrew on an English system, say). The program
@@ -335,8 +336,8 @@ int run_process(std::wstring cmdline) {
 // (runtime/scripts/build_ids.py), the id hashes the converter's entries'
 // names, lengths and CRC-32s from the jar's central directory: a rebuild of
 // the same sources, or a change to the framework or the loader only, keeps
-// the jars. (After 5566brs/win.apk 67f7f16.) The name starts with ".macapk",
-// so Boot's code-dir scan leaves the file here.
+// the jars. The name starts with ".macapk", so Boot's code-dir scan leaves
+// the file here.
 
 // "<size>:<last write time>" of a file, or "" when it cannot be read.
 std::string file_id(const fs::path& p) {
@@ -565,6 +566,8 @@ bool install_app(Options* o, const fs::path& android_root) {
 // "skip" (not an arm64 ELF file: packed or encrypted, loaded by the app's
 // own code), or "bad" (its translation crashed: the loader marks it, and the
 // JIT runs the library; see arm64_aot.cpp). A DLL without a stamp is a whole translation from before stamps.
+// The stamp ends with the kAotVersion it was made with; another one means
+// translate again.
 //
 // Many apps ship the same libraries (libc++_shared.so, libcrashlytics.so,
 // SQLite, ...). As Windows on ARM's translation cache and Box64's DynaCache
@@ -606,6 +609,7 @@ size_t profile_lines(const fs::path& so) {
 struct AotStamp {
     std::string kind;  // "full", "profile", "wait", or "" (none)
     size_t lines = 0;
+    unsigned version = 0;  // the kAotVersion it was made with; 0 before stamps had one
 };
 
 AotStamp read_aot_stamp(const fs::path& so) {
@@ -614,9 +618,11 @@ AotStamp read_aot_stamp(const fs::path& so) {
     if (!f) return s;
     char kind[16] = {};
     unsigned long long lines = 0;
-    if (std::fscanf(f, "%15s %llu", kind, &lines) >= 1) {
+    unsigned version = 0;
+    if (std::fscanf(f, "%15s %llu %u", kind, &lines, &version) >= 1) {
         s.kind = kind;
         s.lines = static_cast<size_t>(lines);
+        s.version = version;
     }
     std::fclose(f);
     return s;
@@ -624,7 +630,7 @@ AotStamp read_aot_stamp(const fs::path& so) {
 
 void write_aot_stamp(const fs::path& so, const char* kind, size_t lines) {
     if (FILE* f = _wfopen(with_suffix(so, L".aot.stamp").c_str(), L"wb")) {
-        std::fprintf(f, "%s %zu\n", kind, lines);
+        std::fprintf(f, "%s %zu %u\n", kind, lines, winapk::arm64::kAotVersion);
         std::fclose(f);
     }
 }
@@ -638,6 +644,10 @@ bool newer_than(const fs::path& a, const fs::path& b) {
 bool aot_needs_work(const fs::path& so) {
     const bool have = newer_than(with_suffix(so, L".aot.dll"), so) || newer_than(with_suffix(so, L".aot.dll.new"), so);
     const AotStamp stamp = read_aot_stamp(so);
+    // Made by an older winapk-aot: the loader ignores that DLL, and a "bad"
+    // one may have been the translator's fault (City Car's libflutter.so).
+    if (have && stamp.version != winapk::arm64::kAotVersion) return true;
+    if (stamp.kind == "bad" && stamp.version != winapk::arm64::kAotVersion) return true;
     if (stamp.kind == "skip" || stamp.kind == "bad") return !newer_than(with_suffix(so, L".aot.stamp"), so);
     auto grown = [&] {
         const size_t p = profile_lines(so);
@@ -1416,12 +1426,13 @@ void map_shared_folders(const Options& o) {
 // boot had its main thread in NativeLog.print for most of the samples it was
 // not idle in: the first frame took 48 to 76 s, and about 5 s with this.
 //
-// So stderr gets a 64 KB buffer, flushed every 200 ms by a background thread,
+// So stderr gets a 64 KB buffer, flushed every 50 ms by a background thread,
 // at once for warnings and errors (NativeLog), and on the exit paths that
-// already flush. A hard crash can lose at most the last 200 ms of INFO lines.
-// 50 ms: an abort in a library with its own C runtime (ANGLE's) ends the
-// process without flushing ours, and the log's last lines are the ones that
-// say why. VLC's run ended that way with nothing after a class load.
+// already flush. A hard crash can lose at most the last 50 ms of INFO lines;
+// the interval is that short because an abort in a library with its own C
+// runtime (ANGLE's) ends the process without flushing ours, and the log's
+// last lines are the ones that say why (VLC's run ended that way with
+// nothing after a class load).
 DWORD WINAPI stderr_flusher(void*) {
     for (;;) {
         Sleep(50);
@@ -1520,6 +1531,8 @@ int wmain(int argc, wchar_t** argv) {
     std::error_code ec;
     b.app_dir = b.options.data / "apps" / b.options.apk.stem();
     winapk::host::set_app_dir(b.app_dir.wstring());
+    // Before the window: the taskbar and the notifications go by it.
+    if (!b.options.install_only) winapk::host::set_app_user_model_id(b.options.apk.stem().wstring());
     fs::create_directories(b.app_dir, ec);
     if (ec) {
         std::fprintf(stderr, "[win.apk] cannot create %s\n", utf8(b.app_dir.wstring()).c_str());

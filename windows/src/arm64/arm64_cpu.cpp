@@ -214,7 +214,6 @@ void dp_immediate(Cpu& c, uint32_t insn) {
 
 // ---- branches, exceptions, system -------------------------------------------
 
-
 // The generic timer (CNTVCT_EL0): nanoseconds of a monotonic clock, with
 // CNTFRQ_EL0 saying so.
 uint64_t counter_frequency() { return 1000000000; }
@@ -252,7 +251,7 @@ void system_insn(Cpu& c, uint32_t insn) {
             std::memset(reinterpret_cast<void*>(a), 0, 64);
         }
         // DC CVAU/CIVAC/CVAC and IC IVAU: the interpreter has no code cache
-        // to invalidate (a JIT will have to act here).
+        // to invalidate (the JIT acts on them itself, arm64_jit.cpp).
         return;
     }
     // MRS / MSR (register)

@@ -28,20 +28,42 @@ public class NotificationManager {
 
     public static final int VISIBILITY_NO_OVERRIDE = -1000;
 
-    private final List<NotificationChannel> channels = new ArrayList<>();
+    // One registry for the process, as NotificationManagerService's is: a
+    // manager is made per getSystemService call, and a channel created through
+    // one is what notify() through another looks up.
+    private static final List<NotificationChannel> channels = new ArrayList<>();
 
-    public void notify(int id, Notification notification) {}
-    public void notify(String tag, int id, Notification notification) {}
-    public void notifyAsPackage(String targetPackage, String tag, int id, Notification notification) {}
-    public void cancel(int id) {}
-    public void cancel(String tag, int id) {}
-    public void cancelAll() {}
+    /** Posts the notification to the host (com.macapk.loader.HostNotifications;
+     *  nothing on a host without them), as NotificationManagerService would:
+     *  not without POST_NOTIFICATIONS (areNotificationsEnabled, which has T's
+     *  pre-grant below T), not on a blocked channel, and with the channel's
+     *  importance deciding whether it interrupts. A notification without a
+     *  channel (a pre-O app) takes its priority's importance. */
+    public void notify(int id, Notification notification) { notify(null, id, notification); }
+    public void notify(String tag, int id, Notification notification) {
+        if (notification == null || !areNotificationsEnabled()) return;
+        int importance = IMPORTANCE_DEFAULT;
+        NotificationChannel channel = getNotificationChannel(notification.getChannelId());
+        if (channel != null) {
+            if (channel.getImportance() != IMPORTANCE_UNSPECIFIED) importance = channel.getImportance();
+        } else if (notification.priority <= Notification.PRIORITY_LOW) {
+            importance = IMPORTANCE_LOW;
+        }
+        if (importance <= IMPORTANCE_NONE) return;
+        com.macapk.loader.HostNotifications.post(tag, id, notification, importance);
+    }
+    public void notifyAsPackage(String targetPackage, String tag, int id, Notification notification) {
+        notify(tag, id, notification);
+    }
+    public void cancel(int id) { cancel(null, id); }
+    public void cancel(String tag, int id) { com.macapk.loader.HostNotifications.cancel(tag, id); }
+    public void cancelAll() { com.macapk.loader.HostNotifications.cancelAll(); }
 
     public void createNotificationChannel(NotificationChannel channel) {
         if (channel != null) channels.add(channel);
     }
-    public void createNotificationChannels(List<NotificationChannel> channels) {
-        if (channels != null) this.channels.addAll(channels);
+    public void createNotificationChannels(List<NotificationChannel> list) {
+        if (list != null) channels.addAll(list);
     }
     public void deleteNotificationChannel(String channelId) {
         channels.removeIf(c -> c != null && c.getId() != null && c.getId().equals(channelId));

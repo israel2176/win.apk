@@ -96,7 +96,7 @@ bool marked_bad(const std::string& so) {
 // (Waze's libcrashlytics-common.so: translated, it crashed ten seconds in;
 // on the JIT, Waze runs).
 //
-// TODO(aot): fix the translation instead of falling back. The case found:
+// Open translation bugs, worth fixing instead of falling back. The case found:
 // libcrashlytics-common.so (Waze 5.26.5), base::StringPrintf(const char*,
 // ...) at vaddr 0x106398, a variadic function; its translated code writes to
 // 0xe9 at +0x1a1. Suspect the prologue that spills x1-x7/q0-q7 to the
@@ -104,12 +104,17 @@ bool marked_bad(const std::string& so) {
 // a test of w8), or how va_start's pointers are formed. Reproduce with
 // winapk-aot on that library and the arm64 differential test, with a
 // variadic guest function added to test/guest/arm64_isa.c.
-// TODO(aot): second case, same app: libwaze.so, guest function 0x4035494
+// Second case, same app: libwaze.so, guest function 0x4035494
 // (stripped; it runs among the library's 2184 initializers), writes to 0x8
 // at +0xf9 (+0x88 in an older, -O2 build). Find what the guest reads as 0
 // there that the JIT does not.
-// TODO(aot): a "bad" stamp is kept until the library changes; it should
-// also be retried when winapk-aot changes (as the shared cache's key does).
+// A "bad" stamp is kept until the library changes or kAotVersion is raised
+// (runtime_main.cpp, aot_needs_work).
+//
+// Not caught here: a translation bug that hands a host function bad
+// arguments faults in that function, outside the DLL. City Car's
+// libflutter.so did (memmove, from a dropped `cmp` result; arm64_aot.h,
+// "Calls"), and crashed on every start.
 struct LoadedDll {
     uint64_t lo, hi;
     std::string so;      // file name, for the message
@@ -150,7 +155,9 @@ LONG CALLBACK report_aot_fault(EXCEPTION_POINTERS* e) {
                 HANDLE f = CreateFileW(stamp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL,
                                        nullptr);
                 if (f != INVALID_HANDLE_VALUE) {
-                    WriteFile(f, "bad 0\n", 6, &n, nullptr);
+                    char bad[32];
+                    const int len = std::snprintf(bad, sizeof bad, "bad 0 %u\n", kAotVersion);
+                    WriteFile(f, bad, static_cast<DWORD>(len), &n, nullptr);
                     CloseHandle(f);
                 }
                 static const char kNote[] =

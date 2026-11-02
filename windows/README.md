@@ -1,372 +1,237 @@
-# Win.apk: the Windows x64 port
+# Win.apk: building, running and testing
 
-Win.apk is an unofficial port of [Mac.apk](https://github.com/kksimp/Mac.apk) to
-Windows on Intel/AMD (x64). It is not affiliated with or endorsed by the Mac.apk
-project or Voltare. Win.apk's code lives in `windows/`; `runtime/` (the Android
-framework in Java and the shared native sources) comes from upstream and is kept
-close to it so that upstream fixes can still be merged. The macOS-only parts of
-upstream (the Swift launcher, the Mac build scripts, the prebuilt Mac libraries
-and the Mac documentation) are not in this repository.
+This is the developer guide for the Windows port: how to build it, run an app
+from a build, run the tests, and keep the fork in step with upstream.
+[`../docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md) explains how the pieces
+fit; [`PORTING.md`](PORTING.md) holds the design decisions, the technical
+findings, the known gaps and the milestone plan; the
+[user guide](../docs/USER_GUIDE.md) describes what a user sees.
 
-## Why x64 is a different problem from the Mac
+Win.apk is an unofficial port of [Mac.apk](https://github.com/kksimp/Mac.apk)
+to Windows on Intel/AMD (x64). It is not affiliated with or endorsed by the
+Mac.apk project or Voltare. Win.apk's own code lives in `windows/`;
+`runtime/` (the Android framework in Java and the shared native sources)
+comes from upstream and is kept close to it so that upstream fixes can still
+be merged. Upstream's macOS-only parts (the Swift launcher, the Mac build
+scripts, the prebuilt Mac libraries and the Mac documentation) are not in
+this repository.
 
-Mac.apk runs an app's native code as is, because Apple Silicon and Android phones
-are both arm64. An Intel/AMD CPU cannot execute arm64 code, so on x64 Android apps
-fall into three groups:
-
-| Apps | Plan |
-|---|---|
-| Java/Kotlin only (no `.so`) | Run on HotSpot like on the Mac. Needs only the host layer (window, input, ANGLE on D3D11, audio). |
-| Ship `lib/x86_64/*.so` | Load the x86_64 libraries natively with the loader in this directory. Full speed. |
-| ARM-only native code | `lib/arm64-v8a` is translated to x86-64 at install time (`winapk-aot`, see `include/winapk/arm64_aot.h`): integer code runs at about native speed, floating point and NEON at about 1.3x, calls into the host at about 2x. What the translation cannot follow runs through the arm64 JIT (dynarmic, 0BSD), about 2.6-6x; the interpreter (about 80x) checks both. 32-bit `armeabi-v7a` is not supported. |
+- [What is here](#what-is-here)
+- [Build on Windows](#build-on-windows)
+- [Build on Linux and run under Wine](#build-on-linux-and-run-under-wine)
+- [Run an app from a build](#run-an-app-from-a-build)
+- [Environment variables for development](#environment-variables-for-development)
+- [Tests](#tests)
+- [The compatibility sweep](#the-compatibility-sweep)
+- [CI and releases](#ci-and-releases)
+- [Keeping up with upstream](#keeping-up-with-upstream)
+  - [Changes to the upstream tree](#changes-to-the-upstream-tree)
+- [License](#license)
 
 ## What is here
 
 | Path | What it is |
 |---|---|
-| `include/winapk/elf64_defs.h` | ELF64 / x86-64 psABI layouts (Windows has no `<elf.h>`) |
-| `include/winapk/guest_abi.h` | `WINAPK_GUEST_ABI`: the boundary between System V and Microsoft x64 calls |
-| `src/elf_loader.cpp` | Android x86_64 ELF loader: segments, RELA/RELR/APS2 relocations, protections, RELRO, init/fini |
-| `src/elf_tls.cpp` | Dynamic ELF TLS for guest libraries: module ids, `__tls_get_addr`, a block per thread and module |
-| `src/fs_tls_patch.cpp` | Rewrites the Bionic stack guard `%fs:0x28` to `%gs:0x28` (`NT_TIB.ArbitraryUserPointer`) |
-| `src/mini_bionic.cpp`, `src/bionic/` | The Windows Bionic shim (sysv_abi functions over the UCRT and Win32): strings, printf, pthread, files, time, `mmap`, system properties and the environment, Android paths, pipes/eventfd/epoll, sockets on Winsock, `ALooper`, and `libz.so` on a statically linked zlib. `test/bionic_test.cpp` (`winapk-bionic-test`) checks it against `test/guest/bionic_guest.c` |
-| `tools/elfrun_main.cpp` | `winapk-elfrun`: loads `.so` files and runs the PoC checks |
-| `test/guest/poc_guest.c` | The Android x86_64 test library |
-| `include/winapk/abi_thunk.h`, `src/abi_thunk.cpp` | Runtime machine-code thunks for the JNI bridge: native-method thunks from Microsoft x64 callers to System V code (built per Java signature) and the System V variadic `va_list` entry stub |
-| `tools/gen_jni_slots.py`, `src/jni_slots.inc` | Generated `JNINativeInterface_` slot table (235 slots) the guest `JNIEnv` wrapper is built from |
-| `include/winapk/guest_jni.h`, `src/guest_jni.cpp` | The guest `JNIEnv`/`JavaVM` wrapper: per-thread guest env, a generic System V forwarder into HotSpot's table for every non-variadic slot, and `GetEnv`/`Attach`/`Detach`. Needs a JDK's `jni.h` at build time (`-DWINAPK_JNI_INCLUDE=$JAVA_HOME/include`) |
-| `include/winapk/jni_variadic.h`, `src/jni_variadic.cpp` | The variadic `Call<T>Method` / `...V` / `NewObject` bridge (31 families, one template keyed on the `...A` slot): reads the argument stream against the method signature and repacks it into the `jvalue[]` of HotSpot's A-form. Needs a `SignatureProvider` (JVMTI-backed in the real host, a map in tests) |
-| `include/winapk/linker.h`, `src/linker.cpp` | The guest linker: loads a library with its `DT_NEEDED` tree (bionic's lookup order, system libraries answered by the shim), keeps the registry of loaded images, and implements the guest's `dlopen`, `dlsym`, `dladdr`, `dlerror` and `dlclose`. `test/linker_test.cpp` (`winapk-linker-test`) checks it against `test/guest/link_guest.c` |
-| `include/winapk/jni_bind.h`, `src/jni_bind.cpp` | Binding guest natives into HotSpot: the guest `RegisterNatives` slot wraps each function in a thunk, and a JVMTI `NativeMethodBind` hook does the same for natives bound by name. Also the cached JVMTI signature provider |
-| `include/winapk/arm64_cpu.h`, `src/arm64/` | The arm64 track (M10): an AArch64 interpreter (`arm64_cpu.cpp` for integer, memory and branches, `arm64_simd.cpp` for FP and NEON) and its bridge to the host (`arm64_guest.cpp`, `include/winapk/arm64_guest.h`): AAPCS64 to System V calls into the shim, `va_list` conversion, host calls into guest code through an execute-fault handler, per-thread guest stacks and TLS. `ElfImage` loads arm64 libraries with it. `test/arm64_test.cpp` (`winapk-arm64-test`) checks the interpreter against the same C code built for the host, and the bridge against `test/guest/arm64_bridge_guest.c` |
-| `host/` | `winapk-runtime.exe`, the host that runs an APK: DEX conversion, the in-process JVM, the host natives (window and input, `NativeOs`, `NativeLooper`, `NativeImageCodec` with libwebp and WIC, `NativeAudio` on WASAPI; the rest are still stubs), app native libraries (`guest_libs.cpp`), and `Boot.run`. `test/audio_test.cpp` (`winapk-audio-test`) checks the audio backend |
-| `scripts/` | `build_java.sh` (upstream's Java runtime with a stock JDK), `build_framework_res.sh` (the platform resource APK) and `stage_runtime.sh` (a runnable `bin/` + `lib/` folder) |
-| `tools/jvmrun_main.cpp` | `winapk-jvm-run`: the real-JVM end-to-end test. Creates a HotSpot JVM, loads an Android x86_64 `.so` through the guest linker, runs its `JNI_OnLoad` (which registers a native itself), binds a second native through the `NativeMethodBind` hook, and calls both from Java; one of them calls back into Java through the guest `JNIEnv`. `test/guest/jni_guest.c` and `test/java/WinApkJniTest.java` are its inputs; `test/build_e2e.sh` builds them and `test/run_e2e_wine.sh` runs it under Wine |
+| `include/winapk/`, `src/` | The ELF loader (`elf_loader.cpp`), the guest linker (`linker.cpp`), dynamic ELF TLS (`elf_tls.cpp`), the `%fs` stack-guard patch (`fs_tls_patch.cpp`), the ABI thunks (`abi_thunk.cpp`), the guest `JNIEnv` (`guest_jni.cpp`, `jni_slots.inc`), the variadic JNI bridge (`jni_variadic.cpp`), native-method binding (`jni_bind.cpp`), libjnigraphics (`jnigraphics.cpp`) |
+| `src/mini_bionic.cpp`, `src/bionic/` | The Bionic shim: Android's libc, libdl, liblog, libm, libz and the NDK's `ALooper` on the UCRT and Win32, about 520 System V functions |
+| `src/arm64/` | The arm64 engines: interpreter (`arm64_cpu.cpp`, `arm64_simd.cpp`), JIT (`arm64_jit.cpp`, dynarmic), ahead-of-time translator (`arm64_aot.cpp`) and the AAPCS64 bridge (`arm64_guest.cpp`, `arm64_abi.cpp`) |
+| `host/` | `winapk-runtime.exe` (`runtime_main.cpp`), the app window (`win32_window.cpp`), the host natives (`native_*.cpp`, one file per Java class; `host_natives.cpp` binds them), the GL layer (`gl/`), the app-library loading path (`guest_libs.cpp`, `guest_stub.cpp`, `translator_main.cpp`), shared storage (`user_folders.cpp`) |
+| `launcher/` | `Win.apk.exe`, the app library, the install helper and the permission dialogs (`launcher_main.cpp`, `launcher.rc`, the icon) |
+| `java/` | Windows-only Java: `com.winapk.tools.AppInstall` and `AppMeta` (`winapk-tools.jar`), and `java_base_patch/` (an overlay for `java.base`) |
+| `tools/` | `winapk-elfrun` (the loader test runner), `winapk-jvm-run` (the real-JVM test), `winapk-aot` (`arm64_aot_main.cpp`), and the generators `gen_jni_slots.py`, `gen_gl_stubs.py`, `gen_icon.py` |
+| `scripts/` | `build_java.sh`, `build_framework_res.sh`, `fetch_angle.sh`, `fetch_webview2.sh`, `stage_clang.sh`, `stage_runtime.sh` |
+| `test/` | The unit tests (`*_test.cpp`), the guest test libraries (`guest/`, built with plain clang + lld, no NDK), the Java tests (`java/`), the Wine runners (`run_*_wine.sh`), the compatibility sweep (`compat/`) |
+| `package/` | The installer (`winapk.iss`, Inno Setup), `README.txt` and `RELEASE_NOTES.md` shipped with a release |
+| `cmake/`, `compat/`, `third_party/` | The Linux cross toolchain file, the CMake steps that cut the GL and Bitmap bridges out of upstream's `native_methods.cpp` and `bionic_shim.cpp`, a CoreFoundation shim for `native_sqlite.cpp`, the Khronos headers |
+| `CMakeLists.txt` | Every Windows target |
 
-What the PoC checks: int/double/stack arguments across the ABI boundary, RELATIVE,
-`R_X86_64_64`, GLOB_DAT/JUMP_SLOT, RELR and Android APS2 relocations, `DT_INIT_ARRAY`,
-calls from guest code into the shim, host callbacks into guest code, and stack-protected guest code
-on the main thread and on new threads.
+`PORTING.md`, section 4, describes each component and test in more detail.
 
-## Build and run
+## Build on Windows
 
-On Windows ([MSYS2](https://www.msys2.org/), CLANG64 shell):
+Toolchain: clang only. MSVC cannot emit System V calls, and MinGW GCC 13
+emits broken SEH unwind data for `sysv_abi` functions. CI builds on
+`windows-latest` with MSYS2 CLANG64 and Temurin 21.
+
+In an [MSYS2](https://www.msys2.org/) CLANG64 shell, with a JDK 21 installed
+and `JAVA_HOME` pointing at it:
 
 ```sh
-pacman -S mingw-w64-clang-x86_64-{clang,cmake,ninja,zlib}
-cmake -S windows -B build -G Ninja && cmake --build build
-./build/winapk-elfrun.exe path/to/libwinapk_poc_guest.so
+pacman -S mingw-w64-clang-x86_64-{clang,cmake,ninja,zlib,boost}
+cmake -S windows -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  -DWINAPK_JNI_INCLUDE="$JAVA_HOME/include" -DWINAPK_ARM64_JIT=ON
+cmake --build build
+windows/scripts/stage_runtime.sh build runtime
 ```
 
-The guest libraries are built with plain clang + lld, so no NDK is needed:
-`windows/test/build_guest.sh`.
+- `-DWINAPK_JNI_INCLUDE=<jdk>/include` builds the JNI library, its tests,
+  `winapk-jvm-run` and the runtime; without it only the loader, the shim and
+  their tests build.
+- `-DWINAPK_ARM64_JIT=ON` fetches dynarmic (needs the Boost headers) and
+  builds the arm64 JIT. CI and releases use it; without it arm64 code runs on
+  the interpreter until its translation is ready.
+- `stage_runtime.sh <build dir> [out]` assembles a runnable folder (default
+  `windows/build/runtime`): `Win.apk.exe`, `bin/` (the runtime, the
+  translator and stub DLL, `winapk-aot`, ANGLE from `fetch_angle.sh`,
+  `WebView2Loader.dll` from `fetch_webview2.sh`, `tools/framework-res.apk`),
+  `lib/` (the jars from `build_java.sh`) and `clang/` (from
+  `stage_clang.sh`, the compiler the arm64 translation uses). The JDK is not
+  copied: the runtime uses `<out>/jre` if present, else `WINAPK_JAVA_HOME` or
+  `JAVA_HOME`.
+- `build_java.sh [out]` builds upstream's Java side with a stock JDK 21:
+  `android-framework.jar`, `macapk-loader.jar`, `winapk-tools.jar`, the
+  BouncyCastle provider, and the `java.base` and `jdk.unsupported` patches.
+- `build_framework_res.sh [out.apk]` builds the platform resource APK from
+  AOSP sources with Google's standalone `aapt2` (9.x or later), through
+  upstream's `scripts/build_framework_res.sh`. The result is cached under
+  `thirdparty/framework-res`.
 
-On Linux (cross-compile, run under Wine): `windows/test/run_poc_wine.sh`.
-
-The JNI library and its tests (`winapk-jni-test`, `winapk-jni-variadic-test`,
-`winapk-jvm-run`) build only when CMake is given a JDK's include directory:
-`-DWINAPK_JNI_INCLUDE=$JAVA_HOME/include`.
-The real-JVM test runs under Wine with `windows/test/run_e2e_wine.sh`; see
-`PORTING.md`, section 9, for the full local setup.
-
-CI: `.github/workflows/windows-poc.yml` builds the guests on Ubuntu and runs all
-tests on a real `windows-latest` runner.
-
-Toolchain: clang only. MSVC cannot emit System V calls, and mingw GCC 13 emits
-broken SEH unwind data for `sysv_abi` functions.
-
-## Trying it
-
-Download `Win.apk-Setup.exe` (or `Win.apk-windows-x64.zip`) from the
-repository's Releases page. The installer puts Win.apk in the Start menu for
-the current user and opens `.apk` files with it. `Win.apk.exe` is the app
-library (`launcher/launcher_main.cpp`, the counterpart of upstream's
-`launcher/`):
-
-- **Adding an app:** drop an APK on it to install the app. The APK is copied into
-  `%LOCALAPPDATA%\Win.apk\library`, installed and converted once by
-  `winapk-runtime --install-only` (which also renders the app's icon and
-  resolves its name), and given Start menu and desktop shortcuts with its own
-  icon.
-- **Running and managing:** double-click an app to run it; right-click for Get
-  Info, shortcuts, its files and log, updating it from a newer APK,
-  reinstalling or removing it. Typing searches the library.
-- **Orientation:** apps open in landscape, the shape of a PC screen, unless the
-  settings say portrait. Right-click > "Open in portrait" / "Open in
-  landscape" turns one app the other way, for that app only
-  (`library\<name>.orientation`); Get Info shows the choice and can hand it
-  back to the settings. An app whose manifest fixes the orientation of its
-  launched activity always opens that way, and the menu entry says so.
-- **Hebrew:** the library is in Hebrew, laid out right to left, when Windows
-  is; the settings can pick English or Hebrew instead.
-- **Settings** (the gear): language, light or dark theme, the default app for `.apk`
-  files, the phone's screen size and orientation (`HKCU\Software\Win.apk`;
-  `Landscape` absent means landscape, an explicit 0 from an earlier version
-  still means portrait), desktop shortcuts, and the logs and app data folders.
-
-The package holds the runtime, a Java runtime, ANGLE and `README.txt`, which
-says what works, where app data and logs are, and what to attach to a bug
-report. Every CI run on
-`windows-latest` also uploads the same folder as the `winapk-preview`
-artifact.
-
-A release is made by running the "Windows release" workflow
-(`.github/workflows/windows-release.yml`) by hand with a tag such as
-`v0.1.0-preview`: it builds on Windows, packages `windows/package/` with the
-staged runtime, boots an APK from the package as a smoke test, builds the
-installer with Inno Setup, and publishes both as a GitHub pre-release with
-`windows/package/RELEASE_NOTES.md`.
-
-## Running an APK
+## Build on Linux and run under Wine
 
 ```sh
-windows/scripts/stage_runtime.sh build runtime     # after building with CMake
-runtime/bin/winapk-runtime.exe --apk app.apk --jdk "$JAVA_HOME"
+sudo apt install clang lld cmake ninja-build mingw-w64 libz-mingw-w64-dev wine64
 ```
 
-`--apk` also takes a split bundle (`.apkm`, `.xapk` or `.apks`), installed once
-as `base.apk` plus `split_*.apk` under `%LOCALAPPDATA%\Win.apk\app`. The app
-opens in its own window, with its own icon, and takes mouse, wheel and keyboard input
-(Escape is Android's Back). Java-only apps work this way, including OpenGL
-from Java (`GLSurfaceView`, libGDX) on ANGLE, and so do apps that draw with
-OpenGL ES from their own native code through a SurfaceView (SDL games);
-`NativeActivity` apps and native audio (OpenSL ES, AAudio) are not there yet. App data goes to `%LOCALAPPDATA%\Win.apk`.
+You also need a Windows JDK (for example the Temurin 21 zip) for `jvm.dll`,
+`jni.h` and `jvmti.h`, and any JDK 21 or later on the host for `javac`.
+Configure with `-DCMAKE_TOOLCHAIN_FILE=windows/cmake/clang-mingw-x86_64.cmake`
+and `-DWINAPK_JNI_INCLUDE=<windows-jdk>/include`. The scripts under
+`windows/test/` do the whole thing:
 
-The runtime and the app data may live in folders with names in any language,
-whatever "Language for non-Unicode programs" is set to: the runtime's manifest
-makes its ANSI code page UTF-8 (Windows 10 1903 and later), which is how the
-JVM gets such paths whole, and the steps that run in a separate JVM (install,
-DEX conversion) run in a child of `winapk-runtime.exe` rather than `java.exe`.
-Older Windows ignores the manifest; there the runtime passes the JVM 8.3 short
-names, which covers the app data, but the runtime's own folder needs plain
-letters (the JDK loads its DLLs by their long names).
+| Script | What it does |
+|---|---|
+| `windows/test/run_poc_wine.sh` | Builds the loader and the guest libraries and runs the PoC checks under Wine |
+| `WINAPK_WIN_JDK=<windows-jdk> windows/test/run_e2e_wine.sh` | Builds and runs the real-JVM end-to-end test, with the x86_64 and the arm64 guest library (`WINAPK_HOST_JAVAC` picks the javac) |
+| `WINAPK_WIN_JDK=<windows-jdk> windows/test/run_app_wine.sh app.apk [frames]` | Stages the runtime and boots an APK headless (needs `curl` and `unzip` for the first resource build); leaves `windows/build/frame.bmp` and `boot.log` |
+| `windows/test/build_guest.sh [out]`, `build_e2e.sh <jni include> <javac> <out>` | Build the guest test libraries alone |
 
-The app sees a 360x800 dp phone, the most common phone screen.
-`WINAPK_PHONE_SIZE=412x915` sets another size, in dp. The window shows the
-phone at the monitor's scale. When the whole window, title bar included, would
-not fit the monitor's work area (the screen without the taskbar), the app gets
-a lower density instead, so it keeps its dp size and still draws at the
-window's own pixel size. `WINAPK_DENSITY` (a dpi) overrides the density.
+To see a window under Wine, start `Xvfb :99` and run `winapk-runtime.exe`
+with `DISPLAY=:99` and without `WINAPK_HEADLESS`; `xdotool` and ImageMagick's
+`import` can drive and capture it. Wine is a convenience: the CI job on a
+real Windows runner is what counts. Wine 9 lacks a function the JDK's
+`NetworkInterface` code delay-loads, which `run_app_wine.sh` works around by
+putting the SunMSCAPI provider first.
 
-The window is the app's display, as an Android desktop window is. Resizing
-it -- dragging an edge, maximizing, snapping -- gives the app a display of the
-new size: its surface is the window's client area in pixels, the Configuration
-and DisplayMetrics follow (`DisplayConfig`), the views are laid out again and
-every GL surface and native window hears `surfaceChanged`. The app follows
-each step of a drag, and frames are shown pixel for pixel: an old frame is
-never stretched to the new size, it stays unscaled until the app has drawn
-the new one. An app that fixed its orientation keeps its shape in a window of
-the other one: it gets the largest box of its aspect, centred, with black bars
-around it, as Android letterboxes a fixed-orientation app on a large screen,
-and draws at that box's size. Clicks on the bars go nowhere. The size the user
-settles on is kept per app (`library\<name>.window`, in dp) for the next
-start; the library's Get Info resets it. `WINAPK_RESIZABLE=0` keeps the
-phone's size for good and shows it letterboxed in whatever size the window
-gets; `MACAPK_LETTERBOX=0` then stretches it over the whole window.
+## Run an app from a build
 
-The density stays what it was at launch. On a monitor with another scale the
-window keeps its size in physical terms and the frames are resampled to it,
-the one case a frame is scaled by design (PORTING.md, "Display", on why a
-density change is not done yet).
+```sh
+runtime/bin/winapk-runtime.exe --apk app.apk [--jdk "$JAVA_HOME"] [--data <dir>] [--install-only]
+runtime/bin/winapk-runtime.exe [--jdk "$JAVA_HOME"] [--data <dir>] --gms <command> [args]
+```
 
-An app runs once at a time, as on the Mac: starting it again (a shortcut, the
-library) brings the running app's window forward, and updating it while it
-runs is refused until it is closed. `WINAPK_ALLOW_SECOND_INSTANCE=1` turns the
-check off.
+`--apk` takes a plain APK or a split bundle (`.apkm`, `.xapk`, `.apks`).
+`--data` defaults to `%LOCALAPPDATA%\Win.apk`; a separate folder keeps a
+development run away from the user's library. `--install-only` installs,
+converts and writes the icon and name, then exits (3 if the app is running).
+`--gms` runs upstream's `com.macapk.gms.GmsCli` (`status`, `selftest`,
+`accounts`, `signin-window`, `signout`, `checkin`, `license`, `gcmtoken`...)
+with no app; exit 0 done, 1 error, 2 cancelled or bad arguments.
 
-### Permissions
+`Win.apk.exe` has the user-facing command line (`<file>`, `--run`) and the
+helper verbs `install`, `uninstall`, `runtime-permission`, `special-access`
+and `app-details`, documented at the top of `launcher/launcher_main.cpp` and
+in the [user guide](../docs/USER_GUIDE.md#command-line).
 
-Apps ask for permissions as on Android. Every dangerous group is a runtime
-permission the user answers in a Windows dialog over the app, drawn by the
-launcher (`Win.apk.exe runtime-permission`, run by the runtime as upstream runs
-macapk-installhelper; the app is identified from the parent process, never
-from arguments): storage and media, location (with "Only approximate", and
-"all the time" asked separately once the foreground is granted), camera,
-microphone, contacts, calendar, phone, call logs, SMS, notifications, nearby
-devices, physical activity and body sensors. Allow grants the group; Don't
-allow denies it, and a second refusal denies it for good (no more dialogs;
-`shouldShowRequestPermissionRationale` is true only between the two); a
-permission in a group that already has a granted member is granted silently.
-A pre-M app holds what it declares, and legacy targets get the platform's
-implicit grants (notifications below T, the Bluetooth split below S, and so
-on). The answer is signed into `%LOCALAPPDATA%\Win.apk\appops\app-ops.json`
-(ECDSA P-256; the private key under DPAPI), which the runtime verifies and
-never writes; it survives restarts and updates, and is forgotten when the
-app is removed. The special access the user can grant in Settings on a device
-has the same dialog here (`special-access`): All files access, Media
-management, Display over other apps and Install unknown apps; the Settings
-screens for access Windows cannot provide (notification access,
-accessibility, usage access, Do Not Disturb) say so and grant nothing, as do
-those for what Win.apk never restricts (battery optimization, exact alarms,
-system settings). The app's App info screen (`app-details`) and Get Info in
-the library turn each group on or off or reset them; taking a permission
-away ends the app, as Android does. `MACAPK_ALL_PERMS_ASK=0` returns the
-groups beyond storage and location to the install-time rule (declared ==
-held), the Mac's behaviour; `MACAPK_MEDIA_PERMS_ASK=0` and
-`MACAPK_ALLFILES_HONEST=0` keep their upstream meaning.
+The runtime and the app data may live in folders with names in any language:
+the runtime's manifest makes its ANSI code page UTF-8 (Windows 10 1903 and
+later), which is how the JVM gets such paths whole. Older Windows ignores the
+manifest; there the runtime passes the JVM 8.3 short names, which covers the
+app data, but the runtime's own folder needs plain letters.
 
-### Web content (WebView2)
+## Environment variables for development
 
-Web pages an app shows run in Microsoft Edge WebView2, the counterpart of
-upstream's WKWebView. It needs the WebView2 Runtime, which Windows 11 and most
-Windows 10 machines already have; `WebView2Loader.dll`, the SDK's
-redistributable loader, sits next to `winapk-runtime.exe`
-(`windows/scripts/fetch_webview2.sh`). Without the runtime, without the loader,
-headless, or with `WINAPK_WEBVIEW2=0`, web links open in the system browser as
-before, and the log says so once.
+The user-facing ones (`WINAPK_PHONE_SIZE`, `WINAPK_RESIZABLE`,
+`WINAPK_AOT_CLANG`, `WINAPK_ABIS`, `WINAPK_WEBVIEW2`, `WINAPK_PROXY`,
+`WINAPK_ALLOW_SECOND_INSTANCE`, the headless ones) are in the
+[user guide](../docs/USER_GUIDE.md#command-line). For development and tests:
 
-- A Custom Tab or Trusted Web Activity launch (androidx.browser's
-  `CustomTabsIntent`, AppAuth's sign-in, a TWA launcher) opens a tab window over
-  the app: close, back and the URL on a toolbar, the page title as the window
-  title. As in a Custom Tab on a phone, every navigation is checked against the
-  app's own manifest: a page that goes to a URL the app handles (an OAuth or
-  sign-in callback, as a custom scheme or an `https` App Link) is not loaded but
-  delivered to the app as the browser's `ACTION_VIEW` intent, and the tab
-  closes. Other pages keep loading in the tab. The browser row the
-  PackageManager lists (`com.macapk.host`) answers androidx.browser's Custom
-  Tabs service, so apps that look for one choose a Custom Tab.
-- A plain link (an "open in browser", a Privacy Policy link) still opens in the
-  system browser: on a phone that is the user's browser app too.
-- An app's own `android.webkit.WebView`s show the page in the app window, at
-  the view's place, behind the app's views drawn over it: upstream's Java
-  WebView runs unchanged on WebView2 (`native_webview.cpp`), with
-  `WebViewClient`, `WebChromeClient`, `evaluateJavascript`,
-  `addJavascriptInterface` (a synchronous call, as on a device),
-  `CookieManager`, `loadData` and `loadDataWithBaseURL`.
-- Cookies and storage are the app's own, in `app_webview2` in its data
-  directory, kept between runs; the browser tab has a profile of its own
-  there.
+| Variable | Effect |
+|---|---|
+| `WINAPK_HEADLESS=1` | No window; `WINAPK_HEADLESS_FRAME=<file.bmp>` saves the last frame and `WINAPK_HEADLESS_EXIT_AFTER_FRAMES=<n>` exits after that many presented frames (an idle app counts too) |
+| `WINAPK_TEST_WORKAREA=<w>x<h>[+<x>+<y>]` | Stands in for the monitor's work area, in pixels; `@file` reads the value from a file at every fit |
+| `WINAPK_TEST_RESIZE=<w>x<h>` | A second after the first frame, resizes the window to a client area of that many pixels (CI's "Boot an APK in a window") |
+| `WINAPK_DENSITY=<dpi>` | Overrides the density the app sees |
+| `WINAPK_WINDOW_RTL=1` or `0` | Overrides the locale's reading layout for the app window's frame |
+| `WINAPK_ANGLE_BACKEND=d3d11` or `swiftshader` | Forces a graphics backend (the default is a GPU, then WARP, then SwiftShader) |
+| `MACAPK_LETTERBOX=0` | With `WINAPK_RESIZABLE=0`, stretches the phone over the whole window instead of letterboxing |
+| `MACAPK_SCROLL_SCALE=<n>` | Scales the drag the mouse wheel makes |
+| `WINAPK_ARM64_ENGINE=interp` | Forces the arm64 interpreter instead of the JIT |
+| `WINAPK_ARM64_STATS=1` | Prints at exit where the guest's time went (host functions versus arm64 code, transitions, interpreter fallbacks) |
+| `WINAPK_ARM64_FP=exact` | Keeps the arm64 JIT's floating point bit-exact (it uses the host's FMA otherwise) |
+| `WINAPK_AOT_OPTNONE_INSNS=<n>` | The function size above which the translation is compiled unoptimized |
+| `WINAPK_SYSTEM_CACERTS=0` | Does not build Android's CA store from the Windows roots |
+| `WINAPK_USER_FOLDER_TARGETS` | Names the Windows folders the shared-storage junctions point at (tests) |
+| `MACAPK_USER_FOLDERS=0`, `HKCU\Software\Win.apk\UserFolders=0` | Turn the shared-storage mapping off (the setting is what the launcher writes) |
+| `MACAPK_JVM_OPTS` | Extra JVM options, passed through |
+| `MACAPK_ALL_PERMS_ASK=0` | Returns the permission groups beyond storage and location to the install-time rule (declared means held), the Mac's behaviour; `MACAPK_MEDIA_PERMS_ASK=0` and `MACAPK_ALLFILES_HONEST=0` keep their upstream meaning |
+| `MACAPK_GMS_PRESENT=0`, `MACAPK_GMS_FCM=0`, `MACAPK_GMS_SIGNIN=0`, `MACAPK_GMS_LOCATION=0`, `MACAPK_GMS_DIR` | Upstream's Play services switches and the state folder |
+| `MACAPK_VIRTUAL_CAMERA=0`, `MACAPK_SV_OVERSIZE_HOLDER=0`, `MACAPK_MANIFEST_FEATURE_SPLITS=0`, `MACAPK_LIFECYCLE_*=0`, `MACAPK_CONTEXT_MCLASSLOADER=0` | Switch off individual framework fixes listed under [Changes to the upstream tree](#changes-to-the-upstream-tree) |
 
-### Google Play services
+The Java framework has many more `MACAPK_*` switches of upstream's; grep
+`runtime/java` for the one you need.
 
-Apps that depend on Play services get upstream's stand-ins, the same Java on
-Windows as on the Mac: `GoogleApiAvailability` answers that the services are
-there (`com.macapk.loader.PlayServices`), the client APIs under
-`runtime/java/com/google/android/gms/` (tasks, common, auth, location, ads,
-appset, cast, games, maps, nearby, safetynet, wallet, wearable...) are
-in-process, and `runtime/java/com/macapk/gms/` holds the services behind
-them. What they need from the host on Windows:
+## Tests
 
-- **Google sign-in.** The account chooser (`GoogleSignIn`, Credential
-  Manager's Google ID and Sign in with Google options, One Tap,
-  `AccountManager` for `com.google` accounts) is upstream's. Its "Add an
-  account", a licence check that needs an account, and the library's
-  Settings > Google account open the Google sign-in window
-  (`host/native_signin.cpp`, upstream's `gms_signin.mm`): Google's own
-  EmbeddedSetup page in a WebView2 window of its own, in an in-private
-  profile, with the Android WebView user agent that makes Google serve the
-  device flow. The `oauth_token` cookie the finished flow sets is exchanged
-  for a master token (`GoogleAuthClient`); the password never reaches
-  Win.apk. It needs the WebView2 Runtime (2022 or later, for private
-  profiles); headless, or without WebView2, the ask is answered as
-  cancelled, as a headless run on the Mac answers it.
-- **Play licensing** (`PlayLicenseClient`), **Firebase Cloud Messaging**
-  (`GcmRegisterClient`, the push channel in `McsClient`, which honours
-  `WINAPK_PROXY=socks5://host:port`), **Firebase Analytics**
-  (`MeasurementBrokerService` hands the app its own measurement service) and
-  the **fused location provider** (`GmsLocationService` on `LocationBridge`,
-  Windows' geolocation) are upstream's Java and need no further host piece.
-- The layer's state (the account, its tokens, the checkin identity) is
-  `%LOCALAPPDATA%\Win.apk\gms\gms_state.properties`, next to the
-  installed-apps registry as upstream keeps it next to its own
-  (`MACAPK_GMS_DIR` moves it); a file in the user's own profile where
-  upstream has a 0600 file. Upstream's opt-in Keychain store
-  (`MACAPK_GMS_KEYCHAIN=1`, the `security` tool) has no counterpart here.
-- `winapk-runtime --gms <command> [args]`, after the other options, is
-  upstream's `macapk-runtime --gms`: `status`, `selftest`, `accounts`,
-  `signin-window`, `signout`, `checkin`, `license <pkg> <versionCode>`,
-  `gcmtoken` and the rest of `com.macapk.gms.GmsCli`, with no app. The
-  library's Settings > Google account lists the accounts, adds one and signs
-  out through it.
-- Upstream's switches apply: `MACAPK_GMS_PRESENT=0` restores the
-  services-absent contract, `MACAPK_GMS_FCM=0` the push backend's,
-  `MACAPK_GMS_SIGNIN=0` the sign-in chooser's, `MACAPK_GMS_LOCATION=0` the
-  location provider's.
+Every test is a program built by CMake; `windows-poc.yml` runs each of them on
+`windows-latest`, and `test/run_*_wine.sh` run the main ones under Wine.
 
-Not Play-certified, as upstream: no Google signing certificate, no installed
-`com.google.android.gms` package (an app that verifies its signature finds
-none), no Play Integrity or SafetyNet attestation, Play Billing answers
-`BILLING_UNAVAILABLE`, and the Maps SDK lays out a blank map.
+| Program | What it checks |
+|---|---|
+| `winapk-elfrun <poc.so> <poc_packed.so>` | Two builds of the Android test library (plain RELA, and APS2 + RELR) load and run: argument passing across the ABI boundary, RELATIVE and `R_X86_64_64` relocations, constructors, shim calls, stack-protected code on new threads, a guest comparator in host `qsort`, a host callback from guest code |
+| `winapk-thunk-test` | Native-method thunks with mixed, stack-overflowing and narrow arguments; the variadic entry stub's `va_list`; the tagged zero stub |
+| `winapk-jni-test`, `winapk-jni-variadic-test` | The guest `JNIEnv` against a mock JVM; the variadic bridge for all four call kinds and every argument type, through `...` and `va_list` |
+| `winapk-linker-test <dir>` | A four-library tree with a `DT_NEEDED` cycle and a runtime plugin: constructor order, symbol resolution, `dlsym` scopes, the guest's `dlopen`, `dlsym`, `dlerror` and `dladdr` |
+| `winapk-bionic-test <bionic_guest.so> <scratch dir>` | `test/guest/bionic_guest.c` exercises the shim from guest code: strings, printf and scanf through the System V `va_list`, threads and keys, files and directories, ELF TLS, system properties, locales, futex, an 8 GiB `PROT_NONE` reservation, pipes, eventfd, epoll, sockets, `ALooper`, clocks, `mmap` |
+| `winapk-arm64-test <dir>` | The arm64 engines: `test/guest/arm64_isa.c` built for the host and for arm64 at three optimization levels must agree on every function, on the interpreter, the JIT and the AOT translation; then `arm64_bridge_guest.c` (calls in both directions, variadics, threads, atexit) and `arm64_bench.c` (the speed ratios) |
+| `winapk-audio-test <test/audio>` | The WASAPI mixer and the decoders |
+| `winapk-user-folders-test <dir>` | The shared-storage junction rules |
+| `winapk-window-test` | The window geometry decisions (the letterbox, how a frame is shown) without a window |
+| `winapk-gl-test` | ANGLE makes a context, clears a pbuffer and the read-back frame has the right colors (WARP or SwiftShader on CI) |
+| `winapk-jvm-run <jni_guest.so> <classes>` | A real HotSpot JVM loads a guest library through the linker: its `JNI_OnLoad` registers a native through the guest `RegisterNatives`, another native is bound by name through the `NativeMethodBind` hook, both are called from Java and call back through the variadic bridge. Run with the x86_64 and the arm64 build of the library, and again on the staged `android-framework.jar` for libjnigraphics |
+| `test/java/PermissionModelTest.java` | `SpecialAccessStore.GroupModel` against PermissionController's rules (grant, deny, deny twice, auto grant, background permissions, legacy targets, App info rows) |
+| `test/java/FileSeparatorRewriteTest.java` | Guest code reads Android's `/` from `File.separator` while the JDK's own classes keep the backslash |
+| Headless boot, window boot, GMS CLI (CI steps) | The staged runtime boots the F-Droid Sudoku APK headless (30 frames) and in a window with a resize (`WINAPK_TEST_RESIZE=400x600`), and `--gms selftest` and `--gms status` pass |
 
-Shared storage is the user's own folders, as on a phone: `/sdcard/Download`,
-`Pictures`, `Documents`, `Music` and `Movies` are junctions to Windows'
-Downloads, Pictures, Documents, Music and Videos (wherever they are
-redirected), made before the app starts; what an app had saved there moves in
-first, never over a file of the user's (a clash comes in as
-`name (from Android).ext`; every move is logged in
-`android\data\system\storage\usermap-journal.tsv`). DCIM stays the
-volume's own. Only for the library in `%LOCALAPPDATA%\Win.apk`, never with
-`--data`. Settings > App data > "Use my Windows folders" (`UserFolders`) off
-turns each folder back into an empty one of the volume, files left in place;
-`MACAPK_USER_FOLDERS=0` changes nothing either way.
+The guest libraries are built with plain clang + lld (`test/build_guest.sh`,
+`test/build_e2e.sh`), so no NDK is needed; CI builds them on Ubuntu and
+hands them to the Windows job.
 
-For tests, `WINAPK_TEST_WORKAREA=1366x728` stands in for the work area, in
-pixels (`1366x728-0+0` puts it at the top right of the real one;
-`@file` reads the value from a file at every fit),
-`WINAPK_HEADLESS=1` runs without a window,
-`WINAPK_HEADLESS_FRAME=frame.bmp` saves the last frame the app drew, and
-`WINAPK_HEADLESS_EXIT_AFTER_FRAMES=30` exits that many display frames after the
-first one the app presents (an idle app counts too). On
-Linux, `windows/test/run_app_wine.sh` boots an APK headless under Wine.
+## The compatibility sweep
 
-## Status and next steps
+`test/compat/sweep.py` boots every app of `test/compat/apps.txt` (open-source
+apps from F-Droid, pinned to one version each; about 90 apps covering Java
+and Kotlin apps, games, Compose, Flutter, React Native, WebView shells,
+native-heavy apps and arm64-only builds) headless, with a fresh data
+directory, and reports what blocks them ranked by the number of apps each
+problem affects:
 
-The goal is the whole of Mac.apk on Windows x64: every Mac piece ported or
-replaced with its Windows counterpart (PORTING.md section 4 lists them one by
-one), then x86_64 apps at full speed, then ARM-only apps through translation
-(arm64-v8a is supported: translated ahead of time, with a JIT fallback;
-32-bit armeabi-v7a is not).
+```sh
+python windows/test/compat/sweep.py --runtime <staged runtime> --out <report dir> \
+    [--jdk <dir>] [--apps apps.txt] [--apks <cache dir>] [--frames 60] [--timeout 180] \
+    [--launcher wine] [--only pkg,...]
+```
 
-Done so far:
+Each app gets one status: `drew` (ran its frames and the last frame has real
+content), `blank` (the last frame is one or two colors), `no-frame` (no frame
+before the timeout) or `crashed`. The report (`report.md`, `report.json`)
+collects the host natives called while still stubbed, the exceptions Java
+logged, HotSpot crash files, and for native code the system functions the shim
+lacks and the libraries that could not load. `compat-sweep.yml` runs it on
+pull requests and attaches the report, the logs and the last frames.
 
-- The loader, linker, ELF TLS and the JNI bridge for Android x86_64 libraries.
-- arm64-v8a libraries, when an app has no x86_64 build (apps install with
-  the ABIs `x86_64,arm64-v8a`; `WINAPK_ABIS` overrides): the same loader,
-  linker and JNI bridge, checked in CI against the host and in a real JVM.
-  In the background (`prepare_arm64` and `winapk-runtime --aot-translate`
-  in `host/runtime_main.cpp`; nothing waits for it) `winapk-aot` turns each
-  `lib/arm64/*.so` into C, in parts, and clang (`WINAPK_AOT_CLANG`,
-  `<install>\clang\bin\clang.exe` or the PATH; the launcher also finds an
-  LLVM or MSYS2 clang) compiles the parts in parallel with
-  `-O1 -march=native` into `<lib>.so.aot.dll`. A library of more than 400K
-  instructions is translated only where the JIT's profile
-  (`<lib>.so.aot.profile`) says code ran, and again as that grows; a
-  translation finished while the app runs is loaded at once (see
-  `include/winapk/arm64_aot.h`, "Profiles"). Functions of more than 4000
-  instructions are compiled unoptimized (clang's time on them grows far
-  faster than their size), and whole translations are shared between apps
-  through `<data>\aot-cache`, keyed by the library's code. Code without a
-  translation runs through a JIT (dynarmic) backed by an interpreter. CMake option
-  `-DWINAPK_ARM64_JIT=ON` (CI and releases) fetches dynarmic;
-  `WINAPK_ARM64_ENGINE=interp` forces the interpreter, and
-  `WINAPK_ARM64_STATS=1` prints at exit where the guest's time went (host
-  functions versus arm64 code, transitions, interpreter fallbacks).
-- The Bionic shim: about 520 libc functions (threads, files, sockets,
-  epoll, `ALooper`, printf and scanf), on the UCRT and Win32.
-- The host: the window and input, `NativeOs`, `NativeLooper`, images (libwebp,
-  WIC), audio (WASAPI: AudioTrack, SoundPool, MediaPlayer's audio, OpenSL ES,
-  AAudio, recording; Media Foundation decodes), clipboard, file pickers, game
-  controllers, ICU, SQLite, WebView on WebView2, the camera (Media Foundation
-  capture), location (`Windows.Devices.Geolocation`), the radios' state,
-  photos and wallpapers, the user's own folders as shared storage, and
-  Android's permission dialogs (through the launcher's helper).
-- OpenGL ES on ANGLE, from Java and from app native code (`ANativeWindow`,
-  EGL window surfaces), plus libandroid's assets, and `NativeActivity` with
-  the NDK input queue and `AConfiguration` (`host/native_activity.cpp`).
-- The app library (`Win.apk.exe`) with shortcuts per app, the Store (F-Droid),
-  the installer (`package/winapk.iss`, English and Hebrew) and the release
-  workflow.
-- Google Play services as upstream provides them: the Google sign-in window
-  on WebView2, `winapk-runtime --gms`, the library's Google account setting.
+## CI and releases
 
-Next, in order: video (MediaPlayer and the NDK media API on Media
-Foundation), Vulkan (`VK_KHR_win32_surface`), sensors, W^X thunks with unwind
-tables and a crash handler (M9), code signing, then a wider compatibility
-corpus. ARM code (M10) is translated ahead of time, with the JIT
-as the fallback; 32-bit `armeabi-v7a` stays unsupported.
+| Workflow | Trigger | What it does |
+|---|---|---|
+| `.github/workflows/windows-poc.yml` | Pull requests touching `windows/`; by hand | Builds the guest libraries on Ubuntu; on `windows-latest` builds everything with MSYS2 CLANG64 and Temurin 21, runs every test above, stages the runtime, boots an APK headless and in a window, runs the GMS CLI, then packages the staged folder with a Temurin JRE (`winapk-preview` artifact) and builds the installer (`winapk-setup`) |
+| `.github/workflows/compat-sweep.yml` | Pull requests touching `windows/` or `runtime/java/`; by hand | The compatibility sweep, with the ranked report as the run's summary |
+| `.github/workflows/windows-release.yml` | By hand only, with a tag such as `v0.2.0-preview` | Builds, stages, packages `Win.apk-windows-x64.zip` with a JRE and `package/README.txt`, smoke-tests the package (boots an APK headless), builds `Win.apk-Setup.exe` with Inno Setup, and publishes both as a GitHub pre-release with `package/RELEASE_NOTES.md` as the notes |
 
-`PORTING.md` holds the design decisions, the technical findings, the known
-gaps, and the milestone plan up to a production release.
+Nothing runs on a push to `main`, and nothing is released automatically. The
+platform resource APK and the ANGLE download are cached between runs.
+
+Pull requests: one topic each, CI green on Windows before merging, merged
+with rebase. [`../CONTRIBUTING.md`](../CONTRIBUTING.md) has the rest.
 
 ## Keeping up with upstream
 
@@ -378,6 +243,8 @@ git merge upstream/main
 
 Upstream's macOS-only files were removed here, so a merge that touches them
 stops with a modify/delete conflict: keep them deleted (`git rm` the file).
+### Changes to the upstream tree
+
 Files in `runtime/` are changed only where a Windows hook is unavoidable, and
 every such change is listed here:
 
@@ -590,6 +457,18 @@ every such change is listed here:
   `android/hardware/Camera.java`, `camera2/CameraManager.java` and
   `AudioInputBridge` honour the Android permission before the Windows
   privacy switch.
+- `runtime/java/com/macapk/loader/HostNotifications.java` (new) and
+  `android/app/NotificationManager.java`: `notify`, `cancel` and `cancelAll`
+  reach the host (Windows: `windows/host/native_notifications.cpp`, toasts in
+  the Action Center with the app's name and icon; a click brings the window
+  forward and sends the `contentIntent`), once `areNotificationsEnabled`
+  (POST_NOTIFICATIONS, pre-granted below T) and the channel's importance let
+  the notification through; LOW and MIN do not pop up. The channel list is
+  one per process, as the service's is. A host without the natives (the Mac)
+  shows nothing, as before. `android/app/Notification.java`: `Style.addExtras`
+  as AOSP has it, so a built notification's extras carry `BigTextStyle`'s
+  text, `InboxStyle`'s lines and `MessagingStyle`'s messages (as lines) under
+  the `EXTRA_*` keys; the styles kept nothing before. Not Windows-specific.
 - `runtime/java/com/macapk/loader/ActivityHost.java`: without the AOSP window
   policy (Windows), an activity that owns the window box asks the host for its
   manifest's `screenOrientation` at launch (`NativeCocoa.applyWindowOrientation`,

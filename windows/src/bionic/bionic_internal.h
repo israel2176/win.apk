@@ -50,8 +50,8 @@ ShimTable setjmp_symbols();   // setjmp.cpp: setjmp and longjmp for x86_64 guest
 ShimTable misc_symbols();     // misc.cpp: time, sysconf, system properties, environment, math
 ShimTable signal_symbols();   // signal.cpp: sigaction, sigaltstack, masks, POSIX timers (state kept, none delivered)
 ShimTable fd_symbols();       // fd.cpp: pipe, eventfd, poll, select, epoll
-ShimTable socket_symbols();
-ShimTable looper_symbols();   // looper.cpp: the NDK's ALooper   // socket.cpp: BSD sockets on Winsock, getaddrinfo, inet_*
+ShimTable socket_symbols();   // socket.cpp: BSD sockets on Winsock, getaddrinfo, inet_*
+ShimTable looper_symbols();   // looper.cpp: the NDK's ALooper
 ShimTable locale_symbols();   // locale.cpp: <locale.h>, UTF-8 conversion, <wctype.h>, more <wchar.h>
 ShimTable zlib_symbols();     // zlib.cpp: libz.so, on the host's zlib
 
@@ -92,6 +92,11 @@ std::string format_va(const char* fmt, SysVVaList* va);
 // paths.cpp: the host path for a guest path (Android's absolute paths are
 // mapped under the android root; see paths.cpp).
 std::wstring host_path(const char* guest_path);
+
+// cacerts.cpp: the host directory that answers Android's system CA store
+// (/system/etc/security/cacerts), built from the roots Windows trusts on the
+// first call; empty when it is turned off or could not be built.
+std::wstring android_cacerts_dir(const std::wstring& android_root);
 
 // ---- descriptors that are not files (fd.cpp) -------------------------------------
 // Pipes, eventfds, epoll instances and sockets. Each holds a CRT descriptor

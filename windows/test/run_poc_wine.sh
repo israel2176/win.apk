@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# run_poc_wine.sh -- build the phase-1 PoC on Linux and run it under Wine.
+# run_poc_wine.sh -- build the loader, linker and arm64 tests on Linux and run
+# them under Wine.
 #
 # Needs: clang, lld, cmake, ninja, mingw-w64 (headers/CRT), zlib for mingw-w64, wine64.
 #   Ubuntu: apt install clang lld cmake ninja-build mingw-w64 libz-mingw-w64-dev wine64

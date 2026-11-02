@@ -25,11 +25,14 @@ first column says what to look for in the app or its log.
 |---|---|---|---|
 | The APK has only `lib/armeabi-v7a` | 32-bit ARM native code only | Not supported; the app does not run | Look for an x86_64 or arm64-v8a build of the same app (F-Droid often has one) |
 | The APK has only `lib/arm64-v8a` | 64-bit ARM native code only | Runs: the libraries are translated to x64 in the background by `winapk-aot` with clang. The app starts at once on an ARM JIT and is slow until the translation of each library is ready; large libraries are translated only where the app's code ran | Give it a minute on first run. Set `WINAPK_AOT_CLANG` to another `clang.exe` if the bundled one is missing |
-| `NativeActivity` in the manifest | A game whose whole UI is native code (many engines) | Not yet | None |
-| Video playback, `MediaPlayer`, `ExoPlayer` | Video and native audio paths | Not yet: video does not play; MediaPlayer, OpenSL ES and AAudio are missing. Sound from `AudioTrack` and `SoundPool` (WAV, Ogg, MP3) works | None |
-| A `WebView` in the app | Web content inside the app | Not yet | None |
-| The camera, location | Hardware the PC may not have | Not yet | None |
-| Sign in with Google, in-app purchases, Google Maps | Google Play services | Not there: sign-in, purchases and maps that need it do not work. The rest of the app may | Use the app's own account or an open-source build without Play services (F-Droid) |
+| `NativeActivity` in the manifest | A game whose whole UI is native code (many engines) | Runs: the app gets its window, input queue and configuration as on Android | |
+| Video playback, `MediaPlayer`, `ExoPlayer` | Video | Not yet: video does not play. Audio plays: `AudioTrack`, `SoundPool` and `MediaPlayer` from Java (WAV, Ogg, MP3, AAC and what Windows decodes), AAudio from native code | None |
+| A game in native code has no sound | OpenSL ES from native code | Not yet: the OpenSL ES engine reports itself unsupported, so engines that use it are silent. AAudio works | None |
+| A `WebView` in the app, a Custom Tab | Web content inside the app | Runs on Microsoft Edge WebView2 (needs the WebView2 Runtime, which Windows 11 and most Windows 10 PCs have). Without it, links open in the system browser | Install the WebView2 Runtime |
+| The camera, location | The PC's webcam and location service | Run: webcams through Media Foundation (a virtual camera when there is none), location from Windows' location service, both behind Windows' privacy settings (Settings > Privacy) | Turn the Windows privacy switch on |
+| The accelerometer and other sensors | Hardware a PC usually lacks | The sensors exist but report a still, flat phone (gravity on the accelerometer, zero rotation), so tilt controls do nothing | None |
+| Sign in with Google, Play licence checks, push messages | Google Play services | Run through Win.apk's own in-process stand-ins (as on the Mac). Sign-in opens Google's page in a WebView2 window; Settings > Google account adds the account | None |
+| In-app purchases, Play Integrity, Google Maps | Play Store features | Not there: purchases report billing unavailable, there is no attestation, and the Maps SDK lays out a blank map. The rest of the app may work | Use an open-source build without Play services (F-Droid) where there is one |
 | `not implemented on Windows yet` in the log | A libc function the app's native code needs that the Bionic shim does not have yet | Open an issue with the log: adding one is usually small | None |
 | `native not implemented` in the log | A piece of the Android host that is still missing | Open an issue with the log | None |
 | `[win.apk] cannot load <library>` in the log | A native library the loader could not load (packed, encrypted, or for another ABI) | Open an issue with the log and the APK's `lib/` folders | None |
@@ -44,21 +47,29 @@ work in the notes. Newest test first within an app.
 | App | Version | Source | Status | Notes | Tested | Issue |
 |---|---|---|---|---|---|---|
 | Privacy Friendly Sudoku | 101 (`org.secuso.privacyfriendlysudoku`) | F-Droid | Boots | Boots headless on every CI run (`windows-poc.yml`): DEX conversion, `Application.onCreate`, the first activity resumed and 30 frames drawn | every CI run | |
-| Klooni | 860 (`dev.lonami.klooni`) | F-Droid | Works | libGDX: OpenGL ES from Java on ANGLE; draws and takes input | `windows/PORTING.md`, M2 | |
-| Tensy | 2 (`se.voxelmanip.tensy`) | F-Droid | Works | SDL 3: OpenGL ES from the app's own native code through a SurfaceView; draws and takes input | `windows/PORTING.md`, M2 | |
+| Klooni | 860 (`dev.lonami.klooni`) | F-Droid | Works | libGDX: OpenGL ES from Java on ANGLE; draws and takes input | `windows/PORTING.md`, section 8 (window, input and rendering) | |
+| Tensy | 2 (`se.voxelmanip.tensy`) | F-Droid | Works | SDL 3: OpenGL ES from the app's own native code through a SurfaceView; draws and takes input | `windows/PORTING.md`, section 8 (window, input and rendering) | |
 
 The automated compatibility sweep (`windows/test/compat/apps.txt`, run by
-`compat-sweep.yml`) boots about 40 F-Droid apps headless on every pull
-request and reports which draw their first screen; its report is an artifact
-of the run. The corpus, without native libraries: Coffee, the Privacy Friendly
-apps (Sudoku, Notes, To-Do, Dicer, 2048, Memory, Tape Measure, Activity
-Tracker), Markor, Editor, Diary and Currency (Bill Farmer), Music (Muntashir),
-Noice, OpenTracks, Loop Habit Tracker, OpenTasks, QuickDic, Vanilla Music,
-SatStat, PassAndroid. With x86_64 native libraries: Chess (Cocode), Tuner,
-Simple Markdown, Game of Life Wallpaper, Game Counter, NextPush, Todo,
-MicroREPL, TriPeaks, Klooni, Alex vs Bus, Tensy, Shader Editor, NetGuard,
-KeePassDX (libre), AnkiDroid. A sweep result says the app booted, not that it
-is usable: a row above is worth more.
+`compat-sweep.yml`) boots about 90 F-Droid apps headless on every pull
+request that touches the runtime, and reports which draw their first screen
+and what blocks the rest; its report is an artifact of the run. The corpus is
+pinned to one version per app and covers: apps without native libraries
+(Coffee, the Privacy Friendly apps, Markor, Bill Farmer's Editor, Diary and
+Currency, Noice, OpenTracks, Loop Habit Tracker, OpenTasks, QuickDic, Vanilla
+Music, SatStat, PassAndroid and others); apps with x86_64 libraries (Klooni,
+Tensy, Alex vs Bus, Shader Editor, NetGuard, KeePassDX, AnkiDroid and
+others); games in native code (Shattered Pixel Dungeon, Mindustry, Unciv,
+DroidFish, PPSSPP, RetroArch, Minetest, Dolphin); Kotlin and Compose apps
+(the Fossify apps, Pachli, Jerboa, Breezy Weather, Tasks, Auxio, LibreTube,
+F-Droid, Aurora Store, Aegis, Thunderbird, NewPipe, AntennaPod);
+cross-platform frameworks (LocalSend on Flutter, Jitsi Meet on React Native,
+Jellyfin and AndBible on WebView); and native-heavy apps (VLC, Organic Maps,
+Sky Map, ConnectBot, Trime, AnySoftKeyboard, MuPDF, Termux-style terminals,
+Gadgetbridge, OpenVPN, Open Camera, OpenKeychain, DAVx5, AdAway, Key Mapper,
+Tremotesf). Where F-Droid builds per ABI the x86_64 build is pinned, and a
+few arm64-v8a-only builds exercise the ARM translation. A sweep result says
+the app booted, not that it is usable: a row above is worth more.
 
 ### Adding a row
 
