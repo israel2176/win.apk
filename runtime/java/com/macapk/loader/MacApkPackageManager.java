@@ -419,6 +419,12 @@ public final class MacApkPackageManager extends PackageManager {
                         if (asked == null) asked = SpecialAccessStore.trackedPermissionGranted(rp);
                         boolean held = asked != null ? asked : !macapkNeverGranted(rp);
                         grants[i] = held ? PackageInfo.REQUESTED_PERMISSION_GRANTED : 0;
+                        // AOSP also carries the manifest's usesPermissionFlags
+                        // (neverForLocation on BLUETOOTH_SCAN), which the LE
+                        // scanner reads to know whether results need location.
+                        if ((usesPermissionFlags(rp) & PackageInfo.REQUESTED_PERMISSION_NEVER_FOR_LOCATION) != 0) {
+                            grants[i] |= PackageInfo.REQUESTED_PERMISSION_NEVER_FOR_LOCATION;
+                        }
                     }
                     info.requestedPermissionsFlags = grants;
                 }
@@ -450,6 +456,18 @@ public final class MacApkPackageManager extends PackageManager {
      *  in the requested set on a newer platform, and apps depend on that -- the
      *  legacy-storage pattern branches on WRITE_EXTERNAL_STORAGE coming back
      *  DENIED afterwards). */
+    /** The manifest's android:usesPermissionFlags on `permission`, 0 when
+     *  absent (the manifest reader keeps them; AOSP's PackageInfo carries
+     *  them in requestedPermissionsFlags). */
+    private int usesPermissionFlags(String permission) {
+        Manifest m = manifest();
+        if (m == null || permission == null) return 0;
+        for (Manifest.UsesPermissionEntry e : m.usesPermissions) {
+            if (permission.equals(e.name)) return e.usesPermissionFlags;
+        }
+        return 0;
+    }
+
     private java.util.List<String> requestedPermissions() {
         Manifest m = manifest();
         if (m == null || m.usesPermissions.isEmpty()) {
@@ -4255,10 +4273,11 @@ public final class MacApkPackageManager extends PackageManager {
             f.add("android.hardware.wifi");
         }
         // FEATURE_BLUETOOTH: only when the host reports a radio, which is also
-        // when BluetoothAdapter.getDefaultAdapter() is non-null. Not LE: there
-        // is no LE scanner behind BluetoothLeScanner, and an app that sees
-        // bluetooth_le goes looking for devices it can never find.
+        // when BluetoothAdapter.getDefaultAdapter() is non-null. LE only when
+        // the host scans and connects (HostBluetooth; Win.apk): an app that
+        // sees bluetooth_le goes looking for devices, and must find them.
         if (HostRadios.bluetoothRadio() != null) f.add("android.hardware.bluetooth");
+        if (HostBluetooth.leAvailable()) f.add("android.hardware.bluetooth_le");
         // FEATURE_LOCATION and its network form: when the host's location is
         // bridged (LocationBridge), which is when LocationManager's providers
         // can deliver. Not .gps: a PC rarely has a GPS receiver, and Windows

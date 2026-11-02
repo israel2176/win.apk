@@ -1,11 +1,14 @@
 // android.bluetooth.BluetoothDevice
 //
-// A remote Bluetooth device handle. Mac.apk has no Bluetooth backend, so
-// instances are normally only constructed from an address string (apps that
-// hold a MAC and want to connect). Bonding/connection always report
-// "none/disconnected" and connectGatt returns a GATT client that immediately
-// reports a failed connection -- the honest no-radio result. Mirrors
-// frameworks/base/core/java/android/bluetooth/BluetoothDevice.java.
+// A remote Bluetooth device handle: one the host has paired
+// (BluetoothAdapter.getBondedDevices), one an LE scan found, or one made from
+// an address string (apps that hold a MAC and want to connect). On a host
+// that talks to devices (com.macapk.loader.HostBluetooth; Win.apk) the RFCOMM
+// sockets and the GATT client it hands out are real; pairing (createBond) and
+// SDP UUID queries are not offered. Without such a host (the Mac)
+// connectGatt returns a GATT client that immediately reports a failed
+// connection and a socket's connect throws -- the honest no-radio result.
+// Mirrors frameworks/base/core/java/android/bluetooth/BluetoothDevice.java.
 package android.bluetooth;
 
 import android.content.Context;
@@ -89,29 +92,44 @@ public class BluetoothDevice implements Parcelable {
 
     private final String mAddress;
     // A device the host has paired (BluetoothAdapter.getBondedDevices) carries
-    // its name and class of device; one made from an address alone does not.
+    // its name and class of device, one an LE scan found its advertised name;
+    // one made from an address alone has neither.
     private final String mName;
     private final int mClassOfDevice;
+    private final int mType;
     private final boolean mBonded;
 
     public BluetoothDevice() { this(null); }
     public BluetoothDevice(String address) {
-        mAddress = address;
-        mName = null;
-        mClassOfDevice = 0;
-        mBonded = false;
+        this(address, null, DEVICE_TYPE_UNKNOWN, false, 0);
     }
+    /** A paired classic device, from the host's list. */
     BluetoothDevice(String address, String name, int classOfDevice) {
+        this(address, name, DEVICE_TYPE_CLASSIC, true, classOfDevice);
+    }
+    /** A device an LE scan found (BluetoothLeScanner, another package, so
+     *  public; hidden on AOSP). */
+    public BluetoothDevice(String address, String name, int type, boolean bonded) {
+        this(address, name, type, bonded, 0);
+    }
+    private BluetoothDevice(String address, String name, int type, boolean bonded, int classOfDevice) {
         mAddress = address;
         mName = name;
+        mType = type;
+        mBonded = bonded;
         mClassOfDevice = classOfDevice;
-        mBonded = true;
     }
 
     public String getAddress() { return mAddress; }
-    public String getName() { return mName; }
-    public String getAlias() { return mName; }
-    public int getType() { return mBonded ? DEVICE_TYPE_CLASSIC : DEVICE_TYPE_UNKNOWN; }
+    /** AOSP: the remote name the stack has cached, null when none; a
+     *  SecurityException without BLUETOOTH_CONNECT (BLUETOOTH below API 31),
+     *  as the Bluetooth service gives. */
+    public String getName() {
+        com.macapk.loader.HostBluetooth.enforceConnect("getName");
+        return mName;
+    }
+    public String getAlias() { return getName(); }
+    public int getType() { return mType; }
     public int getBondState() { return mBonded ? BOND_BONDED : BOND_NONE; }
     public boolean createBond() { return false; }
     public BluetoothClass getBluetoothClass() { return mBonded ? new BluetoothClass(mClassOfDevice) : null; }
@@ -120,31 +138,41 @@ public class BluetoothDevice implements Parcelable {
     public boolean setPin(byte[] pin) { return false; }
     public boolean createBond(int transport) { return false; }
 
-    public BluetoothSocket createRfcommSocketToServiceRecord(java.util.UUID uuid) {
-        return null;
+    /** AOSP: an RFCOMM socket to the service `uuid` on this device, not yet
+     *  connected (BluetoothSocket.connect finds the channel and connects);
+     *  secure, so the link is authenticated and encrypted. */
+    public BluetoothSocket createRfcommSocketToServiceRecord(java.util.UUID uuid) throws java.io.IOException {
+        if (uuid == null) throw new java.io.IOException("uuid is null");
+        return new BluetoothSocket(this, uuid, true);
     }
-    public BluetoothSocket createInsecureRfcommSocketToServiceRecord(java.util.UUID uuid) {
-        return null;
+    /** @see #createRfcommSocketToServiceRecord -- the link as the pairing left it. */
+    public BluetoothSocket createInsecureRfcommSocketToServiceRecord(java.util.UUID uuid)
+            throws java.io.IOException {
+        if (uuid == null) throw new java.io.IOException("uuid is null");
+        return new BluetoothSocket(this, uuid, false);
     }
 
-    /** AOSP connectGatt(): begins a GATT client connection. No radio, so the
-     *  returned client immediately reports a connection failure to the callback. */
+    /** AOSP connectGatt(): begins a GATT client connection, reported to the
+     *  callback (onConnectionStateChange). A host that cannot connect
+     *  (the Mac) gets a client that reports the failure at once. The
+     *  transport and PHY are the host stack's to choose. */
     public BluetoothGatt connectGatt(Context context, boolean autoConnect,
             BluetoothGattCallback callback) {
-        return BluetoothGatt.createFailed(this, callback);
+        return BluetoothGatt.create(this, autoConnect, callback, null);
     }
     public BluetoothGatt connectGatt(Context context, boolean autoConnect,
             BluetoothGattCallback callback, int transport) {
-        return BluetoothGatt.createFailed(this, callback);
+        return BluetoothGatt.create(this, autoConnect, callback, null);
     }
     public BluetoothGatt connectGatt(Context context, boolean autoConnect,
             BluetoothGattCallback callback, int transport, int phy) {
-        return BluetoothGatt.createFailed(this, callback);
+        return BluetoothGatt.create(this, autoConnect, callback, null);
     }
+    /** API 26: the callbacks go through `handler` instead of a binder thread. */
     public BluetoothGatt connectGatt(Context context, boolean autoConnect,
             BluetoothGattCallback callback, int transport, int phy,
             android.os.Handler handler) {
-        return BluetoothGatt.createFailed(this, callback);
+        return BluetoothGatt.create(this, autoConnect, callback, handler);
     }
 
     /** No bond can exist, so there is no pairing to confirm; false is AOSP's

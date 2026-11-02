@@ -332,6 +332,21 @@ window themselves, through their "Add an account" flow.
 Google sign-in needs the WebView2 Runtime (a 2022 or later version). Without
 it the sign-in is cancelled and the log says why.
 
+## Wi-Fi and Bluetooth
+
+Apps see the PC's Wi-Fi: whether it is on, the current network with its
+signal and address, and scan results. Network names and scan results need
+location access for desktop apps in Windows' privacy settings, the same way
+Android needs the location permission. An app cannot connect the PC to a
+network.
+
+Bluetooth works with devices you have paired in Windows Settings: an app can
+open a serial (RFCOMM) connection to one, or listen for one to connect to the
+PC, scan for Bluetooth LE devices and connect to them (reading, writing and
+notifications), after it asks for the Nearby devices permission. Apps cannot
+pair or discover classic devices themselves, advertise, act as a GATT server,
+or use the audio and input profiles.
+
 ## Shared storage
 
 On a phone, apps share folders such as Download and Pictures. Here those
