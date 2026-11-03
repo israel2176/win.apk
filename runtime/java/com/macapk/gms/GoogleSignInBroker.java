@@ -486,7 +486,7 @@ public final class GoogleSignInBroker {
     public static final class Result {
         public int status = STATUS_INTERNAL_ERROR;
         public String error;
-        public String email, gaiaId, displayName, givenName, familyName;
+        public String email, gaiaId, displayName, givenName, familyName, photoUrl;
         public String idToken, serverAuthCode, obfuscatedId;
         public long expirationSecs;
         public final List<String> grantedScopes = new ArrayList<>();
@@ -631,6 +631,12 @@ public final class GoogleSignInBroker {
         res.givenName = GmsStore.accountData(account, "firstName");
         res.familyName = GmsStore.accountData(account, "lastName");
         res.displayName = displayName(account);
+        // The account's picture, as GMS gives it to the app (GoogleSignInAccount
+        // .getPhotoUrl): the ID token's `picture` claim, else the one the sign-in
+        // window found (AccountPhoto). Without it an app showed its blank avatar.
+        res.photoUrl = jwtClaim(res.idToken, "picture");
+        if (res.photoUrl != null) AccountPhoto.saveIfMissing(account, res.photoUrl);
+        else res.photoUrl = GmsStore.accountData(account, AccountPhoto.URL_KEY);
         res.expirationSecs = expiry == Long.MAX_VALUE ? now + 3600 : expiry;
         if (granted != null && !granted.trim().isEmpty()) {
             for (String g : granted.trim().split(" ")) if (!g.isEmpty()) res.grantedScopes.add(g);
@@ -738,6 +744,12 @@ public final class GoogleSignInBroker {
         SafeParcel.writeString(p, 3, r.idToken ? res.idToken : null);
         SafeParcel.writeString(p, 4, r.includeEmail() ? res.email : null);
         SafeParcel.writeString(p, 5, r.includeProfile() ? res.displayName : null);
+        if (r.includeProfile() && res.photoUrl != null) {
+            final android.net.Uri photo = android.net.Uri.parse(res.photoUrl);
+            SafeParcel.writeObject(p, 6, new SafeParcel.Body() {
+                @Override public void write(Parcel q) { photo.writeToParcel(q, 0); }
+            });
+        }
         SafeParcel.writeString(p, 7, r.serverAuthCode ? res.serverAuthCode : null);
         SafeParcel.writeLong(p, 8, res.expirationSecs);
         SafeParcel.writeString(p, 9, res.obfuscatedId);
@@ -1012,6 +1024,22 @@ public final class GoogleSignInBroker {
             return cert.getSubjectX500Principal().getName().contains("NetFree");
         } catch (Throwable t) {
             return false;
+        }
+    }
+
+    /** A string claim of a JWT's payload (unverified: it is Google's own answer
+     *  to us, read for display only), or null. */
+    static String jwtClaim(String jwt, String claim) {
+        if (jwt == null) return null;
+        String[] parts = jwt.split("\\.");
+        if (parts.length < 2) return null;
+        try {
+            String json = new String(java.util.Base64.getUrlDecoder().decode(parts[1]),
+                    java.nio.charset.StandardCharsets.UTF_8);
+            Object v = new org.json.JSONObject(json).opt(claim);
+            return v instanceof String && !((String) v).isEmpty() ? (String) v : null;
+        } catch (Throwable t) {
+            return null;
         }
     }
 

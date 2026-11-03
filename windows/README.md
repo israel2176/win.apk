@@ -609,6 +609,15 @@ every such change is listed here:
   when the app does not declare the attr, instead of TypedArray's short
   hand table. `android:fillType` read as nonZero, so Compose and AndroidX
   vector icons cut out of a filled shape drew as solid shapes.
+- `runtime/java/com/macapk/gms/GoogleSignInActivity.java`,
+  `GoogleSignInBroker.java` and `AccountPhoto.java`: the account chooser is
+  in Hebrew when Win.apk is (`winapk.ui.lang`, which `runtime_main.cpp` sets
+  from the launcher's Language setting, else Windows'), and right to left.
+  The signed-in account an app gets carries the picture
+  (`GoogleSignInAccount.photoUrl`, from the ID token), which is also saved for
+  the launcher's account button when the sign-in window found none. A copy of
+  an app re-signed by someone else (NetFree's patcher) that Google refuses
+  (`UNREGISTERED_ON_API_CONSOLE`) gets an explanation instead of a closed window.
 - `runtime/java/android/graphics/drawable/VectorDrawable.java`: a path's
   `android:fillType="evenOdd"` is honoured; icons cut out of a filled shape
   filled solid.

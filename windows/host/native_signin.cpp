@@ -398,9 +398,11 @@ void controller_ready(HRESULT hr, ICoreWebView2Controller* controller) {
     layout(w);
     controller->put_IsVisible(TRUE);
     if (GetForegroundWindow() == w->hwnd) controller->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
-    std::fprintf(stderr, "[win.apk] gms-signin: window up, loading %s\n", wv2::narrow(kUrl).c_str());
+    // Google's page in Win.apk's language (hl), as the app's own sign-in screen is.
+    const std::wstring url = std::wstring(kUrl) + (ui_hebrew() ? L"?hl=iw" : L"?hl=en");
+    std::fprintf(stderr, "[win.apk] gms-signin: window up, loading %s\n", wv2::narrow(url.c_str()).c_str());
     std::fflush(stderr);
-    w->view->Navigate(kUrl);
+    w->view->Navigate(url.c_str());
     SetTimer(w->hwnd, kPollTimer, kPollMs, nullptr);
 }
 
@@ -678,5 +680,17 @@ const HostMethod kMethods[] = {
 }  // namespace
 
 HostMethods native_signin_methods() { return {kMethods, sizeof(kMethods) / sizeof(kMethods[0])}; }
+
+// Win.apk's language, decided as the launcher's pick_language does: its setting
+// (HKCU\Software\Win.apk\Language: 0 as Windows, 1 English, 2 Hebrew), else the
+// Windows display language.
+bool ui_hebrew() {
+    DWORD pref = 0, size = sizeof(pref);
+    if (RegGetValueW(HKEY_CURRENT_USER, L"Software\\Win.apk", L"Language", RRF_RT_REG_DWORD, nullptr, &pref,
+                     &size) != ERROR_SUCCESS) {
+        pref = 0;
+    }
+    return pref == 2 || (pref == 0 && PRIMARYLANGID(GetUserDefaultUILanguage()) == LANG_HEBREW);
+}
 
 }  // namespace winapk::host

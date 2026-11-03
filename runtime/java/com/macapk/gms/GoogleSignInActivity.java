@@ -160,15 +160,17 @@ public class GoogleSignInActivity extends Activity {
         scroll.addView(outer, new ScrollView.LayoutParams(
                 ScrollView.LayoutParams.MATCH_PARENT, ScrollView.LayoutParams.WRAP_CONTENT));
 
-        card.addView(text("Sign in with Google", 14, sub, false));
+        card.addView(text(tr("Sign in with Google", "כניסה עם חשבון Google"), 14, sub, false));
         List<String> accounts = GoogleSignInBroker.eligibleAccounts(mRequest);
-        TextView title = text(accounts.isEmpty() ? "Add a Google account to Win.apk" : "Choose an account", 24, ink,
+        TextView title = text(accounts.isEmpty() ? tr("Add a Google account to Win.apk", "הוספת חשבון Google ל-Win.apk")
+                : tr("Choose an account", "בחירת חשבון"), 24, ink,
                 false);
         title.setPadding(0, dp(16), 0, dp(4));
         card.addView(title);
-        card.addView(text("to continue to " + mAppLabel, 16, sub, false));
+        card.addView(text(tr("to continue to ", "כדי להמשיך אל ") + mAppLabel, 16, sub, false));
         if (accounts.isEmpty()) {
-            TextView shared = text("Every app on this PC uses the account added to Win.apk.", 14, sub, false);
+            TextView shared = text(tr("Every app on this PC uses the account added to Win.apk.",
+                    "כל האפליקציות במחשב הזה משתמשות בחשבון שנוסף ל-Win.apk."), 14, sub, false);
             shared.setPadding(0, dp(8), 0, 0);
             card.addView(shared);
         }
@@ -197,7 +199,8 @@ public class GoogleSignInActivity extends Activity {
                     LinearLayout.LayoutParams.MATCH_PARENT, Math.max(1, dp(1))));
         }
 
-        TextView add = text(accounts.isEmpty() ? "Add an account" : "Use another account", 16, blue, false);
+        TextView add = text(accounts.isEmpty() ? tr("Add an account", "הוספת חשבון")
+                : tr("Use another account", "שימוש בחשבון אחר"), 16, blue, false);
         add.setPadding(dp(4), dp(14), dp(4), dp(14));
         add.setClickable(true);
         add.setOnClickListener(new View.OnClickListener() {
@@ -205,15 +208,15 @@ public class GoogleSignInActivity extends Activity {
         });
         card.addView(add);
 
-        TextView consent = text("To continue, Google will share your name and email address with "
-                + mAppLabel + ".", 13, sub, false);
+        TextView consent = text(tr("To continue, Google will share your name and email address with ",
+                "כדי להמשיך, Google תשתף את השם וכתובת האימייל שלך עם ") + mAppLabel + ".", 13, sub, false);
         consent.setPadding(0, dp(16), 0, dp(8));
         card.addView(consent);
 
         mStatus = text("", 13, 0xFFD93025, false);
         card.addView(mStatus);
 
-        TextView cancel = text("Cancel", 15, blue, true);
+        TextView cancel = text(tr("Cancel", "ביטול"), 15, blue, true);
         cancel.setGravity(Gravity.END);
         cancel.setPadding(dp(4), dp(16), dp(4), dp(4));
         cancel.setClickable(true);
@@ -223,13 +226,24 @@ public class GoogleSignInActivity extends Activity {
         card.addView(cancel, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
 
+        if (hebrew()) scroll.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
         setContentView(scroll);
     }
 
+    /** Win.apk's language for this window: its own setting (winapk.ui.lang, from
+     *  the runtime), else the locale the app runs in. */
+    private static boolean hebrew() {
+        String ui = System.getProperty("winapk.ui.lang");
+        if (ui != null && !ui.isEmpty()) return "he".equals(ui);
+        String lang = java.util.Locale.getDefault().getLanguage();
+        return "he".equals(lang) || "iw".equals(lang);
+    }
+
+    private static String tr(String english, String hebrew) { return hebrew() ? hebrew : english; }
+
     private String unregisteredMessage() {
         final boolean netFree = GoogleSignInBroker.appSignedByNetFree(this, mRequest.callerPkg);
-        final String lang = java.util.Locale.getDefault().getLanguage();
-        if ("he".equals(lang) || "iw".equals(lang)) {
+        if (hebrew()) {
             return netFree
                     ? "גוגל לא מזהה את העותק הזה של " + mAppLabel + ": הוא נחתם מחדש על ידי נטפרי, ולכן"
                       + " ההתחברות עם גוגל לא תעבוד בו (גם בטלפון). צריך עותק שחתום על ידי מפתח האפליקציה."
@@ -256,7 +270,7 @@ public class GoogleSignInActivity extends Activity {
         if (mBusy || mFinished) return;
         mBusy = true;
         GoogleSignInBroker.log("chooser: user picked " + GoogleAuthenticator.redact(account));
-        setStatus("Signing in…");
+        setStatus(tr("Signing in…", "מתבצעת כניסה…"));
         final String sig = GoogleSignInBroker.appCertSha1(this, mRequest.callerPkg);
         Thread t = new Thread(new Runnable() {
             @Override public void run() {
@@ -297,13 +311,15 @@ public class GoogleSignInActivity extends Activity {
     private void addAccount(final boolean direct) {
         if (mBusy || mFinished) return;
         if (!NativeSignIn.available()) {
-            setStatus("Adding an account needs Win.apk's Google sign-in window. "
-                    + "Add one in Win.apk > Settings > Google account, then try again.");
+            setStatus(tr("Adding an account needs Win.apk's Google sign-in window. "
+                    + "Add one in Win.apk > Settings > Google account, then try again.",
+                    "כדי להוסיף חשבון צריך את חלון הכניסה של Google ב-Win.apk. אפשר להוסיף חשבון"
+                    + " ב-Win.apk > הגדרות > חשבון Google ולנסות שוב."));
             return;
         }
         if (NativeSignIn.active()) return;
         mBusy = true;
-        setStatus("Finish signing in in the Google window…");
+        setStatus(tr("Finish signing in in the Google window…", "יש להשלים את הכניסה בחלון של Google…"));
         Thread t = new Thread(new Runnable() {
             @Override public void run() {
                 final String added = NativeSignIn.signInInteractive();
@@ -321,7 +337,7 @@ public class GoogleSignInActivity extends Activity {
                             return;
                         }
                         buildUi();
-                        if (added == null) setStatus("No account was added.");
+                        if (added == null) setStatus(tr("No account was added.", "לא נוסף חשבון."));
                     }
                 });
             }

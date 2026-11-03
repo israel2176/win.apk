@@ -1065,6 +1065,9 @@ std::vector<std::string> jvm_options(const BootArgs& b) {
         const DWORD n = GetShortPathNameW(data_dir.c_str(), buf, MAX_PATH * 4);
         if (n > 0 && n < MAX_PATH * 4) v.push_back("-Dwinapk.data.dir=" + jvm_path(fs::path(std::wstring(buf, n))));
     }
+    // Win.apk's own language, for the screens it draws itself (the Google
+    // account chooser): its setting can differ from the Windows locale the app sees.
+    v.push_back(std::string("-Dwinapk.ui.lang=") + (winapk::host::ui_hebrew() ? "he" : "en"));
     v.push_back("-Dmacapk.bundle.apk=" + jvm_path(o.apk));
     v.push_back("-Dmacapk.display.density=" + std::to_string(display_density_dpi()));
     v.push_back("-XX:ErrorFile=" + jvm_path(logs) + "\\hs_err_pid%p.log");

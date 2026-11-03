@@ -25,6 +25,10 @@ public final class AccountPhoto {
     private static final int SIZE = 128;
     private static final int MAX_BYTES = 1 << 20;
 
+    /** The account-data key holding the picture's URL, which GoogleSignInBroker
+     *  hands apps as GoogleSignInAccount.photoUrl. */
+    static final String URL_KEY = "photoUrl";
+
     private AccountPhoto() {}
 
     /** Where the account's picture is. Lower case, and anything but
@@ -43,6 +47,7 @@ public final class AccountPhoto {
      *  for {@code account}. Never throws. */
     public static void save(String account, String url) {
         if (account == null || url == null || !isGooglePhotoUrl(url)) return;
+        try { GmsStore.putAccountData(account, URL_KEY, url); } catch (Throwable ignored) {}
         try {
             Map<String, String> h = new LinkedHashMap<>();
             // Not WebP, which GDI+ cannot decode.
@@ -65,9 +70,22 @@ public final class AccountPhoto {
         }
     }
 
+    /** Keep {@code url} as the account's picture if none is on disk yet. The
+     *  sign-in window finds the picture only while its session is open, and not
+     *  always, so the launcher's account button could stay a letter; an app's
+     *  Google sign-in later carries the same picture in its ID token (the
+     *  `picture` claim). Off the caller's thread; never throws. */
+    public static void saveIfMissing(final String account, final String url) {
+        if (account == null || url == null || file(account).isFile()) return;
+        Thread t = new Thread(() -> save(account, url), "gms-account-photo");
+        t.setDaemon(true);
+        t.start();
+    }
+
     public static void delete(String account) {
         if (account == null) return;
         try { file(account).delete(); } catch (Throwable ignored) {}
+        try { GmsStore.putAccountData(account, URL_KEY, null); } catch (Throwable ignored) {}
     }
 
     /** https://lh<n>.googleusercontent.com/... and nothing else. */
