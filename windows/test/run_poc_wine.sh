@@ -6,7 +6,7 @@
 #   Ubuntu: apt install clang lld cmake ninja-build mingw-w64 libz-mingw-w64-dev wine64
 #
 # Wine is a convenience, not the verdict: the CI job on a real Windows runner
-# (.github/workflows/windows-poc.yml) is what counts.
+# (.github/workflows/ci.yml) is what counts.
 
 set -euo pipefail
 
