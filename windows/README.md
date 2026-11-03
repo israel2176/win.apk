@@ -603,6 +603,12 @@ every such change is listed here:
   signOut, revokeAccess). Flutter's google_sign_in calls signOut before every
   sign-in; with the bind unanswered it threw and City Car never asked for an
   account.
+- `runtime/java/com/macapk/loader/ResourceIndex.java`: an enum or flag value
+  given by name (apktool-decoded XML carries `evenOdd`, not 1) resolves
+  against the platform's own `<attr>` definitions in `framework-res.apk`
+  when the app does not declare the attr, instead of TypedArray's short
+  hand table. `android:fillType` read as nonZero, so Compose and AndroidX
+  vector icons cut out of a filled shape drew as solid shapes.
 - `runtime/java/android/graphics/drawable/VectorDrawable.java`: a path's
   `android:fillType="evenOdd"` is honoured; icons cut out of a filled shape
   filled solid.
