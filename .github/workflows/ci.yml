@@ -1,13 +1,18 @@
 # Win.apk's build and tests, as one pipeline of stages:
 #
-#   What changed ──┬─ Guest libraries (Ubuntu) ─────────┬─ Unit tests ────────────┐
-#                  ├─ Launcher check (Ubuntu, MinGW)    ├─ Runtime tests          │
-#                  └─ Build (Windows, ccache) ──────────┼─ Sweep 1/4 .. 4/4 ─ Sweep report
-#                                                       └─ Package (preview + installer)
+#   What changed ──┬─ Guest libraries (Ubuntu) ─────────┬─ Unit tests
+#                  ├─ Launcher check (Ubuntu, MinGW)    ├─ Runtime tests
+#                  └─ Build (Windows, ccache) ──────────┼─ App smoke test (10 apps)
+#                                                       ├─ Package (preview + installer)
+#                                                       └─ Sweep 1/4 .. 4/4 ─ Sweep report  (only when asked)
 #
 # The Windows build runs once; every later job takes its output (the exes and
-# the staged runtime) as an artifact, so tests, the compatibility sweep (split
-# over four machines) and packaging run side by side. "What changed" skips the
+# the staged runtime) as an artifact, so the tests and packaging run side by
+# side. Every pull request boots the smoke set (windows/test/compat/smoke.txt,
+# one app of each kind) and fails when one of them no longer draws. The whole
+# corpus (apps.txt, over four machines) runs only when asked for: Actions >
+# CI > Run workflow, on the branch, with "Full compatibility sweep" ticked.
+# Its report ranks what blocks apps; it fails nothing. "What changed" skips the
 # stages a pull request cannot affect: a launcher-only change builds, checks the
 # launcher and packages, but runs no app. A new push to a pull request cancels
 # its run still in progress.
@@ -33,6 +38,11 @@ on:
       - 'scripts/build_framework_res.sh'
       - '.github/workflows/ci.yml'
   workflow_dispatch:
+    inputs:
+      full_sweep:
+        description: 'Full compatibility sweep (every app of apps.txt, on four machines)'
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -50,6 +60,7 @@ jobs:
       tests: ${{ steps.diff.outputs.tests }}
       launcher: ${{ steps.diff.outputs.launcher }}
       package: ${{ steps.diff.outputs.package }}
+      full_sweep: ${{ steps.diff.outputs.full_sweep }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -75,8 +86,11 @@ jobs:
           esac
           package=$build
           [[ "${{ github.event_name }}" == push ]] && package=false
-          printf 'build=%s\ntests=%s\nlauncher=%s\npackage=%s\n' "$build" "$tests" "$launcher" "$package" |
-            tee -a "$GITHUB_OUTPUT"
+          # Only by hand: a pull request gets the smoke set instead.
+          full_sweep=false
+          [[ "${{ github.event_name }}" == workflow_dispatch && "${{ inputs.full_sweep }}" == true ]] && full_sweep=true
+          printf 'build=%s\ntests=%s\nlauncher=%s\npackage=%s\nfull_sweep=%s\n' \
+            "$build" "$tests" "$launcher" "$package" "$full_sweep" | tee -a "$GITHUB_OUTPUT"
 
   guest:
     name: Guest libraries (x86_64, arm64)
@@ -399,12 +413,51 @@ jobs:
             window.log
             frame.bmp
 
-  sweep:
-    # The compatibility sweep (windows/test/compat/sweep.py): every app of
-    # apps.txt booted headless, a quarter of them on each machine.
-    name: Sweep ${{ matrix.shard }}/4
+  smoke:
+    # One app of each kind (windows/test/compat/smoke.txt) booted headless;
+    # any that no longer draws its first screen, after one more try, fails the
+    # run. A minute or two on one machine, beside the tests.
+    name: App smoke test (10 apps)
     needs: [changes, build]
     if: needs.changes.outputs.tests == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: actions/download-artifact@v4
+        with:
+          name: runtime-stage
+          path: stage
+      - uses: actions/cache@v4
+        with:
+          path: apk-cache
+          key: compat-apks-smoke-${{ hashFiles('windows/test/compat/apps.txt', 'windows/test/compat/smoke.txt') }}
+      - name: Boot the smoke set
+        shell: pwsh
+        run: |
+          python windows/test/compat/sweep.py --runtime stage --jdk "$env:JAVA_HOME" `
+            --apks apk-cache --out smoke --frames 150 --timeout 180 `
+            --only-from windows/test/compat/smoke.txt --require-drew
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke
+          path: |
+            smoke/report.md
+            smoke/logs/
+            smoke/frames/
+
+  sweep:
+    # The compatibility sweep (windows/test/compat/sweep.py): every app of
+    # apps.txt booted headless, a quarter of them on each machine. Only when
+    # asked for (Run workflow, "Full compatibility sweep").
+    name: Sweep ${{ matrix.shard }}/4
+    needs: [changes, build]
+    if: needs.changes.outputs.full_sweep == 'true'
     runs-on: windows-latest
     timeout-minutes: 90
     strategy:

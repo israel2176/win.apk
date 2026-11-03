@@ -5,12 +5,15 @@ blocks them, ranked by how many apps each problem affects.
     sweep.py --runtime <staged runtime dir> --out <report dir>
              [--jdk <dir>] [--apps apps.txt] [--apks <cache dir>]
              [--frames 60] [--timeout 180] [--launcher wine] [--only pkg,...]
-             [--shard I/N]
+             [--shard I/N] [--only-from smoke.txt] [--require-drew]
     sweep.py --merge <report dir>... --out <report dir>
 
 --shard I/N runs only every Nth app starting at the Ith (1-based), so N
 machines share the corpus; --merge joins their report directories (report.json,
 logs, frames) into one report, as if one machine had run them all.
+--only-from takes the packages to run from a file (smoke.txt), and
+--require-drew makes the sweep a test: an app that does not draw is run once
+more, and if it still does not the exit code is 1.
 
 For each app it runs winapk-runtime with WINAPK_HEADLESS=1 and a fresh data
 directory, waits for --frames presented frames (or the timeout), and keeps the
@@ -61,6 +64,16 @@ FRAMES_RE = re.compile(r"\[win\.apk\] (\d+) frames presented")
 GUEST_MISSING_RE = re.compile(
     r"guest (?:called a system function|uses a system variable) not implemented on Windows yet, [^:]*: (\S+)")
 GUEST_LOAD_RE = re.compile(r"\[win\.apk\] cannot load (\S+?\.so): (?:cannot load \"[^\"]*\": )?(.*)$")
+
+
+def read_list(path):
+    """Package names, one per line, '#' starts a comment."""
+    names = set()
+    for line in open(path, encoding="utf-8"):
+        line = line.split("#", 1)[0].strip()
+        if line:
+            names.add(line)
+    return names
 
 
 def read_apps(path, only):
@@ -278,6 +291,9 @@ def main():
     ap.add_argument("--only", default="")
     ap.add_argument("--shard", default="1/1", help="I/N: every Nth app from the Ith (1-based)")
     ap.add_argument("--merge", nargs="+", metavar="DIR", help="join these report directories into --out")
+    ap.add_argument("--only-from", metavar="FILE", help="run only the packages this file lists (smoke.txt)")
+    ap.add_argument("--require-drew", action="store_true",
+                    help="exit 1 when an app does not draw, after one more try")
     args = ap.parse_args()
 
     out = os.path.abspath(args.out)
@@ -293,8 +309,15 @@ def main():
         os.makedirs(os.path.join(out, sub), exist_ok=True)
     cache = args.apks or os.path.join(out, "apks")
     only = set(filter(None, args.only.split(",")))
+    if args.only_from:
+        only |= read_list(args.only_from)
+    apps = read_apps(args.apps, only)
+    missing = only - {pkg for pkg, _, _ in apps}
+    if missing:
+        # A smoke app that is not in the corpus would silently not run.
+        ap.error("not in " + args.apps + ": " + ", ".join(sorted(missing)))
     results = []
-    for pkg, version, name in read_apps(args.apps, only)[index - 1::count]:
+    for pkg, version, name in apps[index - 1::count]:
         apk = fetch(pkg, version, name, cache)
         if not apk:
             print(f"[sweep] {pkg}: download failed", flush=True)
@@ -303,9 +326,23 @@ def main():
         print(f"[sweep] {pkg}: {r['status']} in {r['seconds']} s, {len(r['stubbed_natives'])} stubbed natives, "
               f"{len(r['exceptions'])} exceptions, {len(r['guest_missing'])} missing system functions, "
               f"{len(r['guest_load_failures'])} libraries not loaded", flush=True)
+        if args.require_drew and r["status"] != "drew":
+            # One more try tells a slow start on a busy machine from a break.
+            print(f"[sweep] {pkg}: {r['status']}, trying once more", flush=True)
+            shutil.rmtree(os.path.join(out, "data", pkg), ignore_errors=True)
+            r = run_app(pkg, apk, args, out)
+            print(f"[sweep] {pkg}: {r['status']} in {r['seconds']} s", flush=True)
         results.append(r)
         shutil.rmtree(os.path.join(out, "data", pkg), ignore_errors=True)
     print(write_report(results, out))
+    if args.require_drew:
+        failed = [f"{r['package']} ({r['status']})" for r in results if r["status"] != "drew"]
+        missing = len(apps[index - 1::count]) - len(results)
+        if failed or missing:
+            print("[sweep] FAILED: " + ", ".join(failed + ([f"{missing} not downloaded"] if missing else [])),
+                  flush=True)
+            return 1
+        print(f"[sweep] OK: all {len(results)} apps drew", flush=True)
     return 0
 
 

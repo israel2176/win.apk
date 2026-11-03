@@ -998,7 +998,7 @@ double-clicking it.
 ### M9. Hardening and release (4 to 8 weeks)
 
 Status: not started, apart from the compatibility corpus in CI
-(`ci.yml`'s sweep jobs, `test/compat/`) and the release pipeline
+(`ci.yml`'s smoke test and sweep jobs, `test/compat/`) and the release pipeline
 (`windows-release.yml`, unsigned pre-releases).
 
 - W^X thunk pool and unwind tables (section 7).
@@ -1099,8 +1099,10 @@ Build with CMake as described in `windows/README.md`.
 libraries and the end-to-end inputs, and compile the launcher with MinGW. One
 Windows job builds everything with MSYS2 CLANG64 (through ccache) and Temurin
 21 and stages the runtime; the unit tests, the runtime tests (an APK booted
-headless and in a window), the compatibility sweep on four machines and the
-packaging then run side by side on its artifacts. A first job skips what a
+headless and in a window), a smoke test of ten apps (`test/compat/smoke.txt`;
+it fails when one no longer draws) and the packaging then run side by side on
+its artifacts. The whole compatibility sweep runs only by hand, on four
+machines. A first job skips what a
 pull request cannot affect. The platform resource APK, ANGLE, the compile
 cache and the sweep's APKs are cached between runs.
 

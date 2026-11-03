@@ -50,10 +50,12 @@ work in the notes. Newest test first within an app.
 | Klooni | 860 (`dev.lonami.klooni`) | F-Droid | Works | libGDX: OpenGL ES from Java on ANGLE; draws and takes input | `windows/PORTING.md`, section 8 (window, input and rendering) | |
 | Tensy | 2 (`se.voxelmanip.tensy`) | F-Droid | Works | SDL 3: OpenGL ES from the app's own native code through a SurfaceView; draws and takes input | `windows/PORTING.md`, section 8 (window, input and rendering) | |
 
-The automated compatibility sweep (`windows/test/compat/apps.txt`, run by
-`ci.yml` over four machines) boots about 90 F-Droid apps headless on every pull
-request that touches the runtime, and reports which draw their first screen
-and what blocks the rest; its report is an artifact of the run. The corpus is
+The automated compatibility sweep (`windows/test/compat/apps.txt`) boots about
+90 F-Droid apps headless and reports which draw their first screen and what
+blocks the rest. It runs when asked for (`ci.yml` by hand, on four machines),
+and its report is an artifact of the run. Every pull request that touches the
+runtime boots ten of them instead, one of each kind (`smoke.txt`), and fails
+when one no longer draws. The corpus is
 pinned to one version per app and covers: apps without native libraries
 (Coffee, the Privacy Friendly apps, Markor, Bill Farmer's Editor, Diary and
 Currency, Noice, OpenTracks, Loop Habit Tracker, OpenTasks, QuickDic, Vanilla

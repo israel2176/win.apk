@@ -213,7 +213,7 @@ problem affects:
 ```sh
 python windows/test/compat/sweep.py --runtime <staged runtime> --out <report dir> \
     [--jdk <dir>] [--apps apps.txt] [--apks <cache dir>] [--frames 60] [--timeout 180] \
-    [--launcher wine] [--only pkg,...] [--shard I/N]
+    [--launcher wine] [--only pkg,...] [--shard I/N] [--only-from smoke.txt] [--require-drew]
 python windows/test/compat/sweep.py --merge <report dir>... --out <report dir>
 ```
 
@@ -224,9 +224,19 @@ collects the host natives called while still stubbed, the exceptions Java
 logged, HotSpot crash files, and for native code the system functions the shim
 lacks and the libraries that could not load. `--shard I/N` runs every Nth
 app from the Ith, and `--merge` joins the shards' report directories into one.
-`ci.yml` runs it on pull requests as four shards on four machines, then joins
-them: the ranked report is the run's summary, and the report, the logs and the
-last frames are the `compat-sweep` artifact.
+`--only-from` runs only the packages a file lists, and `--require-drew` makes
+the sweep a test: an app that does not draw gets one more try, then the exit
+code is 1.
+
+In CI, every pull request that touches the runtime boots the smoke set,
+`test/compat/smoke.txt`: ten apps, one of each kind (Java, Kotlin, Compose,
+JNI, libGDX, SDL, NativeActivity, React Native, a WebView shell, an
+arm64-only build), all of which draw today, with `--require-drew`. Keep only
+apps that reliably draw in it. The whole corpus runs only when asked for:
+Actions > CI > Run workflow on the branch, with "Full compatibility sweep"
+ticked (the default). It runs as four shards on four machines, then joins them:
+the ranked report is the run's summary, and the report, the logs and the last
+frames are the `compat-sweep` artifact. It fails nothing.
 
 ## CI and releases
 
@@ -245,7 +255,8 @@ last frames are the `compat-sweep` artifact.
 | Build | `windows-latest` | What changed | Every CMake target with MSYS2 CLANG64 through ccache (the cache is restored from the newest run, `main`'s for a pull request's first one), then `stage_runtime.sh build stage`. Uploads `winapk-binaries` (every exe) and `runtime-stage` |
 | Unit tests | `windows-latest` | Guest libraries, Build | Every test program above, the arm64 AOT translation included |
 | Runtime tests | `windows-latest` | Guest libraries, Build | The tests that need the staged jars or ANGLE, the APK booted headless and in a window (`headless-boot` artifact), the GMS CLI |
-| Sweep 1/4 to 4/4 | `windows-latest` × 4 | Build | A quarter of the corpus each (`--shard`), each with its own APK cache |
+| App smoke test | `windows-latest` | Build | The ten apps of `test/compat/smoke.txt` (`--require-drew`): fails when one no longer draws (`smoke` artifact) |
+| Sweep 1/4 to 4/4 | `windows-latest` × 4 | Build | Only by hand, with "Full compatibility sweep": a quarter of the corpus each (`--shard`), each with its own APK cache |
 | Sweep report | Ubuntu | Sweep | `sweep.py --merge`: the run's summary and the `compat-sweep` artifact |
 | Package | `windows-latest` | Build | The staged folder with a Temurin JRE (`winapk-preview`) and the installer (`winapk-setup`); beside the tests, not after them |
 
