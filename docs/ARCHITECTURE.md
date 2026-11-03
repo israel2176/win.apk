@@ -537,12 +537,11 @@ engines), the audio backend, the shared-folder mapping, the window geometry,
 and a real HotSpot JVM loading a guest library (`winapk-jvm-run`). Two Java
 tests check the permission model and the `File.separator` rewrite.
 
-Three GitHub Actions workflows, none of which runs on a push to `main`:
+Two GitHub Actions workflows:
 
 | Workflow | When | What |
 |---|---|---|
-| `windows-poc.yml` | Pull requests touching `windows/`, and by hand | Builds the guest test libraries on Ubuntu, then builds everything on `windows-latest`, runs every test, stages the runtime, boots an APK headless and in a window, runs the GMS CLI's self-test, and packages a preview and an installer as artifacts |
-| `compat-sweep.yml` | Pull requests touching `windows/` or `runtime/java/`, and by hand | Boots every app in `windows/test/compat/apps.txt` headless and ranks what blocks them by the number of apps affected (`sweep.py`) |
+| `ci.yml` | Pull requests touching `windows/` or `runtime/`, and by hand; a push to `main` only builds (to leave its compile cache to pull requests) | One pipeline of jobs. *What changed* decides which stages a pull request needs. The guest test libraries build on Ubuntu, and a launcher-only change gets a one-minute MinGW compile with warnings as errors. Everything else builds once on `windows-latest` (MSYS2 CLANG64, ccache) and stages the runtime. That output goes as artifacts to the jobs that run side by side: *Unit tests* (every test program), *Runtime tests* (the Java tests, GL, an APK booted headless and in a window, the GMS CLI), *App smoke test* (the ten apps of `windows/test/compat/smoke.txt`, one of each kind; it fails when one no longer draws), and *Package* (a preview folder with a Temurin JRE and the installer). The whole compatibility sweep runs only by hand (Run workflow, "Full compatibility sweep"): split over four machines (`sweep.py --shard`) and joined by *Sweep report* into one ranked report. A new push cancels the run in progress |
 | `windows-release.yml` | By hand only, with a tag | Builds (stamping the tag's version into `Win.apk.exe`), packages with a Temurin 21 JRE, smoke-tests the package, builds the installer and publishes a GitHub pre-release |
 
 [`windows/README.md`](../windows/README.md) has the commands.

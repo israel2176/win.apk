@@ -17,6 +17,8 @@ xcuserdata/
 # Build output
 build/
 dist/
+stage/
+.ccache/
 out/
 runtime/build/
 cache/

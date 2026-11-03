@@ -177,7 +177,7 @@ The Java framework has many more `MACAPK_*` switches of upstream's; grep
 
 ## Tests
 
-Every test is a program built by CMake; `windows-poc.yml` runs each of them on
+Every test is a program built by CMake; `ci.yml` runs each of them on
 `windows-latest`, and `test/run_*_wine.sh` run the main ones under Wine.
 
 | Program | What it checks |
@@ -217,7 +217,8 @@ problem affects:
 ```sh
 python windows/test/compat/sweep.py --runtime <staged runtime> --out <report dir> \
     [--jdk <dir>] [--apps apps.txt] [--apks <cache dir>] [--frames 60] [--timeout 180] \
-    [--launcher wine] [--only pkg,...]
+    [--launcher wine] [--only pkg,...] [--shard I/N] [--only-from smoke.txt] [--require-drew]
+python windows/test/compat/sweep.py --merge <report dir>... --out <report dir>
 ```
 
 Each app gets one status: `drew` (ran its frames and the last frame has real
@@ -225,19 +226,48 @@ content), `blank` (the last frame is one or two colors), `no-frame` (no frame
 before the timeout) or `crashed`. The report (`report.md`, `report.json`)
 collects the host natives called while still stubbed, the exceptions Java
 logged, HotSpot crash files, and for native code the system functions the shim
-lacks and the libraries that could not load. `compat-sweep.yml` runs it on
-pull requests and attaches the report, the logs and the last frames.
+lacks and the libraries that could not load. `--shard I/N` runs every Nth
+app from the Ith, and `--merge` joins the shards' report directories into one.
+`--only-from` runs only the packages a file lists, and `--require-drew` makes
+the sweep a test: an app that does not draw gets one more try, then the exit
+code is 1.
+
+In CI, every pull request that touches the runtime boots the smoke set,
+`test/compat/smoke.txt`: ten apps, one of each kind (Java, Kotlin, Compose,
+JNI, libGDX, SDL, NativeActivity, React Native, a WebView shell, an
+arm64-only build), all of which draw today, with `--require-drew`. Keep only
+apps that reliably draw in it. The whole corpus runs only when asked for:
+Actions > CI > Run workflow on the branch, with "Full compatibility sweep"
+ticked (the default). It runs as four shards on four machines, then joins them:
+the ranked report is the run's summary, and the report, the logs and the last
+frames are the `compat-sweep` artifact. It fails nothing.
 
 ## CI and releases
 
 | Workflow | Trigger | What it does |
 |---|---|---|
-| `.github/workflows/windows-poc.yml` | Pull requests touching `windows/`; by hand | Builds the guest libraries on Ubuntu; on `windows-latest` builds everything with MSYS2 CLANG64 and Temurin 21, runs every test above, stages the runtime, boots an APK headless and in a window, runs the GMS CLI, then packages the staged folder with a Temurin JRE (`winapk-preview` artifact) and builds the installer (`winapk-setup`) |
-| `.github/workflows/compat-sweep.yml` | Pull requests touching `windows/` or `runtime/java/`; by hand | The compatibility sweep, with the ranked report as the run's summary |
+| `.github/workflows/ci.yml` | Pull requests touching `windows/` or `runtime/`; by hand; a push to `main` (build only) | The pipeline below |
 | `.github/workflows/windows-release.yml` | By hand only, with a tag such as `v0.2.0-preview` | Builds with `-DWINAPK_VERSION=<tag>`, stages, packages `Win.apk-windows-x64.zip` with a JRE and `package/README.txt`, smoke-tests the package (boots an APK headless), builds `Win.apk-Setup.exe` with Inno Setup, and publishes both as a GitHub pre-release with `package/RELEASE_NOTES.md` as the notes |
 
-Nothing runs on a push to `main`, and nothing is released automatically. The
-platform resource APK and the ANGLE download are cached between runs.
+`ci.yml`'s jobs, in the order they can start:
+
+| Job | Runs on | Needs | What |
+|---|---|---|---|
+| What changed | Ubuntu | | Reads the pull request's files: docs alone run nothing; `launcher/` or `package/` alone build and package but run no app; anything else runs everything. By hand, everything; a push to `main`, the build alone |
+| Guest libraries | Ubuntu | What changed | The x86_64 and arm64 test libraries and the end-to-end inputs (`test/build_guest.sh`, `test/build_e2e.sh`) |
+| Launcher check | Ubuntu | What changed | The launcher compiled with MinGW-w64, warnings as errors: an answer in about a minute |
+| Build | `windows-latest` | What changed | Every CMake target with MSYS2 CLANG64 through ccache (the cache is restored from the newest run, `main`'s for a pull request's first one), then `stage_runtime.sh build stage`. Uploads `winapk-binaries` (every exe) and `runtime-stage` |
+| Unit tests | `windows-latest` | Guest libraries, Build | Every test program above, the arm64 AOT translation included |
+| Runtime tests | `windows-latest` | Guest libraries, Build | The tests that need the staged jars or ANGLE, the APK booted headless and in a window (`headless-boot` artifact), the GMS CLI |
+| App smoke test | `windows-latest` | Build | The ten apps of `test/compat/smoke.txt` (`--require-drew`): fails when one no longer draws (`smoke` artifact) |
+| Sweep 1/4 to 4/4 | `windows-latest` × 4 | Build | Only by hand, with "Full compatibility sweep": a quarter of the corpus each (`--shard`), each with its own APK cache |
+| Sweep report | Ubuntu | Sweep | `sweep.py --merge`: the run's summary and the `compat-sweep` artifact |
+| Package | `windows-latest` | Build | The staged folder with a Temurin JRE (`winapk-preview`) and the installer (`winapk-setup`); beside the tests, not after them |
+
+A new push to a pull request cancels its run in progress. Nothing is released
+automatically. The platform resource APK, ANGLE, the compile cache and the
+sweep's APKs are cached between runs. The runtime is staged into `stage/`,
+never `runtime/`, which is upstream's source tree.
 
 Pull requests: one topic each, CI green on Windows before merging, merged
 with rebase. [`../CONTRIBUTING.md`](../CONTRIBUTING.md) has the rest.
