@@ -420,7 +420,10 @@ Windows the only host piece is the sign-in window (`native_signin.cpp`):
 Google's EmbeddedSetup page in a WebView2 window with a private profile and
 the Android WebView user agent that makes Google serve the device flow; the
 `oauth_token` cookie the finished flow sets is exchanged for a master token.
-The layer's state is `gms\gms_state.properties`. `winapk-runtime --gms
+Before the window closes, the page asks `accounts.google.com/ListAccounts`
+(the session's accounts, as Chrome asks) for the account's picture URL;
+`AccountPhoto` saves the picture as `gms\photo-<account>.img` for the
+launcher's account button. The layer's state is `gms\gms_state.properties`. `winapk-runtime --gms
 <command>` runs upstream's `GmsCli` with no app, which is how the launcher's
 Google account setting lists accounts, adds one and signs out.
 

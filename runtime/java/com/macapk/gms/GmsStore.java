@@ -346,6 +346,7 @@ public final class GmsStore {
             }
         }
         save();
+        AccountPhoto.delete(account);
     }
 
     // ===================================================================

@@ -2550,6 +2550,10 @@ struct Layout {
 // (refresh_account asks the runtime in the background).
 std::wstring g_account;
 void refresh_account();
+// The account's picture, round, at the button's size: what the runtime saved at sign-in
+// (com.macapk.gms.AccountPhoto), loaded once per account and size. Null: none, the initial shows.
+std::unique_ptr<Gdiplus::Bitmap> g_account_photo;
+std::wstring g_account_photo_key;  // account + size it was loaded for; cleared to load again
 
 HWND owner() { return g_main; }
 void show_logs(const fs::path& log);
@@ -2571,8 +2575,8 @@ const App* find_app(const std::wstring& name) {
     return nullptr;
 }
 
-// The picture in `png` at s x s, with the icons' rounded corners; null if there is none.
-std::unique_ptr<Gdiplus::Bitmap> rounded_icon(const fs::path& png, int s) {
+// The picture in `png` at s x s, its corners rounded by `radius` (s / 2: a circle); null if there is none.
+std::unique_ptr<Gdiplus::Bitmap> rounded_picture(const fs::path& png, int s, float radius) {
     std::unique_ptr<Gdiplus::Bitmap> out;
     std::error_code ec;
     if (fs::exists(png, ec)) {
@@ -2591,12 +2595,15 @@ std::unique_ptr<Gdiplus::Bitmap> rounded_icon(const fs::path& png, int s) {
             g.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHighQuality);
             Gdiplus::TextureBrush brush(&scaled);
             GraphicsPath p;
-            rounded(p, RectF(0, 0, static_cast<float>(s), static_cast<float>(s)), s * 0.22f);
+            rounded(p, RectF(0, 0, static_cast<float>(s), static_cast<float>(s)), radius);
             g.FillPath(&brush, &p);
         }
     }
     return out;
 }
+
+// The picture in `png` at s x s, with the icons' rounded corners; null if there is none.
+std::unique_ptr<Gdiplus::Bitmap> rounded_icon(const fs::path& png, int s) { return rounded_picture(png, s, s * 0.22f); }
 
 // The program's icon (launcher.rc's PNG) for the pane, at the pane's size.
 Gdiplus::Bitmap* brand_icon() {
@@ -3034,8 +3041,33 @@ void paint_search_box(Graphics& g) {
     }
 }
 
-// The Google account's button, as a browser's profile button: the account's initial on a colour of
-// its own when one is signed in, else an outline of a person. It opens Settings, where the account is.
+fs::path gms_dir();
+
+// Where the runtime keeps the account's picture: com.macapk.gms.AccountPhoto.file, the same name
+// (lower case; anything but a-z 0-9 . _ @ - as '_').
+fs::path account_photo_path(const std::wstring& account) {
+    std::wstring name = L"photo-";
+    for (wchar_t ch : account) {
+        if (ch >= L'A' && ch <= L'Z') ch = static_cast<wchar_t>(ch - L'A' + L'a');
+        const bool ok = (ch >= L'a' && ch <= L'z') || (ch >= L'0' && ch <= L'9') || ch == L'.' || ch == L'_' ||
+                        ch == L'@' || ch == L'-';
+        name += ok ? ch : L'_';
+    }
+    return gms_dir() / (name + L".img");
+}
+
+Gdiplus::Bitmap* account_photo(int s) {
+    const std::wstring key = g_account + L"|" + std::to_wstring(s);
+    if (key != g_account_photo_key) {
+        g_account_photo_key = key;
+        g_account_photo = rounded_picture(account_photo_path(g_account), s, s / 2.0f);
+    }
+    return g_account_photo.get();
+}
+
+// The Google account's button, as a browser's profile button: the account's picture when Google gave
+// one at sign-in, else its initial on a colour of its own, or an outline of a person when no one is
+// signed in. It opens Settings, where the account is.
 void paint_account_button(Graphics& g) {
     const RectF& r = g_l.account;
     const bool hot = g_hot.kind == kHitAccount;
@@ -3045,6 +3077,15 @@ void paint_account_button(Graphics& g) {
         Gdiplus::Pen ring(hot ? g_t.text : g_t.text2, px(1.2f));
         g.DrawEllipse(&ring, inset(c, px(1), px(1)));
         draw_text(g, kGlyphContact, g_f.glyph12.get(), hot ? g_t.text : g_t.text2, c, kCenter);
+        return;
+    }
+    const int side = static_cast<int>(std::lround(c.Width));
+    if (Gdiplus::Bitmap* photo = side > 0 ? account_photo(side) : nullptr) {
+        draw_image(g, photo, RectF(c.X, c.Y, static_cast<float>(side), static_cast<float>(side)));
+        if (hot) {
+            Gdiplus::Pen ring(g_t.accent, px(1.5f));
+            g.DrawEllipse(&ring, inset(c, -px(1.5f), -px(1.5f)));
+        }
         return;
     }
     static const Color kAvatar[] = {Color(255, 26, 115, 232), Color(255, 217, 48, 37), Color(255, 24, 128, 56),
@@ -4376,6 +4417,29 @@ bool google_account_present() {
     return fs::exists(gms_dir() / L"accounts.present", ec);
 }
 
+// A failure's reason is an `ERROR\t<message>` line on the runtime's stdout,
+// which only the caller reads; the error dialog's Show log opens gms.log,
+// which had only stderr, so "PKIX path building failed" was nowhere to be
+// seen. Copied there, and only those lines: the rest of stdout holds the
+// account's email. Called after the runtime exited, as its stderr handle
+// shares no write.
+void append_gms_errors(const std::string& out) {
+    std::string lines;
+    for (size_t at = 0; at < out.size();) {
+        size_t end = out.find('\n', at);
+        if (end == std::string::npos) end = out.size();
+        if (out.compare(at, 6, "ERROR\t") == 0) lines.append(out, at, end - at).append("\n");
+        at = end + 1;
+    }
+    if (lines.empty()) return;
+    HANDLE f = CreateFileW(gms_log().c_str(), FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_DELETE, nullptr,
+                           OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return;
+    DWORD n = 0;
+    WriteFile(f, lines.data(), static_cast<DWORD>(lines.size()), &n, nullptr);
+    CloseHandle(f);
+}
+
 // Runs winapk-runtime --gms <args>, its stdout into *out (UTF-8, as the
 // runtime's manifest makes the code page) and its stderr into logs\gms.log.
 // The exit code, or -1 when it did not start.
@@ -4410,7 +4474,9 @@ int run_gms(const std::wstring& args, std::wstring* out) {
     if (!ok) return -1;
     if (out) *out = utf8_to_wide(bytes);
     CloseHandle(pi.hThread);
-    return static_cast<int>(wait_exit(pi.hProcess));
+    const int code = static_cast<int>(wait_exit(pi.hProcess));
+    append_gms_errors(bytes);
+    return code;
 }
 
 // One argument for the runtime's command line, as CommandLineToArgvW splits it.
@@ -4463,6 +4529,7 @@ DWORD WINAPI account_thread(void*) {
 void refresh_account() {
     if (!google_account_present()) {
         g_account.clear();
+        g_account_photo_key.clear();
         if (g_main) InvalidateRect(g_main, nullptr, FALSE);
         return;
     }
@@ -7058,6 +7125,7 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case kGmsAccount: {
             std::unique_ptr<std::wstring> account(reinterpret_cast<std::wstring*>(lp));
             g_account = *account;
+            g_account_photo_key.clear();  // a sign-in or sign-out may have changed the picture
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         }

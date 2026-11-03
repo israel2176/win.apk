@@ -381,8 +381,12 @@ An app's **Sign in with Google** opens the same sign-in window when no account
 is signed in yet, and the account added there is the one the app signs in
 with (and the one Settings shows). With an account, the app shows its chooser.
 The round button at the end of the toolbar (on the left in Hebrew) shows the
-signed-in account's initial, as a browser's profile button does, or an
-outline of a person when there is none; it opens Settings.
+signed-in account's profile picture, as a browser's profile button does (the
+account's initial when Google gave no picture at sign-in), or an outline of a
+person when there is none; it opens Settings. The picture is fetched once, at
+sign-in, and kept in `%LOCALAPPDATA%\Win.apk\gms` until you sign out; an
+account signed in before this version shows its picture after signing out and
+in again.
 
 Google sign-in needs the WebView2 Runtime (a 2022 or later version). Without
 it the sign-in is cancelled and the log says why.

@@ -26,6 +26,11 @@ public final class NativeSignIn {
 
     private static native boolean signInWindowActive();
 
+    /** The picture URL the last window found for its account, or null.
+     *  Windows only: on the Mac there is no such native, and the
+     *  UnsatisfiedLinkError means "no picture" (see AccountPhoto). */
+    private static native String signInPhotoUrl();
+
     /** Whether this process can show a window at all. Cached after the first
      *  probe: an UnsatisfiedLinkError costs a stack trace to construct, and this
      *  is consulted on a path that may run per licence check. */
@@ -71,7 +76,11 @@ public final class NativeSignIn {
             return null;
         }
         if (token == null || token.isEmpty()) return null;   // cancelled
-        return GoogleAuthClient.exchangeOAuthToken(token);
+        String photo = null;
+        try { photo = signInPhotoUrl(); } catch (Throwable t) { /* no such native */ }
+        String email = GoogleAuthClient.exchangeOAuthToken(token);
+        if (email != null && photo != null) AccountPhoto.save(email, photo);
+        return email;
     }
 
     /** Whether this process has already put a sign-in window in front of the user
