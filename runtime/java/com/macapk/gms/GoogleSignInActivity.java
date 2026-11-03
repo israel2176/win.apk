@@ -15,6 +15,9 @@
 // SIGN_IN_CANCELLED), TYPE_USER_CANCELED for Credential Manager. With no account
 // the screen offers only "Add an account", which opens the same Google sign-in
 // window as Mac.apk's Accounts panel (NativeSignIn) -- agents never type into it.
+// Win.apk: with no account on the PC at all, that window opens at once -- the
+// account is Win.apk's, shared by every app (Settings > Google account), not
+// this app's -- and the account added is the one signed in with.
 package com.macapk.gms;
 
 import android.app.Activity;
@@ -111,6 +114,18 @@ public class GoogleSignInActivity extends Activity {
             return;
         }
         buildUi();
+        if (offered.isEmpty() && !mRequest.filterByAuthorized && noAccountAtAll() && NativeSignIn.available()) {
+            GoogleSignInBroker.log("chooser: no account on this PC -- adding Win.apk's account");
+            addAccount(true);
+        }
+    }
+
+    /** No Google account is signed in to Win.apk (as opposed to none that this request may use). */
+    private static boolean noAccountAtAll() {
+        for (String a : GmsStore.accountNames()) {
+            if (a != null && !a.startsWith("_")) return false;
+        }
+        return true;
     }
 
     // ------------------------------------------------------------------ UI
@@ -147,10 +162,16 @@ public class GoogleSignInActivity extends Activity {
 
         card.addView(text("Sign in with Google", 14, sub, false));
         List<String> accounts = GoogleSignInBroker.eligibleAccounts(mRequest);
-        TextView title = text(accounts.isEmpty() ? "Add a Google account" : "Choose an account", 24, ink, false);
+        TextView title = text(accounts.isEmpty() ? "Add a Google account to Win.apk" : "Choose an account", 24, ink,
+                false);
         title.setPadding(0, dp(16), 0, dp(4));
         card.addView(title);
         card.addView(text("to continue to " + mAppLabel, 16, sub, false));
+        if (accounts.isEmpty()) {
+            TextView shared = text("Every app on this PC uses the account added to Win.apk.", 14, sub, false);
+            shared.setPadding(0, dp(8), 0, 0);
+            card.addView(shared);
+        }
         View rule = new View(this);
         rule.setBackgroundColor(line);
         LinearLayout.LayoutParams ruleLp = new LinearLayout.LayoutParams(
@@ -240,10 +261,16 @@ public class GoogleSignInActivity extends Activity {
     }
 
     private void onAddAccount() {
+        addAccount(false);
+    }
+
+    /** Opens Win.apk's Google sign-in window. `direct`: the screen opened straight into it
+     *  (no account at all), so the account added signs in to the app and a cancel cancels. */
+    private void addAccount(final boolean direct) {
         if (mBusy || mFinished) return;
         if (!NativeSignIn.available()) {
-            setStatus("Adding an account needs Mac.apk's Google sign-in window. "
-                    + "Add one in Mac.apk > Accounts, then try again.");
+            setStatus("Adding an account needs Win.apk's Google sign-in window. "
+                    + "Add one in Win.apk > Settings > Google account, then try again.");
             return;
         }
         if (NativeSignIn.active()) return;
@@ -257,6 +284,14 @@ public class GoogleSignInActivity extends Activity {
                     @Override public void run() {
                         mBusy = false;
                         if (mFinished) return;
+                        if (direct && added == null) {
+                            onCancel();
+                            return;
+                        }
+                        if (direct && GoogleSignInBroker.eligibleAccounts(mRequest).contains(added)) {
+                            onAccountPicked(added);
+                            return;
+                        }
                         buildUi();
                         if (added == null) setStatus("No account was added.");
                     }

@@ -10,7 +10,9 @@
 ; Setup speaks English or Hebrew, chosen from the Windows display language
 ; without asking (Hebrew is laid out right to left, from Inno Setup's own
 ; Languages\Hebrew.isl). The file is UTF-8 with a BOM, which Inno Setup needs
-; to read the Hebrew below.
+; to read the Hebrew below. Inno Setup lays the Hebrew wizard's controls out
+; right to left but leaves its title bar as in English; [Code] mirrors that too
+; (the icon on the right, Close on the left), as a Hebrew Windows draws it.
 
 #ifndef SourceDir
   #error Pass /DSourceDir=<the staged Win.apk folder>
@@ -81,3 +83,53 @@ Type: filesandordirs; Name: "{userprograms}\Win.apk Apps"
 
 [Run]
 Filename: "{app}\Win.apk.exe"; Description: "{cm:OpenWinApk}"; Flags: nowait postinstall skipifsilent
+
+[Code]
+// Inno Setup's right-to-left forms flip their controls but not the title bar:
+// that takes WS_EX_LAYOUTRTL, which the VCL does not set (Setup.SetupForm.pas).
+// Set here, with WS_EX_NOINHERITLAYOUT so the controls inside keep drawing
+// themselves as they do, it mirrors the frame and the form's own coordinates.
+// The form's direct children are then placed mirrored too, so they are flipped
+// back first: InitializeWizard runs before Inno Setup flips the controls, and
+// two flips leave them where the mirrored form shows them right to left.
+const
+  GWL_EXSTYLE = -20;
+  WS_EX_LAYOUTRTL = $00400000;
+  WS_EX_NOINHERITLAYOUT = $00100000;
+  SWP_NOSIZE = $0001;
+  SWP_NOMOVE = $0002;
+  SWP_NOZORDER = $0004;
+  SWP_FRAMECHANGED = $0020;
+
+function GetWindowLongW(hWnd: HWND; nIndex: Integer): LongInt;
+  external 'GetWindowLongW@user32.dll stdcall';
+function SetWindowLongW(hWnd: HWND; nIndex: Integer; dwNewLong: LongInt): LongInt;
+  external 'SetWindowLongW@user32.dll stdcall';
+function SetWindowPos(hWnd: HWND; hWndInsertAfter: HWND; X, Y, cx, cy: Integer; uFlags: UINT): BOOL;
+  external 'SetWindowPos@user32.dll stdcall';
+
+procedure MirrorTitleBar(Form: TForm);
+var
+  I: Integer;
+  C: TControl;
+  A: TAnchors;
+begin
+  for I := 0 to Form.ControlCount - 1 do begin
+    C := Form.Controls[I];
+    C.Left := Form.ClientWidth - C.Left - C.Width;
+    A := C.Anchors;
+    if (akLeft in A) <> (akRight in A) then begin
+      if akLeft in A then A := A - [akLeft] + [akRight]
+      else A := A - [akRight] + [akLeft];
+      C.Anchors := A;
+    end;
+  end;
+  SetWindowLongW(Form.Handle, GWL_EXSTYLE,
+    GetWindowLongW(Form.Handle, GWL_EXSTYLE) or WS_EX_LAYOUTRTL or WS_EX_NOINHERITLAYOUT);
+  SetWindowPos(Form.Handle, 0, 0, 0, 0, 0, SWP_NOMOVE or SWP_NOSIZE or SWP_NOZORDER or SWP_FRAMECHANGED);
+end;
+
+procedure InitializeWizard;
+begin
+  if ActiveLanguage = 'hebrew' then MirrorTitleBar(WizardForm);
+end;

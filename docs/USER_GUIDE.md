@@ -196,7 +196,7 @@ phone-style sandbox: install only apps you trust ([`SECURITY.md`](../SECURITY.md
 | Enter | Open the selected app |
 | Alt+Enter | The selected app's details |
 | Menu key, Shift+F10 | The selected app's right-click menu |
-| Typing, Ctrl+F | Search the library or the Store; Esc shows everything again |
+| Typing, Ctrl+F | In the Store: search it; Esc shows everything again |
 | Ctrl+O | Add an app from a file |
 | Ctrl+1, Ctrl+2 | The Library and the Store |
 | Ctrl+, | Settings |
@@ -241,8 +241,8 @@ its own. Each setting takes effect the next time an app opens unless noted.
 | Google account | **Sign in**, **Add another account**, **Sign out** | See [Google account](#google-account) |
 | Troubleshooting | **Logs** | Opens the log window |
 | Troubleshooting | **App data** | Opens `%LOCALAPPDATA%\Win.apk` |
-| Troubleshooting | **Remove all apps** | Removes every app (what they saved stays) |
-| About | | The version |
+| Troubleshooting | **Clear library** | Uninstalls every app and removes its shortcuts (app data is kept) |
+| About | | The version, the source code (github.com/israel2176/win.apk) and the licence (GNU AGPL v3.0), with links; Win.apk is forked from Mac.apk |
 
 Settings are stored under `HKEY_CURRENT_USER\Software\Win.apk`.
 
@@ -277,7 +277,8 @@ Hebrew, the installer and the library open in Hebrew; otherwise pick
 **Language > עברית** in the settings, and the library switches at once. In
 Hebrew every window of Win.apk is laid out right to left: the library, its
 pages, the install window, the launch window, the permission questions, menus
-and dialogs. Logs stay left to right.
+and dialogs. So is the installer, title bar included (its icon on the right,
+Close on the left, Finish at the bottom left). Logs stay left to right.
 
 An app's window follows Windows' reading layout for right-to-left users: its
 title bar is mirrored, while the app draws its own layout as it would on a
@@ -366,8 +367,15 @@ signs out. Signing in opens Google's own sign-in page in a window of its own
 (Microsoft Edge WebView2, in a private profile). Win.apk never sees the
 password; it keeps the token Google hands back, in
 `%LOCALAPPDATA%\Win.apk\gms`. Signing out forgets the account and its tokens
-on this PC; apps that used it ask again. Apps can also open the same sign-in
-window themselves, through their "Add an account" flow.
+on this PC; apps that used it ask again.
+
+The account belongs to Win.apk, not to one app: every app on the PC uses it.
+An app's **Sign in with Google** opens the same sign-in window when no account
+is signed in yet, and the account added there is the one the app signs in
+with (and the one Settings shows). With an account, the app shows its chooser.
+The round button at the end of the toolbar (on the left in Hebrew) shows the
+signed-in account's initial, as a browser's profile button does, or an
+outline of a person when there is none; it opens Settings.
 
 Google sign-in needs the WebView2 Runtime (a 2022 or later version). Without
 it the sign-in is cancelled and the log says why.
@@ -430,8 +438,8 @@ and the launch window open the right log themselves when something fails.
   then its data folder (`android\data\data\<package>`) and its folders in
   shared storage (`Android\data` and `Android\obb`) go too, as uninstalling
   does on a phone. Your own files in your Windows folders are never touched.
-- **Settings > Troubleshooting > Remove all apps** removes every app (what they
-  saved stays).
+- **Settings > Troubleshooting > Clear library** uninstalls every app and
+  removes its shortcuts (app data is kept).
 - Uninstalling Win.apk (Windows Settings > Apps) removes the program, the
   Start menu shortcuts and the `.apk` association, and keeps
   `%LOCALAPPDATA%\Win.apk`. Delete that folder to remove the apps, their data,

@@ -1,57 +1,78 @@
 #!/usr/bin/env python3
-"""gen_icon.py -- draws the Win.apk icon (launcher/winapk.ico and a PNG).
+"""gen_icon.py -- draws the Win.apk icon (launcher/winapk.ico and winapk.png).
 
-A rounded tile with a teal-to-blue gradient and a white phone outline that
-holds a play mark: an app, running. Drawn at 1024 px and scaled down for each
-icon size.
+A blue-to-teal rounded tile holding a white window, and in the window a 2x2
+grid of coloured app tiles: Android apps, in a Windows window. Drawn at
+1024 px and scaled down; the sizes up to 24 px drop the title bar and the
+tile's margin so the grid stays readable.
 
-    windows/tools/gen_icon.py   (needs Pillow; rewrites windows/launcher/winapk.ico)
+    windows/tools/gen_icon.py   (needs Pillow; rewrites windows/launcher/winapk.ico and winapk.png)
 """
 
 import os
-import sys
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFilter
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, "..", "launcher")
+S = 1024
 
 
-def draw(size=1024):
-    s = size
-    grad = Image.new("RGBA", (s, s))
-    top, bottom = (24, 200, 160), (30, 100, 230)
+def lerp(a, b, t):
+    return tuple(int(a[i] + (b[i] - a[i]) * t) for i in range(len(a)))
+
+
+def draw(size, small=False):
+    img = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+    # The tile: a diagonal gradient, with a soft light over its top half.
+    grad = Image.new("RGBA", (S, S))
+    blue, teal = (64, 98, 255, 255), (14, 186, 160, 255)
     px = grad.load()
-    for y in range(s):
-        for x in range(s):
-            t = (x + y) / (2 * (s - 1))
-            px[x, y] = tuple(int(top[i] + (bottom[i] - top[i]) * t) for i in range(3)) + (255,)
-    mask = Image.new("L", (s, s), 0)
-    ImageDraw.Draw(mask).rounded_rectangle([0, 0, s - 1, s - 1], radius=int(s * 0.22), fill=255)
-    tile = Image.new("RGBA", (s, s), (0, 0, 0, 0))
-    tile.paste(grad, (0, 0), mask)
-    d = ImageDraw.Draw(tile)
-    # The phone.
-    w, h = s * 0.42, s * 0.66
-    x0, y0 = (s - w) / 2, (s - h) / 2
-    d.rounded_rectangle([x0, y0, x0 + w, y0 + h], radius=int(s * 0.07), outline=(255, 255, 255, 255),
-                        width=int(s * 0.045))
-    d.rounded_rectangle([s / 2 - s * 0.05, y0 + s * 0.045, s / 2 + s * 0.05, y0 + s * 0.07],
-                        radius=int(s * 0.012), fill=(255, 255, 255, 255))
-    # The play mark.
-    cx, cy, r = s / 2 + s * 0.015, s / 2 + s * 0.02, s * 0.11
-    d.polygon([(cx - r * 0.75, cy - r), (cx - r * 0.75, cy + r), (cx + r, cy)], fill=(255, 255, 255, 255))
-    return tile
+    for y in range(S):
+        for x in range(S):
+            t = (x * 0.45 + (S - y) * 0.55) / S
+            light = int(34 * (1 - y / (S / 2)) ** 2) if y < S // 2 else 0
+            c = lerp(teal, blue, min(1.0, max(0.0, t)))
+            px[x, y] = lerp(c, (255, 255, 255, 255), light / 255)[:3] + (255,)
+    m = 0 if small else 40
+    mask = Image.new("L", (S, S), 0)
+    ImageDraw.Draw(mask).rounded_rectangle((m, m, S - m, S - m), radius=int((S - 2 * m) * 0.23), fill=255)
+    img.paste(grad, (0, 0), mask)
+
+    # The window, on a shadow.
+    wx0, wy0, wx1, wy1 = (150, 190, 874, 830) if small else (190, 230, 834, 800)
+    r = 90 if small else 70
+    shadow = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+    ImageDraw.Draw(shadow).rounded_rectangle((wx0, wy0 + 24, wx1, wy1 + 24), radius=r, fill=(10, 30, 80, 90))
+    img.alpha_composite(shadow.filter(ImageFilter.GaussianBlur(28)))
+    d = ImageDraw.Draw(img)
+    d.rounded_rectangle((wx0, wy0, wx1, wy1), radius=r, fill=(255, 255, 255, 255))
+    bar = 0 if small else 120
+    if bar:  # the title bar: its three controls at the end, a line under it
+        for i in range(3):
+            cx = wx1 - 70 - i * 62
+            d.ellipse((cx - 20, wy0 + 40, cx + 20, wy0 + 80), fill=(200, 208, 230))
+        d.line((wx0, wy0 + bar, wx1, wy0 + bar), fill=(226, 231, 243), width=6)
+
+    # The apps.
+    pad = 90 if small else 64
+    gx0, gy0, gx1, gy1 = wx0 + pad, wy0 + bar + pad - (8 if bar else 0), wx1 - pad, wy1 - pad
+    gap = 60 if small else 44
+    tw, th = (gx1 - gx0 - gap) / 2, (gy1 - gy0 - gap) / 2
+    colours = [(61, 220, 132), (255, 176, 32), (77, 120, 255), (255, 90, 120)]
+    for i, c in enumerate(colours):
+        x0, y0 = gx0 + (i % 2) * (tw + gap), gy0 + (i // 2) * (th + gap)
+        d.rounded_rectangle((x0, y0, x0 + tw, y0 + th), radius=int(min(tw, th) * 0.28), fill=c + (255,))
+    return img.resize((size, size), Image.LANCZOS)
 
 
 def main():
-    big = draw()
+    big = draw(256)
+    big.save(os.path.join(OUT, "winapk.png"))
     sizes = [16, 20, 24, 32, 40, 48, 64, 96, 128, 256]
-    big.resize((256, 256), Image.LANCZOS).save(os.path.join(OUT, "winapk.ico"),
-                                              sizes=[(n, n) for n in sizes])
-    big.resize((256, 256), Image.LANCZOS).save(os.path.join(OUT, "winapk.png"))
-    print("[gen_icon] windows/launcher/winapk.ico, winapk.png")
+    images = [draw(s, small=s <= 24) for s in sizes]
+    images[-1].save(os.path.join(OUT, "winapk.ico"), sizes=[(s, s) for s in sizes], append_images=images[:-1])
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()
