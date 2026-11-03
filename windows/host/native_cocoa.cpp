@@ -560,6 +560,12 @@ std::atomic<unsigned long long> g_guest_last_ms{0};
 std::mutex g_tree_lock;
 std::vector<uint32_t> g_tree_frame;
 int g_tree_w = 0, g_tree_h = 0;
+// The native code's last frame (under g_tree_lock). A compositor shows a
+// surface's last buffer until the next one, and an app draws only when
+// something changes: Flutter drew City Car's sign-in screen, went idle, and
+// the tree's next frame covered its hole with black.
+std::vector<uint32_t> g_guest_frame;
+int g_guest_w = 0, g_guest_h = 0;
 
 bool guest_live() {
     const unsigned long long last = g_guest_last_ms.load();
@@ -1113,6 +1119,8 @@ void phone_size_dp(int* w, int* h) {
     *h = g_phone_h.load();
 }
 
+void present_over_guest(const uint32_t* argb, int w, int h);
+
 void guest_frame_present(const uint32_t* argb, int w, int h) {
     if (g_guest_last_ms.exchange(GetTickCount64()) == 0) {
         std::fprintf(stderr, "[win.apk] native window: first frame from the app's native code (%dx%d)\n", w, h);
@@ -1121,14 +1129,23 @@ void guest_frame_present(const uint32_t* argb, int w, int h) {
         present_pixels(argb, w, h);
         return;
     }
-    // The view tree over the guest frame: where the tree is transparent (the
-    // SurfaceView's hole) the guest shows. Both are the surface's size; an app
-    // that set its own buffer geometry (a game rendering at a lower
-    // resolution) is scaled up to the tree, as Android's compositor scales
-    // its buffer to the window. Otherwise a size they disagree on means one
-    // of them is from before a resize: the guest's frame goes out alone, at
-    // its own size (the window shows it unscaled), and the next frame of
-    // each brings them together.
+    {
+        std::lock_guard<std::mutex> hold(g_tree_lock);
+        g_guest_frame.assign(argb, argb + static_cast<size_t>(w) * h);
+        g_guest_w = w;
+        g_guest_h = h;
+    }
+    present_over_guest(argb, w, h);
+}
+
+// The view tree over a guest frame: where the tree is transparent (the
+// SurfaceView's hole) the guest shows. Both are the surface's size; an app
+// that set its own buffer geometry (a game rendering at a lower resolution)
+// is scaled up to the tree, as Android's compositor scales its buffer to the
+// window. Otherwise a size they disagree on means one of them is from before
+// a resize: the guest's frame goes out alone, at its own size (the window
+// shows it unscaled), and the next frame of each brings them together.
+void present_over_guest(const uint32_t* argb, int w, int h) {
     thread_local std::vector<uint32_t> out;
     int tw = 0, th = 0;
     {
@@ -1176,8 +1193,18 @@ void JNICALL Cocoa_presentBitmap(JNIEnv* env, jclass, jintArray argb, jint w, ji
     keep_tree_frame(reinterpret_cast<const uint32_t*>(px), w, h);
     // While the app's native code shows frames, its next one brings this along.
     // With a GL content view or a surface on screen, the tree is their overlay.
+    // When it has gone quiet, the tree still goes over its last frame.
     if (!guest_live()) {
-        if (composite_active()) composite_tree_frame(env, reinterpret_cast<const uint32_t*>(px), w, h);
+        thread_local std::vector<uint32_t> guest;
+        int gw = 0, gh = 0;
+        if (g_guest_last_ms.load() != 0 && g_guest_layer_z.load() == 1) {
+            std::lock_guard<std::mutex> hold(g_tree_lock);
+            guest = g_guest_frame;
+            gw = g_guest_w;
+            gh = g_guest_h;
+        }
+        if (gw > 0 && gh > 0) present_over_guest(guest.data(), gw, gh);
+        else if (composite_active()) composite_tree_frame(env, reinterpret_cast<const uint32_t*>(px), w, h);
         else present_pixels(reinterpret_cast<const uint32_t*>(px), w, h);
     }
     env->ReleaseIntArrayElements(argb, px, JNI_ABORT);
