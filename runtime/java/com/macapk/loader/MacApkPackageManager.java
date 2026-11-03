@@ -5811,7 +5811,13 @@ public final class MacApkPackageManager extends PackageManager {
             // ⚠ NEVER null: a caller that finds the package immediately does
             // `signatures.length` (AppAuth's BrowserDescriptor does exactly
             // this), and it catches NameNotFoundException but not NPE.
-            android.content.pm.Signature ours = macapkPlatformSignature(VENDING_PACKAGE);
+            // Win.apk: the store and Play services share Google's certificate on
+            // a phone, and an app's own basement requires both, and requires them
+            // equal, before it reports Play services available.
+            android.content.pm.Signature ours = null;
+            try { ours = com.macapk.gms.GoogleGmsCertificate.signature(); }
+            catch (Throwable t) { NativeLog.w("Mac.apk.PM", "no Google store certificate (" + t + ")"); }
+            if (ours == null) ours = macapkPlatformSignature(VENDING_PACKAGE);
             if (ours != null) {
                 pi.signatures = new android.content.pm.Signature[] { ours };
                 try {
@@ -6095,8 +6101,8 @@ public final class MacApkPackageManager extends PackageManager {
             pi.packageName = GMS_PACKAGE;
             // versionCode >= 12000000 is what makes firebase-messaging's Rpc take
             // the modern bound-Messenger path instead of the legacy broadcast one.
-            pi.versionName = "24.44.00";
-            pi.versionCode = PlayServices.VERSION_CODE;   // 244400000, well above 12000000
+            pi.versionName = "26.44.00";
+            pi.versionCode = PlayServices.VERSION_CODE;   // 264400000, well above 12000000
             pi.longVersionCode = PlayServices.VERSION_CODE;
             pi.firstInstallTime = pi.lastUpdateTime = macapkInstallTimeMs();
             android.content.pm.ApplicationInfo ai = new android.content.pm.ApplicationInfo();
@@ -6106,10 +6112,14 @@ public final class MacApkPackageManager extends PackageManager {
                       | android.content.pm.ApplicationInfo.FLAG_UPDATED_SYSTEM_APP
                       | android.content.pm.ApplicationInfo.FLAG_INSTALLED;
             pi.applicationInfo = ai;
-            // ⛔ OUR platform certificate, never Google's -- an app that
-            // byte-compares the gms signature against Google's embedded cert
-            // still correctly finds it is not Google-signed (the honest ceiling).
-            android.content.pm.Signature ours = macapkPlatformSignature(GMS_PACKAGE);
+            // Win.apk: Google's public gms certificate, the one every app's own
+            // play-services-basement checks before it uses Play services at all
+            // (see com.macapk.gms.GoogleGmsCertificate). MACAPK_GMS_GOOGLE_CERT=0
+            // goes back to our platform certificate, upstream's honest ceiling.
+            android.content.pm.Signature ours = null;
+            try { ours = com.macapk.gms.GoogleGmsCertificate.signature(); }
+            catch (Throwable t) { NativeLog.w("Mac.apk.PM", "no Google gms certificate (" + t + ")"); }
+            if (ours == null) ours = macapkPlatformSignature(GMS_PACKAGE);
             pi.signatures = (ours != null)
                 ? new android.content.pm.Signature[] { ours }
                 : new android.content.pm.Signature[] { new android.content.pm.Signature(new byte[0]) };

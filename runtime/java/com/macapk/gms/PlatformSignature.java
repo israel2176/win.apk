@@ -6,6 +6,10 @@
 // certificate, and an app is entitled to ask for it. There are exactly three
 // things we could hand back and only one of them is acceptable:
 //
+//   (Win.apk departs from this for com.google.android.gms and
+//   com.android.vending: it reports Google's public certificate for those
+//   two, see GoogleGmsCertificate. This one is the fallback.)
+//
 //   1. Google's real certificate bytes. FORBIDDEN. CLAUDE.md's scope section is
 //      explicit, and it stays forbidden even though those bytes are public and
 //      no private key is involved: presenting Google's signing identity for a

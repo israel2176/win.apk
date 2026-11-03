@@ -43,8 +43,11 @@ public final class PlayServices {
 
     /** The client-API version this device's provider implements. Apps compare
      *  their bundled com.google.android.gms.version meta-data against this; a
-     *  high value means "new enough", so no SERVICE_VERSION_UPDATE_REQUIRED. */
-    public static final int VERSION_CODE = 244400000;
+     *  high value means "new enough", so no SERVICE_VERSION_UPDATE_REQUIRED.
+     *  Win.apk: 26.44, as current as the apps. Each API also carries its own
+     *  minimum (Waze 5.26's cloud messaging client wants 261200000), and with
+     *  24.44 those calls failed with SERVICE_VERSION_UPDATE_REQUIRED. */
+    public static final int VERSION_CODE = 264400000;
 
     // MACAPK_GMS_HONEST_MISSING=1/true: answer the fully-absent contract on the
     // availability question too. A/B diagnosis only -- nothing needs it set.
