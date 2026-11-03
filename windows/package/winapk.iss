@@ -40,6 +40,8 @@ SetupIconFile=..\launcher\winapk.ico
 UninstallDisplayIcon={app}\Win.apk.exe
 UninstallDisplayName=Win.apk
 WizardStyle=modern
+; A fixed size: [Code] mirrors the Hebrew wizard's frame, and a resize would move its buttons back.
+WizardResizable=no
 Compression=lzma2/max
 SolidCompression=yes
 ChangesAssociations=yes
@@ -92,6 +94,9 @@ Filename: "{app}\Win.apk.exe"; Description: "{cm:OpenWinApk}"; Flags: nowait pos
 // The form's direct children are then placed mirrored too, so they are flipped
 // back first: InitializeWizard runs before Inno Setup flips the controls, and
 // two flips leave them where the mirrored form shows them right to left.
+// Pascal Script has no Anchors on TControl, so only their positions are
+// flipped; the wizard keeps one size (WizardResizable=no), where anchors do
+// not move anything.
 const
   GWL_EXSTYLE = -20;
   WS_EX_LAYOUTRTL = $00400000;
@@ -112,17 +117,10 @@ procedure MirrorTitleBar(Form: TForm);
 var
   I: Integer;
   C: TControl;
-  A: TAnchors;
 begin
   for I := 0 to Form.ControlCount - 1 do begin
     C := Form.Controls[I];
     C.Left := Form.ClientWidth - C.Left - C.Width;
-    A := C.Anchors;
-    if (akLeft in A) <> (akRight in A) then begin
-      if akLeft in A then A := A - [akLeft] + [akRight]
-      else A := A - [akRight] + [akLeft];
-      C.Anchors := A;
-    end;
   end;
   SetWindowLongW(Form.Handle, GWL_EXSTYLE,
     GetWindowLongW(Form.Handle, GWL_EXSTYLE) or WS_EX_LAYOUTRTL or WS_EX_NOINHERITLAYOUT);
