@@ -27,6 +27,8 @@ namespace winapk::bionic {
 // (LP64), Windows' is 32 (LLP64). Never write `long` in a guest signature.
 using glong = int64_t;
 using gulong = uint64_t;
+// A guest long double (IEEE binary128) as System V passes it: in one SSE register.
+typedef long long GuestQuad __attribute__((vector_size(16)));
 
 struct ShimSymbol {
     const char* name;
@@ -139,6 +141,8 @@ int fd_install(std::shared_ptr<FdObject> object);
 // Close/dup for object descriptors; false if `fd` is not one.
 bool fd_close(int fd);
 int fd_dup(int fd, int to);  // to < 0: lowest free number
+// 0, 1, 2: the runtime's own standard streams, which guest calls never close or replace.
+bool fd_is_host_std(int fd);
 // Something became readable/writable: wakes poll, select and epoll_wait.
 void fd_notify();
 // poll(2) over guest descriptors, for other modules (looper.cpp).

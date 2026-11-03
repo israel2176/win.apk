@@ -658,10 +658,17 @@ bool fd_close(int fd) {
         dropped = std::move(it->second);
         g_table.erase(it);
     }
-    _close(fd);
+    if (!fd_is_host_std(fd)) _close(fd);
     fd_notify();  // a waiter on this number sees POLLNVAL
     return true;
 }
+
+// 0, 1 and 2 are the runtime's own standard streams as well as the guest's: the
+// log is written to 2. A guest that points its stdout and stderr at a pipe, to
+// pump them into logcat (Waze does), made 2 a NUL placeholder and the rest of
+// the run's log went nowhere. The guest gets its redirection through the
+// object table; the CRT descriptor underneath stays the runtime's.
+bool fd_is_host_std(int fd) { return fd >= 0 && fd <= 2; }
 
 int fd_dup(int fd, int to) {
     auto o = fd_object(fd);
@@ -670,6 +677,9 @@ int fd_dup(int fd, int to) {
     int n;
     if (to < 0) {
         n = _open("NUL", _O_RDWR | _O_BINARY);
+    } else if (fd_is_host_std(to)) {
+        fd_close(to);
+        n = to;
     } else {
         fd_close(to);
         n = _dup2(fd, to) == 0 ? to : -1;  // `fd` is a NUL placeholder too

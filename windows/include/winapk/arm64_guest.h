@@ -36,7 +36,7 @@
 //
 // setjmp and longjmp are the exception to "every import is a host function":
 // they save and restore guest registers, so the bridge implements them itself
-// (guest_intrinsic).
+// (guest_intrinsic). So is strtold, whose binary128 result fills q0.
 //
 // Not supported yet: arguments or results passed by value as structs larger
 // than 16 bytes or as floating-point aggregates (the conventions disagree;
