@@ -10,8 +10,8 @@
 // dart:io loads it with SSL_CTX_load_verify_locations, and without it every
 // HTTPS request failed with "TlsException: Failed to find root cert cache".
 //
-// The directory holds the same trust anchors the Java side gets (Boot's
-// installHostTrustAnchors): the JDK's CAs plus every root Windows trusts. The
+// The directory holds the same trust anchors the Java side gets
+// (HostTrust.install): the JDK's CAs plus every root Windows trusts. The
 // Windows ones matter most: on a PC that is where the root of a filtering
 // proxy (NetFree), a company's TLS inspection or a locally installed CA lives,
 // and behind such a proxy no public root would verify anything. Windows' set
