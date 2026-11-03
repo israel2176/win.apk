@@ -1745,8 +1745,13 @@ public final class Boot {
         // Unity title (Crossy Road) loaded its engine but rendered only the
         // camera clear -- a flat blue window.)
         String dataSubdir = new File(appDir).getName();
-        File persistentDataDir = new File(androidRoot,
-                "data/data/" + dataSubdir);
+        // Win.apk: the same directory by its short name where there is one,
+        // which native code sized for /data/user/0/<package> can hold
+        // (runtime_main.cpp, winapk.data.dir).
+        String shortDataDir = System.getProperty("winapk.data.dir");
+        File persistentDataDir = shortDataDir != null && !shortDataDir.isEmpty() && new File(shortDataDir).isDirectory()
+                ? new File(shortDataDir)
+                : new File(androidRoot, "data/data/" + dataSubdir);
         File filesDir = new File(persistentDataDir, "files"); filesDir.mkdirs();
         File cacheDir = new File(persistentDataDir, "cache"); cacheDir.mkdirs();
         NativeLog.i(TAG, "data dir: " + persistentDataDir.getAbsolutePath());

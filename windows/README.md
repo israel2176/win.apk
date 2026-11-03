@@ -170,6 +170,7 @@ The user-facing ones (`WINAPK_PHONE_SIZE`, `WINAPK_RESIZABLE`,
 | `MACAPK_JVM_OPTS` | Extra JVM options, passed through |
 | `MACAPK_ALL_PERMS_ASK=0` | Returns the permission groups beyond storage and location to the install-time rule (declared means held), the Mac's behaviour; `MACAPK_MEDIA_PERMS_ASK=0` and `MACAPK_ALLFILES_HONEST=0` keep their upstream meaning |
 | `MACAPK_GMS_PRESENT=0`, `MACAPK_GMS_FCM=0`, `MACAPK_GMS_SIGNIN=0`, `MACAPK_GMS_LOCATION=0`, `MACAPK_GMS_DIR` | Upstream's Play services switches and the state folder |
+| `MACAPK_GMS_GOOGLE_CERT=0` | Reports the platform certificate for `com.google.android.gms` and `com.android.vending` instead of Google's (apps then see Play services as invalid) |
 | `MACAPK_VIRTUAL_CAMERA=0`, `MACAPK_SV_OVERSIZE_HOLDER=0`, `MACAPK_MANIFEST_FEATURE_SPLITS=0`, `MACAPK_LIFECYCLE_*=0`, `MACAPK_CONTEXT_MCLASSLOADER=0` | Switch off individual framework fixes listed under [Changes to the upstream tree](#changes-to-the-upstream-tree) |
 
 The Java framework has many more `MACAPK_*` switches of upstream's; grep
@@ -584,6 +585,22 @@ every such change is listed here:
   sign-in window found (`signInPhotoUrl`, a native only Windows has; on the
   Mac its absence means no picture) is saved as `gms\photo-<account>.img`
   for the launcher's account button, and removed with the account.
+- `runtime/java/com/macapk/gms/GoogleGmsCertificate.java` (new),
+  `MacApkPackageManager.java` and `PlatformSignature.java`:
+  `com.google.android.gms` and `com.android.vending` report Google's public
+  Play services certificate instead of the platform one. Every app's own
+  play-services-basement compares the two with the copy it embeds before it
+  uses Play services at all; with ours it answered `SERVICE_INVALID`, so
+  "Sign in with Google" failed at once (BuyMe, Waze) and the location and
+  sign-in providers were never asked. `MACAPK_GMS_GOOGLE_CERT=0` goes back.
+- `runtime/java/com/macapk/loader/PlayServices.java` and
+  `MacApkPackageManager.java`: the Play services version is 26.44
+  (`264400000`); app clients of 2026 want more than 24.44 for some APIs
+  (`SERVICE_VERSION_UPDATE_REQUIRED`).
+- `runtime/java/com/macapk/loader/Boot.java`: the app's data directory is the
+  8.3 short form `runtime_main.cpp` passes in `winapk.data.dir`, when the
+  volume has short names. Native code sized for `/data/user/0/<package>` cut
+  the ~150-character full form (Waze: a 128-byte buffer, so no map).
 
 ## License
 
