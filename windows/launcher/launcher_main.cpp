@@ -229,8 +229,11 @@ const wchar_t* tr(const wchar_t* en) {
         {L"All {0} apps and their shortcuts will be removed. App data is kept.",
          L"כל {0} האפליקציות וקיצורי הדרך שלהן יוסרו. נתוני האפליקציות נשמרים."},
         {L"The library was cleared.", L"הספרייה נוקתה."},
-        {L"Records of app installs and launches, for troubleshooting and bug reports.",
-         L"תיעוד של התקנות והפעלות של אפליקציות, לפתרון בעיות ולדיווח על תקלות."},
+        {L"Every app's install and run logs, to attach to a bug report. Each app's own is on its details page.",
+         L"יומני ההתקנה וההפעלה של כל האפליקציות, לצירוף לדיווח על תקלה. היומן של כל אפליקציה נמצא גם בפרטי האפליקציה."},
+        {L"Log", L"יומן"},
+        {L"What happened the last time the app ran.", L"מה קרה בהפעלה האחרונה של האפליקציה."},
+        {L"What happened when the app was installed.", L"מה קרה בהתקנת האפליקציה."},
         {L"The files and settings each app has saved.", L"הקבצים וההגדרות שכל אפליקציה שמרה."},
         {L"Google account: not signed in", L"חשבון Google: לא מחובר"},
         {L"Google account: {0}", L"חשבון Google: {0}"},
@@ -245,7 +248,6 @@ const wchar_t* tr(const wchar_t* en) {
         {L"{0} is ready", L"{0} מוכנה"},
         {L"Waiting", L"ממתינה"},
         {L"Copy", L"העתקה"},
-        {L"&Open", L"פתיחה"},
         {L"Portrait (the app requires it)", L"לאורך (האפליקציה דורשת זאת)"},
         {L"Landscape (the app requires it)", L"לרוחב (האפליקציה דורשת זאת)"},
         {L"Settings' default", L"ברירת המחדל שבהגדרות"},
@@ -253,7 +255,6 @@ const wchar_t* tr(const wchar_t* en) {
         {L"The settings' default is portrait.", L"ברירת המחדל שבהגדרות היא לאורך."},
         {L"{0} opens in landscape from now on.", L"{0} תיפתח לרוחב מעתה."},
         {L"{0} opens in portrait from now on.", L"{0} תיפתח לאורך מעתה."},
-        {L"&Remove…", L"הסרה…"},
         {L"{0} stopped with an error", L"{0} נעצרה עם שגיאה"},
         {L"What the log says", L"מה רשום ביומן"},
         {L"An app", L"אפליקציה"},
@@ -363,7 +364,6 @@ const wchar_t* tr(const wchar_t* en) {
          L"ב-Windows אין הגדרות מערכת של Android ש-{0} תוכל לשנות; זה נחשב כמותר."},
         {L"{0} was stopped, as Android does when a permission is revoked.",
          L"{0} נעצרה, כפי ש-Android עושה כשהרשאה נשללת."},
-        {L"&Stop", L"&עצירה"},
         {L"A newer version is out", L"יש גרסה חדשה יותר"},
         {L"Allow {0} to access music and audio on this PC?", L"לאפשר ל-{0} גישה למוזיקה ולאודיו במחשב הזה?"},
         {L"Allow {0} to access photos and videos on this PC?", L"לאפשר ל-{0} גישה לתמונות ולסרטונים במחשב הזה?"},
@@ -375,7 +375,7 @@ const wchar_t* tr(const wchar_t* en) {
         {L"Allow {0} to install other apps?", L"לאפשר ל-{0} להתקין אפליקציות אחרות?"},
         {L"Allow {0} to manage all files?", L"לאפשר ל-{0} לנהל את כל הקבצים?"},
         {L"Also delete what the app saved (accounts, settings, files)", L"למחוק גם את מה שהאפליקציה שמרה (חשבונות, הגדרות, קבצים)"},
-        {L"App &details", L"&פרטי האפליקציה"},
+        {L"App details", L"פרטי האפליקציה"},
         {L"Apps", L"אפליקציות"},
         {L"Apps save to and open from your Downloads, Pictures, Documents, Music and Videos.", L"אפליקציות שומרות בתיקיות ההורדות, התמונות, המסמכים, המוזיקה והסרטונים שלך, ופותחות מהן."},
         {L"Apps that need one orientation always get it. An app's details can turn just that one.", L"אפליקציה שצריכה כיוון מסוים תמיד מקבלת אותו. בפרטי האפליקציה אפשר לסובב רק אותה."},
@@ -412,7 +412,6 @@ const wchar_t* tr(const wchar_t* en) {
         {L"OK", L"אישור"},
         {L"On Windows such windows stay inside the app's own window.", L"ב-Windows חלונות כאלה נשארים בתוך החלון של האפליקציה."},
         {L"Open .apk, .apkm, .xapk and .apks files with Win.apk", L"פתיחת קובצי ‎.apk, ‎.apkm, ‎.xapk ו-‎.apks באמצעות Win.apk"},
-        {L"Open logs", L"פתיחת היומנים"},
         {L"Precise location", L"מיקום מדויק"},
         {L"Ready", L"מוכנה"},
         {L"Search the log", L"חיפוש ביומן"},
@@ -879,7 +878,11 @@ fs::path shortcut_icon(const std::wstring& name) { return library_dir() / (name 
 std::wstring label_of(const std::wstring& name) {
     std::ifstream f(label_file(name), std::ios::binary);
     std::string s((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-    const std::wstring w = utf8_to_wide(s);
+    std::wstring w = utf8_to_wide(s);
+    // One line: a label written with a line end (or edited by hand) would wrap or cut in menus and lists.
+    w.erase(0, w.find_first_not_of(L" \t\r\n"));
+    if (const size_t end = w.find_first_of(L"\r\n"); end != std::wstring::npos) w.resize(end);
+    while (!w.empty() && (w.back() == L' ' || w.back() == L'\t')) w.pop_back();
     return w.empty() ? name : w;
 }
 
@@ -1969,7 +1972,8 @@ constexpr wchar_t kGlyphSettings[] = L"\uE713", kGlyphDownload[] = L"\uE896", kG
                   kGlyphStore[] = L"\uE719", kGlyphAdd[] = L"\uE710", kGlyphRefresh[] = L"\uE72C",
                   kGlyphClear[] = L"\uE894", kGlyphLog[] = L"\uE8A5", kGlyphPackage[] = L"\uE7B8",
                   kGlyphChevronUp[] = L"\uE70E", kGlyphBack[] = L"\uE72B", kGlyphForward[] = L"\uE72A",
-                  kGlyphContact[] = L"\uE77B";
+                  kGlyphContact[] = L"\uE77B", kGlyphPlay[] = L"\uE768", kGlyphInfo[] = L"\uE946",
+                  kGlyphDelete[] = L"\uE74D";
 
 void make_fonts() {
     g_f.title = font(20, true);
@@ -3144,11 +3148,62 @@ std::vector<fs::path> pick_files(bool multiple, const wchar_t* title) {
 // ---------------------------------------------------------------------------
 // Actions
 
+// The library name for a file, which names its folders (apps\<name>, library\<name>.apk): the
+// package when the file is named after it, as the sites that share APKs name them
+// ("com.waze_5.26.5.0-1030744_1arch_2dpi_24lang_<hash>_apkmirror.com.apkm" -> "com.waze"); else
+// the file's name up to its version ("WhatsApp_2.24.1" -> "WhatsApp"). An app the library has
+// under that package keeps its name, so the file updates it.
+std::wstring install_name(const fs::path& source) {
+    const std::wstring stem = source.stem().wstring();
+    auto letter = [](wchar_t c) { return (c >= L'a' && c <= L'z') || (c >= L'A' && c <= L'Z'); };
+    auto digit = [](wchar_t c) { return c >= L'0' && c <= L'9'; };
+    // A leading package: dot-separated identifiers, each starting with a letter.
+    size_t end = 0;
+    int parts = 0;
+    while (end < stem.size() && letter(stem[end])) {
+        size_t j = end + 1;
+        while (j < stem.size() && (letter(stem[j]) || digit(stem[j]) || stem[j] == L'_')) ++j;
+        ++parts;
+        end = j;
+        if (end + 1 < stem.size() && stem[end] == L'.' && letter(stem[end + 1])) ++end;
+        else break;
+    }
+    std::wstring name;
+    if (parts >= 2) {
+        name = stem.substr(0, end);
+        // "waze_5" took the version's first number in: an identifier ends where "_<digit>" starts.
+        for (size_t k = name.rfind(L'.') + 1; k + 1 < name.size(); ++k) {
+            if (name[k] == L'_' && digit(name[k + 1])) {
+                name.resize(k);
+                break;
+            }
+        }
+        const wchar_t next = end < stem.size() ? stem[end] : L'_';
+        if (!wcschr(L"_- (.", next)) name.clear();  // "com.example.app!" is not a package
+    }
+    if (name.empty()) {
+        name = stem;
+        for (size_t k = 1; k + 1 < name.size(); ++k) {
+            const bool sep = name[k] == L'_' || name[k] == L' ' || name[k] == L'-';
+            const size_t v = k + 1 + ((name[k + 1] == L'v' || name[k + 1] == L'V') ? 1 : 0);
+            if (sep && v < name.size() && digit(name[v])) {
+                name.resize(k);
+                break;
+            }
+        }
+        while (!name.empty() && name.back() == L' ') name.pop_back();
+        if (name.empty()) name = stem;
+    }
+    const auto it = g_store.installed.find(wide_to_utf8(name));
+    if (it != g_store.installed.end() && find_app(it->second.first)) return it->second.first;
+    return file_name_safe(name);
+}
+
 // Queues an install. The store's (`from_store`) installs a download it then
 // removes, and shows its progress on the app's card rather than in the
 // install window.
 void install(const fs::path& source, std::wstring name = L"", fs::path replaces = {}, bool from_store = false) {
-    if (name.empty()) name = file_name_safe(source.stem().wstring());
+    if (name.empty()) name = install_name(source);
     if (is_pending(name)) return;  // the same file twice
     if (g_pending.empty()) {
         g_batch_total = g_batch_done = 0;
@@ -3392,6 +3447,258 @@ void store_downloaded(const Download& d, bool ok) {
     const std::wstring name = existing ? existing->name : file_name_safe(utf8_to_wide(d.pkg));
     if (!existing) g_job_labels[name] = d.label;
     install(d.file, name, existing ? existing->apk : fs::path(), true);
+}
+
+// ---------------------------------------------------------------------------
+// Menus
+//
+// The library's own popup menu, drawn as Windows 11 draws a flyout menu: a rounded card with a
+// shadow, a glyph per item, its shortcut at the end, a destructive item in red, and over the
+// items, for an app's menu, the app's icon and name. The system menu ignores the theme and draws
+// no pictures. It runs modally, as TrackPopupMenu does: the owner keeps the focus and so the
+// keyboard, the menu holds the mouse capture, and a click elsewhere or another window closes it.
+
+struct MenuItem {
+    int id = 0;  // 0: a separator
+    std::wstring text, shortcut;
+    const wchar_t* glyph = nullptr;
+    bool destructive = false, disabled = false, checked = false;
+};
+
+struct PopupMenu {
+    std::vector<MenuItem> items;
+    const App* app = nullptr;  // a header with its icon and name
+    std::wstring title, sub;   // the header's lines
+    std::vector<RectF> rects;  // where each item is, in the menu's client area
+    float header_h = 0, w = 0, h = 0;
+    int hot = -1, result = 0;
+    bool done = false;
+};
+PopupMenu* g_menu = nullptr;
+
+constexpr wchar_t kMenuClass[] = L"WinApkMenu";
+
+bool menu_item_usable(const MenuItem& it) { return it.id != 0 && !it.disabled; }
+
+void lay_out_menu(PopupMenu& m) {
+    const float pad = px(4), item_h = px(34), sep_h = px(9);
+    float text_w = 0, key_w = 0;
+    for (const MenuItem& it : m.items) {
+        if (!it.id) continue;
+        text_w = (std::max)(text_w, measure(it.text, g_f.body.get()));
+        if (!it.shortcut.empty()) key_w = (std::max)(key_w, measure(it.shortcut, g_f.caption.get()));
+    }
+    m.w = (std::max)(px(200), px(44) + text_w + (key_w > 0 ? px(28) + key_w : 0) + px(16)) + 2 * pad;
+    if (!m.title.empty()) {
+        const float tw = (std::max)(measure(m.title, g_f.body_semi.get()), measure(m.sub, g_f.caption.get()));
+        m.w = (std::min)(px(340), (std::max)(m.w, px(64) + tw + px(16)));
+        m.header_h = px(60);
+    }
+    float y = pad + m.header_h;
+    m.rects.clear();
+    for (const MenuItem& it : m.items) {
+        const float ih = it.id ? item_h : sep_h;
+        m.rects.emplace_back(pad, y, m.w - 2 * pad, ih);
+        y += ih;
+    }
+    m.h = y + pad;
+}
+
+void paint_menu(Graphics& g, float W, float H) {
+    const PopupMenu& m = *g_menu;
+    g.Clear(g_t.dark ? Color(255, 44, 44, 44) : Color(255, 249, 249, 249));
+    Gdiplus::Pen edge(g_t.border, 1);
+    g.DrawRectangle(&edge, RectF(0, 0, W - 1, H - 1));
+    if (m.header_h > 0) {
+        const float s = px(36);
+        const RectF ir(px(14), (m.header_h - s) / 2 + px(2), s, s);
+        draw_app_icon(g, m.app, m.title, ir);
+        const float tx = ir.GetRight() + px(12), tw = W - tx - px(12);
+        draw_text(g, m.title, g_f.body_semi.get(), g_t.text, RectF(tx, ir.Y - px(1), tw, px(20)), kLeft, false, true);
+        draw_text(g, m.sub, g_f.caption.get(), g_t.text2, RectF(tx, ir.Y + px(19), tw, px(18)), kLeft, false, true);
+        Gdiplus::Pen line(g_t.divider, 1);
+        g.DrawLine(&line, 0.0f, m.header_h, W, m.header_h);
+    }
+    for (size_t i = 0; i < m.items.size(); ++i) {
+        const MenuItem& it = m.items[i];
+        const RectF& r = m.rects[i];
+        if (!it.id) {
+            Gdiplus::Pen line(g_t.divider, 1);
+            g.DrawLine(&line, r.X + px(8), r.Y + r.Height / 2, r.GetRight() - px(8), r.Y + r.Height / 2);
+            continue;
+        }
+        const bool hot = static_cast<int>(i) == m.hot && !it.disabled;
+        if (hot) fill_round(g, r, px(4), g_t.dark ? Color(255, 61, 61, 61) : Color(255, 234, 234, 234));
+        const Color ink = it.disabled ? g_t.text3 : it.destructive ? g_t.danger : g_t.text;
+        const wchar_t* glyph = it.checked ? kGlyphCheck : it.glyph;
+        if (glyph) {
+            draw_text(g, glyph, g_f.glyph16.get(), it.checked ? g_t.accent : ink,
+                      RectF(r.X + px(10), r.Y, px(20), r.Height), kCenter);
+        }
+        draw_text(g, it.text, g_f.body.get(), ink, RectF(r.X + px(40), r.Y, r.Width - px(48), r.Height), kLeft,
+                  false, true);
+        if (!it.shortcut.empty()) {  // at the item's end, sized to it: keys read left to right in Hebrew too
+            const float kw = text_width(g, it.shortcut, g_f.caption.get()) + px(2);
+            draw_text(g, it.shortcut, g_f.caption.get(), it.disabled ? g_t.text3 : g_t.text2,
+                      RectF(r.GetRight() - px(12) - kw, r.Y, kw, r.Height), kLeft, false, true, true);
+        }
+    }
+}
+
+int menu_item_at(const PopupMenu& m, float x, float y) {
+    for (size_t i = 0; i < m.rects.size(); ++i) {
+        if (contains(m.rects[i], x, y)) return static_cast<int>(i);
+    }
+    return -1;
+}
+
+LRESULT CALLBACK menu_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    PopupMenu* m = g_menu;
+    switch (msg) {
+        case WM_MOUSEACTIVATE: return MA_NOACTIVATE;
+        case WM_PAINT:
+            if (m) buffered_paint(hwnd, paint_menu);
+            else ValidateRect(hwnd, nullptr);
+            return 0;
+        case WM_ERASEBKGND: return 1;
+        case WM_MOUSEMOVE:
+            if (m) {
+                const int hot = menu_item_at(*m, static_cast<float>(GET_X_LPARAM(lp)), static_cast<float>(GET_Y_LPARAM(lp)));
+                if (hot != m->hot) {
+                    m->hot = hot;
+                    InvalidateRect(hwnd, nullptr, FALSE);
+                }
+            }
+            return 0;
+        case WM_LBUTTONDOWN:
+        case WM_RBUTTONDOWN:
+        case WM_MBUTTONDOWN: {
+            RECT rc;
+            GetClientRect(hwnd, &rc);
+            const POINT pt{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
+            if (m && !PtInRect(&rc, pt)) m->done = true;  // a click outside closes the menu, as a menu's does
+            return 0;
+        }
+        case WM_LBUTTONUP:
+        case WM_RBUTTONUP:
+            if (m) {
+                const int i = menu_item_at(*m, static_cast<float>(GET_X_LPARAM(lp)), static_cast<float>(GET_Y_LPARAM(lp)));
+                if (i >= 0 && menu_item_usable(m->items[static_cast<size_t>(i)])) {
+                    m->result = m->items[static_cast<size_t>(i)].id;
+                    m->done = true;
+                }
+            }
+            return 0;
+        case WM_CAPTURECHANGED:
+            if (m && reinterpret_cast<HWND>(lp) != hwnd) m->done = true;
+            return 0;
+    }
+    return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+void menu_move(PopupMenu& m, int step) {
+    const int n = static_cast<int>(m.items.size());
+    int i = m.hot;
+    for (int k = 0; k < n; ++k) {
+        i = i < 0 ? (step > 0 ? 0 : n - 1) : (i + step + n) % n;
+        if (menu_item_usable(m.items[static_cast<size_t>(i)])) {
+            m.hot = i;
+            return;
+        }
+    }
+}
+
+// Shows `m` at the screen point `pt` (its top start corner there) and returns the item picked, or 0.
+// `below`: the top of the control it opens under, for a menu that does not fit below it.
+int run_menu(PopupMenu& m, POINT pt, LONG below = LONG_MIN, bool keyboard = false) {
+    static bool registered = false;
+    if (!registered) {
+        WNDCLASSW wc{};
+        wc.style = CS_DROPSHADOW;
+        wc.lpfnWndProc = menu_proc;
+        wc.hInstance = g_inst;
+        wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+        wc.lpszClassName = kMenuClass;
+        registered = RegisterClassW(&wc) != 0;
+    }
+    lay_out_menu(m);
+    const int w = static_cast<int>(std::ceil(m.w)), h = static_cast<int>(std::ceil(m.h));
+    MONITORINFO mi{sizeof(mi)};
+    GetMonitorInfoW(MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST), &mi);
+    const RECT& wa = mi.rcWork;
+    int x = g_rtl ? pt.x - w : pt.x, y = pt.y;
+    if (x + w > wa.right) x = (std::max)(wa.left, static_cast<LONG>(g_rtl ? wa.right - w : pt.x - w));
+    if (x < wa.left) x = wa.left;
+    if (y + h > wa.bottom) y = (std::max)(wa.top, (below != LONG_MIN ? below : pt.y) - h);
+    if (keyboard) menu_move(m, 1);
+    g_menu = &m;
+    HWND hwnd = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE | layout_style(), kMenuClass,
+                                L"", WS_POPUP, x, y, w, h, g_main, nullptr, g_inst, nullptr);
+    if (!hwnd) {
+        g_menu = nullptr;
+        return 0;
+    }
+    const DWORD round = 2;  // DWMWCP_ROUND: Windows 11 rounds the corners; older Windows ignores it
+    DwmSetWindowAttribute(hwnd, 33 /* DWMWA_WINDOW_CORNER_PREFERENCE */, &round, sizeof round);
+    ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+    SetCapture(hwnd);
+    MSG msg;
+    bool quit = false;
+    while (!m.done) {
+        if (!GetMessageW(&msg, nullptr, 0, 0)) {
+            quit = true;
+            break;
+        }
+        if (msg.message == WM_KEYDOWN || msg.message == WM_SYSKEYDOWN) {
+            switch (msg.wParam) {
+                case VK_ESCAPE:
+                case VK_MENU:
+                case VK_F10: m.done = true; break;
+                case VK_UP: menu_move(m, -1); break;
+                case VK_DOWN: menu_move(m, 1); break;
+                case VK_HOME: m.hot = -1; menu_move(m, 1); break;
+                case VK_END: m.hot = -1; menu_move(m, -1); break;
+                case VK_RETURN:
+                case VK_SPACE:
+                    if (m.hot >= 0 && menu_item_usable(m.items[static_cast<size_t>(m.hot)])) {
+                        m.result = m.items[static_cast<size_t>(m.hot)].id;
+                        m.done = true;
+                    }
+                    break;
+            }
+            InvalidateRect(hwnd, nullptr, FALSE);
+            continue;
+        }
+        if (msg.message == WM_CHAR || msg.message == WM_SYSCHAR || msg.message == WM_KEYUP ||
+            msg.message == WM_SYSKEYUP) {
+            continue;
+        }
+        TranslateMessage(&msg);
+        DispatchMessageW(&msg);
+        if (GetForegroundWindow() != g_main) m.done = true;  // Alt+Tab, another program in front
+    }
+    if (GetCapture() == hwnd) ReleaseCapture();
+    DestroyWindow(hwnd);
+    g_menu = nullptr;
+    if (quit) PostQuitMessage(static_cast<int>(msg.wParam));
+    return m.result;
+}
+
+// A choice list under a control: the choices, the current one checked.
+int run_choice_menu(const std::vector<std::wstring>& choices, int current, const RectF& under) {
+    PopupMenu m;
+    for (size_t i = 0; i < choices.size(); ++i) {
+        MenuItem it;
+        it.id = static_cast<int>(i) + 1;
+        it.text = choices[i];
+        it.checked = static_cast<int>(i) == current;
+        m.items.push_back(it);
+    }
+    POINT pt{static_cast<LONG>(under.X), static_cast<LONG>(under.GetBottom() + px(4))};
+    POINT top{static_cast<LONG>(under.X), static_cast<LONG>(under.Y - px(4))};
+    ClientToScreen(g_main, &pt);
+    ClientToScreen(g_main, &top);
+    return run_menu(m, pt, top.y);
 }
 
 // The categories, in a menu of a few columns so that a hundred of them fit.
@@ -3680,16 +3987,7 @@ void page_click(int hit) {
     } else if (row.kind == Row::kToggle) {
         row.act(!row.on);
     } else if (row.kind == Row::kChoice) {
-        HMENU menu = CreatePopupMenu();
-        for (size_t i = 0; i < row.choices.size(); ++i) {
-            AppendMenuW(menu, MF_STRING | (static_cast<int>(i) == row.choice ? MF_CHECKED : 0), i + 1,
-                        row.choices[i].c_str());
-        }
-        POINT pt{static_cast<LONG>(t.r.X), static_cast<LONG>(t.r.GetBottom() + px(2))};
-        ClientToScreen(g_main, &pt);
-        const int pick = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_TOPALIGN | menu_flags(true), pt.x, pt.y, 0, g_main,
-                                        nullptr);
-        DestroyMenu(menu);
+        const int pick = run_choice_menu(row.choices, row.choice, t.r);
         if (pick > 0) row.act(pick - 1);
     }
     if (g_page.generation == generation) rebuild_page();
@@ -3982,8 +4280,14 @@ std::vector<Section> settings_sections() {
     out.push_back(google_account_section());
 
     std::vector<Row> trouble = {
-        button_row(tr(L"Logs"), tr(L"Records of app installs and launches, for troubleshooting and bug reports."),
-                   tr(L"Open logs"), [] { show_logs({}); }),
+        button_row(tr(L"Logs"),
+                   tr(L"Every app's install and run logs, to attach to a bug report. Each app's own is on its "
+                      L"details page."),
+                   tr(L"Open folder"), [] {
+                       std::error_code ec;
+                       fs::create_directories(logs_dir(), ec);
+                       open_path(logs_dir());
+                   }),
         button_row(tr(L"App data"), tr(L"The files and settings each app has saved."), tr(L"Open folder"),
                    [] { open_path(data_dir()); })};
     if (!g_apps.empty()) {
@@ -4098,6 +4402,18 @@ void show_info(const App& app) {
             }
         };
         out.push_back({tr(L"Shortcut"), {desktop}, L""});
+        // The app's own log: its last run, else its install (the log window's picker has the rest).
+        {
+            std::error_code ec2;
+            const fs::path log = fs::exists(run_log(a.name), ec2) ? run_log(a.name) : install_log(a.name);
+            out.push_back({tr(L"Troubleshooting"),
+                           {button_row(tr(L"Log"),
+                                       tr(fs::exists(run_log(a.name), ec2)
+                                              ? L"What happened the last time the app ran."
+                                              : L"What happened when the app was installed."),
+                                       tr(L"Show log"), [log] { show_logs(log); })},
+                           L""});
+        }
         out.push_back({tr(L"Storage"),
                        {button_row(fmt(L"The app's file  ·  {0}", {apk_size}), a.apk.wstring(), tr(L"Show"),
                                    [a] { show_in_explorer(a.apk); }),
@@ -5471,20 +5787,36 @@ void apply_theme() {
     InvalidateRect(g_search, nullptr, TRUE);
 }
 
-// The tile's menu: Open, Stop while it runs, App details, Remove. Everything else is on the details page.
-void show_context_menu(const App& app, POINT pt) {
-    HMENU menu = CreatePopupMenu();
-    AppendMenuW(menu, MF_STRING, kCmdOpen, (std::wstring(tr(L"&Open")) + L"\t" + tr(L"Enter")).c_str());
-    if (g_running.count(app.name) || app_running(app.name)) AppendMenuW(menu, MF_STRING, kCmdStop, tr(L"&Stop"));
-    AppendMenuW(menu, MF_STRING, kCmdInfo, (std::wstring(tr(L"App &details")) + L"\tAlt+Enter").c_str());
-    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, MF_STRING, kCmdRemove, tr(L"&Remove…"));
-    SetMenuDefaultItem(menu, kCmdOpen, FALSE);
-    if (is_pending(app.name)) {
-        for (int id : {kCmdOpen, kCmdRemove}) EnableMenuItem(menu, id, MF_GRAYED);
-    }
-    TrackPopupMenu(menu, TPM_RIGHTBUTTON | menu_flags(false), pt.x, pt.y, 0, g_main, nullptr);
-    DestroyMenu(menu);
+void command(int id);
+
+// The tile's menu, under the app's icon and name: Open, Stop while it runs, App details, Remove.
+// Everything else is on the details page.
+void show_context_menu(const App& app, POINT pt, bool keyboard = false) {
+    const bool running = g_running.count(app.name) || app_running(app.name);
+    const bool pending = is_pending(app.name);
+    PopupMenu m;
+    m.app = &app;
+    m.title = app.label;
+    const std::vector<std::string> pkg = package_of(app.name);
+    if (running) m.sub = tr(L"Running");
+    else if (pkg.size() > 2 && !pkg[2].empty()) m.sub = fmt(L"Version {0}", {utf8_to_wide(pkg[2])});
+    else if (!pkg.empty()) m.sub = utf8_to_wide(pkg[0]);
+    auto item = [&](int id, const wchar_t* text, const wchar_t* glyph, std::wstring key = L"") {
+        MenuItem it;
+        it.id = id;
+        it.text = tr(text);
+        it.glyph = glyph;
+        it.shortcut = std::move(key);
+        it.disabled = pending && (id == kCmdOpen || id == kCmdRemove);
+        it.destructive = id == kCmdRemove;
+        m.items.push_back(it);
+    };
+    item(kCmdOpen, L"Open", kGlyphPlay, tr(L"Enter"));
+    if (running) item(kCmdStop, L"Stop", kGlyphStop);
+    item(kCmdInfo, L"App details", kGlyphInfo, L"Alt+Enter");
+    m.items.push_back({});
+    item(kCmdRemove, L"Remove…", kGlyphDelete);
+    if (const int pick = run_menu(m, pt, LONG_MIN, keyboard)) command(pick);
 }
 
 void command(int id) {
@@ -5877,7 +6209,7 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 const RectF r = tile_rect(tile_of(g_selected));
                 POINT pt{static_cast<LONG>(r.X + r.Width / 2), static_cast<LONG>(r.Y + r.Height / 2)};
                 ClientToScreen(hwnd, &pt);
-                show_context_menu(*selected(), pt);
+                show_context_menu(*selected(), pt, true);
                 return 0;
             }
             break;

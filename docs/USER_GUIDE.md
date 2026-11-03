@@ -207,8 +207,10 @@ phone-style sandbox: install only apps you trust ([`SECURITY.md`](../SECURITY.md
 
 ## Managing an app
 
-Right-click an app's tile for **Open**, **Stop** (while it runs),
-**App details** and **Remove**.
+Right-click an app's tile for its menu: the app's icon, name and version at
+the top, then **Open**, **Stop** (while it runs), **App details** and
+**Remove**, each with its icon and shortcut. It follows the theme and, in
+Hebrew, opens to the left.
 
 **App details** (also Alt+Enter) is a page in the library, with a back arrow:
 
@@ -217,12 +219,13 @@ Right-click an app's tile for **Open**, **Stop** (while it runs),
 | Window | **Orientation**: the settings' default, portrait or landscape for this app only (an app whose manifest fixes one says so instead). **Window size**: the size the app's window was last given, with **Reset** |
 | Permissions | A switch per permission the app was asked for or granted, and **Reset permissions**; see [Permissions](#permissions) |
 | Shortcut | **Desktop shortcut**: adds or removes the app's desktop shortcut. The Start menu one is always there |
+| Troubleshooting | **Log**: **Show log** opens the log window on the app's last run (or its install, before the first run) |
 | Storage | **The app's file**: its size, and **Show** opens Explorer on it. **Converted code**: the app's folder under `apps\` |
 | Manage | **Stop** (while it runs), **Update from a file** (installs a newer, or any other, version over this one; what the app saved stays; refused while the app runs) and **Remove** |
 
 Each action has one place: the details page, plus the right-click menu for
-the four above. The install log and the run log are in the log window
-(**Settings > Troubleshooting > Open logs**, Ctrl+L).
+the four above. An app's log is on its details page (**Troubleshooting >
+Show log**); Ctrl+L opens the log window on the newest log.
 
 ## Settings
 
@@ -239,7 +242,7 @@ its own. Each setting takes effect the next time an app opens unless noted.
 | Apps | **Desktop shortcut for new apps** | Every app gets a Start menu shortcut; this adds one on the desktop too |
 | Apps | **Open .apk, .apkm, .xapk and .apks files with Win.apk** | Makes Win.apk the default program for the four formats |
 | Google account | **Sign in**, **Add another account**, **Sign out** | See [Google account](#google-account) |
-| Troubleshooting | **Logs** | Opens the log window |
+| Troubleshooting | **Logs** | Opens the `logs` folder in Explorer, to attach files to a bug report |
 | Troubleshooting | **App data** | Opens `%LOCALAPPDATA%\Win.apk` |
 | Troubleshooting | **Clear library** | Uninstalls every app and removes its shortcuts (app data is kept) |
 | About | | The version, the source code (github.com/israel2176/win.apk) and the licence (GNU AGPL v3.0), with links; Win.apk is forked from Mac.apk |
@@ -411,7 +414,7 @@ are.
 
 ## Logs
 
-The log window (**Settings > Troubleshooting > Open logs**, or Ctrl+L) shows
+The log window (an app's details page, **Troubleshooting > Show log**, or Ctrl+L) shows
 any of Win.apk's logs and follows the end as it is written. Pick the log at
 the top left ("Wiz · last run", "Wiz · install", "Google sign-in"…), search
 it (every match is marked; Enter or F3 goes to the next, Shift+F3 back),
@@ -462,6 +465,11 @@ and the launch window open the right log themselves when something fails.
 | Shared ARM translations | `%LOCALAPPDATA%\Win.apk\aot-cache` |
 | Settings | `HKEY_CURRENT_USER\Software\Win.apk` (`Theme`, `Language`, `PhoneSize`, `Landscape`, `DesktopShortcut`, `UserFolders`, `InstallDetails`, and the library window's size) |
 | Start menu shortcuts | `Start > Win.apk Apps` |
+
+`<app>` is the app's package name (`com.waze`) when the file it came from
+is named after it, as APK download sites name them, else the file's name up
+to its version (`WhatsApp_2.24.1.apk` gives `WhatsApp`). Apps installed
+before this keep their folders.
 
 ## Command line
 
@@ -518,7 +526,7 @@ development and testing.
 ## Troubleshooting
 
 **The app does not start, or stops with an error.** Click **Show log** in
-the launch window, or open the log window (Ctrl+L) on the app's last run.
+the launch window, or **Show log** on the app's details page.
 The most useful lines:
 
 | Line | Meaning |

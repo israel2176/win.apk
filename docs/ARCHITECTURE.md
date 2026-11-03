@@ -430,7 +430,11 @@ Billing answers `BILLING_UNAVAILABLE`, the Maps SDK lays out a blank map.
 
 ## An install, step by step
 
-1. The launcher copies the file into `library\<name>.apk` (an update moves the
+1. The launcher names the app (`install_name`: the package when the file name
+   starts with one, as `com.waze_5.26.5.0-..._apkmirror.com.apkm` does, else
+   the file name up to its version; a package already in the library keeps
+   that app's name, so the install updates it), copies the file into
+   `library\<name>.apk` (an update moves the
    previous APK aside, and puts it back if the install fails or is cancelled)
    and starts `winapk-runtime --apk <that file> --install-only`, logging to
    `logs\install-<name>.log`. The install window reads that log for its
