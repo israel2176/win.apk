@@ -1101,9 +1101,13 @@ public abstract class PackageManager {
      *  When the app DOES declare an icon we resolve it, which is the case that
      *  actually matters -- MacApkPackageManager fills ApplicationInfo.icon from
      *  `<application android:icon>`. */
-    public android.graphics.drawable.Drawable getApplicationIcon(String packageName) {
-        try { return getApplicationIcon(getApplicationInfo(packageName, 0)); }
-        catch (Throwable t) { return getDefaultActivityIcon(); }
+    // By name, a package that is not installed is NameNotFoundException, as in
+    // AOSP; apps catch it for their own artwork. Waze's audio button showed the
+    // icon of a partner app it does not have: the transparent stand-in, tinted
+    // by Compose, drew a solid square.
+    public android.graphics.drawable.Drawable getApplicationIcon(String packageName)
+            throws NameNotFoundException {
+        return getApplicationIcon(getApplicationInfo(packageName, 0));
     }
     public android.graphics.drawable.Drawable getApplicationIcon(ApplicationInfo info) {
         if (info != null && info.icon != 0) {

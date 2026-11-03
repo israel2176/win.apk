@@ -597,6 +597,19 @@ every such change is listed here:
   `MacApkPackageManager.java`: the Play services version is 26.44
   (`264400000`); app clients of 2026 want more than 24.44 for some APIs
   (`SERVICE_VERSION_UPDATE_REQUIRED`).
+- `runtime/java/com/macapk/gms/LegacySignInService.java` (new) and
+  `MacApkPackageManager.java`: the legacy Google Sign-In service
+  (`com.google.android.gms.auth.api.signin.service.START`: silentSignIn,
+  signOut, revokeAccess). Flutter's google_sign_in calls signOut before every
+  sign-in; with the bind unanswered it threw and City Car never asked for an
+  account.
+- `runtime/java/android/graphics/drawable/VectorDrawable.java`: a path's
+  `android:fillType="evenOdd"` is honoured; icons cut out of a filled shape
+  filled solid.
+- `runtime/java/android/content/pm/PackageManager.java`:
+  `getApplicationIcon(String)` throws `NameNotFoundException` for a package
+  that is not installed, as in AOSP, instead of returning a transparent
+  stand-in that apps then tinted into a solid shape.
 - `runtime/java/com/macapk/loader/Boot.java`: the app's data directory is the
   8.3 short form `runtime_main.cpp` passes in `winapk.data.dir`, when the
   volume has short names. Native code sized for `/data/user/0/<package>` cut

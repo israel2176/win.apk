@@ -5902,6 +5902,7 @@ public final class MacApkPackageManager extends PackageManager {
         if (ri == null) ri = macapkResolveGmsRegisterService(intent);
         if (ri == null) ri = macapkResolveGmsMeasurementService(intent);
         if (ri == null) ri = macapkResolveGmsIdentityService(intent);
+        if (ri == null) ri = macapkResolveGmsLegacySignInService(intent);
         if (ri == null) ri = macapkResolveGmsLocationService(intent);
         if (ri == null) ri = macapkResolveCustomTabsService(intent);
         if (ri != null) out.add(ri);
@@ -5991,6 +5992,7 @@ public final class MacApkPackageManager extends PackageManager {
         if (ri == null) ri = macapkResolveGmsRegisterService(intent);
         if (ri == null) ri = macapkResolveGmsMeasurementService(intent);
         if (ri == null) ri = macapkResolveGmsIdentityService(intent);
+        if (ri == null) ri = macapkResolveGmsLegacySignInService(intent);
         if (ri == null) ri = macapkResolveGmsLocationService(intent);
         if (ri == null) ri = macapkResolveCustomTabsService(intent);
         if (ri != null) return ri;
@@ -6225,6 +6227,33 @@ public final class MacApkPackageManager extends PackageManager {
     }
     private static final String IDENTITY_SIGNIN_SERVICE_CLASS =
             "com.macapk.gms.IdentitySignInService";
+
+    /** com.google.android.gms's legacy Google Sign-In service: the bind behind
+     *  GoogleSignInClient.silentSignIn / signOut / revokeAccess
+     *  (`com.google.android.gms.auth.api.signin.service.START`). Answered by
+     *  com.macapk.gms.LegacySignInService, under the gate of the sign-in
+     *  activity and the Identity service. */
+    private ResolveInfo macapkResolveGmsLegacySignInService(Intent intent) {
+        if (intent == null) return null;
+        if (!com.macapk.gms.LegacySignInService.ACTION.equals(intent.getAction())) return null;
+        String want = intent.getPackage();
+        if (want != null && !GMS_PACKAGE.equals(want)) return null;
+        ComponentName explicit = intent.getComponent();
+        if (explicit != null && !GMS_PACKAGE.equals(explicit.getPackageName())) return null;
+        if (!com.macapk.gms.GoogleSignInBroker.enabled()) return null;
+        android.content.pm.ServiceInfo si = new android.content.pm.ServiceInfo();
+        si.packageName = GMS_PACKAGE;
+        si.name = "com.macapk.gms.LegacySignInService";
+        si.exported = true;
+        si.enabled = true;
+        si.applicationInfo = gmsPackageInfo().applicationInfo;
+        ResolveInfo ri = new ResolveInfo();
+        ri.serviceInfo = si;
+        ri.resolvePackageName = GMS_PACKAGE;
+        ri.isDefault = true;
+        ri.match = android.content.IntentFilter.MATCH_CATEGORY_EMPTY;
+        return ri;
+    }
 
     /** com.google.android.gms's fused location service: the bind an app's own
      *  play-services-location (or microG's client) makes on
