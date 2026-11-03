@@ -5,6 +5,12 @@ blocks them, ranked by how many apps each problem affects.
     sweep.py --runtime <staged runtime dir> --out <report dir>
              [--jdk <dir>] [--apps apps.txt] [--apks <cache dir>]
              [--frames 60] [--timeout 180] [--launcher wine] [--only pkg,...]
+             [--shard I/N]
+    sweep.py --merge <report dir>... --out <report dir>
+
+--shard I/N runs only every Nth app starting at the Ith (1-based), so N
+machines share the corpus; --merge joins their report directories (report.json,
+logs, frames) into one report, as if one machine had run them all.
 
 For each app it runs winapk-runtime with WINAPK_HEADLESS=1 and a fresh data
 directory, waits for --frames presented frames (or the timeout), and keeps the
@@ -243,9 +249,25 @@ def write_report(results, out):
     return "\n".join(lines)
 
 
+def merge(parts, out):
+    results = []
+    for part in parts:
+        path = os.path.join(part, "report.json")
+        if not os.path.exists(path):
+            print(f"[sweep] {part}: no report.json, skipped", flush=True)
+            continue
+        results += json.load(open(path, encoding="utf-8"))
+        for sub in ("logs", "frames"):
+            src = os.path.join(part, sub)
+            if os.path.isdir(src):
+                shutil.copytree(src, os.path.join(out, sub), dirs_exist_ok=True)
+    print(write_report(results, out))
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--runtime", required=True)
+    ap.add_argument("--runtime")
     ap.add_argument("--out", required=True)
     ap.add_argument("--jdk")
     ap.add_argument("--apps", default=os.path.join(HERE, "apps.txt"))
@@ -254,15 +276,25 @@ def main():
     ap.add_argument("--timeout", type=int, default=180)
     ap.add_argument("--launcher", default=None)
     ap.add_argument("--only", default="")
+    ap.add_argument("--shard", default="1/1", help="I/N: every Nth app from the Ith (1-based)")
+    ap.add_argument("--merge", nargs="+", metavar="DIR", help="join these report directories into --out")
     args = ap.parse_args()
 
     out = os.path.abspath(args.out)
+    if args.merge:
+        os.makedirs(out, exist_ok=True)
+        return merge(args.merge, out)
+    if not args.runtime:
+        ap.error("--runtime is required unless --merge is given")
+    index, count = (int(n) for n in args.shard.split("/"))
+    if not 1 <= index <= count:
+        ap.error("--shard is I/N with 1 <= I <= N")
     for sub in ("logs", "frames", "data"):
         os.makedirs(os.path.join(out, sub), exist_ok=True)
     cache = args.apks or os.path.join(out, "apks")
     only = set(filter(None, args.only.split(",")))
     results = []
-    for pkg, version, name in read_apps(args.apps, only):
+    for pkg, version, name in read_apps(args.apps, only)[index - 1::count]:
         apk = fetch(pkg, version, name, cache)
         if not apk:
             print(f"[sweep] {pkg}: download failed", flush=True)

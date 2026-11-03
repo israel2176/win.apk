@@ -26,7 +26,7 @@ the fix working.
 
 ## Checklist
 
-- [ ] CI (`windows-poc.yml`) is green
+- [ ] CI (`ci.yml`) is green
 - [ ] New user-visible strings in the launcher have a Hebrew entry in `tr()`
 - [ ] A change under `runtime/` is listed in `windows/README.md`
 - [ ] `windows/package/RELEASE_NOTES.md` mentions it, if a user would notice it

@@ -46,12 +46,12 @@ work in the notes. Newest test first within an app.
 
 | App | Version | Source | Status | Notes | Tested | Issue |
 |---|---|---|---|---|---|---|
-| Privacy Friendly Sudoku | 101 (`org.secuso.privacyfriendlysudoku`) | F-Droid | Boots | Boots headless on every CI run (`windows-poc.yml`): DEX conversion, `Application.onCreate`, the first activity resumed and 30 frames drawn | every CI run | |
+| Privacy Friendly Sudoku | 101 (`org.secuso.privacyfriendlysudoku`) | F-Droid | Boots | Boots headless on every CI run (`ci.yml`, Runtime tests): DEX conversion, `Application.onCreate`, the first activity resumed and 30 frames drawn | every CI run | |
 | Klooni | 860 (`dev.lonami.klooni`) | F-Droid | Works | libGDX: OpenGL ES from Java on ANGLE; draws and takes input | `windows/PORTING.md`, section 8 (window, input and rendering) | |
 | Tensy | 2 (`se.voxelmanip.tensy`) | F-Droid | Works | SDL 3: OpenGL ES from the app's own native code through a SurfaceView; draws and takes input | `windows/PORTING.md`, section 8 (window, input and rendering) | |
 
 The automated compatibility sweep (`windows/test/compat/apps.txt`, run by
-`compat-sweep.yml`) boots about 90 F-Droid apps headless on every pull
+`ci.yml` over four machines) boots about 90 F-Droid apps headless on every pull
 request that touches the runtime, and reports which draw their first screen
 and what blocks the rest; its report is an artifact of the run. The corpus is
 pinned to one version per app and covers: apps without native libraries

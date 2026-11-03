@@ -67,10 +67,10 @@ and it will be copied over.
    and how it was tested: the apps you ran it on, a screenshot for anything
    visible (in Hebrew too when it touches the library), and for a runtime
    change the log lines that show the fix. Link the issue (`Fixes #123`).
-4. CI must be green: `windows-poc.yml` builds everything with clang on
-   Windows, runs the tests and the headless boot, and packages the result;
-   `compat-sweep.yml` boots the app corpus. Add a test where there is a place
-   for one (`windows/test/`).
+4. CI must be green: `ci.yml` builds everything with clang on Windows, then
+   runs the tests, the headless boot and the app corpus side by side and
+   packages the result. Add a test where there is a place for one
+   (`windows/test/`).
 5. Reviews happen on the pull request. Keep follow-up fixes as new commits
    until it is approved; it is merged with rebase.
 
