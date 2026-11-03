@@ -998,6 +998,23 @@ public final class GoogleSignInBroker {
         }
     }
 
+    /** Whether the hosted app's signing certificate is NetFree's: its filter
+     *  re-signs the APKs it lets through ("NetFree APK Patcher"), and Google
+     *  then refuses the app (UNREGISTERED_ON_API_CONSOLE). */
+    public static boolean appSignedByNetFree(android.content.Context ctx, String pkg) {
+        try {
+            android.content.pm.PackageInfo pi = ctx.getPackageManager().getPackageInfo(pkg,
+                    android.content.pm.PackageManager.GET_SIGNATURES);
+            if (pi == null || pi.signatures == null || pi.signatures.length == 0) return false;
+            java.security.cert.X509Certificate cert = (java.security.cert.X509Certificate)
+                    java.security.cert.CertificateFactory.getInstance("X.509").generateCertificate(
+                            new java.io.ByteArrayInputStream(pi.signatures[0].toByteArray()));
+            return cert.getSubjectX500Principal().getName().contains("NetFree");
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
     static void log(String m) {
         try { com.macapk.loader.NativeLog.i("GoogleSignIn", m); }
         catch (Throwable t) { System.err.println("[GoogleSignIn] " + m); }

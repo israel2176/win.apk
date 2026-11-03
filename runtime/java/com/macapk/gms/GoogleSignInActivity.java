@@ -226,6 +226,24 @@ public class GoogleSignInActivity extends Activity {
         setContentView(scroll);
     }
 
+    private String unregisteredMessage() {
+        final boolean netFree = GoogleSignInBroker.appSignedByNetFree(this, mRequest.callerPkg);
+        final String lang = java.util.Locale.getDefault().getLanguage();
+        if ("he".equals(lang) || "iw".equals(lang)) {
+            return netFree
+                    ? "גוגל לא מזהה את העותק הזה של " + mAppLabel + ": הוא נחתם מחדש על ידי נטפרי, ולכן"
+                      + " ההתחברות עם גוגל לא תעבוד בו (גם בטלפון). צריך עותק שחתום על ידי מפתח האפליקציה."
+                    : "גוגל לא מזהה את העותק הזה של " + mAppLabel + ": הוא לא חתום בחתימה של מפתח"
+                      + " האפליקציה. צריך עותק מקורי של האפליקציה.";
+        }
+        return netFree
+                ? "Google does not recognize this copy of " + mAppLabel + ": NetFree re-signed it, so"
+                  + " Google sign-in cannot work in it (on a phone either). It needs a copy signed by the"
+                  + " app's developer."
+                : "Google does not recognize this copy of " + mAppLabel + ": it is not signed by the"
+                  + " app's developer. It needs the app's original copy.";
+    }
+
     private void setStatus(final String s) {
         runOnUiThread(new Runnable() {
             @Override public void run() { if (mStatus != null) mStatus.setText(s); }
@@ -250,8 +268,18 @@ public class GoogleSignInActivity extends Activity {
                 runOnUiThread(new Runnable() {
                     @Override public void run() {
                         mBusy = false;
-                        if (res.ok()) finishWith(res, GoogleSignInBroker.STATUS_SUCCESS, null);
-                        else finishWith(null, res.status, res.error);
+                        if (res.ok()) {
+                            finishWith(res, GoogleSignInBroker.STATUS_SUCCESS, null);
+                        } else if (res.error != null && res.error.contains("UNREGISTERED_ON_API_CONSOLE")) {
+                            // Google knows this app by its package AND its developer's
+                            // signing certificate. A copy signed by someone else (a
+                            // filter that re-signs downloads, such as NetFree's patcher)
+                            // is refused whatever the account, here as on a phone: say
+                            // so and stay, rather than close on the app's generic error.
+                            setStatus(unregisteredMessage());
+                        } else {
+                            finishWith(null, res.status, res.error);
+                        }
                     }
                 });
             }
