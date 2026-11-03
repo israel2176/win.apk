@@ -350,6 +350,22 @@ endif()
 # through winapk-runtime.
 add_executable(winapk-launcher WIN32 launcher/launcher_main.cpp launcher/launcher.rc)
 set_target_properties(winapk-launcher PROPERTIES OUTPUT_NAME "Win.apk")
+# The version in Win.apk.exe's resource (launcher.rc), which Settings shows and the updater compares with the
+# newest release on GitHub: the release workflow passes its tag (v0.2.0-preview or 0.2.0-preview); other builds
+# say 0.1.0. Written to a header, since a quoted string survives no RC compiler's command line the same way.
+set(WINAPK_VERSION "0.1.0" CACHE STRING "Win.apk's version, as a release tag (v0.2.0-preview) or 0.2.0")
+string(REGEX MATCH "^v?([0-9]+)\\.([0-9]+)\\.([0-9]+)([-+].*)?$" winapk_version_ok "${WINAPK_VERSION}")
+if(NOT winapk_version_ok)
+  message(FATAL_ERROR "WINAPK_VERSION must look like v0.2.0-preview or 0.2.0, not '${WINAPK_VERSION}'")
+endif()
+set(WINAPK_VERSION_MAJOR ${CMAKE_MATCH_1})
+set(WINAPK_VERSION_MINOR ${CMAKE_MATCH_2})
+set(WINAPK_VERSION_PATCH ${CMAKE_MATCH_3})
+string(REGEX REPLACE "^v" "" WINAPK_VERSION_TEXT "${WINAPK_VERSION}")
+configure_file(launcher/winapk_version.h.in "${CMAKE_CURRENT_BINARY_DIR}/launcher/winapk_version.h" @ONLY)
+set_source_files_properties(launcher/launcher.rc PROPERTIES COMPILE_DEFINITIONS WINAPK_VERSION_FILE)
+target_include_directories(winapk-launcher PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/launcher")
+message(STATUS "Win.apk version ${WINAPK_VERSION_TEXT}")
 target_compile_definitions(winapk-launcher PRIVATE UNICODE _UNICODE _WIN32_WINNT=0x0A00 WINVER=0x0A00)
 target_link_options(winapk-launcher PRIVATE -municode -static)
 target_link_libraries(winapk-launcher PRIVATE comctl32 shell32 ole32 uuid gdiplus dwmapi uxtheme gdi32 winhttp bcrypt crypt32)

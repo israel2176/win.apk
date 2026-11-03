@@ -70,6 +70,10 @@ windows/scripts/stage_runtime.sh build runtime
 - `-DWINAPK_ARM64_JIT=ON` fetches dynarmic (needs the Boost headers) and
   builds the arm64 JIT. CI and releases use it; without it arm64 code runs on
   the interpreter until its translation is ready.
+- `-DWINAPK_VERSION=v0.2.0-preview` (or `0.2.0`) is the version stamped into
+  `Win.apk.exe` (`launcher/launcher.rc`, through a generated
+  `winapk_version.h`), which Settings shows and the update check compares with
+  the newest release. The release workflow passes its tag; the default is 0.1.0.
 - `stage_runtime.sh <build dir> [out]` assembles a runnable folder (default
   `windows/build/runtime`): `Win.apk.exe`, `bin/` (the runtime, the
   translator and stub DLL, `winapk-aot`, ANGLE from `fetch_angle.sh`,
@@ -243,7 +247,7 @@ frames are the `compat-sweep` artifact. It fails nothing.
 | Workflow | Trigger | What it does |
 |---|---|---|
 | `.github/workflows/ci.yml` | Pull requests touching `windows/` or `runtime/`; by hand; a push to `main` (build only) | The pipeline below |
-| `.github/workflows/windows-release.yml` | By hand only, with a tag such as `v0.2.0-preview` | Builds, stages, packages `Win.apk-windows-x64.zip` with a JRE and `package/README.txt`, smoke-tests the package (boots an APK headless), builds `Win.apk-Setup.exe` with Inno Setup, and publishes both as a GitHub pre-release with `package/RELEASE_NOTES.md` as the notes |
+| `.github/workflows/windows-release.yml` | By hand only, with a tag such as `v0.2.0-preview` | Builds with `-DWINAPK_VERSION=<tag>`, stages, packages `Win.apk-windows-x64.zip` with a JRE and `package/README.txt`, smoke-tests the package (boots an APK headless), builds `Win.apk-Setup.exe` with Inno Setup, and publishes both as a GitHub pre-release with `package/RELEASE_NOTES.md` as the notes |
 
 `ci.yml`'s jobs, in the order they can start:
 

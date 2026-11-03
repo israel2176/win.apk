@@ -513,11 +513,13 @@ default; `--data` moves it for a direct run):
 | `gms\` | `gms_state.properties`, the `accounts.present` marker |
 | `aot-cache\` | Whole arm64 translations shared between apps (kept under 2 GB, least recently used first) |
 | `staging\` | The install helper's staging area |
+| `updates\` | `releases.json` and `releases.etag` (GitHub's list of releases from the last update check), `Win.apk-Setup-<version>.exe` (a downloaded update, until it is installed) |
 
 Settings live in `HKCU\Software\Win.apk`: `Theme`, `Language`, `PhoneSize`,
 `Landscape` (absent means landscape; 0 means portrait), `DesktopShortcut`,
 `UserFolders`, `InstallDetails` (the install window shows its log),
-`ShortcutVersion`, and the library window's `WindowWidth`, `WindowHeight` and
+`ShortcutVersion`, `AutoUpdate` (absent means on) and `LastUpdateCheck` (Unix
+seconds of the last update check GitHub answered), and the library window's `WindowWidth`, `WindowHeight` and
 `WindowMaximized`.
 
 ## Build, tests and CI
@@ -543,9 +545,18 @@ Two GitHub Actions workflows:
 | Workflow | When | What |
 |---|---|---|
 | `ci.yml` | Pull requests touching `windows/` or `runtime/`, and by hand; a push to `main` only builds (to leave its compile cache to pull requests) | One pipeline of jobs. *What changed* decides which stages a pull request needs. The guest test libraries build on Ubuntu, and a launcher-only change gets a one-minute MinGW compile with warnings as errors. Everything else builds once on `windows-latest` (MSYS2 CLANG64, ccache) and stages the runtime. That output goes as artifacts to the jobs that run side by side: *Unit tests* (every test program), *Runtime tests* (the Java tests, GL, an APK booted headless and in a window, the GMS CLI), *App smoke test* (the ten apps of `windows/test/compat/smoke.txt`, one of each kind; it fails when one no longer draws), and *Package* (a preview folder with a Temurin JRE and the installer). The whole compatibility sweep runs only by hand (Run workflow, "Full compatibility sweep"): split over four machines (`sweep.py --shard`) and joined by *Sweep report* into one ranked report. A new push cancels the run in progress |
-| `windows-release.yml` | By hand only, with a tag | Builds, packages with a Temurin 21 JRE, smoke-tests the package, builds the installer and publishes a GitHub pre-release |
+| `windows-release.yml` | By hand only, with a tag | Builds (stamping the tag's version into `Win.apk.exe`), packages with a Temurin 21 JRE, smoke-tests the package, builds the installer and publishes a GitHub pre-release |
 
 [`windows/README.md`](../windows/README.md) has the commands.
+
+The launcher's update check (Settings > Updates) reads that list of releases
+from GitHub's API, takes the highest version that is not a draft (they are
+all pre-releases, so `/releases/latest` would find none), and compares it with
+the version in its own resource; **Update** downloads the release's
+`Win.apk-Setup.exe`, checks its size (and SHA-256 when GitHub lists one), runs
+it and quits so that the installer (`CloseApplications=yes`) can replace the
+files. The version comes from `WINAPK_VERSION`, which the release workflow
+sets from its tag; any other build is 0.1.0.
 
 ## What is not there
 

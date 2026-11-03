@@ -20,6 +20,10 @@
 #ifndef AppVersion
   #define AppVersion "0.1.0"
 #endif
+; The numeric part (0.2.0 of 0.2.0-preview), for the file's version resource.
+#ifndef AppNumber
+  #define AppNumber "0.1.0"
+#endif
 
 [Setup]
 AppId={{6E1B7C2A-5F3D-4C8B-9A0E-7D2F1A4B3C59}
@@ -27,7 +31,7 @@ AppName=Win.apk
 AppVersion={#AppVersion}
 AppVerName=Win.apk {#AppVersion}
 AppPublisher=Win.apk
-VersionInfoVersion=0.1.0
+VersionInfoVersion={#AppNumber}
 DefaultDirName={localappdata}\Programs\Win.apk
 DisableProgramGroupPage=yes
 DisableDirPage=yes
