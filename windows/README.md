@@ -575,6 +575,11 @@ every such change is listed here:
   process only; `GmsCli.run` (`--gms`, Settings > Google account) now does
   too, or the sign-in's token exchange failed with "PKIX path building
   failed". Not on other systems.
+- `runtime/java/com/macapk/gms/AccountPhoto.java` (new),
+  `NativeSignIn.java` and `GmsStore.java`: after a sign-in, the picture the
+  sign-in window found (`signInPhotoUrl`, a native only Windows has; on the
+  Mac its absence means no picture) is saved as `gms\photo-<account>.img`
+  for the launcher's account button, and removed with the account.
 
 ## License
 
