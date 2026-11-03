@@ -4064,6 +4064,29 @@ bool google_account_present() {
     return fs::exists(gms_dir() / L"accounts.present", ec);
 }
 
+// A failure's reason is an `ERROR\t<message>` line on the runtime's stdout,
+// which only the caller reads; the error dialog's Show log opens gms.log,
+// which had only stderr, so "PKIX path building failed" was nowhere to be
+// seen. Copied there, and only those lines: the rest of stdout holds the
+// account's email. Called after the runtime exited, as its stderr handle
+// shares no write.
+void append_gms_errors(const std::string& out) {
+    std::string lines;
+    for (size_t at = 0; at < out.size();) {
+        size_t end = out.find('\n', at);
+        if (end == std::string::npos) end = out.size();
+        if (out.compare(at, 6, "ERROR\t") == 0) lines.append(out, at, end - at).append("\n");
+        at = end + 1;
+    }
+    if (lines.empty()) return;
+    HANDLE f = CreateFileW(gms_log().c_str(), FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_DELETE, nullptr,
+                           OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return;
+    DWORD n = 0;
+    WriteFile(f, lines.data(), static_cast<DWORD>(lines.size()), &n, nullptr);
+    CloseHandle(f);
+}
+
 // Runs winapk-runtime --gms <args>, its stdout into *out (UTF-8, as the
 // runtime's manifest makes the code page) and its stderr into logs\gms.log.
 // The exit code, or -1 when it did not start.
@@ -4098,7 +4121,9 @@ int run_gms(const std::wstring& args, std::wstring* out) {
     if (!ok) return -1;
     if (out) *out = utf8_to_wide(bytes);
     CloseHandle(pi.hThread);
-    return static_cast<int>(wait_exit(pi.hProcess));
+    const int code = static_cast<int>(wait_exit(pi.hProcess));
+    append_gms_errors(bytes);
+    return code;
 }
 
 // One argument for the runtime's command line, as CommandLineToArgvW splits it.
