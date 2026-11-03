@@ -41,7 +41,8 @@ jobs:
       - name: Build
         run: |
           cmake -S windows -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=clang++ \
-            -DWINAPK_JNI_INCLUDE="$(cygpath -u "$JAVA_HOME")/include" -DWINAPK_ARM64_JIT=ON
+            -DWINAPK_JNI_INCLUDE="$(cygpath -u "$JAVA_HOME")/include" -DWINAPK_ARM64_JIT=ON \
+            -DWINAPK_VERSION="${{ inputs.tag }}"
           cmake --build build
       - uses: actions/cache@v4
         with:
@@ -77,7 +78,8 @@ jobs:
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
           if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress | Out-Null }
           $version = "${{ inputs.tag }}".TrimStart("v")
-          & $iscc "/DSourceDir=$PWD\Win.apk" "/DAppVersion=$version" "/O$PWD" windows\package\winapk.iss
+          $number = ($version -split '[-+]')[0]
+          & $iscc "/DSourceDir=$PWD\Win.apk" "/DAppVersion=$version" "/DAppNumber=$number" "/O$PWD" windows\package\winapk.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Publish
         shell: pwsh

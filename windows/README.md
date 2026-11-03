@@ -70,6 +70,10 @@ windows/scripts/stage_runtime.sh build runtime
 - `-DWINAPK_ARM64_JIT=ON` fetches dynarmic (needs the Boost headers) and
   builds the arm64 JIT. CI and releases use it; without it arm64 code runs on
   the interpreter until its translation is ready.
+- `-DWINAPK_VERSION=v0.2.0-preview` (or `0.2.0`) is the version stamped into
+  `Win.apk.exe` (`launcher/launcher.rc`, through a generated
+  `winapk_version.h`), which Settings shows and the update check compares with
+  the newest release. The release workflow passes its tag; the default is 0.1.0.
 - `stage_runtime.sh <build dir> [out]` assembles a runnable folder (default
   `windows/build/runtime`): `Win.apk.exe`, `bin/` (the runtime, the
   translator and stub DLL, `winapk-aot`, ANGLE from `fetch_angle.sh`,
@@ -230,7 +234,7 @@ pull requests and attaches the report, the logs and the last frames.
 |---|---|---|
 | `.github/workflows/windows-poc.yml` | Pull requests touching `windows/`; by hand | Builds the guest libraries on Ubuntu; on `windows-latest` builds everything with MSYS2 CLANG64 and Temurin 21, runs every test above, stages the runtime, boots an APK headless and in a window, runs the GMS CLI, then packages the staged folder with a Temurin JRE (`winapk-preview` artifact) and builds the installer (`winapk-setup`) |
 | `.github/workflows/compat-sweep.yml` | Pull requests touching `windows/` or `runtime/java/`; by hand | The compatibility sweep, with the ranked report as the run's summary |
-| `.github/workflows/windows-release.yml` | By hand only, with a tag such as `v0.2.0-preview` | Builds, stages, packages `Win.apk-windows-x64.zip` with a JRE and `package/README.txt`, smoke-tests the package (boots an APK headless), builds `Win.apk-Setup.exe` with Inno Setup, and publishes both as a GitHub pre-release with `package/RELEASE_NOTES.md` as the notes |
+| `.github/workflows/windows-release.yml` | By hand only, with a tag such as `v0.2.0-preview` | Builds with `-DWINAPK_VERSION=<tag>`, stages, packages `Win.apk-windows-x64.zip` with a JRE and `package/README.txt`, smoke-tests the package (boots an APK headless), builds `Win.apk-Setup.exe` with Inno Setup, and publishes both as a GitHub pre-release with `package/RELEASE_NOTES.md` as the notes |
 
 Nothing runs on a push to `main`, and nothing is released automatically. The
 platform resource APK and the ANGLE download are cached between runs.

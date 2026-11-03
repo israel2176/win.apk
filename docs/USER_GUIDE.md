@@ -14,6 +14,7 @@ change between releases while the behaviour stays.
 - [Shortcuts and file types](#shortcuts-and-file-types)
 - [Permissions](#permissions)
 - [Google account](#google-account)
+- [Updates](#updates)
 - [Shared storage](#shared-storage)
 - [Logs](#logs)
 - [Removing apps and uninstalling](#removing-apps-and-uninstalling)
@@ -245,6 +246,9 @@ its own. Each setting takes effect the next time an app opens unless noted.
 | Troubleshooting | **Logs** | Opens the `logs` folder in Explorer, to attach files to a bug report |
 | Troubleshooting | **App data** | Opens `%LOCALAPPDATA%\Win.apk` |
 | Troubleshooting | **Clear library** | Uninstalls every app and removes its shortcuts (app data is kept) |
+| Updates | **Check now** | Asks GitHub for the newest release at once. The row shows this copy's version and the last check's result: up to date, a newer version, or could not check. See [Updates](#updates) |
+| Updates | **Check for updates automatically** | On (the default): about once a day, while the library is open, Win.apk checks for a newer release in the background and says so in the InfoBar |
+| Updates | **Update** | Shown when a newer version is out, with **What's new in** that version below it. Downloads the installer, then runs it and closes Win.apk |
 | About | | The version, the source code (github.com/israel2176/win.apk) and the licence (GNU AGPL v3.0), with links; Win.apk is forked from Mac.apk |
 
 Settings are stored under `HKEY_CURRENT_USER\Software\Win.apk`.
@@ -383,6 +387,29 @@ outline of a person when there is none; it opens Settings.
 Google sign-in needs the WebView2 Runtime (a 2022 or later version). Without
 it the sign-in is cancelled and the log says why.
 
+## Updates
+
+Win.apk's releases are published on GitHub
+([github.com/israel2176/win.apk/releases](https://github.com/israel2176/win.apk/releases)).
+**Settings > Updates** shows the version you have and what the last check
+found; **Check now** checks at once. With **Check for updates automatically**
+on (the default), the library checks about once a day when it opens and every
+hour while it stays open, once a day has passed since the last check. The
+check downloads only GitHub's list of releases and sends nothing about you or
+your apps (the request names itself `Win.apk-updater`). Versions are compared
+by their numbers: `v0.3.0-preview` is newer than 0.2.0.
+
+When a newer version is out, the InfoBar says so with **What's new**, which
+opens Settings at Updates: the new version's row with **Update**, and its
+release notes as plain text under **What's new in** that version, with a link
+to its page on GitHub. **Update** downloads `Win.apk-Setup.exe` from the
+release (the button shows how far it is), checks that it is complete (its
+size, and its SHA-256 when GitHub gives one), runs it and closes Win.apk so
+that the installer can replace it. Your apps and their data are kept. The
+update does not start while an app is running or an install is under way:
+close the app or wait, then press **Update** again. A downloaded installer is
+kept in `%LOCALAPPDATA%\Win.apk\updates` until the update has been installed.
+
 ## Wi-Fi and Bluetooth
 
 Apps see the PC's Wi-Fi: whether it is on, the current network with its
@@ -462,8 +489,9 @@ and the launch window open the right log themselves when something fails.
 | The installed-apps registry | `%LOCALAPPDATA%\Win.apk\installed_apps.json` |
 | Permission grants | `%LOCALAPPDATA%\Win.apk\appops` |
 | The Google account and its tokens | `%LOCALAPPDATA%\Win.apk\gms` |
+| The last update check and a downloaded update | `%LOCALAPPDATA%\Win.apk\updates` (`releases.json`, `Win.apk-Setup-<version>.exe`) |
 | Shared ARM translations | `%LOCALAPPDATA%\Win.apk\aot-cache` |
-| Settings | `HKEY_CURRENT_USER\Software\Win.apk` (`Theme`, `Language`, `PhoneSize`, `Landscape`, `DesktopShortcut`, `UserFolders`, `InstallDetails`, and the library window's size) |
+| Settings | `HKEY_CURRENT_USER\Software\Win.apk` (`Theme`, `Language`, `PhoneSize`, `Landscape`, `DesktopShortcut`, `UserFolders`, `InstallDetails`, `AutoUpdate`, `LastUpdateCheck`, and the library window's size) |
 | Start menu shortcuts | `Start > Win.apk Apps` |
 
 `<app>` is the app's package name (`com.waze`) when the file it came from

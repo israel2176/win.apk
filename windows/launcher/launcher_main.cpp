@@ -112,7 +112,11 @@ constexpr UINT kStoreDownloaded = WM_APP + 9; // wParam: ok, lParam: new Downloa
 constexpr UINT kGmsDone = WM_APP + 10;       // the Google sign-in window closed; wParam: exit code, lParam: new std::wstring (stdout)
 constexpr UINT kRunReady = WM_APP + 11;       // the app's window is up; lParam: new std::wstring (the app's name)
 constexpr UINT kGmsAccount = WM_APP + 12;     // lParam: new std::wstring (the signed-in account, or empty)
+constexpr UINT kUpdateChecked = WM_APP + 13;  // lParam: new UpdateCheck (the check, with its result)
+constexpr UINT kUpdateProgress = WM_APP + 14; // wParam: percent of Win.apk-Setup.exe downloaded
+constexpr UINT kUpdateDownloaded = WM_APP + 15;  // wParam: ok (complete and checked)
 constexpr UINT_PTR kInfoBarTimer = 2;  // the InfoBar closes itself
+constexpr UINT_PTR kUpdateTimer = 3;   // hourly: is the daily update check due?
 constexpr ULONG_PTR kCopyOpen = 0x57415031;  // WM_COPYDATA from another start of Win.apk.exe (forward_to_running)
 constexpr UINT_PTR kAnimTimer = 1;
 constexpr int kIdSearch = 100;
@@ -464,7 +468,36 @@ const wchar_t* tr(const wchar_t* en) {
         {L"They show as Windows notifications.", L"הן יוצגו כהתראות של Windows."},
         {L"This PC has none of these for the app to find.", L"אין במחשב הזה דבר כזה שהאפליקציה תוכל למצוא."},
         {L"This PC has no such sensors.", L"אין במחשב הזה חיישנים כאלה."},
-        {L"These are the Bluetooth devices near this PC.", L"אלה מכשירי ה-Bluetooth שליד המחשב הזה."}
+        {L"These are the Bluetooth devices near this PC.", L"אלה מכשירי ה-Bluetooth שליד המחשב הזה."},
+        {L"Updates", L"עדכונים"},
+        {L"Check now", L"בדיקה עכשיו"},
+        {L"Checking…", L"בודק…"},
+        {L"Checking for updates…", L"בודק אם יש עדכונים…"},
+        {L"Check for updates automatically", L"בדיקת עדכונים אוטומטית"},
+        {L"Once a day, while the library is open.", L"פעם ביום, כשהספרייה פתוחה."},
+        {L"Not checked yet.", L"טרם בוצעה בדיקה."},
+        {L"Last checked {0}.", L"בדיקה אחרונה: {0}."},
+        {L"Win.apk is up to date. Last checked {0}.", L"Win.apk מעודכנת. בדיקה אחרונה: {0}."},
+        {L"Win.apk is up to date (version {0}).", L"Win.apk מעודכנת (גרסה {0})."},
+        {L"Version {0} is available.", L"גרסה {0} זמינה."},
+        {L"A new version of Win.apk is available: {0}.", L"יש גרסה חדשה של Win.apk: {0}."},
+        {L"Couldn't check for updates. Check the internet connection.", L"לא ניתן היה לבדוק אם יש עדכונים. בדוק את החיבור לאינטרנט."},
+        {L"What's new", L"מה חדש"},
+        {L"What's new in {0}", L"מה חדש בגרסה {0}"},
+        {L"Released {0}", L"תאריך פרסום: {0}"},
+        {L"Release notes", L"הערות גרסה"},
+        {L"This release has no notes.", L"לגרסה זו אין הערות."},
+        {L"Release page", L"דף הגרסה"},
+        {L"Win.apk closes and the installer replaces it. Your apps and their data are kept.", L"Win.apk תיסגר ותוכנית ההתקנה תחליף אותה. האפליקציות שלך והנתונים שלהן יישמרו."},
+        {L"This release has no installer; its page on GitHub has its files.", L"לגרסה זו אין תוכנית התקנה; הקבצים שלה נמצאים בדף הגרסה ב-GitHub."},
+        {L"The check reads the list of releases on GitHub. Nothing about you or your apps is sent.", L"הבדיקה קוראת את רשימת הגרסאות ב-GitHub. שום מידע עליך או על האפליקציות שלך אינו נשלח."},
+        {L"Downloading Win.apk {0}…", L"מוריד את Win.apk {0}…"},
+        {L"Downloading… {0}%", L"מוריד… {0}%"},
+        {L"Couldn't download the update. Check the internet connection.", L"לא ניתן היה להוריד את העדכון. בדוק את החיבור לאינטרנט."},
+        {L"Wait for the installs to finish, then update Win.apk.", L"המתן לסיום ההתקנות, ולאחר מכן עדכן את Win.apk."},
+        {L"Close {0} first: the update replaces files it uses.", L"סגור תחילה את {0}: העדכון מחליף קבצים שהיא משתמשת בהם."},
+        {L"Close the running apps first: the update replaces files they use.", L"סגור תחילה את האפליקציות הפועלות: העדכון מחליף קבצים שהן משתמשות בהם."},
+        {L"The installer could not be started.", L"לא ניתן היה להפעיל את תוכנית ההתקנה."}
     };
     if (!g_rtl) return en;
     const auto it = he.find(en);
@@ -1269,34 +1302,39 @@ struct StoreApp {
     long long code = 0, size = 0, updated = 0;  // versionCode, bytes, ms since 1970
 };
 
-// One WinHTTP session for the program, so the icons' requests reuse their
+// A WinHTTP session; `agent` is the User-Agent its requests send.
+HINTERNET open_http_session(const wchar_t* agent) {
+    HINTERNET s = WinHttpOpen(agent, WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME,
+                              WINHTTP_NO_PROXY_BYPASS, 0);
+    if (!s) {  // before Windows 8.1
+        s = WinHttpOpen(agent, WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    }
+    if (s) {
+        DWORD decompress = WINHTTP_DECOMPRESSION_FLAG_ALL;  // the catalog is 70 MB of JSON, a fifth of that gzipped
+        WinHttpSetOption(s, WINHTTP_OPTION_DECOMPRESSION, &decompress, sizeof(decompress));
+        DWORD per_server = 8;
+        WinHttpSetOption(s, WINHTTP_OPTION_MAX_CONNS_PER_SERVER, &per_server, sizeof(per_server));
+        WinHttpSetTimeouts(s, 15000, 15000, 30000, 60000);
+    }
+    return s;
+}
+
+// One WinHTTP session for the store, so the icons' requests reuse their
 // connections to f-droid.org rather than each making its own.
 HINTERNET http_session() {
-    static const HINTERNET session = [] {
-        HINTERNET s = WinHttpOpen(L"Win.apk", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME,
-                                  WINHTTP_NO_PROXY_BYPASS, 0);
-        if (!s) {  // before Windows 8.1
-            s = WinHttpOpen(L"Win.apk", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME,
-                            WINHTTP_NO_PROXY_BYPASS, 0);
-        }
-        if (s) {
-            DWORD decompress = WINHTTP_DECOMPRESSION_FLAG_ALL;  // the catalog is 70 MB of JSON, a fifth of that gzipped
-            WinHttpSetOption(s, WINHTTP_OPTION_DECOMPRESSION, &decompress, sizeof(decompress));
-            DWORD per_server = 8;
-            WinHttpSetOption(s, WINHTTP_OPTION_MAX_CONNS_PER_SERVER, &per_server, sizeof(per_server));
-            WinHttpSetTimeouts(s, 15000, 15000, 30000, 60000);
-        }
-        return s;
-    }();
+    static const HINTERNET session = open_http_session(L"Win.apk");
     return session;
 }
 
 // GETs `url` into `out`, through <out>.part so a broken download never looks
 // whole. With an `etag` the server may answer 304, not modified. `progress`
-// gets the bytes so far and the total (0 when unknown). Returns the HTTP
-// status, 0 when the server could not be reached or the body broke off.
+// gets the bytes so far and the total (0 when unknown); `headers` are more
+// request headers ("Name: value", CRLF between); `session` defaults to the
+// store's. Returns the HTTP status, 0 when the server could not be reached or
+// the body broke off.
 int http_get(const std::wstring& url, const fs::path& out, const std::wstring& etag, std::wstring* new_etag,
-             const std::function<void(uint64_t, uint64_t)>& progress) {
+             const std::function<void(uint64_t, uint64_t)>& progress, const std::wstring& headers = L"",
+             HINTERNET session = nullptr) {
     URL_COMPONENTS uc{};
     uc.dwStructSize = sizeof(uc);
     uc.dwHostNameLength = uc.dwUrlPathLength = uc.dwExtraInfoLength = static_cast<DWORD>(-1);
@@ -1304,7 +1342,7 @@ int http_get(const std::wstring& url, const fs::path& out, const std::wstring& e
     const std::wstring host(uc.lpszHostName, uc.dwHostNameLength);
     const std::wstring path = std::wstring(uc.lpszUrlPath, uc.dwUrlPathLength) +
                               std::wstring(uc.lpszExtraInfo, uc.dwExtraInfoLength);
-    HINTERNET session = http_session();
+    if (!session) session = http_session();
     if (!session) return 0;
     HINTERNET connection = WinHttpConnect(session, host.c_str(), uc.nPort, 0);
     HINTERNET request = connection ? WinHttpOpenRequest(connection, L"GET", path.c_str(), nullptr, WINHTTP_NO_REFERER,
@@ -1312,7 +1350,8 @@ int http_get(const std::wstring& url, const fs::path& out, const std::wstring& e
                                                         uc.nScheme == INTERNET_SCHEME_HTTPS ? WINHTTP_FLAG_SECURE : 0)
                                    : nullptr;
     int status = 0;
-    const std::wstring header = etag.empty() ? L"" : L"If-None-Match: " + etag;
+    std::wstring header = etag.empty() ? L"" : L"If-None-Match: " + etag;
+    if (!headers.empty()) header += (header.empty() ? L"" : L"\r\n") + headers;
     if (request &&
         WinHttpSendRequest(request, header.empty() ? WINHTTP_NO_ADDITIONAL_HEADERS : header.c_str(),
                            header.empty() ? 0 : static_cast<DWORD>(-1), WINHTTP_NO_REQUEST_DATA, 0, 0, 0) &&
@@ -1855,6 +1894,256 @@ DWORD WINAPI download_thread(void* param) {
 }
 
 // ---------------------------------------------------------------------------
+// Software updates: the newest release on GitHub and its installer
+//
+// Releases are pre-releases tagged v0.2.0-preview, so /releases/latest (which
+// skips them) will not do: the list is read and its highest version taken.
+// The request says nothing about the user, and its answer is kept with its ETag:
+// a check that finds nothing new costs GitHub a 304, and the library shows the
+// last result at start without asking again within the day.
+
+constexpr wchar_t kReleasesUrl[] = L"https://api.github.com/repos/israel2176/win.apk/releases?per_page=20";
+constexpr wchar_t kReleasesPage[] = L"https://github.com/israel2176/win.apk/releases";
+constexpr wchar_t kSetupAsset[] = L"Win.apk-Setup.exe";
+constexpr DWORD kUpdateInterval = 24 * 3600;  // seconds between automatic checks
+
+fs::path updates_dir() { return data_dir() / L"updates"; }
+fs::path releases_file() { return updates_dir() / L"releases.json"; }
+fs::path releases_etag_file() { return updates_dir() / L"releases.etag"; }
+// The installer of one version, so that a download kept from an older release is never run for a newer one.
+fs::path setup_file(const std::wstring& v) {
+    return updates_dir() / (L"Win.apk-Setup-" + file_name_safe(v) + L".exe");
+}
+
+// GitHub's API wants a User-Agent; this one names the program and nothing about the user.
+HINTERNET updater_session() {
+    static const HINTERNET session = open_http_session(L"Win.apk-updater");
+    return session;
+}
+
+// 0.2.0 of "v0.2.0-preview": the numbers before any -suffix or +build.
+std::vector<unsigned> version_numbers(const std::wstring& v) {
+    std::vector<unsigned> out;
+    size_t i = !v.empty() && (v[0] == L'v' || v[0] == L'V') ? 1 : 0;
+    while (i < v.size() && iswdigit(v[i])) {
+        unsigned n = 0;
+        while (i < v.size() && iswdigit(v[i])) n = n * 10 + static_cast<unsigned>(v[i++] - L'0');
+        out.push_back(n);
+        if (i >= v.size() || v[i] != L'.') break;
+        ++i;
+    }
+    return out;
+}
+
+// <0, 0, >0 as a is older than, the same as or newer than b; missing numbers count as 0 (0.2 = 0.2.0).
+int compare_versions(const std::wstring& a, const std::wstring& b) {
+    const std::vector<unsigned> x = version_numbers(a), y = version_numbers(b);
+    for (size_t i = 0; i < (std::max)(x.size(), y.size()); ++i) {
+        const unsigned p = i < x.size() ? x[i] : 0, q = i < y.size() ? y[i] : 0;
+        if (p != q) return p < q ? -1 : 1;
+    }
+    return 0;
+}
+
+// Release notes in Markdown as plain text: no headings' #, no ** or `, "• " for list items,
+// [text](link) as its text, and no runs of blank lines.
+std::string markdown_to_text(const std::string& md) {
+    std::string out;
+    size_t at = 0;
+    int blanks = 0;
+    while (at <= md.size()) {
+        size_t end = md.find('\n', at);
+        if (end == std::string::npos) end = md.size();
+        std::string line = md.substr(at, end - at);
+        at = end + 1;
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        size_t lead = line.find_first_not_of(" \t");
+        if (lead == std::string::npos) {
+            if (!out.empty() && blanks++ == 0) out += '\n';
+            continue;
+        }
+        blanks = 0;
+        std::string indent(lead > 0 ? 2 * ((lead + 1) / 2) : 0, ' ');
+        line.erase(0, lead);
+        if (line[0] == '#') {
+            line.erase(0, line.find_first_not_of('#'));
+        } else if ((line[0] == '-' || line[0] == '*' || line[0] == '+') && line.size() > 1 && line[1] == ' ') {
+            line = "\xE2\x80\xA2 " + line.substr(2);  // a bullet
+        } else if (line.rfind("---", 0) == 0 && line.find_first_not_of('-') == std::string::npos) {
+            continue;  // a rule
+        }
+        std::string plain;
+        for (size_t i = 0; i < line.size(); ++i) {
+            if (line.compare(i, 2, "**") == 0 || line.compare(i, 2, "__") == 0) {
+                ++i;
+                continue;
+            }
+            if (line[i] == '`') continue;
+            if (line[i] == '[') {  // [text](url) keeps the text
+                const size_t close = line.find("](", i);
+                const size_t paren = close == std::string::npos ? close : line.find(')', close);
+                if (paren != std::string::npos) {
+                    plain += line.substr(i + 1, close - i - 1);
+                    i = paren;
+                    continue;
+                }
+            }
+            plain += line[i];
+        }
+        const size_t first = plain.find_first_not_of(' ');
+        if (first == std::string::npos) continue;
+        if (!out.empty()) out += '\n';
+        out += indent + plain.substr(first);
+    }
+    while (!out.empty() && out.back() == '\n') out.pop_back();
+    return out;
+}
+
+struct Release {
+    std::wstring tag, version, notes, page;  // version: the tag without its v; notes: plain text
+    std::wstring url;                        // Win.apk-Setup.exe's download, empty when the release has none
+    std::string digest;                      // the asset's "sha256:<hex>", when GitHub gives one
+    uint64_t size = 0;                       // the asset's bytes
+    FILETIME published{};
+};
+
+// "2026-10-01T12:00:00Z" as a FILETIME; zero when it is not one.
+FILETIME iso_filetime(const std::string& s) {
+    SYSTEMTIME st{};
+    FILETIME ft{};
+    unsigned y = 0, mo = 0, d = 0, h = 0, mi = 0, se = 0;
+    if (std::sscanf(s.c_str(), "%4u-%2u-%2uT%2u:%2u:%2u", &y, &mo, &d, &h, &mi, &se) == 6) {
+        st = {static_cast<WORD>(y), static_cast<WORD>(mo), 0, static_cast<WORD>(d),
+              static_cast<WORD>(h), static_cast<WORD>(mi), static_cast<WORD>(se), 0};
+        if (!SystemTimeToFileTime(&st, &ft)) ft = {};
+    }
+    return ft;
+}
+
+// The newest release in GitHub's list that is not a draft, with its installer asset; `found` says whether there
+// is one. Returns whether the list could be read.
+bool newest_release(const std::string& json, Release* best, bool* found_out) {
+    Json j{json.data(), json.data() + json.size()};
+    bool found = false;
+    auto text = [&j](std::string* out) {  // a string, or skips a null
+        j.ws();
+        if (j.p < j.end && *j.p == '"') j.str(out);
+        else j.skip();
+    };
+    j.array([&] {
+        Release r;
+        bool draft = false;
+        j.object([&](const std::string& key) {
+            std::string v;
+            if (key == "draft") {
+                j.scalar(&v);
+                draft = v == "true";
+            } else if (key == "tag_name") {
+                text(&v);
+                r.tag = utf8_to_wide(v);
+            } else if (key == "body") {
+                text(&v);
+                r.notes = utf8_to_wide(markdown_to_text(v));
+            } else if (key == "html_url") {
+                text(&v);
+                r.page = utf8_to_wide(v);
+            } else if (key == "published_at") {
+                text(&v);
+                r.published = iso_filetime(v);
+            } else if (key == "assets") {
+                j.array([&] {
+                    std::string name, url, size, digest;
+                    j.object([&](const std::string& k) {
+                        if (k == "name") text(&name);
+                        else if (k == "browser_download_url") text(&url);
+                        else if (k == "size") j.scalar(&size);
+                        else if (k == "digest") text(&digest);
+                        else j.skip();
+                    });
+                    if (utf8_to_wide(name) == kSetupAsset && !url.empty()) {
+                        r.url = utf8_to_wide(url);
+                        r.size = std::strtoull(size.c_str(), nullptr, 10);
+                        r.digest = digest;
+                    }
+                });
+            } else {
+                j.skip();
+            }
+        });
+        if (!j.ok || draft || version_numbers(r.tag).empty()) return;
+        if (!found || compare_versions(r.tag, best->tag) > 0) {
+            r.version = r.tag.substr(r.tag[0] == L'v' || r.tag[0] == L'V' ? 1 : 0);
+            *best = std::move(r);
+            found = true;
+        }
+    });
+    *found_out = j.ok && found;
+    return j.ok;
+}
+
+// One check, from the library's thread to the update thread and back (kUpdateChecked).
+struct UpdateCheck {
+    bool fetch = false;    // ask GitHub; else read only the answer kept from the last check
+    bool manual = false;   // Check now: the result is said in the InfoBar whatever it is
+    bool reached = true;   // GitHub answered (a fetch)
+    bool ok = false;       // the list of releases was read, GitHub's answer or the one kept
+    bool found = false;    // and `latest` holds its newest release
+    Release latest;
+};
+
+DWORD WINAPI update_check_thread(void* param) {
+    std::unique_ptr<UpdateCheck> c(static_cast<UpdateCheck*>(param));
+    std::error_code ec;
+    const bool have = fs::exists(releases_file(), ec);
+    bool read = have && !c->fetch;
+    if (c->fetch) {
+        std::wstring etag, new_etag;
+        if (have) {
+            std::ifstream f(releases_etag_file(), std::ios::binary);
+            std::string s;
+            std::getline(f, s);
+            etag = utf8_to_wide(s);
+        }
+        const int status = http_get(kReleasesUrl, releases_file(), etag, &new_etag, {},
+                                    L"Accept: application/vnd.github+json", updater_session());
+        if (status == 200) {
+            std::ofstream(releases_etag_file(), std::ios::binary | std::ios::trunc) << wide_to_utf8(new_etag);
+        }
+        c->reached = status == 200 || (status == 304 && have);
+        read = c->reached || have;  // unreached, the answer kept still shows a newer version found before
+    }
+    if (read) {
+        std::ifstream f(releases_file(), std::ios::binary);
+        const std::string json((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        c->ok = newest_release(json, &c->latest, &c->found);
+    }
+    UpdateCheck* out = c.release();
+    if (!PostMessageW(g_main, kUpdateChecked, 0, reinterpret_cast<LPARAM>(out))) delete out;
+    return 0;
+}
+
+// Downloads the release's Win.apk-Setup.exe to updates\, and keeps it only when it is whole: the size GitHub
+// gives, and its SHA-256 when GitHub gives that too.
+DWORD WINAPI update_download_thread(void* param) {
+    std::unique_ptr<Release> r(static_cast<Release*>(param));
+    int shown = -1;
+    const fs::path file = setup_file(r->version);
+    const int status = http_get(r->url, file, L"", nullptr, [&](uint64_t got, uint64_t total) {
+        if (!total) total = r->size;
+        const int pct = total ? static_cast<int>((std::min)(got * 100 / total, uint64_t{99})) : 0;
+        if (pct == shown) return;
+        shown = pct;
+        PostMessageW(g_main, kUpdateProgress, static_cast<WPARAM>(pct), 0);
+    }, L"", updater_session());
+    std::error_code ec;
+    bool ok = status == 200 && r->size > 0 && fs::file_size(file, ec) == r->size && !ec;
+    if (ok && r->digest.rfind("sha256:", 0) == 0) ok = "sha256:" + sha256_of(file) == r->digest;
+    if (!ok) fs::remove(file, ec);
+    PostMessageW(g_main, kUpdateDownloaded, ok, 0);
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
 // Theme and drawing
 //
 // Spacing follows a 4 px scale (4, 8, 12, 16, 24, 32), radii are kRadius*,
@@ -2208,6 +2497,8 @@ std::unique_ptr<Gdiplus::Bitmap> g_brand;  // the program's icon, for the naviga
 std::wstring g_selected;
 std::wstring g_status;
 StatusKind g_status_kind = kHint;
+std::wstring g_status_link;          // the InfoBar's action, a link before its close button
+std::function<void()> g_status_act;
 float g_scroll = 0;
 bool g_drag_over = false, g_tracking = false;
 bool g_focus_visible = false;  // the selection was reached with the keyboard: it shows a focus ring
@@ -2233,7 +2524,7 @@ struct StoreState {
 
 // What the mouse is over. kHitNav's `tile` is the pane's item: 0 Library, 1 Store, 2 Settings.
 enum HitKind { kHitNone, kHitNav, kHitAdd, kHitClear, kHitRefresh, kHitTile, kHitThumb, kHitTrack, kHitCategory,
-               kHitCard, kHitCardButton, kHitRetry, kHitInfoClose, kHitBack, kHitPage, kHitAccount };
+               kHitCard, kHitCardButton, kHitRetry, kHitInfoClose, kHitInfoLink, kHitBack, kHitPage, kHitAccount };
 enum NavItem { kNavLibrary, kNavStore, kNavSettings };
 struct Hit {
     HitKind kind = kHitNone;
@@ -2249,7 +2540,7 @@ float g_thumb_y0 = 0, g_thumb_scroll0 = 0;
 // grid, or a page (Settings, an app's details) in its place.
 struct Layout {
     RectF rail, nav[3], content, title, account, search, clear, add, category, refresh, grid, drop, retry, infobar,
-        info_close;
+        info_close, info_link;  // info_link: measured when the InfoBar is painted
     bool compact = false;  // a narrow window: the pane shows icons only
     int cols = 1;
     float tile_w = 0, tile_h = 0, gap = 0, content_h = 0, max_scroll = 0;  // the library's tiles or the store's cards
@@ -2371,12 +2662,15 @@ std::wstring job_label(const std::wstring& name) {
     return it == g_job_labels.end() ? name : it->second;
 }
 
-// Shows a message in the InfoBar; a success or a note closes itself after six seconds.
-void info(const std::wstring& text, StatusKind kind) {
+// Shows a message in the InfoBar; a success or a note closes itself after six seconds. A `link` is an action
+// at its end (`act`), and keeps it open until it is used or closed.
+void info(const std::wstring& text, StatusKind kind, const std::wstring& link = L"", std::function<void()> act = {}) {
     g_status = text;
     g_status_kind = kind;
+    g_status_link = act ? link : L"";
+    g_status_act = std::move(act);
     if (!g_main) return;
-    if (kind == kError || text.empty()) KillTimer(g_main, kInfoBarTimer);
+    if (kind == kError || text.empty() || g_status_act) KillTimer(g_main, kInfoBarTimer);
     else SetTimer(g_main, kInfoBarTimer, 6000, nullptr);
     InvalidateRect(g_main, nullptr, FALSE);
 }
@@ -2645,6 +2939,7 @@ Hit hit_test(float x, float y) {
         if (contains(g_l.nav[i], x, y)) return {kHitNav, i};
     }
     if (!g_status.empty() && contains(g_l.infobar, x, y)) {
+        if (!g_status_link.empty() && contains(g_l.info_link, x, y)) return {kHitInfoLink, -1};
         return {contains(g_l.info_close, x, y) ? kHitInfoClose : kHitNone, -1};
     }
     if (page_view()) {
@@ -3021,7 +3316,16 @@ void paint_infobar(Graphics& g) {
     g.FillEllipse(&b, dot);
     draw_text(g, g_status_kind == kError ? L"!" : g_status_kind == kSuccess ? kGlyphCheck : L"i",
               g_status_kind == kSuccess ? g_f.glyph12.get() : g_f.caption_semi.get(), kWhite, dot, kCenter);
-    draw_text(g, g_status, g_f.body.get(), g_t.text, RectF(dot.GetRight() + px(12), r.Y, r.Width - px(96), r.Height));
+    float text_w = r.Width - px(96);
+    g_l.info_link = RectF();
+    if (!g_status_link.empty()) {
+        const float lw = text_width(g, g_status_link, g_f.body_semi.get()) + px(24);
+        g_l.info_link = RectF(g_l.info_close.X - px(4) - lw, r.Y + px(8), lw, px(32));
+        if (g_hot.kind == kHitInfoLink) fill_round(g, g_l.info_link, px(kRadiusControl), g_t.hover);
+        draw_text(g, g_status_link, g_f.body_semi.get(), g_t.accent, g_l.info_link, kCenter);
+        text_w = g_l.info_link.X - px(8) - (dot.GetRight() + px(12));
+    }
+    draw_text(g, g_status, g_f.body.get(), g_t.text, RectF(dot.GetRight() + px(12), r.Y, text_w, r.Height));
     const bool hot = g_hot.kind == kHitInfoClose;
     if (hot) fill_round(g, g_l.info_close, px(kRadiusControl), g_t.hover);
     draw_text(g, kGlyphClear, g_f.glyph12.get(), g_t.text2, g_l.info_close, kCenter);
@@ -3227,7 +3531,6 @@ void add_from_dialog() {
 }
 
 Splash* show_splash(const std::wstring& name);
-void info(const std::wstring& text, StatusKind kind);
 
 // Brings the window of an app started from here to the front.
 void bring_forward(const std::wstring& name) {
@@ -3742,6 +4045,7 @@ struct Row {
     std::vector<std::wstring> choices;
     int choice = 0;
     std::function<void(int)> act;  // button: act(0), toggle: act(new state), choice: act(index)
+    const char* key = nullptr;     // names a row that an event changes in place (update_progress)
 };
 
 struct Section {
@@ -3770,6 +4074,7 @@ struct Page {
     bool thumb_drag = false;
     float thumb_y0 = 0, thumb_scroll0 = 0;
     int generation = 0;  // a new page was opened: an action's rebuild is not for it
+    int reveal = -1;     // a section to scroll to the top on the next paint
 } g_page;
 
 constexpr int kPageBack = -2, kPageThumb = -3;
@@ -3857,8 +4162,10 @@ void paint_page(Graphics& g) {
     s.scroll = (std::min)(s.scroll, page_max_scroll());
     g.SetClip(s.view);
     float y = s.view.Y + px(8) - s.scroll;
+    float reveal_at = -1;
     for (size_t si = 0; si < s.sections.size(); ++si) {
         const Section& sec = s.sections[si];
+        if (static_cast<int>(si) == s.reveal) reveal_at = y + s.scroll - s.view.Y - px(8);
         if (!sec.title.empty()) {
             draw_text(g, sec.title, g_f.body_semi.get(), g_t.text, RectF(m, y, cw, px(22)));
             y += px(28);
@@ -3929,6 +4236,11 @@ void paint_page(Graphics& g) {
     }
     s.content_h = y + s.scroll - s.view.Y + px(56);  // room for the InfoBar at the end
     g.ResetClip();
+    if (s.reveal >= 0) {  // known only now that the page is laid out: painted again there
+        s.reveal = -1;
+        s.scroll = (std::max)(0.0f, (std::min)(reveal_at, page_max_scroll()));
+        InvalidateRect(g_main, nullptr, FALSE);
+    }
     if (s.content_h > s.view.Height) {
         const float h = (std::max)(px(36), s.view.Height * s.view.Height / s.content_h);
         const float ty = s.view.Y + px(4) + (s.view.Height - px(8) - h) * s.scroll / page_max_scroll();
@@ -4216,6 +4528,264 @@ Section google_account_section() {
     return sec;
 }
 
+// ---- Software updates ----------------------------------------------------------
+//
+// The check and the download run on threads (update_check_thread, update_download_thread) and report to the
+// library's window. The Updates section says where things stand, and the InfoBar when a newer version is out.
+// Update downloads the release's installer, then runs it and closes the library, so that the installer can
+// replace Win.apk.exe and the runtime; with an app running or an install under way it does not start.
+
+struct UpdateState {
+    bool busy = false;      // a check thread runs
+    bool checking = false;  // and it asks GitHub
+    bool failed = false;    // the last check could not reach GitHub or read its answer
+    bool known = false;     // a list of releases was read
+    bool have = false;      // and `latest` holds its newest release
+    bool told = false;      // the InfoBar has said this session that `latest` is out
+    int percent = -1;       // Win.apk-Setup.exe is downloading: how far; -1 when it is not
+    Release latest;
+} g_update;
+size_t g_updates_section = 0;  // the Updates section's index in Settings, for the InfoBar's "What's new"
+
+void show_settings();
+void save_window_size();
+bool installs_active();
+
+DWORD unix_now() {
+    FILETIME ft;
+    GetSystemTimeAsFileTime(&ft);
+    const unsigned long long t = (static_cast<unsigned long long>(ft.dwHighDateTime) << 32) | ft.dwLowDateTime;
+    return static_cast<DWORD>((t - kUnixEpochFiletime) / 10000000);
+}
+
+FILETIME unix_filetime(DWORD seconds) {
+    const unsigned long long t = kUnixEpochFiletime + static_cast<unsigned long long>(seconds) * 10000000;
+    return FILETIME{static_cast<DWORD>(t), static_cast<DWORD>(t >> 32)};
+}
+
+bool update_available() { return g_update.have && compare_versions(g_update.latest.version, version()) > 0; }
+
+// Installers that are not the newest release's: one that ran, or one left behind.
+void remove_old_setups() {
+    std::error_code ec;
+    const fs::path keep = update_available() ? setup_file(g_update.latest.version) : fs::path();
+    for (fs::directory_iterator it(updates_dir(), ec), end; !ec && it != end; it.increment(ec)) {
+        const fs::path p = it->path();
+        if (p.extension() == L".exe" && p != keep) fs::remove(p, ec);
+    }
+}
+
+// `fetch` asks GitHub; else only the answer kept from the last check is read (at start, within the day).
+void start_update_check(bool fetch, bool manual) {
+    if (g_update.busy) return;
+    g_update.busy = true;
+    g_update.checking = fetch;
+    auto* c = new UpdateCheck;
+    c->fetch = fetch;
+    c->manual = manual;
+    if (HANDLE t = CreateThread(nullptr, 0, update_check_thread, c, 0, nullptr)) {
+        CloseHandle(t);
+    } else {
+        delete c;
+        g_update.busy = g_update.checking = false;
+    }
+}
+
+bool update_check_due() {
+    const DWORD last = setting(L"LastUpdateCheck", 0), now = unix_now();
+    return now < last || now - last >= kUpdateInterval;
+}
+
+// When the library is shown and hourly while it is: the daily check if it is on and due, else (once) the last
+// answer, so that Settings and the InfoBar know of a newer version found earlier.
+void auto_update_check() {
+    static bool read_kept = false;
+    if (!g_main || !IsWindowVisible(g_main)) return;
+    if (setting(L"AutoUpdate", 1) && update_check_due()) start_update_check(true, false);
+    else if (!read_kept) start_update_check(false, false);
+    read_kept = true;
+}
+
+// The InfoBar's "What's new": Settings, scrolled to Updates.
+void show_update() {
+    show_settings();
+    g_page.reveal = static_cast<int>(g_updates_section);
+}
+
+void update_checked(UpdateCheck& c) {
+    g_update.busy = g_update.checking = false;
+    if (c.ok) {
+        if (c.found && (!g_update.have || g_update.latest.version != c.latest.version)) g_update.told = false;
+        if (c.found) g_update.latest = std::move(c.latest);
+        g_update.known = true;
+        g_update.have = c.found;
+    }
+    if (c.fetch) {
+        g_update.failed = !c.reached || !c.ok;
+        if (!g_update.failed) set_setting(L"LastUpdateCheck", unix_now());
+    }
+    if (c.ok && g_update.percent < 0) remove_old_setups();
+    if (c.manual && g_update.failed) {
+        info(tr(L"Couldn't check for updates. Check the internet connection."), kError);
+    } else if (c.manual && !update_available()) {
+        info(fmt(L"Win.apk is up to date (version {0}).", {version()}), kSuccess);
+    } else if (update_available() && !g_update.told && (c.manual || setting(L"AutoUpdate", 1))) {
+        g_update.told = true;
+        info(fmt(L"A new version of Win.apk is available: {0}.", {g_update.latest.version}), kInfo, tr(L"What's new"),
+             show_update);
+    }
+    if (g_view == kSettingsView) rebuild_page();
+}
+
+// Whether the installer may run now, else says why in the InfoBar: it replaces the runtime that running apps
+// use and the launcher that installs go through.
+bool update_can_start() {
+    if (installs_active() || !g_pending.empty() || !g_store.downloads.empty()) {
+        info(tr(L"Wait for the installs to finish, then update Win.apk."), kError);
+        return false;
+    }
+    std::vector<std::wstring> running;
+    for (const App& a : g_apps) {
+        if (g_running.count(a.name) || app_running(a.name)) running.push_back(a.label);
+    }
+    if (running.size() == 1) {
+        info(fmt(L"Close {0} first: the update replaces files it uses.", {running[0]}), kError);
+        return false;
+    }
+    if (!running.empty() || !g_running.empty()) {
+        info(tr(L"Close the running apps first: the update replaces files they use."), kError);
+        return false;
+    }
+    return true;
+}
+
+// Runs the downloaded installer and closes the library, so that the installer can replace Win.apk.exe; false
+// when it did not start.
+bool run_installer() {
+    if (!update_can_start()) return false;
+    const fs::path setup = setup_file(g_update.latest.version);
+    const auto r = reinterpret_cast<INT_PTR>(ShellExecuteW(g_main, L"open", setup.c_str(), nullptr, nullptr,
+                                                           SW_SHOWNORMAL));
+    if (r <= 32) {
+        info(tr(L"The installer could not be started."), kError);
+        return false;
+    }
+    save_window_size();
+    g_page.build = nullptr;  // the Update button's page_click must not rebuild a page of a window that is gone
+    if (g_log_wnd) DestroyWindow(g_log_wnd);
+    if (g_install_wnd) DestroyWindow(g_install_wnd);
+    DestroyWindow(g_main);  // its WM_DESTROY ends the program
+    return true;
+}
+
+void start_update() {
+    if (g_update.percent >= 0 || !update_available()) return;
+    const Release& r = g_update.latest;
+    if (r.url.empty()) {  // a release without the installer: its page has what it has
+        ShellExecuteW(nullptr, L"open", (r.page.empty() ? kReleasesPage : r.page.c_str()), nullptr, nullptr,
+                      SW_SHOWNORMAL);
+        return;
+    }
+    if (!update_can_start()) return;
+    std::error_code ec;
+    if (fs::file_size(setup_file(r.version), ec) == r.size && !ec) {  // downloaded and checked before
+        run_installer();
+        return;
+    }
+    remove_old_setups();
+    fs::create_directories(updates_dir(), ec);
+    auto* job = new Release(r);
+    if (HANDLE t = CreateThread(nullptr, 0, update_download_thread, job, 0, nullptr)) {
+        CloseHandle(t);
+        g_update.percent = 0;
+        info(fmt(L"Downloading Win.apk {0}…", {r.version}), kInfo);
+    } else {
+        delete job;
+    }
+}
+
+void update_downloaded(bool ok) {
+    g_update.percent = -1;
+    if (ok && run_installer()) return;  // the library is gone
+    if (!ok) info(tr(L"Couldn't download the update. Check the internet connection."), kError);
+    if (g_view == kSettingsView) rebuild_page();
+}
+
+// The Update button shows how far the download is; changed in place, since a rebuild asks the runtime for the
+// Google account.
+void update_progress(int percent) {
+    g_update.percent = percent;
+    if (g_view != kSettingsView) return;
+    for (Section& sec : g_page.sections) {
+        for (Row& row : sec.rows) {
+            if (row.key && strcmp(row.key, "update") == 0) {
+                row.value = fmt(L"Downloading… {0}%", {std::to_wstring(percent)});
+            }
+        }
+    }
+    InvalidateRect(g_main, nullptr, FALSE);
+}
+
+// Settings > Updates, and when a newer version is out, what changed in it.
+std::vector<Section> update_sections() {
+    std::vector<Section> out;
+    const bool newer = update_available();
+    const Release& r = g_update.latest;
+    std::wstring status;
+    if (g_update.checking) status = tr(L"Checking for updates…");
+    else if (newer) status = fmt(L"Version {0} is available.", {r.version});
+    else if (g_update.failed) status = tr(L"Couldn't check for updates. Check the internet connection.");
+    else if (const DWORD last = setting(L"LastUpdateCheck", 0)) {
+        status = g_update.known ? fmt(L"Win.apk is up to date. Last checked {0}.", {long_date(unix_filetime(last))})
+                               : fmt(L"Last checked {0}.", {long_date(unix_filetime(last))});
+    } else {
+        status = tr(L"Not checked yet.");
+    }
+    Section sec{tr(L"Updates"), {}, L""};
+    sec.rows.push_back(button_row(fmt(L"Version {0}", {version()}), status,
+                                  g_update.checking ? tr(L"Checking…") : tr(L"Check now"),
+                                  [] { start_update_check(true, true); }));
+    Row autoc;
+    autoc.kind = Row::kToggle;
+    autoc.title = tr(L"Check for updates automatically");
+    autoc.detail = tr(L"Once a day, while the library is open.");
+    autoc.on = setting(L"AutoUpdate", 1) != 0;
+    autoc.act = [](int on) {
+        set_setting(L"AutoUpdate", static_cast<DWORD>(on));
+        if (on && update_check_due()) start_update_check(true, false);
+    };
+    sec.rows.push_back(autoc);
+    if (newer) {
+        const std::wstring button = r.url.empty()           ? tr(L"Open")
+                                    : g_update.percent >= 0 ? fmt(L"Downloading… {0}%",
+                                                                  {std::to_wstring(g_update.percent)})
+                                                            : tr(L"Update");
+        Row up = button_row(fmt(L"Win.apk {0}", {r.version}),
+                            r.url.empty() ? tr(L"This release has no installer; its page on GitHub has its files.")
+                                          : tr(L"Win.apk closes and the installer replaces it. Your apps and their "
+                                               L"data are kept."),
+                            button, [] { start_update(); });
+        up.primary = true;
+        up.key = "update";
+        sec.rows.push_back(up);
+    }
+    sec.footer = tr(L"The check reads the list of releases on GitHub. Nothing about you or your apps is sent.");
+    out.push_back(std::move(sec));
+    if (newer) {
+        const bool dated = r.published.dwHighDateTime || r.published.dwLowDateTime;
+        const std::wstring page = r.page.empty() ? kReleasesPage : r.page;
+        out.push_back({fmt(L"What's new in {0}", {r.version}),
+                       {text_row(dated ? fmt(L"Released {0}", {long_date(r.published)}) : tr(L"Release notes"), L"",
+                                 r.notes.empty() ? tr(L"This release has no notes.") : r.notes),
+                        button_row(tr(L"Release page"), L"github.com/israel2176/win.apk/releases", tr(L"Open"),
+                                   [page] {
+                                       ShellExecuteW(nullptr, L"open", page.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+                                   })},
+                       L""});
+    }
+    return out;
+}
+
 std::vector<Section> settings_sections() {
     std::vector<Section> out;
 
@@ -4309,6 +4879,9 @@ std::vector<Section> settings_sections() {
                                      true));
     }
     out.push_back({tr(L"Troubleshooting"), std::move(trouble), L""});
+
+    g_updates_section = out.size();
+    for (Section& sec : update_sections()) out.push_back(std::move(sec));
 
     auto open_url = [](const wchar_t* url) {
         return [url] { ShellExecuteW(nullptr, L"open", url, nullptr, nullptr, SW_SHOWNORMAL); };
@@ -6002,6 +6575,7 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             RegisterDragDrop(hwnd, g_drop_target);
             refresh();
             refresh_account();
+            SetTimer(hwnd, kUpdateTimer, 3600 * 1000, nullptr);
             return 0;
         }
         case WM_SIZE:
@@ -6094,7 +6668,7 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 const bool hand = g_hot.kind == kHitNav || g_hot.kind == kHitAdd || g_hot.kind == kHitClear ||
                                   g_hot.kind == kHitRefresh || g_hot.kind == kHitCategory || g_hot.kind == kHitCard ||
                                   g_hot.kind == kHitCardButton || g_hot.kind == kHitRetry ||
-                                  g_hot.kind == kHitInfoClose ||
+                                  g_hot.kind == kHitInfoClose || g_hot.kind == kHitInfoLink ||
                                   (g_hot.kind == kHitPage && g_page.hot != -1 && g_page.hot != kPageThumb);
                 SetCursor(LoadCursorW(nullptr, hand ? IDC_HAND : IDC_ARROW));
                 return TRUE;
@@ -6103,6 +6677,7 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_TIMER:
             if (wp == kAnimTimer) InvalidateRect(hwnd, nullptr, FALSE);
             if (wp == kInfoBarTimer) info(L"", kInfo);
+            if (wp == kUpdateTimer) auto_update_check();
             return 0;
         case WM_LBUTTONDOWN: {
             SetFocus(hwnd);
@@ -6124,6 +6699,12 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 case kHitRetry: store_start(true); break;
                 case kHitCategory: choose_category(); break;
                 case kHitInfoClose: info(L"", kInfo); break;
+                case kHitInfoLink: {
+                    const std::function<void()> act = g_status_act;
+                    info(L"", kInfo);
+                    if (act) act();
+                    break;
+                }
                 case kHitPage: {
                     g_page.focus = -1;  // the mouse takes over: no focus ring
                     if (page_hit(x, y) == kPageThumb) {
@@ -6445,6 +7026,13 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             store_downloaded(*d, wp != 0);
             return 0;
         }
+        case kUpdateChecked: {
+            std::unique_ptr<UpdateCheck> c(reinterpret_cast<UpdateCheck*>(lp));
+            update_checked(*c);
+            return 0;
+        }
+        case kUpdateProgress: update_progress(static_cast<int>(wp)); return 0;
+        case kUpdateDownloaded: update_downloaded(wp != 0); return 0;
         case WM_GETMINMAXINFO:
             reinterpret_cast<MINMAXINFO*>(lp)->ptMinTrackSize = {ipx(680), ipx(520)};
             return 0;
@@ -8307,6 +8895,7 @@ void show_library(int show) {
                                                                                   : show);
     }
     SetForegroundWindow(g_main);
+    auto_update_check();
 }
 
 // When the library is not shown, the process lives only for what it is doing: an install window,

@@ -46,7 +46,9 @@ Open Win.apk: it shows your app library and the Store.
 - Settings, at the bottom of the left pane: theme, language (English or
   Hebrew), the phone's screen size and orientation, whether apps use your
   Windows folders, the desktop shortcut for new apps, the Google account,
-  and the logs (Ctrl+L), with search, Copy and Open folder.
+  updates (a daily check on GitHub, Check now, and Update when a newer
+  version is out), and the logs (Ctrl+L), with search, Copy and Open
+  folder.
 
 In an app, the mouse is your finger and the wheel scrolls. Android's Back
 is Escape, Alt+Left or the mouse's back button. Resize or maximize the

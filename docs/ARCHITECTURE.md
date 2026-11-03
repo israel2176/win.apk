@@ -510,11 +510,13 @@ default; `--data` moves it for a direct run):
 | `gms\` | `gms_state.properties`, the `accounts.present` marker |
 | `aot-cache\` | Whole arm64 translations shared between apps (kept under 2 GB, least recently used first) |
 | `staging\` | The install helper's staging area |
+| `updates\` | `releases.json` and `releases.etag` (GitHub's list of releases from the last update check), `Win.apk-Setup-<version>.exe` (a downloaded update, until it is installed) |
 
 Settings live in `HKCU\Software\Win.apk`: `Theme`, `Language`, `PhoneSize`,
 `Landscape` (absent means landscape; 0 means portrait), `DesktopShortcut`,
 `UserFolders`, `InstallDetails` (the install window shows its log),
-`ShortcutVersion`, and the library window's `WindowWidth`, `WindowHeight` and
+`ShortcutVersion`, `AutoUpdate` (absent means on) and `LastUpdateCheck` (Unix
+seconds of the last update check GitHub answered), and the library window's `WindowWidth`, `WindowHeight` and
 `WindowMaximized`.
 
 ## Build, tests and CI
@@ -541,9 +543,18 @@ Three GitHub Actions workflows, none of which runs on a push to `main`:
 |---|---|---|
 | `windows-poc.yml` | Pull requests touching `windows/`, and by hand | Builds the guest test libraries on Ubuntu, then builds everything on `windows-latest`, runs every test, stages the runtime, boots an APK headless and in a window, runs the GMS CLI's self-test, and packages a preview and an installer as artifacts |
 | `compat-sweep.yml` | Pull requests touching `windows/` or `runtime/java/`, and by hand | Boots every app in `windows/test/compat/apps.txt` headless and ranks what blocks them by the number of apps affected (`sweep.py`) |
-| `windows-release.yml` | By hand only, with a tag | Builds, packages with a Temurin 21 JRE, smoke-tests the package, builds the installer and publishes a GitHub pre-release |
+| `windows-release.yml` | By hand only, with a tag | Builds (stamping the tag's version into `Win.apk.exe`), packages with a Temurin 21 JRE, smoke-tests the package, builds the installer and publishes a GitHub pre-release |
 
 [`windows/README.md`](../windows/README.md) has the commands.
+
+The launcher's update check (Settings > Updates) reads that list of releases
+from GitHub's API, takes the highest version that is not a draft (they are
+all pre-releases, so `/releases/latest` would find none), and compares it with
+the version in its own resource; **Update** downloads the release's
+`Win.apk-Setup.exe`, checks its size (and SHA-256 when GitHub lists one), runs
+it and quits so that the installer (`CloseApplications=yes`) can replace the
+files. The version comes from `WINAPK_VERSION`, which the release workflow
+sets from its tag; any other build is 0.1.0.
 
 ## What is not there
 
