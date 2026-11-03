@@ -34,6 +34,10 @@ public final class GmsCli {
      */
     public static int run(String[] args) {
         if (args.length == 0) { usage(); return 2; }
+        // Before any HTTPS call: Boot.run does this for an app's process, but
+        // `--gms` boots no app, and without the roots Windows trusts every
+        // call to Google behind NetFree failed with "PKIX path building failed".
+        try { com.macapk.loader.HostTrust.install(); } catch (Throwable ignored) {}
         String cmd = args[0];
         try {
             switch (cmd) {

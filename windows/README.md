@@ -568,6 +568,13 @@ every such change is listed here:
   at once; the account added is Win.apk's, shared by every app, and signs in
   to the app, and a cancel cancels. The screen's texts name Win.apk and
   Settings > Google account instead of Mac.apk > Accounts.
+- `runtime/java/com/macapk/loader/HostTrust.java` (new) and
+  `runtime/java/com/macapk/gms/GmsCli.java`: the JVM's default trust store is
+  the JDK's CAs plus the roots Windows trusts (a filtering proxy's such as
+  NetFree's among them), set before any TLS. `Boot.run` did it for an app's
+  process only; `GmsCli.run` (`--gms`, Settings > Google account) now does
+  too, or the sign-in's token exchange failed with "PKIX path building
+  failed". Not on other systems.
 - `runtime/java/com/macapk/gms/AccountPhoto.java` (new),
   `NativeSignIn.java` and `GmsStore.java`: after a sign-in, the picture the
   sign-in window found (`signInPhotoUrl`, a native only Windows has; on the
