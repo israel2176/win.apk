@@ -532,6 +532,12 @@ every such change is listed here:
   holder (`setDisplay`), measures to the video's aspect ratio
   (`onMeasure`), and keeps a `start()`/`seekTo()` made before the player is
   prepared for `onPrepared`, as AOSP does. Not Windows-specific.
+- `runtime/java/com/macapk/gms/GoogleSignInActivity.java`: with no Google
+  account on the PC at all (and a request that does not filter by authorized
+  accounts), the app's "Sign in with Google" opens Win.apk's sign-in window
+  at once; the account added is Win.apk's, shared by every app, and signs in
+  to the app, and a cancel cancels. The screen's texts name Win.apk and
+  Settings > Google account instead of Mac.apk > Accounts.
 
 ## License
 

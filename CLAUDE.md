@@ -64,9 +64,17 @@ page's Permissions rows, which stop a running app on revoke), single instance
   `WINAPK_READY_EVENT` and waits on it or the process. Ready closes the splash;
   an exit first turns it into the error with Show log.
 - One home per action: the tile's menu is Open, Stop, App details, Remove;
-  everything else per app is on the App details page; logs are in the log
-  window (Settings > Troubleshooting, Ctrl+L) and in the failure states of the
-  install window and the splash. Don't add a second way to an action.
+  everything else per app is on the App details page, its log too (Show log,
+  in the log window; Ctrl+L opens the newest); Settings > Troubleshooting >
+  Logs opens the logs folder; the failure states of the install window and the
+  splash have Show log. Don't add a second way to an action.
+- Menus are the launcher's own (`run_menu`, `PopupMenu`: themed, a glyph per
+  item, an app header), not `TrackPopupMenu`; only the Store's many-column
+  category list and the log picker still use the system menu.
+- An install's library name (`install_name`) is the package when the file
+  name starts with one (`com.waze_5.26..._apkmirror.com.apkm` -> `com.waze`),
+  else the file name up to its version; a package the library has keeps its
+  app's name, so the file updates it.
 - Settings > Google account asks `winapk-runtime --gms accounts|signin-window|signout`
   (`run_gms`, stdout captured, stderr in `logs\gms.log`); exit codes 0 done,
   1 error, 2 cancelled.

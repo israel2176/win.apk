@@ -196,7 +196,7 @@ phone-style sandbox: install only apps you trust ([`SECURITY.md`](../SECURITY.md
 | Enter | Open the selected app |
 | Alt+Enter | The selected app's details |
 | Menu key, Shift+F10 | The selected app's right-click menu |
-| Typing, Ctrl+F | Search the library or the Store; Esc shows everything again |
+| Typing, Ctrl+F | In the Store: search it; Esc shows everything again |
 | Ctrl+O | Add an app from a file |
 | Ctrl+1, Ctrl+2 | The Library and the Store |
 | Ctrl+, | Settings |
@@ -207,8 +207,10 @@ phone-style sandbox: install only apps you trust ([`SECURITY.md`](../SECURITY.md
 
 ## Managing an app
 
-Right-click an app's tile for **Open**, **Stop** (while it runs),
-**App details** and **Remove**.
+Right-click an app's tile for its menu: the app's icon, name and version at
+the top, then **Open**, **Stop** (while it runs), **App details** and
+**Remove**, each with its icon and shortcut. It follows the theme and, in
+Hebrew, opens to the left.
 
 **App details** (also Alt+Enter) is a page in the library, with a back arrow:
 
@@ -217,12 +219,13 @@ Right-click an app's tile for **Open**, **Stop** (while it runs),
 | Window | **Orientation**: the settings' default, portrait or landscape for this app only (an app whose manifest fixes one says so instead). **Window size**: the size the app's window was last given, with **Reset** |
 | Permissions | A switch per permission the app was asked for or granted, and **Reset permissions**; see [Permissions](#permissions) |
 | Shortcut | **Desktop shortcut**: adds or removes the app's desktop shortcut. The Start menu one is always there |
+| Troubleshooting | **Log**: **Show log** opens the log window on the app's last run (or its install, before the first run) |
 | Storage | **The app's file**: its size, and **Show** opens Explorer on it. **Converted code**: the app's folder under `apps\` |
 | Manage | **Stop** (while it runs), **Update from a file** (installs a newer, or any other, version over this one; what the app saved stays; refused while the app runs) and **Remove** |
 
 Each action has one place: the details page, plus the right-click menu for
-the four above. The install log and the run log are in the log window
-(**Settings > Troubleshooting > Open logs**, Ctrl+L).
+the four above. An app's log is on its details page (**Troubleshooting >
+Show log**); Ctrl+L opens the log window on the newest log.
 
 ## Settings
 
@@ -239,10 +242,10 @@ its own. Each setting takes effect the next time an app opens unless noted.
 | Apps | **Desktop shortcut for new apps** | Every app gets a Start menu shortcut; this adds one on the desktop too |
 | Apps | **Open .apk, .apkm, .xapk and .apks files with Win.apk** | Makes Win.apk the default program for the four formats |
 | Google account | **Sign in**, **Add another account**, **Sign out** | See [Google account](#google-account) |
-| Troubleshooting | **Logs** | Opens the log window |
+| Troubleshooting | **Logs** | Opens the `logs` folder in Explorer, to attach files to a bug report |
 | Troubleshooting | **App data** | Opens `%LOCALAPPDATA%\Win.apk` |
-| Troubleshooting | **Remove all apps** | Removes every app (what they saved stays) |
-| About | | The version |
+| Troubleshooting | **Clear library** | Uninstalls every app and removes its shortcuts (app data is kept) |
+| About | | The version, the source code (github.com/israel2176/win.apk) and the licence (GNU AGPL v3.0), with links; Win.apk is forked from Mac.apk |
 
 Settings are stored under `HKEY_CURRENT_USER\Software\Win.apk`.
 
@@ -277,7 +280,8 @@ Hebrew, the installer and the library open in Hebrew; otherwise pick
 **Language > עברית** in the settings, and the library switches at once. In
 Hebrew every window of Win.apk is laid out right to left: the library, its
 pages, the install window, the launch window, the permission questions, menus
-and dialogs. Logs stay left to right.
+and dialogs. So is the installer, title bar included (its icon on the right,
+Close on the left, Finish at the bottom left). Logs stay left to right.
 
 An app's window follows Windows' reading layout for right-to-left users: its
 title bar is mirrored, while the app draws its own layout as it would on a
@@ -366,8 +370,15 @@ signs out. Signing in opens Google's own sign-in page in a window of its own
 (Microsoft Edge WebView2, in a private profile). Win.apk never sees the
 password; it keeps the token Google hands back, in
 `%LOCALAPPDATA%\Win.apk\gms`. Signing out forgets the account and its tokens
-on this PC; apps that used it ask again. Apps can also open the same sign-in
-window themselves, through their "Add an account" flow.
+on this PC; apps that used it ask again.
+
+The account belongs to Win.apk, not to one app: every app on the PC uses it.
+An app's **Sign in with Google** opens the same sign-in window when no account
+is signed in yet, and the account added there is the one the app signs in
+with (and the one Settings shows). With an account, the app shows its chooser.
+The round button at the end of the toolbar (on the left in Hebrew) shows the
+signed-in account's initial, as a browser's profile button does, or an
+outline of a person when there is none; it opens Settings.
 
 Google sign-in needs the WebView2 Runtime (a 2022 or later version). Without
 it the sign-in is cancelled and the log says why.
@@ -403,7 +414,7 @@ are.
 
 ## Logs
 
-The log window (**Settings > Troubleshooting > Open logs**, or Ctrl+L) shows
+The log window (an app's details page, **Troubleshooting > Show log**, or Ctrl+L) shows
 any of Win.apk's logs and follows the end as it is written. Pick the log at
 the top left ("Wiz · last run", "Wiz · install", "Google sign-in"…), search
 it (every match is marked; Enter or F3 goes to the next, Shift+F3 back),
@@ -430,8 +441,8 @@ and the launch window open the right log themselves when something fails.
   then its data folder (`android\data\data\<package>`) and its folders in
   shared storage (`Android\data` and `Android\obb`) go too, as uninstalling
   does on a phone. Your own files in your Windows folders are never touched.
-- **Settings > Troubleshooting > Remove all apps** removes every app (what they
-  saved stays).
+- **Settings > Troubleshooting > Clear library** uninstalls every app and
+  removes its shortcuts (app data is kept).
 - Uninstalling Win.apk (Windows Settings > Apps) removes the program, the
   Start menu shortcuts and the `.apk` association, and keeps
   `%LOCALAPPDATA%\Win.apk`. Delete that folder to remove the apps, their data,
@@ -454,6 +465,11 @@ and the launch window open the right log themselves when something fails.
 | Shared ARM translations | `%LOCALAPPDATA%\Win.apk\aot-cache` |
 | Settings | `HKEY_CURRENT_USER\Software\Win.apk` (`Theme`, `Language`, `PhoneSize`, `Landscape`, `DesktopShortcut`, `UserFolders`, `InstallDetails`, and the library window's size) |
 | Start menu shortcuts | `Start > Win.apk Apps` |
+
+`<app>` is the app's package name (`com.waze`) when the file it came from
+is named after it, as APK download sites name them, else the file's name up
+to its version (`WhatsApp_2.24.1.apk` gives `WhatsApp`). Apps installed
+before this keep their folders.
 
 ## Command line
 
@@ -510,7 +526,7 @@ development and testing.
 ## Troubleshooting
 
 **The app does not start, or stops with an error.** Click **Show log** in
-the launch window, or open the log window (Ctrl+L) on the app's last run.
+the launch window, or **Show log** on the app's details page.
 The most useful lines:
 
 | Line | Meaning |
