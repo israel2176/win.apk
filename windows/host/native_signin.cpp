@@ -30,6 +30,11 @@
 // the app's own WebView jar. The window closes once the token is in the jar,
 // so nothing is left for the next sign-in to find.
 //
+// Before the window closes, while its session still exists, the page is asked
+// for the account's picture (ask_photo): the launcher's account button shows
+// it, as a browser's profile button does. Best effort; without one the button
+// keeps the account's initial.
+//
 // presentSignInWindow BLOCKS for as long as a human takes, which is what the
 // Java callers expect (they run it off the main thread; NativeSignIn's own
 // guards keep it from the UI thread and from stacking windows). The window
@@ -40,6 +45,8 @@
 
 #include <atomic>
 #include <cstdio>
+#include <cwchar>
+#include <mutex>
 #include <string>
 
 #include <windows.h>
@@ -70,6 +77,22 @@ constexpr UINT kPollMs = 1000;
 // long enough for a password plus a 2FA prompt on a phone.
 constexpr UINT_PTR kTimeoutTimer = 2;
 constexpr UINT kTimeoutMs = 600 * 1000;
+// How long the picture may hold up the end of the flow.
+constexpr UINT_PTR kPhotoTimer = 3;
+constexpr UINT kPhotoMs = 5000;
+
+// The account's picture, the way Chrome learns the accounts in its cookie jar:
+// accounts.google.com/ListAccounts answers the session's accounts, each with
+// its name, email and picture URL. Run in the page, so the in-private
+// session's cookies go with it (same origin), and synchronous, so the
+// script's result is the answer. Any failure is an empty string.
+constexpr wchar_t kListAccountsScript[] =
+    L"(function(){try{var x=new XMLHttpRequest();"
+    L"x.open('GET','https://accounts.google.com/ListAccounts?gpsia=1&source=ChromiumBrowser&json=standard',false);"
+    L"x.send();return x.status==200?x.responseText:'';}catch(e){return '';}})()";
+
+std::mutex g_photo_lock;
+std::wstring g_photo;  // the last window's picture URL, for signInPhotoUrl
 
 std::atomic<bool> g_active{false};
 
@@ -86,7 +109,9 @@ struct Window {
     std::wstring folder;
     bool finished = false;
     bool checking = false;  // a GetCookies is in flight
+    bool asking_photo = false;  // the token is in; ListAccounts is in flight
     std::wstring token;
+    std::wstring photo;
     HANDLE done = nullptr;  // signalled when the window is gone
 };
 
@@ -128,12 +153,87 @@ void finish(Window* w) {
     w->finished = true;
     KillTimer(w->hwnd, kPollTimer);
     KillTimer(w->hwnd, kTimeoutTimer);
+    KillTimer(w->hwnd, kPhotoTimer);
     PostMessageW(w->hwnd, WM_CLOSE, 0, 0);
+}
+
+// One level of a JSON string literal, quotes included: `"a\"b"` -> `a"b`.
+std::wstring json_unquote(const std::wstring& q) {
+    std::wstring out;
+    if (q.size() < 2 || q.front() != L'"' || q.back() != L'"') return out;
+    for (size_t i = 1; i + 1 < q.size(); ++i) {
+        wchar_t c = q[i];
+        if (c != L'\\' || i + 2 >= q.size()) {
+            out += c;
+            continue;
+        }
+        c = q[++i];
+        switch (c) {
+            case L'n': out += L'\n'; break;
+            case L't': out += L'\t'; break;
+            case L'r': out += L'\r'; break;
+            case L'b': out += L'\b'; break;
+            case L'f': out += L'\f'; break;
+            case L'u':
+                if (i + 4 < q.size()) {
+                    out += static_cast<wchar_t>(std::wcstoul(q.substr(i + 1, 4).c_str(), nullptr, 16));
+                    i += 4;
+                }
+                break;
+            default: out += c; break;  // \" \\ \/
+        }
+    }
+    return out;
+}
+
+// The first picture URL in ListAccounts' answer (the in-private session holds
+// the one account just signed in), or empty. Google's pictures are served from
+// lh<n>.googleusercontent.com; nothing else is taken.
+std::wstring photo_url_in(const std::wstring& body) {
+    const size_t host = body.find(L".googleusercontent.com");  // its "/" may be written "\/"
+    if (host == std::wstring::npos) return L"";
+    const size_t open = body.rfind(L'"', host);
+    size_t close = host;
+    while ((close = body.find(L'"', close + 1)) != std::wstring::npos && body[close - 1] == L'\\') {
+    }
+    if (open == std::wstring::npos || close == std::wstring::npos) return L"";
+    const std::wstring url = json_unquote(body.substr(open, close - open + 1));
+    if (url.rfind(L"https://lh", 0) != 0 || url.size() > 2048) return L"";
+    const size_t slash = url.find(L'/', 8);
+    if (slash == std::wstring::npos || slash < 30 || url.compare(slash - 22, 22, L".googleusercontent.com") != 0) {
+        return L"";
+    }
+    for (const wchar_t c : url) {
+        if (c <= L' ' || c == L'"' || c == L'<' || c == L'>' || c == L'\\') return L"";
+    }
+    return url;
+}
+
+// The token is in: ask the page for the account's picture, then finish. The
+// timer finishes without one if the answer is slow.
+void ask_photo(Window* w) {
+    if (w->finished || w->asking_photo) return;
+    w->asking_photo = true;
+    KillTimer(w->hwnd, kPollTimer);
+    SetTimer(w->hwnd, kPhotoTimer, kPhotoMs, nullptr);
+    auto done = wv2::handler<ICoreWebView2ExecuteScriptCompletedHandler>(
+        IID_ICoreWebView2ExecuteScriptCompletedHandler, [](HRESULT hr, LPCWSTR json) -> HRESULT {
+            Window* w = g_window;
+            if (!w || w->finished) return S_OK;
+            // The script's result is JSON: the answer's text as a string literal.
+            if (SUCCEEDED(hr) && json) w->photo = photo_url_in(json_unquote(json));
+            std::fprintf(stderr, "[win.apk] gms-signin: the account's picture: %s\n",
+                         w->photo.empty() ? "none" : "found");
+            std::fflush(stderr);
+            finish(w);
+            return S_OK;
+        });
+    if (!w->view || FAILED(w->view->ExecuteScript(kListAccountsScript, done.get()))) finish(w);
 }
 
 // The whole detection mechanism: does the jar hold `oauth_token` yet?
 void check_cookies(Window* w) {
-    if (w->finished || w->checking || !w->cookies) return;
+    if (w->finished || w->checking || w->asking_photo || !w->cookies) return;
     w->checking = true;
     auto done = wv2::handler<ICoreWebView2GetCookiesCompletedHandler>(
         IID_ICoreWebView2GetCookiesCompletedHandler, [](HRESULT hr, ICoreWebView2CookieList* list) -> HRESULT {
@@ -152,11 +252,11 @@ void check_cookies(Window* w) {
                 c->get_Value(&raw);
                 w->token = wv2::take_co_string(raw);
             }
-            if (!w->token.empty()) {
+            if (!w->token.empty() && !w->asking_photo) {
                 std::fprintf(stderr, "[win.apk] gms-signin: the flow finished (oauth_token, %zu chars)\n",
                              w->token.size());
                 std::fflush(stderr);
-                finish(w);
+                ask_photo(w);
             }
             return S_OK;
         });
@@ -376,6 +476,9 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             } else if (w && wp == kTimeoutTimer) {
                 std::fprintf(stderr, "[win.apk] gms-signin: timed out after %u s\n", kTimeoutMs / 1000);
                 finish(w);
+            } else if (w && wp == kPhotoTimer) {
+                std::fprintf(stderr, "[win.apk] gms-signin: no answer about the account's picture\n");
+                finish(w);
             }
             return 0;
         case WM_ERASEBKGND: {
@@ -402,6 +505,7 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (w) {
                 KillTimer(hwnd, kPollTimer);
                 KillTimer(hwnd, kTimeoutTimer);
+                KillTimer(hwnd, kPhotoTimer);
                 if (w->controller) w->controller->Close();
                 w->view.reset();
                 w->cookies.reset();
@@ -534,10 +638,15 @@ jstring JNICALL SignIn_present(JNIEnv* env, jclass) {
     auto* w = new Window();
     w->folder = user_data_folder(env);
     w->done = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-    std::wstring token;
+    std::wstring token, photo;
     if (w->done && !w->folder.empty() && wv2::post([w] { open_on_thread(w); })) {
         WaitForSingleObject(w->done, INFINITE);
         token = w->token;
+        photo = w->photo;
+    }
+    {
+        std::lock_guard<std::mutex> lock(g_photo_lock);
+        g_photo = token.empty() ? std::wstring() : photo;
     }
     if (w->done) CloseHandle(w->done);
     delete w;
@@ -552,11 +661,18 @@ jstring JNICALL SignIn_present(JNIEnv* env, jclass) {
 
 jboolean JNICALL SignIn_active(JNIEnv*, jclass) { return g_active.load() ? JNI_TRUE : JNI_FALSE; }
 
+// The picture URL the last window found for its account, or null.
+jstring JNICALL SignIn_photo(JNIEnv* env, jclass) {
+    std::lock_guard<std::mutex> lock(g_photo_lock);
+    return g_photo.empty() ? nullptr : wv2::to_jstring(env, g_photo);
+}
+
 constexpr const char* kCls = "com.macapk.gms.NativeSignIn";
 
 const HostMethod kMethods[] = {
     WINAPK_HOST_NATIVE(kCls, "presentSignInWindow", "()Ljava/lang/String;", SignIn_present),
     WINAPK_HOST_NATIVE(kCls, "signInWindowActive", "()Z", SignIn_active),
+    WINAPK_HOST_NATIVE(kCls, "signInPhotoUrl", "()Ljava/lang/String;", SignIn_photo),
 };
 
 }  // namespace

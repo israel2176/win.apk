@@ -568,6 +568,11 @@ every such change is listed here:
   at once; the account added is Win.apk's, shared by every app, and signs in
   to the app, and a cancel cancels. The screen's texts name Win.apk and
   Settings > Google account instead of Mac.apk > Accounts.
+- `runtime/java/com/macapk/gms/AccountPhoto.java` (new),
+  `NativeSignIn.java` and `GmsStore.java`: after a sign-in, the picture the
+  sign-in window found (`signInPhotoUrl`, a native only Windows has; on the
+  Mac its absence means no picture) is saved as `gms\photo-<account>.img`
+  for the launcher's account button, and removed with the account.
 
 ## License
 
