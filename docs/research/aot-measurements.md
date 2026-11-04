@@ -301,7 +301,8 @@ Part B of the plan, in the order that decides settings:
 
 1. **The bundled clang.** Repeat section 5's `-O1`, `-O2`, `-O2 -mllvm
    -fast-isel` rows with Win.apk's `clang\bin\clang.exe` on the same samples
-   (`matrix.py` runs on Windows with `clang` on the PATH). Switch
+   (`aot-measurements/aot_flags_windows.ps1` does this with an installed
+   Win.apk). Switch
    `kAotCompileFlags` only if `-O2 -mllvm -fast-isel` stays at least as fast
    to compile as `-O1`.
 2. **Real speed, per app.**

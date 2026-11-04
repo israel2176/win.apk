@@ -15,6 +15,7 @@ the translator is a patched copy.
 | `reuse.py` | How much of a pass must be compiled again as a profile grows, per way of cutting parts |
 | `fdecount.py` | Function starts listed in `.eh_frame_hdr` |
 | `measure.py` | Time and peak memory of compiling C files one by one |
+| `aot_flags_windows.ps1` | On Windows, with an installed Win.apk: the `-O1` / `-O2` / `-O2 -mllvm -fast-isel` comparison of `matrix.py` with the bundled clang, on the arm64 libraries of the installed apps (`aot-measurements.md`, section 8, step 1). Writes `winapk-aot-flags.csv` on the desktop |
 
 Build:
 
