@@ -260,16 +260,28 @@ Three engines run arm64 code, behind one CPU state (`src/arm64/`):
 - **Ahead-of-time translation** (`arm64_aot.cpp`, `tools/arm64_aot_main.cpp`,
   `winapk-aot.exe`). Each guest function becomes a C function with the guest
   registers as local variables, so the C compiler allocates registers and
-  optimizes across the whole function. The runtime compiles that C with
-  clang (`-O1 -march=native`, in parts, on all but one core, at below-normal
-  priority) into `<lib>.so.aot.dll` next to the library. A library of up to
-  400,000 instructions is translated whole; a larger one only where the JIT's
-  profile (`<lib>.so.aot.profile`) says code ran, and again as the profile
-  grows. A translation finished while the app runs is loaded at once. Whole
-  translations are shared between apps through `<data>\aot-cache`, keyed by
-  the library's code. The translation never has to be complete: a function
-  returns to the JIT when it reaches a branch the translator could not
-  follow.
+  optimizes across the whole function. Functions are found from the symbol
+  tables, the function starts in `.eh_frame_hdr` (which survive stripping)
+  and, transitively, the targets of BL. The runtime compiles that C with
+  clang (`-O1 -march=native`) into `<lib>.so.aot.dll` next to the library,
+  in parts of 20,000 instructions. A background worker runs them at idle
+  priority and as EcoQoS, in a job object that ends its compilers with it,
+  as many at once as the PC allows: up to half the logical processors while
+  the user is away, one while the user is active, none on battery saver or
+  under a full-screen program, and never more than free memory allows
+  (512 MB each, 20% of the RAM and at least 2 GB kept free). A library of up
+  to 400,000 instructions is translated whole; a larger one only where the
+  JIT's profile (`<lib>.so.aot.profile`) says code ran, and again once the
+  profile has grown by a quarter. The running app starts the worker when its
+  profile has settled, and a worker started with the app waits a minute.
+  A pass works in `.aot-tmp\<lib>\` from a copy of the profile and keeps
+  each compiled part, so a stopped worker goes on where it was. A failed one
+  waits 10 minutes, 4 times longer after each failure (at most a day), and
+  stops after 4. A translation finished while the app runs is loaded at once.
+  Whole translations are shared between apps through `<data>\aot-cache`,
+  keyed by the library's code. The translation never has to be complete: a
+  function returns to the JIT when it reaches a branch the translator could
+  not follow.
 - **The JIT** (`arm64_jit.cpp`, dynarmic from the azahar-emu fork, 0BSD
   license, fastmem over the shared address space). The app starts on it and
   it runs whatever has no translation. Built when CMake is given
@@ -505,7 +517,7 @@ default; `--data` moves it for a direct run):
 |---|---|
 | `library\<name>.apk`, `.label`, `.package`, `.orientation`, `.window` | The user's copy of each app and the launcher's per-app files |
 | `apps\<name>\` | `classes.jar`, `.macapk-dex-stamp`, `icon.png`, `label.txt`, `package.txt` |
-| `android\` | The Android file system: `data\app\` (installed packages, with `lib\<isa>\` and the `.so.aot.*` translation files), `data\data\<package>\` (app data), the shared-storage volume |
+| `android\` | The Android file system: `data\app\` (installed packages, with `lib\<isa>\` and the `.so.aot.*` translation files; `lib\arm64\.aot-tmp\<lib>\` holds an unfinished translation), `data\data\<package>\` (app data), the shared-storage volume |
 | `logs\` | `run-<name>.log` and `run-<name>.1.log`, `last-run.log` (a hard link to the newest run log), `install-<name>.log`, `gms.log`, `install-helper.log`, `package-backfill.log`, `hs_err_pid*.log` |
 | `store\` | `catalog.tsv`, `catalog.etag`, `icons\`, `downloads\` |
 | `installed_apps.json` | The installed-apps registry the package manager answers from |

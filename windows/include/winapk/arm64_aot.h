@@ -45,9 +45,14 @@
 
 namespace winapk::arm64 {
 
-// Raised when translated code changes meaning: the loader ignores an older
-// DLL and the stamp (runtime_main.cpp) has it translated again.
-constexpr uint32_t kAotVersion = 3;
+// Raised when the translation changes: the stamp (runtime_main.cpp) has each
+// library translated again. When the translated code changes meaning,
+// kAotMinVersion is raised with it, and the loader ignores the older DLLs.
+constexpr uint32_t kAotVersion = 4;
+// The oldest translation the loader still runs. Version 4 finds more of a
+// library's functions (.eh_frame_hdr) but its code means what 3's does, so
+// a DLL of 3 stays in use while the worker translates the library again.
+constexpr uint32_t kAotMinVersion = 3;
 constexpr uint32_t kAotDone = 0;
 constexpr uint32_t kAotBail = 1;
 

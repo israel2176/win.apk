@@ -1,7 +1,32 @@
 # Background arm64 translation: how others do it, and a design for Win.apk
 
-Issue: israel2176/win.apk#78. Status: research and design; nothing here is
-implemented yet. Measurements on four apps
+Issue: israel2176/win.apk#78.
+
+Status, implemented (`windows/host/runtime_main.cpp`, "arm64 translation, in
+the background"; tested by `windows/test/aot_worker/run_aot_worker_wine.sh`):
+
+- the job object;
+- idle priority, background mode and EcoQoS;
+- fixed 20,000-instruction parts;
+- the governor (free memory, user activity, CPU load, battery saver,
+  full-screen programs);
+- resumable passes from a frozen copy of the profile;
+- the waits after failures;
+- the settled-profile start and the 25% growth rule;
+- the minute's delay at app start;
+- `.eh_frame_hdr` discovery (`windows/tools/arm64_aot_main.cpp`);
+- the direct-mapped table in `aot_lookup`.
+
+Not yet:
+
+- `-O2 -mllvm -fast-isel` (to check with the bundled clang);
+- the 3M whole-library threshold;
+- delta DLLs with the call-site cache;
+- the job's memory caps;
+- the launcher's progress, Pause and setting;
+- the launcher's idle-time start.
+
+Measurements on four apps
 ([`aot-measurements.md`](aot-measurements.md)) since then change four
 settings here:
 
