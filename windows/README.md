@@ -630,11 +630,22 @@ every such change is listed here:
   volume has short names. Native code sized for `/data/user/0/<package>` cut
   the ~150-character full form (Waze: a 128-byte buffer, so no map).
 - `runtime/java/com/macapk/loader/ViewCanvasDriver.java` and
-  `ActivityHost.java`: an activity stopped under a top with an opaque theme or
-  an opaque window background does not present. Each driver presents the whole
-  window, so a covered one that kept drawing (a SurfaceView's overlay driver,
-  ticked by the app's own render loop) alternated with the top: Waze flickered
-  between the map and its sign-in screens.
+  `ActivityHost.java`: an activity stopped under another does not present.
+  Each driver presents the whole window, so a covered one that kept drawing (a
+  SurfaceView's overlay driver, ticked by the app's own render loop)
+  alternated with the top: Waze flickered between the map and its sign-in
+  screens. A translucent or floating top (no opaque window background) draws
+  the last frame of the activity below before its own, as Android composites
+  the two windows; it cleared over it, so Waze's translucent sign-in steps
+  showed an empty window.
+- `runtime/java/com/macapk/gms/AuthorizationService.java` (new),
+  `GoogleSignInBroker.java`, `IdentitySignInService.java` and
+  `MacApkPackageManager.java`: the Identity Authorization API
+  (`com.google.android.gms.auth.api.identity.service.authorization.START`,
+  `AuthorizationClient.authorize`): a server auth code, an access token or an
+  ID token for the account the app signed in with on this device. Waze asks
+  for a server auth code right after the account is picked; the bind was
+  unanswered and the sign-in ended in an error.
 - `runtime/java/com/macapk/dex/NestIndex.java` and `NestPlan.java`: a class
   whose superclass is in the same package and has only private constructors
   is put in that superclass's nest when R8 dropped the enclosing-class

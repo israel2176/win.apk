@@ -6232,10 +6232,19 @@ public final class MacApkPackageManager extends PackageManager {
      *  GoogleSignInClient.silentSignIn / signOut / revokeAccess
      *  (`com.google.android.gms.auth.api.signin.service.START`). Answered by
      *  com.macapk.gms.LegacySignInService, under the gate of the sign-in
-     *  activity and the Identity service. */
+     *  activity and the Identity service. Also the Identity Authorization API
+     *  (`...identity.service.authorization.START`, AuthorizationClient.authorize),
+     *  answered by com.macapk.gms.AuthorizationService. */
     private ResolveInfo macapkResolveGmsLegacySignInService(Intent intent) {
         if (intent == null) return null;
-        if (!com.macapk.gms.LegacySignInService.ACTION.equals(intent.getAction())) return null;
+        final String cls;
+        if (com.macapk.gms.LegacySignInService.ACTION.equals(intent.getAction())) {
+            cls = "com.macapk.gms.LegacySignInService";
+        } else if (com.macapk.gms.AuthorizationService.ACTION.equals(intent.getAction())) {
+            cls = "com.macapk.gms.AuthorizationService";
+        } else {
+            return null;
+        }
         String want = intent.getPackage();
         if (want != null && !GMS_PACKAGE.equals(want)) return null;
         ComponentName explicit = intent.getComponent();
@@ -6243,7 +6252,7 @@ public final class MacApkPackageManager extends PackageManager {
         if (!com.macapk.gms.GoogleSignInBroker.enabled()) return null;
         android.content.pm.ServiceInfo si = new android.content.pm.ServiceInfo();
         si.packageName = GMS_PACKAGE;
-        si.name = "com.macapk.gms.LegacySignInService";
+        si.name = cls;
         si.exported = true;
         si.enabled = true;
         si.applicationInfo = gmsPackageInfo().applicationInfo;

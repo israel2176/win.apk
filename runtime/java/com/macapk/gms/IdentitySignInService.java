@@ -348,11 +348,16 @@ public final class IdentitySignInService extends android.app.Service {
     /** ConnectionInfo {2 Feature[]} (the Bundle and telemetry fields are null and
      *  omitted; field 3 is the int the app's writer always writes). */
     public static void writeConnectionInfo(Parcel p) {
+        writeConnectionInfo(p, FEATURE_NAMES, FEATURE_VERSIONS);
+    }
+
+    /** The same, declaring another service's features (AuthorizationService). */
+    static void writeConnectionInfo(Parcel p, String[] names, long[] versions) {
         int o = SafeParcel.beginObject(p);
         List<SafeParcel.Body> features = new ArrayList<>();
-        for (int i = 0; i < FEATURE_NAMES.length; i++) {
-            final String name = FEATURE_NAMES[i];
-            final long version = FEATURE_VERSIONS[i];
+        for (int i = 0; i < names.length; i++) {
+            final String name = names[i];
+            final long version = versions[i];
             features.add(new SafeParcel.Body() {
                 @Override public void write(Parcel q) { writeFeature(q, name, version); }
             });

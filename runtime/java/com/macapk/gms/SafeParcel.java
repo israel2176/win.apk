@@ -46,13 +46,13 @@ public final class SafeParcel {
 
     public static void finishObject(Parcel p, int start) { finishVariable(p, start); }
 
-    private static int beginVariable(Parcel p, int id) {
+    static int beginVariable(Parcel p, int id) {
         p.writeInt(0xFFFF0000 | id);
         p.writeInt(0);
         return p.dataPosition();
     }
 
-    private static void finishVariable(Parcel p, int start) {
+    static void finishVariable(Parcel p, int start) {
         int end = p.dataPosition();
         p.setDataPosition(start - 4);
         p.writeInt(end - start);

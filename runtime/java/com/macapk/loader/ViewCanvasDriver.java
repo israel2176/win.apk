@@ -808,6 +808,28 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
         try { m.invoke(sSnapPumpTarget); } catch (Throwable ignored) {}
     }
 
+    /** The driver that last presented a frame for each activity: what a
+     *  see-through activity above it draws first. */
+    private static final java.util.Map<android.app.Activity, ViewCanvasDriver> sLastPresenter =
+        java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
+
+    /** A translucent or floating top shows the activity below it, as Android
+     *  composites the two windows: its frame starts from the last frame the
+     *  one below presented (which no longer presents itself: ActivityHost
+     *  .macapkIsHiddenUnderTop), instead of a clear that hid it entirely --
+     *  Waze's translucent sign-in steps showed an empty window. */
+    private void drawActivityBelow() {
+        try {
+            if (ownerActivity == null || !ActivityHost.macapkSeesThrough(ownerActivity)) return;
+            android.app.Activity below = ActivityHost.macapkBelow(ownerActivity);
+            ViewCanvasDriver d = below != null ? sLastPresenter.get(below) : null;
+            Bitmap b = d != null && d != this ? d.bitmap : null;
+            if (b == null || b.getWidth() != surfaceW || b.getHeight() != surfaceH) return;
+            canvas.drawBitmap(b, 0f, 0f, null);
+        } catch (Throwable ignored) {
+        }
+    }
+
     private boolean wasHiddenUnderTop;
     private android.app.Activity ownerActivity;
     private boolean ownerResolved;
@@ -850,6 +872,7 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
             rootView.invalidate();
         }
         long n = ++drawFrameCount;
+        if (ownerActivity != null && !rootView.macapkIsWindowRemoved()) sLastPresenter.put(ownerActivity, this);
         // Phase-trace timestamps (all zero when the flag is off; assignments are
         // grouped at the six fixed points named in the field comment above).
         long pt0 = PHASE_TRACE ? System.nanoTime() : 0;
@@ -1193,6 +1216,7 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
             }
         }
         canvas.drawColor(clearArgb);
+        drawActivityBelow();
         // v1.0.874: the LETTERBOX REMAINDER is black, not the window background.
         // AOSP letterboxes a legacy activity against the letterbox background
         // (SystemBarUtils / LetterboxConfiguration default, solid black), NOT

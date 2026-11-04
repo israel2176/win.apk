@@ -434,6 +434,21 @@ public final class GoogleSignInBroker {
 
     /** Was `account` used to sign in to `pkg` on THIS device? (One Tap auto-select
      *  needs it; a grant Google holds from another device only lets us OFFER it.) */
+    /** The account `pkg` last signed in with on this device, or null. */
+    static String lastSignedIn(String pkg) {
+        String best = null;
+        long bestAt = -1;
+        for (String a : GmsStore.accountNames()) {
+            if (a == null || a.startsWith("_") || !autoSignInAllowed(a, pkg)) continue;
+            String at = GmsStore.accountData(a, AUTHORIZED_PREFIX + pkg);
+            if (at == null) continue;
+            long t;
+            try { t = Long.parseLong(at.trim()); } catch (NumberFormatException e) { t = 0; }
+            if (t > bestAt) { bestAt = t; best = a; }
+        }
+        return best;
+    }
+
     static boolean usedOnThisDevice(String account, String pkg) {
         return account != null && pkg != null && GmsStore.accountData(account, AUTHORIZED_PREFIX + pkg) != null;
     }
@@ -488,6 +503,9 @@ public final class GoogleSignInBroker {
         public String error;
         public String email, gaiaId, displayName, givenName, familyName, photoUrl;
         public String idToken, serverAuthCode, obfuscatedId;
+        /** The scopes' OAuth token, when neither an ID token nor a code was asked
+         *  for (AuthorizationResult.accessToken). */
+        public String accessToken;
         public long expirationSecs;
         public final List<String> grantedScopes = new ArrayList<>();
         public boolean ok() { return status == STATUS_SUCCESS; }
@@ -624,6 +642,7 @@ public final class GoogleSignInBroker {
             Map<String, String> resp = sTokens.fetch(account, "oauth2:" + String.join(" ", s),
                     r.callerPkg, appSigSha1, r.includeEmail(), r.includeProfile(), consented, null, null);
             if (!absorb(res, resp, "scopes")) return res;
+            res.accessToken = resp.get("Auth");
             granted = resp.get("grantedScopes");
             expiry = Math.min(expiry, absExpiry(resp, now));
         }

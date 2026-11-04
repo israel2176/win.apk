@@ -100,17 +100,32 @@ public final class ActivityHost {
         return s != null && s.intValue() >= STATE_STOPPED && stack.peek() != a;
     }
 
-    /** True while `a` is stopped under a top that covers it: an opaque theme
-     *  (it owns the window box), or an opaque windowBackground, which paints
-     *  over everything below even in a theme marked translucent (Waze's sign-in
-     *  screens). Each activity's driver presents the whole shared window, so a
-     *  covered one that keeps presenting alternates with the top every frame.
-     *  Under a see-through top it keeps drawing, as on Android. Read by
+    /** True while `a` is stopped under another activity. Each activity's
+     *  driver presents the whole shared window, so a covered one that kept
+     *  presenting alternated with the top every frame (Waze flickered between
+     *  the map and its sign-in screens). A see-through top shows it instead,
+     *  by drawing its last frame first (macapkSeesThrough). Read by
      *  ViewCanvasDriver. */
     public static boolean macapkIsHiddenUnderTop(Activity a) {
-        if (!macapkIsStoppedUnderTop(a)) return false;
-        Activity top = stack.peek();
-        return top != null && (top.macapkOwnsWindowBox() || sOpaqueBackground.containsKey(top));
+        return macapkIsStoppedUnderTop(a);
+    }
+
+    /** Does `a` let the activity below it show through: it is the top, its
+     *  theme does not own the window box (translucent or floating) and its
+     *  windowBackground is not an opaque colour? Then, as on Android, what is
+     *  below stays visible around its content. */
+    public static boolean macapkSeesThrough(Activity a) {
+        return a != null && stack.peek() == a && !a.macapkOwnsWindowBox() && !sOpaqueBackground.containsKey(a);
+    }
+
+    /** The activity directly below `a` in the task, or null. */
+    public static Activity macapkBelow(Activity a) {
+        boolean next = false;
+        for (Activity x : stack) {   // ArrayDeque iterates from the top (push = addFirst)
+            if (next) return x;
+            if (x == a) next = true;
+        }
+        return null;
     }
 
     /** Activities whose windowBackground resolved to an opaque colour at
