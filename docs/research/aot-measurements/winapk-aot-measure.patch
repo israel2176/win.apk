@@ -1,0 +1,75 @@
+--- windows/tools/arm64_aot_main.cpp	2026-11-04 01:30:23.396254660 +0000
++++ aot_main_x.cpp	2026-11-04 11:31:48.048302740 +0000
+@@ -2136,6 +2136,36 @@
+     // Every function: the symbols, then the targets of BL, transitively.
+     std::set<uint64_t> entries;
+     for (const auto& s : img.symbols) entries.insert(s.first);
++    // Scratch: WINAPK_AOT_EH=1 adds every function start in .eh_frame_hdr's
++    // search table (PT_GNU_EH_FRAME; table encoding datarel sdata4 only).
++    if (std::getenv("WINAPK_AOT_EH")) {
++        Ehdr64 eh;
++        read_at(img.file, 0, &eh);
++        std::vector<Phdr64> loads;
++        Phdr64 ehp{};
++        bool have = false;
++        for (unsigned i = 0; i < eh.phnum; ++i) {
++            Phdr64 ph;
++            if (!read_at(img.file, eh.phoff + uint64_t(i) * eh.phentsize, &ph)) break;
++            if (ph.type == 1) loads.push_back(ph);
++            if (ph.type == 0x6474e550) { ehp = ph; have = true; }
++        }
++        size_t added = 0;
++        if (have && ehp.offset + 12 <= img.file.size()) {
++            const uint8_t* h = img.file.data() + ehp.offset;
++            uint32_t count;
++            std::memcpy(&count, h + 8, 4);
++            if (h[0] == 1 && h[2] == 0x03 && h[3] == 0x3b && ehp.offset + 12 + 8ull * count <= img.file.size()) {
++                for (uint32_t i = 0; i < count; ++i) {
++                    int32_t rel;
++                    std::memcpy(&rel, h + 12 + 8ull * i, 4);
++                    const uint64_t va = ehp.vaddr + int64_t(rel);
++                    if (img.code(va) && entries.insert(va).second) ++added;
++                }
++            }
++        }
++        std::fprintf(stderr, "winapk-aot: %s: %zu function starts added from .eh_frame_hdr\n", argv[1], added);
++    }
+     std::map<uint64_t, Function> functions;
+     std::vector<uint64_t> work(entries.begin(), entries.end());
+     size_t skipped = 0;
+@@ -2184,6 +2214,18 @@
+         std::fprintf(stderr, "winapk-aot: %s: profile: %zu of %zu functions ran\n", argv[1], functions.size(), all);
+         if (functions.empty()) return 3;
+     }
++    // Scratch: WINAPK_AOT_ONLY / WINAPK_AOT_EXCLUDE = comma-separated hex vaddrs.
++    for (const char* var : {"WINAPK_AOT_ONLY", "WINAPK_AOT_EXCLUDE"}) {
++        const char* v = std::getenv(var);
++        if (!v) continue;
++        std::set<uint64_t> list;
++        for (const char* p = v; *p;) { char* e; list.insert(std::strtoull(p, &e, 16)); p = *e ? e + 1 : e; }
++        const bool only = var[11] == 'O';
++        for (auto it = functions.begin(); it != functions.end();)
++            it = (list.count(it->first) != 0) == only ? std::next(it) : functions.erase(it);
++        total = 0;
++        for (const auto& f : functions) total += f.second.insns.size();
++    }
+     std::set<uint64_t> translated;
+     for (const auto& f : functions) translated.insert(f.first);
+ 
+@@ -2208,7 +2250,15 @@
+         Emitter em(img, *f, translated);
+         size_t n = 0;
+         const size_t part = static_cast<size_t>(std::min_element(load.begin(), load.end()) - load.begin());
+-        bodies[part] += em.function(&n);
++        const std::string body = em.function(&n);
++        if (const char* d = std::getenv("WINAPK_AOT_DUMP")) {
++            static FILE* df = std::fopen(d, "w");
++            uint64_t hh = 1469598103934665603ull;
++            for (unsigned char ch : body) hh = (hh ^ ch) * 1099511628211ull;
++            std::fprintf(df, "%" PRIx64 " %zu %016" PRIx64 "\n", f->entry, f->insns.size(), hh);
++            std::fflush(df);
++        }
++        bodies[part] += body;
+         load[part] += f->insns.size();
+         insns += f->insns.size();
+         interpreted += n;

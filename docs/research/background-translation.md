@@ -1,7 +1,17 @@
 # Background arm64 translation: how others do it, and a design for Win.apk
 
 Issue: israel2176/win.apk#78. Status: research and design; nothing here is
-implemented yet.
+implemented yet. Measurements on four apps
+([`aot-measurements.md`](aot-measurements.md)) since then change four
+settings here:
+
+- compile with `-O2 -mllvm -fast-isel` instead of `-O1`;
+- find functions from `.eh_frame_hdr` too;
+- the call-site cache for delta DLLs is required, not optional;
+- add a direct-mapped table in front of `aot_lookup`.
+
+They also put the planning rate at 35k-80k instructions a CPU-minute by kind
+of code, instead of 60k.
 
 Win.apk translates an app's arm64 libraries ahead of time: `winapk-aot` writes
 C, the bundled clang compiles it into `<lib>.so.aot.dll`, in a background
@@ -661,11 +671,17 @@ last-error clang exit 1 in part 3f9a…, 1 function left to the JIT
 - `aot_load` and `aot_load_pending` load every `<lib>.so.aot*.dll` in order.
   `Library::translated` becomes the number of DLLs loaded, so a delta finished
   while the app runs is picked up too.
-- Calls between DLLs need nothing new: a call to a function outside the DLL is
-  already `aot_rt.branch` → `aot_lookup`, which sees every loaded DLL (section
-  2). That costs one hash lookup per such call. If it shows up in a profile,
-  add a per-call-site cache of the looked-up function, invalidated by a
-  generation counter that each DLL load increments.
+- Calls between DLLs work without changes to the emitted code: a call to a
+  function outside the DLL is already `aot_rt.branch` → `aot_lookup`, which
+  sees every loaded DLL (section 2).
+- They are slow, though: measured at about 15× a call inside one DLL
+  ([`aot-measurements.md`](aot-measurements.md), section 4). So
+  `CALL_SITE` also remembers its first translated target (set once per site),
+  which is 2.7× faster, and `aot_lookup` gets a direct-mapped table in front of
+  its map, which is 1.9× faster for every call through a pointer.
+- Deltas are merged into one DLL at idle when they hold 25% of the base's
+  instructions or there are 4 of them, so hot calls end up inside one DLL
+  again.
 
 ### 7.4 Processes and the governor
 
