@@ -390,6 +390,17 @@ const wchar_t* tr(const wchar_t* en) {
         {L"Closes the app at once, as Force stop does on a phone.", L"סוגר את האפליקציה מיד, כמו \"עצירה בכפייה\" בטלפון."},
         {L"Converted code  ·  {0}", L"הקוד המומר  ·  {0}"},
         {L"Copy details", L"העתקת הפרטים"},
+        {L"Report a problem", L"דיווח על בעיה"},
+        {L"Report", L"דיווח"},
+        {L"Report a problem with {0}", L"דיווח על בעיה ב-{0}"},
+        {L"Open the report", L"פתיחת הדיווח"},
+        {L"See whether someone already reported it", L"לבדוק אם מישהו כבר דיווח על זה"},
+        {L"Opens a report on GitHub with the versions filled in, and the log to attach.", L"פותח דיווח ב-GitHub עם הגרסאות כבר ממולאות, ואת היומן לצירוף."},
+        {L"Your browser opens a report on GitHub with the versions already filled in, and the logs folder opens "
+         L"with the app's log selected. Look the log over, then drag it into the report: nothing is sent until "
+         L"you post it. A GitHub account is needed.",
+         L"הדפדפן יפתח דיווח ב-GitHub שהגרסאות בו כבר ממולאות, ותיקיית היומנים תיפתח כשהיומן של האפליקציה מסומן. "
+         L"עבור על היומן, ואז גרור אותו לתוך הדיווח: שום דבר לא נשלח עד שתפרסם אותו. צריך חשבון GitHub."},
         {L"Couldn't install", L"ההתקנה נכשלה"},
         {L"Couldn't install {0}", L"לא ניתן היה להתקין את {0}"},
         {L"Drop an Android app here", L"גרור לכאן אפליקציית Android"},
@@ -3461,6 +3472,167 @@ void error_with_log(const std::wstring& main, const std::wstring& content, const
     if (task_dialog(main, content, TD_ERROR_ICON, {{100, tr(L"Show log")}}, false) == 100) show_logs(log);
 }
 
+// ---------------------------------------------------------------------------
+// Report a problem: GitHub's "An app does not work" form (.github/ISSUE_TEMPLATE/app_problem.yml) opened in the
+// browser with what the launcher knows filled in by the fields' ids, and the logs folder with the app's log (and its
+// newest crash dump) selected to drag in. Nothing is uploaded by itself: a log can hold the user's name and paths,
+// so what goes in the report is the user's choice. The log stays out of the URL too, which GitHub cuts at about 8 KB.
+
+constexpr wchar_t kIssuesUrl[] = L"https://github.com/israel2176/win.apk/issues";
+
+// A query value: UTF-8, everything but the unreserved characters percent-encoded.
+std::wstring url_escape(const std::wstring& s) {
+    static const wchar_t hex[] = L"0123456789ABCDEF";
+    std::wstring out;
+    for (const unsigned char c : wide_to_utf8(s)) {
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '_' ||
+            c == '.' || c == '~') {
+            out += static_cast<wchar_t>(c);
+        } else {
+            out += L'%';
+            out += hex[c >> 4];
+            out += hex[c & 15];
+        }
+    }
+    return out;
+}
+
+// "Windows 11 23H2 (build 22631), x64". RtlGetVersion, since GetVersionEx answers what the manifest claims; 11 is a
+// build of 10.0 from 22000 on.
+std::wstring windows_version() {
+    OSVERSIONINFOW v{};
+    v.dwOSVersionInfoSize = sizeof(v);
+    using RtlGetVersionFn = LONG(WINAPI*)(OSVERSIONINFOW*);
+    if (auto get = reinterpret_cast<RtlGetVersionFn>(
+            reinterpret_cast<void*>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "RtlGetVersion")))) {
+        get(&v);
+    }
+    std::wstring out = L"Windows ";
+    if (v.dwMajorVersion == 10 && v.dwBuildNumber >= 22000) out += L"11";
+    else out += std::to_wstring(v.dwMajorVersion) + (v.dwMinorVersion ? L"." + std::to_wstring(v.dwMinorVersion) : L"");
+    wchar_t display[64] = {};
+    DWORD size = sizeof(display);
+    if (RegGetValueW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion", L"DisplayVersion",
+                     RRF_RT_REG_SZ, nullptr, display, &size) == ERROR_SUCCESS && display[0]) {
+        out += L" " + std::wstring(display);
+    }
+    out += L" (build " + std::to_wstring(v.dwBuildNumber) + L")";
+    // The machine itself, not the x64 that Windows on Arm emulates for us.
+    USHORT process = 0, native = 0;
+    using IsWow64Process2Fn = BOOL(WINAPI*)(HANDLE, USHORT*, USHORT*);
+    auto wow = reinterpret_cast<IsWow64Process2Fn>(
+        reinterpret_cast<void*>(GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "IsWow64Process2")));
+    const bool arm = wow && wow(GetCurrentProcess(), &process, &native) && native == 0xAA64;  // IMAGE_FILE_MACHINE_ARM64
+    return out + (arm ? L", Arm64" : L", x64");
+}
+
+// The primary display's adapter, as Device Manager names it.
+std::wstring gpu_name() {
+    DISPLAY_DEVICEW d{};
+    d.cb = sizeof(d);
+    for (DWORD i = 0; EnumDisplayDevicesW(nullptr, i, &d, 0); ++i) {
+        if (d.StateFlags & DISPLAY_DEVICE_PRIMARY_DEVICE) return d.DeviceString;
+        d.cb = sizeof(d);
+    }
+    return {};
+}
+
+// The newest logs\crash-<name>-<time>.dmp, if the runtime wrote one.
+fs::path newest_dump(const std::wstring& name) {
+    const std::wstring prefix = L"crash-" + name + L"-";
+    fs::path best;
+    fs::file_time_type best_time{};
+    std::error_code ec;
+    for (fs::directory_iterator it(logs_dir(), ec), end; !ec && it != end; it.increment(ec)) {
+        const std::wstring f = it->path().filename().wstring();
+        if (f.rfind(prefix, 0) != 0 || it->path().extension() != L".dmp") continue;
+        std::error_code ec2;
+        const auto t = fs::last_write_time(it->path(), ec2);
+        if (!ec2 && (best.empty() || t > best_time)) {
+            best = it->path();
+            best_time = t;
+        }
+    }
+    return best;
+}
+
+// Explorer on the folder of `files`, with all of them selected (show_in_explorer's /select takes only one).
+void select_in_explorer(const std::vector<fs::path>& files) {
+    if (files.empty()) return;
+    PIDLIST_ABSOLUTE folder = ILCreateFromPathW(files.front().parent_path().c_str());
+    std::vector<PIDLIST_ABSOLUTE> items;
+    for (const fs::path& f : files)
+        if (PIDLIST_ABSOLUTE p = ILCreateFromPathW(f.c_str())) items.push_back(p);
+    std::vector<PCUITEMID_CHILD> children;
+    for (PIDLIST_ABSOLUTE p : items) children.push_back(ILFindLastID(p));
+    if (!folder || children.empty() ||
+        FAILED(SHOpenFolderAndSelectItems(folder, static_cast<UINT>(children.size()), children.data(), 0))) {
+        show_in_explorer(files.front());
+    }
+    for (PIDLIST_ABSOLUTE p : items) ILFree(p);
+    if (folder) ILFree(folder);
+}
+
+HRESULT CALLBACK report_dialog_proc(HWND, UINT msg, WPARAM, LPARAM lp, LONG_PTR) {
+    if (msg == TDN_HYPERLINK_CLICKED)
+        ShellExecuteW(nullptr, L"open", reinterpret_cast<PCWSTR>(lp), nullptr, nullptr, SW_SHOWNORMAL);
+    return S_OK;
+}
+
+// Asks first, with a link to the open reports on the same app so a second one is not opened, then opens the form and
+// the logs. `name` is the library name, `log` the log that tells what happened, `what` the sentence the user saw.
+void report_problem(HWND parent, const std::wstring& name, const std::wstring& label, const fs::path& log,
+                    const std::wstring& what) {
+    const std::vector<std::string> pkg = package_of(name);
+    const std::wstring package = pkg.empty() ? std::wstring() : utf8_to_wide(pkg[0]);
+    const std::wstring app_version = pkg.size() > 2 ? utf8_to_wide(pkg[2]) : std::wstring();
+
+    const std::wstring search = std::wstring(kIssuesUrl) + L"?q=" +
+                                url_escape(L"is:issue is:open \"" + (package.empty() ? label : package) + L"\"");
+    const std::wstring main = fmt(L"Report a problem with {0}", {label});
+    const std::wstring content =
+        tr(L"Your browser opens a report on GitHub with the versions already filled in, and the logs folder opens "
+           L"with the app's log selected. Look the log over, then drag it into the report: nothing is sent until "
+           L"you post it. A GitHub account is needed.") +
+        std::wstring(L"\n\n<a href=\"") + search + L"\">" +
+        tr(L"See whether someone already reported it") + L"</a>";
+    const TASKDIALOG_BUTTON buttons[] = {{100, tr(L"Open the report")}};
+    TASKDIALOGCONFIG c{};
+    c.cbSize = sizeof(c);
+    c.hwndParent = parent;
+    c.hInstance = g_inst;
+    c.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION | TDF_POSITION_RELATIVE_TO_WINDOW | TDF_ENABLE_HYPERLINKS |
+                (g_rtl ? TDF_RTL_LAYOUT : 0);
+    c.pszWindowTitle = L"Win.apk";
+    c.pszMainInstruction = main.c_str();
+    c.pszContent = content.c_str();
+    c.cButtons = 1;
+    c.pButtons = buttons;
+    c.dwCommonButtons = TDCBF_CANCEL_BUTTON;
+    c.pfCallback = report_dialog_proc;
+    int pressed = 0;
+    if (FAILED(TaskDialogIndirect(&c, &pressed, nullptr, nullptr)) || pressed != 100) return;
+
+    // The form's own title pattern: "<App name> <version>: <what goes wrong>".
+    const std::wstring app_line = label + (app_version.empty() ? L"" : L" " + app_version) +
+                                  (package.empty() ? L"" : L" (" + package + L")");
+    std::wstring url = std::wstring(kIssuesUrl) + L"/new?template=app_problem.yml";
+    url += L"&title=" + url_escape(label + (app_version.empty() ? L"" : L" " + app_version) + L": " + what);
+    url += L"&winapk-version=" + url_escape(version());
+    url += L"&windows-version=" + url_escape(windows_version());
+    if (const std::wstring gpu = gpu_name(); !gpu.empty()) url += L"&gpu=" + url_escape(gpu);
+    url += L"&app=" + url_escape(app_line);
+    if (!what.empty()) url += L"&what-happens=" + url_escape(what);
+    ShellExecuteW(nullptr, L"open", url.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+
+    std::vector<fs::path> files;
+    std::error_code ec;
+    if (!log.empty() && fs::exists(log, ec)) files.push_back(log);
+    if (const fs::path dump = newest_dump(name); !dump.empty()) files.push_back(dump);
+    if (files.empty()) open_path(logs_dir());
+    else select_in_explorer(files);
+}
+
 std::vector<fs::path> pick_files(bool multiple, const wchar_t* title) {
     std::vector<fs::path> out;
     IFileOpenDialog* dlg = nullptr;
@@ -5042,7 +5214,8 @@ void show_info(const App& app) {
             }
         };
         out.push_back({tr(L"Shortcut"), {desktop}, L""});
-        // The app's own log: its last run, else its install (the log window's picker has the rest).
+        // The app's own log: its last run, else its install (the log window's picker has the rest); and a
+        // report for a problem met inside the app, which the splash's and the install's errors cannot see.
         {
             std::error_code ec2;
             const fs::path log = fs::exists(run_log(a.name), ec2) ? run_log(a.name) : install_log(a.name);
@@ -5051,7 +5224,11 @@ void show_info(const App& app) {
                                        tr(fs::exists(run_log(a.name), ec2)
                                               ? L"What happened the last time the app ran."
                                               : L"What happened when the app was installed."),
-                                       tr(L"Show log"), [log] { show_logs(log); })},
+                                       tr(L"Show log"), [log] { show_logs(log); }),
+                            button_row(tr(L"Report a problem"),
+                                       tr(L"Opens a report on GitHub with the versions filled in, and the log to "
+                                          L"attach."),
+                                       tr(L"Report"), [a, log] { report_problem(g_main, a.name, a.label, log, {}); })},
                            L""});
         }
         out.push_back({tr(L"Storage"),
@@ -5221,7 +5398,7 @@ struct InstallView {
     float need_h = 0;              // the height the last paint wanted, for fit_install_window
 } g_iv;
 
-enum { kActClose = 1, kActCancel, kActOpen, kActDetails, kActCopy, kActShowLog, kActLibrary, kActRowOpen = 1000,
+enum { kActClose = 1, kActCancel, kActOpen, kActDetails, kActCopy, kActShowLog, kActLibrary, kActReport, kActRowOpen = 1000,
        kActRowLog = 2000 };
 constexpr UINT kFitInstall = WM_APP + 20;
 
@@ -5370,6 +5547,11 @@ void paint_install(Graphics& g, float W, float H) {
     const float sh = (std::max)(px(18), text_height(g, sub, g_f.caption.get(), tw) + px(2));
     draw_text(g, sub, g_f.caption.get(), sub_ink, RectF(tx, y + px(32), tw, sh), kLeft, true, false);
     float hero_bottom = y + px(32) + sh;
+    // A failed install's Report a problem, under its reason: the footer's width is taken by its buttons.
+    if (hero && hero->state == Job::kFailed && !active) {
+        draw_link(g, tr(L"Report a problem"), tx, hero_bottom + px(2), px(22), g_iv.hot == kActReport, kActReport);
+        hero_bottom += px(24);
+    }
     if (hero && (hero->state == Job::kWaiting || hero->state == Job::kInstalling)) {
         draw_progress_line(g, RectF(tx, hero_bottom + px(8), tw, px(4)));
         hero_bottom += px(12);
@@ -5559,6 +5741,12 @@ void install_action(HWND hwnd, int act) {
         fit_install_window();
     } else if (act == kActCopy) {
         if (const Job* hero = hero_job()) copy_install_details(hwnd, *hero);
+    } else if (act == kActReport) {
+        if (const Job* hero = hero_job()) {
+            const Job j = *hero;  // the dialog is modal: the jobs can change under it
+            report_problem(hwnd, j.name, job_title(j), install_log(j.name),
+                           fmt(L"Couldn't install {0}", {job_title(j)}) + L". " + j.reason);
+        }
     } else if (act == kActLibrary) {
         std::wstring pick;
         for (const Job& j : g_jobs)
@@ -6109,7 +6297,7 @@ void show_logs(const fs::path& log) {
 // ---------------------------------------------------------------------------
 // The launch splash: shown the moment an app is opened, as a phone shows one,
 // until the app's own window is up (the runtime's ready event, kRunReady).
-// If the app ends first it turns into a short error with Show log.
+// If the app ends first it turns into a short error with Show log and Report a problem.
 
 struct Splash {
     std::wstring name;
@@ -6125,7 +6313,7 @@ struct Splash {
 };
 
 std::map<std::wstring, std::unique_ptr<Splash>> g_splashes;
-enum { kSplashClose = 1, kSplashLog = 2, kSplashCancel = 3 };
+enum { kSplashClose = 1, kSplashLog = 2, kSplashCancel = 3, kSplashReport = 4 };
 
 void maybe_quit();
 
@@ -6179,13 +6367,26 @@ void paint_splash(Splash& s, Graphics& g, float W, float H) {
         sub = tr(L"Still starting. The first start can take a minute.");
     }
     draw_text(g, sub, g_f.caption.get(), g_t.text2, RectF(m, px(178), W - 2 * m, px(54)), kCenter, true, false);
+    // The corner's X: Close on the error (two buttons are all its width takes), Cancel while starting.
+    const RectF corner(W - px(40), px(8), px(32), px(32));
+    if (s.hot == (s.failed ? kSplashClose : kSplashCancel)) fill_round(g, corner, px(kRadiusControl), g_t.hover);
+    draw_text(g, kGlyphClear, g_f.glyph12.get(), g_t.text2, corner, kCenter);
+    s.targets.push_back({corner, s.failed ? kSplashClose : kSplashCancel});
     if (s.failed) {
-        const float bw = px(112), by = H - px(22) - px(32);
-        const RectF close((W - 2 * bw - px(8)) / 2, by, bw, px(32)), log(close.GetRight() + px(8), by, bw, px(32));
-        draw_button(g, log, tr(L"Show log"), s.hot == kSplashLog, false, false);
-        draw_button(g, close, tr(L"Close"), s.hot == kSplashClose, true, false);
+        // Each as wide as its words, the pair centred; squeezed alike only if they would pass the window's edges.
+        const std::wstring report = tr(L"Report a problem"), show = tr(L"Show log");
+        float lw = (std::max)(px(96), text_width(g, show, g_f.body.get()) + px(32));
+        float rw = (std::max)(px(96), text_width(g, report, g_f.body_semi.get()) + px(32));
+        if (const float room = W - 2 * px(16) - px(8); lw + rw > room) {
+            lw *= room / (lw + rw);
+            rw = room - lw;
+        }
+        const float by = H - px(22) - px(32);
+        const RectF log((W - lw - rw - px(8)) / 2, by, lw, px(32)), rep(log.GetRight() + px(8), by, rw, px(32));
+        draw_button(g, log, show, s.hot == kSplashLog, false, false);
+        draw_button(g, rep, report, s.hot == kSplashReport, true, false);
         s.targets.push_back({log, kSplashLog});
-        s.targets.push_back({close, kSplashClose});
+        s.targets.push_back({rep, kSplashReport});
     } else {
         // Three dots that brighten in turn.
         const float t = static_cast<float>(GetTickCount64() % 1200) / 1200.0f, d = px(7), gap = px(8);
@@ -6197,10 +6398,6 @@ void paint_splash(Splash& s, Graphics& g, float W, float H) {
             Gdiplus::SolidBrush b(with_alpha(g_t.accent, static_cast<BYTE>(70 + 185 * lit)));
             g.FillEllipse(&b, x0 + i * (d + gap), y, d, d);
         }
-        const RectF cancel(W - px(40), px(8), px(32), px(32));
-        if (s.hot == kSplashCancel) fill_round(g, cancel, px(kRadiusControl), g_t.hover);
-        draw_text(g, kGlyphClear, g_f.glyph12.get(), g_t.text2, cancel, kCenter);
-        s.targets.push_back({cancel, kSplashCancel});
     }
     stroke_round(g, RectF(0.5f, 0.5f, W - 1, H - 1), px(8), g_t.border);
 }
@@ -6209,6 +6406,9 @@ void splash_action(Splash& s, int act) {
     if (act == kSplashLog) {
         show_logs(s.log);
         DestroyWindow(s.hwnd);
+    } else if (act == kSplashReport) {
+        const App* app = find_app(s.name);
+        report_problem(s.hwnd, s.name, app ? app->label : job_label(s.name), s.log, s.error_text);
     } else if (act == kSplashClose) {
         DestroyWindow(s.hwnd);
     } else if (act == kSplashCancel) {

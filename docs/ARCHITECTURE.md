@@ -474,7 +474,9 @@ Billing answers `BILLING_UNAVAILABLE`, the Maps SDK lays out a blank map.
    or the process: the runtime sets the event once its window has painted
    the app's first frame (`win32_window.cpp`, `signal_launcher_ready`), and
    the splash goes. If the process ends first, the splash says the app did
-   not start, with Show log.
+   not start, with Show log and Report a problem (`report_problem`: GitHub's
+   issue form prefilled through its fields' ids in the URL, and Explorer on
+   the run log and the newest crash dump; nothing is uploaded).
 2. The runtime takes a named mutex keyed on the app's data folder. If another
    copy holds it, the running window is brought forward, the ready event is
    set, and this process exits.
