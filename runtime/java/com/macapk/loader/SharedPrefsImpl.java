@@ -89,7 +89,25 @@ public final class SharedPrefsImpl implements SharedPreferences {
     static File macapkFileFor(Context ctx, String name) {
         File dir = new File(ctx.getDataDir(), "shared_prefs");
         dir.mkdirs();
-        return new File(dir, name + ".xml");
+        return new File(dir, fileSafe(name) + ".xml");
+    }
+
+    /** Win.apk: a name Windows cannot hold as a file name (Firebase Remote
+     *  Config's "frc_1:<project>:android:<app>_firebase_settings" has colons)
+     *  failed every write. Such characters become %XX; '%' itself is kept, so
+     *  every name that was already writable keeps its file. A no-op elsewhere. */
+    static String fileSafe(String name) {
+        if (File.separatorChar != '\\' || name == null) return name;
+        StringBuilder b = null;
+        for (int i = 0; i < name.length(); i++) {
+            char c = name.charAt(i);
+            boolean bad = c < 0x20 || "<>:\"|?*".indexOf(c) >= 0;
+            if (bad && b == null) b = new StringBuilder(name.substring(0, i));
+            if (b == null) continue;
+            if (bad) b.append('%').append(String.format("%02X", (int) c));
+            else b.append(c);
+        }
+        return b == null ? name : b.toString();
     }
 
     /** Per-FILE lock, keyed by canonical path and shared by every instance that

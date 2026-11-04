@@ -100,6 +100,24 @@ public final class ActivityHost {
         return s != null && s.intValue() >= STATE_STOPPED && stack.peek() != a;
     }
 
+    /** True while `a` is stopped under a top that covers it: an opaque theme
+     *  (it owns the window box), or an opaque windowBackground, which paints
+     *  over everything below even in a theme marked translucent (Waze's sign-in
+     *  screens). Each activity's driver presents the whole shared window, so a
+     *  covered one that keeps presenting alternates with the top every frame.
+     *  Under a see-through top it keeps drawing, as on Android. Read by
+     *  ViewCanvasDriver. */
+    public static boolean macapkIsHiddenUnderTop(Activity a) {
+        if (!macapkIsStoppedUnderTop(a)) return false;
+        Activity top = stack.peek();
+        return top != null && (top.macapkOwnsWindowBox() || sOpaqueBackground.containsKey(top));
+    }
+
+    /** Activities whose windowBackground resolved to an opaque colour at
+     *  launch (maybePaintStartingWindow). */
+    private static final java.util.Map<Activity, Boolean> sOpaqueBackground =
+        java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
+
     private static final int STATE_PAUSED  = 1;
     private static final int STATE_STOPPED = 2;
     /** How far DOWN we drove each activity that another activity was started on
@@ -4058,7 +4076,6 @@ public final class ActivityHost {
      *  native placeholder. Best-effort and completely silent on failure: a boot
      *  must never be blocked by a cosmetic colour lookup. */
     private static void maybePaintStartingWindow(Activity activity) {
-        if ("0".equals(System.getenv("MACAPK_STARTING_WINDOW"))) return;
         try {
             final int UNSET = 0x00000001;   // not a legal opaque ARGB
             int bg = UNSET;
@@ -4076,6 +4093,8 @@ public final class ActivityHost {
                 }
             }
             if (bg == UNSET) return;
+            sOpaqueBackground.put(activity, Boolean.TRUE);
+            if ("0".equals(System.getenv("MACAPK_STARTING_WINDOW"))) return;
             NativeCocoa.setStartingWindowColor(bg);
             NativeLog.i(TAG, String.format(
                 "window: starting-window background #%06X (AOSP windowBackground)",

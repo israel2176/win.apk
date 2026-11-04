@@ -96,7 +96,7 @@ final class NestIndex {
         if (byName == null || byName.isEmpty()) return NONE;
         Map<String, List<DexClass>> idx = new HashMap<>();
         for (DexClass c : byName.values()) {
-            String outer = DexFile.enclosingOf(c);
+            String outer = enclosingOf(c, byName);
             if (outer != null) {
                 idx.computeIfAbsent(outer, k -> new ArrayList<>()).add(c);
             }
@@ -129,5 +129,52 @@ final class NestIndex {
      */
     DexClass classByName(String internalName) {
         return byName.get(internalName);
+    }
+
+    /**
+     * The class directly enclosing {@code c}: the one its EnclosingClass /
+     * EnclosingMethod annotation names, else, when R8 dropped those (it does
+     * unless the app keeps InnerClasses) and renamed the class, the one
+     * {@link #inferredEnclosing} recovers. Used for both directions of the
+     * nest, so a host's NestMembers and its member's NestHost always agree.
+     */
+    String enclosingOf(DexClass c) {
+        return enclosingOf(c, byName);
+    }
+
+    private static String enclosingOf(DexClass c, Map<String, DexClass> byName) {
+        String outer = DexFile.enclosingOf(c);
+        return outer != null ? outer : inferredEnclosing(c, byName);
+    }
+
+    /**
+     * A class with no enclosing annotation whose superclass is in the same
+     * package and declares constructors that are ALL private: in source, only
+     * a nestmate can call such a constructor, so the subclass was nested in
+     * (or beside) it -- an enum constant with a body is the common case
+     * (Truecaller 26.42: com.truecaller.service.bar extends
+     * AlarmReceiver$AlarmType and calls its private constructor, an
+     * IllegalAccessError without the nest). ART does not check this access
+     * at run time, so the dex is legal there. Making the superclass the
+     * enclosing class puts both in the superclass's nest; per JVMS 5.4.4 a
+     * wrong guess only degrades to self-hosting, as NestPlan's header says.
+     */
+    private static String inferredEnclosing(DexClass c, Map<String, DexClass> byName) {
+        String sup = c.superclassName();
+        if (sup == null || !samePackage(c.name(), sup)) return null;
+        DexClass s = byName.get(sup);
+        if (s == null) return null;
+        boolean any = false;
+        for (DexMethod m : s.directMethods()) {
+            if (!"<init>".equals(m.name())) continue;
+            if ((m.accessFlags() & DexFile.Access.ACC_PRIVATE) == 0) return null;
+            any = true;
+        }
+        return any ? sup : null;
+    }
+
+    private static boolean samePackage(String a, String b) {
+        int i = a.lastIndexOf('/'), j = b.lastIndexOf('/');
+        return i == j && (i < 0 || a.regionMatches(0, b, 0, i));
     }
 }

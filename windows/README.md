@@ -629,6 +629,22 @@ every such change is listed here:
   8.3 short form `runtime_main.cpp` passes in `winapk.data.dir`, when the
   volume has short names. Native code sized for `/data/user/0/<package>` cut
   the ~150-character full form (Waze: a 128-byte buffer, so no map).
+- `runtime/java/com/macapk/loader/ViewCanvasDriver.java` and
+  `ActivityHost.java`: an activity stopped under a top with an opaque theme or
+  an opaque window background does not present. Each driver presents the whole
+  window, so a covered one that kept drawing (a SurfaceView's overlay driver,
+  ticked by the app's own render loop) alternated with the top: Waze flickered
+  between the map and its sign-in screens.
+- `runtime/java/com/macapk/dex/NestIndex.java` and `NestPlan.java`: a class
+  whose superclass is in the same package and has only private constructors
+  is put in that superclass's nest when R8 dropped the enclosing-class
+  annotations. Enum constants with bodies, renamed by R8, call the enum's
+  private constructor (legal on ART); HotSpot threw `IllegalAccessError`
+  (Truecaller crashed in the background).
+- `runtime/java/com/macapk/loader/SharedPrefsImpl.java`: characters Windows
+  does not allow in a file name are written as `%XX` in a preferences file's
+  name. Firebase Remote Config's `frc_1:<project>:android:...` file failed
+  every write.
 
 ## License
 

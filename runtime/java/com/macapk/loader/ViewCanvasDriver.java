@@ -808,11 +808,47 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
         try { m.invoke(sSnapPumpTarget); } catch (Throwable ignored) {}
     }
 
+    private boolean wasHiddenUnderTop;
+    private android.app.Activity ownerActivity;
+    private boolean ownerResolved;
+
+    /** Is the Activity owning this root stopped under an opaque top
+     *  (ActivityHost.macapkIsHiddenUnderTop)? A root on a non-Activity
+     *  context never is. */
+    private boolean ownerHiddenUnderTop() {
+        try {
+            if (!ownerResolved) {
+                ownerResolved = true;
+                android.content.Context c = rootView.getContext();
+                while (c instanceof android.content.ContextWrapper && !(c instanceof android.app.Activity)) {
+                    android.content.Context b = ((android.content.ContextWrapper) c).getBaseContext();
+                    if (b == c) break;
+                    c = b;
+                }
+                if (c instanceof android.app.Activity) ownerActivity = (android.app.Activity) c;
+            }
+            return ownerActivity != null && ActivityHost.macapkIsHiddenUnderTop(ownerActivity);
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
     private void doFrame() {
         // v1.0.1643: the window this root belonged to was removed (activity
         // destroyed). A frame queued before the native renderer was released
         // must not re-attach, lay out or draw the dead tree.
         if (rootView.macapkIsWindowRemoved()) return;
+        // A stopped activity under an opaque top has no visible window on
+        // Android. Its drivers can still be ticked (a SurfaceView's overlay
+        // driver runs off the app's own render loop), and presenting would
+        // flip the shared window between it and the top every frame.
+        if (ownerHiddenUnderTop()) { wasHiddenUnderTop = true; return; }
+        if (wasHiddenUnderTop) {
+            // Uncovered: redraw now, not at the next heartbeat.
+            wasHiddenUnderTop = false;
+            rootView.requestLayout();
+            rootView.invalidate();
+        }
         long n = ++drawFrameCount;
         // Phase-trace timestamps (all zero when the flag is off; assignments are
         // grouped at the six fixed points named in the field comment above).
@@ -2093,7 +2129,8 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
                     + " nonzero=" + nz + "/" + pixels.length
                     + " (" + (100L * nz / pixels.length) + "%)"
                     + " opaque=" + opaque
-                    + " drawn=" + drawn);
+                    + " drawn=" + drawn
+                    + " owner=" + (ownerActivity != null ? ownerActivity.getClass().getSimpleName() : "-"));
                 // Canvas-draw-gap harvester (lead B): dump the REAL/STUB/CAUGHT
                 // graphics-API tally on these checkpoint frames. With
                 // MACAPK_GFX_HARVEST set this is the COMPLETE draw-API usage list
