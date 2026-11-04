@@ -262,8 +262,9 @@ Three engines run arm64 code, behind one CPU state (`src/arm64/`):
   registers as local variables, so the C compiler allocates registers and
   optimizes across the whole function. Functions are found from the symbol
   tables, the function starts in `.eh_frame_hdr` (which survive stripping)
-  and, transitively, the targets of BL. The runtime compiles that C with
-  clang (`-O1 -march=native`) into `<lib>.so.aot.dll` next to the library,
+  and, transitively, the targets of BL; a function of more than 4,000
+  instructions is left to the JIT. The runtime compiles that C with
+  clang (`-O2 -mllvm -fast-isel -march=native`) into `<lib>.so.aot.dll` next to the library,
   in parts of 20,000 instructions. A background worker runs them at idle
   priority and as EcoQoS, in a job object that ends its compilers with it,
   as many at once as the PC allows: up to half the logical processors while

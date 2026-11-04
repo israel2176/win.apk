@@ -553,7 +553,7 @@ bool install_app(Options* o, const fs::path& android_root) {
 // this CPU into <lib>.so.aot.dll, which the loader picks up. Compiling a large
 // library whole took most of an hour (libwaze.so, 1.5M instructions), and the
 // app waited for it. Now nothing waits: the app starts on the JIT while a
-// background process (this program, --aot-translate) does the work at -O1.
+// background process (this program, --aot-translate) does the work.
 // A library of up to kAotFullBelow instructions is translated whole; a larger
 // one only where its profile says code ran (arm64_aot.h, "Profiles"), and
 // again when the profile has grown by a quarter. A translation finished while
@@ -611,7 +611,11 @@ constexpr uintmax_t kAotCacheBytes = uintmax_t{2} << 30;
 constexpr uint64_t kAotJobBytes = uint64_t{512} << 20;  // memory to allow per clang (measured: 250-410 MB)
 constexpr unsigned kAotMaxFailures = 4;
 constexpr DWORD kAotStartDelayS = 60;
-const wchar_t* const kAotCompileFlags = L"-O1 -march=native -fno-strict-aliasing -w";
+// -O2 with LLVM's fast instruction selector: about as fast to compile as -O1
+// with Win.apk's clang 22 (97.2 s against 94.8 s over the same 11 parts of
+// three libraries, on an i7-13620H; plain -O2 105 s), with 16% less code,
+// and the code runs as fast (docs/research/aot-measurements.md).
+const wchar_t* const kAotCompileFlags = L"-O2 -mllvm -fast-isel -march=native -fno-strict-aliasing -w";
 
 fs::path aot_clang() {
     std::error_code ec;
@@ -932,7 +936,7 @@ std::string aot_cache_key(const fs::path& so, const fs::path& clang) {
     if (run_capture(quoted(exe_dir() / "winapk-aot.exe") + L" --hash " + quoted(so), &hash) != 0) return {};
     while (!hash.empty() && std::isspace(static_cast<unsigned char>(hash.back()))) hash.pop_back();
     const std::string id = hash + "|" + file_id(exe_dir() / "winapk-aot.exe") + "|" + file_id(clang) + "|" +
-                           utf8(kAotCompileFlags) + "|" + utf8(env_var(L"WINAPK_AOT_OPTNONE_INSNS"));
+                           utf8(kAotCompileFlags) + "|" + utf8(env_var(L"WINAPK_AOT_MAX_INSNS"));
     return hex64(fnv1a(id));
 }
 
@@ -1047,7 +1051,7 @@ void aot_translate_one(const fs::path& so, const fs::path& clang, const fs::path
         // Each part's object is named by its C and how it is compiled, so a
         // part compiled before the pass was stopped is not compiled again.
         const std::string how =
-            file_id(clang) + "|" + utf8(kAotCompileFlags) + "|" + utf8(env_var(L"WINAPK_AOT_OPTNONE_INSNS"));
+            file_id(clang) + "|" + utf8(kAotCompileFlags) + "|" + utf8(env_var(L"WINAPK_AOT_MAX_INSNS"));
         std::vector<Compile> compiles;
         for (int i = 0;; ++i) {
             const fs::path src = i == 0 ? c : fs::path(c.wstring() + L"." + std::to_wstring(i) + L".c");

@@ -15,11 +15,15 @@ the background"; tested by `windows/test/aot_worker/run_aot_worker_wine.sh`):
 - the settled-profile start and the 25% growth rule;
 - the minute's delay at app start;
 - `.eh_frame_hdr` discovery (`windows/tools/arm64_aot_main.cpp`);
-- the direct-mapped table in `aot_lookup`.
+- the direct-mapped table in `aot_lookup`;
+- `-O2 -mllvm -fast-isel`, checked with the bundled clang 22 on a 13th-gen
+  Intel laptop: about as fast to compile as `-O1`, 16% less code;
+- functions over 4,000 instructions left to the JIT: compiled unoptimized,
+  one of 21,631 instructions took clang 290 s and 4.3 GB, and such code runs
+  slower than the JIT.
 
 Not yet:
 
-- `-O2 -mllvm -fast-isel` (to check with the bundled clang);
 - the 3M whole-library threshold;
 - delta DLLs with the call-site cache;
 - the job's memory caps;

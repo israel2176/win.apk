@@ -280,9 +280,16 @@ struct Function {
 
 constexpr size_t kMaxInsns = 100000;
 
-// Functions above this many instructions are compiled without optimization
-// (Emitter::function). WINAPK_AOT_OPTNONE_INSNS overrides it, for measuring.
-size_t g_optnone_insns = 4000;
+// Functions above this many instructions are left to the JIT. A huge
+// function costs clang far more than its size (one of 10K+ instructions in
+// libjuicebox_sdk_jni.so took 200 s at -O1). Compiling those unoptimized, as
+// was done, was not enough: one of 21,631 instructions (AliExpress's
+// libsaasCorePlayer.so) still took clang 290 s and 4.3 GB, and code with the
+// guest registers in stack slots runs about 11x slower than native, slower
+// than the JIT (3-6x; docs/research/aot-measurements.md). So the JIT runs
+// them: the few functions above this size cost most of a library's compile
+// time and memory and gave nothing back. WINAPK_AOT_MAX_INSNS overrides it.
+size_t g_max_insns = 4000;
 
 // Follows the branches of the function at f->entry. BL targets go to `calls`.
 bool discover(const Image& img, const std::set<uint64_t>& entries, Function* f, std::set<uint64_t>* calls) {
@@ -2098,13 +2105,6 @@ std::string Emitter::function(size_t* interpreted) {
     }
     out += "#define FLUSH() do {" + flush + " } while (0)\n";
     out += "#define RELOAD() do {" + reload + " } while (0)\n";
-    // A huge function costs clang far more than its size (time grows faster
-    // than the number of blocks): one of 10K+ instructions in
-    // libjuicebox_sdk_jni.so took 200 s at -O1, 12.6 s unoptimized. So, as
-    // other static recompilers do, those few are not optimized; they still
-    // run natively, with the guest registers in stack slots, as the JIT
-    // keeps them in memory.
-    if (f_.insns.size() > g_optnone_insns) out += "__attribute__((optnone, noinline)) ";
     out += "uint32_t " + name + "(Cpu* restrict c) {\n";
     out += "    const uint64_t B = aot_base;\n";
     for (unsigned n = 0; n < 32; ++n) {
@@ -2171,7 +2171,7 @@ int main(int argc, char** argv) {
             return 2;
         }
     }
-    if (const char* t = std::getenv("WINAPK_AOT_OPTNONE_INSNS")) g_optnone_insns = std::strtoull(t, nullptr, 10);
+    if (const char* t = std::getenv("WINAPK_AOT_MAX_INSNS")) g_max_insns = std::strtoull(t, nullptr, 10);
     Image img;
     std::string error;
     if (!read_image(argv[1], &img, &error)) {
@@ -2230,6 +2230,16 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "winapk-aot: %s: profile: %zu of %zu functions ran\n", argv[1], functions.size(), all);
         if (functions.empty()) return 3;
     }
+    size_t too_large = 0;  // left to the JIT (g_max_insns)
+    for (auto it = functions.begin(); it != functions.end();) {
+        if (it->second.insns.size() > g_max_insns) {
+            total -= it->second.insns.size();
+            ++too_large;
+            it = functions.erase(it);
+        } else {
+            ++it;
+        }
+    }
     std::set<uint64_t> translated;
     for (const auto& f : functions) translated.insert(f.first);
 
@@ -2285,16 +2295,13 @@ int main(int argc, char** argv) {
             if (!write(fmt("%s.%zu.c", argv[2], i + 1), head + bodies[i])) return 1;
         }
     }
-    size_t largest = 0, unoptimized = 0;
-    for (const Function* f : order) {
-        largest = std::max(largest, f->insns.size());
-        if (f->insns.size() > g_optnone_insns) ++unoptimized;
-    }
+    size_t largest = 0;
+    for (const Function* f : order) largest = std::max(largest, f->insns.size());
     std::fprintf(stderr,
                  "winapk-aot: %s: %zu functions, %zu instructions, %zu through the interpreter (%.1f%%), "
-                 "largest function %zu instructions, %zu unoptimized%s\n",
+                 "largest function %zu instructions, %zu over %zu left to the JIT%s\n",
                  argv[1], functions.size(), insns, interpreted,
                  insns ? 100.0 * static_cast<double>(interpreted) / static_cast<double>(insns) : 0.0, largest,
-                 unoptimized, skipped ? fmt(", %zu too large to translate", skipped).c_str() : "");
+                 too_large, g_max_insns, skipped ? fmt(", %zu too large to decode", skipped).c_str() : "");
     return by_profile ? 4 : 0;
 }
