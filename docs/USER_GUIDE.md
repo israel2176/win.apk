@@ -78,9 +78,10 @@ Installs run one at a time, in a small install window:
 - When it is done: **Open** starts the app, **Close** closes the window, and
   **Show in library** opens the library with the app selected. With several
   apps each one has its own **Open**.
-- When it fails: one sentence on why, **Show log** (the install log, in the
-  window) and **Copy details** (the reason, Win.apk's version and the end of
-  the log, for a bug report).
+- When it fails: one sentence on why, **Report a problem** under it (see
+  [Reporting a problem](#reporting-a-problem)), **Show log** (the install
+  log, in the window) and **Copy details** (the reason, Win.apk's version and
+  the end of the log, for a bug report).
 
 Two apps with the same library name (the app's label) cannot coexist: a
 second install of the same app replaces the first and keeps the app's data.
@@ -154,7 +155,8 @@ long says why: **Converting the app's code. This happens once.** when the
 app's code changed, or **Still starting** after twenty seconds. Esc or the
 ✕ in its corner cancels the start. If the app ends before its window is up,
 or later with an error, the same window turns into a short message
-(**Wiz didn't start**, **Wiz stopped with an error**) with **Show log**.
+(**Wiz didn't start**, **Wiz stopped with an error**) with **Show log** and
+**Report a problem**; the ✕, Esc or Enter closes it.
 
 The library marks a running app with a green badge on its tile and counts
 them under its title. **Stop** in the tile's right-click menu, or on the
@@ -220,7 +222,7 @@ Hebrew, opens to the left.
 | Window | **Orientation**: the settings' default, portrait or landscape for this app only (an app whose manifest fixes one says so instead). **Window size**: the size the app's window was last given, with **Reset** |
 | Permissions | A switch per permission the app was asked for or granted, and **Reset permissions**; see [Permissions](#permissions) |
 | Shortcut | **Desktop shortcut**: adds or removes the app's desktop shortcut. The Start menu one is always there |
-| Troubleshooting | **Log**: **Show log** opens the log window on the app's last run (or its install, before the first run) |
+| Troubleshooting | **Log**: **Show log** opens the log window on the app's last run (or its install, before the first run). **Report a problem**: for a problem met inside the app; see [Reporting a problem](#reporting-a-problem) |
 | Storage | **The app's file**: its size, and **Show** opens Explorer on it. **Converted code**: the app's folder under `apps\` |
 | Manage | **Stop** (while it runs), **Update from a file** (installs a newer, or any other, version over this one; what the app saved stays; refused while the app runs) and **Remove** |
 
@@ -571,8 +573,7 @@ The most useful lines:
 | `[win.apk]` | A message from Win.apk itself |
 
 Then look in [`APPS.md`](APPS.md) for the app or the kind of problem, and
-[open an issue](../../../issues/new/choose) with the app's name, version and
-source, the exact steps, a screenshot and the whole log.
+report it: see [Reporting a problem](#reporting-a-problem).
 
 **The install failed.** The install window says why in a sentence; **Show
 log** opens `install-<app>.log`, and **Copy details** copies what a bug
@@ -605,3 +606,22 @@ screenshot plus the log makes a good report.
 **The app asks for something Windows cannot give** (notification access,
 accessibility, usage access). The window explains this in a sentence and the
 app is told no; the rest of the app usually works.
+
+### Reporting a problem
+
+**Report a problem** is on the launch window's error, under a failed
+install's reason, and on the app's details page (Troubleshooting) for a
+problem met inside the app. It first asks, with a link to the open reports
+that name the same package so a second one is not opened. Then:
+
+- The browser opens GitHub's "An app does not work" form with the title,
+  Win.apk's version, the Windows version, the graphics adapter and the app
+  (name, version and package) already filled in, and for a failure the
+  sentence the window showed. A GitHub account is needed to post it.
+- Explorer opens the logs folder with the app's log selected, and its newest
+  crash dump (`crash-<app>-<time>.dmp`) too when there is one, ready to drag
+  into the form.
+
+Nothing is uploaded by itself: a log can hold your Windows user name and
+file names, so look it over and decide what to attach. What is left to fill
+in is where the APK came from, the steps and a screenshot.
