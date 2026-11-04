@@ -115,8 +115,31 @@ public final class ActivityHost {
      *  windowBackground is not an opaque colour? Then, as on Android, what is
      *  below stays visible around its content. */
     public static boolean macapkSeesThrough(Activity a) {
-        return a != null && stack.peek() == a && !a.macapkOwnsWindowBox() && !sOpaqueBackground.containsKey(a);
+        if (a == null || stack.peek() != a) return false;
+        int resid = 0;
+        try { resid = a.getThemeResId(); } catch (Throwable ignored) { }
+        if (resid == 0) return !a.macapkOwnsWindowBox() && !sOpaqueBackground.containsKey(a);
+        // The theme the activity set for itself, which an app commonly does in
+        // onCreate (Waze's sign-in: a manifest theme that is opaque, then
+        // setTheme(UidAppTheme.Translucent)), so the launch-time answer is stale.
+        int[] c = sSeesThroughByTheme.get(a);
+        if (c != null && c[0] == resid) return c[1] != 0;
+        boolean see = false;
+        try {
+            int flags = FrameworkWindowStyle.flagsForTheme(resid);
+            if (!FrameworkWindowStyle.occludesParent(flags)) {
+                final int unset = 0x00000001;   // not a legal opaque ARGB
+                int bg = a.getTheme().resolveAttrColor("windowBackground", unset);
+                see = bg == unset || (bg >>> 24) != 0xFF;
+            }
+        } catch (Throwable ignored) { }
+        sSeesThroughByTheme.put(a, new int[] { resid, see ? 1 : 0 });
+        return see;
     }
+
+    /** macapkSeesThrough's answer per activity, for the theme it was worked out for. */
+    private static final java.util.Map<Activity, int[]> sSeesThroughByTheme =
+        java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
 
     /** The activity directly below `a` in the task, or null. */
     public static Activity macapkBelow(Activity a) {

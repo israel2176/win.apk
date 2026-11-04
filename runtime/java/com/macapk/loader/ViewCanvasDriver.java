@@ -825,6 +825,10 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
             ViewCanvasDriver d = below != null ? sLastPresenter.get(below) : null;
             Bitmap b = d != null && d != this ? d.bitmap : null;
             if (b == null || b.getWidth() != surfaceW || b.getHeight() != surfaceH) return;
+            // From transparent, not the theme's clear: the frame below may itself
+            // be an overlay with holes over a native surface (Waze's map), which
+            // the host composites under whatever the tree leaves transparent.
+            canvas.drawColor(0);   // SRC in this Canvas: overwrites
             canvas.drawBitmap(b, 0f, 0f, null);
         } catch (Throwable ignored) {
         }
