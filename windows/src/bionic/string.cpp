@@ -213,8 +213,22 @@ WINAPK_GUEST_ABI double g_strtod(const char* s, char** e) {
 WINAPK_GUEST_ABI float g_strtof(const char* s, char** e) {
     return converted<float>([&] { return std::strtof(s, e); });
 }
-WINAPK_GUEST_ABI long double g_strtold(const char* s, char** e) {
-    return converted<long double>([&] { return std::strtold(s, e); });
+// Android's long double is IEEE binary128 on x86_64 and arm64 alike, returned
+// in xmm0 / q0. The CRT's is the x87 80-bit format, and a System V function
+// returning it takes a hidden result pointer in rdi: every argument moved one
+// register over, so strtold(s, e) read its string from e (Waze's map, NULL).
+// The two formats share the exponent and its bias; the 64-bit significand,
+// with its explicit integer bit, is the 112-bit fraction's top 63 bits.
+WINAPK_GUEST_ABI GuestQuad g_strtold(const char* s, char** e) {
+    const long double v = converted<long double>([&] { return std::strtold(s, e); });
+    uint64_t mantissa;
+    uint16_t sign_exp;
+    std::memcpy(&mantissa, &v, 8);
+    std::memcpy(&sign_exp, reinterpret_cast<const char*>(&v) + 8, 2);
+    const uint64_t fraction = mantissa & 0x7fffffffffffffffull;
+    GuestQuad q = {static_cast<long long>(fraction << 49),
+                   static_cast<long long>((static_cast<uint64_t>(sign_exp) << 48) | (fraction >> 15))};
+    return q;
 }
 WINAPK_GUEST_ABI glong g_labs(glong v) { return v < 0 ? -v : v; }
 WINAPK_GUEST_ABI int g_abs(int v) { return v < 0 ? -v : v; }

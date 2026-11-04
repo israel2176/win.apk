@@ -170,6 +170,7 @@ The user-facing ones (`WINAPK_PHONE_SIZE`, `WINAPK_RESIZABLE`,
 | `MACAPK_JVM_OPTS` | Extra JVM options, passed through |
 | `MACAPK_ALL_PERMS_ASK=0` | Returns the permission groups beyond storage and location to the install-time rule (declared means held), the Mac's behaviour; `MACAPK_MEDIA_PERMS_ASK=0` and `MACAPK_ALLFILES_HONEST=0` keep their upstream meaning |
 | `MACAPK_GMS_PRESENT=0`, `MACAPK_GMS_FCM=0`, `MACAPK_GMS_SIGNIN=0`, `MACAPK_GMS_LOCATION=0`, `MACAPK_GMS_DIR` | Upstream's Play services switches and the state folder |
+| `MACAPK_GMS_GOOGLE_CERT=0` | Reports the platform certificate for `com.google.android.gms` and `com.android.vending` instead of Google's (apps then see Play services as invalid) |
 | `MACAPK_VIRTUAL_CAMERA=0`, `MACAPK_SV_OVERSIZE_HOLDER=0`, `MACAPK_MANIFEST_FEATURE_SPLITS=0`, `MACAPK_LIFECYCLE_*=0`, `MACAPK_CONTEXT_MCLASSLOADER=0` | Switch off individual framework fixes listed under [Changes to the upstream tree](#changes-to-the-upstream-tree) |
 
 The Java framework has many more `MACAPK_*` switches of upstream's; grep
@@ -584,6 +585,77 @@ every such change is listed here:
   sign-in window found (`signInPhotoUrl`, a native only Windows has; on the
   Mac its absence means no picture) is saved as `gms\photo-<account>.img`
   for the launcher's account button, and removed with the account.
+- `runtime/java/com/macapk/gms/GoogleGmsCertificate.java` (new),
+  `MacApkPackageManager.java` and `PlatformSignature.java`:
+  `com.google.android.gms` and `com.android.vending` report Google's public
+  Play services certificate instead of the platform one. Every app's own
+  play-services-basement compares the two with the copy it embeds before it
+  uses Play services at all; with ours it answered `SERVICE_INVALID`, so
+  "Sign in with Google" failed at once (BuyMe, Waze) and the location and
+  sign-in providers were never asked. `MACAPK_GMS_GOOGLE_CERT=0` goes back.
+- `runtime/java/com/macapk/loader/PlayServices.java` and
+  `MacApkPackageManager.java`: the Play services version is 26.44
+  (`264400000`); app clients of 2026 want more than 24.44 for some APIs
+  (`SERVICE_VERSION_UPDATE_REQUIRED`).
+- `runtime/java/com/macapk/gms/LegacySignInService.java` (new) and
+  `MacApkPackageManager.java`: the legacy Google Sign-In service
+  (`com.google.android.gms.auth.api.signin.service.START`: silentSignIn,
+  signOut, revokeAccess). Flutter's google_sign_in calls signOut before every
+  sign-in; with the bind unanswered it threw and City Car never asked for an
+  account.
+- `runtime/java/com/macapk/loader/ResourceIndex.java`: an enum or flag value
+  given by name (apktool-decoded XML carries `evenOdd`, not 1) resolves
+  against the platform's own `<attr>` definitions in `framework-res.apk`
+  when the app does not declare the attr, instead of TypedArray's short
+  hand table. `android:fillType` read as nonZero, so Compose and AndroidX
+  vector icons cut out of a filled shape drew as solid shapes.
+- `runtime/java/com/macapk/gms/GoogleSignInActivity.java`,
+  `GoogleSignInBroker.java` and `AccountPhoto.java`: the account chooser is
+  in Hebrew when Win.apk is (`winapk.ui.lang`, which `runtime_main.cpp` sets
+  from the launcher's Language setting, else Windows'), and right to left.
+  The signed-in account an app gets carries the picture
+  (`GoogleSignInAccount.photoUrl`, from the ID token), which is also saved for
+  the launcher's account button when the sign-in window found none. A copy of
+  an app re-signed by someone else (NetFree's patcher) that Google refuses
+  (`UNREGISTERED_ON_API_CONSOLE`) gets an explanation instead of a closed window.
+- `runtime/java/android/graphics/drawable/VectorDrawable.java`: a path's
+  `android:fillType="evenOdd"` is honoured; icons cut out of a filled shape
+  filled solid.
+- `runtime/java/android/content/pm/PackageManager.java`:
+  `getApplicationIcon(String)` throws `NameNotFoundException` for a package
+  that is not installed, as in AOSP, instead of returning a transparent
+  stand-in that apps then tinted into a solid shape.
+- `runtime/java/com/macapk/loader/Boot.java`: the app's data directory is the
+  8.3 short form `runtime_main.cpp` passes in `winapk.data.dir`, when the
+  volume has short names. Native code sized for `/data/user/0/<package>` cut
+  the ~150-character full form (Waze: a 128-byte buffer, so no map).
+- `runtime/java/com/macapk/loader/ViewCanvasDriver.java` and
+  `ActivityHost.java`: an activity stopped under another does not present.
+  Each driver presents the whole window, so a covered one that kept drawing (a
+  SurfaceView's overlay driver, ticked by the app's own render loop)
+  alternated with the top: Waze flickered between the map and its sign-in
+  screens. A translucent or floating top (no opaque window background) draws
+  the last frame of the activity below before its own, as Android composites
+  the two windows; it cleared over it, so Waze's translucent sign-in steps
+  showed an empty window.
+- `runtime/java/com/macapk/gms/AuthorizationService.java` (new),
+  `GoogleSignInBroker.java`, `IdentitySignInService.java` and
+  `MacApkPackageManager.java`: the Identity Authorization API
+  (`com.google.android.gms.auth.api.identity.service.authorization.START`,
+  `AuthorizationClient.authorize`): a server auth code, an access token or an
+  ID token for the account the app signed in with on this device. Waze asks
+  for a server auth code right after the account is picked; the bind was
+  unanswered and the sign-in ended in an error.
+- `runtime/java/com/macapk/dex/NestIndex.java` and `NestPlan.java`: a class
+  whose superclass is in the same package and has only private constructors
+  is put in that superclass's nest when R8 dropped the enclosing-class
+  annotations. Enum constants with bodies, renamed by R8, call the enum's
+  private constructor (legal on ART); HotSpot threw `IllegalAccessError`
+  (Truecaller crashed in the background).
+- `runtime/java/com/macapk/loader/SharedPrefsImpl.java`: characters Windows
+  does not allow in a file name are written as `%XX` in a preferences file's
+  name. Firebase Remote Config's `frc_1:<project>:android:...` file failed
+  every write.
 
 ## License
 

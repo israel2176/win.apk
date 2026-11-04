@@ -434,6 +434,21 @@ public final class GoogleSignInBroker {
 
     /** Was `account` used to sign in to `pkg` on THIS device? (One Tap auto-select
      *  needs it; a grant Google holds from another device only lets us OFFER it.) */
+    /** The account `pkg` last signed in with on this device, or null. */
+    static String lastSignedIn(String pkg) {
+        String best = null;
+        long bestAt = -1;
+        for (String a : GmsStore.accountNames()) {
+            if (a == null || a.startsWith("_") || !autoSignInAllowed(a, pkg)) continue;
+            String at = GmsStore.accountData(a, AUTHORIZED_PREFIX + pkg);
+            if (at == null) continue;
+            long t;
+            try { t = Long.parseLong(at.trim()); } catch (NumberFormatException e) { t = 0; }
+            if (t > bestAt) { bestAt = t; best = a; }
+        }
+        return best;
+    }
+
     static boolean usedOnThisDevice(String account, String pkg) {
         return account != null && pkg != null && GmsStore.accountData(account, AUTHORIZED_PREFIX + pkg) != null;
     }
@@ -486,8 +501,11 @@ public final class GoogleSignInBroker {
     public static final class Result {
         public int status = STATUS_INTERNAL_ERROR;
         public String error;
-        public String email, gaiaId, displayName, givenName, familyName;
+        public String email, gaiaId, displayName, givenName, familyName, photoUrl;
         public String idToken, serverAuthCode, obfuscatedId;
+        /** The scopes' OAuth token, when neither an ID token nor a code was asked
+         *  for (AuthorizationResult.accessToken). */
+        public String accessToken;
         public long expirationSecs;
         public final List<String> grantedScopes = new ArrayList<>();
         public boolean ok() { return status == STATUS_SUCCESS; }
@@ -624,6 +642,7 @@ public final class GoogleSignInBroker {
             Map<String, String> resp = sTokens.fetch(account, "oauth2:" + String.join(" ", s),
                     r.callerPkg, appSigSha1, r.includeEmail(), r.includeProfile(), consented, null, null);
             if (!absorb(res, resp, "scopes")) return res;
+            res.accessToken = resp.get("Auth");
             granted = resp.get("grantedScopes");
             expiry = Math.min(expiry, absExpiry(resp, now));
         }
@@ -631,6 +650,12 @@ public final class GoogleSignInBroker {
         res.givenName = GmsStore.accountData(account, "firstName");
         res.familyName = GmsStore.accountData(account, "lastName");
         res.displayName = displayName(account);
+        // The account's picture, as GMS gives it to the app (GoogleSignInAccount
+        // .getPhotoUrl): the ID token's `picture` claim, else the one the sign-in
+        // window found (AccountPhoto). Without it an app showed its blank avatar.
+        res.photoUrl = jwtClaim(res.idToken, "picture");
+        if (res.photoUrl != null) AccountPhoto.saveIfMissing(account, res.photoUrl);
+        else res.photoUrl = GmsStore.accountData(account, AccountPhoto.URL_KEY);
         res.expirationSecs = expiry == Long.MAX_VALUE ? now + 3600 : expiry;
         if (granted != null && !granted.trim().isEmpty()) {
             for (String g : granted.trim().split(" ")) if (!g.isEmpty()) res.grantedScopes.add(g);
@@ -738,6 +763,12 @@ public final class GoogleSignInBroker {
         SafeParcel.writeString(p, 3, r.idToken ? res.idToken : null);
         SafeParcel.writeString(p, 4, r.includeEmail() ? res.email : null);
         SafeParcel.writeString(p, 5, r.includeProfile() ? res.displayName : null);
+        if (r.includeProfile() && res.photoUrl != null) {
+            final android.net.Uri photo = android.net.Uri.parse(res.photoUrl);
+            SafeParcel.writeObject(p, 6, new SafeParcel.Body() {
+                @Override public void write(Parcel q) { photo.writeToParcel(q, 0); }
+            });
+        }
         SafeParcel.writeString(p, 7, r.serverAuthCode ? res.serverAuthCode : null);
         SafeParcel.writeLong(p, 8, res.expirationSecs);
         SafeParcel.writeString(p, 9, res.obfuscatedId);
@@ -993,6 +1024,39 @@ public final class GoogleSignInBroker {
             StringBuilder sb = new StringBuilder();
             for (byte b : d) sb.append(String.format("%02x", b & 0xff));
             return sb.toString();
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /** Whether the hosted app's signing certificate is NetFree's: its filter
+     *  re-signs the APKs it lets through ("NetFree APK Patcher"), and Google
+     *  then refuses the app (UNREGISTERED_ON_API_CONSOLE). */
+    public static boolean appSignedByNetFree(android.content.Context ctx, String pkg) {
+        try {
+            android.content.pm.PackageInfo pi = ctx.getPackageManager().getPackageInfo(pkg,
+                    android.content.pm.PackageManager.GET_SIGNATURES);
+            if (pi == null || pi.signatures == null || pi.signatures.length == 0) return false;
+            java.security.cert.X509Certificate cert = (java.security.cert.X509Certificate)
+                    java.security.cert.CertificateFactory.getInstance("X.509").generateCertificate(
+                            new java.io.ByteArrayInputStream(pi.signatures[0].toByteArray()));
+            return cert.getSubjectX500Principal().getName().contains("NetFree");
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /** A string claim of a JWT's payload (unverified: it is Google's own answer
+     *  to us, read for display only), or null. */
+    static String jwtClaim(String jwt, String claim) {
+        if (jwt == null) return null;
+        String[] parts = jwt.split("\\.");
+        if (parts.length < 2) return null;
+        try {
+            String json = new String(java.util.Base64.getUrlDecoder().decode(parts[1]),
+                    java.nio.charset.StandardCharsets.UTF_8);
+            Object v = new org.json.JSONObject(json).opt(claim);
+            return v instanceof String && !((String) v).isEmpty() ? (String) v : null;
         } catch (Throwable t) {
             return null;
         }

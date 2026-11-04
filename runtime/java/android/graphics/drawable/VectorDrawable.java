@@ -305,6 +305,13 @@ public class VectorDrawable extends Drawable {
                     Path p = parsePathData(pathData);
                     if (p != null) {
                         p = applyTrim(p, trimStart, trimEnd, trimOffset);
+                        // android:fillType (AOSP VectorDrawable: nonZero 0, evenOdd 1).
+                        // An icon cut out of a filled shape (a rounded square with
+                        // its glyph as a hole) filled solid without it: Waze's map
+                        // buttons drew blank squares.
+                        if (macapkIsEvenOdd(e.getAttributeNS(NS, "fillType"))) {
+                            p.setFillType(Path.FillType.EVEN_ODD);
+                        }
                         PathSpec spec = new PathSpec();
                         spec.path = p;
                         spec.fillColor = fillColor;
@@ -1322,6 +1329,17 @@ public class VectorDrawable extends Drawable {
         }
         out[n] = i;
         return out;
+    }
+
+    /** android:fillType as text ("evenOdd") or as compiled XML gives it (1, 0x1). */
+    static boolean macapkIsEvenOdd(String s) {
+        if (s == null || s.isEmpty()) return false;
+        if ("evenOdd".equalsIgnoreCase(s)) return true;
+        try {
+            return (s.startsWith("0x") ? Integer.parseInt(s.substring(2), 16) : Integer.parseInt(s)) == 1;
+        } catch (NumberFormatException ex) {
+            return false;
+        }
     }
 
     private static float parseFloat(String s, float def) {

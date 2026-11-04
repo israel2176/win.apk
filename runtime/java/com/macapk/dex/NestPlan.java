@@ -119,7 +119,7 @@ public final class NestPlan {
      * than mis-granting access.
      */
     static String outermostEnclosing(DexClass cls, NestIndex nestIndex) {
-        String outer = enclosingOf(cls);
+        String outer = nestIndex.enclosingOf(cls);
         if (outer == null) return null;
         // Names already seen, so an EnclosingClass cycle terminates. Seeded
         // with the starting class because the shortest possible cycle is a
@@ -130,7 +130,7 @@ public final class NestPlan {
             if (!seen.add(outer)) return null;   // cycle: emit nothing
             DexClass parent = nestIndex.classByName(outer);
             if (parent == null) return outer;    // not in this session; stop here
-            String next = enclosingOf(parent);
+            String next = nestIndex.enclosingOf(parent);
             if (next == null) return outer;      // parent is outermost
             outer = next;
         }

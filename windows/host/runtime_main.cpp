@@ -1052,6 +1052,22 @@ std::vector<std::string> jvm_options(const BootArgs& b) {
     v.push_back("-Dmacapk.android.root=" + jvm_path(android_root));
     // Guest code's "/data/...", "/sdcard/..." resolve under the same folder.
     winapk::set_android_root(utf8(android_root.wstring()).c_str());
+    // The app's data directory, by its 8.3 short name where the volume has
+    // them. On a phone it is /data/user/0/<package>; here the full form is
+    // ~150 characters (the profile folder, then the APK's file name), and
+    // native code sized for the phone cuts it: Waze keeps "<dataDir>/waze" in
+    // a 128-byte buffer and looked for its map scenes in a folder that does
+    // not exist, so the map stayed an empty grid. Same folder, shorter name.
+    if (!b.app_dir.empty()) {
+        const fs::path data_dir = android_root / "data" / "data" / b.app_dir.filename();
+        fs::create_directories(data_dir, ec);
+        wchar_t buf[MAX_PATH * 4];
+        const DWORD n = GetShortPathNameW(data_dir.c_str(), buf, MAX_PATH * 4);
+        if (n > 0 && n < MAX_PATH * 4) v.push_back("-Dwinapk.data.dir=" + jvm_path(fs::path(std::wstring(buf, n))));
+    }
+    // Win.apk's own language, for the screens it draws itself (the Google
+    // account chooser): its setting can differ from the Windows locale the app sees.
+    v.push_back(std::string("-Dwinapk.ui.lang=") + (winapk::host::ui_hebrew() ? "he" : "en"));
     v.push_back("-Dmacapk.bundle.apk=" + jvm_path(o.apk));
     v.push_back("-Dmacapk.display.density=" + std::to_string(display_density_dpi()));
     v.push_back("-XX:ErrorFile=" + jvm_path(logs) + "\\hs_err_pid%p.log");

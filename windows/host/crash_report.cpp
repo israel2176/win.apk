@@ -213,6 +213,18 @@ LONG CALLBACK report_fault(EXCEPTION_POINTERS* e) {
     // the shim called with the guest's arguments (Pixel Wheels died in one
     // with nothing in the log).
     const bool own = worth_reporting(reinterpret_cast<const void*>(rip));
+    // Code no module holds and no guest image is a JIT's: HotSpot's, or the
+    // arm64 JIT's, whose fastmem takes faults on purpose (a load-acquire is a
+    // locked read-modify-write on x86, so Dart reading its read-only heap page
+    // faults as a write, and dynarmic redoes the read). Its owner handles it,
+    // after this handler; a fault nobody handles reaches report_unhandled. A
+    // report and a minidump here for each froze City Car's window at start.
+    HMODULE holder = nullptr;
+    if (!own && !in_guest(reinterpret_cast<const void*>(rip)) &&
+        !GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                            reinterpret_cast<LPCWSTR>(rip), &holder)) {
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
     if (!own && scan_frames(rsp, false) == 0 && !worth_reporting(reinterpret_cast<const void*>(rip), true)) {
         return EXCEPTION_CONTINUE_SEARCH;
     }
@@ -266,6 +278,17 @@ LONG WINAPI report_unhandled(EXCEPTION_POINTERS* e) {
                  static_cast<unsigned long>(code), where, static_cast<unsigned long long>(rip), GetCurrentThreadId());
     if (code != EXCEPTION_STACK_OVERFLOW) scan_frames(static_cast<uint64_t>(e->ContextRecord->Rsp), true, true);
     std::fflush(stderr);
+    // report_fault wrote none for a fault in a JIT's code: this is its dump.
+    bool dumped;
+    {
+        std::lock_guard<std::mutex> hold(g_lock);
+        dumped = g_reported.count(rip) > 0;
+    }
+    char dump[MAX_PATH * 3];
+    if (!dumped && write_minidump(e, dump, sizeof(dump))) {
+        std::fprintf(stderr, "[win.apk] crash dump: %s (faulting module %s); attach it to a GitHub issue\n", dump, where);
+        std::fflush(stderr);
+    }
     return g_previous_filter ? g_previous_filter(e) : EXCEPTION_CONTINUE_SEARCH;
 }
 

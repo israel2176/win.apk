@@ -228,6 +228,7 @@ WINAPK_GUEST_ABI int g_creat(const char* path, unsigned mode) { return g_open(pa
 // call checks for one first.
 WINAPK_GUEST_ABI int g_close(int fd) {
     if (fd_close(fd)) return 0;
+    if (fd_is_host_std(fd)) return 0;  // the runtime's log stays open
     return _close(fd) < 0 ? fail_crt() : 0;
 }
 WINAPK_GUEST_ABI int64_t g_read(int fd, void* buf, size_t n) {
@@ -304,6 +305,9 @@ WINAPK_GUEST_ABI int g_dup2(int fd, int to) {
     const int o = fd_dup(fd, to);
     if (o != -2) return o;
     fd_close(to);  // a file replacing an object
+    // The guest's own 0-2 are the runtime's streams too: a file put there (a
+    // /dev/null, a log file) would take the runtime's log with it.
+    if (fd_is_host_std(to)) return to;
     return _dup2(fd, to) < 0 ? fail_crt() : to;
 }
 WINAPK_GUEST_ABI int g_dup3(int fd, int to, int) { return g_dup2(fd, to); }
@@ -384,10 +388,29 @@ void fill_stat(const struct _stat64& s, GuestStat* g) {
     g->st_mtime_sec = s.st_mtime;
     g->st_ctime_sec = s.st_ctime;
 }
+// The CRT leaves st_ino 0 for every file, and SQLite's unix VFS (bundled in many
+// apps) keys its per-file lock and shared-memory state on (st_dev, st_ino): every
+// database in the process then shared one lock, and a write to one made the
+// others "database is locked". Waze never created its tile table and showed no
+// map. The volume serial and the NTFS file index are what identify a file.
+void fill_identity(HANDLE h, GuestStat* g) {
+    BY_HANDLE_FILE_INFORMATION info;
+    if (h == INVALID_HANDLE_VALUE || !GetFileInformationByHandle(h, &info)) return;
+    g->st_dev = info.dwVolumeSerialNumber;
+    g->st_ino = (static_cast<uint64_t>(info.nFileIndexHigh) << 32) | info.nFileIndexLow;
+}
 WINAPK_GUEST_ABI int g_stat(const char* path, GuestStat* g) {
+    const std::wstring w = host_path(path);
     struct _stat64 s;
-    if (_wstat64(host_path(path).c_str(), &s) < 0) return fail_crt();
+    if (_wstat64(w.c_str(), &s) < 0) return fail_crt();
     fill_stat(s, g);
+    // No access rights asked for, so this opens a file another program holds too.
+    const HANDLE h = CreateFileW(w.c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                                 OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    if (h != INVALID_HANDLE_VALUE) {
+        fill_identity(h, g);
+        CloseHandle(h);
+    }
     return 0;
 }
 WINAPK_GUEST_ABI int g_fstat(int fd, GuestStat* g) {
@@ -401,6 +424,7 @@ WINAPK_GUEST_ABI int g_fstat(int fd, GuestStat* g) {
     struct _stat64 s;
     if (_fstat64(fd, &s) < 0) return fail_crt();
     fill_stat(s, g);
+    fill_identity(reinterpret_cast<HANDLE>(_get_osfhandle(fd)), g);
     return 0;
 }
 // memfd_create: an anonymous file. A temporary file deleted on close behaves
@@ -936,7 +960,11 @@ WINAPK_GUEST_ABI FILE* g_fdopen(int fd, const char* mode) {
     return f;
 }
 WINAPK_GUEST_ABI FILE* g_freopen(const char* path, const char* mode, void* f) {
-    FILE* r = _wfreopen(host_path(path).c_str(), crt_mode(mode).c_str(), host_file(f));
+    // stdout and stderr are the runtime's log as well; the guest keeps writing
+    // to it rather than taking it away (fd_is_host_std).
+    FILE* file = host_file(f);
+    if (file == stdout || file == stderr) return file;
+    FILE* r = _wfreopen(host_path(path).c_str(), crt_mode(mode).c_str(), file);
     if (!r) set_errno_from_crt(errno);
     return r;
 }
@@ -991,6 +1019,7 @@ WINAPK_GUEST_ABI FILE* g_funopen(void* cookie, FunopenRead readfn, FunopenWrite 
 
 WINAPK_GUEST_ABI int g_fclose(void* f) {
     FILE* file = host_file(f);
+    if (file == stdin || file == stdout || file == stderr) return 0;  // see fd_is_host_std
     FunopenFile fun{};
     bool is_funopen = false;
     {

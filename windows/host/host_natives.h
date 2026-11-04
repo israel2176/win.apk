@@ -97,4 +97,8 @@ struct NativeStats {
 // with a warning. Returns false only if the JNI calls themselves fail.
 bool register_host_natives(JNIEnv* env, jvmtiEnv* jvmti, NativeStats* stats);
 
+// Whether Win.apk shows Hebrew: its Language setting, else Windows' display
+// language (native_signin.cpp). The launcher decides the same way.
+bool ui_hebrew();
+
 }  // namespace winapk::host

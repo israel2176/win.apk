@@ -3500,13 +3500,31 @@ public final class ResourceIndex {
         int slash = an.lastIndexOf('/');
         if (slash >= 0) an = an.substring(slash + 1);
         int colon = an.lastIndexOf(':');
+        final boolean framework = colon >= 0 && an.substring(0, colon).endsWith("android");
         if (colon >= 0) an = an.substring(colon + 1);
-        Map<String, Integer> vals = attrEnums.get(an);
+        // Then the PLATFORM's own <attr> bags (framework-res.apk, MacapkFwView),
+        // for the framework attrs an app never redeclares. Without them every
+        // framework enum outside TypedArray's hand table read as the caller's
+        // default: android:fillType="evenOdd" came back nonZero, so a Compose or
+        // AndroidX vector icon cut out of a filled shape filled solid (Waze's
+        // music button, a blank square). An android:-named attr asks the
+        // platform first: an app may declare its own attr of the same name.
+        MacapkFwView fw = macapkFwView;
+        if (framework && fw != null) {
+            Integer r = resolveEnumIn(fw.attrEnum.get(an), fw.attrFlagged.contains(an), value);
+            if (r != null) return r;
+        }
+        Integer r = resolveEnumIn(attrEnums.get(an), attrFlagSets.contains(an), value);
+        if (r != null || framework || fw == null) return r;
+        return resolveEnumIn(fw.attrEnum.get(an), fw.attrFlagged.contains(an), value);
+    }
+
+    private static Integer resolveEnumIn(Map<String, Integer> vals, boolean flags, String value) {
         if (vals == null) return null;
         String v = value.trim();
         if (v.isEmpty()) return null;
         if (v.indexOf('|') < 0) return vals.get(v);
-        if (!attrFlagSets.contains(an)) return null;   // never OR an <enum>
+        if (!flags) return null;                       // never OR an <enum>
         int acc = 0;
         for (String part : v.split("\\|")) {
             Integer pv = vals.get(part.trim());

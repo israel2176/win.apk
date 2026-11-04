@@ -100,6 +100,62 @@ public final class ActivityHost {
         return s != null && s.intValue() >= STATE_STOPPED && stack.peek() != a;
     }
 
+    /** True while `a` is stopped under another activity. Each activity's
+     *  driver presents the whole shared window, so a covered one that kept
+     *  presenting alternated with the top every frame (Waze flickered between
+     *  the map and its sign-in screens). A see-through top shows it instead,
+     *  by drawing its last frame first (macapkSeesThrough). Read by
+     *  ViewCanvasDriver. */
+    public static boolean macapkIsHiddenUnderTop(Activity a) {
+        return macapkIsStoppedUnderTop(a);
+    }
+
+    /** Does `a` let the activity below it show through: it is the top, its
+     *  theme does not own the window box (translucent or floating) and its
+     *  windowBackground is not an opaque colour? Then, as on Android, what is
+     *  below stays visible around its content. */
+    public static boolean macapkSeesThrough(Activity a) {
+        if (a == null || stack.peek() != a) return false;
+        int resid = 0;
+        try { resid = a.getThemeResId(); } catch (Throwable ignored) { }
+        if (resid == 0) return !a.macapkOwnsWindowBox() && !sOpaqueBackground.containsKey(a);
+        // The theme the activity set for itself, which an app commonly does in
+        // onCreate (Waze's sign-in: a manifest theme that is opaque, then
+        // setTheme(UidAppTheme.Translucent)), so the launch-time answer is stale.
+        int[] c = sSeesThroughByTheme.get(a);
+        if (c != null && c[0] == resid) return c[1] != 0;
+        boolean see = false;
+        try {
+            int flags = FrameworkWindowStyle.flagsForTheme(resid);
+            if (!FrameworkWindowStyle.occludesParent(flags)) {
+                final int unset = 0x00000001;   // not a legal opaque ARGB
+                int bg = a.getTheme().resolveAttrColor("windowBackground", unset);
+                see = bg == unset || (bg >>> 24) != 0xFF;
+            }
+        } catch (Throwable ignored) { }
+        sSeesThroughByTheme.put(a, new int[] { resid, see ? 1 : 0 });
+        return see;
+    }
+
+    /** macapkSeesThrough's answer per activity, for the theme it was worked out for. */
+    private static final java.util.Map<Activity, int[]> sSeesThroughByTheme =
+        java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
+
+    /** The activity directly below `a` in the task, or null. */
+    public static Activity macapkBelow(Activity a) {
+        boolean next = false;
+        for (Activity x : stack) {   // ArrayDeque iterates from the top (push = addFirst)
+            if (next) return x;
+            if (x == a) next = true;
+        }
+        return null;
+    }
+
+    /** Activities whose windowBackground resolved to an opaque colour at
+     *  launch (maybePaintStartingWindow). */
+    private static final java.util.Map<Activity, Boolean> sOpaqueBackground =
+        java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
+
     private static final int STATE_PAUSED  = 1;
     private static final int STATE_STOPPED = 2;
     /** How far DOWN we drove each activity that another activity was started on
@@ -4058,7 +4114,6 @@ public final class ActivityHost {
      *  native placeholder. Best-effort and completely silent on failure: a boot
      *  must never be blocked by a cosmetic colour lookup. */
     private static void maybePaintStartingWindow(Activity activity) {
-        if ("0".equals(System.getenv("MACAPK_STARTING_WINDOW"))) return;
         try {
             final int UNSET = 0x00000001;   // not a legal opaque ARGB
             int bg = UNSET;
@@ -4076,6 +4131,8 @@ public final class ActivityHost {
                 }
             }
             if (bg == UNSET) return;
+            sOpaqueBackground.put(activity, Boolean.TRUE);
+            if ("0".equals(System.getenv("MACAPK_STARTING_WINDOW"))) return;
             NativeCocoa.setStartingWindowColor(bg);
             NativeLog.i(TAG, String.format(
                 "window: starting-window background #%06X (AOSP windowBackground)",

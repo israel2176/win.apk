@@ -450,8 +450,9 @@ HostFunction host_function(uint64_t fn) {
 // bound to marker addresses (guest_intrinsic) that host_call handles here.
 // The jmp_buf layout is private to the pair; bionic's arm64 jmp_buf has room
 // for 32 words and this uses 22: x19..x30, sp, d8..d15, and a check word.
+// strtold is here too, for its result: a binary128 in all of q0.
 
-enum Intrinsic { kSetjmp, kSigsetjmp, kLongjmp, kIntrinsicCount };
+enum Intrinsic { kSetjmp, kSigsetjmp, kLongjmp, kStrtold, kIntrinsicCount };
 const uint8_t g_intrinsics[kIntrinsicCount] = {};
 constexpr uint64_t kJmpBufMagic = 0x77696e61706b6a62ull;  // "winapkjb"
 
@@ -460,6 +461,20 @@ bool run_intrinsic(Cpu& c, uint64_t target) {
     if (target < base || target >= base + kIntrinsicCount) return false;
     uint64_t* buf = reinterpret_cast<uint64_t*>(c.x[0]);
     switch (static_cast<Intrinsic>(target - base)) {
+        case kStrtold: {
+            // strtold returns its binary128 in all of q0; the bridge's call
+            // carries back only the low half of xmm0. The shim's strtold
+            // (bionic/string.cpp) returns the whole value in xmm0.
+            typedef long long Quad __attribute__((vector_size(16)));
+            using Fn = Quad(__attribute__((sysv_abi))*)(const char*, char**);
+            static const auto fn = reinterpret_cast<Fn>(mini_bionic_resolve("strtold"));
+            const Quad q = fn(reinterpret_cast<const char*>(c.x[0]), reinterpret_cast<char**>(c.x[1]));
+            c.v[0] = VReg{};
+            c.v[0].d[0] = static_cast<uint64_t>(q[0]);
+            c.v[0].d[1] = static_cast<uint64_t>(q[1]);
+            c.pc = c.x[30];
+            break;
+        }
         case kSetjmp:
         case kSigsetjmp:  // the signal mask is not saved: the guest has no signals
             std::memcpy(buf, &c.x[19], 12 * sizeof(uint64_t));
@@ -824,6 +839,7 @@ void* guest_intrinsic(const char* name) {
     } kNames[] = {
         {"setjmp", kSetjmp}, {"_setjmp", kSetjmp}, {"sigsetjmp", kSigsetjmp},
         {"longjmp", kLongjmp}, {"_longjmp", kLongjmp}, {"siglongjmp", kLongjmp},
+        {"strtold", kStrtold}, {"strtold_l", kStrtold},
     };
     for (const auto& n : kNames) {
         if (std::strcmp(n.name, name) == 0) return const_cast<uint8_t*>(&g_intrinsics[n.kind]);
