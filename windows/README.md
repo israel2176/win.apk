@@ -169,7 +169,8 @@ The user-facing ones (`WINAPK_PHONE_SIZE`, `WINAPK_RESIZABLE`,
 | `WINAPK_SYSTEM_CACERTS=0` | Does not build Android's CA store from the Windows roots |
 | `WINAPK_USER_FOLDER_TARGETS` | Names the Windows folders the shared-storage junctions point at (tests) |
 | `MACAPK_USER_FOLDERS=0`, `HKCU\Software\Win.apk\UserFolders=0` | Turn the shared-storage mapping off (the setting is what the launcher writes) |
-| `MACAPK_JVM_OPTS` | Extra JVM options, passed through |
+| `MACAPK_JVM_OPTS` | Extra JVM options, passed through after Win.apk's own (`-XX:TieredStopAtLevel=4` brings back the C2 compiler, which the runtime leaves out for a faster start) |
+| `MACAPK_QUIET_CLASSLOAD=0` | Logs a line for every class the app's class loader loads (the runtime sets it to 1, as upstream's launcher does: thousands of lines cost up to 0.4 s of a start) |
 | `MACAPK_ALL_PERMS_ASK=0` | Returns the permission groups beyond storage and location to the install-time rule (declared means held), the Mac's behaviour; `MACAPK_MEDIA_PERMS_ASK=0` and `MACAPK_ALLFILES_HONEST=0` keep their upstream meaning |
 | `MACAPK_GMS_PRESENT=0`, `MACAPK_GMS_FCM=0`, `MACAPK_GMS_SIGNIN=0`, `MACAPK_GMS_LOCATION=0`, `MACAPK_GMS_DIR` | Upstream's Play services switches and the state folder |
 | `MACAPK_GMS_GOOGLE_CERT=0` | Reports the platform certificate for `com.google.android.gms` and `com.android.vending` instead of Google's (apps then see Play services as invalid) |
@@ -581,7 +582,10 @@ every such change is listed here:
   NetFree's among them), set before any TLS. `Boot.run` did it for an app's
   process only; `GmsCli.run` (`--gms`, Settings > Google account) now does
   too, or the sign-in's token exchange failed with "PKIX path building
-  failed". Not on other systems.
+  failed". The set is kept as one JKS file, `%TEMP%\winapk-trust.jks`, that a
+  start uses at once and, when it is more than a day old, rebuilds in the
+  background 20 s later; only the first start ever builds it before the app (building it cost 0.6-1.3 s of
+  every start). Not on other systems.
 - `runtime/java/com/macapk/gms/AccountPhoto.java` (new),
   `NativeSignIn.java` and `GmsStore.java`: after a sign-in, the picture the
   sign-in window found (`signInPhotoUrl`, a native only Windows has; on the

@@ -337,6 +337,14 @@ jobs:
           cp="$(cygpath -w stage/lib/macapk-loader.jar);$(cygpath -w build/sep-test)"
           "$JAVA_HOME/bin/java" -cp "$cp" FileSeparatorRewriteTest
           MACAPK_ANDROID_FILE_SEPARATOR=0 "$JAVA_HOME/bin/java" -cp "$cp" FileSeparatorRewriteTest off
+      - name: Run the File.renameTo test
+        run: |
+          # A file renamed onto an existing one replaces it, as on Android
+          # (java_base_patch/java/io/WinNTFileSystem.java).
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          "$JAVA_HOME/bin/javac" -d build/rename-test windows/test/java/FileRenameTest.java
+          "$JAVA_HOME/bin/java" --patch-module "java.base=$(cygpath -w stage/lib/java_base_patch)" \
+            -cp "$(cygpath -w build/rename-test)" FileRenameTest
       - name: Run the permission model test
         run: |
           # SpecialAccessStore.GroupModel, the decision model behind every

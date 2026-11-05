@@ -493,10 +493,14 @@ Billing answers `BILLING_UNAVAILABLE`, the Maps SDK lays out a blank map.
    set, and this process exits.
 3. The install and DEX conversion are checked (cached, so this is quick), and
    shared storage is mapped to the user's folders if the setting is on.
-4. HotSpot is created in-process on a thread with a large stack; JVMTI is
-   enabled for the `NativeMethodBind` hook and signature lookups; the host
-   natives are bound; SQLite's natives are registered.
-5. `Boot.run` starts the Android side: the package manager reads the
+4. HotSpot is created in-process on a thread with a large stack, with the
+   C1 compiler only (a faster start than tiered C1+C2; no class data sharing,
+   which the `java.base` overlay rules out); JVMTI is enabled for the
+   `NativeMethodBind` hook and signature lookups; the host natives are bound;
+   SQLite's natives are registered.
+5. `Boot.run` starts the Android side: the TLS trust store is set to the
+   JDK's and Windows' roots, kept between starts in `%TEMP%\winapk-trust.jks`
+   and rebuilt in the background once a day; the package manager reads the
    installed app, the framework resources load, `Application.onCreate`
    runs, the first activity is created and resumed, and the window opens with
    the app's icon.

@@ -2,9 +2,10 @@
  * Win.apk java.base overlay (--patch-module java.base, built by
  * windows/scripts/build_java.sh next to runtime/java_base_patch). This REPLACES
  * the JDK's java.io.WinNTFileSystem (OpenJDK 21u, GPLv2 with the Classpath
- * exception, licence header below) with ONE change, in resolve(parent, child):
- * a child that is itself an absolute Windows path with a drive letter nests
- * under the parent instead of producing a path with a colon in the middle.
+ * exception, licence header below) with two changes. The first, in
+ * resolve(parent, child): a child that is itself an absolute Windows path with
+ * a drive letter nests under the parent instead of producing a path with a
+ * colon in the middle.
  *
  * WHY: on Android, java.io.File(parent, child) with an absolute child joins
  * them ("/data/x/cache" + "/data/x/no_backup/db" = "/data/x/cache/data/x/
@@ -20,6 +21,14 @@
  * letter becomes a directory, "D:\a\b" -> "D\a\b", and the child nests as on
  * Android. The JDK itself never resolves a drive-absolute child against a
  * parent: File(URI), listFiles and the rest build children without drives.
+ *
+ * The second, in rename(f1, f2): a file renamed onto an existing file replaces
+ * it, as rename(2) does on Android. The JDK's rename0 is _wrename, which
+ * refuses an existing target, so the write-a-temporary-file-then-rename-it-over
+ * pattern failed on every save after the first: the framework's launcher icon
+ * was rendered again on every start and its "already rendered" stamp never
+ * written. Only a file over a file; a directory target still fails, as
+ * rename(2) fails onto a non-empty one.
  */
 /*
  * Copyright (c) 2001, 2023, Oracle and/or its affiliates. All rights reserved.
@@ -632,12 +641,26 @@ final class WinNTFileSystem extends FileSystem {
     public boolean rename(File f1, File f2) {
         long comp = Blocker.begin();
         try {
-            return rename0(f1, f2);
+            if (rename0(f1, f2)) return true;
         } finally {
             Blocker.end(comp);
         }
+        return renameOverFile(f1, f2);
     }
     private native boolean rename0(File f1, File f2);
+
+    // Win.apk: rename(2) replaces an existing file in one step; MoveFileEx with
+    // MOVEFILE_REPLACE_EXISTING (what an atomic Files.move does) is the same.
+    private boolean renameOverFile(File f1, File f2) {
+        if (!f1.isFile() || !f2.isFile()) return false;
+        try {
+            java.nio.file.Files.move(f1.toPath(), f2.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                                     java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
 
     /* -- Filesystem interface -- */
 

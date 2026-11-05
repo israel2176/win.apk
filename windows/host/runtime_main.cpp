@@ -628,6 +628,17 @@ fs::path aot_clang() {
     return {};
 }
 
+// The bundled clang links with its own MinGW files (stage_clang.sh). Without a
+// --sysroot, clang's MinGW driver takes them from the first gcc on the PATH
+// (Strawberry Perl, MSYS2, a MinGW install), which has no libunwind, and every
+// link fails. Another clang is left to find its own.
+std::wstring aot_sysroot(const fs::path& clang) {
+    std::error_code ec;
+    const fs::path root = clang.parent_path().parent_path();
+    if (!fs::equivalent(root, exe_dir().parent_path() / "clang", ec)) return {};
+    return L" --sysroot=" + quoted(root);
+}
+
 fs::path arm64_libs(const fs::path& base) { return base.parent_path() / "lib" / "arm64"; }
 
 fs::path with_suffix(const fs::path& so, const wchar_t* suffix) { return so.wstring() + suffix; }
@@ -1062,7 +1073,7 @@ void aot_translate_one(const fs::path& so, const fs::path& clang, const fs::path
                 ++reused;
                 continue;
             }
-            compiles.push_back({quoted(clang) + L" " + kAotCompileFlags + L" -c -o " +
+            compiles.push_back({quoted(clang) + aot_sysroot(clang) + L" " + kAotCompileFlags + L" -c -o " +
                                     quoted(fs::path(obj.wstring() + L".tmp")) + L" " + quoted(src),
                                 obj});
         }
@@ -1073,7 +1084,7 @@ void aot_translate_one(const fs::path& so, const fs::path& clang, const fs::path
         ok = run_parallel(compiles);
     }
     if (ok) {
-        std::wstring link = quoted(clang) + L" -shared -o " + quoted(dll);
+        std::wstring link = quoted(clang) + aot_sysroot(clang) + L" -shared -o " + quoted(dll);
         for (const fs::path& o : objs) link += L" " + quoted(o);
         ok = run_process(link) == 0;
     }
@@ -1324,6 +1335,14 @@ std::vector<std::string> jvm_options(const BootArgs& b) {
     v.push_back("-XX:+UnlockDiagnosticVMOptions");
     v.push_back("-XX:-BytecodeVerificationRemote");
     v.push_back("-XX:-BytecodeVerificationLocal");
+    // C1 only, no C2: an app's start is mostly code that runs once, which
+    // tiered compilation first profiles and then recompiles with C2 on the
+    // other cores. Measured on windows-latest (4 CPUs), the first frame came
+    // 25-35% sooner (Jerboa 2.08 -> 1.44 s, Fossify Notes 3.33 -> 2.45 s) for
+    // less than half the CPU, while Mindustry and Shattered Pixel Dungeon held
+    // 60 fps on the same CPU (+7%, -1%). Long hot Java loops lose C2's peak;
+    // MACAPK_JVM_OPTS=-XX:TieredStopAtLevel=4, read after this, restores it.
+    v.push_back("-XX:TieredStopAtLevel=1");
     v.push_back("--enable-native-access=ALL-UNNAMED");
     v.push_back("--add-opens=java.base/java.io=ALL-UNNAMED");
     v.push_back("--add-opens=java.base/java.util=ALL-UNNAMED");
@@ -1825,6 +1844,10 @@ int wmain(int argc, wchar_t** argv) {
         // path under the home directory.
         if (env_var(L"MACAPK_GMS_DIR").empty())
             SetEnvironmentVariableW(L"MACAPK_GMS_DIR", (b.options.data / L"gms").c_str());
+        // No line per class loaded (AppClassLoader.QUIET_CLASSLOAD), as
+        // upstream's launcher sets it: 1,000-6,000 lines a start, 0.05-0.4 s
+        // before the first frame. MACAPK_QUIET_CLASSLOAD=0 brings them back.
+        if (env_var(L"MACAPK_QUIET_CLASSLOAD").empty()) SetEnvironmentVariableW(L"MACAPK_QUIET_CLASSLOAD", L"1");
     }
 
     // --gms: a JVM, the GMS classes and no app. Before anything APK-shaped.
