@@ -1537,6 +1537,10 @@ int wmain(int argc, wchar_t** argv) {
         // path under the home directory.
         if (env_var(L"MACAPK_GMS_DIR").empty())
             SetEnvironmentVariableW(L"MACAPK_GMS_DIR", (b.options.data / L"gms").c_str());
+        // No line per class loaded (AppClassLoader.QUIET_CLASSLOAD), as
+        // upstream's launcher sets it: 1,000-6,000 lines a start, 0.05-0.4 s
+        // before the first frame. MACAPK_QUIET_CLASSLOAD=0 brings them back.
+        if (env_var(L"MACAPK_QUIET_CLASSLOAD").empty()) SetEnvironmentVariableW(L"MACAPK_QUIET_CLASSLOAD", L"1");
     }
 
     // --gms: a JVM, the GMS classes and no app. Before anything APK-shaped.
