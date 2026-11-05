@@ -1044,6 +1044,14 @@ std::vector<std::string> jvm_options(const BootArgs& b) {
     v.push_back("-XX:+UnlockDiagnosticVMOptions");
     v.push_back("-XX:-BytecodeVerificationRemote");
     v.push_back("-XX:-BytecodeVerificationLocal");
+    // C1 only, no C2: an app's start is mostly code that runs once, which
+    // tiered compilation first profiles and then recompiles with C2 on the
+    // other cores. Measured on windows-latest (4 CPUs), the first frame came
+    // 25-35% sooner (Jerboa 2.08 -> 1.44 s, Fossify Notes 3.33 -> 2.45 s) for
+    // less than half the CPU, while Mindustry and Shattered Pixel Dungeon held
+    // 60 fps on the same CPU (+7%, -1%). Long hot Java loops lose C2's peak;
+    // MACAPK_JVM_OPTS=-XX:TieredStopAtLevel=4, read after this, restores it.
+    v.push_back("-XX:TieredStopAtLevel=1");
     v.push_back("--enable-native-access=ALL-UNNAMED");
     v.push_back("--add-opens=java.base/java.io=ALL-UNNAMED");
     v.push_back("--add-opens=java.base/java.util=ALL-UNNAMED");
