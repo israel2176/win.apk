@@ -27,13 +27,24 @@ def run(args, apk, data, extra, name, install_only=False, frames=30):
     start = time.time()
     lines = []
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env)
+    import psutil, threading
+    cpu = [0.0]
+    def sample():
+        ps = psutil.Process(proc.pid)
+        while proc.poll() is None:
+            try:
+                t = ps.cpu_times(); cpu[0] = t.user + t.system
+            except Exception:
+                pass
+            time.sleep(0.5)
+    threading.Thread(target=sample, daemon=True).start()
     for raw in proc.stdout:
         lines.append((time.time() - start, raw.decode("utf-8", "replace").rstrip()))
-    proc.wait(timeout=300)
+    proc.wait(timeout=600)
     with open(os.path.join(args.out, name + ".log"), "w", encoding="utf-8") as f:
         for t, l in lines:
             f.write(f"{t:8.3f} {l}\n")
-    r = {"first_frame": None, "lines": len(lines), "exit": proc.returncode}
+    r = {"first_frame": None, "lines": len(lines), "exit": proc.returncode, "cpu": round(cpu[0], 1)}
     for t, l in lines:
         if "first frame presented" in l and r["first_frame"] is None:
             r["first_frame"] = round(t, 3)
@@ -47,7 +58,9 @@ def main():
     ap = argparse.ArgumentParser()
     for a in ("--runtime", "--jdk", "--pkg", "--vc", "--out"):
         ap.add_argument(a, required=True)
-    ap.add_argument("--reps", type=int, default=3)
+    ap.add_argument("--reps", type=int, default=5)
+    ap.add_argument("--mode", default="start")
+    ap.add_argument("--steady-ticks", type=int, default=3600)
     args = ap.parse_args()
     args.out = os.path.abspath(args.out)
     os.makedirs(args.out, exist_ok=True)
@@ -56,51 +69,40 @@ def main():
     run(args, apk, data, {}, "install", install_only=True)
     run(args, apk, data, {}, "warmup")
 
-    # Diagnostics, once: is the JDK's class archive (CDS) in use at all, and where classes come from.
-    # -Xlog splits on ':', so the file is named relative to the working directory, then moved.
-    jsa_log = os.path.join(args.out, "classload.txt")
-    run(args, apk, data, {"MACAPK_JVM_OPTS": "-Xlog:cds=info,class+load=info:file=classload.txt"}, "diag-cds")
-    if os.path.exists("classload.txt"):
-        os.replace("classload.txt", jsa_log)
-    shared = other = 0
-    cds_lines = []
-    if os.path.exists(jsa_log):
-        for l in open(jsa_log, encoding="utf-8", errors="replace"):
-            if "source: shared objects file" in l:
-                shared += 1
-            elif "class,load" in l:
-                other += 1
-            elif "cds" in l and len(cds_lines) < 15:
-                cds_lines.append(l.strip()[:200])
-    diag = {"classes_from_cds": shared, "classes_loaded_otherwise": other, "cds_log": cds_lines}
-
-    jsa = os.path.join(args.out, "app.jsa")
-    configs = [
-        ("base", {}),
-        ("quiet", {"MACAPK_QUIET_CLASSLOAD": "1"}),
-        ("quiet+c1", {"MACAPK_QUIET_CLASSLOAD": "1", "MACAPK_JVM_OPTS": "-XX:TieredStopAtLevel=1"}),
-        ("quiet+xshareoff", {"MACAPK_QUIET_CLASSLOAD": "1", "MACAPK_JVM_OPTS": "-Xshare:off"}),
-        ("quiet+appcds", {"MACAPK_QUIET_CLASSLOAD": "1",
-                          "MACAPK_JVM_OPTS": f"-XX:+AutoCreateSharedArchive -XX:SharedArchiveFile={jsa}"}),
-    ]
+    diag = {}
+    c1 = {"MACAPK_JVM_OPTS": "-XX:TieredStopAtLevel=1"}
     results = {}
-    for name, env in configs:
-        if name == "quiet+appcds":  # one run to write the archive
-            r, lines = run(args, apk, data, env, "appcds-dump")
-            diag["appcds_archive_written"] = os.path.exists(jsa)
-            diag["appcds_dump_msgs"] = [l[:200] for _, l in lines if "shar" in l.lower() or "cds" in l.lower()][:10]
-        runs = [run(args, apk, data, env, f"{name}-{i}")[0] for i in range(args.reps)]
-        results[name] = runs
-
+    if args.mode == "start":
+        configs = [("logging on (as before)", {"MACAPK_QUIET_CLASSLOAD": "0"}), ("new defaults", {}),
+                   ("new defaults + C1 only", c1)]
+        for name, env in configs:
+            results[name] = [run(args, apk, data, env, f"{name[:12]}-{i}".replace(" ", "_"))[0]
+                             for i in range(args.reps)]
+    else:  # steady: frames and CPU over --steady-ticks display ticks, tiered vs C1
+        import psutil
+        for name, env in [("tiered (today)", {}), ("C1 only", c1)]:
+            runs = []
+            for i in range(2):
+                t0 = time.time()
+                r, lines = run(args, apk, data, env, f"steady-{name[:6]}-{i}".replace(" ", "_"),
+                               frames=args.steady_ticks)
+                frames = max([int(m.group(1)) for _, l in lines
+                              for m in [re.search(r"\] (\d+) frames presented", l)] if m] or [0])
+                r["fps"] = round(frames / (args.steady_ticks / 60), 1)
+                runs.append(r)
+            results[name] = runs
     def med(runs, key):
         v = [r[key] for r in runs if r.get(key) is not None]
         return round(statistics.median(v), 2) if v else None
 
-    out = [f"## {args.pkg}", "", "| Config | First frame | Boot.run | manifest | resources | App.onCreate done | Log lines |",
-           "|---|---|---|---|---|---|---|"]
+    out = [f"## {args.pkg} ({args.mode})", "",
+           "| Config | First frame | Boot.run | manifest | resources | App.onCreate done | Log lines | FPS | CPU s |",
+           "|---|---|---|---|---|---|---|---|---|"]
     for name, runs in results.items():
         out.append(f"| {name} | {med(runs, 'first_frame')} | " + " | ".join(str(med(runs, m)) for m in MARKS)
-                   + f" | {med(runs, 'lines')} |")
+                   + f" | {med(runs, 'lines')} | {med(runs, 'fps')} | {med(runs, 'cpu')} |")
+    trust = [l for _, l in run(args, apk, data, {}, "trust-check")[1] if "TLS trust" in l]
+    diag["trust_lines"] = trust[:3]
     out += ["", "```", json.dumps(diag, indent=1), "```", ""]
     md = "\n".join(out)
     print(md)
