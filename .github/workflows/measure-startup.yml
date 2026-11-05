@@ -1,6 +1,6 @@
-# One-off measurement (to be deleted after it ran): where an arm64 app's time
-# goes while it runs (.github/measure/arm_profile.py).
-name: Measure arm64 profile (one-off)
+# One-off (to be deleted after it ran): which of PR 79's changes makes
+# translated Jitsi crash (.github/measure/aot_bisect.py).
+name: Bisect AOT crash (one-off)
 
 on:
   push:
@@ -71,17 +71,15 @@ jobs:
           retention-days: 2
           compression-level: 1
 
-  measure:
-    name: profile ${{ matrix.pkg }}
+  bisect:
+    name: jitsi ${{ matrix.variant }}
     needs: build
     runs-on: windows-latest
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - { pkg: org.jitsi.meet, x86: '26000004', arm: '26000002' }
-          - { pkg: se.voxelmanip.tensy, x86: '2', arm: '2' }
+        variant: [base, no-eh, o1, no-lookup-cache]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -92,17 +90,16 @@ jobs:
         with:
           name: measure-stage
           path: stage
-      - name: Measure
+      - name: Run
         shell: pwsh
         run: |
           python -m pip install --quiet psutil
-          python .github/measure/arm_profile.py --runtime stage --jdk "$env:JAVA_HOME" `
-            --pkg ${{ matrix.pkg }} --x86 ${{ matrix.x86 }} --arm ${{ matrix.arm }} --out out
+          python .github/measure/aot_bisect.py --runtime stage --jdk "$env:JAVA_HOME" --variant ${{ matrix.variant }} --out out
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: profile-${{ matrix.pkg }}
+          name: bisect-${{ matrix.variant }}
           path: |
-            out/*.md
             out/*.log
+            out/data/logs/
           retention-days: 5

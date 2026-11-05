@@ -194,7 +194,8 @@ bool read_image(const char* path, Image* img, std::string* error) {
             if (s.size > size) size = s.size;
         }
     }
-    img->unwind_starts = eh_frame_starts(*img, eh_frame_hdr);
+    // EXPERIMENT (to be removed): WINAPK_EXPERIMENT_NO_EH=1 finds no functions from .eh_frame_hdr.
+    if (!std::getenv("WINAPK_EXPERIMENT_NO_EH")) img->unwind_starts = eh_frame_starts(*img, eh_frame_hdr);
     for (const uint64_t va : img->unwind_starts) img->symbols.emplace(va, 0);
     return true;
 }

@@ -7,6 +7,7 @@
 #include <atomic>
 #include <cinttypes>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -387,6 +388,13 @@ AotFn aot_lookup(uint64_t pc) {
     if (cache.generation != generation) {
         std::memset(cache.slots, 0, sizeof cache.slots);
         cache.generation = generation;
+    }
+    // EXPERIMENT (to be removed): WINAPK_EXPERIMENT_NO_LOOKUP_CACHE=1 skips the table.
+    static const bool no_cache = std::getenv("WINAPK_EXPERIMENT_NO_LOOKUP_CACHE") != nullptr;
+    if (no_cache) {
+        const FunctionMap* map = g_functions.load(std::memory_order_acquire);
+        auto it = map->find(pc);
+        return it == map->end() ? nullptr : it->second;
     }
     LookupSlot& slot = cache.slots[(pc >> 2) & (kLookupSlots - 1)];
     if (slot.pc == pc && pc != 0) return slot.fn;

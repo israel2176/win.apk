@@ -49,6 +49,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <cctype>
 #include <ctime>
@@ -615,7 +616,10 @@ constexpr DWORD kAotStartDelayS = 60;
 // with Win.apk's clang 22 (97.2 s against 94.8 s over the same 11 parts of
 // three libraries, on an i7-13620H; plain -O2 105 s), with 16% less code,
 // and the code runs as fast (docs/research/aot-measurements.md).
-const wchar_t* const kAotCompileFlags = L"-O2 -mllvm -fast-isel -march=native -fno-strict-aliasing -w";
+// EXPERIMENT (to be removed): WINAPK_EXPERIMENT_O1=1 compiles with the flags from before PR 79.
+const wchar_t* const kAotCompileFlags = _wgetenv(L"WINAPK_EXPERIMENT_O1")
+                                            ? L"-O1 -march=native -fno-strict-aliasing -w"
+                                            : L"-O2 -mllvm -fast-isel -march=native -fno-strict-aliasing -w";
 
 fs::path aot_clang() {
     std::error_code ec;
