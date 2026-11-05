@@ -56,14 +56,22 @@ def main():
     apk = fetch(args.pkg, args.vc, os.path.abspath("apk-cache"))
     base = {"WINAPK_ABIS": args.abis} if args.abis else {}
     nopatch = dict(base, WINAPK_EXPERIMENT_NO_BASE_PATCH="1")
-    jsa = os.path.join(args.out, "app.jsa")
     rows, notes = [], []
+    jsa = os.path.join(args.out, "app.jsa")
 
     def mode(label, env, data):
         firsts = [run(args, apk, data, env, f"{label}-{i}") for i in range(args.reps)]
         ok = [f for f in firsts if f is not None]
         rows.append((label, round(statistics.median(ok), 2) if ok else None, len(firsts) - len(ok)))
 
+    for label, env in (("diag-nobase", dict(nopatch, MACAPK_JVM_OPTS="-Xlog:cds=info")),
+                       ("diag-nopatch", dict(base, WINAPK_EXPERIMENT_NO_BASE_PATCH="2", MACAPK_JVM_OPTS="-Xlog:cds=info"))):
+        d = os.path.join(args.out, "d-" + label)
+        run(args, apk, d, env, label + "-install", install_only=True)
+        run(args, apk, d, env, label)
+        lines = [l for l in open(os.path.join(args.out, label + ".log"), encoding="utf-8") if "[cds" in l][:12]
+        notes.append(label + ": " + " || ".join(l.strip()[9:170] for l in lines))
+    nopatch = dict(base, WINAPK_EXPERIMENT_NO_BASE_PATCH="2")
     for label, env in (("today", base), ("jdk-cds", nopatch)):
         data = os.path.join(args.out, "d-" + label)
         run(args, apk, data, env, label + "-install", install_only=True)
