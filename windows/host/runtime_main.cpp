@@ -592,6 +592,17 @@ fs::path aot_clang() {
     return {};
 }
 
+// The bundled clang links with its own MinGW files (stage_clang.sh). Without a
+// --sysroot, clang's MinGW driver takes them from the first gcc on the PATH
+// (Strawberry Perl, MSYS2, a MinGW install), which has no libunwind, and every
+// link fails. Another clang is left to find its own.
+std::wstring aot_sysroot(const fs::path& clang) {
+    std::error_code ec;
+    const fs::path root = clang.parent_path().parent_path();
+    if (!fs::equivalent(root, exe_dir().parent_path() / "clang", ec)) return {};
+    return L" --sysroot=" + quoted(root);
+}
+
 fs::path arm64_libs(const fs::path& base) { return base.parent_path() / "lib" / "arm64"; }
 
 fs::path with_suffix(const fs::path& so, const wchar_t* suffix) { return so.wstring() + suffix; }
@@ -825,13 +836,13 @@ void aot_translate_one(const fs::path& so, const fs::path& clang, size_t jobs, c
             const fs::path src = i == 0 ? c : fs::path(c.wstring() + L"." + std::to_wstring(i) + L".c");
             if (!fs::exists(src, ec)) break;
             objs.push_back(src.wstring() + L".o");
-            compiles.push_back(quoted(clang) + L" " + kAotCompileFlags + L" -c -o " + quoted(objs.back()) + L" " +
+            compiles.push_back(quoted(clang) + aot_sysroot(clang) + L" " + kAotCompileFlags + L" -c -o " + quoted(objs.back()) + L" " +
                                quoted(src));
         }
         ok = run_parallel(compiles, jobs);
     }
     if (ok) {
-        std::wstring link = quoted(clang) + L" -shared -o " + quoted(dll);
+        std::wstring link = quoted(clang) + aot_sysroot(clang) + L" -shared -o " + quoted(dll);
         for (const fs::path& o : objs) link += L" " + quoted(o);
         ok = run_process(link) == 0;
     }

@@ -102,6 +102,7 @@ jobs:
       - name: Measure
         shell: pwsh
         run: |
+          Get-Command gcc, clang -All -ErrorAction SilentlyContinue | Format-Table Name, Source
           python -m pip install --quiet psutil
           python .github/measure/startup_measure.py --runtime stage --jdk "$env:JAVA_HOME" `
             --pkg ${{ matrix.pkg }} --x86 ${{ matrix.x86 }} --arm ${{ matrix.arm }} --out out

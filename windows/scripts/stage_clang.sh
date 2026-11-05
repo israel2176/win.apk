@@ -44,11 +44,13 @@ for d in "$PREFIX/share/licenses"/{clang,llvm,lld,compiler-rt,mingw-w64-crt,libc
     [[ -d "$d" ]] && cp -rf "$d" "$OUT/licenses/" || true
 done
 
-# It must compile on its own: no MSYS2 on the PATH, as on a user's machine.
+# It must compile on its own: no MSYS2 on the PATH, as on a user's machine, and
+# with --sysroot as the runtime passes it, so a gcc on the user's PATH is not
+# taken for the sysroot (runtime_main.cpp, aot_sysroot).
 probe="$(mktemp -d)"
 printf '#include <stddef.h>\n#include <stdint.h>\n__declspec(dllexport) int64_t f(int64_t a) { return a * 3; }\n' \
     > "$probe/t.c"
 env -i SYSTEMROOT="${SYSTEMROOT:-C:\\Windows}" PATH="/usr/bin:/bin" \
-    "$OUT/bin/clang.exe" -O1 -march=x86-64-v2 -shared -fno-strict-aliasing -w -o "$probe/t.dll" "$probe/t.c"
+    "$OUT/bin/clang.exe" --sysroot="$(cygpath -w "$OUT" 2>/dev/null || echo "$OUT")" -O1 -march=x86-64-v2 -shared -fno-strict-aliasing -w -o "$probe/t.dll" "$probe/t.c"
 rm -rf "$probe"
 echo "[stage_clang] clang $VER -> $OUT ($(du -sh "$OUT" | cut -f1))"
