@@ -2,11 +2,15 @@
 // of time, for the installer to compile into `<lib>.so.aot.dll` (see
 // include/winapk/arm64_aot.h for how the runtime uses it).
 //
-//   winapk-aot <lib.so> <out.c> [parts] [--profile <file>] [--full-below <insns>]
+//   winapk-aot <lib.so> <out.c> [parts] [--part-insns <n>] [--profile <file>] [--full-below <insns>]
 //   winapk-aot --hash <lib.so>
 //
 // parts: out.c.1.c ..., to compile in parallel (fewer when the library is
-// small). With --profile, a library of more than --full-below instructions
+// small). --part-insns <n> instead cuts as many parts as it takes for about
+// n instructions each, however many there are: clang's memory grows with a
+// part (about 300 MB at 20,000 instructions, 1.7 GB at 176,000), its speed
+// does not, so the background worker fixes the size and runs as many parts
+// at once as memory allows. With --profile, a library of more than --full-below instructions
 // is translated only where the profile says code ran (see
 // include/winapk/arm64_aot.h, "Profiles"). Exit code 0: translated whole;
 // 4: translated where the profile says code ran; 3: nothing ran yet, so
@@ -32,6 +36,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cerrno>
 #include <cinttypes>
 #include <cstdarg>
 #include <cstdio>
@@ -83,6 +88,7 @@ struct Image {
     std::vector<Seg> exec;
     uint64_t text_hash = 0;
     std::map<uint64_t, uint64_t> symbols;  // function entry -> size (0: unknown)
+    std::vector<uint64_t> unwind_starts;   // function entries from .eh_frame_hdr
 
     bool code(uint64_t va) const {
         for (const Seg& s : exec) {
@@ -108,6 +114,40 @@ template <typename T> bool read_at(const std::vector<uint8_t>& f, uint64_t off, 
     return true;
 }
 
+// The function starts in .eh_frame_hdr's search table. Release builds are
+// stripped, and from the exported symbols and their BL targets alone the
+// translator found 1-45% of a library's code (Fennec's libxul.so: 1.3%,
+// libflutter.so: 13%); the rest, reached through vtables and function
+// pointers, stayed on the JIT. The unwind tables C++ needs for exceptions
+// and crash reports list every function with unwind information, and their
+// search table survives stripping (it is in a loaded segment,
+// PT_GNU_EH_FRAME): with it, 93-97% (docs/research/aot-measurements.md).
+// Only the encodings linkers write are read: a 4- or 8-byte eh_frame_ptr,
+// a udata4 count, and a datarel sdata4 table; anything else adds nothing.
+std::vector<uint64_t> eh_frame_starts(const Image& img, const Phdr64& hdr) {
+    std::vector<uint64_t> starts;
+    const std::vector<uint8_t>& f = img.file;
+    if (hdr.filesz < 4 || hdr.offset > f.size() || f.size() - hdr.offset < hdr.filesz) return starts;
+    const uint8_t* p = f.data() + hdr.offset;
+    const uint8_t version = p[0], ptr_enc = p[1], count_enc = p[2], table_enc = p[3];
+    const unsigned format = ptr_enc & 0x0f;  // DW_EH_PE_udata4 3, sdata4 0xb, udata8 4, sdata8 0xc
+    const uint64_t ptr_size = format == 0x03 || format == 0x0b ? 4 : format == 0x04 || format == 0x0c ? 8 : 0;
+    if (version != 1 || ptr_size == 0 || count_enc != 0x03 || table_enc != 0x3b) return starts;
+    const uint64_t count_at = 4 + ptr_size, table_at = count_at + 4;
+    if (hdr.filesz < table_at) return starts;
+    uint32_t count;
+    std::memcpy(&count, p + count_at, 4);
+    if ((hdr.filesz - table_at) / 8 < count) return starts;
+    starts.reserve(count);
+    for (uint32_t i = 0; i < count; ++i) {
+        int32_t rel;  // relative to the start of .eh_frame_hdr
+        std::memcpy(&rel, p + table_at + uint64_t(i) * 8, 4);
+        const uint64_t va = hdr.vaddr + static_cast<uint64_t>(static_cast<int64_t>(rel));
+        if (img.code(va) && va % 4 == 0) starts.push_back(va);
+    }
+    return starts;
+}
+
 bool read_image(const char* path, Image* img, std::string* error) {
     std::ifstream in(path, std::ios::binary);
     if (!in) {
@@ -122,9 +162,11 @@ bool read_image(const char* path, Image* img, std::string* error) {
         return false;
     }
     uint64_t h = 0xcbf29ce484222325ull;
+    Phdr64 eh_frame_hdr{};
     for (unsigned i = 0; i < eh.phnum; ++i) {
         Phdr64 ph;
         if (!read_at(img->file, eh.phoff + uint64_t(i) * eh.phentsize, &ph)) break;
+        if (ph.type == 0x6474e550) eh_frame_hdr = ph;  // PT_GNU_EH_FRAME
         if (ph.type != 1 || !(ph.flags & 1) || ph.filesz == 0) continue;
         if (ph.offset + ph.filesz > img->file.size()) {
             *error = "truncated executable segment";
@@ -152,6 +194,8 @@ bool read_image(const char* path, Image* img, std::string* error) {
             if (s.size > size) size = s.size;
         }
     }
+    img->unwind_starts = eh_frame_starts(*img, eh_frame_hdr);
+    for (const uint64_t va : img->unwind_starts) img->symbols.emplace(va, 0);
     return true;
 }
 
@@ -236,9 +280,16 @@ struct Function {
 
 constexpr size_t kMaxInsns = 100000;
 
-// Functions above this many instructions are compiled without optimization
-// (Emitter::function). WINAPK_AOT_OPTNONE_INSNS overrides it, for measuring.
-size_t g_optnone_insns = 4000;
+// Functions above this many instructions are left to the JIT. A huge
+// function costs clang far more than its size (one of 10K+ instructions in
+// libjuicebox_sdk_jni.so took 200 s at -O1). Compiling those unoptimized, as
+// was done, was not enough: one of 21,631 instructions (AliExpress's
+// libsaasCorePlayer.so) still took clang 290 s and 4.3 GB, and code with the
+// guest registers in stack slots runs about 11x slower than native, slower
+// than the JIT (3-6x; docs/research/aot-measurements.md). So the JIT runs
+// them: the few functions above this size cost most of a library's compile
+// time and memory and gave nothing back. WINAPK_AOT_MAX_INSNS overrides it.
+size_t g_max_insns = 4000;
 
 // Follows the branches of the function at f->entry. BL targets go to `calls`.
 bool discover(const Image& img, const std::set<uint64_t>& entries, Function* f, std::set<uint64_t>* calls) {
@@ -2054,13 +2105,6 @@ std::string Emitter::function(size_t* interpreted) {
     }
     out += "#define FLUSH() do {" + flush + " } while (0)\n";
     out += "#define RELOAD() do {" + reload + " } while (0)\n";
-    // A huge function costs clang far more than its size (time grows faster
-    // than the number of blocks): one of 10K+ instructions in
-    // libjuicebox_sdk_jni.so took 200 s at -O1, 12.6 s unoptimized. So, as
-    // other static recompilers do, those few are not optimized; they still
-    // run natively, with the guest registers in stack slots, as the JIT
-    // keeps them in memory.
-    if (f_.insns.size() > g_optnone_insns) out += "__attribute__((optnone, noinline)) ";
     out += "uint32_t " + name + "(Cpu* restrict c) {\n";
     out += "    const uint64_t B = aot_base;\n";
     for (unsigned n = 0; n < 32; ++n) {
@@ -2097,7 +2141,8 @@ bool read_profile(const char* path, uint64_t text_hash, std::set<uint64_t>* hits
 }  // namespace
 
 int main(int argc, char** argv) {
-    const char* usage = "usage: winapk-aot <lib.so> <out.c> [parts] [--profile <file>] [--full-below <insns>]\n"
+    const char* usage = "usage: winapk-aot <lib.so> <out.c> [parts] [--part-insns <n>] [--profile <file>] "
+                        "[--full-below <insns>]\n"
                         "       winapk-aot --hash <lib.so>   (prints the text hash a translation is keyed by)\n";
     if (argc == 3 && std::string(argv[1]) == "--hash") {
         Image img;
@@ -2113,11 +2158,12 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "%s", usage);
         return 2;
     }
-    size_t parts = 1, full_below = 0;
+    size_t parts = 1, full_below = 0, part_insns = 0;
     const char* profile = nullptr;
     for (int i = 3; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "--profile" && i + 1 < argc) profile = argv[++i];
+        else if (a == "--part-insns" && i + 1 < argc) part_insns = std::strtoull(argv[++i], nullptr, 10);
         else if (a == "--full-below" && i + 1 < argc) full_below = std::strtoull(argv[++i], nullptr, 10);
         else if (i == 3 && std::isdigit(static_cast<unsigned char>(a[0]))) parts = std::max(1, std::atoi(argv[i]));
         else {
@@ -2125,7 +2171,7 @@ int main(int argc, char** argv) {
             return 2;
         }
     }
-    if (const char* t = std::getenv("WINAPK_AOT_OPTNONE_INSNS")) g_optnone_insns = std::strtoull(t, nullptr, 10);
+    if (const char* t = std::getenv("WINAPK_AOT_MAX_INSNS")) g_max_insns = std::strtoull(t, nullptr, 10);
     Image img;
     std::string error;
     if (!read_image(argv[1], &img, &error)) {
@@ -2184,6 +2230,16 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "winapk-aot: %s: profile: %zu of %zu functions ran\n", argv[1], functions.size(), all);
         if (functions.empty()) return 3;
     }
+    size_t too_large = 0;  // left to the JIT (g_max_insns)
+    for (auto it = functions.begin(); it != functions.end();) {
+        if (it->second.insns.size() > g_max_insns) {
+            total -= it->second.insns.size();
+            ++too_large;
+            it = functions.erase(it);
+        } else {
+            ++it;
+        }
+    }
     std::set<uint64_t> translated;
     for (const auto& f : functions) translated.insert(f.first);
 
@@ -2191,6 +2247,7 @@ int main(int argc, char** argv) {
     // out.c.1.c .. out.c.<parts>.c the functions, balanced by instruction
     // count, for compiling in parallel. A part under ~20000 instructions
     // costs clang more in fixed overhead than it saves.
+    if (part_insns > 0) parts = (total + part_insns - 1) / part_insns;
     parts = std::max<size_t>(1, std::min(parts, (total + 19999) / 20000));
     std::string protos;
     for (uint64_t e : translated) protos += fmt("uint32_t F_%" PRIx64 "(Cpu* restrict c);\n", e);
@@ -2226,7 +2283,7 @@ int main(int argc, char** argv) {
     auto write = [&](const std::string& path, const std::string& text) {
         std::ofstream o(path, std::ios::binary);
         o << text;
-        if (!o) std::fprintf(stderr, "winapk-aot: cannot write %s\n", path.c_str());
+        if (!o) std::fprintf(stderr, "winapk-aot: cannot write %s: %s\n", path.c_str(), std::strerror(errno));
         return static_cast<bool>(o);
     };
     const std::string head = std::string(kPrelude) + protos + "\n";
@@ -2238,16 +2295,13 @@ int main(int argc, char** argv) {
             if (!write(fmt("%s.%zu.c", argv[2], i + 1), head + bodies[i])) return 1;
         }
     }
-    size_t largest = 0, unoptimized = 0;
-    for (const Function* f : order) {
-        largest = std::max(largest, f->insns.size());
-        if (f->insns.size() > g_optnone_insns) ++unoptimized;
-    }
+    size_t largest = 0;
+    for (const Function* f : order) largest = std::max(largest, f->insns.size());
     std::fprintf(stderr,
                  "winapk-aot: %s: %zu functions, %zu instructions, %zu through the interpreter (%.1f%%), "
-                 "largest function %zu instructions, %zu unoptimized%s\n",
+                 "largest function %zu instructions, %zu over %zu left to the JIT%s\n",
                  argv[1], functions.size(), insns, interpreted,
                  insns ? 100.0 * static_cast<double>(interpreted) / static_cast<double>(insns) : 0.0, largest,
-                 unoptimized, skipped ? fmt(", %zu too large to translate", skipped).c_str() : "");
+                 too_large, g_max_insns, skipped ? fmt(", %zu too large to decode", skipped).c_str() : "");
     return by_profile ? 4 : 0;
 }

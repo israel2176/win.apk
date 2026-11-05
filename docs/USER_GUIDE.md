@@ -109,6 +109,16 @@ libraries are translated only where the app's code actually ran, and more as
 you use the app, so the first runs of a big app are the slow ones. Whole
 translations are shared between apps that ship the same library.
 
+The translation keeps out of your way. It runs at the lowest priority and
+uses at most one processor core while you are using the PC, more only while
+you are away, and none on battery saver or while a full-screen program (a
+game, a presentation) runs. It never takes the memory other programs need:
+it compiles less at once when memory is short. If it is stopped, by closing
+the app, shutting down or ending the process, it goes on where it was the
+next time. If a translation fails it is tried again later, and after four
+failures the library stays on the JIT until the app or Win.apk is updated
+(the app's `aot-<app>.log` in the logs folder says why).
+
 The translation uses the clang shipped in Win.apk's `clang` folder. To use a
 different one, set the environment variable `WINAPK_AOT_CLANG` to its
 `clang.exe`; without the bundled one, Win.apk also looks for `clang.exe` on
@@ -581,8 +591,10 @@ installed; a Store entry that says the APK has no native code for this PC
 needs the full bundle instead.
 
 **The app is slow.** If it has only ARM64 libraries, it runs on the JIT until
-its translation is ready; give it a few minutes on the first runs and watch
-the log for the translation finishing. Check that the `clang` folder is next
+its translation is ready. The translation goes faster while you leave the
+PC alone: on a busy PC, a large app's first translation can take an hour or
+more. `logs\aot-<app>.log` shows its progress and how many compilers it runs
+at once, and why. Check that the `clang` folder is next
 to `bin` in Win.apk's folder.
 
 **No sound from a native game.** Games whose engine plays audio through
