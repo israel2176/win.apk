@@ -1350,7 +1350,8 @@ std::vector<std::string> jvm_options(const BootArgs& b) {
     v.push_back("--add-opens=java.base/jdk.internal.loader=ALL-UNNAMED");
     v.push_back("--add-exports=java.base/sun.net.www.protocol.http=ALL-UNNAMED");
     v.push_back("--add-exports=java.base/sun.net.www.protocol.https=ALL-UNNAMED");
-    if (fs::is_directory(o.lib / "java_base_patch", ec))
+    // EXPERIMENT (to be removed): WINAPK_EXPERIMENT_NO_BASE_PATCH=1 leaves java.base unpatched, so CDS can work.
+    if (fs::is_directory(o.lib / "java_base_patch", ec) && env_var(L"WINAPK_EXPERIMENT_NO_BASE_PATCH") != L"1")
         v.push_back("--patch-module=java.base=" + jvm_path(o.lib / "java_base_patch"));
     if (fs::is_directory(o.lib / "jdk_unsupported_patch", ec))
         v.push_back("--patch-module=jdk.unsupported=" + jvm_path(o.lib / "jdk_unsupported_patch"));
