@@ -114,7 +114,8 @@ template <typename T> bool read_at(const std::vector<uint8_t>& f, uint64_t off, 
     return true;
 }
 
-// The function starts in .eh_frame_hdr's search table. Release builds are
+// The function starts in .eh_frame_hdr's search table (only with
+// WINAPK_AOT_EH_FRAME=1: see read_image). Release builds are
 // stripped, and from the exported symbols and their BL targets alone the
 // translator found 1-45% of a library's code (Fennec's libxul.so: 1.3%,
 // libflutter.so: 13%); the rest, reached through vtables and function
@@ -194,8 +195,12 @@ bool read_image(const char* path, Image* img, std::string* error) {
             if (s.size > size) size = s.size;
         }
     }
-    // EXPERIMENT (to be removed): WINAPK_EXPERIMENT_NO_EH=1 finds no functions from .eh_frame_hdr.
-    if (!std::getenv("WINAPK_EXPERIMENT_NO_EH")) img->unwind_starts = eh_frame_starts(*img, eh_frame_hdr);
+    // Off unless WINAPK_AOT_EH_FRAME=1 (kAotVersion 5): with these starts,
+    // translated Jitsi Meet (React Native, Hermes) stopped right after its
+    // first frame, on a return to address 0, every time; without them it ran.
+    // Left in for finding out why: which start, of which library, breaks.
+    if (const char* on = std::getenv("WINAPK_AOT_EH_FRAME"); on && std::strcmp(on, "1") == 0)
+        img->unwind_starts = eh_frame_starts(*img, eh_frame_hdr);
     for (const uint64_t va : img->unwind_starts) img->symbols.emplace(va, 0);
     return true;
 }

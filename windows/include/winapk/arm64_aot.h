@@ -48,11 +48,12 @@ namespace winapk::arm64 {
 // Raised when the translation changes: the stamp (runtime_main.cpp) has each
 // library translated again. When the translated code changes meaning,
 // kAotMinVersion is raised with it, and the loader ignores the older DLLs.
-constexpr uint32_t kAotVersion = 4;
-// The oldest translation the loader still runs. Version 4 finds more of a
-// library's functions (.eh_frame_hdr) but its code means what 3's does, so
-// a DLL of 3 stays in use while the worker translates the library again.
-constexpr uint32_t kAotMinVersion = 3;
+constexpr uint32_t kAotVersion = 5;
+// The oldest translation the loader still runs. Version 4 also translated the
+// functions .eh_frame_hdr lists, and translated Jitsi Meet with it returned
+// to address 0 after its first frame; 5 leaves them out again, and no DLL
+// of 4 is run (nor of 3, which a DLL of 5 replaces after one pass).
+constexpr uint32_t kAotMinVersion = 5;
 constexpr uint32_t kAotDone = 0;
 constexpr uint32_t kAotBail = 1;
 
