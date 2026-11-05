@@ -32,6 +32,27 @@ using FunctionMap = std::unordered_map<uint64_t, AotFn>;
 SRWLOCK g_load_lock = SRWLOCK_INIT;
 std::atomic<const FunctionMap*> g_functions{new FunctionMap};
 
+// The map is looked up on every call the translation could not make
+// directly (BLR, a callee in another library) and every time the JIT reaches
+// translated code: a hash lookup each, which made a call through a function
+// pointer cost about 7x native code. Each thread keeps its last answers,
+// misses included, in a direct-mapped table in front of it (half the cost of
+// such a call; docs/research/aot-measurements.md, section 4). Per thread, so
+// a slot is never read half written; a load bumps g_generation after
+// publishing its map, and a thread that sees a new generation starts over.
+// 16 KB a thread.
+std::atomic<uint32_t> g_generation{1};
+struct LookupSlot {
+    uint64_t pc;  // 0: empty (no guest code at 0)
+    AotFn fn;     // nullptr: not translated
+};
+constexpr size_t kLookupSlots = 1024;
+struct LookupCache {
+    uint32_t generation = 0;
+    LookupSlot slots[kLookupSlots];
+};
+thread_local LookupCache t_lookup;
+
 // A call or jump the translation could not resolve statically.
 uint32_t runtime_branch(Cpu* c, uint64_t target) {
     if (AotFn fn = aot_lookup(target)) {
@@ -331,7 +352,7 @@ bool load_dll(const std::filesystem::path& dll, uint64_t bias, uint64_t text_has
     const uint32_t layout[4] = {offsetof(Cpu, sp), offsetof(Cpu, nzcv), offsetof(Cpu, tpidr), offsetof(Cpu, v)};
     const char* why = nullptr;
     if (!m) why = "no winapk_aot_module";
-    else if (m->version != kAotVersion) why = "built by another version of winapk-aot";
+    else if (m->version < kAotMinVersion || m->version > kAotVersion) why = "built by another version of winapk-aot";
     else if (std::memcmp(m->layout, layout, sizeof layout) != 0) why = "built for another CPU state layout";
     else if (m->text_hash != text_hash) why = "built from another build of the library";
     if (why) {
@@ -348,6 +369,7 @@ bool load_dll(const std::filesystem::path& dll, uint64_t bias, uint64_t text_has
     auto* next = new FunctionMap(*g_functions.load());
     for (uint64_t i = 0; i < m->count; ++i) (*next)[bias + m->entries[i].vaddr] = m->entries[i].fn;
     g_functions.store(next, std::memory_order_release);
+    g_generation.fetch_add(1, std::memory_order_release);
     ReleaseSRWLockExclusive(&g_load_lock);
     remember_dll(h, m, dll);
     std::fprintf(stderr, "[win.apk] arm64 AOT: %s: %llu translated functions\n", dll.filename().u8string().c_str(),
@@ -358,9 +380,21 @@ bool load_dll(const std::filesystem::path& dll, uint64_t bias, uint64_t text_has
 }  // namespace
 
 AotFn aot_lookup(uint64_t pc) {
+    LookupCache& cache = t_lookup;
+    // The generation first: a newer one guarantees the map read below is at
+    // least that new (both are released in that order by load_dll).
+    const uint32_t generation = g_generation.load(std::memory_order_acquire);
+    if (cache.generation != generation) {
+        std::memset(cache.slots, 0, sizeof cache.slots);
+        cache.generation = generation;
+    }
+    LookupSlot& slot = cache.slots[(pc >> 2) & (kLookupSlots - 1)];
+    if (slot.pc == pc && pc != 0) return slot.fn;
     const FunctionMap* map = g_functions.load(std::memory_order_acquire);
     auto it = map->find(pc);
-    return it == map->end() ? nullptr : it->second;
+    const AotFn fn = it == map->end() ? nullptr : it->second;
+    slot = {pc, fn};
+    return fn;
 }
 
 uint32_t aot_run(AotFn fn, Cpu* c) { return fn(c); }

@@ -1,0 +1,40 @@
+--- aot_main_x.cpp	2026-11-04 11:31:48.048302740 +0000
++++ aot_main_sc.cpp	2026-11-04 11:39:17.848846717 +0000
+@@ -308,6 +308,7 @@
+     void (*step)(Cpu* c);
+     uint32_t (*plain)(uint64_t target);
+     void (__attribute__((sysv_abi)) *call_sysv)(const void* fn, void* frame);
++    void* (*lookup)(uint64_t target);  // scratch: the translated function at target, or null
+ } AotRuntime;
+ typedef struct { uint64_t vaddr; uint32_t (*fn)(Cpu* c); } AotEntry;
+ typedef struct {
+@@ -453,13 +454,25 @@
+ // turned out to be a plain host function: the next call to it is direct.
+ #define CALL_SITE(st, t)                                                           \
+     do {                                                                           \
+-        static uint64_t site;                                                      \
+-        if ((t) == __atomic_load_n(&site, __ATOMIC_RELAXED)) {                     \
++        static uint64_t site, gsite; static int claimed;                           \
++        static uint32_t (*gfn)(Cpu*);                                              \
++        if ((t) == __atomic_load_n(&gsite, __ATOMIC_ACQUIRE)) {                    \
++            (st) = gfn(c);                                                         \
++        } else if ((t) == __atomic_load_n(&site, __ATOMIC_RELAXED)) {              \
+             host_call(c, (t));                                                     \
+             (st) = 0;                                                              \
+         } else {                                                                   \
+-            (st) = aot_rt.branch(c, (t));                                          \
+-            if ((st) == 0 && aot_rt.plain(t)) __atomic_store_n(&site, (t), __ATOMIC_RELAXED); \
++            uint32_t (*fn)(Cpu*) = (uint32_t (*)(Cpu*))aot_rt.lookup(t);          \
++            if (fn) {                                                              \
++                if (!__atomic_exchange_n(&claimed, 1, __ATOMIC_RELAXED)) {         \
++                    gfn = fn; /* the first target only; published by the release */ \
++                    __atomic_store_n(&gsite, (t), __ATOMIC_RELEASE);               \
++                }                                                                  \
++                (st) = fn(c);                                                      \
++            } else {                                                               \
++                (st) = aot_rt.branch(c, (t));                                      \
++                if ((st) == 0 && aot_rt.plain(t)) __atomic_store_n(&site, (t), __ATOMIC_RELAXED); \
++            }                                                                      \
+         }                                                                          \
+     } while (0)
+ )";
