@@ -487,7 +487,7 @@ Billing answers `BILLING_UNAVAILABLE`, the Maps SDK lays out a blank map.
    SQLite's natives are registered.
 5. `Boot.run` starts the Android side: the TLS trust store is set to the
    JDK's and Windows' roots, kept between starts in `%TEMP%\winapk-trust.jks`
-   and rebuilt in the background; the package manager reads the
+   and rebuilt in the background once a day; the package manager reads the
    installed app, the framework resources load, `Application.onCreate`
    runs, the first activity is created and resumed, and the window opens with
    the app's icon.

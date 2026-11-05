@@ -581,8 +581,8 @@ every such change is listed here:
   process only; `GmsCli.run` (`--gms`, Settings > Google account) now does
   too, or the sign-in's token exchange failed with "PKIX path building
   failed". The set is kept as one JKS file, `%TEMP%\winapk-trust.jks`, that a
-  start uses at once and rebuilds in the background 20 s later; only the
-  first start ever builds it before the app (building it cost 0.6-1.3 s of
+  start uses at once and, when it is more than a day old, rebuilds in the
+  background 20 s later; only the first start ever builds it before the app (building it cost 0.6-1.3 s of
   every start). Not on other systems.
 - `runtime/java/com/macapk/gms/AccountPhoto.java` (new),
   `NativeSignIn.java` and `GmsStore.java`: after a sign-in, the picture the

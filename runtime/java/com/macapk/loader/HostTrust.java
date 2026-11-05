@@ -34,9 +34,10 @@ public final class HostTrust {
      * Building the set costs 0.6-1.3 s (the JDK's TLS classes, cacerts, the
      * Windows store), on the main thread before the app's first frame. So it is
      * kept in one file, %TEMP%\winapk-trust.jks, shared by every app: a start
-     * that finds it uses it at once and rebuilds it in the background once the
-     * app is up, for the next start; only the first start ever builds it in
-     * line. JKS, not PKCS12: these are public certificates, and PKCS12 encrypts
+     * that finds it uses it at once. One more than a day old is rebuilt in the
+     * background once the app is up, for the next start, so a root added to
+     * Windows (a filter's, a company's) reaches the apps within a day; only the
+     * first start ever builds it in line. JKS, not PKCS12: these are public certificates, and PKCS12 encrypts
      * every entry, which alone took 220-350 ms. (It also replaces the temporary
      * file each start wrote: deleteOnExit never ran, since the process ends with
      * TerminateProcess, so %TEMP% kept 0.7 MB per app start.)
@@ -47,6 +48,11 @@ public final class HostTrust {
         final java.io.File store = new java.io.File(System.getProperty("java.io.tmpdir"), "winapk-trust.jks");
         if (store.isFile() && store.length() > 0) {
             use(store);
+            final long age = System.currentTimeMillis() - store.lastModified();
+            if (age >= 0 && age < MAX_AGE_MS) {
+                log(false, "TLS trust anchors: the JDK's and Windows' from " + store);
+                return;
+            }
             Thread refresh = new Thread(() -> {
                 try {
                     Thread.sleep(REFRESH_DELAY_MS);
@@ -68,6 +74,9 @@ public final class HostTrust {
             log(true, "TLS trust anchors: kept the JDK's (" + t + ")");
         }
     }
+
+    /** How long a built set is used as it is. */
+    private static final long MAX_AGE_MS = 24L * 60 * 60 * 1000;
 
     /** After the app's first frame, as a rule; the next start reads the result. */
     private static final long REFRESH_DELAY_MS = 20_000;
