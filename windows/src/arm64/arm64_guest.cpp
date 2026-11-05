@@ -220,9 +220,12 @@ uint64_t now_ns() {
     return static_cast<uint64_t>(t.QuadPart / freq * 1000000000 + t.QuadPart % freq * 1000000000 / freq);
 }
 
-// Totals of the threads that have exited.
+// Totals of the threads that have exited, and the threads alive (their counts
+// are read without a lock: totals for a report, not exact to the call).
 std::mutex g_stats_lock;
 Stats g_exited;
+struct ThreadState;
+std::vector<ThreadState*> g_live;
 
 void add(Stats& to, const Stats& s) {
     to.guest_entries += s.guest_entries;
@@ -276,11 +279,16 @@ struct ThreadState {
         stack_top = (reinterpret_cast<uint64_t>(stack) + kStackGuard + kGuestStack - kStackSlack) & ~uint64_t{15};
         cpu.tpidr = reinterpret_cast<uint64_t>(&tls[1]);
         tls[1 + 5] = 0x5eed5eedc0ffee00ull ^ (reinterpret_cast<uint64_t>(this) << 8);
+        thread_id = GetCurrentThreadId();
+        std::lock_guard<std::mutex> hold(g_stats_lock);
+        g_live.push_back(this);
     }
+    DWORD thread_id = 0;
     ~ThreadState() {
         {
             std::lock_guard<std::mutex> hold(g_stats_lock);
             add(g_exited, totals());
+            g_live.erase(std::remove(g_live.begin(), g_live.end(), this), g_live.end());
         }
         jits.clear();
         if (stack) VirtualFree(stack, 0, MEM_RELEASE);
@@ -754,6 +762,23 @@ AotFn aot_entry(uint64_t pc) {
 // goes. Threads still running then are not counted.
 void print_stats() {
     const Stats s = stats();
+    {
+        // The threads still running, busiest first: a thread that stays in
+        // guest code (a JS engine, a game loop) is where an app's time goes.
+        std::lock_guard<std::mutex> hold(g_stats_lock);
+        std::vector<std::pair<Stats, DWORD>> live;
+        for (ThreadState* t : g_live) live.emplace_back(t->totals(), t->thread_id);
+        std::sort(live.begin(), live.end(), [](const auto& a, const auto& b) { return a.first.run_ns > b.first.run_ns; });
+        for (size_t i = 0; i < live.size() && i < 8; ++i) {
+            const Stats& t = live[i].first;
+            std::fprintf(stderr,
+                         "[win.apk] arm64 stats, thread %lu: %.1f ms in guest calls, %.1f ms of it in host functions; "
+                         "%llu guest entries, %llu host calls, %llu JIT exits, %llu interpreted instructions\n",
+                         live[i].second, static_cast<double>(t.run_ns) / 1e6, static_cast<double>(t.host_ns) / 1e6,
+                         static_cast<unsigned long long>(t.guest_entries), static_cast<unsigned long long>(t.host_calls),
+                         static_cast<unsigned long long>(t.jit_exits), static_cast<unsigned long long>(t.interp_insns));
+        }
+    }
     const double run_ms = static_cast<double>(s.run_ns) / 1e6, host_ms = static_cast<double>(s.host_ns) / 1e6;
     std::fprintf(stderr,
                  "[win.apk] arm64 stats (%s): %.1f ms in guest calls, of which %.1f ms in host functions and %.1f ms "
@@ -856,13 +881,14 @@ bool set_engine(Engine e) {
 Engine engine() { return g_engine.load(); }
 
 Stats stats() {
-    Stats s;
-    {
-        std::lock_guard<std::mutex> hold(g_stats_lock);
-        s = g_exited;
-    }
-    if (t_state) add(s, t_state->totals());
+    std::lock_guard<std::mutex> hold(g_stats_lock);
+    Stats s = g_exited;
+    for (ThreadState* t : g_live) add(s, t->totals());
     return s;
+}
+
+void print_stats_if_enabled() {
+    if (GetEnvironmentVariableA("WINAPK_ARM64_STATS", nullptr, 0) > 0) print_stats();
 }
 
 void set_profiling(bool on) { g_profiling.store(on); }
