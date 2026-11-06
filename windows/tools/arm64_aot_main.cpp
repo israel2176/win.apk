@@ -513,6 +513,7 @@ static __attribute__((noinline)) void host_call(Cpu* restrict c, uint64_t target
         static uint64_t site;                                                      \
         if ((t) == __atomic_load_n(&site, __ATOMIC_RELAXED)) {                     \
             host_call(c, (t));                                                     \
+            c->pc = c->x[30];                                                      \
             (st) = 0;                                                              \
         } else {                                                                   \
             (st) = aot_rt.branch(c, (t));                                          \
@@ -690,6 +691,11 @@ private:
             line("    uint32_t st; c->pc = t; CALL_SITE(st, t);");
         }
         line("    if (st) return st;");
+        // Returned somewhere else: an exception's landing pad (the unwinder
+        // ends in a ret or br to it), a longjmp, code that is not a whole
+        // function. The whole state is in *c: the JIT goes on from c->pc,
+        // as after an instruction the interpreter stepped.
+        line("    if (c->pc != " + addr(ret) + ") return 1;");
         line("    RELOAD();");
         line("}");
     }
