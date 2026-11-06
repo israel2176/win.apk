@@ -86,6 +86,27 @@ ARM64=(
     -Wl,--pack-dyn-relocs=android+relr -Wl,--use-android-relr-tags \
     -Wl,-soname,libwinapk_arm64_bridge.so \
     -o "$ARM64_OUT/libwinapk_arm64_bridge.so" "$HERE/guest/arm64_bridge_guest.c"
+# Control flow and edge cases (arm64_flow_guest.c), and a library the test
+# unloads with dlclose (arm64_isa.c again).
+"$CC" "${ARM64[@]}" -O2 -mno-outline-atomics -Wl,-soname,libwinapk_arm64_flow.so \
+    -o "$ARM64_OUT/libwinapk_arm64_flow.so" "$HERE/guest/arm64_flow_guest.c"
+"$CC" "${ARM64[@]}" -O2 -mno-outline-atomics -Wl,-soname,libwinapk_arm64_unload.so \
+    -o "$ARM64_OUT/libwinapk_arm64_unload.so" "$HERE/guest/arm64_isa.c"
+# The same, linked 2 MB higher: the same code bytes at other addresses, which
+# a translation of the first must not be taken for.
+"$CC" "${ARM64[@]}" -O2 -mno-outline-atomics -Wl,-soname,libwinapk_arm64_rebased.so -Wl,--image-base=0x200000 \
+    -o "$ARM64_OUT/libwinapk_arm64_rebased.so" "$HERE/guest/arm64_isa.c"
+# A library that patches its own code (arm64_patch_guest.c), one copy per
+# engine: the first patch retires a library's translation for good.
+for engine in interp jit aot; do
+    "$CC" "${ARM64[@]}" -O2 -Wl,-soname,libwinapk_arm64_patch_$engine.so \
+        -o "$ARM64_OUT/libwinapk_arm64_patch_$engine.so" "$HERE/guest/arm64_patch_guest.c"
+done
+# Random instruction sequences for the differential test (gen_arm64_fuzz.py:
+# functions, instructions each, seed).
+python3 "$HERE/guest/gen_arm64_fuzz.py" 400 48 1 > "$ARM64_OUT/arm64_fuzz.S"
+"$CC" "${ARM64[@]}" -Wl,-soname,libwinapk_arm64_fuzz.so \
+    -o "$ARM64_OUT/libwinapk_arm64_fuzz.so" "$ARM64_OUT/arm64_fuzz.S"
 # The engines' benchmarks, -O2 like an app's release build.
 "$CC" "${ARM64[@]}" -O2 -mno-outline-atomics -Wl,-soname,libwinapk_arm64_bench.so \
     -o "$ARM64_OUT/libwinapk_arm64_bench.so" "$HERE/guest/arm64_bench.c"
@@ -94,4 +115,4 @@ echo "[build_guest] $OUT/libwinapk_poc_guest.so"
 echo "[build_guest] $OUT/libwinapk_poc_guest_packed.so"
 echo "[build_guest] $LINK/libwinapk_link_{root,mid,base,plugin}.so"
 echo "[build_guest] $OUT/libwinapk_bionic_guest.so"
-echo "[build_guest] $ARM64_OUT/libwinapk_arm64_{isa_O2,isa_O3,isa_lse,bridge,bench}.so"
+echo "[build_guest] $ARM64_OUT/libwinapk_arm64_{isa_O2,isa_O3,isa_lse,bridge,flow,unload,rebased,patch_*,fuzz,bench}.so"
