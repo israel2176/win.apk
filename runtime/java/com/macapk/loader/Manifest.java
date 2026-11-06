@@ -979,6 +979,69 @@ public final class Manifest {
         return m[0] == 0x03 && m[1] == 0x00 && m[2] == 0x08 && m[3] == 0x00;
     }
 
+    /** The base member of a split bundle: base.apk, else the largest root
+     *  .apk (the selection binaryManifestFromBundle documents); null when there is none.
+     *  ApkVerification orders a bundle's members with it too. */
+    static java.util.zip.ZipEntry bundleBaseEntry(java.util.zip.ZipFile zf) {
+        java.util.zip.ZipEntry base = null;
+        java.util.Enumeration<? extends java.util.zip.ZipEntry> en = zf.entries();
+        while (en.hasMoreElements()) {
+            java.util.zip.ZipEntry e = en.nextElement();
+            if (e.isDirectory()) continue;
+            String name = e.getName();
+            // Root members only: a nested "assets/base.apk" inside a plain apk
+            // is the app's own payload, not this archive's base.
+            if (name.indexOf('/') >= 0) continue;
+            if (!name.toLowerCase(java.util.Locale.ROOT).endsWith(".apk")) continue;
+            if (name.equals("base.apk")) { base = e; break; }
+            if (base == null || e.getSize() > base.getSize()) base = e;
+        }
+        return base;
+    }
+
+    private static final java.util.Map<String, String> RESOURCE_APKS =
+        new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** The APK whose resources.arsc and res/ files a manifest reference of
+     *  `apkPath` resolves in: `apkPath` itself, or for a split bundle (.apkm,
+     *  .xapk, .apks: no AndroidManifest.xml at the top) its base member,
+     *  extracted once to a temporary file. The broker parses the user's
+     *  library file, which is such a bundle for Play services; reading
+     *  resources.arsc from the bundle's top found none, so
+     *  android:process="@string/..." stayed "@0x7f150335" and Play services'
+     *  persistent process was never recognized. */
+    static String resourceApk(String apkPath) {
+        if (apkPath == null || apkPath.isEmpty()) return apkPath;
+        File f = new File(apkPath);
+        String key = apkPath + "|" + f.length() + "|" + f.lastModified();
+        String hit = RESOURCE_APKS.get(key);
+        if (hit != null && new File(hit).isFile()) return hit;
+        synchronized (RESOURCE_APKS) {
+            hit = RESOURCE_APKS.get(key);
+            if (hit != null && new File(hit).isFile()) return hit;
+            String out = apkPath;
+            try (java.util.zip.ZipFile zf = new java.util.zip.ZipFile(apkPath)) {
+                java.util.zip.ZipEntry base = zf.getEntry("AndroidManifest.xml") == null
+                    && zf.getEntry("resources.arsc") == null ? bundleBaseEntry(zf) : null;
+                if (base != null) {
+                    File tmp = File.createTempFile("macapk-resapk-", ".apk");
+                    tmp.deleteOnExit();
+                    try (java.io.InputStream in = zf.getInputStream(base)) {
+                        java.nio.file.Files.copy(in, tmp.toPath(),
+                            java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                    }
+                    out = tmp.getPath();
+                    NativeLog.i(TAG, "resources of split bundle " + apkPath + " are read from its "
+                        + base.getName());
+                }
+            } catch (Throwable t) {
+                NativeLog.w(TAG, "could not open " + apkPath + " for its resources: " + t);
+            }
+            RESOURCE_APKS.put(key, out);
+            return out;
+        }
+    }
+
     /** The raw binary AndroidManifest.xml of a multi-part bundle's BASE member,
      *  or null when this zip is not that shape.
      *
@@ -1003,19 +1066,7 @@ public final class Manifest {
     // is exactly the two-answers-to-one-question shape this selector's own
     // doc comment warns about.
     static byte[] binaryManifestFromBundle(java.util.zip.ZipFile zf) {
-        java.util.zip.ZipEntry base = null;
-        java.util.Enumeration<? extends java.util.zip.ZipEntry> en = zf.entries();
-        while (en.hasMoreElements()) {
-            java.util.zip.ZipEntry e = en.nextElement();
-            if (e.isDirectory()) continue;
-            String name = e.getName();
-            // Root members only: a nested "assets/base.apk" inside a plain apk
-            // is the app's own payload, not this archive's base.
-            if (name.indexOf('/') >= 0) continue;
-            if (!name.toLowerCase(java.util.Locale.ROOT).endsWith(".apk")) continue;
-            if (name.equals("base.apk")) { base = e; break; }
-            if (base == null || e.getSize() > base.getSize()) base = e;
-        }
+        java.util.zip.ZipEntry base = bundleBaseEntry(zf);
         if (base == null) return null;
         // Nested zip: the member is a stream, not a File, so it has to be read
         // with ZipInputStream rather than ZipFile (which needs random access).
@@ -1086,7 +1137,7 @@ public final class Manifest {
         if (raw == null || !raw.startsWith("@0x") || apkPath == null || apkPath.isEmpty()) return null;
         try {
             int id = (int) Long.parseLong(raw.substring(3), 16);
-            try (java.util.zip.ZipFile zf = new java.util.zip.ZipFile(apkPath)) {
+            try (java.util.zip.ZipFile zf = new java.util.zip.ZipFile(resourceApk(apkPath))) {
                 java.util.zip.ZipEntry e = zf.getEntry("resources.arsc");
                 if (e == null) return null;
                 byte[] arsc;
@@ -1145,7 +1196,7 @@ public final class Manifest {
             if (!answers) continue;
             String file = resolveFileRef(apkPath, se.metaData.get("android.accounts.AccountAuthenticator"));
             if (file == null) continue;
-            try (java.util.zip.ZipFile zf = new java.util.zip.ZipFile(apkPath)) {
+            try (java.util.zip.ZipFile zf = new java.util.zip.ZipFile(resourceApk(apkPath))) {
                 java.util.zip.ZipEntry e = zf.getEntry(file);
                 if (e == null) continue;
                 byte[] x;
@@ -1179,7 +1230,7 @@ public final class Manifest {
     private static StringTables tables(String apkPath) {
         return STRING_TABLES.computeIfAbsent(apkPath, k -> {
             StringTables t = new StringTables();
-            try (java.util.zip.ZipFile zf = new java.util.zip.ZipFile(k)) {
+            try (java.util.zip.ZipFile zf = new java.util.zip.ZipFile(resourceApk(k))) {
                 java.util.zip.ZipEntry e = zf.getEntry("resources.arsc");
                 if (e == null) return t;
                 byte[] arsc;
