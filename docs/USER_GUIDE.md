@@ -107,7 +107,12 @@ starts at once on an ARM64 JIT, which is slower, and each library switches to
 its translation as soon as it is ready, even while the app is running. Large
 libraries are translated only where the app's code actually ran, and more as
 you use the app, so the first runs of a big app are the slow ones. Whole
-translations are shared between apps that ship the same library.
+translations are shared between apps that ship the same library, stored once
+on the disk; the shared folder keeps under 2 GB and lets go of what no app
+used for two months. A translation is made for your PC's processor: on
+another one (the data folder moved to a new PC) it is made again. A library
+that rewrites its own code while it runs (some games' anti-cheat code, some
+packed apps) stays on the JIT.
 
 The translation keeps out of your way. It runs at the lowest priority and
 uses at most one processor core while you are using the PC, more only while
