@@ -3,6 +3,8 @@
 
 #include "winapk/arm64_aot.h"
 
+#include "winapk/aot_files.h"
+
 #include <algorithm>
 #include <atomic>
 #include <cinttypes>
@@ -12,6 +14,7 @@
 #include <fstream>
 #include <memory>
 #include <mutex>
+#include <sstream>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -103,30 +106,44 @@ std::filesystem::path sibling(const std::string& so, const char* suffix) {
     return std::filesystem::u8path(so + suffix);
 }
 
-const AotModule* load_dll(const std::filesystem::path& dll, uint64_t bias, uint64_t text_hash);
+const AotModule* load_dll(const std::filesystem::path& dll, uint64_t bias, uint64_t text_hash, bool sealed);
 void drop_functions(uint64_t lo, uint64_t hi);
 
 // Why the library's translation is not to be loaded, from its stamp
-// (runtime_main.cpp writes it, "kind lines version failures retry cpu"), or
-// nullptr: it crashed before (report_aot_fault), the library rewrites its
-// own code (aot_code_written), or it was compiled for another CPU.
-const char* stamp_refuses(const std::string& so) {
-    std::ifstream in(sibling(so, ".aot.stamp"), std::ios::binary);
+// (runtime_main.cpp writes it, "kind lines version failures retry cpu lib"),
+// or nullptr: it crashed before (report_aot_fault), the library rewrites its
+// own code (aot_code_written), or it was compiled for another CPU. *sealed:
+// the stamp names the library (aot_files.h), so its DLLs carry a seal and one
+// without is cut short.
+const char* stamp_refuses(const std::string& so, bool* sealed) {
+    *sealed = false;
+    // Not an ifstream: that would hold the stamp so the worker's rename of a
+    // new one over it fails (aot_read_file).
+    std::istringstream in(aot_read_file(sibling(so, ".aot.stamp")));
     std::string kind;
-    unsigned long long lines = 0, failures = 0, retry = 0, cpu = 0;
+    unsigned long long lines = 0, failures = 0, retry = 0, cpu = 0, lib = 0;
     unsigned version = 0;
     if (!(in >> kind)) return nullptr;
     if (kind == "bad") return "its translation crashed before";
     if (kind == "written") return "it rewrites its own code";
-    if (in >> lines >> version >> failures >> retry >> std::hex >> cpu && cpu != 0 && cpu != aot_cpu_signature()) {
-        return "it was translated for another CPU";
-    }
+    if (!(in >> lines >> version >> failures >> retry >> std::hex >> cpu)) return nullptr;
+    if (cpu != 0 && cpu != aot_cpu_signature()) return "it was translated for another CPU";
+    *sealed = in >> lib && lib != 0;
     return nullptr;
 }
 
+// The stamp's line for `kind` (no translation to use), with the library's
+// id so the worker knows it is about this build (runtime_main.cpp).
+std::string stamp_line(const std::string& so, const char* kind) {
+    char line[96];
+    std::snprintf(line, sizeof line, "%s 0 %u 0 0 %llx %llx\n", kind, kAotVersion,
+                  static_cast<unsigned long long>(aot_cpu_signature()),
+                  static_cast<unsigned long long>(aot_lib_id(std::filesystem::u8path(so))));
+    return line;
+}
+
 void write_stamp(const std::string& so, const char* kind) {
-    std::ofstream out(sibling(so, ".aot.stamp"), std::ios::binary | std::ios::trunc);
-    out << kind << " 0 " << kAotVersion << "\n";
+    aot_write_file(sibling(so, ".aot.stamp"), stamp_line(so, kind));
 }
 
 // ---- naming a fault in translated code ---------------------------------------------
@@ -166,6 +183,7 @@ struct LoadedDll {
     uint64_t lo, hi;
     std::string so;      // file name, for the message
     std::wstring stamp;  // <lib>.so.aot.stamp
+    std::string bad;     // the stamp's "bad" line, made at load: the handler asks the file system for nothing more
     std::vector<std::pair<uint64_t, uint64_t>> fns;  // (host address, guest vaddr), sorted
 };
 SRWLOCK g_dlls_lock = SRWLOCK_INIT;
@@ -182,6 +200,7 @@ LONG CALLBACK report_aot_fault(EXCEPTION_POINTERS* e) {
     const uint64_t rip = e->ContextRecord->Rip;
     char line[512] = {};
     std::wstring stamp;
+    std::string bad;
     AcquireSRWLockShared(&g_dlls_lock);
     for (const LoadedDll& d : *g_dlls) {
         if (rip < d.lo || rip >= d.hi) continue;
@@ -190,6 +209,7 @@ LONG CALLBACK report_aot_fault(EXCEPTION_POINTERS* e) {
         if (it == d.fns.begin()) break;
         --it;
         stamp = d.stamp;
+        bad = d.bad;
         if (code == EXCEPTION_ACCESS_VIOLATION) {
             std::snprintf(line, sizeof line,
                           "[win.apk] arm64 AOT: access violation %s 0x%llx in %s, guest function 0x%llx "
@@ -217,9 +237,7 @@ LONG CALLBACK report_aot_fault(EXCEPTION_POINTERS* e) {
                 HANDLE f = CreateFileW(stamp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL,
                                        nullptr);
                 if (f != INVALID_HANDLE_VALUE) {
-                    char bad[32];
-                    const int len = std::snprintf(bad, sizeof bad, "bad 0 %u\n", kAotVersion);
-                    WriteFile(f, bad, static_cast<DWORD>(len), &n, nullptr);
+                    WriteFile(f, bad.data(), static_cast<DWORD>(bad.size()), &n, nullptr);
                     CloseHandle(f);
                 }
                 static const char kNote[] =
@@ -248,6 +266,7 @@ void remember_dll(HMODULE h, const AotModule* m, const std::filesystem::path& dl
         if (base.size() > n && base.compare(base.size() - n, n, suffix) == 0) base.resize(base.size() - n);
     }
     d.stamp = base + L".aot.stamp";
+    d.bad = stamp_line(std::filesystem::path(base).u8string(), "bad");
     for (uint64_t i = 0; i < m->count; ++i) {
         d.fns.emplace_back(reinterpret_cast<uint64_t>(m->entries[i].fn), m->entries[i].vaddr);
     }
@@ -266,11 +285,12 @@ bool aot_load(const char* so_path, uint64_t bias, uint64_t text_hash, uint64_t c
     lib->text_hash = text_hash;
     lib->lo = code_lo;
     lib->hi = code_hi;
-    if (const char* why = stamp_refuses(lib->so)) {
+    bool sealed = false;
+    if (const char* why = stamp_refuses(lib->so, &sealed)) {
         std::fprintf(stderr, "[win.apk] arm64 AOT: %s: %s; the JIT runs it\n",
                      std::filesystem::u8path(lib->so).filename().u8string().c_str(), why);
     } else {
-        lib->module = load_dll(sibling(lib->so, ".aot.dll"), bias, text_hash);
+        lib->module = load_dll(sibling(lib->so, ".aot.dll"), bias, text_hash, sealed);
         lib->translated = lib->module != nullptr;
     }
     const bool translated = lib->translated;
@@ -412,7 +432,7 @@ size_t aot_load_pending() {
     std::vector<Want> want;
     AcquireSRWLockShared(&g_libs_lock);
     for (const auto& lib : g_libs) {
-        if (!lib->translated && !lib->unloaded && !lib->written && !stamp_refuses(lib->so)) {
+        if (!lib->translated && !lib->unloaded && !lib->written) {
             want.push_back({lib.get(), lib->so, lib->bias, lib->text_hash});
         }
     }
@@ -421,9 +441,11 @@ size_t aot_load_pending() {
     for (const Want& w : want) {
         std::error_code ec;
         const AotModule* m = nullptr;
+        bool sealed = false;
+        if (stamp_refuses(w.so, &sealed)) continue;
         for (const char* suffix : {".aot.dll", ".aot.dll.new"}) {
             const std::filesystem::path dll = sibling(w.so, suffix);
-            if (std::filesystem::exists(dll, ec) && (m = load_dll(dll, w.bias, w.text_hash))) break;
+            if (std::filesystem::exists(dll, ec) && (m = load_dll(dll, w.bias, w.text_hash, sealed))) break;
         }
         if (!m) continue;
         AcquireSRWLockExclusive(&g_libs_lock);
@@ -446,9 +468,19 @@ size_t aot_load_pending() {
 
 namespace {
 
-const AotModule* load_dll(const std::filesystem::path& dll, uint64_t bias, uint64_t text_hash) {
-    std::error_code ec;
-    if (!std::filesystem::exists(dll, ec)) return nullptr;
+const AotModule* load_dll(const std::filesystem::path& dll, uint64_t bias, uint64_t text_hash, bool sealed) {
+    // Only a DLL as long as its seal says: LoadLibrary of one cut short may
+    // fail, or map zeros where code should be (aot_files.h). The seal alone,
+    // not its hash: reading the whole DLL at every start would cost more than
+    // what it guards against now that nothing is renamed in before it is on
+    // the disk.
+    const AotFile check = aot_check_dll(dll, false);
+    if (check == AotFile::kMissing) return nullptr;
+    if (check == AotFile::kBroken || (check == AotFile::kUnsealed && sealed)) {
+        std::fprintf(stderr, "[win.apk] arm64 AOT: ignoring %s: incomplete (%s); it is translated again\n",
+                     dll.u8string().c_str(), check == AotFile::kBroken ? "shorter than its seal says" : "no seal");
+        return nullptr;
+    }
     HMODULE h = LoadLibraryW(dll.wstring().c_str());
     if (!h) {
         std::fprintf(stderr, "[win.apk] arm64 AOT: cannot load %s (error %lu)\n", dll.u8string().c_str(),

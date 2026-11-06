@@ -11,7 +11,22 @@
 #   3. a part that always fails: waits of 10, 40, 160 minutes, then no more
 #      tries; each retry compiles only that part;
 #   4. a library over kAotFullBelow: nothing until it has a profile, then only
-#      what ran, and again only once the profile has grown by a quarter.
+#      what ran, and again only once the profile has grown by a quarter;
+#   5. four apps' workers on the same library at once, one shared cache, with
+#      hard links and with copies: one good entry, every app's DLL sealed;
+#   6. a worker killed at each step of a write (WINAPK_AOT_FAULT: half a seal,
+#      a cache entry under its temporary name, before and after the rename
+#      into place, half a stamp): the next run finishes, nothing half made
+#      is taken for a translation;
+#   7. a DLL cut short under a "full" stamp (a power loss): translated again,
+#      and the cache entry it shares is not handed on;
+#   8. a cache entry cut short: not taken, deleted, compiled again;
+#   9. a library dated in the future (extracted while the clock was ahead):
+#      translated once, not at every pass;
+#  10. temporary files left by killed writers: deleted once an hour old.
+#
+# Scenarios 5-10 are aot_files.h's rules in the real worker; test/
+# aot_cache_test.cpp checks the same rules on Windows in CI.
 #
 #   windows/test/aot_worker/run_aot_worker_wine.sh
 #
@@ -31,7 +46,7 @@ cd "$OUT"
 
 python3 -I "$HERE/gen_worker_test.py" "$WIN_DIR/host/runtime_main.cpp" worker.cpp
 FLAGS=(-std=c++17 -O1 -municode -static -DUNICODE -D_UNICODE -I"$WIN_DIR/include")
-"$CXX" "${FLAGS[@]}" -o winapk-runtime.exe worker.cpp -lshell32
+"$CXX" "${FLAGS[@]}" -o winapk-runtime.exe worker.cpp "$WIN_DIR/src/arm64/aot_files.cpp" -lshell32
 "$CXX" "${FLAGS[@]}" -o fakeclang.exe "$HERE/fakeclang.cpp"
 "$CXX" -std=c++17 -O2 -static -I"$WIN_DIR/include" -o winapk-aot.exe "$WIN_DIR/tools/arm64_aot_main.cpp"
 
@@ -64,6 +79,7 @@ setup() {  # setup <test dir> <library>: a library folder with that library
 worker() { "$WINE" ./winapk-runtime.exe --aot-translate "$(win "$PWD/$1/lib/arm64")" --cache "$(win "$PWD/$1/cache")"; }
 needs_work() { "$WINE" ./winapk-runtime.exe "$(win "$PWD/$1/lib/arm64/$2")" | tr -d '\r'; }
 stamp() { cat "$1/lib/arm64/$2.aot.stamp"; }
+check_dll() { "$WINE" ./winapk-runtime.exe --check "$(win "$PWD/$1")" | tr -d '\r'; }
 compiles() { grep -c '^start' "$1/clang.log" || true; }
 count() { ps -eo comm | grep -c "^$1" || true; }
 WINAPK_AOT_CLANG="$(win "$PWD/fakeclang.exe")"
@@ -146,6 +162,94 @@ sed -n 1001,1200p entries.txt >> "$P"
 check "+20%: not again yet" test "$(needs_work t4 libbig.so)" = 0
 sed -n 1201,1300p entries.txt >> "$P"
 check "+30%: again" test "$(needs_work t4 libbig.so)" = 1
+
+echo "== 5. four apps' workers on one library at once"
+for mode in links copies; do
+    rm -rf t5 && mkdir -p t5/cache
+    for a in 1 2 3 4; do mkdir -p "t5/app$a/lib/arm64" && cp libguest.so "t5/app$a/lib/arm64/"; done
+    : > t5/clang.log
+    FAKECLANG_LOG="$(win "$PWD/t5/clang.log")"
+    fault=""
+    [ "$mode" = copies ] && fault=nolink
+    for a in 1 2 3 4; do
+        WINAPK_AOT_FAULT="$fault" FAKECLANG_MS=300 FAKECLANG_LOG="$FAKECLANG_LOG" "$WINE" ./winapk-runtime.exe \
+            --aot-translate "$(win "$PWD/t5/app$a/lib/arm64")" --cache "$(win "$PWD/t5/cache")" > "t5/log$a" 2>&1 &
+    done
+    wait
+    good=0
+    for a in 1 2 3 4; do
+        [ "$(check_dll "t5/app$a/lib/arm64/libguest.so.aot.dll")" = sealed ] &&
+            grep -q '^full 0 ' "t5/app$a/lib/arm64/libguest.so.aot.stamp" &&
+            [ "$(needs_work "t5/app$a" libguest.so)" = 0 ] && good=$((good + 1))
+    done
+    check "$mode: every app's DLL whole, stamped full, nothing left to do ($good of 4)" test "$good" -eq 4
+    check "$mode: one entry in the cache, whole" test "$(ls t5/cache | wc -l)" -eq 1 -a \
+        "$(check_dll t5/cache/*.aot.dll)" = sealed
+    check "$mode: no temporary file left" test -z "$(find t5 -name '*.tmp')"
+done
+
+echo "== 6. killed at each step of a write"
+for point in seal cache-put install installed write; do
+    setup t6 libguest.so
+    code=0
+    WINAPK_AOT_FAULT="kill:$point" FAKECLANG_MS=20 worker t6 > t6/log 2>&1 || code=$?
+    check "kill:$point ends the worker there (exit code $code)" test "$code" -eq 99
+    dll=$(check_dll t6/lib/arm64/libguest.so.aot.dll)
+    check "kill:$point: the app's DLL is whole or none ($dll)" test "$dll" = sealed -o "$dll" = missing
+    check "kill:$point: work is left" test "$(needs_work t6 libguest.so)" = 1
+    for f in t6/cache/*.aot.dll; do
+        [ -e "$f" ] && check "kill:$point: the cache entry is whole" test "$(check_dll "$f")" = sealed
+    done
+    FAKECLANG_MS=20 worker t6 > t6/log2 2>&1
+    check "kill:$point: the next run finishes ($(stamp t6 libguest.so))" grep -q '^full 0 ' \
+        t6/lib/arm64/libguest.so.aot.stamp
+    check "kill:$point: with a whole DLL" test "$(check_dll t6/lib/arm64/libguest.so.aot.dll)" = sealed
+    check "kill:$point: nothing left to do" test "$(needs_work t6 libguest.so)" = 0
+done
+
+echo "== 7. a DLL cut short under a full stamp"
+setup t7 libguest.so
+FAKECLANG_MS=20 worker t7 > t7/log 2>&1
+truncate -s -10 t7/lib/arm64/libguest.so.aot.dll  # a hard link: the cache's entry too
+check "the stamp says full" grep -q '^full 0 ' t7/lib/arm64/libguest.so.aot.stamp
+check "work to do" test "$(needs_work t7 libguest.so)" = 1
+: > t7/clang.log
+FAKECLANG_MS=20 worker t7 > t7/log2 2>&1
+check "the cache's entry is not taken" test -z "$(grep 'taken from the shared cache' t7/log2)"
+check "compiled again ($(compiles t7) compiles)" test "$(compiles t7)" -ge 1
+check "a whole DLL" test "$(check_dll t7/lib/arm64/libguest.so.aot.dll)" = sealed
+check "nothing left to do" test "$(needs_work t7 libguest.so)" = 0
+
+echo "== 8. a cache entry cut short"
+setup t8 libguest.so
+cp t1/cache/*.aot.dll t8/cache/
+entry=$(ls t8/cache/*.aot.dll)
+truncate -s 10 "$entry"
+FAKECLANG_MS=20 worker t8 > t8/log 2>&1
+check "not taken" test -z "$(grep 'taken from the shared cache' t8/log)"
+check "compiled instead ($(compiles t8) compiles)" test "$(compiles t8)" -ge 1
+check "the app's DLL is not the cut-short one ($(stat -c %s t8/lib/arm64/libguest.so.aot.dll) bytes)" \
+    test "$(stat -c %s t8/lib/arm64/libguest.so.aot.dll)" -gt 10
+check "a whole one in the cache now" test "$(check_dll "$entry")" = sealed
+
+echo "== 9. a library dated in the future"
+setup t9 libguest.so
+cp t1/cache/*.aot.dll t9/cache/  # as a second app: from the cache
+touch -d '+1 day' t9/lib/arm64/libguest.so
+FAKECLANG_MS=20 worker t9 > t9/log 2>&1
+taken=$(grep -c 'taken from the shared cache' t9/log || true)
+check "translated once, not at every pass ($taken)" test "$taken" -eq 1
+check "nothing left to do" test "$(needs_work t9 libguest.so)" = 0
+
+echo "== 10. temporary files left by killed writers"
+setup t10 libguest.so
+for f in t10/cache/x.aot.dll.1a2b-0.tmp t10/lib/arm64/libguest.so.aot.stamp.1a2b-0.tmp; do echo partial > "$f"; done
+touch t10/cache/fresh.aot.dll.1a2c-0.tmp
+touch -d '-2 hours' t10/cache/x.aot.dll.1a2b-0.tmp t10/lib/arm64/libguest.so.aot.stamp.1a2b-0.tmp
+FAKECLANG_MS=20 worker t10 > t10/log 2>&1
+check "the stale ones are deleted" test ! -e t10/cache/x.aot.dll.1a2b-0.tmp -a \
+    ! -e t10/lib/arm64/libguest.so.aot.stamp.1a2b-0.tmp
+check "a fresh one is left (its writer may be at it)" test -e t10/cache/fresh.aot.dll.1a2c-0.tmp
 
 echo
 if [ "$failures" -eq 0 ]; then echo "OK"; else echo "FAILED: $failures"; fi

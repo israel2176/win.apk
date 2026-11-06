@@ -210,7 +210,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: winapk-binaries
-          path: build/*.exe
+          path: |
+            build/*.exe
+            build/winapk-aot-test-dll.dll
           compression-level: 1
 
   unit-tests:
@@ -263,6 +265,10 @@ jobs:
           done
       - name: Run the arm64 test (interpreter, JIT, AOT)
         run: ./build/winapk-arm64-test.exe guest/arm64
+      - name: Run the translation cache test (racing and killed processes)
+        run: |
+          mkdir -p aot-cache-scratch
+          ./build/winapk-aot-cache-test.exe "$(cygpath -w "$PWD/aot-cache-scratch")"
       - name: Run the Bionic shim test
         run: |
           mkdir -p bionic-scratch

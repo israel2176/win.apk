@@ -34,6 +34,7 @@
 //
 // Exit code: the number of failed checks.
 
+#include "winapk/aot_files.h"
 #include "winapk/arm64_aot.h"
 #include "winapk/arm64_guest.h"
 #include "winapk/guest_abi.h"
@@ -457,6 +458,47 @@ void run_rebased(winapk::GuestLinker& linker, const std::filesystem::path& dir) 
     check("runs", winapk::arm64::call(fn, in, 3) == isa_arith(1, 2, 3));
 }
 
+// A translation cut short (a copy killed half way, data lost in a power cut)
+// under a stamp that says its DLLs are sealed (include/winapk/aot_files.h):
+// the loader must leave it alone and the JIT run the library. The same DLL
+// whole, with its seal, is loaded: the 32 bytes after the image are nothing
+// to LoadLibrary. Copies of libwinapk_arm64_unload.so and its translation.
+void run_sealed(winapk::GuestLinker& linker, const std::filesystem::path& dir) {
+    const std::filesystem::path so = dir / "libwinapk_arm64_unload.so", dll = dir / "libwinapk_arm64_unload.so.aot.dll";
+    std::error_code ec;
+    if (!std::filesystem::exists(dll, ec)) {
+        std::printf("libwinapk_arm64_torn.so\n  (no translation of libwinapk_arm64_unload.so: skipped)\n");
+        return;
+    }
+    for (const bool whole : {false, true}) {
+        const char* file = whole ? "libwinapk_arm64_sealed.so" : "libwinapk_arm64_torn.so";
+        std::printf("%s\n", file);
+        const std::filesystem::path copy = dir / file, copy_dll = copy.u8string() + ".aot.dll";
+        std::filesystem::remove(copy, ec);  // (MinGW's libstdc++ does not overwrite)
+        std::filesystem::remove(copy_dll, ec);
+        std::filesystem::copy_file(so, copy, ec);
+        std::filesystem::copy_file(dll, copy_dll, ec);
+        check("sealed", winapk::arm64::aot_seal(copy_dll));
+        if (!whole) std::filesystem::resize_file(copy_dll, std::filesystem::file_size(copy_dll, ec) / 2, ec);
+        char stamp[128];
+        std::snprintf(stamp, sizeof stamp, "full 0 %u 0 0 %llx %llx\n", winapk::arm64::kAotVersion,
+                      static_cast<unsigned long long>(winapk::arm64::aot_cpu_signature()),
+                      static_cast<unsigned long long>(winapk::arm64::aot_lib_id(copy)));
+        winapk::arm64::aot_write_file(copy.u8string() + ".aot.stamp", stamp);
+        std::string error;
+        void* lib = linker.open(file, winapk::GuestLinker::kRtldNow, &error);
+        check("open", lib != nullptr, error);
+        if (!lib) continue;
+        void* fn = sym(linker, lib, "isa_arith");
+        if (!fn) continue;
+        const bool translated = winapk::arm64::aot_lookup(reinterpret_cast<uint64_t>(fn)) != nullptr;
+        check(whole ? "its sealed translation is loaded" : "its translation cut short is refused", translated == whole);
+        const uint64_t in[3] = {1, 2, 3};
+        check("runs", winapk::arm64::call(fn, in, 3) == isa_arith(1, 2, 3));
+        check("dlclose", linker.close(lib, &error) == 0, error);
+    }
+}
+
 // arm64_patch_guest.c: a library that patches its own code. Each engine has
 // its own copy, as a translation is dropped for good once its library
 // writes code (arm64_aot.h, "Code the guest rewrites").
@@ -833,6 +875,7 @@ int main(int argc, char** argv) {
     }
     winapk::arm64::set_engine(winapk::arm64::Engine::kAot);
     run_rebased(linker, std::filesystem::u8path(argv[1]));
+    run_sealed(linker, std::filesystem::u8path(argv[1]));
     run_fuzz(linker, engines);
     run_speed(linker, engines);
 
