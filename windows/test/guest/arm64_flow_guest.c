@@ -277,6 +277,38 @@ __asm__(
     "    br x16\n"
     ".size flow_br_lr, .-flow_br_lr\n");
 
+__asm__(
+    ".text\n"
+    // Two entries into one body: flow_multi falls through into
+    // flow_multi_mid, which is also a function of its own (as a symbol, an
+    // .eh_frame_hdr entry or a BL target inside another function can be).
+    ".p2align 2\n"
+    ".globl flow_multi\n"
+    ".type flow_multi, %function\n"
+    "flow_multi:\n"
+    "    add x0, x0, #1\n"
+    "    cbz x1, flow_multi_mid\n"
+    "    add x0, x0, #100\n"
+    ".globl flow_multi_mid\n"
+    ".type flow_multi_mid, %function\n"
+    "flow_multi_mid:\n"
+    "    add x0, x0, #10\n"
+    "    ret\n"
+    ".size flow_multi_mid, .-flow_multi_mid\n"
+    ".size flow_multi, .-flow_multi\n");
+
+uint64_t flow_multi(uint64_t, uint64_t);
+uint64_t flow_multi_mid(uint64_t);
+
+// Each entry, called directly and from translated code.
+EXPORT uint64_t flow_entries(uint64_t x) {
+    uint64_t r = flow_multi(x, 0);
+    OPAQUE(r);
+    r = r * 1000 + flow_multi(x, 1);
+    OPAQUE(r);
+    return r * 1000 + flow_multi_mid(x);
+}
+
 uint64_t flow_retaa(uint64_t);
 EXPORT uint64_t flow_br_lr(uint64_t);
 
