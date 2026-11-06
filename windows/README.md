@@ -251,7 +251,10 @@ JNI, libGDX, SDL, NativeActivity, React Native, a WebView shell, an
 arm64-only build), all of which draw today, with `--require-drew`. Keep only
 apps that reliably draw in it. The whole corpus runs only when asked for:
 Actions > CI > Run workflow on the branch, with "Full compatibility sweep"
-ticked (the default). It runs as four shards on four machines, then joins them:
+ticked (the default). It gives each app 300 frames (5 s) after its first,
+where the smoke set has 150: a slow first start (LocalSend, a Flutter app
+whose first frame comes about 2.5 s after the window's on a runner) drew or
+not by a few hundred ms at 150, on main as on branches. It runs as four shards on four machines, then joins them:
 the ranked report is the run's summary, and the report, the logs and the last
 frames are the `compat-sweep` artifact. It fails nothing.
 

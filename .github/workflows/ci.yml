@@ -501,11 +501,15 @@ jobs:
         with:
           path: apk-cache
           key: compat-apks-${{ matrix.shard }}-of-4-${{ hashFiles('windows/test/compat/apps.txt') }}
+      # 300 frames (5 s after the first): a slow first start drew or not by a
+      # few hundred ms at 150, on main as on branches (LocalSend: its UI thread
+      # waits ~1.7 s for Flutter's GL setup on the runner's software GPU, then
+      # Dart does its first-run setup before the first Flutter frame).
       - name: Run the sweep
         shell: pwsh
         run: |
           python windows/test/compat/sweep.py --runtime stage --jdk "$env:JAVA_HOME" `
-            --apks apk-cache --out sweep --frames 150 --timeout 180 --shard ${{ matrix.shard }}/4
+            --apks apk-cache --out sweep --frames 300 --timeout 180 --shard ${{ matrix.shard }}/4
       - uses: actions/upload-artifact@v4
         if: always()
         with:
