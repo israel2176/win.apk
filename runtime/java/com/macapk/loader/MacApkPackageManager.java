@@ -365,20 +365,17 @@ public final class MacApkPackageManager extends PackageManager {
         //     it forced a fragile "no signature = dev build" fallback.
         // Reads the real certificate from the APK, newest signing scheme first
         // (v3.1 / v3 / v2 out of the APK Signing Block, then v1/JAR); falls back
-        // to null only when the APK is unreadable or carries no signature at all.
+        // to null when the APK is unreadable, carries no signature at all, or its
+        // signature does not verify (ApkVerification).
+        // With a v3 key rotation, GET_SIGNATURES answers the OLDEST certificate
+        // of the lineage and signingInfo the whole story (AOSP PackageInfoUtils).
         Signature[] sigs = readApkSignatures();
-        info.signatures  = sigs;
+        info.signatures  = legacySignatures(sigs, cachedPastSigners);
         // Use AOSP's 4-arg constructor so getSchemeVersion() reports the scheme we
         // actually verified rather than 0. Upstream degrades the whole object when
         // schemeVersion <= 0, so an unsigned/unreadable APK still yields the same
         // empty SigningInfo the signers-only constructor produced.
-        info.signingInfo = (sigs == null || sigs.length == 0)
-            ? new android.content.pm.SigningInfo(sigs)
-            : new android.content.pm.SigningInfo(
-                  cachedSchemeVersion,
-                  java.util.Arrays.asList(sigs),
-                  null,
-                  null);
+        info.signingInfo = signingInfo(cachedSchemeVersion, sigs, cachedPastSigners);
         // v1.0.834: AOSP PackageInfoUtils.generatePackageInfo fills the component
         // arrays when the caller asks for them. These were left null, so an app
         // enumerating its own components (a settings screen listing its
@@ -591,537 +588,99 @@ public final class MacApkPackageManager extends PackageManager {
         return out.toArray(new android.content.pm.ActivityInfo[0]);
     }
 
-    // Lazily read + cache the APK's REAL signing certificate(s). Every installed
-    // APK carries at least one, and a real device's PackageManager reports it
-    // whichever scheme signed the APK.
+    // The APK's signing certificate(s), as a device's PackageManager reports
+    // them: every installed APK carries at least one, whichever scheme signed it
+    // (v3.1 / v3 / v2 out of the APK Signing Block, else v1 / JAR). Reading only
+    // v1 (the pre-v1.0.5xx behavior) reported signatures=null for every
+    // v2/v3-only APK, and callers doing `signatures.length` NPE'd while
+    // self-signature checks took an unintended "tampered / unsigned" branch.
     //
-    // AOSP ApkSignatureVerifier tries the schemes newest-first (v3.1, v3, v2,
-    // then v1/JAR) and stops at the first one present, so we do the same. Reading
-    // only v1 (the pre-v1.0.5xx behavior) reported signatures=null for every
-    // v2/v3-only APK -- and v2-or-newer-only is normal for anything built with a
-    // recent Android Gradle Plugin, which is why real corpus APKs hit it. That
-    // null is exactly the lie the real-signature work removed for the v1 case:
-    // callers doing `signatures.length` NPE, and self-signature checks take an
-    // unintended "tampered / unsigned" branch.
+    // Win.apk: the certificates come from ApkVerification, which verifies the
+    // signature cryptographically (apksig) before any of them is believed. An
+    // APK whose signature does not verify reports no certificate at all, as an
+    // unsigned one did -- on a device it would not have installed. The reader
+    // used to parse the signing block without checking a single signature, so
+    // a certificate pasted into an APK was reported (and, for Google's, trusted
+    // as a system app).
     private Signature[] cachedSignatures;
+    /** The v3 rotation lineage (oldest first, current signer last), or null:
+     *  AOSP SigningDetails.getPastSigningCertificates. */
+    private Signature[] cachedPastSigners;
     private boolean     signaturesLoaded;
     /** APK signature scheme that actually produced cachedSignatures: 3 for v3/v3.1,
      *  2 for v2, 1 for v1/JAR, 0 for none. AOSP's SigningInfo.getSchemeVersion()
-     *  reports this, and we were hardcoding 0 by constructing SigningInfo with the
-     *  signers-only constructor -- so an app checking the scheme (a tamper check
-     *  that requires v2+, or one that refuses v1-only installs) read "unknown" for
-     *  a properly v3-signed APK. We already KNEW the answer here and threw it away. */
+     *  reports this; an app checking the scheme (a tamper check that requires v2+,
+     *  or one that refuses v1-only installs) reads it. */
     private int         cachedSchemeVersion;
     private synchronized Signature[] readApkSignatures() {
         if (signaturesLoaded) return cachedSignatures;
         signaturesLoaded = true;
         if (apkPath == null) return null;
-        Signature[] sigs = readSignaturesFromPath(apkPath);
-        // A split bundle (.apkm / .xapk / .apks) is a ZIP-of-APKs: the outer file
-        // has no APK Signing Block and no META-INF signature of its own, so the read
-        // above returns null. The SIGNED artifact is the inner base.apk. Extract it
-        // and read ITS certificate -- exactly what a device's PackageManager reports
-        // for the installed package (the base split carries the signing identity).
-        // This is the running app's OWN real signature, not a forged one. Without it,
-        // pairip's com.pairip.SignatureCheck.verifyIntegrity does signatures[0] on a
-        // null array and NPEs out of Application.attachBaseContext, which cascades
-        // (the obfuscated string pool never initializes) all the way to a black
-        // screen. (v1.0.1551.)
-        if (sigs == null || sigs.length == 0) {
-            // v1.0.1585+: apkPath is the INSTALLED base.apk, which carries the
-            // real signing block, so the read above normally succeeds and this
-            // fallback is idle. It survives for the legacy state, where apkPath
-            // is the synthetic MERGED single-zip (apk_unpacker.cpp flattens a
-            // bundle's base.apk + splits and drops the signing block): the
-            // ORIGINAL input is published by main.cpp as -Dmacapk.bundle.apk
-            // and, when that is a .apkm/.xapk container, its inner base.apk
-            // keeps the signature. Try apkPath-as-bundle first (a directly-
-            // passed .apkm), then the original input path. A plain apk on
-            // either path has no inner base.apk and falls through harmlessly.
-            for (String bundle : new String[]{ apkPath, System.getProperty("macapk.bundle.apk") }) {
-                if (bundle == null || bundle.isEmpty()) continue;
-                String inner = extractInnerBaseApk(bundle);
-                if (inner == null) continue;
-                Signature[] innerSigs = readSignaturesFromPath(inner);
-                if (innerSigs != null && innerSigs.length > 0) { sigs = innerSigs; break; }
+        ApkVerification.Result r = ApkVerification.of(apkPath);
+        // The legacy state, where apkPath is the synthetic MERGED single zip
+        // (apk_unpacker.cpp flattens a bundle and drops the signing block): the
+        // ORIGINAL input is -Dmacapk.bundle.apk, and a bundle there still carries
+        // its APKs' signatures. Since v1.0.1585 apkPath is the installed base.apk,
+        // so this is idle.
+        if (!r.verified && !InstalledSplits.isInstalledBase(apkPath)) {
+            String bundle = System.getProperty("macapk.bundle.apk");
+            if (bundle != null && !bundle.isEmpty() && !bundle.equals(apkPath)) {
+                ApkVerification.Result b = ApkVerification.of(bundle);
+                if (b.verified) r = b;
             }
         }
-        cachedSignatures = sigs;
+        Signature[][] s = signaturesOf(r);
+        cachedSignatures = s[0];
+        cachedPastSigners = s[1];
+        cachedSchemeVersion = r.verified ? r.scheme : 0;
+        return cachedSignatures;
+    }
+
+    /** {signers, past} of a verdict as Signatures (null, null when it did not
+     *  verify); the past ones carry their lineage capability flags. */
+    static Signature[][] signaturesOf(ApkVerification.Result r) {
+        if (r == null || !r.verified || r.signers.isEmpty()) return new Signature[2][];
+        Signature[] sigs = new Signature[r.signers.size()];
+        for (int i = 0; i < sigs.length; i++) sigs[i] = new Signature(r.signers.get(i));
+        Signature[] past = null;
+        if (r.past != null) {
+            past = new Signature[r.past.size()];
+            for (int i = 0; i < past.length; i++) {
+                past[i] = new Signature(r.past.get(i));
+                past[i].setFlags(r.pastFlags[i]);
+            }
+        }
+        return new Signature[][] { sigs, past };
+    }
+
+    /** AOSP PackageInfoUtils.generate, GET_SIGNATURES: with a rotation lineage
+     *  "Return the oldest cert so that programmatic checks keep working even if
+     *  unaware of key rotation", else every current signer. */
+    static Signature[] legacySignatures(Signature[] sigs, Signature[] past) {
+        if (past != null && past.length > 0) return new Signature[] { past[0] };
         return sigs;
+    }
+
+    /** AOSP new SigningInfo(SigningDetails): the current signers, the lineage
+     *  as the history, the scheme. */
+    static android.content.pm.SigningInfo signingInfo(int scheme, Signature[] sigs, Signature[] past) {
+        if (sigs == null || sigs.length == 0) return new android.content.pm.SigningInfo(sigs);
+        return new android.content.pm.SigningInfo(scheme, java.util.Arrays.asList(sigs.clone()), null,
+                past != null ? java.util.Arrays.asList(past.clone()) : null);
     }
 
     /** v1.0.1639: certificates of ANOTHER package's APK -- the base class's
      *  getPackageArchiveInfo seam, which registryPackageInfo goes through for
-     *  every registry-installed package. Same readers as the running app's own
-     *  signature (signing block first, then v1; a split bundle's inner
-     *  base.apk), but the scheme version the readers record in
-     *  cachedSchemeVersion is saved and restored so the running app's own
-     *  answer is untouched. Cached per (path, length, mtime): Aurora asks per
-     *  package per update check and F-Droid asks for the whole installed set,
-     *  and a v1 read or a bundle's inner-apk extraction is not free. */
-    private final java.util.Map<String, Object[]> archiveSignatureCache = new java.util.HashMap<>();
-
-    @Override protected synchronized Object[] macapkArchiveSignatures(String path) {
-        java.io.File f = new java.io.File(path);
-        if (!f.isFile()) return null;
-        String key = path + "|" + f.length() + "|" + f.lastModified();
-        Object[] hit = archiveSignatureCache.get(key);
-        if (hit != null) return hit;
-        int ownScheme = cachedSchemeVersion;
-        Signature[] sigs;
-        int scheme;
-        try {
-            cachedSchemeVersion = 0;
-            sigs = readSignaturesFromPath(path);
-            if (sigs == null || sigs.length == 0) {
-                String inner = extractInnerBaseApk(path);
-                if (inner != null) {
-                    sigs = readSignaturesFromPath(inner);
-                    new java.io.File(inner).delete();
-                }
-            }
-            scheme = cachedSchemeVersion;
-        } finally {
-            cachedSchemeVersion = ownScheme;
-        }
-        Object[] out = new Object[]{ sigs, scheme };
-        archiveSignatureCache.put(key, out);
-        return out;
-    }
-
-    /** Signing-block (v2/v3) first, then v1 (JAR / PKCS#7), reading from {@code path}. */
-    private Signature[] readSignaturesFromPath(String path) {
-        Signature[] sigs = readSigningBlockSignatures(path);
-        if (sigs == null) {
-            sigs = readV1Signatures(path);
-            if (sigs != null && sigs.length > 0) cachedSchemeVersion = 1;
-        }
-        return sigs;
-    }
-
-    /** If {@code bundlePath} is a split bundle (a ZIP whose entries are .apk files,
-     *  as APKMirror .apkm / .xapk / Play .apks are), extract the inner base.apk to a
-     *  temp file and return its path; otherwise null. The signing block needs random
-     *  access, so the inner apk is materialized rather than streamed. */
-    private String extractInnerBaseApk(String bundlePath) {
-        try (java.util.zip.ZipFile zip = new java.util.zip.ZipFile(bundlePath)) {
-            java.util.zip.ZipEntry base = zip.getEntry("base.apk");
-            if (base == null) {
-                // Some bundles nest the base split under a directory or name it
-                // <pkg>.apk. Take the first *.apk entry that is not a config/lang
-                // split (those carry no code-signing identity distinct from base).
-                java.util.Enumeration<? extends java.util.zip.ZipEntry> en = zip.entries();
-                while (en.hasMoreElements()) {
-                    java.util.zip.ZipEntry e = en.nextElement();
-                    if (e.isDirectory()) continue;
-                    String n = e.getName();
-                    String leaf = n.substring(n.lastIndexOf('/') + 1);
-                    if (leaf.endsWith(".apk")
-                            && !leaf.startsWith("config.")
-                            && !leaf.startsWith("split_")
-                            && !leaf.contains("install_pack")) {
-                        base = e; break;
-                    }
-                }
-            }
-            if (base == null) return null;   // not a bundle (a plain APK has no inner apk)
-            java.io.File tmp = java.io.File.createTempFile("macapk-baseapk", ".apk");
-            tmp.deleteOnExit();
-            byte[] buf = new byte[65536];
-            try (java.io.InputStream is = zip.getInputStream(base);
-                 java.io.OutputStream os = new java.io.FileOutputStream(tmp)) {
-                int n;
-                while ((n = is.read(buf)) != -1) os.write(buf, 0, n);
-            }
-            NativeLog.i("Mac.apk.PM", "extracted inner " + base.getName()
-                + " from split bundle for signature read -> " + tmp.getPath());
-            return tmp.getPath();
-        } catch (Throwable t) {
-            NativeLog.w("Mac.apk.PM", "extractInnerBaseApk(" + bundlePath + ") failed (" + t + ")");
-            return null;
-        }
-    }
-
-    // v1 (JAR) signing. Only reached when the APK carries no APK Signing Block,
-    // i.e. a genuinely v1-only APK.
-    //
-    // Two steps, because JarFile alone is not enough. JarFile's verifier applies
-    // the JDK's `jdk.jar.disabledAlgorithms` policy, and JDK 21 denies SHA-1
-    // signed JARs (SHA1 denyAfter 2019-01-01); when it denies one it does not
-    // throw, it silently treats the entry as UNSIGNED and getCertificates()
-    // returns null. Practically every pre-2019 APK is SHA1withRSA, so JarFile on
-    // its own reports "no signature" for exactly the old apps whose baked-in
-    // anti-tamper comparisons the real certificate exists to satisfy. A device's
-    // PackageManager has no such policy: it reports the certificate the package
-    // was signed with, whatever the digest's age. So when JarFile declines we
-    // read the certificate straight out of the PKCS#7 signature block, which is
-    // the same DER the verifier would have parsed.
-    private Signature[] readV1Signatures(String path) {
-        Signature[] sigs = readV1SignaturesVerified(path);
-        if (sigs == null) sigs = readV1SignaturesFromPkcs7(path);
-        return sigs;
-    }
-
-    private Signature[] readV1SignaturesVerified(String path) {
-        try (java.util.jar.JarFile jar = new java.util.jar.JarFile(path, true)) {
-            // Prefer a small, always-v1-signed entry (AndroidManifest.xml) to
-            // minimize I/O; fall back to the first non-META-INF file entry.
-            java.util.jar.JarEntry chosen = jar.getJarEntry("AndroidManifest.xml");
-            if (chosen == null) {
-                java.util.Enumeration<java.util.jar.JarEntry> en = jar.entries();
-                while (en.hasMoreElements()) {
-                    java.util.jar.JarEntry je = en.nextElement();
-                    if (!je.isDirectory() && !je.getName().startsWith("META-INF/")) {
-                        chosen = je; break;
-                    }
-                }
-            }
-            if (chosen == null) return null;
-            byte[] buf = new byte[16384];
-            try (java.io.InputStream is = jar.getInputStream(chosen)) {
-                while (is.read(buf) != -1) { /* read fully so certs load */ }
-            }
-            java.security.cert.Certificate[] certs = chosen.getCertificates();
-            if (certs == null || certs.length == 0) return null;
-            Signature[] sigs = new Signature[certs.length];
-            for (int i = 0; i < certs.length; i++)
-                sigs[i] = new Signature(certs[i].getEncoded());
-            NativeLog.i("Mac.apk.PM", "read " + sigs.length + " real APK signature(s) (v1/JAR) from " + path);
-            return sigs;
-        } catch (Throwable t) {
-            NativeLog.w("Mac.apk.PM", "readV1SignaturesVerified failed (" + t + ")");
-            return null;
-        }
-    }
-
-    /** The signer certificate(s) of a v1-signed APK, read from the PKCS#7
-     *  signature block(s) under META-INF (one .RSA / .DSA / .EC entry per
-     *  signer). CertificateFactory.generateCertificates parses a PKCS#7
-     *  SignedData container directly, which is what those entries are.
-     *  One Signature per SIGNER carrying that signer's end-entity certificate,
-     *  matching AOSP ApkSignatureVerifier.convertToSignatures. */
-    private Signature[] readV1SignaturesFromPkcs7(String path) {
-        try (java.util.zip.ZipFile zip = new java.util.zip.ZipFile(path)) {
-            java.security.cert.CertificateFactory cf =
-                java.security.cert.CertificateFactory.getInstance("X.509");
-            java.util.ArrayList<Signature> out = new java.util.ArrayList<>();
-            java.util.Enumeration<? extends java.util.zip.ZipEntry> en = zip.entries();
-            while (en.hasMoreElements()) {
-                java.util.zip.ZipEntry e = en.nextElement();
-                String name = e.getName();
-                if (!name.startsWith("META-INF/") || e.isDirectory()) continue;
-                String upper = name.toUpperCase(java.util.Locale.ROOT);
-                if (!upper.endsWith(".RSA") && !upper.endsWith(".DSA")
-                        && !upper.endsWith(".EC")) continue;
-                java.util.Collection<? extends java.security.cert.Certificate> certs;
-                try (java.io.InputStream is = zip.getInputStream(e)) {
-                    certs = cf.generateCertificates(is);
-                } catch (Throwable t) {
-                    continue;   // a malformed block is not a reason to lose the others
-                }
-                java.security.cert.X509Certificate leaf = endEntityCertificate(certs);
-                if (leaf != null) out.add(new Signature(leaf.getEncoded()));
-            }
-            if (out.isEmpty()) {
-                NativeLog.i("Mac.apk.PM", "APK carries no signature in any scheme; signatures=null");
-                return null;
-            }
-            NativeLog.i("Mac.apk.PM", "read " + out.size()
-                + " real APK signature(s) (v1/PKCS#7) from " + path);
-            return out.toArray(new Signature[0]);
-        } catch (Throwable t) {
-            NativeLog.w("Mac.apk.PM", "readV1SignaturesFromPkcs7 failed (" + t + "); signatures=null");
-            return null;
-        }
-    }
-
-    /** The end-entity (signing) certificate of a PKCS#7 chain: the one no other
-     *  certificate in the set was issued by. Android APKs are overwhelmingly
-     *  signed with a single self-signed certificate, where this is the only
-     *  candidate; the walk exists so a chained block still yields the leaf
-     *  rather than a CA. */
-    private static java.security.cert.X509Certificate endEntityCertificate(
-            java.util.Collection<? extends java.security.cert.Certificate> certs) {
-        java.util.ArrayList<java.security.cert.X509Certificate> xs =
-            new java.util.ArrayList<>();
-        for (java.security.cert.Certificate c : certs) {
-            if (c instanceof java.security.cert.X509Certificate) {
-                xs.add((java.security.cert.X509Certificate) c);
-            }
-        }
-        if (xs.isEmpty()) return null;
-        if (xs.size() == 1) return xs.get(0);
-        for (java.security.cert.X509Certificate c : xs) {
-            boolean issuedAnother = false;
-            for (java.security.cert.X509Certificate other : xs) {
-                if (other == c) continue;
-                if (other.getIssuerX500Principal().equals(c.getSubjectX500Principal())) {
-                    issuedAnother = true;
-                    break;
-                }
-            }
-            if (!issuedAnother) return c;
-        }
-        return xs.get(0);
-    }
-
-    // ---- APK Signature Scheme v2 / v3 ------------------------------------
-    // Block ids, from AOSP frameworks/base core/java/android/util/apk/
-    // ApkSignatureSchemeV2Verifier.java:75 and ApkSignatureSchemeV3Verifier.java
-    // :73-74. Tried newest-first, matching ApkSignatureVerifier's ordering.
-    private static final int APK_SIGNATURE_SCHEME_V2_BLOCK_ID  = 0x7109871a;
-    private static final int APK_SIGNATURE_SCHEME_V3_BLOCK_ID  = 0xf05368c0;
-    private static final int APK_SIGNATURE_SCHEME_V31_BLOCK_ID = 0x1b93ad61;
-    // "APK Sig Block 42", as the two little-endian longs AOSP compares against
-    // (ApkSigningBlockUtils.java:694-695).
-    private static final long APK_SIG_BLOCK_MAGIC_HI = 0x3234206b636f6c42L;
-    private static final long APK_SIG_BLOCK_MAGIC_LO = 0x20676953204b5041L;
-
-    /** Read the signing certificate(s) out of the APK Signing Block, the
-     *  length-prefixed id-value region that sits immediately before the ZIP
-     *  central directory (https://source.android.com/docs/security/features/
-     *  apksigning/v2). Returns null when the APK has no signing block or the
-     *  block does not parse, so the caller can fall back to v1.
-     *
-     *  WHAT THIS DOES NOT DO: it does not verify the APK's content digests, and
-     *  it does not verify the signature over signed-data. That is APK INTEGRITY
-     *  verification, which Mac.apk performs nowhere (it maps the DEX and the
-     *  native libraries unconditionally), so doing a fraction of it here would
-     *  buy no integrity guarantee while adding a way to fail closed on a
-     *  perfectly good APK. What this method owes its callers is the same thing
-     *  the v1 path owes them: the certificate the package was actually signed
-     *  with. It does keep AOSP's cheap structural check (the leaf certificate's
-     *  public key must equal the signer's own public key record), because a
-     *  mismatch there means the block did not parse the way we think it did. */
-    private Signature[] readSigningBlockSignatures(String path) {
-        try (java.io.RandomAccessFile raf = new java.io.RandomAccessFile(path, "r")) {
-            long cdOffset = findCentralDirOffset(raf);
-            if (cdOffset < 0) return null;
-            java.nio.ByteBuffer signingBlock = findApkSigningBlock(raf, cdOffset);
-            if (signingBlock == null) return null;
-            int[] order = { APK_SIGNATURE_SCHEME_V31_BLOCK_ID,
-                            APK_SIGNATURE_SCHEME_V3_BLOCK_ID,
-                            APK_SIGNATURE_SCHEME_V2_BLOCK_ID };
-            for (int blockId : order) {
-                java.nio.ByteBuffer scheme = findSchemeBlock(signingBlock, blockId);
-                if (scheme == null) continue;
-                boolean v3 = blockId != APK_SIGNATURE_SCHEME_V2_BLOCK_ID;
-                Signature[] sigs = parseSigners(scheme, v3);
-                if (sigs != null && sigs.length > 0) {
-                    // v3.1 and v3 both report scheme 3: AOSP's SigningDetails has no
-                    // separate v3.1 constant, and v3.1 is a rotation-targeting variant
-                    // of the v3 block, not a distinct scheme version.
-                    cachedSchemeVersion = v3 ? 3 : 2;
-                    NativeLog.i("Mac.apk.PM", "read " + sigs.length
-                        + " real APK signature(s) (scheme block 0x"
-                        + Integer.toHexString(blockId) + ", schemeVersion="
-                        + cachedSchemeVersion + ") from " + path);
-                    return sigs;
-                }
-            }
-            return null;
-        } catch (Throwable t) {
-            NativeLog.w("Mac.apk.PM", "readSigningBlockSignatures failed (" + t + ")");
-            return null;
-        }
-    }
-
-    /** Offset of the ZIP central directory, read out of the End Of Central
-     *  Directory record (scanned backwards from EOF, since the record is
-     *  followed only by a comment of up to 64 KB). -1 when there is no usable
-     *  EOCD, including the ZIP64 case where the 32-bit field is saturated:
-     *  a >4 GB APK is not something we can locate the signing block in with
-     *  this record alone, and v1 remains available. */
-    private static long findCentralDirOffset(java.io.RandomAccessFile raf)
-            throws java.io.IOException {
-        final int EOCD_LEN = 22;
-        long fileLen = raf.length();
-        if (fileLen < EOCD_LEN) return -1;
-        int scan = (int) Math.min(fileLen, 0xffffL + EOCD_LEN);
-        byte[] buf = new byte[scan];
-        raf.seek(fileLen - scan);
-        raf.readFully(buf);
-        for (int i = scan - EOCD_LEN; i >= 0; i--) {
-            if (buf[i] != 0x50 || buf[i + 1] != 0x4b
-                    || buf[i + 2] != 0x05 || buf[i + 3] != 0x06) continue;
-            int commentLen = u16(buf, i + 20);
-            // The comment must run exactly to EOF, which is what disambiguates a
-            // real EOCD from the same four bytes appearing inside compressed data.
-            if (i + EOCD_LEN + commentLen != scan) continue;
-            long cdOffset = u32(buf, i + 16);
-            if (cdOffset == 0xffffffffL) return -1;   // ZIP64
-            return (cdOffset <= fileLen) ? cdOffset : -1;
-        }
-        return -1;
-    }
-
-    private static int u16(byte[] b, int off) {
-        return (b[off] & 0xff) | ((b[off + 1] & 0xff) << 8);
-    }
-    private static long u32(byte[] b, int off) {
-        return (b[off] & 0xffL) | ((b[off + 1] & 0xffL) << 8)
-             | ((b[off + 2] & 0xffL) << 16) | ((b[off + 3] & 0xffL) << 24);
-    }
-
-    /** Mirrors AOSP ApkSigningBlockUtils.findApkSigningBlock. Layout, ending at
-     *  the central directory offset:
-     *      @+0  uint64  size in bytes (excluding this field)
-     *      @+8          payload (id-value pairs)
-     *      @-24 uint64  the same size again
-     *      @-16         the 16-byte magic
-     *  Returns the whole block (size field included, so pair walking starts at
-     *  offset 8 exactly as upstream), or null when it is absent/inconsistent. */
-    private static java.nio.ByteBuffer findApkSigningBlock(
-            java.io.RandomAccessFile raf, long cdOffset) throws java.io.IOException {
-        final int MIN_SIZE = 32;
-        if (cdOffset < MIN_SIZE) return null;
-        byte[] footer = new byte[24];
-        raf.seek(cdOffset - footer.length);
-        raf.readFully(footer);
-        java.nio.ByteBuffer fb = java.nio.ByteBuffer.wrap(footer)
-                .order(java.nio.ByteOrder.LITTLE_ENDIAN);
-        if (fb.getLong(8) != APK_SIG_BLOCK_MAGIC_LO
-                || fb.getLong(16) != APK_SIG_BLOCK_MAGIC_HI) {
-            return null;
-        }
-        long sizeInFooter = fb.getLong(0);
-        if (sizeInFooter < footer.length || sizeInFooter > Integer.MAX_VALUE - 8) return null;
-        int total = (int) (sizeInFooter + 8);
-        long blockOffset = cdOffset - total;
-        if (blockOffset < 0) return null;
-        byte[] raw = new byte[total];
-        raf.seek(blockOffset);
-        raf.readFully(raw);
-        java.nio.ByteBuffer block = java.nio.ByteBuffer.wrap(raw)
-                .order(java.nio.ByteOrder.LITTLE_ENDIAN);
-        // The two size fields must agree, exactly as upstream requires.
-        if (block.getLong(0) != sizeInFooter) return null;
-        return block;
-    }
-
-    /** Mirrors AOSP ApkSigningBlockUtils.findApkSignatureSchemeBlock: walk the
-     *  uint64-length-prefixed id-value pairs between the leading size field and
-     *  the trailing size+magic, and return the value of the pair with this id. */
-    private static java.nio.ByteBuffer findSchemeBlock(
-            java.nio.ByteBuffer signingBlock, int blockId) {
-        java.nio.ByteBuffer pairs =
-            sliceFromTo(signingBlock, 8, signingBlock.capacity() - 24);
-        if (pairs == null) return null;
-        while (pairs.remaining() >= 8) {
-            long lenLong = pairs.getLong();
-            if (lenLong < 4 || lenLong > Integer.MAX_VALUE) return null;
-            int len = (int) lenLong;
-            if (len > pairs.remaining()) return null;
-            int nextEntryPos = pairs.position() + len;
-            int id = pairs.getInt();
-            if (id == blockId) return sliceFromTo(pairs, pairs.position(), nextEntryPos);
-            pairs.position(nextEntryPos);
-        }
-        return null;
-    }
-
-    /** Extract one Signature per signer from a v2 or v3 scheme block.
-     *
-     *  Layouts (all length prefixes are uint32 little-endian), from AOSP
-     *  ApkSignatureSchemeV2Verifier.verifySigner and
-     *  ApkSignatureSchemeV3Verifier.verifySigner:
-     *      block  = len-prefixed sequence of len-prefixed signers
-     *      signer = [signed data] (v3 only: [minSdk][maxSdk]) [signatures] [public key]
-     *      signed data = [digests] [certificates] (v3 only: [minSdk][maxSdk]) [attributes]
-     *      certificates = sequence of len-prefixed X.509 DER certificates
-     *  The signing certificate is the FIRST certificate of each signer, and the
-     *  Signature carries its verbatim DER bytes -- that is what AOSP's
-     *  VerbatimX509Certificate + convertToSignatures produce.
-     *
-     *  v3 signers are scoped to a platform range; AOSP skips a signer whose
-     *  [minSdk, maxSdk] does not contain the running SDK_INT, so we do too. If
-     *  that leaves no signer, the caller falls through to the next scheme. */
-    private static Signature[] parseSigners(java.nio.ByteBuffer schemeBlock, boolean v3)
-            throws java.security.cert.CertificateException {
-        java.nio.ByteBuffer signers = lenPrefixedSlice(schemeBlock);
-        if (signers == null) return null;
-        java.security.cert.CertificateFactory certFactory =
-            java.security.cert.CertificateFactory.getInstance("X.509");
-        java.util.ArrayList<Signature> out = new java.util.ArrayList<>();
-        while (signers.remaining() >= 4) {
-            java.nio.ByteBuffer signer = lenPrefixedSlice(signers);
-            if (signer == null) return null;
-            java.nio.ByteBuffer signedData = lenPrefixedSlice(signer);
-            if (signedData == null) return null;
-            if (v3) {
-                if (signer.remaining() < 8) return null;
-                int minSdk = signer.getInt();
-                int maxSdk = signer.getInt();
-                if (android.os.Build.VERSION.SDK_INT < minSdk
-                        || android.os.Build.VERSION.SDK_INT > maxSdk) {
-                    continue;   // this signer targets a different platform version
-                }
-            }
-            if (lenPrefixedSlice(signer) == null) return null;      // signatures
-            byte[] publicKeyBytes = lenPrefixedBytes(signer);       // public key
-            if (lenPrefixedSlice(signedData) == null) return null;  // digests
-            java.nio.ByteBuffer certificates = lenPrefixedSlice(signedData);
-            if (certificates == null) return null;
-            byte[] leaf = lenPrefixedBytes(certificates);
-            if (leaf == null) return null;
-            java.security.cert.X509Certificate cert =
-                (java.security.cert.X509Certificate) certFactory.generateCertificate(
-                    new java.io.ByteArrayInputStream(leaf));
-            // AOSP: "Public key mismatch between certificate and signature record".
-            if (publicKeyBytes == null
-                    || !java.util.Arrays.equals(publicKeyBytes,
-                                                cert.getPublicKey().getEncoded())) {
-                return null;
-            }
-            out.add(new Signature(leaf));
-        }
-        return out.isEmpty() ? null : out.toArray(new Signature[0]);
-    }
-
-    /** Consume a uint32 length prefix and return that many bytes as an
-     *  independent little-endian view, advancing the source past them. */
-    private static java.nio.ByteBuffer lenPrefixedSlice(java.nio.ByteBuffer src) {
-        if (src == null || src.remaining() < 4) return null;
-        int len = src.getInt();
-        if (len < 0 || len > src.remaining()) return null;
-        int start = src.position();
-        int end   = start + len;
-        java.nio.ByteBuffer out = sliceFromTo(src, start, end);
-        if (out == null) return null;
-        src.position(end);
-        return out;
-    }
-
-    private static byte[] lenPrefixedBytes(java.nio.ByteBuffer src) {
-        if (src == null || src.remaining() < 4) return null;
-        int len = src.getInt();
-        if (len < 0 || len > src.remaining()) return null;
-        byte[] out = new byte[len];
-        src.get(out);
-        return out;
-    }
-
-    /** Mirrors AOSP ApkSigningBlockUtils.sliceFromTo: an independent buffer over
-     *  [start, end) of the source, leaving the source's position and limit
-     *  untouched. The position/limit assignment order matters (limit first),
-     *  because start may be beyond the current limit. */
-    private static java.nio.ByteBuffer sliceFromTo(java.nio.ByteBuffer source,
-                                                   int start, int end) {
-        if (start < 0 || end < start || end > source.capacity()) return null;
-        int originalLimit = source.limit();
-        int originalPosition = source.position();
-        try {
-            source.position(0);
-            source.limit(end);
-            source.position(start);
-            java.nio.ByteBuffer result = source.slice();
-            result.order(source.order());
-            return result;
-        } finally {
-            source.position(0);
-            source.limit(originalLimit);
-            source.position(originalPosition);
-        }
+     *  every registry-installed package: {signers, scheme, lineage}. The
+     *  verdict is ApkVerification's, cached per file (path, size, mtime): Aurora
+     *  asks per package per update check and F-Droid asks for the whole
+     *  installed set. */
+    @Override protected Object[] macapkArchiveSignatures(String path) {
+        if (path == null || !new java.io.File(path).isFile()) return null;
+        ApkVerification.Result r = ApkVerification.of(path);
+        if (!r.verified) return null;
+        Signature[][] s = signaturesOf(r);
+        return new Object[]{ s[0], r.scheme, s[1] };
     }
 
     @Override public ApplicationInfo getApplicationInfo(String packageName, int flags)
@@ -1837,7 +1396,7 @@ public final class MacApkPackageManager extends PackageManager {
             // GoogleSignatureVerifier) reads flags & 129 to decide trust. See
             // platformSystemPackage(). This is the cross-package answer path --
             // the one GMS hits when it asks us about its CALLER com.android.vending.
-            if (platformSystemPackage(row.pkg)) {
+            if (platformSystemApk(row.pkg, apk)) {
                 info.applicationInfo.flags |= ApplicationInfo.FLAG_SYSTEM
                                             | ApplicationInfo.FLAG_UPDATED_SYSTEM_APP;
             }
@@ -6288,21 +5847,40 @@ public final class MacApkPackageManager extends PackageManager {
      *  MACAPK_PLATFORM_SYSTEM_FLAGS=0. */
     /** Win.apk: on Windows the platform treatment above is for the REAL Google
      *  packages only. An installed APK named com.google.android.gms (or the
-     *  store, or GSF) is a system app here only when Google's own certificate
-     *  signed it (com.macapk.gms.GoogleGmsCertificate.isGoogleSigner); anyone can
-     *  build an APK with that package name. The in-process stand-ins (no APK)
-     *  keep their answer, and on the Mac nothing changes. */
+     *  store, or GSF) is a system app here only when its signature VERIFIES
+     *  (ApkVerification: every APK of the set, with apksig) and Google's
+     *  certificate signed it, as its current signer or as an ancestor in its
+     *  verified rotation lineage (Play services 26.x is signed by a newer Google
+     *  key that rotated from the old one). Anyone can build an APK with that
+     *  package name, and anyone can paste Google's public certificate into one;
+     *  only Google can sign it. The in-process stand-ins (no APK) keep their
+     *  answer, and on the Mac nothing changes. */
     private boolean macapkPlatformApkTrusted() {
         if (!HostAppSupport.windowsHost() || apkPath == null) return true;
-        return com.macapk.gms.GoogleGmsCertificate.isGoogleSigner(readApkSignatures());
+        return googleSignedApk(packageName, apkPath);
     }
 
-    /** The broker's question (SystemServer.bootSystemServices): is the
-     *  installed `apkPath` the real platform package `pkg`? */
+    /** The broker's question (SystemServer.bootSystemServices), and the
+     *  cross-package one (registryPackageInfo): is the installed `apkPath` the
+     *  real platform package `pkg`? */
     static boolean platformSystemApk(String pkg, String apkPath) {
         if (!platformSystemPackage(pkg)) return false;
         if (!HostAppSupport.windowsHost() || apkPath == null) return true;
-        return new MacApkPackageManager(pkg, apkPath, null, null, null, null).macapkPlatformApkTrusted();
+        return googleSignedApk(pkg, apkPath);
+    }
+
+    private static final java.util.Set<String> UNTRUSTED_LOGGED =
+        java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    private static boolean googleSignedApk(String pkg, String apkPath) {
+        ApkVerification.Result r = ApkVerification.of(apkPath);
+        boolean ok = r.verified && com.macapk.gms.GoogleGmsCertificate.isGoogleSigner(r);
+        if (!ok && UNTRUSTED_LOGGED.add(apkPath)) {
+            NativeLog.w("Mac.apk.PM", pkg + " at " + apkPath + " is not treated as a Google system app: "
+                + (r.verified ? "Google's certificate did not sign it" : "its signature does not verify ("
+                + r.reason + ")"));
+        }
+        return ok;
     }
 
     static boolean platformSystemPackage(String pkg) {

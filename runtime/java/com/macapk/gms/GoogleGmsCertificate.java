@@ -33,15 +33,12 @@ public final class GoogleGmsCertificate {
         return new android.content.pm.Signature(java.util.Base64.getDecoder().decode(DER_BASE64));
     }
 
-    /** Whether one of `signers` is this certificate: the APK really is Google's.
-     *  Compared as whole DER encodings, not by name or by a self-declared field. */
-    public static boolean isGoogleSigner(android.content.pm.Signature[] signers) {
-        if (signers == null) return false;
-        byte[] google = java.util.Base64.getDecoder().decode(DER_BASE64);
-        for (android.content.pm.Signature s : signers) {
-            if (s != null && java.security.MessageDigest.isEqual(google, s.toByteArray())) return true;
-        }
-        return false;
+    /** Whether Google's certificate signed this verified APK: as its signer,
+     *  or as an earlier signer in its verified v3 rotation lineage (Play
+     *  services 26.x is signed by a newer Google key, SHA-1 bd324242..., whose
+     *  lineage starts at this one). False for an APK that did not verify. */
+    public static boolean isGoogleSigner(com.macapk.loader.ApkVerification.Result r) {
+        return r != null && r.signedBy(java.util.Base64.getDecoder().decode(DER_BASE64));
     }
 
     private static final String DER_BASE64 =

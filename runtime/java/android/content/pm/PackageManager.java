@@ -773,14 +773,19 @@ public abstract class PackageManager {
         return info;
     }
 
-    /** Mac.apk seam: {Signature[] signers, Integer schemeVersion} for the APK
-     *  (or split bundle) at {@code path}, or null when it cannot be read.
-     *  MacApkPackageManager overrides it with its signing-block / v1 reader;
-     *  the base answer is "unknown". */
+    /** Mac.apk seam: {Signature[] signers, Integer schemeVersion, Signature[]
+     *  lineage-or-null} for the APK (or split bundle) at {@code path}, or null
+     *  when it cannot be read or its signature does not verify.
+     *  MacApkPackageManager overrides it with ApkVerification; the base answer
+     *  is "unknown". */
     protected Object[] macapkArchiveSignatures(String path) { return null; }
 
     /** Fill the signature fields {@code flags} asks for from the APK at
-     *  {@code path}. Fresh arrays per call, as AOSP hands out. */
+     *  {@code path}. Fresh arrays per call, as AOSP hands out. AOSP
+     *  PackageInfoUtils.generate: GET_SIGNATURES gets the OLDEST certificate of
+     *  a v3 rotation lineage ("so that programmatic checks keep working even if
+     *  unaware of key rotation"), else every signer; GET_SIGNING_CERTIFICATES
+     *  gets the whole SigningDetails. */
     protected final void macapkFillSignatures(PackageInfo info, String path, int flags) {
         Object[] s = null;
         try { s = path != null ? macapkArchiveSignatures(path) : null; }
@@ -788,10 +793,14 @@ public abstract class PackageManager {
         Signature[] sigs = s != null ? (Signature[]) s[0] : null;
         if (sigs == null || sigs.length == 0) return;
         int scheme = s[1] instanceof Integer ? (Integer) s[1] : 0;
-        if ((flags & GET_SIGNATURES) != 0) info.signatures = sigs.clone();
+        Signature[] past = s.length > 2 && s[2] instanceof Signature[] ? (Signature[]) s[2] : null;
+        if ((flags & GET_SIGNATURES) != 0) {
+            info.signatures = past != null && past.length > 0 ? new Signature[] { past[0] } : sigs.clone();
+        }
         if ((flags & GET_SIGNING_CERTIFICATES) != 0) {
             info.signingInfo = scheme > 0
-                ? new SigningInfo(scheme, java.util.Arrays.asList(sigs.clone()), null, null)
+                ? new SigningInfo(scheme, java.util.Arrays.asList(sigs.clone()), null,
+                      past != null ? java.util.Arrays.asList(past.clone()) : null)
                 : new SigningInfo(sigs.clone());
         }
     }
@@ -1052,13 +1061,13 @@ public abstract class PackageManager {
      *  with GET_SIGNATURES since it takes into account the possibility of signing
      *  certificate rotation." Returns true only on an exact match.
      *
-     *  Real work, not a stub: we ask ourselves for the package's PackageInfo (the
-     *  Mac.apk PackageManager reads the APK's actual signing certificate off disk)
-     *  and run AOSP's own comparison. Mirrors SigningDetails.hasCertificateInternal
-     *  / hasSha256CertificateInternal: the current-signer match requires EXACTLY
-     *  one signature (rotation is unsupported for multiply-signed packages), and
-     *  the rotation-history branch is skipped because an APK we load has no
-     *  lineage (SigningInfo.hasPastSigningCertificates() is false).
+     *  Real work, not a stub: we ask ourselves for the package's SigningInfo (the
+     *  Mac.apk PackageManager reports the certificates of the APK's verified
+     *  signature) and run AOSP's own comparison, SigningDetails
+     *  .hasCertificateInternal / hasSha256CertificateInternal with
+     *  PAST_CERT_EXISTS: every PAST signer of the rotation lineage except the
+     *  last (the current one), then the current signer, which must be the only
+     *  one (rotation is unsupported for multiply-signed packages).
      *
      *  A package that is not installed here throws NameNotFoundException out of
      *  getPackageInfo; "not installed" means "was not signed by that cert", so
@@ -1068,29 +1077,34 @@ public abstract class PackageManager {
      *  observable behavior. */
     public boolean hasSigningCertificate(String packageName, byte[] certificate, int type) {
         if (packageName == null || certificate == null) return false;
-        Signature[] sigs;
+        if (type != CERT_INPUT_RAW_X509 && type != CERT_INPUT_SHA256) return false;
+        SigningInfo si;
         try {
-            PackageInfo info = getPackageInfo(packageName, GET_SIGNING_CERTIFICATES);
-            sigs = (info != null) ? info.signatures : null;
+            si = signingOf(packageName);
         } catch (NameNotFoundException e) {
             return false;
         }
-        if (sigs == null || sigs.length != 1) return false;
-        byte[] mine = sigs[0].toByteArray();
-        if (mine == null) return false;
-        if (type == CERT_INPUT_RAW_X509) {
-            return java.util.Arrays.equals(certificate, mine);
-        }
-        if (type == CERT_INPUT_SHA256) {
-            try {
-                byte[] digest = java.security.MessageDigest
-                    .getInstance("SHA-256").digest(mine);
-                return java.util.Arrays.equals(certificate, digest);
-            } catch (java.security.NoSuchAlgorithmException e) {
-                return false;
+        if (si == null) return false;
+        Signature[] current = si.getApkContentsSigners();
+        if (si.hasPastSigningCertificates()) {
+            Signature[] past = si.getSigningCertificateHistory();
+            for (int i = 0; past != null && i < past.length - 1; i++) {
+                if (certificateMatches(past[i], certificate, type)) return true;
             }
         }
-        return false;
+        return current != null && current.length == 1 && certificateMatches(current[0], certificate, type);
+    }
+
+    private static boolean certificateMatches(Signature s, byte[] certificate, int type) {
+        byte[] mine = s != null ? s.toByteArray() : null;
+        if (mine == null) return false;
+        if (type == CERT_INPUT_RAW_X509) return java.util.Arrays.equals(certificate, mine);
+        try {
+            byte[] digest = java.security.MessageDigest.getInstance("SHA-256").digest(mine);
+            return java.util.Arrays.equals(certificate, digest);
+        } catch (java.security.NoSuchAlgorithmException e) {
+            return false;
+        }
     }
 
     /** AOSP uid-keyed overload: "analogous to using getPackagesForUid followed by
@@ -1396,10 +1410,10 @@ public abstract class PackageManager {
      *  both of them. If they do contain the same signature, then they are
      *  allowed special privileges when working with each other."
      *
-     *  This is a REAL comparison, not a constant: both packages' signatures come
-     *  from getPackageInfo(GET_SIGNATURES), which on Mac.apk reads the APK's
-     *  actual signing certificate off disk (MacApkPackageManager
-     *  .readApkSignatures). The result codes follow AOSP's own ladder --
+     *  This is a REAL comparison, not a constant: both packages' signers come
+     *  from getPackageInfo(GET_SIGNING_CERTIFICATES), which on Win.apk reports
+     *  the certificates of the APK's verified signature (MacApkPackageManager
+     *  .readApkSignatures, ApkVerification). The result codes follow AOSP's own ladder --
      *  unknown package, neither signed, one signed, no match, match -- so a
      *  same-signature check between an app and itself answers SIGNATURE_MATCH,
      *  which is what a device answers and what a shared-uid or bound-service
@@ -1411,14 +1425,26 @@ public abstract class PackageManager {
         // either is missing, even for two identical names -- so a check against
         // an uninstalled package must not come back MATCH just because the
         // caller passed the same string twice.
-        Signature[] a, b;
+        SigningInfo a, b;
         try {
-            a = signaturesOf(packageName1);
-            b = signaturesOf(packageName2);
+            a = signingOf(packageName1);
+            b = signingOf(packageName2);
         } catch (NameNotFoundException e) {
             return SIGNATURE_UNKNOWN_PACKAGE;
         }
-        return compareSignatures(a, b);
+        Signature[] s1 = signersOf(a), s2 = signersOf(b);
+        int result = compareSignatures(s1, s2);
+        // AOSP ComputerEngine.checkSignaturesInternal: "To support backwards
+        // compatibility with clients of this API expecting pre-key rotation
+        // results if either of the packages has a signing lineage the oldest
+        // signer in the lineage is used for signature verification."
+        boolean past1 = a != null && a.hasPastSigningCertificates();
+        boolean past2 = b != null && b.hasPastSigningCertificates();
+        if (result != SIGNATURE_MATCH && s1 != null && s2 != null && (past1 || past2)) {
+            result = compareSignatures(past1 ? new Signature[] { a.getSigningCertificateHistory()[0] } : s1,
+                                       past2 ? new Signature[] { b.getSigningCertificateHistory()[0] } : s2);
+        }
+        return result;
     }
 
     /** AOSP uid-keyed overload: the same question asked about the packages in
@@ -1432,9 +1458,20 @@ public abstract class PackageManager {
         return checkSignatures(p1[0], p2[0]);
     }
 
-    private Signature[] signaturesOf(String packageName) throws NameNotFoundException {
-        PackageInfo info = getPackageInfo(packageName, GET_SIGNATURES);
-        return (info != null) ? info.signatures : null;
+    /** The package's SigningInfo; a PackageInfo that only carries the legacy
+     *  array (a synthetic platform package) is taken as that one signer set. */
+    private SigningInfo signingOf(String packageName) throws NameNotFoundException {
+        PackageInfo info = getPackageInfo(packageName, GET_SIGNATURES | GET_SIGNING_CERTIFICATES);
+        if (info == null) return null;
+        SigningInfo si = info.signingInfo;
+        if (si != null && si.getApkContentsSigners() != null && si.getApkContentsSigners().length > 0) return si;
+        return info.signatures != null && info.signatures.length > 0 ? new SigningInfo(info.signatures) : si;
+    }
+
+    /** The current signers (SigningDetails.getSignatures), null when unsigned. */
+    private static Signature[] signersOf(SigningInfo si) {
+        Signature[] s = si != null ? si.getApkContentsSigners() : null;
+        return s != null && s.length > 0 ? s : null;
     }
 
     /** AOSP PackageManagerServiceUtils.compareSignatures, verbatim ladder. */
