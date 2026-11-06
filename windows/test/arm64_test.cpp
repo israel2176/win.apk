@@ -313,6 +313,7 @@ void run_flow(winapk::GuestLinker& linker, const char* file) {
         }
         expect("coroutines switching at one call site on their own stacks", call("flow_coroutines", {1000}), acc);
     }
+    expect("a variadic guest function: 8 integers and 4 doubles through va_arg", call("flow_variadic"), 1634474);
     expect("RETAA from a call", call("flow_call_retaa", {5}), 12);
     expect("RETAA from the host's call", call("flow_retaa", {7}), 8);
     expect("a return through BR x16 to the host's call", call("flow_br_lr", {5}), 7);

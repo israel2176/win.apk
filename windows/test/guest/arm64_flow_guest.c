@@ -336,6 +336,34 @@ EXPORT uint64_t flow_deep_thread(uint64_t n) {
     return (uint64_t)r;
 }
 
+// ---- variadic functions in guest code ----------------------------------------------------
+// The prologue spills x1-x7 and q0-q7 to the va_list save areas; va_arg
+// walks them, then the stack. (An open case: a variadic function of Waze's
+// libcrashlytics-common.so, arm64_aot.cpp.)
+typedef __builtin_va_list va_list;
+
+static NOINLINE double vsum(int n, va_list ap) {
+    double s = 0;
+    for (int i = 0; i < n; ++i) {
+        s = s * 3 + (i % 3 == 2 ? __builtin_va_arg(ap, double) : (double)__builtin_va_arg(ap, long));
+    }
+    return s;
+}
+
+static NOINLINE double sum_va(int n, ...) {
+    va_list ap;
+    __builtin_va_start(ap, n);
+    const double s = vsum(n, ap);
+    __builtin_va_end(ap);
+    return s;
+}
+
+// 12 values: 8 integers (7 in registers, then the stack) and 4 doubles.
+EXPORT long flow_variadic(void) {
+    const double s = sum_va(12, 1L, 2L, 3.5, 4L, 5L, 6.25, 7L, 8L, 9.75, 10L, 11L, 12.5);
+    return (long)(s * 4);
+}
+
 // ---- floating point edge cases -----------------------------------------------------------
 // Each writes its results to out[] and returns how many.
 static inline uint32_t bits_f(float f) {
