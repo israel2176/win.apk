@@ -182,7 +182,8 @@ def memory():
     if k == 5:  # pair with writeback
         base, a, b = distinct(3)
         op = rng.choice(["ldp", "stp"])
-        mode = rng.choice(["[x%d, #%d]!" % (base, 16 * rng.randrange(-4, 4)), "[x%d], #%d" % (base, 16 * rng.randrange(-4, 4))])
+        mode = rng.choice(["[x%d, #%d]!" % (base, 16 * rng.randrange(-4, 4)),
+                           "[x%d], #%d" % (base, 16 * rng.randrange(-4, 4))])
         return "add x%d, x28, #%d\n    %s x%d, x%d, %s" % (base, rng.randrange(1024, 3072) & ~15, op, a, b, mode)
     if k == 6:  # SIMD&FP registers
         op, reg, sz = rng.choice([("ldr", "q", 16), ("str", "q", 16), ("ldr", "d", 8), ("str", "d", 8),
@@ -199,12 +200,15 @@ def memory():
         arr = rng.choice(["16b", "8b", "8h", "4s", "2d", "4h", "2s"])
         form = rng.choice([
             "ld1 {v%d.%s}" % (v0, arr), "st1 {v%d.%s}" % (v0, arr),
-            "ld1 {v%d.%s, v%d.%s}" % (v0, arr, v0 + 1, arr), "st1 {v%d.%s, v%d.%s, v%d.%s}" % (v0, arr, v0 + 1, arr, v0 + 2, arr),
+            "ld1 {v%d.%s, v%d.%s}" % (v0, arr, v0 + 1, arr),
+            "st1 {v%d.%s, v%d.%s, v%d.%s}" % (v0, arr, v0 + 1, arr, v0 + 2, arr),
             "ld1 {v%d.%s, v%d.%s, v%d.%s, v%d.%s}" % (v0, arr, v0 + 1, arr, v0 + 2, arr, v0 + 3, arr),
             "ld2 {v%d.%s, v%d.%s}" % (v0, arr if arr != "2d" else "4s", v0 + 1, arr if arr != "2d" else "4s"),
             "st2 {v%d.%s, v%d.%s}" % (v0, arr if arr != "2d" else "4s", v0 + 1, arr if arr != "2d" else "4s"),
-            "ld3 {v%d.4s, v%d.4s, v%d.4s}" % (v0, v0 + 1, v0 + 2), "st4 {v%d.8b, v%d.8b, v%d.8b, v%d.8b}" % (v0, v0 + 1, v0 + 2, v0 + 3),
-            "ld1r {v%d.%s}" % (v0, arr), "ld1 {v%d.s}[%d]" % (v0, rng.randrange(4)), "st1 {v%d.h}[%d]" % (v0, rng.randrange(8)),
+            "ld3 {v%d.4s, v%d.4s, v%d.4s}" % (v0, v0 + 1, v0 + 2),
+            "st4 {v%d.8b, v%d.8b, v%d.8b, v%d.8b}" % (v0, v0 + 1, v0 + 2, v0 + 3),
+            "ld1r {v%d.%s}" % (v0, arr), "ld1 {v%d.s}[%d]" % (v0, rng.randrange(4)),
+            "st1 {v%d.h}[%d]" % (v0, rng.randrange(8)),
             "ld1 {v%d.d}[%d]" % (v0, rng.randrange(2)), "ld1 {v%d.b}[%d]" % (v0, rng.randrange(16)),
         ])
         post = rng.choice(["", ", #%d" % 0, ", x%d" % rng.choice([d for d in DATA if d != base])])
@@ -229,7 +233,8 @@ def memory():
         return "add x%d, x28, #%d\n    %s x%d, x%d, [x%d]" % (a, 8 * rng.randrange(400), op, s, t, a)
     # LDAR/STLR
     a, t = distinct(2)
-    return "add x%d, x28, #%d\n    %s x%d, [x%d]" % (a, 8 * rng.randrange(400), rng.choice(["ldar", "stlr", "ldapr"]), t, a)
+    return "add x%d, x28, #%d\n    %s x%d, [x%d]" % (a, 8 * rng.randrange(400), rng.choice(["ldar", "stlr", "ldapr"]),
+                                                     t, a)
 
 
 ARR_I = ["8b", "16b", "4h", "8h", "2s", "4s"]
@@ -348,7 +353,8 @@ def simd():
                 v |= (0xff if rng.random() < 0.5 else 0) << (8 * i)
             return "movi v%d.2d, #0x%x" % (d, v)
         if op == 3:
-            return "fmov v%d.%s, #%s" % (d, rng.choice(["2s", "4s", "2d"]), rng.choice(["1.0", "-2.5", "0.125", "31.0"]))
+            return "fmov v%d.%s, #%s" % (d, rng.choice(["2s", "4s", "2d"]),
+                                         rng.choice(["1.0", "-2.5", "0.125", "31.0"]))
         return "movi v%d.4s, #%d, msl #%d" % (d, rng.randrange(256), rng.choice([8, 16]))
     if k == 14:
         arr = rng.choice(["4h", "8h", "2s", "4s"])

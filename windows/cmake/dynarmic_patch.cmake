@@ -9,11 +9,13 @@
 # infinity. Those four fast paths are turned off; dynarmic's exact path (an
 # FMA and a check) runs instead.
 set(fast "&& ctx.HasOptimization(OptimizationFlag::Unsafe_InaccurateNaN)) {")
+set(fp "src/dynarmic/backend/x64/emit_x64_floating_point.cpp")
+set(vfp "src/dynarmic/backend/x64/emit_x64_vector_floating_point.cpp")
 set(off "&& false /* Win.apk: the step has special cases (0 * inf) besides NaNs */) {")
 foreach(spec
-    "src/dynarmic/backend/x64/emit_x64_floating_point.cpp@if (code.HasHostFeature(HostFeature::FMA) "
-    "src/dynarmic/backend/x64/emit_x64_floating_point.cpp@if (code.HasHostFeature(HostFeature::FMA | HostFeature::AVX) "
-    "src/dynarmic/backend/x64/emit_x64_vector_floating_point.cpp@if (code.HasHostFeature(HostFeature::FMA | HostFeature::AVX) ")
+    "${fp}@if (code.HasHostFeature(HostFeature::FMA) "
+    "${fp}@if (code.HasHostFeature(HostFeature::FMA | HostFeature::AVX) "
+    "${vfp}@if (code.HasHostFeature(HostFeature::FMA | HostFeature::AVX) ")
   string(REPLACE "@" ";" parts "${spec}")
   list(GET parts 0 file)
   list(GET parts 1 head)
@@ -22,8 +24,7 @@ foreach(spec
   file(WRITE "${file}" "${text}")
 endforeach()
 # Two in each file: the scalar and vector RecipStepFused and RSqrtStepFused.
-foreach(file src/dynarmic/backend/x64/emit_x64_floating_point.cpp
-             src/dynarmic/backend/x64/emit_x64_vector_floating_point.cpp)
+foreach(file "${fp}" "${vfp}")
   file(READ "${file}" text)
   string(REGEX MATCHALL "Win\\.apk: the step has special cases" found "${text}")
   list(LENGTH found n)
