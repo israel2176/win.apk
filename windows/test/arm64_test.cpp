@@ -136,6 +136,8 @@ void run_isa(winapk::GuestLinker& linker, const char* file) {
     }
 }
 
+WINAPK_GUEST_ABI uint64_t missing_function() { return 0; }
+
 // The host function arm64_call_host calls (System V, like every shim function).
 WINAPK_GUEST_ABI int64_t host_many_args(int64_t a, int64_t b, int64_t c, int64_t d, int64_t e, int64_t f, int64_t g,
                                         int64_t h, int64_t i, int64_t j, double x, double y) {
@@ -396,6 +398,31 @@ void run_flow(winapk::GuestLinker& linker, const char* file) {
     expect("LDAXR/STLXR counter: a library's code and a mapped copy on two threads", call("flow_mixed", {200000}),
            400000);
     expect("store-buffer litmus test, STLR then LDAR: never both 0", call("flow_litmus", {100000}), 0);
+}
+
+// arm64_eh_guest.cpp: C++ exceptions thrown through translated frames (built
+// only where an NDK was found; skipped otherwise).
+void run_eh(winapk::GuestLinker& linker, const std::filesystem::path& dir) {
+    std::printf("libwinapk_arm64_eh.so\n");
+    std::error_code ec;
+    if (!std::filesystem::exists(dir / "libwinapk_arm64_eh.so", ec)) {
+        std::printf("  (not built: no Android NDK)\n");
+        return;
+    }
+    std::string error;
+    void* lib = linker.open("libwinapk_arm64_eh.so", winapk::GuestLinker::kRtldNow, &error);
+    check("open (the NDK's libc++ and unwinder inside)", lib != nullptr, error);
+    if (!lib) return;
+    auto call = [&](const char* name, std::vector<uint64_t> args = {}) -> uint64_t {
+        void* f = sym(linker, lib, name);
+        return f ? winapk::arm64::call(f, args.data(), args.size()) : ~uint64_t{0};
+    };
+    auto expect = [&](const char* what, uint64_t got, uint64_t want) {
+        check(what, got == want, got == want ? "" : "got " + std::to_string(got) + ", want " + std::to_string(want));
+    };
+    expect("a throw 40 frames down, their destructors run", call("eh_deep"), 780);
+    expect("through a virtual call and a function pointer, rethrown", call("eh_mixed"), 2003313535);
+    expect("1,000 throws in a loop", call("eh_loop", {1000}), 3500);
 }
 
 // libwinapk_arm64_rebased.so is libwinapk_arm64_unload.so linked 2 MB
@@ -766,6 +793,10 @@ int main(int argc, char** argv) {
     winapk::LinkerConfig config;
     config.search_paths.push_back(std::filesystem::u8path(argv[1]));
     config.host = winapk::mini_bionic_resolve;
+    // What the shim lacks and the runtime stubs (host/guest_libs.cpp): the
+    // NDK's static libc++ refers to a few such (openlog, swprintf, ...),
+    // never called here.
+    config.load.unresolved = [](const char*) { return reinterpret_cast<void*>(&missing_function); };
     winapk::GuestLinker linker(config);
 
     // Every check on each engine the build has: the interpreter, the JIT
@@ -787,6 +818,7 @@ int main(int argc, char** argv) {
         run_isa(linker, "libwinapk_arm64_isa_lse.so");
         run_bridge(linker, "libwinapk_arm64_bridge.so");
         run_flow(linker, "libwinapk_arm64_flow.so");
+        run_eh(linker, std::filesystem::u8path(argv[1]));
         run_unload(linker, "libwinapk_arm64_unload.so");
         run_patch(linker, e.first == winapk::arm64::Engine::kAot   ? "libwinapk_arm64_patch_aot.so"
                           : e.first == winapk::arm64::Engine::kJit ? "libwinapk_arm64_patch_jit.so"

@@ -102,6 +102,16 @@ for engine in interp jit aot; do
     "$CC" "${ARM64[@]}" -O2 -Wl,-soname,libwinapk_arm64_patch_$engine.so \
         -o "$ARM64_OUT/libwinapk_arm64_patch_$engine.so" "$HERE/guest/arm64_patch_guest.c"
 done
+# C++ exceptions (arm64_eh_guest.cpp), with an NDK's libc++ and unwinder when
+# there is one (GitHub's Ubuntu runners have it): the test skips it otherwise.
+NDK="${ANDROID_NDK_HOME:-${ANDROID_NDK_LATEST_HOME:-}}"
+NDK_CXX="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++"
+if [ -n "$NDK" ] && [ -x "$NDK_CXX" ]; then
+    "$NDK_CXX" --target=aarch64-linux-android24 -O2 -fPIC -shared -static-libstdc++ -fvisibility=hidden \
+        -Wl,-soname,libwinapk_arm64_eh.so -o "$ARM64_OUT/libwinapk_arm64_eh.so" "$HERE/guest/arm64_eh_guest.cpp"
+else
+    echo "[build_guest] no Android NDK (ANDROID_NDK_HOME): libwinapk_arm64_eh.so not built"
+fi
 # Random instruction sequences for the differential test (gen_arm64_fuzz.py:
 # functions, instructions each, seed).
 python3 "$HERE/guest/gen_arm64_fuzz.py" 400 48 1 > "$ARM64_OUT/arm64_fuzz.S"
