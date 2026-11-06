@@ -283,16 +283,19 @@ Three engines run arm64 code, behind one CPU state (`src/arm64/`):
   keyed by the library's code (its bytes and addresses) and the CPU's model
   and features, since the code is compiled for that CPU; the stamp next to
   each DLL records the CPU too, and a translation made on another CPU is not
-  loaded. The translation never has to be complete: a
-  function returns to the JIT when it reaches a branch the translator could
-  not follow, when a call returns somewhere else than its return address
+  loaded. An app's DLL and the cache's are one file (a hard link), and the
+  cache drops what no app used for 60 days. The translation never has to be
+  complete: a function returns to the JIT when it reaches a branch the
+  translator could not follow, when a call returns somewhere else than its return address
   (an exception's landing pad, a jump into another frame), and at its entry
   when the host stack is nearly used up (a translated guest call is a host
-  call, so deep guest recursion would overflow it; `Cpu::stack_floor`, 256 KB
-  before its end). A library that rewrites its own code (an inline hook, a
-  packer decrypting its text: IC IVAU in its code) is handed to the JIT for
-  good, its stamp saying `written`; one unloaded with `dlclose` takes its
-  translation with it.
+  call, so deep guest recursion would overflow it; `Cpu::stack_floor`, an
+  eighth of the stack and at least 256 KB before its end). A library that
+  rewrites its own code (an inline hook, a packer decrypting its text: IC
+  IVAU in its code) is handed to the JIT for good, its stamp saying
+  `written`; one unloaded with `dlclose` takes its translation with it. A
+  call through a register to a function of the same library (a C++ virtual
+  call) finds it in the DLL's own table, cached at the call site.
 - **The JIT** (`arm64_jit.cpp`, dynarmic from the azahar-emu fork, 0BSD
   license, fastmem over the shared address space). The app starts on it and
   it runs whatever has no translation. Built when CMake is given

@@ -72,17 +72,20 @@ namespace winapk::arm64 {
 // Raised when the translation changes: the stamp (runtime_main.cpp) has each
 // library translated again. When the translated code changes meaning,
 // kAotMinVersion is raised with it, and the loader ignores the older DLLs.
-constexpr uint32_t kAotVersion = 6;
+constexpr uint32_t kAotVersion = 7;
 // The oldest translation the loader still runs. In 4 a translated call went on
 // after the call wherever the callee had returned to; with the functions
 // .eh_frame_hdr lists also translated, C++ exceptions went through translated
 // code, and translated Jitsi Meet returned to address 0 after its first frame.
-// 5 checked the return address after every call. 6: RETAA returned to 0,
-// FRECPS/FRSQRTS were not fused and gave NaN for 0 times infinity, a deep
-// recursion overflowed the host's stack, and a library that patches its
-// code kept running the old; the CPU state has stack_floor, and text_hash
-// takes in the segments' addresses. No DLL before 6 is run.
-constexpr uint32_t kAotMinVersion = 6;
+// 5 checked the return address after every call. Before 7: RETAA returned to
+// 0, FRECPS/FRSQRTS/FMULX gave NaN for 0 times infinity, EXTR #0 took the
+// wrong register, a deep recursion overflowed the host's stack, a return
+// through BR to the bridge called its return address, and a library that
+// patches its code kept running the old; 7 also has a new CPU state
+// (stack_floor), module (off, aot_entries) and runtime (branch with a call
+// site), and text_hash takes in the segments' addresses. No DLL before 7 is
+// run.
+constexpr uint32_t kAotMinVersion = 7;
 constexpr uint32_t kAotDone = 0;
 constexpr uint32_t kAotBail = 1;
 
@@ -91,13 +94,13 @@ struct AotRuntime {
     // A call or jump to `target` (an address the translation does not know
     // statically: BLR, BR, a branch out of the library). c->x[30] is the
     // guest return address. Returns kAotDone when the call has returned.
-    uint32_t (*branch)(Cpu* c, uint64_t target);
+    // When `target` is a host function translated code may call directly
+    // through call_sysv (no va_list or guest callback among its arguments,
+    // not setjmp/longjmp: Hooks::plain_host), it is stored in *site, the
+    // call site's cache, if `site` is given.
+    uint32_t (*branch)(Cpu* c, uint64_t target, uint64_t* site);
     // Executes the instruction at c->pc through the interpreter.
     void (*step)(Cpu* c);
-    // Whether `target` is a host function translated code may call directly
-    // through call_sysv: no va_list or guest callback among its arguments,
-    // not setjmp/longjmp (Hooks::plain_host). Call sites cache the answer.
-    uint32_t (*plain)(uint64_t target);
     // The bridge's System V call (winapk_arm64_call_sysv): the argument
     // registers and stack words in, rax/rdx/xmm0/xmm1 out.
     void(__attribute__((sysv_abi)) * call_sysv)(const void* fn, void* frame);

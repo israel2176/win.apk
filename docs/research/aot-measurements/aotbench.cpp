@@ -58,7 +58,7 @@ static void fault(Cpu& c, uint32_t insn, const char* what) {
     std::exit(4);
 }
 
-static uint32_t rt_branch(Cpu* c, uint64_t target) {
+static uint32_t rt_branch(Cpu* c, uint64_t target, uint64_t*) {
     if (AotFn fn = lookup(target)) {
         c->pc = target;
         return fn(c);
@@ -71,8 +71,6 @@ static uint32_t rt_branch(Cpu* c, uint64_t target) {
     return kAotBail;
 }
 static void rt_step(Cpu* c) { step(*c); }
-static void* rt_lookup(uint64_t t) { return reinterpret_cast<void*>(lookup(t)); }
-static uint32_t rt_plain(uint64_t) { return 0; }
 
 // Runs from c.pc until kStop: translated functions where there are any,
 // the interpreter in between.
@@ -152,9 +150,7 @@ int main(int argc, char** argv) {
         *m->base = g_bias;
         m->runtime->branch = rt_branch;
         m->runtime->step = rt_step;
-        m->runtime->plain = rt_plain;
         m->runtime->call_sysv = nullptr;
-        if (std::getenv("AOTBENCH_LOOKUP")) reinterpret_cast<void**>(m->runtime)[4] = reinterpret_cast<void*>(rt_lookup);
         for (uint64_t i = 0; i < m->count; ++i) g_fns[g_bias + m->entries[i].vaddr] = m->entries[i].fn;
     }
     const uint64_t n = std::strtoull(argv[3], nullptr, 0);

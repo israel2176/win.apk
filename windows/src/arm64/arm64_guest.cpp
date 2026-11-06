@@ -177,8 +177,9 @@ constexpr size_t kGuestStackWords = 14;
 // thread's stack ends sooner (dispatch).
 constexpr size_t kCallbackStackWords = 64;
 // Host stack translated code leaves free at the end of a thread's stack
-// (Cpu::stack_floor): for the host functions it calls, the JVM's checks of
-// its own guard zones included.
+// (Cpu::stack_floor): for the host functions it calls, the JVM (its guard
+// zones, and Java code a JNI call runs) included. At least this much, an
+// eighth of a larger stack (2 MB of a Java thread's 16), at most half.
 constexpr uint64_t kAotStackReserve = 256 * 1024;
 
 // run() stops when the guest returns here. It is never guest code and never
@@ -287,7 +288,10 @@ struct ThreadState {
         // calls (the JVM's own guard zones among them).
         ULONG_PTR low = 0, high = 0;
         GetCurrentThreadStackLimits(&low, &high);
-        if (high > low) cpu.stack_floor = low + std::min<uint64_t>((high - low) / 2, kAotStackReserve);
+        if (high > low) {
+            const uint64_t size = high - low;
+            cpu.stack_floor = low + std::min<uint64_t>(size / 2, std::max<uint64_t>(kAotStackReserve, size / 8));
+        }
         tls[1 + 5] = 0x5eed5eedc0ffee00ull ^ (reinterpret_cast<uint64_t>(this) << 8);
         thread_id = GetCurrentThreadId();
         std::lock_guard<std::mutex> hold(g_stats_lock);

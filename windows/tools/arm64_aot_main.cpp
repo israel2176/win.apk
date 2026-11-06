@@ -357,9 +357,8 @@ typedef struct {
     _Alignas(16) uint64_t v[32][2];
 } Cpu;
 typedef struct {
-    uint32_t (*branch)(Cpu* c, uint64_t target);
+    uint32_t (*branch)(Cpu* c, uint64_t target, uint64_t* site);
     void (*step)(Cpu* c);
-    uint32_t (*plain)(uint64_t target);
     void (__attribute__((sysv_abi)) *call_sysv)(const void* fn, void* frame);
 } AotRuntime;
 typedef struct { uint64_t vaddr; uint32_t (*fn)(Cpu* c); } AotEntry;
@@ -378,6 +377,8 @@ typedef struct {
 extern uint64_t aot_base;
 extern AotRuntime aot_rt;
 extern uint32_t aot_off;  // the library rewrote its code: hand everything to the JIT
+extern const AotEntry aot_entries[];  // sorted by vaddr
+extern const uint64_t aot_count;
 
 // Guest memory: unaligned, and volatile so that the C compiler keeps every
 // access, in order, as the guest's own synchronization expects.
@@ -528,7 +529,7 @@ STEPS(float, f, __builtin_fmaf) STEPS(double, d, __builtin_fma)
     }
 MULX(float, f) MULX(double, d)
 
-// A direct call of a plain host function (AotRuntime::plain) with the
+// A direct call of a plain host function (AotRuntime::branch, `site`) with the
 // guest's argument registers and stack words in *c (as the bridge's
 // host_call passes them), results back into *c.
 typedef struct {
@@ -552,18 +553,46 @@ static __attribute__((noinline)) void host_call(Cpu* restrict c, uint64_t target
     c->v[0][0] = f.xmm0; c->v[0][1] = 0;
     c->v[1][0] = f.xmm1; c->v[1][1] = 0;
 }
-// A call through the runtime, remembering at the call site a target that
-// turned out to be a plain host function: the next call to it is direct.
+// The translated function of this library at library address `off`, or 0.
+// *own is the call site's last answer (an index into aot_entries, checked
+// before use: one word, so never torn).
+static __attribute__((noinline)) uint32_t (*own_fn(uint64_t off, uint32_t* own))(Cpu*) {
+    const uint32_t i = __atomic_load_n(own, __ATOMIC_RELAXED);
+    if (i < aot_count && aot_entries[i].vaddr == off) return aot_entries[i].fn;
+    uint64_t lo = 0, hi = aot_count;
+    while (lo < hi) {
+        const uint64_t mid = lo + (hi - lo) / 2;
+        if (aot_entries[mid].vaddr < off) lo = mid + 1;
+        else hi = mid;
+    }
+    if (lo == aot_count || aot_entries[lo].vaddr != off) return 0;
+    __atomic_store_n(own, (uint32_t)lo, __ATOMIC_RELAXED);
+    return aot_entries[lo].fn;
+}
+// A call or jump through a register (c->pc is the target). A function of this
+// library is called directly, found in its own table: a C++ virtual call
+// costs no trip through the runtime and its per-thread lookup. Anything else
+// goes through the runtime, which remembers at the call site a target that
+// turned out to be a plain host function (the next call to it is direct) and
+// the site remembers the last target that was not this library's (no search
+// for it next time). Each cache is one word, so threads never see half of
+// one, and a wrong guess only costs the search.
 #define CALL_SITE(st, t)                                                           \
     do {                                                                           \
-        static uint64_t site;                                                      \
-        if ((t) == __atomic_load_n(&site, __ATOMIC_RELAXED)) {                     \
-            host_call(c, (t));                                                     \
+        static uint64_t site, elsewhere;                                           \
+        static uint32_t own;                                                       \
+        const uint64_t t_ = (t);                                                   \
+        uint32_t (*fn_)(Cpu*) = 0;                                                 \
+        if (t_ != __atomic_load_n(&elsewhere, __ATOMIC_RELAXED)) fn_ = own_fn(t_ - B, &own); \
+        if (fn_) {                                                                 \
+            (st) = fn_(c);                                                         \
+        } else if (t_ == __atomic_load_n(&site, __ATOMIC_RELAXED)) {               \
+            host_call(c, t_);                                                      \
             c->pc = c->x[30];                                                      \
             (st) = 0;                                                              \
         } else {                                                                   \
-            (st) = aot_rt.branch(c, (t));                                          \
-            if ((st) == 0 && aot_rt.plain(t)) __atomic_store_n(&site, (t), __ATOMIC_RELAXED); \
+            __atomic_store_n(&elsewhere, t_, __ATOMIC_RELAXED);                    \
+            (st) = aot_rt.branch(c, t_, &site);                                    \
         }                                                                          \
     } while (0)
 )";
@@ -723,7 +752,7 @@ private:
     // A jump to `t` outside this function: a tail call, or the runtime.
     std::string exit_str(uint64_t t) {
         if (translated_.count(t)) return flush() + fmt(" return F_%" PRIx64 "(c);", t);
-        return flush() + " c->pc = " + addr(t) + "; return aot_rt.branch(c, " + addr(t) + ");";
+        return flush() + " c->pc = " + addr(t) + "; return aot_rt.branch(c, " + addr(t) + ", 0);";
     }
     void exit_to(uint64_t t) { line(exit_str(t)); }
     void call_to(const std::string& target_expr, uint64_t direct, uint64_t ret) {
@@ -2342,13 +2371,14 @@ int main(int argc, char** argv) {
         interpreted += n;
     }
     std::string table = "uint64_t aot_base;\nAotRuntime aot_rt;\nuint32_t aot_off;\n\n";
-    table += "static const AotEntry entries[] = {\n";
+    table += "const AotEntry aot_entries[] = {\n";  // sorted: `translated` is a std::set
     for (uint64_t e : translated) table += fmt("    {0x%" PRIx64 "ull, F_%" PRIx64 "},\n", e, e);
-    table += "};\n\n";
+    table += "};\nconst uint64_t aot_count = sizeof aot_entries / sizeof aot_entries[0];\n\n";
     table += "__declspec(dllexport) const AotModule winapk_aot_module = {\n";
     table += fmt("    %u, {offsetof(Cpu, sp), offsetof(Cpu, nzcv), offsetof(Cpu, tpidr), offsetof(Cpu, v)},\n",
                  winapk::arm64::kAotVersion);
-    table += fmt("    0x%" PRIx64 "ull, &aot_base, &aot_rt, entries, sizeof entries / sizeof entries[0], &aot_off,\n",
+    table += fmt("    0x%" PRIx64 "ull, &aot_base, &aot_rt, aot_entries, sizeof aot_entries / sizeof aot_entries[0], "
+                 "&aot_off,\n",
                  img.text_hash);
     table += "};\n";
 

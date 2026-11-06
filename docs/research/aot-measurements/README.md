@@ -8,7 +8,7 @@ the translator is a patched copy.
 |---|---|
 | `winapk-aot-measure.patch` | Against `windows/tools/arm64_aot_main.cpp`. Adds `WINAPK_AOT_ONLY` / `WINAPK_AOT_EXCLUDE` (comma-separated hex vaddrs: translate only / all but these functions), `WINAPK_AOT_DUMP=<file>` (one line per function: vaddr, instructions, hash of its C) and `WINAPK_AOT_EH=1` (add every function start in `.eh_frame_hdr`) |
 | `winapk-aot-site-cache.patch` | On top of the first: `CALL_SITE` also remembers a translated target (set once per call site), through a new `AotRuntime::lookup` |
-| `aotbench.cpp` | Loads an arm64 `.so` (relative relocations only), runs functions on the interpreter (`src/arm64/arm64_cpu.cpp`, `arm64_simd.cpp`) or on one or more translations compiled to host `.so` files; `AOTBENCH_LOOKUP=1` sets `AotRuntime::lookup`, `AOTBENCH_FASTMAP=1` puts a 4096-entry direct-mapped table in front of the function map |
+| `aotbench.cpp` | Loads an arm64 `.so` (relative relocations only), runs functions on the interpreter (`src/arm64/arm64_cpu.cpp`, `arm64_simd.cpp`) or on one or more translations compiled to host `.so` files, `AOTBENCH_FASTMAP=1` puts a 4096-entry direct-mapped table in front of the function map |
 | `guest_bench.c`, `native_bench.c` | `windows/test/guest/arm64_bench.c` as the guest library (with a guest-side allocator, and a direct-call benchmark) and as its native reference |
 | `speed.sh` | Code speed per compile setting, ratio to native, median of 5 |
 | `matrix.py` | Compile cost per setting on a fixed random sample of a library's functions |

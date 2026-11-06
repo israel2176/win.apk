@@ -54,7 +54,7 @@ struct LookupCache {
 thread_local LookupCache t_lookup;
 
 // A call or jump the translation could not resolve statically.
-uint32_t runtime_branch(Cpu* c, uint64_t target) {
+uint32_t runtime_branch(Cpu* c, uint64_t target, uint64_t* site) {
     // A jump to the bridge's return address (a return through BR, or a tail
     // call home): the guest call is over. It is no host function to call.
     if (target == c->stop_pc) {
@@ -76,12 +76,12 @@ uint32_t runtime_branch(Cpu* c, uint64_t target) {
     const uint64_t ret = c->x[30];
     c->pc = target;
     hooks().host_call(*c, target);
-    return c->pc == ret ? kAotDone : kAotBail;  // longjmp lands elsewhere
+    if (c->pc != ret) return kAotBail;  // longjmp lands elsewhere
+    if (site && hooks().plain_host && hooks().plain_host(target)) __atomic_store_n(site, target, __ATOMIC_RELAXED);
+    return kAotDone;
 }
 
 void runtime_step(Cpu* c) { step(*c); }
-
-uint32_t runtime_plain(uint64_t target) { return hooks().plain_host && hooks().plain_host(target); }
 
 // Every arm64 library mapped, for the profile and for translations that
 // arrive while the app runs. Guarded by g_libs_lock.
@@ -461,7 +461,6 @@ const AotModule* load_dll(const std::filesystem::path& dll, uint64_t bias, uint6
     *m->base = bias;
     m->runtime->branch = runtime_branch;
     m->runtime->step = runtime_step;
-    m->runtime->plain = runtime_plain;
     m->runtime->call_sysv = winapk_arm64_call_sysv;
     AcquireSRWLockExclusive(&g_load_lock);
     auto* next = new FunctionMap(*g_functions.load());
