@@ -129,6 +129,10 @@ public final class NativeCocoa {
     // v1.0.690: open a URL/URI on the macOS host (NSWorkspace). The
     // resolution target for an implicit ACTION_VIEW/SENDTO/DIAL intent.
     public static native boolean openHostUrl(String url);
+    /** Open `url` in the Mac.apk sign-in window (applink_window.mm); a
+     *  navigation to `returnPrefix` (scheme://host/path of the app's verified
+     *  redirect) is cancelled and queued for HostUrlIntake like a GURL. */
+    public static native boolean openAppLinkWindow(String url, String returnPrefix);
     /** Host URL intake (MACAPK_URL_SCHEMES): every URL LaunchServices handed this
      *  app through kAEGetURL since the last call, oldest first, and clears the
      *  queue. See HostUrlIntake. */
@@ -259,6 +263,10 @@ public final class NativeCocoa {
     public static native void releaseRenderer(long metalView);
 
     public static native void setDataSubdir(String subdir);
+    /** The bionic shim's synthesized host file for a /proc path, or null.
+     *  Installed into java.io.FileReader by Boot so Java /proc reads match
+     *  native ones. */
+    public static native String remapProcPath(String procPath);
 
     /** Tell the loader which directory guest libraries should be reported under in
      *  /proc/self/maps, so that file and ApplicationInfo.nativeLibraryDir name the
@@ -268,6 +276,16 @@ public final class NativeCocoa {
     /** Hand the shim the directory behind /system/etc/fonts.xml and
      *  /system/fonts/ (android.graphics.MacApkSystemFonts). */
     public static native void setSystemFontsDir(String dir);
+
+    /** The file behind a host font's PostScript name, from CoreText, or null when
+     *  this Mac has no face by that exact name (host_fonts.cpp). Used for the CJK
+     *  families of that fonts.xml (android.graphics.MacApkHostFonts). */
+    public static native String hostFontFile(String postScriptName);
+
+    /** Hand the shim the one shared volume path every app uses
+     *  (SharedStorage.adoptCanonicalVolume): native /sdcard/... names it from
+     *  here on, /sdcard/Android/{data,obb,media} still the app's own. */
+    public static native void setSharedStorageRoot(String dir);
 
     /** Show a one-shot "Translating <libname>…" splash over the
      *  placeholder window. Called from AppClassLoader.translate

@@ -1709,7 +1709,13 @@ public final class ActivityHost {
             Activity owner = boxOwner();
             if (owner != null) o = owner;
         }
-        try { NativeCocoa.setTopActivityConfigChanges(o.macapkRealConfigChanged()); }
+        try {
+            // Bit 30: a window resize would reach the app (DisplayConfig
+            // .wouldReportWindowResize); the native free-resize default keys on it.
+            int bits = o.macapkRealConfigChanged();
+            if (DisplayConfig.wouldReportWindowResize(o)) bits |= 0x40000000;
+            NativeCocoa.setTopActivityConfigChanges(bits);
+        }
         catch (Throwable t) { NativeLog.w(TAG, "pushTopWindowTraits: " + t); }
         // FLAG_SECURE follows the resumed top: a secure activity covered by a
         // plain one stops protecting the window, and comes back with its flag.
@@ -2380,6 +2386,9 @@ public final class ActivityHost {
         if (act.kind == HostAction.Kind.APP_DETAILS) {
             return SpecialAccessHandler.handleAppDetails(intent, real, hostCover(true));
         }
+        if (act.kind == HostAction.Kind.DEVICE_CREDENTIAL) {
+            return DeviceCredentialHandler.handle(intent, real, hostCover(false));
+        }
         // DocumentsUI's picker: a full-screen activity on a device, so the
         // caller is paused AND stopped while it is up; the pick is the user's
         // own act inside the panel, so no recency gate applies.
@@ -2539,7 +2548,10 @@ public final class ActivityHost {
              *  CREATE_DOCUMENT): DocumentPickerHandler shows the macOS open/save
              *  panel and answers with HostDocumentsProvider URIs. v1.0.1653,
              *  MACAPK_DOC_PICKER. */
-            DOCUMENT_PICKER
+            DOCUMENT_PICKER,
+            /** Real macOS password verification for Android Keyguard's
+             * confirm-device-credential activity. */
+            DEVICE_CREDENTIAL
         }
         final Kind kind;
         final String url;
@@ -2660,6 +2672,9 @@ public final class ActivityHost {
         // MACAPK_APP_DETAILS_SETTINGS=0.
         if (SpecialAccessHandler.isAppDetailsIntent(intent)) {
             return new HostAction(HostAction.Kind.APP_DETAILS, null);
+        }
+        if (DeviceCredentialHandler.isCredentialIntent(intent)) {
+            return new HostAction(HostAction.Kind.DEVICE_CREDENTIAL, null);
         }
         // ACTION_SEND of TEXT -- matched on action + MIME type ONLY. See the
         // header for why reading EXTRA_TEXT here was the wrong question.
@@ -2863,6 +2878,10 @@ public final class ActivityHost {
             return true;
         }
         if (claim) HostUrlIntake.claimRedirectSchemes(uri);
+        // A sign-in whose redirect_uri is one of this app's VERIFIED App Links
+        // opens in the Mac.apk sign-in window, which hands that redirect back
+        // the way a device browser does; Safari would load it as a page.
+        if (AppLinks.maybeOpenSignInWindow(uri)) return true;
         try {
             boolean ok = NativeCocoa.openHostUrl(uri);
             NativeLog.i(TAG, "implicit intent " + action + " -> host open("
@@ -2904,7 +2923,20 @@ public final class ActivityHost {
         final ComponentName cn = intent.getComponent();
         if (cn != null) {
             final String pkg = cn.getPackageName();
+            // A caller may pin the exact Settings component returned by our
+            // resolver. It performs the same real host check as the implicit
+            // Keyguard intent, before cross-app resolution is considered.
+            if (DeviceCredentialHandler.isCredentialIntent(intent) && resolveImplicitToHost(intent)) return null;
             if (own == null || own.equals(pkg)) return intent;
+            // The platform package installer, pinned by the caller (a store
+            // picks InstallStart out of queryIntentActivities and setClassName()s
+            // it): performed by the installer surface, as the implicit start is.
+            if (MacApkPackageManager.macapkInstallerComponent()
+                    && MacApkPackageManager.macapkIsInstallerPackage(pkg)
+                    && InstallIntentHandler.isInstallIntent(intent)
+                    && resolveImplicitToHost(intent)) {
+                return null;
+            }
             // Stage 3a: a component of ANOTHER installed Mac.apk app is handed to
             // that app (resolveForStart: not narrowed by package visibility).
             if (CrossAppLauncher.XAPP_START && macapkCrossAppStart(own, intent, null)) return null;
@@ -2916,7 +2948,9 @@ public final class ActivityHost {
         try {
             android.content.pm.PackageManager pm = app != null ? app.getPackageManager() : null;
             if (pm != null) {
-                rows = pm.queryIntentActivities(intent,
+                // resolveForStart: registry rows are not narrowed by package
+                // visibility (MacApkPackageManager stage 4).
+                rows = MacApkPackageManager.macapkQueryForStart(pm, intent,
                         android.content.pm.PackageManager.MATCH_DEFAULT_ONLY);
             }
         } catch (Throwable t) {
@@ -3030,6 +3064,12 @@ public final class ActivityHost {
     }
 
     /** AOSP Intent.isWebIntent: ACTION_VIEW with an http/https data URI. */
+    /** AOSP Intent.isWebIntent (ACTION_VIEW of an http/https URI), for the PM's
+     *  stage-4 registry scan. */
+    static boolean macapkWebIntent(Intent intent) {
+        return intent != null && macapkIsWebIntent(intent);
+    }
+
     private static boolean macapkIsWebIntent(Intent intent) {
         if (!Intent.ACTION_VIEW.equals(intent.getAction())) return false;
         android.net.Uri d = intent.getData();
@@ -3058,6 +3098,25 @@ public final class ActivityHost {
             return (t != null && !t.isEmpty() && !t.equals(cn.getClassName())) ? t : null;
         } catch (Throwable t) {
             return null;
+        }
+    }
+
+    /** A SERVICE HOST (SystemClient.isServiceHost: started by the system
+     *  broker to answer another app's bind) runs the main looper and launches
+     *  no activity -- a device's background process, where ActivityThread.main
+     *  still ends in Looper.loop() and services, binds and broadcasts arrive as
+     *  main-looper messages. Without the loop, a bind the broker schedules here
+     *  is posted and never runs. Same thread and guards as start()'s M3 path. */
+    public static void runMainLoopOnly() {
+        if (!ONE_MAIN_THREAD || !android.os.Looper.macapkHasMainThread()) {
+            android.os.Looper.prepareMainLooper();
+        }
+        if (android.os.Looper.MACAPK_REAL_LOOPER && android.os.Looper.macapkIsActivityThread()) {
+            NativeLog.i(TAG, "service host: entering main loop on macapk-activity (no activity)");
+            android.os.Looper.loop();
+        } else {
+            NativeLog.w(TAG, "service host: not on the main-looper thread; main-looper messages"
+                    + " (service binds) will not run here");
         }
     }
 
@@ -3090,6 +3149,8 @@ public final class ActivityHost {
             // and an IntentSender pairing names none. Re-key it to what is launched.
             android.app.Activity.macapkBindPendingResult(intent, routed);
             intent = routed;
+        } else if (DeviceCredentialHandler.isCredentialIntent(intent) && resolveImplicitToHost(intent)) {
+            return;
         } else if (intent.getComponent() == null) {
             // v1.0.690: an IMPLICIT intent (no explicit component). On a device
             // this resolves against installed apps' intent filters. Mac.apk has
@@ -3829,7 +3890,13 @@ public final class ActivityHost {
         // activity's own registry). Without this, ProcessLifecycleOwner stays below
         // STARTED and foreground-gated SDKs (Play Games AutomaticGamesAuthenticator)
         // never trigger -> the game bootstrap hangs before LoadScene.
-        if (app != null && !Application.CREATED_ORDER) app.dispatchActivityCreated(activity, null);
+        // With Application.CREATED_ORDER the three create phases already went out
+        // around onCreate (above); =0 sends them all here, after it, as before.
+        if (app != null && !Application.CREATED_ORDER) {
+            app.dispatchActivityPreCreated(activity, null);
+            app.dispatchActivityCreated(activity, null);
+            app.dispatchActivityPostCreated(activity, null);
+        }
         // Report each phase to the activity's fragment manager (AOSP
         // Activity.performStart/performResume call mFragments.dispatchX
         // the same way; ActivityHost is our ActivityThread analogue).

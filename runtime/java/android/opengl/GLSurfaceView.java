@@ -319,7 +319,7 @@ public class GLSurfaceView extends SurfaceView
                 // The renderer runs as the app's GLThread (no Looper):
                 // Looper.macapkEnterGlRenderer, docs/gl-thread-has-no-looper_2026-10-01.md
                 android.os.Looper.macapkEnterGlRenderer();
-                try { r.onSurfaceCreated(gl, null); }
+                try { r.onSurfaceCreated(gl, javax.microedition.khronos.egl.MacApkEGL10.macapkWindowSurfaceConfig()); }
                 finally { android.os.Looper.macapkExitGlRenderer(); }
                 lifecycleDeliveredTo = r;
                 lifecycleDeliveredW = -1;   // force onSurfaceChanged below

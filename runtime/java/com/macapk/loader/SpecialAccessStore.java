@@ -473,7 +473,10 @@ public final class SpecialAccessStore {
             for (int i = 0; i < apps.length(); i++) {
                 org.json.JSONObject a = apps.optJSONObject(i);
                 if (a == null) continue;
-                if (!"installed".equals(a.optString("state", "installed"))) continue;
+                // "ok" = the pre-v1.0.2239 control panel's spelling of installed
+                // (InstallCore.swift AppState.legacyInstalled).
+                String st = a.optString("state", "installed");
+                if (!"installed".equals(st) && !"ok".equals(st)) continue;
                 String bundle = a.optString("bundlePath", "");
                 if (bundle.isEmpty()) continue;
                 if (!windows && !root.equals(normalizeDir(bundle + "/Contents/android"))) continue;

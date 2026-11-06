@@ -27,7 +27,8 @@
 //     connect by HOSTNAME and set ServerNames explicitly.
 //   - use a PRIVATE SSLContext, never SSLContext.getDefault(): the global
 //     default is mutable by guest code sharing this JVM.
-//   - a bare Socket obeys the JVM-global socksProxyHost; use Proxy.NO_PROXY.
+//   - a bare Socket obeys guest-mutable socksProxyHost. HostProxy supplies the
+//     captured per-app transport (or the legacy direct path with no config).
 package com.macapk.gms;
 
 import java.io.IOException;
@@ -306,12 +307,18 @@ public final class McsClient {
     private SSLSocket openSocket() throws IOException {
         IOException last = null;
         for (int port : PORTS) {
+            Socket plain = null;
+            boolean complete = false;
             try {
-                Socket plain = new Socket(RUNTIME_PROXY);    // ignore the guest-mutable socksProxyHost
-                plain.connect(RUNTIME_PROXY == Proxy.NO_PROXY
-                        ? new InetSocketAddress(HOST, port)
-                        : InetSocketAddress.createUnresolved(HOST, port),   // the proxy resolves it
-                        CONNECT_TIMEOUT_MS);
+                if (RUNTIME_PROXY != Proxy.NO_PROXY) {
+                    // Win.apk's WINAPK_PROXY (a SOCKS proxy for this connection
+                    // only) wins over the per-app policy, as it did before.
+                    plain = new Socket(RUNTIME_PROXY);
+                    plain.connect(InetSocketAddress.createUnresolved(HOST, port),   // the proxy resolves it
+                            CONNECT_TIMEOUT_MS);
+                } else {
+                    plain = com.macapk.loader.HostProxy.connect(HOST, port, CONNECT_TIMEOUT_MS);
+                }
                 plain.setKeepAlive(true);
                 plain.setTcpNoDelay(true);
                 SSLSocket s = (SSLSocket) factory().createSocket(plain, HOST, port, true);
@@ -322,10 +329,13 @@ public final class McsClient {
                 s.setSoTimeout(CONNECT_TIMEOUT_MS);
                 s.startHandshake();                               // a timeout here is fatal
                 s.setSoTimeout(READ_TICK_MS);
+                complete = true;
                 return s;
             } catch (IOException e) {
                 last = e;
                 log("port " + port + " failed: " + e);
+            } finally {
+                if (!complete && plain != null) try { plain.close(); } catch (IOException ignored) {}
             }
         }
         throw (last != null) ? last : new IOException("no MCS port answered");

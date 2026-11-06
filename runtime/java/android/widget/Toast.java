@@ -99,7 +99,7 @@ public class Toast {
      *  current activity's decor FrameLayout, which is not what the canvas
      *  driver paints (it paints the content root the activity installed, e.g.
      *  AppCompat's sub-decor), so most toasts never reached the screen
-     *  (pf-notes "Note saved"/"Note not saved"), and the few that did sat at
+     *  (Privacy Friendly Notes "Note saved"/"Note not saved"), and the few that did sat at
      *  the decor's TOP|START. It now goes through the overlay window stack
      *  that already composites Dialogs and PopupWindows.
      *  MACAPK_TOAST_WINDOW=0 restores the decor child. */
@@ -204,7 +204,7 @@ public class Toast {
      *              com.android.internal.R.integer.config_toastDefaultGravity);
      *  (android14 Toast.java:191-194). Ours added the view with plain
      *  WRAP_CONTENT params, so the decor FrameLayout put it at TOP|START: a
-     *  dark band over the toolbar title (pf-notes "Note updated"), at the
+     *  dark band over the toolbar title (Privacy Friendly Notes "Note updated"), at the
      *  top-right under an RTL locale. setGravity() was stored and ignored. */
     private android.widget.FrameLayout.LayoutParams macapkOverlayParams() {
         int g = mGravity;

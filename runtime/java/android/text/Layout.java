@@ -162,6 +162,11 @@ public abstract class Layout {
     // space counted against the width). Text layout touches every app.
     static final boolean MACAPK_TEXT_LINES_AOSP =
         !"0".equals(System.getenv("MACAPK_TEXT_LINES_AOSP"));
+    // v1.0.2239: before splitting a word that overflows, ask whether the WHOLE
+    // word fits when shaped as one run. MACAPK_TEXT_WORD_FIT=0 restores the
+    // prefix-only test (an icon-font ligature word wraps one letter per line).
+    static final boolean MACAPK_TEXT_WORD_FIT =
+        !"0".equals(System.getenv("MACAPK_TEXT_WORD_FIT"));
     private int ellipsizedWidth;
     // Per-line ellipsis geometry (AOSP getEllipsisStart/getEllipsisCount).
     private int[] ellipsisStart;
@@ -555,6 +560,33 @@ public abstract class Layout {
             if (i > lineBegin
                     && !(MACAPK_TEXT_LINES_AOSP && isLineEndSpace(c))
                     && macapkMeasure(text != null ? text : s, lineBegin, i + 1) > width) {
+                // A desperate (mid-word) break, but only if the word really does
+                // not fit. minikin's greedy breaker measures a WORD from the
+                // advances of the whole shaped run (LineBreaker.cpp; MeasuredText
+                // shapes the paragraph once and attributes a ligature's advance to
+                // its first character), never from a re-shaped PREFIX. The two only
+                // differ when shaping the whole word makes it narrower than one of
+                // its prefixes, i.e. a ligature or kerning: Material Symbols'
+                // "light_mode" is one 1em rlig glyph, while its prefix "li" is two
+                // 1em letters, so the prefix test wrapped every icon one character
+                // per line and only the first letter survived maxLines=1 (Rhythm,
+                // issue #11). For text with no such shrink the whole word is at least
+                // as wide as the overflowing prefix, so this changes nothing.
+                if (MACAPK_TEXT_WORD_FIT && lastBreak <= lineBegin) {
+                    int wordEnd = n;
+                    for (int bp : breakPositions) {
+                        if (bp > i + 1) { wordEnd = bp; break; }
+                    }
+                    int we = wordEnd;
+                    while (we > i + 1 && (isLineEndSpace(s.charAt(we - 1))
+                                          || s.charAt(we - 1) == '\n')) we--;
+                    if (we > i + 1
+                            && macapkMeasure(text != null ? text : s, lineBegin, we) <= width) {
+                        i = we;
+                        if (java.util.Arrays.binarySearch(breakPositions, we) >= 0) lastBreak = we;
+                        continue;
+                    }
+                }
                 int breakAt;
                 if (lastBreak > lineBegin) {
                     breakAt = lastBreak;            // wrap at the last break opportunity
@@ -1363,7 +1395,8 @@ public abstract class Layout {
      *  copy of the paint. Returns its advance. */
     private float macapkDrawSpanRun(android.graphics.Canvas canvas, android.text.Spanned sp,
                                     String line, int srcStart, int runStart, int runEnd,
-                                    float cx, float baselineY, boolean rtl) {
+                                    float cx, float baselineY, boolean rtl,
+                                    android.text.style.MetricAffectingSpan[] drawnRep) {
         final android.text.TextPaint p = paint;
         p.set(mDrawBase);
         android.text.style.CharacterStyle[] runSpans =
@@ -1374,6 +1407,19 @@ public abstract class Layout {
                 if (sp.getSpanStart(cs) >= runEnd || sp.getSpanEnd(cs) <= runStart) continue;
                 try { cs.updateDrawState(p); } catch (Throwable ignored) {}
             }
+        }
+        // A ReplacementSpan's run is painted by the span in the bidi path too
+        // (AOSP TextLine.handleReplacement); once per span even when a bidi
+        // level change splits its range into several pieces.
+        android.text.style.MetricAffectingSpan repSpan = MacApkReplacement.covering(sp, runStart, runEnd);
+        if (repSpan != null) {
+            if (repSpan == drawnRep[0]) return 0f;
+            drawnRep[0] = repSpan;
+            int r0 = Math.max(sp.getSpanStart(repSpan), srcStart);
+            int r1 = Math.min(sp.getSpanEnd(repSpan), srcStart + line.length());
+            return MacApkReplacement.draw(canvas,
+                    (android.text.style.ReplacementSpan) repSpan.getUnderlying(),
+                    sp, r0, r1, cx, baselineY, p);
         }
         String run = line.substring(runStart - srcStart, runEnd - srcStart);
         float runW = p.measureText(run);
@@ -1412,6 +1458,7 @@ public abstract class Layout {
         mDrawBase.set(p);
         float cx = x;
         final int end = srcStart + line.length();
+        android.text.style.MetricAffectingSpan drawnRep = null;
         if (MacApkBidi.hasRtl(line, 0, line.length())) {
             // Cut at every style run and every bidi level change, then paint
             // the pieces in visual order, each with its own direction.
@@ -1424,14 +1471,14 @@ public abstract class Layout {
                 rs = re;
             }
             int[] pieces = MacApkBidi.visualPieces(line, bounds, nb, MacApkBidi.isRtlParagraph(sp, srcStart));
+            final android.text.style.MetricAffectingSpan[] bidiRep = new android.text.style.MetricAffectingSpan[1];
             for (int k = 0; k < pieces.length; k += 3) {
                 cx += macapkDrawSpanRun(canvas, sp, line, srcStart, srcStart + pieces[k],
-                        srcStart + pieces[k + 1], cx, baselineY, (pieces[k + 2] & 1) != 0);
+                        srcStart + pieces[k + 1], cx, baselineY, (pieces[k + 2] & 1) != 0, bidiRep);
             }
             p.set(mDrawBase);
             return;
         }
-        android.text.style.MetricAffectingSpan drawnRep = null;
         int runStart = srcStart;
         while (runStart < end) {
             int runEnd = sp.nextSpanTransition(runStart, end, android.text.style.CharacterStyle.class);

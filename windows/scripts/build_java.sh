@@ -62,10 +62,23 @@ LIST="$WORK/java.list"
 find "$RT/java" -name '*.java' ! -path '* [2-9].java' | sort | native_paths > "$LIST"
 # Upstream's sources produce a few dozen warnings (sun.misc.Unsafe use) that
 # -nowarn does not silence, so the output goes to a log shown only on failure.
-if ! "$JAVAC" -J-Xmx2g -d "$TMP" --release 21 -nowarn -Xlint:-options @"$LIST" > "$WORK/javac.log" 2>&1; then
+# Android's org.apache.http.legacy (thirdparty/apache-http-legacy/README.md):
+# the real library, converted to JVM classes. The framework's boot-classpath
+# slice of org.apache.http compiles against it, and its classes are unpacked
+# into android-framework.jar (never over a class compiled here), as upstream's
+# build does.
+APACHE_LEGACY="$RT/../thirdparty/apache-http-legacy/org.apache.http.legacy.jvm.jar"
+APACHE_CP=()
+[[ -f "$APACHE_LEGACY" ]] && APACHE_CP=(-cp "$(native_path "$APACHE_LEGACY")")
+if ! "$JAVAC" -J-Xmx2g -d "$TMP" --release 21 -nowarn -Xlint:-options "${APACHE_CP[@]}" @"$LIST" \
+        > "$WORK/javac.log" 2>&1; then
     cat "$WORK/javac.log" >&2
     echo "[build_java] javac failed" >&2
     exit 1
+fi
+if [[ -f "$APACHE_LEGACY" ]]; then
+    # unzip -n: never overwrite a class compiled above.
+    ( cd "$TMP" && unzip -qn "$APACHE_LEGACY" -x 'META-INF/*' )
 fi
 
 # The resolver provider is a separate pass: it needs the running JDK's API

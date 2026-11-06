@@ -112,4 +112,13 @@ public final class NativeAudio {
     public static native int  nativeMpPosition(long h);
     public static native boolean nativeMpIsPlaying(long h);
     public static native void nativeMpRelease(long h);
+
+    // The track's frameCount (the app's request raised to the platform
+    // minimum) and the fill threshold under it: AudioTrack
+    // getBufferCapacityInFrames / setBufferSizeInFrames (audio_backend.mm
+    // macapk_audio_stream_buffer_capacity / _set_buffer_size).
+    public static native int nativeGetBufferCapacity(long h);
+    public static native int nativeSetBufferSize(long h, int frames);
+    // AudioTrack.getUnderrunCount: starved render cycles, one per episode.
+    public static native int nativeGetUnderrunCount(long h);
 }

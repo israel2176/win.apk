@@ -1459,6 +1459,8 @@ public class LayoutInflater {
      *  ConstraintLayout constraints that reference the include
      *  site's id can't resolve (the inflated view has the included
      *  file's root-element id, not the include site's). */
+    static final boolean INCLUDE_SITE_STYLE_LP =
+        !"0".equals(System.getenv("MACAPK_INCLUDE_SITE_STYLE_LP"));
     private void applyIncludeOverrides(View inflated, Element includeElem, ViewGroup parent) {
         try {
             org.w3c.dom.NamedNodeMap attrs = includeElem.getAttributes();
@@ -1522,6 +1524,22 @@ public class LayoutInflater {
                 if ("layout_width".equals(n))  siteHasW = true;
                 else if ("layout_height".equals(n)) siteHasH = true;
             }
+            // The site's width/height may come from its style= rather than
+            // attributes: AOSP's generateLayoutParams(attrs) reads through
+            // obtainStyledAttributes, which honours the AttributeSet's style.
+            // Measured: AdGuard 4.14's fragment_home has
+            //   <include android:id="@id/stub" style="@style/LayoutFullWidth"
+            //            app:layout_constraintBottom_toBottomOf="parent" .../>
+            // and, read as "no size", kept the included root's constraint-less
+            // LP: the stub sat at the top, the card barrier followed it there,
+            // and the cards covered the main protection switch (issue #5,
+            // 2026-10-19). MACAPK_INCLUDE_SITE_STYLE_LP=0 restores attrs-only.
+            java.util.Map<String, String> siteStyle = java.util.Collections.emptyMap();
+            if (INCLUDE_SITE_STYLE_LP && parent != null && !(siteHasW && siteHasH)) {
+                siteStyle = new DomBackedAttributeSet(includeElem, macapkLpContext(parent)).macapkStyleItems();
+                if (siteStyle.containsKey("layout_width"))  siteHasW = true;
+                if (siteStyle.containsKey("layout_height")) siteHasH = true;
+            }
             if (parent != null && siteHasW && siteHasH) {
                 try {
                     android.util.AttributeSet siteAttrs = new DomBackedAttributeSet(includeElem, macapkLpContext(parent));
@@ -1534,6 +1552,16 @@ public class LayoutInflater {
                 }
             }
             java.util.Map<String, String> incMargins = new java.util.HashMap<>();
+            // Style-supplied layout_* first, the site's own attributes then
+            // overwrite (the same precedence the element path applies).
+            if (lp != null) {
+                for (java.util.Map.Entry<String, String> en : siteStyle.entrySet()) {
+                    String name = en.getKey();
+                    if (!name.startsWith("layout_")) continue;
+                    if (LAYOUT_AOSP_1643 && MARGIN_ATTRS.contains(name)) incMargins.put(name, en.getValue());
+                    else applyLayoutAttribute(lp, name, en.getValue());
+                }
+            }
             for (int i = 0; i < attrs.getLength(); i++) {
                 Node a = attrs.item(i);
                 String name = a.getLocalName();
@@ -2517,8 +2545,15 @@ public class LayoutInflater {
             // would re-apply the sp->px scale -> DOUBLE-sized text. Apply as PX.
             // (Bug: Calculator's DisplayLarge result rendered 228px == 57sp*2*2
             // instead of 57sp*2=114px; every style-textAppearance text was 2x.)
-            if (px != null && px > 0)
-                tv.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, px);
+            // Raw, as AOSP's constructor applies a textAppearance size
+            // (setRawTextSize), never through the overridable setTextSize.
+            if (px != null && px > 0) {
+                String v = sz.trim();
+                int unit = v.endsWith("sp") ? android.util.TypedValue.COMPLEX_UNIT_SP
+                    : (v.endsWith("dp") || v.endsWith("dip")) ? android.util.TypedValue.COMPLEX_UNIT_DIP
+                    : android.util.TypedValue.COMPLEX_UNIT_PX;
+                tv.macapkSetRawTextSize(px, unit);
+            }
         }
         String col = macapkStyleAttrRaw(styleName, "textColor");
         if (applyColor && col != null) {
@@ -2691,9 +2726,9 @@ public class LayoutInflater {
                 break;
         }
         if (minH > 0) {
-            // The table above is in PIXELS AT 2x (56dp = 112px), the only
-            // density Mac.apk ran at when it was written. At any other density
-            // it is wrong by that ratio: Win.apk runs at 1x, where every real
+            // The table above is in PIXELS AT 2x (56dp = 112px), the Retina
+            // density it was written for. At any other density it is wrong by
+            // that ratio: at 1x (a non-Retina monitor, density 160) every real
             // ActionBarContainer and wrap_content Toolbar was floored at 112dp,
             // twice the bar, so each AppCompat screen showed an empty band as
             // tall as the toolbar under it (NoNonsense Notes, every screen), and
@@ -3252,20 +3287,47 @@ public class LayoutInflater {
             return macapkStyleItems().get(name);
         }
 
+        /** The element's REAL attributes, in document order: what Android's
+         *  XmlBlock.Parser counts and indexes. The DOM also carries namespace
+         *  declarations (xmlns:*) and the parser's own sidecars (http://macapk/
+         *  axml-*: value types, table aliases, attr ids, document names), none of
+         *  which exists in the compiled file; counting them made an app that walks
+         *  getAttributeCount() / getAttributeName(i) see names Android never
+         *  shows it. */
+        private java.util.List<Node> realAttrs;
+        private java.util.List<Node> realAttrs() {
+            if (realAttrs != null) return realAttrs;
+            java.util.List<Node> out = new java.util.ArrayList<>();
+            if (elem != null) {
+                org.w3c.dom.NamedNodeMap attrs = elem.getAttributes();
+                for (int k = 0; k < attrs.getLength(); k++) {
+                    Node a = attrs.item(k);
+                    String ns = a.getNamespaceURI();
+                    if ("http://www.w3.org/2000/xmlns/".equals(ns)) continue;
+                    if (ns != null && ns.startsWith("http://macapk/")) continue;
+                    String qn = a.getNodeName();
+                    if (qn != null && (qn.equals("xmlns") || qn.startsWith("xmlns:"))) continue;
+                    out.add(a);
+                }
+            }
+            return realAttrs = out;
+        }
         @Override public int    getAttributeCount() {
-            return elem == null ? 0 : elem.getAttributes().getLength();
+            return realAttrs().size();
         }
         @Override public String getAttributeName(int i) {
-            if (elem == null) return null;
-            Node n = elem.getAttributes().item(i);
-            if (n == null) return null;
+            if (i < 0 || i >= realAttrs().size()) return null;
+            Node n = realAttrs().get(i);
             String s = n.getLocalName();
-            return s != null ? s : n.getNodeName();
+            if (s == null) s = n.getNodeName();
+            // The compiled file's own spelling, when the parser renamed it
+            // (BinaryXmlParser.MACAPK_DOCNAME_NS).
+            String doc = elem.getAttributeNS(com.macapk.loader.BinaryXmlParser.MACAPK_DOCNAME_NS, s);
+            return doc != null && !doc.isEmpty() ? doc : s;
         }
         @Override public String getAttributeValue(int i) {
-            if (elem == null) return null;
-            Node n = elem.getAttributes().item(i);
-            return n == null ? null : n.getNodeValue();
+            if (i < 0 || i >= realAttrs().size()) return null;
+            return realAttrs().get(i).getNodeValue();
         }
         @Override public String getAttributeValue(String ns, String name) {
             return lookup(ns, name);
@@ -3705,6 +3767,47 @@ public class LayoutInflater {
             macapkReplaySingleLine(tvSl, elem, sitems);
         }
         applyMaterialButtonStyle(view, sitems, elem);
+        macapkApplyThemeElevation(view, elem, sitems);
+    }
+
+    /** AOSP View(Context, AttributeSet, int, int) reads android:elevation through
+     *  obtainStyledAttributes, whose last fallback, after the XML attribute, the
+     *  style= items and the default style, is the view's own THEME. So a theme
+     *  overlay that sets android:elevation (app:theme on a view, wrapped into a
+     *  ContextThemeWrapper by AppCompat's inflater) raises that view. Our View
+     *  constructor makes that read only for a view given a default style
+     *  (MACAPK_VIEW_CTOR_ELEVATION); for one built with defStyleAttr and
+     *  defStyleRes both 0, the plain XML case, elevation came only from the
+     *  element and its style here, so a theme overlay left it at Z 0.
+     *
+     *  Z orders touch dispatch, not only shadows: WhatsApp's welcome screen
+     *  centres a scroll view that, on a short screen, reaches up under its top
+     *  bar. On Android the bar's overlay gives it 4dp and the bar takes the taps
+     *  over its overflow button first; at Z 0 the scroll view took them.
+     *  MACAPK_THEME_ELEVATION=0 turns this off. */
+    private static final boolean MACAPK_THEME_ELEVATION =
+        !"0".equals(System.getenv("MACAPK_THEME_ELEVATION"));
+    private void macapkApplyThemeElevation(View view, Element elem,
+                                           java.util.Map<String, String> sitems) {
+        if (!MACAPK_THEME_ELEVATION || view == null || view.getElevation() != 0f) return;
+        if (elem.hasAttributeNS(MACAPK_ANDROID_NS, "elevation")) return;
+        if (sitems != null && sitems.containsKey("elevation")) return;
+        final Context vc = view.getContext();
+        if (vc == null) return;
+        try {
+            android.content.res.TypedArray ta = vc.getTheme()
+                .obtainStyledAttributes(new int[]{android.R.attr.elevation});
+            try {
+                if (ta.hasValue(0)) {
+                    float e = ta.getDimension(0, 0f);
+                    if (e > 0f) view.setElevation(e);
+                }
+            } finally {
+                ta.recycle();
+            }
+        } catch (Throwable ignored) {
+            // No theme answer: AOSP would fall through to the 0 default as well.
+        }
     }
 
     /** BISECT GATE shared by name with android.widget.TextView and
@@ -3898,13 +4001,19 @@ public class LayoutInflater {
             //     framework table, deliberately -- see that table's note on why
             //     injecting colour here is a precedence hazard.
             final boolean editText = "editTextStyle".equals(defStyleAttr);
+            // "focusable" / "clickable": Widget.Button and Widget.CompoundButton
+            // declare both true (core/res styles.xml), and it is the STYLE that
+            // makes a platform button focusable on a device. Without them a
+            // Button could hold focus only if the app set it, so D-pad / Tab
+            // focus skipped every plain button.
             for (String attr : (compound
-                    ? new String[]{"button"}
+                    ? new String[]{"button", "focusable", "clickable"}
                     : editText
                     ? new String[]{"background", "textSize", "minHeight",
                                    "minWidth", "gravity", "textColor"}
                     : new String[]{"background", "minHeight", "minWidth",
-                                   "gravity", "textColor", "textAllCaps"})) {
+                                   "gravity", "textColor", "textAllCaps",
+                                   "focusable", "clickable"})) {
                 // `containsKey` is CORRECT here, and a v1.0.871 experiment that
                 // said otherwise was reverted. The reasoning that looked right:
                 // Material's `Widget.MaterialComponents.Button` declares
@@ -4934,8 +5043,16 @@ public class LayoutInflater {
                         Float sz = parseDimensionPx(value);
                         // parseDimensionPx already gave px; setTextSize(float) is
                         // the SP overload and would double-convert. Apply as PX.
-                        if (sz != null)
-                            tv.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, sz);
+                        // AOSP sets the XML size inside the constructor through the
+                        // private setRawTextSize, never through the overridable
+                        // public setTextSize; see TextView.macapkSetRawTextSize.
+                        if (sz != null) {
+                            String v = value.trim();
+                            int unit = v.endsWith("sp") ? android.util.TypedValue.COMPLEX_UNIT_SP
+                                : (v.endsWith("dp") || v.endsWith("dip")) ? android.util.TypedValue.COMPLEX_UNIT_DIP
+                                : android.util.TypedValue.COMPLEX_UNIT_PX;
+                            tv.macapkSetRawTextSize(sz, unit);
+                        }
                     }
                     return;
                 case "textStyle":
@@ -5046,6 +5163,26 @@ public class LayoutInflater {
                     // reads it from its own TypedArray; setting it again here is
                     // the same value.)
                     if (LAYOUT_AOSP_1643) setBooleanReflect(view, attr, "true".equals(value));
+                    return;
+                case "descendantFocusability":
+                    // AOSP ViewGroup's constructor: setDescendantFocusability(
+                    // DESCENDANT_FOCUSABILITY_FLAGS[a.getInt(attr, 0)]), the enum
+                    // beforeDescendants=0 / afterDescendants=1 / blocksDescendants=2
+                    // (attrs.xml). Never read, so every XML group stayed
+                    // BEFORE_DESCENDANTS: leanback's BrowseFrameLayout (focusable,
+                    // afterDescendants in lb_browse_fragment.xml) then kept focus
+                    // ITSELF instead of handing it to its rows, and a list row
+                    // that blocks descendants let its buttons steal focus.
+                    if (view instanceof ViewGroup vgDF && value != null) {
+                        int df;
+                        switch (value.trim()) {
+                            case "0": case "beforeDescendants": df = ViewGroup.FOCUS_BEFORE_DESCENDANTS; break;
+                            case "1": case "afterDescendants": df = ViewGroup.FOCUS_AFTER_DESCENDANTS; break;
+                            case "2": case "blocksDescendants": df = ViewGroup.FOCUS_BLOCK_DESCENDANTS; break;
+                            default: df = -1; break;
+                        }
+                        if (df != -1) vgDF.setDescendantFocusability(df);
+                    }
                     return;
                 case "focusable":
                 case "focusableInTouchMode":
@@ -5679,34 +5816,35 @@ public class LayoutInflater {
         // "@ANDROID:STRING/OK" (textAllCaps). Resources.getString already
         // serves 0x0104xxxx (ResourceIndex.stringForId); this only has to
         // turn the name back into its id.
-        if (s.startsWith("@android:string/") && context != null) {
-            try {
-                android.content.res.Resources r = context.getResources();
-                final String fwName = s.substring(16);
-                int id = r != null ? r.getIdentifier(fwName, "string", "android") : 0;
-                if (id == 0) {
-                    // public-final.xml ids of the strings ResourceIndex's frozen
-                    // table serves when the platform table is gated off.
-                    switch (fwName) {
-                        case "cancel": id = 0x01040000; break;
-                        case "copy": id = 0x01040001; break;
-                        case "cut": id = 0x01040003; break;
-                        case "no": id = 0x01040009; break;
-                        case "ok": id = 0x0104000a; break;
-                        case "paste": id = 0x0104000b; break;
-                        case "search_go": id = 0x0104000c; break;
-                        case "selectAll": id = 0x0104000d; break;
-                        case "untitled": id = 0x0104000f; break;
-                        case "yes": id = 0x01040013; break;
-                        case "dialog_alert_title": id = 0x01040014; break;
-                        default: break;
-                    }
-                }
-                if (id != 0 && r != null) {
-                    CharSequence resolved = r.getText(id);
+        if (s.startsWith("@android:string/")) {
+            final String fwName = s.substring("@android:string/".length());
+            final String platform = macapkPlatformString(fwName);
+            if (platform != null) return platform;
+            // public-final.xml ids of the strings ResourceIndex's frozen table
+            // serves when the platform table is gated off (getIdentifier
+            // cannot name them then).
+            int id = 0;
+            switch (fwName) {
+                case "cancel": id = 0x01040000; break;
+                case "copy": id = 0x01040001; break;
+                case "cut": id = 0x01040003; break;
+                case "no": id = 0x01040009; break;
+                case "ok": id = 0x0104000a; break;
+                case "paste": id = 0x0104000b; break;
+                case "search_go": id = 0x0104000c; break;
+                case "selectAll": id = 0x0104000d; break;
+                case "untitled": id = 0x0104000f; break;
+                case "yes": id = 0x01040013; break;
+                case "dialog_alert_title": id = 0x01040014; break;
+                default: break;
+            }
+            if (id != 0 && context != null) {
+                try {
+                    android.content.res.Resources r = context.getResources();
+                    CharSequence resolved = r != null ? r.getText(id) : null;
                     if (resolved != null && resolved.length() > 0) return resolved.toString();
-                }
-            } catch (Throwable ignored) {}
+                } catch (Throwable ignored) {}
+            }
         }
         return s;
     }
@@ -6206,6 +6344,82 @@ public class LayoutInflater {
         return t.equals("@null") || t.equals("@empty");
     }
 
+    /** A compound-drawable attribute value as TypedArray.getDrawable reads it:
+     *  a `?attr` chased through the view's theme (the applyBackground chase),
+     *  then a platform drawable (by name or compiled id), an app drawable / mipmap
+     *  / colour reference, or a colour literal. A platform drawable the table can
+     *  only answer with the empty stand-in (the Material radio / checkbox are
+     *  animated-selectors of animated vectors) falls back to the synthesized
+     *  indicator Resources keeps for exactly those two
+     *  (MacapkCompoundButtonDrawable). Null when nothing resolves. */
+    private android.graphics.drawable.Drawable macapkResolveCompoundDrawable(View view, String value) {
+        if (value == null) return null;
+        value = value.trim();
+        if (value.isEmpty() || macapkIsNullBackground(value)) return null;
+        android.content.res.Resources r = view.getResources();
+        if (r == null) return null;
+        android.content.res.Resources.Theme th = null;
+        try { if (view.getContext() != null) th = view.getContext().getTheme(); }
+        catch (Throwable ignored) {}
+        String cur = value;
+        String lastAttr = null;
+        if (cur.startsWith("?") && th != null) {
+            for (int hop = 0; hop < 4 && cur.startsWith("?"); hop++) {
+                String attr = cur.substring(1);
+                if (attr.startsWith("android:attr/")) attr = "android:" + attr.substring(13);
+                else if (attr.startsWith("attr/")) attr = attr.substring(5);
+                lastAttr = attr;
+                String raw = th.resolveAttrRaw(attr);
+                if (raw == null) break;
+                raw = raw.trim();
+                if (raw.isEmpty() || raw.equals(cur)) break;
+                cur = raw;
+            }
+        }
+        if (cur.startsWith("?") || macapkIsNullBackground(cur)) return null;
+        android.graphics.drawable.Drawable dr = null;
+        try {
+            if (cur.startsWith("#")) {
+                Integer c = macapkResolveColorValue(cur, th);
+                if (c != null) dr = new android.graphics.drawable.ColorDrawable(c);
+            } else if (cur.startsWith("@android:drawable/")) {
+                String fw = cur.substring(18);
+                // Theme.Material's listChoiceIndicatorSingle/Multiple point at
+                // btn_radio_material_anim / btn_check_material_anim: animated
+                // selectors of animated vectors that the platform table loads
+                // but nothing here can paint, so the row reserved the room and
+                // drew no radio (Privacy Friendly Notes' ListPreference dialog, a Material 3
+                // theme whose overlay does not restate the attr). Use the
+                // synthesized Material indicator, as for an unresolved attr.
+                if ("btn_radio_material_anim".equals(fw)) fw = "btn_radio_material";
+                else if ("btn_check_material_anim".equals(fw)) fw = "btn_check_material";
+                dr = r.macapkFrameworkDrawableByName(fw, th);
+            } else if (cur.startsWith("@0x") || cur.startsWith("@0X")) {
+                int id = (int) Long.parseLong(cur.substring(3), 16);
+                if (id != 0) dr = r.getDrawable(id, th);
+            } else if (cur.startsWith("@")) {
+                int id = parseResourceId(cur);
+                if (id != 0) dr = r.getDrawable(id, th);
+            }
+        } catch (Throwable ignored) {
+            dr = null;
+        }
+        if (dr instanceof android.graphics.drawable.VectorDrawable vd
+                && (vd.macapkUnresolvedStub || vd.macapkPaintsNothing())) {
+            dr = null;
+        }
+        if (dr == null && lastAttr != null) {
+            String a = lastAttr.startsWith("android:") ? lastAttr.substring(8) : lastAttr;
+            String synth = a.startsWith("listChoiceIndicatorSingle") ? "btn_radio_material"
+                         : a.startsWith("listChoiceIndicatorMultiple") ? "btn_check_material"
+                         : null;
+            if (synth != null) {
+                try { dr = r.macapkFrameworkDrawableByName(synth, th); } catch (Throwable ignored) {}
+            }
+        }
+        return dr;
+    }
+
     /** Resolve a color VALUE string: hex literal, `@color/X`,
      *  `@android:color/white|black|transparent`, or a `?attr` theme
      *  reference (through the application-theme cascade). Returns
@@ -6278,14 +6492,6 @@ public class LayoutInflater {
         return null;
     }
 
-    /** A compound-drawable attribute value as TypedArray.getDrawable reads it:
-     *  a `?attr` chased through the view's theme (the applyBackground chase),
-     *  then a platform drawable (by name or compiled id), an app drawable / mipmap
-     *  / colour reference, or a colour literal. A platform drawable the table can
-     *  only answer with the empty stand-in (the Material radio / checkbox are
-     *  animated-selectors of animated vectors) falls back to the synthesized
-     *  indicator Resources keeps for exactly those two
-     *  (MacapkCompoundButtonDrawable). Null when nothing resolves. */
     /** A TextView colour attribute as AOSP reads it: TypedArray.getColorStateList,
      *  so a @color/ SELECTOR (directly, or reached through ?attr hops in the
      *  view's theme) keeps its states. Both of our textColor paths (the direct
@@ -6293,10 +6499,11 @@ public class LayoutInflater {
      *  selector text colour on its default row: a disabled preference
      *  (androidx's setEnabledStateOnViews -> setEnabled(false)) kept full-ink
      *  text under Material 3's m3_default_color_primary_text, whose
-     *  state_enabled="false" row carries the 38% disabled alpha (pf-notes
-     *  Settings: "Autodelete timespan" while its dependency is off). Returns null
-     *  for anything that is not a STATEFUL list, so plain colours keep the int
-     *  path exactly. MACAPK_TEXTCOLOR_CSL=0 restores the int-only path. */
+     *  state_enabled="false" row carries the 38% disabled alpha (Privacy
+     *  Friendly Notes' Settings: "Autodelete timespan" while its dependency is
+     *  off). Returns null for anything that is not a STATEFUL list, so plain
+     *  colours keep the int path exactly. MACAPK_TEXTCOLOR_CSL=0 restores the
+     *  int-only path. */
     static final boolean MACAPK_TEXTCOLOR_CSL =
         !"0".equals(System.getenv("MACAPK_TEXTCOLOR_CSL"));
     private android.content.res.ColorStateList macapkResolveTextColorList(View view, String value,
@@ -6335,74 +6542,6 @@ public class LayoutInflater {
         } catch (Throwable t) {
             return null;
         }
-    }
-
-    private android.graphics.drawable.Drawable macapkResolveCompoundDrawable(View view, String value) {
-        if (value == null) return null;
-        value = value.trim();
-        if (value.isEmpty() || macapkIsNullBackground(value)) return null;
-        android.content.res.Resources r = view.getResources();
-        if (r == null) return null;
-        android.content.res.Resources.Theme th = null;
-        try { if (view.getContext() != null) th = view.getContext().getTheme(); }
-        catch (Throwable ignored) {}
-        String cur = value;
-        String lastAttr = null;
-        if (cur.startsWith("?") && th != null) {
-            for (int hop = 0; hop < 4 && cur.startsWith("?"); hop++) {
-                String attr = cur.substring(1);
-                if (attr.startsWith("android:attr/")) attr = "android:" + attr.substring(13);
-                else if (attr.startsWith("attr/")) attr = attr.substring(5);
-                lastAttr = attr;
-                String raw = th.resolveAttrRaw(attr);
-                if (raw == null) break;
-                raw = raw.trim();
-                if (raw.isEmpty() || raw.equals(cur)) break;
-                cur = raw;
-            }
-        }
-        if (cur.startsWith("?") || macapkIsNullBackground(cur)) return null;
-        android.graphics.drawable.Drawable dr = null;
-        try {
-            if (cur.startsWith("#")) {
-                Integer c = macapkResolveColorValue(cur, th);
-                if (c != null) dr = new android.graphics.drawable.ColorDrawable(c);
-            } else if (cur.startsWith("@android:drawable/")) {
-                String fw = cur.substring(18);
-                // Theme.Material's listChoiceIndicatorSingle/Multiple point at
-                // btn_radio_material_anim / btn_check_material_anim: animated
-                // selectors of animated vectors that the platform table loads
-                // but nothing here can paint, so the row reserved the room and
-                // drew no radio (pf-notes' ListPreference dialog, a Material 3
-                // theme whose overlay does not restate the attr). Use the
-                // synthesized Material indicator, as for an unresolved attr.
-                if ("btn_radio_material_anim".equals(fw)) fw = "btn_radio_material";
-                else if ("btn_check_material_anim".equals(fw)) fw = "btn_check_material";
-                dr = r.macapkFrameworkDrawableByName(fw, th);
-            } else if (cur.startsWith("@0x") || cur.startsWith("@0X")) {
-                int id = (int) Long.parseLong(cur.substring(3), 16);
-                if (id != 0) dr = r.getDrawable(id, th);
-            } else if (cur.startsWith("@")) {
-                int id = parseResourceId(cur);
-                if (id != 0) dr = r.getDrawable(id, th);
-            }
-        } catch (Throwable ignored) {
-            dr = null;
-        }
-        if (dr instanceof android.graphics.drawable.VectorDrawable vd
-                && (vd.macapkUnresolvedStub || vd.macapkPaintsNothing())) {
-            dr = null;
-        }
-        if (dr == null && lastAttr != null) {
-            String a = lastAttr.startsWith("android:") ? lastAttr.substring(8) : lastAttr;
-            String synth = a.startsWith("listChoiceIndicatorSingle") ? "btn_radio_material"
-                         : a.startsWith("listChoiceIndicatorMultiple") ? "btn_check_material"
-                         : null;
-            if (synth != null) {
-                try { dr = r.macapkFrameworkDrawableByName(synth, th); } catch (Throwable ignored) {}
-            }
-        }
-        return dr;
     }
 
     private void applyImageSrc(android.widget.ImageView iv, String value) {
