@@ -37,6 +37,7 @@
 #include "gl/gl_surface.h"
 #include "native_window.h"
 #include "win32_window.h"
+#include "winapk/arm64_guest.h"
 #include "winapk/mini_bionic.h"
 
 namespace winapk::host {
@@ -1050,6 +1051,7 @@ void JNICALL Cocoa_exitProcess(JNIEnv*, jclass, jint code, jstring relaunch) {
             std::fprintf(stderr, "[win.apk] the relaunch failed (error %lu)\n", GetLastError());
         }
     }
+    winapk::arm64::print_stats_if_enabled();  // TerminateProcess skips atexit
     std::fflush(stdout);
     std::fflush(stderr);
     TerminateProcess(GetCurrentProcess(), static_cast<UINT>(code));
