@@ -42,4 +42,11 @@ std::unique_ptr<JitEngine> make_jit_engine(Cpu& c, bool outermost = true);
 // Whether this build has the JIT.
 bool jit_built();
 
+// The guest wrote code at `addr` and said so with IC IVAU, on any thread and
+// whichever engine ran it. Arm makes that reach every core; here each thread
+// has an engine of its own, with its own compiled code: every engine drops
+// what it compiled from that cache line, a running one at its next exit
+// (each is asked to halt).
+void jit_code_written(uint64_t addr);
+
 }  // namespace winapk::arm64

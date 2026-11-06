@@ -479,6 +479,10 @@ void run_patch(winapk::GuestLinker& linker, const char* file) {
     if (aot) {
         check("its translation is dropped", winapk::arm64::aot_lookup(reinterpret_cast<uint64_t>(target)) == nullptr);
     }
+    if (void* threads = sym(linker, lib, "flow_patch_threads")) {
+        check("patched by one thread while another runs it: the other sees the new code",
+              winapk::arm64::call(threads) == 1);
+    }
 }
 
 // A library unloaded with dlclose must take its translation with it: other

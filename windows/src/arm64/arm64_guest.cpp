@@ -771,6 +771,13 @@ bool plain_host(uint64_t target) {
     return info.va_list < 0 && info.guest_fn_args == 0;
 }
 
+// Hooks::code_written: every thread's JIT drops what it compiled there, and a
+// translation of that library is retired (arm64_aot.h).
+void code_written(uint64_t addr) {
+    jit_code_written(addr);
+    aot_code_written(addr);
+}
+
 // Hooks::aot_entry: translated code, while the engine uses it.
 AotFn aot_entry(uint64_t pc) {
     return g_engine.load(std::memory_order_relaxed) == Engine::kAot ? aot_lookup(pc) : nullptr;
@@ -840,7 +847,7 @@ void init() {
         h.full_state_call = full_state_call;
         h.aot_entry = aot_entry;
         h.plain_host = plain_host;
-        h.code_written = aot_code_written;
+        h.code_written = code_written;
         h.svc = svc;
         h.fault = fault;
         set_hooks(h);

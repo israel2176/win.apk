@@ -50,3 +50,54 @@ EXPORT uint64_t flow_patch(void) {
     write_code(at, original);
     return before * 100 + after;
 }
+
+// The same across threads: a second thread calls flow_patch_target2 over and
+// over (so a JIT has compiled it on that thread), this one patches it, and
+// the other thread must see the new code (Arm makes IC IVAU reach every
+// core). Returns 1 when it did, 0 when it kept running the old code.
+__asm__(
+    ".text\n"
+    ".p2align 2\n"
+    ".globl flow_patch_target2\n"
+    ".type flow_patch_target2, %function\n"
+    "flow_patch_target2:\n"
+    "    mov w0, #1\n"
+    "    ret\n"
+    ".size flow_patch_target2, .-flow_patch_target2\n");
+
+uint64_t flow_patch_target2(void);
+typedef long pthread_t;
+int pthread_create(pthread_t*, const void*, void* (*)(void*), void*);
+int pthread_join(pthread_t, void**);
+
+static volatile uint64_t g_calls, g_patched;
+
+static void* call_until_patched(void* arg) {
+    (void)arg;
+    // Up to 20 million calls after the patch: far longer than any engine
+    // needs to see it, and a fraction of a second.
+    uint64_t after = 0;
+    for (;;) {
+        const uint64_t r = flow_patch_target2();
+        __atomic_add_fetch(&g_calls, 1, __ATOMIC_RELAXED);
+        if (r == 42) return (void*)1;
+        if (__atomic_load_n(&g_patched, __ATOMIC_ACQUIRE) && ++after > 20000000) return (void*)0;
+    }
+}
+
+EXPORT uint64_t flow_patch_threads(void) {
+    volatile uint32_t* at = (volatile uint32_t*)&flow_patch_target2;
+    const uint32_t original = *at;
+    g_calls = 0;
+    g_patched = 0;
+    pthread_t t;
+    if (pthread_create(&t, 0, call_until_patched, 0) != 0) return 2;
+    while (__atomic_load_n(&g_calls, __ATOMIC_RELAXED) < 10000) {
+    }
+    write_code(at, 0x52800540);  // mov w0, #42
+    __atomic_store_n(&g_patched, 1, __ATOMIC_RELEASE);
+    void* seen = 0;
+    pthread_join(t, &seen);
+    write_code(at, original);
+    return (uint64_t)seen;
+}
