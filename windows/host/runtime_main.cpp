@@ -1941,6 +1941,7 @@ int wmain(int argc, wchar_t** argv) {
             return 0;
         }
         SetEnvironmentVariableW(L"MACAPK_BROKER", L"1");
+        SetEnvironmentVariableW(L"MACAPK_APK_PATH", nullptr);  // the app that started it, not the broker's
         if (env_var(L"MACAPK_BROKER_LOGDIR").empty()) {
             std::error_code lec;
             fs::create_directories(b.options.data / L"logs" / L"services", lec);
@@ -1956,6 +1957,7 @@ int wmain(int argc, wchar_t** argv) {
 
     // --gms: a JVM, the GMS classes and no app. Before anything APK-shaped.
     if (b.options.gms) {
+        SetEnvironmentVariableW(L"MACAPK_APK_PATH", nullptr);
         HANDLE t = CreateThread(nullptr, 64 * 1024 * 1024, gms_thread, &b, STACK_SIZE_PARAM_IS_A_RESERVATION,
                                 nullptr);
         if (!t) return 1;
@@ -1994,6 +1996,14 @@ int wmain(int argc, wchar_t** argv) {
         return 0;
     }
     if (!install_app(&b.options, b.options.data / "android")) return 1;
+    // The installed APK, for the Java side's first moments: PresentedSdk reads
+    // the app's targetSdkVersion and minSdkVersion from it when Build.VERSION
+    // initializes, before any loader class could hand it over (upstream's
+    // main.cpp exports it the same way). Without it every app was presented
+    // API 29, below Play services' minSdk 31. Always this run's own APK: a
+    // value inherited from the process that started this one (the broker
+    // starting Play services for an app) names another app.
+    SetEnvironmentVariableW(L"MACAPK_APK_PATH", b.options.apk.c_str());
     prepare_arm64(b.options, b.app_dir);
     if (!convert_dex(b.options, b.app_dir, &b.app_jar)) return 1;
 
