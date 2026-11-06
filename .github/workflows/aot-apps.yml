@@ -1,0 +1,136 @@
+# One-off (to be deleted before the branch is merged): arm64 apps on the JIT
+# alone and then translated, with the translation's fixes
+# (.github/measure/aot_apps.py).
+name: arm64 apps, JIT and translated (one-off)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [claude/tender-gates-68namz]
+    paths:
+      - '.github/workflows/aot-apps.yml'
+      - '.github/measure/**'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build (Windows x64)
+    runs-on: windows-latest
+    timeout-minutes: 75
+    defaults:
+      run:
+        shell: msys2 {0}
+    env:
+      CCACHE_DIR: ${{ github.workspace }}\.ccache
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_COMPILERCHECK: content
+      CCACHE_MAXSIZE: 2G
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: CLANG64
+          install: unzip zip git
+          pacboy: >-
+            clang:p
+            cmake:p
+            ninja:p
+            boost:p
+            ccache:p
+      - uses: actions/cache/restore@v4
+        with:
+          path: .ccache
+          key: ccache-${{ github.sha }}
+          restore-keys: ccache-
+      - uses: actions/cache/restore@v4
+        with:
+          path: thirdparty/framework-res
+          key: framework-res-v2-${{ hashFiles('scripts/build_framework_res.sh', 'windows/scripts/build_framework_res.sh') }}
+      - uses: actions/cache/restore@v4
+        with:
+          path: thirdparty/angle-win
+          key: angle-${{ hashFiles('windows/scripts/fetch_angle.sh') }}
+      - name: Build
+        run: |
+          cmake -S windows -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=clang++ \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DWINAPK_JNI_INCLUDE="$(cygpath -u "$JAVA_HOME")/include" -DWINAPK_ARM64_JIT=ON
+          cmake --build build
+      - name: Stage the runtime
+        run: |
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          windows/scripts/stage_runtime.sh build stage
+      - uses: actions/upload-artifact@v4
+        with:
+          name: measure-stage
+          path: stage/
+          retention-days: 2
+          compression-level: 1
+
+  app:
+    name: ${{ matrix.pkg }}
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { pkg: org.moire.opensudoku, vc: '20261008' }
+          - { pkg: com.artifex.mupdf.viewer.app, vc: '270' }
+          - { pkg: org.jitsi.meet, vc: '26000002' }
+          - { pkg: org.localsend.localsend_app, vc: '643' }
+          - { pkg: org.videolan.vlc, vc: '13070206' }
+          - { pkg: net.minetest.minetest, vc: '5170000' }
+          - { pkg: se.voxelmanip.tensy, vc: '2' }
+          - { pkg: com.nesbox.tic, vc: '10100' }
+          - { pkg: org.wesnoth.Wesnoth, vc: '1192900002' }
+          - { pkg: net.nullsum.freedoom, vc: '20' }
+          - { pkg: org.gnu.emacs, vc: '310100003' }
+          - { pkg: org.tuxpaint, vc: '9350' }
+          - { pkg: org.xbmc.kodi, vc: '2103001' }
+          - { pkg: net.osmand.plus, vc: '541103' }
+          - { pkg: org.godotengine.editor.v4, vc: '407025003' }
+          - { pkg: net.gcompris.full, vc: '260201' }
+          - { pkg: org.documentfoundation.libreoffice, vc: '131' }
+          - { pkg: org.lichess.mobileV2, vc: '300303' }
+          - { pkg: com.clavierhaus.gnubg, vc: '103' }
+          - { pkg: chat.simplex.app, vc: '385' }
+          - { pkg: io.github.divverent.aaaaxy, vc: '108300344' }
+          - { pkg: com.brouken.player, vc: '2174' }
+          - { pkg: org.revengate.revengate, vc: '2001300' }
+          - { pkg: org.linphone, vc: '6000213' }
+          - { pkg: org.thunderdog.challegram, vc: '1800202' }
+          - { pkg: org.mozilla.fennec_fdroid, vc: '1590020' }
+          - { pkg: org.ppsspp.ppsspp, vc: '119030000' }
+          - { pkg: name.boyle.chris.sgtpuzzles, vc: '149' }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: actions/download-artifact@v4
+        with:
+          name: measure-stage
+          path: stage
+      - name: Run
+        shell: pwsh
+        run: |
+          python -m pip install --quiet psutil
+          python .github/measure/aot_apps.py --runtime stage --jdk "$env:JAVA_HOME" `
+            --pkg ${{ matrix.pkg }} --vc ${{ matrix.vc }} --out out
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: aot-${{ matrix.pkg }}
+          path: |
+            out/*.log
+            out/summary.json
+          retention-days: 5
