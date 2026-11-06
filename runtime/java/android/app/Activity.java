@@ -2981,6 +2981,14 @@ public class Activity extends ContextThemeWrapper
     /** Exposes the contentView to framework code (e.g. TouchDispatcher
      *  walking the tree for the renderer). Apps don't see this. */
     public View macapkContentView() { return contentView; }
+    /** The view the app installed: macapkContentView() without the FrameLayout
+     *  root ActivityWindow.macapkFrameRootFor may have put above it (#29), so
+     *  framework code that checks "is the root still the view I installed?"
+     *  (NativeActivity.macapkInstallWindowSurface) sees through the wrapper. */
+    View macapkInstalledContentView() {
+        Window w = windowImpl;
+        return (w instanceof ActivityWindow aw) ? aw.macapkUnwrapFrameRoot(contentView) : contentView;
+    }
 
     /** v1.0.74: AOSP signature is `public CharSequence getTitle()` --
      *  see frameworks/base/core/java/android/app/Activity.java. AppCompat's
