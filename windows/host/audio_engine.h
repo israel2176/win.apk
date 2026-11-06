@@ -56,6 +56,12 @@ bool stream_set_rate(Stream* s, int hz);
 int stream_rate(Stream* s);
 void stream_set_params(Stream* s, float speed, float pitch);
 void stream_params(Stream* s, float* speed, float* pitch);
+// The buffer the track was made with, in frames (getBufferCapacityInFrames).
+size_t stream_capacity(Stream* s);
+// setBufferSizeInFrames: clipped to [16, capacity]; returns the size set.
+size_t stream_set_buffer_size(Stream* s, size_t frames);
+// Render cycles a playing track found empty (getUnderrunCount).
+int64_t stream_underruns(Stream* s);
 
 // ---- clip voices (SoundPool, MediaPlayer) ----------------------------------------
 class Voice;
