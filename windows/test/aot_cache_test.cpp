@@ -524,8 +524,8 @@ void test_in_use(const fs::path& dir) {
                   entry == AotFile::kSealed, name(entry));
             check("and takes it", took && winapk::arm64::aot_check_dll(stale, true) == AotFile::kSealed);
             const bool replaced = winapk::arm64::aot_replace(other, cached, 2);
-            std::printf("  (renaming another file over it: %s)\n", replaced ? "done" : "refused, as Windows does");
-            check("a refused rename leaves the loaded file's name in place", replaced || fs::exists(cached, ec));
+            std::printf("  (renaming another file over it: %s)\n", replaced ? "done" : "refused");
+            check("done or refused, the name is there", fs::exists(cached, ec));
         }
         SetEvent(go);
         check("the process that has it loaded runs on", finish(holder) == 0);
@@ -565,7 +565,7 @@ void test_stamps(const fs::path& dir) {
     std::printf("8. stamps written by four processes while another reads them\n");
     const fs::path stamp = dir / "lib.so.aot.stamp";
     std::vector<HANDLE> writers;
-    for (int i = 0; i < 4; ++i) writers.push_back(spawn(L"stamp " + q(stamp) + L" w" + std::to_wstring(i) + L" 300"));
+    for (int i = 0; i < 4; ++i) writers.push_back(spawn(L"stamp " + q(stamp) + L" w" + std::to_wstring(i) + L" 2000"));
     int reads = 0, partial = 0;
     std::string seen;
     for (;;) {
@@ -580,7 +580,7 @@ void test_stamps(const fs::path& dir) {
             }
         }
         if (!running) break;
-        Sleep(1);
+        Sleep(0);
     }
     std::string failed;
     bool most = true;
@@ -591,6 +591,7 @@ void test_stamps(const fs::path& dir) {
     }
     check("never a partial stamp", partial == 0, std::to_string(partial) + " of " + std::to_string(reads) +
                                                      " reads, e.g. \"" + seen + "\"");
+    check("read while being written, many times", reads >= 1000, std::to_string(reads) + " reads");
     check("the writes get through a reader (retried while it has the file open)", most, failed);
     check("no temporary file left", count_ext(dir, L".tmp") == 0);
 }

@@ -993,9 +993,9 @@ std::string aot_cache_key(const fs::path& so, const fs::path& clang) {
     return hex64(fnv1a(id));
 }
 
-// Puts a finished translation in place, unless the running app has the old
-// one loaded: then for the next start. A rename, so the app's name points at
-// a whole DLL or at none.
+// Puts a finished translation in place, or, where the running app has the
+// old one loaded and the system refuses to rename over it, beside it for the
+// next start. A rename, so the app's name points at a whole DLL or at none.
 bool install_aot_dll(const fs::path& dll, const fs::path& so) {
     const fs::path target = with_suffix(so, L".aot.dll"), later = with_suffix(so, L".aot.dll.new");
     winapk::arm64::aot_fault_point("install");

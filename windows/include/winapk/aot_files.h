@@ -30,9 +30,11 @@
 //     end); a DLL from before seals is loaded only under an older stamp.
 //   - The shared cache is checked whole before an entry is used, and an entry
 //     that fails is moved aside and deleted. An entry is never replaced while
-//     it is good: an app may have it mapped, and Windows refuses to replace
-//     (or delete) a mapped DLL, so the first writer wins and the second drops
-//     its copy.
+//     it is good: the first writer wins and the second drops its copy. An app
+//     may have the entry loaded: Windows then refuses to delete it through
+//     any of its names; renaming another file over it went through on CI's
+//     Windows and is refused under Wine (aot_cache_test.cpp, check 6), so
+//     neither is counted on.
 //   - A temporary file left by a process that was killed is deleted by the
 //     next pass over its folder, once it is an hour old (no writer takes that
 //     long between creating and renaming one).
@@ -81,8 +83,8 @@ AotFile aot_check_dll(const std::filesystem::path& dll, bool full);
 std::filesystem::path aot_temp_name(const std::filesystem::path& p);
 
 // Renames `from` over `to`, retrying for about a second while either is in
-// use; false (GetLastError says why) when it cannot, as when `to` is a DLL
-// another process has loaded.
+// use; false (GetLastError says why) when it cannot, as where the system
+// refuses to replace a DLL another process has loaded.
 bool aot_replace(const std::filesystem::path& from, const std::filesystem::path& to, int tries = 6);
 
 // Writes `data` to `p` atomically (temporary name, flush, rename).

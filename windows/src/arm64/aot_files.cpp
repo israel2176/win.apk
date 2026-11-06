@@ -158,7 +158,8 @@ bool aot_replace(const fs::path& from, const fs::path& to, int tries) {
         if (MoveFileExW(from.c_str(), to.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) return true;
         e = GetLastError();
         // Held open for a moment (a reader, a virus scanner): try again. A
-        // DLL another process has loaded stays "access denied" every time.
+        // DLL another process has loaded, where that is refused, stays
+        // "access denied" every time.
         if (e != ERROR_SHARING_VIOLATION && e != ERROR_ACCESS_DENIED && e != ERROR_LOCK_VIOLATION) break;
         if (i + 1 < tries) Sleep(25u << i);
     }
@@ -266,8 +267,8 @@ bool aot_cache_take(const fs::path& cached, const fs::path& to) {
 }
 
 bool aot_cache_put(const fs::path& dll, const fs::path& cached) {
-    // The first good entry stays: an app may have it loaded, and a mapped DLL
-    // can be neither replaced nor deleted.
+    // The first good entry stays: replacing it gains nothing, and an app may
+    // have it loaded (aot_files.h).
     if (aot_check_dll(cached, true) == AotFile::kSealed) {
         aot_touch(cached);
         return true;
