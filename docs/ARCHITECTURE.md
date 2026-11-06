@@ -298,7 +298,9 @@ Three engines run arm64 code, behind one CPU state (`src/arm64/`):
   call) finds it in the DLL's own table, cached at the call site.
 - **The JIT** (`arm64_jit.cpp`, dynarmic from the azahar-emu fork, 0BSD
   license, fastmem over the shared address space). The app starts on it and
-  it runs whatever has no translation. Built when CMake is given
+  it runs whatever has no translation. Each thread has its own engine and
+  code cache; code the guest writes (IC IVAU, on any thread and engine) is
+  dropped from all of them. Built when CMake is given
   `-DWINAPK_ARM64_JIT=ON` (CI and releases).
 - **The interpreter** (`arm64_cpu.cpp`, `arm64_simd.cpp`): the base integer
   ISA, every load/store form, exclusives and LSE atomics, scalar FP and the
