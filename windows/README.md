@@ -85,6 +85,9 @@ windows/scripts/stage_runtime.sh build runtime
 - `build_java.sh [out]` builds upstream's Java side with a stock JDK 21:
   `android-framework.jar`, `macapk-loader.jar`, `winapk-tools.jar`, the
   BouncyCastle provider, and the `java.base` and `jdk.unsupported` patches.
+  Android's own `org.apache.http.legacy` (Apache-2.0, converted to JVM classes
+  in `thirdparty/apache-http-legacy/`) is unpacked into
+  `android-framework.jar`, as upstream's build does.
 - `build_framework_res.sh [out.apk]` builds the platform resource APK from
   AOSP sources with Google's standalone `aapt2` (9.x or later), through
   upstream's `scripts/build_framework_res.sh`. The result is cached under
@@ -278,19 +281,66 @@ with rebase. [`../CONTRIBUTING.md`](../CONTRIBUTING.md) has the rest.
 
 ## Keeping up with upstream
 
+`runtime/` was copied from Mac.apk, not merged, so the two histories share no
+commit and `git merge upstream/main` cannot find a base. Sync file by file
+instead, with a three-way merge whose base is the upstream commit last synced:
+
 ```sh
 git remote add upstream https://github.com/kksimp/Mac.apk.git   # once
 git fetch upstream
-git merge upstream/main
+# for each file under runtime/java, runtime/java_base_patch and the shared
+# runtime/src files below that changed between BASE and upstream/main:
+git merge-file <file> <(git show BASE:<file>) <(git show upstream/main:<file>)
 ```
 
-Upstream's macOS-only files were removed here, so a merge that touches them
-stops with a modify/delete conflict: keep them deleted (`git rm` the file).
+The last sync is upstream **1500431** (Mac.apk v1.0.2379, 2026-11); the first
+copy was 66cb689 (v1.0.2238). A file only upstream changed is taken as it is,
+one only Win.apk changed is kept, and a file both changed is resolved by hand,
+keeping every change listed below. Synced: `runtime/java/**`,
+`runtime/java_base_patch/**`, `thirdparty/apache-http-legacy/`, and the
+upstream C++ Windows compiles: `runtime/src/native_methods.cpp` (its GL
+stretch), `egl14_bridges.inc`, `native_sqlite.cpp`. Not synced: upstream's
+Mac-only native code (`runtime/src/*.mm`, the other `runtime/src/*.cpp`,
+`runtime/translator/`), the Swift launcher, `launcher/SystemBrokerMain.c`, the
+Skia dylib, entitlements and plists; Windows has its own counterparts in
+`windows/`. Every native a synced class gains needs a Windows answer in
+`windows/host/` (for the classes `host_natives.cpp` binds, an unimplemented
+one returns 0 / null) or a guard in the Java that catches its absence.
+
 ### Changes to the upstream tree
 
 Files in `runtime/` are changed only where a Windows hook is unavoidable, and
 every such change is listed here:
 
+- `runtime/java/com/macapk/loader/HostAppSupport.java` (new) and
+  `InstallerOfRecord.java`: the small files every app process shares (the
+  installer of record, and with Google services on the per-package uids and
+  the broker's state) live in the data folder, `%LOCALAPPDATA%\Win.apk`,
+  beside `installed_apps.json`, not in a `Library\Application Support` folder
+  under the user profile. On the Mac nothing changes.
+- `runtime/java/android/os/Build.java`: on Windows `BRAND`, `MANUFACTURER` and
+  `MODEL` stay "Mac.apk", "Voltare" and "Mac.apk"; upstream now reports Apple
+  and the Mac's hardware model, which a PC is not.
+- `runtime/java/com/macapk/gms/McsClient.java`: `WINAPK_PROXY` (a SOCKS proxy
+  for the push connection) wins over upstream's per-app `HostProxy` policy.
+- `runtime/java/com/macapk/loader/Manifest.java` and `MacApkPackageManager.java`:
+  an intent filter's `<data>` ports, paths and ssps are matched as AOSP's
+  `IntentFilter` does (beside upstream's `autoVerify`).
+- `runtime/java/com/macapk/loader/ClassFileRewriter.java`, `AppClassLoader.java`,
+  `NativeLoadBridge.java` (new): in guest classes, `File.separator(Char)` reads
+  Android's `/` (Pattern S; `MACAPK_ANDROID_FILE_SEPARATOR=0` turns it off) and
+  `System.mapLibraryName` / `load` go through the on-demand native loader
+  (Pattern N); beside upstream's Patterns L and J.
+- `runtime/java/android/app/Activity.java`: `Window.setContentView(View)` puts
+  the view into the decor's content frame and keeps the decor as the root, as
+  AOSP's `PhoneWindow` does (a view added to the decor floats over the content),
+  and `findViewById(android.R.id.content)` finds the sub-decor's frame in that
+  tree before upstream's frame-root unwrap.
+- `runtime/java/android/bluetooth/` (`BluetoothAdapter`, `BluetoothDevice`,
+  `BluetoothGatt`, `BluetoothManager`, `le/BluetoothLeScanner`,
+  `le/ScanRecord`): Win.apk's `HostBluetooth` versions (below). Upstream later
+  wrote a CoreBluetooth backend (`BluetoothBridge`, `BluetoothPeripheralBridge`)
+  into the same classes; those files are synced but unused here.
 - `runtime/java/android/content/res/Resources.java`: `getIntArray` resolves the
   items of a typed `<array>` (for example a list of color references) instead
   of returning an empty array. Not Windows-specific; worth offering upstream.
@@ -496,7 +546,10 @@ every such change is listed here:
   the override skips super), and `onActivityPostCreated` before a `finish()` in
   `onCreate` tears the activity down, as AOSP does. Chromium's
   `ApplicationStatus` depends on it. `MACAPK_LIFECYCLE_CREATED_ORDER=0` restores
-  the old order. Not Windows-specific.
+  the old order. Not Windows-specific. Upstream later split the three phases
+  the same way (for the Play Store); its `dispatchActivityPreCreated` /
+  `dispatchActivityPostCreated` are used, the gate and the `finish()` handling
+  stay Win.apk's.
 - `runtime/java/com/macapk/loader/SpecialAccessStore.java`: on Windows the
   app-ops store (`appops\app-ops.json`, `signing-key.pub`) and the registry
   (`installed_apps.json`) are read from the data folder, the parent of the
