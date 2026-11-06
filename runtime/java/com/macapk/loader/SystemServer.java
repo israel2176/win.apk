@@ -390,7 +390,7 @@ public final class SystemServer {
         // bare JVM runs with logging closed (MACAPK_LOG_LEVEL=7) and its own
         // package list, none of which applies to the process it starts.
         for (String k : new String[] { "MACAPK_LOG_LEVEL", "MACAPK_BROKER_APKS",
-                "MACAPK_BROKER_RUNTIME", "MACAPK_BROKER_ROOT", "MACAPK_BROKER_LOGDIR" }) {
+                "MACAPK_BROKER_RUNTIME", "MACAPK_BROKER_ROOT", "MACAPK_BROKER_LOGDIR", "MACAPK_APK_PATH" }) {
             env.remove(k);
         }
         env.put("MACAPK_SERVICE_HOST", "1");
@@ -794,6 +794,13 @@ public final class SystemServer {
      *  itself, and a receiver declared in a sibling android:process is only ever
      *  run there. `callerProc` is the process that sent it (null = unknown). */
     void broadcast(String caller, String callerProc, Intent intent) {
+        // Play services announces a finished device check-in; the boot nudge
+        // below has done its job.
+        if (CHECKIN_COMPLETE.equals(intent.getAction())
+                && ("com.google.android.gms".equals(caller) || "com.google.android.gsf".equals(caller))) {
+            if (!checkinCompleted) log("boot: device check-in completed (" + caller + ")");
+            checkinCompleted = true;
+        }
         String target = intent.getComponent() != null ? intent.getComponent().getPackageName()
                                                       : intent.getPackage();
         java.util.List<String> pkgs = new ArrayList<>(packages.keySet());
@@ -859,6 +866,10 @@ public final class SystemServer {
     /** Packages whose one-shot boot-time kicks have been sent. */
     private final java.util.Set<String> bootKicked = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
+    static final String CHECKIN_COMPLETE = "com.google.android.checkin.CHECKIN_COMPLETE";
+    /** Play services broadcast CHECKIN_COMPLETE since this broker started. */
+    private volatile boolean checkinCompleted;
+
     private void sendBootBroadcasts(AppRecord app) {
         PackageRecord pr = packages.get(app.pkg);
         if (pr == null) return;
@@ -885,7 +896,11 @@ public final class SystemServer {
         // decides whether to actually hit the network, so re-sending is idempotent.
         // Sent a few times with backoff because on a cold boot the Chimera config
         // (which routes the receiver) commits ~2-3 min in; at least one send lands
-        // after it is ready. MACAPK_BROKER_TRIGGER_CHECKIN=0 disables it.
+        // after it is ready, and none once Play services has broadcast
+        // CHECKIN_COMPLETE: every nudge after that started one more check-in
+        // (each answered with CHECKIN_COMPLETE again), so a device that had
+        // checked in at boot checked in three more times, a minute apart.
+        // MACAPK_BROKER_TRIGGER_CHECKIN=0 disables it.
         // Follow-up (broader, not on the sign-in path): make the nts scheduler execute
         // scheduled tasks so this nudge is unnecessary and all GMS background tasks run.
         if (!"0".equals(System.getenv("MACAPK_BROKER_TRIGGER_CHECKIN")) && "com.google.android.gms".equals(app.pkg)) {
@@ -895,6 +910,10 @@ public final class SystemServer {
                     for (int attempt = 0; attempt < 3; attempt++) {
                         Thread.sleep(attempt == 0 ? base : 75_000L);
                         if (processesOf(app.pkg).isEmpty()) return;
+                        if (checkinCompleted) {
+                            log("boot: device check-in already done; no nudge");
+                            return;
+                        }
                         Intent ci = new Intent("android.server.checkin.CHECKIN").setPackage(app.pkg);
                         log("boot: kicking device checkin (android.server.checkin.CHECKIN) -> " + app.pkg
                                 + " (attempt " + (attempt + 1) + ")");
