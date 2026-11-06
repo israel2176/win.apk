@@ -280,17 +280,46 @@ Three engines run arm64 code, behind one CPU state (`src/arm64/`):
   waits 10 minutes, 4 times longer after each failure (at most a day), and
   stops after 4. A translation finished while the app runs is loaded at once.
   Whole translations are shared between apps through `<data>\aot-cache`,
-  keyed by the library's code. The translation never has to be complete: a
-  function returns to the JIT when it reaches a branch the translator could
-  not follow.
+  keyed by the library's code (its bytes and addresses) and the CPU's model
+  and features, since the code is compiled for that CPU; the stamp next to
+  each DLL records the CPU too, and a translation made on another CPU is not
+  loaded. An app's DLL and the cache's are one file (a hard link), and the
+  cache drops what no app used for 60 days. Every app's worker writes the
+  cache while apps load from it, and any of them can be killed half way, so
+  no file is written in place (`include/winapk/aot_files.h`): each is written
+  under a name unique to its writer, flushed, then renamed; a finished DLL
+  ends with a 32-byte seal (its length and hash) that the loader, the worker
+  and the cache check, so a DLL cut short is never loaded, shared or taken
+  for done; a good cache entry is never replaced (an app may have it mapped),
+  a broken one is deleted, and temporary files a killed writer left go an
+  hour later. The stamp ends with the library's id (its size and date), so
+  whether a translation is current does not depend on the clock. The
+  translation never has to be
+  complete: a function returns to the JIT when it reaches a branch the
+  translator could not follow, when a call returns somewhere else than its return address
+  (an exception's landing pad, a jump into another frame), and at its entry
+  when the host stack is nearly used up (a translated guest call is a host
+  call, so deep guest recursion would overflow it; `Cpu::stack_floor`, an
+  eighth of the stack and at least 256 KB before its end). A library that
+  rewrites its own code (an inline hook, a packer decrypting its text: IC
+  IVAU in its code) is handed to the JIT for good, its stamp saying
+  `written`; one unloaded with `dlclose` takes its translation with it. A
+  call through a register to a function of the same library (a C++ virtual
+  call) finds it in the DLL's own table, cached at the call site.
 - **The JIT** (`arm64_jit.cpp`, dynarmic from the azahar-emu fork, 0BSD
   license, fastmem over the shared address space). The app starts on it and
-  it runs whatever has no translation. Built when CMake is given
+  it runs whatever has no translation. Each thread has its own engine and
+  code cache; code the guest writes (IC IVAU, on any thread and engine) is
+  dropped from all of them. Built when CMake is given
   `-DWINAPK_ARM64_JIT=ON` (CI and releases).
 - **The interpreter** (`arm64_cpu.cpp`, `arm64_simd.cpp`): the base integer
   ISA, every load/store form, exclusives and LSE atomics, scalar FP and the
   Advanced SIMD forms compilers emit. It runs the few instructions the other
-  two do not handle and is the reference the others are checked against.
+  two do not handle and is the reference the others are checked against:
+  `winapk-arm64-test` runs C compiled for arm64 and for x64, control-flow and
+  edge cases with results worked out by hand (`arm64_flow_guest.c`), and 400
+  functions of random instructions (`gen_arm64_fuzz.py`) on all three and
+  compares them.
 
 The bridge (`arm64_guest.cpp`) gives each thread its CPU state, a guest stack
 and Bionic's TLS slots; converts AAPCS64 arguments and `va_list`s to System V
@@ -528,7 +557,7 @@ default; `--data` moves it for a direct run):
 | `installed_apps.json` | The installed-apps registry the package manager answers from |
 | `appops\` | `app-ops.json`, `signing-key.pub`, `signing-key.p256` |
 | `gms\` | `gms_state.properties`, the `accounts.present` marker |
-| `aot-cache\` | Whole arm64 translations shared between apps (kept under 2 GB, least recently used first) |
+| `aot-cache\` | Whole arm64 translations shared between apps, `<key>.aot.dll` (kept under 2 GB, least recently used first); a `*.tmp` is a write in progress, or one a killed worker left (deleted when an hour old) |
 | `staging\` | The install helper's staging area |
 | `updates\` | `releases.json` and `releases.etag` (GitHub's list of releases from the last update check), `Win.apk-Setup-<version>.exe` (a downloaded update, until it is installed) |
 

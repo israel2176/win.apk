@@ -176,6 +176,11 @@ constexpr size_t kGuestStackWords = 14;
 // crashed in the JVM after the first frame (City Car). Fewer when the host
 // thread's stack ends sooner (dispatch).
 constexpr size_t kCallbackStackWords = 64;
+// Host stack translated code leaves free at the end of a thread's stack
+// (Cpu::stack_floor): for the host functions it calls, the JVM (its guard
+// zones, and Java code a JNI call runs) included. At least this much, an
+// eighth of a larger stack (2 MB of a Java thread's 16), at most half.
+constexpr uint64_t kAotStackReserve = 256 * 1024;
 
 // run() stops when the guest returns here. It is never guest code and never
 // called: only its address matters.
@@ -278,6 +283,15 @@ struct ThreadState {
         }
         stack_top = (reinterpret_cast<uint64_t>(stack) + kStackGuard + kGuestStack - kStackSlack) & ~uint64_t{15};
         cpu.tpidr = reinterpret_cast<uint64_t>(&tls[1]);
+        // Translated code stops taking host stack this far above its end
+        // (Cpu::stack_floor), and leaves the rest to the host functions it
+        // calls (the JVM's own guard zones among them).
+        ULONG_PTR low = 0, high = 0;
+        GetCurrentThreadStackLimits(&low, &high);
+        if (high > low) {
+            const uint64_t size = high - low;
+            cpu.stack_floor = low + std::min<uint64_t>(size / 2, std::max<uint64_t>(kAotStackReserve, size / 8));
+        }
         tls[1 + 5] = 0x5eed5eedc0ffee00ull ^ (reinterpret_cast<uint64_t>(this) << 8);
         thread_id = GetCurrentThreadId();
         std::lock_guard<std::mutex> hold(g_stats_lock);
@@ -751,9 +765,17 @@ bool full_state_call(uint64_t target) {
 // Hooks::plain_host.
 bool plain_host(uint64_t target) {
     uint64_t lo, hi;
-    if (full_state_call(target) || code_range(target, &lo, &hi)) return false;
+    // The bridge's return address is where a guest call ends, not a function.
+    if (target == return_address() || full_state_call(target) || code_range(target, &lo, &hi)) return false;
     const HostFunction info = host_function(target);
     return info.va_list < 0 && info.guest_fn_args == 0;
+}
+
+// Hooks::code_written: every thread's JIT drops what it compiled there, and a
+// translation of that library is retired (arm64_aot.h).
+void code_written(uint64_t addr) {
+    jit_code_written(addr);
+    aot_code_written(addr);
 }
 
 // Hooks::aot_entry: translated code, while the engine uses it.
@@ -825,6 +847,7 @@ void init() {
         h.full_state_call = full_state_call;
         h.aot_entry = aot_entry;
         h.plain_host = plain_host;
+        h.code_written = code_written;
         h.svc = svc;
         h.fault = fault;
         set_hooks(h);

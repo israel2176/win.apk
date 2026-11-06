@@ -51,6 +51,7 @@ add_library(winapk_loader STATIC
   src/arm64/arm64_guest.cpp
   src/arm64/arm64_jit.cpp
   src/arm64/arm64_aot.cpp
+  src/arm64/aot_files.cpp
   src/arm64/arm64_abi.cpp
 )
 target_include_directories(winapk_loader PUBLIC include PRIVATE src)
@@ -87,6 +88,8 @@ if(WINAPK_ARM64_JIT)
     GIT_REPOSITORY https://github.com/azahar-emu/dynarmic.git
     GIT_TAG a46601580d5512d324104f985b5f0209dc980ddc
     GIT_SUBMODULES externals/fmt externals/mcl externals/robin-map externals/xbyak externals/zycore externals/zydis
+    # FRECPS/FRSQRTS kept exact under Unsafe_InaccurateNaN (cmake/dynarmic_patch.cmake)
+    PATCH_COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/dynarmic_patch.cmake
     EXCLUDE_FROM_ALL)
   FetchContent_MakeAvailable(dynarmic)
   # dynarmic and the libraries it bundles use standard names (malloc,
@@ -128,6 +131,15 @@ target_link_libraries(winapk-arm64-test PRIVATE winapk_loader)
 target_include_directories(winapk-arm64-test PRIVATE test/guest)
 target_compile_options(winapk-arm64-test PRIVATE -mcx16)
 
+# The translation's files under racing and killed processes
+# (include/winapk/aot_files.h), test/aot_cache_test.cpp. The DLL is its
+# stand-in for a translation, and must be next to it.
+add_library(winapk-aot-test-dll SHARED test/aot_cache_dll.cpp)
+set_target_properties(winapk-aot-test-dll PROPERTIES PREFIX "")
+add_executable(winapk-aot-cache-test test/aot_cache_test.cpp)
+target_link_libraries(winapk-aot-cache-test PRIVATE winapk_loader)
+add_dependencies(winapk-aot-cache-test winapk-aot-test-dll)
+
 # The ahead-of-time translator (include/winapk/arm64_aot.h): arm64 .so -> C,
 # which the installer compiles into <lib>.so.aot.dll.
 add_executable(winapk-aot tools/arm64_aot_main.cpp)
@@ -141,6 +153,8 @@ if(MINGW)
   target_link_options(winapk-bionic-test PRIVATE -static)
   target_link_options(winapk-crash-test PRIVATE -static -municode)
   target_link_options(winapk-arm64-test PRIVATE -static)
+  target_link_options(winapk-aot-cache-test PRIVATE -static -municode)
+  target_link_options(winapk-aot-test-dll PRIVATE -static)
   target_link_options(winapk-aot PRIVATE -static)
 endif()
 
