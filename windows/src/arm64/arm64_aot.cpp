@@ -295,6 +295,15 @@ void aot_unload(uint64_t code_lo, uint64_t code_hi) {
 }
 
 void aot_code_written(uint64_t addr) {
+    // Mostly a JIT's own buffers (a JavaScript engine flushes every function
+    // it compiles): a shared look first, the exclusive lock only for a library.
+    bool ours = false;
+    AcquireSRWLockShared(&g_libs_lock);
+    for (const auto& lib : g_libs) {
+        if (!lib->unloaded && !lib->written && addr >= lib->lo && addr < lib->hi) ours = true;
+    }
+    ReleaseSRWLockShared(&g_libs_lock);
+    if (!ours) return;
     std::string so;
     uint64_t lo = 0, hi = 0;
     const AotModule* m = nullptr;
