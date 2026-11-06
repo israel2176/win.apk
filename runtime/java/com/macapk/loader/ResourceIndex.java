@@ -1267,6 +1267,9 @@ public final class ResourceIndex {
     }
 
     private static File macapkFwViewCacheDir() {
+        // Win.apk: %LOCALAPPDATA%\Win.apk\cache, not a "Library" folder in the
+        // user's profile.
+        if (HostAppSupport.windowsHost()) return HostAppSupport.file("cache/fwview");
         String home = System.getProperty("user.home");
         if (home == null || home.isEmpty()) home = System.getenv("HOME");
         if (home == null || home.isEmpty()) return null;

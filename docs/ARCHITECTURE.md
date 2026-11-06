@@ -579,6 +579,8 @@ default; `--data` moves it for a direct run):
 | `app_uids.properties`, `system_ce\0\`, `installer-of-record.properties`, `run\system-ready` | With Google services on: per-package uids, the accounts service's store, which app installed which, the broker's readiness |
 | `logs\system.log`, `logs\services\` | The system broker and the apps it starts as service hosts |
 | `aot-cache\` | Whole arm64 translations shared between apps (kept under 2 GB, least recently used first) |
+| `cache\` | The runtime's shared caches: `android-system-fonts\` (the `/system/fonts` and `fonts.xml` native text stacks such as Flutter's read), `fonts\`, `fwview\` (the framework's resolved resources), `monet\` |
+| `run\<package>.pid` | Each running app's run lock |
 | `staging\` | The install helper's staging area |
 | `updates\` | `releases.json` and `releases.etag` (GitHub's list of releases from the last update check), `Win.apk-Setup-<version>.exe` (a downloaded update, until it is installed) |
 

@@ -103,6 +103,7 @@ public final class SpaceTap {
     // ---- persistence (per app), the same shape as ArrowPad's ---------------
 
     private static File storeFile() {
+        if (HostAppSupport.windowsHost()) return HostAppSupport.file("space-tap.properties");   // Win.apk
         return new File(System.getProperty("user.home")
             + "/Library/Application Support/Mac.apk/space-tap.properties");
     }

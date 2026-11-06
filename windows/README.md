@@ -344,6 +344,21 @@ every such change is listed here:
   the broker's state) live in the data folder, `%LOCALAPPDATA%\Win.apk`,
   beside `installed_apps.json`, not in a `Library\Application Support` folder
   under the user profile. On the Mac nothing changes.
+- `HostAppSupport` users that upstream spells with Mac paths: the caches
+  (`MacApkSystemFonts`: the `/system/fonts` Flutter's Skia reads,
+  `MacApkFontStore`, `ResourceIndex`'s framework view, `monet/Monet`) go to
+  `%LOCALAPPDATA%\Win.apk\cache\`, and the run lock (`RunLock`,
+  `CrossAppDoorbell`), `SettingsStore`'s boot count and the per-app input
+  settings (`ArrowPad`, `SpaceTap`, `TiltControl`, `KeyBindProfiles`) to
+  `%LOCALAPPDATA%\Win.apk`, never `Library\Caches` or
+  `Library\Application Support` under the user profile.
+- `runtime/java/android/app/NativeActivity.java` and `Activity.java`
+  (`macapkInstalledContentView`): the full-window SurfaceView that stands in
+  for the window surface is installed when the root is still
+  `NativeContentView`, looked at through the FrameLayout root upstream's
+  `ActivityWindow.macapkFrameRootFor` (#29) puts above a non-frame content
+  view. Comparing the wrapper itself skipped it, so a NativeActivity (SDL)
+  never got its window and stayed blank. An upstream bug too.
 - `runtime/java/android/os/Build.java`: on Windows `BRAND`, `MANUFACTURER` and
   `MODEL` stay "Mac.apk", "Voltare" and "Mac.apk"; upstream now reports Apple
   and the Mac's hardware model, which a PC is not.

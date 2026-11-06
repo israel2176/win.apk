@@ -150,6 +150,13 @@ public final class MacApkSystemFonts {
     }
 
     private static File root() throws IOException {
+        if (com.macapk.loader.HostAppSupport.windowsHost()) {
+            // Win.apk: %LOCALAPPDATA%\Win.apk\cache, not a "Library" folder in
+            // the user's profile. The guest only ever sees /system/fonts.
+            File d = com.macapk.loader.HostAppSupport.file("cache/android-system-fonts");
+            Files.createDirectories(d.toPath());
+            return d;
+        }
         String home = System.getProperty("user.home");
         if (home == null || home.isEmpty()) home = System.getenv("HOME");
         if (home == null || home.isEmpty()) throw new IOException("no home directory");

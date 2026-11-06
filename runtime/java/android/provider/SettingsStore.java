@@ -310,7 +310,9 @@ final class SettingsStore {
                 .flatMap(h -> h.info().startInstant());
             if (!st.isPresent()) return null;
             long boot = st.get().getEpochSecond();
-            java.io.File f = new java.io.File(com.macapk.loader.SharedStorage.hostHome(),
+            java.io.File f = com.macapk.loader.HostAppSupport.windowsHost()
+                    ? com.macapk.loader.HostAppSupport.file("boot_count")   // Win.apk
+                    : new java.io.File(com.macapk.loader.SharedStorage.hostHome(),
                     "Library/Application Support/Mac.apk/boot_count");
             f.getParentFile().mkdirs();
             try (java.io.RandomAccessFile raf = new java.io.RandomAccessFile(f, "rw");

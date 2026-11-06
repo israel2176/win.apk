@@ -33,6 +33,7 @@ final class CrossAppDoorbell {
     private CrossAppDoorbell() {}
 
     static File runDir() {
+        if (HostAppSupport.windowsHost()) return HostAppSupport.file("run");   // Win.apk
         return new File(System.getProperty("user.home"),
                 "Library/Application Support/Mac.apk/run");
     }

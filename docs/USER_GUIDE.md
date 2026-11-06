@@ -527,6 +527,7 @@ and the launch window open the right log themselves when something fails.
 | The Google account and its tokens | `%LOCALAPPDATA%\Win.apk\gms` |
 | The last update check and a downloaded update | `%LOCALAPPDATA%\Win.apk\updates` (`releases.json`, `Win.apk-Setup-<version>.exe`) |
 | Shared ARM translations | `%LOCALAPPDATA%\Win.apk\aot-cache` |
+| The runtime's caches (fonts, resources) | `%LOCALAPPDATA%\Win.apk\cache` |
 | Settings | `HKEY_CURRENT_USER\Software\Win.apk` (`Theme`, `Language`, `PhoneSize`, `Landscape`, `DesktopShortcut`, `UserFolders`, `InstallDetails`, `AutoUpdate`, `LastUpdateCheck`, `GoogleServices`, and the library window's size) |
 | With Google services on: app uids, the account service, the installer of record, the broker's readiness | `%LOCALAPPDATA%\Win.apk` (`app_uids.properties`, `system_ce\`, `installer-of-record.properties`, `run\`) |
 | Start menu shortcuts | `Start > Win.apk Apps` |
