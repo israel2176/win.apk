@@ -261,9 +261,8 @@ Three engines run arm64 code, behind one CPU state (`src/arm64/`):
   `winapk-aot.exe`). Each guest function becomes a C function with the guest
   registers as local variables, so the C compiler allocates registers and
   optimizes across the whole function. Functions are found from the symbol
-  tables and, transitively, the targets of BL (the function starts in
-  `.eh_frame_hdr`, which survive stripping, only with `WINAPK_AOT_EH_FRAME=1`:
-  with them translated Jitsi Meet returned to address 0); a function of more than 4,000
+  tables, the function starts in `.eh_frame_hdr` (which survive stripping)
+  and, transitively, the targets of BL; a function of more than 4,000
   instructions is left to the JIT. The runtime compiles that C with
   clang (`-O2 -mllvm -fast-isel -march=native`) into `<lib>.so.aot.dll` next to the library,
   in parts of 20,000 instructions. A background worker runs them at idle

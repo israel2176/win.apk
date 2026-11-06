@@ -36,7 +36,7 @@ FLAGS=(-std=c++17 -O1 -municode -static -DUNICODE -D_UNICODE -I"$WIN_DIR/include
 "$CXX" -std=c++17 -O2 -static -I"$WIN_DIR/include" -o winapk-aot.exe "$WIN_DIR/tools/arm64_aot_main.cpp"
 
 # Guest libraries, stripped as release builds are (their functions are found
-# through .eh_frame_hdr, with WINAPK_AOT_EH_FRAME=1 below): libguest.so, about 100,000 instructions (several
+# through .eh_frame_hdr): libguest.so, about 100,000 instructions (several
 # parts, translated whole), and libbig.so, over kAotFullBelow (translated
 # where its profile says code ran).
 guest() {  # guest <functions> <name>
@@ -67,9 +67,7 @@ stamp() { cat "$1/lib/arm64/$2.aot.stamp"; }
 compiles() { grep -c '^start' "$1/clang.log" || true; }
 count() { ps -eo comm | grep -c "^$1" || true; }
 WINAPK_AOT_CLANG="$(win "$PWD/fakeclang.exe")"
-# The guest libraries are stripped: their functions are found only through
-# .eh_frame_hdr, which winapk-aot reads only when asked (kAotVersion 5).
-export WINAPK_AOT_CLANG WINAPK_AOT_JOBS=3 WINAPK_AOT_EH_FRAME=1
+export WINAPK_AOT_CLANG WINAPK_AOT_JOBS=3
 
 echo "== 1. a whole translation"
 setup t1 libguest.so
