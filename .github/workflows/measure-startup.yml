@@ -87,7 +87,6 @@ jobs:
           - { pkg: net.minetest.minetest, vc: '5170000', eh: 'on' }
           - { pkg: org.moire.opensudoku, vc: '20261008', eh: 'on' }
           - { pkg: se.voxelmanip.tensy, vc: '2', eh: 'on' }
-          - { pkg: org.jitsi.meet, vc: '26000002', eh: 'off' }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -102,9 +101,8 @@ jobs:
         shell: pwsh
         run: |
           python -m pip install --quiet psutil
-          $eh = if ("${{ matrix.eh }}" -eq "on") { "--eh" } else { "" }
           python .github/measure/eh_check.py --runtime stage --jdk "$env:JAVA_HOME" `
-            --pkg ${{ matrix.pkg }} --vc ${{ matrix.vc }} --out out $eh
+            --pkg ${{ matrix.pkg }} --vc ${{ matrix.vc }} --out out
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -14,8 +14,6 @@ def run(args, apk, data, name, install_only=False, ticks=1800):
         cmd.append("--install-only")
     e = dict(os.environ, WINAPK_HEADLESS="1", WINAPK_HEADLESS_EXIT_AFTER_FRAMES=str(ticks), WINAPK_ABIS="arm64-v8a",
              WINAPK_AOT_JOBS="4")
-    if args.eh:
-        e["WINAPK_AOT_EH_FRAME"] = "1"
     try:
         p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=e, timeout=400)
         out, code = p.stdout, p.returncode
