@@ -355,6 +355,22 @@ jobs:
           cp="$(cygpath -w stage/lib/macapk-loader.jar);$(cygpath -w stage/lib/android-framework.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/perm-test windows/test/java/PermissionModelTest.java
           "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/perm-test)" PermissionModelTest
+      - name: Run the APK signature verification test
+        run: |
+          # com.macapk.loader.ApkVerification (apksig) on APKs the test signs
+          # from the staged framework-res.apk: signed ones verify; tampered ones,
+          # a pasted signing block and a pasted v1 certificate do not; a rotated
+          # key reports its lineage as AOSP's PackageManager does (GET_SIGNATURES
+          # the oldest, checkSignatures and hasSigningCertificate through it);
+          # split sets and bundles; the cache. Also a bundle's string resources
+          # and PresentedSdk's minSdk floor.
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          cp="$(cygpath -w stage/lib/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          "$JAVA_HOME/bin/javac" -cp "$cp" -d build/apkverify-test windows/test/java/com/macapk/loader/ApkVerificationTest.java
+          MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/apkverify-test)" \
+            com.macapk.loader.ApkVerificationTest "$(cygpath -w stage/bin/tools/framework-res.apk)" \
+            "$(cygpath -w "$RUNNER_TEMP/apkverify")" | tee apkverify-test.log
+          grep -q "ALL PASSED" apkverify-test.log
       - name: Run the scan record test
         run: |
           # android.bluetooth.le.ScanRecord's parser over the advertising bytes
