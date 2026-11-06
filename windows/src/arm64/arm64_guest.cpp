@@ -312,8 +312,11 @@ void execute(ThreadState& ts) {
     if (engine == Engine::kAot) {
         if (AotFn fn = aot_lookup(ts.cpu.pc)) {
             ++ts.stats.aot_entries;
-            if (aot_run(fn, &ts.cpu) == kAotDone) return;  // returned to stop_pc
-            ++ts.stats.aot_bails;                          // on from ts.cpu.pc
+            // Done is a return; only one to stop_pc ends the call. A guest
+            // function that returns somewhere else (an exception's landing
+            // pad, a longjmp) goes on from there.
+            if (aot_run(fn, &ts.cpu) == kAotDone && ts.cpu.pc == ts.cpu.stop_pc) return;
+            ++ts.stats.aot_bails;  // on from ts.cpu.pc
         }
     }
     if (engine != Engine::kInterpreter && jit_built()) {

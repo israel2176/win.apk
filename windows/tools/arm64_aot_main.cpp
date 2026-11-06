@@ -785,7 +785,10 @@ bool Emitter::branch(uint64_t va, uint32_t insn) {
             for (uint64_t l : f_.labels) line(fmt("        case 0x%" PRIx64 "ull: goto L_%" PRIx64 ";", l, l));
             line("    }");
             line("    " + flush() + " c->pc = t;");
-            line("    { uint32_t st; CALL_SITE(st, t); if (st == 0) c->pc = c->x[30]; return st; }");
+            // A jump: whatever t returns to is this function's return. c->pc
+            // says where (the call site's host call and the runtime's leave
+            // the return address there), so the caller can check it.
+            line("    { uint32_t st; CALL_SITE(st, t); return st; }");
             line("}");
             return true;
         }
