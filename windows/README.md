@@ -237,7 +237,9 @@ content), `blank` (the last frame is one or two colors), `no-frame` (no frame
 before the timeout) or `crashed`. The report (`report.md`, `report.json`)
 collects the host natives called while still stubbed, the exceptions Java
 logged, HotSpot crash files, and for native code the system functions the shim
-lacks and the libraries that could not load. `--shard I/N` runs every Nth
+lacks and the libraries that could not load. Each line of an app's log
+(`logs/<package>.log`) starts with the seconds since its start, so an app that
+misses the frame budget shows where its time went. `--shard I/N` runs every Nth
 app from the Ith, and `--merge` joins the shards' report directories into one.
 `--only-from` runs only the packages a file lists, and `--require-drew` makes
 the sweep a test: an app that does not draw gets one more try, then the exit
