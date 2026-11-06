@@ -33,6 +33,14 @@ public final class GoogleGmsCertificate {
         return new android.content.pm.Signature(java.util.Base64.getDecoder().decode(DER_BASE64));
     }
 
+    /** Whether Google's certificate signed this verified APK: as its signer,
+     *  or as an earlier signer in its verified v3 rotation lineage (Play
+     *  services 26.x is signed by a newer Google key, SHA-1 bd324242..., whose
+     *  lineage starts at this one). False for an APK that did not verify. */
+    public static boolean isGoogleSigner(com.macapk.loader.ApkVerification.Result r) {
+        return r != null && r.signedBy(java.util.Base64.getDecoder().decode(DER_BASE64));
+    }
+
     private static final String DER_BASE64 =
             "MIIEQzCCAyugAwIBAgIJAMLgh0ZkSjCNMA0GCSqGSIb3DQEBBAUAMHQxCzAJBgNVBAYTAlVTMRMwEQYDVQQIEwpDYWxpZm9y" +
             "bmlhMRYwFAYDVQQHEw1Nb3VudGFpbiBWaWV3MRQwEgYDVQQKEwtHb29nbGUgSW5jLjEQMA4GA1UECxMHQW5kcm9pZDEQMA4G" +

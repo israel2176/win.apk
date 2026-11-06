@@ -774,8 +774,20 @@ Still open:
   - The sign-in round trip has been built against upstream's design and the
     CLI's `selftest` and `status` run in CI; a sign-in with a real Google
     account takes a person at a Windows PC and has not been part of CI.
+  - The real Google apps (upstream's "Use Google GMS"): ported as
+    "Use Google services (experimental)". Mach ports become named pipes
+    (`host/binder_win.cpp`), launchd's on-demand start becomes the first app
+    starting `winapk-runtime --system`, and the caller's identity comes from
+    the OS (pipe client pid, the process's recorded command line) where
+    upstream's phase 1 trusts the message. Tested between real JVMs
+    (`winapk-binder-test`); not tried with Google's real APKs on Windows.
+    Open: the broker cannot show a service host's window if the user opens
+    that same app afterwards (the running copy is headless); a SurfaceView
+    window through EGL14 (upstream's native-EGL layer) still refuses on
+    Windows; unbind accounting and Play Billing / Integrity, as upstream.
 - Upstream commits almost daily. Merging at least monthly keeps conflicts
-  small; `windows/README.md` lists every `runtime/` change to carry over.
+  small; `windows/README.md` lists every `runtime/` change to carry over and
+  how to sync (the last sync: upstream 1500431, v1.0.2379).
 
 ## 8. Roadmap to production
 

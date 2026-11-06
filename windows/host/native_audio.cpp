@@ -141,6 +141,19 @@ jint JNICALL Audio_setPlaybackRate(JNIEnv*, jclass, jlong h, jint hz) {
     if (!s) return -3;
     return au::stream_set_rate(s.get(), hz) ? 0 : -2;
 }
+jint JNICALL Audio_getBufferCapacity(JNIEnv*, jclass, jlong h) {
+    auto s = stream(h);
+    return s ? static_cast<jint>(au::stream_capacity(s.get())) : 0;
+}
+jint JNICALL Audio_setBufferSize(JNIEnv*, jclass, jlong h, jint frames) {
+    auto s = stream(h);
+    if (!s || frames < 0) return 0;
+    return static_cast<jint>(au::stream_set_buffer_size(s.get(), static_cast<size_t>(frames)));
+}
+jint JNICALL Audio_getUnderrunCount(JNIEnv*, jclass, jlong h) {
+    auto s = stream(h);
+    return s ? static_cast<jint>(au::stream_underruns(s.get())) : 0;
+}
 jint JNICALL Audio_getPlaybackRate(JNIEnv*, jclass, jlong h) {
     auto s = stream(h);
     return s ? au::stream_rate(s.get()) : 0;
@@ -356,6 +369,9 @@ const HostMethod kMethods[] = {
     WINAPK_HOST_NATIVE(kCls, "nativeGetTimestamp", "(J[J)Z", Audio_getTimestamp),
     WINAPK_HOST_NATIVE(kCls, "nativeSetPlaybackRate", "(JI)I", Audio_setPlaybackRate),
     WINAPK_HOST_NATIVE(kCls, "nativeGetPlaybackRate", "(J)I", Audio_getPlaybackRate),
+    WINAPK_HOST_NATIVE(kCls, "nativeGetBufferCapacity", "(J)I", Audio_getBufferCapacity),
+    WINAPK_HOST_NATIVE(kCls, "nativeSetBufferSize", "(JI)I", Audio_setBufferSize),
+    WINAPK_HOST_NATIVE(kCls, "nativeGetUnderrunCount", "(J)I", Audio_getUnderrunCount),
     WINAPK_HOST_NATIVE(kCls, "nativeSetPlaybackParams", "(JFF)I", Audio_setPlaybackParams),
     WINAPK_HOST_NATIVE(kCls, "nativeGetPlaybackParams", "(J[F)V", Audio_getPlaybackParams),
     WINAPK_HOST_NATIVE(kCls, "nativeSpLoad", "([BI)I", Sp_load),

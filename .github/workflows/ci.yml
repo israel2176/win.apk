@@ -355,6 +355,22 @@ jobs:
           cp="$(cygpath -w stage/lib/macapk-loader.jar);$(cygpath -w stage/lib/android-framework.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/perm-test windows/test/java/PermissionModelTest.java
           "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/perm-test)" PermissionModelTest
+      - name: Run the APK signature verification test
+        run: |
+          # com.macapk.loader.ApkVerification (apksig) on APKs the test signs
+          # from the staged framework-res.apk: signed ones verify; tampered ones,
+          # a pasted signing block and a pasted v1 certificate do not; a rotated
+          # key reports its lineage as AOSP's PackageManager does (GET_SIGNATURES
+          # the oldest, checkSignatures and hasSigningCertificate through it);
+          # split sets and bundles; the cache. Also a bundle's string resources
+          # and PresentedSdk's minSdk floor.
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          cp="$(cygpath -w stage/lib/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          "$JAVA_HOME/bin/javac" -cp "$cp" -d build/apkverify-test windows/test/java/com/macapk/loader/ApkVerificationTest.java
+          MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/apkverify-test)" \
+            com.macapk.loader.ApkVerificationTest "$(cygpath -w stage/bin/tools/framework-res.apk)" \
+            "$(cygpath -w "$RUNNER_TEMP/apkverify")" | tee apkverify-test.log
+          grep -q "ALL PASSED" apkverify-test.log
       - name: Run the scan record test
         run: |
           # android.bluetooth.le.ScanRecord's parser over the advertising bytes
@@ -363,6 +379,20 @@ jobs:
           cp="$(cygpath -w stage/lib/android-framework.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/scan-test windows/test/java/ScanRecordTest.java
           "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/scan-test)" ScanRecordTest
+      - name: Run the cross-process Binder test
+        run: |
+          # host/binder_win.cpp under android.os.MacApkBinderTransport, between
+          # real JVMs in three processes: transact, oneway order, binders passed
+          # both ways keeping their identity, fds, death notification, and the
+          # system broker's caller checks (a process claiming another package is
+          # refused; android:exported).
+          export PATH="$(cygpath -u "$JAVA_HOME")/bin/server:$(cygpath -u "$JAVA_HOME")/bin:$PATH"
+          jh="$(cygpath -u "$JAVA_HOME")"
+          cp="$(cygpath -w stage/lib/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          "$jh/bin/javac" -cp "$cp" -d build/binder-test windows/test/java/com/macapk/loader/BinderTransportTest.java
+          ./build/winapk-binder-test.exe "$cp;$(cygpath -w build/binder-test)" com.macapk.loader.BinderTransportTest \
+            | tee binder-test.log
+          grep -q "ALL PASSED" binder-test.log
       - name: Run the GL test
         run: |
           # It needs ANGLE next to it, which staging put in stage/bin.
@@ -487,11 +517,15 @@ jobs:
         with:
           path: apk-cache
           key: compat-apks-${{ matrix.shard }}-of-4-${{ hashFiles('windows/test/compat/apps.txt') }}
+      # 300 frames (5 s after the first): a slow first start drew or not by a
+      # few hundred ms at 150, on main as on branches (LocalSend: its UI thread
+      # waits ~1.7 s for Flutter's GL setup on the runner's software GPU, then
+      # Dart does its first-run setup before the first Flutter frame).
       - name: Run the sweep
         shell: pwsh
         run: |
           python windows/test/compat/sweep.py --runtime stage --jdk "$env:JAVA_HOME" `
-            --apks apk-cache --out sweep --frames 150 --timeout 180 --shard ${{ matrix.shard }}/4
+            --apks apk-cache --out sweep --frames 300 --timeout 180 --shard ${{ matrix.shard }}/4
       - uses: actions/upload-artifact@v4
         if: always()
         with:

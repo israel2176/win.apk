@@ -228,7 +228,12 @@ public class ContentResolver {
         ContentProvider p = providerFor(uri);
         if (p == null) return null;
         p.macapkEnforceFile(uri, "r");   // Transport.openAssetFile -> enforceFilePermission
-        android.content.res.AssetFileDescriptor afd = p.openAssetFile(uri, "r");
+        // v1.0.2244: the 3-arg entry point, as AOSP's Transport.openAssetFile calls
+        // `mInterface.openAssetFile(uri, mode, CancellationSignal.fromTransport(..))`
+        // (android14 ContentProvider.java:609). A provider that overrides only the
+        // CancellationSignal overloads (Rhythm's album-art provider) answered our
+        // 2-arg call from the base class: "No files supported by provider".
+        android.content.res.AssetFileDescriptor afd = p.openAssetFile(uri, "r", null);
         // AOSP openInputStream (:1529-1534) converts ONLY the createInputStream
         // IOException into FileNotFoundException; a provider's own exception
         // propagates.
@@ -250,7 +255,7 @@ public class ContentResolver {
         if (p == null) return null;
         p.macapkEnforceFile(uri, mode != null ? mode : "w");
         android.content.res.AssetFileDescriptor afd =
-            p.openAssetFile(uri, mode != null ? mode : "w");
+            p.openAssetFile(uri, mode != null ? mode : "w", null);   // Transport's 3-arg call
         // AOSP openOutputStream (:1755-1760), same shape as openInputStream.
         try {
             return afd != null ? afd.createOutputStream() : null;
@@ -278,7 +283,11 @@ public class ContentResolver {
     // provider in this tree, e.g. MediaStoreProvider) is unaffected.
     public final android.os.ParcelFileDescriptor openFileDescriptor(Uri uri, String mode)
             throws java.io.FileNotFoundException {
-        android.content.res.AssetFileDescriptor afd = openAssetFileDescriptor(uri, mode);
+        return openFileDescriptor(uri, mode, null);
+    }
+    public final android.os.ParcelFileDescriptor openFileDescriptor(Uri uri, String mode,
+            CancellationSignal sig) throws java.io.FileNotFoundException {
+        android.content.res.AssetFileDescriptor afd = openAssetFileDescriptor(uri, mode, sig);
         if (afd == null) return null;
         if (afd.getDeclaredLength() < 0) {
             return afd.getParcelFileDescriptor();
@@ -286,10 +295,7 @@ public class ContentResolver {
         try { afd.close(); } catch (Throwable ignored) {}
         throw new java.io.FileNotFoundException("Not a whole file");
     }
-    public final android.os.ParcelFileDescriptor openFileDescriptor(Uri uri, String mode,
-            CancellationSignal sig) throws java.io.FileNotFoundException {
-        return openFileDescriptor(uri, mode);
-    }
+
     // AOSP ContentResolver.openAssetFileDescriptor(Uri, String, CancellationSignal)
     // special-cases scheme "file" BEFORE any provider lookup (same fetch as
     // above) -- a file:// Uri names a real path on disk, not a ContentProvider
@@ -324,6 +330,10 @@ public class ContentResolver {
     // another. Leave for whoever lands that stub.)
     public final android.content.res.AssetFileDescriptor openAssetFileDescriptor(Uri uri, String mode)
             throws java.io.FileNotFoundException {
+        return openAssetFileDescriptor(uri, mode, null);
+    }
+    public final android.content.res.AssetFileDescriptor openAssetFileDescriptor(Uri uri, String mode, CancellationSignal sig)
+            throws java.io.FileNotFoundException {
         if (uri != null && SCHEME_FILE.equals(uri.getScheme())) {
             String path = uri.getPath();
             if (path == null) throw new java.io.FileNotFoundException("no path in " + uri);
@@ -335,22 +345,19 @@ public class ContentResolver {
         ContentProvider p = providerFor(uri);
         if (p == null) return null;
         p.macapkEnforceFile(uri, mode);
-        return p.openAssetFile(uri, mode);
-    }
-    public final android.content.res.AssetFileDescriptor openAssetFileDescriptor(Uri uri, String mode, CancellationSignal sig)
-            throws java.io.FileNotFoundException {
-        return openAssetFileDescriptor(uri, mode);
+        return p.openAssetFile(uri, mode, sig);   // Transport.openAssetFile's 3-arg call
     }
     public final android.content.res.AssetFileDescriptor openTypedAssetFileDescriptor(Uri uri, String mimeType, Bundle opts)
+            throws java.io.FileNotFoundException {
+        return openTypedAssetFileDescriptor(uri, mimeType, opts, null);
+    }
+    public final android.content.res.AssetFileDescriptor openTypedAssetFileDescriptor(Uri uri, String mimeType, Bundle opts, CancellationSignal sig)
             throws java.io.FileNotFoundException {
         ContentProvider p = providerFor(uri);
         if (p == null) return null;
         p.macapkEnforceFile(uri, "r");   // Transport.openTypedAssetFile
-        return p.openTypedAssetFile(uri, mimeType, opts);
-    }
-    public final android.content.res.AssetFileDescriptor openTypedAssetFileDescriptor(Uri uri, String mimeType, Bundle opts, CancellationSignal sig)
-            throws java.io.FileNotFoundException {
-        return openTypedAssetFileDescriptor(uri, mimeType, opts);
+        // The 4-arg call Transport makes (android14 ContentProvider.java:667).
+        return p.openTypedAssetFile(uri, mimeType, opts, sig);
     }
     // AOSP ContentResolver.openTypedAssetFile (core/java/android/content/
     // ContentResolver.java) is a genuinely separate public method from

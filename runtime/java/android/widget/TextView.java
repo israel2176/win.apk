@@ -109,6 +109,16 @@ public class TextView extends View
     private String macapkCursorDrawableAttr;
     private boolean macapkCursorDrawableResolved;
 
+    /** The view's OWN android:textSelectHandle / Left / Right, as written (null
+     *  when the XML/style says nothing: the getters then ask the theme, as
+     *  AOSP's obtainStyledAttributes falls back to it). */
+    private String macapkSelectHandleAttr, macapkSelectHandleLeftAttr, macapkSelectHandleRightAttr;
+    private boolean macapkSelectHandleResolved, macapkSelectHandleLeftResolved, macapkSelectHandleRightResolved;
+
+    private static String macapkNonEmpty(String v) {
+        return v == null || v.isEmpty() ? null : v;
+    }
+
     /** AOSP TextView.mCursorVisibleFromAttr (:12097-12125 backing field). */
     private boolean mCursorVisibleFromAttr = true;
 
@@ -117,6 +127,13 @@ public class TextView extends View
      *  TextView_textCursorDrawable (:1504-1506), TextView_editable
      *  (:1259-1260), and the editable branch creating the Editor. */
     private void macapkInitCaret(android.util.AttributeSet a) {
+        if (a != null) {
+            try {
+                macapkSelectHandleAttr = macapkNonEmpty(a.getAttributeValue(MACAPK_ANDROID_NS, "textSelectHandle"));
+                macapkSelectHandleLeftAttr = macapkNonEmpty(a.getAttributeValue(MACAPK_ANDROID_NS, "textSelectHandleLeft"));
+                macapkSelectHandleRightAttr = macapkNonEmpty(a.getAttributeValue(MACAPK_ANDROID_NS, "textSelectHandleRight"));
+            } catch (Throwable ignored) {}
+        }
         if (!MACAPK_TEXT_CARET) return;
         boolean editableAttrFalse = false;
         if (a != null) {
@@ -571,8 +588,10 @@ public class TextView extends View
                 // `android:textColor="?about_text_primary"` does not resolve:
                 // white text turned black. An explicit @empty (DATA_NULL_EMPTY)
                 // is a real value and still goes through.
-                android.util.TypedValue rec = appearance.peekValue(attr);
-                if (rec != null && rec.type == android.util.TypedValue.TYPE_NULL
+                // macapkPeekRecord, not peekValue: peekValue is null for every
+                // TYPE_NULL slot (AOSP), and this test needs the @empty data.
+                android.util.TypedValue rec = appearance.macapkPeekRecord(attr);
+                if (rec.type == android.util.TypedValue.TYPE_NULL
                         && rec.data != 1 /* TypedValue.DATA_NULL_EMPTY */) {
                     continue;
                 }
@@ -1071,7 +1090,21 @@ public class TextView extends View
     public CharSequence getText() { return text; }
     static final boolean MACAPK_TEXT_WATCHER_EDITABLE =
         !"0".equals(System.getenv("MACAPK_TEXT_WATCHER_EDITABLE"));
+    /** AOSP TextView.setText(CharSequence) (android14, `final`): `setText(text,
+     *  mBufferType)`. Every setText reaches the 2-arg overload, because that is
+     *  the one subclasses override (SmartTube's MarqueeTextViewCompat mirrors its
+     *  text into an inner TextView there).
+     *
+     *  ⚠ The delegation ran the other way (the 2-arg called this one), so an app
+     *  override of setText(CharSequence, BufferType) never saw setText(text):
+     *  MarqueeTextViewCompat's inner copy stayed empty and a focused, scrolling
+     *  SmartTube card title drew nothing. */
     public void setText(CharSequence t) {
+        setText(t, mBufferType);
+    }
+    /** The last BufferType setText was called with (AOSP mBufferType). */
+    private BufferType mBufferType = BufferType.NORMAL;
+    private void macapkSetTextImpl(CharSequence t) {
         // AOSP routes EVERY programmatic setText through the TextWatcher
         // before/on/after-TextChanged notifications + requestLayout/invalidate
         // (androidx TextInputLayout/MaterialTextView floating-label/error/
@@ -1110,16 +1143,16 @@ public class TextView extends View
                 for (android.text.TextWatcher w : textWatchers) {
                     try { w.beforeTextChanged(old, 0, oldLen, n.length()); } catch (Throwable ignored) {}
                 }
-                // Ported from Mac.apk main (902e6ff, TextView setText). AOSP
-                // setText (:7136-7141): with listeners registered
+                // AOSP setText (:7136-7141): with listeners registered
                 // (needEditableForNotification) the buffer is made an Editable
                 // (mEditableFactory.newEditable) BEFORE it is stored, and
                 // sendAfterTextChanged((Editable) text) then always runs. We
                 // stored the caller's String and skipped afterTextChanged, so
                 // TextInputLayout -- whose label logic lives in afterTextChanged
-                // -- never collapsed its hint over programmatic text (pf-notes:
-                // "Category" drawn full size over "Default").
-                // MACAPK_TEXT_WATCHER_EDITABLE=0 restores the old store.
+                // -- never collapsed its hint over programmatic text: "Title"
+                // drawn full size over the field's value (ytdlnis download
+                // sheet, issue #5, 2026-10-19). MACAPK_TEXT_WATCHER_EDITABLE=0
+                // restores the old store.
                 if (MACAPK_TEXT_WATCHER_EDITABLE && !(n instanceof android.text.Editable)) {
                     n = android.text.Editable.Factory.getInstance().newEditable(n);
                 }
@@ -1522,6 +1555,23 @@ public class TextView extends View
         p.setTypeface(getTypeface());
         p.setFakeBoldText(macapkFakeBold);
         p.setTextSkewX(macapkFakeItalic ? -0.25f : 0f);
+    }
+    /** AOSP's private setRawTextSize (:4649-4661) with the unit recorded the way
+     *  the constructor records it: how android:textSize from XML reaches the
+     *  view. Mac.apk's inflater applies XML attributes after construction, and
+     *  doing that through the public setTextSize(int, float) reached app
+     *  overrides a device never calls for XML: SmartTube's
+     *  MarqueeTextViewCompat forwards setTextSize(unit, size) to its inner
+     *  TextView as setTextSize(size) (sp), so the 16sp title it had already
+     *  converted to 32 px came out as 32 sp, twice the size. */
+    public void macapkSetRawTextSize(float px, int unit) {
+        mTextSizeUnit = unit;
+        if (textSizePx != px) {
+            textSizePx = px;
+            macapkSyncPaintTextSize();
+            requestLayout();
+            invalidate();
+        }
     }
     public void setTextSize(float size) { setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, size); }
     public void setTextSize(int unit, float size) {
@@ -3027,14 +3077,15 @@ public class TextView extends View
                             this, macapkActionIdForEnterEvent(), ev)) return true;
                 } catch (Throwable ignore) {}
             }
-            // SCOPED DELTA from AOSP, unchanged from before this fix: AOSP would
-            // now fall through and let a MULTI-LINE field insert the newline
-            // through its key listener. We consume instead. Our KeyListener chain
-            // is inert (see onKeyDown's header), so falling through would drop the
-            // key rather than insert anything, and turning it into a literal '\n'
-            // for every field we cannot prove is multi-line would put newlines
-            // into game name/room-code fields that today commit cleanly. Revisit
-            // together with a real ArrowKeyMovementMethod/KeyListener edit path.
+            // SCOPED DELTA from AOSP, for a field we cannot prove multi-line (a
+            // provable one took the newline above): AOSP would now fall through
+            // and let the key listener decide. We consume instead. Our
+            // KeyListener chain is inert (see onKeyDown's header), so falling
+            // through would drop the key rather than insert anything, and
+            // turning it into a literal '\n' for every field we cannot prove is
+            // multi-line would put newlines into game name/room-code fields that
+            // today commit cleanly. Revisit together with a real
+            // ArrowKeyMovementMethod/KeyListener edit path.
             return true;
         }
         if (unicodeChar >= 32 && unicodeChar != 127) {
@@ -4598,6 +4649,7 @@ public class TextView extends View
         mDrawBase.set(p);
         float cx = x;
         final int end = Math.min(srcStart + srcCount, sp.length());
+        android.text.style.MetricAffectingSpan drawnRep = null;
         final int visLen = Math.max(0, Math.min(line.length(), Math.min(srcCount, end - srcStart)));
         if (visLen > 0 && android.text.MacApkBidi.hasRtl(line, 0, visLen)) {
             // Cut at every style run and every bidi level change, then paint the
@@ -4612,17 +4664,6 @@ public class TextView extends View
             }
             int[] pieces = android.text.MacApkBidi.visualPieces(line.substring(0, visLen), bounds, nb,
                     android.text.MacApkBidi.isRtlParagraph(sp, srcStart));
-            if (System.getenv("MACAPK_TRACE_BIDI") != null) {
-                StringBuilder t = new StringBuilder("bidi line rtlPara=")
-                        .append(android.text.MacApkBidi.isRtlParagraph(sp, srcStart)).append(" :");
-                for (int q = 0; q < Math.min(visLen, 24); q++) t.append(String.format(" %04x", (int) line.charAt(q)));
-                t.append(" | pieces");
-                for (int k = 0; k < pieces.length; k += 3) {
-                    t.append(" [").append(pieces[k]).append(',').append(pieces[k + 1]).append(" L").append(pieces[k + 2])
-                     .append(" w=").append(p.measureText(line.substring(pieces[k], pieces[k + 1]))).append(']');
-                }
-                com.macapk.loader.NativeLog.i("Mac.apk.Bidi", t.toString());
-            }
             for (int k = 0; k < pieces.length; k += 3) {
                 int rs = srcStart + pieces[k], re = srcStart + pieces[k + 1];
                 p.set(mDrawBase);
@@ -4634,6 +4675,21 @@ public class TextView extends View
                         if (sp.getSpanStart(cs) >= re || sp.getSpanEnd(cs) <= rs) continue;
                         try { cs.updateDrawState(p); } catch (Throwable ignored) {}
                     }
+                }
+                // Replaced runs are painted by their span here too (AOSP
+                // TextLine.handleReplacement), once per span across bidi pieces.
+                android.text.style.MetricAffectingSpan bidiRepSpan =
+                        android.text.MacApkReplacement.covering(sp, rs, re);
+                if (bidiRepSpan != null) {
+                    if (bidiRepSpan != drawnRep) {
+                        drawnRep = bidiRepSpan;
+                        int r0 = Math.max(sp.getSpanStart(bidiRepSpan), srcStart);
+                        int r1 = Math.min(sp.getSpanEnd(bidiRepSpan), end);
+                        cx += android.text.MacApkReplacement.draw(canvas,
+                                (android.text.style.ReplacementSpan) bidiRepSpan.getUnderlying(),
+                                sp, r0, r1, cx, baselineY, p);
+                    }
+                    continue;
                 }
                 String run = line.substring(pieces[k], pieces[k + 1]);
                 float runW = p.measureText(run);
@@ -4652,7 +4708,6 @@ public class TextView extends View
                 canvas.drawText(line.substring(srcCount), cx, baselineY, p);
             return;
         }
-        android.text.style.MetricAffectingSpan drawnRep = null;
         int runStart = srcStart;
         while (runStart < end) {
             int runEnd = sp.nextSpanTransition(runStart, end,
@@ -4937,11 +4992,12 @@ public class TextView extends View
      *    applySingleLine(singleLine, !isPassword, ...) (TextView.java:6912),
      *    which lands on setTransformationMethod(SingleLineTransformationMethod
      *    .getInstance()) or setTransformationMethod(null) depending on the
-     *    multi-line flag. Our setSingleLine() never installs
-     *    SingleLineTransformationMethod at all, so mirroring the single-line
-     *    half here would newline-collapse every single-line TextView in the
-     *    fleet -- a much wider change than this lane. We clear to null, which
-     *    is AOSP's own multi-line answer and matches the rest of this tree.
+     *    multi-line flag. Only the setSingleLine() API installs
+     *    SingleLineTransformationMethod here (MACAPK_SINGLELINE_TRANSFORM),
+     *    so mirroring the single-line half here would newline-collapse every
+     *    field whose inputType merely lacks textMultiLine -- a much wider
+     *    change than this lane. We clear to null, which is AOSP's own
+     *    multi-line answer and matches the rest of this tree.
      *  - No setTypefaceFromAttrs(MONOSPACE): AOSP switches password fields to
      *    a monospace face so the dots align. Cosmetic, and our Paint has no
      *    typeface-by-index selection. */
@@ -4960,8 +5016,8 @@ public class TextView extends View
         // Only the FLAG is applied here. The rest of applySingleLine (setLines(1),
         // setHorizontallyScrolling, SingleLineTransformationMethod, the
         // MAX_LENGTH_FOR_SINGLE_LINE_EDIT_TEXT filter) stays out for the reason
-        // already recorded above this method: this tree has no
-        // SingleLineTransformationMethod wiring, and installing the layout half
+        // already recorded above this method: only setSingleLine() installs
+        // SingleLineTransformationMethod, and installing the layout half
         // here would newline-collapse fields fleet-wide. The flag on its own is
         // what isSingleLine() -- and therefore macapkActionIdForEnterEvent() --
         // needs to answer correctly, and it is also the value AOSP's
@@ -5093,14 +5149,22 @@ public class TextView extends View
                 // AOSP's applySingleLine runs before setInputType installs it.
                 if (!(mTransformationMethod instanceof android.text.method.PasswordTransformationMethod)) {
                     setTransformationMethod(sl);
+                    mMacapkSingleLineTransform = true;
                 }
-            } else if (mTransformationMethod == sl) {
+            } else if (mMacapkSingleLineTransform) {
+                // AOSP's applySingleLine(false, ...) clears the transformation.
+                // Only undo one this method installed, so a field that was
+                // never set single-line here keeps its own.
+                mMacapkSingleLineTransform = false;
                 setTransformationMethod(null);
             }
         }
     }
     static final boolean MACAPK_SINGLELINE_TRANSFORM =
         !"0".equals(System.getenv("MACAPK_SINGLELINE_TRANSFORM"));
+    /** setSingleLine(true) installed SingleLineTransformationMethod (possibly
+     *  re-wrapped by an AppCompat subclass, so not comparable by identity). */
+    private boolean mMacapkSingleLineTransform;
     public void setSingleLine() { setSingleLine(true); }
 
     /** AOSP TextView.isSingleLine() (android14-release TextView.java:7405-7408),
@@ -5656,9 +5720,12 @@ public class TextView extends View
         return new android.graphics.drawable.Drawable[]{
             mDrawableLeft, mDrawableTop, mDrawableRight, mDrawableBottom };
     }
-    /** AOSP getCompoundDrawablesRelative (android14 TextView.java:3384-3400):
-     *  the relative pair when one was set, else the absolute pair mirrored for
-     *  an RTL view. */
+    /** AOSP getCompoundDrawablesRelative (android14 TextView.java:3384-3400)
+     *  returns the start/end pair that was set. When only absolute drawables
+     *  are set AOSP's start/end are null; ours keeps its older answer there,
+     *  the absolute pair read as start/end, now mirrored for an RTL view, so a
+     *  get-then-setCompoundDrawablesRelative round trip keeps each icon on its
+     *  side. */
     public android.graphics.drawable.Drawable[] getCompoundDrawablesRelative() {
         if (mMacapkRelativeDrawables) {
             return new android.graphics.drawable.Drawable[]{
@@ -5675,11 +5742,11 @@ public class TextView extends View
     // RESOLVES them against the layout direction (TextView.resolveDrawables /
     // Drawables.resolveWithLayoutDirection, android14 :1011-1060, re-run from
     // onResolveDrawables on every RTL change): in an RTL view the START drawable
-    // shows on the RIGHT. Ours mapped start->left unconditionally, so under an
-    // RTL locale (he / ar, which Win.apk takes from the host) every relative
-    // icon sat on the wrong side -- and MaterialButton, which publishes its icon
-    // with setCompoundDrawablesRelative and, for RTL, a NEGATIVE iconLeft
-    // offset meant for the right-hand slot, drew it entirely outside the button:
+    // shows on the RIGHT. Ours mapped start->left unconditionally, so in an
+    // RTL layout (a Hebrew or Arabic locale) every relative icon sat on the
+    // wrong side -- and MaterialButton, which publishes its icon with
+    // setCompoundDrawablesRelative and, for RTL, a NEGATIVE iconLeft offset
+    // meant for the right-hand slot, drew it entirely outside the button:
     // Privacy Friendly Notes' FAB-menu close button was an empty pill.
     private android.graphics.drawable.Drawable mDrawableStart, mDrawableEnd;
     private boolean mMacapkRelativeDrawables;
@@ -6647,7 +6714,7 @@ public class TextView extends View
         // AOSP setText (:7052-7054): an EDITABLE buffer creates the Editor.
         if (type == BufferType.EDITABLE) createEditorIfNeeded();
         if (type != null) mBufferType = type;
-        setText(t);
+        macapkSetTextImpl(t);
     }
     /** AOSP mBufferType: the type of the LAST setText(text, type); the
      *  one-argument setText reuses it (setText(text) -> setText(text,
@@ -6660,7 +6727,6 @@ public class TextView extends View
      *  storing the text as given. */
     static final boolean MACAPK_TEXT_BUFFER_TYPE =
         !"0".equals(System.getenv("MACAPK_TEXT_BUFFER_TYPE"));
-    private BufferType mBufferType = BufferType.NORMAL;
     private CharSequence macapkApplyBufferType(CharSequence n) {
         if (MACAPK_TEXT_BUFFER_TYPE && mBufferType == BufferType.SPANNABLE
                 && !(n instanceof android.text.Spannable)) {
@@ -6980,13 +7046,25 @@ public class TextView extends View
     }
     /** AOSP TextView.getTextSelectHandle() (TextView.java:3649-3654): lazily
      *  resolves mTextSelectHandleRes into a Drawable on first read and caches
-     *  it. Returns null until a setter above has run at least once -- the
-     *  same branch AOSP itself takes whenever the res id is still its zero
-     *  default, which is always here since this tree does not parse the
-     *  android:textSelectHandle theme attribute during inflation. */
+     *  it. AOSP's constructor fills mTextSelectHandleRes from
+     *  TextView_textSelectHandle, i.e. the view's XML/style, else the THEME
+     *  (Theme.Material and every AppCompat/MaterialComponents theme on it:
+     *  @drawable/text_select_handle_middle_material), so on a device the
+     *  getter is non-null for any themed TextView. That theme value is
+     *  resolved lazily here, once, the way getTextCursorDrawable does it.
+     *  React Native's ReactTextInputManager.setSelectionHandleColor does
+     *  checkNotNull(view.textSelectHandle) on API 29+; a null here threw
+     *  inside RN's UI-operation frame, which puts its UIManager in an illegal
+     *  state and drops every later UI update (Xbox: taps did nothing). */
     public android.graphics.drawable.Drawable getTextSelectHandle() {
         if (mTextSelectHandle == null && mTextSelectHandleRes != 0) {
             mTextSelectHandle = getContext().getDrawable(mTextSelectHandleRes);
+        } else if (mTextSelectHandle == null && !macapkSelectHandleResolved) {
+            macapkSelectHandleResolved = true;
+            int[] id = new int[1];
+            try { mTextSelectHandle = macapkResolveAttrDrawable(macapkSelectHandleAttr, "android:textSelectHandle", id); }
+            catch (Throwable ignored) {}
+            if (id[0] != 0) mTextSelectHandleRes = id[0];
         }
         return mTextSelectHandle;
     }
@@ -7011,6 +7089,12 @@ public class TextView extends View
     public android.graphics.drawable.Drawable getTextSelectHandleLeft() {
         if (mTextSelectHandleLeft == null && mTextSelectHandleLeftRes != 0) {
             mTextSelectHandleLeft = getContext().getDrawable(mTextSelectHandleLeftRes);
+        } else if (mTextSelectHandleLeft == null && !macapkSelectHandleLeftResolved) {
+            macapkSelectHandleLeftResolved = true;
+            int[] id = new int[1];
+            try { mTextSelectHandleLeft = macapkResolveAttrDrawable(macapkSelectHandleLeftAttr, "android:textSelectHandleLeft", id); }
+            catch (Throwable ignored) {}
+            if (id[0] != 0) mTextSelectHandleLeftRes = id[0];
         }
         return mTextSelectHandleLeft;
     }
@@ -7035,6 +7119,12 @@ public class TextView extends View
     public android.graphics.drawable.Drawable getTextSelectHandleRight() {
         if (mTextSelectHandleRight == null && mTextSelectHandleRightRes != 0) {
             mTextSelectHandleRight = getContext().getDrawable(mTextSelectHandleRightRes);
+        } else if (mTextSelectHandleRight == null && !macapkSelectHandleRightResolved) {
+            macapkSelectHandleRightResolved = true;
+            int[] id = new int[1];
+            try { mTextSelectHandleRight = macapkResolveAttrDrawable(macapkSelectHandleRightAttr, "android:textSelectHandleRight", id); }
+            catch (Throwable ignored) {}
+            if (id[0] != 0) mTextSelectHandleRightRes = id[0];
         }
         return mTextSelectHandleRight;
     }
@@ -7058,7 +7148,7 @@ public class TextView extends View
     private android.graphics.drawable.Drawable mCursorDrawable;
     /** AOSP mCursorDrawableRes (:981), an APP drawable id. A FRAMEWORK drawable
      *  has no id in this tree and is resolved by name instead (see
-     *  macapkResolveCursorDrawable). Field NAME kept: apps reflect on it. */
+     *  macapkResolveAttrDrawable). Field NAME kept: apps reflect on it. */
     int mCursorDrawableRes;
     /** AOSP :4009-4015. The Editor's copy is loaded once and not replaced, as
      *  on a device. */
@@ -7089,27 +7179,33 @@ public class TextView extends View
                 catch (Throwable ignored) {}
             } else if (!macapkCursorDrawableResolved) {
                 macapkCursorDrawableResolved = true;
-                try { mCursorDrawable = macapkResolveCursorDrawable(); }
+                try {
+                    int[] id = new int[1];
+                    mCursorDrawable = macapkResolveAttrDrawable(macapkCursorDrawableAttr,
+                            "android:textCursorDrawable", id);
+                    if (id[0] != 0) mCursorDrawableRes = id[0];
+                }
                 catch (Throwable ignored) {}
             }
         }
         return mCursorDrawable;
     }
 
-    /** The view's android:textCursorDrawable, else the theme's, as a Drawable.
-     *  An APP reference resolves to its id (and fills mCursorDrawableRes, as the
-     *  AOSP constructor would have). A FRAMEWORK reference -- the Material
-     *  default, `@android:drawable/text_cursor_material`, measured as the
+    /** A TextView drawable attribute (textCursorDrawable, textSelectHandle*):
+     *  the view's own value `ref`, else the theme's `themeAttr`, as a Drawable.
+     *  An APP reference resolves to its id, returned in outRes[0] for the
+     *  caller's mXxxRes field, as the AOSP constructor would have filled it.
+     *  A FRAMEWORK reference -- the Material default, `@android:drawable/text_cursor_material`, measured as the
      *  resolved theme value for both Google Calculator (Theme.Legacy.Calculator)
      *  and OpenCalculator (AppTheme) -- goes to Resources' framework-drawable
      *  table (text_cursor_material itself excepted, see below). */
-    private android.graphics.drawable.Drawable macapkResolveCursorDrawable() {
-        String ref = macapkCursorDrawableAttr;
+    private android.graphics.drawable.Drawable macapkResolveAttrDrawable(String ref, String themeAttr,
+                                                                          int[] outRes) {
         final Context c = getContext();
         if (c == null) return null;
         if (ref == null) {
             android.content.res.Resources.Theme t = c.getTheme();
-            if (t != null) ref = t.resolveAttrRaw("android:textCursorDrawable");
+            if (t != null) ref = t.resolveAttrRaw(themeAttr);
         }
         if (ref == null) return null;
         ref = ref.trim();
@@ -7124,7 +7220,7 @@ public class TextView extends View
                 int id = num.startsWith("0x") ? (int) Long.parseLong(num.substring(2), 16)
                                                : (int) Long.parseLong(num);
                 if (id != 0) {
-                    mCursorDrawableRes = id;
+                    outRes[0] = id;
                     return c.getDrawable(id);
                 }
             } catch (Throwable ignored) {}
@@ -7136,7 +7232,7 @@ public class TextView extends View
             try { id = res.getIdentifier(name, "drawable", c.getPackageName()); }
             catch (Throwable ignored) {}
             if (id != 0) {
-                mCursorDrawableRes = id;
+                outRes[0] = id;
                 return c.getDrawable(id);
             }
             // An unqualified name the APP table lacks came out of a FRAMEWORK
@@ -7169,7 +7265,7 @@ public class TextView extends View
      *  getDimensionPixelOffset (truncate). Fallback colour: Theme.Material.Light's
      *  colorAccent, material_deep_teal_500 #009688 (colors_material.xml).
      *  REMOVAL CONDITION: delete this (and the name check that routes to it in
-     *  macapkResolveCursorDrawable) once the platform-table copy of
+     *  macapkResolveAttrDrawable) once the platform-table copy of
      *  text_cursor_material carries its tint -- the drawable inflater reading
      *  <shape android:tint> and applying it SRC_IN, as AOSP's GradientDrawable
      *  does. Until then the table copy is a WHITE bar. */

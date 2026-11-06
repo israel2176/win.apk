@@ -21,8 +21,11 @@
 // on a real device of that level -- and it puts every app on the level its
 // developers actually tested: their own targetSdk.
 //
-//   presented = clamp(targetSdkVersion, FLOOR, CEILING)
+//   presented = max(clamp(targetSdkVersion, FLOOR, CEILING), minSdkVersion)
 //
+// - minSdkVersion wins over both bounds (Win.apk, 2026-11-06): a device below
+//   it would never have installed the app. Play services 26.x declares 31;
+//   presented 29 it refused to start its services.
 // - targetSdkVersion is NOT "the highest level the app supports" (apps
 //   forward-support every future level; the manifest has no max field).
 //   It is the behaviour generation the app was DESIGNED against, which is
@@ -280,16 +283,28 @@ public final class PresentedSdk {
                 // actually stand behind -- 35 forces edge-to-edge and our
                 // WindowInsets dispatch is deliberately absent).
                 // Kill switch: MACAPK_SDK_FROM_TARGET=0 restores the flat 29.
-                int target = readTargetSdk();
+                int[] sdks = readSdks();
+                int target = sdks[0];
                 if (target > 0) {
-                    sdk = Math.max(FLOOR, Math.min(CEILING, target));
+                    sdk = presentedFor(target, sdks[1], CEILING);
                     explicit = true;
-                    source = "MACAPK_SDK_FROM_TARGET(targetSdk=" + target + ")";
+                    source = "MACAPK_SDK_FROM_TARGET(targetSdk=" + target
+                        + (sdks[1] > 0 ? ", minSdk=" + sdks[1] : "") + ")";
                     logi("per-app presentation: "
-                        + "targetSdk=" + target + " -> presenting " + sdk
-                        + " (clamp [" + FLOOR + "," + CEILING + "])");
+                        + "targetSdk=" + target + " minSdk=" + sdks[1] + " -> presenting " + sdk
+                        + " (clamp [" + FLOOR + "," + CEILING + "], never below minSdk)");
                 }
-                // readTargetSdk already logged why it could not answer.
+                // readSdks already logged why it could not answer.
+            } else {
+                // The flat default, but never below the app's minSdkVersion:
+                // a device below it would not have installed the app, and an
+                // app told so takes branches its developers removed (Play
+                // services 26.x requires 31 and refused to run on 29).
+                int min = System.getenv("MACAPK_APK_PATH") != null ? readSdks()[1] : 0;
+                if (min > sdk) {
+                    sdk = Math.min(min, MAX_KNOWN_SDK);
+                    source = "default(minSdk=" + min + ")";
+                }
             }
         } catch (Throwable t) {
             // Presentation must never take the process down; fall back to
@@ -420,14 +435,25 @@ public final class PresentedSdk {
      *  reliable source. AOSP PackageParser defaulting is mirrored:
      *  targetSdkVersion absent -> minSdkVersion -> 1. Returns 0 when the
      *  gate cannot answer (no path, no zip entry, parse failure). */
-    private static int readTargetSdk() {
+    private static int[] readSdks() {
         String apk = System.getenv("MACAPK_APK_PATH");
         if (apk == null || apk.isEmpty()) {
             logw("MACAPK_SDK_FROM_TARGET=1 but "
                 + "MACAPK_APK_PATH is unset; presenting default " + DEFAULT_SDK);
-            return 0;
+            return new int[2];
         }
-        return readTargetSdkFromApk(apk);
+        return readSdksFromApk(apk);
+    }
+
+    /** The level presented to an app with this targetSdkVersion and
+     *  minSdkVersion (0 = not declared): its target clamped to [FLOOR,
+     *  ceiling], and never below its minSdk, which wins over the ceiling (an
+     *  app needing a level above it would not install on a device below it),
+     *  up to MAX_KNOWN_SDK. Package-visible for the unit test. */
+    static int presentedFor(int target, int min, int ceiling) {
+        int sdk = Math.max(FLOOR, Math.min(ceiling, target));
+        if (min > sdk) sdk = Math.min(min, MAX_KNOWN_SDK);
+        return sdk;
     }
 
     /** Public because Manifest.java needs the same read: the decoded text
@@ -437,6 +463,13 @@ public final class PresentedSdk {
      *  aspect cap) all run on 1. This helper is the cure; wiring it into
      *  Manifest belongs to that file's owner. Returns 0 when unreadable. */
     public static int readTargetSdkFromApk(String apk) {
+        return readSdksFromApk(apk)[0];
+    }
+
+    /** {targetSdkVersion, minSdkVersion} from the APK's binary manifest, with
+     *  readTargetSdkFromApk's defaulting for the target; minSdk is 0 when the
+     *  manifest declares none, and both are 0 when it cannot be read. */
+    static int[] readSdksFromApk(String apk) {
         try (java.util.zip.ZipFile zf = new java.util.zip.ZipFile(apk)) {
             java.util.zip.ZipEntry e = zf.getEntry("AndroidManifest.xml");
             byte[] axml;
@@ -464,7 +497,7 @@ public final class PresentedSdk {
                 if (axml == null) {
                     logw("no AndroidManifest.xml in "
                         + apk + "; presenting default " + DEFAULT_SDK);
-                    return 0;
+                    return new int[2];
                 }
             }
             org.w3c.dom.Document doc = BinaryXmlParser.parse(axml);
@@ -476,11 +509,11 @@ public final class PresentedSdk {
                 min    = parseIntAttr(sdk, "minSdkVersion");
             }
             if (target == 0) target = min > 0 ? min : 1;
-            return target;
+            return new int[] { target, min };
         } catch (Throwable t) {
             logw("binary manifest read failed for "
                 + apk + " (" + t + "); presenting default " + DEFAULT_SDK);
-            return 0;
+            return new int[2];
         }
     }
 

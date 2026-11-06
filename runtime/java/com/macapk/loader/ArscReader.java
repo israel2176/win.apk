@@ -152,7 +152,19 @@ public final class ArscReader {
         int[] mapNames; int[] mapTypes; int[] mapData;
     }
 
-    private final byte[] d;
+    /** The table bytes. Read only while parsing (run()); parse() and
+     *  parseFrameworkIndex() drop it once the reader is built, because the
+     *  framework reader is cached for the life of the process and the
+     *  platform table is ~52 MB: holding it kept 52 MB of dead bytes in every
+     *  app's Java heap (measured on Metrolist, 2026-10-19). A device maps
+     *  resources.arsc read-only and shares it; nothing here reads it again. */
+    private byte[] d;
+    private static final byte[] RELEASED = new byte[0];
+    /** MACAPK_ARSC_KEEP_BYTES=1 keeps the bytes after parsing (pre-v1.0.2254). */
+    private static final boolean KEEP_BYTES = "1".equals(System.getenv("MACAPK_ARSC_KEEP_BYTES"));
+    private void releaseBytes() { if (!KEEP_BYTES) d = RELEASED; }
+    /** True once the table bytes were dropped (gate hook). */
+    boolean bytesReleased() { return d == RELEASED; }
     private String[] globalStrings = new String[0];
     private Span[][] globalStyles = new Span[0][];
     private final List<RawRow> raw = new ArrayList<>();
@@ -204,6 +216,7 @@ public final class ArscReader {
         if (frameworkAttrSource != null) r.attrDefs.putAll(frameworkAttrSource.attrDefs);
         r.run();
         r.finish();
+        r.releaseBytes();
         return r;
     }
 
@@ -220,6 +233,7 @@ public final class ArscReader {
         r.run();
         r.collectAttrDefs();
         r.raw.clear();      // attr raw rows served their purpose
+        r.releaseBytes();
         return r;
     }
 
@@ -523,8 +537,28 @@ public final class ArscReader {
                 a.vals[j] = r.mapData[i];
                 j++;
             }
+            // Rendering an int as its symbol is only safe when the symbol
+            // spells exactly one value, because consumers turn the text back
+            // into an int by NAME. Under resource-name obfuscation every
+            // symbol of an attr is "0_resource_name_obfuscated" (Play Store
+            // 53.7: ConstraintLayout's barrierDirection, 6 symbols, one name),
+            // and the name lookup returned whichever value it met last: an
+            // "end" Barrier (6) came back as "top" (2), so every OneGoogle
+            // account-menu label was laid out on top of its icon. Android's
+            // TypedArray hands the app the compiled int and never consults the
+            // names, so keeping the int for such an attr is the faithful answer.
+            if (!macapkSymbolsUnique(a.names)) continue;
             attrDefs.put(r.resId, a);
         }
+    }
+
+    /** True when no two symbols share a (non-empty) name. */
+    private static boolean macapkSymbolsUnique(String[] names) {
+        java.util.HashSet<String> seen = new java.util.HashSet<>();
+        for (String n : names) {
+            if (n == null || n.isEmpty() || !seen.add(n)) return false;
+        }
+        return true;
     }
 
     /** Res_INTERNALID: a "resource id" with a zero type byte is an internal

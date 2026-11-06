@@ -436,6 +436,12 @@ public class Switch extends CompoundButton {
         if (mThumbDrawable != null && mThumbDrawable != thumb) mThumbDrawable.setCallback(null);
         mThumbDrawable = thumb;
         macapkAttach(thumb);
+        // AOSP setThumbDrawable -> applyThumbTint: a tint set before (or by the
+        // style) must follow a replacement drawable.
+        if (thumb != null && !(thumb instanceof MacapkSwitchPart)) {
+            if (mThumbTintList != null) macapkTint(thumb, mThumbTintList);
+            if (mThumbTintMode != null) thumb.setTintMode(mThumbTintMode);
+        }
         requestLayout();
     }
     // AOSP Switch.setThumbResource(int) resolves the resource through the
@@ -449,6 +455,10 @@ public class Switch extends CompoundButton {
         if (mTrackDrawable != null && mTrackDrawable != track) mTrackDrawable.setCallback(null);
         mTrackDrawable = track;
         macapkAttach(track);
+        if (track != null && !(track instanceof MacapkSwitchPart)) {
+            if (mTrackTintList != null) macapkTint(track, mTrackTintList);
+            if (mTrackTintMode != null) track.setTintMode(mTrackTintMode);
+        }
         requestLayout();
     }
     public void setTrackResource(int resId) {
@@ -463,9 +473,28 @@ public class Switch extends CompoundButton {
     // trip correctly through real fields.
     private android.content.res.ColorStateList mThumbTintList;
     private android.content.res.ColorStateList mTrackTintList;
-    public void setThumbTintList(android.content.res.ColorStateList tint) { mThumbTintList = tint; }
+    // AOSP setThumbTintList -> applyThumbTint. Now that the Switch draws, an app's
+    // programmatic tint (SwitchMaterial, SwitchCompat-style code) must reach
+    // the drawable instead of only being stored.
+    public void setThumbTintList(android.content.res.ColorStateList tint) {
+        mThumbTintList = tint;
+        if (mThumbDrawable != null && !(mThumbDrawable instanceof MacapkSwitchPart)) {
+            mThumbDrawable = mThumbDrawable.mutate();
+            mThumbDrawable.setTintList(tint);
+            if (mThumbDrawable.isStateful()) mThumbDrawable.setState(getDrawableState());
+        }
+        invalidate();
+    }
     public android.content.res.ColorStateList getThumbTintList() { return mThumbTintList; }
-    public void setTrackTintList(android.content.res.ColorStateList tint) { mTrackTintList = tint; }
+    public void setTrackTintList(android.content.res.ColorStateList tint) {
+        mTrackTintList = tint;
+        if (mTrackDrawable != null && !(mTrackDrawable instanceof MacapkSwitchPart)) {
+            mTrackDrawable = mTrackDrawable.mutate();
+            mTrackDrawable.setTintList(tint);
+            if (mTrackDrawable.isStateful()) mTrackDrawable.setState(getDrawableState());
+        }
+        invalidate();
+    }
     public android.content.res.ColorStateList getTrackTintList() { return mTrackTintList; }
     public void setSwitchTypeface(android.graphics.Typeface tf) {}
 

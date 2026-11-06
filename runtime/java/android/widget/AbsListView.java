@@ -615,6 +615,56 @@ public abstract class AbsListView extends AdapterView<ListAdapter>
         }
     }
 
+    /** AOSP AbsListView.onGenericMotionEvent (android14-release
+     *  AbsListView.java:4488-4535): a wheel step moves the list by AXIS_VSCROLL x
+     *  the vertical scroll factor through trackMotionScroll. AOSP's
+     *  trackMotionScroll returns true when the list was already at that edge;
+     *  then a MOUSE step is not consumed (it falls to super and on to an
+     *  enclosing scroller), a non-mouse one pulls the edge glow. Ours returns
+     *  nothing, so "at the edge" is read as "the anchor did not move".
+     *  WheelScroll.VIEWS=0: not handled. */
+    @Override public boolean onGenericMotionEvent(MotionEvent event) {
+        if (com.macapk.loader.WheelScroll.VIEWS
+                && event.getAction() == MotionEvent.ACTION_SCROLL) {
+            final float axisValue;
+            if (event.isFromSource(android.view.InputDevice.SOURCE_CLASS_POINTER)) {
+                axisValue = event.getAxisValue(MotionEvent.AXIS_VSCROLL);
+            } else if (event.isFromSource(android.view.InputDevice.SOURCE_ROTARY_ENCODER)) {
+                axisValue = event.getAxisValue(MotionEvent.AXIS_SCROLL);
+            } else {
+                axisValue = 0;
+            }
+            final float factor = android.view.ViewConfiguration.get(getContext())
+                    .getScaledVerticalScrollFactor();
+            final int delta = Math.round(axisValue * factor);
+            if (delta != 0) {
+                final int prevFirst = mFirstPosition, prevTop = mFirstTop;
+                trackMotionScroll(delta);
+                final boolean atEdge = mFirstPosition == prevFirst && mFirstTop == prevTop;
+                if (!atEdge) {
+                    fireScroll();
+                    return true;
+                }
+                final int overscrollMode = getOverScrollMode();
+                if (!event.isFromSource(android.view.InputDevice.SOURCE_MOUSE)
+                        && getChildCount() > 0
+                        && overscrollMode != OVER_SCROLL_NEVER) {
+                    float overscroll = delta / ((float) getHeight());
+                    if (delta > 0) {
+                        mEdgeGlowTop.onPullDistance(overscroll, 0.5f);
+                        mEdgeGlowTop.onRelease();
+                    } else {
+                        mEdgeGlowBottom.onPullDistance(-overscroll, 0.5f);
+                        mEdgeGlowBottom.onRelease();
+                    }
+                    invalidate();
+                    return true;
+                }
+            }
+        }
+        return super.onGenericMotionEvent(event);
+    }
+
     @Override public boolean onTouchEvent(MotionEvent ev) {
         switch (ev.getActionMasked()) {
             case MotionEvent.ACTION_DOWN:

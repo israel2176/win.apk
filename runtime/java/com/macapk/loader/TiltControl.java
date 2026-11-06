@@ -262,6 +262,7 @@ public final class TiltControl {
     // ---- persistence (per app) ----------------------------------------------
 
     private static File storeFile() {
+        if (HostAppSupport.windowsHost()) return HostAppSupport.file("tilt-control.properties");   // Win.apk
         String home = System.getProperty("user.home");
         return new File(home + "/Library/Application Support/Mac.apk/tilt-control.properties");
     }

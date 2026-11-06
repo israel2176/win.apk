@@ -506,7 +506,9 @@ public class ImageView extends View {
     public int getImageAlpha() { return mImageAlphaValue; }
     public void setImageAlpha(int alpha) {
         alpha &= 0xFF;
-        if (mImageAlphaValue != alpha || !mHasImageAlpha) {
+        // AOSP setImageAlpha: only a real change marks the alpha as set, so a
+        // default 255 never forces the drawable to be mutate()d.
+        if (mImageAlphaValue != alpha) {
             mImageAlphaValue = alpha;
             mHasImageAlpha = true;
             applyColorMod();
@@ -515,7 +517,9 @@ public class ImageView extends View {
     }
     public void setImageLevel(int level) {}
     public void setColorFilter(android.graphics.ColorFilter cf) {
-        if (this.colorFilter != cf || !mHasColorFilter) {
+        // AOSP setColorFilter: only a real change marks the filter as set, so
+        // clearColorFilter() on a fresh view (RecyclerView binds) does not mutate().
+        if (this.colorFilter != cf) {
             this.colorFilter = cf;
             mHasColorFilter = true;
             applyColorMod();

@@ -7,7 +7,7 @@ import android.content.ComponentName;
  *  SearchableInfo.java (android14-release), whose private XML constructor
  *  (:666-722) and getActivityMetaData (:780-830) are mirrored by macapkParse.
  *
- *  Until 2026-10-22 this class had no state and SearchManager.getSearchableInfo
+ *  This class used to hold no state and SearchManager.getSearchableInfo
  *  always answered null, so an app's SearchView had no search activity to
  *  launch: AppCompat's SearchView.onSubmitQuery only launches the query intent
  *  when mSearchable != null, and NoNonsense Notes' search box (the toolbar

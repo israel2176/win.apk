@@ -449,8 +449,8 @@ public final class Configuration implements Comparable<Configuration>, android.o
      *  nothing mirrored; a device sets the two together. */
     private static int macapkDefaultLayoutDir() {
         try {
-            return java.awt.ComponentOrientation.getOrientation(Locale.getDefault()).isLeftToRight()
-                ? SCREENLAYOUT_LAYOUTDIR_LTR : SCREENLAYOUT_LAYOUTDIR_RTL;
+            return android.text.TextUtils.macapkIsLocaleRtl(Locale.getDefault())
+                ? SCREENLAYOUT_LAYOUTDIR_RTL : SCREENLAYOUT_LAYOUTDIR_LTR;
         } catch (Throwable t) {
             return SCREENLAYOUT_LAYOUTDIR_LTR;
         }
@@ -1035,7 +1035,7 @@ public final class Configuration implements Comparable<Configuration>, android.o
         if (dir == SCREENLAYOUT_LAYOUTDIR_UNDEFINED) {
             try {
                 Locale loc = locale;
-                if (loc != null && !java.awt.ComponentOrientation.getOrientation(loc).isLeftToRight()) return 1;
+                if (android.text.TextUtils.macapkIsLocaleRtl(loc)) return 1;
             } catch (Throwable ignored) {}
             return 0;
         }
@@ -1043,7 +1043,7 @@ public final class Configuration implements Comparable<Configuration>, android.o
     }
     public void setLayoutDirection(java.util.Locale loc) {
         boolean rtl = false;
-        try { if (loc != null) rtl = !java.awt.ComponentOrientation.getOrientation(loc).isLeftToRight(); }
+        try { rtl = android.text.TextUtils.macapkIsLocaleRtl(loc); }
         catch (Throwable ignored) {}
         screenLayout = (screenLayout & ~SCREENLAYOUT_LAYOUTDIR_MASK)
                      | (rtl ? SCREENLAYOUT_LAYOUTDIR_RTL : SCREENLAYOUT_LAYOUTDIR_LTR);

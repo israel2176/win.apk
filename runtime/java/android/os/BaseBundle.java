@@ -92,16 +92,36 @@ public class BaseBundle {
         this.mClassLoader = getClass().getClassLoader();
     }
     protected BaseBundle(BaseBundle src) {
+        boolean copied = false;
         if (src != null) {
-            // AOSP's copyInternal keeps the copy lazy by SHARING the source's
-            // mParcelledData. We unparcel instead, deliberately: a shared Parcel
-            // has two owners and initializeFromParcelLocked recycles the one it
-            // read, so the second owner would unparcel a recycled buffer. The
-            // resulting map is identical either way; the only difference is that
-            // cloning a bundle holding an unresolvable Parcelable throws here
-            // rather than at the clone's first read.
-            src.unparcel();
-            this.map = new ArrayMap<>(src.map);
+            // AOSP's copyInternal keeps the copy lazy: a bundle still in its
+            // parcelled form is copied AS BYTES, never unparcelled. That is
+            // what lets system_server copy an Intent whose extras hold an app's
+            // own Parcelables, which it has no class for, and pass them on --
+            // our system broker did `new Intent(intent)` for every start, bind
+            // and stop, and unparcelled Play services' extras in a process that
+            // cannot load them (BadParcelableException: ClassNotFoundException
+            // GmsModuleFinder$StageFileApksResultReceiver). AOSP shares the
+            // source's Parcel; here the copy gets its own, because
+            // initializeFromParcelLocked recycles the Parcel it read, and a
+            // second owner would read a recycled buffer.
+            synchronized (src) {
+                if (src.mParcelledData != null) {
+                    if (src.mParcelledData == EMPTY_PARCEL) {
+                        this.mParcelledData = EMPTY_PARCEL;
+                    } else {
+                        Parcel p = Parcel.obtain();
+                        p.appendFrom(src.mParcelledData, 0, src.mParcelledData.dataSize());
+                        p.adoptClassCookies(src.mParcelledData);
+                        p.setDataPosition(0);
+                        this.mParcelledData = p;
+                    }
+                    this.mParcelledByNative = src.mParcelledByNative;
+                    this.map = null;
+                    copied = true;
+                }
+            }
+            if (!copied) this.map = src.map != null ? new ArrayMap<>(src.map) : new ArrayMap<>();
         } else {
             this.map = new ArrayMap<>();
         }

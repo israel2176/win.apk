@@ -28,13 +28,10 @@ import com.macapk.loader.NativeSqlite;
 
 import java.util.Map;
 
-// Extends SQLiteClosable so the AOSP reference-counting surface
-// (acquireReference / releaseReference / releaseReferenceFromContainer)
-// resolves -- some androidx code shares a db across components via
-// these. We route the refcount's terminal callback
-// (onAllReferencesReleased) to the real handle-close; the explicit
-// close() below remains for direct callers (the common path) and AOSP
-// behavior is preserved either way.
+// Extends SQLiteClosable, as AOSP does: close() is releaseReference(), and the
+// native handle closes when the last acquireReference() is released
+// (onAllReferencesReleased). With no outstanding reference that is the first
+// close().
 public class SQLiteDatabase extends SQLiteClosable {
     public static final int OPEN_READWRITE         = 0x00000000;
     public static final int OPEN_READONLY          = 0x00000001;
@@ -63,6 +60,9 @@ public class SQLiteDatabase extends SQLiteClosable {
     private long dbHandle;
     /** Path opened; used for diagnostics + reopen logic. */
     private final String path;
+    /** Opened with OPEN_READONLY (AOSP isReadOnly: the connection's open
+     *  flags). Cleared by reopenReadWrite. */
+    private volatile boolean readOnly;
     // Transaction state is PER-THREAD, exactly like AOSP. See the long
     // comment above beginTransaction() for the model, the citation, and
     // the Aurora Store bug this shape fixed. The fields live in TxState;
@@ -87,6 +87,7 @@ public class SQLiteDatabase extends SQLiteClosable {
                 "sqlite3_open_v2(\"" + this.path + "\") failed: "
                 + NativeSqlite.nativeLastOpenError());
         }
+        this.readOnly = (flags & OPEN_READONLY) != 0;
     }
 
     /** Memory-only DB for callers that don't supply a path. Used by
@@ -113,7 +114,29 @@ public class SQLiteDatabase extends SQLiteClosable {
     }
 
     // ---- lifecycle ------------------------------------------------
-    @Override public synchronized void close() {
+    //
+    // AOSP does NOT override SQLiteClosable.close(): close() is releaseReference(),
+    // and the connection pool is only disposed when the LAST reference goes
+    // (onAllReferencesReleased -> dispose). The reference count is part of the
+    // contract, not an extra: SQLiteOpenHelper hands every caller the SAME
+    // SQLiteDatabase, and code that shares it takes its own reference first
+    // (acquireReference) and close()s when done, expecting the helper's database
+    // to stay open for the others. Play Store's streamdatastore helper (ahsi) is
+    // exactly that: b() = getWritableDatabase() + acquireReference(), and each
+    // writer ends with close(). Closing the native handle on the first close()
+    // made the second concurrent writer's needUpgrade() throw
+    // "attempt to re-open an already-closed object" on a database that AOSP keeps
+    // open (the bgExecutor FATAL in streamdatastore.db).
+    //
+    // A close() with no outstanding acquireReference() is the common case and is
+    // unchanged: the count goes 1 -> 0 and the native handle closes right there.
+    // A close() past zero (a double close) is a no-op, as in AOSP, where the
+    // count simply goes negative after dispose.
+    @Override public void close() {
+        releaseReference();
+    }
+
+    private synchronized void closeNative() {
         if (dbHandle != 0) {
             NativeSqlite.nativeClose(dbHandle);
             dbHandle = 0;
@@ -123,15 +146,39 @@ public class SQLiteDatabase extends SQLiteClosable {
         }
     }
 
-    /** SQLiteClosable terminal hook: when the last reference acquired
-     *  via acquireReference() is released, actually close the native
-     *  handle. Direct close() callers (the common path) bypass this
-     *  and close immediately; both leave the handle closed. */
+    /** SQLiteClosable terminal hook (AOSP dispose): the last reference is gone,
+     *  so close the native handle. */
     @Override protected void onAllReferencesReleased() {
-        close();
+        closeNative();
     }
     public synchronized boolean isOpen()    { return dbHandle != 0; }
-    public boolean isReadOnly()             { return false; }
+    public boolean isReadOnly()             { return readOnly; }
+
+    /**
+     * AOSP (@hide, used by SQLiteOpenHelper): reopen a database that was
+     * opened read-only so it can be written. AOSP reconfigures its connection
+     * pool with OPEN_READWRITE; we run one connection, so we open a read-write
+     * sqlite3* on the same path and swap it in. The old handle goes through
+     * sqlite3_close_v2, which keeps it alive (a zombie) until any statement
+     * still prepared on it is finalized.
+     */
+    public synchronized void reopenReadWrite() {
+        if (dbHandle == 0) {
+            throw new IllegalStateException(
+                "attempt to re-open an already-closed object: SQLiteDatabase: " + path);
+        }
+        if (!readOnly) return;
+        long rw = NativeSqlite.nativeOpen(path, NativeSqlite.SQLITE_OPEN_READWRITE);
+        if (rw == 0) {
+            throw new SQLiteCantOpenDatabaseException(
+                "sqlite3_open_v2(\"" + path + "\", READWRITE) failed: "
+                + NativeSqlite.nativeLastOpenError());
+        }
+        long old = dbHandle;
+        dbHandle = rw;
+        readOnly = false;
+        NativeSqlite.nativeClose(old);
+    }
     public String  getPath()                { return path; }
 
     long macapkDbHandle()                 { return dbHandle; }  // package-private for cursor/stmt

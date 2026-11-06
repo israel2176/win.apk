@@ -81,7 +81,9 @@ public class View implements android.graphics.drawable.Drawable.Callback,
     public static final int LAYER_TYPE_HARDWARE = 2;
 
     // ---- Layout state ----
-    private final Context context;
+    /** AOSP View.mContext (protected, non-final): ByteDance Nita and other view-reuse frameworks swap it by
+     *  reflection (View.class.getDeclaredField("mContext")) when they re-parent a pre-built view to its real activity. */
+    protected Context mContext;
     private int id = NO_ID;
     private int left, top, right, bottom;
     private int paddingLeft, paddingTop, paddingRight, paddingBottom;
@@ -133,7 +135,7 @@ public class View implements android.graphics.drawable.Drawable.Callback,
     protected long nativeHandle;
 
     public View(Context context) {
-        this.context = context;
+        this.mContext = context;
         // AOSP View(Context) latches sThrowOnInvalidFloatProperties from
         // targetSdkVersion here (View.java:5370) -- the FIRST View constructed
         // in the process decides it for every View afterwards. See
@@ -330,8 +332,35 @@ public class View implements android.graphics.drawable.Drawable.Callback,
                 if (mw >= 0) setMinimumWidth(mw);
                 if (mh >= 0) setMinimumHeight(mh);
             } catch (Throwable ignored) {}
+            // AOSP's View constructor reads R.styleable.View_elevation from the
+            // same four-tier cascade (android14 View.java, `case
+            // R.styleable.View_elevation: elevation = a.getDimension(...)` ->
+            // setElevation), so a widget whose DEFAULT STYLE declares
+            // android:elevation sits above its siblings. Ours read it only from
+            // the element / style= tiers in the inflater. Measured: Material3
+            // SearchView (Widget.Material3.SearchView, android:elevation
+            // m3_searchview_elevation) is the FIRST child of ytdlnis's
+            // CoordinatorLayout; at Z 0 the app bar and the result list drew
+            // over the open search page (issue #5, 2026-10-19). Separate read so
+            // the slot indexes above stay put. The inflater applies an element
+            // android:elevation afterwards, which still wins.
+            // MACAPK_VIEW_CTOR_ELEVATION=0 restores the old constructor.
+            if (MACAPK_VIEW_CTOR_ELEVATION) {
+                try {
+                    android.content.res.TypedArray ea = context.obtainStyledAttributes(
+                        attrs, CTOR_ELEVATION_ATTR, defStyleAttr, defStyleRes);
+                    if (ea.hasValue(0)) {
+                        float ev = ea.getDimension(0, 0f);
+                        if (ev != 0f && getElevation() == 0f) setElevation(ev);
+                    }
+                    ea.recycle();
+                } catch (Throwable ignored) {}
+            }
         }
     }
+    static final boolean MACAPK_VIEW_CTOR_ELEVATION =
+        !"0".equals(System.getenv("MACAPK_VIEW_CTOR_ELEVATION"));
+    private static final int[] CTOR_ELEVATION_ATTR = { 0x01010440 /*elevation*/ };
 
     // ------------------------------------------------------------------
     // Cluster B3 (widget-fidelity, 2026-09-26): CONSTRUCTOR-TIER PADDING.
@@ -631,9 +660,9 @@ public class View implements android.graphics.drawable.Drawable.Callback,
         onVisibilityChanged(changedView, visibility);
     }
 
-    public final Context getContext() { return context; }
+    public final Context getContext() { return mContext; }
     public android.content.res.Resources getResources() {
-        return context != null ? context.getResources() : null;
+        return mContext != null ? mContext.getResources() : null;
     }
     /** AOSP getHandler():
      *      final AttachInfo attachInfo = mAttachInfo;
@@ -654,7 +683,11 @@ public class View implements android.graphics.drawable.Drawable.Callback,
     private android.os.Handler mViewHandler;
     public android.os.Handler getHandler() {
         if (sIsShownDetachedAosp && !macapkAttached) return null;
-        if (mViewHandler == null) mViewHandler = new android.os.Handler();
+        // The UI looper explicitly: AOSP's View handler is the ViewRootImpl
+        // handler of the UI thread, whichever thread asks first. An implicit
+        // `new Handler()` binds the CALLING thread's Looper when it has
+        // prepared one, so a worker that touched the view first would own it.
+        if (mViewHandler == null) mViewHandler = new android.os.Handler(android.os.Looper.getMainLooper());
         return mViewHandler;
     }
     // android.view.Display getter (API 17+). Flappy Bird's
@@ -737,7 +770,7 @@ public class View implements android.graphics.drawable.Drawable.Callback,
         // (its ContextThemeWrapper had no ctx entry) and threw
         // "ViewTreeLifecycleOwner not found" in onAttachedToWindow, so its
         // composition never got created.
-        for (Context ctx = context; ctx != null;
+        for (Context ctx = mContext; ctx != null;
                 ctx = (ctx instanceof android.content.ContextWrapper)
                         ? ((android.content.ContextWrapper) ctx).getBaseContext() : null) {
             java.util.HashMap<Integer, Object> ctxTags = sContextKeyedTags.get(ctx);
@@ -843,8 +876,8 @@ public class View implements android.graphics.drawable.Drawable.Callback,
         if (c == null) {
             c = "";
             try {
-                if (context != null) {
-                    android.content.res.Resources res = context.getResources();
+                if (mContext != null) {
+                    android.content.res.Resources res = mContext.getResources();
                     if (res != null) {
                         String nm = res.getResourceEntryName(key);
                         if (nm != null) {
@@ -952,8 +985,8 @@ public class View implements android.graphics.drawable.Drawable.Callback,
         if (c != null) return c;
         boolean owner = false;
         try {
-            if (context != null) {
-                android.content.res.Resources res = context.getResources();
+            if (mContext != null) {
+                android.content.res.Resources res = mContext.getResources();
                 if (res != null) {
                     String nm = res.getResourceEntryName(key);
                     owner = nm != null && VIEW_TREE_OWNER_RES_NAMES.contains(nm);
@@ -970,7 +1003,7 @@ public class View implements android.graphics.drawable.Drawable.Callback,
      *  so androidx's `getTag(ownerKey) as? XxxOwner` succeeds -- the AOSP root
      *  owner that ComponentActivity.initializeViewTreeOwners would have installed. */
     private Object activityOwnerFor() {
-        for (Context ctx = context; ctx != null;
+        for (Context ctx = mContext; ctx != null;
                 ctx = (ctx instanceof android.content.ContextWrapper)
                         ? ((android.content.ContextWrapper) ctx).getBaseContext() : null) {
             if (ctx instanceof android.app.Activity) return ctx;
@@ -1040,9 +1073,9 @@ public class View implements android.graphics.drawable.Drawable.Callback,
                     + " value=" + t.getClass().getName());
             }
             sObservedOwnerKeys.add(key);
-            if (context != null) {
+            if (mContext != null) {
                 java.util.HashMap<Integer, Object> m = sContextKeyedTags
-                    .computeIfAbsent(context, k -> new java.util.HashMap<>());
+                    .computeIfAbsent(mContext, k -> new java.util.HashMap<>());
                 // v1.0.1643: AOSP's root owner for an activity-context view is
                 // the Activity (ComponentActivity.initializeViewTreeOwners on the
                 // decor). A SUBTREE owner -- a Fragment view's
@@ -1050,7 +1083,7 @@ public class View implements android.graphics.drawable.Drawable.Callback,
                 // context -- must not replace it in this per-context fallback, or
                 // every later lookup resolves to (and pins) that narrower owner.
                 Object prev = m.get(key);
-                android.app.Activity act = macapkActivityOf(context);
+                android.app.Activity act = macapkActivityOf(mContext);
                 if (!(prev != null && prev == act && t != act)) m.put(key, t);
             }
         }
@@ -1131,6 +1164,22 @@ public class View implements android.graphics.drawable.Drawable.Callback,
      *  Cached per-class. */
     private static boolean isViewTreeOwnerTagValue(Object v) {
         if (v == null) return false;
+        // v1.0.2311: NAME-FREE root-owner detection. AOSP
+        // ComponentActivity.initializeViewTreeOwners sets the ACTIVITY ITSELF as the
+        // decor's ViewTreeLifecycle/ViewModelStore/SavedStateRegistry/... owner
+        // (decorView.setTag(R.id.view_tree_lifecycle_owner, this)). An Activity used as
+        // a view-tree tag value therefore IS the root owner by construction. Recognise
+        // it WITHOUT resolving any androidx class name -- the ONLY path that works for a
+        // FULLY R8-obfuscated app (the Play Store), where the owner interface names AND
+        // androidx.lifecycle.Lifecycle$State itself are renamed, so both the name fast
+        // path and the "rename-proof" structural probe below fail (lifecycleStateClass
+        // returns null) and the owner-key is never learned -> getTag's Activity fallback
+        // never fires -> the first ComposeView throws "ViewTreeLifecycleOwner not found"
+        // and composition is never built (blank white). A ComponentActivity implements
+        // all the owner interfaces and is driven to RESUMED, so this is correct, and the
+        // getTag fallback's macapkActivitySatisfiesOwnerKey guard still rejects a wrong
+        // family for un-minified apps. Measured on com.android.vending 53.7.23.
+        if (v instanceof android.app.Activity) return true;
         Class<?> vc = v.getClass();
         Boolean cached = sOwnerTagClassCache.get(vc);
         if (cached != null) return cached;
@@ -1273,7 +1322,14 @@ public class View implements android.graphics.drawable.Drawable.Callback,
     // T cast in declaration matches AOSP's <T extends View> signature.
     @SuppressWarnings("unchecked")
     public <T extends View> T findViewById(int searchId) {
-        if (searchId != NO_ID && this.id == searchId) return (T) this;
+        if (searchId == NO_ID) return null;
+        return findViewTraversal(searchId);
+    }
+    /** AOSP View.findViewTraversal: look for the id in this view (ViewGroup overrides
+     *  this to search its children). */
+    @SuppressWarnings("unchecked")
+    protected <T extends View> T findViewTraversal(int searchId) {
+        if (searchId == this.id) return (T) this;
         return null;
     }
     @SuppressWarnings("unchecked")
@@ -1358,7 +1414,9 @@ public class View implements android.graphics.drawable.Drawable.Callback,
     public boolean isHovered() { return hovered; }
     public void setHovered(boolean h) {
         if (!android.os.Looper.MACAPK_REAL_LOOPER) return;
-        if (hovered != h) { hovered = h; refreshDrawableState(); }
+        // AOSP View.setHovered (android14 :17898): refreshDrawableState, then
+        // the onHoverChanged hook.
+        if (hovered != h) { hovered = h; refreshDrawableState(); onHoverChanged(h); }
     }
     /** AOSP setDrawingCacheEnabled/isDrawingCacheEnabled (View.java:21112) --
      *  a plain mViewFlags bit. Deprecated since API 28 and we still build no
@@ -1740,9 +1798,27 @@ public class View implements android.graphics.drawable.Drawable.Callback,
         // never re-selects its unfocused art once focus leaves.
         refreshDrawableState();
         invalidate();
-        if (mInClearFocus) return;
+        // AOSP clearFocus: refocus = sAlwaysAssignFocus || !isInTouchMode(), so in
+        // touch mode a modern app's cleared focus STAYS cleared. Gated now that
+        // ViewGroup.requestFocus descends: refocusing the root unconditionally
+        // would hand focus straight back to the first focusableInTouchMode view
+        // (often the very EditText the app just cleared to hide the keyboard).
+        if (mInClearFocus || !(macapkAlwaysAssignFocus() || !isInTouchMode())) return;
         mInClearFocus = true;
         try { rootViewRequestFocus(); } catch (Throwable ignored) {} finally { mInClearFocus = false; }
+    }
+    /** AOSP View.sAlwaysAssignFocus = targetSdkVersion < P (View's constructor,
+     *  android14 :5546). An unresolved targetSdk reads as modern. */
+    private boolean macapkAlwaysAssignFocus() {
+        try {
+            android.content.Context c = getContext();
+            android.content.pm.ApplicationInfo ai = c == null ? null : c.getApplicationInfo();
+            int t = ai == null ? 0 : ai.targetSdkVersion;
+            return android.app.Application.macapkTargetSdkKnown(t)
+                && t < android.os.Build.VERSION_CODES.P;
+        } catch (Throwable t) {
+            return false;
+        }
     }
     /** AOSP rootViewRequestFocus():7968. */
     boolean rootViewRequestFocus() {
@@ -2568,7 +2644,7 @@ public class View implements android.graphics.drawable.Drawable.Callback,
         event.setEnabled(isEnabled());
         event.setContentDescription(getContentDescription());
         try {
-            if (context != null) event.setPackageName(context.getPackageName());
+            if (mContext != null) event.setPackageName(mContext.getPackageName());
         } catch (Throwable ignored) {}
     }
     public void onInitializeAccessibilityNodeInfo(
@@ -2813,7 +2889,12 @@ public class View implements android.graphics.drawable.Drawable.Callback,
     // v1.0.98: more API surface used by Compose / SwipeRefreshLayout
     // / RecyclerView during init. Other isXxx/getXxx defined earlier
     // in the file are not duplicated here.
-    public boolean isInTouchMode() { return true; }
+    /** AOSP View.isInTouchMode (android14): mAttachInfo.mInTouchMode for an
+     *  attached view, config_defaultInTouchMode (true on a touch device) for a
+     *  detached one. It was a constant true; see ViewRootImpl's TOUCH MODE. */
+    public boolean isInTouchMode() {
+        return !macapkAttached || ViewRootImpl.macapkInTouchMode();
+    }
     /** AOSP View.hasWindowFocus (android11-release View.java:14620-14622):
      *      return mAttachInfo != null && mAttachInfo.mHasWindowFocus;
      *  A DETACHED view has no attach info and therefore no window focus --
@@ -3099,13 +3180,17 @@ public class View implements android.graphics.drawable.Drawable.Callback,
      *  callDragEventHandler. (Was a no-op until MacApkDragSession existed.) */
     public void setOnDragListener(OnDragListener l) { mOnDragListener = l; }
     OnDragListener mOnDragListener;
-    public void setOnHoverListener(OnHoverListener l) {}
+    /** AOSP ListenerInfo.mOnHoverListener, read by dispatchHoverEvent. Was a
+     *  discard. */
+    public void setOnHoverListener(OnHoverListener l) { mOnHoverListener = l; }
     public void setOnScrollChangeListener(OnScrollChangeListener l) {}
     public void setOnContextClickListener(OnContextClickListener l) {
         // AOSP stores it in ListenerInfo.mOnContextClickListener and
         // performContextClick() consults it; was a discard here, so the
         // listener could never fire. Storing it is what makes the AOSP
         // performContextClick() added below observable.
+        // AOSP View.java:7925: `if (!isContextClickable()) setContextClickable(true);`
+        if (!isContextClickable()) setContextClickable(true);
         macapkSetContextClickListener(l);
     }
     public void setOnGenericMotionListener(OnGenericMotionListener listener, Object discriminator) {}
@@ -3752,7 +3837,7 @@ public class View implements android.graphics.drawable.Drawable.Callback,
     private boolean hasRtlSupport() {
         try {
             android.content.pm.ApplicationInfo ai =
-                (context != null) ? context.getApplicationInfo() : null;
+                (mContext != null) ? mContext.getApplicationInfo() : null;
             return ai != null
                 && (ai.flags & android.content.pm.ApplicationInfo.FLAG_SUPPORTS_RTL) != 0;
         } catch (Throwable ignored) {
@@ -3768,7 +3853,7 @@ public class View implements android.graphics.drawable.Drawable.Callback,
         int targetSdk = 0;
         try {
             android.content.pm.ApplicationInfo ai =
-                (context != null) ? context.getApplicationInfo() : null;
+                (mContext != null) ? mContext.getApplicationInfo() : null;
             if (ai != null) targetSdk = ai.targetSdkVersion;
         } catch (Throwable ignored) {}
         return targetSdk < android.os.Build.VERSION_CODES.JELLY_BEAN_MR1 || !hasRtlSupport();
@@ -3778,8 +3863,8 @@ public class View implements android.graphics.drawable.Drawable.Callback,
      *  LTR when no Context/Resources is reachable. */
     private int configuredLayoutDirection() {
         try {
-            if (context != null) {
-                android.content.res.Resources res = context.getResources();
+            if (mContext != null) {
+                android.content.res.Resources res = mContext.getResources();
                 if (res != null && res.getConfiguration() != null) {
                     return res.getConfiguration().getLayoutDirection() == LAYOUT_DIRECTION_RTL
                         ? LAYOUT_DIRECTION_RTL : LAYOUT_DIRECTION_LTR;
@@ -3789,13 +3874,11 @@ public class View implements android.graphics.drawable.Drawable.Callback,
         return LAYOUT_DIRECTION_LTR;
     }
     /** AOSP resolves LAYOUT_DIRECTION_LOCALE via
-     *  TextUtils.getLayoutDirectionFromLocale (ICU ULocale.isRightToLeft).
-     *  android.text.TextUtils has no such method in this tree, so use the same
-     *  JDK query android.content.res.Configuration.setLayoutDirection(Locale)
-     *  already uses, keeping the two answers consistent. */
+     *  TextUtils.getLayoutDirectionFromLocale (ICU ULocale.isRightToLeft), the
+     *  same AWT-free table Configuration.setLayoutDirection(Locale) uses. */
     private static int layoutDirectionFromLocale(java.util.Locale loc) {
         try {
-            if (loc != null && !java.awt.ComponentOrientation.getOrientation(loc).isLeftToRight()) {
+            if (android.text.TextUtils.macapkIsLocaleRtl(loc)) {
                 return LAYOUT_DIRECTION_RTL;
             }
         } catch (Throwable ignored) {}
@@ -3863,7 +3946,13 @@ public class View implements android.graphics.drawable.Drawable.Callback,
 
     private float transitionAlpha = 1f;
     public float getTransitionAlpha() { return transitionAlpha; }
-    public void  setTransitionAlpha(float alpha) { this.transitionAlpha = alpha; }
+    /** AOSP setTransitionAlpha: stores the multiplier and invalidates the view
+     *  (invalidateViewProperty), so a Fade's frames repaint. */
+    public void  setTransitionAlpha(float alpha) {
+        if (this.transitionAlpha == alpha) return;
+        this.transitionAlpha = alpha;
+        invalidate();
+    }
     public void  setTransitionVisibility(int visibility) {}
 
     public android.view.WindowId getWindowId() { return null; }
@@ -3880,7 +3969,7 @@ public class View implements android.graphics.drawable.Drawable.Callback,
      *  view that belongs to no window. */
     public WindowInsetsController getWindowInsetsController() {
         try {
-            Context c = context;
+            Context c = mContext;
             while (c instanceof android.content.ContextWrapper
                    && !(c instanceof android.app.Activity)) {
                 Context b = ((android.content.ContextWrapper) c).getBaseContext();
@@ -4318,7 +4407,51 @@ public class View implements android.graphics.drawable.Drawable.Callback,
                 && onGenericMotionListener.onGenericMotion(this, event)) {
             return true;
         }
-        return onGenericMotionEvent(event);
+        if (onGenericMotionEvent(event)) return true;
+        // AOSP View.dispatchGenericMotionEventInternal (android14 View.java:16788-16812):
+        // a SECONDARY (or stylus primary) BUTTON_PRESS on a context-clickable view
+        // performs the context click and holds the pressed state; its
+        // BUTTON_RELEASE ends it and makes the following UP skip the click.
+        final int actionButton = event.getActionButton();
+        switch (event.getActionMasked()) {
+            case android.view.MotionEvent.ACTION_BUTTON_PRESS:
+                if (isContextClickable() && !mInContextButtonPress && !mHasPerformedLongPress
+                        && (actionButton == android.view.MotionEvent.BUTTON_STYLUS_PRIMARY
+                        || actionButton == android.view.MotionEvent.BUTTON_SECONDARY)) {
+                    if (performContextClick(event.getX(), event.getY())) {
+                        mInContextButtonPress = true;
+                        setPressed(true);
+                        removeLongPressCallback();
+                        return true;
+                    }
+                }
+                break;
+            case android.view.MotionEvent.ACTION_BUTTON_RELEASE:
+                if (mInContextButtonPress && (actionButton == android.view.MotionEvent.BUTTON_STYLUS_PRIMARY
+                        || actionButton == android.view.MotionEvent.BUTTON_SECONDARY)) {
+                    mInContextButtonPress = false;
+                    mIgnoreNextUpEvent = true;
+                }
+                break;
+            default:
+                break;
+        }
+        return false;
+    }
+    /** AOSP View.mInContextButtonPress / mIgnoreNextUpEvent. */
+    private boolean mInContextButtonPress;
+    private boolean mIgnoreNextUpEvent;
+
+    /** AOSP View.performButtonActionOnTouchDown (android14 View.java:8224), @hide:
+     *  a MOUSE secondary-button press shows the context menu and consumes the
+     *  DOWN. */
+    protected boolean performButtonActionOnTouchDown(MotionEvent event) {
+        if (event.isFromSource(android.view.InputDevice.SOURCE_MOUSE)
+                && (event.getButtonState() & MotionEvent.BUTTON_SECONDARY) != 0) {
+            showContextMenu(event.getX(), event.getY());
+            return true;
+        }
+        return false;
     }
     public boolean onGenericMotionEvent(android.view.MotionEvent event) { return false; }
     /** AOSP View.cancelLongPress (View.java:18392-18401): a scrolling container
@@ -6027,7 +6160,7 @@ public class View implements android.graphics.drawable.Drawable.Callback,
         if (h == null) {
             synchronized (this) {
                 h = mPostHandler;
-                if (h == null) mPostHandler = h = new android.os.Handler();
+                if (h == null) mPostHandler = h = new android.os.Handler(android.os.Looper.getMainLooper());
             }
         }
         return h;
@@ -6185,6 +6318,11 @@ public class View implements android.graphics.drawable.Drawable.Callback,
             }
             return false;
         }
+        // AOSP requestFocusNoSearch (android14): "need to not have any parents
+        // blocking us". Matters once ViewGroup.requestFocus descends: a
+        // FOCUS_BLOCK_DESCENDANTS ancestor (a hidden leanback headers panel, a
+        // disabled pane) must keep its subtree out of focus.
+        if (hasAncestorThatBlocksDescendantFocus()) return false;
         if (mIsFocused) return true;
         handleFocusGainInternal(direction, previouslyFocusedRect);
         if (sTraceIme) {
@@ -6192,6 +6330,21 @@ public class View implements android.graphics.drawable.Drawable.Callback,
                 + " parent=" + (getParent() == null ? "null" : getParent().getClass().getName()));
         }
         return true;
+    }
+    /** AOSP View.hasAncestorThatBlocksDescendantFocus (android14): a
+     *  FOCUS_BLOCK_DESCENDANTS ancestor, or (for a view that is not focusable
+     *  in touch mode) an ancestor whose touchscreenBlocksFocus applies. */
+    private boolean hasAncestorThatBlocksDescendantFocus() {
+        final boolean inTouchModeFocusable = isFocusableInTouchMode();
+        ViewParent ancestor = parent;
+        while (ancestor instanceof ViewGroup vg) {
+            if (vg.getDescendantFocusability() == ViewGroup.FOCUS_BLOCK_DESCENDANTS
+                    || (!inTouchModeFocusable && vg.shouldBlockFocusForTouchscreen())) {
+                return true;
+            }
+            ancestor = vg.getParent();
+        }
+        return false;
     }
     /** AOSP splits this into canTakeFocus():16018 (visible AND focusable AND
      *  ENABLED) plus the touch-mode test in requestFocusNoSearch:13304. The
@@ -6204,8 +6357,18 @@ public class View implements android.graphics.drawable.Drawable.Callback,
         return focusable && visibility == VISIBLE && isEnabled()
             && (!isInTouchMode() || focusableInTouchMode);
     }
+    /** MACAPK_TRACE_FOCUS=1: who takes focus, from where (diagnostic). */
+    static final boolean sTraceFocus = "1".equals(System.getenv("MACAPK_TRACE_FOCUS"));
     void handleFocusGainInternal(int direction, android.graphics.Rect previouslyFocusedRect) {
         if (mIsFocused) return;
+        if (sTraceFocus) {
+            StringBuilder sb = new StringBuilder("focus-gain ").append(getClass().getName())
+                .append('@').append(Integer.toHexString(System.identityHashCode(this)))
+                .append(" dir=").append(direction);
+            StackTraceElement[] st = new Throwable().getStackTrace();
+            for (int i = 1; i < Math.min(st.length, 14); i++) sb.append("\n      at ").append(st[i]);
+            com.macapk.loader.NativeLog.i("Mac.apk.Focus", sb.toString());
+        }
         mIsFocused = true;
         ViewParent p = getParent();
         if (p != null) p.requestChildFocus(this, this);   // builds the mFocused chain to root, clears old branch
@@ -7072,6 +7235,12 @@ public class View implements android.graphics.drawable.Drawable.Callback,
                     // that still showed one was the separate M18 ripple below,
                     // which runs only under MACAPK_REAL_LOOPER.
                     mHasPerformedLongPress = false;
+                    // AOSP View.onTouchEvent DOWN (android14 View.java:18167):
+                    // `if (performButtonActionOnTouchDown(event)) break;` -- a
+                    // mouse SECONDARY press opens the context menu and never
+                    // enters the pressed state, so its UP cannot click. Host
+                    // mice carry their real buttons since MACAPK_MOUSE_POINTER.
+                    if (performButtonActionOnTouchDown(ev)) break;
                     setPressed(true);
                     // M18: kick off a Material ripple from the touch point.
                     if (android.os.Looper.MACAPK_REAL_LOOPER) macapkStartRipple(ev.getX(), ev.getY());
@@ -7130,11 +7299,14 @@ public class View implements android.graphics.drawable.Drawable.Callback,
                         // ... performClick ... }`. Without the gate, holding a
                         // list row would fire onItemLongClick AND onItemClick.
                         removeLongPressCallback();
-                        if (!mHasPerformedLongPress && !focusTaken) {
+                        // mIgnoreNextUpEvent: a context click consumed this
+                        // button's press (dispatchGenericMotionEvent below).
+                        if (!mHasPerformedLongPress && !mIgnoreNextUpEvent && !focusTaken) {
                             performClick();
                         }
                         mHasPerformedLongPress = false;
                     }
+                    mIgnoreNextUpEvent = false;
                     break;
                 case MotionEvent.ACTION_MOVE:
                     // AOSP View.java:18258-18272: "Be lenient about moving
@@ -7222,8 +7394,54 @@ public class View implements android.graphics.drawable.Drawable.Callback,
                 return false;
         }
     }
-    @Override public boolean onKeyDown(int keyCode, KeyEvent ev) { return false; }
-    @Override public boolean onKeyUp(int keyCode, KeyEvent ev)   { return false; }
+    /** AOSP View.onKeyDown (android14 :16334-16363): a confirm key (D-pad
+     *  centre, Enter, Space, numpad Enter) on an enabled clickable or
+     *  long-clickable view presses it at its centre and arms the long-press
+     *  timer; a disabled view swallows the key.
+     *
+     *  ⚠ Both bodies were `return false` (on the belief that AOSP's are), so a
+     *  focused Button, card or row never clicked from the keyboard: Enter on a
+     *  focused SmartTube video card went nowhere. */
+    @Override public boolean onKeyDown(int keyCode, KeyEvent ev) {
+        if (KeyEvent.isConfirmKey(keyCode) && ev != null && ev.hasNoModifiers()) {
+            if (!isEnabled()) return true;
+            if (ev.getRepeatCount() == 0 && (isClickable() || isLongClickable())) {
+                if (isClickable()) setPressed(true);
+                mKeyHasPerformedLongPress = false;
+                if (isLongClickable()) {
+                    if (mKeyLongPress == null) {
+                        mKeyLongPress = () -> {
+                            if (isPressed() || !isClickable()) {
+                                if (performLongClick()) mKeyHasPerformedLongPress = true;
+                            }
+                        };
+                    }
+                    removeCallbacks(mKeyLongPress);
+                    postDelayed(mKeyLongPress, ViewConfiguration.getLongPressTimeout());
+                }
+                return true;
+            }
+        }
+        return false;
+    }
+    /** AOSP View.onKeyUp (android14 :16392-16410): releasing a confirm key on a
+     *  pressed clickable view clicks it, unless the long press already fired or
+     *  the key was cancelled. */
+    @Override public boolean onKeyUp(int keyCode, KeyEvent ev) {
+        if (KeyEvent.isConfirmKey(keyCode) && ev != null && ev.hasNoModifiers()) {
+            if (!isEnabled()) return true;
+            if (isClickable() && isPressed()) {
+                setPressed(false);
+                if (!mKeyHasPerformedLongPress) {
+                    if (mKeyLongPress != null) removeCallbacks(mKeyLongPress);
+                    if (!ev.isCanceled()) return performClick();
+                }
+            }
+        }
+        return false;
+    }
+    private Runnable mKeyLongPress;
+    private boolean mKeyHasPerformedLongPress;
     /** KeyEvent.Callback. AOSP's View base bodies both return false; subclasses
      *  (and apps that route their own key events) override. */
     @Override public boolean onKeyMultiple(int keyCode, int repeatCount, KeyEvent ev) { return false; }
@@ -9176,8 +9394,51 @@ public class View implements android.graphics.drawable.Drawable.Callback,
         return who == getBackground();
     }
     public boolean isShowingLayoutBounds() { return false; }
-    public boolean dispatchHoverEvent(android.view.MotionEvent event) { return false; }
-    public boolean onHoverEvent(android.view.MotionEvent event) { return false; }
+    /** AOSP View.dispatchHoverEvent (android14 View.java:16829): the
+     *  OnHoverListener first (an enabled view only), then onHoverEvent. Both
+     *  used to answer false, so no view ever saw a hover (GitHub #25). */
+    public boolean dispatchHoverEvent(android.view.MotionEvent event) {
+        if (!HOVER_VIEWS) return false;
+        if (mOnHoverListener != null && isEnabled() && mOnHoverListener.onHover(this, event)) {
+            return true;
+        }
+        return onHoverEvent(event);
+    }
+    /** AOSP View.onHoverEvent (android14): a hoverable view (enabled and
+     *  clickable / long-clickable / context-clickable), or one already hovered,
+     *  takes the hovered state on ENTER and drops it on EXIT, offers the event to
+     *  onGenericMotionEvent for compatibility, and consumes it. The accessibility
+     *  hover events and the scrollbar wake-up are not modelled. */
+    public boolean onHoverEvent(android.view.MotionEvent event) {
+        if (!HOVER_VIEWS) return false;
+        if (isHoverable() || isHovered()) {
+            switch (event.getActionMasked()) {
+                case android.view.MotionEvent.ACTION_HOVER_ENTER: setHovered(true); break;
+                case android.view.MotionEvent.ACTION_HOVER_EXIT: setHovered(false); break;
+                default: break;
+            }
+            if (onGenericMotionListener != null && isEnabled()
+                    && onGenericMotionListener.onGenericMotion(this, event)) {
+                return true;
+            }
+            onGenericMotionEvent(event);
+            return true;
+        }
+        return false;
+    }
+    /** AOSP View.isHoverable (android14 View.java:17859). */
+    private boolean isHoverable() {
+        if (!isEnabled()) return false;
+        return isClickable() || isLongClickable() || isContextClickable();
+    }
+    /** AOSP @hide hasHoveredChild / pointInHoveredChild: a plain View has no
+     *  children; ViewGroup answers from its hover targets. */
+    protected boolean hasHoveredChild() { return false; }
+    protected boolean pointInHoveredChild(android.view.MotionEvent event) { return false; }
+    /** MACAPK_HOVER_EVENTS (default ON; =0 = the pre-change views, which never
+     *  answered a hover). Read by ViewGroup's hover routing and TouchDispatcher. */
+    public static final boolean HOVER_VIEWS = !"0".equals(System.getenv("MACAPK_HOVER_EVENTS"));
+    private OnHoverListener mOnHoverListener;
 
     // ---- content-translation (API 31): no on-device translator ---------------
     public void setViewTranslationCallback(android.view.translation.ViewTranslationCallback callback) { }

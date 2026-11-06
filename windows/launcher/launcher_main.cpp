@@ -198,6 +198,12 @@ const wchar_t* tr(const wchar_t* en) {
         {L"Use my Windows folders", L"שימוש בתיקיות של Windows"},
         {L"App data", L"נתוני אפליקציות"},
         {L"Google account", L"חשבון Google"},
+        {L"Use Google services (experimental)", L"שימוש בשירותי Google (ניסיוני)"},
+        {L"Runs the Google Play services, Services Framework and Play Store you install yourself, as apps other "
+         L"apps can reach. Only copies signed by Google are trusted. Takes effect when an app starts.",
+         L"מפעיל את Google Play services, ‏Services Framework ו-Play Store שהתקנת בעצמך, כאפליקציות שאפליקציות "
+         L"אחרות יכולות לפנות אליהן. רק עותקים חתומים על ידי Google נחשבים מהימנים. נכנס לתוקף כשאפליקציה "
+         L"מופעלת."},
         {L"Signing in…", L"מתבצעת כניסה…"},
         {L"Complete the sign-in in the Google window, or close it to cancel.", L"יש להשלים את הכניסה בחלון של Google, או לסגור אותו כדי לבטל."},
         {L"Sign out", L"התנתקות"},
@@ -4590,6 +4596,17 @@ Section google_account_section() {
                                          L"push notifications."),
                                       tr(L"Sign in…"), [] { start_google_signin(); }));
     }
+    // The real Google Play services, Services Framework and Play Store, installed by the user, running as
+    // apps through the system broker (winapk-runtime --system). The runtime reads the value at an app's start.
+    Row gms;
+    gms.kind = Row::kToggle;
+    gms.title = tr(L"Use Google services (experimental)");
+    gms.detail = tr(L"Runs the Google Play services, Services Framework and Play Store you install yourself, "
+                    L"as apps other apps can reach. Only copies signed by Google are trusted. Takes effect "
+                    L"when an app starts.");
+    gms.on = setting(L"GoogleServices", 0) != 0;
+    gms.act = [](int on) { set_setting(L"GoogleServices", static_cast<DWORD>(on)); };
+    sec.rows.push_back(gms);
     sec.footer = tr(L"Sign-in takes place on Google's own page, in a separate window; Win.apk never sees your "
                     L"password. The account's tokens are stored only on this PC.");
     return sec;

@@ -36,6 +36,7 @@ const char* const kHostClasses[] = {
     "android.opengl.GLUtils",
     "android.provider.MediaStoreProvider",
     "android.view.InputQueue",
+    "android.os.MacApkBinderTransport",
     "android.webkit.MacApkWebViewBridge",
     "com.google.firebase.app.internal.cpp.CppThreadDispatcherContext",
     "com.google.firebase.app.internal.cpp.GoogleApiAvailabilityHelper",
@@ -63,6 +64,7 @@ const char* const kHostClasses[] = {
     "com.macapk.loader.NativeMedia",
     "com.macapk.loader.NativeOs",
     "com.macapk.loader.NativeSqlite",
+    "com.macapk.loader.WinProcesses",
     "com.macapk.loader.monet.HostWallpaper",
     "javax.microedition.khronos.egl.MacApkEGL10",
 };
@@ -109,6 +111,7 @@ const HostMethods kProviders[] = {
     native_signin_methods(),
     native_media_video_methods(),
     native_notifications_methods(),
+    native_binder_methods(),
 };
 
 const JNINativeMethod* implementation_of(const char* clazz, const char* name, const char* sig) {

@@ -83,6 +83,15 @@ final class MacApkFontStore {
     static File dir() throws IOException {
         File d = sDir;
         if (d != null) return d;
+        if (com.macapk.loader.HostAppSupport.windowsHost()) {
+            // Win.apk: %LOCALAPPDATA%\Win.apk\cache, not a "Library" folder in
+            // the user's profile.
+            d = com.macapk.loader.HostAppSupport.file("cache/fonts");
+            Files.createDirectories(d.toPath());
+            if (sPurged.compareAndSet(false, true)) purgeStaleParts(d);
+            sDir = d;
+            return d;
+        }
         String home = System.getProperty("user.home");
         if (home == null || home.isEmpty()) home = System.getenv("HOME");
         if (home == null || home.isEmpty()) throw new IOException("no home directory for the font store");
