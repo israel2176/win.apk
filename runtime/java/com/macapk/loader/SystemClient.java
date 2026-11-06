@@ -81,6 +81,10 @@ public final class SystemClient {
     }
 
     public static java.io.File useGoogleGmsFile() {
+        // Win.apk: the launcher's setting reaches the runtime as MACAPK_BROKER
+        // (runtime_main reads HKCU\Software\Win.apk GoogleServices); a file
+        // in the data folder is honoured too.
+        if (HostAppSupport.windowsHost()) return HostAppSupport.file("use-google-gms");
         // The Mac's real home, captured before anything may repoint user.home
         // (SharedStorage.hostHome, same as the folders switch).
         return new java.io.File(SharedStorage.hostHome(),
@@ -129,11 +133,54 @@ public final class SystemClient {
                 if (!sBrokerLooked) {
                     try { sBroker = MacApkBinderTransport.lookUp(systemName()); }
                     catch (Throwable t) { sBroker = null; }
+                    // Win.apk: no launchd starts the broker on a lookup; the
+                    // first app that needs it starts it (WindowsBroker).
+                    if (sBroker == null && enabled() && WinProcesses.available()) {
+                        WindowsBroker.start();
+                        long deadline = System.currentTimeMillis() + WindowsBroker.START_WAIT_MS;
+                        while (sBroker == null && System.currentTimeMillis() < deadline) {
+                            try { Thread.sleep(250); } catch (InterruptedException e) { break; }
+                            try { sBroker = MacApkBinderTransport.lookUp(systemName()); }
+                            catch (Throwable t) { sBroker = null; }
+                        }
+                    }
                     sBrokerLooked = true;
                 }
             }
         }
         return sBroker;
+    }
+
+    /** Win.apk: the broker's pid, from its answer to our registration. Only it
+     *  may call this app's application thread. */
+    private static volatile int sBrokerPid = -1;
+    /** Win.apk: pid -> {process start time, uid}, the broker's answers. */
+    private static final Map<Integer, long[]> sUidOfPid = new ConcurrentHashMap<>();
+
+    /** The calling uid of `pid` (Win.apk, MacApkBinderTransport.callingUidFor):
+     *  the broker's own uid for the broker, else what the broker has on record
+     *  for that process. Cached per process (pid and start time). */
+    static int uidOfPid(int pid) {
+        if (pid == sBrokerPid) return android.os.Process.SYSTEM_UID;
+        if (pid == (int) ProcessHandle.current().pid()) return android.os.Process.myUid();
+        long started;
+        try { started = WinProcesses.startTime(pid); } catch (Throwable t) { started = 0; }
+        long[] known = sUidOfPid.get(pid);
+        if (known != null && known[0] == started && started != 0) return (int) known[1];
+        IBinder sys = sSystem;
+        if (sys == null) return -1;
+        Parcel d = Parcel.obtain(), r = Parcel.obtain();
+        try {
+            d.writeInterfaceToken(SystemServer.DESCRIPTOR);
+            d.writeInt(pid);
+            sys.transact(SystemServer.TX_UID_OF_PID, d, r, 0);
+            r.readException();
+            int uid = r.readInt();
+            if (uid >= 0 && started != 0) sUidOfPid.put(pid, new long[] { started, uid });
+            return uid;
+        } catch (Throwable t) {
+            return -1;
+        } finally { d.recycle(); r.recycle(); }
     }
 
     /** Split is configured AND the broker is reachable: components declared in
@@ -183,8 +230,10 @@ public final class SystemClient {
                 d.writeString(sProcess);
                 sys.transact(SystemServer.TX_REGISTER, d, r, 0);
                 r.readException();
+                if (r.dataAvail() >= 4) sBrokerPid = r.readInt();
             } finally { d.recycle(); r.recycle(); }
             sSystem = sys;
+            if (WinProcesses.available()) MacApkBinderTransport.setUidResolver(SystemClient::uidOfPid);
             SystemAccounts.registerOwnAuthenticators(app);
             NativeLog.i(TAG, "attached " + sProcess + " to " + systemName()
                       + (isServiceHost() ? " (service host: no activity)" : ""));
@@ -198,6 +247,15 @@ public final class SystemClient {
         AppThread() { super(SystemServer.THREAD_DESCRIPTOR); }
         @Override protected boolean onTransact(int code, Parcel data, Parcel reply, int flags)
                 throws RemoteException {
+            // Win.apk: this thread acts for the system (binds our services for
+            // others, delivers broadcasts and jobs), so only the broker, by the
+            // pid the OS reports, may call it. Anyone else who got the binder is
+            // refused.
+            if (WinProcesses.available() && android.os.Binder.getCallingPid() != sBrokerPid) {
+                NativeLog.w(TAG, "REFUSED: application-thread call " + code + " from pid "
+                        + android.os.Binder.getCallingPid() + ", not the broker");
+                throw new SecurityException("only the system broker may call the application thread");
+            }
             if (code == SystemServer.TX_ACQUIRE_PROVIDER) {
                 data.enforceInterface(SystemServer.THREAD_DESCRIPTOR);
                 String authority = data.readString();

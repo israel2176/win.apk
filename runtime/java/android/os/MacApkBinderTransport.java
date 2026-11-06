@@ -30,6 +30,9 @@
 // kept for the life of the process (no MACH_NOTIFY_NO_SENDERS yet); the
 // sender's Android uid travels in the header and is trusted until the phase-3
 // broker assigns per-package uids and checks them against the pid it launched.
+// Win.apk: on Windows no uid travels; the calling pid is the OS's
+// (GetNamedPipeClientProcessId) and the uid is the broker's record of that
+// process (callingUidFor, setUidResolver).
 package android.os;
 
 import java.io.File;
@@ -81,6 +84,15 @@ public final class MacApkBinderTransport {
     static synchronized void ensureLoaded() {
         if (sLoaded) return;
         if (sLoadError != null) throw new IllegalStateException("binder transport unavailable", sLoadError);
+        // Win.apk: the Windows host binds these natives itself before any Java
+        // runs (windows/host/binder_win.cpp, over named pipes), so there is no
+        // library to load. Elsewhere the call fails unbound and the search
+        // below runs as before.
+        try {
+            if (nativeInit()) { sLoaded = true; return; }
+        } catch (UnsatisfiedLinkError notBound) {
+            // the Mac: load libmacapk-binder.dylib
+        }
         try {
             String explicit = System.getProperty("macapk.binder.lib");
             if (explicit == null || explicit.isEmpty()) explicit = System.getenv("MACAPK_BINDER_LIB");
@@ -276,6 +288,25 @@ public final class MacApkBinderTransport {
      *  service while handling another app's call. */
     private static volatile ClassLoader sAppLoader;
     public static void setAppClassLoader(ClassLoader cl) { sAppLoader = cl; }
+
+    /** Win.apk: the calling uid of a process, from the OS-reported pid (the
+     *  Windows transport passes no uid of the caller's own: the system broker's
+     *  record of which package that process is decides it). Set by the broker
+     *  (SystemServer) and by an attached app (SystemClient). */
+    private static volatile java.util.function.IntUnaryOperator sUidResolver;
+    public static void setUidResolver(java.util.function.IntUnaryOperator r) { sUidResolver = r; }
+    /** AOSP's NOBODY_UID: a caller nobody vouches for. */
+    static final int UNKNOWN_CALLER_UID = 9999;
+
+    /** Called by the Windows transport once per incoming connection. */
+    static int callingUidFor(int pid) {
+        java.util.function.IntUnaryOperator r = sUidResolver;
+        int uid = -1;
+        if (r != null) {
+            try { uid = r.applyAsInt(pid); } catch (Throwable t) { uid = -1; }
+        }
+        return uid >= 0 ? uid : UNKNOWN_CALLER_UID;
+    }
 
     private static final java.util.Set<String> sLoggedThrowSites =
         java.util.concurrent.ConcurrentHashMap.newKeySet();

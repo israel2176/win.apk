@@ -363,6 +363,20 @@ jobs:
           cp="$(cygpath -w stage/lib/android-framework.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/scan-test windows/test/java/ScanRecordTest.java
           "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/scan-test)" ScanRecordTest
+      - name: Run the cross-process Binder test
+        run: |
+          # host/binder_win.cpp under android.os.MacApkBinderTransport, between
+          # real JVMs in three processes: transact, oneway order, binders passed
+          # both ways keeping their identity, fds, death notification, and the
+          # system broker's caller checks (a process claiming another package is
+          # refused; android:exported).
+          export PATH="$(cygpath -u "$JAVA_HOME")/bin/server:$(cygpath -u "$JAVA_HOME")/bin:$PATH"
+          jh="$(cygpath -u "$JAVA_HOME")"
+          cp="$(cygpath -w stage/lib/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          "$jh/bin/javac" -cp "$cp" -d build/binder-test windows/test/java/com/macapk/loader/BinderTransportTest.java
+          ./build/winapk-binder-test.exe "$cp;$(cygpath -w build/binder-test)" com.macapk.loader.BinderTransportTest \
+            | tee binder-test.log
+          grep -q "ALL PASSED" binder-test.log
       - name: Run the GL test
         run: |
           # It needs ANGLE next to it, which staging put in stage/bin.

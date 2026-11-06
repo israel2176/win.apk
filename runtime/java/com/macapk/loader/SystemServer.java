@@ -88,6 +88,17 @@
 // when its last remote client leaves); the caller's Android uid is the one its
 // header claims (per-package uid assignment checked against the launched pid is
 // the follow-up); content providers and broadcasts across packages are phase 4.
+//
+// WIN.APK (Windows). The broker is `winapk-runtime --system`, started on demand
+// by the first app that looks it up (SystemClient) and alone per user session
+// (its pipe name is claimed with FILE_FLAG_FIRST_PIPE_INSTANCE). It starts an
+// app as the launcher does, winapk-runtime --apk <library file>. And it does not
+// trust what a caller says it is: the transport gives the caller's pid from the
+// OS, a process is a package only by the broker's own record of it (a process
+// it started, or one whose command line Windows recorded names an installed
+// APK of that package: WinIdentity), every caller-package argument must match
+// that record or the call is refused with a SecurityException and logged, and
+// the calling uid every app sees is derived from the same record.
 package com.macapk.loader;
 
 import android.content.ComponentName;
@@ -133,6 +144,9 @@ public final class SystemServer {
     static final int TX_SCHEDULE_BROADCAST = IBinder.FIRST_CALL_TRANSACTION + 13;
     /** The account service (AccountsService), as ServiceManager hands out "account". */
     static final int TX_GET_ACCOUNT_SERVICE = IBinder.FIRST_CALL_TRANSACTION + 20;
+    /** Win.apk: the calling uid of a pid (pid) -> uid, -1 when that process is
+     *  no registered app; asked by an app the pid called (SystemClient.uidOfPid). */
+    static final int TX_UID_OF_PID = IBinder.FIRST_CALL_TRANSACTION + 21;
     static final int TX_SCHEDULE_BIND = IBinder.FIRST_CALL_TRANSACTION + 10;
     static final int TX_ACQUIRE_PROVIDER = IBinder.FIRST_CALL_TRANSACTION + 11;
     static final int TX_SCHEDULE_START = IBinder.FIRST_CALL_TRANSACTION + 12;
@@ -168,6 +182,8 @@ public final class SystemServer {
     /** Processes this broker spawned (service hosts), by pid. Everything else
      *  that attaches is an app the user opened: those keep the broker alive. */
     private final Map<Long, Process> spawned = new java.util.concurrent.ConcurrentHashMap<>();
+    /** Win.apk: what each process this broker started IS: {package, process}. */
+    private final Map<Long, String[]> spawnedAs = new java.util.concurrent.ConcurrentHashMap<>();
     /** Last time an app the user opened was running (see BrokerIdle). */
     private volatile long lastClientMs = System.currentTimeMillis();
     /** An app the user opened has attached at least once. Until then the broker
@@ -350,7 +366,12 @@ public final class SystemServer {
         String runtime = System.getenv("MACAPK_BROKER_RUNTIME");
         String root = System.getenv("MACAPK_BROKER_ROOT");
         List<String> cmd = new ArrayList<>();
-        if (runtime != null && !runtime.isEmpty()) {
+        if (HostAppSupport.windowsHost()) {
+            // Win.apk: the app as the launcher starts it, with this broker's own
+            // runtime, data folder, JDK and jars (runtime_main sets them).
+            cmd.addAll(WindowsBroker.runtimeCommand());
+            cmd.add("--apk"); cmd.add(pr.apkPath);
+        } else if (runtime != null && !runtime.isEmpty()) {
             // Development: the given runtime binary on the APK.
             cmd.add(runtime);
             cmd.add("--apk"); cmd.add(pr.apkPath);
@@ -387,6 +408,14 @@ public final class SystemServer {
         // A secondary process shares the package's data and its installed-app
         // identity: the stub must not treat it as a second COPY of the app.
         if (!proc.equals(mainProcessOf(pr))) env.put("MACAPK_SECONDARY_PROCESS", "1");
+        // Win.apk: a service host has no window (and does not hand a launcher
+        // a ready signal it never asked for).
+        if (HostAppSupport.windowsHost()) {
+            env.put("WINAPK_HEADLESS", "1");
+            env.remove("WINAPK_HEADLESS_EXIT_AFTER_FRAMES");
+            env.remove("WINAPK_HEADLESS_FRAME");
+            env.remove("WINAPK_READY_EVENT");
+        }
         String logDir = System.getenv("MACAPK_BROKER_LOGDIR");
         if (logDir != null && !logDir.isEmpty()) {
             File lf = new File(logDir, (proc.equals(mainProcessOf(pr)) ? pr.pkg : fileSafe(proc)) + ".log");
@@ -399,14 +428,87 @@ public final class SystemServer {
         Process p = pb.start();
         log("starting " + proc + " (pid " + p.pid() + ") as a service host");
         spawned.put(p.pid(), p);
+        spawnedAs.put(p.pid(), new String[] { pr.pkg, proc });
         p.onExit().thenAccept(x -> {
             spawned.remove(p.pid());
+            spawnedAs.remove(p.pid());
             synchronized (SystemServer.this) {
                 CompletableFuture<AppRecord> f = starting.remove(proc);
                 if (f != null) f.completeExceptionally(
                         new IllegalStateException(proc + " exited (" + x.exitValue() + ") before attaching"));
             }
         });
+    }
+
+    // ---- caller identity (Win.apk) -------------------------------------------------
+
+    /** Whether callers are identified by the OS here (Windows), not by what they
+     *  write into the parcel (upstream's phase-3 behaviour on the Mac). */
+    static boolean osIdentity() { return WinProcesses.available(); }
+
+    /** The package a caller claims, checked: on Windows it must be the package
+     *  the broker has on record for the calling process (Binder.getCallingPid,
+     *  which the transport takes from the OS). A mismatch is refused and logged;
+     *  a process that never registered is refused. On the Mac the claim stands. */
+    String callerPackage(String claimed) {
+        if (!osIdentity()) return claimed;
+        int pid = Binder.getCallingPid();
+        String actual = packageOfPid(pid);
+        if (actual == null) {
+            // Not attached yet (a content provider installs before the app
+            // attaches): what the OS says the process is.
+            String[] id = identityOfPid(pid);
+            if (id != null) actual = id[0];
+        }
+        if (actual == null) {
+            log("REFUSED: pid " + pid + " (claiming " + claimed + ") is no installed app's process");
+            throw new SecurityException("pid " + pid + " is not an installed app's process");
+        }
+        if (claimed != null && !claimed.equals(actual)) {
+            log("REFUSED: pid " + pid + " is " + actual + " but claimed to be " + claimed);
+            throw new SecurityException("calling package " + claimed + " does not match the calling process ("
+                    + actual + ")");
+        }
+        return actual;
+    }
+
+    /** What the OS says `pid` is: the package this broker started it as, or the
+     *  package whose installed APK its command line names (the launcher starts
+     *  an app as winapk-runtime --apk <library file>, the file installed_apps.json
+     *  records for the package). {package, process}, or null for an unknown or
+     *  untrusted process. */
+    String[] identityOfPid(int pid) {
+        String[] mine = spawnedAs.get((long) pid);
+        if (mine != null) return mine;
+        String apk = WinProcesses.apkArgument(pid);
+        if (apk == null) return null;
+        String pkg = packageOfApk(apk);
+        return pkg == null ? null : new String[] { pkg, null };
+    }
+
+    /** The package whose installed APK is `apk` (same file, compared as paths). */
+    String packageOfApk(String apk) {
+        java.nio.file.Path want;
+        try { want = new File(apk).getCanonicalFile().toPath(); } catch (Throwable t) { return null; }
+        for (PackageRecord pr : packages.values()) {
+            try {
+                if (new File(pr.apkPath).getCanonicalFile().toPath().equals(want)) return pr.pkg;
+            } catch (Throwable ignored) {}
+        }
+        return null;
+    }
+
+    /** The calling uid of `pid`: its package's uid (AppUids), or -1. */
+    int uidOfPid(int pid) {
+        if (pid == ProcessHandle.current().pid()) return android.os.Process.SYSTEM_UID;
+        String pkg = packageOfPid(pid);
+        if (pkg == null) {
+            String[] id = identityOfPid(pid);
+            if (id != null) pkg = id[0];
+        }
+        if (pkg == null) return -1;
+        PackageRecord pr = packages.get(pkg);
+        return AppUids.uidFor(pkg, pr != null ? pr.manifest.sharedUserId : null);
     }
 
     synchronized void register(String pkg, String proc, IBinder thread, int pid) {
@@ -479,6 +581,7 @@ public final class SystemServer {
     static File systemDir() {
         String root = System.getenv("MACAPK_BROKER_ROOT");
         if (root != null && !root.isEmpty()) return new File(root, "data/system_ce/0");
+        if (HostAppSupport.windowsHost()) return HostAppSupport.file("system_ce/0");
         return new File(SharedStorage.hostHome(), "Library/Application Support/Mac.apk/system_ce/0");
     }
 
@@ -508,16 +611,48 @@ public final class SystemServer {
                     // An app that attached is an installed package too (it may
                     // not be one this broker starts): learn its APK so others'
                     // PackageManagers can answer for it.
-                    if (apk != null && !apk.isEmpty() && !packages.containsKey(pkg)) addPackage(apk);
+                    int pid = Binder.getCallingPid();
+                    if (osIdentity()) {
+                        // Win.apk: the package is what the OS says this process
+                        // is, never what it claims; the APK is the installed one.
+                        String[] id = identityOfPid(pid);
+                        if (id == null || !id[0].equals(pkg)) {
+                            log("REFUSED registration: pid " + pid + " claimed " + pkg + ", the OS says "
+                                    + (id == null ? "it is no installed app" : id[0]));
+                            throw new SecurityException("process " + pid + " is not " + pkg);
+                        }
+                        if (proc == null || proc.isEmpty()) proc = pkg;
+                        // A process this broker started is exactly the one it
+                        // started; one the launcher started is the main process.
+                        boolean procOk = id[1] != null ? id[1].equals(proc)
+                                : proc.equals(pkg) || proc.equals(mainProcessOf(packages.get(pkg)));
+                        if (!procOk) {
+                            log("REFUSED registration: pid " + pid + " (" + pkg + ") claimed process " + proc);
+                            throw new SecurityException("process " + pid + " is not " + proc);
+                        }
+                    } else if (apk != null && !apk.isEmpty() && !packages.containsKey(pkg)) {
+                        addPackage(apk);
+                    }
                     if (proc == null || proc.isEmpty()) proc = pkg;
-                    register(pkg, proc, thread, Binder.getCallingPid());
+                    register(pkg, proc, thread, pid);
                     reply.writeNoException();
+                    // The broker's pid: an app accepts calls on its application
+                    // thread from this process only (SystemClient.AppThread).
+                    reply.writeInt((int) ProcessHandle.current().pid());
                     return true;
                 }
                 case TX_GET_ACCOUNT_SERVICE: {
                     data.enforceInterface(DESCRIPTOR);
                     reply.writeNoException();
                     reply.writeStrongBinder(accounts());
+                    return true;
+                }
+                case TX_UID_OF_PID: {
+                    data.enforceInterface(DESCRIPTOR);
+                    callerPackage(null);   // a registered app asks, about its own caller
+                    int pid = data.readInt();
+                    reply.writeNoException();
+                    reply.writeInt(uidOfPid(pid));
                     return true;
                 }
                 case TX_HAS_PACKAGE: {
@@ -535,7 +670,7 @@ public final class SystemServer {
                 }
                 case TX_RESOLVE: {
                     data.enforceInterface(DESCRIPTOR);
-                    String caller = data.readString();
+                    String caller = callerPackage(data.readString());
                     Intent intent = data.readTypedObject(Intent.CREATOR);
                     String[] target = intent == null ? null : resolve(intent);
                     int answer = RESOLVE_NONE;
@@ -552,7 +687,7 @@ public final class SystemServer {
                 }
                 case TX_GET_PROVIDER: {
                     data.enforceInterface(DESCRIPTOR);
-                    String caller = data.readString();
+                    String caller = callerPackage(data.readString());
                     String authority = data.readString();
                     IBinder b = getProvider(caller, authority);
                     reply.writeNoException();
@@ -561,7 +696,7 @@ public final class SystemServer {
                 }
                 case TX_START: {
                     data.enforceInterface(DESCRIPTOR);
-                    String caller = data.readString();
+                    String caller = callerPackage(data.readString());
                     Intent intent = data.readTypedObject(Intent.CREATOR);
                     start(caller, intent);
                     reply.writeNoException();
@@ -569,7 +704,7 @@ public final class SystemServer {
                 }
                 case TX_BROADCAST: {
                     data.enforceInterface(DESCRIPTOR);
-                    String caller = data.readString();
+                    String caller = callerPackage(data.readString());
                     Intent intent = data.readTypedObject(Intent.CREATOR);
                     // The sender's own process, which delivered to itself.
                     String callerProc = data.dataAvail() > 0 ? data.readString() : null;
@@ -582,14 +717,14 @@ public final class SystemServer {
                 }
                 case TX_BIND: {
                     data.enforceInterface(DESCRIPTOR);
-                    String caller = data.readString();
+                    String caller = callerPackage(data.readString());
                     Intent intent = data.readTypedObject(Intent.CREATOR);
                     bind(caller, intent, reply);
                     return true;
                 }
                 case TX_STOP: {
                     data.enforceInterface(DESCRIPTOR);
-                    String caller = data.readString();
+                    String caller = callerPackage(data.readString());
                     Intent intent = data.readTypedObject(Intent.CREATOR);
                     boolean stopped = stopService(caller, intent);
                     reply.writeNoException();
@@ -798,6 +933,7 @@ public final class SystemServer {
     static File readyFile() {
         String f = System.getenv("MACAPK_BROKER_READY_FILE");
         if (f != null && !f.isEmpty()) return new File(f);
+        if (HostAppSupport.windowsHost()) return HostAppSupport.file("run/system-ready");
         return new File(System.getProperty("user.home"), "Library/Application Support/Mac.apk/run/system-ready");
     }
 
@@ -877,7 +1013,7 @@ public final class SystemServer {
         final java.util.concurrent.CopyOnWriteArrayList<String> okNames = new java.util.concurrent.CopyOnWriteArrayList<>();
         final java.util.concurrent.CopyOnWriteArrayList<String> failedNames = new java.util.concurrent.CopyOnWriteArrayList<>();
         for (PackageRecord pr : new ArrayList<>(packages.values())) {
-            if (!MacApkPackageManager.platformSystemPackage(pr.pkg)) continue;
+            if (!MacApkPackageManager.platformSystemApk(pr.pkg, pr.apkPath)) continue;
             if (pr.manifest.launchableActivity != null) continue;
             // Every process that owns a boot receiver (AMS starts a receiver's
             // process for BOOT_COMPLETED). One process for a collapsed package.
@@ -1033,7 +1169,7 @@ public final class SystemServer {
      *  (started if needed); cancel and the pending queries cover the app's OTHER
      *  processes (the caller handles its own). */
     private void job(Parcel data, Parcel reply) {
-        String caller = data.readString();
+        String caller = callerPackage(data.readString());
         String callerProc = data.readString();
         int op = data.readInt();
         try {
@@ -1231,6 +1367,9 @@ public final class SystemServer {
         }
         readyFile().delete();   // a previous broker's readiness is not this one's
         MacApkBinderTransport.setThreadPoolSize(16);
+        // Win.apk: Binder.getCallingUid() of a caller is its registered
+        // package's uid, from the pid the OS reports (osIdentity).
+        if (osIdentity()) MacApkBinderTransport.setUidResolver(s::uidOfPid);
         MacApkBinderTransport.publish(sName, s.new Stub());
         log("serving " + sName + " with " + s.packages.size() + " packages (pid "
                 + ProcessHandle.current().pid() + ")");

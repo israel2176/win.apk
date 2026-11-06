@@ -47,6 +47,8 @@ public final class AppUids {
     }
 
     private static File file() {
+        // Win.apk: in the data folder, beside installed_apps.json.
+        if (HostAppSupport.windowsHost()) return HostAppSupport.file("app_uids.properties");
         return new File(SharedStorage.hostHome(), "Library/Application Support/Mac.apk/app_uids.properties");
     }
 

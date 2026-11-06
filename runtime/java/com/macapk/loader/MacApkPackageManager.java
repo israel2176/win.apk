@@ -6002,7 +6002,7 @@ public final class MacApkPackageManager extends PackageManager {
         // The general privilege-lie caution above still holds for ordinary guests;
         // this exception is only the platform's OWN packages, which genuinely are
         // system apps, and it grants no real macOS privilege.
-        if (platformSystemPackage(packageName)) {
+        if (platformSystemPackage(packageName) && macapkPlatformApkTrusted()) {
             f |= ApplicationInfo.FLAG_SYSTEM | ApplicationInfo.FLAG_UPDATED_SYSTEM_APP;
         }
         cachedFlags = f;
@@ -6286,6 +6286,25 @@ public final class MacApkPackageManager extends PackageManager {
      *  FLAG_UPDATED_SYSTEM_APP. Owner-authorized 2026-10-31 ("I'm fine with telling
      *  the app it's a system app"). Kill switch for bisecting:
      *  MACAPK_PLATFORM_SYSTEM_FLAGS=0. */
+    /** Win.apk: on Windows the platform treatment above is for the REAL Google
+     *  packages only. An installed APK named com.google.android.gms (or the
+     *  store, or GSF) is a system app here only when Google's own certificate
+     *  signed it (com.macapk.gms.GoogleGmsCertificate.isGoogleSigner); anyone can
+     *  build an APK with that package name. The in-process stand-ins (no APK)
+     *  keep their answer, and on the Mac nothing changes. */
+    private boolean macapkPlatformApkTrusted() {
+        if (!HostAppSupport.windowsHost() || apkPath == null) return true;
+        return com.macapk.gms.GoogleGmsCertificate.isGoogleSigner(readApkSignatures());
+    }
+
+    /** The broker's question (SystemServer.bootSystemServices): is the
+     *  installed `apkPath` the real platform package `pkg`? */
+    static boolean platformSystemApk(String pkg, String apkPath) {
+        if (!platformSystemPackage(pkg)) return false;
+        if (!HostAppSupport.windowsHost() || apkPath == null) return true;
+        return new MacApkPackageManager(pkg, apkPath, null, null, null, null).macapkPlatformApkTrusted();
+    }
+
     static boolean platformSystemPackage(String pkg) {
         if (pkg == null) return false;
         if ("0".equals(System.getenv("MACAPK_PLATFORM_SYSTEM_FLAGS"))) return false;

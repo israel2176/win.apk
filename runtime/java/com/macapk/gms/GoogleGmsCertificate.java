@@ -33,6 +33,17 @@ public final class GoogleGmsCertificate {
         return new android.content.pm.Signature(java.util.Base64.getDecoder().decode(DER_BASE64));
     }
 
+    /** Whether one of `signers` is this certificate: the APK really is Google's.
+     *  Compared as whole DER encodings, not by name or by a self-declared field. */
+    public static boolean isGoogleSigner(android.content.pm.Signature[] signers) {
+        if (signers == null) return false;
+        byte[] google = java.util.Base64.getDecoder().decode(DER_BASE64);
+        for (android.content.pm.Signature s : signers) {
+            if (s != null && java.security.MessageDigest.isEqual(google, s.toByteArray())) return true;
+        }
+        return false;
+    }
+
     private static final String DER_BASE64 =
             "MIIEQzCCAyugAwIBAgIJAMLgh0ZkSjCNMA0GCSqGSIb3DQEBBAUAMHQxCzAJBgNVBAYTAlVTMRMwEQYDVQQIEwpDYWxpZm9y" +
             "bmlhMRYwFAYDVQQHEw1Nb3VudGFpbiBWaWV3MRQwEgYDVQQKEwtHb29nbGUgSW5jLjEQMA4GA1UECxMHQW5kcm9pZDEQMA4G" +

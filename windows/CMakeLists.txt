@@ -240,10 +240,12 @@ if(WINAPK_JNI_INCLUDE)
                               host/native_camera.cpp host/native_radios.cpp host/native_bluetooth.cpp
                               host/native_location.cpp
                               host/native_signin.cpp host/native_notifications.cpp
+                              host/binder_win.cpp
                               host/user_folders.cpp host/crash_report.cpp
                               host/runtime.rc)
   target_link_libraries(winapk-runtime PRIVATE winapk_jni winapk_sqlite webpdecoder winapk_stb_vorbis windowscodecs
-                        ole32 mf mfplat mfreadwrite mfuuid shlwapi advapi32 shell32 uuid wlanapi iphlpapi bthprops winmm)
+                        ole32 mf mfplat mfreadwrite mfuuid shlwapi advapi32 shell32 uuid wlanapi iphlpapi bthprops winmm
+                        bcrypt)
   target_include_directories(winapk-runtime PRIVATE ${WINAPK_WEBP_DIR}/src)
   # WebView2 (host/webview2_host.h): the SDK's header to build against, from
   # scripts/fetch_webview2.sh; its WebView2Loader.dll is staged next to the
@@ -294,6 +296,13 @@ if(WINAPK_JNI_INCLUDE)
   target_include_directories(winapk-gl-test PRIVATE host third_party/khronos)
   target_compile_definitions(winapk-gl-test PRIVATE KHRONOS_STATIC)
   target_link_options(winapk-gl-test PRIVATE -static)
+
+  # Cross-process Binder over named pipes (host/binder_win.cpp) between real
+  # JVMs: test/binder_test.cpp runs test/java/com/macapk/loader/BinderTransportTest.
+  add_executable(winapk-binder-test test/binder_test.cpp host/binder_win.cpp)
+  target_include_directories(winapk-binder-test PRIVATE host "${WINAPK_JNI_INCLUDE}" "${WINAPK_JNI_INCLUDE}/win32")
+  target_link_libraries(winapk-binder-test PRIVATE advapi32 bcrypt)
+  target_link_options(winapk-binder-test PRIVATE -static -municode)
 
   # NativeAudio's backend on its own (test/audio_test.cpp).
   add_executable(winapk-audio-test test/audio_test.cpp host/audio_engine.cpp host/audio_decode.cpp)
