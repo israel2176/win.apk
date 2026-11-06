@@ -87,6 +87,8 @@ if(WINAPK_ARM64_JIT)
     GIT_REPOSITORY https://github.com/azahar-emu/dynarmic.git
     GIT_TAG a46601580d5512d324104f985b5f0209dc980ddc
     GIT_SUBMODULES externals/fmt externals/mcl externals/robin-map externals/xbyak externals/zycore externals/zydis
+    # FRECPS/FRSQRTS kept exact under Unsafe_InaccurateNaN (cmake/dynarmic_patch.cmake)
+    PATCH_COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/dynarmic_patch.cmake
     EXCLUDE_FROM_ALL)
   FetchContent_MakeAvailable(dynarmic)
   # dynarmic and the libraries it bundles use standard names (malloc,

@@ -302,7 +302,14 @@ private:
                     // or where it stopped).
                     save_state(cpu_);
                     cpu_.pc = pc;
-                    fn(&cpu_);
+                    if (fn(&cpu_) == kAotBail && cpu_.pc == pc) {
+                        // It handed over before its first instruction (the
+                        // host stack is low: Cpu::stack_floor), and the JIT
+                        // does not fetch code that has a translation: the
+                        // interpreter runs that instruction, the JIT the rest.
+                        step(cpu_);
+                        ++interp_insns;
+                    }
                     load_state(cpu_);
                 } else if (in_place_calls() && pc != cpu_.stop_pc && !(hooks().full_state_call && hooks().full_state_call(pc))) {
                     host_call_in_place(pc);
@@ -337,6 +344,7 @@ private:
         // Guest code that writes code (a JIT of its own) says so with IC IVAU.
         if (op == Dynarmic::A64::InstructionCacheOperation::InvalidateByVAToPoU) {
             jit_->InvalidateCacheRange(value & ~VAddr{63}, 64);
+            if (hooks().code_written) hooks().code_written(value);
         } else {
             jit_->ClearCache();
         }

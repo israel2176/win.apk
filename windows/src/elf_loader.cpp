@@ -239,6 +239,8 @@ void ElfImage::finalize() {
 ElfImage::~ElfImage() {
     if (initialized_) run_finalizers();
     for (const void* start : arm64_code_) arm64::unregister_code(start);
+    // Its translation goes with it: other code mapped here later is not this.
+    if (!arm64_code_.empty()) arm64::aot_unload(arm64_lo_, arm64_hi_);
     if (tls_module_) tls_unregister_module(tls_module_);
     if (mem_ && owns_mem_) VirtualFree(mem_, 0, MEM_RELEASE);
 }
@@ -709,12 +711,14 @@ void ElfImage::register_arm64_code() {
         if (!(s.flags & kPfX) || s.memsz == 0) continue;
         arm64::register_code(at<const void>(s.vaddr), s.memsz);
         arm64_code_.push_back(at<const void>(s.vaddr));
-        if (s.filesz) text_hash = arm64::aot_hash(at<const uint8_t>(s.vaddr), s.filesz, text_hash);
+        if (s.filesz) text_hash = arm64::aot_hash_segment(s.vaddr, at<const uint8_t>(s.vaddr), s.filesz, text_hash);
         code_lo = std::min(code_lo, reinterpret_cast<uint64_t>(at<const void>(s.vaddr)));
         code_hi = std::max(code_hi, reinterpret_cast<uint64_t>(at<const void>(s.vaddr)) + s.memsz);
     }
     // The code translated ahead of time, if there is a translation yet
     // (still unrelocated here, as winapk-aot read it).
+    arm64_lo_ = code_lo;
+    arm64_hi_ = code_hi;
     arm64::aot_load(path_.u8string().c_str(), bias_, text_hash, code_lo, code_hi);
 }
 

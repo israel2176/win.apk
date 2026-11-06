@@ -35,6 +35,28 @@
 // one only where its profile says code ran, again as the profile grows. A
 // translation finished while the app runs is loaded at once
 // (aot_load_pending), for the functions not entered yet.
+//
+// Code the guest rewrites. An inline hook (Dobby, ShadowHook, a game's
+// anti-cheat) overwrites the start of a function in a loaded library, and a
+// packer's loader decrypts its library's text in place; on arm64 either then
+// runs IC IVAU over what it wrote. A translation is of the file's bytes, so
+// from the first IC IVAU in a library's code (aot_code_written) its
+// translated functions are looked up no more and hand over to the JIT at
+// their entry (AotModule::off), and its stamp says "written": from then on
+// the JIT runs that library and the worker leaves it alone, until the
+// library changes.
+//
+// Host stack. A translated guest call is a host call, so translated code
+// takes host stack as deep as the guest calls go, several times the guest's
+// own frames; the JIT takes none per call. Below Cpu::stack_floor a
+// translated function hands over to the JIT before its first instruction.
+//
+// The CPU. The C is compiled for the CPU it runs on (-march=native), so a
+// translation is kept with the signature of that CPU (aot_cpu_signature, in
+// the stamp and the shared cache's key): on another CPU (a VM moved to
+// another host, a BIOS update that turns AVX-512 off) the loader leaves it
+// alone and the worker translates again, where an instruction this CPU
+// lacks would have crashed the app at every start.
 
 #pragma once
 
@@ -48,14 +70,17 @@ namespace winapk::arm64 {
 // Raised when the translation changes: the stamp (runtime_main.cpp) has each
 // library translated again. When the translated code changes meaning,
 // kAotMinVersion is raised with it, and the loader ignores the older DLLs.
-constexpr uint32_t kAotVersion = 5;
+constexpr uint32_t kAotVersion = 6;
 // The oldest translation the loader still runs. In 4 a translated call went on
 // after the call wherever the callee had returned to; with the functions
 // .eh_frame_hdr lists also translated, C++ exceptions went through translated
 // code, and translated Jitsi Meet returned to address 0 after its first frame.
-// 5 checks the return address after every call, so no DLL of 4 is run (nor
-// of 3, which a DLL of 5 replaces after one pass).
-constexpr uint32_t kAotMinVersion = 5;
+// 5 checked the return address after every call. 6: RETAA returned to 0,
+// FRECPS/FRSQRTS were not fused and gave NaN for 0 times infinity, a deep
+// recursion overflowed the host's stack, and a library that patches its
+// code kept running the old; the CPU state has stack_floor, and text_hash
+// takes in the segments' addresses. No DLL before 6 is run.
+constexpr uint32_t kAotMinVersion = 6;
 constexpr uint32_t kAotDone = 0;
 constexpr uint32_t kAotBail = 1;
 
@@ -85,11 +110,15 @@ struct AotEntry {
 struct AotModule {
     uint32_t version;
     uint32_t layout[4];    // sizeof(Cpu) prefix the code uses: offsets of sp, nzcv, tpidr, v
-    uint64_t text_hash;    // FNV-1a of the library's executable segments (file bytes)
+    uint64_t text_hash;    // FNV-1a of the library's executable segments (aot_hash_segment)
     uint64_t* base;        // the library's load bias, set by the runtime
     AotRuntime* runtime;   // set by the runtime
     const AotEntry* entries;
     uint64_t count;
+    // Set when the library rewrites its own code (aot_code_written): every
+    // translated function then hands over to the JIT at its entry, those
+    // called directly by other translated functions included.
+    uint32_t* off;
 };
 
 // FNV-1a 64, as winapk-aot computes text_hash.
@@ -98,11 +127,38 @@ inline uint64_t aot_hash(const uint8_t* p, size_t n, uint64_t h = 0xcbf29ce48422
     return h;
 }
 
+// text_hash takes in each executable segment's file bytes and its address:
+// the same code at another address (the library linked at another base, or
+// its text moved by a whole page because the segments before it grew) has
+// the same bytes, but a translation's entries and ADRP results are vaddrs.
+inline uint64_t aot_hash_segment(uint64_t vaddr, const uint8_t* p, size_t n, uint64_t h) {
+    uint8_t at[8];
+    for (int i = 0; i < 8; ++i) at[i] = static_cast<uint8_t>(vaddr >> (8 * i));
+    return aot_hash(p, n, aot_hash(at, sizeof at, h));
+}
+
+// A signature of this CPU's model and of the features clang's -march=native
+// looks at (and of what the OS saves of them): a translation compiled on
+// another CPU is not loaded, nor taken from the shared cache.
+uint64_t aot_cpu_signature();
+
 // Loads `<so_path>.aot.dll` for an arm64 library mapped at `bias` whose
 // executable segments hash to `text_hash`; false if there is none or it
 // does not match (built for another version of the library or of Win.apk).
 // [code_lo, code_hi) is the library's code, for the profile.
 bool aot_load(const char* so_path, uint64_t bias, uint64_t text_hash, uint64_t code_lo, uint64_t code_hi);
+
+// The library whose code is [code_lo, code_hi) is being unmapped (dlclose):
+// its translated functions are no longer looked up, and a translation that
+// arrives for it later is not loaded. The DLL stays loaded (a thread may
+// still be returning through it); a later load of the library looks its
+// functions up again at the new address.
+void aot_unload(uint64_t code_lo, uint64_t code_hi);
+
+// IC IVAU at `addr`: the guest wrote code there (Hooks::code_written). When
+// that is in a library's code, its translation (made from the file's bytes)
+// no longer describes it: see "Code the guest rewrites" above.
+void aot_code_written(uint64_t addr);
 
 // The JIT compiled guest code at `pc`: recorded for the library's profile.
 void aot_profile_hit(uint64_t pc);

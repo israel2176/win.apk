@@ -690,11 +690,12 @@ size_t profile_lines_of(const fs::path& profile) {
 size_t profile_lines(const fs::path& so) { return profile_lines_of(with_suffix(so, L".aot.profile")); }
 
 struct AotStamp {
-    std::string kind;  // "full", "profile", "wait", "skip", "bad", or "" (none)
+    std::string kind;  // "full", "profile", "wait", "skip", "bad", "written", or "" (none)
     size_t lines = 0;
     unsigned version = 0;     // the kAotVersion it was made with; 0 before stamps had one
     unsigned failures = 0;    // "wait" after a failed translation: how many in a row
     int64_t retry_after = 0;  // and when to try again (Unix seconds)
+    uint64_t cpu = 0;         // aot_cpu_signature() of the CPU it was compiled for; 0 before stamps had one
 };
 
 AotStamp read_aot_stamp(const fs::path& so) {
@@ -705,12 +706,14 @@ AotStamp read_aot_stamp(const fs::path& so) {
     unsigned long long lines = 0;
     unsigned version = 0, failures = 0;
     long long retry_after = 0;
-    if (std::fscanf(f, "%15s %llu %u %u %lld", kind, &lines, &version, &failures, &retry_after) >= 1) {
+    unsigned long long cpu = 0;
+    if (std::fscanf(f, "%15s %llu %u %u %lld %llx", kind, &lines, &version, &failures, &retry_after, &cpu) >= 1) {
         s.kind = kind;
         s.lines = static_cast<size_t>(lines);
         s.version = version;
         s.failures = failures;
         s.retry_after = retry_after;
+        s.cpu = cpu;
     }
     std::fclose(f);
     return s;
@@ -719,9 +722,10 @@ AotStamp read_aot_stamp(const fs::path& so) {
 void write_aot_stamp(const fs::path& so, const char* kind, size_t lines, unsigned failures = 0,
                      int64_t retry_after = 0) {
     if (FILE* f = _wfopen(with_suffix(so, L".aot.stamp").c_str(), L"wb")) {
-        std::fprintf(f, "%s %zu %u", kind, lines, winapk::arm64::kAotVersion);
-        if (failures > 0) std::fprintf(f, " %u %lld", failures, static_cast<long long>(retry_after));
-        std::fprintf(f, "\n");
+        // The loader reads the same fields (arm64_aot.cpp, stamp_refuses).
+        std::fprintf(f, "%s %zu %u %u %lld %llx\n", kind, lines, winapk::arm64::kAotVersion, failures,
+                     static_cast<long long>(retry_after),
+                     static_cast<unsigned long long>(winapk::arm64::aot_cpu_signature()));
         std::fclose(f);
     }
 }
@@ -741,7 +745,10 @@ bool aot_needs_work(const fs::path& so) {
     // one may have been the translator's fault (City Car's libflutter.so).
     if (have && stamp.version != winapk::arm64::kAotVersion) return true;
     if (stamp.kind == "bad" && stamp.version != winapk::arm64::kAotVersion) return true;
-    if (stamp.kind == "skip" || stamp.kind == "bad") return !stamp_current;
+    // A library that rewrites its own code runs on the JIT (arm64_aot.h) until it changes.
+    if (stamp.kind == "skip" || stamp.kind == "bad" || stamp.kind == "written") return !stamp_current;
+    // Compiled for another CPU (-march=native): the loader leaves it alone.
+    if (have && stamp.cpu != winapk::arm64::aot_cpu_signature()) return true;
     if (stamp.kind == "wait" && stamp.failures > 0) {
         if (stamp.version != winapk::arm64::kAotVersion || !stamp_current) return true;  // a new chance
         return stamp.failures < kAotMaxFailures && unix_now() >= stamp.retry_after;
@@ -946,8 +953,10 @@ std::string aot_cache_key(const fs::path& so, const fs::path& clang) {
     std::string hash;
     if (run_capture(quoted(exe_dir() / "winapk-aot.exe") + L" --hash " + quoted(so), &hash) != 0) return {};
     while (!hash.empty() && std::isspace(static_cast<unsigned char>(hash.back()))) hash.pop_back();
+    // -march=native: the CPU too, for a data folder that moves to another PC.
     const std::string id = hash + "|" + file_id(exe_dir() / "winapk-aot.exe") + "|" + file_id(clang) + "|" +
-                           utf8(kAotCompileFlags) + "|" + utf8(env_var(L"WINAPK_AOT_MAX_INSNS"));
+                           utf8(kAotCompileFlags) + "|" + utf8(env_var(L"WINAPK_AOT_MAX_INSNS")) + "|" +
+                           hex64(winapk::arm64::aot_cpu_signature());
     return hex64(fnv1a(id));
 }
 

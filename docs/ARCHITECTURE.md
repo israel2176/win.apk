@@ -280,9 +280,19 @@ Three engines run arm64 code, behind one CPU state (`src/arm64/`):
   waits 10 minutes, 4 times longer after each failure (at most a day), and
   stops after 4. A translation finished while the app runs is loaded at once.
   Whole translations are shared between apps through `<data>\aot-cache`,
-  keyed by the library's code. The translation never has to be complete: a
+  keyed by the library's code (its bytes and addresses) and the CPU's model
+  and features, since the code is compiled for that CPU; the stamp next to
+  each DLL records the CPU too, and a translation made on another CPU is not
+  loaded. The translation never has to be complete: a
   function returns to the JIT when it reaches a branch the translator could
-  not follow.
+  not follow, when a call returns somewhere else than its return address
+  (an exception's landing pad, a jump into another frame), and at its entry
+  when the host stack is nearly used up (a translated guest call is a host
+  call, so deep guest recursion would overflow it; `Cpu::stack_floor`, 256 KB
+  before its end). A library that rewrites its own code (an inline hook, a
+  packer decrypting its text: IC IVAU in its code) is handed to the JIT for
+  good, its stamp saying `written`; one unloaded with `dlclose` takes its
+  translation with it.
 - **The JIT** (`arm64_jit.cpp`, dynarmic from the azahar-emu fork, 0BSD
   license, fastmem over the shared address space). The app starts on it and
   it runs whatever has no translation. Built when CMake is given
@@ -290,7 +300,11 @@ Three engines run arm64 code, behind one CPU state (`src/arm64/`):
 - **The interpreter** (`arm64_cpu.cpp`, `arm64_simd.cpp`): the base integer
   ISA, every load/store form, exclusives and LSE atomics, scalar FP and the
   Advanced SIMD forms compilers emit. It runs the few instructions the other
-  two do not handle and is the reference the others are checked against.
+  two do not handle and is the reference the others are checked against:
+  `winapk-arm64-test` runs C compiled for arm64 and for x64, control-flow and
+  edge cases with results worked out by hand (`arm64_flow_guest.c`), and 400
+  functions of random instructions (`gen_arm64_fuzz.py`) on all three and
+  compares them.
 
 The bridge (`arm64_guest.cpp`) gives each thread its CPU state, a guest stack
 and Bionic's TLS slots; converts AAPCS64 arguments and `va_list`s to System V

@@ -51,7 +51,7 @@
 
 namespace {
 
-using winapk::arm64::aot_hash;
+using winapk::arm64::aot_hash_segment;
 
 // ---- ELF ---------------------------------------------------------------------
 
@@ -173,7 +173,7 @@ bool read_image(const char* path, Image* img, std::string* error) {
             return false;
         }
         img->exec.push_back({ph.vaddr, ph.filesz, ph.offset});
-        h = aot_hash(img->file.data() + ph.offset, ph.filesz, h);
+        h = aot_hash_segment(ph.vaddr, img->file.data() + ph.offset, ph.filesz, h);
     }
     img->text_hash = h;
     if (img->exec.empty()) {
@@ -353,7 +353,7 @@ typedef struct {
     uint64_t x[31];
     uint64_t sp, pc;
     uint32_t nzcv, fpcr, fpsr;
-    uint64_t tpidr;
+    uint64_t tpidr, stack_floor;
     _Alignas(16) uint64_t v[32][2];
 } Cpu;
 typedef struct {
@@ -370,12 +370,14 @@ typedef struct {
     AotRuntime* runtime;
     const AotEntry* entries;
     uint64_t count;
+    uint32_t* off;
 } AotModule;
 
 // Defined once, in the file with the module table (the code may be split
 // across several files compiled in parallel).
 extern uint64_t aot_base;
 extern AotRuntime aot_rt;
+extern uint32_t aot_off;  // the library rewrote its code: hand everything to the JIT
 
 // Guest memory: unaligned, and volatile so that the C compiler keeps every
 // access, in order, as the guest's own synchronization expects.
@@ -393,6 +395,22 @@ typedef volatile uint64_t __attribute__((aligned(1))) vu64;
 #define ST64(a, v) (*(vu64*)(uintptr_t)(a) = (uint64_t)(v))
 
 #define INL static inline __attribute__((always_inline))
+// At each function's entry, two reasons to hand over to the JIT before the
+// first instruction (every translated caller then returns the same way):
+//   * the host stack is nearly used up. A guest call is a host call here, and
+//     deep guest recursion (640 KB of a 1 MB Android thread's stack is 20,000
+//     small frames) takes several times that of host stack, which the JIT
+//     does not use per call;
+//   * the library rewrote its own code (aot_off): this is the file's.
+#define ENTRY_CHECK(entry)                                                                      \
+    do {                                                                                        \
+        uint64_t rsp_;                                                                          \
+        __asm__("movq %%rsp, %0" : "=r"(rsp_));                                                 \
+        if (__builtin_expect(rsp_ < c->stack_floor || __atomic_load_n(&aot_off, __ATOMIC_RELAXED), 0)) { \
+            c->pc = (entry);                                                                    \
+            return 1;                                                                           \
+        }                                                                                       \
+    } while (0)
 INL uint64_t ror64(uint64_t v, unsigned r) { r &= 63; return r ? (v >> r) | (v << (64 - r)) : v; }
 INL uint64_t ror32(uint64_t v, unsigned r) { uint32_t w = (uint32_t)v; r &= 31; return r ? (uint32_t)((w >> r) | (w << (32 - r))) : w; }
 INL uint64_t asr64(uint64_t v, unsigned s) { return (uint64_t)((int64_t)v >> s); }
@@ -463,20 +481,52 @@ INL uint64_t sat_u32(double r) {
     return (uint32_t)r;
 }
 // Arm's FMAX/FMIN (NaN in, NaN out; +0 > -0) and FMAXNM/FMINNM (a NaN loses).
-#define FMINMAX(T, sfx)                                                                              \
+// The NaN out is Arm's choice (a signaling one first, the first operand
+// first, quieted), as the interpreter's nan_arm makes it.
+#define FMINMAX(T, sfx, U, QUIET)                                                                    \
+    INL T nan_##sfx(T a, T b) {                                                                      \
+        U ua, ub;                                                                                    \
+        __builtin_memcpy(&ua, &a, sizeof ua);                                                        \
+        __builtin_memcpy(&ub, &b, sizeof ub);                                                        \
+        const int sa = a != a && !(ua & QUIET), sb = b != b && !(ub & QUIET);                       \
+        U r = (sa ? ua : sb ? ub : a != a ? ua : ub) | QUIET;                                        \
+        T f;                                                                                         \
+        __builtin_memcpy(&f, &r, sizeof f);                                                          \
+        return f;                                                                                    \
+    }                                                                                                \
     INL T fmax_##sfx(T a, T b) {                                                                     \
-        if (a != a || b != b) return a + b;                                                          \
+        if (a != a || b != b) return nan_##sfx(a, b);                                                \
         if (a == 0 && b == 0) return __builtin_signbit(a) ? b : a;                                   \
         return a > b ? a : b;                                                                        \
     }                                                                                                \
     INL T fmin_##sfx(T a, T b) {                                                                     \
-        if (a != a || b != b) return a + b;                                                          \
+        if (a != a || b != b) return nan_##sfx(a, b);                                                \
         if (a == 0 && b == 0) return __builtin_signbit(a) ? a : b;                                   \
         return a < b ? a : b;                                                                        \
     }                                                                                                \
     INL T fmaxnm_##sfx(T a, T b) { return a != a && b == b ? b : b != b && a == a ? a : fmax_##sfx(a, b); } \
     INL T fminnm_##sfx(T a, T b) { return a != a && b == b ? b : b != b && a == a ? a : fmin_##sfx(a, b); }
-FMINMAX(float, f) FMINMAX(double, d)
+FMINMAX(float, f, uint32_t, 0x400000u) FMINMAX(double, d, uint64_t, 0x8000000000000ull)
+// FRECPS and FRSQRTS: fused, and 2.0 and 1.5 for 0 times infinity (which
+// keeps a reciprocal or square root estimate of 0 at infinity, not NaN).
+#define STEPS(T, sfx, fma)                                                                         \
+    INL T frecps_##sfx(T a, T b) {                                                                 \
+        if ((__builtin_isinf(a) && b == 0) || (a == 0 && __builtin_isinf(b))) return 2;            \
+        return fma(-a, b, 2);                                                                      \
+    }                                                                                              \
+    INL T frsqrts_##sfx(T a, T b) {                                                                \
+        if ((__builtin_isinf(a) && b == 0) || (a == 0 && __builtin_isinf(b))) return 1.5;          \
+        return fma(-a, b, 3) / 2;                                                                  \
+    }
+STEPS(float, f, __builtin_fmaf) STEPS(double, d, __builtin_fma)
+// FMULX: 0 times infinity is 2.0 with the product's sign.
+#define MULX(T, sfx)                                                                                \
+    INL T fmulx_##sfx(T a, T b) {                                                                   \
+        if ((__builtin_isinf(a) && b == 0) || (a == 0 && __builtin_isinf(b)))                      \
+            return __builtin_signbit(a) != __builtin_signbit(b) ? -2 : 2;                           \
+        return a * b;                                                                               \
+    }
+MULX(float, f) MULX(double, d)
 
 // A direct call of a plain host function (AotRuntime::plain) with the
 // guest's argument registers and stack words in *c (as the bridge's
@@ -793,7 +843,9 @@ bool Emitter::branch(uint64_t va, uint32_t insn) {
             return true;
         }
         case Flow::kRet:
-            line("{ const uint64_t t = " + rx(field(insn, 9, 5)) + "; " + flush() +
+            // RETAA/RETAB (bit 11) return to x30; their Rn field is 11111,
+            // which read as XZR returned to 0.
+            line("{ const uint64_t t = " + rx(bit(insn, 11) ? 30 : field(insn, 9, 5)) + "; " + flush() +
                  " c->pc = t; return 0; }");
             return true;
     }
@@ -891,8 +943,8 @@ bool Emitter::dp_immediate(uint32_t insn, uint64_t va) {
             if (lsb >= size) return false;
             const std::string hi = "(" + rx(rn) + " & " + hex(mask(size)) + ")";
             const std::string lo = "(" + rx(field(insn, 20, 16)) + " & " + hex(mask(size)) + ")";
-            if (lsb == 0) {
-                wx(rd, hi, true);
+            if (lsb == 0) {  // the low register (Rn:Rm shifted by nothing), not Rn
+                wx(rd, lo, true);
             } else {
                 wx(rd, fmt("((%s >> %u) | (%s << %u)) & %s", lo.c_str(), lsb, hi.c_str(), size - lsb,
                            hex(mask(size)).c_str()),
@@ -1402,7 +1454,6 @@ bool Emitter::v_three_same(uint32_t insn) {
         const std::string F = ft(eb), FA = "((" + F + ")" + a + ")", FB = "((" + F + ")" + b + ")",
                           FD = "((" + F + ")" + d + ")";
         const char* sfx = eb == 64 ? "d" : "f";
-        const char* one = eb == 64 ? "" : "f";
         const unsigned key = (u << 6) | (hi << 5) | opcode, lanes = 128 / eb;
         auto per_lane = [&](const char* fn, const std::string& x, const std::string& y) {
             std::string r = "(" + F + "){";
@@ -1413,7 +1464,8 @@ bool Emitter::v_three_same(uint32_t insn) {
         switch (key) {
             case 0x1a: r = FA + " + " + FB; break;
             case 0x3a: r = FA + " - " + FB; break;
-            case 0x1b: case 0x5b: r = FA + " * " + FB; break;
+            case 0x1b: r = per_lane("fmulx", FA, FB); break;
+            case 0x5b: r = FA + " * " + FB; break;
             case 0x5f: r = FA + " / " + FB; break;
             case 0x19: r = "__builtin_elementwise_fma(" + FA + ", " + FB + ", " + FD + ")"; break;
             case 0x39: r = "__builtin_elementwise_fma(-" + FA + ", " + FB + ", " + FD + ")"; break;
@@ -1423,8 +1475,8 @@ bool Emitter::v_three_same(uint32_t insn) {
             case 0x7c: r = "(" + FA + " > " + FB + ")"; break;
             case 0x5d: r = "(__builtin_elementwise_abs(" + FA + ") >= __builtin_elementwise_abs(" + FB + "))"; break;
             case 0x7d: r = "(__builtin_elementwise_abs(" + FA + ") > __builtin_elementwise_abs(" + FB + "))"; break;
-            case 0x1f: r = fmt("(2.0%s - %s * %s)", one, FA.c_str(), FB.c_str()); break;
-            case 0x3f: r = fmt("((3.0%s - %s * %s) / 2.0%s)", one, FA.c_str(), FB.c_str(), one); break;
+            case 0x1f: r = per_lane("frecps", FA, FB); break;
+            case 0x3f: r = per_lane("frsqrts", FA, FB); break;
             case 0x1e: r = per_lane("fmax", FA, FB); break;
             case 0x3e: r = per_lane("fmin", FA, FB); break;
             case 0x18: r = per_lane("fmaxnm", FA, FB); break;
@@ -1889,6 +1941,13 @@ bool Emitter::v_by_element(uint32_t insn) {
         std::string r;
         if (opcode == 1) r = "__builtin_elementwise_fma(" + FA + ", " + y + ", " + FD + ")";
         else if (opcode == 5) r = "__builtin_elementwise_fma(-" + FA + ", " + y + ", " + FD + ")";
+        else if (u) {  // FMULX (by element)
+            r = "(" + F + "){";
+            for (unsigned i = 0; i < (dbl ? 2u : 4u); ++i) {
+                r += fmt("%sfmulx_%s(%s[%u], %s[%u])", i ? ", " : "", dbl ? "d" : "f", FA.c_str(), i, y.c_str(), i);
+            }
+            r += "}";
+        }
         else r = FA + " * " + y;
         wq(rd, r, bytes);
         return true;
@@ -2118,6 +2177,7 @@ std::string Emitter::function(size_t* interpreted) {
     out += "#define RELOAD() do {" + reload + " } while (0)\n";
     out += "uint32_t " + name + "(Cpu* restrict c) {\n";
     out += "    const uint64_t B = aot_base;\n";
+    out += "    ENTRY_CHECK(" + addr(f_.entry) + ");\n";
     for (unsigned n = 0; n < 32; ++n) {
         if (!(used_x_ >> n & 1)) continue;
         out += n == 31 ? "    uint64_t SP = c->sp;\n" : fmt("    uint64_t X%u = c->x[%u];\n", n, n);
@@ -2281,13 +2341,14 @@ int main(int argc, char** argv) {
         insns += f->insns.size();
         interpreted += n;
     }
-    std::string table = "uint64_t aot_base;\nAotRuntime aot_rt;\n\nstatic const AotEntry entries[] = {\n";
+    std::string table = "uint64_t aot_base;\nAotRuntime aot_rt;\nuint32_t aot_off;\n\n";
+    table += "static const AotEntry entries[] = {\n";
     for (uint64_t e : translated) table += fmt("    {0x%" PRIx64 "ull, F_%" PRIx64 "},\n", e, e);
     table += "};\n\n";
     table += "__declspec(dllexport) const AotModule winapk_aot_module = {\n";
     table += fmt("    %u, {offsetof(Cpu, sp), offsetof(Cpu, nzcv), offsetof(Cpu, tpidr), offsetof(Cpu, v)},\n",
                  winapk::arm64::kAotVersion);
-    table += fmt("    0x%" PRIx64 "ull, &aot_base, &aot_rt, entries, sizeof entries / sizeof entries[0],\n",
+    table += fmt("    0x%" PRIx64 "ull, &aot_base, &aot_rt, entries, sizeof entries / sizeof entries[0], &aot_off,\n",
                  img.text_hash);
     table += "};\n";
 
