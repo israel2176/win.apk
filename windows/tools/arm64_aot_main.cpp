@@ -194,7 +194,9 @@ bool read_image(const char* path, Image* img, std::string* error) {
             if (s.size > size) size = s.size;
         }
     }
-    img->unwind_starts = eh_frame_starts(*img, eh_frame_hdr);
+    // WINAPK_AOT_EH_FRAME=0 leaves them out, for comparing.
+    if (const char* off = std::getenv("WINAPK_AOT_EH_FRAME"); !off || std::strcmp(off, "0") != 0)
+        img->unwind_starts = eh_frame_starts(*img, eh_frame_hdr);
     for (const uint64_t va : img->unwind_starts) img->symbols.emplace(va, 0);
     return true;
 }
@@ -507,6 +509,7 @@ static __attribute__((noinline)) void host_call(Cpu* restrict c, uint64_t target
         static uint64_t site;                                                      \
         if ((t) == __atomic_load_n(&site, __ATOMIC_RELAXED)) {                     \
             host_call(c, (t));                                                     \
+            c->pc = c->x[30];                                                      \
             (st) = 0;                                                              \
         } else {                                                                   \
             (st) = aot_rt.branch(c, (t));                                          \
@@ -684,6 +687,11 @@ private:
             line("    uint32_t st; c->pc = t; CALL_SITE(st, t);");
         }
         line("    if (st) return st;");
+        // Returned somewhere else: an exception's landing pad (the unwinder
+        // ends in a ret or br to it), a longjmp, code that is not a whole
+        // function. The whole state is in *c: the JIT goes on from c->pc,
+        // as after an instruction the interpreter stepped.
+        line("    if (c->pc != " + addr(ret) + ") return 1;");
         line("    RELOAD();");
         line("}");
     }
@@ -777,7 +785,10 @@ bool Emitter::branch(uint64_t va, uint32_t insn) {
             for (uint64_t l : f_.labels) line(fmt("        case 0x%" PRIx64 "ull: goto L_%" PRIx64 ";", l, l));
             line("    }");
             line("    " + flush() + " c->pc = t;");
-            line("    { uint32_t st; CALL_SITE(st, t); if (st == 0) c->pc = c->x[30]; return st; }");
+            // A jump: whatever t returns to is this function's return. c->pc
+            // says where (the call site's host call and the runtime's leave
+            // the return address there), so the caller can check it.
+            line("    { uint32_t st; CALL_SITE(st, t); return st; }");
             line("}");
             return true;
         }
