@@ -410,8 +410,14 @@ another's services, the way Android's system server does. Apps then use the
 real Play services instead of Win.apk's stand-ins. It takes effect when an app
 starts.
 
-Only copies signed by Google's own certificate are treated as the system's
-Google apps; an APK that merely uses their package names is an ordinary app.
+Only copies whose signature verifies, made with Google's own key (or a newer
+Google key that proves it took over from it, as current Play services do), are
+treated as the system's Google apps; an APK that merely uses their package
+names, or carries a copy of Google's certificate it was not signed with, is an
+ordinary app. Win.apk checks every app's signature this way when it is
+installed and before it reports the app's certificate to another app: an app
+whose signature does not verify still runs, but it reports no certificate and
+the install log says why.
 The broker knows which app a process is from how Windows started it, not from
 what the app says, and refuses an app that claims to be another. Every app
 still runs with your Windows account's rights, as any program you run does:

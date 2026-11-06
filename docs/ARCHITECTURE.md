@@ -481,9 +481,23 @@ the user installed run as apps, as upstream runs them on the Mac:
   executable. `android:exported` is enforced as upstream does.
 - **Google's packages.** `com.google.android.gms`, `.gsf` and
   `com.android.vending` get the system-app treatment (`FLAG_SYSTEM`, started
-  at the broker's boot) only when their APK is signed with Google's
-  certificate (`GoogleGmsCertificate.isGoogleSigner`). Win.apk ships and
+  at the broker's boot) only when their APKs' signature verifies and Google's
+  certificate made it, as the signer or as an ancestor in the verified v3
+  rotation lineage (`GoogleGmsCertificate.isGoogleSigner`). Win.apk ships and
   downloads none of them.
+- **Signatures.** Every certificate PackageManager reports (an app's own,
+  another installed app's) and every trust decision comes from
+  `ApkVerification`, which runs AOSP's verifier, apksig
+  (`thirdparty/apksig/`), over the APK: the v3.1 / v3 / v2 signature over the
+  signed data and the content digests over the whole ZIP, the v3
+  proof-of-rotation chain, or the v1 JAR signature of an old APK. An installed
+  app is base.apk and every split, a bundle every APK in it; all must verify
+  with the base's signer. The signer is chosen for API 36 in every process.
+  With a rotation, `GET_SIGNATURES` answers the oldest certificate and
+  `SigningInfo` the lineage; `checkSignatures` and `hasSigningCertificate`
+  follow AOSP's lineage rules. An APK that does not verify reports no
+  certificate. Verdicts are cached by path, size and time in
+  `cache\apk-verify\`; the install fills it.
 - **The limit.** Every app runs with the user's Windows rights and there is no
   OS sandbox between them: native code in one app's process can read or write
   another process of the same user. The checks above stop an app's Java code
@@ -579,7 +593,7 @@ default; `--data` moves it for a direct run):
 | `app_uids.properties`, `system_ce\0\`, `installer-of-record.properties`, `run\system-ready` | With Google services on: per-package uids, the accounts service's store, which app installed which, the broker's readiness |
 | `logs\system.log`, `logs\services\` | The system broker and the apps it starts as service hosts |
 | `aot-cache\` | Whole arm64 translations shared between apps (kept under 2 GB, least recently used first) |
-| `cache\` | The runtime's shared caches: `android-system-fonts\` (the `/system/fonts` and `fonts.xml` native text stacks such as Flutter's read), `fonts\`, `fwview\` (the framework's resolved resources), `monet\` |
+| `cache\` | The runtime's shared caches: `android-system-fonts\` (the `/system/fonts` and `fonts.xml` native text stacks such as Flutter's read), `fonts\`, `fwview\` (the framework's resolved resources), `monet\`, `apk-verify\` (APK signature verdicts) |
 | `run\<package>.pid` | Each running app's run lock |
 | `staging\` | The install helper's staging area |
 | `updates\` | `releases.json` and `releases.etag` (GitHub's list of releases from the last update check), `Win.apk-Setup-<version>.exe` (a downloaded update, until it is installed) |

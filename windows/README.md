@@ -160,6 +160,8 @@ The user-facing ones (`WINAPK_PHONE_SIZE`, `WINAPK_RESIZABLE`,
 | `MACAPK_BROKER=1` or `0` | Overrides the "Use Google services" setting for this run (the system broker and the real Google apps); `MACAPK_BROKER_IDLE_GRACE_S`, `MACAPK_BROKER_IDLE_EXIT=0` tune the broker's idle exit |
 | `WINAPK_TEST_ANDROID_ROOT=<dir>` | `winapk-binder-test` only: the android root its JVM gets (the broker checks' scratch data folder) |
 | `WINAPK_TEST_RESIZE=<w>x<h>` | A second after the first frame, resizes the window to a client area of that many pixels (CI's "Boot an APK in a window") |
+| `MACAPK_APK_PATH` | Set by the runtime, not by hand: the installed APK, which `PresentedSdk` reads the app's targetSdk and minSdk from to choose the API level the app is presented (its targetSdk within 29..36, never below its minSdk); `MACAPK_SDK_INT=<n>` forces a level, `MACAPK_SDK_FROM_TARGET=0` presents 29 (still never below the minSdk) |
+| `MACAPK_BROKER_TRIGGER_CHECKIN=0` | The broker does not nudge Play services to check in at boot (it nudges at most three times, and not at all once Play services has broadcast `CHECKIN_COMPLETE`) |
 | `WINAPK_READY_EVENT=<handle>` | Set by the launcher, not by hand: an inherited event handle, as a decimal number, that the runtime sets once its window has painted the app's first frame (the launch splash waits for it) |
 | `WINAPK_DENSITY=<dpi>` | Overrides the density the app sees |
 | `WINAPK_WINDOW_RTL=1` or `0` | Overrides the locale's reading layout for the app window's frame |
@@ -337,11 +339,41 @@ every such change is listed here:
   registration reply carries the broker's pid, and an app's application thread
   takes calls from that pid only; state under `%LOCALAPPDATA%\Win.apk`
   (`HostAppSupport`). On the Mac (no `WinProcesses`) nothing changes.
-- `runtime/java/com/macapk/loader/MacApkPackageManager.java`,
-  `com/macapk/gms/GoogleGmsCertificate.java`: on Windows the system-app
-  treatment of `com.google.android.gms`, `.gsf` and `com.android.vending`
-  needs an APK signed with Google's certificate (`isGoogleSigner`), not just
-  the package name; the in-process stand-ins (no APK) are unchanged.
+- `runtime/java/com/macapk/loader/ApkVerification.java` (new),
+  `MacApkPackageManager.java`, `android/content/pm/PackageManager.java`,
+  `Signature.java`, `com/macapk/gms/GoogleGmsCertificate.java`: APK
+  signatures are verified cryptographically with AOSP's apksig
+  (`thirdparty/apksig/`, built into `macapk-loader.jar`) before any
+  certificate is reported or trusted; upstream read the certificate out of the
+  signing block without checking a signature. An installed app's base.apk and
+  splits, or a bundle's APKs, must all verify with one signer; an APK that
+  does not verify reports no certificate. A v3 key rotation is reported as on
+  a device: `GET_SIGNATURES` the oldest certificate of the lineage,
+  `SigningInfo` the lineage with its capability flags, `checkSignatures` and
+  `hasSigningCertificate` through it. On Windows the system-app treatment of
+  `com.google.android.gms`, `.gsf` and `com.android.vending` needs a verified
+  APK that Google's certificate signed, directly or as an ancestor in the
+  lineage (Play services 26.x is signed by a newer Google key), not just the
+  package name; the in-process stand-ins (no APK) are unchanged. Verdicts are
+  cached in `%LOCALAPPDATA%\Win.apk\cache\apk-verify\`;
+  `windows/java/com/winapk/tools/AppMeta.java` verifies at install.
+- `runtime/java/com/macapk/loader/Manifest.java`: a manifest's `@string/` and
+  `@xml/` references in a split bundle (`.apks`, `.apkm`, `.xapk`, which the
+  broker parses as the library holds them) resolve in the bundle's base APK
+  (`resourceApk`); they were looked up at the bundle's top, which has no
+  `resources.arsc`, so Play services' `android:process="@string/..."` stayed
+  `@0x7f...`.
+- `runtime/java/com/macapk/loader/PresentedSdk.java`: never presents a level
+  below the app's minSdkVersion (Play services 26.x needs 31); the runtime
+  exports `MACAPK_APK_PATH` as upstream's launcher does, so the per-app level
+  works at all (without it every app was presented 29).
+- `runtime/java/android/os/BaseBundle.java`: copying a bundle that is still
+  parcelled copies its bytes instead of unparcelling it, as AOSP's
+  `copyInternal` does, so the broker can pass on an intent whose extras hold
+  an app's own Parcelables (Play services' `FileApkService` start failed with
+  `BadParcelableException` in the broker).
+- `runtime/java/com/macapk/loader/SystemServer.java`: the boot check-in nudge
+  stops once Play services has broadcast `CHECKIN_COMPLETE`.
 
 - `runtime/java/com/macapk/loader/HostAppSupport.java` (new) and
   `InstallerOfRecord.java`: the small files every app process shares (the
