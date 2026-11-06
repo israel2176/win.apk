@@ -157,6 +157,8 @@ The user-facing ones (`WINAPK_PHONE_SIZE`, `WINAPK_RESIZABLE`,
 |---|---|
 | `WINAPK_HEADLESS=1` | No window; `WINAPK_HEADLESS_FRAME=<file.bmp>` saves the last frame and `WINAPK_HEADLESS_EXIT_AFTER_FRAMES=<n>` exits after that many presented frames (an idle app counts too) |
 | `WINAPK_TEST_WORKAREA=<w>x<h>[+<x>+<y>]` | Stands in for the monitor's work area, in pixels; `@file` reads the value from a file at every fit |
+| `MACAPK_BROKER=1` or `0` | Overrides the "Use Google services" setting for this run (the system broker and the real Google apps); `MACAPK_BROKER_IDLE_GRACE_S`, `MACAPK_BROKER_IDLE_EXIT=0` tune the broker's idle exit |
+| `WINAPK_TEST_ANDROID_ROOT=<dir>` | `winapk-binder-test` only: the android root its JVM gets (the broker checks' scratch data folder) |
 | `WINAPK_TEST_RESIZE=<w>x<h>` | A second after the first frame, resizes the window to a client area of that many pixels (CI's "Boot an APK in a window") |
 | `WINAPK_READY_EVENT=<handle>` | Set by the launcher, not by hand: an inherited event handle, as a decimal number, that the runtime sets once its window has painted the app's first frame (the launch splash waits for it) |
 | `WINAPK_DENSITY=<dpi>` | Overrides the density the app sees |
@@ -206,6 +208,7 @@ Every test is a program built by CMake; `ci.yml` runs each of them on
 | `winapk-jvm-run <jni_guest.so> <classes>` | A real HotSpot JVM loads a guest library through the linker: its `JNI_OnLoad` registers a native through the guest `RegisterNatives`, another native is bound by name through the `NativeMethodBind` hook, both are called from Java and call back through the variadic bridge. Run with the x86_64 and the arm64 build of the library, and again on the staged `android-framework.jar` for libjnigraphics |
 | `test/java/PermissionModelTest.java` | `SpecialAccessStore.GroupModel` against PermissionController's rules (grant, deny, deny twice, auto grant, background permissions, legacy targets, App info rows) |
 | `test/java/FileSeparatorRewriteTest.java` | Guest code reads Android's `/` from `File.separator` while the JDK's own classes keep the backslash |
+| `winapk-binder-test <classpath> com.macapk.loader.BinderTransportTest` | `host/binder_win.cpp` between real JVMs in three processes (`test/java/com/macapk/loader/BinderTransportTest.java`): transact, the OS calling pid and the receiver-derived uid, oneway order, a nested callback, binder identity both ways, fds both ways, death notification; then the system broker's checks: a process that is no installed app, or that claims another package, is refused, android:exported, the package uid |
 | Headless boot, window boot, GMS CLI (CI steps) | The staged runtime boots the F-Droid Sudoku APK headless (30 frames) and in a window with a resize (`WINAPK_TEST_RESIZE=400x600`), and `--gms selftest` and `--gms status` pass |
 
 The guest libraries are built with plain clang + lld (`test/build_guest.sh`,
@@ -311,6 +314,28 @@ one returns 0 / null) or a guard in the Java that catches its absence.
 
 Files in `runtime/` are changed only where a Windows hook is unavoidable, and
 every such change is listed here:
+
+- `runtime/java/android/os/MacApkBinderTransport.java`: tries `nativeInit()`
+  before looking for upstream's `libmacapk-binder.dylib`, since the Windows
+  host binds the transport's natives itself (`windows/host/binder_win.cpp`);
+  `callingUidFor` / `setUidResolver`: on Windows the calling uid is derived
+  from the OS-reported pid by the receiver, never sent by the caller.
+- `runtime/java/com/macapk/loader/WinProcesses.java` (new),
+  `WindowsBroker.java` (new), `SystemServer.java`, `SystemClient.java`,
+  `AppUids.java`: the system broker on Windows. `winapk-runtime --system`
+  started by the first app that needs it; apps started as
+  `winapk-runtime --apk`; a process is a package by the broker's record (the
+  process it started, or the `--apk` on its command line), and a caller
+  argument or registration that names another package is refused and logged;
+  `TX_UID_OF_PID` (new) answers an app's question about its caller's uid; the
+  registration reply carries the broker's pid, and an app's application thread
+  takes calls from that pid only; state under `%LOCALAPPDATA%\Win.apk`
+  (`HostAppSupport`). On the Mac (no `WinProcesses`) nothing changes.
+- `runtime/java/com/macapk/loader/MacApkPackageManager.java`,
+  `com/macapk/gms/GoogleGmsCertificate.java`: on Windows the system-app
+  treatment of `com.google.android.gms`, `.gsf` and `com.android.vending`
+  needs an APK signed with Google's certificate (`isGoogleSigner`), not just
+  the package name; the in-process stand-ins (no APK) are unchanged.
 
 - `runtime/java/com/macapk/loader/HostAppSupport.java` (new) and
   `InstallerOfRecord.java`: the small files every app process shares (the

@@ -252,7 +252,7 @@ its own. Each setting takes effect the next time an app opens unless noted.
 | Apps | **Use my Windows folders** | On: apps' shared storage (Downloads, Pictures, Documents, Music, Movies) is your own Windows folders. Off: each is an empty folder of Win.apk's own, and your files stay where they are. See [Shared storage](#shared-storage) |
 | Apps | **Desktop shortcut for new apps** | Every app gets a Start menu shortcut; this adds one on the desktop too |
 | Apps | **Open .apk, .apkm, .xapk and .apks files with Win.apk** | Makes Win.apk the default program for the four formats |
-| Google account | **Sign in**, **Add another account**, **Sign out** | See [Google account](#google-account) |
+| Google account | **Sign in**, **Add another account**, **Sign out**; **Use Google services (experimental)** (off) | See [Google account](#google-account) |
 | Troubleshooting | **Logs** | Opens the `logs` folder in Explorer, to attach files to a bug report |
 | Troubleshooting | **App data** | Opens `%LOCALAPPDATA%\Win.apk` |
 | Troubleshooting | **Clear library** | Uninstalls every app and removes its shortcuts (app data is kept) |
@@ -398,6 +398,27 @@ sign-in, and kept in `%LOCALAPPDATA%\Win.apk\gms` until you sign out; an
 account signed in before this version shows its picture after signing out and
 in again.
 
+### Google services (experimental)
+
+**Settings > Google account > Use Google services (experimental)** (off by
+default) runs Google's real Play services, Services Framework and Play Store
+as apps, when you have installed them yourself (Win.apk never ships or
+downloads them). Each app runs in its own process; a small background process,
+the system broker (`winapk-runtime --system`, started by the first app that
+needs it and gone a minute after the last app closes), lets one app reach
+another's services, the way Android's system server does. Apps then use the
+real Play services instead of Win.apk's stand-ins. It takes effect when an app
+starts.
+
+Only copies signed by Google's own certificate are treated as the system's
+Google apps; an APK that merely uses their package names is an ordinary app.
+The broker knows which app a process is from how Windows started it, not from
+what the app says, and refuses an app that claims to be another. Every app
+still runs with your Windows account's rights, as any program you run does:
+there is no sandbox between apps on Windows. In-app purchases and Play
+Integrity still do not work. The broker's log is `logs\system.log`, its
+services' logs are in `logs\services`.
+
 Google sign-in needs the WebView2 Runtime (a 2022 or later version). Without
 it the sign-in is cancelled and the log says why.
 
@@ -469,6 +490,7 @@ and the launch window open the right log themselves when something fails.
 | `last-run.log` | The app opened most recently (a second name for its `run-<app>.log`) |
 | `install-<app>.log` | That app's install or update |
 | `gms.log` | The Google account operations run from the settings |
+| `system.log`, `services\` | With Google services on: the system broker, and the apps it starts for other apps |
 | `install-helper.log`, `package-backfill.log` | Installs an app itself asked for (F-Droid installing another app), and library maintenance |
 | `hs_err_pid<n>.log` | A crash report from the Java VM, if the VM itself crashed |
 | `crash-<app>-<date>.dmp` | A minidump of the app's process when its native code crashed (the last three per app); attach it to an issue with the log |
@@ -505,7 +527,8 @@ and the launch window open the right log themselves when something fails.
 | The Google account and its tokens | `%LOCALAPPDATA%\Win.apk\gms` |
 | The last update check and a downloaded update | `%LOCALAPPDATA%\Win.apk\updates` (`releases.json`, `Win.apk-Setup-<version>.exe`) |
 | Shared ARM translations | `%LOCALAPPDATA%\Win.apk\aot-cache` |
-| Settings | `HKEY_CURRENT_USER\Software\Win.apk` (`Theme`, `Language`, `PhoneSize`, `Landscape`, `DesktopShortcut`, `UserFolders`, `InstallDetails`, `AutoUpdate`, `LastUpdateCheck`, and the library window's size) |
+| Settings | `HKEY_CURRENT_USER\Software\Win.apk` (`Theme`, `Language`, `PhoneSize`, `Landscape`, `DesktopShortcut`, `UserFolders`, `InstallDetails`, `AutoUpdate`, `LastUpdateCheck`, `GoogleServices`, and the library window's size) |
+| With Google services on: app uids, the account service, the installer of record, the broker's readiness | `%LOCALAPPDATA%\Win.apk` (`app_uids.properties`, `system_ce\`, `installer-of-record.properties`, `run\`) |
 | Start menu shortcuts | `Start > Win.apk Apps` |
 
 `<app>` is the app's package name (`com.waze`) when the file it came from

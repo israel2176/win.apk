@@ -444,6 +444,54 @@ Not Play-certified: no Google signing certificate, no installed
 `com.google.android.gms` package, no Play Integrity or SafetyNet, Play
 Billing answers `BILLING_UNAVAILABLE`, the Maps SDK lays out a blank map.
 
+### Google services: cross-process Binder and the system broker
+
+With Settings > Google account > "Use Google services (experimental)" on
+(`HKCU\Software\Win.apk` `GoogleServices`, which `runtime_main` turns into
+`MACAPK_BROKER=1`), the real Play services, Services Framework and Play Store
+the user installed run as apps, as upstream runs them on the Mac:
+
+- **Binder across processes** (`windows/host/binder_win.cpp`, the natives of
+  upstream's `android.os.MacApkBinderTransport`). Each process serves a named
+  pipe, `\\.\pipe\winapk-<user SID>-s<session>-b-<pid>-<random>`, one thread
+  per connection. A binder travels as (endpoint, number) and comes back as the
+  same proxy, or as the same local object in its own process; oneway calls go
+  over one connection per peer, in order; a file descriptor is the open file's
+  handle duplicated into the receiver, where it becomes a new CRT fd;
+  `linkToDeath` waits on the peer's process handle.
+- **The system broker** (`winapk-runtime --system`, upstream's
+  `com.macapk.loader.SystemServer`): binds, starts, providers, broadcasts and
+  jobs between apps, the accounts service, per-package uids (`AppUids`). The
+  first app that finds no broker starts it (`WindowsBroker`); one per session
+  (`Local\WinApk-system`, then the pipe name); it exits when no app has been
+  open for a minute. It starts an app for another's request as the launcher
+  would, `winapk-runtime --apk <library file>`, headless; a second
+  `android:process` of a package gets its own single-instance key.
+- **Who calls.** The calling pid is the OS's (`GetNamedPipeClientProcessId`);
+  no uid travels. The broker knows a process as the package it started it as,
+  or the package whose installed APK the process's command line (`--apk`)
+  names (`WinProcesses`, from the process's recorded command line); a caller
+  argument that names another package, or a registration as another package
+  or process, is refused with a `SecurityException` and logged; the calling
+  uid any app sees is the broker's answer for that pid. An app's application
+  thread takes calls from the broker's pid only. Pipes have a DACL for the
+  user and SYSTEM, reject remote clients, claim their name with
+  `FILE_FLAG_FIRST_PIPE_INSTANCE`, connect with `SECURITY_IDENTIFICATION`, and
+  each end checks that the other is the same user's process of the same
+  executable. `android:exported` is enforced as upstream does.
+- **Google's packages.** `com.google.android.gms`, `.gsf` and
+  `com.android.vending` get the system-app treatment (`FLAG_SYSTEM`, started
+  at the broker's boot) only when their APK is signed with Google's
+  certificate (`GoogleGmsCertificate.isGoogleSigner`). Win.apk ships and
+  downloads none of them.
+- **The limit.** Every app runs with the user's Windows rights and there is no
+  OS sandbox between them: native code in one app's process can read or write
+  another process of the same user. The checks above stop an app's Java code
+  from passing itself off as another app; they are not a sandbox.
+
+`windows/test/binder_test.cpp` with `test/java/com/macapk/loader/BinderTransportTest.java`
+tests the transport and the broker's checks across three processes.
+
 ## An install, step by step
 
 1. The launcher names the app (`install_name`: the package when the file name
@@ -528,6 +576,8 @@ default; `--data` moves it for a direct run):
 | `installed_apps.json` | The installed-apps registry the package manager answers from |
 | `appops\` | `app-ops.json`, `signing-key.pub`, `signing-key.p256` |
 | `gms\` | `gms_state.properties`, the `accounts.present` marker |
+| `app_uids.properties`, `system_ce\0\`, `installer-of-record.properties`, `run\system-ready` | With Google services on: per-package uids, the accounts service's store, which app installed which, the broker's readiness |
+| `logs\system.log`, `logs\services\` | The system broker and the apps it starts as service hosts |
 | `aot-cache\` | Whole arm64 translations shared between apps (kept under 2 GB, least recently used first) |
 | `staging\` | The install helper's staging area |
 | `updates\` | `releases.json` and `releases.etag` (GitHub's list of releases from the last update check), `Win.apk-Setup-<version>.exe` (a downloaded update, until it is installed) |
@@ -535,7 +585,8 @@ default; `--data` moves it for a direct run):
 Settings live in `HKCU\Software\Win.apk`: `Theme`, `Language`, `PhoneSize`,
 `Landscape` (absent means landscape; 0 means portrait), `DesktopShortcut`,
 `UserFolders`, `InstallDetails` (the install window shows its log),
-`ShortcutVersion`, `AutoUpdate` (absent means on) and `LastUpdateCheck` (Unix
+`ShortcutVersion`, `AutoUpdate` (absent means on), `GoogleServices` (absent
+means off: the system broker and the real Google apps) and `LastUpdateCheck` (Unix
 seconds of the last update check GitHub answered), and the library window's `WindowWidth`, `WindowHeight` and
 `WindowMaximized`.
 
