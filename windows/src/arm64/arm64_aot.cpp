@@ -17,7 +17,6 @@
 #include <unordered_set>
 #include <vector>
 
-#include <cpuid.h>
 #include <windows.h>
 
 extern "C" __attribute__((sysv_abi)) void winapk_arm64_call_sysv(const void* fn, void* frame);  // arm64_guest.cpp
@@ -259,38 +258,6 @@ void remember_dll(HMODULE h, const AotModule* m, const std::filesystem::path& dl
 }
 
 }  // namespace
-
-uint64_t aot_cpu_signature() {
-    static const uint64_t signature = [] {
-        uint64_t h = 0xcbf29ce484222325ull;
-        auto add = [&](uint32_t v) { h = aot_hash(reinterpret_cast<const uint8_t*>(&v), sizeof v, h); };
-        unsigned a = 0, b = 0, c = 0, d = 0;
-        __cpuid(0, a, b, c, d);
-        const unsigned max = a;
-        add(b), add(c), add(d);  // the vendor
-        __cpuid(1, a, b, c, d);
-        add(a), add(c), add(d);  // family, model, stepping; features (not b: it holds the core's APIC id)
-        const bool osxsave = (c >> 27) & 1;
-        if (max >= 7) {
-            __cpuid_count(7, 0, a, b, c, d);
-            add(b), add(c), add(d);
-            __cpuid_count(7, 1, a, b, c, d);
-            add(a);
-        }
-        __cpuid(0x80000000u, a, b, c, d);
-        if (a >= 0x80000001u) {
-            __cpuid(0x80000001u, a, b, c, d);
-            add(c), add(d);
-        }
-        if (osxsave) {  // the register state the OS saves: AVX and AVX-512 need it
-            uint32_t lo, hi;
-            __asm__ volatile("xgetbv" : "=a"(lo), "=d"(hi) : "c"(0));
-            add(lo), add(hi);
-        }
-        return h ? h : 1;
-    }();
-    return signature;
-}
 
 bool aot_load(const char* so_path, uint64_t bias, uint64_t text_hash, uint64_t code_lo, uint64_t code_hi) {
     auto lib = std::make_unique<Library>();

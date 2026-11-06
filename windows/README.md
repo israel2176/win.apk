@@ -69,9 +69,9 @@ windows/scripts/stage_runtime.sh build runtime
   their tests build.
 - `-DWINAPK_ARM64_JIT=ON` fetches dynarmic (needs the Boost headers) and
   builds the arm64 JIT. CI and releases use it; without it arm64 code runs on
-  the interpreter until its translation is ready. One patch is applied to it
-  (`cmake/dynarmic_recip_steps.patch`): FRECPS and FRSQRTS keep their
-  special case for 0 times infinity under the NaN optimization Win.apk uses.
+  the interpreter until its translation is ready. One change is made to it
+  (`cmake/dynarmic_patch.cmake`): FRECPS and FRSQRTS keep their special
+  case for 0 times infinity under the NaN optimization Win.apk uses.
 - `-DWINAPK_VERSION=v0.2.0-preview` (or `0.2.0`) is the version stamped into
   `Win.apk.exe` (`launcher/launcher.rc`, through a generated
   `winapk_version.h`), which Settings shows and the update check compares with

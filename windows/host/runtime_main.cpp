@@ -47,6 +47,7 @@
 #include "win32_window.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -601,13 +602,16 @@ bool install_app(Options* o, const fs::path& android_root) {
 // SQLite, ...). As Windows on ARM's translation cache and Box64's DynaCache
 // do, a whole translation is kept in <data>\aot-cache under a key of the
 // library's code (the text hash the loader checks), winapk-aot and clang
-// (each by size and date) and the flags, and an app with the same library
-// copies it instead of compiling. Translations made from a profile differ by
-// app and are not kept. The cache keeps to kAotCacheBytes, oldest use first.
+// (each by size and date), the flags and the CPU, and an app with the same
+// library links it (a second name for the same file, link_or_copy) instead
+// of compiling. Translations made from a profile differ by app and are not
+// kept. The cache keeps to kAotCacheBytes, oldest use first, and drops what
+// no app used for kAotCacheDays.
 
 constexpr size_t kAotFullBelow = 400000;
 constexpr size_t kAotPartInsns = 20000;
 constexpr uintmax_t kAotCacheBytes = uintmax_t{2} << 30;
+constexpr int kAotCacheDays = 60;
 constexpr uint64_t kAotJobBytes = uint64_t{512} << 20;  // memory to allow per clang (measured: 250-410 MB)
 constexpr unsigned kAotMaxFailures = 4;
 constexpr DWORD kAotStartDelayS = 60;
@@ -960,7 +964,10 @@ std::string aot_cache_key(const fs::path& so, const fs::path& clang) {
     return hex64(fnv1a(id));
 }
 
-// Keeps the cache within kAotCacheBytes, dropping the least recently used.
+// Keeps the cache within kAotCacheBytes, dropping the least recently used,
+// and drops what no app used for kAotCacheDays: a new Win.apk (another
+// winapk-aot, clang or kAotVersion) gives every library a new key, and the
+// old translations would otherwise stay until the cache is full.
 void aot_cache_trim(const fs::path& cache) {
     std::error_code ec;
     std::vector<std::pair<fs::file_time_type, fs::path>> files;
@@ -971,11 +978,22 @@ void aot_cache_trim(const fs::path& cache) {
         files.emplace_back(e.last_write_time(ec), e.path());
     }
     std::sort(files.begin(), files.end());
+    const auto stale = fs::file_time_type::clock::now() - std::chrono::hours(24 * kAotCacheDays);
     for (const auto& f : files) {
-        if (total <= kAotCacheBytes) break;
+        if (total <= kAotCacheBytes && f.first >= stale) break;
         const uintmax_t size = fs::file_size(f.second, ec);
-        if (fs::remove(f.second, ec)) total -= size;
+        if (fs::remove(f.second, ec)) total -= size;  // not one an app has loaded
     }
+}
+
+// A whole translation in the cache and in an app's library folder is one
+// file with two names, where the file system allows (NTFS): an app's DLL
+// costs no disk of its own. The cache only ever replaces a name (MoveFileEx),
+// never writes into a file, so an app's DLL never changes under it.
+bool link_or_copy(const fs::path& from, const fs::path& to) {
+    std::error_code ec;
+    fs::remove(to, ec);
+    return CreateHardLinkW(to.c_str(), from.c_str(), nullptr) || CopyFileW(from.c_str(), to.c_str(), FALSE);
 }
 
 // Puts a finished translation in place, unless the running app has the old
@@ -1022,8 +1040,7 @@ void aot_translate_one(const fs::path& so, const fs::path& clang, const fs::path
     fs::create_directories(work, ec);
     const fs::path cached = cache.empty() ? fs::path() : cache / (key + ".aot.dll");
     const fs::path dll = work / (so.filename().wstring() + L".aot.dll");
-    if (!cached.empty() && fs::exists(cached, ec) && CopyFileW(cached.c_str(), dll.c_str(), FALSE) &&
-        install_aot_dll(dll, so)) {
+    if (!cached.empty() && fs::exists(cached, ec) && link_or_copy(cached, dll) && install_aot_dll(dll, so)) {
         fs::last_write_time(cached, fs::file_time_type::clock::now(), ec);  // recently used
         write_aot_stamp(so, "full", profile_lines(so));
         fs::remove_all(work, ec);
@@ -1100,8 +1117,7 @@ void aot_translate_one(const fs::path& so, const fs::path& clang, const fs::path
     if (ok && rc == 0 && !cached.empty()) {  // whole: for every app with this library
         fs::create_directories(cache, ec);
         const fs::path part = cached.wstring() + L".tmp";
-        if (CopyFileW(dll.c_str(), part.c_str(), FALSE) &&
-            MoveFileExW(part.c_str(), cached.c_str(), MOVEFILE_REPLACE_EXISTING)) {
+        if (link_or_copy(dll, part) && MoveFileExW(part.c_str(), cached.c_str(), MOVEFILE_REPLACE_EXISTING)) {
             aot_cache_trim(cache);
         }
     }
@@ -1172,6 +1188,7 @@ int aot_translate_main(const fs::path& libs, const fs::path& cache, DWORD delay_
         return 1;
     }
     if (delay_s > 0) Sleep(delay_s * 1000);
+    if (!cache.empty()) aot_cache_trim(cache);
     std::error_code ec;
     for (const auto& e : fs::directory_iterator(libs / ".aot-tmp", ec)) {
         if (!e.is_directory(ec)) fs::remove(e.path(), ec);  // from before passes had a folder each

@@ -62,6 +62,8 @@
 
 #include "winapk/arm64_cpu.h"
 
+#include <cpuid.h>
+
 #include <cstddef>
 #include <cstdint>
 
@@ -139,8 +141,39 @@ inline uint64_t aot_hash_segment(uint64_t vaddr, const uint8_t* p, size_t n, uin
 
 // A signature of this CPU's model and of the features clang's -march=native
 // looks at (and of what the OS saves of them): a translation compiled on
-// another CPU is not loaded, nor taken from the shared cache.
-uint64_t aot_cpu_signature();
+// another CPU is not loaded, nor taken from the shared cache. (Here, not in
+// arm64_aot.cpp: the background worker uses it too.)
+inline uint64_t aot_cpu_signature() {
+    static const uint64_t signature = [] {
+        uint64_t h = 0xcbf29ce484222325ull;
+        auto add = [&](uint32_t v) { h = aot_hash(reinterpret_cast<const uint8_t*>(&v), sizeof v, h); };
+        unsigned a = 0, b = 0, c = 0, d = 0;
+        __cpuid(0, a, b, c, d);
+        const unsigned max = a;
+        add(b), add(c), add(d);  // the vendor
+        __cpuid(1, a, b, c, d);
+        add(a), add(c), add(d);  // family, model, stepping; features (not b: it holds the core's APIC id)
+        const bool osxsave = (c >> 27) & 1;
+        if (max >= 7) {
+            __cpuid_count(7, 0, a, b, c, d);
+            add(b), add(c), add(d);
+            __cpuid_count(7, 1, a, b, c, d);
+            add(a);
+        }
+        __cpuid(0x80000000u, a, b, c, d);
+        if (a >= 0x80000001u) {
+            __cpuid(0x80000001u, a, b, c, d);
+            add(c), add(d);
+        }
+        if (osxsave) {  // the register state the OS saves: AVX and AVX-512 need it
+            uint32_t lo, hi;
+            __asm__ volatile("xgetbv" : "=a"(lo), "=d"(hi) : "c"(0));
+            add(lo), add(hi);
+        }
+        return h ? h : 1;
+    }();
+    return signature;
+}
 
 // Loads `<so_path>.aot.dll` for an arm64 library mapped at `bias` whose
 // executable segments hash to `text_hash`; false if there is none or it

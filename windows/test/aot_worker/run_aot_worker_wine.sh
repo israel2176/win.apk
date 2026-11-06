@@ -5,7 +5,7 @@
 # and logs when each one runs. Checks, on generated arm64 libraries:
 #
 #   1. a whole translation: parts of kAotPartInsns, the stamp, the shared
-#      cache, the work folder gone;
+#      cache (one file with the app's DLL), the work folder gone;
 #   2. the worker killed half way: none of its compilers outlives it (the job
 #      object), and the next run compiles only the parts not done;
 #   3. a part that always fails: waits of 10, 40, 160 minutes, then no more
@@ -79,6 +79,8 @@ check "at most WINAPK_AOT_JOBS at once ($most)" test "$most" -le 3
 check "stamp full ($(stamp t1 libguest.so))" grep -q '^full 0 ' t1/lib/arm64/libguest.so.aot.stamp
 check "the DLL in place" test -f t1/lib/arm64/libguest.so.aot.dll
 check "the shared cache has it" test "$(ls t1/cache | wc -l)" -eq 1
+check "as the same file as the app's DLL (a hard link)" test "$(stat -c %i t1/cache/*.aot.dll)" = \
+    "$(stat -c %i t1/lib/arm64/libguest.so.aot.dll)"
 check "the work folder is gone" test -z "$(ls -A t1/lib/arm64/.aot-tmp)"
 check "nothing left to do" test "$(needs_work t1 libguest.so)" = 0
 

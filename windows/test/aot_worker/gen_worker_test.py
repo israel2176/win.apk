@@ -21,6 +21,7 @@ parts = [func(r"^std::string utf8\(const std::wstring& w\)"), func(r"^std::wstri
 a = src.index("// ---- arm64 translation, in the background"); b = src.index("// Step 1b, before the app's libraries load")
 out = '''// Generated from host/runtime_main.cpp: the background translation worker alone, for a test under Wine.
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
