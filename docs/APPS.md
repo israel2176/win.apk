@@ -78,12 +78,12 @@ of 28 F-Droid apps, headless, twice on the JIT alone and twice translated:
 VLC, Jitsi Meet (React Native), LocalSend and Lichess (Flutter), Godot
 editor and Revengate (Godot), OsmAnd, Telegram X, Minetest, Tensy, TIC-80,
 Tux Paint, Wesnoth, Simon Tatham's Puzzles, Just Player, LibreOffice
-Viewer, Kodi, Freedoom, MuPDF, Open Sudoku, GCompris, SimpleX. Each drew
-the same on both engines (the translated runs with 5-30% less memory and up
-to half the time in arm64 code). PPSSPP, Linphone and Emacs crash at start
-in `winapk-runtime.exe` itself, GNU Backgammon aborts, AAAAXY (Go) stops
-with "unaligned sysNoHugePageOS" and Firefox (Fennec) draws nothing: the same
-on the JIT, so not the translation.
+Viewer, Kodi, Freedoom, MuPDF and Open Sudoku drew the same on both engines
+(translated, with 5-30% less memory and up to half the time in arm64 code).
+PPSSPP, Linphone and Emacs crash at start in `winapk-runtime.exe` itself,
+GNU Backgammon aborts, AAAAXY (Go) stops with "unaligned sysNoHugePageOS",
+and Firefox (Fennec), GCompris and SimpleX draw nothing in 7 minutes: the
+same on the JIT, so not the translation.
 
 ### Adding a row
 
