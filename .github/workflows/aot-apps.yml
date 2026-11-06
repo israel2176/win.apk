@@ -1,6 +1,6 @@
 # One-off (to be deleted before the branch is merged): arm64 apps on the JIT
-# alone and then translated, with the translation's fixes
-# (.github/measure/aot_apps.py).
+# alone and then translated, with main's translation (before) and this
+# branch's (after) (.github/measure/aot_apps.py).
 name: arm64 apps, JIT and translated (one-off)
 
 on:
@@ -15,8 +15,68 @@ permissions:
   contents: read
 
 jobs:
-  build:
-    name: Build (Windows x64)
+  build-main:
+    name: Build main (before)
+    runs-on: windows-latest
+    timeout-minutes: 75
+    defaults:
+      run:
+        shell: msys2 {0}
+    env:
+      CCACHE_DIR: ${{ github.workspace }}\.ccache
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_COMPILERCHECK: content
+      CCACHE_MAXSIZE: 2G
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: aca069e763ebf638e2965fa91a651323b872a86f
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: CLANG64
+          install: unzip zip git
+          pacboy: >-
+            clang:p
+            cmake:p
+            ninja:p
+            boost:p
+            ccache:p
+      - uses: actions/cache/restore@v4
+        with:
+          path: .ccache
+          key: ccache-${{ github.sha }}
+          restore-keys: ccache-
+      - uses: actions/cache/restore@v4
+        with:
+          path: thirdparty/framework-res
+          key: framework-res-v2-${{ hashFiles('scripts/build_framework_res.sh', 'windows/scripts/build_framework_res.sh') }}
+      - uses: actions/cache/restore@v4
+        with:
+          path: thirdparty/angle-win
+          key: angle-${{ hashFiles('windows/scripts/fetch_angle.sh') }}
+      - name: Build
+        run: |
+          cmake -S windows -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=clang++ \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DWINAPK_JNI_INCLUDE="$(cygpath -u "$JAVA_HOME")/include" -DWINAPK_ARM64_JIT=ON
+          cmake --build build
+      - name: Stage the runtime
+        run: |
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          windows/scripts/stage_runtime.sh build stage
+      - uses: actions/upload-artifact@v4
+        with:
+          name: measure-stage-main
+          path: stage/
+          retention-days: 2
+          compression-level: 1
+
+  build-branch:
+    name: Build this branch (after)
     runs-on: windows-latest
     timeout-minutes: 75
     defaults:
@@ -68,48 +128,56 @@ jobs:
           windows/scripts/stage_runtime.sh build stage
       - uses: actions/upload-artifact@v4
         with:
-          name: measure-stage
+          name: measure-stage-branch
           path: stage/
           retention-days: 2
           compression-level: 1
 
   app:
-    name: ${{ matrix.pkg }}
-    needs: build
+    name: ${{ matrix.pkg }} ${{ matrix.build }}
+    needs: [build-main, build-branch]
     runs-on: windows-latest
     timeout-minutes: 150
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { pkg: org.moire.opensudoku, vc: '20261008' }
-          - { pkg: com.artifex.mupdf.viewer.app, vc: '270' }
-          - { pkg: org.jitsi.meet, vc: '26000002' }
-          - { pkg: org.localsend.localsend_app, vc: '643' }
-          - { pkg: org.videolan.vlc, vc: '13070206' }
-          - { pkg: net.minetest.minetest, vc: '5170000' }
-          - { pkg: se.voxelmanip.tensy, vc: '2' }
-          - { pkg: com.nesbox.tic, vc: '10100' }
-          - { pkg: org.wesnoth.Wesnoth, vc: '1192900002' }
-          - { pkg: net.nullsum.freedoom, vc: '20' }
-          - { pkg: org.gnu.emacs, vc: '310100003' }
-          - { pkg: org.tuxpaint, vc: '9350' }
-          - { pkg: org.xbmc.kodi, vc: '2103001' }
-          - { pkg: net.osmand.plus, vc: '541103' }
-          - { pkg: org.godotengine.editor.v4, vc: '407025003' }
-          - { pkg: net.gcompris.full, vc: '260201' }
-          - { pkg: org.documentfoundation.libreoffice, vc: '131' }
-          - { pkg: org.lichess.mobileV2, vc: '300303' }
-          - { pkg: com.clavierhaus.gnubg, vc: '103' }
-          - { pkg: chat.simplex.app, vc: '385' }
-          - { pkg: io.github.divverent.aaaaxy, vc: '108300344' }
-          - { pkg: com.brouken.player, vc: '2174' }
-          - { pkg: org.revengate.revengate, vc: '2001300' }
-          - { pkg: org.linphone, vc: '6000213' }
-          - { pkg: org.thunderdog.challegram, vc: '1800202' }
-          - { pkg: org.mozilla.fennec_fdroid, vc: '1590020' }
-          - { pkg: org.ppsspp.ppsspp, vc: '119030000' }
-          - { pkg: name.boyle.chris.sgtpuzzles, vc: '149' }
+          - { pkg: com.brouken.player, vc: '2174', build: main }
+          - { pkg: com.brouken.player, vc: '2174', build: branch }
+          - { pkg: com.nesbox.tic, vc: '10100', build: main }
+          - { pkg: com.nesbox.tic, vc: '10100', build: branch }
+          - { pkg: name.boyle.chris.sgtpuzzles, vc: '149', build: main }
+          - { pkg: name.boyle.chris.sgtpuzzles, vc: '149', build: branch }
+          - { pkg: net.minetest.minetest, vc: '5170000', build: main }
+          - { pkg: net.minetest.minetest, vc: '5170000', build: branch }
+          - { pkg: net.osmand.plus, vc: '541103', build: main }
+          - { pkg: net.osmand.plus, vc: '541103', build: branch }
+          - { pkg: org.godotengine.editor.v4, vc: '407025003', build: main }
+          - { pkg: org.godotengine.editor.v4, vc: '407025003', build: branch }
+          - { pkg: org.jitsi.meet, vc: '26000002', build: main }
+          - { pkg: org.jitsi.meet, vc: '26000002', build: branch }
+          - { pkg: org.localsend.localsend_app, vc: '643', build: main }
+          - { pkg: org.localsend.localsend_app, vc: '643', build: branch }
+          - { pkg: org.revengate.revengate, vc: '2001300', build: main }
+          - { pkg: org.revengate.revengate, vc: '2001300', build: branch }
+          - { pkg: org.thunderdog.challegram, vc: '1800202', build: main }
+          - { pkg: org.thunderdog.challegram, vc: '1800202', build: branch }
+          - { pkg: org.videolan.vlc, vc: '13070206', build: main }
+          - { pkg: org.videolan.vlc, vc: '13070206', build: branch }
+          - { pkg: se.voxelmanip.tensy, vc: '2', build: main }
+          - { pkg: se.voxelmanip.tensy, vc: '2', build: branch }
+          - { pkg: org.tuxpaint, vc: '9350', build: main }
+          - { pkg: org.tuxpaint, vc: '9350', build: branch }
+          - { pkg: org.lichess.mobileV2, vc: '300303', build: main }
+          - { pkg: org.lichess.mobileV2, vc: '300303', build: branch }
+          - { pkg: org.wesnoth.Wesnoth, vc: '1192900002', build: main }
+          - { pkg: org.wesnoth.Wesnoth, vc: '1192900002', build: branch }
+          - { pkg: net.gcompris.full, vc: '260201', build: main }
+          - { pkg: net.gcompris.full, vc: '260201', build: branch }
+          - { pkg: chat.simplex.app, vc: '385', build: main }
+          - { pkg: chat.simplex.app, vc: '385', build: branch }
+          - { pkg: org.mozilla.fennec_fdroid, vc: '1590020', build: main }
+          - { pkg: org.mozilla.fennec_fdroid, vc: '1590020', build: branch }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -118,18 +186,18 @@ jobs:
           java-version: '21'
       - uses: actions/download-artifact@v4
         with:
-          name: measure-stage
+          name: measure-stage-${{ matrix.build }}
           path: stage
       - name: Run
         shell: pwsh
         run: |
           python -m pip install --quiet psutil
           python .github/measure/aot_apps.py --runtime stage --jdk "$env:JAVA_HOME" `
-            --pkg ${{ matrix.pkg }} --vc ${{ matrix.vc }} --out out
+            --pkg ${{ matrix.pkg }} --vc ${{ matrix.vc }} --out out --translate-limit 1800
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: aot-${{ matrix.pkg }}
+          name: aot-${{ matrix.pkg }}-${{ matrix.build }}
           path: |
             out/*.log
             out/summary.json
