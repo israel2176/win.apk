@@ -452,8 +452,9 @@ void run_rebased(winapk::GuestLinker& linker, const std::filesystem::path& dir) 
     void* fn = sym(linker, lib, "isa_arith");
     if (!fn) return;
     const uint64_t at = reinterpret_cast<uint64_t>(fn);
-    check("the other library's translation is refused", !winapk::arm64::aot_lookup(at) &&
-                                                             !winapk::arm64::aot_lookup(at - 0x200000));
+    // Only this library's own addresses: 2 MB lower may hold another library the tests loaded,
+    // with its own translation, so a lookup there says nothing about this one (it failed CI that way).
+    check("the other library's translation is refused", !winapk::arm64::aot_lookup(at));
     const uint64_t in[3] = {1, 2, 3};
     check("runs", winapk::arm64::call(fn, in, 3) == isa_arith(1, 2, 3));
 }
