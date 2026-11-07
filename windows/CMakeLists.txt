@@ -229,7 +229,7 @@ if(WINAPK_JNI_INCLUDE)
   # The host that runs an APK. Like winapk-jvm-run it loads jvm.dll at
   # runtime.
   add_executable(winapk-runtime host/runtime_main.cpp host/host_natives.cpp host/native_log.cpp
-                              host/native_cocoa.cpp host/win32_window.cpp host/guest_libs.cpp
+                              host/native_cocoa.cpp host/win32_window.cpp host/guest_libs.cpp host/java_io_open.cpp
                               host/native_os.cpp host/native_image.cpp
                               host/native_looper.cpp host/native_audio.cpp host/audio_engine.cpp
                               host/audio_decode.cpp host/native_clipboard.cpp
@@ -299,7 +299,7 @@ if(WINAPK_JNI_INCLUDE)
 
   # Cross-process Binder over named pipes (host/binder_win.cpp) between real
   # JVMs: test/binder_test.cpp runs test/java/com/macapk/loader/BinderTransportTest.
-  add_executable(winapk-binder-test test/binder_test.cpp host/binder_win.cpp)
+  add_executable(winapk-binder-test test/binder_test.cpp host/binder_win.cpp host/java_io_open.cpp)
   target_include_directories(winapk-binder-test PRIVATE host "${WINAPK_JNI_INCLUDE}" "${WINAPK_JNI_INCLUDE}/win32")
   target_link_libraries(winapk-binder-test PRIVATE advapi32 bcrypt)
   target_link_options(winapk-binder-test PRIVATE -static -municode)

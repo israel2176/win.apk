@@ -2,6 +2,7 @@
 
 #include "host_natives.h"
 
+#include "java_io_open.h"
 #include "winapk/abi_thunk.h"
 
 #include <atomic>
@@ -225,6 +226,9 @@ bool register_host_natives(JNIEnv* env, jvmtiEnv* jvmti, NativeStats* stats) {
         env->DeleteLocalRef(methods);
         env->DeleteLocalRef(cls);
     }
+    // Every JVM this host runs (an app, the broker, --gms) opens java.io files
+    // so that they can be renamed and deleted while open, as on Android.
+    java_io_open_init(env);
     return true;
 }
 

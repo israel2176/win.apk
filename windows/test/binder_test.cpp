@@ -4,8 +4,8 @@
 //
 // It creates a HotSpot JVM with the runtime's framework and loader jars plus
 // the test classes, binds the transport's natives (and the few NativeOs ones
-// ParcelFileDescriptor needs) as winapk-runtime does, and calls the Java test's
-// main. The Java side (test/java/BinderTransportTest.java) starts more copies
+// ParcelFileDescriptor needs, and java.io's opens) as winapk-runtime does, and
+// calls the Java test's main; FileShareDeleteTest runs in it too. The Java side (test/java/BinderTransportTest.java) starts more copies
 // of this program for its other processes: the transport only talks to a peer
 // that runs the same executable as this user.
 //
@@ -15,6 +15,7 @@
 // Java main passes to System.exit (0 = every check passed).
 
 #include "host_natives.h"
+#include "java_io_open.h"
 
 #include <cstdio>
 #include <string>
@@ -123,6 +124,9 @@ int wmain(int argc, wchar_t** argv) {
     // scratch android root, as the runtime's -Dmacapk.android.root does.
     if (const std::wstring root = env_var(L"WINAPK_TEST_ANDROID_ROOT"); !root.empty())
         opts.push_back("-Dmacapk.android.root=" + utf8(root));
+    // Win.apk's java.base overlay, as winapk-runtime runs with it.
+    if (const std::wstring patch = env_var(L"WINAPK_TEST_JAVA_BASE_PATCH"); !patch.empty())
+        opts.push_back("--patch-module=java.base=" + utf8(patch));
     std::vector<JavaVMOption> jopts(opts.size());
     for (size_t i = 0; i < opts.size(); ++i) {
         jopts[i].optionString = const_cast<char*>(opts[i].c_str());
@@ -140,6 +144,8 @@ int wmain(int argc, wchar_t** argv) {
     const winapk::host::HostMethods binder = winapk::host::native_binder_methods();
     if (!bind(env, binder.methods, binder.count) || !bind(env, kOs, sizeof kOs / sizeof kOs[0]))
         return fail("binding the natives");
+    // java.io's opens as winapk-runtime binds them (FileShareDeleteTest).
+    if (!winapk::host::java_io_open_init(env)) return fail("binding java.io's opens");
 
     std::string main_class = utf8(argv[2]);
     for (char& c : main_class)

@@ -393,6 +393,18 @@ jobs:
           ./build/winapk-binder-test.exe "$cp;$(cygpath -w build/binder-test)" com.macapk.loader.BinderTransportTest \
             | tee binder-test.log
           grep -q "ALL PASSED" binder-test.log
+      - name: Run the java.io share-delete test
+        run: |
+          # java.io's opens as winapk-runtime binds them (host/java_io_open.cpp):
+          # a file renamed or deleted while a stream has it open, and renamed
+          # over one a stream has open (the overlay's WinNTFileSystem), as on
+          # Android; the JDK's behaviour otherwise.
+          export PATH="$(cygpath -u "$JAVA_HOME")/bin/server:$(cygpath -u "$JAVA_HOME")/bin:$PATH"
+          "$(cygpath -u "$JAVA_HOME")/bin/javac" -d build/share-delete-test windows/test/java/FileShareDeleteTest.java
+          WINAPK_TEST_JAVA_BASE_PATCH="$(cygpath -w stage/lib/java_base_patch)" \
+            ./build/winapk-binder-test.exe "$(cygpath -w build/share-delete-test)" FileShareDeleteTest \
+            | tee share-delete-test.log
+          grep -q "ALL PASSED" share-delete-test.log
       - name: Run the GL test
         run: |
           # It needs ANGLE next to it, which staging put in stage/bin.
