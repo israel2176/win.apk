@@ -364,7 +364,8 @@ every such change is listed here:
   services installed, the in-process GMS stand-ins stay out also before the
   process attaches to the broker.
 - `runtime/java/com/macapk/gms/GmsCli.java`, `GoogleAuthClient.java`: the
-  `signin-master` verb (an account from a master token, on stdin).
+  `signin-master` verb (an account from a master token, on stdin); a refusal
+  from Google's `/auth` is logged with its reason line, not only its status.
 - `runtime/java/com/macapk/loader/Manifest.java`, `MacApkPackageManager.java`,
   `android/content/pm/PackageManager.java`: `<permission-tree>`, and
   `addPermission` / `removePermission` inside a tree of the package's own

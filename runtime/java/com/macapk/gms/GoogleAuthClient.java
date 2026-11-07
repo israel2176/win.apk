@@ -465,6 +465,11 @@ public final class GoogleAuthClient {
                 // Keeping that text is the whole difference between a diagnosable
                 // failure and "HTTP 403".
                 sLastError.set("HTTP " + r.status + " " + firstLine(body));
+                // In the log too: a caller that drops lastError() (the broker's
+                // account service answering an app) otherwise leaves only the
+                // status. The reason line carries no credential.
+                String why = sLastError.get();
+                log("refused " + form.get("service") + ": " + (why.length() > 200 ? why.substring(0, 200) + "..." : why));
                 return null;
             }
             Map<String, String> parsed = parse(body);

@@ -28,7 +28,8 @@
  * pattern failed on every save after the first: the framework's launcher icon
  * was rendered again on every start and its "already rendered" stamp never
  * written. Only a file over a file; a directory target still fails, as
- * rename(2) fails onto a non-empty one.
+ * rename(2) fails onto a non-empty one. A rename that still fails is logged
+ * with Windows' reason.
  */
 /*
  * Copyright (c) 2001, 2023, Oracle and/or its affiliates. All rights reserved.
@@ -651,15 +652,32 @@ final class WinNTFileSystem extends FileSystem {
 
     // Win.apk: rename(2) replaces an existing file in one step; MoveFileEx with
     // MOVEFILE_REPLACE_EXISTING (what an atomic Files.move does) is the same.
+    // A rename that still fails is logged with Windows' reason (the first few
+    // per process): renameTo only answers false, and where rename(2) succeeds
+    // but Windows refuses (a file some handle holds open), the app's own error
+    // says nothing about why.
     private boolean renameOverFile(File f1, File f2) {
-        if (!f1.isFile() || !f2.isFile()) return false;
         try {
-            java.nio.file.Files.move(f1.toPath(), f2.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING,
-                                     java.nio.file.StandardCopyOption.ATOMIC_MOVE);
-            return true;
+            if (f1.isFile() && (f2.isFile() || !f2.exists())) {
+                java.nio.file.Files.move(f1.toPath(), f2.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                                         java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+                return true;
+            }
+            if (f1.exists()) noteRenameFailure(f1, f2, "not a file renamed onto a file");
         } catch (Exception e) {
-            return false;
+            noteRenameFailure(f1, f2, String.valueOf(e));
         }
+        return false;
+    }
+
+    private static final java.util.concurrent.atomic.AtomicInteger renameFailures =
+        new java.util.concurrent.atomic.AtomicInteger();
+
+    private static void noteRenameFailure(File f1, File f2, String why) {
+        int n = renameFailures.incrementAndGet();
+        if (n > 20) return;
+        System.err.println("[win.apk] rename " + f1.getPath() + " -> " + f2.getPath() + " failed: " + why
+                           + (n == 20 ? " (no more rename failures are logged)" : ""));
     }
 
     /* -- Filesystem interface -- */

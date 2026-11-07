@@ -1730,6 +1730,9 @@ std::wstring instance_key(const fs::path& app_dir) {
     return name;
 }
 
+// The holder's flags, after its pid in the "-pid" mapping.
+constexpr DWORD kHolderServiceHost = 1;
+
 bool claim_single_instance(const std::wstring& key) {
     if (!env_var(L"WINAPK_ALLOW_SECOND_INSTANCE").empty()) return true;
     HANDLE m = CreateMutexW(nullptr, FALSE, key.c_str());
@@ -1739,13 +1742,46 @@ bool claim_single_instance(const std::wstring& key) {
         CloseHandle(m);
         return false;
     }
-    // Held until exit, like the mapping that names us.
-    if (HANDLE map = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, sizeof(DWORD),
+    // Held until exit, like the mapping that names us: our pid, then whether
+    // we are a service host (kHolderServiceHost).
+    if (HANDLE map = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, 2 * sizeof(DWORD),
                                         (key + L"-pid").c_str())) {
-        if (auto* pid = static_cast<DWORD*>(MapViewOfFile(map, FILE_MAP_WRITE, 0, 0, sizeof(DWORD))))
-            *pid = GetCurrentProcessId();
+        if (auto* p = static_cast<DWORD*>(MapViewOfFile(map, FILE_MAP_WRITE, 0, 0, 2 * sizeof(DWORD)))) {
+            p[0] = GetCurrentProcessId();
+            p[1] = env_var(L"MACAPK_SERVICE_HOST") == L"1" ? kHolderServiceHost : 0;
+        }
     }
     return true;
+}
+
+// A user's start of an app whose process the system broker started as a
+// service host (to answer another app's bind or broadcast: Play services binds
+// the Play Store's, for one). On a device the activity would start in that
+// process; ours runs headless, with no window to show it in, so the start
+// would be refused and nothing would appear. Stop the host and let this start
+// take its place: its clients see the binder die and bind again, which the
+// broker answers from the new process, as when Android kills a background
+// process. True when the holder was a service host and has exited.
+bool replace_service_host(const std::wstring& key) {
+    if (env_var(L"MACAPK_SERVICE_HOST") == L"1") return false;  // the broker's own start: the holder serves it
+    HANDLE map = OpenFileMappingW(FILE_MAP_READ, FALSE, (key + L"-pid").c_str());
+    if (!map) return false;
+    DWORD pid = 0, flags = 0;
+    if (const auto* p = static_cast<const DWORD*>(MapViewOfFile(map, FILE_MAP_READ, 0, 0, 2 * sizeof(DWORD)))) {
+        pid = p[0];
+        flags = p[1];
+        UnmapViewOfFile(p);
+    }
+    CloseHandle(map);
+    if (!pid || !(flags & kHolderServiceHost)) return false;
+    HANDLE h = OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, FALSE, pid);
+    if (!h) return false;
+    std::fprintf(stderr, "[win.apk] the system broker runs this app as a service host (pid %lu); "
+                         "restarting it with a window\n", static_cast<unsigned long>(pid));
+    TerminateProcess(h, 1);
+    const bool gone = WaitForSingleObject(h, 15000) == WAIT_OBJECT_0;
+    CloseHandle(h);
+    return gone;
 }
 
 struct WindowSearch {
@@ -1987,7 +2023,8 @@ int wmain(int argc, wchar_t** argv) {
         return 1;
     }
     const std::wstring instance = instance_key(b.app_dir);
-    if (!claim_single_instance(instance)) {
+    if (!claim_single_instance(instance) &&
+        (b.options.install_only || !replace_service_host(instance) || !claim_single_instance(instance))) {
         std::fprintf(stderr, "[win.apk] %s is already running; not starting a second copy\n",
                      utf8(b.app_dir.filename().wstring()).c_str());
         if (b.options.install_only) return 3;

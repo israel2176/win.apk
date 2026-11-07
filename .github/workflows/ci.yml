@@ -411,6 +411,22 @@ jobs:
           timeout 600 ./stage/bin/winapk-runtime.exe --apk sudoku.apk --jdk "$JAVA_HOME" --data "$(cygpath -w "$PWD/appdata")" \
             > boot.log 2>&1 || { tail -n 200 boot.log; exit 1; }
           grep -E "first frame presented|frames presented" boot.log
+      - name: Start an app the broker runs as a service host
+        run: |
+          # The broker starts an app headless, with no window, to serve another
+          # app (MACAPK_SERVICE_HOST=1). The user's start of that app replaces
+          # the host instead of being turned away as a second copy, and draws.
+          data="$(cygpath -w "$PWD/appdata")"
+          MACAPK_SERVICE_HOST=1 WINAPK_HEADLESS=1 ./stage/bin/winapk-runtime.exe --apk sudoku.apk \
+            --jdk "$JAVA_HOME" --data "$data" > host.log 2>&1 &
+          for i in $(seq 1 120); do grep -q "service host: entering main loop" host.log && break; sleep 2; done
+          grep "service host: entering main loop" host.log || { tail -n 100 host.log; exit 1; }
+          export WINAPK_HEADLESS=1 WINAPK_HEADLESS_EXIT_AFTER_FRAMES=30
+          timeout 600 ./stage/bin/winapk-runtime.exe --apk sudoku.apk --jdk "$JAVA_HOME" --data "$data" \
+            > replace.log 2>&1 || { tail -n 200 replace.log; exit 1; }
+          grep -F "runs this app as a service host" replace.log
+          grep -E "frames presented" replace.log
+          wait || true   # the host, stopped by the start that replaced it
       - name: Run the GMS layer's CLI
         run: |
           # winapk-runtime --gms: a JVM with the framework jars and the host
@@ -449,6 +465,8 @@ jobs:
           path: |
             boot.log
             window.log
+            host.log
+            replace.log
             frame.bmp
 
   smoke:

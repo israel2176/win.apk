@@ -466,7 +466,11 @@ the user installed run as apps, as upstream runs them on the Mac:
   (`Local\WinApk-system`, then the pipe name); it exits when no app has been
   open for a minute. It starts an app for another's request as the launcher
   would, `winapk-runtime --apk <library file>`, headless; a second
-  `android:process` of a package gets its own single-instance key.
+  `android:process` of a package gets its own single-instance key. When you
+  open an app the broker is running headless that way (Play services binds
+  the Play Store's services, for one), the new start stops the headless
+  process and takes its place with a window; its clients bind again, as
+  after Android stops a background process.
 - **Who calls.** The calling pid is the OS's (`GetNamedPipeClientProcessId`);
   no uid travels. The broker knows a process as the package it started it as,
   or the package whose installed APK the process's command line (`--apk`)
