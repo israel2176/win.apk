@@ -20,7 +20,7 @@ to Windows x64. It is not affiliated with or endorsed by the Mac.apk project.
 > games are partly there. See [What works](#what-works) and
 > [`docs/APPS.md`](docs/APPS.md) before you try an app.
 
-![The Win.apk library: a drop zone for installing apps above a grid of installed apps](docs/images/library.png)
+![The Win.apk library: the navigation pane beside a grid of installed apps, with Add app at the top](docs/images/library.png)
 
 ## Contents
 
