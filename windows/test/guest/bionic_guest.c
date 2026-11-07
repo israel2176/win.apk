@@ -58,6 +58,8 @@ pthread_t pthread_self(void);
 
 int open(const char*, int, ...);
 int close(int);
+int fsync(int);
+int fdatasync(int);
 ssize_t read(int, void*, size_t);
 ssize_t write(int, const void*, size_t);
 off_t lseek(int, off_t, int);
@@ -1200,6 +1202,12 @@ static void test_at_and_cacerts(const char* dir) {
                                                             (st.mode & 0170000) == 0040000, 0);
     rmdir(path);
     snprintf(path, sizeof path, "%s/at.txt", sub);
+    // LevelDB syncs the database directory after its MANIFEST, and a file
+    // opened read-only may be synced too.
+    check("fsync of a directory descriptor", fsync(dfd) == 0 && fdatasync(dfd) == 0, 0);
+    fd = openat(dfd, "at.txt", 0);
+    check("fsync of a read-only descriptor", fd >= 0 && fsync(fd) == 0, 0);
+    if (fd >= 0) close(fd);
     DIR* d = fdopendir(dfd);
     int found = 0;
     for (struct dirent* e; d && (e = readdir(d));) found |= strcmp(e->d_name, "at.txt") == 0;
