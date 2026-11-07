@@ -47,6 +47,7 @@ public final class GmsCli {
                 case "signin-url": signinUrl(); return 0;
                 case "signin":   return signin(arg(args, 1, "<oauth_token>"));
                 case "signin-window": return signinWindow();
+                case "signin-master": return signinMaster();
                 case "accounts": return accounts();
                 case "gcmtoken": return gcmtoken(arg(args, 1, "<package>"),
                                                  arg(args, 2, "<senderId>"),
@@ -87,6 +88,9 @@ public final class GmsCli {
           + "  gcmtoken <pkg> <sender> [certSha1]   register for FCM push -> a real token\n"
           + "  mcslogin                connect+login to Google's MCS push server (framing+auth test)\n"
           + "  signin <oauth_token>    exchange a WebView oauth_token for a master token\n"
+          + "  signin-master           add an account from its e-mail and master token, read as two\n"
+          + "                          lines from stdin (never arguments: a command line is visible\n"
+          + "                          to every process); for tests and for moving an account\n"
           + "  token <scope>           fetch/print a scoped bearer token (redacted)\n"
           + "  idtoken <pkg> <certSha1> <serverClientId> [--consent]\n"
           + "                          ask /auth for a Google sign-in ID token for <pkg> on its OWN\n"
@@ -214,6 +218,30 @@ public final class GmsCli {
         }
         System.out.println("SIGNED_IN\t" + email);
         System.out.println("services : " + GmsStore.accountData(email, "services"));
+        return 0;
+    }
+
+    /**
+     * An account whose master token the caller already holds (a test account, or
+     * one moved from another device): what `signin` stores after its exchange,
+     * without the browser half. The token is checked with Google first, so a
+     * wrong or revoked one is an error rather than a stored account that fails
+     * later. Read from stdin so it never appears in a process list.
+     */
+    private static int signinMaster() throws java.io.IOException {
+        java.io.BufferedReader in = new java.io.BufferedReader(
+                new java.io.InputStreamReader(System.in, java.nio.charset.StandardCharsets.UTF_8));
+        String email = in.readLine(), master = in.readLine();
+        if (email == null || master == null || email.trim().isEmpty() || master.trim().isEmpty()) {
+            System.out.println("ERROR\texpected two lines on stdin: the e-mail address, then the master token");
+            return 2;
+        }
+        String signedIn = GoogleAuthClient.signInWithMasterToken(email.trim(), master.trim());
+        if (signedIn == null) {
+            System.out.println("ERROR\t" + GoogleAuthClient.lastError());
+            return 1;
+        }
+        System.out.println("SIGNED_IN\t" + GoogleAuthenticator.redact(signedIn));
         return 0;
     }
 

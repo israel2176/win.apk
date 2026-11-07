@@ -134,6 +134,10 @@ converts and writes the icon and name, then exits (3 if the app is running).
 `--gms` runs upstream's `com.macapk.gms.GmsCli` (`status`, `selftest`,
 `accounts`, `signin-window`, `signout`, `checkin`, `license`, `gcmtoken`...)
 with no app; exit 0 done, 1 error, 2 cancelled or bad arguments.
+`--gms signin-master` adds a Google account from its e-mail and master token,
+read as two lines from standard input, after Google accepts the token; with
+Google services on, the broker puts it in the accounts table as the device's
+Google account (for tests with a test account, never on a command line).
 
 `Win.apk.exe` has the user-facing command line (`<file>`, `--run`) and the
 helper verbs `install`, `uninstall`, `runtime-permission`, `special-access`
@@ -353,6 +357,12 @@ every such change is listed here:
   name on one thread is answered from the innermost base context, as a
   ContextImpl would (Play services' `GmsApplication` cycled through a wrapper
   around itself into a StackOverflowError).
+- `runtime/java/com/macapk/gms/GmsCli.java`, `GoogleAuthClient.java`: the
+  `signin-master` verb (an account from a master token, on stdin).
+- `runtime/java/com/macapk/loader/Manifest.java`, `MacApkPackageManager.java`,
+  `android/content/pm/PackageManager.java`: `<permission-tree>`, and
+  `addPermission` / `removePermission` inside a tree of the package's own
+  (Google Services Framework adds its GOOGLE_AUTH.<service> permissions so).
 - `runtime/java/com/macapk/loader/ApkVerification.java` (new),
   `MacApkPackageManager.java`, `android/content/pm/PackageManager.java`,
   `Signature.java`, `com/macapk/gms/GoogleGmsCertificate.java`: APK

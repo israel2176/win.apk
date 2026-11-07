@@ -1371,10 +1371,10 @@ public abstract class PackageManager {
     // AOSP lets an app add permissions AT RUNTIME, but only inside a
     // <permission-tree> the app itself declares, and PackageManagerService
     // enforces that with a SecurityException ("Calling uid ... is not allowed to
-    // add to permission tree"). Mac.apk models no permission trees at all --
-    // com.macapk.loader.Manifest parses <permission> and <permission-group> but
-    // not <permission-tree> -- so NO name can be inside one, and the
-    // SecurityException is the answer a device gives for the same call.
+    // add to permission tree"). This base class knows no package, so no name is
+    // inside a tree of the caller's and the SecurityException is the answer;
+    // com.macapk.loader.MacApkPackageManager accepts names inside the
+    // <permission-tree>s of its own package's manifest.
     //
     // The alternative (accept and store the permission) would be worse than a
     // no-op: checkPermission answers from the manifest, so a stored permission

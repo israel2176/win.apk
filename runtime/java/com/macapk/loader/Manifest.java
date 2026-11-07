@@ -589,6 +589,9 @@ public final class Manifest {
     }
     /** `<queries><intent>` declarations (AppsFilterUtils.canQueryViaComponents). */
     public java.util.List<QueriesIntent> queriesIntents = java.util.Collections.emptyList();
+    /** `<permission-tree android:name>`s: the name spaces under which this
+     *  package may add permissions at run time (PackageManager.addPermission). */
+    public java.util.List<String> permissionTrees = java.util.Collections.emptyList();
     /** `<queries><provider android:authorities>`, split on ';' (matchesProviders). */
     public java.util.Set<String> queriesProviders = java.util.Collections.emptySet();
 
@@ -1925,6 +1928,7 @@ public final class Manifest {
         java.util.List<PermissionEntry> permissions = new java.util.ArrayList<>();
         java.util.List<PermissionGroupEntry> permissionGroups =
             new java.util.ArrayList<>();
+        java.util.List<String> permissionTrees = new java.util.ArrayList<>();
         java.util.List<FeatureEntry> reqFeatures = new java.util.ArrayList<>();
         java.util.List<String> queriesPackages = new java.util.ArrayList<>();
         java.util.List<QueriesIntent> queriesIntents = new java.util.ArrayList<>();
@@ -1974,6 +1978,15 @@ public final class Manifest {
                         parseProtectionLevel(
                             e.getAttributeNS(ANDROID_NS, "protectionLevel")),
                         attrInt(e, "permissionFlags", 0)));
+                    break;
+                }
+                case "permission-tree": {
+                    // ParsedPermissionUtils.parsePermissionTree: the name needs
+                    // at least two dots past the first segment's start, else
+                    // AOSP fails the parse; such a tree is just not recorded here.
+                    String name = e.getAttributeNS(ANDROID_NS, "name");
+                    if (name == null || name.indexOf('.', name.indexOf('.') + 1) < 0) break;
+                    permissionTrees.add(name);
                     break;
                 }
                 case "permission-group": {
@@ -2140,6 +2153,7 @@ public final class Manifest {
                             applicationEnabled,
                             componentProcesses, queriesPackages);
         built.queriesIntents = queriesIntents;
+        built.permissionTrees = permissionTrees;
         built.launchableCategory = launchCategory;
         built.queriesProviders = queriesProviders;
         built.applicationIconRaw = appIconRaw;

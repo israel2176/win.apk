@@ -117,6 +117,40 @@ public final class GoogleAuthClient {
         return email;
     }
 
+    /**
+     * Store an account from a master token the caller already holds, after
+     * Google accepts it: the same ac2dm call as above with the master token as
+     * `Token` (no ACCESS_TOKEN), which answers an Auth for it and, with
+     * get_accountid, the account's id (gaia id). Returns the e-mail, or null
+     * with lastError() set.
+     */
+    public static String signInWithMasterToken(String email, String master) {
+        if (email == null || master == null || email.isEmpty() || master.isEmpty()) {
+            sLastError.set("no e-mail or master token supplied");
+            return null;
+        }
+        Map<String, String> form = baseParams();
+        form.put("Email", email);
+        form.put("service", "ac2dm");
+        form.put("source", "android");
+        form.put("Token", master);
+        form.put("get_accountid", "1");
+        Map<String, String> resp = post(form);
+        if (resp == null) return null;
+        if (resp.get("Auth") == null) {
+            sLastError.set("Google did not accept the master token (keys: " + resp.keySet() + ")");
+            return null;
+        }
+        GmsStore.putAccount(email, master);
+        if (resp.get("services")  != null) GmsStore.putAccountData(email, "services",  resp.get("services"));
+        if (resp.get("accountId") != null) GmsStore.putAccountData(email, "accountId", resp.get("accountId"));
+        if (resp.get("firstName") != null) GmsStore.putAccountData(email, "firstName", resp.get("firstName"));
+        if (resp.get("lastName")  != null) GmsStore.putAccountData(email, "lastName",  resp.get("lastName"));
+        log("signed in " + GoogleAuthenticator.redact(email) + " from a master token (accountId "
+            + (resp.get("accountId") != null ? "present" : "absent") + ")");
+        return email;
+    }
+
     // ===================================================================
     // Call 2: master token -> scoped token
     // ===================================================================

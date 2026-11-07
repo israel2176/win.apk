@@ -3801,6 +3801,43 @@ public final class MacApkPackageManager extends PackageManager {
      *  Rollback: MACAPK_PM_SELF_ONLY=0 restores the legacy blanket GRANTED,
      *  the same switch that restores the legacy "every package is installed"
      *  answer -- one flag, because it is one question. */
+    // ---- dynamic permissions (AOSP PermissionManagerServiceImpl.addPermission) ----
+    // A package may add permissions at run time inside a <permission-tree> it
+    // declares (enforcePermissionTree: the name is the tree's name plus ".<more>",
+    // and the tree's owner is the caller). Google Services Framework adds
+    // com.google.android.googleapps.permission.GOOGLE_AUTH.<service> this way
+    // when packages change, and the SecurityException every call used to get
+    // killed its ServiceWatcherUpdatePackages thread. The added names are kept
+    // for this process, as PMS keeps them until reboot; nothing checks them here.
+    private static final java.util.Map<String, android.content.pm.PermissionInfo> sDynamicPermissions =
+        new java.util.concurrent.ConcurrentHashMap<>();
+
+    private String macapkPermissionTreeOf(String name) {
+        Manifest m = manifest();
+        if (name == null || m == null) return null;
+        for (String tree : m.permissionTrees) {
+            if (name.length() > tree.length() && name.startsWith(tree) && name.charAt(tree.length()) == '.') {
+                return tree;
+            }
+        }
+        return null;
+    }
+
+    @Override public boolean addPermission(android.content.pm.PermissionInfo info) {
+        String name = info != null ? info.name : null;
+        if (macapkPermissionTreeOf(name) == null) return super.addPermission(info);
+        return sDynamicPermissions.put(name, info) == null;
+    }
+
+    @Override public boolean addPermissionAsync(android.content.pm.PermissionInfo info) {
+        return addPermission(info);
+    }
+
+    @Override public void removePermission(String permName) {
+        if (macapkPermissionTreeOf(permName) == null) { super.removePermission(permName); return; }
+        sDynamicPermissions.remove(permName);
+    }
+
     @Override public int checkPermission(String permName, String pkgName) {
         // Another package the Mac.apk broker serves answers from ITS manifest
         // (see getPackageInfo); a package asking about ITSELF is never the
