@@ -62,6 +62,15 @@ public final class AppUids {
             try (RandomAccessFile raf = new RandomAccessFile(f, "rw");
                  FileLock lock = raf.getChannel().lock()) {
                 Properties p = read(raf);
+                // A package's uid is fixed once assigned, as PMS keeps it for the
+                // life of the install. A caller that could not read the package's
+                // manifest passes no sharedUserId; that must not move a member of
+                // a shared uid to a uid of its own (the GMS run saw the Play Store
+                // listed at com.google.uid.shared's uid AND at a second one), so
+                // an existing assignment answers it.
+                String known = p.getProperty("member:" + pkg);
+                if (sharedUserId == null && known != null) return Integer.parseInt(known);
+                if (sharedUserId == null) sharedUserId = Manifest.impliedSharedUserId(pkg);
                 String key = sharedUserId != null ? "shared:" + sharedUserId : "pkg:" + pkg;
                 String v = p.getProperty(key);
                 int uid;

@@ -62,13 +62,39 @@ public class ContextWrapper extends Context {
      *  null. Without the fallback, Application (which sets
      *  baseContext=null in its no-arg ctor) returns null for every
      *  system service and apps that cast the result NPE. */
+    private static final ThreadLocal<java.util.IdentityHashMap<ContextWrapper, String>> sActiveGetService =
+        ThreadLocal.withInitial(java.util.IdentityHashMap::new);
+
     @Override public Object getSystemService(String name) {
         // v1.0.102 diag: trace the CW path so we can localize where a
         // getSystemService("jobscheduler") request is going.
         Object svc = null;
         String via = "super";
         if (baseContext != null) {
-            svc = baseContext.getSystemService(name);
+            // A wrapper this runtime builds AROUND an app context (the
+            // createConfigurationContext and storage-context wrappers) has the
+            // app as its base, where AOSP's would be a ContextImpl that never
+            // calls back into the app. An Application whose getSystemService
+            // asks such a wrapper of itself (Google Play services'
+            // GmsApplication) then cycled app -> wrapper -> app until a
+            // StackOverflowError killed the thread. Re-entering the same wrapper
+            // for the same name on one thread can only be that cycle: answer it
+            // from the innermost base context, the ContextImpl's place.
+            java.util.IdentityHashMap<ContextWrapper, String> active = sActiveGetService.get();
+            if (name != null && name.equals(active.get(this))) {
+                Context inner = baseContext;
+                while (inner instanceof ContextWrapper && ((ContextWrapper) inner).baseContext != null) {
+                    inner = ((ContextWrapper) inner).baseContext;
+                }
+                return inner instanceof ContextWrapper ? super.getSystemService(name)
+                                                       : inner.getSystemService(name);
+            }
+            String outer = active.put(this, name);
+            try {
+                svc = baseContext.getSystemService(name);
+            } finally {
+                if (outer != null) active.put(this, outer); else active.remove(this);
+            }
             via = "baseContext(" + baseContext.getClass().getSimpleName() + ")";
         }
         if (svc == null) {

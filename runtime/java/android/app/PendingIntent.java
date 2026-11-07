@@ -59,6 +59,10 @@ public final class PendingIntent implements Parcelable {
     private Sender mSender;
     private IBinder mRemote;
     private String mCreatorPackage;   // carried for a token from another process
+    /** The creator's app uid, carried with the token; -1 = created here (our
+     *  own uid). AOSP answers getCreatorUid() from ActivityManager's record of
+     *  the IIntentSender; the token's own process is the creator here. */
+    private int mCreatorUid = -1;
 
     private static final int TX_SEND = IBinder.FIRST_CALL_TRANSACTION;
     private static final int TX_CANCEL = IBinder.FIRST_CALL_TRANSACTION + 1;
@@ -363,7 +367,13 @@ public final class PendingIntent implements Parcelable {
         return creatorContext != null ? creatorContext.getPackageName() : null;
     }
     public String getTargetPackage() { return getCreatorPackage(); }
-    public int getCreatorUid() { return 0; }
+    /** AOSP: the uid of the app that created this PendingIntent. Google Play
+     *  services compares it with the package and the calling uid of a GCM
+     *  registration (the "app" extra), so it must be the creator's real app
+     *  uid, not 0 (root). */
+    public int getCreatorUid() {
+        return mCreatorUid >= 0 ? mCreatorUid : android.os.Process.myUid();
+    }
     public Intent getIntent() {
         if (intent != null) return intent;
         if (intents != null && intents.length > 0) return intents[intents.length - 1];
@@ -440,6 +450,7 @@ public final class PendingIntent implements Parcelable {
         // token that already came from elsewhere forwards ITS remote, so a
         // token passed on through a third process still reaches the creator.
         dest.writeString(getCreatorPackage());
+        dest.writeInt(getCreatorUid());
         dest.writeStrongBinder(mRemote != null ? mRemote : origin().sender());
     }
 
@@ -454,6 +465,7 @@ public final class PendingIntent implements Parcelable {
             p.intents = s.createTypedArray(Intent.CREATOR);
             p.canceled = s.readInt() != 0;
             p.mCreatorPackage = s.readString();
+            p.mCreatorUid = s.readInt();
             IBinder b = s.readStrongBinder();
             // Our own token came back (same process). AOSP hands back a NEW
             // PendingIntent around the SAME IIntentSender, so it is equal to,

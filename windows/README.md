@@ -211,7 +211,7 @@ Every test is a program built by CMake; `ci.yml` runs each of them on
 | `winapk-jvm-run <jni_guest.so> <classes>` | A real HotSpot JVM loads a guest library through the linker: its `JNI_OnLoad` registers a native through the guest `RegisterNatives`, another native is bound by name through the `NativeMethodBind` hook, both are called from Java and call back through the variadic bridge. Run with the x86_64 and the arm64 build of the library, and again on the staged `android-framework.jar` for libjnigraphics |
 | `test/java/PermissionModelTest.java` | `SpecialAccessStore.GroupModel` against PermissionController's rules (grant, deny, deny twice, auto grant, background permissions, legacy targets, App info rows) |
 | `test/java/FileSeparatorRewriteTest.java` | Guest code reads Android's `/` from `File.separator` while the JDK's own classes keep the backslash |
-| `winapk-binder-test <classpath> com.macapk.loader.BinderTransportTest` | `host/binder_win.cpp` between real JVMs in three processes (`test/java/com/macapk/loader/BinderTransportTest.java`): transact, the OS calling pid and the receiver-derived uid, oneway order, a nested callback, binder identity both ways, fds both ways, death notification; then the system broker's checks: a process that is no installed app, or that claims another package, is refused, android:exported, the package uid |
+| `winapk-binder-test <classpath> com.macapk.loader.BinderTransportTest` | `host/binder_win.cpp` between real JVMs in three processes (`test/java/com/macapk/loader/BinderTransportTest.java`): transact, the OS calling pid and the receiver-derived uid, oneway order, a nested callback, binder identity both ways, a Messenger and its replyTo with the sender's uid in `Message.sendingUid` and a PendingIntent's creator uid, fds both ways, death notification; then the system broker's checks: a process that is no installed app, or that claims another package, is refused, android:exported, the package uid |
 | Headless boot, window boot, GMS CLI (CI steps) | The staged runtime boots the F-Droid Sudoku APK headless (30 frames) and in a window with a resize (`WINAPK_TEST_RESIZE=400x600`), and `--gms selftest` and `--gms status` pass |
 
 The guest libraries are built with plain clang + lld (`test/build_guest.sh`,
@@ -339,6 +339,20 @@ every such change is listed here:
   registration reply carries the broker's pid, and an app's application thread
   takes calls from that pid only; state under `%LOCALAPPDATA%\Win.apk`
   (`HostAppSupport`). On the Mac (no `WinProcesses`) nothing changes.
+- `runtime/java/android/os/Messenger.java`, `android/app/PendingIntent.java`,
+  `com/macapk/loader/AppUids.java`, `Manifest.java`: what Google Play
+  services' GCM registrar checks before it hands out an FCM token. A Message
+  sent to a Messenger carries the sender's uid in `sendingUid` (AOSP's
+  `Handler.MessengerImpl`); a PendingIntent carries its creator's uid across
+  processes (`getCreatorUid`); a package's uid is fixed once assigned, and the
+  Google packages that share `com.google.uid.shared` get it even from a caller
+  that has no manifest at hand.
+- `runtime/java/android/content/Context.java`, `ContextWrapper.java`:
+  `createContextAsUser` (the one user's own Context; Play services calls it),
+  and a wrapper's `getSystemService` that comes back to itself for the same
+  name on one thread is answered from the innermost base context, as a
+  ContextImpl would (Play services' `GmsApplication` cycled through a wrapper
+  around itself into a StackOverflowError).
 - `runtime/java/com/macapk/loader/ApkVerification.java` (new),
   `MacApkPackageManager.java`, `android/content/pm/PackageManager.java`,
   `Signature.java`, `com/macapk/gms/GoogleGmsCertificate.java`: APK

@@ -2162,11 +2162,15 @@ public final class Manifest {
         // com.google.uid.shared is fixed across builds/devices), not per-APK
         // behaviour, and it forges nothing: the Play Store keeps its real cert; we
         // only place it in its real uid group.
-        if (built.sharedUserId == null && built.packageName != null
-                && GOOGLE_SHARED_UID_PACKAGES.contains(built.packageName)) {
-            built.sharedUserId = "com.google.uid.shared";
-        }
+        if (built.sharedUserId == null) built.sharedUserId = impliedSharedUserId(built.packageName);
         return built;
+    }
+
+    /** The shared uid a package belongs to without declaring one: the Google
+     *  platform packages below, else null. AppUids asks it too when a caller
+     *  has no manifest at hand, so both answer the same uid. */
+    static String impliedSharedUserId(String pkg) {
+        return pkg != null && GOOGLE_SHARED_UID_PACKAGES.contains(pkg) ? "com.google.uid.shared" : null;
     }
 
     /** Packages that belong to the "com.google.uid.shared" uid on a stock device

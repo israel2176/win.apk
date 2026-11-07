@@ -473,7 +473,10 @@ the user installed run as apps, as upstream runs them on the Mac:
   names (`WinProcesses`, from the process's recorded command line); a caller
   argument that names another package, or a registration as another package
   or process, is refused with a `SecurityException` and logged; the calling
-  uid any app sees is the broker's answer for that pid. An app's application
+  uid any app sees is the broker's answer for that pid. A Message sent
+  through a Messenger is stamped with that uid (`sendingUid`), and a
+  PendingIntent carries its creator's package and uid, which is how Google
+  Play services' GCM registrar tells which app asks for an FCM token. An app's application
   thread takes calls from the broker's pid only. Pipes have a DACL for the
   user and SYSTEM, reject remote clients, claim their name with
   `FILE_FLAG_FIRST_PIPE_INSTANCE`, connect with `SECURITY_IDENTIFICATION`, and

@@ -394,6 +394,11 @@ public abstract class Context {
     public Context createPackageContextAsUser(String packageName, int flags,
                                                 android.os.UserHandle user)
             throws android.content.pm.PackageManager.NameNotFoundException { return this; }
+    /** AOSP (API 30, system API): a Context for the same package as another
+     *  user. There is exactly one user here, so it is this Context, as
+     *  createPackageContextAsUser above. Google Play services calls it; its
+     *  absence was a NoSuchMethodError that killed a GMS worker thread. */
+    public Context createContextAsUser(android.os.UserHandle user, int flags) { return this; }
     public Context createContextForSplit(String splitName)
             throws android.content.pm.PackageManager.NameNotFoundException { return this; }
     public Context createAttributionContext(String attributionTag) { return this; }

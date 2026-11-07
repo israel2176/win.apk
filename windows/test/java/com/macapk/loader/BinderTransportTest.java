@@ -8,7 +8,10 @@
 //   the RECEIVER's resolver, never from the caller; oneway calls arrive, in
 //   order; a binder passed both ways keeps its identity (a callback into the
 //   caller while it waits, our own object coming home as itself, one proxy per
-//   remote object); file descriptors cross as new fds of the same file; death
+//   remote object); a Messenger across processes stamps the sender's uid on the
+//   Message (Message.sendingUid) and its replyTo answers back, and a
+//   PendingIntent in its Bundle keeps its creator's uid; file descriptors
+//   cross as new fds of the same file; death
 //   of the far process reaches linkToDeath, then isBinderAlive and transact.
 // Broker, "client" child -> "broker" child (com.macapk.loader.SystemServer):
 //   a process registering as, or calling as, a package it is not is refused;
@@ -19,7 +22,13 @@ package com.macapk.loader;
 
 import android.content.ComponentName;
 import android.content.Intent;
+import android.app.PendingIntent;
 import android.os.Binder;
+import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.Message;
+import android.os.Messenger;
 import android.os.DeadObjectException;
 import android.os.IBinder;
 import android.os.MacApkBinderTransport;
@@ -90,7 +99,23 @@ public final class BinderTransportTest {
     // ---- the transport ---------------------------------------------------------------
 
     static final int ECHO = 1, ONEWAY = 2, COUNT = 3, CALLBACK = 4, SAME = 5, FD = 6, DIE = 7, RESOLVER = 8,
-            HOME = 9;
+            HOME = 9, MESSENGER = 10;
+
+    /** A Handler on a new thread running its own Looper. */
+    static Handler looperThread(String name, Handler.Callback cb) throws InterruptedException {
+        final Handler[] h = new Handler[1];
+        CountDownLatch ready = new CountDownLatch(1);
+        Thread t = new Thread(() -> {
+            Looper.prepare();
+            h[0] = new Handler(Looper.myLooper(), cb);
+            ready.countDown();
+            Looper.loop();
+        }, name);
+        t.setDaemon(true);
+        t.start();
+        ready.await(20, TimeUnit.SECONDS);
+        return h[0];
+    }
 
     /** The child's own object, handed out twice per SAME call. */
     static final Binder CHILD_OBJECT = new Binder();
@@ -132,6 +157,28 @@ public final class BinderTransportTest {
                             reply.writeStrongBinder(CHILD_OBJECT);
                             reply.writeStrongBinder(CHILD_OBJECT);
                             return true;
+                        case MESSENGER: {
+                            // As Google Play services' GCM registrar: the uid that
+                            // sent the Message and the creator uid of the
+                            // PendingIntent ("app") it carries, answered on replyTo.
+                            Handler h = looperThread("child-messenger", msg -> {
+                                try {
+                                    Bundle b = msg.getData();
+                                    b.setClassLoader(PendingIntent.class.getClassLoader());
+                                    PendingIntent app = b.getParcelable("app");
+                                    Message out = Message.obtain();
+                                    out.what = msg.what;
+                                    out.arg1 = msg.sendingUid;
+                                    out.arg2 = app != null ? app.getCreatorUid() : -2;
+                                    msg.replyTo.send(out);
+                                } catch (Exception e) {
+                                    e.printStackTrace();
+                                }
+                                return true;
+                            });
+                            reply.writeStrongBinder(new Messenger(h).getBinder());
+                            return true;
+                        }
                         case HOME:
                             reply.writeInt(data.readStrongBinder() == CHILD_OBJECT ? 1 : 0);
                             return true;
@@ -238,6 +285,35 @@ public final class BinderTransportTest {
         d.writeStrongBinder(a);
         svc.transact(HOME, d, r, 0);
         check("a proxy sent back is the owner's own object there", r.readInt() == 1, "");
+
+        // The child's resolver answers 12345 for us (RESOLVER above); ours is unset,
+        // so the child's reply comes from nobody's uid (9999).
+        d = Parcel.obtain(); r = Parcel.obtain();
+        svc.transact(MESSENGER, d, r, 0);
+        IBinder mb = r.readStrongBinder();
+        final int[] got = { -1, -1, -1, -1 };
+        CountDownLatch answered = new CountDownLatch(1);
+        Handler mine = looperThread("parent-messenger", msg -> {
+            got[0] = msg.what; got[1] = msg.arg1; got[2] = msg.arg2; got[3] = msg.sendingUid;
+            answered.countDown();
+            return true;
+        });
+        Message m = Message.obtain();
+        m.what = 77;
+        m.replyTo = new Messenger(mine);
+        Bundle data = new Bundle();
+        data.putParcelable("app", PendingIntent.getBroadcast(null, 0, new Intent("com.example.NOTHING"),
+                PendingIntent.FLAG_IMMUTABLE));
+        m.setData(data);
+        boolean sent = false;
+        if (mb != null) { new Messenger(mb).send(m); sent = true; }
+        boolean replied = sent && answered.await(20, TimeUnit.SECONDS);
+        check("a Message to a Messenger in another process is answered on its replyTo",
+                replied && got[0] == 77, got[0] + "");
+        check("the receiver sees the sender's uid in Message.sendingUid", got[1] == 12345, "" + got[1]);
+        check("a PendingIntent in the Message keeps its creator's uid", got[2] == android.os.Process.myUid(),
+                got[2] + " vs " + android.os.Process.myUid());
+        check("the reply carries its own sender's uid", got[3] == 9999, "" + got[3]);
 
         File f = scratch("parent.txt");
         Files.writeString(f.toPath(), "written by the parent \u05e9\u05dc\u05d5\u05dd");
