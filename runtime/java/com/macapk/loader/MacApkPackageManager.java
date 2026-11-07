@@ -6161,7 +6161,19 @@ public final class MacApkPackageManager extends PackageManager {
     private boolean macapkStandInsActive() {
         if ("com.google.android.gms".equals(this.packageName)
                 || "com.android.vending".equals(this.packageName)) return false;
-        return SystemClient.pmFor("com.google.android.gms") == null;
+        if (SystemClient.pmFor("com.google.android.gms") != null) return false;
+        // Before this process attaches to the broker (content providers and
+        // Application.attachBaseContext run first) pmFor knows no peer yet. With
+        // Google services on and the real Play services installed, the stand-ins
+        // must stay out then too: Moovit's early FCM registration went to the
+        // in-process push service, so its token came from a second device
+        // identity next to the real Play services' one.
+        if (SystemClient.enabled() && InstalledRegistry.enabled()) {
+            for (InstalledRegistry.Row r : InstalledRegistry.rows()) {
+                if ("com.google.android.gms".equals(r.pkg)) return false;
+            }
+        }
+        return true;
     }
 
     /** AOSP resolveService: the single best match, or null. */

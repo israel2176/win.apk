@@ -525,12 +525,20 @@ public final class ServiceRegistry {
             Context base = null;
             if (ctx != null) { try { base = ctx.getApplicationContext(); } catch (Throwable ignored) {} }
             if (base == null) base = Application.getInstance();
-            if (base != null) {
-                try { svc.macapkAttach(base); } catch (Throwable ignored) {}
-            }
+            // Creating from attach on: ActivityThread.handleCreateService runs
+            // instantiate, attach and onCreate as one message, so a start of
+            // this component issued from attachBaseContext is queued behind it
+            // too. Google Play services' chimera proxies start a service from
+            // attachBaseContext that, while its module config is missing,
+            // starts the proxy's own service again: created here synchronously,
+            // that recursed into a StackOverflowError.
             sCreating.add(cls);
-            try { svc.onCreate(); } catch (Throwable t) { log("onCreate", cls, t); }
-            finally { sCreating.remove(cls); }
+            try {
+                if (base != null) {
+                    try { svc.macapkAttach(base); } catch (Throwable ignored) {}
+                }
+                try { svc.onCreate(); } catch (Throwable t) { log("onCreate", cls, t); }
+            } finally { sCreating.remove(cls); }
             sCreated.merge(cls, 1, Integer::sum);
             // Published only after onCreate, as ActivityThread.handleCreateService
             // does (mServices.put follows service.onCreate()). A start or bind

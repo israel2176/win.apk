@@ -357,6 +357,12 @@ every such change is listed here:
   name on one thread is answered from the innermost base context, as a
   ContextImpl would (Play services' `GmsApplication` cycled through a wrapper
   around itself into a StackOverflowError).
+- `runtime/java/android/app/ServiceRegistry.java`: a service is "being
+  created" from its attachBaseContext on, so a start of it from there is
+  queued as on a device (Play services' chimera proxies recursed).
+  `MacApkPackageManager.java`: with Google services on and the real Play
+  services installed, the in-process GMS stand-ins stay out also before the
+  process attaches to the broker.
 - `runtime/java/com/macapk/gms/GmsCli.java`, `GoogleAuthClient.java`: the
   `signin-master` verb (an account from a master token, on stdin).
 - `runtime/java/com/macapk/loader/Manifest.java`, `MacApkPackageManager.java`,
