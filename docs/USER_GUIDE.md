@@ -247,6 +247,14 @@ the top, then **Open**, **Stop** (while it runs), **App details** and
 **Remove**, each with its icon and shortcut. It follows the theme and, in
 Hebrew, opens to the left.
 
+Win.apk asks its questions in dialogs of its own, in the same look as the
+library, light or dark and mirrored in Hebrew: **Remove**, **Clear library**,
+**Stop installing?**, signing out of Google, an error with **Show log**, an
+app asking to install, update or remove another app, and the permission
+questions apps ask. The accent button comes first; for anything that removes
+something, Enter picks **Cancel**. Esc or the window's ✕ closes a dialog
+without an answer.
+
 **App details** (also Alt+Enter) is a page in the library, with a back arrow:
 
 | Section | What it holds |

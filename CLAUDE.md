@@ -74,6 +74,12 @@ page's Permissions rows, which stop a running app on revoke), single instance
 - Menus are the launcher's own (`run_menu`, `PopupMenu`: themed, a glyph per
   item, an app header), not `TrackPopupMenu`; only the Store's many-column
   category list and the log picker still use the system menu.
+- Dialogs are the launcher's own too (`Prompt`, in the dialogs section:
+  `run_dialog` for its questions, modal to the window asking; `run_prompt`
+  for an app's, over the app's window), not TaskDialog or MessageBox: the
+  accent button first, Enter on Cancel for anything destructive, Esc no answer.
+- Points from screen coordinates (WM_NCHITTEST's) go through `client_point`:
+  in a mirrored window ScreenToClient already mirrors x, as mouse messages do.
 - An install's library name (`install_name`) is the package when the file
   name starts with one (`com.waze_5.26..._apkmirror.com.apkm` -> `com.waze`),
   else the file name up to its version; a package the library has keeps its
