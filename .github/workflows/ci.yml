@@ -400,9 +400,12 @@ jobs:
           # over one a stream has open (the overlay's WinNTFileSystem), as on
           # Android; the JDK's behaviour otherwise.
           export PATH="$(cygpath -u "$JAVA_HOME")/bin/server:$(cygpath -u "$JAVA_HOME")/bin:$PATH"
+          # The test host binds the Binder transport's natives too, so the
+          # framework jars are on the classpath.
+          cp="$(cygpath -w stage/lib/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
           "$(cygpath -u "$JAVA_HOME")/bin/javac" -d build/share-delete-test windows/test/java/FileShareDeleteTest.java
           WINAPK_TEST_JAVA_BASE_PATCH="$(cygpath -w stage/lib/java_base_patch)" \
-            ./build/winapk-binder-test.exe "$(cygpath -w build/share-delete-test)" FileShareDeleteTest \
+            ./build/winapk-binder-test.exe "$cp;$(cygpath -w build/share-delete-test)" FileShareDeleteTest \
             | tee share-delete-test.log
           grep -q "ALL PASSED" share-delete-test.log
       - name: Run the GL test
