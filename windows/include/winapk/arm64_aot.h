@@ -208,6 +208,17 @@ size_t aot_profile_flush();
 // use). Returns how many it loaded.
 size_t aot_load_pending();
 
+// Turns translations off for this process, before any library loads: aot_load
+// and aot_load_pending load none, and the JIT runs every arm64 library. Set by
+// WINAPK_AOT=0 and by the crash guard (host/aot_guard.h).
+void aot_disable();
+bool aot_disabled();
+
+// Called once, on the thread that loaded it, after the first translation this
+// process loads (the crash guard notes that the run has translated code in it).
+// Set before any library loads.
+void aot_set_loaded_hook(void (*hook)());
+
 // The translated function at guest address `pc`, if any (and AOT is on).
 AotFn aot_lookup(uint64_t pc);
 

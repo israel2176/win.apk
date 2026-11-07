@@ -306,6 +306,21 @@ Three engines run arm64 code, behind one CPU state (`src/arm64/`):
   `written`; one unloaded with `dlclose` takes its translation with it. A
   call through a register to a function of the same library (a C++ virtual
   call) finds it in the DLL's own table, cached at the call site.
+  A fault inside a translated DLL marks that library's stamp `bad`, and the
+  JIT runs it from the next start. A mistranslation that corrupts state
+  and crashes elsewhere (in the JIT, the guest's own code, a host function,
+  the JVM) is caught a level up, by the crash guard (`host/aot_guard.cpp`):
+  when the app's process ends through the crash path (`crash_report.cpp`:
+  a fault nobody handled, `abort()`, HotSpot's fatal error handler through
+  the JVM's `abort` hook; not a normal exit, a closed window or a kill)
+  twice in a row with a translation loaded, the next start disables
+  translation for the app (`aot_disable`, as `WINAPK_AOT=0` does) and says
+  so in its run log. A run without a crash sets the count back; two crashes
+  in a row on the JIT mean it was not the translation, and the next start
+  turns it on again for that build of the app. The state is
+  `apps\<name>\aot-guard.txt`, written atomically (`aot_write_file`), and a
+  new `kAotVersion` or another build of the APK or its libraries starts it
+  over.
 - **The JIT** (`arm64_jit.cpp`, dynarmic from the azahar-emu fork, 0BSD
   license, fastmem over the shared address space). The app starts on it and
   it runs whatever has no translation. Each thread has its own engine and
@@ -535,7 +550,9 @@ Billing answers `BILLING_UNAVAILABLE`, the Maps SDK lays out a blank map.
    the app's icon.
 6. When the app loads a native library, the path in
    [Loading an app's libraries](#loading-an-apps-libraries) runs; an arm64
-   library picks up its translation DLL if one exists and the JIT otherwise.
+   library picks up its translation DLL if one exists and the JIT otherwise
+   (always the JIT when the crash guard has turned the app's translation off,
+   which the run log's first `arm64 AOT:` line says).
 7. The render tick drives frames; input goes to `TouchDispatcher`; permission
    requests spawn the launcher's dialogs; a resize re-lays the app out.
 8. Closing the window ends the activity stack and the process. The exit code
@@ -550,7 +567,7 @@ default; `--data` moves it for a direct run):
 | Path | What |
 |---|---|
 | `library\<name>.apk`, `.label`, `.package`, `.orientation`, `.window` | The user's copy of each app and the launcher's per-app files |
-| `apps\<name>\` | `classes.jar`, `.macapk-dex-stamp`, `icon.png`, `label.txt`, `package.txt` |
+| `apps\<name>\` | `classes.jar`, `.macapk-dex-stamp`, `icon.png`, `label.txt`, `package.txt`; for an arm64-only app that crashed with its translation loaded, `aot-guard.txt` (the crash guard's count and whether translation is off) |
 | `android\` | The Android file system: `data\app\` (installed packages, with `lib\<isa>\` and the `.so.aot.*` translation files; `lib\arm64\.aot-tmp\<lib>\` holds an unfinished translation), `data\data\<package>\` (app data), the shared-storage volume |
 | `logs\` | `run-<name>.log` and `run-<name>.1.log`, `last-run.log` (a hard link to the newest run log), `install-<name>.log`, `gms.log`, `install-helper.log`, `package-backfill.log`, `hs_err_pid*.log` |
 | `store\` | `catalog.tsv`, `catalog.etag`, `icons\`, `downloads\` |

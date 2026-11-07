@@ -140,6 +140,17 @@ add_executable(winapk-aot-cache-test test/aot_cache_test.cpp)
 target_link_libraries(winapk-aot-cache-test PRIVATE winapk_loader)
 add_dependencies(winapk-aot-cache-test winapk-aot-test-dll)
 
+# The translation's crash guard (host/aot_guard.h) through the real crash path,
+# test/aot_guard_test.cpp. The DLL is its stand-in for a translation, and must
+# be next to it.
+add_library(winapk-aot-guard-dll SHARED test/aot_guard_dll.cpp)
+set_target_properties(winapk-aot-guard-dll PROPERTIES PREFIX "")
+target_include_directories(winapk-aot-guard-dll PRIVATE include)
+add_executable(winapk-aot-guard-test test/aot_guard_test.cpp host/aot_guard.cpp host/crash_report.cpp)
+target_include_directories(winapk-aot-guard-test PRIVATE host)
+target_link_libraries(winapk-aot-guard-test PRIVATE winapk_loader)
+add_dependencies(winapk-aot-guard-test winapk-aot-guard-dll)
+
 # The ahead-of-time translator (include/winapk/arm64_aot.h): arm64 .so -> C,
 # which the installer compiles into <lib>.so.aot.dll.
 add_executable(winapk-aot tools/arm64_aot_main.cpp)
@@ -155,6 +166,8 @@ if(MINGW)
   target_link_options(winapk-arm64-test PRIVATE -static)
   target_link_options(winapk-aot-cache-test PRIVATE -static -municode)
   target_link_options(winapk-aot-test-dll PRIVATE -static)
+  target_link_options(winapk-aot-guard-test PRIVATE -static -municode)
+  target_link_options(winapk-aot-guard-dll PRIVATE -static)
   target_link_options(winapk-aot PRIVATE -static)
 endif()
 
@@ -254,7 +267,7 @@ if(WINAPK_JNI_INCLUDE)
                               host/native_camera.cpp host/native_radios.cpp host/native_bluetooth.cpp
                               host/native_location.cpp
                               host/native_signin.cpp host/native_notifications.cpp
-                              host/user_folders.cpp host/crash_report.cpp
+                              host/user_folders.cpp host/crash_report.cpp host/aot_guard.cpp
                               host/runtime.rc)
   target_link_libraries(winapk-runtime PRIVATE winapk_jni winapk_sqlite webpdecoder winapk_stb_vorbis windowscodecs
                         ole32 mf mfplat mfreadwrite mfuuid shlwapi advapi32 shell32 uuid wlanapi iphlpapi bthprops winmm)

@@ -213,6 +213,7 @@ jobs:
           path: |
             build/*.exe
             build/winapk-aot-test-dll.dll
+            build/winapk-aot-guard-dll.dll
           compression-level: 1
 
   unit-tests:
@@ -269,6 +270,10 @@ jobs:
         run: |
           mkdir -p aot-cache-scratch
           ./build/winapk-aot-cache-test.exe "$(cygpath -w "$PWD/aot-cache-scratch")"
+      - name: Run the translation crash guard test (two crashes turn translation off, two on the JIT back on)
+        run: |
+          mkdir -p aot-guard-scratch
+          ./build/winapk-aot-guard-test.exe "$(cygpath -w "$PWD/aot-guard-scratch")"
       - name: Run the Bionic shim test
         run: |
           mkdir -p bionic-scratch

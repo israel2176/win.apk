@@ -40,6 +40,7 @@
 // program (--java-main), not in java.exe, which reads its own location and
 // its arguments in the ANSI code page.
 
+#include "aot_guard.h"
 #include "crash_report.h"
 #include "guest_libs.h"
 #include "host_natives.h"
@@ -188,6 +189,11 @@ HMODULE load_jvm(const fs::path& jdk) {
 
 using CreateVmFn = jint(JNICALL*)(JavaVM**, void**, void*);
 
+// HotSpot's fatal error handler (hs_err) calls it on its way out: a fault in
+// native code called from Java ends there, as HotSpot's threads catch their
+// own exceptions and the unhandled-exception filter never sees it.
+void JNICALL jvm_abort_hook() { winapk::host::crash_report_fatal("the JVM's fatal error handler"); }
+
 bool create_vm(HMODULE jvm, std::vector<std::string>& opts, JavaVM** vm, JNIEnv** env) {
     auto create = reinterpret_cast<CreateVmFn>(GetProcAddress(jvm, "JNI_CreateJavaVM"));
     if (!create) return false;
@@ -196,6 +202,8 @@ bool create_vm(HMODULE jvm, std::vector<std::string>& opts, JavaVM** vm, JNIEnv*
         jopts[i].optionString = &opts[i][0];
         jopts[i].extraInfo = nullptr;
     }
+    static char abort_option[] = "abort";
+    jopts.push_back({abort_option, reinterpret_cast<void*>(&jvm_abort_hook)});
     JavaVMInitArgs args{};
     args.version = JNI_VERSION_21;
     args.nOptions = static_cast<jint>(jopts.size());
@@ -1310,6 +1318,15 @@ void prepare_arm64(const Options& o, const fs::path& app_dir) {
     std::error_code ec;
     const fs::path libs = arm64_libs(o.apk);
     if (!fs::is_directory(libs, ec) || !fs::exists(exe_dir() / "winapk-aot.exe", ec)) return;
+    if (env_var(L"WINAPK_AOT") == L"0") {
+        winapk::arm64::aot_disable();
+        std::fprintf(stderr, "[win.apk] arm64 AOT: off (WINAPK_AOT=0); the JIT runs the app's arm64 code\n");
+        return;
+    }
+    // Translation off for this start if the app crashed twice in a row with
+    // translated code loaded (aot_guard.h). Then nothing is translated either:
+    // the worker would only make what is not loaded.
+    if (!o.install_only && !winapk::host::aot_guard_start(app_dir, winapk::host::aot_guard_id(o.apk, libs))) return;
     if (aot_clang().empty()) {
         std::fprintf(stderr, "[win.apk] no clang found (WINAPK_AOT_CLANG, clang\\bin\\clang.exe in Win.apk's folder, "
                              "or the PATH): the app's arm64 code runs on the JIT, which is slower\n");

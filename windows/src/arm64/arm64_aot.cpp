@@ -102,6 +102,10 @@ struct Library {
 SRWLOCK g_libs_lock = SRWLOCK_INIT;
 std::vector<std::unique_ptr<Library>> g_libs;
 
+std::atomic<bool> g_disabled{false};  // aot_disable
+std::atomic<bool> g_any_loaded{false};
+void (*g_loaded_hook)() = nullptr;
+
 std::filesystem::path sibling(const std::string& so, const char* suffix) {
     return std::filesystem::u8path(so + suffix);
 }
@@ -178,7 +182,9 @@ void write_stamp(const std::string& so, const char* kind) {
 // Not caught here: a translation bug that hands a host function bad
 // arguments faults in that function, outside the DLL. City Car's
 // libflutter.so did (memmove, from a dropped `cmp` result; arm64_aot.h,
-// "Calls"), and crashed on every start.
+// "Calls"), and crashed on every start. The crash guard (host/aot_guard.h)
+// catches those a level up: two crashes in a row of a process with a
+// translation loaded, wherever they are, turn translation off for the app.
 struct LoadedDll {
     uint64_t lo, hi;
     std::string so;      // file name, for the message
@@ -286,7 +292,9 @@ bool aot_load(const char* so_path, uint64_t bias, uint64_t text_hash, uint64_t c
     lib->lo = code_lo;
     lib->hi = code_hi;
     bool sealed = false;
-    if (const char* why = stamp_refuses(lib->so, &sealed)) {
+    if (g_disabled.load(std::memory_order_relaxed)) {
+        // The reason was logged once, at the start (runtime_main.cpp, host/aot_guard.cpp).
+    } else if (const char* why = stamp_refuses(lib->so, &sealed)) {
         std::fprintf(stderr, "[win.apk] arm64 AOT: %s: %s; the JIT runs it\n",
                      std::filesystem::u8path(lib->so).filename().u8string().c_str(), why);
     } else {
@@ -424,6 +432,7 @@ size_t aot_profile_flush() {
 }
 
 size_t aot_load_pending() {
+    if (g_disabled.load(std::memory_order_relaxed)) return 0;
     struct Want {
         Library* lib;
         std::string so;
@@ -512,6 +521,7 @@ const AotModule* load_dll(const std::filesystem::path& dll, uint64_t bias, uint6
     remember_dll(h, m, dll);
     std::fprintf(stderr, "[win.apk] arm64 AOT: %s: %llu translated functions\n", dll.filename().u8string().c_str(),
                  static_cast<unsigned long long>(m->count));
+    if (!g_any_loaded.exchange(true) && g_loaded_hook) g_loaded_hook();
     return m;
 }
 
@@ -530,6 +540,10 @@ void drop_functions(uint64_t lo, uint64_t hi) {
 }
 
 }  // namespace
+
+void aot_disable() { g_disabled.store(true); }
+bool aot_disabled() { return g_disabled.load(); }
+void aot_set_loaded_hook(void (*hook)()) { g_loaded_hook = hook; }
 
 AotFn aot_lookup(uint64_t pc) {
     LookupCache& cache = t_lookup;

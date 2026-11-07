@@ -3,6 +3,7 @@
 #include "crash_report.h"
 
 #include <algorithm>
+#include <atomic>
 #include <csignal>
 #include <cstdio>
 #include <cstring>
@@ -25,6 +26,19 @@ namespace {
 
 std::mutex g_lock;
 std::set<uint64_t> g_reported;  // one report per faulting address
+
+// set_crash_hook's, called once (the first of the crash paths a dying process
+// goes through: HotSpot's fatal error handler may follow the unhandled filter).
+CrashHook g_crash_hook = nullptr;
+std::atomic<bool> g_crash_noted{false};
+// The last fault report_fault reported, for a crash that ends elsewhere
+// (HotSpot's fatal error handler names no guest module).
+char g_last_fault[512];
+
+void note_crash(const char* what) {
+    if (g_crash_noted.exchange(true)) return;
+    if (g_crash_hook) g_crash_hook(what);
+}
 
 // ---- minidumps ------------------------------------------------------------------
 
@@ -249,6 +263,7 @@ LONG CALLBACK report_fault(EXCEPTION_POINTERS* e) {
                       GetCurrentThreadId());
     }
     std::fputs(line, stderr);
+    std::snprintf(g_last_fault, sizeof g_last_fault, "%s at %s", name, where);
     scan_frames(rsp, true);
     std::fflush(stderr);
     char dump[MAX_PATH * 3];
@@ -278,6 +293,11 @@ LONG WINAPI report_unhandled(EXCEPTION_POINTERS* e) {
                  static_cast<unsigned long>(code), where, static_cast<unsigned long long>(rip), GetCurrentThreadId());
     if (code != EXCEPTION_STACK_OVERFLOW) scan_frames(static_cast<uint64_t>(e->ContextRecord->Rsp), true, true);
     std::fflush(stderr);
+    {
+        char what[640];
+        std::snprintf(what, sizeof what, "%s 0x%08lx at %s", name, static_cast<unsigned long>(code), where);
+        note_crash(what);
+    }
     // report_fault wrote none for a fault in a JIT's code: this is its dump.
     bool dumped;
     {
@@ -306,6 +326,11 @@ void on_abort(int) {
         }
     }
     std::fflush(stderr);
+    {
+        char what[640];
+        std::snprintf(what, sizeof what, "abort() from %s", top);
+        note_crash(what);
+    }
     char dump[MAX_PATH * 3];
     if (write_minidump(nullptr, dump, sizeof(dump))) {
         std::fprintf(stderr, "[win.apk] crash dump: %s (abort from %s); attach it to a GitHub issue\n", dump, top);
@@ -348,6 +373,20 @@ void install_crash_report() {
 void rearm_crash_report() {
     LPTOP_LEVEL_EXCEPTION_FILTER previous = SetUnhandledExceptionFilter(report_unhandled);
     if (previous != report_unhandled) g_previous_filter = previous;
+}
+
+void set_crash_hook(CrashHook hook) { g_crash_hook = hook; }
+
+void crash_report_fatal(const char* who) {
+    char what[768];
+    if (g_last_fault[0]) {
+        std::snprintf(what, sizeof what, "%s, after %s", who, g_last_fault);
+    } else {
+        std::snprintf(what, sizeof what, "%s", who);
+    }
+    std::fprintf(stderr, "[win.apk] crash: %s; the process ends\n", what);
+    std::fflush(stderr);
+    note_crash(what);
 }
 
 void set_crash_dump_location(const std::filesystem::path& dir, const std::wstring& app) {
