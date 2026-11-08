@@ -38,17 +38,23 @@ void JNICALL Log_print(JNIEnv* env, jclass, jint level, jstring tag_j, jstring m
     if (msg_j) env->ReleaseStringUTFChars(msg_j, msg);
 }
 
-// Nanoseconds since the host process started, for Boot's timing lines.
+// android.os.SystemClock.elapsedRealtimeNanos(): CLOCK_BOOTTIME, a clock every
+// process shares. It used to count from this process's start, so two processes
+// of one app disagreed by the time between their starts: the Play Store's
+// background process stamps its gRPC calls with elapsedRealtime, the main
+// process measured "duration (-14 s) must not be negative" from them and every
+// install-queue call failed. The performance counter, converted as the guest's
+// clock_gettime(CLOCK_BOOTTIME) is (bionic monotonic_ns), is the system-wide
+// monotonic clock HotSpot's System.nanoTime() reads too.
 jlong JNICALL Log_bootTimeNanos(JNIEnv*, jclass) {
-    static const ULONGLONG start = [] {
-        FILETIME created, exited, kernel, user;
-        GetProcessTimes(GetCurrentProcess(), &created, &exited, &kernel, &user);
-        return (static_cast<ULONGLONG>(created.dwHighDateTime) << 32) | created.dwLowDateTime;
+    static const LONGLONG freq = [] {
+        LARGE_INTEGER f;
+        QueryPerformanceFrequency(&f);
+        return f.QuadPart;
     }();
-    FILETIME now;
-    GetSystemTimePreciseAsFileTime(&now);
-    const ULONGLONG t = (static_cast<ULONGLONG>(now.dwHighDateTime) << 32) | now.dwLowDateTime;
-    return static_cast<jlong>((t - start) * 100);  // FILETIME ticks are 100 ns
+    LARGE_INTEGER c;
+    QueryPerformanceCounter(&c);
+    return static_cast<jlong>(c.QuadPart / freq * 1000000000LL + (c.QuadPart % freq) * 1000000000LL / freq);
 }
 
 // Upstream raises the calling thread to the interactive QoS class, so that a
