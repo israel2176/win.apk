@@ -385,6 +385,11 @@ every such change is listed here:
 - `runtime/java/com/macapk/loader/SystemClient.java`: a call from the broker
   that arrives before the process has read the broker's pid from its
   registration waits for it, instead of being refused as a stranger's.
+- `runtime/java/android/net/Uri.java`: `Uri.fromFile` of a drive path gives
+  the path `/C:/Users/...` (a leading `/`, `/` separators), so the URI's
+  string parses back to the same path; `file://C:%5C...` parsed back with the
+  path taken for the authority and an empty path (the Play Store's
+  downloads wrote to `""`).
 - `runtime/java/com/macapk/loader/ViewDump.java` (new),
   `ViewCanvasDriver.java`: `WINAPK_DUMP_VIEWS=1` logs the top window's views
   with their bounds after each frame that changed them (a Compose view's
