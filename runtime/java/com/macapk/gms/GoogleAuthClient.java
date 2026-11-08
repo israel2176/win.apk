@@ -148,7 +148,67 @@ public final class GoogleAuthClient {
         if (resp.get("lastName")  != null) GmsStore.putAccountData(email, "lastName",  resp.get("lastName"));
         log("signed in " + GoogleAuthenticator.redact(email) + " from a master token (accountId "
             + (resp.get("accountId") != null ? "present" : "absent") + ")");
+        if (resp.get("accountId") == null) ensureAccountId(email);
         return email;
+    }
+
+    /**
+     * The account's id (its gaia id), fetched once when the sign-in did not
+     * bring it: Google answers ac2dm with a master token without accountId.
+     * Play services cannot do without it: it keeps it as the account's
+     * "GoogleUserId" user data (written there at a device's sign-in), and its
+     * getToken answers every app "missing gaiaId ... internal error", so the
+     * Play Store got no token at all. Asked as Play services asks for its own
+     * userinfo token (app and caller com.google.android.gms with Google's
+     * certificate), with get_accountid; when that answer has no accountId
+     * either, the token's userinfo ("sub" is the gaia id). Stored as account
+     * data, where the broker's account service reads it. Returns it, or null.
+     */
+    public static String ensureAccountId(String email) {
+        if (email == null) return null;
+        String have = GmsStore.accountData(email, "accountId");
+        if (have != null && !have.isEmpty()) return have;
+        String master = GmsStore.masterToken(email);
+        if (master == null) return null;
+        Map<String, String> form = baseParams();
+        form.put("app", GMS_PACKAGE);
+        form.put("client_sig", PLAY_STORE_CLIENT_SIG);
+        form.put("callerPkg", GMS_PACKAGE);
+        form.put("callerSig", PLAY_STORE_CLIENT_SIG);
+        form.put("Email", email);
+        form.put("service", "oauth2:https://www.googleapis.com/auth/userinfo.email");
+        form.put("source", "android");
+        form.put("Token", master);
+        form.put("get_accountid", "1");
+        Map<String, String> resp = post(form);
+        if (resp == null) {
+            log("account id: no userinfo token (" + sLastError.get() + ")");
+            return null;
+        }
+        String id = resp.get("accountId");
+        if ((id == null || id.isEmpty()) && resp.get("Auth") != null) {
+            try {
+                Map<String, String> h = new LinkedHashMap<>();
+                h.put("Authorization", "Bearer " + resp.get("Auth"));
+                GmsHttp.Response r = GmsHttp.get("https://www.googleapis.com/oauth2/v3/userinfo", h);
+                if (r.ok()) {
+                    java.util.regex.Matcher m = java.util.regex.Pattern.compile("\"sub\"\\s*:\\s*\"(\\d+)\"")
+                            .matcher(r.text());
+                    if (m.find()) id = m.group(1);
+                } else {
+                    log("account id: userinfo answered " + r);
+                }
+            } catch (IOException e) {
+                log("account id: userinfo failed: " + e);
+            }
+        }
+        if (id == null || id.isEmpty()) {
+            log("account id: Google did not tell it");
+            return null;
+        }
+        GmsStore.putAccountData(email, "accountId", id);
+        log("account id of " + GoogleAuthenticator.redact(email) + " fetched");
+        return id;
     }
 
     // ===================================================================

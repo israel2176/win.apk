@@ -154,6 +154,8 @@ public final class SystemClient {
     /** Win.apk: the broker's pid, from its answer to our registration. Only it
      *  may call this app's application thread. */
     private static volatile int sBrokerPid = -1;
+    /** Open once TX_REGISTER has returned (sBrokerPid is known, or never will be). */
+    private static final CountDownLatch sRegistered = new CountDownLatch(1);
     /** Win.apk: pid -> {process start time, uid}, the broker's answers. */
     private static final Map<Integer, long[]> sUidOfPid = new ConcurrentHashMap<>();
 
@@ -231,7 +233,7 @@ public final class SystemClient {
                 sys.transact(SystemServer.TX_REGISTER, d, r, 0);
                 r.readException();
                 if (r.dataAvail() >= 4) sBrokerPid = r.readInt();
-            } finally { d.recycle(); r.recycle(); }
+            } finally { d.recycle(); r.recycle(); sRegistered.countDown(); }
             sSystem = sys;
             if (WinProcesses.available()) MacApkBinderTransport.setUidResolver(SystemClient::uidOfPid);
             SystemAccounts.registerOwnAuthenticators(app);
@@ -252,6 +254,13 @@ public final class SystemClient {
             // others, delivers broadcasts and jobs), so only the broker, by the
             // pid the OS reports, may call it. Anyone else who got the binder is
             // refused.
+            // The broker may call as soon as it has our registration, before
+            // attach has read the broker's pid from the reply (a bind queued for
+            // this process while it started): wait for that first.
+            if (WinProcesses.available() && sBrokerPid < 0) {
+                try { sRegistered.await(30, TimeUnit.SECONDS); }
+                catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+            }
             if (WinProcesses.available() && android.os.Binder.getCallingPid() != sBrokerPid) {
                 NativeLog.w(TAG, "REFUSED: application-thread call " + code + " from pid "
                         + android.os.Binder.getCallingPid() + ", not the broker");

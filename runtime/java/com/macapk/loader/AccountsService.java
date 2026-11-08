@@ -159,6 +159,8 @@ final class AccountsService extends Binder {
                 String master = com.macapk.gms.GmsStore.masterToken(a.name);
                 java.util.Map<String, String> extras = null;
                 String id = com.macapk.gms.GoogleAuthenticator.userData(a, "accountId");
+                // Signed in before the id was fetched at sign-in: fetch it now.
+                if (id == null && master != null) id = com.macapk.gms.GoogleAuthClient.ensureAccountId(a.name);
                 if (id != null) {
                     extras = new java.util.HashMap<>();
                     extras.put("accountId", id);
@@ -174,6 +176,13 @@ final class AccountsService extends Binder {
                                 + (master != null ? " (with LST)" : " (no master token yet)"));
                     }
                 } else if (master != null) {
+                    // A row without the gaia id (added before it was known): GMS's
+                    // getToken needs it ("missing gaiaId").
+                    if (id != null && store.userData(a.name, a.type, "GoogleUserId") == null) {
+                        store.setUserData(a.name, a.type, "accountId", id);
+                        store.setUserData(a.name, a.type, "GoogleUserId", id);
+                        SystemServer.log("accounts: added the account's gaia id (GoogleUserId)");
+                    }
                     // Already a row (persisted from a prior launch, possibly added before this
                     // password plumbing existed): make sure the LST is where GMS's getPassword
                     // reader looks, without disturbing its user-data/gaiaId.
