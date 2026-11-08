@@ -14,7 +14,7 @@ SmartScreen may warn because the installer is not signed: click "More info",
 then "Run anyway". Or unzip Win.apk-windows-x64.zip anywhere and start
 Win.apk.exe from that folder.
 
-Everything needed is included: Java (Eclipse Temurin 21, the jre folder),
+Everything needed is included: Java (built from Eclipse Temurin 21, the jre folder),
 ANGLE for graphics (bin\libEGL.dll, bin\libGLESv2.dll, Chromium's build;
 licenses in bin\licenses) and the clang compiler that translates apps' ARM
 code for your processor (the clang folder, licenses in clang\licenses). Web

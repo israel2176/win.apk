@@ -1514,6 +1514,10 @@ std::vector<std::string> jvm_options(const BootArgs& b) {
     // 60 fps on the same CPU (+7%, -1%). Long hot Java loops lose C2's peak;
     // MACAPK_JVM_OPTS=-XX:TieredStopAtLevel=4, read after this, restores it.
     v.push_back("-XX:TieredStopAtLevel=1");
+    // No hsperfdata file: HotSpot otherwise creates and maps a file per JVM in
+    // %TEMP%\hsperfdata_<user> for jps/jstat, which nothing here reads. 6 ms
+    // off creating the JVM (docs/research/startup-cds.md).
+    v.push_back("-XX:-UsePerfData");
     v.push_back("--enable-native-access=ALL-UNNAMED");
     v.push_back("--add-opens=java.base/java.io=ALL-UNNAMED");
     v.push_back("--add-opens=java.base/java.util=ALL-UNNAMED");

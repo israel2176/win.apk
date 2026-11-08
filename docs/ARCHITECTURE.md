@@ -119,12 +119,39 @@ and name the launcher shows), plus an overlay for `java.base`.
 `windows/host/` is `winapk-runtime.exe`, the Windows counterpart of
 upstream's `runtime/src/main.cpp`. It finds the runtime files, installs and
 converts the app, creates the HotSpot JVM in-process with upstream's options
-(SerialGC, a 16 MB thread stack, `--patch-module java.base`, bytecode
-verification off), binds the host natives, and calls `Boot.run`. One file per
+(SerialGC, a 16 MB thread stack, upstream's `java.base` changes, bytecode
+verification off) and class-data sharing (below), binds the host natives, and
+calls `Boot.run`. One file per
 Java class: `native_cocoa.cpp` (the screen, the render tick, input delivery,
 presenting frames), `win32_window.cpp` (the window itself),
 `native_audio.cpp`, `native_webview.cpp`, `native_camera.cpp`,
 `native_location.cpp`, `native_activity.cpp`, `native_signin.cpp` and so on.
+
+**The Java runtime and class-data sharing** (`host/cds.h`). Win.apk ships its
+own JRE, built by `windows/scripts/bake_jre.sh` from Temurin 21's modules:
+the JDK's tools, JFR, JVMCI and the like left out, debug information stripped,
+and upstream's `java.base`/`jdk.unsupported` overlays (`lib\java_base_patch`,
+`lib\jdk_unsupported_patch`) built into those modules instead of applied with
+`--patch-module` at each start, because HotSpot turns class-data sharing (CDS)
+off whenever a module is patched. Two archives then spare a start the parsing
+and linking of classes it loaded before: the JRE's own (`bin\server\classes.jsa`,
+the JDK's classes) and the framework archive (`<data>\cds\framework-<key>.jsa`:
+the JDK's and the framework's classes, `android-framework.jar`,
+`macapk-loader.jar` and an unsigned bcprov, one for all apps). The runtime
+drops the `--patch-module` flags only when the JRE's
+`lib\winapk-baked-patches` records the same SHA-256 as the patch folders (a
+plain JDK, or a patch rebuilt since, keeps them and runs without CDS). The
+framework archive is dumped by `java -Xshare:dump`, in the background after the
+first app start of each Win.apk and JRE version (`winapk-runtime --cds-dump`),
+from the class list Win.apk ships (`lib\winapk-framework.classlist`, what the
+smoke apps load) and the classes that start loaded. The key changes with the
+JRE, the jars, the shipped list and the JVM options; HotSpot itself checks the
+JRE and the jars when it maps the file and otherwise starts without it. A new
+archive is checked whole (`-XX:+VerifySharedSpaces`) on its first use and
+after a crash; one that does not map is deleted and dumped again, twice at
+most. The app's own classes are never archived: HotSpot verifies every class
+it dumps, and dex-converted code often does not verify. Measurements:
+`docs/research/startup-cds.md`.
 
 The runtime's manifest sets the process's ANSI code page to UTF-8 (Windows
 10 1903 and later), so the JVM reads paths with any characters whole; the
@@ -617,10 +644,14 @@ tests the transport and the broker's checks across three processes.
 3. The install and DEX conversion are checked (cached, so this is quick), and
    shared storage is mapped to the user's folders if the setting is on.
 4. HotSpot is created in-process on a thread with a large stack, with the
-   C1 compiler only (a faster start than tiered C1+C2; no class data sharing,
-   which the `java.base` overlay rules out); JVMTI is enabled for the
-   `NativeMethodBind` hook and signature lookups; the host natives are bound;
-   SQLite's natives are registered.
+   C1 compiler only (a faster start than tiered C1+C2) and class-data sharing:
+   the JRE's archive and the framework archive (see [The host](#the-host); the
+   run log's `[win.apk] cds:` line says which, and `startup:` lines when the
+   JVM was up and when the first frame came, with the working set). The first
+   start without a framework archive records its classes, and 10 s after its
+   first frame (or at its exit) starts the archive's dump in the background;
+   JVMTI is enabled for the `NativeMethodBind` hook and signature lookups; the
+   host natives are bound; SQLite's natives are registered.
 5. `Boot.run` starts the Android side: the TLS trust store is set to the
    JDK's and Windows' roots, kept between starts in `%TEMP%\winapk-trust.jks`
    and rebuilt in the background once a day; the package manager reads the
@@ -656,6 +687,7 @@ default; `--data` moves it for a direct run):
 | `app_uids.properties`, `system_ce\0\`, `installer-of-record.properties`, `run\system-ready` | With Google services on: per-package uids, the accounts service's store, which app installed which, the broker's readiness |
 | `logs\system.log`, `logs\services\` | The system broker and the apps it starts as service hosts |
 | `aot-cache\` | Whole arm64 translations shared between apps, `<key>.aot.dll` (kept under 2 GB, least recently used first); a `*.tmp` is a write in progress, or one a killed worker left (deleted when an hour old) |
+| `cds\` | The framework archive (`host/cds.h`): `framework-<key>.jsa`, `.ok` once it has mapped whole, `.fails` (failures in a row; at two it is not made again for that key), `dump.log` (the last dump), and a `.classlist` while a first start records |
 | `cache\` | The runtime's shared caches: `android-system-fonts\` (the `/system/fonts` and `fonts.xml` native text stacks such as Flutter's read), `fonts\`, `fwview\` (the framework's resolved resources), `monet\`, `apk-verify\` (APK signature verdicts) |
 | `run\<package>.pid` | Each running app's run lock |
 | `staging\` | The install helper's staging area |
@@ -692,8 +724,8 @@ Two GitHub Actions workflows:
 
 | Workflow | When | What |
 |---|---|---|
-| `ci.yml` | Pull requests touching `windows/` or `runtime/`, and by hand; a push to `main` only builds (to leave its compile cache to pull requests) | One pipeline of jobs. *What changed* decides which stages a pull request needs. The guest test libraries build on Ubuntu, and a launcher-only change gets a one-minute MinGW compile with warnings as errors. Everything else builds once on `windows-latest` (MSYS2 CLANG64, ccache) and stages the runtime. That output goes as artifacts to the jobs that run side by side: *Unit tests* (every test program), *Runtime tests* (the Java tests, GL, an APK booted headless and in a window, the GMS CLI), *App smoke test* (the ten apps of `windows/test/compat/smoke.txt`, one of each kind; it fails when one no longer draws), and *Package* (a preview folder with a Temurin JRE and the installer). The whole compatibility sweep runs only by hand (Run workflow, "Full compatibility sweep"): split over four machines (`sweep.py --shard`) and joined by *Sweep report* into one ranked report. A new push cancels the run in progress |
-| `windows-release.yml` | By hand only, with a tag | Builds (stamping the tag's version into `Win.apk.exe`), packages with a Temurin 21 JRE, smoke-tests the package, builds the installer and publishes a GitHub pre-release |
+| `ci.yml` | Pull requests touching `windows/` or `runtime/`, and by hand; a push to `main` only builds (to leave its compile cache to pull requests) | One pipeline of jobs. *What changed* decides which stages a pull request needs. The guest test libraries build on Ubuntu, and a launcher-only change gets a one-minute MinGW compile with warnings as errors. Everything else builds once on `windows-latest` (MSYS2 CLANG64, ccache) and stages the runtime. That output goes as artifacts to the jobs that run side by side: *Unit tests* (every test program), *Runtime tests* (the Java tests, GL, an APK booted headless and in a window, the GMS CLI), *App smoke test* (the ten apps of `windows/test/compat/smoke.txt`, one of each kind; it fails when one no longer draws), and *Package* (a preview folder with the JRE the build baked and the installer). The smoke test and the sweep run on that JRE, with one framework archive made first (`--cds-prepare`) and shared by the apps, and the smoke test records the apps' classes into the `framework-classlist` artifact, the source of `windows/java/winapk-framework.classlist`. The whole compatibility sweep runs only by hand (Run workflow, "Full compatibility sweep"): split over four machines (`sweep.py --shard`) and joined by *Sweep report* into one ranked report. A new push cancels the run in progress |
+| `windows-release.yml` | By hand only, with a tag | Builds (stamping the tag's version into `Win.apk.exe`), packages with the JRE `bake_jre.sh` makes from Temurin 21, smoke-tests the package, builds the installer and publishes a GitHub pre-release |
 
 [`windows/README.md`](../windows/README.md) has the commands.
 

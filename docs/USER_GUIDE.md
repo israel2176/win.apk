@@ -202,6 +202,13 @@ or later with an error, the same window turns into a short message
 (**Wiz didn't start**, **Wiz stopped with an error**) with **Report a
 problem** under it, and **Close** and **Show log**; Esc or Enter closes it.
 
+Starts get quicker after the first app start of each Win.apk version: in
+the background, Win.apk keeps the Java classes every app loads (the JDK's and
+the Android framework's) ready in a file it maps at the next starts, instead
+of reading and checking them again each time (class-data sharing). It takes
+about 10 seconds of one core at low priority, once, and 35 MB in
+`%LOCALAPPDATA%\Win.apk\cds`.
+
 The library marks a running app with a green badge on its tile and counts
 them under its title. **Stop** in the tile's right-click menu, or on the
 app's details page, closes the app at once.
@@ -627,6 +634,7 @@ and the launch window open the right log themselves when something fails.
 | The last update check and a downloaded update | `%LOCALAPPDATA%\Win.apk\updates` (`releases.json`, `Win.apk-Setup-<version>.exe`) |
 | Shared ARM translations | `%LOCALAPPDATA%\Win.apk\aot-cache` |
 | The runtime's caches (fonts, resources) | `%LOCALAPPDATA%\Win.apk\cache` |
+| The Java classes every app shares, ready to map (class-data sharing) | `%LOCALAPPDATA%\Win.apk\cds` (`framework-<key>.jsa`; delete the folder to have it made again) |
 | Settings | `HKEY_CURRENT_USER\Software\Win.apk` (`Theme`, `Language`, `PhoneSize`, `Landscape`, `DesktopShortcut`, `UserFolders`, `AotBackground`, `InstallDetails`, `AutoUpdate`, `LastUpdateCheck`, `GoogleServices`, and the library window's size) |
 | With Google services on: app uids, the account service, the installer of record, the broker's readiness | `%LOCALAPPDATA%\Win.apk` (`app_uids.properties`, `system_ce\`, `installer-of-record.properties`, `run\`) |
 | Start menu shortcuts | `Start > Win.apk Apps` |
@@ -685,6 +693,7 @@ Environment variables the launcher and the runtime read:
 | `WINAPK_WEBVIEW2=0` | Do not use WebView2; web links open in the system browser |
 | `WINAPK_ANGLE_BACKEND=d3d11` or `swiftshader` | Force a graphics backend |
 | `WINAPK_PROXY=socks5://host:port` | A SOCKS proxy for the push (Firebase Cloud Messaging) connection |
+| `WINAPK_CDS=0` | Start the Java runtime without class-data sharing, as Win.apk 0.8 did (slower; for comparing, or if a start fails with `[cds]` lines in its log) |
 | `WINAPK_HEADLESS=1` | Run without a window, for tests |
 | `WINAPK_HEADLESS_FRAME=frame.bmp` | Save the last frame the app drew |
 | `WINAPK_HEADLESS_EXIT_AFTER_FRAMES=30` | Exit that many frames after the first |
@@ -706,6 +715,8 @@ The most useful lines:
 | `Exception` or `FATAL` | The app crashed; the lines after it say where |
 | `[win.apk] crash:` and `crash dump:` | The app's native code crashed: the library and offset, and the minidump written for it, which is worth attaching too |
 | `[win.apk] arm64 AOT: off for this app` | An ARM-only app crashed twice in a row with its translation loaded, so it runs on the JIT; see [ARM-only apps](#arm-only-apps) |
+| `[win.apk] cds:` and `[cds]` | Class-data sharing: which archives the start maps, and HotSpot's reason when one does not map (Win.apk then deletes it and makes it again; the start goes on without it) |
+| `[win.apk] startup:` | When the Java VM was up and when the first frame came, with the memory then |
 | `[win.apk]` | A message from Win.apk itself |
 
 Then look in [`APPS.md`](APPS.md) for the app or the kind of problem, and

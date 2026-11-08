@@ -62,7 +62,6 @@ jobs:
           export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
           windows/scripts/stage_runtime.sh build stage
           time windows/scripts/bake_jre.sh "$JAVA_HOME" stage/lib stage/jre
-          WINAPK_JRE_COMPRESS=zip-6 windows/scripts/bake_jre.sh "$JAVA_HOME" stage/lib jre-z
           mkdir -p cds-scratch && ./build/winapk-cds-test.exe "$(cygpath -w "$PWD/cds-scratch")"
       - uses: actions/upload-artifact@v4
         with:
@@ -70,47 +69,9 @@ jobs:
           path: stage/
           retention-days: 2
           compression-level: 1
-      - uses: actions/upload-artifact@v4
-        with:
-          name: jre-z
-          path: jre-z/
-          retention-days: 2
-          compression-level: 1
-
-  classlist:
-    needs: build
-    runs-on: windows-latest
-    timeout-minutes: 40
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          name: stage-new
-          path: stage
-      - uses: actions/cache/restore@v4
-        with:
-          path: apk-cache
-          key: compat-apks-smoke-${{ hashFiles('windows/test/compat/apps.txt', 'windows/test/compat/smoke.txt') }}
-      - name: Record the smoke apps' classes
-        shell: pwsh
-        run: |
-          $env:WINAPK_CDS_DIR = "$PWD\cds"
-          $env:WINAPK_CDS_RECORD_DIR = "$PWD\classlists"
-          python windows/test/compat/sweep.py --runtime stage --apks apk-cache --out smoke --frames 150 `
-            --timeout 180 --only-from windows/test/compat/smoke.txt
-          python windows/scripts/merge_classlists.py framework.classlist (Get-ChildItem classlists/*.classlist)
-          Get-ChildItem classlists | Format-Table Name, Length
-          Get-Content cds/dump.log -Tail 3
-      - uses: actions/upload-artifact@v4
-        with:
-          name: framework-classlist
-          path: |
-            framework.classlist
-            classlists/
-            smoke/report.md
 
   bench:
-    needs: [build, classlist]
+    needs: build
     runs-on: windows-latest
     timeout-minutes: 90
     strategy:
@@ -130,12 +91,12 @@ jobs:
           path: stage
       - uses: actions/download-artifact@v4
         with:
-          name: jre-z
-          path: jre-z
-      - uses: actions/download-artifact@v4
-        with:
+          # The first bench's class lists: the editor's alone stands for a
+          # data folder whose archive came from a simple first app.
           name: framework-classlist
           path: cl
+          run-id: 42524653832
+          github-token: ${{ github.token }}
       - uses: actions/download-artifact@v4
         with:
           name: runtime-stage
@@ -151,29 +112,25 @@ jobs:
         run: |
           curl -sSfL -o jre.zip "https://api.adoptium.net/v3/binary/latest/21/ga/windows/x64/jre/hotspot/normal/eclipse"
           mkdir jre-unpacked && unzip -q jre.zip -d jre-unpacked && mv jre-unpacked/* stock-jre
-          du -sh stock-jre stage/jre jre-z stage-main stage stage/lib cl/framework.classlist
-          du -s --block-size=1 stock-jre stage/jre jre-z stage-main stage
-          wc -l cl/framework.classlist
+          du -sh stock-jre stage/jre stage-main stage stage/lib stage/lib/winapk-framework.classlist
+          du -s --block-size=1 stock-jre stage/jre stage-main stage
       - name: Bench
         shell: pwsh
         run: |
-          $stock = "$PWD\stock-jre"; $jre = "$PWD\stage\jre"; $jz = "$PWD\jre-z"; $main = "$PWD\stage-main"
-          $list = "$PWD\cl\framework.classlist"
-          $c = "WINAPK_CDS_CLASSLIST=$list,@wait=1"
+          $stock = "$PWD\stock-jre"; $main = "$PWD\stage-main"
+          # Fe: one archive made beforehand from the editor's classes alone.
+          $env:WINAPK_CDS_DIR = "$PWD\cds-editor"
+          $env:WINAPK_CDS_CLASSLIST = "$PWD\cl\classlists\org.billthefarmer.editor_198.classlist"
+          ./stage/bin/winapk-runtime.exe --cds-prepare --data "$PWD\prep"
+          Get-Content cds-editor/dump.log -Tail 2
+          Remove-Item Env:WINAPK_CDS_DIR; Remove-Item Env:WINAPK_CDS_CLASSLIST
+          $fe = "WINAPK_CDS_DIR=$PWD\cds-editor,WINAPK_CDS_CLASSLIST=$PWD\cl\classlists\org.billthefarmer.editor_198.classlist"
           python windows/test/compat/startbench.py --runtime stage --apks apk-cache --out bench `
             --only ${{ matrix.apps }} --warm 3 --frames 150 `
             --config "A=$stock,@runtime=$main" `
-            --config "B=$jre,WINAPK_CDS=base" `
-            --config "Bz=$jz,WINAPK_CDS=base" `
-            --config "C0=$jre,WINAPK_CDS_CLASSLIST=none,@wait=1" `
-            --config "C=$jre,$c" `
-            --config "Cz=$jz,$c" `
-            --config "Cv=$jre,$c,WINAPK_CDS_VERIFY=1" `
-            --config "Cxms=$jre,$c,MACAPK_JVM_OPTS=-Xms32m" `
-            --config "Cperf=$jre,$c,MACAPK_JVM_OPTS=-XX:-UsePerfData" `
-            --config "Cg1=$jre,$c,MACAPK_JVM_OPTS=-XX:-UseSerialGC -XX:+UseG1GC" `
-            --config "Creloc=$jre,$c,MACAPK_JVM_OPTS=-XX:ArchiveRelocationMode=0" `
-            --config "Cc2=$jre,$c,MACAPK_JVM_OPTS=-XX:TieredStopAtLevel=4"
+            --config "F=,@wait=1" `
+            --config "Fown=,WINAPK_CDS_CLASSLIST=none,@wait=1" `
+            --config "Fe=,$fe"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
