@@ -1,6 +1,6 @@
 # Google account and Google services
 
-[עברית](he/google-services.md)
+**🇮🇱 [לדף הזה בעברית — לחצו כאן](he/google-services.md)**
 
 Many Android apps use Google Play services: to sign in with Google, check
 their Play licence, receive push messages or ask for the location. Win.apk

@@ -1,6 +1,6 @@
 # Troubleshooting and reporting a problem
 
-[עברית](he/troubleshooting.md)
+**🇮🇱 [לדף הזה בעברית — לחצו כאן](he/troubleshooting.md)**
 
 Win.apk is a preview: some apps will not work yet. This page helps you tell a
 known limit from a new bug, and send a report we can act on.

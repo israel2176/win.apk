@@ -2,7 +2,7 @@
 
 # פתרון בעיות ודיווח על בעיה
 
-[English](../troubleshooting.md)
+‏[English](../troubleshooting.md)
 
 ‏Win.apk היא גרסת תצוגה, וחלק מהאפליקציות עוד לא יעבדו. הדף הזה עוזר להבחין
 בין מגבלה ידועה לבאג חדש, ולשלוח דיווח שאפשר לטפל בו.
@@ -24,7 +24,7 @@
 
 ## בעיות נפוצות
 
-**"Windows הגן על המחשב שלך" (SmartScreen) בהרצת ההתקנה.** גרסת התצוגה עוד
+‏**"Windows הגן על המחשב שלך" (SmartScreen) בהרצת ההתקנה.** גרסת התצוגה עוד
 לא חתומה דיגיטלית. לוחצים **מידע נוסף** ואז **הפעל בכל זאת**, אם הורדתם
 מדף ה-[Releases](https://github.com/israel2176/win.apk/releases) של המאגר
 הזה.
@@ -85,13 +85,13 @@ Google](google-services.md). רכישות מתוך אפליקציה ו-Play Inte
 
 | שורה | משמעות |
 |---|---|
-| `native not implemented on Windows yet` | חלק בסביבת האנדרואיד שעוד חסר |
-| `not implemented on Windows yet` (על פונקציית מערכת) | פונקציה בספריית C שהקוד המקורי של האפליקציה צריך |
-| `[win.apk] cannot load <library>` או `UnsatisfiedLinkError` | ספרייה מקורית לא נטענה: ARM של 32 ביט בלבד, ארוזה או מוצפנת, או למעבד אחר |
-| `Exception` או `FATAL` | האפליקציה קרסה; השורות שאחרי אומרות איפה |
-| `[win.apk] crash:` ו-`crash dump:` | הקוד המקורי קרס. נכתב קובץ Minidump ליד היומן (`crash-<app>-<time>.dmp`): כדאי לצרף גם אותו |
-| `[win.apk] arm64 AOT: off for this app` | אפליקציית ARM קרסה פעמיים עם התרגום, ולכן היא רצה על ה-JIT |
-| `[win.apk]` | כל הודעה אחרת של Win.apk עצמו |
+| ‏`native not implemented on Windows yet` | חלק בסביבת האנדרואיד שעוד חסר |
+| ‏`not implemented on Windows yet` (על פונקציית מערכת) | פונקציה בספריית C שהקוד המקורי של האפליקציה צריך |
+| ‏`[win.apk] cannot load <library>` או `UnsatisfiedLinkError` | ספרייה מקורית לא נטענה: ARM של 32 ביט בלבד, ארוזה או מוצפנת, או למעבד אחר |
+| ‏`Exception` או `FATAL` | האפליקציה קרסה; השורות שאחרי אומרות איפה |
+| ‏`[win.apk] crash:` ו-`crash dump:` | הקוד המקורי קרס. נכתב קובץ Minidump ליד היומן (`crash-<app>-<time>.dmp`): כדאי לצרף גם אותו |
+| ‏`[win.apk] arm64 AOT: off for this app` | אפליקציית ARM קרסה פעמיים עם התרגום, ולכן היא רצה על ה-JIT |
+| ‏`[win.apk]` | כל הודעה אחרת של Win.apk עצמו |
 
 ## דיווח על בעיה
 
