@@ -294,6 +294,39 @@ public final class ApkVerification {
                 | (c.hasAuth() ? CAP_AUTH : 0);
     }
 
+    /** AOSP PackageManagerInternal.hasSignatureCapability(serverUid, clientUid,
+     *  capability), the check AccountManagerService.getTypesManagedByCaller
+     *  makes with CertCapabilities.AUTH: the client is signed as the server
+     *  is, or by a past signer of the server's lineage that the lineage grants
+     *  `capability`, or the server's signer is in the client's own lineage
+     *  (server.checkCapability(client, capability) ||
+     *  client.hasAncestorOrSelf(server)). Unverified on either side: false. */
+    public static boolean hasSignatureCapability(Result server, Result client, int capability) {
+        if (server == null || client == null || !server.verified || !client.verified
+                || server.signers.isEmpty() || client.signers.isEmpty()) {
+            return false;
+        }
+        return checkCapability(server, client, capability) || checkCapability(client, server, 0);
+    }
+
+    /** AOSP SigningDetails.checkCapability(oldDetails, flags) (flags 0 is
+     *  hasAncestorOrSelf): several signers must match exactly; one must be this
+     *  APK's current signer or a past one whose capabilities include `flags`. */
+    private static boolean checkCapability(Result self, Result old, int flags) {
+        if (old.signers.size() > 1) return sameSigners(self.signers, old.signers);
+        byte[] cert = old.signers.get(0);
+        if (self.past != null) {
+            // The last entry is the current signer, which has every capability.
+            for (int i = 0; i < self.past.size() - 1; i++) {
+                if (MessageDigest.isEqual(self.past.get(i), cert)
+                        && (flags == 0 || (self.pastFlags[i] & flags) == flags)) {
+                    return true;
+                }
+            }
+        }
+        return self.signers.size() == 1 && MessageDigest.isEqual(self.signers.get(0), cert);
+    }
+
     /** AOSP Signature.areExactMatch: the same set, the same count. */
     private static boolean sameSigners(List<byte[]> a, List<byte[]> b) {
         if (a.size() != b.size()) return false;

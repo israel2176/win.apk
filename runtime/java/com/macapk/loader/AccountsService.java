@@ -14,9 +14,9 @@
 // WHAT IS AOSP's (services/core/java/com/android/server/accounts/
 // AccountManagerService.java, android14-release):
 //   - isAccountManagedByCaller: only the authenticator's package, or one
-//     sharing its uid, may add / remove accounts of its type or read / write
-//     passwords, user data and tokens directly (SecurityException otherwise,
-//     AOSP's message shape).
+//     signed with its key (hasSignatureCapability AUTH, lineage included), may
+//     add / remove accounts of its type or read / write passwords, user data
+//     and tokens directly (SecurityException otherwise, AOSP's message shape).
 //   - resolveAccountVisibility: the managing package sees its accounts; else an
 //     explicit visibility; else GET_ACCOUNTS_PRIVILEGED; else a pre-O
 //     (targetSdk < 26) app holding GET_ACCOUNTS; else not visible.
@@ -33,8 +33,9 @@
 // LIMITS (stated): which TYPE a service authenticates comes from the app's own
 // registration (its process parses its resources); the broker checks that the
 // named service is declared with the authenticator action, and the first
-// package to claim a type keeps it. No signature-based visibility and no
-// per-token grant prompts (GrantCredentialsPermissionActivity); every installed
+// package to claim a type keeps it. A signature match makes a caller manage the
+// type (and so see its accounts); there is no SIGNATURE_MATCH visibility apart
+// from that, and no per-token grant prompts (GrantCredentialsPermissionActivity); every installed
 // app is treated as able to hold GET_ACCOUNTS_PRIVILEGED if it declares it.
 package com.macapk.loader;
 
@@ -199,23 +200,22 @@ final class AccountsService extends Binder {
 
     private synchronized Authenticator owner(String type) { return authenticators.get(type); }
 
-    /** AOSP isAccountManagedByCaller: the type's authenticator manages it, and
-     *  so does any caller whose uid passes checkSignatures against the
-     *  authenticator's uid, which a package sharing that uid always does (the
-     *  Play Store shares com.google.uid.shared with Play services, whose
-     *  authenticator owns com.google, and reads its accounts' user data). */
+    /** AOSP isAccountManagedByCaller (getTypesManagedByCaller): the type's
+     *  authenticator manages it, and so does any caller signed as the
+     *  authenticator is -- hasSignatureCapability(authenticator, caller, AUTH)
+     *  over the verified signatures (ApkVerification), the lineage included.
+     *  The Play Store, signed with Play services' key, reads the user data of
+     *  the com.google accounts Play services' authenticator stores; an app
+     *  signed by anyone else, or whose signature does not verify, does not. */
     private boolean manages(String pkg, String type) {
         Authenticator a = owner(type);
         if (a == null || pkg == null) return false;
         if (a.pkg.equals(pkg)) return true;
-        int mine = uidOf(pkg);
-        return mine >= 0 && mine == uidOf(a.pkg);
-    }
-
-    private int uidOf(String pkg) {
-        SystemServer.PackageRecord pr = system.packageRecord(pkg);
-        if (pr == null || pr.manifest.sharedUserId == null) return -1;   // a uid of its own: only itself
-        return AppUids.uidFor(pkg, pr.manifest.sharedUserId);
+        SystemServer.PackageRecord server = system.packageRecord(a.pkg);
+        SystemServer.PackageRecord client = system.packageRecord(pkg);
+        if (server == null || client == null) return false;
+        return ApkVerification.hasSignatureCapability(ApkVerification.of(server.apkPath),
+                ApkVerification.of(client.apkPath), ApkVerification.CAP_AUTH);
     }
 
     private void requireManaged(String pkg, String type, String what) {

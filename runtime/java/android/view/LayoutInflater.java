@@ -953,15 +953,29 @@ public class LayoutInflater {
 
     /** Attaches an inflated child as AOSP's inflate and rInflate do:
      *  addView(view, params), the two-argument overload, with the params
-     *  built for this parent. A ViewGroup that overrides only one overload
-     *  sees the one a device calls: the Play Store's ScrollViewWithHeader
-     *  routes addView(View) into a container it has not made yet while its
-     *  own constructor inflates into it, and threw from there. */
-    private static void macapkAttach(ViewGroup parent, View child) {
+     *  built for this parent (generateDefaultLayoutParams when none were, as
+     *  AOSP's generateLayoutParams(attrs) always yields some). A ViewGroup that
+     *  overrides only one overload sees the one a device calls: the Play
+     *  Store's ScrollViewWithHeader routes addView(View) into a container it
+     *  has not made yet while its own constructor inflates into it, and threw
+     *  from there. An <include>'s root is the exception: AOSP's parseInclude
+     *  attaches it with group.addView(view), the one-argument form. */
+    private void macapkAttach(ViewGroup parent, View child) {
+        if (child == macapkIncludeRoot) {
+            macapkIncludeRoot = null;
+            parent.addView(child);
+            return;
+        }
         ViewGroup.LayoutParams lp = child.getLayoutParams();
+        if (lp == null) {
+            try { lp = parent.generateDefaultLayoutParams(); } catch (Throwable ignored) {}
+        }
         if (lp != null) parent.addView(child, lp);
         else parent.addView(child);
     }
+
+    /** The root an <include> just inflated, for macapkAttach. */
+    private View macapkIncludeRoot;
 
     /** Walk the DOM tree starting at `elem`, instantiating each tag
      *  as a View and recursing over children. `parent` may be null
@@ -1169,6 +1183,7 @@ public class LayoutInflater {
                     // every dependent child collapses to zero width.
                     if (inflated != null && inflated != parent) {
                         applyIncludeOverrides(inflated, elem, parent);
+                        macapkIncludeRoot = inflated;
                     }
                     return inflated;
                 }

@@ -17,7 +17,8 @@
 //   - signed with a key rotated from an older one (v3 proof-of-rotation, as
 //     Play services 26.x is): the current signer plus the lineage, oldest
 //     first; GET_SIGNATURES answers the oldest; checkSignatures and
-//     hasSigningCertificate honour the lineage as AOSP's do;
+//     hasSigningCertificate honour the lineage as AOSP's do, and so does
+//     hasSignatureCapability (who manages an account type), AUTH flag included;
 //   - a split set and a bundle: every APK must verify with the base's signer.
 // Prints PASS/FAIL per check and "ALL PASSED" at the end; exits 1 on a failure.
 package com.macapk.loader;
@@ -188,6 +189,35 @@ public class ApkVerificationTest {
         PackageInfo pi = pm.getPackageInfo("rotated", PackageManager.GET_SIGNATURES);
         check("getPackageInfo(rotated, GET_SIGNATURES) = [old]", pi.signatures != null && pi.signatures.length == 1
                 && eq(pi.signatures[0].toByteArray(), a.der()));
+
+        // AccountsService.manages: AOSP hasSignatureCapability(authenticator,
+        // caller, AUTH), the rule that lets the Play Store read the user data of
+        // the accounts Play services' authenticator stores.
+        ApkVerification.Result rOld = ApkVerification.of(signed.getPath());
+        ApkVerification.Result rRot = ApkVerification.of(rotated.getPath());
+        ApkVerification.Result rOther = ApkVerification.of(new File(scratch, "c.apk").getPath());
+        ApkVerification.Result rForged = ApkVerification.of(pastedBlock.getPath());
+        ApkVerification.Result rV1 = ApkVerification.of(v1.getPath());
+        int auth = ApkVerification.CAP_AUTH;
+        check("account type: same signer manages it",
+                ApkVerification.hasSignatureCapability(rOld, rV1, auth));
+        check("account type: another signer does not",
+                !ApkVerification.hasSignatureCapability(rOld, rOther, auth));
+        check("account type: an unverified APK carrying the certificate does not",
+                !ApkVerification.hasSignatureCapability(rOld, rForged, auth));
+        check("account type: a rotated authenticator's old signer (AUTH granted) manages it",
+                ApkVerification.hasSignatureCapability(rRot, rOld, auth));
+        check("account type: a rotated caller whose lineage has the authenticator's key manages it",
+                ApkVerification.hasSignatureCapability(rOld, rRot, auth));
+        SigningCertificateLineage noAuth = new SigningCertificateLineage.Builder(
+                new SigningCertificateLineage.SignerConfig.Builder(a.key, a.cert).build(),
+                new SigningCertificateLineage.SignerConfig.Builder(c.key, c.cert).build())
+                .setOriginalCapabilities(new SigningCertificateLineage.SignerCapabilities.Builder()
+                        .setAuth(false).build()).build();
+        ApkVerification.Result rNoAuth = ApkVerification.of(
+                sign(unsigned, "rotated-noauth.apk", List.of(a, c), noAuth, true, true, true).getPath());
+        check("account type: an old signer the lineage denies AUTH does not",
+                rNoAuth.verified && !ApkVerification.hasSignatureCapability(rNoAuth, rOld, auth));
 
         // ---- split sets and bundles ------------------------------------------------
         File set = new File(scratch, "data/app/~~n/pkg-n");

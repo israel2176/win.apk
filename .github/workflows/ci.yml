@@ -361,7 +361,8 @@ jobs:
           # from the staged framework-res.apk: signed ones verify; tampered ones,
           # a pasted signing block and a pasted v1 certificate do not; a rotated
           # key reports its lineage as AOSP's PackageManager does (GET_SIGNATURES
-          # the oldest, checkSignatures and hasSigningCertificate through it);
+          # the oldest, checkSignatures and hasSigningCertificate through it, and
+          # hasSignatureCapability, which decides who manages an account type);
           # split sets and bundles; the cache. Also a bundle's string resources
           # and PresentedSdk's minSdk floor.
           export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
