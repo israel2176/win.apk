@@ -1132,6 +1132,27 @@ public final class PackageInstallerBackend {
             throws IOException {
         String ours = "guest-session-" + s.id + "-" + System.currentTimeMillis()
                 + "-" + Integer.toHexString((int) (Math.random() * 0x7fffffff));
+        // AOSP PackageInstallerSession.sAddedApkFilter: a session file is an APK
+        // unless it is dex metadata (DexMetadataHelper: ".dm"), an fs-verity
+        // signature (".fsv_sig"), a digests file or its signature (ApkChecksums:
+        // ".digests", ".signature") or a v4 signature (".idsig"). Those sit beside
+        // the APKs; they are not splits. The Play Store writes a ".dm" with every
+        // app: made a member of the bundle, it was taken for a split without a
+        // manifest, the installed set's signature failed to verify, and Play read
+        // the installed app as unsigned ("has null signatures") and as not
+        // installed.
+        for (java.util.Iterator<Map.Entry<String, File>> it = blobs.entrySet().iterator(); it.hasNext(); ) {
+            Map.Entry<String, File> e = it.next();
+            String n = e.getKey() == null ? "" : e.getKey().toLowerCase(java.util.Locale.ROOT);
+            if (n.endsWith(".dm") || n.endsWith(".fsv_sig") || n.endsWith(".digests")
+                    || n.endsWith(".signature") || n.endsWith(".idsig")) {
+                NativeLog.i(TAG, "session " + s.id + ": " + e.getKey() + " is not an APK (dex metadata or a"
+                        + " signature file); not installed");
+                e.getValue().delete();
+                it.remove();
+            }
+        }
+        if (blobs.isEmpty()) throw new IOException("the session holds no APK");
         if (blobs.size() == 1) {
             File src = blobs.values().iterator().next();
             File dst = new File(stagingRoot(), ours + ".apk");

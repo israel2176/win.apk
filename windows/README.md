@@ -390,6 +390,11 @@ every such change is listed here:
   string parses back to the same path; `file://C:%5C...` parsed back with the
   path taken for the authority and an empty path (the Play Store's
   downloads wrote to `""`).
+- `runtime/java/com/macapk/loader/PackageInstallerBackend.java`: a session's
+  dex metadata (`.dm`) and signature files (`.fsv_sig`, `.digests`,
+  `.signature`, `.idsig`) are not made splits of the installed bundle, as
+  AOSP's session leaves them out of its APKs (the Play Store writes a `.dm`
+  with every app).
 - `runtime/java/com/macapk/loader/ViewDump.java` (new),
   `ViewCanvasDriver.java`: `WINAPK_DUMP_VIEWS=1` logs the top window's views
   with their bounds after each frame that changed them (a Compose view's
