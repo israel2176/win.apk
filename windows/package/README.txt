@@ -1,152 +1,74 @@
 Win.apk preview
 ===============
 
-Win.apk runs Android apps on Windows 10 and 11 (x64) as ordinary Windows
-programs: each app in its own window, with its own Start menu entry. It is
-an unofficial port of Mac.apk and is not affiliated with the Mac.apk
-project. This is an early preview.
+Win.apk runs Android apps on Windows 10 (1903 or later) and 11, 64-bit, as
+ordinary Windows programs: each app in its own window, with its own Start
+menu entry and Windows notifications. There is no emulator and no virtual
+machine. Win.apk is an unofficial port of Mac.apk and is not affiliated with
+or endorsed by the Mac.apk project. This is an early preview.
+
+Documentation, in English and Hebrew: https://github.com/israel2176/win.apk
 
 Installing Win.apk
 ------------------
 Win.apk-Setup.exe installs it for your user only (no administrator rights),
-puts Win.apk in the Start menu and opens .apk files with it. Windows
-SmartScreen may warn because the installer is not signed: click "More info",
-then "Run anyway". Or unzip Win.apk-windows-x64.zip anywhere and start
-Win.apk.exe from that folder.
+puts it in the Start menu and opens .apk files with it. Windows SmartScreen
+warns because the preview is not code-signed: click "More info", then "Run
+anyway". Or unzip Win.apk-windows-x64.zip anywhere and start Win.apk.exe.
 
-Everything needed is included: Java (built from Eclipse Temurin 21, the jre folder),
-ANGLE for graphics (bin\libEGL.dll, bin\libGLESv2.dll, Chromium's build;
-licenses in bin\licenses) and the clang compiler that translates apps' ARM
-code for your processor (the clang folder, licenses in clang\licenses). Web
-pages inside apps and Google sign-in use the Microsoft Edge WebView2
-Runtime, which Windows 11 and most Windows 10 PCs already have.
+Included: Java (built from Eclipse Temurin 21, the jre folder), ANGLE for graphics
+(bin\libEGL.dll, bin\libGLESv2.dll), and the clang compiler that translates
+apps' ARM code for your processor (the clang folder). Web pages inside apps
+and Google sign-in use the Microsoft Edge WebView2 Runtime, which Windows 11
+and most Windows 10 PCs already have.
 
 Adding and running apps
 -----------------------
-Open Win.apk: it shows your app library and the Store.
-- Add an app: double-click an .apk (or an .apkm, .xapk or .apks bundle) in
-  Explorer, drag it onto the library, or click "Add app". A small install
-  window shows the app's icon, its name and what it is doing; the first
-  install of an app converts its code, which takes up to a minute. "Show
-  details" shows the log. At the end: Open, Close, or Show in library.
-- Or get one from the Store tab: the free and open-source apps of F-Droid
-  (f-droid.org), usually Java-only and a good place to start. Search or
-  pick a category, then click Install; the download is checked against
-  F-Droid's index before it is installed. Update shows when F-Droid has a
-  newer version of an app you have.
-- Each app gets its own icon in the library, in the Start menu
-  (Start > Win.apk Apps) and, unless turned off in the settings, on the
-  desktop.
-- Double-click an app to open it: a launch window with its icon shows
-  until the app's window is up, and says why if it does not start.
-  Right-click an app for Open, Stop, App details and Remove. App details
-  holds the rest: the orientation and window size, permissions, the
-  desktop shortcut, its files, Update from a file. Remove can also delete
-  what the app saved. Typing searches the library.
-- Settings, at the bottom of the left pane: theme, language (English or
-  Hebrew), the phone's screen size and orientation, whether apps use your
-  Windows folders, the desktop shortcut for new apps, the Google account,
-  updates (a daily check on GitHub, Check now, and Update when a newer
-  version is out), and the logs (Ctrl+L), with search, Copy and Open
-  folder.
+- From the Store tab: F-Droid's free and open-source apps, the easiest place
+  to start. Search, then Install.
+- From a file: double-click an .apk, .apkm, .xapk or .apks in Explorer, drag
+  it onto the library, or click "Add app". Prefer an x86_64 build of an app
+  (or one with no native code), then arm64-v8a. An app with only 32-bit ARM
+  code (armeabi-v7a) does not run.
+- Double-click an app to open it. The mouse is your finger, the wheel
+  scrolls, and Escape is Android's Back. Resize the window and the app lays
+  itself out again.
+- Right-click an app for Open, Stop, App details and Remove. App details holds
+  the rest: orientation, permissions, the log, Update from a file.
+- Settings: theme, language (English or Hebrew), screen size and orientation,
+  your Windows folders, the ARM translation, the Google account, updates.
 
-In an app, the mouse is your finger and the wheel scrolls. Android's Back
-is Escape, Alt+Left or the mouse's back button. Resize or maximize the
-window and the app lays itself out for the new size. Close the window to
-quit.
-
-Apps ask for permissions as on Android: a small window over the app with
-its icon, one question and Allow / Don't allow. The app's details page in
-the library, or the app's own App info screen, changes them later.
-
-What works
-----------
-- Apps written in Java or Kotlin, with mouse, wheel and keyboard input.
-- Games and apps that draw with OpenGL ES, from Java (GLSurfaceView,
-  libGDX) or from their own native code (SDL games, NativeActivity apps).
-  Graphics go through ANGLE on Direct3D 11; without a usable GPU, a
-  software renderer takes over.
-- Apps that ship x86_64 native libraries (lib/x86_64), loaded directly.
-- Apps that only have 64-bit ARM native libraries (lib/arm64-v8a). Their
-  ARM code is translated to x64 in the background (winapk-aot, compiled
-  with clang for your CPU). The app starts at once on an ARM JIT, which is
-  slower, and switches to the translated code as it becomes ready, so the
-  first runs of a large app are the slow ones.
-- Sound: AudioTrack, SoundPool and MediaPlayer audio from Java (WAV, Ogg,
-  MP3, AAC and what Windows decodes), AAudio from native code, and the
-  microphone.
-- Video: MediaPlayer and VideoView play MP4, MOV and other files Windows
-  decodes (H.264 and AAC always; HEVC, VP9 and AV1 with the Microsoft codec
-  packs from the Store), from a file or a web address, with the sound in
-  step; ExoPlayer and other MediaCodec players decode H.264 video and AAC
-  or MP3 audio the same way.
-- Saving data (files, SharedPreferences, SQLite). Downloads, Pictures,
-  Documents, Music and Movies are your own Windows folders.
-- Web pages inside apps (WebView) and Custom Tabs, on WebView2.
-- Webcams, location (from Windows' location service), the clipboard, file
-  open/save dialogs and game controllers.
-- Google sign-in and the Play services apps use for licences, push
-  notifications, Firebase Analytics and location. Signing in opens Google's
-  own page in a window; Win.apk never sees the password. Settings > Google
-  account adds or removes the account.
-- English and Hebrew, laid out right to left in Hebrew.
-- Wi-Fi: whether it is on, the current network and the scan results
-  (network names need location access for desktop apps in Windows'
-  privacy settings, as they need the location permission on Android).
-- Bluetooth: the paired devices, serial (RFCOMM) connections to them and
-  from them, Bluetooth LE scans and connections (reading, writing and
-  notifications), with the Nearby devices permission the app asks for.
-  Pair devices in Windows Settings first; apps cannot pair or discover
-  classic devices, advertise, or use the audio and input profiles.
-- Notifications: what an app posts shows as a Windows notification, with
-  the app's name and icon, and stays in the Action Center until dismissed;
-  quiet ones (a low-importance channel) go there without popping up.
-  Clicking one brings the app to the front and opens what a tap would on
-  Android, while the app is running. An app made for Android 13 or later
-  asks for the notification permission first.
-
-What does not work yet
-----------------------
-- Apps that only have 32-bit ARM native libraries (lib/armeabi-v7a).
-- Video from an app's own native code (the NDK's AMediaCodec), and Opus,
-  Vorbis or FLAC audio through MediaCodec (an ExoPlayer stream with such
-  audio stays silent; choose one with AAC audio).
-- OpenSL ES from native code: games whose engine uses it get no sound.
-- Vulkan, and real sensor input: the accelerometer and the others report a
-  phone lying still.
-- Play Store features: in-app purchases, Play Integrity, Google Maps.
+What works, and what does not yet: docs/APPS.md in the repository, one table
+checked against the code. In short, Java and Kotlin apps, OpenGL ES games,
+sound and video, WebView, webcams, location, Bluetooth, notifications and
+Google sign-in work; 32-bit ARM code, Vulkan, OpenSL ES sound, the NDK media
+API, real sensors, in-app purchases and Play Integrity do not.
 
 Where things are
 ----------------
-Installed apps:  %LOCALAPPDATA%\Win.apk\library
-App data:        %LOCALAPPDATA%\Win.apk\android
-Logs:            %LOCALAPPDATA%\Win.apk\logs  (run-<app>.log is an app's
-                 last run, last-run.log the app opened last,
-                 install-<app>.log an install)
-Crash dumps:     %LOCALAPPDATA%\Win.apk\logs\crash-<app>-<date>.dmp (the last three per app)
-Settings:        HKEY_CURRENT_USER\Software\Win.apk
+Your apps and their data:  %LOCALAPPDATA%\Win.apk
+Logs:                      %LOCALAPPDATA%\Win.apk\logs (run-<app>.log is an
+                           app's last run, install-<app>.log its install)
+Settings:                  HKEY_CURRENT_USER\Software\Win.apk
 
-Removing an app from the library keeps what it saved unless you tick "Also
-delete what the app saved"; uninstalling Win.apk keeps the apps too. Delete %LOCALAPPDATA%\Win.apk to start from scratch.
+Removing an app keeps what it saved unless you tick "Also delete what the app
+saved"; uninstalling Win.apk keeps the apps too. Delete %LOCALAPPDATA%\Win.apk
+to start from scratch.
 
 Reporting a problem
 -------------------
-If an app does not start or misbehaves, the last log says why. Please open
-an issue on GitHub (the "An app does not work" template) with the app's
-name, version and where it came from, the exact steps that lead to the
-problem, a screenshot of the app at that point, and the app's log attached
-whole (Show log in the launch window, or run-<app>.log). The repository's docs\APPS.md lists common apps and the problems
-already known, and docs\USER_GUIDE.md explains everything above in more
-detail. These lines in the log are the most useful:
-  "native not implemented"            a Windows piece that is missing
-  "not implemented on Windows yet"    a system function an app's native code needs
-  "cannot load <library>"             a native library did not load
-  "Exception" or "FATAL"              the app crashed
-  "crash:" and "crash dump:"          the app's native code crashed; the dump
-                                      named there is worth attaching too
+Use "Report a problem" in Win.apk: under an error, or on an app's details
+page. It opens GitHub's form with the versions filled in and the logs folder
+with the app's log selected; nothing is sent until you post it. Include where
+the APK came from, the steps, a screenshot and the whole log. Hebrew is fine.
+docs/troubleshooting.md explains the common log lines.
 
-Apps run with your Windows user account's rights, without a phone-style
-sandbox: install only apps you trust.
+Apps run with your Windows account's rights, without a phone-style sandbox:
+install only apps you trust.
 
-License: AGPL-3.0, like Mac.apk. Source: the repository this build came
-from. Win.apk is not affiliated with the Mac.apk project.
+License
+-------
+Win.apk is free software under the GNU AGPL v3.0 (LICENSE.txt), like Mac.apk;
+its source is at https://github.com/israel2176/win.apk . The third-party
+components it ships and their licences are listed in THIRD_PARTY_NOTICES.txt;
+full texts are also in jre\legal, bin\licenses and clang\licenses.

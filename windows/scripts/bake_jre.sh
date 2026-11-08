@@ -108,6 +108,9 @@ COMPRESS=()
     --strip-debug --no-header-files --no-man-pages "${COMPRESS[@]}" \
     --generate-cds-archive --output "$(native "$OUT")"
 
+# The distribution's own notice, beside legal/ (jlink copies only the modules').
+[ -f "$JDK/NOTICE" ] && cp "$JDK/NOTICE" "$OUT/"
+
 # The archive for 32 GB heaps and up (no compressed pointers): the runtime runs
 # with -Xmx1g, so it would never map. And the JVM's import library.
 rm -f "$OUT"/bin/server/classes_nocoops.jsa "$OUT"/lib/jvm.lib

@@ -696,10 +696,11 @@ jobs:
         with:
           name: runtime-stage
           path: stage
-      - name: Add the README
+      - name: Add the README and the licences
         run: |
           # The Java runtime is already there: the build baked it (stage/jre).
-          Copy-Item windows/package/README.txt stage/
+          Copy-Item windows/package/README.txt, THIRD_PARTY_NOTICES.txt stage/
+          Copy-Item LICENSE stage/LICENSE.txt
           if (-not (Test-Path stage/jre/bin/server/jvm.dll)) { exit 1 }
       - name: Build the installer
         run: |
