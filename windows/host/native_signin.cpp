@@ -43,6 +43,7 @@
 // is no window: the call answers null, which the callers treat as a cancel,
 // the state a Mac headless run is in.
 
+#include <algorithm>
 #include <atomic>
 #include <cstdio>
 #include <cwchar>
@@ -50,6 +51,7 @@
 #include <string>
 
 #include <windows.h>
+#include <shellapi.h>
 
 #include "host_natives.h"
 #include "webview2_host.h"
@@ -544,15 +546,51 @@ void register_class() {
 
 // The app window's icons for the title bar and taskbar, when there is an app
 // (a bounded ask: that window's thread may be busy in Java).
+// Without an app window (Settings > Google account, the Play Store's Sign in
+// with the app embedded or not yet up) the window had the generic Windows
+// icon; it then takes Win.apk's own, from Win.apk.exe beside bin\.
 void copy_app_icon(HWND hwnd) {
-    HWND app = static_cast<HWND>(window_handle());
-    if (!app) return;
-    for (WPARAM which : {static_cast<WPARAM>(ICON_BIG), static_cast<WPARAM>(ICON_SMALL)}) {
-        DWORD_PTR icon = 0;
-        if (SendMessageTimeoutW(app, WM_GETICON, which, 0, SMTO_ABORTIFHUNG | SMTO_BLOCK, 300, &icon) && icon) {
-            SendMessageW(hwnd, WM_SETICON, which, static_cast<LPARAM>(icon));
+    bool set = false;
+    if (HWND app = static_cast<HWND>(window_handle())) {
+        for (WPARAM which : {static_cast<WPARAM>(ICON_BIG), static_cast<WPARAM>(ICON_SMALL)}) {
+            DWORD_PTR icon = 0;
+            if (SendMessageTimeoutW(app, WM_GETICON, which, 0, SMTO_ABORTIFHUNG | SMTO_BLOCK, 300, &icon) && icon) {
+                SendMessageW(hwnd, WM_SETICON, which, static_cast<LPARAM>(icon));
+                set = true;
+            }
         }
     }
+    if (set) return;
+    wchar_t exe[MAX_PATH];
+    const DWORD n = GetModuleFileNameW(nullptr, exe, MAX_PATH);
+    if (n == 0 || n >= MAX_PATH) return;
+    std::wstring dir(exe, n);
+    dir.resize(dir.find_last_of(L"\\/") == std::wstring::npos ? 0 : dir.find_last_of(L"\\/"));  // ...\bin
+    const size_t up = dir.find_last_of(L"\\/");
+    for (const std::wstring& path : {(up == std::wstring::npos ? dir : dir.substr(0, up)) + L"\\Win.apk.exe",
+                                     dir + L"\\Win.apk.exe"}) {
+        HICON big = nullptr, small = nullptr;
+        if (ExtractIconExW(path.c_str(), 0, &big, &small, 1) > 0 && (big || small)) {
+            if (big) SendMessageW(hwnd, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(big));
+            if (small) SendMessageW(hwnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(small));
+            return;
+        }
+    }
+}
+
+// The DPI of the monitor the window will open on. dpi_of(nullptr) is 96 on
+// every screen, so on a 150% display the window opened at two thirds of its
+// size and Google's page, wider than what was left, was cut at the sides.
+UINT dpi_at(POINT pt) {
+    using Fn = HRESULT(WINAPI*)(HMONITOR, int, UINT*, UINT*);
+    static HMODULE shcore = LoadLibraryW(L"shcore.dll");
+    static auto fn = shcore ? reinterpret_cast<Fn>(reinterpret_cast<void*>(GetProcAddress(shcore, "GetDpiForMonitor")))
+                            : nullptr;
+    UINT x = 96, y = 96;
+    if (fn && SUCCEEDED(fn(MonitorFromPoint(pt, MONITOR_DEFAULTTOPRIMARY), 0 /* MDT_EFFECTIVE_DPI */, &x, &y)) && x) {
+        return x;
+    }
+    return 96;
 }
 
 void open_on_thread(Window* w) {
@@ -560,21 +598,32 @@ void open_on_thread(Window* w) {
     g_window = w;
     // Portrait, the flow is phone-shaped; centred on the app's window when
     // there is one, else on the primary monitor.
-    const UINT dpi = dpi_of(nullptr);
-    const int width = MulDiv(460, static_cast<int>(dpi), 96), height = MulDiv(720, static_cast<int>(dpi), 96);
-    int x = CW_USEDEFAULT, y = CW_USEDEFAULT;
+    // Per-monitor DPI for this window even in a process that never made a
+    // window of its own (`--gms signin-window`), so it is sharp and its size
+    // is in real pixels of the screen it opens on.
+    using SetCtx = HANDLE(WINAPI*)(HANDLE);
+    if (auto set_ctx = reinterpret_cast<SetCtx>(reinterpret_cast<void*>(
+            GetProcAddress(GetModuleHandleW(L"user32.dll"), "SetThreadDpiAwarenessContext")))) {
+        set_ctx(reinterpret_cast<HANDLE>(-4));  // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
+    }
     RECT r{};
     HWND app = static_cast<HWND>(window_handle());
-    if (app && !IsIconic(app) && GetWindowRect(app, &r) && r.right - r.left > 100) {
-        x = r.left + (r.right - r.left - width) / 2;
-        y = r.top + (r.bottom - r.top - height) / 2;
-    } else {
-        RECT work{};
-        if (SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0)) {
-            x = work.left + (work.right - work.left - width) / 2;
-            y = work.top + (work.bottom - work.top - height) / 2;
-        }
-    }
+    const bool over_app = app && !IsIconic(app) && GetWindowRect(app, &r) && r.right - r.left > 100;
+    POINT centre{0, 0};
+    if (over_app) centre = {(r.left + r.right) / 2, (r.top + r.bottom) / 2};
+    MONITORINFO mi{sizeof(mi)};
+    GetMonitorInfoW(MonitorFromPoint(centre, MONITOR_DEFAULTTOPRIMARY), &mi);
+    const RECT& work = mi.rcWork;
+    if (!over_app) centre = {(work.left + work.right) / 2, (work.top + work.bottom) / 2};
+    // 520 x 800 DIPs: Google's sign-in pages lay out for at least ~450 px of
+    // width plus their margins, and the 2-step pages are tall; never more
+    // than the screen's work area.
+    const UINT dpi = dpi_at(centre);
+    const int width = std::min<int>(MulDiv(520, static_cast<int>(dpi), 96), (work.right - work.left) - 16);
+    const int height = std::min<int>(MulDiv(800, static_cast<int>(dpi), 96), (work.bottom - work.top) - 16);
+    int x = centre.x - width / 2, y = centre.y - height / 2;
+    x = std::max<int>(work.left + 8, std::min<int>(x, work.right - width - 8));
+    y = std::max<int>(work.top + 8, std::min<int>(y, work.bottom - height - 8));
     HWND hwnd = CreateWindowExW(0, kClass, L"Sign in to Google", WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, x, y, width,
                                 height, nullptr, nullptr, GetModuleHandleW(nullptr), w);
     if (!hwnd) {
