@@ -780,11 +780,29 @@ Still open:
     starting `winapk-runtime --system`, and the caller's identity comes from
     the OS (pipe client pid, the process's recorded command line) where
     upstream's phase 1 trusts the message. Tested between real JVMs
-    (`winapk-binder-test`); not tried with Google's real APKs on Windows.
-    Open: the broker cannot show a service host's window if the user opens
-    that same app afterwards (the running copy is headless); a SurfaceView
-    window through EGL14 (upstream's native-EGL layer) still refuses on
-    Windows; unbind accounting and Play Billing / Integrity, as upstream.
+    (`winapk-binder-test`), and in November 2026 with Google's own Services
+    Framework, Play services 26.43 and Play Store 52.9 on a Windows runner
+    (a one-off workflow, not in CI): Play services checks in and keeps an
+    MCS connection to mtalk.google.com:5228; Telegram, Moovit and the Play
+    Store get FCM tokens from it; a test account signed in with
+    `--gms signin-master` is the device's Google account (Play services
+    resolves its id, the Play Store shows its picture and gets its
+    googleplay tokens, opens "Welcome to Google Play" and an app's details
+    page with Install). What it took: `Message.sendingUid` and a
+    PendingIntent's creator uid (the GCM registrar's caller checks), fsync
+    of a directory, `<permission-tree>`, a service started from its own
+    attachBaseContext, java.io opens that share deletion with a POSIX
+    replacing rename (Play services' Chimera config is written by renaming
+    a file still open), and a user's start of an app the broker runs
+    headless replacing that process. Findings: before the first check-in
+    completes the Play Store reads android_id 0 and its first home shows
+    "Server error" (the next start is fine); Play's image cache names files
+    with `?`, which Windows refuses, so its images are not cached on disk;
+    a GCM registration can take over 30 s on a loaded machine, past the
+    client's timeout (it retries on its next start).
+    Open: a SurfaceView window through EGL14 (upstream's native-EGL layer)
+    still refuses on Windows; unbind accounting and Play Billing /
+    Integrity, as upstream.
 - Upstream commits almost daily. Merging at least monthly keeps conflicts
   small; `windows/README.md` lists every `runtime/` change to carry over and
   how to sync (the last sync: upstream 1500431, v1.0.2379).

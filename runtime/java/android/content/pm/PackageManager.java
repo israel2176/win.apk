@@ -627,6 +627,13 @@ public abstract class PackageManager {
      *  would behave identically -- the cache just keeps identity stable for
      *  apps that compare references. */
     private static android.content.pm.PackageInstaller sPackageInstaller;
+    /** AOSP getArtManager (@SystemApi, API 28): ART's runtime profiles, which
+     *  are off here (dex.ArtManager). */
+    public android.content.pm.dex.ArtManager getArtManager() {
+        return ART_MANAGER;
+    }
+    private static final android.content.pm.dex.ArtManager ART_MANAGER = new android.content.pm.dex.ArtManager();
+
     public android.content.pm.PackageInstaller getPackageInstaller() {
         synchronized (PackageManager.class) {
             if (sPackageInstaller == null) {

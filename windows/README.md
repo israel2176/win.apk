@@ -366,6 +366,10 @@ every such change is listed here:
   `MacApkPackageManager.java`: with Google services on and the real Play
   services installed, the in-process GMS stand-ins stay out also before the
   process attaches to the broker.
+- `runtime/java/android/content/pm/dex/ArtManager.java` (new),
+  `PackageManager.java`: `getArtManager()`, with runtime profiling off (no
+  ART); the Play Store's profile upload job failed to start without it and
+  its job scheduler retried it without pause.
 - `runtime/java/com/macapk/gms/GmsCli.java`, `GoogleAuthClient.java`: the
   `signin-master` verb (an account from a master token, on stdin); a refusal
   from Google's `/auth` is logged with its reason line, not only its status.

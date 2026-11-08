@@ -408,7 +408,13 @@ the system broker (`winapk-runtime --system`, started by the first app that
 needs it and gone a minute after the last app closes), lets one app reach
 another's services, the way Android's system server does. Apps then use the
 real Play services instead of Win.apk's stand-ins. It takes effect when an app
-starts.
+starts. With Google's own copies this gives apps push notifications through
+Firebase Cloud Messaging from the real Play services, and the Play Store
+signed in with your Google account. The first time, Play services needs a
+minute to check in with Google; a Play Store opened before that shows
+"Server error" until you open it again. Opening an app that Play services
+had started in the background (the Play Store, for one) restarts it with its
+window.
 
 Only copies whose signature verifies, made with Google's own key (or a newer
 Google key that proves it took over from it, as current Play services do), are
