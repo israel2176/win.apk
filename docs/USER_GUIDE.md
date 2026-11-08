@@ -107,7 +107,12 @@ starts at once on an ARM64 JIT, which is slower, and each library switches to
 its translation as soon as it is ready, even while the app is running. Large
 libraries are translated only where the app's code actually ran, and more as
 you use the app, so the first runs of a big app are the slow ones. Whole
-translations are shared between apps that ship the same library.
+translations are shared between apps that ship the same library, stored once
+on the disk; the shared folder keeps under 2 GB and lets go of what no app
+used for two months. A translation is made for your PC's processor: on
+another one (the data folder moved to a new PC) it is made again. A library
+that rewrites its own code while it runs (some games' anti-cheat code, some
+packed apps) stays on the JIT.
 
 The translation keeps out of your way. It runs at the lowest priority and
 uses at most one processor core while you are using the PC, more only while
@@ -118,6 +123,25 @@ the app, shutting down or ending the process, it goes on where it was the
 next time. If a translation fails it is tried again later, and after four
 failures the library stays on the JIT until the app or Win.apk is updated
 (the app's `aot-<app>.log` in the logs folder says why).
+
+If an ARM-only app crashes twice in a row while translated code is loaded,
+Win.apk takes the translation for the suspect: from the next start the app
+runs on the JIT only, slower but without it. Only crashes count (the app's
+process ending in a fault or an abort, the `[win.apk] crash:` lines of its
+log), not closing the app, Stop, Remove or ending it in Task Manager. The app's log says so at that start, with the crashes and their
+times:
+
+```
+[win.apk] arm64 AOT: off for this app: it crashed 2 starts in a row with translated code loaded (...); the JIT runs it. Delete ...\apps\<app>\aot-guard.txt to try the translation again.
+```
+
+and each crash it counts adds a `[win.apk] arm64 AOT: crash counted` line.
+To try the translation again, delete the file the line names; an update of
+the app or of the translator also clears it. If the app then crashes twice
+in a row on the JIT as well, it was not the translation: the log says
+`crashes on the JIT too: not the translation`, and the next start uses the
+translation again, for good for that version of the app. To run any app on
+the JIT only, set `WINAPK_AOT=0`.
 
 The translation uses the clang shipped in Win.apk's `clang` folder. To use a
 different one, set the environment variable `WINAPK_AOT_CLANG` to its
@@ -222,6 +246,14 @@ Right-click an app's tile for its menu: the app's icon, name and version at
 the top, then **Open**, **Stop** (while it runs), **App details** and
 **Remove**, each with its icon and shortcut. It follows the theme and, in
 Hebrew, opens to the left.
+
+Win.apk asks its questions in dialogs of its own, in the same look as the
+library, light or dark and mirrored in Hebrew: **Remove**, **Clear library**,
+**Stop installing?**, signing out of Google, an error with **Show log**, an
+app asking to install, update or remove another app, and the permission
+questions apps ask. The accent button comes first; for anything that removes
+something, Enter picks **Cancel**. Esc or the window's ✕ closes a dialog
+without an answer.
 
 **App details** (also Alt+Enter) is a page in the library, with a back arrow:
 
@@ -533,7 +565,7 @@ and the launch window open the right log themselves when something fails.
 | Win.apk itself | `%LOCALAPPDATA%\Programs\Win.apk`, or the folder you unzipped |
 | Your copy of each APK | `%LOCALAPPDATA%\Win.apk\library\<app>.apk` |
 | Per-app choices beside the APK | `<app>.label` (name), `<app>.package` (package, version, manifest orientation), `<app>.orientation` (your choice), `<app>.window` (remembered window size) |
-| Each app's converted code, icon and name | `%LOCALAPPDATA%\Win.apk\apps\<app>` |
+| Each app's converted code, icon and name | `%LOCALAPPDATA%\Win.apk\apps\<app>` (and `aot-guard.txt`, an ARM-only app's crashes with its translation) |
 | The Android file system: apps' data, the installed packages | `%LOCALAPPDATA%\Win.apk\android` |
 | Logs | `%LOCALAPPDATA%\Win.apk\logs` |
 | The Store's catalog and icons | `%LOCALAPPDATA%\Win.apk\store` |
@@ -592,6 +624,7 @@ Environment variables the launcher and the runtime read:
 | `WINAPK_RESIZABLE=0` | The window letterboxes the phone instead of resizing the app |
 | `WINAPK_DENSITY=<dpi>` | Overrides the density the app sees |
 | `WINAPK_AOT_CLANG=<path to clang.exe>` | The compiler for ARM translation |
+| `WINAPK_AOT=0` | Run ARM-only apps' code on the JIT only: no translation is loaded or made |
 | `WINAPK_ABIS=arm64-v8a` | Install an app's ARM64 build although it has an x86_64 one (for comparing the two) |
 | `WINAPK_ALLOW_SECOND_INSTANCE=1` | Allow a second copy of a running app |
 | `WINAPK_WEBVIEW2=0` | Do not use WebView2; web links open in the system browser |
@@ -617,6 +650,7 @@ The most useful lines:
 | `[win.apk] cannot load <library>` or `UnsatisfiedLinkError` | A native library did not load: 32-bit ARM only, packed or encrypted, or for another CPU |
 | `Exception` or `FATAL` | The app crashed; the lines after it say where |
 | `[win.apk] crash:` and `crash dump:` | The app's native code crashed: the library and offset, and the minidump written for it, which is worth attaching too |
+| `[win.apk] arm64 AOT: off for this app` | An ARM-only app crashed twice in a row with its translation loaded, so it runs on the JIT; see [ARM-only apps](#arm-only-apps) |
 | `[win.apk]` | A message from Win.apk itself |
 
 Then look in [`APPS.md`](APPS.md) for the app or the kind of problem, and

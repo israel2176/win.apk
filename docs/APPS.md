@@ -74,6 +74,18 @@ Tremotesf). Where F-Droid builds per ABI the x86_64 build is pinned, and a
 few arm64-v8a-only builds exercise the ARM translation. A sweep result says
 the app booted, not that it is usable: a row above is worth more.
 
+The arm64 translation was also run (2026-11-06) on the arm64-v8a libraries
+of 28 F-Droid apps, headless, twice on the JIT alone and twice translated:
+VLC, Jitsi Meet (React Native), LocalSend and Lichess (Flutter), Godot
+editor and Revengate (Godot), OsmAnd, Telegram X, Minetest, Tensy, TIC-80,
+Tux Paint, Wesnoth, Simon Tatham's Puzzles, Just Player, LibreOffice
+Viewer, Kodi, Freedoom, MuPDF and Open Sudoku drew the same on both engines
+(translated, with 5-30% less memory and up to half the time in arm64 code).
+PPSSPP, Linphone and Emacs crash at start in `winapk-runtime.exe` itself,
+GNU Backgammon aborts, AAAAXY (Go) stops with "unaligned sysNoHugePageOS",
+and Firefox (Fennec), GCompris and SimpleX draw nothing in 7 minutes: the
+same on the JIT, so not the translation.
+
 ### Adding a row
 
 Copy this line into the table, newest test first for the same app:

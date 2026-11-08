@@ -203,7 +203,7 @@ void dp_immediate(Cpu& c, uint32_t insn) {
             // EXTR Rd, Rn, Rm, #lsb: bits lsb.. of the pair Rn:Rm (Rn high).
             const uint64_t hi = get_x(c, rn) & mask(size);
             const uint64_t lo = get_x(c, field(insn, 20, 16)) & mask(size);
-            uint64_t r = lsb == 0 ? hi : ((lo >> lsb) | (hi << (size - lsb)));
+            uint64_t r = lsb == 0 ? lo : ((lo >> lsb) | (hi << (size - lsb)));
             set_x(c, rd, r & mask(size));
             break;
         }
@@ -250,8 +250,12 @@ void system_insn(Cpu& c, uint32_t insn) {
             const uint64_t a = get_x(c, field(insn, 4, 0)) & ~uint64_t{63};
             std::memset(reinterpret_cast<void*>(a), 0, 64);
         }
-        // DC CVAU/CIVAC/CVAC and IC IVAU: the interpreter has no code cache
-        // to invalidate (the JIT acts on them itself, arm64_jit.cpp).
+        // DC CVAU/CIVAC/CVAC: the interpreter has no cache to clean. IC IVAU
+        // says code was written: the interpreter has nothing compiled, but a
+        // translation of it may (Hooks::code_written).
+        if (op1 == 3 && crn == 7 && crm == 5 && op2 == 1 && g_hooks.code_written) {
+            g_hooks.code_written(get_x(c, field(insn, 4, 0)));
+        }
         return;
     }
     // MRS / MSR (register)
@@ -352,8 +356,9 @@ void branch_system(Cpu& c, uint32_t insn, bool* branched) {
     if ((insn & 0xfe000000) == 0xd6000000) {
         const unsigned opc = field(insn, 24, 21);
         if (field(insn, 20, 16) != 0x1f || (opc > 2 && opc != 8 && opc != 9)) undefined(c, insn);
-        const uint64_t target = get_x(c, field(insn, 9, 5));
         const unsigned kind = opc & 3;  // 0 BR, 1 BLR, 2 RET
+        // RETAA/RETAB (bit 11) return to x30; their Rn field is 11111.
+        const uint64_t target = kind == 2 && bit(insn, 11) ? c.x[30] : get_x(c, field(insn, 9, 5));
         if (kind == 1) c.x[30] = c.pc + 4;
         c.pc = target;
         *branched = true;

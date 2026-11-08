@@ -28,11 +28,14 @@
 #include <dynarmic/interface/A64/config.h>
 #include <dynarmic/interface/exclusive_monitor.h>
 
+#include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <mutex>
 #include <optional>
 #include <vector>
@@ -98,6 +101,23 @@ bool exact_nans() {
     return exact;
 }
 
+// Code written by the guest (jit_code_written): 64-byte cache lines, in the
+// order written, which every engine applies to its own code cache. `base` is
+// the number of lines already dropped from the front (every engine has
+// applied them). Never destroyed: threads may exit after static destructors.
+class DynarmicEngine;
+struct Invalidations {
+    std::mutex lock;
+    std::deque<uint64_t> lines;
+    uint64_t base = 0;
+    std::atomic<uint64_t> end{0};  // base + lines.size()
+    std::vector<DynarmicEngine*> engines;
+};
+Invalidations& invalidations() {
+    static Invalidations* i = new Invalidations;
+    return *i;
+}
+
 template <typename T> T load(VAddr a) {
     T v;
     std::memcpy(&v, reinterpret_cast<const void*>(a), sizeof(T));
@@ -140,14 +160,68 @@ public:
             conf.optimizations |= Dynarmic::OptimizationFlag::Unsafe_InaccurateNaN;
         }
         jit_.reset(new Dynarmic::A64::Jit(conf));
+        Invalidations& inv = invalidations();
+        std::lock_guard<std::mutex> hold(inv.lock);
+        seen_ = inv.base + inv.lines.size();
+        inv.engines.push_back(this);
     }
 
     ~DynarmicEngine() override {
+        {
+            Invalidations& inv = invalidations();
+            std::lock_guard<std::mutex> hold(inv.lock);
+            inv.engines.erase(std::find(inv.engines.begin(), inv.engines.end(), this));
+        }
         jit_.reset();
         give_slot(slot_);
     }
 
+    // jit_code_written: drops the lines other threads wrote since the last
+    // call from this engine's cache, and asks the others to do the same.
+    // On the engine's own thread, outside Run.
+    void apply_invalidations() {
+        Invalidations& inv = invalidations();
+        if (inv.end.load(std::memory_order_acquire) == seen_ && !clear_all_) return;
+        std::lock_guard<std::mutex> hold(inv.lock);
+        if (clear_all_) {  // too far behind (publish): all of it
+            jit_->ClearCache();
+            clear_all_ = false;
+        }
+        for (uint64_t i = std::max(seen_, inv.base); i < inv.base + inv.lines.size(); ++i) {
+            jit_->InvalidateCacheRange(inv.lines[i - inv.base], 64);
+        }
+        seen_ = inv.base + inv.lines.size();
+    }
+    static void publish(uint64_t line) {
+        Invalidations& inv = invalidations();
+        std::lock_guard<std::mutex> hold(inv.lock);
+        inv.lines.push_back(line);
+        inv.end.store(inv.base + inv.lines.size(), std::memory_order_release);
+        // A running engine stops at its next block and applies it (run()).
+        for (DynarmicEngine* e : inv.engines) e->jit_->HaltExecution(kHalt);
+        // What every engine has applied is not kept, and an engine that has
+        // not run for a long time (its thread blocked in a host call while
+        // another's JavaScript engine compiles) clears its whole cache
+        // instead of holding up the list.
+        if (inv.lines.size() > 4096) {
+            const uint64_t end = inv.base + inv.lines.size();
+            uint64_t oldest = end;
+            for (DynarmicEngine* e : inv.engines) {
+                if (end - e->seen_ > 65536) {
+                    e->clear_all_ = true;
+                    e->seen_ = end;
+                }
+                oldest = std::min(oldest, e->seen_);
+            }
+            while (inv.base < oldest) {
+                inv.lines.pop_front();
+                ++inv.base;
+            }
+        }
+    }
+
     void run(Cpu& c) override {
+        apply_invalidations();
         load_state(c);
         for (;;) {
             pending_ = Pending::kNone;
@@ -176,8 +250,9 @@ public:
                     hooks().svc(c, svc_);
                     break;
                 case Pending::kNone:
-                    break;  // a halt dynarmic asked for itself (cache invalidation)
+                    break;  // a halt dynarmic asked for itself, or code another thread wrote
             }
+            apply_invalidations();
             load_state(c);
         }
     }
@@ -302,7 +377,14 @@ private:
                     // or where it stopped).
                     save_state(cpu_);
                     cpu_.pc = pc;
-                    fn(&cpu_);
+                    if (fn(&cpu_) == kAotBail && cpu_.pc == pc) {
+                        // It handed over before its first instruction (the
+                        // host stack is low: Cpu::stack_floor), and the JIT
+                        // does not fetch code that has a translation: the
+                        // interpreter runs that instruction, the JIT the rest.
+                        step(cpu_);
+                        ++interp_insns;
+                    }
                     load_state(cpu_);
                 } else if (in_place_calls() && pc != cpu_.stop_pc && !(hooks().full_state_call && hooks().full_state_call(pc))) {
                     host_call_in_place(pc);
@@ -337,6 +419,7 @@ private:
         // Guest code that writes code (a JIT of its own) says so with IC IVAU.
         if (op == Dynarmic::A64::InstructionCacheOperation::InvalidateByVAToPoU) {
             jit_->InvalidateCacheRange(value & ~VAddr{63}, 64);
+            if (hooks().code_written) hooks().code_written(value);
         } else {
             jit_->ClearCache();
         }
@@ -353,6 +436,8 @@ private:
     std::unique_ptr<Dynarmic::A64::Jit> jit_;
     Cpu& cpu_;
     int slot_;
+    uint64_t seen_ = 0;        // the Invalidations lines this engine has applied (under its lock)
+    bool clear_all_ = false;   // and whether it must clear its whole cache first
     Pending pending_ = Pending::kNone;
     uint64_t target_ = 0;
     size_t count_ = 0;
@@ -362,6 +447,8 @@ private:
 const uint64_t DynarmicEngine::kZero = 0;
 
 }  // namespace
+
+void jit_code_written(uint64_t addr) { DynarmicEngine::publish(addr & ~uint64_t{63}); }
 
 std::unique_ptr<JitEngine> make_jit_engine(Cpu& c, bool outermost) {
     const int slot = take_slot();
@@ -380,6 +467,7 @@ namespace winapk::arm64 {
 
 std::unique_ptr<JitEngine> make_jit_engine(Cpu&, bool) { return nullptr; }
 bool jit_built() { return false; }
+void jit_code_written(uint64_t) {}
 
 }  // namespace winapk::arm64
 

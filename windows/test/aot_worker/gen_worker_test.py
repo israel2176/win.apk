@@ -5,7 +5,9 @@ prepare_arm64, and the helpers it uses), for run_aot_worker_wine.sh.
 usage: python3 gen_worker_test.py <runtime_main.cpp> <out.cpp>
 
 The program: --aot-translate <dir> [--cache <dir>] [--delay <s>] as
-winapk-runtime's, and <lib.so> alone to print aot_needs_work (1 or 0).
+winapk-runtime's, <lib.so> alone to print aot_needs_work (1 or 0), and
+--check <dll> to print what aot_check_dll finds (sealed, unsealed, broken,
+missing). Link it with src/arm64/aot_files.cpp.
 """
 import re, sys
 src = open(sys.argv[1]).read()
@@ -21,6 +23,7 @@ parts = [func(r"^std::string utf8\(const std::wstring& w\)"), func(r"^std::wstri
 a = src.index("// ---- arm64 translation, in the background"); b = src.index("// Step 1b, before the app's libraries load")
 out = '''// Generated from host/runtime_main.cpp: the background translation worker alone, for a test under Wine.
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -33,6 +36,7 @@ out = '''// Generated from host/runtime_main.cpp: the background translation wor
 #include <vector>
 #include <windows.h>
 #include <shellapi.h>
+#include "winapk/aot_files.h"
 #include "winapk/arm64_aot.h"
 namespace winapk::arm64 { size_t aot_profile_flush() { return 0; } size_t aot_load_pending() { return 0; } }
 namespace fs = std::filesystem;
@@ -49,6 +53,11 @@ int wmain(int argc, wchar_t** argv) {
         return aot_translate_main(argv[2], cache, delay_s);
     }
     if (argc == 2) { std::printf("%d\\n", aot_needs_work(argv[1]) ? 1 : 0); return 0; }
+    if (argc == 3 && std::wstring(argv[1]) == L"--check") {
+        static const char* const names[] = {"sealed", "unsealed", "broken", "missing"};
+        std::printf("%s\\n", names[static_cast<int>(winapk::arm64::aot_check_dll(argv[2], true))]);
+        return 0;
+    }
     return 2;
 }
 '''

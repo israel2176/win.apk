@@ -69,7 +69,9 @@ windows/scripts/stage_runtime.sh build runtime
   their tests build.
 - `-DWINAPK_ARM64_JIT=ON` fetches dynarmic (needs the Boost headers) and
   builds the arm64 JIT. CI and releases use it; without it arm64 code runs on
-  the interpreter until its translation is ready.
+  the interpreter until its translation is ready. One change is made to it
+  (`cmake/dynarmic_patch.cmake`): FRECPS and FRSQRTS keep their special
+  case for 0 times infinity under the NaN optimization Win.apk uses.
 - `-DWINAPK_VERSION=v0.2.0-preview` (or `0.2.0`) is the version stamped into
   `Win.apk.exe` (`launcher/launcher.rc`, through a generated
   `winapk_version.h`), which Settings shows and the update check compares with
@@ -109,7 +111,7 @@ and `-DWINAPK_JNI_INCLUDE=<windows-jdk>/include`. The scripts under
 |---|---|
 | `windows/test/run_poc_wine.sh` | Builds the loader and the guest libraries and runs the loader, linker, arm64 and crash-report tests under Wine. The toolchain file adds `-femulated-tls` and winpthreads, which GCC's mingw-w64 libstdc++ needs |
 | `WINAPK_WIN_JDK=<windows-jdk> windows/test/run_e2e_wine.sh` | Builds and runs the real-JVM end-to-end test, with the x86_64 and the arm64 guest library (`WINAPK_HOST_JAVAC` picks the javac) |
-| `windows/test/aot_worker/run_aot_worker_wine.sh` | The background translation worker (`host/runtime_main.cpp`) alone, with a stand-in for clang, on generated arm64 libraries: parts, the stamp and the shared cache; a worker killed half way (no compiler outlives it, the next run goes on); failures and their waits; a library translated from its profile. Needs wine64, mingw-w64 g++, and clang, lld and llvm-strip for the guest libraries |
+| `windows/test/aot_worker/run_aot_worker_wine.sh` | The background translation worker (`host/runtime_main.cpp`) alone, with a stand-in for clang, on generated arm64 libraries: parts, the stamp and the shared cache; a worker killed half way (no compiler outlives it, the next run goes on); failures and their waits; a library translated from its profile; four apps' workers on one library and one cache at once; a worker killed at each step of a write (`WINAPK_AOT_FAULT`); a DLL or a cache entry cut short; a library dated in the future; stale temporary files. Needs wine64, mingw-w64 g++, and clang, lld and llvm-strip for the guest libraries |
 | `WINAPK_WIN_JDK=<windows-jdk> windows/test/run_app_wine.sh app.apk [frames]` | Stages the runtime and boots an APK headless (needs `curl` and `unzip` for the first resource build); leaves `windows/build/frame.bmp` and `boot.log` |
 | `windows/test/build_guest.sh [out]`, `build_e2e.sh <jni include> <javac> <out>` | Build the guest test libraries alone |
 
@@ -153,7 +155,7 @@ app data, but the runtime's own folder needs plain letters.
 ## Environment variables for development
 
 The user-facing ones (`WINAPK_PHONE_SIZE`, `WINAPK_RESIZABLE`,
-`WINAPK_AOT_CLANG`, `WINAPK_ABIS`, `WINAPK_WEBVIEW2`, `WINAPK_PROXY`,
+`WINAPK_AOT_CLANG`, `WINAPK_AOT`, `WINAPK_ABIS`, `WINAPK_WEBVIEW2`, `WINAPK_PROXY`,
 `WINAPK_ALLOW_SECOND_INSTANCE`, the headless ones) are in the
 [user guide](../docs/USER_GUIDE.md#command-line). For development and tests:
 
@@ -180,6 +182,7 @@ The user-facing ones (`WINAPK_PHONE_SIZE`, `WINAPK_RESIZABLE`,
 | `WINAPK_AOT_EH_FRAME=0` | `winapk-aot` leaves out the functions `.eh_frame_hdr` lists (for comparing) |
 | `WINAPK_ARM64_FP=exact` | Keeps the arm64 JIT's floating point bit-exact (it uses the host's FMA otherwise) |
 | `WINAPK_AOT_MAX_INSNS=<n>` | The function size (arm64 instructions, default 4000) above which a function is left to the JIT instead of translated |
+| `WINAPK_AOT_FAULT=<point>[,<point>...]` | Tests only (`include/winapk/aot_files.h`): `nolink` makes the translation's files copies instead of hard links; `kill:<step>` ends the process at once at that step of a write: `seal` (half a DLL's seal), `cache-put` (a cache entry under its temporary name), `install` / `installed` (before and after a DLL is renamed into place), `write` (half a stamp) |
 | `WINAPK_AOT_JOBS=<n>` | The background translation runs up to n compilers at once even while the user is active (otherwise one then, and half the logical processors while the user is away); free memory, battery saver and full-screen programs still count |
 | `WINAPK_SYSTEM_CACERTS=0` | Does not build Android's CA store from the Windows roots |
 | `WINAPK_USER_FOLDER_TARGETS` | Names the Windows folders the shared-storage junctions point at (tests) |
@@ -202,6 +205,7 @@ Every test is a program built by CMake; `ci.yml` runs each of them on
 | Program | What it checks |
 |---|---|
 | `winapk-elfrun <poc.so> <poc_packed.so>` | Two builds of the Android test library (plain RELA, and APS2 + RELR) load and run: argument passing across the ABI boundary, RELATIVE and `R_X86_64_64` relocations, constructors, shim calls, stack-protected code on new threads, a guest comparator in host `qsort`, a host callback from guest code |
+| `winapk-aot-guard-test <scratch dir>` | The translation's crash guard (`host/aot_guard.h`) through the real crash path, each step a child process with `winapk-aot-guard-dll.dll` loaded as its translation: a fault with translated code loaded is counted, a clean run sets the count back, a crash with nothing translated loaded is not counted; after a fault and an `abort()` in a row the next start has translation off and logs the `off for this app` line naming the state file; two crashes on the JIT log `crashes on the JIT too: not the translation` and the next start turns it on for good; another build of the app, or deleting the file, starts over |
 | `winapk-crash-test` | The crash path of `host/crash_report.cpp`: a child with a guest SIGSEGV handler that declines three times, then the report line with the faulting module and offset, a minidump (`MDMP`) in the logs folder, pruning to the last three |
 | `winapk-bluetooth-test` | The Bluetooth host's pure parts without a radio: SHA-1 against the FIPS vectors, the parameterized WinRT interface ids derived from type signatures against five published ones, UUID and address conversions, advertisement bytes |
 | `ScanRecordTest` (`test/java/`) | `ScanRecord`'s advertisement parser and `ScanFilter` against the built jars |
@@ -210,7 +214,8 @@ Every test is a program built by CMake; `ci.yml` runs each of them on
 | `winapk-jni-test`, `winapk-jni-variadic-test` | The guest `JNIEnv` against a mock JVM; the variadic bridge for all four call kinds and every argument type, through `...` and `va_list` |
 | `winapk-linker-test <dir>` | A four-library tree with a `DT_NEEDED` cycle and a runtime plugin: constructor order, symbol resolution, `dlsym` scopes, the guest's `dlopen`, `dlsym`, `dlerror` and `dladdr` |
 | `winapk-bionic-test <bionic_guest.so> <scratch dir>` | `test/guest/bionic_guest.c` exercises the shim from guest code: strings, printf and scanf through the System V `va_list`, threads and keys, files and directories, ELF TLS, system properties, locales, futex, an 8 GiB `PROT_NONE` reservation, pipes, eventfd, epoll, sockets, `ALooper`, clocks, `mmap` |
-| `winapk-arm64-test <dir>` | The arm64 engines: `test/guest/arm64_isa.c` built for the host and for arm64 at three optimization levels must agree on every function, on the interpreter, the JIT and the AOT translation; then `arm64_bridge_guest.c` (calls in both directions, variadics, threads, atexit) and `arm64_bench.c` (the speed ratios) |
+| `winapk-arm64-test <dir>` | The arm64 engines: `test/guest/arm64_isa.c` built for the host and for arm64 at three optimization levels must agree on every function, on the interpreter, the JIT and the AOT translation; then `arm64_bridge_guest.c` (calls in both directions, variadics, threads, atexit); `arm64_flow_guest.c` (returns into an ancestor frame with RET and BR, coroutines, RETAA, deep recursion on a 1 MB thread, saturating conversions, FRECPS/FRSQRTS, an exclusive-monitor counter shared by translated code and the JIT, the STLR/LDAR litmus test) against values worked out by hand; `arm64_patch_guest.c` (a library patching its own code, and code patched by one thread while another runs it), `arm64_eh_guest.cpp` (C++ exceptions through the NDK's libc++ and unwinder, built when `ANDROID_NDK_HOME` names an NDK), a library unloaded with `dlclose`, one linked at another address, a translation cut short under a stamp that says it is sealed (refused) and the same one whole (loaded); 400 functions of random instructions from `gen_arm64_fuzz.py`, whose results on the JIT and the translation must match the interpreter's (`WINAPK_FUZZ_STATE=<i>` starts every function from function i's states, to bisect a difference); and `arm64_bench.c` (the speed ratios) |
+| `winapk-aot-cache-test <scratch dir>` | The arm64 translation's files (`include/winapk/aot_files.h`) in real processes, with `winapk-aot-test-dll.dll` as the translation: a seal against DLLs cut short, emptied, zeroed or changed; eight processes taking, making, putting and loading one cache entry at once (hard links and copies); writers killed at random moments and at each step of a write; broken cache entries deleted and replaced; eviction and replacement while another process has the DLL loaded; the clock (60 days, dates in the future, the size cap); stamps rewritten by four processes while another reads them |
 | `winapk-audio-test <test/audio>` | The WASAPI mixer and the decoders |
 | `winapk-user-folders-test <dir>` | The shared-storage junction rules |
 | `winapk-window-test` | The window geometry decisions (the letterbox, how a frame is shown) without a window |
