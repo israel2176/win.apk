@@ -21,11 +21,12 @@
 #
 # Size: --strip-debug (the JDK's classes lose line numbers in stack traces; the
 # framework's jars are not in the image and keep theirs), no headers, man pages
-# or second CDS archive, and lib/modules compressed (zip-6: 122 -> 73 MB, with
-# no measurable cost to a start, since the CDS archives hold the classes a
-# start loads; docs/research/startup-cds.md). WINAPK_JRE_COMPRESS picks another
-# level ("" for none); WINAPK_JRE_MODULES overrides the module list. Needs a
-# full JDK (jmod, jlink, jmods/).
+# or second CDS archive. lib/modules stays uncompressed: zip-6 would take the
+# installed JRE from 122 to 73 MB at no measurable cost to a start, but the
+# installer's LZMA then has little left to do and the download grows by about
+# 20 MB (docs/research/startup-cds.md); WINAPK_JRE_COMPRESS=zip-6 still does
+# it. WINAPK_JRE_MODULES overrides the module list. Needs a full JDK (jmod,
+# jlink, jmods/).
 set -euo pipefail
 
 JDK="${1:?usage: bake_jre.sh <jdk_home> <lib dir> <out dir>}"
@@ -100,7 +101,7 @@ cp "$WORK/jmods/java.base.jmod" "$WORK/mp/"
 
 rm -rf "$OUT"
 COMPRESS=()
-[ -n "${WINAPK_JRE_COMPRESS-zip-6}" ] && COMPRESS=(--compress="${WINAPK_JRE_COMPRESS-zip-6}")
+[ -n "${WINAPK_JRE_COMPRESS:-}" ] && COMPRESS=(--compress="$WINAPK_JRE_COMPRESS")
 # --generate-cds-archive: the image's bin/server/classes.jsa, dumped by the
 # image's own JVM over the baked classes, as the JDK build does for its own.
 "$JLINK" --module-path "$(native "$WORK/mp")" --add-modules "$MODULES" \

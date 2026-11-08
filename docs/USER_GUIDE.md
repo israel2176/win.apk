@@ -205,8 +205,9 @@ problem** under it, and **Close** and **Show log**; Esc or Enter closes it.
 Starts get quicker after the first app start of each Win.apk version: in
 the background, Win.apk keeps the Java classes every app loads (the JDK's and
 the Android framework's) ready in a file it maps at the next starts, instead
-of reading and checking them again each time (class-data sharing). It takes
-about 10 seconds of one core at low priority, once, and 35 MB in
+of reading and checking them again each time (class-data sharing): a fifth
+off a typical start, and about 30 MB less memory per running app. Making that
+file takes a few seconds of one core at low priority, once, and about 40 MB in
 `%LOCALAPPDATA%\Win.apk\cds`.
 
 The library marks a running app with a green badge on its tile and counts
