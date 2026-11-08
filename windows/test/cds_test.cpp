@@ -11,6 +11,7 @@
 
 #include "cds_util.h"
 
+#include <chrono>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -82,6 +83,32 @@ int main(int argc, char** argv) {
     check(blocked.size() == 1 && opts.size() == 1, "a patch rebuilt after the bake keeps its flag");
     opts = {"--patch-module=java.desktop=" + patch.u8string()};
     check(drop_baked_patches(&opts, baked).size() == 1 && opts.size() == 1, "a module the JRE did not bake stays");
+
+    // The digest cache: a directory whose listing has not changed reuses the
+    // digest recorded for it; any change in a file's size or time hashes again.
+    write(patch / "java" / "lang" / "Thread.class", std::string("Thread bytes\n\x00\x01", 15));
+    const fs::path cache = root / "patch-digests.txt";
+    opts = {"--patch-module=java.base=" + patch.u8string()};
+    check(drop_baked_patches(&opts, baked, cache).empty() && opts.empty(), "with a cache: the baked patch's flag goes");
+    std::ifstream first(cache);
+    std::string st, dig;
+    first >> st >> dig;
+    first.close();
+    check(st == patch_dir_stamp(patch) && dig == want, "the cache records the directory's stamp and digest");
+    // A cache that lies about this stamp is believed (that is the point: no
+    // file is read), so the stamp must change with any change to a file.
+    std::ofstream(cache, std::ios::trunc) << st << " 00ff\n";
+    opts = {"--patch-module=java.base=" + patch.u8string()};
+    check(drop_baked_patches(&opts, baked, cache).size() == 1, "the cached digest answers for an unchanged directory");
+    write(patch / "java" / "lang" / "Thread.class", std::string("Thread bytes\n\x00\x02", 15));  // same size
+    fs::last_write_time(patch / "java" / "lang" / "Thread.class",
+                        fs::last_write_time(patch / "a.class") + std::chrono::seconds(5));
+    check(patch_dir_stamp(patch) != st, "a file rewritten at the same size changes the stamp");
+    opts = {"--patch-module=java.base=" + patch.u8string()};
+    check(drop_baked_patches(&opts, baked, cache).size() == 1, "a changed directory is hashed again (and differs)");
+    write(patch / "java" / "lang" / "Thread.class", std::string("Thread bytes\n\x00\x01", 15));
+    opts = {"--patch-module=java.base=" + patch.u8string()};
+    check(drop_baked_patches(&opts, baked, cache).empty(), "and the original content is baked again");
 
     // The key.
     check(key_of({"a", "bc"}) == "33b43574e9506a95", "the key is FNV-1a over the parts");

@@ -280,7 +280,11 @@ void cds_apply(std::vector<std::string>* opts, const fs::path& jdk, const fs::pa
         return;
     }
     const double t0 = startup_seconds();
-    const std::vector<std::string> blocked = cds::drop_baked_patches(opts, baked);
+    std::wstring dir_w;
+    g.dir = env_set(L"WINAPK_CDS_DIR", &dir_w) && !dir_w.empty() ? fs::path(dir_w) : data / "cds";
+    std::error_code ec;
+    fs::create_directories(g.dir, ec);
+    const std::vector<std::string> blocked = cds::drop_baked_patches(opts, baked, g.dir / "patch-digests.txt");
     if (!blocked.empty()) {
         std::string mods;
         for (const std::string& m : blocked) mods += (mods.empty() ? "" : ", ") + m;
@@ -293,7 +297,6 @@ void cds_apply(std::vector<std::string>* opts, const fs::path& jdk, const fs::pa
     const double digest_ms = (startup_seconds() - t0) * 1000;
     // WINAPK_CDS_RECORD_DIR: every app start's classes, by app (to make the
     // shipped list from: windows/scripts/merge_classlists.py).
-    std::error_code ec;
     fs::path record_to;
     if (const std::wstring rd = env(L"WINAPK_CDS_RECORD_DIR"); !rd.empty() && !app.empty()) {
         fs::create_directories(rd, ec);
@@ -334,9 +337,6 @@ void cds_apply(std::vector<std::string>* opts, const fs::path& jdk, const fs::pa
         }
     }
     const std::string key = cds::key_of(parts);
-    std::wstring dir_w;
-    g.dir = env_set(L"WINAPK_CDS_DIR", &dir_w) && !dir_w.empty() ? fs::path(dir_w) : data / "cds";
-    fs::create_directories(g.dir, ec);
     const std::wstring stem = L"framework-" + wide(key);
     g.jsa = g.dir / (stem + L".jsa");
     g.ok = g.dir / (stem + L".ok");

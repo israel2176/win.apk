@@ -74,8 +74,47 @@ std::vector<std::pair<std::string, std::string>> read_baked(const fs::path& file
     return out;
 }
 
+std::string patch_dir_stamp(const fs::path& dir) {
+    std::error_code ec;
+    std::vector<std::string> parts;
+    for (fs::recursive_directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
+        if (!it->is_regular_file(ec)) continue;
+        // On Windows the size and the time come with the directory listing.
+        const auto size = it->file_size(ec);
+        const auto time = it->last_write_time(ec);
+        parts.push_back(fs::relative(it->path(), dir, ec).generic_u8string() + "|" + std::to_string(size) + "|" +
+                        std::to_string(static_cast<long long>(time.time_since_epoch().count())));
+    }
+    if (ec || parts.empty()) return {};
+    std::sort(parts.begin(), parts.end());
+    parts.insert(parts.begin(), fs::absolute(dir, ec).generic_u8string());
+    return key_of(parts);
+}
+
 std::vector<std::string> drop_baked_patches(std::vector<std::string>* opts,
-                                            const std::vector<std::pair<std::string, std::string>>& baked) {
+                                            const std::vector<std::pair<std::string, std::string>>& baked,
+                                            const fs::path& cache) {
+    // "<stamp> <digest>" lines from earlier starts.
+    std::vector<std::pair<std::string, std::string>> known, now;
+    if (!cache.empty()) {
+        std::ifstream in(cache);
+        std::string stamp_, dig;
+        while (in >> stamp_ >> dig) known.emplace_back(stamp_, dig);
+    }
+    auto digest_of = [&](const fs::path& dir) {
+        const std::string st = cache.empty() ? std::string() : patch_dir_stamp(dir);
+        if (!st.empty()) {
+            for (const auto& k : known) {
+                if (k.first == st) {
+                    now.push_back(k);
+                    return k.second;
+                }
+            }
+        }
+        const std::string dig = patch_dir_digest(dir);
+        if (!st.empty() && !dig.empty()) now.emplace_back(st, dig);
+        return dig;
+    };
     std::vector<std::string> kept, blocked;
     for (const std::string& o : *opts) {
         static const char kPm[] = "--patch-module=";
@@ -90,7 +129,7 @@ std::vector<std::string> drop_baked_patches(std::vector<std::string>* opts,
         if (eq != std::string::npos) {
             for (const auto& b : baked) {
                 if (b.first != mod) continue;
-                const std::string dig = patch_dir_digest(fs::u8path(spec.substr(eq + 1)));
+                const std::string dig = digest_of(fs::u8path(spec.substr(eq + 1)));
                 ok = !dig.empty() && dig == b.second;
                 break;
             }
@@ -101,6 +140,11 @@ std::vector<std::string> drop_baked_patches(std::vector<std::string>* opts,
         }
     }
     opts->swap(kept);
+    if (!cache.empty() && now != known) {
+        // Only this start's directories: a stale line never answers again.
+        std::ofstream out(cache, std::ios::trunc);
+        for (const auto& n : now) out << n.first << " " << n.second << "\n";
+    }
     return blocked;
 }
 
