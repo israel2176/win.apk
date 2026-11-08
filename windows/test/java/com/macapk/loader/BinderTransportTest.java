@@ -18,6 +18,12 @@
 //   the package of the process is what its command line (--apk) makes it; the
 //   android:exported check of a cross-package resolve; the uid of a process is
 //   its package's. The parent, which is no installed app, is refused too.
+// Google accounts, "accounts" child with its own GmsStore folder: the broker's
+//   account service mirrors GmsStore's accounts into its table (master token as
+//   the password, the gaia id as GoogleUserId), sees an account another process
+//   signs in after the service started (the Play Store's "Sign in" in its own
+//   process, Settings' `--gms signin-window`), with or without being asked, and
+//   drops a mirrored account once it is signed out; a row it did not mirror stays.
 package com.macapk.loader;
 
 import android.content.ComponentName;
@@ -91,6 +97,8 @@ public final class BinderTransportTest {
         else if (args[0].equals("service")) rc = service(args[1]);
         else if (args[0].equals("broker")) rc = broker(args);
         else if (args[0].equals("client")) rc = client(args);
+        else if (args[0].equals("accounts")) rc = accounts();
+        else if (args[0].equals("gms-write")) rc = gmsWrite(args);
         else rc = 2;
         System.out.flush();
         System.exit(rc);
@@ -351,6 +359,7 @@ public final class BinderTransportTest {
         check("a call to a dead process throws DeadObjectException", deadThrown, "");
 
         brokerChecks();
+        googleAccountChecks();
         System.out.println(failures == 0 ? "ALL PASSED" : failures + " FAILED");
         return failures == 0 ? 0 : 1;
     }
@@ -494,6 +503,82 @@ public final class BinderTransportTest {
         int uid = r.readInt();
         int expected = AppUids.uidFor(GOOD, null);
         check("our uid is our package's", uid >= AppUids.FIRST && uid == expected, uid + " vs " + expected);
+        return failures == 0 ? 0 : 1;
+    }
+
+    // ---- Google accounts -------------------------------------------------------------
+
+    static final String GOOGLE = "com.google";
+
+    static void googleAccountChecks() throws Exception {
+        File dir = scratch("accounts");
+        File root = new File(dir, "android");
+        root.mkdirs();
+        ProcessBuilder pb = new ProcessBuilder(self("accounts")).inheritIO();
+        pb.environment().put("WINAPK_TEST_ANDROID_ROOT", root.getPath());
+        pb.environment().put("MACAPK_GMS_DIR", new File(dir, "gms").getPath());
+        pb.environment().remove("MACAPK_GMS_PRESENT");
+        Process p = pb.start();
+        boolean done = p.waitFor(180, TimeUnit.SECONDS);
+        if (!done) p.destroyForcibly();
+        int rc = done ? p.exitValue() : -1;
+        check("the Google account checks (above) passed", rc == 0, "exit " + rc);
+    }
+
+    /** Another process writing GmsStore, as a sign-in in an app or in Settings does. */
+    static boolean gmsWriter(String op, String email) throws Exception {
+        ProcessBuilder pb = new ProcessBuilder(self("gms-write", op, email)).inheritIO();
+        Process p = pb.start();
+        return p.waitFor(60, TimeUnit.SECONDS) && p.exitValue() == 0;
+    }
+
+    static int gmsWrite(String[] args) {
+        String email = args[2];
+        if (args[1].equals("add")) {
+            com.macapk.gms.GmsStore.putAccount(email, "master-" + email);
+            com.macapk.gms.GmsStore.putAccountData(email, "accountId", "4242" + email.length());
+        } else {
+            com.macapk.gms.GmsStore.removeAccount(email);
+        }
+        return 0;
+    }
+
+    static int accounts() throws Exception {
+        System.out.println("Google account checks (pid " + myPid() + ")");
+        final String a = "first@example.com", b = "second@example.com", c = "third@example.com";
+        final String other = "kept@example.com";
+        check("first account written", gmsWriter("add", a), "");
+        File storeFile = new File(new File(System.getenv("MACAPK_GMS_DIR")).getParentFile(), "accounts_ce.properties");
+        com.macapk.accounts.AccountStore store = com.macapk.accounts.AccountStore.at(storeFile);
+        // A com.google row the service did not mirror (added the way Play services' own
+        // sign-in would add one): a sign-out in Win.apk must leave it alone.
+        store.add(other, GOOGLE, "pw", null);
+        AccountsService svc = new AccountsService(new SystemServer(), storeFile);
+        check("an account signed in before the service started is mirrored", store.exists(a, GOOGLE), "");
+        check("its master token is the row's password", ("master-" + a).equals(store.password(a, GOOGLE)),
+                String.valueOf(store.password(a, GOOGLE) != null));
+        check("its gaia id is GoogleUserId", ("4242" + a.length()).equals(store.userData(a, GOOGLE, "GoogleUserId")),
+                String.valueOf(store.userData(a, GOOGLE, "GoogleUserId")));
+        check("a second sync changes nothing", !svc.syncGoogleAccounts(), "");
+
+        check("second account written by another process", gmsWriter("add", b), "");
+        boolean changed = svc.syncGoogleAccounts();
+        check("an account signed in by another process after the start is mirrored",
+                changed && store.exists(b, GOOGLE), "changed=" + changed);
+        check("the first account is still there", store.exists(a, GOOGLE), "");
+
+        check("first account signed out by another process", gmsWriter("remove", a), "");
+        changed = svc.syncGoogleAccounts();
+        check("an account signed out elsewhere leaves the table", changed && !store.exists(a, GOOGLE),
+                "changed=" + changed);
+        check("an account Win.apk did not mirror stays", store.exists(other, GOOGLE), "");
+        check("the other account stays", store.exists(b, GOOGLE), "");
+
+        // Nobody asks: the service follows the store's file by itself.
+        check("third account written by another process", gmsWriter("add", c), "");
+        long deadline = System.currentTimeMillis() + 20_000;
+        while (!store.exists(c, GOOGLE) && System.currentTimeMillis() < deadline) Thread.sleep(200);
+        check("a sign-in elsewhere is mirrored without a query", store.exists(c, GOOGLE), "");
         return failures == 0 ? 0 : 1;
     }
 }

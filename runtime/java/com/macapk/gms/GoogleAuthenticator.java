@@ -200,7 +200,7 @@ public final class GoogleAuthenticator {
     /** An email with the local part shortened, for logs. We log which account
      *  failed often enough that a full address would end up in every shared log
      *  file and every pasted bug report. */
-    static String redact(String email) {
+    public static String redact(String email) {
         if (email == null) return "(none)";
         int at = email.indexOf('@');
         if (at <= 1) return "***" + (at < 0 ? "" : email.substring(at));
