@@ -410,9 +410,12 @@ another's services, the way Android's system server does. Apps then use the
 real Play services instead of Win.apk's stand-ins. It takes effect when an app
 starts. With Google's own copies this gives apps push notifications through
 Firebase Cloud Messaging from the real Play services, and the Play Store
-signed in with your Google account. The first time, Play services needs a
-minute to check in with Google; a Play Store opened before that shows
-"Server error" until you open it again. Opening an app that Play services
+signed in with your Google account, which can install apps: its Install
+button downloads the app, asks you (as an app installing another always
+does) and puts it in your library, with the Play Store as the app's
+installer. The first time, Play services needs a minute to check in with
+Google; a Play Store opened before that may show "Server error" (press Try
+again once it has). Opening an app that Play services
 had started in the background (the Play Store, for one) restarts it with its
 window.
 

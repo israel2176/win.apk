@@ -794,9 +794,21 @@ Still open:
     attachBaseContext, java.io opens that share deletion with a POSIX
     replacing rename (Play services' Chimera config is written by renaming
     a file still open), and a user's start of an app the broker runs
-    headless replacing that process. Findings: before the first check-in
-    completes the Play Store reads android_id 0 and its first home shows
-    "Server error" (the next start is fine); Play's image cache names files
+    headless replacing that process. Installing an app from the Play Store
+    (Google's Calculator, through its PackageInstaller session, the install
+    helper and Play's own "state:INSTALLED", the Play Store recorded as the
+    installer) then took: `addView(view, params)` in the inflater (Play's
+    acquire sheet), account management by signature (`hasSignatureCapability`
+    AUTH), the account's gaia id at a master-token sign-in (Play services'
+    getToken refused every app without it), ContentObserver notifications
+    across processes (the gservices change after a check-in), one
+    `elapsedRealtime` for all processes (Play's gRPC between its two
+    processes), `Uri.fromFile` of a drive path parsing back to it (Play's
+    download destination), and a session's `.dm` kept out of the splits.
+    `WINAPK_DUMP_VIEWS` (Compose included) lets the test press Play's
+    buttons. Findings: before the first check-in completes the Play Store
+    reads android_id 0 and may show "Server error" (Try again once it has);
+    Play's image cache names files
     with `?`, which Windows refuses, so its images are not cached on disk;
     a GCM registration can take over 30 s on a loaded machine, past the
     client's timeout (it retries on its next start).
