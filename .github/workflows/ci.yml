@@ -367,6 +367,23 @@ jobs:
           cp="$(cygpath -w stage/lib/macapk-loader.jar);$(cygpath -w stage/lib/android-framework.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/perm-test windows/test/java/PermissionModelTest.java
           "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/perm-test)" PermissionModelTest
+      - name: Run the APK signature verification test
+        run: |
+          # com.macapk.loader.ApkVerification (apksig) on APKs the test signs
+          # from the staged framework-res.apk: signed ones verify; tampered ones,
+          # a pasted signing block and a pasted v1 certificate do not; a rotated
+          # key reports its lineage as AOSP's PackageManager does (GET_SIGNATURES
+          # the oldest, checkSignatures and hasSigningCertificate through it, and
+          # hasSignatureCapability, which decides who manages an account type);
+          # split sets and bundles; the cache. Also a bundle's string resources
+          # and PresentedSdk's minSdk floor.
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          cp="$(cygpath -w stage/lib/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          "$JAVA_HOME/bin/javac" -cp "$cp" -d build/apkverify-test windows/test/java/com/macapk/loader/ApkVerificationTest.java
+          MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/apkverify-test)" \
+            com.macapk.loader.ApkVerificationTest "$(cygpath -w stage/bin/tools/framework-res.apk)" \
+            "$(cygpath -w "$RUNNER_TEMP/apkverify")" | tee apkverify-test.log
+          grep -q "ALL PASSED" apkverify-test.log
       - name: Run the scan record test
         run: |
           # android.bluetooth.le.ScanRecord's parser over the advertising bytes
@@ -375,6 +392,35 @@ jobs:
           cp="$(cygpath -w stage/lib/android-framework.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/scan-test windows/test/java/ScanRecordTest.java
           "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/scan-test)" ScanRecordTest
+      - name: Run the cross-process Binder test
+        run: |
+          # host/binder_win.cpp under android.os.MacApkBinderTransport, between
+          # real JVMs in three processes: transact, oneway order, binders passed
+          # both ways keeping their identity, fds, death notification, and the
+          # system broker's caller checks (a process claiming another package is
+          # refused; android:exported).
+          export PATH="$(cygpath -u "$JAVA_HOME")/bin/server:$(cygpath -u "$JAVA_HOME")/bin:$PATH"
+          jh="$(cygpath -u "$JAVA_HOME")"
+          cp="$(cygpath -w stage/lib/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          "$jh/bin/javac" -cp "$cp" -d build/binder-test windows/test/java/com/macapk/loader/BinderTransportTest.java
+          ./build/winapk-binder-test.exe "$cp;$(cygpath -w build/binder-test)" com.macapk.loader.BinderTransportTest \
+            | tee binder-test.log
+          grep -q "ALL PASSED" binder-test.log
+      - name: Run the java.io share-delete test
+        run: |
+          # java.io's opens as winapk-runtime binds them (host/java_io_open.cpp):
+          # a file renamed or deleted while a stream has it open, and renamed
+          # over one a stream has open (the overlay's WinNTFileSystem), as on
+          # Android; the JDK's behaviour otherwise.
+          export PATH="$(cygpath -u "$JAVA_HOME")/bin/server:$(cygpath -u "$JAVA_HOME")/bin:$PATH"
+          # The test host binds the Binder transport's natives too, so the
+          # framework jars are on the classpath.
+          cp="$(cygpath -w stage/lib/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          "$(cygpath -u "$JAVA_HOME")/bin/javac" -d build/share-delete-test windows/test/java/FileShareDeleteTest.java
+          WINAPK_TEST_JAVA_BASE_PATCH="$(cygpath -w stage/lib/java_base_patch)" \
+            ./build/winapk-binder-test.exe "$cp;$(cygpath -w build/share-delete-test)" FileShareDeleteTest \
+            | tee share-delete-test.log
+          grep -q "ALL PASSED" share-delete-test.log
       - name: Run the GL test
         run: |
           # It needs ANGLE next to it, which staging put in stage/bin.
@@ -393,6 +439,22 @@ jobs:
           timeout 600 ./stage/bin/winapk-runtime.exe --apk sudoku.apk --jdk "$JAVA_HOME" --data "$(cygpath -w "$PWD/appdata")" \
             > boot.log 2>&1 || { tail -n 200 boot.log; exit 1; }
           grep -E "first frame presented|frames presented" boot.log
+      - name: Start an app the broker runs as a service host
+        run: |
+          # The broker starts an app headless, with no window, to serve another
+          # app (MACAPK_SERVICE_HOST=1). The user's start of that app replaces
+          # the host instead of being turned away as a second copy, and draws.
+          data="$(cygpath -w "$PWD/appdata")"
+          MACAPK_SERVICE_HOST=1 WINAPK_HEADLESS=1 ./stage/bin/winapk-runtime.exe --apk sudoku.apk \
+            --jdk "$JAVA_HOME" --data "$data" > host.log 2>&1 &
+          for i in $(seq 1 120); do grep -q "service host: entering main loop" host.log && break; sleep 2; done
+          grep "service host: entering main loop" host.log || { tail -n 100 host.log; exit 1; }
+          export WINAPK_HEADLESS=1 WINAPK_HEADLESS_EXIT_AFTER_FRAMES=30
+          timeout 600 ./stage/bin/winapk-runtime.exe --apk sudoku.apk --jdk "$JAVA_HOME" --data "$data" \
+            > replace.log 2>&1 || { tail -n 200 replace.log; exit 1; }
+          grep -F "runs this app as a service host" replace.log
+          grep -E "frames presented" replace.log
+          wait || true   # the host, stopped by the start that replaced it
       - name: Run the GMS layer's CLI
         run: |
           # winapk-runtime --gms: a JVM with the framework jars and the host
@@ -431,6 +493,8 @@ jobs:
           path: |
             boot.log
             window.log
+            host.log
+            replace.log
             frame.bmp
 
   smoke:
@@ -499,11 +563,15 @@ jobs:
         with:
           path: apk-cache
           key: compat-apks-${{ matrix.shard }}-of-4-${{ hashFiles('windows/test/compat/apps.txt') }}
+      # 300 frames (5 s after the first): a slow first start drew or not by a
+      # few hundred ms at 150, on main as on branches (LocalSend: its UI thread
+      # waits ~1.7 s for Flutter's GL setup on the runner's software GPU, then
+      # Dart does its first-run setup before the first Flutter frame).
       - name: Run the sweep
         shell: pwsh
         run: |
           python windows/test/compat/sweep.py --runtime stage --jdk "$env:JAVA_HOME" `
-            --apks apk-cache --out sweep --frames 150 --timeout 180 --shard ${{ matrix.shard }}/4
+            --apks apk-cache --out sweep --frames 300 --timeout 180 --shard ${{ matrix.shard }}/4
       - uses: actions/upload-artifact@v4
         if: always()
         with:

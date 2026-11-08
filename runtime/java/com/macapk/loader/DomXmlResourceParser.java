@@ -447,7 +447,8 @@ public final class DomXmlResourceParser
     /** BinaryXmlParser's alias / attr-id records: not document attributes. */
     private static boolean macapkInternalAttr(Node n) {
         String uri = n.getNamespaceURI();
-        return BinaryXmlParser.MACAPK_ALIAS_NS.equals(uri) || BinaryXmlParser.MACAPK_ATTRID_NS.equals(uri);
+        return BinaryXmlParser.MACAPK_ALIAS_NS.equals(uri) || BinaryXmlParser.MACAPK_ATTRID_NS.equals(uri)
+            || BinaryXmlParser.MACAPK_DOCNAME_NS.equals(uri);
     }
     @Override public int getAttributeCount() {
         NamedNodeMap a = currentAttrs();
@@ -466,7 +467,15 @@ public final class DomXmlResourceParser
         Node a = nthAttr(index);
         if (a == null) return null;
         String ln = a.getLocalName();
-        return ln != null ? ln : a.getNodeName();
+        if (ln == null) ln = a.getNodeName();
+        // The compiled file's own spelling, as XmlBlock.Parser answers
+        // (BinaryXmlParser.MACAPK_DOCNAME_NS).
+        if (a.getParentNode() == null && cursor >= 0 && cursor < events.size()
+                && events.get(cursor).node instanceof org.w3c.dom.Element el) {
+            String doc = el.getAttributeNS(BinaryXmlParser.MACAPK_DOCNAME_NS, ln);
+            if (doc != null && !doc.isEmpty()) return doc;
+        }
+        return ln;
     }
     @Override public String getAttributeNamespace(int index) {
         Node a = nthAttr(index);

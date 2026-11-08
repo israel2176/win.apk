@@ -37,10 +37,27 @@ public final class MacApkPackageManager extends PackageManager {
     private final String dataDir;
     /** The data dir to REPORT as ApplicationInfo.dataDir (see makeAppInfo). */
     private volatile String reportedDataDir;
+    private android.content.SharedPreferences componentPreferences;
 
     /** v1.0.1641: set by Application once Boot knows the app's data dir. */
-    public void macapkSetReportedDataDir(String dir) {
+    public synchronized void macapkSetReportedDataDir(String dir) {
         this.reportedDataDir = dir;
+        if (dir != null && !dir.isEmpty()) {
+            final java.io.File data = new java.io.File(dir);
+            android.content.Context storage = new android.content.ContextWrapper(null) {
+                @Override public String getPackageName() { return packageName; }
+                @Override public java.io.File getDataDir() { return data; }
+                @Override public java.io.File getFilesDir() { return new java.io.File(data, "files"); }
+            };
+            componentPreferences = SharedPrefsImpl.macapkGet(storage, "macapk.component_enabled");
+            for (java.util.Map.Entry<String, ?> entry : componentPreferences.getAll().entrySet()) {
+                Object value = entry.getValue();
+                if (value instanceof Integer && ((Integer) value == COMPONENT_ENABLED_STATE_ENABLED
+                        || (Integer) value == COMPONENT_ENABLED_STATE_DISABLED)) {
+                    componentEnabledState.put(entry.getKey(), (Integer) value);
+                }
+            }
+        }
     }
     private final String nativeLibraryDir;
 
@@ -148,6 +165,16 @@ public final class MacApkPackageManager extends PackageManager {
 
     @Override public PackageInfo getPackageInfo(String packageName, int flags)
             throws NameNotFoundException {
+        // ANOTHER app's package served by the Mac.apk system broker (it runs in
+        // its own process): answer from THAT package's installed APK -- its own
+        // manifest and its own real signing certificate -- as PMS answers for an
+        // installed package. Only for a package the broker really serves
+        // (MACAPK_BROKER=1 and a peer is installed), so a device without it keeps
+        // every answer below, including the reserved-Google absent contract.
+        if (packageName != null && !packageName.equals(this.packageName)) {
+            MacApkPackageManager peer = SystemClient.pmFor(packageName);
+            if (peer != null && peer != this) return peer.getPackageInfo(packageName, flags);
+        }
         // AOSP: getPackageInfo throws NameNotFoundException for a package that is
         // NOT installed. Mac.apk runs exactly one APK, so only the running app
         // (this.packageName) is installed -- a BROWSED / other package is not.
@@ -231,17 +258,33 @@ public final class MacApkPackageManager extends PackageManager {
         // one. See docs/gms-device-oracle-parent-first_2026-08-01.md.
         // The platform package "android" (framework-res.apk). See
         // platformPackageInfo() for the AOSP contract and why it is always here.
-        if (PLATFORM_PACKAGE.equals(packageName) && platformPackagePresent()) {
+        // The synthetic presence answers (platform, store, Play Services) below
+        // describe OTHER packages a hosted app may probe for. When the hosted app
+        // IS one of them -- e.g. the real Play Store (com.android.vending) runs on
+        // Mac.apk -- its own query must return its REAL installed info (the self
+        // path further down), never the synthetic object. Routing a self-query
+        // into vendingPackageInfo() recurses until the stack blows:
+        //   vendingPackageInfo -> macapkInstallTimeMs -> getPackageInfo(this
+        //   .packageName) -> vendingPackageInfo
+        // and cachedVendingInfo (which would break the loop) is assigned only at
+        // the end, so ApplicationInfo.<clinit> dies with StackOverflowError and
+        // the class stays poisoned for the whole process.
+        final boolean selfSyntheticQuery =
+                packageName != null && packageName.equals(this.packageName);
+        if (PLATFORM_PACKAGE.equals(packageName) && !selfSyntheticQuery
+                && platformPackagePresent()) {
             return platformPackageInfo();
         }
-        if (VENDING_PACKAGE.equals(packageName) && PlayServices.vendingPresent()) {
+        if (VENDING_PACKAGE.equals(packageName) && !selfSyntheticQuery
+                && PlayServices.vendingPresent()) {
             return vendingPackageInfo();
         }
         // com.google.android.gms, present only when the FCM push backend is live
         // (gated, default OFF). Firebase's Rpc reads versionCode >= 12000000 to
         // pick the modern bound-Messenger register path; a lower value sends it
         // down the legacy broadcast path whose "Rpc: No response" is the hang.
-        if (GMS_PACKAGE.equals(packageName) && PlayServices.pushBackendEnabled()) {
+        if (GMS_PACKAGE.equals(packageName) && !selfSyntheticQuery
+                && PlayServices.pushBackendEnabled()) {
             return gmsPackageInfo();
         }
         if (packageName != null && !packageName.equals(this.packageName)) {
@@ -322,20 +365,17 @@ public final class MacApkPackageManager extends PackageManager {
         //     it forced a fragile "no signature = dev build" fallback.
         // Reads the real certificate from the APK, newest signing scheme first
         // (v3.1 / v3 / v2 out of the APK Signing Block, then v1/JAR); falls back
-        // to null only when the APK is unreadable or carries no signature at all.
+        // to null when the APK is unreadable, carries no signature at all, or its
+        // signature does not verify (ApkVerification).
+        // With a v3 key rotation, GET_SIGNATURES answers the OLDEST certificate
+        // of the lineage and signingInfo the whole story (AOSP PackageInfoUtils).
         Signature[] sigs = readApkSignatures();
-        info.signatures  = sigs;
+        info.signatures  = legacySignatures(sigs, cachedPastSigners);
         // Use AOSP's 4-arg constructor so getSchemeVersion() reports the scheme we
         // actually verified rather than 0. Upstream degrades the whole object when
         // schemeVersion <= 0, so an unsigned/unreadable APK still yields the same
         // empty SigningInfo the signers-only constructor produced.
-        info.signingInfo = (sigs == null || sigs.length == 0)
-            ? new android.content.pm.SigningInfo(sigs)
-            : new android.content.pm.SigningInfo(
-                  cachedSchemeVersion,
-                  java.util.Arrays.asList(sigs),
-                  null,
-                  null);
+        info.signingInfo = signingInfo(cachedSchemeVersion, sigs, cachedPastSigners);
         // v1.0.834: AOSP PackageInfoUtils.generatePackageInfo fills the component
         // arrays when the caller asks for them. These were left null, so an app
         // enumerating its own components (a settings screen listing its
@@ -418,6 +458,10 @@ public final class MacApkPackageManager extends PackageManager {
                         if (asked == null) asked = locationPermissionGranted(rp);
                         if (asked == null) asked = SpecialAccessStore.trackedPermissionGranted(rp);
                         boolean held = asked != null ? asked : !macapkNeverGranted(rp);
+                        if (isBluetoothRuntimePermission(rp)
+                                && "1".equals(System.getenv("MACAPK_BLUETOOTH_HOST"))) {
+                            held = checkPermission(rp, this.packageName) == PackageManager.PERMISSION_GRANTED;
+                        }
                         grants[i] = held ? PackageInfo.REQUESTED_PERMISSION_GRANTED : 0;
                         // AOSP also carries the manifest's usesPermissionFlags
                         // (neverForLocation on BLUETOOTH_SCAN), which the LE
@@ -544,541 +588,113 @@ public final class MacApkPackageManager extends PackageManager {
         return out.toArray(new android.content.pm.ActivityInfo[0]);
     }
 
-    // Lazily read + cache the APK's REAL signing certificate(s). Every installed
-    // APK carries at least one, and a real device's PackageManager reports it
-    // whichever scheme signed the APK.
+    // The APK's signing certificate(s), as a device's PackageManager reports
+    // them: every installed APK carries at least one, whichever scheme signed it
+    // (v3.1 / v3 / v2 out of the APK Signing Block, else v1 / JAR). Reading only
+    // v1 (the pre-v1.0.5xx behavior) reported signatures=null for every
+    // v2/v3-only APK, and callers doing `signatures.length` NPE'd while
+    // self-signature checks took an unintended "tampered / unsigned" branch.
     //
-    // AOSP ApkSignatureVerifier tries the schemes newest-first (v3.1, v3, v2,
-    // then v1/JAR) and stops at the first one present, so we do the same. Reading
-    // only v1 (the pre-v1.0.5xx behavior) reported signatures=null for every
-    // v2/v3-only APK -- and v2-or-newer-only is normal for anything built with a
-    // recent Android Gradle Plugin, which is why real corpus APKs hit it. That
-    // null is exactly the lie the real-signature work removed for the v1 case:
-    // callers doing `signatures.length` NPE, and self-signature checks take an
-    // unintended "tampered / unsigned" branch.
+    // Win.apk: the certificates come from ApkVerification, which verifies the
+    // signature cryptographically (apksig) before any of them is believed. An
+    // APK whose signature does not verify reports no certificate at all, as an
+    // unsigned one did -- on a device it would not have installed. The reader
+    // used to parse the signing block without checking a single signature, so
+    // a certificate pasted into an APK was reported (and, for Google's, trusted
+    // as a system app).
     private Signature[] cachedSignatures;
+    /** The v3 rotation lineage (oldest first, current signer last), or null:
+     *  AOSP SigningDetails.getPastSigningCertificates. */
+    private Signature[] cachedPastSigners;
     private boolean     signaturesLoaded;
     /** APK signature scheme that actually produced cachedSignatures: 3 for v3/v3.1,
      *  2 for v2, 1 for v1/JAR, 0 for none. AOSP's SigningInfo.getSchemeVersion()
-     *  reports this, and we were hardcoding 0 by constructing SigningInfo with the
-     *  signers-only constructor -- so an app checking the scheme (a tamper check
-     *  that requires v2+, or one that refuses v1-only installs) read "unknown" for
-     *  a properly v3-signed APK. We already KNEW the answer here and threw it away. */
+     *  reports this; an app checking the scheme (a tamper check that requires v2+,
+     *  or one that refuses v1-only installs) reads it. */
     private int         cachedSchemeVersion;
     private synchronized Signature[] readApkSignatures() {
         if (signaturesLoaded) return cachedSignatures;
         signaturesLoaded = true;
         if (apkPath == null) return null;
-        Signature[] sigs = readSignaturesFromPath(apkPath);
-        // A split bundle (.apkm / .xapk / .apks) is a ZIP-of-APKs: the outer file
-        // has no APK Signing Block and no META-INF signature of its own, so the read
-        // above returns null. The SIGNED artifact is the inner base.apk. Extract it
-        // and read ITS certificate -- exactly what a device's PackageManager reports
-        // for the installed package (the base split carries the signing identity).
-        // This is the running app's OWN real signature, not a forged one. Without it,
-        // pairip's com.pairip.SignatureCheck.verifyIntegrity does signatures[0] on a
-        // null array and NPEs out of Application.attachBaseContext, which cascades
-        // (the obfuscated string pool never initializes) all the way to a black
-        // screen. (v1.0.1551.)
-        if (sigs == null || sigs.length == 0) {
-            // v1.0.1585+: apkPath is the INSTALLED base.apk, which carries the
-            // real signing block, so the read above normally succeeds and this
-            // fallback is idle. It survives for the legacy state, where apkPath
-            // is the synthetic MERGED single-zip (apk_unpacker.cpp flattens a
-            // bundle's base.apk + splits and drops the signing block): the
-            // ORIGINAL input is published by main.cpp as -Dmacapk.bundle.apk
-            // and, when that is a .apkm/.xapk container, its inner base.apk
-            // keeps the signature. Try apkPath-as-bundle first (a directly-
-            // passed .apkm), then the original input path. A plain apk on
-            // either path has no inner base.apk and falls through harmlessly.
-            for (String bundle : new String[]{ apkPath, System.getProperty("macapk.bundle.apk") }) {
-                if (bundle == null || bundle.isEmpty()) continue;
-                String inner = extractInnerBaseApk(bundle);
-                if (inner == null) continue;
-                Signature[] innerSigs = readSignaturesFromPath(inner);
-                if (innerSigs != null && innerSigs.length > 0) { sigs = innerSigs; break; }
+        ApkVerification.Result r = ApkVerification.of(apkPath);
+        // The legacy state, where apkPath is the synthetic MERGED single zip
+        // (apk_unpacker.cpp flattens a bundle and drops the signing block): the
+        // ORIGINAL input is -Dmacapk.bundle.apk, and a bundle there still carries
+        // its APKs' signatures. Since v1.0.1585 apkPath is the installed base.apk,
+        // so this is idle.
+        if (!r.verified && !InstalledSplits.isInstalledBase(apkPath)) {
+            String bundle = System.getProperty("macapk.bundle.apk");
+            if (bundle != null && !bundle.isEmpty() && !bundle.equals(apkPath)) {
+                ApkVerification.Result b = ApkVerification.of(bundle);
+                if (b.verified) r = b;
             }
         }
-        cachedSignatures = sigs;
+        Signature[][] s = signaturesOf(r);
+        cachedSignatures = s[0];
+        cachedPastSigners = s[1];
+        cachedSchemeVersion = r.verified ? r.scheme : 0;
+        return cachedSignatures;
+    }
+
+    /** {signers, past} of a verdict as Signatures (null, null when it did not
+     *  verify); the past ones carry their lineage capability flags. */
+    static Signature[][] signaturesOf(ApkVerification.Result r) {
+        if (r == null || !r.verified || r.signers.isEmpty()) return new Signature[2][];
+        Signature[] sigs = new Signature[r.signers.size()];
+        for (int i = 0; i < sigs.length; i++) sigs[i] = new Signature(r.signers.get(i));
+        Signature[] past = null;
+        if (r.past != null) {
+            past = new Signature[r.past.size()];
+            for (int i = 0; i < past.length; i++) {
+                past[i] = new Signature(r.past.get(i));
+                past[i].setFlags(r.pastFlags[i]);
+            }
+        }
+        return new Signature[][] { sigs, past };
+    }
+
+    /** AOSP PackageInfoUtils.generate, GET_SIGNATURES: with a rotation lineage
+     *  "Return the oldest cert so that programmatic checks keep working even if
+     *  unaware of key rotation", else every current signer. */
+    static Signature[] legacySignatures(Signature[] sigs, Signature[] past) {
+        if (past != null && past.length > 0) return new Signature[] { past[0] };
         return sigs;
+    }
+
+    /** AOSP new SigningInfo(SigningDetails): the current signers, the lineage
+     *  as the history, the scheme. */
+    static android.content.pm.SigningInfo signingInfo(int scheme, Signature[] sigs, Signature[] past) {
+        if (sigs == null || sigs.length == 0) return new android.content.pm.SigningInfo(sigs);
+        return new android.content.pm.SigningInfo(scheme, java.util.Arrays.asList(sigs.clone()), null,
+                past != null ? java.util.Arrays.asList(past.clone()) : null);
     }
 
     /** v1.0.1639: certificates of ANOTHER package's APK -- the base class's
      *  getPackageArchiveInfo seam, which registryPackageInfo goes through for
-     *  every registry-installed package. Same readers as the running app's own
-     *  signature (signing block first, then v1; a split bundle's inner
-     *  base.apk), but the scheme version the readers record in
-     *  cachedSchemeVersion is saved and restored so the running app's own
-     *  answer is untouched. Cached per (path, length, mtime): Aurora asks per
-     *  package per update check and F-Droid asks for the whole installed set,
-     *  and a v1 read or a bundle's inner-apk extraction is not free. */
-    private final java.util.Map<String, Object[]> archiveSignatureCache = new java.util.HashMap<>();
-
-    @Override protected synchronized Object[] macapkArchiveSignatures(String path) {
-        java.io.File f = new java.io.File(path);
-        if (!f.isFile()) return null;
-        String key = path + "|" + f.length() + "|" + f.lastModified();
-        Object[] hit = archiveSignatureCache.get(key);
-        if (hit != null) return hit;
-        int ownScheme = cachedSchemeVersion;
-        Signature[] sigs;
-        int scheme;
-        try {
-            cachedSchemeVersion = 0;
-            sigs = readSignaturesFromPath(path);
-            if (sigs == null || sigs.length == 0) {
-                String inner = extractInnerBaseApk(path);
-                if (inner != null) {
-                    sigs = readSignaturesFromPath(inner);
-                    new java.io.File(inner).delete();
-                }
-            }
-            scheme = cachedSchemeVersion;
-        } finally {
-            cachedSchemeVersion = ownScheme;
-        }
-        Object[] out = new Object[]{ sigs, scheme };
-        archiveSignatureCache.put(key, out);
-        return out;
-    }
-
-    /** Signing-block (v2/v3) first, then v1 (JAR / PKCS#7), reading from {@code path}. */
-    private Signature[] readSignaturesFromPath(String path) {
-        Signature[] sigs = readSigningBlockSignatures(path);
-        if (sigs == null) {
-            sigs = readV1Signatures(path);
-            if (sigs != null && sigs.length > 0) cachedSchemeVersion = 1;
-        }
-        return sigs;
-    }
-
-    /** If {@code bundlePath} is a split bundle (a ZIP whose entries are .apk files,
-     *  as APKMirror .apkm / .xapk / Play .apks are), extract the inner base.apk to a
-     *  temp file and return its path; otherwise null. The signing block needs random
-     *  access, so the inner apk is materialized rather than streamed. */
-    private String extractInnerBaseApk(String bundlePath) {
-        try (java.util.zip.ZipFile zip = new java.util.zip.ZipFile(bundlePath)) {
-            java.util.zip.ZipEntry base = zip.getEntry("base.apk");
-            if (base == null) {
-                // Some bundles nest the base split under a directory or name it
-                // <pkg>.apk. Take the first *.apk entry that is not a config/lang
-                // split (those carry no code-signing identity distinct from base).
-                java.util.Enumeration<? extends java.util.zip.ZipEntry> en = zip.entries();
-                while (en.hasMoreElements()) {
-                    java.util.zip.ZipEntry e = en.nextElement();
-                    if (e.isDirectory()) continue;
-                    String n = e.getName();
-                    String leaf = n.substring(n.lastIndexOf('/') + 1);
-                    if (leaf.endsWith(".apk")
-                            && !leaf.startsWith("config.")
-                            && !leaf.startsWith("split_")
-                            && !leaf.contains("install_pack")) {
-                        base = e; break;
-                    }
-                }
-            }
-            if (base == null) return null;   // not a bundle (a plain APK has no inner apk)
-            java.io.File tmp = java.io.File.createTempFile("macapk-baseapk", ".apk");
-            tmp.deleteOnExit();
-            byte[] buf = new byte[65536];
-            try (java.io.InputStream is = zip.getInputStream(base);
-                 java.io.OutputStream os = new java.io.FileOutputStream(tmp)) {
-                int n;
-                while ((n = is.read(buf)) != -1) os.write(buf, 0, n);
-            }
-            NativeLog.i("Mac.apk.PM", "extracted inner " + base.getName()
-                + " from split bundle for signature read -> " + tmp.getPath());
-            return tmp.getPath();
-        } catch (Throwable t) {
-            NativeLog.w("Mac.apk.PM", "extractInnerBaseApk(" + bundlePath + ") failed (" + t + ")");
-            return null;
-        }
-    }
-
-    // v1 (JAR) signing. Only reached when the APK carries no APK Signing Block,
-    // i.e. a genuinely v1-only APK.
-    //
-    // Two steps, because JarFile alone is not enough. JarFile's verifier applies
-    // the JDK's `jdk.jar.disabledAlgorithms` policy, and JDK 21 denies SHA-1
-    // signed JARs (SHA1 denyAfter 2019-01-01); when it denies one it does not
-    // throw, it silently treats the entry as UNSIGNED and getCertificates()
-    // returns null. Practically every pre-2019 APK is SHA1withRSA, so JarFile on
-    // its own reports "no signature" for exactly the old apps whose baked-in
-    // anti-tamper comparisons the real certificate exists to satisfy. A device's
-    // PackageManager has no such policy: it reports the certificate the package
-    // was signed with, whatever the digest's age. So when JarFile declines we
-    // read the certificate straight out of the PKCS#7 signature block, which is
-    // the same DER the verifier would have parsed.
-    private Signature[] readV1Signatures(String path) {
-        Signature[] sigs = readV1SignaturesVerified(path);
-        if (sigs == null) sigs = readV1SignaturesFromPkcs7(path);
-        return sigs;
-    }
-
-    private Signature[] readV1SignaturesVerified(String path) {
-        try (java.util.jar.JarFile jar = new java.util.jar.JarFile(path, true)) {
-            // Prefer a small, always-v1-signed entry (AndroidManifest.xml) to
-            // minimize I/O; fall back to the first non-META-INF file entry.
-            java.util.jar.JarEntry chosen = jar.getJarEntry("AndroidManifest.xml");
-            if (chosen == null) {
-                java.util.Enumeration<java.util.jar.JarEntry> en = jar.entries();
-                while (en.hasMoreElements()) {
-                    java.util.jar.JarEntry je = en.nextElement();
-                    if (!je.isDirectory() && !je.getName().startsWith("META-INF/")) {
-                        chosen = je; break;
-                    }
-                }
-            }
-            if (chosen == null) return null;
-            byte[] buf = new byte[16384];
-            try (java.io.InputStream is = jar.getInputStream(chosen)) {
-                while (is.read(buf) != -1) { /* read fully so certs load */ }
-            }
-            java.security.cert.Certificate[] certs = chosen.getCertificates();
-            if (certs == null || certs.length == 0) return null;
-            Signature[] sigs = new Signature[certs.length];
-            for (int i = 0; i < certs.length; i++)
-                sigs[i] = new Signature(certs[i].getEncoded());
-            NativeLog.i("Mac.apk.PM", "read " + sigs.length + " real APK signature(s) (v1/JAR) from " + path);
-            return sigs;
-        } catch (Throwable t) {
-            NativeLog.w("Mac.apk.PM", "readV1SignaturesVerified failed (" + t + ")");
-            return null;
-        }
-    }
-
-    /** The signer certificate(s) of a v1-signed APK, read from the PKCS#7
-     *  signature block(s) under META-INF (one .RSA / .DSA / .EC entry per
-     *  signer). CertificateFactory.generateCertificates parses a PKCS#7
-     *  SignedData container directly, which is what those entries are.
-     *  One Signature per SIGNER carrying that signer's end-entity certificate,
-     *  matching AOSP ApkSignatureVerifier.convertToSignatures. */
-    private Signature[] readV1SignaturesFromPkcs7(String path) {
-        try (java.util.zip.ZipFile zip = new java.util.zip.ZipFile(path)) {
-            java.security.cert.CertificateFactory cf =
-                java.security.cert.CertificateFactory.getInstance("X.509");
-            java.util.ArrayList<Signature> out = new java.util.ArrayList<>();
-            java.util.Enumeration<? extends java.util.zip.ZipEntry> en = zip.entries();
-            while (en.hasMoreElements()) {
-                java.util.zip.ZipEntry e = en.nextElement();
-                String name = e.getName();
-                if (!name.startsWith("META-INF/") || e.isDirectory()) continue;
-                String upper = name.toUpperCase(java.util.Locale.ROOT);
-                if (!upper.endsWith(".RSA") && !upper.endsWith(".DSA")
-                        && !upper.endsWith(".EC")) continue;
-                java.util.Collection<? extends java.security.cert.Certificate> certs;
-                try (java.io.InputStream is = zip.getInputStream(e)) {
-                    certs = cf.generateCertificates(is);
-                } catch (Throwable t) {
-                    continue;   // a malformed block is not a reason to lose the others
-                }
-                java.security.cert.X509Certificate leaf = endEntityCertificate(certs);
-                if (leaf != null) out.add(new Signature(leaf.getEncoded()));
-            }
-            if (out.isEmpty()) {
-                NativeLog.i("Mac.apk.PM", "APK carries no signature in any scheme; signatures=null");
-                return null;
-            }
-            NativeLog.i("Mac.apk.PM", "read " + out.size()
-                + " real APK signature(s) (v1/PKCS#7) from " + path);
-            return out.toArray(new Signature[0]);
-        } catch (Throwable t) {
-            NativeLog.w("Mac.apk.PM", "readV1SignaturesFromPkcs7 failed (" + t + "); signatures=null");
-            return null;
-        }
-    }
-
-    /** The end-entity (signing) certificate of a PKCS#7 chain: the one no other
-     *  certificate in the set was issued by. Android APKs are overwhelmingly
-     *  signed with a single self-signed certificate, where this is the only
-     *  candidate; the walk exists so a chained block still yields the leaf
-     *  rather than a CA. */
-    private static java.security.cert.X509Certificate endEntityCertificate(
-            java.util.Collection<? extends java.security.cert.Certificate> certs) {
-        java.util.ArrayList<java.security.cert.X509Certificate> xs =
-            new java.util.ArrayList<>();
-        for (java.security.cert.Certificate c : certs) {
-            if (c instanceof java.security.cert.X509Certificate) {
-                xs.add((java.security.cert.X509Certificate) c);
-            }
-        }
-        if (xs.isEmpty()) return null;
-        if (xs.size() == 1) return xs.get(0);
-        for (java.security.cert.X509Certificate c : xs) {
-            boolean issuedAnother = false;
-            for (java.security.cert.X509Certificate other : xs) {
-                if (other == c) continue;
-                if (other.getIssuerX500Principal().equals(c.getSubjectX500Principal())) {
-                    issuedAnother = true;
-                    break;
-                }
-            }
-            if (!issuedAnother) return c;
-        }
-        return xs.get(0);
-    }
-
-    // ---- APK Signature Scheme v2 / v3 ------------------------------------
-    // Block ids, from AOSP frameworks/base core/java/android/util/apk/
-    // ApkSignatureSchemeV2Verifier.java:75 and ApkSignatureSchemeV3Verifier.java
-    // :73-74. Tried newest-first, matching ApkSignatureVerifier's ordering.
-    private static final int APK_SIGNATURE_SCHEME_V2_BLOCK_ID  = 0x7109871a;
-    private static final int APK_SIGNATURE_SCHEME_V3_BLOCK_ID  = 0xf05368c0;
-    private static final int APK_SIGNATURE_SCHEME_V31_BLOCK_ID = 0x1b93ad61;
-    // "APK Sig Block 42", as the two little-endian longs AOSP compares against
-    // (ApkSigningBlockUtils.java:694-695).
-    private static final long APK_SIG_BLOCK_MAGIC_HI = 0x3234206b636f6c42L;
-    private static final long APK_SIG_BLOCK_MAGIC_LO = 0x20676953204b5041L;
-
-    /** Read the signing certificate(s) out of the APK Signing Block, the
-     *  length-prefixed id-value region that sits immediately before the ZIP
-     *  central directory (https://source.android.com/docs/security/features/
-     *  apksigning/v2). Returns null when the APK has no signing block or the
-     *  block does not parse, so the caller can fall back to v1.
-     *
-     *  WHAT THIS DOES NOT DO: it does not verify the APK's content digests, and
-     *  it does not verify the signature over signed-data. That is APK INTEGRITY
-     *  verification, which Mac.apk performs nowhere (it maps the DEX and the
-     *  native libraries unconditionally), so doing a fraction of it here would
-     *  buy no integrity guarantee while adding a way to fail closed on a
-     *  perfectly good APK. What this method owes its callers is the same thing
-     *  the v1 path owes them: the certificate the package was actually signed
-     *  with. It does keep AOSP's cheap structural check (the leaf certificate's
-     *  public key must equal the signer's own public key record), because a
-     *  mismatch there means the block did not parse the way we think it did. */
-    private Signature[] readSigningBlockSignatures(String path) {
-        try (java.io.RandomAccessFile raf = new java.io.RandomAccessFile(path, "r")) {
-            long cdOffset = findCentralDirOffset(raf);
-            if (cdOffset < 0) return null;
-            java.nio.ByteBuffer signingBlock = findApkSigningBlock(raf, cdOffset);
-            if (signingBlock == null) return null;
-            int[] order = { APK_SIGNATURE_SCHEME_V31_BLOCK_ID,
-                            APK_SIGNATURE_SCHEME_V3_BLOCK_ID,
-                            APK_SIGNATURE_SCHEME_V2_BLOCK_ID };
-            for (int blockId : order) {
-                java.nio.ByteBuffer scheme = findSchemeBlock(signingBlock, blockId);
-                if (scheme == null) continue;
-                boolean v3 = blockId != APK_SIGNATURE_SCHEME_V2_BLOCK_ID;
-                Signature[] sigs = parseSigners(scheme, v3);
-                if (sigs != null && sigs.length > 0) {
-                    // v3.1 and v3 both report scheme 3: AOSP's SigningDetails has no
-                    // separate v3.1 constant, and v3.1 is a rotation-targeting variant
-                    // of the v3 block, not a distinct scheme version.
-                    cachedSchemeVersion = v3 ? 3 : 2;
-                    NativeLog.i("Mac.apk.PM", "read " + sigs.length
-                        + " real APK signature(s) (scheme block 0x"
-                        + Integer.toHexString(blockId) + ", schemeVersion="
-                        + cachedSchemeVersion + ") from " + path);
-                    return sigs;
-                }
-            }
-            return null;
-        } catch (Throwable t) {
-            NativeLog.w("Mac.apk.PM", "readSigningBlockSignatures failed (" + t + ")");
-            return null;
-        }
-    }
-
-    /** Offset of the ZIP central directory, read out of the End Of Central
-     *  Directory record (scanned backwards from EOF, since the record is
-     *  followed only by a comment of up to 64 KB). -1 when there is no usable
-     *  EOCD, including the ZIP64 case where the 32-bit field is saturated:
-     *  a >4 GB APK is not something we can locate the signing block in with
-     *  this record alone, and v1 remains available. */
-    private static long findCentralDirOffset(java.io.RandomAccessFile raf)
-            throws java.io.IOException {
-        final int EOCD_LEN = 22;
-        long fileLen = raf.length();
-        if (fileLen < EOCD_LEN) return -1;
-        int scan = (int) Math.min(fileLen, 0xffffL + EOCD_LEN);
-        byte[] buf = new byte[scan];
-        raf.seek(fileLen - scan);
-        raf.readFully(buf);
-        for (int i = scan - EOCD_LEN; i >= 0; i--) {
-            if (buf[i] != 0x50 || buf[i + 1] != 0x4b
-                    || buf[i + 2] != 0x05 || buf[i + 3] != 0x06) continue;
-            int commentLen = u16(buf, i + 20);
-            // The comment must run exactly to EOF, which is what disambiguates a
-            // real EOCD from the same four bytes appearing inside compressed data.
-            if (i + EOCD_LEN + commentLen != scan) continue;
-            long cdOffset = u32(buf, i + 16);
-            if (cdOffset == 0xffffffffL) return -1;   // ZIP64
-            return (cdOffset <= fileLen) ? cdOffset : -1;
-        }
-        return -1;
-    }
-
-    private static int u16(byte[] b, int off) {
-        return (b[off] & 0xff) | ((b[off + 1] & 0xff) << 8);
-    }
-    private static long u32(byte[] b, int off) {
-        return (b[off] & 0xffL) | ((b[off + 1] & 0xffL) << 8)
-             | ((b[off + 2] & 0xffL) << 16) | ((b[off + 3] & 0xffL) << 24);
-    }
-
-    /** Mirrors AOSP ApkSigningBlockUtils.findApkSigningBlock. Layout, ending at
-     *  the central directory offset:
-     *      @+0  uint64  size in bytes (excluding this field)
-     *      @+8          payload (id-value pairs)
-     *      @-24 uint64  the same size again
-     *      @-16         the 16-byte magic
-     *  Returns the whole block (size field included, so pair walking starts at
-     *  offset 8 exactly as upstream), or null when it is absent/inconsistent. */
-    private static java.nio.ByteBuffer findApkSigningBlock(
-            java.io.RandomAccessFile raf, long cdOffset) throws java.io.IOException {
-        final int MIN_SIZE = 32;
-        if (cdOffset < MIN_SIZE) return null;
-        byte[] footer = new byte[24];
-        raf.seek(cdOffset - footer.length);
-        raf.readFully(footer);
-        java.nio.ByteBuffer fb = java.nio.ByteBuffer.wrap(footer)
-                .order(java.nio.ByteOrder.LITTLE_ENDIAN);
-        if (fb.getLong(8) != APK_SIG_BLOCK_MAGIC_LO
-                || fb.getLong(16) != APK_SIG_BLOCK_MAGIC_HI) {
-            return null;
-        }
-        long sizeInFooter = fb.getLong(0);
-        if (sizeInFooter < footer.length || sizeInFooter > Integer.MAX_VALUE - 8) return null;
-        int total = (int) (sizeInFooter + 8);
-        long blockOffset = cdOffset - total;
-        if (blockOffset < 0) return null;
-        byte[] raw = new byte[total];
-        raf.seek(blockOffset);
-        raf.readFully(raw);
-        java.nio.ByteBuffer block = java.nio.ByteBuffer.wrap(raw)
-                .order(java.nio.ByteOrder.LITTLE_ENDIAN);
-        // The two size fields must agree, exactly as upstream requires.
-        if (block.getLong(0) != sizeInFooter) return null;
-        return block;
-    }
-
-    /** Mirrors AOSP ApkSigningBlockUtils.findApkSignatureSchemeBlock: walk the
-     *  uint64-length-prefixed id-value pairs between the leading size field and
-     *  the trailing size+magic, and return the value of the pair with this id. */
-    private static java.nio.ByteBuffer findSchemeBlock(
-            java.nio.ByteBuffer signingBlock, int blockId) {
-        java.nio.ByteBuffer pairs =
-            sliceFromTo(signingBlock, 8, signingBlock.capacity() - 24);
-        if (pairs == null) return null;
-        while (pairs.remaining() >= 8) {
-            long lenLong = pairs.getLong();
-            if (lenLong < 4 || lenLong > Integer.MAX_VALUE) return null;
-            int len = (int) lenLong;
-            if (len > pairs.remaining()) return null;
-            int nextEntryPos = pairs.position() + len;
-            int id = pairs.getInt();
-            if (id == blockId) return sliceFromTo(pairs, pairs.position(), nextEntryPos);
-            pairs.position(nextEntryPos);
-        }
-        return null;
-    }
-
-    /** Extract one Signature per signer from a v2 or v3 scheme block.
-     *
-     *  Layouts (all length prefixes are uint32 little-endian), from AOSP
-     *  ApkSignatureSchemeV2Verifier.verifySigner and
-     *  ApkSignatureSchemeV3Verifier.verifySigner:
-     *      block  = len-prefixed sequence of len-prefixed signers
-     *      signer = [signed data] (v3 only: [minSdk][maxSdk]) [signatures] [public key]
-     *      signed data = [digests] [certificates] (v3 only: [minSdk][maxSdk]) [attributes]
-     *      certificates = sequence of len-prefixed X.509 DER certificates
-     *  The signing certificate is the FIRST certificate of each signer, and the
-     *  Signature carries its verbatim DER bytes -- that is what AOSP's
-     *  VerbatimX509Certificate + convertToSignatures produce.
-     *
-     *  v3 signers are scoped to a platform range; AOSP skips a signer whose
-     *  [minSdk, maxSdk] does not contain the running SDK_INT, so we do too. If
-     *  that leaves no signer, the caller falls through to the next scheme. */
-    private static Signature[] parseSigners(java.nio.ByteBuffer schemeBlock, boolean v3)
-            throws java.security.cert.CertificateException {
-        java.nio.ByteBuffer signers = lenPrefixedSlice(schemeBlock);
-        if (signers == null) return null;
-        java.security.cert.CertificateFactory certFactory =
-            java.security.cert.CertificateFactory.getInstance("X.509");
-        java.util.ArrayList<Signature> out = new java.util.ArrayList<>();
-        while (signers.remaining() >= 4) {
-            java.nio.ByteBuffer signer = lenPrefixedSlice(signers);
-            if (signer == null) return null;
-            java.nio.ByteBuffer signedData = lenPrefixedSlice(signer);
-            if (signedData == null) return null;
-            if (v3) {
-                if (signer.remaining() < 8) return null;
-                int minSdk = signer.getInt();
-                int maxSdk = signer.getInt();
-                if (android.os.Build.VERSION.SDK_INT < minSdk
-                        || android.os.Build.VERSION.SDK_INT > maxSdk) {
-                    continue;   // this signer targets a different platform version
-                }
-            }
-            if (lenPrefixedSlice(signer) == null) return null;      // signatures
-            byte[] publicKeyBytes = lenPrefixedBytes(signer);       // public key
-            if (lenPrefixedSlice(signedData) == null) return null;  // digests
-            java.nio.ByteBuffer certificates = lenPrefixedSlice(signedData);
-            if (certificates == null) return null;
-            byte[] leaf = lenPrefixedBytes(certificates);
-            if (leaf == null) return null;
-            java.security.cert.X509Certificate cert =
-                (java.security.cert.X509Certificate) certFactory.generateCertificate(
-                    new java.io.ByteArrayInputStream(leaf));
-            // AOSP: "Public key mismatch between certificate and signature record".
-            if (publicKeyBytes == null
-                    || !java.util.Arrays.equals(publicKeyBytes,
-                                                cert.getPublicKey().getEncoded())) {
-                return null;
-            }
-            out.add(new Signature(leaf));
-        }
-        return out.isEmpty() ? null : out.toArray(new Signature[0]);
-    }
-
-    /** Consume a uint32 length prefix and return that many bytes as an
-     *  independent little-endian view, advancing the source past them. */
-    private static java.nio.ByteBuffer lenPrefixedSlice(java.nio.ByteBuffer src) {
-        if (src == null || src.remaining() < 4) return null;
-        int len = src.getInt();
-        if (len < 0 || len > src.remaining()) return null;
-        int start = src.position();
-        int end   = start + len;
-        java.nio.ByteBuffer out = sliceFromTo(src, start, end);
-        if (out == null) return null;
-        src.position(end);
-        return out;
-    }
-
-    private static byte[] lenPrefixedBytes(java.nio.ByteBuffer src) {
-        if (src == null || src.remaining() < 4) return null;
-        int len = src.getInt();
-        if (len < 0 || len > src.remaining()) return null;
-        byte[] out = new byte[len];
-        src.get(out);
-        return out;
-    }
-
-    /** Mirrors AOSP ApkSigningBlockUtils.sliceFromTo: an independent buffer over
-     *  [start, end) of the source, leaving the source's position and limit
-     *  untouched. The position/limit assignment order matters (limit first),
-     *  because start may be beyond the current limit. */
-    private static java.nio.ByteBuffer sliceFromTo(java.nio.ByteBuffer source,
-                                                   int start, int end) {
-        if (start < 0 || end < start || end > source.capacity()) return null;
-        int originalLimit = source.limit();
-        int originalPosition = source.position();
-        try {
-            source.position(0);
-            source.limit(end);
-            source.position(start);
-            java.nio.ByteBuffer result = source.slice();
-            result.order(source.order());
-            return result;
-        } finally {
-            source.position(0);
-            source.limit(originalLimit);
-            source.position(originalPosition);
-        }
+     *  every registry-installed package: {signers, scheme, lineage}. The
+     *  verdict is ApkVerification's, cached per file (path, size, mtime): Aurora
+     *  asks per package per update check and F-Droid asks for the whole
+     *  installed set. */
+    @Override protected Object[] macapkArchiveSignatures(String path) {
+        if (path == null || !new java.io.File(path).isFile()) return null;
+        ApkVerification.Result r = ApkVerification.of(path);
+        if (!r.verified) return null;
+        Signature[][] s = signaturesOf(r);
+        return new Object[]{ s[0], r.scheme, s[1] };
     }
 
     @Override public ApplicationInfo getApplicationInfo(String packageName, int flags)
             throws NameNotFoundException {
+        // ANOTHER app's package served by the Mac.apk system broker (it runs in
+        // its own process): answer from THAT package's installed APK -- its own
+        // manifest and its own real signing certificate -- as PMS answers for an
+        // installed package. Only for a package the broker really serves
+        // (MACAPK_BROKER=1 and a peer is installed), so a device without it keeps
+        // every answer below, including the reserved-Google absent contract.
+        if (packageName != null && !packageName.equals(this.packageName)) {
+            MacApkPackageManager peer = SystemClient.pmFor(packageName);
+            if (peer != null && peer != this) return peer.getApplicationInfo(packageName, flags);
+        }
         // Same AOSP contract as getPackageInfo: a non-installed (non-self) package
         // throws NameNotFoundException. A NULL name is not our package either --
         // it names nothing, so it cannot be installed, and AOSP throws rather
@@ -1087,14 +703,26 @@ public final class MacApkPackageManager extends PackageManager {
         // ApplicationInfo, which turned an app's bug (an unresolved package
         // name) into a silently wrong answer about a different app.
         // Env rollback MACAPK_PM_SELF_ONLY=0.
-        if (PLATFORM_PACKAGE.equals(packageName) && platformPackagePresent()) {
-            return platformPackageInfo().applicationInfo;
-        }
-        if (VENDING_PACKAGE.equals(packageName) && PlayServices.vendingPresent()) {
-            return vendingPackageInfo().applicationInfo;
-        }
-        if (GMS_PACKAGE.equals(packageName) && PlayServices.pushBackendEnabled()) {
-            return gmsPackageInfo().applicationInfo;
+        // A package querying ITSELF must get its REAL record (makeAppInfo),
+        // never a synthetic platform/vending/gms stand-in -- the synthetic ones
+        // carry null sourceDir/dataDir and exist only to answer about OTHER
+        // packages this device does not really have. When the HOSTED app IS the
+        // Play Store or GMS (we run the real APK), its own getApplicationInfo
+        // must be real, or e.g. GMS's bqwp.g does
+        // `new File(getApplicationInfo().sourceDir)` -> NullPointerException.
+        // Same guard the getPackageInfo dispatch already carries (the
+        // vendingPackageInfo self-recursion fix).
+        boolean selfSyntheticQuery = packageName != null && packageName.equals(this.packageName);
+        if (!selfSyntheticQuery) {
+            if (PLATFORM_PACKAGE.equals(packageName) && platformPackagePresent()) {
+                return platformPackageInfo().applicationInfo;
+            }
+            if (VENDING_PACKAGE.equals(packageName) && PlayServices.vendingPresent()) {
+                return vendingPackageInfo().applicationInfo;
+            }
+            if (GMS_PACKAGE.equals(packageName) && PlayServices.pushBackendEnabled()) {
+                return gmsPackageInfo().applicationInfo;
+            }
         }
         if (packageName == null || !packageName.equals(this.packageName)) {
             // MACAPK_PM_REGISTRY (default ON): another Mac.apk-installed app IS
@@ -1250,8 +878,10 @@ public final class MacApkPackageManager extends PackageManager {
         // WHY A DIRECTORY mtime. Removing (or adding) an entry updates the
         // containing directory's mtime, so one stat answers "could anything
         // have appeared or vanished" without walking bundles or stating each
-        // app. It is deliberately coarse: it costs one stat per PM query and
-        // over-fires (any /Applications change triggers it), which is the
+        // app. It is deliberately coarse: it costs a stat per bundle folder
+        // per PM query (/Applications and ~/Applications, where a user who
+        // cannot write /Applications gets their apps, GitHub #28) and
+        // over-fires (any change to either triggers it), which is the
         // right way round -- an extra reconcile is cheap and idempotent, a
         // missed one leaves a store lying about installed apps.
         //
@@ -1266,15 +896,22 @@ public final class MacApkPackageManager extends PackageManager {
                 reconcileInFlight = new java.util.concurrent.atomic.AtomicBoolean(false);
         private static volatile long lastReconcileNanos = 0L;
 
-        /** Ask the helper to re-run its reconcile if /Applications changed.
+        /** Ask the helper to re-run its reconcile if a bundle folder changed.
          *  Never blocks the caller: a PM query must not wait on a subprocess.
          *  The rewritten registry is picked up by the NEXT snapshot() -- the
          *  same poll-driven honesty announceRemovals already documents. */
         private static void maybeReconcileBundles() {
-            java.io.File dir = new java.io.File("/Applications");
+            // One number for both folders: a change to either moves it. A
+            // missing ~/Applications reads 0 and simply never moves.
             long m;
-            try { m = dir.lastModified(); } catch (Throwable t) { return; }
-            if (m == 0L) return;
+            try {
+                String[] roots = CrossAppLauncher.bundleRoots();
+                m = new java.io.File(roots[0]).lastModified();
+                if (m == 0L) return;
+                for (int i = 1; i < roots.length; i++) {
+                    m = m * 31 + new java.io.File(roots[i]).lastModified();
+                }
+            } catch (Throwable t) { return; }
             long prev = bundlesDirMtime.getAndSet(m);
             if (prev < 0) return;          // first observation: baseline only
             if (prev == m) return;         // nothing appeared or vanished
@@ -1293,7 +930,7 @@ public final class MacApkPackageManager extends PackageManager {
                             .redirectErrorStream(true).start();
                     p.getInputStream().close();
                     p.waitFor();
-                    logOnce("[PM.registry] /Applications changed; ran helper reconcile"
+                    logOnce("[PM.registry] a bundle folder changed; ran helper reconcile"
                             + " (a bundle may have been added or removed outside the"
                             + " install path)");
                 } catch (Throwable ignored) {
@@ -1457,6 +1094,11 @@ public final class MacApkPackageManager extends PackageManager {
                     // present when its code is gone, which is a state a device
                     // never has.
                     String state = a.optString("state", "installed");
+                    // "ok" is the pre-v1.0.2239 control panel's spelling of
+                    // installed (InstallCore.swift AppState.legacyInstalled).
+                    // Skipping it hid every drag-drop install from
+                    // PackageManager (issue #11: "0 installed row(s)").
+                    if ("ok".equals(state)) state = "installed";
                     if (!"installed".equals(state)) {
                         if ("removed".equals(state)) removed.add(pkg);
                         continue;
@@ -1570,7 +1212,131 @@ public final class MacApkPackageManager extends PackageManager {
             return true;
         }
         Manifest m = manifest();
-        return m != null && m.queriesPackages.contains(pkg);
+        if (m == null) return false;
+        if (m.queriesPackages.contains(pkg)) return true;
+        return macapkCanQueryViaComponents(m, pkg);
+    }
+
+    /** MACAPK_QUERIES_INTENT (default ON; =0 = only <queries><package>, the old
+     *  answer): AppsFilterUtils.canQueryViaComponents (android14-release).
+     *  A <queries><intent> makes a package visible when one of its EXPORTED
+     *  activities / services / receivers has a filter the intent matches
+     *  (matchesPackage -> matchesAnyComponents -> IntentFilter.match with
+     *  supportWildcards = true); a <queries><provider> when one of its exported
+     *  providers carries the authority (matchesProviders). Game frontends
+     *  (iiSU) and launchers declare these instead of QUERY_ALL_PACKAGES. */
+    private static final boolean QUERIES_INTENT =
+        !"0".equals(System.getenv("MACAPK_QUERIES_INTENT"));
+    /** pkg -> {target Manifest, Boolean}: the answer, recomputed when the target's
+     *  parsed manifest changes (registryManifest re-parses on an APK update). */
+    private final java.util.concurrent.ConcurrentHashMap<String, Object[]> mQueriesVisible =
+        new java.util.concurrent.ConcurrentHashMap<>();
+
+    private boolean macapkCanQueryViaComponents(Manifest querying, String pkg) {
+        if (!QUERIES_INTENT) return false;
+        if (querying.queriesIntents.isEmpty() && querying.queriesProviders.isEmpty()) return false;
+        if (!InstalledRegistry.enabled()) return false;
+        Manifest target = registryManifest(InstalledRegistry.lookup(pkg));
+        if (target == null) return false;
+        Object[] c = mQueriesVisible.get(pkg);
+        if (c != null && c[0] == target) return (Boolean) c[1];
+        boolean v = false;
+        for (Manifest.QueriesIntent q : querying.queriesIntents) {
+            if (macapkQueriesMatchesPackage(q, target)) { v = true; break; }
+        }
+        if (!v && !querying.queriesProviders.isEmpty()) {
+            for (Manifest.ProviderEntry pe : target.providers) {
+                if (!pe.exported || pe.authorities == null) continue;
+                for (String a : pe.authorities.split(";")) {
+                    if (querying.queriesProviders.contains(a)) { v = true; break; }
+                }
+                if (v) break;
+            }
+        }
+        mQueriesVisible.put(pkg, new Object[] { target, v });
+        return v;
+    }
+
+    /** AppsFilterUtils.matchesPackage: services, activities, receivers. (Its
+     *  provider leg matches provider intent-filters, which our manifest model
+     *  does not carry; providers are reached through <queries><provider>.) */
+    private static boolean macapkQueriesMatchesPackage(Manifest.QueriesIntent q, Manifest t) {
+        for (Manifest.ServiceEntry se : t.services.values()) {
+            if (se.exported && macapkQueriesMatchesAny(q, se.filters)) return true;
+        }
+        for (Manifest.ActivityEntry ae : t.activities.values()) {
+            if (ae.exported && macapkQueriesMatchesAny(q, ae.filters)) return true;
+        }
+        for (Manifest.ActivityEntry re : t.receivers.values()) {
+            if (re.exported && macapkQueriesMatchesAny(q, re.filters)) return true;
+        }
+        return false;
+    }
+
+    private static boolean macapkQueriesMatchesAny(Manifest.QueriesIntent q,
+            java.util.List<Manifest.IntentFilterEntry> filters) {
+        if (filters == null) return false;
+        for (Manifest.IntentFilterEntry f : filters) {
+            if (macapkQueriesIntentMatches(q, f)) return true;
+        }
+        return false;
+    }
+
+    /** IntentFilter.match(action, type, scheme, data, categories, tag,
+     *  supportWildcards = true) for a <queries><intent>, over the four dimensions
+     *  our filter model keeps (action, categories, scheme, MIME type; host and
+     *  path are not modelled, and a queries intent's path is always the wildcard).
+     *  android14-release IntentFilter.java: match :2338, matchAction :834,
+     *  matchData :1647, findMimeType :2997, matchCategories :1790. */
+    static boolean macapkQueriesIntentMatches(Manifest.QueriesIntent q,
+            Manifest.IntentFilterEntry f) {
+        // matchAction: a null action matches; otherwise the filter must list it.
+        if (q.action != null && !f.actions.contains(q.action)) return false;
+        // matchData.
+        final boolean hasTypes = !f.mimeTypes.isEmpty();
+        final boolean hasSchemes = !f.schemes.isEmpty();
+        final boolean hasDataUri = q.scheme != null;
+        if (!hasTypes && !hasSchemes) {
+            if (q.type != null || hasDataUri) return false;
+        } else {
+            if (hasSchemes) {
+                String sc = q.scheme != null ? q.scheme : "";
+                if (!f.schemes.contains(sc) && !"*".equals(sc)) return false;
+            } else if (q.scheme != null && !q.scheme.isEmpty() && !"content".equals(q.scheme)
+                    && !"file".equals(q.scheme) && !"*".equals(q.scheme)) {
+                return false;
+            }
+            if (hasTypes) {
+                if (!macapkFindMimeType(f.mimeTypes, q.type)) return false;
+            } else if (q.type != null) {
+                return false;
+            }
+        }
+        // matchCategories: every category of the intent must be in the filter.
+        for (String c : q.categories) {
+            if (!f.categories.contains(c)) return false;
+        }
+        return true;
+    }
+
+    /** IntentFilter.findMimeType, for types as the manifest declares them. */
+    private static boolean macapkFindMimeType(java.util.List<String> t, String type) {
+        if (type == null) return false;
+        if (t.contains(type)) return true;
+        if (type.equals("*/*")) return !t.isEmpty();
+        // a filter type of "*" or "*/*" accepts every type (hasPartialTypes + "*")
+        if (t.contains("*") || t.contains("*/*")) return true;
+        int slash = type.indexOf('/');
+        if (slash > 0) {
+            String base = type.substring(0, slash);
+            if (t.contains(base) || t.contains(base + "/*")) return true;
+            if (type.length() == slash + 2 && type.charAt(slash + 1) == '*') {
+                for (String v : t) {
+                    if (type.regionMatches(0, v, 0, slash + 1)) return true;
+                }
+            }
+        }
+        return false;
     }
 
     /** PackageInfo for a registry-installed package, or null when the registry
@@ -1625,6 +1391,15 @@ public final class MacApkPackageManager extends PackageManager {
             // user (the archive parse is of a not-yet-installed file, so it
             // correctly leaves it clear -- this row IS installed).
             info.applicationInfo.flags |= ApplicationInfo.FLAG_INSTALLED;
+            // A platform package (the store / GMS core) is a SYSTEM app on every
+            // real device; a cross-package query from a first-party caller (GMS's
+            // GoogleSignatureVerifier) reads flags & 129 to decide trust. See
+            // platformSystemPackage(). This is the cross-package answer path --
+            // the one GMS hits when it asks us about its CALLER com.android.vending.
+            if (platformSystemApk(row.pkg, apk)) {
+                info.applicationInfo.flags |= ApplicationInfo.FLAG_SYSTEM
+                                            | ApplicationInfo.FLAG_UPDATED_SYSTEM_APP;
+            }
         }
         // The registry's versionCode is the manifest's, recorded at install; a
         // v1-migrated row carries 0 and the archive parse (when it ran) is the
@@ -1732,6 +1507,62 @@ public final class MacApkPackageManager extends PackageManager {
         return REGISTRY_ACTIVITIES && InstalledRegistry.enabled();
     }
 
+    /** path -> {mtime, Drawable.ConstantState-free Bitmap}: decoded bundle icons. */
+    private static final java.util.concurrent.ConcurrentHashMap<String, Object[]> sRegistryIcons =
+        new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** Another installed Mac.apk app's icon: Contents/Resources/AppIcon.png of its
+     *  bundle (launcher/BundleGenerator.swift renders it from the APK's own
+     *  launcher icon at install). Only for a package the caller can see, like
+     *  every other answer about it; null otherwise and for the running app, whose
+     *  own Resources answer. MACAPK_XAPP_IMPLICIT=0 -> null (the old default icon). */
+    @Override
+    protected android.graphics.drawable.Drawable macapkRegistryAppIcon(String pkg) {
+        if (!XAPP_IMPLICIT || pkg == null || pkg.equals(packageName)) return null;
+        if (!macapkRegistryActivities() || !packageVisible(pkg)) return null;
+        InstalledRegistry.Row row = InstalledRegistry.lookup(pkg);
+        if (row == null || row.bundlePath == null) return null;
+        java.io.File f = new java.io.File(row.bundlePath, "Contents/Resources/AppIcon.png");
+        if (!f.isFile()) return null;
+        String key = f.getPath();
+        long mt = f.lastModified();
+        Object[] c = sRegistryIcons.get(key);
+        android.graphics.Bitmap bm = (c != null && (Long) c[0] == mt) ? (android.graphics.Bitmap) c[1] : null;
+        if (bm == null) {
+            try {
+                bm = android.graphics.BitmapFactory.decodeFile(key);
+            } catch (Throwable t) {
+                bm = null;
+            }
+            if (bm == null) return null;
+            sRegistryIcons.put(key, new Object[] { mt, bm });
+        }
+        android.app.Application app = android.app.Application.macapk_get();
+        return new android.graphics.drawable.BitmapDrawable(
+                app != null ? app.getResources() : null, bm);
+    }
+
+    /** Stage 4 gate (default ON; =0 restores package-scoped-only registry rows). */
+    private static final boolean XAPP_IMPLICIT =
+        !"0".equals(System.getenv("MACAPK_XAPP_IMPLICIT"));
+    static boolean macapkXappImplicit() { return XAPP_IMPLICIT; }
+
+    /** True while ActivityHost resolves a START (resolveForStart): registry rows are
+     *  then not narrowed by package visibility, as ComputerEngine does for a start. */
+    private static final ThreadLocal<Boolean> FOR_START = ThreadLocal.withInitial(() -> false);
+
+    /** queryIntentActivities in START mode (see FOR_START). */
+    public static java.util.List<ResolveInfo> macapkQueryForStart(
+            android.content.pm.PackageManager pm, Intent intent, int flags) {
+        final boolean prev = FOR_START.get();
+        FOR_START.set(true);
+        try {
+            return pm.queryIntentActivities(intent, flags);
+        } finally {
+            FOR_START.set(prev);
+        }
+    }
+
     /** apk path -> {mtime, size, Manifest}: a registry app's parsed manifest,
      *  re-parsed only when its installed APK changes (an update rewrites it). */
     private static final java.util.concurrent.ConcurrentHashMap<String, Object[]> sRegistryManifests =
@@ -1763,6 +1594,18 @@ public final class MacApkPackageManager extends PackageManager {
     private android.content.pm.ActivityInfo registryActivityInfo(
             InstalledRegistry.Row row, Manifest.ActivityEntry e, int flags) {
         android.content.pm.ActivityInfo info = toActivityInfo(e, flags);
+        // toActivityInfo resolves @-references against THIS app's resource table,
+        // so for another app's component those ids name nothing of theirs (or
+        // something of ours). Drop them: loadLabel then falls back to the
+        // application label (the registry row's), and loadIcon to the app icon
+        // (macapkRegistryAppIcon). A literal android:label is kept.
+        // MACAPK_XAPP_IMPLICIT=0 keeps the old ids.
+        if (XAPP_IMPLICIT) {
+            info.icon = 0;
+            info.logo = 0;
+            info.labelRes = 0;
+            info.theme = 0;
+        }
         info.packageName = row.pkg;
         info.processName = e.processName != null ? e.processName : row.pkg;
         if (e.taskAffinity == null) info.taskAffinity = row.pkg;
@@ -1865,6 +1708,36 @@ public final class MacApkPackageManager extends PackageManager {
      *  calls packageManager.getInstalledPackages(I) directly) to find
      *  updatable installed apps. With the registry gate off this is
      *  byte-identical to the old self-only answer. */
+    // ---- hidden deletePackage family (Google Play's UninstallerImpl reflects on these) ----
+    // AOSP: PackageManager.deletePackage(String, IPackageDeleteObserver, int) and the
+    // VersionedPackage / IPackageDeleteObserver2 form. Both ride the one uninstall
+    // path (PackageInstallerBackend.performUninstall: install helper, device-owner
+    // prompt, PACKAGE_REMOVED) and report to the observer AFTER the broadcasts. The
+    // runtime still does no filesystem mutation itself. The observer is only ever
+    // called, never required: a missing one is allowed (AOSP accepts null).
+
+    /** @hide */
+    public void deletePackage(String packageName, android.content.pm.IPackageDeleteObserver observer, int flags) {
+        PackageInstallerBackend.uninstallWithObserver(packageName, -1, (pkg, code, msg) -> {
+            if (observer != null) observer.packageDeleted(pkg, code);
+        });
+    }
+
+    /** @hide */
+    public void deletePackageAsUser(String packageName, android.content.pm.IPackageDeleteObserver observer,
+                                    int flags, int userId) {
+        deletePackage(packageName, observer, flags);
+    }
+
+    /** @hide */
+    public void deletePackage(android.content.pm.VersionedPackage versionedPackage,
+                              android.content.pm.IPackageDeleteObserver2 observer, int flags, int userId) {
+        long vc = versionedPackage.getLongVersionCode();
+        PackageInstallerBackend.uninstallWithObserver(versionedPackage.getPackageName(), vc, (pkg, code, msg) -> {
+            if (observer != null) observer.onPackageDeleted(pkg, code, msg);
+        });
+    }
+
     @Override public java.util.List<PackageInfo> getInstalledPackages(int flags) {
         java.util.List<PackageInfo> out = super.getInstalledPackages(flags);
         for (InstalledRegistry.Row r : InstalledRegistry.allBest()) {
@@ -2178,7 +2051,7 @@ public final class MacApkPackageManager extends PackageManager {
      *  the AOSP source says otherwise and the source wins. It also means the
      *  stored value can only ever be ENABLED or DISABLED, which is what makes
      *  the two-line override read in macapkIsComponentEnabled correct. */
-    @Override public void setComponentEnabledSetting(
+    @Override public synchronized void setComponentEnabledSetting(
             ComponentName componentName, int newState, int flags) {
         if (componentName == null) return;
         switch (newState) {
@@ -2194,6 +2067,13 @@ public final class MacApkPackageManager extends PackageManager {
         }
         String cls = componentName.getClassName();
         if (cls == null) return;
+        if (componentPreferences != null && (newState == COMPONENT_ENABLED_STATE_ENABLED
+                || newState == COMPONENT_ENABLED_STATE_DISABLED || newState == COMPONENT_ENABLED_STATE_DEFAULT)) {
+            android.content.SharedPreferences.Editor edit = componentPreferences.edit();
+            if (newState == COMPONENT_ENABLED_STATE_DEFAULT) edit.remove(cls);
+            else edit.putInt(cls, newState);
+            if (!edit.commit()) throw new IllegalStateException("Cannot persist component enabled state");
+        }
         switch (newState) {
             case COMPONENT_ENABLED_STATE_ENABLED:
             case COMPONENT_ENABLED_STATE_DISABLED:
@@ -2429,6 +2309,21 @@ public final class MacApkPackageManager extends PackageManager {
         // ActivityManager gives, instead of becoming a second opinion.
         info.maxRecents = defaultAppRecentsLimit();
         info.theme = resolveResRef(e.themeRaw, "style");
+        // AOSP: an <activity-alias> with no android:theme inherits its
+        // targetActivity's theme (ParsedActivity.makeAlias copies target.theme,
+        // and the alias's own android:theme, if declared, overrides). Without
+        // this, launching an alias that declares no theme left
+        // ActivityInfo.theme == 0, so ActivityHost applied no theme and the
+        // target AppCompat activity threw "You need to use a Theme.AppCompat
+        // theme (or descendant)" in checkAppCompatTheme. The Play Store hits
+        // exactly this: its LAUNCHER is AssetBrowserActivity, a themeless alias
+        // of MainActivity (which declares the AppCompat theme). getThemeResource()
+        // still falls back to the <application> theme when both the alias and its
+        // target declare none, so this only ADDS a theme where there was none.
+        if (info.theme == 0 && e.targetActivity != null) {
+            Manifest.ActivityEntry target = activityEntry(e.targetActivity, false);
+            if (target != null) info.theme = resolveResRef(target.themeRaw, "style");
+        }
         info.icon  = resolveResRef(e.iconRaw,  "drawable");
         info.logo  = resolveResRef(e.logoRaw,  "drawable");
         // AOSP PackageItemInfo: android:label is EITHER a resource reference
@@ -2698,6 +2593,10 @@ public final class MacApkPackageManager extends PackageManager {
         // selector (see macapkIntentSelector).
         final String resolvedType = macapkResolvedType(intent);
         ComponentName explicit = query.getComponent();
+        if (explicit != null && DeviceCredentialHandler.isCredentialIntent(query)) {
+            out.add(DeviceCredentialHandler.resolveInfo());
+            return out;
+        }
         if (scope && explicit != null && !packageName.equals(explicit.getPackageName())) {
             // getActivityInfo(comp) for a package that is not installed is null
             // (ComputerEngine.java:527-528), so the list stays empty. The class
@@ -2764,6 +2663,26 @@ public final class MacApkPackageManager extends PackageManager {
                 && macapkRegistryActivities() && packageVisible(want)) {
             registryScan(want, query, resolvedType, flags, null, order, defaultOnly,
                     perPackage, clamp, out, cuts);
+        }
+        // Stage 4 (MACAPK_XAPP_IMPLICIT, docs/cross-app-launch-and-implicit-start-design_2026-09-26.md
+        // section 9): an UNSCOPED implicit query also scans every installed Mac.apk
+        // app's manifest, as ComputerEngine.queryIntentActivitiesInternal unions all
+        // installed packages. A query is narrowed by package visibility
+        // (shouldFilterApplication); a START is not (ComputerEngine :561-569, :777),
+        // which macapkQueryForStart marks. Web intents never take a registry row
+        // unless setPackage names the app: Android 12+ opens an unverified web link
+        // in the browser and we never verify Digital Asset Links (CDD 3.2.3.2 C-0-4).
+        // This is what a launcher or a game frontend's MAIN + LAUNCHER query, and an
+        // ACTION_VIEW of a file type, need to see the other installed apps.
+        if (explicit == null && intent.getPackage() == null && macapkXappImplicit()
+                && macapkRegistryActivities() && !ActivityHost.macapkWebIntent(query)) {
+            final boolean forStart = FOR_START.get();
+            for (InstalledRegistry.Row r : InstalledRegistry.allBest()) {
+                if (r.pkg.equals(packageName)) continue;
+                if (!forStart && !packageVisible(r.pkg)) continue;
+                registryScan(r.pkg, query, resolvedType, flags, null, order, defaultOnly,
+                        perPackage, clamp, out, cuts);
+            }
         }
         if (order) aospSortResults(out, cuts);
         // ⚠ v1.0.938: THE HOST HANDOFF. Mac.apk already routes some implicit
@@ -2865,8 +2784,13 @@ public final class MacApkPackageManager extends PackageManager {
                         ? SpecialAccessHandler.settingsResolveInfo(hostQuery)
                         : act.kind == ActivityHost.HostAction.Kind.APP_DETAILS
                         ? SpecialAccessHandler.appDetailsResolveInfo()
+                        : act.kind == ActivityHost.HostAction.Kind.DEVICE_CREDENTIAL
+                        ? DeviceCredentialHandler.resolveInfo()
                         : act.kind == ActivityHost.HostAction.Kind.DOCUMENT_PICKER
                         ? macapkDocumentsUiResolveInfo(hostQuery)
+                        : act.kind == ActivityHost.HostAction.Kind.INSTALL_PACKAGE
+                                && macapkInstallerComponent()
+                        ? macapkInstallerResolveInfo(hostQuery)
                         : macapkHostResolveInfo(hostQuery);
                 boolean listed = want == null
                         || (row != null && row.activityInfo != null
@@ -2979,6 +2903,55 @@ public final class MacApkPackageManager extends PackageManager {
         ai.enabled = true;
         android.content.pm.ApplicationInfo app = new android.content.pm.ApplicationInfo();
         app.packageName = MACAPK_HOST_PACKAGE;
+        ai.applicationInfo = app;
+        ri.activityInfo = ai;
+        return ri;
+    }
+
+    /** The platform package installer as a device lists it. On a Google
+     *  device the PackageInstaller app is package
+     *  com.google.android.packageinstaller, and the activity that takes
+     *  {VIEW, INSTALL_PACKAGE} x {file, content} x
+     *  application/vnd.android.package-archive is
+     *  com.android.packageinstaller.InstallStart (packages/apps/PackageInstaller
+     *  AndroidManifest.xml). Stores pick it out of queryIntentActivities BY
+     *  PACKAGE NAME and pin it: the Epic Games Store's AndroidInstaller keeps
+     *  the row whose package is com.android.packageinstaller or
+     *  com.google.android.packageinstaller and setClassName()s it, and with only
+     *  the generic com.macapk.host row the start stayed implicit and went to the
+     *  first app row instead (Organic Maps), so the install never ran.
+     *  ActivityHost hands an explicit start of this component to the same
+     *  installer surface (InstallIntentHandler). MACAPK_PM_INSTALLER_COMPONENT=0
+     *  lists the com.macapk.host row instead (pre-change). */
+    static final String MACAPK_INSTALLER_PACKAGE = "com.google.android.packageinstaller";
+    static final String MACAPK_INSTALLER_ACTIVITY = "com.android.packageinstaller.InstallStart";
+    static boolean macapkInstallerComponent() {
+        return !"0".equals(System.getenv("MACAPK_PM_INSTALLER_COMPONENT"));
+    }
+    static boolean macapkIsInstallerPackage(String pkg) {
+        return MACAPK_INSTALLER_PACKAGE.equals(pkg) || "com.android.packageinstaller".equals(pkg);
+    }
+    private static ResolveInfo macapkInstallerResolveInfo(Intent intent) {
+        ResolveInfo ri = new ResolveInfo();
+        android.content.IntentFilter f = new android.content.IntentFilter();
+        String action = intent != null ? intent.getAction() : null;
+        f.addAction(action != null ? action : Intent.ACTION_VIEW);
+        f.addCategory(Intent.CATEGORY_DEFAULT);
+        android.net.Uri data = intent != null ? intent.getData() : null;
+        String scheme = data != null ? data.getScheme() : null;
+        if (scheme != null && !scheme.isEmpty()) f.addDataScheme(scheme);
+        try {
+            f.addDataType("application/vnd.android.package-archive");
+        } catch (Throwable ignored) {
+        }
+        ri.filter = f;
+        android.content.pm.ActivityInfo ai = new android.content.pm.ActivityInfo();
+        ai.name = MACAPK_INSTALLER_ACTIVITY;
+        ai.packageName = MACAPK_INSTALLER_PACKAGE;
+        ai.exported = true;
+        ai.enabled = true;
+        android.content.pm.ApplicationInfo app = new android.content.pm.ApplicationInfo();
+        app.packageName = MACAPK_INSTALLER_PACKAGE;
         ai.applicationInfo = app;
         ri.activityInfo = ai;
         return ri;
@@ -3370,7 +3343,7 @@ public final class MacApkPackageManager extends PackageManager {
      *  ResourceIndex does not report changing-configurations, and a redirect
      *  scheme is translatable="false" in every SDK seen, so the default-config
      *  value is used. */
-    private static java.util.List<String> macapkResolvedDataValues(java.util.List<String> raw) {
+    static java.util.List<String> macapkResolvedDataValues(java.util.List<String> raw) {
         if (raw.isEmpty() || !macapkIntentDataResRef()) return raw;
         java.util.List<String> out = null;
         for (int i = 0; i < raw.size(); i++) {
@@ -3828,8 +3801,56 @@ public final class MacApkPackageManager extends PackageManager {
      *  Rollback: MACAPK_PM_SELF_ONLY=0 restores the legacy blanket GRANTED,
      *  the same switch that restores the legacy "every package is installed"
      *  answer -- one flag, because it is one question. */
+    // ---- dynamic permissions (AOSP PermissionManagerServiceImpl.addPermission) ----
+    // A package may add permissions at run time inside a <permission-tree> it
+    // declares (enforcePermissionTree: the name is the tree's name plus ".<more>",
+    // and the tree's owner is the caller). Google Services Framework adds
+    // com.google.android.googleapps.permission.GOOGLE_AUTH.<service> this way
+    // when packages change, and the SecurityException every call used to get
+    // killed its ServiceWatcherUpdatePackages thread. The added names are kept
+    // for this process, as PMS keeps them until reboot; nothing checks them here.
+    private static final java.util.Map<String, android.content.pm.PermissionInfo> sDynamicPermissions =
+        new java.util.concurrent.ConcurrentHashMap<>();
+
+    private String macapkPermissionTreeOf(String name) {
+        Manifest m = manifest();
+        if (name == null || m == null) return null;
+        for (String tree : m.permissionTrees) {
+            if (name.length() > tree.length() && name.startsWith(tree) && name.charAt(tree.length()) == '.') {
+                return tree;
+            }
+        }
+        return null;
+    }
+
+    @Override public boolean addPermission(android.content.pm.PermissionInfo info) {
+        String name = info != null ? info.name : null;
+        if (macapkPermissionTreeOf(name) == null) return super.addPermission(info);
+        return sDynamicPermissions.put(name, info) == null;
+    }
+
+    @Override public boolean addPermissionAsync(android.content.pm.PermissionInfo info) {
+        return addPermission(info);
+    }
+
+    @Override public void removePermission(String permName) {
+        if (macapkPermissionTreeOf(permName) == null) { super.removePermission(permName); return; }
+        sDynamicPermissions.remove(permName);
+    }
+
     @Override public int checkPermission(String permName, String pkgName) {
-        if (GMS_HONEST_MISSING && "com.google.android.gms".equals(pkgName)) {
+        // Another package the Mac.apk broker serves answers from ITS manifest
+        // (see getPackageInfo); a package asking about ITSELF is never the
+        // "absent" com.google.android.gms below -- when the real Google Play
+        // services runs here it holds what its manifest declares (measured: its
+        // NetworkScheduler refused to persist jobs, "does not hold the
+        // permission android.permission.RECEIVE_BOOT_COMPLETED").
+        if (pkgName != null && !pkgName.equals(this.packageName)) {
+            MacApkPackageManager peer = SystemClient.pmFor(pkgName);
+            if (peer != null && peer != this) return peer.checkPermission(permName, pkgName);
+        }
+        if (GMS_HONEST_MISSING && "com.google.android.gms".equals(pkgName)
+                && !pkgName.equals(this.packageName)) {
             // FCM (v1.0.1175, gated on pushBackendEnabled, default OFF): when the
             // in-process push backend is live, the gms package genuinely HOLDS the
             // c2dm SEND permission -- and it MUST, because Firebase's
@@ -3866,6 +3887,14 @@ public final class MacApkPackageManager extends PackageManager {
             return PackageManager.PERMISSION_DENIED;   // not installed here
         }
         if (permName == null) return PackageManager.PERMISSION_DENIED;
+        // The opt-in BLE bridge uses the macOS Bluetooth grant. A manifest
+        // declaration alone must not claim that TCC has authorized access.
+        if (isBluetoothRuntimePermission(permName)
+                && "1".equals(System.getenv("MACAPK_BLUETOOTH_HOST"))) {
+            return declaredPermissions().contains(permName)
+                    && BluetoothBridge.authorization() == 3
+                ? PackageManager.PERMISSION_GRANTED : PackageManager.PERMISSION_DENIED;
+        }
         // Stage S5 (MACAPK_MEDIA_PERMS_ASK, default ON): the storage runtime
         // permissions -- READ_MEDIA_IMAGES/VIDEO/AUDIO,
         // READ_MEDIA_VISUAL_USER_SELECTED, ACCESS_MEDIA_LOCATION and
@@ -3953,13 +3982,19 @@ public final class MacApkPackageManager extends PackageManager {
         }
         if (!LocationBridge.available()) return null;
         if (!declaredPermissions().contains(permName)) return Boolean.FALSE;
-        if (targetSdk > 0 && targetSdk < 23) return Boolean.TRUE;
+        if (android.app.Application.macapkTargetSdkKnown(targetSdk) && targetSdk < 23) return Boolean.TRUE;
         if (SpecialAccessStore.mediaPermsAsk() && !SpecialAccessStore.locationGranted(permName)) {
             return Boolean.FALSE;
         }
         if (!LocationBridge.servicesEnabled()) return Boolean.TRUE;
         if (!LocationBridge.authorized()) return Boolean.FALSE;
         return fine ? !LocationBridge.reducedAccuracy() : Boolean.TRUE;
+    }
+
+    static boolean isBluetoothRuntimePermission(String permission) {
+        return "android.permission.BLUETOOTH_SCAN".equals(permission)
+            || "android.permission.BLUETOOTH_CONNECT".equals(permission)
+            || "android.permission.BLUETOOTH_ADVERTISE".equals(permission);
     }
 
     /** The `<uses-permission>` set, as a lookup. Built once; the manifest does
@@ -4319,6 +4354,9 @@ public final class MacApkPackageManager extends PackageManager {
     @Override public boolean hasSystemFeature(String name, int version) {
         if (name == null) return false;
         boolean has = version <= 0 && SYSTEM_FEATURES.contains(name);
+        if (version <= 0 && "android.hardware.bluetooth_le".equals(name)) {
+            has = BluetoothBridge.available();
+        }
         // Guest Vulkan (Boot.noteGuestVulkan / bionic_shim_vulkan.cpp): an app
         // that gets libvulkan.so also sees the features that announce it, with
         // AOSP's version encodings -- vulkan.version is the VK_API_VERSION the
@@ -4328,6 +4366,13 @@ public final class MacApkPackageManager extends PackageManager {
         if (!has && "1".equals(System.getProperty("macapk.guestVulkan"))) {
             if ("android.hardware.vulkan.version".equals(name)) has = version <= 0x402000;
             else if ("android.hardware.vulkan.level".equals(name)) has = version <= 0;
+        }
+        // Android TV mode (com.macapk.loader.TvMode): the television features, so
+        // hasSystemFeature and getSystemAvailableFeatures give the same answer.
+        if (!has && TvMode.isEnabled() && version <= 0) {
+            for (String tv : TvMode.FEATURES) {
+                if (tv.equals(name)) { has = true; break; }
+            }
         }
         // v1.0.983: MACAPK_TRACE_DEVICEINFO -- the device-profile counterpart
         // of MACAPK_TRACE_ATTR/MACAPK_TRACE_DEFSTYLE. Added while auditing
@@ -4352,11 +4397,24 @@ public final class MacApkPackageManager extends PackageManager {
      *  so it is not optional. */
     @Override public android.content.pm.FeatureInfo[] getSystemAvailableFeatures() {
         java.util.ArrayList<android.content.pm.FeatureInfo> res =
-                new java.util.ArrayList<>(SYSTEM_FEATURES.size() + 1);
+                new java.util.ArrayList<>(SYSTEM_FEATURES.size() + TvMode.FEATURES.length + 1);
         for (String name : SYSTEM_FEATURES) {
             android.content.pm.FeatureInfo fi = new android.content.pm.FeatureInfo();
             fi.name = name;
             res.add(fi);
+        }
+        if (TvMode.isEnabled()) {
+            for (String tv : TvMode.FEATURES) {
+                if (SYSTEM_FEATURES.contains(tv)) continue;
+                android.content.pm.FeatureInfo fi = new android.content.pm.FeatureInfo();
+                fi.name = tv;
+                res.add(fi);
+            }
+        }
+        if (BluetoothBridge.available()) {
+            android.content.pm.FeatureInfo ble = new android.content.pm.FeatureInfo();
+            ble.name = "android.hardware.bluetooth_le";
+            res.add(ble);
         }
         android.content.pm.FeatureInfo gl = new android.content.pm.FeatureInfo();
         // Read the level off the SAME source ActivityManager reports through
@@ -4574,7 +4632,17 @@ public final class MacApkPackageManager extends PackageManager {
      * cleanly; that blocker was an un-neutralized stack canary, fixed separately.)
      */
     @Override public String  getInstallerPackageName(String packageName) {
-        return null;
+        // v1.0.2335: null UNLESS an app really installed this package through
+        // PackageInstaller (InstallerOfRecord), which is what AOSP records. Still
+        // null for everything installed any other way; nothing is fabricated.
+        return InstallerOfRecord.get(packageName);
+    }
+
+    /** The recorded installer, for getInstallSourceInfo (null when none). */
+    @Override public android.content.pm.InstallSourceInfo getInstallSourceInfo(String packageName)
+            throws NameNotFoundException {
+        String installer = InstallerOfRecord.get(packageName);
+        return new android.content.pm.InstallSourceInfo(installer, null, null, installer);
     }
 
     @Override public ServiceInfo getServiceInfo(ComponentName component, int flags)
@@ -4621,6 +4689,9 @@ public final class MacApkPackageManager extends PackageManager {
         info.applicationInfo = makeAppInfo(flags);
         info.name        = entry.name;
         info.packageName = this.packageName;
+        // AOSP ComponentInfo.processName: the declared android:process, else the application's
+        // (never null). Plugin hosts key their per-process tables on it.
+        info.processName = macapkComponentProcess(entry.name);
         info.enabled     = entry.enabled;
         info.exported    = entry.exported;
         if ((flags & GET_META_DATA) != 0 && !entry.metaData.isEmpty()) {
@@ -4667,6 +4738,7 @@ public final class MacApkPackageManager extends PackageManager {
         info.name        = entry.name;
         info.authority   = entry.resolvedAuthorities(null);
         info.packageName = this.packageName;
+        info.processName = macapkComponentProcess(entry.name);   // see toServiceInfo
         // The MANIFEST value, never the runtime-resolved one. AOSP puts the
         // manifest value in the info object (PackageInfoUtils.java:829) and applies
         // the setComponentEnabledSetting override at QUERY time -- copying the
@@ -4724,6 +4796,7 @@ public final class MacApkPackageManager extends PackageManager {
             info.name        = entry.name;
             info.authority   = authorities;
             info.packageName = this.packageName;
+            info.processName = macapkComponentProcess(entry.name);   // see toServiceInfo
             // The MANIFEST value, never the runtime-resolved one. AOSP puts the
             // manifest value in the info object (PackageInfoUtils.java:829) and applies
             // the setComponentEnabledSetting override at QUERY time -- copying the
@@ -4765,10 +4838,25 @@ public final class MacApkPackageManager extends PackageManager {
      *  GET_META_DATA (it has to, to work on Android at all), so honouring the
      *  flag costs those callers nothing and stops us handing an app a different
      *  ApplicationInfo shape than the one it was written against. */
+    /** ComponentInfo.processName for a service/provider class: its own android:process, else the
+     *  application's -- the same Manifest.processNameOf every process-routing decision uses. */
+    private String macapkComponentProcess(String cls) {
+        Manifest m = manifest();
+        String p = m != null ? m.processNameOf(cls) : null;
+        return p != null ? p : this.packageName;
+    }
+
     private ApplicationInfo makeAppInfo(int flags) {
         ApplicationInfo info = new ApplicationInfo();
         info.packageName      = this.packageName;
         info.processName      = this.packageName;
+        // THIS package's app uid (AppUids, per package with the broker on; the
+        // field's default otherwise) -- also when this PM answers for a peer.
+        if (AppUids.enabled()) {
+            Manifest um = manifest();
+            int u = AppUids.uidFor(this.packageName, um != null ? um.sharedUserId : null);
+            if (u > 0) info.uid = u;
+        }
         info.minSdkVersion    = this.minSdk;
         info.targetSdkVersion = this.targetSdk;
         // `<application android:enabled>`. This field defaulted to true and was
@@ -5443,9 +5531,12 @@ public final class MacApkPackageManager extends PackageManager {
      *      copied from somewhere. AOSP's own default for the attribute is also
      *      true.
      *  FLAG_SYSTEM / FLAG_PERSISTENT / FLAG_UPDATED_SYSTEM_APP / FLAG_STOPPED /
-     *  FLAG_SUSPENDED are deliberately NEVER set: a hosted APK is an ordinary
-     *  installed user app, and claiming system-app status is exactly the kind of
-     *  privilege lie that makes an app take a branch the runtime cannot honour. */
+     *  FLAG_SUSPENDED are deliberately NEVER set for an ordinary hosted APK: it is
+     *  an ordinary installed user app, and claiming system-app status is exactly
+     *  the kind of privilege lie that makes an app take a branch the runtime cannot
+     *  honour. The ONE exception, applied below, is a platformSystemPackage() -- the
+     *  platform's own store/GMS-core packages, which genuinely ARE system apps on
+     *  every real device, so reporting it is faithful rather than a lie. */
     private volatile int cachedFlags;
     private volatile boolean cachedFlagsValid;
     private int applicationFlags() {
@@ -5501,6 +5592,15 @@ public final class MacApkPackageManager extends PackageManager {
         if (supportsScreens("xlargeScreens", targetSdk >= 9)) f |= ApplicationInfo.FLAG_SUPPORTS_XLARGE_SCREENS;
         if (supportsScreens("resizeable",    targetSdk >= 4)) f |= ApplicationInfo.FLAG_RESIZEABLE_FOR_SCREENS;
         if (supportsScreens("anyDensity",    targetSdk >= 4)) f |= ApplicationInfo.FLAG_SUPPORTS_SCREEN_DENSITIES;
+        // A platform package (store / GMS core) is a SYSTEM app on every real
+        // device -- see platformSystemPackage(). This is the SELF path (the host
+        // asking about its own package, e.g. GMS about com.google.android.gms).
+        // The general privilege-lie caution above still holds for ordinary guests;
+        // this exception is only the platform's OWN packages, which genuinely are
+        // system apps, and it grants no real macOS privilege.
+        if (platformSystemPackage(packageName) && macapkPlatformApkTrusted()) {
+            f |= ApplicationInfo.FLAG_SYSTEM | ApplicationInfo.FLAG_UPDATED_SYSTEM_APP;
+        }
         cachedFlags = f;
         cachedFlagsValid = true;
         return f;
@@ -5764,6 +5864,70 @@ public final class MacApkPackageManager extends PackageManager {
 
     static final String VENDING_PACKAGE = "com.android.vending";
 
+    /** The platform's own packages that ship in /system (or /product|/system_ext
+     *  priv-app) on EVERY real Android device: the Play Store and the GMS core
+     *  pair. Measured on the reference emulator (dumpsys package com.android.vending
+     *  / com.google.android.gms / com.google.android.gsf, 2026-10-31): all three
+     *  carry flags=[ SYSTEM ... UPDATED_SYSTEM_APP ] privateFlags=[ ... PRIVILEGED ].
+     *
+     *  Reporting FLAG_SYSTEM for them is a FAITHFUL platform surface, not a
+     *  privilege grant: Mac.apk cannot and does not give a guest any real macOS
+     *  system privilege -- the flag only matches what a device's PackageManager
+     *  reports, which first-party callers read to decide trust (GMS's
+     *  GoogleSignatureVerifier gate `bote.j`: for vending/gms, trust requires
+     *  `(applicationInfo.flags & 129) != 0`, i.e. SYSTEM | UPDATED_SYSTEM_APP).
+     *  This is NOT a per-guest-app behaviour branch (the forbidden kind): it is a
+     *  fact about the PLATFORM's own packages -- the same category as
+     *  vendingPackageInfo() already marking the synthetic store FLAG_SYSTEM |
+     *  FLAG_UPDATED_SYSTEM_APP. Owner-authorized 2026-10-31 ("I'm fine with telling
+     *  the app it's a system app"). Kill switch for bisecting:
+     *  MACAPK_PLATFORM_SYSTEM_FLAGS=0. */
+    /** Win.apk: on Windows the platform treatment above is for the REAL Google
+     *  packages only. An installed APK named com.google.android.gms (or the
+     *  store, or GSF) is a system app here only when its signature VERIFIES
+     *  (ApkVerification: every APK of the set, with apksig) and Google's
+     *  certificate signed it, as its current signer or as an ancestor in its
+     *  verified rotation lineage (Play services 26.x is signed by a newer Google
+     *  key that rotated from the old one). Anyone can build an APK with that
+     *  package name, and anyone can paste Google's public certificate into one;
+     *  only Google can sign it. The in-process stand-ins (no APK) keep their
+     *  answer, and on the Mac nothing changes. */
+    private boolean macapkPlatformApkTrusted() {
+        if (!HostAppSupport.windowsHost() || apkPath == null) return true;
+        return googleSignedApk(packageName, apkPath);
+    }
+
+    /** The broker's question (SystemServer.bootSystemServices), and the
+     *  cross-package one (registryPackageInfo): is the installed `apkPath` the
+     *  real platform package `pkg`? */
+    static boolean platformSystemApk(String pkg, String apkPath) {
+        if (!platformSystemPackage(pkg)) return false;
+        if (!HostAppSupport.windowsHost() || apkPath == null) return true;
+        return googleSignedApk(pkg, apkPath);
+    }
+
+    private static final java.util.Set<String> UNTRUSTED_LOGGED =
+        java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    private static boolean googleSignedApk(String pkg, String apkPath) {
+        ApkVerification.Result r = ApkVerification.of(apkPath);
+        boolean ok = r.verified && com.macapk.gms.GoogleGmsCertificate.isGoogleSigner(r);
+        if (!ok && UNTRUSTED_LOGGED.add(apkPath)) {
+            NativeLog.w("Mac.apk.PM", pkg + " at " + apkPath + " is not treated as a Google system app: "
+                + (r.verified ? "Google's certificate did not sign it" : "its signature does not verify ("
+                + r.reason + ")"));
+        }
+        return ok;
+    }
+
+    static boolean platformSystemPackage(String pkg) {
+        if (pkg == null) return false;
+        if ("0".equals(System.getenv("MACAPK_PLATFORM_SYSTEM_FLAGS"))) return false;
+        return VENDING_PACKAGE.equals(pkg) || GMS_PACKAGE.equals(pkg)
+            || "com.google.android.gsf".equals(pkg)
+            || "com.google.android.gsf.login".equals(pkg);
+    }
+
     /** The two intent actions a licensing client binds to. AOSP's Play Store
      *  declares the first; the second is the newer name some clients use. */
     private static final String LICENSING_ACTION_V1 =
@@ -5898,12 +6062,17 @@ public final class MacApkPackageManager extends PackageManager {
      */
     @Override public List<ResolveInfo> queryIntentServices(Intent intent, int flags) {
         List<ResolveInfo> out = new java.util.ArrayList<>(1);
-        ResolveInfo ri = macapkResolveLicensingService(intent);
-        if (ri == null) ri = macapkResolveGmsRegisterService(intent);
-        if (ri == null) ri = macapkResolveGmsMeasurementService(intent);
-        if (ri == null) ri = macapkResolveGmsIdentityService(intent);
-        if (ri == null) ri = macapkResolveGmsLegacySignInService(intent);
-        if (ri == null) ri = macapkResolveGmsLocationService(intent);
+        // The in-process GMS / Play stand-ins answer only when the REAL package
+        // is absent: never inside the real Google Play services or Play Store,
+        // and not while the system broker serves them (measured: the real GMS's
+        // own GoogleLocationManagerService bind resolved to our stand-in). The
+        // host browser's Custom Tabs service is not a stand-in and always answers.
+        ResolveInfo ri = macapkStandInsActive() ? macapkResolveLicensingService(intent) : null;
+        if (ri == null && macapkStandInsActive()) ri = macapkResolveGmsRegisterService(intent);
+        if (ri == null && macapkStandInsActive()) ri = macapkResolveGmsMeasurementService(intent);
+        if (ri == null && macapkStandInsActive()) ri = macapkResolveGmsIdentityService(intent);
+        if (ri == null && macapkStandInsActive()) ri = macapkResolveGmsLegacySignInService(intent);
+        if (ri == null && macapkStandInsActive()) ri = macapkResolveGmsLocationService(intent);
         if (ri == null) ri = macapkResolveCustomTabsService(intent);
         if (ri != null) out.add(ri);
         if (intent == null) return out;
@@ -5986,14 +6155,40 @@ public final class MacApkPackageManager extends PackageManager {
         return out;
     }
 
+    /** False inside the real com.google.android.gms / com.android.vending, and
+     *  while the system broker serves the real GMS: then their own services
+     *  answer, never Mac.apk's stand-ins. */
+    private boolean macapkStandInsActive() {
+        if ("com.google.android.gms".equals(this.packageName)
+                || "com.android.vending".equals(this.packageName)) return false;
+        if (SystemClient.pmFor("com.google.android.gms") != null) return false;
+        // Before this process attaches to the broker (content providers and
+        // Application.attachBaseContext run first) pmFor knows no peer yet. With
+        // Google services on and the real Play services installed, the stand-ins
+        // must stay out then too: Moovit's early FCM registration went to the
+        // in-process push service, so its token came from a second device
+        // identity next to the real Play services' one.
+        if (SystemClient.enabled() && InstalledRegistry.enabled()) {
+            for (InstalledRegistry.Row r : InstalledRegistry.rows()) {
+                if ("com.google.android.gms".equals(r.pkg)) return false;
+            }
+        }
+        return true;
+    }
+
     /** AOSP resolveService: the single best match, or null. */
     @Override public ResolveInfo resolveService(Intent intent, int flags) {
-        ResolveInfo ri = macapkResolveLicensingService(intent);
-        if (ri == null) ri = macapkResolveGmsRegisterService(intent);
-        if (ri == null) ri = macapkResolveGmsMeasurementService(intent);
-        if (ri == null) ri = macapkResolveGmsIdentityService(intent);
-        if (ri == null) ri = macapkResolveGmsLegacySignInService(intent);
-        if (ri == null) ri = macapkResolveGmsLocationService(intent);
+        // The in-process GMS / Play stand-ins answer only when the REAL package
+        // is absent: never inside the real Google Play services or Play Store,
+        // and not while the system broker serves them (measured: the real GMS's
+        // own GoogleLocationManagerService bind resolved to our stand-in). The
+        // host browser's Custom Tabs service is not a stand-in and always answers.
+        ResolveInfo ri = macapkStandInsActive() ? macapkResolveLicensingService(intent) : null;
+        if (ri == null && macapkStandInsActive()) ri = macapkResolveGmsRegisterService(intent);
+        if (ri == null && macapkStandInsActive()) ri = macapkResolveGmsMeasurementService(intent);
+        if (ri == null && macapkStandInsActive()) ri = macapkResolveGmsIdentityService(intent);
+        if (ri == null && macapkStandInsActive()) ri = macapkResolveGmsLegacySignInService(intent);
+        if (ri == null && macapkStandInsActive()) ri = macapkResolveGmsLocationService(intent);
         if (ri == null) ri = macapkResolveCustomTabsService(intent);
         if (ri != null) return ri;
         // Fall through to the hosted package's own services (v1.0.1177). This

@@ -336,6 +336,14 @@ public final class ClassFileRewriter {
                 hits += patternFNeutralizeRunFinalizersOnExit(cf, code, className);
             }
 
+            // ---- Pattern J -- Jato's ART-field probe (JNIHook.nativeInit) ----
+            // See patternJNeutralizeJatoNativeInit for the full write-up.
+            for (MethodEntry m : cf.methods) {
+                CodeAttr code = m.code;
+                if (code == null) continue;
+                hits += patternJNeutralizeJatoNativeInit(cf, code, className);
+            }
+
             // ---- Pattern H -- contain a FOREIGN-PROCESS component's exit ----
             // A component declared `android:process=":something"` runs, on
             // real Android, in a SEPARATE OS process. Mac.apk hosts every
@@ -430,6 +438,34 @@ public final class ClassFileRewriter {
                             + ": Pattern-N routed " + patchedN + " mapLibraryName/load call(s)");
                     }
                     hits += patchedN;
+                }
+            }
+
+            // ---- Pattern L -- libcore private-field names on HotSpot ----
+            // Apps reflect libcore's private fields by NAME; the host JDK names
+            // some of them differently (java.io.FileDescriptor: libcore
+            // `descriptor`, OpenJDK `fd`). Route the app's own
+            // Class.getDeclaredField(String) call sites through
+            // LibcoreFields.getDeclaredField(Class, String), which answers the
+            // libcore name with the host field and passes everything else
+            // through. invokevirtual -> invokestatic, both 3 bytes with the same
+            // stack effect (Class, String -> Field), so no PC / branch /
+            // StackMapTable shift. Rationale and the name table:
+            // LibcoreFields.java. Gate MACAPK_LIBCORE_FIELD_NAMES.
+            if (LIBCORE_FIELD_NAMES && containsNeedle(raw, NEEDLE_GET_DECLARED_FIELD)
+                    && containsNeedle(raw, NEEDLE_LIBCORE_FIELD)) {
+                int patchedL = 0;
+                for (MethodEntry m : cf.methods) {
+                    CodeAttr code = m.code;
+                    if (code == null) continue;
+                    patchedL += patternLLibcoreFieldNames(cf, code, className);
+                }
+                if (patchedL > 0) {
+                    if (DEBUG) {
+                        System.err.println("[rewriter] " + className + ": Pattern-L routed "
+                            + patchedL + " getDeclaredField call site(s) through LibcoreFields");
+                    }
+                    hits += patchedL;
                 }
             }
 
@@ -564,6 +600,10 @@ public final class ClassFileRewriter {
         "java/lang/Object".getBytes(java.nio.charset.StandardCharsets.UTF_8);
     private static final byte[] NEEDLE_RUN_FINALIZERS_ON_EXIT =
         "runFinalizersOnExit".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+    // Pattern J: the Jato library owner prefix; a class that calls into it
+    // carries this exact UTF8 constant. The method-name test is done in the parse.
+    private static final byte[] NEEDLE_JATO_PKG =
+        "com/bytedance/common/jato/".getBytes(java.nio.charset.StandardCharsets.UTF_8);
     // Patterns A/B only ever inspect <clinit> (see the `!"<clinit>".
     // equals(name)` guard in the loop above that calls
     // scanAndRewriteClinit). A class without a <clinit> method
@@ -624,6 +664,16 @@ public final class ClassFileRewriter {
                     || (containsNeedle(raw, NEEDLE_LOAD_NAME)
                         && (containsNeedle(raw, NEEDLE_JAVA_LANG_SYSTEM)
                             || containsNeedle(raw, NEEDLE_JAVA_LANG_RUNTIME))))) {
+                return true;
+            }
+            // Pattern J (Jato nativeInit): a class that names the Jato package.
+            if (containsNeedle(raw, NEEDLE_JATO_PKG)) {
+                return true;
+            }
+            // Pattern L: a getDeclaredField call AND a libcore field name
+            // literal in the same class (an over-match costs one parse).
+            if (LIBCORE_FIELD_NAMES && containsNeedle(raw, NEEDLE_GET_DECLARED_FIELD)
+                    && containsNeedle(raw, NEEDLE_LIBCORE_FIELD)) {
                 return true;
             }
             if (containsNeedle(raw, NEEDLE_CLINIT)
@@ -1011,6 +1061,51 @@ public final class ClassFileRewriter {
     }
 
     // -----------------------------------------------------------------
+    // Pattern L -- libcore private-field names (see LibcoreFields)
+    // -----------------------------------------------------------------
+
+    /** Gate for Pattern L (default ON); MACAPK_LIBCORE_FIELD_NAMES=0 leaves
+     *  every getDeclaredField call site alone. */
+    static final boolean LIBCORE_FIELD_NAMES =
+        !"0".equals(System.getenv("MACAPK_LIBCORE_FIELD_NAMES"));
+    private static final byte[] NEEDLE_GET_DECLARED_FIELD =
+        "getDeclaredField".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+    /** The libcore field names LibcoreFields maps; any one is enough to parse. */
+    private static final byte[] NEEDLE_LIBCORE_FIELD =
+        "descriptor".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+
+    /** Rewrite every `invokevirtual java/lang/Class.getDeclaredField:
+     *  (Ljava/lang/String;)Ljava/lang/reflect/Field;` in one method into
+     *  `invokestatic com/macapk/loader/LibcoreFields.getDeclaredField:
+     *  (Ljava/lang/Class;Ljava/lang/String;)Ljava/lang/reflect/Field;`. */
+    private static int patternLLibcoreFieldNames(ClassFile cf, CodeAttr code, String className) {
+        int routed = 0;
+        int target = -1;
+        byte[] bc = code.code;
+        int codeEnd = code.codeOffset + code.codeLen;
+        int pc = code.codeOffset;
+        while (pc < codeEnd) {
+            int op = bc[pc] & 0xFF;
+            int len = instructionLength(op, bc, pc);
+            if (len <= 0) break;
+            if (op == OP_INVOKEVIRTUAL && isMethodref(cf, u2(bc, pc + 1), "java/lang/Class",
+                    "getDeclaredField", "(Ljava/lang/String;)Ljava/lang/reflect/Field;")) {
+                if (target < 0) {
+                    int cls = cf.findOrAddClass("com/macapk/loader/LibcoreFields");
+                    int nt = cf.findOrAddNameAndType("getDeclaredField",
+                        "(Ljava/lang/Class;Ljava/lang/String;)Ljava/lang/reflect/Field;");
+                    target = cf.findOrAddMethodref(cls, nt);
+                }
+                bc[pc] = (byte) OP_INVOKESTATIC;
+                writeU2(bc, pc + 1, target);
+                routed++;
+            }
+            pc += len;
+        }
+        return routed;
+    }
+
+    // -----------------------------------------------------------------
     // Pattern F -- neutralize invokestatic System.runFinalizersOnExit
     // -----------------------------------------------------------------
 
@@ -1394,6 +1489,87 @@ public final class ClassFileRewriter {
                 if (op > 0xC9) return -1;                                 // reserved, or not in class files
                 return instructionLength(op, bc, pc);
         }
+    }
+
+    // -----------------------------------------------------------------
+    // Pattern J -- neutralize ByteDance Jato's ART-internals probe
+    // -----------------------------------------------------------------
+    //
+    // THE BUG (found on Red Fruit com.phoenix.read 7.2.5.32, issue #111).
+    // com.bytedance.common.jato.util.JNIHook.<clinit> calls the private
+    // native JNIHook.nativeInit(Method, int), whose native body does a JNI
+    // GetFieldID(java.lang.reflect.Executable, "artMethod", "J"). That field
+    // exists in ART's Executable and not in HotSpot's, so our JNI layer
+    // throws NoSuchFieldError -- an Error, not an Exception. The app's
+    // lego InitTaskDispatcher.m only catches Exception around a task's run(),
+    // so QualityP1Task (which calls JatoXL.init) is left "started, never
+    // completed", Application.onCreate is aborted, and SplashActivity.onCreate
+    // then spins forever in InitTaskDispatcher.t waiting for the dependency
+    // chain QualityP1Task -> APP_SUPER2ONCREATEEND_END -> SPLASH_*.
+    //
+    // WHY THIS IS NOT FIXED IN THE RIGHT LAYER. The right layer would give
+    // java.lang.reflect.Executable an ART-shaped long field `artMethod`
+    // (and then also back it with something Jato's hook engine could use).
+    // Executable is a java.base bootstrap class: it cannot be shadowed or
+    // given a field by us, and faking the field at the JNI GetFieldID layer
+    // would hand Jato's native hook engine a bogus ArtMethod pointer, which
+    // is worse than not initialising it. Jato is a startup/perf booster
+    // (cpuset, JIT block, log cut, render-thread boost); the app does not
+    // depend on its hooks for correctness.
+    //
+    // THE PATCH. Keyed on the LIBRARY (owner class under
+    // com/bytedance/common/jato/, method nativeInit, descriptor
+    // (Ljava/lang/reflect/Method;I)V), NOT on any app package: replace the
+    // 3-byte `invokestatic` in place with `pop; pop; nop` (same length, same
+    // net stack effect -- two category-1 values consumed, nothing pushed -- so
+    // no PC / StackMapTable shift and valid even under full verification).
+    // JNIHook's other natives are untouched; with the hook engine never
+    // initialised they stay inert.
+    //
+    // REMOVAL CONDITION: retire this when either (a) Executable's ART fields
+    // are provided in the right layer such that Jato's nativeInit completes
+    // and its hooks are safe, or (b) JNI GetFieldID for ART-only fields
+    // yields a failure the guest can catch (an Exception), at which point
+    // this library no longer takes the app's init scheduler down.
+
+    /** Scan one method for `invokestatic com/bytedance/common/jato/.../X.
+     *  nativeInit:(Ljava/lang/reflect/Method;I)V` and replace each with
+     *  pop; pop; nop. Returns the number of call sites neutralized. */
+    private static int patternJNeutralizeJatoNativeInit(
+            ClassFile cf, CodeAttr code, String className) {
+        int repairs = 0;
+        byte[] bc = code.code;
+        int codeEnd = code.codeOffset + code.codeLen;
+        int pc = code.codeOffset;
+        while (pc < codeEnd) {
+            int op = bc[pc] & 0xFF;
+            int len = instructionLength(op, bc, pc);
+            if (len <= 0) break;
+            if (op == OP_INVOKESTATIC && isJatoNativeInit(cf, u2(bc, pc + 1))) {
+                bc[pc]     = (byte) OP_POP;
+                bc[pc + 1] = (byte) OP_POP;
+                bc[pc + 2] = (byte) OP_NOP;
+                if (DEBUG) {
+                    System.err.println("[rewriter] " + className
+                        + ": Pattern-J pc=" + pc
+                        + " neutralized invokestatic Jato nativeInit(Method,int)V");
+                }
+                repairs++;
+            }
+            pc += len;
+        }
+        return repairs;
+    }
+
+    private static boolean isJatoNativeInit(ClassFile cf, int methodrefIdx) {
+        int classIdx = cf.methodrefClass(methodrefIdx);
+        if (classIdx < 0) return false;
+        String owner = cf.classNameOf(classIdx);
+        if (owner == null || !owner.startsWith("com/bytedance/common/jato/")) return false;
+        int ntIdx = cf.methodrefNameAndType(methodrefIdx);
+        if (ntIdx < 0) return false;
+        return "nativeInit".equals(cf.utf8(cf.nameAndTypeName(ntIdx)))
+            && "(Ljava/lang/reflect/Method;I)V".equals(cf.utf8(cf.nameAndTypeDescriptor(ntIdx)));
     }
 
     // -----------------------------------------------------------------
@@ -1909,6 +2085,56 @@ public final class ClassFileRewriter {
             return new String(raw, e.offset + 3, len, java.nio.charset.StandardCharsets.UTF_8);
         }
 
+        /** Find a CONSTANT_Utf8 equal to `v` (original or added) or append one. */
+        int findOrAddUtf8(String v) {
+            for (int i = 1; i < cpEntries.size(); ++i) {
+                CpEntry e = cpEntries.get(i);
+                if (e == null || e.tag != CP_UTF8) continue;
+                if (e.added ? v.equals(e.addedText) : v.equals(utf8(i))) return i;
+            }
+            byte[] b = v.getBytes(java.nio.charset.StandardCharsets.UTF_8);  // ASCII names only
+            byte[] entry = new byte[3 + b.length];
+            entry[0] = (byte) CP_UTF8;
+            writeU2(entry, 1, b.length);
+            System.arraycopy(b, 0, entry, 3, b.length);
+            CpEntry e = new CpEntry(CP_UTF8, -1, entry.length);
+            e.added = true; e.addedBytes = entry; e.addedText = v;
+            return append(e);
+        }
+        /** Find a CONSTANT_Class naming `internalName` or append one. */
+        int findOrAddClass(String internalName) {
+            for (int i = 1; i < cpEntries.size(); ++i) {
+                CpEntry e = cpEntries.get(i);
+                if (e == null || e.tag != CP_CLASS || e.added) continue;
+                if (internalName.equals(classNameOf(i))) return i;
+            }
+            int name = findOrAddUtf8(internalName);
+            byte[] entry = { (byte) CP_CLASS, (byte) (name >> 8), (byte) name };
+            CpEntry e = new CpEntry(CP_CLASS, -1, 3);
+            e.added = true; e.addedBytes = entry;
+            return append(e);
+        }
+        /** Append a CONSTANT_NameAndType for (name, descriptor). */
+        int findOrAddNameAndType(String name, String desc) {
+            int n = findOrAddUtf8(name), d = findOrAddUtf8(desc);
+            for (int i = 1; i < cpEntries.size(); ++i) {
+                CpEntry e = cpEntries.get(i);
+                if (e == null || e.tag != CP_NAMEANDTYPE || e.added) continue;
+                if (nameAndTypeName(i) == n && nameAndTypeDescriptor(i) == d) return i;
+            }
+            byte[] entry = { (byte) CP_NAMEANDTYPE, (byte) (n >> 8), (byte) n, (byte) (d >> 8), (byte) d };
+            CpEntry e = new CpEntry(CP_NAMEANDTYPE, -1, 5);
+            e.added = true; e.addedBytes = entry;
+            return append(e);
+        }
+        private int append(CpEntry e) {
+            int idx = cpEntries.size();
+            cpEntries.add(e);
+            cpAdded.add(e);
+            cpCount++;
+            return idx;
+        }
+
         /** Look up an existing Methodref with the given (class_idx,
          *  name_and_type_idx). If absent, append one. Returns the CP
          *  index of the (possibly newly-added) entry. */
@@ -1962,51 +2188,15 @@ public final class ClassFileRewriter {
             return appendRaw(CP_STRING, str);
         }
 
-        /** The CP index of a CONSTANT_Utf8 holding `value` (ASCII): an
-         *  existing one, original or added, else a new one. */
-        int findOrAddUtf8(String value) {
-            byte[] b = value.getBytes(java.nio.charset.StandardCharsets.US_ASCII);
-            byte[] entry = new byte[3 + b.length];
-            entry[0] = (byte) CP_UTF8;
-            writeU2(entry, 1, b.length);
-            System.arraycopy(b, 0, entry, 3, b.length);
-            return findOrAppendRaw(CP_UTF8, entry);
-        }
-
-        /** The CP index of a CONSTANT_Class naming `internalName`. */
-        int findOrAddClass(String internalName) {
-            int name = findOrAddUtf8(internalName);
-            return findOrAppendRaw(CP_CLASS, new byte[] {
-                (byte) CP_CLASS, (byte) (name >> 8), (byte) name });
-        }
-
-        /** The CP index of a CONSTANT_NameAndType for (name, descriptor). */
-        int findOrAddNameAndType(String name, String desc) {
-            int n = findOrAddUtf8(name), d = findOrAddUtf8(desc);
-            return findOrAppendRaw(CP_NAMEANDTYPE, new byte[] {
-                (byte) CP_NAMEANDTYPE, (byte) (n >> 8), (byte) n, (byte) (d >> 8), (byte) d });
-        }
-
-        /** An entry with exactly these bytes (tag included), original or
-         *  added, else a new one. */
-        private int findOrAppendRaw(int tag, byte[] bytes) {
-            for (int i = 1; i < cpEntries.size(); ++i) {
-                CpEntry e = cpEntries.get(i);
-                if (e == null || e.tag != tag || e.size != bytes.length) continue;
-                if (e.added) {
-                    if (java.util.Arrays.equals(e.addedRaw, bytes)) return i;
-                } else if (java.util.Arrays.equals(raw, e.offset, e.offset + e.size, bytes, 0, bytes.length)) {
-                    return i;
-                }
-            }
-            return appendRaw(tag, bytes);
-        }
-
         private int appendRaw(int tag, byte[] bytes) {
             int newIdx = cpEntries.size();
             CpEntry e = new CpEntry(tag, -1, bytes.length);
             e.added = true;
-            e.addedRaw = bytes;
+            e.addedBytes = bytes;
+            // findOrAddUtf8 matches added Utf8 entries by their text.
+            if (tag == CP_UTF8) {
+                e.addedText = new String(bytes, 3, bytes.length - 3, java.nio.charset.StandardCharsets.UTF_8);
+            }
             cpEntries.add(e);
             cpAdded.add(e);
             cpCount++;
@@ -2037,9 +2227,9 @@ public final class ClassFileRewriter {
             dst += cpEndOriginal - cpStart;
             // Added CP entries.
             for (CpEntry e : cpAdded) {
-                if (e.addedRaw != null) {
-                    System.arraycopy(e.addedRaw, 0, out, dst, e.addedRaw.length);
-                    dst += e.addedRaw.length;
+                if (e.addedBytes != null) {
+                    System.arraycopy(e.addedBytes, 0, out, dst, e.addedBytes.length);
+                    dst += e.addedBytes.length;
                     continue;
                 }
                 out[dst++] = (byte) e.tag;
@@ -2059,7 +2249,9 @@ public final class ClassFileRewriter {
         boolean added;
         int addedClassIdx;
         int addedNtIdx;
-        byte[] addedRaw;   // an added entry's whole bytes (UTF8, String); null for a Methodref
+        /** For added Utf8 / Class / NameAndType entries: the whole entry. */
+        byte[] addedBytes;
+        String addedText;
         CpEntry(int tag, int offset, int size) {
             this.tag = tag; this.offset = offset; this.size = size;
         }

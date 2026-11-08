@@ -557,6 +557,7 @@ public final class SpecialAccessHandler {
         try { lvl = android.os.Build.VERSION.SDK_INT; } catch (Throwable t) { lvl = 30; }
         askLocation(requester, req, lvl);
         askGroups(req);
+        askBluetooth(requester, req);
         SpecialAccessStore.invalidate();
         SpecialAccessStore.PermModel m = SpecialAccessStore.liveModel();
         if (m == null) return currentGrants(requester, req);
@@ -595,6 +596,27 @@ public final class SpecialAccessHandler {
             }
         }
         return currentGrants(requester, req);
+    }
+
+    /** TCC owns the Bluetooth decision. This runs on the permission worker,
+     *  so the native queue and the app's UI remain free while the user answers. */
+    private static void askBluetooth(Activity requester, String[] permissions) {
+        if (!BluetoothBridge.available()) return;
+        for (String permission : permissions) {
+            if (MacApkPackageManager.isBluetoothRuntimePermission(permission)) {
+                // Ignore undeclared permissions, as the platform does.
+                try {
+                    android.content.pm.PackageInfo info = requester.getPackageManager()
+                        .getPackageInfo(requester.getPackageName(), android.content.pm.PackageManager.GET_PERMISSIONS);
+                    if (info.requestedPermissions == null
+                            || !java.util.Arrays.asList(info.requestedPermissions).contains(permission)) continue;
+                } catch (android.content.pm.PackageManager.NameNotFoundException missing) { continue; }
+                if (BluetoothBridge.authorization() == 0) {
+                    BluetoothBridge.requestAuthorizationAndWait(120_000);
+                }
+                return;
+            }
+        }
     }
 
     /** How long the location request waits on the macOS prompt. The app is
@@ -1131,7 +1153,7 @@ public final class SpecialAccessHandler {
             Manifest m = Boot.macapkManifest();
             if (m != null && m.launchableActivity != null && pkg != null) {
                 Intent in = new Intent(Intent.ACTION_MAIN);
-                in.addCategory(Intent.CATEGORY_LAUNCHER);
+                in.addCategory(m.launchableCategory);
                 in.setComponent(new android.content.ComponentName(pkg, m.launchableActivity));
                 in.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                 android.os.Parcel p = android.os.Parcel.obtain();

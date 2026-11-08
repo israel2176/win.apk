@@ -105,7 +105,9 @@ public class GridView extends AbsListView {
     public int  getColumnWidth() { return mColumnWidth; }
     public int  getRequestedColumnWidth() { return mRequestedColumnWidth; }
     public void setHorizontalSpacing(int hs) { mRequestedHorizontalSpacing = hs; requestLayout(); }
-    public int  getHorizontalSpacing() { return mResolvedHorizontalSpacing; }
+    public int  getHorizontalSpacing() {
+        return MACAPK_GRID_MEASURE_AOSP ? mResolvedHorizontalSpacing : mRequestedHorizontalSpacing;
+    }
     public int  getRequestedHorizontalSpacing() { return mRequestedHorizontalSpacing; }
     public void setVerticalSpacing(int vs) { mVerticalSpacing = vs; requestLayout(); }
     public int  getVerticalSpacing() { return mVerticalSpacing; }
@@ -184,7 +186,7 @@ public class GridView extends AbsListView {
      *  measured AT_MOST is as tall as its rows (row height = the first item's
      *  height), capped at the offered size; UNSPECIFIED is one row. Ours
      *  inherited AbsListView.onMeasure, which fills the offered height, so a
-     *  grid in a dialog stretched the dialog to the whole window (pf-notes'
+     *  grid in a dialog stretched the dialog to the whole window (Privacy Friendly Notes'
      *  category colour picker: five rows of swatches over a screen of blank).
      *  MACAPK_GRID_MEASURE_AOSP=0 restores the old measure. */
     static final boolean MACAPK_GRID_MEASURE_AOSP =

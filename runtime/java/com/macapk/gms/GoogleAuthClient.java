@@ -117,6 +117,100 @@ public final class GoogleAuthClient {
         return email;
     }
 
+    /**
+     * Store an account from a master token the caller already holds, after
+     * Google accepts it: the same ac2dm call as above with the master token as
+     * `Token` (no ACCESS_TOKEN), which answers an Auth for it and, with
+     * get_accountid, the account's id (gaia id). Returns the e-mail, or null
+     * with lastError() set.
+     */
+    public static String signInWithMasterToken(String email, String master) {
+        if (email == null || master == null || email.isEmpty() || master.isEmpty()) {
+            sLastError.set("no e-mail or master token supplied");
+            return null;
+        }
+        Map<String, String> form = baseParams();
+        form.put("Email", email);
+        form.put("service", "ac2dm");
+        form.put("source", "android");
+        form.put("Token", master);
+        form.put("get_accountid", "1");
+        Map<String, String> resp = post(form);
+        if (resp == null) return null;
+        if (resp.get("Auth") == null) {
+            sLastError.set("Google did not accept the master token (keys: " + resp.keySet() + ")");
+            return null;
+        }
+        GmsStore.putAccount(email, master);
+        if (resp.get("services")  != null) GmsStore.putAccountData(email, "services",  resp.get("services"));
+        if (resp.get("accountId") != null) GmsStore.putAccountData(email, "accountId", resp.get("accountId"));
+        if (resp.get("firstName") != null) GmsStore.putAccountData(email, "firstName", resp.get("firstName"));
+        if (resp.get("lastName")  != null) GmsStore.putAccountData(email, "lastName",  resp.get("lastName"));
+        log("signed in " + GoogleAuthenticator.redact(email) + " from a master token (accountId "
+            + (resp.get("accountId") != null ? "present" : "absent") + ")");
+        if (resp.get("accountId") == null) ensureAccountId(email);
+        return email;
+    }
+
+    /**
+     * The account's id (its gaia id), fetched once when the sign-in did not
+     * bring it: Google answers ac2dm with a master token without accountId.
+     * Play services cannot do without it: it keeps it as the account's
+     * "GoogleUserId" user data (written there at a device's sign-in), and its
+     * getToken answers every app "missing gaiaId ... internal error", so the
+     * Play Store got no token at all. Asked as Play services asks for its own
+     * userinfo token (app and caller com.google.android.gms with Google's
+     * certificate), with get_accountid; when that answer has no accountId
+     * either, the token's userinfo ("sub" is the gaia id). Stored as account
+     * data, where the broker's account service reads it. Returns it, or null.
+     */
+    public static String ensureAccountId(String email) {
+        if (email == null) return null;
+        String have = GmsStore.accountData(email, "accountId");
+        if (have != null && !have.isEmpty()) return have;
+        String master = GmsStore.masterToken(email);
+        if (master == null) return null;
+        Map<String, String> form = baseParams();
+        form.put("app", GMS_PACKAGE);
+        form.put("client_sig", PLAY_STORE_CLIENT_SIG);
+        form.put("callerPkg", GMS_PACKAGE);
+        form.put("callerSig", PLAY_STORE_CLIENT_SIG);
+        form.put("Email", email);
+        form.put("service", "oauth2:https://www.googleapis.com/auth/userinfo.email");
+        form.put("source", "android");
+        form.put("Token", master);
+        form.put("get_accountid", "1");
+        Map<String, String> resp = post(form);
+        if (resp == null) {
+            log("account id: no userinfo token (" + sLastError.get() + ")");
+            return null;
+        }
+        String id = resp.get("accountId");
+        if ((id == null || id.isEmpty()) && resp.get("Auth") != null) {
+            try {
+                Map<String, String> h = new LinkedHashMap<>();
+                h.put("Authorization", "Bearer " + resp.get("Auth"));
+                GmsHttp.Response r = GmsHttp.get("https://www.googleapis.com/oauth2/v3/userinfo", h);
+                if (r.ok()) {
+                    java.util.regex.Matcher m = java.util.regex.Pattern.compile("\"sub\"\\s*:\\s*\"(\\d+)\"")
+                            .matcher(r.text());
+                    if (m.find()) id = m.group(1);
+                } else {
+                    log("account id: userinfo answered " + r);
+                }
+            } catch (IOException e) {
+                log("account id: userinfo failed: " + e);
+            }
+        }
+        if (id == null || id.isEmpty()) {
+            log("account id: Google did not tell it");
+            return null;
+        }
+        GmsStore.putAccountData(email, "accountId", id);
+        log("account id of " + GoogleAuthenticator.redact(email) + " fetched");
+        return id;
+    }
+
     // ===================================================================
     // Call 2: master token -> scoped token
     // ===================================================================
@@ -431,6 +525,11 @@ public final class GoogleAuthClient {
                 // Keeping that text is the whole difference between a diagnosable
                 // failure and "HTTP 403".
                 sLastError.set("HTTP " + r.status + " " + firstLine(body));
+                // In the log too: a caller that drops lastError() (the broker's
+                // account service answering an app) otherwise leaves only the
+                // status. The reason line carries no credential.
+                String why = sLastError.get();
+                log("refused " + form.get("service") + ": " + (why.length() > 200 ? why.substring(0, 200) + "..." : why));
                 return null;
             }
             Map<String, String> parsed = parse(body);

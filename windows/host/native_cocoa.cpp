@@ -487,6 +487,15 @@ void JNICALL Cocoa_setSystemFontsDir(JNIEnv* env, jclass, jstring dir) {
 // which the Windows shim does not have; accepting them keeps boot quiet.
 void JNICALL Cocoa_setNativeLibDir(JNIEnv*, jclass, jstring) {}
 void JNICALL Cocoa_setDataSubdir(JNIEnv*, jclass, jstring) {}
+void JNICALL Cocoa_setSharedStorageRoot(JNIEnv*, jclass, jstring) {}
+jstring JNICALL Cocoa_remapProcPath(JNIEnv*, jclass, jstring) { return nullptr; }
+// The host's CJK faces by PostScript name (CoreText on the Mac). None here:
+// MacApkSystemFonts links them into /system/fonts with symbolic links, which a
+// standard Windows account may not create, so the bundled fonts stay the set.
+jstring JNICALL Cocoa_hostFontFile(JNIEnv*, jclass, jstring) { return nullptr; }
+// The Mac shows an App Link sign-in page in its own window. Answering false
+// sends AppLinks down its other path (the browser), as before this native.
+jboolean JNICALL Cocoa_openAppLinkWindow(JNIEnv*, jclass, jstring, jstring) { return JNI_FALSE; }
 
 void JNICALL Cocoa_setWindowTitle(JNIEnv* env, jclass, jlong, jstring title) {
     if (!title) return;
@@ -1248,6 +1257,11 @@ const HostMethod kMethods[] = {
     WINAPK_HOST_NATIVE(kCls, "setSystemProperty", "(Ljava/lang/String;Ljava/lang/String;)V",
                        Cocoa_setSystemProperty),
     WINAPK_HOST_NATIVE(kCls, "setSystemFontsDir", "(Ljava/lang/String;)V", Cocoa_setSystemFontsDir),
+    WINAPK_HOST_NATIVE(kCls, "setSharedStorageRoot", "(Ljava/lang/String;)V", Cocoa_setSharedStorageRoot),
+    WINAPK_HOST_NATIVE(kCls, "remapProcPath", "(Ljava/lang/String;)Ljava/lang/String;", Cocoa_remapProcPath),
+    WINAPK_HOST_NATIVE(kCls, "hostFontFile", "(Ljava/lang/String;)Ljava/lang/String;", Cocoa_hostFontFile),
+    WINAPK_HOST_NATIVE(kCls, "openAppLinkWindow", "(Ljava/lang/String;Ljava/lang/String;)Z",
+                       Cocoa_openAppLinkWindow),
     WINAPK_HOST_NATIVE(kCls, "setNativeLibDir", "(Ljava/lang/String;)V", Cocoa_setNativeLibDir),
     WINAPK_HOST_NATIVE(kCls, "setDataSubdir", "(Ljava/lang/String;)V", Cocoa_setDataSubdir),
     WINAPK_HOST_NATIVE(kCls, "applyWindowOrientation", "(I)V", Cocoa_applyWindowOrientation),

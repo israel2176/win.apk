@@ -17,7 +17,7 @@ more, and if it still does not the exit code is 1.
 
 For each app it runs winapk-runtime with WINAPK_HEADLESS=1 and a fresh data
 directory, waits for --frames presented frames (or the timeout), and keeps the
-log and the last frame. apps.txt lists "package versionCode", with the APK's
+log, each line led by the seconds since the start, and the last frame. apps.txt lists "package versionCode", with the APK's
 file name as a third field when it is not <package>_<versionCode>.apk. Each run
 gets one status:
 
@@ -48,6 +48,7 @@ import shutil
 import struct
 import subprocess
 import sys
+import threading
 import time
 import urllib.request
 
@@ -64,6 +65,8 @@ FRAMES_RE = re.compile(r"\[win\.apk\] (\d+) frames presented")
 GUEST_MISSING_RE = re.compile(
     r"guest (?:called a system function|uses a system variable) not implemented on Windows yet, [^:]*: (\S+)")
 GUEST_LOAD_RE = re.compile(r"\[win\.apk\] cannot load (\S+?\.so): (?:cannot load \"[^\"]*\": )?(.*)$")
+# The time run_app puts in front of each log line.
+STAMP_RE = re.compile(r"^ *\d+\.\d{3} ", re.M)
 
 
 def read_list(path):
@@ -155,7 +158,21 @@ def run_app(pkg, apk, args, out):
     env.setdefault("WINEDEBUG", "-all")
     start = time.time()
     with open(log_path, "w", encoding="utf-8", errors="replace") as log:
-        proc = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT, env=env)
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env)
+
+        # Each line gets the seconds since the start: the frame budget is a
+        # time, and an app that misses it by a little (a slow first-run setup)
+        # only shows where its time went with a clock beside its lines.
+        def copy():
+            try:
+                for raw in proc.stdout:
+                    log.write(f"{time.time() - start:8.3f} " + raw.decode("utf-8", "replace"))
+                    log.flush()
+            except (OSError, ValueError):
+                pass  # the log was closed under a pipe something else still held
+
+        reader = threading.Thread(target=copy, daemon=True)
+        reader.start()
         try:
             code = proc.wait(timeout=args.timeout)
             timed_out = False
@@ -164,11 +181,13 @@ def run_app(pkg, apk, args, out):
             proc.wait()
             code = None
             timed_out = True
+        # A process the runtime started may still hold the pipe; never wait on it.
+        reader.join(timeout=10)
     if args.launcher and os.path.basename(args.launcher).startswith("wine"):
         # A killed wine leaves the JVM behind in the wineserver.
         subprocess.run(["wineserver", "-k"], capture_output=True)
     seconds = round(time.time() - start, 1)
-    text = open(log_path, encoding="utf-8", errors="replace").read()
+    text = STAMP_RE.sub("", open(log_path, encoding="utf-8", errors="replace").read())
     return analyze(pkg, text, code, timed_out, seconds, frame_path, out)
 
 

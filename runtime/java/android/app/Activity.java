@@ -236,7 +236,7 @@ public class Activity extends ContextThemeWrapper
 
     public final Application getApplication() { return application; }
     public Intent getIntent()                 { return intent; }
-    public void setIntent(Intent i)           { this.intent = i; }  // not final, as in AOSP: apps override it
+    public void setIntent(Intent i)           { this.intent = i; }
     // AOSP: Activity does NOT override getContentResolver -- it inherits
     // ContextWrapper.getContentResolver(), which delegates to the base
     // ContextImpl and always returns a non-null ContentResolver. Our old
@@ -453,7 +453,28 @@ public class Activity extends ContextThemeWrapper
     }
     public void onConfigurationChanged(Configuration newConfig) {}
     public void onWindowFocusChanged(boolean hasFocus) {}
-    public boolean onCreateOptionsMenu(android.view.Menu menu) { return false; }
+    /** AOSP Activity.onCreateOptionsMenu: `if (mParent != null) return
+     *  mParent.onCreateOptionsMenu(menu); return true;` (android14-release
+     *  Activity.java:4622). We hosted no parent activities, so the answer is
+     *  true. It was false, which told AppCompat's ToolbarActionBar that an
+     *  activity without its own onCreateOptionsMenu has no options panel; see
+     *  MACAPK_ACTIVITY_MENU_AOSP below for what that broke. */
+    public boolean onCreateOptionsMenu(android.view.Menu menu) { return MACAPK_ACTIVITY_MENU_AOSP; }
+    /** BISECT GATE (2026-10-20, default ON): the base Activity's options-panel
+     *  answers are AOSP's -- onCreateOptionsMenu true, onPreparePanel returns
+     *  onPrepareOptionsMenu's answer (no "has visible items" test; AOSP has none
+     *  there, android14 Activity.java:4478). AppCompat's
+     *  ToolbarActionBar.populateOptionsMenu calls onCreatePanelMenu &&
+     *  onPreparePanel, and only a TRUE onPreparePanel reaches
+     *  ToolbarCallbackWrapper's mDecorToolbar.setMenuPrepared(); until then
+     *  ToolbarWidgetWrapper's navigation-button listener returns without calling
+     *  onMenuItemSelected(home). So on any AppCompat activity with a support
+     *  Toolbar and no menu items of its own, the Up / drawer button did nothing:
+     *  Rangskat's hamburger never reached onSupportNavigateUp and the drawer
+     *  never opened. MACAPK_ACTIVITY_MENU_AOSP=0 restores the old false / the
+     *  hasVisibleItems() test. */
+    static final boolean MACAPK_ACTIVITY_MENU_AOSP =
+        !"0".equals(System.getenv("MACAPK_ACTIVITY_MENU_AOSP"));
     public boolean onOptionsItemSelected(MenuItem item) { return false; }
     public boolean onPrepareOptionsMenu(android.view.Menu menu) { return true; }
     /** AOSP Activity.invalidateOptionsMenu() forces a re-create on
@@ -644,8 +665,9 @@ public class Activity extends ContextThemeWrapper
     // AppCompatWindowCallback which (via WindowCallbackWrapper) forwards to
     // the wrapped callback -- this Activity. So these route the toolbar
     // menu through the app's onCreateOptionsMenu/onPrepareOptionsMenu, the
-    // same as on a real device. The menu is kept iff BOTH return true, so
-    // onPreparePanel must report menu.hasVisibleItems() once inflated.
+    // same as on a real device. The menu is kept iff BOTH return true, and a
+    // true onPreparePanel is also what marks the support Toolbar's menu as
+    // prepared, which its navigation button needs (MACAPK_ACTIVITY_MENU_AOSP).
     private static final boolean sMenuTrace = System.getenv("MACAPK_MENU_TRACE") != null;
     @Override
     public boolean onCreatePanelMenu(int featureId, android.view.Menu menu) {
@@ -673,7 +695,12 @@ public class Activity extends ContextThemeWrapper
     public boolean onPreparePanel(int featureId, View view, android.view.Menu menu) {
         if (featureId == Window.FEATURE_OPTIONS_PANEL && menu != null) {
             boolean goforit = onPrepareOptionsMenu(menu);
-            return goforit && menu.hasVisibleItems();
+            // AOSP also ORs in mFragments.dispatchPrepareOptionsMenu (and
+            // onCreatePanelMenu mFragments.dispatchCreateOptionsMenu); our
+            // platform FragmentManagerImpl has no options-menu dispatch yet, so
+            // android.app.Fragment menus are not merged here. androidx
+            // fragments are dispatched by FragmentActivity itself.
+            return MACAPK_ACTIVITY_MENU_AOSP ? goforit : (goforit && menu.hasVisibleItems());
         }
         return true;
     }
@@ -1267,6 +1294,12 @@ public class Activity extends ContextThemeWrapper
      *  framework's auto-content path, but it's non-null so AppCompat's
      *  id-aliasing pass runs and subDecor ends up with a 16908290 child. */
     private static final class ActivityWindow extends Window {
+        /** MACAPK_TRACE_FINDVIEW=<hex id>: DIAGNOSTIC, default off -- log what the window's findViewById answers for that id. */
+        static final int FINDVIEW_TRACE = macapkParseTraceId();
+        private static int macapkParseTraceId() {
+            try { String e = System.getenv("MACAPK_TRACE_FINDVIEW"); return e == null || e.isEmpty() ? 0 : (int) Long.parseLong(e.replace("0x", ""), 16); }
+            catch (Throwable t) { return 0; }
+        }
         private final Activity activity;
         private android.view.View decor;
         private android.view.View content;
@@ -1582,6 +1615,57 @@ public class Activity extends ContextThemeWrapper
             return !macapkThemeBool(th, "windowNoTitle", false)
                 && !macapkThemeBool(th, "windowActionBar", false)
                 && !macapkThemeBool(th, "windowIsFloating", false);
+        }
+
+        // ---- the FrameLayout root above a non-frame content root (#29) ----------
+        //
+        // AOSP's decor is ALWAYS a FrameLayout (PhoneWindow.generateDecor ->
+        // DecorView extends FrameLayout), and every ViewGroup that views are
+        // added to through View.getRootView() / getWindow().getDecorView()
+        // assumes it. AppCompat hands setContentView its sub-decor
+        // (FitWindowsLinearLayout, a VERTICAL LinearLayout), and installing that
+        // as the tree root made getRootView() a LinearLayout: androidx.core's
+        // SystemBarStateMonitor does rootView.addView(detector, 0) with no
+        // LayoutParams, the vertical LinearLayout gave it MATCH_PARENT x
+        // WRAP_CONTENT, it measured to the whole window height and
+        // ContentFrameLayout got 0 px (Nebula 3.8.0, issue #29). Wrapping the
+        // content root in a FrameLayout makes the root the type a device has.
+        // Bisect gate, default ON: MACAPK_WINDOW_FRAME_ROOT=0 restores the old
+        // install exactly. Views with a native surface and roots that already
+        // are a FrameLayout (the empty decor, a screen_title decor, our own
+        // wrapper on a re-install) are returned unchanged.
+        static final boolean MACAPK_WINDOW_FRAME_ROOT =
+                !"0".equals(System.getenv("MACAPK_WINDOW_FRAME_ROOT"));
+        private android.widget.FrameLayout frameRoot;
+
+        android.view.View macapkFrameRootFor(android.view.View view) {
+            if (!MACAPK_WINDOW_FRAME_ROOT || view == null) return view;
+            if (view instanceof android.widget.FrameLayout) return view;
+            if (frameRoot != null && view.getParent() == frameRoot) return frameRoot;
+            if (view.getParent() != null) return view;
+            if (findNativeHandle(view) != 0) return view;   // GL roots stay bare
+            try {
+                android.widget.FrameLayout w = new android.widget.FrameLayout(activity);
+                w.setDescendantFocusability(android.view.ViewGroup.FOCUS_AFTER_DESCENDANTS);
+                w.setIsRootNamespace(true);
+                w.addView(view, new android.widget.FrameLayout.LayoutParams(
+                        android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                        android.view.ViewGroup.LayoutParams.MATCH_PARENT));
+                frameRoot = w;
+                return w;
+            } catch (Throwable t) {
+                com.macapk.loader.NativeLog.w("Mac.apk.Activity",
+                        "frame root install failed, installing the view bare: " + t);
+                return view;
+            }
+        }
+
+        /** The view macapkFrameRootFor wrapped, when `root` is that wrapper. */
+        android.view.View macapkUnwrapFrameRoot(android.view.View root) {
+            if (frameRoot != null && root == frameRoot && frameRoot.getChildCount() == 1) {
+                return frameRoot.getChildAt(0);
+            }
+            return root;
         }
 
         /** The view Activity.macapkInstallContentDirect should make the render
@@ -2106,7 +2190,46 @@ public class Activity extends ContextThemeWrapper
         @Override public android.view.View findViewById(int id) {
             ensureDecor();
             if (decor == null) return null;
-            return decor.findViewById(id);
+            View v = decor.findViewById(id);
+            View r = v != null ? v : macapkFindInBuiltDecor(id);
+            if (FINDVIEW_TRACE != 0 && id == FINDVIEW_TRACE) {
+                com.macapk.loader.NativeLog.i("FindView", "window.findViewById(0x" + Integer.toHexString(id) + ")="
+                    + (r == null ? "null" : r.getClass().getSimpleName() + "@" + Integer.toHexString(System.identityHashCode(r)))
+                    + " decor=" + macapkDescribe(decor) + " builtDecor=" + macapkDescribe(builtDecor)
+                    + " content=" + macapkDescribe(content) + " thread=" + Thread.currentThread().getName());
+            }
+            return r;
+        }
+        private static String macapkDescribe(View v) {
+            if (v == null) return "null";
+            StringBuilder sb = new StringBuilder(v.getClass().getSimpleName()).append('@')
+                .append(Integer.toHexString(System.identityHashCode(v))).append("[kids=")
+                .append(v instanceof ViewGroup g ? g.getChildCount() : -1).append(" attached=").append(v.isAttachedToWindow())
+                .append(" parents=");
+            for (android.view.ViewParent p = v.getParent(); p != null; p = (p instanceof View pv) ? pv.getParent() : null) {
+                sb.append(p.getClass().getSimpleName()).append('<');
+                if (!(p instanceof View)) break;
+            }
+            return sb.append(']').toString();
+        }
+        /** AOSP PhoneWindow.findViewById is getDecorView().findViewById(id) on the REAL decor. An AppCompat
+         *  sub-decor handed to setContentView(View) replaces `decor` here (see setContentView), but views the
+         *  app adds with addContentView / to android.R.id.content live in the decor we built (`builtDecor`),
+         *  NEXT TO the installed sub-decor -- Douyin's fragment container (id 0x7f0a8c95) is one. AppCompat's
+         *  findViewById goes through mWindow.findViewById, so without this FragmentManager got null for the
+         *  container ("No view found for id ...") and the main tab never attached. No decor is created here. */
+        android.view.View macapkFindInBuiltDecor(int id) {
+            // The attached tree's ROOT first: AppCompat's sub-decor sits inside the root we installed (a
+            // wrapper frame, what findViewById(android.R.id.content) hands the app), and views the app adds
+            // to that frame are the sub-decor's SIBLINGS -- outside `decor`, and outside the detached builtDecor.
+            View top = decor;
+            while (top != null && top.getParent() instanceof View pv) top = pv;
+            if (top != null && top != decor) {
+                View v = top.findViewById(id);
+                if (v != null) return v;
+            }
+            View d = builtDecor;
+            return (d != null && d != decor) ? d.findViewById(id) : null;
         }
         @Override public void setTitle(CharSequence title) {
             if (MACAPK_WINDOW_TITLE_DECOR) {
@@ -2316,6 +2439,10 @@ public class Activity extends ContextThemeWrapper
         if (ActivityWindow.MACAPK_WINDOW_TITLE_DECOR) {
             Window w = getWindow();
             if (w instanceof ActivityWindow aw) view = aw.macapkTitleDecorRootFor(view);
+        }
+        {
+            Window fw = getWindow();
+            if (fw instanceof ActivityWindow aw) view = aw.macapkFrameRootFor(view);
         }
         this.contentView = view;
         // The bare-surface root this install replaces (see macapkAttachBareSurfaceRoot).
@@ -2810,13 +2937,29 @@ public class Activity extends ContextThemeWrapper
                 // The window's decor is the root with a sub-decor in it: the id
                 // is on the sub-decor's content frame (PhoneWindow.findViewById).
                 View inTree = contentView.findViewById(id);
-                return inTree != null ? inTree : contentView;
+                if (inTree != null) return inTree;
+                Window uw = windowImpl;
+                return (uw instanceof ActivityWindow aw) ? aw.macapkUnwrapFrameRoot(contentView) : contentView;
             }
             View dc = getWindow().getDecorView();   // ensureDecor() -> content FrameLayout
             return dc != null ? dc.findViewById(id) : null;
         }
-        if (contentView == null) return null;
-        return contentView.findViewById(id);
+        // AOSP Activity.findViewById is getWindow().findViewById(id): the lookup starts at the DECOR, so
+        // a view the app added to the content FRAME (or the decor) AROUND the root it installed is found
+        // too. This used to search only the installed content root: Douyin adds its fragment container
+        // (SurfaceOptimizeFrameLayout -> id 0x7f0a8c95) to the window's content frame next to the AppCompat
+        // sub-decor it installed, FragmentManager's FragmentContainer.onFindViewById got null for it and the
+        // main tab fragment never attached ("No view found for id ..."): a blank window.
+        // The installed root is searched first (unchanged answers), then the decor if one exists.
+        if (contentView != null) {
+            View inRoot = contentView.findViewById(id);
+            if (inRoot != null) return inRoot;
+        }
+        Window dw = windowImpl;
+        if (!(dw instanceof ActivityWindow aw)) return null;
+        View decor = aw.peekDecorView();
+        View v = (decor != null && decor != contentView) ? decor.findViewById(id) : null;
+        return v != null ? v : aw.macapkFindInBuiltDecor(id);
     }
 
     /** AOSP API-28 requireViewById: findViewById, but an absent id is a
@@ -2838,6 +2981,14 @@ public class Activity extends ContextThemeWrapper
     /** Exposes the contentView to framework code (e.g. TouchDispatcher
      *  walking the tree for the renderer). Apps don't see this. */
     public View macapkContentView() { return contentView; }
+    /** The view the app installed: macapkContentView() without the FrameLayout
+     *  root ActivityWindow.macapkFrameRootFor may have put above it (#29), so
+     *  framework code that checks "is the root still the view I installed?"
+     *  (NativeActivity.macapkInstallWindowSurface) sees through the wrapper. */
+    View macapkInstalledContentView() {
+        Window w = windowImpl;
+        return (w instanceof ActivityWindow aw) ? aw.macapkUnwrapFrameRoot(contentView) : contentView;
+    }
 
     /** v1.0.74: AOSP signature is `public CharSequence getTitle()` --
      *  see frameworks/base/core/java/android/app/Activity.java. AppCompat's
@@ -4504,7 +4655,19 @@ public class Activity extends ContextThemeWrapper
         // through Window.superDispatchGenericMotionEvent -> decor would miss it
         // and the focused view in it.
         View cv = contentView;
-        if (cv != null && cv.dispatchGenericMotionEvent(ev)) return true;
+        if (cv != null) {
+            // A pointer event (a mouse wheel's ACTION_SCROLL) is in window
+            // coordinates and the content root is entered in its own, exactly as
+            // dispatchTouchEvent above offsets a touch.
+            final boolean pointer = ev.isFromSource(android.view.InputDevice.SOURCE_CLASS_POINTER);
+            final float dx = pointer ? -cv.getLeft() : 0f;
+            final float dy = pointer ? -cv.getTop() : 0f;
+            ev.offsetLocation(dx, dy);
+            boolean handled;
+            try { handled = cv.dispatchGenericMotionEvent(ev); }
+            finally { ev.offsetLocation(-dx, -dy); }
+            if (handled) return true;
+        }
         return onGenericMotionEvent(ev);
     }
     public boolean onGenericMotionEvent(android.view.MotionEvent event) { return false; }

@@ -193,14 +193,14 @@ public class ContentProviderClient implements AutoCloseable {
             throws android.os.RemoteException, java.io.FileNotFoundException {
         if (mProvider == null) return null;
         mProvider.macapkEnforceFile(uri, "r");
-        return mProvider.openTypedAssetFile(uri, mimeTypeFilter, opts);
+        return mProvider.openTypedAssetFile(uri, mimeTypeFilter, opts, signal);
     }
 
     public ParcelFileDescriptor openFile(Uri url, String mode)
             throws android.os.RemoteException, java.io.FileNotFoundException {
         if (mProvider == null) return null;
         mProvider.macapkEnforceFile(url, mode);
-        return mProvider.openFile(url, mode);
+        return mProvider.openFile(url, mode, null);   // Transport.openFile is 3-arg
     }
 
     public ParcelFileDescriptor openFile(Uri url, String mode, CancellationSignal signal)
@@ -212,7 +212,7 @@ public class ContentProviderClient implements AutoCloseable {
             throws android.os.RemoteException, java.io.FileNotFoundException {
         if (mProvider == null) return null;
         mProvider.macapkEnforceFile(url, mode);
-        return mProvider.openAssetFile(url, mode);
+        return mProvider.openAssetFile(url, mode, null);   // Transport.openAssetFile is 3-arg
     }
 
     public AssetFileDescriptor openAssetFile(Uri url, String mode, CancellationSignal signal)
@@ -225,7 +225,7 @@ public class ContentProviderClient implements AutoCloseable {
             throws android.os.RemoteException, java.io.FileNotFoundException {
         if (mProvider == null) return null;
         mProvider.macapkEnforceFile(uri, "r");
-        return mProvider.openTypedAssetFile(uri, mimeType, opts);
+        return mProvider.openTypedAssetFile(uri, mimeType, opts, null);   // Transport's 4-arg call
     }
 
     public final AssetFileDescriptor openTypedAssetFileDescriptor(Uri uri,

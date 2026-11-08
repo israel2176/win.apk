@@ -15,6 +15,10 @@
 // ActivityInfo.SCREEN_ORIENTATION_* number, -1 when it declares none), so the
 // library knows before starting the app whether it insists on portrait or
 // landscape: such an app opens that way whatever the user picked.
+//
+// It also verifies the installed APKs' signature (ApkVerification: apksig over
+// base.apk and every split), so the verdict is in the install log and in the
+// verification cache before the app's first start.
 
 package com.winapk.tools;
 
@@ -22,6 +26,7 @@ import android.content.res.AssetManager;
 import android.content.res.Configuration;
 import android.content.res.Resources;
 import android.util.DisplayMetrics;
+import com.macapk.loader.ApkVerification;
 import com.macapk.loader.Boot;
 import com.macapk.loader.Manifest;
 import java.io.File;
@@ -32,6 +37,11 @@ public final class AppMeta {
     private AppMeta() {}
 
     public static void write(String apkPath, String appDir) {
+        ApkVerification.Result signature = ApkVerification.of(apkPath);
+        System.err.println("[win.apk] signature: " + (signature.verified
+                ? "verified (scheme v" + signature.scheme + ")"
+                : "does NOT verify (" + signature.reason + "); the app is installed, but it reports no signing"
+                        + " certificate and is trusted as nothing"));
         Boot.extractIconOnly(apkPath, appDir, null);
         String label = null;
         String pkg = null;

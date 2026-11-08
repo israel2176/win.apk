@@ -452,19 +452,24 @@ Java_com_macapk_loader_NativeSqlite_nativeOpen(JNIEnv* env, jclass,
                      path.c_str(), rc, g_lastOpenError.c_str());
         return 0;
     }
+    // AOSP sets a busy timeout on every connection right after open
+    // (frameworks/base/core/jni/android_database_SQLiteConnection.cpp: `static
+    // const int BUSY_TIMEOUT_MS = 2500;` then `sqlite3_busy_timeout(db,
+    // BUSY_TIMEOUT_MS)`). Without it the default timeout is 0, so a connection
+    // that cannot IMMEDIATELY acquire the database file lock fails with
+    // SQLITE_BUSY (rc=5, "database is locked") instead of waiting -- which is
+    // exactly how Finsky's concurrent InstallerV2 writes (three installs at
+    // once) failed with InstallerException Status 6400 /
+    // SQLiteTableLockedException. Match AOSP so a contended writer waits up to
+    // 2.5s for the lock. General: every DB app with concurrent access benefits;
+    // no behavioural divergence from a device (this is the device's own value).
+    sqlite3_busy_timeout(db, 2500);
     // Cap memory for the page cache so Room's WorkDatabase doesn't
     // grow without bound on a server-class workload. 2MB suffices
     // for WorkManager / F-Droid / standard small-app schemas.
     // AOSP registers these from nativeOpen before the connection is handed out,
     // so every statement compiled on it can name them.
     register_android_sqlite(db);
-    // AOSP android_database_SQLiteConnection.cpp nativeOpen: "Set the default
-    // busy handler to retry automatically before returning SQLITE_BUSY", with
-    // BUSY_TIMEOUT_MS = 2500. Without it a second connection to the same file
-    // (another SQLiteDatabase on the path) failed at once with "database is
-    // locked": in DELETE journal mode (below) a COMMIT needs every other
-    // connection's read lock gone, and Spotify's messages.db COMMIT died that way.
-    sqlite3_busy_timeout(db, 2500);
     sqlite3_exec(db, "PRAGMA cache_size=-2048", nullptr, nullptr, nullptr);
     // Journal mode: DELETE by default, NOT WAL. WAL maintains an mmap'd `-shm`
     // shared-memory index; in this process (alongside the JVM heap + ANGLE +

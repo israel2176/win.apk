@@ -542,21 +542,56 @@ public final class MacApkFont {
      *  KERNING_ON -- `Font.getStringBounds` guards on `values.getKerning() == 0`
      *  -- so the attribute is REQUIRED, not an optimisation. Without it,
      *  layoutGlyphVector returns a kernDelta of exactly 0.000 (measured). */
-    private static Font kernedFont(Font sized) {
-        Font k = sKerned.get(sized);
+    private static Font kernedFont(Font sized, boolean liga) {
+        final java.util.Map<Font, Font> cache = liga ? sKernedLiga : sKerned;
+        Font k = cache.get(sized);
         if (k == null) {
             try {
                 java.util.Map<java.awt.font.TextAttribute, Object> a =
                     new java.util.HashMap<>();
                 a.put(java.awt.font.TextAttribute.KERNING,
                       java.awt.font.TextAttribute.KERNING_ON);
+                if (liga) {
+                    a.put(java.awt.font.TextAttribute.LIGATURES,
+                          java.awt.font.TextAttribute.LIGATURES_ON);
+                }
                 k = sized.deriveFont(a);
             } catch (Throwable t) {
                 k = sized;
             }
-            sKerned.put(sized, k);
+            cache.put(sized, k);
         }
         return k;
+    }
+
+    /** The same cut with standard ligatures on as well (see ligaFor). */
+    private static final java.util.Map<Font, Font> sKernedLiga =
+        java.util.Collections.synchronizedMap(new java.util.WeakHashMap<Font, Font>());
+
+    // --- Standard ligatures (v1.0.2240) -----------------------------------
+    //
+    // minikin shapes with HarfBuzz's default features, which include `liga`
+    // and `clig`, and switches the two off only for letter-spaced text:
+    // LayoutCore.cpp:362-371 (android11-release) -- "Disable default-on
+    // non-required ligature features if letter-spacing ... should not apply
+    // optional ligatures" -- `if (fabs(paint.letterSpacing) > 0.03)` pushes
+    // no_liga and no_clig. Required ligatures (`rlig`) always run.
+    //
+    // JDK HarfBuzz runs `rlig` always but `liga` only when the font carries
+    // TextAttribute.LIGATURES_ON (measured on the bundled JRE: Rhythm's
+    // Google Sans cut shapes "fi" to 2 glyphs, to 1 with the attribute). Our
+    // measure and draw never turned it on, so "fi" / "fl" / "ffi" never formed
+    // in body text where a device forms them, and widths differed by whatever
+    // the ligature saves (or costs). JDK has no `clig` switch of its own;
+    // LIGATURES_ON is its whole optional-ligature control.
+    //
+    // MACAPK_TEXT_LIGATURES=0 restores the pre-v1.0.2240 shaping (no liga).
+    public static final boolean STD_LIGATURES =
+        !"0".equals(System.getenv("MACAPK_TEXT_LIGATURES"));
+
+    /** Does minikin run optional ligatures for this letterSpacing (in ems)? */
+    public static boolean ligaFor(float letterSpacing) {
+        return STD_LIGATURES && Math.abs(letterSpacing) <= 0.03f;
     }
 
     /** null when quantization is gated off or the vector cannot be built.
@@ -594,12 +629,20 @@ public final class MacApkFont {
      *  Graphics2D.drawGlyphVector so ink lands exactly where it was measured, and
      *  per-word vectors would break that invariant. */
     public static Quantized quantize(Font sized, String text) {
+        return quantize(sized, text, STD_LIGATURES);
+    }
+
+    /** `liga`: shape with standard ligatures (ligaFor(letterSpacing)). */
+    public static Quantized quantize(Font sized, String text, boolean liga) {
         if (!GLYPH_QUANTIZE || sized == null || text == null || text.isEmpty()) return null;
         try {
             // layoutGlyphVector also runs GSUB, so ligatures make getNumGlyphs()
-            // differ from text.length(). That matches minikin (liga stays on
-            // unless letterSpacing is set) and isZeroAdvanceMark already maps
+            // differ from text.length(), and isZeroAdvanceMark already maps
             // back through getGlyphCharIndex, so it survives the change.
+            // ⚠ CORRECTED v1.0.2239: this said it "matches minikin (liga stays
+            // on)" while kernedFont() never set LIGATURES_ON, which JDK
+            // HarfBuzz needs before it runs `liga`. Since v1.0.2240 `liga`
+            // follows minikin's rule; see "Standard ligatures".
             char[] chars = text.toCharArray();
             int flags = java.text.Bidi.requiresBidi(chars, 0, chars.length)
                         && new java.text.Bidi(text, java.text.Bidi.DIRECTION_DEFAULT_LEFT_TO_RIGHT)
@@ -607,7 +650,7 @@ public final class MacApkFont {
                       ? Font.LAYOUT_RIGHT_TO_LEFT : Font.LAYOUT_LEFT_TO_RIGHT;
             java.awt.font.GlyphVector gv;
             try {
-                gv = kernedFont(sized).layoutGlyphVector(textFrc(), chars, 0, chars.length, flags);
+                gv = kernedFont(sized, liga).layoutGlyphVector(textFrc(), chars, 0, chars.length, flags);
             } catch (Throwable t) {
                 gv = sized.createGlyphVector(textFrc(), text);
             }
@@ -790,18 +833,112 @@ public final class MacApkFont {
     /** The quantized advance of `text` in `sized`, or Float.NaN when the model
      *  is gated off or unavailable (the caller then keeps its float sum). */
     public static float quantizedWidth(Font sized, String text) {
+        return quantizedWidth(sized, text, STD_LIGATURES);
+    }
+
+    public static float quantizedWidth(Font sized, String text, boolean liga) {
         if (!GLYPH_QUANTIZE || sized == null || text == null || text.isEmpty()) return Float.NaN;
         boolean cacheable = text.length() <= QUANT_CACHE_MAX_LEN;
         String key = null;
         if (cacheable) {
-            key = System.identityHashCode(sized) + " " + text;
+            key = System.identityHashCode(sized) + (liga ? " L " : " ") + text;
             Float w = sQuantWidth.get(key);
             if (w != null) return w;
         }
-        Quantized q = quantize(sized, text);
+        Quantized q = quantize(sized, text, liga);
         if (q == null) return Float.NaN;
         if (cacheable && sQuantWidth.size() < 20000) sQuantWidth.put(key, q.width);
         return q.width;
+    }
+
+    // --- Letter-spacing clusters (v1.0.2239) -------------------------------
+    //
+    // minikin applies letterSpacing AFTER shaping, once per HarfBuzz OUTPUT
+    // cluster: LayoutCore.cpp (android11-release, LayoutPiece ctor) adds
+    // letterSpaceHalf before the first glyph, a full letterSpace wherever
+    // `info[i - 1].cluster != info[i].cluster`, and letterSpaceHalf after the
+    // last. A required ligature collapses several characters into ONE glyph
+    // and ONE cluster, so it gets ONE gap. Material Symbols draws every icon
+    // that way: "home" is four characters, one `rlig` glyph (the font's GSUB
+    // carries only rclt + rlig), and Material3's default bodyLarge style gives
+    // it 0.5sp of letterSpacing.
+    //
+    // We used to split letter-spaced text into UAX#29 grapheme clusters BEFORE
+    // shaping and draw each one alone, so no ligature could ever form: an icon
+    // drew as its first letter, the rest clipped by the 24dp icon box (Rhythm,
+    // issue #11: H / L / S / S where Home / Library / Search / Settings icons
+    // belong). Measure charged one gap per grapheme, four for "home".
+    //
+    // The cluster unit here is HarfBuzz's default MONOTONE_GRAPHEMES level: a
+    // glyph belongs to the grapheme its source character sits in, so a base +
+    // combining mark (two glyphs, char indices 0 and 1 on a font without a
+    // precomposed form) stays ONE cluster, and a ligature (one glyph whose char
+    // index is the first character) leaves the graphemes it swallowed without a
+    // glyph and therefore without a gap. For text with no ligature this is
+    // exactly the old grapheme count, which is what keeps every other letter-
+    // spaced string unchanged.
+    //
+    // Optional ligatures follow minikin's letter-spacing rule since v1.0.2240
+    // ("Standard ligatures" above): on at |letterSpacing| <= 0.03 em, off past
+    // it, `rlig` always. Spaced or not, measure and draw shape the same vector.
+
+    /** Gate: shape letter-spaced text as one run and space its glyph clusters.
+     *  ON by default; MACAPK_TEXT_SHAPED_SPACING=0 restores the per-grapheme
+     *  draw and count (ligatures break under letterSpacing). */
+    public static final boolean SHAPED_SPACING =
+        !"0".equals(System.getenv("MACAPK_TEXT_SHAPED_SPACING"));
+
+    /** For each glyph of `gv` (laid out from `text`), the ordinal of the
+     *  letter-spacing cluster it belongs to, in glyph order; element
+     *  `getNumGlyphs()` is the cluster count. Null when unavailable. */
+    public static int[] spacingClusterOrdinals(java.awt.font.GlyphVector gv, String text) {
+        if (gv == null || text == null || text.isEmpty()) return null;
+        try {
+            final int n = text.length();
+            final int[] bounds = Paint.macapkClusterBounds(text);
+            final int[] graphemeOf = new int[n];
+            for (int k = 0; k + 1 < bounds.length; k++) {
+                for (int c = bounds[k]; c < bounds[k + 1] && c < n; c++) graphemeOf[c] = k;
+            }
+            final int ng = gv.getNumGlyphs();
+            final int[] out = new int[ng + 1];
+            int ord = -1, prev = Integer.MIN_VALUE;
+            for (int i = 0; i < ng; i++) {
+                int ci = gv.getGlyphCharIndex(i);
+                int key = graphemeOf[Math.max(0, Math.min(n - 1, ci))];
+                if (key != prev) { ord++; prev = key; }
+                out[i] = ord;
+            }
+            out[ng] = ord + 1;
+            return out;
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    private static final ConcurrentHashMap<String, Integer> sSpacingClusters =
+        new ConcurrentHashMap<>();
+
+    /** How many letter-spacing gaps `text` takes in `sized` when shaped as one
+     *  run, or -1 when the shaped model is gated off or unavailable (the caller
+     *  then keeps its grapheme count). Cached like quantizedWidth: Material3
+     *  text carries letterSpacing almost everywhere, so this is hot. */
+    public static int spacingClusterCount(Font sized, String text, boolean liga) {
+        if (!SHAPED_SPACING || sized == null || text == null || text.isEmpty()) return -1;
+        boolean cacheable = text.length() <= QUANT_CACHE_MAX_LEN;
+        String key = null;
+        if (cacheable) {
+            key = System.identityHashCode(sized) + (liga ? " L " : " ") + text;
+            Integer c = sSpacingClusters.get(key);
+            if (c != null) return c;
+        }
+        Quantized q = quantize(sized, text, liga);
+        if (q == null) return -1;
+        int[] ord = spacingClusterOrdinals(q.glyphs, text);
+        if (ord == null) return -1;
+        int count = ord[ord.length - 1];
+        if (cacheable && sSpacingClusters.size() < 20000) sSpacingClusters.put(key, count);
+        return count;
     }
 
     /** A loaded face plus the (weight, slant) the file itself declares. */

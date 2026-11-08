@@ -47,16 +47,31 @@ public final class Outline {
         macapkPathShadowRadius = Float.NaN;
     }
     public boolean isEmpty() { return mMode == MODE_EMPTY; }
-    /** As of API 33 all outline shapes are clippable. */
-    /** AOSP: an outline can be used as a clip unless it is a PATH.
+    /** AOSP, by PLATFORM level: up to API 32 an outline can clip unless it is a
+     *  PATH (android12L-release Outline.java, `return mMode != MODE_PATH;`); from
+     *  API 33 every shape can ("As of API 33, all Outline shapes support
+     *  clipping", android14-release Outline.java:118-128, `return true;`).
      *
-     *  This used to hardcode true, with a comment citing "as of API 33 all
-     *  outline shapes are clippable". That is API-33 semantics in a runtime
-     *  that reports SDK_INT 29 and is diffed against an API-30 reference, so
-     *  the forward-dated answer was simply wrong for us -- not a golden-vs-us
-     *  API delta to wave through. Elevation shadows and outline clipping both
-     *  branch on this. */
-    public boolean canClip() { return mMode != MODE_PATH; }
+     *  1a5da7da (2026-08-09) pinned the pre-33 answer because the runtime then
+     *  reported SDK_INT 29 against an API-30 reference, which was right at the
+     *  time. Since PresentedSdk presents clamp(targetSdk, 29, 36), a modern app
+     *  sees a 33+ device and must get that device's answer. It matters beyond
+     *  the probe: Compose's GraphicsLayer.configureOutlineAndClip, given a path
+     *  outline that "cannot clip" and clip = true, turns the layer's clip off and
+     *  discardDisplayList()s it (it expects a re-record that clips by path),
+     *  and this Compose build never re-records a discarded node by itself, so the
+     *  whole layer drew nothing: Rhythm's Settings and Now Playing screens (a
+     *  path-shaped Surface) were blank on Mac.apk, never on an API 33+ device.
+     *  Our clipToOutline already clips by path (RenderNode.macapkApplyOutlineClip
+     *  and View's outline clip), so the 33+ answer is honoured end to end. */
+    public boolean canClip() {
+        return (CANCLIP_BY_PLATFORM && android.os.Build.VERSION.SDK_INT >= 33)
+            || mMode != MODE_PATH;
+    }
+    /** MACAPK_OUTLINE_CANCLIP_PLATFORM=0 restores the pre-v1.0.2241 answer
+     *  (a path never clips, at every level). */
+    private static final boolean CANCLIP_BY_PLATFORM =
+        !"0".equals(System.getenv("MACAPK_OUTLINE_CANCLIP_PLATFORM"));
 
     public void setRect(int left, int top, int right, int bottom) {
         setRoundRect(left, top, right, bottom, 0f);

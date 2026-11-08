@@ -15,6 +15,14 @@
 //   winapk-runtime --apk <file.apk> [--data <dir>] [--jdk <dir>] [--lib <dir>] [--install-only]
 //   winapk-runtime --apk <app> --package-to <file>   (the launcher's install helper: the package name)
 //   winapk-runtime --java-main --jdk <dir> --cp <jar> <class> [args...]   (internal: run_java)
+//   winapk-runtime [--data <dir>] [--jdk <dir>] [--lib <dir>] --system   (the system broker, below)
+//
+// --system runs upstream's system broker (com.macapk.loader.SystemServer: how
+// one app binds another's services, the real Google Play services among them,
+// when Settings > Google account > "Use Google services" is on). It is started
+// by the first app that needs it (com.macapk.loader.WindowsBroker), is alone per
+// user session (the Local\WinApk-system mutex, then its pipe name), and exits
+// when no app has been open for a while.
 //
 // One runtime runs an app at a time, as on the Mac, where the app's stub holds
 // a lock and a second launch brings the running app forward: a second start
@@ -84,6 +92,7 @@ struct Options {
     fs::path package_to;  // --package-to: write the app's package name there and stop
     bool gms = false;     // --gms <subcommand> [args]: com.macapk.gms.GmsCli, no app
     std::vector<std::wstring> gms_args;
+    bool system = false;  // --system: the system broker, no app
 };
 
 std::string utf8(const std::wstring& w) {
@@ -98,6 +107,15 @@ std::wstring env_var(const wchar_t* name) {
     wchar_t buf[32768];
     const DWORD n = GetEnvironmentVariableW(name, buf, 32768);
     return (n > 0 && n < 32768) ? std::wstring(buf, n) : std::wstring();
+}
+
+// HKCU\Software\Win.apk GoogleServices (absent = 0): the launcher's switch
+// Settings > Google account > "Use Google services (experimental)".
+bool google_services_setting() {
+    DWORD value = 0, size = sizeof value;
+    return RegGetValueW(HKEY_CURRENT_USER, L"Software\\Win.apk", L"GoogleServices", RRF_RT_REG_DWORD, nullptr,
+                        &value, &size) == ERROR_SUCCESS &&
+           value != 0;
 }
 
 fs::path exe_dir() {
@@ -237,6 +255,7 @@ bool parse_args(int argc, wchar_t** argv, Options* o) {
         else if (a == L"--lib") ok = value(&o->lib);
         else if (a == L"--install-only") o->install_only = true;
         else if (a == L"--package-to") ok = value(&o->package_to);
+        else if (a == L"--system") o->system = true;
         else if (a == L"--gms") {
             // Everything after --gms belongs to the subcommand, verbatim, as
             // upstream's CliArgs::gms_args.
@@ -246,13 +265,13 @@ bool parse_args(int argc, wchar_t** argv, Options* o) {
         } else ok = false;
         if (!ok) return false;
     }
-    return !o->apk.empty() || o->gms;
+    return !o->apk.empty() || o->gms || o->system;
 }
 
 // Fills in whatever the command line left out, and checks it exists.
 bool resolve_paths(Options* o) {
     std::error_code ec;
-    if (!o->gms) {
+    if (!o->gms && !o->system) {
         o->apk = fs::absolute(o->apk, ec);
         if (!fs::is_regular_file(o->apk, ec)) {
             std::fprintf(stderr, "[win.apk] no such APK: %s\n", utf8(o->apk.wstring()).c_str());
@@ -1421,6 +1440,17 @@ std::vector<std::string> jvm_options(const BootArgs& b) {
     fs::create_directories(android_root, ec);
     fs::create_directories(logs, ec);
     v.push_back("-Dmacapk.android.root=" + jvm_path(android_root));
+    // What a process this runtime starts (the system broker, or an app the
+    // broker starts as a service host) runs with: this same runtime, data
+    // folder, JDK and jars (com.macapk.loader.WindowsBroker.runtimeCommand).
+    {
+        wchar_t self[MAX_PATH * 4];
+        const DWORD n = GetModuleFileNameW(nullptr, self, MAX_PATH * 4);
+        if (n > 0 && n < MAX_PATH * 4) v.push_back("-Dwinapk.runtime.exe=" + jvm_path(fs::path(std::wstring(self, n))));
+        v.push_back("-Dwinapk.data=" + jvm_path(o.data));
+        v.push_back("-Dwinapk.jdk=" + jvm_path(o.jdk));
+        v.push_back("-Dwinapk.lib=" + jvm_path(o.lib));
+    }
     // Guest code's "/data/...", "/sdcard/..." resolve under the same folder.
     winapk::set_android_root(utf8(android_root.wstring()).c_str());
     // The app's data directory, by its 8.3 short name where the volume has
@@ -1619,6 +1649,48 @@ DWORD WINAPI gms_thread(void* param) {
     return 0;
 }
 
+// winapk-runtime --system: com.macapk.loader.SystemServer.main in a JVM with
+// the host natives (the Binder transport among them) and no app. main serves
+// until the broker decides it is idle, and then exits the process itself.
+DWORD WINAPI system_thread(void* param) {
+    auto* b = static_cast<BootArgs*>(param);
+    const Options& o = b->options;
+    b->result = 1;
+    HMODULE jvm = load_jvm(o.jdk);
+    if (!jvm) return 1;
+    std::vector<std::string> opts = jvm_options(*b);
+    JavaVM* vm = nullptr;
+    JNIEnv* env = nullptr;
+    if (!create_vm(jvm, opts, &vm, &env)) return 1;
+    jvmtiEnv* jvmti = nullptr;
+    if (vm->GetEnv(reinterpret_cast<void**>(&jvmti), JVMTI_VERSION_1_2) != JNI_OK) {
+        std::fprintf(stderr, "[win.apk] no JVMTI\n");
+        return 1;
+    }
+    winapk::host::NativeStats stats;
+    if (!winapk::host::register_host_natives(env, jvmti, &stats)) {
+        std::fprintf(stderr, "[win.apk] binding host natives failed\n");
+        return 1;
+    }
+    macapk::sqlite::RegisterNativeSqliteMethods(env);
+    check_exception(env, "RegisterNativeSqliteMethods");
+    jclass server = env->FindClass("com/macapk/loader/SystemServer");
+    jmethodID main = server ? env->GetStaticMethodID(server, "main", "([Ljava/lang/String;)V") : nullptr;
+    if (!main) {
+        check_exception(env, "SystemServer.main lookup");
+        return 1;
+    }
+    jobjectArray args = env->NewObjectArray(0, env->FindClass("java/lang/String"), nullptr);
+    env->CallStaticVoidMethod(server, main, args);
+    if (env->ExceptionCheck()) {
+        env->ExceptionDescribe();
+        env->ExceptionClear();
+    }
+    std::fflush(stderr);
+    TerminateProcess(GetCurrentProcess(), 1);
+    return 0;
+}
+
 // Steps 3 to 5, on the large-stack thread.
 DWORD WINAPI boot_thread(void* param) {
     auto* b = static_cast<BootArgs*>(param);
@@ -1705,6 +1777,11 @@ std::wstring instance_key(const fs::path& app_dir) {
     std::error_code ec;
     std::wstring key = fs::absolute(app_dir, ec).lexically_normal().wstring();
     if (ec) key = app_dir.wstring();
+    // A package's other android:process (the system broker starts it with
+    // MACAPK_SECONDARY_PROCESS=1 and its name) is a second process of the same
+    // app, not a second copy of it.
+    if (!env_var(L"MACAPK_SECONDARY_PROCESS").empty() && !env_var(L"MACAPK_PROCESS_NAME").empty())
+        key += L"|" + env_var(L"MACAPK_PROCESS_NAME");
     while (!key.empty() && (key.back() == L'\\' || key.back() == L'/')) key.pop_back();
     for (wchar_t& c : key) c = static_cast<wchar_t>(towlower(c == L'/' ? L'\\' : c));
     uint64_t h = 1469598103934665603ull;  // FNV-1a over the UTF-16 units
@@ -1713,6 +1790,9 @@ std::wstring instance_key(const fs::path& app_dir) {
     swprintf(name, 48, L"Local\\WinApk-app-%016llx", static_cast<unsigned long long>(h));
     return name;
 }
+
+// The holder's flags, after its pid in the "-pid" mapping.
+constexpr DWORD kHolderServiceHost = 1;
 
 bool claim_single_instance(const std::wstring& key) {
     if (!env_var(L"WINAPK_ALLOW_SECOND_INSTANCE").empty()) return true;
@@ -1723,13 +1803,46 @@ bool claim_single_instance(const std::wstring& key) {
         CloseHandle(m);
         return false;
     }
-    // Held until exit, like the mapping that names us.
-    if (HANDLE map = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, sizeof(DWORD),
+    // Held until exit, like the mapping that names us: our pid, then whether
+    // we are a service host (kHolderServiceHost).
+    if (HANDLE map = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, 2 * sizeof(DWORD),
                                         (key + L"-pid").c_str())) {
-        if (auto* pid = static_cast<DWORD*>(MapViewOfFile(map, FILE_MAP_WRITE, 0, 0, sizeof(DWORD))))
-            *pid = GetCurrentProcessId();
+        if (auto* p = static_cast<DWORD*>(MapViewOfFile(map, FILE_MAP_WRITE, 0, 0, 2 * sizeof(DWORD)))) {
+            p[0] = GetCurrentProcessId();
+            p[1] = env_var(L"MACAPK_SERVICE_HOST") == L"1" ? kHolderServiceHost : 0;
+        }
     }
     return true;
+}
+
+// A user's start of an app whose process the system broker started as a
+// service host (to answer another app's bind or broadcast: Play services binds
+// the Play Store's, for one). On a device the activity would start in that
+// process; ours runs headless, with no window to show it in, so the start
+// would be refused and nothing would appear. Stop the host and let this start
+// take its place: its clients see the binder die and bind again, which the
+// broker answers from the new process, as when Android kills a background
+// process. True when the holder was a service host and has exited.
+bool replace_service_host(const std::wstring& key) {
+    if (env_var(L"MACAPK_SERVICE_HOST") == L"1") return false;  // the broker's own start: the holder serves it
+    HANDLE map = OpenFileMappingW(FILE_MAP_READ, FALSE, (key + L"-pid").c_str());
+    if (!map) return false;
+    DWORD pid = 0, flags = 0;
+    if (const auto* p = static_cast<const DWORD*>(MapViewOfFile(map, FILE_MAP_READ, 0, 0, 2 * sizeof(DWORD)))) {
+        pid = p[0];
+        flags = p[1];
+        UnmapViewOfFile(p);
+    }
+    CloseHandle(map);
+    if (!pid || !(flags & kHolderServiceHost)) return false;
+    HANDLE h = OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, FALSE, pid);
+    if (!h) return false;
+    std::fprintf(stderr, "[win.apk] the system broker runs this app as a service host (pid %lu); "
+                         "restarting it with a window\n", static_cast<unsigned long>(pid));
+    TerminateProcess(h, 1);
+    const bool gone = WaitForSingleObject(h, 15000) == WAIT_OBJECT_0;
+    CloseHandle(h);
+    return gone;
 }
 
 struct WindowSearch {
@@ -1872,7 +1985,8 @@ int wmain(int argc, wchar_t** argv) {
     if (!parse_args(argc, argv, &b.options)) {
         std::fprintf(stderr, "usage: winapk-runtime --apk <file.apk|.apkm|.xapk|.apks> [--data <dir>] [--jdk <dir>] [--lib <dir>] "
                      "[--install-only] [--package-to <file>]\n"
-                     "       winapk-runtime [--data <dir>] [--jdk <dir>] [--lib <dir>] --gms <subcommand> [args]\n");
+                     "       winapk-runtime [--data <dir>] [--jdk <dir>] [--lib <dir>] --gms <subcommand> [args]\n"
+                     "       winapk-runtime [--data <dir>] [--jdk <dir>] [--lib <dir>] --system\n");
         return 2;
     }
     if (!resolve_paths(&b.options)) return 2;
@@ -1909,10 +2023,38 @@ int wmain(int argc, wchar_t** argv) {
         // upstream's launcher sets it: 1,000-6,000 lines a start, 0.05-0.4 s
         // before the first frame. MACAPK_QUIET_CLASSLOAD=0 brings them back.
         if (env_var(L"MACAPK_QUIET_CLASSLOAD").empty()) SetEnvironmentVariableW(L"MACAPK_QUIET_CLASSLOAD", L"1");
+        // Settings > Google account > "Use Google services (experimental)":
+        // the system broker and the real Google apps (SystemClient.enabled).
+        // MACAPK_BROKER, when set, wins either way.
+        if (env_var(L"MACAPK_BROKER").empty() && google_services_setting())
+            SetEnvironmentVariableW(L"MACAPK_BROKER", L"1");
+    }
+
+    // --system: the broker. One per user session: a second one exits at once.
+    if (b.options.system) {
+        HANDLE one = CreateMutexW(nullptr, TRUE, L"Local\\WinApk-system");
+        if (!one || GetLastError() == ERROR_ALREADY_EXISTS) {
+            std::fprintf(stderr, "[win.apk] the system broker is already running\n");
+            return 0;
+        }
+        SetEnvironmentVariableW(L"MACAPK_BROKER", L"1");
+        SetEnvironmentVariableW(L"MACAPK_APK_PATH", nullptr);  // the app that started it, not the broker's
+        if (env_var(L"MACAPK_BROKER_LOGDIR").empty()) {
+            std::error_code lec;
+            fs::create_directories(b.options.data / L"logs" / L"services", lec);
+            SetEnvironmentVariableW(L"MACAPK_BROKER_LOGDIR", (b.options.data / L"logs" / L"services").c_str());
+        }
+        HANDLE t = CreateThread(nullptr, 64 * 1024 * 1024, system_thread, &b, STACK_SIZE_PARAM_IS_A_RESERVATION,
+                                nullptr);
+        if (!t) return 1;
+        WaitForSingleObject(t, INFINITE);
+        CloseHandle(t);
+        return b.result;
     }
 
     // --gms: a JVM, the GMS classes and no app. Before anything APK-shaped.
     if (b.options.gms) {
+        SetEnvironmentVariableW(L"MACAPK_APK_PATH", nullptr);
         HANDLE t = CreateThread(nullptr, 64 * 1024 * 1024, gms_thread, &b, STACK_SIZE_PARAM_IS_A_RESERVATION,
                                 nullptr);
         if (!t) return 1;
@@ -1942,7 +2084,8 @@ int wmain(int argc, wchar_t** argv) {
         return 1;
     }
     const std::wstring instance = instance_key(b.app_dir);
-    if (!claim_single_instance(instance)) {
+    if (!claim_single_instance(instance) &&
+        (b.options.install_only || !replace_service_host(instance) || !claim_single_instance(instance))) {
         std::fprintf(stderr, "[win.apk] %s is already running; not starting a second copy\n",
                      utf8(b.app_dir.filename().wstring()).c_str());
         if (b.options.install_only) return 3;
@@ -1951,6 +2094,14 @@ int wmain(int argc, wchar_t** argv) {
         return 0;
     }
     if (!install_app(&b.options, b.options.data / "android")) return 1;
+    // The installed APK, for the Java side's first moments: PresentedSdk reads
+    // the app's targetSdkVersion and minSdkVersion from it when Build.VERSION
+    // initializes, before any loader class could hand it over (upstream's
+    // main.cpp exports it the same way). Without it every app was presented
+    // API 29, below Play services' minSdk 31. Always this run's own APK: a
+    // value inherited from the process that started this one (the broker
+    // starting Play services for an app) names another app.
+    SetEnvironmentVariableW(L"MACAPK_APK_PATH", b.options.apk.c_str());
     prepare_arm64(b.options, b.app_dir);
     if (!convert_dex(b.options, b.app_dir, &b.app_jar)) return 1;
 

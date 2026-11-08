@@ -2025,7 +2025,8 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
                 android.os.Looper.macapkEnterGlRenderer();
                 try {
                     reflectedOnSurfaceCreated.invoke(reflectedRenderer,
-                        glArgFor(reflectedOnSurfaceCreated), null);
+                        glArgFor(reflectedOnSurfaceCreated),
+                        eglConfigArgFor(reflectedOnSurfaceCreated));
                 } finally { android.os.Looper.macapkExitGlRenderer(); }
                 reflectedSurfaceCreatedFired = true;
                 // MACAPK_SV_RESUME_ONCE (default ON, 2026-09-27): the
@@ -3408,6 +3409,19 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
             Class<?>[] p = m.getParameterTypes();
             Object gl = android.opengl.GLSurfaceView.macapkSharedGL10();
             if (p.length >= 1 && p[0].isInstance(gl)) return gl;
+        } catch (Throwable ignore) {}
+        return null;
+    }
+
+    /** The EGLConfig argument for a reflected onSurfaceCreated: the window
+     *  surface's config (MacApkEGL10.macapkWindowSurfaceConfig, what AOSP's
+     *  GLThread passes from its chooser) when the second parameter accepts it,
+     *  null otherwise. */
+    private static Object eglConfigArgFor(java.lang.reflect.Method m) {
+        try {
+            Class<?>[] p = m.getParameterTypes();
+            Object c = javax.microedition.khronos.egl.MacApkEGL10.macapkWindowSurfaceConfig();
+            if (p.length >= 2 && c != null && p[1].isInstance(c)) return c;
         } catch (Throwable ignore) {}
         return null;
     }

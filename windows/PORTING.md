@@ -774,8 +774,50 @@ Still open:
   - The sign-in round trip has been built against upstream's design and the
     CLI's `selftest` and `status` run in CI; a sign-in with a real Google
     account takes a person at a Windows PC and has not been part of CI.
+  - The real Google apps (upstream's "Use Google GMS"): ported as
+    "Use Google services (experimental)". Mach ports become named pipes
+    (`host/binder_win.cpp`), launchd's on-demand start becomes the first app
+    starting `winapk-runtime --system`, and the caller's identity comes from
+    the OS (pipe client pid, the process's recorded command line) where
+    upstream's phase 1 trusts the message. Tested between real JVMs
+    (`winapk-binder-test`), and in November 2026 with Google's own Services
+    Framework, Play services 26.43 and Play Store 52.9 on a Windows runner
+    (a one-off workflow, not in CI): Play services checks in and keeps an
+    MCS connection to mtalk.google.com:5228; Telegram, Moovit and the Play
+    Store get FCM tokens from it; a test account signed in with
+    `--gms signin-master` is the device's Google account (Play services
+    resolves its id, the Play Store shows its picture and gets its
+    googleplay tokens, opens "Welcome to Google Play" and an app's details
+    page with Install). What it took: `Message.sendingUid` and a
+    PendingIntent's creator uid (the GCM registrar's caller checks), fsync
+    of a directory, `<permission-tree>`, a service started from its own
+    attachBaseContext, java.io opens that share deletion with a POSIX
+    replacing rename (Play services' Chimera config is written by renaming
+    a file still open), and a user's start of an app the broker runs
+    headless replacing that process. Installing an app from the Play Store
+    (Google's Calculator, through its PackageInstaller session, the install
+    helper and Play's own "state:INSTALLED", the Play Store recorded as the
+    installer) then took: `addView(view, params)` in the inflater (Play's
+    acquire sheet), account management by signature (`hasSignatureCapability`
+    AUTH), the account's gaia id at a master-token sign-in (Play services'
+    getToken refused every app without it), ContentObserver notifications
+    across processes (the gservices change after a check-in), one
+    `elapsedRealtime` for all processes (Play's gRPC between its two
+    processes), `Uri.fromFile` of a drive path parsing back to it (Play's
+    download destination), and a session's `.dm` kept out of the splits.
+    `WINAPK_DUMP_VIEWS` (Compose included) lets the test press Play's
+    buttons. Findings: before the first check-in completes the Play Store
+    reads android_id 0 and may show "Server error" (Try again once it has);
+    Play's image cache names files
+    with `?`, which Windows refuses, so its images are not cached on disk;
+    a GCM registration can take over 30 s on a loaded machine, past the
+    client's timeout (it retries on its next start).
+    Open: a SurfaceView window through EGL14 (upstream's native-EGL layer)
+    still refuses on Windows; unbind accounting and Play Billing /
+    Integrity, as upstream.
 - Upstream commits almost daily. Merging at least monthly keeps conflicts
-  small; `windows/README.md` lists every `runtime/` change to carry over.
+  small; `windows/README.md` lists every `runtime/` change to carry over and
+  how to sync (the last sync: upstream 1500431, v1.0.2379).
 
 ## 8. Roadmap to production
 
