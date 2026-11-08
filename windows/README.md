@@ -127,6 +127,7 @@ putting the SunMSCAPI provider first.
 ```sh
 runtime/bin/winapk-runtime.exe --apk app.apk [--jdk "$JAVA_HOME"] [--data <dir>] [--install-only]
 runtime/bin/winapk-runtime.exe [--jdk "$JAVA_HOME"] [--data <dir>] --gms <command> [args]
+runtime/bin/winapk-runtime.exe [--jdk "$JAVA_HOME"] [--data <dir>] --verify-apk <file>
 ```
 
 `--apk` takes a plain APK or a split bundle (`.apkm`, `.xapk`, `.apks`).
@@ -140,6 +141,11 @@ with no app; exit 0 done, 1 error, 2 cancelled or bad arguments.
 read as two lines from standard input, after Google accepts the token; with
 Google services on, the broker puts it in the accounts table as the device's
 Google account (for tests with a test account, never on a command line).
+`--verify-apk` runs `com.winapk.tools.ApkCheck` (`windows/java`): the file's
+package, whether its signature verifies (`ApkVerification`, the lineage
+included) and whether Google signed it, as `KEY<tab>value` lines; exit 0
+Google-signed, 4 another signer, 3 does not verify, 1 not an app. The
+launcher's Google services setup installs a file only on 0.
 
 `Win.apk.exe` has the user-facing command line (`<file>`, `--run`) and the
 helper verbs `install`, `uninstall`, `runtime-permission`, `special-access`
@@ -227,7 +233,7 @@ Every test is a program built by CMake; `ci.yml` runs each of them on
 | `test/java/FileSeparatorRewriteTest.java` | Guest code reads Android's `/` from `File.separator` while the JDK's own classes keep the backslash |
 | `winapk-binder-test <classpath> com.macapk.loader.BinderTransportTest` | `host/binder_win.cpp` between real JVMs in three processes (`test/java/com/macapk/loader/BinderTransportTest.java`): transact, the OS calling pid and the receiver-derived uid, oneway order, a nested callback, binder identity both ways, a Messenger and its replyTo with the sender's uid in `Message.sendingUid` and a PendingIntent's creator uid, fds both ways, death notification; then the system broker's checks: a process that is no installed app, or that claims another package, is refused, android:exported, the package uid |
 | `winapk-binder-test <classpath> FileShareDeleteTest` | java.io's opens as `host/java_io_open.cpp` binds them (`test/java/FileShareDeleteTest.java`, with the java.base overlay from `WINAPK_TEST_JAVA_BASE_PATCH`): a file renamed or deleted while a stream has it open, and renamed over a file a stream has open, as on Android; append, truncate, the `FileNotFoundException` text and the rest as the JDK has them |
-| Headless boot, window boot, service host, GMS CLI (CI steps) | The staged runtime boots the F-Droid Sudoku APK headless (30 frames) and in a window with a resize (`WINAPK_TEST_RESIZE=400x600`); started as a service host (`MACAPK_SERVICE_HOST=1`) and then opened, the open replaces the headless process and draws; `--gms selftest` and `--gms status` pass |
+| Headless boot, window boot, service host, GMS CLI (CI steps) | The staged runtime boots the F-Droid Sudoku APK headless (30 frames) and in a window with a resize (`WINAPK_TEST_RESIZE=400x600`); started as a service host (`MACAPK_SERVICE_HOST=1`) and then opened, the open replaces the headless process and draws; `--gms selftest` and `--gms status` pass; `--verify-apk` answers 4 for a test-signed APK, 3 for an unsigned one and 1 for a file that is no app |
 
 The guest libraries are built with plain clang + lld (`test/build_guest.sh`,
 `test/build_e2e.sh`), so no NDK is needed; CI builds them on Ubuntu and
@@ -480,9 +486,13 @@ every such change is listed here:
   `ActivityWindow.macapkFrameRootFor` (#29) puts above a non-frame content
   view. Comparing the wrapper itself skipped it, so a NativeActivity (SDL)
   never got its window and stayed blank. An upstream bug too.
-- `runtime/java/android/os/Build.java`: on Windows `BRAND`, `MANUFACTURER` and
-  `MODEL` stay "Mac.apk", "Voltare" and "Mac.apk"; upstream now reports Apple
-  and the Mac's hardware model, which a PC is not.
+- `runtime/java/android/os/Build.java`, `com/macapk/gms/CheckinClient.java`:
+  on Windows the device is Win.apk: `BRAND`, `MANUFACTURER` and `MODEL`
+  "Win.apk", `DEVICE`, `PRODUCT`, `BOARD` and `USER` "winapk", `HARDWARE`
+  "x86_64", `DISPLAY` "Win.apk-1", `HOST` "winapk"; `FINGERPRINT`, the `ro.*`
+  properties and the GMS clients' user agents follow from them, and the
+  check-in's own User-Agent says Win.apk. Upstream reports Apple and the Mac's
+  hardware model, which a PC is not; no real phone or Google device is named.
 - `runtime/java/com/macapk/gms/McsClient.java`: `WINAPK_PROXY` (a SOCKS proxy
   for the push connection) wins over upstream's per-app `HostProxy` policy.
 - `runtime/java/com/macapk/loader/Manifest.java` and `MacApkPackageManager.java`:

@@ -470,6 +470,30 @@ jobs:
             > gms-status.log 2>> gms-err.log || { cat gms-status.log; tail -n 100 gms-err.log; exit 1; }
           cat gms-status.log
           grep -F "gms dir        : $data\\gms" gms-status.log
+      - name: Run the APK check verb
+        run: |
+          # winapk-runtime --verify-apk (com.winapk.tools.ApkCheck), what the
+          # launcher's Google services setup asks before it installs a file:
+          # on the APKs the signature test above made, a test-key APK verifies
+          # but is not Google's (4), an unsigned one does not verify (3), and
+          # a file that is no app has no package (1).
+          data="$(cygpath -w "$PWD/appdata")"
+          dir="$RUNNER_TEMP/apkverify"
+          check() {
+            set +e
+            timeout 300 ./stage/bin/winapk-runtime.exe --jdk "$JAVA_HOME" --data "$data" --verify-apk "$(cygpath -w "$1")" \
+              > verify.out 2>> verify-err.log
+            rc=$?
+            set -e
+            echo "--- $1: exit $rc"; cat verify.out
+            [ "$rc" = "$2" ] || { tail -n 50 verify-err.log; exit 1; }
+          }
+          check "$dir/signed.apk" 4
+          grep -q "^PACKAGE.android" verify.out && grep -q "^VERIFIED.1" verify.out && grep -q "^GOOGLE.0" verify.out
+          check "$dir/unsigned.apk" 3
+          grep -q "^VERIFIED.0" verify.out && grep -q "^REASON." verify.out
+          echo "not an app" > "$dir/not-an-app.apk"
+          check "$dir/not-an-app.apk" 1
       - name: Boot an APK in a window
         run: |
           # The runner has a desktop session, so this exercises the Win32

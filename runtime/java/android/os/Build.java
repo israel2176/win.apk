@@ -30,7 +30,7 @@ public class Build {
     }
 
     public static final String UNKNOWN     = "unknown";
-    public static final String BOARD       = "macapk";
+    public static final String BOARD       = macapkWindowsHost() ? "winapk" : "macapk";
     public static final String BOOTLOADER  = "unknown";
     // BRAND / MANUFACTURER / MODEL: what an app (and the account-security
     // alerts of the services it signs in to, "New login from <model>") is
@@ -40,9 +40,13 @@ public class Build {
     // when that is missing. Method-call initializers (not JLS constants), like
     // TAGS/TYPE, so no reader constant-folds them. FINGERPRINT below derives
     // from BRAND/PRODUCT/DEVICE, so it follows BRAND automatically.
-    // Win.apk: a Windows PC is not a Mac made by Apple, so there the three keep
-    // the identity they had before ("Mac.apk", "Voltare", "Mac.apk").
-    public static final String BRAND       = macapkWindowsHost() ? "Mac.apk" : macapkBrand();
+    // Win.apk: a Windows PC is not a Mac made by Apple. There every identity
+    // field says Win.apk ("Win.apk" for BRAND/MANUFACTURER/MODEL, "winapk" for
+    // DEVICE/PRODUCT/BOARD, HARDWARE the host's real class "x86_64"), so the
+    // device Google's check-in and an app's "New login from <model>" see is
+    // what it is: not a real phone or a Google device, which device checks
+    // look for and which would not pass Play Integrity anyway.
+    public static final String BRAND       = macapkWindowsHost() ? "Win.apk" : macapkBrand();
     // The device's ABI is the host's: an x86_64 host (Win.apk on Windows x64)
     // runs x86_64 apps natively, and every other host presents arm64-v8a.
     // An x86_64 host also runs arm64-v8a code through its interpreter, so it
@@ -53,16 +57,16 @@ public class Build {
     public static final String[] SUPPORTED_ABIS    = macapkSupportedAbis();
     public static final String[] SUPPORTED_64_BIT_ABIS = macapkSupportedAbis();
     public static final String[] SUPPORTED_32_BIT_ABIS = {};
-    public static final String DEVICE      = "macapk";
-    public static final String DISPLAY     = "Mac.apk-1";
-    public static final String HARDWARE    = "apple_silicon";
-    public static final String HOST        = "macapk-mac";
+    public static final String DEVICE      = macapkWindowsHost() ? "winapk" : "macapk";
+    public static final String DISPLAY     = macapkWindowsHost() ? "Win.apk-1" : "Mac.apk-1";
+    public static final String HARDWARE    = macapkWindowsHost() ? "x86_64" : "apple_silicon";
+    public static final String HOST        = macapkWindowsHost() ? "winapk" : "macapk-mac";
     public static final String ID          = "PR1";
     // The host is a Mac, so the manufacturer is Apple (was "Voltare", the
     // project's name, which is not who made the hardware an app runs on).
-    public static final String MANUFACTURER = macapkWindowsHost() ? "Voltare" : macapkBrand();
-    public static final String MODEL       = macapkWindowsHost() ? "Mac.apk" : macapkHostModel();
-    public static final String PRODUCT     = "macapk";
+    public static final String MANUFACTURER = macapkWindowsHost() ? "Win.apk" : macapkBrand();
+    public static final String MODEL       = macapkWindowsHost() ? "Win.apk" : macapkHostModel();
+    public static final String PRODUCT     = macapkWindowsHost() ? "winapk" : "macapk";
     public static final String RADIO       = "unknown";
     // TAGS/TYPE: normally a release device ("release-keys"/"user"). When the
     // owner opts a hosted Google Play services process into accepting the
@@ -85,7 +89,7 @@ public class Build {
     private static boolean macapkDebugCertsPersona() {
         return "1".equals(System.getenv("MACAPK_DEBUG_CERTS"));
     }
-    public static final String USER        = "macapk";
+    public static final String USER        = macapkWindowsHost() ? "winapk" : "macapk";
     private static String macapkBrand() { return "Apple"; }
     private static boolean macapkWindowsHost() {
         return System.getProperty("os.name", "").startsWith("Windows");
