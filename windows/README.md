@@ -35,11 +35,11 @@ this repository.
 | `include/winapk/`, `src/` | The ELF loader (`elf_loader.cpp`), the guest linker (`linker.cpp`), dynamic ELF TLS (`elf_tls.cpp`), the `%fs` stack-guard patch (`fs_tls_patch.cpp`), the ABI thunks (`abi_thunk.cpp`), the guest `JNIEnv` (`guest_jni.cpp`, `jni_slots.inc`), the variadic JNI bridge (`jni_variadic.cpp`), native-method binding (`jni_bind.cpp`), libjnigraphics (`jnigraphics.cpp`) |
 | `src/mini_bionic.cpp`, `src/bionic/` | The Bionic shim: Android's libc, libdl, liblog, libm, libz and the NDK's `ALooper` on the UCRT and Win32, about 520 System V functions |
 | `src/arm64/` | The arm64 engines: interpreter (`arm64_cpu.cpp`, `arm64_simd.cpp`), JIT (`arm64_jit.cpp`, dynarmic), ahead-of-time translator (`arm64_aot.cpp`) and the AAPCS64 bridge (`arm64_guest.cpp`, `arm64_abi.cpp`) |
-| `host/` | `winapk-runtime.exe` (`runtime_main.cpp`), the app window (`win32_window.cpp`), the host natives (`native_*.cpp`, one file per Java class; `host_natives.cpp` binds them), the GL layer (`gl/`), the app-library loading path (`guest_libs.cpp`, `guest_stub.cpp`, `translator_main.cpp`), shared storage (`user_folders.cpp`), java.io's file opens with `FILE_SHARE_DELETE` (`java_io_open.cpp`) |
+| `host/` | `winapk-runtime.exe` (`runtime_main.cpp`), the app window (`win32_window.cpp`), the host natives (`native_*.cpp`, one file per Java class; `host_natives.cpp` binds them), the GL layer (`gl/`), the app-library loading path (`guest_libs.cpp`, `guest_stub.cpp`, `translator_main.cpp`), shared storage (`user_folders.cpp`), java.io's file opens with `FILE_SHARE_DELETE` (`java_io_open.cpp`), class-data sharing (`cds.cpp`, `cds_util.cpp`) |
 | `launcher/` | `Win.apk.exe`, the app library, the install helper and the permission dialogs (`launcher_main.cpp`, `launcher.rc`, the icon) |
-| `java/` | Windows-only Java: `com.winapk.tools.AppInstall` and `AppMeta` (`winapk-tools.jar`), and `java_base_patch/` (an overlay for `java.base`) |
+| `java/` | Windows-only Java: `com.winapk.tools.AppInstall` and `AppMeta` (`winapk-tools.jar`), `java_base_patch/` (an overlay for `java.base`), and `winapk-framework.classlist` (the classes of the framework archive, `host/cds.h`) |
 | `tools/` | `winapk-elfrun` (the loader test runner), `winapk-jvm-run` (the real-JVM test), `winapk-aot` (`arm64_aot_main.cpp`), and the generators `gen_jni_slots.py`, `gen_gl_stubs.py`, `gen_icon.py` |
-| `scripts/` | `build_java.sh`, `build_framework_res.sh`, `fetch_angle.sh`, `fetch_webview2.sh`, `stage_clang.sh`, `stage_runtime.sh` |
+| `scripts/` | `build_java.sh`, `build_framework_res.sh`, `fetch_angle.sh`, `fetch_webview2.sh`, `stage_clang.sh`, `stage_runtime.sh`, `bake_jre.sh` (the JRE Win.apk ships), `merge_classlists.py` |
 | `test/` | The unit tests (`*_test.cpp`), the guest test libraries (`guest/`, built with plain clang + lld, no NDK), the Java tests (`java/`), the Wine runners (`run_*_wine.sh`), the compatibility sweep (`compat/`) |
 | `package/` | The installer (`winapk.iss`, Inno Setup), `README.txt` and `RELEASE_NOTES.md` shipped with a release |
 | `cmake/`, `compat/`, `third_party/` | The Linux cross toolchain file, the CMake steps that cut the GL and Bitmap bridges out of upstream's `native_methods.cpp` and `bionic_shim.cpp`, a CoreFoundation shim for `native_sqlite.cpp`, the Khronos headers |
@@ -62,6 +62,7 @@ cmake -S windows -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
   -DWINAPK_JNI_INCLUDE="$JAVA_HOME/include" -DWINAPK_ARM64_JIT=ON
 cmake --build build
 windows/scripts/stage_runtime.sh build runtime
+windows/scripts/bake_jre.sh "$JAVA_HOME" runtime/lib runtime/jre
 ```
 
 - `-DWINAPK_JNI_INCLUDE=<jdk>/include` builds the JNI library, its tests,
@@ -83,10 +84,23 @@ windows/scripts/stage_runtime.sh build runtime
   `lib/` (the jars from `build_java.sh`) and `clang/` (from
   `stage_clang.sh`, the compiler the arm64 translation uses). The JDK is not
   copied: the runtime uses `<out>/jre` if present, else `WINAPK_JAVA_HOME` or
-  `JAVA_HOME`.
+  `JAVA_HOME`. A plain JDK works, but without class-data sharing (the run log
+  says `cds: off`): the patch classes need `--patch-module` there.
+- `bake_jre.sh <jdk> <lib dir> <out>` makes the JRE releases ship (`<out>/jre`):
+  a jlink image of the JDK's jmods (needs a full JDK 21) with the module list
+  the framework needs, `--strip-debug`, and `<lib>`'s `java_base_patch` and
+  `jdk_unsupported_patch` built into `java.base` and `jdk.unsupported`, then
+  its default CDS archive (`bin/server/classes.jsa`). It records the patches'
+  digests in `lib/winapk-baked-patches`; a patch rebuilt later no longer
+  matches and the runtime applies it with `--patch-module` again (no CDS for
+  that run), so re-run the bake after `build_java.sh`. `WINAPK_JRE_COMPRESS`,
+  `WINAPK_JRE_MODULES`, and `WINAPK_JMOD`/`WINAPK_JLINK` (a Windows JDK's tools
+  under Wine, to bake on Linux) change it.
 - `build_java.sh [out]` builds upstream's Java side with a stock JDK 21:
   `android-framework.jar`, `macapk-loader.jar`, `winapk-tools.jar`, the
-  BouncyCastle provider, and the `java.base` and `jdk.unsupported` patches.
+  BouncyCastle provider (unsigned: class-data sharing skips a signed jar's
+  classes), the `java.base` and `jdk.unsupported` patches, and the framework
+  archive's class list.
   Android's own `org.apache.http.legacy` (Apache-2.0, converted to JVM classes
   in `thirdparty/apache-http-legacy/`) is unpacked into
   `android-framework.jar`, as upstream's build does.
@@ -197,6 +211,7 @@ The user-facing ones (`WINAPK_PHONE_SIZE`, `WINAPK_RESIZABLE`,
 | `WINAPK_USER_FOLDER_TARGETS` | Names the Windows folders the shared-storage junctions point at (tests) |
 | `MACAPK_USER_FOLDERS=0`, `HKCU\Software\Win.apk\UserFolders=0` | Turn the shared-storage mapping off (the setting is what the launcher writes) |
 | `MACAPK_JVM_OPTS` | Extra JVM options, passed through after Win.apk's own (`-XX:TieredStopAtLevel=4` brings back the C2 compiler, which the runtime leaves out for a faster start) |
+| `WINAPK_CDS=0` or `base` | Class-data sharing (`host/cds.h`): `0` back to the old flags (`--patch-module`, no archive), `base` the JRE's archive without the framework archive. `WINAPK_CDS_DIR=<dir>` puts the framework archive elsewhere (tests share one), `WINAPK_CDS_CLASSLIST=<file>` dumps from another class list (`none`: only the start's own), `WINAPK_CDS_RECORD_DIR=<dir>` writes every app start's loaded classes to `<dir>\<app>.classlist` (for `scripts/merge_classlists.py`), `WINAPK_CDS_VERIFY=1` checks the archive whole at every start, `WINAPK_CDS_DUMP_DELAY_MS` (default 10000) is the wait after the first frame before the background dump |
 | `MACAPK_QUIET_CLASSLOAD=0` | Logs a line for every class the app's class loader loads (the runtime sets it to 1, as upstream's launcher does: thousands of lines cost up to 0.4 s of a start) |
 | `MACAPK_ALL_PERMS_ASK=0` | Returns the permission groups beyond storage and location to the install-time rule (declared means held), the Mac's behaviour; `MACAPK_MEDIA_PERMS_ASK=0` and `MACAPK_ALLFILES_HONEST=0` keep their upstream meaning |
 | `MACAPK_GMS_PRESENT=0`, `MACAPK_GMS_FCM=0`, `MACAPK_GMS_SIGNIN=0`, `MACAPK_GMS_LOCATION=0`, `MACAPK_GMS_DIR` | Upstream's Play services switches and the state folder |
@@ -215,6 +230,7 @@ Every test is a program built by CMake; `ci.yml` runs each of them on
 |---|---|
 | `winapk-elfrun <poc.so> <poc_packed.so>` | Two builds of the Android test library (plain RELA, and APS2 + RELR) load and run: argument passing across the ABI boundary, RELATIVE and `R_X86_64_64` relocations, constructors, shim calls, stack-protected code on new threads, a guest comparator in host `qsort`, a host callback from guest code |
 | `winapk-aot-guard-test <scratch dir>` | The translation's crash guard (`host/aot_guard.h`) through the real crash path, each step a child process with `winapk-aot-guard-dll.dll` loaded as its translation: a fault with translated code loaded is counted, a clean run sets the count back, a crash with nothing translated loaded is not counted; after a fault and an `abort()` in a row the next start has translation off and logs the `off for this app` line naming the state file; two crashes on the JIT log `crashes on the JIT too: not the translation` and the next start turns it on for good; another build of the app, or deleting the file, starts over |
+| `winapk-cds-test <scratch dir>` | Class-data sharing's pure parts (`host/cds_util.h`): the patch digest equals `bake_jre.sh`'s recipe on the same files, which `--patch-module` flags a JRE's record lets go (a rebuilt patch and an unbaked module keep theirs), the archive's key and file stamps, the per-launch options, the class list merge |
 | `winapk-crash-test` | The crash path of `host/crash_report.cpp`: a child with a guest SIGSEGV handler that declines three times, then the report line with the faulting module and offset, a minidump (`MDMP`) in the logs folder, pruning to the last three |
 | `winapk-bluetooth-test` | The Bluetooth host's pure parts without a radio: SHA-1 against the FIPS vectors, the parameterized WinRT interface ids derived from type signatures against five published ones, UUID and address conversions, advertisement bytes |
 | `ScanRecordTest` (`test/java/`) | `ScanRecord`'s advertisement parser and `ScanFilter` against the built jars |
@@ -234,7 +250,7 @@ Every test is a program built by CMake; `ci.yml` runs each of them on
 | `test/java/FileSeparatorRewriteTest.java` | Guest code reads Android's `/` from `File.separator` while the JDK's own classes keep the backslash |
 | `winapk-binder-test <classpath> com.macapk.loader.BinderTransportTest` | `host/binder_win.cpp` between real JVMs in three processes (`test/java/com/macapk/loader/BinderTransportTest.java`): transact, the OS calling pid and the receiver-derived uid, oneway order, a nested callback, binder identity both ways, a Messenger and its replyTo with the sender's uid in `Message.sendingUid` and a PendingIntent's creator uid, fds both ways, death notification; then the system broker's checks: a process that is no installed app, or that claims another package, is refused, android:exported, the package uid; then the account service's Google accounts (`accounts` child, its own GmsStore folder): an account signed in or out by another process after the service started is mirrored into or removed from the accounts table, asked or not, with the master token as password and `GoogleUserId`, and a row it did not mirror stays |
 | `winapk-binder-test <classpath> FileShareDeleteTest` | java.io's opens as `host/java_io_open.cpp` binds them (`test/java/FileShareDeleteTest.java`, with the java.base overlay from `WINAPK_TEST_JAVA_BASE_PATCH`): a file renamed or deleted while a stream has it open, and renamed over a file a stream has open, as on Android; append, truncate, the `FileNotFoundException` text and the rest as the JDK has them |
-| Headless boot, window boot, service host, GMS CLI (CI steps) | The staged runtime boots the F-Droid Sudoku APK headless (30 frames) and in a window with a resize (`WINAPK_TEST_RESIZE=400x600`); started as a service host (`MACAPK_SERVICE_HOST=1`) and then opened, the open replaces the headless process and draws; `--gms selftest` and `--gms status` pass; `--verify-apk` answers 4 for a test-signed APK, 3 for an unsigned one and 1 for a file that is no app |
+| Headless boot, class-data sharing, window boot, service host, GMS CLI (CI steps) | The staged runtime boots the F-Droid Sudoku APK headless (30 frames); on the staged JRE, a first start records its classes and starts the framework archive's dump, and the next start maps it (`class-data sharing ON`); and in a window with a resize (`WINAPK_TEST_RESIZE=400x600`); started as a service host (`MACAPK_SERVICE_HOST=1`) and then opened, the open replaces the headless process and draws; `--gms selftest` and `--gms status` pass; `--verify-apk` answers 4 for a test-signed APK, 3 for an unsigned one and 1 for a file that is no app |
 
 The guest libraries are built with plain clang + lld (`test/build_guest.sh`,
 `test/build_e2e.sh`), so no NDK is needed; CI builds them on Ubuntu and
@@ -282,12 +298,18 @@ not by a few hundred ms at 150, on main as on branches. It runs as four shards o
 the ranked report is the run's summary, and the report, the logs and the last
 frames are the `compat-sweep` artifact. It fails nothing.
 
+`test/compat/startbench.py` measures starts instead: per app and per
+configuration (a JRE, environment variables, another staged runtime such as
+`main`'s), one first start and then warm starts taken in turns, timed from
+outside to the `first frame presented` line, with the working set and private
+bytes read then. `docs/research/startup-cds.md` has its numbers.
+
 ## CI and releases
 
 | Workflow | Trigger | What it does |
 |---|---|---|
 | `.github/workflows/ci.yml` | Pull requests touching `windows/` or `runtime/`; by hand; a push to `main` (build only) | The pipeline below |
-| `.github/workflows/windows-release.yml` | By hand only, with a tag such as `v0.2.0-preview` | Builds with `-DWINAPK_VERSION=<tag>`, stages, packages `Win.apk-windows-x64.zip` with a JRE and `package/README.txt`, smoke-tests the package (boots an APK headless), builds `Win.apk-Setup.exe` with Inno Setup, and publishes both as a GitHub pre-release with `package/RELEASE_NOTES.md` as the notes |
+| `.github/workflows/windows-release.yml` | By hand only, with a tag such as `v0.2.0-preview` | Builds with `-DWINAPK_VERSION=<tag>`, stages, packages `Win.apk-windows-x64.zip` with the JRE from `bake_jre.sh` and `package/README.txt`, smoke-tests the package (boots an APK headless), builds `Win.apk-Setup.exe` with Inno Setup, and publishes both as a GitHub pre-release with `package/RELEASE_NOTES.md` as the notes |
 
 `ci.yml`'s jobs, in the order they can start:
 
@@ -296,13 +318,13 @@ frames are the `compat-sweep` artifact. It fails nothing.
 | What changed | Ubuntu | | Reads the pull request's files: docs alone run nothing; `launcher/` or `package/` alone build and package but run no app; anything else runs everything. By hand, everything; a push to `main`, the build alone |
 | Guest libraries | Ubuntu | What changed | The x86_64 and arm64 test libraries and the end-to-end inputs (`test/build_guest.sh`, `test/build_e2e.sh`) |
 | Launcher check | Ubuntu | What changed | The launcher compiled with MinGW-w64, warnings as errors: an answer in about a minute |
-| Build | `windows-latest` | What changed | Every CMake target with MSYS2 CLANG64 through ccache (the cache is restored from the newest run, `main`'s for a pull request's first one), then `stage_runtime.sh build stage`. Uploads `winapk-binaries` (every exe) and `runtime-stage` |
+| Build | `windows-latest` | What changed | Every CMake target with MSYS2 CLANG64 through ccache (the cache is restored from the newest run, `main`'s for a pull request's first one), then `stage_runtime.sh build stage` and `bake_jre.sh` into `stage/jre`. Uploads `winapk-binaries` (every exe) and `runtime-stage` |
 | Unit tests | `windows-latest` | Guest libraries, Build | Every test program above, the arm64 AOT translation included |
 | Runtime tests | `windows-latest` | Guest libraries, Build | The tests that need the staged jars or ANGLE, the APK booted headless and in a window (`headless-boot` artifact), the GMS CLI |
-| App smoke test | `windows-latest` | Build | The ten apps of `test/compat/smoke.txt` (`--require-drew`): fails when one no longer draws (`smoke` artifact) |
-| Sweep 1/4 to 4/4 | `windows-latest` × 4 | Build | Only by hand, with "Full compatibility sweep": a quarter of the corpus each (`--shard`), each with its own APK cache |
+| App smoke test | `windows-latest` | Build | The ten apps of `test/compat/smoke.txt` (`--require-drew`) on the staged JRE with one framework archive made first (`--cds-prepare`): fails when one no longer draws (`smoke` artifact). The apps' classes, merged, are the `framework-classlist` artifact: copy it to `java/winapk-framework.classlist` when the framework or the smoke set has changed much |
+| Sweep 1/4 to 4/4 | `windows-latest` × 4 | Build | Only by hand, with "Full compatibility sweep": a quarter of the corpus each (`--shard`), each with its own APK cache, on the staged JRE with one framework archive (`--cds-prepare`) |
 | Sweep report | Ubuntu | Sweep | `sweep.py --merge`: the run's summary and the `compat-sweep` artifact |
-| Package | `windows-latest` | Build | The staged folder with a Temurin JRE (`winapk-preview`) and the installer (`winapk-setup`); beside the tests, not after them |
+| Package | `windows-latest` | Build | The staged folder with its JRE (`winapk-preview`) and the installer (`winapk-setup`); beside the tests, not after them |
 
 A new push to a pull request cancels its run in progress. Nothing is released
 automatically. The platform resource APK, ANGLE, the compile cache and the

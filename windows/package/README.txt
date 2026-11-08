@@ -16,7 +16,7 @@ puts it in the Start menu and opens .apk files with it. Windows SmartScreen
 warns because the preview is not code-signed: click "More info", then "Run
 anyway". Or unzip Win.apk-windows-x64.zip anywhere and start Win.apk.exe.
 
-Included: Java (Eclipse Temurin 21, the jre folder), ANGLE for graphics
+Included: Java (built from Eclipse Temurin 21, the jre folder), ANGLE for graphics
 (bin\libEGL.dll, bin\libGLESv2.dll), and the clang compiler that translates
 apps' ARM code for your processor (the clang folder). Web pages inside apps
 and Google sign-in use the Microsoft Edge WebView2 Runtime, which Windows 11

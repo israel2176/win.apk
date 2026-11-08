@@ -17,6 +17,8 @@
 //   winapk-runtime --verify-apk <app>   (the launcher's Google services setup: package and signer, below)
 //   winapk-runtime --java-main --jdk <dir> --cp <jar> <class> [args...]   (internal: run_java)
 //   winapk-runtime [--data <dir>] [--jdk <dir>] [--lib <dir>] --system   (the system broker, below)
+//   winapk-runtime [--data <dir>] [--jdk <dir>] [--lib <dir>] --cds-prepare   (the framework archive now, cds.h)
+//   winapk-runtime --cds-dump ...   (internal: the framework archive's background dump)
 //
 // --system runs upstream's system broker (com.macapk.loader.SystemServer: how
 // one app binds another's services, the real Google Play services among them,
@@ -50,6 +52,7 @@
 // its arguments in the ANSI code page.
 
 #include "aot_guard.h"
+#include "cds.h"
 #include "crash_report.h"
 #include "guest_libs.h"
 #include "host_natives.h"
@@ -94,6 +97,7 @@ struct Options {
     bool gms = false;     // --gms <subcommand> [args]: com.macapk.gms.GmsCli, no app
     std::vector<std::wstring> gms_args;
     bool system = false;  // --system: the system broker, no app
+    bool cds_prepare = false;  // --cds-prepare: make the framework archive (cds.h) and stop
     bool verify = false;  // --verify-apk <app>: com.winapk.tools.ApkCheck on `apk`, no app run
 };
 
@@ -234,6 +238,7 @@ bool create_vm(HMODULE jvm, std::vector<std::string>& opts, JavaVM** vm, JNIEnv*
         return false;
     }
     winapk::host::rearm_crash_report();  // HotSpot installed its own unhandled-exception filter
+    winapk::host::cds_vm_created(*vm, *env);
     return true;
 }
 
@@ -258,6 +263,7 @@ bool parse_args(int argc, wchar_t** argv, Options* o) {
         else if (a == L"--install-only") o->install_only = true;
         else if (a == L"--package-to") ok = value(&o->package_to);
         else if (a == L"--system") o->system = true;
+        else if (a == L"--cds-prepare") o->cds_prepare = true;
         else if (a == L"--verify-apk") {
             o->verify = true;
             ok = value(&o->apk);
@@ -271,13 +277,13 @@ bool parse_args(int argc, wchar_t** argv, Options* o) {
         } else ok = false;
         if (!ok) return false;
     }
-    return !o->apk.empty() || o->gms || o->system;
+    return !o->apk.empty() || o->gms || o->system || o->cds_prepare;
 }
 
 // Fills in whatever the command line left out, and checks it exists.
 bool resolve_paths(Options* o) {
     std::error_code ec;
-    if (!o->gms && !o->system) {
+    if (!o->gms && !o->system && !o->cds_prepare) {
         o->apk = fs::absolute(o->apk, ec);
         if (!fs::is_regular_file(o->apk, ec)) {
             std::fprintf(stderr, "[win.apk] no such APK: %s\n", utf8(o->apk.wstring()).c_str());
@@ -1508,6 +1514,10 @@ std::vector<std::string> jvm_options(const BootArgs& b) {
     // 60 fps on the same CPU (+7%, -1%). Long hot Java loops lose C2's peak;
     // MACAPK_JVM_OPTS=-XX:TieredStopAtLevel=4, read after this, restores it.
     v.push_back("-XX:TieredStopAtLevel=1");
+    // No hsperfdata file: HotSpot otherwise creates and maps a file per JVM in
+    // %TEMP%\hsperfdata_<user> for jps/jstat, which nothing here reads. 6 ms
+    // off creating the JVM (docs/research/startup-cds.md).
+    v.push_back("-XX:-UsePerfData");
     v.push_back("--enable-native-access=ALL-UNNAMED");
     v.push_back("--add-opens=java.base/java.io=ALL-UNNAMED");
     v.push_back("--add-opens=java.base/java.util=ALL-UNNAMED");
@@ -1564,6 +1574,10 @@ std::vector<std::string> jvm_options(const BootArgs& b) {
         if (j > i) v.push_back(extra.substr(i, j - i));
         i = j + 1;
     }
+    // Class-data sharing (cds.h): last, so its key sees MACAPK_JVM_OPTS too.
+    // Only an app's own start records the classes it loads.
+    winapk::host::cds_apply(&v, o.jdk, o.lib, o.data,
+                            o.install_only ? std::wstring() : b.app_dir.filename().wstring());
     return v;
 }
 
@@ -2078,6 +2092,7 @@ int wmain(int argc, wchar_t** argv) {
         }
     }
     if (argc > 1 && std::wstring(argv[1]) == L"--java-main") return java_main(argc, argv);
+    if (argc > 1 && std::wstring(argv[1]) == L"--cds-dump") return winapk::host::cds_dump_main(argc, argv);
     if (argc >= 3 && std::wstring(argv[1]) == L"--aot-translate") {
         fs::path cache;
         DWORD delay_s = 0;
@@ -2094,10 +2109,15 @@ int wmain(int argc, wchar_t** argv) {
                      "[--install-only] [--package-to <file>]\n"
                      "       winapk-runtime [--data <dir>] [--jdk <dir>] [--lib <dir>] --gms <subcommand> [args]\n"
                      "       winapk-runtime [--data <dir>] [--jdk <dir>] [--lib <dir>] --system\n"
-                     "       winapk-runtime [--data <dir>] [--jdk <dir>] [--lib <dir>] --verify-apk <app>\n");
+                     "       winapk-runtime [--data <dir>] [--jdk <dir>] [--lib <dir>] --verify-apk <app>\n"
+                     "       winapk-runtime [--data <dir>] [--jdk <dir>] [--lib <dir>] --cds-prepare\n");
         return 2;
     }
     if (!resolve_paths(&b.options)) return 2;
+    if (b.options.cds_prepare) {
+        jvm_options(b);  // the options, and with them the archive's key, an app's start would have
+        return winapk::host::cds_prepare();
+    }
     // A crash from here on also leaves logs\crash-<app>-<time>.dmp.
     winapk::host::set_crash_dump_location(b.options.data / "logs",
                                           b.options.apk.empty() ? L"runtime" : b.options.apk.stem().wstring());

@@ -12,6 +12,7 @@
 - Your PC's hardware for apps: webcam, microphone, location, Bluetooth, game controllers, and your Windows folders.
 - **Experimental:** Google's own Play services and Play Store, with a guided setup (Settings > Google account); Google Play opens inside the Win.apk window.
 - English and Hebrew, light and dark.
+- Apps start about a fifth sooner than in 0.8 and use about 30 MB less memory each: Win.apk ships its own, smaller Java runtime and keeps the Java classes every app loads ready to map, a file it makes in the background after the first app start.
 
 ## Known limitations
 - Apps with only 32-bit ARM (`armeabi-v7a`) code do not run.

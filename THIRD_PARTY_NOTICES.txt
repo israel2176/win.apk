@@ -39,9 +39,14 @@ is not affiliated with or endorsed by the Mac.apk project.
 
 Eclipse Temurin 21 (OpenJDK, HotSpot) -- jre\
 SPDX-License-Identifier: GPL-2.0-only WITH Classpath-exception-2.0
-Eclipse Adoptium's build of OpenJDK, unmodified. Its licence and the notices of
-every module ship in jre\legal\ (and jre\NOTICE). Source: https://adoptium.net/ ,
-https://openjdk.org/ .
+Built from Eclipse Adoptium's build of OpenJDK (its jmods) with jlink by
+windows/scripts/bake_jre.sh: a subset of its modules, debug information
+stripped, and a few classes of java.base and jdk.unsupported changed by
+Mac.apk and Win.apk compiled in (their source, under the same licence:
+runtime/java_base_patch, windows/java/java_base_patch and
+runtime/jdk_unsupported_patch in this repository). Its licence and the notices
+of every module ship in jre\legal\ (and jre\NOTICE). Source:
+https://adoptium.net/ , https://openjdk.org/ .
 
 ANGLE, SwiftShader and the Vulkan loader -- bin\libEGL.dll, bin\libGLESv2.dll,
 bin\vk_swiftshader.dll, bin\vulkan-1.dll; and bin\d3dcompiler_47.dll

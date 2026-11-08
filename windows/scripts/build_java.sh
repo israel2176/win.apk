@@ -6,12 +6,14 @@
 #   <out>/lib/android-framework.jar   the Android framework reimplementation
 #   <out>/lib/macapk-loader.jar       boot code, the DEX-to-JVM converter and
 #                                     apksig (thirdparty/apksig/README.md)
-#   <out>/lib/bcprov-jdk18on-1.79.jar the "BC" security provider Android has
+#   <out>/lib/bcprov-jdk18on-1.79.jar the "BC" security provider Android has (unsigned, below)
 #   <out>/lib/winapk-tools.jar        Windows-side helpers (windows/java)
 #   <out>/lib/java_base_patch/        classes patched into java.base (upstream's
 #                                     runtime/java_base_patch and Win.apk's
 #                                     windows/java/java_base_patch)
 #   <out>/lib/jdk_unsupported_patch/  classes patched into jdk.unsupported
+#   <out>/lib/winapk-framework.classlist  the classes the framework archive
+#                                     holds (host/cds.h; windows/java's copy)
 #
 #   windows/scripts/build_java.sh [out]       (default: windows/build/runtime)
 #
@@ -141,7 +143,21 @@ fi
 if [[ -d "$TMP/META-INF/services" ]]; then
     ( cd "$TMP" && "$JAR" --update --file "$LIB/macapk-loader.jar" META-INF/services )
 fi
-cp -f "$RT/thirdparty/bcprov-jdk18on-1.79.jar" "$LIB/"
+# bcprov, unsigned: its signature (an 800 KB manifest of per-entry digests and
+# a .SF/.DSA pair) only costs. Class-data sharing skips every class of a signed
+# jar, and the class loader parses the whole manifest when it defines the
+# first BC package. OpenJDK does not check a JCE provider's signature
+# (javax.crypto.ProviderVerifier is a no-op there), so nothing else changes.
+# Only the manifest's main section is kept.
+BC="$WORK/bcprov"
+rm -rf "$BC"
+mkdir -p "$BC/classes"
+( cd "$BC/classes" && "$JAR" -xf "$(native_path "$RT/thirdparty/bcprov-jdk18on-1.79.jar")" )
+awk '{ sub(/\r$/, "") } /^$/ { exit } { print }' "$BC/classes/META-INF/MANIFEST.MF" > "$BC/MANIFEST.MF"
+rm -f "$BC/classes/META-INF/MANIFEST.MF" "$BC"/classes/META-INF/*.SF "$BC"/classes/META-INF/*.DSA \
+    "$BC"/classes/META-INF/*.RSA "$BC"/classes/META-INF/*.EC
+rm -f "$LIB/bcprov-jdk18on-1.79.jar"
+"$JAR" --create --file "$LIB/bcprov-jdk18on-1.79.jar" --manifest "$BC/MANIFEST.MF" -C "$BC/classes" .
 
 # Our own helpers, kept out of upstream's jars.
 echo "[build_java] compiling windows/java..."
@@ -153,6 +169,12 @@ find "$HERE/../java" -name '*.java' -not -path '*/java_base_patch/*' | sort | na
 # AppMeta calls into the framework and the loader, compiled into $TMP above.
 "$JAVAC" -d "$TOOLS" --release 21 -cp "$(native_path "$TMP")" @"$WORK/tools.list"
 ( cd "$TOOLS" && "$JAR" --create --file "$LIB/winapk-tools.jar" . )
+
+# The class list of the framework archive (host/cds.h), made from the smoke
+# apps' starts by windows/scripts/merge_classlists.py.
+if [[ -f "$HERE/../java/winapk-framework.classlist" ]]; then
+    cp -f "$HERE/../java/winapk-framework.classlist" "$LIB/"
+fi
 
 echo "[build_java] $LIB/android-framework.jar"
 echo "[build_java] $LIB/macapk-loader.jar"

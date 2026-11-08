@@ -201,6 +201,9 @@ jobs:
         run: |
           export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
           windows/scripts/stage_runtime.sh build stage
+          # The Java runtime Win.apk ships: Temurin 21's modules with the patch
+          # classes baked in, so class-data sharing works (host/cds.h).
+          windows/scripts/bake_jre.sh "$JAVA_HOME" stage/lib stage/jre
       - uses: actions/upload-artifact@v4
         with:
           name: runtime-stage
@@ -274,6 +277,10 @@ jobs:
         run: |
           mkdir -p aot-guard-scratch
           ./build/winapk-aot-guard-test.exe "$(cygpath -w "$PWD/aot-guard-scratch")"
+      - name: Run the class-data sharing test (patch digest, archive key, class lists)
+        run: |
+          mkdir -p cds-scratch
+          ./build/winapk-cds-test.exe "$(cygpath -w "$PWD/cds-scratch")"
       - name: Run the Bionic shim test
         run: |
           mkdir -p bionic-scratch
@@ -439,6 +446,27 @@ jobs:
           timeout 600 ./stage/bin/winapk-runtime.exe --apk sudoku.apk --jdk "$JAVA_HOME" --data "$(cygpath -w "$PWD/appdata")" \
             > boot.log 2>&1 || { tail -n 200 boot.log; exit 1; }
           grep -E "first frame presented|frames presented" boot.log
+      - name: Class-data sharing on Win.apk's Java runtime
+        run: |
+          # The staged runtime with its own JRE (stage/jre, bake_jre.sh): the
+          # patches are baked in, so the JRE's archive maps. The first start
+          # has no framework archive yet: it records its classes and, at its
+          # exit, starts the background dump; the next start maps the archive.
+          export WINAPK_HEADLESS=1 WINAPK_HEADLESS_EXIT_AFTER_FRAMES=30
+          data="$(cygpath -w "$PWD/cdsdata")"
+          timeout 600 ./stage/bin/winapk-runtime.exe --apk sudoku.apk --data "$data" > cds1.log 2>&1 \
+            || { tail -n 200 cds1.log; exit 1; }
+          grep -F "cds: no framework archive" cds1.log
+          grep -F "class-data sharing ON" cds1.log
+          for i in $(seq 1 90); do ls cdsdata/cds/framework-*.jsa > /dev/null 2>&1 && break; sleep 2; done
+          cat cdsdata/cds/dump.log | tail -n 5
+          ls -la cdsdata/cds
+          timeout 600 ./stage/bin/winapk-runtime.exe --apk sudoku.apk --data "$data" > cds2.log 2>&1 \
+            || { tail -n 200 cds2.log; exit 1; }
+          grep -F "cds: framework archive" cds2.log
+          grep -F "class-data sharing ON" cds2.log
+          grep -E "frames presented" cds2.log
+          if grep -F "did not map" cds2.log; then exit 1; fi
       - name: Start an app the broker runs as a service host
         run: |
           # The broker starts an app headless, with no window, to serve another
@@ -549,9 +577,18 @@ jobs:
       - name: Boot the smoke set
         shell: pwsh
         run: |
-          python windows/test/compat/sweep.py --runtime stage --jdk "$env:JAVA_HOME" `
+          # On the staged JRE (stage/jre), with the framework archive made once
+          # and shared by the apps (WINAPK_CDS_DIR), as a user's data folder has
+          # it after the first app start. Each app's classes are recorded too,
+          # for the shipped class list (framework-classlist artifact).
+          $env:WINAPK_CDS_DIR = "$PWD\cds"
+          $env:WINAPK_CDS_RECORD_DIR = "$PWD\classlists"
+          ./stage/bin/winapk-runtime.exe --cds-prepare --data "$PWD\cds-prepare"
+          if ($LASTEXITCODE -ne 0) { Get-Content cds/dump.log -Tail 50; exit 1 }
+          python windows/test/compat/sweep.py --runtime stage `
             --apks apk-cache --out smoke --frames 150 --timeout 180 `
             --only-from windows/test/compat/smoke.txt --require-drew
+          python windows/scripts/merge_classlists.py framework.classlist (Get-ChildItem classlists/*.classlist)
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -560,6 +597,13 @@ jobs:
             smoke/report.md
             smoke/logs/
             smoke/frames/
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          # windows/java/winapk-framework.classlist, made again: copy it there
+          # when the framework or the smoke set changes much.
+          name: framework-classlist
+          path: framework.classlist
 
   sweep:
     # The compatibility sweep (windows/test/compat/sweep.py): every app of
@@ -596,7 +640,11 @@ jobs:
       - name: Run the sweep
         shell: pwsh
         run: |
-          python windows/test/compat/sweep.py --runtime stage --jdk "$env:JAVA_HOME" `
+          # The staged JRE and one framework archive for all apps, as in the smoke test.
+          $env:WINAPK_CDS_DIR = "$PWD\cds"
+          ./stage/bin/winapk-runtime.exe --cds-prepare --data "$PWD\cds-prepare"
+          if ($LASTEXITCODE -ne 0) { Get-Content cds/dump.log -Tail 50; exit 1 }
+          python windows/test/compat/sweep.py --runtime stage `
             --apks apk-cache --out sweep --frames 300 --timeout 180 --shard ${{ matrix.shard }}/4
       - uses: actions/upload-artifact@v4
         if: always()
@@ -650,14 +698,9 @@ jobs:
         with:
           name: runtime-stage
           path: stage
-      - name: Add a Java runtime, the README and the licences
+      - name: Add the README and the licences
         run: |
-          curl.exe -sSfL -o jre.zip "https://api.adoptium.net/v3/binary/latest/21/ga/windows/x64/jre/hotspot/normal/eclipse"
-          New-Item -ItemType Directory jre-unpacked | Out-Null
-          # Windows' own tar (bsdtar) reads zip; Git's GNU tar, if first on PATH, does not.
-          & "$env:SystemRoot\System32\tar.exe" -xf jre.zip -C jre-unpacked
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Move-Item (Get-ChildItem jre-unpacked)[0].FullName stage/jre
+          # The Java runtime is already there: the build baked it (stage/jre).
           Copy-Item windows/package/README.txt, THIRD_PARTY_NOTICES.txt stage/
           Copy-Item LICENSE stage/LICENSE.txt
           if (-not (Test-Path stage/jre/bin/server/jvm.dll)) { exit 1 }

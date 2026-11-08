@@ -27,9 +27,9 @@ namespace {
 std::mutex g_lock;
 std::set<uint64_t> g_reported;  // one report per faulting address
 
-// set_crash_hook's, called once (the first of the crash paths a dying process
+// set_crash_hook's, each called once (the first of the crash paths a dying process
 // goes through: HotSpot's fatal error handler may follow the unhandled filter).
-CrashHook g_crash_hook = nullptr;
+CrashHook g_crash_hooks[4] = {};
 std::atomic<bool> g_crash_noted{false};
 // The last fault report_fault reported, for a crash that ends elsewhere
 // (HotSpot's fatal error handler names no guest module).
@@ -37,7 +37,9 @@ char g_last_fault[512];
 
 void note_crash(const char* what) {
     if (g_crash_noted.exchange(true)) return;
-    if (g_crash_hook) g_crash_hook(what);
+    for (CrashHook hook : g_crash_hooks) {
+        if (hook) hook(what);
+    }
 }
 
 // ---- minidumps ------------------------------------------------------------------
@@ -375,7 +377,14 @@ void rearm_crash_report() {
     if (previous != report_unhandled) g_previous_filter = previous;
 }
 
-void set_crash_hook(CrashHook hook) { g_crash_hook = hook; }
+void set_crash_hook(CrashHook hook) {
+    for (CrashHook& slot : g_crash_hooks) {
+        if (!slot || slot == hook) {
+            slot = hook;
+            return;
+        }
+    }
+}
 
 void crash_report_fatal(const char* who) {
     char what[768];

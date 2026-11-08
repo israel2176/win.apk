@@ -79,16 +79,15 @@ issue has none yet; please open one before working on it.
 
 | # | Gap | Effect | Issue |
 |---|---|---|---|
-| 1 | Start-up time | Apps start slowly even after their first run: the Java VM starts with no class-data cache | [#70](https://github.com/israel2176/win.apk/issues/70) |
-| 2 | OpenSL ES | Games whose engine plays sound through OpenSL ES are silent | |
-| 3 | The NDK media API, `MediaExtractor`, Opus/Vorbis/FLAC in `MediaCodec` | Video from native code does not play; some streams play without sound | |
-| 4 | 32-bit ARM code (`armeabi-v7a`) | Apps that ship only 32-bit ARM libraries do not run at all | |
-| 5 | Vulkan | Games that need Vulkan do not draw | |
-| 6 | Notification action buttons | Reply, mark as read and similar buttons are missing | |
-| 7 | Multi-touch | Pinch-to-zoom and two-finger gestures cannot be made | |
-| 8 | Code signing | SmartScreen and some antivirus programs warn about the downloads | |
-| 9 | Real sensors | PCs with an accelerometer cannot steer tilt games | |
-| 10 | Bluetooth: discovery, pairing, GATT server, profiles | Apps that pair devices themselves or act as a Bluetooth peripheral | |
+| 1 | OpenSL ES | Games whose engine plays sound through OpenSL ES are silent | |
+| 2 | The NDK media API, `MediaExtractor`, Opus/Vorbis/FLAC in `MediaCodec` | Video from native code does not play; some streams play without sound | |
+| 3 | 32-bit ARM code (`armeabi-v7a`) | Apps that ship only 32-bit ARM libraries do not run at all | |
+| 4 | Vulkan | Games that need Vulkan do not draw | |
+| 5 | Notification action buttons | Reply, mark as read and similar buttons are missing | |
+| 6 | Multi-touch | Pinch-to-zoom and two-finger gestures cannot be made | |
+| 7 | Code signing | SmartScreen and some antivirus programs warn about the downloads | |
+| 8 | Real sensors | PCs with an accelerometer cannot steer tilt games | |
+| 9 | Bluetooth: discovery, pairing, GATT server, profiles | Apps that pair devices themselves or act as a Bluetooth peripheral | |
 
 ## The automated sweep
 

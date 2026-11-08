@@ -46,7 +46,9 @@ void set_crash_dump_location(const std::filesystem::path& dir, const std::wstrin
 // handler (crash_report_fatal). Not for a normal exit, a kill
 // (TerminateProcess, the launcher's Stop) or a fault someone handled.
 // `what` says what and where, one line. The crash guard (aot_guard.h) counts
-// crashes through it. Runs before the minidump is written.
+// crashes through it, and class-data sharing (cds.h) checks its archive whole
+// again after one. Runs before the minidump is written. Up to four hooks, in
+// the order they were set.
 using CrashHook = void (*)(const char* what);
 void set_crash_hook(CrashHook hook);
 

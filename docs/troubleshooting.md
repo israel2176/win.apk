@@ -92,6 +92,8 @@ before it is `run-<app>.1.log`). The most useful lines:
 | `Exception` or `FATAL` | The app crashed; the lines after it say where |
 | `[win.apk] crash:` and `crash dump:` | The app's native code crashed. A minidump was written next to the log (`crash-<app>-<time>.dmp`): attach it too |
 | `[win.apk] arm64 AOT: off for this app` | An ARM-only app crashed twice with its translation, so it runs on the JIT ([details](arm-apps.md#if-an-arm-app-crashes)) |
+| `[win.apk] cds:` and `[cds]` | Class-data sharing: which archives the start maps, and HotSpot's reason when one does not map (Win.apk then deletes it and makes it again; the start goes on without it). `WINAPK_CDS=0` turns it off |
+| `[win.apk] startup:` | When the Java VM was up and when the first frame came, with the memory then |
 | `[win.apk]` | Any other message from Win.apk itself |
 
 The [user guide](USER_GUIDE.md#logs) lists every log file.

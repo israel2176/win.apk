@@ -47,7 +47,9 @@ they are closed.
 
 ## What happens when you open it
 
-- **The Java side** runs on a standard Java VM (Eclipse Temurin 21, included)
+- **The Java side** runs on a standard Java VM (built from Eclipse Temurin 21,
+  included; the Java classes every app loads are kept ready to map, so starts
+  after the first are quicker)
   against a re-implementation of Android's framework (the Activity, View,
   Resources... classes), which comes from Mac.apk.
 - **The native side** (`.so` libraries in the APK) is loaded by Win.apk's own
