@@ -372,6 +372,11 @@ every such change is listed here:
   (an `<include>`'s root with `addView(view)`, as `parseInclude` does), so a
   ViewGroup overriding one overload sees the one a device calls (the Play
   Store's install sheet).
+- `runtime/java/android/content/ContentResolver.java`, `SystemClient.java`,
+  `SystemServer.java`: with Google services on, `notifyChange` reaches the
+  `ContentObserver`s of other processes through the broker (AOSP's
+  `ContentService`, by authority), so the Play Store sees the Services
+  Framework's settings change when a check-in finishes after it started.
 - `runtime/java/com/macapk/loader/ViewDump.java` (new),
   `ViewCanvasDriver.java`: `WINAPK_DUMP_VIEWS=1` logs the top window's views
   with their bounds after each frame that changed them, for tests that drive

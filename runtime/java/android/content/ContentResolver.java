@@ -615,13 +615,25 @@ public class ContentResolver {
             }
         }
     }
-    public final void notifyChange(Uri uri, ContentObserver observer) { macapkNotify(uri, observer); }
-    public final void notifyChange(Uri uri, ContentObserver observer, boolean syncToNetwork) { macapkNotify(uri, observer); }
-    public final void notifyChange(Uri uri, ContentObserver observer, int flags) { macapkNotify(uri, observer); }
+    public final void notifyChange(Uri uri, ContentObserver observer) { macapkNotifyAll(uri, observer); }
+    public final void notifyChange(Uri uri, ContentObserver observer, boolean syncToNetwork) { macapkNotifyAll(uri, observer); }
+    public final void notifyChange(Uri uri, ContentObserver observer, int flags) { macapkNotifyAll(uri, observer); }
+    /** Win.apk: the observers here, then (through the broker, when Google
+     *  services' broker runs) those of other processes, as ContentService
+     *  reaches every process on a device. */
+    private static void macapkNotifyAll(Uri uri, ContentObserver self) {
+        macapkNotify(uri, self);
+        try { com.macapk.loader.SystemClient.notifyRemote(uri); } catch (Throwable ignored) {}
+    }
+    /** Win.apk: another process's notifyChange, delivered by the broker. */
+    public static void macapkNotifyFromOtherProcess(Uri uri) { macapkNotify(uri, null); }
     public final void registerContentObserver(Uri uri, boolean notifyForDescendents,
                                               ContentObserver observer) {
         if (observer != null) sObservers.add(new Object[]{ observer,
             uri != null ? uri.toString() : "", notifyForDescendents });
+        if (observer != null && uri != null) {
+            try { com.macapk.loader.SystemClient.observeRemote(uri.getAuthority()); } catch (Throwable ignored) {}
+        }
     }
     public final void registerContentObserver(Uri uri, boolean notifyForDescendents,
                                               ContentObserver observer, int userHandle) {

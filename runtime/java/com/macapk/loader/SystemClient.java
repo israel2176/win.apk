@@ -235,6 +235,7 @@ public final class SystemClient {
             sSystem = sys;
             if (WinProcesses.available()) MacApkBinderTransport.setUidResolver(SystemClient::uidOfPid);
             SystemAccounts.registerOwnAuthenticators(app);
+            for (String a : sObserved) sendObserve(sys, a);
             NativeLog.i(TAG, "attached " + sProcess + " to " + systemName()
                       + (isServiceHost() ? " (service host: no activity)" : ""));
         } catch (Throwable t) {
@@ -276,6 +277,16 @@ public final class SystemClient {
                     catch (Throwable t) { NativeLog.w(TAG, "broadcast " + intent + " threw " + t); }
                     finally { android.content.Context.MACAPK_FROM_OTHER_APP.set(Boolean.FALSE); }
                 });
+                return true;
+            }
+            if (code == SystemServer.TX_SCHEDULE_NOTIFY) {
+                data.enforceInterface(SystemServer.THREAD_DESCRIPTOR);
+                String uri = data.readString();
+                // ContentService.notifyChange's callback into this process: the
+                // observers here that match (ContentObserver.dispatchChange posts
+                // to each one's own handler).
+                if (uri != null) android.content.ContentResolver.macapkNotifyFromOtherProcess(
+                        android.net.Uri.parse(uri));
                 return true;
             }
             if (code == SystemServer.TX_SCHEDULE_START) {
@@ -740,5 +751,57 @@ public final class SystemClient {
             catch (Throwable ignored) {}
         }
         return true;
+    }
+
+    // ---- ContentObserver across processes (AOSP ContentService) ------------
+    //
+    // On a device ContentResolver.registerContentObserver hands the observer's
+    // binder to ContentService in system_server, and notifyChange goes there
+    // too, which calls back every matching observer in any process. Here the
+    // broker keeps which authorities each process observes; a notifyChange is
+    // delivered here first (ContentResolver) and then forwarded, and the broker
+    // calls the processes that observe that authority, whose ContentResolver
+    // does the exact uri matching. Play services' Gservices provider notifies
+    // content://com.google.android.gsf.gservices when a check-in changes the
+    // device's settings, and the Play Store drops its cached copy on that.
+
+    private static final java.util.Set<String> sObserved = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /** registerContentObserver's cross-process half: tell the broker this
+     *  process observes `authority` (once; again after attach). */
+    public static void observeRemote(String authority) {
+        if (authority == null || authority.isEmpty() || !sObserved.add(authority)) return;
+        IBinder sys = sSystem;
+        if (sys != null) sendObserve(sys, authority);
+    }
+
+    private static void sendObserve(IBinder sys, String authority) {
+        Parcel d = Parcel.obtain();
+        try {
+            d.writeInterfaceToken(SystemServer.DESCRIPTOR);
+            d.writeString(sPackage);
+            d.writeString(sProcess);
+            d.writeString(authority);
+            sys.transact(SystemServer.TX_OBSERVE, d, null, IBinder.FLAG_ONEWAY);
+        } catch (Throwable t) {
+            NativeLog.w(TAG, "observe " + authority + " failed: " + t);
+        } finally { d.recycle(); }
+    }
+
+    /** notifyChange's cross-process half: the broker tells the other processes
+     *  observing the uri's authority (oneway). */
+    public static void notifyRemote(android.net.Uri uri) {
+        IBinder sys = sSystem;
+        if (sys == null || uri == null || uri.getAuthority() == null) return;
+        Parcel d = Parcel.obtain();
+        try {
+            d.writeInterfaceToken(SystemServer.DESCRIPTOR);
+            d.writeString(sPackage);
+            d.writeString(sProcess);
+            d.writeString(uri.toString());
+            sys.transact(SystemServer.TX_NOTIFY_CHANGE, d, null, IBinder.FLAG_ONEWAY);
+        } catch (Throwable t) {
+            NativeLog.w(TAG, "notifyChange forward failed: " + t);
+        } finally { d.recycle(); }
     }
 }

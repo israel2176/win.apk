@@ -17,8 +17,10 @@
 // window; large results ride the transport's out-of-line path. A file crosses
 // as a real file descriptor (openFile -> ParcelFileDescriptor -> Mach fileport).
 //
-// LIMITS (stated): ContentObserver / notifyChange do not cross processes yet;
-// a Cursor is a snapshot, not a live window; permission enforcement is the
+// ContentObserver / notifyChange cross processes through the broker by
+// authority (SystemClient.observeRemote / notifyRemote).
+//
+// LIMITS (stated): a Cursor is a snapshot, not a live window; permission enforcement is the
 // broker's android:exported check plus the provider's own.
 package com.macapk.loader;
 

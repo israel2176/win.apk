@@ -147,6 +147,13 @@ public final class SystemServer {
     /** Win.apk: the calling uid of a pid (pid) -> uid, -1 when that process is
      *  no registered app; asked by an app the pid called (SystemClient.uidOfPid). */
     static final int TX_UID_OF_PID = IBinder.FIRST_CALL_TRANSACTION + 21;
+    /** ContentService.registerContentObserver, by authority: (pkg, proc,
+     *  authority), oneway. */
+    static final int TX_OBSERVE = IBinder.FIRST_CALL_TRANSACTION + 22;
+    /** ContentService.notifyChange: (pkg, proc, uri), oneway; the broker calls
+     *  TX_SCHEDULE_NOTIFY on every other process that observes the authority. */
+    static final int TX_NOTIFY_CHANGE = IBinder.FIRST_CALL_TRANSACTION + 23;
+    static final int TX_SCHEDULE_NOTIFY = IBinder.FIRST_CALL_TRANSACTION + 16;
     static final int TX_SCHEDULE_BIND = IBinder.FIRST_CALL_TRANSACTION + 10;
     static final int TX_ACQUIRE_PROVIDER = IBinder.FIRST_CALL_TRANSACTION + 11;
     static final int TX_SCHEDULE_START = IBinder.FIRST_CALL_TRANSACTION + 12;
@@ -715,6 +722,28 @@ public final class SystemServer {
                     if (reply != null) reply.writeNoException();
                     return true;
                 }
+                case TX_OBSERVE: {
+                    data.enforceInterface(DESCRIPTOR);
+                    String caller = callerPackage(data.readString());
+                    String proc = data.readString();
+                    String authority = data.readString();
+                    if (proc != null && authority != null && (proc.equals(caller) || proc.startsWith(caller + ":")
+                            || ownsProcess(caller, proc))) {
+                        observers.computeIfAbsent(proc, k -> java.util.concurrent.ConcurrentHashMap.newKeySet())
+                                .add(authority);
+                    }
+                    if (reply != null) reply.writeNoException();
+                    return true;
+                }
+                case TX_NOTIFY_CHANGE: {
+                    data.enforceInterface(DESCRIPTOR);
+                    callerPackage(data.readString());
+                    String proc = data.readString();
+                    String uri = data.readString();
+                    if (uri != null) notifyObservers(proc, uri);
+                    if (reply != null) reply.writeNoException();
+                    return true;
+                }
                 case TX_BIND: {
                     data.enforceInterface(DESCRIPTOR);
                     String caller = callerPackage(data.readString());
@@ -738,6 +767,38 @@ public final class SystemServer {
                 }
             }
             return super.onTransact(code, data, reply, flags);
+        }
+    }
+
+    /** Which authorities each process (by name) has a ContentObserver on. */
+    private final Map<String, java.util.Set<String>> observers = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** A process name of `pkg`'s (its android:process values). */
+    private boolean ownsProcess(String pkg, String proc) {
+        for (AppRecord r : processesOf(pkg)) if (r.proc.equals(proc)) return true;
+        return false;
+    }
+
+    /** AOSP ContentService.notifyChange: every observer of the uri, in every
+     *  process but the notifier's (which has told its own). Matched by
+     *  authority here; the receiving ContentResolver matches the uri. */
+    private void notifyObservers(String fromProc, String uri) {
+        String authority;
+        try { authority = android.net.Uri.parse(uri).getAuthority(); } catch (Throwable t) { return; }
+        if (authority == null) return;
+        for (Map.Entry<String, java.util.Set<String>> e : observers.entrySet()) {
+            if (e.getKey().equals(fromProc) || !e.getValue().contains(authority)) continue;
+            AppRecord app;
+            synchronized (this) { app = running.get(e.getKey()); }
+            if (app == null || !app.thread.isBinderAlive()) continue;
+            Parcel d = Parcel.obtain();
+            try {
+                d.writeInterfaceToken(THREAD_DESCRIPTOR);
+                d.writeString(uri);
+                app.thread.transact(TX_SCHEDULE_NOTIFY, d, null, IBinder.FLAG_ONEWAY);
+            } catch (Throwable t) {
+                log("notifyChange " + uri + " -> " + app.proc + " FAILED: " + t);
+            } finally { d.recycle(); }
         }
     }
 
