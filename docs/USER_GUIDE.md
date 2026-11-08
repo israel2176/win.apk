@@ -106,8 +106,8 @@ When an app has only 64-bit ARM libraries, Win.apk's translator
 for your CPU into a DLL next to the library. Nothing waits for this: the app
 starts at once on an ARM64 JIT, which is slower, and each library switches to
 its translation as soon as it is ready, even while the app is running. A
-library of up to 3 million instructions (nearly every app's) is translated
-whole, once. A larger one (a browser's engine) is translated only where the
+library of up to 1 million instructions (most apps') is translated
+whole, once. A larger one (a browser's engine, a big app's own code) is translated only where the
 app's code actually ran, once what ran has settled (the app has been quiet
 for a minute, or you closed it), and more as you use the app, at most once
 an hour, so the first runs of a big app are the slow ones; its details page

@@ -583,8 +583,8 @@ bool install_app(Options* o, const fs::path& android_root) {
 // library whole took most of an hour (libwaze.so, 1.5M instructions), and the
 // app waited for it. Now nothing waits: the app starts on the JIT while a
 // background process (this program, --aot-translate) does the work.
-// A library of up to kAotFullBelow instructions (3 million: Waze's 2 million
-// is about half an hour of one core, once, then shared) is translated whole;
+// A library of up to kAotFullBelow instructions (1 million: about a quarter
+// of an hour of one core, once, then shared) is translated whole;
 // a larger one only where its profile says code ran (arm64_aot.h,
 // "Profiles"), and again when the profile has grown by a quarter, at least
 // 200 lines, and no sooner than kAotMinIntervalS after the last time. Parts
@@ -655,7 +655,7 @@ bool install_app(Options* o, const fs::path& android_root) {
 // are unique and stale ones deleted). windows/test/aot_cache_test.cpp and
 // test/aot_worker/run_aot_worker_wine.sh race and kill them.
 
-constexpr size_t kAotFullBelow = 3000000;
+constexpr size_t kAotFullBelow = 1000000;
 constexpr int64_t kAotMinIntervalS = 3600;  // between two translations of a library from its profile
 constexpr size_t kAotPartInsns = 20000;
 constexpr uintmax_t kAotCacheBytes = uintmax_t{2} << 30;
