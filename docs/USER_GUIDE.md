@@ -298,7 +298,7 @@ its own. Each setting takes effect the next time an app opens unless noted.
 | Apps | **Optimize ARM apps in the background** (on) | Translates the code of ARM-only apps for your PC, at the lowest priority. Off: no translation is started, one under way stops before its next part (and goes on where it was once this is on again), and translations already made are still used. See [ARM-only apps](#arm-only-apps) |
 | Apps | **Desktop shortcut for new apps** | Every app gets a Start menu shortcut; this adds one on the desktop too |
 | Apps | **Open .apk, .apkm, .xapk and .apks files with Win.apk** | Makes Win.apk the default program for the four formats |
-| Google account | **Sign in**, **Add another account**, **Sign out**; **Use Google services (experimental)** (off) | See [Google account](#google-account) |
+| Google account | **Sign in**, **Add another account**, **Sign out**; **Use Google services (experimental)** (off), and with it on **Google services setup** | See [Google account](#google-account) and [Setting up Google's apps](#setting-up-googles-apps) |
 | Troubleshooting | **Logs** | Opens the `logs` folder in Explorer, to attach files to a bug report |
 | Troubleshooting | **App data** | Opens `%LOCALAPPDATA%\Win.apk` |
 | Troubleshooting | **Clear library** | Uninstalls every app and removes its shortcuts (app data is kept) |
@@ -480,6 +480,43 @@ there is no sandbox between apps on Windows. In-app purchases and Play
 Integrity still do not work. The broker's log is `logs\system.log`, its
 services' logs are in `logs\services`.
 
+With Google services on, Google sees this PC as a device of its own, named
+for what it is: brand, maker and model "Win.apk", device and product
+"winapk", hardware "x86_64". Win.apk never claims to be a real phone or a
+Google device. (Before this version the device called itself "Mac.apk", so
+anyone who had already used Google services meets it as a new device once.)
+
+#### Setting up Google's apps
+
+Win.apk never downloads Google's apps itself. **Google services setup**
+guides you through it. It opens by itself when you turn **Use Google
+services** on and the three apps are not all installed, and it is reached
+again from **Google Play** in the navigation pane (while they are missing) or
+the **Google services setup** row under the switch. It has a row for each
+app: Google Services Framework (`com.google.android.gsf`), Google Play
+services (`com.google.android.gms`) and Google Play Store
+(`com.android.vending`), each either ticked with the installed version or
+with **Download**. **Download** opens the app's page on APKMirror in your
+browser; pick the variant the row names (x86_64 or nodpi, for Android 10 or
+later) and use APKMirror's own download button.
+
+While the page is open, Win.apk watches your Downloads folder. A new `.apk`,
+`.apkm`, `.xapk` or `.apks` file there, or one you drop on the page, is
+checked first (`winapk-runtime --verify-apk`): which app it is, and whether
+its signature verifies and was made with Google's key (or a newer Google key
+that took over from it). Only one of the three apps that Google signed is
+installed, the same way as a file dropped on the library, and its row is
+ticked. A file whose signature does not verify, or that someone other than
+Google signed, is refused with the reason; other downloads are left alone.
+Once all three are installed the page says Google services are ready. From
+then on the Play Store updates itself and Play services, as on a phone. The
+checks are logged in `logs\google-setup.log`.
+
+**Google Play**, under **Store** in the navigation pane while Google services
+are on, opens the real Play Store in its own window, the same as opening it
+from the library, once the three apps are installed; until then it opens the
+setup page.
+
 Google sign-in needs the WebView2 Runtime (a 2022 or later version). Without
 it the sign-in is cancelled and the log says why.
 
@@ -551,6 +588,7 @@ and the launch window open the right log themselves when something fails.
 | `last-run.log` | The app opened most recently (a second name for its `run-<app>.log`) |
 | `install-<app>.log` | That app's install or update |
 | `gms.log` | The Google account operations run from the settings |
+| `google-setup.log` | The checks of the Google services setup |
 | `system.log`, `services\` | With Google services on: the system broker, and the apps it starts for other apps |
 | `install-helper.log`, `package-backfill.log` | Installs an app itself asked for (F-Droid installing another app), and library maintenance |
 | `hs_err_pid<n>.log` | A crash report from the Java VM, if the VM itself crashed |
@@ -615,6 +653,7 @@ The runtime can also be run directly, for testing:
 ```bat
 bin\winapk-runtime.exe --apk <file.apk|.apkm|.xapk|.apks> [--data <dir>] [--jdk <dir>] [--lib <dir>] [--install-only]
 bin\winapk-runtime.exe [--data <dir>] [--jdk <dir>] [--lib <dir>] --gms <command> [args]
+bin\winapk-runtime.exe [--data <dir>] [--jdk <dir>] [--lib <dir>] --verify-apk <file>
 ```
 
 | Option | Meaning |
@@ -625,10 +664,12 @@ bin\winapk-runtime.exe [--data <dir>] [--jdk <dir>] [--lib <dir>] --gms <command
 | `--lib` | The folder with the framework jars (default: `lib` next to `bin`) |
 | `--install-only` | Install and convert the app, write its icon and name, and exit |
 | `--gms <command>` | Run a Google Play services command with no app: `status`, `selftest`, `accounts`, `signin-window`, `signin-master` (an account from its e-mail and master token on standard input, for tests), `signout`, `checkin`, `license <package> <versionCode>`, `gcmtoken <package>` and the rest of `com.macapk.gms.GmsCli` |
+| `--verify-apk <file>` | Print an app file's package and whether its signature verifies and Google signed it (`PACKAGE`, `VERIFIED`, `REASON`, `SCHEME`, `LINEAGE`, `GOOGLE` lines), as the Google services setup asks |
 
 Exit codes: 0 done, 2 wrong arguments, 3 when `--install-only` finds the app
 running. `--gms` exits 0 done, 1 error (an `ERROR` line on standard output),
-2 cancelled or wrong arguments.
+2 cancelled or wrong arguments. `--verify-apk` exits 0 signed by Google, 4
+signed by another key, 3 the signature does not verify, 1 not an app.
 
 Environment variables the launcher and the runtime read:
 

@@ -80,6 +80,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cwctype>
+#include <deque>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -115,8 +116,11 @@ constexpr UINT kGmsAccount = WM_APP + 12;     // lParam: new std::wstring (the s
 constexpr UINT kUpdateChecked = WM_APP + 13;  // lParam: new UpdateCheck (the check, with its result)
 constexpr UINT kUpdateProgress = WM_APP + 14; // wParam: percent of Win.apk-Setup.exe downloaded
 constexpr UINT kUpdateDownloaded = WM_APP + 15;  // wParam: ok (complete and checked)
+constexpr UINT kSetupChanged = WM_APP + 16;   // the Downloads folder changed while the Google services setup is open
+constexpr UINT kSetupChecked = WM_APP + 17;   // lParam: new SetupCheck (winapk-runtime --verify-apk's answer)
 constexpr UINT_PTR kInfoBarTimer = 2;  // the InfoBar closes itself
 constexpr UINT_PTR kUpdateTimer = 3;   // hourly: is the daily update check due?
+constexpr UINT_PTR kSetupScanTimer = 4;  // the Downloads folder settled: look for new files in it
 constexpr ULONG_PTR kCopyOpen = 0x57415031;  // WM_COPYDATA from another start of Win.apk.exe (forward_to_running)
 constexpr UINT_PTR kAnimTimer = 1;
 constexpr int kIdSearch = 100;
@@ -213,6 +217,31 @@ const wchar_t* tr(const wchar_t* en) {
         {L"App data", L"נתוני אפליקציות"},
         {L"Google account", L"חשבון Google"},
         {L"Use Google services (experimental)", L"שימוש בשירותי Google (ניסיוני)"},
+        {L"Google Play", L"Google Play"},
+        {L"Download", L"הורדה"},
+        {L"Google services setup", L"הגדרת שירותי Google"},
+        {L"Play services, Services Framework and Play Store are installed.", L"שירותי Play,\x200F Services Framework וחנות Play מותקנים."},
+        {L"Install Play services, Services Framework and Play Store from their downloads.", L"התקנת שירותי Play,\x200F Services Framework וחנות Play מההורדות שלהם."},
+        {L"Google Play services", L"שירותי Google Play"},
+        {L"Google Play Store", L"חנות Google Play"},
+        {L"Pick the newest version for Android 10 or later.", L"יש לבחור בגרסה החדשה ביותר ל-Android 10 ומעלה."},
+        {L"Pick the x86_64 variant, nodpi, for Android 10 or later.", L"יש לבחור בגרסת x86_64,\x200F nodpi, ל-Android 10 ומעלה."},
+        {L"Pick the nodpi variant, for Android 10 or later.", L"יש לבחור בגרסת nodpi, ל-Android 10 ומעלה."},
+        {L"The file could not be checked", L"לא ניתן היה לבדוק את הקובץ"},
+        {L"Win.apk's runtime did not start.", L"סביבת ההרצה של Win.apk לא הופעלה."},
+        {L"{0} is not one of Google's three apps. To add another app, drop it on the library.", L"{0} אינו אחת משלוש האפליקציות של Google. כדי להוסיף אפליקציה אחרת, יש לשחרר אותה בספרייה."},
+        {L"The signature of {0} does not verify, so the file may have been changed after it was signed. Download it again from APKMirror.", L"החתימה של {0} אינה תקפה, ולכן ייתכן שהקובץ שונה אחרי שנחתם. יש להוריד אותו שוב מ-APKMirror."},
+        {L"{0} is not signed by Google, so Win.apk does not trust it as Google's app. Download it from the APKMirror page that Download opens.", L"{0} אינו חתום על ידי Google, ולכן Win.apk לא סומכת עליו כאפליקציה של Google. יש להוריד אותו מדף APKMirror שנפתח בלחיצה על „הורדה”."},
+        {L"Google services are ready", L"שירותי Google מוכנים"},
+        {L"From now on the Play Store keeps itself and Play services up to date, as on a phone.", L"מעכשיו חנות Play מעדכנת את עצמה ואת שירותי Play, כמו בטלפון."},
+        {L"Waiting for the downloads", L"ממתין להורדות"},
+        {L"Checking {0}…", L"בודק את {0}…"},
+        {L"Download each app below with APKMirror's own download button. While this page is open, Win.apk watches your Downloads folder ({0}) and installs a file once it has checked that Google signed it. You can also drop a file here.", L"יש להוריד כל אפליקציה שלמטה בלחצן ההורדה של APKMirror עצמו. כל עוד הדף הזה פתוח, Win.apk עוקבת אחר תיקיית ההורדות ({0}) ומתקינה קובץ אחרי שבדקה ש-Google חתמה עליו. אפשר גם לשחרר כאן קובץ."},
+        {L"Google's apps", L"האפליקציות של Google"},
+        {L"Installed, {0}", L"מותקנת, {0}"},
+        {L"Not installed.", L"לא מותקנת."},
+        {L"Win.apk does not download Google's apps itself: APKMirror's download button does, in your browser. Only files that Google signed are installed; any other file is refused.", L"Win.apk לא מורידה בעצמה את האפליקציות של Google: לחצן ההורדה של APKMirror עושה זאת, בדפדפן. רק קבצים ש-Google חתמה עליהם מותקנים; כל קובץ אחר נדחה."},
+        {L"Win.apk checks that Google signed it, then installs it", L"Win.apk בודקת ש-Google חתמה עליו, ואז מתקינה אותו"},
         {L"Runs the Google Play services, Services Framework and Play Store you install yourself, as apps other "
          L"apps can reach. Only copies signed by Google are trusted. Takes effect when an app starts.",
          L"מפעיל את Google Play services, ‏Services Framework ו-Play Store שהתקנת בעצמך, כאפליקציות שאפליקציות "
@@ -2618,10 +2647,13 @@ bool g_focus_visible = false;  // the selection was reached with the keyboard: i
 
 // The library and the store share the window's scrolling (the store alone has the search box);
 // the view not shown keeps its own query and scroll position here.
-enum View { kLibraryView, kStoreView, kSettingsView, kAppView, kStoreAppView } g_view = kLibraryView;
+enum View { kLibraryView, kStoreView, kSettingsView, kAppView, kStoreAppView, kGmsSetupView } g_view = kLibraryView;
 void set_view(View view);
 std::map<View, std::wstring> g_queries;  // the search of a grid view not shown
 std::map<View, float> g_scrolls;         // and its scroll position
+bool g_setup_from_settings = false;      // the Google services setup was opened from Settings (it goes back there)
+bool google_services_on();
+void open_google_play();
 
 struct StoreState {
     std::vector<StoreApp> apps;  // the catalog, the most recently updated first
@@ -2635,10 +2667,10 @@ struct StoreState {
     std::set<std::string> icon_wait;                                       // being fetched
 } g_store;
 
-// What the mouse is over. kHitNav's `tile` is the pane's item: 0 Library, 1 Store, 2 Settings.
+// What the mouse is over. kHitNav's `tile` is the pane's item: 0 Library, 1 Store, 2 Settings, 3 Google Play.
 enum HitKind { kHitNone, kHitNav, kHitAdd, kHitClear, kHitRefresh, kHitTile, kHitThumb, kHitTrack, kHitCategory,
                kHitCard, kHitCardButton, kHitRetry, kHitInfoClose, kHitInfoLink, kHitBack, kHitPage, kHitAccount };
-enum NavItem { kNavLibrary, kNavStore, kNavSettings };
+enum NavItem { kNavLibrary, kNavStore, kNavSettings, kNavPlay, kNavCount };
 struct Hit {
     HitKind kind = kHitNone;
     int tile = -1;
@@ -2652,7 +2684,7 @@ float g_thumb_y0 = 0, g_thumb_scroll0 = 0;
 // the content layer beside it, with the page's title and toolbar above the
 // grid, or a page (Settings, an app's details) in its place.
 struct Layout {
-    RectF rail, nav[3], content, title, account, search, clear, add, category, refresh, grid, drop, retry, infobar,
+    RectF rail, nav[kNavCount], content, title, account, search, clear, add, category, refresh, grid, drop, retry, infobar,
         info_close, info_link;  // info_link: measured when the InfoBar is painted
     bool compact = false;  // a narrow window: the pane shows icons only
     int cols = 1;
@@ -2885,12 +2917,14 @@ void compute_layout() {
     const float W = static_cast<float>(rc.right), H = static_cast<float>(rc.bottom);
     const bool store = g_view == kStoreView;
 
-    // The pane: the brand row, Library and Store, Settings at the bottom.
+    // The pane: the brand row, Library and Store (and Google Play under it while Google services are on),
+    // Settings at the bottom.
     g_l.compact = W < px(900);
     const float rail_w = g_l.compact ? px(56) : px(200);
     g_l.rail = RectF(0, 0, rail_w, H);
     const float item_h = px(36), item_w = rail_w - px(16);
     for (int i = 0; i < 2; ++i) g_l.nav[i] = RectF(px(8), px(60) + i * (item_h + px(4)), item_w, item_h);
+    g_l.nav[kNavPlay] = google_services_on() ? RectF(px(8), px(60) + 2 * (item_h + px(4)), item_w, item_h) : RectF();
     g_l.nav[kNavSettings] = RectF(px(8), g_l.rail.GetBottom() - px(12) - item_h, item_w, item_h);
 
     // The content layer: the title block with the toolbar's controls at its end, the grid below.
@@ -3051,12 +3085,14 @@ const App* selected() { return g_selected.empty() ? nullptr : find_app(g_selecte
 // The empty library's drop card is shown when nothing is installed or queued.
 bool empty_library() { return g_view == kLibraryView && g_tiles.empty(); }
 
-bool page_view() { return g_view == kSettingsView || g_view == kAppView || g_view == kStoreAppView; }
+bool page_view() {
+    return g_view == kSettingsView || g_view == kAppView || g_view == kStoreAppView || g_view == kGmsSetupView;
+}
 
 Hit hit_test(float x, float y) {
     const bool store = g_view == kStoreView;
-    for (int i = 0; i < 3; ++i) {
-        if (contains(g_l.nav[i], x, y)) return {kHitNav, i};
+    for (int i = 0; i < kNavCount; ++i) {
+        if (g_l.nav[i].Width > 0 && contains(g_l.nav[i], x, y)) return {kHitNav, i};
     }
     if (!g_status.empty() && contains(g_l.infobar, x, y)) {
         if (!g_status_link.empty() && contains(g_l.info_link, x, y)) return {kHitInfoLink, -1};
@@ -3112,12 +3148,17 @@ void paint_rail(Graphics& g) {
         const wchar_t* glyph;
         const wchar_t* label;
     };
-    const Item items[] = {{kGlyphLibrary, L"Library"}, {kGlyphStore, L"Store"}, {kGlyphSettings, L"Settings"}};
-    for (int i = 0; i < 3; ++i) {
+    const Item items[] = {{kGlyphLibrary, L"Library"}, {kGlyphStore, L"Store"}, {kGlyphSettings, L"Settings"},
+                          {kGlyphPlay, L"Google Play"}};
+    for (int i = 0; i < kNavCount; ++i) {
         const RectF& it = g_l.nav[i];
+        if (it.Width <= 0) continue;  // Google Play while Google services are off
+        // The setup page belongs to Google Play when that opened it, and to Settings when its switch did.
+        const bool setup = g_view == kGmsSetupView;
         const bool on = (i == kNavLibrary && (g_view == kLibraryView || g_view == kAppView)) ||
                         (i == kNavStore && (g_view == kStoreView || g_view == kStoreAppView)) ||
-                        (i == kNavSettings && g_view == kSettingsView);
+                        (i == kNavSettings && (g_view == kSettingsView || (setup && g_setup_from_settings))) ||
+                        (i == kNavPlay && setup && !g_setup_from_settings);
         const bool hot = g_hot.kind == kHitNav && g_hot.tile == i;
         if (on || hot) fill_round(g, it, px(kRadiusControl), mix(g_t.bg, g_t.text, on ? 0.07f : 0.04f));
         if (on) fill_round(g, RectF(it.X, it.Y + (it.Height - px(16)) / 2, px(3), px(16)), px(1.5f), g_t.accent);
@@ -3452,8 +3493,9 @@ void paint_drop_overlay(Graphics& g) {
     const float cy = r.Y + r.Height / 2;
     draw_text(g, kGlyphDownload, g_f.glyph48.get(), g_t.accent, RectF(r.X, cy - px(76), r.Width, px(60)), kCenter);
     draw_text(g, tr(L"Drop to install"), g_f.title.get(), g_t.text, RectF(r.X, cy - px(8), r.Width, px(30)), kCenter);
-    draw_text(g, tr(L"Win.apk keeps its own copy, so the downloaded file can be deleted"), g_f.body.get(), g_t.text2,
-              RectF(r.X, cy + px(24), r.Width, px(24)), kCenter);
+    draw_text(g, tr(g_view == kGmsSetupView ? L"Win.apk checks that Google signed it, then installs it"
+                                            : L"Win.apk keeps its own copy, so the downloaded file can be deleted"),
+              g_f.body.get(), g_t.text2, RectF(r.X, cy + px(24), r.Width, px(24)), kCenter);
 }
 
 // The InfoBar: what just happened, at the bottom of the content, until it closes itself (a success or a
@@ -4992,17 +5034,17 @@ void append_gms_errors(const std::string& out) {
     CloseHandle(f);
 }
 
-// Runs winapk-runtime --gms <args>, its stdout into *out (UTF-8, as the
-// runtime's manifest makes the code page) and its stderr into logs\gms.log.
-// The exit code, or -1 when it did not start.
-int run_gms(const std::wstring& args, std::wstring* out) {
+// Runs winapk-runtime <args>, its stdout into *out (UTF-8, as the runtime's
+// manifest makes the code page) and its stderr into `log`. The exit code, or
+// -1 when it did not start; *raw (if asked) gets stdout's bytes.
+int run_runtime_captured(const std::wstring& args, std::wstring* out, const fs::path& log, std::string* raw = nullptr) {
     std::error_code ec;
     fs::create_directories(logs_dir(), ec);
     SECURITY_ATTRIBUTES sa{sizeof(sa), nullptr, TRUE};
     HANDLE read = nullptr, write = nullptr;
     if (!CreatePipe(&read, &write, &sa, 0)) return -1;
     SetHandleInformation(read, HANDLE_FLAG_INHERIT, 0);
-    HANDLE err = CreateFileW(gms_log().c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_DELETE, &sa, CREATE_ALWAYS,
+    HANDLE err = CreateFileW(log.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_DELETE, &sa, CREATE_ALWAYS,
                              FILE_ATTRIBUTE_NORMAL, nullptr);
     STARTUPINFOW si{};
     si.cb = sizeof(si);
@@ -5010,7 +5052,7 @@ int run_gms(const std::wstring& args, std::wstring* out) {
     si.hStdOutput = write;
     si.hStdError = err != INVALID_HANDLE_VALUE ? err : write;
     si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
-    std::wstring cmd = L"\"" + runtime_exe().wstring() + L"\" --gms " + args;
+    std::wstring cmd = L"\"" + runtime_exe().wstring() + L"\" " + args;
     PROCESS_INFORMATION pi{};
     const BOOL ok = CreateProcessW(nullptr, &cmd[0], nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr,
                                    root().c_str(), &si, &pi);
@@ -5025,8 +5067,15 @@ int run_gms(const std::wstring& args, std::wstring* out) {
     CloseHandle(read);
     if (!ok) return -1;
     if (out) *out = utf8_to_wide(bytes);
+    if (raw) *raw = bytes;
     CloseHandle(pi.hThread);
-    const int code = static_cast<int>(wait_exit(pi.hProcess));
+    return static_cast<int>(wait_exit(pi.hProcess));
+}
+
+// Runs winapk-runtime --gms <args>: stderr into logs\gms.log, with the ERROR lines of stdout.
+int run_gms(const std::wstring& args, std::wstring* out) {
+    std::string bytes;
+    const int code = run_runtime_captured(L"--gms " + args, out, gms_log(), &bytes);
     append_gms_errors(bytes);
     return code;
 }
@@ -5126,6 +5175,9 @@ void google_signout(const std::wstring& account) {
     }
 }
 
+bool google_apps_ready();
+void show_gms_setup(bool from_settings);
+
 Section google_account_section() {
     Section sec{tr(L"Google account"), {}, L""};
     if (g_gms_busy) {
@@ -5150,12 +5202,316 @@ Section google_account_section() {
     gms.detail = tr(L"Runs the Google Play services, Services Framework and Play Store you install yourself, "
                     L"as apps other apps can reach. Only copies signed by Google are trusted. Takes effect "
                     L"when an app starts.");
-    gms.on = setting(L"GoogleServices", 0) != 0;
-    gms.act = [](int on) { set_setting(L"GoogleServices", static_cast<DWORD>(on)); };
+    gms.on = google_services_on();
+    gms.act = [](int on) {
+        set_setting(L"GoogleServices", static_cast<DWORD>(on));
+        rebuild_tiles();  // Google Play in the pane comes and goes with it
+        if (on && !google_apps_ready()) show_gms_setup(true);
+    };
     sec.rows.push_back(gms);
+    // The setup's one home is its page; this row only leads there.
+    if (gms.on) {
+        sec.rows.push_back(button_row(tr(L"Google services setup"),
+                                      google_apps_ready() ? tr(L"Play services, Services Framework and Play Store "
+                                                               L"are installed.")
+                                                          : tr(L"Install Play services, Services Framework and "
+                                                               L"Play Store from their downloads."),
+                                      tr(L"Open"), [] { show_gms_setup(true); }));
+    }
     sec.footer = tr(L"Sign-in takes place on Google's own page, in a separate window; Win.apk never sees your "
                     L"password. The account's tokens are stored only on this PC.");
     return sec;
+}
+
+
+// ---- Google services setup -----------------------------------------------------
+//
+// Google's own Play services, Services Framework and Play Store, which "Use Google services" runs, are the
+// user's to download: Win.apk never fetches or ships them (APKMirror forbids automated downloads, and copies
+// published here could be taken down). The page has a row per app with Download, which opens the app's
+// APKMirror page in the browser, where APKMirror's own button downloads it. While the page is open the
+// launcher watches the Downloads folder (and takes a file dropped on the page); a new app file is checked
+// by `winapk-runtime --verify-apk` (com.winapk.tools.ApkCheck: its package, and whether its signature
+// verifies and Google signed it, as the runtime checks it before it treats the app as Google's), and only
+// one of the three apps that Google signed is installed, through the same install as a dropped APK.
+
+struct GoogleApp {
+    const char* pkg;
+    const wchar_t* name;
+    const wchar_t* url;   // APKMirror's page for the app: the user picks the release and variant there
+    const wchar_t* pick;  // which variant to pick, in a sentence
+};
+const GoogleApp kGoogleApps[] = {
+    {"com.google.android.gsf", L"Google Services Framework",
+     L"https://www.apkmirror.com/apk/google-inc/google-services-framework/",
+     L"Pick the newest version for Android 10 or later."},
+    {"com.google.android.gms", L"Google Play services",
+     L"https://www.apkmirror.com/apk/google-inc/google-play-services/",
+     L"Pick the x86_64 variant, nodpi, for Android 10 or later."},
+    {"com.android.vending", L"Google Play Store", L"https://www.apkmirror.com/apk/google-inc/google-play-store/",
+     L"Pick the nodpi variant, for Android 10 or later."},
+};
+
+const GoogleApp* google_app(const std::string& pkg) {
+    for (const GoogleApp& a : kGoogleApps) {
+        if (pkg == a.pkg) return &a;
+    }
+    return nullptr;
+}
+
+bool google_services_on() { return setting(L"GoogleServices", 0) != 0; }
+
+// The library app that is this package, or null.
+const App* app_of_package(const std::string& pkg) {
+    const auto it = g_store.installed.find(pkg);
+    return it == g_store.installed.end() ? nullptr : find_app(it->second.first);
+}
+
+bool google_apps_ready() {
+    for (const GoogleApp& a : kGoogleApps) {
+        if (!app_of_package(a.pkg)) return false;
+    }
+    return true;
+}
+
+fs::path setup_log() { return logs_dir() / L"google-setup.log"; }
+
+// winapk-runtime --verify-apk's answer for one file.
+struct SetupCheck {
+    fs::path file;
+    bool dropped = false;  // dropped on the page: say why when it is not one of the three
+    int code = -1;
+    std::string pkg;
+    bool verified = false, google = false;
+    std::wstring reason;
+};
+
+struct SetupState {
+    fs::path folder;                                   // the Downloads folder being watched
+    HANDLE stop = nullptr, thread = nullptr;           // the watch thread and what ends it
+    std::map<std::wstring, std::pair<long long, uintmax_t>> seen;  // file: time and size already looked at
+    std::deque<std::pair<fs::path, bool>> queue;       // files to check, dropped or not
+    std::wstring checking;                             // the file being checked now
+    std::map<std::string, std::wstring> installing;    // package: the library name its install has
+} g_setup;
+
+DWORD WINAPI setup_watch_thread(void* param) {
+    std::unique_ptr<std::pair<fs::path, HANDLE>> p(static_cast<std::pair<fs::path, HANDLE>*>(param));
+    HANDLE change = FindFirstChangeNotificationW(p->first.c_str(), FALSE,
+                                                 FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_SIZE |
+                                                     FILE_NOTIFY_CHANGE_LAST_WRITE);
+    if (change == INVALID_HANDLE_VALUE) return 0;
+    HANDLE both[2] = {p->second, change};
+    while (WaitForMultipleObjects(2, both, FALSE, INFINITE) == WAIT_OBJECT_0 + 1) {
+        PostMessageW(g_main, kSetupChanged, 0, 0);
+        if (!FindNextChangeNotification(change)) break;
+    }
+    FindCloseChangeNotification(change);
+    return 0;
+}
+
+// Looks for app files in the Downloads folder that are new or changed since it was last looked at. The first
+// look (`snapshot`) only takes note: what was there before the page opened is the user's to drop.
+void setup_scan(bool snapshot) {
+    std::error_code ec;
+    bool busy = false;  // a file still being written: look again in a moment
+    for (fs::directory_iterator it(g_setup.folder, ec), end; !ec && it != end; it.increment(ec)) {
+        const fs::path& p = it->path();
+        std::error_code fe;
+        if (!it->is_regular_file(fe) || !is_app_file(p)) continue;
+        const std::pair<long long, uintmax_t> stamp{
+            static_cast<long long>(fs::last_write_time(p, fe).time_since_epoch().count()), fs::file_size(p, fe)};
+        const auto old = g_setup.seen.find(p.wstring());
+        if (old != g_setup.seen.end() && old->second == stamp) continue;
+        if (!snapshot) {
+            // A browser renames its download into place once it is whole; another program may still be writing.
+            HANDLE f = CreateFileW(p.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
+            if (f == INVALID_HANDLE_VALUE) {
+                busy = true;
+                continue;
+            }
+            CloseHandle(f);
+            g_setup.queue.emplace_back(p, false);
+        }
+        g_setup.seen[p.wstring()] = stamp;
+    }
+    if (busy && g_main) SetTimer(g_main, kSetupScanTimer, 2000, nullptr);
+}
+
+// Starts or stops watching the Downloads folder: it is watched only while the setup page is shown.
+void setup_watch(bool on) {
+    if (on == (g_setup.thread != nullptr)) return;
+    if (!on) {
+        SetEvent(g_setup.stop);
+        WaitForSingleObject(g_setup.thread, 2000);
+        CloseHandle(g_setup.thread);
+        CloseHandle(g_setup.stop);
+        g_setup.thread = g_setup.stop = nullptr;
+        if (g_main) KillTimer(g_main, kSetupScanTimer);
+        return;
+    }
+    g_setup.folder = known_folder(FOLDERID_Downloads);
+    if (g_setup.folder.empty()) return;
+    g_setup.seen.clear();
+    setup_scan(true);
+    g_setup.stop = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    g_setup.thread = g_setup.stop ? CreateThread(nullptr, 0, setup_watch_thread,
+                                                 new std::pair<fs::path, HANDLE>(g_setup.folder, g_setup.stop), 0,
+                                                 nullptr)
+                                  : nullptr;
+    if (!g_setup.thread && g_setup.stop) {
+        CloseHandle(g_setup.stop);
+        g_setup.stop = nullptr;
+    }
+}
+
+DWORD WINAPI setup_check_thread(void* param) {
+    auto* c = static_cast<SetupCheck*>(param);
+    std::wstring out;
+    c->code = run_runtime_captured(L"--verify-apk " + gms_arg(c->file.wstring()), &out, setup_log());
+    for (size_t at = 0; at < out.size();) {
+        size_t end = out.find(L'\n', at);
+        if (end == std::wstring::npos) end = out.size();
+        std::wstring line = out.substr(at, end - at);
+        at = end + 1;
+        if (!line.empty() && line.back() == L'\r') line.pop_back();
+        const size_t tab = line.find(L'\t');
+        if (tab == std::wstring::npos) continue;
+        const std::wstring key = line.substr(0, tab), value = line.substr(tab + 1);
+        if (key == L"PACKAGE") c->pkg = wide_to_utf8(value);
+        else if (key == L"VERIFIED") c->verified = value == L"1";
+        else if (key == L"GOOGLE") c->google = value == L"1";
+        else if (key == L"REASON") c->reason = value;
+    }
+    if (!PostMessageW(g_main, kSetupChecked, 0, reinterpret_cast<LPARAM>(c))) delete c;
+    return 0;
+}
+
+// Checks the next file in the queue, one at a time.
+void setup_next() {
+    if (!g_setup.checking.empty() || g_setup.queue.empty()) return;
+    auto* c = new SetupCheck;
+    c->file = g_setup.queue.front().first;
+    c->dropped = g_setup.queue.front().second;
+    g_setup.queue.pop_front();
+    g_setup.checking = c->file.filename().wstring();
+    HANDLE t = CreateThread(nullptr, 0, setup_check_thread, c, 0, nullptr);
+    if (t) {
+        CloseHandle(t);
+    } else {
+        delete c;
+        g_setup.checking.clear();
+    }
+    if (g_view == kGmsSetupView) rebuild_page();
+}
+
+// A file dropped on the setup page.
+void setup_offer(const fs::path& file) {
+    g_setup.queue.emplace_back(file, true);
+    setup_next();
+}
+
+// The check's answer: install the file when it is one of the three apps and Google signed it, else say why.
+void setup_checked(std::unique_ptr<SetupCheck> c) {
+    g_setup.checking.clear();
+    if (g_view == kGmsSetupView) rebuild_page();  // no longer "Checking" behind a refusal's dialog
+    const GoogleApp* app = google_app(c->pkg);
+    const std::wstring file = c->file.filename().wstring();
+    if (c->code < 0) {
+        error_with_log(tr(L"The file could not be checked"), tr(L"Win.apk's runtime did not start."), setup_log());
+    } else if (!app) {
+        // A download of something else is none of the page's business; a file dropped on it is.
+        if (c->dropped) {
+            info(fmt(L"{0} is not one of Google's three apps. To add another app, drop it on the library.", {file}),
+                 kError);
+        }
+    } else if (!c->verified) {
+        error_with_log(fmt(L"{0} was not installed", {tr(app->name)}),
+                       fmt(L"The signature of {0} does not verify, so the file may have been changed after it was "
+                           L"signed. Download it again from APKMirror.",
+                           {file}) +
+                           (c->reason.empty() ? L"" : L"\n\x200E" + c->reason),
+                       setup_log());
+    } else if (!c->google) {
+        error_with_log(fmt(L"{0} was not installed", {tr(app->name)}),
+                       fmt(L"{0} is not signed by Google, so Win.apk does not trust it as Google's app. Download "
+                           L"it from the APKMirror page that Download opens.",
+                           {file}),
+                       setup_log());
+    } else {
+        const std::wstring name = install_name(c->file);
+        g_setup.installing[c->pkg] = name;
+        install(c->file, name);
+    }
+    if (g_view == kGmsSetupView) rebuild_page();
+    setup_next();
+}
+
+std::vector<Section> gms_setup_sections() {
+    std::vector<Section> out;
+    const bool ready = google_apps_ready();
+    Section state{L"", {}, L""};
+    if (ready) {
+        Row r = text_row(tr(L"Google services are ready"), tr(L"Ready"),
+                         tr(L"From now on the Play Store keeps itself and Play services up to date, as on a phone."));
+        r.check = true;
+        state.rows.push_back(r);
+    } else {
+        const std::wstring folder = g_setup.folder.empty() ? known_folder(FOLDERID_Downloads).wstring()
+                                                           : g_setup.folder.wstring();
+        state.rows.push_back(text_row(
+            g_setup.checking.empty() ? tr(L"Waiting for the downloads") : fmt(L"Checking {0}…", {g_setup.checking}),
+            L"",
+            fmt(L"Download each app below with APKMirror's own download button. While this page is open, Win.apk "
+                L"watches your Downloads folder ({0}) and installs a file once it has checked that Google signed "
+                L"it. You can also drop a file here.",
+                {g_rtl ? L"\x200E" + folder + L"\x200E" : folder})));  // a path reads left to right
+    }
+    out.push_back(std::move(state));
+
+    Section apps{tr(L"Google's apps"), {}, L""};
+    for (const GoogleApp& a : kGoogleApps) {
+        const App* app = app_of_package(a.pkg);
+        const auto inst = g_setup.installing.find(a.pkg);
+        if (app) {
+            const std::vector<std::string> p = package_of(app->name);
+            const std::wstring v = p.size() > 2 && !p[2].empty() ? utf8_to_wide(p[2]) : L"";
+            Row r = text_row(tr(a.name), v.empty() ? std::wstring(tr(L"Installed")) : fmt(L"Installed, {0}", {v}),
+                             utf8_to_wide(a.pkg));
+            r.check = true;
+            apps.rows.push_back(r);
+        } else if (inst != g_setup.installing.end() && is_pending(inst->second)) {
+            apps.rows.push_back(text_row(tr(a.name), tr(L"Installing…"), utf8_to_wide(a.pkg)));
+        } else {
+            const wchar_t* url = a.url;
+            apps.rows.push_back(button_row(tr(a.name), tr(L"Not installed.") + std::wstring(L" ") + tr(a.pick),
+                                           tr(L"Download"), [url] {
+                                               ShellExecuteW(nullptr, L"open", url, nullptr, nullptr, SW_SHOWNORMAL);
+                                           }));
+        }
+    }
+    apps.footer = tr(L"Win.apk does not download Google's apps itself: APKMirror's download button does, in your "
+                     L"browser. Only files that Google signed are installed; any other file is refused.");
+    out.push_back(std::move(apps));
+    return out;
+}
+
+// The setup page: from Settings (its back arrow returns there) or from Google Play in the pane.
+void show_gms_setup(bool from_settings) {
+    Page p;
+    p.title = tr(L"Google services setup");
+    p.back = from_settings;
+    p.from = kSettingsView;
+    p.build = gms_setup_sections;
+    g_setup_from_settings = from_settings;
+    open_page(kGmsSetupView, std::move(p));
+}
+
+// Google Play in the pane: the Play Store in its own window once the three apps are installed, else the setup.
+void open_google_play() {
+    const App* store = app_of_package("com.android.vending");
+    if (store && google_apps_ready()) launch(*store);
+    else show_gms_setup(false);
 }
 
 // ---- Software updates ----------------------------------------------------------
@@ -6362,6 +6718,7 @@ std::wstring log_title(const fs::path& p) {
         return fmt(L"{0}  ·  install", {label_of(stem.substr(8))});
     }
     if (stem == L"gms") return tr(L"Google sign-in");
+    if (stem == L"google-setup") return tr(L"Google services setup");
     if (stem == L"install-helper") return tr(L"Installs asked for by apps");
     return stem;
 }
@@ -7031,7 +7388,8 @@ public:
     }
     HRESULT STDMETHODCALLTYPE DragEnter(IDataObject* data, DWORD, POINTL, DWORD* effect) override {
         accept_ = !dropped_files(data).empty();
-        if (accept_) set_view(kLibraryView);  // the drop overlay is the library's
+        // The drop overlay is the library's; the Google services setup takes its files itself.
+        if (accept_ && g_view != kGmsSetupView) set_view(kLibraryView);
         set_over(accept_);
         *effect = accept_ ? DROPEFFECT_COPY : DROPEFFECT_NONE;
         return S_OK;
@@ -7048,7 +7406,10 @@ public:
         set_over(false);
         *effect = accept_ ? DROPEFFECT_COPY : DROPEFFECT_NONE;
         if (accept_) {
-            for (const fs::path& p : dropped_files(data)) install(p);
+            for (const fs::path& p : dropped_files(data)) {
+                if (g_view == kGmsSetupView) setup_offer(p);
+                else install(p);
+            }
         }
         return S_OK;
     }
@@ -7157,7 +7518,10 @@ std::wstring tooltip_text(const Hit& h) {
     switch (h.kind) {
         case kHitNav:
             if (!g_l.compact) return L"";
-            return tr(h.tile == kNavLibrary ? L"Library" : h.tile == kNavStore ? L"Store" : L"Settings");
+            return tr(h.tile == kNavLibrary ? L"Library"
+                      : h.tile == kNavStore ? L"Store"
+                      : h.tile == kNavPlay  ? L"Google Play"
+                                            : L"Settings");
         case kHitClear: return tr(L"Clear the search");
         case kHitAccount:
             return g_account.empty() ? std::wstring(tr(L"Google account: not signed in"))
@@ -7232,6 +7596,7 @@ void set_view(View view) {
     }
     g_view = view;
     g_hot = {};
+    setup_watch(view == kGmsSetupView);
     if (grid_view(view)) {
         const float scroll = g_scrolls[view];
         SetWindowTextW(g_search, g_queries[view].c_str());  // its EN_CHANGE starts at the top; this view keeps its place
@@ -7269,6 +7634,7 @@ void apply_language() {
     create_tooltip();
     // A page holds its words: Settings (where the language is picked) is made again, a details page goes back.
     if (g_view == kSettingsView) show_settings();
+    else if (g_view == kGmsSetupView) show_gms_setup(g_setup_from_settings);
     else if (page_view()) set_view(g_page.from);
     else rebuild_tiles();
 }
@@ -7407,6 +7773,13 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (wp == kAnimTimer) InvalidateRect(hwnd, nullptr, FALSE);
             if (wp == kInfoBarTimer) info(L"", kInfo);
             if (wp == kUpdateTimer) auto_update_check();
+            if (wp == kSetupScanTimer) {
+                KillTimer(hwnd, kSetupScanTimer);
+                if (g_view == kGmsSetupView) {
+                    setup_scan(false);
+                    setup_next();
+                }
+            }
             return 0;
         case WM_LBUTTONDOWN: {
             SetFocus(hwnd);
@@ -7416,6 +7789,7 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             switch (h.kind) {
                 case kHitNav:
                     if (h.tile == kNavSettings) show_settings();
+                    else if (h.tile == kNavPlay) open_google_play();
                     else set_view(h.tile == kNavStore ? kStoreView : kLibraryView);
                     break;
                 case kHitAdd: add_from_dialog(); break;
@@ -7669,6 +8043,7 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 info(fmt(L"{0} could not be installed.", {job_label(*name)}), kError);
             }
             if (g_pending.empty()) g_job_labels.clear();
+            if (g_view == kGmsSetupView) rebuild_page();  // the app's row is ticked
             maybe_quit();
             return 0;
         }
@@ -7696,6 +8071,14 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
         case kRefresh:
             refresh();
+            if (g_view == kGmsSetupView) rebuild_page();
+            return 0;
+        case kSetupChanged:
+            // A download lands in several steps (a temporary name, then the real one): look once it settles.
+            SetTimer(hwnd, kSetupScanTimer, 1000, nullptr);
+            return 0;
+        case kSetupChecked:
+            setup_checked(std::unique_ptr<SetupCheck>(reinterpret_cast<SetupCheck*>(lp)));
             return 0;
         case kGmsDone: {
             std::unique_ptr<std::wstring> out(reinterpret_cast<std::wstring*>(lp));

@@ -14,6 +14,7 @@
 //
 //   winapk-runtime --apk <file.apk> [--data <dir>] [--jdk <dir>] [--lib <dir>] [--install-only]
 //   winapk-runtime --apk <app> --package-to <file>   (the launcher's install helper: the package name)
+//   winapk-runtime --verify-apk <app>   (the launcher's Google services setup: package and signer, below)
 //   winapk-runtime --java-main --jdk <dir> --cp <jar> <class> [args...]   (internal: run_java)
 //   winapk-runtime [--data <dir>] [--jdk <dir>] [--lib <dir>] --system   (the system broker, below)
 //
@@ -93,6 +94,7 @@ struct Options {
     bool gms = false;     // --gms <subcommand> [args]: com.macapk.gms.GmsCli, no app
     std::vector<std::wstring> gms_args;
     bool system = false;  // --system: the system broker, no app
+    bool verify = false;  // --verify-apk <app>: com.winapk.tools.ApkCheck on `apk`, no app run
 };
 
 std::string utf8(const std::wstring& w) {
@@ -256,6 +258,10 @@ bool parse_args(int argc, wchar_t** argv, Options* o) {
         else if (a == L"--install-only") o->install_only = true;
         else if (a == L"--package-to") ok = value(&o->package_to);
         else if (a == L"--system") o->system = true;
+        else if (a == L"--verify-apk") {
+            o->verify = true;
+            ok = value(&o->apk);
+        }
         else if (a == L"--gms") {
             // Everything after --gms belongs to the subcommand, verbatim, as
             // upstream's CliArgs::gms_args.
@@ -1483,7 +1489,7 @@ std::vector<std::string> jvm_options(const BootArgs& b) {
     std::vector<std::string> v;
     v.push_back("-Djava.class.path=" + jvm_path(o.lib / "android-framework.jar") + ";" +
                 jvm_path(o.lib / "macapk-loader.jar") + ";" + jvm_path(o.lib / "bcprov-jdk18on-1.79.jar") +
-                (o.install_only ? ";" + jvm_path(o.lib / "winapk-tools.jar") : std::string()));
+                (o.install_only || o.verify ? ";" + jvm_path(o.lib / "winapk-tools.jar") : std::string()));
     // Upstream's set (runtime/src/jvm_loader.cpp), minus the Mac-only parts.
     v.push_back("-Xrs");
     v.push_back("-Djava.library.path=");
@@ -1680,6 +1686,12 @@ int java_main(int argc, wchar_t** argv) {
 // wrong arguments. The process exits without a VM shutdown, as upstream: a
 // sign-in run has WebView2's processes behind it and nothing needs a shutdown
 // hook (GmsStore writes its file on every mutation).
+//
+// winapk-runtime --verify-apk <app> runs here too, with winapk-tools.jar on
+// the class path: com.winapk.tools.ApkCheck prints the file's package and
+// whether its signature verifies and Google signed it (the launcher's Google
+// services setup installs only such a file). Exit codes: 0 Google-signed,
+// 4 another signer, 3 does not verify, 1 not an app, 2 usage.
 DWORD WINAPI gms_thread(void* param) {
     auto* b = static_cast<BootArgs*>(param);
     const Options& o = b->options;
@@ -1703,18 +1715,21 @@ DWORD WINAPI gms_thread(void* param) {
     macapk::sqlite::RegisterNativeSqliteMethods(env);
     check_exception(env, "RegisterNativeSqliteMethods");
 
-    jclass cli = env->FindClass("com/macapk/gms/GmsCli");
+    // --verify-apk is the same shape: com.winapk.tools.ApkCheck.run(String[])int, on the one file.
+    const char* cls_name = o.verify ? "com/winapk/tools/ApkCheck" : "com/macapk/gms/GmsCli";
+    const std::vector<std::wstring> cli_args = o.verify ? std::vector<std::wstring>{o.apk.wstring()} : o.gms_args;
+    jclass cli = env->FindClass(cls_name);
     jmethodID run = cli ? env->GetStaticMethodID(cli, "run", "([Ljava/lang/String;)I") : nullptr;
     if (!run) {
-        check_exception(env, "GmsCli.run lookup");
-        std::fprintf(stderr, "ERROR\tcom.macapk.gms.GmsCli.run(String[])int is missing from the framework jars\n");
+        check_exception(env, "run lookup");
+        std::fprintf(stderr, "ERROR\t%s.run(String[])int is missing from the jars\n", cls_name);
         std::fflush(stderr);
         TerminateProcess(GetCurrentProcess(), 1);
     }
-    jobjectArray args = env->NewObjectArray(static_cast<jsize>(o.gms_args.size()), env->FindClass("java/lang/String"),
+    jobjectArray args = env->NewObjectArray(static_cast<jsize>(cli_args.size()), env->FindClass("java/lang/String"),
                                             nullptr);
-    for (size_t i = 0; i < o.gms_args.size(); ++i) {
-        env->SetObjectArrayElement(args, static_cast<jsize>(i), jstring_of(env, o.gms_args[i]));
+    for (size_t i = 0; i < cli_args.size(); ++i) {
+        env->SetObjectArrayElement(args, static_cast<jsize>(i), jstring_of(env, cli_args[i]));
     }
     jint rc = env->CallStaticIntMethod(cli, run, args);
     if (env->ExceptionCheck()) {
@@ -2076,7 +2091,8 @@ int wmain(int argc, wchar_t** argv) {
         std::fprintf(stderr, "usage: winapk-runtime --apk <file.apk|.apkm|.xapk|.apks> [--data <dir>] [--jdk <dir>] [--lib <dir>] "
                      "[--install-only] [--package-to <file>]\n"
                      "       winapk-runtime [--data <dir>] [--jdk <dir>] [--lib <dir>] --gms <subcommand> [args]\n"
-                     "       winapk-runtime [--data <dir>] [--jdk <dir>] [--lib <dir>] --system\n");
+                     "       winapk-runtime [--data <dir>] [--jdk <dir>] [--lib <dir>] --system\n"
+                     "       winapk-runtime [--data <dir>] [--jdk <dir>] [--lib <dir>] --verify-apk <app>\n");
         return 2;
     }
     if (!resolve_paths(&b.options)) return 2;
@@ -2143,7 +2159,8 @@ int wmain(int argc, wchar_t** argv) {
     }
 
     // --gms: a JVM, the GMS classes and no app. Before anything APK-shaped.
-    if (b.options.gms) {
+    // --verify-apk too: it only reads the file.
+    if (b.options.gms || b.options.verify) {
         SetEnvironmentVariableW(L"MACAPK_APK_PATH", nullptr);
         HANDLE t = CreateThread(nullptr, 64 * 1024 * 1024, gms_thread, &b, STACK_SIZE_PARAM_IS_A_RESERVATION,
                                 nullptr);
