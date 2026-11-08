@@ -173,6 +173,7 @@ const wchar_t* tr(const wchar_t* en) {
         {L"Installing {0}…", L"מתקין את {0}…"},
         {L"{0} is still being installed.", L"{0} עדיין בהתקנה."},
         {L"Remove {0}", L"הסרת {0}"},
+        {L"Remove {0}?", L"להסיר את {0}?"},  // an app asks to remove another (the install helper)
         {L"Remove", L"הסרה"},
         {L"{0} was removed.", L"{0} הוסרה."},
         {L"Done", L"סיום"},
