@@ -45,7 +45,7 @@ Any of these starts an install:
 - double-click an app file in Explorer (see [Shortcuts and file types](#shortcuts-and-file-types)).
   Only the install window opens, not the library;
 - drag one or more files onto the library window;
-- click **Add app** in the library's toolbar (or press Ctrl+O) and choose files;
+- click **Install app** in the library's toolbar (or press Ctrl+O) and choose files;
 - click **Install** on an app's card in the [Store](#the-store);
 - run `Win.apk.exe <file>` from a command line, which is the same as
   double-clicking it.
@@ -72,8 +72,8 @@ Installs run one at a time, in a small install window:
   until the app's own is read, near the end), a moving bar and one line on
   what it is doing: **Installing…**, then **Converting the app's code. This
   happens once.**, then **Getting the app's name and icon…**.
-- **Show details** opens the install's log as it is written; the window
-  remembers whether it was open.
+- **Show details** opens the install's log as it is written; each install
+  window starts with it closed.
 - Files opened while an install is under way, from Explorer or by dragging,
   join the same window: the one being installed is at the top, the others
   below it with their state.
@@ -90,7 +90,8 @@ Installs run one at a time, in a small install window:
 
 Two apps with the same library name (the app's label) cannot coexist: a
 second install of the same app replaces the first and keeps the app's data.
-An app's details page has **Update from a file** to do the same deliberately.
+To update an app, open or drop a newer file of it: there is no separate
+update button.
 
 ### Native code and CPU architectures
 
@@ -223,13 +224,13 @@ without an answer.
 
 | Section | What it holds |
 |---|---|
-| Window | **Orientation**: the settings' default, portrait or landscape for this app only (an app whose manifest fixes one says so instead). **Window size**: the size the app's window was last given, with **Reset** |
+| Window | **Orientation**: the settings' default, portrait or landscape for this app only (an app whose manifest fixes one shows **Portrait – required by the app** or **Landscape – required by the app** instead). **Window size**: the size the app's window was last given, with **Reset** |
 | Permissions | A switch per permission the app was asked for or granted, and **Reset permissions**; see [Permissions](#permissions) |
 | Shortcut | **Desktop shortcut**: adds or removes the app's desktop shortcut. The Start menu one is always there |
 | Performance | Only for an app with only ARM code: **Optimizing for this PC…** while its translation runs in the background (with the parts done so far), and **This app has only ARM code** when a library is too large to translate whole, so an x86_64 build of the app, if one exists, runs faster. See [ARM apps](arm-apps.md) |
-| Troubleshooting | **Log**: **Show log** opens the log window on the app's last run (or its install, before the first run). **Report a problem**: for a problem met inside the app; see [Reporting a problem](troubleshooting.md#reporting-a-problem) |
-| Storage | **The app's file**: its size, and **Show** opens Explorer on it. **Converted code**: the app's folder under `apps\` |
-| Manage | **Stop** (while it runs), **Update from a file** (installs a newer, or any other, version over this one; what the app saved stays; refused while the app runs) and **Remove** |
+| Troubleshooting | **Log** (View the app's recent logs): **Show log** opens the log window on the app's last run (or its install, before the first run). **Report a problem** (opens a GitHub issue with the app's details and log): for a problem met inside the app; see [Reporting a problem](troubleshooting.md#reporting-a-problem) |
+| Storage | **The app's file**: its size, and **Show** opens Explorer on it. **Run files**: what Win.apk prepared to run the app, its folder under `apps\`, and **Open** |
+| Manage | **Stop** (while it runs) and **Remove** |
 
 Each action has one place: the details page, plus the right-click menu for
 the four above. An app's log is on its details page (**Troubleshooting >
@@ -240,26 +241,26 @@ Show log**); Ctrl+L opens the log window on the newest log.
 **Settings**, at the bottom of the navigation pane (or Ctrl+,), is a page of
 its own. Each setting takes effect the next time an app opens unless noted.
 
-![Settings: Appearance (theme, language) and Apps (screen size, orientation, Windows folders, ARM translation, shortcuts)](images/settings.png)
+![Settings: Appearance (theme, language) and Apps (app window size, default orientation, Windows folders, ARM translation, shortcuts)](images/settings.png)
 
 | Section | Setting | What it does |
 |---|---|---|
-| Appearance | **Theme** | Match Windows, Light or Dark. Applies at once |
-| Appearance | **Language** | Match Windows, English or Hebrew. Applies at once; see [Hebrew and right-to-left](#hebrew-and-right-to-left) |
-| Apps | **Screen size** | The phone screen apps see, in dp (density-independent pixels, as on a phone). **Auto** is 360 × 800 dp, or the size given by `WINAPK_PHONE_SIZE` when that variable is set. Presets range from 320 × 480 to a 10-inch tablet |
-| Apps | **Orientation** | Portrait or landscape, for every app that has no choice of its own. The default is landscape, the shape of a PC screen |
+| Appearance | **Theme** | Follow Windows (the default), Light or Dark. Applies at once |
+| Appearance | **Language** | Follow Windows (the default), Hebrew (עברית) or English. Applies at once; see [Hebrew and right-to-left](#hebrew-and-right-to-left) |
+| Apps | **App window size** | The size apps open at, in dp (density-independent pixels, as on a phone). **Auto** is 360 × 800 dp, or the size given by `WINAPK_PHONE_SIZE` when that variable is set. Presets range from 320 × 480 to a 10-inch tablet. An app whose window you resized opens at its saved size |
+| Apps | **Default orientation** | Portrait or landscape, for every app that has no choice of its own. The default is landscape, the shape of a PC screen. Apps that require an orientation always open in it; an app's details page changes it for that app |
 | Apps | **Use my Windows folders** | On: apps' shared storage (Downloads, Pictures, Documents, Music, Movies) is your own Windows folders. Off: each is an empty folder of Win.apk's own, and your files stay where they are. See [Shared storage](#shared-storage) |
-| Apps | **Optimize ARM apps in the background** (on) | Translates the code of ARM-only apps for your PC, at the lowest priority. Off: no translation is started, one under way stops before its next part (and goes on where it was once this is on again), and translations already made are still used. See [ARM apps](arm-apps.md) |
+| Apps | **Speed up ARM apps** (on) | Translates ARM code to your PC's code in the background, at low priority, so apps run faster. Off: no translation is started, one under way stops before its next part (and goes on where it was once this is on again), and translations already made are still used. See [ARM apps](arm-apps.md) |
 | Apps | **Desktop shortcut for new apps** | Every app gets a Start menu shortcut; this adds one on the desktop too |
 | Apps | **Open .apk, .apkm, .xapk and .apks files with Win.apk** | Makes Win.apk the default program for the four formats |
 | Google account | **Sign in**, **Add another account**, **Sign out**; **Use Google services (experimental)** (off), and with it on **Google services setup** | See [Google account and Google services](google-services.md) |
 | Troubleshooting | **Logs** | Opens the `logs` folder in Explorer, to attach files to a bug report |
 | Troubleshooting | **App data** | Opens `%LOCALAPPDATA%\Win.apk` |
-| Troubleshooting | **Clear library** | Uninstalls every app and removes its shortcuts (app data is kept) |
-| Updates | **Check now** | Asks GitHub for the newest release at once. The row shows this copy's version and the last check's result: up to date, a newer version, or could not check. See [Updates](#updates) |
+| Troubleshooting | **Clear library** | Uninstalls every app of the library and removes its shortcuts (app data is kept; Google's apps stay with Google services) |
+| Updates | **Check** | Asks GitHub for the newest release at once. The row shows this copy's version and the last check's result: up to date, a newer version, or could not check. See [Updates](#updates) |
 | Updates | **Check for updates automatically** | On (the default): about once a day, while the library is open, Win.apk checks for a newer release in the background and says so in the InfoBar |
 | Updates | **Update** | Shown when a newer version is out, with **What's new in** that version below it. Downloads the installer, then runs it and closes Win.apk |
-| About | | The version, the source code (github.com/israel2176/win.apk) and the licence (GNU AGPL v3.0), with links; Win.apk is forked from Mac.apk |
+| About | | The version, **Project page** (github.com/israel2176/win.apk) and **Credits and licenses**, which opens `THIRD_PARTY_NOTICES.txt` beside the program (Mac.apk, which Win.apk is built on, and every project the package ships, with their licences; `LICENSE.txt` is Win.apk's own, the GNU AGPL v3.0) |
 
 Settings are stored under `HKEY_CURRENT_USER\Software\Win.apk`.
 
@@ -270,9 +271,9 @@ An app opens in the orientation decided by these rules, first match wins:
 1. The orientation the app's manifest fixes for its first activity (a
    portrait-only game always opens portrait).
 2. The app's own choice on its details page (**Window > Orientation**).
-3. The **Orientation** setting (landscape by default).
+3. The **Default orientation** setting (landscape by default).
 
-The **Screen size** setting gives the phone's dimensions in dp; the
+The **App window size** setting gives the phone's dimensions in dp; the
 orientation decides which is the width. The app's window opens at that size,
 scaled for your monitor. If the window would not fit the monitor's work area,
 the app keeps its dp size and is drawn smaller.
@@ -284,7 +285,7 @@ shape in a window of the other one: it is drawn in the largest box of its
 aspect, centred, with black bars around it.
 
 The size you settle on is remembered per app and used the next time the app
-opens, before the Screen size setting. The app's details page shows it and
+opens, before the App window size setting. The app's details page shows it and
 can reset it; choosing another orientation for the app also forgets it.
 
 ## Hebrew and right-to-left
@@ -374,11 +375,15 @@ top of that. Action buttons on notifications are not shown.
 
 **Settings > Google account** signs in with Google (on Google's own page, in a
 window of its own: Win.apk never sees the password), adds another account and
-signs out. One account serves every app, and the round button at the end of
-the toolbar shows who is signed in. **Use Google services (experimental)**
-runs Google's own Play services and Play Store, which you install through the
-**Google services setup** page; with it on, **Google Play** appears under
-**Store** in the navigation pane.
+signs out. One account serves every app, and the account's item at the foot
+of the navigation pane, above **Settings**, shows who is signed in (the
+account's picture and address, or **Sign in**) and opens Settings. **Use Google
+services (experimental)** runs Google's own Play services and Play Store,
+which you install through the **Google services setup** page; with it on,
+**Google Play** appears under **Store** in the navigation pane and opens the
+Play Store inside the Win.apk window, where the library is. Google's three
+apps are system components: they have no tile in the library and no
+shortcut.
 
 [Google account and Google services](google-services.md) explains both, the
 setup step by step, and what does not work.
@@ -388,7 +393,7 @@ setup step by step, and what does not work.
 Win.apk's releases are published on GitHub
 ([github.com/israel2176/win.apk/releases](https://github.com/israel2176/win.apk/releases)).
 **Settings > Updates** shows the version you have and what the last check
-found; **Check now** checks at once. With **Check for updates automatically**
+found; **Check** checks at once. With **Check for updates automatically**
 on (the default), the library checks about once a day when it opens and every
 hour while it stays open, once a day has passed since the last check. The
 check downloads only GitHub's list of releases and sends nothing about you or
@@ -453,15 +458,16 @@ and the launch window open the right log themselves when something fails.
 
 ## Removing apps and uninstalling
 
-- **Remove** (on the app's details page or its right-click menu) asks first,
-  then deletes the app's APK, converted code, icon and shortcuts, and forgets
+- **Remove** (on the app's details page or its right-click menu) asks first
+  (**Remove** *app*: "Removes the app and its shortcuts."), then deletes the
+  app's APK, run files, icon and shortcuts, and forgets
   its permissions. What the app saved stays, so installing it again picks up
-  where it left off, unless you tick **Also delete what the app saved**:
+  where it left off, unless you tick **Also remove accounts and data saved by the app**:
   then its data folder (`android\data\data\<package>`) and its folders in
   shared storage (`Android\data` and `Android\obb`) go too, as uninstalling
   does on a phone. Your own files in your Windows folders are never touched.
-- **Settings > Troubleshooting > Clear library** uninstalls every app and
-  removes its shortcuts (app data is kept).
+- **Settings > Troubleshooting > Clear library** uninstalls every app of the
+  library and removes its shortcuts (app data is kept).
 - Uninstalling Win.apk (Windows Settings > Apps) removes the program, the
   Start menu shortcuts and the `.apk` association, and keeps
   `%LOCALAPPDATA%\Win.apk`. Delete that folder to remove the apps, their data,
@@ -474,7 +480,7 @@ and the launch window open the right log themselves when something fails.
 | Win.apk itself | `%LOCALAPPDATA%\Programs\Win.apk`, or the folder you unzipped |
 | Your copy of each APK | `%LOCALAPPDATA%\Win.apk\library\<app>.apk` |
 | Per-app choices beside the APK | `<app>.label` (name), `<app>.package` (package, version, manifest orientation), `<app>.orientation` (your choice), `<app>.window` (remembered window size) |
-| Each app's converted code, icon and name | `%LOCALAPPDATA%\Win.apk\apps\<app>` (and `aot-guard.txt`, an ARM-only app's crashes with its translation) |
+| Each app's run files, icon and name | `%LOCALAPPDATA%\Win.apk\apps\<app>` (and `aot-guard.txt`, an ARM-only app's crashes with its translation) |
 | The Android file system: apps' data, the installed packages | `%LOCALAPPDATA%\Win.apk\android` |
 | Logs | `%LOCALAPPDATA%\Win.apk\logs` |
 | The Store's catalog and icons | `%LOCALAPPDATA%\Win.apk\store` |
@@ -484,7 +490,7 @@ and the launch window open the right log themselves when something fails.
 | The last update check and a downloaded update | `%LOCALAPPDATA%\Win.apk\updates` (`releases.json`, `Win.apk-Setup-<version>.exe`) |
 | Shared ARM translations | `%LOCALAPPDATA%\Win.apk\aot-cache` |
 | The runtime's caches (fonts, resources) | `%LOCALAPPDATA%\Win.apk\cache` |
-| Settings | `HKEY_CURRENT_USER\Software\Win.apk` (`Theme`, `Language`, `PhoneSize`, `Landscape`, `DesktopShortcut`, `UserFolders`, `AotBackground`, `InstallDetails`, `AutoUpdate`, `LastUpdateCheck`, `GoogleServices`, and the library window's size) |
+| Settings | `HKEY_CURRENT_USER\Software\Win.apk` (`Theme`, `Language`, `PhoneSize`, `Landscape`, `DesktopShortcut`, `UserFolders`, `AotBackground`, `AutoUpdate`, `LastUpdateCheck`, `GoogleServices`, and the library window's size) |
 | With Google services on: app uids, the account service, the installer of record, the broker's readiness | `%LOCALAPPDATA%\Win.apk` (`app_uids.properties`, `system_ce\`, `installer-of-record.properties`, `run\`) |
 | Start menu shortcuts | `Start > Win.apk Apps` |
 
@@ -532,7 +538,7 @@ Environment variables the launcher and the runtime read:
 
 | Variable | Effect |
 |---|---|
-| `WINAPK_PHONE_SIZE=412x915` | The phone size in dp. The launcher sets it from the Screen size setting; set it yourself for the **Auto** preset or a direct run |
+| `WINAPK_PHONE_SIZE=412x915` | The phone size in dp. The launcher sets it from the App window size setting; set it yourself for the **Auto** preset or a direct run |
 | `WINAPK_RESIZABLE=0` | The window letterboxes the phone instead of resizing the app |
 | `WINAPK_DENSITY=<dpi>` | Overrides the density the app sees |
 | `WINAPK_AOT_CLANG=<path to clang.exe>` | The compiler for ARM translation |

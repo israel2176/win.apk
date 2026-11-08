@@ -178,6 +178,7 @@ The user-facing ones (`WINAPK_PHONE_SIZE`, `WINAPK_RESIZABLE`,
 | `MACAPK_APK_PATH` | Set by the runtime, not by hand: the installed APK, which `PresentedSdk` reads the app's targetSdk and minSdk from to choose the API level the app is presented (its targetSdk within 29..36, never below its minSdk); `MACAPK_SDK_INT=<n>` forces a level, `MACAPK_SDK_FROM_TARGET=0` presents 29 (still never below the minSdk) |
 | `MACAPK_BROKER_TRIGGER_CHECKIN=0` | The broker does not nudge Play services to check in at boot (it nudges at most three times, and not at all once Play services has broadcast `CHECKIN_COMPLETE`) |
 | `WINAPK_READY_EVENT=<handle>` | Set by the launcher, not by hand: an inherited event handle, as a decimal number, that the runtime sets once its window has painted the app's first frame (the launch splash waits for it) |
+| `WINAPK_EMBED_PARENT=<hwnd>` | Set by the launcher, not by hand: a window handle, as a decimal number, that the app's window is created as a borderless child of, filling it (Google Play inside the library window); not a window, or the child cannot be made: a window of its own |
 | `WINAPK_DENSITY=<dpi>` | Overrides the density the app sees |
 | `WINAPK_WINDOW_RTL=1` or `0` | Overrides the locale's reading layout for the app window's frame |
 | `WINAPK_ANGLE_BACKEND=d3d11` or `swiftshader` | Forces a graphics backend (the default is a GPU, then WARP, then SwiftShader) |
@@ -815,7 +816,7 @@ every such change is listed here:
   `NativeSignIn.java` and `GmsStore.java`: after a sign-in, the picture the
   sign-in window found (`signInPhotoUrl`, a native only Windows has; on the
   Mac its absence means no picture) is saved as `gms\photo-<account>.img`
-  for the launcher's account button, and removed with the account.
+  for the launcher's account item, and removed with the account.
 - `runtime/java/com/macapk/gms/GoogleGmsCertificate.java` (new),
   `MacApkPackageManager.java` and `PlatformSignature.java`:
   `com.google.android.gms` and `com.android.vending` report Google's public
@@ -846,7 +847,7 @@ every such change is listed here:
   from the launcher's Language setting, else Windows'), and right to left.
   The signed-in account an app gets carries the picture
   (`GoogleSignInAccount.photoUrl`, from the ID token), which is also saved for
-  the launcher's account button when the sign-in window found none. A copy of
+  the launcher's account item when the sign-in window found none. A copy of
   an app re-signed by someone else (NetFree's patcher) that Google refuses
   (`UNREGISTERED_ON_API_CONSOLE`) gets an explanation instead of a closed window.
 - `runtime/java/android/graphics/drawable/VectorDrawable.java`: a path's

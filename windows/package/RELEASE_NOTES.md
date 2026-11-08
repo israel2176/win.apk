@@ -10,7 +10,7 @@
 - Install `.apk`, `.apkm`, `.xapk` and `.apks` files by double-click or drag and drop, or from the built-in F-Droid Store.
 - Apps that ship only 64-bit ARM code are translated for your PC in the background, at the lowest priority.
 - Your PC's hardware for apps: webcam, microphone, location, Bluetooth, game controllers, and your Windows folders.
-- **Experimental:** Google's own Play services and Play Store, with a guided setup (Settings > Google account).
+- **Experimental:** Google's own Play services and Play Store, with a guided setup (Settings > Google account); Google Play opens inside the Win.apk window.
 - English and Hebrew, light and dark.
 
 ## Known limitations

@@ -490,6 +490,8 @@ jobs:
           }
           check "$dir/signed.apk" 4
           grep -q "^PACKAGE.android" verify.out && grep -q "^VERIFIED.1" verify.out && grep -q "^GOOGLE.0" verify.out
+          # and what the setup's other checks read: the native code's ABIs, the minSdkVersion, the presented level
+          grep -q "^ABIS" verify.out && grep -q "^MINSDK.[0-9]" verify.out && grep -q "^SDK.3[0-9]" verify.out
           check "$dir/unsigned.apk" 3
           grep -q "^VERIFIED.0" verify.out && grep -q "^REASON." verify.out
           echo "not an app" > "$dir/not-an-app.apk"
