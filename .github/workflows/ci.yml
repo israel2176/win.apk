@@ -210,7 +210,10 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: winapk-binaries
-          path: build/*.exe
+          path: |
+            build/*.exe
+            build/winapk-aot-test-dll.dll
+            build/winapk-aot-guard-dll.dll
           compression-level: 1
 
   unit-tests:
@@ -256,12 +259,21 @@ jobs:
           ./build/winapk-crash-test.exe "$(cygpath -w "$PWD/crash-scratch")"
       - name: Translate the arm64 test libraries ahead of time (as the installer does)
         run: |
+          # The flags of the background translation (runtime_main.cpp, kAotCompileFlags).
           for so in guest/arm64/*.so; do
             ./build/winapk-aot.exe "$so" "$so.aot.c"
-            clang -O2 -march=x86-64-v2 -shared -fno-strict-aliasing -w -o "$so.aot.dll" "$so.aot.c"
+            clang -O2 -mllvm -fast-isel -march=native -fno-strict-aliasing -w -shared -o "$so.aot.dll" "$so.aot.c"
           done
       - name: Run the arm64 test (interpreter, JIT, AOT)
         run: ./build/winapk-arm64-test.exe guest/arm64
+      - name: Run the translation cache test (racing and killed processes)
+        run: |
+          mkdir -p aot-cache-scratch
+          ./build/winapk-aot-cache-test.exe "$(cygpath -w "$PWD/aot-cache-scratch")"
+      - name: Run the translation crash guard test (two crashes turn translation off, two on the JIT back on)
+        run: |
+          mkdir -p aot-guard-scratch
+          ./build/winapk-aot-guard-test.exe "$(cygpath -w "$PWD/aot-guard-scratch")"
       - name: Run the Bionic shim test
         run: |
           mkdir -p bionic-scratch

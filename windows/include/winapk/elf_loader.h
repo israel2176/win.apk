@@ -163,6 +163,7 @@ private:
     uint8_t* mem_ = nullptr;
     uint16_t machine_ = elf::kEmX86_64;
     std::vector<const void*> arm64_code_;  // registered with the interpreter
+    uint64_t arm64_lo_ = 0, arm64_hi_ = 0;  // the span of that code, for its translation (arm64_aot.h)
     bool owns_mem_ = true;    // false when loaded into a caller's reserved range
     size_t size_ = 0;
     uintptr_t bias_ = 0;     // runtime address = bias_ + ELF vaddr

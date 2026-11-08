@@ -280,17 +280,61 @@ Three engines run arm64 code, behind one CPU state (`src/arm64/`):
   waits 10 minutes, 4 times longer after each failure (at most a day), and
   stops after 4. A translation finished while the app runs is loaded at once.
   Whole translations are shared between apps through `<data>\aot-cache`,
-  keyed by the library's code. The translation never has to be complete: a
-  function returns to the JIT when it reaches a branch the translator could
-  not follow.
+  keyed by the library's code (its bytes and addresses) and the CPU's model
+  and features, since the code is compiled for that CPU; the stamp next to
+  each DLL records the CPU too, and a translation made on another CPU is not
+  loaded. An app's DLL and the cache's are one file (a hard link), and the
+  cache drops what no app used for 60 days. Every app's worker writes the
+  cache while apps load from it, and any of them can be killed half way, so
+  no file is written in place (`include/winapk/aot_files.h`): each is written
+  under a name unique to its writer, flushed, then renamed; a finished DLL
+  ends with a 32-byte seal (its length and hash) that the loader, the worker
+  and the cache check, so a DLL cut short is never loaded, shared or taken
+  for done; a good cache entry is never replaced (an app may have it mapped),
+  a broken one is deleted, and temporary files a killed writer left go an
+  hour later. The stamp ends with the library's id (its size and date), so
+  whether a translation is current does not depend on the clock. The
+  translation never has to be
+  complete: a function returns to the JIT when it reaches a branch the
+  translator could not follow, when a call returns somewhere else than its return address
+  (an exception's landing pad, a jump into another frame), and at its entry
+  when the host stack is nearly used up (a translated guest call is a host
+  call, so deep guest recursion would overflow it; `Cpu::stack_floor`, an
+  eighth of the stack and at least 256 KB before its end). A library that
+  rewrites its own code (an inline hook, a packer decrypting its text: IC
+  IVAU in its code) is handed to the JIT for good, its stamp saying
+  `written`; one unloaded with `dlclose` takes its translation with it. A
+  call through a register to a function of the same library (a C++ virtual
+  call) finds it in the DLL's own table, cached at the call site.
+  A fault inside a translated DLL marks that library's stamp `bad`, and the
+  JIT runs it from the next start. A mistranslation that corrupts state
+  and crashes elsewhere (in the JIT, the guest's own code, a host function,
+  the JVM) is caught a level up, by the crash guard (`host/aot_guard.cpp`):
+  when the app's process ends through the crash path (`crash_report.cpp`:
+  a fault nobody handled, `abort()`, HotSpot's fatal error handler through
+  the JVM's `abort` hook; not a normal exit, a closed window or a kill)
+  twice in a row with a translation loaded, the next start disables
+  translation for the app (`aot_disable`, as `WINAPK_AOT=0` does) and says
+  so in its run log. A run without a crash sets the count back; two crashes
+  in a row on the JIT mean it was not the translation, and the next start
+  turns it on again for that build of the app. The state is
+  `apps\<name>\aot-guard.txt`, written atomically (`aot_write_file`), and a
+  new `kAotVersion` or another build of the APK or its libraries starts it
+  over.
 - **The JIT** (`arm64_jit.cpp`, dynarmic from the azahar-emu fork, 0BSD
   license, fastmem over the shared address space). The app starts on it and
-  it runs whatever has no translation. Built when CMake is given
+  it runs whatever has no translation. Each thread has its own engine and
+  code cache; code the guest writes (IC IVAU, on any thread and engine) is
+  dropped from all of them. Built when CMake is given
   `-DWINAPK_ARM64_JIT=ON` (CI and releases).
 - **The interpreter** (`arm64_cpu.cpp`, `arm64_simd.cpp`): the base integer
   ISA, every load/store form, exclusives and LSE atomics, scalar FP and the
   Advanced SIMD forms compilers emit. It runs the few instructions the other
-  two do not handle and is the reference the others are checked against.
+  two do not handle and is the reference the others are checked against:
+  `winapk-arm64-test` runs C compiled for arm64 and for x64, control-flow and
+  edge cases with results worked out by hand (`arm64_flow_guest.c`), and 400
+  functions of random instructions (`gen_arm64_fuzz.py`) on all three and
+  compares them.
 
 The bridge (`arm64_guest.cpp`) gives each thread its CPU state, a guest stack
 and Bionic's TLS slots; converts AAPCS64 arguments and `va_list`s to System V
@@ -506,7 +550,9 @@ Billing answers `BILLING_UNAVAILABLE`, the Maps SDK lays out a blank map.
    the app's icon.
 6. When the app loads a native library, the path in
    [Loading an app's libraries](#loading-an-apps-libraries) runs; an arm64
-   library picks up its translation DLL if one exists and the JIT otherwise.
+   library picks up its translation DLL if one exists and the JIT otherwise
+   (always the JIT when the crash guard has turned the app's translation off,
+   which the run log's first `arm64 AOT:` line says).
 7. The render tick drives frames; input goes to `TouchDispatcher`; permission
    requests spawn the launcher's dialogs; a resize re-lays the app out.
 8. Closing the window ends the activity stack and the process. The exit code
@@ -521,14 +567,14 @@ default; `--data` moves it for a direct run):
 | Path | What |
 |---|---|
 | `library\<name>.apk`, `.label`, `.package`, `.orientation`, `.window` | The user's copy of each app and the launcher's per-app files |
-| `apps\<name>\` | `classes.jar`, `.macapk-dex-stamp`, `icon.png`, `label.txt`, `package.txt` |
+| `apps\<name>\` | `classes.jar`, `.macapk-dex-stamp`, `icon.png`, `label.txt`, `package.txt`; for an arm64-only app that crashed with its translation loaded, `aot-guard.txt` (the crash guard's count and whether translation is off) |
 | `android\` | The Android file system: `data\app\` (installed packages, with `lib\<isa>\` and the `.so.aot.*` translation files; `lib\arm64\.aot-tmp\<lib>\` holds an unfinished translation), `data\data\<package>\` (app data), the shared-storage volume |
 | `logs\` | `run-<name>.log` and `run-<name>.1.log`, `last-run.log` (a hard link to the newest run log), `install-<name>.log`, `gms.log`, `install-helper.log`, `package-backfill.log`, `hs_err_pid*.log` |
 | `store\` | `catalog.tsv`, `catalog.etag`, `icons\`, `downloads\` |
 | `installed_apps.json` | The installed-apps registry the package manager answers from |
 | `appops\` | `app-ops.json`, `signing-key.pub`, `signing-key.p256` |
 | `gms\` | `gms_state.properties`, the `accounts.present` marker |
-| `aot-cache\` | Whole arm64 translations shared between apps (kept under 2 GB, least recently used first) |
+| `aot-cache\` | Whole arm64 translations shared between apps, `<key>.aot.dll` (kept under 2 GB, least recently used first); a `*.tmp` is a write in progress, or one a killed worker left (deleted when an hour old) |
 | `staging\` | The install helper's staging area |
 | `updates\` | `releases.json` and `releases.etag` (GitHub's list of releases from the last update check), `Win.apk-Setup-<version>.exe` (a downloaded update, until it is installed) |
 

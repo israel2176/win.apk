@@ -53,6 +53,11 @@ struct Cpu {
     uint32_t fpcr = 0;
     uint32_t fpsr = 0;
     uint64_t tpidr = 0;   // TPIDR_EL0: bionic's TLS slot array
+    // Translated code (arm64_aot.h) makes each guest call a host call, so it
+    // takes host stack as deep as the guest's calls go; below this host
+    // stack address a translated function hands over to the JIT, which
+    // takes none per guest call. 0: no limit.
+    uint64_t stack_floor = 0;
     VReg v[32] = {};
 
     // The exclusive monitor (LDXR/STXR). A store-exclusive succeeds if memory
@@ -93,6 +98,12 @@ struct Hooks {
     // va_list, no guest callback to wrap, not setjmp/longjmp): translated
     // code calls it without going through host_call.
     bool (*plain_host)(uint64_t target) = nullptr;
+    // IC IVAU: the guest wrote code at `addr` and says so, as anything that
+    // patches or generates code must on arm64 (an inline hook, a loader that
+    // decrypts its text, a JIT). The JIT drops what it compiled there itself;
+    // a translation of that library made ahead of time is dropped through
+    // this (arm64_aot.h).
+    void (*code_written)(uint64_t addr) = nullptr;
     // SVC #imm. Android apps do not make raw system calls, but libraries
     // that inline a few (Unity's, some anti-tamper code) exist.
     void (*svc)(Cpu& c, uint32_t imm) = nullptr;

@@ -40,6 +40,7 @@
 // program (--java-main), not in java.exe, which reads its own location and
 // its arguments in the ANSI code page.
 
+#include "aot_guard.h"
 #include "crash_report.h"
 #include "guest_libs.h"
 #include "host_natives.h"
@@ -47,6 +48,7 @@
 #include "win32_window.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -63,6 +65,7 @@
 #include <windows.h>
 #include <shellapi.h>
 
+#include "winapk/aot_files.h"
 #include "winapk/arm64_aot.h"
 #include "winapk/mini_bionic.h"
 
@@ -186,6 +189,11 @@ HMODULE load_jvm(const fs::path& jdk) {
 
 using CreateVmFn = jint(JNICALL*)(JavaVM**, void**, void*);
 
+// HotSpot's fatal error handler (hs_err) calls it on its way out: a fault in
+// native code called from Java ends there, as HotSpot's threads catch their
+// own exceptions and the unhandled-exception filter never sees it.
+void JNICALL jvm_abort_hook() { winapk::host::crash_report_fatal("the JVM's fatal error handler"); }
+
 bool create_vm(HMODULE jvm, std::vector<std::string>& opts, JavaVM** vm, JNIEnv** env) {
     auto create = reinterpret_cast<CreateVmFn>(GetProcAddress(jvm, "JNI_CreateJavaVM"));
     if (!create) return false;
@@ -194,6 +202,8 @@ bool create_vm(HMODULE jvm, std::vector<std::string>& opts, JavaVM** vm, JNIEnv*
         jopts[i].optionString = &opts[i][0];
         jopts[i].extraInfo = nullptr;
     }
+    static char abort_option[] = "abort";
+    jopts.push_back({abort_option, reinterpret_cast<void*>(&jvm_abort_hook)});
     JavaVMInitArgs args{};
     args.version = JNI_VERSION_21;
     args.nOptions = static_cast<jint>(jopts.size());
@@ -595,19 +605,30 @@ bool install_app(Options* o, const fs::path& android_root) {
 // crashed: the loader marks it, and the JIT runs the library; see
 // arm64_aot.cpp). A DLL without a stamp is a whole translation from before
 // stamps. The stamp holds the kAotVersion it was made with; another one means
-// translate again.
+// translate again. It ends with the library's id (aot_lib_id): a stamp for
+// another build of the library is no stamp, and a DLL under it must be sealed.
 //
 // Many apps ship the same libraries (libc++_shared.so, libcrashlytics.so,
 // SQLite, ...). As Windows on ARM's translation cache and Box64's DynaCache
 // do, a whole translation is kept in <data>\aot-cache under a key of the
 // library's code (the text hash the loader checks), winapk-aot and clang
-// (each by size and date) and the flags, and an app with the same library
-// copies it instead of compiling. Translations made from a profile differ by
-// app and are not kept. The cache keeps to kAotCacheBytes, oldest use first.
+// (each by size and date), the flags and the CPU, and an app with the same
+// library links it (a second name for the same file, aot_link_or_copy)
+// instead of compiling. Translations made from a profile differ by app and
+// are not kept. The cache keeps to kAotCacheBytes, oldest use first, and
+// drops what no app used for kAotCacheDays.
+//
+// Every app's worker writes that cache, its app reads the DLLs while they do,
+// and any of them can be killed at any moment: the files are written as
+// include/winapk/aot_files.h says (a DLL is sealed and checked, nothing is
+// written in place, a good cache entry is never replaced, temporary names
+// are unique and stale ones deleted). windows/test/aot_cache_test.cpp and
+// test/aot_worker/run_aot_worker_wine.sh race and kill them.
 
 constexpr size_t kAotFullBelow = 400000;
 constexpr size_t kAotPartInsns = 20000;
 constexpr uintmax_t kAotCacheBytes = uintmax_t{2} << 30;
+constexpr int kAotCacheDays = 60;
 constexpr uint64_t kAotJobBytes = uint64_t{512} << 20;  // memory to allow per clang (measured: 250-410 MB)
 constexpr unsigned kAotMaxFailures = 4;
 constexpr DWORD kAotStartDelayS = 60;
@@ -690,39 +711,50 @@ size_t profile_lines_of(const fs::path& profile) {
 size_t profile_lines(const fs::path& so) { return profile_lines_of(with_suffix(so, L".aot.profile")); }
 
 struct AotStamp {
-    std::string kind;  // "full", "profile", "wait", "skip", "bad", or "" (none)
+    std::string kind;  // "full", "profile", "wait", "skip", "bad", "written", or "" (none)
     size_t lines = 0;
     unsigned version = 0;     // the kAotVersion it was made with; 0 before stamps had one
     unsigned failures = 0;    // "wait" after a failed translation: how many in a row
     int64_t retry_after = 0;  // and when to try again (Unix seconds)
+    uint64_t cpu = 0;         // aot_cpu_signature() of the CPU it was compiled for; 0 before stamps had one
+    uint64_t lib = 0;         // aot_lib_id() of the library it is about; 0 before stamps had one (and DLLs a seal)
 };
 
 AotStamp read_aot_stamp(const fs::path& so) {
     AotStamp s;
-    FILE* f = _wfopen(with_suffix(so, L".aot.stamp").c_str(), L"rb");
-    if (!f) return s;
+    const std::string text = winapk::arm64::aot_read_file(with_suffix(so, L".aot.stamp"));
     char kind[16] = {};
     unsigned long long lines = 0;
     unsigned version = 0, failures = 0;
     long long retry_after = 0;
-    if (std::fscanf(f, "%15s %llu %u %u %lld", kind, &lines, &version, &failures, &retry_after) >= 1) {
+    unsigned long long cpu = 0, lib = 0;
+    if (std::sscanf(text.c_str(), "%15s %llu %u %u %lld %llx %llx", kind, &lines, &version, &failures, &retry_after,
+                    &cpu, &lib) >= 1) {
         s.kind = kind;
         s.lines = static_cast<size_t>(lines);
         s.version = version;
         s.failures = failures;
         s.retry_after = retry_after;
+        s.cpu = cpu;
+        s.lib = lib;
     }
-    std::fclose(f);
     return s;
 }
 
+// Written whole or not at all (aot_files.h): the loader and the app's start
+// read it while the worker writes it, and a worker killed half way through
+// once left half a stamp.
 void write_aot_stamp(const fs::path& so, const char* kind, size_t lines, unsigned failures = 0,
                      int64_t retry_after = 0) {
-    if (FILE* f = _wfopen(with_suffix(so, L".aot.stamp").c_str(), L"wb")) {
-        std::fprintf(f, "%s %zu %u", kind, lines, winapk::arm64::kAotVersion);
-        if (failures > 0) std::fprintf(f, " %u %lld", failures, static_cast<long long>(retry_after));
-        std::fprintf(f, "\n");
-        std::fclose(f);
+    // The loader reads the same fields (arm64_aot.cpp, stamp_refuses).
+    char line[160];
+    std::snprintf(line, sizeof line, "%s %zu %u %u %lld %llx %llx\n", kind, lines, winapk::arm64::kAotVersion,
+                  failures, static_cast<long long>(retry_after),
+                  static_cast<unsigned long long>(winapk::arm64::aot_cpu_signature()),
+                  static_cast<unsigned long long>(winapk::arm64::aot_lib_id(so)));
+    if (!winapk::arm64::aot_write_file(with_suffix(so, L".aot.stamp"), line)) {
+        std::fprintf(stderr, "[win.apk] %s: cannot write its stamp (error %lu)\n",
+                     utf8(so.filename().wstring()).c_str(), GetLastError());
     }
 }
 
@@ -734,14 +766,30 @@ bool newer_than(const fs::path& a, const fs::path& b) {
 // Whether `so` needs a (new) translation now.
 bool aot_needs_work(const fs::path& so) {
     std::error_code ec;
-    const bool have = newer_than(with_suffix(so, L".aot.dll"), so) || newer_than(with_suffix(so, L".aot.dll.new"), so);
+    const fs::path dll = with_suffix(so, L".aot.dll"), later = with_suffix(so, L".aot.dll.new");
     const AotStamp stamp = read_aot_stamp(so);
-    const bool stamp_current = newer_than(with_suffix(so, L".aot.stamp"), so);
+    bool have, stamp_current;
+    if (stamp.lib != 0) {
+        // The stamp names the library it is about, whatever the clock says,
+        // and its DLLs are sealed: one cut short (a copy killed half way)
+        // is no translation, and is made again.
+        auto sealed = [](const fs::path& p) {
+            return winapk::arm64::aot_check_dll(p, false) == winapk::arm64::AotFile::kSealed;
+        };
+        stamp_current = stamp.lib == winapk::arm64::aot_lib_id(so);
+        have = stamp_current && (sealed(dll) || sealed(later));
+    } else {  // a stamp from before: by the files' times
+        have = newer_than(dll, so) || newer_than(later, so);
+        stamp_current = newer_than(with_suffix(so, L".aot.stamp"), so);
+    }
     // Made by an older winapk-aot: the loader ignores that DLL, and a "bad"
     // one may have been the translator's fault (City Car's libflutter.so).
     if (have && stamp.version != winapk::arm64::kAotVersion) return true;
     if (stamp.kind == "bad" && stamp.version != winapk::arm64::kAotVersion) return true;
-    if (stamp.kind == "skip" || stamp.kind == "bad") return !stamp_current;
+    // A library that rewrites its own code runs on the JIT (arm64_aot.h) until it changes.
+    if (stamp.kind == "skip" || stamp.kind == "bad" || stamp.kind == "written") return !stamp_current;
+    // Compiled for another CPU (-march=native): the loader leaves it alone.
+    if (have && stamp.cpu != winapk::arm64::aot_cpu_signature()) return true;
     if (stamp.kind == "wait" && stamp.failures > 0) {
         if (stamp.version != winapk::arm64::kAotVersion || !stamp_current) return true;  // a new chance
         return stamp.failures < kAotMaxFailures && unix_now() >= stamp.retry_after;
@@ -946,35 +994,22 @@ std::string aot_cache_key(const fs::path& so, const fs::path& clang) {
     std::string hash;
     if (run_capture(quoted(exe_dir() / "winapk-aot.exe") + L" --hash " + quoted(so), &hash) != 0) return {};
     while (!hash.empty() && std::isspace(static_cast<unsigned char>(hash.back()))) hash.pop_back();
+    // -march=native: the CPU too, for a data folder that moves to another PC.
     const std::string id = hash + "|" + file_id(exe_dir() / "winapk-aot.exe") + "|" + file_id(clang) + "|" +
-                           utf8(kAotCompileFlags) + "|" + utf8(env_var(L"WINAPK_AOT_MAX_INSNS"));
+                           utf8(kAotCompileFlags) + "|" + utf8(env_var(L"WINAPK_AOT_MAX_INSNS")) + "|" +
+                           hex64(winapk::arm64::aot_cpu_signature());
     return hex64(fnv1a(id));
 }
 
-// Keeps the cache within kAotCacheBytes, dropping the least recently used.
-void aot_cache_trim(const fs::path& cache) {
-    std::error_code ec;
-    std::vector<std::pair<fs::file_time_type, fs::path>> files;
-    uintmax_t total = 0;
-    for (const auto& e : fs::directory_iterator(cache, ec)) {
-        if (!e.is_regular_file(ec)) continue;
-        total += e.file_size(ec);
-        files.emplace_back(e.last_write_time(ec), e.path());
-    }
-    std::sort(files.begin(), files.end());
-    for (const auto& f : files) {
-        if (total <= kAotCacheBytes) break;
-        const uintmax_t size = fs::file_size(f.second, ec);
-        if (fs::remove(f.second, ec)) total -= size;
-    }
-}
-
-// Puts a finished translation in place, unless the running app has the old
-// one loaded: then for the next start.
+// Puts a finished translation in place, or, where the running app has the
+// old one loaded and the system refuses to rename over it, beside it for the
+// next start. A rename, so the app's name points at a whole DLL or at none.
 bool install_aot_dll(const fs::path& dll, const fs::path& so) {
     const fs::path target = with_suffix(so, L".aot.dll"), later = with_suffix(so, L".aot.dll.new");
-    return MoveFileExW(dll.c_str(), target.c_str(), MOVEFILE_REPLACE_EXISTING) ||
-           MoveFileExW(dll.c_str(), later.c_str(), MOVEFILE_REPLACE_EXISTING);
+    winapk::arm64::aot_fault_point("install");
+    const bool ok = winapk::arm64::aot_replace(dll, target) || winapk::arm64::aot_replace(dll, later);
+    if (ok) winapk::arm64::aot_fault_point("installed");  // in place, the stamp not written yet
+    return ok;
 }
 
 // A failure: "wait", tried again after a while that grows with each failure
@@ -1013,9 +1048,8 @@ void aot_translate_one(const fs::path& so, const fs::path& clang, const fs::path
     fs::create_directories(work, ec);
     const fs::path cached = cache.empty() ? fs::path() : cache / (key + ".aot.dll");
     const fs::path dll = work / (so.filename().wstring() + L".aot.dll");
-    if (!cached.empty() && fs::exists(cached, ec) && CopyFileW(cached.c_str(), dll.c_str(), FALSE) &&
-        install_aot_dll(dll, so)) {
-        fs::last_write_time(cached, fs::file_time_type::clock::now(), ec);  // recently used
+    // aot_cache_take checks the entry whole and drops a broken one.
+    if (!cached.empty() && winapk::arm64::aot_cache_take(cached, dll) && install_aot_dll(dll, so)) {
         write_aot_stamp(so, "full", profile_lines(so));
         fs::remove_all(work, ec);
         std::fprintf(stderr, "[win.apk] %s: translation taken from the shared cache\n", name.c_str());
@@ -1084,16 +1118,28 @@ void aot_translate_one(const fs::path& so, const fs::path& clang, const fs::path
         ok = run_parallel(compiles);
     }
     if (ok) {
+        // A new file, never one written in place: `dll` may be a second name
+        // of the cache's entry (taken, then not put in place), and a linker
+        // that writes into its output would change that entry under every app.
+        if (!winapk::arm64::aot_retire(dll)) {
+            std::fprintf(stderr, "[win.apk] %s: cannot remove the old %s (error %lu)\n", name.c_str(),
+                         utf8(dll.wstring()).c_str(), GetLastError());
+            ok = false;
+        }
+    }
+    if (ok) {
         std::wstring link = quoted(clang) + aot_sysroot(clang) + L" -shared -o " + quoted(dll);
         for (const fs::path& o : objs) link += L" " + quoted(o);
         ok = run_process(link) == 0;
+        if (ok && !winapk::arm64::aot_seal(dll)) {
+            std::fprintf(stderr, "[win.apk] %s: cannot seal the DLL (error %lu)\n", name.c_str(), GetLastError());
+            ok = false;
+        }
     }
     if (ok && rc == 0 && !cached.empty()) {  // whole: for every app with this library
         fs::create_directories(cache, ec);
-        const fs::path part = cached.wstring() + L".tmp";
-        if (CopyFileW(dll.c_str(), part.c_str(), FALSE) &&
-            MoveFileExW(part.c_str(), cached.c_str(), MOVEFILE_REPLACE_EXISTING)) {
-            aot_cache_trim(cache);
+        if (winapk::arm64::aot_cache_put(dll, cached)) {
+            winapk::arm64::aot_cache_trim(cache, kAotCacheBytes, kAotCacheDays);
         }
     }
     if (ok && !install_aot_dll(dll, so)) {
@@ -1163,6 +1209,8 @@ int aot_translate_main(const fs::path& libs, const fs::path& cache, DWORD delay_
         return 1;
     }
     if (delay_s > 0) Sleep(delay_s * 1000);
+    if (!cache.empty()) winapk::arm64::aot_cache_trim(cache, kAotCacheBytes, kAotCacheDays);
+    winapk::arm64::aot_remove_stale_temps(libs);  // stamps a killed worker or app was writing
     std::error_code ec;
     for (const auto& e : fs::directory_iterator(libs / ".aot-tmp", ec)) {
         if (!e.is_directory(ec)) fs::remove(e.path(), ec);  // from before passes had a folder each
@@ -1270,6 +1318,15 @@ void prepare_arm64(const Options& o, const fs::path& app_dir) {
     std::error_code ec;
     const fs::path libs = arm64_libs(o.apk);
     if (!fs::is_directory(libs, ec) || !fs::exists(exe_dir() / "winapk-aot.exe", ec)) return;
+    if (env_var(L"WINAPK_AOT") == L"0") {
+        winapk::arm64::aot_disable();
+        std::fprintf(stderr, "[win.apk] arm64 AOT: off (WINAPK_AOT=0); the JIT runs the app's arm64 code\n");
+        return;
+    }
+    // Translation off for this start if the app crashed twice in a row with
+    // translated code loaded (aot_guard.h). Then nothing is translated either:
+    // the worker would only make what is not loaded.
+    if (!o.install_only && !winapk::host::aot_guard_start(app_dir, winapk::host::aot_guard_id(o.apk, libs))) return;
     if (aot_clang().empty()) {
         std::fprintf(stderr, "[win.apk] no clang found (WINAPK_AOT_CLANG, clang\\bin\\clang.exe in Win.apk's folder, "
                              "or the PATH): the app's arm64 code runs on the JIT, which is slower\n");
@@ -1277,8 +1334,12 @@ void prepare_arm64(const Options& o, const fs::path& app_dir) {
     }
     for (const fs::path& so : arm64_sos(libs)) {
         const fs::path later = with_suffix(so, L".aot.dll.new");
-        if (fs::exists(later, ec) &&
-            !MoveFileExW(later.c_str(), with_suffix(so, L".aot.dll").c_str(), MOVEFILE_REPLACE_EXISTING)) {
+        if (!fs::exists(later, ec)) continue;
+        if (winapk::arm64::aot_check_dll(later, false) == winapk::arm64::AotFile::kBroken) {
+            fs::remove(later, ec);  // aot_needs_work: translated again
+            continue;
+        }
+        if (!winapk::arm64::aot_replace(later, with_suffix(so, L".aot.dll"), 2)) {
             std::fprintf(stderr, "[win.apk] cannot put %s in place (error %lu)\n", utf8(later.wstring()).c_str(),
                          GetLastError());
         }
