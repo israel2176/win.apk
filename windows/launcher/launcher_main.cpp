@@ -196,6 +196,20 @@ const wchar_t* tr(const wchar_t* en) {
         {L"Every app also gets one in Start > Win.apk Apps.", L"כל אפליקציה מקבלת גם קיצור דרך בתפריט התחל > Win.apk Apps."},
         {L"Open folder", L"פתיחת התיקייה"},
         {L"Use my Windows folders", L"שימוש בתיקיות של Windows"},
+        {L"Optimize ARM apps in the background", L"אופטימיזציה של אפליקציות ARM ברקע"},
+        {L"Translates the code of apps that have only ARM code for this PC, at the lowest priority, so they run "
+         L"faster. Off, translations already made are still used.",
+         L"מתרגם למחשב הזה את הקוד של אפליקציות שיש להן רק קוד ARM, בעדיפות הנמוכה ביותר, כדי שירוצו מהר יותר. "
+         L"כשההגדרה כבויה, נעשה שימוש בתרגומים שכבר נעשו."},
+        {L"Performance", L"ביצועים"},
+        {L"Optimizing for this PC…", L"מבצע אופטימיזציה למחשב הזה…"},
+        {L"{0} of {1} parts", L"{0} מתוך {1} חלקים"},
+        {L"The app's ARM code is being translated for this processor, at the lowest priority. Until then the app "
+         L"runs it more slowly.",
+         L"קוד ה-ARM של האפליקציה מתורגם למעבד הזה, בעדיפות הנמוכה ביותר. עד אז האפליקציה מריצה אותו לאט יותר."},
+        {L"This app has only ARM code", L"לאפליקציה הזו יש רק קוד ARM"},
+        {L"It runs translated, which uses more CPU. An x86_64 version of the app, if one exists, runs faster.",
+         L"היא רצה מתורגמת, וזה דורש יותר מעבד. גרסת x86_64 של האפליקציה, אם יש כזו, רצה מהר יותר."},
         {L"App data", L"נתוני אפליקציות"},
         {L"Google account", L"חשבון Google"},
         {L"Use Google services (experimental)", L"שימוש בשירותי Google (ניסיוני)"},
@@ -5447,6 +5461,14 @@ std::vector<Section> settings_sections() {
     folders.detail = tr(L"Apps save to and open from your Downloads, Pictures, Documents, Music and Videos.");
     folders.on = setting(L"UserFolders", 1) != 0;
     folders.act = [](int on) { set_setting(L"UserFolders", static_cast<DWORD>(on)); };
+    // Read by the runtime and its background translation (runtime_main.cpp, aot_background_on).
+    Row aot;
+    aot.kind = Row::kToggle;
+    aot.title = tr(L"Optimize ARM apps in the background");
+    aot.detail = tr(L"Translates the code of apps that have only ARM code for this PC, at the lowest priority, so "
+                    L"they run faster. Off, translations already made are still used.");
+    aot.on = setting(L"AotBackground", 1) != 0;
+    aot.act = [](int on) { set_setting(L"AotBackground", static_cast<DWORD>(on)); };
     Row desktop;
     desktop.kind = Row::kToggle;
     desktop.title = tr(L"Desktop shortcut for new apps");
@@ -5461,7 +5483,7 @@ std::vector<Section> settings_sections() {
         types = button_row(tr(L"Open .apk, .apkm, .xapk and .apks files with Win.apk"), L"", tr(L"Make default"),
                            [] { register_file_types(true); });
     }
-    out.push_back({tr(L"Apps"), {size, orient, folders, desktop, types}, L""});
+    out.push_back({tr(L"Apps"), {size, orient, folders, aot, desktop, types}, L""});
 
     out.push_back(google_account_section());
 
@@ -5523,6 +5545,64 @@ std::vector<Row> permission_rows(const App& a);
 
 fs::path desktop_shortcut(const App& a) {
     return known_folder(FOLDERID_Desktop) / (file_name_safe(a.label) + L".lnk");
+}
+
+// ---- The app's arm64 translation (runtime_main.cpp, "arm64 translation, in the background") ----
+//
+// The installed app's arm64 libraries: lib\arm64 next to the base.apk that the install's record
+// (android\data\app\.<name>.installed, its path in UTF-8) names. Empty when it has none.
+fs::path arm64_libs_of(const std::wstring& name) {
+    std::ifstream f(data_dir() / L"android" / L"data" / L"app" / (L"." + name + L".installed"), std::ios::binary);
+    std::string path((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    if (path.empty()) return {};
+    const fs::path libs = fs::path(utf8_to_wide(path)).parent_path() / L"lib" / L"arm64";
+    std::error_code ec;
+    return fs::is_directory(libs, ec) ? libs : fs::path();
+}
+
+struct AotState {
+    bool running = false;            // a worker holds the app's mutex
+    size_t done = 0, parts = 0;      // its pass: parts compiled, of those winapk-aot has written
+    bool large_arm_only = false;     // only arm64 code, and a library too large to translate whole
+};
+
+AotState aot_state(const std::wstring& name) {
+    AotState st;
+    const fs::path libs = arm64_libs_of(name);
+    std::error_code ec;
+    if (libs.empty()) return st;
+    // The worker's mutex, named as runtime_main.cpp's aot_mutex_name does: keep the two the same.
+    std::wstring key = libs.lexically_normal().wstring();
+    for (wchar_t& ch : key) ch = static_cast<wchar_t>(towlower(ch == L'/' ? L'\\' : ch));
+    uint64_t h = 1469598103934665603ull;
+    for (const wchar_t ch : key) h = (h ^ static_cast<uint16_t>(ch)) * 1099511628211ull;
+    wchar_t mutex[48];
+    swprintf(mutex, 48, L"Local\\WinApk-aot-%016llx", static_cast<unsigned long long>(h));
+    if (HANDLE m = OpenMutexW(SYNCHRONIZE, FALSE, mutex)) {
+        st.running = true;
+        CloseHandle(m);
+        // .aot-tmp\<lib>\: the C parts (<lib>.c, <lib>.c.<n>.c) and the objects compiled from them (p-<hash>.o).
+        for (const auto& dir : fs::directory_iterator(libs / L".aot-tmp", ec)) {
+            for (const auto& e : fs::directory_iterator(dir.path(), ec)) {
+                const std::wstring ext = e.path().extension().wstring();
+                if (ext == L".c") ++st.parts;
+                else if (ext == L".o") ++st.done;
+            }
+        }
+    }
+    // A stamp "profile ..." or "wait 0 <version> 0 ..." (waiting for a profile, not after a failure) is a
+    // library over the runtime's kAotFullBelow, translated only where the app's code ran.
+    if (!fs::exists(libs.parent_path() / L"x86_64", ec)) {
+        for (const auto& e : fs::directory_iterator(libs, ec)) {
+            if (e.path().extension() != L".stamp") continue;
+            std::ifstream f(e.path());
+            std::string kind;
+            unsigned long long lines = 0, version = 0, failures = 0;
+            f >> kind >> lines >> version >> failures;
+            if (kind == "profile" || (kind == "wait" && failures == 0)) st.large_arm_only = true;
+        }
+    }
+    return st;
 }
 
 // An app's details: how it opens, its permissions, its shortcut and files, and Stop, Update, Remove.
@@ -5591,6 +5671,26 @@ void show_info(const App& app) {
             }
         };
         out.push_back({tr(L"Shortcut"), {desktop}, L""});
+        // Its arm64 code's translation, while a worker makes it, and what an x86_64 build would spare.
+        {
+            const AotState st = aot_state(a.name);
+            std::vector<Row> perf;
+            if (st.running) {
+                perf.push_back(text_row(tr(L"Optimizing for this PC…"),
+                                        st.parts > 0 ? fmt(L"{0} of {1} parts", {std::to_wstring((std::min)(st.done,
+                                                                                    st.parts)),
+                                                                                std::to_wstring(st.parts)})
+                                                     : L"",
+                                        tr(L"The app's ARM code is being translated for this processor, at the "
+                                           L"lowest priority. Until then the app runs it more slowly.")));
+            }
+            if (st.large_arm_only) {
+                perf.push_back(text_row(tr(L"This app has only ARM code"), L"",
+                                        tr(L"It runs translated, which uses more CPU. An x86_64 version of the app, "
+                                           L"if one exists, runs faster.")));
+            }
+            if (!perf.empty()) out.push_back({tr(L"Performance"), std::move(perf), L""});
+        }
         // The app's own log: its last run, else its install (the log window's picker has the rest); and a
         // report for a problem met inside the app, which the splash's and the install's errors cannot see.
         {

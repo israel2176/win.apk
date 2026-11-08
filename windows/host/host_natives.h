@@ -32,6 +32,10 @@ struct HostMethods {
 #define WINAPK_HOST_NATIVE(clazz, name, sig, fn) \
     {clazz, {const_cast<char*>(name), const_cast<char*>(sig), reinterpret_cast<void*>(&fn)}}
 
+// The app is exiting: starts the background arm64 translation for the
+// profile it leaves (runtime_main.cpp, "arm64 translation, in the background").
+void aot_app_exiting();
+
 // The implementations, one file per Java class.
 HostMethods native_log_methods();    // native_log.cpp
 HostMethods native_cocoa_methods();  // native_cocoa.cpp

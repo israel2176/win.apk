@@ -105,9 +105,13 @@ When an app has only 64-bit ARM libraries, Win.apk's translator
 (`winapk-aot`) turns each library into C, and the bundled clang compiles it
 for your CPU into a DLL next to the library. Nothing waits for this: the app
 starts at once on an ARM64 JIT, which is slower, and each library switches to
-its translation as soon as it is ready, even while the app is running. Large
-libraries are translated only where the app's code actually ran, and more as
-you use the app, so the first runs of a big app are the slow ones. Whole
+its translation as soon as it is ready, even while the app is running. A
+library of up to 1 million instructions (most apps') is translated
+whole, once. A larger one (a browser's engine, a big app's own code) is translated only where the
+app's code actually ran, once what ran has settled (the app has been quiet
+for a minute, or you closed it), and more as you use the app, at most once
+an hour, so the first runs of a big app are the slow ones; its details page
+then says that an x86_64 build of the app, if one exists, runs faster. Whole
 translations are shared between apps that ship the same library, stored once
 on the disk; the shared folder keeps under 2 GB and lets go of what no app
 used for two months. A translation is made for your PC's processor: on
@@ -124,6 +128,12 @@ the app, shutting down or ending the process, it goes on where it was the
 next time. If a translation fails it is tried again later, and after four
 failures the library stays on the JIT until the app or Win.apk is updated
 (the app's `aot-<app>.log` in the logs folder says why).
+
+While an app's translation runs, its details page says **Optimizing for this
+PC…** under Performance. **Settings > Apps > Optimize ARM apps in the
+background** turns the translation off: nothing new is translated (a
+translation under way stops before its next part and goes on later), and
+what was already translated is still used.
 
 If an ARM-only app crashes twice in a row while translated code is loaded,
 Win.apk takes the translation for the suspect: from the next start the app
@@ -264,6 +274,7 @@ without an answer.
 | Window | **Orientation**: the settings' default, portrait or landscape for this app only (an app whose manifest fixes one says so instead). **Window size**: the size the app's window was last given, with **Reset** |
 | Permissions | A switch per permission the app was asked for or granted, and **Reset permissions**; see [Permissions](#permissions) |
 | Shortcut | **Desktop shortcut**: adds or removes the app's desktop shortcut. The Start menu one is always there |
+| Performance | Only for an app with only ARM code: **Optimizing for this PC…** while its translation runs in the background (with the parts done so far), and **This app has only ARM code** when a library is too large to translate whole, so an x86_64 build of the app, if one exists, runs faster. See [ARM-only apps](#arm-only-apps) |
 | Troubleshooting | **Log**: **Show log** opens the log window on the app's last run (or its install, before the first run). **Report a problem**: for a problem met inside the app; see [Reporting a problem](#reporting-a-problem) |
 | Storage | **The app's file**: its size, and **Show** opens Explorer on it. **Converted code**: the app's folder under `apps\` |
 | Manage | **Stop** (while it runs), **Update from a file** (installs a newer, or any other, version over this one; what the app saved stays; refused while the app runs) and **Remove** |
@@ -284,6 +295,7 @@ its own. Each setting takes effect the next time an app opens unless noted.
 | Apps | **Screen size** | The phone screen apps see, in dp (density-independent pixels, as on a phone). **Auto** is 360 × 800 dp, or the size given by `WINAPK_PHONE_SIZE` when that variable is set. Presets range from 320 × 480 to a 10-inch tablet |
 | Apps | **Orientation** | Portrait or landscape, for every app that has no choice of its own. The default is landscape, the shape of a PC screen |
 | Apps | **Use my Windows folders** | On: apps' shared storage (Downloads, Pictures, Documents, Music, Movies) is your own Windows folders. Off: each is an empty folder of Win.apk's own, and your files stay where they are. See [Shared storage](#shared-storage) |
+| Apps | **Optimize ARM apps in the background** (on) | Translates the code of ARM-only apps for your PC, at the lowest priority. Off: no translation is started, one under way stops before its next part (and goes on where it was once this is on again), and translations already made are still used. See [ARM-only apps](#arm-only-apps) |
 | Apps | **Desktop shortcut for new apps** | Every app gets a Start menu shortcut; this adds one on the desktop too |
 | Apps | **Open .apk, .apkm, .xapk and .apks files with Win.apk** | Makes Win.apk the default program for the four formats |
 | Google account | **Sign in**, **Add another account**, **Sign out**; **Use Google services (experimental)** (off) | See [Google account](#google-account) |
@@ -577,7 +589,7 @@ and the launch window open the right log themselves when something fails.
 | The last update check and a downloaded update | `%LOCALAPPDATA%\Win.apk\updates` (`releases.json`, `Win.apk-Setup-<version>.exe`) |
 | Shared ARM translations | `%LOCALAPPDATA%\Win.apk\aot-cache` |
 | The runtime's caches (fonts, resources) | `%LOCALAPPDATA%\Win.apk\cache` |
-| Settings | `HKEY_CURRENT_USER\Software\Win.apk` (`Theme`, `Language`, `PhoneSize`, `Landscape`, `DesktopShortcut`, `UserFolders`, `InstallDetails`, `AutoUpdate`, `LastUpdateCheck`, `GoogleServices`, and the library window's size) |
+| Settings | `HKEY_CURRENT_USER\Software\Win.apk` (`Theme`, `Language`, `PhoneSize`, `Landscape`, `DesktopShortcut`, `UserFolders`, `AotBackground`, `InstallDetails`, `AutoUpdate`, `LastUpdateCheck`, `GoogleServices`, and the library window's size) |
 | With Google services on: app uids, the account service, the installer of record, the broker's readiness | `%LOCALAPPDATA%\Win.apk` (`app_uids.properties`, `system_ce\`, `installer-of-record.properties`, `run\`) |
 | Start menu shortcuts | `Start > Win.apk Apps` |
 

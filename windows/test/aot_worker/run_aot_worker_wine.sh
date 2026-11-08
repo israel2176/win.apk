@@ -10,8 +10,10 @@
 #      object), and the next run compiles only the parts not done;
 #   3. a part that always fails: waits of 10, 40, 160 minutes, then no more
 #      tries; each retry compiles only that part;
-#   4. a library over kAotFullBelow: nothing until it has a profile, then only
-#      what ran, and again only once the profile has grown by a quarter;
+#   4. a library over kAotFullBelow (WINAPK_AOT_FULL_BELOW makes libbig.so
+#      count as one): nothing until it has a profile, then only what ran,
+#      and again only once the profile has grown by a quarter and the
+#      minimum interval since the last translation is over;
 #   5. four apps' workers on the same library at once, one shared cache, with
 #      hard links and with copies: one good entry, every app's DLL sealed;
 #   6. a worker killed at each step of a write (WINAPK_AOT_FAULT: half a seal,
@@ -23,7 +25,9 @@
 #   8. a cache entry cut short: not taken, deleted, compiled again;
 #   9. a library dated in the future (extracted while the clock was ahead):
 #      translated once, not at every pass;
-#  10. temporary files left by killed writers: deleted once an hour old.
+#  10. temporary files left by killed writers: deleted once an hour old;
+#  11. background translation turned off in Settings (AotBackground = 0):
+#      the worker does nothing, and goes on once it is on again.
 #
 # Scenarios 5-10 are aot_files.h's rules in the real worker; test/
 # aot_cache_test.cpp checks the same rules on Windows in CI.
@@ -83,7 +87,7 @@ check_dll() { "$WINE" ./winapk-runtime.exe --check "$(win "$PWD/$1")" | tr -d '\
 compiles() { grep -c '^start' "$1/clang.log" || true; }
 count() { ps -eo comm | grep -c "^$1" || true; }
 WINAPK_AOT_CLANG="$(win "$PWD/fakeclang.exe")"
-export WINAPK_AOT_CLANG WINAPK_AOT_JOBS=3
+export WINAPK_AOT_CLANG WINAPK_AOT_JOBS=3 WINAPK_AOT_FULL_BELOW=400000
 
 echo "== 1. a whole translation"
 setup t1 libguest.so
@@ -161,7 +165,12 @@ check "stamp profile 1000 ($(stamp t4 libbig.so))" grep -q '^profile 1000 ' t4/l
 sed -n 1001,1200p entries.txt >> "$P"
 check "+20%: not again yet" test "$(needs_work t4 libbig.so)" = 0
 sed -n 1201,1300p entries.txt >> "$P"
-check "+30%: again" test "$(needs_work t4 libbig.so)" = 1
+check "+30% within the hour: not yet" test "$(needs_work t4 libbig.so)" = 0
+s=$(stamp t4 libbig.so)
+wait_s=$(($(echo "$s" | awk '{print $5}') - $(date +%s)))
+check "the next one not before an hour ($wait_s s)" test "$wait_s" -gt 3400 -a "$wait_s" -le 3600
+echo "$s" | awk '{$5 = 0; print}' > t4/lib/arm64/libbig.so.aot.stamp  # as if the hour were over
+check "+30% after the hour: again" test "$(needs_work t4 libbig.so)" = 1
 
 echo "== 5. four apps' workers on one library at once"
 for mode in links copies; do
@@ -250,6 +259,17 @@ FAKECLANG_MS=20 worker t10 > t10/log 2>&1
 check "the stale ones are deleted" test ! -e t10/cache/x.aot.dll.1a2b-0.tmp -a \
     ! -e t10/lib/arm64/libguest.so.aot.stamp.1a2b-0.tmp
 check "a fresh one is left (its writer may be at it)" test -e t10/cache/fresh.aot.dll.1a2c-0.tmp
+
+echo "== 11. turned off in Settings"
+setup t11 libguest.so
+"$WINE" reg add 'HKCU\Software\Win.apk' /v AotBackground /t REG_DWORD /d 0 /f > /dev/null 2>&1
+FAKECLANG_MS=20 worker t11 > t11/log 2>&1
+"$WINE" reg delete 'HKCU\Software\Win.apk' /v AotBackground /f > /dev/null 2>&1
+check "off: says so" grep -q 'off in Settings' t11/log
+check "off: nothing compiled ($(compiles t11))" test "$(compiles t11)" -eq 0
+check "off: work is left" test "$(needs_work t11 libguest.so)" = 1
+FAKECLANG_MS=20 worker t11 > t11/log2 2>&1
+check "on again: translated" grep -q '^full 0 ' t11/lib/arm64/libguest.so.aot.stamp
 
 echo
 if [ "$failures" -eq 0 ]; then echo "OK"; else echo "FAILED: $failures"; fi
