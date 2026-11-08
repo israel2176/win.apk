@@ -91,14 +91,6 @@ jobs:
           path: stage
       - uses: actions/download-artifact@v4
         with:
-          # The first bench's class lists: the editor's alone stands for a
-          # data folder whose archive came from a simple first app.
-          name: framework-classlist
-          path: cl
-          run-id: 42524653832
-          github-token: ${{ github.token }}
-      - uses: actions/download-artifact@v4
-        with:
           name: runtime-stage
           path: stage-main
           run-id: 42521083975
@@ -118,19 +110,10 @@ jobs:
         shell: pwsh
         run: |
           $stock = "$PWD\stock-jre"; $main = "$PWD\stage-main"
-          # Fe: one archive made beforehand from the editor's classes alone.
-          $env:WINAPK_CDS_DIR = "$PWD\cds-editor"
-          $env:WINAPK_CDS_CLASSLIST = "$PWD\cl\classlists\org.billthefarmer.editor_198.classlist"
-          ./stage/bin/winapk-runtime.exe --cds-prepare --data "$PWD\prep"
-          Get-Content cds-editor/dump.log -Tail 2
-          Remove-Item Env:WINAPK_CDS_DIR; Remove-Item Env:WINAPK_CDS_CLASSLIST
-          $fe = "WINAPK_CDS_DIR=$PWD\cds-editor,WINAPK_CDS_CLASSLIST=$PWD\cl\classlists\org.billthefarmer.editor_198.classlist"
           python windows/test/compat/startbench.py --runtime stage --apks apk-cache --out bench `
             --only ${{ matrix.apps }} --warm 3 --frames 150 `
             --config "A=$stock,@runtime=$main" `
-            --config "F=,@wait=1" `
-            --config "Fown=,WINAPK_CDS_CLASSLIST=none,@wait=1" `
-            --config "Fe=,$fe"
+            --config "F=,@wait=1"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

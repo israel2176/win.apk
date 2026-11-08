@@ -16,9 +16,9 @@
 //
 //   The framework archive: one static archive of the JDK's and the framework's
 //   classes, shared by every app, <data>\cds\framework-<key>.jsa. The release
-//   ships the class list (lib\winapk-framework.classlist, what the smoke apps
-//   load); the first app start without an archive also records the classes it
-//   loads, and 10 s after its first frame (or at its exit) a background
+//   ships the class list (lib\winapk-framework.classlist, the classes at least
+//   three of the smoke apps load); the first app start without an archive also
+//   records the classes it loads, and 10 s after its first frame (or at its exit) a background
 //   `winapk-runtime --cds-dump` runs `java -Xshare:dump` over both lists.
 //   Every later start of every app maps it. `--cds-prepare` builds it at once.
 //

@@ -143,8 +143,8 @@ drops the `--patch-module` flags only when the JRE's
 plain JDK, or a patch rebuilt since, keeps them and runs without CDS). The
 framework archive is dumped by `java -Xshare:dump`, in the background after the
 first app start of each Win.apk and JRE version (`winapk-runtime --cds-dump`),
-from the class list Win.apk ships (`lib\winapk-framework.classlist`, what the
-smoke apps load) and the classes that start loaded. The key changes with the
+from the class list Win.apk ships (`lib\winapk-framework.classlist`, the classes at
+least three of the ten smoke apps load) and the classes that start loaded. The key changes with the
 JRE, the jars, the shipped list and the JVM options; HotSpot itself checks the
 JRE and the jars when it maps the file and otherwise starts without it. A new
 archive is checked whole (`-XX:+VerifySharedSpaces`) on its first use and
