@@ -31,6 +31,32 @@ constexpr int kMetaAltOn = 0x2;
 constexpr int kMetaCtrlOn = 0x1000;
 
 HWND g_hwnd = nullptr;
+
+// ---- embedded in the launcher ------------------------------------------------
+//
+// WINAPK_EMBED_PARENT=<window handle>: the launcher shows this app inside its
+// own window (Google Play in the library's content area), and that is the
+// window to be a child of. The window is then a borderless child that fills
+// its parent: the launcher sizes it, and the app follows every size as it
+// follows a resized window (follow_client). None of the top-level window's
+// fitting applies -- no work area, no frame, no remembered size, no
+// minimizing -- and its first show takes no foreground. Without the variable,
+// or when the handle is not a window, or the child cannot be made, the window
+// is the normal top-level one; the launcher sees its panel stayed empty.
+HWND g_embed_parent = nullptr;  // set at the window's creation when it is a child
+
+HWND embed_parent_requested() {
+    static const HWND parent = [] {
+        wchar_t buf[32];
+        const DWORD n = GetEnvironmentVariableW(L"WINAPK_EMBED_PARENT", buf, 32);
+        SetEnvironmentVariableW(L"WINAPK_EMBED_PARENT", nullptr);  // not for the processes this one starts
+        if (n == 0 || n >= 32) return static_cast<HWND>(nullptr);
+        const HWND h = reinterpret_cast<HWND>(static_cast<uintptr_t>(wcstoull(buf, nullptr, 10)));
+        return IsWindow(h) ? h : static_cast<HWND>(nullptr);
+    }();
+    return parent;
+}
+
 HANDLE g_ready_event = nullptr;  // the launcher's (take_launcher_ready_event)
 std::atomic<bool> g_ready_signalled{false};
 WindowInput* g_input = nullptr;
@@ -247,6 +273,13 @@ bool follow_client(HWND hwnd);
 // smaller when that does not fit the work area, and the app then follows the
 // smaller window. One that does not follow is shown smaller instead.
 void fit_window(HWND hwnd, HMONITOR mon, UINT dpi, const RECT* at, bool keep_inside) {
+    if (g_embed_parent) {  // the launcher sizes the window: the app follows the box it has
+        g_fit_monitor = mon;
+        g_shown_scale = keep_scale(dpi);
+        follow_client(hwnd);
+        InvalidateRect(hwnd, nullptr, FALSE);
+        return;
+    }
     const bool follows = resizable_enabled();
     if (IsIconic(hwnd) || IsZoomed(hwnd)) {
         // A maximized window the app follows has nothing to fit: the box is
@@ -438,6 +471,7 @@ bool follow_client(HWND hwnd) {
 }
 
 void remember_size() {
+    if (g_embed_parent) return;  // the launcher's area, not a size the user gave the app
     if (g_input) g_input->remember_size(g_phone_w, g_phone_h);
 }
 
@@ -655,7 +689,10 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             // A click on the app's own pixels takes the keyboard back from a
             // WebView placed in the window (native_webview.cpp). Only in the
             // active window: SetFocus would activate an inactive one.
-            if (GetActiveWindow() == hwnd && GetFocus() != hwnd) SetFocus(hwnd);
+            if ((GetActiveWindow() == hwnd || (g_embed_parent && GetActiveWindow() == GetAncestor(hwnd, GA_ROOT))) &&
+                GetFocus() != hwnd) {
+                SetFocus(hwnd);
+            }
             if (!on_phone(hwnd, lp)) return 0;  // a letterbox bar: nothing of the app is there
             SetCapture(hwnd);
             g_pointer_down = true;
@@ -773,6 +810,10 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         // and an app must not pull the user out of another one because a
         // page redirected or an intent arrived.
         case kMsgShow: {
+            if (g_embed_parent) {  // inside the launcher's window, which decides what is in front
+                ShowWindow(hwnd, SW_SHOWNA);
+                return 0;
+            }
             static bool shown = false;
             const bool first = !shown;
             shown = true;
@@ -787,6 +828,13 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         }
         case kMsgShowState:
+            if (g_embed_parent) {  // a child is shown or hidden, never minimized
+                ShowWindow(hwnd, wp == SW_HIDE ? SW_HIDE : SW_SHOWNA);
+                // BACK at the task root minimizes, which stopped the top activity: here the window stays, so
+                // the activity comes straight back, as the launcher's home screen stays on a phone.
+                if (wp == SW_MINIMIZE) g_input->restored();
+                return 0;
+            }
             if (wp == SW_RESTORE && !foreground_is_ours()) {
                 ShowWindow(hwnd, IsIconic(hwnd) ? SW_SHOWNOACTIVATE : SW_SHOWNA);
                 return 0;
@@ -885,12 +933,30 @@ DWORD WINAPI ui_thread(void* param) {
     wc.hIcon = LoadIconW(nullptr, MAKEINTRESOURCEW(32512));  // IDI_APPLICATION
     wc.lpszClassName = kClassName;
     RegisterClassExW(&wc);
+    if (HWND parent = embed_parent_requested()) {
+        RECT pc{};
+        GetClientRect(parent, &pc);
+        g_hwnd = CreateWindowExW(0, kClassName, L"Win.apk", WS_CHILD | WS_CLIPSIBLINGS | WS_CLIPCHILDREN, 0, 0,
+                                 std::max(1L, pc.right), std::max(1L, pc.bottom), parent, nullptr, wc.hInstance,
+                                 nullptr);
+        if (g_hwnd) {
+            g_embed_parent = parent;
+            std::fprintf(stderr, "[win.apk] window: embedded in the launcher, %ldx%ld px\n", pc.right, pc.bottom);
+            fit_window(g_hwnd, MonitorFromWindow(parent, MONITOR_DEFAULTTONEAREST), window_dpi(g_hwnd), nullptr,
+                       false);
+        } else {
+            std::fprintf(stderr, "[win.apk] window: could not embed in the launcher (%lu), a window of its own\n",
+                         GetLastError());
+        }
+    }
     const SIZE s = outer_size(g_plan.dpi, target_scale(g_plan.dpi, work_area(g_plan.monitor)));
-    g_rtl_window = rtl_user();
-    g_hwnd = CreateWindowExW(g_rtl_window ? (WS_EX_LAYOUTRTL | WS_EX_NOINHERITLAYOUT) : 0, kClassName, L"Win.apk",
-                             kStyle, CW_USEDEFAULT, CW_USEDEFAULT, s.cx, s.cy, nullptr, nullptr, wc.hInstance,
-                             nullptr);
-    if (g_hwnd) {
+    g_rtl_window = !g_hwnd && rtl_user();
+    if (!g_hwnd) {
+        g_hwnd = CreateWindowExW(g_rtl_window ? (WS_EX_LAYOUTRTL | WS_EX_NOINHERITLAYOUT) : 0, kClassName, L"Win.apk",
+                                 kStyle, CW_USEDEFAULT, CW_USEDEFAULT, s.cx, s.cy, nullptr, nullptr, wc.hInstance,
+                                 nullptr);
+    }
+    if (g_hwnd && !g_embed_parent) {
         // CW_USEDEFAULT cascades the window down the primary monitor. It
         // opens on the monitor the plan was made for (where the user started
         // the app), wholly inside its work area.
@@ -932,12 +998,15 @@ float window_plan(int phone_w, int phone_h) {
     enable_dpi_awareness();
     // The monitor the user started the app from: the foreground window's
     // (the launcher, a Start menu, Explorer), else the primary one.
-    HWND fg = GetForegroundWindow();
+    // Embedded, the launcher's (whose area WINAPK_PHONE_SIZE already is: nothing to fit).
+    const HWND parent = embed_parent_requested();
+    HWND fg = parent ? parent : GetForegroundWindow();
     g_plan.monitor = fg ? MonitorFromWindow(fg, MONITOR_DEFAULTTOPRIMARY)
                         : MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY);
     g_plan.dpi = monitor_dpi(g_plan.monitor);
     const float natural = static_cast<float>(g_plan.dpi) / 96.0f;
-    g_plan.scale = std::min(natural, fit_scale(work_area(g_plan.monitor), g_plan.dpi, phone_w, phone_h));
+    g_plan.scale = parent ? natural
+                          : std::min(natural, fit_scale(work_area(g_plan.monitor), g_plan.dpi, phone_w, phone_h));
     g_plan.set = true;
     return g_plan.scale;
 }

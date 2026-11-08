@@ -1,15 +1,16 @@
 // launcher_main.cpp -- Win.apk.exe, the app library.
 //
 // The Windows counterpart of upstream's launcher (launcher/*.swift), laid out
-// as a Windows 11 app: a navigation pane (Library, Store, Settings), the
-// page's title and toolbar (Add app, the Google account) over a grid of the installed
+// as a Windows 11 app: a navigation pane (Library, Store, Google Play, and
+// the Google account and Settings at its foot), the page's title and toolbar
+// (Install app) over a grid of the installed
 // apps with their icons, and an InfoBar for what just happened. Settings and
 // an app's details are pages in the same content layer. The whole window
 // takes a dropped APK. The windows are drawn with GDI+ and follow Windows'
 // light or dark mode (or the one picked in the settings), in English or, laid
 // out right to left, in Hebrew.
 //
-// An APK dropped on the window, chosen through Add app, double-clicked in
+// An APK dropped on the window, chosen through Install app, double-clicked in
 // Explorer (the launcher registers itself for .apk files) or passed on the
 // command line is installed, one at a time, in a small install window:
 //
@@ -30,7 +31,7 @@
 // Double-clicking an app runs it (winapk-runtime --apk, without a console)
 // behind a splash that stays until the runtime says its window is up
 // (WINAPK_READY_EVENT); if the app ends first the splash says so, with the
-// log. The screen size and orientation picked in the settings reach the
+// log. The app window size and orientation picked in the settings reach the
 // runtime as WINAPK_PHONE_SIZE. Apps open in landscape, the shape of a PC
 // screen, unless the settings say portrait; an app's details page turns one
 // app the other way (library\<name>.orientation), and an app whose manifest
@@ -155,7 +156,7 @@ const wchar_t* tr(const wchar_t* en) {
         {L"Win.apk keeps its own copy, so the downloaded file can be deleted", L"Win.apk שומרת עותק משלה, כך שניתן למחוק את הקובץ שהורד"},
         {L"Installing…", L"מתקין…"},
         {L"Installing {0} of {1}", L"מתקין {0} מתוך {1}"},
-        {L"Add app", L"הוספת אפליקציה"},
+        {L"Install app", L"התקנת אפליקציה"},
         {L"No apps match “{0}”", L"אין אפליקציות שתואמות ל„{0}”"},
         {L"No apps installed yet", L"עדיין לא הותקנו אפליקציות"},
         {L"Logs", L"יומנים"},
@@ -171,20 +172,21 @@ const wchar_t* tr(const wchar_t* en) {
         {L"Install an Android app", L"התקנת אפליקציית Android"},
         {L"Installing {0}…", L"מתקין את {0}…"},
         {L"{0} is still being installed.", L"{0} עדיין בהתקנה."},
-        {L"Remove {0}?", L"להסיר את {0}?"},
+        {L"Remove {0}", L"הסרת {0}"},
         {L"Remove", L"הסרה"},
         {L"{0} was removed.", L"{0} הוסרה."},
-        {L"Update {0} from an APK", L"עדכון {0} מקובץ APK"},
         {L"Done", L"סיום"},
         {L"Theme", L"ערכת נושא"},
-        {L"Match Windows", L"כמו ב-Windows"},
+        {L"Follow Windows", L"בהתאם ל-Windows"},
         {L"Light", L"בהירה"},
         {L"Dark", L"כהה"},
         {L"Appearance", L"מראה"},
         {L"Language", L"שפה"},
         {L"Default", L"ברירת מחדל"},
         {L"Make default", L"הגדרה כברירת מחדל"},
-        {L"Screen size", L"גודל מסך"},
+        {L"App window size", L"גודל חלון האפליקציות"},
+        {L"The size apps open at. An app whose window you resized opens at its saved size.",
+         L"הגודל שבו אפליקציות נפתחות. אפליקציה ששינית את גודל החלון שלה תיפתח בגודל ששמרה."},
         {L"Auto (fits the screen)", L"אוטומטי (מותאם למסך)"},
         {L"320 × 480  (small, older apps)", L"320 × 480  (קטן, לאפליקציות ישנות)"},
         {L"360 × 640  (5\" phone)", L"360 × 640  (טלפון 5 אינץ')"},
@@ -194,17 +196,18 @@ const wchar_t* tr(const wchar_t* en) {
         {L"600 × 960  (7\" tablet)", L"600 × 960  (טאבלט 7 אינץ')"},
         {L"800 × 1280  (10\" tablet)", L"800 × 1280  (טאבלט 10 אינץ')"},
         {L"Orientation", L"כיוון"},
+        {L"Default orientation", L"כיוון ברירת המחדל"},
+        {L"Apps that require an orientation always open in it. You can change it per app on its details page.",
+         L"אפליקציה שדורשת כיוון מסוים תיפתח בו תמיד. אפשר לשנות לכל אפליקציה בדף הפרטים שלה."},
         {L"Portrait", L"לאורך"},
         {L"Landscape", L"לרוחב"},
         {L"Desktop shortcut for new apps", L"קיצור דרך בשולחן העבודה לאפליקציות חדשות"},
         {L"Every app also gets one in Start > Win.apk Apps.", L"כל אפליקציה מקבלת גם קיצור דרך בתפריט התחל > Win.apk Apps."},
         {L"Open folder", L"פתיחת התיקייה"},
         {L"Use my Windows folders", L"שימוש בתיקיות של Windows"},
-        {L"Optimize ARM apps in the background", L"אופטימיזציה של אפליקציות ARM ברקע"},
-        {L"Translates the code of apps that have only ARM code for this PC, at the lowest priority, so they run "
-         L"faster. Off, translations already made are still used.",
-         L"מתרגם למחשב הזה את הקוד של אפליקציות שיש להן רק קוד ARM, בעדיפות הנמוכה ביותר, כדי שירוצו מהר יותר. "
-         L"כשההגדרה כבויה, נעשה שימוש בתרגומים שכבר נעשו."},
+        {L"Speed up ARM apps", L"האצת אפליקציות ARM"},
+        {L"Translates ARM code to your PC's code in the background so apps run faster. Runs at low priority.",
+         L"ממיר ברקע קוד ARM לקוד של המחשב, כדי שהאפליקציות ירוצו מהר יותר. פועל בעדיפות נמוכה."},
         {L"Performance", L"ביצועים"},
         {L"Optimizing for this PC…", L"מבצע אופטימיזציה למחשב הזה…"},
         {L"{0} of {1} parts", L"{0} מתוך {1} חלקים"},
@@ -236,11 +239,18 @@ const wchar_t* tr(const wchar_t* en) {
         {L"From now on the Play Store keeps itself and Play services up to date, as on a phone.", L"מעכשיו חנות Play מעדכנת את עצמה ואת שירותי Play, כמו בטלפון."},
         {L"Waiting for the downloads", L"ממתין להורדות"},
         {L"Checking {0}…", L"בודק את {0}…"},
-        {L"Download each app below with APKMirror's own download button. While this page is open, Win.apk watches your Downloads folder ({0}) and installs a file once it has checked that Google signed it. You can also drop a file here.", L"יש להוריד כל אפליקציה שלמטה בלחצן ההורדה של APKMirror עצמו. כל עוד הדף הזה פתוח, Win.apk עוקבת אחר תיקיית ההורדות ({0}) ומתקינה קובץ אחרי שבדקה ש-Google חתמה עליו. אפשר גם לשחרר כאן קובץ."},
+        {L"To use Google Play, install the following apps as described.", L"כדי להפעיל את חנות Google Play, יש להתקין את האפליקציות הבאות לפי ההנחיות."},
+        {L"{0} has code only for ARM processors. On APKMirror, download its x86_64 variant.", L"ב-{0} יש קוד למעבדי ARM בלבד. יש להוריד מ-APKMirror את גרסת x86_64 שלו."},
+        {L"{0} needs API level {1}, and Win.apk presents API level {2}. On APKMirror, download an older version of it.", L"{0} דורש רמת API ‏{1}, ו-Win.apk מציגה רמת API ‏{2}. יש להוריד מ-APKMirror גרסה ישנה יותר שלו."},
+        {L"It's part of Google services.", L"היא חלק משירותי Google."},
+        {L"Starting Google Play…", L"מפעיל את Google Play…"},
+        {L"Google Play closed", L"Google Play נסגרה"},
+        {L"Google Play didn't start", L"Google Play לא נפתחה"},
+        {L"Open Google Play", L"פתיחת Google Play"},
+        {L"Google Play opened in its own window.", L"Google Play נפתחה בחלון נפרד."},
         {L"Google's apps", L"האפליקציות של Google"},
         {L"Installed, {0}", L"מותקנת, {0}"},
         {L"Not installed.", L"לא מותקנת."},
-        {L"Win.apk does not download Google's apps itself: APKMirror's download button does, in your browser. Only files that Google signed are installed; any other file is refused.", L"Win.apk לא מורידה בעצמה את האפליקציות של Google: לחצן ההורדה של APKMirror עושה זאת, בדפדפן. רק קבצים ש-Google חתמה עליהם מותקנים; כל קובץ אחר נדחה."},
         {L"Win.apk checks that Google signed it, then installs it", L"Win.apk בודקת ש-Google חתמה עליו, ואז מתקינה אותו"},
         {L"Runs the Google Play services, Services Framework and Play Store you install yourself, as apps other "
          L"apps can reach. Only copies signed by Google are trusted. Takes effect when an app starts.",
@@ -250,6 +260,7 @@ const wchar_t* tr(const wchar_t* en) {
         {L"Signing in…", L"מתבצעת כניסה…"},
         {L"Complete the sign-in in the Google window, or close it to cancel.", L"יש להשלים את הכניסה בחלון של Google, או לסגור אותו כדי לבטל."},
         {L"Sign out", L"התנתקות"},
+        {L"Sign in", L"כניסה"},
         {L"Sign in with Google", L"כניסה עם חשבון Google"},
         {L"Add another account", L"הוספת חשבון נוסף"},
         {L"One account for every app: Google sign-in, Play licence checks and push notifications.",
@@ -271,9 +282,11 @@ const wchar_t* tr(const wchar_t* en) {
         {L"Version {0}", L"גרסה {0}"},
         {L"About", L"אודות"},
         {L"Android apps on Windows.", L"אפליקציות Android ב-Windows."},
-        {L"Source code", L"קוד מקור"},
         {L"View", L"הצגה"},
-        {L"Forked from Mac.apk (github.com/kksimp/Mac.apk).", L"פורק מתוך Mac.apk (github.com/kksimp/Mac.apk)."},
+        {L"Project page", L"דף הפרויקט"},
+        {L"Credits and licenses", L"קרדיטים ורישיונות"},
+        {L"Mac.apk, which Win.apk is built on, the other projects it uses, and their licenses.",
+         L"Mac.apk, שעליה Win.apk מבוססת, שאר הפרויקטים שבהם היא משתמשת, והרישיונות שלהם."},
         {L"Clear library", L"ניקוי הספרייה"},
         {L"Uninstalls every app and removes its shortcuts. App data is kept.",
          L"מסיר את כל האפליקציות ואת קיצורי הדרך שלהן. נתוני האפליקציות נשמרים."},
@@ -285,8 +298,7 @@ const wchar_t* tr(const wchar_t* en) {
         {L"Every app's install and run logs, to attach to a bug report. Each app's own is on its details page.",
          L"יומני ההתקנה וההפעלה של כל האפליקציות, לצירוף לדיווח על תקלה. היומן של כל אפליקציה נמצא גם בפרטי האפליקציה."},
         {L"Log", L"יומן"},
-        {L"What happened the last time the app ran.", L"מה קרה בהפעלה האחרונה של האפליקציה."},
-        {L"What happened when the app was installed.", L"מה קרה בהתקנת האפליקציה."},
+        {L"View the app's recent logs", L"צפייה ביומנים האחרונים של האפליקציה"},
         {L"The files and settings each app has saved.", L"הקבצים וההגדרות שכל אפליקציה שמרה."},
         {L"Google account: not signed in", L"חשבון Google: לא מחובר"},
         {L"Google account: {0}", L"חשבון Google: {0}"},
@@ -296,13 +308,12 @@ const wchar_t* tr(const wchar_t* en) {
         {L"Show", L"הצגה"},
         {L"Open", L"פתיחה"},
         {L"Desktop shortcut", L"קיצור דרך בשולחן העבודה"},
-        {L"Choose…", L"בחירה…"},
         {L"Remove…", L"הסרה…"},
         {L"{0} is ready", L"{0} מוכנה"},
         {L"Waiting", L"ממתינה"},
         {L"Copy", L"העתקה"},
-        {L"Portrait (the app requires it)", L"לאורך (האפליקציה דורשת זאת)"},
-        {L"Landscape (the app requires it)", L"לרוחב (האפליקציה דורשת זאת)"},
+        {L"Portrait – required by the app", L"לאורך – לפי דרישת האפליקציה"},
+        {L"Landscape – required by the app", L"לרוחב – לפי דרישת האפליקציה"},
         {L"Settings' default", L"ברירת המחדל שבהגדרות"},
         {L"The settings' default is landscape.", L"ברירת המחדל שבהגדרות היא לרוחב."},
         {L"The settings' default is portrait.", L"ברירת המחדל שבהגדרות היא לאורך."},
@@ -361,9 +372,9 @@ const wchar_t* tr(const wchar_t* en) {
         {L"Reset", L"איפוס"},
         {L"Window", L"חלון"},
         {L"Window size  ·  {0} × {1} dp", L"גודל החלון  ·  {0} × {1} dp"},
-        {L"The size you last gave the app's window. Reset, it opens at the settings' screen size again.",
-         L"הגודל האחרון שנתת לחלון של האפליקציה. אחרי איפוס היא תיפתח שוב בגודל המסך שבהגדרות."},
-        {L"{0} opens at the settings' screen size again.", L"{0} תיפתח שוב בגודל המסך שבהגדרות."},
+        {L"The size you last gave the app's window. Reset, it opens at the app window size in Settings again.",
+         L"הגודל האחרון שנתת לחלון של האפליקציה. אחרי איפוס היא תיפתח שוב בגודל חלון האפליקציות שבהגדרות."},
+        {L"{0} opens at the app window size in Settings again.", L"{0} תיפתח שוב בגודל חלון האפליקציות שבהגדרות."},
         {L"{0} will ask for its permissions again.", L"{0} תשאל שוב על ההרשאות שלה."},
         {L"Allow {0} to take pictures and record video?", L"לאפשר ל-{0} לצלם תמונות ולהקליט וידאו?"},
         {L"Allow {0} to record audio?", L"לאפשר ל-{0} להקליט אודיו?"},
@@ -428,29 +439,28 @@ const wchar_t* tr(const wchar_t* en) {
         {L"Allow {0} to access this PC's location?", L"לאפשר ל-{0} גישה למיקום של המחשב הזה?"},
         {L"Allow {0} to install other apps?", L"לאפשר ל-{0} להתקין אפליקציות אחרות?"},
         {L"Allow {0} to manage all files?", L"לאפשר ל-{0} לנהל את כל הקבצים?"},
-        {L"Also delete what the app saved (accounts, settings, files)", L"למחוק גם את מה שהאפליקציה שמרה (חשבונות, הגדרות, קבצים)"},
+        {L"Also remove accounts and data saved by the app", L"הסר גם חשבונות ומידע שנשמרו על ידי האפליקציה"},
+        {L"Removes the app and its shortcuts.", L"ההסרה מסירה את האפליקציה ואת קיצורי הדרך שלה."},
         {L"App details", L"פרטי האפליקציה"},
         {L"Apps", L"אפליקציות"},
         {L"Apps save to and open from your Downloads, Pictures, Documents, Music and Videos.", L"אפליקציות שומרות בתיקיות ההורדות, התמונות, המסמכים, המוזיקה והסרטונים שלך, ופותחות מהן."},
-        {L"Apps that need one orientation always get it. An app's details can turn just that one.", L"אפליקציה שצריכה כיוון מסוים תמיד מקבלת אותו. בפרטי האפליקציה אפשר לסובב רק אותה."},
         {L"Cancel", L"ביטול"},
         {L"Cancelled", L"בוטלה"},
         {L"Close {0} first, then install it again.", L"קודם סגור את {0}, ואז התקן אותה שוב."},
         {L"Close {0} first, then remove it.", L"קודם סגור את {0}, ואז הסר אותה."},
         {L"Closes the app at once, as Force stop does on a phone.", L"סוגר את האפליקציה מיד, כמו \"עצירה בכפייה\" בטלפון."},
-        {L"Converted code  ·  {0}", L"הקוד המומר  ·  {0}"},
+        {L"Run files  ·  {0}", L"קבצי ההרצה  ·  {0}"},
+        {L"What Win.apk prepared to run the app: {0}", L"מה ש-Win.apk הכינה כדי להריץ את האפליקציה: {0}"},
         {L"Copy details", L"העתקת הפרטים"},
         {L"Report a problem", L"דיווח על בעיה"},
         {L"Report", L"דיווח"},
-        {L"Report a problem?", L"לדווח על בעיה?"},
-        {L"Open the report", L"פתיחת הדיווח"},
-        {L"See whether someone already reported it", L"לבדוק אם מישהו כבר דיווח על זה"},
-        {L"Opens a report on GitHub with the versions filled in, and the log to attach.", L"פותח דיווח ב-GitHub עם הגרסאות כבר ממולאות, ואת היומן לצירוף."},
-        {L"Your browser opens a report on GitHub with the versions already filled in, and the logs folder opens "
-         L"with the app's log selected. Look the log over, then drag it into the report: nothing is sent until "
-         L"you post it. A GitHub account is needed.",
-         L"הדפדפן יפתח דיווח ב-GitHub שהגרסאות בו כבר ממולאות, ותיקיית היומנים תיפתח כשהיומן של האפליקציה מסומן. "
-         L"עבור על היומן, ואז גרור אותו לתוך הדיווח: שום דבר לא נשלח עד שתפרסם אותו. צריך חשבון GitHub."},
+        {L"Report a problem with {0}", L"דיווח על בעיה ב-{0}"},
+        {L"Open report", L"פתיחת דיווח"},
+        {L"Check whether it was already reported", L"בדיקה אם הבעיה כבר דווחה"},
+        {L"Opens a GitHub issue with the app's details and log", L"פותח Issue ב-GitHub עם נתוני האפליקציה והיומן"},
+        {L"A GitHub form opens with the version and system details filled in. The log is selected in its folder "
+         L"for you to attach; nothing is sent automatically.",
+         L"ייפתח טופס ב-GitHub עם פרטי הגרסה והמערכת. היומן יסומן בתיקייה לצירוף; שום דבר לא נשלח אוטומטית."},
         {L"Couldn't install", L"ההתקנה נכשלה"},
         {L"Couldn't install {0}", L"לא ניתן היה להתקין את {0}"},
         {L"Drop an Android app here", L"גרור לכאן אפליקציית Android"},
@@ -459,16 +469,13 @@ const wchar_t* tr(const wchar_t* en) {
         {L"Google did not answer. Check the internet connection, then try again.", L"Google לא ענתה. בדוק את החיבור לאינטרנט ונסה שוב."},
         {L"Google sign-in", L"כניסה ל-Google"},
         {L"Hide details", L"הסתרת הפרטים"},
-        {L"In dp, as on a phone. An app whose window you resize keeps its own size.", L"ב-dp, כמו בטלפון. אפליקציה שהגדלת או הקטנת את החלון שלה שומרת על הגודל שלה."},
         {L"In your library", L"בספרייה שלך"},
-        {L"Install a newer version over this one. What it saved stays.", L"התקנת גרסה חדשה יותר מעל זו. מה שהאפליקציה שמרה נשאר."},
         {L"Installing {0}", L"מתקין את {0}"},
         {L"Installs asked for by apps", L"התקנות שאפליקציות ביקשו"},
         {L"It can change or delete photos, videos and music that other apps made, without asking you.", L"היא תוכל לשנות או למחוק תמונות, סרטונים ומוזיקה שאפליקציות אחרות יצרו, בלי לשאול אותך."},
         {L"It can read, change and delete every file in your Downloads, Pictures, Documents, Music and Videos.", L"היא תוכל לקרוא, לשנות ולמחוק כל קובץ בתיקיות ההורדות, התמונות, המסמכים, המוזיקה והסרטונים שלך."},
         {L"It's in the Start menu and on the desktop.", L"היא בתפריט התחל ובשולחן העבודה."},
         {L"It's in the Start menu.", L"היא בתפריט התחל."},
-        {L"Its shortcuts go too. Unless you tick the box, what the app saved stays, so installing it again picks up where it left off.", L"גם קיצורי הדרך שלה יוסרו. אם לא תסמן את התיבה, מה שהאפליקציה שמרה נשאר, כך שהתקנה מחדש תמשיך מאיפה שהפסיקה."},
         {L"Keep installing", L"המשך להתקין"},
         {L"Log - Win.apk", L"יומן - Win.apk"},
         {L"Manage", L"ניהול"},
@@ -500,13 +507,12 @@ const wchar_t* tr(const wchar_t* en) {
         {L"This log is written the next time the app is opened or installed.", L"היומן ייכתב בפעם הבאה שהאפליקציה תיפתח או תותקן."},
         {L"Troubleshooting", L"פתרון בעיות"},
         {L"Turning a permission off closes {0}.", L"כיבוי הרשאה סוגר את {0}."},
-        {L"Update from a file", L"עדכון מקובץ"},
         {L"What was not installed yet is left out. An app that was being updated stays as it was.", L"מה שעוד לא הותקן לא יותקן. אפליקציה שהתעדכנה נשארת כפי שהייתה."},
         {L"Win.apk could not convert this app. See the log for details.", L"Win.apk לא הצליחה להמיר את האפליקציה. פרטים נוספים ביומן."},
         {L"Win.apk still asks you before each app it installs.", L"Win.apk עדיין תשאל אותך לפני כל אפליקציה שתותקן."},
         {L"Win.apk's runtime is missing. Install Win.apk again.", L"סביבת ההרצה של Win.apk חסרה. התקן את Win.apk מחדש."},
-        {L"You can also delete what the app saved.", L"אפשר למחוק גם את מה שהאפליקציה שמרה."},
-        {L"or choose Add app  ·  .apk .apkm .xapk .apks", L"או בחר \"הוספת אפליקציה\"  ·  apk, apkm, xapk, apks"},
+        {L"Removes the app and its shortcuts. You can also remove what it saved.", L"מסיר את האפליקציה ואת קיצורי הדרך שלה. אפשר להסיר גם את מה שהיא שמרה."},
+        {L"or choose Install app  ·  .apk .apkm .xapk .apks", L"או בחר \"התקנת אפליקציה\"  ·  apk, apkm, xapk, apks"},
         {L"{0}  ·  install", L"{0}  ·  התקנה"},
         {L"{0}  ·  last run", L"{0}  ·  הפעלה אחרונה"},
         {L"{0}  ·  run before", L"{0}  ·  ההפעלה הקודמת"},
@@ -531,7 +537,7 @@ const wchar_t* tr(const wchar_t* en) {
         {L"This PC has no such sensors.", L"אין במחשב הזה חיישנים כאלה."},
         {L"These are the Bluetooth devices near this PC.", L"אלה מכשירי ה-Bluetooth שליד המחשב הזה."},
         {L"Updates", L"עדכונים"},
-        {L"Check now", L"בדיקה עכשיו"},
+        {L"Check", L"בדיקה"},
         {L"Checking…", L"בודק…"},
         {L"Checking for updates…", L"בודק אם יש עדכונים…"},
         {L"Check for updates automatically", L"בדיקת עדכונים אוטומטית"},
@@ -996,6 +1002,19 @@ std::vector<App> library() {
     return apps;
 }
 
+// Google's Services Framework, Play services and Play Store are system components of Win.apk's Google services,
+// not apps the user opens: the library, its tiles and the shortcuts leave them out (installed_apps.json keeps
+// them, for the runtime and the system broker); their versions show on the Google services setup page, and
+// Google Play in the pane is the Play Store's one way in.
+bool system_package(const std::string& pkg) {
+    return pkg == "com.google.android.gsf" || pkg == "com.google.android.gms" || pkg == "com.android.vending";
+}
+
+bool system_app(const std::wstring& name) {
+    const std::vector<std::string> p = package_of(name);
+    return !p.empty() && system_package(p[0]);
+}
+
 bool write_ico(const fs::path& png, const fs::path& ico) {
     std::ifstream f(png, std::ios::binary);
     std::vector<uint8_t> data((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
@@ -1014,7 +1033,13 @@ bool write_ico(const fs::path& png, const fs::path& ico) {
 
 std::wstring run_args(const fs::path& apk) { return L"--run \"" + apk.wstring() + L"\""; }
 
+void remove_app_shortcuts(const App& app);
+
 void make_app_shortcuts(const App& app, bool desktop) {
+    if (system_app(app.name)) {  // a system component has no shortcut (and loses one an older launcher made)
+        remove_app_shortcuts(app);
+        return;
+    }
     const fs::path ico = shortcut_icon(app.name);
     const bool has_icon = write_ico(app_dir(app.name) / L"icon.png", ico);
     const std::wstring file = file_name_safe(app.label) + L".lnk";
@@ -1037,8 +1062,8 @@ void remove_app_shortcuts(const App& app) {
 // Shortcuts written by an older launcher lack the AppUserModelID, without which
 // an app's notifications show no name or icon: once (the ShortcutVersion
 // setting), every app's shortcuts are written again. Bump the version when
-// what a shortcut holds changes.
-constexpr DWORD kShortcutVersion = 1;
+// what a shortcut holds changes. 2: Google's apps lost theirs.
+constexpr DWORD kShortcutVersion = 2;
 
 void refresh_app_shortcuts() {
     if (setting(L"ShortcutVersion", 0) >= kShortcutVersion) return;
@@ -1083,9 +1108,10 @@ void apply_aot_clang_env() {
 // stdout and stderr go to `log` (none: NUL). `ready`, when given, is the launch handshake's event
 // (win32_window.h, take_launcher_ready_event): the child gets it, and only it and the log, through
 // an explicit handle list, as WINAPK_READY_EVENT in an environment block of its own, so two starts
-// at once do not see each other's.
+// at once do not see each other's. `extra` are NAME=value variables for this child alone, over the ones
+// the launcher has.
 HANDLE start_runtime(const std::wstring& args, const fs::path& log, const std::wstring& name = L"",
-                     HANDLE ready = nullptr) {
+                     HANDLE ready = nullptr, const std::vector<std::wstring>& extra = {}) {
     std::error_code ec;
     if (!log.empty()) fs::create_directories(log.parent_path(), ec);
     apply_runtime_env(name);
@@ -1113,10 +1139,16 @@ HANDLE start_runtime(const std::wstring& args, const fs::path& log, const std::w
     std::vector<std::wstring> vars;
     if (wchar_t* block = GetEnvironmentStringsW()) {
         for (const wchar_t* e = block; *e; e += wcslen(e) + 1) {
-            if (_wcsnicmp(e, L"WINAPK_READY_EVENT=", 19) != 0) vars.emplace_back(e);
+            if (_wcsnicmp(e, L"WINAPK_READY_EVENT=", 19) == 0) continue;
+            const bool replaced = std::any_of(extra.begin(), extra.end(), [e](const std::wstring& x) {
+                const size_t eq = x.find(L'=');
+                return eq != std::wstring::npos && _wcsnicmp(e, x.c_str(), eq + 1) == 0;
+            });
+            if (!replaced) vars.emplace_back(e);
         }
         FreeEnvironmentStringsW(block);
     }
+    vars.insert(vars.end(), extra.begin(), extra.end());
     if (ready) vars.push_back(L"WINAPK_READY_EVENT=" + std::to_wstring(reinterpret_cast<uintptr_t>(ready)));
     std::stable_sort(vars.begin(), vars.end(),
                      [](const std::wstring& a, const std::wstring& b) { return _wcsicmp(a.c_str(), b.c_str()) < 0; });
@@ -1169,6 +1201,7 @@ fs::path start_run_log(const std::wstring& name) {
 struct RunJob {
     std::wstring name;
     fs::path apk;
+    std::vector<std::wstring> env;  // for this run alone: Google Play's embedding (start_play)
 };
 
 SRWLOCK g_proc_lock = SRWLOCK_INIT;      // guards the two below
@@ -1187,7 +1220,7 @@ DWORD WINAPI run_thread(void* param) {
     ReleaseSRWLockShared(&g_proc_lock);
     HANDLE p = stopped_early ? nullptr
                              : start_runtime(L"--apk \"" + job->apk.wstring() + L"\"", start_run_log(job->name),
-                                             job->name, ready);
+                                             job->name, ready, job->env);
     DWORD code = 1;
     bool was_ready = false;
     // Stopped while it was starting (the splash's X): it ends now, before its window comes up.
@@ -2647,11 +2680,12 @@ bool g_focus_visible = false;  // the selection was reached with the keyboard: i
 
 // The library and the store share the window's scrolling (the store alone has the search box);
 // the view not shown keeps its own query and scroll position here.
-enum View { kLibraryView, kStoreView, kSettingsView, kAppView, kStoreAppView, kGmsSetupView } g_view = kLibraryView;
+enum View { kLibraryView, kStoreView, kSettingsView, kAppView, kStoreAppView, kGmsSetupView, kPlayView } g_view = kLibraryView;
 void set_view(View view);
 std::map<View, std::wstring> g_queries;  // the search of a grid view not shown
 std::map<View, float> g_scrolls;         // and its scroll position
 bool g_setup_from_settings = false;      // the Google services setup was opened from Settings (it goes back there)
+std::set<std::wstring> g_setup_names;    // installs the setup page started: system components, never a tile
 bool google_services_on();
 void open_google_play();
 
@@ -2667,9 +2701,17 @@ struct StoreState {
     std::set<std::string> icon_wait;                                       // being fetched
 } g_store;
 
+// Google Play in the window (see "Google Play, in the window" below).
+struct PlayState {
+    HWND panel = nullptr;  // the host panel over the content area; the Play Store's window is its child
+    std::wstring name;     // the Play Store's library name, while it runs (or last ran) in the panel
+    enum State { kIdle, kStarting, kShown, kClosed, kFailed } state = kIdle;
+} g_play;
+
 // What the mouse is over. kHitNav's `tile` is the pane's item: 0 Library, 1 Store, 2 Settings, 3 Google Play.
 enum HitKind { kHitNone, kHitNav, kHitAdd, kHitClear, kHitRefresh, kHitTile, kHitThumb, kHitTrack, kHitCategory,
-               kHitCard, kHitCardButton, kHitRetry, kHitInfoClose, kHitInfoLink, kHitBack, kHitPage, kHitAccount };
+               kHitCard, kHitCardButton, kHitRetry, kHitInfoClose, kHitInfoLink, kHitBack, kHitPage, kHitAccount,
+               kHitPlayOpen, kHitPlayLog };
 enum NavItem { kNavLibrary, kNavStore, kNavSettings, kNavPlay, kNavCount };
 struct Hit {
     HitKind kind = kHitNone;
@@ -2685,7 +2727,8 @@ float g_thumb_y0 = 0, g_thumb_scroll0 = 0;
 // grid, or a page (Settings, an app's details) in its place.
 struct Layout {
     RectF rail, nav[kNavCount], content, title, account, search, clear, add, category, refresh, grid, drop, retry, infobar,
-        info_close, info_link;  // info_link: measured when the InfoBar is painted
+        info_close, info_link,  // info_link: measured when the InfoBar is painted
+        play, play_open, play_log;  // Google Play's panel, and its Open and Show log once it closed
     bool compact = false;  // a narrow window: the pane shows icons only
     int cols = 1;
     float tile_w = 0, tile_h = 0, gap = 0, content_h = 0, max_scroll = 0;  // the library's tiles or the store's cards
@@ -2911,6 +2954,8 @@ float measure(const std::wstring& s, const Gdiplus::Font* f) {
     return w;
 }
 
+void place_play_panel();
+
 void compute_layout() {
     RECT rc;
     GetClientRect(g_main, &rc);
@@ -2926,6 +2971,8 @@ void compute_layout() {
     for (int i = 0; i < 2; ++i) g_l.nav[i] = RectF(px(8), px(60) + i * (item_h + px(4)), item_w, item_h);
     g_l.nav[kNavPlay] = google_services_on() ? RectF(px(8), px(60) + 2 * (item_h + px(4)), item_w, item_h) : RectF();
     g_l.nav[kNavSettings] = RectF(px(8), g_l.rail.GetBottom() - px(12) - item_h, item_w, item_h);
+    // The Google account above Settings, at the pane's foot, where the Microsoft Store keeps the profile.
+    g_l.account = RectF(px(8), g_l.nav[kNavSettings].Y - px(4) - item_h, item_w, item_h);
 
     // The content layer: the title block with the toolbar's controls at its end, the grid below.
     g_l.content = RectF(rail_w, 0, W - rail_w, H);
@@ -2933,9 +2980,6 @@ void compute_layout() {
     g_l.title = RectF(cx, px(20), cw, px(44));
     const float ch = px(32), cy = g_l.title.Y + (g_l.title.Height - ch) / 2;
     float right = cx + cw;
-    // The Google account's button ends the row, as a browser's profile button does.
-    g_l.account = RectF(right - ch, cy, ch, ch);
-    right = g_l.account.X - px(8);
     if (store) {
         g_l.refresh = RectF(right - ch, cy, ch, ch);
         right = g_l.refresh.X - px(8);
@@ -2943,7 +2987,7 @@ void compute_layout() {
         g_l.category = RectF(right - category_w, cy, category_w, ch);
         if (category_w > 0) right = g_l.category.X - px(8);
     } else {
-        const float add_w = measure(tr(L"Add app"), g_f.body_semi.get()) + px(50);
+        const float add_w = measure(tr(L"Install app"), g_f.body_semi.get()) + px(50);
         g_l.add = RectF(right - add_w, cy, add_w, ch);
         right = g_l.add.X - px(8);
     }
@@ -2964,6 +3008,12 @@ void compute_layout() {
     g_l.info_close = RectF(g_l.infobar.GetRight() - px(40), g_l.infobar.Y + px(8), px(32), px(32));
     g_l.retry = RectF(g_l.grid.X + g_l.grid.Width / 2 - px(60),
                       g_l.grid.Y + (std::min)(g_l.grid.Height / 2, px(110)) + px(66), px(120), ch);
+    // Google Play: the Play Store's own window, a child of the panel under the title, edge to edge in the layer.
+    g_l.play = RectF(g_l.content.X + 1, top, g_l.content.Width - 1, (std::max)(1.0f, H - top));
+    const bool play_log = g_play.state == PlayState::kFailed;  // Show log beside Open; else Open alone, centred
+    g_l.play_open = RectF(g_l.grid.X + g_l.grid.Width / 2 - (play_log ? px(140) : px(80)), g_l.retry.Y, px(160), ch);
+    g_l.play_log = RectF(g_l.play_open.GetRight() + px(8), g_l.retry.Y, px(112), ch);
+    place_play_panel();
 
     size_t items = g_tiles.size();
     if (store) {  // cards, as many across as fit at 300 px or more
@@ -3029,9 +3079,11 @@ void rebuild_tiles() {
     g_tiles.clear();
     std::set<std::wstring> shown;
     for (const std::wstring& name : g_pending) {
-        if (!find_app(name) && shown.insert(name).second) g_tiles.push_back({-1, name});
+        if (!find_app(name) && !g_setup_names.count(name) && shown.insert(name).second) g_tiles.push_back({-1, name});
     }
-    for (size_t i = 0; i < g_apps.size(); ++i) g_tiles.push_back({static_cast<int>(i), L""});
+    for (size_t i = 0; i < g_apps.size(); ++i) {
+        if (!system_app(g_apps[i].name)) g_tiles.push_back({static_cast<int>(i), L""});
+    }
     rebuild_store();
     compute_layout();
     InvalidateRect(g_main, nullptr, FALSE);
@@ -3094,6 +3146,7 @@ Hit hit_test(float x, float y) {
     for (int i = 0; i < kNavCount; ++i) {
         if (g_l.nav[i].Width > 0 && contains(g_l.nav[i], x, y)) return {kHitNav, i};
     }
+    if (contains(g_l.account, x, y)) return {kHitAccount, -1};
     if (!g_status.empty() && contains(g_l.infobar, x, y)) {
         if (!g_status_link.empty() && contains(g_l.info_link, x, y)) return {kHitInfoLink, -1};
         return {contains(g_l.info_close, x, y) ? kHitInfoClose : kHitNone, -1};
@@ -3102,7 +3155,12 @@ Hit hit_test(float x, float y) {
         if (contains(g_l.content, x, y)) return {kHitPage, -1};
         return {};
     }
-    if (contains(g_l.account, x, y)) return {kHitAccount, -1};
+    if (g_view == kPlayView) {  // the panel takes the mouse while it is up; once Google Play closed, its buttons
+        const bool ended = g_play.state == PlayState::kClosed || g_play.state == PlayState::kFailed;
+        if (ended && contains(g_l.play_open, x, y)) return {kHitPlayOpen, -1};
+        if (g_play.state == PlayState::kFailed && contains(g_l.play_log, x, y)) return {kHitPlayLog, -1};
+        return {};
+    }
     if (store && !query(g_view).empty() && contains(g_l.clear, x, y)) return {kHitClear, -1};
     if (!store && contains(g_l.add, x, y)) return {kHitAdd, -1};
     if (store && contains(g_l.refresh, x, y)) return {kHitRefresh, -1};
@@ -3134,7 +3192,9 @@ Hit hit_test(float x, float y) {
 // ---------------------------------------------------------------------------
 // Painting the library
 
-// The navigation pane: the brand, Library and Store, and Settings at the bottom.
+void paint_account_button(Graphics& g);
+
+// The navigation pane: the brand, Library and Store, and the Google account and Settings at the bottom.
 void paint_rail(Graphics& g) {
     const RectF& r = g_l.rail;
     if (Gdiplus::Bitmap* brand = brand_icon()) {
@@ -3158,7 +3218,7 @@ void paint_rail(Graphics& g) {
         const bool on = (i == kNavLibrary && (g_view == kLibraryView || g_view == kAppView)) ||
                         (i == kNavStore && (g_view == kStoreView || g_view == kStoreAppView)) ||
                         (i == kNavSettings && (g_view == kSettingsView || (setup && g_setup_from_settings))) ||
-                        (i == kNavPlay && setup && !g_setup_from_settings);
+                        (i == kNavPlay && ((setup && !g_setup_from_settings) || g_view == kPlayView));
         const bool hot = g_hot.kind == kHitNav && g_hot.tile == i;
         if (on || hot) fill_round(g, it, px(kRadiusControl), mix(g_t.bg, g_t.text, on ? 0.07f : 0.04f));
         if (on) fill_round(g, RectF(it.X, it.Y + (it.Height - px(16)) / 2, px(3), px(16)), px(1.5f), g_t.accent);
@@ -3170,6 +3230,7 @@ void paint_rail(Graphics& g) {
                       RectF(it.X + px(40), it.Y, it.Width - px(48), it.Height));
         }
     }
+    paint_account_button(g);
 }
 
 // The content layer: a lighter surface with a rounded corner towards the pane, as Windows 11 lays out.
@@ -3219,42 +3280,31 @@ Gdiplus::Bitmap* account_photo(int s) {
     return g_account_photo.get();
 }
 
-// The Google account's button, as a browser's profile button: the account's picture when Google gave
-// one at sign-in, else its initial on a colour of its own, or an outline of a person when no one is
-// signed in. It opens Settings, where the account is.
+// The Google account's item in the pane, above Settings: the account's picture when Google gave one at
+// sign-in, round with a thin ring, else the person glyph; the account's address beside it, or Sign in. It
+// opens Settings, where the account is.
 void paint_account_button(Graphics& g) {
-    const RectF& r = g_l.account;
+    const RectF& it = g_l.account;
+    if (it.Width <= 0) return;
     const bool hot = g_hot.kind == kHitAccount;
-    if (hot) fill_round(g, r, px(kRadiusControl), g_t.hover);
-    const RectF c = inset(r, px(3), px(3));
-    if (g_account.empty()) {
-        Gdiplus::Pen ring(hot ? g_t.text : g_t.text2, px(1.2f));
-        g.DrawEllipse(&ring, inset(c, px(1), px(1)));
-        draw_text(g, kGlyphContact, g_f.glyph12.get(), hot ? g_t.text : g_t.text2, c, kCenter);
-        return;
-    }
-    const int side = static_cast<int>(std::lround(c.Width));
-    if (Gdiplus::Bitmap* photo = side > 0 ? account_photo(side) : nullptr) {
+    if (hot) fill_round(g, it, px(kRadiusControl), mix(g_t.bg, g_t.text, 0.04f));
+    const Color ink = hot ? g_t.text : g_t.text2;
+    // Centred where the other items' glyphs are: 16 px glyphs from 12 px in, so the 24 px picture from 8.
+    const float s = px(24), gx = g_l.compact ? it.X + (it.Width - px(16)) / 2 : it.X + px(12);
+    const RectF c(gx + px(8) - s / 2, it.Y + (it.Height - s) / 2, s, s);
+    const int side = static_cast<int>(std::lround(s));
+    Gdiplus::Bitmap* photo = g_account.empty() ? nullptr : account_photo(side);
+    if (photo) {
         draw_image(g, photo, RectF(c.X, c.Y, static_cast<float>(side), static_cast<float>(side)));
-        if (hot) {
-            Gdiplus::Pen ring(g_t.accent, px(1.5f));
-            g.DrawEllipse(&ring, inset(c, -px(1.5f), -px(1.5f)));
-        }
-        return;
+        Gdiplus::Pen ring(hot ? g_t.accent : with_alpha(g_t.text, g_t.dark ? 70 : 45), px(1));
+        g.DrawEllipse(&ring, inset(c, px(0.5f), px(0.5f)));
+    } else {
+        draw_text(g, kGlyphContact, g_f.glyph16.get(), ink, RectF(gx, it.Y, px(16), it.Height), kCenter);
     }
-    static const Color kAvatar[] = {Color(255, 26, 115, 232), Color(255, 217, 48, 37), Color(255, 24, 128, 56),
-                                    Color(255, 227, 116, 0),  Color(255, 161, 66, 244), Color(255, 0, 137, 123),
-                                    Color(255, 196, 39, 103)};
-    uint32_t h = 2166136261u;
-    for (const wchar_t ch : g_account) h = (h ^ static_cast<uint32_t>(towlower(ch))) * 16777619u;
-    Gdiplus::SolidBrush fill(kAvatar[h % (sizeof kAvatar / sizeof kAvatar[0])]);
-    g.FillEllipse(&fill, c);
-    if (hot) {
-        Gdiplus::Pen ring(g_t.accent, px(1.5f));
-        g.DrawEllipse(&ring, inset(c, -px(1.5f), -px(1.5f)));
+    if (!g_l.compact) {
+        draw_text(g, g_account.empty() ? std::wstring(tr(L"Sign in")) : g_account, g_f.body.get(), ink,
+                  RectF(it.X + px(40), it.Y, it.Width - px(48), it.Height));
     }
-    const std::wstring ch(1, static_cast<wchar_t>(towupper(g_account[0])));
-    draw_text(g, ch, g_f.body_semi.get(), kWhite, c, kCenter);
 }
 
 // The page's title and what it holds, with the toolbar's controls at the end of the row.
@@ -3270,14 +3320,16 @@ void paint_toolbar(Graphics& g) {
         else if (g_store.loading) sub = tr(L"Checking F-Droid for new apps…");
         else sub = app_count(g_store.shown.size()) + L"  ·  f-droid.org";
     } else {
-        sub = g_apps.empty() ? std::wstring(tr(L"No apps installed yet")) : app_count(g_apps.size());
-        if (!g_running.empty()) sub += L"  ·  " + fmt(L"{0} running", {std::to_wstring(g_running.size())});
+        size_t shown = 0, running = 0;  // the library's own apps: not Google's system components
+        for (const Tile& tile : g_tiles) shown += tile.app >= 0;
+        for (const std::wstring& r : g_running) running += !system_app(r);
+        sub = shown == 0 ? std::wstring(tr(L"No apps installed yet")) : app_count(shown);
+        if (running) sub += L"  ·  " + fmt(L"{0} running", {std::to_wstring(running)});
         if (!g_current.empty()) sub += L"  ·  " + fmt(L"Installing {0}…", {job_label(g_current)});
     }
     const float tw = (std::max)(px(60), g_l.search.X - t.X - px(16));
     draw_text(g, tr(store ? L"Store" : L"Library"), g_f.title.get(), g_t.text, RectF(t.X, t.Y, tw, px(26)));
     draw_text(g, sub, g_f.caption.get(), g_t.text2, RectF(t.X, t.Y + px(26), tw, px(18)));
-    paint_account_button(g);
     if (store) {
         paint_search_box(g);
         if (!g_store.apps.empty()) {
@@ -3297,7 +3349,7 @@ void paint_toolbar(Graphics& g) {
             draw_icon_button(g, g_l.refresh, kGlyphRefresh, g_hot.kind == kHitRefresh, g_t.text2);
         }
     } else {
-        draw_button(g, g_l.add, tr(L"Add app"), g_hot.kind == kHitAdd, true, false, kGlyphAdd);
+        draw_button(g, g_l.add, tr(L"Install app"), g_hot.kind == kHitAdd, true, false, kGlyphAdd);
     }
 }
 
@@ -3360,7 +3412,7 @@ void paint_empty(Graphics& g, const wchar_t* glyph, const std::wstring& title, c
               kCenter, true, false);
 }
 
-// Nothing installed yet: a card that says how to add the first app (Add app is in the toolbar).
+// Nothing installed yet: a card that says how to add the first app (Install app is in the toolbar).
 void paint_drop_card(Graphics& g) {
     const RectF& r = g_l.drop;
     fill_round(g, r, px(kRadiusTile), g_t.card);
@@ -3375,7 +3427,7 @@ void paint_drop_card(Graphics& g) {
               kCenter);
     draw_text(g, tr(L"Drop an Android app here"), g_f.body_semi.get(), g_t.text,
               RectF(r.X + px(16), cy + px(2), r.Width - px(32), px(24)), kCenter);
-    draw_text(g, tr(L"or choose Add app  ·  .apk .apkm .xapk .apks"), g_f.caption.get(), g_t.text2,
+    draw_text(g, tr(L"or choose Install app  ·  .apk .apkm .xapk .apks"), g_f.caption.get(), g_t.text2,
               RectF(r.X + px(16), cy + px(26), r.Width - px(32), px(20)), kCenter);
 }
 
@@ -3529,12 +3581,16 @@ void paint_infobar(Graphics& g) {
 
 void paint_page(Graphics& g);
 
+void paint_play(Graphics& g);
+
 void paint_main(Graphics& g, float, float) {
     g.Clear(g_t.bg);
     paint_rail(g);
     paint_layer(g);
     if (page_view()) {
         paint_page(g);
+    } else if (g_view == kPlayView) {
+        paint_play(g);
     } else {
         paint_toolbar(g);
         if (g_view == kStoreView) paint_store_grid(g);
@@ -3545,7 +3601,8 @@ void paint_main(Graphics& g, float, float) {
 }
 
 void update_timer() {
-    if (!g_pending.empty() || !g_running.empty() || (g_view == kStoreView && g_store.loading)) {
+    if (!g_pending.empty() || !g_running.empty() || (g_view == kStoreView && g_store.loading) ||
+        g_play.state == PlayState::kStarting) {
         SetTimer(g_main, kAnimTimer, 16, nullptr);
     }
     else KillTimer(g_main, kAnimTimer);
@@ -4040,15 +4097,12 @@ void report_problem(HWND parent, const std::wstring& name, const std::wstring& l
     const std::wstring search = std::wstring(kIssuesUrl) + L"?q=" +
                                 url_escape(L"is:issue is:open \"" + (package.empty() ? label : package) + L"\"");
     Prompt p;
-    p.app = label;
-    p.icon = rounded_icon(app_dir(name) / L"icon.png", ipx(40));
-    p.question = tr(L"Report a problem?");
-    p.note = tr(L"Your browser opens a report on GitHub with the versions already filled in, and the logs folder opens "
-                L"with the app's log selected. Look the log over, then drag it into the report: nothing is sent until "
-                L"you post it. A GitHub account is needed.");
-    p.link = tr(L"See whether someone already reported it");
+    p.question = fmt(L"Report a problem with {0}", {label});
+    p.note = tr(L"A GitHub form opens with the version and system details filled in. The log is selected in its "
+                L"folder for you to attach; nothing is sent automatically.");
+    p.link = tr(L"Check whether it was already reported");
     p.on_link = [search] { ShellExecuteW(nullptr, L"open", search.c_str(), nullptr, nullptr, SW_SHOWNORMAL); };
-    p.buttons = {{IDOK, tr(L"Open the report")}, {IDCANCEL, tr(L"Cancel")}};
+    p.buttons = {{IDOK, tr(L"Open report")}, {IDCANCEL, tr(L"Cancel")}};
     p.default_id = IDOK;
     if (run_dialog(p, parent) != IDOK) return;
 
@@ -4290,13 +4344,10 @@ void remove_app_data(const std::string& pkg) {
 // installing the app again picks up where it left off).
 bool confirm_remove(const App& a, bool* with_data) {
     Prompt p;
-    p.app = a.label;
-    p.icon = rounded_icon(app_dir(a.name) / L"icon.png", ipx(40));
     p.caption = L"Win.apk";
-    p.question = fmt(L"Remove {0}?", {a.label});
-    p.note = tr(L"Its shortcuts go too. Unless you tick the box, what the app saved stays, so installing it again "
-                L"picks up where it left off.");
-    p.switches = {{tr(L"Also delete what the app saved (accounts, settings, files)"), false, true}};
+    p.question = fmt(L"Remove {0}", {a.label});
+    p.note = tr(L"Removes the app and its shortcuts.");
+    p.switches = {{tr(L"Also remove accounts and data saved by the app"), false, true}};
     p.buttons = {{IDOK, tr(L"Remove")}, {IDCANCEL, tr(L"Cancel")}};
     p.default_id = IDCANCEL;
     if (run_dialog(p, owner()) != IDOK) return false;
@@ -4334,11 +4385,6 @@ bool remove_app(const App& app, bool ask, bool with_data = false) {
         info(fmt(with_data ? L"{0} and what it saved were removed." : L"{0} was removed.", {copy.label}), kInfo);
     }
     return true;
-}
-
-void update_from_apk(const App& app) {
-    const auto files = pick_files(false, fmt(L"Update {0} from an APK", {app.label}).c_str());
-    if (!files.empty()) install(files[0], app.name, app.apk);
 }
 
 // Opens this app in the given orientation from now on (kOrientUnset: the
@@ -5284,6 +5330,9 @@ struct SetupCheck {
     std::string pkg;
     bool verified = false, google = false;
     std::wstring reason;
+    std::wstring abis;  // the ABIs its native code is for, comma-separated; empty: none
+    int min_sdk = 0;    // its minSdkVersion (0: unknown)
+    int sdk = 0;        // the API level Win.apk presents at most (PresentedSdk's ceiling; 0: unknown)
 };
 
 struct SetupState {
@@ -5382,6 +5431,9 @@ DWORD WINAPI setup_check_thread(void* param) {
         else if (key == L"VERIFIED") c->verified = value == L"1";
         else if (key == L"GOOGLE") c->google = value == L"1";
         else if (key == L"REASON") c->reason = value;
+        else if (key == L"ABIS") c->abis = value;
+        else if (key == L"MINSDK") c->min_sdk = _wtoi(value.c_str());
+        else if (key == L"SDK") c->sdk = _wtoi(value.c_str());
     }
     if (!PostMessageW(g_main, kSetupChecked, 0, reinterpret_cast<LPARAM>(c))) delete c;
     return 0;
@@ -5438,9 +5490,22 @@ void setup_checked(std::unique_ptr<SetupCheck> c) {
                            L"it from the APKMirror page that Download opens.",
                            {file}),
                        setup_log());
+    } else if (!c->abis.empty() && (L"," + c->abis + L",").find(L",x86_64,") == std::wstring::npos) {
+        // Native code for ARM only: Win.apk runs x86_64 code, and translating Play services is no way to run it.
+        error_with_log(fmt(L"{0} was not installed", {tr(app->name)}),
+                       fmt(L"{0} has code only for ARM processors. On APKMirror, download its x86_64 variant.",
+                           {file}),
+                       setup_log());
+    } else if (c->sdk > 0 && c->min_sdk > c->sdk) {
+        error_with_log(fmt(L"{0} was not installed", {tr(app->name)}),
+                       fmt(L"{0} needs API level {1}, and Win.apk presents API level {2}. On APKMirror, download an "
+                           L"older version of it.",
+                           {file, std::to_wstring(c->min_sdk), std::to_wstring(c->sdk)}),
+                       setup_log());
     } else {
         const std::wstring name = install_name(c->file);
         g_setup.installing[c->pkg] = name;
+        g_setup_names.insert(name);
         install(c->file, name);
     }
     if (g_view == kGmsSetupView) rebuild_page();
@@ -5457,15 +5522,11 @@ std::vector<Section> gms_setup_sections() {
         r.check = true;
         state.rows.push_back(r);
     } else {
-        const std::wstring folder = g_setup.folder.empty() ? known_folder(FOLDERID_Downloads).wstring()
-                                                           : g_setup.folder.wstring();
-        state.rows.push_back(text_row(
-            g_setup.checking.empty() ? tr(L"Waiting for the downloads") : fmt(L"Checking {0}…", {g_setup.checking}),
-            L"",
-            fmt(L"Download each app below with APKMirror's own download button. While this page is open, Win.apk "
-                L"watches your Downloads folder ({0}) and installs a file once it has checked that Google signed "
-                L"it. You can also drop a file here.",
-                {g_rtl ? L"\x200E" + folder + L"\x200E" : folder})));  // a path reads left to right
+        // While the page is open the Downloads folder is watched (and a file can be dropped here): each app's row
+        // says which file to download, and the files that pass the checks install themselves.
+        state.rows.push_back(text_row(tr(L"To use Google Play, install the following apps as described."), L"",
+                                      g_setup.checking.empty() ? tr(L"Waiting for the downloads")
+                                                               : fmt(L"Checking {0}…", {g_setup.checking})));
     }
     out.push_back(std::move(state));
 
@@ -5490,8 +5551,6 @@ std::vector<Section> gms_setup_sections() {
                                            }));
         }
     }
-    apps.footer = tr(L"Win.apk does not download Google's apps itself: APKMirror's download button does, in your "
-                     L"browser. Only files that Google signed are installed; any other file is refused.");
     out.push_back(std::move(apps));
     return out;
 }
@@ -5507,11 +5566,179 @@ void show_gms_setup(bool from_settings) {
     open_page(kGmsSetupView, std::move(p));
 }
 
-// Google Play in the pane: the Play Store in its own window once the three apps are installed, else the setup.
+// ---- Google Play, in the window ---------------------------------------------------
+//
+// Google Play in the pane opens the Play Store inside the library window, in the content area as the Store tab
+// is, not in a window of its own. The launcher puts a host panel (a child window, play_panel_proc) over the
+// content area under the title and starts the runtime with WINAPK_EMBED_PARENT=<the panel's handle> and
+// WINAPK_PHONE_SIZE the panel's size in dp; the runtime then makes its window a child of the panel
+// (win32_window.cpp, "embedded in the launcher") that fills it and follows its size, so the app lays itself
+// out for the area as it does for a resized window. The two processes' input queues are joined, as Windows
+// does for any parent and child, so the panel gives the app the keyboard focus when it is shown.
+//
+// Leaving for another tab hides the panel and the app keeps running, as a phone keeps an app in the
+// background; Google Play again shows it at once. Closing the library window stops it. If it exits, the area
+// says so, with Open Google Play (and Show log when it never came up). If the runtime could not embed its
+// window (an older runtime, or one already running in its own window), the window is a normal one: the
+// launcher sees the panel has no child once the app is up, says so and leaves the window as it is.
+
+constexpr wchar_t kPlayPanelClass[] = L"WinApkPlayPanel";
+
+HWND play_window() { return g_play.panel ? GetWindow(g_play.panel, GW_CHILD) : nullptr; }
+
+// The panel's place and visibility: over the content under the title while Google Play is the view and the app
+// is starting or up.
+void place_play_panel() {
+    if (!g_play.panel) return;
+    const RectF& r = g_l.play;
+    MoveWindow(g_play.panel, static_cast<int>(r.X), static_cast<int>(r.Y), static_cast<int>(r.Width),
+               static_cast<int>(r.Height), TRUE);
+    const bool show = g_view == kPlayView &&
+                      (g_play.state == PlayState::kStarting || g_play.state == PlayState::kShown);
+    if (show != (IsWindowVisible(g_play.panel) != FALSE)) ShowWindow(g_play.panel, show ? SW_SHOW : SW_HIDE);
+}
+
+// Gives the app the keyboard while Google Play is the view.
+void focus_play() {
+    if (g_view != kPlayView) return;
+    if (HWND w = play_window()) SetFocus(w);
+}
+
+// The app's window fills the panel. Asynchronous: a busy app never holds the launcher's thread up.
+void fit_play_window() {
+    HWND w = play_window();
+    if (!w) return;
+    RECT rc;
+    GetClientRect(g_play.panel, &rc);
+    SetWindowPos(w, nullptr, 0, 0, rc.right, rc.bottom, SWP_NOZORDER | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS);
+}
+
+LRESULT CALLBACK play_panel_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    switch (msg) {
+        case WM_ERASEBKGND: return 1;
+        case WM_PAINT:  // under the app's window: the spinner until it is up
+            buffered_paint(hwnd, [](Graphics& g, float w, float h) {
+                g.Clear(g_t.layer);
+                if (g_play.state != PlayState::kStarting) return;
+                const float s = px(32), cy = (std::min)(h / 2, px(220));
+                spinner(g, RectF((w - s) / 2, cy - px(48), s, s), g_t.accent, px(3));
+                draw_text(g, tr(L"Starting Google Play…"), g_f.body.get(), g_t.text2, RectF(0, cy, w, px(24)), kCenter);
+            });
+            return 0;
+        case WM_SIZE: fit_play_window(); return 0;
+        case WM_PARENTNOTIFY:  // the runtime made its window: it fills the panel at once
+            if (LOWORD(wp) == WM_CREATE) fit_play_window();
+            return 0;
+        case WM_SETFOCUS: focus_play(); return 0;
+    }
+    return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+void ensure_play_panel() {
+    if (g_play.panel) return;
+    static bool registered = false;
+    if (!registered) {
+        WNDCLASSEXW wc{sizeof(wc)};
+        wc.lpfnWndProc = play_panel_proc;
+        wc.hInstance = g_inst;
+        wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+        wc.lpszClassName = kPlayPanelClass;
+        RegisterClassExW(&wc);
+        registered = true;
+    }
+    // WS_EX_NOINHERITLAYOUT: the panel is mirrored with the window in Hebrew, the app's window in it never (the
+    // app lays out its own right to left).
+    g_play.panel = CreateWindowExW(layout_style() | WS_EX_NOINHERITLAYOUT | WS_EX_CONTROLPARENT, kPlayPanelClass,
+                                   L"Google Play", WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS, 0, 0, 1, 1, g_main,
+                                   nullptr, g_inst, nullptr);
+}
+
+void start_play(const App& store) {
+    ensure_play_panel();
+    if (!g_play.panel) {  // no panel: Google Play in its own window, as any app
+        launch(store);
+        return;
+    }
+    compute_layout();
+    const int w = (std::max)(1, MulDiv(static_cast<int>(g_l.play.Width), 96, static_cast<int>(g_dpi)));
+    const int h = (std::max)(1, MulDiv(static_cast<int>(g_l.play.Height), 96, static_cast<int>(g_dpi)));
+    g_play.name = store.name;
+    g_play.state = PlayState::kStarting;
+    g_running.insert(store.name);
+    AcquireSRWLockExclusive(&g_proc_lock);
+    g_starting[store.name] = false;
+    ReleaseSRWLockExclusive(&g_proc_lock);
+    auto* job = new RunJob{store.name, store.apk, {}};
+    job->env = {L"WINAPK_EMBED_PARENT=" + std::to_wstring(reinterpret_cast<uintptr_t>(g_play.panel)),
+                L"WINAPK_PHONE_SIZE=" + std::to_wstring(w) + L"x" + std::to_wstring(h)};
+    CloseHandle(CreateThread(nullptr, 0, run_thread, job, 0, nullptr));
+    place_play_panel();
+    update_timer();
+}
+
+// Google Play in the pane: the Play Store in the window once the three apps are installed, else the setup.
 void open_google_play() {
     const App* store = app_of_package("com.android.vending");
-    if (store && google_apps_ready()) launch(*store);
-    else show_gms_setup(false);
+    if (!store || !google_apps_ready()) {
+        show_gms_setup(false);
+        return;
+    }
+    const bool here = g_play.name == store->name &&
+                      (g_play.state == PlayState::kStarting || g_play.state == PlayState::kShown);
+    if (!here && g_running.count(store->name)) {  // running in a window of its own
+        bring_forward(store->name);
+        return;
+    }
+    set_view(kPlayView);
+    if (!here) start_play(*store);
+    focus_play();
+}
+
+// The app's window is up (kRunReady): in the panel, or, when the runtime did not embed it, on its own.
+void play_ready() {
+    if (play_window()) {
+        g_play.state = PlayState::kShown;
+        InvalidateRect(g_play.panel, nullptr, FALSE);
+        fit_play_window();
+        place_play_panel();
+        focus_play();
+    } else {
+        g_play.state = PlayState::kIdle;
+        g_play.name.clear();
+        place_play_panel();
+        if (g_view == kPlayView) set_view(kLibraryView);
+        info(tr(L"Google Play opened in its own window."), kInfo);
+    }
+    update_timer();
+    InvalidateRect(g_main, nullptr, FALSE);
+}
+
+// The Play Store's runtime ended (kRunExited); `ready`: its window had come up. Stopped by the launcher (the
+// window closing) it is simply over.
+void play_exited(bool ready, bool stopped) {
+    g_play.state = stopped || ready ? PlayState::kClosed : PlayState::kFailed;
+    compute_layout();
+    update_timer();
+    InvalidateRect(g_main, nullptr, FALSE);
+}
+
+// The view under the panel: the title, and once Google Play closed, what happened and Open Google Play.
+void paint_play(Graphics& g) {
+    const RectF& t = g_l.title;
+    std::wstring sub;
+    if (g_play.state == PlayState::kStarting) {
+        sub = tr(L"Starting Google Play…");
+    } else if (const App* store = app_of_package("com.android.vending")) {
+        const std::vector<std::string> p = package_of(store->name);
+        if (p.size() > 2 && !p[2].empty()) sub = fmt(L"Version {0}", {utf8_to_wide(p[2])});
+    }
+    draw_text(g, tr(L"Google Play"), g_f.title.get(), g_t.text, RectF(t.X, t.Y, t.Width, px(26)));
+    draw_text(g, sub, g_f.caption.get(), g_t.text2, RectF(t.X, t.Y + px(26), t.Width, px(18)));
+    const bool failed = g_play.state == PlayState::kFailed;
+    if (!failed && g_play.state != PlayState::kClosed) return;
+    paint_empty(g, kGlyphPlay, tr(failed ? L"Google Play didn't start" : L"Google Play closed"), L"");
+    draw_button(g, g_l.play_open, tr(L"Open Google Play"), g_hot.kind == kHitPlayOpen, true, false);
+    if (failed) draw_button(g, g_l.play_log, tr(L"Show log"), g_hot.kind == kHitPlayLog, false, false);
 }
 
 // ---- Software updates ----------------------------------------------------------
@@ -5729,7 +5956,7 @@ std::vector<Section> update_sections() {
     }
     Section sec{tr(L"Updates"), {}, L""};
     sec.rows.push_back(button_row(fmt(L"Version {0}", {version()}), status,
-                                  g_update.checking ? tr(L"Checking…") : tr(L"Check now"),
+                                  g_update.checking ? tr(L"Checking…") : tr(L"Check"),
                                   [] { start_update_check(true, true); }));
     Row autoc;
     autoc.kind = Row::kToggle;
@@ -5778,7 +6005,7 @@ std::vector<Section> settings_sections() {
     Row theme;
     theme.kind = Row::kChoice;
     theme.title = tr(L"Theme");
-    theme.choices = {tr(L"Match Windows"), tr(L"Light"), tr(L"Dark")};
+    theme.choices = {tr(L"Follow Windows"), tr(L"Light"), tr(L"Dark")};  // the setting's 0, 1, 2
     theme.choice = static_cast<int>((std::min)(setting(L"Theme", 0), 2ul));
     theme.act = [](int i) {
         set_setting(L"Theme", static_cast<DWORD>(i));
@@ -5787,26 +6014,29 @@ std::vector<Section> settings_sections() {
     Row lang;
     lang.kind = Row::kChoice;
     lang.title = tr(L"Language");
-    lang.choices = {tr(L"Match Windows"), L"English", L"עברית"};
-    lang.choice = static_cast<int>((std::min)(setting(L"Language", 0), 2ul));
+    // Listed Hebrew first; the setting keeps its values (0 as Windows, 1 English, 2 Hebrew).
+    lang.choices = {tr(L"Follow Windows"), L"עברית", L"English"};
+    const DWORD language = setting(L"Language", 0);
+    lang.choice = language == 2 ? 1 : language == 1 ? 2 : 0;
     lang.act = [](int i) {
-        set_setting(L"Language", static_cast<DWORD>(i));
+        set_setting(L"Language", static_cast<DWORD>(i == 1 ? 2 : i == 2 ? 1 : 0));
         apply_language();
     };
     out.push_back({tr(L"Appearance"), {theme, lang}, L""});
 
     Row size;
     size.kind = Row::kChoice;
-    size.title = tr(L"Screen size");
-    size.detail = tr(L"In dp, as on a phone. An app whose window you resize keeps its own size.");
+    size.title = tr(L"App window size");
+    size.detail = tr(L"The size apps open at. An app whose window you resized opens at its saved size.");
     for (const auto& p : kPhonePresets) size.choices.push_back(tr(p.label));
     size.choice = static_cast<int>(setting(L"PhoneSize", 0));
     if (size.choice >= static_cast<int>(size.choices.size())) size.choice = 0;
     size.act = [](int i) { set_setting(L"PhoneSize", static_cast<DWORD>(i)); };
     Row orient;
     orient.kind = Row::kChoice;
-    orient.title = tr(L"Orientation");
-    orient.detail = tr(L"Apps that need one orientation always get it. An app's details can turn just that one.");
+    orient.title = tr(L"Default orientation");
+    orient.detail = tr(L"Apps that require an orientation always open in it. You can change it per app on its "
+                       L"details page.");
     orient.choices = {tr(L"Portrait"), tr(L"Landscape")};
     orient.choice = landscape_default() ? 1 : 0;
     orient.act = [](int i) { set_setting(L"Landscape", static_cast<DWORD>(i)); };
@@ -5820,9 +6050,9 @@ std::vector<Section> settings_sections() {
     // Read by the runtime and its background translation (runtime_main.cpp, aot_background_on).
     Row aot;
     aot.kind = Row::kToggle;
-    aot.title = tr(L"Optimize ARM apps in the background");
-    aot.detail = tr(L"Translates the code of apps that have only ARM code for this PC, at the lowest priority, so "
-                    L"they run faster. Off, translations already made are still used.");
+    aot.title = tr(L"Speed up ARM apps");
+    aot.detail = tr(L"Translates ARM code to your PC's code in the background so apps run faster. Runs at low "
+                    L"priority.");
     aot.on = setting(L"AotBackground", 1) != 0;
     aot.act = [](int on) { set_setting(L"AotBackground", static_cast<DWORD>(on)); };
     Row desktop;
@@ -5854,19 +6084,22 @@ std::vector<Section> settings_sections() {
                    }),
         button_row(tr(L"App data"), tr(L"The files and settings each app has saved."), tr(L"Open folder"),
                    [] { open_path(data_dir()); })};
-    if (!g_apps.empty()) {
+    // The library's own apps; Google's system components stay with Google services.
+    std::vector<App> own;
+    for (const App& a : g_apps)
+        if (!system_app(a.name)) own.push_back(a);
+    if (!own.empty()) {
         trouble.push_back(button_row(tr(L"Clear library"),
                                      tr(L"Uninstalls every app and removes its shortcuts. App data is kept."),
-                                     tr(L"Clear…"), [] {
+                                     tr(L"Clear…"), [own] {
                                          if (!confirm(tr(L"Clear the library?"),
                                                       fmt(L"All {0} apps and their shortcuts will be removed. App "
                                                           L"data is kept.",
-                                                          {std::to_wstring(g_apps.size())}),
+                                                          {std::to_wstring(own.size())}),
                                                       tr(L"Clear library"))) {
                                              return;
                                          }
-                                         const std::vector<App> apps = g_apps;
-                                         for (const App& a : apps) remove_app(a, false);
+                                         for (const App& a : own) remove_app(a, false);
                                          refresh();
                                          info(tr(L"The library was cleared."), kInfo);
                                      },
@@ -5880,13 +6113,26 @@ std::vector<Section> settings_sections() {
     auto open_url = [](const wchar_t* url) {
         return [url] { ShellExecuteW(nullptr, L"open", url, nullptr, nullptr, SW_SHOWNORMAL); };
     };
+    // Credits and licenses: THIRD_PARTY_NOTICES.txt, packaged next to README.txt and LICENSE.txt, which credits
+    // Mac.apk (the AGPL's attribution) and every project the package ships; the repository's copy when this is
+    // a build without one beside it.
     out.push_back({tr(L"About"),
                    {text_row(L"Win.apk", fmt(L"Version {0}", {version()}), tr(L"Android apps on Windows.")),
-                    button_row(tr(L"Source code"), L"github.com/israel2176/win.apk", tr(L"Open"),
+                    button_row(tr(L"Project page"), L"github.com/israel2176/win.apk", tr(L"Open"),
                                open_url(L"https://github.com/israel2176/win.apk")),
-                    button_row(tr(L"License"), L"GNU Affero General Public License v3.0", tr(L"View"),
-                               open_url(L"https://github.com/israel2176/win.apk/blob/main/LICENSE"))},
-                   tr(L"Forked from Mac.apk (github.com/kksimp/Mac.apk).")});
+                    button_row(tr(L"Credits and licenses"),
+                               tr(L"Mac.apk, which Win.apk is built on, the other projects it uses, and their "
+                                  L"licenses."),
+                               tr(L"View"), [] {
+                                   std::error_code ec;
+                                   const fs::path notices = root() / L"THIRD_PARTY_NOTICES.txt";
+                                   if (fs::exists(notices, ec)) open_path(notices);
+                                   else ShellExecuteW(nullptr, L"open",
+                                                      L"https://github.com/israel2176/win.apk/blob/main/"
+                                                      L"THIRD_PARTY_NOTICES.txt",
+                                                      nullptr, nullptr, SW_SHOWNORMAL);
+                               })},
+                   L""});
     return out;
 }
 
@@ -5980,8 +6226,8 @@ void show_info(const App& app) {
         // The orientation the app opens in: what its manifest fixes, or the user's choice for it over the settings'.
         std::vector<Row> window;
         if (const int fixed = manifest_orientation(a.name); fixed != kOrientUnset) {
-            window.push_back(text_row(tr(L"Orientation"), tr(fixed == kLandscape ? L"Landscape (the app requires it)"
-                                                                                 : L"Portrait (the app requires it)")));
+            window.push_back(text_row(tr(L"Orientation"), tr(fixed == kLandscape ? L"Landscape – required by the app"
+                                                                                 : L"Portrait – required by the app")));
         } else {
             Row orient;
             orient.kind = Row::kChoice;
@@ -6000,11 +6246,11 @@ void show_info(const App& app) {
             if (f >> w >> x >> h && w > 0 && h > 0) {
                 window.push_back(button_row(fmt(L"Window size  ·  {0} × {1} dp", {std::to_wstring(w), std::to_wstring(h)}),
                                             tr(L"The size you last gave the app's window. Reset, it opens at the "
-                                               L"settings' screen size again."),
+                                               L"app window size in Settings again."),
                                             tr(L"Reset"), [a] {
                                                 std::error_code ec;
                                                 fs::remove(library_dir() / (a.name + L".window"), ec);
-                                                info(fmt(L"{0} opens at the settings' screen size again.", {a.label}),
+                                                info(fmt(L"{0} opens at the app window size in Settings again.", {a.label}),
                                                      kSuccess);
                                             }));
             }
@@ -6053,22 +6299,21 @@ void show_info(const App& app) {
             std::error_code ec2;
             const fs::path log = fs::exists(run_log(a.name), ec2) ? run_log(a.name) : install_log(a.name);
             out.push_back({tr(L"Troubleshooting"),
-                           {button_row(tr(L"Log"),
-                                       tr(fs::exists(run_log(a.name), ec2)
-                                              ? L"What happened the last time the app ran."
-                                              : L"What happened when the app was installed."),
-                                       tr(L"Show log"), [log] { show_logs(log); }),
+                           {button_row(tr(L"Log"), tr(L"View the app's recent logs"), tr(L"Show log"),
+                                       [log] { show_logs(log); }),
                             button_row(tr(L"Report a problem"),
-                                       tr(L"Opens a report on GitHub with the versions filled in, and the log to "
-                                          L"attach."),
+                                       tr(L"Opens a GitHub issue with the app's details and log"),
                                        tr(L"Report"), [a, log] { report_problem(g_main, a.name, a.label, log, {}); })},
                            L""});
         }
         out.push_back({tr(L"Storage"),
                        {button_row(fmt(L"The app's file  ·  {0}", {apk_size}), a.apk.wstring(), tr(L"Show"),
                                    [a] { show_in_explorer(a.apk); }),
-                        button_row(fmt(L"Converted code  ·  {0}", {files_size}), app_dir(a.name).wstring(), tr(L"Open"),
-                                   [a] { open_path(app_dir(a.name)); })},
+                        button_row(fmt(L"Run files  ·  {0}", {files_size}),
+                                   fmt(L"What Win.apk prepared to run the app: {0}",  // a path reads left to right
+                                       {g_rtl ? L"\x200E" + app_dir(a.name).wstring() + L"\x200E"
+                                              : app_dir(a.name).wstring()}),
+                                   tr(L"Open"), [a] { open_path(app_dir(a.name)); })},
                        L""});
         std::vector<Row> manage;
         if (g_running.count(a.name) || app_running(a.name)) {
@@ -6078,9 +6323,10 @@ void show_info(const App& app) {
                                             else appops::stop_runtime_of(a.apk);
                                         }));
         }
-        manage.push_back(button_row(tr(L"Update from a file"), tr(L"Install a newer version over this one. What it saved stays."),
-                                    tr(L"Choose…"), [a] { update_from_apk(a); }));
-        manage.push_back(button_row(tr(L"Remove"), tr(L"You can also delete what the app saved."), tr(L"Remove…"),
+        // No "Update from a file": opening or dropping a newer file of the app already installs over it.
+        manage.push_back(button_row(tr(L"Remove"), tr(L"Removes the app and its shortcuts. You can also remove what "
+                                                     L"it saved."),
+                                    tr(L"Remove…"),
                                     [a] { remove_app(a, true); }, true));
         out.push_back({tr(L"Manage"), std::move(manage), L""});
         return out;
@@ -6202,7 +6448,7 @@ struct InstallView {
     Targets targets;
     int hot = 0;
     bool tracking = false;
-    bool details = false;          // the log is shown (the InstallDetails setting)
+    bool details = false;          // the log is shown: Show details, for this window only
     std::wstring log_name;         // whose log the details show; empty: the one being installed
     std::vector<std::wstring> log;
     ULONGLONG log_read = 0;
@@ -6303,9 +6549,10 @@ void paint_install(Graphics& g, float W, float H) {
     g.Clear(g_t.layer);  // as the dialog: the layer, and a footer band of the window colour
     g_iv.targets.clear();
     const float m = px(24), foot = px(64), cw = W - 2 * m;
-    int done = 0, failed = 0, cancelled_n = 0;
+    int done = 0, failed = 0, cancelled_n = 0, shown_done = 0;  // shown_done: in the library (not Google's)
     for (const Job& j : g_jobs) {
         done += j.state == Job::kDone;
+        shown_done += j.state == Job::kDone && !system_app(j.name);
         failed += j.state == Job::kFailed;
         cancelled_n += j.state == Job::kCancelled;
     }
@@ -6330,8 +6577,9 @@ void paint_install(Graphics& g, float W, float H) {
                 break;
             case Job::kDone:
                 title = fmt(L"{0} is ready", {name});
-                sub = tr(setting(L"DesktopShortcut", 1) ? L"It's in the Start menu and on the desktop."
-                                                         : L"It's in the Start menu.");
+                sub = tr(system_app(hero->name)                ? L"It's part of Google services."
+                         : setting(L"DesktopShortcut", 1) != 0 ? L"It's in the Start menu and on the desktop."
+                                                               : L"It's in the Start menu.");
                 draw_badge(g, ir, true, px(24));
                 break;
             case Job::kFailed:
@@ -6399,7 +6647,7 @@ void paint_install(Graphics& g, float W, float H) {
             draw_text(g, job_title(j), g_f.body_semi.get(), g_t.text, RectF(rx, r.Y + px(6), rw, px(20)));
             draw_text(g, state, g_f.caption.get(), ink, RectF(rx, r.Y + px(25), rw, px(17)));
             const float right = r.GetRight() - px(14);
-            if (j.state == Job::kDone) {
+            if (j.state == Job::kDone && !system_app(j.name)) {
                 draw_link(g, tr(L"Open"), right, r.Y, rh, g_iv.hot == kActRowOpen + rows[k], kActRowOpen + rows[k], kRight);
             } else if (j.state == Job::kFailed) {
                 draw_link(g, tr(L"Show log"), right, r.Y, rh, g_iv.hot == kActRowLog + rows[k], kActRowLog + rows[k],
@@ -6466,14 +6714,14 @@ void paint_install(Graphics& g, float W, float H) {
     if (active) {
         button(tr(L"Cancel"), kActCancel, false);
     } else {
-        const bool single_ok = hero && hero->state == Job::kDone;
+        const bool single_ok = hero && hero->state == Job::kDone && !system_app(hero->name);
         if (any_failed && hero && hero->state == Job::kFailed) {
             button(tr(L"Copy details"), kActCopy, false);
             button(tr(L"Show log"), kActShowLog, false);
         }
         button(tr(L"Close"), kActClose, !single_ok);
         if (single_ok) button(tr(L"Open"), kActOpen, true);
-        if (done > 0) draw_link(g, tr(L"Show in library"), m, fy, foot, g_iv.hot == kActLibrary, kActLibrary);
+        if (shown_done > 0) draw_link(g, tr(L"Show in library"), m, fy, foot, g_iv.hot == kActLibrary, kActLibrary);
     }
 }
 
@@ -6533,7 +6781,6 @@ void install_action(HWND hwnd, int act) {
         }
     } else if (act == kActDetails) {
         g_iv.details = !g_iv.details;
-        set_setting(L"InstallDetails", g_iv.details ? 1 : 0);
         g_iv.log_read = 0;
         fit_install_window();
     } else if (act == kActShowLog) {
@@ -6552,7 +6799,7 @@ void install_action(HWND hwnd, int act) {
     } else if (act == kActLibrary) {
         std::wstring pick;
         for (const Job& j : g_jobs)
-            if (j.state == Job::kDone) pick = j.name;
+            if (j.state == Job::kDone && !system_app(j.name)) pick = j.name;
         show_library(SW_SHOWDEFAULT);
         set_view(kLibraryView);
         if (!pick.empty()) select_app(pick);
@@ -6567,7 +6814,7 @@ void install_action(HWND hwnd, int act) {
         }
     } else if (act >= kActRowOpen) {
         const size_t i = static_cast<size_t>(act - kActRowOpen);
-        if (i < g_jobs.size()) {
+        if (i < g_jobs.size() && !system_app(g_jobs[i].name)) {
             if (const App* a = find_app(g_jobs[i].name)) launch(*a);
         }
     }
@@ -6674,7 +6921,7 @@ void show_install_window() {
         SetForegroundWindow(g_install_wnd);
         return;
     }
-    g_iv.details = setting(L"InstallDetails", 0) != 0;
+    g_iv.details = false;  // collapsed each time: the log is for when something needs a look
     g_install_wnd = open_tool_window(L"WinApkInstall", install_title().c_str(), ipx(440), ipx(200),
                                      WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX);
     if (g_install_wnd) {
@@ -7594,6 +7841,8 @@ void set_view(View view) {
         g_queries[g_view] = query(g_view);
         g_scrolls[g_view] = g_scroll;
     }
+    // Leaving Google Play: the panel hides (compute_layout) and the keyboard comes back to the window.
+    if (view != kPlayView && play_window() && GetFocus() == play_window()) SetFocus(g_main);
     g_view = view;
     g_hot = {};
     setup_watch(view == kGmsSetupView);
@@ -7621,7 +7870,7 @@ void set_view(View view) {
 
 void apply_language() {
     pick_language();
-    for (HWND w : {g_main, g_install_wnd}) {
+    for (HWND w : {g_main, g_install_wnd, g_play.panel}) {
         if (!w) continue;
         const LONG_PTR ex = GetWindowLongPtrW(w, GWL_EXSTYLE);
         SetWindowLongPtrW(w, GWL_EXSTYLE, g_rtl ? (ex | WS_EX_LAYOUTRTL) : (ex & ~WS_EX_LAYOUTRTL));
@@ -7760,17 +8009,21 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         case WM_SETCURSOR:
             if (LOWORD(lp) == HTCLIENT && reinterpret_cast<HWND>(wp) == hwnd) {
-                const bool hand = g_hot.kind == kHitNav || g_hot.kind == kHitAdd || g_hot.kind == kHitClear ||
+                const bool hand = g_hot.kind == kHitNav || g_hot.kind == kHitAccount || g_hot.kind == kHitAdd || g_hot.kind == kHitClear ||
                                   g_hot.kind == kHitRefresh || g_hot.kind == kHitCategory || g_hot.kind == kHitCard ||
                                   g_hot.kind == kHitCardButton || g_hot.kind == kHitRetry ||
                                   g_hot.kind == kHitInfoClose || g_hot.kind == kHitInfoLink ||
+                                  g_hot.kind == kHitPlayOpen || g_hot.kind == kHitPlayLog ||
                                   (g_hot.kind == kHitPage && g_page.hot != -1 && g_page.hot != kPageThumb);
                 SetCursor(LoadCursorW(nullptr, hand ? IDC_HAND : IDC_ARROW));
                 return TRUE;
             }
             break;
         case WM_TIMER:
-            if (wp == kAnimTimer) InvalidateRect(hwnd, nullptr, FALSE);
+            if (wp == kAnimTimer) {
+                InvalidateRect(hwnd, nullptr, FALSE);
+                if (g_play.panel && g_play.state == PlayState::kStarting) InvalidateRect(g_play.panel, nullptr, FALSE);
+            }
             if (wp == kInfoBarTimer) info(L"", kInfo);
             if (wp == kUpdateTimer) auto_update_check();
             if (wp == kSetupScanTimer) {
@@ -7793,6 +8046,8 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     else set_view(h.tile == kNavStore ? kStoreView : kLibraryView);
                     break;
                 case kHitAdd: add_from_dialog(); break;
+                case kHitPlayOpen: open_google_play(); break;
+                case kHitPlayLog: show_logs(run_log(g_play.name)); break;
                 case kHitAccount: show_settings(); break;
                 case kHitClear:
                     SetWindowTextW(g_search, L"");
@@ -8049,7 +8304,8 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
         case kRunReady: {
             std::unique_ptr<std::wstring> name(reinterpret_cast<std::wstring*>(lp));
-            close_splash(*name);
+            if (*name == g_play.name && g_play.state == PlayState::kStarting) play_ready();
+            else close_splash(*name);
             return 0;
         }
         case kRunExited: {
@@ -8059,7 +8315,10 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             InvalidateRect(hwnd, nullptr, FALSE);
             const std::wstring label = label_of(*name);
             const bool clean = (wp & 1) != 0, was_ready = (wp & 2) != 0;
-            if (g_stopping.erase(*name)) {
+            if (*name == g_play.name &&
+                (g_play.state == PlayState::kStarting || g_play.state == PlayState::kShown)) {
+                play_exited(was_ready, g_stopping.erase(*name) > 0);
+            } else if (g_stopping.erase(*name)) {
                 close_splash(*name);
             } else if (!was_ready) {
                 splash_failed(*name, fmt(L"{0} didn't start", {label}), failure_reason(run_log(*name), clean));
@@ -8178,8 +8437,19 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         }
+        case WM_ACTIVATE:  // back to the window: the keyboard goes to Google Play when it is the view
+            if (LOWORD(wp) != WA_INACTIVE && g_view == kPlayView && play_window()) {
+                focus_play();
+                return 0;
+            }
+            break;
         case WM_CLOSE:
             save_window_size();
+            // Google Play lives in this window: it closes with it.
+            if (!g_play.name.empty() && (g_play.state == PlayState::kStarting || g_play.state == PlayState::kShown) &&
+                stop_process(g_play.name)) {
+                g_stopping.insert(g_play.name);
+            }
             // Work still under way (an install, a splash) keeps the process; the library only hides.
             if (g_install_wnd || !g_pending.empty() || !g_splashes.empty() || g_log_wnd || !g_running.empty()) {
                 ShowWindow(hwnd, SW_HIDE);
