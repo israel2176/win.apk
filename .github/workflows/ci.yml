@@ -648,7 +648,7 @@ jobs:
         with:
           name: runtime-stage
           path: stage
-      - name: Add a Java runtime and the README
+      - name: Add a Java runtime, the README and the licences
         run: |
           curl.exe -sSfL -o jre.zip "https://api.adoptium.net/v3/binary/latest/21/ga/windows/x64/jre/hotspot/normal/eclipse"
           New-Item -ItemType Directory jre-unpacked | Out-Null
@@ -656,7 +656,8 @@ jobs:
           & "$env:SystemRoot\System32\tar.exe" -xf jre.zip -C jre-unpacked
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Move-Item (Get-ChildItem jre-unpacked)[0].FullName stage/jre
-          Copy-Item windows/package/README.txt stage/
+          Copy-Item windows/package/README.txt, THIRD_PARTY_NOTICES.txt stage/
+          Copy-Item LICENSE stage/LICENSE.txt
           if (-not (Test-Path stage/jre/bin/server/jvm.dll)) { exit 1 }
       - name: Build the installer
         run: |
