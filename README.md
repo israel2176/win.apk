@@ -1,191 +1,184 @@
 # Win.apk
 
-**Run Android apps on Windows 10 and 11 (x64) as ordinary Windows programs.**
+**Run Android apps on Windows as ordinary Windows programs. No emulator, no virtual machine.**
 
-[![Latest release](https://img.shields.io/github/v/release/israel2176/win.apk?include_prereleases&label=release&color=6c5ce7)](../../releases)
-[![Platform: Windows 10/11 x64](https://img.shields.io/badge/platform-Windows%2010%2F11%20x64-0078d4)](#requirements)
+[![Latest release](https://img.shields.io/github/v/release/israel2176/win.apk?include_prereleases&label=release&color=6c5ce7)](https://github.com/israel2176/win.apk/releases)
+[![Windows 10/11 x64](https://img.shields.io/badge/Windows-10%20%7C%2011%20x64-0078d4)](docs/getting-started.md#what-you-need)
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
-[![Star the repository](https://img.shields.io/github/stars/israel2176/win.apk?style=flat&label=stars&color=f1c40f)](../../stargazers)
+[![Sweep: 90 of 92 apps start](https://img.shields.io/badge/F--Droid%20sweep-90%2F92%20start-2ea44f)](docs/APPS.md#the-automated-sweep)
+
+**English** · [עברית](README.he.md)
 
 Win.apk installs Android apps (`.apk`, `.apkm`, `.xapk`, `.apks`) and runs
-each one in its own window, with its own Start menu entry. There is no
-emulator and no virtual machine: an app's Java code runs on a standard Java
-VM, its native libraries load into the same process, and its graphics go
-through ANGLE on Direct3D 11.
+each one in its own window, with its own Start menu entry, taskbar icon and
+Windows notifications. It is an unofficial Windows port of
+[Mac.apk](https://github.com/kksimp/Mac.apk).
 
-Win.apk is an unofficial port of [Mac.apk](https://github.com/kksimp/Mac.apk)
-to Windows x64. It is not affiliated with or endorsed by the Mac.apk project.
+> [!NOTE]
+> **Public preview (v0.8).** Many apps run well; others run in part or not
+> yet. Check [Compatibility](docs/APPS.md) before you rely on an app, and
+> please [report](docs/troubleshooting.md#reporting-a-problem) what you find.
 
-> **Early preview.** Many Java and Kotlin apps run well; native-heavy apps and
-> games are partly there. See [What works](#what-works) and
-> [`docs/APPS.md`](docs/APPS.md) before you try an app.
+![The Win.apk library: twelve installed Android apps, with Library, Store and Settings in the left pane](docs/images/library.png)
 
-![The Win.apk library: the navigation pane beside a grid of installed apps, with Add app at the top](docs/images/library.png)
+## Highlights
 
-## Contents
+- **Apps are Windows programs.** Each app has its own resizable window, Start
+  menu shortcut and taskbar icon; its notifications are Windows notifications.
+- **Install the way you expect.** Double-click or drag an `.apk` or a split
+  bundle (`.apkm`, `.xapk`, `.apks`), or install from the built-in
+  [F-Droid](https://f-droid.org) Store.
+- **Your PC's hardware.** Webcams, the microphone, Windows location, Bluetooth
+  devices you paired, Wi-Fi information, Xbox controllers, your Downloads and
+  Pictures folders, and the clipboard.
+- **ARM apps too.** Apps built only for 64-bit ARM phones are translated for
+  your processor in the background, at the lowest priority.
+- **Google sign-in built in,** and, experimentally, Google's own Play services
+  and Play Store.
+- **English and Hebrew,** light and dark; in Hebrew everything is laid out
+  right to left.
 
-- [The problem it solves](#the-problem-it-solves)
-- [How it works](#how-it-works)
-- [Requirements](#requirements)
-- [Install](#install)
-- [First run](#first-run)
-- [What works](#what-works)
-- [Where your data lives](#where-your-data-lives)
-- [Getting help](#getting-help)
-- [Documentation](#documentation)
-- [Contributing](#contributing)
-- [Credits](#credits)
-- [License](#license)
+| The Store (F-Droid) | Dark theme | Apps from the automated sweep |
+|---|---|---|
+| ![The Store tab: F-Droid apps as cards with Install buttons](docs/images/store.png) | ![The library in the dark theme](docs/images/dark.png) | ![First screens drawn by six F-Droid apps: Shattered Pixel Dungeon, Thunderbird, Mindustry, Lexica, DAVx5, Loop Habit Tracker](docs/images/apps.png) |
 
-## The problem it solves
+## How it differs from an emulator
 
-Android apps are built for phones: ARM processors, a Linux kernel, Android's
-own C library (Bionic) and its Java framework. A Windows PC has none of these.
-The usual answer is an emulator or a virtual machine running a whole Android
-system, which is heavy, slow to start, and keeps the apps in a separate box.
+Emulators and virtual machines (BlueStacks, the Android Studio emulator,
+Windows Subsystem for Android) boot a whole Android system and run the apps
+inside it. Win.apk re-creates only what an app needs, on top of Windows:
 
-Win.apk takes the other route, the one Mac.apk took on Apple Silicon: it
-re-creates the Android application environment on top of Windows. Each app
-becomes a normal Windows process with a normal window, a taskbar icon and a
-Start menu shortcut, and it shares the user's Downloads, Pictures and other
-folders.
+- **Nothing to boot and nothing in the background.** No Android system runs;
+  memory goes only to the apps you open.
+- **No Hyper-V or virtualization**, nothing to turn on in the BIOS.
+- **Real Windows integration**: one window per app, Alt+Tab, snapping,
+  Windows notifications, and your own folders as the phone's shared storage.
+- **Real hardware through Windows' own APIs**, not emulated devices.
 
-## How it works
-
-| Stage | What happens |
-|---|---|
-| **Install** (once per app) | The APK or bundle is unpacked into the layout an Android device uses. Its DEX bytecode is converted to Java class files. Its icon and name are extracted for the library. ARM-only native libraries start being translated to x64 in the background. |
-| **Java code** | Runs on a standard HotSpot JVM (bundled Eclipse Temurin 21) against a reimplementation of the Android framework in Java (from Mac.apk). |
-| **Native code** (`.so` files) | x86_64 libraries are loaded by Win.apk's own ELF loader and call a Windows implementation of Android's C library (the Bionic shim). Calls between the Microsoft and System V calling conventions are bridged by generated thunks. ARM64-only libraries are translated to C and compiled with clang for the PC's CPU; until the translation is ready they run on an ARM64 JIT. |
-| **Window and devices** | A Win32 window per app. OpenGL ES on ANGLE (Direct3D 11, with software fallbacks), audio on WASAPI, web content on WebView2, webcams and media decoding on Media Foundation, location from Windows, file pickers, clipboard, game controllers. |
-| **Permissions** | Apps ask for permissions as on Android, in a Windows dialog. The answers are signed and stored per app. |
-
-[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) explains each layer.
-
-## Requirements
-
-- Windows 10 or 11, 64-bit (x64). Windows on ARM is untested.
-- A GPU with Direct3D 11 is best. Without one, a software renderer takes over.
-- For web content inside apps and for Google sign-in: the Microsoft Edge
-  WebView2 Runtime, which Windows 11 and most Windows 10 PCs already have.
-- Disk space for Win.apk (it bundles a Java runtime, ANGLE and a clang
-  compiler) and for the apps you install.
-
-Nothing else needs to be installed.
-
-## Install
-
-1. Download `Win.apk-Setup.exe` from the newest [release](../../releases).
-2. Run it. It installs for your user only, into
-   `%LOCALAPPDATA%\Programs\Win.apk`, and needs no administrator rights.
-3. Windows SmartScreen may warn that the installer is not signed. Click
-   **More info**, then **Run anyway**.
-
-The installer adds Win.apk to the Start menu, makes `.apk` files open with it,
-and speaks English or Hebrew according to the Windows display language.
-
-**Portable:** download `Win.apk-windows-x64.zip` instead, unzip it anywhere,
-and start `Win.apk.exe`.
-
-**Uninstall:** Windows Settings > Apps > Installed apps > Win.apk. Your apps
-and their data stay in `%LOCALAPPDATA%\Win.apk`; delete that folder to remove
-everything.
-
-## First run
-
-1. Open Win.apk. It shows your library, empty at first, and the **Store**
-   tab with F-Droid's free and open-source apps.
-2. Add an app: drop an APK on the window, pick one in the Store and click
-   **Install**, or double-click an `.apk` in Explorer. The first install of an
-   app converts its code, which takes up to a minute.
-3. Double-click the app to open it. In the app, the mouse is your finger,
-   the wheel scrolls, and Escape is Android's Back.
-
-The [user guide](docs/USER_GUIDE.md) covers everything else: the Store,
-per-app actions, settings, orientation and window size, Hebrew, permissions,
-the Google account, logs and troubleshooting.
+The trade-off is honest: an emulator runs more apps today.
+[How Win.apk works](docs/how-it-works.md) explains it in plain terms.
 
 ## What works
 
-| Works | Not yet |
-|---|---|
-| Java and Kotlin apps, each in its own resizable window, with mouse, wheel and keyboard | Apps with only 32-bit ARM native code (`lib/armeabi-v7a`) |
-| OpenGL ES from Java (`GLSurfaceView`, libGDX) and from native code (SDL games); `NativeActivity` apps | Vulkan |
-| Apps that ship `lib/x86_64` libraries (loaded directly), and apps with only `lib/arm64-v8a` libraries (translated) | Video from an app's own native code (the NDK's `AMediaCodec`), `MediaExtractor`, and Opus, Vorbis or FLAC audio through `MediaCodec` (an ExoPlayer stream with such audio stays silent) |
-| Video: `MediaPlayer` and `VideoView` play MP4, MOV and other files Windows decodes (H.264 and AAC always; HEVC, VP9 and AV1 with Microsoft's codec packs), from a file or an http(s) URL, with the sound in step, seeking and looping; ExoPlayer and other `MediaCodec` players decode H.264 video and AAC/MP3 audio the same way | |
-| Sound: AudioTrack, SoundPool and MediaPlayer audio from Java; AAudio from native code; the microphone | OpenSL ES from native code (engines that use it get no sound) |
-| Files, SharedPreferences, SQLite; shared storage mapped to your Windows folders | Real sensors: the accelerometer and the others report a still, flat phone |
-| WebView and Custom Tabs on WebView2 | Play Store features: in-app purchases, Play Integrity, the Maps SDK's map |
-| Wi-Fi state, the current network, the DHCP configuration and scan results (network names need Windows' location access) | Connecting the PC to a Wi-Fi network for the app |
-| Bluetooth: the paired devices, serial (RFCOMM) connections both ways, LE scans and the GATT client (read, write, notifications) | Classic discovery and pairing from the app, LE advertising and the GATT server, the audio and HID profiles |
-| Webcams, location, clipboard, file pickers, game controllers | |
-| Notifications, shown as Windows notifications with the app's name and icon; a click opens the app while it runs | |
-| Permission dialogs for every Android permission group | |
-| Google sign-in, and the Play services apps use for licences, push messages, Firebase Analytics and location | |
+The full table, checked against the code, is on
+[Compatibility](docs/APPS.md#what-works). In short:
 
-Every row has a counterpart in the code; the
-[architecture document](docs/ARCHITECTURE.md) says where.
-[`docs/APPS.md`](docs/APPS.md) lists known issues by kind of app and the apps
-people have tried; please add yours.
+| ✅ Works | ⚠️ Partly | ❌ Not yet |
+|---|---|---|
+| Java and Kotlin apps | Apps with only arm64 native code: slower until translated | Apps with only 32-bit ARM code (`armeabi-v7a`) |
+| x86_64 native code | `MediaCodec`: H.264 with AAC/MP3 audio | Vulkan |
+| OpenGL ES 1.1-3.2 on Direct3D 11, `NativeActivity` games | Bluetooth: paired devices, RFCOMM, LE scans and GATT client | OpenSL ES (some native games are silent) |
+| Sound (AudioTrack, SoundPool, AAudio output), microphone | Wi-Fi: information, no connecting | NDK media API (`AMediaCodec`) |
+| Video (`MediaPlayer`, `VideoView`) on Media Foundation | Notifications: no action buttons | Real sensors (they report a phone lying still) |
+| WebView and Custom Tabs on WebView2 | Google's real Play services and Play Store (experimental) | In-app purchases, Play Integrity, the Maps SDK's map |
+| Webcam, location, clipboard, file pickers, Xbox controllers | Input: one finger, no multi-touch | |
+| Permissions, Google sign-in, push messages (FCM) | | |
 
-## Where your data lives
+**Measured, not promised:**
 
-| What | Where |
-|---|---|
-| Win.apk itself | `%LOCALAPPDATA%\Programs\Win.apk` (installer) or the folder you unzipped |
-| Your copy of each APK, with the app's name and per-app choices | `%LOCALAPPDATA%\Win.apk\library` |
-| Each app's converted code, icon and name | `%LOCALAPPDATA%\Win.apk\apps\<app>` |
-| What the apps save (the Android file system) | `%LOCALAPPDATA%\Win.apk\android` |
-| Logs | `%LOCALAPPDATA%\Win.apk\logs` |
-| Settings | `HKEY_CURRENT_USER\Software\Win.apk` |
-| Start menu shortcuts | Start > Win.apk Apps |
+- In the last automated sweep, **90 of 92** open-source F-Droid apps of every
+  kind started and drew their first screen on Windows
+  ([details](docs/APPS.md#the-automated-sweep)). Starting is not the same as
+  every screen working.
+- ARM apps use less memory once translated: at peak, Jitsi Meet 516 MB
+  against 742 MB on the JIT, Telegram X 412 MB against 521 MB
+  ([ARM apps](docs/arm-apps.md#how-arm-only-apps-run)).
 
-The [user guide](docs/USER_GUIDE.md#where-things-are) has the full list.
+## Install
 
-## Getting help
+**Requirements:** Windows 10 (1903 or later) or Windows 11, 64-bit, on an
+Intel or AMD processor; about 500 MB of disk; a Direct3D 11 GPU (a software
+renderer is the fallback); the Microsoft Edge WebView2 Runtime for web pages
+and Google sign-in (Windows 11 and most Windows 10 PCs have it). No
+administrator rights.
 
-1. Look in [`docs/APPS.md`](docs/APPS.md) for the app or the kind of problem.
-2. Open **Logs** at the bottom of the library and read the end of
-   `last-run.log`; the [troubleshooting section](docs/USER_GUIDE.md#troubleshooting)
-   says what the common lines mean.
-3. [Open an issue](../../issues/new/choose) with the "An app does not work"
-   template: the app's name, version and source, the exact steps, a screenshot,
-   and the whole log. Hebrew is fine.
+1. Download **`Win.apk-Setup.exe`** from the
+   [latest release](https://github.com/israel2176/win.apk/releases/latest)
+   (or `Win.apk-windows-x64.zip` for a portable copy).
+2. Run it. **SmartScreen will warn** because the preview is not code-signed:
+   click **More info**, then **Run anyway**.
+3. Open Win.apk and install an app from the **Store**, or double-click an APK.
 
-Security problems: see [`SECURITY.md`](SECURITY.md), not a public issue.
+[Getting started](docs/getting-started.md) walks through it with screenshots.
+
+### Which build of an app to install
+
+Android apps may contain code for one kind of processor. When you download an
+app yourself:
+
+1. **x86_64**, or a build with no native code (`noarch`), is best: it runs
+   directly.
+2. **A bundle that includes an x86_64 split** is just as good: Win.apk picks it.
+3. **arm64-v8a** works, translated, slower on its first runs.
+4. **armeabi-v7a only** (32-bit ARM) does not run.
+
+The built-in Store chooses for you. [Why](docs/arm-apps.md#which-build-to-install)
 
 ## Documentation
 
-| Document | For whom | What it covers |
-|---|---|---|
-| [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md) | Users | Installing apps, the Store, settings, permissions, the Google account, logs, troubleshooting, the command line |
-| [`docs/APPS.md`](docs/APPS.md) | Users | Known issues by kind of app, and apps people have tried |
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Developers and the curious | How Win.apk works: each layer, an install and a run step by step, the data layout, the build and CI |
-| [`windows/README.md`](windows/README.md) | Developers | Building, running and testing from source; every change made to the upstream `runtime/` tree |
-| [`windows/PORTING.md`](windows/PORTING.md) | Developers | Design decisions, technical findings, known gaps and the milestone plan |
-| [`CONTRIBUTING.md`](CONTRIBUTING.md) | Contributors | Reporting problems, adding apps to the list, sending code |
+| | |
+|---|---|
+| [Getting started](docs/getting-started.md) | Requirements, installing Win.apk, your first app |
+| [Compatibility](docs/APPS.md) | What works, partly works and is missing; the app sweep; apps people tried |
+| [User guide](docs/USER_GUIDE.md) | Every screen and setting |
+| [ARM apps](docs/arm-apps.md) | Which build to install, and how ARM code is translated |
+| [Google account and services](docs/google-services.md) | Signing in, and setting up Google's Play services and Play Store |
+| [Troubleshooting](docs/troubleshooting.md) | Common problems, reading a log, reporting a problem |
+| [FAQ](docs/faq.md) | Short answers to common questions |
+| [How it works](docs/how-it-works.md) | Win.apk explained, and how it compares with an emulator |
+| [Architecture](docs/ARCHITECTURE.md), [building](windows/README.md) | For developers |
+
+Hebrew pages: [`docs/he/`](docs/he/).
+
+## Status and limitations
+
+Win.apk is a preview. Expect apps that do not
+start, missing features ([the list, by importance](docs/APPS.md#needs-improvement-by-importance))
+and changes between releases. Two things to know before you install apps:
+
+- **There is no sandbox between apps.** Each app runs with your Windows
+  account's rights, like any program. Install only apps you trust
+  ([SECURITY.md](SECURITY.md)).
+- **Google's integrity checks and payments are not available** and will not
+  be faked, so apps that require them (many banking and payment apps, in-app
+  purchases) will not fully work.
 
 ## Contributing
 
-Report how an app runs, add a row to [`docs/APPS.md`](docs/APPS.md), or send
-code: [`CONTRIBUTING.md`](CONTRIBUTING.md) has the rules (behave like Android,
-no app-specific code, Windows code in `windows/`). If Win.apk is useful to
-you, a star on the repository helps other people find it.
+The most useful help right now is trying apps: report what fails with
+**Report a problem** in Win.apk, or add a row to the
+[compatibility list](docs/APPS.md#adding-a-row). Code is welcome too:
+[CONTRIBUTING.md](CONTRIBUTING.md) has the rules (behave like Android, no
+app-specific code). Reports in Hebrew are welcome.
 
 ## Credits
 
-Win.apk started as a port of [Mac.apk](https://github.com/kksimp/Mac.apk) by
-Kaleb Simpson / Voltare, and its Android runtime (`runtime/`) comes from
-there. Win.apk is not affiliated with or endorsed by the Mac.apk project; the
-Mac.apk name and logo belong to their owners ([`TRADEMARKS.md`](TRADEMARKS.md)).
-
-It also builds on [ANGLE](https://chromium.googlesource.com/angle/angle),
-[Eclipse Temurin](https://adoptium.net/), [LLVM](https://llvm.org/) clang,
-[dynarmic](https://github.com/azahar-emu/dynarmic) and the other components
-listed in [`THIRD_PARTY_NOTICES.txt`](THIRD_PARTY_NOTICES.txt).
+- **[Mac.apk](https://github.com/kksimp/Mac.apk)** by Kaleb Simpson
+  ([@kksimp](https://github.com/kksimp), Voltare) and its contributors: Win.apk
+  started as a port of it, and its Android runtime (`runtime/`: the framework
+  re-implementation, the DEX converter, the Play services stand-ins) comes from
+  there. Win.apk is **not affiliated with or endorsed by** the Mac.apk project;
+  the Mac.apk name and logo belong to it ([TRADEMARKS.md](TRADEMARKS.md)).
+- **The Android Open Source Project**: framework resources, apksig, the
+  Apache HTTP legacy library and the fonts.
+- **What Win.apk ships**: [Eclipse Temurin](https://adoptium.net/) (OpenJDK 21),
+  [ANGLE](https://chromium.googlesource.com/angle/angle) and SwiftShader (from
+  Electron's build), [LLVM/clang](https://llvm.org/),
+  [dynarmic](https://github.com/azahar-emu/dynarmic), the
+  [Microsoft Edge WebView2 SDK](https://www.nuget.org/packages/Microsoft.Web.WebView2)'s
+  loader, [Bouncy Castle](https://www.bouncycastle.org/),
+  [libwebp](https://chromium.googlesource.com/webm/libwebp),
+  [SQLite](https://sqlite.org/), [stb_vorbis](https://github.com/nothings/stb)
+  and [zlib](https://zlib.net/). Each one's licence is in
+  [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt).
+- **[F-Droid](https://f-droid.org)**, whose catalog the Store shows; the apps
+  belong to their authors.
 
 ## License
 
-[AGPL-3.0](LICENSE), like Mac.apk. Anyone who distributes a build, or offers a
-modified version over a network, must provide the complete corresponding
-source.
+Win.apk is free software under the [GNU AGPL v3.0](LICENSE), like Mac.apk.
+Anyone who distributes a build, or offers a modified version over a network,
+must provide its complete source. Mac.apk's contributor licence agreement
+applies only to changes sent upstream to Mac.apk, and its commercial licence
+is upstream's offer for Mac.apk; neither covers Win.apk's own code. Android is a trademark of Google LLC; Win.apk is not
+affiliated with Google or Microsoft.
