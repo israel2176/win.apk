@@ -405,7 +405,7 @@ jobs:
           # real JVMs in three processes: transact, oneway order, binders passed
           # both ways keeping their identity, fds, death notification, and the
           # system broker's caller checks (a process claiming another package is
-          # refused; android:exported).
+          # refused; android:exported), and the Google account mirror.
           export PATH="$(cygpath -u "$JAVA_HOME")/bin/server:$(cygpath -u "$JAVA_HOME")/bin:$PATH"
           jh="$(cygpath -u "$JAVA_HOME")"
           cp="$(cygpath -w stage/lib/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
@@ -518,6 +518,8 @@ jobs:
           }
           check "$dir/signed.apk" 4
           grep -q "^PACKAGE.android" verify.out && grep -q "^VERIFIED.1" verify.out && grep -q "^GOOGLE.0" verify.out
+          # and what the setup's other checks read: the native code's ABIs, the minSdkVersion, the presented level
+          grep -q "^ABIS" verify.out && grep -q "^MINSDK.[0-9]" verify.out && grep -q "^SDK.3[0-9]" verify.out
           check "$dir/unsigned.apk" 3
           grep -q "^VERIFIED.0" verify.out && grep -q "^REASON." verify.out
           echo "not an app" > "$dir/not-an-app.apk"

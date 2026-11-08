@@ -27,15 +27,16 @@ Adding and running apps
 - From the Store tab: F-Droid's free and open-source apps, the easiest place
   to start. Search, then Install.
 - From a file: double-click an .apk, .apkm, .xapk or .apks in Explorer, drag
-  it onto the library, or click "Add app". Prefer an x86_64 build of an app
+  it onto the library, or click "Install app". Prefer an x86_64 build of an app
   (or one with no native code), then arm64-v8a. An app with only 32-bit ARM
   code (armeabi-v7a) does not run.
 - Double-click an app to open it. The mouse is your finger, the wheel
   scrolls, and Escape is Android's Back. Resize the window and the app lays
   itself out again.
 - Right-click an app for Open, Stop, App details and Remove. App details holds
-  the rest: orientation, permissions, the log, Update from a file.
-- Settings: theme, language (English or Hebrew), screen size and orientation,
+  the rest: orientation, permissions, the log, Report a problem.
+- Settings: theme, language (English or Hebrew), app window size and default
+  orientation,
   your Windows folders, the ARM translation, the Google account, updates.
 
 What works, and what does not yet: docs/APPS.md in the repository, one table
@@ -51,8 +52,8 @@ Logs:                      %LOCALAPPDATA%\Win.apk\logs (run-<app>.log is an
                            app's last run, install-<app>.log its install)
 Settings:                  HKEY_CURRENT_USER\Software\Win.apk
 
-Removing an app keeps what it saved unless you tick "Also delete what the app
-saved"; uninstalling Win.apk keeps the apps too. Delete %LOCALAPPDATA%\Win.apk
+Removing an app keeps what it saved unless you tick "Also remove accounts and
+data saved by the app"; uninstalling Win.apk keeps the apps too. Delete %LOCALAPPDATA%\Win.apk
 to start from scratch.
 
 Reporting a problem

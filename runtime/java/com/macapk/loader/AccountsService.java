@@ -128,7 +128,64 @@ final class AccountsService extends Binder {
         this.system = system;
         this.store = AccountStore.at(storeFile);
         SystemServer.log("accounts: store " + storeFile);
-        reflectGoogleAccounts();
+        syncGoogleAccounts();
+        watchGoogleAccounts();
+    }
+
+    /** User data marking a row this service mirrors from GmsStore. Only such rows
+     *  are removed when GmsStore no longer has the account (a sign-out). */
+    static final String MIRRORED = "winapk.mirrored";
+    /** Accounts whose gaia id was already asked for this run (one network ask each). */
+    private final java.util.Set<String> idAsked = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /** GmsStore -> the accounts table, then LOGIN_ACCOUNTS_CHANGED when a row came
+     *  or went. GmsStore is Win.apk's one Google account store: Settings > Google
+     *  account (`--gms signin-window` / `signout`, another process) and an app's
+     *  addAccount (Win.apk's sign-in window, in the app's process) both write it.
+     *  Returns whether a row was added or removed. */
+    boolean syncGoogleAccounts() {
+        boolean changed;
+        synchronized (googleLock) { changed = reflectGoogleAccounts(); }
+        if (changed) accountsChanged();
+        return changed;
+    }
+
+    private final Object googleLock = new Object();
+
+    /** GmsStore's file changes in other processes; follow it (debounced), so a
+     *  sign-in or sign-out in Settings reaches Play services and the Play Store
+     *  while they run, as an account change reaches them on a device. */
+    private void watchGoogleAccounts() {
+        final File dir = com.macapk.gms.GmsStore.dir();
+        Thread t = new Thread(() -> {
+            try {
+                dir.mkdirs();
+                java.nio.file.WatchService ws = dir.toPath().getFileSystem().newWatchService();
+                dir.toPath().register(ws, java.nio.file.StandardWatchEventKinds.ENTRY_CREATE,
+                        java.nio.file.StandardWatchEventKinds.ENTRY_MODIFY,
+                        java.nio.file.StandardWatchEventKinds.ENTRY_DELETE);
+                while (true) {
+                    java.nio.file.WatchKey k = ws.take();
+                    boolean ours = false;
+                    for (java.nio.file.WatchEvent<?> e : k.pollEvents()) {
+                        Object c = e.context();
+                        if (c == null || String.valueOf(c).startsWith("gms_state.properties")) ours = true;
+                    }
+                    k.reset();
+                    if (!ours) continue;
+                    Thread.sleep(500);   // a sign-in writes the file a few times in a row
+                    java.nio.file.WatchKey more;
+                    while ((more = ws.poll()) != null) { more.pollEvents(); more.reset(); }
+                    syncGoogleAccounts();
+                }
+            } catch (InterruptedException e) {
+                // shutting down
+            } catch (Throwable e) {
+                SystemServer.log("accounts: not following " + dir + ": " + e);
+            }
+        }, "broker-google-accounts");
+        t.setDaemon(true);
+        t.start();
     }
 
     /** A signed-in Google account lives primarily in GmsStore (its master token and
@@ -142,9 +199,11 @@ final class AccountsService extends Binder {
      *  is the same account that already holds a master token; nothing is forged and no
      *  token is minted here. Best-effort and self-contained: a failure must never break
      *  the account service. */
-    private void reflectGoogleAccounts() {
+    private boolean reflectGoogleAccounts() {
+        boolean changed = false;
         try {
-            for (Account a : com.macapk.gms.GoogleAuthenticator.accounts()) {
+            Account[] signedIn = com.macapk.gms.GoogleAuthenticator.accounts();
+            for (Account a : signedIn) {
                 if (a == null || a.name == null) continue;
                 // GMS reads the account's LST (long-lived credential) as the AccountManager
                 // PASSWORD: its RequestTokenManager does czye.d(account) == AccountManager
@@ -160,9 +219,12 @@ final class AccountsService extends Binder {
                 java.util.Map<String, String> extras = null;
                 String id = com.macapk.gms.GoogleAuthenticator.userData(a, "accountId");
                 // Signed in before the id was fetched at sign-in: fetch it now.
-                if (id == null && master != null) id = com.macapk.gms.GoogleAuthClient.ensureAccountId(a.name);
+                if (id == null && master != null && idAsked.add(a.name)) {
+                    id = com.macapk.gms.GoogleAuthClient.ensureAccountId(a.name);
+                }
+                extras = new java.util.HashMap<>();
+                extras.put(MIRRORED, "1");
                 if (id != null) {
-                    extras = new java.util.HashMap<>();
                     extras.put("accountId", id);
                     // GMS reads the account's gaiaId from the "GoogleUserId" user-data key and
                     // DROPS any Google account that lacks it ("[getAccountsByType] Not returning
@@ -172,15 +234,18 @@ final class AccountsService extends Binder {
                 }
                 if (!store.exists(a.name, a.type)) {
                     if (store.add(a.name, a.type, master, extras)) {
+                        changed = true;
                         SystemServer.log("accounts: reflected a signed-in Google account into the accounts table"
                                 + (master != null ? " (with LST)" : " (no master token yet)"));
                     }
                 } else if (master != null) {
+                    if (store.userData(a.name, a.type, MIRRORED) == null) store.setUserData(a.name, a.type, MIRRORED, "1");
                     // A row without the gaia id (added before it was known): GMS's
                     // getToken needs it ("missing gaiaId").
                     if (id != null && store.userData(a.name, a.type, "GoogleUserId") == null) {
                         store.setUserData(a.name, a.type, "accountId", id);
                         store.setUserData(a.name, a.type, "GoogleUserId", id);
+                        changed = true;   // Play services lists the account only now
                         SystemServer.log("accounts: added the account's gaia id (GoogleUserId)");
                     }
                     // Already a row (persisted from a prior launch, possibly added before this
@@ -193,9 +258,28 @@ final class AccountsService extends Binder {
                     }
                 }
             }
+            // Signed out (in Settings, or the account removed from the store): a
+            // row mirrored from GmsStore goes too, so Play services and the Play
+            // Store stop using an account Win.apk no longer has. Only after a
+            // complete read of the store: a missing or unreadable file is not a
+            // sign-out.
+            if (com.macapk.gms.GoogleAuthenticator.available() && com.macapk.gms.GmsStore.readCleanly()) {
+                java.util.Set<String> names = new java.util.HashSet<>();
+                for (Account a : signedIn) names.add(a.name);
+                for (String[] row : store.accounts(java.util.Collections.singleton(
+                        com.macapk.gms.GoogleAuthenticator.ACCOUNT_TYPE))) {
+                    if (names.contains(row[0]) || store.userData(row[0], row[1], MIRRORED) == null) continue;
+                    if (store.remove(row[0], row[1])) {
+                        synchronized (this) { visibility.remove(key(row[0], row[1])); }
+                        changed = true;
+                        SystemServer.log("accounts: a Google account signed out of Win.apk left the accounts table");
+                    }
+                }
+            }
         } catch (Throwable t) {
             SystemServer.log("accounts: Google-account reflect skipped: " + t);
         }
+        return changed;
     }
 
     // ---- identity + policy -------------------------------------------------------------
@@ -295,7 +379,7 @@ final class AccountsService extends Binder {
                     // a post-boot sign-in surfaces on the next query. Idempotent (adds only a
                     // row that is not already present, else just refreshes the LST) and
                     // best-effort (never throws).
-                    reflectGoogleAccounts();
+                    syncGoogleAccounts();
                     String type = d.readString();
                     List<String> types = new ArrayList<>();
                     synchronized (this) {

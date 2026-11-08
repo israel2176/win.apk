@@ -131,7 +131,7 @@ what to look for in the app or in its log.
 | `not implemented on Windows yet` in the log | A C library function the app's native code needs | [Report it](troubleshooting.md#reporting-a-problem) with the log; adding one is usually small |
 | `native not implemented` in the log | A piece of the Android host that is still missing | Report it with the log |
 | `[win.apk] cannot load <library>` in the log | A native library the loader could not load: packed, encrypted, or for another CPU | Report it with the log and the APK's `lib/` folders |
-| The app opens sideways, or narrow | Apps open in landscape; an app that fixes portrait opens portrait | The app's details page, **Window > Orientation**; or Settings > Apps > Orientation for all apps |
+| The app opens sideways, or narrow | Apps open in landscape; an app that fixes portrait opens portrait | The app's details page, **Window > Orientation**; or Settings > Apps > Default orientation for all apps |
 | SmartScreen or an antivirus warns | The preview is not code-signed, and Win.apk writes then runs translated code | Allow it if you downloaded Win.apk from this repository |
 
 ## Apps people have tried

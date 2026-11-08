@@ -304,8 +304,8 @@ Three engines run arm64 code, behind one CPU state (`src/arm64/`):
   has grown by a quarter (and 200 lines), at most once an hour (the stamp's
   retry field). The running app starts the worker when its profile has
   settled or when it exits (`Cocoa_exitProcess`), and a worker started with
-  the app waits a minute. Settings > Apps > "Optimize ARM apps in the
-  background" (`AotBackground`) turns the worker off: none starts, and a
+  the app waits a minute. Settings > Apps > "Speed up ARM apps"
+  (`AotBackground`) turns the worker off: none starts, and a
   running one stops before its next compile, keeping its pass. The app's
   details page shows a running worker (its mutex, and the parts in
   `.aot-tmp`), and says when a library over the threshold leaves an
@@ -515,7 +515,7 @@ the Android WebView user agent that makes Google serve the device flow; the
 Before the window closes, the page asks `accounts.google.com/ListAccounts`
 (the session's accounts, as Chrome asks) for the account's picture URL;
 `AccountPhoto` saves the picture as `gms\photo-<account>.img` for the
-launcher's account button. The layer's state is `gms\gms_state.properties`. `winapk-runtime --gms
+launcher's account item (the foot of its pane). The layer's state is `gms\gms_state.properties`. `winapk-runtime --gms
 <command>` runs upstream's `GmsCli` with no app, which is how the launcher's
 Google account setting lists accounts, adds one and signs out.
 
@@ -550,6 +550,16 @@ the user installed run as apps, as upstream runs them on the Mac:
   the Play Store's services, for one), the new start stops the headless
   process and takes its place with a window; its clients bind again, as
   after Android stops a background process.
+- **Google accounts with the broker.** The accounts service mirrors
+  `gms\gms_state.properties` (Win.apk's one Google account store) into its
+  table: the master token as the row's password and the gaia id as
+  `GoogleUserId`, where Play services looks. It follows the file as other
+  processes write it (Settings' `--gms signin-window` / `signout`, an app's
+  sign-in) and broadcasts `LOGIN_ACCOUNTS_CHANGED`. `AccountManager.addAccount`
+  for `com.google` (the Play Store's "Sign in") opens Win.apk's sign-in
+  window in the caller's process instead of Play services' authenticator,
+  whose sign-in activity would have to start in Play services' process with
+  the authenticator's response binder.
 - **Who calls.** The calling pid is the OS's (`GetNamedPipeClientProcessId`);
   no uid travels. The broker knows a process as the package it started it as,
   or the package whose installed APK the process's command line (`--apk`)
@@ -570,7 +580,25 @@ the user installed run as apps, as upstream runs them on the Mac:
   at the broker's boot) only when their APKs' signature verifies and Google's
   certificate made it, as the signer or as an ancestor in the verified v3
   rotation lineage (`GoogleGmsCertificate.isGoogleSigner`). Win.apk ships and
-  downloads none of them.
+  downloads none of them. The launcher's setup page installs a file only when
+  `winapk-runtime --verify-apk` (`ApkCheck`) says Google signed it, its native
+  code (if any) has an x86_64 build, and its minSdkVersion is not above
+  `PresentedSdk`'s ceiling. The launcher treats the three as system
+  components: no tile or shortcut, only the setup page shows them.
+- **Google Play in the launcher's window.** The pane's Google Play starts the
+  Play Store with `WINAPK_EMBED_PARENT=<hwnd>`, the handle of a panel the
+  launcher keeps over its content area, and `WINAPK_PHONE_SIZE` the panel's
+  size in dp. The runtime then creates its window as a borderless child of
+  that panel (`win32_window.cpp`, "embedded in the launcher") instead of a
+  top-level window: no work-area fitting, frame or remembered size, no
+  minimizing, no foreground. The launcher sizes the child with the panel
+  (asynchronously, so a busy app never blocks it) and the app follows the box
+  as it follows a resized window; Windows joins the two processes' input
+  queues, as for any parent and child, and the launcher hands the child the
+  keyboard focus when Google Play is the view. Another tab hides the panel
+  and the app keeps running; closing the library window stops it. A runtime
+  that could not make the child opens its own window, and the launcher, which
+  finds its panel empty when the ready event fires, says so.
 - **Signatures.** Every certificate PackageManager reports (an app's own,
   another installed app's) and every trust decision comes from
   `ApkVerification`, which runs AOSP's verifier, apksig
@@ -626,7 +654,7 @@ tests the transport and the broker's checks across three processes.
 ## A run, step by step
 
 1. The launcher (or a shortcut: `Win.apk.exe --run <library apk>`) shows the
-   app's splash at once, sets `WINAPK_PHONE_SIZE` from the Screen size
+   app's splash at once, sets `WINAPK_PHONE_SIZE` from the App window size
    setting and the app's effective orientation, and starts
    `winapk-runtime --apk <library apk>` with its output in
    `logs\run-<name>.log` (the previous run's kept as `run-<name>.1.log`;
@@ -696,7 +724,7 @@ default; `--data` moves it for a direct run):
 Settings live in `HKCU\Software\Win.apk`: `Theme`, `Language`, `PhoneSize`,
 `Landscape` (absent means landscape; 0 means portrait), `DesktopShortcut`,
 `UserFolders`, `AotBackground` (absent means on: the background arm64
-translation), `InstallDetails` (the install window shows its log),
+translation),
 `ShortcutVersion`, `AutoUpdate` (absent means on), `GoogleServices` (absent
 means off: the system broker and the real Google apps) and `LastUpdateCheck` (Unix
 seconds of the last update check GitHub answered), and the library window's `WindowWidth`, `WindowHeight` and

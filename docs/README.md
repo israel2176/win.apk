@@ -1,5 +1,7 @@
 # Win.apk documentation
 
+**🇮🇱 [לתיעוד בעברית — לחצו כאן](../README.he.md)**
+
 **For users**
 
 | Page | Hebrew | What it covers |

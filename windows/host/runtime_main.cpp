@@ -1703,8 +1703,10 @@ int java_main(int argc, wchar_t** argv) {
 //
 // winapk-runtime --verify-apk <app> runs here too, with winapk-tools.jar on
 // the class path: com.winapk.tools.ApkCheck prints the file's package and
-// whether its signature verifies and Google signed it (the launcher's Google
-// services setup installs only such a file). Exit codes: 0 Google-signed,
+// whether its signature verifies and Google signed it, its native code's ABIs
+// and minSdkVersion, and the newest API level Win.apk presents (the launcher's
+// Google services setup installs only a Google-signed file that has x86_64
+// code, if any, and does not need a newer level). Exit codes: 0 Google-signed,
 // 4 another signer, 3 does not verify, 1 not an app, 2 usage.
 DWORD WINAPI gms_thread(void* param) {
     auto* b = static_cast<BootArgs*>(param);

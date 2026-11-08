@@ -1,6 +1,6 @@
 <div dir="rtl">
 
-# Win.apk
+# ‏Win.apk
 
 **אפליקציות אנדרואיד ב-Windows, כתוכנות Windows רגילות. בלי אמולטור ובלי מכונה וירטואלית.**
 
@@ -9,19 +9,18 @@
 [![רישיון AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
 [![90 מתוך 92 אפליקציות עולות](https://img.shields.io/badge/F--Droid%20sweep-90%2F92%20start-2ea44f)](docs/APPS.md#the-automated-sweep)
 
-[English](README.md) · **עברית**
+‏[English](README.md) · **עברית**
 
-Win.apk מתקין אפליקציות אנדרואיד (`.apk`, `.apkm`, `.xapk`, `.apks`) ומריץ כל
+‏Win.apk מתקין אפליקציות אנדרואיד (`.apk`, `.apkm`, `.xapk`, `.apks`) ומריץ כל
 אחת בחלון משלה, עם קיצור דרך בתפריט התחל, אייקון בשורת המשימות והתראות של
 Windows. זו הסבה לא רשמית של [Mac.apk](https://github.com/kksimp/Mac.apk)
 ל-Windows.
 
-> [!NOTE]
 > **גרסת תצוגה ציבורית (v0.8).** הרבה אפליקציות עובדות טוב, אחרות עובדות
 > חלקית או עדיין לא. לפני שסומכים על אפליקציה כדאי להציץ ב[טבלת התאימות](docs/APPS.md),
 > ונשמח ש[תדווחו](docs/he/troubleshooting.md#דיווח-על-בעיה) מה מצאתם.
 
-![ספריית Win.apk: שתים-עשרה אפליקציות מותקנות, ובצד ספרייה, חנות והגדרות](docs/images/library.png)
+![ספריית Win.apk: שתים-עשרה אפליקציות מותקנות, ובצד ספרייה, חנות, כניסה והגדרות](docs/images/library.png)
 
 ## מה יש בו
 
@@ -68,11 +67,11 @@ Windows Subsystem for Android) מפעילים מערכת אנדרואיד שלמ
 | ✅ עובד | ⚠️ חלקי | ❌ עדיין לא |
 |---|---|---|
 | אפליקציות Java ו-Kotlin | אפליקציות עם קוד arm64 בלבד: איטיות עד שהתרגום מוכן | אפליקציות עם קוד ARM של 32 ביט בלבד (`armeabi-v7a`) |
-| קוד מקורי x86_64 | `MediaCodec`: וידאו H.264 עם שמע AAC/MP3 | Vulkan |
-| OpenGL ES 1.1 עד 3.2 על Direct3D 11, משחקי `NativeActivity` | Bluetooth: התקנים מצומדים, RFCOMM, סריקת LE ולקוח GATT | OpenSL ES (חלק מהמשחקים שקטים) |
-| שמע (AudioTrack, SoundPool, פלט AAudio), מיקרופון | Wi-Fi: מידע בלבד, בלי התחברות לרשת | ממשק המדיה של ה-NDK (`AMediaCodec`) |
+| קוד מקורי x86_64 | ‏`MediaCodec`: וידאו H.264 עם שמע AAC/MP3 | ‏Vulkan |
+| ‏OpenGL ES 1.1 עד 3.2 על Direct3D 11, משחקי `NativeActivity` | ‏Bluetooth: התקנים מצומדים, RFCOMM, סריקת LE ולקוח GATT | ‏OpenSL ES (חלק מהמשחקים שקטים) |
+| שמע (AudioTrack, SoundPool, פלט AAudio), מיקרופון | ‏Wi-Fi: מידע בלבד, בלי התחברות לרשת | ממשק המדיה של ה-NDK (`AMediaCodec`) |
 | וידאו (`MediaPlayer`, `VideoView`) על Media Foundation | התראות: בלי כפתורי פעולה | חיישנים אמיתיים (הם מדווחים על טלפון מונח ללא תנועה) |
-| WebView ו-Custom Tabs על WebView2 | שירותי Google Play וחנות Play המקוריים (ניסיוני) | רכישות מתוך אפליקציה, Play Integrity, המפה של Maps SDK |
+| ‏WebView ו-Custom Tabs על WebView2 | שירותי Google Play וחנות Play המקוריים (ניסיוני) | רכישות מתוך אפליקציה, Play Integrity, המפה של Maps SDK |
 | מצלמה, מיקום, לוח, בחירת קבצים, בקרי Xbox | קלט: אצבע אחת, בלי מגע מרובה | |
 | הרשאות, כניסה עם Google, הודעות Push ‏(FCM) | | |
 
@@ -107,10 +106,10 @@ Windows Subsystem for Android) מפעילים מערכת אנדרואיד שלמ
 אפליקציות אנדרואיד עשויות להכיל קוד לסוג מסוים של מעבד. כשמורידים אפליקציה
 לבד:
 
-1. **x86_64**, או גרסה בלי קוד מקורי (`noarch`), היא הטובה ביותר: רצה ישירות.
+1. ‏**x86_64**, או גרסה בלי קוד מקורי (`noarch`), היא הטובה ביותר: רצה ישירות.
 2. **חבילה שכוללת פיצול x86_64** טובה באותה מידה: Win.apk בוחר בו לבד.
-3. **arm64-v8a** עובדת, דרך תרגום, ואיטית בהפעלות הראשונות.
-4. **armeabi-v7a בלבד** (ARM של 32 ביט) לא תעבוד.
+3. ‏**arm64-v8a** עובדת, דרך תרגום, ואיטית בהפעלות הראשונות.
+4. ‏**armeabi-v7a בלבד** (ARM של 32 ביט) לא תעבוד.
 
 החנות המובנית בוחרת בשבילכם. [למה?](docs/he/getting-started.md#איזו-גרסה-להוריד)
 
@@ -122,14 +121,14 @@ Windows Subsystem for Android) מפעילים מערכת אנדרואיד שלמ
 | [שירותי Google](docs/he/google-services.md) | כניסה לחשבון, והתקנת שירותי Google Play וחנות Play |
 | [פתרון בעיות ודיווח](docs/he/troubleshooting.md) | בעיות נפוצות, קריאת יומן, דיווח על בעיה |
 | [שאלות נפוצות](docs/he/faq.md) | תשובות קצרות |
-| [Compatibility](docs/APPS.md) (אנגלית) | מה עובד, מה חלקי ומה חסר; אפליקציות שנבדקו |
-| [User guide](docs/USER_GUIDE.md) (אנגלית) | כל מסך וכל הגדרה |
-| [ARM apps](docs/arm-apps.md) (אנגלית) | התרגום של קוד ARM, לעומק |
-| [How it works](docs/how-it-works.md) (אנגלית) | איך זה עובד, והשוואה לאמולטור |
+| ‏[Compatibility](docs/APPS.md) (אנגלית) | מה עובד, מה חלקי ומה חסר; אפליקציות שנבדקו |
+| ‏[User guide](docs/USER_GUIDE.md) (אנגלית) | כל מסך וכל הגדרה |
+| ‏[ARM apps](docs/arm-apps.md) (אנגלית) | התרגום של קוד ARM, לעומק |
+| ‏[How it works](docs/how-it-works.md) (אנגלית) | איך זה עובד, והשוואה לאמולטור |
 
 ## מצב נוכחי ומגבלות
 
-Win.apk היא גרסת תצוגה. צפו לאפליקציות שלא עולות, ליכולות חסרות
+‏Win.apk היא גרסת תצוגה. צפו לאפליקציות שלא עולות, ליכולות חסרות
 ([הרשימה, לפי חשיבות](docs/APPS.md#needs-improvement-by-importance)) ולשינויים
 בין גרסאות. שני דברים חשוב לדעת לפני שמתקינים אפליקציות:
 
@@ -149,13 +148,13 @@ Win.apk היא גרסת תצוגה. צפו לאפליקציות שלא עולו�
 
 ## קרדיטים
 
-- **[Mac.apk](https://github.com/kksimp/Mac.apk)** של קיילב סימפסון
+- ‏**[Mac.apk](https://github.com/kksimp/Mac.apk)** של קיילב סימפסון
   ([@kksimp](https://github.com/kksimp), ‏Voltare) והתורמים לו: Win.apk התחיל
   כהסבה שלו, וסביבת האנדרואיד (`runtime/`: המימוש מחדש של ה-Framework, ממיר
   ה-DEX, תחליפי שירותי Play) באה משם. Win.apk **אינו קשור לפרויקט Mac.apk
   ואינו מאושר על ידו**; השם והלוגו של Mac.apk שייכים לו
   ([TRADEMARKS.md](TRADEMARKS.md)).
-- **Android Open Source Project:** משאבי ה-Framework, ‏apksig, ספריית Apache
+- ‏**Android Open Source Project:** משאבי ה-Framework, ‏apksig, ספריית Apache
   HTTP הישנה והגופנים.
 - **מה ש-Win.apk כולל:** ‏[Eclipse Temurin](https://adoptium.net/) ‏(OpenJDK 21),
   ‏[ANGLE](https://chromium.googlesource.com/angle/angle) ו-SwiftShader (מהבנייה
@@ -167,12 +166,12 @@ Win.apk היא גרסת תצוגה. צפו לאפליקציות שלא עולו�
   ‏[SQLite](https://sqlite.org/), ‏[stb_vorbis](https://github.com/nothings/stb)
   ו-[zlib](https://zlib.net/). הרישיון של כל אחד מהם ב-
   [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt).
-- **[F-Droid](https://f-droid.org),** שהקטלוג שלו מוצג בחנות. האפליקציות
+- ‏**[F-Droid](https://f-droid.org),** שהקטלוג שלו מוצג בחנות. האפליקציות
   שייכות למפתחים שלהן.
 
 ## רישיון
 
-Win.apk הוא תוכנה חופשית ברישיון [GNU AGPL v3.0](LICENSE), כמו Mac.apk. מי
+‏Win.apk הוא תוכנה חופשית ברישיון [GNU AGPL v3.0](LICENSE), כמו Mac.apk. מי
 שמפיץ גרסה בנויה, או מציע גרסה משונה דרך רשת, חייב לספק את קוד המקור המלא
 שלה. הסכם התורמים (CLA) של Mac.apk חל רק על שינויים שנשלחים ל-Mac.apk עצמו,
 והרישיון המסחרי שלו הוא הצעה של Mac.apk לקוד שלו; אף אחד מהם לא חל על הקוד

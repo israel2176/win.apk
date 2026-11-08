@@ -192,6 +192,7 @@ The user-facing ones (`WINAPK_PHONE_SIZE`, `WINAPK_RESIZABLE`,
 | `MACAPK_APK_PATH` | Set by the runtime, not by hand: the installed APK, which `PresentedSdk` reads the app's targetSdk and minSdk from to choose the API level the app is presented (its targetSdk within 29..36, never below its minSdk); `MACAPK_SDK_INT=<n>` forces a level, `MACAPK_SDK_FROM_TARGET=0` presents 29 (still never below the minSdk) |
 | `MACAPK_BROKER_TRIGGER_CHECKIN=0` | The broker does not nudge Play services to check in at boot (it nudges at most three times, and not at all once Play services has broadcast `CHECKIN_COMPLETE`) |
 | `WINAPK_READY_EVENT=<handle>` | Set by the launcher, not by hand: an inherited event handle, as a decimal number, that the runtime sets once its window has painted the app's first frame (the launch splash waits for it) |
+| `WINAPK_EMBED_PARENT=<hwnd>` | Set by the launcher, not by hand: a window handle, as a decimal number, that the app's window is created as a borderless child of, filling it (Google Play inside the library window); not a window, or the child cannot be made: a window of its own |
 | `WINAPK_DENSITY=<dpi>` | Overrides the density the app sees |
 | `WINAPK_WINDOW_RTL=1` or `0` | Overrides the locale's reading layout for the app window's frame |
 | `WINAPK_ANGLE_BACKEND=d3d11` or `swiftshader` | Forces a graphics backend (the default is a GPU, then WARP, then SwiftShader) |
@@ -247,7 +248,7 @@ Every test is a program built by CMake; `ci.yml` runs each of them on
 | `winapk-jvm-run <jni_guest.so> <classes>` | A real HotSpot JVM loads a guest library through the linker: its `JNI_OnLoad` registers a native through the guest `RegisterNatives`, another native is bound by name through the `NativeMethodBind` hook, both are called from Java and call back through the variadic bridge. Run with the x86_64 and the arm64 build of the library, and again on the staged `android-framework.jar` for libjnigraphics |
 | `test/java/PermissionModelTest.java` | `SpecialAccessStore.GroupModel` against PermissionController's rules (grant, deny, deny twice, auto grant, background permissions, legacy targets, App info rows) |
 | `test/java/FileSeparatorRewriteTest.java` | Guest code reads Android's `/` from `File.separator` while the JDK's own classes keep the backslash |
-| `winapk-binder-test <classpath> com.macapk.loader.BinderTransportTest` | `host/binder_win.cpp` between real JVMs in three processes (`test/java/com/macapk/loader/BinderTransportTest.java`): transact, the OS calling pid and the receiver-derived uid, oneway order, a nested callback, binder identity both ways, a Messenger and its replyTo with the sender's uid in `Message.sendingUid` and a PendingIntent's creator uid, fds both ways, death notification; then the system broker's checks: a process that is no installed app, or that claims another package, is refused, android:exported, the package uid |
+| `winapk-binder-test <classpath> com.macapk.loader.BinderTransportTest` | `host/binder_win.cpp` between real JVMs in three processes (`test/java/com/macapk/loader/BinderTransportTest.java`): transact, the OS calling pid and the receiver-derived uid, oneway order, a nested callback, binder identity both ways, a Messenger and its replyTo with the sender's uid in `Message.sendingUid` and a PendingIntent's creator uid, fds both ways, death notification; then the system broker's checks: a process that is no installed app, or that claims another package, is refused, android:exported, the package uid; then the account service's Google accounts (`accounts` child, its own GmsStore folder): an account signed in or out by another process after the service started is mirrored into or removed from the accounts table, asked or not, with the master token as password and `GoogleUserId`, and a row it did not mirror stays |
 | `winapk-binder-test <classpath> FileShareDeleteTest` | java.io's opens as `host/java_io_open.cpp` binds them (`test/java/FileShareDeleteTest.java`, with the java.base overlay from `WINAPK_TEST_JAVA_BASE_PATCH`): a file renamed or deleted while a stream has it open, and renamed over a file a stream has open, as on Android; append, truncate, the `FileNotFoundException` text and the rest as the JDK has them |
 | Headless boot, class-data sharing, window boot, service host, GMS CLI (CI steps) | The staged runtime boots the F-Droid Sudoku APK headless (30 frames); on the staged JRE, a first start records its classes and starts the framework archive's dump, and the next start maps it (`class-data sharing ON`); and in a window with a resize (`WINAPK_TEST_RESIZE=400x600`); started as a service host (`MACAPK_SERVICE_HOST=1`) and then opened, the open replaces the headless process and draws; `--gms selftest` and `--gms status` pass; `--verify-apk` answers 4 for a test-signed APK, 3 for an unsigned one and 1 for a file that is no app |
 
@@ -486,6 +487,26 @@ every such change is listed here:
   `BadParcelableException` in the broker).
 - `runtime/java/com/macapk/loader/SystemServer.java`: the boot check-in nudge
   stops once Play services has broadcast `CHECKIN_COMPLETE`.
+- `runtime/java/android/accounts/AccountManager.java`,
+  `com/macapk/gms/NativeSignIn.java`: with Google services on and the real
+  Play services installed, `addAccount("com.google")` (the Play Store's
+  "Sign in") opens Win.apk's own sign-in window in the caller's process and
+  answers with the account it added; it went to Play services'
+  authenticator, whose answer is an Intent for Play services' own sign-in
+  activity that no app on Windows can start in another app's process with
+  the authenticator's response binder, so the Play Store waited forever.
+  With an Activity (the user pressed a button) the window opens every time.
+- `runtime/java/com/macapk/gms/GmsStore.java`: a cached copy of
+  `gms_state.properties` is used only while the file is unchanged (another
+  process, the launcher's Settings or an app, signs in or out), and the file
+  is written beside itself and moved over, so a reader never sees half of
+  it; a process kept its first read for good and wrote it back over the
+  others' changes.
+- `runtime/java/com/macapk/loader/AccountsService.java`: the broker follows
+  GmsStore's file (a `WatchService`) as well as each `getAccounts`, mirrors
+  a new account at once and broadcasts `LOGIN_ACCOUNTS_CHANGED`, and removes
+  a row it mirrored (marked `winapk.mirrored`) once the account is signed out
+  of Win.apk; it asks Google for a missing gaia id once per account and run.
 
 - `runtime/java/com/macapk/loader/HostAppSupport.java` (new) and
   `InstallerOfRecord.java`: the small files every app process shares (the
@@ -837,7 +858,7 @@ every such change is listed here:
   `NativeSignIn.java` and `GmsStore.java`: after a sign-in, the picture the
   sign-in window found (`signInPhotoUrl`, a native only Windows has; on the
   Mac its absence means no picture) is saved as `gms\photo-<account>.img`
-  for the launcher's account button, and removed with the account.
+  for the launcher's account item, and removed with the account.
 - `runtime/java/com/macapk/gms/GoogleGmsCertificate.java` (new),
   `MacApkPackageManager.java` and `PlatformSignature.java`:
   `com.google.android.gms` and `com.android.vending` report Google's public
@@ -868,7 +889,7 @@ every such change is listed here:
   from the launcher's Language setting, else Windows'), and right to left.
   The signed-in account an app gets carries the picture
   (`GoogleSignInAccount.photoUrl`, from the ID token), which is also saved for
-  the launcher's account button when the sign-in window found none. A copy of
+  the launcher's account item when the sign-in window found none. A copy of
   an app re-signed by someone else (NetFree's patcher) that Google refuses
   (`UNREGISTERED_ON_API_CONSOLE`) gets an explanation instead of a closed window.
 - `runtime/java/android/graphics/drawable/VectorDrawable.java`: a path's

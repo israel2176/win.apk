@@ -1,6 +1,6 @@
 # Troubleshooting and reporting a problem
 
-[עברית](he/troubleshooting.md)
+**🇮🇱 [לדף הזה בעברית — לחצו כאן](he/troubleshooting.md)**
 
 Win.apk is a preview: some apps will not work yet. This page helps you tell a
 known limit from a new bug, and send a report we can act on.
@@ -67,7 +67,7 @@ apply: Settings > Privacy & security > Camera, Microphone or Location, with
 access for desktop apps on. Wi-Fi network names need location access too, as on
 Android.
 
-**The layout is wrong, or the app is sideways.** Try another **Screen size** in
+**The layout is wrong, or the app is sideways.** Try another **App window size** in
 Settings, or turn the app the other way on its details page (**Window >
 Orientation**). Dragging the window's edge also resizes the app.
 
@@ -75,8 +75,8 @@ Orientation**). Dragging the window's edge also resizes the app.
 accessibility, usage access). The dialog says so and the app is told no; the
 rest of the app usually works.
 
-**I want to start over.** Remove the app with **Also delete what the app
-saved** ticked, then install it again. To reset everything, uninstall Win.apk
+**I want to start over.** Remove the app with **Also remove accounts and
+data saved by the app** ticked, then install it again. To reset everything, uninstall Win.apk
 and delete `%LOCALAPPDATA%\Win.apk`.
 
 ## Reading the log

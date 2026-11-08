@@ -81,14 +81,26 @@ public final class GmsStore {
     // Load / save
     // ===================================================================
 
+    /** The file's (mtime, size) when sProps was read or last written by us. */
+    private static long sStampTime = -1, sStampSize = -1;
+    /** Whether sProps came from a complete read of an existing file. */
+    private static boolean sReadClean;
+
     private static Properties props() {
         synchronized (LOCK) {
-            if (sProps != null) return sProps;
-            Properties p = new Properties();
             File f = file();
+            // Several processes share this file (every app, the system broker,
+            // `--gms` from the launcher's Settings). A copy read once and kept
+            // for the life of the process misses a sign-in or sign-out made
+            // elsewhere, and its next save() writes the stale copy back over
+            // it. So a cached copy is good only while the file is unchanged.
+            if (sProps != null && f.lastModified() == sStampTime && f.length() == sStampSize) return sProps;
+            Properties p = new Properties();
+            boolean clean = false;
             if (f.isFile()) {
                 try (InputStream in = Files.newInputStream(f.toPath())) {
                     p.load(in);
+                    clean = true;
                 } catch (Throwable t) {
                     // A corrupt store must not take the process down, and it must
                     // not silently look like "signed out" either -- that would send
@@ -98,7 +110,20 @@ public final class GmsStore {
                 }
             }
             sProps = p;
+            sReadClean = clean;
+            sStampTime = f.lastModified();
+            sStampSize = f.length();
             return p;
+        }
+    }
+
+    /** True when the accounts this process sees come from a complete read of
+     *  the store's file (not a missing or unreadable one): what a caller needs
+     *  before it treats an account's absence as a sign-out. */
+    public static boolean readCleanly() {
+        synchronized (LOCK) {
+            props();
+            return sReadClean;
         }
     }
 
@@ -116,14 +141,34 @@ public final class GmsStore {
                 // Writing first and chmod-ing after leaves a window where a token
                 // sits at the process umask, which on a default macOS account is
                 // world-readable.
-                if (!f.exists()) {
-                    Files.createFile(f.toPath());
+                // Written beside the file, then moved over it: another process
+                // reading while we write must see the old file or the new one,
+                // never a truncated one (an account missing from a half-written
+                // file would read as a sign-out).
+                File tmp = new File(f.getPath() + ".tmp");
+                if (!tmp.exists()) {
+                    Files.createFile(tmp.toPath());
                 }
-                chmod600(f);
-                try (OutputStream out = Files.newOutputStream(f.toPath())) {
+                chmod600(tmp);
+                try (OutputStream out = Files.newOutputStream(tmp.toPath())) {
                     sProps.store(out, "Mac.apk GMS state -- contains OAuth tokens. Mode 0600.");
                 }
-                chmod600(f);   // store() does not change perms; re-assert after truncate
+                chmod600(tmp);   // store() does not change perms; re-assert after truncate
+                try {
+                    Files.move(tmp.toPath(), f.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                            java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+                } catch (IOException e) {
+                    // No atomic replace here (a reader holding the file without
+                    // delete sharing): write in place, as before.
+                    try (OutputStream out = Files.newOutputStream(f.toPath())) {
+                        sProps.store(out, "Mac.apk GMS state -- contains OAuth tokens. Mode 0600.");
+                    }
+                    Files.deleteIfExists(tmp.toPath());
+                    chmod600(f);
+                }
+                sStampTime = f.lastModified();
+                sStampSize = f.length();
+                sReadClean = true;
             } catch (Throwable t) {
                 warn("could not write " + f + ": " + t);
             }
@@ -541,7 +586,7 @@ public final class GmsStore {
      *  The CLI needs this because it mutates the store in one JVM and a second
      *  process must see it; a long-lived app process never calls it. */
     public static void reload() {
-        synchronized (LOCK) { sProps = null; }
+        synchronized (LOCK) { sProps = null; sStampTime = -1; sStampSize = -1; }
     }
 
     private static void warn(String msg) {

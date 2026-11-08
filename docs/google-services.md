@@ -1,6 +1,6 @@
 # Google account and Google services
 
-[עברית](he/google-services.md)
+**🇮🇱 [לדף הזה בעברית — לחצו כאן](he/google-services.md)**
 
 Many Android apps use Google Play services: to sign in with Google, check
 their Play licence, receive push messages or ask for the location. Win.apk
@@ -30,8 +30,8 @@ sees your password; it keeps the token Google hands back, only on this PC, in
 - **One account for every app.** An app's **Sign in with Google** opens the
   same window when no account is signed in yet; with an account, the app shows
   its chooser.
-- The round button at the end of the library's toolbar shows the signed-in
-  account's picture and opens Settings.
+- The account's item at the foot of the left pane, above Settings, shows the
+  signed-in account's picture and address and opens Settings.
 - **Sign out** forgets the account and its tokens on this PC.
 - Signing in works behind a filter or proxy whose certificate Windows trusts,
   such as NetFree.
@@ -57,14 +57,37 @@ downloads Google's apps.
    in your browser. Pick the variant the row names (x86_64 or nodpi, for
    Android 10 or later) and use APKMirror's own download button.
 3. Keep the page open. Win.apk watches your Downloads folder (or take a file
-   you drop on the page), checks that **Google signed it**, and installs it.
-   A file someone else signed is refused with the reason.
+   you drop on the page), checks it and installs it. A file is refused, with
+   the reason, when **Google did not sign it**, when it has native code but
+   none for x86_64 (download the x86_64 variant), or when it needs a newer
+   Android (API level) than Win.apk presents (download an older version).
 4. When all three are ticked, **Google Play** in the left pane opens the Play
-   Store.
+   Store inside the Win.apk window, where the library is, not in a window of
+   its own. Switching to another tab keeps it running; **Google Play** shows
+   it again. Closing the Win.apk window closes it.
+
+The three apps are part of Google services, not apps of your library: they
+have no tile, menu or shortcut, and their versions show only on the setup
+page.
 
 The first time, Play services needs about a minute to check in with Google; a
 Play Store opened before that may show "Server error" (press **Try again**).
 From then on the Play Store keeps itself and Play services up to date.
+
+### The Google account with Google services on
+
+There is still one Google account, Win.apk's. The Play Store's **Sign in**
+(and any app that asks Android to add a Google account) opens the same
+sign-in window as **Settings > Google account > Sign in**, and the account
+added there is the one Settings shows. Play services and the Play Store then
+see it as a device's Google account, with the token Google gave at sign-in.
+A sign-in or sign-out in Settings reaches Play services and the Play Store
+while they run, within a second or two; signing out there signs them out too.
+
+(On a phone, Play services shows its own sign-in pages. Win.apk cannot run
+them: they need a device check Win.apk does not fake, and they open in
+another app's window, which an app on Win.apk cannot do with the answer the
+sign-in needs. So the window is Win.apk's own, on Google's own page.)
 
 ### What was tried
 
