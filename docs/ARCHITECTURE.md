@@ -260,24 +260,81 @@ Three engines run arm64 code, behind one CPU state (`src/arm64/`):
 - **Ahead-of-time translation** (`arm64_aot.cpp`, `tools/arm64_aot_main.cpp`,
   `winapk-aot.exe`). Each guest function becomes a C function with the guest
   registers as local variables, so the C compiler allocates registers and
-  optimizes across the whole function. The runtime compiles that C with
-  clang (`-O1 -march=native`, in parts, on all but one core, at below-normal
-  priority) into `<lib>.so.aot.dll` next to the library. A library of up to
-  400,000 instructions is translated whole; a larger one only where the JIT's
-  profile (`<lib>.so.aot.profile`) says code ran, and again as the profile
-  grows. A translation finished while the app runs is loaded at once. Whole
-  translations are shared between apps through `<data>\aot-cache`, keyed by
-  the library's code. The translation never has to be complete: a function
-  returns to the JIT when it reaches a branch the translator could not
-  follow.
+  optimizes across the whole function. Functions are found from the symbol
+  tables, the function starts in `.eh_frame_hdr` (which survive stripping)
+  and, transitively, the targets of BL; a function of more than 4,000
+  instructions is left to the JIT. The runtime compiles that C with
+  clang (`-O2 -mllvm -fast-isel -march=native`) into `<lib>.so.aot.dll` next to the library,
+  in parts of 20,000 instructions. A background worker runs them at idle
+  priority and as EcoQoS, in a job object that ends its compilers with it,
+  as many at once as the PC allows: up to half the logical processors while
+  the user is away, one while the user is active, none on battery saver or
+  under a full-screen program, and never more than free memory allows
+  (512 MB each, 20% of the RAM and at least 2 GB kept free). A library of up
+  to 400,000 instructions is translated whole; a larger one only where the
+  JIT's profile (`<lib>.so.aot.profile`) says code ran, and again once the
+  profile has grown by a quarter. The running app starts the worker when its
+  profile has settled, and a worker started with the app waits a minute.
+  A pass works in `.aot-tmp\<lib>\` from a copy of the profile and keeps
+  each compiled part, so a stopped worker goes on where it was. A failed one
+  waits 10 minutes, 4 times longer after each failure (at most a day), and
+  stops after 4. A translation finished while the app runs is loaded at once.
+  Whole translations are shared between apps through `<data>\aot-cache`,
+  keyed by the library's code (its bytes and addresses) and the CPU's model
+  and features, since the code is compiled for that CPU; the stamp next to
+  each DLL records the CPU too, and a translation made on another CPU is not
+  loaded. An app's DLL and the cache's are one file (a hard link), and the
+  cache drops what no app used for 60 days. Every app's worker writes the
+  cache while apps load from it, and any of them can be killed half way, so
+  no file is written in place (`include/winapk/aot_files.h`): each is written
+  under a name unique to its writer, flushed, then renamed; a finished DLL
+  ends with a 32-byte seal (its length and hash) that the loader, the worker
+  and the cache check, so a DLL cut short is never loaded, shared or taken
+  for done; a good cache entry is never replaced (an app may have it mapped),
+  a broken one is deleted, and temporary files a killed writer left go an
+  hour later. The stamp ends with the library's id (its size and date), so
+  whether a translation is current does not depend on the clock. The
+  translation never has to be
+  complete: a function returns to the JIT when it reaches a branch the
+  translator could not follow, when a call returns somewhere else than its return address
+  (an exception's landing pad, a jump into another frame), and at its entry
+  when the host stack is nearly used up (a translated guest call is a host
+  call, so deep guest recursion would overflow it; `Cpu::stack_floor`, an
+  eighth of the stack and at least 256 KB before its end). A library that
+  rewrites its own code (an inline hook, a packer decrypting its text: IC
+  IVAU in its code) is handed to the JIT for good, its stamp saying
+  `written`; one unloaded with `dlclose` takes its translation with it. A
+  call through a register to a function of the same library (a C++ virtual
+  call) finds it in the DLL's own table, cached at the call site.
+  A fault inside a translated DLL marks that library's stamp `bad`, and the
+  JIT runs it from the next start. A mistranslation that corrupts state
+  and crashes elsewhere (in the JIT, the guest's own code, a host function,
+  the JVM) is caught a level up, by the crash guard (`host/aot_guard.cpp`):
+  when the app's process ends through the crash path (`crash_report.cpp`:
+  a fault nobody handled, `abort()`, HotSpot's fatal error handler through
+  the JVM's `abort` hook; not a normal exit, a closed window or a kill)
+  twice in a row with a translation loaded, the next start disables
+  translation for the app (`aot_disable`, as `WINAPK_AOT=0` does) and says
+  so in its run log. A run without a crash sets the count back; two crashes
+  in a row on the JIT mean it was not the translation, and the next start
+  turns it on again for that build of the app. The state is
+  `apps\<name>\aot-guard.txt`, written atomically (`aot_write_file`), and a
+  new `kAotVersion` or another build of the APK or its libraries starts it
+  over.
 - **The JIT** (`arm64_jit.cpp`, dynarmic from the azahar-emu fork, 0BSD
   license, fastmem over the shared address space). The app starts on it and
-  it runs whatever has no translation. Built when CMake is given
+  it runs whatever has no translation. Each thread has its own engine and
+  code cache; code the guest writes (IC IVAU, on any thread and engine) is
+  dropped from all of them. Built when CMake is given
   `-DWINAPK_ARM64_JIT=ON` (CI and releases).
 - **The interpreter** (`arm64_cpu.cpp`, `arm64_simd.cpp`): the base integer
   ISA, every load/store form, exclusives and LSE atomics, scalar FP and the
   Advanced SIMD forms compilers emit. It runs the few instructions the other
-  two do not handle and is the reference the others are checked against.
+  two do not handle and is the reference the others are checked against:
+  `winapk-arm64-test` runs C compiled for arm64 and for x64, control-flow and
+  edge cases with results worked out by hand (`arm64_flow_guest.c`), and 400
+  functions of random instructions (`gen_arm64_fuzz.py`) on all three and
+  compares them.
 
 The bridge (`arm64_guest.cpp`) gives each thread its CPU state, a guest stack
 and Bionic's TLS slots; converts AAPCS64 arguments and `va_list`s to System V
@@ -431,6 +488,75 @@ Not Play-certified: no Google signing certificate, no installed
 `com.google.android.gms` package, no Play Integrity or SafetyNet, Play
 Billing answers `BILLING_UNAVAILABLE`, the Maps SDK lays out a blank map.
 
+### Google services: cross-process Binder and the system broker
+
+With Settings > Google account > "Use Google services (experimental)" on
+(`HKCU\Software\Win.apk` `GoogleServices`, which `runtime_main` turns into
+`MACAPK_BROKER=1`), the real Play services, Services Framework and Play Store
+the user installed run as apps, as upstream runs them on the Mac:
+
+- **Binder across processes** (`windows/host/binder_win.cpp`, the natives of
+  upstream's `android.os.MacApkBinderTransport`). Each process serves a named
+  pipe, `\\.\pipe\winapk-<user SID>-s<session>-b-<pid>-<random>`, one thread
+  per connection. A binder travels as (endpoint, number) and comes back as the
+  same proxy, or as the same local object in its own process; oneway calls go
+  over one connection per peer, in order; a file descriptor is the open file's
+  handle duplicated into the receiver, where it becomes a new CRT fd;
+  `linkToDeath` waits on the peer's process handle.
+- **The system broker** (`winapk-runtime --system`, upstream's
+  `com.macapk.loader.SystemServer`): binds, starts, providers, broadcasts and
+  jobs between apps, the accounts service, per-package uids (`AppUids`). The
+  first app that finds no broker starts it (`WindowsBroker`); one per session
+  (`Local\WinApk-system`, then the pipe name); it exits when no app has been
+  open for a minute. It starts an app for another's request as the launcher
+  would, `winapk-runtime --apk <library file>`, headless; a second
+  `android:process` of a package gets its own single-instance key. When you
+  open an app the broker is running headless that way (Play services binds
+  the Play Store's services, for one), the new start stops the headless
+  process and takes its place with a window; its clients bind again, as
+  after Android stops a background process.
+- **Who calls.** The calling pid is the OS's (`GetNamedPipeClientProcessId`);
+  no uid travels. The broker knows a process as the package it started it as,
+  or the package whose installed APK the process's command line (`--apk`)
+  names (`WinProcesses`, from the process's recorded command line); a caller
+  argument that names another package, or a registration as another package
+  or process, is refused with a `SecurityException` and logged; the calling
+  uid any app sees is the broker's answer for that pid. A Message sent
+  through a Messenger is stamped with that uid (`sendingUid`), and a
+  PendingIntent carries its creator's package and uid, which is how Google
+  Play services' GCM registrar tells which app asks for an FCM token. An app's application
+  thread takes calls from the broker's pid only. Pipes have a DACL for the
+  user and SYSTEM, reject remote clients, claim their name with
+  `FILE_FLAG_FIRST_PIPE_INSTANCE`, connect with `SECURITY_IDENTIFICATION`, and
+  each end checks that the other is the same user's process of the same
+  executable. `android:exported` is enforced as upstream does.
+- **Google's packages.** `com.google.android.gms`, `.gsf` and
+  `com.android.vending` get the system-app treatment (`FLAG_SYSTEM`, started
+  at the broker's boot) only when their APKs' signature verifies and Google's
+  certificate made it, as the signer or as an ancestor in the verified v3
+  rotation lineage (`GoogleGmsCertificate.isGoogleSigner`). Win.apk ships and
+  downloads none of them.
+- **Signatures.** Every certificate PackageManager reports (an app's own,
+  another installed app's) and every trust decision comes from
+  `ApkVerification`, which runs AOSP's verifier, apksig
+  (`thirdparty/apksig/`), over the APK: the v3.1 / v3 / v2 signature over the
+  signed data and the content digests over the whole ZIP, the v3
+  proof-of-rotation chain, or the v1 JAR signature of an old APK. An installed
+  app is base.apk and every split, a bundle every APK in it; all must verify
+  with the base's signer. The signer is chosen for API 36 in every process.
+  With a rotation, `GET_SIGNATURES` answers the oldest certificate and
+  `SigningInfo` the lineage; `checkSignatures` and `hasSigningCertificate`
+  follow AOSP's lineage rules. An APK that does not verify reports no
+  certificate. Verdicts are cached by path, size and time in
+  `cache\apk-verify\`; the install fills it.
+- **The limit.** Every app runs with the user's Windows rights and there is no
+  OS sandbox between them: native code in one app's process can read or write
+  another process of the same user. The checks above stop an app's Java code
+  from passing itself off as another app; they are not a sandbox.
+
+`windows/test/binder_test.cpp` with `test/java/com/macapk/loader/BinderTransportTest.java`
+tests the transport and the broker's checks across three processes.
+
 ## An install, step by step
 
 1. The launcher names the app (`install_name`: the package when the file name
@@ -482,16 +608,22 @@ Billing answers `BILLING_UNAVAILABLE`, the Maps SDK lays out a blank map.
    set, and this process exits.
 3. The install and DEX conversion are checked (cached, so this is quick), and
    shared storage is mapped to the user's folders if the setting is on.
-4. HotSpot is created in-process on a thread with a large stack; JVMTI is
-   enabled for the `NativeMethodBind` hook and signature lookups; the host
-   natives are bound; SQLite's natives are registered.
-5. `Boot.run` starts the Android side: the package manager reads the
+4. HotSpot is created in-process on a thread with a large stack, with the
+   C1 compiler only (a faster start than tiered C1+C2; no class data sharing,
+   which the `java.base` overlay rules out); JVMTI is enabled for the
+   `NativeMethodBind` hook and signature lookups; the host natives are bound;
+   SQLite's natives are registered.
+5. `Boot.run` starts the Android side: the TLS trust store is set to the
+   JDK's and Windows' roots, kept between starts in `%TEMP%\winapk-trust.jks`
+   and rebuilt in the background once a day; the package manager reads the
    installed app, the framework resources load, `Application.onCreate`
    runs, the first activity is created and resumed, and the window opens with
    the app's icon.
 6. When the app loads a native library, the path in
    [Loading an app's libraries](#loading-an-apps-libraries) runs; an arm64
-   library picks up its translation DLL if one exists and the JIT otherwise.
+   library picks up its translation DLL if one exists and the JIT otherwise
+   (always the JIT when the crash guard has turned the app's translation off,
+   which the run log's first `arm64 AOT:` line says).
 7. The render tick drives frames; input goes to `TouchDispatcher`; permission
    requests spawn the launcher's dialogs; a resize re-lays the app out.
 8. Closing the window ends the activity stack and the process. The exit code
@@ -506,21 +638,26 @@ default; `--data` moves it for a direct run):
 | Path | What |
 |---|---|
 | `library\<name>.apk`, `.label`, `.package`, `.orientation`, `.window` | The user's copy of each app and the launcher's per-app files |
-| `apps\<name>\` | `classes.jar`, `.macapk-dex-stamp`, `icon.png`, `label.txt`, `package.txt` |
-| `android\` | The Android file system: `data\app\` (installed packages, with `lib\<isa>\` and the `.so.aot.*` translation files), `data\data\<package>\` (app data), the shared-storage volume |
+| `apps\<name>\` | `classes.jar`, `.macapk-dex-stamp`, `icon.png`, `label.txt`, `package.txt`; for an arm64-only app that crashed with its translation loaded, `aot-guard.txt` (the crash guard's count and whether translation is off) |
+| `android\` | The Android file system: `data\app\` (installed packages, with `lib\<isa>\` and the `.so.aot.*` translation files; `lib\arm64\.aot-tmp\<lib>\` holds an unfinished translation), `data\data\<package>\` (app data), the shared-storage volume |
 | `logs\` | `run-<name>.log` and `run-<name>.1.log`, `last-run.log` (a hard link to the newest run log), `install-<name>.log`, `gms.log`, `install-helper.log`, `package-backfill.log`, `hs_err_pid*.log` |
 | `store\` | `catalog.tsv`, `catalog.etag`, `icons\`, `downloads\` |
 | `installed_apps.json` | The installed-apps registry the package manager answers from |
 | `appops\` | `app-ops.json`, `signing-key.pub`, `signing-key.p256` |
 | `gms\` | `gms_state.properties`, the `accounts.present` marker |
-| `aot-cache\` | Whole arm64 translations shared between apps (kept under 2 GB, least recently used first) |
+| `app_uids.properties`, `system_ce\0\`, `installer-of-record.properties`, `run\system-ready` | With Google services on: per-package uids, the accounts service's store, which app installed which, the broker's readiness |
+| `logs\system.log`, `logs\services\` | The system broker and the apps it starts as service hosts |
+| `aot-cache\` | Whole arm64 translations shared between apps, `<key>.aot.dll` (kept under 2 GB, least recently used first); a `*.tmp` is a write in progress, or one a killed worker left (deleted when an hour old) |
+| `cache\` | The runtime's shared caches: `android-system-fonts\` (the `/system/fonts` and `fonts.xml` native text stacks such as Flutter's read), `fonts\`, `fwview\` (the framework's resolved resources), `monet\`, `apk-verify\` (APK signature verdicts) |
+| `run\<package>.pid` | Each running app's run lock |
 | `staging\` | The install helper's staging area |
 | `updates\` | `releases.json` and `releases.etag` (GitHub's list of releases from the last update check), `Win.apk-Setup-<version>.exe` (a downloaded update, until it is installed) |
 
 Settings live in `HKCU\Software\Win.apk`: `Theme`, `Language`, `PhoneSize`,
 `Landscape` (absent means landscape; 0 means portrait), `DesktopShortcut`,
 `UserFolders`, `InstallDetails` (the install window shows its log),
-`ShortcutVersion`, `AutoUpdate` (absent means on) and `LastUpdateCheck` (Unix
+`ShortcutVersion`, `AutoUpdate` (absent means on), `GoogleServices` (absent
+means off: the system broker and the real Google apps) and `LastUpdateCheck` (Unix
 seconds of the last update check GitHub answered), and the library window's `WindowWidth`, `WindowHeight` and
 `WindowMaximized`.
 

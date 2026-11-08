@@ -260,7 +260,7 @@ public class VectorDrawable extends Drawable {
         intrinsicHeightDp = parseDpToPx(root.getAttributeNS(NS, "height"), intrinsicHeightDp);
         final String tintAttr = root.getAttributeNS(NS, "tint");
         macapkTintDeclared = tintAttr != null && !tintAttr.trim().isEmpty();
-        tint = parseColor(tintAttr, 0);
+        tint = parseColor(root.getAttributeNS(NS, "tint"), 0);
         if ("true".equalsIgnoreCase(root.getAttributeNS(NS, "autoMirrored"))) setAutoMirrored(true);
 
         // Walk children: <path>, <group>
@@ -588,14 +588,14 @@ public class VectorDrawable extends Drawable {
         return effectiveFillColor(fillColor, tint, alpha, monochrome, tintDeclared, false);
     }
 
-    /** Ported from Mac.apk main (902e6ff). A path with a VISIBLE stroke and a
-     *  transparent fill is a stroke-only outline: AOSP draws its stroke and no
-     *  fill (VFullPath fills only when fillColor != TRANSPARENT). The
-     *  transparent-fill-takes-the-tint substitution below filled it solid.
-     *  Measured: Material's switch mtrl_switch_track_decoration (a 2px
-     *  ?colorOutline ring, tinted colorOutline when unchecked) painted the whole
-     *  unchecked track outline-grey, hiding the same-coloured thumb -- every off
-     *  MaterialSwitch was a featureless grey pill (pf-notes Settings).
+    /** A path with a VISIBLE stroke and a transparent fill is a stroke-only
+     *  outline: AOSP draws its stroke and no fill (VFullPath fills only when
+     *  fillColor != TRANSPARENT). The transparent-fill-takes-the-tint
+     *  substitution below filled it solid. Measured: Material's switch
+     *  mtrl_switch_track_decoration (a 2px ?colorOutline ring, tinted
+     *  colorOutline when unchecked) painted the whole unchecked track
+     *  outline-grey, hiding the same-coloured thumb -- every off MaterialSwitch
+     *  was a featureless grey pill (ytdlnis settings, issue #5, 2026-10-19).
      *  MACAPK_VD_STROKE_NO_TINT_FILL=0 restores the fill. */
     static final boolean MACAPK_VD_TRANSPARENT_TINT =
         !"0".equals(System.getenv("MACAPK_VD_TRANSPARENT_TINT"));
@@ -679,13 +679,13 @@ public class VectorDrawable extends Drawable {
         // current state. v1.0.423.
         int effTint = macapkEffectiveTint();
         if (effTint != 0) tint = effTint;
-        // Ported from Mac.apk main (902e6ff). A programmatic tint that is fully
-        // TRANSPARENT under SRC_IN (the default mode) paints nothing on AOSP:
-        // the PorterDuffColorFilter keeps the source's coverage but multiplies
-        // by the tint's alpha 0. Ours read tint 0 as "no tint" and drew the
-        // authored colours. Measured: Material's switch decoration ring is
-        // tinted transparent when CHECKED (mtrl_switch_track_decoration_tint),
-        // and every checked MaterialSwitch kept a grey ?colorOutline ring.
+        // A programmatic tint that is fully TRANSPARENT under SRC_IN (the default
+        // mode) paints nothing on AOSP: the PorterDuffColorFilter keeps the
+        // source's coverage but multiplies by the tint's alpha 0. Ours read
+        // tint 0 as "no tint" and drew the authored colours. Measured:
+        // Material's switch decoration ring is tinted transparent when CHECKED
+        // (mtrl_switch_track_decoration_tint), and every checked MaterialSwitch
+        // kept a grey ?colorOutline ring (ytdlnis settings, issue #5).
         // MACAPK_VD_TRANSPARENT_TINT=0 restores drawing.
         if (MACAPK_VD_TRANSPARENT_TINT && mTintList != null && (effTint >>> 24) == 0
                 && (mTintMode == null || mTintMode == android.graphics.PorterDuff.Mode.SRC_IN)

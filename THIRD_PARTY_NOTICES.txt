@@ -272,6 +272,17 @@ Source: https://github.com/KhronosGroup/MoltenVK .
 
 
 --------------------------------------------------------------------------------
+apksig (in macapk-loader.jar) -- Android's APK signature verifier (Win.apk)
+SPDX-License-Identifier: Apache-2.0
+
+com.android.tools.build:apksig 9.5.1, unmodified, from The Android Open Source
+Project (https://android.googlesource.com/platform/tools/apksig). Copyright (C)
+The Android Open Source Project. Licensed under the Apache License, Version 2.0,
+whose full text is reproduced above (MoltenVK) and ships in the jar as
+apksig-legal/LICENSE.
+
+
+--------------------------------------------------------------------------------
 Vulkan Loader / Headers (libvulkan.dylib) -- Khronos Vulkan
 SPDX-License-Identifier: Apache-2.0
 

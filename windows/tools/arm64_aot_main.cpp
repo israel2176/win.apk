@@ -2,11 +2,15 @@
 // of time, for the installer to compile into `<lib>.so.aot.dll` (see
 // include/winapk/arm64_aot.h for how the runtime uses it).
 //
-//   winapk-aot <lib.so> <out.c> [parts] [--profile <file>] [--full-below <insns>]
+//   winapk-aot <lib.so> <out.c> [parts] [--part-insns <n>] [--profile <file>] [--full-below <insns>]
 //   winapk-aot --hash <lib.so>
 //
 // parts: out.c.1.c ..., to compile in parallel (fewer when the library is
-// small). With --profile, a library of more than --full-below instructions
+// small). --part-insns <n> instead cuts as many parts as it takes for about
+// n instructions each, however many there are: clang's memory grows with a
+// part (about 300 MB at 20,000 instructions, 1.7 GB at 176,000), its speed
+// does not, so the background worker fixes the size and runs as many parts
+// at once as memory allows. With --profile, a library of more than --full-below instructions
 // is translated only where the profile says code ran (see
 // include/winapk/arm64_aot.h, "Profiles"). Exit code 0: translated whole;
 // 4: translated where the profile says code ran; 3: nothing ran yet, so
@@ -32,6 +36,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cerrno>
 #include <cinttypes>
 #include <cstdarg>
 #include <cstdio>
@@ -46,7 +51,7 @@
 
 namespace {
 
-using winapk::arm64::aot_hash;
+using winapk::arm64::aot_hash_segment;
 
 // ---- ELF ---------------------------------------------------------------------
 
@@ -83,6 +88,7 @@ struct Image {
     std::vector<Seg> exec;
     uint64_t text_hash = 0;
     std::map<uint64_t, uint64_t> symbols;  // function entry -> size (0: unknown)
+    std::vector<uint64_t> unwind_starts;   // function entries from .eh_frame_hdr
 
     bool code(uint64_t va) const {
         for (const Seg& s : exec) {
@@ -108,6 +114,40 @@ template <typename T> bool read_at(const std::vector<uint8_t>& f, uint64_t off, 
     return true;
 }
 
+// The function starts in .eh_frame_hdr's search table. Release builds are
+// stripped, and from the exported symbols and their BL targets alone the
+// translator found 1-45% of a library's code (Fennec's libxul.so: 1.3%,
+// libflutter.so: 13%); the rest, reached through vtables and function
+// pointers, stayed on the JIT. The unwind tables C++ needs for exceptions
+// and crash reports list every function with unwind information, and their
+// search table survives stripping (it is in a loaded segment,
+// PT_GNU_EH_FRAME): with it, 93-97% (docs/research/aot-measurements.md).
+// Only the encodings linkers write are read: a 4- or 8-byte eh_frame_ptr,
+// a udata4 count, and a datarel sdata4 table; anything else adds nothing.
+std::vector<uint64_t> eh_frame_starts(const Image& img, const Phdr64& hdr) {
+    std::vector<uint64_t> starts;
+    const std::vector<uint8_t>& f = img.file;
+    if (hdr.filesz < 4 || hdr.offset > f.size() || f.size() - hdr.offset < hdr.filesz) return starts;
+    const uint8_t* p = f.data() + hdr.offset;
+    const uint8_t version = p[0], ptr_enc = p[1], count_enc = p[2], table_enc = p[3];
+    const unsigned format = ptr_enc & 0x0f;  // DW_EH_PE_udata4 3, sdata4 0xb, udata8 4, sdata8 0xc
+    const uint64_t ptr_size = format == 0x03 || format == 0x0b ? 4 : format == 0x04 || format == 0x0c ? 8 : 0;
+    if (version != 1 || ptr_size == 0 || count_enc != 0x03 || table_enc != 0x3b) return starts;
+    const uint64_t count_at = 4 + ptr_size, table_at = count_at + 4;
+    if (hdr.filesz < table_at) return starts;
+    uint32_t count;
+    std::memcpy(&count, p + count_at, 4);
+    if ((hdr.filesz - table_at) / 8 < count) return starts;
+    starts.reserve(count);
+    for (uint32_t i = 0; i < count; ++i) {
+        int32_t rel;  // relative to the start of .eh_frame_hdr
+        std::memcpy(&rel, p + table_at + uint64_t(i) * 8, 4);
+        const uint64_t va = hdr.vaddr + static_cast<uint64_t>(static_cast<int64_t>(rel));
+        if (img.code(va) && va % 4 == 0) starts.push_back(va);
+    }
+    return starts;
+}
+
 bool read_image(const char* path, Image* img, std::string* error) {
     std::ifstream in(path, std::ios::binary);
     if (!in) {
@@ -122,16 +162,18 @@ bool read_image(const char* path, Image* img, std::string* error) {
         return false;
     }
     uint64_t h = 0xcbf29ce484222325ull;
+    Phdr64 eh_frame_hdr{};
     for (unsigned i = 0; i < eh.phnum; ++i) {
         Phdr64 ph;
         if (!read_at(img->file, eh.phoff + uint64_t(i) * eh.phentsize, &ph)) break;
+        if (ph.type == 0x6474e550) eh_frame_hdr = ph;  // PT_GNU_EH_FRAME
         if (ph.type != 1 || !(ph.flags & 1) || ph.filesz == 0) continue;
         if (ph.offset + ph.filesz > img->file.size()) {
             *error = "truncated executable segment";
             return false;
         }
         img->exec.push_back({ph.vaddr, ph.filesz, ph.offset});
-        h = aot_hash(img->file.data() + ph.offset, ph.filesz, h);
+        h = aot_hash_segment(ph.vaddr, img->file.data() + ph.offset, ph.filesz, h);
     }
     img->text_hash = h;
     if (img->exec.empty()) {
@@ -152,6 +194,10 @@ bool read_image(const char* path, Image* img, std::string* error) {
             if (s.size > size) size = s.size;
         }
     }
+    // WINAPK_AOT_EH_FRAME=0 leaves them out, for comparing.
+    if (const char* off = std::getenv("WINAPK_AOT_EH_FRAME"); !off || std::strcmp(off, "0") != 0)
+        img->unwind_starts = eh_frame_starts(*img, eh_frame_hdr);
+    for (const uint64_t va : img->unwind_starts) img->symbols.emplace(va, 0);
     return true;
 }
 
@@ -236,9 +282,16 @@ struct Function {
 
 constexpr size_t kMaxInsns = 100000;
 
-// Functions above this many instructions are compiled without optimization
-// (Emitter::function). WINAPK_AOT_OPTNONE_INSNS overrides it, for measuring.
-size_t g_optnone_insns = 4000;
+// Functions above this many instructions are left to the JIT. A huge
+// function costs clang far more than its size (one of 10K+ instructions in
+// libjuicebox_sdk_jni.so took 200 s at -O1). Compiling those unoptimized, as
+// was done, was not enough: one of 21,631 instructions (AliExpress's
+// libsaasCorePlayer.so) still took clang 290 s and 4.3 GB, and code with the
+// guest registers in stack slots runs about 11x slower than native, slower
+// than the JIT (3-6x; docs/research/aot-measurements.md). So the JIT runs
+// them: the few functions above this size cost most of a library's compile
+// time and memory and gave nothing back. WINAPK_AOT_MAX_INSNS overrides it.
+size_t g_max_insns = 4000;
 
 // Follows the branches of the function at f->entry. BL targets go to `calls`.
 bool discover(const Image& img, const std::set<uint64_t>& entries, Function* f, std::set<uint64_t>* calls) {
@@ -300,13 +353,12 @@ typedef struct {
     uint64_t x[31];
     uint64_t sp, pc;
     uint32_t nzcv, fpcr, fpsr;
-    uint64_t tpidr;
+    uint64_t tpidr, stack_floor;
     _Alignas(16) uint64_t v[32][2];
 } Cpu;
 typedef struct {
-    uint32_t (*branch)(Cpu* c, uint64_t target);
+    uint32_t (*branch)(Cpu* c, uint64_t target, uint64_t* site);
     void (*step)(Cpu* c);
-    uint32_t (*plain)(uint64_t target);
     void (__attribute__((sysv_abi)) *call_sysv)(const void* fn, void* frame);
 } AotRuntime;
 typedef struct { uint64_t vaddr; uint32_t (*fn)(Cpu* c); } AotEntry;
@@ -317,12 +369,16 @@ typedef struct {
     AotRuntime* runtime;
     const AotEntry* entries;
     uint64_t count;
+    uint32_t* off;
 } AotModule;
 
 // Defined once, in the file with the module table (the code may be split
 // across several files compiled in parallel).
 extern uint64_t aot_base;
 extern AotRuntime aot_rt;
+extern uint32_t aot_off;  // the library rewrote its code: hand everything to the JIT
+extern const AotEntry aot_entries[];  // sorted by vaddr
+extern const uint64_t aot_count;
 
 // Guest memory: unaligned, and volatile so that the C compiler keeps every
 // access, in order, as the guest's own synchronization expects.
@@ -340,6 +396,22 @@ typedef volatile uint64_t __attribute__((aligned(1))) vu64;
 #define ST64(a, v) (*(vu64*)(uintptr_t)(a) = (uint64_t)(v))
 
 #define INL static inline __attribute__((always_inline))
+// At each function's entry, two reasons to hand over to the JIT before the
+// first instruction (every translated caller then returns the same way):
+//   * the host stack is nearly used up. A guest call is a host call here, and
+//     deep guest recursion (640 KB of a 1 MB Android thread's stack is 20,000
+//     small frames) takes several times that of host stack, which the JIT
+//     does not use per call;
+//   * the library rewrote its own code (aot_off): this is the file's.
+#define ENTRY_CHECK(entry)                                                                      \
+    do {                                                                                        \
+        uint64_t rsp_;                                                                          \
+        __asm__("movq %%rsp, %0" : "=r"(rsp_));                                                 \
+        if (__builtin_expect(rsp_ < c->stack_floor || __atomic_load_n(&aot_off, __ATOMIC_RELAXED), 0)) { \
+            c->pc = (entry);                                                                    \
+            return 1;                                                                           \
+        }                                                                                       \
+    } while (0)
 INL uint64_t ror64(uint64_t v, unsigned r) { r &= 63; return r ? (v >> r) | (v << (64 - r)) : v; }
 INL uint64_t ror32(uint64_t v, unsigned r) { uint32_t w = (uint32_t)v; r &= 31; return r ? (uint32_t)((w >> r) | (w << (32 - r))) : w; }
 INL uint64_t asr64(uint64_t v, unsigned s) { return (uint64_t)((int64_t)v >> s); }
@@ -410,22 +482,54 @@ INL uint64_t sat_u32(double r) {
     return (uint32_t)r;
 }
 // Arm's FMAX/FMIN (NaN in, NaN out; +0 > -0) and FMAXNM/FMINNM (a NaN loses).
-#define FMINMAX(T, sfx)                                                                              \
+// The NaN out is Arm's choice (a signaling one first, the first operand
+// first, quieted), as the interpreter's nan_arm makes it.
+#define FMINMAX(T, sfx, U, QUIET)                                                                    \
+    INL T nan_##sfx(T a, T b) {                                                                      \
+        U ua, ub;                                                                                    \
+        __builtin_memcpy(&ua, &a, sizeof ua);                                                        \
+        __builtin_memcpy(&ub, &b, sizeof ub);                                                        \
+        const int sa = a != a && !(ua & QUIET), sb = b != b && !(ub & QUIET);                       \
+        U r = (sa ? ua : sb ? ub : a != a ? ua : ub) | QUIET;                                        \
+        T f;                                                                                         \
+        __builtin_memcpy(&f, &r, sizeof f);                                                          \
+        return f;                                                                                    \
+    }                                                                                                \
     INL T fmax_##sfx(T a, T b) {                                                                     \
-        if (a != a || b != b) return a + b;                                                          \
+        if (a != a || b != b) return nan_##sfx(a, b);                                                \
         if (a == 0 && b == 0) return __builtin_signbit(a) ? b : a;                                   \
         return a > b ? a : b;                                                                        \
     }                                                                                                \
     INL T fmin_##sfx(T a, T b) {                                                                     \
-        if (a != a || b != b) return a + b;                                                          \
+        if (a != a || b != b) return nan_##sfx(a, b);                                                \
         if (a == 0 && b == 0) return __builtin_signbit(a) ? a : b;                                   \
         return a < b ? a : b;                                                                        \
     }                                                                                                \
     INL T fmaxnm_##sfx(T a, T b) { return a != a && b == b ? b : b != b && a == a ? a : fmax_##sfx(a, b); } \
     INL T fminnm_##sfx(T a, T b) { return a != a && b == b ? b : b != b && a == a ? a : fmin_##sfx(a, b); }
-FMINMAX(float, f) FMINMAX(double, d)
+FMINMAX(float, f, uint32_t, 0x400000u) FMINMAX(double, d, uint64_t, 0x8000000000000ull)
+// FRECPS and FRSQRTS: fused, and 2.0 and 1.5 for 0 times infinity (which
+// keeps a reciprocal or square root estimate of 0 at infinity, not NaN).
+#define STEPS(T, sfx, fma)                                                                         \
+    INL T frecps_##sfx(T a, T b) {                                                                 \
+        if ((__builtin_isinf(a) && b == 0) || (a == 0 && __builtin_isinf(b))) return 2;            \
+        return fma(-a, b, 2);                                                                      \
+    }                                                                                              \
+    INL T frsqrts_##sfx(T a, T b) {                                                                \
+        if ((__builtin_isinf(a) && b == 0) || (a == 0 && __builtin_isinf(b))) return 1.5;          \
+        return fma(-a, b, 3) / 2;                                                                  \
+    }
+STEPS(float, f, __builtin_fmaf) STEPS(double, d, __builtin_fma)
+// FMULX: 0 times infinity is 2.0 with the product's sign.
+#define MULX(T, sfx)                                                                                \
+    INL T fmulx_##sfx(T a, T b) {                                                                   \
+        if ((__builtin_isinf(a) && b == 0) || (a == 0 && __builtin_isinf(b)))                      \
+            return __builtin_signbit(a) != __builtin_signbit(b) ? -2 : 2;                           \
+        return a * b;                                                                               \
+    }
+MULX(float, f) MULX(double, d)
 
-// A direct call of a plain host function (AotRuntime::plain) with the
+// A direct call of a plain host function (AotRuntime::branch, `site`) with the
 // guest's argument registers and stack words in *c (as the bridge's
 // host_call passes them), results back into *c.
 typedef struct {
@@ -449,17 +553,46 @@ static __attribute__((noinline)) void host_call(Cpu* restrict c, uint64_t target
     c->v[0][0] = f.xmm0; c->v[0][1] = 0;
     c->v[1][0] = f.xmm1; c->v[1][1] = 0;
 }
-// A call through the runtime, remembering at the call site a target that
-// turned out to be a plain host function: the next call to it is direct.
+// The translated function of this library at library address `off`, or 0.
+// *own is the call site's last answer (an index into aot_entries, checked
+// before use: one word, so never torn).
+static __attribute__((noinline)) uint32_t (*own_fn(uint64_t off, uint32_t* own))(Cpu*) {
+    const uint32_t i = __atomic_load_n(own, __ATOMIC_RELAXED);
+    if (i < aot_count && aot_entries[i].vaddr == off) return aot_entries[i].fn;
+    uint64_t lo = 0, hi = aot_count;
+    while (lo < hi) {
+        const uint64_t mid = lo + (hi - lo) / 2;
+        if (aot_entries[mid].vaddr < off) lo = mid + 1;
+        else hi = mid;
+    }
+    if (lo == aot_count || aot_entries[lo].vaddr != off) return 0;
+    __atomic_store_n(own, (uint32_t)lo, __ATOMIC_RELAXED);
+    return aot_entries[lo].fn;
+}
+// A call or jump through a register (c->pc is the target). A function of this
+// library is called directly, found in its own table: a C++ virtual call
+// costs no trip through the runtime and its per-thread lookup. Anything else
+// goes through the runtime, which remembers at the call site a target that
+// turned out to be a plain host function (the next call to it is direct) and
+// the site remembers the last target that was not this library's (no search
+// for it next time). Each cache is one word, so threads never see half of
+// one, and a wrong guess only costs the search.
 #define CALL_SITE(st, t)                                                           \
     do {                                                                           \
-        static uint64_t site;                                                      \
-        if ((t) == __atomic_load_n(&site, __ATOMIC_RELAXED)) {                     \
-            host_call(c, (t));                                                     \
+        static uint64_t site, elsewhere;                                           \
+        static uint32_t own;                                                       \
+        const uint64_t t_ = (t);                                                   \
+        uint32_t (*fn_)(Cpu*) = 0;                                                 \
+        if (t_ != __atomic_load_n(&elsewhere, __ATOMIC_RELAXED)) fn_ = own_fn(t_ - B, &own); \
+        if (fn_) {                                                                 \
+            (st) = fn_(c);                                                         \
+        } else if (t_ == __atomic_load_n(&site, __ATOMIC_RELAXED)) {               \
+            host_call(c, t_);                                                      \
+            c->pc = c->x[30];                                                      \
             (st) = 0;                                                              \
         } else {                                                                   \
-            (st) = aot_rt.branch(c, (t));                                          \
-            if ((st) == 0 && aot_rt.plain(t)) __atomic_store_n(&site, (t), __ATOMIC_RELAXED); \
+            __atomic_store_n(&elsewhere, t_, __ATOMIC_RELAXED);                    \
+            (st) = aot_rt.branch(c, t_, &site);                                    \
         }                                                                          \
     } while (0)
 )";
@@ -619,7 +752,7 @@ private:
     // A jump to `t` outside this function: a tail call, or the runtime.
     std::string exit_str(uint64_t t) {
         if (translated_.count(t)) return flush() + fmt(" return F_%" PRIx64 "(c);", t);
-        return flush() + " c->pc = " + addr(t) + "; return aot_rt.branch(c, " + addr(t) + ");";
+        return flush() + " c->pc = " + addr(t) + "; return aot_rt.branch(c, " + addr(t) + ", 0);";
     }
     void exit_to(uint64_t t) { line(exit_str(t)); }
     void call_to(const std::string& target_expr, uint64_t direct, uint64_t ret) {
@@ -633,6 +766,11 @@ private:
             line("    uint32_t st; c->pc = t; CALL_SITE(st, t);");
         }
         line("    if (st) return st;");
+        // Returned somewhere else: an exception's landing pad (the unwinder
+        // ends in a ret or br to it), a longjmp, code that is not a whole
+        // function. The whole state is in *c: the JIT goes on from c->pc,
+        // as after an instruction the interpreter stepped.
+        line("    if (c->pc != " + addr(ret) + ") return 1;");
         line("    RELOAD();");
         line("}");
     }
@@ -726,12 +864,17 @@ bool Emitter::branch(uint64_t va, uint32_t insn) {
             for (uint64_t l : f_.labels) line(fmt("        case 0x%" PRIx64 "ull: goto L_%" PRIx64 ";", l, l));
             line("    }");
             line("    " + flush() + " c->pc = t;");
-            line("    { uint32_t st; CALL_SITE(st, t); if (st == 0) c->pc = c->x[30]; return st; }");
+            // A jump: whatever t returns to is this function's return. c->pc
+            // says where (the call site's host call and the runtime's leave
+            // the return address there), so the caller can check it.
+            line("    { uint32_t st; CALL_SITE(st, t); return st; }");
             line("}");
             return true;
         }
         case Flow::kRet:
-            line("{ const uint64_t t = " + rx(field(insn, 9, 5)) + "; " + flush() +
+            // RETAA/RETAB (bit 11) return to x30; their Rn field is 11111,
+            // which read as XZR returned to 0.
+            line("{ const uint64_t t = " + rx(bit(insn, 11) ? 30 : field(insn, 9, 5)) + "; " + flush() +
                  " c->pc = t; return 0; }");
             return true;
     }
@@ -829,8 +972,8 @@ bool Emitter::dp_immediate(uint32_t insn, uint64_t va) {
             if (lsb >= size) return false;
             const std::string hi = "(" + rx(rn) + " & " + hex(mask(size)) + ")";
             const std::string lo = "(" + rx(field(insn, 20, 16)) + " & " + hex(mask(size)) + ")";
-            if (lsb == 0) {
-                wx(rd, hi, true);
+            if (lsb == 0) {  // the low register (Rn:Rm shifted by nothing), not Rn
+                wx(rd, lo, true);
             } else {
                 wx(rd, fmt("((%s >> %u) | (%s << %u)) & %s", lo.c_str(), lsb, hi.c_str(), size - lsb,
                            hex(mask(size)).c_str()),
@@ -1340,7 +1483,6 @@ bool Emitter::v_three_same(uint32_t insn) {
         const std::string F = ft(eb), FA = "((" + F + ")" + a + ")", FB = "((" + F + ")" + b + ")",
                           FD = "((" + F + ")" + d + ")";
         const char* sfx = eb == 64 ? "d" : "f";
-        const char* one = eb == 64 ? "" : "f";
         const unsigned key = (u << 6) | (hi << 5) | opcode, lanes = 128 / eb;
         auto per_lane = [&](const char* fn, const std::string& x, const std::string& y) {
             std::string r = "(" + F + "){";
@@ -1351,7 +1493,8 @@ bool Emitter::v_three_same(uint32_t insn) {
         switch (key) {
             case 0x1a: r = FA + " + " + FB; break;
             case 0x3a: r = FA + " - " + FB; break;
-            case 0x1b: case 0x5b: r = FA + " * " + FB; break;
+            case 0x1b: r = per_lane("fmulx", FA, FB); break;
+            case 0x5b: r = FA + " * " + FB; break;
             case 0x5f: r = FA + " / " + FB; break;
             case 0x19: r = "__builtin_elementwise_fma(" + FA + ", " + FB + ", " + FD + ")"; break;
             case 0x39: r = "__builtin_elementwise_fma(-" + FA + ", " + FB + ", " + FD + ")"; break;
@@ -1361,8 +1504,8 @@ bool Emitter::v_three_same(uint32_t insn) {
             case 0x7c: r = "(" + FA + " > " + FB + ")"; break;
             case 0x5d: r = "(__builtin_elementwise_abs(" + FA + ") >= __builtin_elementwise_abs(" + FB + "))"; break;
             case 0x7d: r = "(__builtin_elementwise_abs(" + FA + ") > __builtin_elementwise_abs(" + FB + "))"; break;
-            case 0x1f: r = fmt("(2.0%s - %s * %s)", one, FA.c_str(), FB.c_str()); break;
-            case 0x3f: r = fmt("((3.0%s - %s * %s) / 2.0%s)", one, FA.c_str(), FB.c_str(), one); break;
+            case 0x1f: r = per_lane("frecps", FA, FB); break;
+            case 0x3f: r = per_lane("frsqrts", FA, FB); break;
             case 0x1e: r = per_lane("fmax", FA, FB); break;
             case 0x3e: r = per_lane("fmin", FA, FB); break;
             case 0x18: r = per_lane("fmaxnm", FA, FB); break;
@@ -1827,6 +1970,13 @@ bool Emitter::v_by_element(uint32_t insn) {
         std::string r;
         if (opcode == 1) r = "__builtin_elementwise_fma(" + FA + ", " + y + ", " + FD + ")";
         else if (opcode == 5) r = "__builtin_elementwise_fma(-" + FA + ", " + y + ", " + FD + ")";
+        else if (u) {  // FMULX (by element)
+            r = "(" + F + "){";
+            for (unsigned i = 0; i < (dbl ? 2u : 4u); ++i) {
+                r += fmt("%sfmulx_%s(%s[%u], %s[%u])", i ? ", " : "", dbl ? "d" : "f", FA.c_str(), i, y.c_str(), i);
+            }
+            r += "}";
+        }
         else r = FA + " * " + y;
         wq(rd, r, bytes);
         return true;
@@ -2054,15 +2204,9 @@ std::string Emitter::function(size_t* interpreted) {
     }
     out += "#define FLUSH() do {" + flush + " } while (0)\n";
     out += "#define RELOAD() do {" + reload + " } while (0)\n";
-    // A huge function costs clang far more than its size (time grows faster
-    // than the number of blocks): one of 10K+ instructions in
-    // libjuicebox_sdk_jni.so took 200 s at -O1, 12.6 s unoptimized. So, as
-    // other static recompilers do, those few are not optimized; they still
-    // run natively, with the guest registers in stack slots, as the JIT
-    // keeps them in memory.
-    if (f_.insns.size() > g_optnone_insns) out += "__attribute__((optnone, noinline)) ";
     out += "uint32_t " + name + "(Cpu* restrict c) {\n";
     out += "    const uint64_t B = aot_base;\n";
+    out += "    ENTRY_CHECK(" + addr(f_.entry) + ");\n";
     for (unsigned n = 0; n < 32; ++n) {
         if (!(used_x_ >> n & 1)) continue;
         out += n == 31 ? "    uint64_t SP = c->sp;\n" : fmt("    uint64_t X%u = c->x[%u];\n", n, n);
@@ -2097,7 +2241,8 @@ bool read_profile(const char* path, uint64_t text_hash, std::set<uint64_t>* hits
 }  // namespace
 
 int main(int argc, char** argv) {
-    const char* usage = "usage: winapk-aot <lib.so> <out.c> [parts] [--profile <file>] [--full-below <insns>]\n"
+    const char* usage = "usage: winapk-aot <lib.so> <out.c> [parts] [--part-insns <n>] [--profile <file>] "
+                        "[--full-below <insns>]\n"
                         "       winapk-aot --hash <lib.so>   (prints the text hash a translation is keyed by)\n";
     if (argc == 3 && std::string(argv[1]) == "--hash") {
         Image img;
@@ -2113,11 +2258,12 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "%s", usage);
         return 2;
     }
-    size_t parts = 1, full_below = 0;
+    size_t parts = 1, full_below = 0, part_insns = 0;
     const char* profile = nullptr;
     for (int i = 3; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "--profile" && i + 1 < argc) profile = argv[++i];
+        else if (a == "--part-insns" && i + 1 < argc) part_insns = std::strtoull(argv[++i], nullptr, 10);
         else if (a == "--full-below" && i + 1 < argc) full_below = std::strtoull(argv[++i], nullptr, 10);
         else if (i == 3 && std::isdigit(static_cast<unsigned char>(a[0]))) parts = std::max(1, std::atoi(argv[i]));
         else {
@@ -2125,7 +2271,7 @@ int main(int argc, char** argv) {
             return 2;
         }
     }
-    if (const char* t = std::getenv("WINAPK_AOT_OPTNONE_INSNS")) g_optnone_insns = std::strtoull(t, nullptr, 10);
+    if (const char* t = std::getenv("WINAPK_AOT_MAX_INSNS")) g_max_insns = std::strtoull(t, nullptr, 10);
     Image img;
     std::string error;
     if (!read_image(argv[1], &img, &error)) {
@@ -2184,6 +2330,16 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "winapk-aot: %s: profile: %zu of %zu functions ran\n", argv[1], functions.size(), all);
         if (functions.empty()) return 3;
     }
+    size_t too_large = 0;  // left to the JIT (g_max_insns)
+    for (auto it = functions.begin(); it != functions.end();) {
+        if (it->second.insns.size() > g_max_insns) {
+            total -= it->second.insns.size();
+            ++too_large;
+            it = functions.erase(it);
+        } else {
+            ++it;
+        }
+    }
     std::set<uint64_t> translated;
     for (const auto& f : functions) translated.insert(f.first);
 
@@ -2191,6 +2347,7 @@ int main(int argc, char** argv) {
     // out.c.1.c .. out.c.<parts>.c the functions, balanced by instruction
     // count, for compiling in parallel. A part under ~20000 instructions
     // costs clang more in fixed overhead than it saves.
+    if (part_insns > 0) parts = (total + part_insns - 1) / part_insns;
     parts = std::max<size_t>(1, std::min(parts, (total + 19999) / 20000));
     std::string protos;
     for (uint64_t e : translated) protos += fmt("uint32_t F_%" PRIx64 "(Cpu* restrict c);\n", e);
@@ -2213,20 +2370,22 @@ int main(int argc, char** argv) {
         insns += f->insns.size();
         interpreted += n;
     }
-    std::string table = "uint64_t aot_base;\nAotRuntime aot_rt;\n\nstatic const AotEntry entries[] = {\n";
+    std::string table = "uint64_t aot_base;\nAotRuntime aot_rt;\nuint32_t aot_off;\n\n";
+    table += "const AotEntry aot_entries[] = {\n";  // sorted: `translated` is a std::set
     for (uint64_t e : translated) table += fmt("    {0x%" PRIx64 "ull, F_%" PRIx64 "},\n", e, e);
-    table += "};\n\n";
+    table += "};\nconst uint64_t aot_count = sizeof aot_entries / sizeof aot_entries[0];\n\n";
     table += "__declspec(dllexport) const AotModule winapk_aot_module = {\n";
     table += fmt("    %u, {offsetof(Cpu, sp), offsetof(Cpu, nzcv), offsetof(Cpu, tpidr), offsetof(Cpu, v)},\n",
                  winapk::arm64::kAotVersion);
-    table += fmt("    0x%" PRIx64 "ull, &aot_base, &aot_rt, entries, sizeof entries / sizeof entries[0],\n",
+    table += fmt("    0x%" PRIx64 "ull, &aot_base, &aot_rt, aot_entries, sizeof aot_entries / sizeof aot_entries[0], "
+                 "&aot_off,\n",
                  img.text_hash);
     table += "};\n";
 
     auto write = [&](const std::string& path, const std::string& text) {
         std::ofstream o(path, std::ios::binary);
         o << text;
-        if (!o) std::fprintf(stderr, "winapk-aot: cannot write %s\n", path.c_str());
+        if (!o) std::fprintf(stderr, "winapk-aot: cannot write %s: %s\n", path.c_str(), std::strerror(errno));
         return static_cast<bool>(o);
     };
     const std::string head = std::string(kPrelude) + protos + "\n";
@@ -2238,16 +2397,13 @@ int main(int argc, char** argv) {
             if (!write(fmt("%s.%zu.c", argv[2], i + 1), head + bodies[i])) return 1;
         }
     }
-    size_t largest = 0, unoptimized = 0;
-    for (const Function* f : order) {
-        largest = std::max(largest, f->insns.size());
-        if (f->insns.size() > g_optnone_insns) ++unoptimized;
-    }
+    size_t largest = 0;
+    for (const Function* f : order) largest = std::max(largest, f->insns.size());
     std::fprintf(stderr,
                  "winapk-aot: %s: %zu functions, %zu instructions, %zu through the interpreter (%.1f%%), "
-                 "largest function %zu instructions, %zu unoptimized%s\n",
+                 "largest function %zu instructions, %zu over %zu left to the JIT%s\n",
                  argv[1], functions.size(), insns, interpreted,
                  insns ? 100.0 * static_cast<double>(interpreted) / static_cast<double>(insns) : 0.0, largest,
-                 unoptimized, skipped ? fmt(", %zu too large to translate", skipped).c_str() : "");
+                 too_large, g_max_insns, skipped ? fmt(", %zu too large to decode", skipped).c_str() : "");
     return by_profile ? 4 : 0;
 }

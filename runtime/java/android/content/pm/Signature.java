@@ -1,7 +1,6 @@
 package android.content.pm;
-// APK signing block summary. Real Android exposes the issuer chain;
-// we don't sign-verify dragged-in APKs, so callers that compare
-// signatures (anti-tamper checks) see a stable stub identity.
+// A signing certificate (DER). Win.apk reports an APK's only after its
+// signature has verified (com.macapk.loader.ApkVerification).
 public class Signature implements android.os.Parcelable {
     private final byte[] bytes;
     public Signature(byte[] signatureBytes) {
@@ -48,6 +47,13 @@ public class Signature implements android.os.Parcelable {
     }
 
     public byte[] toByteArray() { return bytes; }
+
+    /** AOSP Signature.mFlags / getFlags / setFlags (@hide): the capabilities a
+     *  PAST signer in a v3 rotation lineage keeps (SigningDetails
+     *  .CertCapabilities). equals() ignores them, as upstream's does. */
+    private int flags;
+    public int getFlags() { return flags; }
+    public void setFlags(int flags) { this.flags = flags; }
     public char[] toChars() { return toChars(null, null); }
 
     /** AOSP Signature.toChars(char[] existingArray, int[] outLen): the

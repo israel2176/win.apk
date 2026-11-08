@@ -79,6 +79,7 @@ public final class KeyBindProfiles {
     // for user-level Mac.apk state rather than inventing a second.
 
     private static File profilesDir() {
+        if (HostAppSupport.windowsHost()) return HostAppSupport.file("keybinds");   // Win.apk
         String home = System.getProperty("user.home");
         return new File(home + "/Library/Application Support/Mac.apk/keybinds");
     }

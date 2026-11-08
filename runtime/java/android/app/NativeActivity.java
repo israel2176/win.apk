@@ -360,7 +360,12 @@ public class NativeActivity extends Activity implements SurfaceHolder.Callback2,
     private void macapkInstallWindowSurface() {
         if (mMacapkWindowSurface != null || mDestroyed) return;
         if (getWindow().macapkTakenSurface() == null) return;
-        if (mNativeContentView == null || macapkContentView() != mNativeContentView) return;
+        // macapkInstalledContentView, not macapkContentView: the window wraps a
+        // non-FrameLayout content root in a FrameLayout (ActivityWindow.
+        // macapkFrameRootFor, #29), so the root is that wrapper and comparing it
+        // with mNativeContentView skipped the surface for every NativeActivity
+        // (SDL games stayed blank: no surfaceCreated, no onNativeWindowCreated).
+        if (mNativeContentView == null || macapkInstalledContentView() != mNativeContentView) return;
         if (mNativeContentView.getParent() instanceof android.view.ViewGroup parent) {
             parent.removeView(mNativeContentView);
         }

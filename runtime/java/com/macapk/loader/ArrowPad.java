@@ -155,6 +155,7 @@ public final class ArrowPad {
     // ---- persistence (per app), the same shape as TiltControl's -------------
 
     private static File storeFile() {
+        if (HostAppSupport.windowsHost()) return HostAppSupport.file("arrow-pad.properties");   // Win.apk
         return new File(System.getProperty("user.home")
             + "/Library/Application Support/Mac.apk/arrow-pad.properties");
     }

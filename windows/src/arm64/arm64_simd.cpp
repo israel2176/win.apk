@@ -14,6 +14,7 @@
 
 #include <cmath>
 #include <cstring>
+#include <type_traits>
 #include <limits>
 
 namespace winapk::arm64 {
@@ -119,12 +120,26 @@ uint16_t float_to_half(float f) {
 
 enum Rounding { kNearestEven, kPlusInf, kMinusInf, kZero, kNearestAway };
 
+// FMULX: a multiply, except that 0 times infinity is 2.0 with the sign of
+// the product (the first step of a reciprocal estimate of 0 stays finite).
+template <typename F> F fmulx(F a, F b) {
+    if ((std::isinf(a) && b == 0) || (a == 0 && std::isinf(b))) {
+        return std::signbit(a) != std::signbit(b) ? F(-2) : F(2);
+    }
+    return a * b;
+}
+
 template <typename F> F round_to_integral(F v, int mode) {
     switch (mode) {
         case kPlusInf: return std::ceil(v);
         case kMinusInf: return std::floor(v);
         case kZero: return std::trunc(v);
-        case kNearestAway: return std::round(v);
+        case kNearestAway: {
+            // Not std::round: some C runtimes (Wine's msvcrt) round 0.49999999999999994 to 1.
+            // v - trunc(v) is exact.
+            const F t = std::trunc(v);
+            return std::fabs(v - t) >= F(0.5) ? t + std::copysign(F(1), v) : t;
+        }
         default: return std::nearbyint(v);
     }
 }
@@ -152,13 +167,30 @@ template <typename F> F int_to_fp(uint64_t v, unsigned bits, bool is_unsigned, i
     return r;
 }
 
+// Arm's NaN propagation for two operands (FPProcessNaNs, FPCR.DN clear): a
+// signaling NaN first, then a quiet one, the first operand first; quieted.
+// Adding them does this on x86 except for a quiet first and a signaling
+// second, which is what the translation does too (arm64_aot_main.cpp).
+template <typename F> F nan_arm(F a, F b) {
+    using U = std::conditional_t<sizeof(F) == 4, uint32_t, uint64_t>;
+    constexpr U quiet = U{1} << (sizeof(F) == 4 ? 22 : 51);
+    U ua, ub;
+    std::memcpy(&ua, &a, sizeof ua);
+    std::memcpy(&ub, &b, sizeof ub);
+    const bool snan_a = std::isnan(a) && !(ua & quiet), snan_b = std::isnan(b) && !(ub & quiet);
+    U r = snan_a ? ua : snan_b ? ub : std::isnan(a) ? ua : ub;
+    r |= quiet;
+    F f;
+    std::memcpy(&f, &r, sizeof f);
+    return f;
+}
 template <typename F> F fmax_arm(F a, F b) {
-    if (std::isnan(a) || std::isnan(b)) return std::numeric_limits<F>::quiet_NaN();
+    if (std::isnan(a) || std::isnan(b)) return nan_arm(a, b);
     if (a == F(0) && b == F(0)) return std::signbit(a) ? b : a;
     return a > b ? a : b;
 }
 template <typename F> F fmin_arm(F a, F b) {
-    if (std::isnan(a) || std::isnan(b)) return std::numeric_limits<F>::quiet_NaN();
+    if (std::isnan(a) || std::isnan(b)) return nan_arm(a, b);
     if (a == F(0) && b == F(0)) return std::signbit(a) ? a : b;
     return a < b ? a : b;
 }
@@ -277,7 +309,7 @@ bool three_same(Cpu& c, uint32_t insn, bool scalar) {
                     break;
                 case 0x1a: out = fop2(ebits, x, y, [](auto p, auto q2) { return p + q2; }); break;   // FADD
                 case 0x3a: out = fop2(ebits, x, y, [](auto p, auto q2) { return p - q2; }); break;   // FSUB
-                case 0x1b: out = fop2(ebits, x, y, [](auto p, auto q2) { return p * q2; }); break;   // FMULX
+                case 0x1b: out = fop2(ebits, x, y, [](auto p, auto q2) { return fmulx(p, q2); }); break;  // FMULX
                 case 0x5b: out = fop2(ebits, x, y, [](auto p, auto q2) { return p * q2; }); break;   // FMUL
                 case 0x7a: out = fop2(ebits, x, y, [](auto p, auto q2) { return std::fabs(p - q2); }); break;  // FABD
                 case 0x5f: out = fop2(ebits, x, y, [](auto p, auto q2) { return p / q2; }); break;   // FDIV
@@ -288,9 +320,22 @@ bool three_same(Cpu& c, uint32_t insn, bool scalar) {
                 case 0x7c: out = fx > fy ? mask(ebits) : 0; break;                    // FCMGT
                 case 0x5d: out = std::fabs(fx) >= std::fabs(fy) ? mask(ebits) : 0; break;  // FACGE
                 case 0x7d: out = std::fabs(fx) > std::fabs(fy) ? mask(ebits) : 0; break;   // FACGT
-                case 0x1f: out = fop2(ebits, x, y, [](auto p, auto q2) { return decltype(p)(2) - p * q2; }); break;  // FRECPS
+                // FRECPS and FRSQRTS, the Newton-Raphson steps: fused, and 2.0
+                // and 1.5 for 0 times infinity, which keeps a reciprocal of 0
+                // at infinity instead of NaN.
+                case 0x1f:  // FRECPS
+                    out = fop2(ebits, x, y, [](auto p, auto q2) {
+                        using T = decltype(p);
+                        if ((std::isinf(p) && q2 == 0) || (p == 0 && std::isinf(q2))) return T(2);
+                        return std::fma(-p, q2, T(2));
+                    });
+                    break;
                 case 0x3f:  // FRSQRTS
-                    out = fop2(ebits, x, y, [](auto p, auto q2) { return (decltype(p)(3) - p * q2) / decltype(p)(2); });
+                    out = fop2(ebits, x, y, [](auto p, auto q2) {
+                        using T = decltype(p);
+                        if ((std::isinf(p) && q2 == 0) || (p == 0 && std::isinf(q2))) return T(1.5);
+                        return std::fma(-p, q2, T(3)) / T(2);
+                    });
                     break;
                 default: return false;
             }
@@ -889,11 +934,13 @@ bool by_element(Cpu& c, uint32_t insn, bool scalar) {
             uint64_t out;
             if (dbl) {
                 const double x = a.df[i], y = b.df[index], z = d.df[i];
-                const double res = opcode == 1 ? std::fma(x, y, z) : opcode == 5 ? std::fma(-x, y, z) : x * y;
+                const double res = opcode == 1 ? std::fma(x, y, z) : opcode == 5 ? std::fma(-x, y, z)
+                                                                   : u ? fmulx(x, y) : x * y;
                 out = bits64(res);
             } else {
                 const float x = a.f[i], y = b.f[index], z = d.f[i];
-                const float res = opcode == 1 ? std::fma(x, y, z) : opcode == 5 ? std::fma(-x, y, z) : x * y;
+                const float res = opcode == 1 ? std::fma(x, y, z) : opcode == 5 ? std::fma(-x, y, z)
+                                                                  : u ? fmulx(x, y) : x * y;
                 out = bits32(res);
             }
             set_elem(r, ebits, i, out);

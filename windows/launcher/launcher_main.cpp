@@ -198,6 +198,12 @@ const wchar_t* tr(const wchar_t* en) {
         {L"Use my Windows folders", L"שימוש בתיקיות של Windows"},
         {L"App data", L"נתוני אפליקציות"},
         {L"Google account", L"חשבון Google"},
+        {L"Use Google services (experimental)", L"שימוש בשירותי Google (ניסיוני)"},
+        {L"Runs the Google Play services, Services Framework and Play Store you install yourself, as apps other "
+         L"apps can reach. Only copies signed by Google are trusted. Takes effect when an app starts.",
+         L"מפעיל את Google Play services, ‏Services Framework ו-Play Store שהתקנת בעצמך, כאפליקציות שאפליקציות "
+         L"אחרות יכולות לפנות אליהן. רק עותקים חתומים על ידי Google נחשבים מהימנים. נכנס לתוקף כשאפליקציה "
+         L"מופעלת."},
         {L"Signing in…", L"מתבצעת כניסה…"},
         {L"Complete the sign-in in the Google window, or close it to cancel.", L"יש להשלים את הכניסה בחלון של Google, או לסגור אותו כדי לבטל."},
         {L"Sign out", L"התנתקות"},
@@ -260,11 +266,12 @@ const wchar_t* tr(const wchar_t* en) {
         {L"{0} opens in landscape from now on.", L"{0} תיפתח לרוחב מעתה."},
         {L"{0} opens in portrait from now on.", L"{0} תיפתח לאורך מעתה."},
         {L"{0} stopped with an error", L"{0} נעצרה עם שגיאה"},
-        {L"What the log says", L"מה רשום ביומן"},
         {L"An app", L"אפליקציה"},
-        {L"{0} wants to remove {1}.\n\nRemove it?", L"{0} מבקשת להסיר את {1}.\n\nלהסיר?"},
-        {L"{0} wants to update {1} ({2}).\n\nUpdate it?", L"{0} מבקשת לעדכן את {1} ({2}).\n\nלעדכן?"},
-        {L"{0} wants to install {1}.\n\nInstall it?", L"{0} מבקשת להתקין את {1}.\n\nלהתקין?"},
+        {L"{0} asks to remove it.", L"{0} מבקשת להסיר אותה."},
+        {L"Update {0}?", L"לעדכן את {0}?"},
+        {L"{0} asks to update it with the copy it has ({1}).", L"{0} מבקשת לעדכן אותה בעותק שיש לה ({1})."},
+        {L"Install {0}?", L"להתקין את {0}?"},
+        {L"{0} asks to install it.", L"{0} מבקשת להתקין אותה."},
         {L"bytes", L"בתים"},
         {L"Library", L"ספרייה"},
         {L"Store", L"חנות"},
@@ -392,7 +399,7 @@ const wchar_t* tr(const wchar_t* en) {
         {L"Copy details", L"העתקת הפרטים"},
         {L"Report a problem", L"דיווח על בעיה"},
         {L"Report", L"דיווח"},
-        {L"Report a problem with {0}", L"דיווח על בעיה ב-{0}"},
+        {L"Report a problem?", L"לדווח על בעיה?"},
         {L"Open the report", L"פתיחת הדיווח"},
         {L"See whether someone already reported it", L"לבדוק אם מישהו כבר דיווח על זה"},
         {L"Opens a report on GitHub with the versions filled in, and the log to attach.", L"פותח דיווח ב-GitHub עם הגרסאות כבר ממולאות, ואת היומן לצירוף."},
@@ -1121,8 +1128,9 @@ struct RunJob {
     fs::path apk;
 };
 
-SRWLOCK g_proc_lock = SRWLOCK_INIT;
+SRWLOCK g_proc_lock = SRWLOCK_INIT;      // guards the two below
 std::map<std::wstring, HANDLE> g_procs;  // the runtimes of apps started from here, for Stop
+std::map<std::wstring, bool> g_starting; // apps whose runtime is being started: true once stopped meanwhile
 
 // Runs the app and reports to the library's window: kRunReady when its window is up (the
 // handshake's event), then kRunExited with the exit code. The splash waits for the first.
@@ -1130,13 +1138,23 @@ DWORD WINAPI run_thread(void* param) {
     std::unique_ptr<RunJob> job(static_cast<RunJob*>(param));
     SECURITY_ATTRIBUTES sa{sizeof(sa), nullptr, TRUE};
     HANDLE ready = CreateEventW(&sa, TRUE, FALSE, nullptr);
-    HANDLE p = start_runtime(L"--apk \"" + job->apk.wstring() + L"\"", start_run_log(job->name), job->name, ready);
+    AcquireSRWLockShared(&g_proc_lock);
+    const auto early = g_starting.find(job->name);
+    const bool stopped_early = early != g_starting.end() && early->second;
+    ReleaseSRWLockShared(&g_proc_lock);
+    HANDLE p = stopped_early ? nullptr
+                             : start_runtime(L"--apk \"" + job->apk.wstring() + L"\"", start_run_log(job->name),
+                                             job->name, ready);
     DWORD code = 1;
     bool was_ready = false;
+    // Stopped while it was starting (the splash's X): it ends now, before its window comes up.
+    AcquireSRWLockExclusive(&g_proc_lock);
+    const auto st = g_starting.find(job->name);
+    if (p && st != g_starting.end() && st->second) TerminateProcess(p, 1);
+    if (st != g_starting.end()) g_starting.erase(st);
+    if (p) g_procs[job->name] = p;
+    ReleaseSRWLockExclusive(&g_proc_lock);
     if (p) {
-        AcquireSRWLockExclusive(&g_proc_lock);
-        g_procs[job->name] = p;
-        ReleaseSRWLockExclusive(&g_proc_lock);
         HANDLE both[2] = {ready, p};
         // Index 0 wins when both are set: an app that was already running signals, then exits.
         if (ready && WaitForMultipleObjects(2, both, FALSE, INFINITE) == WAIT_OBJECT_0) {
@@ -1156,10 +1174,13 @@ DWORD WINAPI run_thread(void* param) {
     return 0;
 }
 
+// Stops the app; one still starting (run_thread has no process yet) is stopped as soon as it has one,
+// or not started at all. True when there was one to stop: its exit is then no error (g_stopping).
 bool stop_process(const std::wstring& name) {
     AcquireSRWLockExclusive(&g_proc_lock);
     const auto it = g_procs.find(name);
-    const bool found = it != g_procs.end() && TerminateProcess(it->second, 1);
+    bool found = it != g_procs.end() && TerminateProcess(it->second, 1);
+    if (const auto st = g_starting.find(name); !found && st != g_starting.end()) found = st->second = true;
     ReleaseSRWLockExclusive(&g_proc_lock);
     return found;
 }
@@ -2333,15 +2354,23 @@ enum Align { kLeft, kCenter, kRight };
 
 // In Hebrew the layout is mirrored, so the text is drawn without the mirror,
 // right to left, in the mirrored place; `ltr` keeps it left to right (logs).
-void draw_text(Graphics& g, const std::wstring& s, const Gdiplus::Font* f, const Color& c, const RectF& r,
+void draw_text(Graphics& g, const std::wstring& s, const Gdiplus::Font* f, const Color& c, const RectF& box,
                Align align = kLeft, bool wrap = false, bool vcenter = true, bool ltr = false) {
     Gdiplus::StringFormat sf;
     sf.SetAlignment(align == kLeft     ? Gdiplus::StringAlignmentNear
                     : align == kCenter ? Gdiplus::StringAlignmentCenter
                                        : Gdiplus::StringAlignmentFar);
     sf.SetLineAlignment(vcenter ? Gdiplus::StringAlignmentCenter : Gdiplus::StringAlignmentNear);
-    sf.SetTrimming(wrap ? Gdiplus::StringTrimmingEllipsisWord : Gdiplus::StringTrimmingEllipsisCharacter);
-    sf.SetFormatFlags(wrap ? Gdiplus::StringFormatFlagsLineLimit : Gdiplus::StringFormatFlagsNoWrap);
+    // One character (an icon glyph, a monogram, "!") is never trimmed: in a box as wide as its font is
+    // high, GDI+'s padding either side would turn it into an ellipsis the icon font has no glyph for (or,
+    // in some GDI+, into nothing). Centred, it gets the room either side.
+    const bool one = s.size() == 1;
+    const RectF r = one && align == kCenter ? inset(box, -f->GetSize(), 0) : box;
+    sf.SetTrimming(one    ? Gdiplus::StringTrimmingNone
+                   : wrap ? Gdiplus::StringTrimmingEllipsisWord
+                          : Gdiplus::StringTrimmingEllipsisCharacter);
+    sf.SetFormatFlags(wrap ? Gdiplus::StringFormatFlagsLineLimit
+                           : Gdiplus::StringFormatFlagsNoWrap | (one ? Gdiplus::StringFormatFlagsNoClip : 0));
     Gdiplus::SolidBrush b(c);
     if (!g_rtl) {
         g.DrawString(s.c_str(), static_cast<INT>(s.size()), f, r, &sf, &b);
@@ -2423,6 +2452,65 @@ void draw_button(Graphics& g, const RectF& r, const std::wstring& text, bool hot
 void draw_icon_button(Graphics& g, const RectF& r, const wchar_t* glyph, bool hot, const Color& ink) {
     if (hot) fill_round(g, r, px(kRadiusControl), g_t.hover);
     draw_text(g, glyph, g_f.glyph16.get(), ink, r, kCenter);
+}
+
+// A button's width: its text with room either side, never narrower than Windows' 96.
+float button_width(Graphics& g, const std::wstring& text, bool primary) {
+    return (std::max)(px(96), text_width(g, text, primary ? g_f.body_semi.get() : g_f.body.get()) + px(32));
+}
+
+// Windows' toggle switch.
+void draw_switch(Graphics& g, bool on, const RectF& r, bool hot) {
+    const Color fill = hot ? mix(g_t.accent, g_t.dark ? kWhite : kBlack, 0.1f) : g_t.accent;
+    fill_round(g, r, r.Height / 2, on ? fill : hot ? g_t.hover : g_t.card);
+    if (!on) stroke_round(g, r, r.Height / 2, g_t.text2);
+    const float k = on ? r.Height - px(8) : r.Height - px(10);
+    const float kx = on ? r.GetRight() - k - px(4) : r.X + px(5);
+    Gdiplus::SolidBrush knob(on ? g_t.accent_text : g_t.text2);
+    g.FillEllipse(&knob, kx, r.Y + (r.Height - k) / 2, k, k);
+}
+
+// Windows' check box.
+void draw_check_box(Graphics& g, bool on, const RectF& r, bool hot) {
+    if (on) {
+        fill_round(g, r, px(4), hot ? mix(g_t.accent, g_t.dark ? kWhite : kBlack, 0.1f) : g_t.accent);
+        draw_text(g, kGlyphCheck, g_f.glyph12.get(), g_t.accent_text, r, kCenter);
+    } else {
+        fill_round(g, r, px(4), hot ? g_t.hover : g_t.card);
+        stroke_round(g, r, px(4), g_t.text2);
+    }
+}
+
+using Targets = std::vector<std::pair<RectF, int>>;
+
+// A screen point in an lParam (WM_NCHITTEST's, WM_MOUSEWHEEL's) in the coordinates the window's
+// targets and mouse messages use. In a mirrored (Hebrew) window ScreenToClient already mirrors x, as
+// the mouse messages' lParam is: mirroring it again would put every target on the other side.
+POINT client_point(HWND hwnd, LPARAM screen) {
+    POINT pt{GET_X_LPARAM(screen), GET_Y_LPARAM(screen)};
+    ScreenToClient(hwnd, &pt);
+    return pt;
+}
+
+int find_target(const Targets& targets, LPARAM lp) {
+    const float x = static_cast<float>(GET_X_LPARAM(lp)), y = static_cast<float>(GET_Y_LPARAM(lp));
+    for (const auto& t : targets) {
+        if (contains(t.first, x, y)) return t.second;
+    }
+    return 0;
+}
+
+// Hover tracking for the custom-drawn buttons of a window; true when it changed.
+bool track_hot(HWND hwnd, LPARAM lp, const Targets& targets, int* hot, bool* tracking) {
+    if (!*tracking) {
+        TRACKMOUSEEVENT tme{sizeof(tme), TME_LEAVE, hwnd, 0};
+        *tracking = TrackMouseEvent(&tme);
+    }
+    const int now = find_target(targets, lp);
+    if (now == *hot) return false;
+    *hot = now;
+    InvalidateRect(hwnd, nullptr, FALSE);
+    return true;
 }
 
 // Windows' keyboard focus ring: two strokes, the outer one the text colour.
@@ -3410,34 +3498,339 @@ void update_timer() {
 // ---------------------------------------------------------------------------
 // Dialogs
 
-int task_dialog(const std::wstring& main, const std::wstring& content, PCWSTR icon,
-                std::vector<TASKDIALOG_BUTTON> buttons, bool cancel, const std::wstring& details = {}) {
-    TASKDIALOGCONFIG c{};
-    c.cbSize = sizeof(c);
-    c.hwndParent = owner();
-    c.hInstance = g_inst;
-    c.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION | TDF_POSITION_RELATIVE_TO_WINDOW | (g_rtl ? TDF_RTL_LAYOUT : 0);
-    c.pszWindowTitle = L"Win.apk";
-    c.pszMainIcon = icon;
-    c.pszMainInstruction = main.c_str();
-    c.pszContent = content.c_str();
-    c.cButtons = static_cast<UINT>(buttons.size());
-    c.pButtons = buttons.data();
-    c.dwCommonButtons = cancel ? TDCBF_CANCEL_BUTTON : TDCBF_CLOSE_BUTTON;
-    if (!details.empty()) {
-        c.pszExpandedInformation = details.c_str();
-        c.pszExpandedControlText = tr(L"What the log says");
-        c.pszCollapsedControlText = c.pszExpandedControlText;
-        c.dwFlags |= TDF_EXPANDED_BY_DEFAULT;
+// The launcher's one dialog, for its own questions and for the ones apps ask: in its theme, light or
+// dark, mirrored in Hebrew (TaskDialog and MessageBox follow neither). An app's icon and name head it
+// when it is about one app; then the question, at most a sentence saying what it means, switches or a
+// check box when there is something to pick, and the buttons: the accent one first, as Windows orders
+// them, stacked full width for an app's question as Android's are, else right-aligned in a footer.
+// Esc and the caption's close are no answer (0).
+
+constexpr UINT kAskTimeoutMs = 300 * 1000;  // an app's question: no answer in five minutes changes nothing
+
+constexpr int kPromptLink = 0x7000;  // the link's target id: past any switch's, and no button uses it
+
+struct Prompt {
+    std::wstring app, question, note;
+    std::wstring caption;  // the window's title; the app's name when empty
+    std::unique_ptr<Gdiplus::Bitmap> icon;
+    struct Switch {
+        std::wstring title;
+        bool on;
+        bool check = false;  // a check box under the text, else a switch in a card
+    };
+    std::vector<Switch> switches;
+    std::vector<std::pair<int, std::wstring>> buttons;  // the first is the accent one
+    std::wstring link;              // a link under the note, which does `on_link` and leaves the dialog open
+    std::function<void()> on_link;
+    bool footer = false;   // the buttons in a footer at the end, else stacked full width
+    bool timeout = false;  // closes itself after kAskTimeoutMs
+    int default_id = 0;    // Enter
+    int pressed = 0;       // the answer; 0: closed or timed out
+    HWND window = nullptr, near_window = nullptr, owner = nullptr;
+    Targets targets;       // ids: a button's own, or 1 + index for a switch
+    int hot = 0, focus = 0;
+    bool tracking = false;
+};
+
+// Lays the prompt out, and draws it when `draw`; returns the height it needs.
+float layout_prompt(Graphics& g, Prompt& p, float W, bool draw) {
+    if (draw) g.Clear(g_t.layer);
+    p.targets.clear();
+    const float m = px(24), cw = W - 2 * m;
+    float y = px(24);
+    if (!p.app.empty()) {
+        const RectF ir(m, px(20), px(40), px(40));
+        if (draw) {
+            draw_icon(g, p.icon.get(), p.app, ir);
+            draw_text(g, p.app, g_f.body.get(), g_t.text2, RectF(ir.GetRight() + px(12), ir.Y, cw - px(52), ir.Height));
+        }
+        y = ir.GetBottom() + px(14);
     }
-    int pressed = 0;
-    if (FAILED(TaskDialogIndirect(&c, &pressed, nullptr, nullptr))) return 0;
-    return pressed;
+    const float qh = text_height(g, p.question, g_f.title.get(), cw) + px(2);
+    if (draw) draw_text(g, p.question, g_f.title.get(), g_t.text, RectF(m, y, cw, qh), kLeft, true, false);
+    y += qh + px(6);
+    if (!p.note.empty()) {
+        const float nh = text_height(g, p.note, g_f.body.get(), cw) + px(2);
+        if (draw) draw_text(g, p.note, g_f.body.get(), g_t.text2, RectF(m, y, cw, nh), kLeft, true, false);
+        y += nh;
+    }
+    if (!p.link.empty()) {
+        const RectF r(m, y + px(8), (std::min)(cw, text_width(g, p.link, g_f.body.get()) + px(4)), px(22));
+        p.targets.push_back({r, kPromptLink});
+        if (draw) {
+            const Color ink = p.hot == kPromptLink ? mix(g_t.accent, g_t.text, 0.3f) : g_t.accent;
+            draw_text(g, p.link, g_f.body.get(), ink, r);
+            if (p.focus == kPromptLink) draw_focus_ring(g, r, px(4));
+        }
+        y += px(30);
+    }
+    const bool checks = !p.switches.empty() && p.switches[0].check;
+    if (checks) {
+        y += px(10);
+        for (size_t i = 0; i < p.switches.size(); ++i) {
+            const int id = 1 + static_cast<int>(i);
+            const float th = (std::max)(px(20), text_height(g, p.switches[i].title, g_f.body.get(), cw - px(30)) + px(2));
+            const RectF row(m, y, cw, th + px(8)), box(m, y + px(4), px(20), px(20));
+            p.targets.push_back({row, id});
+            if (draw) {
+                draw_check_box(g, p.switches[i].on, box, p.hot == id);
+                draw_text(g, p.switches[i].title, g_f.body.get(), g_t.text, RectF(m + px(30), y + px(4), cw - px(30), th),
+                          kLeft, true, false);
+                if (p.focus == id) draw_focus_ring(g, box, px(4));
+            }
+            y += row.Height;
+        }
+    } else if (!p.switches.empty()) {
+        y += px(14);
+        const float rh = px(44);
+        const RectF card(m, y, cw, rh * p.switches.size());
+        if (draw) fill_round(g, card, px(kRadiusCard), g_t.card);
+        for (size_t i = 0; i < p.switches.size(); ++i) {
+            const RectF r(m, y + i * rh, cw, rh);
+            const int id = 1 + static_cast<int>(i);
+            p.targets.push_back({r, id});
+            if (!draw) continue;
+            if (p.hot == id) {
+                GraphicsPath clip;
+                rounded(clip, card, px(kRadiusCard));
+                g.SetClip(&clip);
+                Gdiplus::SolidBrush b(g_t.hover);
+                g.FillRectangle(&b, r);
+                g.ResetClip();
+            }
+            if (i > 0) {
+                Gdiplus::Pen line(g_t.divider, 1);
+                g.DrawLine(&line, r.X + px(14), r.Y, r.GetRight() - px(14), r.Y);
+            }
+            draw_text(g, p.switches[i].title, g_f.body.get(), g_t.text, RectF(r.X + px(14), r.Y, r.Width - px(80), rh));
+            const RectF sr(r.GetRight() - px(14) - px(44), r.Y + (rh - px(22)) / 2, px(44), px(22));  // as Settings
+            draw_switch(g, p.switches[i].on, sr, p.hot == id);
+            if (p.focus == id) draw_focus_ring(g, sr, sr.Height / 2);
+        }
+        if (draw) stroke_round(g, card, px(kRadiusCard), g_t.border);
+        y += card.Height;
+    }
+    if (p.footer) {
+        // As the install window's footer: a band of the window colour, the buttons right-aligned in it.
+        y += px(24);
+        const float foot = px(64);
+        if (draw) {
+            Gdiplus::SolidBrush bar(g_t.bg);
+            g.FillRectangle(&bar, RectF(0, y, W, foot));
+            Gdiplus::Pen line(g_t.border, 1);
+            g.DrawLine(&line, 0.0f, y, W, y);
+        }
+        float total = 0;
+        for (size_t i = 0; i < p.buttons.size(); ++i) total += button_width(g, p.buttons[i].second, i == 0) + (i ? px(8) : 0);
+        float x = W - m - total;
+        for (size_t i = 0; i < p.buttons.size(); ++i) {
+            const float bw = button_width(g, p.buttons[i].second, i == 0);
+            const RectF r(x, y + (foot - px(32)) / 2, bw, px(32));
+            p.targets.push_back({r, p.buttons[i].first});
+            if (draw) {
+                draw_button(g, r, p.buttons[i].second, p.hot == p.buttons[i].first, i == 0, false);
+                if (p.focus == p.buttons[i].first) draw_focus_ring(g, r, px(kRadiusControl));
+            }
+            x += bw + px(8);
+        }
+        return y + foot;
+    }
+    y += px(22);
+    for (size_t i = 0; i < p.buttons.size(); ++i) {
+        const RectF r(m, y, cw, px(32));
+        p.targets.push_back({r, p.buttons[i].first});
+        if (draw) {
+            draw_button(g, r, p.buttons[i].second, p.hot == p.buttons[i].first, i == 0, false);
+            if (p.focus == p.buttons[i].first) draw_focus_ring(g, r, px(kRadiusControl));
+        }
+        y += px(40);
+    }
+    return y + px(16);
 }
 
-bool confirm(const std::wstring& main, const std::wstring& content, const wchar_t* action) {
-    return task_dialog(main, content, TD_WARNING_ICON, {{IDOK, action}}, true) == IDOK;
+// The owner takes input again before the dialog goes, so Windows hands it the activation.
+void close_prompt(Prompt& p) {
+    if (p.owner) EnableWindow(p.owner, TRUE);
+    if (p.window) DestroyWindow(p.window);
 }
+
+void prompt_answer(Prompt& p, int id) {
+    if (id <= 0) return;
+    if (id == kPromptLink) {
+        if (p.on_link) p.on_link();
+        return;
+    }
+    if (id <= static_cast<int>(p.switches.size())) {
+        p.switches[static_cast<size_t>(id - 1)].on = !p.switches[static_cast<size_t>(id - 1)].on;
+        InvalidateRect(p.window, nullptr, FALSE);
+        return;
+    }
+    p.pressed = id;
+    close_prompt(p);
+}
+
+LRESULT CALLBACK prompt_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    auto* p = reinterpret_cast<Prompt*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    switch (msg) {
+        case WM_NCCREATE:
+            SetWindowLongPtrW(hwnd, GWLP_USERDATA,
+                              reinterpret_cast<LONG_PTR>(reinterpret_cast<CREATESTRUCTW*>(lp)->lpCreateParams));
+            break;
+        case WM_ERASEBKGND: return 1;
+        case WM_PAINT:
+            buffered_paint(hwnd, [&](Graphics& g, float w, float) { layout_prompt(g, *p, w, true); });
+            return 0;
+        case WM_MOUSEMOVE: track_hot(hwnd, lp, p->targets, &p->hot, &p->tracking); return 0;
+        case WM_MOUSELEAVE:
+            p->tracking = false;
+            p->hot = 0;
+            InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
+        case WM_SETCURSOR:
+            if (LOWORD(lp) == HTCLIENT) {
+                SetCursor(LoadCursorW(nullptr, p->hot ? IDC_HAND : IDC_ARROW));
+                return TRUE;
+            }
+            break;
+        case WM_LBUTTONDOWN: p->focus = 0; return 0;
+        case WM_LBUTTONUP: prompt_answer(*p, find_target(p->targets, lp)); return 0;
+        case WM_KEYDOWN:
+            if (wp == VK_ESCAPE) {
+                close_prompt(*p);
+            } else if (wp == VK_RETURN) {
+                prompt_answer(*p, p->focus ? p->focus : p->default_id);
+            } else if (wp == VK_SPACE && p->focus) {
+                prompt_answer(*p, p->focus);
+            } else if (wp == VK_TAB || wp == VK_UP || wp == VK_DOWN || wp == VK_LEFT || wp == VK_RIGHT) {
+                std::vector<int> ids;
+                for (const auto& t : p->targets) ids.push_back(t.second);
+                if (!ids.empty()) {
+                    // Left and right go by what the eye sees: mirrored in Hebrew.
+                    const bool back = wp == VK_UP || (wp == VK_TAB && GetKeyState(VK_SHIFT) < 0) ||
+                                      wp == (g_rtl ? VK_RIGHT : VK_LEFT);
+                    const auto it = std::find(ids.begin(), ids.end(), p->focus);
+                    int i = it == ids.end() ? (back ? 0 : -1) : static_cast<int>(it - ids.begin());
+                    i = ((back ? i - 1 : i + 1) % static_cast<int>(ids.size()) + static_cast<int>(ids.size())) %
+                        static_cast<int>(ids.size());
+                    p->focus = ids[static_cast<size_t>(i)];
+                    InvalidateRect(hwnd, nullptr, FALSE);
+                }
+            }
+            return 0;
+        case WM_CLOSE: close_prompt(*p); return 0;
+        case WM_TIMER: close_prompt(*p); return 0;  // no answer in time: nothing changes
+        case WM_DESTROY: p->window = nullptr; return 0;
+    }
+    return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+// Shows `p` centred over `over` (screen coordinates) and returns the button pressed (0: none). With an
+// owner the dialog is modal to it; without one it stays above every window, as an app's question must.
+int show_prompt(Prompt& p, const RECT& over) {
+    static bool registered = false;
+    if (!registered) {
+        WNDCLASSEXW wc{sizeof(wc)};
+        wc.lpfnWndProc = prompt_proc;
+        wc.hInstance = g_inst;
+        wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+        wc.hIcon = LoadIconW(g_inst, MAKEINTRESOURCEW(1));
+        wc.lpszClassName = L"WinApkPrompt";
+        RegisterClassExW(&wc);
+        registered = true;
+    }
+    const int w = ipx(p.footer ? 440 : 400);
+    HDC dc = GetDC(nullptr);
+    float need = 0;
+    {
+        Graphics g(dc);
+        need = layout_prompt(g, p, static_cast<float>(w), false);
+    }
+    ReleaseDC(nullptr, dc);
+    const DWORD style = WS_POPUP | WS_CAPTION | WS_SYSMENU;
+    const DWORD ex = layout_style() | (p.owner ? 0 : WS_EX_TOPMOST);
+    RECT frame{0, 0, w, static_cast<LONG>(std::lround(need))};
+    AdjustWindowRectEx(&frame, style, FALSE, ex);
+    const int fw = frame.right - frame.left, fh = frame.bottom - frame.top;
+    const int x = (over.left + over.right - fw) / 2;
+    const int y = (std::max)(static_cast<int>(over.top), static_cast<int>((over.top + over.bottom - fh) / 2));
+    const std::wstring& caption = p.caption.empty() ? p.app : p.caption;
+    p.window = CreateWindowExW(ex, L"WinApkPrompt", caption.c_str(), style, x, y, fw, fh, p.owner, nullptr, g_inst, &p);
+    if (!p.window) return 0;
+    theme_window(p.window);
+    const int corner = 2;  // DWMWCP_ROUND, Windows 11, as the splash and the menus
+    DwmSetWindowAttribute(p.window, 33 /* DWMWA_WINDOW_CORNER_PREFERENCE */, &corner, sizeof(corner));
+    if (p.timeout) SetTimer(p.window, 1, kAskTimeoutMs, nullptr);
+    if (p.owner) EnableWindow(p.owner, FALSE);
+    ShowWindow(p.window, SW_SHOW);
+    SetForegroundWindow(p.window);
+    MSG m;
+    while (p.window) {
+        const BOOL got = GetMessageW(&m, nullptr, 0, 0);
+        if (got <= 0) {
+            if (got == 0) PostQuitMessage(static_cast<int>(m.wParam));  // for the loop that ends the program
+            close_prompt(p);
+            break;
+        }
+        TranslateMessage(&m);
+        DispatchMessageW(&m);
+    }
+    return p.pressed;
+}
+
+RECT work_area_with_cursor() {
+    POINT cursor;
+    GetCursorPos(&cursor);
+    MONITORINFO mi{sizeof(mi)};
+    GetMonitorInfoW(MonitorFromPoint(cursor, MONITOR_DEFAULTTOPRIMARY), &mi);
+    return mi.rcWork;
+}
+
+BOOL CALLBACK find_app_window(HWND w, LPARAM lp) {
+    auto* p = reinterpret_cast<Prompt*>(lp);
+    DWORD pid = 0;
+    GetWindowThreadProcessId(w, &pid);
+    if (pid == static_cast<DWORD>(reinterpret_cast<uintptr_t>(p->near_window)) && IsWindowVisible(w) &&
+        !GetWindow(w, GW_OWNER)) {
+        p->near_window = w;
+        return FALSE;
+    }
+    return TRUE;
+}
+
+// An app's question: over the window of process `pid`, not owned by it (that would tie two processes'
+// input together) but kept above it.
+int run_prompt(Prompt& p, DWORD pid) {
+    p.near_window = reinterpret_cast<HWND>(static_cast<uintptr_t>(pid));
+    EnumWindows(find_app_window, reinterpret_cast<LPARAM>(&p));
+    if (reinterpret_cast<uintptr_t>(p.near_window) == pid) p.near_window = nullptr;  // no window found
+    p.owner = nullptr;
+    p.timeout = true;
+    RECT near_r;
+    if (!p.near_window || !GetWindowRect(p.near_window, &near_r)) near_r = work_area_with_cursor();
+    return show_prompt(p, near_r);
+}
+
+// The launcher's own question, modal to `owner` while that is on screen; else on its own, in front, with
+// a taskbar button, where the mouse is (an install from Explorer shows no library window).
+int run_dialog(Prompt& p, HWND owner) {
+    if (p.caption.empty()) p.caption = L"Win.apk";
+    p.footer = true;
+    p.owner = owner && IsWindowVisible(owner) && !IsIconic(owner) ? owner : nullptr;
+    RECT near_r;
+    if (!p.owner || !GetWindowRect(p.owner, &near_r)) near_r = work_area_with_cursor();
+    return show_prompt(p, near_r);
+}
+
+// Asks before doing `action` (a verb: "Sign out", "Clear library"). Enter is Cancel: these undo nothing.
+bool confirm(const std::wstring& main, const std::wstring& content, const wchar_t* action) {
+    Prompt p;
+    p.question = main;
+    p.note = content;
+    p.buttons = {{IDOK, action}, {IDCANCEL, tr(L"Cancel")}};
+    p.default_id = IDCANCEL;
+    return run_dialog(p, owner()) == IDOK;
+}
+
 
 std::string read_tail(const fs::path& p, size_t max_bytes);
 
@@ -3468,8 +3861,14 @@ std::wstring log_summary(const fs::path& log, bool* no_native_code) {
 }
 
 // An error the user can do nothing about but read: the sentence, and Show log.
+// Close and Show log, as the install window's and the splash's failures have them.
 void error_with_log(const std::wstring& main, const std::wstring& content, const fs::path& log) {
-    if (task_dialog(main, content, TD_ERROR_ICON, {{100, tr(L"Show log")}}, false) == 100) show_logs(log);
+    Prompt p;
+    p.question = main;
+    p.note = content;
+    p.buttons = {{IDCLOSE, tr(L"Close")}, {IDRETRY, tr(L"Show log")}};
+    p.default_id = IDCLOSE;
+    if (run_dialog(p, owner()) == IDRETRY) show_logs(log);
 }
 
 // ---------------------------------------------------------------------------
@@ -3522,7 +3921,8 @@ std::wstring windows_version() {
     using IsWow64Process2Fn = BOOL(WINAPI*)(HANDLE, USHORT*, USHORT*);
     auto wow = reinterpret_cast<IsWow64Process2Fn>(
         reinterpret_cast<void*>(GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "IsWow64Process2")));
-    const bool arm = wow && wow(GetCurrentProcess(), &process, &native) && native == 0xAA64;  // IMAGE_FILE_MACHINE_ARM64
+    constexpr USHORT kArm64 = 0xAA64;  // IMAGE_FILE_MACHINE_ARM64
+    const bool arm = wow && wow(GetCurrentProcess(), &process, &native) && native == kArm64;
     return out + (arm ? L", Arm64" : L", x64");
 }
 
@@ -3573,12 +3973,6 @@ void select_in_explorer(const std::vector<fs::path>& files) {
     if (folder) ILFree(folder);
 }
 
-HRESULT CALLBACK report_dialog_proc(HWND, UINT msg, WPARAM, LPARAM lp, LONG_PTR) {
-    if (msg == TDN_HYPERLINK_CLICKED)
-        ShellExecuteW(nullptr, L"open", reinterpret_cast<PCWSTR>(lp), nullptr, nullptr, SW_SHOWNORMAL);
-    return S_OK;
-}
-
 // Asks first, with a link to the open reports on the same app so a second one is not opened, then opens the form and
 // the logs. `name` is the library name, `log` the log that tells what happened, `what` the sentence the user saw.
 void report_problem(HWND parent, const std::wstring& name, const std::wstring& label, const fs::path& log,
@@ -3589,29 +3983,18 @@ void report_problem(HWND parent, const std::wstring& name, const std::wstring& l
 
     const std::wstring search = std::wstring(kIssuesUrl) + L"?q=" +
                                 url_escape(L"is:issue is:open \"" + (package.empty() ? label : package) + L"\"");
-    const std::wstring main = fmt(L"Report a problem with {0}", {label});
-    const std::wstring content =
-        tr(L"Your browser opens a report on GitHub with the versions already filled in, and the logs folder opens "
-           L"with the app's log selected. Look the log over, then drag it into the report: nothing is sent until "
-           L"you post it. A GitHub account is needed.") +
-        std::wstring(L"\n\n<a href=\"") + search + L"\">" +
-        tr(L"See whether someone already reported it") + L"</a>";
-    const TASKDIALOG_BUTTON buttons[] = {{100, tr(L"Open the report")}};
-    TASKDIALOGCONFIG c{};
-    c.cbSize = sizeof(c);
-    c.hwndParent = parent;
-    c.hInstance = g_inst;
-    c.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION | TDF_POSITION_RELATIVE_TO_WINDOW | TDF_ENABLE_HYPERLINKS |
-                (g_rtl ? TDF_RTL_LAYOUT : 0);
-    c.pszWindowTitle = L"Win.apk";
-    c.pszMainInstruction = main.c_str();
-    c.pszContent = content.c_str();
-    c.cButtons = 1;
-    c.pButtons = buttons;
-    c.dwCommonButtons = TDCBF_CANCEL_BUTTON;
-    c.pfCallback = report_dialog_proc;
-    int pressed = 0;
-    if (FAILED(TaskDialogIndirect(&c, &pressed, nullptr, nullptr)) || pressed != 100) return;
+    Prompt p;
+    p.app = label;
+    p.icon = rounded_icon(app_dir(name) / L"icon.png", ipx(40));
+    p.question = tr(L"Report a problem?");
+    p.note = tr(L"Your browser opens a report on GitHub with the versions already filled in, and the logs folder opens "
+                L"with the app's log selected. Look the log over, then drag it into the report: nothing is sent until "
+                L"you post it. A GitHub account is needed.");
+    p.link = tr(L"See whether someone already reported it");
+    p.on_link = [search] { ShellExecuteW(nullptr, L"open", search.c_str(), nullptr, nullptr, SW_SHOWNORMAL); };
+    p.buttons = {{IDOK, tr(L"Open the report")}, {IDCANCEL, tr(L"Cancel")}};
+    p.default_id = IDOK;
+    if (run_dialog(p, parent) != IDOK) return;
 
     // The form's own title pattern: "<App name> <version>: <what goes wrong>".
     const std::wstring app_line = label + (app_version.empty() ? L"" : L" " + app_version) +
@@ -3783,6 +4166,9 @@ void launch(const App& app) {
     }
     g_running.insert(app.name);
     show_splash(app.name);
+    AcquireSRWLockExclusive(&g_proc_lock);
+    g_starting[app.name] = false;
+    ReleaseSRWLockExclusive(&g_proc_lock);
     CloseHandle(CreateThread(nullptr, 0, run_thread, new RunJob{app.name, app.apk}, 0, nullptr));
     update_timer();
 }
@@ -3847,29 +4233,18 @@ void remove_app_data(const std::string& pkg) {
 // Asks before removing: Remove, with a box for what the app saved (off: it stays, so
 // installing the app again picks up where it left off).
 bool confirm_remove(const App& a, bool* with_data) {
-    TASKDIALOGCONFIG c{};
-    c.cbSize = sizeof(c);
-    c.hwndParent = owner();
-    c.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION | TDF_POSITION_RELATIVE_TO_WINDOW | (g_rtl ? TDF_RTL_LAYOUT : 0);
-    c.pszWindowTitle = L"Win.apk";
-    c.pszMainIcon = TD_WARNING_ICON;
-    const std::wstring main = fmt(L"Remove {0}?", {a.label});
-    const std::wstring content = tr(L"Its shortcuts go too. Unless you tick the box, what the app saved stays, so "
-                                    L"installing it again picks up where it left off.");
-    c.pszMainInstruction = main.c_str();
-    c.pszContent = content.c_str();
-    const std::wstring check = tr(L"Also delete what the app saved (accounts, settings, files)");
-    c.pszVerificationText = check.c_str();
-    const std::wstring remove_text = tr(L"Remove");
-    const TASKDIALOG_BUTTON buttons[] = {{IDOK, remove_text.c_str()}};
-    c.cButtons = 1;
-    c.pButtons = buttons;
-    c.dwCommonButtons = TDCBF_CANCEL_BUTTON;
-    c.nDefaultButton = IDCANCEL;
-    int pressed = 0;
-    BOOL checked = FALSE;
-    if (FAILED(TaskDialogIndirect(&c, &pressed, nullptr, &checked)) || pressed != IDOK) return false;
-    *with_data = checked != FALSE;
+    Prompt p;
+    p.app = a.label;
+    p.icon = rounded_icon(app_dir(a.name) / L"icon.png", ipx(40));
+    p.caption = L"Win.apk";
+    p.question = fmt(L"Remove {0}?", {a.label});
+    p.note = tr(L"Its shortcuts go too. Unless you tick the box, what the app saved stays, so installing it again "
+                L"picks up where it left off.");
+    p.switches = {{tr(L"Also delete what the app saved (accounts, settings, files)"), false, true}};
+    p.buttons = {{IDOK, tr(L"Remove")}, {IDCANCEL, tr(L"Cancel")}};
+    p.default_id = IDCANCEL;
+    if (run_dialog(p, owner()) != IDOK) return false;
+    *with_data = p.switches[0].on;
     return true;
 }
 
@@ -4312,16 +4687,7 @@ SizeF control_size(Graphics& g, const Row& row) {
 void paint_control(Graphics& g, const Row& row, const RectF& r, bool hot) {
     switch (row.kind) {
         case Row::kButton: draw_button(g, r, row.value, hot, row.primary, row.destructive); break;
-        case Row::kToggle: {
-            const Color on = hot ? mix(g_t.accent, g_t.dark ? kWhite : kBlack, 0.1f) : g_t.accent;
-            fill_round(g, r, r.Height / 2, row.on ? on : hot ? g_t.hover : g_t.card);
-            if (!row.on) stroke_round(g, r, r.Height / 2, g_t.text2);
-            const float k = row.on ? r.Height - px(8) : r.Height - px(10);
-            const float kx = row.on ? r.GetRight() - k - px(4) : r.X + px(5);
-            Gdiplus::SolidBrush knob(row.on ? g_t.accent_text : g_t.text2);
-            g.FillEllipse(&knob, kx, r.Y + (r.Height - k) / 2, k, k);
-            break;
-        }
+        case Row::kToggle: draw_switch(g, row.on, r, hot); break;
         case Row::kChoice: {
             fill_round(g, r, px(kRadiusControl), hot ? g_t.hover : g_t.card);
             stroke_round(g, r, px(kRadiusControl), g_t.border);
@@ -4762,6 +5128,17 @@ Section google_account_section() {
                                          L"push notifications."),
                                       tr(L"Sign in…"), [] { start_google_signin(); }));
     }
+    // The real Google Play services, Services Framework and Play Store, installed by the user, running as
+    // apps through the system broker (winapk-runtime --system). The runtime reads the value at an app's start.
+    Row gms;
+    gms.kind = Row::kToggle;
+    gms.title = tr(L"Use Google services (experimental)");
+    gms.detail = tr(L"Runs the Google Play services, Services Framework and Play Store you install yourself, "
+                    L"as apps other apps can reach. Only copies signed by Google are trusted. Takes effect "
+                    L"when an app starts.");
+    gms.on = setting(L"GoogleServices", 0) != 0;
+    gms.act = [](int on) { set_setting(L"GoogleServices", static_cast<DWORD>(on)); };
+    sec.rows.push_back(gms);
     sec.footer = tr(L"Sign-in takes place on Google's own page, in a separate window; Win.apk never sees your "
                     L"password. The account's tokens are stored only on this PC.");
     return sec;
@@ -5331,28 +5708,6 @@ std::vector<std::wstring> last_lines(const fs::path& p, size_t n) {
     return lines;
 }
 
-using Targets = std::vector<std::pair<RectF, int>>;
-
-int find_target(const Targets& targets, LPARAM lp) {
-    const float x = static_cast<float>(GET_X_LPARAM(lp)), y = static_cast<float>(GET_Y_LPARAM(lp));
-    for (const auto& t : targets) {
-        if (contains(t.first, x, y)) return t.second;
-    }
-    return 0;
-}
-
-// Hover tracking for the custom-drawn buttons of a window; true when it changed.
-bool track_hot(HWND hwnd, LPARAM lp, const Targets& targets, int* hot, bool* tracking) {
-    if (!*tracking) {
-        TRACKMOUSEEVENT tme{sizeof(tme), TME_LEAVE, hwnd, 0};
-        *tracking = TrackMouseEvent(&tme);
-    }
-    const int now = find_target(targets, lp);
-    if (now == *hot) return false;
-    *hot = now;
-    InvalidateRect(hwnd, nullptr, FALSE);
-    return true;
-}
 
 // A window of its own: over the library when it is shown, and owned by it (no taskbar button of
 // its own); else in the middle of the screen with the mouse, with a taskbar button.
@@ -5398,8 +5753,8 @@ struct InstallView {
     float need_h = 0;              // the height the last paint wanted, for fit_install_window
 } g_iv;
 
-enum { kActClose = 1, kActCancel, kActOpen, kActDetails, kActCopy, kActShowLog, kActLibrary, kActReport, kActRowOpen = 1000,
-       kActRowLog = 2000 };
+enum { kActClose = 1, kActCancel, kActOpen, kActDetails, kActCopy, kActShowLog, kActLibrary, kActReport,
+       kActRowOpen = 1000, kActRowLog = 2000 };
 constexpr UINT kFitInstall = WM_APP + 20;
 
 // How far an install got, from the lines the runtime writes: 0 starting, 1 installing, 2 converting the
@@ -5472,7 +5827,7 @@ void draw_job_icon(Graphics& g, Job& j, const RectF& r) {
 
 void draw_badge(Graphics& g, const RectF& icon, bool ok, float size) {
     const RectF b(icon.GetRight() - size * 0.75f, icon.GetBottom() - size * 0.75f, size, size);
-    Gdiplus::SolidBrush ring(g_t.bg), dot(ok ? g_t.success : g_t.danger);
+    Gdiplus::SolidBrush ring(g_t.layer), dot(ok ? g_t.success : g_t.danger);
     g.FillEllipse(&ring, inset(b, -px(2), -px(2)));
     g.FillEllipse(&dot, b);
     if (ok) draw_text(g, kGlyphCheck, g_f.glyph12.get(), kWhite, b, kCenter);
@@ -5489,7 +5844,7 @@ float draw_link(Graphics& g, const std::wstring& text, float x, float y, float h
 }
 
 void paint_install(Graphics& g, float W, float H) {
-    g.Clear(g_t.bg);
+    g.Clear(g_t.layer);  // as the dialog: the layer, and a footer band of the window colour
     g_iv.targets.clear();
     const float m = px(24), foot = px(64), cw = W - 2 * m;
     int done = 0, failed = 0, cancelled_n = 0;
@@ -5639,14 +5994,14 @@ void paint_install(Graphics& g, float W, float H) {
 
     // The footer's buttons, right-aligned; the default one first, as Windows' dialogs order them.
     const float fy = H - foot;
-    Gdiplus::SolidBrush bar(g_t.layer);
+    Gdiplus::SolidBrush bar(g_t.bg);
     g.FillRectangle(&bar, RectF(0, fy, W, foot));
     Gdiplus::Pen line(g_t.border, 1);
     g.DrawLine(&line, 0.0f, fy, W, fy);
     float right = W - m;
     const float by = fy + (foot - px(32)) / 2;
     auto button = [&](const std::wstring& text, int act, bool primary) {
-        const float bw = (std::max)(px(96), text_width(g, text, primary ? g_f.body_semi.get() : g_f.body.get()) + px(32));
+        const float bw = button_width(g, text, primary);
         const RectF r(right - bw, by, bw, px(32));
         draw_button(g, r, text, g_iv.hot == act, primary, false);
         g_iv.targets.push_back({r, act});
@@ -5694,21 +6049,12 @@ void copy_install_details(HWND hwnd, const Job& j) {
 }
 
 bool ask_stop_installing(HWND hwnd) {
-    TASKDIALOGCONFIG c{};
-    c.cbSize = sizeof(c);
-    c.hwndParent = hwnd;
-    c.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION | TDF_POSITION_RELATIVE_TO_WINDOW | (g_rtl ? TDF_RTL_LAYOUT : 0);
-    c.pszWindowTitle = L"Win.apk";
-    const std::wstring main = tr(L"Stop installing?");
-    const std::wstring content = tr(L"What was not installed yet is left out. An app that was being updated stays as it was.");
-    c.pszMainInstruction = main.c_str();
-    c.pszContent = content.c_str();
-    const TASKDIALOG_BUTTON buttons[] = {{IDOK, tr(L"Stop installing")}, {IDCANCEL, tr(L"Keep installing")}};
-    c.cButtons = 2;
-    c.pButtons = buttons;
-    c.nDefaultButton = IDCANCEL;
-    int pressed = 0;
-    return SUCCEEDED(TaskDialogIndirect(&c, &pressed, nullptr, nullptr)) && pressed == IDOK;
+    Prompt p;
+    p.question = tr(L"Stop installing?");
+    p.note = tr(L"What was not installed yet is left out. An app that was being updated stays as it was.");
+    p.buttons = {{IDOK, tr(L"Stop installing")}, {IDCANCEL, tr(L"Keep installing")}};
+    p.default_id = IDCANCEL;
+    return run_dialog(p, hwnd) == IDOK;
 }
 
 void cancel_all_installs() {
@@ -6307,6 +6653,7 @@ struct Splash {
     bool failed = false;
     std::wstring error_title, error_text;
     fs::path log;  // Show log's
+    float need_h = 0;  // the failed state's height, when its sentence is long
     Targets targets;
     int hot = 0;
     bool tracking = false;
@@ -6314,6 +6661,7 @@ struct Splash {
 
 std::map<std::wstring, std::unique_ptr<Splash>> g_splashes;
 enum { kSplashClose = 1, kSplashLog = 2, kSplashCancel = 3, kSplashReport = 4 };
+constexpr UINT kFitSplash = WM_APP + 21;
 
 void maybe_quit();
 
@@ -6367,26 +6715,26 @@ void paint_splash(Splash& s, Graphics& g, float W, float H) {
         sub = tr(L"Still starting. The first start can take a minute.");
     }
     draw_text(g, sub, g_f.caption.get(), g_t.text2, RectF(m, px(178), W - 2 * m, px(54)), kCenter, true, false);
-    // The corner's X: Close on the error (two buttons are all its width takes), Cancel while starting.
-    const RectF corner(W - px(40), px(8), px(32), px(32));
-    if (s.hot == (s.failed ? kSplashClose : kSplashCancel)) fill_round(g, corner, px(kRadiusControl), g_t.hover);
-    draw_text(g, kGlyphClear, g_f.glyph12.get(), g_t.text2, corner, kCenter);
-    s.targets.push_back({corner, s.failed ? kSplashClose : kSplashCancel});
     if (s.failed) {
-        // Each as wide as its words, the pair centred; squeezed alike only if they would pass the window's edges.
-        const std::wstring report = tr(L"Report a problem"), show = tr(L"Show log");
-        float lw = (std::max)(px(96), text_width(g, show, g_f.body.get()) + px(32));
-        float rw = (std::max)(px(96), text_width(g, report, g_f.body_semi.get()) + px(32));
-        if (const float room = W - 2 * px(16) - px(8); lw + rw > room) {
-            lw *= room / (lw + rw);
-            rw = room - lw;
-        }
-        const float by = H - px(22) - px(32);
-        const RectF log((W - lw - rw - px(8)) / 2, by, lw, px(32)), rep(log.GetRight() + px(8), by, rw, px(32));
-        draw_button(g, log, show, s.hot == kSplashLog, false, false);
-        draw_button(g, rep, report, s.hot == kSplashReport, true, false);
-        s.targets.push_back({log, kSplashLog});
+        // Report a problem as a link under the sentence, as under a failed install's reason: three buttons with the
+        // dialog's widths do not fit in 300 px. The window grows when a long sentence leaves no room (kFitSplash).
+        const float sh = (std::min)(px(54), text_height(g, sub, g_f.caption.get(), W - 2 * m));
+        const std::wstring report = tr(L"Report a problem");
+        const float rw = text_width(g, report, g_f.body.get()) + px(4);
+        const RectF rep((W - rw) / 2, px(178) + sh + px(6), rw, px(22));
+        draw_text(g, report, g_f.body.get(), s.hot == kSplashReport ? mix(g_t.accent, g_t.text, 0.3f) : g_t.accent,
+                  rep, kCenter);
+        s.need_h = (std::max)(px(300), rep.GetBottom() + px(16) + px(32) + px(24));
+        // Windows' order and the dialog's widths: Close (the accent one), then Show log.
+        const float cw = button_width(g, tr(L"Close"), true), lw = button_width(g, tr(L"Show log"), false);
+        const float by = H - px(24) - px(32);
+        const RectF close((W - cw - lw - px(8)) / 2, by, cw, px(32)), log(close.GetRight() + px(8), by, lw, px(32));
+        draw_button(g, log, tr(L"Show log"), s.hot == kSplashLog, false, false);
+        draw_button(g, close, tr(L"Close"), s.hot == kSplashClose, true, false);
         s.targets.push_back({rep, kSplashReport});
+        s.targets.push_back({log, kSplashLog});
+        s.targets.push_back({close, kSplashClose});
+        if (std::lround(s.need_h) > std::lround(H)) PostMessageW(s.hwnd, kFitSplash, 0, 0);
     } else {
         // Three dots that brighten in turn.
         const float t = static_cast<float>(GetTickCount64() % 1200) / 1200.0f, d = px(7), gap = px(8);
@@ -6398,6 +6746,10 @@ void paint_splash(Splash& s, Graphics& g, float W, float H) {
             Gdiplus::SolidBrush b(with_alpha(g_t.accent, static_cast<BYTE>(70 + 185 * lit)));
             g.FillEllipse(&b, x0 + i * (d + gap), y, d, d);
         }
+        const RectF cancel(W - px(40), px(8), px(32), px(32));
+        if (s.hot == kSplashCancel) fill_round(g, cancel, px(kRadiusControl), g_t.hover);
+        draw_text(g, kGlyphClear, g_f.glyph12.get(), g_t.text2, cancel, kCenter);
+        s.targets.push_back({cancel, kSplashCancel});
     }
     stroke_round(g, RectF(0.5f, 0.5f, W - 1, H - 1), px(8), g_t.border);
 }
@@ -6412,7 +6764,9 @@ void splash_action(Splash& s, int act) {
     } else if (act == kSplashClose) {
         DestroyWindow(s.hwnd);
     } else if (act == kSplashCancel) {
-        if (stop_process(s.name)) g_stopping.insert(s.name);
+        // Whether the runtime is up, still starting or already ending, its exit is now no failure.
+        stop_process(s.name);
+        if (g_running.count(s.name)) g_stopping.insert(s.name);
         DestroyWindow(s.hwnd);
     }
 }
@@ -6429,6 +6783,19 @@ LRESULT CALLBACK splash_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_PAINT:
             buffered_paint(hwnd, [&](Graphics& g, float w, float h) { paint_splash(*s, g, w, h); });
             return 0;
+        case kFitSplash: {  // taller by what the failed state's sentence needs, about the same middle
+            RECT wr, rc;
+            GetWindowRect(hwnd, &wr);
+            GetClientRect(hwnd, &rc);
+            const int want = static_cast<int>(std::lround(s->need_h));
+            if (want > rc.bottom) {
+                const int grow = want - rc.bottom;
+                SetWindowPos(hwnd, nullptr, wr.left, wr.top - grow / 2, wr.right - wr.left, wr.bottom - wr.top + grow,
+                             SWP_NOZORDER | SWP_NOACTIVATE);
+            }
+            InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
+        }
         case WM_TIMER:
             if (!s->failed && GetTickCount64() - s->phase_read > 500) {
                 s->phase = run_phase(run_log(s->name));
@@ -6437,13 +6804,7 @@ LRESULT CALLBACK splash_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (!s->failed) InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         case WM_NCHITTEST: {  // drag it by anything that is not a button
-            POINT pt{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
-            ScreenToClient(hwnd, &pt);
-            if (g_rtl) {
-                RECT rc;
-                GetClientRect(hwnd, &rc);
-                pt.x = rc.right - pt.x;
-            }
+            const POINT pt = client_point(hwnd, lp);
             for (const auto& t : s->targets)
                 if (contains(t.first, static_cast<float>(pt.x), static_cast<float>(pt.y))) return HTCLIENT;
             return HTCAPTION;
@@ -6507,6 +6868,7 @@ Splash* show_splash(const std::wstring& name) {
     ShowWindow(hwnd, SW_SHOW);
     UpdateWindow(hwnd);
     SetForegroundWindow(hwnd);
+    SetFocus(hwnd);  // Esc cancels
     return raw;
 }
 
@@ -7248,11 +7610,15 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 info(email.empty() ? tr(L"Signed in to Google.") : fmt(L"Signed in as {0}.", {email}), kSuccess);
             } else if (code == 2) {
                 info(tr(L"No account was added."), kInfo);
-            } else {
-                error_with_log(tr(L"Could not sign in to Google"), tr(L"Google did not answer. Check the internet connection, then try again."), gms_log());
             }
             refresh_account();
             if (g_view == kSettingsView) rebuild_page();
+            if (code != 0 && code != 2) {  // after the page is rebuilt: behind the dialog it no longer says "Signing in…"
+                InvalidateRect(hwnd, nullptr, FALSE);
+                UpdateWindow(hwnd);
+                error_with_log(tr(L"Could not sign in to Google"),
+                               tr(L"Google did not answer. Check the internet connection, then try again."), gms_log());
+            }
             return 0;
         }
         case kStoreCatalog:
@@ -7480,12 +7846,21 @@ const App* find_package(const std::vector<App>& apps, const std::string& pkg) {
     return nullptr;
 }
 
-// Asks the user, as the Mac's helper does before it acts for an app. A no is
+// Asks the user, as the Mac's helper does before it acts for an app: the launcher's dialog, in front of
+// the app, Enter on Cancel. `app` heads it when the question is about one in the library. A no is
 // exit 3, which the installer reports as STATUS_FAILURE_ABORTED.
-bool helper_consent(const std::wstring& text) {
-    const UINT rtl = g_rtl ? MB_RTLREADING | MB_RIGHT : 0;
-    return MessageBoxW(nullptr, text.c_str(), L"Win.apk",
-                       MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2 | MB_TOPMOST | MB_SETFOREGROUND | rtl) == IDYES;
+bool helper_consent(const App* app, const std::wstring& question, const std::wstring& note, const std::wstring& action) {
+    Prompt p;
+    if (app) {
+        p.app = app->label;
+        p.icon = rounded_icon(app_dir(app->name) / L"icon.png", ipx(40));
+    }
+    p.caption = L"Win.apk";
+    p.question = question;
+    p.note = note;
+    p.buttons = {{IDOK, action}, {IDCANCEL, tr(L"Cancel")}};
+    p.default_id = IDCANCEL;
+    return run_dialog(p, nullptr) == IDOK;
 }
 
 void notify_library() {
@@ -7518,7 +7893,8 @@ int helper_main(int argc, wchar_t** argv) {
     if (verb == L"uninstall") {
         const App* app = package.empty() ? nullptr : find_package(apps, wide_to_utf8(package));
         if (!app) return helper_fail(5, "lookup", "not installed: " + wide_to_utf8(package));
-        if (!helper_consent(fmt(L"{0} wants to remove {1}.\n\nRemove it?", {who, app->label})))
+        if (!helper_consent(app, fmt(L"Remove {0}?", {app->label}), fmt(L"{0} asks to remove it.", {who}),
+                            tr(L"Remove")))
             return helper_fail(3, "consent", "declined");
         remove_app(*app, false);
         notify_library();
@@ -7547,10 +7923,12 @@ int helper_main(int argc, wchar_t** argv) {
     const App* existing = find_package(apps, pkg);
     const bool update = existing != nullptr;
     const std::wstring wpkg = utf8_to_wide(pkg);
-    const std::wstring question =
-        update ? fmt(L"{0} wants to update {1} ({2}).\n\nUpdate it?", {who, existing->label, wpkg})
-               : fmt(L"{0} wants to install {1}.\n\nInstall it?", {who, wpkg});
-    if (!helper_consent(question)) return helper_fail(3, "consent", "declined");
+    const bool agreed =
+        update ? helper_consent(existing, fmt(L"Update {0}?", {existing->label}),
+                                fmt(L"{0} asks to update it with the copy it has ({1}).", {who, wpkg}), tr(L"Update"))
+               : helper_consent(nullptr, fmt(L"Install {0}?", {wpkg}), fmt(L"{0} asks to install it.", {who}),
+                                tr(L"Install"));
+    if (!agreed) return helper_fail(3, "consent", "declined");
     helper_progress(0.1, "consented");
 
     const std::wstring name = update ? existing->name : file_name_safe(wpkg);
@@ -8297,249 +8675,12 @@ bool resolve(Caller* c, std::string* why) {
 
 // ---- the dialog ----------------------------------------------------------------
 //
-// One window for every question an app asks, in Win.apk's theme: the app's
-// icon and name, one question, at most a line saying what it means here,
-// switches when there is something to pick, and the buttons. Not owned by
-// the app's window (that would tie two processes' input together); centred
-// over it and kept above it instead. No answer in five minutes (upstream's
-// alert timeout) changes nothing.
+// Every question an app asks is the launcher's dialog (Prompt, run_prompt): the
+// app's icon and name, one question, at most a line saying what it means here,
+// switches when there is something to pick, and the buttons. No answer in five
+// minutes (upstream's alert timeout) changes nothing.
 
 constexpr int kAnswerAllow = 100, kAnswerDeny = 101, kAnswerSelect = 102;
-constexpr UINT kAskTimeoutMs = 300 * 1000;
-
-struct Prompt {
-    std::wstring app, question, note;
-    std::unique_ptr<Gdiplus::Bitmap> icon;
-    struct Switch {
-        std::wstring title;
-        bool on;
-    };
-    std::vector<Switch> switches;
-    std::vector<std::pair<int, std::wstring>> buttons;  // the first is the accent one
-    bool footer = false;   // the buttons in a footer at the end (a list of switches), else stacked full width
-    int default_id = 0;    // Enter
-    int pressed = 0;       // the answer; 0: closed or timed out
-    HWND window = nullptr, near_window = nullptr;
-    Targets targets;       // ids: a button's own, or 1 + index for a switch
-    int hot = 0, focus = 0;
-    bool tracking = false;
-    float need_h = 0;
-};
-
-// Lays the prompt out, and draws it when `draw`; returns the height it needs.
-float layout_prompt(Graphics& g, Prompt& p, float W, bool draw) {
-    if (draw) g.Clear(g_t.layer);
-    p.targets.clear();
-    const float m = px(24), cw = W - 2 * m;
-    float y = px(20);
-    const RectF ir(m, y, px(40), px(40));
-    if (draw) {
-        draw_icon(g, p.icon.get(), p.app, ir);
-        draw_text(g, p.app, g_f.body.get(), g_t.text2, RectF(ir.GetRight() + px(12), y, cw - px(52), ir.Height));
-    }
-    y = ir.GetBottom() + px(14);
-    const float qh = text_height(g, p.question, g_f.title.get(), cw) + px(2);
-    if (draw) draw_text(g, p.question, g_f.title.get(), g_t.text, RectF(m, y, cw, qh), kLeft, true, false);
-    y += qh + px(6);
-    if (!p.note.empty()) {
-        const float nh = text_height(g, p.note, g_f.caption.get(), cw) + px(2);
-        if (draw) draw_text(g, p.note, g_f.caption.get(), g_t.text2, RectF(m, y, cw, nh), kLeft, true, false);
-        y += nh;
-    }
-    if (!p.switches.empty()) {
-        y += px(14);
-        const float rh = px(44);
-        const RectF card(m, y, cw, rh * p.switches.size());
-        if (draw) fill_round(g, card, px(kRadiusCard), g_t.card);
-        for (size_t i = 0; i < p.switches.size(); ++i) {
-            const RectF r(m, y + i * rh, cw, rh);
-            const int id = 1 + static_cast<int>(i);
-            p.targets.push_back({r, id});
-            if (!draw) continue;
-            if (p.hot == id) {
-                GraphicsPath clip;
-                rounded(clip, card, px(kRadiusCard));
-                g.SetClip(&clip);
-                Gdiplus::SolidBrush b(g_t.hover);
-                g.FillRectangle(&b, r);
-                g.ResetClip();
-            }
-            if (i > 0) {
-                Gdiplus::Pen line(g_t.divider, 1);
-                g.DrawLine(&line, r.X + px(14), r.Y, r.GetRight() - px(14), r.Y);
-            }
-            draw_text(g, p.switches[i].title, g_f.body.get(), g_t.text, RectF(r.X + px(14), r.Y, r.Width - px(80), rh));
-            Row sw;
-            sw.kind = Row::kToggle;
-            sw.on = p.switches[i].on;
-            const RectF sr(r.GetRight() - px(14) - px(44), r.Y + (rh - px(22)) / 2, px(44), px(22));
-            paint_control(g, sw, sr, p.hot == id);
-            if (p.focus == id) draw_focus_ring(g, sr, sr.Height / 2);
-        }
-        if (draw) stroke_round(g, card, px(kRadiusCard), g_t.border);
-        y += card.Height;
-    }
-    if (p.footer) {
-        y += px(20);
-        const float foot = px(64);
-        if (draw) {
-            Gdiplus::SolidBrush bar(g_t.bg);
-            g.FillRectangle(&bar, RectF(0, y, W, foot));
-            Gdiplus::Pen line(g_t.border, 1);
-            g.DrawLine(&line, 0.0f, y, W, y);
-        }
-        float right = W - m;
-        for (size_t i = p.buttons.size(); i-- > 0;) {  // the accent one at the end
-            const RectF r(right - px(100), y + (foot - px(32)) / 2, px(100), px(32));
-            p.targets.push_back({r, p.buttons[i].first});
-            if (draw) {
-                draw_button(g, r, p.buttons[i].second, p.hot == p.buttons[i].first, i == 0, false);
-                if (p.focus == p.buttons[i].first) draw_focus_ring(g, r, px(kRadiusControl));
-            }
-            right -= px(108);
-        }
-        return y + foot;
-    }
-    y += px(22);
-    for (size_t i = 0; i < p.buttons.size(); ++i) {
-        const RectF r(m, y, cw, px(34));
-        p.targets.push_back({r, p.buttons[i].first});
-        if (draw) {
-            draw_button(g, r, p.buttons[i].second, p.hot == p.buttons[i].first, i == 0, false);
-            if (p.focus == p.buttons[i].first) draw_focus_ring(g, r, px(kRadiusControl));
-        }
-        y += px(42);
-    }
-    return y + px(14);
-}
-
-void prompt_answer(Prompt& p, int id) {
-    if (id <= 0) return;
-    if (id <= static_cast<int>(p.switches.size())) {
-        p.switches[static_cast<size_t>(id - 1)].on = !p.switches[static_cast<size_t>(id - 1)].on;
-        InvalidateRect(p.window, nullptr, FALSE);
-        return;
-    }
-    p.pressed = id;
-    DestroyWindow(p.window);
-}
-
-LRESULT CALLBACK prompt_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
-    auto* p = reinterpret_cast<Prompt*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
-    switch (msg) {
-        case WM_NCCREATE:
-            SetWindowLongPtrW(hwnd, GWLP_USERDATA,
-                              reinterpret_cast<LONG_PTR>(reinterpret_cast<CREATESTRUCTW*>(lp)->lpCreateParams));
-            break;
-        case WM_ERASEBKGND: return 1;
-        case WM_PAINT:
-            buffered_paint(hwnd, [&](Graphics& g, float w, float) { layout_prompt(g, *p, w, true); });
-            return 0;
-        case WM_MOUSEMOVE: track_hot(hwnd, lp, p->targets, &p->hot, &p->tracking); return 0;
-        case WM_MOUSELEAVE:
-            p->tracking = false;
-            p->hot = 0;
-            InvalidateRect(hwnd, nullptr, FALSE);
-            return 0;
-        case WM_SETCURSOR:
-            if (LOWORD(lp) == HTCLIENT) {
-                SetCursor(LoadCursorW(nullptr, p->hot ? IDC_HAND : IDC_ARROW));
-                return TRUE;
-            }
-            break;
-        case WM_LBUTTONDOWN: p->focus = 0; return 0;
-        case WM_LBUTTONUP: prompt_answer(*p, find_target(p->targets, lp)); return 0;
-        case WM_KEYDOWN:
-            if (wp == VK_ESCAPE) {
-                DestroyWindow(hwnd);
-            } else if (wp == VK_RETURN) {
-                prompt_answer(*p, p->focus ? p->focus : p->default_id);
-            } else if (wp == VK_SPACE && p->focus) {
-                prompt_answer(*p, p->focus);
-            } else if (wp == VK_TAB || wp == VK_UP || wp == VK_DOWN) {
-                std::vector<int> ids;
-                for (const auto& t : p->targets) ids.push_back(t.second);
-                if (!ids.empty()) {
-                    const bool back = wp == VK_UP || (wp == VK_TAB && GetKeyState(VK_SHIFT) < 0);
-                    const auto it = std::find(ids.begin(), ids.end(), p->focus);
-                    int i = it == ids.end() ? (back ? 0 : -1) : static_cast<int>(it - ids.begin());
-                    i = ((back ? i - 1 : i + 1) % static_cast<int>(ids.size()) + static_cast<int>(ids.size())) %
-                        static_cast<int>(ids.size());
-                    p->focus = ids[static_cast<size_t>(i)];
-                    InvalidateRect(hwnd, nullptr, FALSE);
-                }
-            }
-            return 0;
-        case WM_TIMER: DestroyWindow(hwnd); return 0;  // no answer in time: nothing changes
-        case WM_DESTROY: p->window = nullptr; return 0;
-    }
-    return DefWindowProcW(hwnd, msg, wp, lp);
-}
-
-BOOL CALLBACK find_app_window(HWND w, LPARAM lp) {
-    auto* p = reinterpret_cast<Prompt*>(lp);
-    DWORD pid = 0;
-    GetWindowThreadProcessId(w, &pid);
-    if (pid == static_cast<DWORD>(reinterpret_cast<uintptr_t>(p->near_window)) && IsWindowVisible(w) &&
-        !GetWindow(w, GW_OWNER)) {
-        p->near_window = w;
-        return FALSE;
-    }
-    return TRUE;
-}
-
-// Shows the prompt over the window of process `pid` and returns the button pressed (0: none).
-int run_prompt(Prompt& p, DWORD pid) {
-    static bool registered = false;
-    if (!registered) {
-        WNDCLASSEXW wc{sizeof(wc)};
-        wc.lpfnWndProc = prompt_proc;
-        wc.hInstance = g_inst;
-        wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-        wc.hIcon = LoadIconW(g_inst, MAKEINTRESOURCEW(1));
-        wc.lpszClassName = L"WinApkPrompt";
-        RegisterClassExW(&wc);
-        registered = true;
-    }
-    p.near_window = reinterpret_cast<HWND>(static_cast<uintptr_t>(pid));
-    EnumWindows(find_app_window, reinterpret_cast<LPARAM>(&p));
-    if (reinterpret_cast<uintptr_t>(p.near_window) == pid) p.near_window = nullptr;  // no window found
-    const int w = ipx(400);
-    HDC dc = GetDC(nullptr);
-    float need = 0;
-    {
-        Graphics g(dc);
-        need = layout_prompt(g, p, static_cast<float>(w), false);
-    }
-    ReleaseDC(nullptr, dc);
-    const DWORD style = WS_POPUP | WS_CAPTION | WS_SYSMENU;
-    RECT frame{0, 0, w, static_cast<LONG>(std::lround(need))};
-    AdjustWindowRectEx(&frame, style, FALSE, layout_style());
-    const int fw = frame.right - frame.left, fh = frame.bottom - frame.top;
-    RECT near_r;
-    if (!p.near_window || !GetWindowRect(p.near_window, &near_r)) {
-        MONITORINFO mi{sizeof(mi)};
-        POINT cursor;
-        GetCursorPos(&cursor);
-        GetMonitorInfoW(MonitorFromPoint(cursor, MONITOR_DEFAULTTOPRIMARY), &mi);
-        near_r = mi.rcWork;
-    }
-    const int x = (near_r.left + near_r.right - fw) / 2;
-    const int y = (std::max)(static_cast<int>(near_r.top), static_cast<int>((near_r.top + near_r.bottom - fh) / 2));
-    p.window = CreateWindowExW(layout_style() | WS_EX_TOPMOST, L"WinApkPrompt", p.app.c_str(), style, x, y, fw, fh,
-                               nullptr, nullptr, g_inst, &p);
-    if (!p.window) return 0;
-    theme_window(p.window);
-    SetTimer(p.window, 1, kAskTimeoutMs, nullptr);
-    ShowWindow(p.window, SW_SHOW);
-    SetForegroundWindow(p.window);
-    MSG m;
-    while (p.window && GetMessageW(&m, nullptr, 0, 0) > 0) {
-        TranslateMessage(&m);
-        DispatchMessageW(&m);
-    }
-    return p.pressed;
-}
 
 // A question with buttons (the first is the accent one), as the app `c`: its name and icon head it.
 int ask(const Caller& c, const std::wstring& question, const std::wstring& note,
@@ -9185,9 +9326,17 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
 
     // The install helper, for apps that install apps.
     if (argc >= 2 && (wcscmp(argv[1], L"install") == 0 || wcscmp(argv[1], L"uninstall") == 0)) {
+        ULONG_PTR gdiplus = 0;  // its question is the launcher's dialog
+        Gdiplus::GdiplusStartupInput gsi;
+        Gdiplus::GdiplusStartup(&gdiplus, &gsi, nullptr);
         pick_language();
+        pick_theme();
+        g_dpi = static_cast<float>(GetDpiForSystem());
+        make_fonts();
         const int code = helper_main(argc, argv);
         LocalFree(argv);
+        g_f = Fonts{};
+        Gdiplus::GdiplusShutdown(gdiplus);
         OleUninitialize();
         return code;
     }

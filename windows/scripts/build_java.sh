@@ -4,7 +4,8 @@
 # puts on the JVM's classpath:
 #
 #   <out>/lib/android-framework.jar   the Android framework reimplementation
-#   <out>/lib/macapk-loader.jar       boot code and the DEX-to-JVM converter
+#   <out>/lib/macapk-loader.jar       boot code, the DEX-to-JVM converter and
+#                                     apksig (thirdparty/apksig/README.md)
 #   <out>/lib/bcprov-jdk18on-1.79.jar the "BC" security provider Android has
 #   <out>/lib/winapk-tools.jar        Windows-side helpers (windows/java)
 #   <out>/lib/java_base_patch/        classes patched into java.base (upstream's
@@ -62,11 +63,30 @@ LIST="$WORK/java.list"
 find "$RT/java" -name '*.java' ! -path '* [2-9].java' | sort | native_paths > "$LIST"
 # Upstream's sources produce a few dozen warnings (sun.misc.Unsafe use) that
 # -nowarn does not silence, so the output goes to a log shown only on failure.
-if ! "$JAVAC" -J-Xmx2g -d "$TMP" --release 21 -nowarn -Xlint:-options @"$LIST" > "$WORK/javac.log" 2>&1; then
+# Android's org.apache.http.legacy (thirdparty/apache-http-legacy/README.md):
+# the real library, converted to JVM classes. The framework's boot-classpath
+# slice of org.apache.http compiles against it, and its classes are unpacked
+# into android-framework.jar (never over a class compiled here), as upstream's
+# build does.
+APACHE_LEGACY="$RT/../thirdparty/apache-http-legacy/org.apache.http.legacy.jvm.jar"
+# AOSP's APK signature verifier (thirdparty/apksig/README.md): the loader's
+# ApkVerification calls it, and its classes go into macapk-loader.jar.
+APKSIG="$RT/../thirdparty/apksig/apksig-9.5.1.jar"
+CP_SEP=":"
+command -v cygpath > /dev/null 2>&1 && CP_SEP=";"  # javac on Windows splits on ';'
+CP="$(native_path "$APKSIG")"
+[[ -f "$APACHE_LEGACY" ]] && CP="$CP$CP_SEP$(native_path "$APACHE_LEGACY")"
+if ! "$JAVAC" -J-Xmx2g -d "$TMP" --release 21 -nowarn -Xlint:-options -cp "$CP" @"$LIST" \
+        > "$WORK/javac.log" 2>&1; then
     cat "$WORK/javac.log" >&2
     echo "[build_java] javac failed" >&2
     exit 1
 fi
+if [[ -f "$APACHE_LEGACY" ]]; then
+    # unzip -n: never overwrite a class compiled above.
+    ( cd "$TMP" && unzip -qn "$APACHE_LEGACY" -x 'META-INF/*' )
+fi
+( cd "$TMP" && unzip -qn "$APKSIG" 'com/android/apksig/*' && mkdir -p apksig-legal && unzip -qo -d apksig-legal "$APKSIG" LICENSE )
 
 # The resolver provider is a separate pass: it needs the running JDK's API
 # rather than --release 21.
@@ -110,14 +130,14 @@ if [[ -d "$RT/java/com/macapk/loader/keybinds" ]]; then
 fi
 
 echo "[build_java] packaging..."
-( cd "$TMP" && find . -type f -name '*.class' ! -path './com/macapk/*' | sort > "$WORK/framework.list" )
+( cd "$TMP" && find . -type f -name '*.class' ! -path './com/macapk/*' ! -path './com/android/apksig/*' | sort > "$WORK/framework.list" )
 ( cd "$TMP" && "$JAR" --create --file "$LIB/android-framework.jar" @"$WORK/framework.list" )
 if compgen -G "$RT/fonts/*.ttf" > /dev/null; then
     mkdir -p "$TMP/fonts"
     cp -f "$RT"/fonts/*.ttf "$TMP/fonts/"
     ( cd "$TMP" && "$JAR" --update --file "$LIB/android-framework.jar" fonts )
 fi
-( cd "$TMP" && "$JAR" --create --file "$LIB/macapk-loader.jar" com/macapk )
+( cd "$TMP" && "$JAR" --create --file "$LIB/macapk-loader.jar" com/macapk com/android/apksig apksig-legal )
 if [[ -d "$TMP/META-INF/services" ]]; then
     ( cd "$TMP" && "$JAR" --update --file "$LIB/macapk-loader.jar" META-INF/services )
 fi

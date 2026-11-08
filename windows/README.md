@@ -35,7 +35,7 @@ this repository.
 | `include/winapk/`, `src/` | The ELF loader (`elf_loader.cpp`), the guest linker (`linker.cpp`), dynamic ELF TLS (`elf_tls.cpp`), the `%fs` stack-guard patch (`fs_tls_patch.cpp`), the ABI thunks (`abi_thunk.cpp`), the guest `JNIEnv` (`guest_jni.cpp`, `jni_slots.inc`), the variadic JNI bridge (`jni_variadic.cpp`), native-method binding (`jni_bind.cpp`), libjnigraphics (`jnigraphics.cpp`) |
 | `src/mini_bionic.cpp`, `src/bionic/` | The Bionic shim: Android's libc, libdl, liblog, libm, libz and the NDK's `ALooper` on the UCRT and Win32, about 520 System V functions |
 | `src/arm64/` | The arm64 engines: interpreter (`arm64_cpu.cpp`, `arm64_simd.cpp`), JIT (`arm64_jit.cpp`, dynarmic), ahead-of-time translator (`arm64_aot.cpp`) and the AAPCS64 bridge (`arm64_guest.cpp`, `arm64_abi.cpp`) |
-| `host/` | `winapk-runtime.exe` (`runtime_main.cpp`), the app window (`win32_window.cpp`), the host natives (`native_*.cpp`, one file per Java class; `host_natives.cpp` binds them), the GL layer (`gl/`), the app-library loading path (`guest_libs.cpp`, `guest_stub.cpp`, `translator_main.cpp`), shared storage (`user_folders.cpp`) |
+| `host/` | `winapk-runtime.exe` (`runtime_main.cpp`), the app window (`win32_window.cpp`), the host natives (`native_*.cpp`, one file per Java class; `host_natives.cpp` binds them), the GL layer (`gl/`), the app-library loading path (`guest_libs.cpp`, `guest_stub.cpp`, `translator_main.cpp`), shared storage (`user_folders.cpp`), java.io's file opens with `FILE_SHARE_DELETE` (`java_io_open.cpp`) |
 | `launcher/` | `Win.apk.exe`, the app library, the install helper and the permission dialogs (`launcher_main.cpp`, `launcher.rc`, the icon) |
 | `java/` | Windows-only Java: `com.winapk.tools.AppInstall` and `AppMeta` (`winapk-tools.jar`), and `java_base_patch/` (an overlay for `java.base`) |
 | `tools/` | `winapk-elfrun` (the loader test runner), `winapk-jvm-run` (the real-JVM test), `winapk-aot` (`arm64_aot_main.cpp`), and the generators `gen_jni_slots.py`, `gen_gl_stubs.py`, `gen_icon.py` |
@@ -69,7 +69,9 @@ windows/scripts/stage_runtime.sh build runtime
   their tests build.
 - `-DWINAPK_ARM64_JIT=ON` fetches dynarmic (needs the Boost headers) and
   builds the arm64 JIT. CI and releases use it; without it arm64 code runs on
-  the interpreter until its translation is ready.
+  the interpreter until its translation is ready. One change is made to it
+  (`cmake/dynarmic_patch.cmake`): FRECPS and FRSQRTS keep their special
+  case for 0 times infinity under the NaN optimization Win.apk uses.
 - `-DWINAPK_VERSION=v0.2.0-preview` (or `0.2.0`) is the version stamped into
   `Win.apk.exe` (`launcher/launcher.rc`, through a generated
   `winapk_version.h`), which Settings shows and the update check compares with
@@ -85,6 +87,9 @@ windows/scripts/stage_runtime.sh build runtime
 - `build_java.sh [out]` builds upstream's Java side with a stock JDK 21:
   `android-framework.jar`, `macapk-loader.jar`, `winapk-tools.jar`, the
   BouncyCastle provider, and the `java.base` and `jdk.unsupported` patches.
+  Android's own `org.apache.http.legacy` (Apache-2.0, converted to JVM classes
+  in `thirdparty/apache-http-legacy/`) is unpacked into
+  `android-framework.jar`, as upstream's build does.
 - `build_framework_res.sh [out.apk]` builds the platform resource APK from
   AOSP sources with Google's standalone `aapt2` (9.x or later), through
   upstream's `scripts/build_framework_res.sh`. The result is cached under
@@ -106,6 +111,7 @@ and `-DWINAPK_JNI_INCLUDE=<windows-jdk>/include`. The scripts under
 |---|---|
 | `windows/test/run_poc_wine.sh` | Builds the loader and the guest libraries and runs the loader, linker, arm64 and crash-report tests under Wine. The toolchain file adds `-femulated-tls` and winpthreads, which GCC's mingw-w64 libstdc++ needs |
 | `WINAPK_WIN_JDK=<windows-jdk> windows/test/run_e2e_wine.sh` | Builds and runs the real-JVM end-to-end test, with the x86_64 and the arm64 guest library (`WINAPK_HOST_JAVAC` picks the javac) |
+| `windows/test/aot_worker/run_aot_worker_wine.sh` | The background translation worker (`host/runtime_main.cpp`) alone, with a stand-in for clang, on generated arm64 libraries: parts, the stamp and the shared cache; a worker killed half way (no compiler outlives it, the next run goes on); failures and their waits; a library translated from its profile; four apps' workers on one library and one cache at once; a worker killed at each step of a write (`WINAPK_AOT_FAULT`); a DLL or a cache entry cut short; a library dated in the future; stale temporary files. Needs wine64, mingw-w64 g++, and clang, lld and llvm-strip for the guest libraries |
 | `WINAPK_WIN_JDK=<windows-jdk> windows/test/run_app_wine.sh app.apk [frames]` | Stages the runtime and boots an APK headless (needs `curl` and `unzip` for the first resource build); leaves `windows/build/frame.bmp` and `boot.log` |
 | `windows/test/build_guest.sh [out]`, `build_e2e.sh <jni include> <javac> <out>` | Build the guest test libraries alone |
 
@@ -130,6 +136,10 @@ converts and writes the icon and name, then exits (3 if the app is running).
 `--gms` runs upstream's `com.macapk.gms.GmsCli` (`status`, `selftest`,
 `accounts`, `signin-window`, `signout`, `checkin`, `license`, `gcmtoken`...)
 with no app; exit 0 done, 1 error, 2 cancelled or bad arguments.
+`--gms signin-master` adds a Google account from its e-mail and master token,
+read as two lines from standard input, after Google accepts the token; with
+Google services on, the broker puts it in the accounts table as the device's
+Google account (for tests with a test account, never on a command line).
 
 `Win.apk.exe` has the user-facing command line (`<file>`, `--run`) and the
 helper verbs `install`, `uninstall`, `runtime-permission`, `special-access`
@@ -145,7 +155,7 @@ app data, but the runtime's own folder needs plain letters.
 ## Environment variables for development
 
 The user-facing ones (`WINAPK_PHONE_SIZE`, `WINAPK_RESIZABLE`,
-`WINAPK_AOT_CLANG`, `WINAPK_ABIS`, `WINAPK_WEBVIEW2`, `WINAPK_PROXY`,
+`WINAPK_AOT_CLANG`, `WINAPK_AOT`, `WINAPK_ABIS`, `WINAPK_WEBVIEW2`, `WINAPK_PROXY`,
 `WINAPK_ALLOW_SECOND_INSTANCE`, the headless ones) are in the
 [user guide](../docs/USER_GUIDE.md#command-line). For development and tests:
 
@@ -153,7 +163,14 @@ The user-facing ones (`WINAPK_PHONE_SIZE`, `WINAPK_RESIZABLE`,
 |---|---|
 | `WINAPK_HEADLESS=1` | No window; `WINAPK_HEADLESS_FRAME=<file.bmp>` saves the last frame and `WINAPK_HEADLESS_EXIT_AFTER_FRAMES=<n>` exits after that many presented frames (an idle app counts too) |
 | `WINAPK_TEST_WORKAREA=<w>x<h>[+<x>+<y>]` | Stands in for the monitor's work area, in pixels; `@file` reads the value from a file at every fit |
+| `MACAPK_BROKER=1` or `0` | Overrides the "Use Google services" setting for this run (the system broker and the real Google apps); `MACAPK_BROKER_IDLE_GRACE_S`, `MACAPK_BROKER_IDLE_EXIT=0` tune the broker's idle exit |
+| `WINAPK_TEST_ANDROID_ROOT=<dir>` | `winapk-binder-test` only: the android root its JVM gets (the broker checks' scratch data folder) |
+| `WINAPK_TEST_JAVA_BASE_PATCH=<dir>` | `winapk-binder-test` only: the java.base overlay its JVM runs with (`stage\lib\java_base_patch`) |
+| `WINAPK_JAVA_IO_SHARE_DELETE=0` | java.io opens files as the JDK does, without `FILE_SHARE_DELETE` (`host/java_io_open.cpp`), for comparing |
+| `WINAPK_DUMP_VIEWS=1` | Logs the top window's views (`[viewdump]` lines: class, id name, text, content description, clickable, enabled, bounds in the frame's pixels) each time its content changes and then holds still for half a second, with a Compose view's nodes from its accessibility provider, as uiautomator's dump does; a test finds and taps a button from them (`runtime/java/com/macapk/loader/ViewDump.java`) |
 | `WINAPK_TEST_RESIZE=<w>x<h>` | A second after the first frame, resizes the window to a client area of that many pixels (CI's "Boot an APK in a window") |
+| `MACAPK_APK_PATH` | Set by the runtime, not by hand: the installed APK, which `PresentedSdk` reads the app's targetSdk and minSdk from to choose the API level the app is presented (its targetSdk within 29..36, never below its minSdk); `MACAPK_SDK_INT=<n>` forces a level, `MACAPK_SDK_FROM_TARGET=0` presents 29 (still never below the minSdk) |
+| `MACAPK_BROKER_TRIGGER_CHECKIN=0` | The broker does not nudge Play services to check in at boot (it nudges at most three times, and not at all once Play services has broadcast `CHECKIN_COMPLETE`) |
 | `WINAPK_READY_EVENT=<handle>` | Set by the launcher, not by hand: an inherited event handle, as a decimal number, that the runtime sets once its window has painted the app's first frame (the launch splash waits for it) |
 | `WINAPK_DENSITY=<dpi>` | Overrides the density the app sees |
 | `WINAPK_WINDOW_RTL=1` or `0` | Overrides the locale's reading layout for the app window's frame |
@@ -161,13 +178,17 @@ The user-facing ones (`WINAPK_PHONE_SIZE`, `WINAPK_RESIZABLE`,
 | `MACAPK_LETTERBOX=0` | With `WINAPK_RESIZABLE=0`, stretches the phone over the whole window instead of letterboxing |
 | `MACAPK_SCROLL_SCALE=<n>` | Scales the drag the mouse wheel makes |
 | `WINAPK_ARM64_ENGINE=interp` | Forces the arm64 interpreter instead of the JIT |
-| `WINAPK_ARM64_STATS=1` | Prints at exit where the guest's time went (host functions versus arm64 code, transitions, interpreter fallbacks) |
+| `WINAPK_ARM64_STATS=1` | Prints at exit where the guest's time went (host functions versus arm64 code, transitions, interpreter fallbacks), and the same for the eight busiest threads still running |
+| `WINAPK_AOT_EH_FRAME=0` | `winapk-aot` leaves out the functions `.eh_frame_hdr` lists (for comparing) |
 | `WINAPK_ARM64_FP=exact` | Keeps the arm64 JIT's floating point bit-exact (it uses the host's FMA otherwise) |
-| `WINAPK_AOT_OPTNONE_INSNS=<n>` | The function size above which the translation is compiled unoptimized |
+| `WINAPK_AOT_MAX_INSNS=<n>` | The function size (arm64 instructions, default 4000) above which a function is left to the JIT instead of translated |
+| `WINAPK_AOT_FAULT=<point>[,<point>...]` | Tests only (`include/winapk/aot_files.h`): `nolink` makes the translation's files copies instead of hard links; `kill:<step>` ends the process at once at that step of a write: `seal` (half a DLL's seal), `cache-put` (a cache entry under its temporary name), `install` / `installed` (before and after a DLL is renamed into place), `write` (half a stamp) |
+| `WINAPK_AOT_JOBS=<n>` | The background translation runs up to n compilers at once even while the user is active (otherwise one then, and half the logical processors while the user is away); free memory, battery saver and full-screen programs still count |
 | `WINAPK_SYSTEM_CACERTS=0` | Does not build Android's CA store from the Windows roots |
 | `WINAPK_USER_FOLDER_TARGETS` | Names the Windows folders the shared-storage junctions point at (tests) |
 | `MACAPK_USER_FOLDERS=0`, `HKCU\Software\Win.apk\UserFolders=0` | Turn the shared-storage mapping off (the setting is what the launcher writes) |
-| `MACAPK_JVM_OPTS` | Extra JVM options, passed through |
+| `MACAPK_JVM_OPTS` | Extra JVM options, passed through after Win.apk's own (`-XX:TieredStopAtLevel=4` brings back the C2 compiler, which the runtime leaves out for a faster start) |
+| `MACAPK_QUIET_CLASSLOAD=0` | Logs a line for every class the app's class loader loads (the runtime sets it to 1, as upstream's launcher does: thousands of lines cost up to 0.4 s of a start) |
 | `MACAPK_ALL_PERMS_ASK=0` | Returns the permission groups beyond storage and location to the install-time rule (declared means held), the Mac's behaviour; `MACAPK_MEDIA_PERMS_ASK=0` and `MACAPK_ALLFILES_HONEST=0` keep their upstream meaning |
 | `MACAPK_GMS_PRESENT=0`, `MACAPK_GMS_FCM=0`, `MACAPK_GMS_SIGNIN=0`, `MACAPK_GMS_LOCATION=0`, `MACAPK_GMS_DIR` | Upstream's Play services switches and the state folder |
 | `MACAPK_GMS_GOOGLE_CERT=0` | Reports the platform certificate for `com.google.android.gms` and `com.android.vending` instead of Google's (apps then see Play services as invalid) |
@@ -184,6 +205,7 @@ Every test is a program built by CMake; `ci.yml` runs each of them on
 | Program | What it checks |
 |---|---|
 | `winapk-elfrun <poc.so> <poc_packed.so>` | Two builds of the Android test library (plain RELA, and APS2 + RELR) load and run: argument passing across the ABI boundary, RELATIVE and `R_X86_64_64` relocations, constructors, shim calls, stack-protected code on new threads, a guest comparator in host `qsort`, a host callback from guest code |
+| `winapk-aot-guard-test <scratch dir>` | The translation's crash guard (`host/aot_guard.h`) through the real crash path, each step a child process with `winapk-aot-guard-dll.dll` loaded as its translation: a fault with translated code loaded is counted, a clean run sets the count back, a crash with nothing translated loaded is not counted; after a fault and an `abort()` in a row the next start has translation off and logs the `off for this app` line naming the state file; two crashes on the JIT log `crashes on the JIT too: not the translation` and the next start turns it on for good; another build of the app, or deleting the file, starts over |
 | `winapk-crash-test` | The crash path of `host/crash_report.cpp`: a child with a guest SIGSEGV handler that declines three times, then the report line with the faulting module and offset, a minidump (`MDMP`) in the logs folder, pruning to the last three |
 | `winapk-bluetooth-test` | The Bluetooth host's pure parts without a radio: SHA-1 against the FIPS vectors, the parameterized WinRT interface ids derived from type signatures against five published ones, UUID and address conversions, advertisement bytes |
 | `ScanRecordTest` (`test/java/`) | `ScanRecord`'s advertisement parser and `ScanFilter` against the built jars |
@@ -192,7 +214,8 @@ Every test is a program built by CMake; `ci.yml` runs each of them on
 | `winapk-jni-test`, `winapk-jni-variadic-test` | The guest `JNIEnv` against a mock JVM; the variadic bridge for all four call kinds and every argument type, through `...` and `va_list` |
 | `winapk-linker-test <dir>` | A four-library tree with a `DT_NEEDED` cycle and a runtime plugin: constructor order, symbol resolution, `dlsym` scopes, the guest's `dlopen`, `dlsym`, `dlerror` and `dladdr` |
 | `winapk-bionic-test <bionic_guest.so> <scratch dir>` | `test/guest/bionic_guest.c` exercises the shim from guest code: strings, printf and scanf through the System V `va_list`, threads and keys, files and directories, ELF TLS, system properties, locales, futex, an 8 GiB `PROT_NONE` reservation, pipes, eventfd, epoll, sockets, `ALooper`, clocks, `mmap` |
-| `winapk-arm64-test <dir>` | The arm64 engines: `test/guest/arm64_isa.c` built for the host and for arm64 at three optimization levels must agree on every function, on the interpreter, the JIT and the AOT translation; then `arm64_bridge_guest.c` (calls in both directions, variadics, threads, atexit) and `arm64_bench.c` (the speed ratios) |
+| `winapk-arm64-test <dir>` | The arm64 engines: `test/guest/arm64_isa.c` built for the host and for arm64 at three optimization levels must agree on every function, on the interpreter, the JIT and the AOT translation; then `arm64_bridge_guest.c` (calls in both directions, variadics, threads, atexit); `arm64_flow_guest.c` (returns into an ancestor frame with RET and BR, coroutines, RETAA, deep recursion on a 1 MB thread, saturating conversions, FRECPS/FRSQRTS, an exclusive-monitor counter shared by translated code and the JIT, the STLR/LDAR litmus test) against values worked out by hand; `arm64_patch_guest.c` (a library patching its own code, and code patched by one thread while another runs it), `arm64_eh_guest.cpp` (C++ exceptions through the NDK's libc++ and unwinder, built when `ANDROID_NDK_HOME` names an NDK), a library unloaded with `dlclose`, one linked at another address, a translation cut short under a stamp that says it is sealed (refused) and the same one whole (loaded); 400 functions of random instructions from `gen_arm64_fuzz.py`, whose results on the JIT and the translation must match the interpreter's (`WINAPK_FUZZ_STATE=<i>` starts every function from function i's states, to bisect a difference); and `arm64_bench.c` (the speed ratios) |
+| `winapk-aot-cache-test <scratch dir>` | The arm64 translation's files (`include/winapk/aot_files.h`) in real processes, with `winapk-aot-test-dll.dll` as the translation: a seal against DLLs cut short, emptied, zeroed or changed; eight processes taking, making, putting and loading one cache entry at once (hard links and copies); writers killed at random moments and at each step of a write; broken cache entries deleted and replaced; eviction and replacement while another process has the DLL loaded; the clock (60 days, dates in the future, the size cap); stamps rewritten by four processes while another reads them |
 | `winapk-audio-test <test/audio>` | The WASAPI mixer and the decoders |
 | `winapk-user-folders-test <dir>` | The shared-storage junction rules |
 | `winapk-window-test` | The window geometry decisions (the letterbox, how a frame is shown) without a window |
@@ -200,7 +223,9 @@ Every test is a program built by CMake; `ci.yml` runs each of them on
 | `winapk-jvm-run <jni_guest.so> <classes>` | A real HotSpot JVM loads a guest library through the linker: its `JNI_OnLoad` registers a native through the guest `RegisterNatives`, another native is bound by name through the `NativeMethodBind` hook, both are called from Java and call back through the variadic bridge. Run with the x86_64 and the arm64 build of the library, and again on the staged `android-framework.jar` for libjnigraphics |
 | `test/java/PermissionModelTest.java` | `SpecialAccessStore.GroupModel` against PermissionController's rules (grant, deny, deny twice, auto grant, background permissions, legacy targets, App info rows) |
 | `test/java/FileSeparatorRewriteTest.java` | Guest code reads Android's `/` from `File.separator` while the JDK's own classes keep the backslash |
-| Headless boot, window boot, GMS CLI (CI steps) | The staged runtime boots the F-Droid Sudoku APK headless (30 frames) and in a window with a resize (`WINAPK_TEST_RESIZE=400x600`), and `--gms selftest` and `--gms status` pass |
+| `winapk-binder-test <classpath> com.macapk.loader.BinderTransportTest` | `host/binder_win.cpp` between real JVMs in three processes (`test/java/com/macapk/loader/BinderTransportTest.java`): transact, the OS calling pid and the receiver-derived uid, oneway order, a nested callback, binder identity both ways, a Messenger and its replyTo with the sender's uid in `Message.sendingUid` and a PendingIntent's creator uid, fds both ways, death notification; then the system broker's checks: a process that is no installed app, or that claims another package, is refused, android:exported, the package uid |
+| `winapk-binder-test <classpath> FileShareDeleteTest` | java.io's opens as `host/java_io_open.cpp` binds them (`test/java/FileShareDeleteTest.java`, with the java.base overlay from `WINAPK_TEST_JAVA_BASE_PATCH`): a file renamed or deleted while a stream has it open, and renamed over a file a stream has open, as on Android; append, truncate, the `FileNotFoundException` text and the rest as the JDK has them |
+| Headless boot, window boot, service host, GMS CLI (CI steps) | The staged runtime boots the F-Droid Sudoku APK headless (30 frames) and in a window with a resize (`WINAPK_TEST_RESIZE=400x600`); started as a service host (`MACAPK_SERVICE_HOST=1`) and then opened, the open replaces the headless process and draws; `--gms selftest` and `--gms status` pass |
 
 The guest libraries are built with plain clang + lld (`test/build_guest.sh`,
 `test/build_e2e.sh`), so no NDK is needed; CI builds them on Ubuntu and
@@ -227,7 +252,9 @@ content), `blank` (the last frame is one or two colors), `no-frame` (no frame
 before the timeout) or `crashed`. The report (`report.md`, `report.json`)
 collects the host natives called while still stubbed, the exceptions Java
 logged, HotSpot crash files, and for native code the system functions the shim
-lacks and the libraries that could not load. `--shard I/N` runs every Nth
+lacks and the libraries that could not load. Each line of an app's log
+(`logs/<package>.log`) starts with the seconds since its start, so an app that
+misses the frame budget shows where its time went. `--shard I/N` runs every Nth
 app from the Ith, and `--merge` joins the shards' report directories into one.
 `--only-from` runs only the packages a file lists, and `--require-drew` makes
 the sweep a test: an app that does not draw gets one more try, then the exit
@@ -239,7 +266,10 @@ JNI, libGDX, SDL, NativeActivity, React Native, a WebView shell, an
 arm64-only build), all of which draw today, with `--require-drew`. Keep only
 apps that reliably draw in it. The whole corpus runs only when asked for:
 Actions > CI > Run workflow on the branch, with "Full compatibility sweep"
-ticked (the default). It runs as four shards on four machines, then joins them:
+ticked (the default). It gives each app 300 frames (5 s) after its first,
+where the smoke set has 150: a slow first start (LocalSend, a Flutter app
+whose first frame comes about 2.5 s after the window's on a runner) drew or
+not by a few hundred ms at 150, on main as on branches. It runs as four shards on four machines, then joins them:
 the ranked report is the run's summary, and the report, the logs and the last
 frames are the `compat-sweep` artifact. It fails nothing.
 
@@ -275,19 +305,202 @@ with rebase. [`../CONTRIBUTING.md`](../CONTRIBUTING.md) has the rest.
 
 ## Keeping up with upstream
 
+`runtime/` was copied from Mac.apk, not merged, so the two histories share no
+commit and `git merge upstream/main` cannot find a base. Sync file by file
+instead, with a three-way merge whose base is the upstream commit last synced:
+
 ```sh
 git remote add upstream https://github.com/kksimp/Mac.apk.git   # once
 git fetch upstream
-git merge upstream/main
+# for each file under runtime/java, runtime/java_base_patch and the shared
+# runtime/src files below that changed between BASE and upstream/main:
+git merge-file <file> <(git show BASE:<file>) <(git show upstream/main:<file>)
 ```
 
-Upstream's macOS-only files were removed here, so a merge that touches them
-stops with a modify/delete conflict: keep them deleted (`git rm` the file).
+The last sync is upstream **1500431** (Mac.apk v1.0.2379, 2026-11); the first
+copy was 66cb689 (v1.0.2238). A file only upstream changed is taken as it is,
+one only Win.apk changed is kept, and a file both changed is resolved by hand,
+keeping every change listed below. Synced: `runtime/java/**`,
+`runtime/java_base_patch/**`, `thirdparty/apache-http-legacy/`, and the
+upstream C++ Windows compiles: `runtime/src/native_methods.cpp` (its GL
+stretch), `egl14_bridges.inc`, `native_sqlite.cpp`. Not synced: upstream's
+Mac-only native code (`runtime/src/*.mm`, the other `runtime/src/*.cpp`,
+`runtime/translator/`), the Swift launcher, `launcher/SystemBrokerMain.c`, the
+Skia dylib, entitlements and plists; Windows has its own counterparts in
+`windows/`. Every native a synced class gains needs a Windows answer in
+`windows/host/` (for the classes `host_natives.cpp` binds, an unimplemented
+one returns 0 / null) or a guard in the Java that catches its absence.
+
 ### Changes to the upstream tree
 
 Files in `runtime/` are changed only where a Windows hook is unavoidable, and
 every such change is listed here:
 
+- `runtime/java/android/os/MacApkBinderTransport.java`: tries `nativeInit()`
+  before looking for upstream's `libmacapk-binder.dylib`, since the Windows
+  host binds the transport's natives itself (`windows/host/binder_win.cpp`);
+  `callingUidFor` / `setUidResolver`: on Windows the calling uid is derived
+  from the OS-reported pid by the receiver, never sent by the caller.
+- `runtime/java/com/macapk/loader/WinProcesses.java` (new),
+  `WindowsBroker.java` (new), `SystemServer.java`, `SystemClient.java`,
+  `AppUids.java`: the system broker on Windows. `winapk-runtime --system`
+  started by the first app that needs it; apps started as
+  `winapk-runtime --apk`; a process is a package by the broker's record (the
+  process it started, or the `--apk` on its command line), and a caller
+  argument or registration that names another package is refused and logged;
+  `TX_UID_OF_PID` (new) answers an app's question about its caller's uid; the
+  registration reply carries the broker's pid, and an app's application thread
+  takes calls from that pid only; state under `%LOCALAPPDATA%\Win.apk`
+  (`HostAppSupport`). On the Mac (no `WinProcesses`) nothing changes.
+- `runtime/java/android/os/Messenger.java`, `android/app/PendingIntent.java`,
+  `com/macapk/loader/AppUids.java`, `Manifest.java`: what Google Play
+  services' GCM registrar checks before it hands out an FCM token. A Message
+  sent to a Messenger carries the sender's uid in `sendingUid` (AOSP's
+  `Handler.MessengerImpl`); a PendingIntent carries its creator's uid across
+  processes (`getCreatorUid`); a package's uid is fixed once assigned, and the
+  Google packages that share `com.google.uid.shared` get it even from a caller
+  that has no manifest at hand.
+- `runtime/java/android/content/Context.java`, `ContextWrapper.java`:
+  `createContextAsUser` (the one user's own Context; Play services calls it),
+  and a wrapper's `getSystemService` that comes back to itself for the same
+  name on one thread is answered from the innermost base context, as a
+  ContextImpl would (Play services' `GmsApplication` cycled through a wrapper
+  around itself into a StackOverflowError).
+- `runtime/java/android/app/ServiceRegistry.java`: a service is "being
+  created" from its attachBaseContext on, so a start of it from there is
+  queued as on a device (Play services' chimera proxies recursed).
+  `MacApkPackageManager.java`: with Google services on and the real Play
+  services installed, the in-process GMS stand-ins stay out also before the
+  process attaches to the broker.
+- `runtime/java/android/view/LayoutInflater.java`: an inflated view is
+  attached with `addView(view, params)`, as AOSP's inflate and rInflate do
+  (an `<include>`'s root with `addView(view)`, as `parseInclude` does), so a
+  ViewGroup overriding one overload sees the one a device calls (the Play
+  Store's install sheet).
+- `runtime/java/android/content/ContentResolver.java`, `SystemClient.java`,
+  `SystemServer.java`: with Google services on, `notifyChange` reaches the
+  `ContentObserver`s of other processes through the broker (AOSP's
+  `ContentService`, by authority), so the Play Store sees the Services
+  Framework's settings change when a check-in finishes after it started.
+- `runtime/java/com/macapk/gms/GoogleAuthClient.java`, `AccountsService.java`:
+  a sign-in from a master token fetches the account's gaia id when Google's
+  answer leaves it out (a userinfo token), and the account row gets it as
+  `GoogleUserId`; without it Play services' `getToken` refused every app
+  ("missing gaiaId").
+- `runtime/java/com/macapk/loader/SystemClient.java`: a call from the broker
+  that arrives before the process has read the broker's pid from its
+  registration waits for it, instead of being refused as a stranger's.
+- `runtime/java/android/net/Uri.java`: `Uri.fromFile` of a drive path gives
+  the path `/C:/Users/...` (a leading `/`, `/` separators), so the URI's
+  string parses back to the same path; `file://C:%5C...` parsed back with the
+  path taken for the authority and an empty path (the Play Store's
+  downloads wrote to `""`).
+- `runtime/java/com/macapk/loader/PackageInstallerBackend.java`: a session's
+  dex metadata (`.dm`) and signature files (`.fsv_sig`, `.digests`,
+  `.signature`, `.idsig`) are not made splits of the installed bundle, as
+  AOSP's session leaves them out of its APKs (the Play Store writes a `.dm`
+  with every app).
+- `runtime/java/com/macapk/loader/ViewDump.java` (new),
+  `ViewCanvasDriver.java`: `WINAPK_DUMP_VIEWS=1` logs the top window's views
+  with their bounds after each frame that changed them (a Compose view's
+  semantics through its `AccessibilityNodeProvider`), for tests that drive a
+  real app's window. `AccessibilityNodeProvider.HOST_VIEW_ID` is AOSP's.
+- `runtime/java/com/macapk/loader/AccountsService.java`,
+  `ApkVerification.java`: a package signed with the authenticator's key
+  manages its account type too (AOSP's `isAccountManagedByCaller` through
+  `hasSignatureCapability(..., AUTH)` over the verified signatures and
+  lineage), so the Play Store reads Google accounts' user data as on a device.
+- `runtime/java/android/content/pm/dex/ArtManager.java` (new),
+  `PackageManager.java`: `getArtManager()`, with runtime profiling off (no
+  ART); the Play Store's profile upload job failed to start without it and
+  its job scheduler retried it without pause.
+- `runtime/java/com/macapk/gms/GmsCli.java`, `GoogleAuthClient.java`: the
+  `signin-master` verb (an account from a master token, on stdin); a refusal
+  from Google's `/auth` is logged with its reason line, not only its status.
+- `runtime/java/com/macapk/loader/Manifest.java`, `MacApkPackageManager.java`,
+  `android/content/pm/PackageManager.java`: `<permission-tree>`, and
+  `addPermission` / `removePermission` inside a tree of the package's own
+  (Google Services Framework adds its GOOGLE_AUTH.<service> permissions so).
+- `runtime/java/com/macapk/loader/ApkVerification.java` (new),
+  `MacApkPackageManager.java`, `android/content/pm/PackageManager.java`,
+  `Signature.java`, `com/macapk/gms/GoogleGmsCertificate.java`: APK
+  signatures are verified cryptographically with AOSP's apksig
+  (`thirdparty/apksig/`, built into `macapk-loader.jar`) before any
+  certificate is reported or trusted; upstream read the certificate out of the
+  signing block without checking a signature. An installed app's base.apk and
+  splits, or a bundle's APKs, must all verify with one signer; an APK that
+  does not verify reports no certificate. A v3 key rotation is reported as on
+  a device: `GET_SIGNATURES` the oldest certificate of the lineage,
+  `SigningInfo` the lineage with its capability flags, `checkSignatures` and
+  `hasSigningCertificate` through it. On Windows the system-app treatment of
+  `com.google.android.gms`, `.gsf` and `com.android.vending` needs a verified
+  APK that Google's certificate signed, directly or as an ancestor in the
+  lineage (Play services 26.x is signed by a newer Google key), not just the
+  package name; the in-process stand-ins (no APK) are unchanged. Verdicts are
+  cached in `%LOCALAPPDATA%\Win.apk\cache\apk-verify\`;
+  `windows/java/com/winapk/tools/AppMeta.java` verifies at install.
+- `runtime/java/com/macapk/loader/Manifest.java`: a manifest's `@string/` and
+  `@xml/` references in a split bundle (`.apks`, `.apkm`, `.xapk`, which the
+  broker parses as the library holds them) resolve in the bundle's base APK
+  (`resourceApk`); they were looked up at the bundle's top, which has no
+  `resources.arsc`, so Play services' `android:process="@string/..."` stayed
+  `@0x7f...`.
+- `runtime/java/com/macapk/loader/PresentedSdk.java`: never presents a level
+  below the app's minSdkVersion (Play services 26.x needs 31); the runtime
+  exports `MACAPK_APK_PATH` as upstream's launcher does, so the per-app level
+  works at all (without it every app was presented 29).
+- `runtime/java/android/os/BaseBundle.java`: copying a bundle that is still
+  parcelled copies its bytes instead of unparcelling it, as AOSP's
+  `copyInternal` does, so the broker can pass on an intent whose extras hold
+  an app's own Parcelables (Play services' `FileApkService` start failed with
+  `BadParcelableException` in the broker).
+- `runtime/java/com/macapk/loader/SystemServer.java`: the boot check-in nudge
+  stops once Play services has broadcast `CHECKIN_COMPLETE`.
+
+- `runtime/java/com/macapk/loader/HostAppSupport.java` (new) and
+  `InstallerOfRecord.java`: the small files every app process shares (the
+  installer of record, and with Google services on the per-package uids and
+  the broker's state) live in the data folder, `%LOCALAPPDATA%\Win.apk`,
+  beside `installed_apps.json`, not in a `Library\Application Support` folder
+  under the user profile. On the Mac nothing changes.
+- `HostAppSupport` users that upstream spells with Mac paths: the caches
+  (`MacApkSystemFonts`: the `/system/fonts` Flutter's Skia reads,
+  `MacApkFontStore`, `ResourceIndex`'s framework view, `monet/Monet`) go to
+  `%LOCALAPPDATA%\Win.apk\cache\`, and the run lock (`RunLock`,
+  `CrossAppDoorbell`), `SettingsStore`'s boot count and the per-app input
+  settings (`ArrowPad`, `SpaceTap`, `TiltControl`, `KeyBindProfiles`) to
+  `%LOCALAPPDATA%\Win.apk`, never `Library\Caches` or
+  `Library\Application Support` under the user profile.
+- `runtime/java/android/app/NativeActivity.java` and `Activity.java`
+  (`macapkInstalledContentView`): the full-window SurfaceView that stands in
+  for the window surface is installed when the root is still
+  `NativeContentView`, looked at through the FrameLayout root upstream's
+  `ActivityWindow.macapkFrameRootFor` (#29) puts above a non-frame content
+  view. Comparing the wrapper itself skipped it, so a NativeActivity (SDL)
+  never got its window and stayed blank. An upstream bug too.
+- `runtime/java/android/os/Build.java`: on Windows `BRAND`, `MANUFACTURER` and
+  `MODEL` stay "Mac.apk", "Voltare" and "Mac.apk"; upstream now reports Apple
+  and the Mac's hardware model, which a PC is not.
+- `runtime/java/com/macapk/gms/McsClient.java`: `WINAPK_PROXY` (a SOCKS proxy
+  for the push connection) wins over upstream's per-app `HostProxy` policy.
+- `runtime/java/com/macapk/loader/Manifest.java` and `MacApkPackageManager.java`:
+  an intent filter's `<data>` ports, paths and ssps are matched as AOSP's
+  `IntentFilter` does (beside upstream's `autoVerify`).
+- `runtime/java/com/macapk/loader/ClassFileRewriter.java`, `AppClassLoader.java`,
+  `NativeLoadBridge.java` (new): in guest classes, `File.separator(Char)` reads
+  Android's `/` (Pattern S; `MACAPK_ANDROID_FILE_SEPARATOR=0` turns it off) and
+  `System.mapLibraryName` / `load` go through the on-demand native loader
+  (Pattern N); beside upstream's Patterns L and J.
+- `runtime/java/android/app/Activity.java`: `Window.setContentView(View)` puts
+  the view into the decor's content frame and keeps the decor as the root, as
+  AOSP's `PhoneWindow` does (a view added to the decor floats over the content),
+  and `findViewById(android.R.id.content)` finds the sub-decor's frame in that
+  tree before upstream's frame-root unwrap.
+- `runtime/java/android/bluetooth/` (`BluetoothAdapter`, `BluetoothDevice`,
+  `BluetoothGatt`, `BluetoothManager`, `le/BluetoothLeScanner`,
+  `le/ScanRecord`): Win.apk's `HostBluetooth` versions (below). Upstream later
+  wrote a CoreBluetooth backend (`BluetoothBridge`, `BluetoothPeripheralBridge`)
+  into the same classes; those files are synced but unused here.
 - `runtime/java/android/content/res/Resources.java`: `getIntArray` resolves the
   items of a typed `<array>` (for example a list of color references) instead
   of returning an empty array. Not Windows-specific; worth offering upstream.
@@ -493,7 +706,10 @@ every such change is listed here:
   the override skips super), and `onActivityPostCreated` before a `finish()` in
   `onCreate` tears the activity down, as AOSP does. Chromium's
   `ApplicationStatus` depends on it. `MACAPK_LIFECYCLE_CREATED_ORDER=0` restores
-  the old order. Not Windows-specific.
+  the old order. Not Windows-specific. Upstream later split the three phases
+  the same way (for the Play Store); its `dispatchActivityPreCreated` /
+  `dispatchActivityPostCreated` are used, the gate and the `finish()` handling
+  stay Win.apk's.
 - `runtime/java/com/macapk/loader/SpecialAccessStore.java`: on Windows the
   app-ops store (`appops\app-ops.json`, `signing-key.pub`) and the registry
   (`installed_apps.json`) are read from the data folder, the parent of the
@@ -579,7 +795,10 @@ every such change is listed here:
   NetFree's among them), set before any TLS. `Boot.run` did it for an app's
   process only; `GmsCli.run` (`--gms`, Settings > Google account) now does
   too, or the sign-in's token exchange failed with "PKIX path building
-  failed". Not on other systems.
+  failed". The set is kept as one JKS file, `%TEMP%\winapk-trust.jks`, that a
+  start uses at once and, when it is more than a day old, rebuilds in the
+  background 20 s later; only the first start ever builds it before the app (building it cost 0.6-1.3 s of
+  every start). Not on other systems.
 - `runtime/java/com/macapk/gms/AccountPhoto.java` (new),
   `NativeSignIn.java` and `GmsStore.java`: after a sign-in, the picture the
   sign-in window found (`signInPhotoUrl`, a native only Windows has; on the

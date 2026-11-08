@@ -1997,6 +1997,8 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
                 }
             }
         }
+        // WINAPK_DUMP_VIEWS=1: the top window's views, once it settles (ViewDump).
+        if (ViewDump.ON) ViewDump.afterFrame(surfaceW, surfaceH, statusBarH);
         // An in-window drag's shadow, above every app window as the system's
         // drag surface is (android.view.MacApkDragSession; nothing unless a
         // drag started from THIS tree is in flight).

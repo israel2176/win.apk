@@ -184,7 +184,7 @@ class Stream final : public Source {
 public:
     Stream(int rate, int channels, int buffer_frames)
         : base_rate_(rate), rate_(rate), channels_(channels),
-          capacity_(static_cast<size_t>(std::max(buffer_frames, rate / 5))) {}
+          capacity_(static_cast<size_t>(std::max(buffer_frames, rate / 5))), limit_(capacity_) {}
 
     bool mix(float* out, size_t frames, int out_rate) override {
         std::lock_guard<std::mutex> hold(lock_);
@@ -194,7 +194,12 @@ public:
         for (; rendered < frames; ++rendered) {
             const size_t have = buf_.size() / 2;
             const size_t i = static_cast<size_t>(cursor_);
-            if (i + 1 >= have) break;  // underrun
+            if (i + 1 >= have) {  // underrun
+                // AudioFlinger counts one per starved render cycle of an active
+                // track (getUnderrunCount); a track never written to is idle.
+                if (state_ == kPlaying && !draining_ && played_ + static_cast<int64_t>(have) > 0) ++underruns_;
+                break;
+            }
             const double t = cursor_ - static_cast<double>(i);
             for (int c = 0; c < 2; ++c) {
                 const float a = buf_[i * 2 + c], b = buf_[(i + 1) * 2 + c];
@@ -224,7 +229,10 @@ public:
         size_t done = 0;
         std::unique_lock<std::mutex> hold(lock_);
         while (done < whole) {
-            const size_t free_frames = capacity_ > buf_.size() / 2 ? capacity_ - buf_.size() / 2 : 0;
+            // limit_, not capacity_: setBufferSizeInFrames lowers the fill a
+            // blocking write waits on, which is what makes a smaller size lower
+            // latency (AOSP ClientProxy::setBufferSizeInFrames).
+            const size_t free_frames = limit_ > buf_.size() / 2 ? limit_ - buf_.size() / 2 : 0;
             if (free_frames == 0) {
                 // Only a playing track drains; a blocking write to one that is
                 // not (pre-filling before play) takes what fits, as AOSP's does.
@@ -321,6 +329,18 @@ public:
         *speed = speed_;
         *pitch = pitch_;
     }
+    size_t capacity() const { return capacity_; }
+    // AOSP clips the requested size to [16, capacity] and returns what it set.
+    size_t set_buffer_size(size_t frames) {
+        std::lock_guard<std::mutex> hold(lock_);
+        limit_ = std::min(std::max<size_t>(frames, 16), capacity_);
+        room_.notify_all();
+        return limit_;
+    }
+    int64_t underruns() {
+        std::lock_guard<std::mutex> hold(lock_);
+        return underruns_;
+    }
     void release() {
         std::lock_guard<std::mutex> hold(lock_);
         state_ = kStopped;
@@ -339,6 +359,8 @@ private:
     int rate_;
     const int channels_;
     const size_t capacity_;  // frames
+    size_t limit_;           // frames a write fills up to (setBufferSizeInFrames)
+    int64_t underruns_ = 0;
     int state_ = kStopped;
     bool draining_ = false;
     float left_ = 1, right_ = 1, speed_ = 1, pitch_ = 1;
@@ -370,6 +392,9 @@ bool stream_set_rate(Stream* s, int hz) { return s->set_rate(hz); }
 int stream_rate(Stream* s) { return s->rate(); }
 void stream_set_params(Stream* s, float speed, float pitch) { s->set_params(speed, pitch); }
 void stream_params(Stream* s, float* speed, float* pitch) { s->params(speed, pitch); }
+size_t stream_capacity(Stream* s) { return s->capacity(); }
+size_t stream_set_buffer_size(Stream* s, size_t frames) { return s->set_buffer_size(frames); }
+int64_t stream_underruns(Stream* s) { return s->underruns(); }
 
 // ---- clip voices -------------------------------------------------------------------------
 class Voice final : public Source {

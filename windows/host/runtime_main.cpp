@@ -15,6 +15,14 @@
 //   winapk-runtime --apk <file.apk> [--data <dir>] [--jdk <dir>] [--lib <dir>] [--install-only]
 //   winapk-runtime --apk <app> --package-to <file>   (the launcher's install helper: the package name)
 //   winapk-runtime --java-main --jdk <dir> --cp <jar> <class> [args...]   (internal: run_java)
+//   winapk-runtime [--data <dir>] [--jdk <dir>] [--lib <dir>] --system   (the system broker, below)
+//
+// --system runs upstream's system broker (com.macapk.loader.SystemServer: how
+// one app binds another's services, the real Google Play services among them,
+// when Settings > Google account > "Use Google services" is on). It is started
+// by the first app that needs it (com.macapk.loader.WindowsBroker), is alone per
+// user session (the Local\WinApk-system mutex, then its pipe name), and exits
+// when no app has been open for a while.
 //
 // One runtime runs an app at a time, as on the Mac, where the app's stub holds
 // a lock and a second launch brings the running app forward: a second start
@@ -40,6 +48,7 @@
 // program (--java-main), not in java.exe, which reads its own location and
 // its arguments in the ANSI code page.
 
+#include "aot_guard.h"
 #include "crash_report.h"
 #include "guest_libs.h"
 #include "host_natives.h"
@@ -47,10 +56,12 @@
 #include "win32_window.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <cctype>
+#include <ctime>
 #include <cwctype>
 #include <filesystem>
 #include <string>
@@ -60,7 +71,9 @@
 #include <jni.h>
 #include <jvmti.h>
 #include <windows.h>
+#include <shellapi.h>
 
+#include "winapk/aot_files.h"
 #include "winapk/arm64_aot.h"
 #include "winapk/mini_bionic.h"
 
@@ -79,6 +92,7 @@ struct Options {
     fs::path package_to;  // --package-to: write the app's package name there and stop
     bool gms = false;     // --gms <subcommand> [args]: com.macapk.gms.GmsCli, no app
     std::vector<std::wstring> gms_args;
+    bool system = false;  // --system: the system broker, no app
 };
 
 std::string utf8(const std::wstring& w) {
@@ -93,6 +107,15 @@ std::wstring env_var(const wchar_t* name) {
     wchar_t buf[32768];
     const DWORD n = GetEnvironmentVariableW(name, buf, 32768);
     return (n > 0 && n < 32768) ? std::wstring(buf, n) : std::wstring();
+}
+
+// HKCU\Software\Win.apk GoogleServices (absent = 0): the launcher's switch
+// Settings > Google account > "Use Google services (experimental)".
+bool google_services_setting() {
+    DWORD value = 0, size = sizeof value;
+    return RegGetValueW(HKEY_CURRENT_USER, L"Software\\Win.apk", L"GoogleServices", RRF_RT_REG_DWORD, nullptr,
+                        &value, &size) == ERROR_SUCCESS &&
+           value != 0;
 }
 
 fs::path exe_dir() {
@@ -184,6 +207,11 @@ HMODULE load_jvm(const fs::path& jdk) {
 
 using CreateVmFn = jint(JNICALL*)(JavaVM**, void**, void*);
 
+// HotSpot's fatal error handler (hs_err) calls it on its way out: a fault in
+// native code called from Java ends there, as HotSpot's threads catch their
+// own exceptions and the unhandled-exception filter never sees it.
+void JNICALL jvm_abort_hook() { winapk::host::crash_report_fatal("the JVM's fatal error handler"); }
+
 bool create_vm(HMODULE jvm, std::vector<std::string>& opts, JavaVM** vm, JNIEnv** env) {
     auto create = reinterpret_cast<CreateVmFn>(GetProcAddress(jvm, "JNI_CreateJavaVM"));
     if (!create) return false;
@@ -192,6 +220,8 @@ bool create_vm(HMODULE jvm, std::vector<std::string>& opts, JavaVM** vm, JNIEnv*
         jopts[i].optionString = &opts[i][0];
         jopts[i].extraInfo = nullptr;
     }
+    static char abort_option[] = "abort";
+    jopts.push_back({abort_option, reinterpret_cast<void*>(&jvm_abort_hook)});
     JavaVMInitArgs args{};
     args.version = JNI_VERSION_21;
     args.nOptions = static_cast<jint>(jopts.size());
@@ -225,6 +255,7 @@ bool parse_args(int argc, wchar_t** argv, Options* o) {
         else if (a == L"--lib") ok = value(&o->lib);
         else if (a == L"--install-only") o->install_only = true;
         else if (a == L"--package-to") ok = value(&o->package_to);
+        else if (a == L"--system") o->system = true;
         else if (a == L"--gms") {
             // Everything after --gms belongs to the subcommand, verbatim, as
             // upstream's CliArgs::gms_args.
@@ -234,13 +265,13 @@ bool parse_args(int argc, wchar_t** argv, Options* o) {
         } else ok = false;
         if (!ok) return false;
     }
-    return !o->apk.empty() || o->gms;
+    return !o->apk.empty() || o->gms || o->system;
 }
 
 // Fills in whatever the command line left out, and checks it exists.
 bool resolve_paths(Options* o) {
     std::error_code ec;
-    if (!o->gms) {
+    if (!o->gms && !o->system) {
         o->apk = fs::absolute(o->apk, ec);
         if (!fs::is_regular_file(o->apk, ec)) {
             std::fprintf(stderr, "[win.apk] no such APK: %s\n", utf8(o->apk.wstring()).c_str());
@@ -551,35 +582,80 @@ bool install_app(Options* o, const fs::path& android_root) {
 // this CPU into <lib>.so.aot.dll, which the loader picks up. Compiling a large
 // library whole took most of an hour (libwaze.so, 1.5M instructions), and the
 // app waited for it. Now nothing waits: the app starts on the JIT while a
-// background process (this program, --aot-translate) does the work, at below
-// normal priority, the C split in parts that clang compiles on all but one
-// core at -O1 (a quarter faster than -O2 for code about as good).
+// background process (this program, --aot-translate) does the work.
 // A library of up to kAotFullBelow instructions is translated whole; a larger
 // one only where its profile says code ran (arm64_aot.h, "Profiles"), and
-// again when the profile has grown by a tenth. A translation finished while
+// again when the profile has grown by a quarter. A translation finished while
 // the app runs is loaded at once (aot_load_pending); one that replaces a DLL
 // in use waits as <lib>.so.aot.dll.new for the next start.
 //
+// The worker must not get in the user's way, which it did (issue #78: CPU
+// and memory at 100% at every start of Waze; docs/research/
+// background-translation.md and aot-measurements.md for how others do it and
+// the measurements behind the numbers here):
+//   - The C is cut in parts of kAotPartInsns instructions, however many cores
+//     there are. clang's memory grows with a part (about 300 MB at 20,000
+//     instructions, 1.7 GB at 176,000) and its speed does not; one part per
+//     core had made a few huge ones.
+//   - AotGovernor decides, every couple of seconds, how many clang run at
+//     once: up to half the logical processors while the user is away, one
+//     while the user is active, none on battery saver or under a full-screen
+//     program, never so many that free memory falls below kAotReserve, and
+//     no new one while the whole machine is above 80% busy.
+//   - The worker and everything it starts run at idle priority, in
+//     background mode (low I/O and memory priority) and as EcoQoS, in a job
+//     object that ends them all when the worker ends.
+//   - Work survives interruption: a pass works in .aot-tmp\<lib>\ from a copy
+//     of the profile taken when it began (`plan`, `profile`); each compiled
+//     part is kept as p-<hash of its C>.o, so a worker stopped half way (the
+//     PC shut down, the process killed) goes on where it was.
+//   - A failed translation waits 10 minutes, then 4 times longer after each
+//     failure (at most a day), and stops after kAotMaxFailures until the
+//     library or winapk-aot changes.
+//   - The running app starts the worker only once its profile has settled
+//     (two flushes in a row without growth), and a worker started with the
+//     app waits kAotStartDelayS before compiling, so the start stays fast.
+//
 // <lib>.so.aot.stamp says what the last translation used: "full",
 // "profile <lines>" (the profile's line count then), "wait <lines>" (too
-// large without a profile, or failed: tried again when the profile grows),
-// "skip" (not an arm64 ELF file: packed or encrypted, loaded by the app's
-// own code), or "bad" (its translation crashed: the loader marks it, and the
-// JIT runs the library; see arm64_aot.cpp). A DLL without a stamp is a whole translation from before stamps.
-// The stamp ends with the kAotVersion it was made with; another one means
-// translate again.
+// large without a profile, or failed: then with the number of failures and
+// the Unix time of the next try), "skip" (not an arm64 ELF file: packed or
+// encrypted, loaded by the app's own code), or "bad" (its translation
+// crashed: the loader marks it, and the JIT runs the library; see
+// arm64_aot.cpp). A DLL without a stamp is a whole translation from before
+// stamps. The stamp holds the kAotVersion it was made with; another one means
+// translate again. It ends with the library's id (aot_lib_id): a stamp for
+// another build of the library is no stamp, and a DLL under it must be sealed.
 //
 // Many apps ship the same libraries (libc++_shared.so, libcrashlytics.so,
 // SQLite, ...). As Windows on ARM's translation cache and Box64's DynaCache
 // do, a whole translation is kept in <data>\aot-cache under a key of the
 // library's code (the text hash the loader checks), winapk-aot and clang
-// (each by size and date) and the flags, and an app with the same library
-// copies it instead of compiling. Translations made from a profile differ by
-// app and are not kept. The cache keeps to kAotCacheBytes, oldest use first.
+// (each by size and date), the flags and the CPU, and an app with the same
+// library links it (a second name for the same file, aot_link_or_copy)
+// instead of compiling. Translations made from a profile differ by app and
+// are not kept. The cache keeps to kAotCacheBytes, oldest use first, and
+// drops what no app used for kAotCacheDays.
+//
+// Every app's worker writes that cache, its app reads the DLLs while they do,
+// and any of them can be killed at any moment: the files are written as
+// include/winapk/aot_files.h says (a DLL is sealed and checked, nothing is
+// written in place, a good cache entry is never replaced, temporary names
+// are unique and stale ones deleted). windows/test/aot_cache_test.cpp and
+// test/aot_worker/run_aot_worker_wine.sh race and kill them.
 
 constexpr size_t kAotFullBelow = 400000;
+constexpr size_t kAotPartInsns = 20000;
 constexpr uintmax_t kAotCacheBytes = uintmax_t{2} << 30;
-const wchar_t* const kAotCompileFlags = L"-O1 -march=native -fno-strict-aliasing -w";
+constexpr int kAotCacheDays = 60;
+constexpr uint64_t kAotJobBytes = uint64_t{512} << 20;  // memory to allow per clang (measured: 250-410 MB)
+constexpr unsigned kAotMaxFailures = 4;
+constexpr DWORD kAotStartDelayS = 60;
+// -O2 with LLVM's fast instruction selector: about as fast to compile as -O1
+// with Win.apk's clang 22 (97.2 s against 94.8 s over the same 11 parts of
+// three libraries, on an i7-13620H; plain -O2 105 s), with 16% less code,
+// and the code runs as fast (docs/research/aot-measurements.md).
+const wchar_t* const kAotCompileFlags = L"-O2 -mllvm -fast-isel -march=native -fno-strict-aliasing -w";
 
 fs::path aot_clang() {
     std::error_code ec;
@@ -592,12 +668,57 @@ fs::path aot_clang() {
     return {};
 }
 
+// The bundled clang links with its own MinGW files (stage_clang.sh). Without a
+// --sysroot, clang's MinGW driver takes them from the first gcc on the PATH
+// (Strawberry Perl, MSYS2, a MinGW install), which has no libunwind, and every
+// link fails. Another clang is left to find its own.
+std::wstring aot_sysroot(const fs::path& clang) {
+    std::error_code ec;
+    const fs::path root = clang.parent_path().parent_path();
+    if (!fs::equivalent(root, exe_dir().parent_path() / "clang", ec)) return {};
+    return L" --sysroot=" + quoted(root);
+}
+
 fs::path arm64_libs(const fs::path& base) { return base.parent_path() / "lib" / "arm64"; }
 
 fs::path with_suffix(const fs::path& so, const wchar_t* suffix) { return so.wstring() + suffix; }
 
-size_t profile_lines(const fs::path& so) {
-    FILE* f = _wfopen(with_suffix(so, L".aot.profile").c_str(), L"rb");
+// Where a pass over `so` keeps its work until it is done.
+fs::path aot_work_dir(const fs::path& so) { return so.parent_path() / ".aot-tmp" / so.filename(); }
+
+int64_t unix_now() { return static_cast<int64_t>(std::time(nullptr)); }
+
+std::string read_text(const fs::path& p) {
+    std::string s;
+    if (FILE* f = _wfopen(p.c_str(), L"rb")) {
+        char buf[65536];
+        for (size_t n; (n = std::fread(buf, 1, sizeof buf, f)) > 0;) s.append(buf, n);
+        std::fclose(f);
+    }
+    return s;
+}
+
+bool write_text(const fs::path& p, const std::string& s) {
+    FILE* f = _wfopen(p.c_str(), L"wb");
+    if (!f) return false;
+    const bool ok = std::fwrite(s.data(), 1, s.size(), f) == s.size();
+    return std::fclose(f) == 0 && ok;
+}
+
+uint64_t fnv1a(const std::string& s, uint64_t h = 1469598103934665603ull) {
+    for (const unsigned char ch : s) h = (h ^ ch) * 1099511628211ull;
+    return h;
+}
+
+std::string hex64(uint64_t v) {
+    char out[24];
+    std::snprintf(out, sizeof out, "%016llx", static_cast<unsigned long long>(v));
+    return out;
+}
+
+// Lines of a profile file, without its header.
+size_t profile_lines_of(const fs::path& profile) {
+    FILE* f = _wfopen(profile.c_str(), L"rb");
     if (!f) return 0;
     size_t lines = 0;
     char buf[65536];
@@ -606,32 +727,53 @@ size_t profile_lines(const fs::path& so) {
     return lines > 0 ? lines - 1 : 0;  // the header
 }
 
+size_t profile_lines(const fs::path& so) { return profile_lines_of(with_suffix(so, L".aot.profile")); }
+
 struct AotStamp {
-    std::string kind;  // "full", "profile", "wait", or "" (none)
+    std::string kind;  // "full", "profile", "wait", "skip", "bad", "written", or "" (none)
     size_t lines = 0;
-    unsigned version = 0;  // the kAotVersion it was made with; 0 before stamps had one
+    unsigned version = 0;     // the kAotVersion it was made with; 0 before stamps had one
+    unsigned failures = 0;    // "wait" after a failed translation: how many in a row
+    int64_t retry_after = 0;  // and when to try again (Unix seconds)
+    uint64_t cpu = 0;         // aot_cpu_signature() of the CPU it was compiled for; 0 before stamps had one
+    uint64_t lib = 0;         // aot_lib_id() of the library it is about; 0 before stamps had one (and DLLs a seal)
 };
 
 AotStamp read_aot_stamp(const fs::path& so) {
     AotStamp s;
-    FILE* f = _wfopen(with_suffix(so, L".aot.stamp").c_str(), L"rb");
-    if (!f) return s;
+    const std::string text = winapk::arm64::aot_read_file(with_suffix(so, L".aot.stamp"));
     char kind[16] = {};
     unsigned long long lines = 0;
-    unsigned version = 0;
-    if (std::fscanf(f, "%15s %llu %u", kind, &lines, &version) >= 1) {
+    unsigned version = 0, failures = 0;
+    long long retry_after = 0;
+    unsigned long long cpu = 0, lib = 0;
+    if (std::sscanf(text.c_str(), "%15s %llu %u %u %lld %llx %llx", kind, &lines, &version, &failures, &retry_after,
+                    &cpu, &lib) >= 1) {
         s.kind = kind;
         s.lines = static_cast<size_t>(lines);
         s.version = version;
+        s.failures = failures;
+        s.retry_after = retry_after;
+        s.cpu = cpu;
+        s.lib = lib;
     }
-    std::fclose(f);
     return s;
 }
 
-void write_aot_stamp(const fs::path& so, const char* kind, size_t lines) {
-    if (FILE* f = _wfopen(with_suffix(so, L".aot.stamp").c_str(), L"wb")) {
-        std::fprintf(f, "%s %zu %u\n", kind, lines, winapk::arm64::kAotVersion);
-        std::fclose(f);
+// Written whole or not at all (aot_files.h): the loader and the app's start
+// read it while the worker writes it, and a worker killed half way through
+// once left half a stamp.
+void write_aot_stamp(const fs::path& so, const char* kind, size_t lines, unsigned failures = 0,
+                     int64_t retry_after = 0) {
+    // The loader reads the same fields (arm64_aot.cpp, stamp_refuses).
+    char line[160];
+    std::snprintf(line, sizeof line, "%s %zu %u %u %lld %llx %llx\n", kind, lines, winapk::arm64::kAotVersion,
+                  failures, static_cast<long long>(retry_after),
+                  static_cast<unsigned long long>(winapk::arm64::aot_cpu_signature()),
+                  static_cast<unsigned long long>(winapk::arm64::aot_lib_id(so)));
+    if (!winapk::arm64::aot_write_file(with_suffix(so, L".aot.stamp"), line)) {
+        std::fprintf(stderr, "[win.apk] %s: cannot write its stamp (error %lu)\n",
+                     utf8(so.filename().wstring()).c_str(), GetLastError());
     }
 }
 
@@ -642,16 +784,39 @@ bool newer_than(const fs::path& a, const fs::path& b) {
 
 // Whether `so` needs a (new) translation now.
 bool aot_needs_work(const fs::path& so) {
-    const bool have = newer_than(with_suffix(so, L".aot.dll"), so) || newer_than(with_suffix(so, L".aot.dll.new"), so);
+    std::error_code ec;
+    const fs::path dll = with_suffix(so, L".aot.dll"), later = with_suffix(so, L".aot.dll.new");
     const AotStamp stamp = read_aot_stamp(so);
+    bool have, stamp_current;
+    if (stamp.lib != 0) {
+        // The stamp names the library it is about, whatever the clock says,
+        // and its DLLs are sealed: one cut short (a copy killed half way)
+        // is no translation, and is made again.
+        auto sealed = [](const fs::path& p) {
+            return winapk::arm64::aot_check_dll(p, false) == winapk::arm64::AotFile::kSealed;
+        };
+        stamp_current = stamp.lib == winapk::arm64::aot_lib_id(so);
+        have = stamp_current && (sealed(dll) || sealed(later));
+    } else {  // a stamp from before: by the files' times
+        have = newer_than(dll, so) || newer_than(later, so);
+        stamp_current = newer_than(with_suffix(so, L".aot.stamp"), so);
+    }
     // Made by an older winapk-aot: the loader ignores that DLL, and a "bad"
     // one may have been the translator's fault (City Car's libflutter.so).
     if (have && stamp.version != winapk::arm64::kAotVersion) return true;
     if (stamp.kind == "bad" && stamp.version != winapk::arm64::kAotVersion) return true;
-    if (stamp.kind == "skip" || stamp.kind == "bad") return !newer_than(with_suffix(so, L".aot.stamp"), so);
+    // A library that rewrites its own code runs on the JIT (arm64_aot.h) until it changes.
+    if (stamp.kind == "skip" || stamp.kind == "bad" || stamp.kind == "written") return !stamp_current;
+    // Compiled for another CPU (-march=native): the loader leaves it alone.
+    if (have && stamp.cpu != winapk::arm64::aot_cpu_signature()) return true;
+    if (stamp.kind == "wait" && stamp.failures > 0) {
+        if (stamp.version != winapk::arm64::kAotVersion || !stamp_current) return true;  // a new chance
+        return stamp.failures < kAotMaxFailures && unix_now() >= stamp.retry_after;
+    }
+    if (fs::exists(aot_work_dir(so) / "plan", ec)) return true;  // a pass to finish
     auto grown = [&] {
         const size_t p = profile_lines(so);
-        return p >= stamp.lines + std::max<size_t>(200, stamp.lines / 10);
+        return p >= stamp.lines + std::max<size_t>(200, stamp.lines / 4);
     };
     if (!have) return stamp.kind != "wait" || grown();
     if (stamp.kind.empty() || stamp.kind == "full") return false;
@@ -672,34 +837,140 @@ std::vector<fs::path> arm64_sos(const fs::path& libs) {
     return sos;
 }
 
-// Runs `cmds` (command lines), at most `jobs` at a time, below normal
-// priority; true when every one exited 0.
-bool run_parallel(const std::vector<std::wstring>& cmds, size_t jobs) {
+// A process the worker starts gets out of the user's way like the worker:
+// EcoQoS (efficient cores, low clocks) and low memory priority. Idle
+// priority and the job come from the worker by inheritance.
+void background_child(HANDLE process) {
+    PROCESS_POWER_THROTTLING_STATE eco{};
+    eco.Version = PROCESS_POWER_THROTTLING_CURRENT_VERSION;
+    eco.ControlMask = eco.StateMask = PROCESS_POWER_THROTTLING_EXECUTION_SPEED;
+    SetProcessInformation(process, ProcessPowerThrottling, &eco, sizeof eco);
+    MEMORY_PRIORITY_INFORMATION memory{MEMORY_PRIORITY_LOW};
+    SetProcessInformation(process, ProcessMemoryPriority, &memory, sizeof memory);
+}
+
+// How many compilers may run at once, decided again each time one is about
+// to start (see the top of this section for the policy).
+class AotGovernor {
+public:
+    size_t slots(size_t running) {
+        const size_t logical = std::max(1u, std::thread::hardware_concurrency());
+        // WINAPK_AOT_JOBS=<n>: n at most, whether or not the user is active
+        // (to measure, or for a PC left to it); memory, battery saver and
+        // full-screen programs still count.
+        const size_t fixed = std::wcstoul(env_var(L"WINAPK_AOT_JOBS").c_str(), nullptr, 10);
+        size_t n = fixed > 0 ? fixed : std::max<size_t>(1, logical / 2);
+        const char* why = fixed > 0 ? "WINAPK_AOT_JOBS" : "the PC is idle";
+        double busy = 0;
+        FILETIME fi, fk, fu;
+        if (GetSystemTimes(&fi, &fk, &fu)) {
+            auto u64 = [](const FILETIME& t) {
+                return static_cast<uint64_t>(t.dwHighDateTime) << 32 | t.dwLowDateTime;
+            };
+            const uint64_t idle = u64(fi), total = u64(fk) + u64(fu);  // kernel time includes idle time
+            if (total_ != 0 && total > total_) busy = 1.0 - double(idle - idle_) / double(total - total_);
+            idle_ = idle;
+            total_ = total;
+        }
+        MEMORYSTATUSEX ms{};
+        ms.dwLength = sizeof ms;
+        if (GlobalMemoryStatusEx(&ms)) {
+            // Keep a fifth of the memory (at least 2 GB) for everything else.
+            const uint64_t reserve = std::max<uint64_t>(uint64_t{2} << 30, ms.ullTotalPhys / 5);
+            const uint64_t room = ms.ullAvailPhys > reserve ? ms.ullAvailPhys - reserve : 0;
+            // Running compilers are already in ullAvailPhys: count them back.
+            const size_t fit = static_cast<size_t>(room / kAotJobBytes) + running;
+            if (fit < n) {
+                n = fit;
+                why = "free memory";
+            }
+        }
+        LASTINPUTINFO li{};
+        li.cbSize = sizeof li;
+        if (fixed == 0 && n > 1 && GetLastInputInfo(&li) && GetTickCount() - li.dwTime < 2 * 60 * 1000) {
+            n = 1;
+            why = "the user is active";
+        }
+        if (running > 0 && busy > 0.80 && n > running) {
+            n = running;
+            why = "the PC is busy";
+        }
+        SYSTEM_POWER_STATUS power{};
+        if (GetSystemPowerStatus(&power) && power.SystemStatusFlag == 1) {
+            n = 0;
+            why = "battery saver is on";
+        }
+        QUERY_USER_NOTIFICATION_STATE state;
+        if (SUCCEEDED(SHQueryUserNotificationState(&state)) &&
+            (state == QUNS_BUSY || state == QUNS_RUNNING_D3D_FULL_SCREEN || state == QUNS_PRESENTATION_MODE)) {
+            n = 0;
+            why = "a full-screen program runs";
+        }
+        if (n != last_) {
+            std::fprintf(stderr, "[win.apk] aot: %zu compiler%s at once (%s)\n", n, n == 1 ? "" : "s", why);
+            std::fflush(stderr);
+            last_ = n;
+        }
+        return n;
+    }
+
+private:
+    uint64_t idle_ = 0, total_ = 0;
+    size_t last_ = SIZE_MAX;
+};
+
+struct Compile {
+    std::wstring cmd;
+    fs::path out;  // written as out + ".tmp", renamed to `out` when the compiler succeeds
+};
+
+// Runs the compiles as the governor allows; true when every one succeeded.
+// A compile that fails leaves no object; the others are kept.
+bool run_parallel(const std::vector<Compile>& compiles) {
     std::fflush(stderr);
-    std::vector<HANDLE> running;
+    AotGovernor governor;
+    struct Running {
+        HANDLE process;
+        const Compile* job;
+    };
+    std::vector<Running> running;
     bool ok = true;
     auto reap = [&](DWORD timeout) {
-        const DWORD w = WaitForMultipleObjects(static_cast<DWORD>(running.size()), running.data(), FALSE, timeout);
-        if (w >= WAIT_OBJECT_0 + running.size()) return;
-        HANDLE h = running[w - WAIT_OBJECT_0];
-        DWORD code = 1;
-        GetExitCodeProcess(h, &code);
-        ok = ok && code == 0;
-        CloseHandle(h);
+        std::vector<HANDLE> handles;
+        for (const Running& r : running) handles.push_back(r.process);
+        const DWORD w = WaitForMultipleObjects(static_cast<DWORD>(handles.size()), handles.data(), FALSE, timeout);
+        if (w >= WAIT_OBJECT_0 + handles.size()) return;
+        const Running r = running[w - WAIT_OBJECT_0];
         running.erase(running.begin() + (w - WAIT_OBJECT_0));
+        DWORD code = 1;
+        GetExitCodeProcess(r.process, &code);
+        CloseHandle(r.process);
+        const fs::path part = r.job->out.wstring() + L".tmp";
+        if (code == 0 && MoveFileExW(part.c_str(), r.job->out.c_str(), MOVEFILE_REPLACE_EXISTING)) return;
+        std::error_code ec;
+        fs::remove(part, ec);
+        ok = false;
     };
-    for (std::wstring cmd : cmds) {
-        while (running.size() >= std::min<size_t>(jobs, MAXIMUM_WAIT_OBJECTS)) reap(INFINITE);
+    for (const Compile& c : compiles) {
+        for (;;) {
+            const size_t allowed = std::min<size_t>(governor.slots(running.size()), MAXIMUM_WAIT_OBJECTS);
+            if (running.size() < allowed) break;
+            if (running.empty()) Sleep(2000);  // paused
+            else reap(2000);
+        }
+        std::wstring cmd = c.cmd;
         STARTUPINFOW si{};
         si.cb = sizeof si;
         PROCESS_INFORMATION pi{};
-        if (!CreateProcessW(nullptr, &cmd[0], nullptr, nullptr, TRUE, BELOW_NORMAL_PRIORITY_CLASS | CREATE_NO_WINDOW,
+        if (!CreateProcessW(nullptr, &cmd[0], nullptr, nullptr, TRUE, IDLE_PRIORITY_CLASS | CREATE_NO_WINDOW,
                             nullptr, nullptr, &si, &pi)) {
+            std::fprintf(stderr, "[win.apk] aot: cannot start clang (error %lu)\n", GetLastError());
             ok = false;
             continue;
         }
+        background_child(pi.hProcess);
         CloseHandle(pi.hThread);
-        running.push_back(pi.hProcess);
+        running.push_back({pi.hProcess, &c});
     }
     while (!running.empty()) reap(INFINITE);
     return ok;
@@ -742,51 +1013,47 @@ std::string aot_cache_key(const fs::path& so, const fs::path& clang) {
     std::string hash;
     if (run_capture(quoted(exe_dir() / "winapk-aot.exe") + L" --hash " + quoted(so), &hash) != 0) return {};
     while (!hash.empty() && std::isspace(static_cast<unsigned char>(hash.back()))) hash.pop_back();
+    // -march=native: the CPU too, for a data folder that moves to another PC.
     const std::string id = hash + "|" + file_id(exe_dir() / "winapk-aot.exe") + "|" + file_id(clang) + "|" +
-                           utf8(kAotCompileFlags) + "|" + utf8(env_var(L"WINAPK_AOT_OPTNONE_INSNS"));
-    uint64_t h = 1469598103934665603ull;
-    for (const unsigned char ch : id) h = (h ^ ch) * 1099511628211ull;
-    char key[48];
-    std::snprintf(key, sizeof key, "%016llx", static_cast<unsigned long long>(h));
-    return key;
+                           utf8(kAotCompileFlags) + "|" + utf8(env_var(L"WINAPK_AOT_MAX_INSNS")) + "|" +
+                           hex64(winapk::arm64::aot_cpu_signature());
+    return hex64(fnv1a(id));
 }
 
-// Keeps the cache within kAotCacheBytes, dropping the least recently used.
-void aot_cache_trim(const fs::path& cache) {
-    std::error_code ec;
-    std::vector<std::pair<fs::file_time_type, fs::path>> files;
-    uintmax_t total = 0;
-    for (const auto& e : fs::directory_iterator(cache, ec)) {
-        if (!e.is_regular_file(ec)) continue;
-        total += e.file_size(ec);
-        files.emplace_back(e.last_write_time(ec), e.path());
-    }
-    std::sort(files.begin(), files.end());
-    for (const auto& f : files) {
-        if (total <= kAotCacheBytes) break;
-        const uintmax_t size = fs::file_size(f.second, ec);
-        if (fs::remove(f.second, ec)) total -= size;
-    }
-}
-
-// Puts a finished translation in place, unless the running app has the old
-// one loaded: then for the next start.
+// Puts a finished translation in place, or, where the running app has the
+// old one loaded and the system refuses to rename over it, beside it for the
+// next start. A rename, so the app's name points at a whole DLL or at none.
 bool install_aot_dll(const fs::path& dll, const fs::path& so) {
     const fs::path target = with_suffix(so, L".aot.dll"), later = with_suffix(so, L".aot.dll.new");
-    return MoveFileExW(dll.c_str(), target.c_str(), MOVEFILE_REPLACE_EXISTING) ||
-           MoveFileExW(dll.c_str(), later.c_str(), MOVEFILE_REPLACE_EXISTING);
+    winapk::arm64::aot_fault_point("install");
+    const bool ok = winapk::arm64::aot_replace(dll, target) || winapk::arm64::aot_replace(dll, later);
+    if (ok) winapk::arm64::aot_fault_point("installed");  // in place, the stamp not written yet
+    return ok;
+}
+
+// A failure: "wait", tried again after a while that grows with each failure
+// in a row (10 minutes, 40, 160, ..., at most a day).
+void aot_failed(const fs::path& so, size_t lines) {
+    const AotStamp before = read_aot_stamp(so);
+    const unsigned failures = (before.kind == "wait" ? before.failures : 0) + 1;
+    const int64_t wait = std::min<int64_t>(24 * 3600, int64_t{600} << (2 * std::min(failures - 1, 10u)));
+    write_aot_stamp(so, "wait", lines, failures, unix_now() + wait);
+    if (failures >= kAotMaxFailures) {
+        std::fprintf(stderr, "[win.apk] %s: %u failures in a row; not tried again until the library or Win.apk "
+                             "changes (the JIT runs it)\n", utf8(so.filename().wstring()).c_str(), failures);
+    } else {
+        std::fprintf(stderr, "[win.apk] %s: tried again in %lld minutes\n", utf8(so.filename().wstring()).c_str(),
+                     static_cast<long long>(wait / 60));
+    }
 }
 
 // Translates one library: from the shared cache if it is there, else C from
-// winapk-aot in parts, the parts compiled in parallel, linked into a DLL,
-// put in place (and, when whole, into the cache).
-void aot_translate_one(const fs::path& so, const fs::path& clang, size_t jobs, const fs::path& cache) {
+// winapk-aot in parts, the parts compiled as the governor allows, linked into
+// a DLL, put in place (and, when whole, into the cache). A pass interrupted
+// half way goes on where it was the next time.
+void aot_translate_one(const fs::path& so, const fs::path& clang, const fs::path& cache) {
     std::error_code ec;
-    const fs::path tmp = so.parent_path() / ".aot-tmp";
-    fs::remove_all(tmp, ec);
-    fs::create_directories(tmp, ec);
-    const fs::path c = tmp / (so.filename().wstring() + L".c");
-    const size_t lines = profile_lines(so);
+    const fs::path work = aot_work_dir(so);
     const std::string name = utf8(so.filename().wstring());
     const ULONGLONG t0 = GetTickCount64();
     const std::string key = aot_cache_key(so, clang);
@@ -794,63 +1061,125 @@ void aot_translate_one(const fs::path& so, const fs::path& clang, size_t jobs, c
         std::fprintf(stderr, "[win.apk] %s is not an arm64 ELF file (packed or encrypted; the app loads it "
                              "itself): the JIT runs its code\n", name.c_str());
         write_aot_stamp(so, "skip", 0);
-        fs::remove_all(tmp, ec);
+        fs::remove_all(work, ec);
         return;
     }
+    fs::create_directories(work, ec);
     const fs::path cached = cache.empty() ? fs::path() : cache / (key + ".aot.dll");
-    const fs::path dll = tmp / (so.filename().wstring() + L".aot.dll");
-    if (!cached.empty() && fs::exists(cached, ec) && CopyFileW(cached.c_str(), dll.c_str(), FALSE) &&
-        install_aot_dll(dll, so)) {
-        fs::last_write_time(cached, fs::file_time_type::clock::now(), ec);  // recently used
-        write_aot_stamp(so, "full", lines);
-        fs::remove_all(tmp, ec);
+    const fs::path dll = work / (so.filename().wstring() + L".aot.dll");
+    // aot_cache_take checks the entry whole and drops a broken one.
+    if (!cached.empty() && winapk::arm64::aot_cache_take(cached, dll) && install_aot_dll(dll, so)) {
+        write_aot_stamp(so, "full", profile_lines(so));
+        fs::remove_all(work, ec);
         std::fprintf(stderr, "[win.apk] %s: translation taken from the shared cache\n", name.c_str());
         return;
     }
-    std::fprintf(stderr, "[win.apk] translating %s for this CPU, in the background...\n", name.c_str());
-    const int rc = run_process(quoted(exe_dir() / "winapk-aot.exe") + L" " + quoted(so) + L" " + quoted(c) + L" " +
-                               std::to_wstring(jobs) + L" --profile " + quoted(with_suffix(so, L".aot.profile")) +
+    // The pass: the one left half done for this build of the library and of
+    // the tools, or a new one from a copy of the profile as it is now (the
+    // profile may grow while the pass works; the next pass takes that).
+    const fs::path plan = work / "plan", profile = work / "profile";
+    const std::string plan_id = key + " " + file_id(so) + "\n";
+    if (read_text(plan) == plan_id) {
+        std::fprintf(stderr, "[win.apk] going on with the translation of %s, in the background...\n", name.c_str());
+    } else {
+        fs::remove_all(work, ec);
+        fs::create_directories(work, ec);
+        const fs::path live = with_suffix(so, L".aot.profile");
+        if (fs::exists(live, ec) && !CopyFileW(live.c_str(), profile.c_str(), FALSE)) {
+            std::fprintf(stderr, "[win.apk] %s: cannot copy the profile (error %lu)\n", name.c_str(), GetLastError());
+        }
+        if (!write_text(plan, plan_id)) {
+            std::fprintf(stderr, "[win.apk] %s: cannot write %s (error %lu)\n", name.c_str(),
+                         utf8(plan.wstring()).c_str(), GetLastError());
+        }
+        std::fprintf(stderr, "[win.apk] translating %s for this CPU, in the background...\n", name.c_str());
+    }
+    for (const auto& e : fs::directory_iterator(work, ec)) {  // what a stopped compile left
+        if (e.path().extension() == L".tmp") fs::remove(e.path(), ec);
+    }
+    const size_t lines = profile_lines_of(profile);
+    const fs::path c = work / (so.filename().wstring() + L".c");
+    const int rc = run_process(quoted(exe_dir() / "winapk-aot.exe") + L" " + quoted(so) + L" " + quoted(c) +
+                               L" --part-insns " + std::to_wstring(kAotPartInsns) + L" --profile " + quoted(profile) +
                                L" --full-below " + std::to_wstring(kAotFullBelow));
     if (rc == 3) {
         std::fprintf(stderr, "[win.apk] %s: too large to translate whole; waiting for its profile\n", name.c_str());
         write_aot_stamp(so, "wait", lines);
-        fs::remove_all(tmp, ec);
+        fs::remove_all(work, ec);
         return;
     }
     bool ok = rc == 0 || rc == 4;
     std::vector<fs::path> objs;
+    size_t reused = 0;
     if (ok) {
-        std::vector<std::wstring> compiles;
+        // Each part's object is named by its C and how it is compiled, so a
+        // part compiled before the pass was stopped is not compiled again.
+        const std::string how =
+            file_id(clang) + "|" + utf8(kAotCompileFlags) + "|" + utf8(env_var(L"WINAPK_AOT_MAX_INSNS"));
+        std::vector<Compile> compiles;
         for (int i = 0;; ++i) {
             const fs::path src = i == 0 ? c : fs::path(c.wstring() + L"." + std::to_wstring(i) + L".c");
             if (!fs::exists(src, ec)) break;
-            objs.push_back(src.wstring() + L".o");
-            compiles.push_back(quoted(clang) + L" " + kAotCompileFlags + L" -c -o " + quoted(objs.back()) + L" " +
-                               quoted(src));
+            const fs::path obj = work / ("p-" + hex64(fnv1a(read_text(src), fnv1a(how))) + ".o");
+            objs.push_back(obj);
+            if (fs::exists(obj, ec)) {
+                ++reused;
+                continue;
+            }
+            compiles.push_back({quoted(clang) + aot_sysroot(clang) + L" " + kAotCompileFlags + L" -c -o " +
+                                    quoted(fs::path(obj.wstring() + L".tmp")) + L" " + quoted(src),
+                                obj});
         }
-        ok = run_parallel(compiles, jobs);
+        if (reused > 0) {
+            std::fprintf(stderr, "[win.apk] %s: %zu of %zu parts were compiled before\n", name.c_str(), reused,
+                         objs.size());
+        }
+        ok = run_parallel(compiles);
     }
     if (ok) {
-        std::wstring link = quoted(clang) + L" -shared -o " + quoted(dll);
+        // A new file, never one written in place: `dll` may be a second name
+        // of the cache's entry (taken, then not put in place), and a linker
+        // that writes into its output would change that entry under every app.
+        if (!winapk::arm64::aot_retire(dll)) {
+            std::fprintf(stderr, "[win.apk] %s: cannot remove the old %s (error %lu)\n", name.c_str(),
+                         utf8(dll.wstring()).c_str(), GetLastError());
+            ok = false;
+        }
+    }
+    if (ok) {
+        std::wstring link = quoted(clang) + aot_sysroot(clang) + L" -shared -o " + quoted(dll);
         for (const fs::path& o : objs) link += L" " + quoted(o);
         ok = run_process(link) == 0;
+        if (ok && !winapk::arm64::aot_seal(dll)) {
+            std::fprintf(stderr, "[win.apk] %s: cannot seal the DLL (error %lu)\n", name.c_str(), GetLastError());
+            ok = false;
+        }
     }
     if (ok && rc == 0 && !cached.empty()) {  // whole: for every app with this library
         fs::create_directories(cache, ec);
-        const fs::path part = cached.wstring() + L".tmp";
-        if (CopyFileW(dll.c_str(), part.c_str(), FALSE) &&
-            MoveFileExW(part.c_str(), cached.c_str(), MOVEFILE_REPLACE_EXISTING)) {
-            aot_cache_trim(cache);
+        if (winapk::arm64::aot_cache_put(dll, cached)) {
+            winapk::arm64::aot_cache_trim(cache, kAotCacheBytes, kAotCacheDays);
         }
     }
-    ok = ok && install_aot_dll(dll, so);
-    fs::remove_all(tmp, ec);
+    if (ok && !install_aot_dll(dll, so)) {
+        std::fprintf(stderr, "[win.apk] %s: cannot put the translation in place (error %lu)\n", name.c_str(),
+                     GetLastError());
+        ok = false;
+    }
     if (!ok) {
-        std::fprintf(stderr, "[win.apk] %s: translation failed (winapk-aot exit code %d); the JIT runs it\n",
-                     name.c_str(), rc);
-        write_aot_stamp(so, "wait", lines);
+        if (rc != 0 && rc != 4) {
+            std::fprintf(stderr, "[win.apk] %s: translation failed (winapk-aot exit code %d); the JIT runs it\n",
+                         name.c_str(), rc);
+        } else {
+            std::fprintf(stderr, "[win.apk] %s: translation failed (clang, above); the JIT runs it\n", name.c_str());
+        }
+        aot_failed(so, lines);
+        // The objects that did compile stay for the next try of this pass,
+        // unless there will be none.
+        if (read_aot_stamp(so).failures >= kAotMaxFailures) fs::remove_all(work, ec);
         return;
     }
+    fs::remove_all(work, ec);
     write_aot_stamp(so, rc == 4 ? "profile" : "full", lines);
     std::fprintf(stderr, "[win.apk] %s: translated%s in %.1f s\n", name.c_str(), rc == 4 ? " (what ran)" : "",
                  static_cast<double>(GetTickCount64() - t0) / 1000);
@@ -866,24 +1195,50 @@ std::wstring aot_mutex_name(const fs::path& libs) {
     return name;
 }
 
-// winapk-runtime --aot-translate <lib\arm64 dir> [--cache <dir>]: the
-// background worker. One per app; passes until nothing is left to do (the
-// profile can grow while it works).
-int aot_translate_main(const fs::path& libs, const fs::path& cache) {
+// The worker and everything it starts: at idle priority, in background mode
+// (low I/O and memory priority; for this process only), as EcoQoS, and in a
+// job that ends them all when the worker ends, however it ends (before, a
+// killed worker left its clang running and holding files in .aot-tmp).
+void aot_worker_background() {
+    SetPriorityClass(GetCurrentProcess(), PROCESS_MODE_BACKGROUND_BEGIN);
+    SetPriorityClass(GetCurrentProcess(), IDLE_PRIORITY_CLASS);
+    background_child(GetCurrentProcess());
+    HANDLE job = CreateJobObjectW(nullptr, nullptr);
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    if (!job || !SetInformationJobObject(job, JobObjectExtendedLimitInformation, &limits, sizeof limits) ||
+        !AssignProcessToJobObject(job, GetCurrentProcess())) {
+        std::fprintf(stderr, "[win.apk] aot: no job object for the worker (error %lu): a compiler may outlive it\n",
+                     GetLastError());
+    }
+    // The handle stays open until the process ends; closing it is what ends the job.
+}
+
+// winapk-runtime --aot-translate <lib\arm64 dir> [--cache <dir>] [--delay <s>]:
+// the background worker. One per app; passes until nothing is left to do
+// (the profile can grow while it works). --delay: the seconds to wait first,
+// when the app has just started.
+int aot_translate_main(const fs::path& libs, const fs::path& cache, DWORD delay_s) {
     HANDLE m = CreateMutexW(nullptr, FALSE, aot_mutex_name(libs).c_str());
     if (m && WaitForSingleObject(m, 0) == WAIT_TIMEOUT) return 0;  // another one is at it
-    SetPriorityClass(GetCurrentProcess(), BELOW_NORMAL_PRIORITY_CLASS);
+    aot_worker_background();
     const fs::path clang = aot_clang();
     if (clang.empty()) {
         std::fprintf(stderr, "[win.apk] no clang found: arm64 code runs on the JIT\n");
         return 1;
     }
-    const size_t jobs = std::max<size_t>(1, std::thread::hardware_concurrency() - 1);
+    if (delay_s > 0) Sleep(delay_s * 1000);
+    if (!cache.empty()) winapk::arm64::aot_cache_trim(cache, kAotCacheBytes, kAotCacheDays);
+    winapk::arm64::aot_remove_stale_temps(libs);  // stamps a killed worker or app was writing
+    std::error_code ec;
+    for (const auto& e : fs::directory_iterator(libs / ".aot-tmp", ec)) {
+        if (!e.is_directory(ec)) fs::remove(e.path(), ec);  // from before passes had a folder each
+    }
     for (int pass = 0; pass < 8; ++pass) {
         bool worked = false;
         for (const fs::path& so : arm64_sos(libs)) {
             if (!aot_needs_work(so)) continue;
-            aot_translate_one(so, clang, jobs, cache);
+            aot_translate_one(so, clang, cache);
             worked = true;
         }
         if (!worked) break;
@@ -893,7 +1248,7 @@ int aot_translate_main(const fs::path& libs, const fs::path& cache) {
 
 // Starts the worker for `libs` unless one is running; its output goes to
 // `log` (appended).
-void start_aot_worker(const fs::path& libs, const fs::path& log, const fs::path& cache) {
+void start_aot_worker(const fs::path& libs, const fs::path& log, const fs::path& cache, DWORD delay_s = 0) {
     HANDLE m = OpenMutexW(SYNCHRONIZE, FALSE, aot_mutex_name(libs).c_str());
     if (m) {  // a worker holds it, or has just let go: either way it rescans
         CloseHandle(m);
@@ -921,8 +1276,9 @@ void start_aot_worker(const fs::path& libs, const fs::path& log, const fs::path&
     }
     std::wstring cmd = quoted(exe_dir() / "winapk-runtime.exe") + L" --aot-translate " + quoted(libs) + L" --cache " +
                        quoted(cache);
-    const DWORD flags = BELOW_NORMAL_PRIORITY_CLASS | CREATE_NO_WINDOW |
-                        (si.lpAttributeList ? EXTENDED_STARTUPINFO_PRESENT : 0);
+    if (delay_s > 0) cmd += L" --delay " + std::to_wstring(delay_s);
+    const DWORD flags =
+        IDLE_PRIORITY_CLASS | CREATE_NO_WINDOW | (si.lpAttributeList ? EXTENDED_STARTUPINFO_PRESENT : 0);
     PROCESS_INFORMATION pi{};
     // Out of the launcher's job, if it has one, so the work goes on after the app.
     if (CreateProcessW(nullptr, &cmd[0], nullptr, nullptr, TRUE, flags | CREATE_BREAKAWAY_FROM_JOB, nullptr, nullptr,
@@ -946,28 +1302,50 @@ struct AotWatch {
     fs::path libs, log, cache;
 };
 
-// While the app runs: writes the JIT's profile, starts the worker when it
-// has grown, and loads translations as they are finished.
+// While the app runs: writes the JIT's profile, starts the worker once it
+// has settled, and loads translations as they are finished.
 DWORD WINAPI aot_watch_thread(void* param) {
     const AotWatch w = *static_cast<AotWatch*>(param);
     delete static_cast<AotWatch*>(param);
     // Every 2 s for the first half minute (a flush with nothing new writes
     // nothing): an app that stops early (Waze, ten seconds in) still leaves
-    // the profile of what ran. Then every 30 s.
+    // the profile of what ran. Then every 30 s. In the first sessions the
+    // profile grows at nearly every flush, and a worker started at each one
+    // translated it over and over: it starts once two flushes in a row
+    // have added nothing (a minute without new code), a minute or more into
+    // the run. A profile that never settles is taken at the next start.
+    bool grew = false;
+    int quiet = 0;
     for (int tick = 0;; ++tick) {
         Sleep(tick < 15 ? 2000 : 30000);
-        if (winapk::arm64::aot_profile_flush() > 0 && any_aot_work(w.libs)) start_aot_worker(w.libs, w.log, w.cache);
+        if (winapk::arm64::aot_profile_flush() > 0) {
+            grew = true;
+            quiet = 0;
+        } else if (tick >= 15 && ++quiet >= 2 && grew) {
+            grew = false;
+            if (any_aot_work(w.libs)) start_aot_worker(w.libs, w.log, w.cache);
+        }
         winapk::arm64::aot_load_pending();
     }
 }
 
 // Step 1b, before the app's libraries load: puts in place what the worker
-// finished while the app was not running, starts it for what is left, and
-// watches the profile while the app runs. Never waits for a translation.
+// finished while the app was not running, starts it for what is left (after
+// kAotStartDelayS, when the app is starting), and watches the profile while
+// the app runs. Never waits for a translation.
 void prepare_arm64(const Options& o, const fs::path& app_dir) {
     std::error_code ec;
     const fs::path libs = arm64_libs(o.apk);
     if (!fs::is_directory(libs, ec) || !fs::exists(exe_dir() / "winapk-aot.exe", ec)) return;
+    if (env_var(L"WINAPK_AOT") == L"0") {
+        winapk::arm64::aot_disable();
+        std::fprintf(stderr, "[win.apk] arm64 AOT: off (WINAPK_AOT=0); the JIT runs the app's arm64 code\n");
+        return;
+    }
+    // Translation off for this start if the app crashed twice in a row with
+    // translated code loaded (aot_guard.h). Then nothing is translated either:
+    // the worker would only make what is not loaded.
+    if (!o.install_only && !winapk::host::aot_guard_start(app_dir, winapk::host::aot_guard_id(o.apk, libs))) return;
     if (aot_clang().empty()) {
         std::fprintf(stderr, "[win.apk] no clang found (WINAPK_AOT_CLANG, clang\\bin\\clang.exe in Win.apk's folder, "
                              "or the PATH): the app's arm64 code runs on the JIT, which is slower\n");
@@ -975,8 +1353,12 @@ void prepare_arm64(const Options& o, const fs::path& app_dir) {
     }
     for (const fs::path& so : arm64_sos(libs)) {
         const fs::path later = with_suffix(so, L".aot.dll.new");
-        if (fs::exists(later, ec) &&
-            !MoveFileExW(later.c_str(), with_suffix(so, L".aot.dll").c_str(), MOVEFILE_REPLACE_EXISTING)) {
+        if (!fs::exists(later, ec)) continue;
+        if (winapk::arm64::aot_check_dll(later, false) == winapk::arm64::AotFile::kBroken) {
+            fs::remove(later, ec);  // aot_needs_work: translated again
+            continue;
+        }
+        if (!winapk::arm64::aot_replace(later, with_suffix(so, L".aot.dll"), 2)) {
             std::fprintf(stderr, "[win.apk] cannot put %s in place (error %lu)\n", utf8(later.wstring()).c_str(),
                          GetLastError());
         }
@@ -986,7 +1368,7 @@ void prepare_arm64(const Options& o, const fs::path& app_dir) {
     if (any_aot_work(libs)) {
         std::fprintf(stderr, "[win.apk] arm64 code is being translated in the background (log: %s); "
                              "until then the JIT runs it\n", utf8(log.wstring()).c_str());
-        start_aot_worker(libs, log, cache);
+        start_aot_worker(libs, log, cache, o.install_only ? 0 : kAotStartDelayS);
     }
     if (!o.install_only) {
         if (HANDLE t = CreateThread(nullptr, 0, aot_watch_thread, new AotWatch{libs, log, cache}, 0, nullptr)) CloseHandle(t);
@@ -1033,6 +1415,14 @@ std::vector<std::string> jvm_options(const BootArgs& b) {
     v.push_back("-XX:+UnlockDiagnosticVMOptions");
     v.push_back("-XX:-BytecodeVerificationRemote");
     v.push_back("-XX:-BytecodeVerificationLocal");
+    // C1 only, no C2: an app's start is mostly code that runs once, which
+    // tiered compilation first profiles and then recompiles with C2 on the
+    // other cores. Measured on windows-latest (4 CPUs), the first frame came
+    // 25-35% sooner (Jerboa 2.08 -> 1.44 s, Fossify Notes 3.33 -> 2.45 s) for
+    // less than half the CPU, while Mindustry and Shattered Pixel Dungeon held
+    // 60 fps on the same CPU (+7%, -1%). Long hot Java loops lose C2's peak;
+    // MACAPK_JVM_OPTS=-XX:TieredStopAtLevel=4, read after this, restores it.
+    v.push_back("-XX:TieredStopAtLevel=1");
     v.push_back("--enable-native-access=ALL-UNNAMED");
     v.push_back("--add-opens=java.base/java.io=ALL-UNNAMED");
     v.push_back("--add-opens=java.base/java.util=ALL-UNNAMED");
@@ -1050,6 +1440,17 @@ std::vector<std::string> jvm_options(const BootArgs& b) {
     fs::create_directories(android_root, ec);
     fs::create_directories(logs, ec);
     v.push_back("-Dmacapk.android.root=" + jvm_path(android_root));
+    // What a process this runtime starts (the system broker, or an app the
+    // broker starts as a service host) runs with: this same runtime, data
+    // folder, JDK and jars (com.macapk.loader.WindowsBroker.runtimeCommand).
+    {
+        wchar_t self[MAX_PATH * 4];
+        const DWORD n = GetModuleFileNameW(nullptr, self, MAX_PATH * 4);
+        if (n > 0 && n < MAX_PATH * 4) v.push_back("-Dwinapk.runtime.exe=" + jvm_path(fs::path(std::wstring(self, n))));
+        v.push_back("-Dwinapk.data=" + jvm_path(o.data));
+        v.push_back("-Dwinapk.jdk=" + jvm_path(o.jdk));
+        v.push_back("-Dwinapk.lib=" + jvm_path(o.lib));
+    }
     // Guest code's "/data/...", "/sdcard/..." resolve under the same folder.
     winapk::set_android_root(utf8(android_root.wstring()).c_str());
     // The app's data directory, by its 8.3 short name where the volume has
@@ -1248,6 +1649,48 @@ DWORD WINAPI gms_thread(void* param) {
     return 0;
 }
 
+// winapk-runtime --system: com.macapk.loader.SystemServer.main in a JVM with
+// the host natives (the Binder transport among them) and no app. main serves
+// until the broker decides it is idle, and then exits the process itself.
+DWORD WINAPI system_thread(void* param) {
+    auto* b = static_cast<BootArgs*>(param);
+    const Options& o = b->options;
+    b->result = 1;
+    HMODULE jvm = load_jvm(o.jdk);
+    if (!jvm) return 1;
+    std::vector<std::string> opts = jvm_options(*b);
+    JavaVM* vm = nullptr;
+    JNIEnv* env = nullptr;
+    if (!create_vm(jvm, opts, &vm, &env)) return 1;
+    jvmtiEnv* jvmti = nullptr;
+    if (vm->GetEnv(reinterpret_cast<void**>(&jvmti), JVMTI_VERSION_1_2) != JNI_OK) {
+        std::fprintf(stderr, "[win.apk] no JVMTI\n");
+        return 1;
+    }
+    winapk::host::NativeStats stats;
+    if (!winapk::host::register_host_natives(env, jvmti, &stats)) {
+        std::fprintf(stderr, "[win.apk] binding host natives failed\n");
+        return 1;
+    }
+    macapk::sqlite::RegisterNativeSqliteMethods(env);
+    check_exception(env, "RegisterNativeSqliteMethods");
+    jclass server = env->FindClass("com/macapk/loader/SystemServer");
+    jmethodID main = server ? env->GetStaticMethodID(server, "main", "([Ljava/lang/String;)V") : nullptr;
+    if (!main) {
+        check_exception(env, "SystemServer.main lookup");
+        return 1;
+    }
+    jobjectArray args = env->NewObjectArray(0, env->FindClass("java/lang/String"), nullptr);
+    env->CallStaticVoidMethod(server, main, args);
+    if (env->ExceptionCheck()) {
+        env->ExceptionDescribe();
+        env->ExceptionClear();
+    }
+    std::fflush(stderr);
+    TerminateProcess(GetCurrentProcess(), 1);
+    return 0;
+}
+
 // Steps 3 to 5, on the large-stack thread.
 DWORD WINAPI boot_thread(void* param) {
     auto* b = static_cast<BootArgs*>(param);
@@ -1334,6 +1777,11 @@ std::wstring instance_key(const fs::path& app_dir) {
     std::error_code ec;
     std::wstring key = fs::absolute(app_dir, ec).lexically_normal().wstring();
     if (ec) key = app_dir.wstring();
+    // A package's other android:process (the system broker starts it with
+    // MACAPK_SECONDARY_PROCESS=1 and its name) is a second process of the same
+    // app, not a second copy of it.
+    if (!env_var(L"MACAPK_SECONDARY_PROCESS").empty() && !env_var(L"MACAPK_PROCESS_NAME").empty())
+        key += L"|" + env_var(L"MACAPK_PROCESS_NAME");
     while (!key.empty() && (key.back() == L'\\' || key.back() == L'/')) key.pop_back();
     for (wchar_t& c : key) c = static_cast<wchar_t>(towlower(c == L'/' ? L'\\' : c));
     uint64_t h = 1469598103934665603ull;  // FNV-1a over the UTF-16 units
@@ -1342,6 +1790,9 @@ std::wstring instance_key(const fs::path& app_dir) {
     swprintf(name, 48, L"Local\\WinApk-app-%016llx", static_cast<unsigned long long>(h));
     return name;
 }
+
+// The holder's flags, after its pid in the "-pid" mapping.
+constexpr DWORD kHolderServiceHost = 1;
 
 bool claim_single_instance(const std::wstring& key) {
     if (!env_var(L"WINAPK_ALLOW_SECOND_INSTANCE").empty()) return true;
@@ -1352,13 +1803,46 @@ bool claim_single_instance(const std::wstring& key) {
         CloseHandle(m);
         return false;
     }
-    // Held until exit, like the mapping that names us.
-    if (HANDLE map = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, sizeof(DWORD),
+    // Held until exit, like the mapping that names us: our pid, then whether
+    // we are a service host (kHolderServiceHost).
+    if (HANDLE map = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, 2 * sizeof(DWORD),
                                         (key + L"-pid").c_str())) {
-        if (auto* pid = static_cast<DWORD*>(MapViewOfFile(map, FILE_MAP_WRITE, 0, 0, sizeof(DWORD))))
-            *pid = GetCurrentProcessId();
+        if (auto* p = static_cast<DWORD*>(MapViewOfFile(map, FILE_MAP_WRITE, 0, 0, 2 * sizeof(DWORD)))) {
+            p[0] = GetCurrentProcessId();
+            p[1] = env_var(L"MACAPK_SERVICE_HOST") == L"1" ? kHolderServiceHost : 0;
+        }
     }
     return true;
+}
+
+// A user's start of an app whose process the system broker started as a
+// service host (to answer another app's bind or broadcast: Play services binds
+// the Play Store's, for one). On a device the activity would start in that
+// process; ours runs headless, with no window to show it in, so the start
+// would be refused and nothing would appear. Stop the host and let this start
+// take its place: its clients see the binder die and bind again, which the
+// broker answers from the new process, as when Android kills a background
+// process. True when the holder was a service host and has exited.
+bool replace_service_host(const std::wstring& key) {
+    if (env_var(L"MACAPK_SERVICE_HOST") == L"1") return false;  // the broker's own start: the holder serves it
+    HANDLE map = OpenFileMappingW(FILE_MAP_READ, FALSE, (key + L"-pid").c_str());
+    if (!map) return false;
+    DWORD pid = 0, flags = 0;
+    if (const auto* p = static_cast<const DWORD*>(MapViewOfFile(map, FILE_MAP_READ, 0, 0, 2 * sizeof(DWORD)))) {
+        pid = p[0];
+        flags = p[1];
+        UnmapViewOfFile(p);
+    }
+    CloseHandle(map);
+    if (!pid || !(flags & kHolderServiceHost)) return false;
+    HANDLE h = OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, FALSE, pid);
+    if (!h) return false;
+    std::fprintf(stderr, "[win.apk] the system broker runs this app as a service host (pid %lu); "
+                         "restarting it with a window\n", static_cast<unsigned long>(pid));
+    TerminateProcess(h, 1);
+    const bool gone = WaitForSingleObject(h, 15000) == WAIT_OBJECT_0;
+    CloseHandle(h);
+    return gone;
 }
 
 struct WindowSearch {
@@ -1487,13 +1971,22 @@ int wmain(int argc, wchar_t** argv) {
         }
     }
     if (argc > 1 && std::wstring(argv[1]) == L"--java-main") return java_main(argc, argv);
-    if ((argc == 3 || (argc == 5 && std::wstring(argv[3]) == L"--cache")) && std::wstring(argv[1]) == L"--aot-translate")
-        return aot_translate_main(argv[2], argc == 5 ? fs::path(argv[4]) : fs::path());
+    if (argc >= 3 && std::wstring(argv[1]) == L"--aot-translate") {
+        fs::path cache;
+        DWORD delay_s = 0;
+        for (int i = 3; i + 1 < argc; i += 2) {
+            if (std::wstring(argv[i]) == L"--cache") cache = argv[i + 1];
+            else if (std::wstring(argv[i]) == L"--delay")
+                delay_s = static_cast<DWORD>(std::wcstoul(argv[i + 1], nullptr, 10));
+        }
+        return aot_translate_main(argv[2], cache, delay_s);
+    }
     BootArgs b;
     if (!parse_args(argc, argv, &b.options)) {
         std::fprintf(stderr, "usage: winapk-runtime --apk <file.apk|.apkm|.xapk|.apks> [--data <dir>] [--jdk <dir>] [--lib <dir>] "
                      "[--install-only] [--package-to <file>]\n"
-                     "       winapk-runtime [--data <dir>] [--jdk <dir>] [--lib <dir>] --gms <subcommand> [args]\n");
+                     "       winapk-runtime [--data <dir>] [--jdk <dir>] [--lib <dir>] --gms <subcommand> [args]\n"
+                     "       winapk-runtime [--data <dir>] [--jdk <dir>] [--lib <dir>] --system\n");
         return 2;
     }
     if (!resolve_paths(&b.options)) return 2;
@@ -1526,10 +2019,42 @@ int wmain(int argc, wchar_t** argv) {
         // path under the home directory.
         if (env_var(L"MACAPK_GMS_DIR").empty())
             SetEnvironmentVariableW(L"MACAPK_GMS_DIR", (b.options.data / L"gms").c_str());
+        // No line per class loaded (AppClassLoader.QUIET_CLASSLOAD), as
+        // upstream's launcher sets it: 1,000-6,000 lines a start, 0.05-0.4 s
+        // before the first frame. MACAPK_QUIET_CLASSLOAD=0 brings them back.
+        if (env_var(L"MACAPK_QUIET_CLASSLOAD").empty()) SetEnvironmentVariableW(L"MACAPK_QUIET_CLASSLOAD", L"1");
+        // Settings > Google account > "Use Google services (experimental)":
+        // the system broker and the real Google apps (SystemClient.enabled).
+        // MACAPK_BROKER, when set, wins either way.
+        if (env_var(L"MACAPK_BROKER").empty() && google_services_setting())
+            SetEnvironmentVariableW(L"MACAPK_BROKER", L"1");
+    }
+
+    // --system: the broker. One per user session: a second one exits at once.
+    if (b.options.system) {
+        HANDLE one = CreateMutexW(nullptr, TRUE, L"Local\\WinApk-system");
+        if (!one || GetLastError() == ERROR_ALREADY_EXISTS) {
+            std::fprintf(stderr, "[win.apk] the system broker is already running\n");
+            return 0;
+        }
+        SetEnvironmentVariableW(L"MACAPK_BROKER", L"1");
+        SetEnvironmentVariableW(L"MACAPK_APK_PATH", nullptr);  // the app that started it, not the broker's
+        if (env_var(L"MACAPK_BROKER_LOGDIR").empty()) {
+            std::error_code lec;
+            fs::create_directories(b.options.data / L"logs" / L"services", lec);
+            SetEnvironmentVariableW(L"MACAPK_BROKER_LOGDIR", (b.options.data / L"logs" / L"services").c_str());
+        }
+        HANDLE t = CreateThread(nullptr, 64 * 1024 * 1024, system_thread, &b, STACK_SIZE_PARAM_IS_A_RESERVATION,
+                                nullptr);
+        if (!t) return 1;
+        WaitForSingleObject(t, INFINITE);
+        CloseHandle(t);
+        return b.result;
     }
 
     // --gms: a JVM, the GMS classes and no app. Before anything APK-shaped.
     if (b.options.gms) {
+        SetEnvironmentVariableW(L"MACAPK_APK_PATH", nullptr);
         HANDLE t = CreateThread(nullptr, 64 * 1024 * 1024, gms_thread, &b, STACK_SIZE_PARAM_IS_A_RESERVATION,
                                 nullptr);
         if (!t) return 1;
@@ -1559,7 +2084,8 @@ int wmain(int argc, wchar_t** argv) {
         return 1;
     }
     const std::wstring instance = instance_key(b.app_dir);
-    if (!claim_single_instance(instance)) {
+    if (!claim_single_instance(instance) &&
+        (b.options.install_only || !replace_service_host(instance) || !claim_single_instance(instance))) {
         std::fprintf(stderr, "[win.apk] %s is already running; not starting a second copy\n",
                      utf8(b.app_dir.filename().wstring()).c_str());
         if (b.options.install_only) return 3;
@@ -1568,6 +2094,14 @@ int wmain(int argc, wchar_t** argv) {
         return 0;
     }
     if (!install_app(&b.options, b.options.data / "android")) return 1;
+    // The installed APK, for the Java side's first moments: PresentedSdk reads
+    // the app's targetSdkVersion and minSdkVersion from it when Build.VERSION
+    // initializes, before any loader class could hand it over (upstream's
+    // main.cpp exports it the same way). Without it every app was presented
+    // API 29, below Play services' minSdk 31. Always this run's own APK: a
+    // value inherited from the process that started this one (the broker
+    // starting Play services for an app) names another app.
+    SetEnvironmentVariableW(L"MACAPK_APK_PATH", b.options.apk.c_str());
     prepare_arm64(b.options, b.app_dir);
     if (!convert_dex(b.options, b.app_dir, &b.app_jar)) return 1;
 

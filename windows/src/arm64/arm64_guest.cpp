@@ -176,6 +176,11 @@ constexpr size_t kGuestStackWords = 14;
 // crashed in the JVM after the first frame (City Car). Fewer when the host
 // thread's stack ends sooner (dispatch).
 constexpr size_t kCallbackStackWords = 64;
+// Host stack translated code leaves free at the end of a thread's stack
+// (Cpu::stack_floor): for the host functions it calls, the JVM (its guard
+// zones, and Java code a JNI call runs) included. At least this much, an
+// eighth of a larger stack (2 MB of a Java thread's 16), at most half.
+constexpr uint64_t kAotStackReserve = 256 * 1024;
 
 // run() stops when the guest returns here. It is never guest code and never
 // called: only its address matters.
@@ -220,9 +225,12 @@ uint64_t now_ns() {
     return static_cast<uint64_t>(t.QuadPart / freq * 1000000000 + t.QuadPart % freq * 1000000000 / freq);
 }
 
-// Totals of the threads that have exited.
+// Totals of the threads that have exited, and the threads alive (their counts
+// are read without a lock: totals for a report, not exact to the call).
 std::mutex g_stats_lock;
 Stats g_exited;
+struct ThreadState;
+std::vector<ThreadState*> g_live;
 
 void add(Stats& to, const Stats& s) {
     to.guest_entries += s.guest_entries;
@@ -275,12 +283,26 @@ struct ThreadState {
         }
         stack_top = (reinterpret_cast<uint64_t>(stack) + kStackGuard + kGuestStack - kStackSlack) & ~uint64_t{15};
         cpu.tpidr = reinterpret_cast<uint64_t>(&tls[1]);
+        // Translated code stops taking host stack this far above its end
+        // (Cpu::stack_floor), and leaves the rest to the host functions it
+        // calls (the JVM's own guard zones among them).
+        ULONG_PTR low = 0, high = 0;
+        GetCurrentThreadStackLimits(&low, &high);
+        if (high > low) {
+            const uint64_t size = high - low;
+            cpu.stack_floor = low + std::min<uint64_t>(size / 2, std::max<uint64_t>(kAotStackReserve, size / 8));
+        }
         tls[1 + 5] = 0x5eed5eedc0ffee00ull ^ (reinterpret_cast<uint64_t>(this) << 8);
+        thread_id = GetCurrentThreadId();
+        std::lock_guard<std::mutex> hold(g_stats_lock);
+        g_live.push_back(this);
     }
+    DWORD thread_id = 0;
     ~ThreadState() {
         {
             std::lock_guard<std::mutex> hold(g_stats_lock);
             add(g_exited, totals());
+            g_live.erase(std::remove(g_live.begin(), g_live.end(), this), g_live.end());
         }
         jits.clear();
         if (stack) VirtualFree(stack, 0, MEM_RELEASE);
@@ -304,8 +326,11 @@ void execute(ThreadState& ts) {
     if (engine == Engine::kAot) {
         if (AotFn fn = aot_lookup(ts.cpu.pc)) {
             ++ts.stats.aot_entries;
-            if (aot_run(fn, &ts.cpu) == kAotDone) return;  // returned to stop_pc
-            ++ts.stats.aot_bails;                          // on from ts.cpu.pc
+            // Done is a return; only one to stop_pc ends the call. A guest
+            // function that returns somewhere else (an exception's landing
+            // pad, a longjmp) goes on from there.
+            if (aot_run(fn, &ts.cpu) == kAotDone && ts.cpu.pc == ts.cpu.stop_pc) return;
+            ++ts.stats.aot_bails;  // on from ts.cpu.pc
         }
     }
     if (engine != Engine::kInterpreter && jit_built()) {
@@ -740,9 +765,17 @@ bool full_state_call(uint64_t target) {
 // Hooks::plain_host.
 bool plain_host(uint64_t target) {
     uint64_t lo, hi;
-    if (full_state_call(target) || code_range(target, &lo, &hi)) return false;
+    // The bridge's return address is where a guest call ends, not a function.
+    if (target == return_address() || full_state_call(target) || code_range(target, &lo, &hi)) return false;
     const HostFunction info = host_function(target);
     return info.va_list < 0 && info.guest_fn_args == 0;
+}
+
+// Hooks::code_written: every thread's JIT drops what it compiled there, and a
+// translation of that library is retired (arm64_aot.h).
+void code_written(uint64_t addr) {
+    jit_code_written(addr);
+    aot_code_written(addr);
 }
 
 // Hooks::aot_entry: translated code, while the engine uses it.
@@ -754,6 +787,23 @@ AotFn aot_entry(uint64_t pc) {
 // goes. Threads still running then are not counted.
 void print_stats() {
     const Stats s = stats();
+    {
+        // The threads still running, busiest first: a thread that stays in
+        // guest code (a JS engine, a game loop) is where an app's time goes.
+        std::lock_guard<std::mutex> hold(g_stats_lock);
+        std::vector<std::pair<Stats, DWORD>> live;
+        for (ThreadState* t : g_live) live.emplace_back(t->totals(), t->thread_id);
+        std::sort(live.begin(), live.end(), [](const auto& a, const auto& b) { return a.first.run_ns > b.first.run_ns; });
+        for (size_t i = 0; i < live.size() && i < 8; ++i) {
+            const Stats& t = live[i].first;
+            std::fprintf(stderr,
+                         "[win.apk] arm64 stats, thread %lu: %.1f ms in guest calls, %.1f ms of it in host functions; "
+                         "%llu guest entries, %llu host calls, %llu JIT exits, %llu interpreted instructions\n",
+                         live[i].second, static_cast<double>(t.run_ns) / 1e6, static_cast<double>(t.host_ns) / 1e6,
+                         static_cast<unsigned long long>(t.guest_entries), static_cast<unsigned long long>(t.host_calls),
+                         static_cast<unsigned long long>(t.jit_exits), static_cast<unsigned long long>(t.interp_insns));
+        }
+    }
     const double run_ms = static_cast<double>(s.run_ns) / 1e6, host_ms = static_cast<double>(s.host_ns) / 1e6;
     std::fprintf(stderr,
                  "[win.apk] arm64 stats (%s): %.1f ms in guest calls, of which %.1f ms in host functions and %.1f ms "
@@ -797,6 +847,7 @@ void init() {
         h.full_state_call = full_state_call;
         h.aot_entry = aot_entry;
         h.plain_host = plain_host;
+        h.code_written = code_written;
         h.svc = svc;
         h.fault = fault;
         set_hooks(h);
@@ -856,13 +907,14 @@ bool set_engine(Engine e) {
 Engine engine() { return g_engine.load(); }
 
 Stats stats() {
-    Stats s;
-    {
-        std::lock_guard<std::mutex> hold(g_stats_lock);
-        s = g_exited;
-    }
-    if (t_state) add(s, t_state->totals());
+    std::lock_guard<std::mutex> hold(g_stats_lock);
+    Stats s = g_exited;
+    for (ThreadState* t : g_live) add(s, t->totals());
     return s;
+}
+
+void print_stats_if_enabled() {
+    if (GetEnvironmentVariableA("WINAPK_ARM64_STATS", nullptr, 0) > 0) print_stats();
 }
 
 void set_profiling(bool on) { g_profiling.store(on); }

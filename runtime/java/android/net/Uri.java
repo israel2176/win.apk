@@ -145,11 +145,27 @@ public abstract class Uri implements Parcelable, Comparable<Uri> {
      *
      * @throws NullPointerException if file is null
      */
+    /** Win.apk: a Windows drive path ("C:\\Users\\...") as a file URI's path,
+     *  "/C:/Users/...". On Android an absolute path starts with '/', which is
+     *  what keeps it out of the authority: file://C:%5CUsers... parses back
+     *  with the whole path taken for the authority and an EMPTY path, so the
+     *  Play Store's downloads (Uri.fromFile(...).toString(), parsed again,
+     *  getPath()) opened a FileOutputStream on "". With the leading '/' and
+     *  '/' separators it parses back to the same path, segments and all, and
+     *  java.io reads "/C:/..." as the drive path again. */
+    static String macapkFilePath(String p) {
+        if (p != null && p.length() >= 2 && p.charAt(1) == ':' && Character.isLetter(p.charAt(0))
+                && (p.length() == 2 || p.charAt(2) == '\\' || p.charAt(2) == '/')) {
+            return "/" + p.replace('\\', '/');
+        }
+        return p;
+    }
+
     public static Uri fromFile(File file) {
         if (file == null) {
             throw new NullPointerException("file");
         }
-        PathPart path = PathPart.fromDecoded(file.getAbsolutePath());
+        PathPart path = PathPart.fromDecoded(macapkFilePath(file.getAbsolutePath()));
         return new HierarchicalUri("file", Part.EMPTY, path, Part.NULL, Part.NULL);
     }
 

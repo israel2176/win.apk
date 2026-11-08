@@ -311,7 +311,26 @@ WINAPK_GUEST_ABI int g_dup2(int fd, int to) {
     return _dup2(fd, to) < 0 ? fail_crt() : to;
 }
 WINAPK_GUEST_ABI int g_dup3(int fd, int to, int) { return g_dup2(fd, to); }
-WINAPK_GUEST_ABI int g_fsync(int fd) { return _commit(fd) < 0 ? fail_crt() : 0; }
+// Linux syncs whatever the descriptor names: a directory (LevelDB syncs the
+// database's directory after writing its MANIFEST, as POSIX asks for a new
+// file's name to be durable) or a file opened read-only. FlushFileBuffers
+// refuses both, a directory outright and a handle without write access with
+// ERROR_ACCESS_DENIED, which the CRT turned into EBADF, so every LevelDB open
+// failed ("IO error: <dir>: Bad file descriptor": Google Play services' GCM,
+// HomeKit and location stores). A directory's entries are NTFS metadata, which
+// the file system journals itself; a read-only handle has nothing of its own
+// to flush. Both succeed, as on Linux.
+WINAPK_GUEST_ABI int g_fsync(int fd) {
+    if (_commit(fd) == 0) return 0;
+    const intptr_t h = _get_osfhandle(fd);
+    if (h != -1) {
+        BY_HANDLE_FILE_INFORMATION info{};
+        const bool dir = GetFileInformationByHandle(reinterpret_cast<HANDLE>(h), &info) &&
+                         (info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY);
+        if (dir || _doserrno == ERROR_ACCESS_DENIED) return 0;
+    }
+    return fail_crt();
+}
 WINAPK_GUEST_ABI int g_ftruncate(int fd, int64_t len) {
     const errno_t e = _chsize_s(fd, len);
     if (e) {

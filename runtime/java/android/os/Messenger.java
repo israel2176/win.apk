@@ -49,7 +49,15 @@ public final class Messenger implements Parcelable {
         @Override public IBinder asBinder() { return this; }
 
         @Override public void send(Message message) {
-            // AOSP's stub enqueues on the Handler that created it.
+            // AOSP's stub (Handler.MessengerImpl) stamps the sender's uid before
+            // it enqueues on the Handler that created it:
+            //   msg.sendingUid = Binder.getCallingUid();
+            // Inside a cross-process dispatch that is the caller's app uid; on
+            // the same-process path it is our own, as on a device. Google Play
+            // services' GCM registrar checks it against the package that asks
+            // for a token, and rejected every Firebase client with "Invalid
+            // caller: <pkg> -1" while it stayed UID_NONE.
+            if (message != null) message.sendingUid = Binder.getCallingUid();
             if (target != null) target.sendMessage(message);
         }
 

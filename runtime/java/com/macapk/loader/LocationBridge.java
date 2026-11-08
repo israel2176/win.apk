@@ -125,10 +125,11 @@ public final class LocationBridge {
                 }
             }
         } catch (Throwable ignored) { }
-        String canon = System.getenv("MACAPK_CANONICAL_APP");
-        if (canon == null || canon.isEmpty()) canon = "/Applications/Mac.apk.app";
-        java.io.File f = new java.io.File(canon, "Contents/" + rel);
-        return f.canExecute() ? f : null;
+        for (java.io.File app : PackageInstallerBackend.canonicalAppCandidates()) {
+            java.io.File f = new java.io.File(app, "Contents/" + rel);
+            if (f.canExecute()) return f;
+        }
+        return null;
     }
 
     /** Can macOS show its location prompt for us at all? Only through the helper:

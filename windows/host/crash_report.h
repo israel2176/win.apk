@@ -40,4 +40,20 @@ void rearm_crash_report();
 // name). Loads dbghelp now, not in the handler.
 void set_crash_dump_location(const std::filesystem::path& dir, const std::wstring& app);
 
+// Called once, when the process ends through the crash path: a fault nobody
+// handled (the unhandled-exception filter), abort() (the SIGABRT handler: the
+// host's, a guest's, an uncaught C++ exception), or HotSpot's fatal error
+// handler (crash_report_fatal). Not for a normal exit, a kill
+// (TerminateProcess, the launcher's Stop) or a fault someone handled.
+// `what` says what and where, one line. The crash guard (aot_guard.h) counts
+// crashes through it. Runs before the minidump is written.
+using CrashHook = void (*)(const char* what);
+void set_crash_hook(CrashHook hook);
+
+// The crash path for a fatal error outside these handlers: HotSpot's
+// (hs_err), through the JVM's "abort" hook (runtime_main.cpp, create_vm). A
+// fault in native code called from Java ends there, not in the
+// unhandled-exception filter: HotSpot's threads catch their own exceptions.
+void crash_report_fatal(const char* who);
+
 }  // namespace winapk::host

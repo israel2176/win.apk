@@ -108,7 +108,41 @@ starts at once on an ARM64 JIT, which is slower, and each library switches to
 its translation as soon as it is ready, even while the app is running. Large
 libraries are translated only where the app's code actually ran, and more as
 you use the app, so the first runs of a big app are the slow ones. Whole
-translations are shared between apps that ship the same library.
+translations are shared between apps that ship the same library, stored once
+on the disk; the shared folder keeps under 2 GB and lets go of what no app
+used for two months. A translation is made for your PC's processor: on
+another one (the data folder moved to a new PC) it is made again. A library
+that rewrites its own code while it runs (some games' anti-cheat code, some
+packed apps) stays on the JIT.
+
+The translation keeps out of your way. It runs at the lowest priority and
+uses at most one processor core while you are using the PC, more only while
+you are away, and none on battery saver or while a full-screen program (a
+game, a presentation) runs. It never takes the memory other programs need:
+it compiles less at once when memory is short. If it is stopped, by closing
+the app, shutting down or ending the process, it goes on where it was the
+next time. If a translation fails it is tried again later, and after four
+failures the library stays on the JIT until the app or Win.apk is updated
+(the app's `aot-<app>.log` in the logs folder says why).
+
+If an ARM-only app crashes twice in a row while translated code is loaded,
+Win.apk takes the translation for the suspect: from the next start the app
+runs on the JIT only, slower but without it. Only crashes count (the app's
+process ending in a fault or an abort, the `[win.apk] crash:` lines of its
+log), not closing the app, Stop, Remove or ending it in Task Manager. The app's log says so at that start, with the crashes and their
+times:
+
+```
+[win.apk] arm64 AOT: off for this app: it crashed 2 starts in a row with translated code loaded (...); the JIT runs it. Delete ...\apps\<app>\aot-guard.txt to try the translation again.
+```
+
+and each crash it counts adds a `[win.apk] arm64 AOT: crash counted` line.
+To try the translation again, delete the file the line names; an update of
+the app or of the translator also clears it. If the app then crashes twice
+in a row on the JIT as well, it was not the translation: the log says
+`crashes on the JIT too: not the translation`, and the next start uses the
+translation again, for good for that version of the app. To run any app on
+the JIT only, set `WINAPK_AOT=0`.
 
 The translation uses the clang shipped in Win.apk's `clang` folder. To use a
 different one, set the environment variable `WINAPK_AOT_CLANG` to its
@@ -155,8 +189,8 @@ long says why: **Converting the app's code. This happens once.** when the
 app's code changed, or **Still starting** after twenty seconds. Esc or the
 ✕ in its corner cancels the start. If the app ends before its window is up,
 or later with an error, the same window turns into a short message
-(**Wiz didn't start**, **Wiz stopped with an error**) with **Show log** and
-**Report a problem**; the ✕, Esc or Enter closes it.
+(**Wiz didn't start**, **Wiz stopped with an error**) with **Report a
+problem** under it, and **Close** and **Show log**; Esc or Enter closes it.
 
 The library marks a running app with a green badge on its tile and counts
 them under its title. **Stop** in the tile's right-click menu, or on the
@@ -215,6 +249,14 @@ the top, then **Open**, **Stop** (while it runs), **App details** and
 **Remove**, each with its icon and shortcut. It follows the theme and, in
 Hebrew, opens to the left.
 
+Win.apk asks its questions in dialogs of its own, in the same look as the
+library, light or dark and mirrored in Hebrew: **Remove**, **Clear library**,
+**Stop installing?**, signing out of Google, an error with **Show log**, an
+app asking to install, update or remove another app, and the permission
+questions apps ask. The accent button comes first; for anything that removes
+something, Enter picks **Cancel**. Esc or the window's ✕ closes a dialog
+without an answer.
+
 **App details** (also Alt+Enter) is a page in the library, with a back arrow:
 
 | Section | What it holds |
@@ -244,7 +286,7 @@ its own. Each setting takes effect the next time an app opens unless noted.
 | Apps | **Use my Windows folders** | On: apps' shared storage (Downloads, Pictures, Documents, Music, Movies) is your own Windows folders. Off: each is an empty folder of Win.apk's own, and your files stay where they are. See [Shared storage](#shared-storage) |
 | Apps | **Desktop shortcut for new apps** | Every app gets a Start menu shortcut; this adds one on the desktop too |
 | Apps | **Open .apk, .apkm, .xapk and .apks files with Win.apk** | Makes Win.apk the default program for the four formats |
-| Google account | **Sign in**, **Add another account**, **Sign out** | See [Google account](#google-account) |
+| Google account | **Sign in**, **Add another account**, **Sign out**; **Use Google services (experimental)** (off) | See [Google account](#google-account) |
 | Troubleshooting | **Logs** | Opens the `logs` folder in Explorer, to attach files to a bug report |
 | Troubleshooting | **App data** | Opens `%LOCALAPPDATA%\Win.apk` |
 | Troubleshooting | **Clear library** | Uninstalls every app and removes its shortcuts (app data is kept) |
@@ -390,6 +432,42 @@ sign-in, and kept in `%LOCALAPPDATA%\Win.apk\gms` until you sign out; an
 account signed in before this version shows its picture after signing out and
 in again.
 
+### Google services (experimental)
+
+**Settings > Google account > Use Google services (experimental)** (off by
+default) runs Google's real Play services, Services Framework and Play Store
+as apps, when you have installed them yourself (Win.apk never ships or
+downloads them). Each app runs in its own process; a small background process,
+the system broker (`winapk-runtime --system`, started by the first app that
+needs it and gone a minute after the last app closes), lets one app reach
+another's services, the way Android's system server does. Apps then use the
+real Play services instead of Win.apk's stand-ins. It takes effect when an app
+starts. With Google's own copies this gives apps push notifications through
+Firebase Cloud Messaging from the real Play services, and the Play Store
+signed in with your Google account, which can install apps: its Install
+button downloads the app, asks you (as an app installing another always
+does) and puts it in your library, with the Play Store as the app's
+installer. The first time, Play services needs a minute to check in with
+Google; a Play Store opened before that may show "Server error" (press Try
+again once it has). Opening an app that Play services
+had started in the background (the Play Store, for one) restarts it with its
+window.
+
+Only copies whose signature verifies, made with Google's own key (or a newer
+Google key that proves it took over from it, as current Play services do), are
+treated as the system's Google apps; an APK that merely uses their package
+names, or carries a copy of Google's certificate it was not signed with, is an
+ordinary app. Win.apk checks every app's signature this way when it is
+installed and before it reports the app's certificate to another app: an app
+whose signature does not verify still runs, but it reports no certificate and
+the install log says why.
+The broker knows which app a process is from how Windows started it, not from
+what the app says, and refuses an app that claims to be another. Every app
+still runs with your Windows account's rights, as any program you run does:
+there is no sandbox between apps on Windows. In-app purchases and Play
+Integrity still do not work. The broker's log is `logs\system.log`, its
+services' logs are in `logs\services`.
+
 Google sign-in needs the WebView2 Runtime (a 2022 or later version). Without
 it the sign-in is cancelled and the log says why.
 
@@ -461,6 +539,7 @@ and the launch window open the right log themselves when something fails.
 | `last-run.log` | The app opened most recently (a second name for its `run-<app>.log`) |
 | `install-<app>.log` | That app's install or update |
 | `gms.log` | The Google account operations run from the settings |
+| `system.log`, `services\` | With Google services on: the system broker, and the apps it starts for other apps |
 | `install-helper.log`, `package-backfill.log` | Installs an app itself asked for (F-Droid installing another app), and library maintenance |
 | `hs_err_pid<n>.log` | A crash report from the Java VM, if the VM itself crashed |
 | `crash-<app>-<date>.dmp` | A minidump of the app's process when its native code crashed (the last three per app); attach it to an issue with the log |
@@ -488,7 +567,7 @@ and the launch window open the right log themselves when something fails.
 | Win.apk itself | `%LOCALAPPDATA%\Programs\Win.apk`, or the folder you unzipped |
 | Your copy of each APK | `%LOCALAPPDATA%\Win.apk\library\<app>.apk` |
 | Per-app choices beside the APK | `<app>.label` (name), `<app>.package` (package, version, manifest orientation), `<app>.orientation` (your choice), `<app>.window` (remembered window size) |
-| Each app's converted code, icon and name | `%LOCALAPPDATA%\Win.apk\apps\<app>` |
+| Each app's converted code, icon and name | `%LOCALAPPDATA%\Win.apk\apps\<app>` (and `aot-guard.txt`, an ARM-only app's crashes with its translation) |
 | The Android file system: apps' data, the installed packages | `%LOCALAPPDATA%\Win.apk\android` |
 | Logs | `%LOCALAPPDATA%\Win.apk\logs` |
 | The Store's catalog and icons | `%LOCALAPPDATA%\Win.apk\store` |
@@ -497,7 +576,9 @@ and the launch window open the right log themselves when something fails.
 | The Google account and its tokens | `%LOCALAPPDATA%\Win.apk\gms` |
 | The last update check and a downloaded update | `%LOCALAPPDATA%\Win.apk\updates` (`releases.json`, `Win.apk-Setup-<version>.exe`) |
 | Shared ARM translations | `%LOCALAPPDATA%\Win.apk\aot-cache` |
-| Settings | `HKEY_CURRENT_USER\Software\Win.apk` (`Theme`, `Language`, `PhoneSize`, `Landscape`, `DesktopShortcut`, `UserFolders`, `InstallDetails`, `AutoUpdate`, `LastUpdateCheck`, and the library window's size) |
+| The runtime's caches (fonts, resources) | `%LOCALAPPDATA%\Win.apk\cache` |
+| Settings | `HKEY_CURRENT_USER\Software\Win.apk` (`Theme`, `Language`, `PhoneSize`, `Landscape`, `DesktopShortcut`, `UserFolders`, `InstallDetails`, `AutoUpdate`, `LastUpdateCheck`, `GoogleServices`, and the library window's size) |
+| With Google services on: app uids, the account service, the installer of record, the broker's readiness | `%LOCALAPPDATA%\Win.apk` (`app_uids.properties`, `system_ce\`, `installer-of-record.properties`, `run\`) |
 | Start menu shortcuts | `Start > Win.apk Apps` |
 
 `<app>` is the app's package name (`com.waze`) when the file it came from
@@ -531,7 +612,7 @@ bin\winapk-runtime.exe [--data <dir>] [--jdk <dir>] [--lib <dir>] --gms <command
 | `--jdk` | The Java runtime (default: the `jre` folder next to `bin`, else `WINAPK_JAVA_HOME` or `JAVA_HOME`) |
 | `--lib` | The folder with the framework jars (default: `lib` next to `bin`) |
 | `--install-only` | Install and convert the app, write its icon and name, and exit |
-| `--gms <command>` | Run a Google Play services command with no app: `status`, `selftest`, `accounts`, `signin-window`, `signout`, `checkin`, `license <package> <versionCode>`, `gcmtoken <package>` and the rest of `com.macapk.gms.GmsCli` |
+| `--gms <command>` | Run a Google Play services command with no app: `status`, `selftest`, `accounts`, `signin-window`, `signin-master` (an account from its e-mail and master token on standard input, for tests), `signout`, `checkin`, `license <package> <versionCode>`, `gcmtoken <package>` and the rest of `com.macapk.gms.GmsCli` |
 
 Exit codes: 0 done, 2 wrong arguments, 3 when `--install-only` finds the app
 running. `--gms` exits 0 done, 1 error (an `ERROR` line on standard output),
@@ -545,6 +626,7 @@ Environment variables the launcher and the runtime read:
 | `WINAPK_RESIZABLE=0` | The window letterboxes the phone instead of resizing the app |
 | `WINAPK_DENSITY=<dpi>` | Overrides the density the app sees |
 | `WINAPK_AOT_CLANG=<path to clang.exe>` | The compiler for ARM translation |
+| `WINAPK_AOT=0` | Run ARM-only apps' code on the JIT only: no translation is loaded or made |
 | `WINAPK_ABIS=arm64-v8a` | Install an app's ARM64 build although it has an x86_64 one (for comparing the two) |
 | `WINAPK_ALLOW_SECOND_INSTANCE=1` | Allow a second copy of a running app |
 | `WINAPK_WEBVIEW2=0` | Do not use WebView2; web links open in the system browser |
@@ -570,6 +652,7 @@ The most useful lines:
 | `[win.apk] cannot load <library>` or `UnsatisfiedLinkError` | A native library did not load: 32-bit ARM only, packed or encrypted, or for another CPU |
 | `Exception` or `FATAL` | The app crashed; the lines after it say where |
 | `[win.apk] crash:` and `crash dump:` | The app's native code crashed: the library and offset, and the minidump written for it, which is worth attaching too |
+| `[win.apk] arm64 AOT: off for this app` | An ARM-only app crashed twice in a row with its translation loaded, so it runs on the JIT; see [ARM-only apps](#arm-only-apps) |
 | `[win.apk]` | A message from Win.apk itself |
 
 Then look in [`APPS.md`](APPS.md) for the app or the kind of problem, and
@@ -582,8 +665,10 @@ installed; a Store entry that says the APK has no native code for this PC
 needs the full bundle instead.
 
 **The app is slow.** If it has only ARM64 libraries, it runs on the JIT until
-its translation is ready; give it a few minutes on the first runs and watch
-the log for the translation finishing. Check that the `clang` folder is next
+its translation is ready. The translation goes faster while you leave the
+PC alone: on a busy PC, a large app's first translation can take an hour or
+more. `logs\aot-<app>.log` shows its progress and how many compilers it runs
+at once, and why. Check that the `clang` folder is next
 to `bin` in Win.apk's folder.
 
 **No sound from a native game.** Games whose engine plays audio through
@@ -609,8 +694,8 @@ app is told no; the rest of the app usually works.
 
 ### Reporting a problem
 
-**Report a problem** is on the launch window's error, under a failed
-install's reason, and on the app's details page (Troubleshooting) for a
+**Report a problem** is under the sentence of the launch window's error and
+of a failed install, and on the app's details page (Troubleshooting) for a
 problem met inside the app. It first asks, with a link to the open reports
 that name the same package so a second one is not opened. Then:
 

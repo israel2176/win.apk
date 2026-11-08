@@ -33,6 +33,7 @@ public final class RunLock {
     private static volatile int sFd = -1;
 
     static File runDir() {
+        if (HostAppSupport.windowsHost()) return HostAppSupport.file("run");   // Win.apk
         return new File(SharedStorage.hostHome(), "Library/Application Support/Mac.apk/run");
     }
 

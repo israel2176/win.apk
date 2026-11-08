@@ -318,6 +318,28 @@ public final class PackageInstallerBackend {
         EXEC.execute(() -> performUninstall(pkg, vc, statusReceiver));
     }
 
+    /** Where an uninstall's result goes when the caller used the legacy
+     *  PackageManager.deletePackage observer instead of an IntentSender. Set
+     *  on the EXEC thread for the duration of one performUninstall. */
+    public interface DeleteSink { void onDeleted(String pkg, int returnCode, String message); }
+    private static final ThreadLocal<DeleteSink> DELETE_SINK = new ThreadLocal<>();
+
+    /** The host side of the hidden PackageManager.deletePackage(String,
+     *  IPackageDeleteObserver, int) family (what Google Play's UninstallerImpl
+     *  calls, by reflection): the same performUninstall, helper verb and
+     *  device-owner gate as the IntentSender surface, with the result handed to
+     *  `sink` after the PACKAGE_REMOVED broadcasts (AOSP order). */
+    public static void uninstallWithObserver(String packageName, long versionCode, DeleteSink sink) {
+        final String pkg = packageName;
+        NativeLog.i(TAG, "deletePackage requested for " + pkg
+                + (versionCode != -1 ? (" versionCode=" + versionCode) : "") + "; queued");
+        EXEC.execute(() -> {
+            DELETE_SINK.set(sink);
+            try { performUninstall(pkg, versionCode, null); }
+            finally { DELETE_SINK.remove(); }
+        });
+    }
+
     /** The INTENT half of the guest uninstall surface: ACTION_DELETE (and the
      *  deprecated ACTION_UNINSTALL_PACKAGE) carrying package:<pkg> data.
      *
@@ -816,6 +838,10 @@ public final class PackageInstallerBackend {
             switch (r.exit) {
                 case 0:
                     success = true;
+                    // The installer of record, BEFORE the broadcasts and the
+                    // status: Play's post-install step (setApplicationCategoryHint)
+                    // is allowed only for the installer of record.
+                    InstallerOfRecord.set(pkg, requestor);
                     // ORDER IS AOSP'S, AND IT MATTERS. handlePackagePostInstall
                     // sends the package broadcasts and only then calls
                     // notifyInstallObserver, which is what fires the caller's
@@ -993,6 +1019,7 @@ public final class PackageInstallerBackend {
                     catch (Throwable ignored) {}
                     // ORDER IS AOSP'S: broadcasts first, then the caller's
                     // IntentSender -- see the method header.
+                    InstallerOfRecord.set(pkg, null);
                     broadcastPackageRemoved(pkg, dataRemoved);
                     deliverUninstallStatus(sender, pkg,
                             PackageInstaller.STATUS_SUCCESS, DELETE_SUCCEEDED,
@@ -1046,6 +1073,12 @@ public final class PackageInstallerBackend {
         // must still leave a record.
         NativeLog.i(TAG, "uninstall status=" + status + " pkg=" + pkg
                 + " (" + message + ")");
+        DeleteSink sink = DELETE_SINK.get();
+        if (sink != null) {
+            try { sink.onDeleted(pkg, legacyStatus, message); }
+            catch (Throwable t) { NativeLog.e(TAG, "delete observer failed for " + pkg + ": " + t); }
+            return;
+        }
         if (sender == null) return;
         Intent fillIn = new Intent();
         fillIn.putExtra(PackageInstaller.EXTRA_PACKAGE_NAME, pkg);
@@ -1099,6 +1132,27 @@ public final class PackageInstallerBackend {
             throws IOException {
         String ours = "guest-session-" + s.id + "-" + System.currentTimeMillis()
                 + "-" + Integer.toHexString((int) (Math.random() * 0x7fffffff));
+        // AOSP PackageInstallerSession.sAddedApkFilter: a session file is an APK
+        // unless it is dex metadata (DexMetadataHelper: ".dm"), an fs-verity
+        // signature (".fsv_sig"), a digests file or its signature (ApkChecksums:
+        // ".digests", ".signature") or a v4 signature (".idsig"). Those sit beside
+        // the APKs; they are not splits. The Play Store writes a ".dm" with every
+        // app: made a member of the bundle, it was taken for a split without a
+        // manifest, the installed set's signature failed to verify, and Play read
+        // the installed app as unsigned ("has null signatures") and as not
+        // installed.
+        for (java.util.Iterator<Map.Entry<String, File>> it = blobs.entrySet().iterator(); it.hasNext(); ) {
+            Map.Entry<String, File> e = it.next();
+            String n = e.getKey() == null ? "" : e.getKey().toLowerCase(java.util.Locale.ROOT);
+            if (n.endsWith(".dm") || n.endsWith(".fsv_sig") || n.endsWith(".digests")
+                    || n.endsWith(".signature") || n.endsWith(".idsig")) {
+                NativeLog.i(TAG, "session " + s.id + ": " + e.getKey() + " is not an APK (dex metadata or a"
+                        + " signature file); not installed");
+                e.getValue().delete();
+                it.remove();
+            }
+        }
+        if (blobs.isEmpty()) throw new IOException("the session holds no APK");
         if (blobs.size() == 1) {
             File src = blobs.values().iterator().next();
             File dst = new File(stagingRoot(), ours + ".apk");
@@ -1453,6 +1507,22 @@ public final class PackageInstallerBackend {
         return dir;
     }
 
+    /** Where the Mac.apk control panel (Mac.apk.app) may live, in order:
+     *  MACAPK_CANONICAL_APP (the app stub exports the one it resolved, which
+     *  covers any folder Launch Services knows), /Applications, then the
+     *  per-user ~/Applications (GitHub #13). The staged shared runtime ships
+     *  neither macapk-installhelper nor the location helper, so an installed
+     *  app finds both here. */
+    public static java.util.List<File> canonicalAppCandidates() {
+        java.util.List<File> out = new java.util.ArrayList<>();
+        String env = System.getenv("MACAPK_CANONICAL_APP");
+        if (env != null && !env.isEmpty()) out.add(new File(env));
+        out.add(new File("/Applications/Mac.apk.app"));
+        String home = System.getProperty("user.home");
+        if (home != null && !home.isEmpty()) out.add(new File(home, "Applications/Mac.apk.app"));
+        return out;
+    }
+
     /** Find the install helper, for BOTH install surfaces (InstallIntentHandler
      *  delegates here; it used to carry an identical private copy). Order: the
      *  MACAPK_INSTALLHELPER environment export (picks WHICH binary we ask, not
@@ -1484,9 +1554,14 @@ public final class PackageInstallerBackend {
                 }
             }
         } catch (Throwable ignored) {}
-        File canonical = new File(
-                "/Applications/Mac.apk.app/Contents/bin/macapk-installhelper");
-        return canonical.canExecute() ? canonical : null;
+        // The control panel: MACAPK_CANONICAL_APP (the stub exports the one it
+        // resolved), then the two standard install locations (GitHub #13: a
+        // Mac.apk in ~/Applications left installed apps with no helper).
+        for (File app : PackageInstallerBackend.canonicalAppCandidates()) {
+            File f = new File(app, "Contents/bin/macapk-installhelper");
+            if (f.canExecute()) return f;
+        }
+        return null;
     }
 
     public static final class HelperResult {

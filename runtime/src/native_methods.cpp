@@ -9,9 +9,11 @@
 
 #include "macapk/native_methods.h"
 #include "macapk/gms_signin.h"
+#include "macapk/native_host_proxy.h"
 #include "macapk/cocoa_bridge.h"
 #include "macapk/self_capture.h"   // SelfCaptureGlWanted
 #include "macapk/gles_bridge.h"
+#include "macapk/user_verification_bridge.h"
 
 #include <atomic>
 #include <cstdint>
@@ -253,6 +255,18 @@ jboolean Cocoa_openHostUrl(JNIEnv* env, jclass, jstring url_j) {
     return ok ? JNI_TRUE : JNI_FALSE;
 }
 
+// The App Link sign-in window (com.macapk.loader.AppLinks): show `url` in the
+// Mac.apk window; the navigation to `prefix` is handed back to the app.
+jboolean Cocoa_openAppLinkWindow(JNIEnv* env, jclass, jstring url_j, jstring prefix_j) {
+    if (!url_j || !prefix_j) return JNI_FALSE;
+    const char* url = env->GetStringUTFChars(url_j, nullptr);
+    const char* prefix = env->GetStringUTFChars(prefix_j, nullptr);
+    bool ok = url && prefix && CocoaOpenAppLinkWindow(url, prefix);
+    if (url) env->ReleaseStringUTFChars(url_j, url);
+    if (prefix) env->ReleaseStringUTFChars(prefix_j, prefix);
+    return ok ? JNI_TRUE : JNI_FALSE;
+}
+
 // Host URL intake (MACAPK_URL_SCHEMES): the URLs LaunchServices delivered via
 // kAEGetURL since the last call, oldest first; an empty array when none.
 jobjectArray Cocoa_takeHostUrls(JNIEnv* env, jclass) {
@@ -482,6 +496,23 @@ void Cocoa_setSystemProperty(JNIEnv* env, jclass, jstring key_j, jstring val_j) 
     if (key) env->ReleaseStringUTFChars(key_j, key);
 }
 
+// The shim's synthesized host file for a /proc path (bionic_shim.cpp
+// __macapk_remap_proc_path), so Java reads of /proc/self/* see what native
+// code sees. Null when the path is not one the shim answers.
+jstring Cocoa_remapProcPath(JNIEnv* env, jclass, jstring path_j) {
+    if (!path_j) return nullptr;
+    typedef int (*remap_fn_t)(const char*, char*, size_t);
+    static remap_fn_t fn = reinterpret_cast<remap_fn_t>(
+        dlsym(RTLD_DEFAULT, "__macapk_remap_proc_path"));
+    if (!fn) return nullptr;
+    const char* path = env->GetStringUTFChars(path_j, nullptr);
+    if (!path) return nullptr;
+    char out[PATH_MAX];
+    int n = fn(path, out, sizeof out);
+    env->ReleaseStringUTFChars(path_j, path);
+    return n > 0 ? env->NewStringUTF(out) : nullptr;
+}
+
 void Cocoa_setDataSubdir(JNIEnv* env, jclass, jstring subdir_j) {
     if (!subdir_j) return;
     const char* subdir = env->GetStringUTFChars(subdir_j, nullptr);
@@ -527,6 +558,28 @@ void Cocoa_setSystemFontsDir(JNIEnv* env, jclass, jstring dir_j) {
         if (set_fn) set_fn(dir);
         else std::fprintf(stderr,
                  "[macapk] shim missing __macapk_set_system_fonts_dir: %s\n", dlerror());
+        env->ReleaseStringUTFChars(dir_j, dir);
+    }
+}
+
+// NativeCocoa.hostFontFile (host_fonts.cpp, CoreText). C linkage: this
+// declaration sits in an unnamed namespace, where a C++ name would get internal
+// linkage and never meet its definition.
+extern "C" jstring Cocoa_hostFontFile(JNIEnv* env, jclass, jstring ps_j);
+
+// Stage S3 of the shared-storage design: one volume path for every installed
+// app (SharedStorage.adoptCanonicalVolume). The shim's setter has existed since
+// S0 (bionic_shim.cpp __macapk_set_shared_storage_root); this is its caller.
+void Cocoa_setSharedStorageRoot(JNIEnv* env, jclass, jstring dir_j) {
+    if (!dir_j) return;
+    const char* dir = env->GetStringUTFChars(dir_j, nullptr);
+    if (dir) {
+        typedef void (*set_fn_t)(const char*);
+        set_fn_t set_fn = reinterpret_cast<set_fn_t>(
+            dlsym(RTLD_DEFAULT, "__macapk_set_shared_storage_root"));
+        if (set_fn) set_fn(dir);
+        else std::fprintf(stderr,
+                 "[macapk] shim missing __macapk_set_shared_storage_root: %s\n", dlerror());
         env->ReleaseStringUTFChars(dir_j, dir);
     }
 }
@@ -766,6 +819,8 @@ const JNINativeMethod kNativeCocoaMethods[] = {
      reinterpret_cast<void*>(Cocoa_openHostUrl)},
     {const_cast<char*>("takeHostUrls"),           const_cast<char*>("()[Ljava/lang/String;"),
      reinterpret_cast<void*>(Cocoa_takeHostUrls)},
+    {const_cast<char*>("openAppLinkWindow"),      const_cast<char*>("(Ljava/lang/String;Ljava/lang/String;)Z"),
+     reinterpret_cast<void*>(Cocoa_openAppLinkWindow)},
     {const_cast<char*>("urlSchemeHandlers"),      const_cast<char*>("(Ljava/lang/String;)[Ljava/lang/String;"),
      reinterpret_cast<void*>(Cocoa_urlSchemeHandlers)},
     {const_cast<char*>("setUrlSchemeDefault"),    const_cast<char*>("(Ljava/lang/String;Ljava/lang/String;)I"),
@@ -820,12 +875,21 @@ const JNINativeMethod kNativeCocoaMethods[] = {
     {const_cast<char*>("setDataSubdir"),
      const_cast<char*>("(Ljava/lang/String;)V"),
      reinterpret_cast<void*>(Cocoa_setDataSubdir)},
+    {const_cast<char*>("remapProcPath"),
+     const_cast<char*>("(Ljava/lang/String;)Ljava/lang/String;"),
+     reinterpret_cast<void*>(Cocoa_remapProcPath)},
     {const_cast<char*>("setNativeLibDir"),
      const_cast<char*>("(Ljava/lang/String;)V"),
      reinterpret_cast<void*>(Cocoa_setNativeLibDir)},
     {const_cast<char*>("setSystemFontsDir"),
      const_cast<char*>("(Ljava/lang/String;)V"),
      reinterpret_cast<void*>(Cocoa_setSystemFontsDir)},
+    {const_cast<char*>("hostFontFile"),
+     const_cast<char*>("(Ljava/lang/String;)Ljava/lang/String;"),
+     reinterpret_cast<void*>(Cocoa_hostFontFile)},
+    {const_cast<char*>("setSharedStorageRoot"),
+     const_cast<char*>("(Ljava/lang/String;)V"),
+     reinterpret_cast<void*>(Cocoa_setSharedStorageRoot)},
     {const_cast<char*>("showTranslationOverlay"),
      const_cast<char*>("(Ljava/lang/String;)V"),
      reinterpret_cast<void*>(Cocoa_showTranslationOverlay)},
@@ -3300,6 +3364,15 @@ void Bind(JNIEnv* env, const char* class_name,
 
 }  // namespace
 
+// The native half of EGL14 windows (GitHub #16), exported for the bionic shim's
+// eglSwapBuffers / eglMakeCurrent / eglQuerySurface; see egl14_bridges.inc.
+extern "C" void* __macapk_egl14_window_resolve(void* dpy, void* surf) {
+    return egl14_native_resolve(dpy, surf);
+}
+extern "C" int __macapk_egl14_window_swap(void* dpy, void* surf) {
+    return egl14_native_swap(dpy, surf);
+}
+
 namespace {
 // Java-callable: install the JNI tracer for the calling thread's
 // JNIEnv. Bound to NativeLog so we don't need a new Java class.
@@ -4328,6 +4401,12 @@ namespace gamepad { void RegisterGamepadBridgeMethods(JNIEnv* env); }
 // com.macapk.loader.LocationBridge's JNI methods (macOS Location Services ->
 // android.location.LocationManager).
 namespace location { void RegisterLocationBridgeMethods(JNIEnv* env); }
+namespace bluetooth { void RegisterBluetoothBridgeMethods(JNIEnv* env); }
+namespace bluetoothperipheral { void RegisterBluetoothPeripheralBridgeMethods(JNIEnv* env); }
+// Forward-declared from nowplaying_bridge.mm; registers
+// android.media.session.MacApkNowPlaying (the active MediaSession <-> macOS
+// Now Playing and its remote commands). Soft-fails on a jar that lacks it.
+namespace nowplaying { void RegisterNowPlayingBridgeMethods(JNIEnv* env); }
 // Forward-declared from webview_bridge.mm; registers
 // android.webkit.MacApkWebViewBridge's JNI methods (system WKWebView engine
 // behind android.webkit.WebView). Soft-fails: a registration miss disables
@@ -4387,6 +4466,7 @@ void RegisterAllNativeMethods(JNIEnv* env) {
          sizeof(kNativeLogMethods)   / sizeof(kNativeLogMethods[0]));
     Bind(env, "com/macapk/loader/NativeLog",   kNativeQos,
          sizeof(kNativeQos)          / sizeof(kNativeQos[0]));
+    RegisterHostProxyNativeMethods(env);
     Bind(env, "com/macapk/loader/NativeLog",   kNativeBootTime,
          sizeof(kNativeBootTime)     / sizeof(kNativeBootTime[0]));
     Bind(env, "com/macapk/loader/NativeLog",   kNativePairipGate,
@@ -4445,6 +4525,7 @@ void RegisterAllNativeMethods(JNIEnv* env) {
     sqlite::RegisterNativeSqliteMethods(env);
     osnative::RegisterNativeOsMethods(env);
     audio::RegisterNativeAudioMethods(env);
+    RegisterUserVerificationNativeMethods(env);
     audioin::RegisterAudioInputMethods(env);
     media::RegisterNativeMediaMethods(env);
     video::RegisterNativeVideoMethods(env);
@@ -4453,6 +4534,9 @@ void RegisterAllNativeMethods(JNIEnv* env) {
     camera::RegisterCameraBridgeMethods(env);
     gamepad::RegisterGamepadBridgeMethods(env);
     location::RegisterLocationBridgeMethods(env);
+    bluetooth::RegisterBluetoothBridgeMethods(env);
+    bluetoothperipheral::RegisterBluetoothPeripheralBridgeMethods(env);
+    nowplaying::RegisterNowPlayingBridgeMethods(env);
     webview::RegisterWebViewBridgeMethods(env);
     clipboard::RegisterClipboardBridgeMethods(env);
     icuhost::RegisterIcuHostMethods(env);

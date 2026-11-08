@@ -227,6 +227,9 @@ public final class Monet {
     private static final String MAGIC = "macapk-monet-cache 1";
 
     static File cacheFile() {
+        if (com.macapk.loader.HostAppSupport.windowsHost()) {
+            return com.macapk.loader.HostAppSupport.file("cache/monet/palette.txt");   // Win.apk
+        }
         String home = com.macapk.loader.SharedStorage.hostHome();
         return new File(home, "Library/Caches/Mac.apk/monet/palette.txt");
     }
