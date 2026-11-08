@@ -1060,6 +1060,7 @@ void JNICALL Cocoa_exitProcess(JNIEnv*, jclass, jint code, jstring relaunch) {
             std::fprintf(stderr, "[win.apk] the relaunch failed (error %lu)\n", GetLastError());
         }
     }
+    aot_app_exiting();
     winapk::arm64::print_stats_if_enabled();  // TerminateProcess skips atexit
     std::fflush(stdout);
     std::fflush(stderr);

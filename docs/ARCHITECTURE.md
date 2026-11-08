@@ -266,15 +266,23 @@ Three engines run arm64 code, behind one CPU state (`src/arm64/`):
   instructions is left to the JIT. The runtime compiles that C with
   clang (`-O2 -mllvm -fast-isel -march=native`) into `<lib>.so.aot.dll` next to the library,
   in parts of 20,000 instructions. A background worker runs them at idle
-  priority and as EcoQoS, in a job object that ends its compilers with it,
-  as many at once as the PC allows: up to half the logical processors while
+  priority and as EcoQoS, in a job object that ends its compilers with it
+  and caps their memory together (half the RAM, at least 2 GB), as many at once as the PC allows: up to half the logical processors while
   the user is away, one while the user is active, none on battery saver or
   under a full-screen program, and never more than free memory allows
   (512 MB each, 20% of the RAM and at least 2 GB kept free). A library of up
-  to 400,000 instructions is translated whole; a larger one only where the
-  JIT's profile (`<lib>.so.aot.profile`) says code ran, and again once the
-  profile has grown by a quarter. The running app starts the worker when its
-  profile has settled, and a worker started with the app waits a minute.
+  to 3,000,000 instructions is translated whole (the parts are of a fixed
+  size, so that costs time, not memory); a larger one only where the JIT's
+  profile (`<lib>.so.aot.profile`) says code ran, and again once the profile
+  has grown by a quarter (and 200 lines), at most once an hour (the stamp's
+  retry field). The running app starts the worker when its profile has
+  settled or when it exits (`Cocoa_exitProcess`), and a worker started with
+  the app waits a minute. Settings > Apps > "Optimize ARM apps in the
+  background" (`AotBackground`) turns the worker off: none starts, and a
+  running one stops before its next compile, keeping its pass. The app's
+  details page shows a running worker (its mutex, and the parts in
+  `.aot-tmp`), and says when a library over the threshold leaves an
+  arm64-only app on a profile, where an x86_64 build would need nothing.
   A pass works in `.aot-tmp\<lib>\` from a copy of the profile and keeps
   each compiled part, so a stopped worker goes on where it was. A failed one
   waits 10 minutes, 4 times longer after each failure (at most a day), and
@@ -655,7 +663,8 @@ default; `--data` moves it for a direct run):
 
 Settings live in `HKCU\Software\Win.apk`: `Theme`, `Language`, `PhoneSize`,
 `Landscape` (absent means landscape; 0 means portrait), `DesktopShortcut`,
-`UserFolders`, `InstallDetails` (the install window shows its log),
+`UserFolders`, `AotBackground` (absent means on: the background arm64
+translation), `InstallDetails` (the install window shows its log),
 `ShortcutVersion`, `AutoUpdate` (absent means on), `GoogleServices` (absent
 means off: the system broker and the real Google apps) and `LastUpdateCheck` (Unix
 seconds of the last update check GitHub answered), and the library window's `WindowWidth`, `WindowHeight` and
