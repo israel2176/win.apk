@@ -366,6 +366,14 @@ every such change is listed here:
   `MacApkPackageManager.java`: with Google services on and the real Play
   services installed, the in-process GMS stand-ins stay out also before the
   process attaches to the broker.
+- `runtime/java/android/view/LayoutInflater.java`: an inflated view is
+  attached with `addView(view, params)`, as AOSP's inflate and rInflate do,
+  so a ViewGroup overriding one overload sees the one a device calls (the
+  Play Store's install sheet).
+- `runtime/java/com/macapk/loader/AccountsService.java`: a package sharing
+  the authenticator's uid manages its account type too (AOSP's
+  `isAccountManagedByCaller` by uid), so the Play Store reads Google
+  accounts' user data as on a device.
 - `runtime/java/android/content/pm/dex/ArtManager.java` (new),
   `PackageManager.java`: `getArtManager()`, with runtime profiling off (no
   ART); the Play Store's profile upload job failed to start without it and

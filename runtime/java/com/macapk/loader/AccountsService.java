@@ -13,9 +13,10 @@
 //
 // WHAT IS AOSP's (services/core/java/com/android/server/accounts/
 // AccountManagerService.java, android14-release):
-//   - isAccountManagedByCaller: only the authenticator's package may add /
-//     remove accounts of its type or read / write passwords, user data and
-//     tokens directly (SecurityException otherwise, AOSP's message shape).
+//   - isAccountManagedByCaller: only the authenticator's package, or one
+//     sharing its uid, may add / remove accounts of its type or read / write
+//     passwords, user data and tokens directly (SecurityException otherwise,
+//     AOSP's message shape).
 //   - resolveAccountVisibility: the managing package sees its accounts; else an
 //     explicit visibility; else GET_ACCOUNTS_PRIVILEGED; else a pre-O
 //     (targetSdk < 26) app holding GET_ACCOUNTS; else not visible.
@@ -198,9 +199,23 @@ final class AccountsService extends Binder {
 
     private synchronized Authenticator owner(String type) { return authenticators.get(type); }
 
+    /** AOSP isAccountManagedByCaller: the type's authenticator manages it, and
+     *  so does any caller whose uid passes checkSignatures against the
+     *  authenticator's uid, which a package sharing that uid always does (the
+     *  Play Store shares com.google.uid.shared with Play services, whose
+     *  authenticator owns com.google, and reads its accounts' user data). */
     private boolean manages(String pkg, String type) {
         Authenticator a = owner(type);
-        return a != null && a.pkg.equals(pkg);
+        if (a == null || pkg == null) return false;
+        if (a.pkg.equals(pkg)) return true;
+        int mine = uidOf(pkg);
+        return mine >= 0 && mine == uidOf(a.pkg);
+    }
+
+    private int uidOf(String pkg) {
+        SystemServer.PackageRecord pr = system.packageRecord(pkg);
+        if (pr == null || pr.manifest.sharedUserId == null) return -1;   // a uid of its own: only itself
+        return AppUids.uidFor(pkg, pr.manifest.sharedUserId);
     }
 
     private void requireManaged(String pkg, String type, String what) {

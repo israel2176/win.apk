@@ -946,9 +946,21 @@ public class LayoutInflater {
         if (root != null && attachToRoot
             && inflated != root
             && inflated.getParent() == null) {
-            root.addView(inflated);
+            macapkAttach(root, inflated);
         }
         return inflated;
+    }
+
+    /** Attaches an inflated child as AOSP's inflate and rInflate do:
+     *  addView(view, params), the two-argument overload, with the params
+     *  built for this parent. A ViewGroup that overrides only one overload
+     *  sees the one a device calls: the Play Store's ScrollViewWithHeader
+     *  routes addView(View) into a container it has not made yet while its
+     *  own constructor inflates into it, and threw from there. */
+    private static void macapkAttach(ViewGroup parent, View child) {
+        ViewGroup.LayoutParams lp = child.getLayoutParams();
+        if (lp != null) parent.addView(child, lp);
+        else parent.addView(child);
     }
 
     /** Walk the DOM tree starting at `elem`, instantiating each tag
@@ -1072,7 +1084,7 @@ public class LayoutInflater {
                     View childView = inflateElement(child, parent);
                     if (childView != null && childView != parent
                         && childView.getParent() == null && parent != null) {
-                        parent.addView(childView);
+                        macapkAttach(parent, childView);
                         NativeLog.i(TAG, "merge: addView " + childView.getClass().getSimpleName()
                           + " id=0x" + Integer.toHexString(childView.getId()) + " to " + parent.getClass().getSimpleName()
                           + "(now " + parent.getChildCount() + " children)");
@@ -1403,7 +1415,7 @@ public class LayoutInflater {
                     View childView = inflateElement(child, vg);
                     if (childView != null && childView != vg
                                             && childView.getParent() == null) {
-                        vg.addView(childView);
+                        macapkAttach(vg, childView);
                     }
                 }
             }
