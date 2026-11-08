@@ -1,103 +1,167 @@
-# Apps and known issues
+# Compatibility
 
-What is known about running particular apps in Win.apk, and the problems that
-apply to whole kinds of apps. Check here before
-[opening an issue](../../../issues/new/choose); add what you learn, as a pull
-request or in an issue (see [CONTRIBUTING.md](../CONTRIBUTING.md), "Add an app
-to the list"). If an app you care about runs well, a ⭐ star on the repository
-tells us so.
+What works in Win.apk, what works in part, and what is missing, in one place.
+Every row was checked against the code of the current `main`; the source
+column names the file to read when in doubt. Other pages link here instead of
+keeping a copy.
 
+**✅ works** · **⚠️ partly: read the note** · **❌ missing**
+
+- [What works](#what-works)
+- [Needs improvement, by importance](#needs-improvement-by-importance)
+- [The automated sweep](#the-automated-sweep)
 - [Known issues by kind of app](#known-issues-by-kind-of-app)
-- [Apps](#apps)
-  - [Adding a row](#adding-a-row)
+- [Apps people have tried](#apps-people-have-tried)
 
-**Status words used below:** *Works* (the main screens are usable), *Partly*
-(opens, but something in the notes does not work), *Boots* (draws its first
-screen in an automated run; nobody has used it), *Does not start* (installs,
-then shows no window or crashes at once), *Does not install*.
+## What works
+
+### Installing and running
+
+| Area | | What exactly | What is missing | Source |
+|---|:-:|---|---|---|
+| App files | ✅ | `.apk`, and the split bundles `.apkm` (APKMirror), `.xapk` (APKPure) and `.apks` (bundletool); the splits for this PC are picked as Android's installer picks them | | `windows/host/runtime_main.cpp` |
+| Java and Kotlin apps | ✅ | Each in its own resizable window, with a Start menu shortcut and a taskbar icon | | `win32_window.cpp` |
+| Native code: x86_64 | ✅ | `lib/x86_64` libraries load directly, at full speed | | `windows/src/` |
+| Native code: arm64-v8a only | ⚠️ | Translated to x64 in the background; the app runs on a slower ARM JIT until then. See [ARM apps](arm-apps.md) | A library over 1 million instructions is translated only where the app ran | `winapk-aot`, `src/arm64/` |
+| Native code: armeabi-v7a only | ❌ | | 32-bit ARM code does not run. Look for another build of the app | |
+| Input | ⚠️ | Mouse as one finger, the wheel as a scroll, the keyboard, Escape as Back; Xbox (XInput) controllers | No multi-touch: pinch and two-finger gestures cannot be made with a mouse. Controllers that are not XInput | `win32_window.cpp`, `native_gamepad.cpp` |
+
+### Graphics, sound and video
+
+| Area | | What exactly | What is missing | Source |
+|---|:-:|---|---|---|
+| OpenGL ES | ✅ | GLES 1.1 to 3.2 and EGL 1.5, from Java (`GLSurfaceView`, libGDX) and from native code (SDL), on ANGLE over Direct3D 11; WARP or SwiftShader without a GPU | | `host/gl/` |
+| `NativeActivity` | ✅ | Games whose whole UI is native code get their window, input queue and configuration | | `native_activity.cpp` |
+| Vulkan | ❌ | | Not implemented | |
+| AudioTrack, SoundPool, MediaPlayer audio | ✅ | A WASAPI mixer; WAV, Ogg, MP3, AAC and what Windows decodes | | `native_audio.cpp` |
+| AAudio | ⚠️ | Output, in write and callback modes | No AAudio input | `native_aaudio.cpp` |
+| Microphone (`AudioRecord`) | ✅ | WASAPI capture | | `native_audio_input.cpp` |
+| OpenSL ES | ❌ | | The engine reports itself unsupported, so native games that use it are silent | `native_opensles.cpp` |
+| `MediaPlayer`, `VideoView` | ✅ | MP4, MOV, MKV with H.264 and AAC always; HEVC, VP9 and AV1 with Microsoft's codec packs; from a file or an http(s) URL | | `video_player.cpp` |
+| `MediaCodec` (ExoPlayer and others) | ⚠️ | H.264 video (and the codec packs' formats), AAC and MP3 audio | Opus, Vorbis and FLAC audio (such a stream plays silent); `MediaExtractor` | `native_media_video.cpp` |
+| NDK media (`AMediaCodec`, `AMediaExtractor`) | ❌ | | Not implemented: video from an app's native code | `native_media.cpp` |
+
+### The PC's hardware
+
+| Area | | What exactly | What is missing | Source |
+|---|:-:|---|---|---|
+| Camera | ✅ | Webcams through Camera, camera2 and CameraX (Media Foundation); a virtual camera when there is none | | `native_camera.cpp` |
+| Location | ✅ | Windows' location service, behind Windows' privacy switch | | `native_location.cpp` |
+| Sensors | ❌ | | The sensors exist but report a phone lying still; tilt controls do nothing | `runtime/java/android/hardware/` |
+| Bluetooth | ⚠️ | Paired devices; serial (RFCOMM) connections both ways; LE scans and the GATT client (read, write, notifications) | Discovery and pairing from the app, LE advertising, the GATT server, audio and HID profiles, L2CAP | `native_bluetooth.cpp` |
+| Wi-Fi | ⚠️ | On or off, the current network, the DHCP configuration, scan results | Connecting the PC to a network | `native_radios.cpp` |
+| Clipboard, file pickers | ✅ | Text, HTML and links; Windows' open and save dialogs | | `native_clipboard.cpp`, `native_picker.cpp` |
+
+### Windows integration
+
+| Area | | What exactly | What is missing | Source |
+|---|:-:|---|---|---|
+| WebView, Custom Tabs | ✅ | Microsoft Edge WebView2, with `shouldInterceptRequest` (Cordova, Capacitor) | Needs the WebView2 Runtime, which Windows 11 and most Windows 10 PCs have | `native_webview.cpp` |
+| Notifications | ⚠️ | Windows notifications with the app's name and icon, text, large icon and progress; a click opens the app while it runs | Action buttons are not shown | `native_notifications.cpp` |
+| Storage | ✅ | Files, SharedPreferences, SQLite. Downloads, Pictures, Documents, Music and Movies are your Windows folders (a setting turns this off) | | `user_folders.cpp` |
+| Permissions | ✅ | Android's dialogs for every dangerous group and special access, remembered per app | | `launcher_main.cpp` (`appops`) |
+| Hebrew and right to left | ⚠️ | Win.apk itself and its installer are fully Hebrew and mirrored. Apps see the Windows language and region, and the framework lays out right-to-left apps as Android does | Few Hebrew apps have been tried by hand | `launcher_main.cpp` (`tr()`) |
+
+### Google and app stores
+
+| Area | | What exactly | What is missing | Source |
+|---|:-:|---|---|---|
+| Google sign-in and basic Play services | ✅ | Built-in stand-ins: Google sign-in, Play licence checks, push messages (FCM), Firebase Analytics, fused location | | `runtime/java/com/macapk/gms/` |
+| Google's real Play services and Play Store | ⚠️ | Experimental, off by default, with Google's own APKs that you install. Tried: FCM tokens, the Play Store signed in, installing a free app from it. See [Google services](google-services.md) | Untested on most apps | `binder_win.cpp`, `SystemServer` |
+| In-app purchases, Play Integrity, Maps SDK | ❌ | | Billing reports unavailable, there is no attestation, and the Maps SDK lays out a blank map. Not planned: Win.apk does not forge Google's checks | |
+| F-Droid (the built-in Store) | ✅ | Search, categories, Install and Update; downloads checked against F-Droid's index | | `launcher_main.cpp` (Store) |
+| Store apps (F-Droid, Aurora Store) | ⚠️ | An app that installs other apps asks you first and installs into the library | Being tested in [#66](https://github.com/israel2176/win.apk/issues/66) | `PackageInstallerBackend` |
+
+## Needs improvement, by importance
+
+Ordered by how many apps each gap blocks, as far as we know. An item without an
+issue has none yet; please open one before working on it.
+
+| # | Gap | Effect | Issue |
+|---|---|---|---|
+| 1 | Start-up time | Apps start slowly even after their first run: the Java VM starts with no class-data cache | [#70](https://github.com/israel2176/win.apk/issues/70) |
+| 2 | OpenSL ES | Games whose engine plays sound through OpenSL ES are silent | |
+| 3 | The NDK media API, `MediaExtractor`, Opus/Vorbis/FLAC in `MediaCodec` | Video from native code does not play; some streams play without sound | |
+| 4 | 32-bit ARM code (`armeabi-v7a`) | Apps that ship only 32-bit ARM libraries do not run at all | |
+| 5 | Vulkan | Games that need Vulkan do not draw | |
+| 6 | Notification action buttons | Reply, mark as read and similar buttons are missing | |
+| 7 | Multi-touch | Pinch-to-zoom and two-finger gestures cannot be made | |
+| 8 | Code signing | SmartScreen and some antivirus programs warn about the downloads | |
+| 9 | Real sensors | PCs with an accelerometer cannot steer tilt games | |
+| 10 | Bluetooth: discovery, pairing, GATT server, profiles | Apps that pair devices themselves or act as a Bluetooth peripheral | |
+
+## The automated sweep
+
+CI can boot a corpus of 92 open-source F-Droid apps headless on Windows, one
+per kind of app (Java-only, Kotlin and Compose, x86_64 native code, arm64-only,
+games, Flutter, React Native, WebView), and report whether each draws its
+first screen. The list is `windows/test/compat/apps.txt`; every pull request
+that touches the runtime boots ten of them (`smoke.txt`) and fails if one no
+longer draws.
+
+The last full run (2026-11-08, [CI run 42518858070](https://github.com/israel2176/win.apk/actions/runs/42518858070)):
+**90 of 92 drew their first screen.** MuPDF Viewer started but drew a blank
+screen, and Tiny Wheels crashed at start.
+
+![First screens of six F-Droid apps from the sweep: Shattered Pixel Dungeon, Thunderbird, Mindustry, Lexica, DAVx5 and Loop Habit Tracker](images/apps.png)
+
+A sweep result means the app started and drew. It does not mean every screen
+works: a row in [Apps people have tried](#apps-people-have-tried) is worth more.
+
+The arm64 translation was also run (2026-11-06) on the arm64-v8a builds of 28
+F-Droid apps, each on the JIT alone and translated. 20 drew the same on both,
+among them VLC, Jitsi Meet, LocalSend, Lichess, Godot, OsmAnd, Telegram X,
+Minetest, Wesnoth, LibreOffice Viewer and Kodi. PPSSPP, Linphone and Emacs
+crashed at start, GNU Backgammon and AAAAXY stopped, and Firefox, GCompris and
+SimpleX drew nothing, the same way on both engines, so not because of the
+translation.
 
 ## Known issues by kind of app
 
-These come from how Win.apk is built; they are not specific to one app. The
-first column says what to look for in the app or its log.
+These come from how Win.apk is built, not from one app. The first column is
+what to look for in the app or in its log.
 
-| Sign | What it is | Status | Workaround |
-|---|---|---|---|
-| The APK has only `lib/armeabi-v7a` | 32-bit ARM native code only | Not supported; the app does not run | Look for an x86_64 or arm64-v8a build of the same app (F-Droid often has one) |
-| The APK has only `lib/arm64-v8a` | 64-bit ARM native code only | Runs: the libraries are translated to x64 in the background by `winapk-aot` with clang. The app starts at once on an ARM JIT and is slow until the translation of each library is ready; large libraries are translated only where the app's code ran | Give it a minute on first run. Set `WINAPK_AOT_CLANG` to another `clang.exe` if the bundled one is missing |
-| `NativeActivity` in the manifest | A game whose whole UI is native code (many engines) | Runs: the app gets its window, input queue and configuration as on Android | |
-| Video playback, `MediaPlayer`, `VideoView`, `ExoPlayer` | Video decoding on Media Foundation | `MediaPlayer` and `VideoView` play a local file or an http(s) URL into the app's `SurfaceView` or `TextureView`, with the sound in step, seeking and looping: MP4/MOV/MKV with H.264 and AAC always, HEVC/VP9/AV1 with Microsoft's codec packs. ExoPlayer and other `MediaCodec` players decode H.264 (and the pack codecs) with AAC or MP3 audio. Not yet: the NDK media API (`AMediaCodec`), `MediaExtractor`, and Opus/Vorbis/FLAC audio through `MediaCodec` (such a stream stays silent: pick one with AAC) | None |
-| A game in native code has no sound | OpenSL ES from native code | Not yet: the OpenSL ES engine reports itself unsupported, so engines that use it are silent. AAudio works | None |
-| A `WebView` in the app, a Custom Tab | Web content inside the app | Runs on Microsoft Edge WebView2 (needs the WebView2 Runtime, which Windows 11 and most Windows 10 PCs have). Without it, links open in the system browser | Install the WebView2 Runtime |
-| The camera, location | The PC's webcam and location service | Run: webcams through Media Foundation (a virtual camera when there is none), location from Windows' location service, both behind Windows' privacy settings (Settings > Privacy) | Turn the Windows privacy switch on |
-| The accelerometer and other sensors | Hardware a PC usually lacks | The sensors exist but report a still, flat phone (gravity on the accelerometer, zero rotation), so tilt controls do nothing | None |
-| Sign in with Google, Play licence checks, push messages | Google Play services | Run through Win.apk's own in-process stand-ins (as on the Mac). Sign-in opens Google's page in a WebView2 window; Settings > Google account adds the account | None |
-| Apps that need the real Google Play services or the Play Store | Google Play services | Experimental: Settings > Google account > Use Google services runs the Play services, Services Framework and Play Store you install (signed by Google) as apps other apps reach through the system broker. Tried with Google's own APKs: push (FCM) tokens for Telegram, Moovit and the Play Store, the signed-in account in the Play Store, and installing an app from it (Google's Calculator: download, the install question, the app in the library with the Play Store as its installer, the app opens; the Play Store's own updates of its helper apps install too). A Play Store started before Play services has checked in may show "Server error" (Try again) | Leave it off; the stand-ins above cover sign-in, licence checks and push |
-| In-app purchases, Play Integrity, Google Maps | Play Store features | Not there: purchases report billing unavailable, there is no attestation, and the Maps SDK lays out a blank map. The rest of the app may work | Use an open-source build without Play services (F-Droid) where there is one |
-| `not implemented on Windows yet` in the log | A libc function the app's native code needs that the Bionic shim does not have yet | Open an issue with the log: adding one is usually small | None |
-| `native not implemented` in the log | A piece of the Android host that is still missing | Open an issue with the log | None |
-| `[win.apk] cannot load <library>` in the log | A native library the loader could not load (packed, encrypted, or for another ABI) | Open an issue with the log and the APK's `lib/` folders | None |
-| The app looks like a phone turned on its side, or opens narrow when you wanted it wide | Apps open in landscape by default, the shape of a PC screen; an app whose manifest fixes portrait opens portrait | Expected | Right-click the app > "Open in portrait" or "Open in landscape", for that app only; Settings > Screen > Orientation for all of them. An app that requires one orientation always gets it, and its menu entry says so |
-| Windows Defender or SmartScreen warns about Win.apk or an app | Win.apk writes and then runs translated code, and the preview builds are not code-signed | Known; the preview builds are not signed yet | Allow it |
+| Sign | What it is | Workaround |
+|---|---|---|
+| The APK has only `lib/armeabi-v7a` | 32-bit ARM code, which Win.apk cannot run | Find an x86_64 or arm64-v8a build ([which build](arm-apps.md#which-build-to-install)) |
+| The APK has only `lib/arm64-v8a` | Runs, slowly at first, while it is translated | Give it a few minutes on its first runs |
+| A native game has no sound | OpenSL ES | None yet |
+| A video plays without sound in an ExoPlayer app | Opus, Vorbis or FLAC audio | Pick a stream with AAC audio, if the app lets you |
+| "Sign in with Google" fails, or the app says Play services are missing | The app checks for Google's own Play services | Try [Google services](google-services.md) (experimental) |
+| In-app purchases, a Play Integrity error, a blank Google map | Not available | Use an open-source build without Play services, where there is one |
+| `not implemented on Windows yet` in the log | A C library function the app's native code needs | [Report it](troubleshooting.md#reporting-a-problem) with the log; adding one is usually small |
+| `native not implemented` in the log | A piece of the Android host that is still missing | Report it with the log |
+| `[win.apk] cannot load <library>` in the log | A native library the loader could not load: packed, encrypted, or for another CPU | Report it with the log and the APK's `lib/` folders |
+| The app opens sideways, or narrow | Apps open in landscape; an app that fixes portrait opens portrait | The app's details page, **Window > Orientation**; or Settings > Apps > Orientation for all apps |
+| SmartScreen or an antivirus warns | The preview is not code-signed, and Win.apk writes then runs translated code | Allow it if you downloaded Win.apk from this repository |
 
-## Apps
+## Apps people have tried
 
-One row per app and version that someone actually ran; say what does not
-work in the notes. Newest test first within an app.
+One row per app and version that someone actually used. Newest test first
+within an app. The results of [#69](https://github.com/israel2176/win.apk/issues/69)
+(20 very different apps) and [#66](https://github.com/israel2176/win.apk/issues/66)
+(app stores) will be added here.
+
+**Status:** *Works* (the main screens are usable), *Partly* (opens, but
+something in the notes does not work), *Boots* (draws its first screen in an
+automated run; nobody has used it), *Does not start*, *Does not install*.
 
 | App | Version | Source | Status | Notes | Tested | Issue |
 |---|---|---|---|---|---|---|
-| Privacy Friendly Sudoku | 101 (`org.secuso.privacyfriendlysudoku`) | F-Droid | Boots | Boots headless on every CI run (`ci.yml`, Runtime tests): DEX conversion, `Application.onCreate`, the first activity resumed and 30 frames drawn | every CI run | |
-| Klooni | 860 (`dev.lonami.klooni`) | F-Droid | Works | libGDX: OpenGL ES from Java on ANGLE; draws and takes input | `windows/PORTING.md`, section 8 (window, input and rendering) | |
-| Tensy | 2 (`se.voxelmanip.tensy`) | F-Droid | Works | SDL 3: OpenGL ES from the app's own native code through a SurfaceView; draws and takes input | `windows/PORTING.md`, section 8 (window, input and rendering) | |
-
-The automated compatibility sweep (`windows/test/compat/apps.txt`) boots about
-90 F-Droid apps headless and reports which draw their first screen and what
-blocks the rest. It runs when asked for (`ci.yml` by hand, on four machines),
-and its report is an artifact of the run. Every pull request that touches the
-runtime boots ten of them instead, one of each kind (`smoke.txt`), and fails
-when one no longer draws. The corpus is
-pinned to one version per app and covers: apps without native libraries
-(Coffee, the Privacy Friendly apps, Markor, Bill Farmer's Editor, Diary and
-Currency, Noice, OpenTracks, Loop Habit Tracker, OpenTasks, QuickDic, Vanilla
-Music, SatStat, PassAndroid and others); apps with x86_64 libraries (Klooni,
-Tensy, Alex vs Bus, Shader Editor, NetGuard, KeePassDX, AnkiDroid and
-others); games in native code (Shattered Pixel Dungeon, Mindustry, Unciv,
-DroidFish, PPSSPP, RetroArch, Minetest, Dolphin); Kotlin and Compose apps
-(the Fossify apps, Pachli, Jerboa, Breezy Weather, Tasks, Auxio, LibreTube,
-F-Droid, Aurora Store, Aegis, Thunderbird, NewPipe, AntennaPod);
-cross-platform frameworks (LocalSend on Flutter, Jitsi Meet on React Native,
-Jellyfin and AndBible on WebView); and native-heavy apps (VLC, Organic Maps,
-Sky Map, ConnectBot, Trime, AnySoftKeyboard, MuPDF, Termux-style terminals,
-Gadgetbridge, OpenVPN, Open Camera, OpenKeychain, DAVx5, AdAway, Key Mapper,
-Tremotesf). Where F-Droid builds per ABI the x86_64 build is pinned, and a
-few arm64-v8a-only builds exercise the ARM translation. A sweep result says
-the app booted, not that it is usable: a row above is worth more.
-
-The arm64 translation was also run (2026-11-06) on the arm64-v8a libraries
-of 28 F-Droid apps, headless, twice on the JIT alone and twice translated:
-VLC, Jitsi Meet (React Native), LocalSend and Lichess (Flutter), Godot
-editor and Revengate (Godot), OsmAnd, Telegram X, Minetest, Tensy, TIC-80,
-Tux Paint, Wesnoth, Simon Tatham's Puzzles, Just Player, LibreOffice
-Viewer, Kodi, Freedoom, MuPDF and Open Sudoku drew the same on both engines
-(translated, with 5-30% less memory and up to half the time in arm64 code).
-PPSSPP, Linphone and Emacs crash at start in `winapk-runtime.exe` itself,
-GNU Backgammon aborts, AAAAXY (Go) stops with "unaligned sysNoHugePageOS",
-and Firefox (Fennec), GCompris and SimpleX draw nothing in 7 minutes: the
-same on the JIT, so not the translation.
+| Privacy Friendly Sudoku | 101 (`org.secuso.privacyfriendlysudoku`) | F-Droid | Boots | Boots headless on every CI run: code conversion, `Application.onCreate`, the first activity and 30 frames | every CI run | |
+| Klooni | 860 (`dev.lonami.klooni`) | F-Droid | Works | libGDX: OpenGL ES from Java; draws and takes input | `windows/PORTING.md`, section 8 | |
+| Tensy | 2 (`se.voxelmanip.tensy`) | F-Droid | Works | SDL 3: OpenGL ES from native code through a SurfaceView; draws and takes input | `windows/PORTING.md`, section 8 | |
 
 ### Adding a row
 
-Copy this line into the table, newest test first for the same app:
+Copy this line into the table, newest test first for the same app, and send it
+as a pull request or in an issue ([CONTRIBUTING.md](../CONTRIBUTING.md)):
 
 ```
 | App name | version (`package.name`) | F-Droid / APKMirror / the app's site | Works / Partly / Does not start | what works, what does not, in one line | YYYY-MM-DD | #123 |
 ```
 
-- **Version:** as the app's own About screen or its F-Droid page shows it,
-  and the package name, so two apps with the same name are not confused.
-- **Status:** one of the words at the top of this page.
-- **Tested:** the date, and the Win.apk version if it is not the latest
-  release.
-- **Issue:** the issue number for anything that does not work, so the row and
-  the fix stay linked.
+- **Version:** as the app's About screen or its store page shows it, and the
+  package name, so two apps with the same name are not confused.
+- **Tested:** the date, and the Win.apk version if it is not the latest.
+- **Issue:** the issue for anything that does not work.

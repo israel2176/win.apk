@@ -61,7 +61,8 @@ jobs:
           unzip -q jre.zip -d jre-unpacked
           mv jre-unpacked/* Win.apk/jre
           test -f Win.apk/jre/bin/server/jvm.dll
-          cp windows/package/README.txt Win.apk/
+          cp windows/package/README.txt THIRD_PARTY_NOTICES.txt Win.apk/
+          cp LICENSE Win.apk/LICENSE.txt
           zip -qr Win.apk-windows-x64.zip Win.apk
       - name: Smoke test the package
         run: |

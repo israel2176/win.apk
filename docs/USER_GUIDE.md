@@ -1,8 +1,9 @@
 # Win.apk user guide
 
-How to install, run and manage Android apps with Win.apk. This guide describes
-what each part does, not where it sits on the screen: the library's layout may
-change between releases while the behaviour stays.
+Every screen and setting of Win.apk, for reference. New to Win.apk? Start with
+[Getting started](getting-started.md). What apps can and cannot do is on one
+page, [Compatibility](APPS.md); problems and bug reports are in
+[Troubleshooting](troubleshooting.md).
 
 - [Installing apps](#installing-apps)
 - [The Store](#the-store)
@@ -13,14 +14,16 @@ change between releases while the behaviour stays.
 - [Hebrew and right-to-left](#hebrew-and-right-to-left)
 - [Shortcuts and file types](#shortcuts-and-file-types)
 - [Permissions](#permissions)
+- [Notifications](#notifications)
 - [Google account](#google-account)
 - [Updates](#updates)
+- [Wi-Fi and Bluetooth](#wi-fi-and-bluetooth)
 - [Shared storage](#shared-storage)
 - [Logs](#logs)
 - [Removing apps and uninstalling](#removing-apps-and-uninstalling)
 - [Where things are](#where-things-are)
 - [Command line](#command-line)
-- [Troubleshooting](#troubleshooting)
+- [Troubleshooting](troubleshooting.md) (its own page)
 
 ## Installing apps
 
@@ -56,12 +59,14 @@ What happens during an install:
    a minute for a typical app, longer for very large ones, and happens once
    per app version.
 3. If the app has only ARM64 native libraries, their translation to x64
-   starts in the background (see [ARM-only apps](#arm-only-apps)).
+   starts in the background (see [ARM apps](arm-apps.md)).
 4. The app gets a tile in the library, a Start menu shortcut under
    **Start > Win.apk Apps** and, unless turned off in the settings, a desktop
    shortcut.
 
 Installs run one at a time, in a small install window:
+
+![The install window while it works: the file's name, Installing… and a progress bar, with Show details and Cancel](images/install-progress.png)
 
 - While it works, the window shows the app's icon and name (the file's name
   until the app's own is read, near the end), a moving bar and one line on
@@ -79,7 +84,7 @@ Installs run one at a time, in a small install window:
   **Show in library** opens the library with the app selected. With several
   apps each one has its own **Open**.
 - When it fails: one sentence on why, **Report a problem** under it (see
-  [Reporting a problem](#reporting-a-problem)), **Show log** (the install
+  [Reporting a problem](troubleshooting.md#reporting-a-problem)), **Show log** (the install
   log, in the window) and **Copy details** (the reason, Win.apk's version and
   the end of the log, for a bug report).
 
@@ -97,69 +102,19 @@ Android phones use ARM processors; a PC uses x86-64. An app's native code
 | No native libraries (Java or Kotlin only) | Runs directly |
 | `lib/x86_64` | Loads those libraries directly, at full speed. Win.apk prefers this build whenever the APK or bundle has it |
 | Only `lib/arm64-v8a` | Translates the libraries to x64 in the background; the app runs on an ARM64 JIT until the translation is ready |
-| Only `lib/armeabi-v7a` (32-bit ARM) | Not supported. The app does not run; look for an x86_64 or arm64-v8a build |
+| Only `lib/armeabi-v7a` (32-bit ARM) | Not supported. The app installs but stops when it loads that code; look for an x86_64 or arm64-v8a build |
 
 #### ARM-only apps
 
-When an app has only 64-bit ARM libraries, Win.apk's translator
-(`winapk-aot`) turns each library into C, and the bundled clang compiles it
-for your CPU into a DLL next to the library. Nothing waits for this: the app
-starts at once on an ARM64 JIT, which is slower, and each library switches to
-its translation as soon as it is ready, even while the app is running. A
-library of up to 1 million instructions (most apps') is translated
-whole, once. A larger one (a browser's engine, a big app's own code) is translated only where the
-app's code actually ran, once what ran has settled (the app has been quiet
-for a minute, or you closed it), and more as you use the app, at most once
-an hour, so the first runs of a big app are the slow ones; its details page
-then says that an x86_64 build of the app, if one exists, runs faster. Whole
-translations are shared between apps that ship the same library, stored once
-on the disk; the shared folder keeps under 2 GB and lets go of what no app
-used for two months. A translation is made for your PC's processor: on
-another one (the data folder moved to a new PC) it is made again. A library
-that rewrites its own code while it runs (some games' anti-cheat code, some
-packed apps) stays on the JIT.
-
-The translation keeps out of your way. It runs at the lowest priority and
-uses at most one processor core while you are using the PC, more only while
-you are away, and none on battery saver or while a full-screen program (a
-game, a presentation) runs. It never takes the memory other programs need:
-it compiles less at once when memory is short. If it is stopped, by closing
-the app, shutting down or ending the process, it goes on where it was the
-next time. If a translation fails it is tried again later, and after four
-failures the library stays on the JIT until the app or Win.apk is updated
-(the app's `aot-<app>.log` in the logs folder says why).
-
-While an app's translation runs, its details page says **Optimizing for this
-PC…** under Performance. **Settings > Apps > Optimize ARM apps in the
-background** turns the translation off: nothing new is translated (a
-translation under way stops before its next part and goes on later), and
-what was already translated is still used.
-
-If an ARM-only app crashes twice in a row while translated code is loaded,
-Win.apk takes the translation for the suspect: from the next start the app
-runs on the JIT only, slower but without it. Only crashes count (the app's
-process ending in a fault or an abort, the `[win.apk] crash:` lines of its
-log), not closing the app, Stop, Remove or ending it in Task Manager. The app's log says so at that start, with the crashes and their
-times:
-
-```
-[win.apk] arm64 AOT: off for this app: it crashed 2 starts in a row with translated code loaded (...); the JIT runs it. Delete ...\apps\<app>\aot-guard.txt to try the translation again.
-```
-
-and each crash it counts adds a `[win.apk] arm64 AOT: crash counted` line.
-To try the translation again, delete the file the line names; an update of
-the app or of the translator also clears it. If the app then crashes twice
-in a row on the JIT as well, it was not the translation: the log says
-`crashes on the JIT too: not the translation`, and the next start uses the
-translation again, for good for that version of the app. To run any app on
-the JIT only, set `WINAPK_AOT=0`.
-
-The translation uses the clang shipped in Win.apk's `clang` folder. To use a
-different one, set the environment variable `WINAPK_AOT_CLANG` to its
-`clang.exe`; without the bundled one, Win.apk also looks for `clang.exe` on
-the `PATH`.
+An app with only 64-bit ARM libraries starts at once on an ARM64 JIT while
+its code is translated for your processor in the background, at the lowest
+priority. [ARM apps](arm-apps.md) explains which build of an app to install,
+how the translation works, what it does when an app crashes, and the
+settings and variables that control it.
 
 ## The Store
+
+![The Store: F-Droid's apps as cards with Install buttons, a search box and a category list](images/store.png)
 
 The **Store** tab is [F-Droid](https://f-droid.org)'s catalog of free and
 open-source apps, usually Java-only and a good place to start. It lists the
@@ -217,13 +172,8 @@ In an app:
 | Close the window | The app quits |
 | Resize, maximize or snap the window | A display of the new size; the app lays itself out again |
 
-Video plays: `MediaPlayer` and `VideoView` show MP4, MOV and other files
-Windows can decode (H.264 and AAC always; HEVC, VP9 and AV1 once Microsoft's
-codec packs are installed from the Microsoft Store), from a file or a web
-address, with the sound in step, seeking and looping. Players built on
-`MediaCodec`, such as ExoPlayer, decode H.264 video with AAC or MP3 audio;
-a stream whose audio is Opus, Vorbis or FLAC stays silent, so pick one with
-AAC audio where the app lets you.
+What an app can use (sound, video, the camera, Bluetooth and the rest) is
+listed in [Compatibility](APPS.md#what-works).
 
 An app runs once at a time. Starting it again (from a shortcut or the
 library) brings the running window to the front.
@@ -269,13 +219,15 @@ without an answer.
 
 **App details** (also Alt+Enter) is a page in the library, with a back arrow:
 
+![An app's details page: Window, Shortcut, Troubleshooting and Storage sections](images/details.png)
+
 | Section | What it holds |
 |---|---|
 | Window | **Orientation**: the settings' default, portrait or landscape for this app only (an app whose manifest fixes one says so instead). **Window size**: the size the app's window was last given, with **Reset** |
 | Permissions | A switch per permission the app was asked for or granted, and **Reset permissions**; see [Permissions](#permissions) |
 | Shortcut | **Desktop shortcut**: adds or removes the app's desktop shortcut. The Start menu one is always there |
-| Performance | Only for an app with only ARM code: **Optimizing for this PC…** while its translation runs in the background (with the parts done so far), and **This app has only ARM code** when a library is too large to translate whole, so an x86_64 build of the app, if one exists, runs faster. See [ARM-only apps](#arm-only-apps) |
-| Troubleshooting | **Log**: **Show log** opens the log window on the app's last run (or its install, before the first run). **Report a problem**: for a problem met inside the app; see [Reporting a problem](#reporting-a-problem) |
+| Performance | Only for an app with only ARM code: **Optimizing for this PC…** while its translation runs in the background (with the parts done so far), and **This app has only ARM code** when a library is too large to translate whole, so an x86_64 build of the app, if one exists, runs faster. See [ARM apps](arm-apps.md) |
+| Troubleshooting | **Log**: **Show log** opens the log window on the app's last run (or its install, before the first run). **Report a problem**: for a problem met inside the app; see [Reporting a problem](troubleshooting.md#reporting-a-problem) |
 | Storage | **The app's file**: its size, and **Show** opens Explorer on it. **Converted code**: the app's folder under `apps\` |
 | Manage | **Stop** (while it runs), **Update from a file** (installs a newer, or any other, version over this one; what the app saved stays; refused while the app runs) and **Remove** |
 
@@ -288,6 +240,8 @@ Show log**); Ctrl+L opens the log window on the newest log.
 **Settings**, at the bottom of the navigation pane (or Ctrl+,), is a page of
 its own. Each setting takes effect the next time an app opens unless noted.
 
+![Settings: Appearance (theme, language) and Apps (screen size, orientation, Windows folders, ARM translation, shortcuts)](images/settings.png)
+
 | Section | Setting | What it does |
 |---|---|---|
 | Appearance | **Theme** | Match Windows, Light or Dark. Applies at once |
@@ -295,10 +249,10 @@ its own. Each setting takes effect the next time an app opens unless noted.
 | Apps | **Screen size** | The phone screen apps see, in dp (density-independent pixels, as on a phone). **Auto** is 360 × 800 dp, or the size given by `WINAPK_PHONE_SIZE` when that variable is set. Presets range from 320 × 480 to a 10-inch tablet |
 | Apps | **Orientation** | Portrait or landscape, for every app that has no choice of its own. The default is landscape, the shape of a PC screen |
 | Apps | **Use my Windows folders** | On: apps' shared storage (Downloads, Pictures, Documents, Music, Movies) is your own Windows folders. Off: each is an empty folder of Win.apk's own, and your files stay where they are. See [Shared storage](#shared-storage) |
-| Apps | **Optimize ARM apps in the background** (on) | Translates the code of ARM-only apps for your PC, at the lowest priority. Off: no translation is started, one under way stops before its next part (and goes on where it was once this is on again), and translations already made are still used. See [ARM-only apps](#arm-only-apps) |
+| Apps | **Optimize ARM apps in the background** (on) | Translates the code of ARM-only apps for your PC, at the lowest priority. Off: no translation is started, one under way stops before its next part (and goes on where it was once this is on again), and translations already made are still used. See [ARM apps](arm-apps.md) |
 | Apps | **Desktop shortcut for new apps** | Every app gets a Start menu shortcut; this adds one on the desktop too |
 | Apps | **Open .apk, .apkm, .xapk and .apks files with Win.apk** | Makes Win.apk the default program for the four formats |
-| Google account | **Sign in**, **Add another account**, **Sign out**; **Use Google services (experimental)** (off), and with it on **Google services setup** | See [Google account](#google-account) and [Setting up Google's apps](#setting-up-googles-apps) |
+| Google account | **Sign in**, **Add another account**, **Sign out**; **Use Google services (experimental)** (off), and with it on **Google services setup** | See [Google account and Google services](google-services.md) |
 | Troubleshooting | **Logs** | Opens the `logs` folder in Explorer, to attach files to a bug report |
 | Troubleshooting | **App data** | Opens `%LOCALAPPDATA%\Win.apk` |
 | Troubleshooting | **Clear library** | Uninstalls every app and removes its shortcuts (app data is kept) |
@@ -418,107 +372,16 @@ top of that. Action buttons on notifications are not shown.
 
 ## Google account
 
-Apps that use Google Play services get Win.apk's own in-process stand-ins,
-inherited from Mac.apk: Google sign-in, Play licence checks, Firebase Cloud
-Messaging (push), Firebase Analytics and the fused location provider work
-without the Play Store. In-app purchases, Play Integrity attestation and the
-Maps SDK's map do not: there is no Google signing certificate and no installed
-Play services package, so an app that checks for them finds none.
+**Settings > Google account** signs in with Google (on Google's own page, in a
+window of its own: Win.apk never sees the password), adds another account and
+signs out. One account serves every app, and the round button at the end of
+the toolbar shows who is signed in. **Use Google services (experimental)**
+runs Google's own Play services and Play Store, which you install through the
+**Google services setup** page; with it on, **Google Play** appears under
+**Store** in the navigation pane.
 
-**Settings > Google account** lists the accounts on this PC, adds one and
-signs out. Signing in opens Google's own sign-in page in a window of its own
-(Microsoft Edge WebView2, in a private profile). Win.apk never sees the
-password; it keeps the token Google hands back, in
-`%LOCALAPPDATA%\Win.apk\gms`. Signing out forgets the account and its tokens
-on this PC; apps that used it ask again.
-
-The account belongs to Win.apk, not to one app: every app on the PC uses it.
-An app's **Sign in with Google** opens the same sign-in window when no account
-is signed in yet, and the account added there is the one the app signs in
-with (and the one Settings shows). With an account, the app shows its chooser.
-The round button at the end of the toolbar (on the left in Hebrew) shows the
-signed-in account's profile picture, as a browser's profile button does (the
-account's initial when Google gave no picture at sign-in), or an outline of a
-person when there is none; it opens Settings. The picture is fetched once, at
-sign-in, and kept in `%LOCALAPPDATA%\Win.apk\gms` until you sign out; an
-account signed in before this version shows its picture after signing out and
-in again.
-
-### Google services (experimental)
-
-**Settings > Google account > Use Google services (experimental)** (off by
-default) runs Google's real Play services, Services Framework and Play Store
-as apps, when you have installed them yourself (Win.apk never ships or
-downloads them). Each app runs in its own process; a small background process,
-the system broker (`winapk-runtime --system`, started by the first app that
-needs it and gone a minute after the last app closes), lets one app reach
-another's services, the way Android's system server does. Apps then use the
-real Play services instead of Win.apk's stand-ins. It takes effect when an app
-starts. With Google's own copies this gives apps push notifications through
-Firebase Cloud Messaging from the real Play services, and the Play Store
-signed in with your Google account, which can install apps: its Install
-button downloads the app, asks you (as an app installing another always
-does) and puts it in your library, with the Play Store as the app's
-installer. The first time, Play services needs a minute to check in with
-Google; a Play Store opened before that may show "Server error" (press Try
-again once it has). Opening an app that Play services
-had started in the background (the Play Store, for one) restarts it with its
-window.
-
-Only copies whose signature verifies, made with Google's own key (or a newer
-Google key that proves it took over from it, as current Play services do), are
-treated as the system's Google apps; an APK that merely uses their package
-names, or carries a copy of Google's certificate it was not signed with, is an
-ordinary app. Win.apk checks every app's signature this way when it is
-installed and before it reports the app's certificate to another app: an app
-whose signature does not verify still runs, but it reports no certificate and
-the install log says why.
-The broker knows which app a process is from how Windows started it, not from
-what the app says, and refuses an app that claims to be another. Every app
-still runs with your Windows account's rights, as any program you run does:
-there is no sandbox between apps on Windows. In-app purchases and Play
-Integrity still do not work. The broker's log is `logs\system.log`, its
-services' logs are in `logs\services`.
-
-With Google services on, Google sees this PC as a device of its own, named
-for what it is: brand, maker and model "Win.apk", device and product
-"winapk", hardware "x86_64". Win.apk never claims to be a real phone or a
-Google device. (Before this version the device called itself "Mac.apk", so
-anyone who had already used Google services meets it as a new device once.)
-
-#### Setting up Google's apps
-
-Win.apk never downloads Google's apps itself. **Google services setup**
-guides you through it. It opens by itself when you turn **Use Google
-services** on and the three apps are not all installed, and it is reached
-again from **Google Play** in the navigation pane (while they are missing) or
-the **Google services setup** row under the switch. It has a row for each
-app: Google Services Framework (`com.google.android.gsf`), Google Play
-services (`com.google.android.gms`) and Google Play Store
-(`com.android.vending`), each either ticked with the installed version or
-with **Download**. **Download** opens the app's page on APKMirror in your
-browser; pick the variant the row names (x86_64 or nodpi, for Android 10 or
-later) and use APKMirror's own download button.
-
-While the page is open, Win.apk watches your Downloads folder. A new `.apk`,
-`.apkm`, `.xapk` or `.apks` file there, or one you drop on the page, is
-checked first (`winapk-runtime --verify-apk`): which app it is, and whether
-its signature verifies and was made with Google's key (or a newer Google key
-that took over from it). Only one of the three apps that Google signed is
-installed, the same way as a file dropped on the library, and its row is
-ticked. A file whose signature does not verify, or that someone other than
-Google signed, is refused with the reason; other downloads are left alone.
-Once all three are installed the page says Google services are ready. From
-then on the Play Store updates itself and Play services, as on a phone. The
-checks are logged in `logs\google-setup.log`.
-
-**Google Play**, under **Store** in the navigation pane while Google services
-are on, opens the real Play Store in its own window, the same as opening it
-from the library, once the three apps are installed; until then it opens the
-setup page.
-
-Google sign-in needs the WebView2 Runtime (a 2022 or later version). Without
-it the sign-in is cancelled and the log says why.
+[Google account and Google services](google-services.md) explains both, the
+setup step by step, and what does not work.
 
 ## Updates
 
@@ -545,18 +408,10 @@ kept in `%LOCALAPPDATA%\Win.apk\updates` until the update has been installed.
 
 ## Wi-Fi and Bluetooth
 
-Apps see the PC's Wi-Fi: whether it is on, the current network with its
-signal and address, and scan results. Network names and scan results need
-location access for desktop apps in Windows' privacy settings, the same way
-Android needs the location permission. An app cannot connect the PC to a
-network.
-
-Bluetooth works with devices you have paired in Windows Settings: an app can
-open a serial (RFCOMM) connection to one, or listen for one to connect to the
-PC, scan for Bluetooth LE devices and connect to them (reading, writing and
-notifications), after it asks for the Nearby devices permission. Apps cannot
-pair or discover classic devices themselves, advertise, act as a GATT server,
-or use the audio and input profiles.
+Apps see the PC's Wi-Fi and the Bluetooth devices paired in Windows Settings.
+Network names and scan results need location access for desktop apps in
+Windows' privacy settings, as Android needs the location permission. What
+exactly works is in [Compatibility](APPS.md#the-pcs-hardware).
 
 ## Shared storage
 
@@ -568,7 +423,7 @@ saved there earlier is moved into your folders first, never over a file of
 yours (a name clash comes in as `name (from Android).ext`). `DCIM` stays
 Win.apk's own.
 
-**Settings > App data > Use my Windows folders** turns this off: each folder
+**Settings > Apps > Use my Windows folders** turns this off: each folder
 becomes an empty one of Win.apk's own again, and your files stay where they
 are.
 
@@ -581,6 +436,8 @@ it (every match is marked; Enter or F3 goes to the next, Shift+F3 back),
 **Copy** it to the clipboard, or **Open folder** to see the file in Explorer
 (`%LOCALAPPDATA%\Win.apk\logs`). Error lines are in red. The install window
 and the launch window open the right log themselves when something fails.
+
+![The log window: a log picker, search, Copy and Open folder above an app's log](images/logs.png)
 
 | File | What it records |
 |---|---|
@@ -694,72 +551,5 @@ development and testing.
 
 ## Troubleshooting
 
-**The app does not start, or stops with an error.** Click **Show log** in
-the launch window, or **Show log** on the app's details page.
-The most useful lines:
-
-| Line | Meaning |
-|---|---|
-| `native not implemented on Windows yet` | A piece of the Android host that is still missing |
-| `not implemented on Windows yet` (about a system function) | A C library function the app's native code needs that the Bionic shim does not have yet |
-| `[win.apk] cannot load <library>` or `UnsatisfiedLinkError` | A native library did not load: 32-bit ARM only, packed or encrypted, or for another CPU |
-| `Exception` or `FATAL` | The app crashed; the lines after it say where |
-| `[win.apk] crash:` and `crash dump:` | The app's native code crashed: the library and offset, and the minidump written for it, which is worth attaching too |
-| `[win.apk] arm64 AOT: off for this app` | An ARM-only app crashed twice in a row with its translation loaded, so it runs on the JIT; see [ARM-only apps](#arm-only-apps) |
-| `[win.apk]` | A message from Win.apk itself |
-
-Then look in [`APPS.md`](APPS.md) for the app or the kind of problem, and
-report it: see [Reporting a problem](#reporting-a-problem).
-
-**The install failed.** The install window says why in a sentence; **Show
-log** opens `install-<app>.log`, and **Copy details** copies what a bug
-report needs. An APK with only 32-bit ARM libraries cannot be
-installed; a Store entry that says the APK has no native code for this PC
-needs the full bundle instead.
-
-**The app is slow.** If it has only ARM64 libraries, it runs on the JIT until
-its translation is ready. The translation goes faster while you leave the
-PC alone: on a busy PC, a large app's first translation can take an hour or
-more. `logs\aot-<app>.log` shows its progress and how many compilers it runs
-at once, and why. Check that the `clang` folder is next
-to `bin` in Win.apk's folder.
-
-**No sound from a native game.** Games whose engine plays audio through
-OpenSL ES get no sound yet; AAudio works.
-
-**Video does not play.** `MediaPlayer`, `VideoView` and ExoPlayer play what
-Windows decodes: H.264 with AAC always; HEVC, VP9 and AV1 only with
-Microsoft's codec packs from the Store. A stream whose audio is Opus, Vorbis
-or FLAC plays without sound in an ExoPlayer app (pick one with AAC), and
-video from an app's native code (the NDK's `AMediaCodec`) is not there yet.
-
-**Windows Defender or SmartScreen warns.** Preview builds are not
-code-signed, and Win.apk writes and then runs translated code, which some
-scanners flag. Allow it if you trust the download.
-
-**Text or layout is wrong in the app.** Try another Screen size preset, or
-turn the app the other way (its details page, **Window > Orientation**). A
-screenshot plus the log makes a good report.
-
-**The app asks for something Windows cannot give** (notification access,
-accessibility, usage access). The window explains this in a sentence and the
-app is told no; the rest of the app usually works.
-
-### Reporting a problem
-
-**Report a problem** is under the sentence of the launch window's error and
-of a failed install, and on the app's details page (Troubleshooting) for a
-problem met inside the app. It first asks, with a link to the open reports
-that name the same package so a second one is not opened. Then:
-
-- The browser opens GitHub's "An app does not work" form with the title,
-  Win.apk's version, the Windows version, the graphics adapter and the app
-  (name, version and package) already filled in, and for a failure the
-  sentence the window showed. A GitHub account is needed to post it.
-- Explorer opens the logs folder with the app's log selected, and its newest
-  crash dump (`crash-<app>-<time>.dmp`) too when there is one, ready to drag
-  into the form.
-
-Nothing is uploaded by itself: a log can hold your Windows user name and
-file names, so look it over and decide what to attach. What is left to fill
-in is where the APK came from, the steps and a screenshot.
+Common problems, what the lines of a log mean, and how to report a problem
+are on their own page: [Troubleshooting](troubleshooting.md).

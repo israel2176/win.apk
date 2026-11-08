@@ -24,18 +24,19 @@ Hebrew is fine. A report that can be acted on has four things:
    builds.
 2. **Steps to reproduce.** Numbered, from a fresh start: how you installed
    the app, what you clicked, what you typed, whether it happens every time.
-   Try once more after right-click > **Reinstall** first, to rule out a
-   broken install.
+   Try once more after installing the app again (its details page, **Update
+   from a file**), to rule out a broken install.
 3. **A screenshot** of the app at the point it goes wrong (Win+Shift+S), or
    a short recording for anything that moves or flickers. For a layout or
    text problem the screenshot is the report.
 4. **The log**, attached whole: `%LOCALAPPDATA%\Win.apk\logs\last-run.log`
-   for a run, `install-<app>.log` for an install. **Logs** at the bottom of
-   the library opens them and **Copy** puts one on the clipboard. Look it
-   over first; it can contain file names and the app's own output.
+   for a run, `install-<app>.log` for an install. The app's details page
+   (**Troubleshooting > Show log**) or Ctrl+L opens them, and **Copy** puts
+   one on the clipboard. Look it over first; it can contain file names and
+   the app's own output.
 
-The [user guide's troubleshooting section](docs/USER_GUIDE.md#troubleshooting)
-explains the common log lines. Before opening an issue, look through
+[Troubleshooting](docs/troubleshooting.md#reading-the-log) explains the
+common log lines. Before opening an issue, look through
 [`docs/APPS.md`](docs/APPS.md) and the open issues for the same app, and add
 to an existing issue rather than opening a second one. One app or one problem
 per issue.
@@ -109,13 +110,17 @@ pull request:
 
 | Document | What it covers |
 |---|---|
-| [`README.md`](README.md) | What Win.apk is, what it solves, how it works at a glance, what works |
-| [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md) | What a user does and sees: installing, the Store, settings, permissions, logs, the command line |
+| [`README.md`](README.md), [`README.he.md`](README.he.md) | The front page, in English and Hebrew: what Win.apk is, how it differs from an emulator, install, credits |
+| [`docs/APPS.md`](docs/APPS.md) | Compatibility: the one table of what works, partly works and is missing; the sweep; apps people tried |
+| [`docs/getting-started.md`](docs/getting-started.md), [`faq.md`](docs/faq.md), [`how-it-works.md`](docs/how-it-works.md) | Requirements and installing; common questions; Win.apk explained for users |
+| [`docs/arm-apps.md`](docs/arm-apps.md), [`google-services.md`](docs/google-services.md), [`troubleshooting.md`](docs/troubleshooting.md) | Which build of an app to install and the ARM translation; the Google account and Google services; problems, logs and reporting |
+| [`docs/he/`](docs/he/) | The Hebrew versions of getting started, Google services, troubleshooting and the FAQ |
+| [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md) | Every screen and setting: installing, the Store, settings, permissions, logs, the command line |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | How the layers work, an install and a run step by step, the data on disk |
-| [`docs/APPS.md`](docs/APPS.md) | Apps that were tried, and known issues by kind of app |
 | [`windows/README.md`](windows/README.md) | Building, running and testing; every change made under `runtime/` |
 | [`windows/PORTING.md`](windows/PORTING.md) | Design decisions, findings, known gaps and the milestone plan |
-| [`windows/package/RELEASE_NOTES.md`](windows/package/RELEASE_NOTES.md), [`README.txt`](windows/package/README.txt) | What a user of a release sees: what works, what is new, the shipped read-me |
+| [`windows/package/RELEASE_NOTES.md`](windows/package/RELEASE_NOTES.md), [`README.txt`](windows/package/README.txt) | The short release notes, and the read-me shipped in the package |
+| [`THIRD_PARTY_NOTICES.txt`](THIRD_PARTY_NOTICES.txt) | Every third-party component Win.apk ships, with its licence |
 | [`CLAUDE.md`](CLAUDE.md) | The map of the repository and its conventions, for people and for AI assistants |
 
 Write for the reader who was not there: say what a thing does and why, in
