@@ -1,3 +1,9 @@
+<div align="center">
+
+### 🇮🇱 [לתיעוד בעברית — לחצו כאן](README.he.md)
+
+</div>
+
 # Win.apk
 
 **Run Android apps on Windows as ordinary Windows programs. No emulator, no virtual machine.**

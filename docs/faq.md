@@ -1,6 +1,6 @@
 # Frequently asked questions
 
-[עברית](he/faq.md)
+**🇮🇱 [לדף הזה בעברית — לחצו כאן](he/faq.md)**
 
 **Is Win.apk an emulator?**
 No. No Android system runs: each app runs as its own Windows program, on a

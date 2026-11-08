@@ -1,6 +1,6 @@
 # Getting started
 
-[עברית](he/getting-started.md)
+**🇮🇱 [לדף הזה בעברית — לחצו כאן](he/getting-started.md)**
 
 From download to your first Android app on Windows, in about five minutes.
 
