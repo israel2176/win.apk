@@ -3,6 +3,7 @@
 #include "cds_util.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
@@ -20,16 +21,57 @@ namespace {
 
 bool starts(const std::string& s, const char* prefix) { return s.compare(0, std::strlen(prefix), prefix) == 0; }
 
+struct Listed {
+    std::string rel;  // relative path, '/' separated, UTF-8
+    uint64_t size = 0, time = 0;
+};
+
+std::string utf8_of(const std::wstring& w) {
+    if (w.empty()) return {};
+    const int n = WideCharToMultiByte(CP_UTF8, 0, w.data(), static_cast<int>(w.size()), nullptr, 0, nullptr, nullptr);
+    std::string out(static_cast<size_t>(n), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, w.data(), static_cast<int>(w.size()), &out[0], n, nullptr, nullptr);
+    return out;
+}
+
+// Every file under `dir` with its size and time, straight from
+// FindFirstFileEx: no file is opened and nothing is asked twice
+// (std::filesystem's iterator plus relative() cost ~10 ms on ~80 files).
+// False when `dir` cannot be listed.
+bool list_files(const std::wstring& dir, const std::string& prefix, std::vector<Listed>* out) {
+    WIN32_FIND_DATAW fd;
+    HANDLE h = FindFirstFileExW((dir + L"\\*").c_str(), FindExInfoBasic, &fd, FindExSearchNameMatch, nullptr,
+                                FIND_FIRST_EX_LARGE_FETCH);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    bool ok = true;
+    do {
+        const std::wstring name = fd.cFileName;
+        if (name == L"." || name == L"..") continue;
+        const std::string rel = prefix + utf8_of(name);
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            ok = list_files(dir + L"\\" + name, rel + "/", out) && ok;
+        } else {
+            out->push_back({rel, (static_cast<uint64_t>(fd.nFileSizeHigh) << 32) | fd.nFileSizeLow,
+                            (static_cast<uint64_t>(fd.ftLastWriteTime.dwHighDateTime) << 32) |
+                                fd.ftLastWriteTime.dwLowDateTime});
+        }
+    } while (FindNextFileW(h, &fd));
+    FindClose(h);
+    return ok;
+}
+
+std::vector<Listed> listing(const fs::path& dir) {
+    std::vector<Listed> files;
+    if (!list_files(dir.wstring(), "", &files)) files.clear();
+    std::sort(files.begin(), files.end(), [](const Listed& a, const Listed& b) { return a.rel < b.rel; });
+    return files;  // byte order of the paths, as LC_ALL=C sort
+}
+
 }  // namespace
 
 std::string patch_dir_digest(const fs::path& dir) {
-    std::error_code ec;
-    std::vector<std::string> rel;
-    for (fs::recursive_directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
-        if (it->is_regular_file(ec)) rel.push_back(fs::relative(it->path(), dir, ec).generic_u8string());
-    }
-    if (ec || rel.empty()) return {};
-    std::sort(rel.begin(), rel.end());  // byte order, as LC_ALL=C sort
+    const std::vector<Listed> files = listing(dir);
+    if (files.empty()) return {};
     BCRYPT_ALG_HANDLE alg = nullptr;
     BCRYPT_HASH_HANDLE hash = nullptr;
     if (BCryptOpenAlgorithmProvider(&alg, BCRYPT_SHA256_ALGORITHM, nullptr, 0) != 0) return {};
@@ -37,11 +79,10 @@ std::string patch_dir_digest(const fs::path& dir) {
     if (BCryptCreateHash(alg, &hash, nullptr, 0, nullptr, 0, 0) == 0) {
         bool ok = true;
         std::vector<char> buf(1 << 16);
-        for (const std::string& r : rel) {
-            const fs::path full = dir / fs::u8path(r);
-            std::ifstream in(full, std::ios::binary);
-            const std::string head = r + "\n" + std::to_string(fs::file_size(full, ec)) + "\n";
-            ok = ok && in && !ec &&
+        for (const Listed& f : files) {
+            std::ifstream in(dir / fs::u8path(f.rel), std::ios::binary);
+            const std::string head = f.rel + "\n" + std::to_string(f.size) + "\n";
+            ok = ok && in &&
                  BCryptHashData(hash, reinterpret_cast<PUCHAR>(const_cast<char*>(head.data())),
                                 static_cast<ULONG>(head.size()), 0) == 0;
             while (ok && (in.read(buf.data(), static_cast<std::streamsize>(buf.size())) || in.gcount() > 0))
@@ -75,19 +116,11 @@ std::vector<std::pair<std::string, std::string>> read_baked(const fs::path& file
 }
 
 std::string patch_dir_stamp(const fs::path& dir) {
+    const std::vector<Listed> files = listing(dir);
+    if (files.empty()) return {};
     std::error_code ec;
-    std::vector<std::string> parts;
-    for (fs::recursive_directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
-        if (!it->is_regular_file(ec)) continue;
-        // On Windows the size and the time come with the directory listing.
-        const auto size = it->file_size(ec);
-        const auto time = it->last_write_time(ec);
-        parts.push_back(fs::relative(it->path(), dir, ec).generic_u8string() + "|" + std::to_string(size) + "|" +
-                        std::to_string(static_cast<long long>(time.time_since_epoch().count())));
-    }
-    if (ec || parts.empty()) return {};
-    std::sort(parts.begin(), parts.end());
-    parts.insert(parts.begin(), fs::absolute(dir, ec).generic_u8string());
+    std::vector<std::string> parts = {fs::absolute(dir, ec).generic_u8string()};
+    for (const Listed& f : files) parts.push_back(f.rel + "|" + std::to_string(f.size) + "|" + std::to_string(f.time));
     return key_of(parts);
 }
 

@@ -687,7 +687,7 @@ default; `--data` moves it for a direct run):
 | `app_uids.properties`, `system_ce\0\`, `installer-of-record.properties`, `run\system-ready` | With Google services on: per-package uids, the accounts service's store, which app installed which, the broker's readiness |
 | `logs\system.log`, `logs\services\` | The system broker and the apps it starts as service hosts |
 | `aot-cache\` | Whole arm64 translations shared between apps, `<key>.aot.dll` (kept under 2 GB, least recently used first); a `*.tmp` is a write in progress, or one a killed worker left (deleted when an hour old) |
-| `cds\` | The framework archive (`host/cds.h`): `framework-<key>.jsa`, `.ok` once it has mapped whole, `.fails` (failures in a row; at two it is not made again for that key), `dump.log` (the last dump), and a `.classlist` while a first start records |
+| `cds\` | The framework archive (`host/cds.h`): `framework-<key>.jsa`, `.ok` once it has mapped whole, `.fails` (failures in a row; at two it is not made again for that key), `dump.log` (the last dump), a `.classlist` while a first start records, and `patch-digests.txt` (the patch folders' digests under a stamp of their listing, so a start does not hash them again) |
 | `cache\` | The runtime's shared caches: `android-system-fonts\` (the `/system/fonts` and `fonts.xml` native text stacks such as Flutter's read), `fonts\`, `fwview\` (the framework's resolved resources), `monet\`, `apk-verify\` (APK signature verdicts) |
 | `run\<package>.pid` | Each running app's run lock |
 | `staging\` | The install helper's staging area |
