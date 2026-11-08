@@ -991,6 +991,25 @@ public class AccountManager {
             String[] requiredFeatures, Bundle addAccountOptions, Activity activity,
             AccountManagerCallback<Bundle> callback, Handler handler) {
         if (accountType == null) throw new IllegalArgumentException("accountType is null");
+        if (sys(accountType) && com.macapk.gms.GoogleAuthenticator.ACCOUNT_TYPE.equals(accountType)
+                && com.macapk.gms.NativeSignIn.available()) {
+            // A Google account with Google's own Play services installed (the Play
+            // Store's "Sign in"). On a device Play services' authenticator answers
+            // with an Intent to its own sign-in activity, which the caller starts in
+            // Play services' process and which answers through the authenticator
+            // response binder in the Intent. Win.apk has no cross-app activity start
+            // that carries a binder, and that activity's embedded flow wants a
+            // device attestation besides, so the Intent could not be started and
+            // the future never completed. Win.apk's own sign-in window (the one
+            // Settings > Google account uses) adds the account instead, to the one
+            // Google account store every app and the system broker share; the
+            // broker then lists it to Play services with its master token, as Play
+            // services' own sign-in would have.
+            Context c = appContext();
+            final String caller = c == null ? null : c.getPackageName();
+            final boolean userAsked = activity != null;
+            return submit(() -> sysGoogleAddAccount(caller, userAsked), callback, handler);
+        }
         if (sys(accountType)) {
             // AOSP AccountManager.addAccount puts the caller's package into the options;
             // the service adds KEY_CALLER_UID / KEY_CALLER_PID.
@@ -1020,6 +1039,34 @@ public class AccountManager {
             b.putString(KEY_ACCOUNT_TYPE, com.macapk.gms.GoogleAuthenticator.ACCOUNT_TYPE);
             return b;
         }, callback, handler);
+    }
+
+    /** addAccount("com.google") through Win.apk's sign-in window, then the broker's
+     *  account list, so the caller's next getAccountsByType already has the row. */
+    private static Bundle sysGoogleAddAccount(String caller, boolean userAsked) throws Exception {
+        com.macapk.loader.NativeLog.i("AccountManager", "addAccount com.google from " + caller
+                + ": Win.apk's Google sign-in window");
+        String email = com.macapk.gms.NativeSignIn.signInForApp(userAsked);
+        if (email == null) {
+            com.macapk.loader.NativeLog.i("AccountManager", "addAccount com.google: cancelled ("
+                    + com.macapk.gms.GoogleAuthClient.lastError() + ")");
+            throw new OperationCanceledException("sign-in was cancelled or unavailable");
+        }
+        // Play services drops an account without its gaia id; have it before the
+        // broker lists the account (the broker would ask for it too).
+        com.macapk.gms.GoogleAuthClient.ensureAccountId(email);
+        boolean listed = false;
+        for (Account a : com.macapk.loader.SystemAccounts.getAccounts(
+                com.macapk.gms.GoogleAuthenticator.ACCOUNT_TYPE)) {
+            if (email.equals(a.name)) listed = true;
+        }
+        com.macapk.loader.NativeLog.i("AccountManager", "addAccount com.google: signed in "
+                + com.macapk.gms.GoogleAuthenticator.redact(email)
+                + (listed ? ", listed by the broker" : ", not visible to " + caller));
+        Bundle b = new Bundle();
+        b.putString(KEY_ACCOUNT_NAME, email);
+        b.putString(KEY_ACCOUNT_TYPE, com.macapk.gms.GoogleAuthenticator.ACCOUNT_TYPE);
+        return b;
     }
 
     public AccountManagerFuture<Bundle> confirmCredentials(Account account, Bundle options,

@@ -398,7 +398,7 @@ jobs:
           # real JVMs in three processes: transact, oneway order, binders passed
           # both ways keeping their identity, fds, death notification, and the
           # system broker's caller checks (a process claiming another package is
-          # refused; android:exported).
+          # refused; android:exported), and the Google account mirror.
           export PATH="$(cygpath -u "$JAVA_HOME")/bin/server:$(cygpath -u "$JAVA_HOME")/bin:$PATH"
           jh="$(cygpath -u "$JAVA_HOME")"
           cp="$(cygpath -w stage/lib/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"

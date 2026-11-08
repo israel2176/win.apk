@@ -74,6 +74,21 @@ The first time, Play services needs about a minute to check in with Google; a
 Play Store opened before that may show "Server error" (press **Try again**).
 From then on the Play Store keeps itself and Play services up to date.
 
+### The Google account with Google services on
+
+There is still one Google account, Win.apk's. The Play Store's **Sign in**
+(and any app that asks Android to add a Google account) opens the same
+sign-in window as **Settings > Google account > Sign in**, and the account
+added there is the one Settings shows. Play services and the Play Store then
+see it as a device's Google account, with the token Google gave at sign-in.
+A sign-in or sign-out in Settings reaches Play services and the Play Store
+while they run, within a second or two; signing out there signs them out too.
+
+(On a phone, Play services shows its own sign-in pages. Win.apk cannot run
+them: they need a device check Win.apk does not fake, and they open in
+another app's window, which an app on Win.apk cannot do with the answer the
+sign-in needs. So the window is Win.apk's own, on Google's own page.)
+
 ### What was tried
 
 With Google's own APKs: push-message tokens for Telegram, Moovit and the Play

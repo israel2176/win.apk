@@ -115,6 +115,20 @@ public final class NativeSignIn {
         return signInInteractive();
     }
 
+    /**
+     * The sign-in for an app's AccountManager.addAccount while Google's own Play
+     * services is installed. With an Activity (`userAsked`, the Play Store's
+     * "Sign in" button) the user asked for it: it opens every time, as the
+     * authenticator's activity would; without one it is a background ask and
+     * keeps {@link #promptOnce}'s one-ask-per-launch latch. Never on the main
+     * thread, never over a window already open.
+     */
+    public static String signInForApp(boolean userAsked) {
+        if (!userAsked) return promptOnce();
+        if (!available() || active() || onMainThread()) return null;
+        return signInInteractive();
+    }
+
     private static boolean onMainThread() {
         try {
             android.os.Looper m = android.os.Looper.getMainLooper();

@@ -523,6 +523,16 @@ the user installed run as apps, as upstream runs them on the Mac:
   the Play Store's services, for one), the new start stops the headless
   process and takes its place with a window; its clients bind again, as
   after Android stops a background process.
+- **Google accounts with the broker.** The accounts service mirrors
+  `gms\gms_state.properties` (Win.apk's one Google account store) into its
+  table: the master token as the row's password and the gaia id as
+  `GoogleUserId`, where Play services looks. It follows the file as other
+  processes write it (Settings' `--gms signin-window` / `signout`, an app's
+  sign-in) and broadcasts `LOGIN_ACCOUNTS_CHANGED`. `AccountManager.addAccount`
+  for `com.google` (the Play Store's "Sign in") opens Win.apk's sign-in
+  window in the caller's process instead of Play services' authenticator,
+  whose sign-in activity would have to start in Play services' process with
+  the authenticator's response binder.
 - **Who calls.** The calling pid is the OS's (`GetNamedPipeClientProcessId`);
   no uid travels. The broker knows a process as the package it started it as,
   or the package whose installed APK the process's command line (`--apk`)
