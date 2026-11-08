@@ -1,0 +1,184 @@
+# One-off: issue #70's measurements (class-data sharing, the baked JRE, JVM flags).
+# Runs on a push to claude/issue-70-cds only; removed before the pull request is ready.
+name: Startup bench (issue 70)
+
+on:
+  push:
+    branches: [claude/issue-70-cds]
+
+concurrency:
+  group: startup-bench
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: msys2 {0}
+    env:
+      CCACHE_DIR: ${{ github.workspace }}\.ccache
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_COMPILERCHECK: content
+      CCACHE_MAXSIZE: 2G
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: CLANG64
+          install: unzip zip git
+          pacboy: >-
+            clang:p
+            cmake:p
+            ninja:p
+            boost:p
+            ccache:p
+      - uses: actions/cache/restore@v4
+        with:
+          path: .ccache
+          key: ccache-${{ github.sha }}
+          restore-keys: ccache-
+      - uses: actions/cache/restore@v4
+        with:
+          path: thirdparty/framework-res
+          key: framework-res-v2-${{ hashFiles('scripts/build_framework_res.sh', 'windows/scripts/build_framework_res.sh') }}
+      - uses: actions/cache/restore@v4
+        with:
+          path: thirdparty/angle-win
+          key: angle-${{ hashFiles('windows/scripts/fetch_angle.sh') }}
+      - name: Build
+        run: |
+          cmake -S windows -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=clang++ \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DWINAPK_JNI_INCLUDE="$(cygpath -u "$JAVA_HOME")/include" -DWINAPK_ARM64_JIT=ON
+          cmake --build build --target winapk-runtime macapk-translator winapk-guest-stub winapk-launcher winapk-cds-test
+      - name: Stage, bake the JREs
+        run: |
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          windows/scripts/stage_runtime.sh build stage
+          time windows/scripts/bake_jre.sh "$JAVA_HOME" stage/lib stage/jre
+          WINAPK_JRE_COMPRESS=zip-6 windows/scripts/bake_jre.sh "$JAVA_HOME" stage/lib jre-z
+          mkdir -p cds-scratch && ./build/winapk-cds-test.exe "$(cygpath -w "$PWD/cds-scratch")"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stage-new
+          path: stage/
+          retention-days: 2
+          compression-level: 1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jre-z
+          path: jre-z/
+          retention-days: 2
+          compression-level: 1
+
+  classlist:
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: stage-new
+          path: stage
+      - uses: actions/cache/restore@v4
+        with:
+          path: apk-cache
+          key: compat-apks-smoke-${{ hashFiles('windows/test/compat/apps.txt', 'windows/test/compat/smoke.txt') }}
+      - name: Record the smoke apps' classes
+        shell: pwsh
+        run: |
+          $env:WINAPK_CDS_DIR = "$PWD\cds"
+          $env:WINAPK_CDS_RECORD_DIR = "$PWD\classlists"
+          python windows/test/compat/sweep.py --runtime stage --apks apk-cache --out smoke --frames 150 `
+            --timeout 180 --only-from windows/test/compat/smoke.txt
+          python windows/scripts/merge_classlists.py framework.classlist (Get-ChildItem classlists/*.classlist)
+          Get-ChildItem classlists | Format-Table Name, Length
+          Get-Content cds/dump.log -Tail 3
+      - uses: actions/upload-artifact@v4
+        with:
+          name: framework-classlist
+          path: |
+            framework.classlist
+            classlists/
+            smoke/report.md
+
+  bench:
+    needs: [build, classlist]
+    runs-on: windows-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        apps:
+          - org.billthefarmer.editor,org.jitsi.meet
+          - org.fossify.notes,com.jerboa
+          - name.boyle.chris.sgtpuzzles,org.moire.opensudoku
+          - dev.lonami.klooni,se.voxelmanip.tensy
+          - org.ppsspp.ppsspp,org.jellyfin.mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: stage-new
+          path: stage
+      - uses: actions/download-artifact@v4
+        with:
+          name: jre-z
+          path: jre-z
+      - uses: actions/download-artifact@v4
+        with:
+          name: framework-classlist
+          path: cl
+      - uses: actions/download-artifact@v4
+        with:
+          name: runtime-stage
+          path: stage-main
+          run-id: 42521083975
+          github-token: ${{ github.token }}
+      - uses: actions/cache/restore@v4
+        with:
+          path: apk-cache
+          key: compat-apks-smoke-${{ hashFiles('windows/test/compat/apps.txt', 'windows/test/compat/smoke.txt') }}
+      - name: The JRE main ships, and the sizes
+        shell: bash
+        run: |
+          curl -sSfL -o jre.zip "https://api.adoptium.net/v3/binary/latest/21/ga/windows/x64/jre/hotspot/normal/eclipse"
+          mkdir jre-unpacked && unzip -q jre.zip -d jre-unpacked && mv jre-unpacked/* stock-jre
+          du -sh stock-jre stage/jre jre-z stage-main stage stage/lib cl/framework.classlist
+          du -s --block-size=1 stock-jre stage/jre jre-z stage-main stage
+          wc -l cl/framework.classlist
+      - name: Bench
+        shell: pwsh
+        run: |
+          $stock = "$PWD\stock-jre"; $jre = "$PWD\stage\jre"; $jz = "$PWD\jre-z"; $main = "$PWD\stage-main"
+          $list = "$PWD\cl\framework.classlist"
+          $c = "WINAPK_CDS_CLASSLIST=$list,@wait=1"
+          python windows/test/compat/startbench.py --runtime stage --apks apk-cache --out bench `
+            --only ${{ matrix.apps }} --warm 3 --frames 150 `
+            --config "A=$stock,@runtime=$main" `
+            --config "B=$jre,WINAPK_CDS=base" `
+            --config "Bz=$jz,WINAPK_CDS=base" `
+            --config "C0=$jre,WINAPK_CDS_CLASSLIST=none,@wait=1" `
+            --config "C=$jre,$c" `
+            --config "Cz=$jz,$c" `
+            --config "Cv=$jre,$c,WINAPK_CDS_VERIFY=1" `
+            --config "Cxms=$jre,$c,MACAPK_JVM_OPTS=-Xms32m" `
+            --config "Cperf=$jre,$c,MACAPK_JVM_OPTS=-XX:-UsePerfData" `
+            --config "Cg1=$jre,$c,MACAPK_JVM_OPTS=-XX:-UseSerialGC -XX:+UseG1GC" `
+            --config "Creloc=$jre,$c,MACAPK_JVM_OPTS=-XX:ArchiveRelocationMode=0" `
+            --config "Cc2=$jre,$c,MACAPK_JVM_OPTS=-XX:TieredStopAtLevel=4"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bench-${{ strategy.job-index }}
+          path: |
+            bench/report.md
+            bench/report.json
+            bench/logs/

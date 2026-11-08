@@ -151,6 +151,13 @@ target_include_directories(winapk-aot-guard-test PRIVATE host)
 target_link_libraries(winapk-aot-guard-test PRIVATE winapk_loader)
 add_dependencies(winapk-aot-guard-test winapk-aot-guard-dll)
 
+# Class-data sharing's pure parts (host/cds_util.h): the patch digest
+# bake_jre.sh records, the flags it drops, the archive's key, the class list
+# merge. test/cds_test.cpp.
+add_executable(winapk-cds-test test/cds_test.cpp host/cds_util.cpp)
+target_include_directories(winapk-cds-test PRIVATE host)
+target_link_libraries(winapk-cds-test PRIVATE bcrypt)
+
 # The ahead-of-time translator (include/winapk/arm64_aot.h): arm64 .so -> C,
 # which the installer compiles into <lib>.so.aot.dll.
 add_executable(winapk-aot tools/arm64_aot_main.cpp)
@@ -268,11 +275,11 @@ if(WINAPK_JNI_INCLUDE)
                               host/native_location.cpp
                               host/native_signin.cpp host/native_notifications.cpp
                               host/binder_win.cpp
-                              host/user_folders.cpp host/crash_report.cpp host/aot_guard.cpp
+                              host/user_folders.cpp host/crash_report.cpp host/aot_guard.cpp host/cds.cpp host/cds_util.cpp
                               host/runtime.rc)
   target_link_libraries(winapk-runtime PRIVATE winapk_jni winapk_sqlite webpdecoder winapk_stb_vorbis windowscodecs
                         ole32 mf mfplat mfreadwrite mfuuid shlwapi advapi32 shell32 uuid wlanapi iphlpapi bthprops winmm
-                        bcrypt)
+                        bcrypt psapi)
   target_include_directories(winapk-runtime PRIVATE ${WINAPK_WEBP_DIR}/src)
   # WebView2 (host/webview2_host.h): the SDK's header to build against, from
   # scripts/fetch_webview2.sh; its WebView2Loader.dll is staged next to the

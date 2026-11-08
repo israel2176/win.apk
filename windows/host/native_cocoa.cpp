@@ -34,6 +34,7 @@
 #include <mmsystem.h>
 #include <shellapi.h>
 
+#include "cds.h"
 #include "gl/gl_surface.h"
 #include "native_window.h"
 #include "win32_window.h"
@@ -1061,6 +1062,7 @@ void JNICALL Cocoa_exitProcess(JNIEnv*, jclass, jint code, jstring relaunch) {
         }
     }
     aot_app_exiting();
+    cds_before_exit();  // the framework archive this start still owes
     winapk::arm64::print_stats_if_enabled();  // TerminateProcess skips atexit
     std::fflush(stdout);
     std::fflush(stderr);
@@ -1103,6 +1105,7 @@ void present_pixels(const uint32_t* argb, int w, int h) {
     if (frame == 1) {
         std::fprintf(stderr, "[win.apk] first frame presented (%dx%d)\n", w, h);
         std::fflush(stderr);
+        cds_first_frame();
     }
     static const std::wstring path = [] {
         wchar_t buf[MAX_PATH * 4];

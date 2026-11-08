@@ -70,6 +70,11 @@ hebrew.OpenWinApk=פתיחת Win.apk
 [Tasks]
 Name: desktopicon; Description: "{cm:DesktopIcon}"
 
+[InstallDelete]
+; The Java runtime is replaced whole: files an older one had and this one has
+; not (other modules' DLLs, a second CDS archive) would otherwise stay.
+Type: filesandordirs; Name: "{app}\jre"
+
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion createallsubdirs
 

@@ -1,5 +1,5 @@
 # Publishes a Win.apk pre-release: builds the runtime on Windows, packages it
-# with a Java runtime and ANGLE (the same folder as CI's winapk-preview
+# with its Java runtime (bake_jre.sh) and ANGLE (the same folder as CI's winapk-preview
 # artifact), makes the installer (windows/package/winapk.iss), and attaches
 # both to a GitHub release for the given tag.
 name: Windows release
@@ -56,10 +56,9 @@ jobs:
         run: |
           export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
           windows/scripts/stage_runtime.sh build Win.apk
-          curl -sSfL -o jre.zip "https://api.adoptium.net/v3/binary/latest/21/ga/windows/x64/jre/hotspot/normal/eclipse"
-          mkdir jre-unpacked
-          unzip -q jre.zip -d jre-unpacked
-          mv jre-unpacked/* Win.apk/jre
+          # The Java runtime: Temurin 21's modules with Win.apk's patch classes
+          # baked in and its class-data sharing archive (bake_jre.sh, host/cds.h).
+          windows/scripts/bake_jre.sh "$JAVA_HOME" Win.apk/lib Win.apk/jre
           test -f Win.apk/jre/bin/server/jvm.dll
           cp windows/package/README.txt Win.apk/
           zip -qr Win.apk-windows-x64.zip Win.apk
@@ -72,6 +71,7 @@ jobs:
           timeout 600 ./Win.apk/bin/winapk-runtime.exe --apk sudoku.apk --data "$(cygpath -w "$PWD/appdata")" \
             > boot.log 2>&1 || { tail -n 200 boot.log; exit 1; }
           grep -E "frames presented" boot.log
+          grep -F "class-data sharing ON" boot.log
       - name: Build the installer
         shell: pwsh
         run: |
