@@ -49,7 +49,7 @@ There are three ways to add an app:
   place to start: it lists only apps that can run here and picks the right
   build for you. Search, then click **Install**.
 - **From a file.** Double-click an `.apk`, `.apkm`, `.xapk` or `.apks` file in
-  Explorer, drag it onto the library, or click **Add app**. Before you download
+  Explorer, drag it onto the library, or click **Install app**. Before you download
   an app elsewhere, read [which build to install](arm-apps.md#which-build-to-install).
 - **From Google Play.** Possible, but experimental: see
   [Google services](google-services.md).
@@ -88,10 +88,10 @@ switches still apply.
 - **Win.apk** checks GitHub for a new release about once a day and says so in
   the library; **Update** downloads and runs the new installer and keeps your
   apps. Settings > Updates turns the check off.
-- **An app** updates when you install a newer file of it, from its details page
-  (**Update from a file**), or from the Store (**Update**).
+- **An app** updates when you open or drop a newer file of it, or from the
+  Store (**Update**).
 - **Removing an app** (right-click > Remove) keeps what it saved unless you tick
-  **Also delete what the app saved**.
+  **Also remove accounts and data saved by the app**.
 - **Uninstalling Win.apk** (Windows Settings > Apps) keeps your apps and their
   data in `%LOCALAPPDATA%\Win.apk`. Delete that folder to remove everything.
 

@@ -30,8 +30,8 @@ sees your password; it keeps the token Google hands back, only on this PC, in
 - **One account for every app.** An app's **Sign in with Google** opens the
   same window when no account is signed in yet; with an account, the app shows
   its chooser.
-- The round button at the end of the library's toolbar shows the signed-in
-  account's picture and opens Settings.
+- The account's item at the foot of the left pane, above Settings, shows the
+  signed-in account's picture and address and opens Settings.
 - **Sign out** forgets the account and its tokens on this PC.
 - Signing in works behind a filter or proxy whose certificate Windows trusts,
   such as NetFree.
@@ -57,10 +57,18 @@ downloads Google's apps.
    in your browser. Pick the variant the row names (x86_64 or nodpi, for
    Android 10 or later) and use APKMirror's own download button.
 3. Keep the page open. Win.apk watches your Downloads folder (or take a file
-   you drop on the page), checks that **Google signed it**, and installs it.
-   A file someone else signed is refused with the reason.
+   you drop on the page), checks it and installs it. A file is refused, with
+   the reason, when **Google did not sign it**, when it has native code but
+   none for x86_64 (download the x86_64 variant), or when it needs a newer
+   Android (API level) than Win.apk presents (download an older version).
 4. When all three are ticked, **Google Play** in the left pane opens the Play
-   Store.
+   Store inside the Win.apk window, where the library is, not in a window of
+   its own. Switching to another tab keeps it running; **Google Play** shows
+   it again. Closing the Win.apk window closes it.
+
+The three apps are part of Google services, not apps of your library: they
+have no tile, menu or shortcut, and their versions show only on the setup
+page.
 
 The first time, Play services needs about a minute to check in with Google; a
 Play Store opened before that may show "Server error" (press **Try again**).

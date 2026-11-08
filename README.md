@@ -19,7 +19,7 @@ Windows notifications. It is an unofficial Windows port of
 > yet. Check [Compatibility](docs/APPS.md) before you rely on an app, and
 > please [report](docs/troubleshooting.md#reporting-a-problem) what you find.
 
-![The Win.apk library: twelve installed Android apps, with Library, Store and Settings in the left pane](docs/images/library.png)
+![The Win.apk library: twelve installed Android apps, with Library, Store, Sign in and Settings in the left pane](docs/images/library.png)
 
 ## Highlights
 
