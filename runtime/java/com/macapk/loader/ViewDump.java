@@ -17,6 +17,9 @@
 //   [viewdump] end seq=<n>
 // Bounds are in the presented frame's pixels (the window's client area at
 // frame=<w>x<h>), clipped to every ancestor, so their centre is on screen.
+// A view that draws its own content (Jetpack Compose) has no child views; its
+// AccessibilityNodeProvider's virtual nodes are listed instead, as
+// uiautomator does, with the class "virtual:<node class>".
 package com.macapk.loader;
 
 import android.graphics.RectF;
@@ -42,14 +45,22 @@ public final class ViewDump {
     private static int seq;
     private static android.os.Handler handler;
     private static boolean checkPosted;
+    private static long lastSnapshot;
+    /** A snapshot walks Compose's semantics too: at most this often. */
+    private static final long MIN_INTERVAL_MS = 300;
 
     /** After a frame has been drawn: dump the top window if it changed and
      *  then held still for SETTLE_MS. Runs on the thread that draws. */
     public static void afterFrame(int surfaceW, int surfaceH, int statusBarH) {
         if (!ON) return;
         try {
-            List<String> now = snapshot(surfaceW, surfaceH, statusBarH);
             long t = android.os.SystemClock.uptimeMillis();
+            if (t - lastSnapshot < MIN_INTERVAL_MS) {
+                postCheck(surfaceW, surfaceH, statusBarH);
+                return;
+            }
+            lastSnapshot = t;
+            List<String> now = snapshot(surfaceW, surfaceH, statusBarH);
             if (now.equals(logged)) {
                 pending = null;
                 return;
@@ -63,21 +74,23 @@ public final class ViewDump {
             }
             // A window that settles draws no further frame to notice it with:
             // look again once the settle time is up.
-            if (!checkPosted) {
-                if (handler == null && android.os.Looper.myLooper() != null) {
-                    handler = new android.os.Handler(android.os.Looper.myLooper());
-                }
-                if (handler != null) {
-                    checkPosted = true;
-                    handler.postDelayed(() -> {
-                        checkPosted = false;
-                        afterFrame(surfaceW, surfaceH, statusBarH);
-                    }, SETTLE_MS + 20);
-                }
-            }
+            postCheck(surfaceW, surfaceH, statusBarH);
         } catch (Throwable t) {
             NativeLog.w(TAG, "[viewdump] failed: " + t);
         }
+    }
+
+    private static void postCheck(int surfaceW, int surfaceH, int statusBarH) {
+        if (checkPosted) return;
+        if (handler == null && android.os.Looper.myLooper() != null) {
+            handler = new android.os.Handler(android.os.Looper.myLooper());
+        }
+        if (handler == null) return;
+        checkPosted = true;
+        handler.postDelayed(() -> {
+            checkPosted = false;
+            afterFrame(surfaceW, surfaceH, statusBarH);
+        }, SETTLE_MS + 20);
     }
 
     private static void emit(List<String> lines) {
@@ -142,12 +155,62 @@ public final class ViewDump {
                 }
             }
         }
+        android.view.accessibility.AccessibilityNodeProvider provider = null;
+        try { provider = v.getAccessibilityNodeProvider(); } catch (Throwable ignored) {}
+        if (provider != null) {
+            RectF host = boundsInRoot(v, root);
+            if (host != null) {
+                host.offset(ox, oy);
+                if (host.intersect(0, 0, fw, fh)) {
+                    // The provider reports bounds "in screen": getLocationOnScreen,
+                    // which counts the window root's own left / top, where the
+                    // frame has the root drawn at (ox, oy).
+                    float dx = ox - root.getLeft(), dy = oy - root.getTop();
+                    walkVirtual(provider, android.view.accessibility.AccessibilityNodeProvider.HOST_VIEW_ID,
+                            dx, dy, host, out, 0);
+                }
+            }
+        }
         if (v instanceof ViewGroup) {
             ViewGroup g = (ViewGroup) v;
             for (int i = 0; i < g.getChildCount(); i++) {
                 View c = g.getChildAt(i);
                 if (c != null) walk(c, root, ox, oy, fw, fh, out);
             }
+        }
+    }
+
+    /** A provider's virtual nodes (Compose's semantics): each one with text, a
+     *  description or a click, its bounds in screen space offset into the
+     *  frame and clipped to the host view. */
+    private static void walkVirtual(android.view.accessibility.AccessibilityNodeProvider p, int id,
+                                    float ox, float oy, RectF host, List<String> out, int depth) {
+        if (out.size() > MAX_VIEWS || depth > 60) return;
+        android.view.accessibility.AccessibilityNodeInfo n;
+        try { n = p.createAccessibilityNodeInfo(id); } catch (Throwable t) { return; }
+        if (n == null || !n.isVisibleToUser() && id != android.view.accessibility.AccessibilityNodeProvider.HOST_VIEW_ID) {
+            return;
+        }
+        CharSequence text = n.getText(), desc = n.getContentDescription();
+        boolean hasText = text != null && text.length() > 0, hasDesc = desc != null && desc.length() > 0;
+        boolean click = n.isClickable() || n.isLongClickable();
+        if (id != android.view.accessibility.AccessibilityNodeProvider.HOST_VIEW_ID && (click || hasText || hasDesc)) {
+            android.graphics.Rect b = new android.graphics.Rect();
+            n.getBoundsInScreen(b);
+            RectF r = new RectF(b.left + ox, b.top + oy, b.right + ox, b.bottom + oy);
+            if (r.intersect(host) && r.width() >= 1 && r.height() >= 1) {
+                CharSequence cls = n.getClassName();
+                out.add("virtual:" + (cls != null ? cls : "node") + " id=" + id
+                        + " text=\"" + (hasText ? oneLine(text.toString()) : "") + "\""
+                        + " desc=\"" + (hasDesc ? oneLine(desc.toString()) : "") + "\""
+                        + " click=" + (click ? 1 : 0) + " enabled=" + (n.isEnabled() ? 1 : 0)
+                        + " bounds=" + Math.round(r.left) + "," + Math.round(r.top) + ","
+                        + Math.round(r.right) + "," + Math.round(r.bottom));
+            }
+        }
+        for (int i = 0; i < n.getChildCount(); i++) {
+            int child = android.view.accessibility.AccessibilityNodeInfo.getVirtualDescendantId(n.getChildId(i));
+            walkVirtual(p, child, ox, oy, host, out, depth + 1);
         }
     }
 
