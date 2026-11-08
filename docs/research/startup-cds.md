@@ -39,7 +39,12 @@ the process to its `first frame presented` line; working set and private bytes
 (commit) are read at that moment. All 60 warm runs and 20 first starts drew.
 That run's JRE had `lib/modules` compressed; the one that ships does not (see
 Disk), which the run before found makes no difference to a start (B against Bz,
-C against Cz below).
+C against Cz below). And that run still hashed the two patch folders at every
+start to compare them with the JRE's record (17 ms on these runners); the
+digest is now kept under a stamp of the folders' listing (one FindFirstFileEx
+walk) and the check takes 1 ms (pull request CI run
+[42532529025](https://github.com/israel2176/win.apk/actions/runs/42532529025)),
+so the shipped code is about 16 ms quicker than the F column.
 
 | App (kind) | first start A (s) | first start F (s) | warm A (s) | warm F (s) | warm | WS / private A (MB) | WS / private F (MB) |
 |---|---|---|---|---|---|---|---|
@@ -66,6 +71,7 @@ runs): a noisy minute of the machine; the median over apps is not moved by it.
 | Private bytes (commit) at the first frame | **-33 MB** median (-8 to -39) |
 | The archive's dump, once per Win.apk/JRE version | 3 s in the background, at below-normal priority |
 | Disk: the JRE | 146 MB (Adoptium) → 122 MB |
+| The installer (`Win.apk-Setup.exe`) | 132.8 MB (0.8.0) → 125.5 MB |
 | Disk: `%LOCALAPPDATA%\Win.apk\cds` | +39 MB (one archive, all apps) |
 
 Where a warm start's time goes (Fossify Notes): creating the JVM, then
@@ -121,8 +127,7 @@ default; not taken.
 Disk. `--compress=zip-6` takes the JRE from 122 to 73 MB at no measurable cost
 to a start (the archives hold what a start loads), but the installer's LZMA
 then has little left to compress: the installer came out 146 MB against 0.8.0's
-133 MB, while LZMA over the uncompressed JRE gives about 21 MB less than over
-the compressed one (xz, measured locally). The JRE ships uncompressed;
+133 MB; with the JRE uncompressed it is 125.5 MB. The JRE ships uncompressed;
 `WINAPK_JRE_COMPRESS=zip-6` is there for a build that wants the disk instead.
 The JRE also loses the second CDS archive (`classes_nocoops.jsa`, for heaps over
 32 GB; the runtime uses 1 GB), the JDK's tools and their modules, JFR, JVMCI,
@@ -140,7 +145,7 @@ the jdk.* agents and the incubator modules: 146 → 122 MB.
   `-XX:+VerifySharedSpaces` (a CRC of the whole file; the damaged file is then
   refused with "Checksum verification failed" and the start goes on), and only
   after it has mapped whole does `framework-<key>.ok` spare later starts the
-  check (30 ms). Any crash while the archive is in use deletes `.ok`, so the
+  check (30 ms under Wine). Any crash while the archive is in use deletes `.ok`, so the
   next start checks the file again.
 - A start whose archive did not map logs why, deletes it, counts the failure in
   `.fails`, and the next first start makes a new one; after two failures in a
@@ -155,7 +160,9 @@ the jdk.* agents and the incubator modules: 146 → 122 MB.
   a time per user (a named mutex), into a temporary file renamed into place
   only after `java -Xshare:dump` succeeded, so an app closed early, a second
   app starting, or a kill leaves no half archive.
-- The patch digest guards the JRE: a `java_base_patch` rebuilt after the JRE
+- The patch digest guards the JRE (computed once, then kept in
+  `<data>\cds\patch-digests.txt` under a stamp of each folder's file names,
+  sizes and times, so any rebuilt class is hashed again): a `java_base_patch` rebuilt after the JRE
   was baked no longer matches, the runtime keeps `--patch-module` for it and
   runs that start without CDS (`cds: off: ... not the one baked into the Java
   runtime`), instead of silently using stale classes. A plain JDK
