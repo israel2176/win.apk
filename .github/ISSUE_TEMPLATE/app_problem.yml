@@ -45,6 +45,7 @@ body:
       options:
         - The Store tab (F-Droid)
         - f-droid.org, downloaded by hand
+        - Aurora Store (Google Play)
         - The app's own site or GitHub release
         - An .apkm / .xapk / .apks bundle from a mirror
         - Somewhere else (say where below)

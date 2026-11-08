@@ -70,7 +70,10 @@ page's Permissions rows, which stop a running app on revoke), single instance
   everything else per app is on the App details page, its log too (Show log,
   in the log window; Ctrl+L opens the newest); Settings > Troubleshooting >
   Logs opens the logs folder; the failure states of the install window and the
-  splash have Show log. Don't add a second way to an action.
+  splash have Show log, and Report a problem as a link under their sentence
+  (`report_problem`: asks in a `Prompt`, then the issue form prefilled by URL
+  and the log selected in Explorer; nothing uploaded), which the details page
+  has too. Don't add a second way to an action.
 - Menus are the launcher's own (`run_menu`, `PopupMenu`: themed, a glyph per
   item, an app header), not `TrackPopupMenu`; only the Store's many-column
   category list and the log picker still use the system menu.

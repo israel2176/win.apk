@@ -11,8 +11,12 @@ to you, a star on the repository helps other people find it.
 
 ## Report a problem
 
-[Open an issue](../../issues/new/choose) with the "An app does not work"
-template. Hebrew is fine. A report that can be acted on has four things:
+When an app fails to install or start, **Report a problem** in the window
+that says so (or on the app's details page, for a problem inside the app)
+opens the "An app does not work" form with the versions filled in and the
+logs folder with the app's log selected; nothing is sent until you post it.
+Otherwise, [open an issue](../../issues/new/choose) with that template.
+Hebrew is fine. A report that can be acted on has four things:
 
 1. **Versions.** Win.apk (Settings > About), Windows, the app and its version,
    and where the APK came from (the Store tab, f-droid.org, an `.apkm` from
