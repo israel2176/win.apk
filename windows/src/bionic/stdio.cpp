@@ -190,12 +190,77 @@ bool at_path(int dirfd, const char* path, std::string* out) {
     return true;
 }
 
+// ---- named pipes ---------------------------------------------------------------------
+// Windows has no FIFO files. mkfifo writes a small marker file with these
+// bytes; stat reports it as a FIFO and open gives a descriptor on the
+// process's pipe for that path (fifo_open, fd.cpp). Realm creates its FIFOs
+// next to the database (the `.note` notifier, the `.cv` condition variables);
+// the missing-function stub answered success without a file, and its open
+// failed.
+constexpr char kFifoMarker[16] = {'W', 'i', 'n', '.', 'a', 'p', 'k', ' ', 'F', 'I', 'F', 'O', '\n', 0, 0, 0};
+
+bool is_fifo_marker(const std::wstring& w) {
+    WIN32_FILE_ATTRIBUTE_DATA d;
+    if (!GetFileAttributesExW(w.c_str(), GetFileExInfoStandard, &d) || (d.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) ||
+        d.nFileSizeHigh != 0 || d.nFileSizeLow != sizeof(kFifoMarker)) {
+        return false;
+    }
+    const HANDLE h = CreateFileW(w.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                 nullptr, OPEN_EXISTING, 0, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    char got[sizeof(kFifoMarker)];
+    DWORD n = 0;
+    const bool ok = ReadFile(h, got, sizeof(got), &n, nullptr) && n == sizeof(got) &&
+                    std::memcmp(got, kFifoMarker, sizeof(got)) == 0;
+    CloseHandle(h);
+    return ok;
+}
+
+// The key fifo_open shares a FIFO's buffer by: its full path, lower case.
+std::wstring fifo_key(const std::wstring& w) {
+    wchar_t full[MAX_PATH * 4];
+    const DWORD n = GetFullPathNameW(w.c_str(), MAX_PATH * 4, full, nullptr);
+    std::wstring k = (n > 0 && n < MAX_PATH * 4) ? std::wstring(full, n) : w;
+    for (wchar_t& c : k) c = (c == L'/') ? L'\\' : static_cast<wchar_t>(towlower(c));
+    return k;
+}
+
+WINAPK_GUEST_ABI int g_mkfifo(const char* path, unsigned) {
+    const std::wstring w = host_path(path);
+    const HANDLE h = CreateFileW(w.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                 nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) {
+        set_errno_from_win32(GetLastError());  // ERROR_FILE_EXISTS: EEXIST
+        return -1;
+    }
+    DWORD n = 0;
+    const bool ok = WriteFile(h, kFifoMarker, sizeof(kFifoMarker), &n, nullptr) && n == sizeof(kFifoMarker);
+    CloseHandle(h);
+    if (!ok) {
+        DeleteFileW(w.c_str());
+        *guest_errno() = kEIO;
+        return -1;
+    }
+    return 0;
+}
+WINAPK_GUEST_ABI int g_mkfifoat(int dirfd, const char* path, unsigned mode) {
+    std::string p;
+    return at_path(dirfd, path, &p) ? g_mkfifo(p.c_str(), mode) : -1;
+}
+// mknod makes only FIFOs here (S_IFIFO); device nodes need privileges an app does not have.
+WINAPK_GUEST_ABI int g_mknod(const char* path, unsigned mode, uint64_t) {
+    if ((mode & 0170000) == 0010000) return g_mkfifo(path, mode);
+    *guest_errno() = kEPERM;
+    return -1;
+}
+
 // open() is variadic (its mode is the third argument only with O_CREAT), but a
 // variadic int travels in the same register as a fixed one.
 WINAPK_GUEST_ABI int g_open(const char* path, int flags, unsigned mode) {
     if (is_random_device(path)) return fd_install(std::make_shared<RandomDevice>());
     if (is_proc_maps(path)) return open_temp_with(proc_maps_text());
     const std::wstring w = host_path(path);
+    if (is_fifo_marker(w)) return fifo_open(fifo_key(w), flags);
     // Linux opens a directory read-only without O_DIRECTORY too (O_PATH or
     // plain O_RDONLY, then fstat or fdopendir); _wopen would refuse it.
     const DWORD a = GetFileAttributesW(w.c_str());
@@ -464,6 +529,10 @@ WINAPK_GUEST_ABI int g_stat(const char* path, GuestStat* g) {
     struct _stat64 s;
     if (_wstat64(w.c_str(), &s) < 0) return fail_crt();
     fill_stat(s, g);
+    if (g->st_size == sizeof(kFifoMarker) && is_fifo_marker(w)) {
+        g->st_mode = 0010000 | 0600;  // S_IFIFO
+        g->st_size = g->st_blocks = 0;
+    }
     // No access rights asked for, so this opens a file another program holds too.
     const HANDLE h = CreateFileW(w.c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
                                  OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
@@ -1783,6 +1852,9 @@ const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("mkdirat", g_mkdirat),
     WINAPK_SHIM("rmdir", g_rmdir),
     WINAPK_SHIM("unlink", g_unlink),
+    WINAPK_SHIM("mkfifo", g_mkfifo),
+    WINAPK_SHIM("mkfifoat", g_mkfifoat),
+    WINAPK_SHIM("mknod", g_mknod),
     WINAPK_SHIM("rename", g_rename),
     WINAPK_SHIM("remove", g_remove),
     WINAPK_SHIM("chdir", g_chdir),

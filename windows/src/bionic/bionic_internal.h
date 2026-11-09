@@ -154,6 +154,9 @@ struct PollFd {
     short events, revents;
 };
 int fd_poll(PollFd* fds, uint64_t n, int timeout_ms);
+// A descriptor on the named pipe (mkfifo) whose full lower-case host path is
+// `key`, opened with Linux's `flags`; -1 with errno set.
+int fifo_open(const std::wstring& key, int flags);
 
 // ---- small helpers ----------------------------------------------------------
 
