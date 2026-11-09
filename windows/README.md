@@ -1007,6 +1007,12 @@ every such change is listed here:
   compressed entry throws `NotFoundException`. It returned null, and
   ConnectBot's terminal service died with a `NullPointerException` on the
   descriptor. Not Windows-specific.
+- `runtime/java/com/android/internal/policy/DecorView.java` (new), used by
+  `android/app/Activity.java` and `Dialog.java` for the window's root view,
+  with the field `mWindow`: square's curtains (in AnkiDroid, LeakCanary) finds
+  a window's root by that class name and reads its window from that field.
+  AnkiDroid logged `ClassNotFoundException: com.android.internal.policy.DecorView`.
+  Not Windows-specific.
 
 ## License
 

@@ -676,6 +676,7 @@ android/content/SharedPreferences
 java/lang/IllegalStateException
 android/view/Window
 android/app/Activity$ActivityWindow
+com/android/internal/policy/DecorView
 android/app/FragmentManager
 android/app/FragmentManagerImpl
 com/macapk/loader/MetalSurfaceCallbacks

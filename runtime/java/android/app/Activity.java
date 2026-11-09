@@ -1332,7 +1332,10 @@ public class Activity extends ContextThemeWrapper
 
         private void ensureDecor() {
             if (decor == null) {
-                android.widget.FrameLayout d = new android.widget.FrameLayout(activity);
+                // AOSP PhoneWindow.generateDecor: a DecorView holding this window
+                // (libraries find the root of a window by that class and field).
+                android.widget.FrameLayout d =
+                    new com.android.internal.policy.DecorView(activity, -1, this, getAttributes());
                 android.widget.FrameLayout c = new android.widget.FrameLayout(activity);
                 c.setId(0x01020002);  // android.R.id.content
                 d.addView(c);
