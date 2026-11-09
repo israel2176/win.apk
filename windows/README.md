@@ -190,6 +190,7 @@ The user-facing ones (`WINAPK_PHONE_SIZE`, `WINAPK_RESIZABLE`,
 | `WINAPK_TEST_JAVA_BASE_PATCH=<dir>` | `winapk-binder-test` only: the java.base overlay its JVM runs with (`stage\lib\java_base_patch`) |
 | `WINAPK_JAVA_IO_SHARE_DELETE=0` | java.io opens files as the JDK does, without `FILE_SHARE_DELETE` (`host/java_io_open.cpp`), for comparing |
 | `WINAPK_DUMP_VIEWS=1` | Logs the top window's views (`[viewdump]` lines: class, id name, text, content description, clickable, enabled, bounds in the frame's pixels) each time its content changes and then holds still for half a second, with a Compose view's nodes from its accessibility provider, as uiautomator's dump does; a test finds and taps a button from them (`runtime/java/com/macapk/loader/ViewDump.java`) |
+| `WINAPK_TEST_INSTALLER=<package>` | Debugging only: `getInstallerPackageName` and `getInstallSourceInfo` answer that installer (e.g. `com.android.vending`, Google Play) for every app, as if a store installed it; nothing in Win.apk sets it (`runtime/java/com/macapk/loader/InstallerOfRecord.java`) |
 | `WINAPK_TEST_RESIZE=<w>x<h>` | A second after the first frame, resizes the window to a client area of that many pixels (CI's "Boot an APK in a window") |
 | `MACAPK_APK_PATH` | Set by the runtime, not by hand: the installed APK, which `PresentedSdk` reads the app's targetSdk and minSdk from to choose the API level the app is presented (its targetSdk within 29..36, never below its minSdk); `MACAPK_SDK_INT=<n>` forces a level, `MACAPK_SDK_FROM_TARGET=0` presents 29 (still never below the minSdk) |
 | `MACAPK_BROKER_TRIGGER_CHECKIN=0` | The broker does not nudge Play services to check in at boot (it nudges at most three times, and not at all once Play services has broadcast `CHECKIN_COMPLETE`) |
@@ -515,7 +516,9 @@ every such change is listed here:
   installer of record, and with Google services on the per-package uids and
   the broker's state) live in the data folder, `%LOCALAPPDATA%\Win.apk`,
   beside `installed_apps.json`, not in a `Library\Application Support` folder
-  under the user profile. On the Mac nothing changes.
+  under the user profile. On the Mac nothing changes. `InstallerOfRecord.get`
+  also answers `WINAPK_TEST_INSTALLER`, a debugging override (see the
+  environment table).
 - `HostAppSupport` users that upstream spells with Mac paths: the caches
   (`MacApkSystemFonts`: the `/system/fonts` Flutter's Skia reads,
   `MacApkFontStore`, `ResourceIndex`'s framework view, `monet/Monet`) go to
