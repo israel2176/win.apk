@@ -12,6 +12,8 @@
 #include "winapk/mini_bionic.h"
 
 #include <algorithm>
+#include <cerrno>
+#include <climits>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -25,6 +27,7 @@
 #include <io.h>
 #include <windows.h>
 #include <bcrypt.h>
+#include <xmmintrin.h>
 #include <getopt.h>
 
 // BSD's optreset, which <getopt.h> declares only under _BSD_SOURCE.
@@ -251,6 +254,346 @@ const bool g_tz_ready = [] {
     g_tzset();
     return true;
 }();
+// strptime: Bionic's (libc/tzcode/strptime.c, OpenBSD's with Android's %v
+// and %P), in the C locale, which is the only one Bionic's strptime knows.
+// After parsing it fills tm_yday, tm_wday, tm_mon and tm_mday from what was
+// given, as Bionic does.
+struct StrptimeState {
+    int century = 1900;  // TM_YEAR_BASE: no %C seen
+    int relyear = -1;
+    int fields = 0;
+};
+constexpr int kFieldMon = 1, kFieldMday = 2, kFieldWday = 4, kFieldYday = 8, kFieldYear = 16;
+const char* const kDayNames[7] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
+const char* const kDayAbbr[7] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+const char* const kMonNames[12] = {"January", "February", "March",     "April",   "May",      "June",
+                                   "July",    "August",   "September", "October", "November", "December"};
+const char* const kMonAbbr[12] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+const char* const kNaStd[4] = {"EST", "CST", "MST", "PST"};
+const char* const kNaDst[4] = {"EDT", "CDT", "MDT", "PDT"};
+
+bool sp_isspace(unsigned char c) { return c == ' ' || (c >= '\t' && c <= '\r'); }
+bool sp_isdigit(unsigned char c) { return c >= '0' && c <= '9'; }
+
+bool conv_num(const unsigned char** buf, int* dest, int llim, int ulim) {
+    if (!sp_isdigit(**buf)) return false;
+    int result = 0, rulim = ulim;
+    do {
+        result = result * 10 + (*(*buf)++ - '0');
+        rulim /= 10;
+    } while (result * 10 <= ulim && rulim && sp_isdigit(**buf));
+    if (result < llim || result > ulim) return false;
+    *dest = result;
+    return true;
+}
+const unsigned char* find_string(const unsigned char* bp, int* tgt, const char* const* names, int n) {
+    for (int i = 0; i < n; ++i) {
+        const size_t len = std::strlen(names[i]);
+        if (_strnicmp(names[i], reinterpret_cast<const char*>(bp), len) == 0) {
+            *tgt = i;
+            return bp + len;
+        }
+    }
+    return nullptr;
+}
+int leaps_thru_end_of(int y) { return y >= 0 ? y / 4 - y / 100 + y / 400 : -(leaps_thru_end_of(-(y + 1)) + 1); }
+
+const unsigned char* strptime_in(const unsigned char* bp, const char* fmt, GuestTm* tm, StrptimeState& st) {
+    static const char kGmt[] = "GMT", kUtc[] = "UTC";
+    while (unsigned char c = static_cast<unsigned char>(*fmt)) {
+        int alt = 0;  // 1: %E, 2: %O
+        if (sp_isspace(c)) {
+            while (sp_isspace(*bp)) ++bp;
+            ++fmt;
+            continue;
+        }
+        if ((c = static_cast<unsigned char>(*fmt++)) != '%') {
+            if (c != *bp++) return nullptr;
+            continue;
+        }
+        auto legal = [&](int allowed) { return (alt & ~allowed) == 0; };
+        auto sub = [&](const char* f) { return (bp = strptime_in(bp, f, tm, st)) != nullptr; };
+        int i;
+    again:
+        switch (c = static_cast<unsigned char>(*fmt++)) {
+            case '%':
+                if (c != *bp++) return nullptr;
+                break;
+            case 'E':
+                if (!legal(0)) return nullptr;
+                alt |= 1;
+                goto again;
+            case 'O':
+                if (!legal(0)) return nullptr;
+                alt |= 2;
+                goto again;
+            case 'c':
+                if (!legal(1) || !sub("%a %b %e %H:%M:%S %Y")) return nullptr;
+                break;
+            case 'D':
+                if (!legal(0) || !sub("%m/%d/%y")) return nullptr;
+                break;
+            case 'F':
+                if (!legal(0) || !sub("%Y-%m-%d")) return nullptr;
+                break;
+            case 'R':
+                if (!legal(0) || !sub("%H:%M")) return nullptr;
+                break;
+            case 'r':
+                if (!legal(0) || !sub("%I:%M:%S %p")) return nullptr;
+                break;
+            case 'T':
+                if (!legal(0) || !sub("%H:%M:%S")) return nullptr;
+                break;
+            case 'v':
+                if (!legal(0) || !sub("%e-%b-%Y")) return nullptr;
+                break;
+            case 'X':
+                if (!legal(1) || !sub("%H:%M:%S")) return nullptr;
+                break;
+            case 'x':
+                if (!legal(1) || !sub("%m/%d/%y")) return nullptr;
+                break;
+            case 'A': case 'a': {
+                if (!legal(0)) return nullptr;
+                size_t len = 0;
+                for (i = 0; i < 7; ++i) {
+                    len = std::strlen(kDayNames[i]);
+                    if (_strnicmp(kDayNames[i], reinterpret_cast<const char*>(bp), len) == 0) break;
+                    len = std::strlen(kDayAbbr[i]);
+                    if (_strnicmp(kDayAbbr[i], reinterpret_cast<const char*>(bp), len) == 0) break;
+                }
+                if (i == 7) return nullptr;
+                tm->tm_wday = i;
+                bp += len;
+                st.fields |= kFieldWday;
+                break;
+            }
+            case 'B': case 'b': case 'h': {
+                if (!legal(0)) return nullptr;
+                size_t len = 0;
+                for (i = 0; i < 12; ++i) {
+                    len = std::strlen(kMonNames[i]);
+                    if (_strnicmp(kMonNames[i], reinterpret_cast<const char*>(bp), len) == 0) break;
+                    len = std::strlen(kMonAbbr[i]);
+                    if (_strnicmp(kMonAbbr[i], reinterpret_cast<const char*>(bp), len) == 0) break;
+                }
+                if (i == 12) return nullptr;
+                tm->tm_mon = i;
+                bp += len;
+                st.fields |= kFieldMon;
+                break;
+            }
+            case 'C':
+                if (!legal(1) || !conv_num(&bp, &i, 0, 99)) return nullptr;
+                st.century = i * 100;
+                break;
+            case 'e':
+                if (sp_isspace(*bp)) ++bp;
+                [[fallthrough]];
+            case 'd':
+                if (!legal(2) || !conv_num(&bp, &tm->tm_mday, 1, 31)) return nullptr;
+                st.fields |= kFieldMday;
+                break;
+            case 'k':
+                if (!legal(0)) return nullptr;
+                [[fallthrough]];
+            case 'H':
+                if (!legal(2) || !conv_num(&bp, &tm->tm_hour, 0, 23)) return nullptr;
+                break;
+            case 'l':
+                if (!legal(0)) return nullptr;
+                [[fallthrough]];
+            case 'I':
+                if (!legal(2) || !conv_num(&bp, &tm->tm_hour, 1, 12)) return nullptr;
+                break;
+            case 'j':
+                if (!legal(0) || !conv_num(&bp, &tm->tm_yday, 1, 366)) return nullptr;
+                tm->tm_yday--;
+                st.fields |= kFieldYday;
+                break;
+            case 'M':
+                if (!legal(2) || !conv_num(&bp, &tm->tm_min, 0, 59)) return nullptr;
+                break;
+            case 'm':
+                if (!legal(2) || !conv_num(&bp, &tm->tm_mon, 1, 12)) return nullptr;
+                tm->tm_mon--;
+                st.fields |= kFieldMon;
+                break;
+            case 'P': case 'p':
+                if (!legal(0)) return nullptr;
+                if (_strnicmp("AM", reinterpret_cast<const char*>(bp), 2) == 0) {
+                    if (tm->tm_hour > 12) return nullptr;
+                    if (tm->tm_hour == 12) tm->tm_hour = 0;
+                } else if (_strnicmp("PM", reinterpret_cast<const char*>(bp), 2) == 0) {
+                    if (tm->tm_hour > 12) return nullptr;
+                    if (tm->tm_hour < 12) tm->tm_hour += 12;
+                } else {
+                    return nullptr;
+                }
+                bp += 2;
+                break;
+            case 'S':
+                if (!legal(2) || !conv_num(&bp, &tm->tm_sec, 0, 60)) return nullptr;
+                break;
+            case 's': {  // seconds since the epoch, as local time
+                char* end = nullptr;
+                errno = 0;
+                const long long secs = std::strtoll(reinterpret_cast<const char*>(bp), &end, 10);
+                const bool ok = end != reinterpret_cast<const char*>(bp) && secs >= 0 &&
+                                !(secs == LLONG_MAX && errno == ERANGE);
+                bp = reinterpret_cast<const unsigned char*>(end);
+                const int64_t t = secs;
+                if (!ok || !g_localtime_r(&t, tm)) return nullptr;
+                st.fields = 0xffff;
+                break;
+            }
+            case 'U': case 'W':
+                if (!legal(2) || !conv_num(&bp, &i, 0, 53)) return nullptr;
+                break;
+            case 'w':
+                if (!legal(2) || !conv_num(&bp, &tm->tm_wday, 0, 6)) return nullptr;
+                st.fields |= kFieldWday;
+                break;
+            case 'u':
+                if (!legal(2) || !conv_num(&bp, &i, 1, 7)) return nullptr;
+                tm->tm_wday = i % 7;
+                st.fields |= kFieldWday;
+                break;
+            case 'g':
+                if (!conv_num(&bp, &i, 0, 99)) return nullptr;
+                break;
+            case 'G':
+                do ++bp;
+                while (sp_isdigit(*bp));
+                break;
+            case 'V':
+                if (!conv_num(&bp, &i, 0, 53)) return nullptr;
+                break;
+            case 'Y':
+                if (!legal(1) || !conv_num(&bp, &i, 0, 9999)) return nullptr;
+                st.relyear = -1;
+                tm->tm_year = i - 1900;
+                st.fields |= kFieldYear;
+                break;
+            case 'y':
+                if (!legal(3) || !conv_num(&bp, &st.relyear, 0, 99)) return nullptr;
+                break;
+            case 'Z':
+                g_tzset();
+                if (std::strncmp(reinterpret_cast<const char*>(bp), kGmt, 3) == 0 ||
+                    std::strncmp(reinterpret_cast<const char*>(bp), kUtc, 3) == 0) {
+                    tm->tm_isdst = 0;
+                    tm->tm_gmtoff = 0;
+                    tm->tm_zone = bp[0] == 'G' ? kGmt : kUtc;
+                    bp += 3;
+                } else {
+                    const unsigned char* ep = find_string(bp, &i, g_tzname, 2);
+                    if (!ep) return nullptr;
+                    tm->tm_isdst = i;
+                    tm->tm_gmtoff = -g_timezone;
+                    tm->tm_zone = g_tzname[i];
+                    bp = ep;
+                }
+                break;
+            case 'z': {
+                bool neg = false;
+                while (sp_isspace(*bp)) ++bp;
+                switch (*bp++) {
+                    case 'G':
+                        if (*bp++ != 'M') return nullptr;
+                        [[fallthrough]];
+                    case 'U':
+                        if (*bp++ != 'T') return nullptr;
+                        [[fallthrough]];
+                    case 'Z':
+                        tm->tm_isdst = 0;
+                        tm->tm_gmtoff = 0;
+                        tm->tm_zone = kUtc;
+                        continue;
+                    case '+': break;
+                    case '-': neg = true; break;
+                    default: {
+                        --bp;
+                        if (const unsigned char* ep = find_string(bp, &i, kNaStd, 4)) {
+                            tm->tm_gmtoff = (-5 - i) * 3600;
+                            tm->tm_zone = kNaStd[i];
+                            bp = ep;
+                            continue;
+                        }
+                        if (const unsigned char* ep = find_string(bp, &i, kNaDst, 4)) {
+                            tm->tm_isdst = 1;
+                            tm->tm_gmtoff = (-4 - i) * 3600;
+                            tm->tm_zone = kNaDst[i];
+                            bp = ep;
+                            continue;
+                        }
+                        return nullptr;
+                    }
+                }
+                if (!sp_isdigit(bp[0]) || !sp_isdigit(bp[1])) return nullptr;
+                int offs = ((bp[0] - '0') * 10 + (bp[1] - '0')) * 3600;
+                bp += 2;
+                if (*bp == ':') ++bp;
+                if (sp_isdigit(*bp)) {
+                    offs += (*bp++ - '0') * 600;
+                    if (!sp_isdigit(*bp)) return nullptr;
+                    offs += (*bp++ - '0') * 60;
+                }
+                tm->tm_isdst = 0;
+                tm->tm_gmtoff = neg ? -offs : offs;
+                tm->tm_zone = nullptr;
+                break;
+            }
+            case 'n': case 't':
+                if (!legal(0)) return nullptr;
+                while (sp_isspace(*bp)) ++bp;
+                break;
+            default:
+                return nullptr;
+        }
+    }
+    return bp;
+}
+
+WINAPK_GUEST_ABI char* g_strptime(const char* buf, const char* fmt, GuestTm* tm) {
+    StrptimeState st;
+    const unsigned char* bp = strptime_in(reinterpret_cast<const unsigned char*>(buf), fmt, tm, st);
+    if (!bp) return nullptr;
+    // %y last, as a %C may come after it.
+    if (st.relyear != -1) {
+        if (st.century == 1900) tm->tm_year = st.relyear <= 68 ? st.relyear + 100 : st.relyear;
+        else tm->tm_year = st.relyear + st.century - 1900;
+        st.fields |= kFieldYear;
+    }
+    if (st.fields & kFieldYear) {
+        static const int kMonLengths[2][12] = {{31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31},
+                                               {31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31}};
+        const int year = tm->tm_year + 1900;
+        const int* lens = kMonLengths[(year % 4 == 0 && year % 100 != 0) || year % 400 == 0];
+        if (!(st.fields & kFieldYday) && (st.fields & kFieldMon) && (st.fields & kFieldMday)) {
+            tm->tm_yday = tm->tm_mday - 1;
+            for (int i = 0; i < tm->tm_mon; ++i) tm->tm_yday += lens[i];
+            st.fields |= kFieldYday;
+        }
+        if (st.fields & kFieldYday) {
+            int days = tm->tm_yday;
+            if (!(st.fields & kFieldWday)) {
+                // EPOCH_WDAY 4 (Thursday), EPOCH_YEAR 1970, 365 % 7 == 1.
+                tm->tm_wday = (4 + ((year - 1970) % 7) * 1 + leaps_thru_end_of(year - 1) - leaps_thru_end_of(1969) +
+                               tm->tm_yday) % 7;
+                if (tm->tm_wday < 0) tm->tm_wday += 7;
+            }
+            if (!(st.fields & kFieldMon)) {
+                tm->tm_mon = 0;
+                while (tm->tm_mon < 12 && days >= lens[tm->tm_mon]) days -= lens[tm->tm_mon++];
+            }
+            if (!(st.fields & kFieldMday)) tm->tm_mday = days + 1;
+        }
+    }
+    return const_cast<char*>(reinterpret_cast<const char*>(bp));
+}
+
 // <netinet/in.h>'s constants: :: and ::1.
 unsigned char g_in6addr_any[16] = {};
 unsigned char g_in6addr_loopback[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1};
@@ -543,6 +886,85 @@ WINAPK_GUEST_ABI int g_tgkill(int tgid, int tid, int sig) {
 }
 WINAPK_GUEST_ABI int g_tkill(int tid, int sig) { return g_tgkill(-1, tid, sig); }
 
+// fork, vfork and waitpid. Windows cannot copy a running process, and an app
+// here has no other process it could have started, so a fork fails as a
+// kernel without fork(2) fails it: -1 with ENOSYS. (The stub's 0 told the
+// caller it was the child, which then ran its exec path and _exit'ed the
+// app.) Nothing is ever a child of the app, so waitpid has nothing to wait
+// for: ECHILD, as on Linux for a process with no children.
+WINAPK_GUEST_ABI int g_fork() { return *guest_errno() = kENOSYS, -1; }
+WINAPK_GUEST_ABI int g_waitpid(int, int*, int) { return *guest_errno() = kECHILD, -1; }
+
+// True when `pid` names this process to the scheduling calls: 0, its pid, or
+// one of its threads (Linux's per-thread ids; here Windows thread ids).
+bool is_own_task(int pid) {
+    if (pid == 0 || pid == g_getpid()) return true;
+    if (pid < 0) return false;
+    const HANDLE t = OpenThread(THREAD_QUERY_LIMITED_INFORMATION, FALSE, static_cast<DWORD>(pid));
+    if (!t) return false;
+    const bool own = GetProcessIdOfThread(t) == GetCurrentProcessId();
+    CloseHandle(t);
+    return own;
+}
+
+// sched_getaffinity(2) as the kernel answers it: the CPUs this process may
+// run on (Windows' process affinity, which every thread starts with; numbered
+// across processor groups), in a mask of nr_cpu_ids bits rounded up to whole
+// longs. Returns the bytes written, or -1 with errno set: EINVAL for a buffer
+// that is not a whole number of longs or too small for every CPU, ESRCH for a
+// task that is not this process.
+int64_t affinity_syscall(int pid, size_t size, void* set) {
+    const DWORD cpus = GetActiveProcessorCount(ALL_PROCESSOR_GROUPS);
+    const size_t mask_size = (cpus + 63) / 64 * 8;
+    if (size * 8 < cpus || (size & 7)) return *guest_errno() = kEINVAL, -1;
+    if (!is_own_task(pid)) return *guest_errno() = kESRCH, -1;
+    auto* bytes = static_cast<uint8_t*>(set);
+    std::memset(bytes, 0, mask_size);
+    auto set_cpu = [&](DWORD cpu) {
+        if (cpu < cpus) bytes[cpu / 8] |= static_cast<uint8_t>(1u << (cpu % 8));
+    };
+    // CPU numbers continue from group to group, as Linux numbers them.
+    auto group_base = [](WORD group) {
+        DWORD base = 0;
+        for (WORD g = 0; g < group; ++g) base += GetActiveProcessorCount(g);
+        return base;
+    };
+    USHORT groups[64];
+    USHORT ngroups = 64;
+    DWORD_PTR process_mask = 0, system_mask = 0;
+    if (GetProcessGroupAffinity(GetCurrentProcess(), &ngroups, groups) && ngroups > 1) {
+        // Spread over several groups: every processor of each.
+        for (USHORT i = 0; i < ngroups; ++i) {
+            const DWORD base = group_base(groups[i]);
+            for (DWORD c = 0; c < GetActiveProcessorCount(groups[i]); ++c) set_cpu(base + c);
+        }
+    } else if (GetProcessAffinityMask(GetCurrentProcess(), &process_mask, &system_mask)) {
+        const DWORD base = ngroups == 1 ? group_base(groups[0]) : 0;
+        for (DWORD c = 0; c < 64; ++c) {
+            if ((process_mask >> c) & 1) set_cpu(base + c);
+        }
+    } else {
+        for (DWORD c = 0; c < cpus; ++c) set_cpu(c);
+    }
+    return static_cast<int64_t>(mask_size < size ? mask_size : size);
+}
+// Bionic's wrapper: the syscall, then the rest of the caller's set cleared.
+WINAPK_GUEST_ABI int g_sched_getaffinity(int pid, size_t size, void* set) {
+    const int64_t n = affinity_syscall(pid, size, set);
+    if (n < 0) return -1;
+    std::memset(static_cast<uint8_t*>(set) + n, 0, size - static_cast<size_t>(n));
+    return 0;
+}
+
+// ATrace (libandroid's <android/trace.h>): systrace markers. Nothing records
+// a trace here, which is a device with tracing off: isEnabled is false and
+// the markers do nothing.
+WINAPK_GUEST_ABI bool g_atrace_is_enabled() { return false; }
+WINAPK_GUEST_ABI void g_atrace_begin_section(const char*) {}
+WINAPK_GUEST_ABI void g_atrace_end_section() {}
+WINAPK_GUEST_ABI void g_atrace_async_section(const char*, int32_t) {}
+WINAPK_GUEST_ABI void g_atrace_set_counter(const char*, int64_t) {}
+
 struct GuestRlimit {
     uint64_t cur, max;
 };
@@ -677,6 +1099,7 @@ WINAPK_GUEST_ABI int64_t g_syscall(int64_t nr, int64_t a, int64_t b, int64_t c, 
         case 200: return g_tkill(static_cast<int>(a), static_cast<int>(b));
         case 234: return g_tgkill(static_cast<int>(a), static_cast<int>(b), static_cast<int>(c));
         case 24: SwitchToThread(); return 0;  // sched_yield
+        case 204: return affinity_syscall(static_cast<int>(a), static_cast<size_t>(b), reinterpret_cast<void*>(c));
         case 318: return g_getrandom(reinterpret_cast<void*>(a), static_cast<size_t>(b), 0);
         case 228: return g_clock_gettime(static_cast<int>(a), reinterpret_cast<GuestTimespec*>(b));
         case 28: return g_madvise(reinterpret_cast<void*>(a), static_cast<size_t>(b), static_cast<int>(c));
@@ -691,12 +1114,111 @@ WINAPK_GUEST_ABI int64_t g_syscall(int64_t nr, int64_t a, int64_t b, int64_t c, 
     }
 }
 
-// rand/random: Bionic's RAND_MAX is 0x7fffffff, the UCRT's 0x7fff.
-uint64_t g_rand_state = 1;
-WINAPK_GUEST_ABI void g_srand(unsigned seed) { g_rand_state = seed; }
-WINAPK_GUEST_ABI int g_rand() {
-    g_rand_state = g_rand_state * 6364136223846793005ULL + 1442695040888963407ULL;
-    return static_cast<int>((g_rand_state >> 33) & 0x7fffffff);
+// random(3) and rand(3): Bionic's are NetBSD's additive feedback generator
+// (upstream-netbsd/common/lib/libc/stdlib/random.c, USE_BETTER_RANDOM), and
+// rand/srand are random/srandom, so a seeded sequence is the one an Android
+// device gives. The state is the default 128-byte table or the caller's
+// (initstate/setstate): word 0 records the type and the rear pointer, as there.
+constexpr int kRandTypes = 5;
+constexpr int kRandDegrees[kRandTypes] = {0, 7, 15, 31, 63};
+constexpr int kRandSeps[kRandTypes] = {0, 3, 1, 3, 1};
+std::mutex g_random_lock;
+int32_t g_randtbl[32] = {
+    3,
+    static_cast<int32_t>(0x991539b1), 0x16a5bce3, 0x6774a4cd, 0x3e01511e, 0x4e508aaa, 0x61048c05,
+    static_cast<int32_t>(0xf5500617), static_cast<int32_t>(0x846b7115), 0x6a19892c,
+    static_cast<int32_t>(0x896a97af), static_cast<int32_t>(0xdb48f936), 0x14898454,
+    0x37ffd106, static_cast<int32_t>(0xb58bff9c), 0x59e17104, static_cast<int32_t>(0xcf918a49), 0x09378c83,
+    0x52c7a471, static_cast<int32_t>(0x8d293ea9), 0x1f4fc301, static_cast<int32_t>(0xc3db71be), 0x39b44e1c,
+    static_cast<int32_t>(0xf8a44ef9), 0x4c8b80b1, 0x19edc328, static_cast<int32_t>(0x87bf4bdd),
+    static_cast<int32_t>(0xc9b240e5), static_cast<int32_t>(0xe9ee4b1b), 0x4382aee7, 0x535b6b41,
+    static_cast<int32_t>(0xf3bec5da),
+};
+int32_t* g_rstate = &g_randtbl[1];
+int32_t* g_fptr = &g_randtbl[4];
+int32_t* g_rptr = &g_randtbl[1];
+int32_t* g_rend = &g_randtbl[32];
+int g_rtype = 3, g_rdeg = 31, g_rsep = 3;
+
+int32_t random_unlocked() {
+    if (g_rtype == 0) {
+        g_rstate[0] = static_cast<int32_t>((static_cast<uint32_t>(g_rstate[0]) * 1103515245u + 12345u) & 0x7fffffff);
+        return g_rstate[0];
+    }
+    int32_t* f = g_fptr;
+    int32_t* r = g_rptr;
+    *f = static_cast<int32_t>(static_cast<uint32_t>(*f) + static_cast<uint32_t>(*r));
+    const int32_t i = static_cast<int32_t>((static_cast<uint32_t>(*f) >> 1) & 0x7fffffff);
+    if (++f >= g_rend) {
+        f = g_rstate;
+        ++r;
+    } else if (++r >= g_rend) {
+        r = g_rstate;
+    }
+    g_fptr = f;
+    g_rptr = r;
+    return i;
+}
+void srandom_unlocked(unsigned seed) {
+    g_rstate[0] = static_cast<int32_t>(seed);
+    if (g_rtype == 0) return;
+    for (int i = 1; i < g_rdeg; ++i) {  // Park and Miller: x' = 16807 x mod (2^31 - 1)
+        const int32_t x = g_rstate[i - 1], hi = x / 127773, lo = x % 127773;
+        int32_t t = 16807 * lo - 2836 * hi;
+        if (t <= 0) t += 0x7fffffff;
+        g_rstate[i] = t;
+    }
+    g_fptr = &g_rstate[g_rsep];
+    g_rptr = &g_rstate[0];
+    for (int i = 0; i < 10 * g_rdeg; ++i) random_unlocked();
+}
+// Word -1 of the current state: the type, and where the rear pointer is.
+void save_random_type() {
+    g_rstate[-1] = g_rtype == 0 ? 0 : kRandTypes * static_cast<int32_t>(g_rptr - g_rstate) + g_rtype;
+}
+WINAPK_GUEST_ABI void g_srandom(unsigned seed) {
+    std::lock_guard<std::mutex> hold(g_random_lock);
+    srandom_unlocked(seed);
+}
+WINAPK_GUEST_ABI glong g_random() {
+    std::lock_guard<std::mutex> hold(g_random_lock);
+    return random_unlocked();
+}
+WINAPK_GUEST_ABI int g_rand() { return static_cast<int>(g_random()); }
+WINAPK_GUEST_ABI void g_srand(unsigned seed) { g_srandom(seed); }
+WINAPK_GUEST_ABI char* g_initstate(unsigned seed, char* arg_state, size_t n) {
+    std::lock_guard<std::mutex> hold(g_random_lock);
+    char* old = reinterpret_cast<char*>(&g_rstate[-1]);
+    save_random_type();
+    if (n < 8) return nullptr;
+    const int type = n < 32 ? 0 : n < 64 ? 1 : n < 128 ? 2 : n < 256 ? 3 : 4;
+    g_rtype = type;
+    g_rdeg = kRandDegrees[type];
+    g_rsep = kRandSeps[type];
+    auto* words = reinterpret_cast<int32_t*>(arg_state);
+    g_rstate = words + 1;
+    g_rend = &g_rstate[g_rdeg];
+    srandom_unlocked(seed);
+    save_random_type();
+    return old;
+}
+WINAPK_GUEST_ABI char* g_setstate(char* arg_state) {
+    std::lock_guard<std::mutex> hold(g_random_lock);
+    auto* words = reinterpret_cast<int32_t*>(arg_state);
+    const int type = words[0] % kRandTypes, rear = words[0] / kRandTypes;
+    char* old = reinterpret_cast<char*>(&g_rstate[-1]);
+    save_random_type();
+    if (type < 0) return nullptr;
+    g_rtype = type;
+    g_rdeg = kRandDegrees[type];
+    g_rsep = kRandSeps[type];
+    g_rstate = words + 1;
+    if (type != 0) {
+        g_rptr = &g_rstate[rear];
+        g_fptr = &g_rstate[(rear + g_rsep) % g_rdeg];
+    }
+    g_rend = &g_rstate[g_rdeg];
+    return old;
 }
 
 // The rand48 family: POSIX's 48-bit linear congruential generator,
@@ -830,6 +1352,64 @@ WINAPK_GUEST_ABI glong m_lrint(double x) { return std::llrint(x); }
 WINAPK_GUEST_ABI glong m_lrintf(float x) { return std::llrint(x); }
 WINAPK_GUEST_ABI long long m_llround(double x) { return std::llround(x); }
 WINAPK_GUEST_ABI long long m_llrint(double x) { return std::llrint(x); }
+WINAPK_GUEST_ABI long long m_llroundf(float x) { return std::llround(x); }
+WINAPK_GUEST_ABI long long m_llrintf(float x) { return std::llrint(x); }
+
+// lroundl, llroundl, lrintl, llrintl: Android's long double is binary128 (see
+// strtold in string.cpp), which the host has no arithmetic for, so the value
+// is rounded exactly in integers: sign, the 113-bit significand and the
+// exponent. Out of range (and NaN) is FE_INVALID territory, where Bionic's
+// (FreeBSD's) lround returns LONG_MAX and its lrint the conversion's
+// "integer indefinite", LONG_MIN.
+enum class QuadRound { kAway, kCurrent };
+int64_t quad_to_int(GuestQuad q, QuadRound how) {
+    const uint64_t lo = static_cast<uint64_t>(q[0]), hi = static_cast<uint64_t>(q[1]);
+    const bool neg = hi >> 63;
+    const int bexp = static_cast<int>((hi >> 48) & 0x7fff);
+    const int64_t invalid = how == QuadRound::kAway ? INT64_MAX : INT64_MIN;
+    if (bexp == 0x7fff) return invalid;
+    const uint64_t top = (hi & 0xffffffffffffull) | (bexp ? 1ull << 48 : 0);  // the integer bit, if normal
+    const unsigned __int128 sig = (static_cast<unsigned __int128>(top) << 64) | lo;
+    if (sig == 0) return 0;
+    const int e = (bexp ? bexp : 1) - 16383;  // value = sig * 2^(e - 112)
+    if (e >= 64) return invalid;
+    unsigned __int128 ip;
+    int frac;  // the fraction against one half: -1 below, 0 equal, 1 above; -2 none
+    if (e >= 112) {
+        ip = sig << (e - 112);
+        frac = -2;
+    } else if (e < -1) {
+        ip = 0;
+        frac = -1;
+    } else {
+        const int shift = 112 - e;  // 1..113
+        ip = shift >= 128 ? 0 : sig >> shift;
+        const unsigned __int128 rem = sig & ((static_cast<unsigned __int128>(1) << shift) - 1);
+        const unsigned __int128 half = static_cast<unsigned __int128>(1) << (shift - 1);
+        frac = rem == 0 ? -2 : rem < half ? -1 : rem == half ? 0 : 1;
+    }
+    bool up = false;
+    if (frac != -2) {
+        if (how == QuadRound::kAway) {
+            up = frac >= 0;
+        } else {
+            switch ((_mm_getcsr() >> 13) & 3) {  // MXCSR's rounding control, which rint follows
+                case 0: up = frac > 0 || (frac == 0 && (ip & 1)); break;  // to nearest, ties to even
+                case 1: up = neg; break;                                   // down
+                case 2: up = !neg; break;                                  // up
+                default: break;                                            // toward zero
+            }
+        }
+    }
+    if (up) ++ip;
+    const unsigned __int128 limit = neg ? static_cast<unsigned __int128>(1) << 63 : INT64_MAX;
+    if (ip > limit) return invalid;
+    return neg ? static_cast<int64_t>(0 - static_cast<uint64_t>(ip)) : static_cast<int64_t>(ip);
+}
+WINAPK_GUEST_ABI glong m_lroundl(GuestQuad x) { return quad_to_int(x, QuadRound::kAway); }
+WINAPK_GUEST_ABI long long m_llroundl(GuestQuad x) { return quad_to_int(x, QuadRound::kAway); }
+WINAPK_GUEST_ABI glong m_lrintl(GuestQuad x) { return quad_to_int(x, QuadRound::kCurrent); }
+WINAPK_GUEST_ABI long long m_llrintl(GuestQuad x) { return quad_to_int(x, QuadRound::kCurrent); }
 WINAPK_GUEST_ABI int m_ilogb(double x) { return std::ilogb(x); }
 WINAPK_GUEST_ABI void m_sincos(double x, double* s, double* c) {
     *s = std::sin(x);
@@ -1041,6 +1621,8 @@ const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("android_get_device_api_level", g_get_device_api_level),
     WINAPK_SHIM("syscall", g_syscall),
     WINAPK_SHIM("strftime_l", g_strftime),
+    WINAPK_SHIM("strptime", g_strptime),
+    WINAPK_SHIM("strptime_l", g_strptime),
     {"timezone", &g_timezone},
     {"daylight", &g_daylight},
     {"tzname", g_tzname},
@@ -1060,6 +1642,16 @@ const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("kill", g_kill),
     WINAPK_SHIM("tgkill", g_tgkill),
     WINAPK_SHIM("tkill", g_tkill),
+    WINAPK_SHIM("fork", g_fork),
+    WINAPK_SHIM("vfork", g_fork),
+    WINAPK_SHIM("waitpid", g_waitpid),
+    WINAPK_SHIM("sched_getaffinity", g_sched_getaffinity),
+    WINAPK_SHIM("ATrace_isEnabled", g_atrace_is_enabled),
+    WINAPK_SHIM("ATrace_beginSection", g_atrace_begin_section),
+    WINAPK_SHIM("ATrace_endSection", g_atrace_end_section),
+    WINAPK_SHIM("ATrace_beginAsyncSection", g_atrace_async_section),
+    WINAPK_SHIM("ATrace_endAsyncSection", g_atrace_async_section),
+    WINAPK_SHIM("ATrace_setCounter", g_atrace_set_counter),
     WINAPK_SHIM("getrlimit", g_getrlimit),
     WINAPK_SHIM("getrlimit64", g_getrlimit),
     WINAPK_SHIM("setrlimit", g_setrlimit),
@@ -1077,8 +1669,10 @@ const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("getentropy", g_getentropy),
     WINAPK_SHIM("srand", g_srand),
     WINAPK_SHIM("rand", g_rand),
-    WINAPK_SHIM("srandom", g_srand),
-    WINAPK_SHIM("random", g_rand),
+    WINAPK_SHIM("srandom", g_srandom),
+    WINAPK_SHIM("random", g_random),
+    WINAPK_SHIM("initstate", g_initstate),
+    WINAPK_SHIM("setstate", g_setstate),
     WINAPK_SHIM("drand48", g_drand48),
     WINAPK_SHIM("erand48", g_erand48),
     WINAPK_SHIM("lrand48", g_lrand48),
@@ -1107,6 +1701,12 @@ const ShimSymbol kSymbols[] = {
     M(ldexp), M(scalbn), M(frexp), M(modf), M(fma), M(lround), M(lrint), M(sincos), M(nan), M(isinf), M(isnan),
     WINAPK_SHIM("llround", m_llround),
     WINAPK_SHIM("llrint", m_llrint),
+    WINAPK_SHIM("llroundf", m_llroundf),
+    WINAPK_SHIM("llrintf", m_llrintf),
+    WINAPK_SHIM("lroundl", m_lroundl),
+    WINAPK_SHIM("llroundl", m_llroundl),
+    WINAPK_SHIM("lrintl", m_lrintl),
+    WINAPK_SHIM("llrintl", m_llrintl),
     WINAPK_SHIM("ilogb", m_ilogb),
     WINAPK_SHIM("finite", m_finite),
     WINAPK_SHIM("__isinf", m_isinf),

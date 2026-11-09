@@ -427,6 +427,8 @@ void set_errno_from_win32(unsigned long e) {
         case ERROR_DISK_FULL: case ERROR_HANDLE_DISK_FULL: t_guest_errno = kENOSPC; break;
         case ERROR_SHARING_VIOLATION: case ERROR_LOCK_VIOLATION: t_guest_errno = kEBUSY; break;
         case ERROR_DIRECTORY: t_guest_errno = kENOTDIR; break;
+        case ERROR_NOT_SAME_DEVICE: t_guest_errno = kEXDEV; break;
+        case ERROR_TOO_MANY_LINKS: t_guest_errno = kEMLINK; break;
         case ERROR_TOO_MANY_OPEN_FILES: t_guest_errno = kEMFILE; break;
         case ERROR_FILENAME_EXCED_RANGE: t_guest_errno = kENAMETOOLONG; break;
         case ERROR_NOT_SUPPORTED: case ERROR_CALL_NOT_IMPLEMENTED: t_guest_errno = kENOSYS; break;

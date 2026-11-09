@@ -70,6 +70,9 @@ void check(const char* what, bool ok, const std::string& detail = "") {
     if (!ok) ++g_failures;
 }
 
+// The directory of the test libraries (argv[1]).
+std::string g_lib_dir;
+
 std::string hex(uint64_t v) {
     char buf[32];
     std::snprintf(buf, sizeof buf, "0x%" PRIx64, v);
@@ -219,6 +222,17 @@ void run_bridge(winapk::GuestLinker& linker, const char* file) {
 
     check("setjmp/longjmp across three guest frames", call0("arm64_setjmp") == 421239,
           std::to_string(call0("arm64_setjmp")));
+
+    // fts with arm64's struct stat (arm64_abi.cpp), and a guest comparator.
+    {
+        const std::string& dir = g_lib_dir;
+        const char* name = "libwinapk_arm64_bridge.so";
+        const uint64_t a[2] = {reinterpret_cast<uint64_t>(dir.c_str()), reinterpret_cast<uint64_t>(name)};
+        check("fts_read fills arm64's struct stat", static_cast<int>(winapk::arm64::call(fn("arm64_fts"), a, 2)) == 1,
+              dir);
+    }
+    check("cleanup handlers: pop(1) and pthread_exit run guest routines", call0("arm64_cleanup") == 213,
+          std::to_string(call0("arm64_cleanup")));
 
     const int exits_before = call0("arm64_exit_count");
     check("__cxa_atexit with a guest handler", call0("arm64_register_atexit") == 0);
@@ -840,6 +854,7 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "usage: winapk-arm64-test <dir with libwinapk_arm64_*.so>\n");
         return 2;
     }
+    g_lib_dir = argv[1];
     winapk::LinkerConfig config;
     config.search_paths.push_back(std::filesystem::u8path(argv[1]));
     config.host = winapk::mini_bionic_resolve;

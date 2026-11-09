@@ -12,14 +12,19 @@
 
 #include "bionic_internal.h"
 #include "winapk/linker.h"
+#include "winapk/mini_bionic.h"
 
+#include <algorithm>
+#include <atomic>
 #include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <map>
 #include <mutex>
+#include <new>
 #include <string>
 #include <vector>
 
@@ -918,6 +923,500 @@ WINAPK_GUEST_ABI int g_unlinkat(int dirfd, const char* path, int flags) {
     return (flags & 0x200) ? g_rmdir(p.c_str()) : g_unlink(p.c_str());  // AT_REMOVEDIR
 }
 
+// link: a hard link, which NTFS has (CreateHardLinkW). Linux refuses one to a
+// directory with EPERM, and so does a file system without hard links (FAT,
+// exFAT: ERROR_INVALID_FUNCTION here).
+WINAPK_GUEST_ABI int g_link(const char* from, const char* to) {
+    const std::wstring src = host_path(from), dst = host_path(to);
+    const DWORD a = GetFileAttributesW(src.c_str());
+    if (a == INVALID_FILE_ATTRIBUTES) {
+        set_errno_from_win32(GetLastError());
+        return -1;
+    }
+    if (a & FILE_ATTRIBUTE_DIRECTORY) return *guest_errno() = kEPERM, -1;
+    if (CreateHardLinkW(dst.c_str(), src.c_str(), nullptr)) return 0;
+    const DWORD err = GetLastError();
+    if (err == ERROR_INVALID_FUNCTION) return *guest_errno() = kEPERM, -1;
+    set_errno_from_win32(err);
+    return -1;
+}
+
+// ---- fts ------------------------------------------------------------------------------
+//
+// Bionic's fts (libc/bionic/fts.c, OpenBSD's), ported with its structures
+// laid out as Bionic's <fts.h> has them, over this file's stat, lstat and
+// directory calls, so the walk sees the same mapped paths as open and
+// opendir. One difference: the walk never changes the current directory, as
+// if FTS_NOCHDIR were always given (it is set in fts_options). fchdir'ing a
+// process the JVM's threads share is not safe, and with NOCHDIR fts_accpath
+// is the whole path, which is right for every caller.
+struct GuestFtsent {
+    GuestFtsent* fts_cycle;
+    GuestFtsent* fts_parent;
+    GuestFtsent* fts_link;
+    int64_t fts_number;
+    void* fts_pointer;
+    char* fts_accpath;
+    char* fts_path;
+    int32_t fts_errno;
+    int32_t fts_symfd;
+    uint64_t fts_pathlen;
+    uint64_t fts_namelen;
+    uint64_t fts_ino;
+    uint64_t fts_dev;
+    uint32_t fts_nlink;
+    int16_t fts_level;
+    uint16_t fts_info;
+    uint16_t fts_flags;
+    uint16_t fts_instr;
+    void* fts_statp;
+    char fts_name[1];
+};
+static_assert(offsetof(GuestFtsent, fts_ino) == 80 && offsetof(GuestFtsent, fts_level) == 100 &&
+                  offsetof(GuestFtsent, fts_statp) == 112 && offsetof(GuestFtsent, fts_name) == 120,
+              "Bionic's FTSENT on LP64");
+using GuestFtsCompar = int(WINAPK_GUEST_ABI*)(const GuestFtsent**, const GuestFtsent**);
+struct GuestFts {
+    GuestFtsent* fts_cur;
+    GuestFtsent* fts_child;
+    GuestFtsent** fts_array;
+    uint64_t fts_dev;
+    char* fts_path;
+    int32_t fts_rfd;
+    uint64_t fts_pathlen;
+    int32_t fts_nitems;
+    GuestFtsCompar fts_compar;
+    int32_t fts_options;
+};
+static_assert(sizeof(GuestFts) == 80, "Bionic's FTS on LP64");
+// The FTS handed out, and what the shim keeps beside it: how the caller lays
+// out struct stat (an arm64 caller's differs; mini_bionic.h).
+struct HostFts {
+    GuestFts fts;
+    FtsStatFill fill = nullptr;
+};
+
+constexpr int kFtsComfollow = 0x1, kFtsLogical = 0x2, kFtsNochdir = 0x4, kFtsNostat = 0x8, kFtsPhysical = 0x10,
+              kFtsSeedot = 0x20, kFtsXdev = 0x40, kFtsOptionMask = 0xff, kFtsNameonly = 0x1000, kFtsStop = 0x2000;
+constexpr int16_t kFtsRootParentLevel = -1, kFtsRootLevel = 0, kFtsMaxLevel = 0x7fff;
+constexpr uint16_t kFtsD = 1, kFtsDc = 2, kFtsDefault = 3, kFtsDnr = 4, kFtsDot = 5, kFtsDp = 6, kFtsErr = 7,
+                   kFtsF = 8, kFtsInit = 9, kFtsNs = 10, kFtsNsok = 11, kFtsSl = 12, kFtsSlnone = 13;
+constexpr uint16_t kFtsAgain = 1, kFtsFollow = 2, kFtsNoinstr = 3, kFtsSkip = 4;
+constexpr int kBChild = 1, kBNames = 2, kBRead = 3;
+
+bool fts_isset(const GuestFts* sp, int opt) { return (sp->fts_options & opt) != 0; }
+bool is_dot(const char* n) { return n[0] == '.' && (!n[1] || (n[1] == '.' && !n[2])); }
+size_t fts_nappend(const GuestFtsent* p) {
+    return p->fts_path[p->fts_pathlen - 1] == '/' ? p->fts_pathlen - 1 : p->fts_pathlen;
+}
+
+GuestFtsent* fts_alloc(HostFts* h, const char* name, size_t namelen) {
+    GuestFts* sp = &h->fts;
+    size_t len = offsetof(GuestFtsent, fts_name) + namelen + 2;
+    const size_t stat_at = (len + 15) & ~size_t{15};
+    if (!fts_isset(sp, kFtsNostat)) len = stat_at + sizeof(GuestStat);
+    auto* p = static_cast<GuestFtsent*>(std::calloc(1, len));
+    if (!p) return nullptr;
+    p->fts_path = sp->fts_path;
+    p->fts_namelen = namelen;
+    p->fts_instr = kFtsNoinstr;
+    if (!fts_isset(sp, kFtsNostat)) p->fts_statp = reinterpret_cast<char*>(p) + stat_at;
+    std::memcpy(p->fts_name, name, namelen);
+    return p;
+}
+void fts_lfree(GuestFtsent* head) {
+    while (GuestFtsent* p = head) {
+        head = head->fts_link;
+        std::free(p);
+    }
+}
+bool fts_palloc(GuestFts* sp, size_t more) {
+    more += 256;
+    if (sp->fts_pathlen + more < sp->fts_pathlen) {
+        std::free(sp->fts_path);
+        sp->fts_path = nullptr;
+        *guest_errno() = kENAMETOOLONG;
+        return false;
+    }
+    auto* p = static_cast<char*>(std::realloc(sp->fts_path, sp->fts_pathlen + more));
+    if (!p) {
+        std::free(sp->fts_path);
+        sp->fts_path = nullptr;
+        *guest_errno() = kENOMEM;
+        return false;
+    }
+    std::memset(p + sp->fts_pathlen, 0, more);
+    sp->fts_pathlen += more;
+    sp->fts_path = p;
+    return true;
+}
+// The path buffer moved: every entry handed out points into it.
+void fts_padjust(GuestFts* sp, GuestFtsent* head) {
+    char* addr = sp->fts_path;
+    auto adjust = [addr](GuestFtsent* p) {
+        if (p->fts_accpath != p->fts_name) p->fts_accpath = addr + (p->fts_accpath - p->fts_path);
+        p->fts_path = addr;
+    };
+    for (GuestFtsent* p = sp->fts_child; p; p = p->fts_link) adjust(p);
+    for (GuestFtsent* p = head; p->fts_level >= kFtsRootLevel;) {
+        adjust(p);
+        p = p->fts_link ? p->fts_link : p->fts_parent;
+    }
+}
+
+uint16_t fts_stat(HostFts* h, GuestFtsent* p, bool follow) {
+    GuestFts* sp = &h->fts;
+    GuestStat sb{};
+    const char* path = p->fts_accpath;
+    auto store = [&](const GuestStat* s) {
+        if (!p->fts_statp) return;
+        if (h->fill) h->fill(s, p->fts_statp);
+        else std::memcpy(p->fts_statp, s, sizeof(GuestStat));
+    };
+    if (fts_isset(sp, kFtsLogical) || follow) {
+        if (g_stat(path, &sb)) {
+            const int saved = *guest_errno();
+            if (!g_lstat(path, &sb)) {
+                store(&sb);
+                *guest_errno() = 0;
+                return kFtsSlnone;
+            }
+            p->fts_errno = saved;
+            sb = GuestStat{};
+            store(&sb);
+            return kFtsNs;
+        }
+    } else if (g_lstat(path, &sb)) {
+        p->fts_errno = *guest_errno();
+        sb = GuestStat{};
+        store(&sb);
+        return kFtsNs;
+    }
+    store(&sb);
+    const uint32_t type = sb.st_mode & 0170000;
+    if (type == 0040000) {
+        p->fts_dev = sb.st_dev;
+        p->fts_ino = sb.st_ino;
+        p->fts_nlink = static_cast<uint32_t>(sb.st_nlink);
+        if (is_dot(p->fts_name)) return kFtsDot;
+        for (GuestFtsent* t = p->fts_parent; t->fts_level >= kFtsRootLevel; t = t->fts_parent) {
+            if (p->fts_ino == t->fts_ino && p->fts_dev == t->fts_dev) {
+                p->fts_cycle = t;
+                return kFtsDc;
+            }
+        }
+        return kFtsD;
+    }
+    if (type == 0120000) return kFtsSl;
+    if (type == 0100000) return kFtsF;
+    return kFtsDefault;
+}
+
+GuestFtsent* fts_sort(GuestFts* sp, GuestFtsent* head, int nitems) {
+    if (nitems > sp->fts_nitems) {
+        auto* a = static_cast<GuestFtsent**>(std::realloc(sp->fts_array, (nitems + 40) * sizeof(GuestFtsent*)));
+        if (!a) {
+            std::free(sp->fts_array);
+            sp->fts_array = nullptr;
+            sp->fts_nitems = 0;
+            return head;
+        }
+        sp->fts_nitems = nitems + 40;
+        sp->fts_array = a;
+    }
+    GuestFtsent** ap = sp->fts_array;
+    for (GuestFtsent* p = head; p; p = p->fts_link) *ap++ = p;
+    const GuestFtsCompar compar = sp->fts_compar;
+    std::stable_sort(sp->fts_array, sp->fts_array + nitems, [compar](GuestFtsent* a, GuestFtsent* b) {
+        return compar(const_cast<const GuestFtsent**>(&a), const_cast<const GuestFtsent**>(&b)) < 0;
+    });
+    ap = sp->fts_array;
+    head = *ap;
+    for (; --nitems; ++ap) ap[0]->fts_link = ap[1];
+    ap[0]->fts_link = nullptr;
+    return head;
+}
+
+void fts_load(GuestFts* sp, GuestFtsent* p) {
+    size_t len = p->fts_pathlen = p->fts_namelen;
+    std::memmove(sp->fts_path, p->fts_name, len + 1);
+    char* cp = std::strrchr(p->fts_name, '/');
+    if (cp && (cp != p->fts_name || cp[1])) {
+        len = std::strlen(++cp);
+        std::memmove(p->fts_name, cp, len + 1);
+        p->fts_namelen = len;
+    }
+    p->fts_accpath = p->fts_path = sp->fts_path;
+    sp->fts_dev = p->fts_dev;
+}
+
+// The entries of the directory fts_cur is on, as fts_build reads them with
+// NOCHDIR: each one's path is built in the shared buffer before its stat.
+GuestFtsent* fts_build(HostFts* h, int type) {
+    GuestFts* sp = &h->fts;
+    GuestFtsent* cur = sp->fts_cur;
+    GuestDir* dirp = g_opendir(cur->fts_accpath);
+    if (!dirp) {
+        if (type == kBRead) {
+            cur->fts_info = kFtsDnr;
+            cur->fts_errno = *guest_errno();
+        }
+        return nullptr;
+    }
+    int nlinks;
+    bool nostat = false;
+    if (type == kBNames) {
+        nlinks = 0;
+    } else if (fts_isset(sp, kFtsNostat) && fts_isset(sp, kFtsPhysical)) {
+        nlinks = static_cast<int>(cur->fts_nlink) - (fts_isset(sp, kFtsSeedot) ? 0 : 2);
+        nostat = true;
+    } else {
+        nlinks = -1;
+    }
+    size_t len = fts_nappend(cur);
+    char* cp = sp->fts_path + len;
+    *cp++ = '/';
+    ++len;
+    size_t maxlen = sp->fts_pathlen - len;
+    int16_t level = cur->fts_level;
+    if (level < kFtsMaxLevel) ++level;
+
+    bool doadjust = false;
+    int nitems = 0;
+    GuestFtsent *head = nullptr, *tail = nullptr;
+    while (GuestDirent* dp = g_readdir(dirp)) {
+        if (!fts_isset(sp, kFtsSeedot) && is_dot(dp->d_name)) continue;
+        const size_t namelen = std::strlen(dp->d_name);
+        GuestFtsent* p = fts_alloc(h, dp->d_name, namelen);
+        if (p && namelen >= maxlen) {
+            char* oldaddr = sp->fts_path;
+            if (!fts_palloc(sp, namelen + len + 1)) {
+                std::free(p);
+                p = nullptr;
+            } else {
+                if (oldaddr != sp->fts_path) {
+                    doadjust = true;
+                    cp = sp->fts_path + len;
+                }
+                maxlen = sp->fts_pathlen - len;
+            }
+        }
+        if (!p) {
+            const int saved = *guest_errno();
+            fts_lfree(head);
+            g_closedir(dirp);
+            cur->fts_info = kFtsErr;
+            sp->fts_options |= kFtsStop;
+            *guest_errno() = saved;
+            return nullptr;
+        }
+        p->fts_level = level;
+        p->fts_parent = sp->fts_cur;
+        p->fts_pathlen = len + namelen;
+        if (nlinks == 0 || (nostat && dp->d_type != 4 && dp->d_type != 0)) {  // not DT_DIR, DT_UNKNOWN
+            p->fts_accpath = p->fts_path;
+            p->fts_info = kFtsNsok;
+        } else {
+            p->fts_accpath = p->fts_path;
+            std::memmove(cp, p->fts_name, p->fts_namelen + 1);
+            p->fts_info = fts_stat(h, p, false);
+            if (nlinks > 0 && (p->fts_info == kFtsD || p->fts_info == kFtsDc || p->fts_info == kFtsDot)) --nlinks;
+        }
+        p->fts_link = nullptr;
+        if (!head) head = tail = p;
+        else tail = tail->fts_link = p;
+        ++nitems;
+    }
+    g_closedir(dirp);
+    if (doadjust) fts_padjust(sp, head);
+    if (len == sp->fts_pathlen || nitems == 0) --cp;
+    *cp = '\0';
+    if (!nitems) {
+        if (type == kBRead) cur->fts_info = kFtsDp;
+        return nullptr;
+    }
+    if (sp->fts_compar && nitems > 1) head = fts_sort(sp, head, nitems);
+    return head;
+}
+
+GuestFts* fts_open_impl(char* const* argv, int options, GuestFtsCompar compar, FtsStatFill fill) {
+    if (options & ~kFtsOptionMask) return *guest_errno() = kEINVAL, nullptr;
+    if (!*argv) return *guest_errno() = kEINVAL, nullptr;
+    auto* h = new (std::nothrow) HostFts();
+    if (!h) return *guest_errno() = kENOMEM, nullptr;
+    h->fill = fill;
+    GuestFts* sp = &h->fts;
+    sp->fts_compar = compar;
+    sp->fts_options = options | kFtsNochdir;
+    sp->fts_rfd = -1;
+    size_t maxarg = 0;
+    for (char* const* a = argv; *a; ++a) maxarg = std::max(maxarg, std::strlen(*a));
+    if (!fts_palloc(sp, std::max<size_t>(maxarg, 4096))) {
+        delete h;
+        return nullptr;
+    }
+    GuestFtsent* parent = fts_alloc(h, "", 0);
+    GuestFtsent *root = nullptr, *prev = nullptr;
+    int nitems = 0;
+    bool ok = parent != nullptr;
+    if (ok) parent->fts_level = kFtsRootParentLevel;
+    for (; ok && *argv; ++argv, ++nitems) {
+        GuestFtsent* p = fts_alloc(h, *argv, std::strlen(*argv));
+        if (!p) {
+            ok = false;
+            break;
+        }
+        p->fts_level = kFtsRootLevel;
+        p->fts_parent = parent;
+        p->fts_accpath = p->fts_name;
+        p->fts_info = fts_stat(h, p, fts_isset(sp, kFtsComfollow));
+        if (p->fts_info == kFtsDot) p->fts_info = kFtsD;  // a "." or ".." given is a real directory
+        if (compar) {
+            p->fts_link = root;
+            root = p;
+        } else {
+            p->fts_link = nullptr;
+            if (!root) root = p;
+            else prev->fts_link = p;
+            prev = p;
+        }
+    }
+    if (ok && compar && nitems > 1) root = fts_sort(sp, root, nitems);
+    if (ok) ok = (sp->fts_cur = fts_alloc(h, "", 0)) != nullptr;
+    if (!ok) {
+        fts_lfree(root);
+        std::free(parent);
+        std::free(sp->fts_path);
+        std::free(sp->fts_array);
+        delete h;
+        return *guest_errno() = kENOMEM, nullptr;
+    }
+    sp->fts_cur->fts_link = root;
+    sp->fts_cur->fts_info = kFtsInit;
+    return sp;
+}
+
+WINAPK_GUEST_ABI GuestFts* g_fts_open(char* const* argv, int options, GuestFtsCompar compar) {
+    return fts_open_impl(argv, options, compar, nullptr);
+}
+
+WINAPK_GUEST_ABI GuestFtsent* g_fts_read(GuestFts* sp) {
+    auto* h = reinterpret_cast<HostFts*>(sp);
+    if (!sp->fts_cur || fts_isset(sp, kFtsStop)) return nullptr;
+    GuestFtsent* p = sp->fts_cur;
+    const uint16_t instr = p->fts_instr;
+    p->fts_instr = kFtsNoinstr;
+    if (instr == kFtsAgain) {  // any node may be visited again: stat it afresh
+        p->fts_info = fts_stat(h, p, false);
+        return p;
+    }
+    if (instr == kFtsFollow && (p->fts_info == kFtsSl || p->fts_info == kFtsSlnone)) {
+        p->fts_info = fts_stat(h, p, true);
+        return p;
+    }
+    GuestFtsent* tmp;
+    if (p->fts_info == kFtsD) {
+        // Skipped, or across a mount point: the post-order visit now.
+        if (instr == kFtsSkip || (fts_isset(sp, kFtsXdev) && p->fts_dev != sp->fts_dev)) {
+            if (sp->fts_child) {
+                fts_lfree(sp->fts_child);
+                sp->fts_child = nullptr;
+            }
+            p->fts_info = kFtsDp;
+            return p;
+        }
+        // fts_children read only the names: read them properly now.
+        if (sp->fts_child && fts_isset(sp, kFtsNameonly)) {
+            sp->fts_options &= ~kFtsNameonly;
+            fts_lfree(sp->fts_child);
+            sp->fts_child = nullptr;
+        }
+        if (!sp->fts_child && !(sp->fts_child = fts_build(h, kBRead))) {
+            if (fts_isset(sp, kFtsStop)) return nullptr;
+            return p;
+        }
+        p = sp->fts_child;
+        sp->fts_child = nullptr;
+        goto name;
+    }
+next:
+    tmp = p;
+    if ((p = p->fts_link)) {
+        std::free(tmp);
+        if (p->fts_level == kFtsRootLevel) {  // the next root
+            fts_load(sp, p);
+            return sp->fts_cur = p;
+        }
+        // fts_set on the node: skipped, or a link to follow.
+        if (p->fts_instr == kFtsSkip) goto next;
+        if (p->fts_instr == kFtsFollow) {
+            p->fts_info = fts_stat(h, p, true);
+            p->fts_instr = kFtsNoinstr;
+        }
+    name: {
+        char* t = sp->fts_path + fts_nappend(p->fts_parent);
+        *t++ = '/';
+        std::memmove(t, p->fts_name, p->fts_namelen + 1);
+        return sp->fts_cur = p;
+    }
+    }
+    // Up to the parent.
+    p = tmp->fts_parent;
+    std::free(tmp);
+    if (p->fts_level == kFtsRootParentLevel) {
+        // Done: errno 0 tells the end from an error.
+        std::free(p);
+        *guest_errno() = 0;
+        return sp->fts_cur = nullptr;
+    }
+    sp->fts_path[p->fts_pathlen] = '\0';
+    p->fts_info = p->fts_errno ? kFtsErr : kFtsDp;
+    return sp->fts_cur = p;
+}
+
+WINAPK_GUEST_ABI int g_fts_set(GuestFts*, GuestFtsent* p, int instr) {
+    if (instr && instr != kFtsAgain && instr != kFtsFollow && instr != kFtsNoinstr && instr != kFtsSkip) {
+        *guest_errno() = kEINVAL;
+        return 1;
+    }
+    p->fts_instr = static_cast<uint16_t>(instr);
+    return 0;
+}
+
+WINAPK_GUEST_ABI GuestFtsent* g_fts_children(GuestFts* sp, int instr) {
+    if (instr && instr != kFtsNameonly) return *guest_errno() = kEINVAL, nullptr;
+    GuestFtsent* p = sp->fts_cur;
+    *guest_errno() = 0;  // an empty directory from an error
+    if (fts_isset(sp, kFtsStop)) return nullptr;
+    if (p->fts_info == kFtsInit) return p->fts_link;  // the roots
+    if (p->fts_info != kFtsD) return nullptr;
+    if (sp->fts_child) fts_lfree(sp->fts_child);
+    int type = kBChild;
+    if (instr == kFtsNameonly) {
+        sp->fts_options |= kFtsNameonly;
+        type = kBNames;
+    }
+    return sp->fts_child = fts_build(reinterpret_cast<HostFts*>(sp), type);
+}
+
+WINAPK_GUEST_ABI int g_fts_close(GuestFts* sp) {
+    // The dummy entry links to the roots, so this works before any read too.
+    if (sp->fts_cur) {
+        GuestFtsent* p = sp->fts_cur;
+        while (p->fts_level >= kFtsRootLevel) {
+            GuestFtsent* freep = p;
+            p = p->fts_link ? p->fts_link : p->fts_parent;
+            std::free(freep);
+        }
+        std::free(p);
+    }
+    if (sp->fts_child) fts_lfree(sp->fts_child);
+    std::free(sp->fts_array);
+    std::free(sp->fts_path);
+    delete reinterpret_cast<HostFts*>(sp);
+    return 0;
+}
+
 // ---- FILE streams ----------------------------------------------------------------------------
 // Bionic's mode letters, less "e" (O_CLOEXEC); the CRT stream is always binary,
 // as Linux's are.
@@ -1036,9 +1535,61 @@ WINAPK_GUEST_ABI FILE* g_funopen(void* cookie, FunopenRead readfn, FunopenWrite 
     return f;
 }
 
+// ---- popen, pclose, system -------------------------------------------------------
+//
+// Bionic runs the command with /system/bin/sh -c, in a child it vforks. There
+// is no Android shell on Windows to run, and running the command with cmd.exe
+// would be a different language, so it goes the way it goes on a device
+// whose exec of the shell fails: the child exits 127. popen still hands back
+// its stream, which reads end-of-file (or takes writes nobody reads), and
+// pclose, or fclose as in Bionic, returns that exit status, 127 << 8.
+// system(NULL), "is there a shell", is 1 in Bionic whatever the device has.
+constexpr int kNoShellStatus = 127 << 8;
+std::mutex g_popen_lock;
+std::map<FILE*, int> g_popen_status;
+
+void report_command(const char* fn, const char* command) {
+    static std::atomic<int> reported{0};
+    if (reported.fetch_add(1) >= 20) return;  // a guest polling a command must not flood the log
+    std::fprintf(stderr, "[win.apk] %s(\"%s\"): there is no /system/bin/sh on Windows; the command exits 127\n", fn,
+                 command ? command : "");
+    std::fflush(stderr);
+}
+
+WINAPK_GUEST_ABI FILE* g_popen(const char* command, const char* mode) {
+    // "r" or "w", and an optional "e" (close-on-exec).
+    const bool ok = mode && (mode[0] == 'r' || mode[0] == 'w') && (!mode[1] || (mode[1] == 'e' && !mode[2]));
+    if (!ok) return *guest_errno() = kEINVAL, nullptr;
+    report_command("popen", command);
+    FILE* f = _wfopen(L"NUL", mode[0] == 'r' ? L"rb" : L"wb");
+    if (!f) {
+        set_errno_from_crt(errno);
+        return nullptr;
+    }
+    std::lock_guard<std::mutex> hold(g_popen_lock);
+    g_popen_status[f] = kNoShellStatus;
+    return f;
+}
+
+WINAPK_GUEST_ABI int g_system(const char* command) {
+    if (!command) return 1;
+    report_command("system", command);
+    return kNoShellStatus;
+}
+
 WINAPK_GUEST_ABI int g_fclose(void* f) {
     FILE* file = host_file(f);
     if (file == stdin || file == stdout || file == stderr) return 0;  // see fd_is_host_std
+    {
+        std::lock_guard<std::mutex> hold(g_popen_lock);
+        auto it = g_popen_status.find(file);
+        if (it != g_popen_status.end()) {
+            const int status = it->second;
+            g_popen_status.erase(it);
+            std::fclose(file);
+            return status;
+        }
+    }
     FunopenFile fun{};
     bool is_funopen = false;
     {
@@ -1220,6 +1771,15 @@ const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("fdopen", g_fdopen),
     WINAPK_SHIM("freopen", g_freopen),
     WINAPK_SHIM("fclose", g_fclose),
+    WINAPK_SHIM("pclose", g_fclose),
+    WINAPK_SHIM("popen", g_popen),
+    WINAPK_SHIM("system", g_system),
+    WINAPK_SHIM("link", g_link),
+    WINAPK_SHIM("fts_open", g_fts_open),
+    WINAPK_SHIM("fts_read", g_fts_read),
+    WINAPK_SHIM("fts_children", g_fts_children),
+    WINAPK_SHIM("fts_set", g_fts_set),
+    WINAPK_SHIM("fts_close", g_fts_close),
     WINAPK_SHIM("fread", g_fread),
     WINAPK_SHIM("fwrite", g_fwrite),
     WINAPK_SHIM("fputs", g_fputs),
@@ -1257,9 +1817,18 @@ const ShimSymbol kSymbols[] = {
 
 size_t file_write(void* f, const char* data, size_t n) { return std::fwrite(data, 1, n, host_file(f)); }
 int64_t fd_write(int fd, const void* data, size_t n) { return g_write(fd, data, n); }
+void* host_stream(void* guest_file) { return host_file(guest_file); }
 void* guest_stdout() { return stdout; }
 void* guest_stderr() { return stderr; }
 
 ShimTable stdio_symbols() { return WINAPK_SHIM_TABLE(kSymbols); }
 
 }  // namespace winapk::bionic
+
+namespace winapk {
+
+void* fts_open_with_stat(char* const* argv, int options, void* compar, FtsStatFill fill) {
+    return bionic::fts_open_impl(argv, options, reinterpret_cast<bionic::GuestFtsCompar>(compar), fill);
+}
+
+}  // namespace winapk

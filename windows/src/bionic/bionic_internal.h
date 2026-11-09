@@ -73,7 +73,8 @@ int linux_errno(int crt_errno);
 constexpr int kEPERM = 1, kENOENT = 2, kEINTR = 4, kEIO = 5, kEBADF = 9, kEAGAIN = 11, kENOMEM = 12,
               kEACCES = 13, kEFAULT = 14, kEBUSY = 16, kEEXIST = 17, kENOTDIR = 20, kEISDIR = 21,
               kEINVAL = 22, kEMFILE = 24, kENOSPC = 28, kESPIPE = 29, kERANGE = 34, kEDEADLK = 35,
-              kENAMETOOLONG = 36, kENOSYS = 38, kENOTEMPTY = 39, kETIMEDOUT = 110, kENOTSUP = 95, kESRCH = 3;
+              kENAMETOOLONG = 36, kENOSYS = 38, kENOTEMPTY = 39, kETIMEDOUT = 110, kENOTSUP = 95, kESRCH = 3,
+              kECHILD = 10, kEXDEV = 18, kEMLINK = 31;
 
 // ---- shared between modules ---------------------------------------------------
 
@@ -96,6 +97,8 @@ const char* errno_text(int linux_errno);
 // stdout and stderr.
 size_t file_write(void* guest_file, const char* data, size_t n);
 int64_t fd_write(int fd, const void* data, size_t n);
+// The CRT FILE* behind a guest FILE* (the __sF entries are the standard streams).
+void* host_stream(void* guest_file);
 void* guest_stdout();
 void* guest_stderr();
 

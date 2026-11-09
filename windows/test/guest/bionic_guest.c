@@ -1249,6 +1249,288 @@ static void test_at_and_cacerts(const char* dir) {
           stat("/apex/com.android.conscrypt/cacerts", &st) == 0 && (st.mode & 0170000) == 0040000, 0);
 }
 
+// ---- gaps the app sweep found ------------------------------------------------------
+// random(3), fork/waitpid, sched_getaffinity, FORTIFY's FD_*, cleanup
+// handlers, link, fts, popen/system, fscanf, strptime, the lround family and
+// ATrace. See src/bionic/misc.cpp, stdio.cpp, pthread.cpp, fd.cpp, printf.cpp.
+long random(void);
+void srandom(unsigned);
+int rand(void);
+void srand(unsigned);
+char* initstate(unsigned, char*, size_t);
+char* setstate(char*);
+int vfork(void);
+int fork(void);
+int waitpid(int, int*, int);
+int sched_getaffinity(int, size_t, void*);
+typedef struct { unsigned long fds_bits[16]; } fd_set;
+void __FD_SET_chk(int, fd_set*, size_t);
+void __FD_CLR_chk(int, fd_set*, size_t);
+int __FD_ISSET_chk(int, const fd_set*, size_t);
+struct cleanup_t { struct cleanup_t* prev; void (*routine)(void*); void* arg; };
+void __pthread_cleanup_push(struct cleanup_t*, void (*)(void*), void*);
+void __pthread_cleanup_pop(struct cleanup_t*, int);
+void pthread_exit(void*);
+int link(const char*, const char*);
+FILE* popen(const char*, const char*);
+int pclose(FILE*);
+int system(const char*);
+int fscanf(FILE*, const char*, ...);
+struct tm { int sec, min, hour, mday, mon, year, wday, yday, isdst; long gmtoff; const char* zone; };
+char* strptime(const char*, const char*, struct tm*);
+long lroundf(float);
+long long llroundf(float);
+long long llrintf(float);
+long lroundl(long double);
+long long llroundl(long double);
+long lrintl(long double);
+long long llrintl(long double);
+_Bool ATrace_isEnabled(void);
+void ATrace_beginSection(const char*);
+void ATrace_endSection(void);
+void ATrace_beginAsyncSection(const char*, int);
+void ATrace_endAsyncSection(const char*, int);
+void ATrace_setCounter(const char*, long);
+
+typedef struct FTSENT {
+    struct FTSENT *cycle, *parent, *link;
+    long number;
+    void* pointer;
+    char *accpath, *path;
+    int err, symfd;
+    size_t pathlen, namelen;
+    unsigned long ino, dev;
+    unsigned nlink;
+    short level;
+    unsigned short info, flags, instr;
+    struct stat* statp;
+    char name[1];
+} FTSENT;
+typedef struct FTS FTS;
+FTS* fts_open(char* const*, int, int (*)(const FTSENT**, const FTSENT**));
+FTSENT* fts_read(FTS*);
+FTSENT* fts_children(FTS*, int);
+int fts_set(FTS*, FTSENT*, int);
+int fts_close(FTS*);
+
+static char g_cleanup_log[16];
+static void cleanup_note(void* arg) { strlcpy(g_cleanup_log + strlen(g_cleanup_log), arg, 2); }
+static void* cleanup_worker(void* arg) {
+    (void)arg;
+    struct cleanup_t a, b, c;
+    __pthread_cleanup_push(&a, cleanup_note, "a");
+    __pthread_cleanup_push(&b, cleanup_note, "b");
+    __pthread_cleanup_pop(&b, 1);  // runs b
+    __pthread_cleanup_push(&c, cleanup_note, "c");
+    __pthread_cleanup_pop(&c, 0);  // does not run c
+    pthread_exit((void*)5);        // runs a
+    return 0;
+}
+
+static int by_name(const FTSENT** x, const FTSENT** y) { return strcmp((*x)->name, (*y)->name); }
+
+static void put_file(const char* path, const char* text) {
+    FILE* f = fopen(path, "w");
+    if (f) {
+        fputs(text, f);
+        fclose(f);
+    }
+}
+
+static void test_sweep_gaps(const char* dir) {
+    char b[512], path[512], other[512];
+
+    srandom(1);
+    long r1 = random(), r2 = random();
+    snprintf(b, sizeof b, "%ld %ld", r1, r2);
+    check_str("srandom(1); random() is the glibc/BSD additive sequence", b, "1804289383 846930886");
+    srand(1);
+    check("rand() is random() (Bionic)", rand() == 1804289383, 0);
+    static char state2[64], state0[16];
+    char* old = initstate(7, state2, sizeof state2);
+    r1 = random();
+    r2 = random();
+    const long r3 = random();
+    snprintf(b, sizeof b, "%ld %ld %ld", r1, r2, r3);
+    check_str("initstate(7, 64 bytes): the x**15 + x + 1 generator", b, "1539280666 119640454 760216337");
+    initstate(7, state0, sizeof state0);
+    snprintf(b, sizeof b, "%ld", random());
+    check_str("initstate(7, 16 bytes): the linear congruential type", b, "1282168116");
+    check("setstate back to the 64-byte state continues it", setstate(state2) == state0 && random() == 1561606870, 0);
+    setstate(old);
+    srandom(42);
+    snprintf(b, sizeof b, "%ld", random());
+    check_str("setstate back to the default table", b, "71876166");
+    check("initstate with fewer than 8 bytes fails", initstate(1, state0, 4) == 0, 0);
+    setstate(old);
+
+    *__errno() = 0;
+    check("vfork fails with ENOSYS (no child is made)", vfork() == -1 && *__errno() == 38, 0);
+    check("fork fails with ENOSYS", fork() == -1 && *__errno() == 38, 0);
+    int status = 0;
+    check("waitpid: no children (ECHILD)", waitpid(-1, &status, 0) == -1 && *__errno() == 10, 0);
+
+    unsigned long mask[16];
+    memset(mask, 0xff, sizeof mask);
+    int cpus = 0;
+    const int aff = sched_getaffinity(0, sizeof mask, mask);
+    for (int i = 0; i < 1024; ++i) cpus += (mask[i / 64] >> (i % 64)) & 1;
+    snprintf(b, sizeof b, "%d of %ld", cpus, sysconf(0x60));
+    check("sched_getaffinity: the process's CPUs, the rest cleared", aff == 0 && cpus >= 1 && cpus <= sysconf(0x60), b);
+    check("sched_getaffinity of this thread's id", sched_getaffinity(gettid(), sizeof mask, mask) == 0, 0);
+    check("sched_getaffinity with a set that is not whole longs: EINVAL",
+          sched_getaffinity(0, 4, mask) == -1 && *__errno() == 22, 0);
+    const long bytes = syscall(204, 0, sizeof mask, mask);  // the raw call returns the mask's size
+    check("syscall(SYS_sched_getaffinity) returns the bytes written", bytes > 0 && bytes % 8 == 0, 0);
+
+    fd_set set;
+    memset(&set, 0, sizeof set);
+    __FD_SET_chk(70, &set, sizeof set);
+    const int on = __FD_ISSET_chk(70, &set, sizeof set);
+    __FD_CLR_chk(70, &set, sizeof set);
+    check("__FD_SET_chk / __FD_ISSET_chk / __FD_CLR_chk", on == 1 && set.fds_bits[1] == 0 &&
+                                                               __FD_ISSET_chk(70, &set, sizeof set) == 0, 0);
+
+    pthread_t t;
+    void* result = 0;
+    g_cleanup_log[0] = 0;
+    pthread_create(&t, 0, cleanup_worker, 0);
+    pthread_join(t, &result);
+    check_str("cleanup handlers: pop(1) runs, pop(0) not, pthread_exit runs the pending one", g_cleanup_log, "ba");
+    check("pthread_exit's value reaches pthread_join", result == (void*)5, 0);
+
+    // link
+    snprintf(path, sizeof path, "%s/link_src.txt", dir);
+    snprintf(other, sizeof other, "%s/link_dst.txt", dir);
+    put_file(path, "linked\n");
+    unlink(other);
+    check("link makes a second name", link(path, other) == 0, 0);
+    FILE* f = fopen(other, "r");
+    b[0] = 0;
+    if (f) {
+        fgets(b, sizeof b, f);
+        fclose(f);
+    }
+    check_str("the second name reads the same file", b, "linked\n");
+    check("link onto an existing name: EEXIST", link(path, other) == -1 && *__errno() == 17, 0);
+    snprintf(b, sizeof b, "%s/no_such_file", dir);
+    check("link of a missing file: ENOENT", link(b, other) == -1 && *__errno() == 2, 0);
+    check("link of a directory: EPERM", link(dir, other) == -1 && *__errno() == 1, 0);
+    unlink(other);
+    unlink(path);
+
+    // fts
+    char root[512];
+    snprintf(root, sizeof root, "%s/fts_root", dir);
+    mkdir(root, 0755);
+    snprintf(path, sizeof path, "%s/sub", root);
+    mkdir(path, 0755);
+    snprintf(path, sizeof path, "%s/a.txt", root);
+    put_file(path, "aaa");
+    snprintf(path, sizeof path, "%s/sub/b.txt", root);
+    put_file(path, "bb");
+    char* roots[] = {root, 0};
+    FTS* fts = fts_open(roots, 0x10, by_name);  // FTS_PHYSICAL
+    char walk[256] = "";
+    int b_ok = 0;
+    for (FTSENT* e; fts && (e = fts_read(fts));) {
+        snprintf(walk + strlen(walk), sizeof walk - strlen(walk), "%s%d:%s", walk[0] ? " " : "", e->info,
+                 e->level == 0 ? "root" : e->name);
+        if (strcmp(e->name, "b.txt") == 0) {
+            b_ok = e->level == 2 && e->statp && e->statp->size == 2 && strstr(e->path, "fts_root/sub/b.txt") &&
+                   strcmp(e->accpath, e->path) == 0;
+        }
+    }
+    const int end_errno = *__errno();
+    // FTS_D 1, FTS_F 8, FTS_DP 6.
+    check_str("fts_read walks pre- and post-order, sorted", walk, "1:root 8:a.txt 1:sub 8:b.txt 6:sub 6:root");
+    check("fts entries: level, stat, path, accpath", b_ok, 0);
+    check("fts_read ends with errno 0", end_errno == 0, 0);
+    check("fts_close", fts && fts_close(fts) == 0, 0);
+    fts = fts_open(roots, 0x10, by_name);
+    FTSENT* top = fts ? fts_read(fts) : 0;
+    FTSENT* kids = top ? fts_children(fts, 0) : 0;
+    snprintf(walk, sizeof walk, "%s,%s", kids ? kids->name : "-", kids && kids->link ? kids->link->name : "-");
+    check_str("fts_children lists the directory", walk, "a.txt,sub");
+    walk[0] = 0;
+    for (FTSENT* e; fts && (e = fts_read(fts));) {
+        if (strcmp(e->name, "sub") == 0 && e->info == 1) fts_set(fts, e, 4);  // FTS_SKIP
+        snprintf(walk + strlen(walk), sizeof walk - strlen(walk), "%s%d:%s", walk[0] ? " " : "", e->info, e->name);
+    }
+    check_str("fts_set(FTS_SKIP) skips a directory", walk, "8:a.txt 1:sub 6:sub 6:fts_root");
+    if (fts) fts_close(fts);
+    snprintf(b, sizeof b, "%s/missing", dir);
+    char* missing[] = {b, 0};
+    fts = fts_open(missing, 0x10, 0);
+    FTSENT* m = fts ? fts_read(fts) : 0;
+    check("fts on a missing root: FTS_NS with ENOENT", m && m->info == 10 && m->err == 2, 0);
+    if (fts) fts_close(fts);
+    check("fts_open with an unknown option: EINVAL", fts_open(roots, 0x100, 0) == 0 && *__errno() == 22, 0);
+    unlink(path);
+    snprintf(path, sizeof path, "%s/sub", root);
+    rmdir(path);
+    snprintf(path, sizeof path, "%s/a.txt", root);
+    unlink(path);
+    rmdir(root);
+
+    // popen / system: there is no shell, as when exec of /system/bin/sh fails
+    f = popen("getprop ro.build.fingerprint", "r");
+    check("popen gives a stream", f != 0, 0);
+    check("popen's stream reads end-of-file", f && fgets(b, sizeof b, f) == 0, 0);
+    check("pclose: the shell's exit status 127", f && pclose(f) == (127 << 8), 0);
+    check("popen with a bad mode: EINVAL", popen("ls", "rw") == 0 && *__errno() == 22, 0);
+    check("system(NULL) is 1, system(cmd) exits 127", system(0) == 1 && system("ls") == (127 << 8), 0);
+
+    // fscanf
+    snprintf(path, sizeof path, "%s/scan.txt", dir);
+    put_file(path, "12 9000000000 word 2.5\nrest\n");
+    f = fopen(path, "r");
+    int i = 0;
+    long l = 0;
+    double d = 0;
+    char word[16] = "";
+    const int n = f ? fscanf(f, "%d %ld %15s %lf", &i, &l, word, &d) : -2;
+    snprintf(b, sizeof b, "%d: %d %ld %s %.1f", n, i, l, word, d);
+    check_str("fscanf", b, "4: 12 9000000000 word 2.5");
+    check("fscanf leaves the stream after what it read", f && fscanf(f, "%15s", word) == 1 && strcmp(word, "rest") == 0,
+          word);
+    check("fscanf at end-of-file is EOF", f && fscanf(f, "%d", &i) == -1, 0);
+    if (f) fclose(f);
+    unlink(path);
+
+    // strptime
+    struct tm tm;
+    memset(&tm, 0, sizeof tm);
+    const char* in = "2024-02-29 13:45:07 rest";
+    char* end = strptime(in, "%Y-%m-%d %H:%M:%S", &tm);
+    snprintf(b, sizeof b, "%d %d %d %d:%d:%d yday %d wday %d", tm.year, tm.mon, tm.mday, tm.hour, tm.min, tm.sec,
+             tm.yday, tm.wday);
+    check_str("strptime fills the fields, yday and wday", b, "124 1 29 13:45:7 yday 59 wday 4");
+    check("strptime returns where it stopped", end == in + 19, 0);
+    memset(&tm, 0, sizeof tm);
+    end = strptime("Tue, 05 Mar 2024 08:09:10 +0130", "%a, %d %b %Y %H:%M:%S %z", &tm);
+    check("strptime with %a %b %z", end && tm.wday == 2 && tm.mon == 2 && tm.gmtoff == 5400, 0);
+    memset(&tm, 0, sizeof tm);
+    strptime("07:30 PM 69", "%I:%M %p %y", &tm);
+    check("strptime %p and %y (69 is 1969)", tm.hour == 19 && tm.year == 69, 0);
+    check("strptime refuses month 13", strptime("2024-13-01", "%Y-%m-%d", &tm) == 0, 0);
+
+    // The rounding family, float and long double (binary128).
+    volatile float hf = 2.5f;
+    volatile long double h = 2.5L, h3 = 3.5L, nh = -2.5L, big = 1e30L, tiny = 0.4999999999999999999999999L;
+    check("lroundf / llroundf / llrintf", lroundf(hf) == 3 && llroundf(hf) == 3 && llrintf(hf) == 2, 0);
+    check("lroundl / llroundl away from zero", lroundl(h) == 3 && llroundl(nh) == -3 && lroundl(tiny) == 0, 0);
+    check("lrintl / llrintl to nearest even", lrintl(h) == 2 && llrintl(h3) == 4 && lrintl(nh) == -2, 0);
+    check("lroundl out of range is LONG_MAX", lroundl(big) == 0x7fffffffffffffffL, 0);
+
+    ATrace_beginSection("test");
+    ATrace_endSection();
+    ATrace_beginAsyncSection("a", 1);
+    ATrace_endAsyncSection("a", 1);
+    ATrace_setCounter("c", 5);
+    check("ATrace: tracing is off, the markers do nothing", !ATrace_isEnabled(), 0);
+}
+
 EXPORT int bionic_test(const char* dir) {
     printf("Bionic shim, from guest code\n");
     test_printf();
@@ -1267,5 +1549,6 @@ EXPORT int bionic_test(const char* dir) {
     test_misc();
     test_signals_and_paths(dir);
     test_signal_delivery();
+    test_sweep_gaps(dir);
     return failures;
 }
