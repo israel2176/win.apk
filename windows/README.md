@@ -1013,6 +1013,13 @@ every such change is listed here:
   a window's root by that class name and reads its window from that field.
   AnkiDroid logged `ClassNotFoundException: com.android.internal.policy.DecorView`.
   Not Windows-specific.
+- `runtime/java/com/macapk/loader/BinaryXmlParser.java`: a compiled XML
+  element keeps its own namespace (`ResXMLTree_attrExt.ns`), and a default
+  namespace declaration (`xmlns="..."`) is kept, so `getNamespace()` answers
+  what Android's parser does. OpenTasks reads its tab list
+  (`<tabconfig xmlns="http://schema.dmfs.org/tasks">`) by qualified name and
+  found nothing (`Broken fragile delegate`, an NPE in `TabConfig.load`). Not
+  Windows-specific.
 
 ## License
 

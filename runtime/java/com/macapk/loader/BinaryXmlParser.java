@@ -304,19 +304,35 @@ public final class BinaryXmlParser {
                     break;
                 case RES_XML_START_ELEMENT: {
                     int ext = off + headerSize;      // attrExt start
+                    int nsIdx = i32(ext);
                     int nameIdx = i32(ext + 4);
                     String tag = poolStr(nameIdx);
-                    Element el = doc.createElement(
-                        tag.isEmpty() ? "unnamed" : tag);
+                    if (tag.isEmpty()) tag = "unnamed";
+                    // ResXMLTree_attrExt.ns: the element's own namespace, which
+                    // XmlBlock.Parser answers from getNamespace(). A file whose
+                    // root declares a default namespace (`<tabconfig
+                    // xmlns="http://schema.dmfs.org/tasks">`, OpenTasks) puts
+                    // every element in it, and a namespace-aware reader matches
+                    // on it; built without it, the elements had none and
+                    // OpenTasks's tab list came back empty.
+                    String elNs = nsIdx >= 0 ? poolStr(nsIdx) : "";
+                    Element el;
+                    if (elNs.isEmpty()) {
+                        el = doc.createElement(tag);
+                    } else {
+                        String pfx = nsPrefix.get(elNs);
+                        el = doc.createElementNS(elNs, pfx == null || pfx.isEmpty() ? tag : pfx + ":" + tag);
+                    }
                     // The namespaces declared before this element go on it as
                     // xmlns attributes, the way the text form carries them
-                    // (aapt emits every START_NAMESPACE right before the root).
+                    // (aapt emits every START_NAMESPACE right before the root);
+                    // an empty prefix is the default namespace, `xmlns`.
                     if (!nsDecls.isEmpty()) {
                         for (String[] decl : nsDecls) {
-                            if (decl[0].isEmpty() || decl[1].isEmpty()) continue;
+                            if (decl[1].isEmpty()) continue;
                             try {
                                 el.setAttributeNS("http://www.w3.org/2000/xmlns/",
-                                                  "xmlns:" + decl[0], decl[1]);
+                                                  decl[0].isEmpty() ? "xmlns" : "xmlns:" + decl[0], decl[1]);
                             } catch (Throwable ignored) {}
                         }
                         nsDecls.clear();
