@@ -282,6 +282,35 @@ thread_local ThreadSignals t_sig{};
 
 bool altstack_enabled(const ThreadSignals& ts) { return ts.altstack.sp && !(ts.altstack.flags & kSsDisable); }
 
+// Bionic gives every thread an alternate signal stack at its start
+// (pthread_create's __init_alternate_signal_stack: SIGNAL_STACK_SIZE_WITHOUT_GUARD,
+// 16 KiB, under a guard page), so a SA_ONSTACK handler, a crash reporter's
+// above all, runs even when the fault is a stack overflow. Here each thread
+// that runs guest code gets the same the first time it does, unless the
+// guest set its own: reserved only, and committed when a handler first runs
+// on it, so a thread that never takes a signal costs address space and no
+// memory. Released when the thread ends.
+constexpr size_t kOwnAltStackSize = 16 * 1024;
+constexpr size_t kOwnAltStackGuard = 4096;
+struct OwnAltStack {
+    char* region = nullptr;  // guard page, then the stack
+    bool tried = false;
+    bool committed = false;
+    ~OwnAltStack() {
+        if (region) VirtualFree(region, 0, MEM_RELEASE);
+    }
+};
+thread_local OwnAltStack t_own_alt;
+
+// The thread's own alternate stack, committed: true if usable.
+bool commit_own_altstack(const ThreadSignals& ts) {
+    OwnAltStack& o = t_own_alt;
+    if (!o.region || ts.altstack.sp != o.region + kOwnAltStackGuard) return true;  // the guest's own
+    if (o.committed) return true;
+    o.committed = VirtualAlloc(o.region + kOwnAltStackGuard, kOwnAltStackSize, MEM_COMMIT, PAGE_READWRITE) != nullptr;
+    return o.committed;
+}
+
 bool on_altstack(const ThreadSignals& ts, const void* sp) {
     if (!altstack_enabled(ts)) return false;
     const auto lo = reinterpret_cast<uintptr_t>(ts.altstack.sp);
@@ -483,7 +512,8 @@ void run_handler(int sig, const GuestSigaction& act, GuestSiginfo* info, CONTEXT
     if (!(static_cast<uint32_t>(act.flags) & kSaNodefer)) during |= bit(sig);
     ts.mask = during & ~kUnblockable;
 
-    const bool use_alt = (static_cast<uint32_t>(act.flags) & kSaOnstack) && altstack_enabled(ts) && !already_on_alt;
+    const bool use_alt = (static_cast<uint32_t>(act.flags) & kSaOnstack) && altstack_enabled(ts) && !already_on_alt &&
+                         commit_own_altstack(ts);
     const bool with_info = static_cast<uint32_t>(act.flags) & kSaSiginfo;
     if (use_alt) {
         void* top = static_cast<char*>(ts.altstack.sp) + ts.altstack.size;
@@ -990,6 +1020,17 @@ int signal_send(uint32_t tid, int sig) {
     return inject(tid, sig);
 }
 
+void signal_altstack_for_current_thread() {
+    OwnAltStack& o = t_own_alt;
+    if (o.tried) return;
+    o.tried = true;
+    ThreadSignals& ts = t_sig;
+    if (ts.altstack.sp) return;  // the guest's own
+    void* r = VirtualAlloc(nullptr, kOwnAltStackGuard + kOwnAltStackSize, MEM_RESERVE, PAGE_NOACCESS);
+    if (!r) return;
+    o.region = static_cast<char*>(r);
+    ts.altstack = GuestStack{o.region + kOwnAltStackGuard, 0, 0, kOwnAltStackSize};
+}
 uint64_t signal_mask_of_current_thread() { return t_sig.mask; }
 void signal_set_mask_of_current_thread(uint64_t mask) {
     t_sig.mask = mask & ~kUnblockable;
@@ -1004,5 +1045,6 @@ void guest_signals_install() {
     static std::once_flag once;
     std::call_once(once, [] { AddVectoredExceptionHandler(0, bionic::fault_handler); });
 }
+void guest_signal_altstack_for_current_thread() { bionic::signal_altstack_for_current_thread(); }
 
 }  // namespace winapk

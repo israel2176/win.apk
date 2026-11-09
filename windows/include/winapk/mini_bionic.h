@@ -32,6 +32,10 @@ void mini_bionic_run_atexit_in(const void* base, size_t size);
 // constructor calls it, and the runtime's crash report calls it first so the
 // guest's handlers run before the report.
 void guest_signals_install();
+// The calling thread's alternate signal stack, as Bionic gives every thread
+// one (16 KiB, committed when a handler first runs on it); once per thread.
+// Called where a thread first runs guest code.
+void guest_signal_altstack_for_current_thread();
 
 // fts_open for a caller whose struct stat is not x86_64's (an arm64 library):
 // `fill` writes each entry's fts_statp from the shim's x86_64 stat. `compar`
