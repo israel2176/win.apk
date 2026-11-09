@@ -1,5 +1,5 @@
 // launcher_state_test.cpp -- winapk-launcher-state-test: the launcher's state machines
-// (launcher/app_runs.h, launcher/installs.h), which hold no lock and make no Windows call, driven
+// (launcher/app_runs.h, launcher/installs.h, launcher/updates.h), which hold no lock and make no Windows call, driven
 // step by step as the library's thread and a worker's thread drive them.
 //
 //   winapk-launcher-state-test
@@ -8,6 +8,9 @@
 // start", "stopped with an error"); Stop at each point of a run; steps out of order change nothing.
 // An install: done, failed, left alone because the app runs; Cancel while it waits, while the file is
 // copied, while the runtime converts it, once it is being kept and after its end; the queue's order.
+// The update check and download: one check at a time; what each result leaves known and what the
+// InfoBar says of it (once per release); a failed check keeps a newer version found before; the
+// download's progress.
 
 #include <cstdio>
 #include <string>
@@ -15,6 +18,7 @@
 
 #include "../launcher/app_runs.h"
 #include "../launcher/installs.h"
+#include "../launcher/updates.h"
 
 namespace {
 
@@ -365,11 +369,129 @@ void test_installs() {
     }
 }
 
+struct TestRelease {
+    std::wstring version;
+};
+using Tracker = winapk::launcher::UpdateTracker<TestRelease>;
+using winapk::launcher::CheckResult;
+
+// A check's result: GitHub asked or the kept answer read, by hand or not, and what came back.
+CheckResult result(bool fetch, bool manual, bool reached, bool ok, bool found) {
+    CheckResult r;
+    r.fetch = fetch;
+    r.manual = manual;
+    r.reached = reached;
+    r.ok = ok;
+    r.found = found;
+    return r;
+}
+
+void test_updates() {
+    std::printf("the update check and download\n");
+    using Say = Tracker::Say;
+    using Known = Tracker::Known;
+    const TestRelease v2{L"2.0"}, v3{L"3.0"}, same{L"1.0"};
+    {
+        Tracker t;
+        check("at start: idle, nothing known, nothing to download",
+              t.check() == Tracker::Check::kIdle && t.known() == Known::kNothing && !t.available() &&
+                  !t.fetch_failed() && !t.downloading() && t.percent() == -1 && !t.begin_download());
+        check("reading the kept answer is a check, but not asking",
+              t.begin_check(false) && t.check() == Tracker::Check::kReadingKept && !t.asking());
+        check("one check at a time", !t.begin_check(true) && t.check() == Tracker::Check::kReadingKept);
+        check("no kept answer: nothing known, nothing said, no failure",
+              t.checked(result(false, false, true, false, false), {}, false, true) == Say::kNothing &&
+                  t.known() == Known::kNothing && !t.fetch_failed() && t.check() == Tracker::Check::kIdle);
+        check("asking GitHub", t.begin_check(true) && t.asking());
+        t.abort_check();
+        check("a check whose thread did not start is over", t.check() == Tracker::Check::kIdle && t.begin_check(true));
+        check("the daily check finds the same version: known, nothing said",
+              t.checked(result(true, false, true, true, true), same, false, true) == Say::kNothing &&
+                  t.known() == Known::kRelease && !t.available() && !t.fetch_failed());
+        t.begin_check(true);
+        check("'Check' finds the same version: up to date",
+              t.checked(result(true, true, true, true, true), same, false, true) == Say::kUpToDate);
+    }
+    {
+        Tracker t;
+        t.begin_check(true);
+        check("the daily check finds a newer version: said",
+              t.checked(result(true, false, true, true, true), v2, true, true) == Say::kNewVersion && t.available() &&
+                  t.latest().version == L"2.0");
+        t.begin_check(true);
+        check("the next check finds it again: said once only",
+              t.checked(result(true, false, true, true, true), v2, true, true) == Say::kNothing && t.available());
+        t.begin_check(true);
+        check("'Check' finds it again: still nothing new to say, and not 'up to date'",
+              t.checked(result(true, true, true, true, true), v2, true, true) == Say::kNothing);
+        t.begin_check(true);
+        check("a newer one still: said again",
+              t.checked(result(true, false, true, true, true), v3, true, true) == Say::kNewVersion &&
+                  t.latest().version == L"3.0");
+    }
+    {
+        Tracker t;
+        t.begin_check(false);
+        check("the daily check off, a newer version in the kept answer: known, not said",
+              t.checked(result(false, false, true, true, true), v2, true, false) == Say::kNothing && t.available());
+        t.begin_check(true);
+        check("'Check' with the daily check off: said",
+              t.checked(result(true, true, true, true, true), v2, true, false) == Say::kNewVersion);
+    }
+    {
+        Tracker t;
+        t.begin_check(true);
+        t.checked(result(true, false, true, true, true), v2, true, true);
+        t.begin_check(true);
+        check("GitHub not reached, by hand: could not check",
+              t.checked(result(true, true, false, true, true), v2, true, true) == Say::kCouldNotCheck &&
+                  t.fetch_failed());
+        check("the newer version found before is still known", t.available() && t.latest().version == L"2.0");
+        t.begin_check(true);
+        check("GitHub not reached and nothing kept: failed, what was known stays",
+              t.checked(result(true, false, false, false, false), {}, false, true) == Say::kNothing &&
+                  t.fetch_failed() && t.known() == Known::kRelease && t.available());
+        t.begin_check(false);
+        check("reading the kept answer does not clear the failure",
+              t.checked(result(false, false, true, true, true), v2, true, true) == Say::kNothing && t.fetch_failed());
+        t.begin_check(true);
+        check("GitHub answers again: no failure",
+              t.checked(result(true, false, true, true, true), v2, true, true) == Say::kNothing && !t.fetch_failed());
+        t.begin_check(true);
+        check("an answer that cannot be read is a failure too",
+              t.checked(result(true, true, true, false, false), {}, false, true) == Say::kCouldNotCheck);
+        t.begin_check(true);
+        check("a list without a release: none known, by hand 'up to date'",
+              t.checked(result(true, true, true, true, false), {}, false, true) == Say::kUpToDate &&
+                  t.known() == Known::kNoRelease && !t.available());
+        t.begin_check(true);
+        check("the release is back: news again",
+              t.checked(result(true, false, true, true, true), v2, true, true) == Say::kNewVersion);
+    }
+    {
+        Tracker t;
+        t.progress(40);
+        check("progress without a download changes nothing", !t.downloading() && t.percent() == -1);
+        t.begin_check(true);
+        t.checked(result(true, false, true, true, true), v2, true, true);
+        check("the download starts at 0", t.begin_download() && t.downloading() && t.percent() == 0);
+        check("one download at a time", !t.begin_download());
+        t.progress(57);
+        check("it moves", t.percent() == 57);
+        check("a check may run meanwhile", t.begin_check(true) && t.downloading());
+        t.checked(result(true, false, true, true, true), v2, true, true);
+        check("and leaves the download alone", t.percent() == 57);
+        t.downloaded();
+        check("it ends", !t.downloading() && t.percent() == -1 && t.begin_download());
+    }
+}
+
 }  // namespace
 
 int main() {
     test_runs();
     test_installs();
+    test_updates();
     std::printf("%d failed\n", g_failures);
     return g_failures ? 1 : 0;
 }

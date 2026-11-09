@@ -94,6 +94,7 @@
 
 #include "app_runs.h"
 #include "installs.h"
+#include "updates.h"
 
 namespace fs = std::filesystem;
 
@@ -2316,13 +2317,9 @@ bool newest_release(const std::string& json, Release* best, bool* found_out) {
     return j.ok;
 }
 
-// One check, from the library's thread to the update thread and back (kUpdateChecked).
-struct UpdateCheck {
-    bool fetch = false;    // ask GitHub; else read only the answer kept from the last check
-    bool manual = false;   // Check now: the result is said in the InfoBar whatever it is
-    bool reached = true;   // GitHub answered (a fetch)
-    bool ok = false;       // the list of releases was read, GitHub's answer or the one kept
-    bool found = false;    // and `latest` holds its newest release
+// One check, from the library's thread to the update thread and back (kUpdateChecked): what was asked
+// and what came of it (updates.h), and the newest release when one was found.
+struct UpdateCheck : winapk::launcher::CheckResult {
     Release latest;
 };
 
@@ -5859,16 +5856,9 @@ void paint_play(Graphics& g) {
 // Update downloads the release's installer, then runs it and closes the library, so that the installer can
 // replace Win.apk.exe and the runtime; with an app running or an install under way it does not start.
 
-struct UpdateState {
-    bool busy = false;      // a check thread runs
-    bool checking = false;  // and it asks GitHub
-    bool failed = false;    // the last check could not reach GitHub or read its answer
-    bool known = false;     // a list of releases was read
-    bool have = false;      // and `latest` holds its newest release
-    bool told = false;      // the InfoBar has said this session that `latest` is out
-    int percent = -1;       // Win.apk-Setup.exe is downloading: how far; -1 when it is not
-    Release latest;
-} g_update;
+// Where the check and the download stand (updates.h: their states and steps). The library's thread only.
+using UpdateTracker = winapk::launcher::UpdateTracker<Release>;
+UpdateTracker g_update;
 size_t g_updates_section = 0;  // the Updates section's index in Settings, for the InfoBar's "What's new"
 
 void show_settings();
@@ -5887,12 +5877,12 @@ FILETIME unix_filetime(DWORD seconds) {
     return FILETIME{static_cast<DWORD>(t), static_cast<DWORD>(t >> 32)};
 }
 
-bool update_available() { return g_update.have && compare_versions(g_update.latest.version, version()) > 0; }
+bool update_available() { return g_update.available(); }
 
 // Installers that are not the newest release's: one that ran, or one left behind.
 void remove_old_setups() {
     std::error_code ec;
-    const fs::path keep = update_available() ? setup_file(g_update.latest.version) : fs::path();
+    const fs::path keep = update_available() ? setup_file(g_update.latest().version) : fs::path();
     for (fs::directory_iterator it(updates_dir(), ec), end; !ec && it != end; it.increment(ec)) {
         const fs::path p = it->path();
         if (p.extension() == L".exe" && p != keep) fs::remove(p, ec);
@@ -5901,9 +5891,7 @@ void remove_old_setups() {
 
 // `fetch` asks GitHub; else only the answer kept from the last check is read (at start, within the day).
 void start_update_check(bool fetch, bool manual) {
-    if (g_update.busy) return;
-    g_update.busy = true;
-    g_update.checking = fetch;
+    if (!g_update.begin_check(fetch)) return;  // one runs already
     auto* c = new UpdateCheck;
     c->fetch = fetch;
     c->manual = manual;
@@ -5911,7 +5899,7 @@ void start_update_check(bool fetch, bool manual) {
         CloseHandle(t);
     } else {
         delete c;
-        g_update.busy = g_update.checking = false;
+        g_update.abort_check();
     }
 }
 
@@ -5937,26 +5925,22 @@ void show_update() {
 }
 
 void update_checked(UpdateCheck& c) {
-    g_update.busy = g_update.checking = false;
-    if (c.ok) {
-        if (c.found && (!g_update.have || g_update.latest.version != c.latest.version)) g_update.told = false;
-        if (c.found) g_update.latest = std::move(c.latest);
-        g_update.known = true;
-        g_update.have = c.found;
-    }
-    if (c.fetch) {
-        g_update.failed = !c.reached || !c.ok;
-        if (!g_update.failed) set_setting(L"LastUpdateCheck", unix_now());
-    }
-    if (c.ok && g_update.percent < 0) remove_old_setups();
-    if (c.manual && g_update.failed) {
-        info(tr(L"Couldn't check for updates. Check the internet connection."), kError);
-    } else if (c.manual && !update_available()) {
-        info(fmt(L"Win.apk is up to date (version {0}).", {version()}), kSuccess);
-    } else if (update_available() && !g_update.told && (c.manual || setting(L"AutoUpdate", 1))) {
-        g_update.told = true;
-        info(fmt(L"A new version of Win.apk is available: {0}.", {g_update.latest.version}), kInfo, tr(L"What's new"),
-             show_update);
+    const bool newer = c.found && compare_versions(c.latest.version, version()) > 0;
+    const UpdateTracker::Say say = g_update.checked(c, std::move(c.latest), newer, setting(L"AutoUpdate", 1) != 0);
+    if (c.fetch && !g_update.fetch_failed()) set_setting(L"LastUpdateCheck", unix_now());
+    if (c.ok && !g_update.downloading()) remove_old_setups();
+    switch (say) {
+        case UpdateTracker::Say::kNothing: break;
+        case UpdateTracker::Say::kCouldNotCheck:
+            info(tr(L"Couldn't check for updates. Check the internet connection."), kError);
+            break;
+        case UpdateTracker::Say::kUpToDate:
+            info(fmt(L"Win.apk is up to date (version {0}).", {version()}), kSuccess);
+            break;
+        case UpdateTracker::Say::kNewVersion:
+            info(fmt(L"A new version of Win.apk is available: {0}.", {g_update.latest().version}), kInfo,
+                 tr(L"What's new"), show_update);
+            break;
     }
     if (g_view == kSettingsView) rebuild_page();
 }
@@ -5987,7 +5971,7 @@ bool update_can_start() {
 // when it did not start.
 bool run_installer() {
     if (!update_can_start()) return false;
-    const fs::path setup = setup_file(g_update.latest.version);
+    const fs::path setup = setup_file(g_update.latest().version);
     const auto r = reinterpret_cast<INT_PTR>(ShellExecuteW(g_main, L"open", setup.c_str(), nullptr, nullptr,
                                                            SW_SHOWNORMAL));
     if (r <= 32) {
@@ -6003,8 +5987,8 @@ bool run_installer() {
 }
 
 void start_update() {
-    if (g_update.percent >= 0 || !update_available()) return;
-    const Release& r = g_update.latest;
+    if (g_update.downloading() || !update_available()) return;
+    const Release& r = g_update.latest();
     if (r.url.empty()) {  // a release without the installer: its page has what it has
         ShellExecuteW(nullptr, L"open", (r.page.empty() ? kReleasesPage : r.page.c_str()), nullptr, nullptr,
                       SW_SHOWNORMAL);
@@ -6021,7 +6005,7 @@ void start_update() {
     auto* job = new Release(r);
     if (HANDLE t = CreateThread(nullptr, 0, update_download_thread, job, 0, nullptr)) {
         CloseHandle(t);
-        g_update.percent = 0;
+        g_update.begin_download();
         info(fmt(L"Downloading Win.apk {0}…", {r.version}), kInfo);
     } else {
         delete job;
@@ -6029,7 +6013,7 @@ void start_update() {
 }
 
 void update_downloaded(bool ok) {
-    g_update.percent = -1;
+    g_update.downloaded();
     if (ok && run_installer()) return;  // the library is gone
     if (!ok) info(tr(L"Couldn't download the update. Check the internet connection."), kError);
     if (g_view == kSettingsView) rebuild_page();
@@ -6038,7 +6022,7 @@ void update_downloaded(bool ok) {
 // The Update button shows how far the download is; changed in place, since a rebuild asks the runtime for the
 // Google account.
 void update_progress(int percent) {
-    g_update.percent = percent;
+    g_update.progress(percent);
     if (g_view != kSettingsView) return;
     for (Section& sec : g_page.sections) {
         for (Row& row : sec.rows) {
@@ -6054,20 +6038,20 @@ void update_progress(int percent) {
 std::vector<Section> update_sections() {
     std::vector<Section> out;
     const bool newer = update_available();
-    const Release& r = g_update.latest;
+    const Release& r = g_update.latest();
     std::wstring status;
-    if (g_update.checking) status = tr(L"Checking for updates…");
+    if (g_update.asking()) status = tr(L"Checking for updates…");
     else if (newer) status = fmt(L"Version {0} is available.", {r.version});
-    else if (g_update.failed) status = tr(L"Couldn't check for updates. Check the internet connection.");
+    else if (g_update.fetch_failed()) status = tr(L"Couldn't check for updates. Check the internet connection.");
     else if (const DWORD last = setting(L"LastUpdateCheck", 0)) {
-        status = g_update.known ? fmt(L"Win.apk is up to date. Last checked {0}.", {long_date(unix_filetime(last))})
+        status = g_update.known() != UpdateTracker::Known::kNothing ? fmt(L"Win.apk is up to date. Last checked {0}.", {long_date(unix_filetime(last))})
                                : fmt(L"Last checked {0}.", {long_date(unix_filetime(last))});
     } else {
         status = tr(L"Not checked yet.");
     }
     Section sec{tr(L"Updates"), {}, L""};
     sec.rows.push_back(button_row(fmt(L"Version {0}", {version()}), status,
-                                  g_update.checking ? tr(L"Checking…") : tr(L"Check"),
+                                  g_update.asking() ? tr(L"Checking…") : tr(L"Check"),
                                   [] { start_update_check(true, true); }));
     Row autoc;
     autoc.kind = Row::kToggle;
@@ -6081,9 +6065,9 @@ std::vector<Section> update_sections() {
     sec.rows.push_back(autoc);
     if (newer) {
         const std::wstring button = r.url.empty()           ? tr(L"Open")
-                                    : g_update.percent >= 0 ? fmt(L"Downloading… {0}%",
-                                                                  {std::to_wstring(g_update.percent)})
-                                                            : tr(L"Update");
+                                    : g_update.downloading() ? fmt(L"Downloading… {0}%",
+                                                                   {std::to_wstring(g_update.percent())})
+                                                             : tr(L"Update");
         Row up = button_row(fmt(L"Win.apk {0}", {r.version}),
                             r.url.empty() ? tr(L"This release has no installer; its page on GitHub has its files.")
                                           : tr(L"Win.apk closes and the installer replaces it. Your apps and their "
