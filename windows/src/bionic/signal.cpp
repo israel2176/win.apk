@@ -352,6 +352,31 @@ WINAPK_GUEST_ABI int g_sigpending(uint64_t* set) {
 
 // ---- running a handler ----------------------------------------------------------------
 
+// The thread's own stack bounds while a handler runs on the alternate stack
+// (run_handler), so a longjmp out of the handler can put them back.
+struct AltStackSwap {
+    bool active = false;
+    void* base = nullptr;
+    void* limit = nullptr;
+    uintptr_t lo = 0, hi = 0;  // the alternate stack
+};
+thread_local AltStackSwap t_alt_swap;
+
+}  // namespace
+
+// longjmp (setjmp.cpp) to `rsp`: when that leaves the alternate stack a
+// handler runs on, the thread's own stack bounds go back into the TEB.
+extern "C" void winapk_sig_stack_fixup(uint64_t rsp) {
+    AltStackSwap& swap = t_alt_swap;
+    if (!swap.active || (rsp >= swap.lo && rsp < swap.hi)) return;
+    auto* tib = reinterpret_cast<NT_TIB*>(NtCurrentTeb());
+    tib->StackBase = swap.base;
+    tib->StackLimit = swap.limit;
+    swap = AltStackSwap{};
+}
+
+namespace {
+
 // Calls the System V function `fn(a, b, c)` with rsp moved to `sp` (the top
 // of the alternate stack) for the duration of the call. rbp keeps the old
 // rsp; the callee preserves it. sysv_abi, so the C++ caller already treats
@@ -462,7 +487,26 @@ void run_handler(int sig, const GuestSigaction& act, GuestSiginfo* info, CONTEXT
     const bool with_info = static_cast<uint32_t>(act.flags) & kSaSiginfo;
     if (use_alt) {
         void* top = static_cast<char*>(ts.altstack.sp) + ts.altstack.size;
+        // Windows checks a thread's stack against its TEB: __chkstk probes from
+        // StackLimit down to the new rsp, and exception dispatch wants frames
+        // within [StackLimit, StackBase). Left as the thread's own, a host
+        // function with a large frame called from a handler on an alternate
+        // stack below the thread's probed down the whole gap and ended in a
+        // stack overflow (Google Maps: its crash handler's vsnprintf, so the
+        // first fault was never reported). For the call the alternate stack's
+        // bounds are the thread's, as a fiber's are; a handler that longjmps
+        // out gets the thread's back in winapk_sig_stack_fixup.
+        auto* tib = reinterpret_cast<NT_TIB*>(NtCurrentTeb());
+        AltStackSwap& swap = t_alt_swap;
+        const AltStackSwap outer = swap;
+        swap = AltStackSwap{true, tib->StackBase, tib->StackLimit, reinterpret_cast<uintptr_t>(ts.altstack.sp),
+                            reinterpret_cast<uintptr_t>(top)};
+        tib->StackBase = top;
+        tib->StackLimit = ts.altstack.sp;
         winapk_sig_call_on_stack(top, act.handler, sig, with_info ? info : nullptr, with_info ? &uc : nullptr);
+        tib->StackBase = swap.base;
+        tib->StackLimit = swap.limit;
+        swap = outer;
     } else if (with_info) {
         reinterpret_cast<Handler3>(act.handler)(sig, info, &uc);
     } else {

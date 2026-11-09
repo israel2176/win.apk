@@ -22,8 +22,8 @@
 // calls into it afterwards keeps using System V pointers.
 //
 // Not handled yet (the loader fails with a clear message instead):
-//   * static ELF TLS (R_X86_64_TPOFF64); dynamic TLS is in elf_tls.h. On
-//     arm64, ELF TLS (TLSDESC) is not supported yet; emulated TLS is.
+//   * static ELF TLS (R_X86_64_TPOFF64, R_AARCH64_TLS_TPREL64); dynamic TLS is
+//     in elf_tls.h, and on arm64 TLSDESC resolves through it too.
 //   * DT_NEEDED between guest libraries is reported, not followed: the caller's
 //     resolver decides what an undefined symbol binds to. GuestLinker
 //     (linker.h) is the caller that follows it.
@@ -32,6 +32,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -40,6 +41,7 @@
 #include <vector>
 
 #include "winapk/elf64_defs.h"
+#include "winapk/elf_tls.h"
 
 namespace winapk {
 
@@ -196,6 +198,9 @@ private:
     std::unordered_map<std::string, uint64_t> tls_exports_;  // offsets in the TLS block
     std::vector<uint64_t> irelative_slots_;  // vaddrs; resolved after protect
     std::vector<int64_t> irelative_addends_;
+    // The (module, offset) pairs arm64 TLSDESC descriptors point at; a deque
+    // keeps their addresses stable while it grows.
+    std::deque<TlsIndex> tlsdesc_args_;
 
     size_t fs_sites_patched_ = 0;
     size_t relocs_applied_ = 0;

@@ -52,6 +52,7 @@
 #include <filesystem>
 #include <functional>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -560,6 +561,45 @@ void run_unload(winapk::GuestLinker& linker, const char* file) {
     check("dlclose drops the translation", winapk::arm64::aot_lookup(reinterpret_cast<uint64_t>(fn)) == nullptr);
 }
 
+// ---- ELF TLS through TLSDESC (test/guest/arm64_tls_guest.c) ---------------------------
+
+// tls_mix as the guest computes it, from the thread's TLS values.
+long tls_mix_reference(long a, long b, long c, long d, long counter, long zero, long global) {
+    double f = (double)a * 1.5;
+    long r = a + counter;
+    r += b * zero;
+    r += c - global;
+    return r + d + (long)(f * (double)counter);
+}
+
+void run_tls(winapk::GuestLinker& linker, const char* file) {
+    std::printf("%s\n", file);
+    std::string error;
+    void* lib = linker.open(file, winapk::GuestLinker::kRtldNow, &error);
+    check("open (R_AARCH64_TLSDESC relocated)", lib != nullptr, error);
+    if (!lib) return;
+    void* bump = sym(linker, lib, "tls_bump");
+    void* addr = sym(linker, lib, "tls_addr");
+    void* mix = sym(linker, lib, "tls_mix");
+    if (!bump || !addr || !mix) return;
+    // t_counter starts at 5 (.tdata), t_zero at 0 (.tbss).
+    check("the first access reads the initial image", winapk::arm64::call(bump) == 6 + 2);
+    check("the value is kept for the thread", winapk::arm64::call(bump) == 7 + 4);
+    const uint64_t in[4] = {3, 5, 11, 13};
+    const uint64_t got = winapk::arm64::call(mix, in, 4);
+    check("values live across a TLSDESC call survive it", static_cast<long>(got) == tls_mix_reference(3, 5, 11, 13, 7, 4, 7),
+          hex(got));
+    uint64_t other = 0, other_addr = 0;
+    std::thread t([&] {
+        other = winapk::arm64::call(bump);
+        other_addr = winapk::arm64::call(addr);
+    });
+    t.join();
+    check("another thread gets its own block", other == 6 + 2, hex(other));
+    check("at another address", other_addr != winapk::arm64::call(addr));
+    check("dlclose", linker.close(lib, &error) == 0, error);
+}
+
 // ---- the random instruction sequences of gen_arm64_fuzz.py ------------------------------
 
 struct FuzzState {
@@ -883,6 +923,7 @@ int main(int argc, char** argv) {
         run_isa(linker, "libwinapk_arm64_isa_lse.so");
         run_bridge(linker, "libwinapk_arm64_bridge.so");
         run_flow(linker, "libwinapk_arm64_flow.so");
+        run_tls(linker, "libwinapk_arm64_tls.so");
         run_eh(linker, std::filesystem::u8path(argv[1]));
         run_unload(linker, "libwinapk_arm64_unload.so");
         run_patch(linker, e.first == winapk::arm64::Engine::kAot   ? "libwinapk_arm64_patch_aot.so"

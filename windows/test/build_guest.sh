@@ -86,6 +86,9 @@ ARM64=(
     -Wl,--pack-dyn-relocs=android+relr -Wl,--use-android-relr-tags \
     -Wl,-soname,libwinapk_arm64_bridge.so \
     -o "$ARM64_OUT/libwinapk_arm64_bridge.so" "$HERE/guest/arm64_bridge_guest.c"
+# ELF TLS through TLSDESC (arm64_tls_guest.c): API 29, real ELF TLS.
+"$CC" "${ARM64[@]/aarch64-linux-android24/aarch64-linux-android29}" -O2 -fno-emulated-tls \
+    -Wl,-soname,libwinapk_arm64_tls.so -o "$ARM64_OUT/libwinapk_arm64_tls.so" "$HERE/guest/arm64_tls_guest.c"
 # Control flow and edge cases (arm64_flow_guest.c), and a library the test
 # unloads with dlclose (arm64_isa.c again).
 "$CC" "${ARM64[@]}" -O2 -mno-outline-atomics -Wl,-soname,libwinapk_arm64_flow.so \

@@ -35,6 +35,7 @@ namespace {
 // or not restored yet (longjmp) when it happens.
 extern "C" uint64_t winapk_sig_mask_get() { return signal_mask_of_current_thread(); }
 extern "C" void winapk_sig_mask_set(uint64_t mask) { signal_set_mask_of_current_thread(mask); }
+extern "C" void winapk_sig_stack_fixup(uint64_t rsp);  // signal.cpp
 extern "C" __attribute__((naked, sysv_abi)) int g_setjmp(int64_t*) {
     __asm__ volatile(
         "movq %%rbx, 0(%%rdi)\n"
@@ -94,6 +95,13 @@ extern "C" __attribute__((naked, sysv_abi)) void g_longjmp(int64_t*, int) {
         "movabsq $0x5e7a3b1c0f2d4a69, %%rax\n"
         "cmpq %%rax, 64(%%rdi)\n"
         "jne 1f\n"
+        // Out of a signal handler's alternate stack: the TEB's stack bounds back first (signal.cpp).
+        "pushq %%rsi\n"
+        "subq $32, %%rsp\n"  // shadow space; rsp was 8 mod 16 at entry, the push made it 0
+        "movq 48(%%rdi), %%rcx\n"
+        "call winapk_sig_stack_fixup\n"
+        "addq $32, %%rsp\n"
+        "popq %%rsi\n"
         "cmpq $1, 80(%%rdi)\n"  // siglongjmp after sigsetjmp(buf, 1): the mask back first
         "jne 3f\n"
         "pushq %%rsi\n"

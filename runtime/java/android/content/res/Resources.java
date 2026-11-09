@@ -333,7 +333,16 @@ public class Resources {
         }
     }
 
+    // As AOSP: getString is getText's string, and getText looks the resource
+    // up itself. getText calling getString recursed for ever in a Resources
+    // subclass that overrides getString with its own getText and falls back to
+    // super.getText (Lokalise's LokaliseResources in Bit: StackOverflowError on
+    // the main thread at its first string).
     public String getString(int id) {
+        CharSequence cs = getText(id);
+        return cs == null ? "" : cs.toString();
+    }
+    private String macapkLookupString(int id) {
         // Route through the apktool-decoded values/strings.xml index
         // when one is attached. Returning the actual string value is
         // required by SDKs that look up config via getIdentifier +
@@ -369,9 +378,9 @@ public class Resources {
             return raw;
         }
     }
-    public CharSequence getText(int id) { return getString(id); }
+    public CharSequence getText(int id) { return macapkLookupString(id); }
     public CharSequence getText(int id, CharSequence def) {
-        CharSequence cs = getString(id);
+        CharSequence cs = macapkLookupString(id);
         return (cs == null || cs.length() == 0) ? def : cs;
     }
     public int getInteger(int id) {
