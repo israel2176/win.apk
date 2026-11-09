@@ -988,6 +988,18 @@ every such change is listed here:
   family becomes an app font family, so its bold face is used for bold.
   DroidFish logged `ClassNotFoundException: android.graphics.FontFamily`.
   Not Windows-specific.
+- `runtime/java/android/app/Activity.java` and `MacApkToolbarActionBar.java`
+  (new): a window whose theme asks for the platform action bar
+  (`windowActionBar`, as Holo, Material and DeviceDefault do; not AppCompat)
+  gets AOSP's `screen_action_bar` decor: a real `android.widget.Toolbar`
+  with the id `@android:id/action_bar` in `action_bar_container` above the
+  content, styled from `?android:actionBarStyle`. `getActionBar()` drives it
+  (title, subtitle, display options, Up, show and hide, custom view), and the
+  options menu fills its menu, with item clicks and Up (`android.R.id.home`)
+  going to `onMenuItemSelected`. Before, there was no bar, and apps that look
+  the Toolbar up by id got null (Currency's `setNavigationIcon` NPE).
+  `MACAPK_PLATFORM_ACTION_BAR=0` restores the old decor. Not
+  Windows-specific.
 
 ## License
 
