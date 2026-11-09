@@ -97,6 +97,66 @@ uint64_t fresh_guard() {
     return (static_cast<uint64_t>(t.QuadPart) * 0x9e3779b97f4a7c15ull) & ~0xffull;  // low byte 0, as Bionic
 }
 
+// commit_guest_stack_for_current_thread on a fresh 16 MB thread (the JVM's
+// -Xss16m). The pages 512 KB under StackLimit, which a guest frame over a page
+// writes without probing, must end up committed. With `guard_pages` set the
+// thread first lays its stack out as Windows does part way down, whatever the
+// system did (Wine commits a thread's whole stack): a reserved run, then a
+// guard region of that many pages (x64 Windows keeps more than one), then the
+// committed part, so both shapes run under Wine and on Windows alike.
+struct StackCommitProbe {
+    int guard_pages;
+    size_t moved;
+    bool deep_committed;
+};
+
+DWORD WINAPI stack_commit_thread(LPVOID p) {
+    auto* probe = static_cast<StackCommitProbe*>(p);
+    auto* tib = reinterpret_cast<NT_TIB*>(NtCurrentTeb());
+    constexpr uintptr_t kPage = 4096;
+    if (probe->guard_pages > 0) {
+        ULONG_PTR low = 0, high = 0;
+        GetCurrentThreadStackLimits(&low, &high);
+        volatile char here = 0;
+        const uintptr_t limit = (reinterpret_cast<uintptr_t>(&here) - 64 * 1024) & ~(kPage - 1);
+        const uintptr_t guard = limit - probe->guard_pages * kPage;
+        const uintptr_t floor = low + 64 * 1024;  // left as it is: the JVM's zones would be here
+        VirtualFree(reinterpret_cast<void*>(floor), guard - floor, MEM_DECOMMIT);
+        VirtualAlloc(reinterpret_cast<void*>(guard), limit - guard, MEM_COMMIT, PAGE_READWRITE | PAGE_GUARD);
+        tib->StackLimit = reinterpret_cast<void*>(limit);
+    }
+    const uintptr_t deep = reinterpret_cast<uintptr_t>(tib->StackLimit) - 512 * 1024;
+    probe->moved = winapk::commit_guest_stack_for_current_thread();
+    MEMORY_BASIC_INFORMATION mbi{};
+    probe->deep_committed = VirtualQuery(reinterpret_cast<void*>(deep), &mbi, sizeof mbi) &&
+                            mbi.State == MEM_COMMIT && !(mbi.Protect & PAGE_GUARD);
+    if (probe->deep_committed) *reinterpret_cast<volatile char*>(deep) = 1;  // a frame's write, unprobed
+    return 0;
+}
+
+void run_stack_commit_checks() {
+    for (int guard_pages : {0, 1, 3}) {
+        StackCommitProbe probe{guard_pages, 0, false};
+        HANDLE t = CreateThread(nullptr, 16 * 1024 * 1024, stack_commit_thread, &probe,
+                                STACK_SIZE_PARAM_IS_A_RESERVATION, nullptr);
+        if (!t) {
+            check("guest stack commit thread", false, "CreateThread failed");
+            continue;
+        }
+        WaitForSingleObject(t, INFINITE);
+        CloseHandle(t);
+        char what[96], detail[96];
+        if (guard_pages) {
+            std::snprintf(what, sizeof what, "guest stack committed ahead, %d-page guard region", guard_pages);
+        } else {
+            std::snprintf(what, sizeof what, "guest stack committed ahead, the system's layout");
+        }
+        std::snprintf(detail, sizeof detail, "StackLimit moved %zu KB, 512 KB below it %s", probe.moved / 1024,
+                      probe.deep_committed ? "committed" : "only reserved");
+        check(what, probe.deep_committed && (guard_pages == 0 || probe.moved >= 900 * 1024), detail);
+    }
+}
+
 void run_poc_checks(const winapk::ElfImage& img) {
     auto add = sym<AddFn>(img, "winapk_test_add");
     auto scale = sym<ScaleFn>(img, "winapk_test_scale");
@@ -171,6 +231,7 @@ int main(int argc, char** argv) {
     }
 
     std::printf("Win.apk loader PoC\n");
+    run_stack_commit_checks();
     {
         const uint64_t v = 0x00c0ffee5157a100ull;
         winapk::set_guest_stack_guard_for_current_thread(v);

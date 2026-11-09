@@ -1000,6 +1000,44 @@ every such change is listed here:
   the Toolbar up by id got null (Currency's `setNavigationIcon` NPE).
   `MACAPK_PLATFORM_ACTION_BAR=0` restores the old decor. Not
   Windows-specific.
+- `runtime/java/android/content/res/Resources.java` (`openRawResourceFd`)
+  and `ContentResolver.java` (a comment): the raw resource's file as the
+  apk's own descriptor at the entry's offset, through `openNonAssetFd`, as
+  AOSP's `ResourcesImpl.openRawResourceFd` does; an id with no file or a
+  compressed entry throws `NotFoundException`. It returned null, and
+  ConnectBot's terminal service died with a `NullPointerException` on the
+  descriptor. Not Windows-specific.
+- `runtime/java/com/android/internal/policy/DecorView.java` (new), used by
+  `android/app/Activity.java` and `Dialog.java` for the window's root view,
+  with the field `mWindow`: square's curtains (in AnkiDroid, LeakCanary) finds
+  a window's root by that class name and reads its window from that field.
+  AnkiDroid logged `ClassNotFoundException: com.android.internal.policy.DecorView`.
+  Not Windows-specific.
+- `runtime/java/com/macapk/loader/BinaryXmlParser.java`: a compiled XML
+  element keeps its own namespace (`ResXMLTree_attrExt.ns`), and a default
+  namespace declaration (`xmlns="..."`) is kept, so `getNamespace()` answers
+  what Android's parser does. OpenTasks reads its tab list
+  (`<tabconfig xmlns="http://schema.dmfs.org/tasks">`) by qualified name and
+  found nothing (`Broken fragile delegate`, an NPE in `TabConfig.load`). Not
+  Windows-specific.
+- `runtime/java/android/app/Activity.java`: the window's generateLayout
+  reads the framework's window attributes (`android:windowNoTitle`,
+  `android:windowActionBar`, ...), as `R.styleable.Window` does. Read by bare
+  name, AppCompat's own `windowNoTitle` (false) and `windowActionBar` (true)
+  won, so every DarkActionBar AppCompat activity got the platform action bar
+  and its options menu as a platform `Menu` (NetGuard's SearchView and
+  SMSSecure's NPEs in `onCreateOptionsMenu`/`onPrepareOptionsMenu`). Not
+  Windows-specific.
+- `runtime/java/android/widget/ActionMenuView.java`: the Toolbar menu's
+  `addSubMenu` is MenuBuilder's, a submenu tied to its item, so `findItem`
+  reaches items nested in a submenu (Editor's NPE on its Typeface items).
+  Opening a submenu from the bar is not drawn yet. Not Windows-specific.
+- `runtime/java/android/media/RingtoneManager.java` (`getDefaultUri`,
+  `getDefaultType`, `isDefault`) and `android/preference/RingtonePreference.java`
+  (comments): the default sound of a type is AOSP's `Settings.System` URI
+  (`content://settings/system/alarm_alert`...), not null. Fossify Clock
+  builds its alarm table from it and died creating its database. Not
+  Windows-specific.
 
 ## License
 

@@ -753,7 +753,7 @@ public class ActionMenuView extends LinearLayout {
 
     // ---- MenuBuilder (com/android/internal/view/menu/MenuBuilder.java) ----
 
-    static final class MenuImpl implements Menu {
+    static class MenuImpl implements Menu {
         // MenuBuilder :48-67.
         private static final int USER_MASK = 0x0000ffff;
         private static final int CATEGORY_SHIFT = 16;
@@ -819,6 +819,26 @@ public class ActionMenuView extends LinearLayout {
         }
         @Override public MenuItem add(int groupId, int itemId, int order, int titleRes) {
             return addInternal(groupId, itemId, order, mContext.getResources().getString(titleRes));
+        }
+        /** MenuBuilder.addSubMenu (:437-452): the item goes into this menu and
+         *  opens a SubMenuBuilder of its own, so findItem reaches the items an
+         *  app's menu XML nests under it. Before, Menu's default handed out a
+         *  detached stub: Editor's onPrepareOptionsMenu found none of its
+         *  Typeface items and died on null. */
+        @Override public android.view.SubMenu addSubMenu(CharSequence title) {
+            return addSubMenu(0, 0, 0, title);
+        }
+        @Override public android.view.SubMenu addSubMenu(int titleRes) {
+            return addSubMenu(0, 0, 0, mContext.getResources().getString(titleRes));
+        }
+        @Override public android.view.SubMenu addSubMenu(int groupId, int itemId, int order, int titleRes) {
+            return addSubMenu(groupId, itemId, order, mContext.getResources().getString(titleRes));
+        }
+        @Override public android.view.SubMenu addSubMenu(int groupId, int itemId, int order, CharSequence title) {
+            final ItemImpl item = (ItemImpl) addInternal(groupId, itemId, order, title);
+            final SubMenuImpl subMenu = new SubMenuImpl(this, item);
+            item.mSubMenu = subMenu;
+            return subMenu;
         }
         @Override public int size() { return items.size(); }
         @Override public MenuItem getItem(int index) { return items.get(index); }
@@ -901,6 +921,37 @@ public class ActionMenuView extends LinearLayout {
         }
     }
 
+    /** SubMenuBuilder (com/android/internal/view/menu/SubMenuBuilder.java): a
+     *  menu of its own whose header and icon are its item's. A change in it
+     *  is a change in the menu bar's, as SubMenuBuilder forwards to its parent. */
+    static final class SubMenuImpl extends MenuImpl implements android.view.SubMenu {
+        final MenuImpl mParentMenu;
+        final ItemImpl mItem;
+        private CharSequence mHeaderTitle;
+        private Drawable mHeaderIcon;
+        private View mHeaderView;
+
+        SubMenuImpl(MenuImpl parent, ItemImpl item) {
+            super(parent.mContext, parent.mView);
+            mParentMenu = parent;
+            mItem = item;
+        }
+
+        @Override public android.view.SubMenu setHeaderTitle(int titleRes) {
+            return setHeaderTitle(mContext.getResources().getString(titleRes));
+        }
+        @Override public android.view.SubMenu setHeaderTitle(CharSequence title) { mHeaderTitle = title; return this; }
+        @Override public android.view.SubMenu setHeaderIcon(int iconRes) {
+            return setHeaderIcon(mContext.getDrawable(iconRes));
+        }
+        @Override public android.view.SubMenu setHeaderIcon(Drawable icon) { mHeaderIcon = icon; return this; }
+        @Override public android.view.SubMenu setHeaderView(View view) { mHeaderView = view; return this; }
+        @Override public void clearHeader() { mHeaderTitle = null; mHeaderIcon = null; mHeaderView = null; }
+        @Override public android.view.SubMenu setIcon(int iconRes) { mItem.setIcon(iconRes); return this; }
+        @Override public android.view.SubMenu setIcon(Drawable icon) { mItem.setIcon(icon); return this; }
+        @Override public MenuItem getItem() { return mItem; }
+    }
+
     // ---- MenuItemImpl (com/android/internal/view/menu/MenuItemImpl.java) ----
 
     static final class ItemImpl implements MenuItem {
@@ -928,6 +979,7 @@ public class ActionMenuView extends LinearLayout {
         boolean mExclusive;
         private int mShowAsAction = SHOW_AS_ACTION_NEVER;
         private View mActionView;
+        SubMenuImpl mSubMenu;
         android.view.ActionProvider mActionProvider;
         MenuItem.OnMenuItemClickListener mClickListener;
         private CharSequence mContentDescription;
@@ -958,6 +1010,8 @@ public class ActionMenuView extends LinearLayout {
 
         @Override public int getItemId() { return mId; }
         @Override public int getGroupId() { return mGroup; }
+        @Override public boolean hasSubMenu() { return mSubMenu != null; }
+        @Override public android.view.SubMenu getSubMenu() { return mSubMenu; }
         /** MenuItemImpl.getOrder: the category order as passed to add(). */
         @Override public int getOrder() { return mCategoryOrder; }
 

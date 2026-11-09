@@ -7424,10 +7424,35 @@ public class Resources {
         return getDrawable(id, theme);
     }
 
-    /** AOSP Resources.openRawResourceFd(int): returns an
-     *  AssetFileDescriptor for the raw resource. We don't have a
-     *  real fd; null = "not available." */
-    public AssetFileDescriptor openRawResourceFd(int id) { return null; }
+    /** AOSP Resources.openRawResourceFd(int) -> ResourcesImpl.openRawResourceFd:
+     *      getValue(id, tempValue, true);
+     *      try {
+     *          return mAssets.openNonAssetFd(tempValue.assetCookie, tempValue.string.toString());
+     *      } catch (Exception e) {
+     *          throw new NotFoundException("File " + tempValue.string.toString()
+     *                  + " from resource ID #0x" + Integer.toHexString(id), e);
+     *      }
+     *  It never returns null: the resource's file (res/raw/x.ogg) as the apk's
+     *  own fd at the entry's offset, a NotFoundException for an id with no
+     *  file, and a NotFoundException wrapping openNonAssetFd's
+     *  FileNotFoundException for a compressed entry. The old `return null`
+     *  stub made ConnectBot's TerminalManager (MediaPlayer.setDataSource(
+     *  afd.getFileDescriptor(), ...)) die with an NPE AOSP cannot produce.
+     *  Cookie 0 searches every mount, newest first, as our openNonAssetFd's
+     *  cookie convention allows; the path is the table's own entry path. */
+    public AssetFileDescriptor openRawResourceFd(int id) throws NotFoundException {
+        String path = macapkResourcePath(id);
+        if (path == null && (id >>> 24) == 0x01) {
+            Object[] fw = macapkFwSimpleValue(id);
+            if (fw != null && fw.length > 2 && fw[2] instanceof String s && s.startsWith("res/")) path = s;
+        }
+        if (path == null) throw new NotFoundException("Resource ID #0x" + Integer.toHexString(id));
+        try {
+            return assets.openNonAssetFd(0, path);
+        } catch (Exception e) {
+            throw new NotFoundException("File " + path + " from resource ID #0x" + Integer.toHexString(id), e);
+        }
+    }
 
     /** AOSP Resources.parseBundleExtra(String, AttributeSet, Bundle):
      *  parses an <extra> tag's attributes into the given bundle. */
