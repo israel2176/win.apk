@@ -170,7 +170,7 @@ public class GestureOverlayView extends FrameLayout {
     private static String attrRaw(AttributeSet attrs, String name) {
         if (attrs == null) return null;
         try {
-            return attrs.getAttributeValue(ANDROID_NS, name);
+            return attrs.macapkAttributeText(ANDROID_NS, name);
         } catch (Throwable t) {
             return null;
         }

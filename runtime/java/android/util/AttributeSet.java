@@ -38,4 +38,16 @@ public interface AttributeSet {
     String getClassAttribute();
     int getIdAttributeResourceValue(int defaultValue);
     int getStyleAttribute();
+
+    /**
+     * Mac.apk: the attribute's value in the decoded-source spelling the
+     * framework resolves by text: an enum or flag as its symbol ("number",
+     * "textPassword|textNoSuggestions") where getAttributeValue answers what a
+     * device does for a compiled int ("0x2"). TypedArray and the framework's
+     * widgets read through this; an implementation that keeps no symbol
+     * answers getAttributeValue. Not in the SDK, so apps never see it.
+     */
+    default String macapkAttributeText(String namespace, String name) {
+        return getAttributeValue(namespace, name);
+    }
 }

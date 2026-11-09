@@ -107,7 +107,7 @@ public class TypedArray implements AutoCloseable {
         // bisect gate, not a mode we support.
         if ((attrs[index] >>> 24) == 0x7f
                 && !"0".equals(System.getenv("MACAPK_ATTR_NS_EXACT"))) {
-            return attributeSet.getAttributeValue(
+            return attributeSet.macapkAttributeText(
                 "http://schemas.android.com/apk/res-auto", name);
         }
         // The mirror image for a FRAMEWORK slot (0x01......): only the android
@@ -123,10 +123,10 @@ public class TypedArray implements AutoCloseable {
         }
         // Legacy (MACAPK_TYPEDARRAY_FW_SLOT_ID=0, or the MACAPK_FW_SLOT_LEGACY
         // error path): any namespace first.
-        String v = attributeSet.getAttributeValue(null, name);
+        String v = attributeSet.macapkAttributeText(null, name);
         if (v != null) return v;
         // Fallback: try common Android namespace explicitly.
-        return attributeSet.getAttributeValue(MACAPK_NS_ANDROID, name);
+        return attributeSet.macapkAttributeText(MACAPK_NS_ANDROID, name);
     }
 
     // ------------------------------------------------------------------
@@ -326,7 +326,7 @@ public class TypedArray implements AutoCloseable {
         if (set instanceof Resources.StyleBackedAttributeSet) {
             return set.getAttributeValue(MACAPK_NS_ANDROID, "android:" + name);
         }
-        return set.getAttributeValue(MACAPK_NS_ANDROID, name);
+        return set.macapkAttributeText(MACAPK_NS_ANDROID, name);
     }
 
     // The THEME tier has the same identity rule, with its own gate so the two

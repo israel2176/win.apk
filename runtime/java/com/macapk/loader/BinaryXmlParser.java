@@ -72,6 +72,21 @@ public final class BinaryXmlParser {
      *  AttributeSet.getAttributeName(i) (XmlBlock.Parser) answers from that pool,
      *  so an app that inspects names sees the document's spelling. */
     public static final String MACAPK_DOCNAME_NS = "http://macapk/axml-docname";
+    /** What Android's AttributeSet.getAttributeValue answers for a compiled int
+     *  (TYPE_INT_DEC / TYPE_INT_HEX) attribute, beside one this parser spelled as
+     *  its enum / flag symbol: XmlBlock.Parser gives the raw string when the file
+     *  kept one, else TypedValue.coerceToString ("2", "0x81"). Apps decode it
+     *  (Integer.decode(attrs.getAttributeValue(android, "inputType"))), while our
+     *  own TypedArray and widgets resolve the symbol. Keyed by valueKey(). */
+    public static final String MACAPK_VALUE_NS = "http://macapk/axml-value";
+
+    /** The MACAPK_VALUE_NS local name for the attribute spelled `qname` in the
+     *  DOM ("android:inputType" -> "aosp.android.inputType"): never a real
+     *  attribute's name, so a by-local-name walk of the element cannot take it
+     *  for one, and two namespaces' same-named attributes stay apart. */
+    public static String valueKey(String qname) {
+        return "aosp." + qname.replace(':', '.');
+    }
     private static final String ANDROID_NS =
         "http://schemas.android.com/apk/res/android";
 
@@ -180,7 +195,7 @@ public final class BinaryXmlParser {
     private static void writeElement(StringBuilder sb, Element el) {
         sb.append('<').append(el.getTagName());
         org.w3c.dom.NamedNodeMap attrs = el.getAttributes();
-        boolean aliasNs = false, attrIdNs = false, docNameNs = false;
+        boolean aliasNs = false, attrIdNs = false, docNameNs = false, valueNs = false;
         for (int i = 0; i < attrs.getLength(); i++) {
             org.w3c.dom.Node a = attrs.item(i);
             String qn = a.getNodeName();
@@ -197,6 +212,9 @@ public final class BinaryXmlParser {
             } else if (!docNameNs && MACAPK_DOCNAME_NS.equals(a.getNamespaceURI())) {
                 sb.append(" xmlns:macapkDocName=\"").append(MACAPK_DOCNAME_NS).append('"');
                 docNameNs = true;
+            } else if (!valueNs && MACAPK_VALUE_NS.equals(a.getNamespaceURI())) {
+                sb.append(" xmlns:macapkValue=\"").append(MACAPK_VALUE_NS).append('"');
+                valueNs = true;
             }
             sb.append(' ').append(qn).append("=\"");
             escape(sb, a.getNodeValue());
@@ -444,6 +462,7 @@ public final class BinaryXmlParser {
         // enum/flag symbol tables are keyed by.
         String value;
         String typeTag;
+        String aospValue = null;   // MACAPK_VALUE_NS, when it differs from value
         switch (dataType) {
             case TYPE_STRING:
                 value = rawIdx >= 0 ? poolStr(rawIdx) : poolStr(data);
@@ -457,9 +476,11 @@ public final class BinaryXmlParser {
             case TYPE_INT_HEX: {
                 String sym = (names != null && attrId != 0)
                     ? names.enumText(attrId, dataType, data) : null;
-                if (sym != null) value = sym;
-                else value = (dataType == TYPE_INT_DEC)
+                String coerced = (dataType == TYPE_INT_DEC)
                     ? Integer.toString(data) : "0x" + Integer.toHexString(data);
+                value = sym != null ? sym : coerced;
+                String aosp = rawIdx >= 0 ? poolStr(rawIdx) : coerced;
+                if (names != null && !aosp.equals(value)) aospValue = aosp;
                 typeTag = "int";
                 break;
             }
@@ -539,8 +560,14 @@ public final class BinaryXmlParser {
                     el.setAttributeNS("http://www.w3.org/2000/xmlns/", "xmlns:" + prefix, nsUri);
                 }
                 el.setAttributeNS(nsUri, prefix + ":" + name, value);
+                if (aospValue != null) {
+                    el.setAttributeNS(MACAPK_VALUE_NS, "macapkValue:" + valueKey(prefix + ":" + name), aospValue);
+                }
             } else {
                 el.setAttribute(name, value);
+                if (aospValue != null) {
+                    el.setAttributeNS(MACAPK_VALUE_NS, "macapkValue:" + valueKey(name), aospValue);
+                }
             }
             // Under resource-name obfuscation the table spelling replaces the
             // document's ("layout_constraintTop_toBottomOf" becomes

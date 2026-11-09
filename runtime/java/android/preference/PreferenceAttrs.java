@@ -44,7 +44,7 @@ final class PreferenceAttrs {
     static String raw(AttributeSet attrs, String name) {
         if (attrs == null || name == null) return null;
         try {
-            String v = attrs.getAttributeValue(ANDROID_NS, name);
+            String v = attrs.macapkAttributeText(ANDROID_NS, name);
             if (v == null || v.isEmpty()) return null;
             return v;
         } catch (Throwable t) {

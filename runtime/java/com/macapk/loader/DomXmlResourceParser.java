@@ -444,11 +444,12 @@ public final class DomXmlResourceParser
         if (e.type != START_TAG || e.node == null) return null;
         return e.node.getAttributes();
     }
-    /** BinaryXmlParser's alias / attr-id records: not document attributes. */
+    /** BinaryXmlParser's alias / attr-id / docname / value records: not
+     *  document attributes. */
     private static boolean macapkInternalAttr(Node n) {
         String uri = n.getNamespaceURI();
         return BinaryXmlParser.MACAPK_ALIAS_NS.equals(uri) || BinaryXmlParser.MACAPK_ATTRID_NS.equals(uri)
-            || BinaryXmlParser.MACAPK_DOCNAME_NS.equals(uri);
+            || BinaryXmlParser.MACAPK_DOCNAME_NS.equals(uri) || BinaryXmlParser.MACAPK_VALUE_NS.equals(uri);
     }
     @Override public int getAttributeCount() {
         NamedNodeMap a = currentAttrs();

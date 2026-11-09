@@ -193,7 +193,7 @@ public abstract class Transition implements Cloneable {
     static int getEnumAttr(AttributeSet attrs, String name, String[] names, int[] values,
             int defValue) {
         if (attrs == null) return defValue;
-        String raw = attrs.getAttributeValue(ANDROID_NS, name);
+        String raw = attrs.macapkAttributeText(ANDROID_NS, name);
         if (raw == null) return defValue;
         raw = raw.trim();
         if (raw.isEmpty()) return defValue;

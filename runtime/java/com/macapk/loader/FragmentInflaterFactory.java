@@ -1111,6 +1111,9 @@ public final class FragmentInflaterFactory implements LayoutInflater.Factory2 {
         @Override public String getAttributeValue(String ns, String name) {
             return isName(name) ? null : d.getAttributeValue(ns, name);
         }
+        @Override public String macapkAttributeText(String ns, String name) {
+            return isName(name) ? null : d.macapkAttributeText(ns, name);
+        }
         @Override public int getAttributeCount() { return d.getAttributeCount(); }
         @Override public String getAttributeName(int i) { return d.getAttributeName(i); }
         @Override public String getAttributeValue(int i) { return d.getAttributeValue(i); }

@@ -117,7 +117,7 @@ public final class ViewStub extends View {
      *  decoded "@type/name" refs we resolve via Resources.getIdentifier. */
     private static int resolveAttrResId(Context c, android.util.AttributeSet a, String name, int def) {
         String v;
-        try { v = a.getAttributeValue(ANDROID_NS, name); } catch (Throwable t) { return def; }
+        try { v = a.macapkAttributeText(ANDROID_NS, name); } catch (Throwable t) { return def; }
         if (v == null) return def;
         v = v.trim();
         if (v.isEmpty()) return def;
