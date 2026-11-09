@@ -1028,6 +1028,10 @@ every such change is listed here:
   and its options menu as a platform `Menu` (NetGuard's SearchView and
   SMSSecure's NPEs in `onCreateOptionsMenu`/`onPrepareOptionsMenu`). Not
   Windows-specific.
+- `runtime/java/android/widget/ActionMenuView.java`: the Toolbar menu's
+  `addSubMenu` is MenuBuilder's, a submenu tied to its item, so `findItem`
+  reaches items nested in a submenu (Editor's NPE on its Typeface items).
+  Opening a submenu from the bar is not drawn yet. Not Windows-specific.
 
 ## License
 
