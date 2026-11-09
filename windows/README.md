@@ -972,6 +972,15 @@ every such change is listed here:
   `21.0.x+y-LTS` did not match its pattern, so it reflected on
   `DexPathList.makeDexElements`, which our loader does not have, and logged
   "MultiDex installation failed" (KeePassDX, Tripeaks). Not Windows-specific.
+- `runtime/java/android/view/WindowManagerGlobal.java`, with
+  `com/macapk/loader/WindowOverlayStack.java` and `ActivityHost.java`: AOSP's
+  `mViews` and `mParams` lists exist and follow the windows we hold (each
+  activity's window from its first resume to its destroy, every
+  `WindowManager.addView` window), changed with `add` and `remove(int)` through
+  the field, so a list an app swaps in (LeakCanary's Curtains) sees each
+  change. AnkiDroid's LeakCanary failed with `NoSuchFieldException: mViews`.
+  `mRoots` is not provided (one `ViewRootImpl` for the process). Not
+  Windows-specific.
 
 ## License
 
