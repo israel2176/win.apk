@@ -93,9 +93,11 @@ sign-in needs. So the window is Win.apk's own, on Google's own page.)
 
 With Google's own APKs: push-message tokens for Telegram, Moovit and the Play
 Store; the Play Store signed in with the account; installing an app from it
-(Google's Calculator: download, the install question, the app in the library
+(Google's Calculator: download, the app in the library
 with the Play Store as its installer, and the app opens); the Play Store
-updating its own helper apps. Most apps have not been tried yet: please
+updating its own helper apps. The Play Store installs and updates without
+Win.apk asking again, as a phone's does: only the copy Google signed, checked
+each time. Any other app that installs one gets the question. Most apps have not been tried yet: please
 [report](troubleshooting.md#reporting-a-problem) what you find.
 
 ### How it works and what it means for privacy
