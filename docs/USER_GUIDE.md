@@ -384,8 +384,9 @@ top of that. Action buttons on notifications are not shown.
 **Settings > Google account** signs in with Google (on Google's own page, in a
 window of its own: Win.apk never sees the password), adds another account and
 signs out. One account serves every app, and the account's item at the foot
-of the navigation pane, above **Settings**, shows who is signed in (the
-account's picture and address, or **Sign in**) and opens Settings. **Use Google
+of the navigation pane, above **Settings**, shows who is signed in (only the
+account's picture, or its initial when Google gave none, or the person icon when
+no one is; the address shows when you point at it) and opens Settings. **Use Google
 services (experimental)** runs Google's own Play services and Play Store,
 which you install through the **Google services setup** page; with it on,
 **Google Play** appears under **Store** in the navigation pane and opens the
