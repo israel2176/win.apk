@@ -155,6 +155,16 @@ void test_runs() {
         check("an end the user asked for, heard of late, is expected", t.expect_end(app));
         check("and is no failure", kind_of(t, app) == RunEnd::kStopped);
     }
+    {  // Ended by other means on the user's word: Remove, a permission taken away
+        RunTable t;
+        t.begin(app);
+        t.attach(app, kA);
+        t.ready(app);
+        check("a running app whose runtime the launcher ends by other means: expected", t.expect_end(app));
+        check("it is still running until its process is gone", t.state(app) == RunState::kReady);
+        t.ended(app, false);
+        check("its exit code 1 is no failure", kind_of(t, app) == RunEnd::kStopped);
+    }
     {  // Steps out of order
         RunTable t;
         Killer kill;

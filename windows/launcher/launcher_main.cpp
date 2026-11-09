@@ -1313,7 +1313,9 @@ bool stop_run(const std::wstring& name) {
     return found;
 }
 
-// The run was asked to stop and may be over already (the splash's X): its end is no error either way.
+// The run was asked to stop and may be over already (the splash's X), or its runtime was just ended by
+// other means on the user's word (Remove, a permission taken away, a newer copy installed over it): its
+// end is no error either way.
 void expect_run_end(const std::wstring& name) {
     AcquireSRWLockExclusive(&g_proc_lock);
     g_runs.expect_end(name);
@@ -1384,6 +1386,7 @@ bool stop_google_app_for_install(const std::wstring& name) {
     std::string pkg;
     for (const wchar_t c : name) pkg += static_cast<char>(c < 0x80 ? c : '?');
     if (!google_app(pkg) || !appops::stop_library_app(name)) return false;
+    expect_run_end(name);  // the Play Store in a window of its own: stopped for its update, not "an error"
     for (int i = 0; i < 100 && app_running(name); ++i) Sleep(100);  // its mutex goes with the process
     return !app_running(name);
 }
@@ -4428,9 +4431,12 @@ bool remove_app(const App& app, bool ask, bool with_data = false) {
     if (ask && !confirm_remove(app, &with_data)) return false;
     const App copy = app;  // `app` may point into g_apps, which refresh() replaces
     std::error_code ec;
-    if (app_running(copy.name) && !appops::stop_runtime_of(copy.apk)) {
-        info(fmt(L"Close {0} first, then remove it.", {copy.label}), kError);
-        return false;
+    if (app_running(copy.name)) {
+        if (!appops::stop_runtime_of(copy.apk)) {
+            info(fmt(L"Close {0} first, then remove it.", {copy.label}), kError);
+            return false;
+        }
+        expect_run_end(copy.name);  // started from here: its exit is the removal, not a failure
     }
     // Its permissions go with it, unless another copy in the library is the same package.
     const std::vector<std::string> pkg = package_of(copy.name);
@@ -10064,7 +10070,9 @@ std::vector<Grant> grants_of(const Identity& id) {
 // have no kill rule on a device.
 void revoked(const App& a, const std::string& op) {
     if (op == kManageMedia || op == kOverlay || op == kInstallApps) return;
-    if (stop_runtime_of(a.apk)) info(fmt(L"{0} was stopped, as Android does when a permission is revoked.", {a.label}), kInfo);
+    if (!stop_runtime_of(a.apk)) return;
+    expect_run_end(a.name);  // started from here: the InfoBar says why it ended, no error splash
+    info(fmt(L"{0} was stopped, as Android does when a permission is revoked.", {a.label}), kInfo);
 }
 
 }  // namespace appops
