@@ -56,6 +56,7 @@ winapk::host::AndroidPathMapper g_path_mapper = nullptr;
 
 std::wstring host_of(const std::wstring& p) {
     if (!g_path_mapper || p.empty() || p[0] != L'/' || (p.size() > 1 && p[1] == L'/')) return p;
+    if (p.size() > 2 && p[2] == L':') return p.substr(1);  // "/C:/x", a file URL's path
     const int n = WideCharToMultiByte(CP_UTF8, 0, p.c_str(), static_cast<int>(p.size()), nullptr, 0, nullptr, nullptr);
     std::string u(static_cast<size_t>(n), '\0');
     WideCharToMultiByte(CP_UTF8, 0, p.c_str(), static_cast<int>(p.size()), &u[0], n, nullptr, nullptr);

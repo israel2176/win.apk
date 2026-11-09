@@ -36,9 +36,14 @@ public final class WinApkPaths {
         return s > 0;
     }
 
-    /** Whether `p` is an Android absolute path: one leading '/' ("//host/share" is UNC). */
+    /** Whether `p` is an Android absolute path: one leading '/' ("//host/share" is UNC,
+     *  and "/C:/x", a file URL's path, is the drive path Windows also reads it as). */
     public static boolean isAndroid(String p) {
-        return !p.isEmpty() && p.charAt(0) == '/' && (p.length() == 1 || p.charAt(1) != '/') && enabled();
+        int n = p.length();
+        if (n == 0 || p.charAt(0) != '/') return false;
+        if (n > 1 && p.charAt(1) == '/') return false;
+        if (n > 2 && p.charAt(2) == ':' && Character.isLetter(p.charAt(1))) return false;
+        return enabled();
     }
 
     /** The host file an Android path names; anything else as it is. */
