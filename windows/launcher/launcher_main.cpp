@@ -2026,10 +2026,14 @@ DWORD WINAPI catalog_thread(void* param) {
     const bool force = param != nullptr;
     std::error_code ec;
     fs::create_directories(store_dir(), ec);
-    const bool have = fs::exists(catalog_file(), ec);
+    // A kept catalog with no app in it (cut short, emptied) is none: it is fetched whole, without its ETag,
+    // which would only get "not modified" for the list that is missing.
+    std::vector<StoreApp> kept;
+    if (fs::exists(catalog_file(), ec)) kept = read_catalog();
+    const bool have = !kept.empty();
     if (have) {
         PostMessageW(g_main, kStoreCatalog, kCatalogList,
-                     reinterpret_cast<LPARAM>(new std::vector<StoreApp>(read_catalog())));
+                     reinterpret_cast<LPARAM>(new std::vector<StoreApp>(std::move(kept))));
     }
     int result = kCatalogDone;
     if (!have || force || file_age(catalog_file()) > kCatalogMaxAge) {
@@ -3294,9 +3298,8 @@ Hit hit_test(float x, float y) {
         return {contains(inset(thumb_rect(), -px(4), 0), x, y) ? kHitThumb : kHitTrack, -1};
     }
     if (store) {
-        if (g_store.apps.empty() && g_store.fetch == StoreState::Fetch::kFailed && contains(g_l.retry, x, y)) {
-            return {kHitRetry, -1};
-        }
+        // Wherever paint_store_grid draws "Try again": no list, and none on its way.
+        if (g_store.apps.empty() && !g_store.first_load() && contains(g_l.retry, x, y)) return {kHitRetry, -1};
         const int col = static_cast<int>((x - g_l.grid.X - px(8)) / (g_l.tile_w + g_l.gap));
         const int row = static_cast<int>((y - g_l.grid.Y - px(4) + g_scroll) / (g_l.tile_h + g_l.gap));
         const int i = row * g_l.cols + col;
@@ -4524,7 +4527,7 @@ void store_start(bool force) {
     g_store.fetch = StoreState::Fetch::kLoading;
     g_store.got_kb = 0;
     if (HANDLE t = CreateThread(nullptr, 0, catalog_thread, force ? &g_store : nullptr, 0, nullptr)) CloseHandle(t);
-    else g_store.fetch = StoreState::Fetch::kDone;
+    else g_store.fetch = StoreState::Fetch::kFailed;  // no thread: nothing was fetched
     update_timer();
     InvalidateRect(g_main, nullptr, FALSE);
 }
