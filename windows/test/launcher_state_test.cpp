@@ -1,17 +1,20 @@
 // launcher_state_test.cpp -- winapk-launcher-state-test: the launcher's state machines
-// (launcher/app_runs.h), which hold no lock and make no Windows call, driven step by step as the
-// library's thread and a worker's thread drive them.
+// (launcher/app_runs.h, launcher/installs.h), which hold no lock and make no Windows call, driven
+// step by step as the library's thread and a worker's thread drive them.
 //
 //   winapk-launcher-state-test
 //
 // An app's run: each path from start to end says the right thing (nothing, the splash goes, "didn't
 // start", "stopped with an error"); Stop at each point of a run; steps out of order change nothing.
+// An install: done, failed, left alone because the app runs; Cancel while it waits, while the file is
+// copied, while the runtime converts it, once it is being kept and after its end; the queue's order.
 
 #include <cstdio>
 #include <string>
 #include <vector>
 
 #include "../launcher/app_runs.h"
+#include "../launcher/installs.h"
 
 namespace {
 
@@ -199,10 +202,174 @@ void test_runs() {
     }
 }
 
+using winapk::launcher::InstallEnd;
+using winapk::launcher::InstallState;
+using winapk::launcher::InstallTable;
+
+InstallEnd::Kind how(InstallTable& t, const std::wstring& name) {
+    const auto end = t.finish(name);
+    return end ? end->kind() : static_cast<InstallEnd::Kind>(-1);
+}
+
+void test_installs() {
+    std::printf("an install\n");
+    const std::wstring a = L"a", b = L"b", c = L"c";
+    {
+        InstallTable t;
+        check("nothing queued: not pending, no current, nothing to finish",
+              !t.pending(a) && t.empty() && t.current().empty() && !t.finish(a) && !t.state(a));
+        check("an install is queued", t.begin(a) && t.state(a) == InstallState::kQueued && t.pending(a));
+        check("the same file twice is refused", !t.begin(a));
+        check("queued is not under way", t.current().empty());
+        check("its turn: installing", t.start(a) && t.state(a) == InstallState::kInstalling && t.current() == a);
+        check("the runtime started: not to be ended", !t.attach(a, kA));
+        t.detach(a);
+        check("the runtime succeeded: kept", t.commit(a) && t.state(a) == InstallState::kCommitted && t.current() == a);
+        check("not over until its thread says so", !t.finish(a));
+        check("ended", t.ended(a, true, false) && t.state(a) == InstallState::kEnded && t.current().empty());
+        check("still pending until the library hears", t.pending(a) && !t.begin(a));
+        check("it is done", how(t, a) == InstallEnd::kDone);
+        check("and forgotten", !t.pending(a) && t.empty() && t.begin(a));
+    }
+    {
+        InstallTable t;
+        t.begin(a);
+        t.start(a);
+        t.attach(a, kA);
+        t.detach(a);
+        t.ended(a, false, false);
+        check("the runtime failed: failed", how(t, a) == InstallEnd::kFailed);
+        t.begin(a);
+        t.start(a);
+        t.ended(a, false, true);
+        check("the app runs: left alone, and said so", how(t, a) == InstallEnd::kAppRunning);
+        t.begin(a);
+        t.start(a);
+        t.attach(a, kA);
+        t.detach(a);
+        t.commit(a);
+        t.ended(a, false, false);
+        check("kept, but its name could not be written: failed", how(t, a) == InstallEnd::kFailed);
+        t.begin(a);
+        t.start(a);
+        t.ended(a, true, false);
+        check("ok without having been committed is not done", how(t, a) == InstallEnd::kFailed);
+    }
+    {  // Cancel while it waits for its turn
+        InstallTable t;
+        Killer kill;
+        t.begin(a);
+        check("cancel while queued: taken, nothing to end", t.cancel(a, kill) && kill.killed.empty());
+        check("its turn comes: it does not start", !t.start(a) && t.state(a) == InstallState::kEnded);
+        check("the thread's report changes nothing", !t.ended(a, false, false));
+        check("cancelled", how(t, a) == InstallEnd::kCancelled);
+    }
+    {  // Cancel while the file is copied in, before the runtime
+        InstallTable t;
+        Killer kill;
+        t.begin(a);
+        t.start(a);
+        check("cancel before the runtime: taken, nothing to end yet", t.cancel(a, kill) && kill.killed.empty());
+        check("the runtime, started after it, is to be ended at once", t.attach(a, kA));
+        t.detach(a);
+        check("and the install is not kept", !t.commit(a) && t.state(a) == InstallState::kInstalling);
+        t.ended(a, false, false);
+        check("cancelled", how(t, a) == InstallEnd::kCancelled);
+    }
+    {  // Cancel while the runtime converts the app
+        InstallTable t;
+        Killer kill;
+        t.begin(a);
+        t.start(a);
+        t.attach(a, kA);
+        check("cancel under way: its runtime is ended", t.cancel(a, kill) && kill.killed == std::vector<void*>{kA});
+        t.detach(a);
+        t.ended(a, false, false);
+        check("cancelled, not failed", how(t, a) == InstallEnd::kCancelled);
+    }
+    {  // The runtime succeeded, then Cancel: the cancel wins while the install is not kept yet
+        InstallTable t;
+        Killer kill;
+        t.begin(a);
+        t.start(a);
+        t.attach(a, kA);
+        t.detach(a);
+        check("cancel after the runtime exited, before it is kept: taken", t.cancel(a, kill) && kill.killed.empty());
+        check("so it is not kept", !t.commit(a));
+        t.ended(a, true, false);
+        check("cancelled, whatever the thread reports", how(t, a) == InstallEnd::kCancelled);
+    }
+    {  // Cancel once it is being kept
+        InstallTable t;
+        Killer kill;
+        t.begin(a);
+        t.start(a);
+        t.attach(a, kA);
+        t.detach(a);
+        t.commit(a);
+        check("cancel once it is being kept: refused", !t.cancel(a, kill));
+        t.ended(a, true, false);
+        check("it is done, never 'cancelled' with the app installed", how(t, a) == InstallEnd::kDone);
+    }
+    {  // Cancel after the end, before the library heard
+        InstallTable t;
+        Killer kill;
+        t.begin(a);
+        t.start(a);
+        t.ended(a, false, false);
+        check("cancel after the end: refused", !t.cancel(a, kill));
+        check("its failure is still told", how(t, a) == InstallEnd::kFailed);
+        check("cancel of one that is gone: refused", !t.cancel(a, kill));
+        t.begin(a);
+        check("the next install of that name starts: no cancel was left behind", t.start(a));
+    }
+    {  // The queue
+        InstallTable t;
+        Killer kill;
+        t.begin(c);
+        t.begin(a);
+        t.begin(b);
+        check("pending installs are listed in the order queued", t.names() == std::vector<std::wstring>{c, a, b});
+        t.start(c);
+        t.attach(c, kA);
+        check("cancelling a waiting one ends nobody's runtime", t.cancel(a, kill) && kill.killed.empty());
+        check("cancelling the one under way ends its own", t.cancel(c, kill) && kill.killed == std::vector<void*>{kA});
+        t.detach(c);
+        t.ended(c, false, false);
+        t.start(a);
+        t.start(b);
+        t.attach(b, kB);
+        check("the next one's runtime was not touched", kill.killed.size() == 1 && t.current() == b);
+        check("what is left is listed", t.names() == std::vector<std::wstring>{c, a, b});
+        check("each ends its own way", how(t, c) == InstallEnd::kCancelled && how(t, a) == InstallEnd::kCancelled);
+        check("the queue shrinks", t.names() == std::vector<std::wstring>{b});
+    }
+    {  // Steps out of order, and an install in no table
+        InstallTable t;
+        Killer kill;
+        check("an install in no table (the install helper's) cannot be cancelled: kept",
+              t.commit(a) && !t.attach(a, kA) && !t.cancel(a, kill) && t.empty());
+        check("steps of one that does not exist change nothing", !t.start(a) && !t.ended(a, true, false) && t.empty());
+        t.begin(a);
+        check("a runtime before its turn: refused", !t.attach(a, kA) && !t.commit(a));
+        check("cancel does not reach a process that was refused", t.cancel(a, kill) && kill.killed.empty());
+        t.start(a);
+        t.finish(a);
+        t.begin(b);
+        t.start(b);
+        check("its turn twice: refused", !t.start(b) && t.state(b) == InstallState::kInstalling);
+        t.commit(b);
+        check("kept twice: refused", !t.commit(b));
+        t.ended(b, true, false);
+        check("ended twice: refused, the first end kept", !t.ended(b, false, true) && how(t, b) == InstallEnd::kDone);
+    }
+}
+
 }  // namespace
 
 int main() {
     test_runs();
+    test_installs();
     std::printf("%d failed\n", g_failures);
     return g_failures ? 1 : 0;
 }
