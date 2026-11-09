@@ -339,6 +339,42 @@ WINAPK_GUEST_ABI int g_ftruncate(int fd, int64_t len) {
     }
     return 0;
 }
+// posix_fallocate: the file is at least offset + len bytes afterwards, as on
+// Linux. SetEndOfFile extends without writing the zeros (NTFS reads the new
+// range as zeros), so a large reservation costs no I/O; the space itself is
+// not reserved, which Linux file systems without fallocate also allow. Realm
+// (Bit) reserves its database file with it, then maps the file: the shim's
+// missing-function stub answered success without growing it.
+WINAPK_GUEST_ABI int g_posix_fallocate(int fd, int64_t offset, int64_t len) {
+    if (offset < 0 || len <= 0) return 22;  // EINVAL
+    const intptr_t h = _get_osfhandle(fd);
+    if (h == -1 || fd_object(fd)) return 9;  // EBADF
+    const HANDLE file = reinterpret_cast<HANDLE>(h);
+    LARGE_INTEGER size{};
+    if (!GetFileSizeEx(file, &size)) return 9;
+    if (size.QuadPart >= offset + len) return 0;
+    LARGE_INTEGER end{}, here{}, zero{};
+    end.QuadPart = offset + len;
+    // SetEndOfFile works at the file pointer, which the descriptor shares.
+    if (!SetFilePointerEx(file, zero, &here, FILE_CURRENT)) return 9;
+    const bool ok = SetFilePointerEx(file, end, nullptr, FILE_BEGIN) && SetEndOfFile(file);
+    const DWORD error = ok ? 0 : GetLastError();
+    SetFilePointerEx(file, here, nullptr, FILE_BEGIN);
+    if (ok) return 0;
+    return error == ERROR_DISK_FULL ? 28 : error == ERROR_ACCESS_DENIED ? 9 : 5;  // ENOSPC, EBADF, EIO
+}
+// Linux fallocate(2): mode 0 is posix_fallocate with errno; FALLOC_FL_KEEP_SIZE
+// alone only reserves space, which there is nothing to do for; punching holes
+// and the other modes are not supported (EOPNOTSUPP), as on file systems
+// without them.
+WINAPK_GUEST_ABI int g_fallocate(int fd, int mode, int64_t offset, int64_t len) {
+    int e = 0;
+    if (mode == 0) e = g_posix_fallocate(fd, offset, len);
+    else if (mode != 1) e = 95;
+    if (!e) return 0;
+    *guest_errno() = e;
+    return -1;
+}
 WINAPK_GUEST_ABI int g_isatty(int fd) { return !fd_object(fd) && _isatty(fd) ? 1 : 0; }
 // fcntl: descriptor flags are accepted and ignored (no fork, so close-on-exec
 // has nothing to protect); F_GETFL answers read-write.
@@ -1163,6 +1199,10 @@ const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("fdatasync", g_fsync),
     WINAPK_SHIM("ftruncate", g_ftruncate),
     WINAPK_SHIM("ftruncate64", g_ftruncate),
+    WINAPK_SHIM("posix_fallocate", g_posix_fallocate),
+    WINAPK_SHIM("posix_fallocate64", g_posix_fallocate),
+    WINAPK_SHIM("fallocate", g_fallocate),
+    WINAPK_SHIM("fallocate64", g_fallocate),
     WINAPK_SHIM("isatty", g_isatty),
     WINAPK_SHIM("fcntl", g_fcntl),
     WINAPK_SHIM("ioctl", g_ioctl),
