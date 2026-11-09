@@ -989,7 +989,7 @@ public class KeyboardView extends View implements View.OnClickListener {
         // Keyboard.getDimensionOrFraction wants an XmlResourceParser; the
         // KeyboardView attributes are plain dimensions with no fraction form
         // (AOSP declares them format="dimension"), so the base is irrelevant.
-        String v = attrs.getAttributeValue(Keyboard.ANDROID_NS, name);
+        String v = attrs.macapkAttributeText(Keyboard.ANDROID_NS, name);
         if (v == null) return defValue;
         if (!v.isEmpty() && (v.charAt(0) == '@' || v.charAt(0) == '?')) {
             int id = attrs.getAttributeResourceValue(Keyboard.ANDROID_NS, name, 0);
@@ -1004,7 +1004,7 @@ public class KeyboardView extends View implements View.OnClickListener {
     }
 
     private int readColorAttr(AttributeSet attrs, String name, int defValue) {
-        String v = attrs.getAttributeValue(Keyboard.ANDROID_NS, name);
+        String v = attrs.macapkAttributeText(Keyboard.ANDROID_NS, name);
         if (v == null) return defValue;
         v = v.trim();
         if (v.startsWith("#")) {

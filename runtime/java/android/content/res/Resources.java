@@ -6958,6 +6958,10 @@ public class Resources {
             String v = direct.getAttributeValue(ns, name);
             return (v != null) ? v : style.getAttributeValue(ns, name);
         }
+        @Override public String macapkAttributeText(String ns, String name) {
+            String v = direct.macapkAttributeText(ns, name);
+            return (v != null) ? v : style.getAttributeValue(ns, name);
+        }
         @Override public int getAttributeCount() { return direct.getAttributeCount(); }
         @Override public String getAttributeName(int i) { return direct.getAttributeName(i); }
         @Override public String getAttributeValue(int i) { return direct.getAttributeValue(i); }

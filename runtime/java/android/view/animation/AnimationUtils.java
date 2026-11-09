@@ -368,9 +368,9 @@ public class AnimationUtils {
     static String rawAttr(android.util.AttributeSet attrs, String name) {
         if (attrs == null || name == null) return null;
         String v = null;
-        try { v = attrs.getAttributeValue(ANDROID_NS, name); } catch (Throwable ignored) {}
+        try { v = attrs.macapkAttributeText(ANDROID_NS, name); } catch (Throwable ignored) {}
         if (v == null) {
-            try { v = attrs.getAttributeValue(null, name); } catch (Throwable ignored) {}
+            try { v = attrs.macapkAttributeText(null, name); } catch (Throwable ignored) {}
         }
         return v;
     }

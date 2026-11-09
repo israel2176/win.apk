@@ -930,6 +930,27 @@ every such change is listed here:
   does not allow in a file name are written as `%XX` in a preferences file's
   name. Firebase Remote Config's `frc_1:<project>:android:...` file failed
   every write.
+- `runtime/java/com/macapk/loader/BinaryXmlParser.java`,
+  `DomXmlResourceParser.java`, `android/util/AttributeSet.java`,
+  `android/view/LayoutInflater.java` and the framework readers of a view's
+  attributes (`TypedArray`, `Resources.StyleMergedAttributeSet`, `TextView`,
+  `ViewStub`, `GestureOverlayView`, `KeyboardView`, `AnimationUtils`,
+  `Transition`, `PreferenceAttrs`, `FragmentInflaterFactory`): a view's
+  `AttributeSet.getAttributeValue` answers a compiled enum or flag as a device
+  does (`TypedValue.coerceToString`: `"0x2"` for `inputType="number"`, or the
+  raw string when the file kept one), and `getAttributeIntValue` its number.
+  The parser records that value beside the symbol it spells the layout with
+  (`MACAPK_VALUE_NS`); the framework reads the symbol through
+  `AttributeSet.macapkAttributeText`. The bank app com.ideomobile.mercantile
+  ran `Integer.decode` on `getAttributeValue(android, "inputType")` and
+  crashed on `"number"`.
+- `runtime/net_spi/com/macapk/net/AndroidCharsetAliasProvider.java` (new,
+  registered in `runtime/net_spi/META-INF/services`): a charset name with `_`
+  for `-` (`"UTF_8"`, `"US_ASCII"`, `"UTF_16LE"`) is the charset, as on
+  Android, whose ICU lookup ignores `-` and `_`. `URLEncoder.encode(s, "UTF_8")`
+  threw `UnsupportedEncodingException`. A `CharsetProvider` on the class path
+  rather than a copy of `java.nio.charset.Charset` in `java_base_patch`: the
+  JDK asks providers only after its own charsets miss.
 
 ## License
 

@@ -129,20 +129,20 @@ public class TextView extends View
     private void macapkInitCaret(android.util.AttributeSet a) {
         if (a != null) {
             try {
-                macapkSelectHandleAttr = macapkNonEmpty(a.getAttributeValue(MACAPK_ANDROID_NS, "textSelectHandle"));
-                macapkSelectHandleLeftAttr = macapkNonEmpty(a.getAttributeValue(MACAPK_ANDROID_NS, "textSelectHandleLeft"));
-                macapkSelectHandleRightAttr = macapkNonEmpty(a.getAttributeValue(MACAPK_ANDROID_NS, "textSelectHandleRight"));
+                macapkSelectHandleAttr = macapkNonEmpty(a.macapkAttributeText(MACAPK_ANDROID_NS, "textSelectHandle"));
+                macapkSelectHandleLeftAttr = macapkNonEmpty(a.macapkAttributeText(MACAPK_ANDROID_NS, "textSelectHandleLeft"));
+                macapkSelectHandleRightAttr = macapkNonEmpty(a.macapkAttributeText(MACAPK_ANDROID_NS, "textSelectHandleRight"));
             } catch (Throwable ignored) {}
         }
         if (!MACAPK_TEXT_CARET) return;
         boolean editableAttrFalse = false;
         if (a != null) {
             try {
-                String cv = a.getAttributeValue(MACAPK_ANDROID_NS, "cursorVisible");
+                String cv = a.macapkAttributeText(MACAPK_ANDROID_NS, "cursorVisible");
                 if ("false".equals(cv) || "0".equals(cv)) setCursorVisible(false);
-                String cd = a.getAttributeValue(MACAPK_ANDROID_NS, "textCursorDrawable");
+                String cd = a.macapkAttributeText(MACAPK_ANDROID_NS, "textCursorDrawable");
                 if (cd != null && !cd.isEmpty()) macapkCursorDrawableAttr = cd;
-                String ed = a.getAttributeValue(MACAPK_ANDROID_NS, "editable");
+                String ed = a.macapkAttributeText(MACAPK_ANDROID_NS, "editable");
                 editableAttrFalse = "false".equals(ed) || "0".equals(ed);
             } catch (Throwable ignored) {}
         }
@@ -759,8 +759,8 @@ public class TextView extends View
     private static boolean macapkIsPasswordAttrs(android.util.AttributeSet a) {
         if (a == null) return false;
         try {
-            if ("true".equals(a.getAttributeValue(MACAPK_ANDROID_NS, "password"))) return true;
-            String it = a.getAttributeValue(MACAPK_ANDROID_NS, "inputType");
+            if ("true".equals(a.macapkAttributeText(MACAPK_ANDROID_NS, "password"))) return true;
+            String it = a.macapkAttributeText(MACAPK_ANDROID_NS, "inputType");
             if (it == null || it.isEmpty()) return false;
             int variation = macapkParseInputType(it)
                 & (android.text.InputType.TYPE_MASK_CLASS | android.text.InputType.TYPE_MASK_VARIATION);
@@ -946,7 +946,7 @@ public class TextView extends View
     private void macapkApplyInputTypeAttrs(android.util.AttributeSet a) {
         if (a == null) return;
         try {
-            String it = a.getAttributeValue(MACAPK_ANDROID_NS, "inputType");
+            String it = a.macapkAttributeText(MACAPK_ANDROID_NS, "inputType");
             if (it != null && !it.isEmpty()) {
                 int parsed = macapkParseInputType(it);
                 if (parsed != 0) setInputType(parsed);
@@ -958,14 +958,14 @@ public class TextView extends View
             // "no action" to its own OnEditorActionListener when Enter was
             // pressed (see macapkActionIdForEnterEvent). Flags are '|'-joined
             // names exactly as in inputType.
-            String imeOpts = a.getAttributeValue(MACAPK_ANDROID_NS, "imeOptions");
+            String imeOpts = a.macapkAttributeText(MACAPK_ANDROID_NS, "imeOptions");
             if (imeOpts != null && !imeOpts.isEmpty())
                 setImeOptions(macapkParseImeOptions(imeOpts));
 
             // Legacy android:password="true" (AOSP TextView_password). Applied
             // after inputType so an explicit password="true" still masks a
             // field whose inputType did not say so, matching AOSP's OR.
-            String pw = a.getAttributeValue(MACAPK_ANDROID_NS, "password");
+            String pw = a.macapkAttributeText(MACAPK_ANDROID_NS, "password");
             if ("true".equals(pw)) {
                 setTransformationMethod(
                     android.text.method.PasswordTransformationMethod.getInstance());
@@ -986,8 +986,8 @@ public class TextView extends View
             // android:ellipsize is applied by the inflater after construction
             // and still wins.
             if (MACAPK_TEXT_LINES_AOSP) {
-                String sl = a.getAttributeValue(MACAPK_ANDROID_NS, "singleLine");
-                String el = a.getAttributeValue(MACAPK_ANDROID_NS, "ellipsize");
+                String sl = a.macapkAttributeText(MACAPK_ANDROID_NS, "singleLine");
+                String el = a.macapkAttributeText(MACAPK_ANDROID_NS, "ellipsize");
                 if (("true".equals(sl) || "1".equals(sl))
                         && el == null
                         && getKeyListener() == null && !getDefaultEditable() && mInputType == 0) {

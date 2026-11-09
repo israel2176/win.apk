@@ -3266,10 +3266,22 @@ public class LayoutInflater {
          *  style= cascade (AOSP precedence: XML attr > style item). */
         private String lookup(String namespace, String name) {
             if (elem == null || name == null) return null;
+            Node a = lookupAttr(namespace, name);
+            if (a != null) return a.getNodeValue();
+            // The style cascade's keys are prefix-stripped by construction,
+            // so a same-local-name collision INSIDE a style is still
+            // possible here. Same class as the bug in lookupAttr, much rarer.
+            return macapkStyleItems().get(name);
+        }
+
+        /** lookup()'s element tier: the attribute node itself, so a caller can
+         *  also read its BinaryXmlParser.MACAPK_VALUE_NS record. */
+        private Node lookupAttr(String namespace, String name) {
+            if (elem == null || name == null) return null;
             // Try fully-qualified namespace match first.
             if (namespace != null && !namespace.isEmpty()) {
-                String v = elem.getAttributeNS(namespace, name);
-                if (v != null && !v.isEmpty()) return v;
+                Node a = elem.getAttributeNodeNS(namespace, name);
+                if (a != null && a.getNodeValue() != null && !a.getNodeValue().isEmpty()) return a;
             }
             // v1.0.918: the two REAL namespaces are matched EXACTLY by
             // prefix. This used to match a bare local name across every
@@ -3306,12 +3318,31 @@ public class LayoutInflater {
                 boolean androidPrefixed = qn != null && qn.startsWith("android:");
                 if (nsAndroid && !androidPrefixed) continue;
                 if (nsResAuto && androidPrefixed) continue;
-                return a.getNodeValue();
+                return a;
             }
-            // The style cascade's keys are prefix-stripped by construction,
-            // so a same-local-name collision INSIDE a style is still
-            // possible here. Same class as the bug above, much rarer.
-            return macapkStyleItems().get(name);
+            return null;
+        }
+
+        /** What Android's XmlBlock.Parser answers for attribute `a`: the value a
+         *  device sees for a compiled enum / flag ("0x2" for inputType="number"),
+         *  which BinaryXmlParser records beside the symbol it spells the DOM
+         *  with; any other value is the same in both spellings. A bank app
+         *  (com.ideomobile.mercantile) runs Integer.decode on getAttributeValue
+         *  (android, "inputType") and died on "number". */
+        private String aospValue(Node a) {
+            String key = com.macapk.loader.BinaryXmlParser.valueKey(a.getNodeName());
+            String ns = com.macapk.loader.BinaryXmlParser.MACAPK_VALUE_NS;
+            return elem.hasAttributeNS(ns, key) ? elem.getAttributeNS(ns, key) : a.getNodeValue();
+        }
+
+        /** getAttributeIntValue's parse of an aospValue: XmlBlock.Parser answers
+         *  a compiled int's data, and its string is decimal or "0x" + hex. */
+        private int intValue(String v, int def) {
+            if (v == null) return def;
+            try {
+                if (v.startsWith("0x") || v.startsWith("0X")) return (int) Long.parseLong(v.substring(2), 16);
+                return Integer.parseInt(v);
+            } catch (NumberFormatException ignored) { return def; }
         }
 
         /** The element's REAL attributes, in document order: what Android's
@@ -3354,9 +3385,13 @@ public class LayoutInflater {
         }
         @Override public String getAttributeValue(int i) {
             if (i < 0 || i >= realAttrs().size()) return null;
-            return realAttrs().get(i).getNodeValue();
+            return aospValue(realAttrs().get(i));
         }
         @Override public String getAttributeValue(String ns, String name) {
+            Node a = lookupAttr(ns, name);
+            return a != null ? aospValue(a) : lookup(ns, name);
+        }
+        @Override public String macapkAttributeText(String ns, String name) {
             return lookup(ns, name);
         }
         @Override public String getPositionDescription() {
@@ -3381,9 +3416,7 @@ public class LayoutInflater {
             return id != 0 ? id : def;
         }
         @Override public int    getAttributeIntValue(String ns, String attr, int def) {
-            String v = lookup(ns, attr);
-            if (v == null) return def;
-            try { return Integer.parseInt(v); } catch (NumberFormatException ignored) { return def; }
+            return intValue(getAttributeValue(ns, attr), def);
         }
         @Override public int    getAttributeUnsignedIntValue(String ns, String attr, int def) {
             return getAttributeIntValue(ns, attr, def);
@@ -3407,9 +3440,7 @@ public class LayoutInflater {
             return id != 0 ? id : def;
         }
         @Override public int    getAttributeIntValue(int i, int def) {
-            String v = getAttributeValue(i);
-            try { return v != null ? Integer.parseInt(v) : def; }
-            catch (NumberFormatException ignored) { return def; }
+            return intValue(getAttributeValue(i), def);
         }
         @Override public int    getAttributeUnsignedIntValue(int i, int def) {
             return getAttributeIntValue(i, def);
