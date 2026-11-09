@@ -20,8 +20,6 @@
 
 #include "java_io_open.h"
 
-#include "winapk/mini_bionic.h"
-
 #include <windows.h>
 
 #include <algorithm>
@@ -54,12 +52,14 @@ std::wstring wide(JNIEnv* env, jstring s) {
 // The host file a path names: an Android path ("/data/user/0/<package>/x",
 // one leading '/') is the file the guest shim's table maps it to (paths.cpp);
 // anything else is a host path already.
+winapk::host::AndroidPathMapper g_path_mapper = nullptr;
+
 std::wstring host_of(const std::wstring& p) {
-    if (p.empty() || p[0] != L'/' || (p.size() > 1 && p[1] == L'/')) return p;
+    if (!g_path_mapper || p.empty() || p[0] != L'/' || (p.size() > 1 && p[1] == L'/')) return p;
     const int n = WideCharToMultiByte(CP_UTF8, 0, p.c_str(), static_cast<int>(p.size()), nullptr, 0, nullptr, nullptr);
     std::string u(static_cast<size_t>(n), '\0');
     WideCharToMultiByte(CP_UTF8, 0, p.c_str(), static_cast<int>(p.size()), &u[0], n, nullptr, nullptr);
-    return winapk::android_host_path(u.c_str());
+    return g_path_mapper(u.c_str());
 }
 
 // jdk.internal.util.WinApkPaths.host0(String), Win.apk's java.base overlay:
@@ -211,6 +211,8 @@ bool bind(JNIEnv* env, const char* clazz, jfieldID* fd_field, const char* sig, v
 }  // namespace
 
 namespace winapk::host {
+
+void java_io_set_path_mapper(AndroidPathMapper mapper) { g_path_mapper = mapper; }
 
 bool java_io_open_init(JNIEnv* env) {
     // Android paths for java.io.File and java.nio (the overlay's WinApkPaths),
