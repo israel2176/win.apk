@@ -1032,6 +1032,12 @@ every such change is listed here:
   `addSubMenu` is MenuBuilder's, a submenu tied to its item, so `findItem`
   reaches items nested in a submenu (Editor's NPE on its Typeface items).
   Opening a submenu from the bar is not drawn yet. Not Windows-specific.
+- `runtime/java/android/media/RingtoneManager.java` (`getDefaultUri`,
+  `getDefaultType`, `isDefault`) and `android/preference/RingtonePreference.java`
+  (comments): the default sound of a type is AOSP's `Settings.System` URI
+  (`content://settings/system/alarm_alert`...), not null. Fossify Clock
+  builds its alarm table from it and died creating its database. Not
+  Windows-specific.
 
 ## License
 
