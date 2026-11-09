@@ -2813,8 +2813,13 @@ struct StoreState {
     std::vector<StoreApp> apps;  // the catalog, the most recently updated first
     std::vector<int> shown;      // what the grid shows: the search and the category applied
     std::wstring category;       // empty: every category
-    bool started = false, loading = false, failed = false;
-    uint64_t got_kb = 0;
+    // The catalog's fetch: not asked for yet (the store was never opened), under way (catalog_thread), or
+    // over, well or not. `apps` may hold a list in any of them: the one kept from the last fetch.
+    enum class Fetch { kNotStarted, kLoading, kDone, kFailed } fetch = Fetch::kNotStarted;
+    bool loading() const { return fetch == Fetch::kLoading; }
+    // No list to show yet, and one is on its way (or will be, once the store is opened).
+    bool first_load() const { return apps.empty() && (fetch == Fetch::kLoading || fetch == Fetch::kNotStarted); }
+    uint64_t got_kb = 0;  // of the catalog, while it loads
     std::map<std::string, std::pair<std::wstring, long long>> installed;  // package: library name, versionCode
     std::map<std::string, int> downloads;                                  // package: percent, -1 waiting
     std::map<std::string, std::unique_ptr<Gdiplus::Bitmap>> icons;         // rounded; null: none
@@ -3289,7 +3294,9 @@ Hit hit_test(float x, float y) {
         return {contains(inset(thumb_rect(), -px(4), 0), x, y) ? kHitThumb : kHitTrack, -1};
     }
     if (store) {
-        if (g_store.apps.empty() && g_store.failed && contains(g_l.retry, x, y)) return {kHitRetry, -1};
+        if (g_store.apps.empty() && g_store.fetch == StoreState::Fetch::kFailed && contains(g_l.retry, x, y)) {
+            return {kHitRetry, -1};
+        }
         const int col = static_cast<int>((x - g_l.grid.X - px(8)) / (g_l.tile_w + g_l.gap));
         const int row = static_cast<int>((y - g_l.grid.Y - px(4) + g_scroll) / (g_l.tile_h + g_l.gap));
         const int i = row * g_l.cols + col;
@@ -3431,11 +3438,9 @@ void paint_toolbar(Graphics& g) {
     const bool store = g_view == kStoreView;
     std::wstring sub;
     if (store) {
-        if (g_store.apps.empty() && (g_store.loading || !g_store.started)) {
-            sub = tr(L"Getting the app catalog from F-Droid…");
-        }
+        if (g_store.first_load()) sub = tr(L"Getting the app catalog from F-Droid…");
         else if (g_store.apps.empty()) sub = tr(L"F-Droid could not be reached");
-        else if (g_store.loading) sub = tr(L"Checking F-Droid for new apps…");
+        else if (g_store.loading()) sub = tr(L"Checking F-Droid for new apps…");
         else sub = app_count(g_store.shown.size()) + L"  ·  f-droid.org";
     } else {
         size_t shown = 0, running = 0;  // the library's own apps: not Google's system components
@@ -3463,7 +3468,7 @@ void paint_toolbar(Graphics& g) {
             draw_text(g, kGlyphChevron, g_f.glyph12.get(), g_t.text2,
                       RectF(c.GetRight() - px(30), c.Y, px(22), c.Height), kCenter);
         }
-        if (g_store.loading && !g_store.apps.empty()) {
+        if (g_store.loading() && !g_store.apps.empty()) {
             spinner(g, inset(g_l.refresh, px(8), px(8)), g_t.accent, px(2));
         } else {
             draw_icon_button(g, g_l.refresh, kGlyphRefresh, g_hot.kind == kHitRefresh, g_t.text2);
@@ -3619,7 +3624,7 @@ void paint_store_grid(Graphics& g) {
     const RectF& gr = g_l.grid;
     if (g_store.shown.empty()) {
         const std::wstring q = query(kStoreView);
-        if (g_store.apps.empty() && (g_store.loading || !g_store.started)) {
+        if (g_store.first_load()) {
             const float cy = gr.Y + (std::min)(gr.Height / 2, px(110));
             spinner(g, RectF(gr.X + gr.Width / 2 - px(20), cy - px(58), px(40), px(40)), g_t.accent, px(3.5f));
             wchar_t mb[32];
@@ -3721,7 +3726,7 @@ void paint_main(Graphics& g, float, float) {
 }
 
 void update_timer() {
-    if (any_pending() || any_runs() || (g_view == kStoreView && g_store.loading) ||
+    if (any_pending() || any_runs() || (g_view == kStoreView && g_store.loading()) ||
         g_play.state == PlayState::kStarting) {
         SetTimer(g_main, kAnimTimer, 16, nullptr);
     }
@@ -4515,12 +4520,11 @@ void set_orientation(const App& app, int o) {
 // Fetches the catalog: the one kept from last time at once, F-Droid's when
 // that is old or `force` asks for it.
 void store_start(bool force) {
-    if (g_store.loading) return;
-    g_store.started = g_store.loading = true;
-    g_store.failed = false;
+    if (g_store.loading()) return;
+    g_store.fetch = StoreState::Fetch::kLoading;
     g_store.got_kb = 0;
     if (HANDLE t = CreateThread(nullptr, 0, catalog_thread, force ? &g_store : nullptr, 0, nullptr)) CloseHandle(t);
-    else g_store.loading = false;
+    else g_store.fetch = StoreState::Fetch::kDone;
     update_timer();
     InvalidateRect(g_main, nullptr, FALSE);
 }
@@ -7946,7 +7950,7 @@ void set_view(View view) {
         if (view == kStoreView) {
             ShowWindow(g_search, SW_SHOW);
             InvalidateRect(g_search, nullptr, TRUE);
-            if (!g_store.started) store_start(false);
+            if (g_store.fetch == StoreState::Fetch::kNotStarted) store_start(false);
         } else {
             if (GetFocus() == g_search) SetFocus(g_main);
             ShowWindow(g_search, SW_HIDE);
@@ -8470,9 +8474,9 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                                  [](const StoreApp& a, const StoreApp& b) { return a.updated > b.updated; });
                 rebuild_tiles();
             } else {
-                g_store.loading = false;
-                g_store.failed = wp == kCatalogFailed;
-                if (g_store.failed && !g_store.apps.empty() && g_view == kStoreView) {
+                const bool failed = wp == kCatalogFailed;
+                g_store.fetch = failed ? StoreState::Fetch::kFailed : StoreState::Fetch::kDone;
+                if (failed && !g_store.apps.empty() && g_view == kStoreView) {
                     info(tr(L"F-Droid could not be checked for new apps."), kError);
                 }
                 update_timer();
