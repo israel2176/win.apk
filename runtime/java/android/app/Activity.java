@@ -1766,9 +1766,9 @@ public class Activity extends ContextThemeWrapper
             try { th = activity.getTheme(); } catch (Throwable ignored) {}
             if (th == null) return false;
             // screen_action_bar is a decor root too (macapkInstallScreenActionBar).
-            return !macapkThemeBool(th, "windowNoTitle", false)
-                && (MACAPK_PLATFORM_ACTION_BAR || !macapkThemeBool(th, "windowActionBar", false))
-                && !macapkThemeBool(th, "windowIsFloating", false);
+            return !macapkThemeBool(th, "android:windowNoTitle", false)
+                && (MACAPK_PLATFORM_ACTION_BAR || !macapkThemeBool(th, "android:windowActionBar", false))
+                && !macapkThemeBool(th, "android:windowIsFloating", false);
         }
 
         // ---- the FrameLayout root above a non-frame content root (#29) ----------
@@ -1871,7 +1871,7 @@ public class Activity extends ContextThemeWrapper
         boolean macapkWindowNoDisplay() {
             android.content.res.Resources.Theme th = null;
             try { th = activity.getTheme(); } catch (Throwable ignored) {}
-            return macapkThemeBool(th, "windowNoDisplay", false);
+            return macapkThemeBool(th, "android:windowNoDisplay", false);
         }
 
         /** The @android:id/content frame when the installed root is this
@@ -1983,7 +1983,15 @@ public class Activity extends ContextThemeWrapper
          *  theme says nothing, and flip a probe row that currently matches the
          *  device. Resources.Theme.resolveAttrRaw is the uncompensated cascade
          *  and is what generateLayout wants. Absent value = AOSP's own default,
-         *  which is the `def` argument each caller passes. */
+         *  which is the `def` argument each caller passes.
+         *
+         *  Callers name the FRAMEWORK attribute ("android:windowNoTitle"), as
+         *  generateLayout reads R.styleable.Window. A bare name resolves the
+         *  app's attribute of that name first, and AppCompat declares its own
+         *  windowNoTitle (false) and windowActionBar (true) beside
+         *  android:windowNoTitle=true: read bare, every DarkActionBar AppCompat
+         *  activity got the platform action bar, whose menu reached the app's
+         *  onCreateOptionsMenu as a platform Menu (NetGuard's SearchView NPE). */
         private static boolean macapkThemeBool(android.content.res.Resources.Theme th,
                 String attr, boolean def) {
             if (th == null) return def;
@@ -2014,7 +2022,7 @@ public class Activity extends ContextThemeWrapper
             // really do default mFitInsetsTypes to Type.systemBars() and
             // mFitInsetsSides to all four. The zeros a device reports are this
             // OVERRIDE, applied per window at decor install.
-            final boolean isFloating = macapkThemeBool(th, "windowIsFloating", false);
+            final boolean isFloating = macapkThemeBool(th, "android:windowIsFloating", false);
             final int flagsToUpdate = WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
                                     | WindowManager.LayoutParams.FLAG_LAYOUT_INSET_DECOR;
             if (isFloating) {
@@ -2030,18 +2038,18 @@ public class Activity extends ContextThemeWrapper
             // PhoneWindow.java:2388-2401 and :2453-2458. windowNoTitle is checked
             // first and SUPPRESSES the action bar ("Don't allow an action bar if
             // there is no title").
-            if (macapkThemeBool(th, "windowNoTitle", false)) {
+            if (macapkThemeBool(th, "android:windowNoTitle", false)) {
                 requestFeature(FEATURE_NO_TITLE);
-            } else if (macapkThemeBool(th, "windowActionBar", false)) {
+            } else if (macapkThemeBool(th, "android:windowActionBar", false)) {
                 requestFeature(FEATURE_ACTION_BAR);
             }
-            if (macapkThemeBool(th, "windowActionBarOverlay", false)) {
+            if (macapkThemeBool(th, "android:windowActionBarOverlay", false)) {
                 requestFeature(FEATURE_ACTION_BAR_OVERLAY);
             }
-            if (macapkThemeBool(th, "windowActionModeOverlay", false)) {
+            if (macapkThemeBool(th, "android:windowActionModeOverlay", false)) {
                 requestFeature(FEATURE_ACTION_MODE_OVERLAY);
             }
-            if (macapkThemeBool(th, "windowSwipeToDismiss", false)) {
+            if (macapkThemeBool(th, "android:windowSwipeToDismiss", false)) {
                 requestFeature(FEATURE_SWIPE_TO_DISMISS);
             }
 
@@ -2078,15 +2086,15 @@ public class Activity extends ContextThemeWrapper
             // StatusBarDriver.navBarInsetPx must stay non-zero here -- only
             // SYSTEM_UI_FLAG_HIDE_NAVIGATION / WindowInsetsController.hide(
             // navigationBars()) removes that one.
-            if (macapkThemeBool(th, "windowFullscreen", false)) {
+            if (macapkThemeBool(th, "android:windowFullscreen", false)) {
                 setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN,
                          WindowManager.LayoutParams.FLAG_FULLSCREEN);
             }
 
-            if (macapkThemeBool(th, "windowContentTransitions", false)) {
+            if (macapkThemeBool(th, "android:windowContentTransitions", false)) {
                 requestFeature(FEATURE_CONTENT_TRANSITIONS);
             }
-            if (macapkThemeBool(th, "windowActivityTransitions", false)) {
+            if (macapkThemeBool(th, "android:windowActivityTransitions", false)) {
                 requestFeature(FEATURE_ACTIVITY_TRANSITIONS);
             }
 
@@ -2111,7 +2119,7 @@ public class Activity extends ContextThemeWrapper
             // AOSP only when the app targets L or later; a pre-L app keeps the
             // pre-L "system draws its own bars" contract.
             if (!isFloating && !macapkTargetPreL()
-                    && macapkThemeBool(th, "windowDrawsSystemBarBackgrounds", false)) {
+                    && macapkThemeBool(th, "android:windowDrawsSystemBarBackgrounds", false)) {
                 setFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS,
                          WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
             }
@@ -2450,7 +2458,7 @@ public class Activity extends ContextThemeWrapper
             android.content.pm.ApplicationInfo ai = ctx.getApplicationInfo();
             if (ai != null) targetSdk = ai.targetSdkVersion;
         } catch (Throwable ignored) {}
-        final boolean optOut = ActivityWindow.macapkThemeBool(th, "windowOptOutEdgeToEdgeEnforcement", false);
+        final boolean optOut = ActivityWindow.macapkThemeBool(th, "android:windowOptOutEdgeToEdgeEnforcement", false);
         final boolean e2e = enforceEnabled && macapkIsEdgeToEdgeEnforced(
                 com.macapk.loader.PresentedSdk.get(), targetSdk, optOut);
         if (e2e) status = 0;

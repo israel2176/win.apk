@@ -1020,6 +1020,14 @@ every such change is listed here:
   (`<tabconfig xmlns="http://schema.dmfs.org/tasks">`) by qualified name and
   found nothing (`Broken fragile delegate`, an NPE in `TabConfig.load`). Not
   Windows-specific.
+- `runtime/java/android/app/Activity.java`: the window's generateLayout
+  reads the framework's window attributes (`android:windowNoTitle`,
+  `android:windowActionBar`, ...), as `R.styleable.Window` does. Read by bare
+  name, AppCompat's own `windowNoTitle` (false) and `windowActionBar` (true)
+  won, so every DarkActionBar AppCompat activity got the platform action bar
+  and its options menu as a platform `Menu` (NetGuard's SearchView and
+  SMSSecure's NPEs in `onCreateOptionsMenu`/`onPrepareOptionsMenu`). Not
+  Windows-specific.
 
 ## License
 
