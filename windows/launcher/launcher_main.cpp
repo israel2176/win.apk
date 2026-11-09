@@ -2988,8 +2988,10 @@ void compute_layout() {
     for (int i = 0; i < 2; ++i) g_l.nav[i] = RectF(px(8), px(60) + i * (item_h + px(4)), item_w, item_h);
     g_l.nav[kNavPlay] = google_services_on() ? RectF(px(8), px(60) + 2 * (item_h + px(4)), item_w, item_h) : RectF();
     g_l.nav[kNavSettings] = RectF(px(8), g_l.rail.GetBottom() - px(12) - item_h, item_w, item_h);
-    // The Google account above Settings, at the pane's foot, where the Microsoft Store keeps the profile.
-    g_l.account = RectF(px(8), g_l.nav[kNavSettings].Y - px(4) - item_h, item_w, item_h);
+    // The Google account above Settings, at the pane's foot, where the Microsoft Store keeps the profile: only
+    // its picture, a square the items' height (the address is its tooltip), where the items' glyphs are.
+    g_l.account = RectF(g_l.compact ? px(8) + (item_w - item_h) / 2 : px(8), g_l.nav[kNavSettings].Y - px(4) - item_h,
+                        item_h, item_h);
 
     // The content layer: the title block with the toolbar's controls at its end, the grid below.
     g_l.content = RectF(rail_w, 0, W - rail_w, H);
@@ -3298,29 +3300,29 @@ Gdiplus::Bitmap* account_photo(int s) {
 }
 
 // The Google account's item in the pane, above Settings: the account's picture when Google gave one at
-// sign-in, round with a thin ring, else the person glyph; the account's address beside it, or Sign in. It
-// opens Settings, where the account is.
+// sign-in, round with a thin ring; else its initial in an accent circle; signed out, the person glyph. Only the
+// picture: the address (or "not signed in") is its tooltip. It opens Settings, where the account is.
 void paint_account_button(Graphics& g) {
     const RectF& it = g_l.account;
     if (it.Width <= 0) return;
     const bool hot = g_hot.kind == kHitAccount;
     if (hot) fill_round(g, it, px(kRadiusControl), mix(g_t.bg, g_t.text, 0.04f));
     const Color ink = hot ? g_t.text : g_t.text2;
-    // Centred where the other items' glyphs are: 16 px glyphs from 12 px in, so the 24 px picture from 8.
-    const float s = px(24), gx = g_l.compact ? it.X + (it.Width - px(16)) / 2 : it.X + px(12);
-    const RectF c(gx + px(8) - s / 2, it.Y + (it.Height - s) / 2, s, s);
+    const float s = px(26);
+    const RectF c(it.X + (it.Width - s) / 2, it.Y + (it.Height - s) / 2, s, s);
     const int side = static_cast<int>(std::lround(s));
     Gdiplus::Bitmap* photo = g_account.empty() ? nullptr : account_photo(side);
     if (photo) {
         draw_image(g, photo, RectF(c.X, c.Y, static_cast<float>(side), static_cast<float>(side)));
         Gdiplus::Pen ring(hot ? g_t.accent : with_alpha(g_t.text, g_t.dark ? 70 : 45), px(1));
         g.DrawEllipse(&ring, inset(c, px(0.5f), px(0.5f)));
+    } else if (!g_account.empty()) {
+        Gdiplus::SolidBrush disc(g_t.accent);
+        g.FillEllipse(&disc, c);
+        const std::wstring initial(1, static_cast<wchar_t>(towupper(g_account[0])));
+        draw_text(g, initial, g_f.body_semi.get(), Color(255, 255, 255, 255), c, kCenter);
     } else {
-        draw_text(g, kGlyphContact, g_f.glyph16.get(), ink, RectF(gx, it.Y, px(16), it.Height), kCenter);
-    }
-    if (!g_l.compact) {
-        draw_text(g, g_account.empty() ? std::wstring(tr(L"Sign in")) : g_account, g_f.body.get(), ink,
-                  RectF(it.X + px(40), it.Y, it.Width - px(48), it.Height));
+        draw_text(g, kGlyphContact, g_f.glyph16.get(), ink, it, kCenter);
     }
 }
 
