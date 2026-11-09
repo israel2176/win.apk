@@ -88,7 +88,8 @@ page's Permissions rows, which stop a running app on revoke), single instance
   else the file name up to its version; a package the library has keeps its
   app's name, so the file updates it.
 - The version is `launcher.rc`'s VS_VERSION_INFO (`version()`): 0.1.0 unless
-  CMake's `WINAPK_VERSION` (the release workflow passes its tag) writes
+  CMake's `WINAPK_VERSION` (the release workflow passes its tag; `ci.yml` the newest
+  release tag + `-dev.<run>`, which the update check counts as that release) writes
   `winapk_version.h`. The update check compares it with the newest release's tag.
 - Settings > Google account asks `winapk-runtime --gms accounts|signin-window|signout`
   (`run_gms`, stdout captured, stderr in `logs\gms.log`); exit codes 0 done,
