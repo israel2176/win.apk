@@ -1911,6 +1911,8 @@ public class TypedArray implements AutoCloseable {
         if (v == null) return macapkThemeString(index);
         // A2: TYPE_NULL -> null (AOSP :268-269), not the literal "@null".
         if (macapkNullDataOf(index, v) >= 0) return null;
+        String device = macapkCompiledIntText(index, v);
+        if (device != null) return device;
         // Resolve @string/foo references.
         if (v.startsWith("@string/") || v.startsWith("@android:string/")) {
             int id = getResourceId(index, 0);
@@ -1920,6 +1922,39 @@ public class TypedArray implements AutoCloseable {
             return null;
         }
         return v;
+    }
+
+    /** What a device's getString answers for an app attribute the layout set
+     *  to a compiled enum or flag: AOSP's TypedArray.getString coerces the int
+     *  (TypedValue.coerceToString: "0x2" for a flag, "2" for an enum), where
+     *  our bound value is the symbol the layout DOM is spelled with ("number").
+     *  The device spelling is the one BinaryXmlParser records beside the symbol
+     *  and the AttributeSet's getAttributeValue answers (see
+     *  AttributeSet.macapkAttributeText). Only app attributes (0x7f slots): the
+     *  framework reads its own 0x01 attributes by symbol. Discount's and
+     *  Mercantile's DiscountTextInputLayout declare `editText_inputType` as
+     *  flags and run Integer.decode on getString; "number" threw, the field
+     *  became a placeholder and the login screen never laid out. Null when the
+     *  value did not come from such an XML attribute. */
+    private String macapkCompiledIntText(int index, String bound) {
+        if (attributeSet == null || index < 0 || index >= attrs.length || (attrs[index] >>> 24) != 0x7f) return null;
+        if (bound.isEmpty() || bound.charAt(0) == '@' || bound.charAt(0) == '?') return null;
+        String name = attrNameAt(index);
+        if (name == null) return null;
+        String ns = "http://schemas.android.com/apk/res-auto";
+        try {
+            if (!bound.equals(attributeSet.macapkAttributeText(ns, name))) return null;
+            String device = attributeSet.getAttributeValue(ns, name);
+            if (device == null || device.equals(bound)) return null;
+            boolean hex = device.startsWith("0x");
+            for (int i = hex ? 2 : (device.startsWith("-") ? 1 : 0); i < device.length(); i++) {
+                char c = device.charAt(i);
+                if (!(c >= '0' && c <= '9') && !(hex && ((c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')))) return null;
+            }
+            return device;
+        } catch (Throwable t) {
+            return null;
+        }
     }
 
     /** Answer a THEME-ONLY string read from the theme, the way AOSP does.
