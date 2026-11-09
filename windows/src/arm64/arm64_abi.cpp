@@ -123,6 +123,14 @@ WINAPK_GUEST_ABI int a64_fstatat(int dirfd, const char* path, Arm64Stat* out, in
     return r;
 }
 
+// fts: each entry's fts_statp is a struct stat, filled in the caller's layout.
+void fill_arm64_stat(const void* x86, void* out) {
+    to_arm64(*static_cast<const X86Stat*>(x86), static_cast<Arm64Stat*>(out));
+}
+WINAPK_GUEST_ABI void* a64_fts_open(char* const* argv, int options, void* compar) {
+    return fts_open_with_stat(argv, options, compar ? host_callable(compar) : nullptr, &fill_arm64_stat);
+}
+
 using EpollCtl = int(WINAPK_GUEST_ABI*)(int, int, int, X86EpollEvent*);
 using EpollWait = int(WINAPK_GUEST_ABI*)(int, X86EpollEvent*, int, int);
 using EpollPwait = int(WINAPK_GUEST_ABI*)(int, X86EpollEvent*, int, int, const void*);
@@ -230,6 +238,7 @@ using Fn4 = int64_t(WINAPK_GUEST_ABI*)(int64_t, int64_t, int64_t, int64_t);
 bool known_syscall(uint64_t nr) {
     switch (nr) {
         case 98: case 178: case 172: case 124: case 278: case 113: case 233: case 283:   // via the shim's syscall()
+        case 123:
         case 56: case 57: case 62: case 63: case 64: case 79: case 80: case 93: case 94:  // via libc functions
         case 96: case 132: case 134: case 135: case 167:
         case 48: case 129: case 130: case 131:  // faccessat; kill, tkill, tgkill
@@ -255,6 +264,7 @@ int64_t do_syscall(uint64_t nr, const uint64_t a[6]) {
         case 178: return via(186);  // gettid
         case 172: return via(39);   // getpid
         case 124: return via(24);   // sched_yield
+        case 123: return via(204);  // sched_getaffinity
         case 278: return via(318);  // getrandom
         case 113: return via(228);  // clock_gettime
         case 233: return via(28);   // madvise
@@ -332,6 +342,7 @@ void* abi_override(const char* name) {
         {"fstat64", reinterpret_cast<void*>(&a64_fstat)},
         {"fstatat", reinterpret_cast<void*>(&a64_fstatat)},
         {"fstatat64", reinterpret_cast<void*>(&a64_fstatat)},
+        {"fts_open", reinterpret_cast<void*>(&a64_fts_open)},
         {"epoll_ctl", reinterpret_cast<void*>(&a64_epoll_ctl)},
         {"epoll_wait", reinterpret_cast<void*>(&a64_epoll_wait)},
         {"epoll_pwait", reinterpret_cast<void*>(&a64_epoll_pwait)},

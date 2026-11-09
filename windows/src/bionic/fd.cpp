@@ -17,6 +17,8 @@
 #include <algorithm>
 #include <atomic>
 #include <condition_variable>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <deque>
 #include <map>
@@ -396,6 +398,31 @@ void set_bit(GuestFdSet* s, int fd) { s->bits[fd / 64] |= uint64_t{1} << (fd % 6
 struct GuestTimeval {
     int64_t tv_sec, tv_usec;
 };
+
+// FORTIFY's FD_SET, FD_CLR and FD_ISSET (Bionic's <sys/select.h> calls these
+// when the set's size is known): the same bit operations after Bionic's
+// checks, whose failure is fatal as there (__fortify_fatal aborts).
+void check_fd_set(const char* fn, int fd, size_t set_size) {
+    const char* why = fd < 0 ? "file descriptor < 0" : fd >= 1024 ? "file descriptor >= FD_SETSIZE 1024"
+                    : set_size < sizeof(GuestFdSet)  ? "set size is too small to be an fd_set"
+                                                     : nullptr;
+    if (!why) return;
+    std::fprintf(stderr, "[win.apk] guest FORTIFY: %s: %s (fd %d, size %zu)\n", fn, why, fd, set_size);
+    std::fflush(stderr);
+    std::abort();
+}
+WINAPK_GUEST_ABI void g_fd_set_chk(int fd, GuestFdSet* set, size_t set_size) {
+    check_fd_set("FD_SET", fd, set_size);
+    set_bit(set, fd);
+}
+WINAPK_GUEST_ABI void g_fd_clr_chk(int fd, GuestFdSet* set, size_t set_size) {
+    check_fd_set("FD_CLR", fd, set_size);
+    set->bits[fd / 64] &= ~(uint64_t{1} << (fd % 64));
+}
+WINAPK_GUEST_ABI int g_fd_isset_chk(int fd, const GuestFdSet* set, size_t set_size) {
+    check_fd_set("FD_ISSET", fd, set_size);
+    return is_set(set, fd) ? 1 : 0;
+}
 WINAPK_GUEST_ABI int g_select(int nfds, GuestFdSet* rd, GuestFdSet* wr, GuestFdSet* ex, GuestTimeval* tv) {
     if (nfds < 0 || nfds > 1024) {
         *guest_errno() = kEINVAL;
@@ -622,6 +649,9 @@ const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("ppoll", g_ppoll),
     WINAPK_SHIM("select", g_select),
     WINAPK_SHIM("pselect", g_pselect),
+    WINAPK_SHIM("__FD_SET_chk", g_fd_set_chk),
+    WINAPK_SHIM("__FD_CLR_chk", g_fd_clr_chk),
+    WINAPK_SHIM("__FD_ISSET_chk", g_fd_isset_chk),
     WINAPK_SHIM("epoll_create", g_epoll_create),
     WINAPK_SHIM("epoll_create1", g_epoll_create1),
     WINAPK_SHIM("epoll_ctl", g_epoll_ctl),

@@ -87,6 +87,7 @@ Google](google-services.md). רכישות מתוך אפליקציה ו-Play Inte
 |---|---|
 | ‏`native not implemented on Windows yet` | חלק בסביבת האנדרואיד שעוד חסר |
 | ‏`not implemented on Windows yet` (על פונקציית מערכת) | פונקציה בספריית C שהקוד המקורי של האפליקציה צריך |
+| ‏`there is no /system/bin/sh on Windows` | הקוד המקורי של האפליקציה הריץ פקודת מעטפת (`popen`, `system`). אין מעטפת אנדרואיד, ולכן הפקודה מדווחת "לא נמצא" (קוד יציאה 127), כמו בטלפון שאין בו מעטפת |
 | ‏`[win.apk] cannot load <library>` או `UnsatisfiedLinkError` | ספרייה מקורית לא נטענה: ARM של 32 ביט בלבד, ארוזה או מוצפנת, או למעבד אחר |
 | ‏`Exception` או `FATAL` | האפליקציה קרסה; השורות שאחרי אומרות איפה |
 | ‏`[win.apk] crash:` ו-`crash dump:` | הקוד המקורי קרס. נכתב קובץ Minidump ליד היומן (`crash-<app>-<time>.dmp`): כדאי לצרף גם אותו |

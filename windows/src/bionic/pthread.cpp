@@ -347,6 +347,27 @@ struct Thread {
 
 thread_local Thread* t_self = nullptr;
 
+// pthread_cleanup_push/pop: Bionic's macros put a __pthread_cleanup_t on the
+// caller's stack and link it into the thread's list with these two calls;
+// pthread_exit runs whatever is still linked, newest first.
+struct GuestCleanup {
+    GuestCleanup* prev;
+    GuestDtor routine;
+    void* arg;
+};
+thread_local GuestCleanup* t_cleanup = nullptr;
+
+WINAPK_GUEST_ABI void g_cleanup_push(GuestCleanup* c, GuestDtor routine, void* arg) {
+    c->routine = routine;
+    c->arg = arg;
+    c->prev = t_cleanup;
+    t_cleanup = c;
+}
+WINAPK_GUEST_ABI void g_cleanup_pop(GuestCleanup* c, int execute) {
+    t_cleanup = c->prev;
+    if (execute) c->routine(c->arg);
+}
+
 Thread* self_record() {
     if (!t_self) {
         t_self = new Thread();
@@ -359,8 +380,13 @@ Thread* self_record() {
 
 [[noreturn]] void finish_thread(Thread* t, void* result) {
     t->result = result;
-    // Bionic's order: C++ thread_local destructors, then the key destructors.
+    // Bionic's order: C++ thread_local destructors, the cleanup handlers still
+    // pushed, then the key destructors.
     tls_run_thread_dtors();
+    while (GuestCleanup* c = t_cleanup) {
+        t_cleanup = c->prev;
+        c->routine(c->arg);
+    }
     run_key_destructors();
     if (t->detached.load()) {
         CloseHandle(t->handle);
@@ -639,6 +665,8 @@ const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("pthread_self", g_self),
     WINAPK_SHIM("pthread_equal", g_equal),
     WINAPK_SHIM("pthread_exit", g_exit),
+    WINAPK_SHIM("__pthread_cleanup_push", g_cleanup_push),
+    WINAPK_SHIM("__pthread_cleanup_pop", g_cleanup_pop),
     WINAPK_SHIM("pthread_gettid_np", g_pthread_gettid_np),
     WINAPK_SHIM("pthread_setname_np", g_setname_np),
     WINAPK_SHIM("prctl", g_prctl),
