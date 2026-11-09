@@ -548,6 +548,37 @@ public final class SystemClient {
         return apk.isEmpty() ? null : apk;
     }
 
+    /** authority -> the package another process serves it from ("" = none). */
+    private static final Map<String, String> sProviderPkgs = new ConcurrentHashMap<>();
+
+    /** PMS resolveContentProvider's lookup for an authority this app does not
+     *  declare: the package the broker knows declaring it, or null (no broker,
+     *  nobody declares it, or it is this package). Cached per authority, as
+     *  apkOf caches packages. */
+    static String providerPackage(String authority) {
+        IBinder sys = sSystem;
+        if (sys == null || authority == null) return null;
+        String pkg = sProviderPkgs.get(authority);
+        if (pkg == null) {
+            pkg = "";
+            Parcel d = Parcel.obtain(), r = Parcel.obtain();
+            try {
+                d.writeInterfaceToken(SystemServer.DESCRIPTOR);
+                d.writeString(authority);
+                sys.transact(SystemServer.TX_PROVIDER_PACKAGE, d, r, 0);
+                r.readException();
+                String p = r.readString();
+                if (p != null) pkg = p;
+            } catch (Throwable t) {
+                NativeLog.w(TAG, "broker PROVIDER_PACKAGE " + authority + " failed: " + t);
+                // Not cached: a broker hiccup must not hide the provider for good.
+                return null;
+            } finally { d.recycle(); r.recycle(); }
+            sProviderPkgs.put(authority, pkg);
+        }
+        return pkg.isEmpty() || pkg.equals(sPackage) ? null : pkg;
+    }
+
     /** A PackageManager whose SELF is `pkg`, built from that package's own
      *  installed APK, for a package another Mac.apk process serves through the
      *  broker -- so getPackageInfo / getApplicationInfo answer with ITS manifest

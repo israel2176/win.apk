@@ -2100,6 +2100,13 @@ public class Resources {
             // android:color. A root <color> is how a solid-colour drawable
             // resource is spelled.
             case "color":           return macapkInflateColorDrawable(e, theme);
+            // The platform's progress-bar styles name this @hide class as their
+            // indeterminate drawable's root (progress_*_material.xml). It lives in
+            // the framework, not the app, so the class-name fallback below (the
+            // app's ClassLoader) cannot find it, and it is inflated here like the
+            // other DrawableContainers.
+            case "com.android.internal.graphics.drawable.AnimationScaleListDrawable":
+                return macapkInflateAnimationScaleList(e, theme);
             default:
                 // A FULLY-QUALIFIED CLASS NAME is a first-class drawable root on
                 // Android, not an exotic case. AOSP's DrawableInflater tries the
@@ -2456,6 +2463,28 @@ public class Resources {
             n++;
         }
         return n > 0 ? lld : null;
+    }
+
+    /** AOSP AnimationScaleListDrawable.inflateChildElements: each {@code <item>}
+     *  gives one drawable (android:drawable or a nested element); addDrawable
+     *  sorts it into the animatable or the static slot. */
+    private android.graphics.drawable.Drawable macapkInflateAnimationScaleList(
+            org.w3c.dom.Element root, Theme theme) {
+        com.android.internal.graphics.drawable.AnimationScaleListDrawable asl =
+            new com.android.internal.graphics.drawable.AnimationScaleListDrawable();
+        int n = 0;
+        org.w3c.dom.NodeList kids = root.getChildNodes();
+        for (int i = 0; i < kids.getLength(); i++) {
+            org.w3c.dom.Node node = kids.item(i);
+            if (!(node instanceof org.w3c.dom.Element)) continue;
+            org.w3c.dom.Element item = (org.w3c.dom.Element) node;
+            if (!"item".equals(macapkLocalTag(item))) continue;
+            android.graphics.drawable.Drawable d = macapkInflateItemDrawable(item, theme);
+            if (d == null) continue;
+            asl.addDrawable(d);
+            n++;
+        }
+        return n > 0 ? asl : null;
     }
 
     /** AOSP AnimationDrawable.inflate: {@code <animation-list android:oneshot>}
