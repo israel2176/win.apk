@@ -92,6 +92,8 @@ char* fgets(char*, int, FILE*);
 
 struct timespec { long tv_sec; long tv_nsec; };
 int clock_gettime(int, struct timespec*);
+double difftime(long, long);
+int getentropy(void*, size_t);
 int nanosleep(const struct timespec*, struct timespec*);
 int __system_property_get(const char*, char*);
 char* getenv(const char*);
@@ -856,6 +858,14 @@ static void test_misc(void) {
     check("CLOCK_MONOTONIC advances across nanosleep(10 ms)", ns >= 9000000 && ns < 500000000, 0);
     clock_gettime(0, &a);
     check("CLOCK_REALTIME is after 2020", a.tv_sec > 1577836800L, 0);
+    check("difftime returns the difference as a double", difftime(1700000100L, 1700000000L) == 100.0, 0);
+    unsigned char entropy[64] = {0};
+    int nonzero = 0;
+    const int got_entropy = getentropy(entropy, sizeof entropy) == 0;
+    for (int i = 0; i < 64; ++i) nonzero |= entropy[i];
+    check("getentropy fills the buffer", got_entropy && nonzero, 0);
+    check("getentropy refuses more than 256 bytes with EIO",
+          getentropy(entropy, 257) == -1 && *__errno() == 5, 0);
     char v[92];
     check("__system_property_get", __system_property_get("ro.product.cpu.abi", v) > 0 && strcmp(v, "x86_64") == 0, v);
     setenv("WINAPK_TEST", "yes", 1);

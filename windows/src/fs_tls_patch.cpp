@@ -2,7 +2,9 @@
 
 #include "winapk/fs_tls_patch.h"
 
+#include <atomic>
 #include <cstring>
+#include <mutex>
 
 #include <intrin.h>
 #include <windows.h>
@@ -26,29 +28,81 @@ bool is_guard_read_opcode(uint8_t op) {
     return op == 0x8b || op == 0x2b || op == 0x33 || op == 0x3b || op == 0x39;
 }
 
+// prefix, REX, opcode, ModRM, SIB, disp32
+constexpr size_t kInsnLen = 9;
+
+// Whether the 9 bytes at `p` are a stack-guard read, whatever its segment
+// prefix (p[0]) is.
+bool is_guard_read_after_prefix(const uint8_t* p) {
+    if (!is_rex_w(p[1]) || !is_guard_read_opcode(p[2])) return false;
+    // ModRM mod=00 rm=100 (SIB follows); SIB 0x25 = no base, no index,
+    // disp32: an absolute segment-relative address.
+    if ((p[3] & 0xc7) != 0x04 || p[4] != 0x25) return false;
+    uint32_t disp;
+    std::memcpy(&disp, p + 5, sizeof(disp));
+    return disp == kStackGuardOffset;
+}
+
 }  // namespace
 
 size_t patch_fs_stack_guard_sites(uint8_t* code, size_t len) {
     size_t patched = 0;
-    // prefix, REX, opcode, ModRM, SIB, disp32
-    constexpr size_t kInsnLen = 9;
     for (size_t i = 0; i + kInsnLen <= len; ++i) {
-        if (code[i] != kPrefixFs) continue;
-        if (!is_rex_w(code[i + 1])) continue;
-        if (!is_guard_read_opcode(code[i + 2])) continue;
-        // ModRM mod=00 rm=100 (SIB follows); SIB 0x25 = no base, no index,
-        // disp32: an absolute segment-relative address.
-        if ((code[i + 3] & 0xc7) != 0x04) continue;
-        if (code[i + 4] != 0x25) continue;
-        uint32_t disp;
-        std::memcpy(&disp, code + i + 5, sizeof(disp));
-        if (disp != kStackGuardOffset) continue;
+        if (code[i] != kPrefixFs || !is_guard_read_after_prefix(code + i)) continue;
         code[i] = kPrefixGs;
         ++patched;
         i += kInsnLen - 1;
     }
     return patched;
 }
+
+namespace {
+
+SRWLOCK g_fixup_lock = SRWLOCK_INIT;
+std::atomic<size_t> g_fixed_at_run_time{0};
+
+// A guard load the scan never saw, faulting on FS's zero base: give it the GS
+// prefix and run it again. Everything else is left to the next handler. The
+// bytes are read in order and each one matched says the instruction goes on,
+// so none is read past the end of the instruction the CPU has just fetched.
+LONG CALLBACK fix_unpatched_guard_load(EXCEPTION_POINTERS* info) {
+    const EXCEPTION_RECORD* rec = info->ExceptionRecord;
+    if (rec->ExceptionCode != EXCEPTION_ACCESS_VIOLATION || rec->NumberParameters < 2) {
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+    if (rec->ExceptionInformation[0] != 0) return EXCEPTION_CONTINUE_SEARCH;  // a read
+    auto* insn = reinterpret_cast<uint8_t*>(info->ContextRecord->Rip);
+    if (insn[0] != kPrefixFs && insn[0] != kPrefixGs) return EXCEPTION_CONTINUE_SEARCH;
+    if (!is_guard_read_after_prefix(insn)) return EXCEPTION_CONTINUE_SEARCH;
+    AcquireSRWLockExclusive(&g_fixup_lock);
+    bool resume = insn[0] == kPrefixGs;  // another thread got here first
+    if (insn[0] == kPrefixFs) {
+        // The page is usually back to read-execute by now (a decryptor
+        // restores it): open it for the one byte, then put it back.
+        DWORD old = 0;
+        if (VirtualProtect(insn, 1, PAGE_EXECUTE_READWRITE, &old)) {
+            insn[0] = kPrefixGs;
+            DWORD ignored;
+            VirtualProtect(insn, 1, old, &ignored);
+            FlushInstructionCache(GetCurrentProcess(), insn, kInsnLen);
+            g_fixed_at_run_time.fetch_add(1, std::memory_order_relaxed);
+            resume = true;
+        }
+    }
+    ReleaseSRWLockExclusive(&g_fixup_lock);
+    return resume ? EXCEPTION_CONTINUE_EXECUTION : EXCEPTION_CONTINUE_SEARCH;
+}
+
+}  // namespace
+
+void install_fs_stack_guard_fixup() {
+    static std::once_flag once;
+    // First in the chain: the guest's SIGSEGV emulation and the crash report
+    // must not see a fault that is only a load the scan missed.
+    std::call_once(once, [] { AddVectoredExceptionHandler(1, fix_unpatched_guard_load); });
+}
+
+size_t fs_stack_guard_sites_fixed_at_run_time() { return g_fixed_at_run_time.load(std::memory_order_relaxed); }
 
 void set_guest_stack_guard_for_current_thread(uint64_t value) {
     auto* tib = reinterpret_cast<NT_TIB*>(NtCurrentTeb());

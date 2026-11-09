@@ -9,7 +9,8 @@
 //     double and stack-passed arguments, guest -> host shim, and host -> guest
 //     callbacks (qsort comparator);
 //   * the patched %fs:0x28 stack-guard loads hold on the main thread and on
-//     fresh threads, with and without a guard value installed.
+//     fresh threads, with and without a guard value installed, and a guard
+//     load in code the guest writes at run time is patched when it faults.
 //
 //   winapk-elfrun <libwinapk_poc_guest.so> [<another build of it> ...]
 //   winapk-elfrun --load-only <any x86_64 .so>   load it and report what is missing
@@ -53,6 +54,7 @@ using ManyArgsFn = long(WINAPK_GUEST_ABI*)(long, long, long, long, long, long, l
                                            double, double, double, double);
 using IntFromIntFn = int(WINAPK_GUEST_ABI*)(int);
 using IntFn = int(WINAPK_GUEST_ABI*)();
+using WrittenGuardFn = int(WINAPK_GUEST_ABI*)(long long*);
 using HostCallback = int(WINAPK_GUEST_ABI*)(int);
 using CallbackFn = int(WINAPK_GUEST_ABI*)(HostCallback, int);
 
@@ -130,6 +132,24 @@ void run_poc_checks(const winapk::ElfImage& img) {
     expect_eq("stack guard, main thread", stack_guard(1), 2080);
     expect_eq("stack guard, new thread, slot never set", run_on_new_thread(stack_guard, false, 0), 2080);
     expect_eq("stack guard, new thread, own guard", run_on_new_thread(stack_guard, true, fresh_guard()), 2080);
+
+    if (auto written = sym<WrittenGuardFn>(img, "winapk_test_written_guard")) {
+        // gs:[0x28] holds a value of its own here (main() installs one).
+        const size_t fixed = winapk::fs_stack_guard_sites_fixed_at_run_time();
+        long long guard = 0;
+        const int patched = written(&guard);
+        if (patched == 0) {
+            // Unpatched and no fault: FS has a base here (Wine on Linux points
+            // it at the host thread's TLS), so there was nothing to fix. On
+            // Windows the load faults and is patched, or the process dies.
+            std::printf("  [SKIP] stack guard in code written at run time: FS reads do not fault here\n");
+        } else {
+            expect_eq("stack guard in code written at run time, patched as it faults", patched, 1);
+            expect_eq("  it read gs:[0x28]", guard, static_cast<long long>(winapk::read_guest_stack_guard_slot()));
+            expect_eq("  one load patched by the fault handler",
+                      winapk::fs_stack_guard_sites_fixed_at_run_time() - fixed, static_cast<size_t>(1));
+        }
+    }
 
     expect_eq("guest comparator called by host qsort", qsort_test(), 188);
     expect_eq("host callback called by the guest (3*20 + 3*21)", callback(host_triple, 20), 123);

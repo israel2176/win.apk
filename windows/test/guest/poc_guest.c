@@ -20,6 +20,9 @@ int strcmp(const char*, const char*);
 int puts(const char*);
 void qsort(void*, size_t, size_t, int (*)(const void*, const void*));
 int __android_log_write(int prio, const char* tag, const char* text);
+void* mmap(void*, size_t, int, int, int, long);
+int mprotect(void*, size_t, int);
+int munmap(void*, size_t);
 
 #define EXPORT __attribute__((visibility("default")))
 
@@ -99,6 +102,31 @@ EXPORT int winapk_test_stack_guard(int seed) {
     int sum = 0;
     for (int i = 0; i < 64; ++i) sum += buf[i];
     return sum;
+}
+
+// Code written at run time, as a library that ships its .text encrypted and
+// decrypts it from a constructor: the loader's scan never saw these bytes.
+// "mov rax, fs:[0x28]; ret", stored XORed so the image holds no guard load.
+// Run twice: on Windows the first run faults and is patched, the second runs
+// patched. Returns whether the code was patched (its first byte is now the
+// GS prefix) with the guard both runs read in *guard, or a negative step
+// that failed.
+EXPORT int winapk_test_written_guard(long* guard) {
+    static const unsigned char encoded[] = {0x64 ^ 0x5a, 0x48 ^ 0x5a, 0x8b ^ 0x5a, 0x04 ^ 0x5a, 0x25 ^ 0x5a,
+                                            0x28 ^ 0x5a, 0x00 ^ 0x5a, 0x00 ^ 0x5a, 0x00 ^ 0x5a, 0xc3 ^ 0x5a};
+    unsigned char* code = (unsigned char*)mmap(0, 4096, 3 /* RW */, 0x22 /* PRIVATE|ANONYMOUS */, -1, 0);
+    if (code == (unsigned char*)-1) return -1;
+    volatile unsigned char key = 0x5a;  // keeps the compiler from decoding it into an immediate
+    for (int i = 0; i < (int)sizeof(encoded); ++i) code[i] = encoded[i] ^ key;
+    if (mprotect(code, 4096, 5 /* R|X */) != 0) return -2;
+    long (*fn)(void) = (long (*)(void))code;
+    const long first = fn();
+    const long second = fn();
+    const int patched = code[0] == 0x65;
+    munmap(code, 4096);
+    if (first != second) return -3;
+    *guard = first;
+    return patched;
 }
 
 // ---- callbacks in both directions -------------------------------------------

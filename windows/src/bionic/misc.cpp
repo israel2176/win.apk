@@ -104,6 +104,11 @@ WINAPK_GUEST_ABI int64_t g_time(int64_t* t) {
     if (t) *t = s;
     return s;
 }
+// difftime returns a double (xmm0): the missing-function stub's 0 in rax would
+// leave the caller reading whatever xmm0 held.
+WINAPK_GUEST_ABI double g_difftime(int64_t end, int64_t start) {
+    return static_cast<double>(end) - static_cast<double>(start);
+}
 WINAPK_GUEST_ABI glong g_clock() { return thread_cpu_ns(nullptr, true) / 1000; }  // CLOCKS_PER_SEC 1000000
 
 void sleep_ns(int64_t ns) {
@@ -614,6 +619,16 @@ WINAPK_GUEST_ABI int64_t g_getrandom(void* buf, size_t n, unsigned) {
     g_arc4random_buf(buf, n);
     return static_cast<int64_t>(n);
 }
+// getentropy: at most 256 bytes (EIO above, as bionic), all or nothing. The
+// missing-function stub's 0 would report success with the buffer untouched.
+WINAPK_GUEST_ABI int g_getentropy(void* buf, size_t n) {
+    if (n > 256) {
+        *guest_errno() = kEIO;
+        return -1;
+    }
+    g_arc4random_buf(buf, n);
+    return 0;
+}
 // ---- syscall(2) ------------------------------------------------------------------------
 // Code that bypasses libc (Chromium's and PartitionAlloc's locks, Rust and Go
 // runtimes, abseil) calls syscall() with x86_64 Linux numbers. The common ones
@@ -996,6 +1011,7 @@ const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("clock_getres", g_clock_getres),
     WINAPK_SHIM("gettimeofday", g_gettimeofday),
     WINAPK_SHIM("time", g_time),
+    WINAPK_SHIM("difftime", g_difftime),
     WINAPK_SHIM("clock", g_clock),
     WINAPK_SHIM("nanosleep", g_nanosleep),
     WINAPK_SHIM("clock_nanosleep", g_clock_nanosleep),
@@ -1058,6 +1074,7 @@ const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("arc4random_buf", g_arc4random_buf),
     WINAPK_SHIM("arc4random_uniform", g_arc4random_uniform),
     WINAPK_SHIM("getrandom", g_getrandom),
+    WINAPK_SHIM("getentropy", g_getentropy),
     WINAPK_SHIM("srand", g_srand),
     WINAPK_SHIM("rand", g_rand),
     WINAPK_SHIM("srandom", g_srand),

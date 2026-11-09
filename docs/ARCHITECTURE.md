@@ -200,7 +200,11 @@ what compiled code actually does:
   read with `mov rax, fs:[0x28]`. The loader rewrites the segment prefix so
   the instruction reads `gs:[0x28]` instead, which on x64 Windows is
   `NT_TIB.ArbitraryUserPointer`, a per-thread slot nothing else uses. The
-  instruction length does not change.
+  instruction length does not change. Libraries that ship their code
+  encrypted and decrypt it from a constructor (IBM Trusteer's anti-fraud
+  SDK in banking apps does) show the scan only ciphertext, so a vectored
+  exception handler catches a guard load that faults on FS's zero base
+  (a read of address 0x28), rewrites its prefix the same way and resumes it.
 
 ### The Bionic shim
 
