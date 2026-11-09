@@ -95,6 +95,7 @@
 #include "app_runs.h"
 #include "installs.h"
 #include "updates.h"
+#include "../include/winapk/aot_stamp.h"
 
 namespace fs = std::filesystem;
 
@@ -6287,16 +6288,15 @@ AotState aot_state(const std::wstring& name) {
             }
         }
     }
-    // A stamp "profile ..." or "wait 0 <version> 0 ..." (waiting for a profile, not after a failure) is a
-    // library over the runtime's kAotFullBelow, translated only where the app's code ran.
+    // A stamp that says "by its profile" (aot_stamp.h: kProfile, or kWait not after a failure) is a library over
+    // the runtime's kAotFullBelow, translated only where the app's code ran.
     if (!fs::exists(libs.parent_path() / L"x86_64", ec)) {
         for (const auto& e : fs::directory_iterator(libs, ec)) {
             if (e.path().extension() != L".stamp") continue;
             std::ifstream f(e.path());
-            std::string kind;
-            unsigned long long lines = 0, version = 0, failures = 0;
-            f >> kind >> lines >> version >> failures;
-            if (kind == "profile" || (kind == "wait" && failures == 0)) st.large_arm_only = true;
+            std::string line;
+            std::getline(f, line);
+            if (winapk::arm64::aot_stamp_by_profile(winapk::arm64::aot_parse_stamp(line))) st.large_arm_only = true;
         }
     }
     return st;

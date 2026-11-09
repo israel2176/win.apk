@@ -140,6 +140,11 @@ add_executable(winapk-aot-cache-test test/aot_cache_test.cpp)
 target_link_libraries(winapk-aot-cache-test PRIVATE winapk_loader)
 add_dependencies(winapk-aot-cache-test winapk-aot-test-dll)
 
+# A library's translation stamp (include/winapk/aot_stamp.h): its line, what the loader refuses, when the
+# worker has a step to take. No file and no Windows call in it. test/aot_stamp_test.cpp.
+add_executable(winapk-aot-stamp-test test/aot_stamp_test.cpp)
+target_include_directories(winapk-aot-stamp-test PRIVATE include)
+
 # The translation's crash guard (host/aot_guard.h) through the real crash path,
 # test/aot_guard_test.cpp. The DLL is its stand-in for a translation, and must
 # be next to it.

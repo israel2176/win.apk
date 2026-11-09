@@ -78,6 +78,7 @@
 #include <shellapi.h>
 
 #include "winapk/aot_files.h"
+#include "winapk/aot_stamp.h"
 #include "winapk/arm64_aot.h"
 #include "winapk/mini_bionic.h"
 
@@ -639,7 +640,7 @@ bool install_app(Options* o, const fs::path& android_root) {
 //     (aot_app_exiting), and a worker started with the app waits
 //     kAotStartDelayS before compiling, so the start stays fast.
 //
-// <lib>.so.aot.stamp says what the last translation used: "full",
+// <lib>.so.aot.stamp (aot_stamp.h: its kinds, and who writes each) says what the last translation used: "full",
 // "profile <lines>" (the profile's line count then), "wait <lines>" (too
 // large without a profile, or failed: then with the number of failures and
 // the Unix time of the next try), "skip" (not an arm64 ELF file: packed or
@@ -772,48 +773,22 @@ size_t profile_lines_of(const fs::path& profile) {
 
 size_t profile_lines(const fs::path& so) { return profile_lines_of(with_suffix(so, L".aot.profile")); }
 
-struct AotStamp {
-    std::string kind;  // "full", "profile", "wait", "skip", "bad", "written", or "" (none)
-    size_t lines = 0;
-    unsigned version = 0;     // the kAotVersion it was made with; 0 before stamps had one
-    unsigned failures = 0;    // "wait" after a failed translation: how many in a row
-    int64_t retry_after = 0;  // and when to try again (Unix seconds)
-    uint64_t cpu = 0;         // aot_cpu_signature() of the CPU it was compiled for; 0 before stamps had one
-    uint64_t lib = 0;         // aot_lib_id() of the library it is about; 0 before stamps had one (and DLLs a seal)
-};
+// The stamp's kinds, its line and the rules that go by it are aot_stamp.h's.
+using winapk::arm64::AotStamp;
+using winapk::arm64::AotStampKind;
 
 AotStamp read_aot_stamp(const fs::path& so) {
-    AotStamp s;
-    const std::string text = winapk::arm64::aot_read_file(with_suffix(so, L".aot.stamp"));
-    char kind[16] = {};
-    unsigned long long lines = 0;
-    unsigned version = 0, failures = 0;
-    long long retry_after = 0;
-    unsigned long long cpu = 0, lib = 0;
-    if (std::sscanf(text.c_str(), "%15s %llu %u %u %lld %llx %llx", kind, &lines, &version, &failures, &retry_after,
-                    &cpu, &lib) >= 1) {
-        s.kind = kind;
-        s.lines = static_cast<size_t>(lines);
-        s.version = version;
-        s.failures = failures;
-        s.retry_after = retry_after;
-        s.cpu = cpu;
-        s.lib = lib;
-    }
-    return s;
+    return winapk::arm64::aot_parse_stamp(winapk::arm64::aot_read_file(with_suffix(so, L".aot.stamp")));
 }
 
 // Written whole or not at all (aot_files.h): the loader and the app's start
 // read it while the worker writes it, and a worker killed half way through
 // once left half a stamp.
-void write_aot_stamp(const fs::path& so, const char* kind, size_t lines, unsigned failures = 0,
+void write_aot_stamp(const fs::path& so, AotStampKind kind, size_t lines, unsigned failures = 0,
                      int64_t retry_after = 0) {
-    // The loader reads the same fields (arm64_aot.cpp, stamp_refuses).
-    char line[160];
-    std::snprintf(line, sizeof line, "%s %zu %u %u %lld %llx %llx\n", kind, lines, winapk::arm64::kAotVersion,
-                  failures, static_cast<long long>(retry_after),
-                  static_cast<unsigned long long>(winapk::arm64::aot_cpu_signature()),
-                  static_cast<unsigned long long>(winapk::arm64::aot_lib_id(so)));
+    const std::string line =
+        winapk::arm64::aot_stamp_line(kind, lines, winapk::arm64::kAotVersion, failures, retry_after,
+                                      winapk::arm64::aot_cpu_signature(), winapk::arm64::aot_lib_id(so));
     if (!winapk::arm64::aot_write_file(with_suffix(so, L".aot.stamp"), line)) {
         std::fprintf(stderr, "[win.apk] %s: cannot write its stamp (error %lu)\n",
                      utf8(so.filename().wstring()).c_str(), GetLastError());
@@ -844,29 +819,17 @@ bool aot_needs_work(const fs::path& so) {
         have = newer_than(dll, so) || newer_than(later, so);
         stamp_current = newer_than(with_suffix(so, L".aot.stamp"), so);
     }
-    // Made by an older winapk-aot: the loader ignores that DLL, and a "bad"
-    // one may have been the translator's fault (City Car's libflutter.so).
-    if (have && stamp.version != winapk::arm64::kAotVersion) return true;
-    if (stamp.kind == "bad" && stamp.version != winapk::arm64::kAotVersion) return true;
-    // A library that rewrites its own code runs on the JIT (arm64_aot.h) until it changes.
-    if (stamp.kind == "skip" || stamp.kind == "bad" || stamp.kind == "written") return !stamp_current;
-    // Compiled for another CPU (-march=native): the loader leaves it alone.
-    if (have && stamp.cpu != winapk::arm64::aot_cpu_signature()) return true;
-    if (stamp.kind == "wait" && stamp.failures > 0) {
-        if (stamp.version != winapk::arm64::kAotVersion || !stamp_current) return true;  // a new chance
-        return stamp.failures < kAotMaxFailures && unix_now() >= stamp.retry_after;
-    }
-    if (fs::exists(aot_work_dir(so) / "plan", ec)) return true;  // a pass to finish
-    auto grown = [&] {
-        const size_t p = profile_lines(so);
-        return p >= stamp.lines + std::max<size_t>(200, stamp.lines / 4);
-    };
-    if (!have) return stamp.kind != "wait" || grown();
-    if (stamp.kind.empty() || stamp.kind == "full") return false;
-    // From a profile: not again within kAotMinIntervalS (the stamp's retry
-    // field), however fast the profile grows in an app's first sessions.
-    if (stamp.kind == "profile" && unix_now() < stamp.retry_after) return false;
-    return grown();
+    // The rest is the stamp's own rules (aot_stamp_needs_work), given what the files say.
+    winapk::arm64::AotStampFacts facts;
+    facts.have = have;
+    facts.current = stamp_current;
+    facts.version = winapk::arm64::kAotVersion;
+    facts.cpu = winapk::arm64::aot_cpu_signature();
+    facts.now = unix_now();
+    facts.pass_to_finish = fs::exists(aot_work_dir(so) / "plan", ec);
+    facts.max_failures = kAotMaxFailures;
+    facts.profile_lines = [&so] { return profile_lines(so); };
+    return winapk::arm64::aot_stamp_needs_work(stamp, facts);
 }
 
 std::vector<fs::path> arm64_sos(const fs::path& libs) {
@@ -1090,9 +1053,9 @@ bool install_aot_dll(const fs::path& dll, const fs::path& so) {
 // in a row (10 minutes, 40, 160, ..., at most a day).
 void aot_failed(const fs::path& so, size_t lines) {
     const AotStamp before = read_aot_stamp(so);
-    const unsigned failures = (before.kind == "wait" ? before.failures : 0) + 1;
+    const unsigned failures = winapk::arm64::aot_stamp_failures_after(before);
     const int64_t wait = std::min<int64_t>(24 * 3600, int64_t{600} << (2 * std::min(failures - 1, 10u)));
-    write_aot_stamp(so, "wait", lines, failures, unix_now() + wait);
+    write_aot_stamp(so, AotStampKind::kWait, lines, failures, unix_now() + wait);
     if (failures >= kAotMaxFailures) {
         std::fprintf(stderr, "[win.apk] %s: %u failures in a row; not tried again until the library or Win.apk "
                              "changes (the JIT runs it)\n", utf8(so.filename().wstring()).c_str(), failures);
@@ -1115,7 +1078,7 @@ void aot_translate_one(const fs::path& so, const fs::path& clang, const fs::path
     if (key.empty()) {
         std::fprintf(stderr, "[win.apk] %s is not an arm64 ELF file (packed or encrypted; the app loads it "
                              "itself): the JIT runs its code\n", name.c_str());
-        write_aot_stamp(so, "skip", 0);
+        write_aot_stamp(so, AotStampKind::kSkip, 0);
         fs::remove_all(work, ec);
         return;
     }
@@ -1124,7 +1087,7 @@ void aot_translate_one(const fs::path& so, const fs::path& clang, const fs::path
     const fs::path dll = work / (so.filename().wstring() + L".aot.dll");
     // aot_cache_take checks the entry whole and drops a broken one.
     if (!cached.empty() && winapk::arm64::aot_cache_take(cached, dll) && install_aot_dll(dll, so)) {
-        write_aot_stamp(so, "full", profile_lines(so));
+        write_aot_stamp(so, AotStampKind::kFull, profile_lines(so));
         fs::remove_all(work, ec);
         std::fprintf(stderr, "[win.apk] %s: translation taken from the shared cache\n", name.c_str());
         return;
@@ -1159,7 +1122,7 @@ void aot_translate_one(const fs::path& so, const fs::path& clang, const fs::path
                                L" --full-below " + std::to_wstring(aot_full_below()));
     if (rc == 3) {
         std::fprintf(stderr, "[win.apk] %s: too large to translate whole; waiting for its profile\n", name.c_str());
-        write_aot_stamp(so, "wait", lines);
+        write_aot_stamp(so, AotStampKind::kWait, lines);
         fs::remove_all(work, ec);
         return;
     }
@@ -1241,7 +1204,8 @@ void aot_translate_one(const fs::path& so, const fs::path& clang, const fs::path
         return;
     }
     fs::remove_all(work, ec);
-    write_aot_stamp(so, rc == 4 ? "profile" : "full", lines, 0, rc == 4 ? unix_now() + kAotMinIntervalS : 0);
+    write_aot_stamp(so, rc == 4 ? AotStampKind::kProfile : AotStampKind::kFull, lines, 0,
+                    rc == 4 ? unix_now() + kAotMinIntervalS : 0);
     std::fprintf(stderr, "[win.apk] %s: translated%s in %.1f s\n", name.c_str(), rc == 4 ? " (what ran)" : "",
                  static_cast<double>(GetTickCount64() - t0) / 1000);
 }
