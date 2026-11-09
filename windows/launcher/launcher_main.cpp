@@ -8637,6 +8637,10 @@ void notify_library() {
     if (HWND w = FindWindowW(L"WinApkLibrary", nullptr)) PostMessageW(w, kRefresh, 0, 0);
 }
 
+namespace appops {
+bool caller_is_play_store();
+}
+
 int helper_main(int argc, wchar_t** argv) {
     const std::wstring verb = argv[1];
     std::wstring apk, package, source, requestor;
@@ -8693,11 +8697,15 @@ int helper_main(int argc, wchar_t** argv) {
     const App* existing = find_package(apps, pkg);
     const bool update = existing != nullptr;
     const std::wstring wpkg = utf8_to_wide(pkg);
+    // The Play Store installs as a phone's system installer does, with no question: it holds INSTALL_PACKAGES
+    // there, and the user already chose the app in it. Only the real one: the asking runtime runs the
+    // library's com.android.vending and Google signed that APK (appops::caller_is_play_store).
     const bool agreed =
-        update ? helper_consent(existing, fmt(L"Update {0}?", {existing->label}),
-                                fmt(L"{0} asks to update it with the copy it has ({1}).", {who, wpkg}), tr(L"Update"))
-               : helper_consent(nullptr, fmt(L"Install {0}?", {wpkg}), fmt(L"{0} asks to install it.", {who}),
-                                tr(L"Install"));
+        appops::caller_is_play_store() ||
+        (update ? helper_consent(existing, fmt(L"Update {0}?", {existing->label}),
+                                 fmt(L"{0} asks to update it with the copy it has ({1}).", {who, wpkg}), tr(L"Update"))
+                : helper_consent(nullptr, fmt(L"Install {0}?", {wpkg}), fmt(L"{0} asks to install it.", {who}),
+                                 tr(L"Install")));
     if (!agreed) return helper_fail(3, "consent", "declined");
     helper_progress(0.1, "consented");
 
@@ -9463,6 +9471,31 @@ bool resolve(Caller* c, std::string* why) {
     }
     *why = "the parent runs no library app (" + wide_to_utf8(apk.wstring()) + ")";
     return false;
+}
+
+// Whether the app asking is the real Google Play Store: the parent runtime runs the library's
+// com.android.vending (resolve), and winapk-runtime --verify-apk says Google signed that APK and it verifies.
+bool caller_is_play_store() {
+    Caller c;
+    std::string why;
+    if (!resolve(&c, &why) || c.id.package != "com.android.vending") return false;
+    const App* app = find_app(c.name);
+    if (!app) return false;
+    std::wstring out;
+    const fs::path log = logs_dir() / L"install-helper.log";
+    if (run_runtime_captured(L"--verify-apk " + gms_arg(app->apk.wstring()), &out, log) != 0) return false;
+    bool pkg = false, verified = false, google = false;
+    for (size_t at = 0; at < out.size();) {
+        size_t end = out.find(L'\n', at);
+        if (end == std::wstring::npos) end = out.size();
+        std::wstring line = out.substr(at, end - at);
+        at = end + 1;
+        if (!line.empty() && line.back() == L'\r') line.pop_back();
+        if (line == L"PACKAGE\tcom.android.vending") pkg = true;
+        else if (line == L"VERIFIED\t1") verified = true;
+        else if (line == L"GOOGLE\t1") google = true;
+    }
+    return pkg && verified && google;
 }
 
 // ---- the dialog ----------------------------------------------------------------
