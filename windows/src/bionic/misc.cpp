@@ -642,8 +642,8 @@ bool map_in_place(void* addr, size_t len, bool commit) {
     return true;
 }
 
-// MAP_SHARED mappings of a file: views of the file itself, by the address the
-// guest got. A private copy (the fallback below) never reaches the file, and
+// MAP_SHARED mappings of a file (and read-only private ones): views of the
+// file itself, by the address the guest got. A private copy (the fallback below) never reaches the file, and
 // two mappings of one file never see each other's writes: Realm (Bit) writes
 // its lock file's header through one mapping and reads `init_complete` back
 // through another, and spun on 0 for ever; MMKV and SQLite's shared memory
@@ -715,7 +715,12 @@ WINAPK_GUEST_ABI void* g_mmap(void* addr, size_t len, int prot, int flags, int f
     const bool fixed = flags & 0x10;
     void* want = fixed ? addr : nullptr;
     const bool anonymous = (flags & 0x20) || fd < 0;
-    if ((flags & 3) == 1 && !anonymous && !fixed) {  // MAP_SHARED
+    // MAP_SHARED, and MAP_PRIVATE read-only: on Linux a private page reads the
+    // file's current bytes until the process writes it, so a read-only private
+    // mapping sees later writes to the file. Realm maps its database that way
+    // and reads each commit through it; a copy taken at mmap kept the empty
+    // file ("Invalid top array size (ref: 128, array size: 0)").
+    if (((flags & 3) == 1 || ((flags & 3) == 2 && !(prot & 2))) && !anonymous && !fixed) {
         if (void* v = map_shared_view(len, prot, fd, off)) return v;
     }
     void* p = nullptr;
