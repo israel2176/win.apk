@@ -201,8 +201,9 @@ constexpr char kFifoMarker[16] = {'W', 'i', 'n', '.', 'a', 'p', 'k', ' ', 'F', '
 
 bool is_fifo_marker(const std::wstring& w) {
     WIN32_FILE_ATTRIBUTE_DATA d;
-    if (!GetFileAttributesExW(w.c_str(), GetFileExInfoStandard, &d) || (d.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) ||
-        d.nFileSizeHigh != 0 || d.nFileSizeLow != sizeof(kFifoMarker)) {
+    if (!GetFileAttributesExW(w.c_str(), GetFileExInfoStandard, &d) ||
+        (d.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || d.nFileSizeHigh != 0 ||
+        d.nFileSizeLow != sizeof(kFifoMarker)) {
         return false;
     }
     const HANDLE h = CreateFileW(w.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
