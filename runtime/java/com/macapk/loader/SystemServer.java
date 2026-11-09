@@ -38,6 +38,9 @@
 //                                           boot-time action (started on demand)
 //   HAS_PACKAGE(pkg) -> boolean, apkPath    is this package known here, and
 //                                           where its installed APK is
+//   PROVIDER_PACKAGE(authority) -> pkg      PMS resolveContentProvider: which
+//                                           package declares the authority (null:
+//                                           none); no process is started
 // and each app's thread (android.app.IMacApkApplicationThread):
 //   SCHEDULE_BIND(Intent) -> IBinder        run the bind on the app's main
 //                                           looper (ActivityThread.handleBindService)
@@ -153,6 +156,9 @@ public final class SystemServer {
     /** ContentService.notifyChange: (pkg, proc, uri), oneway; the broker calls
      *  TX_SCHEDULE_NOTIFY on every other process that observes the authority. */
     static final int TX_NOTIFY_CHANGE = IBinder.FIRST_CALL_TRANSACTION + 23;
+    /** PMS resolveContentProvider for another package: (authority) -> the
+     *  declaring package or null. Only the lookup; GET_PROVIDER is the acquire. */
+    static final int TX_PROVIDER_PACKAGE = IBinder.FIRST_CALL_TRANSACTION + 24;
     static final int TX_SCHEDULE_NOTIFY = IBinder.FIRST_CALL_TRANSACTION + 16;
     static final int TX_SCHEDULE_BIND = IBinder.FIRST_CALL_TRANSACTION + 10;
     static final int TX_ACQUIRE_PROVIDER = IBinder.FIRST_CALL_TRANSACTION + 11;
@@ -673,6 +679,17 @@ public final class SystemServer {
                     reply.writeNoException();
                     reply.writeInt(pr != null ? 1 : 0);
                     reply.writeString(pr != null ? pr.apkPath : null);
+                    return true;
+                }
+                case TX_PROVIDER_PACKAGE: {
+                    // The caller's PackageManager then answers from that
+                    // package's own manifest (SystemClient.pmFor), as
+                    // HAS_PACKAGE does for getPackageInfo.
+                    data.enforceInterface(DESCRIPTOR);
+                    String authority = data.readString();
+                    Object[] hit = authority == null ? null : findProvider(authority);
+                    reply.writeNoException();
+                    reply.writeString(hit != null ? ((PackageRecord) hit[0]).pkg : null);
                     return true;
                 }
                 case TX_RESOLVE: {

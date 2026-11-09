@@ -930,6 +930,19 @@ every such change is listed here:
   does not allow in a file name are written as `%XX` in a preferences file's
   name. Firebase Remote Config's `frc_1:<project>:android:...` file failed
   every write.
+- `runtime/java/com/android/internal/graphics/drawable/AnimationScaleListDrawable.java`
+  (new) and `android/content/res/Resources.java`: the platform's progress-bar
+  styles root their indeterminate drawable in this @hide class; it now inflates
+  (the animated child, or the static one when the animator duration scale is 0)
+  instead of a transparent drawable, so a progress bar that draws the style's
+  drawable itself (Google Play) shows its spinner. Not Windows-specific.
+- `runtime/java/com/macapk/loader/MacApkPackageManager.java`, `SystemClient.java`,
+  `SystemServer.java` (`PROVIDER_PACKAGE`): with the broker on,
+  `resolveContentProvider` also finds an authority another installed package
+  declares and answers from that package's manifest, as PMS does. Compose's
+  downloadable fonts (`com.google.android.gms.fonts`) failed with "The
+  requested provider was not found on this device." even with Google Play
+  services installed. Not Windows-specific.
 
 ## License
 

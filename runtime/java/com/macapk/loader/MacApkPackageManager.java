@@ -4821,6 +4821,20 @@ public final class MacApkPackageManager extends PackageManager {
             }
             return info;
         }
+        // Not ours: on a device PMS resolves every installed package's
+        // providers. With the broker on, ask it which package declares the
+        // authority and answer from that package's own manifest, so the
+        // ProviderInfo carries ITS package name (FontsContractCompat checks it
+        // against the FontRequest and then that package's signing
+        // certificates; Compose's GoogleFont -> com.google.android.gms.fonts is
+        // the case that found this). The query itself already crosses
+        // processes (ContentProviderRegistry -> SystemClient.remoteProvider).
+        // Without the broker nothing else is installed, and null is the answer.
+        String owner = SystemClient.providerPackage(authority);
+        if (owner != null && !owner.equals(this.packageName)) {
+            MacApkPackageManager peer = SystemClient.pmFor(owner);
+            if (peer != null && peer != this) return peer.resolveContentProvider(authority, flags);
+        }
         return null;
     }
 
