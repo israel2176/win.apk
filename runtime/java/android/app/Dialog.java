@@ -624,7 +624,8 @@ public class Dialog implements DialogInterface, android.content.DialogInterface.
                 // config_prefDialogWidth. See the comment above
                 // Dialog.MACAPK_DIALOG_WIDTH_AOSP for the numbers, the size
                 // classes and the citations.
-                android.widget.FrameLayout d = new android.widget.FrameLayout(mContext) {
+                android.widget.FrameLayout d =
+                        new com.android.internal.policy.DecorView(mContext, -1, this, getAttributes()) {
                     // The measureHierarchy memo (MACAPK_DIALOG_MEASURE_MEMO):
                     // the inputs of the last full pre-pass and the width spec
                     // its final super.onMeasure used. minW and pref are pure

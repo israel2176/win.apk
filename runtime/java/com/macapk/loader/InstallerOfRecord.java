@@ -50,6 +50,11 @@ public final class InstallerOfRecord {
     /** The package that installed `pkg` through PackageInstaller, or null. */
     public static String get(String pkg) {
         if (pkg == null) return null;
+        // Win.apk, debugging only: WINAPK_TEST_INSTALLER=<package> (e.g. com.android.vending) answers that
+        // installer for every app but itself, to see how an app behaves once it believes a store installed
+        // it. Never set by the launcher or the installer; no setting shows it.
+        String test = System.getenv("WINAPK_TEST_INSTALLER");
+        if (test != null && !test.isEmpty() && !test.equals(pkg)) return test;
         String v = load().getProperty(pkg);
         if (v == null || v.isEmpty()) v = backfillFromPlay(pkg);
         return (v == null || v.isEmpty()) ? null : v;

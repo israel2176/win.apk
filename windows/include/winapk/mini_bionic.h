@@ -33,6 +33,12 @@ void mini_bionic_run_atexit_in(const void* base, size_t size);
 // guest's handlers run before the report.
 void guest_signals_install();
 
+// fts_open for a caller whose struct stat is not x86_64's (an arm64 library):
+// `fill` writes each entry's fts_statp from the shim's x86_64 stat. `compar`
+// is the caller's comparator, callable as a System V function.
+using FtsStatFill = void (*)(const void* x86_64_stat, void* out);
+void* fts_open_with_stat(char* const* argv, int options, void* compar, FtsStatFill fill);
+
 // The guest's system properties (__system_property_get). The Java framework
 // pushes its values here (NativeCocoa.setSystemProperty); null erases.
 void property_set(const char* name, const char* value);

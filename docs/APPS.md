@@ -98,9 +98,13 @@ first screen. The list is `windows/test/compat/apps.txt`; every pull request
 that touches the runtime boots ten of them (`smoke.txt`) and fails if one no
 longer draws.
 
-The last full run (2026-11-08, [CI run 42518858070](https://github.com/israel2176/win.apk/actions/runs/42518858070)):
-**90 of 92 drew their first screen.** MuPDF Viewer started but drew a blank
-screen, and Tiny Wheels crashed at start.
+The last full run (2026-11-09, [CI run 42633462999](https://github.com/israel2176/win.apk/actions/runs/42633462999)):
+**91 of 92 drew their first screen.** Tiny Wheels crashed at start, with no
+crash report, in its native font code: a frame that ran past the part of the
+thread's stack Windows had committed. The runtime has committed that stack
+ahead since the run before, but on Windows it took the guard region below it
+for one page, which on x64 is several, and so committed nothing; it now finds
+the region whatever its size (the next run will tell).
 
 ![First screens of six F-Droid apps from the sweep: Shattered Pixel Dungeon, Thunderbird, Mindustry, Lexica, DAVx5 and Loop Habit Tracker](images/apps.png)
 

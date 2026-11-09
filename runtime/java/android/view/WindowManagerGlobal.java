@@ -60,6 +60,85 @@ public final class WindowManagerGlobal {
 
     private WindowManagerGlobal() { }
 
+    // ---- AOSP's window registry fields ----
+    //
+    // AOSP keeps the process's windows in three parallel lists under mLock:
+    // mViews (each window's root view), mRoots (its ViewRootImpl) and mParams
+    // (its WindowManager.LayoutParams); addView appends to all three and
+    // removeViewLocked takes the same index out of each. Libraries read and even
+    // REPLACE them by reflection: LeakCanary's Curtains (WindowManagerSpy) swaps
+    // mViews for its own ArrayList subclass, after copying what is there, to be
+    // told of every window added (add) and removed (remove(int)); Radiography
+    // and others read mViews to walk every window. AnkiDroid's LeakCanary died
+    // on the missing field at start. So the lists are real and kept in sync with
+    // the windows we hold (each activity's window from its first resume to its
+    // destroy, ActivityHost; every WindowManager.addView window,
+    // WindowOverlayStack), mutated the way AOSP does (add(E), remove(int)) and
+    // always through the field, so a swapped list sees every change. mRoots is
+    // left out: we have one ViewRootImpl for the process, not one per window, and
+    // a list of the same object would answer questions about the wrong window.
+    private final Object mLock = new Object();
+    private ArrayList<View> mViews = new ArrayList<>();
+    private ArrayList<WindowManager.LayoutParams> mParams = new ArrayList<>();
+    /** Which root stands for each activity's window. Weak both ways: the root's
+     *  context is the activity, so a strong value would pin its own key. */
+    private final java.util.Map<android.app.Activity, java.lang.ref.WeakReference<View>> mActivityRoots =
+        new java.util.WeakHashMap<>();
+
+    /** AOSP addView's bookkeeping: the root and its params go on the end of the
+     *  lists; a root already there only has its params replaced (AOSP throws
+     *  "already been added" for that; our callers re-add on update). */
+    public void macapkWindowAdded(View root, WindowManager.LayoutParams params) {
+        if (root == null) return;
+        synchronized (mLock) {
+            ArrayList<View> views = mViews;
+            int i = views.indexOf(root);
+            if (i >= 0) {
+                if (i < mParams.size()) mParams.set(i, params);
+                return;
+            }
+            views.add(root);
+            mParams.add(params);
+        }
+    }
+
+    /** AOSP removeViewLocked's bookkeeping: the same index out of each list. */
+    public void macapkWindowRemoved(View root) {
+        if (root == null) return;
+        synchronized (mLock) {
+            ArrayList<View> views = mViews;
+            int i = views.indexOf(root);
+            if (i < 0) return;
+            views.remove(i);
+            if (i < mParams.size()) mParams.remove(i);
+        }
+    }
+
+    /** handleResumeActivity's wm.addView(decor, attrs): the activity's window
+     *  joins the registry at its first visible resume. Idempotent. */
+    public void macapkActivityWindowAdded(android.app.Activity a) {
+        if (a == null || a.isFinishing()) return;
+        Window w = a.getWindow();
+        View decor = (w != null) ? w.getDecorView() : null;
+        if (decor == null) return;
+        synchronized (mLock) {
+            java.lang.ref.WeakReference<View> prev = mActivityRoots.get(a);
+            View old = (prev != null) ? prev.get() : null;
+            if (old == decor) return;
+            mActivityRoots.put(a, new java.lang.ref.WeakReference<>(decor));
+            if (old != null) macapkWindowRemoved(old);
+        }
+        macapkWindowAdded(decor, w.getAttributes());
+    }
+
+    /** handleDestroyActivity's wm.removeViewImmediate(decor). */
+    public void macapkActivityWindowRemoved(android.app.Activity a) {
+        if (a == null) return;
+        java.lang.ref.WeakReference<View> ref;
+        synchronized (mLock) { ref = mActivityRoots.remove(a); }
+        if (ref != null) macapkWindowRemoved(ref.get());
+    }
+
     /** The active Activity's own content root, if any. Mirrors AOSP's "one
      *  ViewRootImpl per top-level window" model collapsed to our single
      *  window: this IS the base window every overlay draws on top of. */

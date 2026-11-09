@@ -33,7 +33,7 @@ this repository.
 | Path | What it is |
 |---|---|
 | `include/winapk/`, `src/` | The ELF loader (`elf_loader.cpp`), the guest linker (`linker.cpp`), dynamic ELF TLS (`elf_tls.cpp`), the `%fs` stack-guard patch (`fs_tls_patch.cpp`), the ABI thunks (`abi_thunk.cpp`), the guest `JNIEnv` (`guest_jni.cpp`, `jni_slots.inc`), the variadic JNI bridge (`jni_variadic.cpp`), native-method binding (`jni_bind.cpp`), libjnigraphics (`jnigraphics.cpp`) |
-| `src/mini_bionic.cpp`, `src/bionic/` | The Bionic shim: Android's libc, libdl, liblog, libm, libz and the NDK's `ALooper` on the UCRT and Win32, about 520 System V functions |
+| `src/mini_bionic.cpp`, `src/bionic/` | The Bionic shim: Android's libc, libdl, liblog, libm, libz and the NDK's `ALooper` and `ATrace` on the UCRT and Win32, about 900 System V functions |
 | `src/arm64/` | The arm64 engines: interpreter (`arm64_cpu.cpp`, `arm64_simd.cpp`), JIT (`arm64_jit.cpp`, dynarmic), ahead-of-time translator (`arm64_aot.cpp`) and the AAPCS64 bridge (`arm64_guest.cpp`, `arm64_abi.cpp`) |
 | `host/` | `winapk-runtime.exe` (`runtime_main.cpp`), the app window (`win32_window.cpp`), the host natives (`native_*.cpp`, one file per Java class; `host_natives.cpp` binds them), the GL layer (`gl/`), the app-library loading path (`guest_libs.cpp`, `guest_stub.cpp`, `translator_main.cpp`), shared storage (`user_folders.cpp`), java.io's file opens with `FILE_SHARE_DELETE` (`java_io_open.cpp`), class-data sharing (`cds.cpp`, `cds_util.cpp`) |
 | `launcher/` | `Win.apk.exe`, the app library, the install helper and the permission dialogs (`launcher_main.cpp`, `launcher.rc`, the icon) |
@@ -190,6 +190,7 @@ The user-facing ones (`WINAPK_PHONE_SIZE`, `WINAPK_RESIZABLE`,
 | `WINAPK_TEST_JAVA_BASE_PATCH=<dir>` | `winapk-binder-test` only: the java.base overlay its JVM runs with (`stage\lib\java_base_patch`) |
 | `WINAPK_JAVA_IO_SHARE_DELETE=0` | java.io opens files as the JDK does, without `FILE_SHARE_DELETE` (`host/java_io_open.cpp`), for comparing |
 | `WINAPK_DUMP_VIEWS=1` | Logs the top window's views (`[viewdump]` lines: class, id name, text, content description, clickable, enabled, bounds in the frame's pixels) each time its content changes and then holds still for half a second, with a Compose view's nodes from its accessibility provider, as uiautomator's dump does; a test finds and taps a button from them (`runtime/java/com/macapk/loader/ViewDump.java`) |
+| `WINAPK_TEST_INSTALLER=<package>` | Debugging only: `getInstallerPackageName` and `getInstallSourceInfo` answer that installer (e.g. `com.android.vending`, Google Play) for every app, as if a store installed it; nothing in Win.apk sets it (`runtime/java/com/macapk/loader/InstallerOfRecord.java`) |
 | `WINAPK_TEST_RESIZE=<w>x<h>` | A second after the first frame, resizes the window to a client area of that many pixels (CI's "Boot an APK in a window") |
 | `MACAPK_APK_PATH` | Set by the runtime, not by hand: the installed APK, which `PresentedSdk` reads the app's targetSdk and minSdk from to choose the API level the app is presented (its targetSdk within 29..36, never below its minSdk); `MACAPK_SDK_INT=<n>` forces a level, `MACAPK_SDK_FROM_TARGET=0` presents 29 (still never below the minSdk) |
 | `MACAPK_BROKER_TRIGGER_CHECKIN=0` | The broker does not nudge Play services to check in at boot (it nudges at most three times, and not at all once Play services has broadcast `CHECKIN_COMPLETE`) |
@@ -240,8 +241,8 @@ Every test is a program built by CMake; `ci.yml` runs each of them on
 | `winapk-thunk-test` | Native-method thunks with mixed, stack-overflowing and narrow arguments; the variadic entry stub's `va_list`; the tagged zero stub |
 | `winapk-jni-test`, `winapk-jni-variadic-test` | The guest `JNIEnv` against a mock JVM; the variadic bridge for all four call kinds and every argument type, through `...` and `va_list` |
 | `winapk-linker-test <dir>` | A four-library tree with a `DT_NEEDED` cycle and a runtime plugin: constructor order, symbol resolution, `dlsym` scopes, the guest's `dlopen`, `dlsym`, `dlerror` and `dladdr` |
-| `winapk-bionic-test <bionic_guest.so> <scratch dir>` | `test/guest/bionic_guest.c` exercises the shim from guest code: strings, printf and scanf through the System V `va_list`, threads and keys, files and directories, ELF TLS, system properties, locales, futex, an 8 GiB `PROT_NONE` reservation, pipes, eventfd, epoll, sockets, `ALooper`, clocks, `mmap` |
-| `winapk-arm64-test <dir>` | The arm64 engines: `test/guest/arm64_isa.c` built for the host and for arm64 at three optimization levels must agree on every function, on the interpreter, the JIT and the AOT translation; then `arm64_bridge_guest.c` (calls in both directions, variadics, threads, atexit); `arm64_flow_guest.c` (returns into an ancestor frame with RET and BR, coroutines, RETAA, deep recursion on a 1 MB thread, saturating conversions, FRECPS/FRSQRTS, an exclusive-monitor counter shared by translated code and the JIT, the STLR/LDAR litmus test) against values worked out by hand; `arm64_patch_guest.c` (a library patching its own code, and code patched by one thread while another runs it), `arm64_eh_guest.cpp` (C++ exceptions through the NDK's libc++ and unwinder, built when `ANDROID_NDK_HOME` names an NDK), a library unloaded with `dlclose`, one linked at another address, a translation cut short under a stamp that says it is sealed (refused) and the same one whole (loaded); 400 functions of random instructions from `gen_arm64_fuzz.py`, whose results on the JIT and the translation must match the interpreter's (`WINAPK_FUZZ_STATE=<i>` starts every function from function i's states, to bisect a difference); and `arm64_bench.c` (the speed ratios) |
+| `winapk-bionic-test <bionic_guest.so> <scratch dir>` | `test/guest/bionic_guest.c` exercises the shim from guest code: strings, printf and scanf through the System V `va_list`, threads and keys, files and directories, ELF TLS, system properties, locales, futex, an 8 GiB `PROT_NONE` reservation, pipes, eventfd, epoll, sockets, `ALooper`, clocks, `mmap`; `random(3)` against glibc's sequences (the same generator), `fts` walks, `link`, `popen`/`system` without a shell, `fscanf`, `strptime`, cleanup handlers run by `pthread_exit`, `sched_getaffinity`, FORTIFY's `FD_*`, the binary128 `lroundl` family |
+| `winapk-arm64-test <dir>` | The arm64 engines: `test/guest/arm64_isa.c` built for the host and for arm64 at three optimization levels must agree on every function, on the interpreter, the JIT and the AOT translation; then `arm64_bridge_guest.c` (calls in both directions, variadics, threads, atexit, `fts` filling arm64's `struct stat`, cleanup handlers); `arm64_flow_guest.c` (returns into an ancestor frame with RET and BR, coroutines, RETAA, deep recursion on a 1 MB thread, saturating conversions, FRECPS/FRSQRTS, an exclusive-monitor counter shared by translated code and the JIT, the STLR/LDAR litmus test) against values worked out by hand; `arm64_patch_guest.c` (a library patching its own code, and code patched by one thread while another runs it), `arm64_eh_guest.cpp` (C++ exceptions through the NDK's libc++ and unwinder, built when `ANDROID_NDK_HOME` names an NDK), a library unloaded with `dlclose`, one linked at another address, a translation cut short under a stamp that says it is sealed (refused) and the same one whole (loaded); 400 functions of random instructions from `gen_arm64_fuzz.py`, whose results on the JIT and the translation must match the interpreter's (`WINAPK_FUZZ_STATE=<i>` starts every function from function i's states, to bisect a difference); and `arm64_bench.c` (the speed ratios) |
 | `winapk-aot-cache-test <scratch dir>` | The arm64 translation's files (`include/winapk/aot_files.h`) in real processes, with `winapk-aot-test-dll.dll` as the translation: a seal against DLLs cut short, emptied, zeroed or changed; eight processes taking, making, putting and loading one cache entry at once (hard links and copies); writers killed at random moments and at each step of a write; broken cache entries deleted and replaced; eviction and replacement while another process has the DLL loaded; the clock (60 days, dates in the future, the size cap); stamps rewritten by four processes while another reads them |
 | `winapk-audio-test <test/audio>` | The WASAPI mixer and the decoders |
 | `winapk-user-folders-test <dir>` | The shared-storage junction rules |
@@ -515,7 +516,9 @@ every such change is listed here:
   installer of record, and with Google services on the per-package uids and
   the broker's state) live in the data folder, `%LOCALAPPDATA%\Win.apk`,
   beside `installed_apps.json`, not in a `Library\Application Support` folder
-  under the user profile. On the Mac nothing changes.
+  under the user profile. On the Mac nothing changes. `InstallerOfRecord.get`
+  also answers `WINAPK_TEST_INSTALLER`, a debugging override (see the
+  environment table).
 - `HostAppSupport` users that upstream spells with Mac paths: the caches
   (`MacApkSystemFonts`: the `/system/fonts` Flutter's Skia reads,
   `MacApkFontStore`, `ResourceIndex`'s framework view, `monet/Monet`) go to
@@ -981,6 +984,78 @@ every such change is listed here:
   `ServiceInfo.permission` is the service's `android:permission` (else the
   application's). IBM Trusteer's TAZ checks a job service for
   `BIND_JOB_SERVICE` and stopped its start without it. Not Windows-specific.
+- `runtime/java/com/macapk/loader/Boot.java`, `HttpAgent.java`: `java.vm.version`
+  is ART's `2.1.0`, as on every Android since 5. androidx MultiDex 2.x reads it
+  to decide whether the VM loads secondary dex files itself; HotSpot's
+  `21.0.x+y-LTS` did not match its pattern, so it reflected on
+  `DexPathList.makeDexElements`, which our loader does not have, and logged
+  "MultiDex installation failed" (KeePassDX, Tripeaks). Not Windows-specific.
+- `runtime/java/android/view/WindowManagerGlobal.java`, with
+  `com/macapk/loader/WindowOverlayStack.java` and `ActivityHost.java`: AOSP's
+  `mViews` and `mParams` lists exist and follow the windows we hold (each
+  activity's window from its first resume to its destroy, every
+  `WindowManager.addView` window), changed with `add` and `remove(int)` through
+  the field, so a list an app swaps in (LeakCanary's Curtains) sees each
+  change. AnkiDroid's LeakCanary failed with `NoSuchFieldException: mViews`.
+  `mRoots` is not provided (one `ViewRootImpl` for the process). Not
+  Windows-specific.
+- `runtime/java/android/graphics/FontFamily.java` (new), `Typeface.java`
+  (`createFromFamiliesWithDefault`) and `android/content/res/AssetManager.java`
+  (`openNonAsset`): the hidden family builder androidx.core's
+  `TypefaceCompatApi21/24/26/28Impl` reflect on, backed by our font loader; a
+  family becomes an app font family, so its bold face is used for bold.
+  DroidFish logged `ClassNotFoundException: android.graphics.FontFamily`.
+  Not Windows-specific.
+- `runtime/java/android/app/Activity.java` and `MacApkToolbarActionBar.java`
+  (new): a window whose theme asks for the platform action bar
+  (`windowActionBar`, as Holo, Material and DeviceDefault do; not AppCompat)
+  gets AOSP's `screen_action_bar` decor: a real `android.widget.Toolbar`
+  with the id `@android:id/action_bar` in `action_bar_container` above the
+  content, styled from `?android:actionBarStyle`. `getActionBar()` drives it
+  (title, subtitle, display options, Up, show and hide, custom view), and the
+  options menu fills its menu, with item clicks and Up (`android.R.id.home`)
+  going to `onMenuItemSelected`. Before, there was no bar, and apps that look
+  the Toolbar up by id got null (Currency's `setNavigationIcon` NPE).
+  `MACAPK_PLATFORM_ACTION_BAR=0` restores the old decor. Not
+  Windows-specific.
+- `runtime/java/android/content/res/Resources.java` (`openRawResourceFd`)
+  and `ContentResolver.java` (a comment): the raw resource's file as the
+  apk's own descriptor at the entry's offset, through `openNonAssetFd`, as
+  AOSP's `ResourcesImpl.openRawResourceFd` does; an id with no file or a
+  compressed entry throws `NotFoundException`. It returned null, and
+  ConnectBot's terminal service died with a `NullPointerException` on the
+  descriptor. Not Windows-specific.
+- `runtime/java/com/android/internal/policy/DecorView.java` (new), used by
+  `android/app/Activity.java` and `Dialog.java` for the window's root view,
+  with the field `mWindow`: square's curtains (in AnkiDroid, LeakCanary) finds
+  a window's root by that class name and reads its window from that field.
+  AnkiDroid logged `ClassNotFoundException: com.android.internal.policy.DecorView`.
+  Not Windows-specific.
+- `runtime/java/com/macapk/loader/BinaryXmlParser.java`: a compiled XML
+  element keeps its own namespace (`ResXMLTree_attrExt.ns`), and a default
+  namespace declaration (`xmlns="..."`) is kept, so `getNamespace()` answers
+  what Android's parser does. OpenTasks reads its tab list
+  (`<tabconfig xmlns="http://schema.dmfs.org/tasks">`) by qualified name and
+  found nothing (`Broken fragile delegate`, an NPE in `TabConfig.load`). Not
+  Windows-specific.
+- `runtime/java/android/app/Activity.java`: the window's generateLayout
+  reads the framework's window attributes (`android:windowNoTitle`,
+  `android:windowActionBar`, ...), as `R.styleable.Window` does. Read by bare
+  name, AppCompat's own `windowNoTitle` (false) and `windowActionBar` (true)
+  won, so every DarkActionBar AppCompat activity got the platform action bar
+  and its options menu as a platform `Menu` (NetGuard's SearchView and
+  SMSSecure's NPEs in `onCreateOptionsMenu`/`onPrepareOptionsMenu`). Not
+  Windows-specific.
+- `runtime/java/android/widget/ActionMenuView.java`: the Toolbar menu's
+  `addSubMenu` is MenuBuilder's, a submenu tied to its item, so `findItem`
+  reaches items nested in a submenu (Editor's NPE on its Typeface items).
+  Opening a submenu from the bar is not drawn yet. Not Windows-specific.
+- `runtime/java/android/media/RingtoneManager.java` (`getDefaultUri`,
+  `getDefaultType`, `isDefault`) and `android/preference/RingtonePreference.java`
+  (comments): the default sound of a type is AOSP's `Settings.System` URI
+  (`content://settings/system/alarm_alert`...), not null. Fossify Clock
+  builds its alarm table from it and died creating its database. Not
+  Windows-specific.
 
 ## License
 

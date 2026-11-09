@@ -621,6 +621,8 @@ public final class ActivityHost {
         // queued (keeping the activity reachable from the MessageQueue) and its
         // animations kept running for a screen nobody could see.
         {
+            try { android.view.WindowManagerGlobal.getInstance().macapkActivityWindowRemoved(a); }
+            catch (Throwable ignored) { }
             try {
                 android.view.View content = a.macapkContentView();
                 if (content != null) content.macapkRemoveWindow();
@@ -3498,6 +3500,10 @@ public final class ActivityHost {
      *  gets its surface behind the translucent GrantPermissionsActivity.
      *  OFF (unset / =0): does nothing (nothing reads the latch then). */
     static void latchWindowAdded(Activity a, boolean reveal) {
+        // The window joins WindowManagerGlobal's mViews/mParams, as
+        // handleResumeActivity's wm.addView does. Idempotent per window.
+        try { android.view.WindowManagerGlobal.getInstance().macapkActivityWindowAdded(a); }
+        catch (Throwable t) { NativeLog.w(TAG, "window registry add failed: " + t); }
         // A window whose input queue was taken (NativeActivity) gets its
         // InputQueue here, after the resume, as ViewRootImpl.setView builds it
         // when handleResumeActivity adds the window. Independent of the

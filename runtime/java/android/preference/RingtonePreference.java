@@ -26,9 +26,9 @@
 // same thing that happens on an Android device with no ringtone picker
 // installed. Nothing here pretends a picker ran or invents a Uri; per the
 // no-shortcuts rule, a capability we cannot honour is not advertised.
-// RingtoneManager.getDefaultUri returns null on Mac.apk
-// (runtime/java/android/media/RingtoneManager.java: "no system default"), so
-// EXTRA_RINGTONE_DEFAULT_URI is simply absent rather than fabricated.
+// RingtoneManager.getDefaultUri answers AOSP's Settings.System URI for the
+// type (it names the default setting, not a sound file), so
+// EXTRA_RINGTONE_DEFAULT_URI carries what it carries on a device.
 package android.preference;
 
 import android.content.Context;
@@ -129,10 +129,6 @@ public class RingtonePreference extends Preference
         ringtonePickerIntent.putExtra(RingtoneManager.EXTRA_RINGTONE_SHOW_DEFAULT, mShowDefault);
         if (mShowDefault) {
             Uri defaultUri = RingtoneManager.getDefaultUri(getRingtoneType());
-            // Null on Mac.apk (no system ringtone set). AOSP would put a real
-            // Uri; putting a null extra is what AOSP does when getDefaultUri
-            // returns null, so the picker sees "no default" rather than a Uri
-            // that resolves to nothing.
             ringtonePickerIntent.putExtra(RingtoneManager.EXTRA_RINGTONE_DEFAULT_URI, defaultUri);
         }
 

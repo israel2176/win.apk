@@ -522,6 +522,56 @@ public class Typeface {
         }
     }
 
+    // ---- The hidden factories over android.graphics.FontFamily ----
+    //
+    // AOSP keeps these private (@UnsupportedAppUsage); androidx's
+    // TypefaceCompatApi21/24/26/28Impl call them by reflection after building
+    // FontFamily objects. hwui Typeface::createFromFamilies: with
+    // RESOLVE_BY_FONT_TABLE (-1) the weight and slant come from the family's
+    // closest match to the default style (400, upright), else from the
+    // arguments; that weight is the base weight. The first family is the
+    // primary one; the others only add glyph coverage, which our single-face
+    // text path cannot use, so the first family's faces become an app family
+    // that create(tf, BOLD) resolves within, as the res/font XML path does.
+
+    /** API 21-25. */
+    public static Typeface createFromFamiliesWithDefault(FontFamily[] families) {
+        return createFromFamiliesWithDefault(families, "sans-serif", -1, -1);
+    }
+
+    /** API 26-27. */
+    public static Typeface createFromFamiliesWithDefault(FontFamily[] families, int weight, int italic) {
+        return createFromFamiliesWithDefault(families, "sans-serif", weight, italic);
+    }
+
+    /** API 28+. */
+    public static Typeface createFromFamiliesWithDefault(FontFamily[] families, String fallbackName,
+                                                         int weight, int italic) {
+        FontFamily first = null;
+        if (families != null) {
+            for (FontFamily f : families) {
+                if (f != null && !f.macapkFaces().isEmpty()) { first = f; break; }
+            }
+        }
+        if (first == null) return create(getSystemDefaultTypeface(fallbackName), NORMAL);
+        java.util.List<Object[]> faces = first.macapkFaces();
+        // The default-style closest match: nearest weight to 400 among the
+        // upright faces when there are any (minikin weighs slant above weight).
+        Object[] best = null;
+        int bestScore = Integer.MAX_VALUE;
+        for (Object[] f : faces) {
+            int score = Math.abs((Integer) f[0] - 400) + (((Boolean) f[1]) ? 10000 : 0);
+            if (score < bestScore) { bestScore = score; best = f; }
+        }
+        int w = (weight == -1) ? (Integer) best[0] : clampWeight(weight);
+        boolean it = (italic == -1) ? (Boolean) best[1] : italic == 1;
+        String fam = MacApkFontFamilies.registerAppFamily(faces);
+        if (fam != null) return new Typeface(null, fam, w, computeAPIStyle(w, it), w);
+        // Table gated off (MACAPK_FONT_FAMILY=0): the single matched face.
+        Font face = (Font) best[2];
+        return new Typeface(face, null, w, computeAPIStyle(w, it), w, (Integer) best[0], (Boolean) best[1]);
+    }
+
     /** AOSP Typeface.defaultFromStyle (API 1): the default family in the given
      *  style (NORMAL/BOLD/ITALIC/BOLD_ITALIC). */
     public static Typeface defaultFromStyle(int style) {

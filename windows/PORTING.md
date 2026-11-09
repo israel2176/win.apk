@@ -306,6 +306,25 @@ nobody has to find them again.
   Each such site faults once.
 - x64 `NT_TIB` layout: 0x00 ExceptionList, 0x08 StackBase, 0x10 StackLimit,
   0x18 SubSystemTib, 0x20 FiberData, 0x28 ArbitraryUserPointer, 0x30 Self.
+- Code built for Linux does not probe its stack a page at a time, as Windows
+  code must (`__chkstk`): a function with a frame over 4 KB (FreeType's
+  rasterizer keeps 16 KB on the stack) writes below the guard page into
+  stack that is only reserved. Windows cannot deliver that fault, having no
+  stack to deliver it on, so the process ends with 0xC0000005 and no handler
+  runs: no crash line, no minidump (Pixel Wheels, at its third font). A
+  Linux thread's stack is mapped whole. `commit_guest_stack_for_current_thread`
+  (`fs_tls_patch.cpp`) commits up to 1 MB below the part in use, once per
+  thread, from `wrap_host_env` (every Java call into a guest native) and the
+  shim's `pthread_create`, and moves the guard region to the bottom of it. It
+  costs commit charge, not memory: the pages stay untouched until used. The
+  guard region is one page under Wine but several on x64 Windows: the first
+  version took it for exactly one page, found no reserved run below it on
+  Windows and committed nothing, so Pixel Wheels died the same way. It now
+  takes the PAGE_GUARD region that ends at StackLimit, whatever its size;
+  `winapk-elfrun` checks a 1- and a 3-page guard and the system's own layout,
+  and a layout it does not know is said once in the log ("stack: thread ...
+  is not laid out as expected"). Wine commits a thread's whole stack, so
+  there it has nothing to do.
 - lld emits Android APS2 relocations with `--pack-dyn-relocs=android+relr`.
   With `--use-android-relr-tags` it writes `DT_ANDROID_RELR` (0x6fffe000)
   instead of `DT_RELR`. The loader handles both. APS2 decoding mirrors bionic's

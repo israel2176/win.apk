@@ -152,9 +152,27 @@ public class RingtoneManager {
         r.setUri(ringtoneUri);
         return r;
     }
-    public static android.net.Uri getDefaultUri(int type) { return null; }
-    public static int getDefaultType(android.net.Uri defaultRingtoneUri) { return -1; }
-    public static boolean isDefault(android.net.Uri ringtoneUri) { return false; }
+    /** AOSP getDefaultUri: the Settings.System URI that stands for the
+     *  default sound of a type, whatever that sound is (it names the setting,
+     *  not a file), and null only for a type that is none of the three.
+     *  Fossify Clock builds its alarm table from getDefaultUri(TYPE_ALARM)
+     *  .toString() and died on the null this used to answer. */
+    public static android.net.Uri getDefaultUri(int type) {
+        if ((type & TYPE_RINGTONE) != 0) return android.provider.Settings.System.DEFAULT_RINGTONE_URI;
+        if ((type & TYPE_NOTIFICATION) != 0) return android.provider.Settings.System.DEFAULT_NOTIFICATION_URI;
+        if ((type & TYPE_ALARM) != 0) return android.provider.Settings.System.DEFAULT_ALARM_ALERT_URI;
+        return null;
+    }
+    /** AOSP getDefaultType: which of getDefaultUri's URIs this is, or -1. */
+    public static int getDefaultType(android.net.Uri defaultRingtoneUri) {
+        if (defaultRingtoneUri == null) return -1;
+        if (defaultRingtoneUri.equals(android.provider.Settings.System.DEFAULT_RINGTONE_URI)) return TYPE_RINGTONE;
+        if (defaultRingtoneUri.equals(android.provider.Settings.System.DEFAULT_NOTIFICATION_URI)) return TYPE_NOTIFICATION;
+        if (defaultRingtoneUri.equals(android.provider.Settings.System.DEFAULT_ALARM_ALERT_URI)) return TYPE_ALARM;
+        return -1;
+    }
+    /** AOSP isDefault: getDefaultType(uri) != -1. */
+    public static boolean isDefault(android.net.Uri ringtoneUri) { return getDefaultType(ringtoneUri) != -1; }
     public static void setActualDefaultRingtoneUri(android.content.Context context,
                                                    int type, android.net.Uri ringtoneUri) {}
     public static android.net.Uri getActualDefaultRingtoneUri(android.content.Context context, int type) {

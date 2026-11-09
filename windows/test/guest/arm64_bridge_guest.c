@@ -220,3 +220,79 @@ EXPORT int arm64_setjmp(void) {
     snprintf(buf, sizeof buf, "%d", r);  // the stack is usable after the jump
     return (int)strtol(buf, 0, 10) * 10000 + trail * 10 + (int)kept;  // 42 * 10000 + 123 * 10 + 9
 }
+
+// ---- arm64 layouts the shim converts: fts's struct stat; and cleanup handlers ----------
+struct a64_stat {  // Bionic arm64 (asm-generic): 128 bytes, st_size at 48
+    unsigned long dev, ino;
+    unsigned mode, nlink, uid, gid;
+    unsigned long rdev, pad1;
+    long size;
+    int blksize, pad2;
+    long blocks, times[6];
+    unsigned unused[2];
+};
+int stat(const char*, struct a64_stat*);
+typedef struct FTSENT {
+    struct FTSENT *cycle, *parent, *link;
+    long number;
+    void* pointer;
+    char *accpath, *path;
+    int err, symfd;
+    size_t pathlen, namelen;
+    unsigned long ino, dev;
+    unsigned nlink;
+    short level;
+    unsigned short info, flags, instr;
+    struct a64_stat* statp;
+    char name[1];
+} FTSENT;
+typedef struct FTS FTS;
+FTS* fts_open(char* const*, int, int (*)(const FTSENT**, const FTSENT**));
+FTSENT* fts_read(FTS*);
+int fts_close(FTS*);
+
+static int g_fts_compares;
+static int fts_by_name(const FTSENT** a, const FTSENT** b) {
+    ++g_fts_compares;
+    return strcmp((*a)->name, (*b)->name);
+}
+
+// Walks `dir` (FTS_PHYSICAL, sorted by a guest comparator) and returns 1 when
+// `name` was found with the size stat() gives it, in arm64's struct stat.
+EXPORT int arm64_fts(const char* dir, const char* name) {
+    char* roots[] = {(char*)dir, 0};
+    FTS* fts = fts_open(roots, 0x10, fts_by_name);
+    if (!fts) return -1;
+    int found = 0;
+    for (FTSENT* e; (e = fts_read(fts));) {
+        if (e->level != 1 || strcmp(e->name, name) != 0) continue;
+        struct a64_stat st;
+        found = e->info == 8 && stat(e->path, &st) == 0 && st.size > 0 && e->statp->size == st.size &&
+                (e->statp->mode & 0170000) == 0100000;
+    }
+    fts_close(fts);
+    return found && g_fts_compares > 0;
+}
+
+struct cleanup_t { struct cleanup_t* prev; void (*routine)(void*); void* arg; };
+void __pthread_cleanup_push(struct cleanup_t*, void (*)(void*), void*);
+void __pthread_cleanup_pop(struct cleanup_t*, int);
+void pthread_exit(void*) __attribute__((noreturn));
+static int g_cleanup_sum;
+static void cleanup_add(void* arg) { g_cleanup_sum = g_cleanup_sum * 10 + (int)(long)arg; }
+static void* cleanup_thread(void* arg) {
+    (void)arg;
+    struct cleanup_t a, b;
+    __pthread_cleanup_push(&a, cleanup_add, (void*)1);
+    __pthread_cleanup_push(&b, cleanup_add, (void*)2);
+    __pthread_cleanup_pop(&b, 1);
+    pthread_exit((void*)3);
+}
+// 2 (popped with execute), then 1 (run by pthread_exit), then 3 joined: 213.
+EXPORT int arm64_cleanup(void) {
+    pthread_t t;
+    void* r = 0;
+    g_cleanup_sum = 0;
+    if (pthread_create(&t, 0, cleanup_thread, 0) || pthread_join(t, &r)) return -1;
+    return g_cleanup_sum * 10 + (int)(long)r;
+}

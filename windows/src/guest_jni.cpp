@@ -18,6 +18,7 @@
 // this thread is attached to.
 
 #include "winapk/guest_jni.h"
+#include "winapk/fs_tls_patch.h"
 
 #include "winapk/guest_abi.h"
 #include "winapk/jni_bind.h"
@@ -261,6 +262,9 @@ void build_guest_table() {
 
 // Updates this thread's guest env to wrap `host` and returns it as a JNIEnv*.
 JNIEnv* wrap_host_env(JNIEnv* host) {
+    // Every call from Java into a guest native passes here: the first on a
+    // thread readies its stack for code that does not probe it.
+    commit_guest_stack_for_current_thread();
     t_env.functions = &g_guest_table;
     t_env.host = host;
     t_env.alive = true;
