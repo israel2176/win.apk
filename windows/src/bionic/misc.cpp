@@ -642,6 +642,68 @@ bool map_in_place(void* addr, size_t len, bool commit) {
     return true;
 }
 
+// MAP_SHARED mappings of a file: views of the file itself, by the address the
+// guest got. A private copy (the fallback below) never reaches the file, and
+// two mappings of one file never see each other's writes: Realm (Bit) writes
+// its lock file's header through one mapping and reads `init_complete` back
+// through another, and spun on 0 for ever; MMKV and SQLite's shared memory
+// keep their data in such mappings too.
+struct SharedView {
+    void* view;  // what MapViewOfFile returned: the offset rounded down to the allocation granularity
+    size_t len;  // what the guest asked for, from the address it got
+};
+std::map<uintptr_t, SharedView> g_views;  // under g_maps_lock
+
+// A view of `len` bytes of the file `fd` has open, from `off`, or null to fall
+// back to a private copy: an exec or MAP_FIXED mapping, a descriptor without
+// a file, a range past the file's last page (Linux maps it and faults on
+// access; a section cannot be larger than the file without growing it), an
+// empty file (no section), or a read-only file asked for writing.
+void* map_shared_view(size_t len, int prot, int fd, int64_t off) {
+    if ((prot & 4) || off < 0 || fd_object(fd)) return nullptr;
+    const intptr_t h = _get_osfhandle(fd);
+    if (h == -1) return nullptr;
+    const HANDLE file = reinterpret_cast<HANDLE>(h);
+    LARGE_INTEGER size{};
+    if (!GetFileSizeEx(file, &size) || size.QuadPart == 0) return nullptr;
+    const uint64_t last_page = (static_cast<uint64_t>(size.QuadPart) + 4095) & ~uint64_t{4095};
+    if (static_cast<uint64_t>(off) + len > last_page) return nullptr;
+    SYSTEM_INFO si;
+    GetSystemInfo(&si);
+    const uint64_t base = static_cast<uint64_t>(off) & ~(static_cast<uint64_t>(si.dwAllocationGranularity) - 1);
+    const size_t delta = static_cast<size_t>(static_cast<uint64_t>(off) - base);
+    const bool write = prot & 2;
+    // Size 0: the section is the file as it is now, so the file does not grow.
+    const HANDLE section = CreateFileMappingW(file, nullptr, write ? PAGE_READWRITE : PAGE_READONLY, 0, 0, nullptr);
+    if (!section) return nullptr;
+    // To the section's end when the range reaches into the last page: a view
+    // covers whole pages, so its tail past the file reads as zeros, as on Linux.
+    const bool to_end = static_cast<uint64_t>(off) + len > static_cast<uint64_t>(size.QuadPart);
+    void* view = MapViewOfFile(section, write ? FILE_MAP_WRITE : FILE_MAP_READ, static_cast<DWORD>(base >> 32),
+                               static_cast<DWORD>(base), to_end ? 0 : delta + len);
+    CloseHandle(section);  // the view keeps the section alive
+    if (!view) return nullptr;
+    if (prot == 0) {
+        DWORD old;
+        VirtualProtect(view, delta + len, PAGE_NOACCESS, &old);
+    }
+    void* p = static_cast<char*>(view) + delta;
+    std::lock_guard<std::mutex> hold(g_maps_lock);
+    g_views[reinterpret_cast<uintptr_t>(p)] = SharedView{view, len};
+    return p;
+}
+
+// True when [addr, addr + len) touches a shared file view.
+bool in_shared_view(const void* addr, size_t len) {
+    const auto a = reinterpret_cast<uintptr_t>(addr);
+    std::lock_guard<std::mutex> hold(g_maps_lock);
+    // Views do not overlap: only the last one starting before the range's end can reach into it.
+    auto it = g_views.lower_bound(a + len);
+    if (it == g_views.begin()) return false;
+    --it;
+    return it->first + it->second.len > a;
+}
+
 WINAPK_GUEST_ABI void* g_mmap(void* addr, size_t len, int prot, int flags, int fd, int64_t off) {
     void* const kFailed = reinterpret_cast<void*>(-1);
     if (len == 0) {
@@ -653,6 +715,9 @@ WINAPK_GUEST_ABI void* g_mmap(void* addr, size_t len, int prot, int flags, int f
     const bool fixed = flags & 0x10;
     void* want = fixed ? addr : nullptr;
     const bool anonymous = (flags & 0x20) || fd < 0;
+    if ((flags & 3) == 1 && !anonymous && !fixed) {  // MAP_SHARED
+        if (void* v = map_shared_view(len, prot, fd, off)) return v;
+    }
     void* p = nullptr;
     if (fixed && map_in_place(addr, len, prot != 0 || !anonymous)) {
         if (prot == 0 && anonymous) return addr;
@@ -681,8 +746,9 @@ WINAPK_GUEST_ABI void* g_mmap(void* addr, size_t len, int prot, int flags, int f
         g_maps[reinterpret_cast<uintptr_t>(p)] = len;
     }
     if (!(flags & 0x20) && fd >= 0) {
-        // A file mapping: a private copy of the file's bytes. Writes are not
-        // carried back to the file (MAP_SHARED writes need a real view).
+        // A file mapping: a private copy of the file's bytes (MAP_PRIVATE, or a
+        // MAP_SHARED one map_shared_view could not make a view of): writes are
+        // not carried back to the file.
         const int64_t at = _lseeki64(fd, 0, SEEK_CUR);
         if (_lseeki64(fd, off, SEEK_SET) >= 0) {
             size_t done = 0;
@@ -701,6 +767,16 @@ WINAPK_GUEST_ABI void* g_mmap(void* addr, size_t len, int prot, int flags, int f
 }
 WINAPK_GUEST_ABI int g_munmap(void* addr, size_t len) {
     std::lock_guard<std::mutex> hold(g_maps_lock);
+    const auto a = reinterpret_cast<uintptr_t>(addr);
+    if (auto v = g_views.find(a); v != g_views.end()) {
+        // A view goes as a whole; unmapping only its head leaves it all mapped
+        // (a view cannot be cut), which only keeps memory the guest gave up.
+        if (len >= v->second.len) {
+            UnmapViewOfFile(v->second.view);
+            g_views.erase(v);
+        }
+        return 0;
+    }
     auto it = g_maps.find(reinterpret_cast<uintptr_t>(addr));
     if (it != g_maps.end() && len >= it->second) {
         VirtualFree(addr, 0, MEM_RELEASE);
@@ -721,7 +797,9 @@ WINAPK_GUEST_ABI int g_mprotect(void* addr, size_t len, int prot) {
     return -1;
 }
 WINAPK_GUEST_ABI int g_madvise(void* addr, size_t len, int advice) {
-    if (advice == 4) {  // MADV_DONTNEED: the pages read back as zeros
+    // MADV_DONTNEED: private pages read back as zeros; a shared file view
+    // reads the file again, which it always does.
+    if (advice == 4 && !in_shared_view(addr, len)) {
         MEMORY_BASIC_INFORMATION mbi;
         if (VirtualQuery(addr, &mbi, sizeof(mbi)) && (mbi.Protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE))) {
             std::memset(addr, 0, len);
@@ -729,7 +807,12 @@ WINAPK_GUEST_ABI int g_madvise(void* addr, size_t len, int advice) {
     }
     return 0;
 }
-WINAPK_GUEST_ABI int g_msync(void*, size_t, int) { return 0; }
+// A shared view's changes are the file's already (the system cache); msync
+// starts writing them out. Private copies have nothing to write.
+WINAPK_GUEST_ABI int g_msync(void* addr, size_t len, int) {
+    if (in_shared_view(addr, len)) FlushViewOfFile(addr, len);
+    return 0;
+}
 WINAPK_GUEST_ABI int g_mlock(const void*, size_t) { return 0; }
 WINAPK_GUEST_ABI int g_munlock(const void*, size_t) { return 0; }
 
