@@ -16,6 +16,7 @@
 #include "bionic_internal.h"
 
 #include "winapk/elf_tls.h"
+#include "winapk/fs_tls_patch.h"
 
 #include <atomic>
 #include <cstdio>
@@ -398,6 +399,7 @@ Thread* self_record() {
 DWORD WINAPI thread_main(void* p) {
     auto* t = static_cast<Thread*>(p);
     t_self = t;
+    commit_guest_stack_for_current_thread();  // the stack a Linux thread would have mapped
     finish_thread(t, t->start(t->arg));
 }
 

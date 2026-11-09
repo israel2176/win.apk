@@ -482,6 +482,12 @@ public class Activity extends ContextThemeWrapper
      *  no-op, but F-Droid calls it from its category-switch logic
      *  and NPEs without the method present. */
     public void invalidateOptionsMenu() {
+        // AOSP: mWindow.invalidatePanelMenu(FEATURE_OPTIONS_PANEL), which on a
+        // decor action bar rebuilds the Toolbar's menu (ToolbarActionBar).
+        if (getWindow() instanceof ActivityWindow aw && aw.mMacapkActionBar != null
+                && aw.macapkTitleDecorLive()) {
+            aw.mMacapkActionBar.macapkInvalidateMenu();
+        }
         if (sMenuTrace) {
             StringBuilder st = new StringBuilder("invalidateOptionsMenu caller stack:");
             StackTraceElement[] tr = new Throwable().getStackTrace();
@@ -1253,8 +1259,24 @@ public class Activity extends ContextThemeWrapper
     // platform getter, kept independent.)
     private android.app.ActionBar mPlatformActionBar;
     public android.app.ActionBar getActionBar() {
+        // A screen_action_bar window answers its real bar (AOSP initWindowDecorActionBar).
+        MacApkToolbarActionBar bar = macapkDecorActionBar();
+        if (bar != null) return bar;
         if (mPlatformActionBar == null) mPlatformActionBar = new android.app.ActionBar();
         return mPlatformActionBar;
+    }
+    /** The decor's action bar while that decor is the window's (not after
+     *  AppCompat or setContentView replaced it). Builds the decor, as AOSP's
+     *  getActionBar -> initWindowDecorActionBar -> getDecorView does. */
+    private MacApkToolbarActionBar macapkDecorActionBar() {
+        Window w = getWindow();
+        if (!(w instanceof ActivityWindow aw) || !ActivityWindow.MACAPK_PLATFORM_ACTION_BAR) return null;
+        if (aw.mMacapkActionBar == null) {
+            // Only a window that can take screen_action_bar builds its decor here.
+            if (!aw.macapkMayTakeScreenTitle()) return null;
+            w.getDecorView();
+        }
+        return aw.mMacapkActionBar != null && aw.macapkTitleDecorLive() ? aw.mMacapkActionBar : null;
     }
     /** AOSP API-21 Activity.setActionBar(Toolbar): promotes a Toolbar to the
      *  platform action bar. We have no system chrome, so this is a no-op (the
@@ -1337,6 +1359,9 @@ public class Activity extends ContextThemeWrapper
                 // content frame already in `d`; screen_title is built here.
                 if (MACAPK_WINDOW_TITLE_DECOR && LAYOUT_SCREEN_TITLE.equals(mMacapkLayout)) {
                     macapkInstallScreenTitle(d, c);
+                } else if (MACAPK_WINDOW_TITLE_DECOR && MACAPK_PLATFORM_ACTION_BAR
+                        && LAYOUT_SCREEN_ACTION_BAR.equals(mMacapkLayout)) {
+                    macapkInstallScreenActionBar(d, c);
                 }
             }
         }
@@ -1427,8 +1452,17 @@ public class Activity extends ContextThemeWrapper
          *  always null with the gate off. */
         String mMacapkLayout;
         static final String LAYOUT_SCREEN_TITLE = "screen_title";
+        static final String LAYOUT_SCREEN_ACTION_BAR = "screen_action_bar";
+        /** MACAPK_PLATFORM_ACTION_BAR, default ON: a window whose theme asks for
+         *  the platform action bar (windowActionBar, not windowNoTitle: Holo,
+         *  Material, DeviceDefault) gets screen_action_bar's Toolbar. =0 keeps
+         *  the old screen_simple decor and the state-only ActionBar. */
+        static final boolean MACAPK_PLATFORM_ACTION_BAR =
+                !"0".equals(System.getenv("MACAPK_PLATFORM_ACTION_BAR"));
+        /** The screen_action_bar bar, non-null once macapkInstallScreenActionBar ran. */
+        MacApkToolbarActionBar mMacapkActionBar;
         /** The screen_title views, non-null only once macapkInstallScreenTitle ran. */
-        private android.widget.LinearLayout mMacapkTitleRoot;
+        private android.view.ViewGroup mMacapkTitleRoot;
         private android.widget.TextView mTitleView;
         /** PhoneWindow.mTitle: the WINDOW's own title, which installDecor copies
          *  into the title view (android14 :2820-2831 `mTitleView.setText(mTitle)`).
@@ -1589,6 +1623,121 @@ public class Activity extends ContextThemeWrapper
             if (mMacapkTitleColor != 0) title.setTextColor(mMacapkTitleColor);
         }
 
+        /** screen_action_bar (android14 core/res/res/layout/screen_action_bar.xml):
+         *      <ActionBarOverlayLayout @+id/decor_content_parent fitsSystemWindows>
+         *        <FrameLayout @android:id/content match/match />
+         *        <ActionBarContainer @+id/action_bar_container match/wrap
+         *                            style=?android:attr/actionBarStyle gravity=top>
+         *          <Toolbar @+id/action_bar match/wrap style=?android:attr/toolbarStyle />
+         *          <ActionBarContextView @+id/action_context_bar .../>
+         *        </ActionBarContainer>
+         *        <ActionBarContainer @+id/split_action_bar .../>
+         *      </ActionBarOverlayLayout>
+         *  ActionBarOverlayLayout stacks the bar above the content, or over it
+         *  with FEATURE_ACTION_BAR_OVERLAY. Built in code like screen_title: a
+         *  vertical LinearLayout (a FrameLayout for the overlay), a FrameLayout
+         *  for the container, and a real Toolbar that ToolbarWidgetWrapper styles
+         *  from ?android:actionBarStyle (height, title / subtitle text styles,
+         *  display options, background; the Up indicator from
+         *  ?android:homeAsUpIndicator). The action-mode and split bars are not
+         *  built. Ids come from the loaded table (action_bar is not public:
+         *  apps find it with getIdentifier("action_bar", "id", "android")).
+         *  Any failure leaves screen_simple in place. */
+        private void macapkInstallScreenActionBar(android.widget.FrameLayout d,
+                                                  android.widget.FrameLayout c) {
+            final Activity ctx = activity;
+            android.view.ViewGroup root = null;
+            try {
+                final int MATCH = android.view.ViewGroup.LayoutParams.MATCH_PARENT;
+                final int WRAP = android.view.ViewGroup.LayoutParams.WRAP_CONTENT;
+                // Sorted, as obtainStyledAttributes wants: windowContentOverlay,
+                // actionBarStyle, actionBarSize, homeAsUpIndicator.
+                int abStyle = 0, abSize = 0;
+                android.graphics.drawable.Drawable contentOverlay = null, up = null;
+                android.content.res.TypedArray a = ctx.obtainStyledAttributes(new int[] {
+                        ATTR_WINDOW_CONTENT_OVERLAY, android.R.attr.actionBarStyle,
+                        android.R.attr.actionBarSize, android.R.attr.homeAsUpIndicator });
+                try {
+                    if (a.hasValue(0)) contentOverlay = a.getDrawable(0);
+                    abStyle = a.getResourceId(1, 0);
+                    abSize = a.getDimensionPixelSize(2, 0);
+                    if (a.hasValue(3)) up = a.getDrawable(3);
+                } finally {
+                    a.recycle();
+                }
+                // ActionBar styleable, read through the bar's style: background,
+                // height, title / subtitle styles, display options.
+                android.graphics.drawable.Drawable bg = null;
+                int titleStyle = 0, subtitleStyle = 0;
+                int options = android.app.ActionBar.DISPLAY_SHOW_TITLE | android.app.ActionBar.DISPLAY_SHOW_HOME;
+                if (abStyle != 0) {
+                    android.content.res.TypedArray s = ctx.obtainStyledAttributes(null, new int[] {
+                            ATTR_BACKGROUND, android.R.attr.height, android.R.attr.displayOptions,
+                            android.R.attr.titleTextStyle, android.R.attr.subtitleTextStyle }, 0, abStyle);
+                    try {
+                        if (s.hasValue(0)) bg = s.getDrawable(0);
+                        int h = s.getDimensionPixelSize(1, 0);
+                        if (h > 0) abSize = h;
+                        if (s.hasValue(2)) options = s.getInt(2, options);
+                        titleStyle = s.getResourceId(3, 0);
+                        subtitleStyle = s.getResourceId(4, 0);
+                    } finally {
+                        s.recycle();
+                    }
+                }
+
+                android.widget.FrameLayout container = new android.widget.FrameLayout(ctx);
+                int containerId = macapkFrameworkId(ctx, "action_bar_container", "id");
+                if (containerId != 0) container.setId(containerId);
+                if (bg != null) container.setBackground(bg);
+                android.widget.Toolbar bar = new android.widget.Toolbar(ctx, null, android.R.attr.toolbarStyle);
+                int barId = macapkFrameworkId(ctx, "action_bar", "id");
+                if (barId != 0) bar.setId(barId);
+                if (titleStyle != 0) bar.setTitleTextAppearance(ctx, titleStyle);
+                if (subtitleStyle != 0) bar.setSubtitleTextAppearance(ctx, subtitleStyle);
+                container.addView(bar, new android.widget.FrameLayout.LayoutParams(MATCH, abSize > 0 ? abSize : WRAP));
+
+                d.removeView(c);
+                if (hasFeature(FEATURE_ACTION_BAR_OVERLAY)) {
+                    android.widget.FrameLayout r = new android.widget.FrameLayout(ctx);
+                    r.addView(c, new android.widget.FrameLayout.LayoutParams(MATCH, MATCH));
+                    r.addView(container, new android.widget.FrameLayout.LayoutParams(MATCH, WRAP,
+                            android.view.Gravity.TOP));
+                    root = r;
+                } else {
+                    android.widget.LinearLayout r = new android.widget.LinearLayout(ctx);
+                    r.setOrientation(android.widget.LinearLayout.VERTICAL);
+                    r.addView(container, new android.widget.LinearLayout.LayoutParams(MATCH, WRAP));
+                    if (contentOverlay != null) {
+                        c.setForeground(contentOverlay);
+                        c.setForegroundGravity(android.view.Gravity.FILL_HORIZONTAL | android.view.Gravity.TOP);
+                    }
+                    r.addView(c, new android.widget.LinearLayout.LayoutParams(MATCH, 0, 1f));
+                    root = r;
+                }
+                root.setFitsSystemWindows(true);
+                int parentId = macapkFrameworkId(ctx, "decor_content_parent", "id");
+                if (parentId != 0) root.setId(parentId);
+                d.addView(root, new android.widget.FrameLayout.LayoutParams(MATCH, MATCH));
+                mMacapkActionBar = new MacApkToolbarActionBar(ctx, bar, container, options, up);
+            } catch (Throwable t) {
+                com.macapk.loader.NativeLog.w("Mac.apk.Activity",
+                        "screen_action_bar decor not built, keeping screen_simple: " + t);
+                mMacapkActionBar = null;
+                try {
+                    if (root != null && root.getParent() == d) d.removeView(root);
+                    if (c.getParent() != d) {
+                        if (c.getParent() instanceof android.view.ViewGroup vg) vg.removeView(c);
+                        d.addView(c);
+                    }
+                } catch (Throwable ignored) {}
+                return;
+            }
+            mMacapkTitleRoot = root;
+            mMacapkActionBar.macapkSetWindowTitle(mMacapkWindowTitle);
+            mMacapkActionBar.macapkInvalidateMenu();
+        }
+
         /** getIdentifier(name, type, "android") against the loaded platform
          *  table; 0 when it has none (never an invented id). */
         private static int macapkFrameworkId(android.content.Context ctx, String name, String type) {
@@ -1608,12 +1757,14 @@ public class Activity extends ContextThemeWrapper
          *  never take screen_title keep their pre-change install order. */
         private boolean macapkMayTakeScreenTitle() {
             if (decor != null) return macapkTitleDecorLive();
-            if (hasFeature(FEATURE_NO_TITLE) || hasFeature(FEATURE_ACTION_BAR)) return false;
+            if (hasFeature(FEATURE_NO_TITLE)) return false;
+            if (hasFeature(FEATURE_ACTION_BAR) && !MACAPK_PLATFORM_ACTION_BAR) return false;
             android.content.res.Resources.Theme th = null;
             try { th = activity.getTheme(); } catch (Throwable ignored) {}
             if (th == null) return false;
+            // screen_action_bar is a decor root too (macapkInstallScreenActionBar).
             return !macapkThemeBool(th, "windowNoTitle", false)
-                && !macapkThemeBool(th, "windowActionBar", false)
+                && (MACAPK_PLATFORM_ACTION_BAR || !macapkThemeBool(th, "windowActionBar", false))
                 && !macapkThemeBool(th, "windowIsFloating", false);
         }
 
@@ -2237,6 +2388,9 @@ public class Activity extends ContextThemeWrapper
                 //     if (mTitleView != null) mTitleView.setText(title); ... mTitle = title;
                 mMacapkWindowTitle = title;
                 if (mTitleView != null) mTitleView.setText(title);
+                // WindowDecorActionBar.setWindowTitle (PhoneWindow.setTitle ->
+                // mDecorContentParent.setWindowTitle).
+                if (mMacapkActionBar != null) mMacapkActionBar.macapkSetWindowTitle(title);
             }
             // PhoneWindow.setTitle never calls back into the Activity: the
             // Activity drives the Window (setTitle -> onTitleChanged ->

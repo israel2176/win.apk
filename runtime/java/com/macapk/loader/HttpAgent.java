@@ -12,9 +12,9 @@
 // the property was null and every request that named no agent of its own went
 // out as the desktop JDK's "Java/21.x".
 //
-// The VM version is ART's "2.1.0", not System.getProperty("java.vm.version"):
-// that property is still the host JDK's ("21.0.x"), and "Dalvik/21.0.x" is not
-// an agent any Android release has sent. The Build values are our own
+// The VM version is ART's "2.1.0", the same value Boot sets as java.vm.version
+// (the constant is kept here so the agent never shows the host JDK's "21.0.x",
+// an agent no Android release has sent). The Build values are our own
 // android.os.Build, so the agent and Build cannot disagree.
 //
 // Caveat (JDK, not AOSP): sun.net.www.protocol.http.HttpURLConnection appends

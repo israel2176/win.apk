@@ -966,6 +966,40 @@ every such change is listed here:
   downloadable fonts (`com.google.android.gms.fonts`) failed with "The
   requested provider was not found on this device." even with Google Play
   services installed. Not Windows-specific.
+- `runtime/java/com/macapk/loader/Boot.java`, `HttpAgent.java`: `java.vm.version`
+  is ART's `2.1.0`, as on every Android since 5. androidx MultiDex 2.x reads it
+  to decide whether the VM loads secondary dex files itself; HotSpot's
+  `21.0.x+y-LTS` did not match its pattern, so it reflected on
+  `DexPathList.makeDexElements`, which our loader does not have, and logged
+  "MultiDex installation failed" (KeePassDX, Tripeaks). Not Windows-specific.
+- `runtime/java/android/view/WindowManagerGlobal.java`, with
+  `com/macapk/loader/WindowOverlayStack.java` and `ActivityHost.java`: AOSP's
+  `mViews` and `mParams` lists exist and follow the windows we hold (each
+  activity's window from its first resume to its destroy, every
+  `WindowManager.addView` window), changed with `add` and `remove(int)` through
+  the field, so a list an app swaps in (LeakCanary's Curtains) sees each
+  change. AnkiDroid's LeakCanary failed with `NoSuchFieldException: mViews`.
+  `mRoots` is not provided (one `ViewRootImpl` for the process). Not
+  Windows-specific.
+- `runtime/java/android/graphics/FontFamily.java` (new), `Typeface.java`
+  (`createFromFamiliesWithDefault`) and `android/content/res/AssetManager.java`
+  (`openNonAsset`): the hidden family builder androidx.core's
+  `TypefaceCompatApi21/24/26/28Impl` reflect on, backed by our font loader; a
+  family becomes an app font family, so its bold face is used for bold.
+  DroidFish logged `ClassNotFoundException: android.graphics.FontFamily`.
+  Not Windows-specific.
+- `runtime/java/android/app/Activity.java` and `MacApkToolbarActionBar.java`
+  (new): a window whose theme asks for the platform action bar
+  (`windowActionBar`, as Holo, Material and DeviceDefault do; not AppCompat)
+  gets AOSP's `screen_action_bar` decor: a real `android.widget.Toolbar`
+  with the id `@android:id/action_bar` in `action_bar_container` above the
+  content, styled from `?android:actionBarStyle`. `getActionBar()` drives it
+  (title, subtitle, display options, Up, show and hide, custom view), and the
+  options menu fills its menu, with item clicks and Up (`android.R.id.home`)
+  going to `onMenuItemSelected`. Before, there was no bar, and apps that look
+  the Toolbar up by id got null (Currency's `setNavigationIcon` NPE).
+  `MACAPK_PLATFORM_ACTION_BAR=0` restores the old decor. Not
+  Windows-specific.
 
 ## License
 

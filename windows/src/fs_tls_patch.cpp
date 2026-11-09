@@ -109,6 +109,52 @@ void set_guest_stack_guard_for_current_thread(uint64_t value) {
     tib->ArbitraryUserPointer = reinterpret_cast<PVOID>(value);
 }
 
+void commit_guest_stack_for_current_thread() {
+    thread_local bool done = false;
+    if (done) return;
+    done = true;
+    constexpr uintptr_t kPage = 4096;
+    constexpr uintptr_t kWindow = 1024 * 1024;  // deeper than any one guest frame
+    constexpr uintptr_t kMargin = 64 * 1024;    // left to the system's overflow handling
+    ULONG_PTR low = 0, high = 0;
+    GetCurrentThreadStackLimits(&low, &high);
+    auto* tib = reinterpret_cast<NT_TIB*>(NtCurrentTeb());
+    const uintptr_t limit = reinterpret_cast<uintptr_t>(tib->StackLimit);
+    if (!low || limit < low + kMargin + 2 * kPage || limit > high) return;
+    // The system's guard page sits right below StackLimit; anything else is a
+    // layout this does not know, left alone.
+    const uintptr_t guard = limit - kPage;
+    MEMORY_BASIC_INFORMATION mbi{};
+    if (!VirtualQuery(reinterpret_cast<void*>(guard), &mbi, sizeof mbi) || mbi.State != MEM_COMMIT ||
+        !(mbi.Protect & PAGE_GUARD)) {
+        return;
+    }
+    // The run of reserved pages below the guard page: down to the stack's end,
+    // or to the JVM's own guard zones, which are committed.
+    uintptr_t run = 0;
+    for (uintptr_t p = low; p < guard;) {
+        if (!VirtualQuery(reinterpret_cast<void*>(p), &mbi, sizeof mbi) || !mbi.RegionSize) return;
+        const uintptr_t end = reinterpret_cast<uintptr_t>(mbi.BaseAddress) + mbi.RegionSize;
+        if (mbi.State == MEM_RESERVE && end == guard) run = p;
+        p = end;
+    }
+    if (!run) return;
+    if (run == low) run += kMargin;
+    if (run + 2 * kPage > guard) return;
+    const uintptr_t from = guard - run > kWindow ? guard - kWindow : run;
+    if (!VirtualAlloc(reinterpret_cast<void*>(from), guard - from, MEM_COMMIT, PAGE_READWRITE)) return;
+    DWORD old = 0;
+    VirtualProtect(reinterpret_cast<void*>(guard), kPage, PAGE_READWRITE, &old);
+    if (from > run || run == low + kMargin) {
+        // Reserved stack is left below: guard the bottom page, as the system
+        // would after growing this far.
+        VirtualProtect(reinterpret_cast<void*>(from), kPage, PAGE_READWRITE | PAGE_GUARD, &old);
+        tib->StackLimit = reinterpret_cast<void*>(from + kPage);
+    } else {
+        tib->StackLimit = reinterpret_cast<void*>(from);  // the JVM's guard zones are next
+    }
+}
+
 uint64_t read_guest_stack_guard_slot() {
     return __readgsqword(kStackGuardOffset);
 }

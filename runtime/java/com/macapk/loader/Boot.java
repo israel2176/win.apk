@@ -1358,6 +1358,18 @@ public final class Boot {
         System.setProperty("java.vm.vendor", "The Android Project");
         System.setProperty("java.vm.specification.vendor", "The Android Project");
         System.setProperty("java.vm.specification.name", "Dalvik Virtual Machine Specification");
+        // ART's java.vm.version on every release since Android 5 (AOSP
+        // art/runtime/runtime.cc: properties.push_back("java.vm.version=2.1.0")
+        // via Runtime::GetVersion). The legacy MultiDex library decides from it
+        // alone whether the VM loads secondary dex files itself:
+        // MultiDex.isVMMultidexCapable matches "(\d+)\.(\d+)(\.\d+)?" and
+        // wants >= 2.1. HotSpot's "21.0.x+y-LTS" does not match that pattern, so
+        // androidx.multidex 2.x took the API 19 path and reflected on
+        // DexPathList.makeDexElements, which our loader does not have, and the
+        // install failed (KeePassDX, Tripeaks). Our loader already holds every
+        // classesN.dex, so "capable" is the true answer. The JDK reads its own
+        // version from VersionProps / java.version, never from this property.
+        System.setProperty("java.vm.version", HttpAgent.ART_VM_VERSION);
         // AOSP RuntimeInit.commonInit sets the default HTTP User-Agent here.
         HttpAgent.install();
 

@@ -198,6 +198,7 @@ public final class WindowOverlayStack {
             }
             LAYERS.add(new Layer(view, wlp));
         }
+        android.view.WindowManagerGlobal.getInstance().macapkWindowAdded(view, wlp);
         // Tell the view it is attached. A window we put on screen genuinely IS
         // attached, but only ViewCanvasDriver ever dispatched this, and only for
         // the content root -- so every Dialog, PopupWindow and Spinner popup
@@ -305,7 +306,10 @@ public final class WindowOverlayStack {
         // AOSP updateViewLayout :433 (see SET_LAYOUT_PARAMS). AOSP sets it and
         // then throws for a view it does not know; we stay lenient and leave an
         // unknown view alone.
-        if (found) giveRootItsParams(view, wlp);
+        if (found) {
+            giveRootItsParams(view, wlp);
+            android.view.WindowManagerGlobal.getInstance().macapkWindowAdded(view, wlp);
+        }
     }
 
     public static void remove(View view) {
@@ -329,6 +333,7 @@ public final class WindowOverlayStack {
         // Scheduling a traversal here defeats the idle-skip for one frame, so
         // whichever compositor painted the overlay repaints without it.
         if (removed) {
+            android.view.WindowManagerGlobal.getInstance().macapkWindowRemoved(view);
             // AOSP WindowManagerGlobal.removeViewLocked -> ViewRootImpl.die ->
             // doDie -> dispatchDetachedFromWindow: a removed window's tree is
             // detached (Dialog.dismissDialog uses removeViewImmediate, so this is
