@@ -427,6 +427,12 @@ public final class Manifest {
          *  receivers have carried their filters all along (ActivityEntry
          *  .filters); services now do too, from the same parseIntentFilter. */
         public final java.util.List<IntentFilterEntry> filters;
+        /** android:permission, else <application android:permission> (AOSP
+         *  ParsedServiceUtils), null when neither is set: ServiceInfo.permission.
+         *  JobScheduler requires android.permission.BIND_JOB_SERVICE on a job
+         *  service, and SDKs check it before scheduling (IBM Trusteer's TAZ in
+         *  Discount and Mercantile refused to start without it). */
+        public String permission;
         public ServiceEntry(String n, boolean en, boolean exp,
                              java.util.Map<String, String> md) {
             this(n, en, exp, md, null, null);
@@ -1615,9 +1621,15 @@ public final class Manifest {
                         }
                     }
                     if (!svcSetExported && EXPORTED_DEFAULT) exportedSvc = !svcFilters.isEmpty();
-                    services.put(name, new ServiceEntry(
+                    ServiceEntry svc = new ServiceEntry(
                         name, enabled, exportedSvc, svcMeta, svcMetaTypes,
-                        svcFilters));
+                        svcFilters);
+                    String svcPerm = child.getAttributeNS(ANDROID_NS, "permission");
+                    if ((svcPerm == null || svcPerm.isEmpty()) && child.getParentNode() instanceof Element) {
+                        svcPerm = ((Element) child.getParentNode()).getAttributeNS(ANDROID_NS, "permission");
+                    }
+                    svc.permission = (svcPerm == null || svcPerm.isEmpty()) ? null : svcPerm;
+                    services.put(name, svc);
                 } else if ("provider".equals(childTag)) {
                     // ContentProvider declaration. Used by SDKs that
                     // auto-initialize at app start (FirebaseInitProvider
