@@ -13,6 +13,7 @@
 #pragma once
 
 #include <cstddef>
+#include <string>
 
 namespace winapk {
 
@@ -58,6 +59,12 @@ int bionic_unsetenv(const char* name);
 // directory Boot writes. UTF-8 host paths.
 void set_android_root(const char* dir);
 void set_system_fonts_dir(const char* dir);
+// The running app: /data/user/0/<package> and /data/data/<package> are
+// `host_dir`, its data directory (UTF-8).
+void set_app_data(const char* package, const char* host_dir);
+// The host file an Android path names (host_path), for the runtime's own
+// natives (java.io, java.nio); a host path comes back as it is.
+std::wstring android_host_path(const char* path);
 
 // The calling thread's NDK looper (ALooper, src/bionic/looper.cpp), for Java's
 // android.os.Looper (NativeLooper): one wait for a thread's Java messages and

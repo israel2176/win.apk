@@ -914,6 +914,15 @@ every such change is listed here:
   8.3 short form `runtime_main.cpp` passes in `winapk.data.dir`, when the
   volume has short names. Native code sized for `/data/user/0/<package>` cut
   the ~150-character full form (Waze: a 128-byte buffer, so no map).
+- `runtime/java/com/macapk/loader/Boot.java`, `NativeCocoa.java`
+  (`setAppData`): the app sees its data directory as
+  `/data/user/0/<package>` (`getDataDir`, `getFilesDir`, `getCacheDir`,
+  `ApplicationInfo.dataDir`), the device's name, and the host maps it to the
+  real folder (`windows/src/bionic/paths.cpp` for native code,
+  `jdk.internal.util.WinApkPaths` in the java.base overlay for java.io and
+  java.nio). Native code walks a path up to `/` and joins relative paths onto
+  its working directory: with `C:\...` it never reached `/` (Google Maps'
+  recursive mkdir overflowed its stack) and took the folder for a relative path.
 - `runtime/java/javax/microedition/khronos/egl/MacApkEGL10.java`: an app's
   own GL thread with a real context (not a GLSurfaceView fork) that calls
   `eglCreateWindowSurface` on a SurfaceView or its holder gets a window

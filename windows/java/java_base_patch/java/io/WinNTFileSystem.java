@@ -32,6 +32,11 @@
  * is a POSIX-semantics one the host binds (winapkReplace), which also replaces
  * a target another process has open, as rename(2) does. A rename that still
  * fails is logged with Windows' reason.
+ *
+ * The third: Android paths (jdk.internal.util.WinApkPaths). A path that starts
+ * with one '/' keeps that form ('/' separators, prefix length 1, absolute,
+ * canonicalized by its text), a child joins it with '/', and the natives get
+ * the host file it names.
  */
 /*
  * Copyright (c) 2001, 2023, Oracle and/or its affiliates. All rights reserved.
@@ -66,6 +71,7 @@ import java.util.BitSet;
 import java.util.Locale;
 import java.util.Properties;
 import jdk.internal.misc.Blocker;
+import jdk.internal.util.WinApkPaths;
 import sun.security.action.GetPropertyAction;
 
 /**
@@ -133,6 +139,8 @@ final class WinNTFileSystem extends FileSystem {
        This way we iterate through the whole pathname string only once. */
     @Override
     public String normalize(String path) {
+        // Win.apk: an Android path keeps its '/' form (the third change).
+        if (WinApkPaths.isAndroid(path)) return WinApkPaths.normalize(path);
         int n = path.length();
         char slash = this.slash;
         char altSlash = this.altSlash;
@@ -258,6 +266,7 @@ final class WinNTFileSystem extends FileSystem {
 
     @Override
     public int prefixLength(String path) {
+        if (WinApkPaths.isAndroid(path)) return 1;  /* Win.apk: an Android path, "/" its root */
         char slash = this.slash;
         int n = path.length();
         if (n == 0) return 0;
@@ -281,6 +290,14 @@ final class WinNTFileSystem extends FileSystem {
         if (pn == 0) return child;
         int cn = child.length();
         if (cn == 0) return parent;
+        if (WinApkPaths.isAndroid(parent)) {
+            // Win.apk: under an Android path a child joins with '/'; a drive in
+            // it nests as below ("D:\a" -> "D/a").
+            if (cn >= 2 && isLetter(child.charAt(0)) && child.charAt(1) == ':') {
+                child = child.charAt(0) + "/" + child.substring(2);
+            }
+            return WinApkPaths.join(parent, child);
+        }
 
         // Win.apk: a drive-absolute child ("D:\\a\\b", or "D:a") nests under
         // the parent as a relative path, with the drive letter as the first
@@ -365,6 +382,7 @@ final class WinNTFileSystem extends FileSystem {
 
     @Override
     public boolean isAbsolute(File f) {
+        if (WinApkPaths.isAndroid(f.getPath())) return true;
         int pl = f.getPrefixLength();
         return (((pl == 2) && (f.getPath().charAt(0) == slash))
                 || (pl == 3));
@@ -403,6 +421,7 @@ final class WinNTFileSystem extends FileSystem {
     @Override
     public String resolve(File f) {
         String path = f.getPath();
+        if (WinApkPaths.isAndroid(path)) return path;
         int pl = f.getPrefixLength();
         if ((pl == 2) && (path.charAt(0) == slash))
             return path;                        /* UNC */
@@ -485,6 +504,8 @@ final class WinNTFileSystem extends FileSystem {
 
     @Override
     public String canonicalize(String path) throws IOException {
+        // Win.apk: an Android path stays one, its "." and ".." folded.
+        if (WinApkPaths.isAndroid(path)) return WinApkPaths.fold(path);
         // If path is a drive letter only then skip canonicalization
         int len = path.length();
         if ((len == 2) &&
@@ -521,7 +542,7 @@ final class WinNTFileSystem extends FileSystem {
     public int getBooleanAttributes(File f) {
         long comp = Blocker.begin();
         try {
-            return getBooleanAttributes0(f);
+            return getBooleanAttributes0(host(f));
         } finally {
             Blocker.end(comp);
         }
@@ -532,7 +553,7 @@ final class WinNTFileSystem extends FileSystem {
     public boolean checkAccess(File f, int access) {
         long comp = Blocker.begin();
         try {
-            return checkAccess0(f, access);
+            return checkAccess0(host(f), access);
         } finally {
             Blocker.end(comp);
         }
@@ -543,7 +564,7 @@ final class WinNTFileSystem extends FileSystem {
     public long getLastModifiedTime(File f) {
         long comp = Blocker.begin();
         try {
-            return getLastModifiedTime0(f);
+            return getLastModifiedTime0(host(f));
         } finally {
             Blocker.end(comp);
         }
@@ -554,7 +575,7 @@ final class WinNTFileSystem extends FileSystem {
     public long getLength(File f) {
         long comp = Blocker.begin();
         try {
-            return getLength0(f);
+            return getLength0(host(f));
         } finally {
             Blocker.end(comp);
         }
@@ -565,7 +586,7 @@ final class WinNTFileSystem extends FileSystem {
     public boolean setPermission(File f, int access, boolean enable, boolean owneronly) {
         long comp = Blocker.begin();
         try {
-            return setPermission0(f, access, enable, owneronly);
+            return setPermission0(host(f), access, enable, owneronly);
         } finally {
             Blocker.end(comp);
         }
@@ -578,7 +599,7 @@ final class WinNTFileSystem extends FileSystem {
     public boolean createFileExclusively(String path) throws IOException {
         long comp = Blocker.begin();
         try {
-            return createFileExclusively0(path);
+            return createFileExclusively0(WinApkPaths.hostPath(path));
         } finally {
             Blocker.end(comp);
         }
@@ -589,7 +610,7 @@ final class WinNTFileSystem extends FileSystem {
     public String[] list(File f) {
         long comp = Blocker.begin();
         try {
-            return list0(f);
+            return list0(host(f));
         } finally {
             Blocker.end(comp);
         }
@@ -600,7 +621,7 @@ final class WinNTFileSystem extends FileSystem {
     public boolean createDirectory(File f) {
         long comp = Blocker.begin();
         try {
-            return createDirectory0(f);
+            return createDirectory0(host(f));
         } finally {
             Blocker.end(comp);
         }
@@ -611,7 +632,7 @@ final class WinNTFileSystem extends FileSystem {
     public boolean setLastModifiedTime(File f, long time) {
         long comp = Blocker.begin();
         try {
-            return setLastModifiedTime0(f, time);
+            return setLastModifiedTime0(host(f), time);
         } finally {
             Blocker.end(comp);
         }
@@ -622,7 +643,7 @@ final class WinNTFileSystem extends FileSystem {
     public boolean setReadOnly(File f) {
         long comp = Blocker.begin();
         try {
-            return setReadOnly0(f);
+            return setReadOnly0(host(f));
         } finally {
             Blocker.end(comp);
         }
@@ -633,7 +654,7 @@ final class WinNTFileSystem extends FileSystem {
     public boolean delete(File f) {
         long comp = Blocker.begin();
         try {
-            return delete0(f);
+            return delete0(host(f));
         } finally {
             Blocker.end(comp);
         }
@@ -644,13 +665,19 @@ final class WinNTFileSystem extends FileSystem {
     public boolean rename(File f1, File f2) {
         long comp = Blocker.begin();
         try {
-            if (rename0(f1, f2)) return true;
+            if (rename0(host(f1), host(f2))) return true;
         } finally {
             Blocker.end(comp);
         }
         return renameOverFile(f1, f2);
     }
     private native boolean rename0(File f1, File f2);
+
+    // Win.apk: the host file an Android path names, for the natives (the third change).
+    private static File host(File f) {
+        String p = f.getPath();
+        return WinApkPaths.isAndroid(p) ? new File(WinApkPaths.hostPath(p)) : f;
+    }
 
     // Win.apk: rename(2) replaces an existing file in one step; MoveFileEx with
     // MOVEFILE_REPLACE_EXISTING (what an atomic Files.move does) is the same.
@@ -667,7 +694,7 @@ final class WinNTFileSystem extends FileSystem {
             if (f1.isFile() && (f2.isFile() || !f2.exists())) {
                 int error = -1;
                 try {
-                    error = winapkReplace(f1.getPath(), f2.getPath());
+                    error = winapkReplace(WinApkPaths.hostPath(f1.getPath()), WinApkPaths.hostPath(f2.getPath()));
                 } catch (UnsatisfiedLinkError unbound) {
                     // the JDK's move below
                 }
@@ -729,7 +756,7 @@ final class WinNTFileSystem extends FileSystem {
     @Override
     public long getSpace(File f, int t) {
         if (f.exists()) {
-            return getSpace0(f, t);
+            return getSpace0(host(f), t);
         }
         return 0;
     }
@@ -743,6 +770,7 @@ final class WinNTFileSystem extends FileSystem {
 
     @Override
     public int getNameMax(String path) {
+        if (path != null) path = WinApkPaths.hostPath(path);
         String s = null;
         if (path != null) {
             File f = new File(path);

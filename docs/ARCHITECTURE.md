@@ -734,6 +734,15 @@ default; `--data` moves it for a direct run):
 | `staging\` | The install helper's staging area |
 | `updates\` | `releases.json` and `releases.etag` (GitHub's list of releases from the last update check), `Win.apk-Setup-<version>.exe` (a downloaded update, until it is installed) |
 
+An app sees its files by Android's names, not by these: its data directory
+is `/data/user/0/<package>` (here `android\data\data\<folder>\`, by its 8.3
+short name), shared storage `/storage/emulated/0` and `/sdcard`
+(`android\sdcard\`), and any other `/x` is `android\x`. Guest native code
+goes through the Bionic shim's table (`windows/src/bionic/paths.cpp`); java.io
+and java.nio through the java.base overlay's `jdk.internal.util.WinApkPaths`,
+which asks the same table (`windows/host/java_io_open.cpp`), so a `File` keeps
+its Android path while its opens, attributes and listings reach the host file.
+
 Settings live in `HKCU\Software\Win.apk`: `Theme`, `Language`, `PhoneSize`,
 `Landscape` (absent means landscape; 0 means portrait), `DesktopShortcut`,
 `UserFolders`, `AotBackground` (absent means on: the background arm64

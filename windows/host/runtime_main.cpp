@@ -1512,6 +1512,9 @@ std::vector<std::string> jvm_options(const BootArgs& b) {
     }
     // Guest code's "/data/...", "/sdcard/..." resolve under the same folder.
     winapk::set_android_root(utf8(android_root.wstring()).c_str());
+    // java.io and java.nio take "/data/...", "/storage/emulated/0/..." for the
+    // files this folder holds (the overlay's WinApkPaths), as the guest does.
+    v.push_back("-Dwinapk.android.root=" + jvm_path(android_root));
     // The app's data directory, by its 8.3 short name where the volume has
     // them. On a phone it is /data/user/0/<package>; here the full form is
     // ~150 characters (the profile folder, then the APK's file name), and
