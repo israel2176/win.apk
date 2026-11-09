@@ -294,6 +294,16 @@ nobody has to find them again.
   This was verified on real Windows, including threads where the slot was never
   written. On the test library, the 28 patched sites matched the count reported
   by `objdump` exactly.
+- Some libraries write their code after loading. IBM Trusteer's
+  `libtaz_full.*.so` (Mercantile and other banking apps) keeps `.text`
+  encrypted on disk; its first `DT_INIT_ARRAY` entry, in a `.tsotext`
+  section, `mprotect`s `.text` writable, decrypts it and makes it
+  read-execute again. The load-time scan saw ciphertext, so the first
+  decrypted function crashed reading address 0x28 (`fs:[0x28]` on a zero FS
+  base). `fs_tls_patch.cpp` now also installs a first vectored exception
+  handler that, for an access violation whose instruction is a stack-guard
+  read, swaps its prefix to GS (opening the page for that byte) and resumes.
+  Each such site faults once.
 - x64 `NT_TIB` layout: 0x00 ExceptionList, 0x08 StackBase, 0x10 StackLimit,
   0x18 SubSystemTib, 0x20 FiberData, 0x28 ArbitraryUserPointer, 0x30 Self.
 - lld emits Android APS2 relocations with `--pack-dyn-relocs=android+relr`.

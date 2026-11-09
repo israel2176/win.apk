@@ -206,6 +206,8 @@ std::unique_ptr<ElfImage> ElfImage::map(const std::filesystem::path& path, std::
     if (img->is_arm64()) {
         img->register_arm64_code();
     } else if (options.patch_fs_stack_guard) {
+        // Code the library decrypts or writes later is patched as it faults.
+        install_fs_stack_guard_fixup();
         for (const Segment& s : img->loads_) {
             if (s.flags & kPfX) {
                 img->fs_sites_patched_ +=

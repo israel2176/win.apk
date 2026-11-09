@@ -23,6 +23,13 @@
 // a thread between a function's prologue and epilogue, which holds even on a
 // thread whose slot was never initialized.
 //
+// Code the guest writes at run time never went through the load-time scan:
+// packers and anti-tamper SDKs (IBM Trusteer's libtaz, for one) ship their
+// .text encrypted and decrypt it from their first DT_INIT_ARRAY entry, so the
+// scan saw only ciphertext. An unpatched guard load reads through FS's zero
+// base and faults on address 0x28; a vectored handler rewrites the prefix of
+// the faulting instruction then and resumes it (install_fs_stack_guard_fixup).
+//
 // PoC SCOPE. The scanner matches the exact 9-byte stack-guard encodings, not
 // arbitrary FS accesses. It does not decode instructions, so a data byte run
 // that happens to match would be patched as well. Win.apk phase 3 replaces this
@@ -38,6 +45,14 @@ namespace winapk {
 
 // Rewrites the stack-guard loads in [code, code + len). Returns sites patched.
 size_t patch_fs_stack_guard_sites(uint8_t* code, size_t len);
+
+// Installs, once per process, the vectored handler that patches a stack-guard
+// load at the moment it faults: one the load-time scan could not see because
+// the guest wrote or decrypted that code after loading.
+void install_fs_stack_guard_fixup();
+
+// How many guard loads the handler has patched so far.
+size_t fs_stack_guard_sites_fixed_at_run_time();
 
 // Sets the value guest code reads as its stack guard on the calling thread.
 void set_guest_stack_guard_for_current_thread(uint64_t value);
