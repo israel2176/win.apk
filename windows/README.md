@@ -981,6 +981,13 @@ every such change is listed here:
   change. AnkiDroid's LeakCanary failed with `NoSuchFieldException: mViews`.
   `mRoots` is not provided (one `ViewRootImpl` for the process). Not
   Windows-specific.
+- `runtime/java/android/graphics/FontFamily.java` (new), `Typeface.java`
+  (`createFromFamiliesWithDefault`) and `android/content/res/AssetManager.java`
+  (`openNonAsset`): the hidden family builder androidx.core's
+  `TypefaceCompatApi21/24/26/28Impl` reflect on, backed by our font loader; a
+  family becomes an app font family, so its bold face is used for bold.
+  DroidFish logged `ClassNotFoundException: android.graphics.FontFamily`.
+  Not Windows-specific.
 
 ## License
 

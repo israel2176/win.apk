@@ -497,6 +497,26 @@ public final class AssetManager implements AutoCloseable {
         return macapkFdFor(f, fileName, "openNonAssetFd('" + fileName + "')");
     }
 
+    /** AOSP's hidden openNonAsset (@UnsupportedAppUsage): a stream over a file
+     *  in the APK outside assets/, such as "res/font/x.ttf", the path a font
+     *  resource's TypedValue names. androidx's TypefaceCompatApi26Impl reaches
+     *  it through FontFamily.addFontFromAssetManager(..., isAsset=false, ...). */
+    public InputStream openNonAsset(String fileName) throws IOException {
+        return openNonAsset(0, fileName, ACCESS_STREAMING);
+    }
+    public InputStream openNonAsset(String fileName, int accessMode) throws IOException {
+        return openNonAsset(0, fileName, accessMode);
+    }
+    public InputStream openNonAsset(int cookie, String fileName) throws IOException {
+        return openNonAsset(cookie, fileName, ACCESS_STREAMING);
+    }
+    public InputStream openNonAsset(int cookie, String fileName, int accessMode) throws IOException {
+        if (macapkNoMounts()) throw new java.io.FileNotFoundException("no APK bound");
+        Found f = macapkFind(cookie, fileName);
+        if (f == null) throw new java.io.FileNotFoundException("Asset absolute file: " + fileName);
+        return f.zip.getInputStream(f.entry);
+    }
+
     public InputStream open(String name, int accessMode) throws IOException {
         if (macapkNoMounts()) throw new IOException("no APK bound");
         Found f = macapkFind("assets/" + name);
