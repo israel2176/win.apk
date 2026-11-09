@@ -67,8 +67,10 @@ uint64_t read_guest_stack_guard_slot();
 // only reserved, and Windows cannot even deliver that fault, since it has no
 // stack to deliver it on, so the process ends with 0xC0000005 and not a line
 // in the log (Pixel Wheels in FreeType). On Linux the whole stack mapping is
-// usable. A new guard page goes at the bottom of the committed part, so the
-// stack still grows, and overflows, the Windows way below it.
-void commit_guest_stack_for_current_thread();
+// usable. The guard region goes to the bottom of the committed part, so the
+// stack still grows, and overflows, the Windows way below it. Returns how far
+// StackLimit moved down (0: already done on this thread, or nothing to do; a
+// layout it does not know is said once in the log).
+size_t commit_guest_stack_for_current_thread();
 
 }  // namespace winapk
