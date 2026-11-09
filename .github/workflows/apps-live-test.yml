@@ -1,0 +1,84 @@
+# A live test session for Win.apk on one Windows runner, by hand only. Test
+# only: nothing here is built into or shipped with Win.apk.
+#
+# Takes a CI run's staged runtime (its `runtime-stage` artifact, kept 3 days),
+# downloads the apps itself (APKPure without a login, x86_64 builds; no Google
+# account and no credentials), installs them (a package of Google's only when
+# winapk-runtime --verify-apk says Google signed it), then for up to `hours`
+# runs the commands pushed as cmd.txt to the branch live/<run id> and pushes
+# their results there (windows/test/live/live.py has the commands). The
+# branch is public: only logs, view dumps, screenshots and thread dumps go
+# there, with lines that may carry account data dropped. No APK is uploaded,
+# committed or kept as an artifact. Push `stop` to end a session early.
+#
+# For an app APKPure lacks: the live command `fetch <url> [name.apk]`
+# downloads a file onto the runner, checks and installs it; or, optional, the
+# repository secret APK_URLS, one direct download link per line, fetched at the
+# start (each link masked before any use and never printed).
+name: Apps live test
+
+on:
+  workflow_dispatch:
+    inputs:
+      winapk_run:
+        description: "CI run id whose runtime-stage artifact to use"
+        required: true
+      packages:
+        description: "space-separated packages (Google's three apps are always tried too)"
+        required: false
+        default: "com.google.android.apps.maps"
+      hours:
+        description: "longest session, in hours"
+        required: false
+        default: "5.5"
+
+permissions:
+  contents: write   # only to push the live/<run id> branch
+  actions: read     # the runtime-stage artifact of another run
+
+jobs:
+  live:
+    runs-on: windows-latest
+    timeout-minutes: 360
+    steps:
+      - name: Check the inputs
+        shell: bash
+        env:
+          IN_RUN: ${{ inputs.winapk_run }}
+          IN_PKGS: ${{ inputs.packages }}
+          IN_HOURS: ${{ inputs.hours }}
+        run: |
+          [[ "$IN_RUN" =~ ^[0-9]+$ ]] || { echo "::error::bad run id"; exit 1; }
+          [[ "$IN_PKGS" =~ ^[A-Za-z0-9_.\ ]*$ ]] || { echo "::error::bad package list"; exit 1; }
+          [[ "$IN_HOURS" =~ ^[0-9]+(\.[0-9]+)?$ ]] || { echo "::error::bad hours"; exit 1; }
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4   # update-java builds the Java (JDK 21); jcmd takes thread dumps
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: actions/download-artifact@v4
+        with:
+          name: runtime-stage
+          path: stage
+          run-id: ${{ inputs.winapk_run }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Download the apps
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APK_URLS: ${{ secrets.APK_URLS }}
+          PACKAGES: ${{ inputs.packages }}
+          GOOGLE_APPS: com.google.android.gsf com.google.android.gms com.android.vending
+        run: |
+          mkdir -p tools
+          gh release download -R EFForg/apkeep --pattern '*windows*' -D tools
+          bash windows/test/live/download.sh "$PWD/$(ls tools/*windows*.exe | head -1)" "$RUNNER_TEMP/apks"
+      - name: Live session
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # update-exe: another CI run's runtime-stage
+          PYTHONIOENCODING: utf-8
+        run: |
+          python -I windows/test/live/live.py --runtime stage --apks "$env:RUNNER_TEMP\apks" `
+            --data "$env:LOCALAPPDATA\Win.apk" --out "$env:RUNNER_TEMP\out" `
+            --branch "live/${{ github.run_id }}" --hours ${{ inputs.hours }}

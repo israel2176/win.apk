@@ -77,6 +77,7 @@ jobs:
               while read -r f; do
                 case "$f" in
                   docs/*|*.md) ;;
+                  windows/test/live/*) ;;   # the live test's own harness: nothing CI builds or runs
                   windows/launcher/*) build=true launcher=true ;;
                   windows/package/*) build=true ;;
                   *) build=true tests=true ;;

@@ -23,6 +23,7 @@ this repository.
 - [Environment variables for development](#environment-variables-for-development)
 - [Tests](#tests)
 - [The compatibility sweep](#the-compatibility-sweep)
+- [The live test (test only)](#the-live-test-test-only)
 - [CI and releases](#ci-and-releases)
 - [Keeping up with upstream](#keeping-up-with-upstream)
   - [Changes to the upstream tree](#changes-to-the-upstream-tree)
@@ -309,18 +310,51 @@ configuration (a JRE, environment variables, another staged runtime such as
 outside to the `first frame presented` line, with the working set and private
 bytes read then. `docs/research/startup-cds.md` has its numbers.
 
+## The live test (test only)
+
+`test/live/` and `.github/workflows/apps-live-test.yml` are a test harness
+only: nothing in them is built into, or shipped with, Win.apk. The workflow
+runs by hand (Actions > Apps live test > Run workflow) with a CI run id, whose
+`runtime-stage` artifact (kept 3 days) it runs, and a list of packages. On one
+`windows-latest` runner, for up to 5.5 hours:
+
+- `download.sh` fetches the packages and Google's three apps from APKPure
+  without a login (apkeep, `arch=x86_64`): no Google account and no
+  credentials. The optional repository secret `APK_URLS` adds direct links,
+  one per line, masked before any use. No APK is uploaded, committed or kept
+  as an artifact.
+- `live.py` checks each file with `winapk-runtime --verify-apk`, installs one
+  per package (a package of Google's only when Google signed it), turns on
+  `GoogleServices` and runs every app with
+  `WINAPK_TEST_INSTALLER=com.android.vending`.
+- It then polls the branch `live/<run id>` for `cmd.txt` and pushes each
+  command's results there under `results/<n>-<command>/`: `run <pkg> [s]
+  [dump=S,..] [pan=S] [resize=S]` (`harness.drive`: screenshots, view dumps,
+  taps on onboarding buttons, memory and first-frame numbers, the GL and TLS
+  lines; `pan=` the app's CPU idle and while dragged, `resize=` a window
+  resize), `fetch <url> [name.apk]`, `install`, `clear`, `env NAME=VALUE`,
+  `update-java <ref>`, `update-exe <CI run id>`, `logs`, `ps <PowerShell>`,
+  `stop` (`live.py`'s docstring has them all).
+
+The branch is public: only logs, view dumps, screenshots and thread dumps are
+pushed, every line that may carry an account, a token or a device identifier
+is dropped (`live.py`'s `scrub`), the data folder's `gms\` is never copied,
+and a `fetch` link is not repeated beyond `cmd.txt`. Changes to `test/live/`
+alone run no CI.
+
 ## CI and releases
 
 | Workflow | Trigger | What it does |
 |---|---|---|
 | `.github/workflows/ci.yml` | Pull requests touching `windows/` or `runtime/`; by hand; a push to `main` (build only) | The pipeline below |
+| `.github/workflows/apps-live-test.yml` | By hand only | Test only: a live session on one Windows runner, [above](#the-live-test-test-only) |
 | `.github/workflows/windows-release.yml` | By hand only, with a tag such as `v0.2.0-preview` | Builds with `-DWINAPK_VERSION=<tag>`, stages, packages `Win.apk-windows-x64.zip` with the JRE from `bake_jre.sh` and `package/README.txt`, smoke-tests the package (boots an APK headless), builds `Win.apk-Setup.exe` with Inno Setup, and publishes both as a GitHub pre-release with `package/RELEASE_NOTES.md` as the notes |
 
 `ci.yml`'s jobs, in the order they can start:
 
 | Job | Runs on | Needs | What |
 |---|---|---|---|
-| What changed | Ubuntu | | Reads the pull request's files: docs alone run nothing; `launcher/` or `package/` alone build and package but run no app; anything else runs everything. By hand, everything; a push to `main`, the build alone |
+| What changed | Ubuntu | | Reads the pull request's files: docs or `test/live/` alone run nothing; `launcher/` or `package/` alone build and package but run no app; anything else runs everything. By hand, everything; a push to `main`, the build alone |
 | Guest libraries | Ubuntu | What changed | The x86_64 and arm64 test libraries and the end-to-end inputs (`test/build_guest.sh`, `test/build_e2e.sh`) |
 | Launcher check | Ubuntu | What changed | The launcher compiled with MinGW-w64, warnings as errors: an answer in about a minute |
 | Build | `windows-latest` | What changed | Every CMake target with MSYS2 CLANG64 through ccache (the cache is restored from the newest run, `main`'s for a pull request's first one), then `stage_runtime.sh build stage` and `bake_jre.sh` into `stage/jre`. Uploads `winapk-binaries` (every exe) and `runtime-stage` |
