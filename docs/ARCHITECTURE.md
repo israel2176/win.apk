@@ -764,7 +764,8 @@ the version in its own resource; **Update** downloads the release's
 `Win.apk-Setup.exe`, checks its size (and SHA-256 when GitHub lists one), runs
 it and quits so that the installer (`CloseApplications=yes`) can replace the
 files. The version comes from `WINAPK_VERSION`, which the release workflow
-sets from its tag; any other build is 0.1.0.
+sets from its tag; a `ci.yml` build is the newest release tag + `-dev.<run>`
+(compared as that release); a local build is 0.1.0.
 
 ## What is not there
 

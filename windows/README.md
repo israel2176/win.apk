@@ -76,7 +76,9 @@ windows/scripts/bake_jre.sh "$JAVA_HOME" runtime/lib runtime/jre
 - `-DWINAPK_VERSION=v0.2.0-preview` (or `0.2.0`) is the version stamped into
   `Win.apk.exe` (`launcher/launcher.rc`, through a generated
   `winapk_version.h`), which Settings shows and the update check compares with
-  the newest release. The release workflow passes its tag; the default is 0.1.0.
+  the newest release. The release workflow passes its tag; `ci.yml` passes the
+  newest release tag + `-dev.<run>` (the update check reads it as that release,
+  so a CI build is not offered the release it came after); the default is 0.1.0.
 - `stage_runtime.sh <build dir> [out]` assembles a runnable folder (default
   `windows/build/runtime`): `Win.apk.exe`, `bin/` (the runtime, the
   translator and stub DLL, `winapk-aot`, ANGLE from `fetch_angle.sh`,
@@ -951,6 +953,19 @@ every such change is listed here:
   threw `UnsupportedEncodingException`. A `CharsetProvider` on the class path
   rather than a copy of `java.nio.charset.Charset` in `java_base_patch`: the
   JDK asks providers only after its own charsets miss.
+- `runtime/java/com/android/internal/graphics/drawable/AnimationScaleListDrawable.java`
+  (new) and `android/content/res/Resources.java`: the platform's progress-bar
+  styles root their indeterminate drawable in this @hide class; it now inflates
+  (the animated child, or the static one when the animator duration scale is 0)
+  instead of a transparent drawable, so a progress bar that draws the style's
+  drawable itself (Google Play) shows its spinner. Not Windows-specific.
+- `runtime/java/com/macapk/loader/MacApkPackageManager.java`, `SystemClient.java`,
+  `SystemServer.java` (`PROVIDER_PACKAGE`): with the broker on,
+  `resolveContentProvider` also finds an authority another installed package
+  declares and answers from that package's manifest, as PMS does. Compose's
+  downloadable fonts (`com.google.android.gms.fonts`) failed with "The
+  requested provider was not found on this device." even with Google Play
+  services installed. Not Windows-specific.
 
 ## License
 

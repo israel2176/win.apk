@@ -1313,6 +1313,22 @@ bool app_running(const std::wstring& name) {
 }
 
 void remove_app_files(const std::wstring& name);
+struct GoogleApp;
+const GoogleApp* google_app(const std::string& pkg);
+namespace appops {
+bool stop_library_app(const std::wstring& name);
+}
+
+// Google's three apps are not in the library, so the user has no way to close
+// them: Play services in particular runs whenever an app or the Play Store uses
+// it. Installing a newer copy stops the running one first instead of asking.
+bool stop_google_app_for_install(const std::wstring& name) {
+    std::string pkg;
+    for (const wchar_t c : name) pkg += static_cast<char>(c < 0x80 ? c : '?');
+    if (!google_app(pkg) || !appops::stop_library_app(name)) return false;
+    for (int i = 0; i < 100 && app_running(name); ++i) Sleep(100);  // its mutex goes with the process
+    return !app_running(name);
+}
 
 // Copies `source` into the library as <name><ext> and installs it there: the
 // install, the code conversion, the name, icon and package, the shortcuts.
@@ -1322,7 +1338,7 @@ void remove_app_files(const std::wstring& name);
 // back; a new app that does leaves nothing behind.
 bool install_into_library(const fs::path& source, const std::wstring& name, const fs::path& replaces,
                           bool* running) {
-    *running = app_running(name);
+    *running = app_running(name) && !stop_google_app_for_install(name);
     if (*running) return false;
     std::error_code ec;
     fs::create_directories(library_dir(), ec);
@@ -8621,6 +8637,10 @@ void notify_library() {
     if (HWND w = FindWindowW(L"WinApkLibrary", nullptr)) PostMessageW(w, kRefresh, 0, 0);
 }
 
+namespace appops {
+bool caller_is_play_store();
+}
+
 int helper_main(int argc, wchar_t** argv) {
     const std::wstring verb = argv[1];
     std::wstring apk, package, source, requestor;
@@ -8677,11 +8697,15 @@ int helper_main(int argc, wchar_t** argv) {
     const App* existing = find_package(apps, pkg);
     const bool update = existing != nullptr;
     const std::wstring wpkg = utf8_to_wide(pkg);
+    // The Play Store installs as a phone's system installer does, with no question: it holds INSTALL_PACKAGES
+    // there, and the user already chose the app in it. Only the real one: the asking runtime runs the
+    // library's com.android.vending and Google signed that APK (appops::caller_is_play_store).
     const bool agreed =
-        update ? helper_consent(existing, fmt(L"Update {0}?", {existing->label}),
-                                fmt(L"{0} asks to update it with the copy it has ({1}).", {who, wpkg}), tr(L"Update"))
-               : helper_consent(nullptr, fmt(L"Install {0}?", {wpkg}), fmt(L"{0} asks to install it.", {who}),
-                                tr(L"Install"));
+        appops::caller_is_play_store() ||
+        (update ? helper_consent(existing, fmt(L"Update {0}?", {existing->label}),
+                                 fmt(L"{0} asks to update it with the copy it has ({1}).", {who, wpkg}), tr(L"Update"))
+                : helper_consent(nullptr, fmt(L"Install {0}?", {wpkg}), fmt(L"{0} asks to install it.", {who}),
+                                 tr(L"Install")));
     if (!agreed) return helper_fail(3, "consent", "declined");
     helper_progress(0.1, "consented");
 
@@ -9379,6 +9403,28 @@ bool stop_runtime_of(const fs::path& apk) {
     return stopped;
 }
 
+// Ends every runtime running the library app `name` (its APK is library\<name>.<ext>), whoever
+// started it. True when one was found.
+bool stop_library_app(const std::wstring& name) {
+    bool stopped = false;
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap == INVALID_HANDLE_VALUE) return false;
+    PROCESSENTRY32W pe{sizeof(pe)};
+    std::error_code ec;
+    for (BOOL more = Process32FirstW(snap, &pe); more; more = Process32NextW(snap, &pe)) {
+        if (_wcsicmp(pe.szExeFile, L"winapk-runtime.exe") != 0) continue;
+        HANDLE p = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE, FALSE, pe.th32ProcessID);
+        if (!p) continue;
+        const fs::path theirs = apk_of_command_line(command_line_of(p));
+        if (!theirs.empty() && _wcsicmp(theirs.stem().c_str(), name.c_str()) == 0 &&
+            fs::equivalent(theirs.parent_path(), library_dir(), ec) && TerminateProcess(p, 1))
+            stopped = true;
+        CloseHandle(p);
+    }
+    CloseHandle(snap);
+    return stopped;
+}
+
 // The app asking: our parent must be a winapk-runtime.exe that started before
 // us (not a reused process id), and its --apk a library app whose package has
 // one registry row. Nothing the app passes in its arguments is believed.
@@ -9425,6 +9471,31 @@ bool resolve(Caller* c, std::string* why) {
     }
     *why = "the parent runs no library app (" + wide_to_utf8(apk.wstring()) + ")";
     return false;
+}
+
+// Whether the app asking is the real Google Play Store: the parent runtime runs the library's
+// com.android.vending (resolve), and winapk-runtime --verify-apk says Google signed that APK and it verifies.
+bool caller_is_play_store() {
+    Caller c;
+    std::string why;
+    if (!resolve(&c, &why) || c.id.package != "com.android.vending") return false;
+    const App* app = find_app(c.name);
+    if (!app) return false;
+    std::wstring out;
+    const fs::path log = logs_dir() / L"install-helper.log";
+    if (run_runtime_captured(L"--verify-apk " + gms_arg(app->apk.wstring()), &out, log) != 0) return false;
+    bool pkg = false, verified = false, google = false;
+    for (size_t at = 0; at < out.size();) {
+        size_t end = out.find(L'\n', at);
+        if (end == std::wstring::npos) end = out.size();
+        std::wstring line = out.substr(at, end - at);
+        at = end + 1;
+        if (!line.empty() && line.back() == L'\r') line.pop_back();
+        if (line == L"PACKAGE\tcom.android.vending") pkg = true;
+        else if (line == L"VERIFIED\t1") verified = true;
+        else if (line == L"GOOGLE\t1") google = true;
+    }
+    return pkg && verified && google;
 }
 
 // ---- the dialog ----------------------------------------------------------------

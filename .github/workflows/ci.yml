@@ -190,9 +190,14 @@ jobs:
       - name: Build (loader, thunks, JNI wrapper, runtime, launcher, tests)
         run: |
           ccache -z
+          # A CI build is the newest release plus what came after it: v0.8.0-dev.<run>. Built as
+          # 0.1.0 it offered that release as an update, and installing it went backwards.
+          tag=$(git ls-remote --tags --refs origin 'v*' | sed 's#.*refs/tags/##' | sort -V | tail -1)
+          tag=${tag:-v0.1.0}
           cmake -S windows -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=clang++ \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
-            -DWINAPK_JNI_INCLUDE="$(cygpath -u "$JAVA_HOME")/include" -DWINAPK_ARM64_JIT=ON
+            -DWINAPK_JNI_INCLUDE="$(cygpath -u "$JAVA_HOME")/include" -DWINAPK_ARM64_JIT=ON \
+            -DWINAPK_VERSION="${tag%%[-+]*}-dev.${{ github.run_number }}"
           cmake --build build
           ccache -s
       - name: Stage the runtime
