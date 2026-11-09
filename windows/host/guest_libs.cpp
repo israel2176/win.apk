@@ -194,11 +194,43 @@ const winapk::host::HostMethod kLinkerMethods[] = {
                        link_only),
 };
 
+// com.macapk.loader.CriticalNatives.isCritical, for jni_bind: whether ART
+// would call a guest native as @CriticalNative.
+jclass g_critical_cls = nullptr;
+jmethodID g_critical_mid = nullptr;
+
+bool is_critical_native(JNIEnv* env, jclass cls, const char* name, const char* sig) {
+    if (!g_critical_cls || !g_critical_mid || !cls || !name || !sig) return false;
+    // A pending exception (RegisterNatives' caller may have one) would make the
+    // call fail; it is kept for the caller.
+    jthrowable pending = env->ExceptionOccurred();
+    if (pending) env->ExceptionClear();
+    jstring jn = env->NewStringUTF(name);
+    jstring js = env->NewStringUTF(sig);
+    const bool critical = jn && js && env->CallStaticBooleanMethod(g_critical_cls, g_critical_mid, cls, jn, js);
+    if (env->ExceptionCheck()) env->ExceptionClear();
+    if (jn) env->DeleteLocalRef(jn);
+    if (js) env->DeleteLocalRef(js);
+    if (pending) {
+        env->Throw(pending);
+        env->DeleteLocalRef(pending);
+    }
+    return critical;
+}
+
 }  // namespace
 
 namespace winapk::host {
 
 bool guest_libs_init(JNIEnv* env, jvmtiEnv* jvmti) {
+    if (jclass c = env->FindClass("com/macapk/loader/CriticalNatives")) {
+        g_critical_cls = static_cast<jclass>(env->NewGlobalRef(c));
+        g_critical_mid =
+            env->GetStaticMethodID(c, "isCritical", "(Ljava/lang/Class;Ljava/lang/String;Ljava/lang/String;)Z");
+        env->DeleteLocalRef(c);
+        if (g_critical_mid) winapk::set_critical_native_query(&is_critical_native);
+    }
+    if (env->ExceptionCheck()) env->ExceptionClear();
     JavaVM* vm = nullptr;
     env->GetJavaVM(&vm);
     // Upstream's order: the guest JNI view and the bind hook exist before the

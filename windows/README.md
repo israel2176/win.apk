@@ -914,6 +914,11 @@ every such change is listed here:
   8.3 short form `runtime_main.cpp` passes in `winapk.data.dir`, when the
   volume has short names. Native code sized for `/data/user/0/<package>` cut
   the ~150-character full form (Waze: a 128-byte buffer, so no map).
+- `runtime/java/com/macapk/loader/CriticalNatives.java` (new): which guest
+  natives ART calls as `@CriticalNative` (no JNIEnv*, no jclass), read from the
+  converted class file; `windows/src/jni_bind.cpp` gives those a thunk that
+  drops the two. HotSpot passed them, so the guest read its JNIEnv* as its
+  first argument (Google Maps' Elements and map renderer: a corrupted heap).
 - `runtime/java/com/macapk/loader/ViewCanvasDriver.java` and
   `ActivityHost.java`: an activity stopped under another does not present.
   Each driver presents the whole window, so a covered one that kept drawing (a
