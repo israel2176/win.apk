@@ -139,6 +139,12 @@ jobs:
             -DUNICODE -D_UNICODE -D_WIN32_WINNT=0x0A00 -municode -mwindows -static \
             windows/launcher/launcher_main.cpp "$RUNNER_TEMP/l.res" -o "$RUNNER_TEMP/Win.apk.exe" \
             -lcomctl32 -lshell32 -lole32 -luuid -lgdiplus -ldwmapi -luxtheme -lgdi32 -lwinhttp -lbcrypt -lcrypt32
+      - name: Run the launcher's state test (its state machines, step by step)
+        # Here as well as with the unit tests: a launcher-only change runs this job alone. The machines make
+        # no Windows call, so the host's compiler builds the test.
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror windows/test/launcher_state_test.cpp -o "$RUNNER_TEMP/launcher-state-test"
+          "$RUNNER_TEMP/launcher-state-test"
 
   build:
     name: Build (Windows x64)
@@ -298,6 +304,8 @@ jobs:
         run: ./build/winapk-user-folders-test.exe "$(cygpath -w "$PWD")"
       - name: Run the window geometry test
         run: ./build/winapk-window-test.exe
+      - name: Run the launcher's state test
+        run: ./build/winapk-launcher-state-test.exe
       - name: Run the Bluetooth host test
         run: ./build/winapk-bluetooth-test.exe
       - name: Run the real-JVM end-to-end test
