@@ -966,6 +966,12 @@ every such change is listed here:
   downloadable fonts (`com.google.android.gms.fonts`) failed with "The
   requested provider was not found on this device." even with Google Play
   services installed. Not Windows-specific.
+- `runtime/java/com/macapk/loader/Boot.java`, `HttpAgent.java`: `java.vm.version`
+  is ART's `2.1.0`, as on every Android since 5. androidx MultiDex 2.x reads it
+  to decide whether the VM loads secondary dex files itself; HotSpot's
+  `21.0.x+y-LTS` did not match its pattern, so it reflected on
+  `DexPathList.makeDexElements`, which our loader does not have, and logged
+  "MultiDex installation failed" (KeePassDX, Tripeaks). Not Windows-specific.
 
 ## License
 
