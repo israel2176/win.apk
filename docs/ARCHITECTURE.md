@@ -459,7 +459,8 @@ There is no sensor hardware behind `SensorManager`: the framework (upstream's Ja
 
 ### The launcher
 
-`Win.apk.exe` (`windows/launcher/launcher_main.cpp`, one file, GDI+) is the
+`Win.apk.exe` (`windows/launcher/launcher_main.cpp`, one file, GDI+; its state
+machines in headers beside it: `app_runs.h`, `installs.h`, `updates.h`) is the
 app library, the counterpart of upstream's Swift launcher. It installs APKs
 by copying them into `library\` and running `winapk-runtime --install-only`,
 gives each app its shortcuts, runs apps (`winapk-runtime --apk`), shows

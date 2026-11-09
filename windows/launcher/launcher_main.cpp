@@ -92,6 +92,11 @@
 #include <string>
 #include <vector>
 
+#include "app_runs.h"
+#include "installs.h"
+#include "updates.h"
+#include "../include/winapk/aot_stamp.h"
+
 namespace fs = std::filesystem;
 
 namespace {
@@ -102,8 +107,8 @@ using Gdiplus::GraphicsPath;
 using Gdiplus::RectF;
 using Gdiplus::SizeF;
 
-constexpr UINT kInstalled = WM_APP + 1;       // wParam: ok | running << 2 | cancelled << 3, lParam: new std::wstring (the name)
-constexpr UINT kRunExited = WM_APP + 2;       // wParam: exit code 0 | was ready << 1, lParam: new std::wstring (the app's name)
+constexpr UINT kInstalled = WM_APP + 1;       // an install ended (finish_install says how); lParam: new std::wstring (the name)
+constexpr UINT kRunExited = WM_APP + 2;       // the app's run ended (finish_run says how); lParam: new std::wstring (the app's name)
 constexpr UINT kInstallStarted = WM_APP + 3;  // lParam: new std::wstring (the app's name)
 constexpr UINT kRefresh = WM_APP + 4;         // the install helper changed the library
 constexpr UINT kStoreCatalog = WM_APP + 5;    // wParam: kCatalogList (lParam: new std::vector<StoreApp>), Done, Failed
@@ -1205,61 +1210,119 @@ struct RunJob {
     std::vector<std::wstring> env;  // for this run alone: Google Play's embedding (start_play)
 };
 
-SRWLOCK g_proc_lock = SRWLOCK_INIT;      // guards the two below
-std::map<std::wstring, HANDLE> g_procs;  // the runtimes of apps started from here, for Stop
-std::map<std::wstring, bool> g_starting; // apps whose runtime is being started: true once stopped meanwhile
+// The runs of the apps started from here (app_runs.h: the states, and which thread makes each step).
+// g_proc_lock guards the table: shared to read it, exclusive to change it. The functions below are the
+// only code that touches it.
+SRWLOCK g_proc_lock = SRWLOCK_INIT;
+winapk::launcher::RunTable g_runs;
+using winapk::launcher::RunEnd;
+
+// The library: the app's run begins. False when it has one already.
+bool begin_run(const std::wstring& name) {
+    AcquireSRWLockExclusive(&g_proc_lock);
+    const bool begun = g_runs.begin(name);
+    ReleaseSRWLockExclusive(&g_proc_lock);
+    return begun;
+}
+
+// Whether the app was started from here and the library has not heard of its end yet.
+bool run_active(const std::wstring& name) {
+    AcquireSRWLockShared(&g_proc_lock);
+    const bool active = g_runs.active(name);
+    ReleaseSRWLockShared(&g_proc_lock);
+    return active;
+}
+
+bool any_runs() {
+    AcquireSRWLockShared(&g_proc_lock);
+    const bool any = !g_runs.empty();
+    ReleaseSRWLockShared(&g_proc_lock);
+    return any;
+}
+
+std::vector<std::wstring> run_names() {
+    AcquireSRWLockShared(&g_proc_lock);
+    std::vector<std::wstring> names = g_runs.names();
+    ReleaseSRWLockShared(&g_proc_lock);
+    return names;
+}
+
+// The process id of the app's runtime, 0 when it has none (not started from here, still starting, over).
+DWORD run_pid(const std::wstring& name) {
+    AcquireSRWLockShared(&g_proc_lock);
+    HANDLE p = g_runs.process(name);
+    const DWORD pid = p ? GetProcessId(p) : 0;  // under the lock: run_thread closes the handle after ended()
+    ReleaseSRWLockShared(&g_proc_lock);
+    return pid;
+}
+
+// The library, on kRunExited: how the run ended; it is forgotten.
+RunEnd finish_run(const std::wstring& name) {
+    AcquireSRWLockExclusive(&g_proc_lock);
+    const std::optional<RunEnd> end = g_runs.finish(name);
+    ReleaseSRWLockExclusive(&g_proc_lock);
+    // run_thread posts kRunExited only after ended(), so there is always one; a quiet end otherwise.
+    return end ? *end : RunEnd{false, true, true};
+}
 
 // Runs the app and reports to the library's window: kRunReady when its window is up (the
-// handshake's event), then kRunExited with the exit code. The splash waits for the first.
+// handshake's event), then kRunExited. The splash waits for the first.
 DWORD WINAPI run_thread(void* param) {
     std::unique_ptr<RunJob> job(static_cast<RunJob*>(param));
     SECURITY_ATTRIBUTES sa{sizeof(sa), nullptr, TRUE};
     HANDLE ready = CreateEventW(&sa, TRUE, FALSE, nullptr);
     AcquireSRWLockShared(&g_proc_lock);
-    const auto early = g_starting.find(job->name);
-    const bool stopped_early = early != g_starting.end() && early->second;
+    const bool stopped_early = g_runs.stop_requested(job->name);
     ReleaseSRWLockShared(&g_proc_lock);
     HANDLE p = stopped_early ? nullptr
                              : start_runtime(L"--apk \"" + job->apk.wstring() + L"\"", start_run_log(job->name),
                                              job->name, ready, job->env);
     DWORD code = 1;
-    bool was_ready = false;
-    // Stopped while it was starting (the splash's X): it ends now, before its window comes up.
     AcquireSRWLockExclusive(&g_proc_lock);
-    const auto st = g_starting.find(job->name);
-    if (p && st != g_starting.end() && st->second) TerminateProcess(p, 1);
-    if (st != g_starting.end()) g_starting.erase(st);
-    if (p) g_procs[job->name] = p;
+    if (!p) {
+        g_runs.ended(job->name, false);  // it did not start, or was stopped before it did
+    } else if (g_runs.attach(job->name, p)) {
+        // Stopped while it was starting (the splash's X): it ends now, before its window comes up.
+        TerminateProcess(p, 1);
+    }
     ReleaseSRWLockExclusive(&g_proc_lock);
     if (p) {
         HANDLE both[2] = {ready, p};
         // Index 0 wins when both are set: an app that was already running signals, then exits.
         if (ready && WaitForMultipleObjects(2, both, FALSE, INFINITE) == WAIT_OBJECT_0) {
-            was_ready = true;
+            AcquireSRWLockExclusive(&g_proc_lock);
+            g_runs.ready(job->name);
+            ReleaseSRWLockExclusive(&g_proc_lock);
             PostMessageW(g_main, kRunReady, 0, reinterpret_cast<LPARAM>(new std::wstring(job->name)));
         }
         WaitForSingleObject(p, INFINITE);
         GetExitCodeProcess(p, &code);
         AcquireSRWLockExclusive(&g_proc_lock);
-        g_procs.erase(job->name);
+        g_runs.ended(job->name, code == 0);
         ReleaseSRWLockExclusive(&g_proc_lock);
         CloseHandle(p);
     }
     if (ready) CloseHandle(ready);
-    PostMessageW(g_main, kRunExited, (code == 0 ? 1 : 0) | (was_ready ? 2 : 0),
-                 reinterpret_cast<LPARAM>(new std::wstring(job->name)));
+    PostMessageW(g_main, kRunExited, 0, reinterpret_cast<LPARAM>(new std::wstring(job->name)));
     return 0;
 }
 
 // Stops the app; one still starting (run_thread has no process yet) is stopped as soon as it has one,
-// or not started at all. True when there was one to stop: its exit is then no error (g_stopping).
-bool stop_process(const std::wstring& name) {
+// or not started at all. True when there was one to stop: however it ends is then no error.
+bool stop_run(const std::wstring& name) {
     AcquireSRWLockExclusive(&g_proc_lock);
-    const auto it = g_procs.find(name);
-    bool found = it != g_procs.end() && TerminateProcess(it->second, 1);
-    if (const auto st = g_starting.find(name); !found && st != g_starting.end()) found = st->second = true;
+    const bool found = g_runs.stop(name, [](HANDLE p) { return TerminateProcess(p, 1) != 0; });
     ReleaseSRWLockExclusive(&g_proc_lock);
     return found;
+}
+
+// The run was asked to stop and may be over already (the splash's X), or its runtime was just ended by
+// other means on the user's word (Remove, a permission taken away, a newer copy installed over it): its
+// end is no error either way.
+void expect_run_end(const std::wstring& name) {
+    AcquireSRWLockExclusive(&g_proc_lock);
+    g_runs.expect_end(name);
+    ReleaseSRWLockExclusive(&g_proc_lock);
 }
 
 struct InstallJob {
@@ -1270,23 +1333,68 @@ struct InstallJob {
 };
 
 SRWLOCK g_install_lock = SRWLOCK_INIT;  // one install at a time: each one is a JVM converting the whole app
-SRWLOCK g_cancel_lock = SRWLOCK_INIT;   // guards the two below
-HANDLE g_install_process = nullptr;     // the runtime converting the current install, for Cancel
-std::set<std::wstring> g_cancelled;     // installs the user cancelled: not started, or stopped
 
-bool cancelled(const std::wstring& name) {
-    AcquireSRWLockShared(&g_cancel_lock);
-    const bool c = g_cancelled.count(name) > 0;
-    ReleaseSRWLockShared(&g_cancel_lock);
-    return c;
+// The installs queued from here (installs.h: the states, and which thread makes each step).
+// g_installs_lock guards the table: shared to read it, exclusive to change it. The functions below,
+// install_into_library and install_thread are the only code that touches it.
+SRWLOCK g_installs_lock = SRWLOCK_INIT;
+winapk::launcher::InstallTable g_installs;
+using winapk::launcher::InstallEnd;
+
+// The library: an install is queued. False when one of that name is pending already.
+bool begin_install(const std::wstring& name) {
+    AcquireSRWLockExclusive(&g_installs_lock);
+    const bool begun = g_installs.begin(name);
+    ReleaseSRWLockExclusive(&g_installs_lock);
+    return begun;
 }
 
-// Cancels the install of `name`: one still waiting does not start, the one under way is stopped.
-void cancel_install(const std::wstring& name, bool current) {
-    AcquireSRWLockExclusive(&g_cancel_lock);
-    g_cancelled.insert(name);
-    if (current && g_install_process) TerminateProcess(g_install_process, 1);
-    ReleaseSRWLockExclusive(&g_cancel_lock);
+// Whether an install of `name` is queued or under way, or over without the library having heard.
+bool is_pending(const std::wstring& name) {
+    AcquireSRWLockShared(&g_installs_lock);
+    const bool pending = g_installs.pending(name);
+    ReleaseSRWLockShared(&g_installs_lock);
+    return pending;
+}
+
+bool any_pending() {
+    AcquireSRWLockShared(&g_installs_lock);
+    const bool any = !g_installs.empty();
+    ReleaseSRWLockShared(&g_installs_lock);
+    return any;
+}
+
+// The pending installs, in the order they were queued.
+std::vector<std::wstring> pending_names() {
+    AcquireSRWLockShared(&g_installs_lock);
+    std::vector<std::wstring> names = g_installs.names();
+    ReleaseSRWLockShared(&g_installs_lock);
+    return names;
+}
+
+// The install under way, empty when there is none.
+std::wstring current_install() {
+    AcquireSRWLockShared(&g_installs_lock);
+    std::wstring name = g_installs.current();
+    ReleaseSRWLockShared(&g_installs_lock);
+    return name;
+}
+
+// The library, on kInstalled: how the install ended; it is forgotten.
+InstallEnd finish_install(const std::wstring& name) {
+    AcquireSRWLockExclusive(&g_installs_lock);
+    const std::optional<InstallEnd> end = g_installs.finish(name);
+    ReleaseSRWLockExclusive(&g_installs_lock);
+    // install_thread posts kInstalled only after ended(), so there is always one; a failure otherwise.
+    return end ? *end : InstallEnd{};
+}
+
+// Cancels the install of `name`: one still waiting does not start, the one under way is stopped and
+// undone. One that is being kept already, or is over, stays as it is.
+void cancel_install(const std::wstring& name) {
+    AcquireSRWLockExclusive(&g_installs_lock);
+    g_installs.cancel(name, [](HANDLE p) { TerminateProcess(p, 1); });
+    ReleaseSRWLockExclusive(&g_installs_lock);
 }
 
 void write_registry();
@@ -1326,6 +1434,7 @@ bool stop_google_app_for_install(const std::wstring& name) {
     std::string pkg;
     for (const wchar_t c : name) pkg += static_cast<char>(c < 0x80 ? c : '?');
     if (!google_app(pkg) || !appops::stop_library_app(name)) return false;
+    expect_run_end(name);  // the Play Store in a window of its own: stopped for its update, not "an error"
     for (int i = 0; i < 100 && app_running(name); ++i) Sleep(100);  // its mutex goes with the process
     return !app_running(name);
 }
@@ -1351,21 +1460,24 @@ bool install_into_library(const fs::path& source, const std::wstring& name, cons
     bool ok = same || CopyFileW(source.c_str(), target.c_str(), FALSE) != 0;
     if (ok) {
         HANDLE p = start_runtime(L"--apk \"" + target.wstring() + L"\" --install-only", install_log(name));
-        AcquireSRWLockExclusive(&g_cancel_lock);
-        g_install_process = p;
-        if (p && g_cancelled.count(name)) TerminateProcess(p, 1);  // cancelled while it was starting
-        ReleaseSRWLockExclusive(&g_cancel_lock);
         DWORD code = 1;
         if (p) {
+            AcquireSRWLockExclusive(&g_installs_lock);
+            if (g_installs.attach(name, p)) TerminateProcess(p, 1);  // cancelled while it was starting
+            ReleaseSRWLockExclusive(&g_installs_lock);
             WaitForSingleObject(p, INFINITE);
             GetExitCodeProcess(p, &code);
+            AcquireSRWLockExclusive(&g_installs_lock);
+            g_installs.detach(name);
+            ReleaseSRWLockExclusive(&g_installs_lock);
+            CloseHandle(p);
         }
-        AcquireSRWLockExclusive(&g_cancel_lock);
-        g_install_process = nullptr;
-        ReleaseSRWLockExclusive(&g_cancel_lock);
-        if (p) CloseHandle(p);
         *running = code == 3;  // the app was started meanwhile
-        ok = code == 0 && !cancelled(name) &&
+        // commit(): kept unless it was cancelled, and from here on a cancel is refused.
+        AcquireSRWLockExclusive(&g_installs_lock);
+        const bool keep = code == 0 && g_installs.commit(name);
+        ReleaseSRWLockExclusive(&g_installs_lock);
+        ok = keep &&
              MoveFileExW((app_dir(name) / L"label.txt").c_str(), label_file(name).c_str(),
                          MOVEFILE_REPLACE_EXISTING | MOVEFILE_COPY_ALLOWED) != 0;
         if (ok) MoveFileExW((app_dir(name) / L"package.txt").c_str(), package_file(name).c_str(),
@@ -1389,20 +1501,20 @@ DWORD WINAPI install_thread(void* param) {
     std::unique_ptr<InstallJob> job(static_cast<InstallJob*>(param));
     AcquireSRWLockExclusive(&g_install_lock);
     bool ok = false, running = false;
-    const bool skipped = cancelled(job->name);
-    if (!skipped) {
+    AcquireSRWLockExclusive(&g_installs_lock);
+    const bool started = g_installs.start(job->name);  // false: cancelled while it waited
+    ReleaseSRWLockExclusive(&g_installs_lock);
+    if (started) {
         PostMessageW(g_main, kInstallStarted, 0, reinterpret_cast<LPARAM>(new std::wstring(job->name)));
         ok = install_into_library(job->source, job->name, job->replaces, &running);
     }
-    const bool was_cancelled = cancelled(job->name);
-    AcquireSRWLockExclusive(&g_cancel_lock);
-    g_cancelled.erase(job->name);
-    ReleaseSRWLockExclusive(&g_cancel_lock);
+    AcquireSRWLockExclusive(&g_installs_lock);
+    g_installs.ended(job->name, ok, running);
+    ReleaseSRWLockExclusive(&g_installs_lock);
     ReleaseSRWLockExclusive(&g_install_lock);
     std::error_code ec;
     if (job->temporary) fs::remove(job->source, ec);
-    PostMessageW(g_main, kInstalled, (ok ? 1 : 0) | (running ? 4 : 0) | (was_cancelled ? 8 : 0),
-                 reinterpret_cast<LPARAM>(new std::wstring(job->name)));
+    PostMessageW(g_main, kInstalled, 0, reinterpret_cast<LPARAM>(new std::wstring(job->name)));
     CoUninitialize();
     return 0;
 }
@@ -1914,10 +2026,14 @@ DWORD WINAPI catalog_thread(void* param) {
     const bool force = param != nullptr;
     std::error_code ec;
     fs::create_directories(store_dir(), ec);
-    const bool have = fs::exists(catalog_file(), ec);
+    // A kept catalog with no app in it (cut short, emptied) is none: it is fetched whole, without its ETag,
+    // which would only get "not modified" for the list that is missing.
+    std::vector<StoreApp> kept;
+    if (fs::exists(catalog_file(), ec)) kept = read_catalog();
+    const bool have = !kept.empty();
     if (have) {
         PostMessageW(g_main, kStoreCatalog, kCatalogList,
-                     reinterpret_cast<LPARAM>(new std::vector<StoreApp>(read_catalog())));
+                     reinterpret_cast<LPARAM>(new std::vector<StoreApp>(std::move(kept))));
     }
     int result = kCatalogDone;
     if (!have || force || file_age(catalog_file()) > kCatalogMaxAge) {
@@ -2206,13 +2322,9 @@ bool newest_release(const std::string& json, Release* best, bool* found_out) {
     return j.ok;
 }
 
-// One check, from the library's thread to the update thread and back (kUpdateChecked).
-struct UpdateCheck {
-    bool fetch = false;    // ask GitHub; else read only the answer kept from the last check
-    bool manual = false;   // Check now: the result is said in the InfoBar whatever it is
-    bool reached = true;   // GitHub answered (a fetch)
-    bool ok = false;       // the list of releases was read, GitHub's answer or the one kept
-    bool found = false;    // and `latest` holds its newest release
+// One check, from the library's thread to the update thread and back (kUpdateChecked): what was asked
+// and what came of it (updates.h), and the newest release when one was found.
+struct UpdateCheck : winapk::launcher::CheckResult {
     Release latest;
 };
 
@@ -2666,11 +2778,6 @@ struct Tile {
 
 std::vector<App> g_apps;
 std::vector<Tile> g_tiles;                 // what the grid shows: new installs first, then the (filtered) apps
-std::vector<std::wstring> g_pending;       // names queued or being installed, in order
-std::wstring g_current;                    // the one being installed now
-int g_batch_total = 0, g_batch_done = 0;   // installs since the queue was last empty
-std::set<std::wstring> g_running;          // apps started from this window that are still running
-std::set<std::wstring> g_stopping;         // running apps the user stopped: their exit is not an error
 struct Job {
     std::wstring name;
     enum State { kWaiting, kInstalling, kDone, kFailed, kCancelled } state = kWaiting;
@@ -2710,8 +2817,13 @@ struct StoreState {
     std::vector<StoreApp> apps;  // the catalog, the most recently updated first
     std::vector<int> shown;      // what the grid shows: the search and the category applied
     std::wstring category;       // empty: every category
-    bool started = false, loading = false, failed = false;
-    uint64_t got_kb = 0;
+    // The catalog's fetch: not asked for yet (the store was never opened), under way (catalog_thread), or
+    // over, well or not. `apps` may hold a list in any of them: the one kept from the last fetch.
+    enum class Fetch { kNotStarted, kLoading, kDone, kFailed } fetch = Fetch::kNotStarted;
+    bool loading() const { return fetch == Fetch::kLoading; }
+    // No list to show yet, and one is on its way (or will be, once the store is opened).
+    bool first_load() const { return apps.empty() && (fetch == Fetch::kLoading || fetch == Fetch::kNotStarted); }
+    uint64_t got_kb = 0;  // of the catalog, while it loads
     std::map<std::string, std::pair<std::wstring, long long>> installed;  // package: library name, versionCode
     std::map<std::string, int> downloads;                                  // package: percent, -1 waiting
     std::map<std::string, std::unique_ptr<Gdiplus::Bitmap>> icons;         // rounded; null: none
@@ -2768,10 +2880,6 @@ std::wstring install_failure_reason(const fs::path& log);
 void show_library(int show);
 void maybe_quit();
 struct Splash;
-
-bool is_pending(const std::wstring& name) {
-    return std::find(g_pending.begin(), g_pending.end(), name) != g_pending.end();
-}
 
 const App* find_app(const std::wstring& name) {
     for (const App& a : g_apps) {
@@ -3097,7 +3205,7 @@ void rebuild_store() {
 void rebuild_tiles() {
     g_tiles.clear();
     std::set<std::wstring> shown;
-    for (const std::wstring& name : g_pending) {
+    for (const std::wstring& name : pending_names()) {
         if (!find_app(name) && !g_setup_names.count(name) && shown.insert(name).second) g_tiles.push_back({-1, name});
     }
     for (size_t i = 0; i < g_apps.size(); ++i) {
@@ -3190,7 +3298,8 @@ Hit hit_test(float x, float y) {
         return {contains(inset(thumb_rect(), -px(4), 0), x, y) ? kHitThumb : kHitTrack, -1};
     }
     if (store) {
-        if (g_store.apps.empty() && g_store.failed && contains(g_l.retry, x, y)) return {kHitRetry, -1};
+        // Wherever paint_store_grid draws "Try again": no list, and none on its way.
+        if (g_store.apps.empty() && !g_store.first_load() && contains(g_l.retry, x, y)) return {kHitRetry, -1};
         const int col = static_cast<int>((x - g_l.grid.X - px(8)) / (g_l.tile_w + g_l.gap));
         const int row = static_cast<int>((y - g_l.grid.Y - px(4) + g_scroll) / (g_l.tile_h + g_l.gap));
         const int i = row * g_l.cols + col;
@@ -3332,19 +3441,19 @@ void paint_toolbar(Graphics& g) {
     const bool store = g_view == kStoreView;
     std::wstring sub;
     if (store) {
-        if (g_store.apps.empty() && (g_store.loading || !g_store.started)) {
-            sub = tr(L"Getting the app catalog from F-Droid…");
-        }
+        if (g_store.first_load()) sub = tr(L"Getting the app catalog from F-Droid…");
         else if (g_store.apps.empty()) sub = tr(L"F-Droid could not be reached");
-        else if (g_store.loading) sub = tr(L"Checking F-Droid for new apps…");
+        else if (g_store.loading()) sub = tr(L"Checking F-Droid for new apps…");
         else sub = app_count(g_store.shown.size()) + L"  ·  f-droid.org";
     } else {
         size_t shown = 0, running = 0;  // the library's own apps: not Google's system components
         for (const Tile& tile : g_tiles) shown += tile.app >= 0;
-        for (const std::wstring& r : g_running) running += !system_app(r);
+        for (const std::wstring& r : run_names()) running += !system_app(r);
         sub = shown == 0 ? std::wstring(tr(L"No apps installed yet")) : app_count(shown);
         if (running) sub += L"  ·  " + fmt(L"{0} running", {std::to_wstring(running)});
-        if (!g_current.empty()) sub += L"  ·  " + fmt(L"Installing {0}…", {job_label(g_current)});
+        if (const std::wstring now = current_install(); !now.empty()) {
+            sub += L"  ·  " + fmt(L"Installing {0}…", {job_label(now)});
+        }
     }
     const float tw = (std::max)(px(60), g_l.search.X - t.X - px(16));
     draw_text(g, tr(store ? L"Store" : L"Library"), g_f.title.get(), g_t.text, RectF(t.X, t.Y, tw, px(26)));
@@ -3362,7 +3471,7 @@ void paint_toolbar(Graphics& g) {
             draw_text(g, kGlyphChevron, g_f.glyph12.get(), g_t.text2,
                       RectF(c.GetRight() - px(30), c.Y, px(22), c.Height), kCenter);
         }
-        if (g_store.loading && !g_store.apps.empty()) {
+        if (g_store.loading() && !g_store.apps.empty()) {
             spinner(g, inset(g_l.refresh, px(8), px(8)), g_t.accent, px(2));
         } else {
             draw_icon_button(g, g_l.refresh, kGlyphRefresh, g_hot.kind == kHitRefresh, g_t.text2);
@@ -3385,7 +3494,7 @@ void paint_tile(Graphics& g, int i) {
     const App* app = t.app >= 0 ? &g_apps[static_cast<size_t>(t.app)] : nullptr;
     const bool sel = app && app->name == g_selected;
     const bool hot = g_hot.kind == kHitTile && g_hot.tile == i;
-    const bool running = app && g_running.count(app->name);
+    const bool running = app && run_active(app->name);
     if (sel) {
         fill_round(g, r, px(kRadiusTile), with_alpha(g_t.accent, g_t.dark ? 56 : 30));
         stroke_round(g, r, px(kRadiusTile), with_alpha(g_t.accent, 170));
@@ -3518,7 +3627,7 @@ void paint_store_grid(Graphics& g) {
     const RectF& gr = g_l.grid;
     if (g_store.shown.empty()) {
         const std::wstring q = query(kStoreView);
-        if (g_store.apps.empty() && (g_store.loading || !g_store.started)) {
+        if (g_store.first_load()) {
             const float cy = gr.Y + (std::min)(gr.Height / 2, px(110));
             spinner(g, RectF(gr.X + gr.Width / 2 - px(20), cy - px(58), px(40), px(40)), g_t.accent, px(3.5f));
             wchar_t mb[32];
@@ -3620,7 +3729,7 @@ void paint_main(Graphics& g, float, float) {
 }
 
 void update_timer() {
-    if (!g_pending.empty() || !g_running.empty() || (g_view == kStoreView && g_store.loading) ||
+    if (any_pending() || any_runs() || (g_view == kStoreView && g_store.loading()) ||
         g_play.state == PlayState::kStarting) {
         SetTimer(g_main, kAnimTimer, 16, nullptr);
     }
@@ -4234,12 +4343,8 @@ std::wstring install_name(const fs::path& source) {
 void install(const fs::path& source, std::wstring name = L"", fs::path replaces = {}, bool from_store = false) {
     if (name.empty()) name = install_name(source);
     if (is_pending(name)) return;  // the same file twice
-    if (g_pending.empty()) {
-        g_batch_total = g_batch_done = 0;
-        if (!g_install_wnd) g_jobs.clear();
-    }
-    ++g_batch_total;
-    g_pending.push_back(name);
+    if (!any_pending() && !g_install_wnd) g_jobs.clear();
+    begin_install(name);
     Job job{name};
     job.file = source.filename().wstring();
     job.update = find_app(name) != nullptr;
@@ -4259,10 +4364,7 @@ Splash* show_splash(const std::wstring& name);
 
 // Brings the window of an app started from here to the front.
 void bring_forward(const std::wstring& name) {
-    AcquireSRWLockShared(&g_proc_lock);
-    const auto it = g_procs.find(name);
-    const DWORD pid = it == g_procs.end() ? 0 : GetProcessId(it->second);
-    ReleaseSRWLockShared(&g_proc_lock);
+    const DWORD pid = run_pid(name);
     struct Find {
         DWORD pid;
         HWND found;
@@ -4289,15 +4391,11 @@ void launch(const App& app) {
         info(fmt(L"{0} is still being installed.", {app.label}), kInfo);
         return;
     }
-    if (g_running.count(app.name)) {
+    if (!begin_run(app.name)) {
         bring_forward(app.name);
         return;
     }
-    g_running.insert(app.name);
     show_splash(app.name);
-    AcquireSRWLockExclusive(&g_proc_lock);
-    g_starting[app.name] = false;
-    ReleaseSRWLockExclusive(&g_proc_lock);
     CloseHandle(CreateThread(nullptr, 0, run_thread, new RunJob{app.name, app.apk}, 0, nullptr));
     update_timer();
 }
@@ -4379,9 +4477,12 @@ bool remove_app(const App& app, bool ask, bool with_data = false) {
     if (ask && !confirm_remove(app, &with_data)) return false;
     const App copy = app;  // `app` may point into g_apps, which refresh() replaces
     std::error_code ec;
-    if (app_running(copy.name) && !appops::stop_runtime_of(copy.apk)) {
-        info(fmt(L"Close {0} first, then remove it.", {copy.label}), kError);
-        return false;
+    if (app_running(copy.name)) {
+        if (!appops::stop_runtime_of(copy.apk)) {
+            info(fmt(L"Close {0} first, then remove it.", {copy.label}), kError);
+            return false;
+        }
+        expect_run_end(copy.name);  // started from here: its exit is the removal, not a failure
     }
     // Its permissions go with it, unless another copy in the library is the same package.
     const std::vector<std::string> pkg = package_of(copy.name);
@@ -4422,12 +4523,11 @@ void set_orientation(const App& app, int o) {
 // Fetches the catalog: the one kept from last time at once, F-Droid's when
 // that is old or `force` asks for it.
 void store_start(bool force) {
-    if (g_store.loading) return;
-    g_store.started = g_store.loading = true;
-    g_store.failed = false;
+    if (g_store.loading()) return;
+    g_store.fetch = StoreState::Fetch::kLoading;
     g_store.got_kb = 0;
     if (HANDLE t = CreateThread(nullptr, 0, catalog_thread, force ? &g_store : nullptr, 0, nullptr)) CloseHandle(t);
-    else g_store.loading = false;
+    else g_store.fetch = StoreState::Fetch::kFailed;  // no thread: nothing was fetched
     update_timer();
     InvalidateRect(g_main, nullptr, FALSE);
 }
@@ -5683,10 +5783,7 @@ void start_play(const App& store) {
     const int h = (std::max)(1, MulDiv(static_cast<int>(g_l.play.Height), 96, static_cast<int>(g_dpi)));
     g_play.name = store.name;
     g_play.state = PlayState::kStarting;
-    g_running.insert(store.name);
-    AcquireSRWLockExclusive(&g_proc_lock);
-    g_starting[store.name] = false;
-    ReleaseSRWLockExclusive(&g_proc_lock);
+    begin_run(store.name);  // open_google_play starts it only when it has no run
     auto* job = new RunJob{store.name, store.apk, {}};
     job->env = {L"WINAPK_EMBED_PARENT=" + std::to_wstring(reinterpret_cast<uintptr_t>(g_play.panel)),
                 L"WINAPK_PHONE_SIZE=" + std::to_wstring(w) + L"x" + std::to_wstring(h)};
@@ -5704,7 +5801,7 @@ void open_google_play() {
     }
     const bool here = g_play.name == store->name &&
                       (g_play.state == PlayState::kStarting || g_play.state == PlayState::kShown);
-    if (!here && g_running.count(store->name)) {  // running in a window of its own
+    if (!here && run_active(store->name)) {  // running in a window of its own
         bring_forward(store->name);
         return;
     }
@@ -5732,10 +5829,10 @@ void play_ready() {
     InvalidateRect(g_main, nullptr, FALSE);
 }
 
-// The Play Store's runtime ended (kRunExited); `ready`: its window had come up. Stopped by the launcher (the
-// window closing) it is simply over.
-void play_exited(bool ready, bool stopped) {
-    g_play.state = stopped || ready ? PlayState::kClosed : PlayState::kFailed;
+// The Play Store's runtime ended (kRunExited); `failed`: before its window came up, and not stopped by the
+// launcher (the window closing), which is simply over.
+void play_exited(bool failed) {
+    g_play.state = failed ? PlayState::kFailed : PlayState::kClosed;
     compute_layout();
     update_timer();
     InvalidateRect(g_main, nullptr, FALSE);
@@ -5767,16 +5864,9 @@ void paint_play(Graphics& g) {
 // Update downloads the release's installer, then runs it and closes the library, so that the installer can
 // replace Win.apk.exe and the runtime; with an app running or an install under way it does not start.
 
-struct UpdateState {
-    bool busy = false;      // a check thread runs
-    bool checking = false;  // and it asks GitHub
-    bool failed = false;    // the last check could not reach GitHub or read its answer
-    bool known = false;     // a list of releases was read
-    bool have = false;      // and `latest` holds its newest release
-    bool told = false;      // the InfoBar has said this session that `latest` is out
-    int percent = -1;       // Win.apk-Setup.exe is downloading: how far; -1 when it is not
-    Release latest;
-} g_update;
+// Where the check and the download stand (updates.h: their states and steps). The library's thread only.
+using UpdateTracker = winapk::launcher::UpdateTracker<Release>;
+UpdateTracker g_update;
 size_t g_updates_section = 0;  // the Updates section's index in Settings, for the InfoBar's "What's new"
 
 void show_settings();
@@ -5795,12 +5885,12 @@ FILETIME unix_filetime(DWORD seconds) {
     return FILETIME{static_cast<DWORD>(t), static_cast<DWORD>(t >> 32)};
 }
 
-bool update_available() { return g_update.have && compare_versions(g_update.latest.version, version()) > 0; }
+bool update_available() { return g_update.available(); }
 
 // Installers that are not the newest release's: one that ran, or one left behind.
 void remove_old_setups() {
     std::error_code ec;
-    const fs::path keep = update_available() ? setup_file(g_update.latest.version) : fs::path();
+    const fs::path keep = update_available() ? setup_file(g_update.latest().version) : fs::path();
     for (fs::directory_iterator it(updates_dir(), ec), end; !ec && it != end; it.increment(ec)) {
         const fs::path p = it->path();
         if (p.extension() == L".exe" && p != keep) fs::remove(p, ec);
@@ -5809,9 +5899,7 @@ void remove_old_setups() {
 
 // `fetch` asks GitHub; else only the answer kept from the last check is read (at start, within the day).
 void start_update_check(bool fetch, bool manual) {
-    if (g_update.busy) return;
-    g_update.busy = true;
-    g_update.checking = fetch;
+    if (!g_update.begin_check(fetch)) return;  // one runs already
     auto* c = new UpdateCheck;
     c->fetch = fetch;
     c->manual = manual;
@@ -5819,7 +5907,7 @@ void start_update_check(bool fetch, bool manual) {
         CloseHandle(t);
     } else {
         delete c;
-        g_update.busy = g_update.checking = false;
+        g_update.abort_check();
     }
 }
 
@@ -5845,26 +5933,22 @@ void show_update() {
 }
 
 void update_checked(UpdateCheck& c) {
-    g_update.busy = g_update.checking = false;
-    if (c.ok) {
-        if (c.found && (!g_update.have || g_update.latest.version != c.latest.version)) g_update.told = false;
-        if (c.found) g_update.latest = std::move(c.latest);
-        g_update.known = true;
-        g_update.have = c.found;
-    }
-    if (c.fetch) {
-        g_update.failed = !c.reached || !c.ok;
-        if (!g_update.failed) set_setting(L"LastUpdateCheck", unix_now());
-    }
-    if (c.ok && g_update.percent < 0) remove_old_setups();
-    if (c.manual && g_update.failed) {
-        info(tr(L"Couldn't check for updates. Check the internet connection."), kError);
-    } else if (c.manual && !update_available()) {
-        info(fmt(L"Win.apk is up to date (version {0}).", {version()}), kSuccess);
-    } else if (update_available() && !g_update.told && (c.manual || setting(L"AutoUpdate", 1))) {
-        g_update.told = true;
-        info(fmt(L"A new version of Win.apk is available: {0}.", {g_update.latest.version}), kInfo, tr(L"What's new"),
-             show_update);
+    const bool newer = c.found && compare_versions(c.latest.version, version()) > 0;
+    const UpdateTracker::Say say = g_update.checked(c, std::move(c.latest), newer, setting(L"AutoUpdate", 1) != 0);
+    if (c.fetch && !g_update.fetch_failed()) set_setting(L"LastUpdateCheck", unix_now());
+    if (c.ok && !g_update.downloading()) remove_old_setups();
+    switch (say) {
+        case UpdateTracker::Say::kNothing: break;
+        case UpdateTracker::Say::kCouldNotCheck:
+            info(tr(L"Couldn't check for updates. Check the internet connection."), kError);
+            break;
+        case UpdateTracker::Say::kUpToDate:
+            info(fmt(L"Win.apk is up to date (version {0}).", {version()}), kSuccess);
+            break;
+        case UpdateTracker::Say::kNewVersion:
+            info(fmt(L"A new version of Win.apk is available: {0}.", {g_update.latest().version}), kInfo,
+                 tr(L"What's new"), show_update);
+            break;
     }
     if (g_view == kSettingsView) rebuild_page();
 }
@@ -5872,19 +5956,19 @@ void update_checked(UpdateCheck& c) {
 // Whether the installer may run now, else says why in the InfoBar: it replaces the runtime that running apps
 // use and the launcher that installs go through.
 bool update_can_start() {
-    if (installs_active() || !g_pending.empty() || !g_store.downloads.empty()) {
+    if (installs_active() || any_pending() || !g_store.downloads.empty()) {
         info(tr(L"Wait for the installs to finish, then update Win.apk."), kError);
         return false;
     }
     std::vector<std::wstring> running;
     for (const App& a : g_apps) {
-        if (g_running.count(a.name) || app_running(a.name)) running.push_back(a.label);
+        if (run_active(a.name) || app_running(a.name)) running.push_back(a.label);
     }
     if (running.size() == 1) {
         info(fmt(L"Close {0} first: the update replaces files it uses.", {running[0]}), kError);
         return false;
     }
-    if (!running.empty() || !g_running.empty()) {
+    if (!running.empty() || any_runs()) {
         info(tr(L"Close the running apps first: the update replaces files they use."), kError);
         return false;
     }
@@ -5895,7 +5979,7 @@ bool update_can_start() {
 // when it did not start.
 bool run_installer() {
     if (!update_can_start()) return false;
-    const fs::path setup = setup_file(g_update.latest.version);
+    const fs::path setup = setup_file(g_update.latest().version);
     const auto r = reinterpret_cast<INT_PTR>(ShellExecuteW(g_main, L"open", setup.c_str(), nullptr, nullptr,
                                                            SW_SHOWNORMAL));
     if (r <= 32) {
@@ -5911,8 +5995,8 @@ bool run_installer() {
 }
 
 void start_update() {
-    if (g_update.percent >= 0 || !update_available()) return;
-    const Release& r = g_update.latest;
+    if (g_update.downloading() || !update_available()) return;
+    const Release& r = g_update.latest();
     if (r.url.empty()) {  // a release without the installer: its page has what it has
         ShellExecuteW(nullptr, L"open", (r.page.empty() ? kReleasesPage : r.page.c_str()), nullptr, nullptr,
                       SW_SHOWNORMAL);
@@ -5929,7 +6013,7 @@ void start_update() {
     auto* job = new Release(r);
     if (HANDLE t = CreateThread(nullptr, 0, update_download_thread, job, 0, nullptr)) {
         CloseHandle(t);
-        g_update.percent = 0;
+        g_update.begin_download();
         info(fmt(L"Downloading Win.apk {0}…", {r.version}), kInfo);
     } else {
         delete job;
@@ -5937,7 +6021,7 @@ void start_update() {
 }
 
 void update_downloaded(bool ok) {
-    g_update.percent = -1;
+    g_update.downloaded();
     if (ok && run_installer()) return;  // the library is gone
     if (!ok) info(tr(L"Couldn't download the update. Check the internet connection."), kError);
     if (g_view == kSettingsView) rebuild_page();
@@ -5946,7 +6030,7 @@ void update_downloaded(bool ok) {
 // The Update button shows how far the download is; changed in place, since a rebuild asks the runtime for the
 // Google account.
 void update_progress(int percent) {
-    g_update.percent = percent;
+    g_update.progress(percent);
     if (g_view != kSettingsView) return;
     for (Section& sec : g_page.sections) {
         for (Row& row : sec.rows) {
@@ -5962,20 +6046,20 @@ void update_progress(int percent) {
 std::vector<Section> update_sections() {
     std::vector<Section> out;
     const bool newer = update_available();
-    const Release& r = g_update.latest;
+    const Release& r = g_update.latest();
     std::wstring status;
-    if (g_update.checking) status = tr(L"Checking for updates…");
+    if (g_update.asking()) status = tr(L"Checking for updates…");
     else if (newer) status = fmt(L"Version {0} is available.", {r.version});
-    else if (g_update.failed) status = tr(L"Couldn't check for updates. Check the internet connection.");
+    else if (g_update.fetch_failed()) status = tr(L"Couldn't check for updates. Check the internet connection.");
     else if (const DWORD last = setting(L"LastUpdateCheck", 0)) {
-        status = g_update.known ? fmt(L"Win.apk is up to date. Last checked {0}.", {long_date(unix_filetime(last))})
+        status = g_update.known() != UpdateTracker::Known::kNothing ? fmt(L"Win.apk is up to date. Last checked {0}.", {long_date(unix_filetime(last))})
                                : fmt(L"Last checked {0}.", {long_date(unix_filetime(last))});
     } else {
         status = tr(L"Not checked yet.");
     }
     Section sec{tr(L"Updates"), {}, L""};
     sec.rows.push_back(button_row(fmt(L"Version {0}", {version()}), status,
-                                  g_update.checking ? tr(L"Checking…") : tr(L"Check"),
+                                  g_update.asking() ? tr(L"Checking…") : tr(L"Check"),
                                   [] { start_update_check(true, true); }));
     Row autoc;
     autoc.kind = Row::kToggle;
@@ -5989,9 +6073,9 @@ std::vector<Section> update_sections() {
     sec.rows.push_back(autoc);
     if (newer) {
         const std::wstring button = r.url.empty()           ? tr(L"Open")
-                                    : g_update.percent >= 0 ? fmt(L"Downloading… {0}%",
-                                                                  {std::to_wstring(g_update.percent)})
-                                                            : tr(L"Update");
+                                    : g_update.downloading() ? fmt(L"Downloading… {0}%",
+                                                                   {std::to_wstring(g_update.percent())})
+                                                             : tr(L"Update");
         Row up = button_row(fmt(L"Win.apk {0}", {r.version}),
                             r.url.empty() ? tr(L"This release has no installer; its page on GitHub has its files.")
                                           : tr(L"Win.apk closes and the installer replaces it. Your apps and their "
@@ -6211,16 +6295,15 @@ AotState aot_state(const std::wstring& name) {
             }
         }
     }
-    // A stamp "profile ..." or "wait 0 <version> 0 ..." (waiting for a profile, not after a failure) is a
-    // library over the runtime's kAotFullBelow, translated only where the app's code ran.
+    // A stamp that says "by its profile" (aot_stamp.h: kProfile, or kWait not after a failure) is a library over
+    // the runtime's kAotFullBelow, translated only where the app's code ran.
     if (!fs::exists(libs.parent_path() / L"x86_64", ec)) {
         for (const auto& e : fs::directory_iterator(libs, ec)) {
             if (e.path().extension() != L".stamp") continue;
             std::ifstream f(e.path());
-            std::string kind;
-            unsigned long long lines = 0, version = 0, failures = 0;
-            f >> kind >> lines >> version >> failures;
-            if (kind == "profile" || (kind == "wait" && failures == 0)) st.large_arm_only = true;
+            std::string line;
+            std::getline(f, line);
+            if (winapk::arm64::aot_stamp_by_profile(winapk::arm64::aot_parse_stamp(line))) st.large_arm_only = true;
         }
     }
     return st;
@@ -6335,11 +6418,10 @@ void show_info(const App& app) {
                                    tr(L"Open"), [a] { open_path(app_dir(a.name)); })},
                        L""});
         std::vector<Row> manage;
-        if (g_running.count(a.name) || app_running(a.name)) {
+        if (run_active(a.name) || app_running(a.name)) {
             manage.push_back(button_row(tr(L"Stop"), tr(L"Closes the app at once, as Force stop does on a phone."),
                                         tr(L"Stop"), [a] {
-                                            if (stop_process(a.name)) g_stopping.insert(a.name);
-                                            else appops::stop_runtime_of(a.apk);
+                                            if (!stop_run(a.name)) appops::stop_runtime_of(a.apk);
                                         }));
         }
         // No "Update from a file": opening or dropping a newer file of the app already installs over it.
@@ -6782,7 +6864,7 @@ bool ask_stop_installing(HWND hwnd) {
 
 void cancel_all_installs() {
     for (const Job& j : g_jobs) {
-        if (j.state == Job::kWaiting || j.state == Job::kInstalling) cancel_install(j.name, j.state == Job::kInstalling);
+        if (j.state == Job::kWaiting || j.state == Job::kInstalling) cancel_install(j.name);
     }
 }
 
@@ -6925,7 +7007,7 @@ LRESULT CALLBACK install_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_DESTROY:
             g_install_wnd = nullptr;
             g_iv = InstallView{};
-            if (g_pending.empty()) g_jobs.clear();
+            if (!any_pending()) g_jobs.clear();
             maybe_quit();
             return 0;
     }
@@ -7488,8 +7570,8 @@ void splash_action(Splash& s, int act) {
         DestroyWindow(s.hwnd);
     } else if (act == kSplashCancel) {
         // Whether the runtime is up, still starting or already ending, its exit is now no failure.
-        stop_process(s.name);
-        if (g_running.count(s.name)) g_stopping.insert(s.name);
+        stop_run(s.name);
+        expect_run_end(s.name);
         DestroyWindow(s.hwnd);
     }
 }
@@ -7721,7 +7803,7 @@ void command(int id);
 // The tile's menu, under the app's icon and name: Open, Stop while it runs, App details, Remove.
 // Everything else is on the details page.
 void show_context_menu(const App& app, POINT pt, bool keyboard = false) {
-    const bool running = g_running.count(app.name) || app_running(app.name);
+    const bool running = run_active(app.name) || app_running(app.name);
     const bool pending = is_pending(app.name);
     PopupMenu m;
     m.app = &app;
@@ -7755,8 +7837,7 @@ void command(int id) {
     switch (id) {
         case kCmdOpen: launch(a); break;
         case kCmdStop:
-            if (stop_process(a.name)) g_stopping.insert(a.name);
-            else appops::stop_runtime_of(a.apk);
+            if (!stop_run(a.name)) appops::stop_runtime_of(a.apk);
             break;
         case kCmdInfo: show_info(a); break;
         case kCmdRemove: remove_app(a, true); break;
@@ -7797,7 +7878,7 @@ std::wstring tooltip_text(const Hit& h) {
             const Tile& t = g_tiles[static_cast<size_t>(h.tile)];
             if (t.app < 0) return fmt(L"Installing {0}…", {job_label(t.job)});
             const App& a = g_apps[static_cast<size_t>(t.app)];
-            return g_running.count(a.name) ? a.label + L"  ·  " + tr(L"Running") : a.label;
+            return run_active(a.name) ? a.label + L"  ·  " + tr(L"Running") : a.label;
         }
         default: return L"";
     }
@@ -7872,7 +7953,7 @@ void set_view(View view) {
         if (view == kStoreView) {
             ShowWindow(g_search, SW_SHOW);
             InvalidateRect(g_search, nullptr, TRUE);
-            if (!g_store.started) store_start(false);
+            if (g_store.fetch == StoreState::Fetch::kNotStarted) store_start(false);
         } else {
             if (GetFocus() == g_search) SetFocus(g_main);
             ShowWindow(g_search, SW_HIDE);
@@ -8275,7 +8356,6 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         case kInstallStarted: {
             std::unique_ptr<std::wstring> name(reinterpret_cast<std::wstring*>(lp));
-            g_current = *name;
             for (Job& j : g_jobs) {
                 if (j.name == *name && j.state == Job::kWaiting) {
                     j.state = Job::kInstalling;
@@ -8289,18 +8369,19 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
         case kInstalled: {
             std::unique_ptr<std::wstring> name(reinterpret_cast<std::wstring*>(lp));
-            const auto it = std::find(g_pending.begin(), g_pending.end(), *name);
-            if (it != g_pending.end()) g_pending.erase(it);
-            ++g_batch_done;
-            if (g_pending.empty()) g_current.clear();
+            const InstallEnd end = finish_install(*name);
+            const InstallEnd::Kind how = end.kind();
             refresh();
             for (Job& j : g_jobs) {
                 if (j.name != *name || (j.state != Job::kInstalling && j.state != Job::kWaiting)) continue;
-                j.state = (wp & 8) ? Job::kCancelled : (wp & 1) ? Job::kDone : Job::kFailed;
+                j.state = how == InstallEnd::kCancelled ? Job::kCancelled
+                          : how == InstallEnd::kDone    ? Job::kDone
+                                                        : Job::kFailed;
                 j.end = GetTickCount64();
                 if (j.state == Job::kFailed) {
-                    j.reason = (wp & 4) ? fmt(L"Close {0} first, then install it again.", {job_label(*name)})
-                                        : install_failure_reason(install_log(*name));
+                    j.reason = how == InstallEnd::kAppRunning
+                                   ? fmt(L"Close {0} first, then install it again.", {job_label(*name)})
+                                   : install_failure_reason(install_log(*name));
                 }
                 break;
             }
@@ -8309,14 +8390,14 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 InvalidateRect(g_install_wnd, nullptr, FALSE);
             }
             update_timer();
-            if (wp & 1) {
+            if (how == InstallEnd::kDone) {
                 select_app(*name);
                 // A store install has no install window: the library says it.
                 if (!g_install_wnd) info(fmt(L"{0} is installed.", {label_of(*name)}), kSuccess);
-            } else if (!(wp & 8) && !g_install_wnd) {
+            } else if (how != InstallEnd::kCancelled && !g_install_wnd) {
                 info(fmt(L"{0} could not be installed.", {job_label(*name)}), kError);
             }
-            if (g_pending.empty()) g_job_labels.clear();
+            if (!any_pending()) g_job_labels.clear();
             if (g_view == kGmsSetupView) rebuild_page();  // the app's row is ticked
             maybe_quit();
             return 0;
@@ -8329,20 +8410,26 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
         case kRunExited: {
             std::unique_ptr<std::wstring> name(reinterpret_cast<std::wstring*>(lp));
-            g_running.erase(*name);
+            const RunEnd end = finish_run(*name);
             update_timer();
             InvalidateRect(hwnd, nullptr, FALSE);
             const std::wstring label = label_of(*name);
-            const bool clean = (wp & 1) != 0, was_ready = (wp & 2) != 0;
             if (*name == g_play.name &&
                 (g_play.state == PlayState::kStarting || g_play.state == PlayState::kShown)) {
-                play_exited(was_ready, g_stopping.erase(*name) > 0);
-            } else if (g_stopping.erase(*name)) {
-                close_splash(*name);
-            } else if (!was_ready) {
-                splash_failed(*name, fmt(L"{0} didn't start", {label}), failure_reason(run_log(*name), clean));
-            } else if (!clean) {
-                splash_failed(*name, fmt(L"{0} stopped with an error", {label}), failure_reason(run_log(*name), false));
+                play_exited(end.kind() == RunEnd::kDidNotStart);
+            } else {
+                switch (end.kind()) {
+                    case RunEnd::kQuiet: break;
+                    case RunEnd::kStopped: close_splash(*name); break;
+                    case RunEnd::kDidNotStart:
+                        splash_failed(*name, fmt(L"{0} didn't start", {label}),
+                                      failure_reason(run_log(*name), end.clean));
+                        break;
+                    case RunEnd::kFailed:
+                        splash_failed(*name, fmt(L"{0} stopped with an error", {label}),
+                                      failure_reason(run_log(*name), false));
+                        break;
+                }
             }
             maybe_quit();
             return 0;
@@ -8390,9 +8477,9 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                                  [](const StoreApp& a, const StoreApp& b) { return a.updated > b.updated; });
                 rebuild_tiles();
             } else {
-                g_store.loading = false;
-                g_store.failed = wp == kCatalogFailed;
-                if (g_store.failed && !g_store.apps.empty() && g_view == kStoreView) {
+                const bool failed = wp == kCatalogFailed;
+                g_store.fetch = failed ? StoreState::Fetch::kFailed : StoreState::Fetch::kDone;
+                if (failed && !g_store.apps.empty() && g_view == kStoreView) {
                     info(tr(L"F-Droid could not be checked for new apps."), kError);
                 }
                 update_timer();
@@ -8445,7 +8532,7 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return TRUE;
         }
         case WM_ACTIVATEAPP:  // another program (an app's store, the install helper) may have changed the library
-            if (wp && IsWindowVisible(hwnd) && g_pending.empty() && library_stamp() != g_library_stamp) refresh();
+            if (wp && IsWindowVisible(hwnd) && !any_pending() && library_stamp() != g_library_stamp) refresh();
             // An app may have added the account (its "Sign in with Google") or the user signed out.
             if (wp && google_account_present() != !g_account.empty()) refresh_account();
             break;
@@ -8465,12 +8552,11 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_CLOSE:
             save_window_size();
             // Google Play lives in this window: it closes with it.
-            if (!g_play.name.empty() && (g_play.state == PlayState::kStarting || g_play.state == PlayState::kShown) &&
-                stop_process(g_play.name)) {
-                g_stopping.insert(g_play.name);
+            if (!g_play.name.empty() && (g_play.state == PlayState::kStarting || g_play.state == PlayState::kShown)) {
+                stop_run(g_play.name);
             }
             // Work still under way (an install, a splash) keeps the process; the library only hides.
-            if (g_install_wnd || !g_pending.empty() || !g_splashes.empty() || g_log_wnd || !g_running.empty()) {
+            if (g_install_wnd || any_pending() || !g_splashes.empty() || g_log_wnd || any_runs()) {
                 ShowWindow(hwnd, SW_HIDE);
                 maybe_quit();
                 return 0;
@@ -10015,7 +10101,9 @@ std::vector<Grant> grants_of(const Identity& id) {
 // have no kill rule on a device.
 void revoked(const App& a, const std::string& op) {
     if (op == kManageMedia || op == kOverlay || op == kInstallApps) return;
-    if (stop_runtime_of(a.apk)) info(fmt(L"{0} was stopped, as Android does when a permission is revoked.", {a.label}), kInfo);
+    if (!stop_runtime_of(a.apk)) return;
+    expect_run_end(a.name);  // started from here: the InfoBar says why it ended, no error splash
+    info(fmt(L"{0} was stopped, as Android does when a permission is revoked.", {a.label}), kInfo);
 }
 
 }  // namespace appops
@@ -10138,7 +10226,7 @@ void show_library(int show) {
 // a splash, an app it started (to report how it ended), the log window.
 void maybe_quit() {
     if (!g_main || IsWindowVisible(g_main)) return;
-    if (g_install_wnd || g_log_wnd || !g_splashes.empty() || !g_running.empty() || !g_pending.empty()) return;
+    if (g_install_wnd || g_log_wnd || !g_splashes.empty() || any_runs() || any_pending()) return;
     DestroyWindow(g_main);
 }
 

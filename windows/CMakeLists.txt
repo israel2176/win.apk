@@ -140,6 +140,11 @@ add_executable(winapk-aot-cache-test test/aot_cache_test.cpp)
 target_link_libraries(winapk-aot-cache-test PRIVATE winapk_loader)
 add_dependencies(winapk-aot-cache-test winapk-aot-test-dll)
 
+# A library's translation stamp (include/winapk/aot_stamp.h): its line, what the loader refuses, when the
+# worker has a step to take. No file and no Windows call in it. test/aot_stamp_test.cpp.
+add_executable(winapk-aot-stamp-test test/aot_stamp_test.cpp)
+target_include_directories(winapk-aot-stamp-test PRIVATE include)
+
 # The translation's crash guard (host/aot_guard.h) through the real crash path,
 # test/aot_guard_test.cpp. The DLL is its stand-in for a translation, and must
 # be next to it.
@@ -412,3 +417,7 @@ message(STATUS "Win.apk version ${WINAPK_VERSION_TEXT}")
 target_compile_definitions(winapk-launcher PRIVATE UNICODE _UNICODE _WIN32_WINNT=0x0A00 WINVER=0x0A00)
 target_link_options(winapk-launcher PRIVATE -municode -static)
 target_link_libraries(winapk-launcher PRIVATE comctl32 shell32 ole32 uuid gdiplus dwmapi uxtheme gdi32 winhttp bcrypt crypt32)
+
+# The launcher's state machines (launcher/app_runs.h, installs.h, updates.h): no lock and no Windows call in them, so the test drives
+# each step as the library's thread and a worker's would. test/launcher_state_test.cpp.
+add_executable(winapk-launcher-state-test test/launcher_state_test.cpp)

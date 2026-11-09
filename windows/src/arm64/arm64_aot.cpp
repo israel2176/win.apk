@@ -4,6 +4,7 @@
 #include "winapk/arm64_aot.h"
 
 #include "winapk/aot_files.h"
+#include "winapk/aot_stamp.h"
 
 #include <algorithm>
 #include <atomic>
@@ -114,39 +115,24 @@ const AotModule* load_dll(const std::filesystem::path& dll, uint64_t bias, uint6
 void drop_functions(uint64_t lo, uint64_t hi);
 
 // Why the library's translation is not to be loaded, from its stamp
-// (runtime_main.cpp writes it, "kind lines version failures retry cpu lib"),
-// or nullptr: it crashed before (report_aot_fault), the library rewrites its
-// own code (aot_code_written), or it was compiled for another CPU. *sealed:
-// the stamp names the library (aot_files.h), so its DLLs carry a seal and one
-// without is cut short.
+// (aot_stamp.h; the worker in runtime_main.cpp writes it), or nullptr: it
+// crashed before (report_aot_fault), the library rewrites its own code
+// (aot_code_written), or it was compiled for another CPU. *sealed: the stamp
+// names the library (aot_files.h), so its DLLs carry a seal and one without
+// is cut short.
 const char* stamp_refuses(const std::string& so, bool* sealed) {
-    *sealed = false;
-    // Not an ifstream: that would hold the stamp so the worker's rename of a
-    // new one over it fails (aot_read_file).
-    std::istringstream in(aot_read_file(sibling(so, ".aot.stamp")));
-    std::string kind;
-    unsigned long long lines = 0, failures = 0, retry = 0, cpu = 0, lib = 0;
-    unsigned version = 0;
-    if (!(in >> kind)) return nullptr;
-    if (kind == "bad") return "its translation crashed before";
-    if (kind == "written") return "it rewrites its own code";
-    if (!(in >> lines >> version >> failures >> retry >> std::hex >> cpu)) return nullptr;
-    if (cpu != 0 && cpu != aot_cpu_signature()) return "it was translated for another CPU";
-    *sealed = in >> lib && lib != 0;
-    return nullptr;
+    // aot_read_file, not an ifstream: that would hold the stamp so the
+    // worker's rename of a new one over it fails.
+    return aot_stamp_refuses(aot_parse_stamp(aot_read_file(sibling(so, ".aot.stamp"))), aot_cpu_signature(), sealed);
 }
 
 // The stamp's line for `kind` (no translation to use), with the library's
 // id so the worker knows it is about this build (runtime_main.cpp).
-std::string stamp_line(const std::string& so, const char* kind) {
-    char line[96];
-    std::snprintf(line, sizeof line, "%s 0 %u 0 0 %llx %llx\n", kind, kAotVersion,
-                  static_cast<unsigned long long>(aot_cpu_signature()),
-                  static_cast<unsigned long long>(aot_lib_id(std::filesystem::u8path(so))));
-    return line;
+std::string stamp_line(const std::string& so, AotStampKind kind) {
+    return aot_stamp_line(kind, 0, kAotVersion, 0, 0, aot_cpu_signature(), aot_lib_id(std::filesystem::u8path(so)));
 }
 
-void write_stamp(const std::string& so, const char* kind) {
+void write_stamp(const std::string& so, AotStampKind kind) {
     aot_write_file(sibling(so, ".aot.stamp"), stamp_line(so, kind));
 }
 
@@ -272,7 +258,7 @@ void remember_dll(HMODULE h, const AotModule* m, const std::filesystem::path& dl
         if (base.size() > n && base.compare(base.size() - n, n, suffix) == 0) base.resize(base.size() - n);
     }
     d.stamp = base + L".aot.stamp";
-    d.bad = stamp_line(std::filesystem::path(base).u8string(), "bad");
+    d.bad = stamp_line(std::filesystem::path(base).u8string(), AotStampKind::kBad);
     for (uint64_t i = 0; i < m->count; ++i) {
         d.fns.emplace_back(reinterpret_cast<uint64_t>(m->entries[i].fn), m->entries[i].vaddr);
     }
@@ -355,7 +341,7 @@ void aot_code_written(uint64_t addr) {
     // `off` at its entry. A translation loading right now sees `written`.
     if (m) __atomic_store_n(m->off, 1, __ATOMIC_RELAXED);
     if (translated) drop_functions(lo, hi);
-    write_stamp(so, "written");
+    write_stamp(so, AotStampKind::kWritten);
     std::fprintf(stderr,
                  "[win.apk] arm64 AOT: %s rewrites its own code (an inline hook, or a loader that decrypts it); "
                  "the JIT runs it from now on\n",
