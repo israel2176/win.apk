@@ -286,12 +286,15 @@ bool altstack_enabled(const ThreadSignals& ts) { return ts.altstack.sp && !(ts.a
 // (pthread_create's __init_alternate_signal_stack: SIGNAL_STACK_SIZE_WITHOUT_GUARD,
 // 16 KiB, under a guard page), so a SA_ONSTACK handler, a crash reporter's
 // above all, runs even when the fault is a stack overflow. Here each thread
-// that runs guest code gets the same the first time it does, unless the
-// guest set its own: reserved only, and committed when a handler first runs
-// on it, so a thread that never takes a signal costs address space and no
-// memory. Released when the thread ends.
-constexpr size_t kOwnAltStackSize = 16 * 1024;
+// that runs guest code gets one the first time it does, unless the guest set
+// its own: reserved only, and committed when a handler first runs on it, so a
+// thread that never takes a signal costs address space and no memory.
+// Released when the thread ends. A reservation takes 64 KiB of address space
+// whatever its size, and the host functions a handler calls (the CRT's
+// formatting) want more stack than Bionic's, so the stack is all of it but the
+// guard page, 60 KiB, and sigaltstack reports that size.
 constexpr size_t kOwnAltStackGuard = 4096;
+constexpr size_t kOwnAltStackSize = 64 * 1024 - kOwnAltStackGuard;
 struct OwnAltStack {
     char* region = nullptr;  // guard page, then the stack
     bool tried = false;

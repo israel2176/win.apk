@@ -33,7 +33,7 @@ void mini_bionic_run_atexit_in(const void* base, size_t size);
 // guest's handlers run before the report.
 void guest_signals_install();
 // The calling thread's alternate signal stack, as Bionic gives every thread
-// one (16 KiB, committed when a handler first runs on it); once per thread.
+// one (60 KiB, committed when a handler first runs on it); once per thread.
 // Called where a thread first runs guest code.
 void guest_signal_altstack_for_current_thread();
 
