@@ -324,10 +324,10 @@ public class ContentResolver {
     // references Fossify. openInputStream()/openOutputStream() above already
     // carried this same special case for the Stream-returning overloads; this
     // brings the descriptor-returning ones in line with them and with AOSP.
-    // (AOSP also special-cases SCHEME_ANDROID_RESOURCE here; not mirrored yet --
-    // our Resources.openRawResourceFd(int) is still a `return null;` stub, so
-    // adding the branch now would just trade one null-returning path for
-    // another. Leave for whoever lands that stub.)
+    // (AOSP also special-cases SCHEME_ANDROID_RESOURCE here, through
+    // getResourceId(uri) -> Resources.openRawResourceFd. The latter is real now;
+    // the branch is not mirrored yet because this ContentResolver holds no
+    // Context to resolve the authority's Resources with.)
     public final android.content.res.AssetFileDescriptor openAssetFileDescriptor(Uri uri, String mode)
             throws java.io.FileNotFoundException {
         return openAssetFileDescriptor(uri, mode, null);

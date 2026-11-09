@@ -1000,6 +1000,13 @@ every such change is listed here:
   the Toolbar up by id got null (Currency's `setNavigationIcon` NPE).
   `MACAPK_PLATFORM_ACTION_BAR=0` restores the old decor. Not
   Windows-specific.
+- `runtime/java/android/content/res/Resources.java` (`openRawResourceFd`)
+  and `ContentResolver.java` (a comment): the raw resource's file as the
+  apk's own descriptor at the entry's offset, through `openNonAssetFd`, as
+  AOSP's `ResourcesImpl.openRawResourceFd` does; an id with no file or a
+  compressed entry throws `NotFoundException`. It returned null, and
+  ConnectBot's terminal service died with a `NullPointerException` on the
+  descriptor. Not Windows-specific.
 
 ## License
 
