@@ -1056,6 +1056,13 @@ every such change is listed here:
   (`content://settings/system/alarm_alert`...), not null. Fossify Clock
   builds its alarm table from it and died creating its database. Not
   Windows-specific.
+- `runtime/java/android/content/res/Resources.java`: `getString(int)` is
+  `getText(int)`'s string and `getText` looks the resource up itself, as in
+  AOSP. `getText` called `getString`, so a `Resources` subclass whose
+  `getString` calls its own `getText` and falls back to `super.getText`
+  recursed for ever (Bit's Lokalise `LokaliseResources`: a
+  `StackOverflowError` on the main thread at its first string). Not
+  Windows-specific.
 
 ## License
 
