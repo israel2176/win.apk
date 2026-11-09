@@ -1313,6 +1313,22 @@ bool app_running(const std::wstring& name) {
 }
 
 void remove_app_files(const std::wstring& name);
+struct GoogleApp;
+const GoogleApp* google_app(const std::string& pkg);
+namespace appops {
+bool stop_library_app(const std::wstring& name);
+}
+
+// Google's three apps are not in the library, so the user has no way to close
+// them: Play services in particular runs whenever an app or the Play Store uses
+// it. Installing a newer copy stops the running one first instead of asking.
+bool stop_google_app_for_install(const std::wstring& name) {
+    std::string pkg;
+    for (const wchar_t c : name) pkg += static_cast<char>(c < 0x80 ? c : '?');
+    if (!google_app(pkg) || !appops::stop_library_app(name)) return false;
+    for (int i = 0; i < 100 && app_running(name); ++i) Sleep(100);  // its mutex goes with the process
+    return !app_running(name);
+}
 
 // Copies `source` into the library as <name><ext> and installs it there: the
 // install, the code conversion, the name, icon and package, the shortcuts.
@@ -1322,7 +1338,7 @@ void remove_app_files(const std::wstring& name);
 // back; a new app that does leaves nothing behind.
 bool install_into_library(const fs::path& source, const std::wstring& name, const fs::path& replaces,
                           bool* running) {
-    *running = app_running(name);
+    *running = app_running(name) && !stop_google_app_for_install(name);
     if (*running) return false;
     std::error_code ec;
     fs::create_directories(library_dir(), ec);
@@ -9373,6 +9389,28 @@ bool stop_runtime_of(const fs::path& apk) {
         if (!p) continue;
         const fs::path theirs = apk_of_command_line(command_line_of(p));
         if (!theirs.empty() && fs::equivalent(theirs, apk, ec) && TerminateProcess(p, 1)) stopped = true;
+        CloseHandle(p);
+    }
+    CloseHandle(snap);
+    return stopped;
+}
+
+// Ends every runtime running the library app `name` (its APK is library\<name>.<ext>), whoever
+// started it. True when one was found.
+bool stop_library_app(const std::wstring& name) {
+    bool stopped = false;
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap == INVALID_HANDLE_VALUE) return false;
+    PROCESSENTRY32W pe{sizeof(pe)};
+    std::error_code ec;
+    for (BOOL more = Process32FirstW(snap, &pe); more; more = Process32NextW(snap, &pe)) {
+        if (_wcsicmp(pe.szExeFile, L"winapk-runtime.exe") != 0) continue;
+        HANDLE p = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE, FALSE, pe.th32ProcessID);
+        if (!p) continue;
+        const fs::path theirs = apk_of_command_line(command_line_of(p));
+        if (!theirs.empty() && _wcsicmp(theirs.stem().c_str(), name.c_str()) == 0 &&
+            fs::equivalent(theirs.parent_path(), library_dir(), ec) && TerminateProcess(p, 1))
+            stopped = true;
         CloseHandle(p);
     }
     CloseHandle(snap);
