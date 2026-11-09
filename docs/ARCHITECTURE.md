@@ -254,7 +254,12 @@ Guest code gets its own `JNIEnv` and `JavaVM` (`guest_jni.cpp`): a function
 table with System V entry points, generated from the JDK's `jni.h`
 (235 slots, `tools/gen_jni_slots.py`), each forwarding into HotSpot's table.
 There is one guest env per thread, and `GetEnv`, `AttachCurrentThread` and
-`DetachCurrentThread` hand back guest envs.
+`DetachCurrentThread` hand back guest envs. A few slots do what ART does where
+HotSpot differs: `GetMethodID` finds an inherited constructor, `GetFieldID`
+knows libcore's renamed `FileDescriptor.descriptor`, and `FindClass` inside a
+library's `JNI_OnLoad` leaves the class uninitialized (HotSpot registers the
+library only after `JNI_OnLoad`, so an initializer calling one of its natives
+would fail).
 
 ### The variadic JNI bridge
 

@@ -966,6 +966,21 @@ every such change is listed here:
   downloadable fonts (`com.google.android.gms.fonts`) failed with "The
   requested provider was not found on this device." even with Google Play
   services installed. Not Windows-specific.
+- `runtime/java/android/content/res/TypedArray.java`: `getString` of an app
+  attribute set in the XML to a compiled enum or flag answers the device's
+  spelling (`"0x2"`), which the parser already records, not the symbol.
+  Discount's and Mercantile's `DiscountTextInputLayout` run `Integer.decode`
+  on it; every input field became a placeholder. Not Windows-specific.
+- `runtime/java/android/provider/Settings.java`: `Settings.System` reads a
+  setting that moved to Secure or Global (`android_id`, `adb_enabled`...)
+  from there, and `Settings.Secure` one that moved to Global, as AOSP's
+  `MOVED_TO_SECURE` / `MOVED_TO_GLOBAL` do. Discount and Mercantile read
+  `Settings.System` `android_id` and threw on null in `Application.onCreate`.
+  Not Windows-specific.
+- `runtime/java/com/macapk/loader/Manifest.java`, `MacApkPackageManager.java`:
+  `ServiceInfo.permission` is the service's `android:permission` (else the
+  application's). IBM Trusteer's TAZ checks a job service for
+  `BIND_JOB_SERVICE` and stopped its start without it. Not Windows-specific.
 
 ## License
 

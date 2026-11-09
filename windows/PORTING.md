@@ -958,7 +958,13 @@ Remaining:
 
 - Static ELF TLS (`TPOFF64`). Dynamic TLS, which app libraries built for
   API 29+ use, is done.
-- `FindClass` with the semantics from section 6.
+- `FindClass` with the semantics from section 6 outside `JNI_OnLoad`. Inside
+  it, done: the guest's `FindClass` loads the class with
+  `Class.forName(name, false, loader)` and the loader of
+  `NativeLibraries.getFromClass()` (`guest_find_class`), because HotSpot adds
+  the library to its loader only after `JNI_OnLoad`, so an initializer that
+  calls one of the library's own natives failed there (Realm's
+  `NativeRealmAny`, which aborted Bit).
 
 Exit: an app with small, self-contained x86_64 JNI libraries works through the
 normal `System.loadLibrary` path.
@@ -1093,9 +1099,12 @@ left:
   with the clang the package ships; `include/winapk/arm64_aot.h`). Still
   open: jump tables (BR into the function now leaves it), exclusives and LSE
   atomics without the interpreter, and coverage on real apps' libraries.
-- ELF TLS through TLSDESC (libraries built for API 29 or later that use
-  `thread_local`), raw `SVC` system calls, and signals (a guest `SIGSEGV`
-  handler, Unity's and Mono's null checks).
+- Raw `SVC` system calls, and signals (a guest `SIGSEGV` handler, Unity's and
+  Mono's null checks). ELF TLS through TLSDESC (libraries built for API 29 or
+  later that use `thread_local`) is done: `R_AARCH64_TLSDESC` points the
+  descriptor at a bridge intrinsic that answers the offset from `TPIDR_EL0`
+  through `elf_tls.cpp`'s blocks and changes only `x0`
+  (`test/guest/arm64_tls_guest.c`). Google Maps' `libgoogle3.so` needs it.
 - Structs larger than 16 bytes and floating-point aggregates passed by value
   across the boundary (no libc or JNI function has them; some NDK APIs do).
 - A32/T32 for armeabi-v7a-only apps.
