@@ -1058,6 +1058,10 @@ every such change is listed here:
   family becomes an app font family, so its bold face is used for bold.
   DroidFish logged `ClassNotFoundException: android.graphics.FontFamily`.
   Not Windows-specific.
+- `runtime/java/android/content/res/AssetManager.java`: `open`, `openFd` and
+  `openNonAssetFd` throw `FileNotFoundException` for a name the APK does not
+  have, as AOSP does; they threw a plain `IOException`, which a
+  `catch (FileNotFoundException)` fallback misses. Not Windows-specific.
 - `runtime/java/android/app/Activity.java` and `MacApkToolbarActionBar.java`
   (new): a window whose theme asks for the platform action bar
   (`windowActionBar`, as Holo, Material and DeviceDefault do; not AppCompat)
