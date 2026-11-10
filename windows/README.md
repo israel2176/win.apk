@@ -591,6 +591,14 @@ every such change is listed here:
   `onPostResume` (AOSP destroys it in a later transaction; tearing it down
   inside `onResume` nulled the FragmentManager's host under `onPostResume`,
   "No activity" in sgtpuzzles). Not Windows-specific.
+- `runtime/java/com/macapk/loader/ActivityHost.java` and
+  `android/app/Activity.java`: an activity that finishes before its first
+  `onResume` is driven down only from where it is, as AOSP's
+  `performDestroyActivity` does: `onDestroy` alone after `onCreate`, `onStop`
+  and `onDestroy` after `onStart` (it got `onPause` and `onStop` too, which
+  made androidx start the fragments of an activity on its way out), with the
+  androidx lifecycle taken to CREATED first; and `isDestroyed()` turns true
+  right before `onDestroy`, not at `finish()`. Not Windows-specific.
 - `runtime/java/android/provider/SettingsStore.java`: `Secure.DEFAULT_INPUT_METHOD`
   is seeded with the host keyboard's component, as a device always has a
   current IME (Key Mapper read it without a null check). Not Windows-specific.

@@ -256,7 +256,14 @@ public class Activity extends ContextThemeWrapper
     }
 
     public boolean isFinishing()      { return finished; }
-    public boolean isDestroyed()      { return finished; }
+    /** AOSP: mDestroyed, set by performDestroy right before onDestroy; a
+     *  finishing activity is not destroyed until then. It answered `finished`,
+     *  so Glide.with(activity) in the callbacks that follow finish() threw
+     *  "You cannot start a load for a destroyed activity". */
+    public boolean isDestroyed()      { return destroyed; }
+    private boolean destroyed;
+    /** ActivityHost's teardown, right before onDestroy. */
+    public final void macapkMarkDestroyed() { destroyed = true; }
     // Android: returns true when this Activity is the root of its task
     // stack (the one launched from the home screen). Mac.apk only
     // hosts a single Activity per process, so the launchable Activity
