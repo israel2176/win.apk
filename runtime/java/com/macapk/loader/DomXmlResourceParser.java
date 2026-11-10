@@ -93,11 +93,26 @@ public final class DomXmlResourceParser
         // android namespace URI, which lets app code look up attrs
         // by namespace.
         dbf.setNamespaceAware(true);
-        // Defensive: disable external entity resolution (apps may
-        // ship XMLs that reference DTDs that aren't on the host;
-        // we want a hard-fail, not a network fetch).
-        try { dbf.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true); }
+        // A DOCTYPE is legal and a device's parser (libcore KXmlParser) reads past
+        // it: next() skips the declaration and nothing is ever fetched. This is
+        // also Xml.newPullParser(), so it sees the app's own files, and an SVG
+        // exported by Inkscape or Illustrator starts with
+        //     <!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/...dtd">
+        // Refusing the declaration (disallow-doctype-decl, as this did) failed
+        // every such file: AndroidSVG threw SVGParseException, DroidFish caught
+        // it and drew a board with no pieces (issue #118). So accept the
+        // declaration, and keep what the refusal was for: no DTD and no external
+        // entity is loaded, from the network or from disk.
+        for (String off : new String[] {
+                "http://apache.org/xml/features/nonvalidating/load-external-dtd",
+                "http://xml.org/sax/features/external-general-entities",
+                "http://xml.org/sax/features/external-parameter-entities" }) {
+            try { dbf.setFeature(off, false); } catch (Throwable ignore) {}
+        }
+        // Internal entities stay under the JDK's expansion limits.
+        try { dbf.setFeature(javax.xml.XMLConstants.FEATURE_SECURE_PROCESSING, true); }
         catch (Throwable ignore) {}
+        try { dbf.setXIncludeAware(false); } catch (Throwable ignore) {}
         return dbf.newDocumentBuilder();
     }
 

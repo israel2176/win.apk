@@ -599,6 +599,13 @@ every such change is listed here:
   threw "nextText not on START_TAG"), and the compiled-XML reader keeps text
   chunks, so an element's content (`<key>` in a media-browser allow list) is no
   longer empty. Not Windows-specific; worth offering upstream.
+- `runtime/java/com/macapk/loader/DomXmlResourceParser.java`: an XML file with
+  a `<!DOCTYPE ...>` parses, as on a device, where the pull parser reads past
+  the declaration; the DTD and external entities are still never loaded. This
+  is also `Xml.newPullParser()`, and it refused such a file outright, so
+  AndroidSVG could not read an SVG that starts with the usual W3C DOCTYPE
+  (DroidFish drew its board without the pieces, issue #118). Not
+  Windows-specific; worth offering upstream.
 - `runtime/java/com/macapk/dex/InitRepointPlan.java`: the DEX converter also
   synthesises the constructor R8 deleted when the call site still names the
   allocated class (`new-instance T; invoke-direct T.<init>(D)` with no
