@@ -398,17 +398,21 @@ public final class Camera2StillTest {
             session.close();
         }
 
-        // ---- video: refused, not left waiting ---------------------------------
-        MediaRecorder recorder = new MediaRecorder();
-        check(session(device, recorder.getSurface()) == null,
-                "a session with only a MediaRecorder Surface fails to configure");
+        // ---- video: nothing to record with on a plain JVM, and it says so ------
+        boolean early = false;
+        try {
+            new MediaRecorder().getSurface();
+        } catch (IllegalStateException e) {
+            early = true;
+        }
+        check(early, "MediaRecorder.getSurface before prepare throws IllegalStateException, as on Android");
         boolean noEncoder = false;
         try {
             android.media.MediaCodec.createEncoderByType("video/avc");
         } catch (java.io.IOException e) {
             noEncoder = true;
         }
-        check(noEncoder, "MediaCodec.createEncoderByType throws IOException (no video encoder)");
+        check(noEncoder, "MediaCodec.createEncoderByType throws IOException where the host has no encoder (no natives here)");
 
         jpegReader.close();
         yuvReader.close();
