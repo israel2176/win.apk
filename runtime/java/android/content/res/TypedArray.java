@@ -2175,6 +2175,16 @@ public class TypedArray implements AutoCloseable {
         // NPE on null). hasValue() stays universal for theme reads
         // (attributeSet==null), so those keep the stub too.
         if (id == 0 && !hasValue(index)) return null;
+        // A colour written out (or a ?attr the theme sets to one) is a ColorDrawable on Android
+        // (ResourcesImpl.loadDrawable's colour branch): a style's background="?attr/colorPrimary".
+        if (id == 0) {
+            int type = getType(index);
+            if (type >= android.util.TypedValue.TYPE_FIRST_COLOR_INT
+                    && type <= android.util.TypedValue.TYPE_LAST_COLOR_INT) {
+                android.util.TypedValue rec = macapkRecordAt(index);
+                if (rec != null) return new android.graphics.drawable.ColorDrawable(rec.data);
+            }
+        }
         return new android.graphics.drawable.VectorDrawable();
     }
     /** v1.0.97: never return null. Material widgets that read a

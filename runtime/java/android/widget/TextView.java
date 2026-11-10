@@ -5418,6 +5418,11 @@ public class TextView extends View
         // fm.top under the default includeFontPadding, so the baseline sits
         // -top below it, not -ascent. Measured against the golden at 20px:
         // reference 22, and -ascent gives 19.
+        // AOSP: `if (mLayout == null) return super.getBaseline();`, which is -1.
+        // A view that was never measured (gone, or not laid out yet) has no
+        // layout, and "no baseline" is what keeps it out of a baseline-aligned
+        // row's arithmetic.
+        if (getWidth() <= 0 && getMeasuredWidth() <= 0) return -1;
         android.graphics.Paint p = new android.graphics.Paint();
         p.setTextSize(textSizePx);
         applyTextStyleToPaint(p);

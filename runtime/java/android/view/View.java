@@ -322,7 +322,8 @@ public class View implements android.graphics.drawable.Drawable.Callback,
                             "ctor4 " + getClass().getSimpleName()
                             + " dsa=0x" + Integer.toHexString(defStyleAttr)
                             + " dsr=0x" + Integer.toHexString(defStyleRes)
-                            + " minW=" + mw + " minH=" + mh
+                            + " minW=" + mw + " minH=" + mh + " bg=" + styleBg
+                            + (declaredNullBg ? " bg-declared-null" : "")
                             + (ctorPad == null ? ""
                                : " padMask=0x" + Integer.toHexString(macapkCtorPaddingMask)
                                  + " pad=" + paddingLeft + "," + paddingTop + ","
@@ -331,7 +332,14 @@ public class View implements android.graphics.drawable.Drawable.Callback,
                 }
                 if (mw >= 0) setMinimumWidth(mw);
                 if (mh >= 0) setMinimumHeight(mh);
-            } catch (Throwable ignored) {}
+            } catch (Throwable t) {
+                if (ENV_MACAPK_TRACE_DEFSTYLE != null) {
+                    try {
+                        com.macapk.loader.NativeLog.i("Mac.apk.View", "ctor4 " + getClass().getSimpleName()
+                            + " default-style read threw " + t);
+                    } catch (Throwable ignored) {}
+                }
+            }
             // AOSP's View constructor reads R.styleable.View_elevation from the
             // same four-tier cascade (android14 View.java, `case
             // R.styleable.View_elevation: elevation = a.getDimension(...)` ->
