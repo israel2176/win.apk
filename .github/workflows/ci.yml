@@ -406,6 +406,17 @@ jobs:
             com.macapk.loader.ApkVerificationTest "$(cygpath -w stage/bin/tools/framework-res.apk)" \
             "$(cygpath -w "$RUNNER_TEMP/apkverify")" | tee apkverify-test.log
           grep -q "ALL PASSED" apkverify-test.log
+      - name: Run the App Link verification test
+        run: |
+          # com.macapk.loader.AppLinks: nothing fetched at start; a sign-in's
+          # redirect host checked on its own, its verdict cached per APK (TTLs,
+          # a new APK drops it). No network: the fetch is the test's.
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          cp="$(cygpath -w stage/lib/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          "$JAVA_HOME/bin/javac" -cp "$cp" -d build/applinks-test windows/test/java/com/macapk/loader/AppLinksTest.java
+          MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/applinks-test)" \
+            com.macapk.loader.AppLinksTest "$(cygpath -w "$RUNNER_TEMP/applinks")" | tee applinks-test.log
+          grep -q "ALL PASSED" applinks-test.log
       - name: Run the scan record test
         run: |
           # android.bluetooth.le.ScanRecord's parser over the advertising bytes
