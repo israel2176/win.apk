@@ -33,7 +33,8 @@ Windows notifications. It is an unofficial Windows port of
   menu shortcut and taskbar icon; its notifications are Windows notifications.
 - **Install the way you expect.** Double-click or drag an `.apk` or a split
   bundle (`.apkm`, `.xapk`, `.apks`), or install from the built-in
-  [F-Droid](https://f-droid.org) Store.
+  [F-Droid](https://f-droid.org) Store. A store app such as Aurora Store
+  installs into the same library: [App stores](docs/USER_GUIDE.md#app-stores).
 - **Your PC's hardware.** Webcams, the microphone, Windows location, Bluetooth
   devices you paired, Wi-Fi information, Xbox controllers, your Downloads and
   Pictures folders, and the clipboard.

@@ -7,6 +7,7 @@ page, [Compatibility](APPS.md); problems and bug reports are in
 
 - [Installing apps](#installing-apps)
 - [The Store](#the-store)
+- [App stores](#app-stores)
 - [Running an app](#running-an-app)
 - [Managing an app](#managing-an-app)
 - [Settings](#settings)
@@ -144,6 +145,45 @@ checks now.
 
 The Store needs an internet connection and reaches only f-droid.org. The
 downloaded APK is deleted after the install.
+
+## App stores
+
+There are three ways to get apps from a store, and they can be used together.
+
+| Store | What it is | Where |
+|---|---|---|
+| The **Store** tab | F-Droid's catalog, built into Win.apk | [The Store](#the-store) |
+| A store app | A store that is itself an Android app, such as the [F-Droid](https://f-droid.org) app or [Aurora Store](https://auroraoss.com) (a free client for Google Play) | Install it like any app; it has a tile in the library |
+| **Google Play** | Google's own Play Store, with Google's Play services | Experimental: [Google account](#google-account) |
+
+A store app runs like any other app. What it installs lands in the Win.apk
+library, the same as a file you dropped:
+
+- When the store app installs or updates an app, Win.apk asks first
+  (**Install _package_?** or **Update _app_?**, naming the store app that
+  asks). Declining leaves everything as it was. An update keeps the app's
+  data; an app that is running has to be closed before it can be updated.
+- The first time, the store app asks for **Install unknown apps**, as on a
+  phone ([Permissions](#permissions)).
+- The installed app opens from the library, has its own shortcut, and is
+  removed like any other ([Removing apps](#removing-apps-and-uninstalling)).
+- These installs are logged in `install-helper.log` ([Logs](#logs)).
+
+Aurora Store downloads the build Google Play offers to the device it
+describes itself as, so the device profile chosen in Aurora's settings
+decides whether an app arrives with x86_64 code (runs directly) or only
+arm64 code (translated, slower the first time:
+[ARM-only apps](#arm-only-apps)). After changing the profile, sign out of
+Aurora and in again, or it keeps asking for the old device's builds. Which
+profile serves Win.apk best has not been settled yet; it is being tried in
+[#66](https://github.com/israel2176/win.apk/issues/66).
+
+What no store can give here: in-app purchases and paid apps' licence checks
+that need Play Integrity
+([what does not work](google-services.md#what-does-not-work-and-will-not-be-faked)).
+Aurora Store and the F-Droid app boot in the automated sweep; installing
+through them has not yet been tried by hand on Windows, so
+[Compatibility](APPS.md) lists them as partial.
 
 ## Running an app
 

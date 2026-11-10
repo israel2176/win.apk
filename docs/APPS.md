@@ -70,7 +70,7 @@ keeping a copy.
 | Google's real Play services and Play Store | ⚠️ | Experimental, off by default, with Google's own APKs that you install. Tried: FCM tokens, the Play Store signed in, installing a free app from it. See [Google services](google-services.md) | Untested on most apps | `binder_win.cpp`, `SystemServer` |
 | In-app purchases, Play Integrity, Maps SDK | ❌ | | Billing reports unavailable, there is no attestation, and the Maps SDK lays out a blank map. Not planned: Win.apk does not forge Google's checks | |
 | F-Droid (the built-in Store) | ✅ | Search, categories, Install and Update; downloads checked against F-Droid's index | | `launcher_main.cpp` (Store) |
-| Store apps (F-Droid, Aurora Store) | ⚠️ | An app that installs other apps asks you first and installs into the library | Being tested in [#66](https://github.com/israel2176/win.apk/issues/66) | `PackageInstallerBackend` |
+| Store apps (F-Droid, Aurora Store) | ⚠️ | An app that installs other apps asks you first and installs into the library. See [App stores](USER_GUIDE.md#app-stores) | Both boot in the sweep; installing through them is being tested by hand in [#66](https://github.com/israel2176/win.apk/issues/66) | `PackageInstallerBackend` |
 
 ## Needs improvement, by importance
 
