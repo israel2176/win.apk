@@ -998,6 +998,48 @@ WINAPK_GUEST_ABI int g_timerfd_gettime(int fd, GuestItimerspec* out) {
     return t->get(out);
 }
 
+// ---- forms that were missing -----------------------------------------------------------
+// The 64-bit-sigset waits, epoll_pwait2 and FORTIFY's poll. Missing, each answered 0 through the
+// loader's fallback: "timed out, nothing ready", at once, to an event loop that then asked again.
+// The signal mask is not applied, as in ppoll and epoll_pwait above.
+WINAPK_GUEST_ABI int g_epoll_pwait2(int epfd, GuestEpollEvent* out, int max, const GuestTimespec* ts, const void*) {
+    const int64_t ms = ts ? ts->tv_sec * 1000 + (ts->tv_nsec + 999999) / 1000000 : -1;
+    return g_epoll_wait(epfd, out, max, static_cast<int>(std::min<int64_t>(ms, INT_MAX)));
+}
+void check_poll_fds(const char* fn, uint64_t nfds, size_t fds_size) {
+    if (fds_size / sizeof(GuestPollFd) >= nfds) return;
+    std::fprintf(stderr, "[win.apk] guest FORTIFY: %s: %llu-element pollfd array too small for nfds\n", fn,
+                 static_cast<unsigned long long>(fds_size / sizeof(GuestPollFd)));
+    std::fflush(stderr);
+    std::abort();
+}
+WINAPK_GUEST_ABI int g_poll_chk(GuestPollFd* fds, uint64_t nfds, int timeout, size_t fds_size) {
+    check_poll_fds("poll", nfds, fds_size);
+    return g_poll(fds, nfds, timeout);
+}
+WINAPK_GUEST_ABI int g_ppoll_chk(GuestPollFd* fds, uint64_t nfds, const GuestTimespec* ts, const void* mask,
+                                 size_t fds_size) {
+    check_poll_fds("ppoll", nfds, fds_size);
+    return g_ppoll(fds, nfds, ts, mask);
+}
+
+// inotify and signalfd have no object here yet. The fallback's 0 was "descriptor 0": the caller
+// then read the runtime's standard input for its events.
+// TODO(inotify): an FdObject over ReadDirectoryChangesW; android.os.FileObserver is the Java side.
+WINAPK_GUEST_ABI int g_inotify() {
+    static std::atomic<bool> said{false};
+    say_once(said, "inotify_init()",
+             "the app's native code asked to watch files for changes, which is not supported yet; the call "
+             "fails with ENOSYS");
+    return *guest_errno() = kENOSYS, -1;
+}
+// TODO(signalfd): an FdObject that signal.cpp's delivery writes to for the signals in its mask.
+WINAPK_GUEST_ABI int g_signalfd() {
+    static std::atomic<bool> said{false};
+    say_once(said, "signalfd()", "not supported yet; the call fails with ENOSYS");
+    return *guest_errno() = kENOSYS, -1;
+}
+
 const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("pipe", g_pipe),
     WINAPK_SHIM("pipe2", g_pipe2),
@@ -1019,6 +1061,20 @@ const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("epoll_ctl", g_epoll_ctl),
     WINAPK_SHIM("epoll_wait", g_epoll_wait),
     WINAPK_SHIM("epoll_pwait", g_epoll_pwait),
+    WINAPK_SHIM("epoll_pwait64", g_epoll_pwait),
+    WINAPK_SHIM("epoll_pwait2", g_epoll_pwait2),
+    WINAPK_SHIM("epoll_pwait2_64", g_epoll_pwait2),
+    WINAPK_SHIM("ppoll64", g_ppoll),
+    WINAPK_SHIM("pselect64", g_pselect),
+    WINAPK_SHIM("__poll_chk", g_poll_chk),
+    WINAPK_SHIM("__ppoll_chk", g_ppoll_chk),
+    WINAPK_SHIM("__ppoll64_chk", g_ppoll_chk),
+    WINAPK_SHIM("inotify_init", g_inotify),
+    WINAPK_SHIM("inotify_init1", g_inotify),
+    WINAPK_SHIM("inotify_add_watch", g_inotify),
+    WINAPK_SHIM("inotify_rm_watch", g_inotify),
+    WINAPK_SHIM("signalfd", g_signalfd),
+    WINAPK_SHIM("signalfd4", g_signalfd),
 };
 
 }  // namespace

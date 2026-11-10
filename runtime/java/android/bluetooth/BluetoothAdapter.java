@@ -163,25 +163,60 @@ public class BluetoothAdapter {
     public int getLeMaximumAdvertisingDataLength() { return 0; }
 
     /**
-     * The pre-API-21 LE scan API. AOSP returns false when the scan could not
-     * be started, which is our permanent state -- and false is what stops an
-     * app waiting for an onLeScan that cannot come.
+     * The pre-API-21 LE scan API, as AOSP has it since API 21: a wrapper over
+     * the LE scanner. Apps for older devices (and vendor SDKs that never
+     * moved on) still call it. False when the scan cannot start: the adapter
+     * is off, the host has no LE radio, or this callback is already scanning.
      */
     @Deprecated
-    public boolean startLeScan(LeScanCallback callback) { return false; }
+    public boolean startLeScan(LeScanCallback callback) { return startLeScan(null, callback); }
 
-    /** @see #startLeScan(LeScanCallback) */
+    /** As AOSP: scans unfiltered and reports a device only when its
+     *  advertisement lists every one of serviceUuids. */
     @Deprecated
-    public boolean startLeScan(java.util.UUID[] serviceUuids, LeScanCallback callback) {
-        return false;
+    public boolean startLeScan(final java.util.UUID[] serviceUuids, final LeScanCallback callback) {
+        if (callback == null) return false;
+        android.bluetooth.le.BluetoothLeScanner scanner = getBluetoothLeScanner();
+        if (scanner == null || !com.macapk.loader.HostBluetooth.leAvailable()) return false;
+        android.bluetooth.le.ScanCallback wrapper;
+        synchronized (mLegacyScans) {
+            if (mLegacyScans.containsKey(callback)) return false;
+            wrapper = new android.bluetooth.le.ScanCallback() {
+                @Override public void onScanResult(int callbackType, android.bluetooth.le.ScanResult result) {
+                    android.bluetooth.le.ScanRecord record = result.getScanRecord();
+                    if (record == null) return;
+                    if (serviceUuids != null && serviceUuids.length > 0) {
+                        java.util.List<android.os.ParcelUuid> have = record.getServiceUuids();
+                        for (java.util.UUID want : serviceUuids) {
+                            if (have == null || !have.contains(new android.os.ParcelUuid(want))) return;
+                        }
+                    }
+                    callback.onLeScan(result.getDevice(), result.getRssi(), record.getBytes());
+                }
+            };
+            mLegacyScans.put(callback, wrapper);
+        }
+        scanner.startScan(null, new android.bluetooth.le.ScanSettings.Builder()
+                .setScanMode(android.bluetooth.le.ScanSettings.SCAN_MODE_LOW_LATENCY).build(), wrapper);
+        return true;
     }
 
-    /** A removal: no scan is running, so there is nothing to stop. */
     @Deprecated
-    public void stopLeScan(LeScanCallback callback) {}
+    public void stopLeScan(LeScanCallback callback) {
+        android.bluetooth.le.ScanCallback wrapper;
+        synchronized (mLegacyScans) {
+            wrapper = mLegacyScans.remove(callback);
+        }
+        if (wrapper != null) new android.bluetooth.le.BluetoothLeScanner().stopScan(wrapper);
+    }
+
+    // startLeScan's callbacks and the ScanCallback each one scans through. Static:
+    // the scanner's clients are, and apps stop a scan on another adapter object.
+    private static final java.util.Map<LeScanCallback, android.bluetooth.le.ScanCallback> mLegacyScans =
+            new java.util.HashMap<>();
 
     /**
-     * The pre-API-21 LE scan callback. Never invoked here, but it is a class
+     * The pre-API-21 LE scan callback. Also a class
      * STRUCTURE dependency for any app that declares
      * `implements BluetoothAdapter.LeScanCallback` -- resolved when that class
      * is DEFINED, so a missing interface aborts it on load.

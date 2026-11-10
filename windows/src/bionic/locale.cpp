@@ -495,7 +495,28 @@ const char g_c_ctype[1 + 256] = {
 };
 const char* g_ctype = g_c_ctype;
 
+// nl_langinfo, as Bionic answers it for its one locale (C.UTF-8); the items are <langinfo.h>'s, 1 to
+// 55 in this order. Missing, it answered null through the loader's fallback, which callers hand
+// straight to strcmp or iconv_open.
+WINAPK_GUEST_ABI const char* g_nl_langinfo(int item) {
+    static const char* const kItems[] = {
+        "",  // 0 is no item
+        "UTF-8", "%F %T %z", "%F", "%T", "%I:%M:%S %p", "AM", "PM",                      // CODESET .. PM_STR
+        "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday",     // DAY_1 .. DAY_7
+        "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat",                                  // ABDAY_1 .. ABDAY_7
+        "January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
+        "November", "December",                                                           // MON_1 .. MON_12
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",  // ABMON_1 .. ABMON_12
+        "", "", "", "", "",                                 // ERA, ERA_D_FMT, ERA_D_T_FMT, ERA_T_FMT, ALT_DIGITS
+        ".", "", "^[yY]", "^[nN]", "",                      // RADIXCHAR, THOUSEP, YESEXPR, NOEXPR, CRNCYSTR
+    };
+    const size_t count = sizeof(kItems) / sizeof(kItems[0]);
+    return item > 0 && static_cast<size_t>(item) < count ? kItems[item] : "";
+}
+
 const ShimSymbol kSymbols[] = {
+    WINAPK_SHIM("nl_langinfo", g_nl_langinfo),
+    WINAPK_SHIM("nl_langinfo_l", g_nl_langinfo),
     WINAPK_SHIM("setlocale", g_setlocale),
     WINAPK_SHIM("newlocale", g_newlocale),
     WINAPK_SHIM("duplocale", g_duplocale),

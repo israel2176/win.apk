@@ -1785,6 +1785,282 @@ static void test_sweep_gaps(const char* dir) {
     check("ATrace: tracing is off, the markers do nothing", !ATrace_isEnabled(), 0);
 }
 
+// ---- calls the loader's fallback used to answer -----------------------------------
+// FORTIFY forms and plain calls the shim did not have. An import nobody provides is bound to a stub
+// that answers 0, which for these meant "done", "nothing ready" or "descriptor 0": __pwrite_chk's 0
+// kept Play services writing for ever. Each is either the real thing now or fails as Linux reports
+// it (src/bionic/, "calls that were missing").
+struct iovec { void* base; size_t len; };
+ssize_t writev(int, const struct iovec*, int);
+ssize_t readv(int, const struct iovec*, int);
+ssize_t pwritev(int, const struct iovec*, int, off_t);
+ssize_t preadv(int, const struct iovec*, int, off_t);
+ssize_t __pwrite_chk(int, const void*, size_t, off_t, size_t);
+ssize_t __pread_chk(int, void*, size_t, off_t, size_t);
+ssize_t __readlinkat_chk(int, const char*, char*, size_t, size_t);
+char* __getcwd_chk(char*, size_t, size_t);
+void* __memrchr_chk(const void*, int, size_t, size_t);
+void* __mempcpy_chk(void*, const void*, size_t, size_t);
+char* __stpncpy_chk(char*, const char*, size_t, size_t);
+char* __stpncpy_chk2(char*, const char*, size_t, size_t, size_t);
+void* memccpy(void*, const void*, int, size_t);
+int __poll_chk(struct pollfd*, unsigned long, int, size_t);
+int __ppoll_chk(struct pollfd*, unsigned long, const struct timespec*, const void*, size_t);
+int epoll_pwait2(int, struct epoll_event*, int, const struct timespec*, const void*);
+ssize_t sendfile(int, int, off_t*, size_t);
+int truncate(const char*, off_t);
+int renameat(int, const char*, int, const char*);
+int renameat2(int, const char*, int, const char*, unsigned);
+int readdir_r(DIR*, struct dirent*, struct dirent**);
+void rewinddir(DIR*);
+int scandir(const char*, struct dirent***, int (*)(const struct dirent*),
+            int (*)(const struct dirent**, const struct dirent**));
+int alphasort(const struct dirent**, const struct dirent**);
+int mkstemps(char*, int);
+int getc_unlocked(FILE*);
+int posix_spawn(int*, const char*, const void*, const void*, char* const[], char* const[]);
+int execv(const char*, char* const[]);
+int wait4(int, int*, int, void*);
+int openpty(int*, int*, char*, const void*, const void*);
+int inotify_init1(int);
+void* iconv_open(const char*, const char*);
+int regcomp(void*, const char*, int);
+void* mremap(void*, size_t, size_t, int, ...);
+int symlink(const char*, const char*);
+int sigtimedwait(const unsigned long*, void*, const struct timespec*);
+int sigwait(const unsigned long*, int*);
+int pthread_spin_init(long*, int);
+int pthread_spin_lock(long*);
+int pthread_spin_trylock(long*);
+int pthread_spin_unlock(long*);
+int pthread_mutex_clocklock(pthread_mutex_t*, int, const struct timespec*);
+typedef struct { unsigned count; int reserved[3]; } sem_t;
+int sem_init(sem_t*, int, unsigned);
+int sem_post(sem_t*);
+int sem_clockwait(sem_t*, int, const struct timespec*);
+const char* nl_langinfo(int);
+struct sysinfo {
+    long uptime;
+    unsigned long loads[3], totalram, freeram, sharedram, bufferram, totalswap, freeswap;
+    unsigned short procs, pad;
+    unsigned long totalhigh, freehigh;
+    unsigned mem_unit;
+};
+int sysinfo(struct sysinfo*);
+int gethostbyname_r(const char*, void*, char*, size_t, void**, int*);
+int ASharedMemory_create(const char*, size_t);
+size_t ASharedMemory_getSize(int);
+
+static int only_txt(const struct dirent* e) {
+    const size_t n = strlen(e->d_name);
+    return n > 4 && strcmp(e->d_name + n - 4, ".txt") == 0;
+}
+
+// CLOCK_MONOTONIC's time `ms` from now.
+static struct timespec in_ms(long ms) {
+    struct timespec t;
+    clock_gettime(1, &t);
+    t.tv_nsec += ms * 1000000;
+    t.tv_sec += t.tv_nsec / 1000000000;
+    t.tv_nsec %= 1000000000;
+    return t;
+}
+
+static void test_missing_forms(const char* dir) {
+    char b[512], path[512], other[512];
+    struct stat st;
+
+    // Files: the FORTIFY forms of pread/pwrite, vectors, sendfile, truncate, renameat.
+    snprintf(path, sizeof path, "%s/forms.bin", dir);
+    int fd = open(path, 01102, 0600);  // O_RDWR | O_CREAT | O_TRUNC
+    check("__pwrite_chk writes what it is given", fd >= 0 && __pwrite_chk(fd, "0123456789", 10, 0, 16) == 10,
+          why(fd >= 0));
+    memset(b, 0, sizeof b);
+    check("__pread_chk reads it back", __pread_chk(fd, b, 4, 3, sizeof b) == 4 && strcmp(b, "3456") == 0, b);
+    struct iovec out[3] = {{"ab", 2}, {"", 0}, {"cdef", 4}};
+    check("writev writes every buffer in one call", lseek(fd, 0, 2) == 10 && writev(fd, out, 3) == 6, 0);
+    char r1[4] = "", r2[8] = "";
+    struct iovec in[2] = {{r1, 3}, {r2, 7}};
+    lseek(fd, 8, 0);
+    check("readv fills the buffers in order and stops at the end",
+          readv(fd, in, 2) == 8 && memcmp(r1, "89a", 3) == 0 && memcmp(r2, "bcdef", 5) == 0, 0);
+    check("readv at the end of the file is 0", readv(fd, in, 2) == 0, 0);
+    check("pwritev / preadv work at an offset and leave the position",
+          pwritev(fd, out, 3, 2) == 6 && preadv(fd, in, 1, 2) == 3 && memcmp(r1, "abc", 3) == 0 &&
+              lseek(fd, 0, 1) == 16,
+          0);
+    int p[2] = {-1, -1};
+    pipe(p);
+    write(p[1], "xyz", 3);
+    in[0].len = 2;
+    check("readv on a pipe returns what is there", readv(p[0], in, 2) == 3 && r1[1] == 'y' && r2[0] == 'z', 0);
+    check("writev to a pipe", writev(p[1], out, 3) == 6 && read(p[0], b, 16) == 6 && memcmp(b, "abcdef", 6) == 0, 0);
+    off_t at = 2;  // the file holds "01abcdef89abcdef"
+    check("sendfile copies from an offset and moves it",
+          sendfile(p[1], fd, &at, 5) == 5 && at == 7 && read(p[0], b, 16) == 5 && memcmp(b, "abcde", 5) == 0, 0);
+    at = 14;
+    check("sendfile stops at the end of the file", sendfile(p[1], fd, &at, 100) == 2 && read(p[0], b, 16) == 2, 0);
+    close(fd);
+    check("truncate by path", truncate(path, 4) == 0 && stat(path, &st) == 0 && st.size == 4, 0);
+    snprintf(other, sizeof other, "%s/forms2.bin", dir);
+    check("renameat(AT_FDCWD) renames", renameat(-100, path, -100, other) == 0 && stat(other, &st) == 0 &&
+                                            stat(path, &st) != 0, 0);
+    put_file(path, "x");
+    check("renameat2(RENAME_NOREPLACE) refuses a taken name: EEXIST",
+          renameat2(-100, path, -100, other, 1) == -1 && *__errno() == 17 && stat(path, &st) == 0, 0);
+    unlink(path);
+    unlink(other);
+    check("__readlinkat_chk fails as readlinkat does", __readlinkat_chk(-100, path, b, 16, 16) == -1, 0);
+    check("__getcwd_chk", __getcwd_chk(b, sizeof b, sizeof b) == b && b[0] == '/', b);
+    check("symlink: EPERM, as on a file system without links", symlink(other, path) == -1 && *__errno() == 1, 0);
+
+    // Strings.
+    const char* abc = "abcabc";
+    char s8[8];
+    check("__memrchr_chk", __memrchr_chk(abc, 'b', 6, 7) == abc + 4, 0);
+    check("__mempcpy_chk returns the end of the copy",
+          __mempcpy_chk(s8, "xy", 3, sizeof s8) == s8 + 3 && strcmp(s8, "xy") == 0, 0);
+    memset(s8, 'z', sizeof s8);
+    check("__stpncpy_chk pads and returns the terminator",
+          __stpncpy_chk(s8, "ab", 6, sizeof s8) == s8 + 2 && s8[5] == 0 && s8[6] == 'z', 0);
+    check("__stpncpy_chk2 without room for a terminator returns the end",
+          __stpncpy_chk2(s8, "abcdef", 4, sizeof s8, 7) == s8 + 4 && memcmp(s8, "abcd", 4) == 0, 0);
+    check("memccpy stops after the byte, or answers null",
+          memccpy(s8, "a,b", ',', 3) == s8 + 2 && memccpy(s8, "abc", ',', 3) == 0, 0);
+
+    // Waits: each takes its timeout, where the stub's 0 came back at once.
+    struct pollfd pf = {p[0], 1, 0};
+    long t0 = ms_now(1);
+    check("__poll_chk waits out its timeout on an empty pipe",
+          __poll_chk(&pf, 1, 50, sizeof pf) == 0 && ms_now(1) - t0 >= 40, 0);
+    const struct timespec fifty = {0, 50000000};
+    t0 = ms_now(1);
+    check("__ppoll_chk too", __ppoll_chk(&pf, 1, &fifty, 0, sizeof pf) == 0 && ms_now(1) - t0 >= 40, 0);
+    const int ep = epoll_create1(0);
+    struct epoll_event ev = {1, 0}, got;
+    epoll_ctl(ep, 1, p[0], &ev);
+    t0 = ms_now(1);
+    check("epoll_pwait2 waits out its timespec", epoll_pwait2(ep, &got, 1, &fifty, 0) == 0 && ms_now(1) - t0 >= 40,
+          0);
+    write(p[1], "!", 1);
+    check("epoll_pwait2 reports the pipe once it is written", epoll_pwait2(ep, &got, 1, &fifty, 0) == 1, 0);
+    close(ep);
+    close(p[0]);
+    close(p[1]);
+
+    // Directories.
+    snprintf(path, sizeof path, "%s/forms_dir", dir);
+    mkdir(path, 0700);
+    static const char* const kNames[] = {"b.txt", "a.txt", "c.dat"};
+    for (int i = 0; i < 3; ++i) {
+        snprintf(other, sizeof other, "%s/%s", path, kNames[i]);
+        put_file(other, "x");
+    }
+    DIR* d = opendir(path);
+    struct dirent entry, *res = &entry;
+    int seen = 0, rounds = 0;
+    while (d && rounds++ < 100 && readdir_r(d, &entry, &res) == 0 && res) seen += entry.d_name[0] != '.';
+    check("readdir_r ends with a null result", seen == 3 && res == 0, 0);
+    if (d) rewinddir(d);
+    seen = 0;
+    for (struct dirent* e; d && (e = readdir(d));) seen += e->d_name[0] != '.';
+    check("rewinddir starts the listing over", seen == 3, 0);
+    if (d) closedir(d);
+    struct dirent** list = 0;
+    const int n = scandir(path, &list, only_txt, alphasort);
+    check("scandir filters with the callback and sorts with alphasort",
+          n == 2 && strcmp(list[0]->d_name, "a.txt") == 0 && strcmp(list[1]->d_name, "b.txt") == 0, 0);
+    for (int i = 0; i < n; ++i) free(list[i]);
+    if (n >= 0) free(list);
+    for (int i = 0; i < 3; ++i) {
+        snprintf(other, sizeof other, "%s/%s", path, kNames[i]);
+        unlink(other);
+    }
+    rmdir(path);
+
+    snprintf(path, sizeof path, "%s/tmpXXXXXX.txt", dir);
+    fd = mkstemps(path, 4);
+    check("mkstemps keeps the suffix",
+          fd > 2 && strcmp(path + strlen(path) - 4, ".txt") == 0 && !strstr(path, "XXXXXX"), path);
+    write(fd, "q", 1);
+    close(fd);
+    FILE* f = fopen(path, "r");
+    check("getc_unlocked reads, then answers EOF", f && getc_unlocked(f) == 'q' && getc_unlocked(f) == -1, 0);
+    if (f) fclose(f);
+    unlink(path);
+
+    // What Win.apk cannot do fails as Linux reports it (and says so once in the log).
+    int pid = 0;
+    char* argv[] = {"sh", 0};
+    check("posix_spawn answers ENOSYS", posix_spawn(&pid, "/system/bin/sh", 0, 0, argv, environ) == 38, 0);
+    check("execv returns -1 with ENOSYS", execv("/system/bin/sh", argv) == -1 && *__errno() == 38, 0);
+    check("wait4 has no child: ECHILD", wait4(-1, 0, 0, 0) == -1 && *__errno() == 10, 0);
+    int master = 0, slave = 0;
+    check("openpty: ENOENT, there is no /dev/ptmx", openpty(&master, &slave, 0, 0, 0) == -1 && *__errno() == 2, 0);
+    check("inotify_init1 fails with ENOSYS, not descriptor 0", inotify_init1(0) == -1 && *__errno() == 38, 0);
+    check("iconv_open fails with (iconv_t)-1 and EINVAL",
+          iconv_open("UTF-8", "UTF-16LE") == (void*)-1 && *__errno() == 22, 0);
+    char re[64];
+    check("regcomp does not claim to have compiled", regcomp(re, "a+", 1) != 0, 0);
+    check("mremap fails with MAP_FAILED and ENOMEM", mremap(b, 4096, 8192, 1) == (void*)-1 && *__errno() == 12, 0);
+    void* host = b;
+    int herr = 0;
+    check("gethostbyname_r: no result, NO_RECOVERY",
+          gethostbyname_r("localhost", b, path, sizeof path, &host, &herr) == -1 && host == 0 && herr == 3, 0);
+
+    // Signals waited for, not handled.
+    const unsigned long usr1 = 1ul << 9;  // SIGUSR1 is 10
+    sigprocmask(0, &usr1, 0);             // SIG_BLOCK
+    t0 = ms_now(1);
+    check("sigtimedwait times out with EAGAIN",
+          sigtimedwait(&usr1, 0, &fifty) == -1 && *__errno() == 11 && ms_now(1) - t0 >= 40, 0);
+    raise(10);
+    int sig = 0;
+    check("sigwait takes the pending signal", sigwait(&usr1, &sig) == 0 && sig == 10, 0);
+    raise(10);
+    check("sigtimedwait takes it too", sigtimedwait(&usr1, 0, &fifty) == 10, 0);
+    sigprocmask(1, &usr1, 0);  // SIG_UNBLOCK: nothing is left pending
+
+    // Locks with a deadline, and the spin lock.
+    long spin = 7;
+    check("pthread_spin_lock holds the lock: trylock is EBUSY until unlock",
+          pthread_spin_init(&spin, 0) == 0 && pthread_spin_lock(&spin) == 0 && pthread_spin_trylock(&spin) == 16 &&
+              pthread_spin_unlock(&spin) == 0 && pthread_spin_trylock(&spin) == 0,
+          0);
+    static pthread_mutex_t mu;
+    pthread_mutex_lock(&mu);
+    struct timespec deadline = in_ms(50);
+    t0 = ms_now(1);
+    check("pthread_mutex_clocklock times out on a held mutex",
+          pthread_mutex_clocklock(&mu, 1, &deadline) == 110 && ms_now(1) - t0 >= 40, 0);
+    pthread_mutex_unlock(&mu);
+    deadline = in_ms(50);
+    check("pthread_mutex_clocklock takes a free one", pthread_mutex_clocklock(&mu, 1, &deadline) == 0, 0);
+    pthread_mutex_unlock(&mu);
+    sem_t sem;
+    sem_init(&sem, 0, 0);
+    deadline = in_ms(50);
+    t0 = ms_now(1);
+    check("sem_clockwait times out on an empty semaphore: ETIMEDOUT",
+          sem_clockwait(&sem, 1, &deadline) == -1 && *__errno() == 110 && ms_now(1) - t0 >= 40, 0);
+    sem_post(&sem);
+    deadline = in_ms(50);
+    check("sem_clockwait takes a posted one", sem_clockwait(&sem, 1, &deadline) == 0, 0);
+
+    fd = ASharedMemory_create("region", 8192);
+    char* shared = fd > 2 ? mmap(0, 8192, 3, 1, fd, 0) : (char*)-1;  // PROT_READ | PROT_WRITE, MAP_SHARED
+    check("ASharedMemory_create gives a region of the size asked, to map",
+          fd > 2 && ASharedMemory_getSize(fd) == 8192 && shared != (char*)-1 && (shared[8191] = 'm') == 'm', 0);
+    if (shared != (char*)-1) munmap(shared, 8192);
+    if (fd > 2) close(fd);
+
+    check_str("nl_langinfo(CODESET)", nl_langinfo(1), "UTF-8");
+    struct sysinfo si;
+    memset(&si, 0, sizeof si);
+    check("sysinfo reports memory", sysinfo(&si) == 0 && si.totalram > 0 && si.freeram <= si.totalram &&
+                                        si.mem_unit == 1, 0);
+}
+
 EXPORT int bionic_test(const char* dir) {
     printf("Bionic shim, from guest code\n");
     test_printf();
@@ -1805,5 +2081,6 @@ EXPORT int bionic_test(const char* dir) {
     test_signals_and_paths(dir);
     test_signal_delivery();
     test_sweep_gaps(dir);
+    test_missing_forms(dir);
     return failures;
 }

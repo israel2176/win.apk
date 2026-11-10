@@ -756,7 +756,8 @@ void register_shim_functions() {
     } kCallbacks[] = {
         {"qsort", 3}, {"bsearch", 4}, {"pthread_create", 2}, {"pthread_once", 1}, {"pthread_key_create", 1},
         {"__cxa_atexit", 0}, {"__system_property_read_callback", 1}, {"ALooper_addFd", 4},
-        {"__pthread_cleanup_push", 1},
+        {"__pthread_cleanup_push", 1}, {"scandir", 2}, {"scandir", 3}, {"scandir64", 2}, {"scandir64", 3},
+        {"scandirat", 3}, {"scandirat", 4}, {"scandirat64", 3}, {"scandirat64", 4},
     };
     for (const auto& f : kCallbacks) {
         void* p = mini_bionic_resolve(f.name);
