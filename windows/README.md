@@ -1090,6 +1090,14 @@ every such change is listed here:
   `addSubMenu` is MenuBuilder's, a submenu tied to its item, so `findItem`
   reaches items nested in a submenu (Editor's NPE on its Typeface items).
   Opening a submenu from the bar is not drawn yet. Not Windows-specific.
+- `runtime/java/android/widget/RelativeLayout.java` (`solveBoundsForMeasure`,
+  `onLayout`): a rule waits for its anchor's edges on its own axis only, as
+  in AOSP, which positions every child horizontally and then vertically. A
+  child aligned vertically to a sibling that sits horizontally beside it
+  (arrows with `layout_alignTop`/`alignBottom` on a title that is
+  `layout_toEndOf`/`toStartOf` them) was a cycle to the solver, and every
+  child of the layout became an equal horizontal slice of it (Fossify
+  Calendar's month header). Not Windows-specific.
 - `runtime/java/android/media/RingtoneManager.java` (`getDefaultUri`,
   `getDefaultType`, `isDefault`) and `android/preference/RingtonePreference.java`
   (comments): the default sound of a type is AOSP's `Settings.System` URI
