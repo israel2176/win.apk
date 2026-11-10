@@ -186,17 +186,17 @@ struct PackBuffers {
 std::mutex g_pack_lock;
 std::map<EGLContext, PackBuffers> g_packs;  // std::map: element pointers stay valid across other keys
 
-bool sync_readback_forced() {
-    static const bool forced = [] {
-        const char* e = std::getenv("WINAPK_GL_SYNC_READBACK");
+bool async_readback_enabled() {
+    static const bool on = [] {
+        const char* e = std::getenv("WINAPK_GL_ASYNC_READBACK");
         return e && e[0] == '1';
     }();
-    return forced;
+    return on;
 }
 
 }  // namespace
 
-bool gl_sync_readback_forced() { return sync_readback_forced(); }
+bool gl_async_readback_enabled() { return async_readback_enabled(); }
 
 bool gl_read_current_async(std::vector<uint32_t>* argb, int W, int H, int* pw, int* ph) {
     if (W <= 0 || H <= 0) return false;
@@ -206,11 +206,11 @@ bool gl_read_current_async(std::vector<uint32_t>* argb, int W, int H, int* pw, i
     if (ctx != EGL_NO_CONTEXT) eglQueryContext(dpy, ctx, EGL_CONTEXT_CLIENT_VERSION, &version);
 
     PackBuffers* pb = nullptr;
-    if (!sync_readback_forced() && version >= 3 && ctx != EGL_NO_CONTEXT) {
+    if (version >= 3 && ctx != EGL_NO_CONTEXT) {
         std::lock_guard<std::mutex> hold(g_pack_lock);
         pb = &g_packs[ctx];  // pointer stays valid; only this context's thread erases this key
     }
-    if (!pb || pb->broken) {  // ES 2, forced sync, or a prior failure: present this frame synchronously
+    if (!pb || pb->broken) {  // ES 2 or a prior PBO/map failure: present this frame synchronously
         gl_read_current(argb, W, H);
         *pw = W;
         *ph = H;

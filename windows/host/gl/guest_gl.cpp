@@ -289,17 +289,19 @@ WINAPK_GUEST_ABI EGLBoolean guest_eglSwapBuffers(EGLDisplay dpy, EGLSurface surf
     int w = 0, h = 0;
     live_size(ws, &w, &h);
     // The readback hands the frame to the CPU for the window's GDI compositor.
-    // It is asynchronous (a double pixel pack buffer: the GL thread does not
-    // stall on the GPU->CPU copy, at a cost of one frame of latency) only while
-    // the app renders continuously, where that stall is worth hiding. An app
-    // that renders on demand (a Flutter UI, which draws a burst then idles)
-    // swaps too rarely for the async path: its final frame would sit in a
-    // buffer, unpresented, until a next swap that never comes, so the window
-    // stays blank (localsend). For those the synchronous read is right -- no
-    // stall worth hiding when idle, and the latest frame always reaches the
-    // window at once. The choice is by swap cadence: async only after a short
-    // run of quick swaps. Timed on the GL thread so sync and async are
-    // comparable.
+    // Synchronous by default (glReadPixels, as since the window surface was
+    // added): the GL thread stalls on the GPU->CPU copy, but every app draws.
+    //
+    // WINAPK_GL_ASYNC_READBACK=1 opts into the asynchronous double pixel pack
+    // buffer, which hides that stall at a cost of one frame of latency. It is
+    // not the default because an on-demand renderer (a Flutter UI that draws a
+    // burst then idles, e.g. localsend) swaps too rarely for a one-frame
+    // pipeline -- its final frame is left in a buffer, never presented, and the
+    // window stays blank, with no later tick on the app's own GL thread to flush
+    // it. Even opted in, async engages only once the app has proven it renders
+    // continuously (a long run of swaps under 40 ms apart); any pause reverts to
+    // synchronous at once, so an on-demand UI keeps drawing. Timed on the GL
+    // thread so the two are comparable.
     using clock = std::chrono::steady_clock;
     thread_local std::vector<uint32_t> argb;
     thread_local long long frames = 0, read_ns = 0, present_ns = 0;
@@ -310,16 +312,13 @@ WINAPK_GUEST_ABI EGLBoolean guest_eglSwapBuffers(EGLDisplay dpy, EGLSurface surf
     const double gap_ms = have_last ? std::chrono::duration<double, std::milli>(t0 - last_swap).count() : 1e9;
     last_swap = t0;
     have_last = true;
-    // A continuous renderer sustains quick swaps (<40 ms, i.e. >25 fps); anything
-    // slower is treated as on-demand. Two in a row before switching to async, so
-    // a one-off quick swap in an otherwise idle app does not engage it and drop
-    // that app's frame.
+    constexpr int kAsyncAfter = 90;  // ~1.5 s of unbroken 60 fps before trusting the stream
     if (gap_ms < 40.0) {
-        if (fast_streak < 8) ++fast_streak;
+        if (fast_streak <= kAsyncAfter) ++fast_streak;
     } else {
         fast_streak = 0;
     }
-    const bool use_async = !gl_sync_readback_forced() && fast_streak >= 2;
+    const bool use_async = gl_async_readback_enabled() && fast_streak >= kAsyncAfter;
     int pw = w, ph = h;
     bool present = true;
     if (use_async) {

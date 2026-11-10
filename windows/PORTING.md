@@ -934,33 +934,39 @@ in software). The view tree goes over the guest layer through the hole the
 owning SurfaceView punches (`SurfaceView.macapkNativeWindowLayerZ`), as
 upstream composites its CAMetalLayer.
 
-The read-back on a presenting swap is asynchronous (`gl_read_current_async`,
-`host/gl/gl_surface.cpp`): each swap issues this frame's `glReadPixels` into one
-of two pixel pack buffers, which returns at once (the GPU DMAs into the buffer),
-and maps and presents the *previous* frame from the other buffer, whose copy
-finished a frame ago -- so the app's GL thread never stalls on the GPU->CPU copy
-(a synchronous `glReadPixels` cost ~2.5-3 ms/frame on WARP at 474x630). The cost
-is one frame of latency on that layer, which a continuously rendering map or game
-does not show. The pbuffer resize recreates the buffer at the new size; the
-previous one is still presented at its old size (the compositor handles the
-mismatch). Needs ES 3; on ES 2, a mapping failure, or any PBO error the context
-falls back to the synchronous read for good, and `WINAPK_GL_SYNC_READBACK=1`
-forces that path for comparing. The full fix -- a swap chain on the window that
-skips the copy -- is still left for later.
+The read-back on a presenting swap is synchronous by default (`glReadPixels` into
+client memory, as since the window surface was added): the GL thread stalls on
+the GPU->CPU copy (~2.5-3 ms/frame on WARP at 474x630), but every app draws.
 
-The async path is used only while the app swaps continuously, chosen by swap
-cadence in `guest_eglSwapBuffers` (async after a short run of swaps under 40 ms
-apart, i.e. above ~25 fps; synchronous otherwise). An app that renders on demand
--- a Flutter UI draws a burst then idles -- swaps too rarely for a one-frame
-pipeline: its last frame would sit in a buffer, unpresented, until a next swap
-that may never come (there is no later tick on the app's own GL thread to flush
-it), leaving the window blank (this is what made `org.localsend.localsend_app`
-go blank in the sweep). Reading such a frame synchronously costs nothing worth
-hiding -- the app is idle -- and the latest frame always reaches the window at
-once. The timing line names the path it took (`... (async, avg of 120)` or
-`sync`).
-`winapk-gl-test` draws, reads back and checks a frame on CI's software
-backends.
+`WINAPK_GL_ASYNC_READBACK=1` opts into an asynchronous read
+(`gl_read_current_async`, `host/gl/gl_surface.cpp`): each swap issues this
+frame's `glReadPixels` into one of two pixel pack buffers, which returns at once
+(the GPU DMAs into the buffer), and maps and presents the *previous* frame from
+the other buffer, whose copy finished a frame ago -- so the GL thread never
+stalls on the copy. The cost is one frame of latency on that layer. The pbuffer
+resize recreates the buffer at the new size; the previous one is still presented
+at its old size (the compositor handles the mismatch). Needs ES 3; on ES 2, a
+mapping failure, or any PBO error the context falls back to the synchronous read
+for good.
+
+It is off by default, and is not merely cadence-gated, because the one-frame
+pipeline is wrong for an app that renders on demand -- a Flutter UI (Impeller on
+OpenGL ES) draws a startup burst then idles. Its last, settled frame is issued
+into a buffer but never mapped: there is no next swap to map it, and no later
+tick on the app's own GL thread to flush it (the display loop runs on another
+thread and cannot touch that GL context), so the window stays blank. This made
+`org.localsend.localsend_app` go blank in the sweep (91/92) where it draws on
+`main`. Swap-cadence gating did not save it: its content frames are part of a
+quick burst, and the burst's final frame has no successor to present it. So the
+safe default is the synchronous read (no regression, the full sweep stays
+92/92), and the async path stays opt-in until it is correct for every app --
+even opted in it engages only after a sustained run of continuous swaps (a map
+or game), reverting to synchronous on any pause, so an on-demand UI keeps
+drawing. The timing line names the path it took (`... (async, avg of 120)` or
+`sync`). The full fix -- a swap chain on the window that skips the CPU copy
+entirely -- is a separate planned issue.
+`winapk-gl-test` draws, reads back (synchronously and through the async double
+buffer) and checks a frame on CI's software backends.
 
 Exit: Java-only apps from the compatibility list draw and respond to input
 (for example a calculator, a sudoku game and the F-Droid client).

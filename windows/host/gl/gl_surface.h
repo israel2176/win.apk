@@ -54,7 +54,13 @@ void gl_read_current(std::vector<uint32_t>* argb, int w, int h);
 // with a current context.
 bool gl_read_current_async(std::vector<uint32_t>* argb, int w, int h, int* pw, int* ph);
 
-// Forces gl_read_current_async onto the synchronous path (WINAPK_GL_SYNC_READBACK=1).
-bool gl_sync_readback_forced();
+// Whether the asynchronous readback is opted into (WINAPK_GL_ASYNC_READBACK=1).
+// Off by default: a presenting swap reads the frame back synchronously, as it
+// has since the window surface was added, so no app regresses. The async path
+// trades one frame of latency for a non-stalling readback, which on-demand
+// renderers (a Flutter UI that draws a burst then idles) cannot take -- their
+// final frame is left in a buffer, never presented -- so it stays opt-in until
+// it is correct for every app.
+bool gl_async_readback_enabled();
 
 }  // namespace winapk::host
