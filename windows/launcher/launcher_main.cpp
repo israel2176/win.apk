@@ -1439,6 +1439,54 @@ bool stop_google_app_for_install(const std::wstring& name) {
     return !app_running(name);
 }
 
+// An install of `name` is under way in some process (the library's, or an install helper's): a named
+// mutex held from the first file moved to the last. Windows lets go of it when its process dies, so a
+// mutex that can be had means no install is alive, whatever the files say.
+struct InstallClaim {
+    HANDLE mutex = nullptr;
+    bool held = false;
+    // `wait`: for the install before this one to end; else only if it is free now.
+    InstallClaim(const std::wstring& name, bool wait) {
+        std::wstring key = name;
+        for (wchar_t& c : key) c = static_cast<wchar_t>(towlower(c));
+        uint64_t h = 1469598103934665603ull;  // FNV-1a over the UTF-16 units
+        for (const wchar_t c : key) h = (h ^ static_cast<uint16_t>(c)) * 1099511628211ull;
+        wchar_t id[48];
+        swprintf(id, 48, L"Local\\WinApk-install-%016llx", static_cast<unsigned long long>(h));
+        mutex = CreateMutexW(nullptr, FALSE, id);
+        if (!mutex) return;
+        const DWORD w = WaitForSingleObject(mutex, wait ? INFINITE : 0);
+        held = w == WAIT_OBJECT_0 || w == WAIT_ABANDONED;
+    }
+    ~InstallClaim() {
+        if (held) ReleaseMutex(mutex);
+        if (mutex) CloseHandle(mutex);
+    }
+    InstallClaim(const InstallClaim&) = delete;
+    InstallClaim& operator=(const InstallClaim&) = delete;
+};
+
+// An update that was cut off (the process killed, the PC switched off) left the app's previous APK
+// beside it as <name><ext>.previous, and in its place a new one that may be half copied and was never
+// converted. Each such app gets its previous APK back, as a failed update does. One whose install is
+// alive in another process is left to it. True when something was put back.
+bool recover_interrupted_installs() {
+    bool recovered = false;
+    std::error_code ec;
+    std::vector<fs::path> kept;
+    for (const auto& e : fs::directory_iterator(library_dir(), ec)) {
+        if (e.path().extension() == L".previous") kept.push_back(e.path());
+    }
+    for (const fs::path& previous : kept) {
+        fs::path target = previous;
+        target.replace_extension();  // <name><ext>
+        const InstallClaim claim(target.stem().wstring(), false);
+        if (!claim.held) continue;
+        if (MoveFileExW(previous.c_str(), target.c_str(), MOVEFILE_REPLACE_EXISTING)) recovered = true;
+    }
+    return recovered;
+}
+
 // Copies `source` into the library as <name><ext> and installs it there: the
 // install, the code conversion, the name, icon and package, the shortcuts.
 // `replaces` is the app's previous APK, removed once the new one is in. An
@@ -1449,6 +1497,7 @@ bool install_into_library(const fs::path& source, const std::wstring& name, cons
                           bool* running) {
     *running = app_running(name) && !stop_google_app_for_install(name);
     if (*running) return false;
+    const InstallClaim claim(name, true);  // until this returns: see recover_interrupted_installs
     std::error_code ec;
     fs::create_directories(library_dir(), ec);
     const fs::path target = library_dir() / (name + source.extension().wstring());
@@ -6300,10 +6349,10 @@ AotState aot_state(const std::wstring& name) {
     if (!fs::exists(libs.parent_path() / L"x86_64", ec)) {
         for (const auto& e : fs::directory_iterator(libs, ec)) {
             if (e.path().extension() != L".stamp") continue;
-            std::ifstream f(e.path());
-            std::string line;
-            std::getline(f, line);
-            if (winapk::arm64::aot_stamp_by_profile(winapk::arm64::aot_parse_stamp(line))) st.large_arm_only = true;
+            // read_tail shares the file for delete: the worker replaces a stamp by renaming a new one over it.
+            if (winapk::arm64::aot_stamp_by_profile(winapk::arm64::aot_parse_stamp(read_tail(e.path(), 256)))) {
+                st.large_arm_only = true;
+            }
         }
     }
     return st;
@@ -10294,6 +10343,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
         return code;
     }
 
+    // Before anything reads the library: an update cut off the last time (a crash, the power) is undone.
+    recover_interrupted_installs();
     if (run_apk.empty()) {
         integrate_with_windows();
         refresh_app_shortcuts();
