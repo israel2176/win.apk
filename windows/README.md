@@ -599,7 +599,8 @@ every such change is listed here:
   tree before upstream's frame-root unwrap.
 - `runtime/java/android/bluetooth/` (`BluetoothAdapter`, `BluetoothDevice`,
   `BluetoothGatt`, `BluetoothManager`, `le/BluetoothLeScanner`,
-  `le/ScanRecord`): Win.apk's `HostBluetooth` versions (below). Upstream later
+  `le/ScanRecord`): Win.apk's `HostBluetooth` versions (below); the pre-API-21
+  `startLeScan` / `stopLeScan` scan through the LE scanner, as in AOSP. Upstream later
   wrote a CoreBluetooth backend (`BluetoothBridge`, `BluetoothPeripheralBridge`)
   into the same classes; those files are synced but unused here.
 - `runtime/java/android/content/res/Resources.java`: `getIntArray` resolves the
