@@ -640,7 +640,9 @@ tests the transport and the broker's checks across three processes.
    the file name up to its version; a package already in the library keeps
    that app's name, so the install updates it), copies the file into
    `library\<name>.apk` (an update moves the
-   previous APK aside, and puts it back if the install fails or is cancelled)
+   previous APK aside, and puts it back if the install fails or is cancelled;
+   an install cut off by a crash or the power is undone the same way at the
+   launcher's next start, `recover_interrupted_installs`)
    and starts `winapk-runtime --apk <that file> --install-only`, logging to
    `logs\install-<name>.log`. The install window reads that log for its
    status line.
@@ -650,32 +652,41 @@ tests the transport and the broker's checks across three processes.
    upstream chooses them, and the native libraries of the first ABI in
    `x86_64,arm64-v8a` the app has, under `lib\<isa>\`. A record file notes
    the result so the step runs once per input file.
-3. Upstream's DEX converter (`com.macapk.dex.Main`) turns the app's DEX into
-   `apps\<name>\classes.jar`, with a stamp naming the converter and the APK so
-   a change to either converts again.
+3. `com.winapk.tools.AppMeta` renders the launcher icon to
+   `apps\<name>\icon.png`, and writes the label and `package.txt` (package,
+   versionCode, versionName, the first activity's manifest
+   `screenOrientation`). It comes before the long step, so that the install
+   window and the library's tile show a new app's own icon and name while it
+   is converted, as Android's installer does (`pending_look` in the launcher).
 4. If the app has only arm64 libraries, a background `winapk-runtime
    --aot-translate` starts for each: `winapk-aot` writes C, clang compiles it
    into `<lib>.so.aot.dll`. Nothing waits for it.
-5. `com.winapk.tools.AppMeta` renders the launcher icon to
-   `apps\<name>\icon.png`, and writes the label and `package.txt` (package,
-   versionCode, versionName, the first activity's manifest
-   `screenOrientation`). The launcher moves them beside the APK as
-   `library\<name>.label` and `.package`.
+5. Upstream's DEX converter (`com.macapk.dex.Main`) turns the app's DEX into
+   `apps\<name>\classes.jar`, with a stamp naming the converter and the APK so
+   a change to either converts again. The launcher then moves the label and
+   `package.txt` beside the APK as `library\<name>.label` and `.package`.
 6. The launcher makes the Start menu shortcut (and the desktop one, if the
    setting is on) and adds the app to the library.
 
 ## A run, step by step
 
 1. The launcher (or a shortcut: `Win.apk.exe --run <library apk>`) shows the
-   app's splash at once, sets `WINAPK_PHONE_SIZE` from the App window size
-   setting and the app's effective orientation, and starts
+   app's starting window at once: a normal window with the app's name and
+   icon on its frame and the icon in its middle, as Android's starting window
+   is, of the size the app's window will open at (`host/window_fit.h`, the
+   arithmetic the runtime sizes its window with) and with the app's
+   AppUserModelID, so the taskbar counts it as the app. It sets
+   `WINAPK_PHONE_SIZE` from the App window size
+   setting and the app's effective orientation, passes the starting window
+   as `WINAPK_START_WINDOW` (the runtime opens its window over it, so the
+   app's window takes its place), and starts
    `winapk-runtime --apk <library apk>` with its output in
    `logs\run-<name>.log` (the previous run's kept as `run-<name>.1.log`;
    `last-run.log` is a hard link to the newest). It passes
    `WINAPK_READY_EVENT`, an inherited event handle, and waits for the event
    or the process: the runtime sets the event once its window has painted
    the app's first frame (`win32_window.cpp`, `signal_launcher_ready`), and
-   the splash goes. If the process ends first, the splash says the app did
+   the starting window goes. If the process ends first, that window says the app did
    not start, with Show log and Report a problem (`report_problem`: GitHub's
    issue form prefilled through its fields' ids in the URL, and Explorer on
    the run log and the newest crash dump; nothing is uploaded).

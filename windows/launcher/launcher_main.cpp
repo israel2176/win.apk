@@ -95,6 +95,7 @@
 #include "app_runs.h"
 #include "installs.h"
 #include "updates.h"
+#include "../host/window_fit.h"
 #include "../include/winapk/aot_stamp.h"
 
 namespace fs = std::filesystem;
@@ -834,11 +835,12 @@ int effective_orientation(const std::wstring& name) {
     return landscape_default() ? kLandscape : kPortrait;
 }
 
-// The settings' screen size and the app's orientation, for the runtime
-// started from here (it inherits this process's environment). "Auto" leaves
-// whatever WINAPK_PHONE_SIZE the user set themselves, turned to the
-// orientation; `name` empty (an install) takes the settings' orientation.
-void apply_runtime_env(const std::wstring& name) {
+// The settings' screen size and the app's orientation, in dp: what the runtime
+// started from here is told (apply_runtime_env), and what the starting window
+// is sized by. "Auto" leaves whatever WINAPK_PHONE_SIZE the user set
+// themselves, turned to the orientation; `name` empty (an install) takes the
+// settings' orientation.
+void runtime_phone_size(const std::wstring& name, int* pw, int* ph) {
     const DWORD i = setting(L"PhoneSize", 0);
     const bool landscape = (name.empty() ? landscape_default() : effective_orientation(name) == kLandscape);
     int w = 360, h = 800;
@@ -857,6 +859,14 @@ void apply_runtime_env(const std::wstring& name) {
         h = kPhonePresets[i].h;
     }
     if (landscape != (w > h)) std::swap(w, h);
+    *pw = w;
+    *ph = h;
+}
+
+// For the runtime started from here: it inherits this process's environment.
+void apply_runtime_env(const std::wstring& name) {
+    int w = 360, h = 800;
+    runtime_phone_size(name, &w, &h);
     SetEnvironmentVariableW(L"WINAPK_PHONE_SIZE", (std::to_wstring(w) + L"x" + std::to_wstring(h)).c_str());
 }
 
@@ -1440,6 +1450,68 @@ bool stop_google_app_for_install(const std::wstring& name) {
     return !app_running(name);
 }
 
+// An install of `name` is under way in some process (the library's, or an install helper's): a named
+// mutex held from the first file moved to the last. Windows lets go of it when its process dies, so a
+// mutex that can be had means no install is alive, whatever the files say.
+struct InstallClaim {
+    HANDLE mutex = nullptr;
+    bool held = false;
+    // `wait`: for the install before this one to end; else only if it is free now.
+    InstallClaim(const std::wstring& name, bool wait) {
+        std::wstring key = name;
+        for (wchar_t& c : key) c = static_cast<wchar_t>(towlower(c));
+        uint64_t h = 1469598103934665603ull;  // FNV-1a over the UTF-16 units
+        for (const wchar_t c : key) h = (h ^ static_cast<uint16_t>(c)) * 1099511628211ull;
+        wchar_t id[48];
+        swprintf(id, 48, L"Local\\WinApk-install-%016llx", static_cast<unsigned long long>(h));
+        mutex = CreateMutexW(nullptr, FALSE, id);
+        if (!mutex) return;
+        const DWORD w = WaitForSingleObject(mutex, wait ? INFINITE : 0);
+        held = w == WAIT_OBJECT_0 || w == WAIT_ABANDONED;
+    }
+    ~InstallClaim() {
+        if (held) ReleaseMutex(mutex);
+        if (mutex) CloseHandle(mutex);
+    }
+    InstallClaim(const InstallClaim&) = delete;
+    InstallClaim& operator=(const InstallClaim&) = delete;
+};
+
+// An update that was cut off (the process killed, the PC switched off) left the app's previous APK
+// beside it as <name><ext>.previous, and in its place a new one that may be half copied and was never
+// converted. Each such app gets its previous APK (and icon) back, as a failed update does. A new app
+// whose install was cut off left its APK in the library with no name beside it, and whatever the install
+// had made of it: those go, as after a failed install. An app whose install is alive in another process
+// is left to it. True when something was put back or removed.
+bool recover_interrupted_installs() {
+    bool recovered = false;
+    std::error_code ec;
+    std::vector<fs::path> kept, files;
+    for (const auto& e : fs::directory_iterator(library_dir(), ec)) {
+        if (e.path().extension() == L".previous") kept.push_back(e.path());
+        else if (e.is_regular_file(ec) && is_app_file(e.path())) files.push_back(e.path());
+    }
+    for (const fs::path& previous : kept) {
+        fs::path target = previous;
+        target.replace_extension();  // <name><ext>
+        const std::wstring name = target.stem().wstring();
+        const InstallClaim claim(name, false);
+        if (!claim.held) continue;
+        if (MoveFileExW(previous.c_str(), target.c_str(), MOVEFILE_REPLACE_EXISTING)) recovered = true;
+        MoveFileExW((app_dir(name) / L"icon.png.previous").c_str(), (app_dir(name) / L"icon.png").c_str(),
+                    MOVEFILE_REPLACE_EXISTING);
+    }
+    for (const fs::path& file : files) {
+        const std::wstring name = file.stem().wstring();
+        if (fs::exists(label_file(name), ec)) continue;  // installed
+        const InstallClaim claim(name, false);
+        if (!claim.held) continue;
+        if (fs::remove(file, ec)) recovered = true;
+        remove_app_files(name);
+    }
+    return recovered;
+}
+
 // Copies `source` into the library as <name><ext> and installs it there: the
 // install, the code conversion, the name, icon and package, the shortcuts.
 // `replaces` is the app's previous APK, removed once the new one is in. An
@@ -1450,6 +1522,7 @@ bool install_into_library(const fs::path& source, const std::wstring& name, cons
                           bool* running) {
     *running = app_running(name) && !stop_google_app_for_install(name);
     if (*running) return false;
+    const InstallClaim claim(name, true);  // until this returns: see recover_interrupted_installs
     std::error_code ec;
     fs::create_directories(library_dir(), ec);
     const fs::path target = library_dir() / (name + source.extension().wstring());
@@ -1459,6 +1532,10 @@ bool install_into_library(const fs::path& source, const std::wstring& name, cons
     const bool backed_up = !same && fs::exists(target, ec) &&
                            MoveFileExW(target.c_str(), kept.c_str(), MOVEFILE_REPLACE_EXISTING) != 0;
     bool ok = same || CopyFileW(source.c_str(), target.c_str(), FALSE) != 0;
+    // The install writes the new version's icon first (so that it shows while the code is converted):
+    // an update keeps the app's own beside it, to put back if the update does not go through.
+    const fs::path icon = app_dir(name) / L"icon.png", icon_kept = app_dir(name) / L"icon.png.previous";
+    const bool icon_backed_up = update && CopyFileW(icon.c_str(), icon_kept.c_str(), FALSE) != 0;
     if (ok) {
         HANDLE p = start_runtime(L"--apk \"" + target.wstring() + L"\" --install-only", install_log(name));
         DWORD code = 1;
@@ -1484,6 +1561,8 @@ bool install_into_library(const fs::path& source, const std::wstring& name, cons
         if (ok) MoveFileExW((app_dir(name) / L"package.txt").c_str(), package_file(name).c_str(),
                             MOVEFILE_REPLACE_EXISTING | MOVEFILE_COPY_ALLOWED);
     }
+    if (icon_backed_up && !ok) MoveFileExW(icon_kept.c_str(), icon.c_str(), MOVEFILE_REPLACE_EXISTING);
+    else if (icon_backed_up) fs::remove(icon_kept, ec);
     if (ok) {
         if (backed_up) fs::remove(kept, ec);
         if (!replaces.empty() && replaces != target) fs::remove(replaces, ec);
@@ -2692,7 +2771,8 @@ using Targets = std::vector<std::pair<RectF, int>>;
 // A screen point in an lParam (WM_NCHITTEST's, WM_MOUSEWHEEL's) in the coordinates the window's
 // targets and mouse messages use. In a mirrored (Hebrew) window ScreenToClient already mirrors x, as
 // the mouse messages' lParam is: mirroring it again would put every target on the other side.
-POINT client_point(HWND hwnd, LPARAM screen) {
+// (No window hit-tests its own targets at the moment; the next one that does goes through this.)
+[[maybe_unused]] POINT client_point(HWND hwnd, LPARAM screen) {
     POINT pt{GET_X_LPARAM(screen), GET_Y_LPARAM(screen)};
     ScreenToClient(hwnd, &pt);
     return pt;
@@ -2787,6 +2867,7 @@ struct Job {
     bool update = false;  // the library had the app already
     int phase = 0;        // how far the install log says it got (install_phase)
     std::wstring reason;  // why it failed, in a sentence
+    std::wstring label;   // the app's own name once the install has written it (a new app's)
     std::shared_ptr<Gdiplus::Bitmap> icon;  // the app's icon once the install has written it
 };
 std::vector<Job> g_jobs;                   // this batch of installs, for the install window
@@ -2975,8 +3056,43 @@ void draw_app_icon(Graphics& g, const App* app, const std::wstring& label, const
     draw_icon(g, app ? icon_for(*app) : nullptr, label, r);
 }
 
+// What the install of a new app has written of it so far: its icon and name (apps\<name>\icon.png and
+// label.txt, which the runtime writes before it converts the code), so that the install shows the real
+// ones while it runs, as Android's does. Looked for twice a second, and forgotten with the batch.
+struct PendingLook {
+    ULONGLONG looked = 0;
+    uintmax_t icon_size = 0;  // the file's size at the last look: read once it has stopped growing
+    std::shared_ptr<Gdiplus::Bitmap> icon;
+    std::wstring label;
+};
+std::map<std::wstring, PendingLook> g_pending_looks;
+
+const PendingLook& pending_look(const std::wstring& name) {
+    PendingLook& look = g_pending_looks[name];
+    const ULONGLONG now = GetTickCount64();
+    if ((look.icon && !look.label.empty()) || now - look.looked < 500) return look;
+    look.looked = now;
+    std::error_code ec;
+    if (!look.icon) {
+        const fs::path png = app_dir(name) / L"icon.png";
+        const uintmax_t size = fs::file_size(png, ec);
+        if (!ec && size > 0 && size == look.icon_size) look.icon = rounded_icon(png, ipx(72));
+        look.icon_size = ec ? 0 : size;
+    }
+    if (look.label.empty()) {
+        std::ifstream f(app_dir(name) / L"label.txt", std::ios::binary);
+        std::string s((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        look.label = utf8_to_wide(s);
+        look.label.erase(0, look.label.find_first_not_of(L" \t\r\n"));
+        if (const size_t end = look.label.find_first_of(L"\r\n"); end != std::wstring::npos) look.label.resize(end);
+        // The library's and the tiles' name for it too, unless the store gave it one.
+        if (!look.label.empty()) g_job_labels.emplace(name, look.label);
+    }
+    return look;
+}
+
 // The name an install shows before the app is in the library: the store's
-// name for it, else the library name.
+// name for it, else the app's own once its install has written it, else the library name.
 std::wstring job_label(const std::wstring& name) {
     if (const App* a = find_app(name)) return a->label;
     const auto it = g_job_labels.find(name);
@@ -3507,7 +3623,8 @@ void paint_tile(Graphics& g, int i) {
     const std::wstring label = app ? app->label : job_label(t.job);
     const float s = px(72);
     const RectF ir(r.X + (r.Width - s) / 2, r.Y + px(12), s, s);
-    draw_app_icon(g, app, label, ir);
+    // A new app being installed: its own icon as soon as the install has it, under the veil.
+    draw_icon(g, app ? icon_for(*app) : pending_look(t.job).icon.get(), label, ir);
     if (!app || is_pending(app->name)) {
         fill_round(g, ir, s * 0.22f, Color(130, 0, 0, 0));
         spinner(g, inset(ir, s * 0.3f, s * 0.3f), kWhite, px(3));
@@ -4361,7 +4478,8 @@ void add_from_dialog() {
     for (const fs::path& p : pick_files(true, tr(L"Install an Android app"))) install(p);
 }
 
-Splash* show_splash(const std::wstring& name);
+Splash* show_splash(const std::wstring& name, bool compact = false);
+HWND start_window(const std::wstring& name);
 
 // Brings the window of an app started from here to the front.
 void bring_forward(const std::wstring& name) {
@@ -4396,8 +4514,12 @@ void launch(const App& app) {
         bring_forward(app.name);
         return;
     }
-    show_splash(app.name);
-    CloseHandle(CreateThread(nullptr, 0, run_thread, new RunJob{app.name, app.apk}, 0, nullptr));
+    // The app's window opens over the starting window, and takes its place (host/win32_window.cpp).
+    auto* job = new RunJob{app.name, app.apk, {}};
+    if (const HWND start = start_window(app.name)) {
+        job->env.push_back(L"WINAPK_START_WINDOW=" + std::to_wstring(reinterpret_cast<uintptr_t>(start)));
+    }
+    CloseHandle(CreateThread(nullptr, 0, run_thread, job, 0, nullptr));
     update_timer();
 }
 
@@ -6301,10 +6423,10 @@ AotState aot_state(const std::wstring& name) {
     if (!fs::exists(libs.parent_path() / L"x86_64", ec)) {
         for (const auto& e : fs::directory_iterator(libs, ec)) {
             if (e.path().extension() != L".stamp") continue;
-            std::ifstream f(e.path());
-            std::string line;
-            std::getline(f, line);
-            if (winapk::arm64::aot_stamp_by_profile(winapk::arm64::aot_parse_stamp(line))) st.large_arm_only = true;
+            // read_tail shares the file for delete: the worker replaces a stamp by renaming a new one over it.
+            if (winapk::arm64::aot_stamp_by_profile(winapk::arm64::aot_parse_stamp(read_tail(e.path(), 256)))) {
+                st.large_arm_only = true;
+            }
         }
     }
     return st;
@@ -6561,12 +6683,12 @@ enum { kActClose = 1, kActCancel, kActOpen, kActDetails, kActCopy, kActShowLog, 
        kActRowOpen = 1000, kActRowLog = 2000 };
 constexpr UINT kFitInstall = WM_APP + 20;
 
-// How far an install got, from the lines the runtime writes: 0 starting, 1 installing, 2 converting the
-// code, 3 reading the name and icon.
+// How far an install got, from the lines the runtime writes, in the order it works (runtime_main.cpp):
+// 0 starting, 1 installing, 2 reading the name and icon, 3 converting the code, the long part.
 int install_phase(const fs::path& log) {
     const std::string tail = read_tail(log, 128 * 1024);
-    if (tail.find("host natives:") != std::string::npos) return 3;
-    if (tail.find("converting the app's code") != std::string::npos) return 2;
+    if (tail.find("converting the app's code") != std::string::npos) return 3;
+    if (tail.find("host natives:") != std::string::npos) return 2;
     if (tail.find("installing the app (once per install)") != std::string::npos) return 1;
     return 0;
 }
@@ -6574,8 +6696,8 @@ int install_phase(const fs::path& log) {
 const wchar_t* phase_text(int phase) {
     switch (phase) {
         case 1: return L"Installing…";
-        case 2: return L"Converting the app's code. This happens once.";
-        case 3: return L"Getting the app's name and icon…";
+        case 2: return L"Getting the app's name and icon…";
+        case 3: return L"Converting the app's code. This happens once.";
         default: return L"Preparing…";
     }
 }
@@ -6595,6 +6717,7 @@ std::wstring install_failure_reason(const fs::path& log) {
 // The name to show for an install: the app's own once known, else the file's.
 std::wstring job_title(const Job& j) {
     if (find_app(j.name) || g_job_labels.count(j.name)) return job_label(j.name);
+    if (!j.label.empty()) return j.label;
     return j.file.empty() ? j.name : j.file;
 }
 
@@ -6928,9 +7051,10 @@ void poll_install(HWND hwnd) {
     for (Job& j : g_jobs) {
         if (j.state != Job::kInstalling) continue;
         j.phase = (std::max)(j.phase, install_phase(install_log(j.name)));
-        if (!j.icon && !find_app(j.name)) {
-            std::error_code ec;
-            if (fs::exists(app_dir(j.name) / L"icon.png", ec)) j.icon = rounded_icon(app_dir(j.name) / L"icon.png", ipx(64));
+        if (!find_app(j.name)) {  // a new app: what its install has written of it so far
+            const PendingLook& look = pending_look(j.name);
+            if (!j.icon) j.icon = look.icon;
+            if (j.label.empty()) j.label = look.label;
         }
     }
     if (g_iv.details) {
@@ -7460,6 +7584,8 @@ struct Splash {
     std::wstring error_title, error_text;
     fs::path log;  // Show log's
     float need_h = 0;  // the failed state's height, when its sentence is long
+    float need_w = 0;  // and its width, when its title is long ("<a long name> stopped with an error")
+    std::unique_ptr<Gdiplus::Bitmap> icon;  // the app's, at the starting window's size
     Targets targets;
     int hot = 0;
     bool tracking = false;
@@ -7503,48 +7629,16 @@ void paint_splash(Splash& s, Graphics& g, float W, float H) {
     s.targets.clear();
     const App* app = find_app(s.name);
     const std::wstring label = app ? app->label : job_label(s.name);
-    const float is = px(88);
-    const RectF ir((W - is) / 2, px(40), is, is);
-    draw_app_icon(g, app, label, ir);
-    if (s.failed) {
-        const RectF badge(ir.GetRight() - px(20), ir.GetBottom() - px(20), px(26), px(26));
-        Gdiplus::SolidBrush ring(g_t.layer), dot(g_t.danger);
-        g.FillEllipse(&ring, inset(badge, -px(2), -px(2)));
-        g.FillEllipse(&dot, badge);
-        draw_text(g, L"!", g_f.body_semi.get(), kWhite, badge, kCenter);
-    }
+    Gdiplus::Bitmap* icon = s.icon ? s.icon.get() : app ? icon_for(*app) : nullptr;
     const float m = px(24);
-    draw_text(g, s.failed ? s.error_title : label, g_f.title.get(), g_t.text, RectF(m, px(144), W - 2 * m, px(30)),
-              kCenter);
-    std::wstring sub = s.failed ? s.error_text : std::wstring(tr(s.phase ? s.phase : L"Starting…"));
-    if (!s.failed && !s.phase && GetTickCount64() - s.start > 20000) {
-        sub = tr(L"Still starting. The first start can take a minute.");
-    }
-    draw_text(g, sub, g_f.caption.get(), g_t.text2, RectF(m, px(178), W - 2 * m, px(54)), kCenter, true, false);
-    if (s.failed) {
-        // Report a problem as a link under the sentence, as under a failed install's reason: three buttons with the
-        // dialog's widths do not fit in 300 px. The window grows when a long sentence leaves no room (kFitSplash).
-        const float sh = (std::min)(px(54), text_height(g, sub, g_f.caption.get(), W - 2 * m));
-        const std::wstring report = tr(L"Report a problem");
-        const float rw = text_width(g, report, g_f.body.get()) + px(4);
-        const RectF rep((W - rw) / 2, px(178) + sh + px(6), rw, px(22));
-        draw_text(g, report, g_f.body.get(), s.hot == kSplashReport ? mix(g_t.accent, g_t.text, 0.3f) : g_t.accent,
-                  rep, kCenter);
-        s.need_h = (std::max)(px(300), rep.GetBottom() + px(16) + px(32) + px(24));
-        // Windows' order and the dialog's widths: Close (the accent one), then Show log.
-        const float cw = button_width(g, tr(L"Close"), true), lw = button_width(g, tr(L"Show log"), false);
-        const float by = H - px(24) - px(32);
-        const RectF close((W - cw - lw - px(8)) / 2, by, cw, px(32)), log(close.GetRight() + px(8), by, lw, px(32));
-        draw_button(g, log, tr(L"Show log"), s.hot == kSplashLog, false, false);
-        draw_button(g, close, tr(L"Close"), s.hot == kSplashClose, true, false);
-        s.targets.push_back({rep, kSplashReport});
-        s.targets.push_back({log, kSplashLog});
-        s.targets.push_back({close, kSplashClose});
-        if (std::lround(s.need_h) > std::lround(H)) PostMessageW(s.hwnd, kFitSplash, 0, 0);
-    } else {
-        // Three dots that brighten in turn.
+    if (!s.failed) {
+        // The app's starting window, as Android draws one: its icon in the middle of its own window, and
+        // nothing else unless the start takes long. Three dots that brighten in turn say it is alive.
+        const float is = (std::min)(px(96), (std::min)(W, H) * 0.4f);
+        const RectF ir((W - is) / 2, (H - is) / 2 - px(16), is, is);
+        draw_icon(g, icon, label, ir);
         const float t = static_cast<float>(GetTickCount64() % 1200) / 1200.0f, d = px(7), gap = px(8);
-        const float x0 = (W - 3 * d - 2 * gap) / 2, y = H - px(52);
+        const float x0 = (W - 3 * d - 2 * gap) / 2, y = ir.GetBottom() + px(28);
         for (int i = 0; i < 3; ++i) {
             float phase = t - i * 0.17f;
             phase -= std::floor(phase);
@@ -7552,12 +7646,54 @@ void paint_splash(Splash& s, Graphics& g, float W, float H) {
             Gdiplus::SolidBrush b(with_alpha(g_t.accent, static_cast<BYTE>(70 + 185 * lit)));
             g.FillEllipse(&b, x0 + i * (d + gap), y, d, d);
         }
-        const RectF cancel(W - px(40), px(8), px(32), px(32));
-        if (s.hot == kSplashCancel) fill_round(g, cancel, px(kRadiusControl), g_t.hover);
-        draw_text(g, kGlyphClear, g_f.glyph12.get(), g_t.text2, cancel, kCenter);
-        s.targets.push_back({cancel, kSplashCancel});
+        std::wstring sub = s.phase ? std::wstring(tr(s.phase)) : std::wstring();
+        if (!s.phase && GetTickCount64() - s.start > 20000) sub = tr(L"Still starting. The first start can take a minute.");
+        if (!sub.empty()) {
+            draw_text(g, sub, g_f.caption.get(), g_t.text2, RectF(m, y + d + px(14), W - 2 * m, px(40)), kCenter, true,
+                      false);
+        }
+        return;
     }
-    stroke_round(g, RectF(0.5f, 0.5f, W - 1, H - 1), px(8), g_t.border);
+    // The error, a block of the old splash's size in the middle of the window, taller when its sentence
+    // is long (kFitSplash also grows a window too small for it).
+    const float block = (std::max)(px(300), s.need_h);
+    const float top = (std::max)(0.0f, (H - block) / 2);
+    const float is = px(88);
+    const RectF ir((W - is) / 2, top + px(40), is, is);
+    draw_icon(g, icon, label, ir);
+    const RectF badge(ir.GetRight() - px(20), ir.GetBottom() - px(20), px(26), px(26));
+    Gdiplus::SolidBrush ring(g_t.layer), dot(g_t.danger);
+    g.FillEllipse(&ring, inset(badge, -px(2), -px(2)));
+    g.FillEllipse(&dot, badge);
+    draw_text(g, L"!", g_f.body_semi.get(), kWhite, badge, kCenter);
+    draw_text(g, s.error_title, g_f.title.get(), g_t.text, RectF(m, top + px(144), W - 2 * m, px(30)), kCenter);
+    draw_text(g, s.error_text, g_f.caption.get(), g_t.text2, RectF(m, top + px(178), W - 2 * m, px(54)), kCenter, true,
+              false);
+    // Report a problem as a link under the sentence, as under a failed install's reason.
+    const float sh = (std::min)(px(54), text_height(g, s.error_text, g_f.caption.get(), W - 2 * m));
+    const std::wstring report = tr(L"Report a problem");
+    const float rw = text_width(g, report, g_f.body.get()) + px(4);
+    const RectF rep((W - rw) / 2, top + px(178) + sh + px(6), rw, px(22));
+    draw_text(g, report, g_f.body.get(), s.hot == kSplashReport ? mix(g_t.accent, g_t.text, 0.3f) : g_t.accent, rep,
+              kCenter);
+    const float need = (std::max)(px(300), rep.GetBottom() - top + px(16) + px(32) + px(24));
+    // As wide as the title, up to 560: a long app name is not cut to an ellipsis.
+    const float need_w = (std::min)(px(560), (std::max)(px(300), text_width(g, s.error_title, g_f.title.get()) +
+                                                                   2 * m + px(8)));
+    // Windows' order and the dialog's widths: Close (the accent one), then Show log.
+    const float cw = button_width(g, tr(L"Close"), true), lw = button_width(g, tr(L"Show log"), false);
+    const float by = top + block - px(24) - px(32);
+    const RectF close((W - cw - lw - px(8)) / 2, by, cw, px(32)), log(close.GetRight() + px(8), by, lw, px(32));
+    draw_button(g, log, tr(L"Show log"), s.hot == kSplashLog, false, false);
+    draw_button(g, close, tr(L"Close"), s.hot == kSplashClose, true, false);
+    s.targets.push_back({rep, kSplashReport});
+    s.targets.push_back({log, kSplashLog});
+    s.targets.push_back({close, kSplashClose});
+    if (std::lround(need) != std::lround(s.need_h) || std::lround(need_w) != std::lround(s.need_w)) {
+        s.need_h = need;
+        s.need_w = need_w;
+        PostMessageW(s.hwnd, kFitSplash, 0, 0);
+    }
 }
 
 void splash_action(Splash& s, int act) {
@@ -7589,15 +7725,17 @@ LRESULT CALLBACK splash_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_PAINT:
             buffered_paint(hwnd, [&](Graphics& g, float w, float h) { paint_splash(*s, g, w, h); });
             return 0;
-        case kFitSplash: {  // taller by what the failed state's sentence needs, about the same middle
+        case kFitSplash: {  // the error needs a client area of its title's width (300 dp at least) by its own height
             RECT wr, rc;
             GetWindowRect(hwnd, &wr);
             GetClientRect(hwnd, &rc);
-            const int want = static_cast<int>(std::lround(s->need_h));
-            if (want > rc.bottom) {
-                const int grow = want - rc.bottom;
-                SetWindowPos(hwnd, nullptr, wr.left, wr.top - grow / 2, wr.right - wr.left, wr.bottom - wr.top + grow,
-                             SWP_NOZORDER | SWP_NOACTIVATE);
+            const int want_h = static_cast<int>(std::lround((std::max)(px(300), s->need_h)));
+            const int want_w = static_cast<int>(std::lround((std::max)(px(300), s->need_w)));
+            const int grow_w = (std::max)(0, want_w - static_cast<int>(rc.right));
+            const int grow_h = (std::max)(0, want_h - static_cast<int>(rc.bottom));
+            if (grow_w || grow_h) {
+                SetWindowPos(hwnd, nullptr, wr.left - grow_w / 2, wr.top - grow_h / 2, wr.right - wr.left + grow_w,
+                             wr.bottom - wr.top + grow_h, SWP_NOZORDER | SWP_NOACTIVATE);
             }
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
@@ -7609,12 +7747,13 @@ LRESULT CALLBACK splash_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             }
             if (!s->failed) InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
-        case WM_NCHITTEST: {  // drag it by anything that is not a button
-            const POINT pt = client_point(hwnd, lp);
-            for (const auto& t : s->targets)
-                if (contains(t.first, static_cast<float>(pt.x), static_cast<float>(pt.y))) return HTCLIENT;
-            return HTCAPTION;
+        case WM_NCHITTEST: {  // the app's window to be: its frame, but not one to resize
+            const LRESULT hit = DefWindowProcW(hwnd, msg, wp, lp);
+            return hit >= HTLEFT && hit <= HTBOTTOMRIGHT ? HTBORDER : hit;
         }
+        case WM_SYSCOMMAND:  // nor to maximize: it has the size the app's window opens at
+            if ((wp & 0xFFF0) == SC_MAXIMIZE || (wp & 0xFFF0) == SC_SIZE) return 0;
+            break;
         case WM_MOUSEMOVE: track_hot(hwnd, lp, s->targets, &s->hot, &s->tracking); return 0;
         case WM_MOUSELEAVE:
             s->tracking = false;
@@ -7632,6 +7771,9 @@ LRESULT CALLBACK splash_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (wp == VK_ESCAPE) splash_action(*s, s->failed ? kSplashClose : kSplashCancel);
             else if (wp == VK_RETURN && s->failed) splash_action(*s, kSplashClose);
             return 0;
+        case WM_CLOSE:  // its close button, as the app's own: the start is cancelled
+            splash_action(*s, s->failed ? kSplashClose : kSplashCancel);
+            return 0;
         case WM_DESTROY: {
             const std::wstring name = s->name;
             g_splashes.erase(name);  // frees *s
@@ -7642,8 +7784,51 @@ LRESULT CALLBACK splash_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
 
-// The splash for `name`, made now, in the middle of the screen the app will open on.
-Splash* show_splash(const std::wstring& name) {
+// The window's own System.AppUserModel.ID: the taskbar then counts it as the app's (one button with the
+// app's window, under the app's shortcut), not as Win.apk's.
+void set_window_app_id(HWND hwnd, const std::wstring& aumid) {
+    static const PROPERTYKEY kAppUserModelId = {
+        {0x9f4c2855, 0x9f79, 0x4b39, {0xa8, 0xd0, 0xe1, 0xd4, 0x2d, 0xe1, 0xd5, 0xf3}}, 5};
+    IPropertyStore* props = nullptr;
+    if (FAILED(SHGetPropertyStoreForWindow(hwnd, IID_IPropertyStore, reinterpret_cast<void**>(&props))) || !props) {
+        return;
+    }
+    PROPVARIANT v{};
+    v.vt = VT_LPWSTR;
+    v.pwszVal = const_cast<wchar_t*>(aumid.c_str());  // read, not freed: no PropVariantClear
+    if (SUCCEEDED(props->SetValue(kAppUserModelId, v))) props->Commit();
+    props->Release();
+}
+
+// The outer size of the window the app `name` will open with on a monitor at `dpi` with work area `wa`:
+// the runtime's own arithmetic (host/window_fit.h) on the phone size it will be given, so that the
+// starting window is the app's window in everything but its content.
+SIZE app_window_size(const std::wstring& name, UINT dpi, const RECT& wa) {
+    int w = 360, h = 800;
+    runtime_phone_size(name, &w, &h);
+    // The size the user last gave this app's window comes first, as in the runtime (launch_phone_size).
+    if (std::ifstream f(library_dir() / (name + L".window")); f) {
+        int sw = 0, sh = 0;
+        char x = 0;
+        if (f >> sw >> x >> sh && x == 'x' && sw >= 200 && sh >= 200 && sw <= 4000 && sh <= 4000) {
+            w = sw;
+            h = sh;
+        }
+    }
+    RECT frame{0, 0, 0, 0};
+    AdjustWindowRectExForDpi(&frame, WS_OVERLAPPEDWINDOW, FALSE, 0, dpi);
+    const int fw = frame.right - frame.left, fh = frame.bottom - frame.top, m = MulDiv(4, static_cast<int>(dpi), 96);
+    int cw = 0, ch = 0;
+    winapk::host::window_launch_client(w, h, static_cast<int>(dpi), (wa.right - wa.left) - fw - 2 * m,
+                                       (wa.bottom - wa.top) - fh - 2 * m, &cw, &ch);
+    return {cw + fw, ch + fh};
+}
+
+// The starting window for `name`, made now: where the app's window will open and of its size, with the
+// app's name and icon on its frame and on the taskbar, so that it is the app's window to the eye from the
+// first moment; the runtime opens the real one over it (WINAPK_START_WINDOW) and it goes. `compact`: only
+// to say how a run ended, when no start is on show: the old splash's size.
+Splash* show_splash(const std::wstring& name, bool compact) {
     if (auto it = g_splashes.find(name); it != g_splashes.end()) return it->second.get();
     auto s = std::make_unique<Splash>();
     s->name = name;
@@ -7654,21 +7839,33 @@ Splash* show_splash(const std::wstring& name) {
     MONITORINFO mi{sizeof(mi)};
     GetMonitorInfoW(MonitorFromPoint(cursor, MONITOR_DEFAULTTOPRIMARY), &mi);
     const RECT& wa = mi.rcWork;
-    const int w = ipx(300), h = ipx(300);
     const App* app = find_app(name);
-    HWND hwnd = CreateWindowExW(layout_style(), L"WinApkSplash", (app ? app->label : name).c_str(), WS_POPUP,
-                                wa.left + (wa.right - wa.left - w) / 2, wa.top + (wa.bottom - wa.top - h) / 2, w, h,
-                                nullptr, nullptr, g_inst, s.get());
+    // Made on that monitor, so that its DPI is the window's; sized and placed before it is shown.
+    HWND hwnd = CreateWindowExW(layout_style(), L"WinApkSplash", (app ? app->label : name).c_str(),
+                                WS_OVERLAPPEDWINDOW, wa.left, wa.top, ipx(300), ipx(300), nullptr, nullptr, g_inst,
+                                s.get());
     if (!hwnd) return nullptr;
     s->hwnd = hwnd;
-    const int corner = 2;  // DWMWCP_ROUND, Windows 11
-    DwmSetWindowAttribute(hwnd, 33 /* DWMWA_WINDOW_CORNER_PREFERENCE */, &corner, sizeof(corner));
-    theme_window(hwnd);
-    const int ip = GetSystemMetrics(SM_CXICON);
-    if (auto icon = static_cast<HICON>(LoadImageW(nullptr, shortcut_icon(name).c_str(), IMAGE_ICON, ip, ip,
-                                                  LR_LOADFROMFILE))) {
-        SendMessageW(hwnd, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(icon));
+    const UINT dpi = GetDpiForWindow(hwnd);
+    SIZE size;
+    if (compact) {
+        RECT r{0, 0, MulDiv(300, static_cast<int>(dpi), 96), MulDiv(300, static_cast<int>(dpi), 96)};
+        AdjustWindowRectExForDpi(&r, WS_OVERLAPPEDWINDOW, FALSE, 0, dpi);
+        size = {r.right - r.left, r.bottom - r.top};
+    } else {
+        size = app_window_size(name, dpi, wa);
     }
+    SetWindowPos(hwnd, nullptr, wa.left + ((wa.right - wa.left) - size.cx) / 2,
+                 wa.top + ((wa.bottom - wa.top) - size.cy) / 2, size.cx, size.cy, SWP_NOZORDER | SWP_NOACTIVATE);
+    set_window_app_id(hwnd, app_user_model_id(name));
+    for (const int which : {ICON_BIG, ICON_SMALL}) {
+        const int ip = GetSystemMetrics(which == ICON_BIG ? SM_CXICON : SM_CXSMICON);
+        if (auto icon = static_cast<HICON>(LoadImageW(nullptr, shortcut_icon(name).c_str(), IMAGE_ICON, ip, ip,
+                                                      LR_LOADFROMFILE))) {
+            SendMessageW(hwnd, WM_SETICON, static_cast<WPARAM>(which), reinterpret_cast<LPARAM>(icon));
+        }
+    }
+    s->icon = rounded_icon(app_dir(name) / L"icon.png", ipx(96));
     Splash* raw = s.get();
     g_splashes[name] = std::move(s);
     ShowWindow(hwnd, SW_SHOW);
@@ -7678,14 +7875,22 @@ Splash* show_splash(const std::wstring& name) {
     return raw;
 }
 
-// The splash turned into the error: the one still up, else a new one (an app that failed after its window was up).
+// Shows the app's starting window; null when it could not be made.
+HWND start_window(const std::wstring& name) {
+    const Splash* s = show_splash(name);
+    return s ? s->hwnd : nullptr;
+}
+
+// The starting window turned into the error: the one still up, else a small new one (an app that failed
+// after its window was up).
 void splash_failed(const std::wstring& name, const std::wstring& title, const std::wstring& text) {
-    Splash* s = show_splash(name);
+    Splash* s = show_splash(name, true);
     if (!s) return;
     s->failed = true;
     s->error_title = title;
     s->error_text = text;
     s->log = run_log(name);
+    PostMessageW(s->hwnd, kFitSplash, 0, 0);  // a starting window smaller than the error grows to hold it
     InvalidateRect(s->hwnd, nullptr, FALSE);
     SetForegroundWindow(s->hwnd);
 }
@@ -8398,15 +8603,22 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             } else if (how != InstallEnd::kCancelled && !g_install_wnd) {
                 info(fmt(L"{0} could not be installed.", {job_label(*name)}), kError);
             }
-            if (!any_pending()) g_job_labels.clear();
+            if (!any_pending()) {
+                g_job_labels.clear();
+                g_pending_looks.clear();
+            }
             if (g_view == kGmsSetupView) rebuild_page();  // the app's row is ticked
             maybe_quit();
             return 0;
         }
         case kRunReady: {
             std::unique_ptr<std::wstring> name(reinterpret_cast<std::wstring*>(lp));
-            if (*name == g_play.name && g_play.state == PlayState::kStarting) play_ready();
-            else close_splash(*name);
+            if (*name == g_play.name && g_play.state == PlayState::kStarting) {
+                play_ready();
+            } else {
+                bring_forward(*name);  // the app's window, over the starting window, before that one goes
+                close_splash(*name);
+            }
             return 0;
         }
         case kRunExited: {
@@ -10305,6 +10517,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
         return code;
     }
 
+    // Before anything reads the library: an update cut off the last time (a crash, the power) is undone.
+    recover_interrupted_installs();
     if (run_apk.empty()) {
         integrate_with_windows();
         refresh_app_shortcuts();
@@ -10333,7 +10547,6 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
     RegisterClassExW(&sc);
     sc.lpfnWndProc = splash_proc;
     sc.lpszClassName = L"WinApkSplash";
-    sc.style = CS_DROPSHADOW;
     RegisterClassExW(&sc);
     // The size from last time, within the screen; 980 x 720 the first time. The window is made
     // hidden: an install from Explorer or a shortcut's start shows it only when asked for.
