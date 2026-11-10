@@ -37,6 +37,8 @@ namespace {
 std::mutex g_lock;
 std::wstring g_android_root;  // no trailing separator
 std::wstring g_fonts_dir;
+std::string g_app_package;     // the running app's package, for /data/user/0/<package>
+std::wstring g_app_data_dir;   // its data directory on the host (set_app_data)
 
 std::wstring to_wide(const char* utf8, size_t len) {
     if (len == 0) return {};
@@ -64,6 +66,31 @@ const char* cacerts_rest(const char* p) {
 }
 
 }  // namespace
+
+// The device's other spellings of two directories: the app's own data
+// directory (/data/user/0/<package> and /data/data/<package>, which here is
+// <android root>/data/data/<the app's folder>, not always named after the
+// package), and primary shared storage (/storage/emulated/0, /sdcard and
+// their aliases, all <android root>/sdcard). The rest of `p` after the match,
+// or null. Caller holds g_lock.
+const char* app_data_rest(const char* p) {
+    if (g_app_package.empty() || g_app_data_dir.empty()) return nullptr;
+    for (const char* dir : {"/data/user/0/", "/data/data/"}) {
+        const size_t n = std::strlen(dir);
+        if (std::strncmp(p, dir, n) != 0) continue;
+        const char* pkg = p + n;
+        const size_t m = g_app_package.size();
+        if (std::strncmp(pkg, g_app_package.c_str(), m) == 0 && (pkg[m] == 0 || pkg[m] == '/')) return pkg + m;
+    }
+    return nullptr;
+}
+const char* storage_rest(const char* p) {
+    for (const char* dir : {"/storage/emulated/0", "/storage/self/primary", "/mnt/sdcard", "/sdcard"}) {
+        const size_t n = std::strlen(dir);
+        if (std::strncmp(p, dir, n) == 0 && (p[n] == 0 || p[n] == '/')) return p + n;
+    }
+    return nullptr;
+}
 
 std::wstring host_path(const char* p) {
     if (!p) return {};
@@ -102,6 +129,11 @@ std::wstring host_path(const char* p) {
         }
     }
     if (g_android_root.empty()) return to_wide(p, len);
+    if (const char* rest = app_data_rest(p)) return g_app_data_dir + to_wide(rest, std::strlen(rest));
+    if (const char* rest = storage_rest(p)) return g_android_root + L"\\sdcard" + to_wide(rest, std::strlen(rest));
+    if (std::strncmp(p, "/data/user/0", 12) == 0 && (p[12] == 0 || p[12] == '/')) {
+        return g_android_root + L"\\data\\data" + to_wide(p + 12, len - 12);
+    }
     return g_android_root + to_wide(p, len);
 }
 
@@ -113,6 +145,12 @@ void set_android_root(const char* dir) {
     std::lock_guard<std::mutex> hold(bionic::g_lock);
     bionic::g_android_root = bionic::trimmed(bionic::to_wide(dir, dir ? std::strlen(dir) : 0));
 }
+void set_app_data(const char* package, const char* host_dir) {
+    std::lock_guard<std::mutex> hold(bionic::g_lock);
+    bionic::g_app_package = package ? package : "";
+    bionic::g_app_data_dir = bionic::trimmed(bionic::to_wide(host_dir, host_dir ? std::strlen(host_dir) : 0));
+}
+std::wstring android_host_path(const char* path) { return bionic::host_path(path); }
 void set_system_fonts_dir(const char* dir) {
     std::lock_guard<std::mutex> hold(bionic::g_lock);
     bionic::g_fonts_dir = bionic::trimmed(bionic::to_wide(dir, dir ? std::strlen(dir) : 0));

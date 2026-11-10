@@ -88,6 +88,18 @@ public class Environment {
         return SharedStorage.androidRoot();
     }
 
+    // Win.apk: the device name of primary shared storage, "/storage/emulated/0".
+    // The app (and native code, which splits a path on '/' and walks up to "/")
+    // sees and hands around this Android path; java.io, java.nio and the guest
+    // shim open the host folder it names, <android root>/sdcard (WinApkPaths,
+    // paths.cpp). On a plain JVM (no -Dwinapk.android.root) the host folder
+    // itself is returned. SharedStorage.externalStorageRoot() stays the host
+    // resolver the framework's own file walks use (MediaStoreProvider,
+    // HostDocumentsProvider).
+    private static final String WINAPK_SHARED_STORAGE = "/storage/emulated/0";
+    private static boolean winApkAndroidPaths() {
+        return System.getProperty("winapk.android.root") != null;
+    }
     public static File getExternalStorageDirectory() {
         // Matches bionic_shim.cpp's native ext root exactly: a native
         // fopen("/sdcard/foo") or fopen("/storage/emulated/0/foo") rewrites to
@@ -95,7 +107,7 @@ public class Environment {
         // a device, so creating it here is not a divergence.
         File f = SharedStorage.externalStorageRoot();
         f.mkdirs();
-        return f;
+        return winApkAndroidPaths() ? new File(WINAPK_SHARED_STORAGE) : f;
     }
     // AOSP env14 :1085-1092: the returned directory "may not yet exist, so you
     // must make sure it exists before using it such as with File.mkdirs()" --

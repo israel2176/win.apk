@@ -526,6 +526,45 @@ nobody has to find them again.
   before its buttons got listeners. It now resolves each item like AOSP's
   `AssetManager.getResourceIntArray`.
 
+### Android paths (WSL-style)
+
+- An Android app assumes a POSIX filesystem: it hard-codes or builds absolute
+  paths like `/data/user/0/<pkg>/files`, `/storage/emulated/0/Download`,
+  `/system/fonts/Roboto-Regular.ttf`, splits them on `/`, and walks a path up to
+  `/`. Handing it a Windows path (`C:\Users\...\files`) breaks that: on Windows a
+  path that starts with one `/` means the root of the current drive, and code
+  that walks up never reaches `/`. Google Maps' native recursive `mkdir` split
+  `C:\...` on `/`, built a bad parent, and recursed until its 16 MB thread stack
+  overflowed. So, like WSL, the app sees Android paths and the host translates on
+  every access.
+- One table decides where a guest path lives: `windows/src/bionic/paths.cpp`
+  (`host_path`), set up by the runtime (`set_android_root`, `set_app_data`,
+  `set_system_fonts_dir`). The Bionic shim (`stdio.cpp` and friends) routes
+  every `open`/`fopen`/`stat`/`mkdir`/`opendir`/`rename` through it, so BOTH
+  x86_64 guest code and translated arm64 guest code get the mapping for free —
+  there is no separate arm64 path remap on Windows (unlike Mac.apk's
+  `runtime/translator/.../macapk_arm64_remap_path`, which Win.apk does not
+  compile). The framework's SQLite goes through the same table via a thin VFS
+  (`host/sqlite_paths.cpp`).
+- java.io and java.nio keep the Android form in the overlay
+  (`jdk.internal.util.WinApkPaths`, `WinNTFileSystem`, `File`, `WindowsPath`):
+  `isAndroid(p)` is "one leading `/`, not `//` (UNC) and not `/C:` (a file URL's
+  drive path)". A `File`/`Path` keeps that string (forward slashes, no drive,
+  absolute, `.`/`..` folded by text); every native call that reaches Win32 maps
+  it to the host file through the same `host_path` table (`host0`, bound in
+  `host/java_io_open.cpp`). `WindowsPath` keeps the host `\`-form internally
+  (type `DIRECTORY_RELATIVE`), so `getName`/`getParent`/`resolve`/offsets stay
+  the JDK's; only `toString`, `isAbsolute` and `toRealPath` flip to the `/`-form.
+  `file.separator` stays `\` — flipping the whole JVM breaks HotSpot and the
+  loader, which consume host paths.
+- Deliberately kept as host paths (consumed by code the mapper does not reach):
+  `ApplicationInfo.sourceDir`/`publicSourceDir`/`splitSourceDirs` (the ELF loader
+  mmaps them), `nativeLibraryDir` (HotSpot's `System.load`), and the loader's,
+  installer's, run-lock and AOT-cmdline plumbing. A `/C:/x` file-URL path is the
+  drive path, not an Android one. Gated by `-Dwinapk.android.root`, set only by
+  winapk-runtime, so a plain JVM is unchanged. Tests: `winapk-paths-test`
+  (the C++ table) and `AndroidPathsTest` (the java.io/java.nio string form).
+
 ### GitHub
 
 - On a new fork, Actions stay disabled until they are enabled in the Actions

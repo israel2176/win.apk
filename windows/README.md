@@ -915,6 +915,37 @@ every such change is listed here:
   8.3 short form `runtime_main.cpp` passes in `winapk.data.dir`, when the
   volume has short names. Native code sized for `/data/user/0/<package>` cut
   the ~150-character full form (Waze: a 128-byte buffer, so no map).
+- `runtime/java/com/macapk/loader/Boot.java`, `NativeCocoa.java`
+  (`setAppData`), `android/os/Environment.java`,
+  `android/content/StorageContext.java`, `android/app/Application.java`: the app
+  sees its files by Android's names, not host paths, as on a device. The data
+  directory is `/data/user/0/<package>` (`getDataDir`, `getFilesDir`,
+  `getCacheDir`, `getDatabasePath`, `java.io.tmpdir`, `ApplicationInfo.dataDir`,
+  all derived from it), its device-protected sibling `/data/user_de/0/<package>`,
+  and primary shared storage `/storage/emulated/0`
+  (`getExternalStorageDirectory`, and `getExternalFilesDir`/`getObbDir`/… built
+  on it). `ApplicationInfo.sourceDir`/`publicSourceDir`/`splitSourceDirs`/
+  `nativeLibraryDir` stay host paths on purpose: the ELF loader mmaps them and
+  HotSpot's `System.load` opens them, neither through the path mapper (see
+  `Application.macapkSetDataDir`). The host maps an Android path to the real
+  folder: `windows/src/bionic/paths.cpp` for native code (native code walks a
+  path up to `/` and joins relative paths onto its working directory, so with
+  `C:\...` it never reached `/` — Google Maps' recursive mkdir overflowed its
+  stack — and took the folder for a relative path), and the java.base overlay's
+  `jdk.internal.util.WinApkPaths` for java.io and java.nio. Translated arm64
+  guest code goes through the same Bionic shim, so it needs no separate remap.
+- `windows/java/java_base_patch/jdk/internal/util/WinApkPaths.java` (new),
+  `java/io/WinNTFileSystem.java`, `java/io/File.java`,
+  `sun/nio/fs/WindowsPath.java`: the java.base overlay keeps a `/`-rooted Android
+  path in that form (`/` separators, no drive, absolute, `.`/`..` folded by text)
+  through `java.io.File` and `java.nio.file.Path`, and maps it to the host file
+  it names for every call that reaches Win32 (`host0`, bound in
+  `windows/host/java_io_open.cpp`). `file.separator` stays `\`.
+- `windows/host/java_io_open.cpp`, `sqlite_paths.cpp` (new),
+  `native_media_video.cpp`: `FileInputStream`/`FileOutputStream`/
+  `RandomAccessFile` opens, the replacing rename, the framework's default SQLite
+  VFS (`SQLiteDatabase` hands it Android database paths) and `MediaPlayer`'s file
+  source (`HostVideo`) all map an Android path to the host file first.
 - `runtime/java/javax/microedition/khronos/egl/MacApkEGL10.java`: an app's
   own GL thread with a real context (not a GLSurfaceView fork) that calls
   `eglCreateWindowSurface` on a SurfaceView or its holder gets a window

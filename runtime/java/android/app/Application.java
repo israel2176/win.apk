@@ -302,7 +302,23 @@ public class Application extends ContextWrapper
      *  getApplicationInfo().dataDir can never differ on a device. They reported
      *  the CODE dir here (appDir), so apps that store under ai.dataDir wrote into
      *  a directory an update or reinstall replaces. Called by Boot before any
-     *  app code; drops a record cached earlier in boot. */
+     *  app code; drops a record cached earlier in boot.
+     *
+     *  Win.apk (Android paths): `dataDir` is the device name /data/user/0/<pkg>
+     *  (Boot.winApkAppDataDir), and getFilesDir/getCacheDir/getDatabasePath and
+     *  the whole data surface are derived from it, so an app sees Android paths
+     *  there; java.io/java.nio and the guest shim open the host folder each one
+     *  names (WinApkPaths, paths.cpp). ApplicationInfo.sourceDir / publicSourceDir
+     *  / splitSourceDirs / nativeLibraryDir deliberately STAY host paths: they
+     *  are consumed as host files by code the path mapper does not reach -- the
+     *  ELF loader mmaps sourceDir/the splits (getMacApkCodePath ->
+     *  nativeSetApkPath), HotSpot's dll_load opens nativeLibraryDir for
+     *  System.load, and the dex/AOT machinery reads the code dir -- none of which
+     *  goes through java.io or the shim. Presenting them as Android paths would
+     *  need every such host-side open routed through the mapper, a far larger and
+     *  riskier change than the data surface, for no app that merely reads the
+     *  file. The MACAPK_DATADIR_DEVICE experiment below is the one exception, for
+     *  pairip's dirname/memcmp, and stays opt-in. */
     public void macapkSetDataDir(File dataDir) {
         this.macapkDataDir = dataDir;
         this.cachedApplicationInfo = null;
