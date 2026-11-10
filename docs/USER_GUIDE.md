@@ -69,9 +69,10 @@ Installs run one at a time, in a small install window:
 ![The install window while it works: the file's name, Installing… and a progress bar, with Show details and Cancel](images/install-progress.png)
 
 - While it works, the window shows the app's icon and name (the file's name
-  until the app's own is read, near the end), a moving bar and one line on
-  what it is doing: **Installing…**, then **Converting the app's code. This
-  happens once.**, then **Getting the app's name and icon…**.
+  for the first seconds, until the app's own are read), a moving bar and one
+  line on what it is doing: **Installing…**, then **Getting the app's name
+  and icon…**, then **Converting the app's code. This happens once.**, the
+  long part. A new app's tile in the library shows its icon from then on too.
 - **Show details** opens the install's log as it is written; each install
   window starts with it closed.
 - Files opened while an install is under way, from Explorer or by dragging,

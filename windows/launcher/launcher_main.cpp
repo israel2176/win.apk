@@ -2835,6 +2835,7 @@ struct Job {
     bool update = false;  // the library had the app already
     int phase = 0;        // how far the install log says it got (install_phase)
     std::wstring reason;  // why it failed, in a sentence
+    std::wstring label;   // the app's own name once the install has written it (a new app's)
     std::shared_ptr<Gdiplus::Bitmap> icon;  // the app's icon once the install has written it
 };
 std::vector<Job> g_jobs;                   // this batch of installs, for the install window
@@ -3023,8 +3024,43 @@ void draw_app_icon(Graphics& g, const App* app, const std::wstring& label, const
     draw_icon(g, app ? icon_for(*app) : nullptr, label, r);
 }
 
+// What the install of a new app has written of it so far: its icon and name (apps\<name>\icon.png and
+// label.txt, which the runtime writes before it converts the code), so that the install shows the real
+// ones while it runs, as Android's does. Looked for twice a second, and forgotten with the batch.
+struct PendingLook {
+    ULONGLONG looked = 0;
+    uintmax_t icon_size = 0;  // the file's size at the last look: read once it has stopped growing
+    std::shared_ptr<Gdiplus::Bitmap> icon;
+    std::wstring label;
+};
+std::map<std::wstring, PendingLook> g_pending_looks;
+
+const PendingLook& pending_look(const std::wstring& name) {
+    PendingLook& look = g_pending_looks[name];
+    const ULONGLONG now = GetTickCount64();
+    if ((look.icon && !look.label.empty()) || now - look.looked < 500) return look;
+    look.looked = now;
+    std::error_code ec;
+    if (!look.icon) {
+        const fs::path png = app_dir(name) / L"icon.png";
+        const uintmax_t size = fs::file_size(png, ec);
+        if (!ec && size > 0 && size == look.icon_size) look.icon = rounded_icon(png, ipx(72));
+        look.icon_size = ec ? 0 : size;
+    }
+    if (look.label.empty()) {
+        std::ifstream f(app_dir(name) / L"label.txt", std::ios::binary);
+        std::string s((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        look.label = utf8_to_wide(s);
+        look.label.erase(0, look.label.find_first_not_of(L" \t\r\n"));
+        if (const size_t end = look.label.find_first_of(L"\r\n"); end != std::wstring::npos) look.label.resize(end);
+        // The library's and the tiles' name for it too, unless the store gave it one.
+        if (!look.label.empty()) g_job_labels.emplace(name, look.label);
+    }
+    return look;
+}
+
 // The name an install shows before the app is in the library: the store's
-// name for it, else the library name.
+// name for it, else the app's own once its install has written it, else the library name.
 std::wstring job_label(const std::wstring& name) {
     if (const App* a = find_app(name)) return a->label;
     const auto it = g_job_labels.find(name);
@@ -3555,7 +3591,8 @@ void paint_tile(Graphics& g, int i) {
     const std::wstring label = app ? app->label : job_label(t.job);
     const float s = px(72);
     const RectF ir(r.X + (r.Width - s) / 2, r.Y + px(12), s, s);
-    draw_app_icon(g, app, label, ir);
+    // A new app being installed: its own icon as soon as the install has it, under the veil.
+    draw_icon(g, app ? icon_for(*app) : pending_look(t.job).icon.get(), label, ir);
     if (!app || is_pending(app->name)) {
         fill_round(g, ir, s * 0.22f, Color(130, 0, 0, 0));
         spinner(g, inset(ir, s * 0.3f, s * 0.3f), kWhite, px(3));
@@ -6609,12 +6646,12 @@ enum { kActClose = 1, kActCancel, kActOpen, kActDetails, kActCopy, kActShowLog, 
        kActRowOpen = 1000, kActRowLog = 2000 };
 constexpr UINT kFitInstall = WM_APP + 20;
 
-// How far an install got, from the lines the runtime writes: 0 starting, 1 installing, 2 converting the
-// code, 3 reading the name and icon.
+// How far an install got, from the lines the runtime writes, in the order it works (runtime_main.cpp):
+// 0 starting, 1 installing, 2 reading the name and icon, 3 converting the code, the long part.
 int install_phase(const fs::path& log) {
     const std::string tail = read_tail(log, 128 * 1024);
-    if (tail.find("host natives:") != std::string::npos) return 3;
-    if (tail.find("converting the app's code") != std::string::npos) return 2;
+    if (tail.find("converting the app's code") != std::string::npos) return 3;
+    if (tail.find("host natives:") != std::string::npos) return 2;
     if (tail.find("installing the app (once per install)") != std::string::npos) return 1;
     return 0;
 }
@@ -6622,8 +6659,8 @@ int install_phase(const fs::path& log) {
 const wchar_t* phase_text(int phase) {
     switch (phase) {
         case 1: return L"Installing…";
-        case 2: return L"Converting the app's code. This happens once.";
-        case 3: return L"Getting the app's name and icon…";
+        case 2: return L"Getting the app's name and icon…";
+        case 3: return L"Converting the app's code. This happens once.";
         default: return L"Preparing…";
     }
 }
@@ -6643,6 +6680,7 @@ std::wstring install_failure_reason(const fs::path& log) {
 // The name to show for an install: the app's own once known, else the file's.
 std::wstring job_title(const Job& j) {
     if (find_app(j.name) || g_job_labels.count(j.name)) return job_label(j.name);
+    if (!j.label.empty()) return j.label;
     return j.file.empty() ? j.name : j.file;
 }
 
@@ -6976,9 +7014,10 @@ void poll_install(HWND hwnd) {
     for (Job& j : g_jobs) {
         if (j.state != Job::kInstalling) continue;
         j.phase = (std::max)(j.phase, install_phase(install_log(j.name)));
-        if (!j.icon && !find_app(j.name)) {
-            std::error_code ec;
-            if (fs::exists(app_dir(j.name) / L"icon.png", ec)) j.icon = rounded_icon(app_dir(j.name) / L"icon.png", ipx(64));
+        if (!find_app(j.name)) {  // a new app: what its install has written of it so far
+            const PendingLook& look = pending_look(j.name);
+            if (!j.icon) j.icon = look.icon;
+            if (j.label.empty()) j.label = look.label;
         }
     }
     if (g_iv.details) {
@@ -8446,7 +8485,10 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             } else if (how != InstallEnd::kCancelled && !g_install_wnd) {
                 info(fmt(L"{0} could not be installed.", {job_label(*name)}), kError);
             }
-            if (!any_pending()) g_job_labels.clear();
+            if (!any_pending()) {
+                g_job_labels.clear();
+                g_pending_looks.clear();
+            }
             if (g_view == kGmsSetupView) rebuild_page();  // the app's row is ticked
             maybe_quit();
             return 0;

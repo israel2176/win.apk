@@ -642,17 +642,19 @@ tests the transport and the broker's checks across three processes.
    upstream chooses them, and the native libraries of the first ABI in
    `x86_64,arm64-v8a` the app has, under `lib\<isa>\`. A record file notes
    the result so the step runs once per input file.
-3. Upstream's DEX converter (`com.macapk.dex.Main`) turns the app's DEX into
-   `apps\<name>\classes.jar`, with a stamp naming the converter and the APK so
-   a change to either converts again.
+3. `com.winapk.tools.AppMeta` renders the launcher icon to
+   `apps\<name>\icon.png`, and writes the label and `package.txt` (package,
+   versionCode, versionName, the first activity's manifest
+   `screenOrientation`). It comes before the long step, so that the install
+   window and the library's tile show a new app's own icon and name while it
+   is converted, as Android's installer does (`pending_look` in the launcher).
 4. If the app has only arm64 libraries, a background `winapk-runtime
    --aot-translate` starts for each: `winapk-aot` writes C, clang compiles it
    into `<lib>.so.aot.dll`. Nothing waits for it.
-5. `com.winapk.tools.AppMeta` renders the launcher icon to
-   `apps\<name>\icon.png`, and writes the label and `package.txt` (package,
-   versionCode, versionName, the first activity's manifest
-   `screenOrientation`). The launcher moves them beside the APK as
-   `library\<name>.label` and `.package`.
+5. Upstream's DEX converter (`com.macapk.dex.Main`) turns the app's DEX into
+   `apps\<name>\classes.jar`, with a stamp naming the converter and the APK so
+   a change to either converts again. The launcher then moves the label and
+   `package.txt` beside the APK as `library\<name>.label` and `.package`.
 6. The launcher makes the Start menu shortcut (and the desktop one, if the
    setting is on) and adds the app to the library.
 
