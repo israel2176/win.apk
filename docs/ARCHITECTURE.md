@@ -640,7 +640,9 @@ tests the transport and the broker's checks across three processes.
    the file name up to its version; a package already in the library keeps
    that app's name, so the install updates it), copies the file into
    `library\<name>.apk` (an update moves the
-   previous APK aside, and puts it back if the install fails or is cancelled)
+   previous APK aside, and puts it back if the install fails or is cancelled;
+   an install cut off by a crash or the power is undone the same way at the
+   launcher's next start, `recover_interrupted_installs`)
    and starts `winapk-runtime --apk <that file> --install-only`, logging to
    `logs\install-<name>.log`. The install window reads that log for its
    status line.

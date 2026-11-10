@@ -1479,21 +1479,35 @@ struct InstallClaim {
 
 // An update that was cut off (the process killed, the PC switched off) left the app's previous APK
 // beside it as <name><ext>.previous, and in its place a new one that may be half copied and was never
-// converted. Each such app gets its previous APK back, as a failed update does. One whose install is
-// alive in another process is left to it. True when something was put back.
+// converted. Each such app gets its previous APK (and icon) back, as a failed update does. A new app
+// whose install was cut off left its APK in the library with no name beside it, and whatever the install
+// had made of it: those go, as after a failed install. An app whose install is alive in another process
+// is left to it. True when something was put back or removed.
 bool recover_interrupted_installs() {
     bool recovered = false;
     std::error_code ec;
-    std::vector<fs::path> kept;
+    std::vector<fs::path> kept, files;
     for (const auto& e : fs::directory_iterator(library_dir(), ec)) {
         if (e.path().extension() == L".previous") kept.push_back(e.path());
+        else if (e.is_regular_file(ec) && is_app_file(e.path())) files.push_back(e.path());
     }
     for (const fs::path& previous : kept) {
         fs::path target = previous;
         target.replace_extension();  // <name><ext>
-        const InstallClaim claim(target.stem().wstring(), false);
+        const std::wstring name = target.stem().wstring();
+        const InstallClaim claim(name, false);
         if (!claim.held) continue;
         if (MoveFileExW(previous.c_str(), target.c_str(), MOVEFILE_REPLACE_EXISTING)) recovered = true;
+        MoveFileExW((app_dir(name) / L"icon.png.previous").c_str(), (app_dir(name) / L"icon.png").c_str(),
+                    MOVEFILE_REPLACE_EXISTING);
+    }
+    for (const fs::path& file : files) {
+        const std::wstring name = file.stem().wstring();
+        if (fs::exists(label_file(name), ec)) continue;  // installed
+        const InstallClaim claim(name, false);
+        if (!claim.held) continue;
+        if (fs::remove(file, ec)) recovered = true;
+        remove_app_files(name);
     }
     return recovered;
 }
@@ -1518,6 +1532,10 @@ bool install_into_library(const fs::path& source, const std::wstring& name, cons
     const bool backed_up = !same && fs::exists(target, ec) &&
                            MoveFileExW(target.c_str(), kept.c_str(), MOVEFILE_REPLACE_EXISTING) != 0;
     bool ok = same || CopyFileW(source.c_str(), target.c_str(), FALSE) != 0;
+    // The install writes the new version's icon first (so that it shows while the code is converted):
+    // an update keeps the app's own beside it, to put back if the update does not go through.
+    const fs::path icon = app_dir(name) / L"icon.png", icon_kept = app_dir(name) / L"icon.png.previous";
+    const bool icon_backed_up = update && CopyFileW(icon.c_str(), icon_kept.c_str(), FALSE) != 0;
     if (ok) {
         HANDLE p = start_runtime(L"--apk \"" + target.wstring() + L"\" --install-only", install_log(name));
         DWORD code = 1;
@@ -1543,6 +1561,8 @@ bool install_into_library(const fs::path& source, const std::wstring& name, cons
         if (ok) MoveFileExW((app_dir(name) / L"package.txt").c_str(), package_file(name).c_str(),
                             MOVEFILE_REPLACE_EXISTING | MOVEFILE_COPY_ALLOWED);
     }
+    if (icon_backed_up && !ok) MoveFileExW(icon_kept.c_str(), icon.c_str(), MOVEFILE_REPLACE_EXISTING);
+    else if (icon_backed_up) fs::remove(icon_kept, ec);
     if (ok) {
         if (backed_up) fs::remove(kept, ec);
         if (!replaces.empty() && replaces != target) fs::remove(replaces, ec);
@@ -7564,6 +7584,7 @@ struct Splash {
     std::wstring error_title, error_text;
     fs::path log;  // Show log's
     float need_h = 0;  // the failed state's height, when its sentence is long
+    float need_w = 0;  // and its width, when its title is long ("<a long name> stopped with an error")
     std::unique_ptr<Gdiplus::Bitmap> icon;  // the app's, at the starting window's size
     Targets targets;
     int hot = 0;
@@ -7656,6 +7677,9 @@ void paint_splash(Splash& s, Graphics& g, float W, float H) {
     draw_text(g, report, g_f.body.get(), s.hot == kSplashReport ? mix(g_t.accent, g_t.text, 0.3f) : g_t.accent, rep,
               kCenter);
     const float need = (std::max)(px(300), rep.GetBottom() - top + px(16) + px(32) + px(24));
+    // As wide as the title, up to 560: a long app name is not cut to an ellipsis.
+    const float need_w = (std::min)(px(560), (std::max)(px(300), text_width(g, s.error_title, g_f.title.get()) +
+                                                                   2 * m + px(8)));
     // Windows' order and the dialog's widths: Close (the accent one), then Show log.
     const float cw = button_width(g, tr(L"Close"), true), lw = button_width(g, tr(L"Show log"), false);
     const float by = top + block - px(24) - px(32);
@@ -7665,8 +7689,9 @@ void paint_splash(Splash& s, Graphics& g, float W, float H) {
     s.targets.push_back({rep, kSplashReport});
     s.targets.push_back({log, kSplashLog});
     s.targets.push_back({close, kSplashClose});
-    if (std::lround(need) != std::lround(s.need_h)) {
+    if (std::lround(need) != std::lround(s.need_h) || std::lround(need_w) != std::lround(s.need_w)) {
         s.need_h = need;
+        s.need_w = need_w;
         PostMessageW(s.hwnd, kFitSplash, 0, 0);
     }
 }
@@ -7700,11 +7725,12 @@ LRESULT CALLBACK splash_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_PAINT:
             buffered_paint(hwnd, [&](Graphics& g, float w, float h) { paint_splash(*s, g, w, h); });
             return 0;
-        case kFitSplash: {  // the error needs a client area of at least 300 dp by its own height
+        case kFitSplash: {  // the error needs a client area of its title's width (300 dp at least) by its own height
             RECT wr, rc;
             GetWindowRect(hwnd, &wr);
             GetClientRect(hwnd, &rc);
-            const int want_h = static_cast<int>(std::lround((std::max)(px(300), s->need_h))), want_w = ipx(300);
+            const int want_h = static_cast<int>(std::lround((std::max)(px(300), s->need_h)));
+            const int want_w = static_cast<int>(std::lround((std::max)(px(300), s->need_w)));
             const int grow_w = (std::max)(0, want_w - static_cast<int>(rc.right));
             const int grow_h = (std::max)(0, want_h - static_cast<int>(rc.bottom));
             if (grow_w || grow_h) {
