@@ -2580,7 +2580,14 @@ public class Activity extends ContextThemeWrapper
             android.view.LayoutInflater inflater =
                 android.view.LayoutInflater.from(this);
             if (inflater != null) {
-                android.view.View root = inflater.inflate(layoutResID, null);
+                android.view.View root;
+                macapkInflatingContentLayout = true;
+                try {
+                    root = inflater.inflate(layoutResID, null);
+                } finally {
+                    macapkInflatingContentLayout = false;
+                    macapkInflatingContent = null;
+                }
                 if (root != null) {
                     setContentView(root);
                     return;
@@ -2591,6 +2598,20 @@ public class Activity extends ContextThemeWrapper
                 "setContentView(0x" + Integer.toHexString(layoutResID)
                 + ") inflation failed: " + t);
         }
+    }
+
+    /** While setContentView(int) inflates a {@code <merge>} layout: the frame its
+     *  children go into. On a device PhoneWindow inflates into the window's content
+     *  frame, so a view's constructor already finds the layout's earlier top-level
+     *  views through Activity.findViewById (a custom view that looks up a sibling
+     *  named by one of its attributes); here the layout is inflated first and
+     *  installed after, and that lookup answered null. */
+    private View macapkInflatingContent;
+    private boolean macapkInflatingContentLayout;
+
+    /** LayoutInflater: the frame it merges a parentless {@code <merge>} layout into. */
+    public void macapkContentMergeFrame(View frame) {
+        if (macapkInflatingContentLayout) macapkInflatingContent = frame;
     }
     public void setContentView(View view) {
         macapkInstallContentDirect(view);
@@ -3123,6 +3144,13 @@ public class Activity extends ContextThemeWrapper
         // sub-decor it installed, FragmentManager's FragmentContainer.onFindViewById got null for it and the
         // main tab fragment never attached ("No view found for id ..."): a blank window.
         // The installed root is searched first (unchanged answers), then the decor if one exists.
+        // A <merge> layout being inflated by setContentView(int) comes before both: on a device it
+        // has replaced the old content by now.
+        final View inflating = macapkInflatingContent;
+        if (inflating != null) {
+            View v = inflating.findViewById(id);
+            if (v != null) return v;
+        }
         if (contentView != null) {
             View inRoot = contentView.findViewById(id);
             if (inRoot != null) return inRoot;

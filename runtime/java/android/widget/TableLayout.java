@@ -32,11 +32,11 @@
 //     (mapIndexAndColumns / getVirtualChildAt returning a DEFLECTED child
 //     index for a spanned row), which our TableRow does not implement --
 //     getVirtualChildAt there is a trivial getChildAt passthrough.
-//   - stretchColumns/shrinkColumns/collapseColumns XML attributes are not
-//     parsed (no R.styleable.TableLayout_* wiring in the AttributeSet
-//     constructor); use setColumnStretchable/setColumnShrinkable/
-//     setColumnCollapsed programmatically instead.
-//     setShrinkAllColumns/setStretchAllColumns work either way.
+//   - stretchColumns/shrinkColumns/collapseColumns XML attributes are read
+//     by the inflater's attribute pass (LayoutInflater -> macapkSetColumns),
+//     not by the AttributeSet constructor. That pass runs before the rows
+//     are added, so collapseColumns is recorded but hides nothing yet (see
+//     setColumnCollapsed: rows added later do not inherit the state).
 package android.widget;
 
 import android.content.Context;
@@ -109,6 +109,28 @@ public class TableLayout extends LinearLayout {
     public boolean isColumnCollapsed(int columnIndex) {
         final Boolean v = mCollapsedColumns.get(columnIndex);
         return v != null && v;
+    }
+    /** android:stretchColumns / shrinkColumns / collapseColumns, as AOSP's
+     *  initTableLayout reads them: a comma-separated list of column indices
+     *  (parseColumns: blanks around the commas, negative and non-numeric entries
+     *  skipped), or "*" for every column of the first two. Without them a
+     *  table's cells kept their natural widths: a long text cell pushed the
+     *  button beside it off the screen instead of wrapping. */
+    public void macapkSetColumns(String attr, String value) {
+        if (value == null || value.isEmpty()) return;
+        final boolean stretch = "stretchColumns".equals(attr), shrink = "shrinkColumns".equals(attr);
+        if ((stretch || shrink) && value.charAt(0) == '*') {
+            if (stretch) setStretchAllColumns(true); else setShrinkAllColumns(true);
+            return;
+        }
+        for (String part : value.split("\\s*,\\s*")) {
+            final int column;
+            try { column = Integer.parseInt(part); } catch (NumberFormatException e) { continue; }
+            if (column < 0) continue;
+            if (stretch) setColumnStretchable(column, true);
+            else if (shrink) setColumnShrinkable(column, true);
+            else setColumnCollapsed(column, true);
+        }
     }
     public void setShrinkAllColumns(boolean shrink) { mShrinkAllColumns = shrink; requestLayout(); }
     public boolean isShrinkAllColumns() { return mShrinkAllColumns; }

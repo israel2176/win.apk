@@ -592,6 +592,14 @@ every such change is listed here:
 - `runtime/java/android/view/LayoutInflater.java`: a `<merge>` layout inflated
   without a parent merges into a `FrameLayout` instead of being dropped, so
   `setContentView` of a `<merge>` layout works. Not Windows-specific.
+- `runtime/java/android/app/Activity.java`, `android/view/LayoutInflater.java`
+  and `android/widget/TableLayout.java`: while `setContentView(int)` inflates
+  a `<merge>` layout, `Activity.findViewById` finds the top-level views
+  already inflated, as in the content frame PhoneWindow inflates into (a view
+  that looks up a sibling in its constructor got null); and a `TableLayout`
+  reads `stretchColumns`, `shrinkColumns` and `collapseColumns` from XML.
+  Vanilla Music's permission banner lay under its bottom bar with its button
+  off the screen. Not Windows-specific.
 - `runtime/java/com/macapk/loader/ActivityHost.java`: an activity that calls
   `finish()` in its own `onCreate` is torn down after `onCreate` returns, as on
   AOSP, not in the middle of it; one that calls it in `onResume` after
