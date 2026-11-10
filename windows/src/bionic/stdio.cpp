@@ -802,9 +802,12 @@ WINAPK_GUEST_ABI unsigned g_umask_chk(unsigned mode) { return g_umask(mode); }
 // mkstemp/mkostemp: the template's trailing XXXXXX replaced until a new file
 // can be created (O_EXCL), as bionic does; the path goes through g_open, so
 // guest paths map as for any other open.
-WINAPK_GUEST_ABI int g_mkostemp(char* tmpl, int flags) {
-    const size_t n = tmpl ? std::strlen(tmpl) : 0;
-    if (n < 6 || std::strcmp(tmpl + n - 6, "XXXXXX") != 0) return *guest_errno() = kEINVAL, -1;
+// mkstemps/mkostemps keep `suffix` characters after the XXXXXX ("/tmp/abcXXXXXX.txt", 4).
+int make_temp_file(char* tmpl, int suffix, int flags) {
+    const size_t len = tmpl ? std::strlen(tmpl) : 0;
+    if (suffix < 0 || len < static_cast<size_t>(suffix) + 6) return *guest_errno() = kEINVAL, -1;
+    const size_t n = len - static_cast<size_t>(suffix);  // where the XXXXXX ends
+    if (std::strncmp(tmpl + n - 6, "XXXXXX", 6) != 0) return *guest_errno() = kEINVAL, -1;
     static const char kChars[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
     uint64_t seed = GetTickCount64() ^ (static_cast<uint64_t>(GetCurrentThreadId()) << 32);
     for (int attempt = 0; attempt < 100; ++attempt) {
@@ -817,7 +820,11 @@ WINAPK_GUEST_ABI int g_mkostemp(char* tmpl, int flags) {
     }
     return -1;
 }
-WINAPK_GUEST_ABI int g_mkstemp(char* tmpl) { return g_mkostemp(tmpl, 0); }
+WINAPK_GUEST_ABI int g_mkostemp(char* tmpl, int flags) { return make_temp_file(tmpl, 0, flags); }
+WINAPK_GUEST_ABI int g_mkstemp(char* tmpl) { return make_temp_file(tmpl, 0, 0); }
+// Missing, these two answered 0 through the loader's fallback: descriptor 0 as the new temporary file.
+WINAPK_GUEST_ABI int g_mkostemps(char* tmpl, int suffix, int flags) { return make_temp_file(tmpl, suffix, flags); }
+WINAPK_GUEST_ABI int g_mkstemps(char* tmpl, int suffix) { return make_temp_file(tmpl, suffix, 0); }
 
 // ---- directories -------------------------------------------------------------------------
 // Bionic's struct dirent on x86_64.
@@ -839,12 +846,15 @@ struct GuestDir {
     int fd = -1;        // its descriptor (fdopendir, dirfd), closed with it
 };
 
-GuestDir* open_dir(std::wstring path) {
+std::wstring dir_pattern(const std::wstring& path) {
     std::wstring pattern = path;
     if (!pattern.empty() && pattern.back() != L'/' && pattern.back() != L'\\') pattern += L'\\';
-    pattern += L'*';
+    return pattern + L'*';
+}
+
+GuestDir* open_dir(std::wstring path) {
     auto* d = new GuestDir();
-    d->find = FindFirstFileW(pattern.c_str(), &d->data);
+    d->find = FindFirstFileW(dir_pattern(path).c_str(), &d->data);
     if (d->find == INVALID_HANDLE_VALUE) {
         set_errno_from_win32(GetLastError());
         delete d;
@@ -895,7 +905,74 @@ WINAPK_GUEST_ABI int g_closedir(GuestDir* d) {
     delete d;
     return 0;
 }
-WINAPK_GUEST_ABI void g_rewinddir(GuestDir*) {}
+// rewinddir: the listing starts over, and shows what the directory holds now. (It did nothing, so a
+// second pass over a directory -- count the entries, then read them -- found it empty.)
+WINAPK_GUEST_ABI void g_rewinddir(GuestDir* d) {
+    if (!d) return;
+    WIN32_FIND_DATAW first;
+    const HANDLE again = FindFirstFileW(dir_pattern(d->path).c_str(), &first);
+    if (again == INVALID_HANDLE_VALUE) return;  // the directory is gone: the old listing just ends
+    if (d->find != INVALID_HANDLE_VALUE) FindClose(d->find);
+    d->find = again;
+    d->data = first;
+    d->pending = true;
+    d->offset = 0;
+}
+// readdir_r: readdir into the caller's entry. *result is null at the end, with 0 returned. Missing, it
+// answered 0 through the loader's fallback and left *result as it was: a loop on it never ended.
+WINAPK_GUEST_ABI int g_readdir_r(GuestDir* d, GuestDirent* entry, GuestDirent** result) {
+    const int before = *guest_errno();
+    *guest_errno() = 0;
+    const GuestDirent* e = g_readdir(d);
+    const int error = e ? 0 : *guest_errno();
+    *guest_errno() = before;
+    if (e) *entry = *e;
+    *result = e ? entry : nullptr;
+    return error;
+}
+
+// scandir: the entries `filter` keeps, each malloc'ed, in `compare`'s order, in a malloc'ed array.
+using DirFilter = int(WINAPK_GUEST_ABI*)(const GuestDirent*);
+using DirCompare = int(WINAPK_GUEST_ABI*)(const GuestDirent**, const GuestDirent**);
+WINAPK_GUEST_ABI int g_alphasort(const GuestDirent** a, const GuestDirent** b) {
+    return std::strcmp((*a)->d_name, (*b)->d_name);  // strcoll in the C locale
+}
+WINAPK_GUEST_ABI int g_scandir(const char* path, GuestDirent*** out, DirFilter filter, DirCompare compare) {
+    GuestDir* d = g_opendir(path);
+    if (!d) return -1;
+    std::vector<GuestDirent*> found;
+    bool ok = true;
+    while (const GuestDirent* e = g_readdir(d)) {
+        if (filter && !filter(e)) continue;
+        auto* copy = static_cast<GuestDirent*>(std::malloc(sizeof(GuestDirent)));
+        if (!copy) {
+            ok = false;
+            break;
+        }
+        *copy = *e;
+        found.push_back(copy);
+    }
+    g_closedir(d);
+    auto** list = ok ? static_cast<GuestDirent**>(std::malloc((found.size() + 1) * sizeof(GuestDirent*))) : nullptr;
+    if (!list) {
+        for (GuestDirent* e : found) std::free(e);
+        return *guest_errno() = kENOMEM, -1;
+    }
+    if (compare) {
+        // stable_sort merges: a comparator that is not a strict order cannot send it out of the range.
+        std::stable_sort(found.begin(), found.end(), [compare](const GuestDirent* a, const GuestDirent* b) {
+            return compare(&a, &b) < 0;
+        });
+    }
+    std::copy(found.begin(), found.end(), list);
+    *out = list;
+    return static_cast<int>(found.size());
+}
+WINAPK_GUEST_ABI int g_scandirat(int dirfd, const char* path, GuestDirent*** out, DirFilter filter,
+                                 DirCompare compare) {
+    std::string p;
+    return at_path(dirfd, path, &p) ? g_scandir(p.c_str(), out, filter, compare) : -1;
+}
 
 // ---- pathconf ------------------------------------------------------------------
 // pathconf's answers for a local file system (<bits/posix_limits.h> values);
@@ -1797,6 +1874,215 @@ WINAPK_GUEST_ABI int64_t g_getdelim(char** line, size_t* cap, int delim, void* f
 }
 WINAPK_GUEST_ABI int64_t g_getline(char** line, size_t* cap, void* f) { return g_getdelim(line, cap, '\n', f); }
 
+// ---- calls that were missing -------------------------------------------------------------
+// The loader binds a function the shim does not have to a stub that answers 0 (host/guest_libs.cpp).
+// For the calls below 0 is not "failed" but "done", "nothing more to read" or "descriptor 0", and a
+// caller that believes it loops, waits or writes into the wrong file. Each is now either the real thing
+// over the calls above, or fails as Linux reports the failure and says so once in the log (say_once).
+
+// readv/writev and the positioned forms: one read or write of the whole vector, as the syscall is
+// (a datagram stays one datagram; a pipe's reader gets what is there, not one read per buffer).
+struct GuestIovec {
+    void* base;
+    size_t len;
+};
+bool iov_total(const GuestIovec* iov, int n, size_t* total) {
+    if (n < 0 || n > 1024 || (n && !iov)) return *guest_errno() = kEINVAL, false;  // IOV_MAX
+    *total = 0;
+    for (int i = 0; i < n; ++i) *total += iov[i].len;
+    return true;
+}
+// `off` null: at the file position.
+int64_t write_vector(int fd, const GuestIovec* iov, int n, const int64_t* off) {
+    size_t total = 0;
+    if (!iov_total(iov, n, &total)) return -1;
+    if (n == 1) return off ? g_pwrite(fd, iov[0].base, iov[0].len, *off) : g_write(fd, iov[0].base, iov[0].len);
+    std::unique_ptr<char[]> all(new (std::nothrow) char[total ? total : 1]);
+    if (!all) return *guest_errno() = kENOMEM, -1;
+    size_t at = 0;
+    for (int i = 0; i < n; ++i) {
+        std::memcpy(all.get() + at, iov[i].base, iov[i].len);
+        at += iov[i].len;
+    }
+    return off ? g_pwrite(fd, all.get(), total, *off) : g_write(fd, all.get(), total);
+}
+int64_t read_vector(int fd, const GuestIovec* iov, int n, const int64_t* off) {
+    size_t total = 0;
+    if (!iov_total(iov, n, &total)) return -1;
+    if (n == 1) return off ? g_pread(fd, iov[0].base, iov[0].len, *off) : g_read(fd, iov[0].base, iov[0].len);
+    std::unique_ptr<char[]> all(new (std::nothrow) char[total ? total : 1]);
+    if (!all) return *guest_errno() = kENOMEM, -1;
+    const int64_t got = off ? g_pread(fd, all.get(), total, *off) : g_read(fd, all.get(), total);
+    size_t at = 0;
+    for (int i = 0; i < n && got > 0 && at < static_cast<size_t>(got); ++i) {
+        const size_t part = std::min(iov[i].len, static_cast<size_t>(got) - at);
+        std::memcpy(iov[i].base, all.get() + at, part);
+        at += part;
+    }
+    return got;
+}
+WINAPK_GUEST_ABI int64_t g_writev(int fd, const GuestIovec* iov, int n) { return write_vector(fd, iov, n, nullptr); }
+WINAPK_GUEST_ABI int64_t g_readv(int fd, const GuestIovec* iov, int n) { return read_vector(fd, iov, n, nullptr); }
+WINAPK_GUEST_ABI int64_t g_pwritev(int fd, const GuestIovec* iov, int n, int64_t off) {
+    return write_vector(fd, iov, n, &off);
+}
+WINAPK_GUEST_ABI int64_t g_preadv(int fd, const GuestIovec* iov, int n, int64_t off) {
+    return read_vector(fd, iov, n, &off);
+}
+// preadv2/pwritev2: offset -1 is the file position; the RWF_* flags are hints here.
+WINAPK_GUEST_ABI int64_t g_pwritev2(int fd, const GuestIovec* iov, int n, int64_t off, int) {
+    return write_vector(fd, iov, n, off == -1 ? nullptr : &off);
+}
+WINAPK_GUEST_ABI int64_t g_preadv2(int fd, const GuestIovec* iov, int n, int64_t off, int) {
+    return read_vector(fd, iov, n, off == -1 ? nullptr : &off);
+}
+
+// sendfile: read from `in` (at *offset, which then moves, or at its position) and write to `out`.
+// Every byte taken from `in` is written or given back, so a short count loses nothing.
+WINAPK_GUEST_ABI int64_t g_sendfile(int out, int in, int64_t* offset, size_t count) {
+    std::vector<char> buf(std::min<size_t>(count, 65536));
+    size_t done = 0;
+    while (done < count) {
+        const size_t want = std::min(count - done, buf.size());
+        const int64_t got = offset ? g_pread(in, buf.data(), want, *offset) : g_read(in, buf.data(), want);
+        if (got < 0) return done ? static_cast<int64_t>(done) : -1;
+        if (got == 0) break;
+        size_t put = 0;
+        while (put < static_cast<size_t>(got)) {
+            const int64_t w = g_write(out, buf.data() + put, static_cast<size_t>(got) - put);
+            if (w <= 0) break;  // errno is the write's (EAGAIN on a full non-blocking socket)
+            put += static_cast<size_t>(w);
+        }
+        done += put;
+        if (offset) *offset += static_cast<int64_t>(put);
+        if (put < static_cast<size_t>(got)) {
+            if (!offset) {
+                const int e = *guest_errno();
+                g_lseek(in, static_cast<int64_t>(put) - got, SEEK_CUR);
+                *guest_errno() = e;
+            }
+            return done ? static_cast<int64_t>(done) : -1;
+        }
+    }
+    return static_cast<int64_t>(done);
+}
+// splice, tee, vmsplice: EINVAL is Linux's answer for descriptors a splice cannot serve, and
+// copy_file_range's ENOSYS that of a kernel before it; callers copy with read and write then.
+// TODO(splice): move the bytes here, as sendfile does, if an app turns out to have no other path.
+WINAPK_GUEST_ABI int64_t g_splice() {
+    static std::atomic<bool> said{false};
+    say_once(said, "splice()/tee()/vmsplice()", "not supported; the call fails with EINVAL");
+    return *guest_errno() = kEINVAL, -1;
+}
+WINAPK_GUEST_ABI int64_t g_copy_file_range() {
+    static std::atomic<bool> said{false};
+    say_once(said, "copy_file_range()", "not supported; the call fails with ENOSYS");
+    return *guest_errno() = kENOSYS, -1;
+}
+
+WINAPK_GUEST_ABI int g_truncate(const char* path, int64_t len) {
+    const int fd = g_open(path, kOWrOnly, 0);
+    if (fd < 0) return -1;
+    const int r = g_ftruncate(fd, len);
+    const int e = *guest_errno();
+    g_close(fd);
+    if (r < 0) *guest_errno() = e;
+    return r;
+}
+WINAPK_GUEST_ABI int g_renameat(int from_dir, const char* from, int to_dir, const char* to) {
+    std::string a, b;
+    return at_path(from_dir, from, &a) && at_path(to_dir, to, &b) ? g_rename(a.c_str(), b.c_str()) : -1;
+}
+// renameat2: RENAME_NOREPLACE (1) fails with EEXIST when the new name is taken; the other flags
+// (exchange, whiteout) are EINVAL, as on a file system without them.
+WINAPK_GUEST_ABI int g_renameat2(int from_dir, const char* from, int to_dir, const char* to, unsigned flags) {
+    if (flags == 0) return g_renameat(from_dir, from, to_dir, to);
+    if (flags != 1) return *guest_errno() = kEINVAL, -1;
+    std::string a, b;
+    if (!at_path(from_dir, from, &a) || !at_path(to_dir, to, &b)) return -1;
+    if (MoveFileExW(host_path(a.c_str()).c_str(), host_path(b.c_str()).c_str(), MOVEFILE_COPY_ALLOWED)) return 0;
+    const DWORD error = GetLastError();
+    if (error == ERROR_ALREADY_EXISTS || error == ERROR_FILE_EXISTS) return *guest_errno() = kEEXIST, -1;
+    set_errno_from_win32(error);
+    return -1;
+}
+WINAPK_GUEST_ABI int g_linkat(int from_dir, const char* from, int to_dir, const char* to, int) {
+    std::string a, b;
+    return at_path(from_dir, from, &a) && at_path(to_dir, to, &b) ? g_link(a.c_str(), b.c_str()) : -1;
+}
+// symlink: EPERM, Linux's answer on a file system without symbolic links (an SD card's FAT), which
+// apps already meet on Android.
+// TODO(symlinks): CreateSymbolicLinkW needs developer mode or elevation; with it, readlink and lstat
+// would have to report the link too.
+WINAPK_GUEST_ABI int g_symlink() {
+    static std::atomic<bool> said{false};
+    say_once(said, "symlink()", "symbolic links are not supported; the call fails with EPERM");
+    return *guest_errno() = kEPERM, -1;
+}
+
+WINAPK_GUEST_ABI int64_t g_readlinkat_chk(int dirfd, const char* path, char* buf, size_t size, size_t buf_size) {
+    return g_readlinkat(dirfd, path, buf, std::min(size, buf_size));
+}
+WINAPK_GUEST_ABI char* g_getcwd_chk(char* buf, size_t n, size_t bn) {
+    if (buf && n > bn) {
+        std::fprintf(stderr, "[win.apk] guest FORTIFY: getcwd: prevented buffer overflow\n");
+        std::abort();
+    }
+    return g_getcwd(buf, n);
+}
+
+// ---- terminals -----------------------------------------------------------------------------
+// No descriptor of an app is a terminal, and there is no /dev/ptmx to open one from.
+WINAPK_GUEST_ABI int g_not_a_tty() { return *guest_errno() = 25, -1; }  // ENOTTY: tcgetattr and the rest
+WINAPK_GUEST_ABI int g_ttyname_r() { return *guest_errno() = 25; }      // these two return the error
+// TODO(pseudo-terminals): a terminal app's shell needs a pty (ConPTY) and a process to run in it
+// (see fork in misc.cpp).
+WINAPK_GUEST_ABI int g_openpty() {
+    static std::atomic<bool> said{false};
+    say_once(said, "openpty()/posix_openpt()",
+             "the app asked for a pseudo-terminal, which Win.apk does not have; the call fails with ENOENT");
+    return *guest_errno() = kENOENT, -1;
+}
+
+// ---- nftw, glob ---------------------------------------------------------------------------
+// TODO(nftw): ftw and nftw over the fts walk above (the callback gets Bionic's struct stat and FTW).
+WINAPK_GUEST_ABI int g_nftw() {
+    static std::atomic<bool> said{false};
+    say_once(said, "ftw()/nftw()", "not implemented; the walk fails with ENOSYS and visits nothing");
+    return *guest_errno() = kENOSYS, -1;
+}
+// TODO(glob): glob over opendir and fnmatch. GLOB_NOSYS (-4) is <glob.h>'s "not supported"; the
+// result is left empty (gl_pathc, and gl_pathv at offset 32) unless the caller appends to one.
+WINAPK_GUEST_ABI int g_glob(const char*, int flags, void*, void* result) {
+    static std::atomic<bool> said{false};
+    say_once(said, "glob()", "not implemented; the call fails with GLOB_NOSYS");
+    if (result && !(flags & 0x0001)) {  // GLOB_APPEND
+        std::memset(result, 0, sizeof(size_t));
+        std::memset(static_cast<char*>(result) + 32, 0, sizeof(char**));
+    }
+    return -4;
+}
+WINAPK_GUEST_ABI void g_globfree(void*) {}
+
+WINAPK_GUEST_ABI int g_getchar() { return std::fgetc(stdin); }
+
+// libandroid's ASharedMemory: an anonymous file of `size` bytes to mmap (memfd_create above). Missing,
+// ASharedMemory_create answered 0 through the loader's fallback: descriptor 0 as the new region.
+// setProt only ever takes rights away from later mmaps, which nothing else here could make.
+WINAPK_GUEST_ABI int g_ASharedMemory_create(const char* name, size_t size) {
+    const int fd = g_memfd_create(name, 0);
+    if (fd < 0) return -1;
+    if (g_ftruncate(fd, static_cast<int64_t>(size)) == 0) return fd;
+    const int e = *guest_errno();
+    g_close(fd);
+    return *guest_errno() = e, -1;
+}
+WINAPK_GUEST_ABI size_t g_ASharedMemory_getSize(int fd) {
+    const int64_t size = _filelengthi64(fd);
+    return size < 0 ? 0 : static_cast<size_t>(size);  // 0 is its answer for a descriptor that is not one
+}
+WINAPK_GUEST_ABI int g_ASharedMemory_setProt(int, int) { return 0; }
+
 const ShimSymbol kSymbols[] = {
     {"__sF", g_sF},
     {"stdin", &g_stdin_var},
@@ -1824,6 +2110,46 @@ const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("pread64", g_pread),
     WINAPK_SHIM("pwrite", g_pwrite),
     WINAPK_SHIM("pwrite64", g_pwrite),
+    WINAPK_SHIM("readv", g_readv),
+    WINAPK_SHIM("writev", g_writev),
+    WINAPK_SHIM("preadv", g_preadv),
+    WINAPK_SHIM("preadv64", g_preadv),
+    WINAPK_SHIM("pwritev", g_pwritev),
+    WINAPK_SHIM("pwritev64", g_pwritev),
+    WINAPK_SHIM("preadv2", g_preadv2),
+    WINAPK_SHIM("preadv64v2", g_preadv2),
+    WINAPK_SHIM("pwritev2", g_pwritev2),
+    WINAPK_SHIM("pwritev64v2", g_pwritev2),
+    WINAPK_SHIM("sendfile", g_sendfile),
+    WINAPK_SHIM("sendfile64", g_sendfile),
+    WINAPK_SHIM("splice", g_splice),
+    WINAPK_SHIM("tee", g_splice),
+    WINAPK_SHIM("vmsplice", g_splice),
+    WINAPK_SHIM("copy_file_range", g_copy_file_range),
+    WINAPK_SHIM("__readlinkat_chk", g_readlinkat_chk),
+    WINAPK_SHIM("__getcwd_chk", g_getcwd_chk),
+    WINAPK_SHIM("tcgetattr", g_not_a_tty),
+    WINAPK_SHIM("tcsetattr", g_not_a_tty),
+    WINAPK_SHIM("tcflush", g_not_a_tty),
+    WINAPK_SHIM("tcdrain", g_not_a_tty),
+    WINAPK_SHIM("tcflow", g_not_a_tty),
+    WINAPK_SHIM("tcsendbreak", g_not_a_tty),
+    WINAPK_SHIM("tcgetpgrp", g_not_a_tty),
+    WINAPK_SHIM("tcsetpgrp", g_not_a_tty),
+    WINAPK_SHIM("tcgetsid", g_not_a_tty),
+    WINAPK_SHIM("unlockpt", g_not_a_tty),
+    WINAPK_SHIM("ttyname_r", g_ttyname_r),
+    WINAPK_SHIM("ptsname_r", g_ttyname_r),
+    WINAPK_SHIM("openpty", g_openpty),
+    WINAPK_SHIM("forkpty", g_openpty),
+    WINAPK_SHIM("posix_openpt", g_openpty),
+    WINAPK_SHIM("getpt", g_openpty),
+    WINAPK_SHIM("ftw", g_nftw),
+    WINAPK_SHIM("ftw64", g_nftw),
+    WINAPK_SHIM("nftw", g_nftw),
+    WINAPK_SHIM("nftw64", g_nftw),
+    WINAPK_SHIM("glob", g_glob),
+    WINAPK_SHIM("globfree", g_globfree),
     WINAPK_SHIM("dup", g_dup),
     WINAPK_SHIM("dup2", g_dup2),
     WINAPK_SHIM("dup3", g_dup3),
@@ -1850,6 +2176,9 @@ const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("fstat64", g_fstat),
     WINAPK_SHIM("fstatat", g_fstatat),
     WINAPK_SHIM("memfd_create", g_memfd_create),
+    WINAPK_SHIM("ASharedMemory_create", g_ASharedMemory_create),
+    WINAPK_SHIM("ASharedMemory_getSize", g_ASharedMemory_getSize),
+    WINAPK_SHIM("ASharedMemory_setProt", g_ASharedMemory_setProt),
     WINAPK_SHIM("flock", g_flock),
     WINAPK_SHIM("statvfs", g_statvfs),
     WINAPK_SHIM("fstatvfs", g_fstatvfs),
@@ -1868,6 +2197,10 @@ const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("mkfifoat", g_mkfifoat),
     WINAPK_SHIM("mknod", g_mknod),
     WINAPK_SHIM("rename", g_rename),
+    WINAPK_SHIM("renameat", g_renameat),
+    WINAPK_SHIM("renameat2", g_renameat2),
+    WINAPK_SHIM("truncate", g_truncate),
+    WINAPK_SHIM("truncate64", g_truncate),
     WINAPK_SHIM("remove", g_remove),
     WINAPK_SHIM("chdir", g_chdir),
     WINAPK_SHIM("getcwd", g_getcwd),
@@ -1879,6 +2212,10 @@ const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("mkstemp", g_mkstemp),
     WINAPK_SHIM("mkstemp64", g_mkstemp),
     WINAPK_SHIM("mkostemp", g_mkostemp),
+    WINAPK_SHIM("mkstemps", g_mkstemps),
+    WINAPK_SHIM("mkstemps64", g_mkstemps),
+    WINAPK_SHIM("mkostemps", g_mkostemps),
+    WINAPK_SHIM("mkostemps64", g_mkostemps),
     WINAPK_SHIM("mkostemp64", g_mkostemp),
     WINAPK_SHIM("opendir", g_opendir),
     WINAPK_SHIM("fdopendir", g_fdopendir),
@@ -1888,6 +2225,14 @@ const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("funopen", g_funopen),
     WINAPK_SHIM("readdir", g_readdir),
     WINAPK_SHIM("readdir64", g_readdir),
+    WINAPK_SHIM("readdir_r", g_readdir_r),
+    WINAPK_SHIM("readdir64_r", g_readdir_r),
+    WINAPK_SHIM("scandir", g_scandir),
+    WINAPK_SHIM("scandir64", g_scandir),
+    WINAPK_SHIM("scandirat", g_scandirat),
+    WINAPK_SHIM("scandirat64", g_scandirat),
+    WINAPK_SHIM("alphasort", g_alphasort),
+    WINAPK_SHIM("alphasort64", g_alphasort),
     WINAPK_SHIM("closedir", g_closedir),
     WINAPK_SHIM("rewinddir", g_rewinddir),
     WINAPK_SHIM("fopen", g_fopen),
@@ -1899,6 +2244,9 @@ const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("popen", g_popen),
     WINAPK_SHIM("system", g_system),
     WINAPK_SHIM("link", g_link),
+    WINAPK_SHIM("linkat", g_linkat),
+    WINAPK_SHIM("symlink", g_symlink),
+    WINAPK_SHIM("symlinkat", g_symlink),
     WINAPK_SHIM("fts_open", g_fts_open),
     WINAPK_SHIM("fts_read", g_fts_read),
     WINAPK_SHIM("fts_children", g_fts_children),
@@ -1932,6 +2280,25 @@ const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("setvbuf", g_setvbuf),
     WINAPK_SHIM("setbuf", g_setbuf),
     WINAPK_SHIM("tmpfile", g_tmpfile),
+    WINAPK_SHIM("tmpfile64", g_tmpfile),
+    // The _unlocked forms (a stream's lock is the CRT's own). Missing, getc_unlocked answered 0 for
+    // ever, never EOF.
+    WINAPK_SHIM("getc_unlocked", g_fgetc),
+    WINAPK_SHIM("fgetc_unlocked", g_fgetc),
+    WINAPK_SHIM("getchar", g_getchar),
+    WINAPK_SHIM("getchar_unlocked", g_getchar),
+    WINAPK_SHIM("putc_unlocked", g_fputc),
+    WINAPK_SHIM("fputc_unlocked", g_fputc),
+    WINAPK_SHIM("putchar_unlocked", g_putchar),
+    WINAPK_SHIM("fread_unlocked", g_fread),
+    WINAPK_SHIM("fwrite_unlocked", g_fwrite),
+    WINAPK_SHIM("fputs_unlocked", g_fputs),
+    WINAPK_SHIM("fgets_unlocked", g_fgets),
+    WINAPK_SHIM("feof_unlocked", g_feof),
+    WINAPK_SHIM("ferror_unlocked", g_ferror),
+    WINAPK_SHIM("clearerr_unlocked", g_clearerr),
+    WINAPK_SHIM("fflush_unlocked", g_fflush),
+    WINAPK_SHIM("fileno_unlocked", g_fileno),
     WINAPK_SHIM("perror", g_perror),
     WINAPK_SHIM("getdelim", g_getdelim),
     WINAPK_SHIM("getline", g_getline),

@@ -164,11 +164,30 @@ WINAPK_GUEST_ABI int g_mutex_unlock(void* m) {
     return 0;
 }
 
-WINAPK_GUEST_ABI int g_mutex_timedlock(void* m, const GuestTimespec* abstime) {
+int mutex_lock_until(void* m, const GuestTimespec* abstime, bool monotonic) {
     // Polls trylock; a timed mutex wait is rare enough not to need a waiter queue.
     for (;;) {
         if (g_mutex_trylock(m) == 0) return 0;
-        if (ms_until(abstime, false) == 0) return kETIMEDOUT;
+        if (ms_until(abstime, monotonic) == 0) return kETIMEDOUT;
+        Sleep(1);
+    }
+}
+WINAPK_GUEST_ABI int g_mutex_timedlock(void* m, const GuestTimespec* abstime) {
+    return mutex_lock_until(m, abstime, false);
+}
+// The forms with the clock named (API 30, libc++'s timed_mutex) and Bionic's older ones. Missing, each
+// answered 0 through the loader's fallback: "locked", with nothing locked.
+WINAPK_GUEST_ABI int g_mutex_clocklock(void* m, int clock, const GuestTimespec* abstime) {
+    return mutex_lock_until(m, abstime, clock == 1);
+}
+WINAPK_GUEST_ABI int g_mutex_timedlock_monotonic_np(void* m, const GuestTimespec* abstime) {
+    return mutex_lock_until(m, abstime, true);
+}
+WINAPK_GUEST_ABI int g_mutex_lock_timeout_np(void* m, unsigned ms) {
+    const ULONGLONG end = GetTickCount64() + ms;
+    for (;;) {
+        if (g_mutex_trylock(m) == 0) return 0;
+        if (GetTickCount64() >= end) return kEBUSY;  // Bionic's answer for this one, not ETIMEDOUT
         Sleep(1);
     }
 }
@@ -254,6 +273,57 @@ WINAPK_GUEST_ABI int g_rwlock_unlock(void* l) {
     if (w->load(std::memory_order_relaxed) == -1) w->store(0, std::memory_order_release);
     else w->fetch_sub(1, std::memory_order_release);
     futex_wake_all(w);
+    return 0;
+}
+
+// The timed forms poll, as the timed mutex does. Missing, they answered 0 ("locked") without a lock.
+int rwlock_lock_until(void* l, bool write, const GuestTimespec* abstime, bool monotonic) {
+    for (;;) {
+        if ((write ? g_rwlock_trywrlock(l) : g_rwlock_tryrdlock(l)) == 0) return 0;
+        if (ms_until(abstime, monotonic) == 0) return kETIMEDOUT;
+        Sleep(1);
+    }
+}
+WINAPK_GUEST_ABI int g_rwlock_timedrdlock(void* l, const GuestTimespec* t) {
+    return rwlock_lock_until(l, false, t, false);
+}
+WINAPK_GUEST_ABI int g_rwlock_timedwrlock(void* l, const GuestTimespec* t) {
+    return rwlock_lock_until(l, true, t, false);
+}
+WINAPK_GUEST_ABI int g_rwlock_timedrdlock_monotonic_np(void* l, const GuestTimespec* t) {
+    return rwlock_lock_until(l, false, t, true);
+}
+WINAPK_GUEST_ABI int g_rwlock_timedwrlock_monotonic_np(void* l, const GuestTimespec* t) {
+    return rwlock_lock_until(l, true, t, true);
+}
+WINAPK_GUEST_ABI int g_rwlock_clockrdlock(void* l, int clock, const GuestTimespec* t) {
+    return rwlock_lock_until(l, false, t, clock == 1);
+}
+WINAPK_GUEST_ABI int g_rwlock_clockwrlock(void* l, int clock, const GuestTimespec* t) {
+    return rwlock_lock_until(l, true, t, clock == 1);
+}
+
+// ---- spin lock (pthread_spinlock_t: one word, 0 free, 1 held) -----------------------
+// Missing, pthread_spin_lock answered 0 through the loader's fallback: every caller "held" the lock at
+// once.
+WINAPK_GUEST_ABI int g_spin_init(void* l, int) {
+    word(l, 0)->store(0, std::memory_order_release);
+    return 0;
+}
+WINAPK_GUEST_ABI int g_spin_destroy(void*) { return 0; }
+WINAPK_GUEST_ABI int g_spin_trylock(void* l) {
+    int32_t expected = 0;
+    return word(l, 0)->compare_exchange_strong(expected, 1, std::memory_order_acquire) ? 0 : kEBUSY;
+}
+WINAPK_GUEST_ABI int g_spin_lock(void* l) {
+    for (unsigned spins = 0; g_spin_trylock(l) != 0; ++spins) {
+        if (spins < 1000) YieldProcessor();
+        else SwitchToThread();  // the holder may be descheduled
+    }
+    return 0;
+}
+WINAPK_GUEST_ABI int g_spin_unlock(void* l) {
+    word(l, 0)->store(0, std::memory_order_release);
     return 0;
 }
 
@@ -598,6 +668,10 @@ int sem_wait_ms(void* s, const GuestTimespec* abstime, bool monotonic) {
 WINAPK_GUEST_ABI int g_sem_wait(void* s) { return sem_wait_ms(s, nullptr, false); }
 WINAPK_GUEST_ABI int g_sem_timedwait(void* s, const GuestTimespec* t) { return sem_wait_ms(s, t, false); }
 WINAPK_GUEST_ABI int g_sem_timedwait_monotonic_np(void* s, const GuestTimespec* t) { return sem_wait_ms(s, t, true); }
+// sem_clockwait (API 30). Missing, it answered 0: the semaphore "taken" at once, however often.
+WINAPK_GUEST_ABI int g_sem_clockwait(void* s, int clock, const GuestTimespec* t) {
+    return sem_wait_ms(s, t, clock == 1);
+}
 WINAPK_GUEST_ABI int g_sem_post(void* s) {
     word(s, 0)->fetch_add(1, std::memory_order_release);
     futex_wake_one(word(s, 0));
@@ -620,6 +694,9 @@ const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("pthread_mutex_trylock", g_mutex_trylock),
     WINAPK_SHIM("pthread_mutex_unlock", g_mutex_unlock),
     WINAPK_SHIM("pthread_mutex_timedlock", g_mutex_timedlock),
+    WINAPK_SHIM("pthread_mutex_clocklock", g_mutex_clocklock),
+    WINAPK_SHIM("pthread_mutex_timedlock_monotonic_np", g_mutex_timedlock_monotonic_np),
+    WINAPK_SHIM("pthread_mutex_lock_timeout_np", g_mutex_lock_timeout_np),
     WINAPK_SHIM("pthread_condattr_init", g_condattr_init),
     WINAPK_SHIM("pthread_condattr_destroy", g_condattr_destroy),
     WINAPK_SHIM("pthread_condattr_setclock", g_condattr_setclock),
@@ -641,6 +718,17 @@ const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("pthread_rwlock_wrlock", g_rwlock_wrlock),
     WINAPK_SHIM("pthread_rwlock_trywrlock", g_rwlock_trywrlock),
     WINAPK_SHIM("pthread_rwlock_unlock", g_rwlock_unlock),
+    WINAPK_SHIM("pthread_rwlock_timedrdlock", g_rwlock_timedrdlock),
+    WINAPK_SHIM("pthread_rwlock_timedwrlock", g_rwlock_timedwrlock),
+    WINAPK_SHIM("pthread_rwlock_timedrdlock_monotonic_np", g_rwlock_timedrdlock_monotonic_np),
+    WINAPK_SHIM("pthread_rwlock_timedwrlock_monotonic_np", g_rwlock_timedwrlock_monotonic_np),
+    WINAPK_SHIM("pthread_rwlock_clockrdlock", g_rwlock_clockrdlock),
+    WINAPK_SHIM("pthread_rwlock_clockwrlock", g_rwlock_clockwrlock),
+    WINAPK_SHIM("pthread_spin_init", g_spin_init),
+    WINAPK_SHIM("pthread_spin_destroy", g_spin_destroy),
+    WINAPK_SHIM("pthread_spin_lock", g_spin_lock),
+    WINAPK_SHIM("pthread_spin_trylock", g_spin_trylock),
+    WINAPK_SHIM("pthread_spin_unlock", g_spin_unlock),
     WINAPK_SHIM("pthread_once", g_once),
     WINAPK_SHIM("pthread_key_create", g_key_create),
     WINAPK_SHIM("pthread_key_delete", g_key_delete),
@@ -687,6 +775,7 @@ const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("sem_trywait", g_sem_trywait),
     WINAPK_SHIM("sem_timedwait", g_sem_timedwait),
     WINAPK_SHIM("sem_timedwait_monotonic_np", g_sem_timedwait_monotonic_np),
+    WINAPK_SHIM("sem_clockwait", g_sem_clockwait),
     WINAPK_SHIM("sem_post", g_sem_post),
     WINAPK_SHIM("sem_getvalue", g_sem_getvalue),
 };

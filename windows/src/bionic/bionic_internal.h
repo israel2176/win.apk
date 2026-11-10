@@ -10,6 +10,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -174,6 +175,12 @@ int fd_poll(PollFd* fds, uint64_t n, int timeout_ms);
 int fifo_open(const std::wstring& key, int flags);
 
 // ---- small helpers ----------------------------------------------------------
+
+// A call the shim cannot do yet fails as Linux reports the failure (errno, the documented result) and
+// says so in the app's log the first time: "[win.apk] <call>: <what>". An answer of "done" with nothing
+// done is what keeps a caller waiting or looping; the line is what tells a report why the app gave up.
+// `said` is the call site's own flag: `static std::atomic<bool> said{false};`.
+void say_once(std::atomic<bool>& said, const char* call, const char* what);
 
 // Writes a guest log line the way liblog does: "<prio letter>/<tag>: <text>".
 void log_line(int prio, const char* tag, const char* text);

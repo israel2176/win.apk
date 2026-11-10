@@ -394,6 +394,14 @@ WINAPK_GUEST_ABI int64_t g_sendmsg(int fd, const GuestMsghdr* m, int flags) {
     auto s = socket_of(fd);
     if (!s) return -1;
     if (s->would_block(flags, 0x4)) return -1;
+    // TODO(SCM_RIGHTS): ancillary data is dropped (recvmsg below reports none), so a descriptor or
+    // credentials sent this way never arrive. The bytes go out; the peer that waits for the descriptor
+    // is told why here.
+    if (m->control && m->controllen >= 16) {
+        static std::atomic<bool> said{false};
+        say_once(said, "sendmsg()", "ancillary data (a passed file descriptor, credentials) is not sent; only "
+                                    "the message's bytes are");
+    }
     std::vector<WSABUF> bufs(m->iovlen);
     for (size_t i = 0; i < m->iovlen; ++i) bufs[i] = {static_cast<ULONG>(m->iov[i].len), static_cast<char*>(m->iov[i].base)};
     sockaddr_storage h;
@@ -1107,7 +1115,78 @@ WINAPK_GUEST_ABI int g_getifaddrs(GuestIfaddrs** out) {
     return 0;
 }
 
+// ---- forms that were missing -----------------------------------------------------------
+// sendmmsg/recvmmsg: struct mmsghdr is a msghdr and the count for it. As many messages as go without
+// waiting after the first; the number done, or -1 when the first one failed.
+struct GuestMmsghdr {
+    GuestMsghdr hdr;
+    unsigned len;
+};
+WINAPK_GUEST_ABI int g_sendmmsg(int fd, GuestMmsghdr* v, unsigned n, int flags) {
+    unsigned done = 0;
+    for (; done < n; ++done) {
+        const int64_t r = g_sendmsg(fd, &v[done].hdr, flags);
+        if (r < 0) break;
+        v[done].len = static_cast<unsigned>(r);
+    }
+    return done || !n ? static_cast<int>(done) : -1;
+}
+// The timeout is not kept: after the first message the rest are taken only if they are there
+// (MSG_DONTWAIT), which is what MSG_WAITFORONE asks for and a caller of the plain form must expect.
+WINAPK_GUEST_ABI int g_recvmmsg(int fd, GuestMmsghdr* v, unsigned n, int flags, const void*) {
+    unsigned done = 0;
+    for (; done < n; ++done) {
+        const int64_t r = g_recvmsg(fd, &v[done].hdr, (flags & ~0x10000) | (done ? 0x40 : 0));  // MSG_WAITFORONE
+        if (r < 0) break;
+        v[done].len = static_cast<unsigned>(r);
+    }
+    return done || !n ? static_cast<int>(done) : -1;
+}
+// CMSG_NXTHDR's function, as Bionic has it: the next control message, null past the end.
+struct GuestCmsghdr {
+    size_t len;
+    int level, type;
+};
+WINAPK_GUEST_ABI GuestCmsghdr* g_cmsg_nxthdr(const GuestMsghdr* m, GuestCmsghdr* c) {
+    auto* next = reinterpret_cast<GuestCmsghdr*>(reinterpret_cast<char*>(c) + ((c->len + 7) & ~size_t{7}));
+    const size_t end = static_cast<size_t>(reinterpret_cast<char*>(next + 1) - static_cast<char*>(m->control));
+    return end > m->controllen ? nullptr : next;
+}
+// There is one network here, so the handle is not looked at.
+WINAPK_GUEST_ABI int g_getaddrinfofornetwork(uint64_t, const char* node, const char* service,
+                                             const GuestAddrinfo* hints, GuestAddrinfo** out) {
+    return g_getaddrinfo(node, service, hints, out);
+}
+// The reentrant gethostby* functions: no result, h_errno NO_RECOVERY (3), -1, as Bionic answers a
+// lookup that failed. The fallback's 0 was "found" with *result never written.
+// TODO(gethostbyname): gethostbyname, gethostbyaddr and these over getaddrinfo/getnameinfo, with
+// Bionic's struct hostent.
+int no_hostent(void** result, int* h_errnop) {
+    static std::atomic<bool> said{false};
+    say_once(said, "gethostbyname_r()", "not implemented (getaddrinfo is); the lookup fails with NO_RECOVERY");
+    if (result) *result = nullptr;
+    if (h_errnop) *h_errnop = 3;
+    return -1;
+}
+WINAPK_GUEST_ABI int g_gethostbyname_r(const char*, void*, char*, size_t, void** result, int* h_errnop) {
+    return no_hostent(result, h_errnop);
+}
+WINAPK_GUEST_ABI int g_gethostbyname2_r(const char*, int, void*, char*, size_t, void** result, int* h_errnop) {
+    return no_hostent(result, h_errnop);
+}
+WINAPK_GUEST_ABI int g_gethostbyaddr_r(const void*, uint32_t, int, void*, char*, size_t, void** result,
+                                       int* h_errnop) {
+    return no_hostent(result, h_errnop);
+}
+
 const ShimSymbol kSymbols[] = {
+    WINAPK_SHIM("sendmmsg", g_sendmmsg),
+    WINAPK_SHIM("recvmmsg", g_recvmmsg),
+    WINAPK_SHIM("__cmsg_nxthdr", g_cmsg_nxthdr),
+    WINAPK_SHIM("android_getaddrinfofornetwork", g_getaddrinfofornetwork),
+    WINAPK_SHIM("gethostbyname_r", g_gethostbyname_r),
+    WINAPK_SHIM("gethostbyname2_r", g_gethostbyname2_r),
+    WINAPK_SHIM("gethostbyaddr_r", g_gethostbyaddr_r),
     WINAPK_SHIM("socket", g_socket),
     WINAPK_SHIM("socketpair", g_socketpair),
     WINAPK_SHIM("bind", g_bind),

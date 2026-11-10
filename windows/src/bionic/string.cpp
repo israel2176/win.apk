@@ -359,6 +359,41 @@ WINAPK_GUEST_ABI void* g_memchr_chk(const void* s, int c, size_t n, size_t sn) {
     if (n > sn) fortify_fail("memchr");
     return const_cast<void*>(std::memchr(s, c, n));
 }
+WINAPK_GUEST_ABI void* g_memrchr_chk(const void* s, int c, size_t n, size_t sn) {
+    if (n > sn) fortify_fail("memrchr");
+    return g_memrchr(s, c, n);
+}
+// mempcpy, stpncpy and memccpy, with the FORTIFY forms of the first two. The UCRT has none of them.
+WINAPK_GUEST_ABI void* g_mempcpy(void* d, const void* s, size_t n) {
+    return static_cast<char*>(std::memcpy(d, s, n)) + n;
+}
+WINAPK_GUEST_ABI void* g_mempcpy_chk(void* d, const void* s, size_t n, size_t dn) {
+    if (n > dn) fortify_fail("mempcpy");
+    return g_mempcpy(d, s, n);
+}
+// stpncpy: strncpy, answering where the copy's terminator went (d + n when there was no room for one).
+WINAPK_GUEST_ABI char* g_stpncpy(char* d, const char* s, size_t n) {
+    const size_t len = strnlen(s, n);
+    std::memcpy(d, s, len);
+    std::memset(d + len, 0, n - len);
+    return d + len;
+}
+WINAPK_GUEST_ABI char* g_stpncpy_chk(char* d, const char* s, size_t n, size_t dn) {
+    if (n > dn) fortify_fail("stpncpy");
+    return g_stpncpy(d, s, n);
+}
+WINAPK_GUEST_ABI char* g_stpncpy_chk2(char* d, const char* s, size_t n, size_t dn, size_t sn) {
+    if (n > dn) fortify_fail("stpncpy");
+    const size_t sl = strnlen(s, n);
+    if (sl >= sn && sl < n) fortify_fail("stpncpy: read overflow");
+    return g_stpncpy(d, s, n);
+}
+WINAPK_GUEST_ABI void* g_memccpy(void* d, const void* s, int c, size_t n) {
+    const void* hit = std::memchr(s, c, n);
+    const size_t len = hit ? static_cast<size_t>(static_cast<const char*>(hit) - static_cast<const char*>(s)) + 1 : n;
+    std::memcpy(d, s, len);
+    return hit ? static_cast<char*>(d) + len : nullptr;
+}
 
 // ---- <libgen.h>: bionic's dirname and basename leave their argument alone and
 // answer in a per-thread buffer, as POSIX allows.
@@ -550,6 +585,13 @@ const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("__strchr_chk", g_strchr_chk),
     WINAPK_SHIM("__strrchr_chk", g_strrchr_chk),
     WINAPK_SHIM("__memchr_chk", g_memchr_chk),
+    WINAPK_SHIM("__memrchr_chk", g_memrchr_chk),
+    WINAPK_SHIM("mempcpy", g_mempcpy),
+    WINAPK_SHIM("__mempcpy_chk", g_mempcpy_chk),
+    WINAPK_SHIM("stpncpy", g_stpncpy),
+    WINAPK_SHIM("__stpncpy_chk", g_stpncpy_chk),
+    WINAPK_SHIM("__stpncpy_chk2", g_stpncpy_chk2),
+    WINAPK_SHIM("memccpy", g_memccpy),
     WINAPK_SHIM("strxfrm", g_strxfrm),
     // The _l variants (locale.cpp explains): the locale argument comes last
     // and is ignored.

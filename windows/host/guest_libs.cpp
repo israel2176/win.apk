@@ -3,6 +3,7 @@
 
 #include "guest_libs.h"
 
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <memory>
@@ -55,15 +56,14 @@ bool is_guest_code(const void* addr) {
 
 struct MissingTag {
     std::string name;
-    bool reported = false;
+    std::atomic<bool> reported{false};  // two threads may meet in the same stub
 };
 
 // Called (Microsoft x64, from the tagged stub) by the guest; see
 // make_tagged_zero_stub. The guest gets 0.
 void report_missing(void*, const void* tag) {
     auto* t = static_cast<MissingTag*>(const_cast<void*>(tag));
-    if (t->reported) return;
-    t->reported = true;
+    if (t->reported.exchange(true)) return;
     std::fprintf(stderr, "[win.apk] guest called a system function not implemented on Windows yet, returning 0: %s\n",
                  t->name.c_str());
     std::fflush(stderr);

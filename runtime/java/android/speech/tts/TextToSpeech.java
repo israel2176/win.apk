@@ -75,6 +75,58 @@ public class TextToSpeech {
     private Locale mLanguage = Locale.getDefault();
     private float mSpeechRate = 1.0f;
     private float mPitch = 1.0f;
+    private volatile UtteranceProgressListener mProgressListener;
+
+    // Nothing here speaks yet, and an utterance that is queued (SUCCESS) and
+    // then never heard of again keeps a caller waiting: a reader that speaks
+    // the next sentence from onDone, a navigation prompt that holds audio focus
+    // until its utterance ends. So each utterance ends the way AOSP ends one
+    // its engine could not synthesize: UtteranceProgressListener.onError(id,
+    // ERROR_SYNTHESIS), which the deprecated OnUtteranceCompletedListener
+    // hears as its one callback. AOSP delivers these from a binder thread, not
+    // from inside speak(), so they come from a thread of this class's own.
+    // A silence needs no engine: onStart, then onDone when its time is up.
+    // TODO(text to speech): speak through the host's voices (SAPI / WinRT
+    // SpeechSynthesizer) into an AudioTrack; onInit, the language queries and
+    // getVoices then answer from what the host has.
+    private static Handler sCallbacks;
+
+    private static synchronized Handler callbacks() {
+        if (sCallbacks == null) {
+            android.os.HandlerThread t = new android.os.HandlerThread("TextToSpeech");
+            t.setDaemon(true);  // never holds the process up at exit
+            t.start();
+            sCallbacks = new Handler(t.getLooper());
+            android.util.Log.w("TextToSpeech", "there is no speech engine here yet: speak() is silent and reports "
+                    + "onError(ERROR_SYNTHESIS) to the UtteranceProgressListener");
+        }
+        return sCallbacks;
+    }
+
+    private static String utteranceId(HashMap<String, String> params) {
+        return params == null ? null : params.get(Engine.KEY_PARAM_UTTERANCE_ID);
+    }
+
+    private int failUtterance(final String utteranceId) {
+        final UtteranceProgressListener l = mProgressListener;
+        // AOSP reports progress only for an utterance with an id.
+        if (l != null && utteranceId != null) {
+            callbacks().post(new Runnable() { @Override public void run() {
+                l.onError(utteranceId, ERROR_SYNTHESIS);
+            } });
+        }
+        return SUCCESS;
+    }
+
+    private int finishSilence(final String utteranceId, long durationInMs) {
+        final UtteranceProgressListener l = mProgressListener;
+        if (l != null && utteranceId != null) {
+            callbacks().post(new Runnable() { @Override public void run() { l.onStart(utteranceId); } });
+            callbacks().postDelayed(new Runnable() { @Override public void run() { l.onDone(utteranceId); } },
+                    Math.max(0, durationInMs));
+        }
+        return SUCCESS;
+    }
 
     public TextToSpeech(Context context, OnInitListener listener) {
         this(context, listener, null);
@@ -133,32 +185,32 @@ public class TextToSpeech {
 
     public int speak(final CharSequence text, final int queueMode,
                      final Bundle params, final String utteranceId) {
-        return SUCCESS;
+        return failUtterance(utteranceId);
     }
 
     public int speak(final String text, final int queueMode,
                      final HashMap<String, String> params) {
-        return SUCCESS;
+        return failUtterance(utteranceId(params));
     }
 
     public int playEarcon(final String earcon, final int queueMode,
                           final Bundle params, final String utteranceId) {
-        return SUCCESS;
+        return failUtterance(utteranceId);
     }
 
     public int playEarcon(final String earcon, final int queueMode,
                           final HashMap<String, String> params) {
-        return SUCCESS;
+        return failUtterance(utteranceId(params));
     }
 
     public int playSilentUtterance(final long durationInMs, final int queueMode,
                                    final String utteranceId) {
-        return SUCCESS;
+        return finishSilence(utteranceId, durationInMs);
     }
 
     public int playSilence(final long durationInMs, final int queueMode,
                            final HashMap<String, String> params) {
-        return SUCCESS;
+        return finishSilence(utteranceId(params), durationInMs);
     }
 
     public int addSpeech(String text, String packagename, int resourceId) { return SUCCESS; }
@@ -204,11 +256,19 @@ public class TextToSpeech {
         return ERROR;
     }
 
+    // AOSP: the deprecated listener is wrapped in a progress listener that
+    // calls it when an utterance is done and when it failed.
     public int setOnUtteranceCompletedListener(final OnUtteranceCompletedListener listener) {
+        mProgressListener = listener == null ? null : new UtteranceProgressListener() {
+            @Override public void onStart(String utteranceId) { }
+            @Override public void onDone(String utteranceId) { listener.onUtteranceCompleted(utteranceId); }
+            @Override public void onError(String utteranceId) { listener.onUtteranceCompleted(utteranceId); }
+        };
         return SUCCESS;
     }
 
     public int setOnUtteranceProgressListener(UtteranceProgressListener listener) {
+        mProgressListener = listener;
         return SUCCESS;
     }
 

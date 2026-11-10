@@ -1087,6 +1087,30 @@ WINAPK_GUEST_ABI int g_fork() {
     return *guest_errno() = kENOSYS, -1;
 }
 WINAPK_GUEST_ABI int g_waitpid(int, int*, int) { return *guest_errno() = kECHILD, -1; }
+// The rest of the family, for the same reasons. Missing, each answered 0 through the loader's fallback:
+// posix_spawn "started" a process with whatever was in *pid, wait4 "reaped" process 0, and clone, like
+// fork, told its caller it was the child.
+void note_no_child(const char* call) {
+    static std::atomic<bool> said{false};
+    say_once(said, call, "the app tried to start a child process, which Win.apk does not support yet; the call "
+                         "fails with ENOSYS");
+}
+// execve and its relatives return only to fail. (No argument is read, so one function serves the
+// variadic execl forms too.)
+WINAPK_GUEST_ABI int g_exec() {
+    note_no_child("exec()");
+    return *guest_errno() = kENOSYS, -1;
+}
+// posix_spawn and posix_spawnp answer the error itself.
+WINAPK_GUEST_ABI int g_posix_spawn() {
+    note_no_child("posix_spawn()");
+    return kENOSYS;
+}
+WINAPK_GUEST_ABI int g_clone() {
+    note_no_child("clone()");
+    return *guest_errno() = kENOSYS, -1;
+}
+WINAPK_GUEST_ABI int g_wait() { return *guest_errno() = kECHILD, -1; }  // wait, wait3, wait4, waitid
 
 // True when `pid` names this process to the scheduling calls: 0, its pid, or
 // one of its threads (Linux's per-thread ids; here Windows thread ids).
@@ -1863,6 +1887,100 @@ void tdestroy_from(TNode* n, TFree free_node) {
 }
 WINAPK_GUEST_ABI void g_tdestroy(void* root, TFree free_node) { tdestroy_from(static_cast<TNode*>(root), free_node); }
 
+// ---- calls that were missing ---------------------------------------------------------------
+// See the same heading in stdio.cpp: the loader's fallback answers 0, which for these is "done" or a
+// valid-looking result. Each now fails as Linux reports the failure, the unsupported ones saying so once.
+
+// mremap: MAP_FAILED with ENOMEM, on which callers allocate, copy and unmap themselves. (0 was a
+// mapping at address 0.)
+// TODO(mremap): grow in place when the pages after the mapping are free; MREMAP_MAYMOVE as mmap + copy.
+WINAPK_GUEST_ABI void* g_mremap() {
+    static std::atomic<bool> said{false};
+    say_once(said, "mremap()", "not supported; the call fails with ENOMEM");
+    *guest_errno() = kENOMEM;
+    return reinterpret_cast<void*>(~uintptr_t{0});
+}
+// System V shared memory: ENOSYS, as on Android, whose kernels are built without it. shmat's failure
+// is (void*)-1, not null.
+WINAPK_GUEST_ABI int64_t g_sysv_shm() {
+    static std::atomic<bool> said{false};
+    say_once(said, "shmget()/shmat()", "System V shared memory does not exist on Android; the call fails with ENOSYS");
+    return *guest_errno() = kENOSYS, -1;
+}
+// What only root may do: EPERM, the answer an app gets on a device.
+WINAPK_GUEST_ABI int g_root_only() { return *guest_errno() = kEPERM, -1; }
+// Extended attributes: ENOTSUP, as on a file system without them.
+WINAPK_GUEST_ABI int64_t g_no_xattr() { return *guest_errno() = kENOTSUP, -1; }
+
+// sysinfo(2): memory and uptime, the fields callers size caches by. (Unwritten, the struct was read
+// as it lay on the caller's stack.)
+struct GuestSysinfo {
+    int64_t uptime;
+    uint64_t loads[3], totalram, freeram, sharedram, bufferram, totalswap, freeswap;
+    uint16_t procs, pad;
+    uint64_t totalhigh, freehigh;
+    uint32_t mem_unit;
+};
+static_assert(sizeof(GuestSysinfo) == 112, "Linux struct sysinfo on x86_64");
+WINAPK_GUEST_ABI int g_sysinfo(GuestSysinfo* out) {
+    if (!out) return *guest_errno() = kEFAULT, -1;
+    MEMORYSTATUSEX ms{};
+    ms.dwLength = sizeof(ms);
+    GlobalMemoryStatusEx(&ms);
+    std::memset(out, 0, sizeof(*out));
+    out->uptime = static_cast<int64_t>(GetTickCount64() / 1000);
+    out->totalram = ms.ullTotalPhys;
+    out->freeram = ms.ullAvailPhys;
+    out->totalswap = ms.ullTotalPageFile > ms.ullTotalPhys ? ms.ullTotalPageFile - ms.ullTotalPhys : 0;
+    out->freeswap = std::min<uint64_t>(out->totalswap, ms.ullAvailPageFile);
+    out->procs = 1;
+    out->mem_unit = 1;
+    return 0;
+}
+
+// getpwnam_r, getgrnam_r, getgrgid_r: no such entry, which is 0 with *result null. (Unwritten,
+// *result was whatever the caller's variable held.)
+WINAPK_GUEST_ABI int g_no_such_entry(uint64_t, void*, char*, size_t, void** result) {
+    if (result) *result = nullptr;
+    return 0;
+}
+
+// iconv: iconv_open's failure is (iconv_t)-1 with EINVAL, "this conversion is not available". The
+// fallback's 0 was a valid descriptor, and iconv's 0 "everything converted" with the input untouched:
+// a caller that converts until its input is used up never finished.
+// TODO(iconv): UTF-8, UTF-16 and UTF-32 as Bionic has them (MultiByteToWideChar covers the rest).
+WINAPK_GUEST_ABI void* g_iconv_open(const char* to, const char* from) {
+    static std::atomic<int> reported{0};
+    if (reported.fetch_add(1) < 5) {  // a few pairs tell more than one; a caller that retries must not flood
+        std::fprintf(stderr, "[win.apk] iconv_open(\"%s\", \"%s\"): iconv is not implemented yet; the call fails "
+                             "with EINVAL\n", to ? to : "", from ? from : "");
+        std::fflush(stderr);
+    }
+    *guest_errno() = kEINVAL;
+    return reinterpret_cast<void*>(~uintptr_t{0});
+}
+WINAPK_GUEST_ABI int64_t g_iconv() { return *guest_errno() = kEBADF, -1; }  // iconv, iconv_close: no such descriptor
+
+// POSIX regular expressions: regcomp fails with REG_ESPACE (12). The fallback's 0 was "compiled", and
+// regexec's 0 "matches", for every pattern and every string.
+// TODO(regex): regcomp/regexec over Bionic's regex_t (re_nsub at offset 8) -- std::regex has the POSIX
+// basic and extended grammars.
+WINAPK_GUEST_ABI int g_regcomp() {
+    static std::atomic<bool> said{false};
+    say_once(said, "regcomp()", "POSIX regular expressions are not implemented yet; the call fails with REG_ESPACE");
+    return 12;
+}
+WINAPK_GUEST_ABI int g_regexec() { return 1; }  // REG_NOMATCH
+WINAPK_GUEST_ABI size_t g_regerror(int, const void*, char* buf, size_t size) {
+    static const char kText[] = "regular expressions are not implemented";
+    if (buf && size) {
+        std::strncpy(buf, kText, size - 1);
+        buf[size - 1] = '\0';
+    }
+    return sizeof(kText);
+}
+WINAPK_GUEST_ABI void g_regfree(void*) {}
+
 const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("tsearch", g_tsearch),
     WINAPK_SHIM("tfind", g_tfind),
@@ -1873,6 +1991,9 @@ const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("sched_get_priority_min", g_sched_get_priority_min),
     WINAPK_SHIM("sched_get_priority_max", g_sched_get_priority_max),
     WINAPK_SHIM("getpwuid_r", g_getpwuid_r),
+    WINAPK_SHIM("getpwnam_r", g_no_such_entry),
+    WINAPK_SHIM("getgrnam_r", g_no_such_entry),
+    WINAPK_SHIM("getgrgid_r", g_no_such_entry),
     WINAPK_SHIM("getpwuid", g_getpwuid),
     WINAPK_SHIM("clock_gettime", g_clock_gettime),
     WINAPK_SHIM("clock_getres", g_clock_getres),
@@ -1934,6 +2055,58 @@ const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("fork", g_fork),
     WINAPK_SHIM("vfork", g_fork),
     WINAPK_SHIM("waitpid", g_waitpid),
+    WINAPK_SHIM("wait", g_wait),
+    WINAPK_SHIM("wait3", g_wait),
+    WINAPK_SHIM("wait4", g_wait),
+    WINAPK_SHIM("waitid", g_wait),
+    WINAPK_SHIM("clone", g_clone),
+    WINAPK_SHIM("posix_spawn", g_posix_spawn),
+    WINAPK_SHIM("posix_spawnp", g_posix_spawn),
+    WINAPK_SHIM("execve", g_exec),
+    WINAPK_SHIM("execv", g_exec),
+    WINAPK_SHIM("execvp", g_exec),
+    WINAPK_SHIM("execvpe", g_exec),
+    WINAPK_SHIM("execl", g_exec),
+    WINAPK_SHIM("execlp", g_exec),
+    WINAPK_SHIM("execle", g_exec),
+    WINAPK_SHIM("fexecve", g_exec),
+    WINAPK_SHIM("mremap", g_mremap),
+    WINAPK_SHIM("shmget", g_sysv_shm),
+    WINAPK_SHIM("shmat", g_sysv_shm),
+    WINAPK_SHIM("shmdt", g_sysv_shm),
+    WINAPK_SHIM("shmctl", g_sysv_shm),
+    WINAPK_SHIM("chroot", g_root_only),
+    WINAPK_SHIM("mount", g_root_only),
+    WINAPK_SHIM("umount", g_root_only),
+    WINAPK_SHIM("umount2", g_root_only),
+    WINAPK_SHIM("unshare", g_root_only),
+    WINAPK_SHIM("setns", g_root_only),
+    WINAPK_SHIM("reboot", g_root_only),
+    WINAPK_SHIM("swapon", g_root_only),
+    WINAPK_SHIM("swapoff", g_root_only),
+    WINAPK_SHIM("settimeofday", g_root_only),
+    WINAPK_SHIM("clock_settime", g_root_only),
+    WINAPK_SHIM("sethostname", g_root_only),
+    WINAPK_SHIM("getxattr", g_no_xattr),
+    WINAPK_SHIM("lgetxattr", g_no_xattr),
+    WINAPK_SHIM("fgetxattr", g_no_xattr),
+    WINAPK_SHIM("setxattr", g_no_xattr),
+    WINAPK_SHIM("lsetxattr", g_no_xattr),
+    WINAPK_SHIM("fsetxattr", g_no_xattr),
+    WINAPK_SHIM("listxattr", g_no_xattr),
+    WINAPK_SHIM("llistxattr", g_no_xattr),
+    WINAPK_SHIM("flistxattr", g_no_xattr),
+    WINAPK_SHIM("removexattr", g_no_xattr),
+    WINAPK_SHIM("lremovexattr", g_no_xattr),
+    WINAPK_SHIM("fremovexattr", g_no_xattr),
+    WINAPK_SHIM("sysinfo", g_sysinfo),
+    WINAPK_SHIM("iconv_open", g_iconv_open),
+    WINAPK_SHIM("iconv", g_iconv),
+    WINAPK_SHIM("iconv_close", g_iconv),
+    WINAPK_SHIM("regcomp", g_regcomp),
+    WINAPK_SHIM("regexec", g_regexec),
+    WINAPK_SHIM("regerror", g_regerror),
+    WINAPK_SHIM("regfree", g_regfree),
     WINAPK_SHIM("sched_getaffinity", g_sched_getaffinity),
     WINAPK_SHIM("ATrace_isEnabled", g_atrace_is_enabled),
     WINAPK_SHIM("ATrace_beginSection", g_atrace_begin_section),
@@ -1982,6 +2155,7 @@ const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("exit", g_exit),
     WINAPK_SHIM("_exit", g__exit),
     WINAPK_SHIM("_Exit", g__exit),
+    WINAPK_SHIM("quick_exit", g__exit),  // returned to its caller, which the compiler knows it never does
     WINAPK_SHIM("atexit", g_atexit),
     M(sqrt), M(cbrt), M(sin), M(cos), M(tan), M(asin), M(acos), M(atan), M(sinh), M(cosh), M(tanh), M(asinh),
     M(acosh), M(atanh), M(exp), M(exp2), M(expm1), M(log), M(log2), M(log10), M(log1p), M(fabs), M(floor),
@@ -2066,4 +2240,10 @@ int bionic_unsetenv(const char* name) {
 
 namespace winapk::bionic {
 ShimTable misc_symbols() { return WINAPK_SHIM_TABLE(kSymbols); }
+
+void say_once(std::atomic<bool>& said, const char* call, const char* what) {
+    if (said.exchange(true)) return;
+    std::fprintf(stderr, "[win.apk] %s: %s\n", call, what);
+    std::fflush(stderr);
+}
 }  // namespace winapk::bionic

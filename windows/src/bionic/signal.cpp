@@ -277,6 +277,7 @@ struct ThreadSignals {
     uint64_t np_rip = 0;
     uint64_t np_addr = 0;
     int np_count = 0;
+    uint64_t handlers_run = 0;  // what pause and sigsuspend wait on
 };
 thread_local ThreadSignals t_sig{};
 
@@ -497,6 +498,7 @@ bool handler_in_arm64_image(const void* handler) {
 void run_handler(int sig, const GuestSigaction& act, GuestSiginfo* info, CONTEXT* ctx, uint64_t trapno = 0,
                  uint64_t err = 0) {
     ThreadSignals& ts = t_sig;
+    ++ts.handlers_run;
     alignas(16) GuestUcontext uc;
     std::memset(&uc, 0, sizeof(uc));
     context_to_ucontext(*ctx, &uc);
@@ -939,9 +941,110 @@ WINAPK_GUEST_ABI int g_raise(int sig) {
     return 0;
 }
 
+// ---- waiting for a signal ---------------------------------------------------------------
+// sigwait, sigwaitinfo, sigtimedwait, pause and sigsuspend. Missing, each answered 0 at once through
+// the loader's fallback, and a thread whose whole loop is one of them (a signal thread, `for (;;)
+// pause();`) took a processor for good. A signal reaches a thread here only as a call on that thread
+// (raise_self, the injected entry), so the wait is a sleep in short slices that looks at what those
+// calls left: the pending set, the count of handlers run. Ten milliseconds is well under what a
+// signal-driven shutdown or reload notices.
+// TODO(process-directed signals): kill(getpid(), sig) lands on its caller (misc.cpp), not on a thread
+// that waits for `sig` in sigwait, so that thread sleeps on; Linux would pick it.
+constexpr DWORD kSignalWaitSliceMs = 10;
+
+// Takes the lowest pending signal of `set` (0 when `timeout_ms`, < 0 for none, runs out first).
+int take_pending(uint64_t set, int64_t timeout_ms) {
+    ThreadSignals& ts = t_sig;
+    const ULONGLONG start = GetTickCount64();
+    for (;;) {
+        if (const uint64_t ready = ts.pending & set) {
+            int sig = 1;
+            while (!(ready & bit(sig))) ++sig;
+            ts.pending &= ~bit(sig);
+            return sig;
+        }
+        if (timeout_ms >= 0 && GetTickCount64() - start >= static_cast<ULONGLONG>(timeout_ms)) return 0;
+        Sleep(kSignalWaitSliceMs);
+    }
+}
+void fill_waited(GuestSiginfo* info, int sig) {
+    if (!info) return;
+    std::memset(info, 0, sizeof(*info));
+    info->signo = sig;
+    info->code = kSiTkill;
+    info->kill.pid = static_cast<int32_t>(GetCurrentProcessId());
+    info->kill.uid = kAppUid;
+}
+WINAPK_GUEST_ABI int g_sigwait(const uint64_t* set, int* sig) {
+    if (!set || !sig) return kEINVAL;  // an errno value, not -1
+    *sig = take_pending(*set, -1);
+    return 0;
+}
+WINAPK_GUEST_ABI int g_sigwaitinfo(const uint64_t* set, GuestSiginfo* info) {
+    if (!set) return *guest_errno() = kEINVAL, -1;
+    const int sig = take_pending(*set, -1);
+    fill_waited(info, sig);
+    return sig;
+}
+struct GuestTimespec {
+    int64_t tv_sec, tv_nsec;
+};
+WINAPK_GUEST_ABI int g_sigtimedwait(const uint64_t* set, GuestSiginfo* info, const GuestTimespec* timeout) {
+    if (!set || (timeout && (timeout->tv_sec < 0 || timeout->tv_nsec < 0 || timeout->tv_nsec >= 1000000000))) {
+        return *guest_errno() = kEINVAL, -1;
+    }
+    const int sig = take_pending(*set, timeout ? timeout->tv_sec * 1000 + timeout->tv_nsec / 1000000 : -1);
+    if (!sig) return *guest_errno() = kEAGAIN, -1;
+    fill_waited(info, sig);
+    return sig;
+}
+// pause and sigsuspend return once a handler has run on the thread: -1 with EINTR, always.
+int wait_for_handler() {
+    const uint64_t before = t_sig.handlers_run;
+    while (t_sig.handlers_run == before) Sleep(kSignalWaitSliceMs);
+    return *guest_errno() = kEINTR, -1;
+}
+WINAPK_GUEST_ABI int g_pause() { return wait_for_handler(); }
+WINAPK_GUEST_ABI int g_sigsuspend(const uint64_t* mask) {
+    if (!mask) return *guest_errno() = kEFAULT, -1;
+    ThreadSignals& ts = t_sig;
+    const uint64_t saved = ts.mask;
+    const uint64_t before = ts.handlers_run;
+    ts.mask = *mask & ~kUnblockable;
+    deliver_pending();  // what the temporary mask lets through
+    if (ts.handlers_run == before) wait_for_handler();
+    ts.mask = saved;
+    deliver_pending();
+    return *guest_errno() = kEINTR, -1;
+}
+
+// ---- alarm, setitimer -------------------------------------------------------------------
+// Accepted, and SIGALRM never comes: said once. alarm cannot fail (it answers the seconds left of
+// the alarm before, 0), and a timer that is only cancelled has nothing to say.
+// TODO(interval timers): a timer-queue timer that sends the signal to the thread that armed it
+// (signal_send), for alarm, setitimer and the POSIX timers below.
+void note_no_alarm(const char* call) {
+    static std::atomic<bool> said{false};
+    say_once(said, call, "the app set an alarm timer; its signal (SIGALRM) is not delivered yet");
+}
+WINAPK_GUEST_ABI unsigned g_alarm(unsigned seconds) {
+    if (seconds) note_no_alarm("alarm()");
+    return 0;
+}
+WINAPK_GUEST_ABI int g_setitimer(int, const int64_t* value, void* old) {
+    if (value && (value[2] || value[3])) note_no_alarm("setitimer()");  // it_value: the third and fourth words
+    if (old) std::memset(old, 0, 32);  // struct itimerval: two timevals
+    return 0;
+}
+WINAPK_GUEST_ABI int g_getitimer(int, void* value) {
+    if (value) std::memset(value, 0, 32);
+    return 0;
+}
+
 // ---- POSIX timers ---------------------------------------------------------------------
 // Created and armed, but they do not fire (that would need a delivered
 // signal or SIGEV_THREAD callback); said once in the log.
+// TODO(posix timers): see the interval timers above; SIGEV_THREAD is a call on a pool thread.
 std::atomic<uintptr_t> g_next_timer{1};
 std::once_flag g_timer_note;
 
@@ -992,6 +1095,18 @@ const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("sigpending", g_sigpending),
     WINAPK_SHIM("sigpending64", g_sigpending),
     WINAPK_SHIM("raise", g_raise),
+    WINAPK_SHIM("sigwait", g_sigwait),
+    WINAPK_SHIM("sigwait64", g_sigwait),
+    WINAPK_SHIM("sigwaitinfo", g_sigwaitinfo),
+    WINAPK_SHIM("sigwaitinfo64", g_sigwaitinfo),
+    WINAPK_SHIM("sigtimedwait", g_sigtimedwait),
+    WINAPK_SHIM("sigtimedwait64", g_sigtimedwait),
+    WINAPK_SHIM("pause", g_pause),
+    WINAPK_SHIM("sigsuspend", g_sigsuspend),
+    WINAPK_SHIM("sigsuspend64", g_sigsuspend),
+    WINAPK_SHIM("alarm", g_alarm),
+    WINAPK_SHIM("setitimer", g_setitimer),
+    WINAPK_SHIM("getitimer", g_getitimer),
     WINAPK_SHIM("timer_create", g_timer_create),
     WINAPK_SHIM("timer_settime", g_timer_settime),
     WINAPK_SHIM("timer_gettime", g_timer_gettime),
