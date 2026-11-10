@@ -27,11 +27,24 @@ public static class ProbeWin {
   [DllImport("user32.dll")] public static extern void mouse_event(uint f, uint x, uint y, uint d, UIntPtr e);
   public struct RECT { public int l, t, r, b; }
   public struct POINT { public int x, y; }
-  public static IntPtr Find(string title) {
-    IntPtr found = IntPtr.Zero;
+  [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr e);
+  // The visible window with this title and the largest client area (the app's), or the
+  // smallest (a question over it: the launcher's permission prompt has the app's name too).
+  public static IntPtr Find(string title, bool smallest = false) {
+    IntPtr found = IntPtr.Zero; long best = -1; int count = 0;
     EnumWindows((h, l) => { var s = new StringBuilder(256); GetWindowText(h, s, 256);
-      if (IsWindowVisible(h) && s.ToString() == title) { found = h; return false; } return true; }, IntPtr.Zero);
-    return found;
+      if (IsWindowVisible(h) && s.ToString() == title) {
+        RECT r; GetClientRect(h, out r); long a = (long)r.r * r.b; count++;
+        if (best < 0 || (smallest ? a < best : a > best)) { best = a; found = h; }
+      } return true; }, IntPtr.Zero);
+    return smallest && count < 2 ? IntPtr.Zero : found;
+  }
+  // Enter on a question over the app's window (its accent button). False when there is none.
+  public static bool Answer(string title) {
+    IntPtr h = Find(title, true); if (h == IntPtr.Zero) return false;
+    SetForegroundWindow(h); System.Threading.Thread.Sleep(300);
+    keybd_event(0x0D, 0, 0, UIntPtr.Zero); System.Threading.Thread.Sleep(60); keybd_event(0x0D, 0, 2, UIntPtr.Zero);
+    return true;
   }
   public static bool Click(string title, double fx, double fy) {
     IntPtr h = Find(title); if (h == IntPtr.Zero) return false;
@@ -43,4 +56,5 @@ public static class ProbeWin {
   }
 }
 "@
+function AnswerPrompt($title) { [ProbeWin]::Answer($title) }
 function ClickIn($title, $fx, $fy) { if (-not [ProbeWin]::Click($title, $fx, $fy)) { "no window titled $title" } }

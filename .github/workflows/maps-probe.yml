@@ -22,7 +22,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 60
     env:
-      RUN_SECONDS: 300
+      RUN_SECONDS: 320
       SAMPLE_SECONDS: 20
       MACAPK_TRACE_INVALIDATE: 1
     steps:
@@ -121,7 +121,9 @@ jobs:
             Shot "$PWD\probe\screen-$n.png"
             # After a minute idle on the first screen, press its "Skip" (top right of the left
             # half), to see the map itself for the rest of the run.
-            if ($n -eq 4) { ClickIn 'Maps' 0.37 0.085; "  clicked Skip" | Tee-Object -Append probe\samples.txt }
+            # A permission question over the window is answered Allow, as a user would for a map.
+            if (AnswerPrompt 'Maps') { "  answered a question over the window (Enter)" | Tee-Object -Append probe\samples.txt }
+            elseif ($n -eq 5) { ClickIn 'Maps' 0.37 0.085; "  clicked Skip" | Tee-Object -Append probe\samples.txt }
           }
           Get-Process Win.apk, winapk-runtime -ErrorAction SilentlyContinue | Stop-Process -Force
           Start-Sleep 3
