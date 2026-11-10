@@ -52,82 +52,135 @@ public final class AppUids {
         return new File(SharedStorage.hostHome(), "Library/Application Support/Mac.apk/app_uids.properties");
     }
 
+    /** (package, sharedUserId) -> the uid this process was last answered. A
+     *  package's uid is fixed once assigned, so the file is asked once: the
+     *  package manager asks on every ApplicationInfo it builds, and each
+     *  question used to take the file's lock and write the file again. */
+    private static final java.util.Map<String, Integer> sAnswered =
+            new java.util.concurrent.ConcurrentHashMap<>();
+    /** The table as this process last read or wrote it, and the file's size and
+     *  time then. Only under the class lock. */
+    private static Properties sTable;
+    private static long sTableLength = -1, sTableModified = -1;
+
     /** The uid of `pkg` (allocating one on first sight). */
-    public static synchronized int uidFor(String pkg, String sharedUserId) {
+    public static int uidFor(String pkg, String sharedUserId) {
         // MacApkPackageManager's placeholder for "no package" is not a package.
         if (pkg == null || "com.macapk.unknown".equals(pkg)) return -1;
-        try {
-            File f = file();
-            f.getParentFile().mkdirs();
-            try (RandomAccessFile raf = new RandomAccessFile(f, "rw");
-                 FileLock lock = raf.getChannel().lock()) {
-                Properties p = read(raf);
-                // A package's uid is fixed once assigned, as PMS keeps it for the
-                // life of the install. A caller that could not read the package's
-                // manifest passes no sharedUserId; that must not move a member of
-                // a shared uid to a uid of its own (the GMS run saw the Play Store
-                // listed at com.google.uid.shared's uid AND at a second one), so
-                // an existing assignment answers it.
-                String known = p.getProperty("member:" + pkg);
-                if (sharedUserId == null && known != null) return Integer.parseInt(known);
-                if (sharedUserId == null) sharedUserId = Manifest.impliedSharedUserId(pkg);
-                String key = sharedUserId != null ? "shared:" + sharedUserId : "pkg:" + pkg;
-                String v = p.getProperty(key);
-                int uid;
-                if (v != null) {
-                    uid = Integer.parseInt(v);
-                } else {
-                    uid = FIRST;
-                    for (String k : p.stringPropertyNames()) {
-                        if (k.startsWith("pkg:") || k.startsWith("shared:")) {
-                            uid = Math.max(uid, Integer.parseInt(p.getProperty(k)) + 1);
-                        }
+        String asked = pkg + '\n' + (sharedUserId != null ? sharedUserId : "");
+        Integer answered = sAnswered.get(asked);
+        if (answered != null) return answered;
+        synchronized (AppUids.class) {
+            try {
+                File f = file();
+                f.getParentFile().mkdirs();
+                try (RandomAccessFile raf = new RandomAccessFile(f, "rw");
+                     FileLock lock = raf.getChannel().lock()) {
+                    Properties p = read(raf);
+                    Properties was = (Properties) p.clone();
+                    int uid = assign(p, pkg, sharedUserId);
+                    // Written only when it says something new: every write is
+                    // a moment at which the other processes' readers wait.
+                    if (!p.equals(was)) {
+                        write(raf, p);
+                        // The package may have moved to its shared uid.
+                        sAnswered.keySet().removeIf(k -> k.startsWith(pkg + '\n'));
                     }
-                    p.setProperty(key, Integer.toString(uid));
+                    remember(p, f);
+                    sAnswered.put(asked, uid);
+                    return uid;
                 }
-                // Every package is listed with its uid, shared or not, so
-                // packagesFor() can answer.
-                p.setProperty("member:" + pkg, Integer.toString(uid));
-                write(raf, p);
-                return uid;
+            } catch (Throwable t) {
+                return -1;
             }
-        } catch (Throwable t) {
-            return -1;
         }
+    }
+
+    /** The uid of `pkg` in `p`, assigning one there when it has none. */
+    private static int assign(Properties p, String pkg, String sharedUserId) {
+        // A package's uid is fixed once assigned, as PMS keeps it for the
+        // life of the install. A caller that could not read the package's
+        // manifest passes no sharedUserId; that must not move a member of
+        // a shared uid to a uid of its own (the GMS run saw the Play Store
+        // listed at com.google.uid.shared's uid AND at a second one), so
+        // an existing assignment answers it.
+        String known = p.getProperty("member:" + pkg);
+        if (sharedUserId == null && known != null) return Integer.parseInt(known);
+        if (sharedUserId == null) sharedUserId = Manifest.impliedSharedUserId(pkg);
+        String key = sharedUserId != null ? "shared:" + sharedUserId : "pkg:" + pkg;
+        String v = p.getProperty(key);
+        int uid;
+        if (v != null) {
+            uid = Integer.parseInt(v);
+        } else {
+            uid = FIRST;
+            for (String k : p.stringPropertyNames()) {
+                if (k.startsWith("pkg:") || k.startsWith("shared:")) {
+                    uid = Math.max(uid, Integer.parseInt(p.getProperty(k)) + 1);
+                }
+            }
+            p.setProperty(key, Integer.toString(uid));
+        }
+        // Every package is listed with its uid, shared or not, so
+        // packagesFor() can answer.
+        p.setProperty("member:" + pkg, Integer.toString(uid));
+        return uid;
+    }
+
+    private static void remember(Properties p, File f) {
+        sTable = p;
+        sTableLength = f.length();
+        sTableModified = f.lastModified();
+    }
+
+    /** The table, for the questions that only read it. Read under the file's
+     *  lock (shared), as uidFor writes under it: on Windows a file lock is
+     *  mandatory, so a read that did not wait for a writer in ANY process
+     *  failed, and everywhere it could meet the file half written -- and the
+     *  answer was then "no package has this uid", which Google Play services
+     *  takes for a caller that lies about its package ("Unknown calling package
+     *  name", "GoogleCertificatesRslt: no pkgs"). The file is read again only
+     *  when it has changed; a read that fails keeps the last table, since an
+     *  assignment never changes. Null when there is none. */
+    private static synchronized Properties table() {
+        File f = file();
+        if (sTable != null && f.length() == sTableLength && f.lastModified() == sTableModified) return sTable;
+        if (!f.isFile()) return sTable;
+        try (RandomAccessFile raf = new RandomAccessFile(f, "r");
+             FileLock lock = raf.getChannel().lock(0L, Long.MAX_VALUE, true)) {
+            remember(read(raf), f);
+        } catch (Throwable t) {
+            // The last table stands.
+        }
+        return sTable;
     }
 
     /** Every package known at `uid`, or null. */
     public static String[] packagesFor(int uid) {
-        try {
-            File f = file();
-            if (!f.isFile()) return null;
-            Properties p = new Properties();
-            try (java.io.FileInputStream in = new java.io.FileInputStream(f)) { p.load(in); }
-            List<String> out = new ArrayList<>();
-            for (String k : p.stringPropertyNames()) {
-                if (k.startsWith("member:") && Integer.toString(uid).equals(p.getProperty(k))) {
-                    out.add(k.substring("member:".length()));
-                }
+        Properties p = table();
+        if (p == null) return null;
+        String want = Integer.toString(uid);
+        List<String> out = new ArrayList<>();
+        for (String k : p.stringPropertyNames()) {
+            if (k.startsWith("member:") && want.equals(p.getProperty(k))) {
+                out.add(k.substring("member:".length()));
             }
-            if (out.isEmpty()) return null;
-            java.util.Collections.sort(out);
-            return out.toArray(new String[0]);
-        } catch (Throwable t) {
-            return null;
         }
+        if (out.isEmpty()) return null;
+        java.util.Collections.sort(out);
+        return out.toArray(new String[0]);
     }
 
     /** The sharedUserId a uid belongs to, or null. */
     public static String sharedNameFor(int uid) {
-        try {
-            Properties p = new Properties();
-            try (java.io.FileInputStream in = new java.io.FileInputStream(file())) { p.load(in); }
-            for (String k : p.stringPropertyNames()) {
-                if (k.startsWith("shared:") && Integer.toString(uid).equals(p.getProperty(k))) {
-                    return k.substring("shared:".length());
-                }
+        Properties p = table();
+        if (p == null) return null;
+        String want = Integer.toString(uid);
+        for (String k : p.stringPropertyNames()) {
+            if (k.startsWith("shared:") && want.equals(p.getProperty(k))) {
+                return k.substring("shared:".length());
             }
-        } catch (Throwable ignored) {}
+        }
         return null;
     }
 
@@ -144,8 +197,10 @@ public final class AppUids {
         java.io.StringWriter w = new java.io.StringWriter();
         p.store(w, "Mac.apk app uids (com.macapk.loader.AppUids)");
         byte[] b = w.toString().getBytes(StandardCharsets.ISO_8859_1);
-        raf.setLength(0);
+        // Over the old text, then cut to length: the file is never empty, so a
+        // writer that dies here cannot lose every assignment.
         raf.seek(0);
         raf.write(b);
+        raf.setLength(b.length);
     }
 }

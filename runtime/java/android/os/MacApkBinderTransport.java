@@ -305,8 +305,17 @@ public final class MacApkBinderTransport {
         if (r != null) {
             try { uid = r.applyAsInt(pid); } catch (Throwable t) { uid = -1; }
         }
+        if (uid < 0 && sLoggedUnknownCallers.add(pid)) {
+            // Expected once for a process whose first call is its registration
+            // with the broker; anywhere else the service sees a caller that
+            // owns no package, and Play services refuses it.
+            System.err.println("[binder] no uid on record for calling pid " + pid + ": its calls arrive as uid "
+                    + UNKNOWN_CALLER_UID + " until there is");
+        }
         return uid >= 0 ? uid : UNKNOWN_CALLER_UID;
     }
+    private static final java.util.Set<Integer> sLoggedUnknownCallers =
+        java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     private static final java.util.Set<String> sLoggedThrowSites =
         java.util.concurrent.ConcurrentHashMap.newKeySet();

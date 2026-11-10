@@ -398,6 +398,16 @@ every such change is listed here:
   processes (`getCreatorUid`); a package's uid is fixed once assigned, and the
   Google packages that share `com.google.uid.shared` get it even from a caller
   that has no manifest at hand.
+- `runtime/java/com/macapk/loader/AppUids.java`,
+  `android/app/AppOpsManager.java`, `android/os/MacApkBinderTransport.java`:
+  the uid table (`app_uids.properties`) is read under its file lock too, and
+  written only when a package gets a uid. Every `getApplicationInfo` in every
+  process used to rewrite it under the lock while `getPackagesForUid` and
+  `AppOpsManager.checkPackage` read it without one; a Windows file lock is
+  mandatory, so such a read failed, the answer was "no package has this uid",
+  and Play services refused its caller ("Unknown calling package name"). A
+  refused `checkPackage` and a calling pid with no uid on record are each
+  logged once (`[appops]`, `[binder]`).
 - `runtime/java/android/content/Context.java`, `ContextWrapper.java`:
   `createContextAsUser` (the one user's own Context; Play services calls it),
   and a wrapper's `getSystemService` that comes back to itself for the same
