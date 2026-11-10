@@ -101,6 +101,7 @@ int nanosleep(const struct timespec*, struct timespec*);
 int __system_property_get(const char*, char*);
 char* getenv(const char*);
 int setenv(const char*, const char*, int);
+int putenv(char*);
 void* mmap(void*, size_t, int, int, int, long);
 int munmap(void*, size_t);
 int mprotect(void*, size_t, int);
@@ -274,6 +275,16 @@ static void test_locale_and_syscall(void) {
     check("futex WAIT times out with ETIMEDOUT", syscall(202, &word, 128, 5, &ts) == -1 && *__errno() == 110, 0);
     check("futex WAKE succeeds", syscall(202, &word, 129, 1) >= 0, 0);
     check("an unknown syscall fails with ENOSYS", syscall(9999) == -1 && *__errno() == 38, 0);
+    // mozjemalloc (Gecko) maps its chunks by raw call: SYS_mmap with the offset as a sixth
+    // argument, then SYS_munmap of the misaligned head.
+    char* raw = (char*)syscall(9, 0L, 1L << 20, 3L, 0x22L, -1L, 0L);
+    int mapped = raw != (char*)-1 && raw != 0 && raw[1 << 19] == 0;
+    if (mapped) raw[1 << 19] = 3;
+    check("syscall(SYS_mmap) maps zeroed, writable memory", mapped && raw[1 << 19] == 3, 0);
+    check("syscall(SYS_munmap) of a mapping's head leaves the rest",
+          mapped && syscall(11, raw, 65536L) == 0 && raw[1 << 19] == 3, 0);
+    check("syscall(SYS_mprotect), then SYS_munmap of the whole mapping",
+          mapped && syscall(10, raw + 65536, 65536L, 1L) == 0 && syscall(11, raw, 1L << 20) == 0, 0);
 }
 
 // Pipes, eventfd, poll and epoll: the wake-up machinery of every event loop.
@@ -885,6 +896,11 @@ static void test_misc(void) {
     check("__system_property_get", __system_property_get("ro.product.cpu.abi", v) > 0 && strcmp(v, "x86_64") == 0, v);
     setenv("WINAPK_TEST", "yes", 1);
     check("setenv/getenv", getenv("WINAPK_TEST") && strcmp(getenv("WINAPK_TEST"), "yes") == 0, 0);
+    static char put[] = "WINAPK_PUT=one=two";
+    check("putenv sets a variable; the value starts after the first '='",
+          putenv(put) == 0 && getenv("WINAPK_PUT") && strcmp(getenv("WINAPK_PUT"), "one=two") == 0, 0);
+    static char bare[] = "WINAPK_BARE";
+    check("putenv refuses a string without '=' with EINVAL", putenv(bare) == -1 && *__errno() == 22, 0);
     char* m = mmap(0, 65536, 3, 0x22, -1, 0);  // PROT_READ|WRITE, MAP_PRIVATE|ANONYMOUS
     check("mmap anonymous is zeroed and writable", m != (char*)-1 && m[100] == 0 && (m[100] = 7) == 7, 0);
     munmap(m, 65536);
