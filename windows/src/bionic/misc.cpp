@@ -16,6 +16,7 @@
 #include <climits>
 #include <limits>
 #include <cmath>
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -1070,7 +1071,21 @@ WINAPK_GUEST_ABI int g_tkill(int tid, int sig) { return g_tgkill(-1, tid, sig); 
 // caller it was the child, which then ran its exec path and _exit'ed the
 // app.) Nothing is ever a child of the app, so waitpid has nothing to wait
 // for: ECHILD, as on Linux for a process with no children.
-WINAPK_GUEST_ABI int g_fork() { return *guest_errno() = kENOSYS, -1; }
+//
+// TODO(child processes): an app that runs part of itself in processes it
+// starts (Gecko's content and GPU processes: Fennec, issue #117; a terminal's
+// shell) cannot work until guest code can start a second runtime process.
+// Until then the failure is said once in the app's log, so a start that ends
+// here does not look like a crash of ours.
+WINAPK_GUEST_ABI int g_fork() {
+    static std::atomic<bool> said{false};
+    if (!said.exchange(true)) {
+        std::fprintf(stderr, "[win.apk] fork(): the app tried to start a child process, which Win.apk does not "
+                             "support yet; the call fails with ENOSYS\n");
+        std::fflush(stderr);
+    }
+    return *guest_errno() = kENOSYS, -1;
+}
 WINAPK_GUEST_ABI int g_waitpid(int, int*, int) { return *guest_errno() = kECHILD, -1; }
 
 // True when `pid` names this process to the scheduling calls: 0, its pid, or

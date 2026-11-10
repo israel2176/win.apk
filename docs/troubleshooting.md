@@ -95,6 +95,7 @@ before it is `run-<app>.1.log`). The most useful lines:
 | `native not implemented on Windows yet` | A piece of the Android host that is still missing |
 | `not implemented on Windows yet` (about a system function) | A C library function the app's native code needs |
 | `there is no /system/bin/sh on Windows` | The app's native code ran a shell command (`popen`, `system`). There is no Android shell, so the command reports "not found" (exit status 127), as on a phone without one |
+| `fork(): the app tried to start a child process` | The app's native code tried to run part of itself in another process (Firefox-family browsers do). Win.apk does not support that yet, so such an app usually ends at start |
 | `[win.apk] cannot load <library>` or `UnsatisfiedLinkError` | A native library did not load: 32-bit ARM only (`this is a 32-bit ARM library`), packed or encrypted, or for another CPU |
 | `Exception` or `FATAL` | The app crashed; the lines after it say where |
 | `[win.apk] crash:` and `crash dump:` | The app's native code crashed. A minidump was written next to the log (`crash-<app>-<time>.dmp`): attach it too |
