@@ -30,6 +30,8 @@ jobs:
           mkdir -p _site/images
           cp site/* _site/
           cp docs/images/library.png docs/images/store.png docs/images/dark.png _site/images/
+          # Hebrew screenshots, when there are any (docs/images/he/<same name>), for visitors reading in Hebrew.
+          if [ -d docs/images/he ]; then mkdir -p _site/images/he && cp docs/images/he/*.png _site/images/he/; fi
           cp windows/launcher/winapk.png _site/images/icon.png
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3

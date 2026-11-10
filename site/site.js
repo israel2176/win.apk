@@ -15,7 +15,7 @@
       download_small: 'Windows 10 and 11 · 64-bit · Free',
       source: 'View on GitHub',
       portable: 'Portable ZIP', all_releases: 'All releases', whats_new: 'What\'s new',
-      stat1_n: '90/92', stat1: 'F-Droid apps open in our automated test',
+      stat1_n: '1', stat1: 'window per app, with its own taskbar icon',
       stat2_n: '0', stat2: 'emulators or virtual machines',
       stat3_n: '4', stat3: 'package formats: APK, APKM, XAPK, APKS',
       features_title: 'What you get',
@@ -61,7 +61,7 @@
       download_small: 'Windows 10 ו-11 · 64 ביט · חינם',
       source: 'לעמוד ב-GitHub',
       portable: 'גרסה ניידת (ZIP)', all_releases: 'כל הגרסאות', whats_new: 'מה חדש',
-      stat1_n: '90/92', stat1: 'אפליקציות F-Droid נפתחות בבדיקה האוטומטית',
+      stat1_n: '1', stat1: 'חלון לכל אפליקציה, עם אייקון משלה בשורת המשימות',
       stat2_n: '0', stat2: 'אמולטורים או מכונות וירטואליות',
       stat3_n: '4', stat3: 'סוגי קבצים: APK, APKM, XAPK, APKS',
       features_title: 'מה מקבלים',
@@ -134,6 +134,11 @@
     if (meta) meta.content = t.description;
     document.querySelectorAll('[data-i18n]').forEach(function (el) { el.textContent = t[el.dataset.i18n]; });
     document.querySelectorAll('[data-i18n-label]').forEach(function (el) { el.setAttribute('aria-label', t[el.dataset.i18nLabel]); });
+    document.querySelectorAll('img[data-shot]').forEach(function (el) {
+      var name = el.dataset.shot;
+      el.onerror = lang === 'he' ? function () { el.onerror = null; el.src = 'images/' + name; } : null;
+      el.src = (lang === 'he' ? 'images/he/' : 'images/') + name;
+    });
     document.querySelectorAll('[data-doc]').forEach(function (el) { el.href = GH + '/blob/main/' + DOCS[lang][el.dataset.doc]; });
   }
 
