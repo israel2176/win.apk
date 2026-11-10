@@ -171,7 +171,9 @@ file takes a few seconds of one core at low priority, once, and about 40 MB in
 
 The library marks a running app with a green badge on its tile and counts
 them under its title. **Stop** in the tile's right-click menu, or on the
-app's details page, closes the app at once.
+app's details page, closes the app at once, like Android's **Force stop**:
+the app is not told, so close its window instead when it has something to
+save.
 
 In an app:
 
@@ -181,7 +183,8 @@ In an app:
 | Mouse wheel | A short scroll gesture |
 | Keyboard | Key presses, including typing into text fields |
 | **Escape**, **Alt+Left**, the mouse's back button | Android's Back |
-| Close the window | The app quits |
+| Close the window | The app quits as an Android app leaves the screen: the window goes at once, the app is paused, stopped and destroyed (so it saves what it saves on a phone), and then it ends. An app that does not answer is ended after two seconds |
+| Minimize the window | The app goes to the background (paused and stopped), and comes back when you restore the window |
 | Resize, maximize or snap the window | A display of the new size; the app lays itself out again |
 
 What an app can use (sound, video, the camera, Bluetooth and the rest) is

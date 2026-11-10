@@ -5524,7 +5524,149 @@ public class View implements android.graphics.drawable.Drawable.Callback,
      *  the top of the invalidateChild walk). */
     final void macapkScheduleRedraw() {
         if (macapkCannotBeDrawn()) ViewRootImpl.macapkInvalidateSkipped();
-        else ViewRootImpl.schedule();
+        else if (!macapkReportDamage()) ViewRootImpl.schedule();
+    }
+
+    // ---- FRAMESPEED S1: what an invalidation damages (ViewRootImpl has the model) ----
+    // The clip this view was last drawn under on the frame canvas, in device
+    // pixels, and what it was true of: the epoch (0 = no record), the frame draw,
+    // and the two signatures below as they were at that draw.
+    private int mMacapkRecL, mMacapkRecT, mMacapkRecR, mMacapkRecB;
+    private int mMacapkRecEpoch, mMacapkRecDraw;
+    private long mMacapkRecOuter, mMacapkRecInner;
+    /** The epoch in which something other than the parent's drawChild drew this
+     *  view on the frame canvas (an overlay, an app's own child.draw(canvas)). */
+    private int mMacapkForeignEpoch;
+    /** ViewRootImpl.sMacapkDamageSeq of the damage this view's record went into. */
+    private int mMacapkDamageSeq;
+    /** The damage this view last reported for, and its signatures then. */
+    private int mMacapkReportSeq;
+    private long mMacapkReportSig;
+
+    static long macapkMix(long h, int v) { return (h ^ v) * 0x100000001b3L; }
+    /** Everything of this view that decides where and how its PARENT draws it
+     *  (ViewGroup.drawChild and dispatchDraw read exactly these): which parent,
+     *  bounds, the 2D transform, the alpha that makes or drops its layer, and the
+     *  Z its shadow and draw order come from. 64 bits of FNV over the raw values. */
+    private long macapkOuterSig() {
+        long h = macapkMix(0xcbf29ce484222325L, System.identityHashCode(parent));
+        h = macapkMix(h, left); h = macapkMix(h, top); h = macapkMix(h, right); h = macapkMix(h, bottom);
+        h = macapkMix(h, Float.floatToRawIntBits(transX)); h = macapkMix(h, Float.floatToRawIntBits(transY));
+        h = macapkMix(h, Float.floatToRawIntBits(scaleX)); h = macapkMix(h, Float.floatToRawIntBits(scaleY));
+        h = macapkMix(h, Float.floatToRawIntBits(rotation));
+        h = macapkMix(h, Float.floatToRawIntBits(pivotX)); h = macapkMix(h, Float.floatToRawIntBits(pivotY));
+        h = macapkMix(h, Float.floatToRawIntBits(getAlpha() * getTransitionAlpha()));
+        h = macapkMix(h, Float.floatToRawIntBits(getZ()));
+        return h;
+    }
+    /** What moves this view's own content and children inside its clip: its
+     *  scroll (ViewGroup adds what it clips its children to). */
+    long macapkInnerSig() {
+        return macapkMix(macapkMix(0xcbf29ce484222325L, getScrollX()), getScrollY());
+    }
+
+    /** ViewGroup.drawChild, just before child.draw(canvas) (and the driver, for
+     *  the root): record the clip on the frame canvas, and say whether this view
+     *  is a source of the partial frame being drawn (the caller hands the answer
+     *  to macapkAfterDraw). Nothing happens on any other canvas: a parent drawn
+     *  into a bitmap says nothing about the frame. */
+    final boolean macapkBeforeDraw(android.graphics.Canvas canvas) {
+        if (canvas != ViewRootImpl.sMacapkFrameCanvas) return false;
+        final boolean source = ViewRootImpl.sMacapkPartial
+                && mMacapkDamageSeq == ViewRootImpl.sMacapkDrawSourceSeq;
+        if (source) ViewRootImpl.sMacapkUnderSource++;
+        // A partial frame shows this view its clip cut by the damage. Inside a
+        // source the clip lies within the damage, so it is seen whole; anywhere
+        // else the record of the last full frame stays (nothing there moved, or
+        // it would have asked for a frame itself).
+        if (!ViewRootImpl.sMacapkPartial || ViewRootImpl.sMacapkUnderSource > 0) macapkRecordDrawn(canvas);
+        ViewRootImpl.sMacapkDrawTarget = this;
+        return source;
+    }
+    final void macapkAfterDraw(boolean source) {
+        ViewRootImpl.sMacapkDrawTarget = null;
+        if (source && ViewRootImpl.sMacapkUnderSource > 0) ViewRootImpl.sMacapkUnderSource--;
+    }
+    private void macapkRecordDrawn(android.graphics.Canvas canvas) {
+        final int draw = ViewRootImpl.sMacapkDrawSeq, epoch = ViewRootImpl.sMacapkEpoch;
+        final boolean again = mMacapkRecDraw == draw;   // drawn twice in this frame
+        mMacapkRecDraw = draw;
+        final int[] o = ViewRootImpl.sMacapkScratch6;
+        // No record under a matrix that is not a whole-pixel translation (the
+        // clip's device box is then not a rectangle of this view), nor while a
+        // View animation moves the view from frame to frame.
+        if (mCurrentAnimation != null || !canvas.macapkDeviceOrigin(o)) { mMacapkRecEpoch = 0; return; }
+        if (again) {
+            if (mMacapkRecEpoch != epoch) return;       // the other draw had none: none it stays
+            mMacapkRecL = Math.min(mMacapkRecL, o[2]); mMacapkRecT = Math.min(mMacapkRecT, o[3]);
+            mMacapkRecR = Math.max(mMacapkRecR, o[4]); mMacapkRecB = Math.max(mMacapkRecB, o[5]);
+        } else {
+            mMacapkRecL = o[2]; mMacapkRecT = o[3]; mMacapkRecR = o[4]; mMacapkRecB = o[5];
+            mMacapkRecEpoch = epoch;
+        }
+        mMacapkRecOuter = macapkOuterSig();
+        mMacapkRecInner = macapkInnerSig();
+    }
+    /** 2 = the record is of this epoch and the view is where it was; 1 = so, but
+     *  it has scrolled (its own clip stands, its children's do not); 0 = neither. */
+    private int macapkRecordHolds(int epoch) {
+        if (mMacapkRecEpoch != epoch || mCurrentAnimation != null) return 0;
+        if (mMacapkRecOuter != macapkOuterSig()) return 0;
+        return mMacapkRecInner == macapkInnerSig() ? 2 : 1;
+    }
+
+    /** Give ViewRootImpl the rectangle this invalidation can change, and ask for
+     *  the frame; false when no rectangle can be vouched for (the caller then
+     *  asks for a whole frame).
+     *
+     *  The rectangle is a recorded clip: this view's own when the view, and every
+     *  ancestor, is where the record was taken -- the change is then confined to
+     *  what the view draws, and it draws under that clip. A view that has moved,
+     *  resized, faded or been transformed since (its signature differs: no setter
+     *  has to say so), one that was not drawn, and one that casts a shadow (its
+     *  parent draws that, outside the view) change pixels of their PARENT's
+     *  drawing, old place and new, so the parent's record is taken; and so on up
+     *  the chain, because a record below a moved view is of the old place. A view
+     *  that has only scrolled keeps its own clip. Where the chain ends in a view
+     *  with no record (a dialog's tree, the top of a moved tree), or passes one
+     *  that something other than its parent drew on the frame, there is no
+     *  rectangle.
+     *
+     *  invalidate(Rect) and invalidateDrawable damage the whole view too, as on a
+     *  device: since API 21 the dirty rectangle "is ignored entirely in favor of
+     *  an internally-calculated area", so apps are not held to it. */
+    private boolean macapkReportDamage() {
+        final ViewRootImpl root = ViewRootImpl.getInstance();
+        if (!root.macapkDamageOpen()) return false;
+        // The records belong to the UI thread.
+        if (!android.os.Looper.getMainLooper().isCurrentThread()) return false;
+        final int seq = ViewRootImpl.sMacapkDamageSeq, epoch = ViewRootImpl.sMacapkEpoch;
+        final long sig = macapkOuterSig() * 31 + macapkInnerSig();
+        if (mMacapkReportSeq == seq && mMacapkReportSig == sig && mCurrentAnimation == null) {
+            root.macapkScheduleSameDamage();   // already in this frame's rectangle, and not moved since
+            return true;
+        }
+        View source = this, v = this;
+        for (int depth = 0; ; depth++) {
+            if (depth >= 1024 || v.mMacapkForeignEpoch == epoch) return false;
+            final View pv = v.parent instanceof View ? (View) v.parent : null;
+            int holds = v.macapkRecordHolds(epoch);
+            if (holds == 2 && v == this && getZ() > 0f) holds = 0;   // its shadow may change with it
+            if (holds == 0) {
+                if (pv == null) return false;
+                source = pv;
+            } else if (holds == 1) {
+                source = v;
+            }
+            if (pv == null) break;
+            v = pv;
+        }
+        if (source.mMacapkRecR <= source.mMacapkRecL || source.mMacapkRecB <= source.mMacapkRecT) return false;
+        source.mMacapkDamageSeq = seq;
+        mMacapkReportSeq = seq;
+        mMacapkReportSig = sig;
+        root.macapkScheduleDamage(source.mMacapkRecL, source.mMacapkRecT, source.mMacapkRecR, source.mMacapkRecB);
+        return true;
     }
     /** MACAPK_INVALIDATE_PARENT (default ON, =0 the old schedule-only invalidate):
      *  AOSP View.invalidateInternal (android14 View.java:20733-20780) reports the
@@ -5729,6 +5871,12 @@ public class View implements android.graphics.drawable.Drawable.Callback,
     // are display polish that no test APK has needed yet.
     public void draw(android.graphics.Canvas canvas) {
         if (canvas == null) return;
+        // FRAMESPEED S1: on the frame canvas, a draw the parent's drawChild did
+        // not announce puts this view somewhere no record tells of.
+        if (canvas == ViewRootImpl.sMacapkFrameCanvas) {
+            if (ViewRootImpl.sMacapkDrawTarget == this) ViewRootImpl.sMacapkDrawTarget = null;
+            else mMacapkForeignEpoch = ViewRootImpl.sMacapkEpoch;
+        }
         // AOSP: when getClipToOutline() is true the view masks its
         // background + content + children to the outline produced by
         // its ViewOutlineProvider (rebuildOutline -> getOutline, then

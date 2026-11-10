@@ -1080,9 +1080,44 @@ public final class ActivityHost {
         });
     }
 
+    /** The user minimized the app's window and has not brought it back yet. */
+    private static volatile boolean sHostMinimized;
+
+    /** Win.apk: the host's window was minimized by the user (the title bar's
+     *  button, the taskbar, Win+D), from the window's thread. On a device that
+     *  is the task going behind home, and in desktop windowing a minimized
+     *  task is moved to the back: the resumed activity gets onPause and onStop
+     *  (the contract apps save and release under), and macapkTaskToFront, which
+     *  the host calls when the window comes back, owes it onRestart, onStart
+     *  and onResume. The same transitions as macapkMoveTaskToBack, without
+     *  hiding a window that is minimized already. Only a top that is resumed
+     *  and not covered (a launch under way, a host dialog over it) is taken
+     *  down: anything else stays as it is, as before. */
+    public static void macapkHostMinimized() {
+        if (sTaskInBackground || sTerminating) return;
+        if (android.os.Looper.getMainLooper() == null) return;
+        sHostMinimized = true;
+        ownerHandler().post(new Runnable() {
+            @Override public void run() {
+                // Brought back before this ran, or the app moved the task itself.
+                if (!sHostMinimized || sTaskInBackground || sTerminating || sRecreating) return;
+                Activity top = stack.peek();
+                if (top == null || top.isFinishing() || !currentActivityResumed
+                        || sBackgrounded.containsKey(top)) return;
+                sTaskInBackground = true;
+                currentActivityResumed = false;
+                pauseForNewTop(top);
+                stopForNewTop(top);
+                NativeLog.i(TAG, "window minimized: task moved to back (top "
+                    + top.getClass().getName() + " stopped)");
+            }
+        });
+    }
+
     /** Called by the native unhide observer (AppKit thread) when the app is
      *  brought back. A no-op unless WE sent the task to the back. */
     public static void macapkTaskToFront() {
+        sHostMinimized = false;
         if (!sTaskInBackground) return;
         // Not input, so not in a recording: say so (a replay will not re-activate).
         if (InputRecorder.ON)

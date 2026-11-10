@@ -793,6 +793,13 @@ Still open:
   but a copy per frame and no vsync. A DXGI swap chain on the window with
   ANGLE rendering into it would remove the copy; the letterbox, the overlay
   and the stale-frame rule would move into it.
+- An invalidation costs a redraw, a copy and a blit of the whole window: one
+  small animating view (a spinner, a caret, a pulsing hint) is a whole-window
+  frame 60 times a second. Partial redraw (`MACAPK_FRAMESPEED_DAMAGE=1`;
+  `docs/ARCHITECTURE.md`, "The view tree's frames") draws, copies and blits
+  only the damaged rectangle. It is off by default until a sweep with
+  `MACAPK_DAMAGE_VALIDATE=1` reports no `under-damage` and the app probe shows
+  what it saves; frames of GL or surface content are still read back whole.
 - An app that fixed its orientation and runs in a maximized window gets a
   centred box; Android also offers a user-aspect-ratio override there, which
   the record's own orientation stands in for (`windowOverrideOrientation`).

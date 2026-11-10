@@ -216,6 +216,7 @@ The user-facing ones (`WINAPK_PHONE_SIZE`, `WINAPK_RESIZABLE`,
 | `MACAPK_USER_FOLDERS=0`, `HKCU\Software\Win.apk\UserFolders=0` | Turn the shared-storage mapping off (the setting is what the launcher writes) |
 | `MACAPK_JVM_OPTS` | Extra JVM options, passed through after Win.apk's own (`-XX:TieredStopAtLevel=4` brings back the C2 compiler, which the runtime leaves out for a faster start) |
 | `WINAPK_CDS=0` or `base` | Class-data sharing (`host/cds.h`): `0` back to the old flags (`--patch-module`, no archive), `base` the JRE's archive without the framework archive. `WINAPK_CDS_DIR=<dir>` puts the framework archive elsewhere (tests share one), `WINAPK_CDS_CLASSLIST=<file>` dumps from another class list (`none`: only the start's own), `WINAPK_CDS_RECORD_DIR=<dir>` writes every app start's loaded classes to `<dir>\<app>.classlist` (for `scripts/merge_classlists.py`), `WINAPK_CDS_VERIFY=1` checks the archive whole at every start, `WINAPK_CDS_DUMP_DELAY_MS` (default 10000) is the wait after the first frame before the background dump |
+| `MACAPK_FRAMESPEED_DAMAGE=1` | Partial redraw (off by default): a frame that only invalidations asked for draws the view tree clipped to the area they damaged and hands the window only that rectangle, instead of redrawing and copying the whole window (`docs/ARCHITECTURE.md`, "The view tree's frames"). Unset or anything else, every frame is whole. `MACAPK_DAMAGE_VALIDATE=1` with it draws every frame whole but compares what changed with the area claimed: `[damage-validate] under-damage` names a frame that changed outside it, and the `M6:` line counts `validate: claimed= clean= under=`. `MACAPK_TRACE_DAMAGE=1` logs every 5 s what the frames' damage was (`[damage]`), `MACAPK_FRAME_PHASE_TRACE=1` a frame's time by phase (`[frame-phase]`) |
 | `MACAPK_QUIET_CLASSLOAD=0` | Logs a line for every class the app's class loader loads (the runtime sets it to 1, as upstream's launcher does: thousands of lines cost up to 0.4 s of a start) |
 | `MACAPK_ALL_PERMS_ASK=0` | Returns the permission groups beyond storage and location to the install-time rule (declared means held), the Mac's behaviour; `MACAPK_MEDIA_PERMS_ASK=0` and `MACAPK_ALLFILES_HONEST=0` keep their upstream meaning |
 | `MACAPK_GMS_PRESENT=0`, `MACAPK_GMS_FCM=0`, `MACAPK_GMS_SIGNIN=0`, `MACAPK_GMS_LOCATION=0`, `MACAPK_GMS_DIR` | Upstream's Play services switches and the state folder |
@@ -626,6 +627,20 @@ every such change is listed here:
   not shown (`MACAPK_VISIBILITY_AGGREGATED=0`). Google Maps' idle map redrew
   the whole window 57 times a second for a progress bar and Compose content
   of a row that had left its list. Not Windows-specific.
+- `runtime/java/android/view/View.java`, `ViewGroup.java`,
+  `ViewRootImpl.java` and `com/macapk/loader/ViewCanvasDriver.java` (partial
+  redraw, behind `MACAPK_FRAMESPEED_DAMAGE=1`): the view half ("S1") of
+  upstream's damage-clipped frames, which the driver ("S2") had waited for.
+  `ViewGroup.drawChild` records the clip each child is drawn under on the
+  frame; an invalidation damages that rectangle (its parent's when the view
+  has moved, was not drawn or casts a shadow; everything when no rectangle
+  can be vouched for) and `ViewRootImpl.macapkConsumeDamage` hands the frame's
+  union to the driver. In the driver the flag is read through `ViewRootImpl`
+  (on only at `1`), the draw is bracketed by `macapkBeginDraw` /
+  `macapkEndDraw`, damage raised during a frame is kept for the next one
+  instead of dropped, and `MACAPK_DAMAGE_VALIDATE=1` compares frames in Java
+  (the Windows host has no diffing present). Checked by
+  `windows/test/java/DamageRectTest.java`. Not Windows-specific.
 - `runtime/java/android/database/sqlite/SQLiteDatabase.java`: `BEGIN`,
   `COMMIT` and `ROLLBACK` given to `execSQL` nest in the transaction stack, as
   AOSP's `SQLiteSession.executeSpecial` does. Not Windows-specific.
@@ -646,6 +661,12 @@ every such change is listed here:
   `onPostResume` (AOSP destroys it in a later transaction; tearing it down
   inside `onResume` nulled the FragmentManager's host under `onPostResume`,
   "No activity" in sgtpuzzles). Not Windows-specific.
+- `runtime/java/com/macapk/loader/ActivityHost.java`: `macapkHostMinimized`,
+  which the window calls when the user minimizes it: the resumed activity is
+  paused and stopped, as a task moved to the back (the transitions of
+  `macapkMoveTaskToBack`, without hiding the window), and `macapkTaskToFront`
+  brings it back on restore. Closing the window needs no change there: the
+  host now calls upstream's `macapkTerminate`.
 - `runtime/java/com/macapk/loader/ActivityHost.java` and
   `android/app/Activity.java`: an activity that finishes before its first
   `onResume` is driven down only from where it is, as AOSP's

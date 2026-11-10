@@ -395,6 +395,16 @@ jobs:
           "$JAVA_HOME/bin/java" --patch-module "java.base=$(cygpath -w stage/lib/java_base_patch)" \
             -Dwinapk.android.root="$(cygpath -w "$RUNNER_TEMP")" \
             -cp "$(cygpath -w build/android-paths-test)" AndroidPathsTest
+      - name: Run the damage rectangle test
+        run: |
+          # What an invalidation damages, and that a frame drawn clipped to it
+          # has the pixels of a frame drawn whole (partial redraw, off by
+          # default: MACAPK_FRAMESPEED_DAMAGE=1). The real View classes, no window.
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          cp="$(cygpath -w stage/lib/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          "$JAVA_HOME/bin/javac" -cp "$cp" -d build/damage-test windows/test/java/DamageRectTest.java
+          MACAPK_FRAMESPEED_DAMAGE=1 MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -Djava.awt.headless=true \
+            -cp "$cp;$(cygpath -w build/damage-test)" DamageRectTest
       - name: Run the permission model test
         run: |
           # SpecialAccessStore.GroupModel, the decision model behind every

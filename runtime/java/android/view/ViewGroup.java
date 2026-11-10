@@ -2288,6 +2288,13 @@ public class ViewGroup extends View implements ViewParent, ViewManager {
     public boolean getClipChildren()       { return clipChildren; }
     public void setClipToPadding(boolean b) { this.clipToPadding = b; }
     public boolean getClipToPadding()       { return clipToPadding; }
+    /** FRAMESPEED S1 (View.macapkInnerSig): the clip a child is drawn under also
+     *  comes from these, and their setters ask for no frame. */
+    @Override long macapkInnerSig() {
+        long h = macapkMix(super.macapkInnerSig(), (clipChildren ? 1 : 0) | (clipToPadding ? 2 : 0));
+        h = macapkMix(h, getPaddingLeft()); h = macapkMix(h, getPaddingTop());
+        return macapkMix(macapkMix(h, getPaddingRight()), getPaddingBottom());
+    }
 
     /** v1.0.76: minimal onLayout. Real Android-side ViewGroups
      *  (LinearLayout, FrameLayout, ConstraintLayout) each override
@@ -3832,12 +3839,16 @@ public class ViewGroup extends View implements ViewParent, ViewManager {
         }
         // Resilient draw pass (lead A): one throwing child blanks only itself; the
         // restoreToCount returns the canvas to this child's save point either way.
+        // FRAMESPEED S1: the clip the child is drawn under is what an invalidation
+        // of it damages (View.macapkBeforeDraw; one compare off the frame canvas).
+        final boolean damageSource = child.macapkBeforeDraw(canvas);
         try {
             child.draw(canvas);
         } catch (Throwable drawErr) {
             com.macapk.loader.GfxTrace.caught((fromDispatch ? "dispatchDraw:" : "drawChild:")
                     + child.getClass().getName(), drawErr);
         }
+        child.macapkAfterDraw(damageSource);
         canvas.restoreToCount(save);
         // AOSP View.draw(Canvas, ViewGroup, long):24999-25004, after restoreTo:
         //     if (a != null && !more) {
@@ -3911,10 +3922,11 @@ public class ViewGroup extends View implements ViewParent, ViewManager {
         // Resilient draw pass (lead A): same per-node guard as dispatchDraw so a
         // direct drawChild() call (RecyclerView item draw, custom ViewGroups)
         // isolates a throwing child instead of aborting the parent's draw.
+        final boolean damageSource = child.macapkBeforeDraw(canvas);   // FRAMESPEED S1, as in drawChild
         try { child.draw(canvas); }
         catch (Throwable drawErr) {
             com.macapk.loader.GfxTrace.caught("drawChild:" + child.getClass().getName(), drawErr);
-        } finally { canvas.restoreToCount(save); }
+        } finally { child.macapkAfterDraw(damageSource); canvas.restoreToCount(save); }
         if (childAnim != null && !animMore) {
             if (!childAnim.getFillAfter()) {
                 try { child.onSetAlpha(255); } catch (Throwable ignored) {}

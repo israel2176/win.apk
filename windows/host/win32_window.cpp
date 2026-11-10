@@ -899,15 +899,30 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 return 0;
             }
             break;
+        // The window goes at once, so the app is closed as far as the user can
+        // see; its onPause, onStop and onDestroy run behind it and the process
+        // ends when they are done, or after two seconds (native_cocoa.cpp).
         case WM_CLOSE:
+            ShowWindow(hwnd, SW_HIDE);
             g_input->close_requested();
+            return 0;
+        // Sign-out, shutdown, restart: Windows may end the process as soon as
+        // this returns, so the same close is waited for here. It ends the
+        // process itself, well inside the 5 s Windows allows.
+        case WM_ENDSESSION:
+            if (wp) {
+                g_input->close_requested();
+                Sleep(INFINITE);
+            }
             return 0;
         case WM_SIZE: {
             // BACK at the task root minimizes the window (moveTaskToBack) and
             // stops the top activity; un-minimizing must resume it, or every
-            // touch after that goes to no activity at all.
+            // touch after that goes to no activity at all. A window the user
+            // minimizes is the same to the app: its task went to the back.
             static bool minimized = false;
             if (wp == SIZE_MINIMIZED) {
+                if (!minimized) g_input->minimized();
                 minimized = true;
             } else if (minimized && (wp == SIZE_RESTORED || wp == SIZE_MAXIMIZED)) {
                 minimized = false;
@@ -1264,6 +1279,34 @@ void window_present(const uint32_t* argb, int w, int h) {
     if (first && GetEnvironmentVariableW(L"WINAPK_TEST_RESIZE", nullptr, 0) > 0) {
         PostMessageW(g_hwnd, kMsgTestResize, 0, 0);
     }
+}
+
+bool window_present_rect(const uint32_t* rows, int w, int h, int l, int t, int r, int b) {
+    if (!g_hwnd || l < 0 || t < 0 || r > w || b > h || r <= l || b <= t) return false;
+    {
+        std::lock_guard<std::mutex> hold(g_frame_lock);
+        if (g_frame_w != w || g_frame_h != h) return false;  // nothing to patch: the caller sends it whole
+        const size_t rw = static_cast<size_t>(r - l);
+        for (int y = t; y < b; ++y) {
+            std::copy(rows + static_cast<size_t>(y - t) * rw, rows + static_cast<size_t>(y - t + 1) * rw,
+                      g_frame.data() + static_cast<size_t>(y) * static_cast<size_t>(w) + static_cast<size_t>(l));
+        }
+    }
+    // Where paint() puts those pixels. Only for a frame shown pixel for pixel in
+    // a window that is not mirrored; a scaled or stale one is painted whole.
+    RECT client{};
+    GetClientRect(g_hwnd, &client);
+    const RECT box = app_rect(client);
+    const int bw = box.right - box.left, bh = box.bottom - box.top;
+    if (!g_rtl_window && bw > 0 && bh > 0 &&
+        window_frame_present(w, h, bw, bh, g_surface.cx, g_surface.cy) == FramePresent::kExact) {
+        const int x = box.left + (bw - w) / 2, y = box.top + (bh - h) / 2;
+        const RECT changed{x + l, y + t, x + r, y + b};
+        InvalidateRect(g_hwnd, &changed, FALSE);
+    } else {
+        InvalidateRect(g_hwnd, nullptr, FALSE);
+    }
+    return true;
 }
 
 void window_set_overlay(const uint32_t* argb, int w, int h) {

@@ -28,10 +28,15 @@ public:
     virtual void pointer(int action, float x, float y, float view_w, float view_h) = 0;
     // KeyEvent action (DOWN 0, UP 1), KEYCODE_*, the character or 0, META_*.
     virtual void key(int action, int key_code, int unicode, int meta) = 0;
-    // The user closed the window.
+    // The user closed the window, which is hidden already, or the Windows
+    // session is ending: the app is taken through its lifecycle and the
+    // process ends, within a bounded time; a second call ends it at once.
     virtual void close_requested() = 0;
+    // The user minimized the window: on a device, the app's task went to the
+    // back. Also called when the app minimized it itself (moveTaskToBack).
+    virtual void minimized() {}
     // The window came back from being minimized (taskbar, Alt+Tab): upstream's
-    // unhide observer, which brings back a task the app sent to the back.
+    // unhide observer, which brings back a task that went to the back.
     virtual void restored() {}
     // The user gave the window another size (an edge dragged, maximized,
     // snapped): the app's display is now w by h dp, as an Android desktop
@@ -116,6 +121,11 @@ void window_set_background(uint32_t argb);
 // Copies the frame; it is painted on the UI thread. A frame at the size the
 // app was asked to draw is shown pixel for pixel (window_frame_present).
 void window_present(const uint32_t* argb, int w, int h);
+// A frame that differs from the one window_present last copied only inside
+// [l, r) x [t, b): `rows` holds that rectangle's pixels, row after row. Only
+// that part is copied, and repainted. False, with nothing done, when no frame
+// of this size is held (the caller then presents the whole frame).
+bool window_present_rect(const uint32_t* rows, int w, int h, int l, int t, int r, int b);
 // A layer drawn over the frame (dialogs over GL or surface content), scaled to
 // the frame, alpha-blended; cleared with window_clear_overlay.
 void window_set_overlay(const uint32_t* argb, int w, int h);

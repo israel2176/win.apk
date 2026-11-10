@@ -439,6 +439,62 @@ Each GL view renders into its own pbuffer; after a frame the pixels are read
 back and composited with the Java view tree, which is drawn in software.
 Vulkan is not implemented.
 
+### The view tree's frames
+
+The Java view tree is drawn in software (Java2D) into one bitmap that lives
+from frame to frame, by `com.macapk.loader.ViewCanvasDriver`, once per display
+tick and only when something asked: `View.requestLayout` asks for a frame that
+measures, lays out and draws; `View.invalidate` for one that only draws. A
+view that cannot be seen asks for nothing. Every half second an idle window is
+laid out and drawn once more, to catch a change nothing announced. The frame
+then goes to the window (`NativeCocoa.presentFrame`, `host/native_cocoa.cpp`),
+which copies it and blits it in `WM_PAINT`.
+
+A draw-only frame redraws the whole tree. With `MACAPK_FRAMESPEED_DAMAGE=1`
+(off by default; `windows/README.md` lists it with its validator) it redraws
+only what the invalidations damaged, as AOSP's software renderer does with
+`Surface.lockCanvas(dirty)`:
+
+- **What a view damages** (`android.view.ViewRootImpl`, "FRAMESPEED S1";
+  `View.macapkReportDamage`). `ViewGroup.drawChild` records, for each child it
+  draws on the frame, the clip the child is drawn under, in frame pixels.
+  Everything the child and its subtree draw lies inside that clip, whatever
+  transforms, `clipChildren` settings or overlapping siblings are involved. An
+  invalidation damages the view's recorded clip when the view and all its
+  ancestors are still where the record was taken (a signature of bounds,
+  transform, alpha, elevation and parent says so; no setter has to). A view
+  that has moved, faded or changed size, that was not drawn, or that has
+  elevation (its parent draws the shadow) damages its parent's clip instead,
+  which holds its old place and its new one; a view that has only scrolled
+  damages its own. `invalidate(Rect)` damages the whole view, as on a device
+  since API 21. There is no rectangle, and the frame is whole, for
+  `requestLayout`, a visibility change, attaching, anything that asks for a
+  frame without going through `View.invalidate`, an invalidation from another
+  thread, a view something other than its parent drew, a tree with no record
+  (a dialog's), and while a drag shadow is shown.
+- **The frame** (`ViewCanvasDriver`, "FRAMESPEED S2"). When a draw-only frame's
+  damage is one rectangle, the canvas is clipped to it and the normal draw
+  runs under that clip, so siblings and translucent views over and under the
+  damage are drawn as in a whole frame. The frame is whole whenever something
+  outside the tree changed too: a new bitmap, a dialog or popup on show, the
+  status bar's height, minute or the row it takes its color from, the
+  letterbox, a surface's rectangle. A frame drawn whole records every view's
+  clip; one drawn under the damage clip records again only the views inside
+  the ones that were damaged, whose clip it sees uncut. What a frame's own
+  draw invalidates asks for no new frame, as before, but is added to the next
+  frame's damage; when a partial frame was changed from within, outside its
+  rectangle (an `OnPreDrawListener`, `computeScroll`), one more frame follows.
+- **The window** (`Cocoa_presentFrame`, `window_present_rect`). Of a partial
+  frame only the damaged rows are read from the bitmap, patched into the
+  window's copy and invalidated, so the blit is that rectangle too. A frame
+  with GL or surface content under it, or shown scaled, goes whole.
+
+`MACAPK_DAMAGE_VALIDATE=1` is the proof that a partial frame equals a whole
+one: every frame is drawn whole, and each pixel that changed outside the
+rectangle the frame would have been clipped to is reported
+(`[damage-validate] under-damage`). `windows/test/java/DamageRectTest.java`
+checks the same on the JVM with the real `View` classes.
+
 ### The window and the display
 
 Each app has one Win32 window on its own UI thread (`win32_window.cpp`). The
@@ -738,9 +794,25 @@ tests the transport and the broker's checks across three processes.
    which the run log's first `arm64 AOT:` line says).
 7. The render tick drives frames; input goes to `TouchDispatcher`; permission
    requests spawn the launcher's dialogs; a resize re-lays the app out.
-8. Closing the window ends the activity stack and the process. The exit code
-   is 0 unless the app or the VM failed; a VM crash leaves
-   `logs\hs_err_pid<n>.log`.
+8. Closing the window (`WM_CLOSE`; `WM_ENDSESSION` at sign-out or shutdown)
+   hides it at once and runs upstream's close path on a thread of its own
+   (`native_cocoa.cpp`, `close_thread`): `ActivityHost.macapkTerminate` posts
+   the teardown to the app's main thread, `onPause`, `onStop` and `onDestroy`
+   for every activity from the top down, and waits up to two seconds; then
+   the process ends, and the run log says
+   `[win.apk] close: the app was paused, stopped and destroyed in <n> ms; ended`.
+   An app whose main thread is stuck gets
+   `close: the app did not answer in time; ended` (a watchdog thread that
+   uses no Java ends it half a second after the two); a second close request
+   ends it at once, and the launcher's Stop ends the process from outside
+   with no lifecycle, as Force stop does. `SharedPreferences.apply()` writes
+   the file before it returns, so nothing is queued at that point. Minimizing
+   the window is the task going to the back
+   (`ActivityHost.macapkHostMinimized`: `onPause`, `onStop`); restoring it
+   brings the task forward (`macapkTaskToFront`: `onRestart`, `onStart`,
+   `onResume`), the same transitions as Back at the task's root. The exit
+   code is 0 unless the app or the VM failed (always 0 once the user closed
+   the window); a VM crash leaves `logs\hs_err_pid<n>.log`.
 
 ## Data on disk
 
