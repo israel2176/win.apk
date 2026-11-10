@@ -6,7 +6,10 @@
 // supposed to give: a Mac has real networking, so the truthful answer is
 // reachable, and CLAUDE.md's decision ladder puts "route it to the host" ahead
 // of everything else. It now asks macOS -- see MacApkHostNetwork for the probe
-// order (default route, hardware-port table, scutil) and its fallbacks.
+// order (default route, hardware-port table, scutil) and its fallbacks -- and,
+// on Windows (Win.apk), the host layer: the adapter that carries the default
+// route, its type (Ethernet, Wi-Fi, mobile broadband, a tunnel), addresses
+// and DNS servers (MacApkHostNetwork.fromHost).
 //
 // WHAT CHANGED, precisely:
 //   * connected/disconnected is now the presence of a real DEFAULT ROUTE. On a
@@ -84,6 +87,8 @@ public class ConnectivityManager {
         switch (MacApkHostNetwork.get().transport) {
             case NetworkCapabilities.TRANSPORT_ETHERNET: return TYPE_ETHERNET;
             case NetworkCapabilities.TRANSPORT_VPN:      return TYPE_VPN;
+            // A Windows PC on mobile broadband (Win.apk; a Mac has no such radio).
+            case NetworkCapabilities.TRANSPORT_CELLULAR: return TYPE_MOBILE;
             default:                                     return TYPE_WIFI;
         }
     }
@@ -171,7 +176,10 @@ public class ConnectivityManager {
         // this host can present (Wi-Fi, Ethernet) answer CONNECTED for whichever
         // one actually carries the default route and DISCONNECTED for the other
         // -- which is what AOSP reports for a supported type that is down.
-        if (networkType != TYPE_WIFI && networkType != TYPE_ETHERNET) return null;
+        // On Windows the default route can also ride mobile broadband or a
+        // tunnel: the type that is active is supported, whichever it is.
+        if (networkType != TYPE_WIFI && networkType != TYPE_ETHERNET
+                && (offline() || networkType != activeType())) return null;
         if (offline()) return new NetworkInfo(TYPE_NONE, NetworkInfo.State.DISCONNECTED);
         if (networkType != activeType()) {
             return new NetworkInfo(networkType, NetworkInfo.State.DISCONNECTED);

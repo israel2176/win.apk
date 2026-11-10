@@ -13,6 +13,10 @@
 // done, signal, radio) from WlanRegisterNotification, queued for a Java
 // thread that turns them into WifiManager's broadcasts.
 //
+// The same IP helper answers ConnectivityManager: which adapter carries the
+// default route (wired, Wi-Fi, mobile broadband, a tunnel), its addresses,
+// gateway, DNS servers and MTU (Radio_defaultNetwork).
+//
 // Bluetooth here is the classic (BR/EDR) API: the radio, whether it is on,
 // and the paired devices. Talking to devices (RFCOMM, LE scans, GATT) is
 // native_bluetooth.cpp's.
@@ -299,6 +303,97 @@ jintArray JNICALL Radio_wifiDhcp(JNIEnv* env, jclass) {
     return nullptr;
 }
 
+// ---- the default network ------------------------------------------------------------
+
+std::string ip_text(const SOCKET_ADDRESS& a) {
+    char out[INET6_ADDRSTRLEN] = {};
+    if (!a.lpSockaddr) return {};
+    if (a.lpSockaddr->sa_family == AF_INET) {
+        inet_ntop(AF_INET, &reinterpret_cast<const sockaddr_in*>(a.lpSockaddr)->sin_addr, out, sizeof out);
+    } else if (a.lpSockaddr->sa_family == AF_INET6) {
+        inet_ntop(AF_INET6, &reinterpret_cast<const sockaddr_in6*>(a.lpSockaddr)->sin6_addr, out, sizeof out);
+    }
+    return out;
+}
+
+void append(std::string* list, const std::string& item) {
+    if (item.empty()) return;
+    if (!list->empty()) *list += ',';
+    *list += item;
+}
+
+// The interface Windows would send a packet for the internet through: the
+// routing table's own answer for a public address (a lookup, nothing is
+// sent), IPv4 first, then IPv6. 0 when there is no such route.
+DWORD default_route_interface() {
+    DWORD index = 0;
+    sockaddr_in v4{};
+    v4.sin_family = AF_INET;
+    inet_pton(AF_INET, "8.8.8.8", &v4.sin_addr);
+    if (GetBestInterfaceEx(reinterpret_cast<sockaddr*>(&v4), &index) == NO_ERROR && index) return index;
+    sockaddr_in6 v6{};
+    v6.sin6_family = AF_INET6;
+    inet_pton(AF_INET6, "2001:4860:4860::8888", &v6.sin6_addr);
+    if (GetBestInterfaceEx(reinterpret_cast<sockaddr*>(&v6), &index) == NO_ERROR && index) return index;
+    return 0;
+}
+
+// The network that carries the default route, for ConnectivityManager:
+// {interface index, IfType, MTU, addresses as "ip/prefix", gateways, DNS
+// servers}, the lists comma-separated. An empty array when there is no
+// default route (offline); null when Windows would not say.
+jobjectArray JNICALL Radio_defaultNetwork(JNIEnv* env, jclass) {
+    ULONG size = 16 * 1024;
+    std::vector<char> buf;
+    const ULONG flags = GAA_FLAG_INCLUDE_GATEWAYS | GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST |
+                        GAA_FLAG_SKIP_FRIENDLY_NAME;
+    ULONG rc = ERROR_BUFFER_OVERFLOW;
+    for (int tries = 0; tries < 3 && rc == ERROR_BUFFER_OVERFLOW; ++tries) {
+        buf.resize(size);
+        rc = GetAdaptersAddresses(AF_UNSPEC, flags, nullptr, reinterpret_cast<IP_ADAPTER_ADDRESSES_LH*>(buf.data()),
+                                  &size);
+    }
+    if (rc == ERROR_NO_DATA) return to_java(env, {});
+    if (rc != NO_ERROR) return nullptr;
+    const auto usable = [](const IP_ADAPTER_ADDRESSES_LH* a) {
+        return a->OperStatus == IfOperStatusUp && a->IfType != IF_TYPE_SOFTWARE_LOOPBACK;
+    };
+    const auto* adapters = reinterpret_cast<const IP_ADAPTER_ADDRESSES_LH*>(buf.data());
+    const IP_ADAPTER_ADDRESSES_LH* best = nullptr;
+    if (const DWORD index = default_route_interface()) {
+        for (const IP_ADAPTER_ADDRESSES_LH* a = adapters; a && !best; a = a->Next) {
+            if (usable(a) && (a->IfIndex == index || a->Ipv6IfIndex == index)) best = a;
+        }
+    }
+    // The lookup failed for another reason than "no route": the adapter with
+    // a gateway that Windows prefers (the lowest metric).
+    for (const IP_ADAPTER_ADDRESSES_LH* a = adapters; a && !best; a = a->Next) {
+        if (!usable(a) || !a->FirstGatewayAddress) continue;
+        const IP_ADAPTER_ADDRESSES_LH* pick = a;
+        for (const IP_ADAPTER_ADDRESSES_LH* b = a->Next; b; b = b->Next) {
+            if (usable(b) && b->FirstGatewayAddress && b->Ipv4Metric < pick->Ipv4Metric) pick = b;
+        }
+        best = pick;
+    }
+    if (!best) return to_java(env, {});
+    std::string addresses, gateways, dns;
+    for (const IP_ADAPTER_UNICAST_ADDRESS_LH* u = best->FirstUnicastAddress; u; u = u->Next) {
+        if (u->DadState != IpDadStatePreferred) continue;  // tentative or deprecated: not in use
+        const std::string ip = ip_text(u->Address);
+        if (!ip.empty()) append(&addresses, ip + "/" + std::to_string(u->OnLinkPrefixLength));
+    }
+    for (const IP_ADAPTER_GATEWAY_ADDRESS_LH* g = best->FirstGatewayAddress; g; g = g->Next) {
+        append(&gateways, ip_text(g->Address));
+    }
+    for (const IP_ADAPTER_DNS_SERVER_ADDRESS_XP* d = best->FirstDnsServerAddress; d; d = d->Next) {
+        const std::string ip = ip_text(d->Address);
+        // fec0:0:0:ffff::1..3: the placeholders Windows lists when an adapter has no IPv6 resolver.
+        if (ip.rfind("fec0:0:0:ffff:", 0) != 0) append(&dns, ip);
+    }
+    return to_java(env, {std::to_string(best->IfIndex ? best->IfIndex : best->Ipv6IfIndex),
+                         std::to_string(best->IfType), std::to_string(best->Mtu), addresses, gateways, dns});
+}
+
 // ---- Wi-Fi notifications ---------------------------------------------------------
 
 // What WifiManager turns into its broadcasts (HostRadios.WIFI_EVENT_*).
@@ -422,6 +517,7 @@ const HostMethod kMethods[] = {
     WINAPK_HOST_NATIVE(kCls, "nativeWifiStartScan", "()Z", Radio_wifiStartScan),
     WINAPK_HOST_NATIVE(kCls, "nativeWifiDhcp", "()[I", Radio_wifiDhcp),
     WINAPK_HOST_NATIVE(kCls, "nativeWifiEvent", "(I)I", Radio_wifiEvent),
+    WINAPK_HOST_NATIVE(kCls, "nativeDefaultNetwork", "()[Ljava/lang/String;", Radio_defaultNetwork),
     WINAPK_HOST_NATIVE(kCls, "nativeBluetoothRadio", "()[Ljava/lang/String;", Radio_bluetoothRadio),
     WINAPK_HOST_NATIVE(kCls, "nativeBluetoothBonded", "()[Ljava/lang/String;", Radio_bluetoothBonded),
 };

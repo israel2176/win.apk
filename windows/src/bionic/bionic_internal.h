@@ -134,9 +134,21 @@ public:
     // st_mode for fstat (S_IFIFO, S_IFSOCK, ...).
     virtual unsigned mode() const { return 0010000; }
     virtual int ioctl(int request, void* arg);
-    // True when readiness changes without fd_notify() (sockets): waits then
-    // re-check every few milliseconds.
-    virtual bool needs_polling() const { return false; }
+    // What the waits (fd.cpp) sleep on besides fd_notify(). A socket's handle
+    // (a SOCKET; kNoSocket when this is not one): Winsock tells nobody when a
+    // socket becomes ready, so a wait that includes one sleeps in WSAPoll.
+    static constexpr uintptr_t kNoSocket = ~uintptr_t{0};
+    virtual uintptr_t poll_socket() const { return kNoSocket; }
+    // Milliseconds until time alone makes this readable (an armed timerfd);
+    // -1 when it never does.
+    virtual int64_t ready_in_ms() { return -1; }
+    // Counters for edge-triggered epoll (EPOLLET): they move whenever a new
+    // "readable" or "writable" edge may have happened that the level does not
+    // show -- more bytes written to a pipe or eventfd that was readable
+    // already; for a socket, whose arrivals cannot be seen, a read that took
+    // bytes (more may be left) or a send that would have blocked.
+    virtual uint32_t in_edges() const { return 0; }
+    virtual uint32_t out_edges() const { return 0; }
     // O_NONBLOCK (fcntl F_SETFL, ioctl FIONBIO, the *_NONBLOCK flags).
     virtual void set_nonblocking(bool on) { nonblocking = on; }
     bool nonblocking = false;

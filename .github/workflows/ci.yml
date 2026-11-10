@@ -414,6 +414,14 @@ jobs:
           cp="$(cygpath -w stage/lib/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/camera2-test windows/test/java/Camera2StillTest.java
           "$JAVA_HOME/bin/java" -Djava.awt.headless=true -cp "$cp;$(cygpath -w build/camera2-test)" Camera2StillTest
+      - name: Run the host network test
+        run: |
+          # What ConnectivityManager makes of the host's default-route adapter
+          # (its type, addresses, DNS servers), on a plain JVM.
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          cp="$(cygpath -w stage/lib/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          "$JAVA_HOME/bin/javac" -cp "$cp" -d build/hostnet-test windows/test/java/android/net/HostNetworkTest.java
+          MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/hostnet-test)" android.net.HostNetworkTest
       - name: Run the permission model test
         run: |
           # SpecialAccessStore.GroupModel, the decision model behind every
