@@ -5,9 +5,6 @@ name: App probe
 
 on:
   workflow_dispatch:
-  push:
-    branches: [ccr-70ca3b6e-8s4bz0]
-    paths: ['.github/workflows/app-probe.yml', '.github/probe/**', 'runtime/**', 'windows/**']
 
 concurrency:
   group: app-probe-${{ github.ref }}

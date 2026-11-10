@@ -155,18 +155,18 @@ automated run; nobody has used it), *Does not start*, *Does not install*.
 | App | Version | Source | Status | Notes | Tested | Issue |
 |---|---|---|---|---|---|---|
 | Markor | 163 (`net.gsantner.markor`) | F-Droid | Boots | Draws its first-run pages (the notebook's files); idle afterwards (0% of a processor) | 2026-11-10 | |
-| Fossify Calendar | 24 (`org.fossify.calendar`) | F-Droid | Boots | Draws the month view, but its header is laid out wrong: huge arrows above and below the month's name, the weeks pushed apart | 2026-11-10 | [#119](https://github.com/israel2176/win.apk/issues/119) |
+| Fossify Calendar | 24 (`org.fossify.calendar`) | F-Droid | Boots | Draws the month view with its header in one row; idle afterwards (1% of a processor). The header was laid out wrong until [#119](https://github.com/israel2176/win.apk/issues/119) was fixed | 2026-11-10 | |
 | KeePassDX | 45500 (`com.kunzisoft.keepass.libre`) | F-Droid | Boots | Presents its first frame. Its window is hidden from screenshots, as the app asks, so the screen was not seen. Redraws on every frame while idle (20% of a processor) | 2026-11-10 | |
 | Thunderbird | 33 (`net.thunderbird.android`) | F-Droid | Boots | Draws the welcome screen; idle afterwards | 2026-11-10 | |
 | Telegram FOSS | | F-Droid | | Not tried: F-Droid no longer lists `org.telegram.messenger` | 2026-11-10 | |
-| Fennec (Firefox) | 1590110 (`org.mozilla.fennec_fdroid`) | F-Droid | Does not start | Installs; ends 15 s after the start with an access violation in `libmozglue.so`, before a first frame | 2026-11-10 | [#117](https://github.com/israel2176/win.apk/issues/117) |
+| Fennec (Firefox) | 1590110 (`org.mozilla.fennec_fdroid`) | F-Droid | Does not start | Installs; ends about 15 s after the start, before a first frame. Gecko brings its own allocator and needs child processes, which the guest linker and the runtime do not serve yet | 2026-11-10 | [#117](https://github.com/israel2176/win.apk/issues/117) |
 | VLC | 13070208 (`org.videolan.vlc`) | F-Droid | Boots | Draws the welcome screen; idle afterwards | 2026-11-10 | |
 | Organic Maps | 26092932 (`app.organicmaps`) | F-Droid | Boots | Draws "Download the world overview map"; the map itself was not reached | 2026-11-10 | |
 | Open Camera | 96 (`net.sourceforge.opencamera`) | F-Droid | Boots | Draws its first-run dialog over a black preview (the machine has no camera) | 2026-11-10 | |
 | LocalSend | 641 (`org.localsend.localsend_app`) | F-Droid | Boots | Flutter: draws the Receive screen. Uses more than a whole processor while idle, on a machine without a graphics card | 2026-11-10 | |
 | Jitsi Meet | 26000004 (`org.jitsi.meet`) | F-Droid | Boots | React Native: draws the room name screen with its tabs | 2026-11-10 | |
 | Mindustry | 1115 (`io.anuke.mindustry`) | F-Droid | Boots | libGDX: draws the main menu. A whole processor while it shows, on a machine without a graphics card | 2026-11-10 | |
-| DroidFish | 100 (`org.petero.droidfish`) | F-Droid | Boots | Draws the board, clocks and buttons, but none of the pieces | 2026-11-10 | [#118](https://github.com/israel2176/win.apk/issues/118) |
+| DroidFish | 100 (`org.petero.droidfish`) | F-Droid | Boots | Draws the board with its pieces, clocks and buttons; idle afterwards. Its chess engine is a separate Android program and does not run. The pieces were missing until [#118](https://github.com/israel2176/win.apk/issues/118) was fixed | 2026-11-10 | |
 | Privacy Friendly Sudoku | 101 (`org.secuso.privacyfriendlysudoku`) | F-Droid | Boots | Boots headless on every CI run: code conversion, `Application.onCreate`, the first activity and 30 frames | every CI run | |
 | Klooni | 860 (`dev.lonami.klooni`) | F-Droid | Works | libGDX: OpenGL ES from Java; draws and takes input | `windows/PORTING.md`, section 8 | |
 | Tensy | 2 (`se.voxelmanip.tensy`) | F-Droid | Works | SDL 3: OpenGL ES from native code through a SurfaceView; draws and takes input | `windows/PORTING.md`, section 8 | |
