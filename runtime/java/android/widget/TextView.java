@@ -6079,6 +6079,27 @@ public class TextView extends View
             if (style >= 0) setMacapkTextStyle(style);
             if (color != Integer.MIN_VALUE) setTextColor(color);
             if (!Float.isNaN(ls)) setLetterSpacing(ls);
+            // The rest of AOSP's readTextAppearance / applyTextAppearance that a
+            // text appearance set at run time carries: textAllCaps, and the
+            // colours as state lists. A TabLayout gives each tab its look this
+            // way (TextViewCompat.setTextAppearance): the tabs read "Station"
+            // where Android shows "STATION" and were narrower by it (uiprobe),
+            // and a list with a selected or disabled colour kept only its
+            // default one.
+            android.content.res.TypedArray more = t.obtainStyledAttributes(resId,
+                new int[]{ 0x01010098 /*textColor*/, 0x0101009a /*textColorHint*/,
+                           0x0101009b /*textColorLink*/, 0x0101038c /*textAllCaps*/ });
+            try {
+                android.content.res.ColorStateList text = more.getColorStateList(0);
+                if (text != null && text.isStateful()) setTextColor(text);
+                android.content.res.ColorStateList hint = more.getColorStateList(1);
+                if (hint != null) setHintTextColor(hint);
+                android.content.res.ColorStateList link = more.getColorStateList(2);
+                if (link != null) setLinkTextColor(link);
+                if (more.hasValue(3)) setAllCaps(more.getBoolean(3, false));
+            } finally {
+                more.recycle();
+            }
             invalidate();
         } catch (Throwable ignored) {}
     }
