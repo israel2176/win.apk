@@ -1,0 +1,50 @@
+# A measurement, not a test, and not for main: first-start and warm-start
+# times of the ten smoke apps on this branch's build and on main's, in turns
+# on one machine (windows/test/compat/startbench.py). Comes out before merge.
+name: Start benchmark
+
+on:
+  push:
+    branches: [ccr-70ca3b6e-8s4bz0]
+    paths: ['.github/workflows/start-bench.yml']
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  bench:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Both staged runtimes
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          bash .github/probe/stage.sh "${{ github.ref_name }}" stage
+          bash .github/probe/stage.sh main stage-main
+      - uses: actions/cache@v4
+        with:
+          path: apk-cache
+          key: compat-apks-smoke-${{ hashFiles('windows/test/compat/apps.txt', 'windows/test/compat/smoke.txt') }}
+      - name: Benchmark
+        shell: pwsh
+        run: |
+          python windows/test/compat/startbench.py --runtime stage --out bench --apks apk-cache `
+            --config "pr=,@wait=1" --config "main=,@runtime=$PWD\stage-main,@wait=1" `
+            --only-from windows/test/compat/smoke.txt --warm 5
+          Get-Content bench/report.md | Add-Content $env:GITHUB_STEP_SUMMARY
+          Get-Content bench/report.md
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: start-bench
+          path: |
+            bench/report.md
+            bench/report.json
