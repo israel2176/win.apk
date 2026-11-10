@@ -132,8 +132,8 @@ bool is_narrow(ArgKind k) {
 //   [rsp + out .. +160)    saved xmm6-xmm15 (callee-saved in Microsoft x64 only)
 //   [rsp .. rsp + out)     outgoing System V stack arguments; also the 32-byte
 //                          home area for the env_xlate call made first
-void* make_jni_native_thunk(void* target, const ArgKind* args, size_t nargs, void* env_xlate) {
-    if (nargs < 1) return nullptr;
+void* make_jni_native_thunk(void* target, const ArgKind* args, size_t nargs, void* env_xlate, size_t skip) {
+    if (nargs < 1 || skip > nargs) return nullptr;
     auto in_slot = [](size_t i) { return static_cast<int32_t>(16 + 8 * i); };
 
     // System V placement: integer class fills rdi..r9, SSE class xmm0..7,
@@ -141,7 +141,7 @@ void* make_jni_native_thunk(void* target, const ArgKind* args, size_t nargs, voi
     struct Place { bool stack; int reg; int slot; };
     std::vector<Place> place(nargs);
     int nint = 0, nsse = 0, nstack = 0;
-    for (size_t i = 0; i < nargs; ++i) {
+    for (size_t i = skip; i < nargs; ++i) {
         if (is_sse(args[i])) {
             place[i] = nsse < 8 ? Place{false, nsse++, 0} : Place{true, 0, nstack++};
         } else {
@@ -168,14 +168,16 @@ void* make_jni_native_thunk(void* target, const ArgKind* args, size_t nargs, voi
     e.sub_rsp(frame);
     for (int k = 0; k < 10; ++k) e.movdqu_store_rsp(6 + k, static_cast<int32_t>(out + 16 * k));
 
-    // args[0] = env_xlate(args[0]), a Microsoft x64 call.
-    e.load_rbp(RCX, in_slot(0));
-    e.mov_imm64(R11, reinterpret_cast<uint64_t>(env_xlate));
-    e.call(R11);
-    e.store_rbp(RAX, in_slot(0));
+    // args[0] = env_xlate(args[0]), a Microsoft x64 call (unless it is dropped).
+    if (skip == 0) {
+        e.load_rbp(RCX, in_slot(0));
+        e.mov_imm64(R11, reinterpret_cast<uint64_t>(env_xlate));
+        e.call(R11);
+        e.store_rbp(RAX, in_slot(0));
+    }
 
     // Stack arguments first: they go through rax, which is free until the call.
-    for (size_t i = 0; i < nargs; ++i) {
+    for (size_t i = skip; i < nargs; ++i) {
         if (!place[i].stack) continue;
         if (is_narrow(args[i])) {
             e.load_ext_rbp(RAX, in_slot(i), args[i]);
@@ -184,7 +186,7 @@ void* make_jni_native_thunk(void* target, const ArgKind* args, size_t nargs, voi
         }
         e.store_rsp(RAX, 8 * place[i].slot);
     }
-    for (size_t i = 0; i < nargs; ++i) {
+    for (size_t i = skip; i < nargs; ++i) {
         if (place[i].stack) continue;
         if (is_sse(args[i])) {
             e.movsd_load_rbp(place[i].reg, in_slot(i));

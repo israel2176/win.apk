@@ -914,6 +914,39 @@ every such change is listed here:
   8.3 short form `runtime_main.cpp` passes in `winapk.data.dir`, when the
   volume has short names. Native code sized for `/data/user/0/<package>` cut
   the ~150-character full form (Waze: a 128-byte buffer, so no map).
+- `runtime/java/javax/microedition/khronos/egl/MacApkEGL10.java`: an app's
+  own GL thread with a real context (not a GLSurfaceView fork) that calls
+  `eglCreateWindowSurface` on a SurfaceView or its holder gets a window
+  surface on the SurfaceView: `nativeCreateSurfaceViewWindow` makes a pbuffer
+  over the native window, and `nativeSwapSurfaceViewWindow` presents it as
+  the guest layer (`windows/host/gl/egl10_window.cpp`, `guest_gl.cpp`). It
+  was refused and the thread parked (Google Maps' map stayed white).
+  `WINAPK_GL_VIEW_WINDOW=0` restores the refusal.
+- `runtime/java/android/view/LayoutInflater.java`: `resolveString` answers
+  null for `@null` and "" for `@empty`, as `TypedArray.getText` does, not the
+  reference itself (a Chip's text read "@null").
+- `runtime/java/com/google/android/gms/common/security/ProviderInstallerImpl.java`
+  and `com/google/android/gms/org/conscrypt/OpenSSLProvider.java` (new): Play
+  services' side of `ProviderInstaller.installIfNeeded`, which an app loads
+  from Play services' code once its own check finds Play services installed:
+  `GmsCore_OpenSSL` over the JDK's TLS goes first in the provider list and
+  becomes the default SSLContext. The class was missing, every install
+  failed, and Google Maps' own `Ssl_Guard` provider (no TLS until that install
+  succeeds) stayed first: gRPC got a null SSLEngine and no map tile loaded.
+  `android/security/MacApkConscryptProvider.java` gains
+  `copyPlatformServices`, which copies only the platform's providers.
+- `runtime/java/android/security/MacApkConscryptTls.java` (new): the SSLContexts
+  of the `Conscrypt` and `GmsCore_OpenSSL` providers hand out the JDK's
+  sockets wrapped to also answer Conscrypt's methods (`setAlpnProtocols`,
+  `getAlpnSelectedProtocol`, `setHostname`, `setUseSessionTickets`), mapped to
+  the JDK's application protocols and server names. gRPC's okhttp Platform
+  sets ALPN that way on a Conscrypt provider's sockets; on the JDK's it found
+  no such method, skipped ALPN, and Google Maps' gRPC calls (h2 only) failed.
+- `runtime/java/com/macapk/loader/CriticalNatives.java` (new): which guest
+  natives ART calls as `@CriticalNative` (no JNIEnv*, no jclass), read from the
+  converted class file; `windows/src/jni_bind.cpp` gives those a thunk that
+  drops the two. HotSpot passed them, so the guest read its JNIEnv* as its
+  first argument (Google Maps' Elements and map renderer: a corrupted heap).
 - `runtime/java/com/macapk/loader/ViewCanvasDriver.java` and
   `ActivityHost.java`: an activity stopped under another does not present.
   Each driver presents the whole window, so a covered one that kept drawing (a

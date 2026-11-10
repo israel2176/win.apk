@@ -6,6 +6,7 @@
 #include "winapk/guest_jni.h"
 
 #include <cstdio>
+#include <cstring>
 #include <map>
 #include <mutex>
 #include <string>
@@ -22,6 +23,13 @@ std::mutex g_thunk_lock;
 std::map<std::pair<void*, std::string>, void*> g_thunks;
 
 GuestCodePredicate g_is_guest = nullptr;
+CriticalNativeQuery g_critical_query = nullptr;
+
+// Only a static method with primitive arguments and result may be
+// @CriticalNative (ART's rule); anything else need not be asked about.
+bool primitive_only(const char* sig) {
+    return sig && !std::strchr(sig, 'L') && !std::strchr(sig, '[');
+}
 
 std::mutex g_sig_lock;
 std::unordered_map<jmethodID, std::string> g_sigs;  // node-based: c_str() stays valid
@@ -54,11 +62,24 @@ ArgKind kind_of(const char* field) {
     }
 }
 
-void JNICALL on_native_method_bind(jvmtiEnv* jvmti, JNIEnv*, jthread, jmethodID method, void* address,
+void JNICALL on_native_method_bind(jvmtiEnv* jvmti, JNIEnv* env, jthread, jmethodID method, void* address,
                                    void** new_address) {
     if (!g_is_guest || !g_is_guest(address)) return;
     const char* sig = jvmti_method_signature(jvmti, method);
-    void* thunk = sig ? guest_native_thunk(address, sig) : nullptr;
+    bool critical = false;
+    jint modifiers = 0;
+    if (g_critical_query && env && primitive_only(sig) &&
+        jvmti->GetMethodModifiers(method, &modifiers) == JVMTI_ERROR_NONE && (modifiers & 0x0008)) {  // ACC_STATIC
+        jclass cls = nullptr;
+        char* name = nullptr;
+        if (jvmti->GetMethodDeclaringClass(method, &cls) == JVMTI_ERROR_NONE &&
+            jvmti->GetMethodName(method, &name, nullptr, nullptr) == JVMTI_ERROR_NONE) {
+            critical = g_critical_query(env, cls, name, sig);
+        }
+        if (name) jvmti->Deallocate(reinterpret_cast<unsigned char*>(name));
+        if (cls) env->DeleteLocalRef(cls);
+    }
+    void* thunk = sig ? guest_native_thunk(address, sig, critical) : nullptr;
     if (!thunk) {
         // Binding the raw System V address would crash on the first call, far
         // from the cause. Leave it, but say why.
@@ -95,17 +116,20 @@ bool jni_arg_kinds(const char* sig, std::vector<ArgKind>* out) {
     return (*p == 'V' && p[1] == '\0') || ((p = skip_field(p)) && *p == '\0');
 }
 
-void* guest_native_thunk(void* fn, const char* sig) {
+void set_critical_native_query(CriticalNativeQuery query) { g_critical_query = query; }
+
+void* guest_native_thunk(void* fn, const char* sig, bool critical) {
     std::vector<ArgKind> kinds;
     if (!fn || !jni_arg_kinds(sig, &kinds)) return nullptr;
     std::lock_guard<std::mutex> hold(g_thunk_lock);
-    auto key = std::make_pair(fn, std::string(sig));
+    auto key = std::make_pair(fn, std::string(sig) + (critical ? "!critical" : ""));
     auto it = g_thunks.find(key);
     if (it != g_thunks.end()) return it->second;
     // An arm64 native gets its System V entry into the interpreter here, so
     // HotSpot's calls do not go through the execute-fault path each time.
+    // A @CriticalNative method gets its Java arguments only (no JNIEnv*, no jclass).
     void* thunk = make_jni_native_thunk(arm64::host_callable(fn), kinds.data(), kinds.size(),
-                                        reinterpret_cast<void*>(&guest_env_wrapping));
+                                        reinterpret_cast<void*>(&guest_env_wrapping), critical ? 2 : 0);
     if (thunk) g_thunks.emplace(std::move(key), thunk);
     return thunk;
 }
@@ -117,7 +141,9 @@ WINAPK_GUEST_ABI jint guest_register_natives(JNIEnv* env, jclass clazz, const JN
     if (count < 0 || (count > 0 && !methods)) return JNI_ERR;
     std::vector<JNINativeMethod> wrapped(methods, methods + count);
     for (JNINativeMethod& m : wrapped) {
-        void* thunk = guest_native_thunk(m.fnPtr, m.signature);
+        const bool critical = g_critical_query && primitive_only(m.signature) &&
+                              g_critical_query(host, clazz, m.name, m.signature);
+        void* thunk = guest_native_thunk(m.fnPtr, m.signature, critical);
         if (!thunk) {
             // HotSpot throws NoSuchMethodError for a method it cannot bind;
             // a descriptor we cannot read is the same failure to the caller.

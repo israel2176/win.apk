@@ -85,6 +85,9 @@ int signal_send(uint32_t tid, int sig);
 // The calling thread's blocked set, for sigsetjmp/siglongjmp (setjmp.cpp).
 uint64_t signal_mask_of_current_thread();
 void signal_set_mask_of_current_thread(uint64_t mask);
+// The calling thread's own alternate signal stack, as Bionic gives every
+// thread one; once per thread, nothing if the guest set its own.
+void signal_altstack_for_current_thread();
 
 // pthread.cpp: the Windows thread id behind a guest pthread_t (0 if null).
 uint32_t thread_id_of(const void* pthread);

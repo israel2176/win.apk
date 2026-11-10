@@ -221,6 +221,8 @@ bool native_window_buffer_size(const void* window, int* w, int* h) {
     return true;
 }
 
+const void* native_window_handle() { return &g_window; }
+
 bool native_window_has_geometry() {
     std::lock_guard<std::mutex> hold(g_lock);
     return g_window.buf_w > 0 && g_window.buf_h > 0;

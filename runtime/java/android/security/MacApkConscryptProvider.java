@@ -47,6 +47,9 @@ public final class MacApkConscryptProvider extends Provider {
     private MacApkConscryptProvider(String name) {
         super(name, "1.0", "Mac.apk Conscrypt alias delegating to the host JDK JSSE/JCE");
         copyHostServices();
+        // Win.apk: a stack that asked for this provider by name treats its
+        // sockets as Conscrypt's (MacApkConscryptTls).
+        MacApkConscryptTls.register(this);
     }
 
     // Copy every service the host providers expose into this provider, so a
@@ -66,6 +69,25 @@ public final class MacApkConscryptProvider extends Provider {
                 // the string form keeps the JDK's own service-class wiring;
                 // the class is loaded by the same (boot/platform) loader.
                 put(key, svc.getClassName());
+            }
+        }
+    }
+
+    /** Win.apk: the services of the platform's own providers (the JDK's, which
+     *  live in named modules, and the framework's, such as MacApkTrust's
+     *  TrustManagerFactory) copied into `target`, the first provider of each
+     *  type and algorithm winning. A provider an app registered (Google Maps'
+     *  Ssl_Guard, say) is left out: its classes are the app's, and copying them
+     *  would make `target` hand out the app's engines. */
+    public static void copyPlatformServices(Provider target) {
+        ClassLoader framework = MacApkConscryptProvider.class.getClassLoader();
+        for (Provider p : Security.getProviders()) {
+            if (p instanceof MacApkConscryptProvider || p.getClass() == target.getClass()) continue;
+            boolean platform = p.getClass().getModule().isNamed() || p.getClass().getClassLoader() == framework;
+            if (!platform) continue;
+            for (Provider.Service svc : p.getServices()) {
+                if (target.getService(svc.getType(), svc.getAlgorithm()) != null) continue;
+                target.put(svc.getType() + "." + svc.getAlgorithm(), svc.getClassName());
             }
         }
     }

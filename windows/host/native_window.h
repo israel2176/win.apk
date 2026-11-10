@@ -24,6 +24,8 @@ bool native_window_buffer_size(const void* window, int* w, int* h);
 // with a size): its frames are then scaled to the window, as Android's
 // compositor scales such a buffer; otherwise they are the window's size.
 bool native_window_has_geometry();
+// The runtime's one native window (what ANativeWindow_fromSurface hands out).
+const void* native_window_handle();
 
 // A frame from the app's native code for the window, 0xAARRGGBB rows, top row
 // first. Any thread (native_cocoa.cpp).
@@ -44,5 +46,12 @@ void* native_window_for_surface(JNIEnv* env, jobject surface);
 // The guest-callable libEGL/libGLESv*, by name (guest_gl.cpp); null for other
 // names.
 void* guest_gl_resolve(const char* name);
+
+// A Java GL thread's window surface on the SurfaceView (guest_gl.cpp): made
+// over the native window, swapped (1/0; -1 for a surface it did not make) and
+// forgotten. EGLDisplay, EGLConfig and EGLSurface as void*.
+void* surface_view_window_create(void* dpy, void* config);
+int surface_view_window_swap(void* dpy, void* surface);
+void surface_view_window_destroyed(void* surface);
 
 }  // namespace winapk::host

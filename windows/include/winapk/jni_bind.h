@@ -41,7 +41,13 @@ bool jni_arg_kinds(const char* sig, std::vector<ArgKind>* out);
 // A Microsoft x64 entry point HotSpot can bind for the System V guest native
 // `fn` with descriptor `sig`, or nullptr if `sig` is malformed or the thunk
 // pool is exhausted. The same (fn, sig) always gets the same thunk.
-void* guest_native_thunk(void* fn, const char* sig);
+void* guest_native_thunk(void* fn, const char* sig, bool critical = false);
+
+// Whether `name` `sig` of `cls` is one ART calls as @CriticalNative (no JNIEnv*,
+// no jclass); asked only for a static method with primitive arguments. The
+// runtime sets it (com.macapk.loader.CriticalNatives); unset, none is.
+using CriticalNativeQuery = bool (*)(JNIEnv* host, jclass cls, const char* name, const char* sig);
+void set_critical_native_query(CriticalNativeQuery query);
 
 // Forgets the thunks for functions in [base, base + size): a library was
 // unloaded, and the next one mapped there must get thunks of its own. The

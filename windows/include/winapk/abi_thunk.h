@@ -41,9 +41,10 @@ enum class ArgKind : uint8_t {
 
 // A Microsoft x64 callable that forwards to the System V function `target`.
 // args[0] must be the JNIEnv*; it is replaced by env_xlate(args[0]) (an
-// ordinary Microsoft x64 function) before the call. Returns nullptr on
-// allocation failure.
-void* make_jni_native_thunk(void* target, const ArgKind* args, size_t nargs, void* env_xlate);
+// ordinary Microsoft x64 function) before the call. With `skip` 2 the JNIEnv*
+// and the jclass are not passed on at all: ART's @CriticalNative methods take
+// only their Java arguments. Returns nullptr on allocation failure.
+void* make_jni_native_thunk(void* target, const ArgKind* args, size_t nargs, void* env_xlate, size_t skip = 0);
 
 // A System V callable for a C-variadic function with `named` integer-class
 // fixed arguments (3 for CallIntMethod(env, obj, mid, ...), 4 for the

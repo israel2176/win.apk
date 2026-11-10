@@ -102,6 +102,7 @@ const HostMethods kProviders[] = {
     native_audio_input_methods(),
     native_photos_methods(),
     native_gl_methods(),
+    native_egl10_methods(),
     native_browser_tab_methods(),
     native_webview_methods(),
     native_camera_methods(),

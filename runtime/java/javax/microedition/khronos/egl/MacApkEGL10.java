@@ -286,10 +286,16 @@ public final class MacApkEGL10 implements EGL10 {
         final RealDisplay dpy;
         final android.opengl.EGLSurface pbuffer;   // null for a window
         final MacApkGlWindow window;               // null for a pbuffer
+        // Win.apk: a SurfaceView window made for an app's own GL thread
+        // (viewWindow below); `pbuffer` is its surface, swapped by the host.
+        final boolean viewWindow;
         private final int hash;
         volatile boolean destroyed;
         RealSurface(RealDisplay d, android.opengl.EGLSurface pbuffer, MacApkGlWindow window) {
-            dpy = d; this.pbuffer = pbuffer; this.window = window;
+            this(d, pbuffer, window, false);
+        }
+        RealSurface(RealDisplay d, android.opengl.EGLSurface pbuffer, MacApkGlWindow window, boolean viewWindow) {
+            dpy = d; this.pbuffer = pbuffer; this.window = window; this.viewWindow = viewWindow;
             hash = Long.hashCode(nativeSurface().getNativeHandle());
         }
         android.opengl.EGLSurface nativeSurface() {
@@ -709,6 +715,11 @@ public final class MacApkEGL10 implements EGL10 {
         SurfaceTexture st;
         if (nativeWindow instanceof android.view.SurfaceView
                 || nativeWindow instanceof android.view.SurfaceHolder) {
+            // Win.apk: an app's own GL thread with a REAL context (not a
+            // GLSurfaceView fork, which the check above sent to the legacy
+            // contract) renders into the SurfaceView, as on Android.
+            EGLSurface view = viewWindow(d, config, nativeWindow, attribList);
+            if (view != null) return view;
             // The MTKView driver owns SurfaceView surfaces; unchanged.
             return legacyCreateWindowSurface(display, config, nativeWindow, attribList);
         } else if (nativeWindow instanceof android.view.Surface) {
@@ -751,6 +762,42 @@ public final class MacApkEGL10 implements EGL10 {
         return new RealSurface(d, null, made.window);
     }
 
+    // Win.apk (windows/host/gl/egl10_window.cpp): the host's window surface on
+    // the SurfaceView for an app's own Java GL thread, swapped and forgotten
+    // through it. Google Maps renders its map that way: a SurfaceView, its own
+    // GLThread, a real context, eglCreateWindowSurface(holder); refused, the
+    // thread parked and the map stayed white. Null on a host without it (the
+    // Mac's binding answers null for this window), and then the legacy answer.
+    private static native int nativeSwapSurfaceViewWindow(android.opengl.EGLDisplay dpy,
+                                                          android.opengl.EGLSurface surface);
+    private static native void nativeForgetSurfaceViewWindow(android.opengl.EGLSurface surface);
+    private static final boolean VIEW_WINDOW = System.getProperty("winapk.android.root") != null
+        && !"0".equals(System.getenv("WINAPK_GL_VIEW_WINDOW"));
+
+    private EGLSurface viewWindow(RealDisplay d, EGLConfig config, Object nativeWindow, int[] attribList) {
+        if (!VIEW_WINDOW || !(config instanceof RealConfig)) return null;
+        android.view.Surface sur = (nativeWindow instanceof android.view.SurfaceView)
+            ? ((android.view.SurfaceView) nativeWindow).getHolder().getSurface()
+            : ((android.view.SurfaceHolder) nativeWindow).getSurface();
+        if (sur == null || !sur.isValid()) return null;
+        android.opengl.EGLSurface h;
+        try {
+            nativeCall();
+            h = nativeCreateSurfaceViewWindow(d.h, ((RealConfig) config).h, attribList);
+        } catch (UnsatisfiedLinkError notThisHost) {
+            return null;
+        }
+        if (h == null || h.getNativeHandle() == 0) return null;
+        // The SurfaceView now shows the native window's layer through its hole,
+        // as for an engine that called ANativeWindow_fromSurface.
+        sur.macapkNoteNativeWindowConsumer();
+        if (shouldLogReal()) {
+            NativeLog.i(TAG, "eglCreateWindowSurface(SurfaceView) on " + Thread.currentThread().getName()
+                + " -> a window surface on the SurfaceView (0x" + Long.toHexString(h.getNativeHandle()) + ")");
+        }
+        return new RealSurface(d, h, null, true);
+    }
+
     @Override public boolean eglDestroySurface(EGLDisplay display, EGLSurface surface) {
         if (!realOn() || !(surface instanceof RealSurface)) return legacyDestroySurface(display, surface);
         RealSurface s = (RealSurface) surface;
@@ -760,6 +807,7 @@ public final class MacApkEGL10 implements EGL10 {
         }
         s.destroyed = true;
         nativeCall();
+        if (s.viewWindow) nativeForgetSurfaceViewWindow(s.pbuffer);
         return s.window != null ? s.window.destroy() : EGL14.eglDestroySurface(s.dpy.h, s.pbuffer);
     }
 
@@ -834,6 +882,13 @@ public final class MacApkEGL10 implements EGL10 {
             return false;
         }
         if (s.window == null) {
+            if (s.viewWindow) {
+                // Read back and shown as the SurfaceView's layer (the host's
+                // window surface swap); it must be current, as any window's.
+                nativeCall();
+                int r = nativeSwapSurfaceViewWindow(s.dpy.h, s.pbuffer);
+                if (r >= 0) return r == 1;
+            }
             // EGL 1.4 §3.9.3: a swap on a pbuffer has no effect beyond the
             // implicit flush.
             nativeCall();
@@ -1484,6 +1539,11 @@ public final class MacApkEGL10 implements EGL10 {
             return false;
         }
         nativeCall();
+        // Win.apk: the host made this window (a pbuffer it presents itself).
+        if (VIEW_WINDOW) {
+            int r = nativeSwapSurfaceViewWindow(w.owner.dpy.h, w.h);
+            if (r >= 0) return r == 1;
+        }
         return EGL14.eglSwapBuffers(w.owner.dpy.h, w.h);
     }
 
@@ -1494,6 +1554,7 @@ public final class MacApkEGL10 implements EGL10 {
         }
         w.destroyed = true;
         nativeCall();
+        if (VIEW_WINDOW) nativeForgetSurfaceViewWindow(w.h);
         // Still current: EGL 1.4 §3.5.5, ANGLE frees it once it is released.
         return EGL14.eglDestroySurface(w.owner.dpy.h, w.h);
     }

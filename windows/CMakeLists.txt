@@ -274,6 +274,7 @@ if(WINAPK_JNI_INCLUDE)
   # runtime.
   add_executable(winapk-runtime host/runtime_main.cpp host/host_natives.cpp host/native_log.cpp
                               host/native_cocoa.cpp host/win32_window.cpp host/guest_libs.cpp host/java_io_open.cpp
+                              host/gl/egl10_window.cpp
                               host/native_os.cpp host/native_image.cpp
                               host/native_looper.cpp host/native_audio.cpp host/audio_engine.cpp
                               host/audio_decode.cpp host/native_clipboard.cpp
