@@ -1022,6 +1022,13 @@ every such change is listed here:
   the guest layer (`windows/host/gl/egl10_window.cpp`, `guest_gl.cpp`). It
   was refused and the thread parked (Google Maps' map stayed white).
   `WINAPK_GL_VIEW_WINDOW=0` restores the refusal.
+- `runtime/java/javax/microedition/khronos/egl/MacApkEGL10.java`:
+  `eglGetCurrentContext` / `eglGetCurrentDisplay` / `eglGetCurrentSurface`
+  answer `EGL_NO_CONTEXT` / `EGL_NO_DISPLAY` / `EGL_NO_SURFACE` on a thread
+  with no context current at all (`nothingCurrent`), as on Android, not the
+  sentinel objects: an app that reads its GL limits "in the current context,
+  else in one of my own" read them with none (Google Maps' vertex attribute
+  table had `GL_MAX_VERTEX_ATTRIBS` = 0 entries, and its GL thread died).
 - `runtime/java/android/view/LayoutInflater.java`: `resolveString` answers
   null for `@null` and "" for `@empty`, as `TypedArray.getText` does, not the
   reference itself (a Chip's text read "@null").
