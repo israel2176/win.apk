@@ -407,7 +407,14 @@ public class ProgressBar extends View {
                         // Wikipedia screen kept this tick alive, and the queued
                         // message pinned the whole activity.
                         if (mAnimRunning && isAttachedToWindow()) {
-                            invalidate();
+                            // AOSP animates only while the bar is shown
+                            // (startAnimation / onVisibilityAggregated). A
+                            // spinner that is GONE, or inside a hidden parent,
+                            // kept the whole window redrawing 20 times a
+                            // second: Google Maps idle, a third of all frames.
+                            // The tick itself goes on, so the bar turns again
+                            // the moment it is shown.
+                            if (isShown()) invalidate();
                             mAnimHandler.postDelayed(mAnimTick, 50);
                         } else {
                             mAnimRunning = false;

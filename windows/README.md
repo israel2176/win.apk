@@ -574,6 +574,11 @@ every such change is listed here:
 - `runtime/java/android/widget/RatingBar.java` and `ProgressBar.java`: a rating
   bar reads `numStars`, `rating`, `stepSize` and `isIndicator` from XML and
   measures one row of stars, as AOSP does. Not Windows-specific.
+- `runtime/java/android/widget/ProgressBar.java` (the indeterminate tick): it
+  invalidates only while the bar is shown (`isShown()`), as AOSP animates
+  only a visible bar. A hidden spinner kept the whole window redrawing 20
+  times a second (Google Maps idle: a third of all frames). Not
+  Windows-specific.
 - `runtime/java/android/database/sqlite/SQLiteDatabase.java`: `BEGIN`,
   `COMMIT` and `ROLLBACK` given to `execSQL` nest in the transaction stack, as
   AOSP's `SQLiteSession.executeSpecial` does. Not Windows-specific.
