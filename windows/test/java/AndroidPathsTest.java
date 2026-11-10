@@ -77,6 +77,24 @@ public final class AndroidPathsTest {
         eq("Windows Path.getFileName", wp.getFileName().toString(), "y");
 
         if (failed == 0) System.err.println("AndroidPathsTest: all checks passed");
+
+        // Microbenchmark: the Java-side per-op cost the overlay adds for a path
+        // string (the isAndroid check plus, for an Android path, normalize).
+        // host0 is unbound here, so this is the string-form overhead only, not
+        // the native host mapping (that is winapk-paths-test's bench).
+        final int N = 1_000_000;
+        long sink = 0;
+        // warm up
+        for (int i = 0; i < 100_000; i++) sink += new File(D + "/files").getAbsolutePath().length();
+        long t0 = System.nanoTime();
+        for (int i = 0; i < N; i++) sink += new File(D + "/files").getAbsolutePath().length();
+        long androidNs = (System.nanoTime() - t0) / N;
+        t0 = System.nanoTime();
+        for (int i = 0; i < N; i++) sink += new File("C:\\root\\x\\files").getAbsolutePath().length();
+        long winNs = (System.nanoTime() - t0) / N;
+        System.err.println("AndroidPathsTest bench (x" + N + "): File+getAbsolutePath Android=" + androidNs
+                + " ns/op, Windows=" + winNs + " ns/op (sink=" + sink + ")");
+
         System.exit(failed);
     }
 }

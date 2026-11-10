@@ -8,6 +8,7 @@
 
 #include "winapk/mini_bionic.h"
 
+#include <chrono>
 #include <cstdio>
 #include <string>
 
@@ -86,5 +87,24 @@ int main() {
     check("generic /opt", host("/opt/thing"), L"C:\\root\\opt\\thing");
 
     if (g_failed == 0) std::fprintf(stderr, "paths_test: all checks passed\n");
+
+    // Microbenchmark: the native mapping cost per file op (what the Bionic shim,
+    // the SQLite VFS and java.io's host0 each pay). This is the cost the path
+    // feature ADDS on top of the Win32/host syscall a file op makes anyway.
+    {
+        const int N = 1000000;
+        volatile size_t sink = 0;
+        const char* android = "/data/user/0/com.example.app/files/sub/thing.db";
+        const char* hostp = "C:\\root\\data\\data\\sub-8.3\\files\\sub\\thing.db";
+        auto bench = [&](const char* p) {
+            auto t0 = std::chrono::steady_clock::now();
+            for (int i = 0; i < N; i++) sink += winapk::android_host_path(p).size();
+            auto t1 = std::chrono::steady_clock::now();
+            return std::chrono::duration<double, std::nano>(t1 - t0).count() / N;
+        };
+        const double a = bench(android), h = bench(hostp);
+        std::fprintf(stderr, "paths_test bench (x%d): android_host_path Android=%.1f ns/op, host passthrough=%.1f ns/op (sink=%zu)\n",
+                     N, a, h, (size_t)sink);
+    }
     return g_failed;
 }
