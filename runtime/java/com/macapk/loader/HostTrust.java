@@ -5,7 +5,7 @@
 // com.macapk.gms.GmsCli.run (`winapk-runtime --gms`, what Settings > Google
 // account runs). Calling into Boot from the second would run Boot's static
 // initialisers for a process that has no app. Without it there, the sign-in's
-// token exchange behind NetFree failed with "PKIX path building failed" while
+// token exchange behind a filtering proxy failed with "PKIX path building failed" while
 // the same exchange from inside an app worked.
 package com.macapk.loader;
 
@@ -18,7 +18,7 @@ public final class HostTrust {
      * On Windows, the trust anchors every TLS connection checks against are the
      * JDK's CAs AND the ones Windows itself trusts. On a device the system store
      * holds what the user's device trusts; on a PC that is the Windows root
-     * store, which also holds the root of a filtering proxy (NetFree), a
+     * store, which also holds the root of a filtering proxy, a
      * company's TLS inspection or a locally installed CA. With the JDK's
      * cacerts alone every connection behind such a proxy failed with "PKIX
      * path building failed". The Windows store alone is not enough either: it

@@ -494,9 +494,18 @@ jstring JNICALL Cocoa_remapProcPath(JNIEnv*, jclass, jstring) { return nullptr; 
 // MacApkSystemFonts links them into /system/fonts with symbolic links, which a
 // standard Windows account may not create, so the bundled fonts stay the set.
 jstring JNICALL Cocoa_hostFontFile(JNIEnv*, jclass, jstring) { return nullptr; }
-// The Mac shows an App Link sign-in page in its own window. Answering false
-// sends AppLinks down its other path (the browser), as before this native.
-jboolean JNICALL Cocoa_openAppLinkWindow(JNIEnv*, jclass, jstring, jstring) { return JNI_FALSE; }
+// An App Link sign-in page in Win.apk's own window (com.macapk.loader.AppLinks;
+// native_browser_tab.cpp). False sends AppLinks down its other path, the browser.
+jboolean JNICALL Cocoa_openAppLinkWindow(JNIEnv* env, jclass, jstring url, jstring prefix) {
+    if (!url || !prefix) return JNI_FALSE;
+    auto wide = [env](jstring j) {
+        const jchar* c = env->GetStringChars(j, nullptr);
+        std::wstring w(reinterpret_cast<const wchar_t*>(c), static_cast<size_t>(env->GetStringLength(j)));
+        env->ReleaseStringChars(j, c);
+        return w;
+    };
+    return open_applink_window(env, wide(url), wide(prefix)) ? JNI_TRUE : JNI_FALSE;
+}
 
 void JNICALL Cocoa_setWindowTitle(JNIEnv* env, jclass, jlong, jstring title) {
     if (!title) return;

@@ -40,6 +40,8 @@ public class GoogleSignInActivity extends Activity {
     private boolean mIdentity;                 // One Tap / getSignInIntent start (IdentitySignInService)
     private volatile boolean mBusy;
     private TextView mStatus;
+    private int mFailStatus = -1;              // the last failed sign-in's status, -1 for none
+    private String mFailError;
     private String mAppLabel;
 
     @Override
@@ -241,21 +243,33 @@ public class GoogleSignInActivity extends Activity {
 
     private static String tr(String english, String hebrew) { return hebrew() ? hebrew : english; }
 
-    private String unregisteredMessage() {
-        final boolean netFree = GoogleSignInBroker.appSignedByNetFree(this, mRequest.callerPkg);
-        if (hebrew()) {
-            return netFree
-                    ? "גוגל לא מזהה את העותק הזה של " + mAppLabel + ": הוא נחתם מחדש על ידי נטפרי, ולכן"
-                      + " ההתחברות עם גוגל לא תעבוד בו (גם בטלפון). צריך עותק שחתום על ידי מפתח האפליקציה."
-                    : "גוגל לא מזהה את העותק הזה של " + mAppLabel + ": הוא לא חתום בחתימה של מפתח"
-                      + " האפליקציה. צריך עותק מקורי של האפליקציה.";
+    /** A failed sign-in, said plainly with its code: Google's own error word
+     *  (`Error=UNREGISTERED_ON_API_CONSOLE` in /auth's answer) when there is
+     *  one, else the error's text, and the status the app would get. */
+    static String failureMessage(int status, String error, boolean hebrew) {
+        String code = errorCode(error);
+        StringBuilder sb = new StringBuilder(hebrew ? "ההתחברות עם Google נכשלה (" : "Google sign-in failed (");
+        if (code != null) sb.append(hebrew ? "שגיאה: " : "error: ").append(code).append(", ");
+        sb.append(hebrew ? "קוד " : "status ").append(status).append(").");
+        return sb.toString();
+    }
+
+    /** The code in a failure's text: the word after `Error=`, else the text
+     *  itself (cut short), else null. */
+    static String errorCode(String error) {
+        if (error == null || error.trim().isEmpty()) return null;
+        int at = error.indexOf("Error=");
+        if (at >= 0) {
+            int end = at + 6;
+            while (end < error.length()) {
+                char c = error.charAt(end);
+                if (!(Character.isLetterOrDigit(c) || c == '_')) break;
+                end++;
+            }
+            if (end > at + 6) return error.substring(at + 6, end);
         }
-        return netFree
-                ? "Google does not recognize this copy of " + mAppLabel + ": NetFree re-signed it, so"
-                  + " Google sign-in cannot work in it (on a phone either). It needs a copy signed by the"
-                  + " app's developer."
-                : "Google does not recognize this copy of " + mAppLabel + ": it is not signed by the"
-                  + " app's developer. It needs the app's original copy.";
+        String t = error.trim();
+        return t.length() > 160 ? t.substring(0, 160) + "…" : t;
     }
 
     private void setStatus(final String s) {
@@ -269,6 +283,8 @@ public class GoogleSignInActivity extends Activity {
     private void onAccountPicked(final String account) {
         if (mBusy || mFinished) return;
         mBusy = true;
+        mFailStatus = -1;
+        mFailError = null;
         GoogleSignInBroker.log("chooser: user picked " + GoogleAuthenticator.redact(account));
         setStatus(tr("Signing in…", "מתבצעת כניסה…"));
         final String sig = GoogleSignInBroker.appCertSha1(this, mRequest.callerPkg);
@@ -284,15 +300,14 @@ public class GoogleSignInActivity extends Activity {
                         mBusy = false;
                         if (res.ok()) {
                             finishWith(res, GoogleSignInBroker.STATUS_SUCCESS, null);
-                        } else if (res.error != null && res.error.contains("UNREGISTERED_ON_API_CONSOLE")) {
-                            // Google knows this app by its package AND its developer's
-                            // signing certificate. A copy signed by someone else (a
-                            // filter that re-signs downloads, such as NetFree's patcher)
-                            // is refused whatever the account, here as on a phone: say
-                            // so and stay, rather than close on the app's generic error.
-                            setStatus(unregisteredMessage());
                         } else {
-                            finishWith(null, res.status, res.error);
+                            // Say what failed, with its code, and stay: the app's own
+                            // message is a generic one, and its code is what a user
+                            // can report. Leaving (Cancel, Back) hands the app this
+                            // failure rather than a cancel.
+                            mFailStatus = res.status;
+                            mFailError = res.error;
+                            setStatus(failureMessage(res.status, res.error, hebrew()));
                         }
                     }
                 });
@@ -323,12 +338,17 @@ public class GoogleSignInActivity extends Activity {
         Thread t = new Thread(new Runnable() {
             @Override public void run() {
                 final String added = NativeSignIn.signInInteractive();
-                GoogleSignInBroker.log("chooser: add account -> " + (added != null ? "added" : "cancelled"));
+                // Why, when nothing was added: the window's code, else the
+                // exchange's (this thread's lastError); null for a plain cancel.
+                String w = added == null ? NativeSignIn.lastWindowError() : null;
+                final String why = w != null ? w : added == null ? GoogleAuthClient.lastError() : null;
+                GoogleSignInBroker.log("chooser: add account -> " + (added != null ? "added"
+                        : why != null ? "failed: " + why : "cancelled"));
                 runOnUiThread(new Runnable() {
                     @Override public void run() {
                         mBusy = false;
                         if (mFinished) return;
-                        if (direct && added == null) {
+                        if (direct && added == null && why == null) {
                             onCancel();
                             return;
                         }
@@ -337,7 +357,11 @@ public class GoogleSignInActivity extends Activity {
                             return;
                         }
                         buildUi();
-                        if (added == null) setStatus(tr("No account was added.", "לא נוסף חשבון."));
+                        if (added == null) {
+                            setStatus(why != null
+                                    ? failureMessage(GoogleSignInBroker.STATUS_SIGN_IN_FAILED, why, hebrew())
+                                    : tr("No account was added.", "לא נוסף חשבון."));
+                        }
                     }
                 });
             }
@@ -348,6 +372,11 @@ public class GoogleSignInActivity extends Activity {
 
     private void onCancel() {
         if (mFinished) return;
+        if (mFailStatus >= 0) {
+            GoogleSignInBroker.log("chooser: closed after a failed sign-in (status " + mFailStatus + ")");
+            finishWith(null, mFailStatus, mFailError);
+            return;
+        }
         GoogleSignInBroker.log("chooser: cancelled by the user");
         finishWith(null, GoogleSignInBroker.STATUS_HUB_CANCELLED, "cancelled");
     }

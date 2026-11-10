@@ -286,6 +286,8 @@ jobs:
           ./build/winapk-aot-cache-test.exe "$(cygpath -w "$PWD/aot-cache-scratch")"
       - name: Run the translation stamp test (its line, what the loader refuses, when the worker has work)
         run: ./build/winapk-aot-stamp-test.exe
+      - name: Run the App Link sign-in window test (which navigation returns to the app)
+        run: ./build/winapk-applink-test.exe
       - name: Run the translation crash guard test (two crashes turn translation off, two on the JIT back on)
         run: |
           mkdir -p aot-guard-scratch

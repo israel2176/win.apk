@@ -33,10 +33,14 @@ sees your password; it keeps the token Google hands back, only on this PC, in
 - The account's item at the foot of the left pane, above Settings, shows the
   signed-in account's picture and address and opens Settings.
 - **Sign out** forgets the account and its tokens on this PC.
-- Signing in works behind a filter or proxy whose certificate Windows trusts,
-  such as NetFree.
-- It needs the WebView2 Runtime (2022 or later). Without it the sign-in is
-  cancelled and `logs\gms.log` says why.
+- Signing in works behind a filter or proxy whose certificate Windows trusts.
+- It needs the WebView2 Runtime (2022 or later).
+- When the sign-in fails, the message carries the error's code (for example
+  `WEB_ERROR HOST_NAME_NOT_RESOLVED (13)`, `WEBVIEW2_RUNTIME_MISSING (0x80070002)`,
+  `HTTP 403 Error=BadAuthentication`), and `logs\gms.log` has the details.
+  An app's **Sign in with Google** that Google refuses says so with its code,
+  for example `UNREGISTERED_ON_API_CONSOLE` for a copy of the app that is not
+  signed by its developer.
 
 ## Google services (experimental)
 

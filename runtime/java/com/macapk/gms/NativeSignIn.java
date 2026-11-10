@@ -31,6 +31,17 @@ public final class NativeSignIn {
      *  UnsatisfiedLinkError means "no picture" (see AccountPhoto). */
     private static native String signInPhotoUrl();
 
+    /** Why the last window ended without a token, as a code ("WEB_ERROR
+     *  HOST_NAME_NOT_RESOLVED (13)", "WEBVIEW2_CONTROLLER 0x80070005",
+     *  "TIMEOUT (600 s)"), or null when the user simply closed it. Windows
+     *  only, as signInPhotoUrl. */
+    private static native String signInWindowError();
+
+    /** {@link #signInWindowError}, null where there is no such native. */
+    public static String lastWindowError() {
+        try { return signInWindowError(); } catch (Throwable t) { return null; }
+    }
+
     /** Whether this process can show a window at all. Cached after the first
      *  probe: an UnsatisfiedLinkError costs a stack trace to construct, and this
      *  is consulted on a path that may run per licence check. */

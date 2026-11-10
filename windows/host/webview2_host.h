@@ -162,6 +162,11 @@ ComPtr<I> handler(const IID& iid, F&& fn) {
 
 // See the header comment. Safe from any thread.
 bool available();
+// Why available() is false, as a code for logs and error messages
+// ("WEBVIEW2_RUNTIME_MISSING (0x80070002)", "HEADLESS"); empty when available.
+std::string unavailable_reason();
+// The HRESULT the environment failed with, S_OK while it has not. WebView2 thread only.
+HRESULT environment_error();
 // The installed runtime's version ("155.0.4283.62"), or empty when unavailable.
 std::wstring runtime_version();
 
