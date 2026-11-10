@@ -914,6 +914,17 @@ every such change is listed here:
   8.3 short form `runtime_main.cpp` passes in `winapk.data.dir`, when the
   volume has short names. Native code sized for `/data/user/0/<package>` cut
   the ~150-character full form (Waze: a 128-byte buffer, so no map).
+- `runtime/java/javax/microedition/khronos/egl/MacApkEGL10.java`: an app's
+  own GL thread with a real context (not a GLSurfaceView fork) that calls
+  `eglCreateWindowSurface` on a SurfaceView or its holder gets a window
+  surface on the SurfaceView: `nativeCreateSurfaceViewWindow` makes a pbuffer
+  over the native window, and `nativeSwapSurfaceViewWindow` presents it as
+  the guest layer (`windows/host/gl/egl10_window.cpp`, `guest_gl.cpp`). It
+  was refused and the thread parked (Google Maps' map stayed white).
+  `WINAPK_GL_VIEW_WINDOW=0` restores the refusal.
+- `runtime/java/android/view/LayoutInflater.java`: `resolveString` answers
+  null for `@null` and "" for `@empty`, as `TypedArray.getText` does, not the
+  reference itself (a Chip's text read "@null").
 - `runtime/java/com/macapk/loader/CriticalNatives.java` (new): which guest
   natives ART calls as `@CriticalNative` (no JNIEnv*, no jclass), read from the
   converted class file; `windows/src/jni_bind.cpp` gives those a thunk that
