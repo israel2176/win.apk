@@ -69,6 +69,10 @@ struct WindowSurface {
     EGLConfig config = nullptr;
     EGLSurface real = EGL_NO_SURFACE;  // the pbuffer behind the handle; the handle itself at first
     int side = 0;
+    // A Java GL thread's window on a SurfaceView (surface_view_window_create):
+    // its handle is bound by EGL14 itself, which knows no pbuffer behind it,
+    // so it is never replaced by a larger one.
+    bool fixed = false;
 };
 
 // The window's size: what the app should draw (eglQuerySurface) and what the
@@ -244,7 +248,7 @@ WINAPK_GUEST_ABI EGLBoolean guest_eglDestroySurface(EGLDisplay dpy, EGLSurface s
 WINAPK_GUEST_ABI EGLBoolean guest_eglMakeCurrent(EGLDisplay dpy, EGLSurface draw, EGLSurface read, EGLContext ctx) {
     std::lock_guard<std::mutex> hold(g_lock);
     auto d = g_window_surfaces.find(draw), r = g_window_surfaces.find(read);
-    if (d != g_window_surfaces.end() && ctx != EGL_NO_CONTEXT) grow(dpy, draw, d->second);
+    if (d != g_window_surfaces.end() && ctx != EGL_NO_CONTEXT && !d->second.fixed) grow(dpy, draw, d->second);
     return eglMakeCurrent(dpy, d == g_window_surfaces.end() ? draw : d->second.real,
                           r == g_window_surfaces.end() ? read : r->second.real, ctx);
 }
@@ -290,7 +294,7 @@ WINAPK_GUEST_ABI EGLBoolean guest_eglSwapBuffers(EGLDisplay dpy, EGLSurface surf
     // fits): the next frame gets one that holds it.
     int ww = 0, wh = 0;
     window_size(ws, &ww, &wh);
-    if (ww > ws.side || wh > ws.side) {
+    if (!ws.fixed && (ww > ws.side || wh > ws.side)) {
         std::lock_guard<std::mutex> hold(g_lock);
         auto it = g_window_surfaces.find(surface);
         if (it != g_window_surfaces.end()) grow(dpy, surface, it->second);
@@ -406,6 +410,48 @@ WINAPK_GUEST_ABI __eglMustCastToProperFunctionPointerType guest_eglGetProcAddres
 }
 
 }  // namespace
+
+// MacApkEGL10.nativeCreateSurfaceViewWindow: a window surface on the
+// SurfaceView's native window for an app's own Java GL thread (Google Maps'
+// map renderer: a SurfaceView with its own GLThread, a real EGL context, and
+// eglCreateWindowSurface(holder)). On Android that thread renders straight
+// into the SurfaceView's Surface. Here the window is a pbuffer of the window's
+// size, presented the way a native engine's window surface is
+// (guest_eglSwapBuffers: read back, shown as the guest layer under the
+// views); MacApkEGL10 binds it with EGL14 and swaps it through
+// nativeSwapSurfaceViewWindow.
+void* surface_view_window_create(void* dpy, void* config) {
+    const void* window = native_window_handle();
+    int w = 0, h = 0;
+    if (!dpy || !config || !native_window_buffer_size(window, &w, &h) || w <= 0 || h <= 0) return EGL_NO_SURFACE;
+    const EGLint attribs[] = {EGL_WIDTH, w, EGL_HEIGHT, h, EGL_NONE};
+    EGLSurface s = eglCreatePbufferSurface(dpy, config, attribs);
+    if (s == EGL_NO_SURFACE) {
+        std::fprintf(stderr, "[win.apk] GL: the SurfaceView window surface (%dx%d) failed (0x%x)\n", w, h,
+                     eglGetError());
+        return s;
+    }
+    std::fprintf(stderr, "[win.apk] GL: a Java GL thread's SurfaceView window surface is a %dx%d pbuffer\n", w, h);
+    std::lock_guard<std::mutex> hold(g_lock);
+    WindowSurface ws{window, config, s, w > h ? w : h};
+    ws.fixed = true;
+    g_window_surfaces[s] = ws;
+    return s;
+}
+
+// 1 or 0 for such a surface, -1 for any other (the caller swaps it itself).
+int surface_view_window_swap(void* dpy, void* surface) {
+    {
+        std::lock_guard<std::mutex> hold(g_lock);
+        if (g_window_surfaces.find(surface) == g_window_surfaces.end()) return -1;
+    }
+    return guest_eglSwapBuffers(dpy, surface) ? 1 : 0;
+}
+
+void surface_view_window_destroyed(void* surface) {
+    std::lock_guard<std::mutex> hold(g_lock);
+    g_window_surfaces.erase(surface);
+}
 
 void* guest_gl_resolve(const char* name) {
     if (!name || (std::strncmp(name, "gl", 2) != 0 && std::strncmp(name, "egl", 3) != 0)) return nullptr;

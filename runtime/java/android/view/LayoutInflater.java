@@ -5857,6 +5857,12 @@ public class LayoutInflater {
 
     private String resolveString(String s) {
         if (s == null || s.isEmpty()) return s;
+        // "@null" is TYPE_NULL and "@empty" DATA_NULL_EMPTY: AOSP's TypedArray
+        // .getText answers null for the one and "" for the other, never the
+        // reference itself, which a Material Chip in Google Maps' search bar
+        // showed as its text ("@null").
+        if ("@null".equals(s)) return null;
+        if ("@empty".equals(s)) return "";
         if (s.startsWith("@string/")) {
             try {
                 int id = parseResourceId(s);
