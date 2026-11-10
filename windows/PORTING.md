@@ -560,6 +560,23 @@ nobody has to find them again.
   `runtime/translator/.../macapk_arm64_remap_path`, which Win.apk does not
   compile). The framework's SQLite goes through the same table via a thin VFS
   (`host/sqlite_paths.cpp`).
+- Android file names may hold what NTFS forbids. YouTube opened its per-account
+  database `/data/user/0/<pkg>/databases/<account>||.entitystore` 46 times and
+  every `sqlite3_open_v2` failed, leaving much of its UI empty. The table stores
+  such names as WSL's DrvFs and Cygwin do: in the Android part of a mapped path
+  (never the host prefix, never a host path, so a drive colon is safe) each of
+  `< > : " | ? *`, the control characters 0x01-0x1F, and a name's final dot or
+  space becomes U+F000 + the character; `.` and `..` stay, and `\` stays a
+  separator because Java code joins Android paths with `File.separator`. One
+  function each way (`host_names`, `android_name` in `paths.cpp`); a plain name
+  pays one scan. Listings turn names back only where the guest named the
+  directory by an Android path (or a descriptor): `readdir`/`scandir`/`fts` in
+  the shim, `WinNTFileSystem.list` and a `DirectoryStream`'s entries in the
+  overlay (`WinApkPaths.androidName`). The `*at()` calls map the name they join
+  onto the directory's host path. Not done: `java.nio`'s `WindowsPathParser`
+  (not overlaid) still throws `InvalidPathException` for such a name given to
+  `Paths.get`/`File.toPath`; `realpath`/`getcwd` answer host paths, which keep
+  the private-use characters and open as they are.
 - java.io and java.nio keep the Android form in the overlay
   (`jdk.internal.util.WinApkPaths`, `WinNTFileSystem`, `File`, `WindowsPath`):
   `isAndroid(p)` is "one leading `/`, not `//` (UNC) and not `/C:` (a file URL's

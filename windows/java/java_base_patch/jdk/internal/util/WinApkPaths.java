@@ -104,5 +104,27 @@ public final class WinApkPaths {
         return "/" + String.join("/", out);
     }
 
+    /**
+     * The Android name of a file as its host directory lists it (or of a path that ends in one).
+     * An Android name's characters that Windows forbids (&lt; &gt; : " | ? *, control characters,
+     * a final dot or space) are on the host U+F000 + the character, the mapping WSL uses: host0
+     * writes them so (windows/src/bionic/paths.cpp), and this turns them back for a listing.
+     */
+    public static String androidName(String s) {
+        int n = s.length();
+        StringBuilder sb = null;
+        for (int i = 0; i < n; i++) {
+            int c = s.charAt(i);
+            if (c <= 0xF000 || c > 0xF07F) continue;
+            char plain = (char) (c - 0xF000);
+            boolean last = i == n - 1 || s.charAt(i + 1) == '/' || s.charAt(i + 1) == '\\';
+            if (plain < 0x20 || "<>:\"|?*".indexOf(plain) >= 0 || (last && (plain == '.' || plain == ' '))) {
+                if (sb == null) sb = new StringBuilder(s);
+                sb.setCharAt(i, plain);
+            }
+        }
+        return sb == null ? s : sb.toString();
+    }
+
     private static native String host0(String p);
 }

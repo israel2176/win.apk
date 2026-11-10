@@ -372,7 +372,8 @@ int run_process(std::wstring cmdline) {
 //
 // <app dir>\.macapk-dex-stamp records what classes.jar was made from:
 //
-//   converter=<converter_id>   the converter (com/macapk/dex/ in macapk-loader.jar)
+//   converter=<converter_id>   the converter (com/macapk/dex/ in macapk-loader.jar), then "+framework"
+//                              when it read the class hierarchy from android-framework.jar
 //   apk=<file_id>              the installed base.apk
 //
 // The jar is converted again when either line differs, and when there is no
@@ -501,7 +502,16 @@ bool convert_dex(const Options& o, const fs::path& app_dir, fs::path* jar) {
     std::error_code ec;
     *jar = app_dir / "classes.jar";
     const fs::path stamp = app_dir / ".macapk-dex-stamp";
-    const DexStamp want{converter_id(o.lib / "macapk-loader.jar"), file_id(o.apk)};
+    // The class hierarchy the converter reads is the framework the app will link against, not whatever
+    // Android SDK this PC happens to have (the converter's default): a static method of a framework
+    // interface must be an InterfaceMethodref, and an SDK older than the app's does not have the interface
+    // (YouTube's ScrollFeedbackProvider.createProvider with android-34 installed: every touch move threw
+    // IncompatibleClassChangeError), while a PC with no SDK had no hierarchy at all. The stamp says so
+    // ("+framework"), which converts once more the jars made the other way.
+    const fs::path framework = o.lib / "android-framework.jar";
+    const bool with_framework = fs::exists(framework, ec);
+    const DexStamp want{converter_id(o.lib / "macapk-loader.jar") + (with_framework ? "+framework" : ""),
+                        file_id(o.apk)};
     DexStamp have;
     const bool stamped = read_dex_stamp(stamp, &have);
     const bool cached = fs::exists(*jar, ec);
@@ -513,7 +523,11 @@ bool convert_dex(const Options& o, const fs::path& app_dir, fs::path* jar) {
     if (!why) return true;
     std::fprintf(stderr, "[win.apk] converting the app's code (%s)...\n", why);
     const fs::path tmp = app_dir / "classes.jar.tmp";
-    const int rc = run_java(o, o.lib / "macapk-loader.jar", L"com.macapk.dex.Main", {o.apk.wstring(), tmp.wstring()});
+    std::vector<std::wstring> args;
+    if (with_framework) args = {L"--classpath", framework.wstring()};
+    args.push_back(o.apk.wstring());
+    args.push_back(tmp.wstring());
+    const int rc = run_java(o, o.lib / "macapk-loader.jar", L"com.macapk.dex.Main", args);
     if (rc == 3) {
         jar->clear();
         return true;

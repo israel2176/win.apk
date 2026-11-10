@@ -70,7 +70,12 @@ public final class Bitmap implements android.os.Parcelable {
      *  drawing target via createBitmapWithCanvasBacking. Stays null
      *  for createBitmap(w,h,Config) and BitmapFactory paths so
      *  AndEngine's sprite atlas flow is unaffected. */
-    private BufferedImage awtImage;
+    // transient, as argbView below: a host object is not part of the bitmap an
+    // app's reflection may walk. Gson builds an adapter for every non-transient
+    // field of a model's classes, and one for BufferedImage needs
+    // java.awt.image opened, which it is not (InaccessibleObjectException: a
+    // bank's login response, whose model holds a Bitmap, could not be parsed).
+    private transient BufferedImage awtImage;
     /** v1.0.426 Tier-2: AOSP mutability. createBitmap(...) returns a MUTABLE
      *  bitmap; BitmapFactory.decode* returns an IMMUTABLE one. Was hardwired
      *  false, so code that checks isMutable() before drawing into / reconfiguring
@@ -2040,7 +2045,7 @@ public final class Bitmap implements android.os.Parcelable {
     // a REPLACED buffer (new array) or a size change rebuilds the view. The external array
     // makes the DataBuffer UNTRACKABLE, so Java2D never caches a stale copy of it.
     // MACAPK_BITMAP_ARGB_VIEW=0 restores the per-draw setRGB copy. Gate: debug/argbview_gate.sh.
-    private BufferedImage argbView;
+    private transient BufferedImage argbView;
     private int[] argbViewSrc;
     static final boolean ARGB_VIEW = !"0".equals(System.getenv("MACAPK_BITMAP_ARGB_VIEW"));
     private static final java.awt.image.DirectColorModel ARGB_CM =

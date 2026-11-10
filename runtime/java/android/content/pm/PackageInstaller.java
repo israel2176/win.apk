@@ -117,7 +117,9 @@ public class PackageInstaller {
         long size = params != null ? params.sizeBytes : -1;
         String label = (params != null && params.appLabel != null)
                 ? params.appLabel.toString() : null;
-        int id = PackageInstallerBackend.create(pkg, size, label).id;
+        PackageInstallerBackend.SessionState state = PackageInstallerBackend.create(pkg, size, label);
+        state.inheritExisting = params != null && params.mode == SessionParams.MODE_INHERIT_EXISTING;
+        int id = state.id;
         // Record the rest of the SessionParams so getSessionInfo() can echo
         // them back; see SessionMeta for why this half lives here.
         SessionMeta.record(id, params);
@@ -849,6 +851,10 @@ public class PackageInstaller {
         // @hide on AOSP; the Play Store probes it reflectively. We never install
         // instant apps, so record nothing -- a regular install is the only mode.
         public void setInstallAsInstantApp(boolean isInstantApp) {}
+        /** AOSP @SystemApi: lets the installer dip into the storage reserved for the system
+         *  (INSTALL_ALLOCATE_AGGRESSIVE). There is no such reserve here; the Play Store sets it
+         *  on every session, and without the method each install died on NoSuchMethodError. */
+        public void setAllocateAggressive(boolean allocateAggressive) {}
         /** AOSP API-24+; Aurora calls it (setOriginatingUid(Process.myUid()))
          *  on every install at our presented SDK, so it must resolve. */
         public void setOriginatingUid(int originatingUid) { this.originatingUid = originatingUid; }

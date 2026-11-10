@@ -949,7 +949,11 @@ public final class ResourceIndex {
         return cfgDensityDpi + "|" + cfgNight + "|" + cfgOrientation + "|"
             + w + "x" + h + "|" + sw
             + "|" + cfgLocales.toLanguageTags() + "|" + cfgResSdk
-            + (MACAPK_RES_SIZECLASS ? "|sl" + Integer.toHexString(sl) : "");
+            + (MACAPK_RES_SIZECLASS ? "|sl" + Integer.toHexString(sl) : "")
+            // The platform table's -ldrtl rows are selected by the direction, and
+            // a Configuration can carry one its locale does not imply. Appended
+            // only for RTL, so every LTR key and its cached slices stay as they were.
+            + (macapkCfgRtl() ? "|ldrtl" : "");
     }
 
     /** The largest threshold <= dp (0 if none), i.e. the qualifier bucket dp
@@ -1119,6 +1123,14 @@ public final class ResourceIndex {
         return m;
     }
 
+    /** Does this screenLayout say right-to-left? Its layout-direction bits are
+     *  what -ldrtl / -ldltr match (ResTable_config::match); undefined is LTR. */
+    private static boolean macapkIsRtl(int screenLayout) {
+        return (screenLayout & android.content.res.Configuration.SCREENLAYOUT_LAYOUTDIR_MASK)
+                == android.content.res.Configuration.SCREENLAYOUT_LAYOUTDIR_RTL;
+    }
+    private boolean macapkCfgRtl() { return macapkIsRtl(cfgScreenLayout); }
+
     /** Would an index built for `next` SELECT different resources than this
      *  one? True iff a qualifier this class matches on could flip: orientation,
      *  density, night, the screen size class or long aspect when the app's or the
@@ -1138,6 +1150,9 @@ public final class ResourceIndex {
         boolean night = (next.uiMode & android.content.res.Configuration.UI_MODE_NIGHT_MASK)
                 == android.content.res.Configuration.UI_MODE_NIGHT_YES;
         if (night != cfgNight) return true;
+        // -ldrtl / -ldltr. Normally moves with the locale (caught above), but a
+        // Configuration can carry a direction of its own (setLayoutDirection).
+        if (macapkIsRtl(next.screenLayout) != macapkCfgRtl()) return true;
         int[][] app = macapkAppSizeBuckets();
         int[][] fw = null;
         try {
@@ -3301,7 +3316,13 @@ public final class ResourceIndex {
             // above sw's 10000 rather than merely above orientation. MEASURED:
             // 11 decoded app dirs ship a values-ldltr* with content, including
             // values-ldltr-v21, so this is not a one-app curiosity.
-            if (q.equals("ldltr")) { score += 20000; continue; }
+            // Matched against the configuration, as ResTable_config::match does
+            // (a config naming a direction matches only that direction): this
+            // used to answer "we are LTR" whatever the locale, so an app in
+            // Hebrew or Arabic never got its -ldrtl drawables and values. A
+            // configuration that names no direction counts as LTR, as before.
+            if (q.equals("ldltr")) { if (macapkCfgRtl())  return -1; score += 20000; continue; }
+            if (q.equals("ldrtl")) { if (!macapkCfgRtl()) return -1; score += 20000; continue; }
             // SCREEN ASPECT and SCREEN SHAPE. These used to be accepted
             // "neutrally" at score 0 alongside ldltr, with the comment "harmless
             // on our device". They are not harmless in either direction:
@@ -3372,7 +3393,6 @@ public final class ResourceIndex {
             if (q.equals("notlong"))  return -1;
             if (q.equals("notround")) { score += 600; continue; }
             if (q.equals("round"))    return -1;
-            if (q.equals("ldrtl")) return -1;   // we are LTR
             // ---- locale (AOSP qualifier precedence #2) ----
             // Two spellings, both emitted by aapt2/apktool:
             //   values-fr, values-fr-rCA          (legacy; split() has

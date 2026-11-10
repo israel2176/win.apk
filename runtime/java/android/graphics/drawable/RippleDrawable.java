@@ -144,6 +144,17 @@ public class RippleDrawable extends LayerDrawable {
         // conjunction is used verbatim rather than loosened.
         final boolean active = enabled && pressed;
         if (mRippleActive == active) return changed;
+        final long now = android.os.SystemClock.uptimeMillis();
+        final float level = macapkLevel(now);
+        if (active) {
+            mEnterAt = now - (long) (level * ENTER_MS);  // a press during the fade goes on from there
+            mExitAt = 0;
+        } else {
+            // A tap shorter than the enter still shows: AOSP's ripple finishes
+            // entering after the finger is up, then fades.
+            mExitFrom = Math.max(level, TAP_LEVEL);
+            mExitAt = now;
+        }
         mRippleActive = active;
         invalidateSelf();       // AOSP: tryRippleEnter/Exit end in invalidateSelf(false)
         return true;
@@ -227,22 +238,51 @@ public class RippleDrawable extends LayerDrawable {
      *    of the ripple's extent, and it is exact for the two shapes that
      *    actually occur (a plain rect mask and a round-rect mask).
      *
-     *  NOT implemented, deliberately: RippleForeground's expanding radius and
-     *  its exit fade. Those need a per-frame animator; the acknowledgement the
-     *  user needs is the fill, and an animator is a separate decision. */
+     *  NOT implemented, deliberately: RippleForeground's expanding radius. The
+     *  fill covers the whole mask from the start; its opacity is what moves
+     *  (macapkLevel below). */
+    // The press over time. The fill used to appear whole on the frame of the
+    // press and vanish on the frame of the release, a hard flash of a box under
+    // every tap, where a device shows a ripple that takes 225 ms to cover the
+    // view (RippleForeground.RIPPLE_ENTER_DURATION) and 150 ms to fade
+    // (OPACITY_EXIT_DURATION). There is still no radius; the same times drive
+    // the fill's opacity, so a tap is a brief soft tint and a held press settles
+    // at the colour's own alpha, as before.
+    private static final long ENTER_MS = 225, EXIT_MS = 150;
+    private static final float TAP_LEVEL = 0.4f;
+    private long mEnterAt, mExitAt;
+    private float mExitFrom;
+    private int mPressedColor;
+
+    /** How much of the pressed fill shows at `now`, 0..1. */
+    private float macapkLevel(long now) {
+        if (mRippleActive) return Math.min(1f, (now - mEnterAt) / (float) ENTER_MS);
+        if (mExitAt == 0) return 0f;
+        final float left = 1f - (now - mExitAt) / (float) EXIT_MS;
+        if (left <= 0f) { mExitAt = 0; return 0f; }
+        return mExitFrom * left;
+    }
+
     private void drawBackgroundAndRipples(android.graphics.Canvas canvas) {
-        if (!mRippleActive || canvas == null) return;
+        if (canvas == null) return;
+        final float level = macapkLevel(android.os.SystemClock.uptimeMillis());
+        if (level <= 0f) return;
+        if (level < 1f || !mRippleActive) invalidateSelf();  // still moving: another frame
         final android.content.res.ColorStateList csl = color;
         if (csl == null) return;
-        final int c;
+        int c;
         try {
             // AOSP's default here is Color.BLACK, i.e. OPAQUE black. That is the
             // right AOSP answer for a ColorStateList that cannot answer at all,
             // and a <ripple> without a resolvable colour is an XmlPullParserException
             // on a device (verifyRequiredAttributes, :659-665), so the case does
             // not arise from well-formed resources.
-            c = csl.getColorForState(getState(), 0xFF000000);
+            // While it fades the state is no longer pressed, and a colour list may
+            // name a colour for the pressed state only: the fade keeps the press's.
+            if (mRippleActive) mPressedColor = csl.getColorForState(getState(), 0xFF000000);
+            c = mPressedColor;
         } catch (Throwable t) { return; }
+        c = (c & 0x00FFFFFF) | (Math.round((c >>> 24) * level) << 24);
         if ((c >>> 24) == 0) return;    // fully transparent: nothing to paint
 
         final android.graphics.Rect b = getBounds();

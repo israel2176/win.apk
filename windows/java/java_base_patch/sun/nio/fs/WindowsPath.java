@@ -107,6 +107,11 @@ class WindowsPath implements Path {
                                                 String path,
                                                 BasicFileAttributes attrs)
     {
+        // Win.apk: an entry a directory stream lists (the only caller with attributes) under an
+        // Android path has its Android name (WinApkPaths.androidName), which opens the same file.
+        if (attrs != null && jdk.internal.util.WinApkPaths.isAndroid(path.replace('\\', '/'))) {
+            path = jdk.internal.util.WinApkPaths.androidName(path);
+        }
         try {
             WindowsPathParser.Result result =
                 WindowsPathParser.parseNormalizedPath(path);

@@ -102,7 +102,65 @@ public class ViewGroup extends View implements ViewParent, ViewManager {
             this.width = src.width; this.height = src.height;
             this.macapkGravity = src.macapkGravity;
         }
-        public LayoutParams(Context c, android.util.AttributeSet attrs) {}
+        /** AOSP reads layout_width and layout_height here
+         *  (ViewGroup.LayoutParams(Context, AttributeSet): obtainStyledAttributes
+         *  over R.styleable.ViewGroup_Layout, then setBaseAttributes), and
+         *  MarginLayoutParams the margins. Here the inflater writes them after
+         *  the constructor returns, which is too late for a LayoutParams
+         *  subclass that looks at them IN its own constructor: the
+         *  ConstraintLayout 1.0 that old apps bundle ends its constructor with
+         *  validate(), which took width == 0 for "match constraints" for every
+         *  child (YouTube's toolbar and bottom bar: each icon stretched to its
+         *  cell and squeezed to zero height, so both bars were empty).
+         *  Read only for a LayoutParams class the app defines: the framework's
+         *  own classes do not look, and every inflated view comes through
+         *  here. A size the element does not give is left as it was. */
+        public LayoutParams(Context c, android.util.AttributeSet attrs) {
+            macapkReadLayoutAttrs(c, attrs);
+        }
+
+        private static final int[] MACAPK_LAYOUT_ATTRS = {
+            0x010100f4, // 0  layout_width
+            0x010100f5, // 1  layout_height
+            0x010100f6, // 2  layout_margin
+            0x010100f7, // 3  layout_marginLeft
+            0x010100f8, // 4  layout_marginTop
+            0x010100f9, // 5  layout_marginRight
+            0x010100fa, // 6  layout_marginBottom
+            0x010103b3, // 7  layout_marginStart
+            0x010103b4, // 8  layout_marginEnd
+        };
+
+        final void macapkReadLayoutAttrs(Context c, android.util.AttributeSet attrs) {
+            if (c == null || attrs == null) return;
+            if (getClass().getClassLoader() == ViewGroup.class.getClassLoader()) return;
+            try {
+                final android.content.res.TypedArray a = c.obtainStyledAttributes(attrs, MACAPK_LAYOUT_ATTRS);
+                try {
+                    width = a.getLayoutDimension(0, width);
+                    height = a.getLayoutDimension(1, height);
+                    if (this instanceof MarginLayoutParams m) {
+                        // AOSP MarginLayoutParams(Context, AttributeSet): layout_margin
+                        // sets all four, else each side, then start and end.
+                        final int all = a.getDimensionPixelSize(2, -1);
+                        if (all >= 0) {
+                            m.leftMargin = m.topMargin = m.rightMargin = m.bottomMargin = all;
+                        } else {
+                            m.leftMargin = a.getDimensionPixelSize(3, m.leftMargin);
+                            m.topMargin = a.getDimensionPixelSize(4, m.topMargin);
+                            m.rightMargin = a.getDimensionPixelSize(5, m.rightMargin);
+                            m.bottomMargin = a.getDimensionPixelSize(6, m.bottomMargin);
+                            if (a.hasValue(7)) m.startMargin = a.getDimensionPixelSize(7, 0);
+                            if (a.hasValue(8)) m.endMargin = a.getDimensionPixelSize(8, 0);
+                        }
+                    }
+                } finally {
+                    a.recycle();
+                }
+            } catch (Throwable ignored) {
+                // The inflater still writes them after construction.
+            }
+        }
     }
 
     public static class MarginLayoutParams extends LayoutParams {
@@ -124,7 +182,9 @@ public class ViewGroup extends View implements ViewParent, ViewManager {
             rightMargin = src.rightMargin; bottomMargin = src.bottomMargin;
             startMargin = src.startMargin; endMargin = src.endMargin;
         }
-        public MarginLayoutParams(Context c, android.util.AttributeSet attrs) {}
+        public MarginLayoutParams(Context c, android.util.AttributeSet attrs) {
+            macapkReadLayoutAttrs(c, attrs);  // see LayoutParams(Context, AttributeSet)
+        }
         public void setMargins(int l, int t, int r, int b) {
             leftMargin = l; topMargin = t; rightMargin = r; bottomMargin = b;
         }
@@ -529,6 +589,22 @@ public class ViewGroup extends View implements ViewParent, ViewManager {
         try { android.app.Activity.macapkMaybeRewireNativeSurface(child); }
         catch (Throwable ignored) {}
         macapkDragChildAdded(child);
+    }
+    /** AOSP ViewGroup.resetResolvedLayoutDirection (android13-release
+     *  ViewGroup.java:7759): the children that INHERIT their direction drop
+     *  theirs with the parent's, so setLayoutDirection on a group, or a group
+     *  moved under another parent, reaches the views below it. An unresolved
+     *  child ends the walk: nothing below it resolved by inheriting through it
+     *  (View.resolveLayoutDirection resolves the parent first). */
+    @Override public void resetRtlProperties() {
+        super.resetRtlProperties();
+        for (int i = 0; i < children.size(); i++) {
+            View c = children.get(i);
+            if (c != null && c.isLayoutDirectionResolved()
+                    && c.getRawLayoutDirection() == LAYOUT_DIRECTION_INHERIT) {
+                c.resetRtlProperties();
+            }
+        }
     }
     /** AOSP ViewGroup.resolveLayoutParams() (android13-release
      *  ViewGroup.java:7794) RECURSES into every child:

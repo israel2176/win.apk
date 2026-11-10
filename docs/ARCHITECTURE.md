@@ -224,7 +224,7 @@ functions, every one declared with the System V calling convention
 | `pthread.cpp` | Mutexes, condition variables, rwlocks, once, keys and threads on `WaitOnAddress`, over Bionic's struct layouts; cleanup handlers (`pthread_exit` runs the pending ones); semaphores |
 | `stdio.cpp`, `fd.cpp` | One file-descriptor table shared with Java (`NativeOs`): files, `stat` in Bionic's layout, directories, `FILE`, hard links; Bionic's `fts` over the same calls (it never changes directory: always `FTS_NOCHDIR`); `popen` and `system`, which find no shell to run (the command exits 127, as when `/system/bin/sh` cannot be run); pipes, eventfd and epoll; named pipes (`mkfifo`: a marker file `stat` reports as a FIFO, opened as the process's one pipe buffer for that path); `poll`, `select`, `epoll_wait`. A wait sleeps until something it waits for changes: pipes, eventfds and the like wake it through one readiness counter (`WaitOnAddress`); a wait that includes sockets sleeps in `WSAPoll` on them plus a loopback datagram socket of its own that the counter's changes send a byte to; an armed timerfd shortens the sleep to its expiry. Nothing is polled on a period. epoll's `EPOLLET` is edge-triggered (an event once when it appears, again after a new edge: more written to a pipe or eventfd, a socket read that took bytes, a send that would have blocked, `EPOLL_CTL_MOD`), `EPOLLONESHOT` reports once until `EPOLL_CTL_MOD`, and an interest goes when its descriptor closes |
 | `socket.cpp` | BSD sockets on Winsock with Linux's constants translated; `getaddrinfo`; `getifaddrs`, `if_nametoindex`, `if_indextoname` and `if_nameindex` over one list of the adapters that are up (Linux-shaped names, Windows' interface indexes). Socket options: the ones Winsock has are mapped, among them multicast membership in all its forms (`ip_mreq`, `ip_mreqn`, `MCAST_JOIN_GROUP` and the other RFC 3678 requests), `SO_LINGER`, `SO_REUSEPORT` on datagram sockets (Windows' `SO_REUSEADDR`), the TCP keep-alive times, `TCP_USER_TIMEOUT`, path-MTU discovery as "don't fragment"; options that only tune (`SO_PRIORITY`, `TCP_QUICKACK`, `IP_RECVTOS`...) succeed with one log line each; any other fails with `ENOPROTOOPT`, so code that asks for a feature (`UDP_SEGMENT`) takes its fallback |
-| `paths.cpp` | Android's absolute paths (`/data`, `/sdcard`, `/system/fonts`, `/dev/null`) under the Android root; `/proc/self` is `/proc/<pid>` there, where Boot writes the process's `cmdline` |
+| `paths.cpp` | Android's absolute paths (`/data`, `/sdcard`, `/system/fonts`, `/dev/null`) under the Android root; `/proc/self` is `/proc/<pid>` there, where Boot writes the process's `cmdline`; the characters of an Android file name that Windows forbids, stored as U+F000 + the character as WSL does |
 | `looper.cpp` | The NDK's `ALooper` |
 | `misc.cpp` | Clocks and time, `strptime`, `mmap` on `VirtualAlloc` (with `PROT_NONE` as a reservation; a file mapped `MAP_SHARED`, or read-only, is a view of the file (`MapViewOfFile`), also `MAP_FIXED` into an untouched reservation, so writes reach the file and every mapping sees them; a writable private one is a copy), system properties, the guest environment (`setenv`, `putenv`, `clearenv`), `syscall` for futex and friends and for raw `mmap`, `mprotect` and `munmap` (Gecko's allocator), `sysconf`, `uname`, `getauxval`, `sched_getaffinity` (the process's affinity), `fork`/`vfork` (-1, `ENOSYS`: a Windows process cannot be copied) and `waitpid` (`ECHILD`), `random(3)` as Bionic's (NetBSD's) generator, libm (the `long double` rounding functions on binary128), libandroid's `ATrace` (tracing off) |
 | `locale.cpp` | The C and C.UTF-8 locales libc++ builds on, UTF-8 conversion, `wctype.h` |
@@ -765,8 +765,10 @@ tests the transport and the broker's checks across three processes.
    --aot-translate` starts for each: `winapk-aot` writes C, clang compiles it
    into `<lib>.so.aot.dll`. Nothing waits for it.
 5. Upstream's DEX converter (`com.macapk.dex.Main`) turns the app's DEX into
-   `apps\<name>\classes.jar`, with a stamp naming the converter and the APK so
-   a change to either converts again. The launcher then moves the label and
+   `apps\<name>\classes.jar`, reading the class hierarchy from
+   `libndroid-framework.jar` (the framework the app links against, not an
+   Android SDK the PC may have), with a stamp naming the converter and the APK
+   so a change to either converts again. The launcher then moves the label and
    `package.txt` beside the APK as `library\<name>.label` and `.package`.
 6. The launcher makes the Start menu shortcut (and the desktop one, if the
    setting is on) and adds the app to the library.
@@ -872,6 +874,13 @@ goes through the Bionic shim's table (`windows/src/bionic/paths.cpp`); java.io
 and java.nio through the java.base overlay's `jdk.internal.util.WinApkPaths`,
 which asks the same table (`windows/host/java_io_open.cpp`), so a `File` keeps
 its Android path while its opens, attributes and listings reach the host file.
+An Android file name may hold characters Windows forbids (`< > : " | ? *`,
+control characters, a final dot or space): the table stores each as the
+private-use character U+F000 + the character, the mapping WSL and Cygwin use
+(YouTube's `<account>||.entitystore` database, with U+F07C for each `|`
+on disk), and directory listings under an Android path (the shim's `readdir`
+and `scandir`, `File.list`, a `DirectoryStream`) turn the names back. Host
+paths (`C:\...`) are never rewritten.
 
 Settings live in `HKCU\Software\Win.apk`: `Theme`, `Language`, `PhoneSize`,
 `Landscape` (absent means landscape; 0 means portrait), `DesktopShortcut`,

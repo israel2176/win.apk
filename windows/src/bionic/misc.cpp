@@ -695,6 +695,65 @@ void* map_shared_view(size_t len, int prot, int fd, int64_t off) {
     return p;
 }
 
+// A writable MAP_SHARED mapping that could not be a view (above: a file still empty, or a range past its
+// end, both of which Linux maps) is a private copy, and what the guest writes there has to reach the file
+// some other way: a library that creates a file, maps its header and only then grows it wrote the header
+// into the copy, and the file kept none of it. Play services' search index (Icing) is laid out so: its
+// files came back with a zero checksum and an empty trie header, which it takes for corruption it cannot
+// repair, and the process aborted at every start. The copy is written back, page by page where it
+// changed, when the guest syncs or unmaps it, up to the file's size at that moment, as the kernel drops
+// what lies past the end. Pages the guest did not touch are left to whatever else wrote the file (pwrite
+// into a mapped range). Until then another reader of the file does not see the writes; a view does.
+struct SharedCopy {
+    HANDLE file;        // our own handle: the guest may close its descriptor right after mmap
+    int64_t off;
+    size_t len;
+    char* shadow;       // the bytes as last read from or written to the file
+};
+std::map<uintptr_t, SharedCopy> g_copies;  // under g_maps_lock
+constexpr size_t kSharedCopyMax = size_t{64} << 20;  // the shadow doubles the memory: small mappings only
+
+void remember_shared_copy(void* p, size_t len, int fd, int64_t off) {
+    if (len == 0 || len > kSharedCopyMax || off < 0 || fd_object(fd)) return;
+    const intptr_t h = _get_osfhandle(fd);
+    if (h == -1) return;
+    HANDLE file = nullptr;
+    if (!DuplicateHandle(GetCurrentProcess(), reinterpret_cast<HANDLE>(h), GetCurrentProcess(), &file, 0, FALSE,
+                         DUPLICATE_SAME_ACCESS)) {
+        return;
+    }
+    char* shadow = static_cast<char*>(std::malloc(len));
+    if (!shadow) {
+        CloseHandle(file);
+        return;
+    }
+    std::memcpy(shadow, p, len);
+    std::lock_guard<std::mutex> hold(g_maps_lock);
+    g_copies[reinterpret_cast<uintptr_t>(p)] = SharedCopy{file, off, len, shadow};
+}
+
+// Writes the changed pages of `c` within [from, from + n) of the copy to the file. Under g_maps_lock.
+void flush_shared_copy(uintptr_t base, SharedCopy& c, size_t from, size_t n) {
+    LARGE_INTEGER size{};
+    if (!GetFileSizeEx(c.file, &size)) return;
+    const int64_t in_file = size.QuadPart - c.off;  // how much of the mapping the file holds now
+    if (in_file <= 0) return;
+    const size_t end = std::min({c.len, from + n, static_cast<size_t>(in_file)});
+    const char* mem = reinterpret_cast<const char*>(base);
+    for (size_t at = from & ~size_t{4095}; at < end; at += 4096) {
+        const size_t count = std::min<size_t>(4096, end - at);
+        if (std::memcmp(mem + at, c.shadow + at, count) == 0) continue;
+        OVERLAPPED where{};
+        const uint64_t pos = static_cast<uint64_t>(c.off) + at;
+        where.Offset = static_cast<DWORD>(pos);
+        where.OffsetHigh = static_cast<DWORD>(pos >> 32);
+        DWORD wrote = 0;
+        if (WriteFile(c.file, mem + at, static_cast<DWORD>(count), &wrote, &where) && wrote == count) {
+            std::memcpy(c.shadow + at, mem + at, count);
+        }
+    }
+}
+
 // MAP_FIXED of a file into a reservation this file made (PROT_NONE anonymous):
 // Realm reserves a 64 MB section and maps its database at the start of it,
 // then grows the mapping in place. A view can only go where nothing is
@@ -832,6 +891,7 @@ WINAPK_GUEST_ABI void* g_mmap(void* addr, size_t len, int prot, int flags, int f
             }
         }
         if (at >= 0) _lseeki64(fd, at, SEEK_SET);
+        if ((flags & 3) == 1 && (prot & 2)) remember_shared_copy(p, len, fd, off);
     }
     DWORD old;
     VirtualProtect(p, len, win_protect(prot), &old);
@@ -853,6 +913,14 @@ WINAPK_GUEST_ABI int g_munmap(void* addr, size_t len) {
             }
         }
         return 0;
+    }
+    if (auto c = g_copies.find(a); c != g_copies.end()) {
+        flush_shared_copy(a, c->second, 0, c->second.len);
+        if (len >= c->second.len) {
+            CloseHandle(c->second.file);
+            std::free(c->second.shadow);
+            g_copies.erase(c);
+        }
     }
     auto it = g_maps.find(reinterpret_cast<uintptr_t>(addr));
     if (it != g_maps.end() && len >= it->second) {
@@ -887,7 +955,18 @@ WINAPK_GUEST_ABI int g_madvise(void* addr, size_t len, int advice) {
 // A shared view's changes are the file's already (the system cache); msync
 // starts writing them out. Private copies have nothing to write.
 WINAPK_GUEST_ABI int g_msync(void* addr, size_t len, int) {
-    if (in_shared_view(addr, len)) FlushViewOfFile(addr, len);
+    if (in_shared_view(addr, len)) {
+        FlushViewOfFile(addr, len);
+        return 0;
+    }
+    // A copy that stands in for a shared mapping (remember_shared_copy): this is when it reaches the file.
+    std::lock_guard<std::mutex> hold(g_maps_lock);
+    const auto a = reinterpret_cast<uintptr_t>(addr);
+    auto c = g_copies.upper_bound(a);
+    if (c != g_copies.begin()) {
+        --c;
+        if (a < c->first + c->second.len) flush_shared_copy(c->first, c->second, a - c->first, len);
+    }
     return 0;
 }
 WINAPK_GUEST_ABI int g_mlock(const void*, size_t) { return 0; }

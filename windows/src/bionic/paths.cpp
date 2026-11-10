@@ -20,6 +20,16 @@
 // The android root is the per-user folder the runtime mirrors Android's
 // layout in (data/app, data/data/<pkg>, sdcard); the runtime sets it before
 // any guest code runs.
+//
+// An Android file name may hold what a Windows one may not: < > : " | ? *, the
+// control characters, a final dot or space (YouTube's per-account database is
+// "<account id>||.entitystore"; every open of it failed). In the Android part
+// of a mapped path each such character is stored as U+F000 + the character, a
+// private-use code point: the mapping WSL's DrvFs and Cygwin use, so such a
+// file reads right from them too. A listing of a directory named by an Android
+// path turns the names back (android_name). A host path is never touched, nor
+// the host prefix the table puts before the Android part; '\' stays a
+// separator, since Java code joins Android paths with File.separator.
 
 #include "bionic_internal.h"
 
@@ -52,6 +62,59 @@ std::wstring to_wide(const char* utf8, size_t len) {
 std::wstring trimmed(std::wstring w) {
     while (w.size() > 3 && (w.back() == L'\\' || w.back() == L'/')) w.pop_back();
     return w;
+}
+
+// Whether Windows refuses `c` in a file name wherever it stands.
+bool forbidden(wchar_t c) {
+    if (c < 0x20) return c != 0;
+    return c == L'<' || c == L'>' || c == L':' || c == L'"' || c == L'|' || c == L'?' || c == L'*';
+}
+bool is_separator(wchar_t c) { return c == L'/' || c == L'\\'; }
+
+// A final dot or space of the name that starts at `start` and ends at `end`
+// (inclusive), which Windows drops; "." and ".." are the directory links.
+template <typename Char>
+bool dropped_ending(const Char* s, size_t start, size_t end) {
+    if (s[end] == ' ') return true;
+    if (s[end] != '.') return false;
+    const size_t n = end + 1 - start;
+    return !(n == 1 || (n == 2 && s[start] == '.'));
+}
+
+constexpr wchar_t kPrivate = 0xF000;  // DrvFs' and Cygwin's base for a forbidden character
+
+// Whether any name in the Android path part `p` needs the mapping: the scan
+// every path pays, so that a plain one costs nothing more.
+bool needs_host_names(const char* p, size_t len) {
+    size_t start = 0;  // of the name `i` is in
+    for (size_t i = 0; i < len; ++i) {
+        const unsigned char c = static_cast<unsigned char>(p[i]);
+        if (c > '|') continue;  // UTF-8's bytes of other characters too
+        if (is_separator(c)) {
+            start = i + 1;
+        } else if (forbidden(c)) {
+            return true;
+        } else if (i + 1 == len || is_separator(static_cast<unsigned char>(p[i + 1]))) {
+            if (dropped_ending(p, start, i)) return true;
+        }
+    }
+    return false;
+}
+
+// Guest code that knows no drive letters takes the host paths Java hands
+// it ("C:\...") for relative ones and joins them onto getcwd() or "/":
+// SQLite's unixFullPathname yields "C:\cwd/C:\data\x.db" or "/C:\data\x.db".
+// The last drive-letter path after a separator is the one that was meant.
+const char* meant_path(const char* p, size_t* len) {
+    for (size_t i = *len; i-- > 2;) {
+        if (p[i] == ':' && i + 1 < *len && (p[i + 1] == '\\' || p[i + 1] == '/') &&
+            ((p[i - 1] >= 'A' && p[i - 1] <= 'Z') || (p[i - 1] >= 'a' && p[i - 1] <= 'z')) &&
+            (p[i - 2] == '/' || p[i - 2] == '\\')) {
+            *len -= i - 1;
+            return p + i - 1;
+        }
+    }
+    return p;
 }
 
 bool starts_with(const char* s, const char* prefix) { return std::strncmp(s, prefix, std::strlen(prefix)) == 0; }
@@ -93,22 +156,49 @@ const char* storage_rest(const char* p) {
     return nullptr;
 }
 
+// The Android part of a path (`p`, UTF-8: "/name/name", or names relative to
+// an open directory) as it is on the host: the names Windows would refuse
+// spelled with private-use characters, see the top of the file.
+std::wstring host_names(const char* p, size_t len) {
+    std::wstring w = to_wide(p, len);
+    if (!needs_host_names(p, len)) return w;
+    size_t start = 0;
+    for (size_t i = 0; i < w.size(); ++i) {
+        const wchar_t c = w[i];
+        if (is_separator(c)) {
+            start = i + 1;
+            continue;
+        }
+        const bool last = i + 1 == w.size() || is_separator(w[i + 1]);
+        if (forbidden(c) || (last && dropped_ending(w.c_str(), start, i))) w[i] = static_cast<wchar_t>(kPrivate + c);
+    }
+    return w;
+}
+
+// host_names' inverse for one listed name, in place (a mapped character is one
+// UTF-16 unit either way). A private-use dot or space counts only at the end,
+// where host_names writes it, so every name comes back exactly as it went.
+void android_name(wchar_t* name) {
+    for (wchar_t* c = name; *c; ++c) {
+        if (*c <= kPrivate || *c > kPrivate + 0x7F) continue;
+        const wchar_t plain = static_cast<wchar_t>(*c - kPrivate);
+        if (forbidden(plain) || ((plain == L'.' || plain == L' ') && c[1] == 0)) *c = plain;
+    }
+}
+
+// Whether host_path() reads `p` as an Android path (one leading '/'), whose
+// names it maps, and not as a host path, which it leaves as it is.
+bool is_android_path(const char* p) {
+    if (!p) return false;
+    size_t len = std::strlen(p);
+    p = meant_path(p, &len);
+    return p[0] == '/' && p[1] != '/';
+}
+
 std::wstring host_path(const char* p) {
     if (!p) return {};
     size_t len = std::strlen(p);
-    // Guest code that knows no drive letters takes the host paths Java hands
-    // it ("C:\...") for relative ones and joins them onto getcwd() or "/":
-    // SQLite's unixFullPathname yields "C:\cwd/C:\data\x.db" or "/C:\data\x.db".
-    // The last drive-letter path after a separator is the one that was meant.
-    for (size_t i = len; i-- > 2;) {
-        if (p[i] == ':' && i + 1 < len && (p[i + 1] == '\\' || p[i + 1] == '/') &&
-            ((p[i - 1] >= 'A' && p[i - 1] <= 'Z') || (p[i - 1] >= 'a' && p[i - 1] <= 'z')) &&
-            (p[i - 2] == '/' || p[i - 2] == '\\')) {
-            p += i - 1;
-            len -= i - 1;
-            break;
-        }
-    }
+    p = meant_path(p, &len);
     // A host path (drive letter, UNC, relative): as it is.
     if (p[0] != '/' || p[1] == '/') return to_wide(p, len);
     if (std::strcmp(p, "/dev/null") == 0) return L"NUL";
@@ -129,23 +219,23 @@ std::wstring host_path(const char* p) {
             root = g_android_root;
         }
         const std::wstring dir = android_cacerts_dir(root);
-        if (!dir.empty()) return dir + to_wide(rest, std::strlen(rest));
+        if (!dir.empty()) return dir + host_names(rest, std::strlen(rest));
     }
 
     std::lock_guard<std::mutex> hold(g_lock);
     if (!g_fonts_dir.empty()) {
         if (std::strcmp(p, "/system/etc/fonts.xml") == 0) return g_fonts_dir + L"\\fonts.xml";
         if (starts_with(p, "/system/fonts") && (p[13] == '\0' || p[13] == '/')) {
-            return g_fonts_dir + to_wide(p + 13, len - 13);
+            return g_fonts_dir + host_names(p + 13, len - 13);
         }
     }
     if (g_android_root.empty()) return to_wide(p, len);
-    if (const char* rest = app_data_rest(p)) return g_app_data_dir + to_wide(rest, std::strlen(rest));
-    if (const char* rest = storage_rest(p)) return g_android_root + L"\\sdcard" + to_wide(rest, std::strlen(rest));
+    if (const char* rest = app_data_rest(p)) return g_app_data_dir + host_names(rest, std::strlen(rest));
+    if (const char* rest = storage_rest(p)) return g_android_root + L"\\sdcard" + host_names(rest, std::strlen(rest));
     if (std::strncmp(p, "/data/user/0", 12) == 0 && (p[12] == 0 || p[12] == '/')) {
-        return g_android_root + L"\\data\\data" + to_wide(p + 12, len - 12);
+        return g_android_root + L"\\data\\data" + host_names(p + 12, len - 12);
     }
-    return g_android_root + to_wide(p, len);
+    return g_android_root + host_names(p, len);
 }
 
 }  // namespace winapk::bionic
@@ -162,6 +252,10 @@ void set_app_data(const char* package, const char* host_dir) {
     bionic::g_app_data_dir = bionic::trimmed(bionic::to_wide(host_dir, host_dir ? std::strlen(host_dir) : 0));
 }
 std::wstring android_host_path(const char* path) { return bionic::host_path(path); }
+std::wstring android_file_name(std::wstring host_name) {
+    if (!host_name.empty()) bionic::android_name(&host_name[0]);
+    return host_name;
+}
 void set_system_fonts_dir(const char* dir) {
     std::lock_guard<std::mutex> hold(bionic::g_lock);
     bionic::g_fonts_dir = bionic::trimmed(bionic::to_wide(dir, dir ? std::strlen(dir) : 0));

@@ -390,6 +390,9 @@ public final class PackageInstallerBackend {
         public final String appPackageName;   // SessionParams.setAppPackageName, may be null
         public final long sizeBytes;          // SessionParams.setSize hint, -1 unknown
         public final String appLabel;         // SessionParams.setAppLabel, may be null
+        /** SessionParams.MODE_INHERIT_EXISTING: the session holds only what changes, and the
+         *  installed package's other APKs stay (assembleArtifact). */
+        public volatile boolean inheritExisting;
         private final File dir;
 
         /** Written blobs, in write order: logical openWrite name -> staging
@@ -1153,7 +1156,15 @@ public final class PackageInstallerBackend {
             }
         }
         if (blobs.isEmpty()) throw new IOException("the session holds no APK");
-        if (blobs.size() == 1) {
+        // MODE_INHERIT_EXISTING (AOSP PackageInstallerSession.validateApkInstallLocked, the
+        // `params.mode == MODE_INHERIT_EXISTING` arm): "inherit any APKs from the existing
+        // package that the session does not override". The session is then only the difference:
+        // the Play Store adds a language to itself with a session of one config split. Installed
+        // as if it were the whole app, that split replaced the Play Store, which was left with
+        // no code at all.
+        final LinkedHashMap<String, File> inherited = s.inheritExisting
+                ? inheritedApks(s, blobs.keySet()) : new LinkedHashMap<>();
+        if (blobs.size() == 1 && inherited.isEmpty()) {
             File src = blobs.values().iterator().next();
             File dst = new File(stagingRoot(), ours + ".apk");
             if (!src.renameTo(dst)) {
@@ -1196,6 +1207,16 @@ public final class PackageInstallerBackend {
                             + src.getName());
                 }
             }
+            // The installed APKs the session keeps, under the names they are installed by.
+            for (Map.Entry<String, File> e : inherited.entrySet()) {
+                if (!used.add(e.getKey())) continue;
+                zip.putNextEntry(new ZipEntry(e.getKey()));
+                try (InputStream in = new FileInputStream(e.getValue())) {
+                    int n;
+                    while ((n = in.read(buf)) > 0) zip.write(buf, 0, n);
+                }
+                zip.closeEntry();
+            }
         } catch (IOException ioe) {
             dst.delete();
             throw ioe;
@@ -1204,6 +1225,46 @@ public final class PackageInstallerBackend {
                 + "-part bundle " + dst.getName() + " (" + dst.length()
                 + " bytes, entries=" + used + ")");
         return dst;
+    }
+
+    /** The installed package's APKs an inheriting session does not replace, by installed
+     *  file name (base.apk, split_<name>.apk), base first. A session APK replaces the
+     *  installed one of its split name; one named base or after the package is a new base.
+     *  Empty when the package is not installed, which AOSP refuses ("Missing existing base
+     *  package"); the install then goes on with what the session has, as before. */
+    private static LinkedHashMap<String, File> inheritedApks(SessionState s, java.util.Set<String> sessionNames) {
+        LinkedHashMap<String, File> out = new LinkedHashMap<>();
+        final String pkg = s.appPackageName;
+        if (pkg == null || pkg.isEmpty()) return out;
+        try {
+            android.content.pm.ApplicationInfo ai = android.app.Application.getInstance()
+                    .getPackageManager().getApplicationInfo(pkg, 0);
+            java.util.HashSet<String> replaced = new java.util.HashSet<>();
+            java.util.LinkedHashSet<String> scratch = new java.util.LinkedHashSet<>();
+            for (String logical : sessionNames) {
+                String n = splitNameOf(containerEntryName(logical, pkg, scratch));
+                replaced.add(n.equals(pkg) ? "base" : n);
+            }
+            java.util.ArrayList<String> paths = new java.util.ArrayList<>();
+            if (ai.sourceDir != null) paths.add(ai.sourceDir);
+            if (ai.splitSourceDirs != null) paths.addAll(java.util.Arrays.asList(ai.splitSourceDirs));
+            for (String path : paths) {
+                File f = new File(path);
+                if (!f.isFile() || replaced.contains(splitNameOf(f.getName()))) continue;
+                out.put(f.getName(), f);
+            }
+            NativeLog.i(TAG, "session " + s.id + " inherits " + out.keySet() + " from the installed " + pkg);
+        } catch (Throwable t) {
+            NativeLog.w(TAG, "session " + s.id + ": nothing to inherit from " + pkg + " (" + t + ")");
+            out.clear();
+        }
+        return out;
+    }
+
+    /** "split_config.iw.apk" and "config.iw.apk" are the split "config.iw"; "base.apk" is "base". */
+    private static String splitNameOf(String fileName) {
+        String n = fileName.endsWith(".apk") ? fileName.substring(0, fileName.length() - 4) : fileName;
+        return n.startsWith("split_") ? n.substring(6) : n;
     }
 
     /** Zip entry name for a written blob: strip the caller's package-name

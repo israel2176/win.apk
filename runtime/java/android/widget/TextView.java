@@ -325,6 +325,7 @@ public class TextView extends View
             macapkInitDefaultTextSize(c);
             macapkCtorTextAppearance(c, a, defStyleAttr, defStyleRes);
         }
+        macapkCtorDefaultStyleLayout(c, a, defStyleAttr, defStyleRes);
         macapkApplyInputTypeAttrs(a);
         macapkInitCaret(a);
         macapkInstallDefaultMovement();
@@ -501,6 +502,57 @@ public class TextView extends View
             }
         }
         return 0x01010084;
+    }
+
+    /** gravity, textAlignment, ellipsize, maxLines, lines: the attributes that
+     *  place the text, by id (android.R.attr). */
+    private static final int[] MACAPK_PLACEMENT_ATTRS = {
+        0x010100af, // 0  gravity
+        0x010103b1, // 1  textAlignment
+        0x010100ab, // 2  ellipsize
+        0x01010153, // 3  maxLines
+        0x01010154, // 4  lines
+    };
+
+    /** Where the text sits, from the view's default style. The inflater applies
+     *  what the element and its style= say after construction, but a widget's
+     *  own default style (the theme attribute its constructor passes as
+     *  defStyleAttr, or defStyleRes) reached only the text appearance read
+     *  above: a design system that puts `android:gravity="center_vertical"` or
+     *  `android:textAlignment="viewStart"` in its base widget style had every
+     *  such view's text at the top left (a search field's hint at the top of
+     *  its box, labels at the left end in a right-to-left app). AOSP reads
+     *  these in the same obtainStyledAttributes as everything else
+     *  (TextView.java constructor, R.styleable.TextView over the five tiers).
+     *  The element's own values are in the same read and are applied again by
+     *  the inflater, to the same effect. */
+    private void macapkCtorDefaultStyleLayout(Context context, android.util.AttributeSet attrs,
+                                              int defStyleAttr, int defStyleRes) {
+        if (context == null || (defStyleAttr == 0 && defStyleRes == 0)) return;
+        try {
+            final android.content.res.Resources.Theme theme = context.getTheme();
+            if (theme == null) return;
+            final android.content.res.TypedArray a = theme.obtainStyledAttributes(
+                attrs, MACAPK_PLACEMENT_ATTRS, defStyleAttr, defStyleRes);
+            try {
+                if (a.hasValue(0)) setGravity(a.getInt(0, gravity));
+                if (a.hasValue(1)) setTextAlignment(a.getInt(1, getTextAlignment()));
+                if (a.hasValue(2)) {
+                    switch (a.getInt(2, 0)) {
+                        case 1: setEllipsize(android.text.TextUtils.TruncateAt.START); break;
+                        case 2: setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE); break;
+                        case 3: setEllipsize(android.text.TextUtils.TruncateAt.END); break;
+                        default: break;  // none, and marquee, which needs more than a mode
+                    }
+                }
+                if (a.hasValue(3)) { int n = a.getInt(3, -1); if (n > 0) setMaxLines(n); }
+                if (a.hasValue(4)) { int n = a.getInt(4, -1); if (n > 0) setLines(n); }
+            } finally {
+                a.recycle();
+            }
+        } catch (Throwable ignored) {
+            // A style that cannot be read leaves the defaults, as the appearance read does.
+        }
     }
 
     /** The constructor read itself; see the block comment above. Everything a
@@ -4637,8 +4689,8 @@ public class TextView extends View
         if (sp == null) {
             if (android.text.MacApkBidi.hasRtl(line, 0, line.length())) {
                 boolean paraRtl;
-                try { paraRtl = android.text.MacApkBidi.isRtlParagraph(getText(), srcStart); }
-                catch (Throwable t) { paraRtl = android.text.MacApkBidi.isRtlParagraph(line, 0); }
+                try { paraRtl = macapkParagraphRtl(macapkShownText(), srcStart); }
+                catch (Throwable t) { paraRtl = macapkParagraphRtl(line, 0); }
                 canvas.drawTextRun(line, 0, line.length(), 0, line.length(), x, baselineY, paraRtl, p);
             } else {
                 canvas.drawText(line, x, baselineY, p);
@@ -4663,7 +4715,7 @@ public class TextView extends View
                 rs = re;
             }
             int[] pieces = android.text.MacApkBidi.visualPieces(line.substring(0, visLen), bounds, nb,
-                    android.text.MacApkBidi.isRtlParagraph(sp, srcStart));
+                    macapkParagraphRtl(sp, srcStart));
             for (int k = 0; k < pieces.length; k += 3) {
                 int rs = srcStart + pieces[k], re = srcStart + pieces[k + 1];
                 p.set(mDrawBase);
@@ -4770,6 +4822,30 @@ public class TextView extends View
     // -> bottom, else top. NO_GRAVITY (the default) draws top-left, matching the
     // prior behavior, so plain TextViews are unaffected; Buttons (default
     // CENTER) and any android:gravity now position correctly.
+    /** What is on show: the text, or the hint while there is none (AOSP lays the
+     *  hint out as its own mHintLayout, with the hint's own direction). */
+    private CharSequence macapkShownText() {
+        final CharSequence t = getText();
+        return (t == null || t.length() == 0) && mHint != null ? mHint : t;
+    }
+    /** The direction of the paragraph of `s` at `pos`, by AOSP's
+     *  TextView.getTextDirectionHeuristic(): the first strong character decides,
+     *  and a paragraph that has none (empty, a number, punctuation) takes the
+     *  view's layout direction, unless android:textDirection says otherwise.
+     *  This answered left-to-right for every such paragraph, so in a Hebrew or
+     *  Arabic app an empty field's hint, a price and a phone number sat at the
+     *  wrong end of their view. */
+    private boolean macapkParagraphRtl(CharSequence s, int pos) {
+        switch (getTextDirection()) {
+            case TEXT_DIRECTION_LTR: return false;
+            case TEXT_DIRECTION_RTL: return true;
+            case TEXT_DIRECTION_FIRST_STRONG_LTR: return android.text.MacApkBidi.isRtlParagraph(s, pos, false);
+            case TEXT_DIRECTION_FIRST_STRONG_RTL: return android.text.MacApkBidi.isRtlParagraph(s, pos, true);
+            case TEXT_DIRECTION_ANY_RTL:
+                return s != null && android.text.MacApkBidi.hasRtl(s, 0, s.length());
+            default: return android.text.MacApkBidi.isRtlParagraph(s, pos, isLayoutRtl());
+        }
+    }
     private float horizontalGravityOffset(int availW, float contentW) {
         // AOSP resolves android:textAlignment FIRST: TextView.getLayoutAlignment()
         // (android13-release TextView.java:9263-9310) switches on
@@ -4786,7 +4862,7 @@ public class TextView extends View
         // VIEW_END follow the view's resolved layout direction.
         final float right = Math.max(0f, availW - contentW);
         boolean textRtl = false;
-        try { textRtl = android.text.MacApkBidi.isRtlParagraph(getText(), 0); } catch (Throwable ignored) {}
+        try { textRtl = macapkParagraphRtl(macapkShownText(), 0); } catch (Throwable ignored) {}
         final boolean viewRtl = isLayoutRtl();
         switch (getTextAlignment()) {
             case android.view.View.TEXT_ALIGNMENT_CENTER:

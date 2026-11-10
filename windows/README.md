@@ -1115,6 +1115,14 @@ every such change is listed here:
   stack — and took the folder for a relative path), and the java.base overlay's
   `jdk.internal.util.WinApkPaths` for java.io and java.nio. Translated arm64
   guest code goes through the same Bionic shim, so it needs no separate remap.
+  File names with characters Windows forbids (`< > : " | ? *`, control
+  characters, a final dot or space; YouTube's `<account>||.entitystore`
+  database) are stored with WSL's and Cygwin's mapping, each such character as
+  U+F000 + the character, in the Android part of a mapped path only
+  (`host_names` in `paths.cpp`); a listing under an Android path turns the
+  names back (the shim's `readdir`/`scandir`, `WinNTFileSystem.list`,
+  `WindowsPath.createFromNormalizedPath` for a `DirectoryStream`'s entries).
+  `java.nio`'s own parser still refuses such a name in `Paths.get`.
 - `windows/java/java_base_patch/jdk/internal/util/WinApkPaths.java` (new),
   `java/io/WinNTFileSystem.java`, `java/io/File.java`,
   `sun/nio/fs/WindowsPath.java`: the java.base overlay keeps a `/`-rooted Android
@@ -1155,6 +1163,82 @@ every such change is listed here:
   succeeds) stayed first: gRPC got a null SSLEngine and no map tile loaded.
   `android/security/MacApkConscryptProvider.java` gains
   `copyPlatformServices`, which copies only the platform's providers.
+- `runtime/java/com/macapk/loader/Boot.java`: `CODE_DIR_OURS` names the files
+  Win.apk keeps in an app's code folder (`label.txt`, `package.txt`,
+  `icon.png.previous`, `classes.jar.tmp`, `AndroidManifest.txt`,
+  `aot-guard.txt`, `notifications`). An app started while it was being
+  updated took them for its own data, moved them to its data folder and left
+  links: the Play Store updating itself lost its `label.txt` that way, the
+  update counted as failed and the Play Store left the library.
+- `runtime/java/android/widget/TextView.java`, `android/text/MacApkBidi.java`:
+  a paragraph with no strong character (an empty field, a number) takes the
+  view's layout direction, and a hint on show is measured as the hint, as
+  AOSP's `getTextDirectionHeuristic` has it: in a right-to-left app a hint or
+  a number sat at the left end. The constructor reads gravity, textAlignment,
+  ellipsize, maxLines and lines from the widget's default style
+  (`defStyleAttr` / `defStyleRes`), which reached only the text appearance:
+  a design system's `gravity="center_vertical"` or `textAlignment="viewStart"`
+  in its base style was lost (Moovit's search hint at the top of its box).
+- `runtime/java/android/view/ViewGroup.java`: `LayoutParams(Context,
+  AttributeSet)` and `MarginLayoutParams(Context, AttributeSet)` read the
+  layout size and margins for a LayoutParams class the app defines, as AOSP
+  does. They read nothing (the inflater writes them after construction), so
+  a subclass that looks at them in its own constructor saw zeros: the
+  ConstraintLayout 1.0 old apps bundle took every child for "match
+  constraints" (YouTube's toolbar and bottom bar were empty).
+- `runtime/java/com/macapk/loader/PackageInstallerBackend.java`,
+  `android/content/pm/PackageInstaller.java`: a `MODE_INHERIT_EXISTING`
+  session keeps the installed package's APKs it does not replace, as AOSP
+  does. The Play Store adds a language to itself with a session of one
+  config split; installed as the whole app, the split replaced the Play
+  Store, which was left with no code.
+- `runtime/java/com/macapk/dex/Translator.java`, `SuperInterfacePlan.java`: a
+  non-virtual call (invoke-direct, invoke-super) to a final method of a
+  superclass on a receiver that is not the current class is an
+  invokevirtual. It was an invokespecial with the receiver cast to the
+  current class, which threw ClassCastException when the receiver was
+  another subclass: Compose's node chain in the Play Store, on every wheel
+  and hover event.
+- `runtime/java/android/graphics/drawable/RippleDrawable.java`: the pressed
+  fill fades in over 225 ms and out over 150 ms (AOSP's ripple durations)
+  instead of appearing and vanishing whole, a hard box under every tap.
+- `runtime/java_base_patch/java/lang/Thread.java`: the current thread's
+  `getStackTrace()` starts with `dalvik.system.VMStack.getThreadStackTrace`,
+  as on Android, so code that reads its caller at a fixed index finds it (a
+  bank's security library read index 3 of a three-frame trace, its native
+  side went on with a null object and the process crashed).
+- `runtime/java/android/graphics/Bitmap.java`: the host images are
+  `transient`, so reflection over a model that holds a Bitmap (Gson) does not
+  walk into `java.awt.image`.
+- `runtime/java/android/security/keystore/AndroidKeyStoreKeyPairGeneratorSpi.java`:
+  accepts the pre-API-23 `KeyPairGeneratorSpec`, converted as AOSP does.
+- `runtime/java/android/content/pm/PackageInstaller.java`:
+  `SessionParams.setAllocateAggressive`, which the Play Store calls on every
+  install.
+- `runtime/java/com/google/android/gms/maps/internal/CreatorImpl.java` (new):
+  Play services' side of the Maps SDK (the `ICreator` binder), which a client
+  library renamed by R8 loads from Play services' code. It was missing, so
+  `MapsInitializer.initialize` threw in `Application.onCreate` and the app's
+  window stayed empty (Moovit). It answers as a device whose map never
+  finishes loading: initialization succeeds, a map view or fragment gets a
+  plain view, `getMapAsync` does not call back. There is still no map.
+- `runtime/java/android/view/View.java`, `ViewGroup.java`: a view asked for
+  its layout direction before the top of its tree was measured kept that
+  top's unresolved left-to-right for good, and everything added below
+  inherited it: apps in Hebrew or Arabic were laid out left to right (the Play
+  Store, YouTube). Such a tree now answers the Configuration's direction and
+  keeps nothing; a view given a parent resolves again, its inheriting
+  children with it (AOSP `addViewInner`, `resetResolvedLayoutDirection`).
+- `runtime/java/com/macapk/loader/ResourceIndex.java`: `-ldrtl` and `-ldltr`
+  resources match the configuration's layout direction; `-ldrtl` was never
+  selected.
+- `windows/java/java_base_patch/sun/reflect/annotation/AnnotationParser.java`
+  (new, the JDK's with one change): an enum-valued annotation member is the
+  enum's static field of the recorded name, as ART reads it, before the
+  constant of that `name()`. R8 renames the field and keeps the name string,
+  so the JDK's lookup failed, the annotation was an `AnnotationFormatError`,
+  and Litho's layout threads died on `isAnnotationPresent` (YouTube: whole
+  screens empty).
 - `runtime/java/android/security/MacApkConscryptTls.java` (new): the SSLContexts
   of the `Conscrypt` and `GmsCore_OpenSSL` providers hand out the JDK's
   sockets wrapped to also answer Conscrypt's methods (`setAlpnProtocols`,

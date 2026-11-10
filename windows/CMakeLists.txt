@@ -118,7 +118,8 @@ add_executable(winapk-bionic-test test/bionic_test.cpp)
 target_link_libraries(winapk-bionic-test PRIVATE winapk_loader)
 
 # The guest path mapper (src/bionic/paths.cpp): Android paths -> host files,
-# test/paths_test.cpp. No guest library, no scratch dir.
+# test/paths_test.cpp. No guest library; the listing round trip makes its own
+# scratch directory in %TEMP%.
 add_executable(winapk-paths-test test/paths_test.cpp)
 target_link_libraries(winapk-paths-test PRIVATE winapk_loader)
 

@@ -53,6 +53,13 @@ public final class AndroidPathsTest {
         // "." and ".." fold out by text (canonicalize), staying Android form.
         eq("File.getCanonicalPath", new File(D + "/./a/../b").getCanonicalPath(), D + "/b");
 
+        // A name with characters Windows forbids is an Android name like any other
+        // (the host stores them as private-use characters, winapk-paths-test).
+        File odd = new File(D + "/databases", "1||.entitystore");
+        eq("File forbidden characters getPath", odd.getPath(), D + "/databases/1||.entitystore");
+        eq("File forbidden characters getName", odd.getName(), "1||.entitystore");
+        eq("File colon getName", new File(D + "/files/ab:c").getName(), "ab:c");
+
         // ---- java.nio.Path ----
         Path p = Paths.get(D + "/files");
         tru("Path.isAbsolute", p.isAbsolute());
