@@ -947,6 +947,18 @@ mismatch). Needs ES 3; on ES 2, a mapping failure, or any PBO error the context
 falls back to the synchronous read for good, and `WINAPK_GL_SYNC_READBACK=1`
 forces that path for comparing. The full fix -- a swap chain on the window that
 skips the copy -- is still left for later.
+
+The async path is used only while the app swaps continuously, chosen by swap
+cadence in `guest_eglSwapBuffers` (async after a short run of swaps under 40 ms
+apart, i.e. above ~25 fps; synchronous otherwise). An app that renders on demand
+-- a Flutter UI draws a burst then idles -- swaps too rarely for a one-frame
+pipeline: its last frame would sit in a buffer, unpresented, until a next swap
+that may never come (there is no later tick on the app's own GL thread to flush
+it), leaving the window blank (this is what made `org.localsend.localsend_app`
+go blank in the sweep). Reading such a frame synchronously costs nothing worth
+hiding -- the app is idle -- and the latest frame always reaches the window at
+once. The timing line names the path it took (`... (async, avg of 120)` or
+`sync`).
 `winapk-gl-test` draws, reads back and checks a frame on CI's software
 backends.
 
