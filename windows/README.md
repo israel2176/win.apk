@@ -925,6 +925,16 @@ every such change is listed here:
 - `runtime/java/android/view/LayoutInflater.java`: `resolveString` answers
   null for `@null` and "" for `@empty`, as `TypedArray.getText` does, not the
   reference itself (a Chip's text read "@null").
+- `runtime/java/com/google/android/gms/common/security/ProviderInstallerImpl.java`
+  and `com/google/android/gms/org/conscrypt/OpenSSLProvider.java` (new): Play
+  services' side of `ProviderInstaller.installIfNeeded`, which an app loads
+  from Play services' code once its own check finds Play services installed:
+  `GmsCore_OpenSSL` over the JDK's TLS goes first in the provider list and
+  becomes the default SSLContext. The class was missing, every install
+  failed, and Google Maps' own `Ssl_Guard` provider (no TLS until that install
+  succeeds) stayed first: gRPC got a null SSLEngine and no map tile loaded.
+  `android/security/MacApkConscryptProvider.java` gains
+  `copyPlatformServices`, which copies only the platform's providers.
 - `runtime/java/com/macapk/loader/CriticalNatives.java` (new): which guest
   natives ART calls as `@CriticalNative` (no JNIEnv*, no jclass), read from the
   converted class file; `windows/src/jni_bind.cpp` gives those a thunk that
