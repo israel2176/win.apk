@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
   push:
     branches: [ccr-70ca3b6e-8s4bz0]
-    paths: ['.github/workflows/maps-probe.yml', '.github/maps-probe/**', '.github/probe/**']
+    paths: ['.github/workflows/maps-probe.yml', '.github/maps-probe/**', '.github/probe/**', 'runtime/**', 'windows/**']
 
 permissions:
   contents: read
