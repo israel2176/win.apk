@@ -45,17 +45,29 @@ HMODULE load_loader() {
     return LoadLibraryExW((dir + L"WebView2Loader.dll").c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
 }
 
+// Why available() is false, as a code (see webview2_host.h).
+std::string g_unavailable;
+
+std::string hex_hr(HRESULT hr) {
+    char b[16];
+    std::snprintf(b, sizeof b, "0x%08lx", static_cast<unsigned long>(hr));
+    return b;
+}
+
 bool decide() {
     if (env_flag_off("WINAPK_WEBVIEW2")) {
+        g_unavailable = "WEBVIEW2_OFF";
         std::fprintf(stderr, "[win.apk] webview2: off (WINAPK_WEBVIEW2=0); web links open in the system browser\n");
         return false;
     }
     if (headless()) {
+        g_unavailable = "HEADLESS";
         std::fprintf(stderr, "[win.apk] webview2: not used headless; web links open in the system browser\n");
         return false;
     }
     HMODULE loader = load_loader();
     if (!loader) {
+        g_unavailable = "WEBVIEW2_LOADER_MISSING (error " + std::to_string(GetLastError()) + ")";
         std::fprintf(stderr,
                      "[win.apk] webview2: WebView2Loader.dll is not next to the runtime (error %lu); web links "
                      "open in the system browser\n",
@@ -67,6 +79,7 @@ bool decide() {
     g_create_environment = reinterpret_cast<CreateEnvironmentFn>(
         reinterpret_cast<void*>(GetProcAddress(loader, "CreateCoreWebView2EnvironmentWithOptions")));
     if (!get_version || !g_create_environment) {
+        g_unavailable = "WEBVIEW2_LOADER_BAD";
         std::fprintf(stderr, "[win.apk] webview2: WebView2Loader.dll lacks its entry points; web links open in "
                              "the system browser\n");
         return false;
@@ -78,6 +91,7 @@ bool decide() {
     const HRESULT hr = get_version(nullptr, &version);
     g_version = take_co_string(version);
     if (FAILED(hr) || g_version.empty()) {
+        g_unavailable = "WEBVIEW2_RUNTIME_MISSING (" + hex_hr(hr) + ")";
         std::fprintf(stderr,
                      "[win.apk] webview2: the WebView2 Runtime is not installed (0x%08lx); web links open in the "
                      "system browser. Get it from https://go.microsoft.com/fwlink/p/?LinkId=2124703\n",
@@ -171,6 +185,7 @@ bool ensure_thread() {
 
 enum class EnvState { kNone, kCreating, kReady, kFailed };
 EnvState g_env_state = EnvState::kNone;
+HRESULT g_env_hr = S_OK;
 ComPtr<ICoreWebView2Environment> g_environment;
 std::vector<std::function<void(ICoreWebView2Environment*)>> g_env_waiters;
 
@@ -182,6 +197,7 @@ void env_settle(HRESULT hr, ICoreWebView2Environment* environment) {
         std::fprintf(stderr, "[win.apk] webview2: the environment could not be created (0x%08lx)\n",
                      static_cast<unsigned long>(hr));
         g_env_state = EnvState::kFailed;
+        g_env_hr = FAILED(hr) ? hr : E_FAIL;
     }
     auto waiters = std::move(g_env_waiters);
     g_env_waiters.clear();
@@ -196,6 +212,9 @@ bool available() {
     std::call_once(once, [] { yes = decide(); });
     return yes;
 }
+
+std::string unavailable_reason() { return available() ? std::string() : g_unavailable; }
+HRESULT environment_error() { return g_env_hr; }
 
 std::wstring runtime_version() { return available() ? g_version : std::wstring(); }
 

@@ -478,10 +478,30 @@ bool ElfImage::apply_relocations(const SymbolResolver& resolve, const TlsSymbolR
                 *where = type == kRAarch64_TlsDtpMod64 ? module : offset + r.r_addend;
                 break;
             }
-            case kRAarch64_TlsDesc:
-                fatal = "ELF TLS through TLSDESC (thread_local in a library built for API 29+) is not "
-                        "supported for arm64 yet";
-                return false;
+            case kRAarch64_TlsDesc: {
+                // ELF TLS on arm64 (thread_local in a library built for API
+                // 29+). The descriptor is two words: the resolver the code
+                // calls with x0 = &descriptor, and its argument. The resolver
+                // is the bridge's TLSDESC intrinsic (arm64_guest.cpp), which
+                // answers the variable's offset from TPIDR_EL0 through the
+                // same dynamic TLS blocks __tls_get_addr uses.
+                if (!in_image(r.r_offset, 2 * sizeof(uint64_t))) {
+                    fatal = "TLSDESC target " + hex(r.r_offset) + " outside the image";
+                    return false;
+                }
+                size_t module = 0;
+                uint64_t offset = 0;
+                if (!tls_symbol_value(r_sym(r.r_info), &module, &offset)) return false;
+                void* resolver = arm64::guest_intrinsic("__winapk_tlsdesc");
+                if (!resolver) {
+                    fatal = "no TLSDESC resolver";
+                    return false;
+                }
+                tlsdesc_args_.push_back(TlsIndex{module, offset + r.r_addend});
+                where[0] = reinterpret_cast<uint64_t>(resolver);
+                where[1] = reinterpret_cast<uint64_t>(&tlsdesc_args_.back());
+                break;
+            }
             case kRAarch64_TlsTpRel64:
                 fatal = "static ELF TLS (R_AARCH64_TLS_TPREL64) is not supported";
                 return false;

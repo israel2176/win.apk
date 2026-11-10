@@ -245,6 +245,7 @@ Every test is a program built by CMake; `ci.yml` runs each of them on
 | `winapk-bionic-test <bionic_guest.so> <scratch dir>` | `test/guest/bionic_guest.c` exercises the shim from guest code: strings, printf and scanf through the System V `va_list`, threads and keys, files and directories, ELF TLS, system properties, locales, futex, an 8 GiB `PROT_NONE` reservation, pipes, eventfd, epoll, sockets, `ALooper`, clocks, `mmap`; `random(3)` against glibc's sequences (the same generator), `fts` walks, `link`, `popen`/`system` without a shell, `fscanf`, `strptime`, cleanup handlers run by `pthread_exit`, `sched_getaffinity`, FORTIFY's `FD_*`, the binary128 `lroundl` family |
 | `winapk-arm64-test <dir>` | The arm64 engines: `test/guest/arm64_isa.c` built for the host and for arm64 at three optimization levels must agree on every function, on the interpreter, the JIT and the AOT translation; then `arm64_bridge_guest.c` (calls in both directions, variadics, threads, atexit, `fts` filling arm64's `struct stat`, cleanup handlers); `arm64_flow_guest.c` (returns into an ancestor frame with RET and BR, coroutines, RETAA, deep recursion on a 1 MB thread, saturating conversions, FRECPS/FRSQRTS, an exclusive-monitor counter shared by translated code and the JIT, the STLR/LDAR litmus test) against values worked out by hand; `arm64_patch_guest.c` (a library patching its own code, and code patched by one thread while another runs it), `arm64_eh_guest.cpp` (C++ exceptions through the NDK's libc++ and unwinder, built when `ANDROID_NDK_HOME` names an NDK), a library unloaded with `dlclose`, one linked at another address, a translation cut short under a stamp that says it is sealed (refused) and the same one whole (loaded); 400 functions of random instructions from `gen_arm64_fuzz.py`, whose results on the JIT and the translation must match the interpreter's (`WINAPK_FUZZ_STATE=<i>` starts every function from function i's states, to bisect a difference); and `arm64_bench.c` (the speed ratios) |
 | `winapk-aot-stamp-test` | A library's translation stamp (`include/winapk/aot_stamp.h`), with no file behind it: each kind written and read back, an old stamp read as a short one, a newer build's word; what the loader refuses and when it asks for a sealed DLL; for each kind whether the worker has a step to take now (a changed library or translator, another CPU, the back-off after failures and its limit, a pass to finish, a profile that grew, the interval between two translations from a profile); which stamps the launcher takes for "translated by its profile" |
+| `winapk-applink-test` | The App Link sign-in window's decision (`host/applink_match.h`): the navigation that returns to the app is the `redirect_uri` without its query, exactly (scheme and host without case, a default port as none); another path, host, port, scheme, a subdomain, userinfo or the address inside a query is not |
 | `winapk-aot-cache-test <scratch dir>` | The arm64 translation's files (`include/winapk/aot_files.h`) in real processes, with `winapk-aot-test-dll.dll` as the translation: a seal against DLLs cut short, emptied, zeroed or changed; eight processes taking, making, putting and loading one cache entry at once (hard links and copies); writers killed at random moments and at each step of a write; broken cache entries deleted and replaced; eviction and replacement while another process has the DLL loaded; the clock (60 days, dates in the future, the size cap); stamps rewritten by four processes while another reads them |
 | `winapk-audio-test <test/audio>` | The WASAPI mixer and the decoders |
 | `winapk-user-folders-test <dir>` | The shared-storage junction rules |
@@ -854,8 +855,8 @@ every such change is listed here:
   Settings > Google account instead of Mac.apk > Accounts.
 - `runtime/java/com/macapk/loader/HostTrust.java` (new) and
   `runtime/java/com/macapk/gms/GmsCli.java`: the JVM's default trust store is
-  the JDK's CAs plus the roots Windows trusts (a filtering proxy's such as
-  NetFree's among them), set before any TLS. `Boot.run` did it for an app's
+  the JDK's CAs plus the roots Windows trusts (a filtering proxy's among
+  them), set before any TLS. `Boot.run` did it for an app's
   process only; `GmsCli.run` (`--gms`, Settings > Google account) now does
   too, or the sign-in's token exchange failed with "PKIX path building
   failed". The set is kept as one JKS file, `%TEMP%\winapk-trust.jks`, that a
@@ -898,8 +899,11 @@ every such change is listed here:
   The signed-in account an app gets carries the picture
   (`GoogleSignInAccount.photoUrl`, from the ID token), which is also saved for
   the launcher's account item when the sign-in window found none. A copy of
-  an app re-signed by someone else (NetFree's patcher) that Google refuses
-  (`UNREGISTERED_ON_API_CONSOLE`) gets an explanation instead of a closed window.
+  an app re-signed by someone else, which Google refuses
+  (`UNREGISTERED_ON_API_CONSOLE`), and every other failed sign-in show
+  "Google sign-in failed (error: <code>, status <n>)" and stay open instead
+  of closing on the app's generic error; leaving then hands the app that
+  failure.
 - `runtime/java/android/graphics/drawable/VectorDrawable.java`: a path's
   `android:fillType="evenOdd"` is honoured; icons cut out of a filled shape
   filled solid.
@@ -972,6 +976,21 @@ every such change is listed here:
   downloadable fonts (`com.google.android.gms.fonts`) failed with "The
   requested provider was not found on this device." even with Google Play
   services installed. Not Windows-specific.
+- `runtime/java/android/content/res/TypedArray.java`: `getString` of an app
+  attribute set in the XML to a compiled enum or flag answers the device's
+  spelling (`"0x2"`), which the parser already records, not the symbol.
+  Discount's and Mercantile's `DiscountTextInputLayout` run `Integer.decode`
+  on it; every input field became a placeholder. Not Windows-specific.
+- `runtime/java/android/provider/Settings.java`: `Settings.System` reads a
+  setting that moved to Secure or Global (`android_id`, `adb_enabled`...)
+  from there, and `Settings.Secure` one that moved to Global, as AOSP's
+  `MOVED_TO_SECURE` / `MOVED_TO_GLOBAL` do. Discount and Mercantile read
+  `Settings.System` `android_id` and threw on null in `Application.onCreate`.
+  Not Windows-specific.
+- `runtime/java/com/macapk/loader/Manifest.java`, `MacApkPackageManager.java`:
+  `ServiceInfo.permission` is the service's `android:permission` (else the
+  application's). IBM Trusteer's TAZ checks a job service for
+  `BIND_JOB_SERVICE` and stopped its start without it. Not Windows-specific.
 - `runtime/java/com/macapk/loader/Boot.java`, `HttpAgent.java`: `java.vm.version`
   is ART's `2.1.0`, as on every Android since 5. androidx MultiDex 2.x reads it
   to decide whether the VM loads secondary dex files itself; HotSpot's
@@ -1044,6 +1063,44 @@ every such change is listed here:
   (`content://settings/system/alarm_alert`...), not null. Fossify Clock
   builds its alarm table from it and died creating its database. Not
   Windows-specific.
+- `runtime/java/android/content/res/Resources.java`: `getString(int)` is
+  `getText(int)`'s string and `getText` looks the resource up itself, as in
+  AOSP. `getText` called `getString`, so a `Resources` subclass whose
+  `getString` calls its own `getText` and falls back to `super.getText`
+  recursed for ever (Bit's Lokalise `LokaliseResources`: a
+  `StackOverflowError` on the main thread at its first string). Not
+  Windows-specific.
+- `runtime/java/com/macapk/loader/AppLinks.java`, `Boot.java`,
+  `android/content/pm/verify/domain/DomainVerificationManager.java`: App Link
+  verification no longer fetches at start. Upstream fetched
+  `/.well-known/assetlinks.json` for every `autoVerify` host on every run
+  (Google Maps declares hundreds of Google domains: ~356 HTTPS requests per
+  start). Now a domain is fetched only when a sign-in's `redirect_uri` is on
+  it, one domain at a time (same rules: HTTPS, no redirects, the package and a
+  real signing certificate, a wildcard against its parent), and the verdict is
+  kept in `%LOCALAPPDATA%\Win.apk\cache\applinks\<package>.properties`:
+  7 days, an unreachable site 1 hour, the whole file dropped when the APK's
+  versionCode, update time or certificate changes. `DomainVerificationManager`
+  answers from it without waiting (a domain not checked yet is
+  `DOMAIN_STATE_NONE`). `MACAPK_APP_LINKS=0` still turns it all off. Test:
+  `windows/test/java/com/macapk/loader/AppLinksTest.java`.
+  `NativeCocoa.openAppLinkWindow`, the sign-in window AppLinks asks for (a
+  stub answering false before), is now Windows' own
+  (`windows/host/native_browser_tab.cpp`, no `runtime/` change): the
+  browser-tab window of a Custom Tab in the app's `browser` WebView2 profile,
+  whose one check is the return prefix (`host/applink_match.h`, exact
+  `redirect_uri` without its query); that navigation, a server redirect or a
+  pop-up included, is cancelled, queued for `HostUrlIntake` like a tab's
+  hand-off, and the window closes. Closed by the user, or after 10 minutes,
+  the app gets nothing; without a window the URL goes to the system browser as
+  before. Log lines: `applink-signin <n>: ...`, queries redacted.
+- `runtime/java/com/macapk/gms/NativeSignIn.java` and `GmsCli.java`: a
+  sign-in window that ends without a token says why, as a code
+  (`signInWindowError`, a native only Windows has: the WebView2 HRESULT, the
+  page's `COREWEBVIEW2_WEB_ERROR_STATUS` and HTTP status, `TIMEOUT (600 s)`,
+  `WEBVIEW2_RUNTIME_MISSING (0x...)`); `--gms signin-window` prints it as its
+  `ERROR` line (exit 1) instead of exiting 2 as a cancel, and the launcher
+  shows it. The window no longer has a note line above the page.
 
 ## License
 

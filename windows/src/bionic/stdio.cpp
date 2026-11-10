@@ -190,12 +190,78 @@ bool at_path(int dirfd, const char* path, std::string* out) {
     return true;
 }
 
+// ---- named pipes ---------------------------------------------------------------------
+// Windows has no FIFO files. mkfifo writes a small marker file with these
+// bytes; stat reports it as a FIFO and open gives a descriptor on the
+// process's pipe for that path (fifo_open, fd.cpp). Realm creates its FIFOs
+// next to the database (the `.note` notifier, the `.cv` condition variables);
+// the missing-function stub answered success without a file, and its open
+// failed.
+constexpr char kFifoMarker[16] = {'W', 'i', 'n', '.', 'a', 'p', 'k', ' ', 'F', 'I', 'F', 'O', '\n', 0, 0, 0};
+
+bool is_fifo_marker(const std::wstring& w) {
+    WIN32_FILE_ATTRIBUTE_DATA d;
+    if (!GetFileAttributesExW(w.c_str(), GetFileExInfoStandard, &d) ||
+        (d.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || d.nFileSizeHigh != 0 ||
+        d.nFileSizeLow != sizeof(kFifoMarker)) {
+        return false;
+    }
+    const HANDLE h = CreateFileW(w.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                 nullptr, OPEN_EXISTING, 0, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    char got[sizeof(kFifoMarker)];
+    DWORD n = 0;
+    const bool ok = ReadFile(h, got, sizeof(got), &n, nullptr) && n == sizeof(got) &&
+                    std::memcmp(got, kFifoMarker, sizeof(got)) == 0;
+    CloseHandle(h);
+    return ok;
+}
+
+// The key fifo_open shares a FIFO's buffer by: its full path, lower case.
+std::wstring fifo_key(const std::wstring& w) {
+    wchar_t full[MAX_PATH * 4];
+    const DWORD n = GetFullPathNameW(w.c_str(), MAX_PATH * 4, full, nullptr);
+    std::wstring k = (n > 0 && n < MAX_PATH * 4) ? std::wstring(full, n) : w;
+    for (wchar_t& c : k) c = (c == L'/') ? L'\\' : static_cast<wchar_t>(towlower(c));
+    return k;
+}
+
+WINAPK_GUEST_ABI int g_mkfifo(const char* path, unsigned) {
+    const std::wstring w = host_path(path);
+    const HANDLE h = CreateFileW(w.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                 nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) {
+        set_errno_from_win32(GetLastError());  // ERROR_FILE_EXISTS: EEXIST
+        return -1;
+    }
+    DWORD n = 0;
+    const bool ok = WriteFile(h, kFifoMarker, sizeof(kFifoMarker), &n, nullptr) && n == sizeof(kFifoMarker);
+    CloseHandle(h);
+    if (!ok) {
+        DeleteFileW(w.c_str());
+        *guest_errno() = kEIO;
+        return -1;
+    }
+    return 0;
+}
+WINAPK_GUEST_ABI int g_mkfifoat(int dirfd, const char* path, unsigned mode) {
+    std::string p;
+    return at_path(dirfd, path, &p) ? g_mkfifo(p.c_str(), mode) : -1;
+}
+// mknod makes only FIFOs here (S_IFIFO); device nodes need privileges an app does not have.
+WINAPK_GUEST_ABI int g_mknod(const char* path, unsigned mode, uint64_t) {
+    if ((mode & 0170000) == 0010000) return g_mkfifo(path, mode);
+    *guest_errno() = kEPERM;
+    return -1;
+}
+
 // open() is variadic (its mode is the third argument only with O_CREAT), but a
 // variadic int travels in the same register as a fixed one.
 WINAPK_GUEST_ABI int g_open(const char* path, int flags, unsigned mode) {
     if (is_random_device(path)) return fd_install(std::make_shared<RandomDevice>());
     if (is_proc_maps(path)) return open_temp_with(proc_maps_text());
     const std::wstring w = host_path(path);
+    if (is_fifo_marker(w)) return fifo_open(fifo_key(w), flags);
     // Linux opens a directory read-only without O_DIRECTORY too (O_PATH or
     // plain O_RDONLY, then fstat or fdopendir); _wopen would refuse it.
     const DWORD a = GetFileAttributesW(w.c_str());
@@ -344,6 +410,42 @@ WINAPK_GUEST_ABI int g_ftruncate(int fd, int64_t len) {
     }
     return 0;
 }
+// posix_fallocate: the file is at least offset + len bytes afterwards, as on
+// Linux. SetEndOfFile extends without writing the zeros (NTFS reads the new
+// range as zeros), so a large reservation costs no I/O; the space itself is
+// not reserved, which Linux file systems without fallocate also allow. Realm
+// (Bit) reserves its database file with it, then maps the file: the shim's
+// missing-function stub answered success without growing it.
+WINAPK_GUEST_ABI int g_posix_fallocate(int fd, int64_t offset, int64_t len) {
+    if (offset < 0 || len <= 0) return 22;  // EINVAL
+    const intptr_t h = _get_osfhandle(fd);
+    if (h == -1 || fd_object(fd)) return 9;  // EBADF
+    const HANDLE file = reinterpret_cast<HANDLE>(h);
+    LARGE_INTEGER size{};
+    if (!GetFileSizeEx(file, &size)) return 9;
+    if (size.QuadPart >= offset + len) return 0;
+    LARGE_INTEGER end{}, here{}, zero{};
+    end.QuadPart = offset + len;
+    // SetEndOfFile works at the file pointer, which the descriptor shares.
+    if (!SetFilePointerEx(file, zero, &here, FILE_CURRENT)) return 9;
+    const bool ok = SetFilePointerEx(file, end, nullptr, FILE_BEGIN) && SetEndOfFile(file);
+    const DWORD error = ok ? 0 : GetLastError();
+    SetFilePointerEx(file, here, nullptr, FILE_BEGIN);
+    if (ok) return 0;
+    return error == ERROR_DISK_FULL ? 28 : error == ERROR_ACCESS_DENIED ? 9 : 5;  // ENOSPC, EBADF, EIO
+}
+// Linux fallocate(2): mode 0 is posix_fallocate with errno; FALLOC_FL_KEEP_SIZE
+// alone only reserves space, which there is nothing to do for; punching holes
+// and the other modes are not supported (EOPNOTSUPP), as on file systems
+// without them.
+WINAPK_GUEST_ABI int g_fallocate(int fd, int mode, int64_t offset, int64_t len) {
+    int e = 0;
+    if (mode == 0) e = g_posix_fallocate(fd, offset, len);
+    else if (mode != 1) e = 95;
+    if (!e) return 0;
+    *guest_errno() = e;
+    return -1;
+}
 WINAPK_GUEST_ABI int g_isatty(int fd) { return !fd_object(fd) && _isatty(fd) ? 1 : 0; }
 // fcntl: descriptor flags are accepted and ignored (no fork, so close-on-exec
 // has nothing to protect); F_GETFL answers read-write.
@@ -428,6 +530,10 @@ WINAPK_GUEST_ABI int g_stat(const char* path, GuestStat* g) {
     struct _stat64 s;
     if (_wstat64(w.c_str(), &s) < 0) return fail_crt();
     fill_stat(s, g);
+    if (g->st_size == sizeof(kFifoMarker) && is_fifo_marker(w)) {
+        g->st_mode = 0010000 | 0600;  // S_IFIFO
+        g->st_size = g->st_blocks = 0;
+    }
     // No access rights asked for, so this opens a file another program holds too.
     const HANDLE h = CreateFileW(w.c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
                                  OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
@@ -1714,6 +1820,10 @@ const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("fdatasync", g_fsync),
     WINAPK_SHIM("ftruncate", g_ftruncate),
     WINAPK_SHIM("ftruncate64", g_ftruncate),
+    WINAPK_SHIM("posix_fallocate", g_posix_fallocate),
+    WINAPK_SHIM("posix_fallocate64", g_posix_fallocate),
+    WINAPK_SHIM("fallocate", g_fallocate),
+    WINAPK_SHIM("fallocate64", g_fallocate),
     WINAPK_SHIM("isatty", g_isatty),
     WINAPK_SHIM("fcntl", g_fcntl),
     WINAPK_SHIM("ioctl", g_ioctl),
@@ -1743,6 +1853,9 @@ const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("mkdirat", g_mkdirat),
     WINAPK_SHIM("rmdir", g_rmdir),
     WINAPK_SHIM("unlink", g_unlink),
+    WINAPK_SHIM("mkfifo", g_mkfifo),
+    WINAPK_SHIM("mkfifoat", g_mkfifoat),
+    WINAPK_SHIM("mknod", g_mknod),
     WINAPK_SHIM("rename", g_rename),
     WINAPK_SHIM("remove", g_remove),
     WINAPK_SHIM("chdir", g_chdir),

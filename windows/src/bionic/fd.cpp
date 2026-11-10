@@ -181,6 +181,108 @@ private:
     std::shared_ptr<PipeBuffer> b_;
 };
 
+// ---- named pipes (mkfifo) ----------------------------------------------------------------
+// One buffer per FIFO path in the process: every descriptor opened on it reads
+// and writes the same bytes, as Linux's named pipe does. Another process does
+// not see them (each app is its own process; Realm's notification and
+// condition-variable FIFOs are between the threads of one).
+struct FifoBuffer {
+    std::mutex lock;
+    std::deque<char> data;
+    int readers = 0, writers = 0;
+};
+
+class FifoEnd final : public FdObject {
+public:
+    FifoEnd(std::shared_ptr<FifoBuffer> b, bool can_read, bool can_write)
+        : b_(std::move(b)), can_read_(can_read), can_write_(can_write) {
+        std::lock_guard<std::mutex> hold(b_->lock);
+        b_->readers += can_read_;
+        b_->writers += can_write_;
+    }
+    ~FifoEnd() override {
+        {
+            std::lock_guard<std::mutex> hold(b_->lock);
+            b_->readers -= can_read_;
+            b_->writers -= can_write_;
+        }
+        fd_notify();
+    }
+    int64_t read(void* buf, size_t n) override {
+        if (!can_read_) return *guest_errno() = kEBADF, -1;
+        if (n == 0) return 0;
+        for (;;) {
+            const uint32_t seen = g_generation.load();
+            {
+                std::lock_guard<std::mutex> hold(b_->lock);
+                if (!b_->data.empty()) {
+                    const size_t k = std::min(n, b_->data.size());
+                    std::copy_n(b_->data.begin(), k, static_cast<char*>(buf));
+                    b_->data.erase(b_->data.begin(), b_->data.begin() + static_cast<ptrdiff_t>(k));
+                    fd_notify();
+                    return static_cast<int64_t>(k);
+                }
+                if (b_->writers == 0) return 0;  // end of file
+            }
+            if (nonblocking) return *guest_errno() = kEAGAIN, -1;
+            wait_for_change(seen, INFINITE);
+        }
+    }
+    int64_t write(const void* buf, size_t n) override {
+        if (!can_write_) return *guest_errno() = kEBADF, -1;
+        const char* p = static_cast<const char*>(buf);
+        size_t done = 0;
+        while (done < n) {
+            const uint32_t seen = g_generation.load();
+            {
+                std::lock_guard<std::mutex> hold(b_->lock);
+                if (b_->readers == 0) {
+                    if (done) break;
+                    return *guest_errno() = kEPIPE, -1;
+                }
+                const size_t room = PipeBuffer::kCapacity - std::min(PipeBuffer::kCapacity, b_->data.size());
+                if (room > 0) {
+                    const size_t k = std::min(room, n - done);
+                    b_->data.insert(b_->data.end(), p + done, p + done + k);
+                    done += k;
+                    fd_notify();
+                    continue;
+                }
+            }
+            if (nonblocking) {
+                if (done) break;
+                return *guest_errno() = kEAGAIN, -1;
+            }
+            wait_for_change(seen, INFINITE);
+        }
+        return static_cast<int64_t>(done);
+    }
+    short ready(short events) override {
+        std::lock_guard<std::mutex> hold(b_->lock);
+        short r = 0;
+        if (can_read_ && (events & kPollIn) && !b_->data.empty()) r |= kPollIn;
+        if (can_read_ && b_->writers == 0) r |= kPollHup;
+        if (can_write_ && (events & kPollOut) && b_->data.size() < PipeBuffer::kCapacity) r |= kPollOut;
+        if (can_write_ && b_->readers == 0) r |= kPollErr;
+        return r;
+    }
+    int ioctl(int request, void* arg) override {
+        if (request == 0x541B) {  // FIONREAD
+            std::lock_guard<std::mutex> hold(b_->lock);
+            *static_cast<int*>(arg) = static_cast<int>(b_->data.size());
+            return 0;
+        }
+        return FdObject::ioctl(request, arg);
+    }
+
+private:
+    std::shared_ptr<FifoBuffer> b_;
+    const bool can_read_, can_write_;
+};
+
+std::mutex g_fifo_lock;
+std::map<std::wstring, std::weak_ptr<FifoBuffer>> g_fifos;  // by the FIFO's full path, lower case
+
 // ---- eventfd ---------------------------------------------------------------------------
 class EventFd final : public FdObject {
 public:
@@ -724,6 +826,25 @@ int fd_dup(int fd, int to) {
 }
 
 int fd_poll(PollFd* fds, uint64_t n, int timeout_ms) { return g_poll(fds, n, timeout_ms); }
+
+// Opening a FIFO never waits for the other end (Linux's O_RDONLY or O_WRONLY
+// open blocks until one opens): Realm opens its FIFOs O_RDWR, which does not
+// wait on Linux either.
+int fifo_open(const std::wstring& key, int flags) {
+    std::shared_ptr<FifoBuffer> b;
+    {
+        std::lock_guard<std::mutex> hold(g_fifo_lock);
+        b = g_fifos[key].lock();
+        if (!b) {
+            b = std::make_shared<FifoBuffer>();
+            g_fifos[key] = b;
+        }
+    }
+    const int access = flags & 3;  // O_RDONLY 0, O_WRONLY 1, O_RDWR 2
+    auto end = std::make_shared<FifoEnd>(std::move(b), access != 1, access != 0);
+    end->nonblocking = (flags & kONonblock) != 0;
+    return fd_install(std::move(end));
+}
 
 void fd_notify() {
     g_generation.fetch_add(1);

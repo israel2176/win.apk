@@ -13,7 +13,7 @@
 // The directory holds the same trust anchors the Java side gets
 // (HostTrust.install): the JDK's CAs plus every root Windows trusts. The
 // Windows ones matter most: on a PC that is where the root of a filtering
-// proxy (NetFree), a company's TLS inspection or a locally installed CA lives,
+// proxy, a company's TLS inspection or a locally installed CA lives,
 // and behind such a proxy no public root would verify anything. Windows' set
 // is the Root and third-party AuthRoot stores of the user and the machine,
 // group policy and enterprise ones included, less what Windows itself would

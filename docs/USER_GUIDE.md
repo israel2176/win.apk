@@ -386,7 +386,16 @@ top of that. Action buttons on notifications are not shown.
 
 **Settings > Google account** signs in with Google (on Google's own page, in a
 window of its own: Win.apk never sees the password), adds another account and
-signs out. One account serves every app, and the account's item at the foot
+signs out. A sign-in that fails says so with the error's code (a WebView2,
+network or HTTP code, or Google's own, such as `UNREGISTERED_ON_API_CONSOLE`).
+
+An app that signs in through the browser (for example a game's account login)
+and expects the answer at one of its own verified web addresses (Android App
+Links) or its own link scheme gets its sign-in page in a Win.apk window instead
+of Edge or Chrome, which would only open that address as a web page. When the
+page finishes, the window closes and the app gets the answer, as from a
+phone's browser. Closing the window, or leaving it for 10 minutes, cancels the
+sign-in. One account serves every app, and the account's item at the foot
 of the navigation pane, above **Settings**, shows who is signed in (only the
 account's picture, or its initial when Google gave none, or the person icon when
 no one is; the address shows when you point at it) and opens Settings. **Use Google

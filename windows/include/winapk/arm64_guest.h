@@ -36,12 +36,13 @@
 //
 // setjmp and longjmp are the exception to "every import is a host function":
 // they save and restore guest registers, so the bridge implements them itself
-// (guest_intrinsic). So is strtold, whose binary128 result fills q0.
+// (guest_intrinsic). So is strtold, whose binary128 result fills q0, and the
+// TLSDESC resolver ElfImage points R_AARCH64_TLSDESC descriptors at (ELF TLS
+// in apps built for API 29+), which may change only x0.
 //
 // Not supported yet: arguments or results passed by value as structs larger
 // than 16 bytes or as floating-point aggregates (the conventions disagree;
-// libc and JNI have none), raw system calls (SVC), and ELF TLS through TLSDESC
-// (apps built for API 29+ that use thread_local; emulated TLS works).
+// libc and JNI have none) and raw system calls (SVC).
 
 #pragma once
 

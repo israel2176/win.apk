@@ -342,26 +342,57 @@ public final class Settings {
         public static final android.net.Uri CONTENT_URI =
             android.net.Uri.parse("content://settings/system");
 
+        /** AOSP System.MOVED_TO_SECURE: settings that moved to Secure. AOSP's
+         *  System.getStringForUser answers them from Secure (with a log line),
+         *  so Settings.System.getString(cr, "android_id") is the device's
+         *  ANDROID_ID. Discount's and Mercantile's Application read it there
+         *  and derived their key from it; null threw in onCreate. */
+        private static final java.util.Set<String> MOVED_TO_SECURE = new java.util.HashSet<>(java.util.Arrays.asList(
+                "adaptive_sleep", "android_id", "http_proxy", "location_providers_allowed",
+                "lock_biometric_weak_flags", "lock_pattern_autolock", "lock_pattern_visible_pattern",
+                "lock_pattern_tactile_feedback_enabled", "logging_id", "parental_control_enabled",
+                "parental_control_last_update", "parental_control_redirect_url", "settings_classname",
+                "use_google_mail", "wifi_networks_available_notification_on",
+                "wifi_networks_available_repeat_delay", "wifi_num_open_networks_kept",
+                "wifi_on", "install_non_market_apps"));
+        /** AOSP System.MOVED_TO_GLOBAL and MOVED_TO_SECURE_THEN_GLOBAL (the ones
+         *  an app reads): answered from Global, as AOSP does. */
+        private static final java.util.Set<String> MOVED_TO_GLOBAL = new java.util.HashSet<>(java.util.Arrays.asList(
+                "adb_enabled", "airplane_mode_on", "airplane_mode_radios", "airplane_mode_toggleable_radios",
+                "auto_time", "auto_time_zone", "bluetooth_on", "data_roaming", "device_provisioned",
+                "mode_ringer", "network_preference",
+                "stay_on_while_plugged_in", "usb_mass_storage_enabled", "wifi_sleep_policy",
+                "wait_for_debugger", "debug_app", "window_animation_scale", "transition_animation_scale",
+                "animator_duration_scale", "always_finish_activities", "radio_bluetooth", "radio_cell",
+                "radio_nfc", "radio_wifi", "sys_prop_setting_version", "show_processes",
+                "car_dock_sound", "car_undock_sound", "desk_dock_sound", "desk_undock_sound",
+                "dock_sounds_enabled", "lock_sound", "unlock_sound", "low_battery_sound",
+                "power_sounds_enabled"));
+
         public static String getString(ContentResolver cr, String name) {
+            if (MOVED_TO_SECURE.contains(name)) return Secure.getString(cr, name);
+            if (MOVED_TO_GLOBAL.contains(name)) return Global.getString(cr, name);
             return SettingsStore.getString(SettingsStore.NS_SYSTEM, name);
         }
         public static int getInt(ContentResolver cr, String name) throws SettingNotFoundException {
-            return parseIntOrThrow(SettingsStore.getString(SettingsStore.NS_SYSTEM, name), name);
+            return parseIntOrThrow(getString(cr, name), name);
         }
         public static int getInt(ContentResolver cr, String name, int def) {
-            return parseInt(SettingsStore.getString(SettingsStore.NS_SYSTEM, name), def);
+            return parseInt(getString(cr, name), def);
         }
         public static long getLong(ContentResolver cr, String name) throws SettingNotFoundException {
-            return parseLongOrThrow(SettingsStore.getString(SettingsStore.NS_SYSTEM, name), name);
+            return parseLongOrThrow(getString(cr, name), name);
         }
         public static long getLong(ContentResolver cr, String name, long def) {
-            return parseLong(SettingsStore.getString(SettingsStore.NS_SYSTEM, name), def);
+            return parseLong(getString(cr, name), def);
         }
         public static float getFloat(ContentResolver cr, String name) throws SettingNotFoundException {
-            return parseFloatOrThrow(SettingsStore.getString(SettingsStore.NS_SYSTEM, name), name);
+            if (MOVED_TO_GLOBAL.contains(name)) return Global.getFloat(cr, name);
+            return parseFloatOrThrow(getString(cr, name), name);
         }
         public static float getFloat(ContentResolver cr, String name, float def) {
-            return parseFloat(SettingsStore.getString(SettingsStore.NS_SYSTEM, name), def);
+            if (MOVED_TO_GLOBAL.contains(name)) return Global.getFloat(cr, name, def);
+            return parseFloat(getString(cr, name), def);
         }
         public static boolean putString(ContentResolver cr, String name, String value) {
             boolean ok = SettingsStore.putString(SettingsStore.NS_SYSTEM, name, value);
@@ -434,26 +465,41 @@ public final class Settings {
         public static final android.net.Uri CONTENT_URI =
             android.net.Uri.parse("content://settings/secure");
 
+        /** AOSP Secure.MOVED_TO_GLOBAL (the ones an app reads): AOSP's
+         *  Secure.getStringForUser answers them from Global. Banking SDKs read
+         *  Secure "adb_enabled" and "development_settings_enabled". */
+        private static final java.util.Set<String> MOVED_TO_GLOBAL = new java.util.HashSet<>(java.util.Arrays.asList(
+                "adb_enabled", "assisted_gps_enabled", "bluetooth_on", "cdma_cell_broadcast_sms",
+                "cdma_roaming_mode", "cdma_subscription_mode", "data_activity_timeout_mobile",
+                "data_activity_timeout_wifi", "data_roaming", "development_settings_enabled",
+                "device_provisioned", "display_size_forced", "download_manager_max_bytes_over_mobile",
+                "download_manager_recommended_max_bytes_over_mobile", "mobile_data", "netstats_enabled",
+                "network_preference", "usb_mass_storage_enabled", "wifi_on",
+                "wifi_sleep_policy", "wifi_networks_available_notification_on",
+                "wifi_networks_available_repeat_delay", "wifi_num_open_networks_kept",
+                "wtf_is_fatal", "bugreport_in_power_menu", "package_verifier_enable", "http_proxy"));
+
         public static String getString(ContentResolver cr, String name) {
+            if (MOVED_TO_GLOBAL.contains(name)) return Global.getString(cr, name);
             return SettingsStore.getString(SettingsStore.NS_SECURE, name);
         }
         public static int getInt(ContentResolver cr, String name) throws SettingNotFoundException {
-            return parseIntOrThrow(SettingsStore.getString(SettingsStore.NS_SECURE, name), name);
+            return parseIntOrThrow(getString(cr, name), name);
         }
         public static int getInt(ContentResolver cr, String name, int def) {
-            return parseInt(SettingsStore.getString(SettingsStore.NS_SECURE, name), def);
+            return parseInt(getString(cr, name), def);
         }
         public static long getLong(ContentResolver cr, String name) throws SettingNotFoundException {
-            return parseLongOrThrow(SettingsStore.getString(SettingsStore.NS_SECURE, name), name);
+            return parseLongOrThrow(getString(cr, name), name);
         }
         public static long getLong(ContentResolver cr, String name, long def) {
-            return parseLong(SettingsStore.getString(SettingsStore.NS_SECURE, name), def);
+            return parseLong(getString(cr, name), def);
         }
         public static float getFloat(ContentResolver cr, String name) throws SettingNotFoundException {
-            return parseFloatOrThrow(SettingsStore.getString(SettingsStore.NS_SECURE, name), name);
+            return parseFloatOrThrow(getString(cr, name), name);
         }
         public static float getFloat(ContentResolver cr, String name, float def) {
-            return parseFloat(SettingsStore.getString(SettingsStore.NS_SECURE, name), def);
+            return parseFloat(getString(cr, name), def);
         }
         public static boolean putString(ContentResolver cr, String name, String value) {
             boolean ok = SettingsStore.putString(SettingsStore.NS_SECURE, name, value);

@@ -4694,6 +4694,7 @@ public final class MacApkPackageManager extends PackageManager {
         info.processName = macapkComponentProcess(entry.name);
         info.enabled     = entry.enabled;
         info.exported    = entry.exported;
+        info.permission  = entry.permission;
         if ((flags & GET_META_DATA) != 0 && !entry.metaData.isEmpty()) {
             android.os.Bundle md = new android.os.Bundle();
             for (Map.Entry<String, String> e : entry.metaData.entrySet()) {

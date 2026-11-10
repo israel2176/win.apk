@@ -26,6 +26,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 
 namespace winapk {
 
@@ -53,6 +54,9 @@ JNIInvokeInterface_ g_guest_invoke;     // filled by guest_jni_init()
 bool g_table_built = false;             // init runs once at startup, before threads
 SignatureProvider g_sig_provider = nullptr;
 void* g_sig_ctx = nullptr;
+
+// How deep this thread is in guest JNI_OnLoad calls (guest_jni_enter_onload).
+thread_local int t_onload_depth = 0;
 
 // One guest env per thread. Its address is stable for the thread's life, which
 // is what lets it be handed out as a JNIEnv*.
@@ -146,6 +150,83 @@ WINAPK_GUEST_ABI jfieldID guest_get_field_id(JNIEnv* genv, jclass cls, const cha
     return f;
 }
 
+// FindClass inside JNI_OnLoad, as ART does it. ART's FindClass loads and
+// links a class but leaves it uninitialized (ClassLinker::FindClass); HotSpot's
+// also runs its static initializer. Inside JNI_OnLoad that difference matters:
+// HotSpot adds the library to its class loader's list only after JNI_OnLoad
+// returns, so an initializer that calls a native of the library being loaded
+// fails with UnsatisfiedLinkError and FindClass returns null. On Android the
+// initializer runs later, on first use, when the library is registered.
+// Realm's JNI_OnLoad looks up io.realm.internal.core.NativeRealmAny, whose
+// initializer asks librealm-jni for its finalizer; Realm asserted and aborted
+// Bit at start. So inside JNI_OnLoad the class is loaded with
+// Class.forName(name, false, loader), where loader is the one HotSpot's own
+// FindClass uses there: that of NativeLibraries.getFromClass(), the class whose
+// System.load is running. Anything unexpected falls back to HotSpot's FindClass,
+// which then also reports a missing class the usual way. Outside JNI_OnLoad
+// FindClass is HotSpot's: the library is registered by then.
+struct OnLoadIds {
+    jclass native_libraries = nullptr;  // global refs
+    jclass class_class = nullptr;
+    jmethodID get_from_class = nullptr;  // NativeLibraries.getFromClass()
+    jmethodID get_class_loader = nullptr;
+    jmethodID for_name = nullptr;
+};
+
+OnLoadIds onload_ids(JNIEnv* env) {
+    OnLoadIds ids;
+    jclass libs = env->FindClass("jdk/internal/loader/NativeLibraries");
+    jclass cls = env->FindClass("java/lang/Class");
+    if (libs && cls) {
+        ids.get_from_class = env->GetStaticMethodID(libs, "getFromClass", "()Ljava/lang/Class;");
+        ids.get_class_loader = env->GetMethodID(cls, "getClassLoader", "()Ljava/lang/ClassLoader;");
+        ids.for_name =
+            env->GetStaticMethodID(cls, "forName", "(Ljava/lang/String;ZLjava/lang/ClassLoader;)Ljava/lang/Class;");
+    }
+    env->ExceptionClear();
+    if (ids.get_from_class && ids.get_class_loader && ids.for_name) {
+        ids.native_libraries = static_cast<jclass>(env->NewGlobalRef(libs));
+        ids.class_class = static_cast<jclass>(env->NewGlobalRef(cls));
+    }
+    if (libs) env->DeleteLocalRef(libs);
+    if (cls) env->DeleteLocalRef(cls);
+    return ids;
+}
+
+jclass find_class_uninitialized(JNIEnv* env, const char* name) {
+    static const OnLoadIds ids = onload_ids(env);
+    if (!ids.native_libraries) return nullptr;
+    jobject from = env->CallStaticObjectMethod(ids.native_libraries, ids.get_from_class);
+    if (env->ExceptionCheck() || !from) {
+        env->ExceptionClear();
+        return nullptr;
+    }
+    jobject loader = env->CallObjectMethod(from, ids.get_class_loader);
+    env->DeleteLocalRef(from);
+    std::string dotted(name);
+    for (char& c : dotted)
+        if (c == '/') c = '.';
+    jstring jname = env->NewStringUTF(dotted.c_str());
+    jobject found = jname ? env->CallStaticObjectMethod(ids.class_class, ids.for_name, jname, JNI_FALSE, loader)
+                          : nullptr;
+    if (env->ExceptionCheck()) {
+        env->ExceptionClear();
+        found = nullptr;
+    }
+    if (jname) env->DeleteLocalRef(jname);
+    if (loader) env->DeleteLocalRef(loader);
+    return static_cast<jclass>(found);
+}
+
+WINAPK_GUEST_ABI jclass guest_find_class(JNIEnv* genv, const char* name) {
+    GuestEnv* g = guest_env_from(genv);
+    JNIEnv* env = g ? g->host : genv;
+    if (t_onload_depth > 0 && name && !env->ExceptionCheck()) {
+        if (jclass c = find_class_uninitialized(env, name)) return c;
+    }
+    return env->FindClass(name);
+}
+
 // GetJavaVM hands the guest the guest JavaVM (System V slots), never HotSpot's:
 // a guest that calls (*vm)->GetEnv on HotSpot's own table passes System V
 // arguments to a Microsoft x64 function and faults inside jni_GetEnv.
@@ -176,6 +257,7 @@ void build_guest_table() {
     *reinterpret_cast<void**>(&t.GetJavaVM) = reinterpret_cast<void*>(&guest_get_java_vm);
     *reinterpret_cast<void**>(&t.GetMethodID) = reinterpret_cast<void*>(&guest_get_method_id);
     *reinterpret_cast<void**>(&t.GetFieldID) = reinterpret_cast<void*>(&guest_get_field_id);
+    *reinterpret_cast<void**>(&t.FindClass) = reinterpret_cast<void*>(&guest_find_class);
 }
 
 // Updates this thread's guest env to wrap `host` and returns it as a JNIEnv*.
@@ -286,6 +368,12 @@ JNIEnv* host_env_of(JNIEnv* guest) {
 }
 
 JNIEnv* guest_env_wrapping(JNIEnv* host) { return host ? wrap_host_env(host) : nullptr; }
+
+void guest_jni_enter_onload() { ++t_onload_depth; }
+
+void guest_jni_leave_onload() {
+    if (t_onload_depth > 0) --t_onload_depth;
+}
 
 void guest_jni_set_signature_provider(SignatureProvider provider, void* ctx) {
     g_sig_provider = provider;

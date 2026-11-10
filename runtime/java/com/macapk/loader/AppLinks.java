@@ -6,6 +6,7 @@ import android.content.pm.PackageManager;
 import android.content.pm.Signature;
 
 import java.io.ByteArrayOutputStream;
+import java.io.File;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URI;
@@ -22,8 +23,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
 
 /**
  * Android App Links on Mac.apk: the verification a device's domain verifier
@@ -39,6 +38,8 @@ import java.util.concurrent.TimeUnit;
  * `*.example.com` is verified against `example.com`, as AOSP does. Nothing is
  * assumed: a host whose file is missing, redirected or does not list the cert
  * stays DOMAIN_STATE_NONE. DomainVerificationManager reports the result.
+ * Win.apk: a domain is checked only when an answer needs it, and the verdict is
+ * cached per APK (see "lazy verification" below); nothing is fetched at boot.
  *
  * THE BROWSER HALF. On a device the app opens its sign-in page in the browser,
  * and when the page finally navigates to the app's own verified link (an OAuth
@@ -66,9 +67,6 @@ public final class AppLinks {
 
     private static volatile String sPkg;
     private static volatile PackageManager sPm;
-    /** host (as declared, lower case) -> DOMAIN_STATE_*; filled by verifyAsync. */
-    private static volatile Map<String, Integer> sStates = Collections.emptyMap();
-    private static final CountDownLatch sDone = new CountDownLatch(1);
 
     /** The hosts this manifest asks to verify: autoVerify filters that take
      *  VIEW + BROWSABLE + DEFAULT on http/https only (AOSP ignores autoVerify on a
@@ -143,8 +141,12 @@ public final class AppLinks {
         return false;
     }
 
-    /** GET https://<domain>/.well-known/assetlinks.json; null on any failure,
-     *  a redirect or a non-200 answer (the verifier does not follow redirects). */
+    /** One assetlinks.json fetch: the body on a 200, NO_FILE when the server
+     *  answered anything else (a redirect, 404 ...: the verifier does not follow
+     *  redirects, so that is a definite "no"), null when it could not be
+     *  reached (no network, a timeout, TLS): worth asking again soon. */
+    static final String NO_FILE = "";
+
     static String fetchAssetLinks(String domain) {
         HttpURLConnection c = null;
         try {
@@ -154,14 +156,14 @@ public final class AppLinks {
             c.setConnectTimeout(TIMEOUT_MS);
             c.setReadTimeout(TIMEOUT_MS);
             c.setRequestProperty("Accept", "application/json");
-            if (c.getResponseCode() != 200) return null;
+            if (c.getResponseCode() != 200) return NO_FILE;
             try (InputStream in = c.getInputStream()) {
                 ByteArrayOutputStream bo = new ByteArrayOutputStream();
                 byte[] buf = new byte[8192];
                 int n;
                 while ((n = in.read(buf)) > 0) {
                     bo.write(buf, 0, n);
-                    if (bo.size() > MAX_BYTES) return null;
+                    if (bo.size() > MAX_BYTES) return NO_FILE;
                 }
                 return new String(bo.toByteArray(), StandardCharsets.UTF_8);
             }
@@ -172,77 +174,273 @@ public final class AppLinks {
         }
     }
 
-    /** Boot: verify this app's autoVerify hosts off the boot path. */
-    static void verifyAsync(final String pkg, final Manifest manifest, final PackageManager pm) {
+    // ---- lazy verification and its cache -----------------------------------------
+    //
+    // A device verifies once, at install or update, and keeps the answer. Win.apk
+    // used to fetch every autoVerify host on every start: Google Maps declares
+    // hundreds of Google country domains, so each start made ~356 HTTPS requests
+    // for answers nothing had asked for. Now nothing is fetched at boot. A domain
+    // is checked when an answer depends on it -- a sign-in whose redirect_uri is
+    // on that domain -- one domain at a time, and the result is kept in
+    // <data>\cache\applinks\<package>.properties: a verdict for VERIFY_TTL_MS, a
+    // fetch that could not reach the site for FAIL_TTL_MS. The file is dropped
+    // when the APK changes (versionCode, update time or signing certificate).
+    // DomainVerificationManager answers from what is known: a domain not checked
+    // yet is DOMAIN_STATE_NONE, as on a device before its verifier has run.
+
+    static final long VERIFY_TTL_MS = 7L * 24 * 3600 * 1000;
+    static final long FAIL_TTL_MS = 3600L * 1000;
+    /** How long a sign-in open waits for a fetch; a slower one finishes in the
+     *  background and its verdict serves the next open. */
+    private static final long SIGNIN_WAIT_MS = 5000;
+
+    static final String OK = "ok", NO = "no", FAIL = "fail";
+
+    /** One domain's cached answer. */
+    static final class Entry {
+        final String verdict;
+        final long at;
+        Entry(String verdict, long at) { this.verdict = verdict; this.at = at; }
+        boolean fresh(long now) {
+            long ttl = FAIL.equals(verdict) ? FAIL_TTL_MS : VERIFY_TTL_MS;
+            return at <= now && now - at < ttl;
+        }
+    }
+
+    /** Test seams: where the cache lives, the fetch, the clock, the APK identity. */
+    interface Fetcher { String fetch(String domain); }
+    static volatile File cacheDirOverride;
+    static volatile Fetcher fetcher = AppLinks::fetchAssetLinks;
+    static volatile java.util.function.LongSupplier clock = System::currentTimeMillis;
+
+    private static volatile Manifest sManifest;
+    private static List<String> sHosts;              // under LOCK
+    private static Set<String> sFps;                 // under LOCK
+    private static String sStamp;                    // under LOCK
+    private static Map<String, Entry> sCache;        // domain -> entry, under LOCK
+    private static final Object LOCK = new Object();
+    private static final Map<String, Thread> sInFlight = new HashMap<>();  // under LOCK
+
+    /** Boot: remember the app; no network, no disk. */
+    static void init(final String pkg, final Manifest manifest, final PackageManager pm) {
         sPkg = pkg;
         sPm = pm;
-        final List<String> hosts = ON ? autoVerifyHosts(manifest) : Collections.<String>emptyList();
-        if (hosts.isEmpty()) {
-            sDone.countDown();
-            return;
+        sManifest = manifest;
+    }
+
+    /** Test seam: the app as init + its PackageInfo would give it. */
+    static void initForTest(String pkg, List<String> hosts, Set<String> fps, String stamp) {
+        synchronized (LOCK) {
+            sPkg = pkg;
+            sPm = null;
+            sManifest = null;
+            sHosts = new ArrayList<>(hosts);
+            sFps = new HashSet<>(fps);
+            sStamp = stamp;
+            sCache = null;
+            sInFlight.clear();
         }
-        Thread t = new Thread(() -> {
-            Map<String, Integer> states = new HashMap<>();
+    }
+
+    /** The declared hosts, computed once. */
+    private static List<String> hosts() {
+        synchronized (LOCK) {
+            if (sHosts == null) sHosts = ON ? autoVerifyHosts(sManifest) : Collections.<String>emptyList();
+            return sHosts;
+        }
+    }
+
+    /** The APK's signing-cert fingerprints and its identity stamp, once. */
+    private static void loadIdentity() {
+        synchronized (LOCK) {
+            if (sFps != null) return;
+            Set<String> fps = new HashSet<>();
+            String stamp = "";
             try {
-                Set<String> fps = new HashSet<>();
-                PackageInfo pi = pm.getPackageInfo(pkg, PackageManager.GET_SIGNATURES);
-                if (pi != null && pi.signatures != null) {
-                    for (Signature s : pi.signatures) fps.add(fingerprint(s.toByteArray()));
-                }
-                Map<String, Boolean> byDomain = new HashMap<>();
-                for (String h : hosts) {
-                    String d = verifyDomain(h);
-                    Boolean ok = byDomain.get(d);
-                    if (ok == null) {
-                        String json = fps.isEmpty() ? null : fetchAssetLinks(d);
-                        ok = json != null && grants(json, pkg, fps);
-                        byDomain.put(d, ok);
+                PackageManager pm = sPm;
+                PackageInfo pi = pm == null ? null : pm.getPackageInfo(sPkg, PackageManager.GET_SIGNATURES);
+                if (pi != null) {
+                    if (pi.signatures != null) {
+                        for (Signature s : pi.signatures) fps.add(fingerprint(s.toByteArray()));
                     }
-                    states.put(h, ok
-                            ? android.content.pm.verify.domain.DomainVerificationUserState.DOMAIN_STATE_VERIFIED
-                            : android.content.pm.verify.domain.DomainVerificationUserState.DOMAIN_STATE_NONE);
+                    List<String> sorted = new ArrayList<>(fps);
+                    Collections.sort(sorted);
+                    stamp = pi.getLongVersionCode() + "/" + pi.lastUpdateTime + "/" + String.join(",", sorted);
                 }
-                NativeLog.i(TAG, "[applinks] " + pkg + ": " + states);
-            } catch (Throwable th) {
-                NativeLog.w(TAG, "[applinks] verification failed: " + th);
-            } finally {
-                sStates = Collections.unmodifiableMap(states);
-                sDone.countDown();
+            } catch (Throwable t) {
+                NativeLog.w(TAG, "[applinks] no signing certificate for " + sPkg + ": " + t);
             }
-        }, "macapk-applinks");
-        t.setDaemon(true);
-        t.start();
+            sFps = fps;
+            sStamp = stamp;
+        }
+    }
+
+    static File cacheFile(String pkg) {
+        File dir = cacheDirOverride;
+        if (dir == null) dir = HostAppSupport.file("cache/applinks");
+        return new File(dir, pkg + ".properties");
+    }
+
+    /** The cache, read once (under LOCK); an older APK's file reads as empty. */
+    private static Map<String, Entry> cache() {
+        if (sCache != null) return sCache;
+        Map<String, Entry> m = new HashMap<>();
+        File f = cacheFile(sPkg);
+        if (f.isFile()) {
+            // The certificate is read only when there is a file to check it
+            // against: an app never signed in through an App Link reads nothing.
+            loadIdentity();
+            try (java.io.Reader in = new java.io.InputStreamReader(new java.io.FileInputStream(f),
+                    StandardCharsets.UTF_8)) {
+                java.util.Properties p = new java.util.Properties();
+                p.load(in);
+                if (sStamp.equals(p.getProperty("apk"))) {
+                    for (String k : p.stringPropertyNames()) {
+                        if (!k.startsWith("d.")) continue;
+                        String v = p.getProperty(k);
+                        int comma = v.indexOf(',');
+                        if (comma <= 0) continue;
+                        try {
+                            m.put(k.substring(2), new Entry(v.substring(0, comma),
+                                    Long.parseLong(v.substring(comma + 1))));
+                        } catch (NumberFormatException ignored) {
+                        }
+                    }
+                }
+            } catch (Throwable t) {
+                NativeLog.w(TAG, "[applinks] cache unreadable (" + t + "); starting over");
+            }
+        }
+        sCache = m;
+        return m;
+    }
+
+    /** Write the cache (under LOCK): the stamp and the fresh entries only. */
+    private static void save() {
+        File f = cacheFile(sPkg);
+        long now = clock.getAsLong();
+        java.util.Properties p = new java.util.Properties();
+        p.setProperty("apk", sStamp);
+        for (Map.Entry<String, Entry> e : sCache.entrySet()) {
+            if (e.getValue().fresh(now)) p.setProperty("d." + e.getKey(), e.getValue().verdict + "," + e.getValue().at);
+        }
+        try {
+            File dir = f.getParentFile();
+            if (dir != null) dir.mkdirs();
+            File tmp = new File(dir, f.getName() + ".tmp");
+            try (java.io.Writer out = new java.io.OutputStreamWriter(new java.io.FileOutputStream(tmp),
+                    StandardCharsets.UTF_8)) {
+                p.store(out, "Win.apk: App Link verification of " + sPkg);
+            }
+            java.nio.file.Files.move(tmp.toPath(), f.toPath(),
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        } catch (Throwable t) {
+            NativeLog.w(TAG, "[applinks] cache not written: " + t);
+        }
+    }
+
+    /** The cached verdict for `domain` when fresh, else null. No network. */
+    private static String known(String domain) {
+        synchronized (LOCK) {
+            Entry e = cache().get(domain);
+            return e != null && e.fresh(clock.getAsLong()) ? e.verdict : null;
+        }
+    }
+
+    /** Fetch and record one domain's verdict (the verifier's check). */
+    private static void check(String domain) {
+        Set<String> fps;
+        String pkg;
+        synchronized (LOCK) {
+            loadIdentity();
+            fps = sFps;
+            pkg = sPkg;
+        }
+        String verdict;
+        if (fps.isEmpty()) {
+            verdict = NO;   // no real certificate: nothing a site could vouch for
+        } else {
+            String json = fetcher.fetch(domain);
+            verdict = json == null ? FAIL : (json.isEmpty() || !grants(json, pkg, fps)) ? NO : OK;
+        }
+        NativeLog.i(TAG, "[applinks] " + pkg + ": " + domain + " -> " + verdict);
+        synchronized (LOCK) {
+            cache().put(domain, new Entry(verdict, clock.getAsLong()));
+            save();
+        }
+    }
+
+    /** Is `domain` verified? Uses the cache, else fetches it, waiting at most
+     *  `waitMs`; a fetch already running for it is joined, not repeated. */
+    static boolean verifyDomainNow(final String domain, long waitMs) {
+        String v = known(domain);
+        if (v != null) return OK.equals(v);
+        Thread t;
+        synchronized (LOCK) {
+            t = sInFlight.get(domain);
+            if (t == null) {
+                t = new Thread(() -> {
+                    try {
+                        check(domain);
+                    } finally {
+                        synchronized (LOCK) { sInFlight.remove(domain); }
+                    }
+                }, "macapk-applinks");
+                t.setDaemon(true);
+                sInFlight.put(domain, t);
+                t.start();
+            }
+        }
+        try {
+            t.join(waitMs);
+        } catch (InterruptedException ignored) {
+        }
+        return OK.equals(known(domain));
+    }
+
+    /** The domains whose verification would cover `host`: those of each
+     *  declared host that matches it exactly or as a wildcard. */
+    static List<String> domainsFor(String host, List<String> declared) {
+        List<String> out = new ArrayList<>();
+        if (host == null) return out;
+        host = host.toLowerCase(Locale.ROOT);
+        for (String h : declared) {
+            boolean covers = h.equals(host)
+                    || (h.startsWith("*.") && (host.endsWith(h.substring(1)) || host.equals(h.substring(2))));
+            String d = verifyDomain(h);
+            if (covers && !out.contains(d)) out.add(d);
+        }
+        return out;
+    }
+
+    /** The sign-in path's question: is `host` one of this app's verified App
+     *  Links? Checks only the domain(s) that would cover it. */
+    static boolean hostVerifiedLazily(String host, long waitMs) {
+        for (String d : domainsFor(host, hosts())) {
+            if (verifyDomainNow(d, waitMs)) return true;
+        }
+        return false;
+    }
+
+    /** The declared hosts' states from what is known now (no network). */
+    static Map<String, Integer> knownStates() {
+        Map<String, Integer> states = new java.util.LinkedHashMap<>();
+        for (String h : hosts()) {
+            states.put(h, OK.equals(known(verifyDomain(h)))
+                    ? android.content.pm.verify.domain.DomainVerificationUserState.DOMAIN_STATE_VERIFIED
+                    : android.content.pm.verify.domain.DomainVerificationUserState.DOMAIN_STATE_NONE);
+        }
+        return states;
     }
 
     /** DomainVerificationManager's answer for our own package: null when it
-     *  declares no autoVerify host (AOSP's "does not declare any domains"). */
+     *  declares no autoVerify host (AOSP's "does not declare any domains").
+     *  Answers from the cache and never waits on the network: a domain not
+     *  checked yet is DOMAIN_STATE_NONE. */
     public static Map<String, Integer> stateMapFor(String pkg) {
         if (!ON || pkg == null || !pkg.equals(sPkg)) return null;
-        awaitVerification(3000);
-        Map<String, Integer> s = sStates;
-        return s.isEmpty() ? null : s;
-    }
-
-    static void awaitVerification(long ms) {
-        try { sDone.await(ms, TimeUnit.MILLISECONDS); } catch (InterruptedException ignored) {}
-    }
-
-    /** Is `host` covered by a VERIFIED declared host (exact or wildcard)? */
-    static boolean hostVerified(String host, Map<String, Integer> states) {
-        if (host == null || states == null) return false;
-        host = host.toLowerCase(Locale.ROOT);
-        for (Map.Entry<String, Integer> e : states.entrySet()) {
-            if (e.getValue() == null || e.getValue()
-                    != android.content.pm.verify.domain.DomainVerificationUserState.DOMAIN_STATE_VERIFIED) {
-                continue;
-            }
-            String h = e.getKey();
-            if (h.equals(host)) return true;
-            if (h.startsWith("*.") && (host.endsWith(h.substring(1)) || host.equals(h.substring(2)))) {
-                return true;
-            }
-        }
-        return false;
+        if (hosts().isEmpty()) return null;
+        return Collections.unmodifiableMap(knownStates());
     }
 
     /** The `redirect_uri` query parameter of `url`, decoded, or null. */
@@ -283,7 +481,7 @@ public final class AppLinks {
      * app's VERIFIED App Links and resolves to its own exported BROWSABLE
      * activity, else null (open in the Mac's browser as before).
      */
-    static String signInReturnPrefix(String url, Map<String, Integer> states, String pkg,
+    static String signInReturnPrefix(String url, java.util.function.Predicate<String> verified, String pkg,
                                      PackageManager pm) {
         String redirect = redirectUriOf(url);
         if (redirect == null) return null;
@@ -305,10 +503,11 @@ public final class AppLinks {
         } catch (Throwable t) {
             return null;
         }
-        if (!hostVerified(host, states)) return null;
         if (pm != null && HostUrlIntake.resolveOwn(HostUrlIntake.browserIntentFor(lowerScheme(redirect)), pkg, pm) == null) {
             return null;
         }
+        // Last, as it may fetch the domain's assetlinks.json (once, then cached).
+        if (!verified.test(host)) return null;
         return prefix;
     }
 
@@ -373,9 +572,7 @@ public final class AppLinks {
             return false;
         }
         if (redirectUriOf(url) == null) return false;
-        String redirect = redirectUriOf(url);
-        if (redirect != null && isWebScheme(redirect)) awaitVerification(5000);
-        String prefix = signInReturnPrefix(url, sStates, sPkg, sPm);
+        String prefix = signInReturnPrefix(url, h -> hostVerifiedLazily(h, SIGNIN_WAIT_MS), sPkg, sPm);
         if (prefix == null) return false;
         boolean ok;
         try {

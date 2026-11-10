@@ -36,7 +36,7 @@ public final class GmsCli {
         if (args.length == 0) { usage(); return 2; }
         // Before any HTTPS call: Boot.run does this for an app's process, but
         // `--gms` boots no app, and without the roots Windows trusts every
-        // call to Google behind NetFree failed with "PKIX path building failed".
+        // call to Google behind a filtering proxy failed with "PKIX path building failed".
         try { com.macapk.loader.HostTrust.install(); } catch (Throwable ignored) {}
         String cmd = args[0];
         try {
@@ -263,7 +263,10 @@ public final class GmsCli {
         }
         String email = NativeSignIn.signInInteractive();
         if (email == null) {
-            String why = GoogleAuthClient.lastError();
+            // The window's own failure (a WebView2 or page error code) first:
+            // with one there was no token, so no exchange ran.
+            String why = NativeSignIn.lastWindowError();
+            if (why == null) why = GoogleAuthClient.lastError();
             if (why == null) return 2;                    // the user closed the window
             System.out.println("ERROR\t" + why);
             return 1;

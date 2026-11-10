@@ -63,6 +63,9 @@ int fdatasync(int);
 ssize_t read(int, void*, size_t);
 ssize_t write(int, const void*, size_t);
 off_t lseek(int, off_t, int);
+int posix_fallocate(int, off_t, off_t);
+int ftruncate(int, off_t);
+int fallocate(int, int, off_t, off_t);
 int unlink(const char*);
 int mkdir(const char*, unsigned);
 int rmdir(const char*);
@@ -511,6 +514,18 @@ static void test_files(const char* dir) {
     check("read back", rfd >= 0 && read(rfd, buf, 5) == 5 && strcmp(buf, "hello") == 0, buf);
     check("lseek", lseek(rfd, 0, 2) == 6, 0);
     close(rfd);
+    // posix_fallocate grows the file and keeps its contents and position;
+    // asking for less than its size changes nothing.
+    const int afd = open(path, 02);  // O_RDWR
+    check("posix_fallocate", afd >= 0 && lseek(afd, 2, 0) == 2 && posix_fallocate(afd, 0, 65536) == 0, 0);
+    check("posix_fallocate keeps the position", lseek(afd, 0, 1) == 2, 0);
+    check("posix_fallocate grows the file", stat(path, &st) == 0 && st.size == 65536, 0);
+    check("posix_fallocate below the size is a no-op", posix_fallocate(afd, 0, 10) == 0 && stat(path, &st) == 0 &&
+          st.size == 65536, 0);
+    check("fallocate(FALLOC_FL_PUNCH_HOLE) is EOPNOTSUPP", fallocate(afd, 3, 0, 4096) == -1 && *__errno() == 95, 0);
+    check("the contents stay", lseek(afd, 0, 0) == 0 && read(afd, buf, 5) == 5 && strcmp(buf, "hello") == 0, buf);
+    check("ftruncate back", ftruncate(afd, 6) == 0, 0);
+    close(afd);
     FILE* f = fopen(path, "a");
     fprintf(f, "%s %d\n", "line", 2);
     fclose(f);

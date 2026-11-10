@@ -60,4 +60,10 @@ JNIEnv* host_env_of(JNIEnv* guest);
 // ordinary Microsoft x64 function, as the thunk expects.
 JNIEnv* guest_env_wrapping(JNIEnv* host);
 
+// Brackets a guest library's JNI_OnLoad on the calling thread (guest_libs.cpp).
+// Inside it the guest's FindClass loads a class without initializing it, as
+// ART's does; see guest_find_class in guest_jni.cpp.
+void guest_jni_enter_onload();
+void guest_jni_leave_onload();
+
 }  // namespace winapk

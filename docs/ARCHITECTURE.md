@@ -218,11 +218,11 @@ functions, every one declared with the System V calling convention
 | `string.cpp` | `string.h`, ctype, 32-bit `wchar_t`, `strto*`, the FORTIFY `_chk` variants |
 | `printf.cpp` | A printf engine that reads the System V `va_list`; the printf and scanf families; liblog's variadic calls |
 | `pthread.cpp` | Mutexes, condition variables, rwlocks, once, keys and threads on `WaitOnAddress`, over Bionic's struct layouts; cleanup handlers (`pthread_exit` runs the pending ones); semaphores |
-| `stdio.cpp`, `fd.cpp` | One file-descriptor table shared with Java (`NativeOs`): files, `stat` in Bionic's layout, directories, `FILE`, hard links; Bionic's `fts` over the same calls (it never changes directory: always `FTS_NOCHDIR`); `popen` and `system`, which find no shell to run (the command exits 127, as when `/system/bin/sh` cannot be run); pipes, eventfd and epoll; `poll`, `select`, `epoll_wait` |
+| `stdio.cpp`, `fd.cpp` | One file-descriptor table shared with Java (`NativeOs`): files, `stat` in Bionic's layout, directories, `FILE`, hard links; Bionic's `fts` over the same calls (it never changes directory: always `FTS_NOCHDIR`); `popen` and `system`, which find no shell to run (the command exits 127, as when `/system/bin/sh` cannot be run); pipes, eventfd and epoll; named pipes (`mkfifo`: a marker file `stat` reports as a FIFO, opened as the process's one pipe buffer for that path); `poll`, `select`, `epoll_wait` |
 | `socket.cpp` | BSD sockets on Winsock with Linux's constants translated; `getaddrinfo` |
 | `paths.cpp` | Android's absolute paths (`/data`, `/sdcard`, `/system/fonts`, `/dev/null`) under the Android root |
 | `looper.cpp` | The NDK's `ALooper` |
-| `misc.cpp` | Clocks and time, `strptime`, `mmap` on `VirtualAlloc` (with `PROT_NONE` as a reservation), system properties, the guest environment, `syscall` for futex and friends, `sysconf`, `uname`, `getauxval`, `sched_getaffinity` (the process's affinity), `fork`/`vfork` (-1, `ENOSYS`: a Windows process cannot be copied) and `waitpid` (`ECHILD`), `random(3)` as Bionic's (NetBSD's) generator, libm (the `long double` rounding functions on binary128), libandroid's `ATrace` (tracing off) |
+| `misc.cpp` | Clocks and time, `strptime`, `mmap` on `VirtualAlloc` (with `PROT_NONE` as a reservation; a file mapped `MAP_SHARED`, or read-only, is a view of the file (`MapViewOfFile`), also `MAP_FIXED` into an untouched reservation, so writes reach the file and every mapping sees them; a writable private one is a copy), system properties, the guest environment, `syscall` for futex and friends, `sysconf`, `uname`, `getauxval`, `sched_getaffinity` (the process's affinity), `fork`/`vfork` (-1, `ENOSYS`: a Windows process cannot be copied) and `waitpid` (`ECHILD`), `random(3)` as Bionic's (NetBSD's) generator, libm (the `long double` rounding functions on binary128), libandroid's `ATrace` (tracing off) |
 | `locale.cpp` | The C and C.UTF-8 locales libc++ builds on, UTF-8 conversion, `wctype.h` |
 | `signal.cpp` | Signals delivered to guest handlers: a vectored exception handler maps access violations, illegal instructions, divide errors and breakpoints to SIGSEGV/SIGBUS/SIGILL/SIGFPE/SIGTRAP and calls the handler with Bionic's `siginfo_t` and `ucontext_t` (registers written back, so a handler can fix the fault or redirect `rip`); `SA_SIGINFO`, `SA_ONSTACK` with `sigaltstack`, `SA_RESETHAND`, `SA_NODEFER`, `sa_mask`; `raise`, `kill`, `tgkill`, `abort` synchronously, `pthread_kill` by suspending the target and injecting the call; a handler that declines three times leaves the fault to the crash report. Not delivered: faults in HotSpot or in Windows DLLs, faults in arm64 guest code, handlers in arm64 libraries. POSIX timers do not fire |
 | `setjmp.cpp` | `setjmp` and `longjmp` for guest code |
@@ -254,7 +254,12 @@ Guest code gets its own `JNIEnv` and `JavaVM` (`guest_jni.cpp`): a function
 table with System V entry points, generated from the JDK's `jni.h`
 (235 slots, `tools/gen_jni_slots.py`), each forwarding into HotSpot's table.
 There is one guest env per thread, and `GetEnv`, `AttachCurrentThread` and
-`DetachCurrentThread` hand back guest envs.
+`DetachCurrentThread` hand back guest envs. A few slots do what ART does where
+HotSpot differs: `GetMethodID` finds an inherited constructor, `GetFieldID`
+knows libcore's renamed `FileDescriptor.descriptor`, and `FindClass` inside a
+library's `JNI_OnLoad` leaves the class uninitialized (HotSpot registers the
+library only after `JNI_OnLoad`, so an initializer calling one of its natives
+would fail).
 
 ### The variadic JNI bridge
 
@@ -441,7 +446,7 @@ how CI boots apps.
 | Video: MediaCodec | `NativeMedia`'s video natives on the synchronous decoder MFTs: H.264 always, HEVC/VP9/VP8/AV1/MPEG-4 when a decoder is installed (`nativeVideoSupportedMimes` lists what `MFTEnumEx` really creates); AAC and MP3 audio decoders too. The NDK media API (`AMediaCodec`, `AMediaExtractor`) and `MediaExtractor` are not implemented; `native_media.cpp` holds only the `AMEDIAFORMAT_KEY_*` strings so libraries link | `native_media_video.cpp`, `video_decode.cpp` |
 | Images | libwebp for WebP, WIC for the rest | `native_image.cpp` |
 | Notifications | `NotificationManager` posts to `HostNotifications`, whose natives show Windows.UI.Notifications toasts (WinRT C ABI, combase loaded at run time) under the app's AppUserModelID, which the launcher writes on the app's Start menu shortcut; a click comes back through `HostNotifications.onActivated` and `PendingIntent.send()` | `native_notifications.cpp` |
-| WebView, Custom Tabs | Microsoft Edge WebView2, shown in the app window behind the views drawn over it; `shouldInterceptRequest`, JavaScript interfaces, cookies; a Custom Tab is a tab window whose navigations are checked against the app's manifest | `native_webview.cpp`, `webview2_host.cpp`, `native_browser_tab.cpp` |
+| WebView, Custom Tabs, App Link sign-in | Microsoft Edge WebView2, shown in the app window behind the views drawn over it; `shouldInterceptRequest`, JavaScript interfaces, cookies; a Custom Tab is a tab window whose navigations are checked against the app's manifest; a browser sign-in whose `redirect_uri` is one of the app's verified App Links (or its own link scheme) opens in the same window, which hands back only that redirect (`applink_match.h`) | `native_webview.cpp`, `webview2_host.cpp`, `native_browser_tab.cpp` |
 | Camera (camera2, Camera, CameraX) | Media Foundation capture, each webcam offered as a back and a front camera; a virtual camera when there is none | `native_camera.cpp` |
 | Location | `Windows.Devices.Geolocation`; Windows' privacy settings are the authorization | `native_location.cpp` |
 | Wi-Fi | `HostRadios` over the Native Wifi API: state, the current connection (SSID, BSSID, RSSI, frequency, link speed), the DHCP configuration from `GetAdaptersAddresses`, scans, and `WlanRegisterNotification` events pumped by one Java thread into the state, connection, signal and scan-results broadcasts. Network names need Windows' location access, as Android needs the location permission | `native_radios.cpp` |
@@ -520,7 +525,10 @@ the Android WebView user agent that makes Google serve the device flow; the
 Before the window closes, the page asks `accounts.google.com/ListAccounts`
 (the session's accounts, as Chrome asks) for the account's picture URL;
 `AccountPhoto` saves the picture as `gms\photo-<account>.img` for the
-launcher's account item (the foot of its pane). The layer's state is `gms\gms_state.properties`. `winapk-runtime --gms
+launcher's account item (the foot of its pane). A window that ends without a
+token says why as a code (`signInWindowError`: the WebView2 HRESULT, the
+page's `COREWEBVIEW2_WEB_ERROR_STATUS` and HTTP status, `TIMEOUT`), which
+`--gms signin-window` prints as its `ERROR` line and the launcher shows. The layer's state is `gms\gms_state.properties`. `winapk-runtime --gms
 <command>` runs upstream's `GmsCli` with no app, which is how the launcher's
 Google account setting lists accounts, adds one and signs out.
 
@@ -730,7 +738,7 @@ default; `--data` moves it for a direct run):
 | `logs\system.log`, `logs\services\` | The system broker and the apps it starts as service hosts |
 | `aot-cache\` | Whole arm64 translations shared between apps, `<key>.aot.dll` (kept under 2 GB, least recently used first); a `*.tmp` is a write in progress, or one a killed worker left (deleted when an hour old) |
 | `cds\` | The framework archive (`host/cds.h`): `framework-<key>.jsa`, `.ok` once it has mapped whole, `.fails` (failures in a row; at two it is not made again for that key), `dump.log` (the last dump), a `.classlist` while a first start records, and `patch-digests.txt` (the patch folders' digests under a stamp of their listing, so a start does not hash them again) |
-| `cache\` | The runtime's shared caches: `android-system-fonts\` (the `/system/fonts` and `fonts.xml` native text stacks such as Flutter's read), `fonts\`, `fwview\` (the framework's resolved resources), `monet\`, `apk-verify\` (APK signature verdicts) |
+| `cache\` | The runtime's shared caches: `android-system-fonts\` (the `/system/fonts` and `fonts.xml` native text stacks such as Flutter's read), `fonts\`, `fwview\` (the framework's resolved resources), `monet\`, `apk-verify\` (APK signature verdicts), `applinks\<package>.properties` (App Link verdicts per domain, written only when a sign-in needed one: 7 days, an unreachable site 1 hour, dropped when the APK changes) |
 | `run\<package>.pid` | Each running app's run lock |
 | `staging\` | The install helper's staging area |
 | `updates\` | `releases.json` and `releases.etag` (GitHub's list of releases from the last update check), `Win.apk-Setup-<version>.exe` (a downloaded update, until it is installed) |

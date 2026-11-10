@@ -6,6 +6,7 @@
 #include "winapk/abi_thunk.h"
 #include "winapk/arm64_aot.h"
 #include "winapk/arm64_cpu.h"
+#include "winapk/elf_tls.h"
 #include "winapk/guest_abi.h"
 #include "winapk/linker.h"
 #include "winapk/mini_bionic.h"
@@ -477,7 +478,10 @@ HostFunction host_function(uint64_t fn) {
 // for 32 words and this uses 22: x19..x30, sp, d8..d15, and a check word.
 // strtold is here too, for its result: a binary128 in all of q0.
 
-enum Intrinsic { kSetjmp, kSigsetjmp, kLongjmp, kStrtold, kIntrinsicCount };
+// The TLSDESC resolver is one too: AArch64's TLSDESC call may change only x0
+// (and lr, flags), where a host call also writes x1 and v0.
+
+enum Intrinsic { kSetjmp, kSigsetjmp, kLongjmp, kStrtold, kTlsDesc, kIntrinsicCount };
 const uint8_t g_intrinsics[kIntrinsicCount] = {};
 constexpr uint64_t kJmpBufMagic = 0x77696e61706b6a62ull;  // "winapkjb"
 
@@ -486,6 +490,15 @@ bool run_intrinsic(Cpu& c, uint64_t target) {
     if (target < base || target >= base + kIntrinsicCount) return false;
     uint64_t* buf = reinterpret_cast<uint64_t*>(c.x[0]);
     switch (static_cast<Intrinsic>(target - base)) {
+        case kTlsDesc: {
+            // x0 = the descriptor ElfImage filled: {this resolver, &(module,
+            // offset)}. The answer is the variable's address minus TPIDR_EL0,
+            // which the caller adds back (mrs xN, tpidr_el0; add x0, xN, x0).
+            const auto* arg = reinterpret_cast<const TlsIndex*>(buf[1]);
+            c.x[0] = reinterpret_cast<uint64_t>(tls_get_addr(arg)) - c.tpidr;
+            c.pc = c.x[30];
+            break;
+        }
         case kStrtold: {
             // strtold returns its binary128 in all of q0; the bridge's call
             // carries back only the low half of xmm0. The shim's strtold
@@ -892,6 +905,7 @@ void* guest_intrinsic(const char* name) {
         {"setjmp", kSetjmp}, {"_setjmp", kSetjmp}, {"sigsetjmp", kSigsetjmp},
         {"longjmp", kLongjmp}, {"_longjmp", kLongjmp}, {"siglongjmp", kLongjmp},
         {"strtold", kStrtold}, {"strtold_l", kStrtold},
+        {"__winapk_tlsdesc", kTlsDesc},  // ElfImage's R_AARCH64_TLSDESC, never an import
     };
     for (const auto& n : kNames) {
         if (std::strcmp(n.name, name) == 0) return const_cast<uint8_t*>(&g_intrinsics[n.kind]);

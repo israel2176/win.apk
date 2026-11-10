@@ -2874,9 +2874,9 @@ public final class Boot {
         // install-time filter registration a device's PackageManager does), off
         // the boot path; a no-op in a dev run.
         HostUrlIntake.registerAsync(manifest.packageName, manifest);
-        // Verify this app's autoVerify App Link hosts (assetlinks.json against
-        // the APK's real signing certificate), as a device's verifier does.
-        AppLinks.verifyAsync(manifest.packageName, manifest,
+        // Remember the app for App Link verification. Nothing is fetched here:
+        // a domain is verified when a sign-in needs it, and cached (AppLinks).
+        AppLinks.init(manifest.packageName, manifest,
                 application != null ? application.getPackageManager() : null);
         // appClFinal was already captured and applied as macapk-activity's
         // context ClassLoader further up (right before step 4, so it would
