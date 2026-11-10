@@ -35,7 +35,26 @@ void* gl_shared_display();
 
 // Reads the current draw surface's w x h pixels as 0xAARRGGBB rows, top row
 // first (gl_frame_read without the framework's context). Any thread with a
-// current context.
+// current context. This is the synchronous read: glReadPixels stalls the GL
+// thread until the GPU has copied the frame to the CPU.
 void gl_read_current(std::vector<uint32_t>* argb, int w, int h);
+
+// The asynchronous read for a presenting swap (guest_eglSwapBuffers). Issues
+// this frame's readback into one of two pixel pack buffers (returns at once:
+// the GPU DMAs into the buffer) and hands back the PREVIOUS frame, mapped from
+// the other buffer, so the GL thread never blocks on the GPU->CPU copy. The
+// cost is one frame of latency on that layer. Keyed by the current EGL context
+// (each app GL thread gets its own pair); the buffers follow a lost or
+// recreated context. Needs ES 3; on ES 2, a mapping failure, or any PBO error
+// it falls back to gl_read_current for that context from then on.
+//
+// Fills *argb (0xAARRGGBB, top row first) and *pw/*ph with the presented
+// frame's size and returns true when there is one. Returns false on the very
+// first frame of a context (nothing buffered yet: skip the present). Any thread
+// with a current context.
+bool gl_read_current_async(std::vector<uint32_t>* argb, int w, int h, int* pw, int* ph);
+
+// Forces gl_read_current_async onto the synchronous path (WINAPK_GL_SYNC_READBACK=1).
+bool gl_sync_readback_forced();
 
 }  // namespace winapk::host

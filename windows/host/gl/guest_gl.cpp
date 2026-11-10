@@ -20,6 +20,7 @@
 //     callback, which ANGLE would call with the Microsoft convention, is not
 //     installed.
 
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <mutex>
@@ -287,9 +288,33 @@ WINAPK_GUEST_ABI EGLBoolean guest_eglSwapBuffers(EGLDisplay dpy, EGLSurface surf
     if (eglGetCurrentSurface(EGL_DRAW) != ws.real) return EGL_TRUE;
     int w = 0, h = 0;
     live_size(ws, &w, &h);
+    // The readback hands the frame to the CPU for the window's GDI compositor.
+    // Asynchronously by default (a double pixel pack buffer: the GL thread does
+    // not stall on the GPU->CPU copy, at a cost of one frame of latency), or
+    // synchronously when forced or when the backend cannot do it. Timed on the
+    // GL thread so the two are comparable: the async readback should drop toward
+    // zero while present is unchanged.
+    using clock = std::chrono::steady_clock;
     thread_local std::vector<uint32_t> argb;
-    gl_read_current(&argb, w, h);
-    guest_frame_present(argb.data(), w, h);
+    thread_local long long frames = 0, read_ns = 0, present_ns = 0;
+    const auto t0 = clock::now();
+    int pw = w, ph = h;
+    bool present = true;
+    if (gl_sync_readback_forced()) {
+        gl_read_current(&argb, w, h);
+    } else {
+        present = gl_read_current_async(&argb, w, h, &pw, &ph);
+    }
+    const auto t1 = clock::now();
+    if (present) guest_frame_present(argb.data(), pw, ph);
+    const auto t2 = clock::now();
+    read_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+    present_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
+    if (++frames % 120 == 0) {
+        std::fprintf(stderr, "[win.apk] GL: window surface frames %lld: readback %.2f ms present %.2f ms (avg of 120)\n",
+                     frames, read_ns / 120.0 / 1e6, present_ns / 120.0 / 1e6);
+        read_ns = present_ns = 0;
+    }
     // The window outgrew the pbuffer (this frame was read from the part that
     // fits): the next frame gets one that holds it.
     int ww = 0, wh = 0;

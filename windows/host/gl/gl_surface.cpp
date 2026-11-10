@@ -130,6 +130,25 @@ bool gl_frame_read(std::vector<uint32_t>* argb, int* w, int* h) {
     return true;
 }
 
+namespace {
+
+// GL rows run bottom-up; the RGBA bytes of `rgba` (tightly packed, W x H)
+// become top-row-first ARGB (opaque: nothing is behind a GL frame in the
+// window). `rgba` is a glReadPixels result in client memory or a mapped pixel
+// pack buffer; both are 4-byte aligned and unpadded.
+void argb_from_rgba(const uint32_t* rgba, uint32_t* argb, int W, int H) {
+    for (int y = 0; y < H; ++y) {
+        const uint32_t* src = rgba + static_cast<size_t>(H - 1 - y) * W;
+        uint32_t* dst = argb + static_cast<size_t>(y) * W;
+        for (int x = 0; x < W; ++x) {
+            const uint32_t p = src[x];  // bytes R, G, B, A
+            dst[x] = 0xff000000u | ((p & 0xff) << 16) | (p & 0xff00) | ((p >> 16) & 0xff);
+        }
+    }
+}
+
+}  // namespace
+
 void gl_read_current(std::vector<uint32_t>* argb, int W, int H) {
     thread_local std::vector<uint32_t> rgba;
     rgba.resize(static_cast<size_t>(W) * H);
@@ -149,16 +168,122 @@ void gl_read_current(std::vector<uint32_t>* argb, int W, int H) {
     if (pbo) glBindBuffer(GL_PIXEL_PACK_BUFFER, static_cast<GLuint>(pbo));
     if (fbo) glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(fbo));
     argb->resize(rgba.size());
-    // GL rows run bottom-up; RGBA bytes become ARGB (opaque: nothing is
-    // behind a GL frame in the window).
-    for (int y = 0; y < H; ++y) {
-        const uint32_t* src = rgba.data() + static_cast<size_t>(H - 1 - y) * W;
-        uint32_t* dst = argb->data() + static_cast<size_t>(y) * W;
-        for (int x = 0; x < W; ++x) {
-            const uint32_t p = src[x];  // bytes R, G, B, A
-            dst[x] = 0xff000000u | ((p & 0xff) << 16) | (p & 0xff00) | ((p >> 16) & 0xff);
+    argb_from_rgba(rgba.data(), argb->data(), W, H);
+}
+
+namespace {
+
+// A context's two pixel pack buffers for the asynchronous read. glReadPixels
+// into one returns at once (the GPU DMAs into it); the other, whose readback
+// was issued a frame ago and so is done, is mapped and converted with no stall.
+struct PackBuffers {
+    GLuint pbo[2] = {0, 0};
+    int w[2] = {0, 0}, h[2] = {0, 0};  // the size each buffer currently holds
+    bool filled[2] = {false, false};
+    int cur = 0;          // the buffer this frame's readback goes into
+    bool broken = false;  // a PBO/map failure: fall back to the sync read for good
+};
+std::mutex g_pack_lock;
+std::map<EGLContext, PackBuffers> g_packs;  // std::map: element pointers stay valid across other keys
+
+bool sync_readback_forced() {
+    static const bool forced = [] {
+        const char* e = std::getenv("WINAPK_GL_SYNC_READBACK");
+        return e && e[0] == '1';
+    }();
+    return forced;
+}
+
+}  // namespace
+
+bool gl_sync_readback_forced() { return sync_readback_forced(); }
+
+bool gl_read_current_async(std::vector<uint32_t>* argb, int W, int H, int* pw, int* ph) {
+    if (W <= 0 || H <= 0) return false;
+    EGLDisplay dpy = eglGetCurrentDisplay();
+    EGLContext ctx = eglGetCurrentContext();
+    EGLint version = 2;
+    if (ctx != EGL_NO_CONTEXT) eglQueryContext(dpy, ctx, EGL_CONTEXT_CLIENT_VERSION, &version);
+
+    PackBuffers* pb = nullptr;
+    if (!sync_readback_forced() && version >= 3 && ctx != EGL_NO_CONTEXT) {
+        std::lock_guard<std::mutex> hold(g_pack_lock);
+        pb = &g_packs[ctx];  // pointer stays valid; only this context's thread erases this key
+    }
+    if (!pb || pb->broken) {  // ES 2, forced sync, or a prior failure: present this frame synchronously
+        gl_read_current(argb, W, H);
+        *pw = W;
+        *ph = H;
+        return true;
+    }
+
+    while (glGetError() != GL_NO_ERROR) {
+    }  // start from a clean error state
+    GLint fbo = 0, align = 4, prev_binding = 0;
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fbo);
+    glGetIntegerv(GL_PACK_ALIGNMENT, &align);
+    glGetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING, &prev_binding);
+    if (fbo) glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    if (align != 4) glPixelStorei(GL_PACK_ALIGNMENT, 4);
+
+    // A lost or recreated context (its EGLContext pointer reused) leaves our
+    // buffer names invalid: make them afresh.
+    if (!pb->pbo[0] || !glIsBuffer(pb->pbo[0]) || !glIsBuffer(pb->pbo[1])) {
+        if (pb->pbo[0]) glDeleteBuffers(2, pb->pbo);
+        glGenBuffers(2, pb->pbo);
+        pb->filled[0] = pb->filled[1] = false;
+        pb->w[0] = pb->w[1] = pb->h[0] = pb->h[1] = 0;
+        pb->cur = 0;
+    }
+
+    const int cur = pb->cur, prev = cur ^ 1;
+    const size_t need = static_cast<size_t>(W) * H * 4;
+
+    // Issue this frame's readback into `cur` -- returns at once into the PBO.
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, pb->pbo[cur]);
+    if (pb->w[cur] != W || pb->h[cur] != H) {  // size changed (a resize) or first use: (re)allocate
+        glBufferData(GL_PIXEL_PACK_BUFFER, static_cast<GLsizeiptr>(need), nullptr, GL_STREAM_READ);
+    }
+    glReadPixels(0, 0, W, H, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    const bool read_ok = glGetError() == GL_NO_ERROR;
+    if (read_ok) {
+        pb->w[cur] = W;
+        pb->h[cur] = H;
+        pb->filled[cur] = true;
+    }
+
+    // Present the previous frame, done by now, mapped from `prev`. On a resize
+    // it still holds the old size, which the present path handles.
+    bool have = false;
+    if (read_ok && pb->filled[prev] && pb->w[prev] > 0 && pb->h[prev] > 0) {
+        const int PW = pb->w[prev], PH = pb->h[prev];
+        const size_t pbytes = static_cast<size_t>(PW) * PH * 4;
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, pb->pbo[prev]);
+        const void* src = glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, static_cast<GLsizeiptr>(pbytes), GL_MAP_READ_BIT);
+        if (src) {
+            argb->resize(static_cast<size_t>(PW) * PH);
+            argb_from_rgba(static_cast<const uint32_t*>(src), argb->data(), PW, PH);
+            glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
+            *pw = PW;
+            *ph = PH;
+            have = true;
         }
     }
+
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, static_cast<GLuint>(prev_binding));
+    if (align != 4) glPixelStorei(GL_PACK_ALIGNMENT, align);
+    if (fbo) glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(fbo));
+
+    if (!read_ok) {  // the backend would not do the PBO readback: give up on it for this context
+        pb->broken = true;
+        std::fprintf(stderr, "[win.apk] GL: async readback failed, using the synchronous read\n");
+        gl_read_current(argb, W, H);
+        *pw = W;
+        *ph = H;
+        return true;
+    }
+    pb->cur = prev;  // next frame reads into the other buffer
+    return have;     // false only on the first frame of a context (nothing buffered yet)
 }
 
 void* gl_shared_display() { return init() ? g_display : nullptr; }

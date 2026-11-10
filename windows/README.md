@@ -199,6 +199,7 @@ The user-facing ones (`WINAPK_PHONE_SIZE`, `WINAPK_RESIZABLE`,
 | `WINAPK_DENSITY=<dpi>` | Overrides the density the app sees |
 | `WINAPK_WINDOW_RTL=1` or `0` | Overrides the locale's reading layout for the app window's frame |
 | `WINAPK_ANGLE_BACKEND=d3d11` or `swiftshader` | Forces a graphics backend (the default is a GPU, then WARP, then SwiftShader) |
+| `WINAPK_GL_SYNC_READBACK=1` | A presenting swap (`eglSwapBuffers` on a window surface) reads the frame back with a synchronous `glReadPixels` instead of the default asynchronous double pixel pack buffer (`host/gl/gl_surface.cpp`); the old path, for comparing. `winapk-runtime` logs `window surface frames N: readback X ms present Y ms` every 120 frames so the two are comparable |
 | `MACAPK_LETTERBOX=0` | With `WINAPK_RESIZABLE=0`, stretches the phone over the whole window instead of letterboxing |
 | `MACAPK_SCROLL_SCALE=<n>` | Scales the drag the mouse wheel makes |
 | `WINAPK_ARM64_ENGINE=interp` | Forces the arm64 interpreter instead of the JIT |

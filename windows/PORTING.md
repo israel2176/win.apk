@@ -933,6 +933,20 @@ layer (`ANativeWindow_unlockAndPost` presents the same way for apps that draw
 in software). The view tree goes over the guest layer through the hole the
 owning SurfaceView punches (`SurfaceView.macapkNativeWindowLayerZ`), as
 upstream composites its CAMetalLayer.
+
+The read-back on a presenting swap is asynchronous (`gl_read_current_async`,
+`host/gl/gl_surface.cpp`): each swap issues this frame's `glReadPixels` into one
+of two pixel pack buffers, which returns at once (the GPU DMAs into the buffer),
+and maps and presents the *previous* frame from the other buffer, whose copy
+finished a frame ago -- so the app's GL thread never stalls on the GPU->CPU copy
+(a synchronous `glReadPixels` cost ~2.5-3 ms/frame on WARP at 474x630). The cost
+is one frame of latency on that layer, which a continuously rendering map or game
+does not show. The pbuffer resize recreates the buffer at the new size; the
+previous one is still presented at its old size (the compositor handles the
+mismatch). Needs ES 3; on ES 2, a mapping failure, or any PBO error the context
+falls back to the synchronous read for good, and `WINAPK_GL_SYNC_READBACK=1`
+forces that path for comparing. The full fix -- a swap chain on the window that
+skips the copy -- is still left for later.
 `winapk-gl-test` draws, reads back and checks a frame on CI's software
 backends.
 
