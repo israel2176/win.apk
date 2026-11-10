@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <attr name="probeLabelStyle" format="reference" />
+    <style name="ProbeTheme" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="probeLabelStyle">@style/ProbeLabel</item>
+    </style>
+    <style name="ProbeLabelBase">
+        <item name="android:textAlignment">viewStart</item>
+        <item name="android:textSize">16sp</item>
+    </style>
+    <style name="ProbeLabel" parent="ProbeLabelBase">
+        <item name="android:gravity">center_vertical</item>
+        <item name="android:ellipsize">end</item>
+        <item name="android:lines">1</item>
+    </style>
+    <string name="he_hint">לאן היית רוצה להגיע?</string>
+    <string name="he_short">שלום עולם</string>
+    <string name="he_long">כל מה שצריך זה תעודה ביד ועשר דקות פנויות כדי לפתוח חשבון בנק חדש מהבית</string>
+    <string name="en_short">Station</string>
+    <string name="mixed">אבו יאיר Vs אבו טבלה 2026</string>
+    <string name="number">212798409</string>
+</resources>
