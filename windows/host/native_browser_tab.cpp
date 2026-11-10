@@ -32,8 +32,25 @@
 // intent:) is given to HostBrowserTab.macapkExternal, which may hand it to the
 // host as a browser would, or name a fallback URL to load.
 //
+// The same window is the App Link sign-in window (open_applink_window, for
+// NativeCocoa.openAppLinkWindow; upstream's applink_window.mm). When an app
+// opens a sign-in page in the BROWSER (a plain ACTION_VIEW, no Custom Tab)
+// whose redirect_uri is one of its verified App Links or its own link scheme,
+// com.macapk.loader.AppLinks asks for it here instead of the system browser:
+// Edge or Chrome would load an https redirect as a web page, and the app would
+// never get the result. Such a window checks one thing, the return prefix
+// AppLinks passes (applink_match.h: the redirect_uri without its query): the
+// navigation to it, a redirect or a pop-up included, is cancelled and
+// delivered like a tab's hand-off, and the window closes. Everything else
+// loads. It has no HostBrowserTab record on the Java side, so none of the
+// tab's upcalls are made for it; closed by the user, or after kSignInTimeoutMs
+// as the Google sign-in window, the app gets nothing, as when a user abandons
+// the browser. A window that cannot show its page opens the URL in the system
+// browser, the path from before.
+//
 // Everything here runs on the WebView2 thread (webview2_host.h).
 
+#include <algorithm>
 #include <atomic>
 #include <cstdio>
 #include <map>
@@ -41,7 +58,9 @@
 #include <vector>
 
 #include <windows.h>
+#include <shellapi.h>
 
+#include "applink_match.h"
 #include "host_natives.h"
 #include "webview2_host.h"
 #include "win32_window.h"
@@ -61,6 +80,11 @@ constexpr wchar_t kProfile[] = L"browser";
 
 // CustomTabsCallback navigation events (androidx.browser).
 constexpr int kNavStarted = 1, kNavFinished = 2, kNavFailed = 3;
+
+// The App Link sign-in window's ceiling, the Google sign-in window's: long
+// enough for a password and a second factor, and a forgotten window still goes.
+constexpr UINT_PTR kSignInTimer = 1;
+constexpr UINT kSignInTimeoutMs = 600 * 1000;
 
 struct Tab {
     int id = 0;
@@ -83,6 +107,11 @@ struct Tab {
     // decides before any request, so a sign-in callback's code never reaches
     // the network.
     std::vector<std::wstring> refused;
+    // Non-empty: the App Link sign-in window (see the header), which hands
+    // back only the navigation to this address.
+    std::wstring return_prefix;
+    bool applink() const { return !return_prefix.empty(); }
+    const char* tag() const { return applink() ? "applink-signin" : "browser tab"; }
 };
 
 std::map<int, Tab*> g_tabs;  // WebView2 thread only
@@ -123,6 +152,7 @@ std::wstring java_external(const std::wstring& url, bool user) {
 }
 
 void java_event(int id, int event) {
+    if (Tab* t = find_tab(id); t && t->applink()) return;
     JNIEnv* env = wv2::env();
     if (!env || !g_event) return;
     env->CallStaticVoidMethod(g_cls, g_event, id, event);
@@ -132,6 +162,7 @@ void java_event(int id, int event) {
 void java_closed(Tab* t) {
     if (t->notified) return;
     t->notified = true;
+    if (t->applink()) return;
     JNIEnv* env = wv2::env();
     if (!env || !g_closed) return;
     env->CallStaticVoidMethod(g_cls, g_closed, t->id, t->handed_off ? JNI_TRUE : JNI_FALSE);
@@ -143,6 +174,15 @@ void java_closed(Tab* t) {
 void java_failed(Tab* t) {
     if (t->notified) return;
     t->notified = true;
+    if (t->applink()) {
+        // The Java side was told the window opened; the browser is where the
+        // URL went before there was one.
+        std::fprintf(stderr, "[win.apk] applink-signin %d: no window; %s goes to the system browser\n", t->id,
+                     wv2::redact(t->initial_url).c_str());
+        std::fflush(stderr);
+        ShellExecuteW(nullptr, L"open", t->initial_url.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+        return;
+    }
     JNIEnv* env = wv2::env();
     if (!env || !g_failed) return;
     jstring j = wv2::to_jstring(env, t->initial_url);
@@ -161,6 +201,10 @@ Route decide(Tab* t, const std::wstring& url, bool initial_chain) {
     if (scheme == L"about" || scheme == L"data" || scheme == L"blob" || scheme == L"javascript") {
         return Route::kLoad;
     }
+    if (t->applink()) {
+        if (applink::returns_to_app(url, t->return_prefix)) return Route::kHandOff;
+        return scheme == L"http" || scheme == L"https" ? Route::kLoad : Route::kExternal;
+    }
     if (java_claims(url) && !(initial_chain && t->initial_claimed)) return Route::kHandOff;
     if (scheme == L"http" || scheme == L"https") return Route::kLoad;
     return Route::kExternal;
@@ -169,7 +213,7 @@ Route decide(Tab* t, const std::wstring& url, bool initial_chain) {
 void hand_off(Tab* t, const std::wstring& url) {
     if (t->handed_off) return;
     t->handed_off = true;
-    std::fprintf(stderr, "[win.apk] browser tab %d: %s goes back to the app\n", t->id, wv2::redact(url).c_str());
+    std::fprintf(stderr, "[win.apk] %s %d: %s goes back to the app\n", t->tag(), t->id, wv2::redact(url).c_str());
     std::fflush(stderr);
     queue_host_url(wv2::env(), url);
     PostMessageW(t->hwnd, WM_CLOSE, 0, 0);
@@ -338,6 +382,22 @@ void hook_events(Tab* t) {
                 a->get_WebErrorStatus(&status);
                 // A navigation this side cancelled is no failure of the page.
                 if (!ok && status == COREWEBVIEW2_WEB_ERROR_STATUS_OPERATION_CANCELED) return S_OK;
+                if (t->applink()) {
+                    int http = 0;
+                    if (auto a2 = ComPtr<ICoreWebView2NavigationCompletedEventArgs>::retain(a)
+                                      .query<ICoreWebView2NavigationCompletedEventArgs2>(
+                                          IID_ICoreWebView2NavigationCompletedEventArgs2)) {
+                        a2->get_HttpStatusCode(&http);
+                    }
+                    if (!ok || http >= 400) {
+                        // The page says what went wrong; the log keeps its codes.
+                        LPWSTR raw = nullptr;
+                        if (t->view) t->view->get_Source(&raw);
+                        std::fprintf(stderr, "[win.apk] applink-signin %d: %s failed (web error %d, HTTP %d)\n", id,
+                                     wv2::redact(wv2::take_co_string(raw)).c_str(), static_cast<int>(status), http);
+                        std::fflush(stderr);
+                    }
+                }
                 java_event(id, ok ? kNavFinished : kNavFailed);
                 return S_OK;
             })
@@ -405,7 +465,7 @@ void hook_events(Tab* t) {
                 if (!t) return S_OK;
                 COREWEBVIEW2_PROCESS_FAILED_KIND kind = COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED;
                 a->get_ProcessFailedKind(&kind);
-                std::fprintf(stderr, "[win.apk] browser tab %d: WebView2 process failed (kind %d)\n", id,
+                std::fprintf(stderr, "[win.apk] %s %d: WebView2 process failed (kind %d)\n", t->tag(), id,
                              static_cast<int>(kind));
                 if (kind == COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED) {
                     PostMessageW(t->hwnd, WM_CLOSE, 0, 0);
@@ -498,7 +558,7 @@ void controller_ready(int id, HRESULT hr, ICoreWebView2Controller* controller) {
         return;
     }
     if (FAILED(hr) || !controller) {
-        std::fprintf(stderr, "[win.apk] browser tab %d: no WebView2 controller (0x%08lx)\n", id,
+        std::fprintf(stderr, "[win.apk] %s %d: no WebView2 controller (HRESULT 0x%08lx)\n", t->tag(), id,
                      static_cast<unsigned long>(hr));
         java_failed(t);
         DestroyWindow(t->hwnd);
@@ -525,6 +585,7 @@ void create_controller(int id, ICoreWebView2Environment* environment) {
     Tab* t = find_tab(id);
     if (!t) return;
     if (!environment) {
+        std::fprintf(stderr, "[win.apk] %s %d: no WebView2 environment\n", t->tag(), id);
         java_failed(t);
         DestroyWindow(t->hwnd);
         return;
@@ -559,6 +620,17 @@ UINT dpi_of(HWND hwnd) {
     return d ? d : 96;
 }
 
+// The effective DPI of a monitor (shcore's GetDpiForMonitor, Windows 8.1+).
+UINT monitor_dpi(HMONITOR mon) {
+    using Fn = HRESULT(WINAPI*)(HMONITOR, int, UINT*, UINT*);
+    static HMODULE shcore = LoadLibraryW(L"shcore.dll");
+    static auto fn = shcore ? reinterpret_cast<Fn>(reinterpret_cast<void*>(GetProcAddress(shcore, "GetDpiForMonitor")))
+                            : nullptr;
+    UINT x = 96, y = 96;
+    if (fn && SUCCEEDED(fn(mon, 0 /* MDT_EFFECTIVE_DPI */, &x, &y)) && x) return x;
+    return 96;
+}
+
 LRESULT CALLBACK tab_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     auto* t = reinterpret_cast<Tab*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
     switch (msg) {
@@ -581,8 +653,18 @@ LRESULT CALLBACK tab_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                                      reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdUrl)), inst, nullptr);
             make_fonts(t);
             layout(t);
+            if (t->applink()) SetTimer(hwnd, kSignInTimer, kSignInTimeoutMs, nullptr);
             return 0;
         }
+        case WM_TIMER:
+            if (t && wp == kSignInTimer) {
+                KillTimer(hwnd, kSignInTimer);
+                std::fprintf(stderr, "[win.apk] applink-signin %d: timed out after %u s; nothing went to the app\n",
+                             t->id, kSignInTimeoutMs / 1000);
+                std::fflush(stderr);
+                PostMessageW(hwnd, WM_CLOSE, 0, 0);
+            }
+            return 0;
         case WM_SIZE:
             if (t) layout(t);
             return 0;
@@ -644,11 +726,14 @@ LRESULT CALLBACK tab_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         case WM_DESTROY:
             if (t) {
+                KillTimer(hwnd, kSignInTimer);
                 if (t->controller) t->controller->Close();
                 t->view.reset();
                 t->controller.reset();
-                std::fprintf(stderr, "[win.apk] browser tab %d closed%s\n", t->id,
-                             t->handed_off ? " (its URL went to the app)" : "");
+                std::fprintf(stderr, "[win.apk] %s %d closed%s\n", t->tag(), t->id,
+                             t->handed_off ? " (its URL went to the app)"
+                                           : t->applink() ? " (nothing went to the app)" : "");
+                std::fflush(stderr);
                 java_closed(t);
                 g_tabs.erase(t->id);
             }
@@ -710,14 +795,21 @@ void open_on_thread(Tab* t) {
         w = r.right - r.left;
         h = r.bottom - r.top;
     } else {
-        const UINT dpi = dpi_of(nullptr);
-        w = MulDiv(480, static_cast<int>(dpi), 96);
-        h = MulDiv(800, static_cast<int>(dpi), 96);
+        // Phone-shaped on the primary monitor, in its pixels (dpi_of(nullptr)
+        // is 96 everywhere, which made the window small on a 150% screen).
+        MONITORINFO mi{sizeof(mi)};
+        GetMonitorInfoW(MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY), &mi);
+        const RECT& work = mi.rcWork;
+        const UINT dpi = monitor_dpi(MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY));
+        w = std::min<int>(MulDiv(480, static_cast<int>(dpi), 96), (work.right - work.left) - 16);
+        h = std::min<int>(MulDiv(800, static_cast<int>(dpi), 96), (work.bottom - work.top) - 16);
+        x = work.left + ((work.right - work.left) - w) / 2;
+        y = work.top + ((work.bottom - work.top) - h) / 2;
     }
     HWND hwnd = CreateWindowExW(0, kTabClass, host_of(t->initial_url).c_str(), WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
                                 x, y, w, h, nullptr, nullptr, GetModuleHandleW(nullptr), t);
     if (!hwnd) {
-        std::fprintf(stderr, "[win.apk] browser tab %d: no window (error %lu)\n", t->id, GetLastError());
+        std::fprintf(stderr, "[win.apk] %s %d: no window (error %lu)\n", t->tag(), t->id, GetLastError());
         java_failed(t);
         g_tabs.erase(t->id);
         delete t;
@@ -735,7 +827,12 @@ void open_on_thread(Tab* t) {
     } else {
         ShowWindow(hwnd, SW_SHOWNOACTIVATE);
     }
-    std::fprintf(stderr, "[win.apk] browser tab %d: %s\n", t->id, wv2::redact(t->initial_url).c_str());
+    if (t->applink()) {
+        std::fprintf(stderr, "[win.apk] applink-signin %d: %s, returns at %s\n", t->id,
+                     wv2::redact(t->initial_url).c_str(), wv2::redact(t->return_prefix).c_str());
+    } else {
+        std::fprintf(stderr, "[win.apk] browser tab %d: %s\n", t->id, wv2::redact(t->initial_url).c_str());
+    }
     std::fflush(stderr);
     const int id = t->id;
     wv2::with_environment(t->folder, [id](ICoreWebView2Environment* e) { create_controller(id, e); });
@@ -789,7 +886,46 @@ const HostMethod kMethods[] = {
     WINAPK_HOST_NATIVE(kCls, "nativeOpen", "(Ljava/lang/String;Ljava/lang/String;Z)I", Tab_nativeOpen),
 };
 
+// HostBrowserTab.macapkUserDataFolderPath: the app's WebView2 user data.
+std::wstring app_user_data_folder(JNIEnv* env) {
+    jclass tab = env->FindClass("com/macapk/loader/HostBrowserTab");
+    if (env->ExceptionCheck()) env->ExceptionClear();
+    jmethodID m = tab ? env->GetStaticMethodID(tab, "macapkUserDataFolderPath", "()Ljava/lang/String;") : nullptr;
+    if (env->ExceptionCheck()) env->ExceptionClear();
+    std::wstring folder;
+    if (m) {
+        auto s = static_cast<jstring>(env->CallStaticObjectMethod(tab, m));
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        folder = wv2::from_jstring(env, s);
+        if (s) env->DeleteLocalRef(s);
+    }
+    if (tab) env->DeleteLocalRef(tab);
+    return folder;
+}
+
 }  // namespace
+
+bool open_applink_window(JNIEnv* env, const std::wstring& url, const std::wstring& return_prefix) {
+    if (url.empty() || return_prefix.empty() || !wv2::available()) return false;
+    const std::wstring scheme = wv2::scheme_of(url);
+    if (scheme != L"https" && scheme != L"http") return false;
+    const std::wstring folder = app_user_data_folder(env);
+    if (folder.empty()) return false;
+    JavaVM* vm = nullptr;
+    env->GetJavaVM(&vm);
+    wv2::set_vm(vm);
+    prepare_host_url_queue(env);
+    auto* t = new Tab();
+    t->id = g_next_id.fetch_add(1);
+    t->initial_url = url;
+    t->folder = folder;
+    t->return_prefix = return_prefix;
+    if (!wv2::post([t] { open_on_thread(t); })) {
+        delete t;
+        return false;
+    }
+    return true;
+}
 
 HostMethods native_browser_tab_methods() { return {kMethods, sizeof(kMethods) / sizeof(kMethods[0])}; }
 

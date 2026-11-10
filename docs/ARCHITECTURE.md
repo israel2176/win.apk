@@ -446,7 +446,7 @@ how CI boots apps.
 | Video: MediaCodec | `NativeMedia`'s video natives on the synchronous decoder MFTs: H.264 always, HEVC/VP9/VP8/AV1/MPEG-4 when a decoder is installed (`nativeVideoSupportedMimes` lists what `MFTEnumEx` really creates); AAC and MP3 audio decoders too. The NDK media API (`AMediaCodec`, `AMediaExtractor`) and `MediaExtractor` are not implemented; `native_media.cpp` holds only the `AMEDIAFORMAT_KEY_*` strings so libraries link | `native_media_video.cpp`, `video_decode.cpp` |
 | Images | libwebp for WebP, WIC for the rest | `native_image.cpp` |
 | Notifications | `NotificationManager` posts to `HostNotifications`, whose natives show Windows.UI.Notifications toasts (WinRT C ABI, combase loaded at run time) under the app's AppUserModelID, which the launcher writes on the app's Start menu shortcut; a click comes back through `HostNotifications.onActivated` and `PendingIntent.send()` | `native_notifications.cpp` |
-| WebView, Custom Tabs | Microsoft Edge WebView2, shown in the app window behind the views drawn over it; `shouldInterceptRequest`, JavaScript interfaces, cookies; a Custom Tab is a tab window whose navigations are checked against the app's manifest | `native_webview.cpp`, `webview2_host.cpp`, `native_browser_tab.cpp` |
+| WebView, Custom Tabs, App Link sign-in | Microsoft Edge WebView2, shown in the app window behind the views drawn over it; `shouldInterceptRequest`, JavaScript interfaces, cookies; a Custom Tab is a tab window whose navigations are checked against the app's manifest; a browser sign-in whose `redirect_uri` is one of the app's verified App Links (or its own link scheme) opens in the same window, which hands back only that redirect (`applink_match.h`) | `native_webview.cpp`, `webview2_host.cpp`, `native_browser_tab.cpp` |
 | Camera (camera2, Camera, CameraX) | Media Foundation capture, each webcam offered as a back and a front camera; a virtual camera when there is none | `native_camera.cpp` |
 | Location | `Windows.Devices.Geolocation`; Windows' privacy settings are the authorization | `native_location.cpp` |
 | Wi-Fi | `HostRadios` over the Native Wifi API: state, the current connection (SSID, BSSID, RSSI, frequency, link speed), the DHCP configuration from `GetAdaptersAddresses`, scans, and `WlanRegisterNotification` events pumped by one Java thread into the state, connection, signal and scan-results broadcasts. Network names need Windows' location access, as Android needs the location permission | `native_radios.cpp` |
@@ -525,7 +525,10 @@ the Android WebView user agent that makes Google serve the device flow; the
 Before the window closes, the page asks `accounts.google.com/ListAccounts`
 (the session's accounts, as Chrome asks) for the account's picture URL;
 `AccountPhoto` saves the picture as `gms\photo-<account>.img` for the
-launcher's account item (the foot of its pane). The layer's state is `gms\gms_state.properties`. `winapk-runtime --gms
+launcher's account item (the foot of its pane). A window that ends without a
+token says why as a code (`signInWindowError`: the WebView2 HRESULT, the
+page's `COREWEBVIEW2_WEB_ERROR_STATUS` and HTTP status, `TIMEOUT`), which
+`--gms signin-window` prints as its `ERROR` line and the launcher shows. The layer's state is `gms\gms_state.properties`. `winapk-runtime --gms
 <command>` runs upstream's `GmsCli` with no app, which is how the launcher's
 Google account setting lists accounts, adds one and signs out.
 

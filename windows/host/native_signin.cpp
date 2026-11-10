@@ -35,6 +35,14 @@
 // it, as a browser's profile button does. Best effort; without one the button
 // keeps the account's initial.
 //
+// A window that ends without a token says why, as a code (fail(), read by
+// NativeSignIn.lastWindowError through signInWindowError): the WebView2
+// HRESULT, the page's web error status (COREWEBVIEW2_WEB_ERROR_STATUS) and
+// HTTP status, the timeout. The user closing the window over a page that
+// loaded is a cancel and has none; closing it over a page that failed to load
+// reports that failure, as it is why they gave up. `--gms signin-window`
+// prints it as its ERROR line, which the launcher shows.
+//
 // presentSignInWindow BLOCKS for as long as a human takes, which is what the
 // Java callers expect (they run it off the main thread; NativeSignIn's own
 // guards keep it from the UI thread and from stacking windows). The window
@@ -95,6 +103,7 @@ constexpr wchar_t kListAccountsScript[] =
 
 std::mutex g_photo_lock;
 std::wstring g_photo;  // the last window's picture URL, for signInPhotoUrl
+std::wstring g_error;  // why the last window ended without a token, for signInWindowError
 
 std::atomic<bool> g_active{false};
 
@@ -102,8 +111,6 @@ std::atomic<bool> g_active{false};
 // only, except `done`, `token` and `finished`, written before `done` is set.
 struct Window {
     HWND hwnd = nullptr;
-    HWND note = nullptr;  // the one-line reassurance over the page
-    HFONT font = nullptr;
     UINT dpi = 96;
     ComPtr<ICoreWebView2Controller> controller;
     ComPtr<ICoreWebView2> view;
@@ -114,6 +121,8 @@ struct Window {
     bool asking_photo = false;  // the token is in; ListAccounts is in flight
     std::wstring token;
     std::wstring photo;
+    std::wstring error;      // why it ended without a token (fail), else empty
+    std::wstring nav_error;  // the page on show failed to load: its codes
     HANDLE done = nullptr;  // signalled when the window is gone
 };
 
@@ -127,25 +136,29 @@ UINT dpi_of(HWND hwnd) {
     return d ? d : 96;
 }
 
-int note_h(const Window* w) { return MulDiv(24, static_cast<int>(w->dpi), 96); }
-
-void make_font(Window* w) {
-    if (w->font) DeleteObject(w->font);
-    const int px = MulDiv(12, static_cast<int>(w->dpi), 96);
-    w->font = CreateFontW(-px, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-                          CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
-    if (w->note) SendMessageW(w->note, WM_SETFONT, reinterpret_cast<WPARAM>(w->font), TRUE);
-}
-
 void layout(Window* w) {
     RECT c;
     GetClientRect(w->hwnd, &c);
-    const int bar = note_h(w);
-    MoveWindow(w->note, 0, 0, c.right, bar, TRUE);
-    if (w->controller) {
-        RECT web{0, bar, c.right, c.bottom > bar ? c.bottom : bar};
-        w->controller->put_Bounds(web);
-    }
+    if (w->controller) w->controller->put_Bounds(c);
+}
+
+std::wstring hex_hr(HRESULT hr) {
+    wchar_t b[16];
+    std::swprintf(b, 16, L"0x%08lX", static_cast<unsigned long>(hr));
+    return b;
+}
+
+// COREWEBVIEW2_WEB_ERROR_STATUS's names, for the code the user sees.
+const wchar_t* web_error_name(COREWEBVIEW2_WEB_ERROR_STATUS s) {
+    static const wchar_t* const kNames[] = {
+        L"UNKNOWN", L"CERTIFICATE_COMMON_NAME_IS_INCORRECT", L"CERTIFICATE_EXPIRED",
+        L"CLIENT_CERTIFICATE_CONTAINS_ERRORS", L"CERTIFICATE_REVOKED", L"CERTIFICATE_IS_INVALID",
+        L"SERVER_UNREACHABLE", L"TIMEOUT", L"ERROR_HTTP_INVALID_SERVER_RESPONSE", L"CONNECTION_ABORTED",
+        L"CONNECTION_RESET", L"DISCONNECTED", L"CANNOT_CONNECT", L"HOST_NAME_NOT_RESOLVED", L"OPERATION_CANCELED",
+        L"REDIRECT_FAILED", L"UNEXPECTED_ERROR", L"VALID_AUTHENTICATION_CREDENTIALS_REQUIRED",
+        L"VALID_PROXY_AUTHENTICATION_REQUIRED"};
+    const int i = static_cast<int>(s);
+    return i >= 0 && i < static_cast<int>(sizeof(kNames) / sizeof(kNames[0])) ? kNames[i] : L"UNKNOWN";
 }
 
 // The window is done: the token is in `token` or stays empty (cancelled,
@@ -157,6 +170,15 @@ void finish(Window* w) {
     KillTimer(w->hwnd, kTimeoutTimer);
     KillTimer(w->hwnd, kPhotoTimer);
     PostMessageW(w->hwnd, WM_CLOSE, 0, 0);
+}
+
+// The window ends without a token, for `why` (a code; see the header).
+void fail(Window* w, const std::wstring& why) {
+    if (w->finished) return;
+    if (w->error.empty()) w->error = why;
+    std::fprintf(stderr, "[win.apk] gms-signin: failed: %s\n", wv2::narrow(why).c_str());
+    std::fflush(stderr);
+    finish(w);
 }
 
 // One level of a JSON string literal, quotes included: `"a\"b"` -> `a"b`.
@@ -278,15 +300,29 @@ void hook_events(Window* w) {
                 LPWSTR raw = nullptr;
                 sender->get_Source(&raw);
                 const std::wstring src = wv2::take_co_string(raw);
+                int http = 0;
+                if (auto a2 = ComPtr<ICoreWebView2NavigationCompletedEventArgs>::retain(a)
+                                  .query<ICoreWebView2NavigationCompletedEventArgs2>(
+                                      IID_ICoreWebView2NavigationCompletedEventArgs2)) {
+                    a2->get_HttpStatusCode(&http);
+                }
                 if (ok) {
-                    std::fprintf(stderr, "[win.apk] gms-signin: loaded %s\n", wv2::redact(src).c_str());
+                    std::fprintf(stderr, "[win.apk] gms-signin: loaded %s (HTTP %d)\n", wv2::redact(src).c_str(), http);
+                    // Google's error pages load too: their status is the code.
+                    w->nav_error = http >= 400 ? L"HTTP " + std::to_wstring(http) : std::wstring();
                 } else {
                     // Not necessarily the end: the flow redirects through
                     // schemes the view refuses, and the token may be in the jar.
                     COREWEBVIEW2_WEB_ERROR_STATUS status = COREWEBVIEW2_WEB_ERROR_STATUS_UNKNOWN;
                     a->get_WebErrorStatus(&status);
-                    std::fprintf(stderr, "[win.apk] gms-signin: navigation failed (%d) at %s\n",
-                                 static_cast<int>(status), wv2::redact(src).c_str());
+                    std::fprintf(stderr, "[win.apk] gms-signin: navigation failed (%d %s, HTTP %d) at %s\n",
+                                 static_cast<int>(status), wv2::narrow(web_error_name(status)).c_str(), http,
+                                 wv2::redact(src).c_str());
+                    if (status != COREWEBVIEW2_WEB_ERROR_STATUS_OPERATION_CANCELED) {
+                        w->nav_error = std::wstring(L"WEB_ERROR ") + web_error_name(status) + L" (" +
+                                       std::to_wstring(static_cast<int>(status)) + L")" +
+                                       (http > 0 ? L", HTTP " + std::to_wstring(http) : std::wstring());
+                    }
                 }
                 std::fflush(stderr);
                 check_cookies(w);
@@ -352,7 +388,9 @@ void hook_events(Window* w) {
                 a->get_ProcessFailedKind(&kind);
                 std::fprintf(stderr, "[win.apk] gms-signin: WebView2 process failed (kind %d)\n",
                              static_cast<int>(kind));
-                if (kind == COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED) finish(w);
+                if (kind == COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED) {
+                    fail(w, L"WEBVIEW2_PROCESS_FAILED (kind " + std::to_wstring(static_cast<int>(kind)) + L")");
+                }
                 else if (kind == COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED ||
                          kind == COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_UNRESPONSIVE)
                     sender->Reload();
@@ -369,15 +407,13 @@ void controller_ready(HRESULT hr, ICoreWebView2Controller* controller) {
         return;
     }
     if (FAILED(hr) || !controller) {
-        std::fprintf(stderr, "[win.apk] gms-signin: no WebView2 controller (0x%08lx)\n",
-                     static_cast<unsigned long>(hr));
-        finish(w);
+        fail(w, L"WEBVIEW2_CONTROLLER " + hex_hr(FAILED(hr) ? hr : E_FAIL));
         return;
     }
     w->controller = ComPtr<ICoreWebView2Controller>::retain(controller);
     controller->get_CoreWebView2(w->view.put());
     if (!w->view) {
-        finish(w);
+        fail(w, L"WEBVIEW2_NO_VIEW");
         return;
     }
     ComPtr<ICoreWebView2Settings> settings;
@@ -392,8 +428,7 @@ void controller_ready(HRESULT hr, ICoreWebView2Controller* controller) {
     }
     if (auto v2 = w->view.query<ICoreWebView2_2>(IID_ICoreWebView2_2)) v2->get_CookieManager(w->cookies.put());
     if (!w->cookies) {
-        std::fprintf(stderr, "[win.apk] gms-signin: no cookie manager; the flow's end could not be seen\n");
-        finish(w);
+        fail(w, L"WEBVIEW2_NO_COOKIE_MANAGER");
         return;
     }
     hook_events(w);
@@ -412,7 +447,7 @@ void create_controller(ICoreWebView2Environment* environment) {
     Window* w = g_window;
     if (!w || w->finished) return;
     if (!environment) {
-        finish(w);
+        fail(w, L"WEBVIEW2_ENVIRONMENT " + hex_hr(wv2::environment_error()));
         return;
     }
     auto done = wv2::handler<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>(
@@ -437,7 +472,7 @@ void create_controller(ICoreWebView2Environment* environment) {
     }
     std::fprintf(stderr, "[win.apk] gms-signin: this WebView2 Runtime (%s) has no private profiles; update it\n",
                  wv2::narrow(wv2::runtime_version()).c_str());
-    finish(w);
+    fail(w, L"WEBVIEW2_RUNTIME_TOO_OLD (" + wv2::runtime_version() + L")");
 }
 
 LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
@@ -451,13 +486,6 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_CREATE: {
             w->hwnd = hwnd;
             w->dpi = dpi_of(hwnd);
-            // Not decoration: a window asking for a Google password has to say
-            // whose page it is, or the honest thing looks like phishing.
-            w->note = CreateWindowExW(0, L"STATIC",
-                                      L"This is Google's own sign-in page. Win.apk never sees your password.",
-                                      WS_CHILD | WS_VISIBLE | SS_CENTER | SS_CENTERIMAGE, 0, 0, 0, 0, hwnd, nullptr,
-                                      GetModuleHandleW(nullptr), nullptr);
-            make_font(w);
             layout(w);
             SetTimer(hwnd, kTimeoutTimer, kTimeoutMs, nullptr);
             return 0;
@@ -467,7 +495,6 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         case WM_DPICHANGED: {
             w->dpi = HIWORD(wp);
-            make_font(w);
             const RECT* r = reinterpret_cast<const RECT*>(lp);
             SetWindowPos(hwnd, nullptr, r->left, r->top, r->right - r->left, r->bottom - r->top,
                          SWP_NOZORDER | SWP_NOACTIVATE);
@@ -478,8 +505,7 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (w && wp == kPollTimer) {
                 check_cookies(w);
             } else if (w && wp == kTimeoutTimer) {
-                std::fprintf(stderr, "[win.apk] gms-signin: timed out after %u s\n", kTimeoutMs / 1000);
-                finish(w);
+                fail(w, L"TIMEOUT (" + std::to_wstring(kTimeoutMs / 1000) + L" s)");
             } else if (w && wp == kPhotoTimer) {
                 std::fprintf(stderr, "[win.apk] gms-signin: no answer about the account's picture\n");
                 finish(w);
@@ -491,17 +517,17 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             FillRect(reinterpret_cast<HDC>(wp), &c, GetSysColorBrush(COLOR_WINDOW));
             return 1;
         }
-        case WM_CTLCOLORSTATIC: {
-            HDC dc = reinterpret_cast<HDC>(wp);
-            SetTextColor(dc, GetSysColor(COLOR_GRAYTEXT));
-            SetBkColor(dc, GetSysColor(COLOR_WINDOW));
-            return reinterpret_cast<LRESULT>(GetSysColorBrush(COLOR_WINDOW));
-        }
         case WM_SETFOCUS:
             if (w && w->controller) w->controller->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
             return 0;
         case WM_CLOSE:
-            // The user closed the window: a cancel, which resolves the wait.
+            // The user closed the window: a cancel, which resolves the wait;
+            // over a page that did not load, that failure is the answer.
+            if (w && !w->finished && w->token.empty() && w->error.empty() && !w->nav_error.empty()) {
+                w->error = w->nav_error;
+                std::fprintf(stderr, "[win.apk] gms-signin: closed over a failed page: %s\n",
+                             wv2::narrow(w->error).c_str());
+            }
             if (w) w->finished = true;
             DestroyWindow(hwnd);
             return 0;
@@ -519,10 +545,7 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             }
             return 0;
         case WM_NCDESTROY:
-            if (w) {
-                if (w->font) DeleteObject(w->font);
-                SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
-            }
+            if (w) SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
             break;
         default:
             break;
@@ -627,7 +650,9 @@ void open_on_thread(Window* w) {
     HWND hwnd = CreateWindowExW(0, kClass, L"Sign in to Google", WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, x, y, width,
                                 height, nullptr, nullptr, GetModuleHandleW(nullptr), w);
     if (!hwnd) {
-        std::fprintf(stderr, "[win.apk] gms-signin: no window (error %lu)\n", GetLastError());
+        const DWORD e = GetLastError();
+        std::fprintf(stderr, "[win.apk] gms-signin: no window (error %lu)\n", e);
+        w->error = L"NO_WINDOW (error " + std::to_wstring(e) + L")";
         g_window = nullptr;
         SetEvent(w->done);
         return;
@@ -670,10 +695,17 @@ std::wstring user_data_folder(JNIEnv* env) {
 
 // ---- JNI ----------------------------------------------------------------------
 
+void set_error(const std::wstring& e) {
+    std::lock_guard<std::mutex> lock(g_photo_lock);
+    g_error = e;
+}
+
 jstring JNICALL SignIn_present(JNIEnv* env, jclass) {
     if (!wv2::available()) {
-        std::fprintf(stderr, "[win.apk] gms-signin: no WebView2, so no sign-in window (cancelled)\n");
+        const std::string why = wv2::unavailable_reason();
+        std::fprintf(stderr, "[win.apk] gms-signin: no WebView2 (%s), so no sign-in window\n", why.c_str());
         std::fflush(stderr);
+        set_error(std::wstring(why.begin(), why.end()));
         return nullptr;
     }
     // One window at a time: a second licence check arriving while the user is
@@ -686,24 +718,34 @@ jstring JNICALL SignIn_present(JNIEnv* env, jclass) {
     JavaVM* vm = nullptr;
     env->GetJavaVM(&vm);
     wv2::set_vm(vm);
+    set_error(L"");
     auto* w = new Window();
     w->folder = user_data_folder(env);
     w->done = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-    std::wstring token, photo;
-    if (w->done && !w->folder.empty() && wv2::post([w] { open_on_thread(w); })) {
+    std::wstring token, photo, error;
+    if (!w->done) {
+        error = L"NO_EVENT (error " + std::to_wstring(GetLastError()) + L")";
+    } else if (w->folder.empty()) {
+        error = L"NO_USER_DATA_FOLDER";
+    } else if (!wv2::post([w] { open_on_thread(w); })) {
+        error = L"WEBVIEW2_THREAD";
+    } else {
         WaitForSingleObject(w->done, INFINITE);
         token = w->token;
         photo = w->photo;
+        error = w->error;
     }
     {
         std::lock_guard<std::mutex> lock(g_photo_lock);
         g_photo = token.empty() ? std::wstring() : photo;
+        g_error = token.empty() ? error : std::wstring();
     }
     if (w->done) CloseHandle(w->done);
     delete w;
     g_active.store(false);
     if (token.empty()) {
-        std::fprintf(stderr, "[win.apk] gms-signin: no token (cancelled or failed)\n");
+        std::fprintf(stderr, "[win.apk] gms-signin: no token (%s)\n",
+                     error.empty() ? "cancelled" : wv2::narrow(error).c_str());
         std::fflush(stderr);
         return nullptr;  // never an empty string: the Java side reads "" as a token
     }
@@ -718,12 +760,19 @@ jstring JNICALL SignIn_photo(JNIEnv* env, jclass) {
     return g_photo.empty() ? nullptr : wv2::to_jstring(env, g_photo);
 }
 
+// Why the last window ended without a token (a code), or null: a cancel.
+jstring JNICALL SignIn_error(JNIEnv* env, jclass) {
+    std::lock_guard<std::mutex> lock(g_photo_lock);
+    return g_error.empty() ? nullptr : wv2::to_jstring(env, g_error);
+}
+
 constexpr const char* kCls = "com.macapk.gms.NativeSignIn";
 
 const HostMethod kMethods[] = {
     WINAPK_HOST_NATIVE(kCls, "presentSignInWindow", "()Ljava/lang/String;", SignIn_present),
     WINAPK_HOST_NATIVE(kCls, "signInWindowActive", "()Z", SignIn_active),
     WINAPK_HOST_NATIVE(kCls, "signInPhotoUrl", "()Ljava/lang/String;", SignIn_photo),
+    WINAPK_HOST_NATIVE(kCls, "signInWindowError", "()Ljava/lang/String;", SignIn_error),
 };
 
 }  // namespace

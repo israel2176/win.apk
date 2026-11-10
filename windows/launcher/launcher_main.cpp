@@ -285,6 +285,7 @@ const wchar_t* tr(const wchar_t* en) {
         {L"Signed in as {0}.", L"מחובר בתור {0}."},
         {L"No account was added.", L"לא נוסף חשבון."},
         {L"Could not sign in to Google", L"הכניסה ל-Google נכשלה"},
+        {L"Google sign-in failed (error: {0}).", L"ההתחברות עם Google נכשלה (שגיאה: {0})."},
         {L"Version {0}", L"גרסה {0}"},
         {L"About", L"אודות"},
         {L"Android apps on Windows.", L"אפליקציות Android ב-Windows."},
@@ -8464,8 +8465,18 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (code != 0 && code != 2) {  // after the page is rebuilt: behind the dialog it no longer says "Signing in…"
                 InvalidateRect(hwnd, nullptr, FALSE);
                 UpdateWindow(hwnd);
-                error_with_log(tr(L"Could not sign in to Google"),
-                               tr(L"Google did not answer. Check the internet connection, then try again."), gms_log());
+                // The runtime's ERROR line carries the failure's code (a WebView2
+                // HRESULT, the page's web error and HTTP status, Google's Error=):
+                // shown as is, since a code is what a user can look up or report.
+                std::wstring why;
+                if (const size_t at = out->find(L"ERROR\t"); at != std::wstring::npos) {
+                    why = out->substr(at + 6, out->find_first_of(L"\r\n", at) - at - 6);
+                    if (why.size() > 200) why = why.substr(0, 200) + L"…";
+                }
+                const std::wstring body =
+                    why.empty() ? tr(L"Google did not answer. Check the internet connection, then try again.")
+                                : fmt(L"Google sign-in failed (error: {0}).", {why});
+                error_with_log(tr(L"Could not sign in to Google"), body, gms_log());
             }
             return 0;
         }

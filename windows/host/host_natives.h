@@ -84,6 +84,12 @@ void set_app_user_model_id(const std::wstring& app_name);
 void prepare_host_url_queue(JNIEnv* env);
 void queue_host_url(JNIEnv* env, const std::wstring& url);
 
+// The App Link sign-in window (native_browser_tab.cpp): `url` in a WebView2
+// window whose navigation to `return_prefix` (AppLinks' redirect_uri without
+// its query) goes to the app through queue_host_url. Call on a Java thread.
+// False when no window can be shown (the caller opens the browser instead).
+bool open_applink_window(JNIEnv* env, const std::wstring& url, const std::wstring& return_prefix);
+
 // The phone the app sees now, in dp (turned with the app). native_cocoa.cpp.
 void phone_size_dp(int* w, int* h);
 
