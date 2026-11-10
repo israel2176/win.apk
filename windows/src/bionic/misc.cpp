@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <climits>
+#include <limits>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -1564,6 +1565,91 @@ int64_t quad_to_int(GuestQuad q, QuadRound how) {
     if (ip > limit) return invalid;
     return neg ? static_cast<int64_t>(0 - static_cast<uint64_t>(ip)) : static_cast<int64_t>(ip);
 }
+// The rest of <math.h>'s long double functions: the binary128 argument is
+// taken to the host's 80-bit long double (64-bit significand, the same
+// exponent range), computed there and brought back. The last 49 bits of a
+// binary128 significand are lost, which a device's soft-float would keep;
+// a double's worth of precision is what these callers ask for in practice.
+// Missing, powl answered 0 (the loader's "not implemented" fallback) and
+// Google Maps' native map engine computed with it.
+long double quad_to_ld(GuestQuad q) {
+    const uint64_t lo = static_cast<uint64_t>(q[0]), hi = static_cast<uint64_t>(q[1]);
+    const bool neg = hi >> 63;
+    const int bexp = static_cast<int>((hi >> 48) & 0x7fff);
+    const uint64_t frac_hi = hi & 0xffffffffffffull;  // the fraction's top 48 bits
+    // The fraction's top 63 bits; the rest decides the rounding (to nearest, ties to even).
+    uint64_t top63 = (frac_hi << 15) | (lo >> 49);
+    const uint64_t rest = lo & ((1ull << 49) - 1), half = 1ull << 48;
+    long double v;
+    if (bexp == 0x7fff) {
+        v = (frac_hi | lo) ? std::numeric_limits<long double>::quiet_NaN()
+                           : std::numeric_limits<long double>::infinity();
+    } else if (bexp == 0 && (frac_hi | lo) == 0) {
+        v = 0.0L;
+    } else {
+        uint64_t sig = top63 | (bexp ? 1ull << 63 : 0);
+        int e = (bexp ? bexp : 1) - 16383 - 63;
+        if (rest > half || (rest == half && (sig & 1))) {
+            if (++sig == 0) {  // carried out of 64 bits
+                sig = 1ull << 63;
+                ++e;
+            }
+        }
+        if (!bexp) {  // subnormal binary128: far below any long double here but zero
+            v = 0.0L;
+        } else {
+            v = std::ldexp(static_cast<long double>(sig), e);
+        }
+    }
+    return neg ? -v : v;
+}
+
+GuestQuad ld_to_quad(long double v) {
+    uint64_t mantissa;
+    uint16_t sign_exp;
+    std::memcpy(&mantissa, &v, 8);
+    std::memcpy(&sign_exp, reinterpret_cast<const char*>(&v) + 8, 2);
+    uint64_t fraction = mantissa & 0x7fffffffffffffffull;
+    uint16_t se = sign_exp;
+    if ((se & 0x7fff) == 0 && mantissa != 0) {  // an 80-bit subnormal: normalize into binary128's range
+        const int sh = __builtin_clzll(mantissa);
+        const uint64_t norm = mantissa << sh;
+        fraction = norm & 0x7fffffffffffffffull;
+        se = static_cast<uint16_t>((se & 0x8000) | ((1 - sh) & 0x7fff));
+    }
+    GuestQuad q = {static_cast<long long>(fraction << 49),
+                   static_cast<long long>((static_cast<uint64_t>(se) << 48) | (fraction >> 15))};
+    return q;
+}
+
+#define WINAPK_QUAD1(name, expr) \
+    WINAPK_GUEST_ABI GuestQuad m_##name(GuestQuad qx) { const long double x = quad_to_ld(qx); return ld_to_quad(expr); }
+#define WINAPK_QUAD2(name, expr)                                    \
+    WINAPK_GUEST_ABI GuestQuad m_##name(GuestQuad qx, GuestQuad qy) { \
+        const long double x = quad_to_ld(qx), y = quad_to_ld(qy);   \
+        return ld_to_quad(expr);                                    \
+    }
+WINAPK_QUAD2(powl, std::pow(x, y))
+WINAPK_QUAD2(fmodl, std::fmod(x, y))
+WINAPK_QUAD2(atan2l, std::atan2(x, y))
+WINAPK_QUAD1(sqrtl, std::sqrt(x))
+WINAPK_QUAD1(expl, std::exp(x))
+WINAPK_QUAD1(exp2l, std::exp2(x))
+WINAPK_QUAD1(logl, std::log(x))
+WINAPK_QUAD1(log2l, std::log2(x))
+WINAPK_QUAD1(log10l, std::log10(x))
+WINAPK_QUAD1(sinl, std::sin(x))
+WINAPK_QUAD1(cosl, std::cos(x))
+WINAPK_QUAD1(tanl, std::tan(x))
+WINAPK_QUAD1(atanl, std::atan(x))
+WINAPK_QUAD1(floorl, std::floor(x))
+WINAPK_QUAD1(ceill, std::ceil(x))
+WINAPK_QUAD1(truncl, std::trunc(x))
+WINAPK_QUAD1(roundl, std::round(x))
+WINAPK_QUAD1(fabsl, std::fabs(x))
+WINAPK_GUEST_ABI GuestQuad m_ldexpl(GuestQuad qx, int e) { return ld_to_quad(std::ldexp(quad_to_ld(qx), e)); }
+#undef WINAPK_QUAD1
+#undef WINAPK_QUAD2
 WINAPK_GUEST_ABI glong m_lroundl(GuestQuad x) { return quad_to_int(x, QuadRound::kAway); }
 WINAPK_GUEST_ABI long long m_llroundl(GuestQuad x) { return quad_to_int(x, QuadRound::kAway); }
 WINAPK_GUEST_ABI glong m_lrintl(GuestQuad x) { return quad_to_int(x, QuadRound::kCurrent); }
@@ -1862,6 +1948,25 @@ const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("llroundf", m_llroundf),
     WINAPK_SHIM("llrintf", m_llrintf),
     WINAPK_SHIM("lroundl", m_lroundl),
+    WINAPK_SHIM("powl", m_powl),
+    WINAPK_SHIM("fmodl", m_fmodl),
+    WINAPK_SHIM("atan2l", m_atan2l),
+    WINAPK_SHIM("sqrtl", m_sqrtl),
+    WINAPK_SHIM("expl", m_expl),
+    WINAPK_SHIM("exp2l", m_exp2l),
+    WINAPK_SHIM("logl", m_logl),
+    WINAPK_SHIM("log2l", m_log2l),
+    WINAPK_SHIM("log10l", m_log10l),
+    WINAPK_SHIM("sinl", m_sinl),
+    WINAPK_SHIM("cosl", m_cosl),
+    WINAPK_SHIM("tanl", m_tanl),
+    WINAPK_SHIM("atanl", m_atanl),
+    WINAPK_SHIM("floorl", m_floorl),
+    WINAPK_SHIM("ceill", m_ceill),
+    WINAPK_SHIM("truncl", m_truncl),
+    WINAPK_SHIM("roundl", m_roundl),
+    WINAPK_SHIM("fabsl", m_fabsl),
+    WINAPK_SHIM("ldexpl", m_ldexpl),
     WINAPK_SHIM("llroundl", m_llroundl),
     WINAPK_SHIM("lrintl", m_lrintl),
     WINAPK_SHIM("llrintl", m_llrintl),
