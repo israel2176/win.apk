@@ -227,10 +227,17 @@ bool gl_read_current_async(std::vector<uint32_t>* argb, int W, int H, int* pw, i
     if (align != 4) glPixelStorei(GL_PACK_ALIGNMENT, 4);
 
     // A lost or recreated context (its EGLContext pointer reused) leaves our
-    // buffer names invalid: make them afresh.
+    // buffer names invalid: make them afresh. glGenBuffers only reserves names,
+    // and glIsBuffer stays false until a name is first bound, so bind both here
+    // to turn them into real buffer objects -- otherwise this check would see
+    // the not-yet-used one as invalid and regenerate the pair every frame,
+    // losing the previous frame and presenting nothing.
     if (!pb->pbo[0] || !glIsBuffer(pb->pbo[0]) || !glIsBuffer(pb->pbo[1])) {
         if (pb->pbo[0]) glDeleteBuffers(2, pb->pbo);
         glGenBuffers(2, pb->pbo);
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, pb->pbo[0]);
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, pb->pbo[1]);
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
         pb->filled[0] = pb->filled[1] = false;
         pb->w[0] = pb->w[1] = pb->h[0] = pb->h[1] = 0;
         pb->cur = 0;
