@@ -224,8 +224,9 @@ final class CameraBackend {
         // LEGACY is a camera "operating in backward compatibility mode ...
         // implemented on top of the older camera API, with limited
         // capabilities" -- which is a precise description of an AVFoundation
-        // capture session dressed as camera2. We support a repeating preview
-        // request into a YUV_420_888 output and nothing else: no per-frame
+        // capture session dressed as camera2. We support preview requests into
+        // YUV_420_888 and SurfaceTexture outputs and stills into a JPEG output
+        // (what a LEGACY device guarantees), and nothing else: no per-frame
         // control, no meaningful per-request result metadata, no reprocessing.
         // Claiming LIMITED or FULL would promise per-request behaviour we
         // cannot honour, and an app that trusted it would fail deeper.
@@ -260,6 +261,22 @@ final class CameraBackend {
                 new int[] { CameraMetadata.CONTROL_AE_MODE_ON });
         p.put(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES, fmt.fpsRanges);
 
+        // The rest of the 3A description, each list holding exactly the value
+        // the request templates carry (CaptureRequest.Builder): the host runs
+        // auto-exposure and auto-white-balance itself and the app cannot steer
+        // or lock them, so there is one mode each, no lock and no metering
+        // region. AOSP documents these keys as present on every device, and
+        // CameraX and camera apps read them without a null check before they
+        // build a still-capture request.
+        p.put(CameraCharacteristics.CONTROL_AVAILABLE_MODES,
+                new int[] { CameraMetadata.CONTROL_MODE_AUTO });
+        p.put(CameraCharacteristics.CONTROL_AWB_AVAILABLE_MODES,
+                new int[] { CameraMetadata.CONTROL_AWB_MODE_AUTO });
+        p.put(CameraCharacteristics.CONTROL_AE_LOCK_AVAILABLE, Boolean.FALSE);
+        p.put(CameraCharacteristics.CONTROL_AWB_LOCK_AVAILABLE, Boolean.FALSE);
+        p.put(CameraCharacteristics.CONTROL_MAX_REGIONS_AE, Integer.valueOf(0));
+        p.put(CameraCharacteristics.CONTROL_MAX_REGIONS_AWB, Integer.valueOf(0));
+
         // Exposure compensation: not under app control either. AOSP says both
         // keys are "available on all devices" and spells "not supported" as the
         // range [0,0]; a LEGACY device's step comes from Camera1's
@@ -280,10 +297,44 @@ final class CameraBackend {
         // the sensor aspect ratio. The largest format the device advertises is
         // the honest stand-in for the full sensor readout: it is the most
         // pixels this camera will ever hand us.
+        // The pixel array and the pre-correction array are that same rectangle:
+        // there is no masked border and no distortion correction between them.
         if (fmt.maxWidth > 0 && fmt.maxHeight > 0) {
             p.put(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE,
                     new Rect(0, 0, fmt.maxWidth, fmt.maxHeight));
+            p.put(CameraCharacteristics.SENSOR_INFO_PRE_CORRECTION_ACTIVE_ARRAY_SIZE,
+                    new Rect(0, 0, fmt.maxWidth, fmt.maxHeight));
+            p.put(CameraCharacteristics.SENSOR_INFO_PIXEL_ARRAY_SIZE,
+                    new Size(fmt.maxWidth, fmt.maxHeight));
         }
+
+        // Timestamps are the host's monotonic clock, comparable with nothing
+        // else: camera2 calls that UNKNOWN (see CameraCaptureSessionImpl
+        // .dispatchFrame).
+        p.put(CameraCharacteristics.SENSOR_INFO_TIMESTAMP_SOURCE,
+                Integer.valueOf(CameraMetadata.SENSOR_INFO_TIMESTAMP_SOURCE_UNKNOWN));
+
+        // No zoom: SCALER_CROP_REGION is not acted on, and 1.0 is how camera2
+        // says so (the key is required; apps divide the active array by it).
+        p.put(CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM, Float.valueOf(1.0f));
+        p.put(CameraCharacteristics.SCALER_CROPPING_TYPE,
+                Integer.valueOf(CameraMetadata.SCALER_CROPPING_TYPE_CENTER_ONLY));
+
+        // How many outputs one session takes: none RAW, the preview and
+        // analysis outputs, and one stalling (JPEG) output -- the LEGACY
+        // guarantee, and what CameraCaptureSessionImpl serves. One result per
+        // capture, no partials.
+        p.put(CameraCharacteristics.REQUEST_MAX_NUM_OUTPUT_RAW, Integer.valueOf(0));
+        p.put(CameraCharacteristics.REQUEST_MAX_NUM_OUTPUT_PROC, Integer.valueOf(3));
+        p.put(CameraCharacteristics.REQUEST_MAX_NUM_OUTPUT_PROC_STALLING, Integer.valueOf(1));
+        p.put(CameraCharacteristics.REQUEST_PARTIAL_RESULT_COUNT, Integer.valueOf(1));
+
+        // The thumbnails a still can embed (JPEG_THUMBNAIL_SIZE; JpegStill
+        // resamples the still to whichever is asked for). (0, 0), "no
+        // thumbnail", is required to be in the list, which AOSP orders by
+        // area.
+        p.put(CameraCharacteristics.JPEG_AVAILABLE_THUMBNAIL_SIZES,
+                new Size[] { new Size(0, 0), new Size(160, 120), new Size(320, 240) });
 
         // Deliberately ABSENT: LENS_INFO_AVAILABLE_FOCAL_LENGTHS and
         // SENSOR_INFO_PHYSICAL_SIZE. AVFoundation does not tell us the focal
@@ -295,23 +346,34 @@ final class CameraBackend {
 
         p.put(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP,
                 StreamConfigurationMap.macapkCreate(
-                        new int[] { android.graphics.ImageFormat.YUV_420_888 },
+                        // Preview and analysis frames, stills, and the opaque
+                        // buffers of a SurfaceTexture output: see the map.
+                        new int[] { android.graphics.ImageFormat.YUV_420_888,
+                                android.graphics.ImageFormat.JPEG,
+                                android.graphics.ImageFormat.PRIVATE },
                         fmt.sizes,
                         fmt.fpsRanges));
 
-        // The request keys we actually act on. CONTROL_AE_TARGET_FPS_RANGE is
-        // the only one: CameraCaptureSessionImpl passes its upper bound to
-        // CameraBridge.configure(). Naming a key we ignore would be worse than
-        // naming none -- the app would set it, see it in the list, and believe
-        // it took effect.
+        // The request keys we actually act on: CONTROL_AE_TARGET_FPS_RANGE
+        // (CameraCaptureSessionImpl passes its upper bound to
+        // CameraBridge.configure()) and the four a still is encoded by
+        // (JpegStill). Naming a key we ignore would be worse than naming
+        // none -- the app would set it, see it in the list, and believe it
+        // took effect.
         List<CaptureRequest.Key<?>> requestKeys = new ArrayList<>();
         requestKeys.add(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE);
+        requestKeys.add(CaptureRequest.JPEG_ORIENTATION);
+        requestKeys.add(CaptureRequest.JPEG_QUALITY);
+        requestKeys.add(CaptureRequest.JPEG_THUMBNAIL_SIZE);
+        requestKeys.add(CaptureRequest.JPEG_THUMBNAIL_QUALITY);
 
-        // The result keys the capture session actually fills in. Exactly one:
-        // every CaptureResult carries SENSOR_TIMESTAMP and nothing else, so
-        // that is the whole honest list.
+        // The result keys the capture session actually fills in: every
+        // CaptureResult carries SENSOR_TIMESTAMP, and one that produced a still
+        // the quality and orientation it was encoded with.
         List<CaptureResult.Key<?>> resultKeys = new ArrayList<>();
         resultKeys.add(CaptureResult.SENSOR_TIMESTAMP);
+        resultKeys.add(CaptureResult.JPEG_ORIENTATION);
+        resultKeys.add(CaptureResult.JPEG_QUALITY);
 
         trace("characteristics id=" + cameraId + " index=" + index
                 + " unique=" + unique

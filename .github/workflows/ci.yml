@@ -405,6 +405,15 @@ jobs:
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/damage-test windows/test/java/DamageRectTest.java
           MACAPK_FRAMESPEED_DAMAGE=1 MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -Djava.awt.headless=true \
             -cp "$cp;$(cygpath -w build/damage-test)" DamageRectTest
+      - name: Run the camera2 still test
+        run: |
+          # camera2 with the virtual camera on a plain JVM: JPEG sizes are
+          # advertised, a still is a real JPEG of the reader's size with its
+          # EXIF orientation, the callbacks come in order.
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          cp="$(cygpath -w stage/lib/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          "$JAVA_HOME/bin/javac" -cp "$cp" -d build/camera2-test windows/test/java/Camera2StillTest.java
+          "$JAVA_HOME/bin/java" -Djava.awt.headless=true -cp "$cp;$(cygpath -w build/camera2-test)" Camera2StillTest
       - name: Run the permission model test
         run: |
           # SpecialAccessStore.GroupModel, the decision model behind every

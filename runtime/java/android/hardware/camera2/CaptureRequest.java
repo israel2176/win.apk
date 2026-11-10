@@ -185,6 +185,14 @@ public final class CaptureRequest extends CameraMetadata<CaptureRequest.Key<?>>
                     Integer.valueOf(CameraMetadata.FLASH_MODE_OFF));
             settings.put(CONTROL_CAPTURE_INTENT,
                     Integer.valueOf(captureIntentFor(templateType)));
+            // What a still is encoded with unless the app says otherwise: every
+            // device's template carries them, and apps read them back (to
+            // offer a quality setting, to add the display rotation). The
+            // values are JpegStill's own defaults: upright, no thumbnail.
+            settings.put(JPEG_QUALITY, Byte.valueOf(JpegStill.DEFAULT_QUALITY));
+            settings.put(JPEG_ORIENTATION, Integer.valueOf(0));
+            settings.put(JPEG_THUMBNAIL_QUALITY, Byte.valueOf(JpegStill.DEFAULT_THUMBNAIL_QUALITY));
+            settings.put(JPEG_THUMBNAIL_SIZE, new android.util.Size(0, 0));
         }
 
         private static int captureIntentFor(int templateType) {
