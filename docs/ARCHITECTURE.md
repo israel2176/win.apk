@@ -289,6 +289,13 @@ and `System.load`s the result. On Windows (`host/guest_libs.cpp`,
    its place. The guest's `RegisterNatives` slot wraps function pointers the
    same way.
 
+An app that calls `findLibrary` itself (through `BaseDexClassLoader`, as
+Gecko's loader and `GameActivity` do) gets Android's answer, not the stub:
+`lib<name>.so` in its native library directory, by its Android name
+(`/data/app/.../lib/x86_64/lib<name>.so`). `System.load` of that name finds
+the same stub module, and the guest linker takes an Android path for
+`dlopen`, as the shim does for `open` (`src/bionic/paths.cpp`).
+
 ### ARM64 code: translation, JIT, interpreter
 
 Three engines run arm64 code, behind one CPU state (`src/arm64/`):

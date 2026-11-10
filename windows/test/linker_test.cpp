@@ -121,6 +121,13 @@ int main(int argc, char** argv) {
               linker.open("libwinapk_link_mid.so", 0, &error) != nullptr &&
               linker.images().size() == 3);
 
+    // An app names a library by its Android path too (dlopen of one it unpacked into its files directory,
+    // System.load of what findLibrary answered): the file under the android root, as for open().
+    winapk::set_android_root(argv[1]);
+    check("an Android path is the library under the android root",
+          loaded(linker, "/libwinapk_link_root.so") && !loaded(linker, "/libwinapk_link_none.so"));
+    winapk::set_android_root("");
+
     check("RTLD_NOLOAD does not load the plugin", !loaded(linker, kPlugin));
     expect_eq("guest dlopen + dlsym", call(linker, root, "link_root_dlopen"), 81);
     check("the guest's dlclose unloaded the plugin again", !loaded(linker, kPlugin) && linker.images().size() == 3);

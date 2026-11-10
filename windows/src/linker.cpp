@@ -57,6 +57,12 @@ std::string file_name_of(const std::string& name) {
 // ANSI code page on Windows.
 std::filesystem::path utf8_path(const std::string& s) { return std::filesystem::u8path(s); }
 
+// A library's path as an app gives it to dlopen or System.load: a host path, or
+// one of Android's own ("/data/user/0/<package>/files/libx.so" for a library the
+// app unpacked, "/data/app/.../lib/x86_64/libx.so" for what findLibrary answers),
+// which names a host file as it does for open() (bionic/paths.cpp).
+std::filesystem::path guest_path(const std::string& s) { return std::filesystem::path(android_host_path(s.c_str())); }
+
 std::string machine_name(uint16_t machine) {
     switch (machine) {
         case elf::kEmX86_64: return "EM_X86_64 (62)";
@@ -101,7 +107,7 @@ const ElfImage* GuestLinker::image_of(const GuestLibrary* lib) { return lib ? li
 
 GuestLibrary* GuestLinker::find_loaded(const std::string& name) const {
     if (has_separator(name)) {
-        const std::string want = normalized(utf8_path(name));
+        const std::string want = normalized(guest_path(name));
         for (const auto& l : libs_) {
             if (normalized(l->path) == want) return l.get();
         }
@@ -116,7 +122,7 @@ GuestLibrary* GuestLinker::find_loaded(const std::string& name) const {
 std::filesystem::path GuestLinker::locate(const std::string& name, const std::filesystem::path& near) const {
     std::error_code ec;
     if (has_separator(name)) {
-        std::filesystem::path p = utf8_path(name);
+        std::filesystem::path p = guest_path(name);
         return std::filesystem::is_regular_file(p, ec) ? p : std::filesystem::path();
     }
     const std::filesystem::path file = utf8_path(name);
