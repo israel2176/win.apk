@@ -20,8 +20,10 @@ import sun.misc.Unsafe;
  *    to have it revealed). On HotSpot the read yields garbage and the write
  *    corrupts a live JDK object. Both are answered EMPTY: reads return 0/null/
  *    false, writes and CAS do nothing (CAS reports false). The walker then
- *    concludes "no methods here" and falls back to the reflection path, which
- *    on this VM has no hidden-API list in front of it and simply works.
+ *    concludes "no methods here": HiddenApiBypass logs "Cannot find matching
+ *    method" and returns false from setHiddenApiExemptions (it has no other
+ *    path, and catches this itself). Nothing is lost: this VM has no
+ *    hidden-API list, so the app's later reflection simply works.
  *
  * 2. THE ADDRESS IS NOT MAPPED. HotSpot already converts the fault into
  *    java.lang.InternalError rather than dying; ART would have crashed the
