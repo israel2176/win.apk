@@ -36,20 +36,21 @@ keeping a copy.
 | AudioTrack, SoundPool, MediaPlayer audio | ✅ | A WASAPI mixer; WAV, Ogg, MP3, AAC and what Windows decodes | | `native_audio.cpp` |
 | AAudio | ⚠️ | Output, in write and callback modes | No AAudio input | `native_aaudio.cpp` |
 | Microphone (`AudioRecord`) | ✅ | WASAPI capture | | `native_audio_input.cpp` |
-| OpenSL ES | ❌ | | The engine reports itself unsupported, so native games that use it are silent | `native_opensles.cpp` |
+| OpenSL ES | ❌ | | The engine reports itself unsupported, so native games that use it are silent (#132) | `native_opensles.cpp` |
 | `MediaPlayer`, `VideoView` | ✅ | MP4, MOV, MKV with H.264 and AAC always; HEVC, VP9 and AV1 with Microsoft's codec packs; from a file or an http(s) URL | | `video_player.cpp` |
-| `MediaCodec` (ExoPlayer and others) | ⚠️ | H.264 video (and the codec packs' formats), AAC and MP3 audio | Opus, Vorbis and FLAC audio (such a stream plays silent); `MediaExtractor` | `native_media_video.cpp` |
-| NDK media (`AMediaCodec`, `AMediaExtractor`) | ❌ | | Not implemented: video from an app's native code | `native_media.cpp` |
+| `MediaCodec` (ExoPlayer and others) | ⚠️ | Decoding: H.264 video (and the codec packs' formats), AAC and MP3 audio. Encoding: H.264 and AAC-LC on Windows' software encoders, from byte buffers, a camera2 session or a Canvas on the input Surface | Opus, Vorbis and FLAC audio (such a stream plays silent). No OpenGL ES input to an encoder, so screen and game recorders and GL filter pipelines record nothing. The encoders have run only in the unit test | `native_media_video.cpp`, `native_media_codec.cpp`, `media_encode.cpp` |
+| `MediaExtractor`, `MediaMuxer`, `MediaRecorder` | ⚠️ | Extractor: MP4, MOV, MKV tracks with H.264, HEVC, AAC, MP3 from a file, URL, descriptor or `content://`. Muxer: MP4 and 3GPP with H.264 and AAC. Recorder: the microphone to AAC, a Surface (camera2) to H.264 | WebM and Ogg output; AMR, Opus; the old `Camera` API as a recorder's source; tags and embedded pictures in `MediaMetadataRetriever` | `video_decode.cpp`, `mp4_writer.cpp` |
+| NDK media (`AMediaCodec`, `AMediaExtractor`) | ❌ | | Not implemented: video from an app's native code (#133) | `native_media.cpp` |
 
 ### The PC's hardware
 
 | Area | | What exactly | What is missing | Source |
 |---|:-:|---|---|---|
-| Camera | ✅ | Webcams through Camera, camera2 and CameraX (Media Foundation); a virtual camera when there is none | | `native_camera.cpp` |
+| Camera | ✅ | Webcams through Camera, camera2 and CameraX (Media Foundation); a virtual camera when there is none. Preview, analysis frames and JPEG stills; video through `MediaRecorder` or an encoder's Surface from camera2 | | `native_camera.cpp` |
 | Location | ✅ | Windows' location service, behind Windows' privacy switch | | `native_location.cpp` |
 | Sensors | ❌ | | The sensors exist but report a phone lying still; tilt controls do nothing | `runtime/java/android/hardware/` |
 | Bluetooth | ⚠️ | Paired devices; serial (RFCOMM) connections both ways; LE scans and the GATT client (read, write, notifications) | Discovery and pairing from the app, LE advertising, the GATT server, audio and HID profiles, L2CAP | `native_bluetooth.cpp` |
-| Wi-Fi | ⚠️ | On or off, the current network, the DHCP configuration, scan results | Connecting the PC to a network | `native_radios.cpp` |
+| Wi-Fi and the network | ⚠️ | On or off, the current network, the DHCP configuration, scan results; `ConnectivityManager` reports the PC's real default adapter (cable or Wi-Fi), its addresses and DNS servers; multicast and broadcast sockets for finding devices on the local network | Connecting the PC to a network (a device's own setup hotspot); `NsdManager` (mDNS) reports failure | `native_radios.cpp`, `src/bionic/socket.cpp` |
 | Clipboard, file pickers | ✅ | Text, HTML and links; Windows' open and save dialogs | | `native_clipboard.cpp`, `native_picker.cpp` |
 
 ### Windows integration

@@ -1,8 +1,15 @@
 // android.media.MediaExtractor -- demuxes a media container into compressed
-// access units. Backed by the AudioToolbox AudioFile demuxer in
-// runtime/src/media_decode.mm (via com.macapk.loader.NativeMedia). Audio only
-// (one audio track); video tracks are not surfaced by this path yet. The
-// compressed access units it returns are decoded by MediaCodec (AudioConverter).
+// access units. AOSP frameworks/base media/java/android/media/MediaExtractor.java.
+//
+// Backed by the host's demuxer (com.macapk.loader.HostMedia; on Windows Media
+// Foundation's source reader, windows/host/video_decode.h's Demuxer): every
+// audio and video track of what the host can read (MP4/3GP/M4A/MOV, MP3,
+// ADTS, and what its installed codec packs add), with the samples in the form
+// MediaCodec takes -- H.264 and HEVC as Annex-B with the parameter sets in
+// csd-0/csd-1, AAC raw with the AudioSpecificConfig in csd-0. A path and an
+// http(s) URL are opened as they are; a FileDescriptor range, a content://
+// Uri and a MediaDataSource are copied to a temporary file first, because the
+// host's reader opens names, not descriptors.
 package android.media;
 import java.io.FileDescriptor;
 import java.nio.ByteBuffer;
@@ -10,27 +17,49 @@ import java.util.Map;
 
 public final class MediaExtractor {
     private long    mHandle  = 0;
-    private boolean mSelected = false;
-    private byte[]  mCurrent = null;   // cached pre-read current access unit
-    // Temp file backing a FileDescriptor data source; deleted by release().
+    private boolean[] mSelected = new boolean[0];
+    private MediaFormat[] mFormats = new MediaFormat[0];
+    // The current sample (AOSP's model: readSampleData reads it, advance()
+    // moves on). Read lazily, so that selectTrack calls made after
+    // setDataSource decide what the first one is.
+    private byte[]  mCurrent = null;
+    private final long[] mMeta = new long[3];   // {track, presentationTimeUs, sync}
+    private boolean mPrimed = false;
+    // Temp file backing a spooled data source; deleted by release().
     private java.io.File mTmpFile = null;
 
-    // Same sanity cap the NDK extractor uses for an fd slice
-    // (runtime/translator/src/media_ndk.cpp kMaxSrcBytes): refuse to spool a
-    // quarter-gigabyte-plus "audio" region to disk.
-    private static final long MAX_SRC_BYTES = 256L << 20;
+    // What a spooled source may weigh: beyond this the copy is refused rather
+    // than filling the disk.
+    private static final long MAX_SRC_BYTES = 4L << 30;
 
     public MediaExtractor() {}
 
+    private void open(String pathOrUrl, java.io.File tmp) throws java.io.IOException {
+        long h = 0;
+        try {
+            h = com.macapk.loader.HostMedia.nativeDemuxOpen(tmp != null ? tmp.getAbsolutePath() : pathOrUrl);
+        } catch (LinkageError e) {
+            // A runtime without the demuxer: the same answer as an unreadable file.
+        }
+        int n = h != 0 ? com.macapk.loader.HostMedia.nativeDemuxTrackCount(h) : 0;
+        if (h == 0 || n <= 0) {
+            if (h != 0) com.macapk.loader.HostMedia.nativeDemuxClose(h);
+            if (tmp != null) tmp.delete();
+            throw new java.io.IOException("MediaExtractor: cannot open " + (tmp != null ? "the data source" : pathOrUrl));
+        }
+        mHandle = h;
+        mTmpFile = tmp;
+        mSelected = new boolean[n];
+        mFormats = new MediaFormat[n];
+    }
+
     public void setDataSource(String path) throws java.io.IOException {
+        if (path == null) throw new IllegalArgumentException("path == null");
         release();
         // Strip a file:// scheme; the native opener wants a filesystem path.
         String p = path;
-        if (p != null && p.startsWith("file://")) p = p.substring(7);
-        mHandle = com.macapk.loader.NativeMedia.nativeDemuxOpen(p);
-        if (mHandle == 0)
-            throw new java.io.IOException("MediaExtractor: cannot open " + path);
-        refreshCurrent();
+        if (p.startsWith("file://")) p = p.substring(7);
+        open(p, null);
     }
     public void setDataSource(String path, Map<String, String> headers) throws java.io.IOException { setDataSource(path); }
     public void setDataSource(FileDescriptor fd) throws java.io.IOException {
@@ -40,13 +69,9 @@ public final class MediaExtractor {
     }
 
     /**
-     * AOSP opens the [offset, offset+length) region of an already-open fd.
-     * Our demux core (macapk_md_demux_open -> AudioToolbox AudioFileOpenURL)
-     * opens a PATH, so the region has to exist on disk first. This is the
-     * Java-side twin of the NDK extractor's already-shipped
-     * AMediaExtractor_setDataSourceFd (runtime/translator/src/media_ndk.cpp):
-     * pread the slice into a temp file, demux that, unlink it on release.
-     * The reads are positional (pread), so the file offset the caller owns is
+     * AOSP opens the [offset, offset+length) region of an already-open fd. The
+     * host's reader opens a name, so the region is copied to a temporary file
+     * first. The reads are positional, so the file offset the caller owns is
      * never disturbed.
      */
     public void setDataSource(FileDescriptor fd, long offset, long length) throws java.io.IOException {
@@ -58,7 +83,7 @@ public final class MediaExtractor {
         // adopted from an existing FileDescriptor registers no GC-time
         // cleanup of its own, so leaving it unclosed cannot close their fd.
         java.io.FileInputStream in = new java.io.FileInputStream(fd);
-        java.nio.channels.FileChannel ch = in.getChannel();
+        final java.nio.channels.FileChannel ch = in.getChannel();
         long size = ch.size();
         if (offset < 0) offset = 0;
         if (length <= 0 || (size > 0 && offset + length > size))
@@ -66,44 +91,62 @@ public final class MediaExtractor {
         if (length <= 0 || length > MAX_SRC_BYTES)
             throw new java.io.IOException("MediaExtractor: unusable fd range off="
                     + offset + " len=" + length);
-
-        java.io.File tmp = java.io.File.createTempFile("macapk_mediaextractor", ".tmp");
-        tmp.deleteOnExit();
-        boolean copied = false;
-        try (java.io.FileOutputStream out = new java.io.FileOutputStream(tmp)) {
-            java.nio.ByteBuffer buf = java.nio.ByteBuffer.allocate(64 * 1024);
-            long remaining = length;
-            long pos = offset;
-            while (remaining > 0) {
-                buf.clear();
-                buf.limit((int) Math.min(remaining, (long) buf.capacity()));
-                int n = ch.read(buf, pos);
-                if (n <= 0) break;   // short source: demux whatever we got
-                out.write(buf.array(), 0, n);
-                pos += n;
-                remaining -= n;
+        final long start = offset;
+        open(null, spool(new java.io.InputStream() {
+            private long pos = start;
+            @Override public int read() throws java.io.IOException {
+                byte[] one = new byte[1];
+                return read(one, 0, 1) == 1 ? (one[0] & 0xff) : -1;
             }
-            copied = remaining != length;
-        } finally {
-            if (!copied) tmp.delete();
-        }
-        if (!copied)
-            throw new java.io.IOException("MediaExtractor: cannot read fd data source");
-
-        mHandle = com.macapk.loader.NativeMedia.nativeDemuxOpen(tmp.getAbsolutePath());
-        if (mHandle == 0 || getTrackCount() <= 0) {
-            if (mHandle != 0) { com.macapk.loader.NativeMedia.nativeDemuxClose(mHandle); mHandle = 0; }
-            tmp.delete();
-            throw new java.io.IOException("MediaExtractor: cannot demux fd data source");
-        }
-        mTmpFile = tmp;
-        refreshCurrent();
+            @Override public int read(byte[] b, int off, int len) throws java.io.IOException {
+                int n = ch.read(ByteBuffer.wrap(b, off, len), pos);
+                if (n > 0) pos += n;
+                return n;
+            }
+        }, length));
     }
-    public void setDataSource(MediaDataSource source) {}
+
+    /** API 23. The source's bytes, read through readAt. */
+    public void setDataSource(final MediaDataSource source) throws java.io.IOException {
+        if (source == null) throw new IllegalArgumentException("source == null");
+        release();
+        long size = source.getSize();
+        open(null, spool(new java.io.InputStream() {
+            private long pos = 0;
+            @Override public int read() throws java.io.IOException {
+                byte[] one = new byte[1];
+                return read(one, 0, 1) == 1 ? (one[0] & 0xff) : -1;
+            }
+            @Override public int read(byte[] b, int off, int len) throws java.io.IOException {
+                int n = source.readAt(pos, b, off, len);
+                if (n > 0) pos += n;
+                return n;
+            }
+        }, size > 0 ? Math.min(size, MAX_SRC_BYTES) : MAX_SRC_BYTES));
+    }
+
     public void setDataSource(android.content.Context context, android.net.Uri uri,
                               Map<String, String> headers) throws java.io.IOException {
-        if (uri != null && ("file".equals(uri.getScheme()) || uri.getScheme() == null))
+        if (uri == null) throw new IllegalArgumentException("uri == null");
+        String scheme = uri.getScheme();
+        if (scheme == null || "file".equals(scheme)) {
             setDataSource(uri.getPath());
+            return;
+        }
+        if ("http".equals(scheme) || "https".equals(scheme)) {
+            setDataSource(uri.toString());
+            return;
+        }
+        // content://, android.resource://: whatever the resolver opens.
+        if (context == null) throw new java.io.IOException("MediaExtractor: no Context for " + uri);
+        release();
+        java.io.InputStream in = context.getContentResolver().openInputStream(uri);
+        if (in == null) throw new java.io.IOException("MediaExtractor: cannot open " + uri);
+        try {
+            open(null, spool(in, MAX_SRC_BYTES));
+        } finally {
+            try { in.close(); } catch (java.io.IOException ignore) { }
+        }
     }
     // AOSP: a declared length below 0 means "the whole file", so it drops the
     // slice bounds entirely rather than passing a negative length down.
@@ -116,76 +159,141 @@ public final class MediaExtractor {
         }
     }
 
-    private void refreshCurrent() {
-        mCurrent = (mHandle != 0) ? com.macapk.loader.NativeMedia.nativeDemuxCurrent(mHandle) : null;
+    private static java.io.File spool(java.io.InputStream in, long limit) throws java.io.IOException {
+        return com.macapk.loader.HostMedia.spool(in, limit);
     }
 
-    public int getTrackCount() {
-        return mHandle != 0 ? com.macapk.loader.NativeMedia.nativeDemuxTrackCount(mHandle) : 0;
+    /** Reads the next sample of the selected tracks into mCurrent (null at the end). */
+    private void fetch() {
+        mCurrent = (mHandle != 0) ? com.macapk.loader.HostMedia.nativeDemuxRead(mHandle, mMeta) : null;
+        mPrimed = true;
     }
+    private void ensureCurrent() {
+        if (!mPrimed) fetch();
+    }
+
+    public int getTrackCount() { return mSelected.length; }
 
     public MediaFormat getTrackFormat(int index) {
-        MediaFormat f = new MediaFormat();
-        if (mHandle == 0) return f;
-        int fmt = com.macapk.loader.NativeMedia.nativeDemuxFormatId(mHandle);
-        String mime = (fmt == 1) ? MediaFormat.MIMETYPE_AUDIO_AAC
-                    : (fmt == 2) ? MediaFormat.MIMETYPE_AUDIO_MPEG
-                    : "audio/unknown";
-        f.setString(MediaFormat.KEY_MIME, mime);
-        f.setInteger(MediaFormat.KEY_SAMPLE_RATE, com.macapk.loader.NativeMedia.nativeDemuxSampleRate(mHandle));
-        f.setInteger(MediaFormat.KEY_CHANNEL_COUNT, com.macapk.loader.NativeMedia.nativeDemuxChannels(mHandle));
-        long dur = com.macapk.loader.NativeMedia.nativeDemuxDurationUs(mHandle);
-        if (dur > 0) f.setLong(MediaFormat.KEY_DURATION, dur);
-        byte[] csd0 = com.macapk.loader.NativeMedia.nativeDemuxCsd0(mHandle);
-        if (csd0 != null && csd0.length > 0)
-            f.setByteBuffer("csd-0", ByteBuffer.wrap(csd0));
-        return f;
+        if (mHandle == 0 || index < 0 || index >= mFormats.length)
+            throw new IllegalArgumentException("no track " + index);
+        if (mFormats[index] == null) mFormats[index] = readFormat(index);
+        return new MediaFormat(mFormats[index]);
     }
 
-    public void selectTrack(int index)   { mSelected = true; }
-    public void unselectTrack(int index) { mSelected = false; }
+    private MediaFormat readFormat(int index) {
+        java.util.HashMap<String, String> info = new java.util.HashMap<>();
+        String text = com.macapk.loader.HostMedia.nativeDemuxTrackInfo(mHandle, index);
+        if (text != null) {
+            for (String line : text.split("\n")) {
+                int eq = line.indexOf('=');
+                if (eq > 0) info.put(line.substring(0, eq), line.substring(eq + 1));
+            }
+        }
+        MediaFormat f = new MediaFormat();
+        f.setString(MediaFormat.KEY_MIME, info.getOrDefault("mime", "application/octet-stream"));
+        if ("1".equals(info.get("video"))) {
+            int w = intOf(info, "width"), h = intOf(info, "height");
+            f.setInteger(MediaFormat.KEY_WIDTH, w);
+            f.setInteger(MediaFormat.KEY_HEIGHT, h);
+            int rotation = intOf(info, "rotation");
+            if (rotation != 0) f.setInteger(MediaFormat.KEY_ROTATION, rotation);
+            float fps = 0;
+            try { fps = Float.parseFloat(info.getOrDefault("frame-rate", "0")); } catch (NumberFormatException ignore) { }
+            if (fps > 0) f.setInteger(MediaFormat.KEY_FRAME_RATE, Math.max(1, Math.round(fps)));
+            // What a decoder's input buffer must hold: AOSP's extractors state
+            // it; the estimate is media3's (see MediaCodec.resolveInputCapacity).
+            f.setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, Math.max(1 << 16, w * h * 3 / 4));
+        } else {
+            f.setInteger(MediaFormat.KEY_SAMPLE_RATE, intOf(info, "sample-rate"));
+            f.setInteger(MediaFormat.KEY_CHANNEL_COUNT, intOf(info, "channel-count"));
+        }
+        int bitrate = intOf(info, "bitrate");
+        if (bitrate > 0) f.setInteger(MediaFormat.KEY_BIT_RATE, bitrate);
+        String language = info.get("language");
+        f.setString(MediaFormat.KEY_LANGUAGE, language == null || language.isEmpty() ? "und" : language);
+        long dur = com.macapk.loader.HostMedia.nativeDemuxDurationUs(mHandle);
+        if (dur > 0) f.setLong(MediaFormat.KEY_DURATION, dur);
+        for (int i = 0; i < 2; i++) {
+            byte[] csd = com.macapk.loader.HostMedia.nativeDemuxTrackCsd(mHandle, index, i);
+            if (csd != null && csd.length > 0) f.setByteBuffer("csd-" + i, ByteBuffer.wrap(csd));
+        }
+        return f;
+    }
+    private static int intOf(Map<String, String> info, String key) {
+        try { return Integer.parseInt(info.getOrDefault(key, "0")); } catch (NumberFormatException e) { return 0; }
+    }
+
+    public void selectTrack(int index) {
+        if (mHandle == 0 || index < 0 || index >= mSelected.length) return;
+        mSelected[index] = true;
+        com.macapk.loader.HostMedia.nativeDemuxSelect(mHandle, index, true);
+        // Nothing was current because nothing was selected: look again.
+        if (mPrimed && mCurrent == null) mPrimed = false;
+    }
+    public void unselectTrack(int index) {
+        if (mHandle == 0 || index < 0 || index >= mSelected.length) return;
+        mSelected[index] = false;
+        com.macapk.loader.HostMedia.nativeDemuxSelect(mHandle, index, false);
+        if (mCurrent != null && mMeta[0] == index) { mCurrent = null; mPrimed = false; }
+    }
 
     public boolean advance() {
         if (mHandle == 0) return false;
-        boolean ok = com.macapk.loader.NativeMedia.nativeDemuxAdvance(mHandle) != 0;
-        refreshCurrent();
-        return ok;
+        ensureCurrent();
+        if (mCurrent == null) return false;
+        fetch();
+        return mCurrent != null;
     }
 
     public int readSampleData(ByteBuffer byteBuf, int offset) {
-        if (!mSelected || mCurrent == null) return -1;
+        ensureCurrent();
+        if (mCurrent == null) return -1;
         int n = mCurrent.length;
-        ByteBuffer dst = byteBuf.duplicate();
-        dst.position(offset);
-        dst.put(mCurrent, 0, n);
+        if (offset < 0 || byteBuf.capacity() - offset < n)
+            throw new IllegalArgumentException("readSampleData: the buffer holds " + (byteBuf.capacity() - offset)
+                    + " bytes, the sample is " + n);
+        // AOSP leaves the buffer's position at offset and its limit after the sample.
+        byteBuf.limit(byteBuf.capacity());
+        byteBuf.position(offset);
+        byteBuf.put(mCurrent, 0, n);
+        byteBuf.limit(offset + n);
+        byteBuf.position(offset);
         return n;
     }
 
-    public int  getSampleTrackIndex() { return mCurrent != null ? 0 : -1; }
-    public long getSampleTime()       { return (mHandle != 0 && mCurrent != null)
-            ? com.macapk.loader.NativeMedia.nativeDemuxSampleTime(mHandle) : -1; }
-    public int  getSampleFlags()      { return mCurrent != null ? SAMPLE_FLAG_SYNC : 0; }
+    public int  getSampleTrackIndex() { ensureCurrent(); return mCurrent != null ? (int) mMeta[0] : -1; }
+    public long getSampleTime()       { ensureCurrent(); return mCurrent != null ? mMeta[1] : -1; }
+    public int  getSampleFlags() {
+        ensureCurrent();
+        return mCurrent == null ? -1 : mMeta[2] != 0 ? SAMPLE_FLAG_SYNC : 0;
+    }
     // AOSP declares `public native long getSampleSize()`; an int return is a
     // different descriptor and would not link from SDK-compiled bytecode.
     // frameworks/base/media/java/android/media/MediaExtractor.java
-    public long getSampleSize()       { return mCurrent != null ? mCurrent.length : -1L; }
+    public long getSampleSize()       { ensureCurrent(); return mCurrent != null ? mCurrent.length : -1L; }
 
     public void seekTo(long timeUs, int mode) {
         if (mHandle == 0) return;
-        com.macapk.loader.NativeMedia.nativeDemuxSeek(mHandle, timeUs);
-        refreshCurrent();
+        com.macapk.loader.HostMedia.nativeDemuxSeek(mHandle, timeUs, mode);
+        mCurrent = null;
+        mPrimed = false;
     }
 
+    // AOSP: -1 when "that information is unavailable or not applicable (no
+    // cache)", and false unless data is being cached: the host reads files and
+    // streams without a cache this class could measure.
     public long getCachedDuration() { return -1; }
     public boolean hasCacheReachedEndOfStream() { return false; }
     public boolean getSampleCryptoInfo(MediaCodec.CryptoInfo info) { return false; }
 
     public void release() {
-        if (mHandle != 0) { com.macapk.loader.NativeMedia.nativeDemuxClose(mHandle); mHandle = 0; }
-        // Mirrors ext_close_demux in media_ndk.cpp: the spooled fd slice stays
-        // alive only as long as the demuxer that reads it.
+        if (mHandle != 0) { com.macapk.loader.HostMedia.nativeDemuxClose(mHandle); mHandle = 0; }
+        // The spooled source stays alive only as long as the demuxer that reads it.
         if (mTmpFile != null) { mTmpFile.delete(); mTmpFile = null; }
-        mCurrent = null; mSelected = false;
+        mCurrent = null; mPrimed = false;
+        mSelected = new boolean[0];
+        mFormats = new MediaFormat[0];
     }
 
     // =====================================================================

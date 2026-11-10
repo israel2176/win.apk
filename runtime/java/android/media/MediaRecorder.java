@@ -1,27 +1,15 @@
 // android.media.MediaRecorder -- records audio/video to a file. AOSP
 // frameworks/base media/java/android/media/MediaRecorder.java.
 //
-// ⚠ CORRECTED: the header used to say "Mac.apk has no capture/encode backend"
-// and that getMaxAmplitude "returns 0". The CAPTURE half of that is no longer
-// true -- runtime/src/audio_input.mm gives this host a real microphone, and
-// android.media.AudioRecord already reads from it. This class now uses it:
-// start()..stop() really opens the input, so getMaxAmplitude() reports the real
-// peak since the last call and the recorder registers itself in the
-// recording-activity registry the way a live recorder must.
-//
-// What is STILL missing, and the reason the output file is empty, is the
-// ENCODE + MUX half. Producing a 3GP/MP4/AAC file needs an audio ENCODER and a
-// container writer; every native bridge in this tree is decode-only
-// (com.macapk.loader.NativeMedia has nativeDecOpen/nativeDecDecode and no
-// counterpart), and MediaCodec's own header says the same. The macOS-native
-// answer per the decision ladder is AudioToolbox's ExtAudioFile /
-// AVAudioFile (m4a/AAC, CAF, WAV) or AVAssetWriter for A/V -- but that is
-// native code in runtime/src/, outside this file's ownership.
-//
-// Until that lands, the honest position is the one below: no capability is
-// claimed that is not delivered, the state machine is AOSP's, level metering
-// really works (which is what a hold-to-record UI actually needs), and the
-// output file is created but stays empty.
+// Records for real on the host's encoders (MediaCodec, on Windows Media
+// Foundation's) and MediaMuxer: the microphone (AudioRecord) as AAC, and with
+// VideoSource.SURFACE what reaches getSurface() -- a camera2 session that has
+// it as an output, or Canvas drawing -- as H.264, into an MP4 or 3GPP file, or
+// AAC alone into an ADTS file. What the host cannot record is refused in
+// prepare() with AOSP's IOException, never accepted and dropped: AMR, Vorbis,
+// Opus, HE-AAC and AAC-ELD audio, H.263/MPEG-4/VP8/HEVC video, WebM, Ogg and
+// MPEG-2 TS files, and VideoSource.CAMERA (the legacy Camera). The state
+// machine is AOSP's: a call out of order throws IllegalStateException.
 package android.media;
 
 public class MediaRecorder implements AudioRecordingMonitor, AudioRouting, MicrophoneDirection {
@@ -89,14 +77,39 @@ public class MediaRecorder implements AudioRecordingMonitor, AudioRouting, Micro
     private OnErrorListener mOnError;
     private OnInfoListener mOnInfo;
 
-    // --- real capture state (see the corrected header) ---------------------
-    private int mAudioSource = AudioSource.DEFAULT;
-    private int mAudioSamplingRate;
-    private int mAudioChannels;
+    // AOSP's state machine (MediaRecorder's class documentation).
+    private static final int STATE_INITIAL = 0, STATE_INITIALIZED = 1, STATE_CONFIGURED = 2, STATE_PREPARED = 3,
+            STATE_RECORDING = 4, STATE_RELEASED = 5;
+    private int mState = STATE_INITIAL;
+
+    private int mAudioSource = -1, mVideoSource = -1;   // -1: none set
+    private int mOutputFormat = OutputFormat.DEFAULT;
+    private int mAudioEncoder = AudioEncoder.DEFAULT, mVideoEncoder = VideoEncoder.DEFAULT;
+    private int mAudioSamplingRate, mAudioChannels, mAudioBitRate;
+    private int mVideoWidth = 1280, mVideoHeight = 720, mVideoFrameRate = 30, mVideoBitRate;
+    private int mVideoProfile;
+    private int mOrientation, mMaxDurationMs;
+    private long mMaxFileSize;
+    private boolean mHasLocation;
+    private float mLatitude, mLongitude;
+    private android.view.Surface mPersistentSurface;
+
+    // --- the recording ------------------------------------------------------
     private AudioRecord mCapture;
-    private Thread mCaptureThread;
-    private volatile boolean mCapturing;
+    private Thread mCaptureThread, mVideoThread;
+    private volatile boolean mCapturing, mPaused, mVideoDraining;
     private volatile int mPeakAmplitude;
+    private MediaCodec mAudioCodec, mVideoCodec;
+    private android.view.Surface mSurface;
+    private MediaMuxer mMuxer;
+    private java.io.OutputStream mAdts;      // OutputFormat.AAC_ADTS: the frames, each behind its header
+    private final Object mSinkLock = new Object();
+    private int mAudioTrack = -1, mVideoTrack = -1;
+    private boolean mMuxerStarted, mLimitReached, mWroteSample;
+    private long mBytesWritten;
+    private long mStartNs, mPausedNs, mPauseStartNs;
+    private long mVideoBaseUs = Long.MIN_VALUE, mLastVideoUs = -1;
+    private final java.util.ArrayList<Object[]> mPending = new java.util.ArrayList<>();   // {video, bytes, ptsUs, flags}
     private boolean mPrivacySensitive;
     private boolean mPrivacySensitiveExplicit;
     private AudioDeviceInfo mPreferredDevice;
@@ -111,165 +124,506 @@ public class MediaRecorder implements AudioRecordingMonitor, AudioRouting, Micro
         java.util.Objects.requireNonNull(context, "context may not be null");
     }
 
-    public void setAudioSource(int audioSource) { mAudioSource = audioSource; }
-    public void setVideoSource(int videoSource) {}
-    public void setOutputFormat(int outputFormat) {}
-    public void setAudioEncoder(int audioEncoder) {}
-    public void setVideoEncoder(int videoEncoder) {}
-    public void setAudioEncodingBitRate(int bitRate) {}
-    public void setAudioSamplingRate(int samplingRate) { mAudioSamplingRate = samplingRate; }
-    public void setAudioChannels(int numChannels) { mAudioChannels = numChannels; }
-    public void setVideoEncodingBitRate(int bitRate) {}
-    public void setVideoFrameRate(int rate) {}
-    public void setVideoSize(int width, int height) {}
-    public void setMaxDuration(int max_duration_ms) {}
-    public void setMaxFileSize(long max_filesize_bytes) {}
-    public void setOrientationHint(int degrees) {}
-    public void setLocation(float latitude, float longitude) {}
-    public void setCaptureRate(double fps) {}
-    // Published descriptors name android.view.Surface; the prior Object params
-    // compiled but would not resolve a guest's setPreviewDisplay(surface) /
-    // setInputSurface(surface) call (descriptor mismatch -> NoSuchMethodError).
-    // No capture backend, so accept and ignore. getSurface returns a real (empty,
-    // no-producer) Surface so SURFACE-source recorders get a non-null endpoint.
+    private void need(boolean ok, String what) {
+        if (!ok) throw new IllegalStateException(what + " called in an invalid state: " + mState);
+    }
+    private void beforePrepare(String what) {
+        need(mState == STATE_INITIAL || mState == STATE_INITIALIZED || mState == STATE_CONFIGURED, what);
+    }
+
+    public void setAudioSource(int audioSource) {
+        beforePrepare("setAudioSource");
+        need(mState != STATE_CONFIGURED, "setAudioSource");   // AOSP: before setOutputFormat
+        if (audioSource < 0 || audioSource > getAudioSourceMax()) throw new IllegalArgumentException("Invalid audio source");
+        mAudioSource = audioSource;
+        mState = STATE_INITIALIZED;
+    }
+    public void setVideoSource(int videoSource) {
+        beforePrepare("setVideoSource");
+        need(mState != STATE_CONFIGURED, "setVideoSource");
+        mVideoSource = videoSource;
+        mState = STATE_INITIALIZED;
+    }
+    public void setOutputFormat(int outputFormat) {
+        need(mState == STATE_INITIALIZED, "setOutputFormat");   // AOSP: after the sources
+        mOutputFormat = outputFormat;
+        mState = STATE_CONFIGURED;
+    }
+    public void setAudioEncoder(int audioEncoder) { need(mState == STATE_CONFIGURED, "setAudioEncoder"); mAudioEncoder = audioEncoder; }
+    public void setVideoEncoder(int videoEncoder) { need(mState == STATE_CONFIGURED, "setVideoEncoder"); mVideoEncoder = videoEncoder; }
+    public void setAudioEncodingBitRate(int bitRate) {
+        if (bitRate <= 0) throw new IllegalArgumentException("Audio encoding bit rate is not positive");
+        mAudioBitRate = bitRate;
+    }
+    public void setAudioSamplingRate(int samplingRate) {
+        if (samplingRate <= 0) throw new IllegalArgumentException("Audio sampling rate is not positive");
+        mAudioSamplingRate = samplingRate;
+    }
+    public void setAudioChannels(int numChannels) {
+        if (numChannels <= 0) throw new IllegalArgumentException("Number of channels is not positive");
+        mAudioChannels = numChannels;
+    }
+    public void setVideoEncodingBitRate(int bitRate) {
+        if (bitRate <= 0) throw new IllegalArgumentException("Video encoding bit rate is not positive");
+        mVideoBitRate = bitRate;
+    }
+    public void setVideoFrameRate(int rate) { need(mState == STATE_CONFIGURED, "setVideoFrameRate"); mVideoFrameRate = rate; }
+    public void setVideoSize(int width, int height) {
+        need(mState == STATE_CONFIGURED, "setVideoSize");
+        mVideoWidth = width;
+        mVideoHeight = height;
+    }
+    public void setMaxDuration(int max_duration_ms) { mMaxDurationMs = max_duration_ms; }
+    public void setMaxFileSize(long max_filesize_bytes) { mMaxFileSize = max_filesize_bytes; }
+    public void setOrientationHint(int degrees) {
+        if (degrees != 0 && degrees != 90 && degrees != 180 && degrees != 270)
+            throw new IllegalArgumentException("Unsupported angle: " + degrees);
+        mOrientation = degrees;
+    }
+    public void setLocation(float latitude, float longitude) {
+        if (latitude > 90 || latitude < -90) throw new IllegalArgumentException("Latitude: " + latitude + " out of range.");
+        if (longitude > 180 || longitude < -180) throw new IllegalArgumentException("Longitude: " + longitude + " out of range");
+        mHasLocation = true;
+        mLatitude = latitude;
+        mLongitude = longitude;
+    }
+    /** Time-lapse and slow motion: the pictures are stamped with the time
+     *  they arrive, so a capture rate other than the frame rate has no effect. */
+    public void setCaptureRate(double fps) {
+        if (fps <= 0) throw new IllegalArgumentException("Invalid capture rate");
+    }
+
+    /** A recording has no preview of its own here: the app shows the camera
+     *  on a Surface of its own session. */
     public void setPreviewDisplay(android.view.Surface sv) {}
-    public void setInputSurface(android.view.Surface surface) {}
-    private android.view.Surface mSurface;
+    /** API 23: a Surface from MediaCodec.createPersistentInputSurface() as the
+     *  video source's Surface. */
+    public void setInputSurface(android.view.Surface surface) {
+        beforePrepare("setInputSurface");
+        mPersistentSurface = surface;
+    }
+    /** AOSP: the Surface to draw the video on (or to give a camera2 session
+     *  as an output) with VideoSource.SURFACE, valid from prepare() to stop().
+     *  See MediaCodec.createInputSurface() for what reaches the encoder. */
     public android.view.Surface getSurface() {
-        if (mSurface == null) mSurface = new android.view.Surface();
+        if (mVideoSource != VideoSource.SURFACE || mSurface == null)
+            throw new IllegalStateException("getSurface: no Surface (VideoSource.SURFACE, between prepare() and stop())");
         return mSurface;
     }
-    public void setProfile(CamcorderProfile profile) {}
+    public void setProfile(CamcorderProfile profile) {
+        need(mState == STATE_INITIALIZED, "setProfile");
+        setOutputFormat(profile.fileFormat);
+        if (mVideoSource >= 0) {
+            setVideoFrameRate(profile.videoFrameRate);
+            setVideoSize(profile.videoFrameWidth, profile.videoFrameHeight);
+            setVideoEncodingBitRate(profile.videoBitRate);
+            setVideoEncoder(profile.videoCodec);
+        }
+        if (mAudioSource >= 0) {
+            setAudioEncodingBitRate(profile.audioBitRate);
+            setAudioChannels(profile.audioChannels);
+            setAudioSamplingRate(profile.audioSampleRate);
+            setAudioEncoder(profile.audioCodec);
+        }
+    }
     public void setAudioAttributes(AudioAttributes attrs) {}
 
-    public void setOutputFile(String path) { mOutputPath = path; }
-    public void setOutputFile(java.io.File file) { mOutputPath = file != null ? file.getPath() : null; }
-    public void setOutputFile(java.io.FileDescriptor fd) { mOutputFd = fd; }
+    public void setOutputFile(String path) { mOutputPath = path; mOutputFd = null; }
+    public void setOutputFile(java.io.File file) { mOutputPath = file != null ? file.getPath() : null; mOutputFd = null; }
+    public void setOutputFile(java.io.FileDescriptor fd) { mOutputFd = fd; mOutputPath = null; }
 
-    public void prepare() throws java.io.IOException {
-        // Touch the output file so callers that re-open it after stop() find it.
-        touchOutputFile();
-    }
-
-    private void touchOutputFile() {
-        if (mOutputPath != null) {
-            try { new java.io.FileOutputStream(mOutputPath).close(); }
-            catch (Throwable ignore) { }
-        }
-    }
     /**
-     * Opens the real microphone and starts draining it. The PCM is discarded
-     * (there is no encoder -- see the header), but the capture is genuine: the
-     * peak sample feeds getMaxAmplitude(), and the recorder appears in
-     * AudioManager.getActiveRecordingConfigurations() the way a live recorder
-     * must. AOSP throws IllegalStateException when start() is called out of
-     * order; a capture that cannot be opened is reported the same way.
+     * Builds the recording: the AAC encoder for the microphone, the H.264
+     * encoder and its input Surface for VideoSource.SURFACE, and the MP4/3GPP
+     * file (MediaMuxer) or the ADTS stream. AOSP reports what it cannot record
+     * here, as an IOException ("prepare failed."), and so does this: AMR, Vorbis,
+     * Opus, HE-AAC and AAC-ELD audio, video other than H.264, WebM, Ogg and
+     * MPEG-2 TS files, VideoSource.CAMERA (the legacy Camera has no path to the
+     * encoder; a camera2 session with getSurface() as an output has), and a
+     * host without the encoders.
      */
-    public void start() throws IllegalStateException {
-        if (mCapturing) throw new IllegalStateException("MediaRecorder is already recording");
-        int rate = mAudioSamplingRate > 0 ? mAudioSamplingRate : 44100;
-        int channelConfig = (mAudioChannels == 2)
-                ? AudioFormat.CHANNEL_IN_STEREO : AudioFormat.CHANNEL_IN_MONO;
-        int minBuf;
+    public void prepare() throws java.io.IOException {
+        need(mState == STATE_CONFIGURED, "prepare");
+        if (mOutputPath == null && mOutputFd == null) throw new java.io.IOException("No valid output file");
+        final boolean audio = mAudioSource >= 0, video = mVideoSource >= 0;
+        final boolean adts = mOutputFormat == OutputFormat.AAC_ADTS;
+        String why = null;
+        if (!audio && !video) why = "no audio or video source";
+        else if (mOutputFormat != OutputFormat.DEFAULT && mOutputFormat != OutputFormat.MPEG_4
+                && mOutputFormat != OutputFormat.THREE_GPP && !adts) why = "output format " + mOutputFormat;
+        else if (audio && mAudioEncoder != AudioEncoder.DEFAULT && mAudioEncoder != AudioEncoder.AAC)
+            why = "audio encoder " + mAudioEncoder + " (AAC only)";
+        else if (video && mVideoEncoder != VideoEncoder.DEFAULT && mVideoEncoder != VideoEncoder.H264)
+            why = "video encoder " + mVideoEncoder + " (H.264 only)";
+        else if (video && mVideoSource != VideoSource.SURFACE) why = "VideoSource.CAMERA (use VideoSource.SURFACE)";
+        else if (video && adts) why = "video in an ADTS file";
+        if (why != null) throw new java.io.IOException("prepare failed: this host cannot record " + why);
         try {
-            minBuf = AudioRecord.getMinBufferSize(rate, channelConfig,
-                    AudioFormat.ENCODING_PCM_16BIT);
-        } catch (Throwable t) {
-            minBuf = 4096;
-        }
-        if (minBuf <= 0) minBuf = 4096;
-        final int bufBytes = minBuf;
-        AudioRecord record;
-        try {
-            record = new AudioRecord(
-                    mAudioSource == AudioSource.DEFAULT ? AudioSource.MIC : mAudioSource,
-                    rate, channelConfig, AudioFormat.ENCODING_PCM_16BIT, bufBytes);
-        } catch (Throwable t) {
-            throw new IllegalStateException("Cannot open audio capture", t);
-        }
-        if (record.getState() != AudioRecord.STATE_INITIALIZED) {
-            try { record.release(); } catch (Throwable ignore) { }
-            throw new IllegalStateException("Cannot open audio capture");
-        }
-        mCapture = record;
-        mPeakAmplitude = 0;
-        mCapturing = true;
-        record.startRecording();
-        mCaptureThread = new Thread(new Runnable() {
-            @Override public void run() {
-                short[] buf = new short[Math.max(256, bufBytes / 2)];
-                while (mCapturing) {
-                    int n = mCapture.read(buf, 0, buf.length);
-                    if (n <= 0) {
-                        // A negative return is an AudioRecord error code; stop
-                        // spinning on it rather than burning a core.
-                        if (n < 0) break;
-                        continue;
-                    }
-                    int peak = 0;
-                    for (int i = 0; i < n; i++) {
-                        int v = buf[i] < 0 ? -buf[i] : buf[i];
-                        if (v > peak) peak = v;
-                    }
-                    if (peak > mPeakAmplitude) mPeakAmplitude = peak;
+            if (audio) {
+                // The AAC encoder takes 44100 and 48000 Hz, mono and stereo;
+                // another rate asked for is recorded at 44100.
+                int rate = mAudioSamplingRate == 48000 ? 48000 : 44100;
+                int channels = mAudioChannels == 2 ? 2 : 1;
+                MediaFormat f = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, rate, channels);
+                f.setInteger(MediaFormat.KEY_BIT_RATE, mAudioBitRate > 0 ? mAudioBitRate : 128000);
+                mAudioCodec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC);
+                mAudioCodec.configure(f, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
+            }
+            if (video) {
+                MediaFormat f = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, mVideoWidth, mVideoHeight);
+                f.setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaFormat.COLOR_FormatSurface);
+                f.setInteger(MediaFormat.KEY_BIT_RATE, mVideoBitRate > 0 ? mVideoBitRate : mVideoWidth * mVideoHeight * 4);
+                f.setInteger(MediaFormat.KEY_FRAME_RATE, mVideoFrameRate > 0 ? mVideoFrameRate : 30);
+                f.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1);
+                if (mVideoProfile > 0) f.setInteger(MediaFormat.KEY_PROFILE, mVideoProfile);
+                mVideoCodec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC);
+                mVideoCodec.configure(f, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
+                if (mPersistentSurface != null) {
+                    mVideoCodec.setInputSurface(mPersistentSurface);
+                    mSurface = mPersistentSurface;
+                } else {
+                    mSurface = mVideoCodec.createInputSurface();
                 }
             }
-        }, "MediaRecorder-capture");
-        mCaptureThread.setDaemon(true);
-        mCaptureThread.start();
+            if (adts) {
+                mAdts = new java.io.BufferedOutputStream(mOutputFd != null
+                        ? new java.io.FileOutputStream(mOutputFd) : new java.io.FileOutputStream(mOutputPath));
+            } else {
+                int format = mOutputFormat == OutputFormat.THREE_GPP
+                        ? MediaMuxer.OutputFormat.MUXER_OUTPUT_3GPP : MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4;
+                mMuxer = mOutputFd != null ? new MediaMuxer(mOutputFd, format) : new MediaMuxer(mOutputPath, format);
+                if (video && mOrientation != 0) mMuxer.setOrientationHint(mOrientation);
+                if (mHasLocation) mMuxer.setLocation(mLatitude, mLongitude);
+            }
+        } catch (java.io.IOException | RuntimeException e) {
+            closeRecording();
+            throw new java.io.IOException("prepare failed: " + e.getMessage(), e);
+        }
+        mState = STATE_PREPARED;
     }
 
-    /** AOSP pauses capture without ending the recording; the input stays open
-     *  and the drain loop simply stops consuming. */
-    public void pause() throws IllegalStateException {
-        if (mCapture != null && mCapturing) {
-            try { mCapture.stop(); } catch (Throwable ignore) { }
+    /** Microseconds recorded so far: the clock, less the pauses. */
+    private long recordedUs() {
+        long now = mPaused ? mPauseStartNs : System.nanoTime();
+        return (now - mStartNs - mPausedNs) / 1000;
+    }
+
+    private void info(final int what) {
+        final OnInfoListener l = mOnInfo;
+        if (l != null) l.onInfo(this, what, 0);
+    }
+
+    /** An encoder's output format: its track, and the file once every track
+     *  is known. */
+    private void sinkFormat(boolean video, MediaFormat format) {
+        synchronized (mSinkLock) {
+            if (mMuxer == null || mMuxerStarted) return;
+            if (video) mVideoTrack = mMuxer.addTrack(format);
+            else mAudioTrack = mMuxer.addTrack(format);
+            if ((mAudioCodec != null && mAudioTrack < 0) || (mVideoCodec != null && mVideoTrack < 0)) return;
+            mMuxer.start();
+            mMuxerStarted = true;
+            for (Object[] p : mPending) writeLocked((Boolean) p[0], (byte[]) p[1], (Long) p[2], (Integer) p[3]);
+            mPending.clear();
         }
+    }
+
+    /** One encoded buffer. Video times are the producer's clock: brought to
+     *  the recording's, without its pauses. */
+    private void sinkSample(boolean video, java.nio.ByteBuffer buf, MediaCodec.BufferInfo info) {
+        if (info.size <= 0 || (info.flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0) return;   // the csd is in the format
+        byte[] data = new byte[info.size];
+        java.nio.ByteBuffer src = buf.duplicate();
+        src.position(info.offset);
+        src.limit(info.offset + info.size);
+        src.get(data);
+        int reached = 0;
+        synchronized (mSinkLock) {
+            if (mLimitReached) return;
+            long pts = info.presentationTimeUs;
+            if (video) {
+                if (mVideoBaseUs == Long.MIN_VALUE) mVideoBaseUs = pts - Math.max(0, recordedUs());
+                pts = Math.max(mLastVideoUs + 1, pts - mVideoBaseUs);
+                mLastVideoUs = pts;
+            }
+            if (mAdts != null || mMuxerStarted) writeLocked(video, data, pts, info.flags);
+            else mPending.add(new Object[] { video, data, pts, info.flags });
+            if (mMaxDurationMs > 0 && recordedUs() >= mMaxDurationMs * 1000L) reached = MEDIA_RECORDER_INFO_MAX_DURATION_REACHED;
+            else if (mMaxFileSize > 0 && mBytesWritten >= mMaxFileSize) reached = MEDIA_RECORDER_INFO_MAX_FILESIZE_REACHED;
+            if (reached != 0) mLimitReached = true;   // AOSP stops recording here; the app then calls stop()
+        }
+        if (reached != 0) info(reached);
+    }
+
+    private void writeLocked(boolean video, byte[] data, long ptsUs, int flags) {
+        try {
+            if (mAdts != null) {
+                // The seven-byte ADTS header: AAC-LC, this rate, these channels, this frame's length.
+                int rate = mAudioSamplingRate == 48000 ? 3 : 4, channels = mAudioChannels == 2 ? 2 : 1;
+                int len = data.length + 7;
+                byte[] h = { (byte) 0xff, (byte) 0xf1, (byte) ((1 << 6) | (rate << 2) | (channels >> 2)),
+                        (byte) (((channels & 3) << 6) | (len >> 11)), (byte) (len >> 3),
+                        (byte) (((len & 7) << 5) | 0x1f), (byte) 0xfc };
+                mAdts.write(h);
+                mAdts.write(data);
+                mBytesWritten += len;
+            } else {
+                MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
+                info.set(0, data.length, ptsUs, flags);
+                mMuxer.writeSampleData(video ? mVideoTrack : mAudioTrack, java.nio.ByteBuffer.wrap(data), info);
+                mBytesWritten = mMuxer.macapkBytesWritten();
+            }
+            mWroteSample = true;
+        } catch (java.io.IOException | RuntimeException e) {
+            mLimitReached = true;   // a full disk: nothing more can be written
+            final OnErrorListener l = mOnError;
+            if (l != null) l.onError(this, MEDIA_RECORDER_ERROR_UNKNOWN, 0);
+        }
+    }
+
+    /** Takes what an encoder has ready; true once it gave its end of stream. */
+    private boolean drain(MediaCodec codec, boolean video, long timeoutUs) {
+        MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
+        for (;;) {
+            int i = codec.dequeueOutputBuffer(info, timeoutUs);
+            if (i == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) { sinkFormat(video, codec.getOutputFormat()); continue; }
+            if (i < 0) return false;
+            java.nio.ByteBuffer b = codec.getOutputBuffer(i);
+            if (b != null) sinkSample(video, b, info);
+            codec.releaseOutputBuffer(i, false);
+            if ((info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) return true;
+            timeoutUs = 0;
+        }
+    }
+
+    /**
+     * Starts recording: the microphone is read and encoded on one thread, the
+     * video encoder's output taken on another. AOSP throws
+     * IllegalStateException when start() is called out of order; a
+     * microphone that cannot be opened is reported the same way.
+     */
+    public void start() throws IllegalStateException {
+        need(mState == STATE_PREPARED, "start");
+        mPeakAmplitude = 0;
+        mPaused = false;
+        mPausedNs = 0;
+        if (mAudioCodec != null) {
+            final int rate = mAudioSamplingRate == 48000 ? 48000 : 44100;
+            final int channels = mAudioChannels == 2 ? 2 : 1;
+            int channelConfig = channels == 2 ? AudioFormat.CHANNEL_IN_STEREO : AudioFormat.CHANNEL_IN_MONO;
+            int minBuf;
+            try {
+                minBuf = AudioRecord.getMinBufferSize(rate, channelConfig, AudioFormat.ENCODING_PCM_16BIT);
+            } catch (Throwable t) {
+                minBuf = 4096;
+            }
+            if (minBuf <= 0) minBuf = 4096;
+            final int bufBytes = minBuf;
+            AudioRecord record;
+            try {
+                record = new AudioRecord(mAudioSource == AudioSource.DEFAULT ? AudioSource.MIC : mAudioSource,
+                        rate, channelConfig, AudioFormat.ENCODING_PCM_16BIT, bufBytes);
+            } catch (Throwable t) {
+                throw new IllegalStateException("Cannot open audio capture", t);
+            }
+            if (record.getState() != AudioRecord.STATE_INITIALIZED) {
+                try { record.release(); } catch (Throwable ignore) { }
+                throw new IllegalStateException("Cannot open audio capture");
+            }
+            mCapture = record;
+            mAudioCodec.start();
+            record.startRecording();
+            mCapturing = true;
+            mCaptureThread = new Thread(() -> captureLoop(rate, channels, bufBytes), "MediaRecorder-capture");
+            mCaptureThread.setDaemon(true);
+        }
+        mStartNs = System.nanoTime();
+        if (mVideoCodec != null) {
+            mVideoCodec.start();
+            final MediaCodec codec = mVideoCodec;
+            mVideoDraining = true;
+            mVideoThread = new Thread(() -> {
+                try {
+                    while (mVideoDraining && !drain(codec, true, 100000)) { }
+                } catch (RuntimeException e) {
+                    // The encoder failed or was released: the recording ends with what was written.
+                }
+            }, "MediaRecorder-video");
+            mVideoThread.setDaemon(true);
+            mVideoThread.start();
+        }
+        if (mCaptureThread != null) mCaptureThread.start();
+        mState = STATE_RECORDING;
+    }
+
+    /** The microphone into the AAC encoder, with the peak for getMaxAmplitude();
+     *  at the end, the encoder's last frames. */
+    private void captureLoop(int rate, int channels, int bufBytes) {
+        final MediaCodec codec = mAudioCodec;
+        final AudioRecord record = mCapture;
+        short[] buf = new short[Math.max(256, bufBytes / 2)];
+        long frames = 0;
+        try {
+            while (mCapturing) {
+                int n = record.read(buf, 0, buf.length);
+                // A negative return is an AudioRecord error code; stop
+                // spinning on it rather than burning a core.
+                if (n < 0) break;
+                if (n == 0) continue;
+                int peak = 0;
+                for (int i = 0; i < n; i++) {
+                    int v = buf[i] < 0 ? -buf[i] : buf[i];
+                    if (v > peak) peak = v;
+                }
+                if (peak > mPeakAmplitude) mPeakAmplitude = peak;
+                if (mPaused) continue;   // AOSP: the paused stretch is left out of the file
+                int in = codec.dequeueInputBuffer(10000);
+                if (in >= 0) {
+                    java.nio.ByteBuffer b = codec.getInputBuffer(in);
+                    b.clear();
+                    b.order(java.nio.ByteOrder.LITTLE_ENDIAN).asShortBuffer().put(buf, 0, n);
+                    codec.queueInputBuffer(in, 0, n * 2, frames * 1000000L / rate, 0);
+                    frames += n / channels;
+                }
+                drain(codec, false, 0);
+            }
+            int in = codec.dequeueInputBuffer(10000);
+            if (in >= 0) codec.queueInputBuffer(in, 0, 0, frames * 1000000L / rate, MediaCodec.BUFFER_FLAG_END_OF_STREAM);
+            for (int i = 0; i < 50 && !drain(codec, false, 20000); i++) { }
+        } catch (RuntimeException e) {
+            // stop() released the codec under us, or the encoder failed: the
+            // recording ends with what was written.
+        }
+    }
+
+    /** API 24. The paused stretch is left out: the microphone's sound is
+     *  dropped and the video encoder is told to drop its input. */
+    public void pause() throws IllegalStateException {
+        need(mState == STATE_RECORDING, "pause");
+        if (mPaused) return;
+        mPauseStartNs = System.nanoTime();
+        mPaused = true;
+        suspendVideo(true);
     }
 
     public void resume() throws IllegalStateException {
-        if (mCapture != null && mCapturing) {
-            try { mCapture.startRecording(); } catch (Throwable ignore) { }
+        need(mState == STATE_RECORDING, "resume");
+        if (!mPaused) return;
+        synchronized (mSinkLock) {
+            long paused = System.nanoTime() - mPauseStartNs;
+            mPausedNs += paused;
+            if (mVideoBaseUs != Long.MIN_VALUE) mVideoBaseUs += paused / 1000;
+            mPaused = false;
         }
+        suspendVideo(false);
     }
 
+    private void suspendVideo(boolean on) {
+        if (mVideoCodec == null) return;
+        android.os.Bundle b = new android.os.Bundle();
+        b.putInt(MediaCodec.PARAMETER_KEY_SUSPEND, on ? 1 : 0);
+        mVideoCodec.setParameters(b);
+    }
+
+    /**
+     * Ends the recording and completes the file. AOSP: "a RuntimeException is
+     * intentionally thrown to the application, if no valid audio/video data
+     * has been received when stop() is called" -- the output is then not a
+     * playable file, here as there.
+     */
     public void stop() throws IllegalStateException {
-        stopCapture();
-        // AOSP switches to the queued next output file at stop() when one was
-        // set; the same handover happens here so setNextOutputFile is not a lie.
+        need(mState == STATE_RECORDING, "stop");
+        mCapturing = false;
+        join(mCaptureThread);
+        if (mVideoCodec != null) {
+            try { mVideoCodec.signalEndOfInputStream(); } catch (IllegalStateException ignore) { }
+            join(mVideoThread);
+        }
+        boolean ok;
+        synchronized (mSinkLock) {
+            ok = mWroteSample;
+            try {
+                if (mMuxer != null && mMuxerStarted) mMuxer.stop();
+                else if (mMuxer != null) ok = false;   // a track never produced a sample: there is no file to complete
+                if (mAdts != null) mAdts.flush();
+            } catch (java.io.IOException | RuntimeException e) {
+                ok = false;
+            }
+        }
+        closeRecording();
+        mState = STATE_INITIAL;
+        // AOSP switches to the queued next output file at stop() when one was set.
         if (mNextOutputPath != null) {
             mOutputPath = mNextOutputPath;
             mNextOutputPath = null;
-            touchOutputFile();
         }
+        if (!ok) throw new RuntimeException("stop failed.");
     }
 
-    private void stopCapture() {
+    private static void join(Thread t) {
+        if (t == null || t == Thread.currentThread()) return;
+        try { t.join(3000); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+    }
+
+    /** Lets go of the microphone, the encoders and the file. */
+    private void closeRecording() {
         mCapturing = false;
-        Thread t = mCaptureThread;
+        mVideoDraining = false;
+        join(mCaptureThread);
         mCaptureThread = null;
-        if (t != null) {
-            try { t.join(500); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
-        }
         AudioRecord record = mCapture;
         mCapture = null;
         if (record != null) {
             try { record.stop(); } catch (Throwable ignore) { }
             try { record.release(); } catch (Throwable ignore) { }
         }
+        for (MediaCodec c : new MediaCodec[] { mAudioCodec, mVideoCodec }) {
+            if (c != null) {
+                try { c.release(); } catch (Throwable ignore) { }
+            }
+        }
+        join(mVideoThread);
+        mVideoThread = null;
+        mAudioCodec = mVideoCodec = null;
+        mSurface = null;
+        synchronized (mSinkLock) {
+            if (mMuxer != null) {
+                try { mMuxer.release(); } catch (Throwable ignore) { }
+                mMuxer = null;
+            }
+            if (mAdts != null) {
+                // A FileDescriptor is the app's to close; a path's stream is ours.
+                try { if (mOutputFd != null) mAdts.flush(); else mAdts.close(); } catch (java.io.IOException ignore) { }
+                mAdts = null;
+            }
+            mPending.clear();
+            mAudioTrack = mVideoTrack = -1;
+            mMuxerStarted = mLimitReached = mWroteSample = false;
+            mBytesWritten = 0;
+            mVideoBaseUs = Long.MIN_VALUE;
+            mLastVideoUs = -1;
+        }
+        mPaused = false;
     }
 
     public void reset() {
-        stopCapture();
+        closeRecording();
         mOutputPath = null; mOutputFd = null; mNextOutputPath = null;
-        mAudioSource = AudioSource.DEFAULT;
-        mAudioSamplingRate = 0; mAudioChannels = 0;
+        mAudioSource = mVideoSource = -1;
+        mOutputFormat = OutputFormat.DEFAULT;
+        mAudioEncoder = AudioEncoder.DEFAULT; mVideoEncoder = VideoEncoder.DEFAULT;
+        mAudioSamplingRate = 0; mAudioChannels = 0; mAudioBitRate = 0;
+        mVideoWidth = 1280; mVideoHeight = 720; mVideoFrameRate = 30; mVideoBitRate = 0; mVideoProfile = 0;
+        mOrientation = 0; mMaxDurationMs = 0; mMaxFileSize = 0; mHasLocation = false;
+        mPersistentSurface = null;
         mPeakAmplitude = 0;
+        mState = STATE_INITIAL;
     }
 
     public void release() {
-        stopCapture();
+        closeRecording();
         mOutputPath = null; mOutputFd = null; mNextOutputPath = null;
+        mState = STATE_RELEASED;
     }
 
     /**
@@ -338,6 +692,8 @@ public class MediaRecorder implements AudioRecordingMonitor, AudioRouting, Micro
     public interface OnErrorListener { void onError(MediaRecorder mr, int what, int extra); }
     public interface OnInfoListener  { void onInfo(MediaRecorder mr, int what, int extra); }
 
+    /** The legacy Camera as the video source. Accepted, as AOSP accepts it
+     *  here; prepare() is where VideoSource.CAMERA is refused (see there). */
     public void setCamera(android.hardware.Camera c) { }
 
     // =====================================================================
@@ -382,6 +738,12 @@ public class MediaRecorder implements AudioRecordingMonitor, AudioRouting, Micro
      *  is accepted and has nothing to apply. */
     public void setVideoProfile(EncoderProfiles.VideoProfile profile) {
         java.util.Objects.requireNonNull(profile, "profile must not be null");
+        if (profile.getWidth() > 0 && profile.getHeight() > 0) {
+            mVideoWidth = profile.getWidth();
+            mVideoHeight = profile.getHeight();
+        }
+        if (profile.getFrameRate() > 0) mVideoFrameRate = profile.getFrameRate();
+        if (profile.getBitrate() > 0) mVideoBitRate = profile.getBitrate();
     }
 
     /** API 26. Selects an encoder profile/level. No encoder exists, so there is
@@ -394,6 +756,7 @@ public class MediaRecorder implements AudioRecordingMonitor, AudioRouting, Micro
         if (level <= 0) {
             throw new IllegalArgumentException("Video encoding level is not positive");
         }
+        mVideoProfile = profile;   // the level follows from the size and the frame rate
     }
 
     // ---- privacy-sensitive capture (API 30) ------------------------------

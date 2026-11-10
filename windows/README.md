@@ -243,7 +243,7 @@ Every test is a program built by CMake; `ci.yml` runs each of them on
 | `winapk-bluetooth-test` | The Bluetooth host's pure parts without a radio: SHA-1 against the FIPS vectors, the parameterized WinRT interface ids derived from type signatures against five published ones, UUID and address conversions, advertisement bytes |
 | `ScanRecordTest` (`test/java/`) | `ScanRecord`'s advertisement parser and `ScanFilter` against the built jars |
 | `Camera2StillTest` (`test/java/`) | A camera2 still on the virtual camera against the built jars (run by hand, no natives): JPEG sizes in the stream map, a `TEMPLATE_STILL_CAPTURE` into an `ImageReader(JPEG)` giving a one-plane Image that `javax.imageio` decodes at the reader's size, EXIF orientation and thumbnail, one timestamp across Image and result, callback order, `maxImages`, a still beside a repeating YUV reader, a recorder-only session failing to configure |
-| `winapk-video-test <test/video dir>` | The Media Foundation video backend without a JVM: the YUV converter, a decoder MFT, the source reader and the player on `test/video/color.mp4` (1 s of H.264 + AAC); decoder checks are skipped where no H.264 MFT exists |
+| `winapk-video-test <test/video dir>` | The Media Foundation video backend without a JVM: the YUV converter, a decoder MFT, the source reader and the player on `test/video/color.mp4` (1 s of H.264 + AAC); decoder checks are skipped where no H.264 MFT exists. Then what recording and `MediaExtractor` stand on: the demuxer on that file (tracks, csd, samples into the decoders), the H.264 and AAC encoders (codec config first, key frames, times; decoded back), and the MP4 writer (its file read back by the demuxer and the source reader). It prints the encoder MFTs the machine has and skips what needs a missing one |
 | `winapk-thunk-test` | Native-method thunks with mixed, stack-overflowing and narrow arguments; the variadic entry stub's `va_list`; the tagged zero stub |
 | `winapk-jni-test`, `winapk-jni-variadic-test` | The guest `JNIEnv` against a mock JVM; the variadic bridge for all four call kinds and every argument type, through `...` and `va_list` |
 | `winapk-linker-test <dir>` | A four-library tree with a `DT_NEEDED` cycle and a runtime plugin: constructor order, symbol resolution and its order (libc at its place in `DT_NEEDED`, the global group before it), `dlsym` scopes, the guest's `dlopen`, `dlsym`, `dlerror` and `dladdr`, a library opened by its Android path |
@@ -989,6 +989,23 @@ every such change is listed here:
   `MediaCodec.isVideoMimeSupported` and `MediaCodecList`'s libvpx provider
   ask it instead of assuming libvpx. On the Mac every native is unbound and
   nothing changes.
+- `runtime/java/com/macapk/loader/HostMedia.java` (new): the host's demuxer,
+  H.264 and AAC encoders and MP4 writer (`windows/host/native_media_codec.cpp`
+  over `video_decode.h`'s `Demuxer`, `media_encode.h`, `mp4_writer.h`).
+  `android/media/MediaExtractor.java` reads every audio and video track
+  through it (upstream's `NativeMedia.nativeDemux*` is an audio-only demuxer
+  Windows does not have) and `MediaMetadataRetriever.java` answers from that
+  extractor and decodes frames for a path or URL; `MediaMuxer.java` writes MP4
+  and 3GPP (H.264 + AAC) and refuses the rest; `MediaCodec.java` gains its
+  encoder mode (`CONFIGURE_FLAG_ENCODE`, `createEncoderByType`,
+  `createInputSurface`, `signalEndOfInputStream`, `setParameters`), riding the
+  decoder's buffer queues, and `MediaCodecList.java` / `MediaCodecInfo.java` /
+  `HostCodecCapability.java` list the two encoders when the host has them;
+  `MediaRecorder.java` records the microphone and `VideoSource.SURFACE` on
+  those, and fails `prepare()` for what the host cannot record.
+- `runtime/java/android/view/Surface.java`: `macapkSetFrameSink` (new, public):
+  what a Canvas posts on the Surface goes to the sink, at the sink's size,
+  instead of the window. An encoder's input Surface sets it.
 - `runtime/java/android/media/MediaPlayer.java`: `setDataSource(path)` and a
   `file:`/`http(s):` Uri keep the path (read at `prepare`, so a video is not
   slurped into memory and a URL is streamed); `prepare` tries

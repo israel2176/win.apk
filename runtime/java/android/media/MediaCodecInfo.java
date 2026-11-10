@@ -144,11 +144,14 @@ public final class MediaCodecInfo {
         public int[] colorFormats = new int[0];
         private AudioCapabilities mAudioCaps;
         private VideoCapabilities mVideoCaps;
-        // Encoding is out of scope end to end (MediaCodec's native backing is
-        // decode-only -- see MediaCodec.java's own header comment), so this
-        // stays permanently null: AOSP's own contract for
-        // getEncoderCapabilities() is "null if this is not an encoder".
-        private final EncoderCapabilities mEncoderCaps = null;
+        // AOSP: "null if this is not an encoder". Set for the encoders the
+        // host really has (MediaCodecList.HostEncoders).
+        private EncoderCapabilities mEncoderCaps = null;
+
+        public static final int COLOR_FormatYUV420Planar = 19;
+        public static final int COLOR_FormatYUV420SemiPlanar = 21;
+        public static final int COLOR_FormatYUV420Flexible = 0x7F420888;
+        public static final int COLOR_FormatSurface = 0x7F000789;
 
         public CodecCapabilities() {}
 
@@ -182,6 +185,8 @@ public final class MediaCodecInfo {
             c.profileLevels = cap.profileLevels.clone();
             if (cap.isAudio()) c.mAudioCaps = AudioCapabilities.fromHostCapability(cap);
             if (cap.isVideo()) c.mVideoCaps = VideoCapabilities.fromHostCapability(cap);
+            c.colorFormats = cap.colorFormats.clone();
+            if (cap.encoder) c.mEncoderCaps = new EncoderCapabilities(true);
             return c;
         }
 
@@ -196,6 +201,7 @@ public final class MediaCodecInfo {
             c.colorFormats = colorFormats.clone();
             c.mAudioCaps = mAudioCaps;   // immutable after construction: safe to share
             c.mVideoCaps = mVideoCaps;
+            c.mEncoderCaps = mEncoderCaps;
             return c;
         }
 
@@ -835,12 +841,22 @@ public final class MediaCodecInfo {
         }
     }
 
-    /** Encoding is entirely out of scope (see CodecCapabilities.mEncoderCaps
-     *  above) -- this class exists only so a signature that references it
-     *  resolves. AOSP-shaped for when/if an encoder ever exists. */
+    /** What an encoder can be asked for beyond its format. The host's
+     *  encoders (H.264 and AAC on Media Foundation) take a bit rate, variable
+     *  or constant; they have no constant-quality mode and no quality or
+     *  complexity setting, which AOSP states as the range 0..0. */
     public static final class EncoderCapabilities {
-        public Range<Integer> getQualityRange() { return null; }
-        public Range<Integer> getComplexityRange() { return null; }
-        public boolean isBitrateModeSupported(int mode) { return false; }
+        public static final int BITRATE_MODE_CQ = 0;
+        public static final int BITRATE_MODE_VBR = 1;
+        public static final int BITRATE_MODE_CBR = 2;
+        public static final int BITRATE_MODE_CBR_FD = 3;
+        private final boolean mReal;
+        public EncoderCapabilities() { this(false); }
+        EncoderCapabilities(boolean real) { mReal = real; }
+        public Range<Integer> getQualityRange() { return new Range<Integer>(0, 0); }
+        public Range<Integer> getComplexityRange() { return new Range<Integer>(0, 0); }
+        public boolean isBitrateModeSupported(int mode) {
+            return mReal && (mode == BITRATE_MODE_VBR || mode == BITRATE_MODE_CBR);
+        }
     }
 }

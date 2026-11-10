@@ -114,6 +114,7 @@ const HostMethods kProviders[] = {
     native_activity_methods(),
     native_signin_methods(),
     native_media_video_methods(),
+    native_media_codec_methods(),
     native_notifications_methods(),
     native_binder_methods(),
 };

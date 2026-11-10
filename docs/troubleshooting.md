@@ -54,6 +54,12 @@ with AAC always; HEVC, VP9 and AV1 only with Microsoft's codec packs from the
 Microsoft Store. A stream whose audio is Opus, Vorbis or FLAC plays silent in an
 ExoPlayer app; video from an app's native code (`AMediaCodec`) is not there yet.
 
+**An app cannot record, or its recording is empty.** Apps record sound as AAC
+and video as H.264 into MP4 files, with Windows' own encoders; a few Windows
+editions (N editions without the Media Feature Pack, some Server installs) have
+none, and the app is then told so. Recording a screen or a game drawn with
+OpenGL, and recording in AMR, WebM or Ogg, are not there yet.
+
 **Web pages inside the app are empty, or Google sign-in does not open.** Both
 need the Microsoft Edge WebView2 Runtime. Install it from Microsoft if your PC
 lacks it.

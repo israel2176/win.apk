@@ -100,6 +100,7 @@ public final class MediaCodecList {
         // (see the class doc) rather than special-cased here, so there is
         // exactly one code path from "data" to a MediaCodecInfo.
         registerHostCodecProvider(new VerifiedAudioDecoders());
+        registerHostCodecProvider(new HostEncoders());
         registerHostCodecProvider(new VideoToolboxDecoders());
         registerHostCodecProvider(new LibvpxDecoders());
     }
@@ -182,11 +183,9 @@ public final class MediaCodecList {
      *  (findCodecForFormat dereferences format immediately). */
     public String findDecoderForFormat(MediaFormat format) { return findCodecForFormat(false, format); }
 
-    /** No encoder is ever registered (MediaCodec's native backing is
-     *  decode-only -- see MediaCodec.java's header comment), so AOSP's "or
-     *  null if no such codec has been found" is the whole answer -- but the
-     *  format is still dereferenced first so a null argument raises the same
-     *  NullPointerException AOSP raises. */
+    /** As findDecoderForFormat, among the encoders: the host's, when it has
+     *  them (HostEncoders below), else AOSP's "null if no such codec has been
+     *  found". */
     public String findEncoderForFormat(MediaFormat format) { return findCodecForFormat(true, format); }
 
     private String findCodecForFormat(boolean encoder, MediaFormat format) {
@@ -212,6 +211,58 @@ public final class MediaCodecList {
             throw new IllegalArgumentException("no codec at index " + index);
         }
         return all[index];
+    }
+
+    /** The encoders MediaCodec really opens (com.macapk.loader.HostMedia; on
+     *  Windows Media Foundation's software H.264 and AAC encoders), listed
+     *  only when the host has them: a Windows edition without Media
+     *  Foundation's encoders lists none, and createEncoderByType throws.
+     *
+     *  The bounds are what those two encoders are certain to take, not the
+     *  most a given Windows might: H.264 up to 1920x1088 either way round
+     *  (8160 macroblocks, level 4.2 at 60 frames a second), baseline, main and
+     *  high profile, from byte buffers (NV12 or I420) or an input Surface; AAC-LC
+     *  at 44100 or 48000 Hz, mono or stereo, at the encoder's four bit rates
+     *  (96 to 192 kbit/s). MediaCodec.start() throws CodecException when the
+     *  encoder then refuses a configuration, as for the decoders. */
+    private static final class HostEncoders implements HostCodecProvider {
+        public List<HostCodecCapability> getHostCodecCapabilities() {
+            List<HostCodecCapability> out = new ArrayList<HostCodecCapability>(2);
+            if (MediaCodec.macapkCanEncode(MediaFormat.MIMETYPE_VIDEO_AVC)) {
+                final int level = MediaCodecInfo.CodecProfileLevel.AVCLevel42;
+                out.add(HostCodecCapability.videoEncoder(
+                        MediaFormat.MIMETYPE_VIDEO_AVC,
+                        new android.util.Range<Integer>(16, 1920), new android.util.Range<Integer>(16, 1920),
+                        new android.util.Range<Integer>(1, 60), 2, 2,
+                        new android.util.Range<Integer>(10000, 40000000),
+                        new MediaCodecInfo.CodecProfileLevel[] {
+                            new MediaCodecInfo.CodecProfileLevel(
+                                    MediaCodecInfo.CodecProfileLevel.AVCProfileBaseline, level),
+                            new MediaCodecInfo.CodecProfileLevel(
+                                    MediaCodecInfo.CodecProfileLevel.AVCProfileConstrainedBaseline, level),
+                            new MediaCodecInfo.CodecProfileLevel(
+                                    MediaCodecInfo.CodecProfileLevel.AVCProfileMain, level),
+                            new MediaCodecInfo.CodecProfileLevel(
+                                    MediaCodecInfo.CodecProfileLevel.AVCProfileHigh, level),
+                        },
+                        8160,
+                        new int[] {
+                            MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface,
+                            MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420SemiPlanar,
+                            MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Planar,
+                        }));
+            }
+            if (MediaCodec.macapkCanEncode(MediaFormat.MIMETYPE_AUDIO_AAC)) {
+                out.add(HostCodecCapability.audioEncoder(
+                        MediaFormat.MIMETYPE_AUDIO_AAC, new int[] { 44100, 48000 }, 2,
+                        new android.util.Range<Integer>(96000, 192000),
+                        new MediaCodecInfo.CodecProfileLevel[] {
+                            new MediaCodecInfo.CodecProfileLevel(
+                                    MediaCodecInfo.CodecProfileLevel.AACObjectLC, 0)
+                        }));
+            }
+            return out;
+        }
     }
 
     // ---- The verified-real AUDIO truth, contributed through the same ----
