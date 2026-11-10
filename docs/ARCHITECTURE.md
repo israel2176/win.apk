@@ -222,8 +222,8 @@ functions, every one declared with the System V calling convention
 | `string.cpp` | `string.h`, ctype, 32-bit `wchar_t`, `strto*`, the FORTIFY `_chk` variants |
 | `printf.cpp` | A printf engine that reads the System V `va_list`; the printf and scanf families; liblog's variadic calls |
 | `pthread.cpp` | Mutexes, condition variables, rwlocks, once, keys and threads on `WaitOnAddress`, over Bionic's struct layouts; cleanup handlers (`pthread_exit` runs the pending ones); semaphores |
-| `stdio.cpp`, `fd.cpp` | One file-descriptor table shared with Java (`NativeOs`): files, `stat` in Bionic's layout, directories, `FILE`, hard links; Bionic's `fts` over the same calls (it never changes directory: always `FTS_NOCHDIR`); `popen` and `system`, which find no shell to run (the command exits 127, as when `/system/bin/sh` cannot be run); pipes, eventfd and epoll; named pipes (`mkfifo`: a marker file `stat` reports as a FIFO, opened as the process's one pipe buffer for that path); `poll`, `select`, `epoll_wait` |
-| `socket.cpp` | BSD sockets on Winsock with Linux's constants translated; `getaddrinfo` |
+| `stdio.cpp`, `fd.cpp` | One file-descriptor table shared with Java (`NativeOs`): files, `stat` in Bionic's layout, directories, `FILE`, hard links; Bionic's `fts` over the same calls (it never changes directory: always `FTS_NOCHDIR`); `popen` and `system`, which find no shell to run (the command exits 127, as when `/system/bin/sh` cannot be run); pipes, eventfd and epoll; named pipes (`mkfifo`: a marker file `stat` reports as a FIFO, opened as the process's one pipe buffer for that path); `poll`, `select`, `epoll_wait`. A wait sleeps until something it waits for changes: pipes, eventfds and the like wake it through one readiness counter (`WaitOnAddress`); a wait that includes sockets sleeps in `WSAPoll` on them plus a loopback datagram socket of its own that the counter's changes send a byte to; an armed timerfd shortens the sleep to its expiry. Nothing is polled on a period. epoll's `EPOLLET` is edge-triggered (an event once when it appears, again after a new edge: more written to a pipe or eventfd, a socket read that took bytes, a send that would have blocked, `EPOLL_CTL_MOD`), `EPOLLONESHOT` reports once until `EPOLL_CTL_MOD`, and an interest goes when its descriptor closes |
+| `socket.cpp` | BSD sockets on Winsock with Linux's constants translated; `getaddrinfo`; `getifaddrs`, `if_nametoindex`, `if_indextoname` and `if_nameindex` over one list of the adapters that are up (Linux-shaped names, Windows' interface indexes). Socket options: the ones Winsock has are mapped, among them multicast membership in all its forms (`ip_mreq`, `ip_mreqn`, `MCAST_JOIN_GROUP` and the other RFC 3678 requests), `SO_LINGER`, `SO_REUSEPORT` on datagram sockets (Windows' `SO_REUSEADDR`), the TCP keep-alive times, `TCP_USER_TIMEOUT`, path-MTU discovery as "don't fragment"; options that only tune (`SO_PRIORITY`, `TCP_QUICKACK`, `IP_RECVTOS`...) succeed with one log line each; any other fails with `ENOPROTOOPT`, so code that asks for a feature (`UDP_SEGMENT`) takes its fallback |
 | `paths.cpp` | Android's absolute paths (`/data`, `/sdcard`, `/system/fonts`, `/dev/null`) under the Android root; `/proc/self` is `/proc/<pid>` there, where Boot writes the process's `cmdline` |
 | `looper.cpp` | The NDK's `ALooper` |
 | `misc.cpp` | Clocks and time, `strptime`, `mmap` on `VirtualAlloc` (with `PROT_NONE` as a reservation; a file mapped `MAP_SHARED`, or read-only, is a view of the file (`MapViewOfFile`), also `MAP_FIXED` into an untouched reservation, so writes reach the file and every mapping sees them; a writable private one is a copy), system properties, the guest environment (`setenv`, `putenv`, `clearenv`), `syscall` for futex and friends and for raw `mmap`, `mprotect` and `munmap` (Gecko's allocator), `sysconf`, `uname`, `getauxval`, `sched_getaffinity` (the process's affinity), `fork`/`vfork` (-1, `ENOSYS`: a Windows process cannot be copied) and `waitpid` (`ECHILD`), `random(3)` as Bionic's (NetBSD's) generator, libm (the `long double` rounding functions on binary128), libandroid's `ATrace` (tracing off) |
@@ -506,8 +506,31 @@ gets the largest box of its aspect, centred, with black bars. Frames are shown
 pixel for pixel; a frame from before a resize is never stretched. The size
 the user settles on is written to `library\<name>.window` for the next start.
 
-Mouse events become `MotionEvent`s, the wheel a short drag, keys `KeyEvent`s
-(Escape is BACK). A steady 60 Hz tick on a waitable timer drives the app's
+Input leaves the window through `WindowInput` (`win32_window.h`), already in
+Android's terms, and reaches `com.macapk.loader.TouchDispatcher` through
+`native_cocoa.cpp`. The decisions that need no window are in
+`host/pointer_input.h`, which `test/window_test.cpp` checks:
+
+| Windows | Android | Java entry |
+|---|---|---|
+| The left mouse button | One finger on the touchscreen (`SOURCE_TOUCHSCREEN`) | `dispatch` |
+| A touchscreen's contacts, a pen (`WM_POINTER*`; the frame's `WM_NCPOINTER*` stay Windows') | One pointer each, with Android's ids and indices: `ACTION_DOWN`, `ACTION_POINTER_DOWN`, one `ACTION_MOVE` per digitizer frame with every position, `ACTION_POINTER_UP`, `ACTION_UP`, `ACTION_CANCEL`; a pen is `TOOL_TYPE_STYLUS` / `TOOL_TYPE_ERASER` with pressure and `BUTTON_STYLUS_PRIMARY` (`TouchTracker`) | `dispatchHostTouch` |
+| The wheel, a touchpad's two-finger scroll | `ACTION_SCROLL` from `SOURCE_MOUSE` (`AXIS_VSCROLL` / `AXIS_HSCROLL`); when no view handles it, the short finger drag every wheel step used to be | `dispatchHostWheel` |
+| Ctrl+wheel, which is also a precision touchpad's pinch | Two fingers moving apart or together around the pointer (`PinchSynth`) | `dispatchHostPinch` |
+| The right and the middle button, the pointer with no button down | A mouse (`SOURCE_MOUSE`): `BUTTON_SECONDARY` / `BUTTON_TERTIARY` with `ACTION_BUTTON_PRESS` / `_RELEASE`, which the framework answers with the context click; `ACTION_HOVER_ENTER` / `MOVE` / `EXIT`, at most one per 16 ms | `dispatchHostMouse`, `dispatchHostMouseExit` (upstream's) |
+| Keys | `KeyEvent`s (Escape is BACK) carrying the character Windows says the key types: the `WM_CHAR` behind the key-down, so the layout, AltGr and Caps Lock are in it (`plan_key_down`, `HeldKeys`) | `dispatchHostKey` |
+| What a dead key and the next key make, characters beyond U+FFFF, `WM_CHAR` with no key | Text: `InputConnection.commitText`, or a key event per UTF-16 unit for a target without a connection | `dispatchHostText` |
+| An input method's composition (`WM_IME_*`) | `setComposingText` / `commitText` / `finishComposingText` on the focused field's `InputConnection`; without one, Windows draws the composition and the result arrives as characters. The candidate window goes under the focused `TextView`'s caret | `dispatchHostComposingText`, `hostImeInline`, `hostImeAnchor` |
+
+One stream at a time owns the app's touchscreen (the left button, the other
+buttons, the contacts, or a pinch), so the app never sees two gestures
+interleaved. A touch gesture with one pointer takes the mouse's path through
+`TouchDispatcher` (the Back glyph, dialogs and popups, drag and drop); from a
+second pointer on, a gesture the activity owns goes to the activity with all
+its pointers, and one a floating window owns keeps following its first
+pointer only, because that router is single-pointer.
+
+A steady 60 Hz tick on a waitable timer drives the app's
 renderer. `WINAPK_HEADLESS=1` runs the same path without a window, which is
 how CI boots apps.
 
@@ -524,8 +547,9 @@ how CI boots apps.
 | Images | libwebp for WebP, WIC for the rest | `native_image.cpp` |
 | Notifications | `NotificationManager` posts to `HostNotifications`, whose natives show Windows.UI.Notifications toasts (WinRT C ABI, combase loaded at run time) under the app's AppUserModelID, which the launcher writes on the app's Start menu shortcut; a click comes back through `HostNotifications.onActivated` and `PendingIntent.send()` | `native_notifications.cpp` |
 | WebView, Custom Tabs, App Link sign-in | Microsoft Edge WebView2, shown in the app window behind the views drawn over it; `shouldInterceptRequest`, JavaScript interfaces, cookies; a Custom Tab is a tab window whose navigations are checked against the app's manifest; a browser sign-in whose `redirect_uri` is one of the app's verified App Links (or its own link scheme) opens in the same window, which hands back only that redirect (`applink_match.h`) | `native_webview.cpp`, `webview2_host.cpp`, `native_browser_tab.cpp` |
-| Camera (camera2, Camera, CameraX) | Media Foundation capture, each webcam offered as a back and a front camera; a virtual camera when there is none | `native_camera.cpp` |
+| Camera (camera2, Camera, CameraX) | Media Foundation capture, each webcam offered as a back and a front camera; a virtual camera when there is none. Preview and analysis frames, and stills as JPEG (encoded in Java from the captured frame); no video recording | `native_camera.cpp` |
 | Location | `Windows.Devices.Geolocation`; Windows' privacy settings are the authorization | `native_location.cpp` |
+| Connectivity | `ConnectivityManager`, `NetworkCapabilities` and `LinkProperties` answer from the adapter that carries the default route (`HostRadios.defaultNetwork`: `GetBestInterfaceEx` for a public address, then that adapter in `GetAdaptersAddresses`): Ethernet, Wi-Fi, mobile broadband or a tunnel as the transport and the legacy network type, its addresses, DNS servers, MTU and the JDK's name for it; no default route is "no network". Polled every two seconds for `NetworkCallback`. "Validated" means only that there is a default route, and no connection is reported as metered. `NsdManager` (mDNS service discovery) is not implemented: every request reports `FAILURE_INTERNAL_ERROR` to its listener | `native_radios.cpp` |
 | Wi-Fi | `HostRadios` over the Native Wifi API: state, the current connection (SSID, BSSID, RSSI, frequency, link speed), the DHCP configuration from `GetAdaptersAddresses`, scans, and `WlanRegisterNotification` events pumped by one Java thread into the state, connection, signal and scan-results broadcasts. Network names need Windows' location access, as Android needs the location permission | `native_radios.cpp` |
 | Bluetooth | `HostBluetooth`: the paired devices (bluetoothapis), RFCOMM sockets both ways on Winsock `AF_BTH` (the SDP query for the channel, `WSASetService` for a server's record), LE scans on the `BluetoothLEAdvertisementWatcher` and the GATT client (services, reads, writes, notifications through the CCCD, MTU) on the WinRT `Windows.Devices.Bluetooth` APIs through their C ABI, declared in the file. Permissions as AOSP's service: `BLUETOOTH_CONNECT` / `BLUETOOTH_SCAN`, location for scan results unless `neverForLocation`. Not there: classic discovery and pairing, LE advertising and the GATT server, profiles, L2CAP | `native_bluetooth.cpp`, `bluetooth_util.h` |
 | Clipboard | Text, HTML, URLs, with the concealed formats for sensitive clips | `native_clipboard.cpp` |

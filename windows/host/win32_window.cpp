@@ -11,9 +11,11 @@
 #include <cstdio>
 #include <cstdlib>
 #include <mutex>
+#include <string>
 #include <vector>
 
 #include <windows.h>
+#include <imm.h>
 #include <wincodec.h>
 
 namespace winapk::host {
@@ -25,6 +27,8 @@ constexpr UINT kMsgResize = WM_APP + 2;
 constexpr UINT kMsgShowState = WM_APP + 3;  // wParam: SW_MINIMIZE, SW_RESTORE or SW_HIDE
 constexpr UINT kMsgTestResize = WM_APP + 4;  // WINAPK_TEST_RESIZE: resize the window (testing)
 constexpr UINT_PTR kTestResizeTimer = 1;
+constexpr UINT_PTR kHoverTimer = 2;  // the pointer's hover position goes out once a frame
+constexpr UINT_PTR kPinchTimer = 3;  // the wheel rested: the Ctrl+wheel pinch ends
 constexpr wchar_t kClassName[] = L"WinApkAppWindow";
 
 // android.view.KeyEvent META_* bits.
@@ -82,7 +86,7 @@ std::atomic<bool> g_ready_signalled{false};
 WindowInput* g_input = nullptr;
 int g_phone_w = 360, g_phone_h = 640;  // the phone, in dp: the app's display size
 SIZE g_surface{};                      // the size, in pixels, the app is asked to draw at (its surface)
-bool g_pointer_down = false;
+bool g_pointer_down = false;  // the mouse's left button is down on the app: a finger
 
 std::mutex g_frame_lock;
 std::vector<uint32_t> g_frame;
@@ -378,7 +382,7 @@ int client_x(HWND hwnd, int x) {
     if (!g_rtl_window) return x;
     RECT client;
     GetClientRect(hwnd, &client);
-    return client.right - 1 - x;
+    return window_unmirror_x(x, client.right, true);
 }
 
 // ---- the box the app draws in ---------------------------------------------
@@ -580,6 +584,19 @@ void paint(HWND hwnd) {
     if (g_frame_w > 0 && IsWindowVisible(hwnd)) signal_launcher_ready();
 }
 
+// ---- input ----------------------------------------------------------------------
+//
+// What each device is to the app is listed in win32_window.h (WindowInput). The
+// decisions that need no window -- pointer ids and the order of a gesture's
+// events, the pinch a Ctrl+wheel becomes, which characters go with a key -- are
+// in pointer_input.h; here are the messages.
+//
+// One stream at a time owns the app's "touchscreen": the mouse's left button
+// (g_pointer_down), its other buttons (g_mouse_buttons), the contacts of a
+// touchscreen or a pen (g_touches) or a Ctrl+wheel pinch (g_pinch). A press
+// that comes while another stream is down is left out, and a pinch ends when
+// anything else begins, so the app never sees two gestures interleaved.
+
 // Whether a mouse message's position lies on the app (not on a bar).
 bool on_phone(HWND hwnd, LPARAM lp) {
     const RECT phone = client_app_rect(hwnd);
@@ -596,12 +613,268 @@ void send_pointer(HWND hwnd, int action, LPARAM lp) {
                      static_cast<float>(phone.bottom - phone.top));
 }
 
-// A wheel step becomes a short drag, as upstream turns a mouse wheel into
-// DOWN, MOVE, UP (cocoa_bridge.mm scrollWheel:): a line is 16 points, scaled by
-// MACAPK_SCROLL_SCALE (default 0.5), and a notch is the user's "lines per
-// notch" setting. Wheel up scrolls toward the top, so the finger moves down.
+int meta_state() {
+    int meta = 0;
+    if (GetKeyState(VK_SHIFT) & 0x8000) meta |= kMetaShiftOn;
+    if (GetKeyState(VK_MENU) & 0x8000) meta |= kMetaAltOn;
+    if (GetKeyState(VK_CONTROL) & 0x8000) meta |= kMetaCtrlOn;
+    return meta;
+}
+
+// A click on the app's own pixels takes the keyboard back from a WebView placed
+// in the window (native_webview.cpp). Only in the active window: SetFocus would
+// activate an inactive one.
+void take_keyboard(HWND hwnd) {
+    if ((GetActiveWindow() == hwnd || (g_embed_parent && GetActiveWindow() == GetAncestor(hwnd, GA_ROOT))) &&
+        GetFocus() != hwnd) {
+        SetFocus(hwnd);
+    }
+}
+
+// A mouse message Windows made of a touch or a pen contact (its extra
+// information carries this signature). The contact itself is handled as a
+// pointer below, and Windows makes no mouse message of a pointer message that
+// was handled; this only keeps a contact from ever counting twice.
+bool from_touch() {
+    return (static_cast<ULONG_PTR>(GetMessageExtraInfo()) & 0xffffff00u) == 0xff515700u;
+}
+
+// ---- the mouse beside its left button: the other buttons, hovering ---------------
+//
+// The left button is a finger, as it always was: an Android app is made for
+// fingers, and a mouse stream is not the same to it (Compose scrolls a list
+// under a dragged finger and selects text under a dragged mouse). The right
+// and the middle button are a mouse's (BUTTON_SECONDARY, BUTTON_TERTIARY): the
+// framework opens for a secondary press what it opens for a long press -- a
+// view's context menu, a list item's long click (View.performButtonActionOnTouchDown,
+// the context click) -- and an app that reads buttons gets them (a map turned
+// with the right button). With no button down the pointer hovers: the view
+// under it gets ACTION_HOVER_ENTER / MOVE / EXIT (tooltips, hover states).
+// Windows reports a move far more often than a frame is drawn, and each hover
+// event walks the app's view tree, so the position goes out once per kHoverMs
+// at most, always the newest.
+
+constexpr UINT kHoverMs = 16;
+int g_mouse_buttons = 0;       // BUTTON_SECONDARY | BUTTON_TERTIARY held on the app
+bool g_hovering = false;       // the app has been told the pointer is over it
+bool g_hover_dirty = false;    // a hover position waits for the timer
+bool g_hover_timer = false;
+bool g_tracking_leave = false; // WM_MOUSELEAVE was asked for
+LPARAM g_hover_at = 0;
+POINT g_mouse_at{-1, -1};      // where the mouse last was on the app, in box pixels
+
+void send_mouse(HWND hwnd, LPARAM lp) {
+    const RECT phone = client_app_rect(hwnd);
+    if (phone.right <= phone.left || phone.bottom <= phone.top) return;
+    const float x = static_cast<float>(client_x(hwnd, static_cast<short>(LOWORD(lp))) - phone.left);
+    const float y = static_cast<float>(static_cast<short>(HIWORD(lp)) - phone.top);
+    g_input->mouse(g_mouse_buttons, meta_state(), x, y, static_cast<float>(phone.right - phone.left),
+                   static_cast<float>(phone.bottom - phone.top));
+}
+
+// The pointer is no longer hovering over the app: it left, or something went down.
+void leave_hover() {
+    g_hover_dirty = false;
+    if (!g_hovering) return;
+    g_hovering = false;
+    g_input->mouse_exit();
+}
+
+void hover(HWND hwnd, LPARAM lp) {
+    if (!on_phone(hwnd, lp)) {  // over a bar
+        leave_hover();
+        return;
+    }
+    if (!g_tracking_leave) {
+        TRACKMOUSEEVENT track{};
+        track.cbSize = sizeof(track);
+        track.dwFlags = TME_LEAVE;
+        track.hwndTrack = hwnd;
+        g_tracking_leave = TrackMouseEvent(&track) != FALSE;
+    }
+    g_hover_at = lp;
+    g_hover_dirty = true;
+    if (g_hover_timer) return;  // goes out with the timer
+    g_hover_dirty = false;
+    g_hovering = true;
+    send_mouse(hwnd, lp);
+    g_hover_timer = SetTimer(hwnd, kHoverTimer, kHoverMs, nullptr) != 0;
+}
+
+void on_hover_timer(HWND hwnd) {
+    if (g_hover_dirty && g_mouse_buttons == 0 && !g_pointer_down) {
+        g_hover_dirty = false;
+        g_hovering = true;
+        send_mouse(hwnd, g_hover_at);
+        return;
+    }
+    KillTimer(hwnd, kHoverTimer);  // the pointer rests: no timer until it moves again
+    g_hover_timer = false;
+}
+
+// ---- Ctrl+wheel and the touchpad's pinch: two fingers ------------------------------
+
+PinchSynth g_pinch;
+constexpr UINT kPinchRestMs = 250;  // no wheel step for this long: the fingers lift
+
+void send_pinch(HWND hwnd, const std::vector<PinchStep>& steps) {
+    const RECT phone = client_app_rect(hwnd);
+    const float w = static_cast<float>(std::max(phone.right - phone.left, 1L));
+    const float h = static_cast<float>(std::max(phone.bottom - phone.top, 1L));
+    for (const PinchStep& s : steps) g_input->pinch(s, w, h);
+}
+
+void end_pinch(HWND hwnd) {
+    if (!g_pinch.active()) return;
+    std::vector<PinchStep> steps;
+    g_pinch.end(&steps);
+    send_pinch(hwnd, steps);
+    KillTimer(hwnd, kPinchTimer);
+}
+
+// ---- a touchscreen and a pen --------------------------------------------------------
+//
+// Windows reports every contact of a touchscreen, and a pen's tip, as a
+// pointer with an id of its own (WM_POINTERDOWN / UPDATE / UP; the mouse keeps
+// its mouse messages, EnableMouseInPointer is left off). Each contact is one of
+// the app's pointers (TouchTracker), so two thumbs on two on-screen sticks are
+// two pointers and two fingers moving apart are a pinch. A contact that lands
+// on a bar beside the app is not the app's and is never followed; one that
+// landed on the app is followed wherever it goes, as a dragging mouse is. The
+// window's frame gets its own messages (WM_NCPOINTER*), which stay Windows':
+// dragging the title bar and resizing by touch work as in any window.
+//
+// The positions of all contacts change together, once per frame of the
+// digitizer, but arrive as one WM_POINTERUPDATE per contact: the move goes out
+// when no further update is waiting, as one MOVE with every position.
+//
+// A pen is TOOL_TYPE_STYLUS with its pressure, TOOL_TYPE_ERASER when turned
+// over, and its barrel button is BUTTON_STYLUS_PRIMARY. A pen near the screen
+// but not on it is not reported to the app.
+
+TouchTracker g_touches;
+std::vector<TouchEvent> g_touch_events;
+
+void send_touch(HWND hwnd) {
+    if (g_touch_events.empty()) return;
+    const RECT phone = client_app_rect(hwnd);
+    const float w = static_cast<float>(std::max(phone.right - phone.left, 1L));
+    const float h = static_cast<float>(std::max(phone.bottom - phone.top, 1L));
+    for (const TouchEvent& e : g_touch_events) g_input->touch(e, w, h);
+    g_touch_events.clear();
+}
+
+struct Contact {
+    AppPoint at;
+    float pressure = 1.0f;
+    int tool = kToolFinger;
+    int buttons = 0;
+};
+
+bool read_contact(HWND hwnd, UINT32 id, POINTER_INPUT_TYPE type, Contact* c) {
+    POINTER_INFO info{};
+    if (type == PT_PEN) {
+        POINTER_PEN_INFO pen{};
+        if (!GetPointerPenInfo(id, &pen)) return false;
+        info = pen.pointerInfo;
+        c->tool = (pen.penFlags & (PEN_FLAG_INVERTED | PEN_FLAG_ERASER)) ? kToolEraser : kToolStylus;
+        if (pen.penMask & PEN_MASK_PRESSURE) c->pressure = static_cast<float>(pen.pressure) / 1024.0f;
+        if (pen.penFlags & PEN_FLAG_BARREL) c->buttons = kButtonStylusPrimary;
+    } else {
+        POINTER_TOUCH_INFO touch{};
+        if (!GetPointerTouchInfo(id, &touch)) return false;
+        info = touch.pointerInfo;
+        // A screen that measures no pressure reports 0: Android's "no pressure" is 1.
+        if ((touch.touchMask & TOUCH_MASK_PRESSURE) && touch.pressure > 0) {
+            c->pressure = static_cast<float>(touch.pressure) / 1024.0f;
+        }
+    }
+    POINT p = info.ptPixelLocation;  // screen pixels
+    ScreenToClient(hwnd, &p);
+    RECT client{};
+    GetClientRect(hwnd, &client);
+    const RECT phone = app_rect(client);
+    c->at = window_app_point(p.x, p.y, client.right, g_rtl_window, phone.left, phone.top, phone.right - phone.left,
+                             phone.bottom - phone.top);
+    return true;
+}
+
+// A pointer message. False when it is not a touch's or a pen's: Windows' own.
+bool on_pointer(HWND hwnd, UINT msg, WPARAM wp) {
+    const UINT32 id = GET_POINTERID_WPARAM(wp);
+    const bool tracked = g_touches.tracks(id);
+    POINTER_INPUT_TYPE type = PT_POINTER;
+    const bool ours = GetPointerType(id, &type) && (type == PT_TOUCH || type == PT_PEN);
+    Contact c;
+    // The contact is gone without having lifted (another window took it, the
+    // digitizer lost it): the whole gesture is cancelled, as Android does.
+    if (msg == WM_POINTERCAPTURECHANGED || msg == WM_POINTERLEAVE || !ours || !read_contact(hwnd, id, type, &c)) {
+        if (tracked) g_touches.cancel(&g_touch_events);
+        else g_touches.flush(&g_touch_events);
+        send_touch(hwnd);
+        return ours || tracked;
+    }
+    switch (msg) {
+        case WM_POINTERDOWN:
+            // Not on a bar, and not into a press of the mouse.
+            if (!c.at.inside || g_pointer_down || g_mouse_buttons != 0) break;
+            take_keyboard(hwnd);
+            end_pinch(hwnd);
+            leave_hover();
+            g_touches.down(id, c.at.x, c.at.y, c.pressure, c.tool, c.buttons, &g_touch_events);
+            break;
+        case WM_POINTERUPDATE: {
+            g_touches.move(id, c.at.x, c.at.y, c.pressure, c.tool, c.buttons);
+            MSG next;
+            if (!PeekMessageW(&next, hwnd, WM_POINTERUPDATE, WM_POINTERUPDATE, PM_NOREMOVE)) {
+                g_touches.flush(&g_touch_events);
+            }
+            break;
+        }
+        case WM_POINTERUP:
+            g_touches.up(id, c.at.x, c.at.y, &g_touch_events);
+            break;
+        default:
+            break;
+    }
+    send_touch(hwnd);
+    return true;
+}
+
+// Windows' own answers to a finger or a pen held still -- the ring that grows
+// into a right click, the pen's flicks -- are not for a window whose app
+// decides itself what a long press is.
+void touch_setup(HWND hwnd) {
+    using FeedbackFn = BOOL(WINAPI*)(HWND, int, DWORD, UINT32, const void*);
+    auto set_feedback = reinterpret_cast<FeedbackFn>(
+        GetProcAddress(GetModuleHandleW(L"user32.dll"), "SetWindowFeedbackSetting"));  // Windows 8
+    if (set_feedback) {
+        const BOOL off = FALSE;
+        // FEEDBACK_PEN_PRESSANDHOLD 5, FEEDBACK_PEN_RIGHTTAP 6, FEEDBACK_TOUCH_PRESSANDHOLD 9,
+        // FEEDBACK_TOUCH_RIGHTTAP 10
+        for (int kind : {5, 6, 9, 10}) set_feedback(hwnd, kind, 0, sizeof(off), &off);
+    }
+    // TABLET_DISABLE_PRESSANDHOLD | _PENTAPFEEDBACK | _PENBARRELFEEDBACK | _FLICKS, for the pen service.
+    SetPropW(hwnd, L"MicrosoftTabletPenServiceProperty", reinterpret_cast<HANDLE>(static_cast<uintptr_t>(0x10019)));
+}
+
+// ---- the wheel ----------------------------------------------------------------------
+//
+// A wheel step is a scroll event at the pointer, as a mouse's wheel is on a
+// device (ACTION_SCROLL with AXIS_VSCROLL / AXIS_HSCROLL; a notch is 1, scaled
+// by the user's "lines per notch" over the usual 3): scrolling views scroll by
+// it and a map zooms by it. An app whose views take no scroll event -- many
+// custom views do not -- gets what every wheel step was before: a short drag,
+// as upstream turns a wheel into DOWN, MOVE, UP (cocoa_bridge.mm scrollWheel:).
+// For the drag a line is 16 points, scaled by MACAPK_SCROLL_SCALE (default
+// 0.5); wheel up scrolls toward the top, so the finger moves down. A two-finger
+// scroll on a touchpad arrives as the same messages, in small steps.
+//
+// With Ctrl held the step is a zoom: a pinch around the pointer (PinchSynth),
+// which is also what a pinch on a precision touchpad is, because Windows
+// reports that as Ctrl+wheel to a program that does not read the pad itself.
 void send_wheel(HWND hwnd, WPARAM wp, LPARAM lp, bool horizontal) {
-    if (g_pointer_down) return;  // a drag is in progress; do not interleave
+    if (g_pointer_down || g_mouse_buttons != 0 || g_touches.count() > 0) return;  // do not interleave
     static const float scale = [] {
         const char* e = std::getenv("MACAPK_SCROLL_SCALE");
         const float v = e ? static_cast<float>(std::atof(e)) : 0.5f;
@@ -621,6 +894,15 @@ void send_wheel(HWND hwnd, WPARAM wp, LPARAM lp, bool horizontal) {
     p.x -= phone.left;
     p.y -= phone.top;
     const float w = static_cast<float>(phone.right - phone.left), h = static_cast<float>(phone.bottom - phone.top);
+    const float x0 = static_cast<float>(p.x), y0 = static_cast<float>(p.y);
+    if (!horizontal && (GET_KEYSTATE_WPARAM(wp) & MK_CONTROL)) {
+        std::vector<PinchStep> steps;
+        g_pinch.zoom(x0, y0, w, h, h / static_cast<float>(g_phone_h), notches, &steps);
+        send_pinch(hwnd, steps);
+        if (g_pinch.active()) SetTimer(hwnd, kPinchTimer, kPinchRestMs, nullptr);
+        return;
+    }
+    end_pinch(hwnd);
     // Client pixels per point, along the scroll axis.
     const float per_point = horizontal ? w / static_cast<float>(g_phone_w) : h / static_cast<float>(g_phone_h);
     // A scrolling view takes the gesture over on the first move past the touch
@@ -631,7 +913,11 @@ void send_wheel(HWND hwnd, WPARAM wp, LPARAM lp, bool horizontal) {
     const float sign = horizontal ? (points > 0 ? -1.0f : 1.0f) : (points > 0 ? 1.0f : -1.0f);
     const float slop = 10.0f * per_point * sign;
     const float travel = std::fabs(points) * per_point * sign;
-    const float x0 = static_cast<float>(p.x), y0 = static_cast<float>(p.y);
+    const float steps = notches * static_cast<float>(lines) / 3.0f;
+    if (g_input->wheel(x0, y0, w, h, horizontal ? 0.0f : steps, horizontal ? steps : 0.0f, horizontal ? slop : 0.0f,
+                       horizontal ? 0.0f : slop, horizontal ? travel : 0.0f, horizontal ? 0.0f : travel)) {
+        return;
+    }
     const float x1 = horizontal ? x0 + slop : x0, y1 = horizontal ? y0 : y0 + slop;
     const float x2 = horizontal ? x1 + travel : x0, y2 = horizontal ? y0 : y1 + travel;
     g_input->pointer(0, x0, y0, w, h);
@@ -640,30 +926,184 @@ void send_wheel(HWND hwnd, WPARAM wp, LPARAM lp, bool horizontal) {
     g_input->pointer(1, x2, y2, w, h);
 }
 
-int meta_state() {
-    int meta = 0;
-    if (GetKeyState(VK_SHIFT) & 0x8000) meta |= kMetaShiftOn;
-    if (GetKeyState(VK_MENU) & 0x8000) meta |= kMetaAltOn;
-    if (GetKeyState(VK_CONTROL) & 0x8000) meta |= kMetaCtrlOn;
-    return meta;
+// ---- the keyboard -------------------------------------------------------------------
+//
+// A key press is a key event (KEYCODE_*, for games, shortcuts and navigation)
+// and, when it types, a character. The character is the one Windows says the
+// key types: the WM_CHAR that TranslateMessage puts behind the key-down, which
+// has the layout, Caps Lock, AltGr and dead keys in it (an accent typed before
+// its letter). It is taken out of the queue with the key-down and goes out in
+// the same key event, as a hardware keyboard's does on a device. (It used to be
+// asked of ToUnicode, which knows nothing of a dead key typed before and took
+// AltGr for a Ctrl chord: "é" on a French or a US-International layout and "@"
+// on a German one could not be typed.) Text no single key stands for goes out
+// as text: what a dead key and the next key made, a character beyond U+FFFF,
+// an Alt+numpad code, an input method's result (plan_key_down). A release
+// sends what its press sent (HeldKeys). When the window loses the keyboard the
+// keys still held are released for the app, as Android cancels them: the
+// release itself goes to whatever window has the keyboard by then.
+
+Utf16Joiner g_chars;
+HeldKeys g_held_keys;
+bool g_dead_key = false;  // a dead key waits for the key it goes on
+bool g_back_chord = false;  // Alt+Left went down as Back: Left's release is Back's
+
+// Characters that are text: not the control codes a key or a chord produces.
+void send_text(const std::wstring& chars) {
+    std::wstring text;
+    for (wchar_t c : chars) {
+        if (c >= 0x20 && c != 0x7f) text.push_back(c);
+    }
+    if (!text.empty()) g_input->text(text);
 }
 
-void send_key(int action, WPARAM vk, LPARAM lp) {
-    BYTE state[256];
-    GetKeyboardState(state);
-    wchar_t buf[4] = {};
-    const UINT scan = (lp >> 16) & 0xff;
-    // Flag 4: do not change the keyboard state (dead keys stay pending).
-    const int n = ToUnicode(static_cast<UINT>(vk), scan, state, buf, 4, 4);
-    const int meta = meta_state();
-    wchar_t ch = n == 1 ? buf[0] : 0;
-    // What KeyEvent.getUnicodeChar gives on a device: Enter is '\n', Tab is
-    // '\t', other control keys and Ctrl chords (upstream's host_keymap.h) none.
-    if (ch == L'\r') ch = L'\n';
-    if ((meta & kMetaCtrlOn) || (ch < 0x20 && ch != L'\n' && ch != L'\t')) ch = 0;
-    const int code = android_key_code(static_cast<unsigned>(vk), ch);
-    if (code == 0 && ch == 0) return;
-    g_input->key(action, code, ch, meta);
+void on_key_down(HWND hwnd, WPARAM vk, LPARAM lp) {
+    // What the key types: the character messages TranslateMessage queued right
+    // behind this key-down.
+    std::wstring chars;
+    bool dead = false, sys = false, any = false;
+    MSG m;
+    while (PeekMessageW(&m, hwnd, WM_KEYFIRST, WM_KEYLAST, PM_NOREMOVE)) {
+        const UINT kind = m.message;
+        if (kind != WM_CHAR && kind != WM_SYSCHAR && kind != WM_DEADCHAR && kind != WM_SYSDEADCHAR) break;
+        if (!PeekMessageW(&m, hwnd, kind, kind, PM_REMOVE)) break;
+        if (kind == WM_DEADCHAR || kind == WM_SYSDEADCHAR) {
+            dead = true;
+        } else {
+            any = true;
+            sys = sys || kind == WM_SYSCHAR;
+            g_chars.feed(static_cast<wchar_t>(m.wParam), &chars);
+        }
+    }
+    const bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0, alt = (GetKeyState(VK_MENU) & 0x8000) != 0;
+    const KeyDownPlan plan = plan_key_down(chars, sys, dead, g_dead_key, ctrl, alt);
+    if (dead) g_dead_key = true;
+    else if (any) g_dead_key = false;
+    HeldKeys::Key key;
+    if (plan.kind == KeyDownPlan::kText) {
+        send_text(chars);
+    } else if (plan.kind == KeyDownPlan::kKey) {
+        key.ch = plan.ch;
+        key.code = android_key_code(static_cast<unsigned>(vk), plan.ch);
+        key.altgr = plan.altgr;
+        key.sent = key.code != 0 || key.ch != 0;
+        if (key.sent) {
+            int meta = meta_state();
+            if (key.altgr) meta &= ~(kMetaCtrlOn | kMetaAltOn);
+            g_input->key(0, key.code, key.ch, meta, (lp & (1 << 30)) != 0);
+        }
+    }
+    g_held_keys.down(static_cast<unsigned>(vk), key);
+}
+
+void on_key_up(WPARAM vk) {
+    HeldKeys::Key key;
+    if (!g_held_keys.up(static_cast<unsigned>(vk), &key)) return;
+    int meta = meta_state();
+    if (key.altgr) meta &= ~(kMetaCtrlOn | kMetaAltOn);
+    g_input->key(1, key.code, key.ch, meta, false);
+}
+
+void release_keys() {
+    g_chars.reset();
+    g_dead_key = false;
+    g_back_chord = false;
+    for (const HeldKeys::Key& key : g_held_keys.take_all()) {
+        // Not Back (Escape): an activity goes back on its release, and losing
+        // the keyboard is not the user going back.
+        if (key.code != 4) g_input->key(1, key.code, key.ch, 0, false);
+    }
+}
+
+// ---- input methods --------------------------------------------------------------------
+//
+// A Chinese, Japanese or Korean input method (and Windows' emoji panel) builds
+// text from several key presses before it is final. While it does, the keys
+// are the input method's (they arrive as VK_PROCESSKEY, which is no Android
+// key, so the app sees none of them). The text being composed is shown by the
+// field itself when the field can -- it has an InputConnection, as Compose's
+// fields and the framework's own editor connection do -- through
+// setComposingText, and the result through commitText, as an Android input
+// method does it; Windows then draws no composition window of its own. For any
+// other target Windows draws the composition in its own small window and the
+// result arrives as characters (WM_IME_CHAR, then WM_CHAR above). The candidate
+// list is Windows' in both cases, placed under the caret of the focused field
+// when the app has one the framework can ask (a TextView), else under the
+// place the mouse last was on the app. imm32 is loaded when first needed, so
+// the programs that only link this file for its arithmetic need not link it.
+
+struct Imm {
+    HIMC (WINAPI* get_context)(HWND) = nullptr;
+    BOOL (WINAPI* release_context)(HWND, HIMC) = nullptr;
+    LONG (WINAPI* get_string)(HIMC, DWORD, LPVOID, DWORD) = nullptr;
+    BOOL (WINAPI* set_composition_window)(HIMC, COMPOSITIONFORM*) = nullptr;
+    BOOL (WINAPI* set_candidate_window)(HIMC, CANDIDATEFORM*) = nullptr;
+    bool ok = false;
+};
+
+const Imm& imm() {
+    static const Imm api = [] {
+        Imm i;
+        HMODULE dll = LoadLibraryW(L"imm32.dll");
+        if (!dll) return i;
+        i.get_context = reinterpret_cast<decltype(i.get_context)>(GetProcAddress(dll, "ImmGetContext"));
+        i.release_context = reinterpret_cast<decltype(i.release_context)>(GetProcAddress(dll, "ImmReleaseContext"));
+        i.get_string = reinterpret_cast<decltype(i.get_string)>(GetProcAddress(dll, "ImmGetCompositionStringW"));
+        i.set_composition_window =
+            reinterpret_cast<decltype(i.set_composition_window)>(GetProcAddress(dll, "ImmSetCompositionWindow"));
+        i.set_candidate_window =
+            reinterpret_cast<decltype(i.set_candidate_window)>(GetProcAddress(dll, "ImmSetCandidateWindow"));
+        i.ok = i.get_context && i.release_context && i.get_string && i.set_composition_window &&
+               i.set_candidate_window;
+        return i;
+    }();
+    return api;
+}
+
+bool g_ime_inline = false;  // the field shows the composition itself (WindowInput::composing_inline)
+
+std::wstring ime_string(HWND hwnd, DWORD which) {
+    std::wstring s;
+    const Imm& api = imm();
+    HIMC imc = api.ok ? api.get_context(hwnd) : nullptr;
+    if (!imc) return s;
+    const LONG bytes = api.get_string(imc, which, nullptr, 0);
+    if (bytes > 0) {
+        s.resize(static_cast<size_t>(bytes) / sizeof(wchar_t));
+        api.get_string(imc, which, &s[0], static_cast<DWORD>(bytes));
+    }
+    api.release_context(hwnd, imc);
+    return s;
+}
+
+// Puts the input method's windows under the caret.
+void place_ime(HWND hwnd) {
+    const Imm& api = imm();
+    HIMC imc = api.ok ? api.get_context(hwnd) : nullptr;
+    if (!imc) return;
+    RECT client{};
+    GetClientRect(hwnd, &client);
+    const RECT phone = app_rect(client);
+    const float w = static_cast<float>(phone.right - phone.left), h = static_cast<float>(phone.bottom - phone.top);
+    float x = 0, y = 0;
+    if (w <= 0 || h <= 0 || !g_input->caret(&x, &y, w, h)) {
+        // No field to ask: where the user last pointed, else the app's lower left.
+        x = g_mouse_at.x >= 0 ? static_cast<float>(g_mouse_at.x) : 0.0f;
+        y = g_mouse_at.x >= 0 ? static_cast<float>(g_mouse_at.y) : h * 0.75f;
+    }
+    POINT at{phone.left + static_cast<LONG>(std::clamp(x, 0.0f, std::max(w - 1, 0.0f))),
+             phone.top + static_cast<LONG>(std::clamp(y, 0.0f, std::max(h - 1, 0.0f)))};
+    at.x = window_unmirror_x(at.x, client.right, g_rtl_window);  // client coordinates are mirrored with the window
+    COMPOSITIONFORM comp{};
+    comp.dwStyle = CFS_POINT;
+    comp.ptCurrentPos = at;
+    api.set_composition_window(imc, &comp);
+    CANDIDATEFORM cand{};
+    cand.dwIndex = 0;
+    cand.dwStyle = CFS_CANDIDATEPOS;
+    cand.ptCurrentPos = at;
+    api.set_candidate_window(imc, &cand);
+    api.release_context(hwnd, imc);
 }
 
 // Whether the foreground window is one of this process's (the app window, a
@@ -704,20 +1144,26 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_ERASEBKGND:
             return 1;  // paint covers the whole client area
         case WM_LBUTTONDOWN:
-            // A click on the app's own pixels takes the keyboard back from a
-            // WebView placed in the window (native_webview.cpp). Only in the
-            // active window: SetFocus would activate an inactive one.
-            if ((GetActiveWindow() == hwnd || (g_embed_parent && GetActiveWindow() == GetAncestor(hwnd, GA_ROOT))) &&
-                GetFocus() != hwnd) {
-                SetFocus(hwnd);
-            }
+            if (from_touch()) return 0;
+            take_keyboard(hwnd);
             if (!on_phone(hwnd, lp)) return 0;  // a letterbox bar: nothing of the app is there
+            if (g_mouse_buttons != 0 || g_touches.count() > 0) return 0;  // into another press: left out
+            end_pinch(hwnd);
+            leave_hover();
             SetCapture(hwnd);
             g_pointer_down = true;
             send_pointer(hwnd, 0, lp);
             return 0;
         case WM_MOUSEMOVE:
+            if (from_touch()) return 0;
+            if (on_phone(hwnd, lp)) {
+                const RECT phone = client_app_rect(hwnd);
+                g_mouse_at = POINT{client_x(hwnd, static_cast<short>(LOWORD(lp))) - phone.left,
+                                   static_cast<short>(HIWORD(lp)) - phone.top};
+            }
             if (g_pointer_down) send_pointer(hwnd, 2, lp);
+            else if (g_mouse_buttons != 0) send_mouse(hwnd, lp);
+            else if (g_touches.count() == 0) hover(hwnd, lp);
             return 0;
         case WM_LBUTTONUP:
             if (g_pointer_down) {
@@ -725,6 +1171,35 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 send_pointer(hwnd, 1, lp);
                 ReleaseCapture();
             }
+            return 0;
+        // The right and the middle button: a mouse's secondary and tertiary.
+        case WM_RBUTTONDOWN:
+        case WM_MBUTTONDOWN:
+            if (from_touch()) return 0;
+            take_keyboard(hwnd);
+            if (!on_phone(hwnd, lp) || g_pointer_down || g_touches.count() > 0) return 0;
+            end_pinch(hwnd);
+            g_hover_dirty = false;  // the press itself tells the app the hover ended
+            g_hovering = false;
+            if (g_mouse_buttons == 0) SetCapture(hwnd);
+            g_mouse_buttons |= msg == WM_RBUTTONDOWN ? kButtonSecondary : kButtonTertiary;
+            send_mouse(hwnd, lp);
+            return 0;
+        case WM_RBUTTONUP:
+        case WM_MBUTTONUP: {
+            const int button = msg == WM_RBUTTONUP ? kButtonSecondary : kButtonTertiary;
+            if (!(g_mouse_buttons & button)) return 0;
+            g_mouse_buttons &= ~button;
+            send_mouse(hwnd, lp);
+            if (g_mouse_buttons == 0) {
+                g_hovering = true;  // the release leaves the pointer hovering
+                ReleaseCapture();
+            }
+            return 0;
+        }
+        case WM_MOUSELEAVE:
+            g_tracking_leave = false;
+            leave_hover();
             return 0;
         case WM_MOUSEWHEEL:
             send_wheel(hwnd, wp, lp, false);
@@ -737,33 +1212,102 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 g_pointer_down = false;
                 send_pointer(hwnd, 3, 0);
             }
+            if (g_mouse_buttons != 0) {  // the same for the other buttons: they are let go where they were
+                g_mouse_buttons = 0;
+                if (g_mouse_at.x >= 0) {
+                    const RECT phone = client_app_rect(hwnd);
+                    g_input->mouse(0, meta_state(), static_cast<float>(g_mouse_at.x), static_cast<float>(g_mouse_at.y),
+                                   static_cast<float>(std::max(phone.right - phone.left, 1L)),
+                                   static_cast<float>(std::max(phone.bottom - phone.top, 1L)));
+                    g_hovering = true;
+                }
+            }
             return 0;
+        // A touchscreen's contacts and a pen. Anything else (a pointer of the
+        // mouse or a touchpad, were it ever sent) is Windows' own.
+        case WM_POINTERDOWN:
+        case WM_POINTERUPDATE:
+        case WM_POINTERUP:
+        case WM_POINTERCAPTURECHANGED:
+        case WM_POINTERLEAVE:
+            if (on_pointer(hwnd, msg, wp)) return 0;
+            break;
         case WM_KEYDOWN:
         case WM_SYSKEYDOWN:
             if (msg == WM_SYSKEYDOWN && wp == VK_F4) break;  // Alt+F4 closes, as everywhere
             // Alt+Left is Back, as in a browser (Escape is Back too).
             if (msg == WM_SYSKEYDOWN && wp == VK_LEFT) {
-                g_input->key(0, 4, 0, 0);
+                g_back_chord = true;
+                g_input->key(0, 4, 0, 0, false);
                 return 0;
             }
-            send_key(0, wp, lp);
+            on_key_down(hwnd, wp, lp);
             return 0;
         case WM_KEYUP:
         case WM_SYSKEYUP:
-            if (msg == WM_SYSKEYUP && wp == VK_LEFT) {
-                g_input->key(1, 4, 0, 0);
+            // Whichever of the two keys is let go first: Back goes on its release.
+            if (wp == VK_LEFT && g_back_chord) {
+                g_back_chord = false;
+                g_input->key(1, 4, 0, 0, false);
                 return 0;
             }
-            send_key(1, wp, lp);
+            if (wp == VK_CONTROL) end_pinch(hwnd);  // Ctrl let go: the zoom is over
+            on_key_up(wp);
             return 0;
         // The mouse's back side button is Back too.
         case WM_XBUTTONDOWN:
         case WM_XBUTTONUP:
-            if (GET_XBUTTON_WPARAM(wp) == XBUTTON1) g_input->key(msg == WM_XBUTTONDOWN ? 0 : 1, 4, 0, 0);
+            if (GET_XBUTTON_WPARAM(wp) == XBUTTON1) g_input->key(msg == WM_XBUTTONDOWN ? 0 : 1, 4, 0, 0, false);
             return TRUE;
-        case WM_CHAR:
+        // A character with no key-down before it (on_key_down takes a key's own
+        // characters out of the queue): an input method's result, an Alt+numpad
+        // code, text another program sent. It is text.
+        case WM_CHAR: {
+            std::wstring chars;
+            g_chars.feed(static_cast<wchar_t>(wp), &chars);
+            send_text(chars);
+            return 0;
+        }
+        case WM_UNICHAR: {  // a whole code point, from programs that send text
+            if (wp == UNICODE_NOCHAR) return TRUE;  // "yes, this window takes WM_UNICHAR"
+            std::wstring chars;
+            if (wp >= 0x10000 && wp <= 0x10ffff) {
+                chars.push_back(static_cast<wchar_t>(0xd800 + ((wp - 0x10000) >> 10)));
+                chars.push_back(static_cast<wchar_t>(0xdc00 + ((wp - 0x10000) & 0x3ff)));
+            } else if (wp < 0xd800 || (wp > 0xdfff && wp < 0x10000)) {
+                chars.push_back(static_cast<wchar_t>(wp));
+            }
+            send_text(chars);
+            return 0;
+        }
         case WM_SYSCHAR:
-            return 0;  // characters already went out with the key-down
+            return 0;  // an Alt chord types nothing
+        case WM_KILLFOCUS:
+            end_pinch(hwnd);
+            release_keys();
+            break;
+        // An input method composes (see "input methods" above).
+        case WM_IME_STARTCOMPOSITION:
+            place_ime(hwnd);
+            g_ime_inline = g_input->composing_inline();
+            if (g_ime_inline) return 0;  // the field shows it: no composition window of Windows'
+            break;
+        case WM_IME_COMPOSITION:
+            if (!g_ime_inline) break;  // Windows draws it, and makes characters of the result
+            if (lp & GCS_RESULTSTR) {
+                const std::wstring result = ime_string(hwnd, GCS_RESULTSTR);
+                if (!result.empty()) g_input->text(result);  // takes the composed text's place
+            }
+            // The text being composed now: after a result the next one, empty when
+            // the user gave the composition up.
+            if ((lp & GCS_COMPSTR) || !(lp & GCS_RESULTSTR)) g_input->composing(ime_string(hwnd, GCS_COMPSTR));
+            place_ime(hwnd);  // the caret moved with the text
+            return 0;
+        case WM_IME_ENDCOMPOSITION:
+            if (!g_ime_inline) break;
+            g_ime_inline = false;
+            g_input->composing_end();
+            return 0;
         // Another monitor's scale: Windows suggests a rect at the new DPI; the
         // window takes its place but fits its size to that monitor. While the
         // user drags, it is not pushed around; WM_EXITSIZEMOVE settles it.
@@ -884,6 +1428,14 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             SetTimer(hwnd, kTestResizeTimer, 1000, nullptr);
             return 0;
         case WM_TIMER:
+            if (wp == kHoverTimer) {
+                on_hover_timer(hwnd);
+                return 0;
+            }
+            if (wp == kPinchTimer) {
+                end_pinch(hwnd);
+                return 0;
+            }
             if (wp == kTestResizeTimer) {
                 KillTimer(hwnd, kTestResizeTimer);
                 wchar_t buf[64];
@@ -1013,6 +1565,7 @@ DWORD WINAPI ui_thread(void* param) {
         fit_window(g_hwnd, g_plan.monitor ? g_plan.monitor : MonitorFromWindow(g_hwnd, MONITOR_DEFAULTTONEAREST),
                    window_dpi(g_hwnd), &wr, true);
     }
+    if (g_hwnd) touch_setup(g_hwnd);
     args->ok = g_hwnd != nullptr;
     SetEvent(args->ready);
     if (!g_hwnd) return 1;

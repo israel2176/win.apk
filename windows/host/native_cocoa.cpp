@@ -130,6 +130,11 @@ JavaVM* g_vm = nullptr;
 
 jobject g_dispatcher = nullptr;  // global ref, set by registerTouchDispatcher
 jmethodID g_dispatch_mid = nullptr, g_key_mid = nullptr;
+// TouchDispatcher's entries for what the window reports beside one finger and
+// plain keys (win32_window.h, WindowInput); nullptr when the class has none.
+jmethodID g_host_key_mid = nullptr, g_touch_mid = nullptr, g_wheel_mid = nullptr, g_pinch_mid = nullptr;
+jmethodID g_mouse_mid = nullptr, g_mouse_exit_mid = nullptr, g_text_mid = nullptr, g_composing_mid = nullptr;
+jmethodID g_ime_inline_mid = nullptr, g_ime_anchor_mid = nullptr;
 
 JNIEnv* ui_thread_env() {
     thread_local JNIEnv* env = nullptr;
@@ -267,30 +272,154 @@ DWORD WINAPI close_thread(void*) {
 }
 
 class JavaInput : public WindowInput {
-public:
-    // TouchDispatcher.dispatch takes AppKit view coordinates: points, origin at
-    // the bottom left; it multiplies them by backingScale (the density) for the
+    // TouchDispatcher takes AppKit view coordinates: points, origin at the
+    // bottom left; it multiplies them by backingScale (the density) for the
     // surface pixel. The view is the surface in points -- its pixels over the
     // density, not the rounded dp, so a touch lands on the surface pixel it
     // was made on when the window shows the surface pixel for pixel.
+    struct View {
+        float w = 0, h = 0;      // the view, in points
+        float sx = 0, sy = 0;    // points per pixel of the window's box
+        bool ok = false;
+        float x(float px) const { return px * sx; }
+        float y(float py) const { return h - py * sy; }
+    };
+    static View view(float view_w, float view_h) {
+        View v;
+        if (view_w <= 0 || view_h <= 0) return v;
+        const float d = g_density.load() > 0 ? g_density.load() : 1.0f;
+        const int sw = g_surface_w.load(), sh = g_surface_h.load();
+        v.w = sw > 0 ? static_cast<float>(sw) / d : static_cast<float>(g_phone_w.load());
+        v.h = sh > 0 ? static_cast<float>(sh) / d : static_cast<float>(g_phone_h.load());
+        v.sx = v.w / view_w;
+        v.sy = v.h / view_h;
+        v.ok = true;
+        return v;
+    }
+    static void call_text(jmethodID mid, const std::wstring& utf16) {
+        JNIEnv* env = ui_thread_env();
+        if (!env || !g_dispatcher || !mid) return;
+        jstring s = env->NewString(reinterpret_cast<const jchar*>(utf16.data()), static_cast<jsize>(utf16.size()));
+        if (s) env->CallVoidMethod(g_dispatcher, mid, s);
+        report_input_exception(env);
+        if (s) env->DeleteLocalRef(s);
+    }
+
+public:
     void pointer(int action, float x, float y, float view_w, float view_h) override {
         JNIEnv* env = ui_thread_env();
-        if (!env || !g_dispatcher || view_w <= 0 || view_h <= 0) return;
-        const float d = g_density.load() > 0 ? g_density.load() : 1.0f;
-        const float pw = g_surface_w.load() > 0 ? static_cast<float>(g_surface_w.load()) / d
-                                                : static_cast<float>(g_phone_w.load());
-        const float ph = g_surface_h.load() > 0 ? static_cast<float>(g_surface_h.load()) / d
-                                                : static_cast<float>(g_phone_h.load());
-        const float px = x * pw / view_w;
-        const float py = ph - y * ph / view_h;
-        env->CallVoidMethod(g_dispatcher, g_dispatch_mid, action, px, py, pw, ph);
+        const View v = view(view_w, view_h);
+        if (!env || !g_dispatcher || !v.ok) return;
+        env->CallVoidMethod(g_dispatcher, g_dispatch_mid, action, v.x(x), v.y(y), v.w, v.h);
         report_input_exception(env);
     }
-    void key(int action, int key_code, int unicode, int meta) override {
+    void key(int action, int key_code, int unicode, int meta, bool repeat) override {
         JNIEnv* env = ui_thread_env();
         if (!env || !g_dispatcher) return;
-        env->CallVoidMethod(g_dispatcher, g_key_mid, action, key_code, unicode, meta);
+        if (g_host_key_mid) {
+            env->CallVoidMethod(g_dispatcher, g_host_key_mid, action, key_code, unicode, meta,
+                                repeat ? JNI_TRUE : JNI_FALSE);
+        } else {
+            env->CallVoidMethod(g_dispatcher, g_key_mid, action, key_code, unicode, meta);
+        }
         report_input_exception(env);
+    }
+    // TouchDispatcher.dispatchHostTouch: the pointers of the event, side by side.
+    void touch(const TouchEvent& e, float view_w, float view_h) override {
+        JNIEnv* env = ui_thread_env();
+        const View v = view(view_w, view_h);
+        if (!env || !g_dispatcher || !g_touch_mid || !v.ok || e.count <= 0) return;
+        jint ids[kMaxTouches], tools[kMaxTouches];
+        jfloat xs[kMaxTouches], ys[kMaxTouches], pressures[kMaxTouches];
+        for (int i = 0; i < e.count; ++i) {
+            ids[i] = e.points[i].id;
+            tools[i] = e.points[i].tool;
+            xs[i] = v.x(e.points[i].x);
+            ys[i] = v.y(e.points[i].y);
+            pressures[i] = e.points[i].pressure;
+        }
+        jintArray jids = env->NewIntArray(e.count), jtools = env->NewIntArray(e.count);
+        jfloatArray jxs = env->NewFloatArray(e.count), jys = env->NewFloatArray(e.count),
+                    jpressures = env->NewFloatArray(e.count);
+        if (jids && jtools && jxs && jys && jpressures) {
+            env->SetIntArrayRegion(jids, 0, e.count, ids);
+            env->SetIntArrayRegion(jtools, 0, e.count, tools);
+            env->SetFloatArrayRegion(jxs, 0, e.count, xs);
+            env->SetFloatArrayRegion(jys, 0, e.count, ys);
+            env->SetFloatArrayRegion(jpressures, 0, e.count, pressures);
+            env->CallVoidMethod(g_dispatcher, g_touch_mid, e.action, e.index, jids, jxs, jys, jpressures, jtools,
+                                e.buttons, v.w, v.h);
+        }
+        report_input_exception(env);
+        for (jobject o : {static_cast<jobject>(jids), static_cast<jobject>(jtools), static_cast<jobject>(jxs),
+                          static_cast<jobject>(jys), static_cast<jobject>(jpressures)}) {
+            if (o) env->DeleteLocalRef(o);
+        }
+    }
+    // TouchDispatcher.dispatchHostWheel; the drag's steps are distances, so y only turns over.
+    bool wheel(float x, float y, float view_w, float view_h, float vscroll, float hscroll, float slop_x, float slop_y,
+               float drag_x, float drag_y) override {
+        JNIEnv* env = ui_thread_env();
+        const View v = view(view_w, view_h);
+        if (!env || !g_dispatcher || !g_wheel_mid || !v.ok) return false;
+        env->CallVoidMethod(g_dispatcher, g_wheel_mid, v.x(x), v.y(y), v.w, v.h, vscroll, hscroll, slop_x * v.sx,
+                            -slop_y * v.sy, drag_x * v.sx, -drag_y * v.sy);
+        report_input_exception(env);
+        return true;
+    }
+    void pinch(const PinchStep& step, float view_w, float view_h) override {
+        JNIEnv* env = ui_thread_env();
+        const View v = view(view_w, view_h);
+        if (!env || !g_dispatcher || !g_pinch_mid || !v.ok) return;
+        env->CallVoidMethod(g_dispatcher, g_pinch_mid, step.phase, v.x(step.x), v.y(step.y), step.span * v.sx, v.w,
+                            v.h);
+        report_input_exception(env);
+    }
+    void mouse(int buttons, int meta, float x, float y, float view_w, float view_h) override {
+        JNIEnv* env = ui_thread_env();
+        const View v = view(view_w, view_h);
+        if (!env || !g_dispatcher || !g_mouse_mid || !v.ok) return;
+        env->CallVoidMethod(g_dispatcher, g_mouse_mid, buttons, meta, v.x(x), v.y(y), v.w, v.h);
+        report_input_exception(env);
+    }
+    void mouse_exit() override {
+        JNIEnv* env = ui_thread_env();
+        if (!env || !g_dispatcher || !g_mouse_exit_mid) return;
+        env->CallVoidMethod(g_dispatcher, g_mouse_exit_mid, 0.0f, 0.0f, 1.0f, 1.0f);  // an exit has no position
+        report_input_exception(env);
+    }
+    void text(const std::wstring& utf16) override { call_text(g_text_mid, utf16); }
+    bool composing_inline() override {
+        JNIEnv* env = ui_thread_env();
+        if (!env || !g_dispatcher || !g_ime_inline_mid || !g_composing_mid) return false;
+        const bool yes = env->CallBooleanMethod(g_dispatcher, g_ime_inline_mid) == JNI_TRUE;
+        if (env->ExceptionCheck()) {
+            report_input_exception(env);
+            return false;
+        }
+        return yes;
+    }
+    void composing(const std::wstring& utf16) override { call_text(g_composing_mid, utf16); }
+    void composing_end() override {
+        JNIEnv* env = ui_thread_env();
+        if (!env || !g_dispatcher || !g_composing_mid) return;
+        env->CallVoidMethod(g_dispatcher, g_composing_mid, static_cast<jstring>(nullptr));  // null: it ended
+        report_input_exception(env);
+    }
+    // TouchDispatcher.hostImeAnchor: the caret in surface pixels, x in the high half.
+    bool caret(float* x, float* y, float view_w, float view_h) override {
+        JNIEnv* env = ui_thread_env();
+        const float sw = static_cast<float>(g_surface_w.load()), sh = static_cast<float>(g_surface_h.load());
+        if (!env || !g_dispatcher || !g_ime_anchor_mid || sw <= 0 || sh <= 0) return false;
+        const jlong packed = env->CallLongMethod(g_dispatcher, g_ime_anchor_mid);
+        if (env->ExceptionCheck()) {
+            report_input_exception(env);
+            return false;
+        }
+        if (packed < 0) return false;
+        *x = static_cast<float>(static_cast<int32_t>(packed >> 32)) * view_w / sw;
+        *y = static_cast<float>(static_cast<int32_t>(packed & 0xffffffff)) * view_h / sh;
+        return true;
     }
     // The user closed the window (its X, Alt+F4, the taskbar; the end of the
     // Windows session too). See close_thread.
@@ -329,6 +458,26 @@ void JNICALL Cocoa_registerTouchDispatcher(JNIEnv* env, jclass, jobject dispatch
     jclass cls = env->GetObjectClass(dispatcher);
     g_dispatch_mid = env->GetMethodID(cls, "dispatch", "(IFFFF)V");
     g_key_mid = env->GetMethodID(cls, "dispatchKey", "(IIII)V");
+    // A dispatcher without one of these keeps what the window did before it
+    // (a wheel step as a drag, one finger, keys without their repeat).
+    auto method = [&](const char* name, const char* sig) {
+        jmethodID mid = env->GetMethodID(cls, name, sig);
+        if (env->ExceptionCheck()) {
+            env->ExceptionClear();
+            mid = nullptr;
+        }
+        return mid;
+    };
+    g_host_key_mid = method("dispatchHostKey", "(IIIIZ)V");
+    g_touch_mid = method("dispatchHostTouch", "(II[I[F[F[F[IIFF)V");
+    g_wheel_mid = method("dispatchHostWheel", "(FFFFFFFFFF)V");
+    g_pinch_mid = method("dispatchHostPinch", "(IFFFFF)V");
+    g_mouse_mid = method("dispatchHostMouse", "(IIFFFF)V");
+    g_mouse_exit_mid = method("dispatchHostMouseExit", "(FFFF)V");
+    g_text_mid = method("dispatchHostText", "(Ljava/lang/String;)V");
+    g_composing_mid = method("dispatchHostComposingText", "(Ljava/lang/String;)V");
+    g_ime_inline_mid = method("hostImeInline", "()Z");
+    g_ime_anchor_mid = method("hostImeAnchor", "()J");
     env->DeleteLocalRef(cls);
 }
 

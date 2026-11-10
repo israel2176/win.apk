@@ -69,7 +69,10 @@ window with the app's icon shows until the app's window is up.
 | You do | The app sees |
 |---|---|
 | Click, drag | A finger tap and swipe |
+| Touch the screen | Fingers, as on a phone: several at once, pinch to zoom |
 | Mouse wheel | A scroll |
+| **Ctrl**+wheel, or a pinch on the touchpad | A two-finger pinch: zoom |
+| Right click | What a long press opens |
 | Type | The keyboard, as on a phone with a hardware keyboard |
 | **Esc**, **Alt+Left** or the mouse's back button | Android's Back |
 | Resize, maximize or snap the window | A bigger or smaller screen; the app lays itself out again |

@@ -31,8 +31,9 @@ Adding and running apps
   (or one with no native code), then arm64-v8a. An app with only 32-bit ARM
   code (armeabi-v7a) does not run.
 - Double-click an app to open it. The mouse is your finger, the wheel
-  scrolls, and Escape is Android's Back. Resize the window and the app lays
-  itself out again.
+  scrolls, Ctrl+wheel (or a pinch on the touchpad) zooms, a right click is a
+  long press, and Escape is Android's Back. On a touchscreen every finger is a
+  finger. Resize the window and the app lays itself out again.
 - Right-click an app for Open, Stop, App details and Remove. App details holds
   the rest: orientation, permissions, the log, Report a problem.
 - Settings: theme, language (English or Hebrew), app window size and default

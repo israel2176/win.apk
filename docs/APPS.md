@@ -24,7 +24,7 @@ keeping a copy.
 | Native code: x86_64 | ✅ | `lib/x86_64` libraries load directly, at full speed | | `windows/src/` |
 | Native code: arm64-v8a only | ⚠️ | Translated to x64 in the background; the app runs on a slower ARM JIT until then. See [ARM apps](arm-apps.md) | A library over 1 million instructions is translated only where the app ran | `winapk-aot`, `src/arm64/` |
 | Native code: armeabi-v7a only | ❌ | | 32-bit ARM code does not run. Look for another build of the app | |
-| Input | ⚠️ | Mouse as one finger, the wheel as a scroll, the keyboard, Escape as Back; Xbox (XInput) controllers | No multi-touch: pinch and two-finger gestures cannot be made with a mouse. Controllers that are not XInput | `win32_window.cpp`, `native_gamepad.cpp` |
+| Input | ⚠️ | Mouse as one finger; touchscreen fingers as Android pointers (up to 10); pen with pressure and eraser; the wheel and touchpad scroll as `ACTION_SCROLL`; Ctrl+wheel and the touchpad pinch as a two-finger pinch; right and middle buttons; hover; the keyboard with dead keys, AltGr and IME composition; Escape as Back; Xbox (XInput) controllers | Touch, pen, touchpad pinch and IME are checked by unit tests only, not yet on real hardware. No pen tilt. Controllers that are not XInput | `win32_window.cpp`, `pointer_input.h`, `native_gamepad.cpp` |
 
 ### Graphics, sound and video
 

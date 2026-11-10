@@ -8,14 +8,30 @@
 // size of the box the window shows the app in (the whole client area, or a
 // letterbox inside it), so a frame at the right size is copied pixel for
 // pixel; GDI scales only when the app is meant to draw at another size (a
-// monitor with another scale, WINAPK_RESIZABLE=0). Mouse and keyboard input
-// go back out through WindowInput, already translated to Android's MotionEvent
-// and KeyEvent terms.
+// monitor with another scale, WINAPK_RESIZABLE=0). Input goes back out through
+// WindowInput, already translated to Android's MotionEvent and KeyEvent terms:
+//
+//   the mouse's left button   one finger on the touchscreen (pointer)
+//   a touchscreen, a pen      every contact a pointer of its own (touch)
+//   the wheel                 a scroll step, or a short drag for an app whose
+//                             views take no scroll step (wheel)
+//   Ctrl+wheel, and a pinch   two fingers moving apart or together around the
+//   on a precision touchpad   cursor (pinch)
+//   the other buttons, and    a mouse: the right button opens what a long
+//   the pointer over the app  press opens, the pointer hovers (mouse)
+//   the keyboard              key events with the character Windows says the
+//                             key types (key); composed text (text); an input
+//                             method's composition (composing)
+//
+// Positions are pixels in the box the app draws in (window_app_box), origin at
+// its top left, with the box's size beside them.
 
 #pragma once
 
 #include <cstdint>
 #include <string>
+
+#include "pointer_input.h"
 
 namespace winapk::host {
 
@@ -26,8 +42,40 @@ public:
     // MotionEvent action (DOWN 0, UP 1, MOVE 2, CANCEL 3); x and y in client
     // pixels, origin at the top left, of a client area view_w by view_h.
     virtual void pointer(int action, float x, float y, float view_w, float view_h) = 0;
-    // KeyEvent action (DOWN 0, UP 1), KEYCODE_*, the character or 0, META_*.
-    virtual void key(int action, int key_code, int unicode, int meta) = 0;
+    // KeyEvent action (DOWN 0, UP 1), KEYCODE_*, the character or 0, META_*;
+    // repeat: Windows is repeating a key that is held.
+    virtual void key(int action, int key_code, int unicode, int meta, bool repeat) = 0;
+    // The contacts on a touchscreen or a pen's tip (pointer_input.h, TouchTracker).
+    virtual void touch(const TouchEvent& /*event*/, float /*view_w*/, float /*view_h*/) {}
+    // A wheel step at (x, y): vscroll and hscroll in notches, positive up and
+    // to the right (MotionEvent.AXIS_VSCROLL / AXIS_HSCROLL). The app gets it as
+    // a scroll event; when none of its views takes that, as a finger that lands
+    // at (x, y), moves by the slop and then by the drag, and lifts. False when
+    // there is nothing to send it through: the caller drags with pointer().
+    virtual bool wheel(float /*x*/, float /*y*/, float /*view_w*/, float /*view_h*/, float /*vscroll*/,
+                       float /*hscroll*/, float /*slop_x*/, float /*slop_y*/, float /*drag_x*/, float /*drag_y*/) {
+        return false;
+    }
+    // A step of a two-finger pinch (pointer_input.h, PinchSynth).
+    virtual void pinch(const PinchStep& /*step*/, float /*view_w*/, float /*view_h*/) {}
+    // The mouse with `buttons` (MotionEvent.BUTTON_SECONDARY, BUTTON_TERTIARY)
+    // held at (x, y): a press, a drag or a release when they changed or one is
+    // held, else the pointer hovering. mouse_exit: it left the app.
+    virtual void mouse(int /*buttons*/, int /*meta*/, float /*x*/, float /*y*/, float /*view_w*/, float /*view_h*/) {}
+    virtual void mouse_exit() {}
+    // Text that is no single key's: composed with a dead key, an input
+    // method's result, a pasted-in character (UTF-16).
+    virtual void text(const std::wstring& /*utf16*/) {}
+    // An input method is composing. composing_inline: whether the focused
+    // field can show the text being composed itself (it has an
+    // InputConnection); then composing() carries each state of it and
+    // composing_end() its end, and Windows draws no composition window.
+    virtual bool composing_inline() { return false; }
+    virtual void composing(const std::wstring& /*utf16*/) {}
+    virtual void composing_end() {}
+    // Where the focused field's caret is, under its line, for the input
+    // method's candidate window. False when the app has no such field.
+    virtual bool caret(float* /*x*/, float* /*y*/, float /*view_w*/, float /*view_h*/) { return false; }
     // The user closed the window, which is hidden already, or the Windows
     // session is ending: the app is taken through its lifecycle and the
     // process ends, within a bounded time; a second call ends it at once.

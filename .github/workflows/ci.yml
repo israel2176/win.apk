@@ -422,6 +422,13 @@ jobs:
           cp="$(cygpath -w stage/lib/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/hostnet-test windows/test/java/android/net/HostNetworkTest.java
           MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/hostnet-test)" android.net.HostNetworkTest
+      - name: Run the host touch test
+        run: |
+          # The MotionEvents touchscreen and pen contacts become, on a plain JVM.
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          cp="$(cygpath -w stage/lib/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          "$JAVA_HOME/bin/javac" -cp "$cp" -d build/hosttouch-test windows/test/java/com/macapk/loader/HostTouchTest.java
+          MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/hosttouch-test)" com.macapk.loader.HostTouchTest
       - name: Run the permission model test
         run: |
           # SpecialAccessStore.GroupModel, the decision model behind every
