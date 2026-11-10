@@ -4152,6 +4152,18 @@ public class Resources {
                     gd.setSize(macapkDimSizeAttr(c, "width", -1, theme),
                             macapkDimSizeAttr(c, "height", -1, theme));
                     break;
+                case "padding":
+                    // AOSP GradientDrawable.inflateChildElements, the "padding"
+                    // arm: the four sides (0 when absent) become the drawable's
+                    // padding, which a view takes for its own when the shape is
+                    // its background. The element was not read at all, so a
+                    // chip, a badge or a button whose room around the text is
+                    // its background's <padding> had the text against the edge
+                    // and was that much smaller (uiprobe: 62.5x19 where Android
+                    // lays out 78.5x27).
+                    gd.setPadding(macapkDimSizeAttr(c, "left", 0, theme), macapkDimSizeAttr(c, "top", 0, theme),
+                            macapkDimSizeAttr(c, "right", 0, theme), macapkDimSizeAttr(c, "bottom", 0, theme));
+                    break;
                 case "gradient": {
                     // v1.0.499: a <shape> with a <gradient> (and no <solid>) was
                     // parsed into a GradientDrawable with NO fill -> it drew

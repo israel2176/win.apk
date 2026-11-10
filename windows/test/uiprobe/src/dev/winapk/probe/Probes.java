@@ -6,6 +6,8 @@
 package dev.winapk.probe;
 
 import android.content.Context;
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
 import android.text.Layout;
 import android.view.ContextThemeWrapper;
 import android.view.LayoutInflater;
@@ -14,6 +16,8 @@ import android.view.ViewGroup;
 import android.widget.FrameLayout;
 import android.widget.TextView;
 
+import java.io.File;
+import java.io.FileOutputStream;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -25,20 +29,20 @@ public final class Probes {
 
     private static final int[] LAYOUTS = {
         R.layout.text_gravity, R.layout.linear_weights, R.layout.frame_gravity, R.layout.relative,
-        R.layout.edit_compound, R.layout.custom_params,
+        R.layout.edit_compound, R.layout.custom_params, R.layout.icons,
     };
     private static final String[] NAMES = {
-        "text_gravity", "linear_weights", "frame_gravity", "relative", "edit_compound", "custom_params",
+        "text_gravity", "linear_weights", "frame_gravity", "relative", "edit_compound", "custom_params", "icons",
     };
 
     /** runAll for a caller that must not name an Android class: the oracle's test class is
      *  loaded outside Robolectric's sandbox first, where there is no android.content.Context. */
-    public static List<String> runAllOn(Object app) {
-        return runAll((Context) app);
+    public static List<String> runAllOn(Object app, File pictures) {
+        return runAll((Context) app, pictures);
     }
 
     /** Every case, left to right and right to left, as lines of text. */
-    public static List<String> runAll(Context app) {
+    public static List<String> runAll(Context app, File pictures) {
         List<String> out = new ArrayList<>();
         float density = app.getResources().getDisplayMetrics().density;
         out.add("density " + density);
@@ -55,7 +59,26 @@ public final class Probes {
                     root.measure(View.MeasureSpec.makeMeasureSpec(w, View.MeasureSpec.EXACTLY),
                                  View.MeasureSpec.makeMeasureSpec(h, View.MeasureSpec.EXACTLY));
                     root.layout(0, 0, w, h);
-                    dump(root.getChildAt(0), 0, density, out, c);
+                    // What was drawn: the case on a white bitmap, each view's patch of it as a
+                    // few average colours beside its place (a wrong tint, a missing icon, a
+                    // black box show there), and the whole picture as a PNG for looking at.
+                    Bitmap picture = null;
+                    try {
+                        picture = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+                        Canvas canvas = new Canvas(picture);
+                        canvas.drawColor(0xFFFFFFFF);
+                        root.draw(canvas);
+                        if (pictures != null) {
+                            pictures.mkdirs();
+                            try (FileOutputStream f = new FileOutputStream(new File(pictures, name + ".png"))) {
+                                picture.compress(Bitmap.CompressFormat.PNG, 100, f);
+                            }
+                        }
+                    } catch (Throwable t) {
+                        out.add("  NOT DRAWN " + t);
+                        picture = null;
+                    }
+                    dump(root.getChildAt(0), 0, 0, 0, density, out, c, picture);
                 } catch (Throwable t) {
                     out.add("  FAILED " + t);
                 }
@@ -69,7 +92,26 @@ public final class Probes {
         return String.valueOf(Math.round(px / density * 10) / 10f);
     }
 
-    private static void dump(View v, int depth, float d, List<String> out, Context c) {
+    /** The mean colour of a rectangle of the picture, each channel as 0..9. */
+    private static String colour(Bitmap b, int l, int t, int r, int bottom) {
+        l = Math.max(0, l); t = Math.max(0, t);
+        r = Math.min(b.getWidth(), r); bottom = Math.min(b.getHeight(), bottom);
+        if (r <= l || bottom <= t) return "-";
+        int w = r - l, h = bottom - t;
+        int[] px = new int[w * h];
+        b.getPixels(px, 0, w, l, t, w, h);
+        long red = 0, green = 0, blue = 0;
+        for (int p : px) {
+            red += (p >> 16) & 0xff;
+            green += (p >> 8) & 0xff;
+            blue += p & 0xff;
+        }
+        long n = px.length;
+        return (red / n * 10 / 256) + "," + (green / n * 10 / 256) + "," + (blue / n * 10 / 256);
+    }
+
+    private static void dump(View v, int depth, int ox, int oy, float d, List<String> out, Context c,
+                             Bitmap picture) {
         StringBuilder sb = new StringBuilder("  ");
         for (int i = 0; i < depth; i++) sb.append("  ");
         sb.append(v.getClass().getSimpleName());
@@ -101,10 +143,17 @@ public final class Probes {
                 sb.append(" text?").append(t.getClass().getSimpleName());
             }
         }
+        int x = ox + v.getLeft(), y = oy + v.getTop();
+        if (picture != null && !(v instanceof ViewGroup) && v.getWidth() > 0 && v.getHeight() > 0) {
+            // The whole view, then its middle third each way.
+            int tw = v.getWidth() / 3, th = v.getHeight() / 3;
+            sb.append(" px=").append(colour(picture, x, y, x + v.getWidth(), y + v.getHeight()))
+              .append(';').append(colour(picture, x + tw, y + th, x + 2 * tw, y + 2 * th));
+        }
         out.add(sb.toString());
         if (v instanceof ViewGroup) {
             ViewGroup g = (ViewGroup) v;
-            for (int i = 0; i < g.getChildCount(); i++) dump(g.getChildAt(i), depth + 1, d, out, c);
+            for (int i = 0; i < g.getChildCount(); i++) dump(g.getChildAt(i), depth + 1, x, y, d, out, c, picture);
         }
     }
 }

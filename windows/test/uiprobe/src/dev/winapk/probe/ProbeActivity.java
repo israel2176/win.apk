@@ -13,7 +13,7 @@ public class ProbeActivity extends Activity {
         TextView label = new TextView(this);
         label.setText("UI probe");
         setContentView(label);
-        for (String line : Probes.runAll(getApplicationContext())) System.out.println("PROBE " + line);
+        for (String line : Probes.runAll(getApplicationContext(), new java.io.File(getFilesDir(), "probe"))) System.out.println("PROBE " + line);
         System.out.println("PROBE done");
         System.out.flush();
     }

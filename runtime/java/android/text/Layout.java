@@ -1191,7 +1191,11 @@ public abstract class Layout {
             default:             return 0f;
         }
     }
-    public float getLineRight(int line) { return getLineLeft(line) + getLineWidth(line); }
+    /** AOSP Layout.getLineRight: the right edge of the line's VISIBLE extent
+     *  (getLineMax, which leaves trailing spaces out), as getLineLeft is its left
+     *  edge. With getLineWidth a wrapped line that ends in a space reached past
+     *  the layout's width. */
+    public float getLineRight(int line) { return getLineLeft(line) + getLineMax(line); }
 
     public int getLineForOffset(int offset) {
         ensureLines();

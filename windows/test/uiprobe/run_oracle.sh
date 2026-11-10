@@ -49,7 +49,7 @@ CP="$CP$SEP$(native "$PLATFORM/android.jar")"
 # and cannot load its native library from a home folder with a space in its
 # name (it uses the URL's text, "%20" and all, as the path).
 mkdir -p "$OUT/home"
-"$JAVA" "-Duser.home=$(native "$OUT/home")" -cp "$(native "$OUT/oracle-classes")$SEP$(native "$CONF")$SEP$CP" \
+"$JAVA" "-Duser.home=$(native "$OUT/home")" "-Dprobe.pictures=$(native "$OUT/oracle-pictures")" -cp "$(native "$OUT/oracle-classes")$SEP$(native "$CONF")$SEP$CP" \
     org.junit.runner.JUnitCore ProbeOracleTest > "$OUT/oracle.log" 2>&1 || true
 grep '^PROBE ' "$OUT/oracle.log" | sed 's/^PROBE //' > "$OUT/oracle.txt"
 if ! grep -q '^done$' "$OUT/oracle.txt"; then
