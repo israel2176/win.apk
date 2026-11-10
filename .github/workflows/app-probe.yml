@@ -26,7 +26,6 @@ jobs:
           - { name: Fossify Calendar, pkg: org.fossify.calendar, version: '24' }
           - { name: KeePassDX, pkg: com.kunzisoft.keepass.libre, version: '45500' }
           - { name: Thunderbird, pkg: net.thunderbird.android, version: '33' }
-          - { name: Telegram FOSS, pkg: org.telegram.messenger, version: latest }
           - { name: Fennec, pkg: org.mozilla.fennec_fdroid, version: latest }
           - { name: VLC, pkg: org.videolan.vlc, version: '13070208' }
           - { name: Organic Maps, pkg: app.organicmaps, version: '26092932' }
