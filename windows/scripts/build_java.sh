@@ -114,7 +114,10 @@ patch_module() {  # patch_module <module> <out dir> <source dir>...
     for src in "$@"; do
         [[ -d "$src" ]] || continue
         echo "[build_java] compiling ${src#"$RT"/} (--patch-module $module)..."
-        find "$src" -name '*.java' | sort | native_paths >> "$WORK/$module.list"
+        # sun.nio.fs.Windows* patch the Windows JDK's own classes, which a
+        # JDK for another system does not have (a Linux build checks the rest).
+        find "$src" -name '*.java' | { if command -v cygpath > /dev/null 2>&1; then cat; else
+            grep -v '/sun/nio/fs/Windows'; fi; } | sort | native_paths >> "$WORK/$module.list"
         dirs="${dirs:+$dirs$sep}$(native_path "$src")"
     done
     [[ -s "$WORK/$module.list" ]] || return 0

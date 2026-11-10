@@ -117,6 +117,11 @@ target_link_libraries(winapk-linker-test PRIVATE winapk_loader)
 add_executable(winapk-bionic-test test/bionic_test.cpp)
 target_link_libraries(winapk-bionic-test PRIVATE winapk_loader)
 
+# The guest path mapper (src/bionic/paths.cpp): Android paths -> host files,
+# test/paths_test.cpp. No guest library, no scratch dir.
+add_executable(winapk-paths-test test/paths_test.cpp)
+target_link_libraries(winapk-paths-test PRIVATE winapk_loader)
+
 # The runtime's crash path (host/crash_report.cpp: guest handlers first, then
 # the report and a minidump), test/crash_report_test.cpp. dbghelp is loaded
 # at run time.
@@ -275,6 +280,7 @@ if(WINAPK_JNI_INCLUDE)
   add_executable(winapk-runtime host/runtime_main.cpp host/host_natives.cpp host/native_log.cpp
                               host/native_cocoa.cpp host/win32_window.cpp host/guest_libs.cpp host/java_io_open.cpp
                               host/gl/egl10_window.cpp
+                              host/sqlite_paths.cpp
                               host/native_os.cpp host/native_image.cpp
                               host/native_looper.cpp host/native_audio.cpp host/audio_engine.cpp
                               host/audio_decode.cpp host/native_clipboard.cpp

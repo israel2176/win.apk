@@ -300,6 +300,8 @@ jobs:
         run: |
           mkdir -p bionic-scratch
           ./build/winapk-bionic-test.exe guest/libwinapk_bionic_guest.so "$(cygpath -w "$PWD/bionic-scratch")"
+      - name: Run the Android path mapper test
+        run: ./build/winapk-paths-test.exe
       - name: Run the audio backend test
         run: ./build/winapk-audio-test.exe "$(cygpath -w "$PWD/windows/test/audio")"
       - name: Run the video backend test
@@ -381,6 +383,18 @@ jobs:
           "$JAVA_HOME/bin/javac" -d build/rename-test windows/test/java/FileRenameTest.java
           "$JAVA_HOME/bin/java" --patch-module "java.base=$(cygpath -w stage/lib/java_base_patch)" \
             -cp "$(cygpath -w build/rename-test)" FileRenameTest
+      - name: Run the Android paths overlay test
+        run: |
+          # A '/'-rooted Android path keeps its '/' form (no drive, no backslash)
+          # through java.io.File and java.nio.Path, while a Windows path is
+          # untouched (java_base_patch: WinNTFileSystem/File/WindowsPath +
+          # jdk.internal.util.WinApkPaths). The feature is on via
+          # -Dwinapk.android.root.
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          "$JAVA_HOME/bin/javac" -d build/android-paths-test windows/test/java/AndroidPathsTest.java
+          "$JAVA_HOME/bin/java" --patch-module "java.base=$(cygpath -w stage/lib/java_base_patch)" \
+            -Dwinapk.android.root="$(cygpath -w "$RUNNER_TEMP")" \
+            -cp "$(cygpath -w build/android-paths-test)" AndroidPathsTest
       - name: Run the permission model test
         run: |
           # SpecialAccessStore.GroupModel, the decision model behind every

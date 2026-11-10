@@ -251,6 +251,18 @@ public final class Boot {
      *  ("Android-changed: Handle java.io.tmpdir changes"). So an app's
      *  File.createTempFile(prefix, suffix) still lands in the host temp dir; code
      *  that reads System.getProperty("java.io.tmpdir") itself sees the cache dir. */
+    /** Win.apk: /data/user/0/&lt;package&gt; once the host maps it to `hostDir`;
+     *  `hostDir` itself on a host without Android paths. */
+    private static File winApkAppDataDir(String packageName, File hostDir) {
+        if (System.getProperty("winapk.android.root") == null) return hostDir;
+        try {
+            NativeCocoa.setAppData(packageName, hostDir.getAbsolutePath());
+            return new File("/data/user/0/" + packageName);
+        } catch (UnsatisfiedLinkError notWinApk) {
+            return hostDir;
+        }
+    }
+
     private static void macapkSetupGraphicsSupportTmpdir(String packageName, File cacheDir) {
         if (!TMPDIR_CACHE) return;
         // The system package has no real data directories (AOSP's own guard).
@@ -1892,9 +1904,16 @@ public final class Boot {
                 : new File(androidRoot, "data/data/" + dataSubdir);
         android.app.LocaleManager.macapkRestoreApplicationLocales(
                 manifest.packageName, persistentDataDir, resources);
-        File filesDir = new File(persistentDataDir, "files"); filesDir.mkdirs();
-        File cacheDir = new File(persistentDataDir, "cache"); cacheDir.mkdirs();
-        NativeLog.i(TAG, "data dir: " + persistentDataDir.getAbsolutePath());
+        // Win.apk: the app sees its data directory by the device's name,
+        // /data/user/0/<package>, as native code expects (it walks a path up to
+        // "/", which a drive path never reaches); java.io/java.nio and the guest
+        // shim open the host directory it names (WinApkPaths, paths.cpp). The
+        // loader's own plumbing below keeps the host path.
+        File appDataDir = winApkAppDataDir(manifest.packageName, persistentDataDir);
+        File filesDir = new File(appDataDir, "files"); filesDir.mkdirs();
+        File cacheDir = new File(appDataDir, "cache"); cacheDir.mkdirs();
+        NativeLog.i(TAG, "data dir: " + persistentDataDir.getAbsolutePath()
+                + (appDataDir != persistentDataDir ? " (the app sees " + appDataDir.getPath() + ")" : ""));
         // v1.0.1641: ApplicationInfo.dataDir now names THIS directory (AOSP:
         // LoadedApk.mDataDirFile = aInfo.dataDir, so getDataDir() and
         // getApplicationInfo().dataDir are one directory). It used to name the
@@ -2302,7 +2321,7 @@ public final class Boot {
                 // path) needs these set before onCreate runs.
                 application.macapkInitInstall(apkPath, new File(appDir),
                                              resolveNativeLibraryDir(apkPath, appDir));
-                application.macapkSetDataDir(persistentDataDir);
+                application.macapkSetDataDir(appDataDir);
                 // Real manifest version / SDK metadata, so ApplicationInfo
                 // .{min,target}SdkVersion + PackageInfo.{versionName,versionCode}
                 // report true values (Unity reads these at native init; 0 SDK /

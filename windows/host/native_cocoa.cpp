@@ -488,6 +488,25 @@ void JNICALL Cocoa_setSystemFontsDir(JNIEnv* env, jclass, jstring dir) {
 // which the Windows shim does not have; accepting them keeps boot quiet.
 void JNICALL Cocoa_setNativeLibDir(JNIEnv*, jclass, jstring) {}
 void JNICALL Cocoa_setDataSubdir(JNIEnv*, jclass, jstring) {}
+// Boot: the app's package and its data directory on the host, so that
+// /data/user/0/<package> names that directory for guest code and for java.io
+// and java.nio (the overlay's WinApkPaths), whatever the folder is called.
+void JNICALL Cocoa_setAppData(JNIEnv* env, jclass, jstring package, jstring host_dir) {
+    auto text = [env](jstring s) {
+        std::string out;
+        if (!s) return out;
+        const jchar* c = env->GetStringChars(s, nullptr);
+        if (!c) return out;
+        const auto* w = reinterpret_cast<const wchar_t*>(c);
+        const int len = env->GetStringLength(s);
+        const int n = WideCharToMultiByte(CP_UTF8, 0, w, len, nullptr, 0, nullptr, nullptr);
+        out.resize(static_cast<size_t>(n));
+        WideCharToMultiByte(CP_UTF8, 0, w, len, &out[0], n, nullptr, nullptr);
+        env->ReleaseStringChars(s, c);
+        return out;
+    };
+    winapk::set_app_data(text(package).c_str(), text(host_dir).c_str());
+}
 void JNICALL Cocoa_setSharedStorageRoot(JNIEnv*, jclass, jstring) {}
 // java.io.FileReader's hook for a /proc path (Boot installs it): the file Boot
 // wrote for it under <android root>/proc (meminfo, this process's cmdline), as
@@ -1289,6 +1308,7 @@ const HostMethod kMethods[] = {
                        Cocoa_openAppLinkWindow),
     WINAPK_HOST_NATIVE(kCls, "setNativeLibDir", "(Ljava/lang/String;)V", Cocoa_setNativeLibDir),
     WINAPK_HOST_NATIVE(kCls, "setDataSubdir", "(Ljava/lang/String;)V", Cocoa_setDataSubdir),
+    WINAPK_HOST_NATIVE(kCls, "setAppData", "(Ljava/lang/String;Ljava/lang/String;)V", Cocoa_setAppData),
     WINAPK_HOST_NATIVE(kCls, "applyWindowOrientation", "(I)V", Cocoa_applyWindowOrientation),
     WINAPK_HOST_NATIVE(kCls, "applyWindowOrientationFor", "(Ljava/lang/String;III)V", Cocoa_applyWindowOrientationFor),
     WINAPK_HOST_NATIVE(kCls, "restoreUserOrientation", "()V", Cocoa_restoreUserOrientation),

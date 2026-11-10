@@ -49,6 +49,28 @@ std::wstring wide(JNIEnv* env, jstring s) {
     return w;
 }
 
+// The host file a path names: an Android path ("/data/user/0/<package>/x",
+// one leading '/') is the file the guest shim's table maps it to (paths.cpp);
+// anything else is a host path already.
+winapk::host::AndroidPathMapper g_path_mapper = nullptr;
+
+std::wstring host_of(const std::wstring& p) {
+    if (!g_path_mapper || p.empty() || p[0] != L'/' || (p.size() > 1 && p[1] == L'/')) return p;
+    if (p.size() > 2 && p[2] == L':') return p.substr(1);  // "/C:/x", a file URL's path
+    const int n = WideCharToMultiByte(CP_UTF8, 0, p.c_str(), static_cast<int>(p.size()), nullptr, 0, nullptr, nullptr);
+    std::string u(static_cast<size_t>(n), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, p.c_str(), static_cast<int>(p.size()), &u[0], n, nullptr, nullptr);
+    return g_path_mapper(u.c_str());
+}
+
+// jdk.internal.util.WinApkPaths.host0(String), Win.apk's java.base overlay:
+// the host file an Android path names, for java.io.File's and java.nio's calls.
+jstring JNICALL winapk_host_path(JNIEnv* env, jclass, jstring path) {
+    if (!path) return nullptr;
+    const std::wstring h = host_of(wide(env, path));
+    return env->NewString(reinterpret_cast<const jchar*>(h.c_str()), static_cast<jsize>(h.size()));
+}
+
 // The JDK's pathToNTPath: a path near the Win32 limit is opened by the long-path
 // (\\?\) form of its full path; a shorter one as given.
 std::wstring win32_path(const std::wstring& p) {
@@ -95,7 +117,8 @@ void open_file(JNIEnv* env, jobject self, jfieldID fd_field, jstring path, DWORD
         return;
     }
     const std::wstring p = wide(env, path);
-    const HANDLE h = CreateFileW(win32_path(p).c_str(), access, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+    const HANDLE h = CreateFileW(win32_path(host_of(p)).c_str(), access,
+                                 FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                                  nullptr, disposition, flags, nullptr);
     if (h == INVALID_HANDLE_VALUE) {
         throw_not_found(env, p, GetLastError());
@@ -150,8 +173,8 @@ constexpr int kFileRenameInfoEx = 22;  // FILE_INFO_BY_HANDLE_CLASS
 
 jint JNICALL rename_replace(JNIEnv* env, jclass, jstring from, jstring to) {
     if (!from || !to) return ERROR_INVALID_PARAMETER;
-    const std::wstring src = win32_path(wide(env, from));
-    std::wstring dst = wide(env, to);
+    const std::wstring src = win32_path(host_of(wide(env, from)));
+    std::wstring dst = host_of(wide(env, to));
     const DWORD n = GetFullPathNameW(dst.c_str(), 0, nullptr, nullptr);
     if (n == 0) return GetLastError();
     std::wstring full(n, L'\0');
@@ -190,7 +213,18 @@ bool bind(JNIEnv* env, const char* clazz, jfieldID* fd_field, const char* sig, v
 
 namespace winapk::host {
 
+void java_io_set_path_mapper(AndroidPathMapper mapper) { g_path_mapper = mapper; }
+
 bool java_io_open_init(JNIEnv* env) {
+    // Android paths for java.io.File and java.nio (the overlay's WinApkPaths),
+    // whatever the opens below do.
+    if (jclass paths = env->FindClass("jdk/internal/util/WinApkPaths")) {
+        JNINativeMethod m{const_cast<char*>("host0"), const_cast<char*>("(Ljava/lang/String;)Ljava/lang/String;"),
+                          reinterpret_cast<void*>(&winapk_host_path)};
+        if (env->RegisterNatives(paths, &m, 1) != JNI_OK) env->ExceptionClear();
+    } else {
+        env->ExceptionClear();
+    }
     // WINAPK_JAVA_IO_SHARE_DELETE=0 keeps the JDK's own opens, for comparing.
     wchar_t off[4] = {};
     if (GetEnvironmentVariableW(L"WINAPK_JAVA_IO_SHARE_DELETE", off, 4) && off[0] == L'0') return true;

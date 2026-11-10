@@ -93,6 +93,13 @@ final class StorageContext extends ContextWrapper {
     private static File deDirOf(Context base) {
         File ce = base.getDataDir();                                  // .../data/data/<leaf>
         if (ce == null) return new File("user_de");
+        // Win.apk: the credential dir is the device name /data/user/0/<pkg>
+        // (Boot.winApkAppDataDir), three levels deep, not the two-level host
+        // <root>/data/data/<leaf> the parent walk below assumes. Its
+        // device-protected sibling is /data/user_de/0/<pkg> (both map under the
+        // android root through paths.cpp), as on a device.
+        String cePath = ce.getPath().replace('\\', '/');
+        if (cePath.startsWith("/data/user/0/")) return new File("/data/user_de/0/" + ce.getName());
         File dataData = ce.getParentFile();                           // .../data/data
         File dataRoot = dataData != null ? dataData.getParentFile() : null; // .../data
         File anchor = dataRoot != null ? dataRoot : (dataData != null ? dataData : ce);

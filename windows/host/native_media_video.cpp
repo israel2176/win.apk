@@ -23,6 +23,7 @@
 
 #include "video_decode.h"
 #include "video_player.h"
+#include "winapk/mini_bionic.h"
 
 namespace winapk::host {
 
@@ -63,6 +64,16 @@ std::wstring wide_of(JNIEnv* env, jstring s) {
     std::wstring out(reinterpret_cast<const wchar_t*>(p), static_cast<size_t>(n));
     env->ReleaseStringChars(s, p);
     return out;
+}
+
+// The host file an app's media source names. HostVideo.open hands this native
+// a plain file path (an Android path such as "/storage/emulated/0/clip.mp4" or
+// a host path) or an http(s) URL; the Android path is mapped to its host file
+// (paths.cpp), a URL or host path passes through unchanged (android_host_path
+// leaves anything not rooted at a single '/').
+std::wstring host_source_of(JNIEnv* env, jstring s) {
+    if (!s) return {};
+    return winapk::android_host_path(utf8_of(env, s).c_str());
 }
 
 // The picture as a Java int[] (ARGB, as Bitmap.setPixels takes it).
@@ -262,7 +273,7 @@ jboolean JNICALL Hv_vpxBuiltIn(JNIEnv*, jclass) { return JNI_FALSE; }
 // track (the caller then plays it as sound alone).
 jlong JNICALL Hv_open(JNIEnv* env, jclass, jstring path, jbyteArray data) {
     std::unique_ptr<vd::Source> src;
-    if (path && env->GetStringLength(path) > 0) src = vd::Source::open(wide_of(env, path));
+    if (path && env->GetStringLength(path) > 0) src = vd::Source::open(host_source_of(env, path));
     else src = vd::Source::open(bytes_of(env, data));
     auto player = vd::Player::open(std::move(src));
     if (!player) return 0;

@@ -3,7 +3,9 @@
 #include "host_natives.h"
 
 #include "java_io_open.h"
+#include "sqlite_paths.h"
 #include "winapk/abi_thunk.h"
+#include "winapk/mini_bionic.h"
 
 #include <atomic>
 #include <cstdio>
@@ -229,7 +231,11 @@ bool register_host_natives(JNIEnv* env, jvmtiEnv* jvmti, NativeStats* stats) {
     }
     // Every JVM this host runs (an app, the broker, --gms) opens java.io files
     // so that they can be renamed and deleted while open, as on Android.
+    // Android paths ("/data/user/0/<package>/...") open the files the guest
+    // shim maps them to.
+    java_io_set_path_mapper(&winapk::android_host_path);
     java_io_open_init(env);
+    sqlite_android_paths_init();
     return true;
 }
 
