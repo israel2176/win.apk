@@ -577,6 +577,15 @@ every such change is listed here:
   does, `/data/app/.../lib/<isa>/lib<name>.so`, where upstream answers the
   translated library; `loadNativeOnDemand` loads that name through the same
   stub. Only where Pattern N is on.
+- `runtime/java/dalvik/system/NativeLibraryPath.java` (new), `DexPathList.java`,
+  `BaseDexClassLoader.java`, `DexClassLoader.java`, `InMemoryDexClassLoader.java`
+  and `AppClassLoader.libraryOnSearchPath`: a dex loader's `librarySearchPath`
+  is kept and `findLibrary` searches it before the app's lib dir, as AOSP's
+  `DexPathList` does; a `<zip>!/<dir>` entry's library is copied out to
+  `<data>/code_cache/macapk-native-libs/` with the DT_NEEDED it has in that zip
+  directory, and loads through an on-demand stub bound to that loader (Play
+  services' `CronetDynamite.apk` in a client app). Upstream drops the path.
+  `windows/test/java/LibrarySearchPathTest.java` runs on any JVM.
 - `runtime/java/android/app/Activity.java`: `Window.setContentView(View)` puts
   the view into the decor's content frame and keeps the decor as the root, as
   AOSP's `PhoneWindow` does (a view added to the decor floats over the content),

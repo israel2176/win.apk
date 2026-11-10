@@ -1300,17 +1300,52 @@ public final class AppClassLoader extends dalvik.system.PathClassLoader {
         return name != null ? name : so.getAbsolutePath().replace(File.separatorChar, '/');
     }
 
+    /** A dex loader under this one found `elf`, lib<libname>.so, on its own
+     *  librarySearchPath (dalvik.system.BaseDexClassLoader.findLibrary): the
+     *  answer for it, by the kind of caller as in findLibrary. To the JVM the
+     *  stub that loads this ELF, the one System.load of its path gets
+     *  (onDemandStub), which the JVM then binds to the class that called
+     *  System.loadLibrary, a class of that loader; to app code the file's
+     *  path. Null (the caller then asks findLibrary, as it did before there
+     *  was a path to search) on a host without a stub per ELF, and for a file
+     *  no stub can be made for. */
+    public String libraryOnSearchPath(String libname, File elf) {
+        if (!ClassFileRewriter.ONDEMAND_NATIVE) return null;
+        // The app's own lib dir, on the path of a loader for a plugin's dex:
+        // findLibrary's, with what it does around a library of the app.
+        File libDir = nativeLibDir();
+        if (libDir != null && sameFile(libDir, elf.getParentFile())) return null;
+        if (askedByApp()) {
+            String name = androidNameOf(elf);
+            return name != null ? name : elf.getPath().replace(File.separatorChar, '/');
+        }
+        if (!elf.isAbsolute() || !isElf(elf)) return null;
+        try {
+            String stub = onDemandStub(elf).getAbsolutePath();
+            NativeLog.i(TAG, "findLibrary(" + libname + ") -> " + stub + " for " + elf
+                + ", on a dex loader's library path");
+            return stub;
+        } catch (UnsatisfiedLinkError e) {
+            NativeLog.w(TAG, "findLibrary(" + libname + "): " + elf + " is on a dex loader's library path, but "
+                + e.getMessage());
+            return null;
+        }
+    }
+
     private static final StackWalker CALLERS =
         StackWalker.getInstance(StackWalker.Option.RETAIN_CLASS_REFERENCE);
 
     /** Whether findLibrary was called by app code (a class of this loader or of
      *  a dex loader under it), directly or by reflection, and not by the JVM's
-     *  library loading or the framework. BaseDexClassLoader's frame is a child
-     *  loader's findLibrary handing the question up. */
+     *  library loading or the framework. A class loader's frame is a
+     *  findLibrary handing the question on: a child loader's (BaseDexClassLoader,
+     *  or an app's subclass of PathClassLoader that overrides findLibrary and
+     *  calls super, which the JVM's loadLibrary then loads the answer of), or
+     *  java.lang.ClassLoader's own loadLibrary. */
     private static boolean askedByApp() {
         Class<?> caller = CALLERS.walk(frames -> frames
             .map(StackWalker.StackFrame::getDeclaringClass)
-            .filter(c -> c != AppClassLoader.class && c != dalvik.system.BaseDexClassLoader.class)
+            .filter(c -> !ClassLoader.class.isAssignableFrom(c))
             .findFirst().orElse(null));
         return caller != null && caller.getClassLoader() instanceof dalvik.system.BaseDexClassLoader;
     }

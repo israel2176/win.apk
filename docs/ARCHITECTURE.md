@@ -296,6 +296,16 @@ Gecko's loader and `GameActivity` do) gets Android's answer, not the stub:
 the same stub module, and the guest linker takes an Android path for
 `dlopen`, as the shim does for `open` (`src/bionic/paths.cpp`).
 
+A dex class loader the app creates with a library search path (`DexClassLoader`,
+`PathClassLoader`, `DelegateLastClassLoader`, `InMemoryDexClassLoader`) looks
+there first, as Android's `DexPathList` does, and then in the app's own
+libraries. Play services' modules need it: Google Maps loads
+`CronetDynamite.apk` with the path `<that apk>!/lib/x86_64`. A library inside
+an APK is copied out once to `<data dir>/code_cache/macapk-native-libs/`, with
+the libraries beside it that it needs, because the ELF loader maps files; it
+then gets a stub like any ELF the app loads by path, and the JVM binds it to
+the loader whose class called `System.loadLibrary`.
+
 ### ARM64 code: translation, JIT, interpreter
 
 Three engines run arm64 code, behind one CPU state (`src/arm64/`):

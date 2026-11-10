@@ -24,12 +24,12 @@ import java.nio.ByteBuffer;
 
 public final class InMemoryDexClassLoader extends BaseDexClassLoader {
 
-    /** AOSP primary ctor. librarySearchPath is advisory here (we have no
-     *  Android ld.so path); the buffers are converted to bytecode jars. */
+    /** AOSP primary ctor. librarySearchPath is what findLibrary searches
+     *  first; the buffers are converted to bytecode jars. */
     public InMemoryDexClassLoader(ByteBuffer[] dexBuffers,
                                   String librarySearchPath, ClassLoader parent) {
         super(MacApkDexConverter.convertBuffersToJarUrls(requireNonEmpty(dexBuffers)),
-              parent);
+              librarySearchPath, parent);
         // Open the converted jar, then unlink it: the loader reads through its
         // fd from here on, and no file outlives the process. ART never
         // persists an in-memory dex's code either (VdexFile::WriteToDisk

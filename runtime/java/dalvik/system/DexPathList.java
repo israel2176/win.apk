@@ -32,6 +32,10 @@ public final class DexPathList {
     /** AOSP field name (list of dirs searched for native libs). */
     List<File> nativeLibraryDirectories = new ArrayList<>();
 
+    /** The librarySearchPath the loader was created with: what findLibrary
+     *  searches. Not the list above, which is only there to be read. */
+    private NativeLibraryPath nativeLibraries = new NativeLibraryPath(null);
+
     /** AOSP-internal Element type; reflection-based tools sometimes construct
      *  these. We keep a minimal shape so getDeclaredFields succeeds. */
     static final class Element {
@@ -46,11 +50,8 @@ public final class DexPathList {
 
     DexPathList(ClassLoader definingContext, String dexPath,
                 String librarySearchPath, File optimizedDirectory) {
-        if (librarySearchPath != null && !librarySearchPath.isEmpty()) {
-            for (String p : librarySearchPath.split(File.pathSeparator)) {
-                if (!p.isEmpty()) nativeLibraryDirectories.add(new File(p));
-            }
-        }
+        nativeLibraries = new NativeLibraryPath(librarySearchPath);
+        nativeLibraryDirectories.addAll(nativeLibraries.directories());
         if (dexPath != null && !dexPath.isEmpty()) {
             List<Object> els = new ArrayList<>();
             for (String p : dexPath.split(File.pathSeparator)) {
@@ -67,11 +68,20 @@ public final class DexPathList {
         dexElements = n;
     }
 
-    /** AOSP: search the native-library directories for a lib. Mac.apk resolves
-     *  native libs in AppClassLoader.findLibrary, not here, so this returns null
-     *  (callers fall back to the loader's findLibrary). */
+    /** AOSP: lib<libraryName>.so of the first native-library directory that
+     *  has it, or null. Only the loader's own librarySearchPath is searched
+     *  here (NativeLibraryPath); the app's lib dir, which AOSP's list also
+     *  holds, is AppClassLoader.findLibrary's, and BaseDexClassLoader.findLibrary
+     *  asks both. */
     public String findLibrary(String libraryName) {
-        return null;
+        File f = findLibraryFile(libraryName);
+        return f == null ? null : f.getPath();
+    }
+
+    /** The same as a file the host can open: a library of a "<zip>!/<dir>"
+     *  entry is copied out of the zip. */
+    File findLibraryFile(String libraryName) {
+        return nativeLibraries.find(libraryName);
     }
 
     /** AOSP: the configured dex code paths, joined. */

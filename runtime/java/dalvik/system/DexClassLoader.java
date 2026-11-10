@@ -26,11 +26,11 @@ public class DexClassLoader extends BaseDexClassLoader {
 
     /** AOSP signature: takes a colon-separated list of .dex/.jar files,
      *  an optimized-DEX directory (we ignore), a library-search-path
-     *  (we ignore), and a parent ClassLoader. We convert each real code path
+     *  (searched by findLibrary), and a parent ClassLoader. We convert each real code path
      *  to a jar of JVM bytecode so findClass over it works. */
     public DexClassLoader(String dexPath, String optimizedDirectory,
                            String librarySearchPath, ClassLoader parent) {
-        super(convertDexPath(dexPath), parent);
+        super(convertDexPath(dexPath), librarySearchPath, parent);
         // Hold every converted jar open from construction, as ART maps its
         // dex elements here (see BaseDexClassLoader.macapkOpenNow).
         macapkOpenNow();
