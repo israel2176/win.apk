@@ -13,6 +13,7 @@
 #pragma once
 
 #include <cstddef>
+#include <string>
 
 namespace winapk {
 
@@ -58,6 +59,12 @@ int bionic_unsetenv(const char* name);
 // directory Boot writes. UTF-8 host paths.
 void set_android_root(const char* dir);
 void set_system_fonts_dir(const char* dir);
+
+// The host file behind a /proc path that is a real file (/proc/meminfo,
+// /proc/self/cmdline and /proc/<pid>/cmdline, which Boot writes under
+// <android root>/proc), for java.io.FileReader's /proc hook; empty when there
+// is none.
+std::wstring android_proc_file(const char* path);
 
 // The calling thread's NDK looper (ALooper, src/bionic/looper.cpp), for Java's
 // android.os.Looper (NativeLooper): one wait for a thread's Java messages and

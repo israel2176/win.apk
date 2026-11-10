@@ -428,6 +428,13 @@ every such change is listed here:
 - `runtime/java/com/macapk/loader/SystemClient.java`: a call from the broker
   that arrives before the process has read the broker's pid from its
   registration waits for it, instead of being refused as a stranger's.
+- `runtime/java/android/net/LocalServerSocket.java`, `LocalSocket.java`,
+  `LocalSocketAddress.java`: the ABSTRACT namespace (`new LocalServerSocket(name)`,
+  `connect(new LocalSocketAddress(name))`), which upstream refuses. Windows has
+  AF_UNIX but no abstract names, so a name is the socket file
+  `android\dev\socket\a-<hash of the name>`, shared by the apps of the install;
+  the `.lock` file beside it, locked while the server socket is open, says
+  whether a file left by a killed process may be replaced.
 - `runtime/java/android/net/Uri.java`: `Uri.fromFile` of a drive path gives
   the path `/C:/Users/...` (a leading `/`, `/` separators), so the URI's
   string parses back to the same path; `file://C:%5C...` parsed back with the
@@ -628,6 +635,15 @@ every such change is listed here:
   DEX). Not Windows-specific; worth offering upstream.
 - `runtime/java/android/system/Os.java`: `chmod` and `fchmod` (Key Mapper
   died at start on the missing method). Not Windows-specific.
+- `runtime/java/com/macapk/loader/Boot.java` (`writeJavaProcMirror`,
+  `writeProcCmdline`): the `/proc` mirror also writes
+  `<android root>/proc/<pid>/cmdline`, the process name and a NUL, which
+  `/proc/self/cmdline` and `/proc/<pid>/cmdline` name (`paths.cpp`;
+  `java.io.FileReader`'s `/proc` hook, `Cocoa_remapProcPath`), and drops the
+  directories of pids that no longer run (Breezy Weather reads the file in
+  `Application.onCreate`, issue #123). With Android paths
+  (`-Dwinapk.android.root`) the `/proc/meminfo` alias `/tmp/mcmeminf` is a
+  copy, not a symbolic link, which a standard Windows account may not create.
 - `runtime/java/android/preference/Preference.java`: an app subclass that
   overrides `onGetDefaultValue(TypedArray, int)` gets it called, with a
   TypedArray holding `android:defaultValue`, and one that overrides neither
@@ -995,6 +1011,10 @@ every such change is listed here:
   does not allow in a file name are written as `%XX` in a preferences file's
   name. Firebase Remote Config's `frc_1:<project>:android:...` file failed
   every write.
+- `runtime/java/android/content/Context.java`, `com/macapk/loader/SharedPrefsImpl.java`:
+  `Context.getSharedPreferences(File, int)`, which Android removed from the SDK
+  but kept in `Context`. Aurora Store reads its blacklist through it by
+  reflection; without the method the blacklist always read as empty.
 - `runtime/java/com/macapk/loader/BinaryXmlParser.java`,
   `DomXmlResourceParser.java`, `android/util/AttributeSet.java`,
   `android/view/LayoutInflater.java` and the framework readers of a view's

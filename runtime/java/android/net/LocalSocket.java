@@ -1,12 +1,11 @@
 // android.net.LocalSocket
 //
-// A Unix-domain stream socket. JDK 17 exposes Unix-domain sockets via
-// SocketChannel + StandardProtocolFamily.UNIX, so we back FILESYSTEM-namespace
-// LocalSockets with a real channel (honest local IPC where the platform allows
-// it). Android's default ABSTRACT namespace has no JDK equivalent on macOS, so
-// connecting to an ABSTRACT address fails with IOException -- the honest
-// "unsupported namespace" result. Mirrors
-// frameworks/base/core/java/android/net/LocalSocket.java.
+// A Unix-domain stream socket, on the JDK's SocketChannel with
+// StandardProtocolFamily.UNIX. A FILESYSTEM address is its path. Android's
+// default ABSTRACT namespace exists only on Linux, so an abstract name is a
+// socket file in the android root (abstractPath, below), which
+// LocalServerSocket(String) binds. RESERVED (/dev/socket) is not supported.
+// Mirrors frameworks/base/core/java/android/net/LocalSocket.java.
 package android.net;
 
 import java.io.IOException;
@@ -42,14 +41,38 @@ public class LocalSocket implements java.io.Closeable {
         mConnected = channel != null && channel.isConnected();
     }
 
-    public void connect(LocalSocketAddress endpoint) throws IOException {
-        if (endpoint.getNamespace() != LocalSocketAddress.Namespace.FILESYSTEM) {
-            throw new IOException("unsupported local socket namespace: "
-                    + endpoint.getNamespace());
+    /**
+     * The socket file that stands for a name of the ABSTRACT namespace:
+     * {@code <android root>/dev/socket/a-<hash>}. The android root is shared by
+     * the apps of an install and private to the Windows user, which is the
+     * reach an abstract name has on a device. The name is hashed because it may
+     * hold any character, differs by case where Windows file names do not, and
+     * an AF_UNIX path is at most 108 bytes with the directory in it.
+     */
+    static Path abstractPath(String name) throws IOException {
+        if (name == null) throw new NullPointerException("name");
+        byte[] digest;
+        try {
+            digest = java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(name.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IOException(e);
         }
+        StringBuilder file = new StringBuilder("a-");
+        for (int i = 0; i < 8; i++) file.append(String.format("%02x", digest[i]));
+        return Path.of(com.macapk.loader.SharedStorage.androidRoot(), "dev", "socket", file.toString());
+    }
+
+    public void connect(LocalSocketAddress endpoint) throws IOException {
+        Path path;
+        switch (endpoint.getNamespace()) {
+            case FILESYSTEM: path = Path.of(endpoint.getName()); break;
+            case ABSTRACT: path = abstractPath(endpoint.getName()); break;
+            default:
+                throw new IOException("unsupported local socket namespace: " + endpoint.getNamespace());
+        }
+        UnixDomainSocketAddress addr = UnixDomainSocketAddress.of(path);
         mChannel = SocketChannel.open(StandardProtocolFamily.UNIX);
-        UnixDomainSocketAddress addr =
-                UnixDomainSocketAddress.of(Path.of(endpoint.getName()));
         mChannel.connect(addr);
         mConnected = true;
         mRemoteAddress = endpoint;

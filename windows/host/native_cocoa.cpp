@@ -489,7 +489,19 @@ void JNICALL Cocoa_setSystemFontsDir(JNIEnv* env, jclass, jstring dir) {
 void JNICALL Cocoa_setNativeLibDir(JNIEnv*, jclass, jstring) {}
 void JNICALL Cocoa_setDataSubdir(JNIEnv*, jclass, jstring) {}
 void JNICALL Cocoa_setSharedStorageRoot(JNIEnv*, jclass, jstring) {}
-jstring JNICALL Cocoa_remapProcPath(JNIEnv*, jclass, jstring) { return nullptr; }
+// java.io.FileReader's hook for a /proc path (Boot installs it): the file Boot
+// wrote for it under <android root>/proc (meminfo, this process's cmdline), as
+// the guest shim's opens find it. Null for a path with no such file: the open
+// then fails as the JDK's does.
+jstring JNICALL Cocoa_remapProcPath(JNIEnv* env, jclass, jstring path) {
+    if (!path) return nullptr;
+    const char* p = env->GetStringUTFChars(path, nullptr);
+    if (!p) return nullptr;
+    const std::wstring host = winapk::android_proc_file(p);
+    env->ReleaseStringUTFChars(path, p);
+    if (host.empty()) return nullptr;
+    return env->NewString(reinterpret_cast<const jchar*>(host.c_str()), static_cast<jsize>(host.size()));
+}
 // The host's CJK faces by PostScript name (CoreText on the Mac). None here:
 // MacApkSystemFonts links them into /system/fonts with symbolic links, which a
 // standard Windows account may not create, so the bundled fonts stay the set.

@@ -1,9 +1,9 @@
 // android.net.LocalSocketAddress
 //
 // Names a Unix-domain (local) socket endpoint. Android supports three
-// namespaces; only FILESYSTEM maps onto a JDK UnixDomainSocketAddress, so the
-// other two are recorded but only meaningfully usable for FILESYSTEM. Pure
-// value type. Mirrors
+// namespaces: FILESYSTEM is a JDK UnixDomainSocketAddress, ABSTRACT a socket
+// file LocalSocket.abstractPath picks for the name, RESERVED is recorded but
+// cannot be bound or connected. Pure value type. Mirrors
 // frameworks/base/core/java/android/net/LocalSocketAddress.java.
 package android.net;
 
