@@ -13,6 +13,7 @@
 #include <cstdio>
 
 #include "../host/win32_window.h"
+#include "../host/window_fit.h"
 
 namespace {
 
@@ -64,6 +65,38 @@ int main() {
     check("the phone letterboxed (WINAPK_RESIZABLE=0) is scaled", window_frame_present(720, 1600, 468, 1040, 720, 1600) == FramePresent::kScaled);
     check("a frame from before a resize is not stretched", window_frame_present(720, 1600, 1300, 900, 1300, 900) == FramePresent::kStale);
     check("a frame from before a resize, smaller box", window_frame_present(1300, 900, 720, 1600, 720, 1600) == FramePresent::kStale);
+
+    // The size a window opens at (window_fit.h), which the launcher's starting window takes too.
+    std::printf("the size a window opens at\n");
+    using winapk::host::window_density_for;
+    using winapk::host::window_fit_scale;
+    using winapk::host::window_launch_client;
+    auto opens = [](int pw, int ph, int dpi, int aw, int ah, int w, int h) {
+        int cw = 0, ch = 0;
+        window_launch_client(pw, ph, dpi, aw, ah, &cw, &ch);
+        const bool ok = cw == w && ch == h;
+        if (!ok) std::printf("    got %dx%d, want %dx%d\n", cw, ch, w, h);
+        return ok;
+    };
+    check("100%, room to spare: a pixel per dp", opens(800, 360, 96, 1900, 1000, 800, 360));
+    check("150%: one and a half", opens(800, 360, 144, 1900, 1000, 1200, 540));
+    check("200%: two", opens(360, 800, 192, 3800, 2000, 720, 1600));
+    check("a tall phone on a short screen at 100%: made to fit, at a whole density", opens(360, 800, 96, 1900, 700, 315, 700));
+    check("as wide as the room allows", opens(1280, 800, 96, 1000, 1000, 1000, 625));
+    check("never over the room", [] {
+        for (int ah = 300; ah < 1400; ah += 7) {
+            int cw = 0, ch = 0;
+            window_launch_client(360, 800, 144, 2000, ah, &cw, &ch);
+            if (ch > ah || cw > 2000) return false;
+        }
+        return true;
+    }());
+    check("the density is whole and within Android's buckets",
+          window_density_for(1.0f) == 160 && window_density_for(1.5f) == 240 && window_density_for(0.3f) == 120 &&
+              window_density_for(9.0f) == 640);
+    check("the fit is the tighter side, and never below a quarter",
+          window_fit_scale(720, 800, 360, 800) == 1.0f && window_fit_scale(10, 10, 360, 800) == 0.25f &&
+              window_fit_scale(0, 500, 360, 800) == 0.25f);
 
     std::printf("\n%s: %d failure(s)\n", g_failures ? "FAILED" : "OK", g_failures);
     return g_failures;

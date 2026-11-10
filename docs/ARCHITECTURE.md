@@ -661,15 +661,22 @@ tests the transport and the broker's checks across three processes.
 ## A run, step by step
 
 1. The launcher (or a shortcut: `Win.apk.exe --run <library apk>`) shows the
-   app's splash at once, sets `WINAPK_PHONE_SIZE` from the App window size
-   setting and the app's effective orientation, and starts
+   app's starting window at once: a normal window with the app's name and
+   icon on its frame and the icon in its middle, as Android's starting window
+   is, of the size the app's window will open at (`host/window_fit.h`, the
+   arithmetic the runtime sizes its window with) and with the app's
+   AppUserModelID, so the taskbar counts it as the app. It sets
+   `WINAPK_PHONE_SIZE` from the App window size
+   setting and the app's effective orientation, passes the starting window
+   as `WINAPK_START_WINDOW` (the runtime opens its window over it, so the
+   app's window takes its place), and starts
    `winapk-runtime --apk <library apk>` with its output in
    `logs\run-<name>.log` (the previous run's kept as `run-<name>.1.log`;
    `last-run.log` is a hard link to the newest). It passes
    `WINAPK_READY_EVENT`, an inherited event handle, and waits for the event
    or the process: the runtime sets the event once its window has painted
    the app's first frame (`win32_window.cpp`, `signal_launcher_ready`), and
-   the splash goes. If the process ends first, the splash says the app did
+   the starting window goes. If the process ends first, that window says the app did
    not start, with Show log and Report a problem (`report_problem`: GitHub's
    issue form prefilled through its fields' ids in the URL, and Explorer on
    the run log and the newest crash dump; nothing is uploaded).

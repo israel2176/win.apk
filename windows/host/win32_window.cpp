@@ -2,6 +2,8 @@
 
 #include "win32_window.h"
 
+#include "window_fit.h"
+
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -55,6 +57,24 @@ HWND embed_parent_requested() {
         return IsWindow(h) ? h : static_cast<HWND>(nullptr);
     }();
     return parent;
+}
+
+// WINAPK_START_WINDOW=<window handle>: the launcher's starting window for this app, the one the user
+// has looked at since they opened it. It has the size this window will have (window_fit.h) and stands
+// where it should open, so the app's window opens over it and takes its place: on its monitor, at its
+// top, centred on it (the same rectangle when the sizes agree, as they do unless the app or a test
+// changed the size since). Without the variable, or when the handle is no window, or it is minimized,
+// the window opens where Windows puts it.
+HWND start_window_requested() {
+    static const HWND start = [] {
+        wchar_t buf[32];
+        const DWORD n = GetEnvironmentVariableW(L"WINAPK_START_WINDOW", buf, 32);
+        SetEnvironmentVariableW(L"WINAPK_START_WINDOW", nullptr);  // not for the processes this one starts
+        if (n == 0 || n >= 32) return static_cast<HWND>(nullptr);
+        const HWND h = reinterpret_cast<HWND>(static_cast<uintptr_t>(wcstoull(buf, nullptr, 10)));
+        return IsWindow(h) ? h : static_cast<HWND>(nullptr);
+    }();
+    return start && IsWindow(start) && IsWindowVisible(start) && !IsIconic(start) ? start : nullptr;
 }
 
 HANDLE g_ready_event = nullptr;  // the launcher's (take_launcher_ready_event)
@@ -235,13 +255,11 @@ float fit_scale(const RECT& wa, UINT dpi, int w, int h) {
     RECT f{0, 0, 0, 0};
     adjust_for_dpi(&f, dpi);
     const int m = margin_px(dpi);
-    const float aw = static_cast<float>((wa.right - wa.left) - (f.right - f.left) - 2 * m);
-    const float ah = static_cast<float>((wa.bottom - wa.top) - (f.bottom - f.top) - 2 * m);
-    if (w <= 0 || h <= 0 || aw <= 0 || ah <= 0) return 0.25f;
-    return std::max(0.25f, std::min(aw / static_cast<float>(w), ah / static_cast<float>(h)));
+    return window_fit_scale((wa.right - wa.left) - (f.right - f.left) - 2 * m,
+                            (wa.bottom - wa.top) - (f.bottom - f.top) - 2 * m, w, h);
 }
 
-int client_px(int dp, float scale) { return static_cast<int>(static_cast<float>(dp) * scale + 0.5f); }
+int client_px(int dp, float scale) { return window_client_px(dp, scale); }
 
 // The scale the window keeps the phone at on a monitor at `dpi`: its launch
 // size in physical terms.
@@ -962,7 +980,15 @@ DWORD WINAPI ui_thread(void* param) {
         // the app), wholly inside its work area.
         RECT wr{};
         GetWindowRect(g_hwnd, &wr);
-        if (g_plan.monitor && MonitorFromWindow(g_hwnd, MONITOR_DEFAULTTONEAREST) != g_plan.monitor) {
+        RECT sr{};
+        if (const HWND start = start_window_requested(); start && GetWindowRect(start, &sr)) {
+            // Over the launcher's starting window: it takes that window's place.
+            const LONG w = wr.right - wr.left, h = wr.bottom - wr.top;
+            const LONG x = sr.left + ((sr.right - sr.left) - w) / 2, y = sr.top;
+            wr = RECT{x, y, x + w, y + h};
+            SetWindowPos(g_hwnd, nullptr, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+            std::fprintf(stderr, "[win.apk] window: opens over the launcher's starting window, at %ld,%ld\n", x, y);
+        } else if (g_plan.monitor && MonitorFromWindow(g_hwnd, MONITOR_DEFAULTTONEAREST) != g_plan.monitor) {
             const RECT wa = work_area(g_plan.monitor);
             const LONG w = wr.right - wr.left, h = wr.bottom - wr.top;
             const LONG x = wa.left + (wa.right - wa.left - w) / 2, y = wa.top + (wa.bottom - wa.top - h) / 2;
@@ -999,8 +1025,10 @@ float window_plan(int phone_w, int phone_h) {
     // The monitor the user started the app from: the foreground window's
     // (the launcher, a Start menu, Explorer), else the primary one.
     // Embedded, the launcher's (whose area WINAPK_PHONE_SIZE already is: nothing to fit).
+    // Started with the launcher's starting window on show: that window's monitor.
     const HWND parent = embed_parent_requested();
-    HWND fg = parent ? parent : GetForegroundWindow();
+    const HWND start = parent ? nullptr : start_window_requested();
+    HWND fg = parent ? parent : start ? start : GetForegroundWindow();
     g_plan.monitor = fg ? MonitorFromWindow(fg, MONITOR_DEFAULTTOPRIMARY)
                         : MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY);
     g_plan.dpi = monitor_dpi(g_plan.monitor);
@@ -1011,9 +1039,7 @@ float window_plan(int phone_w, int phone_h) {
     return g_plan.scale;
 }
 
-int window_density_dpi(float scale) {
-    return std::clamp(static_cast<int>(std::floor(scale * 160.0f + 0.001f)), 120, 640);
-}
+int window_density_dpi(float scale) { return window_density_for(scale); }
 
 AppBox window_app_box(int cw, int ch, int phone_w, int phone_h, int lock, bool resizable, bool letterbox) {
     AppBox whole{0, 0, std::max(cw, 0), std::max(ch, 0)};
