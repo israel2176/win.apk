@@ -35,7 +35,9 @@
 // --install-only stops after step 2 plus the launcher's metadata: the app's
 // icon and name in <app dir>/icon.png and label.txt (com.winapk.tools.AppMeta,
 // in a JVM with the host natives but no app running), which is what the
-// launcher (launcher/) runs when an APK is added to the library.
+// launcher (launcher/) runs when an APK is added to the library. The metadata
+// is written before the code is converted, so the launcher shows the app's
+// own icon and name while the long step runs.
 //
 // App data lives under %LOCALAPPDATA%\Win.apk unless --data says otherwise.
 // The app's window is win32_window.h's; with WINAPK_HEADLESS=1 there is none
@@ -1809,10 +1811,9 @@ DWORD WINAPI boot_thread(void* param) {
                                : nullptr;
         if (write) env->CallStaticVoidMethod(meta, write, jstr(o.apk), jstr(b->app_dir));
         check_exception(env, "AppMeta.write");
-        // Framework threads the icon render started must not keep the
-        // process alive.
-        std::fflush(stderr);
-        TerminateProcess(GetCurrentProcess(), write ? 0 : 1);
+        // The JVM stays up while main converts the app's code, and goes with the process.
+        b->result = write ? 0 : 1;
+        return 0;
     }
 
     jclass boot = env->FindClass("com/macapk/loader/Boot");
@@ -2198,6 +2199,25 @@ int wmain(int argc, wchar_t** argv) {
     // value inherited from the process that started this one (the broker
     // starting Play services for an app) names another app.
     SetEnvironmentVariableW(L"MACAPK_APK_PATH", b.options.apk.c_str());
+    if (b.options.install_only) {
+        // The app's icon and name first (AppMeta, on boot_thread), then the long part, converting its code:
+        // the launcher shows the real icon and name while an install runs, as Android's installer does,
+        // instead of at its very end. Neither needs the other: the icon comes from the APK's resources.
+        HANDLE t = CreateThread(nullptr, 64 * 1024 * 1024, boot_thread, &b, STACK_SIZE_PARAM_IS_A_RESERVATION,
+                                nullptr);
+        if (!t) return 1;
+        WaitForSingleObject(t, INFINITE);
+        CloseHandle(t);
+        int code = b.result;
+        if (code == 0) {
+            prepare_arm64(b.options, b.app_dir);
+            if (!convert_dex(b.options, b.app_dir, &b.app_jar)) code = 1;
+        }
+        // Not a return: the JVM is still up, and framework threads the icon render started must not keep
+        // the process alive.
+        std::fflush(stderr);
+        TerminateProcess(GetCurrentProcess(), static_cast<UINT>(code));
+    }
     prepare_arm64(b.options, b.app_dir);
     if (!convert_dex(b.options, b.app_dir, &b.app_jar)) return 1;
 

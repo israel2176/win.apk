@@ -69,9 +69,10 @@ Installs run one at a time, in a small install window:
 ![The install window while it works: the file's name, Installing… and a progress bar, with Show details and Cancel](images/install-progress.png)
 
 - While it works, the window shows the app's icon and name (the file's name
-  until the app's own is read, near the end), a moving bar and one line on
-  what it is doing: **Installing…**, then **Converting the app's code. This
-  happens once.**, then **Getting the app's name and icon…**.
+  for the first seconds, until the app's own are read), a moving bar and one
+  line on what it is doing: **Installing…**, then **Getting the app's name
+  and icon…**, then **Converting the app's code. This happens once.**, the
+  long part. A new app's tile in the library shows its icon from then on too.
 - **Show details** opens the install's log as it is written; each install
   window starts with it closed.
 - Files opened while an install is under way, from Explorer or by dragging,
@@ -149,12 +150,14 @@ downloaded APK is deleted after the install.
 Open an app by double-clicking its tile (or selecting it and pressing Enter),
 from its right-click menu, or with its Start menu or desktop shortcut.
 
-A launch window with the app's icon shows at once and stays until the app's
-own window is up, the way a phone shows a splash screen. A start that takes
-long says why: **Converting the app's code. This happens once.** when the
-app's code changed, or **Still starting** after twenty seconds. Esc or the
-✕ in its corner cancels the start. If the app ends before its window is up,
-or later with an error, the same window turns into a short message
+The app's window opens at once, with the app's name and icon on its title bar
+and the icon in its middle, the way a phone shows an app's starting screen;
+the app's own content takes its place, in the same window to the eye, as
+soon as it has drawn. A start that takes
+long says why under the icon: **Converting the app's code. This happens once.** when the
+app's code changed, or **Still starting** after twenty seconds. Closing the
+window, or Esc, cancels the start. If the app ends before it has drawn,
+or later with an error, the window turns into a short message
 (**Wiz didn't start**, **Wiz stopped with an error**) with **Report a
 problem** under it, and **Close** and **Show log**; Esc or Enter closes it.
 
