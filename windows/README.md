@@ -610,6 +610,22 @@ every such change is listed here:
   only a visible bar. A hidden spinner kept the whole window redrawing 20
   times a second (Google Maps idle: a third of all frames). Not
   Windows-specific.
+- `runtime/java/android/view/View.java`, `ViewGroup.java`, `ViewRootImpl.java`
+  and `widget/ProgressBar.java` (views that are not on screen):
+  `ViewGroup.removeDetachedView` detaches the child from the window and
+  reports it removed, as AOSP's does (a RecyclerView row that a layout did not
+  reuse stayed "attached" for good and never got `onDetachedFromWindow`); an
+  invalidation asks for a frame only when the view can be drawn, that is no
+  view from it up to its window's root is hidden without a View animation and
+  its tree is in a window (AOSP's `skipInvalidate` and `mAttachInfo` tests;
+  `MACAPK_INVALIDATE_SKIP_UNDRAWN=0` turns it off, and
+  `MACAPK_TRACE_INVALIDATE=1` lists such invalidations as `skipped`); and
+  `onVisibilityAggregated`, plus `onWindowVisibilityChanged` and
+  `onVisibilityChanged` at attach and detach, are called as AOSP calls them,
+  with `ProgressBar` stopping an animated indeterminate drawable while it is
+  not shown (`MACAPK_VISIBILITY_AGGREGATED=0`). Google Maps' idle map redrew
+  the whole window 57 times a second for a progress bar and Compose content
+  of a row that had left its list. Not Windows-specific.
 - `runtime/java/android/database/sqlite/SQLiteDatabase.java`: `BEGIN`,
   `COMMIT` and `ROLLBACK` given to `execSQL` nest in the transaction stack, as
   AOSP's `SQLiteSession.executeSpecial` does. Not Windows-specific.

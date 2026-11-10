@@ -87,11 +87,16 @@ public final class ViewRootImpl {
     public boolean consumeLayoutRequested() { return mLayoutRequested.getAndSet(false); }
 
     /** Convenience for the single-window case: schedule a DRAW (invalidate). */
-    public static void schedule() { if (INVAL_CENSUS) census(); getInstance().scheduleTraversal(); }
+    public static void schedule() { if (INVAL_CENSUS) census(""); getInstance().scheduleTraversal(); }
+    /** An invalidation that asked for no frame because the view cannot be drawn
+     *  (View.macapkCannotBeDrawn). Only counted: the census lists it as
+     *  `skipped <entry> | <app frame>`, so a run shows what it saved. */
+    static void macapkInvalidateSkipped() { if (INVAL_CENSUS) census("skipped "); }
     // MACAPK_TRACE_INVALIDATE=1 (diagnostic): WHO keeps the window dirty. Every
     // schedule() is attributed to its framework entry (View.invalidate,
     // Drawable.invalidateSelf ...) and the first APP frame that called it, and every
     // 5 s the 8 commonest pairs are logged as `[inval-census]` (tag Mac.apk.Inval).
+    // A pair that starts with `skipped` asked for no frame (macapkInvalidateSkipped).
     // An app that redraws every frame on a static screen shows its animators here:
     // Telegram's chat list (2026-10-01) is a SpoilerEffect cell, ActionBar
     // .setTranslationY and MainTabsActivity's blur fade, 36 each per 5 s -- small
@@ -100,11 +105,12 @@ public final class ViewRootImpl {
     static final boolean INVAL_CENSUS = "1".equals(System.getenv("MACAPK_TRACE_INVALIDATE"));
     private static final java.util.HashMap<String, int[]> sCensus = new java.util.HashMap<>();
     private static long sCensusT0;
-    private static void census() {
+    private static void census(String prefix) {
         StackTraceElement[] st = new Throwable().getStackTrace();
         String entry = "?", app = "?";
         for (int i = 2; i < st.length; i++) {
             String c = st[i].getClassName();
+            if (st[i].getMethodName().equals("macapkScheduleRedraw")) continue;   // name its caller
             boolean fw = c.startsWith("android.") || c.startsWith("com.macapk.") || c.startsWith("java.") || c.startsWith("androidx.");
             if (entry.equals("?")) entry = c.substring(c.lastIndexOf('.') + 1) + "." + st[i].getMethodName();
             if (!fw) { app = c + "." + st[i].getMethodName() + ":" + st[i].getLineNumber()
@@ -112,7 +118,7 @@ public final class ViewRootImpl {
         }
         long now = System.nanoTime();
         synchronized (sCensus) {
-            sCensus.computeIfAbsent(entry + " | " + app, k -> new int[1])[0]++;
+            sCensus.computeIfAbsent(prefix + entry + " | " + app, k -> new int[1])[0]++;
             if (sCensusT0 == 0) sCensusT0 = now;
             if (now - sCensusT0 > 5_000_000_000L) {
                 StringBuilder sb = new StringBuilder("[inval-census] 5s:");

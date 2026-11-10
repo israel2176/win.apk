@@ -374,6 +374,42 @@ public class ProgressBar extends View {
         }
     }
 
+    /** AOSP ProgressBar.onVisibilityAggregated (android14 ProgressBar.java:
+     *  1906-1924):
+     *      if (isVisible != mAggregatedIsVisible) {
+     *          mAggregatedIsVisible = isVisible;
+     *          if (mIndeterminate) {
+     *              // let's be nice with the UI thread
+     *              if (isVisible) startAnimation(); else stopAnimation();
+     *          }
+     *          if (mCurrentDrawable != null) mCurrentDrawable.setVisible(isVisible, false);
+     *      }
+     *  stopAnimation() is `((Animatable) mIndeterminateDrawable).stop()`, and
+     *  startAnimation() only arms the start that the next draw performs
+     *  (drawTrack). This is what stops an app's own animated indeterminate
+     *  drawable when the bar, an ancestor or the window is hidden: without it
+     *  such a drawable ran, and invalidated, for as long as the view lived.
+     *
+     *  We start again only what this stopped while it was running. AOSP starts
+     *  every Animatable indeterminate drawable; ours never has (see onDraw on
+     *  the platform spinner), and that is not this change. */
+    private boolean mAggregatedIsVisible;
+    private boolean mShouldStartAnimationDrawable;
+    @Override public void onVisibilityAggregated(boolean isVisible) {
+        super.onVisibilityAggregated(isVisible);
+        if (isVisible == mAggregatedIsVisible) return;
+        mAggregatedIsVisible = isVisible;
+        if (indeterminate && mIndeterminateDrawable instanceof android.graphics.drawable.Animatable a) {
+            if (isVisible) {
+                postInvalidate();   // the draw that starts it
+            } else if (a.isRunning()) {
+                a.stop();
+                mShouldStartAnimationDrawable = true;
+            }
+        }
+        if (mCurrentDrawable != null) mCurrentDrawable.setVisible(isVisible, false);
+    }
+
     @Override public void onAttachedToWindow() {
         try { super.onAttachedToWindow(); } catch (Throwable ignored) {}
         macapkUpdateAnim();
@@ -474,6 +510,12 @@ public class ProgressBar extends View {
             mCurrentDrawable.setBounds(0, 0, w, h);
             mCurrentDrawable.draw(canvas);
             canvas.restoreToCount(sv);
+            // AOSP drawTrack, after the draw: the start that startAnimation()
+            // armed (see onVisibilityAggregated).
+            if (mShouldStartAnimationDrawable && mAggregatedIsVisible) {
+                mShouldStartAnimationDrawable = false;
+                if (indeterminate && mCurrentDrawable instanceof android.graphics.drawable.Animatable a) a.start();
+            }
             return;
         }
         mPaint.setAntiAlias(true);
