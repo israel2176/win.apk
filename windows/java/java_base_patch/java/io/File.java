@@ -2000,6 +2000,16 @@ public class File
         private static final File TMPDIR = new File(StaticProperty.javaIoTmpDir());
 
         static File location() {
+            // Win.apk / Android libcore: re-read java.io.tmpdir on each call
+            // (AOSP "Android-changed: Handle java.io.tmpdir changes"). Boot
+            // resets it to the app's cache dir (/data/user/0/<pkg>/cache) after
+            // HotSpot has already cached the host temp dir at VM start, so
+            // File.createTempFile lands under the app's Android cache dir, not
+            // the host temp, whose path native code cannot walk.
+            if (jdk.internal.util.WinApkPaths.isAndroid("/")) {
+                String t = System.getProperty("java.io.tmpdir");
+                if (t != null && !t.isEmpty()) return new File(t);
+            }
             return TMPDIR;
         }
 

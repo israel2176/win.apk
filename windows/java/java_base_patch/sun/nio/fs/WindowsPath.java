@@ -402,8 +402,24 @@ class WindowsPath implements Path {
         return path.length() > root.length();
     }
 
+    // Win.apk: a '/'-rooted Android path ("/data/user/0/<pkg>/files",
+    // jdk.internal.util.WinApkPaths). The parser classifies it DIRECTORY_RELATIVE
+    // (one leading slash, no drive), and the whole class keeps the host '\' form
+    // in `path` so getName/getParent/resolve/offsets stay the JDK's; only the
+    // app-visible string form and absoluteness flip to the Android '/'-form.
+    private boolean isAndroidPath() {
+        return type == WindowsPathType.DIRECTORY_RELATIVE
+            && jdk.internal.util.WinApkPaths.isAndroid(path.replace('\\', '/'));
+    }
+    // The Android '/'-form of this path (what the app sees): forward slashes,
+    // no drive, normalized.
+    private String androidForm() {
+        return jdk.internal.util.WinApkPaths.normalize(path.replace('\\', '/'));
+    }
+
     @Override
     public boolean isAbsolute() {
+        if (isAndroidPath()) return true;  // Win.apk: an Android path is absolute ("/..." is its root)
         return type == WindowsPathType.ABSOLUTE || type == WindowsPathType.UNC;
     }
 
@@ -858,6 +874,7 @@ class WindowsPath implements Path {
 
     @Override
     public String toString() {
+        if (isAndroidPath()) return androidForm();  // Win.apk: the Android '/'-form, not the host '\' one
         return path;
     }
 
@@ -969,6 +986,18 @@ class WindowsPath implements Path {
     @Override
     public WindowsPath toRealPath(LinkOption... options) throws IOException {
         checkRead();
+        if (isAndroidPath()) {
+            // Win.apk: the Android tree has no symlinks on the host, so the real
+            // path is the folded '/'-form. Confirm the file exists, as the real
+            // path must, but never return the host "C:\..." that
+            // GetFinalPathNameByHandle would hand back.
+            try {
+                WindowsFileAttributes.get(this, Util.followLinks(options));
+            } catch (WindowsException x) {
+                throw x.asIOException(this);
+            }
+            return parse(getFileSystem(), jdk.internal.util.WinApkPaths.fold(androidForm()));
+        }
         String rp = WindowsLinkSupport.getRealPath(this, Util.followLinks(options));
         return createFromNormalizedPath(getFileSystem(), rp);
     }
