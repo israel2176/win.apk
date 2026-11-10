@@ -1033,7 +1033,7 @@ WINAPK_GUEST_ABI int g_putenv(char* str) {
         *guest_errno() = kEINVAL;
         return -1;
     }
-    return g_setenv(std::string(str, eq).c_str(), eq + 1, 1);
+    return g_setenv(std::string(str, static_cast<size_t>(eq - str)).c_str(), eq + 1, 1);
 }
 WINAPK_GUEST_ABI int g_clearenv() {
     std::lock_guard<std::mutex> hold(g_env_lock);
