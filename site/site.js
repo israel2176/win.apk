@@ -46,8 +46,8 @@
       req: 'Windows 10 (version 1903 or later) or Windows 11, 64-bit, with an Intel or AMD processor; about 500 MB of disk space; a graphics card with Direct3D 11. No administrator rights.',
       preview: 'Public preview: many apps run well, some only in part, some not yet.',
       d_start: 'Getting started', d_compat: 'Compatibility', d_faq: 'FAQ', d_trouble: 'Troubleshooting', d_report: 'Report a problem',
-      footer_1: 'Free and open-source software. An unofficial Windows port of', license: 'License: AGPL-3.0',
-      footer_2: 'Android is a trademark of Google LLC. Win.apk is not affiliated with Google.'
+      footer_1: 'Free and open source.', license: 'License: AGPL-3.0',
+      footer_2: 'Android is a trademark of Google LLC.'
     },
     he: {
       title: 'Win.apk: אפליקציות אנדרואיד ב-Windows',
@@ -92,8 +92,8 @@
       req: 'Windows 10 (גרסה 1903 ומעלה) או Windows 11, ‏64 ביט, עם מעבד Intel או AMD; כ-500MB פנויים בדיסק; כרטיס גרפי עם Direct3D 11. לא צריך הרשאות מנהל.',
       preview: 'גרסת תצוגה ציבורית: הרבה אפליקציות עובדות טוב, חלקן רק בחלקן, וחלקן עוד לא.',
       d_start: 'מדריך התחלה', d_compat: 'תאימות', d_faq: 'שאלות נפוצות', d_trouble: 'פתרון בעיות', d_report: 'דיווח על בעיה',
-      footer_1: 'תוכנה חופשית בקוד פתוח. הסבה לא רשמית ל-Windows של', license: 'רישיון: AGPL-3.0',
-      footer_2: 'Android הוא סימן מסחרי של Google LLC. ‏Win.apk אינו קשור ל-Google.'
+      footer_1: 'חינם וקוד פתוח.', license: 'רישיון: AGPL-3.0',
+      footer_2: 'Android הוא סימן מסחרי של Google LLC.'
     }
   };
   // A link to a document goes to its Hebrew page where one exists.
