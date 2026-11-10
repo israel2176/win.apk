@@ -1,10 +1,19 @@
 // link_guest.c -- the Android x86_64 libraries for the guest linker test
-// (test/linker_test.cpp). One source, four libraries, picked with -D:
+// (test/linker_test.cpp). One source, eight libraries, picked with -D:
 //
 //   WINAPK_LINK_ROOT    libwinapk_link_root.so    needs mid, libc.so, libdl.so
 //   WINAPK_LINK_MID     libwinapk_link_mid.so     needs base, liblog.so
 //   WINAPK_LINK_BASE    libwinapk_link_base.so    needs mid (a DT_NEEDED cycle)
 //   WINAPK_LINK_PLUGIN  libwinapk_link_plugin.so  no dependencies; dlopen'ed and dlclose'd by root
+//
+// and, for the order symbols are looked up in (what libmozglue.so is to
+// Firefox's libxul.so: a library that defines libc's names for the ones that
+// list it before libc.so):
+//
+//   WINAPK_LINK_INTERPOSE  libwinapk_link_interpose.so  no dependencies; exports strlen and dlerror
+//   WINAPK_LINK_USER       libwinapk_link_user.so       needs interpose, libc.so, libdl.so
+//   WINAPK_LINK_LATE       libwinapk_link_late.so       needs libc.so, interpose
+//   WINAPK_LINK_PLAIN      libwinapk_link_plain.so      needs libc.so
 //
 // build_guest.sh links them against stub system libraries so the DT_NEEDED
 // entries look like an NDK build's. The cycle is real: base is linked against
@@ -148,6 +157,38 @@ EXPORT int link_root_dlclose_cycle(void) {
     dlclose(h);
     return 1;
 }
+
+#elif defined(WINAPK_LINK_INTERPOSE)
+
+// libc's name with an answer libc never gives.
+EXPORT size_t strlen(const char* s) {
+    (void)s;
+    return 1000;
+}
+
+// The linker's own name: no library gets this one, whatever the order.
+EXPORT char* dlerror(void) { return (char*)"interposed"; }
+
+#elif defined(WINAPK_LINK_USER) || defined(WINAPK_LINK_LATE) || defined(WINAPK_LINK_PLAIN)
+
+char* dlerror(void);
+
+// strlen as this library was bound to it: 3 from libc, 1000 from interpose.
+// USER lists interpose before libc.so, so it gets interpose's, as on a
+// device. LATE lists libc.so first and gets libc's. PLAIN has libc.so alone:
+// libc's, unless interpose was opened with RTLD_GLOBAL before it was loaded.
+#if defined(WINAPK_LINK_USER)
+EXPORT int link_user_strlen(void) { return (int)strlen("abc"); }
+// 1 when dlerror is the linker's: no error is pending after the first call.
+EXPORT int link_user_dlerror(void) {
+    dlerror();
+    return dlerror() == 0;
+}
+#elif defined(WINAPK_LINK_LATE)
+EXPORT int link_late_strlen(void) { return (int)strlen("abc"); }
+#else
+EXPORT int link_plain_strlen(void) { return (int)strlen("abc"); }
+#endif
 
 #elif defined(WINAPK_LINK_PLUGIN)
 

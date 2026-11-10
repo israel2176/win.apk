@@ -15,9 +15,14 @@
 //     (libc.so, liblog.so, libGLESv2.so, ...) is not a file. It is answered by
 //     the host shim through LinkerConfig::host.
 //   * symbol lookup when linking a new library, in bionic's order: the global
-//     group first (the host shim, standing in for app_process and its libc,
-//     then libraries opened with RTLD_GLOBAL), then the local group (the
-//     dlopen'ed root and its dependency tree, breadth-first). A library's own
+//     group first (libraries opened with RTLD_GLOBAL; nothing of libc's is in
+//     it), then the local group (the dlopen'ed root and its dependency tree,
+//     breadth-first in DT_NEEDED order). The host shim is searched where that
+//     walk first meets a system library, as libc.so is on a device, so a
+//     library an app lists before libc.so interposes malloc, operator new and
+//     the like for the libraries that need it; a tree with no system library
+//     in it gets the shim last. Only the linker's own functions (libdl's and
+//     __tls_get_addr) are answered before any library. A library's own
 //     definitions are bound directly (ElfImage does not support interposition
 //     of a symbol the library defines itself).
 //   * dlsym(handle) walks the handle's dependency tree breadth-first, so a
@@ -155,8 +160,8 @@ public:
     };
     bool describe(const void* addr, AddrInfo* info) const;
 
-    // Resolves a name for guest code being linked: the libdl functions first,
-    // then the host shim. Exposed for loaders that do not go through open().
+    // What the system libraries define: the libdl functions, then the host
+    // shim. Exposed for loaders that do not go through open().
     void* resolve_host(const char* name) const;
 
 private:
@@ -170,6 +175,7 @@ private:
     std::filesystem::path locate(const std::string& name, const std::filesystem::path& near) const;
     std::vector<GuestLibrary*> local_group(GuestLibrary* root) const;
     void* find_in(GuestLibrary* lib, const char* name) const;
+    void* resolve_linker_owned(const char* name) const;
     void run_constructors(GuestLibrary* lib);
     bool is_handle(const void* handle) const;
 

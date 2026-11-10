@@ -172,7 +172,11 @@ and `DT_INIT_ARRAY`.
 `DT_NEEDED` tree in Bionic's order (map all, link all, constructors with
 dependencies first), answers system libraries (`libc.so`, `libm.so`,
 `libdl.so`, `liblog.so`, `libz.so`, `libandroid.so`, `libEGL.so`,
-`libGLESv2.so`...) from the shim, keeps the registry of loaded images, and
+`libGLESv2.so`...) from the shim, looks symbols up in Bionic's order (the
+`RTLD_GLOBAL` libraries, then the library's tree breadth-first with the shim
+at the place of its first system library, so an allocator an app lists
+before `libc.so` is the one its libraries call), keeps the registry of
+loaded images, and
 implements the guest's `dlopen`, `android_dlopen_ext`, `dlsym` (with
 `RTLD_DEFAULT` and `RTLD_NEXT`), `dladdr`, `dlerror` and `dlclose`. A
 library is reference counted and unloaded when its last reference goes
