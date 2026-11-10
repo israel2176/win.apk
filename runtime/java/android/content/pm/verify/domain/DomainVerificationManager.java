@@ -17,7 +17,9 @@ package android.content.pm.verify.domain;
  *  DOMAIN_STATE_NONE for the rest. Another package, or one that declares no
  *  autoVerify domains, still answers NULL (AOSP: "@return the user state, or
  *  null if the package does not declare any domains"); MACAPK_APP_LINKS=0
- *  restores NULL for every package. */
+ *  restores NULL for every package. Win.apk: the answer comes from the
+ *  verification cache and never waits on the network; a domain not checked yet
+ *  (one is checked when a sign-in needs it) is DOMAIN_STATE_NONE. */
 public final class DomainVerificationManager {
     public DomainVerificationManager() {}
     public DomainVerificationManager(android.content.Context context) {}

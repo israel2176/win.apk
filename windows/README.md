@@ -1065,6 +1065,20 @@ every such change is listed here:
   recursed for ever (Bit's Lokalise `LokaliseResources`: a
   `StackOverflowError` on the main thread at its first string). Not
   Windows-specific.
+- `runtime/java/com/macapk/loader/AppLinks.java`, `Boot.java`,
+  `android/content/pm/verify/domain/DomainVerificationManager.java`: App Link
+  verification no longer fetches at start. Upstream fetched
+  `/.well-known/assetlinks.json` for every `autoVerify` host on every run
+  (Google Maps declares hundreds of Google domains: ~356 HTTPS requests per
+  start). Now a domain is fetched only when a sign-in's `redirect_uri` is on
+  it, one domain at a time (same rules: HTTPS, no redirects, the package and a
+  real signing certificate, a wildcard against its parent), and the verdict is
+  kept in `%LOCALAPPDATA%\Win.apk\cache\applinks\<package>.properties`:
+  7 days, an unreachable site 1 hour, the whole file dropped when the APK's
+  versionCode, update time or certificate changes. `DomainVerificationManager`
+  answers from it without waiting (a domain not checked yet is
+  `DOMAIN_STATE_NONE`). `MACAPK_APP_LINKS=0` still turns it all off. Test:
+  `windows/test/java/com/macapk/loader/AppLinksTest.java`.
 
 ## License
 
