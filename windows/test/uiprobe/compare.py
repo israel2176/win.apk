@@ -27,8 +27,16 @@ def cases(path):
     return out
 
 
+# Win.apk's inflater hands out AppCompat's and Material's widgets for the plain
+# tags wherever the app carries those libraries (as AppCompatActivity's own
+# inflater does); the oracle inflates through a bare ContextThemeWrapper. The
+# widget is the same one either way, so the names are compared without the prefix.
+CLASS = re.compile(r'\b(?:AppCompat|Material)(?=[A-Z][a-z])')
+
+
 def same(a, b, tolerance):
     """Equal apart from numbers, and each pair of numbers within the tolerance."""
+    a, b = CLASS.sub('', a), CLASS.sub('', b)
     if NUM.sub('#', a) != NUM.sub('#', b):
         return False
     return all(abs(float(x) - float(y)) <= tolerance for x, y in zip(NUM.findall(a), NUM.findall(b)))

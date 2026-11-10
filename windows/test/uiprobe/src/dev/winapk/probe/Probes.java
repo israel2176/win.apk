@@ -30,10 +30,17 @@ public final class Probes {
     private static final int[] LAYOUTS = {
         R.layout.text_gravity, R.layout.linear_weights, R.layout.frame_gravity, R.layout.relative,
         R.layout.edit_compound, R.layout.custom_params, R.layout.icons,
+        R.layout.lib_material, R.layout.lib_constraint, R.layout.lib_appbar,
     };
     private static final String[] NAMES = {
         "text_gravity", "linear_weights", "frame_gravity", "relative", "edit_compound", "custom_params", "icons",
+        "lib_material", "lib_constraint", "lib_appbar",
     };
+
+    /** The platform's theme for the framework's own widgets, Material Components for the libraries'. */
+    private static int themeOf(String name) {
+        return name.startsWith("lib_") ? R.style.ProbeLibTheme : R.style.ProbeTheme;
+    }
 
     /** runAll for a caller that must not name an Android class: the oracle's test class is
      *  loaded outside Robolectric's sandbox first, where there is no android.content.Context. */
@@ -52,7 +59,7 @@ public final class Probes {
                 String name = NAMES[i] + (dir == 0 ? ".ltr" : ".rtl");
                 out.add("case " + name);
                 try {
-                    Context c = new ContextThemeWrapper(app, R.style.ProbeTheme);
+                    Context c = new ContextThemeWrapper(app, themeOf(NAMES[i]));
                     FrameLayout root = new FrameLayout(c);
                     root.setLayoutDirection(dir == 0 ? View.LAYOUT_DIRECTION_LTR : View.LAYOUT_DIRECTION_RTL);
                     LayoutInflater.from(c).inflate(LAYOUTS[i], root, true);
@@ -125,6 +132,12 @@ public final class Probes {
         sb.append(" dir=").append(v.getLayoutDirection());
         sb.append(" pad=").append(dp(v.getPaddingLeft(), d)).append(',').append(dp(v.getPaddingTop(), d))
           .append(',').append(dp(v.getPaddingRight(), d)).append(',').append(dp(v.getPaddingBottom(), d));
+        if (v.getLayoutParams() instanceof ViewGroup.MarginLayoutParams) {
+            ViewGroup.MarginLayoutParams m = (ViewGroup.MarginLayoutParams) v.getLayoutParams();
+            sb.append(" margins=").append(dp(m.leftMargin, d)).append(',').append(dp(m.topMargin, d))
+              .append(',').append(dp(m.rightMargin, d)).append(',').append(dp(m.bottomMargin, d))
+              .append(" lpdir=").append(m.getLayoutDirection());
+        }
         if (v instanceof TextView) {
             TextView tv = (TextView) v;
             try {

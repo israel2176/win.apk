@@ -590,6 +590,26 @@ public class ViewGroup extends View implements ViewParent, ViewManager {
         catch (Throwable ignored) {}
         macapkDragChildAdded(child);
     }
+    /** AOSP ViewGroup.resolveRtlPropertiesIfNeeded (android13-release
+     *  ViewGroup.java:7730-7745): when a group resolves, its children that
+     *  inherit their direction resolve with it, before the group measures.
+     *  Without this a child resolved only in its own measure(), which is after
+     *  a parent that reads its children's LayoutParams at the start of its
+     *  onMeasure has read them: ConstraintLayout placed its children by the
+     *  direction their params were given when they were inflated (uiprobe: a
+     *  left-to-right ConstraintLayout laid out mirrored). */
+    @Override public boolean resolveRtlPropertiesIfNeeded() {
+        final boolean result = super.resolveRtlPropertiesIfNeeded();
+        if (result) {
+            for (int i = 0; i < children.size(); i++) {
+                View c = children.get(i);
+                if (c != null && c.getRawLayoutDirection() == LAYOUT_DIRECTION_INHERIT) {
+                    c.resolveRtlPropertiesIfNeeded();
+                }
+            }
+        }
+        return result;
+    }
     /** AOSP ViewGroup.resetResolvedLayoutDirection (android13-release
      *  ViewGroup.java:7759): the children that INHERIT their direction drop
      *  theirs with the parent's, so setLayoutDirection on a group, or a group
