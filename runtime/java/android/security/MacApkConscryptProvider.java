@@ -47,6 +47,9 @@ public final class MacApkConscryptProvider extends Provider {
     private MacApkConscryptProvider(String name) {
         super(name, "1.0", "Mac.apk Conscrypt alias delegating to the host JDK JSSE/JCE");
         copyHostServices();
+        // Win.apk: a stack that asked for this provider by name treats its
+        // sockets as Conscrypt's (MacApkConscryptTls).
+        MacApkConscryptTls.register(this);
     }
 
     // Copy every service the host providers expose into this provider, so a

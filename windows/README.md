@@ -935,6 +935,13 @@ every such change is listed here:
   succeeds) stayed first: gRPC got a null SSLEngine and no map tile loaded.
   `android/security/MacApkConscryptProvider.java` gains
   `copyPlatformServices`, which copies only the platform's providers.
+- `runtime/java/android/security/MacApkConscryptTls.java` (new): the SSLContexts
+  of the `Conscrypt` and `GmsCore_OpenSSL` providers hand out the JDK's
+  sockets wrapped to also answer Conscrypt's methods (`setAlpnProtocols`,
+  `getAlpnSelectedProtocol`, `setHostname`, `setUseSessionTickets`), mapped to
+  the JDK's application protocols and server names. gRPC's okhttp Platform
+  sets ALPN that way on a Conscrypt provider's sockets; on the JDK's it found
+  no such method, skipped ALPN, and Google Maps' gRPC calls (h2 only) failed.
 - `runtime/java/com/macapk/loader/CriticalNatives.java` (new): which guest
   natives ART calls as `@CriticalNative` (no JNIEnv*, no jclass), read from the
   converted class file; `windows/src/jni_bind.cpp` gives those a thunk that
