@@ -1,0 +1,90 @@
+:root{--bg:#0b0b14;--panel:#141425;--line:#26263d;--text:#ecebff;--muted:#a3a2c2;--a:#7c6cff;--b:#22d3a6}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.6 "Segoe UI Variable","Segoe UI",system-ui,-apple-system,Arial,sans-serif}
+/* Keeps a Latin run (a version, "Windows 10") in its place inside a Hebrew sentence and the other way round. */
+span[data-i18n],small[data-i18n]{unicode-bidi:isolate}
+a{color:#b9b0ff}
+.wrap{max-width:1160px;margin:0 auto;padding:0 20px}
+
+header{position:sticky;top:0;z-index:5;background:rgba(11,11,20,.8);backdrop-filter:blur(14px);border-bottom:1px solid var(--line)}
+header .wrap{display:flex;align-items:center;gap:18px;height:64px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:19px;color:var(--text);text-decoration:none;margin-inline-end:auto}
+nav{display:flex;gap:22px}
+nav a{color:var(--muted);text-decoration:none;font-size:15px}
+nav a:hover{color:#fff}
+.chip{display:inline-flex;align-items:center;gap:7px;padding:7px 14px;border-radius:999px;border:1px solid var(--line);background:var(--panel);color:var(--text);text-decoration:none;font:inherit;font-size:14px;cursor:pointer}
+.chip:hover{border-color:var(--a)}
+.chip svg{width:17px;height:17px;fill:currentColor}
+
+.hero{position:relative;overflow:hidden}
+.hero::before{content:"";position:absolute;inset:-30% -10% auto;height:700px;background:radial-gradient(closest-side,rgba(124,108,255,.35),transparent),radial-gradient(closest-side at 80% 60%,rgba(34,211,166,.22),transparent);pointer-events:none}
+.hero .wrap{position:relative;display:grid;grid-template-columns:1.05fr 1fr;gap:48px;align-items:center;padding-top:80px;padding-bottom:80px}
+.tag{display:inline-flex;gap:8px;align-items:center;font-size:14px;color:var(--b);font-weight:600}
+.tag::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--b);box-shadow:0 0 12px var(--b)}
+h1{font-size:clamp(34px,5vw,56px);line-height:1.1;margin:16px 0;letter-spacing:-1px;background:linear-gradient(90deg,#fff,#c8c0ff);-webkit-background-clip:text;background-clip:text;color:transparent}
+[dir=rtl] h1{letter-spacing:0}
+.sub{font-size:19px;color:var(--muted);margin:0 0 30px}
+.dl{display:flex;flex-wrap:wrap;gap:12px;align-items:center}
+.btn{display:inline-flex;align-items:center;gap:14px;padding:16px 28px;border-radius:12px;background:linear-gradient(135deg,var(--a),#9b6cff);color:#fff;font-size:18px;font-weight:700;text-decoration:none;box-shadow:0 10px 30px rgba(124,108,255,.45)}
+.btn:hover{filter:brightness(1.1)}
+.btn small{display:block;font-weight:400;font-size:13px;opacity:.85}
+.btn svg{width:26px;height:26px;fill:#fff;flex:none}
+.ghost{padding:15px 22px;border-radius:12px;border:1px solid var(--line);color:var(--text);text-decoration:none;background:var(--panel)}
+.ghost:hover{border-color:var(--a)}
+.fine{margin-top:16px;font-size:14px;color:var(--muted)}
+.fine a{margin-inline-end:16px}
+.screen{border-radius:14px;border:1px solid var(--line);overflow:hidden;box-shadow:0 30px 80px rgba(0,0,0,.6),0 0 0 6px rgba(124,108,255,.08);transform:perspective(1400px) rotateY(-8deg)}
+[dir=rtl] .screen{transform:perspective(1400px) rotateY(8deg)}
+.screen img{display:block;width:100%;height:auto}
+
+.stats{border-block:1px solid var(--line);background:var(--panel)}
+.stats .wrap{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;text-align:center;padding-top:28px;padding-bottom:28px}
+.stats b{display:block;font-size:40px;direction:ltr;background:linear-gradient(90deg,var(--a),var(--b));-webkit-background-clip:text;background-clip:text;color:transparent}
+.stats span{color:var(--muted);font-size:15px}
+
+section{padding:80px 0}
+h2{font-size:36px;margin:0 0 10px;letter-spacing:-.5px}
+.lead{color:var(--muted);max-width:760px;margin:0 0 36px;font-size:17px}
+.bento{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.box{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:24px}
+.box h3{margin:0 0 6px;font-size:19px}
+.box p{margin:0;color:var(--muted)}
+.box .n{font-size:13px;color:var(--b);font-weight:700;letter-spacing:1px}
+
+.table{overflow-x:auto;border:1px solid var(--line);border-radius:16px}
+table{width:100%;border-collapse:collapse;background:var(--panel);min-width:620px}
+th,td{padding:15px 20px;border-bottom:1px solid var(--line);text-align:start;vertical-align:top}
+tbody tr:last-child>*{border-bottom:0}
+thead th{font-size:14px;color:var(--muted);font-weight:600}
+tbody th{font-weight:600;width:24%}
+td{color:var(--muted)}
+.win{color:var(--text);background:rgba(124,108,255,.08)}
+thead .win{color:var(--b)}
+.honest{color:var(--muted);margin-top:14px}
+
+.gallery{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.gallery figure{margin:0}
+.gallery img{width:100%;height:auto;border-radius:12px;border:1px solid var(--line)}
+.gallery figcaption{color:var(--muted);font-size:14px;margin-top:6px}
+
+.final{background:linear-gradient(135deg,rgba(124,108,255,.25),rgba(34,211,166,.12));border:1px solid var(--line);border-radius:22px;padding:48px;display:grid;grid-template-columns:1fr auto;gap:30px;align-items:center}
+.steps{margin:18px 0 0;padding:0;list-style:none;counter-reset:s}
+.steps li{counter-increment:s;display:grid;grid-template-columns:34px 1fr;column-gap:12px;margin:12px 0;color:var(--muted)}
+.steps li::before{content:counter(s);grid-row:span 2;display:grid;place-items:center;width:30px;height:30px;border-radius:50%;background:var(--a);color:#fff;font-weight:700}
+.steps b{color:var(--text)}
+.docs{display:flex;flex-wrap:wrap;gap:10px;margin-top:18px}
+
+footer{border-top:1px solid var(--line);padding:24px 0;color:var(--muted);font-size:14px}
+footer p{margin:6px 0}
+
+@media (max-width:860px){
+  nav{display:none}
+  .hero .wrap,.final{grid-template-columns:1fr}
+  .hero .wrap{padding-top:48px;padding-bottom:48px}
+  .screen,[dir=rtl] .screen{transform:none}
+  .bento,.gallery{grid-template-columns:1fr}
+  .stats .wrap{grid-template-columns:1fr;gap:14px}
+  .final{padding:28px}
+  h2{font-size:28px}
+}
