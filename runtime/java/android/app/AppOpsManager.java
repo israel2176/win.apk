@@ -533,8 +533,17 @@ public class AppOpsManager {
             String[] owners = com.macapk.loader.AppUids.packagesFor(uid);
             if (owners != null) for (String o : owners) if (packageName.equals(o)) return;
         }
+        // The caller usually swallows this (Play services turns it into "Unknown
+        // calling package name"), so what the uid table said is logged here, once.
+        if (sLoggedCheckPackage.add(uid + " " + packageName)) {
+            String[] owners = com.macapk.loader.AppUids.enabled() ? com.macapk.loader.AppUids.packagesFor(uid) : null;
+            System.err.println("[appops] checkPackage(" + uid + ", " + packageName + ") in " + own + " refused: uid "
+                    + uid + " is " + (owners != null ? java.util.Arrays.toString(owners) : "no package's"));
+        }
         throw new SecurityException("Package " + packageName + " does not belong to " + uid);
     }
+    private static final java.util.Set<String> sLoggedCheckPackage =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     /** AOSP setMode/setUidMode (@hide / @SystemApi, @RequiresPermission
      *  MANAGE_APP_OPS_MODES): AppOpsService.enforceManageAppOpsModes

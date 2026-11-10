@@ -876,6 +876,8 @@ public class LayoutInflater {
             // findViewById in its onCreate returned null. Merge into a
             // FrameLayout instead, which is what the content frame is.
             android.widget.FrameLayout frame = new android.widget.FrameLayout(context);
+            // Activity.findViewById finds the children as they are added, as in that content frame.
+            if (context instanceof android.app.Activity activity) activity.macapkContentMergeFrame(frame);
             inflateElement(rootElem, frame);
             inflated = frame;
         } else {
@@ -5259,6 +5261,12 @@ public class LayoutInflater {
                             : android.widget.LinearLayout.HORIZONTAL;
                         ll.setOrientation(o);
                     }
+                    return;
+                case "stretchColumns":
+                case "shrinkColumns":
+                case "collapseColumns":
+                    // AOSP TableLayout's constructor (initTableLayout) reads these.
+                    if (view instanceof android.widget.TableLayout table) table.macapkSetColumns(attr, value);
                     return;
                 case "gravity":
                     // android:gravity -- container's content gravity.

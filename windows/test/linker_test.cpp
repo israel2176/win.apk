@@ -9,6 +9,8 @@
 // the local group, the guest's libdl, the image registry, and dlclose:
 // reference counts, destructors, TLS, RTLD_NODELETE, thread_local
 // destructors holding a library, and dependencies going with their root.
+// Four more libraries check the order symbols are looked up in: libc at its
+// place in the DT_NEEDED order, the global group before it.
 //
 // Exit code: the number of failed checks.
 
@@ -121,6 +123,13 @@ int main(int argc, char** argv) {
               linker.open("libwinapk_link_mid.so", 0, &error) != nullptr &&
               linker.images().size() == 3);
 
+    // An app names a library by its Android path too (dlopen of one it unpacked into its files directory,
+    // System.load of what findLibrary answered): the file under the android root, as for open().
+    winapk::set_android_root(argv[1]);
+    check("an Android path is the library under the android root",
+          loaded(linker, "/libwinapk_link_root.so") && !loaded(linker, "/libwinapk_link_none.so"));
+    winapk::set_android_root("");
+
     check("RTLD_NOLOAD does not load the plugin", !loaded(linker, kPlugin));
     expect_eq("guest dlopen + dlsym", call(linker, root, "link_root_dlopen"), 81);
     check("the guest's dlclose unloaded the plugin again", !loaded(linker, kPlugin) && linker.images().size() == 3);
@@ -196,6 +205,52 @@ int main(int argc, char** argv) {
     root = linker.open("libwinapk_link_root.so", winapk::GuestLinker::kRtldNow, &error);
     check("root loads again", root != nullptr, error);
     if (root) expect_eq("its constructors ran again, dependencies first", call(linker, root, "link_root_init_order"), 42);
+
+    // Lookup order, as Bionic has it: libc is searched where it stands in the DT_NEEDED order, not first. interpose
+    // defines strlen (1000 for any string) and dlerror.
+    constexpr const char* kInterpose = "libwinapk_link_interpose.so";
+    auto from_interpose = [&](void* addr) {
+        const winapk::ElfImage* image = linker.image_containing(addr);
+        return image && image->soname() == kInterpose;
+    };
+    void* const libc_strlen = winapk::mini_bionic_resolve("strlen");
+    error.clear();
+    void* user = linker.open("libwinapk_link_user.so", winapk::GuestLinker::kRtldNow, &error);
+    check("open user, which needs interpose before libc.so", user != nullptr, error);
+    if (user) {
+        expect_eq("a library listed before libc.so interposes libc's function", call(linker, user, "link_user_strlen"),
+                  1000);
+        expect_eq("the linker's own functions are not interposed", call(linker, user, "link_user_dlerror"), 1);
+        check("dlsym on the handle finds the interposer too",
+              from_interpose(linker.lookup(user, "strlen", nullptr, &error)));
+    }
+    error.clear();
+    void* late = linker.open("libwinapk_link_late.so", winapk::GuestLinker::kRtldNow, &error);
+    check("open late, which needs libc.so before interpose", late != nullptr, error);
+    if (late) expect_eq("libc wins when it is listed first", call(linker, late, "link_late_strlen"), 3);
+    error.clear();
+    void* plain = linker.open("libwinapk_link_plain.so", winapk::GuestLinker::kRtldNow, &error);
+    check("open plain, which needs libc.so alone", plain != nullptr, error);
+    if (plain) {
+        expect_eq("a loaded interposer is not seen by a library that does not need it",
+                  call(linker, plain, "link_plain_strlen"), 3);
+        linker.close(plain, &error);
+    }
+    check("RTLD_DEFAULT is libc's while the interposer is local",
+          libc_strlen && linker.lookup(nullptr, "strlen", nullptr, &error) == libc_strlen);
+    // RTLD_GLOBAL puts interpose in the global group, which is searched before a library's own tree.
+    check("plain was unloaded; interpose becomes global",
+          !loaded(linker, "libwinapk_link_plain.so") &&
+              linker.open(kInterpose, winapk::GuestLinker::kRtldGlobal, &error) != nullptr);
+    error.clear();
+    plain = linker.open("libwinapk_link_plain.so", winapk::GuestLinker::kRtldNow, &error);
+    check("plain loads again", plain != nullptr, error);
+    if (plain) {
+        expect_eq("a global library interposes for the libraries loaded after it",
+                  call(linker, plain, "link_plain_strlen"), 1000);
+    }
+    check("RTLD_DEFAULT finds the global library before libc",
+          from_interpose(linker.lookup(nullptr, "strlen", nullptr, &error)));
 
     std::printf("\n%s: %d failure(s)\n", g_failures ? "FAILED" : "OK", g_failures);
     return g_failures;

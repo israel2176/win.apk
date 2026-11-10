@@ -24,7 +24,7 @@ keeping a copy.
 | Native code: x86_64 | ✅ | `lib/x86_64` libraries load directly, at full speed | | `windows/src/` |
 | Native code: arm64-v8a only | ⚠️ | Translated to x64 in the background; the app runs on a slower ARM JIT until then. See [ARM apps](arm-apps.md) | A library over 1 million instructions is translated only where the app ran | `winapk-aot`, `src/arm64/` |
 | Native code: armeabi-v7a only | ❌ | | 32-bit ARM code does not run. Look for another build of the app | |
-| Input | ⚠️ | Mouse as one finger, the wheel as a scroll, the keyboard, Escape as Back; Xbox (XInput) controllers | No multi-touch: pinch and two-finger gestures cannot be made with a mouse. Controllers that are not XInput | `win32_window.cpp`, `native_gamepad.cpp` |
+| Input | ⚠️ | Mouse as one finger; touchscreen fingers as Android pointers (up to 10); pen with pressure and eraser; the wheel and touchpad scroll as `ACTION_SCROLL`; Ctrl+wheel and the touchpad pinch as a two-finger pinch; right and middle buttons; hover; the keyboard with dead keys, AltGr and IME composition; Escape as Back; Xbox (XInput) controllers | Touch, pen, touchpad pinch and IME are checked by unit tests only, not yet on real hardware. No pen tilt. Controllers that are not XInput | `win32_window.cpp`, `pointer_input.h`, `native_gamepad.cpp` |
 
 ### Graphics, sound and video
 
@@ -36,20 +36,21 @@ keeping a copy.
 | AudioTrack, SoundPool, MediaPlayer audio | ✅ | A WASAPI mixer; WAV, Ogg, MP3, AAC and what Windows decodes | | `native_audio.cpp` |
 | AAudio | ⚠️ | Output, in write and callback modes | No AAudio input | `native_aaudio.cpp` |
 | Microphone (`AudioRecord`) | ✅ | WASAPI capture | | `native_audio_input.cpp` |
-| OpenSL ES | ❌ | | The engine reports itself unsupported, so native games that use it are silent | `native_opensles.cpp` |
+| OpenSL ES | ❌ | | The engine reports itself unsupported, so native games that use it are silent (#132) | `native_opensles.cpp` |
 | `MediaPlayer`, `VideoView` | ✅ | MP4, MOV, MKV with H.264 and AAC always; HEVC, VP9 and AV1 with Microsoft's codec packs; from a file or an http(s) URL | | `video_player.cpp` |
-| `MediaCodec` (ExoPlayer and others) | ⚠️ | H.264 video (and the codec packs' formats), AAC and MP3 audio | Opus, Vorbis and FLAC audio (such a stream plays silent); `MediaExtractor` | `native_media_video.cpp` |
-| NDK media (`AMediaCodec`, `AMediaExtractor`) | ❌ | | Not implemented: video from an app's native code | `native_media.cpp` |
+| `MediaCodec` (ExoPlayer and others) | ⚠️ | Decoding: H.264 video (and the codec packs' formats), AAC and MP3 audio. Encoding: H.264 and AAC-LC on Windows' software encoders, from byte buffers, a camera2 session or a Canvas on the input Surface | Opus, Vorbis and FLAC audio (such a stream plays silent). No OpenGL ES input to an encoder, so screen and game recorders and GL filter pipelines record nothing. The encoders have run only in the unit test | `native_media_video.cpp`, `native_media_codec.cpp`, `media_encode.cpp` |
+| `MediaExtractor`, `MediaMuxer`, `MediaRecorder` | ⚠️ | Extractor: MP4, MOV, MKV tracks with H.264, HEVC, AAC, MP3 from a file, URL, descriptor or `content://`. Muxer: MP4 and 3GPP with H.264 and AAC. Recorder: the microphone to AAC, a Surface (camera2) to H.264 | WebM and Ogg output; AMR, Opus; the old `Camera` API as a recorder's source; tags and embedded pictures in `MediaMetadataRetriever` | `video_decode.cpp`, `mp4_writer.cpp` |
+| NDK media (`AMediaCodec`, `AMediaExtractor`) | ❌ | | Not implemented: video from an app's native code (#133) | `native_media.cpp` |
 
 ### The PC's hardware
 
 | Area | | What exactly | What is missing | Source |
 |---|:-:|---|---|---|
-| Camera | ✅ | Webcams through Camera, camera2 and CameraX (Media Foundation); a virtual camera when there is none | | `native_camera.cpp` |
+| Camera | ✅ | Webcams through Camera, camera2 and CameraX (Media Foundation); a virtual camera when there is none. Preview, analysis frames and JPEG stills; video through `MediaRecorder` or an encoder's Surface from camera2 | | `native_camera.cpp` |
 | Location | ✅ | Windows' location service, behind Windows' privacy switch | | `native_location.cpp` |
 | Sensors | ❌ | | The sensors exist but report a phone lying still; tilt controls do nothing | `runtime/java/android/hardware/` |
 | Bluetooth | ⚠️ | Paired devices; serial (RFCOMM) connections both ways; LE scans and the GATT client (read, write, notifications) | Discovery and pairing from the app, LE advertising, the GATT server, audio and HID profiles, L2CAP | `native_bluetooth.cpp` |
-| Wi-Fi | ⚠️ | On or off, the current network, the DHCP configuration, scan results | Connecting the PC to a network | `native_radios.cpp` |
+| Wi-Fi and the network | ⚠️ | On or off, the current network, the DHCP configuration, scan results; `ConnectivityManager` reports the PC's real default adapter (cable or Wi-Fi), its addresses and DNS servers; multicast and broadcast sockets for finding devices on the local network | Connecting the PC to a network (a device's own setup hotspot); `NsdManager` (mDNS) reports failure | `native_radios.cpp`, `src/bionic/socket.cpp` |
 | Clipboard, file pickers | ✅ | Text, HTML and links; Windows' open and save dialogs | | `native_clipboard.cpp`, `native_picker.cpp` |
 
 ### Windows integration
@@ -142,8 +143,11 @@ what to look for in the app or in its log.
 
 One row per app and version that someone actually used. Newest test first
 within an app. The results of [#69](https://github.com/israel2176/win.apk/issues/69)
-(20 very different apps) and [#66](https://github.com/israel2176/win.apk/issues/66)
-(app stores) will be added here.
+(20 very different apps) are added here. The rows dated 2026-11-10 are
+from the app probe (`.github/workflows/app-probe.yml`): each app a minute in
+a window on a Windows machine without a graphics card, looked at in
+screenshots and its log. Nobody used the app, so the status is *Boots* at
+most.
 
 **Status:** *Works* (the main screens are usable), *Partly* (opens, but
 something in the notes does not work), *Boots* (draws its first screen in an
@@ -151,6 +155,19 @@ automated run; nobody has used it), *Does not start*, *Does not install*.
 
 | App | Version | Source | Status | Notes | Tested | Issue |
 |---|---|---|---|---|---|---|
+| Markor | 163 (`net.gsantner.markor`) | F-Droid | Boots | Draws its first-run pages (the notebook's files); idle afterwards (0% of a processor) | 2026-11-10 | |
+| Fossify Calendar | 24 (`org.fossify.calendar`) | F-Droid | Boots | Draws the month view with its header in one row; idle afterwards (1% of a processor). The header was laid out wrong until [#119](https://github.com/israel2176/win.apk/issues/119) was fixed | 2026-11-10 | |
+| KeePassDX | 45500 (`com.kunzisoft.keepass.libre`) | F-Droid | Boots | Presents its first frame. Its window is hidden from screenshots, as the app asks, so the screen was not seen. On a first run its tutorial overlay pulses until it is tapped, which redraws the window on every frame (20% of a processor), as on a phone | 2026-11-10 | |
+| Thunderbird | 33 (`net.thunderbird.android`) | F-Droid | Boots | Draws the welcome screen; idle afterwards | 2026-11-10 | |
+| Telegram FOSS | | F-Droid | | Not tried: F-Droid no longer lists `org.telegram.messenger` | 2026-11-10 | |
+| Fennec (Firefox) | 1590110 (`org.mozilla.fennec_fdroid`) | F-Droid | Does not start | Installs; ends about 15 s after the start, before a first frame. Gecko brings its own allocator and needs child processes, which the guest linker and the runtime do not serve yet | 2026-11-10 | [#117](https://github.com/israel2176/win.apk/issues/117) |
+| VLC | 13070208 (`org.videolan.vlc`) | F-Droid | Boots | Draws the welcome screen; idle afterwards | 2026-11-10 | |
+| Organic Maps | 26092932 (`app.organicmaps`) | F-Droid | Boots | Draws "Download the world overview map"; the map itself was not reached | 2026-11-10 | |
+| Open Camera | 96 (`net.sourceforge.opencamera`) | F-Droid | Boots | Draws its first-run dialog over a black preview (the machine has no camera) | 2026-11-10 | |
+| LocalSend | 641 (`org.localsend.localsend_app`) | F-Droid | Boots | Flutter: draws the Receive screen. Uses more than a whole processor while idle, on a machine without a graphics card | 2026-11-10 | |
+| Jitsi Meet | 26000004 (`org.jitsi.meet`) | F-Droid | Boots | React Native: draws the room name screen with its tabs | 2026-11-10 | |
+| Mindustry | 1115 (`io.anuke.mindustry`) | F-Droid | Boots | libGDX: draws the main menu. A whole processor while it shows, on a machine without a graphics card | 2026-11-10 | |
+| DroidFish | 100 (`org.petero.droidfish`) | F-Droid | Boots | Draws the board with its pieces, clocks and buttons; idle afterwards. Its chess engine is a separate Android program and does not run. The pieces were missing until [#118](https://github.com/israel2176/win.apk/issues/118) was fixed | 2026-11-10 | |
 | Privacy Friendly Sudoku | 101 (`org.secuso.privacyfriendlysudoku`) | F-Droid | Boots | Boots headless on every CI run: code conversion, `Application.onCreate`, the first activity and 30 frames | every CI run | |
 | Klooni | 860 (`dev.lonami.klooni`) | F-Droid | Works | libGDX: OpenGL ES from Java; draws and takes input | `windows/PORTING.md`, section 8 | |
 | Tensy | 2 (`se.voxelmanip.tensy`) | F-Droid | Works | SDL 3: OpenGL ES from native code through a SurfaceView; draws and takes input | `windows/PORTING.md`, section 8 | |

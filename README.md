@@ -77,7 +77,7 @@ The full table, checked against the code, is on
 | Sound (AudioTrack, SoundPool, AAudio output), microphone | Wi-Fi: information, no connecting | NDK media API (`AMediaCodec`) |
 | Video (`MediaPlayer`, `VideoView`) on Media Foundation | Notifications: no action buttons | Real sensors (they report a phone lying still) |
 | WebView and Custom Tabs on WebView2 | Google's real Play services and Play Store (experimental) | In-app purchases, Play Integrity, the Maps SDK's map |
-| Webcam, location, clipboard, file pickers, Xbox controllers | Input: one finger, no multi-touch | |
+| Webcam, location, clipboard, file pickers, Xbox controllers | Input: multi-touch from a touchscreen or a pen, pinch by Ctrl+wheel or the touchpad; no multi-touch from a mouse alone | |
 | Permissions, Google sign-in, push messages (FCM) | | |
 
 **Measured, not promised:**

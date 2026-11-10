@@ -1270,8 +1270,112 @@ public final class AppClassLoader extends dalvik.system.PathClassLoader {
     // and the androidgamesdk GameActivity calls it directly through a
     // BaseDexClassLoader-typed reference (see the comment on our
     // dalvik.system.BaseDexClassLoader.findLibrary).
+    //
+    // Win.apk: the method has two kinds of caller, and on a Windows host they
+    // need different answers. The JVM (System.loadLibrary -> ClassLoader.
+    // loadLibrary) and the framework (NativeActivity) load what comes back, so
+    // they get the host library: the stub DLL lib_native/lib<name>.dylib. An
+    // app that asks itself gets Android's answer: lib<name>.so in the native
+    // library directory, by its Android name (/data/app/.../lib/<isa>/, which
+    // ApplicationInfo.nativeLibraryDir, a host path, does not use yet). Gecko's
+    // GeckoLoader takes the directory part of findLibrary("mozglue") for
+    // MOZ_ANDROID_LIBDIR, from which libmozglue dlopens libxul.so and the
+    // rest, and throws "Invalid library path for libmozglue.so" when the answer
+    // has no '/' (Fennec; the stub's path has none, and its directory holds no
+    // ELF). Whatever the app then does with that path works: System.load goes
+    // through loadNativeOnDemand, which finds the same stub, and the guest's
+    // dlopen and open() take an Android path (windows/src/linker.cpp, paths.cpp).
+    // Under ClassFileRewriter.ONDEMAND_NATIVE, the switch for System.load of an
+    // ELF: without it (macOS, MACAPK_ONDEMAND_NATIVE=0) an app could not load
+    // the .so it was told about.
     @Override
     public String findLibrary(String libname) {
+        String host = hostLibrary(libname);
+        if (host == null || !ClassFileRewriter.ONDEMAND_NATIVE || !askedByApp()) return host;
+        File so = locateApkSo(libname);
+        if (so == null) return host;
+        String name = androidNameOf(so);
+        // Outside the android root the file has no Android name: its host path,
+        // with the '/' an app splits a path on.
+        return name != null ? name : so.getAbsolutePath().replace(File.separatorChar, '/');
+    }
+
+    /** A dex loader under this one found `elf`, lib<libname>.so, on its own
+     *  librarySearchPath (dalvik.system.BaseDexClassLoader.findLibrary): the
+     *  answer for it, by the kind of caller as in findLibrary. To the JVM the
+     *  stub that loads this ELF, the one System.load of its path gets
+     *  (onDemandStub), which the JVM then binds to the class that called
+     *  System.loadLibrary, a class of that loader; to app code the file's
+     *  path. Null (the caller then asks findLibrary, as it did before there
+     *  was a path to search) on a host without a stub per ELF, and for a file
+     *  no stub can be made for. */
+    public String libraryOnSearchPath(String libname, File elf) {
+        if (!ClassFileRewriter.ONDEMAND_NATIVE) return null;
+        // The app's own lib dir, on the path of a loader for a plugin's dex:
+        // findLibrary's, with what it does around a library of the app.
+        File libDir = nativeLibDir();
+        if (libDir != null && sameFile(libDir, elf.getParentFile())) return null;
+        if (askedByApp()) {
+            String name = androidNameOf(elf);
+            return name != null ? name : elf.getPath().replace(File.separatorChar, '/');
+        }
+        if (!elf.isAbsolute() || !isElf(elf)) return null;
+        try {
+            String stub = onDemandStub(elf).getAbsolutePath();
+            NativeLog.i(TAG, "findLibrary(" + libname + ") -> " + stub + " for " + elf
+                + ", on a dex loader's library path");
+            return stub;
+        } catch (UnsatisfiedLinkError e) {
+            NativeLog.w(TAG, "findLibrary(" + libname + "): " + elf + " is on a dex loader's library path, but "
+                + e.getMessage());
+            return null;
+        }
+    }
+
+    private static final StackWalker CALLERS =
+        StackWalker.getInstance(StackWalker.Option.RETAIN_CLASS_REFERENCE);
+
+    /** Whether findLibrary was called by app code (a class of this loader or of
+     *  a dex loader under it), directly or by reflection, and not by the JVM's
+     *  library loading or the framework. A class loader's frame is a
+     *  findLibrary handing the question on: a child loader's (BaseDexClassLoader,
+     *  or an app's subclass of PathClassLoader that overrides findLibrary and
+     *  calls super, which the JVM's loadLibrary then loads the answer of), or
+     *  java.lang.ClassLoader's own loadLibrary. */
+    private static boolean askedByApp() {
+        Class<?> caller = CALLERS.walk(frames -> frames
+            .map(StackWalker.StackFrame::getDeclaringClass)
+            .filter(c -> !ClassLoader.class.isAssignableFrom(c))
+            .findFirst().orElse(null));
+        return caller != null && caller.getClassLoader() instanceof dalvik.system.BaseDexClassLoader;
+    }
+
+    /** Android's name for a file or directory of the install tree, for example
+     *  "/data/app/~~x==/[package]-y==/lib/x86_64/libfoo.so" for the file of
+     *  that path under the android root, on a host that opens that name as this
+     *  file (Win.apk: the java.base overlay's WinApkPaths for java.io, paths.cpp
+     *  for native code); else null. */
+    private static String androidNameOf(File hostFile) {
+        String root = System.getProperty("winapk.android.root");
+        if (root == null || hostFile == null) return null;
+        try {
+            String r = new File(root).getCanonicalPath();
+            String f = hostFile.getCanonicalPath();
+            while (r.endsWith("\\") || r.endsWith("/")) r = r.substring(0, r.length() - 1);
+            if (f.length() <= r.length() || !f.regionMatches(true, 0, r, 0, r.length())) return null;
+            String name = f.substring(r.length()).replace('\\', '/');
+            // Only the install tree: the mapper sends /data/user/0, /sdcard and
+            // others elsewhere, and /data/app/... is <android root>/data/app/...
+            if (!name.startsWith("/data/app/")) return null;
+            return new File(name).exists() ? name : null;
+        } catch (IOException | RuntimeException e) {
+            return null;
+        }
+    }
+
+    /** The host library System.loadLibrary(libname) loads: the translated (on
+     *  Windows: stub) library for the app's lib<name>.so, made on first use. */
+    private String hostLibrary(String libname) {
         // v1.0.152: on the first findLibrary call, pre-translate every
         // other .so in the APK's lib/<abi>/ dir so downstream dlopen()
         // calls from within native code can find them. Unity's libmain.so
@@ -2636,10 +2740,25 @@ public final class AppClassLoader extends dalvik.system.PathClassLoader {
     public void loadNativeOnDemand(String filename) {
         String target = filename;
         if (filename != null) {
-            File f = new File(filename);
+            File f = hostLibraryFile(filename);
             if (f.isAbsolute() && isElf(f)) target = onDemandStub(f).getAbsolutePath();
         }
         loadAsApp(target);
+    }
+
+    /** `path` as a file. The name findLibrary gives the app for a library of the
+     *  installed lib dir (androidNameOf) is turned back into the host file: a
+     *  stub is found by the host path of its ELF, and System.load of that name
+     *  must meet System.loadLibrary's module, not make a second one. */
+    private File hostLibraryFile(String path) {
+        if (path.startsWith("/data/app/")) {
+            File dir = nativeLibDir();
+            String name = dir == null ? null : androidNameOf(dir);
+            if (name != null && path.startsWith(name + "/") && path.indexOf('/', name.length() + 1) < 0) {
+                return new File(dir, path.substring(name.length() + 1));
+            }
+        }
+        return new File(path);
     }
 
     /** System.load(path) from this loader's NativeLoaderShim. Unlike

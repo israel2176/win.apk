@@ -785,4 +785,308 @@ bool Source::seek(int64_t us) {
     return ok;
 }
 
+// ---- Demuxer -----------------------------------------------------------------------------
+
+namespace {
+
+bool starts_with_start_code(const std::vector<uint8_t>& d) {
+    return d.size() >= 4 && d[0] == 0 && d[1] == 0 && (d[2] == 1 || (d[2] == 0 && d[3] == 1));
+}
+
+// Four-byte NAL lengths to start codes, in place, when that is what the data
+// is. Media Foundation's MPEG-4 source already delivers start codes; this is
+// for a source that passes the container's own form through.
+void to_annexb(std::vector<uint8_t>* d) {
+    if (d->size() < 5 || starts_with_start_code(*d)) return;
+    size_t i = 0;
+    while (i + 4 <= d->size()) {
+        const size_t n = (static_cast<size_t>((*d)[i]) << 24) | ((*d)[i + 1] << 16) | ((*d)[i + 2] << 8) | (*d)[i + 3];
+        if (n == 0 || n > d->size() - i - 4) return;  // not length-prefixed after all
+        i += 4 + n;
+    }
+    if (i != d->size()) return;
+    for (i = 0; i < d->size();) {
+        const size_t n = (static_cast<size_t>((*d)[i]) << 24) | ((*d)[i + 1] << 16) | ((*d)[i + 2] << 8) | (*d)[i + 3];
+        (*d)[i] = (*d)[i + 1] = (*d)[i + 2] = 0;
+        (*d)[i + 3] = 1;
+        i += 4 + n;
+    }
+}
+
+// An H.264 sequence header (Annex-B) split as Android does: the SPS in csd0,
+// the PPS in csd1, each with a four-byte start code.
+void split_avc_header(const std::vector<uint8_t>& h, std::vector<uint8_t>* csd0, std::vector<uint8_t>* csd1) {
+    auto code_at = [&](size_t i) { return i + 3 <= h.size() && h[i] == 0 && h[i + 1] == 0 && h[i + 2] == 1; };
+    size_t i = 0;
+    while (i < h.size() && !code_at(i)) ++i;
+    while (i < h.size()) {
+        const size_t begin = i + 3;
+        size_t end = begin;
+        while (end < h.size() && !code_at(end)) ++end;
+        size_t stop = end;
+        if (end < h.size()) {
+            while (stop > begin && h[stop - 1] == 0) --stop;  // the next code's leading zero
+        }
+        if (stop > begin) {
+            const int type = h[begin] & 0x1f;
+            std::vector<uint8_t>* into = type == 7 ? csd0 : type == 8 ? csd1 : nullptr;
+            if (into) {
+                static const uint8_t kCode[4] = {0, 0, 0, 1};
+                into->insert(into->end(), kCode, kCode + 4);
+                into->insert(into->end(), h.begin() + static_cast<ptrdiff_t>(begin), h.begin() + static_cast<ptrdiff_t>(stop));
+            }
+        }
+        i = end;
+    }
+}
+
+int aac_rate_index(int rate) {
+    static const int kRates[] = {96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350};
+    for (int i = 0; i < 13; ++i) {
+        if (kRates[i] == rate) return i;
+    }
+    return -1;
+}
+
+}  // namespace
+
+struct Demuxer::Impl {
+    Com<IMFSourceReader> reader;
+    std::vector<Track> tracks;
+    std::vector<DWORD> streams;   // each track's stream in the reader
+    std::vector<bool> selected, done;
+    std::vector<bool> adts;       // AAC samples carry ADTS headers to drop
+    std::vector<Sample> pending;  // read ahead by seek(), oldest first
+    int64_t duration_us = 0;
+
+    int track_of(DWORD stream) const {
+        for (size_t i = 0; i < streams.size(); ++i) {
+            if (streams[i] == stream) return static_cast<int>(i);
+        }
+        return -1;
+    }
+
+    bool describe(DWORD stream, IMFMediaType* type) {
+        GUID major = GUID_NULL, sub = GUID_NULL;
+        type->GetGUID(MF_MT_MAJOR_TYPE, &major);
+        type->GetGUID(MF_MT_SUBTYPE, &sub);
+        Track t;
+        bool is_adts = false;
+        UINT32 v = 0;
+        if (major == MFMediaType_Video) {
+            t.video = true;
+            t.mime = "video/x-unknown";
+            for (const Mime& m : kMimes) {
+                if (m.subtype == sub) t.mime = m.mime;
+            }
+            if (sub == MFVideoFormat_HEVC) t.mime = "video/hevc";  // kMimes names the elementary-stream subtype
+            Layout lay;
+            if (read_layout(type, &lay)) {
+                t.width = lay.crop_w;
+                t.height = lay.crop_h;
+                t.rotation = lay.rotation;
+            }
+            UINT32 num = 0, den = 0;
+            if (SUCCEEDED(MFGetAttributeRatio(type, MF_MT_FRAME_RATE, &num, &den)) && den) {
+                t.frame_rate = static_cast<double>(num) / den;
+            }
+            if (SUCCEEDED(type->GetUINT32(MF_MT_AVG_BITRATE, &v))) t.bitrate = static_cast<int>(v);
+            UINT32 n = 0;
+            std::vector<uint8_t> header;
+            if (SUCCEEDED(type->GetBlobSize(MF_MT_MPEG_SEQUENCE_HEADER, &n)) && n) {
+                header.resize(n);
+                type->GetBlob(MF_MT_MPEG_SEQUENCE_HEADER, header.data(), n, nullptr);
+            }
+            if (t.mime == "video/avc") split_avc_header(header, &t.csd0, &t.csd1);
+            else t.csd0 = std::move(header);
+        } else if (major == MFMediaType_Audio) {
+            t.mime = sub == MFAudioFormat_AAC ? "audio/mp4a-latm"
+                     : sub == MFAudioFormat_MP3 ? "audio/mpeg"
+                     : (sub == MFAudioFormat_PCM || sub == MFAudioFormat_Float) ? "audio/raw" : "audio/x-unknown";
+            if (SUCCEEDED(type->GetUINT32(MF_MT_AUDIO_SAMPLES_PER_SECOND, &v))) t.sample_rate = static_cast<int>(v);
+            if (SUCCEEDED(type->GetUINT32(MF_MT_AUDIO_NUM_CHANNELS, &v))) t.channels = static_cast<int>(v);
+            if (SUCCEEDED(type->GetUINT32(MF_MT_AUDIO_AVG_BYTES_PER_SECOND, &v))) t.bitrate = static_cast<int>(v) * 8;
+            if (sub == MFAudioFormat_AAC) {
+                is_adts = SUCCEEDED(type->GetUINT32(MF_MT_AAC_PAYLOAD_TYPE, &v)) && v == 1;
+                // The AudioSpecificConfig follows the 12 bytes of HEAACWAVEINFO
+                // that MF_MT_USER_DATA starts with (see AudioDecoder::open).
+                UINT32 n = 0;
+                if (SUCCEEDED(type->GetBlobSize(MF_MT_USER_DATA, &n)) && n > 12) {
+                    std::vector<uint8_t> user(n);
+                    type->GetBlob(MF_MT_USER_DATA, user.data(), n, nullptr);
+                    t.csd0.assign(user.begin() + 12, user.end());
+                }
+                const int idx = aac_rate_index(t.sample_rate);
+                if (t.csd0.empty() && idx >= 0) {  // AAC-LC, as nearly every file is
+                    t.csd0 = {static_cast<uint8_t>((2 << 3) | (idx >> 1)),
+                              static_cast<uint8_t>(((idx & 1) << 7) | (t.channels << 3))};
+                }
+            }
+        } else {
+            return false;
+        }
+        PROPVARIANT var;
+        PropVariantInit(&var);
+        if (SUCCEEDED(reader->GetPresentationAttribute(stream, MF_SD_LANGUAGE, &var)) && var.vt == VT_LPWSTR &&
+            var.pwszVal) {
+            for (const wchar_t* p = var.pwszVal; *p; ++p) t.language.push_back(static_cast<char>(*p & 0x7f));
+        }
+        PropVariantClear(&var);
+        tracks.push_back(std::move(t));
+        streams.push_back(stream);
+        selected.push_back(false);
+        done.push_back(false);
+        adts.push_back(is_adts);
+        return true;
+    }
+
+    bool setup() {
+        reader->SetStreamSelection(static_cast<DWORD>(MF_SOURCE_READER_ALL_STREAMS), FALSE);
+        for (DWORD i = 0;; ++i) {
+            Com<IMFMediaType> t;
+            if (FAILED(reader->GetNativeMediaType(i, 0, &t))) break;
+            describe(i, t.p);
+        }
+        PROPVARIANT var;
+        PropVariantInit(&var);
+        if (SUCCEEDED(reader->GetPresentationAttribute(static_cast<DWORD>(MF_SOURCE_READER_MEDIASOURCE), MF_PD_DURATION,
+                                                       &var)) &&
+            var.vt == VT_UI8) {
+            duration_us = static_cast<int64_t>(var.uhVal.QuadPart / 10);
+        }
+        PropVariantClear(&var);
+        return !tracks.empty();
+    }
+
+    // The next sample from the reader itself. False at the end and on errors.
+    bool fetch(Sample* out) {
+        for (;;) {
+            bool any = false;
+            for (size_t i = 0; i < tracks.size(); ++i) any = any || (selected[i] && !done[i]);
+            if (!any) return false;
+            DWORD index = 0, flags = 0;
+            LONGLONG ts = 0;
+            Com<IMFSample> sample;
+            if (FAILED(reader->ReadSample(static_cast<DWORD>(MF_SOURCE_READER_ANY_STREAM), 0, &index, &flags, &ts,
+                                          &sample)) ||
+                (flags & MF_SOURCE_READERF_ERROR)) {
+                return false;
+            }
+            const int track = track_of(index);
+            if (track < 0) {
+                if (flags & MF_SOURCE_READERF_ENDOFSTREAM) return false;  // a stream this never selected: nothing more
+                continue;
+            }
+            if (flags & MF_SOURCE_READERF_ENDOFSTREAM) done[static_cast<size_t>(track)] = true;
+            if (!sample) continue;
+            Com<IMFMediaBuffer> buf;
+            BYTE* p = nullptr;
+            DWORD len = 0;
+            if (FAILED(sample->ConvertToContiguousBuffer(&buf)) || FAILED(buf->Lock(&p, nullptr, &len))) continue;
+            out->data.assign(p, p + len);
+            buf->Unlock();
+            const Track& t = tracks[static_cast<size_t>(track)];
+            out->track = track;
+            out->pts_us = ts / 10;
+            UINT32 clean = 0;
+            out->key = !t.video || (SUCCEEDED(sample->GetUINT32(MFSampleExtension_CleanPoint, &clean)) && clean != 0);
+            if (t.mime == "video/avc" || t.mime == "video/hevc") to_annexb(&out->data);
+            if (adts[static_cast<size_t>(track)] && out->data.size() > 7 && out->data[0] == 0xff &&
+                (out->data[1] & 0xf0) == 0xf0) {
+                const size_t head = (out->data[1] & 1) ? 7 : 9;  // 9 with a CRC
+                out->data.erase(out->data.begin(), out->data.begin() + static_cast<ptrdiff_t>(head));
+            }
+            return true;
+        }
+    }
+
+    bool position(int64_t us) {
+        PROPVARIANT var;
+        PropVariantInit(&var);
+        var.vt = VT_I8;
+        var.hVal.QuadPart = us < 0 ? 0 : us * 10;
+        const bool ok = SUCCEEDED(reader->SetCurrentPosition(GUID_NULL, var));
+        PropVariantClear(&var);
+        pending.clear();
+        if (ok) std::fill(done.begin(), done.end(), false);
+        return ok;
+    }
+};
+
+Demuxer::Demuxer(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}
+Demuxer::~Demuxer() = default;
+
+std::unique_ptr<Demuxer> Demuxer::open(const std::wstring& path_or_url) {
+    if (!mf_ready()) return nullptr;
+    auto impl = std::make_unique<Impl>();
+    // No attributes: no decoder and no converter is wanted, the streams are
+    // read as the container holds them.
+    if (FAILED(MFCreateSourceReaderFromURL(path_or_url.c_str(), nullptr, &impl->reader)) || !impl->setup()) {
+        return nullptr;
+    }
+    return std::unique_ptr<Demuxer>(new Demuxer(std::move(impl)));
+}
+
+int Demuxer::track_count() const { return static_cast<int>(impl_->tracks.size()); }
+const Demuxer::Track& Demuxer::track(int index) const { return impl_->tracks[static_cast<size_t>(index)]; }
+int64_t Demuxer::duration_us() const { return impl_->duration_us; }
+
+void Demuxer::select(int index, bool on) {
+    Impl& d = *impl_;
+    if (index < 0 || index >= track_count()) return;
+    const size_t i = static_cast<size_t>(index);
+    if (d.selected[i] == on) return;
+    d.selected[i] = on;
+    d.reader->SetStreamSelection(d.streams[i], on ? TRUE : FALSE);
+    if (!on) {
+        d.pending.erase(std::remove_if(d.pending.begin(), d.pending.end(), [&](const Sample& s) { return s.track == index; }),
+                        d.pending.end());
+    }
+}
+
+bool Demuxer::read(Sample* out) {
+    Impl& d = *impl_;
+    if (!d.pending.empty()) {
+        *out = std::move(d.pending.front());
+        d.pending.erase(d.pending.begin());
+        return true;
+    }
+    return d.fetch(out);
+}
+
+bool Demuxer::seek(int64_t us, SeekMode mode) {
+    Impl& d = *impl_;
+    // The reader itself lands on the sync sample at or before the time.
+    if (!d.position(us)) return false;
+    bool video = false;
+    for (size_t i = 0; i < d.tracks.size(); ++i) video = video || (d.selected[i] && d.tracks[i].video);
+    if (mode == kPreviousSync || !video) return true;
+    // The other two modes need the sync sample after the time: read on to it.
+    Sample s;
+    int64_t previous = -1;
+    while (d.fetch(&s)) {
+        if (!d.tracks[static_cast<size_t>(s.track)].video) {
+            if (previous < 0) d.pending.push_back(std::move(s));
+            continue;
+        }
+        if (previous < 0) {
+            previous = s.pts_us;
+            if (s.pts_us >= us) {  // the time is a sync sample itself
+                d.pending.push_back(std::move(s));
+                return true;
+            }
+            continue;
+        }
+        if (!s.key || s.pts_us < us) continue;
+        if (mode == kNextSync || s.pts_us - us < us - previous) {
+            d.pending.clear();
+            d.pending.push_back(std::move(s));
+            return true;
+        }
+        break;
+    }
+    // No later sync sample, or the earlier one is closer.
+    return d.position(us);
+}
+
 }  // namespace winapk::video

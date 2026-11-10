@@ -940,6 +940,21 @@ public class ViewGroup extends View implements ViewParent, ViewManager {
             if (c != null) c.dispatchVisibilityChanged(changedView, visibility);
         }
     }
+
+    /** AOSP ViewGroup.dispatchVisibilityAggregated (android14 ViewGroup.java:
+     *  1668-1683): "Only dispatch to visible children. Not visible children and
+     *  their subtrees already know that they aren't visible and that's not going
+     *  to change as a result of whatever triggered this dispatch." */
+    @Override boolean dispatchVisibilityAggregated(boolean isVisible) {
+        isVisible = super.dispatchVisibilityAggregated(isVisible);
+        // By index over the live list: a callback may add or remove a sibling.
+        for (int i = 0; i < children.size(); i++) {
+            View c = children.get(i);
+            if (c != null && c.getVisibility() == VISIBLE) c.dispatchVisibilityAggregated(isVisible);
+        }
+        return isVisible;
+    }
+
     /** AOSP ViewGroup.focusSearch(View, int) (android14-release ViewGroup.java:1074-1084):
      *
      *      if (isRootNamespace()) {
@@ -1030,13 +1045,32 @@ public class ViewGroup extends View implements ViewParent, ViewManager {
         children.add(index, child);
         child.setParent(this);
     }
+    /** AOSP ViewGroup.removeDetachedView (android14 ViewGroup.java:5869-5894):
+     *  "Finishes the removal of a detached view. This method will dispatch the
+     *  detached from window event and notify the hierarchy change listener":
+     *      } else if (child.mAttachInfo != null) {
+     *          child.dispatchDetachedFromWindow();
+     *      }
+     *      ...
+     *      dispatchViewRemoved(child);
+     *  detachViewFromParent only unlinks the child (it stays attached to the
+     *  WINDOW so that attachViewToParent can put it back for free); this is the
+     *  call that ends that state when the child is not put back. Ours cleared a
+     *  parent link that detachViewFromParent had already cleared and stopped
+     *  there, so the child kept answering isAttachedToWindow() for good and never
+     *  got onDetachedFromWindow. RecyclerView finishes every scrapped row that a
+     *  layout did not reuse this way (LayoutManager.removeAndRecycleScrapInt ->
+     *  RecyclerView.removeDetachedView -> super), so a row that left a list went
+     *  on running whatever it stops on detach: Google Maps' idle map kept a
+     *  loading row's indeterminate bar and Compose content animating, unseen,
+     *  and each tick redrew the window (Win.apk issue 114). */
     protected void removeDetachedView(View child, boolean animate) {
-        if (children.remove(child) && child != null) {
-            child.setParent(null);
-        } else if (child != null && child.getParent() == this) {
-            // Not in children list but parent still points here -- clear.
-            child.setParent(null);
-        }
+        if (child == null) return;
+        children.remove(child);
+        final ViewParent p = child.getParent();
+        // A child that some other group has taken in since is that group's now.
+        if (p != null && p != this) return;
+        macapkFinishRemoval(child);
     }
     /** AOSP returns whether any scrolling was performed; with no scroll
      *  handling at this level we scrolled nothing, so false. */
@@ -2254,6 +2288,13 @@ public class ViewGroup extends View implements ViewParent, ViewManager {
     public boolean getClipChildren()       { return clipChildren; }
     public void setClipToPadding(boolean b) { this.clipToPadding = b; }
     public boolean getClipToPadding()       { return clipToPadding; }
+    /** FRAMESPEED S1 (View.macapkInnerSig): the clip a child is drawn under also
+     *  comes from these, and their setters ask for no frame. */
+    @Override long macapkInnerSig() {
+        long h = macapkMix(super.macapkInnerSig(), (clipChildren ? 1 : 0) | (clipToPadding ? 2 : 0));
+        h = macapkMix(h, getPaddingLeft()); h = macapkMix(h, getPaddingTop());
+        return macapkMix(macapkMix(h, getPaddingRight()), getPaddingBottom());
+    }
 
     /** v1.0.76: minimal onLayout. Real Android-side ViewGroups
      *  (LinearLayout, FrameLayout, ConstraintLayout) each override
@@ -2580,7 +2621,11 @@ public class ViewGroup extends View implements ViewParent, ViewManager {
      *  one exists -- observes the damage the way AOSP's shape guarantees.
      *  Both halves are idempotent: schedule() sets a single AtomicBoolean. */
     @Override public void onDescendantInvalidated(View child, View target) {
-        if (android.os.Looper.MACAPK_REAL_LOOPER) ViewRootImpl.schedule();
+        // The view that changed decides whether a frame is due (see
+        // View.macapkCannotBeDrawn): a layer repaint inside a ComposeView that is
+        // hidden, or whose tree has left the window, cannot change a pixel. The
+        // walk goes on either way, so an override above still hears of it.
+        if (android.os.Looper.MACAPK_REAL_LOOPER) (target != null ? target : this).macapkScheduleRedraw();
         ViewParent p = getParent();
         if (p != null) p.onDescendantInvalidated(child, target);
     }
@@ -3794,12 +3839,16 @@ public class ViewGroup extends View implements ViewParent, ViewManager {
         }
         // Resilient draw pass (lead A): one throwing child blanks only itself; the
         // restoreToCount returns the canvas to this child's save point either way.
+        // FRAMESPEED S1: the clip the child is drawn under is what an invalidation
+        // of it damages (View.macapkBeforeDraw; one compare off the frame canvas).
+        final boolean damageSource = child.macapkBeforeDraw(canvas);
         try {
             child.draw(canvas);
         } catch (Throwable drawErr) {
             com.macapk.loader.GfxTrace.caught((fromDispatch ? "dispatchDraw:" : "drawChild:")
                     + child.getClass().getName(), drawErr);
         }
+        child.macapkAfterDraw(damageSource);
         canvas.restoreToCount(save);
         // AOSP View.draw(Canvas, ViewGroup, long):24999-25004, after restoreTo:
         //     if (a != null && !more) {
@@ -3873,10 +3922,11 @@ public class ViewGroup extends View implements ViewParent, ViewManager {
         // Resilient draw pass (lead A): same per-node guard as dispatchDraw so a
         // direct drawChild() call (RecyclerView item draw, custom ViewGroups)
         // isolates a throwing child instead of aborting the parent's draw.
+        final boolean damageSource = child.macapkBeforeDraw(canvas);   // FRAMESPEED S1, as in drawChild
         try { child.draw(canvas); }
         catch (Throwable drawErr) {
             com.macapk.loader.GfxTrace.caught("drawChild:" + child.getClass().getName(), drawErr);
-        } finally { canvas.restoreToCount(save); }
+        } finally { child.macapkAfterDraw(damageSource); canvas.restoreToCount(save); }
         if (childAnim != null && !animMore) {
             if (!childAnim.getFillAfter()) {
                 try { child.onSetAlpha(255); } catch (Throwable ignored) {}

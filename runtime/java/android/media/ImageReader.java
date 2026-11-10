@@ -41,6 +41,17 @@
 // unaffected.
 //
 // ---------------------------------------------------------------------------
+// A JPEG READER IS A QUEUE OF ENCODED STILLS
+// ---------------------------------------------------------------------------
+// An ImageFormat.JPEG reader does not look into the capture buffer at all. The
+// capture session encodes a still for each request that targets the reader's
+// Surface and hands the bytes to macapkQueueJpeg(); each waits here, in order,
+// until the app acquires it. Such an Image owns its bytes, so maxImages is
+// real for this format: up to maxImages may be outstanding at once, one more
+// acquire throws as AOSP's does, and an Image outlives the session it came
+// from.
+//
+// ---------------------------------------------------------------------------
 // WITH NO CAMERA ATTACHED
 // ---------------------------------------------------------------------------
 // An ImageReader that no capture session ever attached to (a codec output, say)
@@ -77,6 +88,11 @@ public class ImageReader implements AutoCloseable {
     private CameraImage mOutstanding;
     private boolean mWarnedOutstanding;
     private long mDroppedWhileBusy;
+
+    // ---- JPEG stills (guarded by mCameraLock) ----------------------------
+    private final java.util.ArrayDeque<JpegImage> mJpegQueue = new java.util.ArrayDeque<>();
+    private int mJpegOutstanding;
+    private boolean mClosed;
 
     protected ImageReader(int width, int height, int format, int maxImages) {
         // AOSP's constructor rejects these outright. Letting a 0x0 reader
@@ -206,8 +222,6 @@ public class ImageReader implements AutoCloseable {
      * than from a preview that mysteriously freezes after one frame.
      */
     public void macapkOnCameraFrame() {
-        OnImageAvailableListener listener;
-        android.os.Handler handler;
         synchronized (mCameraLock) {
             if (mOutstanding != null) {
                 mDroppedWhileBusy++;
@@ -219,6 +233,49 @@ public class ImageReader implements AutoCloseable {
                 }
                 return;
             }
+        }
+        postImageAvailable();
+    }
+
+    /**
+     * An encoded still for this JPEG reader, from the capture session. Not an
+     * AOSP method (the same convention as macapkOnCameraFrame).
+     *
+     * The reader holds at most maxImages stills, counting the ones the app has
+     * acquired and not closed: that is the size of the buffer queue on a
+     * device, where a full queue loses the new buffer. So a still that does not
+     * fit is dropped, and the session is told so.
+     *
+     * @param timestampNs the capture's SENSOR_TIMESTAMP. Apps pair an Image
+     *                    with its TotalCaptureResult by this value (CameraX's
+     *                    MetadataImageReader does), so it must be that exact
+     *                    number.
+     * @return false when the still was dropped
+     */
+    public boolean macapkQueueJpeg(byte[] jpeg, long timestampNs) {
+        if (jpeg == null || mFormat != android.graphics.ImageFormat.JPEG) return false;
+        synchronized (mCameraLock) {
+            if (mClosed) return false;
+            if (mJpegQueue.size() + mJpegOutstanding >= mMaxImages) {
+                System.err.println("[camera2] ImageReader(JPEG): still dropped, " + mMaxImages
+                        + " image(s) (maxImages) are already queued or not closed");
+                return false;
+            }
+            // Direct, as an Image's plane buffer is on Android (apps hand it to
+            // native code); the reader's size, as AOSP reports for a JPEG Image.
+            ByteBuffer buf = ByteBuffer.allocateDirect(jpeg.length);
+            buf.put(jpeg).flip();
+            mJpegQueue.add(new JpegImage(this, mWidth, mHeight, timestampNs, buf));
+        }
+        postImageAvailable();
+        return true;
+    }
+
+    /** onImageAvailable on the listener's Handler, as AOSP posts it. */
+    private void postImageAvailable() {
+        OnImageAvailableListener listener;
+        android.os.Handler handler;
+        synchronized (mCameraLock) {
             listener = mListener;
             handler = mListenerHandler;
         }
@@ -251,6 +308,7 @@ public class ImageReader implements AutoCloseable {
      *         attached, or when an Image is still outstanding.
      */
     public Image acquireLatestImage() {
+        if (mFormat == android.graphics.ImageFormat.JPEG) return acquireJpeg(true);
         long handle;
         int negotiatedWidth;
         int negotiatedHeight;
@@ -326,7 +384,37 @@ public class ImageReader implements AutoCloseable {
      * it skip, and this comment is where that behaviour is explained.
      */
     public Image acquireNextImage() {
+        if (mFormat == android.graphics.ImageFormat.JPEG) return acquireJpeg(false);
         return acquireLatestImage();
+    }
+
+    /**
+     * The oldest queued still, or with latest the newest (the older ones are
+     * dropped, as AOSP's acquireLatestImage closes them). Null when none is
+     * queued. With maxImages Images acquired and not closed AOSP throws
+     * IllegalStateException with this message (ImageReader.acquireNextImage's
+     * ACQUIRE_MAX_IMAGES case), whether or not another image waits; an app
+     * that leaks stills has to hear about it here as it does there.
+     */
+    private Image acquireJpeg(boolean latest) {
+        synchronized (mCameraLock) {
+            if (mJpegOutstanding >= mMaxImages) {
+                throw new IllegalStateException("maxImages (" + mMaxImages
+                        + ") has already been acquired, call #close before acquiring more.");
+            }
+            if (mJpegQueue.isEmpty()) return null;
+            JpegImage image = latest ? mJpegQueue.pollLast() : mJpegQueue.pollFirst();
+            if (latest) mJpegQueue.clear();
+            mJpegOutstanding++;
+            return image;
+        }
+    }
+
+    /** Called by JpegImage.close(). */
+    void macapkJpegClosed() {
+        synchronized (mCameraLock) {
+            if (mJpegOutstanding > 0) mJpegOutstanding--;
+        }
     }
 
     /** Called by CameraImage.close(). */
@@ -373,6 +461,8 @@ public class ImageReader implements AutoCloseable {
         synchronized (mCameraLock) {
             mListener = null;
             mListenerHandler = null;
+            mClosed = true;
+            mJpegQueue.clear();
         }
         Surface s;
         synchronized (sSurfaceOwners) {
@@ -504,6 +594,60 @@ public class ImageReader implements AutoCloseable {
             @Override public ByteBuffer getBuffer() { return mBuffer; }
             @Override public int getRowStride() { return mRowStride; }
             @Override public int getPixelStride() { return mPixelStride; }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // The JPEG Image
+    // -----------------------------------------------------------------------
+    //
+    // One plane holding the whole JPEG file, with row and pixel stride 0: that
+    // is how AOSP describes a compressed Image (Image.getPlanes: "the number
+    // of planes is 1" for JPEG; Plane.getRowStride/getPixelStride are 0 for
+    // it). The usual consumer reads buffer.remaining() bytes and writes them
+    // to a file or hands them to BitmapFactory.
+
+    static final class JpegImage extends Image {
+        private final ImageReader mReader;
+        private final int mImgWidth;
+        private final int mImgHeight;
+        private final long mTimestamp;
+        private final Plane[] mPlanes;
+        private boolean mIsClosed;
+
+        JpegImage(ImageReader reader, int width, int height, long timestamp, ByteBuffer jpeg) {
+            mReader = reader;
+            mImgWidth = width;
+            mImgHeight = height;
+            mTimestamp = timestamp;
+            mPlanes = new Plane[] { new JpegPlane(jpeg) };
+        }
+
+        private void checkOpen() {
+            if (mIsClosed) throw new IllegalStateException("Image is already closed");
+        }
+
+        @Override public int getFormat() { checkOpen(); return android.graphics.ImageFormat.JPEG; }
+        @Override public int getWidth() { checkOpen(); return mImgWidth; }
+        @Override public int getHeight() { checkOpen(); return mImgHeight; }
+        @Override public long getTimestamp() { checkOpen(); return mTimestamp; }
+        @Override public Plane[] getPlanes() { checkOpen(); return mPlanes; }
+
+        @Override
+        public void close() {
+            synchronized (this) {
+                if (mIsClosed) return;
+                mIsClosed = true;
+            }
+            mReader.macapkJpegClosed();
+        }
+
+        private static final class JpegPlane extends Plane {
+            private final ByteBuffer mBuffer;
+            JpegPlane(ByteBuffer buffer) { mBuffer = buffer; }
+            @Override public ByteBuffer getBuffer() { return mBuffer; }
+            @Override public int getRowStride() { return 0; }
+            @Override public int getPixelStride() { return 0; }
         }
     }
 }

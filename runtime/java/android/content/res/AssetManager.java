@@ -451,7 +451,8 @@ public final class AssetManager implements AutoCloseable {
     public android.content.res.AssetFileDescriptor openFd(String name) throws IOException {
         if (macapkNoMounts()) throw new IOException("no APK bound");
         Found f = macapkFind("assets/" + name);
-        if (f == null) throw new IOException("asset not found: " + name);
+        // AOSP: FileNotFoundException, as open() below.
+        if (f == null) throw new java.io.FileNotFoundException("Asset file: " + name);
         return macapkFdFor(f, "assets/" + name, "openFd('" + name + "')");
     }
 
@@ -493,7 +494,7 @@ public final class AssetManager implements AutoCloseable {
         // behaviour, and the reverse order guarantees the app still wins
         // wherever both have the name.
         Found f = macapkFind(cookie, fileName);
-        if (f == null) throw new IOException("asset not found: " + fileName);
+        if (f == null) throw new java.io.FileNotFoundException("Asset absolute file: " + fileName);
         return macapkFdFor(f, fileName, "openNonAssetFd('" + fileName + "')");
     }
 
@@ -520,7 +521,9 @@ public final class AssetManager implements AutoCloseable {
     public InputStream open(String name, int accessMode) throws IOException {
         if (macapkNoMounts()) throw new IOException("no APK bound");
         Found f = macapkFind("assets/" + name);
-        if (f == null) throw new IOException("asset not found: " + name);
+        // AOSP throws FileNotFoundException ("Asset file: <name>") for a missing asset, here and in openFd /
+        // openNonAssetFd: apps tell "not there" (catch FileNotFoundException, fall back) from a real read error.
+        if (f == null) throw new java.io.FileNotFoundException("Asset file: " + name);
         // Buffer so callers can close/reopen without holding the ZipFile.
         InputStream in = f.zip.getInputStream(f.entry);
         byte[] buf = in.readAllBytes();

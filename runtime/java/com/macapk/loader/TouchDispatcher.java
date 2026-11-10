@@ -200,18 +200,25 @@ public final class TouchDispatcher {
         // cancel -- is what CursorInputMapper emits, not a finger.
         final HostMouseState m = s_deliveringMouse;
         if (m != null) return mouseEvent(downTime, eventTime, action, x, y, m.buttonState, m.metaState);
+        // A host TOUCHSCREEN or PEN contact (dispatchHostTouch) is being
+        // delivered down this path: the event carries its tool, pressure and
+        // stylus button, not a plain finger's.
+        final HostTouchState ht = s_deliveringTouch;
+        final boolean stylus = ht != null && (ht.toolType == MotionEvent.TOOL_TYPE_STYLUS
+                || ht.toolType == MotionEvent.TOOL_TYPE_ERASER);
         MotionEvent.PointerProperties p = new MotionEvent.PointerProperties();
         p.id = 0;
-        p.toolType = MotionEvent.TOOL_TYPE_FINGER;
+        p.toolType = ht != null ? ht.toolType : MotionEvent.TOOL_TYPE_FINGER;
         MotionEvent.PointerCoords c = new MotionEvent.PointerCoords();
         c.x = x; c.y = y;
-        c.pressure = 1f; c.size = 1f;
+        c.pressure = ht != null ? ht.pressure : 1f; c.size = 1f;
         return MotionEvent.obtain(downTime, eventTime, action, 1,
                 new MotionEvent.PointerProperties[]{ p },
                 new MotionEvent.PointerCoords[]{ c },
-                metaState, 0 /* buttonState */, 1f, 1f,
+                metaState, ht != null ? ht.buttonState : 0, 1f, 1f,
                 TOUCHSCREEN_DEVICE_ID, 0 /* edgeFlags */,
-                android.view.InputDevice.SOURCE_TOUCHSCREEN, 0 /* flags */);
+                android.view.InputDevice.SOURCE_TOUCHSCREEN
+                    | (stylus ? android.view.InputDevice.SOURCE_STYLUS : 0), 0 /* flags */);
     }
 
     /** A TWO-POINTER MotionEvent, for the synthesized pinch stream. AOSP packs the pointer index of
@@ -2479,7 +2486,9 @@ public final class TouchDispatcher {
     /** MACAPK_WHEEL_TRACE=1: log where the first wheel steps went. */
     private static final boolean WHEEL_TRACE = "1".equals(System.getenv("MACAPK_WHEEL_TRACE"));
     private static int sWheelLogged;
-    private static void deliverWheelToWindows(Activity a, MotionEvent ev) {
+    /** @return whether a window took the event: a floating window it was
+     *  handed to, or the activity's view tree saying it handled it. */
+    private static boolean deliverWheelToWindows(Activity a, MotionEvent ev) {
         try {
             if (!WindowOverlayStack.isEmpty()) {
                 // Overlay bounds are content-space (screen minus the status bar).
@@ -2487,15 +2496,17 @@ public final class TouchDispatcher {
                 if (WindowOverlayStack.deliverPointerGeneric(ev, ev.getX(), contentY)) {
                     if (WHEEL_TRACE && sWheelLogged++ < 6) NativeLog.i(TAG, "wheel -> overlay window at ("
                             + ev.getX() + "," + contentY + ")");
-                    return;
+                    return true;
                 }
             }
             final boolean handled = a.dispatchGenericMotionEvent(ev);
             if (WHEEL_TRACE && sWheelLogged++ < 6) NativeLog.i(TAG, "wheel ACTION_SCROLL v="
                     + ev.getAxisValue(MotionEvent.AXIS_VSCROLL) + " at (" + ev.getX() + ","
                     + ev.getY() + ") -> " + a.getClass().getSimpleName() + " handled=" + handled);
+            return handled;
         } catch (Throwable t) {
             NativeLog.w(TAG, "wheel delivery threw: " + t);
+            return true;   // not also a drag into an app that just threw
         }
     }
 
@@ -2795,6 +2806,358 @@ public final class TouchDispatcher {
         ev.setActionButton(actionButton);
         if (deliverToTakenInputQueue(a, ev)) return;
         deliverWheelToWindows(a, ev);
+    }
+
+    // ------------------------------------------------------------------
+    // HOST TOUCHSCREEN, PEN, WHEEL AND TEXT (Win.apk). The Windows host's window
+    // (windows/host/win32_window.cpp) reports what a Mac has no counterpart of
+    // or reports differently: the contacts of a touchscreen and a pen's tip, a
+    // wheel step with the drag that stands in for it, a zoom on the wheel, and
+    // text that is no single key's (dead keys, an input method). Coordinates are
+    // dispatch()'s: view points, y up, with the view's size.
+    // ------------------------------------------------------------------
+
+    /** Tool, pressure and buttons of the one pointer a host touch gesture is
+     *  delivered with while it goes down the single-pointer path (delivery
+     *  thread), so touchEvent builds a pen's event for a pen. */
+    static final class HostTouchState {
+        final int toolType, buttonState;
+        final float pressure;
+        HostTouchState(int toolType, float pressure, int buttonState) {
+            this.toolType = toolType; this.pressure = pressure; this.buttonState = buttonState;
+        }
+    }
+    private static volatile HostTouchState s_deliveringTouch;
+
+    /** How the host touch gesture in progress reaches the app (delivery thread).
+     *  ONE: one pointer so far, through dispatchSurfaceTouch like the host mouse,
+     *  so a finger does everything a click does (the BACK glyph, dialogs and
+     *  popups, a drag and drop). MULTI: a second pointer landed on a gesture the
+     *  Activity owns: from then on every event carries all pointers and goes to
+     *  the Activity (or its taken input queue) directly, as the trackpad's
+     *  streams do. FIRST_ONLY: a second pointer landed on a gesture a floating
+     *  window, the BACK glyph or a drag owns -- their routers are single-pointer
+     *  -- so only the first pointer (id 0) is followed. OVER: that pointer
+     *  lifted; the rest of the gesture is dropped. */
+    private static final int HT_NONE = 0, HT_ONE = 1, HT_MULTI = 2, HT_FIRST_ONLY = 3, HT_OVER = 4;
+    private static int s_hostTouchMode = HT_NONE;
+
+    /** One event of a touchscreen or pen gesture, as InputReader's
+     *  MultiTouchInputMapper orders it (windows/host/pointer_input.h,
+     *  TouchTracker): DOWN, POINTER_DOWN@index, MOVE with every pointer,
+     *  POINTER_UP@index, UP, or CANCEL. ids rise; index is the pointer that
+     *  landed or lifted. tools are MotionEvent.TOOL_TYPE_*; buttonState carries
+     *  BUTTON_STYLUS_PRIMARY while a pen's barrel button is held. */
+    public void dispatchHostTouch(int action, int index, int[] ids, float[] xs, float[] ys,
+                                  float[] pressures, int[] tools, int buttonState,
+                                  float viewW, float viewH) {
+        if (ids == null || xs == null || ys == null || pressures == null || tools == null) return;
+        final int n = ids.length;
+        if (n == 0 || xs.length < n || ys.length < n || pressures.length < n || tools.length < n) return;
+        noteRealInput();
+        if (TRACKPAD_MULTITOUCH) {
+            // The same rule dispatch() keeps for the host mouse: a trackpad hold
+            // ends before this stream starts and none begins while it is down.
+            if (action == MotionEvent.ACTION_DOWN) {
+                s_hostPointerDown = true;
+                trackpadClaim(false);
+            } else if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+                s_hostPointerDown = false;
+            }
+        }
+        final float scale = macapkBackingScale();
+        final float[] px = new float[n], py = new float[n];
+        for (int i = 0; i < n; i++) {
+            px[i] = surfaceX(xs[i], scale);
+            py[i] = surfaceY(ys[i], viewH, scale);
+        }
+        final int surfW = Math.round(viewW * scale), surfH = Math.round(viewH * scale);
+        final Runnable r = () -> deliverHostTouch(action, index, ids, px, py, pressures, tools,
+                buttonState, surfW, surfH);
+        if (routeToLoop(ActivityHost.peek())) loopHandler().post(r); else r.run();
+    }
+
+    private void deliverHostTouch(int action, int index, int[] ids, float[] px, float[] py,
+                                  float[] pressures, int[] tools, int buttonState,
+                                  int surfW, int surfH) {
+        final boolean ends = action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL;
+        final Activity active = ActivityHost.peek();
+        if (InputRecorder.ON) {
+            InputRecorder.motions(java.util.Collections.singletonList(
+                    new TrackpadGestureMapper.Motion(action, index, 0L, ids, px, py)));
+        }
+        if (action == MotionEvent.ACTION_DOWN) s_hostTouchMode = active != null ? HT_ONE : HT_NONE;
+        try {
+            if (active == null || s_hostTouchMode == HT_NONE) return;
+            if (action == MotionEvent.ACTION_POINTER_DOWN && s_hostTouchMode == HT_ONE) {
+                s_hostTouchMode = _navBackArmed || WindowOverlayStack.gesturePinnedToOverlay()
+                        || android.view.MacApkDragSession.isActive() ? HT_FIRST_ONLY : HT_MULTI;
+            }
+            switch (s_hostTouchMode) {
+                case HT_ONE:
+                    hostTouchOne(active, action, px[0], py[0], pressures[0], tools[0], buttonState, surfW, surfH);
+                    break;
+                case HT_MULTI:
+                    hostTouchAll(active, action, index, ids, px, py, pressures, tools, buttonState);
+                    break;
+                case HT_FIRST_ONLY: {
+                    int first = -1;
+                    for (int i = 0; i < ids.length; i++) if (ids[i] == 0) { first = i; break; }
+                    if (first < 0) { s_hostTouchMode = HT_OVER; break; }
+                    final boolean lifts = action == MotionEvent.ACTION_UP
+                            || (action == MotionEvent.ACTION_POINTER_UP && index == first);
+                    if (lifts || action == MotionEvent.ACTION_MOVE || action == MotionEvent.ACTION_CANCEL) {
+                        hostTouchOne(active, lifts ? MotionEvent.ACTION_UP : action, px[first], py[first],
+                                pressures[first], tools[first], buttonState, surfW, surfH);
+                    }
+                    if (lifts) s_hostTouchMode = HT_OVER;
+                    break;
+                }
+                default:
+                    break;
+            }
+        } finally {
+            if (ends) s_hostTouchMode = HT_NONE;
+        }
+    }
+
+    /** One pointer, down the host mouse's own path (doDispatch from the surface
+     *  pixel on): touch mode, the gesture clock, then dispatchSurfaceTouch. */
+    private void hostTouchOne(Activity active, int action, float px, float py, float pressure,
+                              int tool, int buttonState, int surfW, int surfH) {
+        final boolean logThis = s_logged < LOG_CAP;
+        if (logThis) {
+            s_logged++;
+            NativeLog.i(TAG, "host touch action=" + action + " px=(" + px + "," + py + ") tool=" + tool
+                + " activity=" + active.getClass().getName());
+        }
+        if (action == MotionEvent.ACTION_DOWN) {
+            macapkEnterTouchModeForPointer(active, action);
+            s_gestureDownTime = android.os.SystemClock.uptimeMillis();
+        }
+        s_deliveringTouch = new HostTouchState(tool, pressure, buttonState);
+        try {
+            dispatchSurfaceTouch(active, action, px, py, surfW, surfH, logThis);
+        } finally {
+            s_deliveringTouch = null;
+        }
+    }
+
+    /** Every pointer, to the Activity: its taken input queue, else
+     *  dispatchTouchEvent and the renderer-direct fallback (deliverTrackpadNow's
+     *  delivery, with the real tools and pressures). */
+    private static void hostTouchAll(Activity active, int action, int index, int[] ids, float[] px,
+                                     float[] py, float[] pressures, int[] tools, int buttonState) {
+        s_ptrDown = !(action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL);
+        s_ptrX = px[0];
+        s_ptrY = py[0];
+        if (s_logged < LOG_CAP) {
+            s_logged++;
+            NativeLog.i(TAG, "host touch action=" + action + "@" + index + " pointers=" + ids.length);
+        }
+        final long t = android.os.SystemClock.uptimeMillis();
+        final MotionEvent ev = hostTouchEvent(s_gestureDownTime != 0L ? s_gestureDownTime : t, t, action, index,
+                ids, px, py, pressures, tools, buttonState);
+        try {
+            if (deliverToTakenInputQueue(active, ev)) return;
+            active.dispatchTouchEvent(ev);
+            if (action == MotionEvent.ACTION_MOVE || action == MotionEvent.ACTION_CANCEL) {
+                for (int i = 0; i < ids.length; i++) dispatchToRenderer(active, action, px[i], py[i], ids[i]);
+            } else {
+                final int i = Math.min(Math.max(index, 0), ids.length - 1);
+                dispatchToRenderer(active, action, px[i], py[i], ids[i]);
+            }
+        } catch (Throwable thr) {
+            NativeLog.w(TAG, "host touch dispatch threw: " + thr);
+        } finally {
+            ev.recycle();
+        }
+    }
+
+    /** A touchscreen's event with N pointers, as MultiTouchInputMapper builds it:
+     *  the pointer index of a POINTER_DOWN / POINTER_UP in the action's bits
+     *  8-15, each pointer's own id, tool and pressure. A pen is
+     *  SOURCE_TOUCHSCREEN | SOURCE_STYLUS, as a touchscreen that takes a stylus
+     *  reports it. Pure, so the JVM test checks it. */
+    static MotionEvent hostTouchEvent(long downTime, long eventTime, int action, int index, int[] ids,
+                                      float[] px, float[] py, float[] pressures, int[] tools,
+                                      int buttonState) {
+        final int count = ids.length;
+        MotionEvent.PointerProperties[] props = new MotionEvent.PointerProperties[count];
+        MotionEvent.PointerCoords[] coords = new MotionEvent.PointerCoords[count];
+        boolean stylus = false;
+        for (int i = 0; i < count; i++) {
+            MotionEvent.PointerProperties p = new MotionEvent.PointerProperties();
+            p.id = ids[i];
+            p.toolType = tools[i];
+            props[i] = p;
+            MotionEvent.PointerCoords c = new MotionEvent.PointerCoords();
+            c.x = px[i]; c.y = py[i];
+            c.pressure = pressures[i]; c.size = 1f;
+            coords[i] = c;
+            stylus |= tools[i] == MotionEvent.TOOL_TYPE_STYLUS || tools[i] == MotionEvent.TOOL_TYPE_ERASER;
+        }
+        int packed = action;
+        if (action == MotionEvent.ACTION_POINTER_DOWN || action == MotionEvent.ACTION_POINTER_UP)
+            packed |= index << MotionEvent.ACTION_POINTER_INDEX_SHIFT;
+        return MotionEvent.obtain(downTime, eventTime, packed, count, props, coords,
+                0 /* metaState */, buttonState, 1f, 1f,
+                TOUCHSCREEN_DEVICE_ID, 0 /* edgeFlags */,
+                android.view.InputDevice.SOURCE_TOUCHSCREEN
+                    | (stylus ? android.view.InputDevice.SOURCE_STYLUS : 0), 0 /* flags */);
+    }
+
+    /** A host wheel step that falls back to a drag. The step is delivered as
+     *  dispatchWheel delivers it (one ACTION_SCROLL, SOURCE_MOUSE, to the taken
+     *  input queue or the window under the pointer). When no view of the window
+     *  handled it -- a custom scroller or a map view that has no
+     *  onGenericMotionEvent, which is common -- the notch becomes the touch drag
+     *  it was before v1.0.2273: DOWN at (x, y), a MOVE by the slop (a scrolling
+     *  view takes the gesture over on that move and scrolls on the next), a MOVE
+     *  by the drag, UP. A taken input queue gets the scroll event only: the
+     *  engine reads the axis, and whether it did is not reported back in time.
+     *  With MACAPK_WHEEL_SCROLL_EVENT=0 (or _ALL=0 for a window without a taken
+     *  queue) every step is the drag. */
+    public void dispatchHostWheel(float x, float y, float viewW, float viewH, float vscroll, float hscroll,
+                                  float slopX, float slopY, float dragX, float dragY) {
+        final Activity a = ActivityHost.peek();
+        if (a == null) return;
+        noteRealInput();
+        final boolean taken = hasTakenInputQueue(a);
+        final Runnable drag = () -> {
+            doDispatch(MotionEvent.ACTION_DOWN, x, y, viewW, viewH);
+            doDispatch(MotionEvent.ACTION_MOVE, x + slopX, y + slopY, viewW, viewH);
+            doDispatch(MotionEvent.ACTION_MOVE, x + slopX + dragX, y + slopY + dragY, viewW, viewH);
+            doDispatch(MotionEvent.ACTION_UP, x + slopX + dragX, y + slopY + dragY, viewW, viewH);
+        };
+        final Runnable r;
+        if (!WHEEL_SCROLL_EVENT || (!taken && !WheelScroll.ALL)) {
+            r = drag;
+        } else {
+            final float scale = macapkBackingScale();
+            final MotionEvent ev = wheelEvent(surfaceX(x, scale), surfaceY(y, viewH, scale), vscroll, hscroll);
+            r = taken ? () -> deliverToTakenInputQueue(a, ev)
+                      : () -> { if (!deliverWheelToWindows(a, ev)) drag.run(); };
+        }
+        if (routeToLoop(a)) loopHandler().post(r); else r.run();
+    }
+
+    /** A step of the host's synthesized pinch (Ctrl+wheel, which is also a
+     *  precision touchpad's pinch on Windows): dispatchPinch, for a gesture that
+     *  began with nothing in its way. The two-pointer stream goes to the
+     *  Activity directly, so it must not begin while a floating window (the
+     *  overlay router is single-pointer: the pinch would fall through a dialog
+     *  onto the Activity) or a drag and drop owns the pointer. Called on the
+     *  host's window thread only. */
+    public void dispatchHostPinch(int phase, float cx, float cy, float span, float viewW, float viewH) {
+        if (phase == 0) {
+            s_hostPinchLive = ActivityHost.peek() != null && WindowOverlayStack.isEmpty()
+                    && !WindowOverlayStack.gesturePinnedToOverlay()
+                    && !android.view.MacApkDragSession.isActive();
+        }
+        if (!s_hostPinchLive) return;
+        if (phase != 0 && phase != 1) s_hostPinchLive = false;
+        noteRealInput();
+        dispatchPinch(phase, cx, cy, span, viewW, viewH);
+    }
+    private static boolean s_hostPinchLive;
+
+    /** Text that is no single key's: what a dead key and the next key made, a
+     *  character beyond U+FFFF, an input method's result. An editor bound
+     *  through an InputConnection gets it whole, as an input method commits it
+     *  (commitText replaces the text being composed, if any). Every other
+     *  target gets it the way cocoa_bridge.mm's insertText: sends composed text:
+     *  a DOWN/UP pair per UTF-16 unit with keyCode 0 and the unit as the
+     *  character, which the soft-key route types into a TextView and an app
+     *  without a field reads from the key event. */
+    public void dispatchHostText(final String text) {
+        if (text == null || text.isEmpty()) return;
+        noteRealInput();
+        final Runnable r = () -> {
+            try {
+                if (android.view.inputmethod.InputMethodManager.macapkActiveInput() == null) {
+                    final android.view.inputmethod.InputConnection ic =
+                        android.view.inputmethod.InputMethodManager.macapkActiveConnection();
+                    if (ic != null) {
+                        if (InputRecorder.ON) InputRecorder.unrecorded("text committed through an InputConnection");
+                        ic.commitText(text, 1);
+                        return;
+                    }
+                }
+            } catch (Throwable thr) {
+                NativeLog.w(TAG, "host text: " + thr);
+                return;
+            }
+            for (int i = 0; i < text.length(); i++) {
+                final char c = text.charAt(i);
+                deliverKey(KeyEvent.ACTION_DOWN, 0, c, 0, false);
+                deliverKey(KeyEvent.ACTION_UP, 0, c, 0, false);
+            }
+        };
+        if (routeToLoop(ActivityHost.peek())) loopHandler().post(r); else r.run();
+    }
+
+    /** Whether the focused editor can show a host input method's composition
+     *  itself: it is bound through an InputConnection and is not a TextView on
+     *  the soft-key route (which has no composing text). The host then sends the
+     *  composition here instead of letting the system draw it. Asked on the
+     *  host's window thread, like cocoa_bridge.mm's MacApkGuestTextTargetActive. */
+    public boolean hostImeInline() {
+        try {
+            return android.view.inputmethod.InputMethodManager.macapkActiveInput() == null
+                && android.view.inputmethod.InputMethodManager.macapkActiveConnection() != null;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /** The text a host input method is composing, each time it changes
+     *  (InputConnection.setComposingText; empty when the user gave the
+     *  composition up), and null when the composition ended
+     *  (finishComposingText). The result itself arrives through dispatchHostText. */
+    public void dispatchHostComposingText(final String text) {
+        final Runnable r = () -> {
+            try {
+                if (android.view.inputmethod.InputMethodManager.macapkActiveInput() != null) return;
+                final android.view.inputmethod.InputConnection ic =
+                    android.view.inputmethod.InputMethodManager.macapkActiveConnection();
+                if (ic == null) return;
+                if (text == null) ic.finishComposingText();
+                else ic.setComposingText(text, 1);
+            } catch (Throwable thr) {
+                NativeLog.w(TAG, "host composing text: " + thr);
+            }
+        };
+        if (routeToLoop(ActivityHost.peek())) loopHandler().post(r); else r.run();
+    }
+
+    /** Where a host input method's candidate window belongs: under the caret of
+     *  the TextView that has (or would get) the keyboard, in surface pixels
+     *  packed as (x << 32) | y, or -1 when there is no such view (a Compose
+     *  field has no TextView; the host then uses the pointer's last place).
+     *  Read-only, and asked on the host's window thread: a layout in progress
+     *  can make the answer a frame old, which a candidate window can live with. */
+    public long hostImeAnchor() {
+        try {
+            final android.widget.TextView t = android.view.inputmethod.InputMethodManager.macapkShowTarget();
+            if (t == null || !t.isAttachedToWindow()) return -1L;
+            final int[] loc = new int[2];
+            t.getLocationOnScreen(loc);
+            float x = loc[0], y = loc[1] + t.getHeight();
+            try {
+                final android.text.Layout l = t.getLayout();
+                final int sel = t.getSelectionEnd();
+                if (l != null && sel >= 0) {
+                    x = loc[0] + t.getTotalPaddingLeft() - t.getScrollX() + l.getPrimaryHorizontal(sel);
+                    y = loc[1] + t.getTotalPaddingTop() - t.getScrollY() + l.getLineBottom(l.getLineForOffset(sel));
+                }
+            } catch (Throwable ignored) { }   // the view's lower left corner, then
+            // View coordinates are the content's: the surface has the status bar above.
+            y += StatusBarDriver.heightPx(null);
+            return ((long) Math.round(Math.max(0f, x)) << 32) | (Math.round(Math.max(0f, y)) & 0xffffffffL);
+        } catch (Throwable t) {
+            return -1L;
+        }
     }
 
     public void dispatch(int action, float x, float y, float viewW, float viewH) {

@@ -660,6 +660,45 @@ public class View implements android.graphics.drawable.Drawable.Callback,
         onVisibilityChanged(changedView, visibility);
     }
 
+    /** MACAPK_VISIBILITY_AGGREGATED (default ON; =0 none of these calls, as
+     *  before): onVisibilityAggregated(boolean), and onWindowVisibilityChanged and
+     *  onVisibilityChanged at attach and detach, were declared but never called.
+     *  They are how a widget learns that it is, or no longer is, on screen:
+     *  AOSP's ProgressBar and ImageView start and stop their drawables from
+     *  onVisibilityAggregated, which tells a view the RESULT (shown or not, its
+     *  ancestors and its window counted) where onVisibilityChanged tells it which
+     *  view changed. */
+    static final boolean MACAPK_VISIBILITY_AGGREGATED =
+            !"0".equals(System.getenv("MACAPK_VISIBILITY_AGGREGATED"));
+
+    /** AOSP View.dispatchVisibilityAggregated (android14 View.java:16127-16135),
+     *  package-private there too: "Internal dispatching method for
+     *  onVisibilityAggregated. Overridden by ViewGroup to dispatch to children."
+     *  Returns "true if this view is visible to the user (not counting clipping
+     *  or overlapping)". */
+    boolean dispatchVisibilityAggregated(boolean isVisible) {
+        final boolean thisVisible = getVisibility() == VISIBLE;
+        // If we're not visible but something is telling us we are, ignore it.
+        if (thisVisible || !isVisible) {
+            try { onVisibilityAggregated(isVisible); }
+            catch (Throwable t) { com.macapk.loader.GfxTrace.caught("View.visibilityAggregated", t); }
+        }
+        return thisVisible && isVisible;
+    }
+
+    /** This view's visibility combined with its ancestors', the `visibility`
+     *  argument AOSP's dispatchAttachedToWindow carries down the tree
+     *  (ViewGroup.combineVisibility is Math.max: VISIBLE < INVISIBLE < GONE). */
+    private int macapkCombinedVisibility() {
+        int vis = visibility;
+        ViewParent p = parent;
+        for (int depth = 0; p instanceof View pv && depth < 1024; depth++) {
+            vis = Math.max(vis, pv.visibility);
+            p = pv.parent;
+        }
+        return vis;
+    }
+
     public final Context getContext() { return mContext; }
     public android.content.res.Resources getResources() {
         return mContext != null ? mContext.getResources() : null;
@@ -1923,6 +1962,9 @@ public class View implements android.graphics.drawable.Drawable.Callback,
         macapkTraceComposeAttach("ATTACH", macapkAttached);
         if (macapkAttached) return;
         macapkAttached = true;
+        // A view that joins a window has to be drawn: its invalidations asked for
+        // no frame while its tree was in none (macapkCannotBeDrawn).
+        if (android.os.Looper.MACAPK_REAL_LOOPER) ViewRootImpl.schedule();
         // hasWindowFocus() flips false -> true at this moment (it gates on
         // macapkAttached since the fwprobe DRAWSTATE fix), so any drawable
         // state cached during construction is stale now. AOSP recomputes via
@@ -1992,6 +2034,28 @@ public class View implements android.graphics.drawable.Drawable.Callback,
                     new java.util.ArrayList<>(attachStateChangeListeners)) {
                 try { l.onViewAttachedToWindow(this); } catch (Throwable ignored) {}
             }
+        }
+        // AOSP View.dispatchAttachedToWindow (android14 View.java:21266-21282),
+        // after onAttachedToWindow and the attach listeners:
+        //     int vis = info.mWindowVisibility;
+        //     if (vis != GONE) {
+        //         onWindowVisibilityChanged(vis);
+        //         if (isShown()) onVisibilityAggregated(vis == VISIBLE);
+        //     }
+        //     onVisibilityChanged(this, visibility);
+        // where `visibility` is this view's combined with its ancestors'
+        // (ViewGroup passes combineVisibility(visibility, child.getVisibility())).
+        // A window of ours is visible from the moment it exists. Widgets start
+        // what they animate from these (ProgressBar.onVisibilityAggregated, a
+        // Material progress bar's onVisibilityChanged) and stop it from the
+        // counterparts in macapkDispatchDetachedFromWindow and setVisibility.
+        if (MACAPK_VISIBILITY_AGGREGATED) {
+            try { onWindowVisibilityChanged(VISIBLE); }
+            catch (Throwable t) { com.macapk.loader.GfxTrace.caught("View.windowVisibility", t); }
+            try { if (isShown()) onVisibilityAggregated(true); }
+            catch (Throwable t) { com.macapk.loader.GfxTrace.caught("View.visibilityAggregated", t); }
+            try { onVisibilityChanged(this, macapkCombinedVisibility()); }
+            catch (Throwable t) { com.macapk.loader.GfxTrace.caught("View.visibilityChanged", t); }
         }
         // v1.0.410: a late-attached view that carries a ViewTree* owner tag
         // (e.g. a Conductor controller view hosting a ComposeView -- Conductor
@@ -2079,6 +2143,21 @@ public class View implements android.graphics.drawable.Drawable.Callback,
     public void macapkDispatchDetachedFromWindow() {
         macapkTraceComposeAttach("DETACH", macapkAttached);
         if (!macapkAttached) return;
+        // AOSP View.dispatchDetachedFromWindow (android14 View.java:21306-21318)
+        // opens with, while the view is still attached:
+        //     if (vis != GONE) {
+        //         onWindowVisibilityChanged(GONE);
+        //         if (isShown()) onVisibilityAggregated(false);
+        //     }
+        // A removed child has lost its parent by now (macapkFinishRemoval), so
+        // isShown() answers for the view alone; a view that was under a hidden
+        // parent hears a second "not visible", which changes nothing.
+        if (MACAPK_VISIBILITY_AGGREGATED) {
+            try { onWindowVisibilityChanged(GONE); }
+            catch (Throwable t) { com.macapk.loader.GfxTrace.caught("View.windowVisibility", t); }
+            try { if (isShown()) onVisibilityAggregated(false); }
+            catch (Throwable t) { com.macapk.loader.GfxTrace.caught("View.visibilityAggregated", t); }
+        }
         macapkAttached = false;
         try { onDetachedFromWindow(); } catch (Throwable ignored) {}
         if (attachStateChangeListeners != null) {
@@ -4701,6 +4780,11 @@ public class View implements android.graphics.drawable.Drawable.Callback,
             if (this.visibility != v) {
                 this.visibility = v;
                 requestLayout();
+                // The frame that shows (or erases) this view. invalidate() alone
+                // no longer asks for one when the view has just become hidden
+                // (macapkCannotBeDrawn); AOSP setFlags invalidates the PARENT
+                // for that reason (`parent.invalidate(true)`).
+                ViewRootImpl.schedule();
                 invalidate();
                 // AOSP View.setFlags runs the GONE / INVISIBLE clearFocus blocks
                 // (View.java android14-release ~17512-17557) BEFORE the
@@ -4714,7 +4798,19 @@ public class View implements android.graphics.drawable.Drawable.Callback,
                 // i.e. a visibility toggle on a not-yet-attached view (common
                 // during construction/inflation) does not fire the callback.
                 // macapkAttached is this codebase's mAttachInfo != null stand-in.
-                if (macapkAttached) dispatchVisibilityChanged(this, v);
+                if (macapkAttached) {
+                    dispatchVisibilityChanged(this, v);
+                    // AOSP setFlags, right after it: "Aggregated visibility changes
+                    // are dispatched to attached views in visible windows where the
+                    // parent is currently shown/drawn or the parent is not a
+                    // ViewGroup (and therefore assumed to be a ViewRoot)". Our root
+                    // has no parent at all.
+                    if (MACAPK_VISIBILITY_AGGREGATED
+                            && (!(parent instanceof ViewGroup pg) || pg.isShown())) {
+                        try { dispatchVisibilityAggregated(v == VISIBLE); }
+                        catch (Throwable t) { com.macapk.loader.GfxTrace.caught("View.visibilityAggregated", t); }
+                    }
+                }
                 macapkDragVisibilityChanged(v);
             }
             return;
@@ -5374,7 +5470,204 @@ public class View implements android.graphics.drawable.Drawable.Callback,
     // Tier 3 M6: invalidate() schedules a draw traversal on the next frame
     // (AOSP View.invalidate -> ViewRootImpl.invalidate -> scheduleTraversals).
     // Gated: flag-off stays a no-op (the driver redraws every frame anyway).
-    public void invalidate()     { macapkTraceComposeInsert("invalidate"); try { if (com.macapk.loader.ComposeViewFallback.SHEET_PROBE_ON && com.macapk.loader.ComposeViewFallback.macapkIsComposeHost(this)) com.macapk.loader.ComposeViewFallback.sAcvInval.incrementAndGet(); } catch (Throwable ignored) {} if (android.os.Looper.MACAPK_REAL_LOOPER) ViewRootImpl.schedule(); macapkInvalidateParent(); }
+    public void invalidate()     { macapkTraceComposeInsert("invalidate"); try { if (com.macapk.loader.ComposeViewFallback.SHEET_PROBE_ON && com.macapk.loader.ComposeViewFallback.macapkIsComposeHost(this)) com.macapk.loader.ComposeViewFallback.sAcvInval.incrementAndGet(); } catch (Throwable ignored) {} if (android.os.Looper.MACAPK_REAL_LOOPER) macapkScheduleRedraw(); macapkInvalidateParent(); }
+    /** MACAPK_INVALIDATE_SKIP_UNDRAWN (default ON; =0 every invalidation asks for a
+     *  frame again). An invalidation only has to produce a frame when drawing the
+     *  window again can show the change. AOSP View.invalidateInternal (android14
+     *  View.java:20733-20780) drops it in two cases, and both apply to the walk a
+     *  draw makes from the root down to this view:
+     *    - skipInvalidate(): the view is not VISIBLE and runs no View animation
+     *      (ViewGroup draws, and re-records, a child only when
+     *      `(child.mViewFlags & VISIBILITY_MASK) == VISIBLE || child.getAnimation()
+     *      != null`: dispatchDraw and dispatchGetDisplayList). The same test holds
+     *      for every ancestor: nothing below a hidden group is drawn, so nothing
+     *      below it can change a pixel. On a device that invalidation costs an
+     *      empty frame; here a frame is a software redraw of the whole window.
+     *    - `mAttachInfo == null`: a tree that is in no window has no ViewRootImpl
+     *      to ask. Ours is "no view from this one up to the top of its parent
+     *      chain is attached": a leaf can be unattached under an attached parent
+     *      for a while (see the self-heal in measure()), and that one is drawn.
+     *  Measured on Google Maps' idle map (Win.apk issue 114): a list row that had
+     *  left its RecyclerView kept an indeterminate bar and a Compose layer
+     *  animating, 57 invalidations a second each, and every one of them redrew
+     *  the window -- 288 of 300 frames, the main thread at 90% of a core.
+     *
+     *  What makes skipping safe is that everything that can END the hidden state
+     *  asks for a frame itself: setVisibility (below), attaching to a window
+     *  (macapkDispatchAttachedToWindow), startAnimation (the animation is set
+     *  before its invalidate), and addView / removeView (requestLayout). */
+    static final boolean MACAPK_INVALIDATE_SKIP_UNDRAWN =
+            !"0".equals(System.getenv("MACAPK_INVALIDATE_SKIP_UNDRAWN"));
+    /** Whether drawing the window again cannot show a change of this view: it or
+     *  an ancestor is hidden and not animating, or its tree is in no window. Reads
+     *  only fields, so it is as safe off the UI thread as invalidate() was. */
+    final boolean macapkCannotBeDrawn() {
+        if (!MACAPK_INVALIDATE_SKIP_UNDRAWN) return false;
+        boolean attached = false;
+        View v = this;
+        // Bounded: a parent cycle cannot exist on AOSP (addView throws), but must
+        // not hang an invalidate here either.
+        for (int depth = 0; depth < 1024; depth++) {
+            attached |= v.macapkAttached;
+            final ViewParent p = v.parent;
+            // The top of the chain: the activity's root is drawn whatever its own
+            // visibility says (ViewCanvasDriver calls its draw()), so only "in a
+            // window at all" counts there.
+            if (!(p instanceof View)) return p == null && !attached;
+            // getVisibility(), not the field: it is what dispatchDraw asks.
+            if (v.getVisibility() != VISIBLE && v.mCurrentAnimation == null) return true;
+            v = (View) p;
+        }
+        return false;
+    }
+    /** invalidate()'s request for a frame (AOSP: ViewRootImpl.scheduleTraversals at
+     *  the top of the invalidateChild walk). */
+    final void macapkScheduleRedraw() {
+        if (macapkCannotBeDrawn()) ViewRootImpl.macapkInvalidateSkipped();
+        else if (!macapkReportDamage()) ViewRootImpl.schedule();
+    }
+
+    // ---- FRAMESPEED S1: what an invalidation damages (ViewRootImpl has the model) ----
+    // The clip this view was last drawn under on the frame canvas, in device
+    // pixels, and what it was true of: the epoch (0 = no record), the frame draw,
+    // and the two signatures below as they were at that draw.
+    private int mMacapkRecL, mMacapkRecT, mMacapkRecR, mMacapkRecB;
+    private int mMacapkRecEpoch, mMacapkRecDraw;
+    private long mMacapkRecOuter, mMacapkRecInner;
+    /** The epoch in which something other than the parent's drawChild drew this
+     *  view on the frame canvas (an overlay, an app's own child.draw(canvas)). */
+    private int mMacapkForeignEpoch;
+    /** ViewRootImpl.sMacapkDamageSeq of the damage this view's record went into. */
+    private int mMacapkDamageSeq;
+    /** The damage this view last reported for, and its signatures then. */
+    private int mMacapkReportSeq;
+    private long mMacapkReportSig;
+
+    static long macapkMix(long h, int v) { return (h ^ v) * 0x100000001b3L; }
+    /** Everything of this view that decides where and how its PARENT draws it
+     *  (ViewGroup.drawChild and dispatchDraw read exactly these): which parent,
+     *  bounds, the 2D transform, the alpha that makes or drops its layer, and the
+     *  Z its shadow and draw order come from. 64 bits of FNV over the raw values. */
+    private long macapkOuterSig() {
+        long h = macapkMix(0xcbf29ce484222325L, System.identityHashCode(parent));
+        h = macapkMix(h, left); h = macapkMix(h, top); h = macapkMix(h, right); h = macapkMix(h, bottom);
+        h = macapkMix(h, Float.floatToRawIntBits(transX)); h = macapkMix(h, Float.floatToRawIntBits(transY));
+        h = macapkMix(h, Float.floatToRawIntBits(scaleX)); h = macapkMix(h, Float.floatToRawIntBits(scaleY));
+        h = macapkMix(h, Float.floatToRawIntBits(rotation));
+        h = macapkMix(h, Float.floatToRawIntBits(pivotX)); h = macapkMix(h, Float.floatToRawIntBits(pivotY));
+        h = macapkMix(h, Float.floatToRawIntBits(getAlpha() * getTransitionAlpha()));
+        h = macapkMix(h, Float.floatToRawIntBits(getZ()));
+        return h;
+    }
+    /** What moves this view's own content and children inside its clip: its
+     *  scroll (ViewGroup adds what it clips its children to). */
+    long macapkInnerSig() {
+        return macapkMix(macapkMix(0xcbf29ce484222325L, getScrollX()), getScrollY());
+    }
+
+    /** ViewGroup.drawChild, just before child.draw(canvas) (and the driver, for
+     *  the root): record the clip on the frame canvas, and say whether this view
+     *  is a source of the partial frame being drawn (the caller hands the answer
+     *  to macapkAfterDraw). Nothing happens on any other canvas: a parent drawn
+     *  into a bitmap says nothing about the frame. */
+    final boolean macapkBeforeDraw(android.graphics.Canvas canvas) {
+        if (canvas != ViewRootImpl.sMacapkFrameCanvas) return false;
+        final boolean source = ViewRootImpl.sMacapkPartial
+                && mMacapkDamageSeq == ViewRootImpl.sMacapkDrawSourceSeq;
+        if (source) ViewRootImpl.sMacapkUnderSource++;
+        // A partial frame shows this view its clip cut by the damage. Inside a
+        // source the clip lies within the damage, so it is seen whole; anywhere
+        // else the record of the last full frame stays (nothing there moved, or
+        // it would have asked for a frame itself).
+        if (!ViewRootImpl.sMacapkPartial || ViewRootImpl.sMacapkUnderSource > 0) macapkRecordDrawn(canvas);
+        ViewRootImpl.sMacapkDrawTarget = this;
+        return source;
+    }
+    final void macapkAfterDraw(boolean source) {
+        ViewRootImpl.sMacapkDrawTarget = null;
+        if (source && ViewRootImpl.sMacapkUnderSource > 0) ViewRootImpl.sMacapkUnderSource--;
+    }
+    private void macapkRecordDrawn(android.graphics.Canvas canvas) {
+        final int draw = ViewRootImpl.sMacapkDrawSeq, epoch = ViewRootImpl.sMacapkEpoch;
+        final boolean again = mMacapkRecDraw == draw;   // drawn twice in this frame
+        mMacapkRecDraw = draw;
+        final int[] o = ViewRootImpl.sMacapkScratch6;
+        // No record under a matrix that is not a whole-pixel translation (the
+        // clip's device box is then not a rectangle of this view), nor while a
+        // View animation moves the view from frame to frame.
+        if (mCurrentAnimation != null || !canvas.macapkDeviceOrigin(o)) { mMacapkRecEpoch = 0; return; }
+        if (again) {
+            if (mMacapkRecEpoch != epoch) return;       // the other draw had none: none it stays
+            mMacapkRecL = Math.min(mMacapkRecL, o[2]); mMacapkRecT = Math.min(mMacapkRecT, o[3]);
+            mMacapkRecR = Math.max(mMacapkRecR, o[4]); mMacapkRecB = Math.max(mMacapkRecB, o[5]);
+        } else {
+            mMacapkRecL = o[2]; mMacapkRecT = o[3]; mMacapkRecR = o[4]; mMacapkRecB = o[5];
+            mMacapkRecEpoch = epoch;
+        }
+        mMacapkRecOuter = macapkOuterSig();
+        mMacapkRecInner = macapkInnerSig();
+    }
+    /** 2 = the record is of this epoch and the view is where it was; 1 = so, but
+     *  it has scrolled (its own clip stands, its children's do not); 0 = neither. */
+    private int macapkRecordHolds(int epoch) {
+        if (mMacapkRecEpoch != epoch || mCurrentAnimation != null) return 0;
+        if (mMacapkRecOuter != macapkOuterSig()) return 0;
+        return mMacapkRecInner == macapkInnerSig() ? 2 : 1;
+    }
+
+    /** Give ViewRootImpl the rectangle this invalidation can change, and ask for
+     *  the frame; false when no rectangle can be vouched for (the caller then
+     *  asks for a whole frame).
+     *
+     *  The rectangle is a recorded clip: this view's own when the view, and every
+     *  ancestor, is where the record was taken -- the change is then confined to
+     *  what the view draws, and it draws under that clip. A view that has moved,
+     *  resized, faded or been transformed since (its signature differs: no setter
+     *  has to say so), one that was not drawn, and one that casts a shadow (its
+     *  parent draws that, outside the view) change pixels of their PARENT's
+     *  drawing, old place and new, so the parent's record is taken; and so on up
+     *  the chain, because a record below a moved view is of the old place. A view
+     *  that has only scrolled keeps its own clip. Where the chain ends in a view
+     *  with no record (a dialog's tree, the top of a moved tree), or passes one
+     *  that something other than its parent drew on the frame, there is no
+     *  rectangle.
+     *
+     *  invalidate(Rect) and invalidateDrawable damage the whole view too, as on a
+     *  device: since API 21 the dirty rectangle "is ignored entirely in favor of
+     *  an internally-calculated area", so apps are not held to it. */
+    private boolean macapkReportDamage() {
+        final ViewRootImpl root = ViewRootImpl.getInstance();
+        if (!root.macapkDamageOpen()) return false;
+        // The records belong to the UI thread.
+        if (!android.os.Looper.getMainLooper().isCurrentThread()) return false;
+        final int seq = ViewRootImpl.sMacapkDamageSeq, epoch = ViewRootImpl.sMacapkEpoch;
+        final long sig = macapkOuterSig() * 31 + macapkInnerSig();
+        if (mMacapkReportSeq == seq && mMacapkReportSig == sig && mCurrentAnimation == null) {
+            root.macapkScheduleSameDamage();   // already in this frame's rectangle, and not moved since
+            return true;
+        }
+        View source = this, v = this;
+        for (int depth = 0; ; depth++) {
+            if (depth >= 1024 || v.mMacapkForeignEpoch == epoch) return false;
+            final View pv = v.parent instanceof View ? (View) v.parent : null;
+            int holds = v.macapkRecordHolds(epoch);
+            if (holds == 2 && v == this && getZ() > 0f) holds = 0;   // its shadow may change with it
+            if (holds == 0) {
+                if (pv == null) return false;
+                source = pv;
+            } else if (holds == 1) {
+                source = v;
+            }
+            if (pv == null) break;
+            v = pv;
+        }
+        if (source.mMacapkRecR <= source.mMacapkRecL || source.mMacapkRecB <= source.mMacapkRecT) return false;
+        source.mMacapkDamageSeq = seq;
+        mMacapkReportSeq = seq;
+        mMacapkReportSig = sig;
+        root.macapkScheduleDamage(source.mMacapkRecL, source.mMacapkRecT, source.mMacapkRecR, source.mMacapkRecB);
+        return true;
+    }
     /** MACAPK_INVALIDATE_PARENT (default ON, =0 the old schedule-only invalidate):
      *  AOSP View.invalidateInternal (android14 View.java:20733-20780) reports the
      *  damage to the parent, `p.invalidateChild(this, damage)`, whose
@@ -5578,6 +5871,12 @@ public class View implements android.graphics.drawable.Drawable.Callback,
     // are display polish that no test APK has needed yet.
     public void draw(android.graphics.Canvas canvas) {
         if (canvas == null) return;
+        // FRAMESPEED S1: on the frame canvas, a draw the parent's drawChild did
+        // not announce puts this view somewhere no record tells of.
+        if (canvas == ViewRootImpl.sMacapkFrameCanvas) {
+            if (ViewRootImpl.sMacapkDrawTarget == this) ViewRootImpl.sMacapkDrawTarget = null;
+            else mMacapkForeignEpoch = ViewRootImpl.sMacapkEpoch;
+        }
         // AOSP: when getClipToOutline() is true the view masks its
         // background + content + children to the outline produced by
         // its ViewOutlineProvider (rebuildOutline -> getOutline, then
@@ -8479,7 +8778,7 @@ public class View implements android.graphics.drawable.Drawable.Callback,
      *  invalidate() and invalidateDrawable() land here; only invalidate()
      *  is subclass-overridable, matching AOSP's dispatch shape. */
     private void macapkInvalidateNonVirtual() {
-        if (android.os.Looper.MACAPK_REAL_LOOPER) ViewRootImpl.schedule();
+        if (android.os.Looper.MACAPK_REAL_LOOPER) macapkScheduleRedraw();
     }
     // Pending drawable animation ticks, keyed by the DRAWABLE that scheduled
     // them. AOSP gets this for free: it posts to the Choreographer with `who`

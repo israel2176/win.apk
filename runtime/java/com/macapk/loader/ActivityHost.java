@@ -171,6 +171,20 @@ public final class ActivityHost {
     private static final java.util.Map<Activity,Integer> sBackgrounded =
         java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
 
+    /** Where a launch has brought an activity that has not reached its first
+     *  onResume, in the same terms: STATE_STOPPED from onCreate (AOSP's
+     *  ActivityClientRecord.setState(ON_CREATE): paused and stopped),
+     *  STATE_PAUSED from onStart (ON_START: paused, not stopped); no entry once
+     *  onResume is due. A teardown drives an activity down only from where it
+     *  is (ActivityThread.performDestroyActivity: performPauseActivityIfNeeded
+     *  returns on r.paused, onStop runs only `if (!r.stopped)`), so one that
+     *  finishes in onCreate gets onDestroy alone. Without this it got onPause
+     *  and onStop too, and androidx's FragmentActivity.onPause moved the
+     *  fragments of a never-started activity UP to STARTED, creating their
+     *  views in an activity on its way out (Metro, issue #124). */
+    private static final java.util.Map<Activity,Integer> sLaunchReached =
+        java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
+
     /** Called by Activity.finish(). AOSP teardown: drive the finishing
      *  activity DOWN (onPause -> onStop -> onDestroy) and dispatch ON_DESTROY to
      *  its LifecycleRegistry. Was just stack.remove(a) -> the activity never
@@ -579,7 +593,15 @@ public final class ActivityHost {
         // onPause/onStop would deliver them twice (and re-entrantly, if the
         // app finishes itself from onStop).
         Integer downTo = sBackgrounded.remove(a);
+        // Not yet resumed by its launch: it is paused, or stopped too, already.
+        Integer reached = sLaunchReached.remove(a);
+        if (downTo == null) downTo = reached;
         try {
+            // AOSP's Activity.performCreate takes androidx's registry to CREATED
+            // even when onCreate finished the activity (ReportFragment's
+            // onActivityPostCreated), so ON_DESTROY has a state to come down
+            // from: "no event down from INITIALIZED" left its ViewModels uncleared.
+            if (reached != null && reached.intValue() >= STATE_STOPPED) driveLifecycleTo(a, "CREATED");
             if (wasTop) {
                 if (downTo == null) {
                     runTolerant(a, "onPause", new Class<?>[0], new Object[0]);
@@ -595,6 +617,8 @@ public final class ActivityHost {
                     a.macapkDispatchFragmentState(android.app.FragmentManagerImpl.ACTIVITY_CREATED);
                 }
             }
+            // AOSP Activity.performDestroy: mDestroyed is set right before onDestroy.
+            a.macapkMarkDestroyed();
             runTolerant(a, "onDestroy", new Class<?>[0], new Object[0]);
             if (app != null) app.dispatchActivityDestroyed(a);
             // ON_DESTROY walks the registry down (ON_PAUSE/ON_STOP/ON_DESTROY in
@@ -839,6 +863,7 @@ public final class ActivityHost {
      *  window, the window-added latch, focus) stays with each caller: a restore owes
      *  it, an in-place resume of an activity that never lost its window does not. */
     private static void resumeCallbacks(Activity a) {
+        sLaunchReached.remove(a);
         resumeFinalState(a);
         runTolerant(a, "onResume", new Class<?>[0], new Object[0]);
         driveLifecycleTo(a, "RESUMED");
@@ -1055,9 +1080,44 @@ public final class ActivityHost {
         });
     }
 
+    /** The user minimized the app's window and has not brought it back yet. */
+    private static volatile boolean sHostMinimized;
+
+    /** Win.apk: the host's window was minimized by the user (the title bar's
+     *  button, the taskbar, Win+D), from the window's thread. On a device that
+     *  is the task going behind home, and in desktop windowing a minimized
+     *  task is moved to the back: the resumed activity gets onPause and onStop
+     *  (the contract apps save and release under), and macapkTaskToFront, which
+     *  the host calls when the window comes back, owes it onRestart, onStart
+     *  and onResume. The same transitions as macapkMoveTaskToBack, without
+     *  hiding a window that is minimized already. Only a top that is resumed
+     *  and not covered (a launch under way, a host dialog over it) is taken
+     *  down: anything else stays as it is, as before. */
+    public static void macapkHostMinimized() {
+        if (sTaskInBackground || sTerminating) return;
+        if (android.os.Looper.getMainLooper() == null) return;
+        sHostMinimized = true;
+        ownerHandler().post(new Runnable() {
+            @Override public void run() {
+                // Brought back before this ran, or the app moved the task itself.
+                if (!sHostMinimized || sTaskInBackground || sTerminating || sRecreating) return;
+                Activity top = stack.peek();
+                if (top == null || top.isFinishing() || !currentActivityResumed
+                        || sBackgrounded.containsKey(top)) return;
+                sTaskInBackground = true;
+                currentActivityResumed = false;
+                pauseForNewTop(top);
+                stopForNewTop(top);
+                NativeLog.i(TAG, "window minimized: task moved to back (top "
+                    + top.getClass().getName() + " stopped)");
+            }
+        });
+    }
+
     /** Called by the native unhide observer (AppKit thread) when the app is
      *  brought back. A no-op unless WE sent the task to the back. */
     public static void macapkTaskToFront() {
+        sHostMinimized = false;
         if (!sTaskInBackground) return;
         // Not input, so not in a recording: say so (a replay will not re-activate).
         if (InputRecorder.ON)
@@ -3761,6 +3821,7 @@ public final class ActivityHost {
         // before a finish() in onCreate tears the activity down (Application.CREATED_ORDER).
         if (Application.CREATED_ORDER && app != null) app.dispatchActivityPreCreated(activity, launchState);
         sCreating = activity;
+        sLaunchReached.put(activity, STATE_STOPPED);
         try {
             runTolerant(activity, "onCreate", new Class<?>[]{Bundle.class},
                     new Object[]{launchState});
@@ -3932,6 +3993,7 @@ public final class ActivityHost {
         // macapkHandshakeDrainFor).
         macapkLifecycleHandshakeActive = macapkHandshakeDrainFor(activity);
         try {
+        sLaunchReached.put(activity, STATE_PAUSED);
         runTolerant(activity, "onStart",  new Class<?>[0], new Object[0]);
         // AOSP ActivityThread.handleStartActivity: performStart() and only THEN
         // performRestoreInstanceState(r.state). The order matters -- onStart is
@@ -3992,6 +4054,7 @@ public final class ActivityHost {
             return;
         }
         resumeFinalState(activity);
+        sLaunchReached.remove(activity);
         sResuming = activity;
         try {
             runTolerant(activity, "onResume", new Class<?>[0], new Object[0]);

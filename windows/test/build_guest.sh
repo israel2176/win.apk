@@ -58,6 +58,12 @@ link_lib PLUGIN libwinapk_link_plugin
 link_lib BASE libwinapk_link_base -L"$STUBS" -lwinapk_link_mid
 link_lib MID libwinapk_link_mid -L"$LINK" -L"$STUBS" -lwinapk_link_base -llog
 link_lib ROOT libwinapk_link_root -L"$LINK" -L"$STUBS" -lwinapk_link_mid -lc -ldl
+# Lookup order: DT_NEEDED order is the order of the -l flags, and it is what
+# the test is about (user: interpose before libc; late: libc before interpose).
+link_lib INTERPOSE libwinapk_link_interpose
+link_lib USER libwinapk_link_user -L"$LINK" -L"$STUBS" -lwinapk_link_interpose -lc -ldl
+link_lib LATE libwinapk_link_late -L"$LINK" -L"$STUBS" -lc -lwinapk_link_interpose
+link_lib PLAIN libwinapk_link_plain -L"$STUBS" -lc
 
 # The Bionic shim's guest-side test (winapk-bionic-test). Real ELF TLS, as an
 # NDK build for minSdk 29 or later uses.
@@ -126,6 +132,6 @@ python3 "$HERE/guest/gen_arm64_fuzz.py" 400 48 1 > "$ARM64_OUT/arm64_fuzz.S"
 
 echo "[build_guest] $OUT/libwinapk_poc_guest.so"
 echo "[build_guest] $OUT/libwinapk_poc_guest_packed.so"
-echo "[build_guest] $LINK/libwinapk_link_{root,mid,base,plugin}.so"
+echo "[build_guest] $LINK/libwinapk_link_{root,mid,base,plugin,interpose,user,late,plain}.so"
 echo "[build_guest] $OUT/libwinapk_bionic_guest.so"
 echo "[build_guest] $ARM64_OUT/libwinapk_arm64_{isa_O2,isa_O3,isa_lse,bridge,flow,unload,rebased,patch_*,fuzz,bench}.so"

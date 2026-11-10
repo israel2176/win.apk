@@ -327,6 +327,7 @@ if(WINAPK_JNI_INCLUDE)
                  host/gl/gl_surface.cpp host/gl/guest_gl.cpp host/native_window.cpp host/native_asset.cpp
                  host/native_opensles.cpp host/native_aaudio.cpp host/native_media.cpp
                  host/video_decode.cpp host/video_player.cpp host/native_media_video.cpp
+                 host/media_encode.cpp host/mp4_writer.cpp host/native_media_codec.cpp
                  host/native_activity.cpp
                  ${WINAPK_GL_UPSTREAM})
   target_include_directories(winapk-runtime PRIVATE host third_party/khronos ${CMAKE_BINARY_DIR}/gl
@@ -361,9 +362,10 @@ if(WINAPK_JNI_INCLUDE)
   target_link_options(winapk-audio-test PRIVATE -static)
 
   # Video on Media Foundation without a JVM (test/video_test.cpp): the
-  # converter, the decoder, the source and the player on test/video/color.mp4.
+  # converter, the decoder, the source and the player on test/video/color.mp4,
+  # then the encoders, the MP4 writer and the demuxer on what they make.
   add_executable(winapk-video-test test/video_test.cpp host/video_decode.cpp host/video_player.cpp
-                 host/audio_engine.cpp)
+                 host/audio_engine.cpp host/media_encode.cpp host/mp4_writer.cpp)
   target_link_libraries(winapk-video-test PRIVATE ole32 mf mfplat mfreadwrite mfuuid shlwapi)
   target_link_options(winapk-video-test PRIVATE -static)
 

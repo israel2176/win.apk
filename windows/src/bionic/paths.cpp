@@ -14,6 +14,7 @@
 //   /apex/com.android.conscrypt/cacerts       -> the CA store cacerts.cpp builds
 //                                                from the roots Windows trusts
 //   /dev/null                                 -> NUL
+//   /proc/self/...                            -> /proc/<this process's pid>/...
 //   any other /...                            -> <android root>/...
 //
 // The android root is the per-user folder the runtime mirrors Android's
@@ -111,6 +112,16 @@ std::wstring host_path(const char* p) {
     // A host path (drive letter, UNC, relative): as it is.
     if (p[0] != '/' || p[1] == '/') return to_wide(p, len);
     if (std::strcmp(p, "/dev/null") == 0) return L"NUL";
+    // /proc/self is the process's own directory, /proc/<pid>. Its files that are
+    // not made on the fly (stdio.cpp: maps) are real ones under <android root>/
+    // proc/<pid>, written by Boot for this process (cmdline), so one running app
+    // does not read another's.
+    std::string own_proc;
+    if (std::strncmp(p, "/proc/self", 10) == 0 && (p[10] == '\0' || p[10] == '/')) {
+        own_proc = "/proc/" + std::to_string(GetCurrentProcessId()) + (p + 10);
+        p = own_proc.c_str();
+        len = own_proc.size();
+    }
     if (const char* rest = cacerts_rest(p)) {
         std::wstring root;
         {
@@ -154,6 +165,14 @@ std::wstring android_host_path(const char* path) { return bionic::host_path(path
 void set_system_fonts_dir(const char* dir) {
     std::lock_guard<std::mutex> hold(bionic::g_lock);
     bionic::g_fonts_dir = bionic::trimmed(bionic::to_wide(dir, dir ? std::strlen(dir) : 0));
+}
+
+std::wstring android_proc_file(const char* path) {
+    if (!path || std::strncmp(path, "/proc/", 6) != 0) return {};
+    const std::wstring host = bionic::host_path(path);
+    const DWORD attrs = GetFileAttributesW(host.c_str());
+    if (attrs == INVALID_FILE_ATTRIBUTES || (attrs & FILE_ATTRIBUTE_DIRECTORY)) return {};
+    return host;
 }
 
 }  // namespace winapk

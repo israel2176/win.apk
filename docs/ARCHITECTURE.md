@@ -172,7 +172,11 @@ and `DT_INIT_ARRAY`.
 `DT_NEEDED` tree in Bionic's order (map all, link all, constructors with
 dependencies first), answers system libraries (`libc.so`, `libm.so`,
 `libdl.so`, `liblog.so`, `libz.so`, `libandroid.so`, `libEGL.so`,
-`libGLESv2.so`...) from the shim, keeps the registry of loaded images, and
+`libGLESv2.so`...) from the shim, looks symbols up in Bionic's order (the
+`RTLD_GLOBAL` libraries, then the library's tree breadth-first with the shim
+at the place of its first system library, so an allocator an app lists
+before `libc.so` is the one its libraries call), keeps the registry of
+loaded images, and
 implements the guest's `dlopen`, `android_dlopen_ext`, `dlsym` (with
 `RTLD_DEFAULT` and `RTLD_NEXT`), `dladdr`, `dlerror` and `dlclose`. A
 library is reference counted and unloaded when its last reference goes
@@ -218,11 +222,11 @@ functions, every one declared with the System V calling convention
 | `string.cpp` | `string.h`, ctype, 32-bit `wchar_t`, `strto*`, the FORTIFY `_chk` variants |
 | `printf.cpp` | A printf engine that reads the System V `va_list`; the printf and scanf families; liblog's variadic calls |
 | `pthread.cpp` | Mutexes, condition variables, rwlocks, once, keys and threads on `WaitOnAddress`, over Bionic's struct layouts; cleanup handlers (`pthread_exit` runs the pending ones); semaphores |
-| `stdio.cpp`, `fd.cpp` | One file-descriptor table shared with Java (`NativeOs`): files, `stat` in Bionic's layout, directories, `FILE`, hard links; Bionic's `fts` over the same calls (it never changes directory: always `FTS_NOCHDIR`); `popen` and `system`, which find no shell to run (the command exits 127, as when `/system/bin/sh` cannot be run); pipes, eventfd and epoll; named pipes (`mkfifo`: a marker file `stat` reports as a FIFO, opened as the process's one pipe buffer for that path); `poll`, `select`, `epoll_wait` |
-| `socket.cpp` | BSD sockets on Winsock with Linux's constants translated; `getaddrinfo` |
-| `paths.cpp` | Android's absolute paths (`/data`, `/sdcard`, `/system/fonts`, `/dev/null`) under the Android root |
+| `stdio.cpp`, `fd.cpp` | One file-descriptor table shared with Java (`NativeOs`): files, `stat` in Bionic's layout, directories, `FILE`, hard links; Bionic's `fts` over the same calls (it never changes directory: always `FTS_NOCHDIR`); `popen` and `system`, which find no shell to run (the command exits 127, as when `/system/bin/sh` cannot be run); pipes, eventfd and epoll; named pipes (`mkfifo`: a marker file `stat` reports as a FIFO, opened as the process's one pipe buffer for that path); `poll`, `select`, `epoll_wait`. A wait sleeps until something it waits for changes: pipes, eventfds and the like wake it through one readiness counter (`WaitOnAddress`); a wait that includes sockets sleeps in `WSAPoll` on them plus a loopback datagram socket of its own that the counter's changes send a byte to; an armed timerfd shortens the sleep to its expiry. Nothing is polled on a period. epoll's `EPOLLET` is edge-triggered (an event once when it appears, again after a new edge: more written to a pipe or eventfd, a socket read that took bytes, a send that would have blocked, `EPOLL_CTL_MOD`), `EPOLLONESHOT` reports once until `EPOLL_CTL_MOD`, and an interest goes when its descriptor closes |
+| `socket.cpp` | BSD sockets on Winsock with Linux's constants translated; `getaddrinfo`; `getifaddrs`, `if_nametoindex`, `if_indextoname` and `if_nameindex` over one list of the adapters that are up (Linux-shaped names, Windows' interface indexes). Socket options: the ones Winsock has are mapped, among them multicast membership in all its forms (`ip_mreq`, `ip_mreqn`, `MCAST_JOIN_GROUP` and the other RFC 3678 requests), `SO_LINGER`, `SO_REUSEPORT` on datagram sockets (Windows' `SO_REUSEADDR`), the TCP keep-alive times, `TCP_USER_TIMEOUT`, path-MTU discovery as "don't fragment"; options that only tune (`SO_PRIORITY`, `TCP_QUICKACK`, `IP_RECVTOS`...) succeed with one log line each; any other fails with `ENOPROTOOPT`, so code that asks for a feature (`UDP_SEGMENT`) takes its fallback |
+| `paths.cpp` | Android's absolute paths (`/data`, `/sdcard`, `/system/fonts`, `/dev/null`) under the Android root; `/proc/self` is `/proc/<pid>` there, where Boot writes the process's `cmdline` |
 | `looper.cpp` | The NDK's `ALooper` |
-| `misc.cpp` | Clocks and time, `strptime`, `mmap` on `VirtualAlloc` (with `PROT_NONE` as a reservation; a file mapped `MAP_SHARED`, or read-only, is a view of the file (`MapViewOfFile`), also `MAP_FIXED` into an untouched reservation, so writes reach the file and every mapping sees them; a writable private one is a copy), system properties, the guest environment, `syscall` for futex and friends, `sysconf`, `uname`, `getauxval`, `sched_getaffinity` (the process's affinity), `fork`/`vfork` (-1, `ENOSYS`: a Windows process cannot be copied) and `waitpid` (`ECHILD`), `random(3)` as Bionic's (NetBSD's) generator, libm (the `long double` rounding functions on binary128), libandroid's `ATrace` (tracing off) |
+| `misc.cpp` | Clocks and time, `strptime`, `mmap` on `VirtualAlloc` (with `PROT_NONE` as a reservation; a file mapped `MAP_SHARED`, or read-only, is a view of the file (`MapViewOfFile`), also `MAP_FIXED` into an untouched reservation, so writes reach the file and every mapping sees them; a writable private one is a copy), system properties, the guest environment (`setenv`, `putenv`, `clearenv`), `syscall` for futex and friends and for raw `mmap`, `mprotect` and `munmap` (Gecko's allocator), `sysconf`, `uname`, `getauxval`, `sched_getaffinity` (the process's affinity), `fork`/`vfork` (-1, `ENOSYS`: a Windows process cannot be copied) and `waitpid` (`ECHILD`), `random(3)` as Bionic's (NetBSD's) generator, libm (the `long double` rounding functions on binary128), libandroid's `ATrace` (tracing off) |
 | `locale.cpp` | The C and C.UTF-8 locales libc++ builds on, UTF-8 conversion, `wctype.h` |
 | `signal.cpp` | Signals delivered to guest handlers: a vectored exception handler maps access violations, illegal instructions, divide errors and breakpoints to SIGSEGV/SIGBUS/SIGILL/SIGFPE/SIGTRAP and calls the handler with Bionic's `siginfo_t` and `ucontext_t` (registers written back, so a handler can fix the fault or redirect `rip`); `SA_SIGINFO`, `SA_ONSTACK` with `sigaltstack`, `SA_RESETHAND`, `SA_NODEFER`, `sa_mask`; `raise`, `kill`, `tgkill`, `abort` synchronously, `pthread_kill` by suspending the target and injecting the call; a handler that declines three times leaves the fault to the crash report. Not delivered: faults in HotSpot or in Windows DLLs, faults in arm64 guest code, handlers in arm64 libraries. POSIX timers do not fire |
 | `setjmp.cpp` | `setjmp` and `longjmp` for guest code |
@@ -288,6 +292,23 @@ and `System.load`s the result. On Windows (`host/guest_libs.cpp`,
    address is guest code it puts a thunk built from the method's signature in
    its place. The guest's `RegisterNatives` slot wraps function pointers the
    same way.
+
+An app that calls `findLibrary` itself (through `BaseDexClassLoader`, as
+Gecko's loader and `GameActivity` do) gets Android's answer, not the stub:
+`lib<name>.so` in its native library directory, by its Android name
+(`/data/app/.../lib/x86_64/lib<name>.so`). `System.load` of that name finds
+the same stub module, and the guest linker takes an Android path for
+`dlopen`, as the shim does for `open` (`src/bionic/paths.cpp`).
+
+A dex class loader the app creates with a library search path (`DexClassLoader`,
+`PathClassLoader`, `DelegateLastClassLoader`, `InMemoryDexClassLoader`) looks
+there first, as Android's `DexPathList` does, and then in the app's own
+libraries. Play services' modules need it: Google Maps loads
+`CronetDynamite.apk` with the path `<that apk>!/lib/x86_64`. A library inside
+an APK is copied out once to `<data dir>/code_cache/macapk-native-libs/`, with
+the libraries beside it that it needs, because the ELF loader maps files; it
+then gets a stub like any ELF the app loads by path, and the JVM binds it to
+the loader whose class called `System.loadLibrary`.
 
 ### ARM64 code: translation, JIT, interpreter
 
@@ -418,6 +439,62 @@ Each GL view renders into its own pbuffer; after a frame the pixels are read
 back and composited with the Java view tree, which is drawn in software.
 Vulkan is not implemented.
 
+### The view tree's frames
+
+The Java view tree is drawn in software (Java2D) into one bitmap that lives
+from frame to frame, by `com.macapk.loader.ViewCanvasDriver`, once per display
+tick and only when something asked: `View.requestLayout` asks for a frame that
+measures, lays out and draws; `View.invalidate` for one that only draws. A
+view that cannot be seen asks for nothing. Every half second an idle window is
+laid out and drawn once more, to catch a change nothing announced. The frame
+then goes to the window (`NativeCocoa.presentFrame`, `host/native_cocoa.cpp`),
+which copies it and blits it in `WM_PAINT`.
+
+A draw-only frame redraws the whole tree. With `MACAPK_FRAMESPEED_DAMAGE=1`
+(off by default; `windows/README.md` lists it with its validator) it redraws
+only what the invalidations damaged, as AOSP's software renderer does with
+`Surface.lockCanvas(dirty)`:
+
+- **What a view damages** (`android.view.ViewRootImpl`, "FRAMESPEED S1";
+  `View.macapkReportDamage`). `ViewGroup.drawChild` records, for each child it
+  draws on the frame, the clip the child is drawn under, in frame pixels.
+  Everything the child and its subtree draw lies inside that clip, whatever
+  transforms, `clipChildren` settings or overlapping siblings are involved. An
+  invalidation damages the view's recorded clip when the view and all its
+  ancestors are still where the record was taken (a signature of bounds,
+  transform, alpha, elevation and parent says so; no setter has to). A view
+  that has moved, faded or changed size, that was not drawn, or that has
+  elevation (its parent draws the shadow) damages its parent's clip instead,
+  which holds its old place and its new one; a view that has only scrolled
+  damages its own. `invalidate(Rect)` damages the whole view, as on a device
+  since API 21. There is no rectangle, and the frame is whole, for
+  `requestLayout`, a visibility change, attaching, anything that asks for a
+  frame without going through `View.invalidate`, an invalidation from another
+  thread, a view something other than its parent drew, a tree with no record
+  (a dialog's), and while a drag shadow is shown.
+- **The frame** (`ViewCanvasDriver`, "FRAMESPEED S2"). When a draw-only frame's
+  damage is one rectangle, the canvas is clipped to it and the normal draw
+  runs under that clip, so siblings and translucent views over and under the
+  damage are drawn as in a whole frame. The frame is whole whenever something
+  outside the tree changed too: a new bitmap, a dialog or popup on show, the
+  status bar's height, minute or the row it takes its color from, the
+  letterbox, a surface's rectangle. A frame drawn whole records every view's
+  clip; one drawn under the damage clip records again only the views inside
+  the ones that were damaged, whose clip it sees uncut. What a frame's own
+  draw invalidates asks for no new frame, as before, but is added to the next
+  frame's damage; when a partial frame was changed from within, outside its
+  rectangle (an `OnPreDrawListener`, `computeScroll`), one more frame follows.
+- **The window** (`Cocoa_presentFrame`, `window_present_rect`). Of a partial
+  frame only the damaged rows are read from the bitmap, patched into the
+  window's copy and invalidated, so the blit is that rectangle too. A frame
+  with GL or surface content under it, or shown scaled, goes whole.
+
+`MACAPK_DAMAGE_VALIDATE=1` is the proof that a partial frame equals a whole
+one: every frame is drawn whole, and each pixel that changed outside the
+rectangle the frame would have been clipped to is reported
+(`[damage-validate] under-damage`). `windows/test/java/DamageRectTest.java`
+checks the same on the JVM with the real `View` classes.
+
 ### The window and the display
 
 Each app has one Win32 window on its own UI thread (`win32_window.cpp`). The
@@ -429,8 +506,31 @@ gets the largest box of its aspect, centred, with black bars. Frames are shown
 pixel for pixel; a frame from before a resize is never stretched. The size
 the user settles on is written to `library\<name>.window` for the next start.
 
-Mouse events become `MotionEvent`s, the wheel a short drag, keys `KeyEvent`s
-(Escape is BACK). A steady 60 Hz tick on a waitable timer drives the app's
+Input leaves the window through `WindowInput` (`win32_window.h`), already in
+Android's terms, and reaches `com.macapk.loader.TouchDispatcher` through
+`native_cocoa.cpp`. The decisions that need no window are in
+`host/pointer_input.h`, which `test/window_test.cpp` checks:
+
+| Windows | Android | Java entry |
+|---|---|---|
+| The left mouse button | One finger on the touchscreen (`SOURCE_TOUCHSCREEN`) | `dispatch` |
+| A touchscreen's contacts, a pen (`WM_POINTER*`; the frame's `WM_NCPOINTER*` stay Windows') | One pointer each, with Android's ids and indices: `ACTION_DOWN`, `ACTION_POINTER_DOWN`, one `ACTION_MOVE` per digitizer frame with every position, `ACTION_POINTER_UP`, `ACTION_UP`, `ACTION_CANCEL`; a pen is `TOOL_TYPE_STYLUS` / `TOOL_TYPE_ERASER` with pressure and `BUTTON_STYLUS_PRIMARY` (`TouchTracker`) | `dispatchHostTouch` |
+| The wheel, a touchpad's two-finger scroll | `ACTION_SCROLL` from `SOURCE_MOUSE` (`AXIS_VSCROLL` / `AXIS_HSCROLL`); when no view handles it, the short finger drag every wheel step used to be | `dispatchHostWheel` |
+| Ctrl+wheel, which is also a precision touchpad's pinch | Two fingers moving apart or together around the pointer (`PinchSynth`) | `dispatchHostPinch` |
+| The right and the middle button, the pointer with no button down | A mouse (`SOURCE_MOUSE`): `BUTTON_SECONDARY` / `BUTTON_TERTIARY` with `ACTION_BUTTON_PRESS` / `_RELEASE`, which the framework answers with the context click; `ACTION_HOVER_ENTER` / `MOVE` / `EXIT`, at most one per 16 ms | `dispatchHostMouse`, `dispatchHostMouseExit` (upstream's) |
+| Keys | `KeyEvent`s (Escape is BACK) carrying the character Windows says the key types: the `WM_CHAR` behind the key-down, so the layout, AltGr and Caps Lock are in it (`plan_key_down`, `HeldKeys`) | `dispatchHostKey` |
+| What a dead key and the next key make, characters beyond U+FFFF, `WM_CHAR` with no key | Text: `InputConnection.commitText`, or a key event per UTF-16 unit for a target without a connection | `dispatchHostText` |
+| An input method's composition (`WM_IME_*`) | `setComposingText` / `commitText` / `finishComposingText` on the focused field's `InputConnection`; without one, Windows draws the composition and the result arrives as characters. The candidate window goes under the focused `TextView`'s caret | `dispatchHostComposingText`, `hostImeInline`, `hostImeAnchor` |
+
+One stream at a time owns the app's touchscreen (the left button, the other
+buttons, the contacts, or a pinch), so the app never sees two gestures
+interleaved. A touch gesture with one pointer takes the mouse's path through
+`TouchDispatcher` (the Back glyph, dialogs and popups, drag and drop); from a
+second pointer on, a gesture the activity owns goes to the activity with all
+its pointers, and one a floating window owns keeps following its first
+pointer only, because that router is single-pointer.
+
+A steady 60 Hz tick on a waitable timer drives the app's
 renderer. `WINAPK_HEADLESS=1` runs the same path without a window, which is
 how CI boots apps.
 
@@ -443,12 +543,15 @@ how CI boots apps.
 | OpenSL ES (native) | Not implemented: `slCreateEngine` reports the feature unsupported, so engines fall back to silence. The interface IDs are real | `native_opensles.cpp` |
 | Microphone (AudioRecord) | WASAPI capture, resampled to the app's format | `native_audio_input.cpp` |
 | Video: MediaPlayer, VideoView | `HostVideo.Player` over `video_player.cpp`: an `IMFSourceReader` demuxes and decodes (NV12, or P010 for 10-bit; own YUV-to-ARGB conversion, aperture crop, container rotation), the audio goes into the audio engine, and a Java thread pulls each picture when the audio clock says it is due and presents it on the SurfaceView's layer, the TextureView's SurfaceTexture, or the window | `video_player.cpp`, `video_decode.cpp`, `native_media_video.cpp` |
-| Video: MediaCodec | `NativeMedia`'s video natives on the synchronous decoder MFTs: H.264 always, HEVC/VP9/VP8/AV1/MPEG-4 when a decoder is installed (`nativeVideoSupportedMimes` lists what `MFTEnumEx` really creates); AAC and MP3 audio decoders too. The NDK media API (`AMediaCodec`, `AMediaExtractor`) and `MediaExtractor` are not implemented; `native_media.cpp` holds only the `AMEDIAFORMAT_KEY_*` strings so libraries link | `native_media_video.cpp`, `video_decode.cpp` |
+| Video: MediaCodec | `NativeMedia`'s video natives on the synchronous decoder MFTs: H.264 always, HEVC/VP9/VP8/AV1/MPEG-4 when a decoder is installed (`nativeVideoSupportedMimes` lists what `MFTEnumEx` really creates); AAC and MP3 audio decoders too. The NDK media API (`AMediaCodec`, `AMediaExtractor`) is not implemented; `native_media.cpp` holds only the `AMEDIAFORMAT_KEY_*` strings so libraries link | `native_media_video.cpp`, `video_decode.cpp` |
+| Video and audio out: MediaCodec encoders, MediaMuxer, MediaRecorder | `HostMedia`'s natives. Encoders: the synchronous (software) H.264 and AAC encoder MFTs, listed in `MediaCodecList` only when `MFTEnumEx` creates them (some Server and N editions have none: `createEncoderByType` then throws `IOException`). H.264: up to 1920x1088, baseline/main/high, VBR or CBR, no B-frames, input as NV12 or I420 buffers or an input Surface; output is Annex-B with the SPS/PPS first as a codec-config buffer and as `csd-0`/`csd-1`. AAC-LC: 44100 or 48000 Hz, mono or stereo, 96 to 192 kbit/s, raw frames with the AudioSpecificConfig as `csd-0`. An input Surface (`createInputSurface`) takes Canvas drawing (`Surface.macapkSetFrameSink`) and a camera2 session's frames (it is an `ImageReader`'s Surface, which the session feeds); OpenGL ES drawing on an EGL window surface made on it is not read back, and the legacy `Camera` has no path to it. `MediaMuxer` writes MP4 and 3GPP with a writer of its own (`mp4_writer.cpp`, no Media Foundation: one progressive `mdat`, the `moov` at `stop()`; `avcC`, `esds`, `ctts` and an edit list for reordered frames, rotation, location) and refuses WebM, Ogg and HEIF. `MediaRecorder` is those three plus `AudioRecord`: AAC in MP4/3GPP/ADTS, H.264 from `VideoSource.SURFACE`; AMR and the other formats fail in `prepare()` | `native_media_codec.cpp`, `media_encode.cpp`, `mp4_writer.cpp` |
+| MediaExtractor, MediaMetadataRetriever | `video_decode.h`'s `Demuxer`: an `IMFSourceReader` with no decoder, every audio and video track as the container holds it (H.264/HEVC as Annex-B with the parameter sets in `csd-0`/`csd-1`, AAC raw with its config), sync flags, the three seek modes. A path or an http(s) URL is opened by name; a FileDescriptor range, a `content://` Uri and a `MediaDataSource` are copied to a temporary file first. The retriever answers duration, tracks, size, rotation and bit rate from it and decodes frames (for a path or URL) with the player's source reader; it reads no tags | `native_media_codec.cpp`, `video_decode.cpp` |
 | Images | libwebp for WebP, WIC for the rest | `native_image.cpp` |
 | Notifications | `NotificationManager` posts to `HostNotifications`, whose natives show Windows.UI.Notifications toasts (WinRT C ABI, combase loaded at run time) under the app's AppUserModelID, which the launcher writes on the app's Start menu shortcut; a click comes back through `HostNotifications.onActivated` and `PendingIntent.send()` | `native_notifications.cpp` |
 | WebView, Custom Tabs, App Link sign-in | Microsoft Edge WebView2, shown in the app window behind the views drawn over it; `shouldInterceptRequest`, JavaScript interfaces, cookies; a Custom Tab is a tab window whose navigations are checked against the app's manifest; a browser sign-in whose `redirect_uri` is one of the app's verified App Links (or its own link scheme) opens in the same window, which hands back only that redirect (`applink_match.h`) | `native_webview.cpp`, `webview2_host.cpp`, `native_browser_tab.cpp` |
-| Camera (camera2, Camera, CameraX) | Media Foundation capture, each webcam offered as a back and a front camera; a virtual camera when there is none | `native_camera.cpp` |
+| Camera (camera2, Camera, CameraX) | Media Foundation capture, each webcam offered as a back and a front camera; a virtual camera when there is none. Preview and analysis frames, and stills as JPEG (encoded in Java from the captured frame); no video recording | `native_camera.cpp` |
 | Location | `Windows.Devices.Geolocation`; Windows' privacy settings are the authorization | `native_location.cpp` |
+| Connectivity | `ConnectivityManager`, `NetworkCapabilities` and `LinkProperties` answer from the adapter that carries the default route (`HostRadios.defaultNetwork`: `GetBestInterfaceEx` for a public address, then that adapter in `GetAdaptersAddresses`): Ethernet, Wi-Fi, mobile broadband or a tunnel as the transport and the legacy network type, its addresses, DNS servers, MTU and the JDK's name for it; no default route is "no network". Polled every two seconds for `NetworkCallback`. "Validated" means only that there is a default route, and no connection is reported as metered. `NsdManager` (mDNS service discovery) is not implemented: every request reports `FAILURE_INTERNAL_ERROR` to its listener | `native_radios.cpp` |
 | Wi-Fi | `HostRadios` over the Native Wifi API: state, the current connection (SSID, BSSID, RSSI, frequency, link speed), the DHCP configuration from `GetAdaptersAddresses`, scans, and `WlanRegisterNotification` events pumped by one Java thread into the state, connection, signal and scan-results broadcasts. Network names need Windows' location access, as Android needs the location permission | `native_radios.cpp` |
 | Bluetooth | `HostBluetooth`: the paired devices (bluetoothapis), RFCOMM sockets both ways on Winsock `AF_BTH` (the SDP query for the channel, `WSASetService` for a server's record), LE scans on the `BluetoothLEAdvertisementWatcher` and the GATT client (services, reads, writes, notifications through the CCCD, MTU) on the WinRT `Windows.Devices.Bluetooth` APIs through their C ABI, declared in the file. Permissions as AOSP's service: `BLUETOOTH_CONNECT` / `BLUETOOTH_SCAN`, location for scan results unless `neverForLocation`. Not there: classic discovery and pairing, LE advertising and the GATT server, profiles, L2CAP | `native_bluetooth.cpp`, `bluetooth_util.h` |
 | Clipboard | Text, HTML, URLs, with the concealed formats for sensitive clips | `native_clipboard.cpp` |
@@ -717,9 +820,25 @@ tests the transport and the broker's checks across three processes.
    which the run log's first `arm64 AOT:` line says).
 7. The render tick drives frames; input goes to `TouchDispatcher`; permission
    requests spawn the launcher's dialogs; a resize re-lays the app out.
-8. Closing the window ends the activity stack and the process. The exit code
-   is 0 unless the app or the VM failed; a VM crash leaves
-   `logs\hs_err_pid<n>.log`.
+8. Closing the window (`WM_CLOSE`; `WM_ENDSESSION` at sign-out or shutdown)
+   hides it at once and runs upstream's close path on a thread of its own
+   (`native_cocoa.cpp`, `close_thread`): `ActivityHost.macapkTerminate` posts
+   the teardown to the app's main thread, `onPause`, `onStop` and `onDestroy`
+   for every activity from the top down, and waits up to two seconds; then
+   the process ends, and the run log says
+   `[win.apk] close: the app was paused, stopped and destroyed in <n> ms; ended`.
+   An app whose main thread is stuck gets
+   `close: the app did not answer in time; ended` (a watchdog thread that
+   uses no Java ends it half a second after the two); a second close request
+   ends it at once, and the launcher's Stop ends the process from outside
+   with no lifecycle, as Force stop does. `SharedPreferences.apply()` writes
+   the file before it returns, so nothing is queued at that point. Minimizing
+   the window is the task going to the back
+   (`ActivityHost.macapkHostMinimized`: `onPause`, `onStop`); restoring it
+   brings the task forward (`macapkTaskToFront`: `onRestart`, `onStart`,
+   `onResume`), the same transitions as Back at the task's root. The exit
+   code is 0 unless the app or the VM failed (always 0 once the user closed
+   the window); a VM crash leaves `logs\hs_err_pid<n>.log`.
 
 ## Data on disk
 
@@ -730,7 +849,7 @@ default; `--data` moves it for a direct run):
 |---|---|
 | `library\<name>.apk`, `.label`, `.package`, `.orientation`, `.window` | The user's copy of each app and the launcher's per-app files |
 | `apps\<name>\` | `classes.jar`, `.macapk-dex-stamp`, `icon.png`, `label.txt`, `package.txt`; for an arm64-only app that crashed with its translation loaded, `aot-guard.txt` (the crash guard's count and whether translation is off) |
-| `android\` | The Android file system: `data\app\` (installed packages, with `lib\<isa>\` and the `.so.aot.*` translation files; `lib\arm64\.aot-tmp\<lib>\` holds an unfinished translation), `data\data\<package>\` (app data), the shared-storage volume |
+| `android\` | The Android file system: `data\app\` (installed packages, with `lib\<isa>\` and the `.so.aot.*` translation files; `lib\arm64\.aot-tmp\<lib>\` holds an unfinished translation), `data\data\<package>\` (app data), `dev\socket\` (the socket files that stand for abstract-namespace `LocalSocket` names), the shared-storage volume |
 | `logs\` | `run-<name>.log` and `run-<name>.1.log`, `last-run.log` (a hard link to the newest run log), `install-<name>.log`, `gms.log`, `install-helper.log`, `package-backfill.log`, `hs_err_pid*.log` |
 | `store\` | `catalog.tsv`, `catalog.etag`, `icons\`, `downloads\` |
 | `installed_apps.json` | The installed-apps registry the package manager answers from |
@@ -787,6 +906,7 @@ Two GitHub Actions workflows:
 |---|---|---|
 | `ci.yml` | Pull requests touching `windows/` or `runtime/`, and by hand; a push to `main` only builds (to leave its compile cache to pull requests) | One pipeline of jobs. *What changed* decides which stages a pull request needs. The guest test libraries build on Ubuntu, and a launcher-only change gets a one-minute MinGW compile with warnings as errors. Everything else builds once on `windows-latest` (MSYS2 CLANG64, ccache) and stages the runtime. That output goes as artifacts to the jobs that run side by side: *Unit tests* (every test program), *Runtime tests* (the Java tests, GL, an APK booted headless and in a window, the GMS CLI), *App smoke test* (the ten apps of `windows/test/compat/smoke.txt`, one of each kind; it fails when one no longer draws), and *Package* (a preview folder with the JRE the build baked and the installer). The smoke test and the sweep run on that JRE, with one framework archive made first (`--cds-prepare`) and shared by the apps, and the smoke test records the apps' classes into the `framework-classlist` artifact, the source of `windows/java/winapk-framework.classlist`. The whole compatibility sweep runs only by hand (Run workflow, "Full compatibility sweep"): split over four machines (`sweep.py --shard`) and joined by *Sweep report* into one ranked report. A new push cancels the run in progress |
 | `windows-release.yml` | By hand only, with a tag | Builds (stamping the tag's version into `Win.apk.exe`), packages with the JRE `bake_jre.sh` makes from Temurin 21, smoke-tests the package, builds the installer and publishes a GitHub pre-release |
+| `app-probe.yml` | By hand only | Not a test: each F-Droid app of its list runs a minute in a window on the staged runtime of the branch's newest CI build (`main`'s when the branch has none); screenshots, the log and CPU samples are the artifacts (the dated rows of [Compatibility](APPS.md#apps-people-have-tried)) |
 
 [`windows/README.md`](../windows/README.md) has the commands.
 

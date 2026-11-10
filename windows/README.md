@@ -201,7 +201,10 @@ The user-facing ones (`WINAPK_PHONE_SIZE`, `WINAPK_RESIZABLE`,
 | `WINAPK_WINDOW_RTL=1` or `0` | Overrides the locale's reading layout for the app window's frame |
 | `WINAPK_ANGLE_BACKEND=d3d11` or `swiftshader` | Forces a graphics backend (the default is a GPU, then WARP, then SwiftShader) |
 | `MACAPK_LETTERBOX=0` | With `WINAPK_RESIZABLE=0`, stretches the phone over the whole window instead of letterboxing |
-| `MACAPK_SCROLL_SCALE=<n>` | Scales the drag the mouse wheel makes |
+| `MACAPK_SCROLL_SCALE=<n>` | Scales the drag a wheel step becomes in an app whose views take no scroll event |
+| `MACAPK_WHEEL_SCROLL_EVENT=0` | Every wheel step is the finger drag; no `ACTION_SCROLL` is sent first |
+| `MACAPK_HOVER_EVENTS=0` | The pointer over the app sends no hover events |
+| `MACAPK_MOUSE_POINTER=0` | The right and the middle mouse button and the hovering pointer are not reported to the app |
 | `WINAPK_ARM64_ENGINE=interp` | Forces the arm64 interpreter instead of the JIT |
 | `WINAPK_ARM64_STATS=1` | Prints at exit where the guest's time went (host functions versus arm64 code, transitions, interpreter fallbacks), and the same for the eight busiest threads still running |
 | `WINAPK_AOT_EH_FRAME=0` | `winapk-aot` leaves out the functions `.eh_frame_hdr` lists (for comparing) |
@@ -216,6 +219,7 @@ The user-facing ones (`WINAPK_PHONE_SIZE`, `WINAPK_RESIZABLE`,
 | `MACAPK_USER_FOLDERS=0`, `HKCU\Software\Win.apk\UserFolders=0` | Turn the shared-storage mapping off (the setting is what the launcher writes) |
 | `MACAPK_JVM_OPTS` | Extra JVM options, passed through after Win.apk's own (`-XX:TieredStopAtLevel=4` brings back the C2 compiler, which the runtime leaves out for a faster start) |
 | `WINAPK_CDS=0` or `base` | Class-data sharing (`host/cds.h`): `0` back to the old flags (`--patch-module`, no archive), `base` the JRE's archive without the framework archive. `WINAPK_CDS_DIR=<dir>` puts the framework archive elsewhere (tests share one), `WINAPK_CDS_CLASSLIST=<file>` dumps from another class list (`none`: only the start's own), `WINAPK_CDS_RECORD_DIR=<dir>` writes every app start's loaded classes to `<dir>\<app>.classlist` (for `scripts/merge_classlists.py`), `WINAPK_CDS_VERIFY=1` checks the archive whole at every start, `WINAPK_CDS_DUMP_DELAY_MS` (default 10000) is the wait after the first frame before the background dump |
+| `MACAPK_FRAMESPEED_DAMAGE=1` | Partial redraw (off by default): a frame that only invalidations asked for draws the view tree clipped to the area they damaged and hands the window only that rectangle, instead of redrawing and copying the whole window (`docs/ARCHITECTURE.md`, "The view tree's frames"). Unset or anything else, every frame is whole. `MACAPK_DAMAGE_VALIDATE=1` with it draws every frame whole but compares what changed with the area claimed: `[damage-validate] under-damage` names a frame that changed outside it, and the `M6:` line counts `validate: claimed= clean= under=`. `MACAPK_TRACE_DAMAGE=1` logs every 5 s what the frames' damage was (`[damage]`), `MACAPK_FRAME_PHASE_TRACE=1` a frame's time by phase (`[frame-phase]`) |
 | `MACAPK_QUIET_CLASSLOAD=0` | Logs a line for every class the app's class loader loads (the runtime sets it to 1, as upstream's launcher does: thousands of lines cost up to 0.4 s of a start) |
 | `MACAPK_ALL_PERMS_ASK=0` | Returns the permission groups beyond storage and location to the install-time rule (declared means held), the Mac's behaviour; `MACAPK_MEDIA_PERMS_ASK=0` and `MACAPK_ALLFILES_HONEST=0` keep their upstream meaning |
 | `MACAPK_GMS_PRESENT=0`, `MACAPK_GMS_FCM=0`, `MACAPK_GMS_SIGNIN=0`, `MACAPK_GMS_LOCATION=0`, `MACAPK_GMS_DIR` | Upstream's Play services switches and the state folder |
@@ -238,21 +242,23 @@ Every test is a program built by CMake; `ci.yml` runs each of them on
 | `winapk-crash-test` | The crash path of `host/crash_report.cpp`: a child with a guest SIGSEGV handler that declines three times, then the report line with the faulting module and offset, a minidump (`MDMP`) in the logs folder, pruning to the last three |
 | `winapk-bluetooth-test` | The Bluetooth host's pure parts without a radio: SHA-1 against the FIPS vectors, the parameterized WinRT interface ids derived from type signatures against five published ones, UUID and address conversions, advertisement bytes |
 | `ScanRecordTest` (`test/java/`) | `ScanRecord`'s advertisement parser and `ScanFilter` against the built jars |
-| `winapk-video-test <test/video dir>` | The Media Foundation video backend without a JVM: the YUV converter, a decoder MFT, the source reader and the player on `test/video/color.mp4` (1 s of H.264 + AAC); decoder checks are skipped where no H.264 MFT exists |
+| `Camera2StillTest` (`test/java/`) | A camera2 still on the virtual camera against the built jars (run by hand, no natives): JPEG sizes in the stream map, a `TEMPLATE_STILL_CAPTURE` into an `ImageReader(JPEG)` giving a one-plane Image that `javax.imageio` decodes at the reader's size, EXIF orientation and thumbnail, one timestamp across Image and result, callback order, `maxImages`, a still beside a repeating YUV reader, a recorder-only session failing to configure |
+| `winapk-video-test <test/video dir>` | The Media Foundation video backend without a JVM: the YUV converter, a decoder MFT, the source reader and the player on `test/video/color.mp4` (1 s of H.264 + AAC); decoder checks are skipped where no H.264 MFT exists. Then what recording and `MediaExtractor` stand on: the demuxer on that file (tracks, csd, samples into the decoders), the H.264 and AAC encoders (codec config first, key frames, times; decoded back), and the MP4 writer (its file read back by the demuxer and the source reader). It prints the encoder MFTs the machine has and skips what needs a missing one |
 | `winapk-thunk-test` | Native-method thunks with mixed, stack-overflowing and narrow arguments; the variadic entry stub's `va_list`; the tagged zero stub |
 | `winapk-jni-test`, `winapk-jni-variadic-test` | The guest `JNIEnv` against a mock JVM; the variadic bridge for all four call kinds and every argument type, through `...` and `va_list` |
-| `winapk-linker-test <dir>` | A four-library tree with a `DT_NEEDED` cycle and a runtime plugin: constructor order, symbol resolution, `dlsym` scopes, the guest's `dlopen`, `dlsym`, `dlerror` and `dladdr` |
-| `winapk-bionic-test <bionic_guest.so> <scratch dir>` | `test/guest/bionic_guest.c` exercises the shim from guest code: strings, printf and scanf through the System V `va_list`, threads and keys, files and directories, ELF TLS, system properties, locales, futex, an 8 GiB `PROT_NONE` reservation, pipes, eventfd, epoll, sockets, `ALooper`, clocks, `mmap`; `random(3)` against glibc's sequences (the same generator), `fts` walks, `link`, `popen`/`system` without a shell, `fscanf`, `strptime`, cleanup handlers run by `pthread_exit`, `sched_getaffinity`, FORTIFY's `FD_*`, the binary128 `lroundl` family |
+| `winapk-linker-test <dir>` | A four-library tree with a `DT_NEEDED` cycle and a runtime plugin: constructor order, symbol resolution and its order (libc at its place in `DT_NEEDED`, the global group before it), `dlsym` scopes, the guest's `dlopen`, `dlsym`, `dlerror` and `dladdr`, a library opened by its Android path |
+| `winapk-bionic-test <bionic_guest.so> <scratch dir>` | `test/guest/bionic_guest.c` exercises the shim from guest code: strings, printf and scanf through the System V `va_list`, threads and keys, files and directories, ELF TLS, system properties, locales, futex, an 8 GiB `PROT_NONE` reservation, pipes, eventfd, epoll, sockets, `ALooper`, clocks, `mmap`; the network (loopback only): a UDP datagram, socket options that are mapped, accepted as tuning or refused with `ENOPROTOOPT`, `SO_LINGER`, a multicast group joined with `IP_ADD_MEMBERSHIP` and with `MCAST_JOIN_GROUP` and a datagram received through each (skipped where the host has no multicast route), `if_nametoindex`/`if_indextoname`/`if_nameindex` against `getifaddrs`, edge-triggered epoll on a socket (`EPOLLOUT` once, then a 300 ms wait that takes 300 ms and no processor time; `EPOLLIN` once per arrival and read) and on an eventfd (every write), `EPOLLONESHOT`, `epoll_wait` and `poll` woken by another thread's send; `random(3)` against glibc's sequences (the same generator), `fts` walks, `link`, `popen`/`system` without a shell, `fscanf`, `strptime`, cleanup handlers run by `pthread_exit`, `sched_getaffinity`, FORTIFY's `FD_*`, the binary128 `lroundl` family |
 | `winapk-arm64-test <dir>` | The arm64 engines: `test/guest/arm64_isa.c` built for the host and for arm64 at three optimization levels must agree on every function, on the interpreter, the JIT and the AOT translation; then `arm64_bridge_guest.c` (calls in both directions, variadics, threads, atexit, `fts` filling arm64's `struct stat`, cleanup handlers); `arm64_flow_guest.c` (returns into an ancestor frame with RET and BR, coroutines, RETAA, deep recursion on a 1 MB thread, saturating conversions, FRECPS/FRSQRTS, an exclusive-monitor counter shared by translated code and the JIT, the STLR/LDAR litmus test) against values worked out by hand; `arm64_patch_guest.c` (a library patching its own code, and code patched by one thread while another runs it), `arm64_eh_guest.cpp` (C++ exceptions through the NDK's libc++ and unwinder, built when `ANDROID_NDK_HOME` names an NDK), a library unloaded with `dlclose`, one linked at another address, a translation cut short under a stamp that says it is sealed (refused) and the same one whole (loaded); 400 functions of random instructions from `gen_arm64_fuzz.py`, whose results on the JIT and the translation must match the interpreter's (`WINAPK_FUZZ_STATE=<i>` starts every function from function i's states, to bisect a difference); and `arm64_bench.c` (the speed ratios) |
 | `winapk-aot-stamp-test` | A library's translation stamp (`include/winapk/aot_stamp.h`), with no file behind it: each kind written and read back, an old stamp read as a short one, a newer build's word; what the loader refuses and when it asks for a sealed DLL; for each kind whether the worker has a step to take now (a changed library or translator, another CPU, the back-off after failures and its limit, a pass to finish, a profile that grew, the interval between two translations from a profile); which stamps the launcher takes for "translated by its profile" |
 | `winapk-applink-test` | The App Link sign-in window's decision (`host/applink_match.h`): the navigation that returns to the app is the `redirect_uri` without its query, exactly (scheme and host without case, a default port as none); another path, host, port, scheme, a subdomain, userinfo or the address inside a query is not |
 | `winapk-aot-cache-test <scratch dir>` | The arm64 translation's files (`include/winapk/aot_files.h`) in real processes, with `winapk-aot-test-dll.dll` as the translation: a seal against DLLs cut short, emptied, zeroed or changed; eight processes taking, making, putting and loading one cache entry at once (hard links and copies); writers killed at random moments and at each step of a write; broken cache entries deleted and replaced; eviction and replacement while another process has the DLL loaded; the clock (60 days, dates in the future, the size cap); stamps rewritten by four processes while another reads them |
 | `winapk-audio-test <test/audio>` | The WASAPI mixer and the decoders |
 | `winapk-user-folders-test <dir>` | The shared-storage junction rules |
-| `winapk-window-test` | The window geometry decisions (the letterbox, how a frame is shown) without a window, and the size a window opens at (`host/window_fit.h`: the monitor's scale, made to fit the work area at a whole density), which the launcher's starting window takes too |
+| `winapk-window-test` | The window geometry decisions (the letterbox, how a frame is shown) without a window, and the size a window opens at (`host/window_fit.h`: the monitor's scale, made to fit the work area at a whole density), which the launcher's starting window takes too. And the window's input decisions (`host/pointer_input.h`): a client position in the app's box, mirrored or not; the Android pointer stream a touchscreen's contacts become (ids, indices, one MOVE per frame, CANCEL); the pinch a Ctrl+wheel becomes; which characters go out with a key (dead keys, AltGr, surrogate pairs) and what a release sends. `windows/test/java/com/macapk/loader/HostTouchTest.java` reads the resulting multi-pointer `MotionEvent`s back on a JVM (by hand: `javac`/`java` with `android-framework.jar` and `macapk-loader.jar`; no CI step runs it yet) |
 | `winapk-launcher-state-test` | The launcher's state machines, which hold no lock and make no Windows call (it also builds with the host's compiler; CI's launcher check runs it that way). An app's run (`launcher/app_runs.h`): every path from start to end says the right thing (nothing, the splash goes, "didn't start", "stopped with an error"), Stop at each point of a run, steps out of order change nothing. An install (`launcher/installs.h`): done, failed, left alone because the app runs; Cancel while it waits, while the file is copied, while the runtime converts it, once it is being kept (refused) and after its end (refused, and nothing is left for the next install of that name); the queue's order. The update check and download (`launcher/updates.h`): one check at a time, what each result leaves known and what the InfoBar says of it (a release once), a failed check keeps a newer version found before, the download's progress |
 | `winapk-gl-test` | ANGLE makes a context, clears a pbuffer and the read-back frame has the right colors (WARP or SwiftShader on CI) |
 | `winapk-jvm-run <jni_guest.so> <classes>` | A real HotSpot JVM loads a guest library through the linker: its `JNI_OnLoad` registers a native through the guest `RegisterNatives`, another native is bound by name through the `NativeMethodBind` hook, both are called from Java and call back through the variadic bridge. Run with the x86_64 and the arm64 build of the library, and again on the staged `android-framework.jar` for libjnigraphics |
+| `test/java/android/net/HostNetworkTest.java` | Run by hand against the built jars (`MACAPK_LOG_LEVEL=7`, no natives): what `ConnectivityManager` makes of the host's default network (`MacApkHostNetwork.fromHost`: the transport for each adapter type, addresses with prefix lengths, DNS servers, no default route, junk in the answer), and that `NsdManager`'s three failures are `FAILURE_INTERNAL_ERROR`, delivered after the call from its own thread |
 | `test/java/PermissionModelTest.java` | `SpecialAccessStore.GroupModel` against PermissionController's rules (grant, deny, deny twice, auto grant, background permissions, legacy targets, App info rows) |
 | `test/java/FileSeparatorRewriteTest.java` | Guest code reads Android's `/` from `File.separator` while the JDK's own classes keep the backslash |
 | `winapk-binder-test <classpath> com.macapk.loader.BinderTransportTest` | `host/binder_win.cpp` between real JVMs in three processes (`test/java/com/macapk/loader/BinderTransportTest.java`): transact, the OS calling pid and the receiver-derived uid, oneway order, a nested callback, binder identity both ways, a Messenger and its replyTo with the sender's uid in `Message.sendingUid` and a PendingIntent's creator uid, fds both ways, death notification; then the system broker's checks: a process that is no installed app, or that claims another package, is refused, android:exported, the package uid; then the account service's Google accounts (`accounts` child, its own GmsStore folder): an account signed in or out by another process after the service started is mirrored into or removed from the accounts table, asked or not, with the master token as password and `GoogleUserId`, and a row it did not mirror stays |
@@ -398,6 +404,16 @@ every such change is listed here:
   processes (`getCreatorUid`); a package's uid is fixed once assigned, and the
   Google packages that share `com.google.uid.shared` get it even from a caller
   that has no manifest at hand.
+- `runtime/java/com/macapk/loader/AppUids.java`,
+  `android/app/AppOpsManager.java`, `android/os/MacApkBinderTransport.java`:
+  the uid table (`app_uids.properties`) is read under its file lock too, and
+  written only when a package gets a uid. Every `getApplicationInfo` in every
+  process used to rewrite it under the lock while `getPackagesForUid` and
+  `AppOpsManager.checkPackage` read it without one; a Windows file lock is
+  mandatory, so such a read failed, the answer was "no package has this uid",
+  and Play services refused its caller ("Unknown calling package name"). A
+  refused `checkPackage` and a calling pid with no uid on record are each
+  logged once (`[appops]`, `[binder]`).
 - `runtime/java/android/content/Context.java`, `ContextWrapper.java`:
   `createContextAsUser` (the one user's own Context; Play services calls it),
   and a wrapper's `getSystemService` that comes back to itself for the same
@@ -428,6 +444,13 @@ every such change is listed here:
 - `runtime/java/com/macapk/loader/SystemClient.java`: a call from the broker
   that arrives before the process has read the broker's pid from its
   registration waits for it, instead of being refused as a stranger's.
+- `runtime/java/android/net/LocalServerSocket.java`, `LocalSocket.java`,
+  `LocalSocketAddress.java`: the ABSTRACT namespace (`new LocalServerSocket(name)`,
+  `connect(new LocalSocketAddress(name))`), which upstream refuses. Windows has
+  AF_UNIX but no abstract names, so a name is the socket file
+  `android\dev\socket\a-<hash of the name>`, shared by the apps of the install;
+  the `.lock` file beside it, locked while the server socket is open, says
+  whether a file left by a killed process may be replaced.
 - `runtime/java/android/net/Uri.java`: `Uri.fromFile` of a drive path gives
   the path `/C:/Users/...` (a leading `/`, `/` separators), so the URI's
   string parses back to the same path; `file://C:%5C...` parsed back with the
@@ -555,6 +578,20 @@ every such change is listed here:
   Android's `/` (Pattern S; `MACAPK_ANDROID_FILE_SEPARATOR=0` turns it off) and
   `System.mapLibraryName` / `load` go through the on-demand native loader
   (Pattern N); beside upstream's Patterns L and J.
+- `runtime/java/com/macapk/loader/AppClassLoader.java`: `findLibrary` asked by
+  app code (not by `System.loadLibrary` or the framework) answers as Android
+  does, `/data/app/.../lib/<isa>/lib<name>.so`, where upstream answers the
+  translated library; `loadNativeOnDemand` loads that name through the same
+  stub. Only where Pattern N is on.
+- `runtime/java/dalvik/system/NativeLibraryPath.java` (new), `DexPathList.java`,
+  `BaseDexClassLoader.java`, `DexClassLoader.java`, `InMemoryDexClassLoader.java`
+  and `AppClassLoader.libraryOnSearchPath`: a dex loader's `librarySearchPath`
+  is kept and `findLibrary` searches it before the app's lib dir, as AOSP's
+  `DexPathList` does; a `<zip>!/<dir>` entry's library is copied out to
+  `<data>/code_cache/macapk-native-libs/` with the DT_NEEDED it has in that zip
+  directory, and loads through an on-demand stub bound to that loader (Play
+  services' `CronetDynamite.apk` in a client app). Upstream drops the path.
+  `windows/test/java/LibrarySearchPathTest.java` runs on any JVM.
 - `runtime/java/android/app/Activity.java`: `Window.setContentView(View)` puts
   the view into the decor's content frame and keeps the decor as the root, as
   AOSP's `PhoneWindow` does (a view added to the decor floats over the content),
@@ -574,18 +611,87 @@ every such change is listed here:
 - `runtime/java/android/widget/RatingBar.java` and `ProgressBar.java`: a rating
   bar reads `numStars`, `rating`, `stepSize` and `isIndicator` from XML and
   measures one row of stars, as AOSP does. Not Windows-specific.
+- `runtime/java/android/widget/ProgressBar.java` (the indeterminate tick): it
+  invalidates only while the bar is shown (`isShown()`), as AOSP animates
+  only a visible bar. A hidden spinner kept the whole window redrawing 20
+  times a second (Google Maps idle: a third of all frames). Not
+  Windows-specific.
+- `runtime/java/android/view/View.java`, `ViewGroup.java`, `ViewRootImpl.java`
+  and `widget/ProgressBar.java` (views that are not on screen):
+  `ViewGroup.removeDetachedView` detaches the child from the window and
+  reports it removed, as AOSP's does (a RecyclerView row that a layout did not
+  reuse stayed "attached" for good and never got `onDetachedFromWindow`); an
+  invalidation asks for a frame only when the view can be drawn, that is no
+  view from it up to its window's root is hidden without a View animation and
+  its tree is in a window (AOSP's `skipInvalidate` and `mAttachInfo` tests;
+  `MACAPK_INVALIDATE_SKIP_UNDRAWN=0` turns it off, and
+  `MACAPK_TRACE_INVALIDATE=1` lists such invalidations as `skipped`); and
+  `onVisibilityAggregated`, plus `onWindowVisibilityChanged` and
+  `onVisibilityChanged` at attach and detach, are called as AOSP calls them,
+  with `ProgressBar` stopping an animated indeterminate drawable while it is
+  not shown (`MACAPK_VISIBILITY_AGGREGATED=0`). Google Maps' idle map redrew
+  the whole window 57 times a second for a progress bar and Compose content
+  of a row that had left its list. Not Windows-specific.
+- `runtime/java/android/view/View.java`, `ViewGroup.java`,
+  `ViewRootImpl.java` and `com/macapk/loader/ViewCanvasDriver.java` (partial
+  redraw, behind `MACAPK_FRAMESPEED_DAMAGE=1`): the view half ("S1") of
+  upstream's damage-clipped frames, which the driver ("S2") had waited for.
+  `ViewGroup.drawChild` records the clip each child is drawn under on the
+  frame; an invalidation damages that rectangle (its parent's when the view
+  has moved, was not drawn or casts a shadow; everything when no rectangle
+  can be vouched for) and `ViewRootImpl.macapkConsumeDamage` hands the frame's
+  union to the driver. In the driver the flag is read through `ViewRootImpl`
+  (on only at `1`), the draw is bracketed by `macapkBeginDraw` /
+  `macapkEndDraw`, damage raised during a frame is kept for the next one
+  instead of dropped, and `MACAPK_DAMAGE_VALIDATE=1` compares frames in Java
+  (the Windows host has no diffing present). Checked by
+  `windows/test/java/DamageRectTest.java`. Not Windows-specific.
 - `runtime/java/android/database/sqlite/SQLiteDatabase.java`: `BEGIN`,
   `COMMIT` and `ROLLBACK` given to `execSQL` nest in the transaction stack, as
   AOSP's `SQLiteSession.executeSpecial` does. Not Windows-specific.
 - `runtime/java/android/view/LayoutInflater.java`: a `<merge>` layout inflated
   without a parent merges into a `FrameLayout` instead of being dropped, so
   `setContentView` of a `<merge>` layout works. Not Windows-specific.
+- `runtime/java/android/app/Activity.java`, `android/view/LayoutInflater.java`
+  and `android/widget/TableLayout.java`: while `setContentView(int)` inflates
+  a `<merge>` layout, `Activity.findViewById` finds the top-level views
+  already inflated, as in the content frame PhoneWindow inflates into (a view
+  that looks up a sibling in its constructor got null); and a `TableLayout`
+  reads `stretchColumns`, `shrinkColumns` and `collapseColumns` from XML.
+  Vanilla Music's permission banner lay under its bottom bar with its button
+  off the screen. Not Windows-specific.
 - `runtime/java/com/macapk/loader/ActivityHost.java`: an activity that calls
   `finish()` in its own `onCreate` is torn down after `onCreate` returns, as on
   AOSP, not in the middle of it; one that calls it in `onResume` after
   `onPostResume` (AOSP destroys it in a later transaction; tearing it down
   inside `onResume` nulled the FragmentManager's host under `onPostResume`,
   "No activity" in sgtpuzzles). Not Windows-specific.
+- `runtime/java/com/macapk/loader/TouchDispatcher.java`: the entries the
+  Windows window calls for what a Mac reports differently or not at all
+  (`windows/host/win32_window.h`, `WindowInput`): `dispatchHostTouch` (a
+  touchscreen's contacts and a pen as a multi-pointer stream; one pointer goes
+  down the host mouse's path, and `touchEvent` then carries its tool, pressure
+  and stylus button), `dispatchHostWheel` (`dispatchWheel`'s `ACTION_SCROLL`,
+  and the old finger drag when no view handled it; `deliverWheelToWindows` now
+  says whether one did), `dispatchHostPinch` (`dispatchPinch`, not begun under a
+  floating window or a drag), `dispatchHostText`, `dispatchHostComposingText`,
+  `hostImeInline` and `hostImeAnchor` (composed text and an input method's
+  composition through the focused field's `InputConnection`). Upstream's
+  callers and its single-pointer path are unchanged.
+- `runtime/java/com/macapk/loader/ActivityHost.java`: `macapkHostMinimized`,
+  which the window calls when the user minimizes it: the resumed activity is
+  paused and stopped, as a task moved to the back (the transitions of
+  `macapkMoveTaskToBack`, without hiding the window), and `macapkTaskToFront`
+  brings it back on restore. Closing the window needs no change there: the
+  host now calls upstream's `macapkTerminate`.
+- `runtime/java/com/macapk/loader/ActivityHost.java` and
+  `android/app/Activity.java`: an activity that finishes before its first
+  `onResume` is driven down only from where it is, as AOSP's
+  `performDestroyActivity` does: `onDestroy` alone after `onCreate`, `onStop`
+  and `onDestroy` after `onStart` (it got `onPause` and `onStop` too, which
+  made androidx start the fragments of an activity on its way out), with the
+  androidx lifecycle taken to CREATED first; and `isDestroyed()` turns true
+  right before `onDestroy`, not at `finish()`. Not Windows-specific.
 - `runtime/java/android/provider/SettingsStore.java`: `Secure.DEFAULT_INPUT_METHOD`
   is seeded with the host keyboard's component, as a device always has a
   current IME (Key Mapper read it without a null check). Not Windows-specific.
@@ -599,6 +705,13 @@ every such change is listed here:
   threw "nextText not on START_TAG"), and the compiled-XML reader keeps text
   chunks, so an element's content (`<key>` in a media-browser allow list) is no
   longer empty. Not Windows-specific; worth offering upstream.
+- `runtime/java/com/macapk/loader/DomXmlResourceParser.java`: an XML file with
+  a `<!DOCTYPE ...>` parses, as on a device, where the pull parser reads past
+  the declaration; the DTD and external entities are still never loaded. This
+  is also `Xml.newPullParser()`, and it refused such a file outright, so
+  AndroidSVG could not read an SVG that starts with the usual W3C DOCTYPE
+  (DroidFish drew its board without the pieces, issue #118). Not
+  Windows-specific; worth offering upstream.
 - `runtime/java/com/macapk/dex/InitRepointPlan.java`: the DEX converter also
   synthesises the constructor R8 deleted when the call site still names the
   allocated class (`new-instance T; invoke-direct T.<init>(D)` with no
@@ -608,6 +721,15 @@ every such change is listed here:
   DEX). Not Windows-specific; worth offering upstream.
 - `runtime/java/android/system/Os.java`: `chmod` and `fchmod` (Key Mapper
   died at start on the missing method). Not Windows-specific.
+- `runtime/java/com/macapk/loader/Boot.java` (`writeJavaProcMirror`,
+  `writeProcCmdline`): the `/proc` mirror also writes
+  `<android root>/proc/<pid>/cmdline`, the process name and a NUL, which
+  `/proc/self/cmdline` and `/proc/<pid>/cmdline` name (`paths.cpp`;
+  `java.io.FileReader`'s `/proc` hook, `Cocoa_remapProcPath`), and drops the
+  directories of pids that no longer run (Breezy Weather reads the file in
+  `Application.onCreate`, issue #123). With Android paths
+  (`-Dwinapk.android.root`) the `/proc/meminfo` alias `/tmp/mcmeminf` is a
+  copy, not a symbolic link, which a standard Windows account may not create.
 - `runtime/java/android/preference/Preference.java`: an app subclass that
   overrides `onGetDefaultValue(TypedArray, int)` gets it called, with a
   TypedArray holding `android:defaultValue`, and one that overrides neither
@@ -646,6 +768,19 @@ every such change is listed here:
   dark-grey frames, so screens built around a preview open and their other
   controls work. `MACAPK_VIRTUAL_CAMERA=0` turns it off. A real camera always
   wins.
+- `runtime/java/android/hardware/camera2/` (`JpegStill.java` new,
+  `CameraCaptureSessionImpl.java`, `CameraBackend.java`,
+  `params/StreamConfigurationMap.java`, `CaptureRequest.java`) and
+  `android/media/ImageReader.java`: camera2 takes stills. The stream map lists
+  JPEG and PRIVATE beside YUV_420_888 (same sizes); a request that targets an
+  `ImageReader(JPEG)` gets its frame encoded with `Bitmap.compress`, as
+  `Camera.takePicture` does, at the reader's size, with `JPEG_QUALITY`,
+  `JPEG_ORIENTATION` as the EXIF Orientation tag (pixels as captured) and the
+  `JPEG_THUMBNAIL_SIZE` thumbnail; the Image carries the result's
+  `SENSOR_TIMESTAMP` and `maxImages` is kept. Before, `getOutputSizes(JPEG)`
+  was null, so camera2 apps and CameraX's ImageCapture had no still output.
+  The characteristics gained the keys they read (3A mode lists, zoom 1.0,
+  pixel array, thumbnail sizes, output counts). Not Windows-specific.
 - `runtime/java/android/view/SurfaceView.java`: a SurfaceView laid out larger
   than its window (a center-cropped camera preview) whose holder has no GL
   consumer yet (no renderer, not a `GLSurfaceView`, not the native-window
@@ -669,6 +804,24 @@ every such change is listed here:
   run. `android.hardware.location` and `.network` are declared when the
   location is bridged. On the Mac, which binds no such native, nothing changes
   but the two features.
+- `runtime/java/android/net/MacApkHostNetwork.java`, `ConnectivityManager.java`
+  and `com/macapk/loader/HostRadios.java` (`defaultNetwork`): on Windows the
+  network `ConnectivityManager`, `NetworkCapabilities` and `LinkProperties`
+  describe is the adapter that carries the default route, asked of
+  `windows/host/native_radios.cpp` (`GetBestInterfaceEx`,
+  `GetAdaptersAddresses`): its transport (Ethernet, Wi-Fi, mobile broadband as
+  `TRANSPORT_CELLULAR` / `TYPE_MOBILE`, a tunnel as VPN), addresses, DNS
+  servers and MTU. Before, the Mac's tools (`route`, `networksetup`, `scutil`)
+  failed here, so the JDK's first interface with a routable address was taken
+  (a Hyper-V or VPN adapter as readily), every network was Wi-Fi and no DNS
+  server was listed. A host without the native (the Mac) answers "not known"
+  and asks its tools as before.
+- `runtime/java/android/net/nsd/NsdManager.java`: the failure every request
+  ends in (`FAILURE_INTERNAL_ERROR`; there is no mDNS behind it) reaches the
+  listener from an "NsdManager" handler thread after the call returned, as
+  AOSP's does, not from inside the call; a null listener or a protocol other
+  than `PROTOCOL_DNS_SD` is an `IllegalArgumentException`. Not
+  Windows-specific.
 - `runtime/java/com/macapk/loader/HostRadios.java` (new), with
   `android/net/wifi/WifiManager.java`, `WifiInfo.java`,
   `android/bluetooth/BluetoothAdapter.java`, `BluetoothDevice.java` and
@@ -836,6 +989,23 @@ every such change is listed here:
   `MediaCodec.isVideoMimeSupported` and `MediaCodecList`'s libvpx provider
   ask it instead of assuming libvpx. On the Mac every native is unbound and
   nothing changes.
+- `runtime/java/com/macapk/loader/HostMedia.java` (new): the host's demuxer,
+  H.264 and AAC encoders and MP4 writer (`windows/host/native_media_codec.cpp`
+  over `video_decode.h`'s `Demuxer`, `media_encode.h`, `mp4_writer.h`).
+  `android/media/MediaExtractor.java` reads every audio and video track
+  through it (upstream's `NativeMedia.nativeDemux*` is an audio-only demuxer
+  Windows does not have) and `MediaMetadataRetriever.java` answers from that
+  extractor and decodes frames for a path or URL; `MediaMuxer.java` writes MP4
+  and 3GPP (H.264 + AAC) and refuses the rest; `MediaCodec.java` gains its
+  encoder mode (`CONFIGURE_FLAG_ENCODE`, `createEncoderByType`,
+  `createInputSurface`, `signalEndOfInputStream`, `setParameters`), riding the
+  decoder's buffer queues, and `MediaCodecList.java` / `MediaCodecInfo.java` /
+  `HostCodecCapability.java` list the two encoders when the host has them;
+  `MediaRecorder.java` records the microphone and `VideoSource.SURFACE` on
+  those, and fails `prepare()` for what the host cannot record.
+- `runtime/java/android/view/Surface.java`: `macapkSetFrameSink` (new, public):
+  what a Canvas posts on the Surface goes to the sink, at the sink's size,
+  instead of the window. An encoder's input Surface sets it.
 - `runtime/java/android/media/MediaPlayer.java`: `setDataSource(path)` and a
   `file:`/`http(s):` Uri keep the path (read at `prepare`, so a video is not
   slurped into memory and a URL is streamed); `prepare` tries
@@ -954,6 +1124,13 @@ every such change is listed here:
   the guest layer (`windows/host/gl/egl10_window.cpp`, `guest_gl.cpp`). It
   was refused and the thread parked (Google Maps' map stayed white).
   `WINAPK_GL_VIEW_WINDOW=0` restores the refusal.
+- `runtime/java/javax/microedition/khronos/egl/MacApkEGL10.java`:
+  `eglGetCurrentContext` / `eglGetCurrentDisplay` / `eglGetCurrentSurface`
+  answer `EGL_NO_CONTEXT` / `EGL_NO_DISPLAY` / `EGL_NO_SURFACE` on a thread
+  with no context current at all (`nothingCurrent`), as on Android, not the
+  sentinel objects: an app that reads its GL limits "in the current context,
+  else in one of my own" read them with none (Google Maps' vertex attribute
+  table had `GL_MAX_VERTEX_ATTRIBS` = 0 entries, and its GL thread died).
 - `runtime/java/android/view/LayoutInflater.java`: `resolveString` answers
   null for `@null` and "" for `@empty`, as `TypedArray.getText` does, not the
   reference itself (a Chip's text read "@null").
@@ -1006,6 +1183,10 @@ every such change is listed here:
   does not allow in a file name are written as `%XX` in a preferences file's
   name. Firebase Remote Config's `frc_1:<project>:android:...` file failed
   every write.
+- `runtime/java/android/content/Context.java`, `com/macapk/loader/SharedPrefsImpl.java`:
+  `Context.getSharedPreferences(File, int)`, which Android removed from the SDK
+  but kept in `Context`. Aurora Store reads its blacklist through it by
+  reflection; without the method the blacklist always read as empty.
 - `runtime/java/com/macapk/loader/BinaryXmlParser.java`,
   `DomXmlResourceParser.java`, `android/util/AttributeSet.java`,
   `android/view/LayoutInflater.java` and the framework readers of a view's
@@ -1077,6 +1258,10 @@ every such change is listed here:
   family becomes an app font family, so its bold face is used for bold.
   DroidFish logged `ClassNotFoundException: android.graphics.FontFamily`.
   Not Windows-specific.
+- `runtime/java/android/content/res/AssetManager.java`: `open`, `openFd` and
+  `openNonAssetFd` throw `FileNotFoundException` for a name the APK does not
+  have, as AOSP does; they threw a plain `IOException`, which a
+  `catch (FileNotFoundException)` fallback misses. Not Windows-specific.
 - `runtime/java/android/app/Activity.java` and `MacApkToolbarActionBar.java`
   (new): a window whose theme asks for the platform action bar
   (`windowActionBar`, as Holo, Material and DeviceDefault do; not AppCompat)
@@ -1121,6 +1306,14 @@ every such change is listed here:
   `addSubMenu` is MenuBuilder's, a submenu tied to its item, so `findItem`
   reaches items nested in a submenu (Editor's NPE on its Typeface items).
   Opening a submenu from the bar is not drawn yet. Not Windows-specific.
+- `runtime/java/android/widget/RelativeLayout.java` (`solveBoundsForMeasure`,
+  `onLayout`): a rule waits for its anchor's edges on its own axis only, as
+  in AOSP, which positions every child horizontally and then vertically. A
+  child aligned vertically to a sibling that sits horizontally beside it
+  (arrows with `layout_alignTop`/`alignBottom` on a title that is
+  `layout_toEndOf`/`toStartOf` them) was a cycle to the solver, and every
+  child of the layout became an equal horizontal slice of it (Fossify
+  Calendar's month header). Not Windows-specific.
 - `runtime/java/android/media/RingtoneManager.java` (`getDefaultUri`,
   `getDefaultType`, `isDefault`) and `android/preference/RingtonePreference.java`
   (comments): the default sound of a type is AOSP's `Settings.System` URI

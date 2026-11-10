@@ -29,6 +29,15 @@
 // irrelevant. Every probe is wrapped so a failure degrades to the previous
 // answer rather than throwing into an app's connectivity check.
 //
+// ON WINDOWS (Win.apk) none of those tools exist. The host layer answers
+// instead, in one call (com.macapk.loader.HostRadios.defaultNetwork, on
+// GetBestInterfaceEx and GetAdaptersAddresses): the adapter the routing table
+// sends internet traffic through, its type, addresses, DNS servers and MTU.
+// Without it the fallback below named the JDK's first interface with a
+// routable address -- a Hyper-V, WSL or VPN adapter as readily as the real
+// one --, called every network Wi-Fi and listed no DNS server. A host without
+// that native (the Mac) answers "not known" and the probes above run.
+//
 // The whole snapshot is cached for TTL_MS. Connectivity queries are called
 // from UI threads and from tight SDK polling loops, so a subprocess per call
 // would be a real cost; a few seconds of staleness is not observable to an app
@@ -63,6 +72,7 @@ final class MacApkHostNetwork {
 
     private static final long TTL_MS = 5_000L;
 
+    static final int TRANSPORT_CELLULAR = NetworkCapabilities.TRANSPORT_CELLULAR;
     static final int TRANSPORT_WIFI = NetworkCapabilities.TRANSPORT_WIFI;
     static final int TRANSPORT_ETHERNET = NetworkCapabilities.TRANSPORT_ETHERNET;
     static final int TRANSPORT_VPN = NetworkCapabilities.TRANSPORT_VPN;
@@ -123,6 +133,12 @@ final class MacApkHostNetwork {
                     Collections.emptyList());
         }
 
+        // Windows: the host layer's own answer (see the top of the file).
+        String[] host = com.macapk.loader.HostRadios.defaultNetwork();
+        if (host != null) {
+            return fromHost(host, hostInterfaceName(host));
+        }
+
         String iface = defaultRouteInterface();
         boolean connected = iface != null;
         if (iface == null) {
@@ -169,6 +185,119 @@ final class MacApkHostNetwork {
 
         return new Snapshot(connected, iface, transportOf(iface), mtu, addrs, links,
                 dnsServers());
+    }
+
+    /**
+     * The snapshot for the host layer's answer (HostRadios.defaultNetwork):
+     * {interface index, interface type, MTU, addresses "ip/prefix", gateways,
+     * DNS servers}, or an empty array when the host has no default route.
+     * {@code name} is the interface's name, null when it could not be found.
+     * No host call in here, so a test can feed it any answer.
+     */
+    static Snapshot fromHost(String[] host, String name) {
+        if (host.length < 6) {
+            // No default route: offline, as AOSP has no default network then.
+            return new Snapshot(false, null, TRANSPORT_WIFI, 0,
+                    Collections.emptyList(), Collections.emptyList(),
+                    Collections.emptyList());
+        }
+        int transport = transportOfIfType(parseInt(host[1]));
+        List<InetAddress> addrs = new ArrayList<>();
+        List<LinkAddress> links = new ArrayList<>();
+        for (String entry : split(host[3])) {
+            int slash = entry.indexOf('/');
+            InetAddress a = numeric(slash < 0 ? entry : entry.substring(0, slash));
+            if (a == null) {
+                continue;
+            }
+            addrs.add(a);
+            if (slash >= 0) {
+                links.add(new LinkAddress(a, parseInt(entry.substring(slash + 1))));
+            }
+        }
+        List<InetAddress> dns = new ArrayList<>();
+        for (String entry : split(host[5])) {
+            InetAddress a = numeric(entry);
+            if (a != null && !dns.contains(a)) {
+                dns.add(a);
+            }
+        }
+        if (name == null) {
+            // Android's own name for such a link; an app that shows or logs
+            // the name gets one, as it always does on a device.
+            name = transport == TRANSPORT_WIFI ? "wlan0"
+                    : transport == TRANSPORT_CELLULAR ? "rmnet0"
+                    : transport == TRANSPORT_VPN ? "tun0" : "eth0";
+        }
+        return new Snapshot(true, name, transport, parseInt(host[2]),
+                Collections.unmodifiableList(addrs), Collections.unmodifiableList(links),
+                Collections.unmodifiableList(dns));
+    }
+
+    /**
+     * The transport of an interface type (IANA ifType, which Windows reports
+     * per adapter). Wi-Fi and mobile broadband are what they say; a
+     * point-to-point link or a tunnel is how a VPN that carries the default
+     * route appears. Everything else -- Ethernet, and the virtual adapters
+     * that present themselves as one -- is a wired link to an app.
+     */
+    static int transportOfIfType(int ifType) {
+        switch (ifType) {
+            case 71:            // IF_TYPE_IEEE80211
+                return TRANSPORT_WIFI;
+            case 243: case 244: // IF_TYPE_WWANPP, IF_TYPE_WWANPP2
+                return TRANSPORT_CELLULAR;
+            case 23: case 131:  // IF_TYPE_PPP, IF_TYPE_TUNNEL
+                return TRANSPORT_VPN;
+            default:            // 6 = IF_TYPE_ETHERNET_CSMACD
+                return TRANSPORT_ETHERNET;
+        }
+    }
+
+    /** The JDK's name for the interface of the host's answer, since apps hand
+     *  LinkProperties.getInterfaceName() to java.net.NetworkInterface: by its
+     *  index, else by one of its addresses. Null when the JDK lists neither. */
+    private static String hostInterfaceName(String[] host) {
+        if (host.length < 6) {
+            return null;
+        }
+        try {
+            NetworkInterface ni = NetworkInterface.getByIndex(parseInt(host[0]));
+            for (String entry : split(host[3])) {
+                if (ni != null) {
+                    break;
+                }
+                int slash = entry.indexOf('/');
+                InetAddress a = numeric(slash < 0 ? entry : entry.substring(0, slash));
+                if (a != null) {
+                    ni = NetworkInterface.getByInetAddress(a);
+                }
+            }
+            return ni == null ? null : ni.getName();
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static String[] split(String list) {
+        return list == null || list.isEmpty() ? new String[0] : list.split(",");
+    }
+
+    private static int parseInt(String s) {
+        try {
+            return Integer.parseInt(s.trim());
+        } catch (RuntimeException e) {
+            return 0;
+        }
+    }
+
+    /** A numeric address, or null: never a name lookup. */
+    private static InetAddress numeric(String s) {
+        try {
+            return InetAddresses.parseNumericAddress(s.trim());
+        } catch (RuntimeException e) {
+            return null;
+        }
     }
 
     /** "interface: en0" out of `route -n get default`, or null when the host

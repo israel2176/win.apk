@@ -18,13 +18,23 @@
 // class at all because getCameraCharacteristics throws first.
 //
 // ---------------------------------------------------------------------------
-// ONLY YUV_420_888 IS ADVERTISED, AND THAT IS THE HONEST ANSWER
+// THE FORMATS: YUV_420_888, JPEG AND PRIVATE
 // ---------------------------------------------------------------------------
-// The capture backend hands out one pixel format: NV12, described to Java as
-// the three YUV_420_888 plane descriptors the spec permits for a semiplanar
-// buffer (see camera_capture.mm's PIXEL FORMAT block). We cannot produce JPEG
-// (no encoder in the capture path) and cannot produce PRIVATE (there is no
-// opaque gralloc buffer to hand out), so neither is listed.
+// The three every camera2 device lists, each with a consumer that receives
+// frames here (CameraCaptureSessionImpl):
+//   * YUV_420_888: the capture backend's NV12 frames, described to Java as the
+//     three plane descriptors the spec permits for a semiplanar buffer, read by
+//     an ImageReader;
+//   * JPEG: the still output. An ImageReader(JPEG) gets the frame encoded
+//     (camera2's JpegStill) for each request that targets it. Without it
+//     getOutputSizes(ImageFormat.JPEG) was null and no camera2 app, CameraX's
+//     ImageCapture included, could take a picture;
+//   * PRIVATE: how camera2 names the opaque buffers of a SurfaceTexture /
+//     TextureView output. CameraX sizes its Preview from
+//     getOutputSizes(ImageFormat.PRIVATE) and fails to bind when that is null.
+//     (An ImageReader created with PRIVATE still fails at configure: it has no
+//     planes to read.)
+// All three come from the same stream, so they share one size list.
 //
 // For a format that is NOT listed, getOutputSizes returns null -- not an empty
 // array. That is AOSP's documented contract, verified verbatim from
@@ -35,31 +45,17 @@
 //     "@return an array of supported sizes, or {@code null} if the
 //      {@code format} is not a supported output"
 //
-//   private Size[] getPublicFormatSizes(int format, boolean output, boolean highRes) {
-//       try {
-//           checkArgumentFormatSupported(format, output);
-//       } catch (IllegalArgumentException e) {
-//           return null;
-//       }
-//
-// This file previously returned a zero-length array for every query, on the
-// reasoning that apps iterate the result without a null check. That reasoning
-// was wrong about AOSP: an app that asks for JPEG sizes on a device that has
-// none gets null on real Android too, and code written against real Android
-// either checks for it or crashes identically. Returning an empty array
-// instead would put the app one step further down a path that cannot work --
-// it would pick no size, or take max() of nothing, and fail with an exception
-// that names the wrong cause.
-//
 // ---------------------------------------------------------------------------
-// FRAME AND STALL DURATIONS ARE 0, WHICH IS LEGAL AND MEANT
+// FRAME AND STALL DURATIONS
 // ---------------------------------------------------------------------------
-// AOSP getOutputMinFrameDuration javadoc: "For devices that do not support
-// manual sensor control (REQUEST_AVAILABLE_CAPABILITIES_MANUAL_SENSOR), this
-// function may return 0. ... @return a minimum frame duration > 0 in
-// nanoseconds, or 0 if the minimum frame duration is not available."
-// We report LEGACY / BACKWARD_COMPATIBLE only, so 0 is exactly the documented
-// answer for this class of device rather than a stub.
+// The minimum frame duration of a size is the period of the fastest frame rate
+// the camera advertises (the backend clamps a request's rate into that range).
+// The stall duration -- how much longer a capture takes when the output is in
+// the request -- is 0 for YUV_420_888 and PRIVATE, as AOSP requires, and
+// JPEG_STALL_NS for JPEG: the pump encodes the still before it goes on to the
+// next frame. AOSP throws IllegalArgumentException from these for a format or
+// size that is not supported; an unlisted one answers 0 here ("not available")
+// rather than crash a caller that asks about a size it took from elsewhere.
 //
 // Other AOSP line refs, same file: getValidOutputFormatsForInput L460,
 // getInputSizes L500, getOutputSizes(Class) L748, getOutputSizes(int) L780,
@@ -101,8 +97,8 @@ public final class StreamConfigurationMap {
      * reach a package-private constructor -- the same reason SensorEvent
      * .macapkNew and TriggerEvent.macapkNew exist in this tree.
      *
-     * @param formats   the image formats this camera can output. One entry,
-     *                  YUV_420_888, for the AVFoundation backend.
+     * @param formats   the image formats this camera can output:
+     *                  YUV_420_888, JPEG and PRIVATE.
      * @param sizes     every advertised resolution, deduplicated and sorted
      *                  largest-area first.
      * @param fpsRanges every advertised frame-rate range, deduplicated.
@@ -160,17 +156,44 @@ public final class StreamConfigurationMap {
      *  every size we advertise is listed by getOutputSizes instead. */
     public Size[] getHighResolutionOutputSizes(int format) { return new Size[0]; }
 
-    // Frame/stall durations: 0 is the documented answer for a device without
-    // MANUAL_SENSOR. See the header.
-    public long getOutputMinFrameDuration(int format, Size size) { return 0L; }
+    /** What a JPEG output adds to a capture: an encode of the largest size on
+     *  the JVM's encoder, generously. Devices report a few hundred ms here. */
+    private static final long JPEG_STALL_NS = 100_000_000L;
+
+    private boolean isOutputSize(Size size) {
+        if (size == null) return false;
+        for (Size s : mOutputSizes) {
+            if (s.equals(size)) return true;
+        }
+        return false;
+    }
+
+    /** The period of the fastest advertised frame rate; 0 when none is known. */
+    private long minFrameDuration() {
+        int fps = 0;
+        for (Range<Integer> r : mFpsRanges) {
+            if (r != null && r.getUpper() != null) fps = Math.max(fps, r.getUpper().intValue());
+        }
+        return fps > 0 ? 1_000_000_000L / fps : 0L;
+    }
+
+    // Frame and stall durations: see the header.
+    public long getOutputMinFrameDuration(int format, Size size) {
+        return isOutputFormat(format) && isOutputSize(size) ? minFrameDuration() : 0L;
+    }
 
     /** API 21. The Class overload, used by apps that target a SurfaceView or
      *  SurfaceTexture rather than a raw ImageFormat. */
-    public <T> long getOutputMinFrameDuration(Class<T> klass, Size size) { return 0L; }
+    public <T> long getOutputMinFrameDuration(Class<T> klass, Size size) {
+        return isOutputSize(size) ? minFrameDuration() : 0L;
+    }
 
-    public long getOutputStallDuration(int format, Size size) { return 0L; }
+    public long getOutputStallDuration(int format, Size size) {
+        return format == android.graphics.ImageFormat.JPEG && isOutputFormat(format)
+                && isOutputSize(size) ? JPEG_STALL_NS : 0L;
+    }
 
-    /** API 21. */
+    /** API 21. The Class consumers take PRIVATE buffers, which never stall. */
     public <T> long getOutputStallDuration(Class<T> klass, Size size) { return 0L; }
 
     public boolean isOutputSupportedFor(int format) { return isOutputFormat(format); }
@@ -201,7 +224,12 @@ public final class StreamConfigurationMap {
      *  above. */
     public boolean isOutputSupportedFor(android.view.Surface surface) {
         if (surface == null) return false;
-        if (android.media.ImageReader.macapkReaderForSurface(surface) != null) return true;
+        android.media.ImageReader reader = android.media.ImageReader.macapkReaderForSurface(surface);
+        if (reader != null) {
+            // A reader's planes are its format's: YUV_420_888 or JPEG.
+            return reader.getImageFormat() != android.graphics.ImageFormat.PRIVATE
+                    && isOutputFormat(reader.getImageFormat());
+        }
         android.graphics.SurfaceTexture st = surface.macapkGetSurfaceTexture();
         return st != null && !st.isReleased();
     }

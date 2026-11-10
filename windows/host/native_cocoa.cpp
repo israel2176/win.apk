@@ -130,6 +130,11 @@ JavaVM* g_vm = nullptr;
 
 jobject g_dispatcher = nullptr;  // global ref, set by registerTouchDispatcher
 jmethodID g_dispatch_mid = nullptr, g_key_mid = nullptr;
+// TouchDispatcher's entries for what the window reports beside one finger and
+// plain keys (win32_window.h, WindowInput); nullptr when the class has none.
+jmethodID g_host_key_mid = nullptr, g_touch_mid = nullptr, g_wheel_mid = nullptr, g_pinch_mid = nullptr;
+jmethodID g_mouse_mid = nullptr, g_mouse_exit_mid = nullptr, g_text_mid = nullptr, g_composing_mid = nullptr;
+jmethodID g_ime_inline_mid = nullptr, g_ime_anchor_mid = nullptr;
 
 JNIEnv* ui_thread_env() {
     thread_local JNIEnv* env = nullptr;
@@ -147,72 +152,291 @@ void report_input_exception(JNIEnv* env) {
     env->ExceptionClear();
 }
 
+// com.macapk.loader.ActivityHost, through the dispatcher's class loader, which
+// is the one that loaded the runtime's classes (a thread attached from native
+// code has only the system loader to look in); a global reference, or nullptr.
+std::mutex g_activity_host_lock;
+jclass g_activity_host = nullptr;
+
+jclass activity_host_class(JNIEnv* env) {
+    std::lock_guard<std::mutex> hold(g_activity_host_lock);
+    if (g_activity_host) return g_activity_host;
+    jobject cls = nullptr;
+    if (g_dispatcher) {
+        jclass dcls = env->GetObjectClass(g_dispatcher);
+        jclass ccls = env->FindClass("java/lang/Class");
+        jmethodID get_loader = env->GetMethodID(ccls, "getClassLoader", "()Ljava/lang/ClassLoader;");
+        jobject loader = env->CallObjectMethod(dcls, get_loader);
+        jclass lcls = env->FindClass("java/lang/ClassLoader");
+        jmethodID load = env->GetMethodID(lcls, "loadClass", "(Ljava/lang/String;)Ljava/lang/Class;");
+        jstring name = env->NewStringUTF("com.macapk.loader.ActivityHost");
+        cls = loader ? env->CallObjectMethod(loader, load, name) : nullptr;
+    } else {
+        cls = env->FindClass("com/macapk/loader/ActivityHost");  // no dispatcher yet: early in the boot
+    }
+    if (env->ExceptionCheck()) {
+        env->ExceptionClear();
+        cls = nullptr;
+    }
+    if (cls) g_activity_host = static_cast<jclass>(env->NewGlobalRef(cls));
+    return g_activity_host;
+}
+
+// A static void method of ActivityHost with no arguments, from the window's
+// UI thread.
+void call_activity_host(const char* method) {
+    JNIEnv* env = ui_thread_env();
+    jclass host = env ? activity_host_class(env) : nullptr;
+    if (!host) return;
+    jmethodID mid = env->GetStaticMethodID(host, method, "()V");
+    if (env->ExceptionCheck()) {
+        env->ExceptionClear();
+        return;
+    }
+    env->CallStaticVoidMethod(host, mid);
+    report_input_exception(env);
+}
+
+// ---- closing: the app's lifecycle runs before the process ends ---------------
+//
+// On a device a visible activity always gets onPause and onStop before it goes
+// away, which is why apps save there (an editor's text, a game's state, a
+// database transaction). Closing the window used to end the process at once
+// and lose all of that. Now the window goes at once (win32_window.cpp hides it
+// on WM_CLOSE) and upstream's own close path runs behind it:
+// ActivityHost.macapkTerminate posts the teardown to the app's main thread,
+// onPause, onStop and onDestroy for every activity of the task from the top
+// down, and waits for it; then the process ends as before, with exit code 0
+// (the launcher reads that as "closed by its user", RunEnd::kind).
+//
+// Nothing here can keep a closed app alive:
+//   - the wait is kCloseTeardownMs, upstream's cap (cocoa_bridge.mm,
+//     macapk_terminate_now): Java-only apps finish in a few ms and game
+//     engines in tens, so two seconds is only ever reached by an app whose
+//     main thread is stuck, and it is well inside the 5 s Windows gives a
+//     program at the end of a session;
+//   - the watchdog thread touches no Java at all, so a VM that cannot answer
+//     (a safepoint that never comes, a thread that cannot attach) is ended
+//     kCloseGraceMs after the cap;
+//   - a second close request ends the process at once, and the launcher's
+//     Stop ends it from outside as it always did (Android's Force stop).
+//
+// The window is hidden before the pause, where upstream waits for onPause to
+// return: there, a render thread cannot get a drawable for a window off
+// screen, and an engine's pause that waits for its render thread never ends.
+// Here the app renders into its own buffers on the render thread, which
+// keeps ticking whether the window shows or not.
+constexpr DWORD kCloseTeardownMs = 2000;
+constexpr DWORD kCloseGraceMs = 500;
+std::atomic<bool> g_closing{false};
+
+// Ends the process for a close, once: the caller that comes second waits for
+// the first to finish. `how` is the log line the CI and a bug report read.
+void end_close(const char* how) {
+    static std::atomic<bool> ended{false};
+    if (ended.exchange(true)) Sleep(INFINITE);
+    std::fprintf(stderr, "[win.apk] close: %s; ended\n", how);
+    std::fflush(stdout);
+    std::fflush(stderr);
+    TerminateProcess(GetCurrentProcess(), 0);
+}
+
+DWORD WINAPI close_watchdog(void*) {
+    Sleep(kCloseTeardownMs + kCloseGraceMs);
+    end_close("the app did not answer in time");
+    return 0;
+}
+
+DWORD WINAPI close_thread(void*) {
+    const ULONGLONG t0 = GetTickCount64();
+    bool done = false;
+    JNIEnv* env = nullptr;
+    JavaVMAttachArgs args{JNI_VERSION_1_6, const_cast<char*>("winapk-close"), nullptr};
+    if (g_vm && g_vm->AttachCurrentThreadAsDaemon(reinterpret_cast<void**>(&env), &args) == JNI_OK && env) {
+        if (jclass host = activity_host_class(env)) {
+            const jmethodID terminate = env->GetStaticMethodID(host, "macapkTerminate", "(J)Z");
+            if (terminate) {
+                done = env->CallStaticBooleanMethod(host, terminate, static_cast<jlong>(kCloseTeardownMs)) == JNI_TRUE;
+            }
+        }
+        if (env->ExceptionCheck()) {
+            env->ExceptionClear();
+            done = false;
+        }
+    }
+    char how[96];
+    std::snprintf(how, sizeof how, "the app was paused, stopped and destroyed in %llu ms",
+                  static_cast<unsigned long long>(GetTickCount64() - t0));
+    end_close(done ? how : "the app did not answer in time");
+    return 0;
+}
+
 class JavaInput : public WindowInput {
-public:
-    // TouchDispatcher.dispatch takes AppKit view coordinates: points, origin at
-    // the bottom left; it multiplies them by backingScale (the density) for the
+    // TouchDispatcher takes AppKit view coordinates: points, origin at the
+    // bottom left; it multiplies them by backingScale (the density) for the
     // surface pixel. The view is the surface in points -- its pixels over the
     // density, not the rounded dp, so a touch lands on the surface pixel it
     // was made on when the window shows the surface pixel for pixel.
+    struct View {
+        float w = 0, h = 0;      // the view, in points
+        float sx = 0, sy = 0;    // points per pixel of the window's box
+        bool ok = false;
+        float x(float px) const { return px * sx; }
+        float y(float py) const { return h - py * sy; }
+    };
+    static View view(float view_w, float view_h) {
+        View v;
+        if (view_w <= 0 || view_h <= 0) return v;
+        const float d = g_density.load() > 0 ? g_density.load() : 1.0f;
+        const int sw = g_surface_w.load(), sh = g_surface_h.load();
+        v.w = sw > 0 ? static_cast<float>(sw) / d : static_cast<float>(g_phone_w.load());
+        v.h = sh > 0 ? static_cast<float>(sh) / d : static_cast<float>(g_phone_h.load());
+        v.sx = v.w / view_w;
+        v.sy = v.h / view_h;
+        v.ok = true;
+        return v;
+    }
+    static void call_text(jmethodID mid, const std::wstring& utf16) {
+        JNIEnv* env = ui_thread_env();
+        if (!env || !g_dispatcher || !mid) return;
+        jstring s = env->NewString(reinterpret_cast<const jchar*>(utf16.data()), static_cast<jsize>(utf16.size()));
+        if (s) env->CallVoidMethod(g_dispatcher, mid, s);
+        report_input_exception(env);
+        if (s) env->DeleteLocalRef(s);
+    }
+
+public:
     void pointer(int action, float x, float y, float view_w, float view_h) override {
         JNIEnv* env = ui_thread_env();
-        if (!env || !g_dispatcher || view_w <= 0 || view_h <= 0) return;
-        const float d = g_density.load() > 0 ? g_density.load() : 1.0f;
-        const float pw = g_surface_w.load() > 0 ? static_cast<float>(g_surface_w.load()) / d
-                                                : static_cast<float>(g_phone_w.load());
-        const float ph = g_surface_h.load() > 0 ? static_cast<float>(g_surface_h.load()) / d
-                                                : static_cast<float>(g_phone_h.load());
-        const float px = x * pw / view_w;
-        const float py = ph - y * ph / view_h;
-        env->CallVoidMethod(g_dispatcher, g_dispatch_mid, action, px, py, pw, ph);
+        const View v = view(view_w, view_h);
+        if (!env || !g_dispatcher || !v.ok) return;
+        env->CallVoidMethod(g_dispatcher, g_dispatch_mid, action, v.x(x), v.y(y), v.w, v.h);
         report_input_exception(env);
     }
-    void key(int action, int key_code, int unicode, int meta) override {
+    void key(int action, int key_code, int unicode, int meta, bool repeat) override {
         JNIEnv* env = ui_thread_env();
         if (!env || !g_dispatcher) return;
-        env->CallVoidMethod(g_dispatcher, g_key_mid, action, key_code, unicode, meta);
-        report_input_exception(env);
-    }
-    // Upstream ends the process on a user quit too (cocoa_bridge.mm, _exit);
-    // the app's state is whatever it saved on its way through onPause/onStop.
-    void close_requested() override {
-        std::fflush(stderr);
-        TerminateProcess(GetCurrentProcess(), 0);
-    }
-    // ActivityHost.macapkTaskToFront: a no-op unless the app sent its task to
-    // the back. Resolved through the dispatcher's class loader, which is the
-    // one that loaded the runtime's classes.
-    void restored() override {
-        JNIEnv* env = ui_thread_env();
-        if (!env || !g_dispatcher) return;
-        static jclass host = nullptr;
-        static jmethodID to_front = nullptr;
-        if (!host) {
-            jclass dcls = env->GetObjectClass(g_dispatcher);
-            jclass ccls = env->FindClass("java/lang/Class");
-            jmethodID get_loader = env->GetMethodID(ccls, "getClassLoader", "()Ljava/lang/ClassLoader;");
-            jobject loader = env->CallObjectMethod(dcls, get_loader);
-            jclass lcls = env->FindClass("java/lang/ClassLoader");
-            jmethodID load = env->GetMethodID(lcls, "loadClass", "(Ljava/lang/String;)Ljava/lang/Class;");
-            jstring name = env->NewStringUTF("com.macapk.loader.ActivityHost");
-            jobject cls = loader ? env->CallObjectMethod(loader, load, name) : nullptr;
-            if (env->ExceptionCheck()) {
-                env->ExceptionClear();
-                cls = nullptr;
-            }
-            if (cls) {
-                host = static_cast<jclass>(env->NewGlobalRef(cls));
-                to_front = env->GetStaticMethodID(host, "macapkTaskToFront", "()V");
-                if (env->ExceptionCheck()) {
-                    env->ExceptionClear();
-                    to_front = nullptr;
-                }
-            }
+        if (g_host_key_mid) {
+            env->CallVoidMethod(g_dispatcher, g_host_key_mid, action, key_code, unicode, meta,
+                                repeat ? JNI_TRUE : JNI_FALSE);
+        } else {
+            env->CallVoidMethod(g_dispatcher, g_key_mid, action, key_code, unicode, meta);
         }
-        if (!host || !to_front) return;
-        env->CallStaticVoidMethod(host, to_front);
         report_input_exception(env);
     }
+    // TouchDispatcher.dispatchHostTouch: the pointers of the event, side by side.
+    void touch(const TouchEvent& e, float view_w, float view_h) override {
+        JNIEnv* env = ui_thread_env();
+        const View v = view(view_w, view_h);
+        if (!env || !g_dispatcher || !g_touch_mid || !v.ok || e.count <= 0) return;
+        jint ids[kMaxTouches], tools[kMaxTouches];
+        jfloat xs[kMaxTouches], ys[kMaxTouches], pressures[kMaxTouches];
+        for (int i = 0; i < e.count; ++i) {
+            ids[i] = e.points[i].id;
+            tools[i] = e.points[i].tool;
+            xs[i] = v.x(e.points[i].x);
+            ys[i] = v.y(e.points[i].y);
+            pressures[i] = e.points[i].pressure;
+        }
+        jintArray jids = env->NewIntArray(e.count), jtools = env->NewIntArray(e.count);
+        jfloatArray jxs = env->NewFloatArray(e.count), jys = env->NewFloatArray(e.count),
+                    jpressures = env->NewFloatArray(e.count);
+        if (jids && jtools && jxs && jys && jpressures) {
+            env->SetIntArrayRegion(jids, 0, e.count, ids);
+            env->SetIntArrayRegion(jtools, 0, e.count, tools);
+            env->SetFloatArrayRegion(jxs, 0, e.count, xs);
+            env->SetFloatArrayRegion(jys, 0, e.count, ys);
+            env->SetFloatArrayRegion(jpressures, 0, e.count, pressures);
+            env->CallVoidMethod(g_dispatcher, g_touch_mid, e.action, e.index, jids, jxs, jys, jpressures, jtools,
+                                e.buttons, v.w, v.h);
+        }
+        report_input_exception(env);
+        for (jobject o : {static_cast<jobject>(jids), static_cast<jobject>(jtools), static_cast<jobject>(jxs),
+                          static_cast<jobject>(jys), static_cast<jobject>(jpressures)}) {
+            if (o) env->DeleteLocalRef(o);
+        }
+    }
+    // TouchDispatcher.dispatchHostWheel; the drag's steps are distances, so y only turns over.
+    bool wheel(float x, float y, float view_w, float view_h, float vscroll, float hscroll, float slop_x, float slop_y,
+               float drag_x, float drag_y) override {
+        JNIEnv* env = ui_thread_env();
+        const View v = view(view_w, view_h);
+        if (!env || !g_dispatcher || !g_wheel_mid || !v.ok) return false;
+        env->CallVoidMethod(g_dispatcher, g_wheel_mid, v.x(x), v.y(y), v.w, v.h, vscroll, hscroll, slop_x * v.sx,
+                            -slop_y * v.sy, drag_x * v.sx, -drag_y * v.sy);
+        report_input_exception(env);
+        return true;
+    }
+    void pinch(const PinchStep& step, float view_w, float view_h) override {
+        JNIEnv* env = ui_thread_env();
+        const View v = view(view_w, view_h);
+        if (!env || !g_dispatcher || !g_pinch_mid || !v.ok) return;
+        env->CallVoidMethod(g_dispatcher, g_pinch_mid, step.phase, v.x(step.x), v.y(step.y), step.span * v.sx, v.w,
+                            v.h);
+        report_input_exception(env);
+    }
+    void mouse(int buttons, int meta, float x, float y, float view_w, float view_h) override {
+        JNIEnv* env = ui_thread_env();
+        const View v = view(view_w, view_h);
+        if (!env || !g_dispatcher || !g_mouse_mid || !v.ok) return;
+        env->CallVoidMethod(g_dispatcher, g_mouse_mid, buttons, meta, v.x(x), v.y(y), v.w, v.h);
+        report_input_exception(env);
+    }
+    void mouse_exit() override {
+        JNIEnv* env = ui_thread_env();
+        if (!env || !g_dispatcher || !g_mouse_exit_mid) return;
+        env->CallVoidMethod(g_dispatcher, g_mouse_exit_mid, 0.0f, 0.0f, 1.0f, 1.0f);  // an exit has no position
+        report_input_exception(env);
+    }
+    void text(const std::wstring& utf16) override { call_text(g_text_mid, utf16); }
+    bool composing_inline() override {
+        JNIEnv* env = ui_thread_env();
+        if (!env || !g_dispatcher || !g_ime_inline_mid || !g_composing_mid) return false;
+        const bool yes = env->CallBooleanMethod(g_dispatcher, g_ime_inline_mid) == JNI_TRUE;
+        if (env->ExceptionCheck()) {
+            report_input_exception(env);
+            return false;
+        }
+        return yes;
+    }
+    void composing(const std::wstring& utf16) override { call_text(g_composing_mid, utf16); }
+    void composing_end() override {
+        JNIEnv* env = ui_thread_env();
+        if (!env || !g_dispatcher || !g_composing_mid) return;
+        env->CallVoidMethod(g_dispatcher, g_composing_mid, static_cast<jstring>(nullptr));  // null: it ended
+        report_input_exception(env);
+    }
+    // TouchDispatcher.hostImeAnchor: the caret in surface pixels, x in the high half.
+    bool caret(float* x, float* y, float view_w, float view_h) override {
+        JNIEnv* env = ui_thread_env();
+        const float sw = static_cast<float>(g_surface_w.load()), sh = static_cast<float>(g_surface_h.load());
+        if (!env || !g_dispatcher || !g_ime_anchor_mid || sw <= 0 || sh <= 0) return false;
+        const jlong packed = env->CallLongMethod(g_dispatcher, g_ime_anchor_mid);
+        if (env->ExceptionCheck()) {
+            report_input_exception(env);
+            return false;
+        }
+        if (packed < 0) return false;
+        *x = static_cast<float>(static_cast<int32_t>(packed >> 32)) * view_w / sw;
+        *y = static_cast<float>(static_cast<int32_t>(packed & 0xffffffff)) * view_h / sh;
+        return true;
+    }
+    // The user closed the window (its X, Alt+F4, the taskbar; the end of the
+    // Windows session too). See close_thread.
+    void close_requested() override {
+        if (g_closing.exchange(true)) end_close("asked to close again");  // no second wait
+        HANDLE watchdog = CreateThread(nullptr, 0, close_watchdog, nullptr, 0, nullptr);
+        HANDLE teardown = watchdog ? CreateThread(nullptr, 0, close_thread, nullptr, 0, nullptr) : nullptr;
+        if (!teardown) end_close("no thread for the app's teardown");
+        CloseHandle(watchdog);
+        CloseHandle(teardown);
+    }
+    // ActivityHost.macapkHostMinimized: the resumed activity is paused and
+    // stopped, as when its task goes behind home; restored() brings it back.
+    void minimized() override { call_activity_host("macapkHostMinimized"); }
+    // ActivityHost.macapkTaskToFront: a no-op unless the task went to the back
+    // (the app sent it there, or the user minimized the window).
+    void restored() override { call_activity_host("macapkTaskToFront"); }
     // The render thread sees the new surface size on its next tick and reports
     // it (DisplayConfig, then surfaceChanged to every renderer).
     void resized(int w_dp, int h_dp, int w_px, int h_px) override {
@@ -234,6 +458,26 @@ void JNICALL Cocoa_registerTouchDispatcher(JNIEnv* env, jclass, jobject dispatch
     jclass cls = env->GetObjectClass(dispatcher);
     g_dispatch_mid = env->GetMethodID(cls, "dispatch", "(IFFFF)V");
     g_key_mid = env->GetMethodID(cls, "dispatchKey", "(IIII)V");
+    // A dispatcher without one of these keeps what the window did before it
+    // (a wheel step as a drag, one finger, keys without their repeat).
+    auto method = [&](const char* name, const char* sig) {
+        jmethodID mid = env->GetMethodID(cls, name, sig);
+        if (env->ExceptionCheck()) {
+            env->ExceptionClear();
+            mid = nullptr;
+        }
+        return mid;
+    };
+    g_host_key_mid = method("dispatchHostKey", "(IIIIZ)V");
+    g_touch_mid = method("dispatchHostTouch", "(II[I[F[F[F[IIFF)V");
+    g_wheel_mid = method("dispatchHostWheel", "(FFFFFFFFFF)V");
+    g_pinch_mid = method("dispatchHostPinch", "(IFFFFF)V");
+    g_mouse_mid = method("dispatchHostMouse", "(IIFFFF)V");
+    g_mouse_exit_mid = method("dispatchHostMouseExit", "(FFFF)V");
+    g_text_mid = method("dispatchHostText", "(Ljava/lang/String;)V");
+    g_composing_mid = method("dispatchHostComposingText", "(Ljava/lang/String;)V");
+    g_ime_inline_mid = method("hostImeInline", "()Z");
+    g_ime_anchor_mid = method("hostImeAnchor", "()J");
     env->DeleteLocalRef(cls);
 }
 
@@ -454,6 +698,7 @@ jboolean JNICALL Cocoa_beginWithheldTick(JNIEnv*, jclass, jboolean) {
 jboolean JNICALL Cocoa_hostRenderTick(JNIEnv*, jclass) { return JNI_FALSE; }
 
 void JNICALL Cocoa_showWindow(JNIEnv*, jclass, jlong) {
+    if (g_closing.load()) return;  // closed by the user: nothing its teardown does brings the window back
     apply_app_icon();
     window_show();
 }
@@ -508,7 +753,19 @@ void JNICALL Cocoa_setAppData(JNIEnv* env, jclass, jstring package, jstring host
     winapk::set_app_data(text(package).c_str(), text(host_dir).c_str());
 }
 void JNICALL Cocoa_setSharedStorageRoot(JNIEnv*, jclass, jstring) {}
-jstring JNICALL Cocoa_remapProcPath(JNIEnv*, jclass, jstring) { return nullptr; }
+// java.io.FileReader's hook for a /proc path (Boot installs it): the file Boot
+// wrote for it under <android root>/proc (meminfo, this process's cmdline), as
+// the guest shim's opens find it. Null for a path with no such file: the open
+// then fails as the JDK's does.
+jstring JNICALL Cocoa_remapProcPath(JNIEnv* env, jclass, jstring path) {
+    if (!path) return nullptr;
+    const char* p = env->GetStringUTFChars(path, nullptr);
+    if (!p) return nullptr;
+    const std::wstring host = winapk::android_proc_file(p);
+    env->ReleaseStringUTFChars(path, p);
+    if (host.empty()) return nullptr;
+    return env->NewString(reinterpret_cast<const jchar*>(host.c_str()), static_cast<jsize>(host.size()));
+}
 // The host's CJK faces by PostScript name (CoreText on the Mac). None here:
 // MacApkSystemFonts links them into /system/fonts with symbolic links, which a
 // standard Windows account may not create, so the bundled fonts stay the set.
@@ -1069,6 +1326,14 @@ void JNICALL Cocoa_runLoop(JNIEnv*, jclass) {
 // waits for this process to end before it claims the app's single instance
 // (WINAPK_RELAUNCH_AFTER, runtime_main.cpp).
 void JNICALL Cocoa_exitProcess(JNIEnv*, jclass, jint code, jstring relaunch) {
+    // The user is closing the app and its teardown asked to exit (System.exit
+    // in onDestroy is common): the run still ended on the user's word, so it
+    // is no failure whatever the code, and the app does not come back.
+    if (g_closing.load()) {
+        std::fprintf(stderr, "[win.apk] close: the app left by itself during its teardown\n");
+        code = 0;
+        relaunch = nullptr;
+    }
     std::fprintf(stderr, "[win.apk] exitProcess(%d)%s\n", static_cast<int>(code), relaunch ? " with a relaunch" : "");
     std::fflush(stderr);
     if (relaunch) {
@@ -1126,6 +1391,16 @@ bool write_bmp(const wchar_t* path, const jint* argb, int w, int h) {
     return ok && MoveFileExW(tmp.c_str(), path, MOVEFILE_REPLACE_EXISTING);
 }
 
+// WINAPK_HEADLESS_FRAME: the file every presented frame is also written to.
+const std::wstring& headless_frame_path() {
+    static const std::wstring path = [] {
+        wchar_t buf[MAX_PATH * 4];
+        const DWORD n = GetEnvironmentVariableW(L"WINAPK_HEADLESS_FRAME", buf, MAX_PATH * 4);
+        return (n > 0 && n < MAX_PATH * 4) ? std::wstring(buf, n) : std::wstring();
+    }();
+    return path;
+}
+
 // A frame for the window (and for WINAPK_HEADLESS_FRAME): from the view tree,
 // or from the content GL view (gl_tick).
 void present_pixels(const uint32_t* argb, int w, int h) {
@@ -1135,11 +1410,7 @@ void present_pixels(const uint32_t* argb, int w, int h) {
         std::fflush(stderr);
         cds_first_frame();
     }
-    static const std::wstring path = [] {
-        wchar_t buf[MAX_PATH * 4];
-        const DWORD n = GetEnvironmentVariableW(L"WINAPK_HEADLESS_FRAME", buf, MAX_PATH * 4);
-        return (n > 0 && n < MAX_PATH * 4) ? std::wstring(buf, n) : std::wstring();
-    }();
+    const std::wstring& path = headless_frame_path();
     // An ARGB int is B, G, R, A in memory: the byte order of a 32-bit DIB.
     window_present(argb, w, h);
     if (!path.empty()) {
@@ -1253,11 +1524,36 @@ void JNICALL Cocoa_presentBitmap(JNIEnv* env, jclass, jintArray argb, jint w, ji
     env->ReleaseIntArrayElements(argb, px, JNI_ABORT);
 }
 
-// The diffing present. There is no layer to diff against here, so every frame
-// is published whole (PRESENT_PUBLISHED).
-jint JNICALL Cocoa_presentFrame(JNIEnv* env, jclass cls, jintArray argb, jint w, jint h, jint, jint, jint, jint,
-                                jint) {
-    Cocoa_presentBitmap(env, cls, argb, w, h);
+// A view tree frame of which only [l, r) x [t, b) was drawn again (a frame
+// clipped to its damage: ViewCanvasDriver, FRAMESPEED S2): those rows alone are
+// read from the array, patched into the frame the window holds, and repainted,
+// instead of the whole frame being copied twice and blitted. Only for the plain
+// case -- the tree is the window's whole content and no frame file is written;
+// false otherwise, and the frame goes the whole way.
+bool present_changed_rect(JNIEnv* env, jintArray argb, jint w, jint h, jint l, jint t, jint r, jint b, jint flags) {
+    constexpr jint kForceFull = 1, kValidate = 2;  // NativeCocoa.PRESENT_FLAG_*
+    if (flags & (kForceFull | kValidate)) return false;  // new bitmap; or drawn whole, the rectangle only claimed
+    if (!argb || w <= 0 || h <= 0 || env->GetArrayLength(argb) < w * h) return false;
+    if (l < 0 || t < 0 || r > w || b > h || r <= l || b <= t) return false;
+    if (l == 0 && t == 0 && r == w && b == h) return false;
+    if (g_guest_last_ms.load() != 0 || composite_active() || !headless_frame_path().empty()) return false;
+    thread_local std::vector<uint32_t> rows;
+    const size_t rw = static_cast<size_t>(r - l);
+    rows.resize(rw * static_cast<size_t>(b - t));
+    for (jint y = t; y < b; ++y) {
+        env->GetIntArrayRegion(argb, y * w + l, r - l, reinterpret_cast<jint*>(rows.data() + (y - t) * rw));
+    }
+    if (!window_present_rect(rows.data(), w, h, l, t, r, b)) return false;
+    ++g_frames;
+    return true;
+}
+
+// The diffing present. There is no layer to diff against here, so a frame is
+// published (PRESENT_PUBLISHED) whole, or as the rectangle the driver says is
+// all that changed.
+jint JNICALL Cocoa_presentFrame(JNIEnv* env, jclass cls, jintArray argb, jint w, jint h, jint l, jint t, jint r,
+                                jint b, jint flags) {
+    if (!present_changed_rect(env, argb, w, h, l, t, r, b, flags)) Cocoa_presentBitmap(env, cls, argb, w, h);
     return 1;
 }
 

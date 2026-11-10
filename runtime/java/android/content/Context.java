@@ -1901,6 +1901,17 @@ public abstract class Context {
         }
     }
 
+    /** AOSP Context.getSharedPreferences(File, int): `@removed` from the SDK but
+     *  still a public method of Context (ContextImpl keeps the by-name form as a
+     *  wrapper over it), and apps reach it by reflection to read preferences
+     *  outside their own shared_prefs: Aurora Store's blacklist getter reads a
+     *  preload file under /product this way, and without the method it caught
+     *  NoSuchMethodException and reported the user's blacklist as empty. A
+     *  wrapper needs no override: the file names its own storage. */
+    public SharedPreferences getSharedPreferences(File file, int mode) {
+        return com.macapk.loader.SharedPrefsImpl.macapkGet(this, file);
+    }
+
     // AOSP Context.openFileInput returns a FileInputStream (NOT InputStream):
     // the public method descriptor is ...(String)Ljava/io/FileInputStream; and
     // callers compiled against it (e.g. Firebase Remote Config's

@@ -43,8 +43,8 @@ public class BaseDexClassLoader extends URLClassLoader {
     }
 
     /** AOSP signature. dexPath is a colon-separated list of code paths;
-     *  optimizedDirectory + librarySearchPath are advisory on a real device
-     *  and ignored here. */
+     *  optimizedDirectory is ignored; librarySearchPath is where findLibrary
+     *  looks first (DexPathList, NativeLibraryPath). */
     public BaseDexClassLoader(String dexPath, File optimizedDirectory,
                               String librarySearchPath, ClassLoader parent) {
         super(buildUrls(dexPath), parent);
@@ -59,6 +59,14 @@ public class BaseDexClassLoader extends URLClassLoader {
     protected BaseDexClassLoader(URL[] urls, ClassLoader parent) {
         super(urls, parent);
         pathList = new DexPathList(this, urlsToDexPath(urls), null, null);
+        ArtJniLibraryOrder.apply(this);
+    }
+
+    /** The same for a subclass that converts its dex itself and was given a
+     *  librarySearchPath (DexClassLoader, InMemoryDexClassLoader). */
+    protected BaseDexClassLoader(URL[] urls, String librarySearchPath, ClassLoader parent) {
+        super(urls, parent);
+        pathList = new DexPathList(this, urlsToDexPath(urls), librarySearchPath, null);
         ArtJniLibraryOrder.apply(this);
     }
 
@@ -319,14 +327,29 @@ public class BaseDexClassLoader extends URLClassLoader {
      *  lives) and let it resolve. This can only ADD resolutions: the base used
      *  to return null unconditionally, so nothing that works today changes.
      *  AppClassLoader is final and overrides findLibrary, so it never reaches
-     *  this body -- no self-delegation. */
+     *  this body -- no self-delegation.
+     *
+     *  The loader's own librarySearchPath comes first, as its entries come
+     *  first in AOSP's nativeLibraryDirectories: a library of a module that is
+     *  not the app's own (Play services' CronetDynamite.apk, loaded by Google
+     *  Maps with "<apk>!/lib/<abi>") is only there. What was found is a guest
+     *  ELF, so the app's loader says what to answer for it: to the JVM the
+     *  host library that loads it, to app code its path (libraryOnSearchPath).
+     *  A name the path does not have, and a loader without a path, get the
+     *  app loader's answer as before. */
     public String findLibrary(String name) {
-        for (ClassLoader p = getParent(); p != null; p = p.getParent()) {
-            if (p instanceof com.macapk.loader.AppClassLoader) {
-                return ((com.macapk.loader.AppClassLoader) p).findLibrary(name);
-            }
+        com.macapk.loader.AppClassLoader app = null;
+        for (ClassLoader p = getParent(); p != null && app == null; p = p.getParent()) {
+            if (p instanceof com.macapk.loader.AppClassLoader) app = (com.macapk.loader.AppClassLoader) p;
         }
-        return null;
+        File onPath = pathList.findLibraryFile(name);
+        if (onPath != null) {
+            // No app at all (a tool, a test): AOSP's answer, the path.
+            if (app == null) return onPath.getPath();
+            String answer = app.libraryOnSearchPath(name, onPath);
+            if (answer != null) return answer;
+        }
+        return app != null ? app.findLibrary(name) : null;
     }
 
     /** AOSP override: BaseDexClassLoader.getPackage always returns a non-null

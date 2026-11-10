@@ -236,9 +236,9 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
     public static volatile android.graphics.Canvas macapkRootCanvas;
     /** FRAMESPEED S2: true while rootView.draw runs under a DAMAGE clip. A view
      *  drawn then sees a clip narrowed by the damage rect, not its real one, so
-     *  S1's drawn-origin record must NOT be refreshed from it (the record from
-     *  the last full frame still holds: a partial frame is draw-only, so no view
-     *  moved). Read by View.macapkRecordDrawnOrigin (the S1 patch). */
+     *  S1's record of where it was drawn must not be taken from it -- except
+     *  inside a view the damage came from, whose clip the damage contains. S1
+     *  (android.view.ViewRootImpl) is told through macapkBeginDraw. */
     public static volatile boolean macapkPartialDraw;
     private static final boolean PUNCH_TRACE =
             "1".equals(System.getenv("MACAPK_PUNCH_TRACE"));
@@ -424,9 +424,21 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
     // hands the damage to presentFrame as the claimed bound with the VALIDATE
     // flag, so the native diff names every changed pixel OUTSIDE the claim as
     // `[damage-validate] under-damage` -- run it before trusting S1 on an app.
-    // MACAPK_FRAMESPEED_DAMAGE=0 restores full frames exactly.
+    // Where presentFrame has no diff (Win.apk's host publishes every frame whole)
+    // macapkDamageValidate below does the same comparison here, against a copy
+    // of the last frame.
+    //
+    // S1 is in the tree now (android.view.ViewRootImpl, "FRAMESPEED S1"), and the
+    // flag is read there so both halves go on and off together:
+    // MACAPK_FRAMESPEED_DAMAGE=1 turns partial frames on; unset or anything else
+    // is full frames exactly as before (the default until the validator has run
+    // clean over a sweep). Two things S2 does differently with S1 present, both
+    // through ViewRootImpl: rootView.draw is bracketed by macapkBeginDraw /
+    // macapkEndDraw, which is where a view's drawn clip is recorded, and the
+    // damage a frame's own traversal raises is no longer dropped at the end of
+    // the frame but kept for the next one (macapkEndFrameDamage says why).
     private static final boolean FRAMESPEED_DAMAGE =
-            !"0".equals(System.getenv("MACAPK_FRAMESPEED_DAMAGE"));
+            android.view.ViewRootImpl.macapkDamageGate(System.getenv("MACAPK_FRAMESPEED_DAMAGE"));
     private static final java.lang.invoke.MethodHandle CONSUME_DAMAGE = lookupConsumeDamage();
     private static java.lang.invoke.MethodHandle lookupConsumeDamage() {
         try {
@@ -477,6 +489,58 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
     private boolean lastOverlayNonEmpty = true;
     private int m6PartialCount = 0;                       // partial frames since the last report
     private long m6PartialArea = 0;                       // their summed rect area (px)
+
+    // MACAPK_DAMAGE_VALIDATE=1 without a native diff: the frame is drawn whole
+    // and only CLAIMS its rectangle, so every pixel outside the claim must be
+    // what the last frame left there. One line per offending frame (the first
+    // 20, then every 100th), and a count on the M6 line:
+    //   [damage-validate] under-damage: 412 px changed outside the claimed 40,300-88,348; they span 0,96-1080,160
+    //   M6: ... validate: claimed=280 clean=280 under=0
+    // A view that draws by the clock without invalidating (the caret that only
+    // heartbeats repaint) is reported too: a full frame would have shown it.
+    private int[] dvPrev;
+    private int dvW, dvH;
+    private int dvClaimed, dvClean, dvUnder;
+    private long dvUnderTotal;
+    private void macapkDamageValidate(int[] px, int w, int h, boolean claimed, int[] rect) {
+        if (px == null || w <= 0 || h <= 0 || px.length < w * h) return;
+        if (claimed && dvPrev != null && dvW == w && dvH == h) {
+            final int l = Math.max(0, rect[0]), t = Math.max(0, rect[1]);
+            final int r = Math.min(w, rect[2]), b = Math.min(h, rect[3]);
+            int changed = 0, x0 = w, y0 = h, x1 = -1, y1 = -1;
+            for (int y = 0; y < h; y++) {
+                final int row = y * w;
+                final boolean in = y >= t && y < b;
+                // Outside the claim's rows the whole row; inside them, its two sides.
+                if (!in && java.util.Arrays.mismatch(px, row, row + w, dvPrev, row, row + w) < 0) continue;
+                for (int x = 0; x < w; x++) {
+                    if (in && x == l) { x = r - 1; continue; }
+                    if (px[row + x] != dvPrev[row + x]) {
+                        changed++;
+                        if (x < x0) x0 = x;
+                        if (x > x1) x1 = x;
+                        if (y < y0) y0 = y;
+                        if (y > y1) y1 = y;
+                    }
+                }
+            }
+            dvClaimed++;
+            if (changed == 0) {
+                dvClean++;
+            } else {
+                dvUnder++;
+                dvUnderTotal++;
+                if (dvUnderTotal <= 20 || dvUnderTotal % 100 == 0) {
+                    NativeLog.i(TAG, "[damage-validate] under-damage: " + changed + " px changed outside the claimed "
+                        + l + "," + t + "-" + r + "," + b + "; they span " + x0 + "," + y0 + "-" + (x1 + 1) + ","
+                        + (y1 + 1) + " (frame " + drawFrameCount + ", #" + dvUnderTotal + ")");
+                }
+            }
+        }
+        if (dvPrev == null || dvPrev.length != w * h) dvPrev = new int[w * h];
+        System.arraycopy(px, 0, dvPrev, 0, w * h);
+        dvW = w; dvH = h;
+    }
 
     private int m6SkipCount = 0;                          // skipped frames since the last heartbeat (diagnostic)
     private int m6DrawOnlyCount = 0;                      // draw-only (no relayout) frames since the last report (diagnostic)
@@ -1019,7 +1083,10 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
                            ? String.format(" (%.1f%% of the window each)",
                                  100.0 * m6PartialArea / m6PartialCount / ((double) surfaceW * surfaceH))
                            : "")
-                        + (CONSUME_DAMAGE == null ? " [S1 absent]" : "") : ""));
+                        + (CONSUME_DAMAGE == null ? " [S1 absent]" : "")
+                        + (DAMAGE_VALIDATE ? " validate: claimed=" + dvClaimed + " clean=" + dvClean
+                            + " under=" + dvUnder : "") : ""));
+                dvClaimed = dvClean = dvUnder = 0;
                 m6PartialCount = 0;
                 m6PartialArea = 0;
                 m6SkipCount = 0;
@@ -1821,10 +1888,17 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
             macapkPartialDraw = partialSave >= 0;   // FRAMESPEED S2 (see the field)
             final int opsBefore = canvas.macapkDrawOps;
             try {
+                // FRAMESPEED S1: views record where this frame draws them (all of
+                // them in a full frame; under a damage clip, those the damage came from).
+                if (FRAMESPEED_DAMAGE) {
+                    android.view.ViewRootImpl.macapkBeginDraw(rootView, canvas, macapkPartialDraw, dmgKind,
+                            partial ? partialRect : null);
+                }
                 rootView.draw(canvas);
             } finally {
                 macapkRootCanvas = null;
                 macapkPartialDraw = false;
+                if (FRAMESPEED_DAMAGE) android.view.ViewRootImpl.macapkEndDraw();
             }
             // Did this traversal put ANY ink on the frame? Counted as draw OPS,
             // deliberately -- not by scanning the pixels. A pixel scan of a 25 MB
@@ -2123,6 +2197,9 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
         }
         int[] pixels = bitmap.macapkLiveArgbOrNull();
         if (pixels == null) pixels = bitmap.macapkArgbBuffer();
+        if (DAMAGE_VALIDATE && FRAMESPEED_DAMAGE) {
+            macapkDamageValidate(pixels, bitmap.getWidth(), bitmap.getHeight(), presentPartial, partialRect);
+        }
         long ckNs = 0;   // phase trace: checkpoint-block time, kept out of `present`
         if (pixels != null) {
             // Diagnostic: count any pixel that ISN'T fully transparent
@@ -2366,9 +2443,14 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
         // window dirty, so a settled tree finally goes idle and frames skip.
         if (android.os.Looper.MACAPK_REAL_LOOPER) {
             android.view.ViewRootImpl.getInstance().consumeTraversalScheduled();
-            // FRAMESPEED S2: the rect follows the flag -- damage this traversal
-            // raised is discarded with the traversal it scheduled (08-30 hazard 6).
-            if (FRAMESPEED_DAMAGE && CONSUME_DAMAGE != null) macapkConsumeDamage(dmgRect);
+            // FRAMESPEED S2: the rect follows the flag (08-30 hazard 6) -- but the
+            // damage this traversal raised is kept for the next frame's rectangle
+            // instead of being dropped, and when it reaches outside what a partial
+            // frame drew, that frame is asked for (ViewRootImpl.macapkEndFrameDamage).
+            if (FRAMESPEED_DAMAGE && android.view.ViewRootImpl.getInstance()
+                    .macapkEndFrameDamage(presentPartial ? partialRect : null)) {
+                android.view.ViewRootImpl.getInstance().macapkScheduleSameDamage();
+            }
         }
     }
 

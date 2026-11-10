@@ -66,6 +66,12 @@ void set_app_data(const char* package, const char* host_dir);
 // natives (java.io, java.nio); a host path comes back as it is.
 std::wstring android_host_path(const char* path);
 
+// The host file behind a /proc path that is a real file (/proc/meminfo,
+// /proc/self/cmdline and /proc/<pid>/cmdline, which Boot writes under
+// <android root>/proc), for java.io.FileReader's /proc hook; empty when there
+// is none.
+std::wstring android_proc_file(const char* path);
+
 // The calling thread's NDK looper (ALooper, src/bionic/looper.cpp), for Java's
 // android.os.Looper (NativeLooper): one wait for a thread's Java messages and
 // its native descriptors. poll_once returns ALooper's POLL_* codes.

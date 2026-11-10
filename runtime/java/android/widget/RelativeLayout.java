@@ -848,8 +848,21 @@ public class RelativeLayout extends ViewGroup {
             int[] outL, int[] outT, int[] outR, int[] outB, boolean[] inv,
             boolean wrapW, boolean wrapH) {
         final boolean[] positioned = new boolean[count];
+        // The two axes resolve separately, as in AOSP, whose onMeasure sorts and
+        // positions all children horizontally and only then vertically: a rule
+        // waits for its anchor's edges on the rule's OWN axis. hDone[i] says
+        // outL/outR of child i are final while its vertical rules still wait;
+        // `positioned` stays "both axes". Waiting for the whole anchor made a
+        // cycle of
+        //     arrow: layout_alignTop/alignBottom=@id/title   (vertical)
+        //     title: layout_toEndOf=@id/arrow                (horizontal)
+        // which is no cycle on either axis, and sent every child of the
+        // container to onLayout's equal-vertical-stack fallback (Fossify
+        // Calendar's month header: the two arrows and the month name each a
+        // quarter of the screen high, one under the other).
+        final boolean[] hDone = new boolean[count];
         int positionedCount = 0, passes = 0;
-        final int MAX_PASSES = count + 2;
+        final int MAX_PASSES = 2 * count + 2;  // a child can take one pass per axis
         while (positionedCount < count && passes < MAX_PASSES) {
             passes++;
             boolean progress = false;
@@ -857,7 +870,7 @@ public class RelativeLayout extends ViewGroup {
                 if (positioned[i]) continue;
                 View child = getChildAt(i);
                 if (child == null || child.getVisibility() == View.GONE) {
-                    positioned[i] = true; positionedCount++; progress = true; continue;
+                    positioned[i] = true; hDone[i] = true; positionedCount++; progress = true; continue;
                 }
                 LayoutParams lp = (child.getLayoutParams() instanceof LayoutParams p) ? p : null;
                 int[] rules = (lp != null) ? lp.mRules : EMPTY_RULES;
@@ -870,7 +883,7 @@ public class RelativeLayout extends ViewGroup {
 
                 int leftPos = Integer.MIN_VALUE, rightPos = Integer.MIN_VALUE;
                 int topPos = Integer.MIN_VALUE, bottomPos = Integer.MIN_VALUE;
-                boolean defer = false;
+                boolean hDefer = false, vDefer = false;
                 if (rules[ALIGN_PARENT_LEFT]  == TRUE && parentW > 0) leftPos  = padLeft + margL;
                 if (rules[ALIGN_PARENT_RIGHT] == TRUE && parentW > 0) rightPos = parentW - padRight - margR;
                 if (rules[ALIGN_PARENT_TOP]   == TRUE && parentH > 0) topPos   = padTop + margT;
@@ -893,14 +906,14 @@ public class RelativeLayout extends ViewGroup {
                 // See docs/canvas-ab-analyst-report_2026-08-02.md item 4.
                 // ALIGN_* rules are edge ALIGNMENT, not stacking, and correctly
                 // take only the child's margin (AOSP does the same).
-                if (rules[LEFT_OF]   != 0) { idx = macapkRelatedIndex(rules, LEFT_OF);   if (idx>=0 && !positioned[idx]) defer=true; else if (idx>=0) rightPos = outL[idx] - margR - macapkAnchorMargin(idx, LEFT_OF); }
-                if (rules[RIGHT_OF]  != 0) { idx = macapkRelatedIndex(rules, RIGHT_OF);  if (idx>=0 && !positioned[idx]) defer=true; else if (idx>=0) leftPos  = outR[idx] + margL + macapkAnchorMargin(idx, RIGHT_OF); }
-                if (rules[ALIGN_LEFT]!= 0) { idx = macapkRelatedIndex(rules, ALIGN_LEFT);if (idx>=0 && !positioned[idx]) defer=true; else if (idx>=0) leftPos  = outL[idx] + margL; }
-                if (rules[ALIGN_RIGHT]!=0) { idx = macapkRelatedIndex(rules, ALIGN_RIGHT);if(idx>=0 && !positioned[idx]) defer=true; else if(idx>=0) rightPos = outR[idx] - margR; }
-                if (rules[ABOVE]     != 0) { idx = macapkRelatedIndex(rules, ABOVE);     if (idx>=0 && !positioned[idx]) defer=true; else if (idx>=0) bottomPos= outT[idx] - margB - macapkAnchorMargin(idx, ABOVE); }
-                if (rules[BELOW]     != 0) { idx = macapkRelatedIndex(rules, BELOW);     if (idx>=0 && !positioned[idx]) defer=true; else if (idx>=0) topPos   = outB[idx] + margT + macapkAnchorMargin(idx, BELOW); }
-                if (rules[ALIGN_TOP] != 0) { idx = macapkRelatedIndex(rules, ALIGN_TOP); if (idx>=0 && !positioned[idx]) defer=true; else if (idx>=0) topPos   = outT[idx] + margT; }
-                if (rules[ALIGN_BOTTOM]!=0) { idx = macapkRelatedIndex(rules, ALIGN_BOTTOM);if(idx>=0 && !positioned[idx]) defer=true; else if(idx>=0) bottomPos= outB[idx] - margB; }
+                if (rules[LEFT_OF]   != 0) { idx = macapkRelatedIndex(rules, LEFT_OF);   if (idx>=0 && !hDone[idx]) hDefer=true; else if (idx>=0) rightPos = outL[idx] - margR - macapkAnchorMargin(idx, LEFT_OF); }
+                if (rules[RIGHT_OF]  != 0) { idx = macapkRelatedIndex(rules, RIGHT_OF);  if (idx>=0 && !hDone[idx]) hDefer=true; else if (idx>=0) leftPos  = outR[idx] + margL + macapkAnchorMargin(idx, RIGHT_OF); }
+                if (rules[ALIGN_LEFT]!= 0) { idx = macapkRelatedIndex(rules, ALIGN_LEFT);if (idx>=0 && !hDone[idx]) hDefer=true; else if (idx>=0) leftPos  = outL[idx] + margL; }
+                if (rules[ALIGN_RIGHT]!=0) { idx = macapkRelatedIndex(rules, ALIGN_RIGHT);if(idx>=0 && !hDone[idx]) hDefer=true; else if(idx>=0) rightPos = outR[idx] - margR; }
+                if (rules[ABOVE]     != 0) { idx = macapkRelatedIndex(rules, ABOVE);     if (idx>=0 && !positioned[idx]) vDefer=true; else if (idx>=0) bottomPos= outT[idx] - margB - macapkAnchorMargin(idx, ABOVE); }
+                if (rules[BELOW]     != 0) { idx = macapkRelatedIndex(rules, BELOW);     if (idx>=0 && !positioned[idx]) vDefer=true; else if (idx>=0) topPos   = outB[idx] + margT + macapkAnchorMargin(idx, BELOW); }
+                if (rules[ALIGN_TOP] != 0) { idx = macapkRelatedIndex(rules, ALIGN_TOP); if (idx>=0 && !positioned[idx]) vDefer=true; else if (idx>=0) topPos   = outT[idx] + margT; }
+                if (rules[ALIGN_BOTTOM]!=0) { idx = macapkRelatedIndex(rules, ALIGN_BOTTOM);if(idx>=0 && !positioned[idx]) vDefer=true; else if(idx>=0) bottomPos= outB[idx] - margB; }
 
                 // ALIGN_BASELINE (docs/fwprobe-window-view-divergences_2026-
                 // 08-10.md cluster D3): AOSP RelativeLayout.java:964-975
@@ -935,7 +948,7 @@ public class RelativeLayout extends ViewGroup {
                 if (rules[ALIGN_BASELINE] != 0) {
                     idx = macapkRelatedIndex(rules, ALIGN_BASELINE);
                     if (idx >= 0 && !positioned[idx]) {
-                        defer = true;
+                        vDefer = true;
                     } else if (idx >= 0) {
                         final int anchorBaseline = getChildAt(idx).getBaseline();
                         if (anchorBaseline != -1) {
@@ -944,6 +957,11 @@ public class RelativeLayout extends ViewGroup {
                         }
                     }
                 }
+
+                // This child's horizontal edges were fixed in an earlier pass
+                // (below): they stand, whatever the rules above say now.
+                final boolean hWasDone = hDone[i];
+                if (hWasDone) { hDefer = false; leftPos = outL[i]; rightPos = outR[i]; }
 
                 // Mirrors onLayout's hBothUnresolved/vBothUnresolved gate
                 // (widget-containers-02): capture BEFORE the defaults below
@@ -954,7 +972,12 @@ public class RelativeLayout extends ViewGroup {
                         (leftPos == Integer.MIN_VALUE && rightPos == Integer.MIN_VALUE);
                 final boolean vBothUnresolved =
                         (topPos == Integer.MIN_VALUE && bottomPos == Integer.MIN_VALUE);
-                if (defer) continue;
+                if (hDefer || (vDefer && hWasDone)) continue;
+                // Only the horizontal axis can be resolved in this pass: AOSP's
+                // horizontal pass (applyHorizontalSizeRules, measureChildHorizontal,
+                // positionChildHorizontal). The vertical edges follow in a later
+                // pass, once their anchors have theirs.
+                final boolean hOnly = vDefer;
 
                 // AOSP measureChild: the child's spec comes from the rule edges
                 // resolved just above, NOT from the container's spec. Without this
@@ -963,8 +986,13 @@ public class RelativeLayout extends ViewGroup {
                 if (lp != null) {
                     int cwSpec = getChildMeasureSpec(leftPos, rightPos, lp.width,
                             margL, margR, padLeft, padRight, specW);
-                    int chSpec = getChildMeasureSpec(topPos, bottomPos, lp.height,
-                            margT, margB, padTop, padBottom, specH);
+                    // With the vertical edges unknown, the height the container
+                    // offers (AOSP measureChildHorizontal): unset edges are just that.
+                    int chSpec = hOnly
+                            ? getChildMeasureSpec(VALUE_NOT_SET, VALUE_NOT_SET, lp.height,
+                                    margT, margB, padTop, padBottom, specH)
+                            : getChildMeasureSpec(topPos, bottomPos, lp.height,
+                                    margT, margB, padTop, padBottom, specH);
                     child.measure(cwSpec, chSpec);
                     childW = child.getMeasuredWidth();
                     childH = child.getMeasuredHeight();
@@ -994,17 +1022,6 @@ public class RelativeLayout extends ViewGroup {
                     rightPos = (wMatch && parentW > 0) ? parentW - padRight - margR
                              : leftPos + childW;
                 }
-                // vertical defaults -- AOSP positionChildVertical, same rule
-                if (topPos == Integer.MIN_VALUE && bottomPos == Integer.MIN_VALUE) {
-                    topPos = padTop + margT;
-                    bottomPos = (hMatch && parentH > 0) ? parentH - padBottom - margB
-                              : topPos + childH;
-                } else if (topPos == Integer.MIN_VALUE) {
-                    topPos = bottomPos - childH;
-                } else if (bottomPos == Integer.MIN_VALUE) {
-                    bottomPos = (hMatch && parentH > 0) ? parentH - padBottom - margB
-                              : topPos + childH;
-                }
                 // centering -- gated on hBothUnresolved/vBothUnresolved (see above)
                 // NOT when the axis is wrap-content: pin instead (see the
                 // method header). The both-unset defaults above already
@@ -1016,6 +1033,23 @@ public class RelativeLayout extends ViewGroup {
                     leftPos = macapkCenterOffset(parentW, w);
                     rightPos = leftPos + w;
                 }
+                if (hOnly) {
+                    outL[i] = leftPos; outR[i] = rightPos;
+                    hDone[i] = true; progress = true;
+                    continue;
+                }
+                // vertical defaults -- AOSP positionChildVertical, same rule
+                if (topPos == Integer.MIN_VALUE && bottomPos == Integer.MIN_VALUE) {
+                    topPos = padTop + margT;
+                    bottomPos = (hMatch && parentH > 0) ? parentH - padBottom - margB
+                              : topPos + childH;
+                } else if (topPos == Integer.MIN_VALUE) {
+                    topPos = bottomPos - childH;
+                } else if (bottomPos == Integer.MIN_VALUE) {
+                    bottomPos = (hMatch && parentH > 0) ? parentH - padBottom - margB
+                              : topPos + childH;
+                }
+                // centering, the vertical half (the horizontal one is above)
                 if (vBothUnresolved && !wrapH
                         && (rules[CENTER_IN_PARENT] == TRUE || rules[CENTER_VERTICAL] == TRUE)) {
                     int h = (childH > 0) ? childH : (bottomPos - topPos);
@@ -1028,7 +1062,7 @@ public class RelativeLayout extends ViewGroup {
                 // not be treated as a layout failure.
                 if (leftPos > rightPos || topPos > bottomPos) inv[i] = true;
                 outL[i] = leftPos; outT[i] = topPos; outR[i] = rightPos; outB[i] = bottomPos;
-                positioned[i] = true; positionedCount++; progress = true;
+                positioned[i] = true; hDone[i] = true; positionedCount++; progress = true;
             }
             if (!progress) break;
         }
@@ -1075,9 +1109,15 @@ public class RelativeLayout extends ViewGroup {
         // that exceed parentH for some buttons; without the fallback
         // those buttons disappear entirely.
         final boolean[] invertedAfterRules = new boolean[count];
+        // Per axis, as in solveBoundsForMeasure (see hDone there): a child
+        // whose horizontal rules are resolved while its vertical ones still
+        // wait keeps its left and right in hL/hR, where the children anchored
+        // to it horizontally read them; it is laid out once, when both are known.
+        final boolean[] hDone = new boolean[count];
+        final int[] hL = new int[count], hR = new int[count];
         int positionedCount = 0;
         int passes = 0;
-        final int MAX_PASSES = count + 2;
+        final int MAX_PASSES = 2 * count + 2;  // a child can take one pass per axis
 
         while (positionedCount < count && passes < MAX_PASSES) {
             passes++;
@@ -1112,7 +1152,7 @@ public class RelativeLayout extends ViewGroup {
                 // the equal-vertical-stack fallback does not reserve a slice
                 // of the container for an invisible child.
                 if (child.getVisibility() == View.GONE) {
-                    positioned[i] = true; positionedCount++; madeProgress = true; continue;
+                    positioned[i] = true; hDone[i] = true; positionedCount++; madeProgress = true; continue;
                 }
                 ViewGroup.LayoutParams baseLp = child.getLayoutParams();
                 LayoutParams lp = (baseLp instanceof LayoutParams)
@@ -1181,7 +1221,7 @@ public class RelativeLayout extends ViewGroup {
                         int bpos = fillH ? (parentH - padBottom - margB)
                                          : (ch > 0 ? tpos + ch : parentH - padBottom - margB);
                         child.layout(lpos, tpos, rpos, bpos);
-                        positioned[i] = true;
+                        positioned[i] = true; hDone[i] = true;
                         positionedCount++;
                         madeProgress = true;
                     } else if (NORULE_TOPLEFT) {
@@ -1212,7 +1252,7 @@ public class RelativeLayout extends ViewGroup {
                         child.layout(lpos, tpos,
                                      lpos + Math.max(0, child.getMeasuredWidth()),
                                      tpos + Math.max(0, child.getMeasuredHeight()));
-                        positioned[i] = true;
+                        positioned[i] = true; hDone[i] = true;
                         positionedCount++;
                         madeProgress = true;
                     }
@@ -1245,7 +1285,7 @@ public class RelativeLayout extends ViewGroup {
                 }
                 if (rules[LEFT_OF] != 0) {
                     int idx = macapkRelatedIndex(rules, LEFT_OF);
-                    if (idx >= 0 && !positioned[idx]) { hDefer = true; }
+                    if (idx >= 0 && !hDone[idx]) { hDefer = true; }
                     else if (idx >= 0) {
                         View sib = getChildAt(idx);
                         // The ANCHOR's facing margin counts too -- see
@@ -1255,26 +1295,28 @@ public class RelativeLayout extends ViewGroup {
                         // match_parent case) Phase 3 discards the solver's
                         // positions and THIS pass decides where children go, so
                         // the fix was inert exactly where it mattered.
-                        rightPos = sib.getLeft() - margR - macapkAnchorMargin(idx, LEFT_OF);
+                        rightPos = (positioned[idx] ? sib.getLeft() : hL[idx])
+                                - margR - macapkAnchorMargin(idx, LEFT_OF);
                     }
                 }
                 if (rules[RIGHT_OF] != 0) {
                     int idx = macapkRelatedIndex(rules, RIGHT_OF);
-                    if (idx >= 0 && !positioned[idx]) { hDefer = true; }
+                    if (idx >= 0 && !hDone[idx]) { hDefer = true; }
                     else if (idx >= 0) {
                         View sib = getChildAt(idx);
-                        leftPos = sib.getRight() + margL + macapkAnchorMargin(idx, RIGHT_OF);
+                        leftPos = (positioned[idx] ? sib.getRight() : hR[idx])
+                                + margL + macapkAnchorMargin(idx, RIGHT_OF);
                     }
                 }
                 if (rules[ALIGN_LEFT] != 0) {
                     int idx = macapkRelatedIndex(rules, ALIGN_LEFT);
-                    if (idx >= 0 && !positioned[idx]) { hDefer = true; }
-                    else if (idx >= 0) { leftPos = getChildAt(idx).getLeft() + margL; }
+                    if (idx >= 0 && !hDone[idx]) { hDefer = true; }
+                    else if (idx >= 0) { leftPos = (positioned[idx] ? getChildAt(idx).getLeft() : hL[idx]) + margL; }
                 }
                 if (rules[ALIGN_RIGHT] != 0) {
                     int idx = macapkRelatedIndex(rules, ALIGN_RIGHT);
-                    if (idx >= 0 && !positioned[idx]) { hDefer = true; }
-                    else if (idx >= 0) { rightPos = getChildAt(idx).getRight() - margR; }
+                    if (idx >= 0 && !hDone[idx]) { hDefer = true; }
+                    else if (idx >= 0) { rightPos = (positioned[idx] ? getChildAt(idx).getRight() : hR[idx]) - margR; }
                 }
 
                 // ---- vertical solve ----
@@ -1333,6 +1375,10 @@ public class RelativeLayout extends ViewGroup {
                     }
                 }
 
+                // The horizontal edges an earlier pass fixed for this child stand.
+                final boolean hWasDone = hDone[i];
+                if (hWasDone) { hDefer = false; leftPos = hL[i]; rightPos = hR[i]; }
+
                 // AOSP's positionChildHorizontal/positionChildVertical only
                 // enter the centering branch when BOTH edges of an axis are
                 // still VALUE_NOT_SET after the rule solve above -- capture
@@ -1347,7 +1393,7 @@ public class RelativeLayout extends ViewGroup {
                 final boolean vBothUnresolved =
                         (topPos == Integer.MIN_VALUE && bottomPos == Integer.MIN_VALUE);
 
-                if (hDefer || vDefer) continue;
+                if (hDefer || (vDefer && hWasDone)) continue;
 
                 // ---- defaults for unset edges ----
                 // If width=match_parent (-1) and neither alignParentLeft
@@ -1385,6 +1431,27 @@ public class RelativeLayout extends ViewGroup {
                                 : leftPos + childW;
                 }
 
+                // ---- centering, horizontal ----
+                // AOSP gate (see hBothUnresolved/vBothUnresolved above): a
+                // child already positioned on this axis by a relational or
+                // alignParent rule keeps that position even if
+                // CENTER_IN_PARENT or the matching CENTER_HORIZONTAL/
+                // CENTER_VERTICAL is also set on it.
+                if (hBothUnresolved
+                        && (rules[CENTER_IN_PARENT] == TRUE || rules[CENTER_HORIZONTAL] == TRUE)) {
+                    int w = (childW > 0) ? childW : (rightPos - leftPos);
+                    leftPos  = macapkCenterOffset(parentW, w);
+                    rightPos = leftPos + w;
+                }
+                if (vDefer) {
+                    // Horizontal only in this pass; the vertical rules wait for
+                    // their anchors, which may in turn be waiting for this.
+                    hL[i] = leftPos; hR[i] = rightPos;
+                    hDone[i] = true;
+                    madeProgress = true;
+                    continue;
+                }
+
                 if (topPos == Integer.MIN_VALUE && bottomPos == Integer.MIN_VALUE) {
                     topPos = padTop + margT;
                     if (heightMatchParent) {
@@ -1417,18 +1484,7 @@ public class RelativeLayout extends ViewGroup {
                                 : topPos + childH;
                 }
 
-                // ---- centering (final pass for this child) ----
-                // AOSP gate (see hBothUnresolved/vBothUnresolved above): a
-                // child already positioned on this axis by a relational or
-                // alignParent rule keeps that position even if
-                // CENTER_IN_PARENT or the matching CENTER_HORIZONTAL/
-                // CENTER_VERTICAL is also set on it.
-                if (hBothUnresolved
-                        && (rules[CENTER_IN_PARENT] == TRUE || rules[CENTER_HORIZONTAL] == TRUE)) {
-                    int w = (childW > 0) ? childW : (rightPos - leftPos);
-                    leftPos  = macapkCenterOffset(parentW, w);
-                    rightPos = leftPos + w;
-                }
+                // ---- centering, vertical (same gate) ----
                 if (vBothUnresolved
                         && (rules[CENTER_IN_PARENT] == TRUE || rules[CENTER_VERTICAL] == TRUE)) {
                     int h = (childH > 0) ? childH : (bottomPos - topPos);
@@ -1452,7 +1508,7 @@ public class RelativeLayout extends ViewGroup {
                     invertedAfterRules[i] = true;
                 }
                 child.layout(leftPos, topPos, rightPos, bottomPos);
-                positioned[i] = true;
+                positioned[i] = true; hDone[i] = true;
                 positionedCount++;
                 madeProgress = true;
             }

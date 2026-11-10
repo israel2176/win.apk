@@ -10,6 +10,8 @@
 //  - Source: a file, URL or memory buffer demuxed and decoded by an
 //    IMFSourceReader (MediaPlayer's shape): video pictures and float PCM in
 //    presentation order, with seeking.
+//  - Demuxer: a file or URL demuxed and not decoded (MediaExtractor's shape):
+//    every track's format and its access units, as MediaCodec takes them.
 // Pictures come out as ARGB ints (0xAARRGGBB, alpha 0xff, row stride =
 // width), the layout the Java side presents, with any rotation the container
 // asks for already applied.
@@ -130,6 +132,49 @@ public:
 private:
     struct Impl;
     explicit Source(std::unique_ptr<Impl> impl);
+    std::unique_ptr<Impl> impl_;
+};
+
+class Demuxer {
+public:
+    struct Track {
+        bool video = false;
+        std::string mime;  // AOSP's names; "video/x-unknown" or "audio/x-unknown" for a stream nothing here names
+        int width = 0, height = 0, rotation = 0;
+        double frame_rate = 0;
+        int sample_rate = 0, channels = 0;
+        int bitrate = 0;  // bits per second, 0 = unsaid
+        // MediaFormat's "csd-0" / "csd-1": H.264's SPS and PPS and HEVC's
+        // parameter sets (in csd0) with start codes, AAC's AudioSpecificConfig.
+        std::vector<uint8_t> csd0, csd1;
+        std::string language;
+    };
+    struct Sample {
+        int track = -1;
+        int64_t pts_us = 0;
+        bool key = false;
+        std::vector<uint8_t> data;  // H.264 and HEVC as Annex-B, AAC raw (no ADTS)
+    };
+    enum SeekMode { kPreviousSync = 0, kNextSync = 1, kClosestSync = 2 };  // MediaExtractor's numbers
+
+    // A host path or an http(s) URL. Null when Media Foundation cannot read it.
+    static std::unique_ptr<Demuxer> open(const std::wstring& path_or_url);
+    ~Demuxer();
+
+    int track_count() const;
+    const Track& track(int index) const;
+    int64_t duration_us() const;
+    // No track is selected at first; read() returns samples of selected tracks only.
+    void select(int index, bool on);
+    // The next sample, in the order the file interleaves them. False at the
+    // end of every selected track, and on a read error.
+    bool read(Sample* out);
+    // The next read starts at a sync sample chosen by `mode` around `us`.
+    bool seek(int64_t us, SeekMode mode);
+
+private:
+    struct Impl;
+    explicit Demuxer(std::unique_ptr<Impl> impl);
     std::unique_ptr<Impl> impl_;
 };
 

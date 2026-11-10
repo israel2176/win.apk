@@ -63,13 +63,17 @@ public final class HostCodecCapability {
     /** Never null; empty means "this format has no meaningful profile/level
      *  concept" (true of MP3) rather than "nothing is supported". */
     public final MediaCodecInfo.CodecProfileLevel[] profileLevels;
+    /** MediaCodecInfo.CodecCapabilities.COLOR_Format* a video encoder takes
+     *  its input in; never null, empty for the decoders. */
+    public final int[] colorFormats;
 
     private HostCodecCapability(String mime, boolean encoder, boolean hardwareAccelerated,
             int[] sampleRates, Range<Integer> sampleRateRange, int maxChannels,
             Range<Integer> widthRange, Range<Integer> heightRange, Range<Integer> frameRateRange,
             int widthAlignment, int heightAlignment,
             Range<Integer> bitrateRange, MediaCodecInfo.CodecProfileLevel[] profileLevels,
-            int maxMacroblocks) {
+            int maxMacroblocks, int[] colorFormats) {
+        this.colorFormats = colorFormats != null ? colorFormats : new int[0];
         if (mime == null) throw new NullPointerException("mime == null");
         this.mime = mime;
         this.encoder = encoder;
@@ -93,7 +97,28 @@ public final class HostCodecCapability {
         return new HostCodecCapability(mime, false, hardwareAccelerated,
                 sampleRates, sampleRateRange, maxChannels,
                 null, null, null, 0, 0,
-                bitrateRange, profileLevels, 0);
+                bitrateRange, profileLevels, 0, null);
+    }
+
+    /** An audio encoder the host really has (see MediaCodecList.HostEncoders). */
+    public static HostCodecCapability audioEncoder(String mime, int[] sampleRates, int maxChannels,
+            Range<Integer> bitrateRange, MediaCodecInfo.CodecProfileLevel[] profileLevels) {
+        return new HostCodecCapability(mime, true, false,
+                sampleRates, null, maxChannels,
+                null, null, null, 0, 0,
+                bitrateRange, profileLevels, 0, null);
+    }
+
+    /** A video encoder the host really has. */
+    public static HostCodecCapability videoEncoder(String mime,
+            Range<Integer> widthRange, Range<Integer> heightRange, Range<Integer> frameRateRange,
+            int widthAlignment, int heightAlignment,
+            Range<Integer> bitrateRange, MediaCodecInfo.CodecProfileLevel[] profileLevels,
+            int maxMacroblocks, int[] colorFormats) {
+        return new HostCodecCapability(mime, true, false,
+                null, null, 0,
+                widthRange, heightRange, frameRateRange, widthAlignment, heightAlignment,
+                bitrateRange, profileLevels, maxMacroblocks, colorFormats);
     }
 
     public static HostCodecCapability videoDecoder(String mime, boolean hardwareAccelerated,
@@ -113,7 +138,7 @@ public final class HostCodecCapability {
         return new HostCodecCapability(mime, false, hardwareAccelerated,
                 null, null, 0,
                 widthRange, heightRange, frameRateRange, widthAlignment, heightAlignment,
-                bitrateRange, profileLevels, maxMacroblocks);
+                bitrateRange, profileLevels, maxMacroblocks, null);
     }
 
     public boolean isAudio() { return sampleRates != null || sampleRateRange != null; }

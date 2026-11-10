@@ -49,10 +49,13 @@
 //        equals), and eglGetCurrent* return the very objects the thread made
 //        current (EGLImpl caches its current wrappers the same way).
 //    What stays legacy even here, and why:
-//      - a thread with NO context of ours current keeps getting the stable
-//        SENTINEL objects from eglGetCurrent*: libGDX caches
-//        eglGetCurrentContext() on OS-main and compares it on resume, where
-//        the framework's ANGLE context (not ours) is what is current;
+//      - a thread with NO context of ours current, but with one of the
+//        framework's (its GLSurfaceView renderer callbacks run with that one),
+//        keeps getting the stable SENTINEL objects from eglGetCurrent*: libGDX
+//        caches eglGetCurrentContext() on OS-main and compares it on resume,
+//        where the framework's ANGLE context (not ours) is what is current.
+//        A thread with nothing current at all gets EGL_NO_CONTEXT /
+//        EGL_NO_DISPLAY / EGL_NO_SURFACE, as on Android (see nothingCurrent);
 //      - eglMakeCurrent(NONE, NONE, NONE) on such a thread stays a no-op, so
 //        it can never unbind the framework context on OS-main; and when our
 //        context is released on a thread that had a FOREIGN context current
@@ -994,10 +997,30 @@ public final class MacApkEGL10 implements EGL10 {
         return EGL14.eglWaitNative(engine);
     }
 
+    /** Has this thread no context current at all: none of ours, and none of
+     *  the framework's either? Then eglGetCurrent* say so, as EGLImpl does. An
+     *  app's GL code asks eglGetCurrentContext() whether it may query GL here,
+     *  and makes a context of its own when the answer is EGL_NO_CONTEXT; told
+     *  the sentinel on a thread with nothing current, Google Maps' GL constants
+     *  were read with no context: glGetIntegerv left GL_MAX_VERTEX_ATTRIBS at
+     *  0, and its GL thread died enabling attribute 0 of an empty table. A
+     *  SurfaceView's own GL thread keeps the legacy contract for every call. */
+    private static boolean nothingCurrent() {
+        if (onSurfaceViewGlThread(false)) return false;
+        try {
+            android.opengl.EGLContext c = EGL14.eglGetCurrentContext();
+            return c == null || c.getNativeHandle() == 0;
+        } catch (Throwable t) {
+            realBroken(t);
+            return false;
+        }
+    }
+
     @Override public EGLContext eglGetCurrentContext() {
         if (realOn()) {
             Current cur = CURRENT.get();
             if (cur.ctx != null) return cur.ctx;
+            if (nothingCurrent()) return EGL_NO_CONTEXT;
         }
         return legacyGetCurrentContext();
     }
@@ -1006,6 +1029,7 @@ public final class MacApkEGL10 implements EGL10 {
         if (realOn()) {
             Current cur = CURRENT.get();
             if (cur.ctx != null) return cur.dpy;
+            if (nothingCurrent()) return EGL_NO_DISPLAY;
         }
         return legacyGetCurrentDisplay();
     }
@@ -1021,6 +1045,7 @@ public final class MacApkEGL10 implements EGL10 {
                 RealSurface s = readdraw == EGL_READ ? cur.read : cur.draw;
                 return s != null ? s : EGL_NO_SURFACE;
             }
+            if (nothingCurrent()) return EGL_NO_SURFACE;
         }
         return legacyGetCurrentSurface(readdraw);
     }

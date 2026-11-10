@@ -57,6 +57,12 @@ std::string file_name_of(const std::string& name) {
 // ANSI code page on Windows.
 std::filesystem::path utf8_path(const std::string& s) { return std::filesystem::u8path(s); }
 
+// A library's path as an app gives it to dlopen or System.load: a host path, or
+// one of Android's own ("/data/user/0/<package>/files/libx.so" for a library the
+// app unpacked, "/data/app/.../lib/x86_64/libx.so" for what findLibrary answers),
+// which names a host file as it does for open() (bionic/paths.cpp).
+std::filesystem::path guest_path(const std::string& s) { return std::filesystem::path(android_host_path(s.c_str())); }
+
 std::string machine_name(uint16_t machine) {
     switch (machine) {
         case elf::kEmX86_64: return "EM_X86_64 (62)";
@@ -101,7 +107,7 @@ const ElfImage* GuestLinker::image_of(const GuestLibrary* lib) { return lib ? li
 
 GuestLibrary* GuestLinker::find_loaded(const std::string& name) const {
     if (has_separator(name)) {
-        const std::string want = normalized(utf8_path(name));
+        const std::string want = normalized(guest_path(name));
         for (const auto& l : libs_) {
             if (normalized(l->path) == want) return l.get();
         }
@@ -116,7 +122,7 @@ GuestLibrary* GuestLinker::find_loaded(const std::string& name) const {
 std::filesystem::path GuestLinker::locate(const std::string& name, const std::filesystem::path& near) const {
     std::error_code ec;
     if (has_separator(name)) {
-        std::filesystem::path p = utf8_path(name);
+        std::filesystem::path p = guest_path(name);
         return std::filesystem::is_regular_file(p, ec) ? p : std::filesystem::path();
     }
     const std::filesystem::path file = utf8_path(name);
@@ -147,6 +153,24 @@ std::vector<GuestLibrary*> GuestLinker::local_group(GuestLibrary* root) const {
 void* GuestLinker::resolve_host(const char* name) const {
     if (void* p = guest_libdl_resolve(name)) return p;
     return config_.host ? config_.host(name) : nullptr;
+}
+
+// The few names that are this linker's whatever a guest library exports, so
+// they are answered before any library is asked. Everything else follows
+// Bionic's order (see open()), where libc is one DT_NEEDED entry among the
+// others. Each name here is one whose guest copy could not work on this
+// linker; the list is not a place for names a guest merely happens to define.
+//   * dlopen, dlsym, dladdr, dl_iterate_phdr, ... and their __loader_* forms
+//     (kLibdl): they read this linker's registry. A guest's own copy would
+//     walk Bionic's soinfo list, which does not exist here; a bundled
+//     unwinder asking it would find no .eh_frame_hdr and every C++ throw
+//     would end in std::terminate.
+//   * __tls_get_addr: the module ids in a library's TLS relocations are the
+//     ones ElfImage assigned (elf_tls.h); only our function knows them.
+void* GuestLinker::resolve_linker_owned(const char* name) const {
+    if (void* p = guest_libdl_resolve(name)) return p;
+    if (std::strcmp(name, "__tls_get_addr") == 0 && config_.host) return config_.host(name);
+    return nullptr;
 }
 
 // A symbol as seen from inside one library of a tree: the system node stands
@@ -247,25 +271,35 @@ GuestLibrary* GuestLinker::open(const std::string& requested, int flags, std::st
         }
     }
 
-    // Phase 2: link. Every new library resolves against the same scope: the
-    // global group, then the root's tree. Global libraries of the other ABI
+    // Phase 2: link. Every new library resolves against the same scope, in
+    // Bionic's order (soinfo_do_lookup): the global group, then the root's
+    // tree breadth-first in DT_NEEDED order. Global libraries of the other ABI
     // (an x86_64 and an arm64 library in one process) are not visible.
+    //
+    // The host shim is not asked first: on Android libc.so is one DT_NEEDED
+    // entry of the tree and is searched at its position, so a library listed
+    // before it interposes. Firefox's libxul.so needs libmozglue.so before
+    // libc.so and takes malloc, free and operator new/delete from it
+    // (mozjemalloc); bound to the host's instead, its first delete of a block
+    // mozglue allocated freed a pointer the host heap never gave out. The
+    // shim's tables are not split by library, so the one system node stands
+    // for all of them at the place the walk first meets a system library. A
+    // library with no system DT_NEEDED at all still gets libc: the shim is
+    // asked once more at the end.
     std::vector<GuestLibrary*> globals;
     for (const auto& l : libs_) {
         if (l->global && l->image->machine() == root->image->machine()) globals.push_back(l.get());
     }
     const std::vector<GuestLibrary*> group = local_group(root);
     SymbolResolver scope = [&](const char* sym) -> void* {
-        if (void* p = resolve_host(sym)) return p;
+        if (void* p = resolve_linker_owned(sym)) return p;
         for (GuestLibrary* l : globals) {
             if (void* p = l->image->dlsym(sym)) return p;
         }
         for (GuestLibrary* l : group) {
-            if (l != system_.get()) {
-                if (void* p = l->image->dlsym(sym)) return p;
-            }
+            if (void* p = find_in(l, sym)) return p;
         }
-        return nullptr;
+        return resolve_host(sym);
     };
     TlsSymbolResolver tls_scope = [&](const char* sym, size_t* module, uint64_t* offset) -> bool {
         auto find = [&](GuestLibrary* l) {
@@ -421,11 +455,15 @@ void* GuestLinker::lookup(void* handle, const char* name, const void* caller, st
     std::lock_guard<std::recursive_mutex> hold(lock_);
     void* found = nullptr;
     if (handle == nullptr || handle == main_.get()) {
-        // RTLD_DEFAULT and the main-program handle: the global group.
-        found = resolve_host(name);
+        // RTLD_DEFAULT and the main-program handle: the global group in load
+        // order, then libc and the other system libraries. (Bionic goes on to
+        // the caller's own local group, where it finds libc; an interposer
+        // there that is not RTLD_GLOBAL is not seen here.)
+        found = resolve_linker_owned(name);
         for (size_t i = 0; !found && i < libs_.size(); ++i) {
             if (libs_[i]->global) found = libs_[i]->image->dlsym(name);
         }
+        if (!found) found = resolve_host(name);
     } else if (handle == reinterpret_cast<void*>(-1)) {
         // RTLD_NEXT: libraries loaded after the caller's, then the host. The
         // usual user is a wrapper that wants the libc function it shadows.

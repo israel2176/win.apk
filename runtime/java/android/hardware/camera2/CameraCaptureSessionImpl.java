@@ -17,6 +17,12 @@
 //
 //   * ImageReader-backed Surfaces: the reader pulls the locked CVPixelBuffer's
 //     YUV planes directly (ImageReader.macapkAttachCameraSource).
+//   * ImageReader(JPEG)-backed Surfaces, the still-capture output: a request
+//     that targets one gets the frame it is served by encoded as a JPEG
+//     (JpegStill) and queued on the reader (ImageReader.macapkQueueJpeg). Only
+//     such a request does: a JPEG output costs an encode per image, which is
+//     why camera2 lists it as a stalling stream and apps leave it out of
+//     their repeating request.
 //   * SurfaceTexture-backed Surfaces (a TextureView preview, a GL consumer
 //     like WebRTC's SurfaceTextureHelper): the session attaches the native
 //     frame source to the SurfaceTexture and publishes each frame's metadata
@@ -223,12 +229,14 @@ final class CameraCaptureSessionImpl extends CameraCaptureSession {
         //    SurfaceTexture-backed Surfaces. Everything else has no producer
         //    path and is named in the log as receiving nothing.
         List<ImageReader> readers = new ArrayList<>();
+        List<ImageReader> stills = new ArrayList<>();
         List<SurfaceTexture> textures = new ArrayList<>();
         List<Surface> unsupported = new ArrayList<>();
         for (Surface s : mOutputs) {
             ImageReader r = ImageReader.macapkReaderForSurface(s);
             if (r != null) {
-                readers.add(r);
+                if (r.getImageFormat() == ImageFormat.JPEG) stills.add(r);
+                else readers.add(r);
                 continue;
             }
             SurfaceTexture st = s.macapkGetSurfaceTexture();
@@ -239,7 +247,7 @@ final class CameraCaptureSessionImpl extends CameraCaptureSession {
             unsupported.add(s);
         }
 
-        if (readers.isEmpty() && textures.isEmpty()) {
+        if (readers.isEmpty() && stills.isEmpty() && textures.isEmpty()) {
             CameraBackend.warn("createCaptureSession FAILED: none of the " + mOutputs.size()
                     + " output Surface(s) is backed by an ImageReader or a SurfaceTexture."
                     + " This backend delivers camera frames to ImageReader and"
@@ -254,16 +262,17 @@ final class CameraCaptureSessionImpl extends CameraCaptureSession {
                     + " SurfaceTexture outputs and will receive no frames.");
         }
 
-        // 2. Format. YUV_420_888 is the only thing the capture backend produces,
+        // 2. Format. YUV_420_888 is the only pixel layout the capture backend
+        //    produces (JPEG readers, sorted out above, get an encoded copy),
         //    and an ImageReader created for another format would hand its app
         //    planes that do not match what it asked for.
         for (ImageReader r : readers) {
             if (r.getImageFormat() != ImageFormat.YUV_420_888) {
                 CameraBackend.warn("createCaptureSession FAILED: ImageReader format 0x"
                         + Integer.toHexString(r.getImageFormat())
-                        + " is not supported. This backend produces YUV_420_888 (0x23) only;"
-                        + " CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP advertises"
-                        + " no other output format.");
+                        + " is not supported. An ImageReader output is YUV_420_888 (0x23) or"
+                        + " JPEG (0x100), the formats"
+                        + " CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP lists for one.");
                 return false;
             }
         }
@@ -273,9 +282,13 @@ final class CameraCaptureSessionImpl extends CameraCaptureSession {
         //    output. An ImageReader's size wins (its app reads the planes
         //    directly, so its geometry is the least flexible); otherwise the
         //    SurfaceTexture's default buffer size, which is what the camera
-        //    stack sizes the stream from on real Android; otherwise the
-        //    device's own active-format default, so an app that never sized
-        //    its texture still gets a truthful, working stream.
+        //    stack sizes the stream from on real Android; otherwise a JPEG
+        //    reader's (a session for stills alone); otherwise the device's own
+        //    active-format default, so an app that never sized its texture
+        //    still gets a truthful, working stream. A JPEG reader comes after
+        //    the preview because it adapts: its still is cut and resampled
+        //    from whatever the stream delivers (JpegStill), while a preview
+        //    consumer shows the stream's frames as they are.
         int w = 0;
         int h = 0;
         if (!readers.isEmpty()) {
@@ -297,6 +310,10 @@ final class CameraCaptureSessionImpl extends CameraCaptureSession {
                     h = st.macapkGetDefaultHeight();
                     break;
                 }
+            }
+            if ((w <= 0 || h <= 0) && !stills.isEmpty()) {
+                w = stills.get(0).getWidth();
+                h = stills.get(0).getHeight();
             }
             if (w <= 0 || h <= 0) {
                 w = CameraBridge.getWidth(mHandle);
@@ -359,6 +376,7 @@ final class CameraCaptureSessionImpl extends CameraCaptureSession {
         mConfigured = true;
 
         CameraBackend.trace("session configured: " + readers.size() + " ImageReader output(s), "
+                + stills.size() + " JPEG output(s), "
                 + textures.size() + " SurfaceTexture output(s), "
                 + nw + "x" + nh + " @" + mAppliedFps + "fps, native session running");
 
@@ -1008,37 +1026,143 @@ final class CameraCaptureSessionImpl extends CameraCaptureSession {
             }
         }
 
-        if (callback == null || dispatch == null || request == null) {
-            // No callback registered for this frame. The readers were still
-            // notified above, which is what a request with an ImageReader
-            // target and a null CaptureCallback is supposed to produce.
+        if (request == null) {
             stopPumpIfIdle();
             return;
         }
 
         final CaptureRequest req = request;
-        final CaptureCallback cb = callback;
+        final CaptureCallback cb = (callback != null && dispatch != null) ? callback : null;
+        final CameraDispatch d = dispatch;
         final int seq = sequenceId;
         final boolean last = endsSequence;
 
-        dispatch.run(() -> cb.onCaptureStarted(this, req, timestampNs, deliveredCount));
+        if (cb != null) {
+            d.run(() -> cb.onCaptureStarted(this, req, timestampNs, deliveredCount));
+        }
 
-        // The result carries only what we measured. SENSOR_TIMESTAMP is the
-        // observation instant described above; exposure time, sensitivity and
-        // the 3A states are absent because AVFoundation does not report them
-        // per frame through this path, and a plausible-looking fabricated value
-        // is worse than a null an app can test for. CameraCharacteristics
-        // .getAvailableCaptureResultKeys() advertises exactly this one key.
+        // The result carries only what we measured or did. SENSOR_TIMESTAMP is
+        // the observation instant described above; exposure time, sensitivity
+        // and the 3A states are absent because AVFoundation does not report
+        // them per frame through this path, and a plausible-looking fabricated
+        // value is worse than a null an app can test for.
         Map<CaptureResult.Key<?>, Object> results = new HashMap<>();
         results.put(CaptureResult.SENSOR_TIMESTAMP, Long.valueOf(timestampNs));
+
+        // Stills: after onCaptureStarted (the shutter moment, which must not
+        // wait for an encoder) and before onCaptureCompleted. The pump waits
+        // here for the encode, so the frames that pass meanwhile are skipped:
+        // the stall a JPEG output has on a device too
+        // (StreamConfigurationMap.getOutputStallDuration).
+        final List<Surface> lostBuffers = deliverStills(req, timestampNs, results);
+
+        if (cb == null) {
+            // A request with a null CaptureCallback still produced its images:
+            // the readers were notified above, the stills just now.
+            stopPumpIfIdle();
+            return;
+        }
+
         final TotalCaptureResult result = new TotalCaptureResult(results, req, deliveredCount,
                 mDevice.getId(), seq);
 
-        dispatch.run(() -> cb.onCaptureCompleted(this, req, result));
+        for (Surface lost : lostBuffers) {
+            d.run(() -> cb.onCaptureBufferLost(this, req, lost, deliveredCount));
+        }
+        d.run(() -> cb.onCaptureCompleted(this, req, result));
 
         if (last) {
-            dispatch.run(() -> cb.onCaptureSequenceCompleted(this, seq, deliveredCount));
+            d.run(() -> cb.onCaptureSequenceCompleted(this, seq, deliveredCount));
             stopPumpIfIdle();
         }
+    }
+
+    // ---- Stills ----------------------------------------------------------
+
+    /** The frame as ARGB, reused between stills. Under mStillLock: a pump that
+     *  was stopped in the middle of an encode can still be in it when its
+     *  successor takes the next still. */
+    private int[] mStillArgb;
+    private final Object mStillLock = new Object();
+
+    /**
+     * Encode the newest frame for every JPEG ImageReader the request targets
+     * and queue it there, stamped with the capture's SENSOR_TIMESTAMP so the
+     * app can pair Image and result.
+     *
+     * The pixels come through copyLatestArgb, the SurfaceTexture consumers'
+     * path, which reads the session's newest frame without taking the one
+     * frame slot a YUV ImageReader in the same session acquires from.
+     *
+     * @param results the capture's result: what the encoder used is added
+     * @return the targets whose still could not be delivered, each of which
+     *         AOSP reports through onCaptureBufferLost
+     */
+    private List<Surface> deliverStills(CaptureRequest req, long timestampNs,
+            Map<CaptureResult.Key<?>, Object> results) {
+        synchronized (mStillLock) {
+            return deliverStillsLocked(req, timestampNs, results);
+        }
+    }
+
+    private List<Surface> deliverStillsLocked(CaptureRequest req, long timestampNs,
+            Map<CaptureResult.Key<?>, Object> results) {
+        List<Surface> lost = Collections.emptyList();
+        boolean any = false;
+        int quality = 0;
+        int orientation = 0;
+        int[] dims = null;
+
+        for (Surface target : req.getTargets()) {
+            ImageReader r = ImageReader.macapkReaderForSurface(target);
+            if (r == null || r.getImageFormat() != ImageFormat.JPEG) continue;
+
+            if (!any) {
+                any = true;
+                Byte q = req.get(CaptureRequest.JPEG_QUALITY);
+                quality = q != null && q >= 1 && q <= 100 ? q : JpegStill.DEFAULT_QUALITY;
+                Integer o = req.get(CaptureRequest.JPEG_ORIENTATION);
+                orientation = o != null ? o : 0;
+
+                int[] d = new int[2];
+                int n = Math.max(1, CameraBridge.getWidth(mHandle) * CameraBridge.getHeight(mHandle));
+                if (mStillArgb == null || mStillArgb.length < n) mStillArgb = new int[n];
+                long pts = CameraBridge.copyLatestArgb(mHandle, mStillArgb, d);
+                if (pts == 0 && d[0] > 0 && d[1] > 0 && mStillArgb.length < d[0] * d[1]) {
+                    // The stream's size changed under us; the copy reported the
+                    // real one, so size the buffer for it and take the frame.
+                    mStillArgb = new int[d[0] * d[1]];
+                    pts = CameraBridge.copyLatestArgb(mHandle, mStillArgb, d);
+                }
+                if (pts != 0 && d[0] > 0 && d[1] > 0) dims = d;
+                else CameraBackend.warn("still capture: the capture backend had no frame to encode");
+            }
+
+            byte[] jpeg = null;
+            if (dims != null) {
+                try {
+                    Byte tq = req.get(CaptureRequest.JPEG_THUMBNAIL_QUALITY);
+                    jpeg = JpegStill.encode(mStillArgb, dims[0], dims[1], r.getWidth(), r.getHeight(),
+                            quality, orientation, req.get(CaptureRequest.JPEG_THUMBNAIL_SIZE),
+                            tq != null ? tq : 0);
+                } catch (Throwable t) {
+                    CameraBackend.warn("still capture: JPEG encoding failed: " + t);
+                }
+            }
+            if (jpeg == null || !r.macapkQueueJpeg(jpeg, timestampNs)) {
+                if (lost.isEmpty()) lost = new ArrayList<>();
+                lost.add(target);
+            } else {
+                CameraBackend.trace("still " + r.getWidth() + "x" + r.getHeight() + " from a "
+                        + dims[0] + "x" + dims[1] + " frame, quality " + quality + ", orientation "
+                        + orientation + ", " + jpeg.length + " bytes");
+            }
+        }
+
+        if (any) {
+            results.put(CaptureResult.JPEG_QUALITY, Byte.valueOf((byte) quality));
+            results.put(CaptureResult.JPEG_ORIENTATION, Integer.valueOf(orientation));
+        }
+        return lost;
     }
 }

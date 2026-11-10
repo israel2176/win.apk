@@ -62,6 +62,7 @@ HostMethods native_location_methods();  // native_location.cpp
 HostMethods native_activity_methods();  // native_activity.cpp
 HostMethods native_signin_methods();    // native_signin.cpp
 HostMethods native_media_video_methods(); // native_media_video.cpp (NativeMedia video + HostVideo)
+HostMethods native_media_codec_methods(); // native_media_codec.cpp (HostMedia: demuxer, encoders, MP4 writer)
 HostMethods native_notifications_methods();  // native_notifications.cpp
 HostMethods native_binder_methods();    // binder_win.cpp (MacApkBinderTransport, WinProcesses)
 

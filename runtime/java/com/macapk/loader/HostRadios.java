@@ -84,6 +84,21 @@ public final class HostRadios {
         }
     }
 
+    /** The network that carries the host's default route, for
+     *  ConnectivityManager: {interface index, the interface type (IANA
+     *  ifType: 6 Ethernet, 71 Wi-Fi, 243 and 244 mobile broadband, 23 and 131
+     *  a tunnel), MTU, addresses as "ip/prefix", gateways, DNS servers}, the
+     *  three lists comma-separated. An empty array when the host has no
+     *  default route (offline). Null when not known: a host without the
+     *  native (the Mac asks its own tools, android.net.MacApkHostNetwork). */
+    public static String[] defaultNetwork() {
+        try {
+            return nativeDefaultNetwork();
+        } catch (UnsatisfiedLinkError e) {
+            return null;
+        }
+    }
+
     /** The host's Bluetooth radio, {name, address "AA:BB:..", "1" when on else
      *  "0"}, or null when there is none or it is not known. */
     public static String[] bluetoothRadio() {
@@ -110,6 +125,7 @@ public final class HostRadios {
     private static native boolean nativeWifiStartScan();
     private static native int[] nativeWifiDhcp();
     private static native int nativeWifiEvent(int timeoutMs);
+    private static native String[] nativeDefaultNetwork();
     private static native String[] nativeBluetoothRadio();
     private static native String[] nativeBluetoothBonded();
 }

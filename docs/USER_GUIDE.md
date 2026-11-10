@@ -171,18 +171,45 @@ file takes a few seconds of one core at low priority, once, and about 40 MB in
 
 The library marks a running app with a green badge on its tile and counts
 them under its title. **Stop** in the tile's right-click menu, or on the
-app's details page, closes the app at once.
+app's details page, closes the app at once, like Android's **Force stop**:
+the app is not told, so close its window instead when it has something to
+save.
 
 In an app:
 
 | You do | The app sees |
 |---|---|
-| Click, drag | A finger touch and drag |
-| Mouse wheel | A short scroll gesture |
-| Keyboard | Key presses, including typing into text fields |
+| Click, drag (the left button) | A finger touch and drag |
+| Touch the screen, with one finger or several | Each finger is a finger: two thumbs on two on-screen sticks, a two-finger pinch or turn. A finger on the title bar or the window's edge moves and resizes the window, as everywhere |
+| A pen | A stylus, with its pressure; turned over, an eraser; its barrel button is the stylus button |
+| Mouse wheel, a two-finger scroll on a touchpad | A scroll at the pointer. An app whose views take no scroll (many custom lists and canvases) gets a short finger drag instead, so it scrolls too |
+| **Ctrl**+wheel, a pinch on a precision touchpad | A two-finger pinch around the pointer: maps, pictures and pages zoom |
+| Right click | A mouse's secondary button: what a long press opens (a context menu, a list item's long-click action), and an app that reads mouse buttons gets it. The middle button is the tertiary one |
+| Move the pointer over the app | The pointer hovers: tooltips and hover highlights |
+| Keyboard | Key presses, and the characters your keyboard layout types, into text fields: dead keys (an accent, then the letter), AltGr, Caps Lock |
+| An input method (Chinese, Japanese, Korean, the emoji panel) | Text. The text being composed shows in the field itself when the field supports it (most do), otherwise in a small window of Windows' until it is final |
 | **Escape**, **Alt+Left**, the mouse's back button | Android's Back |
-| Close the window | The app quits |
+| Close the window | The app quits as an Android app leaves the screen: the window goes at once, the app is paused, stopped and destroyed (so it saves what it saves on a phone), and then it ends. An app that does not answer is ended after two seconds |
+| Minimize the window | The app goes to the background (paused and stopped), and comes back when you restore the window |
 | Resize, maximize or snap the window | A display of the new size; the app lays itself out again |
+
+Notes on input:
+
+- The left mouse button is a finger, not a mouse, because that is what Android
+  apps are made for: a list scrolls when you drag it. The right and the middle
+  button are a mouse's buttons. A game that reads its input itself (a
+  `NativeActivity` engine) gets the left button as a finger and the wheel, and
+  no right button or hovering.
+- A touchpad's two-finger scroll and pinch arrive the way Windows reports them
+  to every program, as wheel steps and Ctrl+wheel; the fingers on the pad are
+  not fingers on the app.
+- Ctrl+wheel zooms in steps: the two fingers it stands for are lifted and set
+  down again when they reach the window's edge, which an app may show as a
+  short pause in a long zoom.
+- The list of an input method's candidates opens under the caret of an
+  ordinary text field. For a field the app draws itself (Jetpack Compose) it
+  opens where the mouse pointer last was on the app.
+- A pen held above the screen without touching it is not reported to the app.
 
 What an app can use (sound, video, the camera, Bluetooth and the rest) is
 listed in [Compatibility](APPS.md#what-works).
@@ -438,6 +465,14 @@ Apps see the PC's Wi-Fi and the Bluetooth devices paired in Windows Settings.
 Network names and scan results need location access for desktop apps in
 Windows' privacy settings, as Android needs the location permission. What
 exactly works is in [Compatibility](APPS.md#the-pcs-hardware).
+
+An app that asks what network it is on is told about the connection your PC
+uses for the internet: wired, Wi-Fi, mobile broadband or a VPN, with its
+addresses and DNS servers. An app that looks for other devices on the local
+network with its own code can join multicast groups as on a phone (Windows
+Firewall may first ask whether to let Win.apk through). Android's built-in
+service discovery (`NsdManager`, mDNS) is not available yet: an app that
+relies on it alone finds nothing.
 
 ## Shared storage
 

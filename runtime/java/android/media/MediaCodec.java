@@ -28,6 +28,10 @@
 // queueSecureInputBuffer here does not decrypt anything, matching this
 // project's no-DRM-circumvention boundary.
 //
+// Encoding (configure with CONFIGURE_FLAG_ENCODE) is real where the host has
+// the encoders (com.macapk.loader.HostMedia: H.264 and AAC, on Windows Media
+// Foundation's); see "Encoder backing" below.
+//
 // Asynchronous mode (setCallback) rides the SAME real backends for both
 // audio and video: asyncDispatchLoop() below drives the synchronous
 // dequeue/queue pair proactively and pushes availability through Callback
@@ -243,28 +247,25 @@ public final class MediaCodec {
         return new MediaCodec("OMX.macapk.dec." + type);
     }
 
-    /** There is NO encoder behind MediaCodec at all -- MediaCodecList registers
-     *  zero of them, configure() ignores CONFIGURE_FLAG_ENCODE entirely, and
-     *  createInputSurface() returns null. So this returned a DECODER under an
-     *  encoder name: an app "encoding" got its PCM fed through an AAC decoder,
-     *  or NPE'd on the null input surface.
-     *
-     *  Throwing IOException here rather than IllegalArgumentException at
-     *  configure() is deliberate. IOException is what AOSP documents for "the
-     *  codec cannot be created", it is a CHECKED exception the callers already
-     *  handle, and it lands inside the corpus caller's protected range: Subway
-     *  Surfers' NatCorder wraps createEncoderByType in a try/catch(IOException)
-     *  but invokes createInputSurface() OUTSIDE it, so today's null-surface NPE
-     *  escapes its constructor while this throw takes its graceful path.
-     *
-     *  macOS itself reports 16 encode formats including AAC, so this is a
-     *  Mac.apk gap, not a host gap -- the honest interim answer, not the
-     *  terminal one. Rung 1 is AudioConverter + VTCompressionSession; see
-     *  docs/media-audio-camera-parity-audit_2026-08-30.md. */
+    /** AOSP: "@throws IOException if the codec cannot be created". The
+     *  encoders are the host's (com.macapk.loader.HostMedia: H.264 and AAC on
+     *  Media Foundation); a mime it has none for, or a host without them,
+     *  gets the IOException a device without that encoder gives. The checked
+     *  exception matters: callers wrap this call, and not always the
+     *  createInputSurface() that follows it. */
     public static MediaCodec createEncoderByType(String type) throws java.io.IOException {
         java.util.Objects.requireNonNull(type, "type");
-        throw new java.io.IOException("no encoder for " + type
-                + " on this host (MediaCodec encoding is not implemented)");
+        if (!macapkCanEncode(type)) {
+            throw new java.io.IOException("no encoder for " + type + " on this host");
+        }
+        return new MediaCodec("OMX.macapk.enc." + type);
+    }
+
+    /** The same predicate configure() uses for CONFIGURE_FLAG_ENCODE. */
+    static boolean macapkCanEncode(String mime) {
+        if (MediaFormat.MIMETYPE_VIDEO_AVC.equals(mime)) return com.macapk.loader.HostMedia.encoderAvailable(true);
+        if (MediaFormat.MIMETYPE_AUDIO_AAC.equals(mime)) return com.macapk.loader.HostMedia.encoderAvailable(false);
+        return false;
     }
 
     public static MediaCodec createByCodecName(String name) throws java.io.IOException {
@@ -369,12 +370,258 @@ public final class MediaCodec {
     private volatile boolean mAsyncRunning;
     private volatile boolean mAsyncPaused;
 
+    // ---- Encoder backing (com.macapk.loader.HostMedia) ---------------------
+    // configure(..., CONFIGURE_FLAG_ENCODE) makes this codec an encoder: H.264
+    // from pictures in input buffers (NV12 or I420) or from an input Surface,
+    // AAC from 16-bit PCM. It rides the decoder's buffer protocol: encoded
+    // buffers wait in mOutQ like decoded PCM does, so the synchronous calls
+    // and the async dispatch loop serve both.
+    public static final String PARAMETER_KEY_REQUEST_SYNC_FRAME = "request-sync";
+    public static final String PARAMETER_KEY_VIDEO_BITRATE = "video-bitrate";
+    public static final String PARAMETER_KEY_SUSPEND = "drop-input-frames";
+    private static final int COLOR_PLANAR = 19;        // CodecCapabilities.COLOR_FormatYUV420Planar (I420)
+    private static final int COLOR_SEMI_PLANAR = 21;   // COLOR_FormatYUV420SemiPlanar (NV12)
+    private boolean mEncoder, mEncVideo, mEncSurfaceInput;
+    private long mEnc = 0;
+    private int mEncWidth, mEncHeight, mEncBitrate, mEncColor, mEncProfile, mEncBitrateMode = 1;
+    private float mEncFps = 30, mEncKeyInterval = 1;
+    private boolean mEncForceKey, mEncInputDone, mEncSuspended, mEncWarnedSize;
+    private long mEncLastInPts = Long.MIN_VALUE, mEncLastOutPts = 0;
+    private byte[] mEncCsd0, mEncCsd1;
+    private android.view.Surface mInputSurface;
+    private ImageReader mInputReader;
+    private android.os.HandlerThread mInputThread;
+
+    private void configureEncoder(MediaFormat format, String mime) {
+        detachInputSurface();
+        mEncoder = true;
+        mIsVideo = false;
+        mFormatId = 0;
+        mEncCsd0 = mEncCsd1 = null;
+        mEncBitrate = format.getInteger(MediaFormat.KEY_BIT_RATE, 0);
+        if (MediaFormat.MIMETYPE_VIDEO_AVC.equals(mime) && macapkCanEncode(mime)) {
+            mEncVideo = true;
+            mEncWidth = format.getInteger(MediaFormat.KEY_WIDTH, 0);
+            mEncHeight = format.getInteger(MediaFormat.KEY_HEIGHT, 0);
+            if (mEncWidth < 16 || mEncHeight < 16 || (mEncWidth & 1) != 0 || (mEncHeight & 1) != 0) {
+                throw new IllegalArgumentException("video/avc encoder: unsupported size "
+                        + mEncWidth + "x" + mEncHeight + " (even, 16 or more)");
+            }
+            mEncColor = format.getInteger(MediaFormat.KEY_COLOR_FORMAT, 0);
+            if (mEncColor != MediaFormat.COLOR_FormatSurface && mEncColor != COLOR_PLANAR
+                    && mEncColor != COLOR_SEMI_PLANAR && mEncColor != MediaFormat.COLOR_FormatYUV420Flexible) {
+                throw new IllegalArgumentException("video/avc encoder: unsupported color format 0x"
+                        + Integer.toHexString(mEncColor));
+            }
+            mEncSurfaceInput = mEncColor == MediaFormat.COLOR_FormatSurface;
+            mEncFps = format.getNumber(MediaFormat.KEY_FRAME_RATE, 30).floatValue();
+            mEncKeyInterval = format.getNumber(MediaFormat.KEY_I_FRAME_INTERVAL, 1).floatValue();
+            mEncProfile = format.getInteger(MediaFormat.KEY_PROFILE, 0);
+            // The constrained profiles are subsets of the plain ones, which is
+            // what the encoder is asked for.
+            if (mEncProfile == MediaCodecInfo.CodecProfileLevel.AVCProfileConstrainedBaseline) {
+                mEncProfile = MediaCodecInfo.CodecProfileLevel.AVCProfileBaseline;
+            } else if (mEncProfile == MediaCodecInfo.CodecProfileLevel.AVCProfileConstrainedHigh) {
+                mEncProfile = MediaCodecInfo.CodecProfileLevel.AVCProfileHigh;
+            }
+            mEncBitrateMode = format.getInteger(MediaFormat.KEY_BIT_RATE_MODE, 1);
+            mInCap = Math.max(IN_CAP, mEncWidth * mEncHeight * 3 / 2);
+        } else if (MediaFormat.MIMETYPE_AUDIO_AAC.equals(mime) && macapkCanEncode(mime)) {
+            mEncVideo = false;
+            mEncSurfaceInput = false;
+            mSampleRate = format.getInteger(MediaFormat.KEY_SAMPLE_RATE, 0);
+            mChannels = format.getInteger(MediaFormat.KEY_CHANNEL_COUNT, 0);
+            if ((mSampleRate != 44100 && mSampleRate != 48000) || mChannels < 1 || mChannels > 2) {
+                throw new IllegalArgumentException("audio/mp4a-latm encoder: unsupported " + mSampleRate + " Hz, "
+                        + mChannels + " channel(s) (44100 or 48000 Hz, mono or stereo)");
+            }
+            mInCap = IN_CAP;
+        } else {
+            mEncoder = false;
+            throw new IllegalArgumentException("no encoder for " + mime + " on this host");
+        }
+    }
+
+    /** The input Surface's two producers: what is drawn on it with a Canvas
+     *  comes through its frame sink, a camera2 session's frames through the
+     *  ImageReader it belongs to (the session feeds ImageReader outputs). */
+    private void attachInputSurface(android.view.Surface persistent) {
+        if (persistent == null) {
+            mInputReader = ImageReader.newInstance(mEncWidth, mEncHeight,
+                    android.graphics.ImageFormat.YUV_420_888, 2);
+            mInputThread = new android.os.HandlerThread("MediaCodec-input");
+            mInputThread.start();
+            mInputReader.setOnImageAvailableListener(reader -> {
+                Image image = reader.acquireLatestImage();
+                if (image == null) return;
+                try { encodeSurfaceImage(image); } finally { image.close(); }
+            }, new android.os.Handler(mInputThread.getLooper()));
+            mInputSurface = mInputReader.getSurface();
+        } else {
+            mInputSurface = persistent;
+        }
+        mInputSurface.macapkSetFrameSink(
+                (argb, w, h, timestampNs) -> encodeSurfaceFrame(argb, w, h, timestampNs / 1000),
+                mEncWidth, mEncHeight);
+    }
+
+    private void detachInputSurface() {
+        if (mInputSurface != null) mInputSurface.macapkSetFrameSink(null, 0, 0);
+        mInputSurface = null;
+        if (mInputReader != null) { mInputReader.close(); mInputReader = null; }
+        if (mInputThread != null) { mInputThread.quitSafely(); mInputThread = null; }
+    }
+
+    /** Presentation times must rise; a producer's clock that repeats is nudged. */
+    private long nextInputPtsLocked(long ptsUs) {
+        if (ptsUs <= mEncLastInPts) ptsUs = mEncLastInPts + 1;
+        mEncLastInPts = ptsUs;
+        return ptsUs;
+    }
+
+    private boolean takesSurfaceFrameLocked(int w, int h) {
+        if (!mStarted || mEnc == 0 || mEncInputDone || mEncSuspended) return false;
+        if (w == mEncWidth && h == mEncHeight) return true;
+        if (!mEncWarnedSize) {
+            mEncWarnedSize = true;
+            System.err.println("[MediaCodec] encoder input Surface: a " + w + "x" + h
+                    + " picture for a " + mEncWidth + "x" + mEncHeight + " encoder");
+        }
+        return false;
+    }
+
+    /** A picture drawn on the input Surface (ARGB, the encoder's size). */
+    private void encodeSurfaceFrame(int[] argb, int w, int h, long ptsUs) {
+        synchronized (mAsyncLock) {
+            if (!takesSurfaceFrameLocked(w, h)) return;
+            boolean key = mEncForceKey;
+            mEncForceKey = false;
+            com.macapk.loader.HostMedia.nativeEncVideoArgb(mEnc, argb, nextInputPtsLocked(ptsUs), key);
+            drainEncoderLocked();
+        }
+    }
+
+    /** A camera picture (YUV_420_888) from the input Surface's ImageReader. A
+     *  camera that could not give the encoder's size exactly is cropped to it,
+     *  or framed in black. */
+    private void encodeSurfaceImage(Image image) {
+        byte[] nv12 = nv12Of(image, mEncWidth, mEncHeight);
+        synchronized (mAsyncLock) {
+            if (nv12 == null || !takesSurfaceFrameLocked(mEncWidth, mEncHeight)) return;
+            boolean key = mEncForceKey;
+            mEncForceKey = false;
+            com.macapk.loader.HostMedia.nativeEncVideo(mEnc, nv12, 0,
+                    nextInputPtsLocked(image.getTimestamp() / 1000), key);
+            drainEncoderLocked();
+        }
+    }
+
+    static byte[] nv12Of(Image image, int w, int h) {
+        Image.Plane[] planes = image.getPlanes();
+        if (planes == null || planes.length < 3) return null;
+        int sw = image.getWidth(), sh = image.getHeight();
+        int cw = Math.min(sw, w), ch = Math.min(sh, h);
+        byte[] out = new byte[w * h * 3 / 2];
+        java.util.Arrays.fill(out, 0, w * h, (byte) 16);
+        java.util.Arrays.fill(out, w * h, out.length, (byte) 128);
+        ByteBuffer y = planes[0].getBuffer().duplicate();
+        int yStride = planes[0].getRowStride();
+        for (int row = 0; row < ch; row++) {
+            y.position(row * yStride);
+            y.get(out, row * w, Math.min(cw, y.remaining()));
+        }
+        ByteBuffer u = planes[1].getBuffer().duplicate(), v = planes[2].getBuffer().duplicate();
+        int uStride = planes[1].getRowStride(), vStride = planes[2].getRowStride();
+        int uStep = planes[1].getPixelStride(), vStep = planes[2].getPixelStride();
+        byte[] uRow = new byte[uStride], vRow = new byte[vStride];
+        for (int row = 0; row < ch / 2; row++) {
+            u.position(row * uStride);
+            int un = Math.min(uRow.length, u.remaining());
+            u.get(uRow, 0, un);
+            v.position(row * vStride);
+            int vn = Math.min(vRow.length, v.remaining());
+            v.get(vRow, 0, vn);
+            int at = w * h + row * w;
+            for (int col = 0; col < cw / 2; col++) {
+                if (col * uStep < un) out[at + col * 2] = uRow[col * uStep];
+                if (col * vStep < vn) out[at + col * 2 + 1] = vRow[col * vStep];
+            }
+        }
+        return out;
+    }
+
+    /** Moves what the encoder has ready into mOutQ. mAsyncLock held. */
+    private void drainEncoderLocked() {
+        if (mEnc == 0) return;
+        long[] meta = new long[2];
+        byte[] b;
+        boolean any = false;
+        while ((b = com.macapk.loader.HostMedia.nativeEncPoll(mEnc, meta)) != null) {
+            int fl = (int) meta[1];
+            if ((fl & BUFFER_FLAG_CODEC_CONFIG) != 0) {
+                // csd-0 / csd-1 for the output format: the SPS and the PPS,
+                // each behind its start code; AAC's config is csd-0 whole.
+                int second = -1;
+                for (int i = 4; mEncVideo && i + 4 <= b.length; i++) {
+                    if (b[i] == 0 && b[i + 1] == 0 && b[i + 2] == 0 && b[i + 3] == 1) { second = i; break; }
+                }
+                mEncCsd0 = second > 0 ? java.util.Arrays.copyOfRange(b, 0, second) : b.clone();
+                mEncCsd1 = second > 0 ? java.util.Arrays.copyOfRange(b, second, b.length) : null;
+            } else {
+                mEncLastOutPts = meta[0];
+            }
+            mOutQ.add(new OutEntry(b, meta[0], fl));
+            any = true;
+        }
+        if (any) mAsyncLock.notifyAll();
+    }
+
+    /** queueInputBuffer for an encoder. mAsyncLock held. */
+    private void queueEncoderInputLocked(int index, int offset, int size, long presentationTimeUs, int flags) {
+        if (mEncSurfaceInput) throw new IllegalStateException("this encoder takes its input from a Surface");
+        boolean eos = (flags & BUFFER_FLAG_END_OF_STREAM) != 0;
+        boolean ok = true;
+        if (size > 0 && mIn != null && index >= 0 && index < mIn.length && !mEncInputDone) {
+            ByteBuffer b = mIn[index].duplicate(); b.position(offset); b.limit(offset + size);
+            byte[] data = new byte[size]; b.get(data);
+            com.macapk.loader.MediaStats.codecIn(mStat);
+            if (mEncVideo) {
+                boolean key = mEncForceKey;
+                mEncForceKey = false;
+                ok = com.macapk.loader.HostMedia.nativeEncVideo(mEnc, data, mEncColor == COLOR_PLANAR ? 1 : 0,
+                        nextInputPtsLocked(presentationTimeUs), key);
+            } else {
+                ok = com.macapk.loader.HostMedia.nativeEncAudio(mEnc, data, size & ~1, presentationTimeUs);
+            }
+        }
+        if (index >= 0 && index < IN_BUFS) mInFree.add(index);
+        if (eos && !mEncInputDone) endEncoderInputLocked();
+        else drainEncoderLocked();
+        // A picture shorter than width * height * 3 / 2, usually.
+        if (!ok) throw new CodecException(0, "the encoder refused the input buffer (" + size + " bytes)");
+    }
+
+    private void endEncoderInputLocked() {
+        mEncInputDone = true;
+        com.macapk.loader.HostMedia.nativeEncFinish(mEnc);
+        drainEncoderLocked();
+        mOutQ.add(new OutEntry(new byte[0], mEncLastOutPts, BUFFER_FLAG_END_OF_STREAM));
+        mAsyncLock.notifyAll();
+    }
+
     // Descriptor (Landroid/media/MediaFormat;Landroid/view/Surface;Landroid/media/MediaCrypto;I)V.
     public void configure(MediaFormat format, android.view.Surface surface,
                           MediaCrypto crypto, int flags) {
         if (format == null) return;
         String mime = format.getString(MediaFormat.KEY_MIME, "");
         mStatMime = mime;
+        if (mEncoder) detachInputSurface();
+        mEncoder = false;
+        mEncSurfaceInput = false;
+        if ((flags & CONFIGURE_FLAG_ENCODE) != 0) {
+            configureEncoder(format, mime);
+            return;
+        }
         mFormatId = 0;
         mIsVideo = false;
         // formatId 1-2 pre-date this table; 3-13 route to the AudioToolbox
@@ -557,7 +804,21 @@ public final class MediaCodec {
 
     public void start() {
         synchronized (mAsyncLock) {
-            if (mFormatId != 0 && mSampleRate > 0 && mChannels > 0) {
+            if (mEncoder) {
+                if (mEnc != 0) { com.macapk.loader.HostMedia.nativeEncClose(mEnc); mEnc = 0; }
+                mEnc = mEncVideo
+                    ? com.macapk.loader.HostMedia.nativeEncOpenVideo(mEncWidth, mEncHeight, mEncBitrate, mEncFps,
+                          mEncKeyInterval, mEncProfile, mEncBitrateMode)
+                    : com.macapk.loader.HostMedia.nativeEncOpenAudio(mSampleRate, mChannels, mEncBitrate);
+                // Loud, as for the decoders below: the registry listed this
+                // encoder, so a size or rate it then refuses is an error.
+                if (mEnc == 0) throw new CodecException(0, "failed to open the " + mStatMime + " encoder");
+                mEncInputDone = false;
+                mEncForceKey = false;
+                mEncSuspended = false;
+                mEncLastInPts = Long.MIN_VALUE;
+                mEncLastOutPts = 0;
+            } else if (mFormatId != 0 && mSampleRate > 0 && mChannels > 0) {
                 mDec = com.macapk.loader.NativeMedia.nativeDecOpen(mFormatId, mSampleRate, mChannels, mCsd0);
                 if (mDec == 0) {
                     // Loud, not silent -- the same reasoning as the video
@@ -603,7 +864,11 @@ public final class MediaCodec {
             mOutPixbuf = mIsVideo ? new long[OUT_BUFS] : null;
             mOutPts    = mIsVideo ? new long[OUT_BUFS] : null;
             mInFree.clear(); mOutFree.clear(); mOutQ.clear();
-            for (int i = 0; i < IN_BUFS;  i++) { mIn[i] = ByteBuffer.allocateDirect(mInCap); mInFree.add(i); }
+            // An encoder fed by a Surface has no input buffers to hand out.
+            for (int i = 0; i < IN_BUFS && !mEncSurfaceInput; i++) {
+                mIn[i] = ByteBuffer.allocateDirect(mInCap); mInFree.add(i);
+            }
+            if (mEncoder) drainEncoderLocked();   // AAC's config is ready at once
             for (int i = 0; i < OUT_BUFS; i++) mOutFree.add(i);
             mStarted = true; mFormatReported = false;
             com.macapk.loader.MediaStats.codecStart(mStat, mStatMime, mHasSurface);
@@ -625,10 +890,13 @@ public final class MediaCodec {
     public void stop()    { com.macapk.loader.MediaStats.codecEnd(mStat, "stop");
                             stopAsyncDispatch(); releaseDec(); mStarted = false; }
     public void reset()   { com.macapk.loader.MediaStats.codecEnd(mStat, "reset");
-                            stopAsyncDispatch(); releaseDec(); mStarted = false; }
+                            stopAsyncDispatch(); releaseDec(); mStarted = false;
+                            detachInputSurface(); mEncoder = false; }
     public void release() {
         com.macapk.loader.MediaStats.codecEnd(mStat, "release");
         stopAsyncDispatch(); releaseDec();
+        mStarted = false;
+        detachInputSurface();
         drainTimedFrames(true);
         // Drop the video-plane geometry binding IF it is still ours (a newer
         // codec's registration wins -- macapkUnregisterVideoSink compares the
@@ -645,7 +913,7 @@ public final class MediaCodec {
                 else if (isVp9()) com.macapk.loader.NativeMedia.nativeVp9Flush(mVidDec);
                 else com.macapk.loader.NativeMedia.nativeVidFlush(mVidDec);
             }
-            if (mIn  != null)  { mInFree.clear();  for (int i = 0; i < IN_BUFS;  i++) mInFree.add(i); }
+            if (mIn  != null)  { mInFree.clear();  for (int i = 0; i < IN_BUFS && !mEncSurfaceInput; i++) mInFree.add(i); }
             if (mOut != null)  { mOutFree.clear(); for (int i = 0; i < OUT_BUFS; i++) mOutFree.add(i); }
             // AOSP: in async mode flush() suspends buffer delivery until the
             // next start() (see start() above); sync-mode callers (mCallback
@@ -754,6 +1022,8 @@ public final class MediaCodec {
     private void releaseDec() {
         synchronized (mAsyncLock) {
             if (mDec != 0) { com.macapk.loader.NativeMedia.nativeDecClose(mDec); mDec = 0; }
+            if (mEnc != 0) { com.macapk.loader.HostMedia.nativeEncClose(mEnc); mEnc = 0; }
+            mAsyncLock.notifyAll();   // a dequeueOutputBuffer waiting on the encoder
             if (mVidDec != 0) {
                 releasePendingVideoFrames();
                 if (isVp8()) com.macapk.loader.NativeMedia.nativeVp8Close(mVidDec);
@@ -1130,6 +1400,9 @@ public final class MediaCodec {
 
     public int dequeueInputBuffer(long timeoutUs) {
         synchronized (mAsyncLock) {
+            if (mEncSurfaceInput && mEncoder) {
+                throw new IllegalStateException("this encoder takes its input from a Surface");
+            }
             if (!mStarted || mInFree.isEmpty()) return INFO_TRY_AGAIN_LATER;
             return mInFree.poll();
         }
@@ -1138,6 +1411,7 @@ public final class MediaCodec {
         if (PRESENT_TRACE && mIsVideo) traceIn();
         synchronized (mAsyncLock) {
             if (!mStarted) return;
+            if (mEncoder) { queueEncoderInputLocked(index, offset, size, presentationTimeUs, flags); return; }
             boolean eos = (flags & BUFFER_FLAG_END_OF_STREAM) != 0;
             boolean codecConfig = (flags & BUFFER_FLAG_CODEC_CONFIG) != 0;
             if (size > 0 && !codecConfig) com.macapk.loader.MediaStats.codecIn(mStat);
@@ -1175,7 +1449,24 @@ public final class MediaCodec {
     }
     public int dequeueOutputBuffer(BufferInfo info, long timeoutUs) {
         synchronized (mAsyncLock) {
-            return tryDequeueOutputLocked(info);
+            int r = tryDequeueOutputLocked(info);
+            // An encoder's output arrives with its input, which a Surface's
+            // producer gives on a thread of its own: wait for it as asked
+            // (a negative timeout waits without limit), as AOSP does.
+            if (!mEncoder || r != INFO_TRY_AGAIN_LATER || timeoutUs == 0) return r;
+            long deadline = timeoutUs < 0 ? Long.MAX_VALUE : System.nanoTime() + timeoutUs * 1000;
+            while (r == INFO_TRY_AGAIN_LATER && mStarted) {
+                long leftMs = (deadline - System.nanoTime()) / 1_000_000;
+                if (leftMs <= 0) break;
+                try {
+                    mAsyncLock.wait(Math.min(leftMs, 100));
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+                r = tryDequeueOutputLocked(info);
+            }
+            return r;
         }
     }
     // Shared output-selection logic for the synchronous dequeueOutputBuffer()
@@ -1191,6 +1482,10 @@ public final class MediaCodec {
     }
     private int tryDequeueOutputLocked0(BufferInfo info) {
         if (!mStarted) return INFO_TRY_AGAIN_LATER;
+        // An encoder's output format carries csd-0/csd-1, which the encoder
+        // knows with its first output: the format is reported then, ahead of
+        // the codec-config buffer and the first frame.
+        if (mEncoder && mOutQ.isEmpty()) return INFO_TRY_AGAIN_LATER;
         // AOSP reports the output format once before the first buffer.
         if (!mFormatReported) { mFormatReported = true; return INFO_OUTPUT_FORMAT_CHANGED; }
         if (mVidDec != 0) {
@@ -1234,7 +1529,16 @@ public final class MediaCodec {
         // exactly like "video decode does not work" and was nothing of the kind.
         // Little-endian is also simply correct: Android PCM 16-bit is
         // little-endian, and so is every Apple Silicon host we run on.
-        mOut[oi] = ByteBuffer.wrap(e.pcm).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+        if (mEncoder) {
+            // Direct, as every MediaCodec buffer is on Android: native
+            // consumers (WebRTC's) take its address.
+            ByteBuffer direct = ByteBuffer.allocateDirect(Math.max(1, e.pcm.length));
+            direct.put(e.pcm);
+            direct.flip();
+            mOut[oi] = direct;
+        } else {
+            mOut[oi] = ByteBuffer.wrap(e.pcm).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+        }
         info.set(0, e.pcm.length, e.pts, e.flags);
         return oi;
     }
@@ -1411,6 +1715,22 @@ public final class MediaCodec {
     }
 
     public MediaFormat getOutputFormat() {
+        if (mEncoder) {
+            MediaFormat f;
+            if (mEncVideo) {
+                f = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, mEncWidth, mEncHeight);
+                f.setInteger(MediaFormat.KEY_FRAME_RATE, Math.max(1, Math.round(mEncFps)));
+            } else {
+                f = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, mSampleRate, mChannels);
+                f.setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC);
+            }
+            if (mEncBitrate > 0) f.setInteger(MediaFormat.KEY_BIT_RATE, mEncBitrate);
+            synchronized (mAsyncLock) {
+                if (mEncCsd0 != null) f.setByteBuffer("csd-0", ByteBuffer.wrap(mEncCsd0.clone()));
+                if (mEncCsd1 != null) f.setByteBuffer("csd-1", ByteBuffer.wrap(mEncCsd1.clone()));
+            }
+            return f;
+        }
         if (mIsVideo) {
             MediaFormat f = MediaFormat.createVideoFormat(mVidMime, mVidWidth, mVidHeight);
             f.setInteger(MediaFormat.KEY_COLOR_FORMAT,
@@ -1438,7 +1758,20 @@ public final class MediaCodec {
 
     public MediaCodecInfo getCodecInfo() { return MediaCodecInfo.forName(mName); }
 
-    public void setParameters(android.os.Bundle params) {}
+    /** For an encoder: a key frame on request, a new bit rate, and dropping
+     *  the input Surface's pictures while suspended. A decoder has none. */
+    public void setParameters(android.os.Bundle params) {
+        if (params == null) return;
+        synchronized (mAsyncLock) {
+            if (!mEncoder || !mEncVideo) return;
+            if (params.containsKey(PARAMETER_KEY_REQUEST_SYNC_FRAME)) mEncForceKey = true;
+            if (params.containsKey(PARAMETER_KEY_SUSPEND)) mEncSuspended = params.getInt(PARAMETER_KEY_SUSPEND) != 0;
+            if (params.containsKey(PARAMETER_KEY_VIDEO_BITRATE) && mEnc != 0) {
+                mEncBitrate = params.getInt(PARAMETER_KEY_VIDEO_BITRATE);
+                com.macapk.loader.HostMedia.nativeEncSetBitrate(mEnc, mEncBitrate);
+            }
+        }
+    }
 
     /** The metrics-bundle keys AOSP publishes for getMetrics(). */
     public static final class MetricsConstants {
@@ -1472,49 +1805,60 @@ public final class MediaCodec {
     public void subscribeToVendorParameters(java.util.List<String> names) { }
     public void unsubscribeFromVendorParameters(java.util.List<String> names) { }
 
-    public android.view.Surface createInputSurface() { return null; }
-    public void signalEndOfInputStream() { }
+    /**
+     * The Surface an encoder configured with COLOR_FormatSurface takes its
+     * pictures from, to be asked for after configure() and before start()
+     * (AOSP throws IllegalStateException otherwise). Two kinds of producer
+     * reach the encoder: a Canvas (lockCanvas / unlockCanvasAndPost, each post
+     * one picture stamped with the time it was posted) and a camera2 capture
+     * session that has the Surface among its outputs. An EGL window surface
+     * made on it does not: OpenGL ES drawing is not read back.
+     */
+    public android.view.Surface createInputSurface() {
+        synchronized (mAsyncLock) {
+            if (!mEncoder || !mEncVideo || !mEncSurfaceInput || mStarted) {
+                throw new IllegalStateException("createInputSurface: not a video encoder configured with"
+                        + " COLOR_FormatSurface, or already started");
+            }
+            if (mInputSurface == null) attachInputSurface(null);
+            return mInputSurface;
+        }
+    }
+
+    /** Ends the stream of an encoder fed by a Surface: what it holds comes
+     *  out, then the end-of-stream buffer. */
+    public void signalEndOfInputStream() {
+        synchronized (mAsyncLock) {
+            if (!mEncoder || !mEncSurfaceInput || !mStarted) {
+                throw new IllegalStateException("signalEndOfInputStream: not a started encoder with an input Surface");
+            }
+            if (!mEncInputDone) endEncoderInputLocked();
+        }
+    }
     public void detachOutputSurface() { }
 
-    // =====================================================================
-    // API-gap close-out. Signatures from /tmp/aosp_api/android16.txt; behaviour
-    // from frameworks/base/media/java/android/media/MediaCodec.java
-    // (android16-release).
-    //
-    // Two families land here, both of which this backend genuinely lacks, and
-    // both of which report that the AOSP way rather than by pretending:
-    //   * ENCODE (createPersistentInputSurface / setInputSurface). The native
-    //     bridge is decode-only -- com.macapk.loader.NativeMedia has
-    //     nativeDecOpen/nativeVidDecode and no encoder counterpart -- so there
-    //     is no producer to hand a surface to. createInputSurface() above
-    //     already returns null for the same reason.
-    //   * The BLOCK MODEL (getQueueRequest / getOutputFrame / LinearBlock).
-    //     AOSP itself throws IllegalStateException from these unless the codec
-    //     was configured with CONFIGURE_FLAG_USE_BLOCK_MODEL, and this backend
-    //     cannot be, so that documented exception is the terminal answer.
-    // =====================================================================
-
     /**
-     * API 23. A surface that can be reused across several encoder sessions.
-     * AOSP returns a real surface from the codec service; there is no encoder
-     * here, so this returns the same empty, no-producer Surface the rest of this
-     * tree hands out for a sink that consumes nothing -- non-null, because
-     * AOSP's contract is @NonNull and an app that gets null here NPEs at its
-     * own setInputSurface call instead of learning anything.
+     * API 23. A Surface that outlives the encoder it feeds. It carries what a
+     * Canvas draws on it to whichever encoder setInputSurface gave it to; a
+     * camera2 session does not take it (only createInputSurface()'s Surface
+     * is one a session feeds).
      */
     public static android.view.Surface createPersistentInputSurface() {
         return new android.view.Surface();
     }
 
-    /**
-     * API 23. Feeds an encoder from a persistent input surface. AOSP throws
-     * IllegalStateException when the codec is not a configured encoder -- which
-     * it never is here (no encoder backend) -- so that is the answer, rather
-     * than accepting a surface whose frames go nowhere.
-     */
+    /** API 23. As createInputSurface, with a Surface made by
+     *  createPersistentInputSurface. */
     public void setInputSurface(android.view.Surface surface) {
         java.util.Objects.requireNonNull(surface, "surface must not be null");
-        throw new IllegalStateException("MediaCodec is not a configured encoder");
+        synchronized (mAsyncLock) {
+            if (!mEncoder || !mEncVideo || !mEncSurfaceInput || mStarted) {
+                throw new IllegalStateException("MediaCodec is not a video encoder configured with"
+                        + " COLOR_FormatSurface, or already started");
+            }
+            detachInputSurface();
+            attachInputSurface(surface);
+        }
     }
 
     /** API 31, tunneled playback only. Mac.apk has no tunneled path

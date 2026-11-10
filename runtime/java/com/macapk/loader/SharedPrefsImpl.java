@@ -182,6 +182,31 @@ public final class SharedPrefsImpl implements SharedPreferences {
         load();
     }
 
+    /** Context.getSharedPreferences(File, int): the preferences of a file the
+     *  caller names itself. Interned in the same table as the by-name ones (AOSP's
+     *  sSharedPrefsCache is keyed by file for both), so a file reached both ways
+     *  is still one instance. */
+    public static SharedPrefsImpl macapkGet(Context ctx, File f) {
+        String key;
+        try { key = f.getCanonicalPath(); } catch (Throwable t) { key = f.getAbsolutePath(); }
+        synchronized (sByPath) {
+            SharedPrefsImpl p = sByPath.get(key);
+            if (p == null) { p = new SharedPrefsImpl(ctx, f); sByPath.put(key, p); }
+            return p;
+        }
+    }
+
+    /** No legacy migration here: that is about where WE used to keep by-name
+     *  files. A file that does not exist is empty preferences, as on a device. */
+    private SharedPrefsImpl(Context ctx, File f) {
+        try {
+            android.content.pm.ApplicationInfo ai = ctx.getApplicationInfo();
+            if (ai != null && ai.targetSdkVersion > 0) macapkTargetSdk = ai.targetSdkVersion;
+        } catch (Throwable ignored) { }
+        this.file = f;
+        load();
+    }
+
     private void load() {
         synchronized (macapkPathLock()) { macapkLoadLocked(); }
     }

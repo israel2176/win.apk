@@ -1,27 +1,12 @@
 // android.media.MediaMetadataRetriever -- pulls metadata + frames out of a
 // media file. AOSP frameworks/base media/java/android/media/MediaMetadataRetriever.java.
 //
-// Mac.apk has no full (stagefright-class) demuxer/decoder backend wired into
-// the JVM side, so frame extraction (getFrameAtTime and friends) and any key
-// that needs a decoded video track (HAS_VIDEO / VIDEO_WIDTH / VIDEO_HEIGHT)
-// stay null -- those need runtime/src/media_video.mm's macapk_vd_* core wired
-// through a new native bridge (like com.macapk.loader.NativeMedia below, but
-// for video), which is outside this file's ownership.
-//
-// The AUDIO side is not hypothetical, though: runtime/src/media_decode.mm's
-// AudioToolbox-backed demuxer is already implemented and already registered
-// as com.macapk.loader.NativeMedia (it backs MediaExtractor/MediaCodec). It
-// answers real duration / sample-rate / channel-count / track-presence for
-// any container AudioFile can open -- which includes plain audio files and,
-// per AudioFileOpenURL's normal behavior, the audio track of many video
-// containers too (AudioFile only ever reports the AUDIO stream; it has no
-// opinion on whether a video stream also exists, so HAS_VIDEO/WIDTH/HEIGHT
-// cannot be answered from it -- those legitimately stay null). We wire
-// extractMetadata's audio-answerable keys (DURATION, HAS_AUDIO, BITRATE via
-// file-size/duration, MIMETYPE via extension) to that already-shipped,
-// already-registered core below. Every other key, and every frame/image
-// method, keeps AOSP's other legal answer: null, exactly as AOSP itself
-// returns null for a key a given file's container genuinely lacks.
+// The tracks come from MediaExtractor (the host's demuxer), so the keys a
+// container's tracks answer are real: duration, the presence of audio and
+// video, the video's size and rotation, the bit rate, the track count. Frames
+// are decoded by the host for a source with a name (see "frame / image
+// extraction" below). Tags (title, artist, album art) are not read: those
+// keys and getEmbeddedPicture() answer null, as AOSP does for a file without them.
 package android.media;
 
 public class MediaMetadataRetriever implements AutoCloseable {
@@ -62,129 +47,200 @@ public class MediaMetadataRetriever implements AutoCloseable {
     // reads back a different (or no) field.
     public static final int METADATA_KEY_VIDEO_FRAME_COUNT = 32;
 
-    private String mPath;   // resolved local filesystem path, or an opaque URI string we cannot open
-    private long   mDemux;  // com.macapk.loader.NativeMedia demux handle (audio-track metadata only); 0 = unavailable
+    private String mPath;   // a path or an http(s) URL the host can open by name; null for a source that has none
+    private MediaExtractor mExtractor;   // the source's tracks; null when the host cannot read it
 
     public MediaMetadataRetriever() {}
 
-    // AOSP: "may be time-consuming" -- ours genuinely is now, since it opens
-    // the file via AudioToolbox to answer extractMetadata below. AOSP also
-    // validates the source up front and throws IllegalArgumentException for a
-    // local path that plainly does not exist; we mirror that much. A path
-    // that exists but that our audio-only backend cannot parse (a video-only
-    // container, or a codec AudioFile does not recognize) is NOT an error
-    // here -- we have no full stagefright-class demuxer to guarantee AOSP
-    // could have opened it either, so extractMetadata degrades to null for
-    // the keys that needed it, same as before this fix.
+    private void open(String pathOrUrl) {
+        closeDemux();
+        mPath = pathOrUrl;
+        MediaExtractor ex = new MediaExtractor();
+        try {
+            ex.setDataSource(pathOrUrl);
+            mExtractor = ex;
+        } catch (java.io.IOException | RuntimeException e) {
+            // A file the host's demuxer cannot read: every key answers null,
+            // AOSP's answer for a key the source does not have.
+            ex.release();
+        }
+    }
+
+    // AOSP validates the source up front and throws IllegalArgumentException
+    // for a local path that plainly does not exist; a file that exists but
+    // that the host cannot demux is not an error here, its keys are null.
     public void setDataSource(String path) throws IllegalArgumentException {
         closeDemux();
         mPath = null;
-        if (path == null) return;
+        if (path == null) throw new IllegalArgumentException("null path");
         String p = path.startsWith("file://") ? path.substring(7) : path;
-        if (p.indexOf("://") < 0) {
-            if (!new java.io.File(p).exists())
-                throw new IllegalArgumentException(p + " does not exist");
-            mPath = p;
-            mDemux = com.macapk.loader.NativeMedia.nativeDemuxOpen(p);
-        } else {
-            // A scheme we cannot resolve to a local file (content://, http://,
-            // ...): keep the historical lenient behavior. mDemux stays 0, so
-            // extractMetadata answers null for the keys that needed it.
-            mPath = p;
+        if (p.indexOf("://") < 0 && !new java.io.File(p).exists())
+            throw new IllegalArgumentException(p + " does not exist");
+        if (p.indexOf("://") >= 0 && !p.startsWith("http://") && !p.startsWith("https://")) {
+            mPath = null;   // a scheme only a Context can resolve
+            return;
         }
+        open(p);
     }
     public void setDataSource(String uri, java.util.Map<String, String> headers) { setDataSource(uri); }
-    public void setDataSource(java.io.FileDescriptor fd) {}
-    public void setDataSource(java.io.FileDescriptor fd, long offset, long length) {}
+    public void setDataSource(java.io.FileDescriptor fd) { setDataSource(fd, 0, 0x7ffffffffffffffL); }
+    /** The descriptor's tracks answer extractMetadata; frames need a source
+     *  with a name (a path or a URL) and are null for this one. */
+    public void setDataSource(java.io.FileDescriptor fd, long offset, long length) {
+        closeDemux();
+        mPath = null;
+        MediaExtractor ex = new MediaExtractor();
+        try {
+            ex.setDataSource(fd, offset, length);
+            mExtractor = ex;
+        } catch (java.io.IOException | RuntimeException e) {
+            ex.release();
+            throw new IllegalArgumentException("setDataSource failed: " + e.getMessage());
+        }
+    }
     public void setDataSource(android.content.Context context, android.net.Uri uri) {
-        if (uri == null) { closeDemux(); mPath = null; return; }
+        if (uri == null) throw new IllegalArgumentException("null uri");
         String scheme = uri.getScheme();
         if (scheme == null || "file".equals(scheme)) {
             setDataSource(uri.getPath());
+        } else if ("http".equals(scheme) || "https".equals(scheme)) {
+            setDataSource(uri.toString());
         } else {
             closeDemux();
-            mPath = uri.toString();
+            mPath = null;
+            MediaExtractor ex = new MediaExtractor();
+            try {
+                ex.setDataSource(context, uri, null);
+                mExtractor = ex;
+            } catch (java.io.IOException | RuntimeException e) {
+                ex.release();
+                throw new IllegalArgumentException("setDataSource failed: " + e.getMessage());
+            }
         }
     }
-    public void setDataSource(android.content.res.AssetFileDescriptor afd) {}
-    public void setDataSource(MediaDataSource dataSource) {}
+    public void setDataSource(android.content.res.AssetFileDescriptor afd) {
+        if (afd == null) throw new IllegalArgumentException("null afd");
+        if (afd.getDeclaredLength() < 0) setDataSource(afd.getFileDescriptor());
+        else setDataSource(afd.getFileDescriptor(), afd.getStartOffset(), afd.getDeclaredLength());
+    }
+    public void setDataSource(MediaDataSource dataSource) {
+        closeDemux();
+        mPath = null;
+        MediaExtractor ex = new MediaExtractor();
+        try {
+            ex.setDataSource(dataSource);
+            mExtractor = ex;
+        } catch (java.io.IOException | RuntimeException e) {
+            ex.release();
+            throw new IllegalArgumentException("setDataSource failed: " + e.getMessage());
+        }
+    }
+
+    /** The first track whose mime starts with `kind` ("video/" or "audio/"), or null. */
+    private MediaFormat track(String kind) {
+        if (mExtractor == null) return null;
+        for (int i = 0; i < mExtractor.getTrackCount(); i++) {
+            MediaFormat f = mExtractor.getTrackFormat(i);
+            if (f.getString(MediaFormat.KEY_MIME, "").startsWith(kind)) return f;
+        }
+        return null;
+    }
+
+    private long durationUs() {
+        long us = 0;
+        for (int i = 0; mExtractor != null && i < mExtractor.getTrackCount(); i++) {
+            us = Math.max(us, mExtractor.getTrackFormat(i).getLong(MediaFormat.KEY_DURATION, 0));
+        }
+        return us;
+    }
 
     public String extractMetadata(int keyCode) {
+        if (mExtractor == null) return keyCode == METADATA_KEY_MIMETYPE ? mimeTypeFromPath() : null;
+        MediaFormat video = track("video/");
         switch (keyCode) {
-            case METADATA_KEY_HAS_AUDIO:
-                // AOSP: "If this key exists the media contains audio content" --
-                // the value itself is the conventional presence marker "yes".
-                return (mDemux != 0 && com.macapk.loader.NativeMedia.nativeDemuxTrackCount(mDemux) > 0)
-                        ? "yes" : null;
+            // AOSP: "If this key exists the media contains audio content" --
+            // the value itself is the conventional presence marker "yes".
+            case METADATA_KEY_HAS_AUDIO: return track("audio/") != null ? "yes" : null;
+            case METADATA_KEY_HAS_VIDEO: return video != null ? "yes" : null;
+            case METADATA_KEY_VIDEO_WIDTH:
+                return video != null ? String.valueOf(video.getInteger(MediaFormat.KEY_WIDTH, 0)) : null;
+            case METADATA_KEY_VIDEO_HEIGHT:
+                return video != null ? String.valueOf(video.getInteger(MediaFormat.KEY_HEIGHT, 0)) : null;
+            case METADATA_KEY_VIDEO_ROTATION:
+                return video != null ? String.valueOf(video.getInteger(MediaFormat.KEY_ROTATION, 0)) : null;
             case METADATA_KEY_DURATION: {
                 // AOSP: duration in ms, as a decimal string.
-                if (mDemux == 0) return null;
-                long us = com.macapk.loader.NativeMedia.nativeDemuxDurationUs(mDemux);
-                return us >= 0 ? String.valueOf(us / 1000) : null;
+                long us = durationUs();
+                return us > 0 ? String.valueOf(us / 1000) : null;
             }
             case METADATA_KEY_BITRATE: {
-                // AOSP: average bitrate in bits/sec. We have no per-track
-                // bitrate from the container, but total-file-size / duration
-                // is the same "average bitrate" quantity AOSP's own average
-                // (as opposed to per-frame) bitrate answers.
-                if (mDemux == 0 || mPath == null) return null;
-                long us = com.macapk.loader.NativeMedia.nativeDemuxDurationUs(mDemux);
-                if (us <= 0) return null;
-                long bytes = new java.io.File(mPath).length();
-                if (bytes <= 0) return null;
-                return String.valueOf(Math.round(bytes * 8.0 * 1_000_000.0 / us));
+                // AOSP: average bitrate in bits/sec: the tracks' own when the
+                // container states them, else file size over duration.
+                long sum = 0;
+                for (int i = 0; i < mExtractor.getTrackCount(); i++) {
+                    sum += mExtractor.getTrackFormat(i).getInteger(MediaFormat.KEY_BIT_RATE, 0);
+                }
+                if (sum > 0) return String.valueOf(sum);
+                long us = durationUs();
+                long bytes = mPath != null && mPath.indexOf("://") < 0 ? new java.io.File(mPath).length() : 0;
+                return us > 0 && bytes > 0 ? String.valueOf(Math.round(bytes * 8.0 * 1_000_000.0 / us)) : null;
             }
-            case METADATA_KEY_MIMETYPE:
-                // AOSP examples: "video/mp4", "audio/mp4", "audio/amr-wb" -- a
-                // container-level mime, not a codec id, so this is derived
-                // from the path's extension (independent of mDemux/audio
-                // presence) rather than from the audio codec we detected.
-                return mimeTypeFromPath();
-            case METADATA_KEY_NUM_TRACKS: {
-                // AOSP: "the number of tracks, such as audio, video, text"
-                // in the media. Our demux is audio-only (see header), so this
-                // reports the audio track count nativeDemuxTrackCount already
-                // answers for METADATA_KEY_HAS_AUDIO above -- an honest lower
-                // bound (it undercounts a video container's own video/text
-                // tracks the same way HAS_VIDEO already stays null for one)
-                // rather than the unconditional null this key returned before,
-                // for data the extractor already had in hand.
-                if (mDemux == 0) return null;
-                int n = com.macapk.loader.NativeMedia.nativeDemuxTrackCount(mDemux);
-                return n > 0 ? String.valueOf(n) : null;
+            case METADATA_KEY_MIMETYPE: {
+                // AOSP examples: "video/mp4", "audio/mp4": the container's
+                // mime, by the path's extension when it has one.
+                String byName = mimeTypeFromPath();
+                return byName != null ? byName : video != null ? "video/mp4" : null;
             }
+            case METADATA_KEY_NUM_TRACKS:
+                return String.valueOf(mExtractor.getTrackCount());
             default:
+                // Tags (title, artist, ...) are not read from the container.
                 return null;
         }
     }
-    // ---- frame / image extraction -----------------------------------------
-    // Every one of these returns null, and that is AOSP's own documented answer
-    // when a frame "cannot be retrieved". The reason here is a real, single
-    // absence: this class's demuxer (com.macapk.loader.NativeMedia's
-    // nativeDemux* family) is AUDIO-ONLY -- see the file header -- so there is
-    // no video track to pull a frame out of and no HEIF image grid to index
-    // into. Returning a blank or placeholder Bitmap would put a wrong thumbnail
-    // on the screen instead of letting the app fall back to its own.
-    //
-    // The BitmapParams-bearing overloads exist because an app compiled against
-    // API 30+ calls exactly those; AOSP leaves params UNTOUCHED when it returns
-    // null (it only writes actualConfig on success), and so does this -- so a
-    // caller that inspects params afterwards sees its own preferred config
-    // rather than a fabricated "actual" one.
 
-    public android.graphics.Bitmap getFrameAtTime(long timeUs, int option) { return null; }
-    public android.graphics.Bitmap getFrameAtTime(long timeUs) { return null; }
-    public android.graphics.Bitmap getFrameAtTime() { return null; }
+    // ---- frame / image extraction -----------------------------------------
+    // A frame is decoded by the host (com.macapk.loader.HostMedia.nativeFrameAt:
+    // the sync sample before the time, decoded on to the time) for a source
+    // with a name: a path or an http(s) URL. For a FileDescriptor, a content
+    // Uri and a MediaDataSource, and for a file without video, these return
+    // null, AOSP's answer when a frame "cannot be retrieved". The option is
+    // not told apart: the frame is the one at the time, which is
+    // OPTION_CLOSEST's, and no further from it than the sync frames the
+    // other options name. Frames by index and HEIF images are not read.
+
+    public android.graphics.Bitmap getFrameAtTime(long timeUs, int option) {
+        if (mPath == null || mExtractor == null || track("video/") == null) return null;
+        int[] dims = new int[2];
+        int[] argb;
+        try {
+            argb = com.macapk.loader.HostMedia.nativeFrameAt(mPath, timeUs, dims);
+        } catch (LinkageError e) {
+            return null;
+        }
+        if (argb == null || dims[0] <= 0 || dims[1] <= 0) return null;
+        return android.graphics.Bitmap.createBitmap(argb, dims[0], dims[1], android.graphics.Bitmap.Config.ARGB_8888);
+    }
+    public android.graphics.Bitmap getFrameAtTime(long timeUs) { return getFrameAtTime(timeUs, OPTION_CLOSEST_SYNC); }
+    public android.graphics.Bitmap getFrameAtTime() { return getFrameAtTime(-1, OPTION_CLOSEST_SYNC); }
     public android.graphics.Bitmap getFrameAtTime(long timeUs, int option, BitmapParams params) {
         java.util.Objects.requireNonNull(params, "params must not be null");
-        return null;
+        return getFrameAtTime(timeUs, option);
     }
     public android.graphics.Bitmap getScaledFrameAtTime(long timeUs, int option,
-                                                        int dstWidth, int dstHeight) { return null; }
+                                                        int dstWidth, int dstHeight) {
+        if (dstWidth <= 0 || dstHeight <= 0) throw new IllegalArgumentException("Invalid width or height");
+        android.graphics.Bitmap frame = getFrameAtTime(timeUs, option);
+        if (frame == null) return null;
+        // AOSP keeps the aspect ratio inside the box asked for.
+        float scale = Math.min(dstWidth / (float) frame.getWidth(), dstHeight / (float) frame.getHeight());
+        return android.graphics.Bitmap.createScaledBitmap(frame, Math.max(1, Math.round(frame.getWidth() * scale)),
+                Math.max(1, Math.round(frame.getHeight() * scale)), true);
+    }
     public android.graphics.Bitmap getScaledFrameAtTime(long timeUs, int option,
             int dstWidth, int dstHeight, BitmapParams params) {
         java.util.Objects.requireNonNull(params, "params must not be null");
-        return null;
+        return getScaledFrameAtTime(timeUs, option, dstWidth, dstHeight);
     }
     public android.graphics.Bitmap getFrameAtIndex(int frameIndex) { return null; }
     public android.graphics.Bitmap getFrameAtIndex(int frameIndex, BitmapParams params) {
@@ -239,7 +295,7 @@ public class MediaMetadataRetriever implements AutoCloseable {
     @Override public void close() { release(); }
 
     private void closeDemux() {
-        if (mDemux != 0) { com.macapk.loader.NativeMedia.nativeDemuxClose(mDemux); mDemux = 0; }
+        if (mExtractor != null) { mExtractor.release(); mExtractor = null; }
     }
 
     private String mimeTypeFromPath() {

@@ -1022,6 +1022,25 @@ WINAPK_GUEST_ABI int g_unsetenv(const char* name) {
     }
     return 0;
 }
+// putenv("NAME=value"): Bionic's rejects a string with no name or no '='.
+// The pair is copied into the store, as setenv's is; later writes through the
+// caller's string do not reach it. Gecko's libmozglue wraps putenv, setenv,
+// unsetenv and clearenv and looks each real one up with dlsym(RTLD_NEXT) on
+// its first call: one that is missing is a deliberate crash there.
+WINAPK_GUEST_ABI int g_putenv(char* str) {
+    const char* eq = str ? std::strchr(str, '=') : nullptr;
+    if (!eq || eq == str) {
+        *guest_errno() = kEINVAL;
+        return -1;
+    }
+    return g_setenv(std::string(str, static_cast<size_t>(eq - str)).c_str(), eq + 1, 1);
+}
+WINAPK_GUEST_ABI int g_clearenv() {
+    std::lock_guard<std::mutex> hold(g_env_lock);
+    env().clear();
+    rebuild_environ();
+    return 0;
+}
 
 // ---- process identity and limits ------------------------------------------------------------
 WINAPK_GUEST_ABI int g_getpid() { return static_cast<int>(GetCurrentProcessId()); }
@@ -1249,8 +1268,18 @@ int64_t guest_futex(uint32_t* uaddr, int op, uint32_t val, const GuestTimespec* 
     *guest_errno() = kENOSYS;
     return -1;
 }
-WINAPK_GUEST_ABI int64_t g_syscall(int64_t nr, int64_t a, int64_t b, int64_t c, int64_t d, int64_t e) {
+// A sixth argument (mmap's offset) is the first one on the stack; a caller that
+// passes fewer leaves its own frame there, which is only read for the calls that have six.
+WINAPK_GUEST_ABI int64_t g_syscall(int64_t nr, int64_t a, int64_t b, int64_t c, int64_t d, int64_t e, int64_t f) {
     switch (nr) {
+        // Memory by raw call: Gecko's allocator (mozjemalloc, in libmozglue.so) maps and unmaps
+        // its chunks this way, so that nothing wrapping libc's mmap sees them; without these it
+        // cannot make its first arena ("<jemalloc>: (malloc) Error initializing arena").
+        case 9: return reinterpret_cast<int64_t>(g_mmap(reinterpret_cast<void*>(a), static_cast<size_t>(b),
+                                                        static_cast<int>(c), static_cast<int>(d),
+                                                        static_cast<int>(e), f));
+        case 10: return g_mprotect(reinterpret_cast<void*>(a), static_cast<size_t>(b), static_cast<int>(c));
+        case 11: return g_munmap(reinterpret_cast<void*>(a), static_cast<size_t>(b));
         case 202: return guest_futex(reinterpret_cast<uint32_t*>(a), static_cast<int>(b), static_cast<uint32_t>(c),
                                      reinterpret_cast<const GuestTimespec*>(d));
         case 186: return static_cast<int64_t>(GetCurrentThreadId());  // gettid
@@ -1267,7 +1296,6 @@ WINAPK_GUEST_ABI int64_t g_syscall(int64_t nr, int64_t a, int64_t b, int64_t c, 
             *guest_errno() = kENOSYS;
             return -1;
         default:
-            (void)e;
             *guest_errno() = kENOSYS;
             return -1;
     }
@@ -1877,6 +1905,8 @@ const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("secure_getenv", g_getenv),
     WINAPK_SHIM("setenv", g_setenv),
     WINAPK_SHIM("unsetenv", g_unsetenv),
+    WINAPK_SHIM("putenv", g_putenv),
+    WINAPK_SHIM("clearenv", g_clearenv),
     WINAPK_SHIM("getpid", g_getpid),
     WINAPK_SHIM("getppid", g_getppid),
     WINAPK_SHIM("getuid", g_getuid),

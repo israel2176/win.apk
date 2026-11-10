@@ -366,6 +366,15 @@ WINAPK_GUEST_ABI int64_t g_write_chk(int fd, const void* buf, size_t n, size_t b
     }
     return g_write(fd, buf, n);
 }
+// The missing one of the family answered 0 through the loader's fallback, and a caller that writes
+// until everything is written never ended: Play services' icing index, a whole processor for good.
+WINAPK_GUEST_ABI int64_t g_pwrite_chk(int fd, const void* buf, size_t n, int64_t off, size_t bn) {
+    if (n > bn) {
+        std::fprintf(stderr, "[win.apk] guest FORTIFY: pwrite: prevented buffer over-read\n");
+        std::abort();
+    }
+    return g_pwrite(fd, buf, n, off);
+}
 WINAPK_GUEST_ABI int g_dup(int fd) {
     const int o = fd_dup(fd, -1);
     if (o != -2) return o;
@@ -1806,6 +1815,8 @@ const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("__pread_chk", g_pread_chk),
     WINAPK_SHIM("__pread64_chk", g_pread_chk),
     WINAPK_SHIM("__write_chk", g_write_chk),
+    WINAPK_SHIM("__pwrite_chk", g_pwrite_chk),
+    WINAPK_SHIM("__pwrite64_chk", g_pwrite_chk),
     WINAPK_SHIM("write", g_write),
     WINAPK_SHIM("lseek", g_lseek),
     WINAPK_SHIM("lseek64", g_lseek),

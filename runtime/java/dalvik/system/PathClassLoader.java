@@ -60,7 +60,7 @@ public class PathClassLoader extends BaseDexClassLoader {
         macapkOpenNow();
     }
 
-    /** AOSP: second ctor adds an explicit library search path (advisory here).
+    /** AOSP: second ctor adds an explicit library search path (findLibrary's).
      *  DelegateLastClassLoader constructs through this one, so it inherits the
      *  open-now below; macapkOpenNow calls URLClassLoader.findResource
      *  non-virtually, so DelegateLast's child-first overrides do not run on

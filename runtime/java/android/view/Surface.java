@@ -140,6 +140,22 @@ public class Surface implements android.os.Parcelable {
         }
     }
 
+    /** Win.apk framework-internal: takes what is drawn on this Surface in
+     *  place of the window, as an encoder's input Surface must
+     *  (MediaCodec.createInputSurface). ARGB ints, width * height. */
+    public interface MacapkFrameSink {
+        void onFrame(int[] argb, int width, int height, long timestampNs);
+    }
+    private volatile MacapkFrameSink mFrameSink;
+    private int mSinkWidth, mSinkHeight;
+    /** The sink and the size its pictures must have; null detaches it. */
+    public void macapkSetFrameSink(MacapkFrameSink sink, int width, int height) {
+        mSinkWidth = width;
+        mSinkHeight = height;
+        mFrameSink = sink;
+    }
+    public MacapkFrameSink macapkGetFrameSink() { return mFrameSink; }
+
     public android.graphics.Canvas lockCanvas(android.graphics.Rect dirty) {
         checkNotReleased();
         // AOSP throws IllegalArgumentException when the surface is already
@@ -149,8 +165,9 @@ public class Surface implements android.os.Parcelable {
         if (mCanvasLocked) {
             throw new IllegalArgumentException("Surface was already locked");
         }
-        int w = defaultWidth();
-        int h = defaultHeight();
+        final boolean sunk = mFrameSink != null && mSinkWidth > 0 && mSinkHeight > 0;
+        int w = sunk ? mSinkWidth : defaultWidth();
+        int h = sunk ? mSinkHeight : defaultHeight();
         if (mDrawBitmap == null || mDrawBitmap.getWidth() != w || mDrawBitmap.getHeight() != h) {
             mDrawBitmap = android.graphics.Bitmap.createBitmapWithCanvasBacking(w, h);
             mDrawCanvas = new android.graphics.Canvas(mDrawBitmap);
@@ -184,6 +201,12 @@ public class Surface implements android.os.Parcelable {
         int[] pixels = mDrawBitmap.macapkLiveArgbOrNull();
         if (pixels == null) pixels = mDrawBitmap.macapkArgbBuffer();
         if (pixels == null) return;
+        MacapkFrameSink sink = mFrameSink;
+        if (sink != null) {
+            // An encoder's input: the picture goes to it, not to the window.
+            sink.onFrame(pixels, mDrawBitmap.getWidth(), mDrawBitmap.getHeight(), System.nanoTime());
+            return;
+        }
         try {
             com.macapk.loader.NativeCocoa.presentBitmap(
                 pixels, mDrawBitmap.getWidth(), mDrawBitmap.getHeight());

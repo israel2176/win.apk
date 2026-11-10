@@ -4,7 +4,7 @@
 // getSystemService(NSD_SERVICE) to register/discover network services on the LAN.
 // Mac.apk provides no mDNS bridge to the guest, so registration/discovery
 // callbacks report failure (the honest "discovery unavailable" result) rather
-// than a null service. Mirrors
+// than a null service, from the manager's own thread as AOSP's do. Mirrors
 // frameworks/base/core/java/android/net/nsd/NsdManager.java surface used by apps.
 //
 // Type fix (F-NET audit pass): every listener callback below, and
@@ -77,15 +77,64 @@ public final class NsdManager {
     public NsdManager() {}
     public NsdManager(Context context) {}
 
-    public void registerService(NsdServiceInfo serviceInfo, int protocolType, RegistrationListener listener) {
-        if (listener != null) listener.onRegistrationFailed(serviceInfo, FAILURE_INTERNAL_ERROR);
+    // There is no mDNS responder behind this class yet, so every request ends
+    // in the failure AOSP documents for a service that could not do it:
+    // FAILURE_INTERNAL_ERROR, through the listener. AOSP delivers it from the
+    // manager's own "NsdManager" HandlerThread after the call has returned
+    // (NsdManager.ServiceHandler.handleMessage, REGISTER_SERVICE_FAILED and
+    // the like), never from inside the call. It was delivered inline here:
+    // an app whose callback touches what it sets up right after the call
+    // (the field it stores the listener in, a lock it holds while calling)
+    // then saw the failure before that existed, which no device does.
+    private static android.os.Handler sHandler;
+
+    private static synchronized android.os.Handler handler() {
+        if (sHandler == null) {
+            android.os.HandlerThread t = new android.os.HandlerThread("NsdManager");
+            t.setDaemon(true);  // never holds the process up at exit
+            t.start();
+            sHandler = new android.os.Handler(t.getLooper());
+            android.util.Log.w("NsdManager", "network service discovery (mDNS) is not available here: "
+                    + "registerService, discoverServices and resolveService report FAILURE_INTERNAL_ERROR");
+        }
+        return sHandler;
     }
+
+    private static void checkProtocol(int protocolType) {
+        // AOSP: checkProtocol.
+        if (protocolType != PROTOCOL_DNS_SD) throw new IllegalArgumentException("Unsupported protocol");
+    }
+
+    private static void checkListener(Object listener) {
+        // AOSP: checkListener.
+        if (listener == null) throw new IllegalArgumentException("listener cannot be null");
+    }
+
+    public void registerService(final NsdServiceInfo serviceInfo, int protocolType,
+            final RegistrationListener listener) {
+        checkListener(listener);
+        checkProtocol(protocolType);
+        handler().post(new Runnable() { @Override public void run() {
+            listener.onRegistrationFailed(serviceInfo, FAILURE_INTERNAL_ERROR);
+        } });
+    }
+    /** Nothing is ever registered, so there is nothing to take back. AOSP
+     *  throws for a listener it does not know; an app that unregisters in its
+     *  teardown whatever happened before must not die of that here. */
     public void unregisterService(RegistrationListener listener) {}
-    public void discoverServices(String serviceType, int protocolType, DiscoveryListener listener) {
-        if (listener != null) listener.onStartDiscoveryFailed(serviceType, FAILURE_INTERNAL_ERROR);
+    public void discoverServices(final String serviceType, int protocolType, final DiscoveryListener listener) {
+        checkListener(listener);
+        checkProtocol(protocolType);
+        handler().post(new Runnable() { @Override public void run() {
+            listener.onStartDiscoveryFailed(serviceType, FAILURE_INTERNAL_ERROR);
+        } });
     }
+    /** As unregisterService: no discovery ever started. */
     public void stopServiceDiscovery(DiscoveryListener listener) {}
-    public void resolveService(NsdServiceInfo serviceInfo, ResolveListener listener) {
-        if (listener != null) listener.onResolveFailed(serviceInfo, FAILURE_INTERNAL_ERROR);
+    public void resolveService(final NsdServiceInfo serviceInfo, final ResolveListener listener) {
+        checkListener(listener);
+        handler().post(new Runnable() { @Override public void run() {
+            listener.onResolveFailed(serviceInfo, FAILURE_INTERNAL_ERROR);
+        } });
     }
 }

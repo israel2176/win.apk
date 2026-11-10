@@ -9,7 +9,10 @@
 //     native method resolves, and the JDK refuses the same library for the
 //     test's own loader;
 //   * a stub the startup exposure made is reused, a same-named ELF elsewhere
-//     gets a stub of its own, and a non-ELF path is loaded as given.
+//     gets a stub of its own, and a non-ELF path is loaded as given;
+//   * System.loadLibrary from a class of a dex loader that has its own
+//     librarySearchPath ("<apk>!/lib/<abi>", a Play services module's) finds
+//     the library there, and it binds to that loader.
 //
 // A plain JVM has no guest linker, so the stub here is OnDemandStubFixture.c:
 // a host JNI library the real translator copies as it copies
@@ -59,6 +62,7 @@ public final class OnDemandNativeLoadTest {
             public static String mapped(String name) { return System.mapLibraryName(name); }
             public static void systemLoad(String path) { System.load(path); }
             public static void runtimeLoad(String path) { Runtime.getRuntime().load(path); }
+            public static void systemLoadLibrary(String name) { System.loadLibrary(name); }
             // ReLinker's ApkLibraryInstaller, cut down: the APK entry under the
             // mapped name, copied out of the APK and System.load()ed.
             public static String relink(String apk, String abi, String name, String dir) throws Exception {
@@ -290,7 +294,54 @@ public final class OnDemandNativeLoadTest {
         check("null: the JDK's NullPointerException", thrown(g, "systemLoad", (Object) null).startsWith("NullPointerException"), true);
         check("no stub for those", logSince(mark, "on-demand native:").size(), 0);
 
+        // ---- a module's dex loader with its own library path ----
+        File moduleApk = tmp.resolve("module.apk").toFile();
+        try (ZipOutputStream z = new ZipOutputStream(Files.newOutputStream(moduleApk.toPath()))) {
+            z.putNextEntry(new ZipEntry("lib/x86_64/libqux.so"));
+            z.write(elf);
+            z.closeEntry();
+        }
+        dalvik.system.VMRuntime.setProcessDataDirectory(tmp.resolve("data").toString());
+        ClassLoader module = new ModuleLoader(new URL[] {guestDir.toUri().toURL()},
+                moduleApk.getPath() + "!/lib/x86_64", loader);
+        Class<?> mg = module.loadClass("OnDemandGuest");
+        check("the module's class is its own loader's", mg.getClassLoader() == module, true);
+        check("before its library is loaded, its native does not resolve",
+                String.valueOf(result(mg, "ping")).startsWith("UnsatisfiedLinkError"), true);
+        mark = logMark();
+        int before = loads();
+        call(mg, "systemLoadLibrary", "qux");
+        java.util.List<String> quxLines = logSince(mark, "on-demand native:");
+        File copies = tmp.resolve("data/code_cache/macapk-native-libs").toFile();
+        File[] copyDirs = copies.listFiles();
+        check("the library was copied out of the module's APK",
+                copyDirs != null && copyDirs.length == 1 && new File(copyDirs[0], "libqux.so").isFile(), true);
+        check("one stub, for that copy", quxLines.size() == 1 && quxLines.get(0).contains("libqux.so -> new stub "),
+                true);
+        check("JNI_OnLoad ran once", loads() - before, 1);
+        check("the module's native resolves (bound to the module's loader)", result(mg, "ping"), 73);
+        check("a library the module does not have: UnsatisfiedLinkError",
+                thrown(mg, "systemLoadLibrary", "nope").startsWith("UnsatisfiedLinkError"), true);
+
         finish(tmp);
+    }
+
+    /** Stands for the loader of a module that is not the app's own code (Play
+     *  services' dynamite modules): the guest class again, defined by a dex
+     *  loader under the app's that was given a library search path. */
+    static final class ModuleLoader extends dalvik.system.BaseDexClassLoader {
+        ModuleLoader(URL[] code, String librarySearchPath, ClassLoader parent) {
+            super(code, librarySearchPath, parent);
+        }
+
+        @Override
+        protected Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException {
+            if (!name.equals("OnDemandGuest")) return super.loadClass(name, resolve);
+            synchronized (getClassLoadingLock(name)) {
+                Class<?> c = findLoadedClass(name);
+                return c != null ? c : findClass(name);
+            }
+        }
     }
 
     /** System.load from THIS class, i.e. for the test's own loader. */

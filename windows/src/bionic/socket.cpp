@@ -20,10 +20,15 @@
 #include "bionic_internal.h"
 
 #include <algorithm>
+#include <atomic>
 #include <climits>
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
+#include <set>
+#include <utility>
 #include <vector>
 
 #include <winsock2.h>
@@ -126,16 +131,53 @@ public:
         WSAPOLLFD p{s_, 0, 0};
         if (events & 0x1) p.events |= POLLRDNORM;
         if (events & 0x4) p.events |= POLLWRNORM;
-        if (WSAPoll(&p, 1, 0) < 0) return 0x20;  // POLLNVAL
+        // Asked only about errors and hang-ups (an epoll interest of
+        // EPOLLRDHUP alone, which Dart registers first): WSAPoll wants an event
+        // to look for, and reports those two whatever it is given.
+        if (!p.events) p.events = POLLRDNORM;
+        if (WSAPoll(&p, 1, 0) < 0 || (p.revents & POLLNVAL)) return 0x20;  // POLLNVAL
         short r = 0;
-        if (p.revents & (POLLRDNORM | POLLRDBAND)) r |= 0x1;
-        if (p.revents & POLLWRNORM) r |= 0x4;
+        if ((events & 0x1) && (p.revents & (POLLRDNORM | POLLRDBAND))) r |= 0x1;
+        if ((events & 0x4) && (p.revents & POLLWRNORM)) r |= 0x4;
         if (p.revents & POLLERR) r |= 0x8;
-        if (p.revents & POLLHUP) r |= 0x10 | (events & 0x1);  // readable at EOF, as on Linux
+        // Readable at EOF, as on Linux, and EPOLLRDHUP (0x2000) for who asks.
+        if (p.revents & POLLHUP) r |= 0x10 | (events & (0x1 | 0x2000));
         return r;
     }
     unsigned mode() const override { return 0140000; }  // S_IFSOCK
-    bool needs_polling() const override { return true; }
+    uintptr_t poll_socket() const override { return static_cast<uintptr_t>(s_); }
+    uint32_t in_edges() const override { return in_edges_.load(); }
+    uint32_t out_edges() const override { return out_edges_.load(); }
+    // What edge-triggered epoll (fd.cpp) cannot see on a socket. A read or an
+    // accept that took something: more may be waiting, with no new arrival to
+    // announce it, so "readable" is reported again. A send that would have
+    // blocked, or a connect: "writable" is reported when it next is.
+    void read_edge() {
+        in_edges_.fetch_add(1);
+        fd_notify();
+    }
+    void write_edge() {
+        out_edges_.fetch_add(1);
+        fd_notify();
+    }
+    // The result of a recv-family or send-family call, for the guest.
+    int64_t received(int r) {
+        if (r == SOCKET_ERROR) return fail_wsa();
+        if (r > 0) in_edges_.fetch_add(1);
+        fd_notify();
+        return r;
+    }
+    // `broken_pipe`: send's own errors for a connection that is gone are EPIPE.
+    int64_t sent(int r, bool broken_pipe = false) {
+        if (r != SOCKET_ERROR) {
+            fd_notify();
+            return r;
+        }
+        const int e = WSAGetLastError();
+        if (e == WSAEWOULDBLOCK) write_edge();
+        *guest_errno() = broken_pipe && (e == WSAECONNRESET || e == WSAESHUTDOWN) ? 32 : linux_from_wsa(e);
+        return -1;
+    }
     void set_nonblocking(bool on) override {
         u_long v = on ? 1 : 0;
         ioctlsocket(s_, FIONBIO, &v);
@@ -155,6 +197,7 @@ public:
     bool would_block(int flags, short want) {
         if (!(flags & 0x40) || nonblocking) return false;
         if (ready(want) & (want | 0x18)) return false;
+        if (want & 0x4) write_edge();
         *guest_errno() = kEAGAIN;
         return true;
     }
@@ -165,29 +208,19 @@ public:
     }
     int64_t recv_flags(void* buf, size_t n, int flags) {
         if (would_block(flags, 0x1)) return -1;
-        const int r = ::recv(s_, static_cast<char*>(buf), static_cast<int>(std::min<size_t>(n, INT_MAX)),
-                             host_msg_flags(flags));
-        if (r == SOCKET_ERROR) return fail_wsa();
-        fd_notify();
-        return r;
+        return received(::recv(s_, static_cast<char*>(buf), static_cast<int>(std::min<size_t>(n, INT_MAX)),
+                               host_msg_flags(flags)));
     }
     int64_t send_flags(const void* buf, size_t n, int flags) {
         if (would_block(flags, 0x4)) return -1;
-        const int r = ::send(s_, static_cast<const char*>(buf), static_cast<int>(std::min<size_t>(n, INT_MAX)),
-                             host_msg_flags(flags));
-        if (r == SOCKET_ERROR) {
-            if (WSAGetLastError() == WSAECONNRESET || WSAGetLastError() == WSAESHUTDOWN) {
-                *guest_errno() = 32;  // EPIPE
-                return -1;
-            }
-            return fail_wsa();
-        }
-        fd_notify();
-        return r;
+        return sent(::send(s_, static_cast<const char*>(buf), static_cast<int>(std::min<size_t>(n, INT_MAX)),
+                           host_msg_flags(flags)),
+                    true);
     }
 
 private:
     SOCKET s_;
+    std::atomic<uint32_t> in_edges_{0}, out_edges_{0};
 };
 
 std::shared_ptr<Socket> socket_of(int fd) {
@@ -208,6 +241,16 @@ WINAPK_GUEST_ABI int g_socket(int family, int type, int protocol) {
     winsock_init();
     const SOCKET h = ::socket(host_family(family), type & ~(kSockNonblock | kSockCloexec), protocol);
     if (h == INVALID_SOCKET) return fail_wsa();
+    if ((type & 0xf) == SOCK_DGRAM) {
+        // Winsock fails the next recvfrom with WSAECONNRESET when a datagram
+        // sent earlier met a closed port (the ICMP answer). Linux reports
+        // that only on a connected socket; a discovery socket that sends to
+        // many hosts must keep receiving.
+        constexpr DWORD kSioUdpConnreset = _WSAIOW(IOC_VENDOR, 12);  // SIO_UDP_CONNRESET (mstcpip.h)
+        BOOL report = FALSE;
+        DWORD bytes = 0;
+        WSAIoctl(h, kSioUdpConnreset, &report, sizeof(report), nullptr, 0, &bytes, nullptr, nullptr);
+    }
     return install(h, type);
 }
 
@@ -263,6 +306,7 @@ WINAPK_GUEST_ABI int g_accept4(int fd, void* addr, uint32_t* len, int flags) {
     int hl = sizeof(h);
     const SOCKET c = ::accept(s->handle(), reinterpret_cast<sockaddr*>(&h), &hl);
     if (c == INVALID_SOCKET) return fail_wsa();
+    s->read_edge();  // more connections may be waiting
     to_guest(h, hl, addr, len);
     // A socket accepted from a non-blocking listener is blocking on Linux;
     // Winsock copies the listener's mode, so it is set explicitly.
@@ -280,13 +324,13 @@ WINAPK_GUEST_ABI int g_connect(int fd, const void* addr, uint32_t len) {
         *guest_errno() = kEINVAL;
         return -1;
     }
-    if (::connect(s->handle(), reinterpret_cast<sockaddr*>(&h), hl) == 0) return 0;
+    const int r = ::connect(s->handle(), reinterpret_cast<sockaddr*>(&h), hl);
+    const int e = r == 0 ? 0 : WSAGetLastError();
+    s->write_edge();  // connected, or will be: "writable" is news again
+    if (r == 0) return 0;
     // A non-blocking connect in progress is EINPROGRESS on Linux.
-    if (WSAGetLastError() == WSAEWOULDBLOCK) {
-        *guest_errno() = 115;
-        return -1;
-    }
-    return fail_wsa();
+    *guest_errno() = e == WSAEWOULDBLOCK ? 115 : linux_from_wsa(e);
+    return -1;
 }
 WINAPK_GUEST_ABI int g_shutdown(int fd, int how) {
     auto s = socket_of(fd);
@@ -315,9 +359,8 @@ WINAPK_GUEST_ABI int64_t g_sendto(int fd, const void* buf, size_t n, int flags, 
         return -1;
     }
     if (s->would_block(flags, 0x4)) return -1;
-    const int r = ::sendto(s->handle(), static_cast<const char*>(buf), static_cast<int>(n),
-                           Socket::host_msg_flags(flags), reinterpret_cast<sockaddr*>(&h), hl);
-    return r == SOCKET_ERROR ? fail_wsa() : r;
+    return s->sent(::sendto(s->handle(), static_cast<const char*>(buf), static_cast<int>(n),
+                            Socket::host_msg_flags(flags), reinterpret_cast<sockaddr*>(&h), hl));
 }
 WINAPK_GUEST_ABI int64_t g_recvfrom(int fd, void* buf, size_t n, int flags, void* addr, uint32_t* len) {
     auto s = socket_of(fd);
@@ -329,7 +372,7 @@ WINAPK_GUEST_ABI int64_t g_recvfrom(int fd, void* buf, size_t n, int flags, void
                              reinterpret_cast<sockaddr*>(&h), &hl);
     if (r == SOCKET_ERROR) return fail_wsa();
     if (addr && len) to_guest(h, hl, addr, len);
-    return r;
+    return s->received(r);
 }
 
 // struct msghdr / iovec (x86_64): name, namelen (u32), iov, iovlen (size_t),
@@ -363,9 +406,9 @@ WINAPK_GUEST_ABI int64_t g_sendmsg(int fd, const GuestMsghdr* m, int flags) {
     if (WSASendTo(s->handle(), bufs.data(), static_cast<DWORD>(bufs.size()), &sent,
                   static_cast<DWORD>(Socket::host_msg_flags(flags)), m->name ? reinterpret_cast<sockaddr*>(&h) : nullptr,
                   hl, nullptr, nullptr) != 0) {
-        return fail_wsa();
+        return s->sent(SOCKET_ERROR);
     }
-    return sent;
+    return s->sent(static_cast<int>(sent));
 }
 WINAPK_GUEST_ABI int64_t g_recvmsg(int fd, GuestMsghdr* m, int flags) {
     auto s = socket_of(fd);
@@ -384,7 +427,7 @@ WINAPK_GUEST_ABI int64_t g_recvmsg(int fd, GuestMsghdr* m, int flags) {
     if (m->name) to_guest(h, hl, m->name, &m->namelen);
     m->controllen = 0;  // no ancillary data (SCM_RIGHTS has no Winsock form)
     m->flags = (wflags & MSG_PARTIAL) ? 0x20 : 0;  // MSG_TRUNC
-    return got;
+    return s->received(static_cast<int>(got));
 }
 
 WINAPK_GUEST_ABI int g_getsockname(int fd, void* addr, uint32_t* len) {
@@ -407,6 +450,14 @@ WINAPK_GUEST_ABI int g_getpeername(int fd, void* addr, uint32_t* len) {
 }
 
 // ---- socket options ----------------------------------------------------------------------
+// Three kinds. Options Winsock has under another number, the value unchanged
+// (kOptions). Options whose value differs (set_special, get_special): SO_LINGER,
+// SO_REUSEPORT, the multicast requests, path-MTU discovery, TCP_USER_TIMEOUT.
+// And options Winsock has nothing for: the ones that only tune (kTuning) are
+// accepted and ignored, with one log line each; any other fails with
+// ENOPROTOOPT, as an option the kernel does not know does on Linux, so that
+// code which asks for a feature (UDP_SEGMENT, SO_ZEROCOPY, SO_BINDTODEVICE)
+// takes its fallback instead of relying on something that is not there.
 struct Option {
     int linux_level, linux_name, level, name;
     bool timeval;  // a struct timeval on Linux, a DWORD of milliseconds on Windows
@@ -416,9 +467,10 @@ const Option kOptions[] = {
     {1, 4, SOL_SOCKET, SO_ERROR, false},      {1, 5, SOL_SOCKET, SO_DONTROUTE, false},
     {1, 6, SOL_SOCKET, SO_BROADCAST, false},  {1, 7, SOL_SOCKET, SO_SNDBUF, false},
     {1, 8, SOL_SOCKET, SO_RCVBUF, false},     {1, 9, SOL_SOCKET, SO_KEEPALIVE, false},
-    {1, 10, SOL_SOCKET, SO_OOBINLINE, false}, {1, 13, SOL_SOCKET, SO_LINGER, false},
+    {1, 10, SOL_SOCKET, SO_OOBINLINE, false},
     {1, 20, SOL_SOCKET, SO_RCVTIMEO, true},   {1, 21, SOL_SOCKET, SO_SNDTIMEO, true},
     {1, 30, SOL_SOCKET, SO_ACCEPTCONN, false},
+    {1, 32, SOL_SOCKET, SO_SNDBUF, false},    {1, 33, SOL_SOCKET, SO_RCVBUF, false},  // SO_SNDBUFFORCE, SO_RCVBUFFORCE
     {6, 1, IPPROTO_TCP, TCP_NODELAY, false},  {6, 4, IPPROTO_TCP, 3, false},  // TCP_KEEPIDLE
     {6, 5, IPPROTO_TCP, 17, false},           {6, 6, IPPROTO_TCP, 16, false},  // TCP_KEEPINTVL, TCP_KEEPCNT
     {0, 1, IPPROTO_IP, IP_TOS, false},        {0, 2, IPPROTO_IP, IP_TTL, false},
@@ -428,7 +480,7 @@ const Option kOptions[] = {
     {41, 26, IPPROTO_IPV6, IPV6_V6ONLY, false}, {41, 16, IPPROTO_IPV6, IPV6_UNICAST_HOPS, false},
     {41, 17, IPPROTO_IPV6, IPV6_MULTICAST_IF, false}, {41, 18, IPPROTO_IPV6, IPV6_MULTICAST_HOPS, false},
     {41, 19, IPPROTO_IPV6, IPV6_MULTICAST_LOOP, false}, {41, 20, IPPROTO_IPV6, IPV6_ADD_MEMBERSHIP, false},
-    {41, 21, IPPROTO_IPV6, IPV6_DROP_MEMBERSHIP, false},
+    {41, 21, IPPROTO_IPV6, IPV6_DROP_MEMBERSHIP, false}, {41, 62, IPPROTO_IPV6, IPV6_DONTFRAG, false},
 };
 const Option* find_option(int level, int name) {
     for (const Option& o : kOptions) {
@@ -437,32 +489,262 @@ const Option* find_option(int level, int name) {
     return nullptr;
 }
 
-// Options Winsock lacks (SO_REUSEPORT, SO_PRIORITY, TCP_QUICKACK...) are
-// accepted and ignored: they tune, they do not change what a program does.
+// Options that tune how a socket behaves and change nothing a program can
+// rely on, or ask for ancillary data recvmsg does not deliver here (it
+// reports none). Windows has no equal for them; they succeed.
+struct TuningOption {
+    int level, name;
+    const char* text;
+};
+const TuningOption kTuning[] = {
+    {1, 1, "SO_DEBUG"},          {1, 11, "SO_NO_CHECK"},      {1, 12, "SO_PRIORITY"},
+    {1, 14, "SO_BSDCOMPAT"},     {1, 15, "SO_REUSEPORT"},     {1, 16, "SO_PASSCRED"},
+    {1, 18, "SO_RCVLOWAT"},      {1, 19, "SO_SNDLOWAT"},      {1, 29, "SO_TIMESTAMP"},
+    {1, 35, "SO_TIMESTAMPNS"},   {1, 36, "SO_MARK"},          {1, 40, "SO_RXQ_OVFL"},
+    {1, 46, "SO_BUSY_POLL"},     {1, 49, "SO_INCOMING_CPU"},
+    {0, 8, "IP_PKTINFO"},        {0, 11, "IP_RECVERR"},       {0, 12, "IP_RECVTTL"},
+    {0, 13, "IP_RECVTOS"},       {0, 15, "IP_FREEBIND"},      {0, 24, "IP_BIND_ADDRESS_NO_PORT"},
+    {0, 49, "IP_MULTICAST_ALL"},
+    {41, 25, "IPV6_RECVERR"},    {41, 29, "IPV6_MULTICAST_ALL"}, {41, 49, "IPV6_RECVPKTINFO"},
+    {41, 51, "IPV6_RECVHOPLIMIT"}, {41, 66, "IPV6_RECVTCLASS"}, {41, 67, "IPV6_TCLASS"},
+    {41, 70, "IPV6_AUTOFLOWLABEL"}, {41, 78, "IPV6_FREEBIND"},
+    {6, 2, "TCP_MAXSEG"},        {6, 3, "TCP_CORK"},          {6, 7, "TCP_SYNCNT"},
+    {6, 8, "TCP_LINGER2"},       {6, 9, "TCP_DEFER_ACCEPT"},  {6, 10, "TCP_WINDOW_CLAMP"},
+    {6, 12, "TCP_QUICKACK"},     {6, 13, "TCP_CONGESTION"},   {6, 16, "TCP_THIN_LINEAR_TIMEOUTS"},
+    {6, 18, "TCP_USER_TIMEOUT"}, {6, 23, "TCP_FASTOPEN"},     {6, 25, "TCP_NOTSENT_LOWAT"},
+    {6, 30, "TCP_FASTOPEN_CONNECT"},
+    // Mapped (kOptions), and tuning where the host lacks them: Windows before 10 1709, Wine.
+    {6, 4, "TCP_KEEPIDLE"},      {6, 5, "TCP_KEEPINTVL"},     {6, 6, "TCP_KEEPCNT"},
+};
+const TuningOption* find_tuning(int level, int name) {
+    for (const TuningOption& o : kTuning) {
+        if (o.level == level && o.name == name) return &o;
+    }
+    return nullptr;
+}
+// True the first time a (level, option) pair is asked about: one log line each.
+bool first_time(int level, int name) {
+    static std::mutex lock;
+    static std::set<std::pair<int, int>> seen;
+    std::lock_guard<std::mutex> hold(lock);
+    return seen.insert({level, name}).second;
+}
+int accept_tuning(int level, int name) {
+    const TuningOption* t = find_tuning(level, name);
+    if (first_time(level, name)) {
+        std::fprintf(stderr,
+                     "[win.apk] setsockopt: %s (level %d, option %d) has no Windows equal; accepted, no effect\n",
+                     t ? t->text : "option", level, name);
+    }
+    return 0;
+}
+
+int set_host(SOCKET s, int level, int name, const void* value, int len) {
+    return setsockopt(s, level, name, static_cast<const char*>(value), len) == 0 ? 0 : fail_wsa();
+}
+int set_host_int(SOCKET s, int level, int name, int value) { return set_host(s, level, name, &value, sizeof(value)); }
+int invalid_option_value() {
+    *guest_errno() = kEINVAL;
+    return -1;
+}
+bool is_datagram(SOCKET s) {
+    int type = 0, len = sizeof(type);
+    return getsockopt(s, SOL_SOCKET, SO_TYPE, reinterpret_cast<char*>(&type), &len) == 0 && type == SOCK_DGRAM;
+}
+int guest_int(const void* value, uint32_t len) {
+    int v = 0;
+    std::memcpy(&v, value, std::min<size_t>(len, sizeof(v)));
+    return v;
+}
+
+// The protocol-independent multicast requests (RFC 3678), which Dart, libuv
+// and Chromium join groups with. Linux's struct group_req and
+// group_source_req -- the interface index, four bytes of padding, then one or
+// two sockaddr_storage of 128 bytes -- have Windows' layout, so only the
+// families inside change. Interface indexes are Windows' own already
+// (if_nametoindex below); 0 is the default interface on both. Joining and
+// leaving a group go through the per-family options, which say the same and
+// which every Winsock has (Wine's lacks MCAST_JOIN_GROUP); the requests that
+// name a source go through Windows' MCAST_* ones, under their own numbers.
+static_assert(sizeof(GROUP_SOURCE_REQ) == 264 && offsetof(GROUP_SOURCE_REQ, gsr_group) == 8 &&
+                  offsetof(GROUP_SOURCE_REQ, gsr_source) == 136,
+              "Linux's struct group_req (the first 136 bytes) and group_source_req");
+int host_mcast_option(int linux_name) {
+    switch (linux_name) {
+        case 42: return MCAST_JOIN_GROUP;
+        case 43: return MCAST_BLOCK_SOURCE;
+        case 44: return MCAST_UNBLOCK_SOURCE;
+        case 45: return MCAST_LEAVE_GROUP;
+        case 46: return MCAST_JOIN_SOURCE_GROUP;
+        case 47: return MCAST_LEAVE_SOURCE_GROUP;
+        default: return 0;
+    }
+}
+int set_mcast(SOCKET s, int level, int linux_name, const void* value, uint32_t len) {
+    const bool with_source = linux_name != 42 && linux_name != 45;
+    const uint32_t size = with_source ? sizeof(GROUP_SOURCE_REQ) : offsetof(GROUP_SOURCE_REQ, gsr_source);
+    if (!value || len < size) return invalid_option_value();
+    GROUP_SOURCE_REQ req{};
+    std::memcpy(&req, value, size);
+    req.gsr_group.ss_family = static_cast<ADDRESS_FAMILY>(host_family(req.gsr_group.ss_family));
+    if (!with_source) {
+        const bool join = linux_name == 42;
+        if (req.gsr_group.ss_family == AF_INET) {
+            ip_mreq m{};
+            m.imr_multiaddr = reinterpret_cast<const sockaddr_in*>(&req.gsr_group)->sin_addr;
+            m.imr_interface.s_addr = htonl(req.gsr_interface);  // 0.0.0.<index>: an index to Windows; 0 the default
+            return set_host(s, IPPROTO_IP, join ? IP_ADD_MEMBERSHIP : IP_DROP_MEMBERSHIP, &m, sizeof(m));
+        }
+        if (req.gsr_group.ss_family == AF_INET6) {
+            ipv6_mreq m{};
+            m.ipv6mr_multiaddr = reinterpret_cast<const sockaddr_in6*>(&req.gsr_group)->sin6_addr;
+            m.ipv6mr_interface = req.gsr_interface;
+            return set_host(s, IPPROTO_IPV6, join ? IPV6_ADD_MEMBERSHIP : IPV6_DROP_MEMBERSHIP, &m, sizeof(m));
+        }
+        return invalid_option_value();
+    }
+    req.gsr_source.ss_family = static_cast<ADDRESS_FAMILY>(host_family(req.gsr_source.ss_family));
+    return set_host(s, level == 41 ? IPPROTO_IPV6 : IPPROTO_IP, host_mcast_option(linux_name), &req,
+                    static_cast<int>(size));
+}
+
+// An option whose value Windows wants in another form. False: not one of them.
+bool set_special(SOCKET s, int level, int name, const void* value, uint32_t len, int* result) {
+    if ((level == 0 || level == 41) && host_mcast_option(name)) {
+        *result = set_mcast(s, level, name, value, len);
+        return true;
+    }
+    if (level == 1 && name == 13) {  // SO_LINGER: two ints on Linux, two u_shorts on Windows
+        if (!value || len < 8) return *result = invalid_option_value(), true;
+        int in[2];
+        std::memcpy(in, value, 8);
+        LINGER l{static_cast<u_short>(in[0] != 0), static_cast<u_short>(std::clamp(in[1], 0, 0xffff))};
+        *result = set_host(s, SOL_SOCKET, SO_LINGER, &l, sizeof(l));
+        return true;
+    }
+    if (level == 1 && name == 15) {  // SO_REUSEPORT
+        // Several datagram sockets on one port, which is how discovery
+        // protocols share theirs: Windows allows that under SO_REUSEADDR. For a
+        // listening socket it would let another program take the port over.
+        *result = value && is_datagram(s) ? set_host_int(s, SOL_SOCKET, SO_REUSEADDR, guest_int(value, len) != 0)
+                                          : accept_tuning(level, name);
+        return true;
+    }
+    if (level == 0 && (name == 35 || name == 36) && value && len >= 12) {
+        // struct ip_mreqn (group, local address, interface index), which Linux
+        // takes here too; Windows takes ip_mreq, whose interface is an address
+        // or, as 0.0.0.<index>, an index.
+        uint32_t in[3];
+        std::memcpy(in, value, 12);
+        ip_mreq m{};
+        m.imr_multiaddr.s_addr = in[0];
+        m.imr_interface.s_addr = in[2] ? htonl(in[2]) : in[1];
+        *result = set_host(s, IPPROTO_IP, name == 35 ? IP_ADD_MEMBERSHIP : IP_DROP_MEMBERSHIP, &m, sizeof(m));
+        return true;
+    }
+    if (level == 0 && name == 32 && value && len >= 8) {  // IP_MULTICAST_IF as ip_mreq or ip_mreqn
+        uint32_t in[3] = {};
+        std::memcpy(in, value, std::min<uint32_t>(len, 12));
+        const uint32_t iface = in[2] ? htonl(in[2]) : in[1];
+        *result = set_host(s, IPPROTO_IP, IP_MULTICAST_IF, &iface, sizeof(iface));
+        return true;
+    }
+    if ((level == 0 && name == 10) || (level == 41 && name == 23)) {
+        // IP_MTU_DISCOVER / IPV6_MTU_DISCOVER: IP_PMTUDISC_DO (2) and _PROBE (3)
+        // set "don't fragment", which is what QUIC stacks ask for.
+        if (!value || len < 4) return *result = invalid_option_value(), true;
+        const int dont_fragment = guest_int(value, len) >= 2;
+        *result = level == 0 ? set_host_int(s, IPPROTO_IP, IP_DONTFRAGMENT, dont_fragment)
+                             : set_host_int(s, IPPROTO_IPV6, IPV6_DONTFRAG, dont_fragment);
+        return true;
+    }
+    if (level == 6 && name == 18) {
+        // TCP_USER_TIMEOUT, milliseconds: Windows' TCP_MAXRT (5), seconds.
+        // 0 is the system's default on Linux; an older Windows without the
+        // option keeps its default too.
+        const int ms = value ? guest_int(value, len) : 0;
+        if (ms <= 0 || set_host_int(s, IPPROTO_TCP, 5, (ms + 999) / 1000) != 0) *result = accept_tuning(level, name);
+        else *result = 0;
+        return true;
+    }
+    return false;
+}
+
 WINAPK_GUEST_ABI int g_setsockopt(int fd, int level, int name, const void* value, uint32_t len) {
     auto s = socket_of(fd);
     if (!s) return -1;
+    int result = 0;
+    if (set_special(s->handle(), level, name, value, len, &result)) return result;
     const Option* o = find_option(level, name);
-    if (!o) return 0;
-    if (o->timeval) {
-        if (len < 16) {
-            *guest_errno() = kEINVAL;
-            return -1;
+    if (!o) {
+        if (find_tuning(level, name)) return accept_tuning(level, name);
+        if (first_time(level, name)) {
+            std::fprintf(stderr, "[win.apk] setsockopt: level %d, option %d is not supported (ENOPROTOOPT)\n", level,
+                         name);
         }
+        *guest_errno() = 92;  // ENOPROTOOPT
+        return -1;
+    }
+    if (o->timeval) {
+        if (len < 16) return invalid_option_value();
         int64_t tv[2];
         std::memcpy(tv, value, 16);
         const DWORD ms = static_cast<DWORD>(tv[0] * 1000 + tv[1] / 1000);
-        return setsockopt(s->handle(), o->level, o->name, reinterpret_cast<const char*>(&ms), sizeof(ms)) == 0
-                   ? 0
-                   : fail_wsa();
+        return set_host(s->handle(), o->level, o->name, &ms, sizeof(ms));
     }
-    return setsockopt(s->handle(), o->level, o->name, static_cast<const char*>(value), static_cast<int>(len)) == 0
-               ? 0
-               : fail_wsa();
+    // A one-byte value (IP_MULTICAST_TTL and _LOOP are often set from an
+    // unsigned char, which Linux takes): Windows wants the int.
+    const unsigned char* byte = static_cast<const unsigned char*>(value);
+    const int r = value && len == 1 ? set_host_int(s->handle(), o->level, o->name, *byte)
+                                    : set_host(s->handle(), o->level, o->name, value, static_cast<int>(len));
+    if (r != 0 && *guest_errno() == 92 && find_tuning(level, name)) return accept_tuning(level, name);
+    return r;
+}
+
+// An int answer in the guest's buffer.
+int get_int_result(int v, void* value, uint32_t* len) {
+    std::memcpy(value, &v, std::min<size_t>(*len, sizeof(v)));
+    *len = sizeof(v);
+    return 0;
+}
+bool get_special(SOCKET s, int level, int name, void* value, uint32_t* len, int* result) {
+    if (level != 1) return false;
+    if (name == 13) {  // SO_LINGER
+        LINGER l{};
+        int ll = sizeof(l);
+        if (getsockopt(s, SOL_SOCKET, SO_LINGER, reinterpret_cast<char*>(&l), &ll) != 0) {
+            return *result = fail_wsa(), true;
+        }
+        const int out[2] = {l.l_onoff != 0, l.l_linger};
+        std::memcpy(value, out, std::min<size_t>(*len, sizeof(out)));
+        *len = sizeof(out);
+        return *result = 0, true;
+    }
+    if (name == 15) {  // SO_REUSEPORT: what set_special made of it
+        int on = 0, ol = sizeof(on);
+        if (is_datagram(s)) getsockopt(s, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<char*>(&on), &ol);
+        return *result = get_int_result(on != 0, value, len), true;
+    }
+    if (name == 38 || name == 39) {  // SO_PROTOCOL, SO_DOMAIN
+        WSAPROTOCOL_INFOW info{};
+        int il = sizeof(info);
+        if (getsockopt(s, SOL_SOCKET, SO_PROTOCOL_INFOW, reinterpret_cast<char*>(&info), &il) != 0) {
+            return *result = fail_wsa(), true;
+        }
+        const int answer = name == 38 ? info.iProtocol : guest_family(info.iAddressFamily);
+        return *result = get_int_result(answer, value, len), true;
+    }
+    return false;
 }
 WINAPK_GUEST_ABI int g_getsockopt(int fd, int level, int name, void* value, uint32_t* len) {
     auto s = socket_of(fd);
     if (!s) return -1;
+    if (!value || !len) {
+        *guest_errno() = kEFAULT;
+        return -1;
+    }
+    int result = 0;
+    if (get_special(s->handle(), level, name, value, len, &result)) return result;
     const Option* o = find_option(level, name);
     if (!o) {
         *guest_errno() = 92;  // ENOPROTOOPT
@@ -619,15 +901,111 @@ WINAPK_GUEST_ABI char* g_inet_ntoa(in_addr a) {
 }
 WINAPK_GUEST_ABI uint32_t g_htonl(uint32_t v) { return _byteswap_ulong(v); }
 WINAPK_GUEST_ABI uint16_t g_htons(uint16_t v) { return _byteswap_ushort(v); }
-WINAPK_GUEST_ABI unsigned g_if_nametoindex(const char*) { return 0; }
 
-// ---- getifaddrs -----------------------------------------------------------------------
-// Linux's struct ifaddrs (x86_64 layout), built from GetAdaptersAddresses.
-// Only adapters that are up are listed (Windows carries a dozen down virtual
-// ones, which apps that ignore ifa_flags would show), under Linux-shaped
-// names (lo, eth0, wlan0) since apps display them. A sockaddr carries the
-// guest's family. The stub that returned 0 without filling *out left
-// LocalSend's Rust walking an uninitialised list, and it died on it.
+// ---- network interfaces ---------------------------------------------------------------
+// The interfaces a guest sees, from GetAdaptersAddresses: only adapters that
+// are up (Windows carries a dozen down virtual ones, which apps that ignore
+// ifa_flags would show), under Linux-shaped names (lo, eth0, wlan0) since
+// apps display them and look for them. getifaddrs, if_nametoindex,
+// if_indextoname and if_nameindex all answer from this one list, so a name
+// from one is a name to the others. The index is Windows' own interface
+// index: it is what sin6_scope_id holds and what the multicast options
+// (ipv6_mreq, group_req, ip_mreqn) take.
+struct Interface {
+    char name[16];  // IFNAMSIZ
+    unsigned index;
+    const IP_ADAPTER_ADDRESSES* adapter;  // in the caller's buffer
+};
+bool list_interfaces(std::vector<char>* buf, std::vector<Interface>* out) {
+    ULONG size = 16 * 1024;
+    ULONG rc = ERROR_BUFFER_OVERFLOW;
+    for (int tries = 0; tries < 3 && rc == ERROR_BUFFER_OVERFLOW; ++tries) {
+        buf->resize(size);
+        rc = GetAdaptersAddresses(AF_UNSPEC,
+                                  GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER |
+                                      GAA_FLAG_SKIP_FRIENDLY_NAME,
+                                  nullptr, reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buf->data()), &size);
+    }
+    if (rc != NO_ERROR && rc != ERROR_NO_DATA) return false;
+    int eth = 0, wlan = 0, tun = 0;
+    const auto* adapters = rc == NO_ERROR ? reinterpret_cast<const IP_ADAPTER_ADDRESSES*>(buf->data()) : nullptr;
+    for (const IP_ADAPTER_ADDRESSES* a = adapters; a; a = a->Next) {
+        if (a->OperStatus != IfOperStatusUp) continue;
+        Interface i{};
+        i.adapter = a;
+        i.index = a->IfIndex ? a->IfIndex : a->Ipv6IfIndex;  // IfIndex is 0 with IPv4 off
+        if (a->IfType == IF_TYPE_SOFTWARE_LOOPBACK) {
+            std::snprintf(i.name, sizeof i.name, "lo");
+        } else if (a->IfType == IF_TYPE_IEEE80211) {
+            std::snprintf(i.name, sizeof i.name, "wlan%d", wlan++);
+        } else if (a->IfType == IF_TYPE_PPP || a->IfType == IF_TYPE_TUNNEL) {
+            std::snprintf(i.name, sizeof i.name, "tun%d", tun++);
+        } else {
+            std::snprintf(i.name, sizeof i.name, "eth%d", eth++);
+        }
+        out->push_back(i);
+    }
+    return true;
+}
+
+WINAPK_GUEST_ABI unsigned g_if_nametoindex(const char* name) {
+    std::vector<char> buf;
+    std::vector<Interface> list;
+    if (name && list_interfaces(&buf, &list)) {
+        for (const Interface& i : list) {
+            if (!std::strcmp(i.name, name)) return i.index;
+        }
+    }
+    *guest_errno() = 19;  // ENODEV
+    return 0;
+}
+WINAPK_GUEST_ABI char* g_if_indextoname(unsigned index, char* name) {
+    std::vector<char> buf;
+    std::vector<Interface> list;
+    if (name && index && list_interfaces(&buf, &list)) {
+        for (const Interface& i : list) {
+            if (i.index == index) {
+                std::memcpy(name, i.name, sizeof i.name);
+                return name;
+            }
+        }
+    }
+    *guest_errno() = 6;  // ENXIO
+    return nullptr;
+}
+// struct if_nameindex: the array ends with an entry of index 0 and no name.
+// One block holds the array and, behind it, the names.
+struct GuestIfNameindex {
+    unsigned if_index;
+    char* if_name;
+};
+WINAPK_GUEST_ABI GuestIfNameindex* g_if_nameindex() {
+    std::vector<char> buf;
+    std::vector<Interface> list;
+    if (!list_interfaces(&buf, &list)) {
+        *guest_errno() = kEIO;
+        return nullptr;
+    }
+    const size_t n = list.size();
+    auto* out = static_cast<GuestIfNameindex*>(
+        std::calloc(1, (n + 1) * sizeof(GuestIfNameindex) + n * sizeof(Interface::name)));
+    if (!out) {
+        *guest_errno() = kENOMEM;
+        return nullptr;
+    }
+    char* names = reinterpret_cast<char*>(out + n + 1);
+    for (size_t i = 0; i < n; ++i) {
+        out[i].if_index = list[i].index;
+        out[i].if_name = names + i * sizeof(Interface::name);
+        std::memcpy(out[i].if_name, list[i].name, sizeof(Interface::name));
+    }
+    return out;
+}
+WINAPK_GUEST_ABI void g_if_freenameindex(GuestIfNameindex* p) { std::free(p); }
+
+// Linux's struct ifaddrs (x86_64 layout). A sockaddr carries the guest's
+// family. The stub that returned 0 without filling *out left LocalSend's Rust
+// walking an uninitialised list, and it died on it.
 struct GuestIfaddrs {
     GuestIfaddrs* ifa_next;
     char* ifa_name;
@@ -658,38 +1036,19 @@ WINAPK_GUEST_ABI int g_getifaddrs(GuestIfaddrs** out) {
         *guest_errno() = kEINVAL;
         return -1;
     }
-    ULONG size = 16 * 1024;
     std::vector<char> buf;
-    ULONG rc = ERROR_BUFFER_OVERFLOW;
-    for (int tries = 0; tries < 3 && rc == ERROR_BUFFER_OVERFLOW; ++tries) {
-        buf.resize(size);
-        rc = GetAdaptersAddresses(AF_UNSPEC,
-                                  GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER |
-                                      GAA_FLAG_SKIP_FRIENDLY_NAME,
-                                  nullptr, reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buf.data()), &size);
-    }
-    if (rc != NO_ERROR && rc != ERROR_NO_DATA) {
+    std::vector<Interface> list;
+    if (!list_interfaces(&buf, &list)) {
         *guest_errno() = kEIO;
         return -1;
     }
     GuestIfaddrs* head = nullptr;
     GuestIfaddrs** tail = &head;
-    int eth = 0, wlan = 0, tun = 0;
-    const auto* adapters = rc == NO_ERROR ? reinterpret_cast<const IP_ADAPTER_ADDRESSES*>(buf.data()) : nullptr;
-    for (const IP_ADAPTER_ADDRESSES* a = adapters; a; a = a->Next) {
-        if (a->OperStatus != IfOperStatusUp) continue;
+    for (const Interface& iface : list) {
+        const IP_ADAPTER_ADDRESSES* a = iface.adapter;
+        const char* name = iface.name;
         const bool loopback = a->IfType == IF_TYPE_SOFTWARE_LOOPBACK;
         const bool p2p = a->IfType == IF_TYPE_PPP || a->IfType == IF_TYPE_TUNNEL;
-        char name[16];
-        if (loopback) {
-            std::snprintf(name, sizeof name, "lo");
-        } else if (a->IfType == IF_TYPE_IEEE80211) {
-            std::snprintf(name, sizeof name, "wlan%d", wlan++);
-        } else if (p2p) {
-            std::snprintf(name, sizeof name, "tun%d", tun++);
-        } else {
-            std::snprintf(name, sizeof name, "eth%d", eth++);
-        }
         unsigned flags = kIffUp | kIffRunning;
         if (loopback) {
             flags |= kIffLoopback;
@@ -708,7 +1067,7 @@ WINAPK_GUEST_ABI int g_getifaddrs(GuestIfaddrs** out) {
                 *guest_errno() = kENOMEM;
                 return -1;
             }
-            std::memcpy(node->name, name, sizeof name);
+            std::memcpy(node->name, name, sizeof node->name);
             node->ifa.ifa_name = node->name;
             node->ifa.ifa_flags = flags;
             node->ifa.ifa_addr = &node->addr;
@@ -784,6 +1143,9 @@ const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("htons", g_htons),
     WINAPK_SHIM("ntohs", g_htons),
     WINAPK_SHIM("if_nametoindex", g_if_nametoindex),
+    WINAPK_SHIM("if_indextoname", g_if_indextoname),
+    WINAPK_SHIM("if_nameindex", g_if_nameindex),
+    WINAPK_SHIM("if_freenameindex", g_if_freenameindex),
     WINAPK_SHIM("getifaddrs", g_getifaddrs),
     WINAPK_SHIM("freeifaddrs", g_freeifaddrs),
 };

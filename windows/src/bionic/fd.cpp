@@ -7,8 +7,18 @@
 // pipe or an eventfd and sleep in epoll_wait. So these objects live here, in
 // memory, with one readiness counter: every state change bumps it and wakes
 // the waiters (WaitOnAddress), which then re-check what they wait for.
-// Sockets (socket.cpp) cannot report changes this way and are re-checked
-// every few milliseconds instead.
+//
+// Sockets (socket.cpp) cannot report changes this way: Winsock wakes nobody.
+// A wait that includes sockets therefore sleeps in WSAPoll on them, for the
+// caller's own timeout, with one more socket in the set: a loopback datagram
+// socket of the waiter's (a Waker) that fd_notify() sends a byte to. An armed
+// timerfd shortens the sleep to its expiry. Nothing polls on a period, so an
+// idle event loop uses no processor time.
+//
+// epoll's edge-triggered interest (EPOLLET; Dart, Rust's mio and tokio use
+// nothing else) is real: an event is reported once when it appears and again
+// only after a new edge (Epoll::poll_one). Reported as level-triggered, a
+// connected socket's EPOLLOUT made every epoll_wait return at once, forever.
 //
 // Regular files are always ready, as on Linux.
 
@@ -16,6 +26,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <climits>
 #include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
@@ -28,6 +39,7 @@
 
 #include <fcntl.h>
 #include <io.h>
+#include <winsock2.h>
 #include <windows.h>
 
 namespace winapk::bionic {
@@ -72,6 +84,7 @@ uint64_t now_ms() { return GetTickCount64(); }
 struct PipeBuffer {
     std::mutex lock;
     std::deque<char> data;
+    std::atomic<uint32_t> writes{0}, reads{0};  // FdObject::in_edges of the reader, out_edges of the writer
     bool reader_open = true, writer_open = true;
     static constexpr size_t kCapacity = 65536;  // Linux's default pipe size
 };
@@ -96,6 +109,7 @@ public:
                     const size_t k = std::min(n, b_->data.size());
                     std::copy_n(b_->data.begin(), k, static_cast<char*>(buf));
                     b_->data.erase(b_->data.begin(), b_->data.begin() + static_cast<ptrdiff_t>(k));
+                    b_->reads.fetch_add(1);
                     fd_notify();
                     return static_cast<int64_t>(k);
                 }
@@ -115,6 +129,7 @@ public:
         if (!b_->writer_open) r |= kPollHup;
         return r;
     }
+    uint32_t in_edges() const override { return b_->writes.load(); }
     int ioctl(int request, void* arg) override {
         if (request == 0x541B) {  // FIONREAD
             std::lock_guard<std::mutex> hold(b_->lock);
@@ -156,6 +171,7 @@ public:
                     const size_t k = std::min(room, n - done);
                     b_->data.insert(b_->data.end(), p + done, p + done + k);
                     done += k;
+                    b_->writes.fetch_add(1);
                     fd_notify();
                     continue;
                 }
@@ -176,6 +192,7 @@ public:
         if (!b_->reader_open) r |= kPollErr;
         return r;
     }
+    uint32_t out_edges() const override { return b_->reads.load(); }
 
 private:
     std::shared_ptr<PipeBuffer> b_;
@@ -189,6 +206,7 @@ private:
 struct FifoBuffer {
     std::mutex lock;
     std::deque<char> data;
+    std::atomic<uint32_t> writes{0}, reads{0};  // as PipeBuffer's
     int readers = 0, writers = 0;
 };
 
@@ -219,6 +237,7 @@ public:
                     const size_t k = std::min(n, b_->data.size());
                     std::copy_n(b_->data.begin(), k, static_cast<char*>(buf));
                     b_->data.erase(b_->data.begin(), b_->data.begin() + static_cast<ptrdiff_t>(k));
+                    b_->reads.fetch_add(1);
                     fd_notify();
                     return static_cast<int64_t>(k);
                 }
@@ -245,6 +264,7 @@ public:
                     const size_t k = std::min(room, n - done);
                     b_->data.insert(b_->data.end(), p + done, p + done + k);
                     done += k;
+                    b_->writes.fetch_add(1);
                     fd_notify();
                     continue;
                 }
@@ -266,6 +286,8 @@ public:
         if (can_write_ && b_->readers == 0) r |= kPollErr;
         return r;
     }
+    uint32_t in_edges() const override { return b_->writes.load(); }
+    uint32_t out_edges() const override { return b_->reads.load(); }
     int ioctl(int request, void* arg) override {
         if (request == 0x541B) {  // FIONREAD
             std::lock_guard<std::mutex> hold(b_->lock);
@@ -321,6 +343,9 @@ public:
             std::lock_guard<std::mutex> hold(lock_);
             count_ += v;  // the counter cannot reach UINT64_MAX in practice
         }
+        // Every write is a new edge, as on Linux: mio's waker writes and never
+        // reads, and expects an event per write.
+        writes_.fetch_add(1);
         fd_notify();
         return 8;
     }
@@ -328,17 +353,19 @@ public:
         std::lock_guard<std::mutex> hold(lock_);
         return static_cast<short>(((events & kPollIn) && count_ > 0 ? kPollIn : 0) | (events & kPollOut));
     }
+    uint32_t in_edges() const override { return writes_.load(); }
 
 private:
     std::mutex lock_;
     uint64_t count_;
+    std::atomic<uint32_t> writes_{0};
     bool semaphore_;
 };
 
 // ---- timerfd ----------------------------------------------------------------------------
 // Flutter's engine (fml's message loop) and other event loops arm one of these
 // and sleep in epoll_wait until it fires. Time passing is not a notification,
-// so the waits re-check it (needs_polling) while it is armed.
+// so a wait sleeps no longer than until the expiry (ready_in_ms).
 struct GuestItimerspec {
     int64_t interval_sec, interval_nsec, value_sec, value_nsec;
 };
@@ -378,6 +405,7 @@ public:
                 if (count > 0) {
                     next_ = interval_ ? next_ + static_cast<int64_t>(count) * interval_ : 0;
                     std::memcpy(buf, &count, 8);
+                    changes_.fetch_add(1);
                     return 8;
                 }
                 wait_ns = next_ ? next_ - now : -1;
@@ -393,7 +421,14 @@ public:
         std::lock_guard<std::mutex> hold(lock_);
         return static_cast<short>((events & kPollIn) && expirations(clock_now_ns(clock_)) ? kPollIn : 0);
     }
-    bool needs_polling() const override { return true; }
+    int64_t ready_in_ms() override {
+        std::lock_guard<std::mutex> hold(lock_);
+        if (!next_) return -1;
+        const int64_t now = clock_now_ns(clock_);
+        return now >= next_ ? 0 : (next_ - now) / 1000000 + 1;
+    }
+    // Read or set again, the next expiry is a new edge.
+    uint32_t in_edges() const override { return changes_.load(); }
     int set(int flags, const GuestItimerspec* v, GuestItimerspec* old) {
         if (!v || v->value_nsec < 0 || v->value_nsec >= 1000000000 || v->interval_nsec < 0 ||
             v->interval_nsec >= 1000000000) {
@@ -413,6 +448,7 @@ public:
                 if (next_ == 0) next_ = 1;
             }
         }
+        changes_.fetch_add(1);
         fd_notify();
         return 0;
     }
@@ -436,48 +472,192 @@ private:
     }
     std::mutex lock_;
     int clock_;
+    std::atomic<uint32_t> changes_{0};
     int64_t next_ = 0;      // the next expiry on clock_, ns; 0 disarmed
     int64_t interval_ = 0;  // ns; 0 one-shot
 };
 
+// ---- what a wait sleeps on -------------------------------------------------------------------
+// Gathered while the descriptors are checked: what, besides fd_notify(), can
+// make one of them ready.
+struct WaitPlan {
+    std::vector<WSAPOLLFD> sockets;
+    // The sockets' objects, held for the sleep: a close on another thread then
+    // cannot free a handle WSAPoll is waiting on (or let it name a new socket).
+    std::vector<std::shared_ptr<FdObject>> keep;
+    int64_t timer_ms = -1;  // the nearest timerfd expiry
+    bool spin = false;      // something only a re-check can see: sleep 5 ms at most
+
+    void socket(const std::shared_ptr<FdObject>& o, short events) {
+        WSAPOLLFD p{static_cast<SOCKET>(o->poll_socket()), 0, 0};
+        if (events & kPollIn) p.events |= POLLRDNORM;
+        if (events & kPollOut) p.events |= POLLWRNORM;
+        sockets.push_back(p);
+        keep.push_back(o);
+    }
+    void timer(int64_t ms) {
+        if (ms >= 0 && (timer_ms < 0 || ms < timer_ms)) timer_ms = ms;
+    }
+};
+
+// A waiter's wake-up socket: a loopback datagram socket connected to itself,
+// which WSAPoll watches with the guest's sockets and fd_notify() sends a byte
+// to. One per wait in progress, reused.
+struct Waker {
+    SOCKET s = INVALID_SOCKET;
+    std::atomic<bool> signalled{false};  // a byte is on its way: one per sleep is enough
+};
+std::mutex g_wakers_lock;
+std::vector<Waker*> g_sleeping, g_idle_wakers;
+std::atomic<int> g_sleepers{0};
+
+Waker* acquire_waker() {
+    {
+        std::lock_guard<std::mutex> hold(g_wakers_lock);
+        if (!g_idle_wakers.empty()) {
+            Waker* w = g_idle_wakers.back();
+            g_idle_wakers.pop_back();
+            return w;
+        }
+    }
+    const SOCKET s = ::socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (s == INVALID_SOCKET) return nullptr;
+    sockaddr_in a{};
+    a.sin_family = AF_INET;
+    a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    int len = sizeof(a);
+    u_long nonblocking = 1;
+    if (::bind(s, reinterpret_cast<sockaddr*>(&a), sizeof(a)) != 0 ||
+        getsockname(s, reinterpret_cast<sockaddr*>(&a), &len) != 0 ||
+        ::connect(s, reinterpret_cast<sockaddr*>(&a), sizeof(a)) != 0 || ioctlsocket(s, FIONBIO, &nonblocking) != 0) {
+        closesocket(s);
+        return nullptr;
+    }
+    auto* w = new Waker;
+    w->s = s;
+    return w;
+}
+
+void wake_sleepers() {
+    std::lock_guard<std::mutex> hold(g_wakers_lock);
+    for (Waker* w : g_sleeping) {
+        if (!w->signalled.exchange(true)) ::send(w->s, "", 1, 0);
+    }
+}
+
+// Sleeps until one of the plan's sockets is ready, fd_notify() is called or
+// `ms` pass (INFINITE allowed). kNoSleep when it could not (no wake-up
+// socket, or WSAPoll refused the set): the caller then sleeps the old way.
+enum Slept { kNoSleep, kSlept, kSocketWoke };
+Slept sleep_on_sockets(WaitPlan* plan, uint32_t seen, DWORD ms) {
+    Waker* w = acquire_waker();
+    if (!w) return kNoSleep;
+    {
+        std::lock_guard<std::mutex> hold(g_wakers_lock);
+        g_sleeping.push_back(w);
+    }
+    g_sleepers.fetch_add(1);
+    Slept result = kSlept;
+    // fd_notify() bumps the generation and then looks for sleepers; this
+    // registered and then looks at the generation: one of the two sees the other.
+    if (g_generation.load() == seen) {
+        plan->sockets.push_back({w->s, POLLRDNORM, 0});
+        const int n = WSAPoll(plan->sockets.data(), static_cast<ULONG>(plan->sockets.size()),
+                              ms == INFINITE ? -1 : static_cast<INT>(std::min<DWORD>(ms, INT_MAX)));
+        if (n == SOCKET_ERROR) result = kNoSleep;
+        else if (n > 0 && !plan->sockets.back().revents) result = kSocketWoke;
+    }
+    g_sleepers.fetch_sub(1);
+    {
+        std::lock_guard<std::mutex> hold(g_wakers_lock);
+        g_sleeping.erase(std::find(g_sleeping.begin(), g_sleeping.end(), w));
+    }
+    if (w->signalled.exchange(false)) {
+        char byte[8];
+        while (::recv(w->s, byte, sizeof(byte), 0) > 0) {
+        }
+    }
+    std::lock_guard<std::mutex> hold(g_wakers_lock);
+    g_idle_wakers.push_back(w);
+    return result;
+}
+
 // ---- checking any descriptor ---------------------------------------------------------------
-// revents for one descriptor; *polled is set when the answer may change
-// without a notification.
-short check(int fd, short events, bool* polled) {
-    if (fd < 0) return 0;
-    if (auto o = fd_object(fd)) {
-        if (o->needs_polling()) *polled = true;
-        return o->ready(static_cast<short>(events | kPollErr | kPollHup));
+short epoll_peek(FdObject* o, short events, WaitPlan* plan, bool* is_epoll);
+
+// What a wait for `events` on `o`, none of them ready, sleeps on. `r` is what
+// is ready of anything else (an edge-triggered interest's events already
+// reported), which is not waited for again.
+void plan_wait(WaitPlan* plan, const std::shared_ptr<FdObject>& o, short events, short r, bool spin_if_unwaitable) {
+    if (o->poll_socket() != FdObject::kNoSocket) {
+        const short bits = static_cast<short>(events & (kPollIn | kPollOut) & ~r);
+        if (bits) {
+            plan->socket(o, bits);
+        } else if (spin_if_unwaitable) {
+            plan->spin = true;  // WSAPoll has nothing to wait for but an error or a hang-up
+        }
+    } else if (!(r & kPollIn)) {
+        plan->timer(o->ready_in_ms());
+    }
+}
+
+// revents for one descriptor. When nothing is ready, what would make it so
+// goes into *plan.
+short check_object(const std::shared_ptr<FdObject>& o, int fd, short events, WaitPlan* plan) {
+    if (o) {
+        bool is_epoll = false;
+        short r = epoll_peek(o.get(), events, plan, &is_epoll);
+        if (is_epoll) return r;
+        r = o->ready(static_cast<short>(events | kPollErr | kPollHup));
+        if (!r && plan) plan_wait(plan, o, events, 0, true);
+        return r;
     }
     if (_get_osfhandle(fd) == -1) return kPollNval;
     return static_cast<short>(events & (kPollIn | kPollOut | kPollPri));  // a file: always ready
 }
+short check(int fd, short events, WaitPlan* plan) {
+    if (fd < 0) return 0;
+    return check_object(fd_object(fd), fd, events, plan);
+}
 
 using GuestPollFd = PollFd;
 
-// The common wait: re-checks `count` descriptors until one is ready or the
+// The common wait: re-checks the descriptors until one is ready or the
 // timeout (ms, -1 = forever) passes. Returns how many are ready.
 template <typename Check>
 int wait_ready(int timeout_ms, Check check_all) {
     const uint64_t deadline = timeout_ms < 0 ? UINT64_MAX : now_ms() + static_cast<uint64_t>(timeout_ms);
+    // WSAPoll woke for a socket, and the check that followed found nothing to
+    // report: once is a race (another thread took the data); time after time
+    // it is something WSAPoll sees and the check does not, and the wait falls
+    // back to a re-check every 5 ms rather than turn in place.
+    int woke_for_nothing = 0;
     for (;;) {
         const uint32_t seen = g_generation.load();
-        bool polled = false;
-        const int n = check_all(&polled);
+        WaitPlan plan;
+        const int n = check_all(&plan);
         if (n > 0 || timeout_ms == 0) return n;
         const uint64_t now = now_ms();
         if (now >= deadline) return 0;
         uint64_t wait = deadline == UINT64_MAX ? INFINITE : deadline - now;
-        if (polled) wait = std::min<uint64_t>(wait, 5);
-        wait_for_change(seen, static_cast<DWORD>(wait));
+        if (plan.timer_ms >= 0) wait = std::min<uint64_t>(wait, static_cast<uint64_t>(plan.timer_ms));
+        if (plan.spin) wait = std::min<uint64_t>(wait, 5);
+        if (plan.sockets.empty()) {
+            wait_for_change(seen, static_cast<DWORD>(wait));
+            continue;
+        }
+        const Slept slept = woke_for_nothing < 3 ? sleep_on_sockets(&plan, seen, static_cast<DWORD>(wait)) : kNoSleep;
+        if (slept == kNoSleep) wait_for_change(seen, static_cast<DWORD>(std::min<uint64_t>(wait, 5)));
+        if (slept == kSocketWoke) ++woke_for_nothing;
+        if (slept == kSlept) woke_for_nothing = 0;
     }
 }
 
 WINAPK_GUEST_ABI int g_poll(GuestPollFd* fds, uint64_t nfds, int timeout) {
-    return wait_ready(timeout, [&](bool* polled) {
+    return wait_ready(timeout, [&](WaitPlan* plan) {
         int n = 0;
         for (uint64_t i = 0; i < nfds; ++i) {
-            fds[i].revents = check(fds[i].fd, fds[i].events, polled);
+            fds[i].revents = check(fds[i].fd, fds[i].events, plan);
             if (fds[i].revents) ++n;
         }
         return n;
@@ -532,7 +712,7 @@ WINAPK_GUEST_ABI int g_select(int nfds, GuestFdSet* rd, GuestFdSet* wr, GuestFdS
     }
     const GuestFdSet in_rd = rd ? *rd : GuestFdSet{}, in_wr = wr ? *wr : GuestFdSet{}, in_ex = ex ? *ex : GuestFdSet{};
     const int ms = tv ? static_cast<int>(tv->tv_sec * 1000 + tv->tv_usec / 1000) : -1;
-    return wait_ready(ms, [&](bool* polled) {
+    return wait_ready(ms, [&](WaitPlan* plan) {
         GuestFdSet out_rd{}, out_wr{}, out_ex{};
         int n = 0;
         for (int fd = 0; fd < nfds; ++fd) {
@@ -541,10 +721,13 @@ WINAPK_GUEST_ABI int g_select(int nfds, GuestFdSet* rd, GuestFdSet* wr, GuestFdS
             if (is_set(&in_wr, fd)) want |= kPollOut;
             if (is_set(&in_ex, fd)) want |= kPollPri;
             if (!want) continue;
-            const short r = check(fd, want, polled);
+            const short r = check(fd, want, plan);
+            const int before = n;
             if ((r & (kPollIn | kPollHup | kPollErr)) && (want & kPollIn)) set_bit(&out_rd, fd), ++n;
             if ((r & (kPollOut | kPollErr)) && (want & kPollOut)) set_bit(&out_wr, fd), ++n;
             if ((r & kPollPri) && (want & kPollPri)) set_bit(&out_ex, fd), ++n;
+            // Hung up, in a set that does not report it: nothing to sleep on.
+            if (r && n == before) plan->spin = true;
         }
         if (n > 0) {
             if (rd) *rd = out_rd;
@@ -570,27 +753,100 @@ struct GuestEpollEvent {
 };
 #pragma pack(pop)
 static_assert(sizeof(GuestEpollEvent) == 12, "x86_64's packed struct epoll_event");
-constexpr uint32_t kEpollOneshot = 1u << 30;
+constexpr uint32_t kEpollOneshot = 1u << 30, kEpollEt = 1u << 31;
 
 class Epoll final : public FdObject {
 public:
     struct Interest {
         uint32_t events;
         uint64_t data;
-        bool armed = true;
+        // What the number named when the interest was added (nothing: a
+        // file). Linux drops an interest when its descriptor closes; here that
+        // shows when the number is closed or names something else by now.
+        std::weak_ptr<FdObject> object;
+        bool is_object = false;
+        bool armed = true;  // false once an EPOLLONESHOT interest reported, until EPOLL_CTL_MOD
+        // Edge-triggered state: the events reported and still true, and the
+        // descriptor's edge counters (FdObject::in_edges, out_edges) then.
+        uint32_t reported = 0, in_seen = 0, out_seen = 0;
     };
     std::mutex lock;
     std::map<int, Interest> interests;
-    short ready(short events) override {
-        // An epoll descriptor is readable when one of its descriptors is.
+
+    // What `in` on `fd` reports now. Level-triggered: whatever is ready.
+    // Edge-triggered (EPOLLET): everything that is ready, but only when
+    // something became ready since the last report -- an event that was not
+    // ready then, or one with a new edge since (more written to an eventfd, a
+    // read that took bytes from a socket, a send that would have blocked).
+    // `commit` records the report (epoll_wait); without it this only looks.
+    // Nothing to report: what would change that goes into *plan. *closed: the
+    // descriptor was closed without EPOLL_CTL_DEL.
+    static bool stale(const Interest& in, const std::shared_ptr<FdObject>& now) {
+        return in.is_object ? in.object.lock() != now || !now : now != nullptr;
+    }
+    uint32_t poll_one(int fd, Interest& in, bool commit, WaitPlan* plan, bool* closed) {
+        const std::shared_ptr<FdObject> o = fd_object(fd);
+        if (stale(in, o)) {
+            *closed = true;
+            return 0;
+        }
+        // The counters before the level: an edge between the two is then
+        // seen by the next check, which its fd_notify() brings about.
+        const uint32_t in_now = o ? o->in_edges() : 0, out_now = o ? o->out_edges() : 0;
+        const short want = static_cast<short>(in.events & 0xffff);
+        const short r = check_object(o, fd, want, nullptr);
+        if (r & kPollNval) {
+            *closed = true;
+            return 0;
+        }
+        const uint32_t level = static_cast<uint16_t>(r) & (in.events | kPollErr | kPollHup);
+        uint32_t result = level;
+        if (in.events & kEpollEt) {
+            uint32_t reported = in.reported;
+            if (in_now != in.in_seen) reported &= ~static_cast<uint32_t>(kPollIn);
+            if (out_now != in.out_seen) reported &= ~static_cast<uint32_t>(kPollOut);
+            if (!(level & ~reported)) result = 0;
+        }
+        if (commit) {
+            in.reported = level;
+            in.in_seen = in_now;
+            in.out_seen = out_now;
+        }
+        if (!result && plan && o) {
+            bool is_epoll = false;
+            epoll_peek(o.get(), want, plan, &is_epoll);  // an epoll inside this one: what it sleeps on
+            // After an error or a hang-up WSAPoll would return at once, every time.
+            if (!is_epoll && !(level & (kPollErr | kPollHup))) {
+                plan_wait(plan, o, want, static_cast<short>(level), false);
+            }
+        }
+        return result;
+    }
+    // Whether an epoll_wait would return something now, changing nothing.
+    short peek(short events, WaitPlan* plan) {
         std::lock_guard<std::mutex> hold(lock);
-        bool polled = false;
+        WaitPlan inner;
         for (auto& [fd, in] : interests) {
-            if (in.armed && check(fd, static_cast<short>(in.events), &polled)) return events & kPollIn;
+            bool closed = false;
+            if (in.armed && poll_one(fd, in, false, &inner, &closed)) return static_cast<short>(events & kPollIn);
+        }
+        if (plan) {
+            plan->sockets.insert(plan->sockets.end(), inner.sockets.begin(), inner.sockets.end());
+            plan->keep.insert(plan->keep.end(), inner.keep.begin(), inner.keep.end());
+            plan->timer(inner.timer_ms);
+            plan->spin = plan->spin || inner.spin;
         }
         return 0;
     }
+    // An epoll descriptor is readable when one of its descriptors is.
+    short ready(short events) override { return peek(events, nullptr); }
 };
+
+short epoll_peek(FdObject* o, short events, WaitPlan* plan, bool* is_epoll) {
+    auto* ep = dynamic_cast<Epoll*>(o);
+    *is_epoll = ep != nullptr;
+    return ep ? ep->peek(events, plan) : 0;
+}
 
 WINAPK_GUEST_ABI int g_epoll_create1(int) { return fd_install(std::make_shared<Epoll>()); }
 WINAPK_GUEST_ABI int g_epoll_create(int size) {
@@ -611,15 +867,22 @@ WINAPK_GUEST_ABI int g_epoll_ctl(int epfd, int op, int fd, const GuestEpollEvent
         return -1;
     }
     {
+        const std::shared_ptr<FdObject> o = fd_object(fd);
+        const Epoll::Interest fresh{ev ? ev->events : 0, ev ? ev->data : 0, o, o != nullptr};
         std::lock_guard<std::mutex> hold(ep->lock);
         auto it = ep->interests.find(fd);
+        // An interest left by a descriptor closed since, whose number this one got.
+        if (it != ep->interests.end() && Epoll::stale(it->second, o)) {
+            ep->interests.erase(it);
+            it = ep->interests.end();
+        }
         switch (op) {
             case 1:  // EPOLL_CTL_ADD
                 if (it != ep->interests.end()) {
                     *guest_errno() = kEEXIST;
                     return -1;
                 }
-                ep->interests[fd] = {ev ? ev->events : 0, ev ? ev->data : 0, true};
+                ep->interests[fd] = fresh;
                 break;
             case 2:  // EPOLL_CTL_DEL
                 if (it == ep->interests.end()) {
@@ -628,12 +891,12 @@ WINAPK_GUEST_ABI int g_epoll_ctl(int epfd, int op, int fd, const GuestEpollEvent
                 }
                 ep->interests.erase(it);
                 break;
-            case 3:  // EPOLL_CTL_MOD
+            case 3:  // EPOLL_CTL_MOD: re-arms, and what is ready is reported anew
                 if (it == ep->interests.end()) {
                     *guest_errno() = kENOENT;
                     return -1;
                 }
-                it->second = {ev ? ev->events : 0, ev ? ev->data : 0, true};
+                it->second = fresh;
                 break;
             default:
                 *guest_errno() = kEINVAL;
@@ -643,28 +906,25 @@ WINAPK_GUEST_ABI int g_epoll_ctl(int epfd, int op, int fd, const GuestEpollEvent
     fd_notify();
     return 0;
 }
-// Edge-triggered interest is reported level-triggered: a consumer that reads
-// until EAGAIN, as edge-triggered code must, sees the same events.
 WINAPK_GUEST_ABI int g_epoll_wait(int epfd, GuestEpollEvent* out, int max, int timeout) {
     auto ep = std::dynamic_pointer_cast<Epoll>(fd_object(epfd));
     if (!ep || max <= 0) {
         *guest_errno() = ep ? kEINVAL : kEBADF;
         return -1;
     }
-    return wait_ready(timeout, [&](bool* polled) {
+    return wait_ready(timeout, [&](WaitPlan* plan) {
         int n = 0;
         std::vector<int> closed;
         std::lock_guard<std::mutex> hold(ep->lock);
         for (auto& [fd, in] : ep->interests) {
             if (n >= max) break;
             if (!in.armed) continue;
-            const short want = static_cast<short>(in.events & 0xffff);
-            const short r = check(fd, want, polled);
-            if (r & kPollNval) {  // closed without EPOLL_CTL_DEL: Linux drops it too
+            bool gone = false;
+            const uint32_t got = ep->poll_one(fd, in, true, plan, &gone);
+            if (gone) {  // closed without EPOLL_CTL_DEL: Linux drops it too
                 closed.push_back(fd);
                 continue;
             }
-            const uint32_t got = static_cast<uint32_t>(r) & (in.events | kPollErr | kPollHup);
             if (!got) continue;
             out[n].events = got;
             out[n].data = in.data;
@@ -849,6 +1109,7 @@ int fifo_open(const std::wstring& key, int flags) {
 void fd_notify() {
     g_generation.fetch_add(1);
     WakeByAddressAll(&g_generation);
+    if (g_sleepers.load() > 0) wake_sleepers();  // the waits asleep in WSAPoll
 }
 
 ShimTable fd_symbols() { return WINAPK_SHIM_TABLE(kSymbols); }

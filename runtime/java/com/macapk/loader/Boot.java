@@ -3087,6 +3087,27 @@ public final class Boot {
         try (java.io.FileOutputStream out = new java.io.FileOutputStream(meminfo)) {
             out.write(content.getBytes(java.nio.charset.StandardCharsets.US_ASCII));
         }
+        // Before the alias, which a host may refuse: a failure there must not
+        // take this file with it.
+        writeProcCmdline(procDir);
+        // Win.apk: java.io and java.nio open an Android path as the file under
+        // the android root (the alias is <android root>/tmp/mcmeminf), and a
+        // standard Windows account may not create symbolic links. The alias is
+        // then the same boot-time snapshot as a file of its own.
+        if (System.getProperty("winapk.android.root") != null) {
+            File alias = new File(PROC_MEMINFO_ALIAS);
+            File aliasDir = alias.getParentFile();
+            if (!aliasDir.isDirectory() && !aliasDir.mkdirs() && !aliasDir.isDirectory()) {
+                throw new java.io.IOException("could not create " + aliasDir);
+            }
+            try (java.io.FileOutputStream out = new java.io.FileOutputStream(alias)) {
+                out.write(content.getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+            }
+            NativeLog.i(TAG, "java-side /proc mirror: " + meminfo.getAbsolutePath()
+                + " (MemTotal=" + totalKb + "kB MemFree=" + freeKb + "kB), copied to "
+                + PROC_MEMINFO_ALIAS);
+            return;
+        }
         // Refresh the fixed-length alias every boot (mtime/content can't
         // go stale across app updates or a host RAM change this way, and
         // /tmp is shared/ephemeral -- always re-point rather than trust
@@ -3097,6 +3118,43 @@ public final class Boot {
         NativeLog.i(TAG, "java-side /proc mirror: " + meminfo.getAbsolutePath()
             + " (MemTotal=" + totalKb + "kB MemFree=" + freeKb + "kB), alias="
             + PROC_MEMINFO_ALIAS);
+    }
+
+    /** Writes {@code <androidRoot>/proc/<pid>/cmdline}: this process's name and
+     *  a NUL, what the kernel's file holds once the zygote's child has named
+     *  itself (Process.setArgV0). Apps and SDKs read /proc/self/cmdline or
+     *  /proc/<myPid()>/cmdline to learn which of the package's processes they
+     *  are in (Breezy Weather's Application.onCreate does, with a FileReader).
+     *  A real file like meminfo above, per pid because the android root is one
+     *  for every running app: Win.apk's path table maps /proc/self to
+     *  /proc/<pid> for native and Java opens (windows/src/bionic/paths.cpp).
+     *  Nothing removes a file at exit (the process ends in _exit), so each boot
+     *  drops the directories of pids that no longer run. */
+    private static void writeProcCmdline(File procDir) throws java.io.IOException {
+        long pid = ProcessHandle.current().pid();   // android.os.Process.myPid()
+        File[] entries = procDir.listFiles();
+        if (entries != null) {
+            for (File entry : entries) {
+                long other;
+                try {
+                    other = Long.parseLong(entry.getName());
+                } catch (NumberFormatException notPid) {
+                    continue;
+                }
+                if (other == pid || ProcessHandle.of(other).isPresent()) continue;
+                new File(entry, "cmdline").delete();
+                entry.delete();
+            }
+        }
+        File own = new File(procDir, Long.toString(pid));
+        if (!own.isDirectory() && !own.mkdirs() && !own.isDirectory()) {
+            throw new java.io.IOException("could not create " + own);
+        }
+        String name = android.app.ActivityThread.currentProcessName();
+        try (java.io.FileOutputStream out = new java.io.FileOutputStream(new File(own, "cmdline"))) {
+            out.write(name.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            out.write(0);
+        }
     }
 
     /** Mirror of RuntimeInit.logUncaught, which every uncaught throwable goes

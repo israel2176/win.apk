@@ -101,6 +101,7 @@ int nanosleep(const struct timespec*, struct timespec*);
 int __system_property_get(const char*, char*);
 char* getenv(const char*);
 int setenv(const char*, const char*, int);
+int putenv(char*);
 void* mmap(void*, size_t, int, int, int, long);
 int munmap(void*, size_t);
 int mprotect(void*, size_t, int);
@@ -274,6 +275,16 @@ static void test_locale_and_syscall(void) {
     check("futex WAIT times out with ETIMEDOUT", syscall(202, &word, 128, 5, &ts) == -1 && *__errno() == 110, 0);
     check("futex WAKE succeeds", syscall(202, &word, 129, 1) >= 0, 0);
     check("an unknown syscall fails with ENOSYS", syscall(9999) == -1 && *__errno() == 38, 0);
+    // mozjemalloc (Gecko) maps its chunks by raw call: SYS_mmap with the offset as a sixth
+    // argument, then SYS_munmap of the misaligned head.
+    char* raw = (char*)syscall(9, 0L, 1L << 20, 3L, 0x22L, -1L, 0L);
+    int mapped = raw != (char*)-1 && raw != 0 && raw[1 << 19] == 0;
+    if (mapped) raw[1 << 19] = 3;
+    check("syscall(SYS_mmap) maps zeroed, writable memory", mapped && raw[1 << 19] == 3, 0);
+    check("syscall(SYS_munmap) of a mapping's head leaves the rest",
+          mapped && syscall(11, raw, 65536L) == 0 && raw[1 << 19] == 3, 0);
+    check("syscall(SYS_mprotect), then SYS_munmap of the whole mapping",
+          mapped && syscall(10, raw + 65536, 65536L, 1L) == 0 && syscall(11, raw, 1L << 20) == 0, 0);
 }
 
 // Pipes, eventfd, poll and epoll: the wake-up machinery of every event loop.
@@ -438,6 +449,229 @@ static void test_sockets(void) {
              ((struct sockaddr_in*)res->addr)->port == 0x5000;
     check("getaddrinfo (numeric) in bionic's addrinfo layout", ok, 0);
     if (res) freeaddrinfo(res);
+}
+
+// Datagrams, multicast, interface names, and epoll on sockets: what a
+// Flutter or Rust app's discovery and event loop are made of. Loopback only.
+long sendto(int, const void*, size_t, int, const void*, unsigned);
+long recvfrom(int, void*, size_t, int, void*, unsigned*);
+struct ifaddrs { struct ifaddrs* next; char* name; unsigned flags; void* addr; void* netmask; void* broadaddr; void* data; };
+int getifaddrs(struct ifaddrs**);
+void freeifaddrs(struct ifaddrs*);
+unsigned if_nametoindex(const char*);
+char* if_indextoname(unsigned, char*);
+struct if_nameindex { unsigned index; char* name; };
+struct if_nameindex* if_nameindex(void);
+void if_freenameindex(struct if_nameindex*);
+struct ip_mreq { unsigned multiaddr, interface; };
+// struct group_req: the interface index, padding, a sockaddr_storage of 128 bytes.
+struct group_req { unsigned interface; unsigned pad; struct sockaddr_in group; char rest[112]; };
+struct linger { int onoff, linger; };
+
+// The errno of a failed call, for the check's line.
+static const char* why(int ok) { return ok ? 0 : strerror(*__errno()); }
+
+static long ms_now(int clock) {
+    struct timespec t;
+    clock_gettime(clock, &t);
+    return t.tv_sec * 1000 + t.tv_nsec / 1000000;
+}
+
+// A UDP socket on `addr`, any port, which is returned in network order.
+static int udp_bound(unsigned addr, unsigned short* port) {
+    const int s = socket(2, 2, 0);  // AF_INET, SOCK_DGRAM
+    int one = 1;
+    struct sockaddr_in a = {2, 0, addr, {0}};
+    unsigned len = sizeof a;
+    if (s < 0 || setsockopt(s, 1, 2, &one, 4) != 0 || bind(s, &a, sizeof a) != 0 || getsockname(s, &a, &len) != 0) return -1;
+    *port = a.port;
+    return s;
+}
+
+// Sends `text` to group:port and expects it on `rx`. 1 received, 0 not, -1
+// the host has no route for multicast (no network at all): nothing to test.
+static int multicast_round_trip(int rx, unsigned group, unsigned short port, const char* text) {
+    const int tx = socket(2, 2, 0);
+    unsigned char ttl = 1, loop = 1;  // one byte each, as BSD code sets them
+    struct sockaddr_in to = {2, port, group, {0}};
+    int result = 0;
+    if (setsockopt(tx, 0, 33, &ttl, 1) != 0 || setsockopt(tx, 0, 34, &loop, 1) != 0) result = 0;
+    else if (sendto(tx, text, strlen(text), 0, &to, sizeof to) != (long)strlen(text)) {
+        const int e = *__errno();
+        result = (e == 101 || e == 113 || e == 100 || e == 99) ? -1 : 0;  // ENETUNREACH, EHOSTUNREACH, ENETDOWN, EADDRNOTAVAIL
+    } else {
+        struct pollfd pf = {rx, 1, 0};
+        char b[32] = {0};
+        result = poll(&pf, 1, 2000) == 1 && recvfrom(rx, b, sizeof b, 0, 0, 0) == (long)strlen(text) && !strcmp(b, text);
+    }
+    close(tx);
+    return result;
+}
+
+static int g_late_fd;
+static void* late_writer(void* arg) {
+    (void)arg;
+    usleep(100000);
+    write(g_late_fd, "w", 1);
+    return 0;
+}
+
+static void test_network(void) {
+    // A datagram over loopback.
+    unsigned short port = 0;
+    const int rx = udp_bound(0x0100007f, &port);
+    const int tx = socket(2, 2, 0);
+    struct sockaddr_in to = {2, port, 0x0100007f, {0}}, from = {0, 0, 0, {0}};
+    unsigned from_len = sizeof from;
+    char b[32] = {0};
+    struct pollfd pf = {rx, 1, 0};
+    check("UDP: sendto, poll and recvfrom over loopback",
+          rx >= 0 && tx >= 0 && sendto(tx, "dgram", 5, 0, &to, sizeof to) == 5 && poll(&pf, 1, 2000) == 1 &&
+              recvfrom(rx, b, sizeof b, 0, &from, &from_len) == 5 && !strcmp(b, "dgram") && from.family == 2 &&
+              from.addr == 0x0100007f, b);
+
+    // Options: mapped, translated, accepted as tuning, refused.
+    int one = 1, v = 0;
+    unsigned len = 4;
+    check("setsockopt(SO_REUSEPORT) on a datagram socket is SO_REUSEADDR",
+          setsockopt(tx, 1, 15, &one, 4) == 0 && getsockopt(tx, 1, 15, &v, &len) == 0 && v == 1, 0);
+    check("setsockopt(SO_PRIORITY) only tunes: accepted", setsockopt(tx, 1, 12, &one, 4) == 0, 0);
+    check("setsockopt(SOL_UDP, UDP_SEGMENT) is ENOPROTOOPT, not a silent success",
+          setsockopt(tx, 17, 103, &one, 4) == -1 && *__errno() == 92, 0);
+    check("setsockopt of an unknown option is ENOPROTOOPT", setsockopt(tx, 1, 250, &one, 4) == -1 && *__errno() == 92, 0);
+    const int tcp = socket(2, 1, 0);
+    struct linger lin = {1, 7}, lout = {0, 0};
+    len = sizeof lout;
+    check("SO_LINGER keeps Linux's two ints (on, 7 s)",
+          setsockopt(tcp, 1, 13, &lin, sizeof lin) == 0 && getsockopt(tcp, 1, 13, &lout, &len) == 0 && len == 8 &&
+              lout.onoff == 1 && lout.linger == 7, 0);
+    int idle = 30;
+    int ok = setsockopt(tcp, 6, 4, &idle, 4) == 0;
+    check("setsockopt(TCP_KEEPIDLE)", ok, why(ok));
+    v = -1, len = 4;
+    check("getsockopt(SO_DOMAIN) is AF_INET", getsockopt(tcp, 1, 39, &v, &len) == 0 && v == 2, 0);
+    close(tcp);
+    close(tx);
+    close(rx);
+
+    // Interface names and indexes agree with getifaddrs.
+    struct ifaddrs* list = 0;
+    char name[16] = {0}, back[16] = {0};
+    check("getifaddrs lists an interface", getifaddrs(&list) == 0 && list && list->name, 0);
+    if (list && list->name) strlcpy(name, list->name, sizeof name);
+    if (list) freeifaddrs(list);
+    const unsigned index = if_nametoindex(name);
+    check("if_nametoindex of a getifaddrs name, and if_indextoname back", index != 0 && if_indextoname(index, back) == back &&
+              !strcmp(back, name), name);
+    check("if_nametoindex of no interface is 0 (ENODEV)", if_nametoindex("nope7") == 0 && *__errno() == 19, 0);
+    check("if_indextoname of no index is NULL (ENXIO)", if_indextoname(0x7ffffff0, back) == 0 && *__errno() == 6, 0);
+    struct if_nameindex* all = if_nameindex();
+    int listed = 0;
+    for (struct if_nameindex* i = all; i && i->index; ++i) listed += i->index == index && !strcmp(i->name, name);
+    check("if_nameindex lists it once, and ends with index 0", listed == 1, 0);
+    if (all) if_freenameindex(all);
+
+    // Multicast: the IPv4 option, then the protocol-independent one Dart and
+    // libuv use, on the default interface.
+    const int m = udp_bound(0, &port);
+    struct ip_mreq mreq = {0x014dffef, 0};  // 239.255.77.1
+    ok = m >= 0 && setsockopt(m, 0, 35, &mreq, sizeof mreq) == 0;
+    check("setsockopt(IP_ADD_MEMBERSHIP)", ok, why(ok));
+    int got = multicast_round_trip(m, mreq.multiaddr, port, "mreq");
+    check(got < 0 ? "SKIP (no multicast route): a datagram to the IP_ADD_MEMBERSHIP group arrives"
+                  : "a datagram to the IP_ADD_MEMBERSHIP group arrives", got != 0, 0);
+    check("setsockopt(IP_DROP_MEMBERSHIP)", setsockopt(m, 0, 36, &mreq, sizeof mreq) == 0, 0);
+    struct group_req greq;
+    memset(&greq, 0, sizeof greq);
+    greq.group.family = 2;
+    greq.group.addr = 0x024dffef;  // 239.255.77.2
+    ok = sizeof greq == 136 && setsockopt(m, 0, 42, &greq, sizeof greq) == 0;
+    check("setsockopt(MCAST_JOIN_GROUP) with Linux's struct group_req", ok, why(ok));
+    got = multicast_round_trip(m, greq.group.addr, port, "greq");
+    check(got < 0 ? "SKIP (no multicast route): a datagram to the MCAST_JOIN_GROUP group arrives"
+                  : "a datagram to the MCAST_JOIN_GROUP group arrives", got != 0, 0);
+    ok = setsockopt(m, 0, 45, &greq, sizeof greq) == 0;
+    check("setsockopt(MCAST_LEAVE_GROUP)", ok, why(ok));
+    check("MCAST_JOIN_GROUP with a short struct is EINVAL", setsockopt(m, 0, 42, &greq, 16) == -1 && *__errno() == 22, 0);
+    close(m);
+
+    // epoll on a connected socket. Edge-triggered "writable" is one event,
+    // not one per call: reported level-triggered, an idle Dart or tokio loop
+    // never slept.
+    int sv[2];
+    struct epoll_event out[4];
+    const int ep = epoll_create1(0);
+    struct epoll_event ev = {0x80000004u, 5};  // EPOLLOUT | EPOLLET
+    check("epoll_ctl ADD a socket, EPOLLOUT|EPOLLET", socketpair(1, 1, 0, sv) == 0 && ep >= 0 && epoll_ctl(ep, 1, sv[0], &ev) == 0, 0);
+    check("EPOLLOUT|EPOLLET on a connected socket is reported", epoll_wait(ep, out, 4, 1000) == 1 && (out[0].events & 4) &&
+              out[0].data == 5, 0);
+    long t0 = ms_now(1), cpu0 = ms_now(3);
+    int n = epoll_wait(ep, out, 4, 300);
+    long waited = ms_now(1) - t0, cpu = ms_now(3) - cpu0;
+    char text[64];
+    snprintf(text, sizeof text, "%d event(s), %ld ms, %ld ms of processor time", n, waited, cpu);
+    check("...once: the next epoll_wait sleeps its whole 300 ms", n == 0 && waited >= 280 && waited < 3000, text);
+    check("...and uses no processor time doing so", cpu < 100, text);
+
+    // Edge-triggered "readable": an event when data arrives, none while it
+    // lies unread, one again after a read.
+    ev.events = 0x80000001u;  // EPOLLIN | EPOLLET
+    check("EPOLL_CTL_MOD to EPOLLIN|EPOLLET: nothing to read, no event", epoll_ctl(ep, 3, sv[0], &ev) == 0 &&
+              epoll_wait(ep, out, 4, 30) == 0, 0);
+    write(sv[1], "1", 1);
+    check("EPOLLIN|EPOLLET: an event when data arrives", epoll_wait(ep, out, 4, 2000) == 1 && (out[0].events & 1), 0);
+    check("EPOLLIN|EPOLLET: none again while the data is unread", epoll_wait(ep, out, 4, 50) == 0, 0);
+    check("...and none after it was read", read(sv[0], b, 1) == 1 && epoll_wait(ep, out, 4, 50) == 0, 0);
+    write(sv[1], "2", 1);
+    check("EPOLLIN|EPOLLET: an event for the next arrival", epoll_wait(ep, out, 4, 2000) == 1 && (out[0].events & 1), 0);
+    read(sv[0], b, 1);
+
+    // A blocking wait on a socket wakes when data arrives, not on a period.
+    g_late_fd = sv[1];
+    pthread_t t;
+    pthread_create(&t, 0, late_writer, 0);
+    t0 = ms_now(1);
+    n = epoll_wait(ep, out, 4, 5000);
+    waited = ms_now(1) - t0;
+    snprintf(text, sizeof text, "%d event(s) after %ld ms", n, waited);
+    check("epoll_wait on a socket wakes when another thread sends", n == 1 && waited >= 50 && waited < 3000, text);
+    pthread_join(t, 0);
+    read(sv[0], b, 1);
+    pf.fd = sv[0];
+    t0 = ms_now(1), cpu0 = ms_now(3);
+    n = poll(&pf, 1, 300);
+    waited = ms_now(1) - t0, cpu = ms_now(3) - cpu0;
+    snprintf(text, sizeof text, "%d ready, %ld ms, %ld ms of processor time", n, waited, cpu);
+    check("poll on an idle socket sleeps its whole 300 ms", n == 0 && waited >= 280 && waited < 3000 && cpu < 100, text);
+    pthread_create(&t, 0, late_writer, 0);
+    check("poll on a socket wakes when another thread sends", poll(&pf, 1, 5000) == 1 && (pf.revents & 1), 0);
+    pthread_join(t, 0);
+    read(sv[0], b, 1);
+
+    // EPOLLONESHOT: one report, then nothing until EPOLL_CTL_MOD.
+    ev.events = 0x40000001u;  // EPOLLIN | EPOLLONESHOT
+    epoll_ctl(ep, 3, sv[0], &ev);
+    write(sv[1], "3", 1);
+    check("EPOLLONESHOT reports once", epoll_wait(ep, out, 4, 2000) == 1 && epoll_wait(ep, out, 4, 30) == 0, 0);
+    check("...and again after EPOLL_CTL_MOD", epoll_ctl(ep, 3, sv[0], &ev) == 0 && epoll_wait(ep, out, 4, 2000) == 1, 0);
+    close(sv[0]);
+    close(sv[1]);
+
+    // An eventfd, edge-triggered: every write is an event, read or not
+    // (Rust's mio wakes its loop this way and never reads).
+    const int efd = eventfd(0, 04000);
+    unsigned long count = 1;
+    ev.events = 0x80000001u;
+    ev.data = 9;
+    check("epoll_ctl ADD an eventfd, EPOLLIN|EPOLLET", efd >= 0 && epoll_ctl(ep, 1, efd, &ev) == 0, 0);
+    write(efd, &count, 8);
+    check("eventfd, edge-triggered: a write is one event", epoll_wait(ep, out, 4, 1000) == 1 && out[0].data == 9 &&
+              epoll_wait(ep, out, 4, 30) == 0, 0);
+    write(efd, &count, 8);
+    check("...and a second write, the first unread, is another", epoll_wait(ep, out, 4, 1000) == 1 &&
+              epoll_wait(ep, out, 4, 30) == 0, 0);
+    close(efd);
+    close(ep);
 }
 
 // The NDK's ALooper: a callback on a pipe, and a wake from another thread.
@@ -885,6 +1119,11 @@ static void test_misc(void) {
     check("__system_property_get", __system_property_get("ro.product.cpu.abi", v) > 0 && strcmp(v, "x86_64") == 0, v);
     setenv("WINAPK_TEST", "yes", 1);
     check("setenv/getenv", getenv("WINAPK_TEST") && strcmp(getenv("WINAPK_TEST"), "yes") == 0, 0);
+    static char put[] = "WINAPK_PUT=one=two";
+    check("putenv sets a variable; the value starts after the first '='",
+          putenv(put) == 0 && getenv("WINAPK_PUT") && strcmp(getenv("WINAPK_PUT"), "one=two") == 0, 0);
+    static char bare[] = "WINAPK_BARE";
+    check("putenv refuses a string without '=' with EINVAL", putenv(bare) == -1 && *__errno() == 22, 0);
     char* m = mmap(0, 65536, 3, 0x22, -1, 0);  // PROT_READ|WRITE, MAP_PRIVATE|ANONYMOUS
     check("mmap anonymous is zeroed and writable", m != (char*)-1 && m[100] == 0 && (m[100] = 7) == 7, 0);
     munmap(m, 65536);
@@ -1556,6 +1795,7 @@ EXPORT int bionic_test(const char* dir) {
     test_malloc_usable_size();
     test_event_fds();
     test_sockets();
+    test_network();
     test_looper();
     test_files(dir);
     test_at_and_cacerts(dir);
