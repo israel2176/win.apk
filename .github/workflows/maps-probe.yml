@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
   push:
     branches: [ccr-70ca3b6e-8s4bz0]
-    paths: ['.github/workflows/maps-probe.yml', '.github/maps-probe/**']
+    paths: ['.github/workflows/maps-probe.yml', '.github/maps-probe/**', '.github/probe/**']
 
 permissions:
   contents: read
@@ -18,7 +18,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 60
     env:
-      RUN_SECONDS: 240
+      RUN_SECONDS: 300
       SAMPLE_SECONDS: 20
       MACAPK_TRACE_INVALIDATE: 1
     steps:
@@ -27,21 +27,11 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
-      - name: The staged runtime of the newest green CI run on main
+      - name: The staged runtime (this branch's build, else main's)
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          for id in $(gh run list -R "$GITHUB_REPOSITORY" --workflow ci.yml --branch main --status success --limit 10 \
-                        --json databaseId -q '.[].databaseId'); do
-            if gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id/artifacts" \
-                 -q '.artifacts[] | select(.name=="runtime-stage" and .expired==false) | .id' | grep -q .; then
-              run=$id; break
-            fi
-          done
-          echo "runtime-stage of run $run"
-          gh run download "$run" -R "$GITHUB_REPOSITORY" -n runtime-stage -D stage
-          ls stage
+        run: bash .github/probe/stage.sh "${{ github.ref_name }}" stage
       - uses: actions/cache@v4
         with:
           path: apk-cache
@@ -119,14 +109,15 @@ jobs:
               "  pid {0,6} {1,-34} {2,4:n0}% of one core, {3,5:n0} MB, {4} threads" -f $w.ProcessId, $what, (100 * ($cpu - $prev) / ($t - $lastT)), ($p.WorkingSet64 / 1MB), $p.Threads.Count |
                 Tee-Object -Append probe\samples.txt
               $last[$w.ProcessId] = $cpu
-              if ($what -eq $apk.Name -and ($n % 3) -eq 0) {
-                & "$env:JAVA_HOME\bin\jcmd.exe" $w.ProcessId Thread.print -e *> "probe\threads-$n.txt"
-                $p.Threads | Sort-Object { $_.TotalProcessorTime } -Descending | Select-Object -First 30 |
-                  ForEach-Object { "{0,7} {1,9:n2} s" -f $_.Id, $_.TotalProcessorTime.TotalSeconds } | Set-Content "probe\os-threads-$n.txt"
+              if (($n % 3) -eq 0) {
+                & "$env:JAVA_HOME\bin\jcmd.exe" $w.ProcessId Thread.print -e *> "probe\threads-$n-$($w.ProcessId)-$($what -replace '[^A-Za-z0-9.]', '_').txt"
               }
             }
             $lastT = $t
             Shot "$PWD\probe\screen-$n.png"
+            # After a minute idle on the first screen, press its "Skip" (top right of the left
+            # half), to see the map itself for the rest of the run.
+            if ($n -eq 4) { ClickIn 'Maps' 0.37 0.085; "  clicked Skip" | Tee-Object -Append probe\samples.txt }
           }
           Get-Process Win.apk, winapk-runtime -ErrorAction SilentlyContinue | Stop-Process -Force
           Start-Sleep 3

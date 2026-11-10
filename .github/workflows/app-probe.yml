@@ -5,6 +5,9 @@ name: App probe
 
 on:
   workflow_dispatch:
+  push:
+    branches: [ccr-70ca3b6e-8s4bz0]
+    paths: ['.github/workflows/app-probe.yml', '.github/probe/**']
 
 permissions:
   contents: read
@@ -38,20 +41,11 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
-      - name: The staged runtime of the newest green CI run on main
+      - name: The staged runtime (this branch's build, else main's)
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          for id in $(gh run list -R "$GITHUB_REPOSITORY" --workflow ci.yml --branch main --status success --limit 10 \
-                        --json databaseId -q '.[].databaseId'); do
-            if gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id/artifacts" \
-                 -q '.artifacts[] | select(.name=="runtime-stage" and .expired==false) | .id' | grep -q .; then
-              run=$id; break
-            fi
-          done
-          echo "runtime-stage of run $run"
-          gh run download "$run" -R "$GITHUB_REPOSITORY" -n runtime-stage -D stage
+        run: bash .github/probe/stage.sh "${{ github.ref_name }}" stage
       - name: The app's APK
         shell: bash
         run: python .github/probe/fdroid_fetch.py "${{ matrix.pkg }}" "${{ matrix.version }}" app.apk | tee fetch.out
