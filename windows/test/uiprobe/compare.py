@@ -34,9 +34,24 @@ def cases(path):
 CLASS = re.compile(r'\b(?:AppCompat|Material)(?=[A-Z][a-z])')
 
 
+HEX = re.compile(r'=[0-9a-f]{8}(?![0-9a-f])')
+WIDE = re.compile(r' text=5\d{5}\.\d\.\.5\d{5}\.\d')
+TEXT = re.compile(r' text=-?[\d.]+\.\.-?[\d.]+')
+
+
 def same(a, b, tolerance):
     """Equal apart from numbers, and each pair of numbers within the tolerance."""
     a, b = CLASS.sub('', a), CLASS.sub('', b)
+    # A colour is compared as written, not as a number.
+    if HEX.findall(a) != HEX.findall(b):
+        return False
+    a, b = HEX.sub('=x', a), HEX.sub('=x', b)
+    # A single line that scrolls sideways is laid out about a million pixels
+    # wide on Android (VERY_WIDE); Win.apk lays it out at its own width. Where
+    # the text sits in such a layout is not a place on the screen.
+    a, b = WIDE.sub('', a), WIDE.sub('', b)
+    if 'text=' in a and 'text=' not in b or 'text=' in b and 'text=' not in a:
+        a, b = TEXT.sub('', a), TEXT.sub('', b)
     if NUM.sub('#', a) != NUM.sub('#', b):
         return False
     return all(abs(float(x) - float(y)) <= tolerance for x, y in zip(NUM.findall(a), NUM.findall(b)))

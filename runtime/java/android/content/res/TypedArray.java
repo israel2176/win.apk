@@ -2261,6 +2261,15 @@ public class TypedArray implements AutoCloseable {
         // still has. Restoring the pref returned it to 84.40%.
         String raw = macapkRawValueAt(index);
         if (raw != null && "@null".equals(raw.trim())) return null;
+        // The ABSENT case, as AOSP has it (getColorStateList: `if (value.type ==
+        // TYPE_NULL) return null`): no tier gives the attribute a value. The
+        // black list stood in for it here, and a caller that asks "is there a
+        // tint / a background colour / an icon colour?" got "yes, black":
+        // Material's BottomNavigationView painted a black bar, a switch a black
+        // thumb, an unselected tab's icon vanished into it (uiprobe, against the
+        // real framework: white, the theme's colour, the theme's colour). The
+        // black stays only for a value that is present and could not be read.
+        if (getType(index) == android.util.TypedValue.TYPE_NULL) return null;
         return android.content.res.ColorStateList.valueOf(0xFF000000);
     }
     /** AOSP TypedArray.getType: the data type of the attribute at index, one

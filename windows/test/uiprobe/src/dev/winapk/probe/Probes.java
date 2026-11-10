@@ -54,6 +54,7 @@ public final class Probes {
         float density = app.getResources().getDisplayMetrics().density;
         out.add("density " + density);
         int w = Math.round(W_DP * density), h = Math.round(H_DP * density);
+        themeValues(app, out);
         for (int i = 0; i < LAYOUTS.length; i++) {
             for (int dir = 0; dir < 2; dir++) {
                 String name = NAMES[i] + (dir == 0 ? ".ltr" : ".rtl");
@@ -92,6 +93,79 @@ public final class Probes {
             }
         }
         return out;
+    }
+
+    /** What the two themes answer for the attributes widgets colour themselves by, read the
+     *  three ways code reads them: resolveAttribute, a styled attribute array, and a colour
+     *  state list of the libraries that names a theme attribute. */
+    private static void themeValues(Context app, List<String> out) {
+        String[] names = {"colorPrimary", "colorSecondary", "colorAccent", "colorControlNormal",
+                          "colorControlActivated", "colorControlHighlight", "colorSurface", "colorOnSurface",
+                          "android:textColorPrimary", "android:colorBackground", "android:colorAccent"};
+        for (int theme = 0; theme < 2; theme++) {
+            out.add("case theme." + (theme == 0 ? "platform" : "lib"));
+            Context c = new ContextThemeWrapper(app, theme == 0 ? R.style.ProbeTheme : R.style.ProbeLibTheme);
+            for (String name : names) {
+                StringBuilder sb = new StringBuilder("  ").append(name);
+                try {
+                    int attr = name.startsWith("android:")
+                        ? c.getResources().getIdentifier(name.substring(8), "attr", "android")
+                        : c.getResources().getIdentifier(name, "attr", c.getPackageName());
+                    if (attr == 0) {
+                        out.add(sb.append(" no such attribute").toString());
+                        continue;
+                    }
+                    android.util.TypedValue tv = new android.util.TypedValue();
+                    boolean found = c.getTheme().resolveAttribute(attr, tv, true);
+                    sb.append(" resolve=").append(found);
+                    if (found) {
+                        sb.append(" type=").append(tv.type);
+                        if (tv.type >= android.util.TypedValue.TYPE_FIRST_COLOR_INT
+                                && tv.type <= android.util.TypedValue.TYPE_LAST_COLOR_INT) {
+                            sb.append(" colour=").append(hex(tv.data));
+                        }
+                    }
+                    android.content.res.TypedArray a = c.obtainStyledAttributes(new int[] {attr});
+                    sb.append(" styled=").append(hex(a.getColor(0, 0x12345678)));
+                    android.content.res.ColorStateList list = a.getColorStateList(0);
+                    sb.append(" list=").append(list == null ? "null" : hex(list.getDefaultColor()));
+                    a.recycle();
+                } catch (Throwable t) {
+                    sb.append(" threw ").append(t.getClass().getSimpleName());
+                }
+                out.add(sb.toString());
+            }
+            if (theme == 1) {
+                int[] lists = {
+                    com.google.android.material.R.color.mtrl_btn_text_color_selector,
+                    com.google.android.material.R.color.mtrl_tabs_icon_color_selector,
+                    com.google.android.material.R.color.mtrl_navigation_bar_item_tint,
+                    com.google.android.material.R.color.mtrl_chip_background_color,
+                    com.google.android.material.R.color.mtrl_text_btn_text_color_selector,
+                    androidx.appcompat.R.color.abc_tint_switch_track,
+                    androidx.appcompat.R.color.abc_tint_btn_checkable,
+                };
+                int[] checked = {android.R.attr.state_enabled, android.R.attr.state_checked};
+                int[] enabled = {android.R.attr.state_enabled};
+                for (int id : lists) {
+                    StringBuilder sb = new StringBuilder("  ").append(c.getResources().getResourceEntryName(id));
+                    try {
+                        android.content.res.ColorStateList l =
+                            androidx.appcompat.content.res.AppCompatResources.getColorStateList(c, id);
+                        sb.append(" default=").append(hex(l.getDefaultColor()))
+                          .append(" enabled=").append(hex(l.getColorForState(enabled, 0)))
+                          .append(" checked=").append(hex(l.getColorForState(checked, 0)));
+                    } catch (Throwable t) {
+                        sb.append(" threw ").append(t.getClass().getSimpleName());
+                    }
+                    out.add(sb.toString());
+                }
+            }
+        }
+    }
+
+    private static String hex(int colour) {
+        return String.format("%08x", colour);
     }
 
     private static String dp(float px, float density) {
