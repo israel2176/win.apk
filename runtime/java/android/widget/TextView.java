@@ -5421,7 +5421,15 @@ public class TextView extends View
         android.graphics.Paint p = new android.graphics.Paint();
         p.setTextSize(textSizePx);
         applyTextStyleToPaint(p);
-        return getPaddingTop()
+        // AOSP getBaselineOffset(): the extended padding and, for a gravity that
+        // is not TOP, the vertical offset of the text block. This added only
+        // the view's own top padding, so a vertically centred label, a Button
+        // and a CheckBox all reported the baseline of text at the top of the
+        // view, and a row that aligns its children on their baselines
+        // (LinearLayout by default, RelativeLayout's alignBaseline,
+        // ConstraintLayout's baseline constraints) set them at different
+        // heights (uiprobe: 17 where Android has 30 for a 48dp centred line).
+        return getCompoundPaddingTop() + getVerticalOffset(true)
              + (int) Math.ceil(macapkLineAscent(p.getFontMetricsInt()));
     }
     // AOSP TextView.getBreakStrategy/setBreakStrategy and
@@ -6078,7 +6086,23 @@ public class TextView extends View
     // Text-direction / locale / break-strategy
     // AOSP returns android.text.TextDirectionHeuristic; the typed interface
     // exists in our tree so use it (Object descriptor would NoSuchMethodError).
-    public android.text.TextDirectionHeuristic getTextDirectionHeuristic() { return null; }
+    /** AOSP TextView.getTextDirectionHeuristic(): android:textDirection as a
+     *  heuristic, a view in a right-to-left layout defaulting to FIRSTSTRONG_RTL.
+     *  It answered null, and getLayout() built its Layout with the LTR default:
+     *  a number or an empty line in a Hebrew app measured from the left edge. */
+    public android.text.TextDirectionHeuristic getTextDirectionHeuristic() {
+        switch (getTextDirection()) {
+            case TEXT_DIRECTION_ANY_RTL: return android.text.TextDirectionHeuristics.ANYRTL_LTR;
+            case TEXT_DIRECTION_LTR: return android.text.TextDirectionHeuristics.LTR;
+            case TEXT_DIRECTION_RTL: return android.text.TextDirectionHeuristics.RTL;
+            case TEXT_DIRECTION_LOCALE: return android.text.TextDirectionHeuristics.LOCALE;
+            case TEXT_DIRECTION_FIRST_STRONG_LTR: return android.text.TextDirectionHeuristics.FIRSTSTRONG_LTR;
+            case TEXT_DIRECTION_FIRST_STRONG_RTL: return android.text.TextDirectionHeuristics.FIRSTSTRONG_RTL;
+            default:
+                return isLayoutRtl() ? android.text.TextDirectionHeuristics.FIRSTSTRONG_RTL
+                                     : android.text.TextDirectionHeuristics.FIRSTSTRONG_LTR;
+        }
+    }
     public java.util.Locale getTextLocale() { return java.util.Locale.getDefault(); }
     public void setTextLocale(java.util.Locale locale) {}
     /** AOSP :4573 getTextLocales() reads mTextPaint.getTextLocales(), so the
@@ -6214,23 +6238,37 @@ public class TextView extends View
             if (mw > 0) avail = mw - getCompoundPaddingLeft() - getCompoundPaddingRight();
         }
         if (avail <= 0) return null;   // AOSP: null before first measure/layout
+        // AOSP TextView.getLayoutAlignment() (android14-release :9263-9310).
+        // viewStart / viewEnd are sides of the VIEW (left or right by its layout
+        // direction), textStart / textEnd follow the paragraph, and under
+        // "gravity" START and END follow the paragraph while LEFT and RIGHT are
+        // absolute. This mapped viewStart to NORMAL and viewEnd to OPPOSITE,
+        // which is the paragraph's side, and END gravity to nothing.
         android.text.Layout.Alignment align;
+        final boolean viewRtl = isLayoutRtl();
         switch (getTextAlignment()) {
             case android.view.View.TEXT_ALIGNMENT_CENTER:
                 align = android.text.Layout.Alignment.ALIGN_CENTER; break;
             case android.view.View.TEXT_ALIGNMENT_TEXT_END:
-            case android.view.View.TEXT_ALIGNMENT_VIEW_END:
                 align = android.text.Layout.Alignment.ALIGN_OPPOSITE; break;
             case android.view.View.TEXT_ALIGNMENT_TEXT_START:
-            case android.view.View.TEXT_ALIGNMENT_VIEW_START:
                 align = android.text.Layout.Alignment.ALIGN_NORMAL; break;
+            case android.view.View.TEXT_ALIGNMENT_VIEW_START:
+                align = viewRtl ? android.text.Layout.Alignment.ALIGN_RIGHT
+                                : android.text.Layout.Alignment.ALIGN_LEFT; break;
+            case android.view.View.TEXT_ALIGNMENT_VIEW_END:
+                align = viewRtl ? android.text.Layout.Alignment.ALIGN_LEFT
+                                : android.text.Layout.Alignment.ALIGN_RIGHT; break;
             default: {
-                int hg = gravity & android.view.Gravity.HORIZONTAL_GRAVITY_MASK;
-                if (hg == android.view.Gravity.CENTER_HORIZONTAL)
+                int hg = gravity & android.view.Gravity.RELATIVE_HORIZONTAL_GRAVITY_MASK;
+                if ((hg & android.view.Gravity.HORIZONTAL_GRAVITY_MASK) == android.view.Gravity.CENTER_HORIZONTAL)
                     align = android.text.Layout.Alignment.ALIGN_CENTER;
-                else if (hg == (android.view.Gravity.RIGHT
-                        & android.view.Gravity.HORIZONTAL_GRAVITY_MASK))
+                else if (hg == android.view.Gravity.END)
                     align = android.text.Layout.Alignment.ALIGN_OPPOSITE;
+                else if (hg == android.view.Gravity.RIGHT)
+                    align = android.text.Layout.Alignment.ALIGN_RIGHT;
+                else if (hg == android.view.Gravity.LEFT)
+                    align = android.text.Layout.Alignment.ALIGN_LEFT;
                 else align = android.text.Layout.Alignment.ALIGN_NORMAL;
             }
         }
@@ -6273,6 +6311,7 @@ public class TextView extends View
         android.text.StaticLayout.Builder b = android.text.StaticLayout.Builder
             .obtain(dispStr, 0, dispStr.length(), lp, avail)
             .setAlignment(align)
+            .setTextDirection(getTextDirectionHeuristic())
             .setLineSpacing(mSpacingAdd, mSpacingMult);
         if (layoutMaxLines > 0 && layoutMaxLines != Integer.MAX_VALUE) b.setMaxLines(layoutMaxLines);
         if (layoutEllipsize != null) b.setEllipsize(layoutEllipsize);
@@ -6339,6 +6378,7 @@ public class TextView extends View
         android.text.StaticLayout.Builder b = android.text.StaticLayout.Builder
             .obtain(src, 0, src.length(), lp, layoutW)
             .setAlignment(layoutAlign)
+            .setTextDirection(getTextDirectionHeuristic())
             .setLineSpacing(mSpacingAdd, mSpacingMult)
             .setIncludePad(layoutIncludePad)
             .setUseLineSpacingFromFallbacks(layoutFallback);

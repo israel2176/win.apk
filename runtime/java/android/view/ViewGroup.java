@@ -127,8 +127,8 @@ public class ViewGroup extends View implements ViewParent, ViewManager {
             0x010100f8, // 4  layout_marginTop
             0x010100f9, // 5  layout_marginRight
             0x010100fa, // 6  layout_marginBottom
-            0x010103b3, // 7  layout_marginStart
-            0x010103b4, // 8  layout_marginEnd
+            0x010103b5, // 7  layout_marginStart
+            0x010103b6, // 8  layout_marginEnd
         };
 
         final void macapkReadLayoutAttrs(Context c, android.util.AttributeSet attrs) {
