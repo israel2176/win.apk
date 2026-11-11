@@ -55,6 +55,7 @@ public final class Probes {
         out.add("density " + density);
         int w = Math.round(W_DP * density), h = Math.round(H_DP * density);
         themeValues(app, out);
+        drawables(app, out);
         for (int i = 0; i < LAYOUTS.length; i++) {
             for (int dir = 0; dir < 2; dir++) {
                 String name = NAMES[i] + (dir == 0 ? ".ltr" : ".rtl");
@@ -93,6 +94,74 @@ public final class Probes {
             }
         }
         return out;
+    }
+
+    /** Every drawable of the common libraries and the platform's widget drawables, as a view
+     *  would ask about one: what it is, its own size, its padding, whether it follows state. */
+    private static void drawables(Context app, List<String> out) {
+        Context c = new ContextThemeWrapper(app, R.style.ProbeLibTheme);
+        float d = c.getResources().getDisplayMetrics().density;
+        Class<?>[] tables = {androidx.appcompat.R.drawable.class, com.google.android.material.R.drawable.class,
+                             R.drawable.class};
+        String[] tableNames = {"appcompat", "material", "probe"};
+        for (int t = 0; t < tables.length; t++) {
+            out.add("case drawables." + tableNames[t]);
+            java.util.TreeMap<String, Integer> ids = new java.util.TreeMap<>();
+            for (java.lang.reflect.Field f : tables[t].getFields()) {
+                try {
+                    if (f.getType() == int.class) ids.put(f.getName(), f.getInt(null));
+                } catch (Throwable ignored) { }
+            }
+            for (java.util.Map.Entry<String, Integer> e : ids.entrySet()) {
+                out.add(drawableLine(c, e.getKey(), e.getValue(), d));
+            }
+        }
+        out.add("case drawables.platform");
+        String[] platform = {"btn_default_material", "btn_default_mtrl_shape", "btn_colored_material",
+            "btn_borderless_material", "edit_text_material", "textfield_default_mtrl_alpha",
+            "textfield_activated_mtrl_alpha", "btn_check_material_anim", "btn_radio_material_anim",
+            "switch_thumb_material_anim", "switch_track_material", "switch_track_mtrl_alpha",
+            "btn_switch_to_on_mtrl_00012", "btn_switch_to_on_mtrl_00001", "spinner_background_material",
+            "spinner_textfield_background_material", "progress_horizontal_material", "seekbar_thumb_material_anim",
+            "seekbar_track_material", "scrubber_control_material_anim", "ratingbar_material",
+            "item_background_material", "item_background_borderless_material", "list_divider_material",
+            "popup_background_material", "dialog_background_material", "toast_frame", "tooltip_frame",
+            "ic_menu_moreoverflow_material", "ic_ab_back_material", "ic_search_api_material",
+            "ic_clear_material", "ic_go_search_api_material", "ic_voice_search_api_material",
+            "text_cursor_material", "text_select_handle_middle_material", "text_select_handle_left_material",
+            "fastscroll_thumb_material", "fastscroll_track_material", "scrollbar_handle_material",
+            "list_selector_background", "divider_horizontal_bright", "btn_default", "btn_default_small",
+            "edit_text", "editbox_background", "ic_menu_search", "ic_dialog_alert", "ic_dialog_info",
+            "ic_menu_close_clear_cancel", "ic_delete", "ic_input_add", "star_big_on", "star_big_off",
+            "presence_online", "sym_def_app_icon", "stat_notify_error", "screen_background_light",
+            "dark_header", "title_bar", "progress_indeterminate_horizontal", "progress_horizontal",
+            "alert_light_frame", "dialog_frame", "picture_frame", "toast_frame", "menuitem_background",
+            "spinner_background", "spinner_dropdown_background", "gallery_thumb", "zoom_plate"};
+        for (String name : platform) {
+            int id = c.getResources().getIdentifier(name, "drawable", "android");
+            out.add(id == 0 ? "  " + name + " no such drawable" : drawableLine(c, name, id, d));
+        }
+    }
+
+    private static String drawableLine(Context c, String name, int id, float d) {
+        StringBuilder sb = new StringBuilder("  ").append(name);
+        try {
+            android.graphics.drawable.Drawable dr =
+                androidx.appcompat.content.res.AppCompatResources.getDrawable(c, id);
+            if (dr == null) return sb.append(" null").toString();
+            String cls = dr.getClass().getSimpleName();
+            sb.append(' ').append(cls.replace("Compat", ""));
+            sb.append(" size ").append(dp(dr.getIntrinsicWidth(), d)).append('x').append(dp(dr.getIntrinsicHeight(), d));
+            android.graphics.Rect r = new android.graphics.Rect();
+            boolean pad = dr.getPadding(r);
+            sb.append(" pad=").append(pad).append(' ').append(dp(r.left, d)).append(',').append(dp(r.top, d))
+              .append(',').append(dp(r.right, d)).append(',').append(dp(r.bottom, d));
+            sb.append(" stateful=").append(dr.isStateful());
+            sb.append(" min ").append(dp(dr.getMinimumWidth(), d)).append('x').append(dp(dr.getMinimumHeight(), d));
+        } catch (Throwable t) {
+            sb.append(" threw ").append(t.getClass().getSimpleName());
+        }
+        return sb.toString();
     }
 
     /** What the two themes answer for the attributes widgets colour themselves by, read the

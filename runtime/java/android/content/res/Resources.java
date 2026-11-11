@@ -2863,26 +2863,13 @@ public class Resources {
      *  inflation unchanged, mask skipped and colour dropped, so nothing about
      *  the shipped path moves. */
     private android.graphics.drawable.Drawable macapkInflateRipple(org.w3c.dom.Element root, Theme theme) {
-        if (!android.graphics.drawable.RippleDrawable.MACAPK_RIPPLE_PRESS) {
-            if (!MACAPK_RIPPLE_MASK_BY_ID) return macapkInflateLayerList(root, theme);
-            // Gate-off keeps the layer-list rendering, but the MASK is still
-            // recognised by id in both spellings. The layer-list test is
-            // `contains("mask")`, which the compiled platform XML's
-            // `android:id="@0x0102002e"` never satisfies, so every platform
-            // <ripple> painted its mask: `item_background_material`, whose
-            // only child is a solid WHITE mask (`<item android:id="@id/mask">
-            // <color android:color="@color/white"/>`), came back a LayerDrawable
-            // that filled the view white. That is the drawable behind
-            // ?android:selectableItemBackground, i.e. every AppCompat v21+ list
-            // row and clickable header that reads it by id. AOSP never paints
-            // the mask (RippleDrawable.drawContent, android14-release
-            // :1155-1164: "Draw everything except the mask",
-            // `if (array[i].mId != R.id.mask)`).
-            android.graphics.drawable.LayerDrawable ld =
-                new android.graphics.drawable.LayerDrawable();
-            macapkFillLayerList(root, theme, ld, false, true);
-            return ld.getNumberOfLayers() > 0 ? ld : null;
-        }
+        // A <ripple> is a RippleDrawable whether or not it paints the press itself (the gate
+        // only chooses who paints it: this drawable or View's own ripple). As a plain
+        // LayerDrawable, or the transparent ColorDrawable a mask-only ripple fell back to, it
+        // was not stateful, a cast to RippleDrawable threw, and code that asks
+        // `instanceof RippleDrawable` to set the colour or the radius skipped it (uiprobe:
+        // abc_control_background_material, item_background_material, Material's ripples).
+        // RippleDrawable.draw leaves the mask layer out with the gate off too.
         android.graphics.drawable.RippleDrawable rd =
             new android.graphics.drawable.RippleDrawable();
         // A single resolved colour rather than a real ColorStateList: our
