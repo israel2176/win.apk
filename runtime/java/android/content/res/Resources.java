@@ -1211,6 +1211,8 @@ public class Resources {
         final byte[] ninePatchChunk;
         final android.graphics.Rect ninePatchPadding;
         final String ninePatchPath;
+        /** A nine-patch's folder density (macapkResourceDensity), 0 when not to be scaled. */
+        int sourceDensity;
         MacapkDrawableConstantState(android.graphics.Bitmap bitmap) {
             this.bitmap = bitmap;
             this.isNinePatch = false;
@@ -1227,8 +1229,12 @@ public class Resources {
         }
         android.graphics.drawable.Drawable newDrawable(Resources res) {
             if (isNinePatch) {
-                return new android.graphics.drawable.NinePatchDrawable(res,
-                    ninePatchContent, ninePatchChunk, ninePatchPadding, ninePatchPath);
+                android.graphics.drawable.NinePatchDrawable np = new android.graphics.drawable.NinePatchDrawable(
+                    res, ninePatchContent, ninePatchChunk, ninePatchPadding, ninePatchPath);
+                if (sourceDensity != 0 && res != null && res.metrics != null) {
+                    np.macapkSetDensities(sourceDensity, res.metrics.densityDpi);
+                }
+                return np;
             }
             return new android.graphics.drawable.BitmapDrawable(res, bitmap);
         }
@@ -1443,6 +1449,7 @@ public class Resources {
                             MacapkDrawableConstantState state =
                                 isPng ? macapkNinePatchFromChunk(id, bm, bytes) : null;
                             if (state == null) state = macapkNinePatchState(id, bm);
+                            if (state != null) state.sourceDensity = macapkResourceDensity(id);
                             if (state == null) {
                                 // The picture is as dense as the folder it came from
                                 // (AOSP: value.density through decodeResourceStream), so an
