@@ -6783,6 +6783,24 @@ public final class ResourceIndex {
      *  bitmap branch unconditionally and throw ResourceResolution
      *  Exception ("Error attempting to load resource: null") when the
      *  resource is actually a <vector> XML. */
+    /** The density of the file chosen for `id`, as AOSP's TypedValue.density carries it for
+     *  a file-backed resource: a bucket's dpi, 160 for a folder with no density qualifier
+     *  (DENSITY_DEFAULT stands for mdpi), and 0 where nothing is to be scaled or known:
+     *  nodpi, anydpi, an id with no file row. A bitmap decoded from the file is that dense;
+     *  on a screen of another density it is scaled (BitmapFactory.decodeResourceStream). */
+    public int densityFor(int id) {
+        Object[] fr = fileRowById.get(id);
+        if (fr == null || !(fr[2] instanceof String)) return 0;
+        String cfg = (String) fr[2];
+        for (String q : cfg.split("-")) {
+            if (q.isEmpty()) continue;
+            int d = macapkDensityOf(q);
+            if (d == -1) continue;
+            return d == 0xfffe || d == 0xffff ? 0 : d;
+        }
+        return 160;
+    }
+
     public String pathFor(int id) {
         String[] tn = idToTypeName.get(id);
         if (tn == null) return null;

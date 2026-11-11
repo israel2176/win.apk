@@ -664,7 +664,14 @@ public class BitmapFactory {
             return null;
         }
         try (InputStream in = res.openRawResource(id)) {
-            Bitmap b = decodeStream(in, null, opts);
+            // AOSP: decodeResourceStream(res, value, is, null, opts), where value.density is
+            // the density of the folder the file came from. The bitmap is scaled from it to
+            // the screen's (inScaled), so a picture shipped in one bucket has its size in dp
+            // whatever the screen. decodeStream alone left it at its size in pixels.
+            android.util.TypedValue value = new android.util.TypedValue();
+            value.density = res.macapkResourceDensity(id);
+            Bitmap b = value.density != 0 ? decodeResourceStream(res, value, in, null, opts)
+                                          : decodeStream(in, null, opts);
             if (trace) android.util.Log.i("Mac.apk.DecodeRes",
                 "decodeResource(0x" + Integer.toHexString(id) + ") stream="
                 + (in == null ? "NULL" : "ok") + " -> "

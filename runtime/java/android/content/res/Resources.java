@@ -933,6 +933,8 @@ public class Resources {
             // getValue was the one path that had not been converted, and the two
             // are required to agree.
             outValue.string = macapkArscRelativePath(path);
+            // TypedValue.density: the folder's density, which decodeResourceStream scales from.
+            { int fileDensity = macapkResourceDensity(id); if (fileDensity != 0) outValue.density = fileDensity; }
             outValue.data = 0;
             // AOSP also sets assetCookie / density; Compose only reads
             // .string, so the path alone is sufficient.
@@ -1025,6 +1027,19 @@ public class Resources {
      *  ResourceIndex (reflective to keep this framework class decoupled
      *  from com.macapk.loader at link time). Returns null when the id
      *  has no file (a value resource, or unknown). */
+    /** The density of the file behind `id` (ResourceIndex.densityFor): a bucket's dpi, 160
+     *  for an unqualified folder, 0 for nodpi, anydpi and anything not known. */
+    public int macapkResourceDensity(int id) {
+        if (macapkResourceIndex == null) return 0;
+        try {
+            Object d = macapkResourceIndex.getClass().getMethod("densityFor", int.class)
+                .invoke(macapkResourceIndex, id);
+            return d instanceof Integer ? (Integer) d : 0;
+        } catch (Throwable t) {
+            return 0;
+        }
+    }
+
     private String macapkResourcePath(int id) {
         if (macapkResourceIndex == null) return null;
         try {
@@ -1428,7 +1443,18 @@ public class Resources {
                             MacapkDrawableConstantState state =
                                 isPng ? macapkNinePatchFromChunk(id, bm, bytes) : null;
                             if (state == null) state = macapkNinePatchState(id, bm);
-                            if (state == null) state = new MacapkDrawableConstantState(bm);
+                            if (state == null) {
+                                // The picture is as dense as the folder it came from
+                                // (AOSP: value.density through decodeResourceStream), so an
+                                // image an app ships in one bucket only is drawn at its size
+                                // in dp, not at its size in pixels: BitmapDrawable scales
+                                // from the bitmap's density to the screen's. Unset, an
+                                // xxhdpi-only picture was one and a half times too large on
+                                // an xhdpi screen, and three times on a 1x monitor.
+                                int src = macapkResourceDensity(id);
+                                if (src != 0) bm.setDensity(src);
+                                state = new MacapkDrawableConstantState(bm);
+                            }
                             macapkDrawableCache.put(cacheKey,
                                 new java.lang.ref.WeakReference<>(state));
                             if (sDrawableCacheTrace) com.macapk.loader.NativeLog.d("Mac.apk.Resources",
