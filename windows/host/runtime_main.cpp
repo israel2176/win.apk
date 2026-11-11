@@ -58,6 +58,7 @@
 #include "crash_report.h"
 #include "guest_libs.h"
 #include "host_natives.h"
+#include "unix_socket_dir.h"
 #include "user_folders.h"
 #include "win32_window.h"
 
@@ -1498,6 +1499,18 @@ std::vector<std::string> jvm_options(const BootArgs& b) {
     // %TEMP%\hsperfdata_<user> for jps/jstat, which nothing here reads. 6 ms
     // off creating the JVM (docs/research/startup-cds.md).
     v.push_back("-XX:-UsePerfData");
+    // java.nio's selectors and pipes need a folder where AF_UNIX sockets connect; %TEMP%
+    // is the JDK's choice and is left alone where it works (unix_socket_dir.h).
+    {
+        const fs::path temp = env_var(L"TEMP");
+        const fs::path dir = winapk::first_unix_socket_dir(
+            {temp, env_var(L"USERPROFILE"), env_var(L"PUBLIC"), fs::path(env_var(L"SystemRoot")) / L"Temp"});
+        if (!dir.empty() && dir != temp) {
+            v.push_back("-Djdk.net.unixdomain.tmpdir=" + jvm_path(dir));
+            std::fprintf(stderr, "[win.apk] java.nio sockets: %s refuses AF_UNIX connections, using %s\n",
+                         utf8(temp.wstring()).c_str(), utf8(dir.wstring()).c_str());
+        }
+    }
     v.push_back("--enable-native-access=ALL-UNNAMED");
     v.push_back("--add-opens=java.base/java.io=ALL-UNNAMED");
     v.push_back("--add-opens=java.base/java.util=ALL-UNNAMED");
