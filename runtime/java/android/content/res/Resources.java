@@ -3486,6 +3486,11 @@ public class Resources {
                 s.setShape(android.graphics.drawable.GradientDrawable.RECTANGLE);
                 s.setColor(macapkThemeColor("colorButtonNormal", 0xFFD6D7D7));
                 s.setCornerRadius(2f * d);
+                // btn_default_mtrl_shape's <padding>: button_padding_horizontal_material (8dp) and
+                // button_padding_vertical_material (4dp). With the insets a button's padding is
+                // 12dp by 10dp, which is where its text sits and how wide a short label makes it.
+                int ph = Math.round(8f * d), pv = Math.round(4f * d);
+                s.setPadding(ph, pv, ph, pv);
                 int ih = Math.round(4f * d), iv = Math.round(6f * d);
                 return new android.graphics.drawable.InsetDrawable(s, ih, iv, ih, iv);
             }
