@@ -537,6 +537,13 @@ void fill_identity(HANDLE h, GuestStat* g) {
     g->st_ino = (static_cast<uint64_t>(info.nFileIndexHigh) << 32) | info.nFileIndexLow;
 }
 WINAPK_GUEST_ABI int g_stat(const char* path, GuestStat* g) {
+    if (is_proc_maps(path)) {  // a regular file of no length, as procfs reports its files
+        std::memset(g, 0, sizeof(*g));
+        g->st_mode = 0100444;  // S_IFREG | r--r--r--
+        g->st_nlink = 1;
+        g->st_blksize = 4096;
+        return 0;
+    }
     const std::wstring w = host_path(path);
     struct _stat64 s;
     if (_wstat64(w.c_str(), &s) < 0) return fail_crt();
@@ -721,6 +728,16 @@ WINAPK_GUEST_ABI int g_fstatat(int dirfd, const char* path, GuestStat* g, int fl
     return at_path(dirfd, path, &p) ? g_stat(p.c_str(), g) : -1;
 }
 WINAPK_GUEST_ABI int g_access(const char* path, int mode) {
+    // /proc/self/maps is no file on disk, yet it is there and readable, as open() and
+    // fopen() have it. Mono asks before it starts ("Mono requires /proc to be mounted."
+    // and exit(1) when access() says no), so every Xamarin and .NET app stopped here.
+    if (is_proc_maps(path)) {
+        if (mode & 2) {
+            errno = EACCES;
+            return fail_crt();
+        }
+        return 0;
+    }
     // _waccess knows no X_OK (1); anything readable counts.
     return _waccess(host_path(path).c_str(), mode & 6) < 0 ? fail_crt() : 0;
 }
