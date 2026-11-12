@@ -1453,6 +1453,46 @@ every such change is listed here:
   `WEBVIEW2_RUNTIME_MISSING (0x...)`); `--gms signin-window` prints it as its
   `ERROR` line (exit 1) instead of exiting 2 as a cancel, and the launcher
   shows it. The window no longer has a note line above the page.
+- Framework fidelity found by `windows/test/uiprobe` (the same probe run on
+  Android's own framework) and `windows/test/apicheck`; none is
+  Windows-specific:
+  - `android/content/res/TypedArray.java`: `getDrawable` of a colour written
+    out or reached through `?attr` is a `ColorDrawable` (a style's
+    `background="?attr/colorPrimary"`); `getFloat` follows a theme attribute
+    or a compiled reference (an alpha kept as a float dimen);
+    `getColorStateList` is null for an attribute no tier sets.
+  - `android/content/res/Resources.java`, `com/macapk/loader/ResourceIndex.java`,
+    `android/graphics/BitmapFactory.java` and
+    `android/graphics/drawable/NinePatchDrawable.java`: a bitmap or a
+    nine-patch is as dense as the folder it came from
+    (`ResourceIndex.densityFor`, `TypedValue.density`), so a picture shipped
+    in one bucket only has its size in dp; a `<ripple>` is a `RippleDrawable`;
+    a shape's `<padding>` and the Material button background's are read; a
+    nine-patch's layout bounds (`npLb`) are its optical insets, which
+    `InsetDrawable` adds its insets to.
+  - `android/graphics/drawable/VectorDrawable.java`: `android:tint` may be a
+    colour state list, followed through `isStateful` and `onStateChange` (the
+    platform's check box and radio button).
+  - `android/text/Layout.java`: `getPrimaryHorizontal`,
+    `getOffsetForHorizontal` and `isRtlCharAt` follow the line's bidi runs;
+    `getLineRight` is the visible extent.
+  - `android/widget/TextView.java`: the baseline, `getLayout()`'s alignment
+    and direction, `getGravity()` (always names a side), a password field and
+    a phone number left to right, `setTextAppearance` with `textAllCaps` and
+    colour state lists, a compound drawable takes the view's state when set.
+  - `android/widget/ProgressBar.java`: `android:mirrorForRtl`.
+  - `android/view/View.java`, `ViewGroup.java`: a group's children that
+    inherit their direction resolve it with the group; margin and padding
+    start/end ids.
+  - `android/view/LayoutInflater.java`: an element's colours resolve against
+    the view's own theme, and a widget's own `app:tint` is left alone.
+  - `com/macapk/loader/AppClassLoader.java`: an app that carries Firebase
+    gets no stand-in for a Firebase class it lacks (old `FirebaseApp` probes
+    its optional modules by name).
+  - Platform members two or more of 50 apps name and the runtime lacked
+    (`AccessibilityEvent.getTextChangeTypes`, `Network.CREATOR`,
+    `OsConstants.PROT_READ`, `Context.bindService(.., BindServiceFlags)`,
+    `android.icu.text.IDNA`, `sun.misc.Cleaner` and about fifty more).
 
 ## License
 
