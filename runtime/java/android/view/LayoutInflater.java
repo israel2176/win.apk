@@ -4276,7 +4276,7 @@ public class LayoutInflater {
                 String synth = (view instanceof android.widget.RadioButton)
                         ? "btn_radio_material" : "btn_check_material";
                 android.graphics.drawable.Drawable fb =
-                        r.macapkFrameworkDrawableByName(synth);
+                        r.macapkFrameworkDrawableByName(synth, macapkThemeOf(view));
                 if (fb == null) return;
                 if (trace) android.util.Log.i("Mac.apk.DefStyle",
                     "  button=" + ref + " unresolved (did=" + did + " tintId=" + cid
@@ -4384,7 +4384,7 @@ public class LayoutInflater {
                 d = r.macapkFrameworkDrawableByName(name, th);
                 if (d == null) standIn = radio ? "btn_radio_material" : "btn_check_material";
             }
-            if (d == null) d = r.macapkFrameworkDrawableByName(standIn);
+            if (d == null) d = r.macapkFrameworkDrawableByName(standIn, macapkThemeOf(cb));
             if (d == null) return;
             if (trace) android.util.Log.i("Mac.apk.DefStyle",
                 "  button=@android:drawable/" + name + " -> "
@@ -6247,7 +6247,7 @@ public class LayoutInflater {
                 android.content.res.Resources r = view.getResources();
                 if (r == null) return;
                 android.graphics.drawable.Drawable fw =
-                    r.macapkFrameworkDrawableByName(value.substring(18));
+                    r.macapkFrameworkDrawableByName(value.substring(18), macapkThemeOf(view));
                 if (fw != null) { view.setBackground(fw); return; }
             } catch (Throwable ignored) {}
             return;
@@ -6652,7 +6652,7 @@ public class LayoutInflater {
                 android.content.res.Resources r = (iv != null) ? iv.getResources() : null;
                 if (r != null) {
                     android.graphics.drawable.Drawable fw =
-                        r.macapkFrameworkDrawableByName(value.substring(18));
+                        r.macapkFrameworkDrawableByName(value.substring(18), macapkThemeOf(iv));
                     if (fw != null) iv.setImageDrawable(fw);
                 }
             } catch (Throwable ignored) {}

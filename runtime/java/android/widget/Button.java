@@ -89,7 +89,7 @@ public class Button extends TextView {
             Object bg = resolve.invoke(ri, styleName, "background");
             if (bg instanceof String && ((String) bg).startsWith("@android:drawable/")) {
                 android.graphics.drawable.Drawable d = c.getResources()
-                    .macapkFrameworkDrawableByName(((String) bg).substring(18));
+                    .macapkFrameworkDrawableByName(((String) bg).substring(18), c.getTheme());
                 if (d != null) setBackgroundDrawable(d);
             }
             Object tc = resolve.invoke(ri, styleName, "textColor");

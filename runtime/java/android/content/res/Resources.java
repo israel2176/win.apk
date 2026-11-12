@@ -3162,7 +3162,12 @@ public class Resources {
         private final android.graphics.Paint paint = new android.graphics.Paint();
         private int alpha = 255;
 
-        MacapkEditTextBar(float density) { this.d = density; }
+        /** The theme the field was inflated with, when there was one: the two colours are
+         *  that theme's (a dark activity in a light app has a light underline), the
+         *  application theme's only without it. */
+        private final Theme theme;
+        MacapkEditTextBar(float density) { this(density, null); }
+        MacapkEditTextBar(float density, Theme theme) { this.d = density; this.theme = theme; }
 
         /** AOSP's selector, read top-down: disabled -> normal art; NOT pressed
          *  and NOT focused -> normal art; otherwise (so: pressed or focused, and
@@ -3195,8 +3200,11 @@ public class Resources {
             // accent_material_light = material_deep_teal_500 = #009688, and
             // secondary_text_material_light = #8a000000 (Theme.Material.Light's
             // colorControlNormal is ?android:textColorSecondary).
-            final int c = on ? macapkThemeColor("colorControlActivated", 0xFF009688)
-                             : macapkThemeColor("colorControlNormal",    0x8A000000);
+            final int c = theme != null
+                ? (on ? theme.resolveAttrColor("android:colorControlActivated", 0xFF009688)
+                      : theme.resolveAttrColor("android:colorControlNormal", 0x8A000000))
+                : (on ? macapkThemeColor("colorControlActivated", 0xFF009688)
+                      : macapkThemeColor("colorControlNormal",    0x8A000000));
             // Drawable.setAlpha SCALES the drawable's own alpha, it does not
             // replace it -- colorControlNormal is #8a000000, i.e. already 54%
             // opaque, and a caller passing 255 must not promote it to opaque.
@@ -3500,7 +3508,7 @@ public class Resources {
             // framework asset we do not ship is worse than no row.
             case "edit_text_material": {
                 if (!MACAPK_ATTRSTYLE) return null;
-                MacapkEditTextBar bar = new MacapkEditTextBar(d);
+                MacapkEditTextBar bar = new MacapkEditTextBar(d, theme);
                 return new android.graphics.drawable.InsetDrawable(bar,
                     Math.round(4f * d), Math.round(10f * d),
                     Math.round(4f * d), Math.round(7f * d));
@@ -3517,7 +3525,11 @@ public class Resources {
                 android.graphics.drawable.GradientDrawable s =
                     new android.graphics.drawable.GradientDrawable();
                 s.setShape(android.graphics.drawable.GradientDrawable.RECTANGLE);
-                s.setColor(macapkThemeColor("colorButtonNormal", 0xFFD6D7D7));
+                // ?attr/colorButtonNormal of the theme the button is inflated with: #5a595b
+                // under a dark theme, where the application theme's light grey left white
+                // text on a pale button.
+                s.setColor(theme != null ? theme.resolveAttrColor("android:colorButtonNormal", 0xFFD6D7D7)
+                                         : macapkThemeColor("colorButtonNormal", 0xFFD6D7D7));
                 s.setCornerRadius(2f * d);
                 // btn_default_mtrl_shape's <padding>: button_padding_horizontal_material (8dp) and
                 // button_padding_vertical_material (4dp). With the insets a button's padding is

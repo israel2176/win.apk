@@ -7427,7 +7427,12 @@ public class TextView extends View
         // (debug/caret_gate.sh theme row: the drawable draws, bar colour none).
         if ("text_cursor_material".equals(name)) return macapkTextCursorMaterial();
         android.graphics.drawable.Drawable d = null;
-        try { d = res.macapkFrameworkDrawableByName(name); } catch (Throwable ignored) {}
+        // With the view's own theme: the drawable's colours are ?attr of the theme the view
+        // was inflated with, not of the application's.
+        try {
+            android.content.res.Resources.Theme th = getContext() != null ? getContext().getTheme() : null;
+            d = res.macapkFrameworkDrawableByName(name, th);
+        } catch (Throwable ignored) {}
         return d;
     }
 
