@@ -5897,6 +5897,14 @@ public class TextView extends View
                                   android.graphics.drawable.Drawable bottom) {
         mDrawableLeft = left; mDrawableTop = top;
         mDrawableRight = right; mDrawableBottom = bottom;
+        // AOSP setCompoundDrawables: each drawable takes the view's state as it is set
+        // (`left.setState(state)`), not only at the next state change. An icon set on an
+        // enabled, idle view otherwise kept the empty state, and a tint list read against it
+        // gave its disabled row: Material's button icons came out grey.
+        final int[] macapkState = getDrawableState();
+        for (android.graphics.drawable.Drawable dr : new android.graphics.drawable.Drawable[] {left, top, right, bottom}) {
+            if (dr != null) dr.setState(macapkState);
+        }
         // Bounds are the CALLER's to own -- AOSP's setCompoundDrawables only
         // READS them (`left.copyBounds(compoundRect); dr.mDrawableSizeLeft =
         // compoundRect.width();`, TextView.java:3226-3232) and it is
