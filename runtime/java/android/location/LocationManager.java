@@ -575,6 +575,13 @@ public class LocationManager {
     /** The location master switch: macOS Location Services. */
     public boolean isLocationEnabled() { return hostEnabled(); }
 
+    /** AOSP setLocationEnabledForUser(boolean, UserHandle), a system API that
+     *  flips the master switch. The switch here is the host's location setting,
+     *  which is the user's to change in the host's own settings, never an
+     *  app's; the request changes nothing and isLocationEnabled keeps telling
+     *  the truth. */
+    public void setLocationEnabledForUser(boolean enabled, android.os.UserHandle userHandle) {}
+
     public boolean isProviderEnabled(String provider) {
         return providerEnabled(provider);
     }

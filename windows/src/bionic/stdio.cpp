@@ -179,14 +179,16 @@ bool at_path(int dirfd, const char* path, std::string* out) {
         *guest_errno() = kEFAULT;
         return false;
     }
-    if (dirfd == -100 || path[0] == '/' || (path[0] && path[1] == ':')) {
+    // ("C:\x" is a host path; "a:b" a name in the directory, as on Android.)
+    if (dirfd == -100 || path[0] == '/' || (path[0] && path[1] == ':' && (path[2] == '\\' || path[2] == '/'))) {
         *out = path;
         return true;
     }
     std::wstring dir;
     if (!fd_host_path(dirfd, &dir)) return false;
     *out = narrow(dir.c_str());
-    if (path[0]) *out += '\\' + std::string(path);
+    // The guest's part is Android names, stored as an Android path's are (paths.cpp).
+    if (path[0]) *out += '\\' + narrow(host_names(path, std::strlen(path)).c_str());
     return true;
 }
 
@@ -535,6 +537,13 @@ void fill_identity(HANDLE h, GuestStat* g) {
     g->st_ino = (static_cast<uint64_t>(info.nFileIndexHigh) << 32) | info.nFileIndexLow;
 }
 WINAPK_GUEST_ABI int g_stat(const char* path, GuestStat* g) {
+    if (is_proc_maps(path)) {  // a regular file of no length, as procfs reports its files
+        std::memset(g, 0, sizeof(*g));
+        g->st_mode = 0100444;  // S_IFREG | r--r--r--
+        g->st_nlink = 1;
+        g->st_blksize = 4096;
+        return 0;
+    }
     const std::wstring w = host_path(path);
     struct _stat64 s;
     if (_wstat64(w.c_str(), &s) < 0) return fail_crt();
@@ -719,6 +728,16 @@ WINAPK_GUEST_ABI int g_fstatat(int dirfd, const char* path, GuestStat* g, int fl
     return at_path(dirfd, path, &p) ? g_stat(p.c_str(), g) : -1;
 }
 WINAPK_GUEST_ABI int g_access(const char* path, int mode) {
+    // /proc/self/maps is no file on disk, yet it is there and readable, as open() and
+    // fopen() have it. Mono asks before it starts ("Mono requires /proc to be mounted."
+    // and exit(1) when access() says no), so every Xamarin and .NET app stopped here.
+    if (is_proc_maps(path)) {
+        if (mode & 2) {
+            errno = EACCES;
+            return fail_crt();
+        }
+        return 0;
+    }
     // _waccess knows no X_OK (1); anything readable counts.
     return _waccess(host_path(path).c_str(), mode & 6) < 0 ? fail_crt() : 0;
 }
@@ -844,6 +863,12 @@ struct GuestDir {
     GuestDirent entry;
     std::wstring path;  // the host directory
     int fd = -1;        // its descriptor (fdopendir, dirfd), closed with it
+    // The guest joins the names onto an Android path (or uses them with the
+    // *at() calls), which stores the characters Windows forbids in a name as
+    // private-use ones (paths.cpp): the names are listed with them turned
+    // back. Not when it named the directory by a host path: a name joined
+    // onto that is opened as it is.
+    bool android_names = false;
 };
 
 std::wstring dir_pattern(const std::wstring& path) {
@@ -865,13 +890,20 @@ GuestDir* open_dir(std::wstring path) {
     return d;
 }
 
-WINAPK_GUEST_ABI GuestDir* g_opendir(const char* path) { return open_dir(host_path(path)); }
+WINAPK_GUEST_ABI GuestDir* g_opendir(const char* path) {
+    GuestDir* d = open_dir(host_path(path));
+    if (d) d->android_names = is_android_path(path);
+    return d;
+}
 // fdopendir: the DIR owns `fd` from here on (closedir closes it).
 WINAPK_GUEST_ABI GuestDir* g_fdopendir(int fd) {
     std::wstring path;
     if (!fd_host_path(fd, &path)) return nullptr;
     GuestDir* d = open_dir(std::move(path));
-    if (d) d->fd = fd;
+    if (d) {
+        d->fd = fd;
+        d->android_names = true;
+    }
     return d;
 }
 // dirfd: a directory descriptor for the *at() calls, opened on first use.
@@ -890,6 +922,7 @@ WINAPK_GUEST_ABI GuestDirent* g_readdir(GuestDir* d) {
     }
     d->pending = false;
     std::memset(&d->entry, 0, sizeof(d->entry));
+    if (d->android_names) android_name(d->data.cFileName);
     const std::string name = narrow(d->data.cFileName);
     std::strncpy(d->entry.d_name, name.c_str(), sizeof(d->entry.d_name) - 1);
     d->entry.d_ino = static_cast<uint64_t>(++d->offset);
@@ -937,8 +970,7 @@ using DirCompare = int(WINAPK_GUEST_ABI*)(const GuestDirent**, const GuestDirent
 WINAPK_GUEST_ABI int g_alphasort(const GuestDirent** a, const GuestDirent** b) {
     return std::strcmp((*a)->d_name, (*b)->d_name);  // strcoll in the C locale
 }
-WINAPK_GUEST_ABI int g_scandir(const char* path, GuestDirent*** out, DirFilter filter, DirCompare compare) {
-    GuestDir* d = g_opendir(path);
+int scan_dir(GuestDir* d, GuestDirent*** out, DirFilter filter, DirCompare compare) {
     if (!d) return -1;
     std::vector<GuestDirent*> found;
     bool ok = true;
@@ -968,10 +1000,17 @@ WINAPK_GUEST_ABI int g_scandir(const char* path, GuestDirent*** out, DirFilter f
     *out = list;
     return static_cast<int>(found.size());
 }
+WINAPK_GUEST_ABI int g_scandir(const char* path, GuestDirent*** out, DirFilter filter, DirCompare compare) {
+    return scan_dir(g_opendir(path), out, filter, compare);
+}
 WINAPK_GUEST_ABI int g_scandirat(int dirfd, const char* path, GuestDirent*** out, DirFilter filter,
                                  DirCompare compare) {
     std::string p;
-    return at_path(dirfd, path, &p) ? g_scandir(p.c_str(), out, filter, compare) : -1;
+    if (!at_path(dirfd, path, &p)) return -1;
+    GuestDir* d = g_opendir(p.c_str());
+    // Under a directory descriptor at_path made a host path of `path`; the names are Android's all the same.
+    if (d && p != path) d->android_names = true;
+    return scan_dir(d, out, filter, compare);
 }
 
 // ---- pathconf ------------------------------------------------------------------

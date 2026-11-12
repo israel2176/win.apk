@@ -212,6 +212,16 @@ public abstract class Window {
     }
     /** AOSP Window.addFlags: setFlags(flags, flags). */
     public void addFlags(int flags) { setFlags(flags, flags); }
+    /** AOSP Window.addSystemFlags (a system API): addPrivateFlags(flags), which
+     *  ORs them into attrs.privateFlags and reports the attributes changed.
+     *  The bits are requests to the system's window manager (hide non-system
+     *  overlays, ...); they are kept where AOSP keeps them, and nothing here
+     *  has overlays of other apps to hide. */
+    public void addSystemFlags(int flags) {
+        WindowManager.LayoutParams attrs = getAttributes();
+        attrs.privateFlags |= flags;
+        dispatchWindowAttributesChanged(attrs);
+    }
     /** AOSP Window.clearFlags: setFlags(0, flags). */
     public void clearFlags(int flags) { setFlags(0, flags); }
     public void setFormat(int format) {}

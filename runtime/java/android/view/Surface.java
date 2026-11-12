@@ -97,6 +97,16 @@ public class Surface implements android.os.Parcelable {
             surfaceTexture.macapkRegisterVideoTarget();
         }
     }
+    /** AOSP Surface(SurfaceControl) (API 29): a Surface that queues buffers to
+     *  the given layer. A SurfaceControl here is a handle with no layer in a
+     *  compositor behind it (android.view.SurfaceControl), so the Surface is a
+     *  valid one that nothing shows, like a default-constructed one. The null
+     *  check is AOSP's copyFrom. */
+    public Surface(SurfaceControl from) {
+        if (from == null) {
+            throw new IllegalArgumentException("other must not be null");
+        }
+    }
     public boolean isValid() { return !mReleased; }
     public void release() { mReleased = true; }
 

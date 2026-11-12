@@ -610,7 +610,13 @@ final class WinNTFileSystem extends FileSystem {
     public String[] list(File f) {
         long comp = Blocker.begin();
         try {
-            return list0(host(f));
+            String[] names = list0(host(f));
+            // Win.apk: under an Android path the names are Android's (the characters Windows
+            // forbids are stored as private-use ones, WinApkPaths.androidName).
+            if (names != null && WinApkPaths.isAndroid(f.getPath())) {
+                for (int i = 0; i < names.length; i++) names[i] = WinApkPaths.androidName(names[i]);
+            }
+            return names;
         } finally {
             Blocker.end(comp);
         }

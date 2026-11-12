@@ -2460,7 +2460,18 @@ public class Thread implements Runnable {
             StackTraceElement[] stackTrace = asyncGetStackTrace();
             return (stackTrace != null) ? stackTrace : EMPTY_STACK_TRACE;
         } else {
-            return (new Exception()).getStackTrace();
+            // Win.apk: Android's own frame first. There the current thread's trace is
+            // VMStack.getThreadStackTrace, Thread.getStackTrace, then the caller, so code
+            // written for Android finds "who called me" one index further than the JDK
+            // has it: a logger reading getStackTrace()[3] for its caller's caller ran off
+            // the end of a three-frame trace (ArrayIndexOutOfBoundsException in a bank's
+            // security library, whose native side then went on with a null object and
+            // took the process down).
+            StackTraceElement[] own = (new Exception()).getStackTrace();
+            StackTraceElement[] st = new StackTraceElement[own.length + 1];
+            st[0] = new StackTraceElement("dalvik.system.VMStack", "getThreadStackTrace", null, -2);
+            System.arraycopy(own, 0, st, 1, own.length);
+            return st;
         }
     }
 

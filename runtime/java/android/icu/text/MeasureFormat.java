@@ -65,6 +65,40 @@ public class MeasureFormat extends UFormat {
         return getInstance(ULocale.forLocale(locale), formatWidth, format);
     }
 
+    /** ICU: a format for CurrencyAmount objects in the locale ("$12.50"). */
+    public static MeasureFormat getCurrencyFormat(ULocale locale) {
+        return new CurrencyFormat(locale);
+    }
+
+    public static MeasureFormat getCurrencyFormat(Locale locale) {
+        return getCurrencyFormat(ULocale.forLocale(locale));
+    }
+
+    public static MeasureFormat getCurrencyFormat() {
+        return getCurrencyFormat(ULocale.getDefault(ULocale.Category.FORMAT));
+    }
+
+    /** ICU's CurrencyFormat: money goes through the locale's currency number
+     *  format, with the amount's own currency, not through a unit pattern. */
+    private static final class CurrencyFormat extends MeasureFormat {
+        private static final long serialVersionUID = 1L;
+
+        CurrencyFormat(ULocale locale) {
+            super(locale, FormatWidth.WIDE, null);
+        }
+
+        @Override
+        public StringBuffer format(Object obj, StringBuffer toAppendTo, FieldPosition fpos) {
+            if (!(obj instanceof android.icu.util.CurrencyAmount)) {
+                throw new IllegalArgumentException("Invalid type: " + obj.getClass().getName());
+            }
+            android.icu.util.CurrencyAmount amount = (android.icu.util.CurrencyAmount) obj;
+            NumberFormat money = NumberFormat.getCurrencyInstance(getLocale());
+            money.setCurrency(amount.getCurrency());
+            return toAppendTo.append(money.format(amount.getNumber()));
+        }
+    }
+
     public final FormatWidth getWidth() { return width; }
     public final ULocale getLocale() { return locale; }
     public NumberFormat getNumberFormat() { return (NumberFormat) numberFormat.clone(); }

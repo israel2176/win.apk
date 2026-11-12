@@ -48,6 +48,41 @@ public class NinePatchDrawable extends Drawable {
         mNinePatch = patch;
     }
 
+    /** The patch's own density and the screen's, when they differ; 0 = draw as it is. AOSP's
+     *  NinePatchDrawable scales a patch of another density whole: its size, its padding
+     *  (computeBitmapSize) and, in draw, the canvas ("mNinePatch.getDensity() !=
+     *  canvas.getDensity()": canvas.scale then the bounds divided by the scale), so the
+     *  corners keep their size in dp. Set by Resources for a patch from one bucket only. */
+    private int mMacapkSourceDensity, mMacapkScreenDensity;
+    public void macapkSetDensities(int source, int screen) {
+        if (source > 0 && screen > 0 && source != screen) {
+            mMacapkSourceDensity = source;
+            mMacapkScreenDensity = screen;
+            mPadding.set(macapkScaled(mPadding.left), macapkScaled(mPadding.top),
+                         macapkScaled(mPadding.right), macapkScaled(mPadding.bottom));
+        }
+    }
+    /** The patch's layout bounds (the compiled PNG's npLb chunk: how far the picture's
+     *  shadow or glow reaches past what is to be lined up), in the patch's own pixels.
+     *  AOSP: NinePatch.InsetStruct.opticalRect, scaled with the patch. A switch sizes its
+     *  track by its thumb's (Switch.onMeasure, SwitchCompat through DrawableUtils). */
+    private android.graphics.Insets mMacapkOpticalInsets = android.graphics.Insets.NONE;
+    public void macapkSetOpticalInsets(int left, int top, int right, int bottom) {
+        mMacapkOpticalInsets = android.graphics.Insets.of(left, top, right, bottom);
+    }
+    @Override public android.graphics.Insets getOpticalInsets() {
+        final android.graphics.Insets in = mMacapkOpticalInsets;
+        if (mMacapkSourceDensity == 0 || in == android.graphics.Insets.NONE) return in;
+        return android.graphics.Insets.of(macapkScaled(in.left), macapkScaled(in.top),
+                macapkScaled(in.right), macapkScaled(in.bottom));
+    }
+
+    /** Bitmap.scaleFromDensity. */
+    private int macapkScaled(int size) {
+        if (mMacapkSourceDensity == 0) return size;
+        return (size * mMacapkScreenDensity + (mMacapkSourceDensity >> 1)) / mMacapkSourceDensity;
+    }
+
     public Paint getPaint() { return mPaint; }
     public void setTargetDensity(int density) { mTargetDensity = density; }
     public void setTargetDensity(android.util.DisplayMetrics metrics) {
@@ -84,7 +119,18 @@ public class NinePatchDrawable extends Drawable {
         if (applied) {
             mPaint.setColorFilter(new android.graphics.PorterDuffColorFilter(tint, mTintMode));
         }
-        mNinePatch.draw(canvas, getBounds(), mPaint);
+        if (mMacapkSourceDensity != 0) {
+            final Rect b = getBounds();
+            final float scale = mMacapkScreenDensity / (float) mMacapkSourceDensity;
+            final int save = canvas.save();
+            canvas.translate(b.left, b.top);
+            canvas.scale(scale, scale);
+            mNinePatch.draw(canvas, new Rect(0, 0, Math.round(b.width() / scale), Math.round(b.height() / scale)),
+                            mPaint);
+            canvas.restoreToCount(save);
+        } else {
+            mNinePatch.draw(canvas, getBounds(), mPaint);
+        }
         if (applied) {
             mPaint.setColorFilter(prevCf);
         }
@@ -122,9 +168,9 @@ public class NinePatchDrawable extends Drawable {
         return (mPadding.left | mPadding.top | mPadding.right | mPadding.bottom) != 0;
     }
     @Override public int getIntrinsicWidth() {
-        return mNinePatch != null ? mNinePatch.getWidth() : -1;
+        return mNinePatch != null ? macapkScaled(mNinePatch.getWidth()) : -1;
     }
     @Override public int getIntrinsicHeight() {
-        return mNinePatch != null ? mNinePatch.getHeight() : -1;
+        return mNinePatch != null ? macapkScaled(mNinePatch.getHeight()) : -1;
     }
 }

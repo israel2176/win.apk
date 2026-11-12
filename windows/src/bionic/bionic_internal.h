@@ -112,6 +112,14 @@ std::string format_va(const char* fmt, SysVVaList* va);
 // paths.cpp: the host path for a guest path (Android's absolute paths are
 // mapped under the android root; see paths.cpp).
 std::wstring host_path(const char* guest_path);
+// Whether host_path() maps `guest_path` as an Android path; a host path it
+// leaves as it is.
+bool is_android_path(const char* guest_path);
+// Android names (UTF-8, '/' between them) as the host stores them, the
+// characters Windows forbids in a name as U+F000 + the character, and the
+// inverse for one listed name, in place.
+std::wstring host_names(const char* android_names, size_t len);
+void android_name(wchar_t* host_name);
 
 // cacerts.cpp: the host directory that answers Android's system CA store
 // (/system/etc/security/cacerts), built from the roots Windows trusts on the

@@ -5,12 +5,19 @@
 // ConnectivityManager methods.
 package android.net;
 
-public class Network {
+public class Network implements android.os.Parcelable {
     private final int netId;
     public Network() { this.netId = 1; }
     Network(int netId) { this.netId = netId; }
 
-    public int  describeContents() { return 0; }
+    @Override public int describeContents() { return 0; }
+    /** AOSP parcels a Network as its netId. */
+    @Override public void writeToParcel(android.os.Parcel dest, int flags) { dest.writeInt(netId); }
+    public static final android.os.Parcelable.Creator<Network> CREATOR =
+            new android.os.Parcelable.Creator<Network>() {
+        @Override public Network createFromParcel(android.os.Parcel in) { return new Network(in.readInt()); }
+        @Override public Network[] newArray(int size) { return new Network[size]; }
+    };
     @Override public boolean equals(Object o) {
         return (o instanceof Network) && ((Network) o).netId == netId;
     }

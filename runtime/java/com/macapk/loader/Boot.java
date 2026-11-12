@@ -603,7 +603,16 @@ public final class Boot {
         "classes.jar", "lib_native", "services_root", ".source-mtime", "meta.json",
         "icon.png", "_apkt", "AndroidManifest.xml", "_merged.apk", ".x18cache",
         "dexopt", "classes.unverified.txt", "_split_res", "_bundle_staging",
-        "base.apk", ".gles31cache", ".angle_blob", ".dexjar-pending");
+        "base.apk", ".gles31cache", ".angle_blob", ".dexjar-pending",
+        // Win.apk's install and launcher (windows/host/runtime_main.cpp, AppMeta,
+        // launcher_main.cpp install_into_library, aot_guard.cpp, native_notifications.cpp).
+        // Taken for the app's, they were moved to the data dir with a link left
+        // behind whenever the app started while it was being updated (the Play
+        // Store updating itself, its processes restarted by the system): the
+        // launcher then found a link where the new label.txt should be, the update
+        // counted as failed, and the Play Store was gone from the library.
+        "label.txt", "package.txt", "icon.png.previous", "classes.jar.tmp",
+        "AndroidManifest.txt", "aot-guard.txt", "notifications");
 
     static boolean isCodeDirArtifact(String name) {
         return CODE_DIR_OURS.contains(name) || name.startsWith(".macapk");

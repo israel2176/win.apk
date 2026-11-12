@@ -648,6 +648,56 @@ final class SuperInterfacePlan {
         return seen;
     }
 
+    /**
+     * Whether a NON-VIRTUAL call (invoke-direct or invoke-super) that names
+     * {@code owner.name+descriptor} from {@code current}, on a receiver typed
+     * {@code receiver}, has to be an invokevirtual.
+     *
+     * invokespecial takes only a receiver of the current class (JVMS 4.9.2),
+     * and the translator casts the receiver to it. R8 also emits the
+     * non-virtual form for a FINAL method of a superclass called on ANOTHER
+     * object of that superclass: Compose's NodeCoordinator subclasses call a
+     * final NodeCoordinator method on the next coordinator in the chain, which
+     * is a different subclass. ART checks the receiver against the method's
+     * class; the cast to the current class threw ClassCastException on every
+     * pointer event that walked the chain (the Play Store: no scrolling with
+     * the wheel, hover and layout passes failing). A final method has one
+     * implementation at and below its class, so invokevirtual runs the same
+     * code. Only when the receiver is known not to be the current class and
+     * the method is found, final, and neither private nor static; everything
+     * else keeps invokespecial.
+     */
+    boolean nonVirtualNeedsInvokeVirtual(String current, String owner, String name,
+                                         String descriptor, String receiver) {
+        if (receiver == null || current == null || owner == null) return false;
+        if (receiver.equals(current) || extendsClass(receiver, current)) return false;
+        String sig = name + descriptor;
+        for (String k = owner; k != null; ) {
+            TypeFacts f = facts(k);
+            if (!f.known || f.isInterface || f.methods == null) return false;
+            Integer access = f.methods.get(sig);
+            if (access != null) {
+                final int isStatic = 0x0008, isPrivate = 0x0002, isFinal = 0x0010;
+                return (access & (isStatic | isPrivate)) == 0 && (access & isFinal) != 0;
+            }
+            if (DexType.OBJECT_NAME.equals(k)) return false;
+            k = f.superName;
+        }
+        return false;
+    }
+
+    /** Whether {@code type} is a proper subclass of {@code ancestor}; false when the chain is unknown. */
+    private boolean extendsClass(String type, String ancestor) {
+        for (String k = type; k != null; ) {
+            TypeFacts f = facts(k);
+            if (!f.known || f.isInterface) return false;
+            k = f.superName;
+            if (ancestor.equals(k)) return true;
+            if (k == null || DexType.OBJECT_NAME.equals(k)) return false;
+        }
+        return false;
+    }
+
     private static int declares(TypeFacts f, String sig) {
         if (!f.known || f.methods == null) return UNKNOWN;
         return f.methods.containsKey(sig) ? YES : NO;

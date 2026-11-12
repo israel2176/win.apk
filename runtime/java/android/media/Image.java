@@ -80,6 +80,22 @@ public abstract class Image implements AutoCloseable {
 
     private long mQueuedTimestamp;
 
+    /** API 33. AOSP: the fence that signals when the image's buffer may be
+     *  read; an image without one answers an empty (already signalled) fence.
+     *  The images here are finished software buffers, so that is every image
+     *  that was not given a fence with setFence. */
+    public android.hardware.SyncFence getFence() throws java.io.IOException {
+        return (mFence != null) ? mFence : android.hardware.SyncFence.createEmpty();
+    }
+
+    /** API 33. AOSP: the fence an app attaches before queueing the image to an
+     *  ImageWriter. Stored for the read-back, as setCropRect is. */
+    public void setFence(android.hardware.SyncFence fence) throws java.io.IOException {
+        mFence = fence;
+    }
+
+    private android.hardware.SyncFence mFence;
+
     public android.hardware.HardwareBuffer getHardwareBuffer() {
         int w = 1, h = 1, f = android.hardware.HardwareBuffer.RGBA_8888;
         try { w = Math.max(1, getWidth()); h = Math.max(1, getHeight()); } catch (Throwable ignored) {}

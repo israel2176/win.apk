@@ -96,6 +96,23 @@ public class VectorDrawable extends Drawable {
     private int tint = 0;
     /** The <vector> declared android:tint (see effectiveFillColor). */
     private boolean macapkTintDeclared;
+    /** android:tint when it is a colour state list with more than one row; null otherwise. */
+    private android.content.res.ColorStateList macapkXmlTintList;
+
+    /** AOSP VectorDrawable.isStateful: `super.isStateful() || (mTint != null && mTint.isStateful())`. */
+    @Override public boolean isStateful() {
+        return super.isStateful() || macapkXmlTintList != null;
+    }
+
+    /** AOSP VectorDrawable.onStateChange: a stateful tint means the picture changed. */
+    @Override public boolean onStateChange(int[] state) {
+        boolean changed = super.onStateChange(state);
+        if (macapkXmlTintList != null && mTintList == null) {
+            invalidateSelf();
+            changed = true;
+        }
+        return changed;
+    }
     private int alpha = 255;
 
     public VectorDrawable() {}
@@ -261,6 +278,19 @@ public class VectorDrawable extends Drawable {
         final String tintAttr = root.getAttributeNS(NS, "tint");
         macapkTintDeclared = tintAttr != null && !tintAttr.trim().isEmpty();
         tint = parseColor(root.getAttributeNS(NS, "tint"), 0);
+        // android:tint may name a colour state list (VectorDrawable.updateStateFromTypedArray
+        // reads it with getColorStateList, and isStateful/onStateChange follow it): the
+        // platform's check box and radio button are vectors tinted by
+        // @color/control_checkable_material, colorControlActivated when checked and
+        // colorControlNormal otherwise. Read as one colour, every such icon kept its default
+        // row: a ticked box stayed grey. The list needs the inflating theme for its ?attr rows.
+        macapkXmlTintList = null;
+        if (macapkTintDeclared && macapkRes != null && macapkTheme != null) {
+            try {
+                android.content.res.ColorStateList list = macapkRes.macapkTintListFor(tintAttr, macapkTheme);
+                if (list != null && list.isStateful()) macapkXmlTintList = list;
+            } catch (Throwable ignored) { }
+        }
         if ("true".equalsIgnoreCase(root.getAttributeNS(NS, "autoMirrored"))) setAutoMirrored(true);
 
         // Walk children: <path>, <group>
@@ -679,6 +709,9 @@ public class VectorDrawable extends Drawable {
         // current state. v1.0.423.
         int effTint = macapkEffectiveTint();
         if (effTint != 0) tint = effTint;
+        else if (macapkXmlTintList != null) {
+            tint = macapkXmlTintList.getColorForState(getState(), macapkXmlTintList.getDefaultColor());
+        }
         // A programmatic tint that is fully TRANSPARENT under SRC_IN (the default
         // mode) paints nothing on AOSP: the PorterDuffColorFilter keeps the
         // source's coverage but multiplies by the tint's alpha 0. Ours read

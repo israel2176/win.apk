@@ -54,6 +54,12 @@ public final class WifiNetworkSpecifier extends NetworkSpecifier {
         }
         public Builder setIsEnhancedOpen(boolean isEnhancedOpen) { return this; }
         public Builder setIsHiddenSsid(boolean isHiddenSsid) { return this; }
+        /** AOSP (API 34): the channels to look on first. A hint for a scan that
+         *  never happens here; AOSP's own null check is kept. */
+        public Builder setPreferredChannelsFrequenciesMhz(int[] channelFreqs) {
+            if (channelFreqs == null) throw new NullPointerException("channelFreqs");
+            return this;
+        }
 
         public WifiNetworkSpecifier build() {
             return new WifiNetworkSpecifier(mSsid, mBssid == null ? null : mBssid.toString());

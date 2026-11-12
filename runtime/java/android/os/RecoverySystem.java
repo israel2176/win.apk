@@ -54,5 +54,17 @@ public class RecoverySystem {
         throw new IOException("cache wipe unsupported on this host");
     }
 
+    /** AOSP prepareForUnattendedUpdate, a system API: get ready to apply an
+     *  update across a reboot without the user unlocking. AOSP throws
+     *  IOException when the preparation cannot be made, which it cannot. */
+    public static void prepareForUnattendedUpdate(Context context, String updateToken,
+                                                  android.content.IntentSender intentSender)
+            throws IOException {
+        if (updateToken == null) {
+            throw new NullPointerException("updateToken == null");
+        }
+        throw new IOException("preparation for update failed");
+    }
+
     public static String handleAftermath(Context context) { return null; }
 }

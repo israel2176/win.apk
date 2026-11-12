@@ -315,6 +315,19 @@ public class TelephonyManager {
     /** AOSP: "@return true if a ICC card is present". No SIM slot exists here. */
     public boolean hasIccCard() { return false; }
 
+    /** AOSP isIccLockEnabled(), a system API: whether the SIM asks for a PIN.
+     *  No SIM, no PIN lock. */
+    public boolean isIccLockEnabled() { return false; }
+
+    /** AOSP PrepareUnattendedRebootResult values. */
+    public static final int PREPARE_UNATTENDED_REBOOT_SUCCESS = 0;
+    public static final int PREPARE_UNATTENDED_REBOOT_PIN_REQUIRED = 1;
+    public static final int PREPARE_UNATTENDED_REBOOT_ERROR = 2;
+    /** AOSP prepareForUnattendedReboot(), a system API: store the SIM PIN so a
+     *  reboot for an update needs no one to type it. ERROR is AOSP's answer
+     *  when the telephony service cannot do it; there is none here. */
+    public int prepareForUnattendedReboot() { return PREPARE_UNATTENDED_REBOOT_ERROR; }
+
     // AOSP returns List<CellInfo>; the audit flagged the raw List<?> as a
     // signature lie. With no radio the list is always empty, but the element
     // type must match so callers that declare List<CellInfo> link cleanly.

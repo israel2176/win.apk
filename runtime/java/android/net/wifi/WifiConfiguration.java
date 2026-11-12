@@ -182,6 +182,27 @@ public class WifiConfiguration implements Parcelable {
 
     private ProxyInfo mHttpProxy;
 
+    // ---- @SystemApi fields: who made the network and how it is treated -------
+    // Read by settings-style code off a configuration it was handed; nothing
+    // here acts on them, they are the values AOSP gives a new configuration.
+
+    /** AOSP meteredOverride values. */
+    public static final int METERED_OVERRIDE_NONE = 0;
+    public static final int METERED_OVERRIDE_METERED = 1;
+    public static final int METERED_OVERRIDE_NOT_METERED = 2;
+
+    /** Uid of the app that created the configuration; -1 when unknown. */
+    public int creatorUid = -1;
+    /** Whether the user said to treat the network as metered or not (METERED_OVERRIDE_*). */
+    public int meteredOverride = METERED_OVERRIDE_NONE;
+    /** Whether every user of the device may use the network. */
+    public boolean shared = true;
+    /** @hide in AOSP: set for a network that is forgotten once disconnected. */
+    public boolean ephemeral = false;
+
+    /** AOSP isEphemeral() (@SystemApi). */
+    public boolean isEphemeral() { return ephemeral; }
+
     public WifiConfiguration() {
         networkId = -1;
         status = Status.DISABLED;
@@ -208,6 +229,10 @@ public class WifiConfiguration implements Parcelable {
         FQDN = source.FQDN;
         providerFriendlyName = source.providerFriendlyName;
         isHomeProviderNetwork = source.isHomeProviderNetwork;
+        creatorUid = source.creatorUid;
+        meteredOverride = source.meteredOverride;
+        shared = source.shared;
+        ephemeral = source.ephemeral;
         roamingConsortiumIds = source.roamingConsortiumIds == null
                 ? new long[0] : source.roamingConsortiumIds.clone();
         allowedKeyManagement = (BitSet) source.allowedKeyManagement.clone();
@@ -357,6 +382,10 @@ public class WifiConfiguration implements Parcelable {
         writeBitSet(dest, allowedGroupCiphers);
         writeBitSet(dest, allowedGroupManagementCiphers);
         writeBitSet(dest, allowedSuiteBCiphers);
+        dest.writeInt(creatorUid);
+        dest.writeInt(meteredOverride);
+        dest.writeInt(shared ? 1 : 0);
+        dest.writeInt(ephemeral ? 1 : 0);
     }
 
     private static void writeBitSet(Parcel dest, BitSet set) {
@@ -391,6 +420,10 @@ public class WifiConfiguration implements Parcelable {
             c.allowedGroupCiphers = readBitSet(in);
             c.allowedGroupManagementCiphers = readBitSet(in);
             c.allowedSuiteBCiphers = readBitSet(in);
+            c.creatorUid = in.readInt();
+            c.meteredOverride = in.readInt();
+            c.shared = in.readInt() != 0;
+            c.ephemeral = in.readInt() != 0;
             return c;
         }
 

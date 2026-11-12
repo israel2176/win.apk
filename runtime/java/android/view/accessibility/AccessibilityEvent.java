@@ -90,6 +90,7 @@ public class AccessibilityEvent extends AccessibilityRecord implements android.o
         e.mEventTime = event.mEventTime;
         e.mAction = event.mAction;
         e.mContentChangeTypes = event.mContentChangeTypes;
+        e.mTextChangeTypes = event.mTextChangeTypes;
         return e;
     }
 
@@ -120,6 +121,11 @@ public class AccessibilityEvent extends AccessibilityRecord implements android.o
 
     public int getContentChangeTypes() { return mContentChangeTypes; }
     public void setContentChangeTypes(int changeTypes) { mContentChangeTypes = changeTypes; }
+    /** What kind of text change a TYPE_VIEW_TEXT_CHANGED event reports, a bit
+     *  mask. A plain round-trip, as the other change-type masks are. */
+    public int getTextChangeTypes() { return mTextChangeTypes; }
+    public void setTextChangeTypes(int changeTypes) { mTextChangeTypes = changeTypes; }
+    private int mTextChangeTypes;
 
     // Sub-records (AOSP appends per-child records for window-content changes).
     public void appendRecord(AccessibilityRecord record) {

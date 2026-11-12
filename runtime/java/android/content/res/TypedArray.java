@@ -1522,7 +1522,20 @@ public class TypedArray implements AutoCloseable {
             if (r == null) return def;
             v = r;
         } else if (v.startsWith("@") || v.startsWith("?")) {
-            return def;
+            // Any other reference: a theme attribute (android:alpha="?android:disabledAlpha")
+            // or a compiled id ("@0x7f070123", a float kept as a dimen: Material's
+            // material_emphasis_medium). AOSP resolves the reference first and reads the
+            // float it ends at (TypedArray.getFloat: TYPE_FLOAT, then TYPE_INT, then a
+            // string coerced). Answering `def` made every such alpha 1: a colour state
+            // list's dimmed rows came out at full strength (uiprobe: abc_tint_btn_checkable
+            // black where Android has 60% black).
+            android.util.TypedValue rec = macapkRecordAt(index);
+            if (rec == null) return def;
+            if (rec.type == android.util.TypedValue.TYPE_FLOAT) return Float.intBitsToFloat(rec.data);
+            if (rec.type >= android.util.TypedValue.TYPE_FIRST_INT
+                    && rec.type <= android.util.TypedValue.TYPE_LAST_INT) return rec.data;
+            if (rec.string == null) return def;
+            v = rec.string.toString();
         }
         try {
             if (v.endsWith("%p")) {
@@ -2175,6 +2188,16 @@ public class TypedArray implements AutoCloseable {
         // NPE on null). hasValue() stays universal for theme reads
         // (attributeSet==null), so those keep the stub too.
         if (id == 0 && !hasValue(index)) return null;
+        // A colour written out (or a ?attr the theme sets to one) is a ColorDrawable on Android
+        // (ResourcesImpl.loadDrawable's colour branch): a style's background="?attr/colorPrimary".
+        if (id == 0) {
+            int type = getType(index);
+            if (type >= android.util.TypedValue.TYPE_FIRST_COLOR_INT
+                    && type <= android.util.TypedValue.TYPE_LAST_COLOR_INT) {
+                android.util.TypedValue rec = macapkRecordAt(index);
+                if (rec != null) return new android.graphics.drawable.ColorDrawable(rec.data);
+            }
+        }
         return new android.graphics.drawable.VectorDrawable();
     }
     /** v1.0.97: never return null. Material widgets that read a
@@ -2261,6 +2284,15 @@ public class TypedArray implements AutoCloseable {
         // still has. Restoring the pref returned it to 84.40%.
         String raw = macapkRawValueAt(index);
         if (raw != null && "@null".equals(raw.trim())) return null;
+        // The ABSENT case, as AOSP has it (getColorStateList: `if (value.type ==
+        // TYPE_NULL) return null`): no tier gives the attribute a value. The
+        // black list stood in for it here, and a caller that asks "is there a
+        // tint / a background colour / an icon colour?" got "yes, black":
+        // Material's BottomNavigationView painted a black bar, a switch a black
+        // thumb, an unselected tab's icon vanished into it (uiprobe, against the
+        // real framework: white, the theme's colour, the theme's colour). The
+        // black stays only for a value that is present and could not be read.
+        if (getType(index) == android.util.TypedValue.TYPE_NULL) return null;
         return android.content.res.ColorStateList.valueOf(0xFF000000);
     }
     /** AOSP TypedArray.getType: the data type of the attribute at index, one

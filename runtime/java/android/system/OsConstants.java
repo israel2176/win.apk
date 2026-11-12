@@ -106,6 +106,102 @@ public final class OsConstants {
     public static final int ENOSYS = 38;
     public static final int EOPNOTSUPP = 95;
     public static final int EBADF = 9;
+
+    // mmap(2) protections and the one signal apps name (Os.kill(pid, SIGKILL)):
+    // Linux's values, as every constant here.
+    public static final int PROT_NONE = 0;
+    public static final int PROT_READ = 1;
+    public static final int PROT_WRITE = 2;
+    public static final int PROT_EXEC = 4;
+    public static final int SIGKILL = 9;
+
+    /** AOSP errnoName(int): the name of an errno value ("ENOENT"), or null for
+     *  one it has no constant for. AOSP's list, with Linux's numbers; where two
+     *  names share a number (EOPNOTSUPP/ENOTSUP, EWOULDBLOCK/EAGAIN) it is the
+     *  one AOSP's chain of ifs reaches first. */
+    public static String errnoName(int errno) {
+        switch (errno) {
+            case 1: return "EPERM";
+            case 2: return "ENOENT";
+            case 3: return "ESRCH";
+            case 4: return "EINTR";
+            case 5: return "EIO";
+            case 6: return "ENXIO";
+            case 7: return "E2BIG";
+            case 8: return "ENOEXEC";
+            case 9: return "EBADF";
+            case 10: return "ECHILD";
+            case 11: return "EAGAIN";
+            case 12: return "ENOMEM";
+            case 13: return "EACCES";
+            case 14: return "EFAULT";
+            case 16: return "EBUSY";
+            case 17: return "EEXIST";
+            case 18: return "EXDEV";
+            case 19: return "ENODEV";
+            case 20: return "ENOTDIR";
+            case 21: return "EISDIR";
+            case 22: return "EINVAL";
+            case 23: return "ENFILE";
+            case 24: return "EMFILE";
+            case 25: return "ENOTTY";
+            case 26: return "ETXTBSY";
+            case 27: return "EFBIG";
+            case 28: return "ENOSPC";
+            case 29: return "ESPIPE";
+            case 30: return "EROFS";
+            case 31: return "EMLINK";
+            case 32: return "EPIPE";
+            case 33: return "EDOM";
+            case 34: return "ERANGE";
+            case 35: return "EDEADLK";
+            case 36: return "ENAMETOOLONG";
+            case 37: return "ENOLCK";
+            case 38: return "ENOSYS";
+            case 39: return "ENOTEMPTY";
+            case 40: return "ELOOP";
+            case 42: return "ENOMSG";
+            case 43: return "EIDRM";
+            case 60: return "ENOSTR";
+            case 61: return "ENODATA";
+            case 62: return "ETIME";
+            case 63: return "ENOSR";
+            case 64: return "ENONET";
+            case 67: return "ENOLINK";
+            case 71: return "EPROTO";
+            case 72: return "EMULTIHOP";
+            case 74: return "EBADMSG";
+            case 75: return "EOVERFLOW";
+            case 84: return "EILSEQ";
+            case 88: return "ENOTSOCK";
+            case 89: return "EDESTADDRREQ";
+            case 90: return "EMSGSIZE";
+            case 91: return "EPROTOTYPE";
+            case 92: return "ENOPROTOOPT";
+            case 93: return "EPROTONOSUPPORT";
+            case 95: return "ENOTSUP";
+            case 97: return "EAFNOSUPPORT";
+            case 98: return "EADDRINUSE";
+            case 99: return "EADDRNOTAVAIL";
+            case 100: return "ENETDOWN";
+            case 101: return "ENETUNREACH";
+            case 102: return "ENETRESET";
+            case 103: return "ECONNABORTED";
+            case 104: return "ECONNRESET";
+            case 105: return "ENOBUFS";
+            case 106: return "EISCONN";
+            case 107: return "ENOTCONN";
+            case 110: return "ETIMEDOUT";
+            case 111: return "ECONNREFUSED";
+            case 113: return "EHOSTUNREACH";
+            case 114: return "EALREADY";
+            case 115: return "EINPROGRESS";
+            case 116: return "ESTALE";
+            case 122: return "EDQUOT";
+            case 125: return "ECANCELED";
+            default: return null;
+        }
+    }
 }
 
 

@@ -416,6 +416,20 @@ public final class ApplicationExitInfo implements Parcelable {
      * still return null, because the traces live in a global circular buffer and can be
      * overwritten by newer crashes.
      */
+    /** The details of the ANR that ended the process, for a {@link #REASON_ANR}
+     *  record that has them. A stop here is the user closing the app's window
+     *  or the process ending; nothing times an app out and records why, so no
+     *  record has any. */
+    public AnrInfo getAnrInfo() {
+        return null;
+    }
+
+    /** What getAnrInfo() returns. Nothing makes one (see there), so it carries
+     *  nothing; the type is here for the code that names it. */
+    public static final class AnrInfo {
+        AnrInfo() {}
+    }
+
     public InputStream getTraceInputStream() throws IOException {
         if (mTraceFile == null || !mTraceFile.isFile()) {
             return null;

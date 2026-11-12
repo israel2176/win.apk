@@ -2888,6 +2888,17 @@ public final class Translator {
             boolean specialReceiver = (family == TypeInference.F_INVOKE_SUPER
                                        || family == TypeInference.F_INVOKE_DIRECT)
                                       && !"<init>".equals(name);
+            // ... unless the receiver is ANOTHER object of the named class and the
+            // method is final: that call is an invokevirtual, with no cast. See
+            // SuperInterfacePlan.nonVirtualNeedsInvokeVirtual.
+            if (specialReceiver && rp == null && it.uses.length > 0) {
+                DexType.Ref recv = it.uses[0].type == null ? null : it.uses[0].type.ref();
+                if (recv != null && recv.kind == DexType.Ref.KIND_CLASS
+                        && superIfacePlan.nonVirtualNeedsInvokeVirtual(ownerName, owner, name, desc, recv.name)) {
+                    specialReceiver = false;
+                    family = TypeInference.F_INVOKE_VIRTUAL;
+                }
+            }
             // A protected method named through a superclass, called on a receiver
             // that is not the current class: name the receiver's own type when it
             // resolves to a PUBLIC override. Decided BEFORE the operands are

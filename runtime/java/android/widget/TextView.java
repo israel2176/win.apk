@@ -325,6 +325,8 @@ public class TextView extends View
             macapkInitDefaultTextSize(c);
             macapkCtorTextAppearance(c, a, defStyleAttr, defStyleRes);
         }
+        macapkCtorDefaultStyleLayout(c, a, defStyleAttr, defStyleRes);
+        macapkCtorSizeAttrs(c, a, defStyleAttr, defStyleRes);
         macapkApplyInputTypeAttrs(a);
         macapkInitCaret(a);
         macapkInstallDefaultMovement();
@@ -501,6 +503,112 @@ public class TextView extends View
             }
         }
         return 0x01010084;
+    }
+
+    /** gravity, textAlignment, ellipsize, maxLines, lines: the attributes that
+     *  place the text, by id (android.R.attr). */
+    private static final int[] MACAPK_PLACEMENT_ATTRS = {
+        0x010100af, // 0  gravity
+        0x010103b1, // 1  textAlignment
+        0x010100ab, // 2  ellipsize
+        0x01010153, // 3  maxLines
+        0x01010154, // 4  lines
+    };
+
+    /** The attributes that size the text block, by id (android.R.attr). */
+    private static final int[] MACAPK_SIZE_ATTRS = {
+        0x0101011f, // 0  maxWidth
+        0x01010120, // 1  maxHeight
+        0x01010159, // 2  width
+        0x01010155, // 3  height
+        0x01010158, // 4  ems
+        0x01010157, // 5  maxEms
+        0x0101015a, // 6  minEms
+        0x0101015f, // 7  includeFontPadding
+        0x01010217, // 8  lineSpacingExtra
+        0x01010218, // 9  lineSpacingMultiplier
+        0x01010156, // 10 minLines
+        0x010104b6, // 11 letterSpacing
+    };
+
+    /** How large the text block may be, over all the tiers AOSP's constructor reads them
+     *  from: the element, its style=, the default style, the theme. The inflater applies
+     *  only some of these and only from the element, so android:maxWidth, android:ems or
+     *  android:width on a TextView did nothing (a wrap_content label ran to the width of
+     *  its parent, uiprobe lib_text_lines #i), and a widget style's includeFontPadding or
+     *  line spacing (Material's Chip) never arrived. */
+    private void macapkCtorSizeAttrs(Context context, android.util.AttributeSet attrs,
+                                     int defStyleAttr, int defStyleRes) {
+        if (context == null) return;
+        try {
+            final android.content.res.Resources.Theme theme = context.getTheme();
+            if (theme == null) return;
+            final android.content.res.TypedArray a = theme.obtainStyledAttributes(
+                attrs, MACAPK_SIZE_ATTRS, defStyleAttr, defStyleRes);
+            try {
+                if (a.hasValue(0)) { int v = a.getDimensionPixelSize(0, -1); if (v >= 0) setMaxWidth(v); }
+                if (a.hasValue(1)) { int v = a.getDimensionPixelSize(1, -1); if (v >= 0) setMaxHeight(v); }
+                if (a.hasValue(2)) { int v = a.getDimensionPixelSize(2, -1); if (v >= 0) setWidth(v); }
+                if (a.hasValue(3)) { int v = a.getDimensionPixelSize(3, -1); if (v >= 0) setHeight(v); }
+                if (a.hasValue(4)) { int v = a.getInt(4, -1); if (v >= 0) setEms(v); }
+                if (a.hasValue(5)) { int v = a.getInt(5, -1); if (v >= 0) setMaxEms(v); }
+                if (a.hasValue(6)) { int v = a.getInt(6, -1); if (v >= 0) setMinEms(v); }
+                // includeFontPadding (7) is left to the inflater: a line of Hebrew, drawn in a
+                // fallback font, is taller than the main font's ascent on Android, and without
+                // the font padding this layout does not yet give it that room (a Hebrew chip's
+                // baseline came out 2dp high).
+                if (a.hasValue(8) || a.hasValue(9)) {
+                    setLineSpacing(a.getDimensionPixelSize(8, 0), a.getFloat(9, 1.0f));
+                }
+                if (a.hasValue(10)) { int v = a.getInt(10, -1); if (v >= 0) setMinLines(v); }
+                if (a.hasValue(11)) setLetterSpacing(a.getFloat(11, 0f));
+            } finally {
+                a.recycle();
+            }
+        } catch (Throwable ignored) {
+            // A style that cannot be read leaves the defaults.
+        }
+    }
+
+    /** Where the text sits, from the view's default style. The inflater applies
+     *  what the element and its style= say after construction, but a widget's
+     *  own default style (the theme attribute its constructor passes as
+     *  defStyleAttr, or defStyleRes) reached only the text appearance read
+     *  above: a design system that puts `android:gravity="center_vertical"` or
+     *  `android:textAlignment="viewStart"` in its base widget style had every
+     *  such view's text at the top left (a search field's hint at the top of
+     *  its box, labels at the left end in a right-to-left app). AOSP reads
+     *  these in the same obtainStyledAttributes as everything else
+     *  (TextView.java constructor, R.styleable.TextView over the five tiers).
+     *  The element's own values are in the same read and are applied again by
+     *  the inflater, to the same effect. */
+    private void macapkCtorDefaultStyleLayout(Context context, android.util.AttributeSet attrs,
+                                              int defStyleAttr, int defStyleRes) {
+        if (context == null || (defStyleAttr == 0 && defStyleRes == 0)) return;
+        try {
+            final android.content.res.Resources.Theme theme = context.getTheme();
+            if (theme == null) return;
+            final android.content.res.TypedArray a = theme.obtainStyledAttributes(
+                attrs, MACAPK_PLACEMENT_ATTRS, defStyleAttr, defStyleRes);
+            try {
+                if (a.hasValue(0)) setGravity(a.getInt(0, gravity));
+                if (a.hasValue(1)) setTextAlignment(a.getInt(1, getTextAlignment()));
+                if (a.hasValue(2)) {
+                    switch (a.getInt(2, 0)) {
+                        case 1: setEllipsize(android.text.TextUtils.TruncateAt.START); break;
+                        case 2: setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE); break;
+                        case 3: setEllipsize(android.text.TextUtils.TruncateAt.END); break;
+                        default: break;  // none, and marquee, which needs more than a mode
+                    }
+                }
+                if (a.hasValue(3)) { int n = a.getInt(3, -1); if (n > 0) setMaxLines(n); }
+                if (a.hasValue(4)) { int n = a.getInt(4, -1); if (n > 0) setLines(n); }
+            } finally {
+                a.recycle();
+            }
+        } catch (Throwable ignored) {
+            // A style that cannot be read leaves the defaults, as the appearance read does.
+        }
     }
 
     /** The constructor read itself; see the block comment above. Everything a
@@ -3376,8 +3484,13 @@ public class TextView extends View
      *  that the name TextView's endToStart anchors to; without a
      *  non-zero wrap width on new_tag, name.width can't be solved,
      *  and the cascade leaves every TextView at 0x0. */
+    /** Whether onMeasure has run: AOSP's `mLayout != null`. A view measured with no text has
+     *  a layout of one empty line and a baseline; one never measured has neither. */
+    private boolean macapkMeasuredOnce;
+
     @Override
     protected void onMeasure(int wSpec, int hSpec) {
+        macapkMeasuredOnce = true;
         if (MACAPK_TEXT_LINES_AOSP) { macapkOnMeasureAosp(wSpec, hSpec); return; }
         int wMode = android.view.View.MeasureSpec.getMode(wSpec);
         int wSize = android.view.View.MeasureSpec.getSize(wSpec);
@@ -3930,7 +4043,7 @@ public class TextView extends View
             float lineW = (line.length() == rg[1] - rg[0])
                 ? macapkRunWidth(disp, s, rg[0], rg[1], p, workD, spannedD)
                 : p.measureText(line);
-            float x = padL + horizontalGravityOffset(viewW, lineW);
+            float x = padL + horizontalGravityOffset(viewW, lineW, rg[0]);
             float baselineY = blockTop + tops[i] - macapkLineTopAbove(fm, i, lines, p);
             macapkDrawLine(canvas, styled, line, ranges.get(i)[0], srcCounts[i],
                 x, baselineY, p);
@@ -4566,7 +4679,7 @@ public class TextView extends View
         for (int i = 0; i < nLines; i++) {
             final String line = lines.get(i);
             final int[] rg = mDrawCacheRanges.get(i);
-            final float x = padL + horizontalGravityOffset(viewW, mDrawCacheLineW[i]);
+            final float x = padL + horizontalGravityOffset(viewW, mDrawCacheLineW[i], rg[0]);
             final float baselineY = blockTop + tops[i] - mDrawCacheAbove[i];
             macapkDrawLine(canvas, styled, line, rg[0], mDrawCacheSrcCounts[i], x, baselineY, p);
         }
@@ -4637,8 +4750,8 @@ public class TextView extends View
         if (sp == null) {
             if (android.text.MacApkBidi.hasRtl(line, 0, line.length())) {
                 boolean paraRtl;
-                try { paraRtl = android.text.MacApkBidi.isRtlParagraph(getText(), srcStart); }
-                catch (Throwable t) { paraRtl = android.text.MacApkBidi.isRtlParagraph(line, 0); }
+                try { paraRtl = macapkParagraphRtl(macapkShownText(), srcStart); }
+                catch (Throwable t) { paraRtl = macapkParagraphRtl(line, 0); }
                 canvas.drawTextRun(line, 0, line.length(), 0, line.length(), x, baselineY, paraRtl, p);
             } else {
                 canvas.drawText(line, x, baselineY, p);
@@ -4663,7 +4776,7 @@ public class TextView extends View
                 rs = re;
             }
             int[] pieces = android.text.MacApkBidi.visualPieces(line.substring(0, visLen), bounds, nb,
-                    android.text.MacApkBidi.isRtlParagraph(sp, srcStart));
+                    macapkParagraphRtl(sp, srcStart));
             for (int k = 0; k < pieces.length; k += 3) {
                 int rs = srcStart + pieces[k], re = srcStart + pieces[k + 1];
                 p.set(mDrawBase);
@@ -4770,7 +4883,39 @@ public class TextView extends View
     // -> bottom, else top. NO_GRAVITY (the default) draws top-left, matching the
     // prior behavior, so plain TextViews are unaffected; Buttons (default
     // CENTER) and any android:gravity now position correctly.
+    /** What is on show: the text, or the hint while there is none (AOSP lays the
+     *  hint out as its own mHintLayout, with the hint's own direction). */
+    private CharSequence macapkShownText() {
+        final CharSequence t = getText();
+        return (t == null || t.length() == 0) && mHint != null ? mHint : t;
+    }
+    /** The direction of the paragraph of `s` at `pos`, by AOSP's
+     *  TextView.getTextDirectionHeuristic(): the first strong character decides,
+     *  and a paragraph that has none (empty, a number, punctuation) takes the
+     *  view's layout direction, unless android:textDirection says otherwise.
+     *  This answered left-to-right for every such paragraph, so in a Hebrew or
+     *  Arabic app an empty field's hint, a price and a phone number sat at the
+     *  wrong end of their view. */
+    private boolean macapkParagraphRtl(CharSequence s, int pos) {
+        if (macapkAlwaysLtr()) return false;
+        switch (getTextDirection()) {
+            case TEXT_DIRECTION_LTR: return false;
+            case TEXT_DIRECTION_RTL: return true;
+            case TEXT_DIRECTION_FIRST_STRONG_LTR: return android.text.MacApkBidi.isRtlParagraph(s, pos, false);
+            case TEXT_DIRECTION_FIRST_STRONG_RTL: return android.text.MacApkBidi.isRtlParagraph(s, pos, true);
+            case TEXT_DIRECTION_ANY_RTL:
+                return s != null && android.text.MacApkBidi.hasRtl(s, 0, s.length());
+            default: return android.text.MacApkBidi.isRtlParagraph(s, pos, isLayoutRtl());
+        }
+    }
     private float horizontalGravityOffset(int availW, float contentW) {
+        return horizontalGravityOffset(availW, contentW, 0);
+    }
+    /** `lineStart`: where the line begins in the shown text. Each PARAGRAPH has its own
+     *  direction (AOSP runs the heuristic per paragraph: StaticLayout's MeasuredParagraph),
+     *  so in a text of several, an English line among Hebrew ones starts at the left.
+     *  Asked at offset 0 for every line, the first paragraph decided for all of them. */
+    private float horizontalGravityOffset(int availW, float contentW, int lineStart) {
         // AOSP resolves android:textAlignment FIRST: TextView.getLayoutAlignment()
         // (android13-release TextView.java:9263-9310) switches on
         // getTextAlignment() and only the TEXT_ALIGNMENT_GRAVITY case consults
@@ -4786,7 +4931,11 @@ public class TextView extends View
         // VIEW_END follow the view's resolved layout direction.
         final float right = Math.max(0f, availW - contentW);
         boolean textRtl = false;
-        try { textRtl = android.text.MacApkBidi.isRtlParagraph(getText(), 0); } catch (Throwable ignored) {}
+        try {
+            final CharSequence shown = macapkShownText();
+            final int at = shown == null ? 0 : Math.max(0, Math.min(lineStart, shown.length()));
+            textRtl = macapkParagraphRtl(shown, at);
+        } catch (Throwable ignored) {}
         final boolean viewRtl = isLayoutRtl();
         switch (getTextAlignment()) {
             case android.view.View.TEXT_ALIGNMENT_CENTER:
@@ -5342,10 +5491,26 @@ public class TextView extends View
         // fm.top under the default includeFontPadding, so the baseline sits
         // -top below it, not -ascent. Measured against the golden at 20px:
         // reference 22, and -ascent gives 19.
+        // AOSP: `if (mLayout == null) return super.getBaseline();`, which is -1.
+        // A view that was never measured (gone, or not laid out yet) has no
+        // layout, and "no baseline" is what keeps it out of a baseline-aligned
+        // row's arithmetic.
+        // "Measured" and not "has a width": an empty wrap_content label is 0 wide and still
+        // has its line, and a row that aligns on baselines counts it (uiprobe lib_list: a
+        // row's empty end label answered -1 where Android has the first line's baseline).
+        if (!macapkMeasuredOnce && getWidth() <= 0 && getMeasuredWidth() <= 0) return -1;
         android.graphics.Paint p = new android.graphics.Paint();
         p.setTextSize(textSizePx);
         applyTextStyleToPaint(p);
-        return getPaddingTop()
+        // AOSP getBaselineOffset(): the extended padding and, for a gravity that
+        // is not TOP, the vertical offset of the text block. This added only
+        // the view's own top padding, so a vertically centred label, a Button
+        // and a CheckBox all reported the baseline of text at the top of the
+        // view, and a row that aligns its children on their baselines
+        // (LinearLayout by default, RelativeLayout's alignBaseline,
+        // ConstraintLayout's baseline constraints) set them at different
+        // heights (uiprobe: 17 where Android has 30 for a 48dp centred line).
+        return getCompoundPaddingTop() + getVerticalOffset(true)
              + (int) Math.ceil(macapkLineAscent(p.getFontMetricsInt()));
     }
     // AOSP TextView.getBreakStrategy/setBreakStrategy and
@@ -5492,6 +5657,20 @@ public class TextView extends View
         return macapkVerticalOffset(getLayout());
     }
 
+    /** The height of the lines that are shown: the whole layout, or its first maxLines when
+     *  the text has more. AOSP splits this over getExtendedPaddingTop (which places a
+     *  layout cut by maxLines: `layoutht = mLayout.getLineTop(mMaximum)`) and
+     *  getVerticalOffset (which places one that fits); their sum is what is used
+     *  everywhere, and this is that sum's text height. With the whole layout's height a
+     *  text longer than its line limit counted as filling the view, so two lines in a
+     *  taller view sat at its top whatever the gravity. */
+    private int macapkShownTextHeight(android.text.Layout l) {
+        if (mMaxModeLines && mMaximum != Integer.MAX_VALUE && mMaximum > 0 && l.getLineCount() > mMaximum) {
+            return l.getLineTop(mMaximum);
+        }
+        return l.getHeight();
+    }
+
     /** getVerticalOffset over a Layout the caller already holds: getLayout()
      *  builds its cache key over the whole text, and the per-frame caret draw
      *  would otherwise pay for it several times. */
@@ -5499,7 +5678,7 @@ public class TextView extends View
         if (l == null) return 0;
         final int g = gravity & android.view.Gravity.VERTICAL_GRAVITY_MASK;
         final int boxht = macapkBoxHeight();
-        final int textht = l.getHeight();
+        final int textht = macapkShownTextHeight(l);
         if (textht >= boxht) return 0;
         if (g == (android.view.Gravity.BOTTOM & android.view.Gravity.VERTICAL_GRAVITY_MASK)) {
             return boxht - textht;
@@ -5514,7 +5693,7 @@ public class TextView extends View
         if (l == null) return 0;
         final int g = gravity & android.view.Gravity.VERTICAL_GRAVITY_MASK;
         final int boxht = macapkBoxHeight();
-        final int textht = l.getHeight();
+        final int textht = macapkShownTextHeight(l);
         if (textht >= boxht) return 0;
         if (g == (android.view.Gravity.BOTTOM & android.view.Gravity.VERTICAL_GRAVITY_MASK)) return 0;
         if (g == android.view.Gravity.CENTER_VERTICAL) return (boxht - textht) >> 1;
@@ -5807,6 +5986,14 @@ public class TextView extends View
                                   android.graphics.drawable.Drawable bottom) {
         mDrawableLeft = left; mDrawableTop = top;
         mDrawableRight = right; mDrawableBottom = bottom;
+        // AOSP setCompoundDrawables: each drawable takes the view's state as it is set
+        // (`left.setState(state)`), not only at the next state change. An icon set on an
+        // enabled, idle view otherwise kept the empty state, and a tint list read against it
+        // gave its disabled row: Material's button icons came out grey.
+        final int[] macapkState = getDrawableState();
+        for (android.graphics.drawable.Drawable dr : new android.graphics.drawable.Drawable[] {left, top, right, bottom}) {
+            if (dr != null) dr.setState(macapkState);
+        }
         // Bounds are the CALLER's to own -- AOSP's setCompoundDrawables only
         // READS them (`left.copyBounds(compoundRect); dr.mDrawableSizeLeft =
         // compoundRect.width();`, TextView.java:3226-3232) and it is
@@ -5995,6 +6182,27 @@ public class TextView extends View
             if (style >= 0) setMacapkTextStyle(style);
             if (color != Integer.MIN_VALUE) setTextColor(color);
             if (!Float.isNaN(ls)) setLetterSpacing(ls);
+            // The rest of AOSP's readTextAppearance / applyTextAppearance that a
+            // text appearance set at run time carries: textAllCaps, and the
+            // colours as state lists. A TabLayout gives each tab its look this
+            // way (TextViewCompat.setTextAppearance): the tabs read "Station"
+            // where Android shows "STATION" and were narrower by it (uiprobe),
+            // and a list with a selected or disabled colour kept only its
+            // default one.
+            android.content.res.TypedArray more = t.obtainStyledAttributes(resId,
+                new int[]{ 0x01010098 /*textColor*/, 0x0101009a /*textColorHint*/,
+                           0x0101009b /*textColorLink*/, 0x0101038c /*textAllCaps*/ });
+            try {
+                android.content.res.ColorStateList text = more.getColorStateList(0);
+                if (text != null && text.isStateful()) setTextColor(text);
+                android.content.res.ColorStateList hint = more.getColorStateList(1);
+                if (hint != null) setHintTextColor(hint);
+                android.content.res.ColorStateList link = more.getColorStateList(2);
+                if (link != null) setLinkTextColor(link);
+                if (more.hasValue(3)) setAllCaps(more.getBoolean(3, false));
+            } finally {
+                more.recycle();
+            }
             invalidate();
         } catch (Throwable ignored) {}
     }
@@ -6002,7 +6210,41 @@ public class TextView extends View
     // Text-direction / locale / break-strategy
     // AOSP returns android.text.TextDirectionHeuristic; the typed interface
     // exists in our tree so use it (Object descriptor would NoSuchMethodError).
-    public android.text.TextDirectionHeuristic getTextDirectionHeuristic() { return null; }
+    /** The two cases AOSP's getTextDirectionHeuristic() settles before android:textDirection:
+     *  "passwords fields should be LTR", and a phone number runs the way the locale's digits
+     *  do, which is left to right for every locale whose digits are not Arabic-Indic. So in
+     *  a Hebrew app the dots of a password and a phone number start at the left edge. */
+    private boolean macapkAlwaysLtr() {
+        try {
+            if (getTransformationMethod() instanceof android.text.method.PasswordTransformationMethod) return true;
+            if ((getInputType() & android.text.InputType.TYPE_MASK_CLASS) == android.text.InputType.TYPE_CLASS_PHONE) {
+                String zero = java.text.DecimalFormatSymbols.getInstance(getTextLocale()).getZeroDigit() + "";
+                byte dir = Character.getDirectionality(zero.codePointAt(0));
+                return dir != Character.DIRECTIONALITY_RIGHT_TO_LEFT
+                    && dir != Character.DIRECTIONALITY_RIGHT_TO_LEFT_ARABIC;
+            }
+        } catch (Throwable ignored) { }
+        return false;
+    }
+
+    /** AOSP TextView.getTextDirectionHeuristic(): android:textDirection as a
+     *  heuristic, a view in a right-to-left layout defaulting to FIRSTSTRONG_RTL.
+     *  It answered null, and getLayout() built its Layout with the LTR default:
+     *  a number or an empty line in a Hebrew app measured from the left edge. */
+    public android.text.TextDirectionHeuristic getTextDirectionHeuristic() {
+        if (macapkAlwaysLtr()) return android.text.TextDirectionHeuristics.LTR;
+        switch (getTextDirection()) {
+            case TEXT_DIRECTION_ANY_RTL: return android.text.TextDirectionHeuristics.ANYRTL_LTR;
+            case TEXT_DIRECTION_LTR: return android.text.TextDirectionHeuristics.LTR;
+            case TEXT_DIRECTION_RTL: return android.text.TextDirectionHeuristics.RTL;
+            case TEXT_DIRECTION_LOCALE: return android.text.TextDirectionHeuristics.LOCALE;
+            case TEXT_DIRECTION_FIRST_STRONG_LTR: return android.text.TextDirectionHeuristics.FIRSTSTRONG_LTR;
+            case TEXT_DIRECTION_FIRST_STRONG_RTL: return android.text.TextDirectionHeuristics.FIRSTSTRONG_RTL;
+            default:
+                return isLayoutRtl() ? android.text.TextDirectionHeuristics.FIRSTSTRONG_RTL
+                                     : android.text.TextDirectionHeuristics.FIRSTSTRONG_LTR;
+        }
+    }
     public java.util.Locale getTextLocale() { return java.util.Locale.getDefault(); }
     public void setTextLocale(java.util.Locale locale) {}
     /** AOSP :4573 getTextLocales() reads mTextPaint.getTextLocales(), so the
@@ -6137,24 +6379,43 @@ public class TextView extends View
             int mw = getMeasuredWidth();
             if (mw > 0) avail = mw - getCompoundPaddingLeft() - getCompoundPaddingRight();
         }
-        if (avail <= 0) return null;   // AOSP: null before first measure/layout
+        if (avail <= 0) {
+            // AOSP: null before the first measure. After it an empty text still has its
+            // layout, one line of no width.
+            if (!macapkMeasuredOnce || disp == null || disp.length() != 0) return null;
+            avail = 0;
+        }
+        // AOSP TextView.getLayoutAlignment() (android14-release :9263-9310).
+        // viewStart / viewEnd are sides of the VIEW (left or right by its layout
+        // direction), textStart / textEnd follow the paragraph, and under
+        // "gravity" START and END follow the paragraph while LEFT and RIGHT are
+        // absolute. This mapped viewStart to NORMAL and viewEnd to OPPOSITE,
+        // which is the paragraph's side, and END gravity to nothing.
         android.text.Layout.Alignment align;
+        final boolean viewRtl = isLayoutRtl();
         switch (getTextAlignment()) {
             case android.view.View.TEXT_ALIGNMENT_CENTER:
                 align = android.text.Layout.Alignment.ALIGN_CENTER; break;
             case android.view.View.TEXT_ALIGNMENT_TEXT_END:
-            case android.view.View.TEXT_ALIGNMENT_VIEW_END:
                 align = android.text.Layout.Alignment.ALIGN_OPPOSITE; break;
             case android.view.View.TEXT_ALIGNMENT_TEXT_START:
-            case android.view.View.TEXT_ALIGNMENT_VIEW_START:
                 align = android.text.Layout.Alignment.ALIGN_NORMAL; break;
+            case android.view.View.TEXT_ALIGNMENT_VIEW_START:
+                align = viewRtl ? android.text.Layout.Alignment.ALIGN_RIGHT
+                                : android.text.Layout.Alignment.ALIGN_LEFT; break;
+            case android.view.View.TEXT_ALIGNMENT_VIEW_END:
+                align = viewRtl ? android.text.Layout.Alignment.ALIGN_LEFT
+                                : android.text.Layout.Alignment.ALIGN_RIGHT; break;
             default: {
-                int hg = gravity & android.view.Gravity.HORIZONTAL_GRAVITY_MASK;
-                if (hg == android.view.Gravity.CENTER_HORIZONTAL)
+                int hg = gravity & android.view.Gravity.RELATIVE_HORIZONTAL_GRAVITY_MASK;
+                if ((hg & android.view.Gravity.HORIZONTAL_GRAVITY_MASK) == android.view.Gravity.CENTER_HORIZONTAL)
                     align = android.text.Layout.Alignment.ALIGN_CENTER;
-                else if (hg == (android.view.Gravity.RIGHT
-                        & android.view.Gravity.HORIZONTAL_GRAVITY_MASK))
+                else if (hg == android.view.Gravity.END)
                     align = android.text.Layout.Alignment.ALIGN_OPPOSITE;
+                else if (hg == android.view.Gravity.RIGHT)
+                    align = android.text.Layout.Alignment.ALIGN_RIGHT;
+                else if (hg == android.view.Gravity.LEFT)
+                    align = android.text.Layout.Alignment.ALIGN_LEFT;
                 else align = android.text.Layout.Alignment.ALIGN_NORMAL;
             }
         }
@@ -6197,6 +6458,7 @@ public class TextView extends View
         android.text.StaticLayout.Builder b = android.text.StaticLayout.Builder
             .obtain(dispStr, 0, dispStr.length(), lp, avail)
             .setAlignment(align)
+            .setTextDirection(getTextDirectionHeuristic())
             .setLineSpacing(mSpacingAdd, mSpacingMult);
         if (layoutMaxLines > 0 && layoutMaxLines != Integer.MAX_VALUE) b.setMaxLines(layoutMaxLines);
         if (layoutEllipsize != null) b.setEllipsize(layoutEllipsize);
@@ -6263,6 +6525,7 @@ public class TextView extends View
         android.text.StaticLayout.Builder b = android.text.StaticLayout.Builder
             .obtain(src, 0, src.length(), lp, layoutW)
             .setAlignment(layoutAlign)
+            .setTextDirection(getTextDirectionHeuristic())
             .setLineSpacing(mSpacingAdd, mSpacingMult)
             .setIncludePad(layoutIncludePad)
             .setUseLineSpacingFromFallbacks(layoutFallback);
@@ -6806,7 +7069,18 @@ public class TextView extends View
     // getters and stateful methods F-Droid + androidx reference.
 
     private int gravity = android.view.Gravity.NO_GRAVITY;
-    public int getGravity() { return gravity; }
+    /** AOSP TextView.getGravity: what setGravity stored, and setGravity fills in what the
+     *  caller left out ("if no horizontal gravity, START; if no vertical, TOP"), from a default
+     *  of TOP | START. So a view's gravity always names a side, relative to the layout
+     *  direction. Material's TextInputLayout hands the field's gravity to the label it draws:
+     *  with the bare stored value the label had no horizontal gravity at all and sat at the
+     *  left, over the outline, in every right-to-left layout and for every Hebrew hint. */
+    public int getGravity() {
+        int g = gravity;
+        if ((g & android.view.Gravity.RELATIVE_HORIZONTAL_GRAVITY_MASK) == 0) g |= android.view.Gravity.START;
+        if ((g & android.view.Gravity.VERTICAL_GRAVITY_MASK) == 0) g |= android.view.Gravity.TOP;
+        return g;
+    }
     /** AOSP TextView.setGravity: stores the gravity for text-draw
      *  positioning + propagates to LayoutParams via Gravity bits. */
     // Note: setGravity is already declared above as void; promote to
@@ -7247,7 +7521,12 @@ public class TextView extends View
         // (debug/caret_gate.sh theme row: the drawable draws, bar colour none).
         if ("text_cursor_material".equals(name)) return macapkTextCursorMaterial();
         android.graphics.drawable.Drawable d = null;
-        try { d = res.macapkFrameworkDrawableByName(name); } catch (Throwable ignored) {}
+        // With the view's own theme: the drawable's colours are ?attr of the theme the view
+        // was inflated with, not of the application's.
+        try {
+            android.content.res.Resources.Theme th = getContext() != null ? getContext().getTheme() : null;
+            d = res.macapkFrameworkDrawableByName(name, th);
+        } catch (Throwable ignored) {}
         return d;
     }
 

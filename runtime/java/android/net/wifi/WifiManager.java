@@ -297,6 +297,24 @@ public class WifiManager {
         public void setReferenceCounted(boolean on) {}
     }
 
+    /** AOSP calculateSignalLevel(int) (API 30): the level on the device's own
+     *  scale, 0..getMaxSignalLevel(), which is AOSP's default of 4. */
+    public int calculateSignalLevel(int rssi) { return calculateSignalLevel(rssi, 5); }
+
+    /** AOSP isWifiApEnabled(), a system API: whether this device is running a
+     *  hotspot. An app cannot start one here, and does not see the host's. */
+    public boolean isWifiApEnabled() { return false; }
+
+    /** AOSP isWpa3SaeSupported(): the host's radio report does not say, and the
+     *  networks an app could ask to join with it are refused anyway
+     *  (addNetwork), so the claim an app can rely on is "no". */
+    public boolean isWpa3SaeSupported() { return false; }
+
+    /** AOSP isStaConcurrencyForLocalOnlyConnectionsSupported() (API 31): a
+     *  second station connection beside the main one. One connection, the
+     *  host's. */
+    public boolean isStaConcurrencyForLocalOnlyConnectionsSupported() { return false; }
+
     public static int calculateSignalLevel(int rssi, int numLevels) {
         if (rssi <= -100) return 0;
         if (rssi >= -55) return numLevels - 1;

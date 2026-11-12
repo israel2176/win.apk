@@ -151,7 +151,7 @@ public abstract class CompoundButton extends Button implements Checkable {
         try {
             final android.content.res.Resources r =
                     context == null ? null : context.getResources();
-            final Drawable d = r == null ? null : r.macapkFrameworkDrawableByName(name);
+            final Drawable d = r == null ? null : r.macapkFrameworkDrawableByName(name, context.getTheme());
             if (d != null) setButtonDrawable(d);
         } catch (Throwable ignored) {
             // A missing indicator must never break construction.

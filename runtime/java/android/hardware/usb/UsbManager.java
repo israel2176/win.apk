@@ -50,6 +50,13 @@ public class UsbManager {
         return null;
     }
 
+    /** AOSP getPorts(), a system API: the device's own USB Type-C ports, whose
+     *  roles the caller may switch. A PC's ports are not offered for that, so
+     *  the list is empty, as on a device whose USB HAL reports none. */
+    public java.util.List<UsbPort> getPorts() {
+        return java.util.Collections.emptyList();
+    }
+
     public boolean hasPermission(UsbDevice device) { return false; }
 
     /** AOSP javadoc (frameworks/base/core/java/android/hardware/usb/UsbManager.java

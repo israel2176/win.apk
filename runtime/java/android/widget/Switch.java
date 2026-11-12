@@ -213,7 +213,15 @@ public class Switch extends CompoundButton {
             mTrackDrawable.getPadding(padding);
             trackHeight = mTrackDrawable.getIntrinsicHeight();
         }
-        mSwitchWidth = Math.max(mSwitchMinWidth, 2 * mThumbWidth + padding.left + padding.right);
+        // AOSP: "Adjust left and right padding to ensure there's enough room for the thumb's
+        // padding (when present)": the thumb's optical insets where they exceed the track's.
+        int paddingLeft = padding.left, paddingRight = padding.right;
+        if (mThumbDrawable != null) {
+            final android.graphics.Insets inset = mThumbDrawable.getOpticalInsets();
+            paddingLeft = Math.max(paddingLeft, inset.left);
+            paddingRight = Math.max(paddingRight, inset.right);
+        }
+        mSwitchWidth = Math.max(mSwitchMinWidth, 2 * mThumbWidth + paddingLeft + paddingRight);
         mSwitchHeight = Math.max(trackHeight, thumbHeight);
         super.onMeasure(widthMeasureSpec, heightMeasureSpec);
         if (getMeasuredHeight() < mSwitchHeight) {
@@ -264,10 +272,22 @@ public class Switch extends CompoundButton {
         final int trackPadL = padding.left, trackPadR = padding.right;
         final float pos = isChecked() ? 1f : 0f;
         final float p = isLayoutRtl() ? 1f - pos : pos;
-        final int range = Math.max(0, mSwitchWidth - mThumbWidth - trackPadL - trackPadR);
-        final int thumbInitialLeft = mSwitchLeft + (int) (p * range + 0.5f) + trackPadL;
+        // AOSP getThumbScrollRange and draw(): the thumb travels the track less its padding
+        // and the thumb's optical insets, and the track is drawn inside those insets where
+        // they exceed its own padding.
+        final android.graphics.Insets thumbInsets = mThumbDrawable != null
+            ? mThumbDrawable.getOpticalInsets() : android.graphics.Insets.NONE;
+        final int range = mTrackDrawable != null
+            ? Math.max(0, mSwitchWidth - mThumbWidth - trackPadL - trackPadR - thumbInsets.left - thumbInsets.right)
+            : Math.max(0, mSwitchWidth - mThumbWidth);
+        final int thumbInitialLeft = mSwitchLeft + thumbInsets.left + (int) (p * range + 0.5f) + trackPadL;
         if (mTrackDrawable != null) {
-            mTrackDrawable.setBounds(mSwitchLeft, mSwitchTop, mSwitchRight, mSwitchBottom);
+            int trackLeft = mSwitchLeft, trackTop = mSwitchTop, trackRight = mSwitchRight, trackBottom = mSwitchBottom;
+            if (thumbInsets.left > padding.left) trackLeft += thumbInsets.left - padding.left;
+            if (thumbInsets.top > padding.top) trackTop += thumbInsets.top - padding.top;
+            if (thumbInsets.right > padding.right) trackRight -= thumbInsets.right - padding.right;
+            if (thumbInsets.bottom > padding.bottom) trackBottom -= thumbInsets.bottom - padding.bottom;
+            mTrackDrawable.setBounds(trackLeft, trackTop, trackRight, trackBottom);
             mTrackDrawable.draw(canvas);
         }
         if (mThumbDrawable != null) {

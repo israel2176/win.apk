@@ -65,6 +65,11 @@ void set_app_data(const char* package, const char* host_dir);
 // The host file an Android path names (host_path), for the runtime's own
 // natives (java.io, java.nio); a host path comes back as it is.
 std::wstring android_host_path(const char* path);
+// The Android name of a file as a listing of its host directory names it: an
+// Android name's characters that Windows forbids (< > : " | ? *, control
+// characters, a final dot or space) are stored as U+F000 + the character
+// (paths.cpp), and this turns them back.
+std::wstring android_file_name(std::wstring host_name);
 
 // The host file behind a /proc path that is a real file (/proc/meminfo,
 // /proc/self/cmdline and /proc/<pid>/cmdline, which Boot writes under

@@ -30,8 +30,8 @@ import com.macapk.loader.ApkVerification;
 import com.macapk.loader.Boot;
 import com.macapk.loader.Manifest;
 import java.io.File;
+import java.io.FileOutputStream;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 
 public final class AppMeta {
     private AppMeta() {}
@@ -49,9 +49,8 @@ public final class AppMeta {
             Manifest mf = Manifest.parse(new File(""), apkPath);
             pkg = mf.packageName;
             String version = (mf.versionNameRaw != null ? mf.versionNameRaw : "").replace('\n', ' ');
-            Files.write(new File(appDir, "package.txt").toPath(),
-                    (pkg + "\n" + mf.versionCode + "\n" + version + "\n" + launchOrientation(mf) + "\n")
-                            .getBytes(StandardCharsets.UTF_8));
+            save(new File(appDir, "package.txt"),
+                    pkg + "\n" + mf.versionCode + "\n" + version + "\n" + launchOrientation(mf) + "\n");
             label = resolve(mf.applicationLabel, apkPath, pkg);
         } catch (Throwable t) {
             System.err.println("[win.apk] reading the app's name failed: " + t);
@@ -59,9 +58,21 @@ public final class AppMeta {
         if (label == null || label.isEmpty()) label = pkg;
         if (label == null || label.isEmpty()) label = new File(apkPath).getName();
         try {
-            Files.write(new File(appDir, "label.txt").toPath(), label.trim().getBytes(StandardCharsets.UTF_8));
+            save(new File(appDir, "label.txt"), label.trim());
         } catch (Exception e) {
             System.err.println("[win.apk] writing label.txt failed: " + e);
+        }
+    }
+
+    // Always a file of its own. A run of the app from before Boot.CODE_DIR_OURS named these two
+    // took them for the app's data, moved them to its data folder and left a link here; written
+    // through that link (java.nio's write failed on one: "The path cannot be traversed because it
+    // contains an untrusted mount point"), the text would land in the data folder and the launcher would move
+    // the link, not the name, beside the APK.
+    private static void save(File file, String text) throws java.io.IOException {
+        if (java.nio.file.Files.isSymbolicLink(file.toPath())) file.delete();
+        try (FileOutputStream out = new FileOutputStream(file)) {
+            out.write(text.getBytes(StandardCharsets.UTF_8));
         }
     }
 

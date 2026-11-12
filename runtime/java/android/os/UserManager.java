@@ -245,6 +245,73 @@ public class UserManager {
         return Collections.singletonList(getUserHandle());
     }
 
+    /** AOSP getProfiles(int) (@hide): the user and the profiles of its group,
+     *  as UserInfo. This device's one user has no profiles, so for user 0 the
+     *  list is that user alone, and for any other id (no such user) it is
+     *  empty, as UserManagerService answers. */
+    public List<android.content.pm.UserInfo> getProfiles(int userId) {
+        List<android.content.pm.UserInfo> profiles = new java.util.ArrayList<>();
+        if (userId == UserHandle.USER_SYSTEM) {
+            android.content.pm.UserInfo info = new android.content.pm.UserInfo(UserHandle.USER_SYSTEM,
+                    getUserName(), android.content.pm.UserInfo.FLAG_PRIMARY | android.content.pm.UserInfo.FLAG_ADMIN
+                            | android.content.pm.UserInfo.FLAG_INITIALIZED | android.content.pm.UserInfo.FLAG_FULL
+                            | android.content.pm.UserInfo.FLAG_SYSTEM | android.content.pm.UserInfo.FLAG_MAIN);
+            info.userType = USER_TYPE_FULL_SYSTEM;
+            profiles.add(info);
+        }
+        return profiles;
+    }
+
+    /** AOSP isManagedProfile(int) (@hide): whether the given user is a work
+     *  profile. There are none (see isManagedProfile()). */
+    public boolean isManagedProfile(int userId) { return false; }
+
+    /** AOSP getUserRestrictionSource / EnforcingUser sources (@SystemApi). */
+    public static final int RESTRICTION_NOT_SET = 0x0;
+    public static final int RESTRICTION_SOURCE_SYSTEM = 0x1;
+    public static final int RESTRICTION_SOURCE_DEVICE_OWNER = 0x2;
+    public static final int RESTRICTION_SOURCE_PROFILE_OWNER = 0x4;
+
+    /** AOSP getUserRestrictionSources(String, UserHandle) (@SystemApi): who
+     *  enforces a restriction on the user. Restrictions here are only the ones
+     *  the app set on itself (setUserRestriction), with no device or profile
+     *  owner and no system policy behind any, so nobody does: an empty list. */
+    public List<EnforcingUser> getUserRestrictionSources(String restrictionKey, UserHandle userHandle) {
+        return new java.util.ArrayList<>();
+    }
+
+    /** AOSP UserManager.EnforcingUser (@SystemApi): a user that enforces a
+     *  restriction, and in which role (a RESTRICTION_SOURCE_* value). */
+    public static final class EnforcingUser implements Parcelable {
+        private final int userId;
+        private final int userRestrictionSource;
+
+        /** @hide in AOSP. */
+        public EnforcingUser(int userId, int userRestrictionSource) {
+            this.userId = userId;
+            this.userRestrictionSource = userRestrictionSource;
+        }
+
+        public UserHandle getUserHandle() { return UserHandle.of(userId); }
+
+        public int getUserRestrictionSource() { return userRestrictionSource; }
+
+        @Override public int describeContents() { return 0; }
+
+        @Override public void writeToParcel(Parcel dest, int flags) {
+            dest.writeInt(userId);
+            dest.writeInt(userRestrictionSource);
+        }
+
+        public static final Parcelable.Creator<EnforcingUser> CREATOR = new Parcelable.Creator<EnforcingUser>() {
+            @Override public EnforcingUser createFromParcel(Parcel in) {
+                int userId = in.readInt();
+                return new EnforcingUser(userId, in.readInt());
+            }
+            @Override public EnforcingUser[] newArray(int size) { return new EnforcingUser[size]; }
+        };
+    }
+
     /** AOSP android14 :5084 (@hide) -- the profile's parent user, or null when
      *  the user is not a profile. This device's only user is the system user,
      *  which is not a profile, so null (UserManagerService.getProfileParent). */

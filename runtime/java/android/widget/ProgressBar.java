@@ -63,6 +63,10 @@ public class ProgressBar extends View {
      *  XML. Never read, so a bar built as `new ProgressBar(ctx, null,
      *  progressBarStyleLarge)` (leanback's ProgressBarManager, SmartTube's player
      *  spinner) had neither its 76dp clamp nor its indeterminate mode. */
+    /** AOSP ProgressBar.mMirrorForRtl: android:mirrorForRtl, false unless the style says so. */
+    private boolean mMirrorForRtl;
+    public boolean getMirrorForRtl() { return mMirrorForRtl; }
+
     private void macapkApplyStyledSize(Context context, AttributeSet attrs,
                                        int defStyleAttr, int defStyleRes) {
         if (context == null) return;
@@ -80,6 +84,16 @@ public class ProgressBar extends View {
             // An unreadable style must never break construction.
         } finally {
             if (a != null) try { a.recycle(); } catch (Throwable ignored) {}
+        }
+        // android:mirrorForRtl (0x010103ce), which the Material horizontal styles set.
+        android.content.res.TypedArray m = null;
+        try {
+            m = context.obtainStyledAttributes(attrs, new int[] {0x010103ce}, defStyleAttr, defStyleRes);
+            mMirrorForRtl = m.getBoolean(0, mMirrorForRtl);
+        } catch (Throwable t) {
+            // as above
+        } finally {
+            if (m != null) try { m.recycle(); } catch (Throwable ignored) {}
         }
     }
 
@@ -486,7 +500,15 @@ public class ProgressBar extends View {
         // AOSP drawTrack: canvas is already translated to (left, top) by the
         // parent's dispatchDraw, so paint in LOCAL coords starting at the
         // padding offset (mirrors View.draw's own local-coord convention).
-        canvas.translate(getPaddingLeft(), getPaddingTop());
+        // ...mirrored in a right-to-left layout when the style asks for it, so the bar fills
+        // from the right (AOSP drawTrack: `if (isLayoutRtl() && mMirrorForRtl)`). It always
+        // filled from the left: in a Hebrew app a download or a step bar ran backwards.
+        if (mMirrorForRtl && isLayoutRtl()) {
+            canvas.translate(getWidth() - getPaddingRight(), getPaddingTop());
+            canvas.scale(-1.0f, 1.0f);
+        } else {
+            canvas.translate(getPaddingLeft(), getPaddingTop());
+        }
         // If a caller supplied a real drawable, AOSP draws THAT and nothing
         // else -- drawTrack's whole body is `final Drawable d = mCurrentDrawable;
         // if (d != null) { ...; d.draw(canvas); }`. Now that the setters are no

@@ -58,6 +58,7 @@
 #include "crash_report.h"
 #include "guest_libs.h"
 #include "host_natives.h"
+#include "unix_socket_dir.h"
 #include "user_folders.h"
 #include "win32_window.h"
 
@@ -372,7 +373,8 @@ int run_process(std::wstring cmdline) {
 //
 // <app dir>\.macapk-dex-stamp records what classes.jar was made from:
 //
-//   converter=<converter_id>   the converter (com/macapk/dex/ in macapk-loader.jar)
+//   converter=<converter_id>   the converter (com/macapk/dex/ in macapk-loader.jar), then "+framework"
+//                              when it read the class hierarchy from android-framework.jar
 //   apk=<file_id>              the installed base.apk
 //
 // The jar is converted again when either line differs, and when there is no
@@ -501,7 +503,16 @@ bool convert_dex(const Options& o, const fs::path& app_dir, fs::path* jar) {
     std::error_code ec;
     *jar = app_dir / "classes.jar";
     const fs::path stamp = app_dir / ".macapk-dex-stamp";
-    const DexStamp want{converter_id(o.lib / "macapk-loader.jar"), file_id(o.apk)};
+    // The class hierarchy the converter reads is the framework the app will link against, not whatever
+    // Android SDK this PC happens to have (the converter's default): a static method of a framework
+    // interface must be an InterfaceMethodref, and an SDK older than the app's does not have the interface
+    // (YouTube's ScrollFeedbackProvider.createProvider with android-34 installed: every touch move threw
+    // IncompatibleClassChangeError), while a PC with no SDK had no hierarchy at all. The stamp says so
+    // ("+framework"), which converts once more the jars made the other way.
+    const fs::path framework = o.lib / "android-framework.jar";
+    const bool with_framework = fs::exists(framework, ec);
+    const DexStamp want{converter_id(o.lib / "macapk-loader.jar") + (with_framework ? "+framework" : ""),
+                        file_id(o.apk)};
     DexStamp have;
     const bool stamped = read_dex_stamp(stamp, &have);
     const bool cached = fs::exists(*jar, ec);
@@ -513,7 +524,11 @@ bool convert_dex(const Options& o, const fs::path& app_dir, fs::path* jar) {
     if (!why) return true;
     std::fprintf(stderr, "[win.apk] converting the app's code (%s)...\n", why);
     const fs::path tmp = app_dir / "classes.jar.tmp";
-    const int rc = run_java(o, o.lib / "macapk-loader.jar", L"com.macapk.dex.Main", {o.apk.wstring(), tmp.wstring()});
+    std::vector<std::wstring> args;
+    if (with_framework) args = {L"--classpath", framework.wstring()};
+    args.push_back(o.apk.wstring());
+    args.push_back(tmp.wstring());
+    const int rc = run_java(o, o.lib / "macapk-loader.jar", L"com.macapk.dex.Main", args);
     if (rc == 3) {
         jar->clear();
         return true;
@@ -1484,6 +1499,18 @@ std::vector<std::string> jvm_options(const BootArgs& b) {
     // %TEMP%\hsperfdata_<user> for jps/jstat, which nothing here reads. 6 ms
     // off creating the JVM (docs/research/startup-cds.md).
     v.push_back("-XX:-UsePerfData");
+    // java.nio's selectors and pipes need a folder where AF_UNIX sockets connect; %TEMP%
+    // is the JDK's choice and is left alone where it works (unix_socket_dir.h).
+    {
+        const fs::path temp = env_var(L"TEMP");
+        const fs::path dir = winapk::first_unix_socket_dir(
+            {temp, env_var(L"USERPROFILE"), env_var(L"PUBLIC"), fs::path(env_var(L"SystemRoot")) / L"Temp"});
+        if (!dir.empty() && dir != temp) {
+            v.push_back("-Djdk.net.unixdomain.tmpdir=" + jvm_path(dir));
+            std::fprintf(stderr, "[win.apk] java.nio sockets: %s refuses AF_UNIX connections, using %s\n",
+                         utf8(temp.wstring()).c_str(), utf8(dir.wstring()).c_str());
+        }
+    }
     v.push_back("--enable-native-access=ALL-UNNAMED");
     v.push_back("--add-opens=java.base/java.io=ALL-UNNAMED");
     v.push_back("--add-opens=java.base/java.util=ALL-UNNAMED");

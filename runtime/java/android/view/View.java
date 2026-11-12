@@ -322,7 +322,8 @@ public class View implements android.graphics.drawable.Drawable.Callback,
                             "ctor4 " + getClass().getSimpleName()
                             + " dsa=0x" + Integer.toHexString(defStyleAttr)
                             + " dsr=0x" + Integer.toHexString(defStyleRes)
-                            + " minW=" + mw + " minH=" + mh
+                            + " minW=" + mw + " minH=" + mh + " bg=" + styleBg
+                            + (declaredNullBg ? " bg-declared-null" : "")
                             + (ctorPad == null ? ""
                                : " padMask=0x" + Integer.toHexString(macapkCtorPaddingMask)
                                  + " pad=" + paddingLeft + "," + paddingTop + ","
@@ -331,7 +332,14 @@ public class View implements android.graphics.drawable.Drawable.Callback,
                 }
                 if (mw >= 0) setMinimumWidth(mw);
                 if (mh >= 0) setMinimumHeight(mh);
-            } catch (Throwable ignored) {}
+            } catch (Throwable t) {
+                if (ENV_MACAPK_TRACE_DEFSTYLE != null) {
+                    try {
+                        com.macapk.loader.NativeLog.i("Mac.apk.View", "ctor4 " + getClass().getSimpleName()
+                            + " default-style read threw " + t);
+                    } catch (Throwable ignored) {}
+                }
+            }
             // AOSP's View constructor reads R.styleable.View_elevation from the
             // same four-tier cascade (android14 View.java, `case
             // R.styleable.View_elevation: elevation = a.getDimension(...)` ->
@@ -3763,7 +3771,34 @@ public class View implements android.graphics.drawable.Drawable.Callback,
      *  half of a layout was mirrored (WhatsApp's numbered lists, the number on
      *  the left over its text). */
     public int  getLayoutDirection() {
-        if (!rtlPropertiesResolved && parent != null) resolveRtlPropertiesIfNeeded();
+        if (rtlPropertiesResolved) return mResolvedLayoutDirection;
+        return macapkLayoutDirectionBeforeResolve();
+    }
+    /** getLayoutDirection() for a view that has not resolved yet. AOSP caches an
+     *  INHERIT resolution only when the chain above can resolve
+     *  (canResolveLayoutDirection / the parent's isLayoutDirectionResolved); a
+     *  subtree that hangs under no root yet -- a layout being inflated, a
+     *  fragment's view before it is added -- must not, or whoever asks during
+     *  onCreate freezes the answer of a root that has not seen its
+     *  Configuration and every view added below inherits it (an RTL app laid
+     *  out left to right). Such a tree answers what its top will resolve to,
+     *  the Configuration's direction, and keeps nothing; the first measure, or
+     *  the parent it is added to, decides for real.
+     *  A loop over fields, not a recursion: this runs for every question asked
+     *  while a layout inflates. */
+    private int macapkLayoutDirectionBeforeResolve() {
+        View top = this;
+        while (!top.rtlPropertiesResolved && top.mRawLayoutDirection == LAYOUT_DIRECTION_INHERIT
+                && top.parent instanceof View vp) {
+            top = vp;
+        }
+        if (!top.rtlPropertiesResolved && top.mRawLayoutDirection == LAYOUT_DIRECTION_INHERIT
+                && top.parent == null) {
+            return top.hasRtlSupport() ? top.configuredLayoutDirection() : LAYOUT_DIRECTION_LTR;
+        }
+        // The chain ends at a resolved view, an explicit direction or a parent
+        // that is not a View: resolvable, so resolve (and cache) down to here.
+        resolveRtlPropertiesIfNeeded();
         return mResolvedLayoutDirection;
     }
     /** AOSP getRawLayoutDirection(): the attribute as set, incl. INHERIT/LOCALE. */
@@ -3881,7 +3916,13 @@ public class View implements android.graphics.drawable.Drawable.Callback,
                 break;
             case LAYOUT_DIRECTION_INHERIT:
                 if (parent instanceof View vp) {
-                    mResolvedLayoutDirection = vp.getLayoutDirection();
+                    // AOSP returns false here while the parent is unresolved and
+                    // tries again later; this tree resolves once, so the parent
+                    // resolves first. A resolved INHERIT view therefore always
+                    // sits under a resolved parent, which is what lets
+                    // ViewGroup.resetRtlProperties stop at an unresolved child.
+                    if (!vp.rtlPropertiesResolved) vp.resolveRtlPropertiesIfNeeded();
+                    mResolvedLayoutDirection = vp.mResolvedLayoutDirection;
                 } else if (parent != null) {
                     mResolvedLayoutDirection = parent.getLayoutDirection();
                 } else {
@@ -4986,7 +5027,19 @@ public class View implements android.graphics.drawable.Drawable.Callback,
     public ViewParent getParent()       { return parent; }
     public void  setParent(ViewParent p){
         this.parent = p;
-        if (p != null) macapkWindowRemoved = false;   // joined a tree: see macapkWindowRemoved
+        if (p == null) return;
+        macapkWindowRemoved = false;   // joined a tree: see macapkWindowRemoved
+        // AOSP ViewGroup.addViewInner: `if (child.isLayoutDirectionInherited())
+        // child.resetRtlProperties();` -- what an INHERIT view resolved to under
+        // its old parent (or as the top of a detached tree) says nothing about
+        // the new one. Kept when the new parent is resolved to the same
+        // direction: the answer cannot change, and RecyclerView re-attaches
+        // resolved rows to itself on every scroll.
+        if (rtlPropertiesResolved && mRawLayoutDirection == LAYOUT_DIRECTION_INHERIT
+                && !(p instanceof View vp && vp.rtlPropertiesResolved
+                     && vp.mResolvedLayoutDirection == mResolvedLayoutDirection)) {
+            resetRtlProperties();
+        }
     }
     /** Diagnostic: LayoutParams width/height as a short string (MP=-1, WC=-2). */
     String lpStr() {

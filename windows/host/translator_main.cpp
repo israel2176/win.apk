@@ -33,8 +33,21 @@ int wmain(int argc, wchar_t** argv) {
     std::wstring stub(self, n);
     stub = stub.substr(0, stub.find_last_of(L"\\/") + 1) + L"winapk-guest-stub.dll";
     if (!CopyFileW(stub.c_str(), out.c_str(), FALSE)) {
-        std::fprintf(stderr, "macapk-translator: cannot copy the stub DLL (error %lu)\n", GetLastError());
-        return 1;
+        // The output may be there already and in use: the library was translated before and
+        // is loaded, here or in another process of the app (React Native's SoLoader asks
+        // again in its recovery step). A loaded DLL cannot be overwritten (error 32), and
+        // need not be: every output is the same stub. Only a missing or different file fails.
+        const DWORD error = GetLastError();
+        WIN32_FILE_ATTRIBUTE_DATA have{}, want{};
+        const bool same = (error == ERROR_SHARING_VIOLATION || error == ERROR_ACCESS_DENIED ||
+                           error == ERROR_USER_MAPPED_FILE) &&
+                          GetFileAttributesExW(out.c_str(), GetFileExInfoStandard, &have) &&
+                          GetFileAttributesExW(stub.c_str(), GetFileExInfoStandard, &want) &&
+                          have.nFileSizeLow == want.nFileSizeLow && have.nFileSizeHigh == want.nFileSizeHigh;
+        if (!same) {
+            std::fprintf(stderr, "macapk-translator: cannot copy the stub DLL (error %lu)\n", error);
+            return 1;
+        }
     }
     const int len = WideCharToMultiByte(CP_UTF8, 0, in.c_str(), static_cast<int>(in.size()), nullptr, 0, nullptr,
                                         nullptr);

@@ -103,11 +103,52 @@ public abstract class AndroidKeyStoreKeyPairGeneratorSpi extends KeyPairGenerato
             + " parameter");
     }
 
+    /** The pre-API-23 KeyPairGeneratorSpec as the spec this generator works with, the way AOSP's
+     *  AndroidKeyStoreKeyPairGeneratorSpi.initialize converts one: a key allowed everything the
+     *  old keystore allowed (every digest and padding, no randomized-encryption requirement, no
+     *  user authentication), with the certificate fields carried over. Apps written against the
+     *  old API still pass it (a bank's login: "Unsupported params class:
+     *  android.security.KeyPairGeneratorSpec", and the login failed). */
+    private KeyGenParameterSpec fromLegacy(android.security.KeyPairGeneratorSpec legacy)
+            throws InvalidAlgorithmParameterException {
+        if (legacy.getKeystoreAlias() == null) {
+            throw new InvalidAlgorithmParameterException("KeyStore entry alias not provided");
+        }
+        KeyGenParameterSpec.Builder b;
+        if ("EC".equals(algorithm)) {
+            b = new KeyGenParameterSpec.Builder(legacy.getKeystoreAlias(),
+                    KeyProperties.PURPOSE_SIGN | KeyProperties.PURPOSE_VERIFY);
+            b.setDigests(KeyProperties.DIGEST_NONE, KeyProperties.DIGEST_SHA1, KeyProperties.DIGEST_SHA224,
+                    KeyProperties.DIGEST_SHA256, KeyProperties.DIGEST_SHA384, KeyProperties.DIGEST_SHA512);
+        } else {
+            b = new KeyGenParameterSpec.Builder(legacy.getKeystoreAlias(),
+                    KeyProperties.PURPOSE_ENCRYPT | KeyProperties.PURPOSE_DECRYPT
+                    | KeyProperties.PURPOSE_SIGN | KeyProperties.PURPOSE_VERIFY);
+            b.setDigests(KeyProperties.DIGEST_NONE, KeyProperties.DIGEST_MD5, KeyProperties.DIGEST_SHA1,
+                    KeyProperties.DIGEST_SHA224, KeyProperties.DIGEST_SHA256, KeyProperties.DIGEST_SHA384,
+                    KeyProperties.DIGEST_SHA512);
+            b.setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE,
+                    KeyProperties.ENCRYPTION_PADDING_RSA_PKCS1, KeyProperties.ENCRYPTION_PADDING_RSA_OAEP);
+            b.setSignaturePaddings(KeyProperties.SIGNATURE_PADDING_RSA_PKCS1,
+                    KeyProperties.SIGNATURE_PADDING_RSA_PSS);
+            b.setRandomizedEncryptionRequired(false);
+        }
+        if (legacy.getKeySize() != -1) b.setKeySize(legacy.getKeySize());
+        if (legacy.getAlgorithmParameterSpec() != null) b.setAlgorithmParameterSpec(legacy.getAlgorithmParameterSpec());
+        if (legacy.getSubjectDN() != null) b.setCertificateSubject(legacy.getSubjectDN());
+        if (legacy.getSerialNumber() != null) b.setCertificateSerialNumber(legacy.getSerialNumber());
+        if (legacy.getStartDate() != null) b.setCertificateNotBefore(legacy.getStartDate());
+        if (legacy.getEndDate() != null) b.setCertificateNotAfter(legacy.getEndDate());
+        b.setUserAuthenticationRequired(false);
+        return b.build();
+    }
+
     @Override
     public void initialize(AlgorithmParameterSpec params, SecureRandom random)
             throws InvalidAlgorithmParameterException {
         this.spec = null;
         this.policy = AndroidKeyStoreAuthPolicy.NONE;
+        if (params instanceof android.security.KeyPairGeneratorSpec legacy) params = fromLegacy(legacy);
         if (!(params instanceof KeyGenParameterSpec)) {
             throw new InvalidAlgorithmParameterException(
                 "Unsupported params class: "

@@ -2991,6 +2991,22 @@ public abstract class Context {
                                      android.os.UserHandle user) {
         return bindService(intent, conn, flags);
     }
+    /** AOSP API-34 overloads taking Context.BindServiceFlags, the long form
+     *  of the BIND_* mask. Every flag this runtime acts on is in the low 32
+     *  bits, so they are the int overloads with the value narrowed. */
+    public boolean bindService(Intent intent, ServiceConnection conn, BindServiceFlags flags) {
+        return bindService(intent, conn, (flags != null) ? (int) flags.getValue() : 0);
+    }
+    public boolean bindService(Intent intent, BindServiceFlags flags,
+                               java.util.concurrent.Executor executor,
+                               ServiceConnection conn) {
+        return bindService(intent, (flags != null) ? (int) flags.getValue() : 0, executor, conn);
+    }
+    /** AOSP startActivityAsUser(Intent, UserHandle), a system API. There is one
+     *  user (see bindServiceAsUser), so it is startActivity. */
+    public void startActivityAsUser(Intent intent, android.os.UserHandle user) {
+        startActivity(intent);
+    }
     /** AOSP API-29 overload: the ServiceConnection callbacks are delivered on
      *  the supplied Executor rather than the caller's main-thread Handler
      *  (LoadedApk.ServiceDispatcher.connected prefers mActivityExecutor when

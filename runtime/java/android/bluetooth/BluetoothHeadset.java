@@ -48,6 +48,14 @@ public final class BluetoothHeadset implements BluetoothProfile {
 
     BluetoothHeadset() {}
 
+    /** AOSP connect(BluetoothDevice), a system API: false when the connection
+     *  could not be started. */
+    public boolean connect(BluetoothDevice device) { return false; }
+
+    /** AOSP disconnect(BluetoothDevice), a system API: false when there was
+     *  nothing to disconnect. */
+    public boolean disconnect(BluetoothDevice device) { return false; }
+
     public boolean startVoiceRecognition(BluetoothDevice device) { return false; }
 
     public boolean stopVoiceRecognition(BluetoothDevice device) { return false; }

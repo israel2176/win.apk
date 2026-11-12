@@ -933,6 +933,8 @@ public class Resources {
             // getValue was the one path that had not been converted, and the two
             // are required to agree.
             outValue.string = macapkArscRelativePath(path);
+            // TypedValue.density: the folder's density, which decodeResourceStream scales from.
+            { int fileDensity = macapkResourceDensity(id); if (fileDensity != 0) outValue.density = fileDensity; }
             outValue.data = 0;
             // AOSP also sets assetCookie / density; Compose only reads
             // .string, so the path alone is sufficient.
@@ -1025,6 +1027,19 @@ public class Resources {
      *  ResourceIndex (reflective to keep this framework class decoupled
      *  from com.macapk.loader at link time). Returns null when the id
      *  has no file (a value resource, or unknown). */
+    /** The density of the file behind `id` (ResourceIndex.densityFor): a bucket's dpi, 160
+     *  for an unqualified folder, 0 for nodpi, anydpi and anything not known. */
+    public int macapkResourceDensity(int id) {
+        if (macapkResourceIndex == null) return 0;
+        try {
+            Object d = macapkResourceIndex.getClass().getMethod("densityFor", int.class)
+                .invoke(macapkResourceIndex, id);
+            return d instanceof Integer ? (Integer) d : 0;
+        } catch (Throwable t) {
+            return 0;
+        }
+    }
+
     private String macapkResourcePath(int id) {
         if (macapkResourceIndex == null) return null;
         try {
@@ -1196,6 +1211,10 @@ public class Resources {
         final byte[] ninePatchChunk;
         final android.graphics.Rect ninePatchPadding;
         final String ninePatchPath;
+        /** A nine-patch's folder density (macapkResourceDensity), 0 when not to be scaled. */
+        int sourceDensity;
+        /** A compiled nine-patch's npLb chunk: left, top, right, bottom; null when it has none. */
+        int[] opticalInsets;
         MacapkDrawableConstantState(android.graphics.Bitmap bitmap) {
             this.bitmap = bitmap;
             this.isNinePatch = false;
@@ -1212,8 +1231,15 @@ public class Resources {
         }
         android.graphics.drawable.Drawable newDrawable(Resources res) {
             if (isNinePatch) {
-                return new android.graphics.drawable.NinePatchDrawable(res,
-                    ninePatchContent, ninePatchChunk, ninePatchPadding, ninePatchPath);
+                android.graphics.drawable.NinePatchDrawable np = new android.graphics.drawable.NinePatchDrawable(
+                    res, ninePatchContent, ninePatchChunk, ninePatchPadding, ninePatchPath);
+                if (opticalInsets != null) {
+                    np.macapkSetOpticalInsets(opticalInsets[0], opticalInsets[1], opticalInsets[2], opticalInsets[3]);
+                }
+                if (sourceDensity != 0 && res != null && res.metrics != null) {
+                    np.macapkSetDensities(sourceDensity, res.metrics.densityDpi);
+                }
+                return np;
             }
             return new android.graphics.drawable.BitmapDrawable(res, bitmap);
         }
@@ -1428,7 +1454,19 @@ public class Resources {
                             MacapkDrawableConstantState state =
                                 isPng ? macapkNinePatchFromChunk(id, bm, bytes) : null;
                             if (state == null) state = macapkNinePatchState(id, bm);
-                            if (state == null) state = new MacapkDrawableConstantState(bm);
+                            if (state != null) state.sourceDensity = macapkResourceDensity(id);
+                            if (state == null) {
+                                // The picture is as dense as the folder it came from
+                                // (AOSP: value.density through decodeResourceStream), so an
+                                // image an app ships in one bucket only is drawn at its size
+                                // in dp, not at its size in pixels: BitmapDrawable scales
+                                // from the bitmap's density to the screen's. Unset, an
+                                // xxhdpi-only picture was one and a half times too large on
+                                // an xhdpi screen, and three times on a 1x monitor.
+                                int src = macapkResourceDensity(id);
+                                if (src != 0) bm.setDensity(src);
+                                state = new MacapkDrawableConstantState(bm);
+                            }
                             macapkDrawableCache.put(cacheKey,
                                 new java.lang.ref.WeakReference<>(state));
                             if (sDrawableCacheTrace) com.macapk.loader.NativeLog.d("Mac.apk.Resources",
@@ -1684,9 +1722,17 @@ public class Resources {
             for (int i = 0; i < ny; i++) yDivs[i] = bb.getInt(yOff + i * 4);
             android.graphics.Rect padding =
                 new android.graphics.Rect(padLeft, padTop, padRight, padBottom);
-            return new MacapkDrawableConstantState(bm, bm,
+            MacapkDrawableConstantState state = new MacapkDrawableConstantState(bm, bm,
                 macapk9Chunk(xDivs, yDivs, padLeft, padRight, padTop, padBottom),
                 padding, macapkResourcePath(id));
+            // npLb: four int32 as aapt2 wrote them from memory (little-endian), which is how
+            // the device reads them back (NinePatchPeeker: memcpy into mOpticalInsets).
+            byte[] lb = macapkPngChunk(png, "npLb");
+            if (lb != null && lb.length == 16) {
+                java.nio.ByteBuffer l = java.nio.ByteBuffer.wrap(lb).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+                state.opticalInsets = new int[] {l.getInt(0), l.getInt(4), l.getInt(8), l.getInt(12)};
+            }
+            return state;
         } catch (Throwable t) {
             return null;
         }
@@ -2863,26 +2909,13 @@ public class Resources {
      *  inflation unchanged, mask skipped and colour dropped, so nothing about
      *  the shipped path moves. */
     private android.graphics.drawable.Drawable macapkInflateRipple(org.w3c.dom.Element root, Theme theme) {
-        if (!android.graphics.drawable.RippleDrawable.MACAPK_RIPPLE_PRESS) {
-            if (!MACAPK_RIPPLE_MASK_BY_ID) return macapkInflateLayerList(root, theme);
-            // Gate-off keeps the layer-list rendering, but the MASK is still
-            // recognised by id in both spellings. The layer-list test is
-            // `contains("mask")`, which the compiled platform XML's
-            // `android:id="@0x0102002e"` never satisfies, so every platform
-            // <ripple> painted its mask: `item_background_material`, whose
-            // only child is a solid WHITE mask (`<item android:id="@id/mask">
-            // <color android:color="@color/white"/>`), came back a LayerDrawable
-            // that filled the view white. That is the drawable behind
-            // ?android:selectableItemBackground, i.e. every AppCompat v21+ list
-            // row and clickable header that reads it by id. AOSP never paints
-            // the mask (RippleDrawable.drawContent, android14-release
-            // :1155-1164: "Draw everything except the mask",
-            // `if (array[i].mId != R.id.mask)`).
-            android.graphics.drawable.LayerDrawable ld =
-                new android.graphics.drawable.LayerDrawable();
-            macapkFillLayerList(root, theme, ld, false, true);
-            return ld.getNumberOfLayers() > 0 ? ld : null;
-        }
+        // A <ripple> is a RippleDrawable whether or not it paints the press itself (the gate
+        // only chooses who paints it: this drawable or View's own ripple). As a plain
+        // LayerDrawable, or the transparent ColorDrawable a mask-only ripple fell back to, it
+        // was not stateful, a cast to RippleDrawable threw, and code that asks
+        // `instanceof RippleDrawable` to set the colour or the radius skipped it (uiprobe:
+        // abc_control_background_material, item_background_material, Material's ripples).
+        // RippleDrawable.draw leaves the mask layer out with the gate off too.
         android.graphics.drawable.RippleDrawable rd =
             new android.graphics.drawable.RippleDrawable();
         // A single resolved colour rather than a real ColorStateList: our
@@ -3129,7 +3162,12 @@ public class Resources {
         private final android.graphics.Paint paint = new android.graphics.Paint();
         private int alpha = 255;
 
-        MacapkEditTextBar(float density) { this.d = density; }
+        /** The theme the field was inflated with, when there was one: the two colours are
+         *  that theme's (a dark activity in a light app has a light underline), the
+         *  application theme's only without it. */
+        private final Theme theme;
+        MacapkEditTextBar(float density) { this(density, null); }
+        MacapkEditTextBar(float density, Theme theme) { this.d = density; this.theme = theme; }
 
         /** AOSP's selector, read top-down: disabled -> normal art; NOT pressed
          *  and NOT focused -> normal art; otherwise (so: pressed or focused, and
@@ -3162,8 +3200,11 @@ public class Resources {
             // accent_material_light = material_deep_teal_500 = #009688, and
             // secondary_text_material_light = #8a000000 (Theme.Material.Light's
             // colorControlNormal is ?android:textColorSecondary).
-            final int c = on ? macapkThemeColor("colorControlActivated", 0xFF009688)
-                             : macapkThemeColor("colorControlNormal",    0x8A000000);
+            final int c = theme != null
+                ? (on ? theme.resolveAttrColor("android:colorControlActivated", 0xFF009688)
+                      : theme.resolveAttrColor("android:colorControlNormal", 0x8A000000))
+                : (on ? macapkThemeColor("colorControlActivated", 0xFF009688)
+                      : macapkThemeColor("colorControlNormal",    0x8A000000));
             // Drawable.setAlpha SCALES the drawable's own alpha, it does not
             // replace it -- colorControlNormal is #8a000000, i.e. already 54%
             // opaque, and a caller passing 255 must not promote it to opaque.
@@ -3467,7 +3508,7 @@ public class Resources {
             // framework asset we do not ship is worse than no row.
             case "edit_text_material": {
                 if (!MACAPK_ATTRSTYLE) return null;
-                MacapkEditTextBar bar = new MacapkEditTextBar(d);
+                MacapkEditTextBar bar = new MacapkEditTextBar(d, theme);
                 return new android.graphics.drawable.InsetDrawable(bar,
                     Math.round(4f * d), Math.round(10f * d),
                     Math.round(4f * d), Math.round(7f * d));
@@ -3484,8 +3525,17 @@ public class Resources {
                 android.graphics.drawable.GradientDrawable s =
                     new android.graphics.drawable.GradientDrawable();
                 s.setShape(android.graphics.drawable.GradientDrawable.RECTANGLE);
-                s.setColor(macapkThemeColor("colorButtonNormal", 0xFFD6D7D7));
+                // ?attr/colorButtonNormal of the theme the button is inflated with: #5a595b
+                // under a dark theme, where the application theme's light grey left white
+                // text on a pale button.
+                s.setColor(theme != null ? theme.resolveAttrColor("android:colorButtonNormal", 0xFFD6D7D7)
+                                         : macapkThemeColor("colorButtonNormal", 0xFFD6D7D7));
                 s.setCornerRadius(2f * d);
+                // btn_default_mtrl_shape's <padding>: button_padding_horizontal_material (8dp) and
+                // button_padding_vertical_material (4dp). With the insets a button's padding is
+                // 12dp by 10dp, which is where its text sits and how wide a short label makes it.
+                int ph = Math.round(8f * d), pv = Math.round(4f * d);
+                s.setPadding(ph, pv, ph, pv);
                 int ih = Math.round(4f * d), iv = Math.round(6f * d);
                 return new android.graphics.drawable.InsetDrawable(s, ih, iv, ih, iv);
             }
@@ -3975,6 +4025,12 @@ public class Resources {
      *  `?attr`, names one; else a single-colour list. A tint must stay a LIST:
      *  ?attr/colorControlNormal is a selector in AppCompat themes, and its
      *  disabled row is what a disabled widget's tint shows. */
+    /** A drawable's android:tint as a colour state list (macapkColorStateListValue), for the
+     *  drawables that live outside this package. */
+    public android.content.res.ColorStateList macapkTintListFor(String v, Theme theme) {
+        return macapkColorStateListValue(v, theme);
+    }
+
     private android.content.res.ColorStateList macapkColorStateListValue(String v, Theme theme) {
         if (v == null) return null;
         v = v.trim();
@@ -4151,6 +4207,18 @@ public class Resources {
                 case "size":
                     gd.setSize(macapkDimSizeAttr(c, "width", -1, theme),
                             macapkDimSizeAttr(c, "height", -1, theme));
+                    break;
+                case "padding":
+                    // AOSP GradientDrawable.inflateChildElements, the "padding"
+                    // arm: the four sides (0 when absent) become the drawable's
+                    // padding, which a view takes for its own when the shape is
+                    // its background. The element was not read at all, so a
+                    // chip, a badge or a button whose room around the text is
+                    // its background's <padding> had the text against the edge
+                    // and was that much smaller (uiprobe: 62.5x19 where Android
+                    // lays out 78.5x27).
+                    gd.setPadding(macapkDimSizeAttr(c, "left", 0, theme), macapkDimSizeAttr(c, "top", 0, theme),
+                            macapkDimSizeAttr(c, "right", 0, theme), macapkDimSizeAttr(c, "bottom", 0, theme));
                     break;
                 case "gradient": {
                     // v1.0.499: a <shape> with a <gradient> (and no <solid>) was
@@ -5028,6 +5096,13 @@ public class Resources {
      *  gate for the 23-app recapture, not a supported mode). */
     private static final boolean MACAPK_ATTR_RESID_THEME =
         !"0".equals(System.getenv("MACAPK_ATTR_RESID_THEME"));
+    /** macapkResolveThemeAttrRaw for callers outside this package (the inflater's own
+     *  attribute readers): what `expr` ("?attr/x", "?android:attr/x", "?0x...") ends at in
+     *  `theme`'s cascade, or null. */
+    public static String macapkThemeAttrRawFor(String expr, Theme theme) {
+        return macapkResolveThemeAttrRaw(expr, theme);
+    }
+
     static String macapkResolveThemeAttrRaw(String expr, Theme theme) {
         if (theme == null || !MACAPK_ATTR_RESID_THEME) {
             return macapkResolveThemeAttrRaw(expr);
@@ -6095,6 +6170,10 @@ public class Resources {
             }
         }
 
+        /** How deep the cascade is inside colour files it inflates against itself (a row of
+         *  one may name an attribute that is another such file); bounded like the hops. */
+        private static final ThreadLocal<int[]> macapkThemedFileDepth = ThreadLocal.withInitial(() -> new int[1]);
+
         private Integer macapkResolveAttrColorInCascade(String attrName, int depth) {
             try {
                 java.util.List<String> cascade =
@@ -6139,6 +6218,41 @@ public class Resources {
                         cur = next;
                         from = 0;
                         continue;
+                    }
+                    // A colour FILE whose default row is a theme attribute belongs to THIS
+                    // theme, so it is asked before the theme-less resolver. Material's
+                    // android:textColorPrimary is @color/material_on_background_emphasis_high_type,
+                    // a selector over ?attr/colorOnBackground; macapkResolveColorExpr flattens
+                    // such a file against the APPLICATION theme and remembers the answer, so
+                    // under any other theme (a dark activity in a light app, a themed dialog
+                    // or toolbar) the text took the application theme's colour: black on a
+                    // dark screen (uiprobe dark_list, dark_appbar).
+                    if (MACAPK_THEME_SELECTOR_ATTR_ROW && depth < 4 && raw.startsWith("@color/")) {
+                        Integer themed = macapkSelectorAttrRowColor(raw.substring(7), depth);
+                        if (themed != null) return themed;
+                    }
+                    // The same for a PLATFORM colour file: android:textColorPrimary of
+                    // Theme.Material is @android:color/text_color_primary, a selector over
+                    // ?attr/colorForeground, which every AppCompat and Material Components
+                    // theme inherits. Inflated against this theme (macapkLoadCslFile, as
+                    // AOSP's loadComplexColorForCookie does), its default row is this
+                    // theme's foreground: white under a dark theme.
+                    if (MACAPK_THEME_SELECTOR_ATTR_ROW && raw.charAt(0) == '@' && !raw.startsWith("@color/")) {
+                        int[] nesting = macapkThemedFileDepth.get();
+                        if (nesting[0] < 4) {
+                            nesting[0]++;
+                            try {
+                                int fileId = macapkResRefToId(raw);
+                                if ((fileId >>> 24) == 0x01) {
+                                    android.content.res.ColorStateList list =
+                                        Resources.this.macapkLoadCslFile(fileId, Theme.this);
+                                    if (list != null) return list.getDefaultColor();
+                                }
+                            } catch (Throwable ignored) {
+                            } finally {
+                                nesting[0]--;
+                            }
+                        }
                     }
                     Integer c = macapkResolveColorExpr(raw);
                     if (c != null) return c;
@@ -6670,12 +6784,21 @@ public class Resources {
                 java.lang.reflect.Method mResolve = macapkResourceIndex.getClass()
                     .getMethod("resolveAttrInTheme", String.class, String.class);
                 for (int hop = 0; hop < 4 && sr.startsWith("?"); hop++) {
+                    // A compiled layout carries the reference as an id ("?0x01010078"):
+                    // name it first, as every other reader of such a value does.
+                    String namedRef = macapkNamedAttrRef(sr);
+                    if (namedRef != null) sr = namedRef;
                     String refAttr = sr.substring(1);
                     // App attribute: whole-cascade identity first (see
                     // macapkResolveAppAttrExact / resolveDefStyleName).
                     final boolean appHop = !refAttr.startsWith("android:");
                     if (refAttr.startsWith("attr/")) refAttr = refAttr.substring(5);
-                    else if (refAttr.startsWith("android:attr/")) refAttr = refAttr.substring(13);
+                    // "?android:attr/x" is the PLATFORM's x: the namespace stays on the key
+                    // (resolveAttrInTheme is namespace-aware). Stripped to a bare "x" it was
+                    // looked up as an app attribute and not found, so an element's
+                    // style="?android:attr/progressBarStyleHorizontal" named no style and
+                    // every attribute read from it came back absent.
+                    else if (refAttr.startsWith("android:attr/")) refAttr = "android:" + refAttr.substring(13);
                     String next = appHop ? macapkResolveAppAttrExact(refAttr) : null;
                     if (next == null) for (String style : appliedStyles) {
                         Object r = mResolve.invoke(macapkResourceIndex, style, refAttr);

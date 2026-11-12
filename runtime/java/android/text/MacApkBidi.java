@@ -35,7 +35,15 @@ public final class MacApkBidi {
     /** FIRSTSTRONG_LTR over the '\n'-delimited paragraph that holds `pos`:
      *  the first strong character decides, and none at all means LTR. */
     public static boolean isRtlParagraph(CharSequence s, int pos) {
-        if (s == null) return false;
+        return isRtlParagraph(s, pos, false);
+    }
+
+    /** The same with the answer for a paragraph that has no strong character
+     *  (empty, digits, punctuation) given by the caller: AOSP's FIRSTSTRONG_RTL
+     *  when `defaultRtl`, which is what a TextView in a right-to-left layout
+     *  uses (TextView.getTextDirectionHeuristic). */
+    public static boolean isRtlParagraph(CharSequence s, int pos, boolean defaultRtl) {
+        if (s == null) return defaultRtl;
         final int len = s.length();
         int p = Math.max(0, Math.min(pos, len));
         while (p > 0 && s.charAt(p - 1) != '\n') p--;
@@ -48,7 +56,7 @@ public final class MacApkBidi {
                     || d == Character.DIRECTIONALITY_RIGHT_TO_LEFT_ARABIC) return true;
             i += Character.charCount(cp);
         }
-        return false;
+        return defaultRtl;
     }
 
     /** The pieces of `line` between consecutive cut points (`bounds[0..n)`,

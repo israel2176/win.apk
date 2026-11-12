@@ -79,6 +79,7 @@ public abstract class UrlRequest {
         }
         public Builder setHttpMethod(String method) { mMethod = method; return this; }
         public Builder setTrafficStatsTag(int tag) { return this; }
+        public Builder setTrafficStatsUid(int uid) { return this; }
         public Builder addHeader(String name, String value) {
             mHeaders.add(new String[]{name, value}); return this;
         }

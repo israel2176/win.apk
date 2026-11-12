@@ -1,5 +1,6 @@
 // jni_variadic.cpp -- see jni_variadic.h.
 
+#include <atomic>
 #include "winapk/jni_variadic.h"
 
 #include "winapk/abi_thunk.h"
@@ -11,6 +12,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <tuple>
+#include <type_traits>
 #include <utility>
 
 namespace winapk {
@@ -70,6 +72,25 @@ int build_jvalues(const char* sig, SysVVaList* va, jvalue* out) {
     std::abort();
 }
 
+// A constructor that threw, said in the log (the first few): native code that builds a Java object
+// and gets null usually reports no more than "cannot create object", then goes on with the null
+// and crashes somewhere else. The exception stays pending for the caller, as JNI leaves it.
+void report_failed_new_object(JNIEnv* host) {
+    static std::atomic<int> said{0};
+    if (!host->ExceptionCheck() || said.fetch_add(1) >= 8) return;
+    jthrowable ex = host->ExceptionOccurred();
+    host->ExceptionClear();
+    std::fputs("[win.apk] JNI NewObject: the constructor threw:\n", stderr);
+    std::fflush(stderr);
+    if (jclass cls = host->GetObjectClass(ex)) {
+        if (jmethodID print = host->GetMethodID(cls, "printStackTrace", "()V")) host->CallVoidMethod(ex, print);
+        host->DeleteLocalRef(cls);
+    }
+    host->ExceptionClear();  // whatever the printing itself threw
+    host->Throw(ex);
+    host->DeleteLocalRef(ex);
+}
+
 // One template covers every Call<T>Method / NewObject family: the A-form slot
 // AField fixes the return type R and the argument list Args... after JNIEnv*,
 // which is (the fixed arguments..., const jvalue*). The variadic entry point
@@ -77,6 +98,16 @@ int build_jvalues(const char* sig, SysVVaList* va, jvalue* out) {
 // so the trailing pointer is declared const jvalue* and reinterpreted as the
 // SysVVaList*/va_list the caller really passes there. The jmethodID is the
 // argument before it; the fixed arguments are everything before that.
+// Whether an A-form slot is NewObjectA (CallStaticObjectMethodA has the same type).
+template <typename F>
+constexpr bool is_new_object(F field) {
+    if constexpr (std::is_same_v<F, decltype(&JNINativeInterface_::NewObjectA)>) {
+        return field == &JNINativeInterface_::NewObjectA;
+    } else {
+        return false;
+    }
+}
+
 template <auto AField>
 struct VarBridge;
 
@@ -98,7 +129,13 @@ struct VarBridge<AField> {
         const char* sig = g_provider ? g_provider(g_provider_ctx, mid) : nullptr;
         jvalue argv[kMaxArgs];
         if (build_jvalues(sig, va, argv) < 0) bad_signature(mid);
-        return call_aform(host, argv, t, std::make_index_sequence<N - 1>{});
+        if constexpr (std::is_same_v<R, jobject>) {
+            R made = call_aform(host, argv, t, std::make_index_sequence<N - 1>{});
+            if (!made && is_new_object(AField)) report_failed_new_object(host);
+            return made;
+        } else {
+            return call_aform(host, argv, t, std::make_index_sequence<N - 1>{});
+        }
     }
 };
 
