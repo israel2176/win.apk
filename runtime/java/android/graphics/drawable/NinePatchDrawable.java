@@ -83,18 +83,6 @@ public class NinePatchDrawable extends Drawable {
         return (size * mMacapkScreenDensity + (mMacapkSourceDensity >> 1)) / mMacapkSourceDensity;
     }
 
-    /** The patch's layout bounds (the red marks of a .9.png, aapt's npLb chunk), in the
-     *  patch's own pixels. AOSP: NinePatchDrawable.getOpticalInsets, scaled like the padding.
-     *  A switch takes its thumb's for the room beside the track (Switch.onMeasure). */
-    private int mMacapkOpticalLeft, mMacapkOpticalTop, mMacapkOpticalRight, mMacapkOpticalBottom;
-    public void macapkSetOpticalInsets(int left, int top, int right, int bottom) {
-        mMacapkOpticalLeft = left; mMacapkOpticalTop = top; mMacapkOpticalRight = right; mMacapkOpticalBottom = bottom;
-    }
-    @Override public android.graphics.Insets getOpticalInsets() {
-        return android.graphics.Insets.of(macapkScaled(mMacapkOpticalLeft), macapkScaled(mMacapkOpticalTop),
-                                          macapkScaled(mMacapkOpticalRight), macapkScaled(mMacapkOpticalBottom));
-    }
-
     public Paint getPaint() { return mPaint; }
     public void setTargetDensity(int density) { mTargetDensity = density; }
     public void setTargetDensity(android.util.DisplayMetrics metrics) {
