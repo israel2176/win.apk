@@ -3484,8 +3484,13 @@ public class TextView extends View
      *  that the name TextView's endToStart anchors to; without a
      *  non-zero wrap width on new_tag, name.width can't be solved,
      *  and the cascade leaves every TextView at 0x0. */
+    /** Whether onMeasure has run: AOSP's `mLayout != null`. A view measured with no text has
+     *  a layout of one empty line and a baseline; one never measured has neither. */
+    private boolean macapkMeasuredOnce;
+
     @Override
     protected void onMeasure(int wSpec, int hSpec) {
+        macapkMeasuredOnce = true;
         if (MACAPK_TEXT_LINES_AOSP) { macapkOnMeasureAosp(wSpec, hSpec); return; }
         int wMode = android.view.View.MeasureSpec.getMode(wSpec);
         int wSize = android.view.View.MeasureSpec.getSize(wSpec);
@@ -5490,7 +5495,10 @@ public class TextView extends View
         // A view that was never measured (gone, or not laid out yet) has no
         // layout, and "no baseline" is what keeps it out of a baseline-aligned
         // row's arithmetic.
-        if (getWidth() <= 0 && getMeasuredWidth() <= 0) return -1;
+        // "Measured" and not "has a width": an empty wrap_content label is 0 wide and still
+        // has its line, and a row that aligns on baselines counts it (uiprobe lib_list: a
+        // row's empty end label answered -1 where Android has the first line's baseline).
+        if (!macapkMeasuredOnce && getWidth() <= 0 && getMeasuredWidth() <= 0) return -1;
         android.graphics.Paint p = new android.graphics.Paint();
         p.setTextSize(textSizePx);
         applyTextStyleToPaint(p);
@@ -6371,7 +6379,12 @@ public class TextView extends View
             int mw = getMeasuredWidth();
             if (mw > 0) avail = mw - getCompoundPaddingLeft() - getCompoundPaddingRight();
         }
-        if (avail <= 0) return null;   // AOSP: null before first measure/layout
+        if (avail <= 0) {
+            // AOSP: null before the first measure. After it an empty text still has its
+            // layout, one line of no width.
+            if (!macapkMeasuredOnce || disp == null || disp.length() != 0) return null;
+            avail = 0;
+        }
         // AOSP TextView.getLayoutAlignment() (android14-release :9263-9310).
         // viewStart / viewEnd are sides of the VIEW (left or right by its layout
         // direction), textStart / textEnd follow the paragraph, and under
