@@ -6967,7 +6967,18 @@ public class TextView extends View
     // getters and stateful methods F-Droid + androidx reference.
 
     private int gravity = android.view.Gravity.NO_GRAVITY;
-    public int getGravity() { return gravity; }
+    /** AOSP TextView.getGravity: what setGravity stored, and setGravity fills in what the
+     *  caller left out ("if no horizontal gravity, START; if no vertical, TOP"), from a default
+     *  of TOP | START. So a view's gravity always names a side, relative to the layout
+     *  direction. Material's TextInputLayout hands the field's gravity to the label it draws:
+     *  with the bare stored value the label had no horizontal gravity at all and sat at the
+     *  left, over the outline, in every right-to-left layout and for every Hebrew hint. */
+    public int getGravity() {
+        int g = gravity;
+        if ((g & android.view.Gravity.RELATIVE_HORIZONTAL_GRAVITY_MASK) == 0) g |= android.view.Gravity.START;
+        if ((g & android.view.Gravity.VERTICAL_GRAVITY_MASK) == 0) g |= android.view.Gravity.TOP;
+        return g;
+    }
     /** AOSP TextView.setGravity: stores the gravity for text-draw
      *  positioning + propagates to LayoutParams via Gravity bits. */
     // Note: setGravity is already declared above as void; promote to
