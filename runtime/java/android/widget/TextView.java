@@ -4038,7 +4038,7 @@ public class TextView extends View
             float lineW = (line.length() == rg[1] - rg[0])
                 ? macapkRunWidth(disp, s, rg[0], rg[1], p, workD, spannedD)
                 : p.measureText(line);
-            float x = padL + horizontalGravityOffset(viewW, lineW);
+            float x = padL + horizontalGravityOffset(viewW, lineW, rg[0]);
             float baselineY = blockTop + tops[i] - macapkLineTopAbove(fm, i, lines, p);
             macapkDrawLine(canvas, styled, line, ranges.get(i)[0], srcCounts[i],
                 x, baselineY, p);
@@ -4674,7 +4674,7 @@ public class TextView extends View
         for (int i = 0; i < nLines; i++) {
             final String line = lines.get(i);
             final int[] rg = mDrawCacheRanges.get(i);
-            final float x = padL + horizontalGravityOffset(viewW, mDrawCacheLineW[i]);
+            final float x = padL + horizontalGravityOffset(viewW, mDrawCacheLineW[i], rg[0]);
             final float baselineY = blockTop + tops[i] - mDrawCacheAbove[i];
             macapkDrawLine(canvas, styled, line, rg[0], mDrawCacheSrcCounts[i], x, baselineY, p);
         }
@@ -4904,6 +4904,13 @@ public class TextView extends View
         }
     }
     private float horizontalGravityOffset(int availW, float contentW) {
+        return horizontalGravityOffset(availW, contentW, 0);
+    }
+    /** `lineStart`: where the line begins in the shown text. Each PARAGRAPH has its own
+     *  direction (AOSP runs the heuristic per paragraph: StaticLayout's MeasuredParagraph),
+     *  so in a text of several, an English line among Hebrew ones starts at the left.
+     *  Asked at offset 0 for every line, the first paragraph decided for all of them. */
+    private float horizontalGravityOffset(int availW, float contentW, int lineStart) {
         // AOSP resolves android:textAlignment FIRST: TextView.getLayoutAlignment()
         // (android13-release TextView.java:9263-9310) switches on
         // getTextAlignment() and only the TEXT_ALIGNMENT_GRAVITY case consults
@@ -4919,7 +4926,11 @@ public class TextView extends View
         // VIEW_END follow the view's resolved layout direction.
         final float right = Math.max(0f, availW - contentW);
         boolean textRtl = false;
-        try { textRtl = macapkParagraphRtl(macapkShownText(), 0); } catch (Throwable ignored) {}
+        try {
+            final CharSequence shown = macapkShownText();
+            final int at = shown == null ? 0 : Math.max(0, Math.min(lineStart, shown.length()));
+            textRtl = macapkParagraphRtl(shown, at);
+        } catch (Throwable ignored) {}
         final boolean viewRtl = isLayoutRtl();
         switch (getTextAlignment()) {
             case android.view.View.TEXT_ALIGNMENT_CENTER:
