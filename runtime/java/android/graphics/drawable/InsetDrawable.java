@@ -126,6 +126,15 @@ public class InsetDrawable extends DrawableWrapper {
         return android.graphics.Insets.of(content.left + mTmpInsetRect.left, content.top + mTmpInsetRect.top,
                 content.right + mTmpInsetRect.right, content.bottom + mTmpInsetRect.bottom);
     }
+    /** AOSP InsetDrawable.getOpticalInsets: the child's, grown by the insets. */
+    @Override public android.graphics.Insets getOpticalInsets() {
+        final Drawable d = getDrawable();
+        final android.graphics.Insets content = d != null ? d.getOpticalInsets() : android.graphics.Insets.NONE;
+        getInsets(mTmpInsetRect);
+        return android.graphics.Insets.of(content.left + mTmpInsetRect.left, content.top + mTmpInsetRect.top,
+                                          content.right + mTmpInsetRect.right, content.bottom + mTmpInsetRect.bottom);
+    }
+
     @Override public boolean getPadding(Rect padding) {
         if (padding == null) return false;
         final Drawable d = getDrawable();

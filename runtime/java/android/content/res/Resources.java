@@ -1213,6 +1213,8 @@ public class Resources {
         final String ninePatchPath;
         /** A nine-patch's folder density (macapkResourceDensity), 0 when not to be scaled. */
         int sourceDensity;
+        /** A compiled nine-patch's layout bounds, left top right bottom (npLb), or null. */
+        int[] optical;
         /** A compiled nine-patch's npLb chunk: left, top, right, bottom; null when it has none. */
         int[] opticalInsets;
         MacapkDrawableConstantState(android.graphics.Bitmap bitmap) {
@@ -1239,6 +1241,7 @@ public class Resources {
                 if (sourceDensity != 0 && res != null && res.metrics != null) {
                     np.macapkSetDensities(sourceDensity, res.metrics.densityDpi);
                 }
+                if (optical != null) np.macapkSetOpticalInsets(optical[0], optical[1], optical[2], optical[3]);
                 return np;
             }
             return new android.graphics.drawable.BitmapDrawable(res, bitmap);
@@ -1454,7 +1457,17 @@ public class Resources {
                             MacapkDrawableConstantState state =
                                 isPng ? macapkNinePatchFromChunk(id, bm, bytes) : null;
                             if (state == null) state = macapkNinePatchState(id, bm);
-                            if (state != null) state.sourceDensity = macapkResourceDensity(id);
+                            if (state != null) {
+                                state.sourceDensity = macapkResourceDensity(id);
+                                // npLb: four int32 as aapt2 wrote them from memory (little-endian),
+                                // read back the same way by NinePatchPeeker.
+                                byte[] lb = macapkPngChunk(bytes, "npLb");
+                                if (lb != null && lb.length == 16) {
+                                    java.nio.IntBuffer ib = java.nio.ByteBuffer.wrap(lb)
+                                        .order(java.nio.ByteOrder.LITTLE_ENDIAN).asIntBuffer();
+                                    state.optical = new int[] {ib.get(0), ib.get(1), ib.get(2), ib.get(3)};
+                                }
+                            }
                             if (state == null) {
                                 // The picture is as dense as the folder it came from
                                 // (AOSP: value.density through decodeResourceStream), so an
