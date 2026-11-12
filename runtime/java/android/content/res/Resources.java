@@ -1317,6 +1317,19 @@ public class Resources {
     }
 
     private android.graphics.drawable.Drawable macapkGetDrawableImpl(int id, Theme theme) {
+        // An ATTRIBUTE's id is not a drawable: AOSP's getValueForDensity finds no value for
+        // it and getDrawable throws NotFoundException("Resource ID #0x..."). Apps lean on
+        // that. YouTube asks getDrawable for its wordmark's theme attribute, and where the
+        // throw ends that attempt it keeps the logo it already set; handed the empty
+        // stand-in instead, it replaced the logo with a 24 px blank.
+        if (id != 0) {
+            String[] kind = null;
+            try { kind = macapkTypeNameOf(id); } catch (Throwable ignored) { }
+            if (kind != null && kind.length > 0 && "attr".equals(kind[0])) {
+                throw new NotFoundException("Resource ID #0x" + Integer.toHexString(id)
+                    + " type attr is not valid");
+            }
+        }
         // v1.0.99: peek the first bytes to determine drawable type.
         // PNG (89 50 4E 47), JPG (FF D8), GIF (47 49 46) -> BitmapDrawable.
         // XML (text starting with '<' or whitespace+'<') -> VectorDrawable
