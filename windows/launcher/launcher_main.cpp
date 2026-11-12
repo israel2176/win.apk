@@ -93,6 +93,7 @@
 #include <vector>
 
 #include "app_runs.h"
+#include "debug_threads.h"
 #include "installs.h"
 #include "updates.h"
 #include "../host/window_fit.h"
@@ -572,7 +573,42 @@ const wchar_t* tr(const wchar_t* en) {
         {L"Wait for the installs to finish, then update Win.apk.", L"המתן לסיום ההתקנות, ולאחר מכן עדכן את Win.apk."},
         {L"Close {0} first: the update replaces files it uses.", L"סגור תחילה את {0}: העדכון מחליף קבצים שהיא משתמשת בהם."},
         {L"Close the running apps first: the update replaces files they use.", L"סגור תחילה את האפליקציות הפועלות: העדכון מחליף קבצים שהן משתמשות בהם."},
-        {L"The installer could not be started.", L"לא ניתן היה להפעיל את תוכנית ההתקנה."}
+        {L"The installer could not be started.", L"לא ניתן היה להפעיל את תוכנית ההתקנה."},
+        {L"Debug mode", L"מצב דיבוג"},
+        {L"For developers. Apps opened from now on report every thread they have, with its Java and native stack.", L"למפתחים. אפליקציות שייפתחו מעכשיו ידווחו על כל תהליכון שלהן, עם מחסנית ה-Java והמחסנית המקורית שלו."},
+        {L"Threads", L"תהליכונים"},
+        {L"Every thread of the running apps, live. Each app's own is on its details page.", L"כל התהליכונים של האפליקציות הפועלות, בזמן אמת. אלה של כל אפליקציה נמצאים בדף הפרטים שלה."},
+        {L"Every thread of the app's processes, live, with its stack", L"כל התהליכונים של תהליכי האפליקציה, בזמן אמת, עם המחסנית"},
+        {L"Threads - Win.apk", L"תהליכונים - Win.apk"},
+        {L"All apps", L"כל האפליקציות"},
+        {L"Win.apk services", L"שירותי Win.apk"},
+        {L"App native", L"קוד מקורי של האפליקציה"},
+        {L"System", L"מערכת"},
+        {L"Not identified", L"לא מזוהים"},
+        {L"Looking for running apps…", L"מחפש אפליקציות פועלות…"},
+        {L"No app is running. Open an app and its threads appear here.", L"אין אפליקציה פועלת. פתח אפליקציה והתהליכונים שלה יופיעו כאן."},
+        {L"{0} is not running. Open it and its threads appear here.", L"{0} אינה פועלת. פתח אותה והתהליכונים שלה יופיעו כאן."},
+        {L"Threads: {0}  ·  Processes: {1}", L"תהליכונים: {0}  ·  תהליכים: {1}"},
+        {L"{0} shown", L"מוצגים {0}"},
+        {L"Reopen the app for Java names and stacks", L"פתח את האפליקציה מחדש כדי לראות שמות ומחסניות של Java"},
+        {L"Paused", L"מושהה"},
+        {L"Pause", L"השהיה"},
+        {L"Resume", L"המשך"},
+        {L"Select a thread to see its stack.", L"בחר תהליכון כדי לראות את המחסנית שלו."},
+        {L"Paused. Resume to see this thread's stack.", L"מושהה. לחץ על המשך כדי לראות את המחסנית של התהליכון."},
+        {L"The thread has ended.", L"התהליכון הסתיים."},
+        {L"This process has no debug agent: it was opened before debug mode was turned on, or it does not answer. Stop the app and open it again to see Java names and stacks.", L"לתהליך הזה אין סוכן דיבוג: הוא נפתח לפני שמצב הדיבוג הופעל, או שאינו עונה. עצור את האפליקציה ופתח אותה שוב כדי לראות שמות ומחסניות של Java."},
+        {L"Stacks are shown for the processes that run the app's code. This one is a helper the app started.", L"מחסניות מוצגות לתהליכים שמריצים את קוד האפליקציה. זהו תהליך עזר שהאפליקציה הפעילה."},
+        {L"Search threads: a name, a type, a library", L"חיפוש תהליכונים: שם, סוג, ספרייה"},
+        {L"Process", L"תהליך"},
+        {L"Thread ID", L"מזהה תהליכון"},
+        {L"Name", L"שם"},
+        {L"Type", L"סוג"},
+        {L"State", L"מצב"},
+        {L"CPU %", L"‏% מעבד"},
+        {L"CPU time", L"זמן מעבד"},
+        {L"Priority", L"עדיפות"},
+        {L"Started in", L"התחיל ב-"}
     };
     if (!g_rtl) return en;
     const auto it = he.find(en);
@@ -2873,6 +2909,7 @@ struct Job {
 std::vector<Job> g_jobs;                   // this batch of installs, for the install window
 std::map<std::wstring, std::wstring> g_job_labels;  // installs that are not in the library yet: their names to show
 HWND g_install_wnd, g_log_wnd, g_log_edit, g_tip;
+HWND g_debug_wnd;  // the Threads window (debug mode)
 std::map<std::wstring, std::unique_ptr<Gdiplus::Bitmap>> g_icons;  // rounded, at the grid's size; null: no icon
 std::unique_ptr<Gdiplus::Bitmap> g_brand;  // the program's icon, for the navigation pane
 std::wstring g_selected;
@@ -2956,6 +2993,8 @@ std::wstring g_account_photo_key;  // account + size it was loaded for; cleared 
 
 HWND owner() { return g_main; }
 void show_logs(const fs::path& log);
+bool debug_mode();
+void show_debugger(const std::wstring& app);
 void show_install_window();
 void fit_install_window();
 std::wstring install_failure_reason(const fs::path& log);
@@ -6112,6 +6151,7 @@ bool run_installer() {
     save_window_size();
     g_page.build = nullptr;  // the Update button's page_click must not rebuild a page of a window that is gone
     if (g_log_wnd) DestroyWindow(g_log_wnd);
+    if (g_debug_wnd) DestroyWindow(g_debug_wnd);
     if (g_install_wnd) DestroyWindow(g_install_wnd);
     DestroyWindow(g_main);  // its WM_DESTROY ends the program
     return true;
@@ -6331,6 +6371,24 @@ std::vector<Section> settings_sections() {
                                      },
                                      true));
     }
+    // Read by the runtime when an app opens (host/debug_agent.cpp, debug_mode_on).
+    Row debug;
+    debug.kind = Row::kToggle;
+    debug.title = tr(L"Debug mode");
+    debug.detail = tr(L"For developers. Apps opened from now on report every thread they have, with its Java and "
+                      L"native stack.");
+    debug.on = debug_mode();
+    debug.act = [](int on) {
+        set_setting(L"DebugMode", static_cast<DWORD>(on));
+        if (!on && g_debug_wnd) DestroyWindow(g_debug_wnd);
+    };  // the page is built again after it: the Threads row comes and goes with the switch
+    trouble.push_back(debug);
+    if (debug_mode()) {
+        trouble.push_back(button_row(tr(L"Threads"),
+                                     tr(L"Every thread of the running apps, live. Each app's own is on its details "
+                                        L"page."),
+                                     tr(L"Open"), [] { show_debugger({}); }));
+    }
     out.push_back({tr(L"Troubleshooting"), std::move(trouble), L""});
 
     g_updates_section = out.size();
@@ -6523,13 +6581,16 @@ void show_info(const App& app) {
         {
             std::error_code ec2;
             const fs::path log = fs::exists(run_log(a.name), ec2) ? run_log(a.name) : install_log(a.name);
-            out.push_back({tr(L"Troubleshooting"),
-                           {button_row(tr(L"Log"), tr(L"View the app's recent logs"), tr(L"Show log"),
-                                       [log] { show_logs(log); }),
-                            button_row(tr(L"Report a problem"),
-                                       tr(L"Opens a GitHub issue with the app's details and log"),
-                                       tr(L"Report"), [a, log] { report_problem(g_main, a.name, a.label, log, {}); })},
-                           L""});
+            std::vector<Row> trouble = {
+                button_row(tr(L"Log"), tr(L"View the app's recent logs"), tr(L"Show log"), [log] { show_logs(log); }),
+                button_row(tr(L"Report a problem"), tr(L"Opens a GitHub issue with the app's details and log"),
+                           tr(L"Report"), [a, log] { report_problem(g_main, a.name, a.label, log, {}); })};
+            if (debug_mode()) {
+                trouble.push_back(button_row(tr(L"Threads"),
+                                             tr(L"Every thread of the app's processes, live, with its stack"),
+                                             tr(L"Open"), [a] { show_debugger(a.name); }));
+            }
+            out.push_back({tr(L"Troubleshooting"), std::move(trouble), L""});
         }
         out.push_back({tr(L"Storage"),
                        {button_row(fmt(L"The app's file  ·  {0}", {apk_size}), a.apk.wstring(), tr(L"Show"),
@@ -7571,6 +7632,911 @@ void show_logs(const fs::path& log) {
 }
 
 // ---------------------------------------------------------------------------
+// The Threads window (debug mode, Settings > Troubleshooting): every thread of an app's processes, live.
+// A worker thread asks Windows each second for the processes of every running app (each winapk-runtime
+// and whatever it started: WebView2, a translation worker) and all their threads, and each runtime's debug
+// agent (host/debug_agent.cpp) for what only it knows: the Java threads, the app's native ones, a thread's
+// stack. Windows' list is the ground: a thread is a row whether or not an agent answered (debug_threads.h).
+// The window picks the app, searches, sorts and shows the selected thread's stack.
+
+namespace appops {
+std::wstring command_line_of(HANDLE process);
+}
+
+using winapk::launcher::ThreadColumn;
+using winapk::launcher::ThreadKind;
+using winapk::launcher::ThreadRow;
+
+bool debug_mode() { return setting(L"DebugMode", 0) != 0; }
+
+constexpr wchar_t kDebugSystemApp[] = L"*system";  // the system broker and what it runs for no one app
+constexpr UINT kDebugSnapshot = WM_APP + 1;        // the worker's: lParam a new DebugSnapshot
+constexpr int kIdDebugSearch = 101, kIdDebugList = 102, kIdDebugStack = 103;
+constexpr float kDebugSummary = 30;
+enum { kDebugPick = 1, kDebugPause, kDebugCopy };
+
+struct DebugProcess {
+    DWORD pid = 0;
+    std::wstring exe;
+    std::wstring app;      // the library name it runs for; kDebugSystemApp; empty: none known
+    bool runtime = false;  // a winapk-runtime.exe
+    bool agent = false;    // its debug agent answered
+};
+
+enum class StackState { kNone, kText, kNoAgent, kNotRuntime };
+
+struct DebugSnapshot {
+    std::wstring app;  // the app it was taken for; empty: all
+    std::vector<DebugProcess> processes;  // of every app
+    std::vector<ThreadRow> rows;          // of `app`
+    uint64_t time = 0;                    // 100 ns
+    DWORD stack_pid = 0, stack_tid = 0;
+    long long stack_jid = -1;
+    StackState stack_state = StackState::kNone;
+    std::string stack;
+};
+
+// What the window and its worker share.
+struct DebugShared {
+    SRWLOCK lock = SRWLOCK_INIT;
+    HANDLE wake = nullptr;  // look now
+    HWND hwnd = nullptr;
+    bool stop = false, paused = false;
+    std::wstring app;
+    bool selected = false;
+    DWORD sel_pid = 0, sel_tid = 0;
+    long long sel_jid = -1;
+};
+
+struct DebugView {
+    HWND list = nullptr, stack = nullptr, search = nullptr;
+    Targets targets;
+    int hot = 0;
+    bool tracking = false;
+    std::shared_ptr<DebugShared> shared;
+    std::wstring app;
+    bool first = true;  // nothing came from the worker yet
+    bool paused = false;
+    bool syncing = false;  // the list's selection is being set from here
+    std::vector<DebugProcess> processes;
+    std::vector<ThreadRow> all, rows;  // of the app; those the search leaves, sorted
+    winapk::launcher::CpuTracker cpu;
+    std::string query;
+    ThreadColumn sort = ThreadColumn::kProcess;
+    bool descending = false;
+    bool selected = false;
+    DWORD sel_pid = 0, sel_tid = 0;
+    long long sel_jid = -1;
+    std::wstring stack_text;
+} g_dv;
+
+// One question to a runtime's debug agent; false when it has none or does not answer in time.
+bool debug_ask(DWORD pid, const std::string& question, DWORD timeout_ms, std::string* reply) {
+    const std::wstring name = winapk::debug::pipe_name(pid);
+    HANDLE pipe = INVALID_HANDLE_VALUE;
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        pipe = CreateFileW(name.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, FILE_FLAG_OVERLAPPED,
+                           nullptr);
+        if (pipe != INVALID_HANDLE_VALUE) break;
+        if (GetLastError() != ERROR_PIPE_BUSY || !WaitNamedPipeW(name.c_str(), 300)) return false;
+    }
+    if (pipe == INVALID_HANDLE_VALUE) return false;
+    HANDLE done = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    const ULONGLONG deadline = GetTickCount64() + timeout_ms;
+    // One read or write, given up at the deadline: an agent whose process hangs must not hang the window's worker.
+    auto io = [&](bool write, void* buf, DWORD n, DWORD* moved) {
+        OVERLAPPED ov{};
+        ov.hEvent = done;
+        ResetEvent(done);
+        *moved = 0;
+        const BOOL ok = write ? WriteFile(pipe, buf, n, nullptr, &ov) : ReadFile(pipe, buf, n, nullptr, &ov);
+        if (!ok) {
+            if (GetLastError() != ERROR_IO_PENDING) return false;
+            const ULONGLONG now = GetTickCount64();
+            if (now >= deadline || WaitForSingleObject(done, static_cast<DWORD>(deadline - now)) != WAIT_OBJECT_0) {
+                CancelIo(pipe);
+                GetOverlappedResult(pipe, &ov, moved, TRUE);
+                return false;
+            }
+        }
+        return GetOverlappedResult(pipe, &ov, moved, FALSE) != 0;
+    };
+    std::string q = question + "\n";
+    DWORD moved = 0;
+    bool ok = done && io(true, &q[0], static_cast<DWORD>(q.size()), &moved) && moved == q.size();
+    if (ok) {
+        reply->clear();
+        std::vector<char> buf(64 * 1024);
+        for (;;) {
+            SetLastError(ERROR_SUCCESS);
+            if (!io(false, buf.data(), static_cast<DWORD>(buf.size()), &moved) || !moved) break;
+            reply->append(buf.data(), moved);
+        }
+        // The agent closed its end: the answer is whole. Anything else (the deadline) and it is not.
+        const DWORD end = GetLastError();
+        ok = end == ERROR_BROKEN_PIPE || end == ERROR_HANDLE_EOF || end == ERROR_PIPE_NOT_CONNECTED ||
+             end == ERROR_SUCCESS;
+    }
+    if (done) CloseHandle(done);
+    CloseHandle(pipe);
+    return ok;
+}
+
+uint64_t filetime_100ns(const FILETIME& t) { return (static_cast<uint64_t>(t.dwHighDateTime) << 32) | t.dwLowDateTime; }
+
+// The app a winapk-runtime.exe runs for, by its command line; empty when it says none.
+std::wstring debug_app_of(const std::wstring& cmd) {
+    int argc = 0;
+    wchar_t** argv = CommandLineToArgvW(cmd.c_str(), &argc);
+    std::wstring app;
+    for (int i = 1; argv && i < argc && app.empty(); ++i) {
+        const std::wstring a = argv[i];
+        if (a == L"--apk" && i + 1 < argc) {
+            app = fs::path(argv[i + 1]).stem().wstring();
+        } else if (a == L"--system" || a == L"--gms") {
+            app = kDebugSystemApp;
+        } else if (a == L"--aot-translate" && i + 1 < argc) {  // ...\apps\<name>\lib\arm64
+            fs::path dir = argv[i + 1];
+            for (fs::path p = dir; p.has_parent_path() && p != p.parent_path(); p = p.parent_path()) {
+                if (_wcsicmp(p.parent_path().filename().c_str(), L"apps") == 0) app = p.filename().wstring();
+            }
+        }
+    }
+    if (argv) LocalFree(argv);
+    return app;
+}
+
+// Every winapk-runtime.exe and every process one of them started, each with the app it belongs to. A
+// process takes its parent's app; a parent is believed only when it started first (a process id is reused).
+std::vector<DebugProcess> debug_processes() {
+    struct Entry {
+        DWORD pid = 0, parent = 0;
+        std::wstring exe;
+        int state = 0;  // 0 not looked at, 1 being looked at, 2 done
+        bool in_tree = false;
+        std::wstring app;
+    };
+    std::map<DWORD, Entry> all;
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap == INVALID_HANDLE_VALUE) return {};
+    PROCESSENTRY32W pe{};
+    pe.dwSize = sizeof(pe);
+    for (BOOL more = Process32FirstW(snap, &pe); more; more = Process32NextW(snap, &pe)) {
+        Entry e;
+        e.pid = pe.th32ProcessID;
+        e.parent = pe.th32ParentProcessID;
+        e.exe = pe.szExeFile;
+        all[e.pid] = std::move(e);
+    }
+    CloseHandle(snap);
+    auto created = [](DWORD pid) -> uint64_t {
+        HANDLE p = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+        if (!p) return 0;
+        FILETIME c{}, x1, x2, x3;
+        const bool ok = GetProcessTimes(p, &c, &x1, &x2, &x3) != 0;
+        CloseHandle(p);
+        return ok ? filetime_100ns(c) : 0;
+    };
+    std::function<void(Entry&)> resolve = [&](Entry& e) {
+        if (e.state) return;
+        e.state = 1;
+        const bool runtime = _wcsicmp(e.exe.c_str(), L"winapk-runtime.exe") == 0;
+        if (runtime) {
+            e.in_tree = true;
+            if (HANDLE p = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, e.pid)) {
+                e.app = debug_app_of(appops::command_line_of(p));
+                CloseHandle(p);
+            }
+        }
+        const auto parent = all.find(e.parent);
+        if (e.pid && parent != all.end() && parent->second.state != 1 && (!e.in_tree || e.app.empty())) {
+            resolve(parent->second);
+            if (parent->second.in_tree) {
+                const uint64_t mine = created(e.pid), theirs = created(parent->second.pid);
+                if (mine && theirs && theirs <= mine) {
+                    e.in_tree = true;
+                    if (e.app.empty()) e.app = parent->second.app;
+                }
+            }
+        }
+        e.state = 2;
+    };
+    std::vector<DebugProcess> out;
+    for (auto& [pid, e] : all) {
+        resolve(e);
+        if (!e.in_tree) continue;
+        DebugProcess p;
+        p.pid = pid;
+        p.exe = e.exe;
+        p.app = e.app;
+        p.runtime = _wcsicmp(e.exe.c_str(), L"winapk-runtime.exe") == 0;
+        out.push_back(std::move(p));
+    }
+    return out;
+}
+
+// The threads Windows lists for `pids`, by process. `modules` remembers which module a start address is in.
+std::map<DWORD, std::vector<winapk::launcher::OsThread>> debug_os_threads(
+    const std::set<DWORD>& pids, std::map<std::pair<DWORD, uintptr_t>, std::string>* modules) {
+    std::map<DWORD, std::vector<winapk::launcher::OsThread>> out;
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    if (snap == INVALID_HANDLE_VALUE) return out;
+    const HMODULE kernel = GetModuleHandleW(L"kernel32.dll");
+    using GetDescription = HRESULT(WINAPI*)(HANDLE, PWSTR*);
+    using MappedName = DWORD(WINAPI*)(HANDLE, LPVOID, LPWSTR, DWORD);
+    using QueryThread = LONG(NTAPI*)(HANDLE, ULONG, PVOID, ULONG, PULONG);
+    static const auto get_description =
+        reinterpret_cast<GetDescription>(reinterpret_cast<void*>(GetProcAddress(kernel, "GetThreadDescription")));
+    static const auto mapped_name =
+        reinterpret_cast<MappedName>(reinterpret_cast<void*>(GetProcAddress(kernel, "K32GetMappedFileNameW")));
+    static const auto query_thread = reinterpret_cast<QueryThread>(
+        reinterpret_cast<void*>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtQueryInformationThread")));
+    std::map<DWORD, HANDLE> processes;
+    for (auto it = modules->begin(); it != modules->end();) it = pids.count(it->first.first) ? std::next(it) : modules->erase(it);
+    THREADENTRY32 te{};
+    te.dwSize = sizeof(te);
+    for (BOOL more = Thread32First(snap, &te); more; more = Thread32Next(snap, &te)) {
+        if (!pids.count(te.th32OwnerProcessID)) continue;
+        winapk::launcher::OsThread t;
+        t.tid = te.th32ThreadID;
+        t.priority = static_cast<int>(te.tpBasePri);
+        HANDLE h = OpenThread(THREAD_QUERY_INFORMATION, FALSE, t.tid);
+        if (!h) h = OpenThread(THREAD_QUERY_LIMITED_INFORMATION, FALSE, t.tid);
+        if (h) {
+            FILETIME c{}, e{}, k{}, u{};
+            if (GetThreadTimes(h, &c, &e, &k, &u)) {
+                t.timed = true;
+                t.cpu = filetime_100ns(k) + filetime_100ns(u);
+            }
+            PWSTR desc = nullptr;
+            if (get_description && SUCCEEDED(get_description(h, &desc)) && desc) {
+                t.name = wide_to_utf8(desc);
+                LocalFree(desc);
+            }
+            void* start = nullptr;
+            constexpr ULONG kThreadQuerySetWin32StartAddress = 9;
+            if (query_thread && query_thread(h, kThreadQuerySetWin32StartAddress, &start, sizeof(start), nullptr) == 0 &&
+                start) {
+                const auto key = std::make_pair(te.th32OwnerProcessID, reinterpret_cast<uintptr_t>(start));
+                auto known = modules->find(key);
+                if (known == modules->end()) {
+                    if (!processes.count(key.first)) {
+                        processes[key.first] =
+                            OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, key.first);
+                    }
+                    std::string module;
+                    wchar_t path[MAX_PATH * 2];
+                    if (mapped_name && processes[key.first] &&
+                        mapped_name(processes[key.first], start, path, MAX_PATH * 2) > 0)
+                        module = wide_to_utf8(fs::path(path).filename().wstring());
+                    known = modules->emplace(key, std::move(module)).first;
+                }
+                t.start = known->second;
+            }
+            CloseHandle(h);
+        }
+        out[te.th32OwnerProcessID].push_back(std::move(t));
+    }
+    CloseHandle(snap);
+    for (auto& [pid, p] : processes)
+        if (p) CloseHandle(p);
+    return out;
+}
+
+DWORD WINAPI debug_thread(void* param) {
+    const std::shared_ptr<DebugShared> shared = *std::unique_ptr<std::shared_ptr<DebugShared>>(
+        static_cast<std::shared_ptr<DebugShared>*>(param));
+    std::map<std::pair<DWORD, uintptr_t>, std::string> modules;
+    for (;;) {
+        AcquireSRWLockShared(&shared->lock);
+        const bool stop = shared->stop, paused = shared->paused, selected = shared->selected;
+        const std::wstring app = shared->app;
+        const DWORD sel_pid = shared->sel_pid, sel_tid = shared->sel_tid;
+        const long long sel_jid = shared->sel_jid;
+        ReleaseSRWLockShared(&shared->lock);
+        if (stop) break;
+        if (!paused) {
+            auto snap = std::make_unique<DebugSnapshot>();
+            snap->app = app;
+            snap->processes = debug_processes();
+            std::set<DWORD> pids;
+            for (const DebugProcess& p : snap->processes)
+                if (app.empty() || p.app == app) pids.insert(p.pid);
+            FILETIME now;
+            GetSystemTimeAsFileTime(&now);
+            snap->time = filetime_100ns(now);
+            const auto os = debug_os_threads(pids, &modules);
+            for (DebugProcess& p : snap->processes) {
+                if (!pids.count(p.pid)) continue;
+                winapk::debug::AgentReply reply;
+                std::string text;
+                if (p.runtime && debug_ask(p.pid, "threads", 1500, &text)) reply = winapk::debug::parse_threads(text);
+                p.agent = reply.ok;
+                const auto threads = os.find(p.pid);
+                std::vector<ThreadRow> rows = winapk::launcher::merge_threads(
+                    p.pid, wide_to_utf8(p.exe) + " (" + std::to_string(p.pid) + ")",
+                    threads == os.end() ? std::vector<winapk::launcher::OsThread>{} : threads->second,
+                    reply.ok ? &reply : nullptr);
+                snap->rows.insert(snap->rows.end(), std::make_move_iterator(rows.begin()),
+                                  std::make_move_iterator(rows.end()));
+            }
+            if (selected) {
+                snap->stack_pid = sel_pid;
+                snap->stack_tid = sel_tid;
+                snap->stack_jid = sel_jid;
+                for (const DebugProcess& p : snap->processes) {
+                    if (p.pid != sel_pid) continue;
+                    if (!p.runtime) {
+                        snap->stack_state = StackState::kNotRuntime;
+                    } else if (!p.agent) {
+                        snap->stack_state = StackState::kNoAgent;
+                    } else if (debug_ask(sel_pid, "stack " + std::to_string(sel_tid) + " " + std::to_string(sel_jid),
+                                         2500, &snap->stack)) {
+                        snap->stack_state = StackState::kText;
+                    }
+                }
+            }
+            DebugSnapshot* raw = snap.release();
+            if (!PostMessageW(shared->hwnd, kDebugSnapshot, 0, reinterpret_cast<LPARAM>(raw))) delete raw;
+        }
+        WaitForSingleObject(shared->wake, 1000);
+    }
+    CloseHandle(shared->wake);
+    return 0;
+}
+
+std::wstring debug_app_label(const std::wstring& app) {
+    if (app.empty()) return tr(L"All apps");
+    if (app == kDebugSystemApp) return tr(L"Win.apk services");
+    const App* a = find_app(app);
+    return a ? a->label : app;
+}
+
+const wchar_t* debug_kind_label(ThreadKind k) {
+    switch (k) {
+        case ThreadKind::kJava: return L"Java";
+        case ThreadKind::kApp: return tr(L"App native");
+        case ThreadKind::kJvm: return L"JVM";
+        case ThreadKind::kRuntime: return L"Win.apk";
+        case ThreadKind::kSystem: return tr(L"System");
+        case ThreadKind::kUnknown: break;
+    }
+    return L"";
+}
+
+struct DebugColumn {
+    const wchar_t* title;
+    int width;  // dp
+    bool right;
+};
+const DebugColumn kDebugColumns[] = {{L"Process", 176, false}, {L"Thread ID", 84, true}, {L"Name", 210, false},
+                                     {L"Type", 96, false},     {L"State", 170, false},  {L"CPU %", 64, true},
+                                     {L"CPU time", 84, true},  {L"Priority", 64, true}, {L"Started in", 220, false}};
+
+std::wstring debug_cell(const ThreadRow& r, int column) {
+    wchar_t buf[64];
+    switch (static_cast<ThreadColumn>(column)) {
+        case ThreadColumn::kProcess: return utf8_to_wide(r.process);
+        case ThreadColumn::kTid: return r.tid ? std::to_wstring(r.tid) : L"–";
+        case ThreadColumn::kName: return utf8_to_wide(r.name);
+        case ThreadColumn::kKind: return debug_kind_label(r.kind);
+        case ThreadColumn::kState: return utf8_to_wide(r.state) + (r.daemon ? L" · daemon" : L"");
+        case ThreadColumn::kCpuPct:
+            if (r.cpu_pct < 0) return L"";
+            swprintf(buf, 64, L"%.1f", r.cpu_pct);
+            return buf;
+        case ThreadColumn::kCpuTime:
+            if (!r.timed) return L"";
+            swprintf(buf, 64, L"%.2f s", static_cast<double>(r.cpu) / 1e7);
+            return buf;
+        case ThreadColumn::kPriority: return r.tid ? std::to_wstring(r.priority) : L"";
+        case ThreadColumn::kStart: return utf8_to_wide(r.start);
+        case ThreadColumn::kCount: break;
+    }
+    return L"";
+}
+
+// The line under the tools: how many threads, of which kinds; or why there are none.
+std::wstring debug_summary() {
+    if (g_dv.first) return tr(L"Looking for running apps…");
+    int processes = 0, no_agent = 0;
+    for (const DebugProcess& p : g_dv.processes) {
+        if (!g_dv.app.empty() && p.app != g_dv.app) continue;
+        ++processes;
+        if (p.runtime && !p.agent) ++no_agent;
+    }
+    if (!processes) {
+        return g_dv.app.empty() ? std::wstring(tr(L"No app is running. Open an app and its threads appear here."))
+                                : fmt(L"{0} is not running. Open it and its threads appear here.",
+                                      {debug_app_label(g_dv.app)});
+    }
+    const winapk::launcher::ThreadCounts c = winapk::launcher::count_threads(g_dv.all);
+    std::wstring s = fmt(L"Threads: {0}  ·  Processes: {1}", {std::to_wstring(c.total), std::to_wstring(processes)});
+    auto add = [&](const wchar_t* label, int n) {
+        if (n) s += std::wstring(L"  ·  ") + label + L" " + std::to_wstring(n);
+    };
+    add(L"Java", c.java);
+    add(tr(L"App native"), c.app);
+    add(L"JVM", c.jvm);
+    add(L"Win.apk", c.runtime);
+    add(tr(L"System"), c.system);
+    add(tr(L"Not identified"), c.unknown);
+    if (g_dv.rows.size() != g_dv.all.size()) s += L"  ·  " + fmt(L"{0} shown", {std::to_wstring(g_dv.rows.size())});
+    if (no_agent) s += std::wstring(L"  ·  ") + tr(L"Reopen the app for Java names and stacks");
+    if (g_dv.paused) s += std::wstring(L"  ·  ") + tr(L"Paused");
+    return s;
+}
+
+void debug_set_stack(const std::wstring& text) {
+    if (text == g_dv.stack_text) return;
+    g_dv.stack_text = text;
+    std::wstring crlf;
+    crlf.reserve(text.size() + text.size() / 16);
+    for (wchar_t c : text) {
+        if (c == L'\n') crlf += L"\r\n";
+        else if (c != L'\r') crlf += c;
+    }
+    SetWindowTextW(g_dv.stack, crlf.c_str());
+}
+
+int debug_selected_index() {
+    if (!g_dv.selected) return -1;
+    for (size_t i = 0; i < g_dv.rows.size(); ++i) {
+        const ThreadRow& r = g_dv.rows[i];
+        if (r.pid == g_dv.sel_pid && r.tid == g_dv.sel_tid && (r.tid || r.jid == g_dv.sel_jid)) return static_cast<int>(i);
+    }
+    return -1;
+}
+
+// The selection, told to the worker: its next look asks for that thread's stack.
+void debug_share_selection(bool wake) {
+    DebugShared& s = *g_dv.shared;
+    AcquireSRWLockExclusive(&s.lock);
+    s.selected = g_dv.selected;
+    s.sel_pid = g_dv.sel_pid;
+    s.sel_tid = g_dv.sel_tid;
+    s.sel_jid = g_dv.sel_jid;
+    s.app = g_dv.app;
+    s.paused = g_dv.paused;
+    ReleaseSRWLockExclusive(&s.lock);
+    if (wake) SetEvent(s.wake);
+}
+
+// The rows the search leaves, sorted; the list shows them, with the same thread selected as before.
+void debug_rebuild_rows() {
+    g_dv.rows.clear();
+    for (const ThreadRow& r : g_dv.all)
+        if (winapk::launcher::row_matches(r, g_dv.query)) g_dv.rows.push_back(r);
+    winapk::launcher::sort_rows(g_dv.rows, g_dv.sort, g_dv.descending);
+    g_dv.syncing = true;
+    ListView_SetItemCountEx(g_dv.list, g_dv.rows.size(), LVSICF_NOSCROLL | LVSICF_NOINVALIDATEALL);
+    const int now = debug_selected_index();
+    const int was = ListView_GetNextItem(g_dv.list, -1, LVNI_SELECTED);
+    if (was != now) {
+        ListView_SetItemState(g_dv.list, -1, 0, LVIS_SELECTED | LVIS_FOCUSED);
+        if (now >= 0) ListView_SetItemState(g_dv.list, now, LVIS_SELECTED | LVIS_FOCUSED, LVIS_SELECTED | LVIS_FOCUSED);
+    }
+    g_dv.syncing = false;
+    InvalidateRect(g_dv.list, nullptr, FALSE);
+    InvalidateRect(g_debug_wnd, nullptr, FALSE);
+}
+
+void debug_apply(const DebugSnapshot& snap) {
+    if (snap.app != g_dv.app || g_dv.paused) return;  // taken for another app, or before Pause
+    g_dv.first = false;
+    g_dv.processes = snap.processes;
+    g_dv.all = snap.rows;
+    g_dv.cpu.apply(g_dv.all, snap.time);
+    debug_rebuild_rows();
+    if (!g_dv.selected) {
+        debug_set_stack(tr(L"Select a thread to see its stack."));
+        return;
+    }
+    if (snap.stack_pid != g_dv.sel_pid || snap.stack_tid != g_dv.sel_tid || snap.stack_jid != g_dv.sel_jid) return;
+    switch (snap.stack_state) {
+        case StackState::kText: debug_set_stack(utf8_to_wide(snap.stack)); break;
+        case StackState::kNoAgent:
+            debug_set_stack(tr(L"This process has no debug agent: it was opened before debug mode was turned on, or "
+                               L"it does not answer. Stop the app and open it again to see Java names and stacks."));
+            break;
+        case StackState::kNotRuntime:
+            debug_set_stack(tr(L"Stacks are shown for the processes that run the app's code. This one is a helper "
+                               L"the app started."));
+            break;
+        case StackState::kNone: debug_set_stack(tr(L"The thread has ended.")); break;
+    }
+}
+
+void paint_debug(Graphics& g, float W, float H) {
+    g.Clear(g_t.layer);
+    g_dv.targets.clear();
+    const float m = px(16), ch = px(32), cy = (px(kLogTools) - ch) / 2;
+    // The picker: which app.
+    const RectF pick(m, cy, (std::min)(px(260), W * 0.3f), ch);
+    fill_round(g, pick, px(kRadiusControl), g_dv.hot == kDebugPick ? g_t.hover : g_t.card);
+    stroke_round(g, pick, px(kRadiusControl), g_t.border);
+    draw_text(g, debug_app_label(g_dv.app), g_f.body.get(), g_t.text, RectF(pick.X + px(12), pick.Y, pick.Width - px(40), ch));
+    draw_text(g, kGlyphChevron, g_f.glyph12.get(), g_t.text2, RectF(pick.GetRight() - px(30), pick.Y, px(22), ch),
+              kCenter);
+    g_dv.targets.push_back({pick, kDebugPick});
+    float x = W - m;
+    for (auto [label, act] : {std::pair<const wchar_t*, int>{tr(L"Copy"), kDebugCopy},
+                              {g_dv.paused ? tr(L"Resume") : tr(L"Pause"), kDebugPause}}) {
+        const float w = text_width(g, label, g_f.body.get()) + px(32);
+        x -= w;
+        const RectF r(x, cy, w, ch);
+        draw_button(g, r, label, g_dv.hot == act, false, false);
+        g_dv.targets.push_back({r, act});
+        x -= px(8);
+    }
+    // The search box between them (the edit is a child; this is its frame).
+    const RectF box(pick.GetRight() + px(12), cy, (std::max)(px(80), x - px(4) - pick.GetRight() - px(12)), ch);
+    const bool focused = GetFocus() == g_dv.search;
+    fill_round(g, box, px(kRadiusControl), g_t.card);
+    stroke_round(g, box, px(kRadiusControl), focused ? g_t.accent : g_t.border, focused ? px(1.5f) : 1);
+    draw_text(g, kGlyphSearch, g_f.glyph12.get(), g_t.text2, RectF(box.X + px(10), box.Y, px(16), ch), kCenter);
+    draw_text(g, debug_summary(), g_f.caption.get(), g_t.text2,
+              RectF(m, px(kLogTools) - px(4), W - 2 * m, px(kDebugSummary)));
+    (void)H;
+}
+
+void layout_debug(HWND hwnd) {
+    RECT rc;
+    GetClientRect(hwnd, &rc);
+    const int top = ipx(kLogTools + kDebugSummary);
+    const int rest = (std::max)(0L, rc.bottom - top);
+    const int stack_h = (std::min)(rest, (std::max)(ipx(150), rest * 36 / 100));
+    MoveWindow(g_dv.list, 0, top, rc.right, rest - stack_h, TRUE);
+    MoveWindow(g_dv.stack, 0, top + rest - stack_h + 1, rc.right, (std::max)(0, stack_h - 1), TRUE);
+    // The last column takes the width that is left, so no bare header shows beside it.
+    int used = 0;
+    const int last = static_cast<int>(std::size(kDebugColumns)) - 1;
+    for (int c = 0; c < last; ++c) used += ListView_GetColumnWidth(g_dv.list, c);
+    ListView_SetColumnWidth(g_dv.list, last,
+                            (std::max)(ipx(static_cast<float>(kDebugColumns[last].width)),
+                                       static_cast<int>(rc.right) - used - GetSystemMetrics(SM_CXVSCROLL)));
+    HDC dc = GetDC(hwnd);
+    float buttons = 0;
+    {
+        Graphics g(dc);
+        for (const wchar_t* label : {tr(L"Copy"), g_dv.paused ? tr(L"Resume") : tr(L"Pause")})
+            buttons += text_width(g, label, g_f.body.get()) + px(40);
+    }
+    ReleaseDC(hwnd, dc);
+    const float W = static_cast<float>(rc.right), m = px(16);
+    const float pick_r = m + (std::min)(px(260), W * 0.3f);
+    const float bx = pick_r + px(12), bw = (std::max)(px(80), W - m - buttons - px(4) - bx);
+    const int eh = ipx(20);
+    MoveWindow(g_dv.search, static_cast<int>(bx + px(32)), static_cast<int>((px(kLogTools) - eh) / 2),
+               static_cast<int>(bw - px(32) - px(12)), eh, TRUE);
+}
+
+void debug_pick_app(HWND hwnd) {
+    std::vector<std::wstring> apps = {L""};
+    for (const DebugProcess& p : g_dv.processes)
+        if (!p.app.empty() && std::find(apps.begin(), apps.end(), p.app) == apps.end()) apps.push_back(p.app);
+    if (std::find(apps.begin(), apps.end(), g_dv.app) == apps.end()) apps.push_back(g_dv.app);
+    std::sort(apps.begin() + 1, apps.end(), [](const std::wstring& a, const std::wstring& b) {
+        return _wcsicmp(debug_app_label(a).c_str(), debug_app_label(b).c_str()) < 0;
+    });
+    HMENU menu = CreatePopupMenu();
+    for (size_t i = 0; i < apps.size(); ++i)
+        AppendMenuW(menu, MF_STRING | (apps[i] == g_dv.app ? MF_CHECKED : 0), i + 1, debug_app_label(apps[i]).c_str());
+    const RectF& r = g_dv.targets[0].first;
+    POINT pt{static_cast<LONG>(r.X), static_cast<LONG>(r.GetBottom() + px(2))};
+    ClientToScreen(hwnd, &pt);
+    const int pick = TrackPopupMenu(menu, TPM_RETURNCMD | menu_flags(true), pt.x, pt.y, 0, hwnd, nullptr);
+    DestroyMenu(menu);
+    if (pick <= 0 || apps[static_cast<size_t>(pick - 1)] == g_dv.app) return;
+    g_dv.app = apps[static_cast<size_t>(pick - 1)];
+    g_dv.all.clear();
+    g_dv.selected = false;
+    g_dv.first = true;
+    g_dv.cpu.reset();
+    debug_set_stack(L"");
+    debug_rebuild_rows();
+    debug_share_selection(true);
+}
+
+void debug_action(HWND hwnd, int act) {
+    if (act == kDebugPick) {
+        debug_pick_app(hwnd);
+    } else if (act == kDebugPause) {
+        g_dv.paused = !g_dv.paused;
+        g_dv.cpu.reset();
+        debug_share_selection(true);
+        layout_debug(hwnd);
+        InvalidateRect(hwnd, nullptr, FALSE);
+    } else if (act == kDebugCopy) {
+        std::wstring text = debug_app_label(g_dv.app) + L"\r\n" + debug_summary() + L"\r\n\r\n";
+        for (size_t c = 0; c < std::size(kDebugColumns); ++c) text += std::wstring(c ? L"\t" : L"") + kDebugColumns[c].title;
+        text += L"\r\n";
+        for (const ThreadRow& r : g_dv.rows) {
+            for (size_t c = 0; c < std::size(kDebugColumns); ++c)
+                text += (c ? L"\t" : L"") + debug_cell(r, static_cast<int>(c));
+            text += L"\r\n";
+        }
+        if (g_dv.selected) {
+            const int len = GetWindowTextLengthW(g_dv.stack);
+            std::wstring stack(static_cast<size_t>(len) + 1, L'\0');
+            GetWindowTextW(g_dv.stack, &stack[0], len + 1);
+            stack.resize(static_cast<size_t>(len));
+            text += L"\r\n" + stack;
+        }
+        copy_text(hwnd, text);
+    }
+}
+
+LRESULT CALLBACK debug_search_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp, UINT_PTR, DWORD_PTR) {
+    if (msg == WM_KEYDOWN && wp == VK_ESCAPE) {
+        if (GetWindowTextLengthW(hwnd) > 0) SetWindowTextW(hwnd, L"");
+        else DestroyWindow(g_debug_wnd);
+        return 0;
+    }
+    if (msg == WM_KEYDOWN && (wp == VK_DOWN || wp == VK_RETURN)) {
+        SetFocus(g_dv.list);
+        return 0;
+    }
+    if (msg == WM_CHAR && (wp == VK_RETURN || wp == VK_ESCAPE)) return 0;  // no beep
+    return DefSubclassProc(hwnd, msg, wp, lp);
+}
+
+// The list's header in the window's colours (a themed header stays light in a dark window), with the
+// sort's direction on its column. The header's notifications go to the list, its parent: caught here.
+LRESULT CALLBACK debug_list_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp, UINT_PTR, DWORD_PTR) {
+    if (msg == WM_NOTIFY) {
+        auto* cd = reinterpret_cast<NMCUSTOMDRAW*>(lp);
+        if (cd->hdr.code == NM_CUSTOMDRAW && cd->hdr.hwndFrom == ListView_GetHeader(hwnd)) {
+            if (cd->dwDrawStage == CDDS_PREPAINT) return CDRF_NOTIFYITEMDRAW | CDRF_NOTIFYPOSTPAINT;
+            if (cd->dwDrawStage == CDDS_POSTPAINT) {  // what is left of the header beside the last column
+                RECT all, last{};
+                GetClientRect(cd->hdr.hwndFrom, &all);
+                const int n = Header_GetItemCount(cd->hdr.hwndFrom);
+                if (n > 0) Header_GetItemRect(cd->hdr.hwndFrom, n - 1, &last);
+                if (last.right < all.right) {
+                    all.left = last.right;
+                    HBRUSH back = CreateSolidBrush(colorref(g_t.card));
+                    FillRect(cd->hdc, &all, back);
+                    DeleteObject(back);
+                }
+                return CDRF_DODEFAULT;
+            }
+            if (cd->dwDrawStage == CDDS_ITEMPREPAINT) {
+                const size_t col = static_cast<size_t>(cd->dwItemSpec);
+                HBRUSH back = CreateSolidBrush(colorref(g_t.card));
+                FillRect(cd->hdc, &cd->rc, back);
+                DeleteObject(back);
+                HBRUSH line = CreateSolidBrush(colorref(g_t.border));
+                RECT edge = cd->rc;
+                edge.top = edge.bottom - 1;
+                FillRect(cd->hdc, &edge, line);
+                edge = cd->rc;
+                edge.left = edge.right - 1;
+                FillRect(cd->hdc, &edge, line);
+                DeleteObject(line);
+                if (col < std::size(kDebugColumns)) {
+                    std::wstring title = tr(kDebugColumns[col].title);
+                    if (static_cast<size_t>(g_dv.sort) == col) title += g_dv.descending ? L"  ▼" : L"  ▲";
+                    RECT text = cd->rc;
+                    InflateRect(&text, -ipx(8), 0);
+                    SetBkMode(cd->hdc, TRANSPARENT);
+                    SetTextColor(cd->hdc, colorref(g_t.text2));
+                    HGDIOBJ old = SelectObject(cd->hdc, g_edit_font);
+                    DrawTextW(cd->hdc, title.c_str(), -1, &text,
+                              DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX |
+                                  (kDebugColumns[col].right ? DT_RIGHT : DT_LEFT));
+                    SelectObject(cd->hdc, old);
+                }
+                return CDRF_SKIPDEFAULT;
+            }
+        }
+    }
+    return DefSubclassProc(hwnd, msg, wp, lp);
+}
+
+LRESULT CALLBACK debug_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    switch (msg) {
+        case WM_CREATE: {
+            // Thread names, modules and stack frames read left to right, as a log does (log_proc).
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, GetWindowLongPtrW(hwnd, GWL_EXSTYLE) | WS_EX_NOINHERITLAYOUT);
+            static bool classes = false;
+            if (!classes) {
+                INITCOMMONCONTROLSEX icc{sizeof(icc), ICC_LISTVIEW_CLASSES};
+                InitCommonControlsEx(&icc);
+                classes = true;
+            }
+            g_dv.list = CreateWindowExW(0, WC_LISTVIEWW, L"",
+                                        WS_CHILD | WS_VISIBLE | WS_TABSTOP | LVS_REPORT | LVS_OWNERDATA | LVS_SINGLESEL |
+                                            LVS_SHOWSELALWAYS,
+                                        0, 0, 0, 0, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdDebugList)),
+                                        g_inst, nullptr);
+            ListView_SetExtendedListViewStyle(g_dv.list, LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER);
+            SetWindowTheme(g_dv.list, g_t.dark ? L"DarkMode_Explorer" : L"Explorer", nullptr);
+            ListView_SetBkColor(g_dv.list, colorref(g_t.layer));
+            ListView_SetTextBkColor(g_dv.list, colorref(g_t.layer));
+            ListView_SetTextColor(g_dv.list, colorref(g_t.text));
+            SendMessageW(g_dv.list, WM_SETFONT, reinterpret_cast<WPARAM>(g_edit_font), FALSE);
+            for (size_t c = 0; c < std::size(kDebugColumns); ++c) {
+                LVCOLUMNW col{};
+                col.mask = LVCF_TEXT | LVCF_WIDTH | LVCF_FMT;
+                col.pszText = const_cast<wchar_t*>(tr(kDebugColumns[c].title));
+                col.cx = ipx(static_cast<float>(kDebugColumns[c].width));
+                col.fmt = kDebugColumns[c].right ? LVCFMT_RIGHT : LVCFMT_LEFT;
+                ListView_InsertColumn(g_dv.list, static_cast<int>(c), &col);
+            }
+            SetWindowSubclass(g_dv.list, debug_list_proc, 1, 0);
+            g_dv.stack = CreateWindowExW(WS_EX_LTRREADING | WS_EX_LEFT, L"EDIT", L"",
+                                         WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_HSCROLL | ES_LEFT | ES_MULTILINE |
+                                             ES_READONLY | ES_AUTOVSCROLL | ES_AUTOHSCROLL | ES_NOHIDESEL,
+                                         0, 0, 0, 0, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdDebugStack)),
+                                         g_inst, nullptr);
+            SendMessageW(g_dv.stack, WM_SETFONT, reinterpret_cast<WPARAM>(g_mono_font), FALSE);
+            SendMessageW(g_dv.stack, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELPARAM(ipx(12), ipx(12)));
+            SetWindowTheme(g_dv.stack, g_t.dark ? L"DarkMode_Explorer" : L"Explorer", nullptr);
+            g_dv.search = CreateWindowExW(g_rtl ? WS_EX_RTLREADING : 0, L"EDIT", L"", WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
+                                          0, 0, 0, 0, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdDebugSearch)),
+                                          g_inst, nullptr);
+            SendMessageW(g_dv.search, WM_SETFONT, reinterpret_cast<WPARAM>(g_edit_font), FALSE);
+            SendMessageW(g_dv.search, EM_SETCUEBANNER, FALSE,
+                         reinterpret_cast<LPARAM>(tr(L"Search threads: a name, a type, a library")));
+            SetWindowSubclass(g_dv.search, debug_search_proc, 1, 0);
+            g_dv.shared = std::make_shared<DebugShared>();
+            g_dv.shared->hwnd = hwnd;
+            g_dv.shared->app = g_dv.app;
+            g_dv.shared->wake = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+            auto* param = new std::shared_ptr<DebugShared>(g_dv.shared);
+            if (HANDLE t = CreateThread(nullptr, 0, debug_thread, param, 0, nullptr)) CloseHandle(t);
+            else delete param;
+            return 0;
+        }
+        case WM_SIZE: layout_debug(hwnd); InvalidateRect(hwnd, nullptr, FALSE); return 0;
+        case WM_ERASEBKGND: return 1;
+        case WM_PAINT: buffered_paint(hwnd, paint_debug); return 0;
+        case WM_CTLCOLOREDIT:
+            SetTextColor(reinterpret_cast<HDC>(wp), colorref(g_t.text));
+            SetBkColor(reinterpret_cast<HDC>(wp), colorref(g_t.card));
+            return reinterpret_cast<LRESULT>(g_edit_brush);
+        case WM_CTLCOLORSTATIC:  // the read-only stack
+            SetTextColor(reinterpret_cast<HDC>(wp), colorref(g_t.text));
+            SetBkColor(reinterpret_cast<HDC>(wp), colorref(code_bg()));
+            return reinterpret_cast<LRESULT>(g_code_brush);
+        case kDebugSnapshot: {
+            const std::unique_ptr<DebugSnapshot> snap(reinterpret_cast<DebugSnapshot*>(lp));
+            debug_apply(*snap);
+            return 0;
+        }
+        case WM_COMMAND:
+            if (LOWORD(wp) == kIdDebugSearch) {
+                if (HIWORD(wp) == EN_CHANGE) {
+                    wchar_t buf[256] = {};
+                    GetWindowTextW(g_dv.search, buf, 256);
+                    g_dv.query = winapk::launcher::lower(wide_to_utf8(buf));
+                    debug_rebuild_rows();
+                } else if (HIWORD(wp) == EN_SETFOCUS || HIWORD(wp) == EN_KILLFOCUS) {
+                    InvalidateRect(hwnd, nullptr, FALSE);
+                }
+            }
+            return 0;
+        case WM_NOTIFY: {
+            auto* hdr = reinterpret_cast<NMHDR*>(lp);
+            if (hdr->hwndFrom != g_dv.list) break;
+            if (hdr->code == LVN_GETDISPINFOW) {
+                auto* info = reinterpret_cast<NMLVDISPINFOW*>(lp);
+                const size_t i = static_cast<size_t>(info->item.iItem);
+                if ((info->item.mask & LVIF_TEXT) && i < g_dv.rows.size() && info->item.cchTextMax > 0) {
+                    const std::wstring cell = debug_cell(g_dv.rows[i], info->item.iSubItem);
+                    lstrcpynW(info->item.pszText, cell.c_str(), info->item.cchTextMax);
+                }
+                return 0;
+            }
+            if (hdr->code == LVN_COLUMNCLICK) {
+                const int col = reinterpret_cast<NMLISTVIEW*>(lp)->iSubItem;
+                if (col < 0 || col >= static_cast<int>(ThreadColumn::kCount)) return 0;
+                if (g_dv.sort == static_cast<ThreadColumn>(col)) {
+                    g_dv.descending = !g_dv.descending;
+                } else {
+                    g_dv.sort = static_cast<ThreadColumn>(col);
+                    // Numbers are looked at from the top down: the busiest thread first.
+                    g_dv.descending = g_dv.sort == ThreadColumn::kCpuPct || g_dv.sort == ThreadColumn::kCpuTime ||
+                                      g_dv.sort == ThreadColumn::kPriority;
+                }
+                debug_rebuild_rows();
+                InvalidateRect(ListView_GetHeader(g_dv.list), nullptr, TRUE);
+                return 0;
+            }
+            if (hdr->code == LVN_ITEMCHANGED && !g_dv.syncing) {
+                const auto* change = reinterpret_cast<NMLISTVIEW*>(lp);
+                if (!(change->uChanged & LVIF_STATE) || !((change->uNewState ^ change->uOldState) & LVIS_SELECTED))
+                    return 0;
+                const int at = ListView_GetNextItem(g_dv.list, -1, LVNI_SELECTED);
+                g_dv.selected = at >= 0 && static_cast<size_t>(at) < g_dv.rows.size();
+                if (g_dv.selected) {
+                    const ThreadRow& r = g_dv.rows[static_cast<size_t>(at)];
+                    g_dv.sel_pid = r.pid;
+                    g_dv.sel_tid = r.tid;
+                    g_dv.sel_jid = r.jid;
+                    debug_set_stack(g_dv.paused ? tr(L"Paused. Resume to see this thread's stack.") : L"…");
+                } else {
+                    debug_set_stack(tr(L"Select a thread to see its stack."));
+                }
+                debug_share_selection(true);
+                return 0;
+            }
+            if (hdr->code == NM_CUSTOMDRAW) {  // a row in its kind's colour: the app's own threads stand out
+                auto* cd = reinterpret_cast<NMLVCUSTOMDRAW*>(lp);
+                if (cd->nmcd.dwDrawStage == CDDS_PREPAINT) return CDRF_NOTIFYITEMDRAW;
+                if (cd->nmcd.dwDrawStage == CDDS_ITEMPREPAINT) {
+                    const size_t i = static_cast<size_t>(cd->nmcd.dwItemSpec);
+                    if (i < g_dv.rows.size()) {
+                        const ThreadKind k = g_dv.rows[i].kind;
+                        cd->clrText = colorref(k == ThreadKind::kJava   ? g_t.text
+                                               : k == ThreadKind::kApp ? g_t.accent
+                                                                       : g_t.text2);
+                    }
+                    return CDRF_NEWFONT;
+                }
+            }
+            break;
+        }
+        case WM_MOUSEMOVE: track_hot(hwnd, lp, g_dv.targets, &g_dv.hot, &g_dv.tracking); return 0;
+        case WM_MOUSELEAVE:
+            g_dv.tracking = false;
+            g_dv.hot = 0;
+            InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
+        case WM_SETCURSOR:
+            if (LOWORD(lp) == HTCLIENT && reinterpret_cast<HWND>(wp) == hwnd) {
+                SetCursor(LoadCursorW(nullptr, g_dv.hot ? IDC_HAND : IDC_ARROW));
+                return TRUE;
+            }
+            break;
+        case WM_LBUTTONUP: debug_action(hwnd, find_target(g_dv.targets, lp)); return 0;
+        case WM_ACTIVATE:
+            if (LOWORD(wp) != WA_INACTIVE && GetFocus() != g_dv.list && GetFocus() != g_dv.stack) SetFocus(g_dv.search);
+            return 0;
+        case WM_GETMINMAXINFO:
+            reinterpret_cast<MINMAXINFO*>(lp)->ptMinTrackSize = {ipx(640), ipx(420)};
+            return 0;
+        case WM_DESTROY:
+            if (g_dv.shared) {
+                AcquireSRWLockExclusive(&g_dv.shared->lock);
+                g_dv.shared->stop = true;
+                ReleaseSRWLockExclusive(&g_dv.shared->lock);
+                SetEvent(g_dv.shared->wake);
+            }
+            g_debug_wnd = nullptr;
+            g_dv = DebugView{};
+            maybe_quit();
+            return 0;
+    }
+    return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+// The Threads window on `app` (a library name); every running app when none is named.
+void show_debugger(const std::wstring& app) {
+    if (g_debug_wnd) {
+        if (g_dv.app != app) {
+            g_dv.app = app;
+            g_dv.all.clear();
+            g_dv.selected = false;
+            g_dv.first = true;
+            g_dv.cpu.reset();
+            debug_set_stack(L"");
+            debug_rebuild_rows();
+            debug_share_selection(true);
+        }
+        ShowWindow(g_debug_wnd, SW_RESTORE);
+        SetForegroundWindow(g_debug_wnd);
+        return;
+    }
+    g_dv.app = app;
+    g_debug_wnd = open_tool_window(L"WinApkThreads", tr(L"Threads - Win.apk"), ipx(1200), ipx(720), WS_OVERLAPPEDWINDOW);
+    if (!g_debug_wnd) return;
+    layout_debug(g_debug_wnd);
+    debug_set_stack(tr(L"Select a thread to see its stack."));
+}
+
+// ---------------------------------------------------------------------------
 // The launch splash: shown the moment an app is opened, as a phone shows one,
 // until the app's own window is up (the runtime's ready event, kRunReady).
 // If the app ends first it turns into a short error with Show log and Report a problem.
@@ -8000,6 +8966,11 @@ void apply_theme() {
         DestroyWindow(g_log_wnd);
         show_logs(path);
     }
+    if (g_debug_wnd) {  // and the Threads window's controls take theirs when they are made
+        const std::wstring app = g_dv.app;
+        DestroyWindow(g_debug_wnd);
+        show_debugger(app);
+    }
     InvalidateRect(g_main, nullptr, FALSE);
     InvalidateRect(g_search, nullptr, TRUE);
 }
@@ -8185,6 +9156,7 @@ void apply_language() {
     }
     if (g_install_wnd) SetWindowTextW(g_install_wnd, install_title().c_str());
     if (g_log_wnd) DestroyWindow(g_log_wnd);
+    if (g_debug_wnd) DestroyWindow(g_debug_wnd);
     create_search();
     create_tooltip();
     // A page holds its words: Settings (where the language is picked) is made again, a details page goes back.
@@ -8491,6 +9463,10 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 show_logs({});
                 return 0;
             }
+            if (ctrl && wp == 'T' && debug_mode()) {  // debug mode's Threads window, on every running app
+                show_debugger({});
+                return 0;
+            }
             if (ctrl && wp == 'O') {
                 add_from_dialog();
                 return 0;
@@ -8779,7 +9755,7 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 stop_run(g_play.name);
             }
             // Work still under way (an install, a splash) keeps the process; the library only hides.
-            if (g_install_wnd || any_pending() || !g_splashes.empty() || g_log_wnd || any_runs()) {
+            if (g_install_wnd || any_pending() || !g_splashes.empty() || g_log_wnd || g_debug_wnd || any_runs()) {
                 ShowWindow(hwnd, SW_HIDE);
                 maybe_quit();
                 return 0;
@@ -10449,7 +11425,7 @@ void show_library(int show) {
 // a splash, an app it started (to report how it ended), the log window.
 void maybe_quit() {
     if (!g_main || IsWindowVisible(g_main)) return;
-    if (g_install_wnd || g_log_wnd || !g_splashes.empty() || any_runs() || any_pending()) return;
+    if (g_install_wnd || g_log_wnd || g_debug_wnd || !g_splashes.empty() || any_runs() || any_pending()) return;
     DestroyWindow(g_main);
 }
 
@@ -10544,6 +11520,9 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
     RegisterClassExW(&sc);
     sc.lpfnWndProc = log_proc;
     sc.lpszClassName = L"WinApkLogs";
+    RegisterClassExW(&sc);
+    sc.lpfnWndProc = debug_proc;
+    sc.lpszClassName = L"WinApkThreads";
     RegisterClassExW(&sc);
     sc.lpfnWndProc = splash_proc;
     sc.lpszClassName = L"WinApkSplash";

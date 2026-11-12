@@ -12,6 +12,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <cstddef>
 #include <string>
 
@@ -84,5 +85,14 @@ void* looper_for_current_thread();
 int looper_poll_once(void* looper, int timeout_ms);
 void looper_wake(void* looper);
 bool looper_has_fds(void* looper);
+
+// The threads the guest started with pthread_create and that still run, for the debug agent
+// (host/debug_agent.cpp): each one's Windows thread id and the guest function it started in.
+// `out` takes up to `max` of them; returns how many there are.
+struct GuestThread {
+    uint32_t tid;
+    const void* start;
+};
+size_t guest_threads(GuestThread* out, size_t max);
 
 }  // namespace winapk

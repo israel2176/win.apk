@@ -11,12 +11,16 @@
 // The update check and download: one check at a time; what each result leaves known and what the
 // InfoBar says of it (once per release); a failed check keeps a newer version found before; the
 // download's progress.
+// The Threads window (launcher/debug_threads.h, include/winapk/debug_protocol.h): an agent's answer
+// survives its own writer and a cut-off reply; every thread Windows lists is a row with or without an
+// agent, and the agent's extra threads are rows too; CPU shares, the search and a sort that holds still.
 
 #include <cstdio>
 #include <string>
 #include <vector>
 
 #include "../launcher/app_runs.h"
+#include "../launcher/debug_threads.h"
 #include "../launcher/installs.h"
 #include "../launcher/updates.h"
 
@@ -486,12 +490,129 @@ void test_updates() {
     }
 }
 
+void test_debug_threads() {
+    using namespace winapk::launcher;
+    namespace dbg = winapk::debug;
+    std::printf("the Threads window\n");
+    dbg::AgentThread main_thread;
+    main_thread.tid = 100;
+    main_thread.kind = "java";
+    main_thread.jid = 1;
+    main_thread.state = "in native code";
+    main_thread.start = "winapk-runtime.exe+0x1000";
+    main_thread.name = "main";
+    dbg::AgentThread worker;
+    worker.tid = 101;
+    worker.kind = "guest";
+    worker.start = "libgame.so!render_loop+0x0";
+    worker.name = "Render\tThread\n";  // a name may hold anything
+    dbg::AgentThread finalizer;  // a Java thread whose Windows thread the agent does not know
+    finalizer.kind = "java";
+    finalizer.jid = 9;
+    finalizer.daemon = true;
+    finalizer.state = "waiting";
+    finalizer.name = "Finalizer";
+    dbg::AgentThread late;  // started after Windows' list was taken
+    late.tid = 300;
+    late.kind = "java";
+    late.jid = 40;
+    late.state = "running";
+    late.name = "pool-1-thread-1";
+    const std::string text = dbg::format_header() + dbg::format_thread(main_thread) + dbg::format_thread(worker) +
+                             dbg::format_thread(finalizer) + dbg::format_thread(late);
+    const dbg::AgentReply reply = dbg::parse_threads(text);
+    check("an answer reads back", reply.ok && reply.threads.size() == 4 && reply.threads[0].name == "main" &&
+                                      reply.threads[0].tid == 100 && reply.threads[0].jid == 1 &&
+                                      reply.threads[0].state == "in native code" &&
+                                      reply.threads[2].daemon && reply.threads[2].tid == 0);
+    check("a tab or a line break in a name shifts nothing",
+          reply.threads[1].name == "Render Thread " && reply.threads[1].start == "libgame.so!render_loop+0x0");
+    check("a reply cut short keeps its whole lines",
+          dbg::parse_threads(text.substr(0, text.size() - 5)).threads.size() == 3);
+    check("another program's answer is not one", !dbg::parse_threads("hello\nT\t1\tjava\t1\t0\t\t\tx\n").ok);
+    check("a newer agent's answer is not guessed at",
+          !dbg::parse_threads("winapk-debug 2\nT\t1\tjava\t1\t0\t\t\tx\n").ok);
+    check("the pipe is the process's", dbg::pipe_name(42) == L"\\\\.\\pipe\\winapk-debug-42");
+
+    std::vector<OsThread> os(4);
+    os[0].tid = 100;
+    os[0].timed = true;
+    os[0].cpu = 1000;
+    os[0].start = "winapk-runtime.exe";
+    os[1].tid = 101;
+    os[1].timed = true;
+    os[1].cpu = 5000;
+    os[1].name = "Render";
+    os[1].start = "winapk-runtime.exe";
+    os[2].tid = 102;  // Windows' own, which no agent names
+    os[2].start = "ntdll.dll";
+    os[3].tid = 103;
+    os[3].start = "jvm.dll";
+    {
+        const std::vector<ThreadRow> rows = merge_threads(7, "winapk-runtime.exe", os, nullptr);
+        check("without an agent every Windows thread is a row", rows.size() == 4 && rows[1].name == "Render");
+        check("and is not called what it may not be",
+              rows[0].kind == ThreadKind::kUnknown && rows[3].kind == ThreadKind::kUnknown &&
+                  rows[2].kind == ThreadKind::kSystem && !rows[0].agent);
+        dbg::AgentReply bad;
+        bad.threads = reply.threads;
+        check("an answer that is not one adds nothing", merge_threads(7, "x", os, &bad).size() == 4);
+    }
+    std::vector<ThreadRow> rows = merge_threads(7, "winapk-runtime.exe", os, &reply);
+    check("with an agent no Windows thread is lost", rows.size() == 6 && rows[2].tid == 102 && rows[3].tid == 103);
+    check("a Java thread takes its name and state",
+          rows[0].kind == ThreadKind::kJava && rows[0].name == "main" && rows[0].state == "in native code" &&
+              rows[0].jid == 1 && rows[0].agent && rows[0].timed);
+    check("an app's native thread says where it started",
+          rows[1].kind == ThreadKind::kApp && rows[1].start == "libgame.so!render_loop+0x0");
+    check("a thread the agent does not name keeps what Windows says",
+          !rows[2].agent && rows[2].kind == ThreadKind::kSystem && rows[2].start == "ntdll.dll");
+    check("a Java thread without a Windows thread is a row", rows[4].tid == 0 && rows[4].name == "Finalizer" &&
+                                                                  rows[4].daemon && !rows[4].timed);
+    check("a thread that started since is a row", rows[5].tid == 300 && rows[5].name == "pool-1-thread-1");
+    const ThreadCounts counts = count_threads(rows);
+    check("the counts add up", counts.total == 6 && counts.java == 3 && counts.app == 1 && counts.system == 1 &&
+                                   counts.unknown == 1);
+
+    CpuTracker cpu;
+    cpu.apply(rows, 10'000'000);
+    check("no share at the first look", rows[0].cpu_pct < 0 && rows[1].cpu_pct < 0);
+    os[0].cpu += 2'500'000;  // a quarter of the second
+    os[1].cpu += 10'000'000;
+    rows = merge_threads(7, "winapk-runtime.exe", os, &reply);
+    cpu.apply(rows, 20'000'000);
+    check("a share of one core over the interval", rows[0].cpu_pct > 24.9 && rows[0].cpu_pct < 25.1 &&
+                                                       rows[1].cpu_pct > 99.9 && rows[1].cpu_pct < 100.1);
+    check("none for a thread that cannot be timed", rows[2].cpu_pct < 0 && rows[4].cpu_pct < 0);
+    {
+        std::vector<ThreadRow> other = merge_threads(8, "x", os, nullptr);  // the same thread ids, another process
+        cpu.apply(other, 30'000'000);
+        check("another process's thread of the same id is another thread", other[0].cpu_pct < 0);
+    }
+
+    check("the search finds a name, whatever its case", row_matches(rows[4], "final") && !row_matches(rows[0], "final"));
+    check("and a kind, a state, a start, a thread id",
+          row_matches(rows[1], "app native") && row_matches(rows[0], "native") && row_matches(rows[1], "libgame") &&
+              row_matches(rows[2], "102") && !row_matches(rows[2], "java"));
+    check("every word must be there", row_matches(rows[0], "main java") && !row_matches(rows[0], "main jvm"));
+    check("an empty search has every row", row_matches(rows[2], "") && row_matches(rows[2], "  "));
+
+    sort_rows(rows, ThreadColumn::kCpuPct, true);
+    check("sorted by CPU, the busiest first", rows[0].tid == 101 && rows[1].tid == 100);
+    check("equal rows keep one order", rows[2].tid == 0 && rows[3].tid == 102 && rows[4].tid == 103 && rows[5].tid == 300);
+    sort_rows(rows, ThreadColumn::kName, false);
+    check("sorted by name", rows[0].name.empty() && rows[2].name == "Finalizer" && rows[3].name == "main");
+    sort_rows(rows, ThreadColumn::kTid, true);
+    check("sorted by thread id, downwards", rows[0].tid == 300 && rows[5].tid == 0);
+}
+
 }  // namespace
 
 int main() {
     test_runs();
     test_installs();
     test_updates();
+    test_debug_threads();
     std::printf("%d failed\n", g_failures);
     return g_failures ? 1 : 0;
 }

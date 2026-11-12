@@ -294,6 +294,7 @@ if(WINAPK_JNI_INCLUDE)
                               host/native_signin.cpp host/native_notifications.cpp
                               host/binder_win.cpp
                               host/user_folders.cpp host/unix_socket_dir.cpp host/crash_report.cpp host/aot_guard.cpp host/cds.cpp host/cds_util.cpp
+                              host/debug_agent.cpp
                               host/runtime.rc)
   target_link_libraries(winapk-runtime PRIVATE winapk_jni winapk_sqlite webpdecoder winapk_stb_vorbis windowscodecs
                         ole32 mf mfplat mfreadwrite mfuuid shlwapi advapi32 shell32 uuid wlanapi iphlpapi bthprops winmm

@@ -56,6 +56,7 @@
 #include "aot_guard.h"
 #include "cds.h"
 #include "crash_report.h"
+#include "debug_agent.h"
 #include "guest_libs.h"
 #include "host_natives.h"
 #include "unix_socket_dir.h"
@@ -1768,6 +1769,7 @@ DWORD WINAPI system_thread(void* param) {
     JavaVM* vm = nullptr;
     JNIEnv* env = nullptr;
     if (!create_vm(jvm, opts, &vm, &env)) return 1;
+    winapk::host::start_debug_agent(vm);
     jvmtiEnv* jvmti = nullptr;
     if (vm->GetEnv(reinterpret_cast<void**>(&jvmti), JVMTI_VERSION_1_2) != JNI_OK) {
         std::fprintf(stderr, "[win.apk] no JVMTI\n");
@@ -1808,6 +1810,7 @@ DWORD WINAPI boot_thread(void* param) {
     JavaVM* vm = nullptr;
     JNIEnv* env = nullptr;
     if (!create_vm(jvm, opts, &vm, &env)) return 1;
+    if (!o.install_only) winapk::host::start_debug_agent(vm);  // debug mode: the launcher's Threads window
     report_path_encoding(env);
     jvmtiEnv* jvmti = nullptr;
     if (vm->GetEnv(reinterpret_cast<void**>(&jvmti), JVMTI_VERSION_1_2) != JNI_OK) {

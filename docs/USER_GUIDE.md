@@ -20,6 +20,7 @@ page, [Compatibility](APPS.md); problems and bug reports are in
 - [Wi-Fi and Bluetooth](#wi-fi-and-bluetooth)
 - [Shared storage](#shared-storage)
 - [Logs](#logs)
+- [Debug mode: the Threads window](#debug-mode-the-threads-window)
 - [Removing apps and uninstalling](#removing-apps-and-uninstalling)
 - [Where things are](#where-things-are)
 - [Command line](#command-line)
@@ -237,6 +238,7 @@ phone-style sandbox: install only apps you trust ([`SECURITY.md`](../SECURITY.md
 | Ctrl+1, Ctrl+2 | The Library and the Store |
 | Ctrl+, | Settings |
 | Ctrl+L | The log window, on the newest log |
+| Ctrl+T | The Threads window, on every running app (with **Debug mode** on) |
 | F5 | In the Store: check F-Droid for new apps |
 | Esc, Backspace, Alt+Left, the mouse's back button | On a details page: back |
 | Tab, Space, Enter | On a page: move between its controls and use them |
@@ -266,7 +268,7 @@ without an answer.
 | Permissions | A switch per permission the app was asked for or granted, and **Reset permissions**; see [Permissions](#permissions) |
 | Shortcut | **Desktop shortcut**: adds or removes the app's desktop shortcut. The Start menu one is always there |
 | Performance | Only for an app with only ARM code: **Optimizing for this PC…** while its translation runs in the background (with the parts done so far), and **This app has only ARM code** when a library is too large to translate whole, so an x86_64 build of the app, if one exists, runs faster. See [ARM apps](arm-apps.md) |
-| Troubleshooting | **Log** (View the app's recent logs): **Show log** opens the log window on the app's last run (or its install, before the first run). **Report a problem** (opens a GitHub issue with the app's details and log): for a problem met inside the app; see [Reporting a problem](troubleshooting.md#reporting-a-problem) |
+| Troubleshooting | **Log** (View the app's recent logs): **Show log** opens the log window on the app's last run (or its install, before the first run). **Report a problem** (opens a GitHub issue with the app's details and log): for a problem met inside the app; see [Reporting a problem](troubleshooting.md#reporting-a-problem). With **Debug mode** on in Settings, **Threads** opens the [Threads window](#debug-mode-the-threads-window) on this app |
 | Storage | **The app's file**: its size, and **Show** opens Explorer on it. **Run files**: what Win.apk prepared to run the app, its folder under `apps\`, and **Open** |
 | Manage | **Stop** (while it runs) and **Remove** |
 
@@ -294,6 +296,7 @@ its own. Each setting takes effect the next time an app opens unless noted.
 | Google account | **Sign in**, **Add another account**, **Sign out**; **Use Google services (experimental)** (off), and with it on **Google services setup** | See [Google account and Google services](google-services.md) |
 | Troubleshooting | **Logs** | Opens the `logs` folder in Explorer, to attach files to a bug report |
 | Troubleshooting | **App data** | Opens `%LOCALAPPDATA%\Win.apk` |
+| Troubleshooting | **Debug mode** | Off by default. For developers: apps opened from now on report every thread they have, with its Java and native stack, to the [Threads window](#debug-mode-the-threads-window). With it on, a **Threads** row under it opens that window on every running app |
 | Troubleshooting | **Clear library** | Uninstalls every app of the library and removes its shortcuts (app data is kept; Google's apps stay with Google services) |
 | Updates | **Check** | Asks GitHub for the newest release at once. The row shows this copy's version and the last check's result: up to date, a newer version, or could not check. See [Updates](#updates) |
 | Updates | **Check for updates automatically** | On (the default): about once a day, while the library is open, Win.apk checks for a newer release in the background and says so in the InfoBar |
@@ -512,6 +515,46 @@ and the launch window open the right log themselves when something fails.
 | `hs_err_pid<n>.log` | A crash report from the Java VM, if the VM itself crashed |
 | `crash-<app>-<date>.dmp` | A minidump of the app's process when its native code crashed (the last three per app); attach it to an issue with the log |
 
+## Debug mode: the Threads window
+
+For looking into how an app behaves inside Win.apk. Turn on **Settings >
+Troubleshooting > Debug mode**, then open the app (an app that was already
+running has to be stopped and opened again). The Threads window opens from
+the **Threads** row under the switch (every running app), from an app's
+details page (**Troubleshooting > Threads**, that app only) or with Ctrl+T.
+
+- **The app** is picked at the top left: one app, **All apps**, or **Win.apk
+  services** (the system broker of "Use Google services"). An app is all its
+  processes: each `winapk-runtime.exe` that runs it and whatever those
+  started (WebView2's processes, an ARM translation worker).
+- **Every thread is a row.** The list comes from Windows itself, once a
+  second, so no thread of those processes is missing, whether or not the app
+  answers. What the app's own debug agent adds: which threads are **Java**
+  threads (their Java name, state and daemon flag), which the app's native
+  code started (**App native**, with the library and function it started in,
+  `libgame.so!render_loop+0x0`), which are the **JVM**'s own (garbage
+  collector, compilers), **Win.apk**'s host threads, and **System** ones
+  (Windows', the graphics driver's). A Java thread whose Windows thread is not
+  known has no thread ID.
+- **Columns**: process and its ID, thread ID, name, type, state, CPU % (of
+  one core, over the last second), CPU time, priority, where the thread
+  started. A click on a column sorts by it; the search box keeps the rows
+  that have every word typed (a name, a type, a state, a library, a thread
+  ID).
+- **A selected thread's stack** is below the list, refreshed every second:
+  the Java frames with file and line, the monitor a blocked thread waits for
+  and who holds it, the native instruction it is at, the frames its frame
+  pointers link, and the code addresses found on its stack (guest code has
+  no unwind tables: return addresses stand out, the rest is noise). The
+  thread is stopped only for the instant its registers and stack are copied.
+- **Pause** freezes the list; **Copy** puts the table and the shown stack on
+  the clipboard.
+
+A process opened before debug mode was on has no agent: its threads are
+still all listed, with what Windows knows (ID, name, CPU, the module they
+started in), and the window says to reopen the app. With debug mode off
+nothing is started in the apps: no agent, no pipe.
+
 ## Removing apps and uninstalling
 
 - **Remove** (on the app's details page or its right-click menu) asks first
@@ -547,7 +590,7 @@ and the launch window open the right log themselves when something fails.
 | Shared ARM translations | `%LOCALAPPDATA%\Win.apk\aot-cache` |
 | The runtime's caches (fonts, resources) | `%LOCALAPPDATA%\Win.apk\cache` |
 | The Java classes every app shares, ready to map (class-data sharing) | `%LOCALAPPDATA%\Win.apk\cds` (`framework-<key>.jsa`; delete the folder to have it made again) |
-| Settings | `HKEY_CURRENT_USER\Software\Win.apk` (`Theme`, `Language`, `PhoneSize`, `Landscape`, `DesktopShortcut`, `UserFolders`, `AotBackground`, `AutoUpdate`, `LastUpdateCheck`, `GoogleServices`, and the library window's size) |
+| Settings | `HKEY_CURRENT_USER\Software\Win.apk` (`Theme`, `Language`, `PhoneSize`, `Landscape`, `DesktopShortcut`, `UserFolders`, `AotBackground`, `AutoUpdate`, `LastUpdateCheck`, `GoogleServices`, `DebugMode`, and the library window's size) |
 | With Google services on: app uids, the account service, the installer of record, the broker's readiness | `%LOCALAPPDATA%\Win.apk` (`app_uids.properties`, `system_ce\`, `installer-of-record.properties`, `run\`) |
 | Start menu shortcuts | `Start > Win.apk Apps` |
 

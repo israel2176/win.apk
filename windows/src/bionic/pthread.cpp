@@ -15,6 +15,7 @@
 
 #include "bionic_internal.h"
 
+#include "winapk/mini_bionic.h"
 #include "winapk/elf_tls.h"
 #include "winapk/fs_tls_patch.h"
 
@@ -418,6 +419,25 @@ struct Thread {
 
 thread_local Thread* t_self = nullptr;
 
+// The guest's own threads, by Windows thread id, with the function each started in: what the debug agent
+// lists as the app's native threads (guest_threads, below). Never freed: a thread may end during exit.
+SRWLOCK g_started_lock = SRWLOCK_INIT;
+std::vector<winapk::GuestThread>& started_threads() {
+    static auto* v = new std::vector<winapk::GuestThread>();
+    return *v;
+}
+void forget_started(DWORD tid) {
+    AcquireSRWLockExclusive(&g_started_lock);
+    auto& v = started_threads();
+    for (size_t i = 0; i < v.size(); ++i) {
+        if (v[i].tid != tid) continue;
+        v[i] = v.back();
+        v.pop_back();
+        break;
+    }
+    ReleaseSRWLockExclusive(&g_started_lock);
+}
+
 // pthread_cleanup_push/pop: Bionic's macros put a __pthread_cleanup_t on the
 // caller's stack and link it into the thread's list with these two calls;
 // pthread_exit runs whatever is still linked, newest first.
@@ -453,6 +473,7 @@ Thread* self_record() {
     t->result = result;
     // Bionic's order: C++ thread_local destructors, the cleanup handlers still
     // pushed, then the key destructors.
+    if (t->guest_created) forget_started(t->tid);
     tls_run_thread_dtors();
     while (GuestCleanup* c = t_cleanup) {
         t_cleanup = c->prev;
@@ -542,6 +563,9 @@ WINAPK_GUEST_ABI int g_create(Thread** out, const GuestAttr* attr, GuestStart st
         return kEAGAIN;
     }
     *out = t;
+    AcquireSRWLockExclusive(&g_started_lock);
+    started_threads().push_back({t->tid, reinterpret_cast<const void*>(start)});
+    ReleaseSRWLockExclusive(&g_started_lock);
     ResumeThread(t->handle);
     return 0;
 }
@@ -789,3 +813,16 @@ uint32_t thread_id_of(const void* pthread) {
 ShimTable pthread_symbols() { return WINAPK_SHIM_TABLE(kSymbols); }
 
 }  // namespace winapk::bionic
+
+namespace winapk {
+
+size_t guest_threads(GuestThread* out, size_t max) {
+    AcquireSRWLockShared(&bionic::g_started_lock);
+    const auto& v = bionic::started_threads();
+    for (size_t i = 0; i < v.size() && i < max; ++i) out[i] = v[i];
+    const size_t n = v.size();
+    ReleaseSRWLockShared(&bionic::g_started_lock);
+    return n;
+}
+
+}  // namespace winapk
