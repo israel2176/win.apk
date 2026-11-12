@@ -1217,6 +1217,19 @@ public abstract class Layout {
         ensureLines();
         if (paint == null || text == null) return getLineStart(line);
         int st = getLineStart(line), en = getLineEnd(line);
+        if (getParagraphDirection(line) == DIR_RIGHT_TO_LEFT || MacApkBidi.hasRtl(text, st, en)) {
+            // A line with right-to-left text: the offset whose position is nearest, as AOSP's
+            // getOffsetForHorizontal picks among the candidates of the line.
+            int visibleEnd = en;
+            if (visibleEnd > st && text.charAt(visibleEnd - 1) == '\n') visibleEnd--;
+            int best = st;
+            float bestDist = Float.MAX_VALUE;
+            for (int o = st; o <= visibleEnd; o++) {
+                float dist = Math.abs(getPrimaryHorizontal(o) - horiz);
+                if (dist < bestDist) { bestDist = dist; best = o; }
+            }
+            return best;
+        }
         float left = getLineLeft(line);
         for (int o = st; o < en; o++) {
             float w = left + macapkMeasure(text, st, o + 1);
@@ -1224,7 +1237,22 @@ public abstract class Layout {
         }
         return en;
     }
-    public boolean isRtlCharAt(int offset) { return false; }
+    /** AOSP Layout.isRtlCharAt: the character's bidi level is odd. */
+    public boolean isRtlCharAt(int offset) {
+        try {
+            ensureLines();
+            if (text == null || offset < 0 || offset >= textLen()) return false;
+            final int line = getLineForOffset(offset);
+            final int st = getLineStart(line), en = getLineEnd(line);
+            final boolean paraRtl = getParagraphDirection(line) == DIR_RIGHT_TO_LEFT;
+            if (!paraRtl && !MacApkBidi.hasRtl(text, st, en)) return false;
+            final java.text.Bidi bidi = new java.text.Bidi(text.subSequence(st, en).toString(), paraRtl
+                ? java.text.Bidi.DIRECTION_RIGHT_TO_LEFT : java.text.Bidi.DIRECTION_LEFT_TO_RIGHT);
+            return (bidi.getLevelAt(offset - st) & 1) != 0;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
     /** AOSP: +1 / -1 (Layout.java:1731), stamped onto each line from the
      *  paragraph's bidi result -- StaticLayout.out() writes
      *  `measured.getParagraphDir()` (StaticLayout.java:926, :1053) and
@@ -1665,12 +1693,75 @@ public abstract class Layout {
         if (end > start && end <= len && text.charAt(end - 1) == '\n') end--;
         if (offset < start) offset = start;
         if (offset > end) offset = end;
+        final float bidi = macapkBidiHorizontal(line, start, end, offset);
+        if (!Float.isNaN(bidi)) return bidi;
         final float wid = (offset > start)
             ? macapkMeasure(text, start, offset)
             : 0f;
         return getLineLeft(line) + wid;
     }
     public float getSecondaryHorizontal(int offset) { return getPrimaryHorizontal(offset); }
+
+    /** Where `offset` sits on a line that has right-to-left text or a right-to-left
+     *  paragraph direction; NaN for a plain left-to-right line (the caller's sum of advances
+     *  is right for those).
+     *
+     *  AOSP's getHorizontal walks the line's bidi runs in visual order (TextLine.measure over
+     *  Layout.Directions). The same here, with java.text.Bidi for the runs: inside a run an
+     *  offset is its start plus the advance of the characters before it, counted from the
+     *  run's left edge when the run is left-to-right and from its right edge when it is
+     *  right-to-left. On the border of two runs the one nearer the paragraph's own level
+     *  owns the position, and at the two ends of the line a run of deeper level gives way to
+     *  the paragraph: "abc" in a Hebrew paragraph starts at the paragraph's right edge.
+     *  This answered the left-to-right sum for every line, so in Hebrew text offset 0 was at
+     *  the left of the line: the caret, a selection and anything a library places by
+     *  getPrimaryHorizontal were mirrored (uiprobe text.layout: first=128 where Android
+     *  has 200). */
+    private float macapkBidiHorizontal(int line, int start, int end, int offset) {
+        if (end <= start) return Float.NaN;
+        final boolean paraRtl = getParagraphDirection(line) == DIR_RIGHT_TO_LEFT;
+        if (!paraRtl && !MacApkBidi.hasRtl(text, start, end)) return Float.NaN;
+        final String str = text.subSequence(start, end).toString();
+        final java.text.Bidi bidi = new java.text.Bidi(str, paraRtl
+            ? java.text.Bidi.DIRECTION_RIGHT_TO_LEFT : java.text.Bidi.DIRECTION_LEFT_TO_RIGHT);
+        final int runs = bidi.getRunCount();
+        final byte[] levels = new byte[runs];
+        final Integer[] visual = new Integer[runs];
+        final float[] widths = new float[runs];
+        for (int r = 0; r < runs; r++) {
+            levels[r] = (byte) bidi.getRunLevel(r);
+            visual[r] = r;
+            widths[r] = macapkMeasure(text, start + bidi.getRunStart(r), start + bidi.getRunLimit(r));
+        }
+        java.text.Bidi.reorderVisually(levels.clone(), 0, visual, 0, runs);
+        final float[] lefts = new float[runs];
+        float x = getLineLeft(line), total = 0f;
+        for (int v = 0; v < runs; v++) {
+            lefts[visual[v]] = x;
+            x += widths[visual[v]];
+            total += widths[visual[v]];
+        }
+        final int paraLevel = paraRtl ? 1 : 0;
+        final int p = offset - start;
+        final float paraStart = paraRtl ? getLineLeft(line) + total : getLineLeft(line);
+        final float paraEnd = paraRtl ? getLineLeft(line) : getLineLeft(line) + total;
+        if (p <= 0 && levels[0] > paraLevel) return paraStart;
+        if (p >= str.length()) {
+            final int last = runs - 1;
+            if (levels[last] > paraLevel) return paraEnd;
+            return (levels[last] & 1) != 0 ? lefts[last] : lefts[last] + widths[last];
+        }
+        int run = 0;
+        while (run < runs - 1 && p >= bidi.getRunLimit(run)) run++;
+        if (p == bidi.getRunStart(run) && run > 0 && levels[run - 1] < levels[run]) {
+            // The border belongs to the run before: its trailing edge.
+            final int before = run - 1;
+            return (levels[before] & 1) != 0 ? lefts[before] : lefts[before] + widths[before];
+        }
+        final float advance = p > bidi.getRunStart(run)
+            ? macapkMeasure(text, start + bidi.getRunStart(run), start + p) : 0f;
+        return (levels[run] & 1) != 0 ? lefts[run] + widths[run] - advance : lefts[run] + advance;
+    }
 
     /** AOSP Layout.getSelectionPath (android16-release Layout.java:3110-3114)
      *  -> getSelection(start, end, consumer) (:3126-3179) -> addSelection

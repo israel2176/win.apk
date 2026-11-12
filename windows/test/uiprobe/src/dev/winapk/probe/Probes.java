@@ -55,6 +55,7 @@ public final class Probes {
         out.add("density " + density);
         int w = Math.round(W_DP * density), h = Math.round(H_DP * density);
         themeValues(app, out);
+        textLayouts(app, out);
         drawables(app, out);
         for (int i = 0; i < LAYOUTS.length; i++) {
             for (int dir = 0; dir < 2; dir++) {
@@ -94,6 +95,58 @@ public final class Probes {
             }
         }
         return out;
+    }
+
+    /** A line of text in a Layout wider than it, for each direction and alignment: where the
+     *  Layout says the line is, and where its ink lands when drawn. Libraries that draw text
+     *  themselves (Material's collapsing titles and field labels) place it by these. */
+    private static void textLayouts(Context app, List<String> out) {
+        float d = app.getResources().getDisplayMetrics().density;
+        android.text.TextPaint paint = new android.text.TextPaint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+        paint.setTextSize(16 * d);
+        paint.setColor(0xFF000000);
+        int width = Math.round(200 * d), height = Math.round(30 * d);
+        String[] texts = {"שלום עולם", "Station", "12345", "אב abc"};
+        String[] textNames = {"he", "en", "digits", "mixed"};
+        android.text.TextDirectionHeuristic[] heuristics = {
+            android.text.TextDirectionHeuristics.LTR, android.text.TextDirectionHeuristics.RTL,
+            android.text.TextDirectionHeuristics.FIRSTSTRONG_LTR, android.text.TextDirectionHeuristics.FIRSTSTRONG_RTL};
+        String[] heuristicNames = {"ltr", "rtl", "firststrong_ltr", "firststrong_rtl"};
+        Layout.Alignment[] alignments = {Layout.Alignment.ALIGN_NORMAL, Layout.Alignment.ALIGN_OPPOSITE,
+                                         Layout.Alignment.ALIGN_CENTER};
+        out.add("case text.layout");
+        for (int t = 0; t < texts.length; t++) {
+            for (int h = 0; h < heuristics.length; h++) {
+                for (Layout.Alignment a : alignments) {
+                    StringBuilder sb = new StringBuilder("  ").append(textNames[t]).append(' ')
+                        .append(heuristicNames[h]).append(' ').append(a);
+                    try {
+                        android.text.StaticLayout l = android.text.StaticLayout.Builder
+                            .obtain(texts[t], 0, texts[t].length(), paint, width)
+                            .setAlignment(a).setTextDirection(heuristics[h]).setIncludePad(false).build();
+                        sb.append(" dir=").append(l.getParagraphDirection(0))
+                          .append(" left=").append(dp(l.getLineLeft(0), d)).append(" right=").append(dp(l.getLineRight(0), d))
+                          .append(" width=").append(dp(l.getLineWidth(0), d)).append(" max=").append(dp(l.getLineMax(0), d))
+                          .append(" first=").append(dp(l.getPrimaryHorizontal(0), d))
+                          .append(" last=").append(dp(l.getPrimaryHorizontal(texts[t].length()), d));
+                        Bitmap b = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+                        Canvas c = new Canvas(b);
+                        c.drawColor(0xFFFFFFFF);
+                        l.draw(c);
+                        int min = -1, max = -1;
+                        for (int x = 0; x < width; x++) {
+                            boolean ink = false;
+                            for (int y = 0; y < height && !ink; y++) ink = (b.getPixel(x, y) & 0xFF) < 0x80;
+                            if (ink) { if (min < 0) min = x; max = x; }
+                        }
+                        sb.append(" ink=").append(dp(min, d)).append("..").append(dp(max, d));
+                    } catch (Throwable e) {
+                        sb.append(" threw ").append(e.getClass().getSimpleName());
+                    }
+                    out.add(sb.toString());
+                }
+            }
+        }
     }
 
     /** Every drawable of the common libraries and the platform's widget drawables, as a view
@@ -301,6 +354,13 @@ public final class Probes {
             } catch (Throwable t) {
                 sb.append(" text?").append(t.getClass().getSimpleName());
             }
+        }
+        if (v instanceof android.widget.ImageView) {
+            android.content.res.ColorStateList tint = ((android.widget.ImageView) v).getImageTintList();
+            sb.append(" tint=").append(tint == null ? "none" : hex(tint.getColorForState(v.getDrawableState(), 0)));
+        }
+        if (v.getBackgroundTintList() != null) {
+            sb.append(" bgtint=").append(hex(v.getBackgroundTintList().getColorForState(v.getDrawableState(), 0)));
         }
         int x = ox + v.getLeft(), y = oy + v.getTop();
         if (picture != null && !(v instanceof ViewGroup) && v.getWidth() > 0 && v.getHeight() > 0) {
