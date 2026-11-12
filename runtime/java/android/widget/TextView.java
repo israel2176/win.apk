@@ -5638,6 +5638,20 @@ public class TextView extends View
         return macapkVerticalOffset(getLayout());
     }
 
+    /** The height of the lines that are shown: the whole layout, or its first maxLines when
+     *  the text has more. AOSP splits this over getExtendedPaddingTop (which places a
+     *  layout cut by maxLines: `layoutht = mLayout.getLineTop(mMaximum)`) and
+     *  getVerticalOffset (which places one that fits); their sum is what is used
+     *  everywhere, and this is that sum's text height. With the whole layout's height a
+     *  text longer than its line limit counted as filling the view, so two lines in a
+     *  taller view sat at its top whatever the gravity. */
+    private int macapkShownTextHeight(android.text.Layout l) {
+        if (mMaxModeLines && mMaximum != Integer.MAX_VALUE && mMaximum > 0 && l.getLineCount() > mMaximum) {
+            return l.getLineTop(mMaximum);
+        }
+        return l.getHeight();
+    }
+
     /** getVerticalOffset over a Layout the caller already holds: getLayout()
      *  builds its cache key over the whole text, and the per-frame caret draw
      *  would otherwise pay for it several times. */
@@ -5645,7 +5659,7 @@ public class TextView extends View
         if (l == null) return 0;
         final int g = gravity & android.view.Gravity.VERTICAL_GRAVITY_MASK;
         final int boxht = macapkBoxHeight();
-        final int textht = l.getHeight();
+        final int textht = macapkShownTextHeight(l);
         if (textht >= boxht) return 0;
         if (g == (android.view.Gravity.BOTTOM & android.view.Gravity.VERTICAL_GRAVITY_MASK)) {
             return boxht - textht;
@@ -5660,7 +5674,7 @@ public class TextView extends View
         if (l == null) return 0;
         final int g = gravity & android.view.Gravity.VERTICAL_GRAVITY_MASK;
         final int boxht = macapkBoxHeight();
-        final int textht = l.getHeight();
+        final int textht = macapkShownTextHeight(l);
         if (textht >= boxht) return 0;
         if (g == (android.view.Gravity.BOTTOM & android.view.Gravity.VERTICAL_GRAVITY_MASK)) return 0;
         if (g == android.view.Gravity.CENTER_VERTICAL) return (boxht - textht) >> 1;
