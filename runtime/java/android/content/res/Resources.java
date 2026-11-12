@@ -6739,12 +6739,21 @@ public class Resources {
                 java.lang.reflect.Method mResolve = macapkResourceIndex.getClass()
                     .getMethod("resolveAttrInTheme", String.class, String.class);
                 for (int hop = 0; hop < 4 && sr.startsWith("?"); hop++) {
+                    // A compiled layout carries the reference as an id ("?0x01010078"):
+                    // name it first, as every other reader of such a value does.
+                    String namedRef = macapkNamedAttrRef(sr);
+                    if (namedRef != null) sr = namedRef;
                     String refAttr = sr.substring(1);
                     // App attribute: whole-cascade identity first (see
                     // macapkResolveAppAttrExact / resolveDefStyleName).
                     final boolean appHop = !refAttr.startsWith("android:");
                     if (refAttr.startsWith("attr/")) refAttr = refAttr.substring(5);
-                    else if (refAttr.startsWith("android:attr/")) refAttr = refAttr.substring(13);
+                    // "?android:attr/x" is the PLATFORM's x: the namespace stays on the key
+                    // (resolveAttrInTheme is namespace-aware). Stripped to a bare "x" it was
+                    // looked up as an app attribute and not found, so an element's
+                    // style="?android:attr/progressBarStyleHorizontal" named no style and
+                    // every attribute read from it came back absent.
+                    else if (refAttr.startsWith("android:attr/")) refAttr = "android:" + refAttr.substring(13);
                     String next = appHop ? macapkResolveAppAttrExact(refAttr) : null;
                     if (next == null) for (String style : appliedStyles) {
                         Object r = mResolve.invoke(macapkResourceIndex, style, refAttr);
