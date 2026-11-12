@@ -185,6 +185,12 @@ public class ImageView extends View {
 
     public void setImageDrawable(android.graphics.drawable.Drawable d) {
         this.drawable = d;
+        // AOSP ImageView.updateDrawable: `if (d.isStateful()) d.setState(getDrawableState())`.
+        // A stateful picture set after the view's last state change otherwise keeps whatever
+        // state it last had: a selector showed the wrong row until something else changed.
+        if (d != null && d.isStateful()) {
+            try { d.setState(getDrawableState()); } catch (Throwable ignored) { }
+        }
         // v1.0.132: heuristic LP-rescue. Material's NavigationBarItem-
         // View.setIconSize(?attr/itemIconSize) sets LP to (0, 0) when
         // our framework returns 0 for that dimension resource (we
