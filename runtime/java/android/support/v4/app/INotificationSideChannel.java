@@ -22,6 +22,8 @@ package android.support.v4.app;
 import android.os.IInterface;
 
 public interface INotificationSideChannel extends IInterface {
+    /** The AIDL compiler's field: an app's own Stub and Proxy name it (uiprobe apicheck, 16 of 50 apps). */
+    String DESCRIPTOR = "android.support.v4.app.INotificationSideChannel";
     void notify(String packageName, int id, String tag, android.app.Notification notification);
 
     void cancel(String packageName, int id, String tag);
