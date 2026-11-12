@@ -4836,6 +4836,7 @@ public class TextView extends View
      *  Arabic app an empty field's hint, a price and a phone number sat at the
      *  wrong end of their view. */
     private boolean macapkParagraphRtl(CharSequence s, int pos) {
+        if (macapkAlwaysLtr()) return false;
         switch (getTextDirection()) {
             case TEXT_DIRECTION_LTR: return false;
             case TEXT_DIRECTION_RTL: return true;
@@ -6112,11 +6113,29 @@ public class TextView extends View
     // Text-direction / locale / break-strategy
     // AOSP returns android.text.TextDirectionHeuristic; the typed interface
     // exists in our tree so use it (Object descriptor would NoSuchMethodError).
+    /** The two cases AOSP's getTextDirectionHeuristic() settles before android:textDirection:
+     *  "passwords fields should be LTR", and a phone number runs the way the locale's digits
+     *  do, which is left to right for every locale whose digits are not Arabic-Indic. So in
+     *  a Hebrew app the dots of a password and a phone number start at the left edge. */
+    private boolean macapkAlwaysLtr() {
+        try {
+            if (getTransformationMethod() instanceof android.text.method.PasswordTransformationMethod) return true;
+            if ((getInputType() & android.text.InputType.TYPE_MASK_CLASS) == android.text.InputType.TYPE_CLASS_PHONE) {
+                String zero = java.text.DecimalFormatSymbols.getInstance(getTextLocale()).getZeroDigit() + "";
+                byte dir = Character.getDirectionality(zero.codePointAt(0));
+                return dir != Character.DIRECTIONALITY_RIGHT_TO_LEFT
+                    && dir != Character.DIRECTIONALITY_RIGHT_TO_LEFT_ARABIC;
+            }
+        } catch (Throwable ignored) { }
+        return false;
+    }
+
     /** AOSP TextView.getTextDirectionHeuristic(): android:textDirection as a
      *  heuristic, a view in a right-to-left layout defaulting to FIRSTSTRONG_RTL.
      *  It answered null, and getLayout() built its Layout with the LTR default:
      *  a number or an empty line in a Hebrew app measured from the left edge. */
     public android.text.TextDirectionHeuristic getTextDirectionHeuristic() {
+        if (macapkAlwaysLtr()) return android.text.TextDirectionHeuristics.LTR;
         switch (getTextDirection()) {
             case TEXT_DIRECTION_ANY_RTL: return android.text.TextDirectionHeuristics.ANYRTL_LTR;
             case TEXT_DIRECTION_LTR: return android.text.TextDirectionHeuristics.LTR;
