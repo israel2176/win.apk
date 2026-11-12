@@ -326,6 +326,7 @@ public class TextView extends View
             macapkCtorTextAppearance(c, a, defStyleAttr, defStyleRes);
         }
         macapkCtorDefaultStyleLayout(c, a, defStyleAttr, defStyleRes);
+        macapkCtorSizeAttrs(c, a, defStyleAttr, defStyleRes);
         macapkApplyInputTypeAttrs(a);
         macapkInitCaret(a);
         macapkInstallDefaultMovement();
@@ -513,6 +514,61 @@ public class TextView extends View
         0x01010153, // 3  maxLines
         0x01010154, // 4  lines
     };
+
+    /** The attributes that size the text block, by id (android.R.attr). */
+    private static final int[] MACAPK_SIZE_ATTRS = {
+        0x0101011f, // 0  maxWidth
+        0x01010120, // 1  maxHeight
+        0x01010159, // 2  width
+        0x01010155, // 3  height
+        0x01010158, // 4  ems
+        0x01010157, // 5  maxEms
+        0x0101015a, // 6  minEms
+        0x0101015f, // 7  includeFontPadding
+        0x01010217, // 8  lineSpacingExtra
+        0x01010218, // 9  lineSpacingMultiplier
+        0x01010156, // 10 minLines
+        0x010104b6, // 11 letterSpacing
+    };
+
+    /** How large the text block may be, over all the tiers AOSP's constructor reads them
+     *  from: the element, its style=, the default style, the theme. The inflater applies
+     *  only some of these and only from the element, so android:maxWidth, android:ems or
+     *  android:width on a TextView did nothing (a wrap_content label ran to the width of
+     *  its parent, uiprobe lib_text_lines #i), and a widget style's includeFontPadding or
+     *  line spacing (Material's Chip) never arrived. */
+    private void macapkCtorSizeAttrs(Context context, android.util.AttributeSet attrs,
+                                     int defStyleAttr, int defStyleRes) {
+        if (context == null) return;
+        try {
+            final android.content.res.Resources.Theme theme = context.getTheme();
+            if (theme == null) return;
+            final android.content.res.TypedArray a = theme.obtainStyledAttributes(
+                attrs, MACAPK_SIZE_ATTRS, defStyleAttr, defStyleRes);
+            try {
+                if (a.hasValue(0)) { int v = a.getDimensionPixelSize(0, -1); if (v >= 0) setMaxWidth(v); }
+                if (a.hasValue(1)) { int v = a.getDimensionPixelSize(1, -1); if (v >= 0) setMaxHeight(v); }
+                if (a.hasValue(2)) { int v = a.getDimensionPixelSize(2, -1); if (v >= 0) setWidth(v); }
+                if (a.hasValue(3)) { int v = a.getDimensionPixelSize(3, -1); if (v >= 0) setHeight(v); }
+                if (a.hasValue(4)) { int v = a.getInt(4, -1); if (v >= 0) setEms(v); }
+                if (a.hasValue(5)) { int v = a.getInt(5, -1); if (v >= 0) setMaxEms(v); }
+                if (a.hasValue(6)) { int v = a.getInt(6, -1); if (v >= 0) setMinEms(v); }
+                // includeFontPadding (7) is left to the inflater: a line of Hebrew, drawn in a
+                // fallback font, is taller than the main font's ascent on Android, and without
+                // the font padding this layout does not yet give it that room (a Hebrew chip's
+                // baseline came out 2dp high).
+                if (a.hasValue(8) || a.hasValue(9)) {
+                    setLineSpacing(a.getDimensionPixelSize(8, 0), a.getFloat(9, 1.0f));
+                }
+                if (a.hasValue(10)) { int v = a.getInt(10, -1); if (v >= 0) setMinLines(v); }
+                if (a.hasValue(11)) setLetterSpacing(a.getFloat(11, 0f));
+            } finally {
+                a.recycle();
+            }
+        } catch (Throwable ignored) {
+            // A style that cannot be read leaves the defaults.
+        }
+    }
 
     /** Where the text sits, from the view's default style. The inflater applies
      *  what the element and its style= say after construction, but a widget's
