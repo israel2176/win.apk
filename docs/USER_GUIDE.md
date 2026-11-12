@@ -191,7 +191,8 @@ In an app:
 | **Escape**, **Alt+Left**, the mouse's back button | Android's Back |
 | Close the window | The app quits as an Android app leaves the screen: the window goes at once, the app is paused, stopped and destroyed (so it saves what it saves on a phone), and then it ends. An app that does not answer is ended after two seconds |
 | Minimize the window | The app goes to the background (paused and stopped), and comes back when you restore the window |
-| Resize, maximize or snap the window | A display of the new size; the app lays itself out again |
+| Resize or snap the window | A display of the new size; the app lays itself out again |
+| Maximize the window | The phone turned on its side, as large as the screen: the app lays itself out for landscape. An app that only works upright stays upright, as tall as the screen |
 
 Notes on input:
 
@@ -321,6 +322,13 @@ gives the app a display of the new size, and it lays itself out again, as an
 Android desktop window does. An app that fixed its orientation keeps its
 shape in a window of the other one: it is drawn in the largest box of its
 aspect, centred, with black bars around it.
+
+Maximizing is turning the phone: the app's display keeps the phone's short
+side and becomes as long as the screen is wide (360 x 800 dp becomes about
+700 x 360 dp on a 16:9 monitor), so the app shows its landscape layout large,
+not a tablet-sized display with its content small. In the run where you
+maximize it the picture is enlarged, which softens it; an app that was
+maximized when it closed opens maximized the next time, drawn sharp.
 
 The size you settle on is remembered per app and used the next time the app
 opens, before the App window size setting. The app's details page shows it and
@@ -597,6 +605,7 @@ Environment variables the launcher and the runtime read:
 |---|---|
 | `WINAPK_PHONE_SIZE=412x915` | The phone size in dp. The launcher sets it from the App window size setting; set it yourself for the **Auto** preset or a direct run |
 | `WINAPK_RESIZABLE=0` | The window letterboxes the phone instead of resizing the app |
+| `WINAPK_MAXIMIZE_TURNS=0` | A maximized window is a large display at the window's scale, not the phone turned |
 | `WINAPK_DENSITY=<dpi>` | Overrides the density the app sees |
 | `WINAPK_AOT_CLANG=<path to clang.exe>` | The compiler for ARM translation |
 | `WINAPK_AOT=0` | Run ARM-only apps' code on the JIT only: no translation is loaded or made |

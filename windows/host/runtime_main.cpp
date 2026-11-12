@@ -1467,6 +1467,7 @@ int display_density_dpi() {
     if (!env_var(L"WINAPK_HEADLESS").empty()) return 320;
     int w = 0, h = 0;
     winapk::host::launch_phone_size(&w, &h);
+    winapk::host::window_set_start_maximized(winapk::host::launch_maximized());
     return winapk::host::window_density_dpi(winapk::host::window_plan(w, h));
 }
 

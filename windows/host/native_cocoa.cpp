@@ -103,6 +103,31 @@ void save_window_size(int w, int h) {
     CloseHandle(f);
 }
 
+// The window was maximized when the app last ran: "<w>x<h> max", the size being
+// the one it has when it is not.
+void save_window_maximized(bool maximized, int w, int h) {
+    const std::wstring file = window_size_file();
+    if (file.empty()) return;
+    const std::string text = std::to_string(w) + "x" + std::to_string(h) + (maximized ? " max\n" : "\n");
+    HANDLE f = CreateFileW(file.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return;
+    DWORD n = 0;
+    WriteFile(f, text.data(), static_cast<DWORD>(text.size()), &n, nullptr);
+    CloseHandle(f);
+}
+
+bool saved_window_maximized() {
+    const std::wstring file = window_size_file();
+    if (file.empty()) return false;
+    HANDLE f = CreateFileW(file.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return false;
+    char buf[32] = {};
+    DWORD n = 0;
+    ReadFile(f, buf, sizeof(buf) - 1, &n, nullptr);
+    CloseHandle(f);
+    return std::strstr(buf, " max") != nullptr;
+}
+
 bool saved_window_size(int* w, int* h) {
     const std::wstring file = window_size_file();
     if (file.empty()) return false;
@@ -447,6 +472,9 @@ public:
     }
     // A size the user settled on is kept for the app's next start.
     void remember_size(int w_dp, int h_dp) override { save_window_size(w_dp, h_dp); }
+    void remember_maximized(bool maximized, int w_dp, int h_dp) override {
+        save_window_maximized(maximized, w_dp, h_dp);
+    }
 };
 
 JavaInput g_java_input;
@@ -1633,6 +1661,8 @@ HostMethods native_cocoa_methods() { return {kMethods, sizeof(kMethods) / sizeof
 // too small for the window gets a lower density (win32_window.h), never a
 // shorter phone. Malformed or out-of-range values are ignored. The window size
 // the user last gave this app (save_window_size) comes before both.
+bool launch_maximized() { return saved_window_maximized(); }
+
 void launch_phone_size(int* w, int* h) {
     *w = 360;
     *h = 800;

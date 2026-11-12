@@ -6801,6 +6801,21 @@ public final class ResourceIndex {
         return 160;
     }
 
+    /** The framework frames above a resource lookup, for the miss line. */
+    private static String macapkCallers() {
+        StringBuilder sb = new StringBuilder(" from");
+        StackTraceElement[] st = new Throwable().getStackTrace();
+        int shown = 0;
+        for (int i = 2; i < st.length && shown < 8; i++) {
+            String c = st[i].getClassName();
+            if (c.startsWith("java.") || c.startsWith("jdk.")) continue;
+            sb.append(' ').append(c.substring(c.lastIndexOf('.') + 1)).append('.').append(st[i].getMethodName())
+              .append(':').append(st[i].getLineNumber());
+            shown++;
+        }
+        return sb.toString();
+    }
+
     public String pathFor(int id) {
         String[] tn = idToTypeName.get(id);
         if (tn == null) return null;
@@ -6895,7 +6910,10 @@ public final class ResourceIndex {
             }
         }
         NativeLog.w(TAG, "openRawResource(0x" + Integer.toHexString(id) +
-                          ") missed: type=" + type + " name=" + name);
+                          ") missed: type=" + type + " name=" + name
+                          // An attribute's id asked for as a file is this runtime handing an
+                          // unresolved ?attr on as a resource: say who did.
+                          + ("attr".equals(type) ? macapkCallers() : ""));
         return null;
     }
 

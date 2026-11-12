@@ -98,6 +98,8 @@ void phone_size_dp(int* w, int* h);
 // The phone the app starts with, in dp: WINAPK_PHONE_SIZE, else 360x800.
 // native_cocoa.cpp.
 void launch_phone_size(int* w, int* h);
+// Whether the app's window was maximized when it last ran (library\<name>.window ends in " max").
+bool launch_maximized();
 
 struct NativeStats {
     int classes = 0;        // host classes found

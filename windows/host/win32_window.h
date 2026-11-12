@@ -94,6 +94,9 @@ public:
     // A size the user settled on (a drag ended, a snap), to keep for the
     // app's next start; not a maximized window's.
     virtual void remember_size(int /*w_dp*/, int /*h_dp*/) {}
+    // The window was maximized (true) or taken out of it; w by h dp is the
+    // size it has when it is not, to keep with the state for the next start.
+    virtual void remember_maximized(bool /*maximized*/, int /*w_dp*/, int /*h_dp*/) {}
 };
 
 // The box, in client pixels, that the app draws in, for a client area of cw by
@@ -126,6 +129,9 @@ FramePresent window_frame_present(int fw, int fh, int bw, int bh, int sw, int sh
 // the window's own pixel size. WINAPK_TEST_WORKAREA=<w>x<h>[+<x>+<y>], in
 // pixels, stands in for the work area (testing; see win32_window.cpp).
 float window_plan(int phone_w, int phone_h);
+// Before window_plan: the app's window opens maximized (it was when the app
+// last ran), so the plan is for the phone turned to fill the screen.
+void window_set_start_maximized(bool maximized);
 // The density, in dpi, for a scale in px per dp: scale x 160, rounded down
 // so the window still fits, within the 120..640 the Java side accepts.
 int window_density_dpi(float scale);
