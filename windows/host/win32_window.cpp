@@ -163,6 +163,11 @@ struct Plan {
     HMONITOR monitor = nullptr;
     UINT dpi = 96;
     float scale = 1.0f;  // px per dp at launch: the monitor's scale, or less to fit
+    // Planned for a window that opens maximized: `scale` is the turned phone's
+    // in the maximized window, `normal` what the window shows the phone at
+    // when it is taken out of it (the scale of a start that is not maximized).
+    bool maximized = false;
+    float normal = 1.0f;
 };
 Plan g_plan;
 // px per dp the window shows the phone at on the launch monitor: the frames'
@@ -177,6 +182,39 @@ bool g_fitting = false;        // our own SetWindowPos: its WM_SIZE is not the u
 float g_shown_scale = 1.0f;    // px per dp the window shows the phone at (the last fit)
 SIZE g_move_start{};           // the client size when a drag began
 int g_orientation_lock = 0;    // 0 any, 1 portrait, 2 landscape (window_set_orientation_lock)
+
+// ---- a maximized window is the phone turned -----------------------------------
+//
+// Maximizing does to the app what turning a phone on its side does: the display
+// keeps the phone's short side, in dp, and gets as long as the screen is wide
+// (360x800 dp becomes about 680x360 dp on a 16:9 monitor), instead of the
+// tablet-sized display the window's pixels at the same scale would be, with a
+// phone app's content small in the middle of it. The window shows that display
+// larger: the density is fixed for the process (see above), so the frames are
+// resampled to the window until the next start, which plans the density for the
+// maximized window (window_set_start_maximized) and draws it pixel for pixel.
+// An app whose activity is fixed to portrait gets its portrait column, as large
+// as the screen is high. WINAPK_MAXIMIZE_TURNS=0: a maximized window is just a
+// large one, as before.
+int g_normal_w = 0, g_normal_h = 0;  // the phone, in dp, in the window when it is not maximized
+bool g_start_maximized = false;
+// The window opens maximized and has not been yet: the sizes it passes through
+// on the way are not the app's.
+bool g_awaiting_maximize = false;
+
+bool maximize_turns() {
+    static const bool on = [] {
+        const char* e = std::getenv("WINAPK_MAXIMIZE_TURNS");
+        return !(e && e[0] == '0');
+    }();
+    return on;
+}
+
+// px per dp a maximized window shows the phone at in a box of bw by bh pixels.
+float zoomed_scale(int bw, int bh, float normal) {
+    const int shortest = g_normal_w > 0 && g_normal_h > 0 ? std::min(g_normal_w, g_normal_h) : 360;
+    return std::max(normal, static_cast<float>(std::min(bw, bh)) / static_cast<float>(shortest));
+}
 
 UINT monitor_dpi(HMONITOR mon) {
     using GetDpiForMonitorFn = HRESULT(WINAPI*)(HMONITOR, int, UINT*, UINT*);
@@ -462,14 +500,21 @@ ULONGLONG g_followed_at = 0;
 // changed.
 bool follow_client(HWND hwnd) {
     if (!resizable_enabled() || g_fitting || IsIconic(hwnd) || g_shown_scale <= 0) return false;
+    if (g_awaiting_maximize) {
+        if (!IsZoomed(hwnd)) return false;
+        g_awaiting_maximize = false;
+    }
     const RECT box = client_app_rect(hwnd);
     const int bw = box.right - box.left, bh = box.bottom - box.top;
     if (bw <= 0 || bh <= 0) return false;
     // The surface is the box in pixels; on a monitor the window shows the app
     // at another scale than its density (see above), the box times that ratio.
-    const double ratio = static_cast<double>(g_surface_scale) / static_cast<double>(g_shown_scale);
+    // A maximized window shows the phone turned, at the scale that takes.
+    const bool turned = IsZoomed(hwnd) && !g_embed_parent && maximize_turns();
+    const float shown = turned ? zoomed_scale(bw, bh, g_shown_scale) : g_shown_scale;
+    const double ratio = static_cast<double>(g_surface_scale) / static_cast<double>(shown);
     int pw = static_cast<int>(std::lround(bw * ratio)), ph = static_cast<int>(std::lround(bh * ratio));
-    int w = static_cast<int>(std::lround(bw / g_shown_scale)), h = static_cast<int>(std::lround(bh / g_shown_scale));
+    int w = static_cast<int>(std::lround(bw / shown)), h = static_cast<int>(std::lround(bh / shown));
     if (w < kMinDp) {
         w = kMinDp;
         pw = client_px(kMinDp, g_surface_scale);
@@ -481,6 +526,10 @@ bool follow_client(HWND hwnd) {
     if (pw == g_surface.cx && ph == g_surface.cy && w == g_phone_w && h == g_phone_h) return false;
     g_phone_w = w;
     g_phone_h = h;
+    if (!IsZoomed(hwnd) && !g_embed_parent) {
+        g_normal_w = w;
+        g_normal_h = h;
+    }
     g_surface = SIZE{pw, ph};
     g_followed_at = GetTickCount64();
     if (!g_in_size_move) {
@@ -1381,8 +1430,11 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             shown = true;
             if ((first && !started_without_activation()) || (!first && foreground_is_ours())) {
                 // Every activity the app starts shows the window again;
-                // SW_SHOWNORMAL would take a maximized window out of it.
-                ShowWindow(hwnd, IsZoomed(hwnd) ? SW_SHOW : SW_SHOWNORMAL);
+                // SW_SHOWNORMAL would take a maximized window out of it. The
+                // first show of an app that was maximized when it last ran
+                // is maximized.
+                ShowWindow(hwnd, first && g_start_maximized && resizable_enabled() ? SW_SHOWMAXIMIZED
+                                 : IsZoomed(hwnd) ? SW_SHOW : SW_SHOWNORMAL);
                 SetForegroundWindow(hwnd);
             } else if (!IsWindowVisible(hwnd)) {
                 ShowWindow(hwnd, SW_SHOWNOACTIVATE);
@@ -1489,8 +1541,15 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 PostMessageW(hwnd, kMsgResize, 0, 0);
             } else if ((wp == SIZE_MAXIMIZED || wp == SIZE_RESTORED) && g_fit_monitor) {
                 // Outside a drag the size is final: a snap or a restore is
-                // kept for the next start; a maximized window is not a size.
+                // kept for the next start; a maximized window is not a size,
+                // it is a state, kept beside the size the window has without it.
+                static bool was_maximized = false;
                 if (follow_client(hwnd) && !g_in_size_move && wp == SIZE_RESTORED) remember_size();
+                const bool maximized = wp == SIZE_MAXIMIZED;
+                if (maximized != was_maximized && !g_embed_parent && resizable_enabled() && g_normal_w > 0) {
+                    was_maximized = maximized;
+                    g_input->remember_maximized(maximized, g_normal_w, g_normal_h);
+                }
             }
             // The box moves to the new centre: Windows would repaint only
             // the newly uncovered part.
@@ -1603,9 +1662,27 @@ float window_plan(int phone_w, int phone_h) {
     const float natural = static_cast<float>(g_plan.dpi) / 96.0f;
     g_plan.scale = parent ? natural
                           : std::min(natural, fit_scale(work_area(g_plan.monitor), g_plan.dpi, phone_w, phone_h));
+    if (!parent && g_start_maximized && maximize_turns() && resizable_enabled()) {
+        // The window opens maximized, showing the phone turned: the scale at
+        // which the phone's short side is the height of a maximized window's
+        // client area (the work area less the title bar), so the app's density
+        // is the one its frames are shown at, pixel for pixel.
+        const RECT wa = work_area(g_plan.monitor);
+        RECT f{0, 0, 0, 0};
+        adjust_for_dpi(&f, g_plan.dpi);
+        const int caption = -f.top - f.bottom;  // the frame's top less a border: the title bar
+        const int cw = wa.right - wa.left, ch = (wa.bottom - wa.top) - std::max(caption, 0);
+        if (cw > 0 && ch > 0) {
+            g_plan.normal = g_plan.scale;
+            g_plan.maximized = true;
+            g_plan.scale = static_cast<float>(std::min(cw, ch)) / static_cast<float>(std::min(phone_w, phone_h));
+        }
+    }
     g_plan.set = true;
     return g_plan.scale;
 }
+
+void window_set_start_maximized(bool maximized) { g_start_maximized = maximized; }
 
 int window_density_dpi(float scale) { return window_density_for(scale); }
 
@@ -1645,12 +1722,17 @@ bool window_start(int phone_w, int phone_h, float surface_scale, WindowInput* in
     if (!g_plan.set) window_plan(phone_w, phone_h);
     g_phone_w = phone_w;
     g_phone_h = phone_h;
+    g_normal_w = phone_w;
+    g_normal_h = phone_h;
     g_surface_scale = surface_scale > 0 ? surface_scale : 1.0f;
     g_surface = SIZE{client_px(phone_w, g_surface_scale), client_px(phone_h, g_surface_scale)};
     // The density came from the plan (no WINAPK_DENSITY): the window shows
     // the frames pixel for pixel.
     const bool planned = std::fabs(g_surface_scale * 160.0f - static_cast<float>(window_density_dpi(g_plan.scale))) < 0.5f;
-    g_base_scale = planned ? g_surface_scale : g_plan.scale;
+    // Planned maximized: out of it the window shows the phone at the normal
+    // scale, its larger frames resampled down.
+    g_base_scale = g_plan.maximized ? g_plan.normal : planned ? g_surface_scale : g_plan.scale;
+    g_awaiting_maximize = g_plan.maximized;
     StartArgs args{CreateEventW(nullptr, TRUE, FALSE, nullptr), false};
     HANDLE t = CreateThread(nullptr, 0, ui_thread, &args, 0, nullptr);
     if (!t) return false;
