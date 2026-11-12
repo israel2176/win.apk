@@ -31,15 +31,99 @@ public final class Probes {
         R.layout.text_gravity, R.layout.linear_weights, R.layout.frame_gravity, R.layout.relative,
         R.layout.edit_compound, R.layout.custom_params, R.layout.icons,
         R.layout.lib_material, R.layout.lib_constraint, R.layout.lib_appbar,
+        R.layout.lib_text_lines, R.layout.lib_images, R.layout.lib_list, R.layout.lib_dialog,
+        R.layout.lib_material, R.layout.lib_appbar, R.layout.lib_list, R.layout.lib_dialog,
+        R.layout.lib_material, R.layout.lib_appbar, R.layout.lib_list, R.layout.lib_dialog,
+        R.layout.lib_material, R.layout.lib_dialog,
     };
     private static final String[] NAMES = {
         "text_gravity", "linear_weights", "frame_gravity", "relative", "edit_compound", "custom_params", "icons",
         "lib_material", "lib_constraint", "lib_appbar",
+        "lib_text_lines", "lib_images", "lib_list", "lib_dialog",
+        "dark_material", "dark_appbar", "dark_list", "dark_dialog",
+        "m3_material", "m3_appbar", "m3_list", "m3_dialog",
+        "m3dark_material", "m3dark_dialog",
     };
 
     /** The platform's theme for the framework's own widgets, Material Components for the libraries'. */
     private static int themeOf(String name) {
+        if (name.startsWith("dark_")) return R.style.ProbeLibDark;
+        if (name.startsWith("m3dark_")) return R.style.ProbeM3Dark;
+        if (name.startsWith("m3_")) return R.style.ProbeM3;
         return name.startsWith("lib_") ? R.style.ProbeLibTheme : R.style.ProbeTheme;
+    }
+
+    /** A dialog's content is inflated with the theme's alertDialogTheme, as AlertDialog does. */
+    private static Context dialogContext(Context c) {
+        android.util.TypedValue v = new android.util.TypedValue();
+        int attr = c.getResources().getIdentifier("alertDialogTheme", "attr", c.getPackageName());
+        if (attr != 0 && c.getTheme().resolveAttribute(attr, v, true) && v.resourceId != 0) {
+            return new ContextThemeWrapper(c, v.resourceId);
+        }
+        return c;
+    }
+
+    /** What code does after inflating: a list's rows, a dialog's words. */
+    private static void fill(View root, Context c) {
+        int[] lists = {R.id.recycler, R.id.recycler_grid, R.id.recycler_strip};
+        for (int i = 0; i < lists.length; i++) {
+            View v = root.findViewById(lists[i]);
+            if (!(v instanceof androidx.recyclerview.widget.RecyclerView)) continue;
+            androidx.recyclerview.widget.RecyclerView list = (androidx.recyclerview.widget.RecyclerView) v;
+            final int layout = i == 0 ? R.layout.row_item : R.layout.row_cell;
+            final int count = i == 0 ? 12 : i == 1 ? 6 : 8;
+            final boolean strip = i == 2;
+            final float d = c.getResources().getDisplayMetrics().density;
+            if (i == 0) {
+                list.addItemDecoration(new androidx.recyclerview.widget.DividerItemDecoration(
+                    c, androidx.recyclerview.widget.DividerItemDecoration.VERTICAL));
+            }
+            list.setAdapter(new androidx.recyclerview.widget.RecyclerView.Adapter<Row>() {
+                @Override public Row onCreateViewHolder(ViewGroup parent, int type) {
+                    View row = LayoutInflater.from(parent.getContext()).inflate(layout, parent, false);
+                    if (strip) row.getLayoutParams().width = Math.round(96 * d);
+                    return new Row(row);
+                }
+                @Override public void onBindViewHolder(Row row, int position) {
+                    String[] titles = {"\u05e9\u05dc\u05d5\u05dd \u05e2\u05d5\u05dc\u05dd", "Station",
+                                       "\u05d0\u05d1\u05d5 \u05d9\u05d0\u05d9\u05e8 Vs 2026"};
+                    ((TextView) row.itemView.findViewById(R.id.row_title)).setText(titles[position % 3] + " " + position);
+                    TextView detail = row.itemView.findViewById(R.id.row_detail);
+                    if (detail != null) {
+                        detail.setText(position % 2 == 0 ? R.string.he_long : R.string.en_short);
+                    }
+                    TextView end = row.itemView.findViewById(R.id.row_end);
+                    if (end != null) end.setText(position % 4 == 0 ? "12:3" + position % 10 : "");
+                }
+                @Override public int getItemCount() { return count; }
+            });
+        }
+        TextView title = root.findViewById(androidx.appcompat.R.id.alertTitle);
+        if (title != null) {
+            title.setText(R.string.dialog_title);
+            TextView message = root.findViewById(android.R.id.message);
+            if (message != null) message.setText(R.string.dialog_message);
+            int[] buttons = {android.R.id.button1, android.R.id.button2, android.R.id.button3};
+            int[] words = {R.string.dialog_yes, R.string.dialog_no, 0};
+            for (int i = 0; i < buttons.length; i++) {
+                View b = root.findViewById(buttons[i]);
+                if (!(b instanceof TextView)) continue;
+                if (words[i] == 0) { b.setVisibility(View.GONE); continue; }
+                ((TextView) b).setText(words[i]);
+                b.setVisibility(View.VISIBLE);
+            }
+            // AlertController hides what the dialog does not use.
+            int[] unused = {androidx.appcompat.R.id.customPanel, android.R.id.icon,
+                            androidx.appcompat.R.id.titleDividerNoCustom};
+            for (int id : unused) {
+                View u = root.findViewById(id);
+                if (u != null) u.setVisibility(View.GONE);
+            }
+        }
+    }
+
+    private static final class Row extends androidx.recyclerview.widget.RecyclerView.ViewHolder {
+        Row(View v) { super(v); }
     }
 
     /** runAll for a caller that must not name an Android class: the oracle's test class is
@@ -64,9 +148,11 @@ public final class Probes {
                 out.add("case " + name);
                 try {
                     Context c = new ContextThemeWrapper(app, themeOf(NAMES[i]));
+                    if (NAMES[i].endsWith("_dialog")) c = dialogContext(c);
                     FrameLayout root = new FrameLayout(c);
                     root.setLayoutDirection(dir == 0 ? View.LAYOUT_DIRECTION_LTR : View.LAYOUT_DIRECTION_RTL);
                     LayoutInflater.from(c).inflate(LAYOUTS[i], root, true);
+                    fill(root, c);
                     root.measure(View.MeasureSpec.makeMeasureSpec(w, View.MeasureSpec.EXACTLY),
                                  View.MeasureSpec.makeMeasureSpec(h, View.MeasureSpec.EXACTLY));
                     root.layout(0, 0, w, h);
@@ -473,6 +559,10 @@ public final class Probes {
                 Layout l = tv.getLayout();
                 if (l != null) {
                     sb.append(" lines=").append(l.getLineCount());
+                    int last = l.getLineCount() - 1;
+                    sb.append(" texth=").append(dp(l.getHeight(), d))
+                      .append(" lastw=").append(dp(l.getLineWidth(last), d))
+                      .append(" ell=").append(l.getEllipsisCount(last));
                     // Where the first line's ink sits inside the view.
                     sb.append(" text=").append(dp(l.getLineLeft(0) + tv.getTotalPaddingLeft(), d))
                       .append("..").append(dp(l.getLineRight(0) + tv.getTotalPaddingLeft(), d))
@@ -483,6 +573,15 @@ public final class Probes {
             } catch (Throwable t) {
                 sb.append(" text?").append(t.getClass().getSimpleName());
             }
+        }
+        if (v instanceof android.widget.ImageView && ((android.widget.ImageView) v).getDrawable() != null) {
+            android.widget.ImageView iv = (android.widget.ImageView) v;
+            float[] m = new float[9];
+            iv.getImageMatrix().getValues(m);
+            android.graphics.Rect b = iv.getDrawable().getBounds();
+            sb.append(" scale=").append(Math.round(m[0] * 100) / 100f).append('x').append(Math.round(m[4] * 100) / 100f)
+              .append(" shift=").append(dp(m[2], d)).append(',').append(dp(m[5], d))
+              .append(" pic=").append(dp(b.width(), d)).append('x').append(dp(b.height(), d));
         }
         if (v instanceof android.widget.ImageView) {
             android.content.res.ColorStateList tint = ((android.widget.ImageView) v).getImageTintList();

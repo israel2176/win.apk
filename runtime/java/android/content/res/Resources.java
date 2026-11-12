@@ -6151,6 +6151,10 @@ public class Resources {
             }
         }
 
+        /** How deep the cascade is inside colour files it inflates against itself (a row of
+         *  one may name an attribute that is another such file); bounded like the hops. */
+        private static final ThreadLocal<int[]> macapkThemedFileDepth = ThreadLocal.withInitial(() -> new int[1]);
+
         private Integer macapkResolveAttrColorInCascade(String attrName, int depth) {
             try {
                 java.util.List<String> cascade =
@@ -6195,6 +6199,41 @@ public class Resources {
                         cur = next;
                         from = 0;
                         continue;
+                    }
+                    // A colour FILE whose default row is a theme attribute belongs to THIS
+                    // theme, so it is asked before the theme-less resolver. Material's
+                    // android:textColorPrimary is @color/material_on_background_emphasis_high_type,
+                    // a selector over ?attr/colorOnBackground; macapkResolveColorExpr flattens
+                    // such a file against the APPLICATION theme and remembers the answer, so
+                    // under any other theme (a dark activity in a light app, a themed dialog
+                    // or toolbar) the text took the application theme's colour: black on a
+                    // dark screen (uiprobe dark_list, dark_appbar).
+                    if (MACAPK_THEME_SELECTOR_ATTR_ROW && depth < 4 && raw.startsWith("@color/")) {
+                        Integer themed = macapkSelectorAttrRowColor(raw.substring(7), depth);
+                        if (themed != null) return themed;
+                    }
+                    // The same for a PLATFORM colour file: android:textColorPrimary of
+                    // Theme.Material is @android:color/text_color_primary, a selector over
+                    // ?attr/colorForeground, which every AppCompat and Material Components
+                    // theme inherits. Inflated against this theme (macapkLoadCslFile, as
+                    // AOSP's loadComplexColorForCookie does), its default row is this
+                    // theme's foreground: white under a dark theme.
+                    if (MACAPK_THEME_SELECTOR_ATTR_ROW && raw.charAt(0) == '@' && !raw.startsWith("@color/")) {
+                        int[] nesting = macapkThemedFileDepth.get();
+                        if (nesting[0] < 4) {
+                            nesting[0]++;
+                            try {
+                                int fileId = macapkResRefToId(raw);
+                                if ((fileId >>> 24) == 0x01) {
+                                    android.content.res.ColorStateList list =
+                                        Resources.this.macapkLoadCslFile(fileId, Theme.this);
+                                    if (list != null) return list.getDefaultColor();
+                                }
+                            } catch (Throwable ignored) {
+                            } finally {
+                                nesting[0]--;
+                            }
+                        }
                     }
                     Integer c = macapkResolveColorExpr(raw);
                     if (c != null) return c;

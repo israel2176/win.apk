@@ -6,4 +6,15 @@
         <item name="colorSecondary">#FFD81B60</item>
         <item name="probeLabelStyle">@style/ProbeLabel</item>
     </style>
+    <style name="ProbeLibDark" parent="Theme.MaterialComponents.NoActionBar">
+        <item name="colorPrimary">#FF8AB4F8</item>
+        <item name="colorSecondary">#FFF48FB1</item>
+        <item name="probeLabelStyle">@style/ProbeLabel</item>
+    </style>
+    <style name="ProbeM3" parent="Theme.Material3.Light.NoActionBar">
+        <item name="probeLabelStyle">@style/ProbeLabel</item>
+    </style>
+    <style name="ProbeM3Dark" parent="Theme.Material3.Dark.NoActionBar">
+        <item name="probeLabelStyle">@style/ProbeLabel</item>
+    </style>
 </resources>
