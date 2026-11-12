@@ -488,6 +488,16 @@ public final class Probes {
             android.content.res.ColorStateList tint = ((android.widget.ImageView) v).getImageTintList();
             sb.append(" tint=").append(tint == null ? "none" : hex(tint.getColorForState(v.getDrawableState(), 0)));
         }
+        if (v instanceof android.widget.Checkable) {
+            sb.append(" checked=").append(((android.widget.Checkable) v).isChecked());
+        }
+        // Only whether the text is masked: the method's class is AppCompat's emoji wrapper
+        // wherever EmojiCompat is set up, which it is in a started app and not under test.
+        if (v instanceof TextView && ((TextView) v).getTransformationMethod()
+                instanceof android.text.method.PasswordTransformationMethod) {
+            sb.append(" password");
+        }
+        if (v instanceof TextView) sb.append(" gravity=").append(Integer.toHexString(((TextView) v).getGravity()));
         if (v.getBackgroundTintList() != null) {
             sb.append(" bgtint=").append(hex(v.getBackgroundTintList().getColorForState(v.getDrawableState(), 0)));
         }
