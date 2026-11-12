@@ -49,13 +49,15 @@ public class MeasureUnit {
     public static final MeasureUnit GRAM         = u("mass", "gram");
     public static final MeasureUnit KILOGRAM     = u("mass", "kilogram");
     public static final MeasureUnit POUND        = u("mass", "pound");
-    public static final MeasureUnit SECOND       = u("duration", "second");
-    public static final MeasureUnit MINUTE       = u("duration", "minute");
-    public static final MeasureUnit HOUR         = u("duration", "hour");
-    public static final MeasureUnit DAY          = u("duration", "day");
-    public static final MeasureUnit WEEK         = u("duration", "week");
-    public static final MeasureUnit MONTH        = u("duration", "month");
-    public static final MeasureUnit YEAR         = u("duration", "year");
+    // ICU declares these seven as TimeUnit, and an app's bytecode names the
+    // field with that type. TimeUnit.of: the same instances as TimeUnit.SECOND...
+    public static final TimeUnit SECOND          = TimeUnit.of("second");
+    public static final TimeUnit MINUTE          = TimeUnit.of("minute");
+    public static final TimeUnit HOUR            = TimeUnit.of("hour");
+    public static final TimeUnit DAY             = TimeUnit.of("day");
+    public static final TimeUnit WEEK            = TimeUnit.of("week");
+    public static final TimeUnit MONTH           = TimeUnit.of("month");
+    public static final TimeUnit YEAR            = TimeUnit.of("year");
     public static final MeasureUnit BYTE         = u("digital", "byte");
     public static final MeasureUnit KILOBYTE     = u("digital", "kilobyte");
     public static final MeasureUnit MEGABYTE     = u("digital", "megabyte");
@@ -100,8 +102,9 @@ public class MeasureUnit {
         if (a == null) {
             java.util.LinkedHashSet<MeasureUnit> out = new java.util.LinkedHashSet<>();
             for (java.lang.reflect.Field f : MeasureUnit.class.getFields()) {
-                if (f.getType() != MeasureUnit.class
-                        || !java.lang.reflect.Modifier.isStatic(f.getModifiers())) continue;
+                // Assignable, not equal: the durations are declared as TimeUnit.
+                if (!MeasureUnit.class.isAssignableFrom(f.getType())
+                        ||!java.lang.reflect.Modifier.isStatic(f.getModifiers())) continue;
                 try { out.add((MeasureUnit) f.get(null)); } catch (IllegalAccessException ignored) { }
             }
             a = java.util.Collections.unmodifiableSet(out);

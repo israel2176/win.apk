@@ -38,7 +38,11 @@ public final class ScanResult implements Parcelable {
 
     public ScanResult() {}
 
-    public CharSequence getWifiSsid() { return SSID; }
+    /** AOSP (API 33) returns the SSID as a WifiSsid, its raw bytes, and an
+     *  app's bytecode names that return type; null when the SSID is unknown. */
+    public WifiSsid getWifiSsid() {
+        return (SSID == null) ? null : WifiSsid.fromBytes(SSID.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    }
     public int getWifiStandard() { return WIFI_STANDARD_UNKNOWN; }
     public boolean is80211mcResponder() { return false; }
 

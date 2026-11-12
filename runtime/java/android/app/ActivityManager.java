@@ -175,6 +175,13 @@ public class ActivityManager {
     public List<AppTask> getAppTasks() { return Collections.emptyList(); }
 
     public void killBackgroundProcesses(String packageName) {}
+    /** AOSP forceStopPackage(String), a system API: stop everything of another
+     *  package. Each app here is its own Windows process that only the user
+     *  (or the launcher) ends, so like killBackgroundProcesses it stops nothing. */
+    public void forceStopPackage(String packageName) {}
+    /** AOSP getCurrentUser(), a system API: the id of the user in the
+     *  foreground. There is one user, the system user. */
+    public static int getCurrentUser() { return android.os.UserHandle.USER_SYSTEM; }
     public boolean clearApplicationUserData() { return true; }
 
     /** AOSP: per-pid memory snapshot. We return a single zeroed

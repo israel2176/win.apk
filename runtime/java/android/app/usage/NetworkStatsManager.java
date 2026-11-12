@@ -5,6 +5,8 @@ public class NetworkStatsManager {
     public NetworkStatsManager() {}
     public NetworkStats querySummary(int networkType, String subscriberId, long startTime, long endTime) { return new NetworkStats(); }
     public NetworkStats queryDetails(int networkType, String subscriberId, long startTime, long endTime) { return new NetworkStats(); }
+    public NetworkStats queryDetailsForUid(int networkType, String subscriberId, long startTime, long endTime, int uid) { return new NetworkStats(); }
+    public NetworkStats queryDetailsForUidTag(int networkType, String subscriberId, long startTime, long endTime, int uid, int tag) { return new NetworkStats(); }
     public NetworkStats.Bucket querySummaryForDevice(int networkType, String subscriberId, long startTime, long endTime) { return new NetworkStats.Bucket(); }
     public NetworkStats.Bucket querySummaryForUser(int networkType, String subscriberId, long startTime, long endTime) { return new NetworkStats.Bucket(); }
 }

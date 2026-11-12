@@ -138,6 +138,30 @@ public class BluetoothDevice implements Parcelable {
     public boolean setPin(byte[] pin) { return false; }
     public boolean createBond(int transport) { return false; }
 
+    // ---- System APIs (pairing, the link, per-device settings) ---------------
+    // Windows pairs and unpairs devices in its own Settings, and what it keeps
+    // about one is not the app's to change; each of these answers as a device
+    // does when the request cannot be carried out.
+
+    /** AOSP removeBond(): false when unpairing could not be started. */
+    public boolean removeBond() { return false; }
+    /** AOSP cancelBondProcess(): false when no pairing is in progress to cancel. */
+    public boolean cancelBondProcess() { return false; }
+    /** AOSP isConnected(): whether any link (ACL) to the device is up. The host
+     *  reports paired devices and scan results, not link state, and a link an
+     *  app opens itself is its BluetoothSocket's or BluetoothGatt's to report. */
+    public boolean isConnected() { return false; }
+    /** AOSP getBatteryLevel(): the remote's battery in percent, or
+     *  BATTERY_LEVEL_UNKNOWN when it is not known. */
+    public int getBatteryLevel() { return BATTERY_LEVEL_UNKNOWN; }
+    public static final int BATTERY_LEVEL_UNKNOWN = -1;
+    public static final int BATTERY_LEVEL_BLUETOOTH_OFF = -100;
+    /** AOSP getMetadata(int): the stored value of a METADATA_* key, null when
+     *  none is stored. Nothing stores any. */
+    public byte[] getMetadata(int key) { return null; }
+    /** AOSP setMetadata(int, byte[]): false when the value was not stored. */
+    public boolean setMetadata(int key, byte[] value) { return false; }
+
     /** AOSP: an RFCOMM socket to the service `uuid` on this device, not yet
      *  connected (BluetoothSocket.connect finds the channel and connects);
      *  secure, so the link is authenticated and encrypted. */

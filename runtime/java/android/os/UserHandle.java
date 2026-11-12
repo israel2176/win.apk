@@ -38,6 +38,8 @@ public final class UserHandle implements Parcelable {
     /** AOSP android14 UserHandle.java:574 -- `return this.equals(OWNER);`. Google
      *  Play services' bound-service entry (GmsApiChimeraService.onBind) asks it. */
     @Deprecated public boolean isOwner() { return this.equals(OWNER); }
+    /** AOSP isSystem(), a system API: whether this is the system user. */
+    public boolean isSystem() { return this.equals(SYSTEM); }
 
     public static UserHandle getUserHandleForUid(int uid) { return SYSTEM; }
     public static int getUserId(int uid)   { return USER_SYSTEM; }

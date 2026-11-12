@@ -172,6 +172,22 @@ public class BiometricPrompt {
             mNegativeText = text; mNegativeExecutor = executor; mNegativeListener = listener;
             return this;
         }
+        /** One more way out of the prompt, shown beside the negative button: a
+         *  label, an icon type and what to run when it is chosen. The prompt
+         *  here is the host's own dialog (Windows Hello), which has no place for
+         *  extra buttons, so an option is recorded and never offered: the user
+         *  still leaves through the negative button or cancel. */
+        public Builder addFallbackOption(CharSequence text, int iconType, Executor executor,
+                DialogInterface.OnClickListener listener) {
+            if (text == null || text.length() == 0) {
+                throw new IllegalArgumentException("Text must be set and non-empty");
+            }
+            if (executor == null) throw new IllegalArgumentException("Executor must not be null");
+            if (listener == null) throw new IllegalArgumentException("Listener must not be null");
+            mFallbackOptions.add(new Object[] { text, iconType, executor, listener });
+            return this;
+        }
+        private final java.util.ArrayList<Object[]> mFallbackOptions = new java.util.ArrayList<>();
         public Builder setAllowedAuthenticators(int authenticators) {
             mAuthenticators = authenticators; return this;
         }

@@ -5203,6 +5203,32 @@ public class Activity extends ContextThemeWrapper
      *  conversion. */
     public boolean setTranslucent(boolean translucent) { return false; }
 
+    /** AOSP Activity.TranslucentConversionListener (a system API): told when the
+     *  activities behind one made translucent have drawn. */
+    public interface TranslucentConversionListener {
+        /** @param drawComplete whether the activities behind drew in time. */
+        void onTranslucentConversionComplete(boolean drawComplete);
+    }
+
+    /** AOSP convertToTranslucent(TranslucentConversionListener, ActivityOptions),
+     *  the system API under setTranslucent(true): false when the conversion did
+     *  not happen, which it does not here (see setTranslucent). AOSP still
+     *  posts the callback in that case, with drawComplete false, and a caller
+     *  that waits on it (the Play Store's swipe-to-dismiss sheets) must hear
+     *  back. */
+    public boolean convertToTranslucent(final TranslucentConversionListener callback,
+            ActivityOptions options) {
+        if (callback != null) {
+            new android.os.Handler(android.os.Looper.getMainLooper()).post(
+                    () -> callback.onTranslucentConversionComplete(false));
+        }
+        return false;
+    }
+
+    /** AOSP convertFromTranslucent(): back to opaque after convertToTranslucent.
+     *  The window never stopped being opaque. */
+    public void convertFromTranslucent() {}
+
     /** AOSP setRecentsScreenshotEnabled(boolean): asks the system not to
      *  screenshot this activity for the Recents thumbnail. Mac.apk has no
      *  Recents and never captures the window, so the request is already

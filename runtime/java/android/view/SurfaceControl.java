@@ -231,6 +231,30 @@ public final class SurfaceControl implements Parcelable {
         public Transaction setSecure(SurfaceControl sc, boolean isSecure) { return this; }
         public Transaction reparent(SurfaceControl sc, SurfaceControl newParent) { return this; }
         public Transaction setBuffer(SurfaceControl sc, Object buffer) { return this; }
+        /** AOSP (API 33) setBuffer(SurfaceControl, HardwareBuffer): the layer's
+         *  next content. No compositor takes it (see the class note). */
+        public Transaction setBuffer(SurfaceControl sc, android.hardware.HardwareBuffer buffer) {
+            return this;
+        }
+        /** AOSP (API 33): as above, with the fence that says when the buffer is
+         *  ready to be read. */
+        public Transaction setBuffer(SurfaceControl sc, android.hardware.HardwareBuffer buffer,
+                android.hardware.SyncFence fence) {
+            return this;
+        }
+        /** AOSP (API 34): as above, with a callback for when the compositor no
+         *  longer reads the buffer and the app may draw into it again. Nothing
+         *  ever reads it here, so it is the app's again at once: the callback
+         *  is called now, with an already signalled fence. Left uncalled, an
+         *  app that recycles a fixed pool of buffers would run out of them. */
+        public Transaction setBuffer(SurfaceControl sc, android.hardware.HardwareBuffer buffer,
+                android.hardware.SyncFence fence,
+                java.util.function.Consumer<android.hardware.SyncFence> releaseCallback) {
+            if (releaseCallback != null) {
+                releaseCallback.accept(android.hardware.SyncFence.createEmpty());
+            }
+            return this;
+        }
         public Transaction merge(Transaction other) { return this; }
 
         // ---- AOSP API-36 surface completion (android.view lane) -------------

@@ -147,6 +147,22 @@ public class StorageManager {
                     "requested " + bytes + " bytes, only " + avail + " available");
         }
     }
+    /** AOSP allocateBytes(FileDescriptor, long): make the open file at least
+     *  `bytes` long with the space behind it committed, or throw IOException.
+     *  Same check as the UUID form, on the volume the app's files are on, then
+     *  the file is extended (never shortened: AOSP's fallocate does not shrink). */
+    public void allocateBytes(java.io.FileDescriptor fd, long bytes) throws java.io.IOException {
+        if (fd == null) throw new NullPointerException("fd");
+        if (bytes <= 0L) return;
+        try {
+            long size = android.system.Os.fstat(fd).st_size;
+            if (size >= bytes) return;
+            allocateBytes(UUID_DEFAULT, bytes - size, 0);
+            android.system.Os.ftruncate(fd, bytes);
+        } catch (android.system.ErrnoException e) {
+            throw new java.io.IOException(e.getMessage(), e);
+        }
+    }
     public boolean isAllocationSupported(java.io.FileDescriptor fd) { return false; }
 
     /** AOSP getCacheQuotaBytes (API 26): the cache quota for the app on a volume.

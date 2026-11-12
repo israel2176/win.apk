@@ -418,6 +418,10 @@ public class Os {
         s.st_blksize = v[8]; s.st_blocks = v[9]; s.st_rdev = v[10];
         return s;
     }
+    public static void ftruncate(java.io.FileDescriptor fd, long length) throws ErrnoException {
+        int r = com.macapk.loader.NativeOs.ftruncate(fdOf(fd), length);
+        if (r < 0) throw new ErrnoException("ftruncate", -r);
+    }
     public static void posix_fallocate(java.io.FileDescriptor fd, long offset, long length) throws ErrnoException {
         int r = com.macapk.loader.NativeOs.ftruncate(fdOf(fd), offset + length);
         if (r < 0) throw new ErrnoException("posix_fallocate", -r);

@@ -13,4 +13,9 @@ public final class ProfilingManager {
     public void registerForAllProfilingResults(Executor executor,
             Consumer<ProfilingResult> listener) { }
     public void unregisterForAllProfilingResults(Consumer<ProfilingResult> listener) { }
+    /** API 36: profiles the system should take by itself after an event. With
+     *  no profiler none is ever taken, so the triggers need no keeping. */
+    public void addProfilingTriggers(java.util.List<ProfilingTrigger> triggers) { }
+    public void removeProfilingTriggersByType(int[] triggers) { }
+    public void clearProfilingTriggers() { }
 }

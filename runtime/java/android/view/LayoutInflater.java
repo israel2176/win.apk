@@ -4755,7 +4755,7 @@ public class LayoutInflater {
                     // ?button_color solid, #b4d2e4 183,460 px -> 0.
                     // AppCompatButton does not override the setter, which is
                     // why the same layout painted correctly WITHOUT the flip.
-                    Integer tc = macapkResolveColorValue(value);
+                    Integer tc = macapkResolveColorValue(value, macapkThemeOf(view));
                     if (tc != null) {
                         view.macapkSetInflatedBackgroundTint(
                             android.content.res.ColorStateList.valueOf(tc));
@@ -4780,8 +4780,19 @@ public class LayoutInflater {
                 // own comment cites CompoundButton.applyButtonTint / ProgressBar
                 // as prior art) -- only the inflater-side wiring was missing.
                 case "tint":
-                    if (view instanceof android.widget.ImageView iv2) {
-                        Integer tintColor = macapkResolveColorValue(value);
+                    // Only where the view has no tint of its own. AppCompat's and
+                    // Material's image views read app:tint in their constructors,
+                    // as a state list and against their own context's theme; this
+                    // wiring then replaced that with one colour resolved against
+                    // the APPLICATION theme, so under a view-level theme or a
+                    // ContextThemeWrapper (a dark toolbar, a dialog) the icon took
+                    // the wrong theme's colour (uiprobe: tint="?attr/colorPrimary"
+                    // came out the platform's #f5f5f5, not the theme's blue).
+                    // And where it does apply, the view's theme answers.
+                    if (view instanceof android.widget.ImageView iv2 && iv2.getImageTintList() == null) {
+                        android.content.res.Resources.Theme tintTheme = null;
+                        try { tintTheme = view.getContext().getTheme(); } catch (Throwable ignored) {}
+                        Integer tintColor = macapkResolveColorValue(value, tintTheme);
                         if (tintColor != null) {
                             iv2.setImageTintList(
                                 android.content.res.ColorStateList.valueOf(tintColor));
@@ -4910,7 +4921,7 @@ public class LayoutInflater {
                     // textColorHint in place, which is the honest fallback.
                     {
                         if (view instanceof android.widget.TextView tvh) {
-                            Integer hc = macapkResolveColorValue(value);
+                            Integer hc = macapkResolveColorValue(value, macapkThemeOf(view));
                             if (hc != null) tvh.setHintTextColor(hc.intValue());
                         }
                     }
@@ -4994,7 +5005,7 @@ public class LayoutInflater {
                               dy = tvsh.getShadowDy();
                         int col = tvsh.getShadowColor();
                         if ("shadowColor".equals(attr)) {
-                            Integer sc = macapkResolveColorValue(value);
+                            Integer sc = macapkResolveColorValue(value, macapkThemeOf(view));
                             if (sc == null) return;
                             col = sc.intValue();
                         } else {
@@ -5094,7 +5105,7 @@ public class LayoutInflater {
                         // default black instead of grey.
                         android.content.res.ColorStateList csl = macapkResolveTextColorList(view, value, null);
                         if (csl != null) { tv.setTextColor(csl); return; }
-                        Integer c = macapkResolveColorValue(value);
+                        Integer c = macapkResolveColorValue(value, macapkThemeOf(view));
                         if (c != null) tv.setTextColor(c);
                     }
                     return;
@@ -6501,6 +6512,16 @@ public class LayoutInflater {
      *  docs/attr-theme-threading_2026-07-31.md's own scoping discipline
      *  ("no confirmed victim needs it threaded today" -- same standard
      *  applied here, not a blanket policy against threading them). */
+    /** The theme a view's attributes resolve against: its own context's (a view-level
+     *  android:theme, a ContextThemeWrapper, a dialog's), as obtainStyledAttributes has it.
+     *  A colour written "?attr/x" on the element belongs to that theme, not the application's. */
+    private static android.content.res.Resources.Theme macapkThemeOf(View view) {
+        try {
+            return view != null && view.getContext() != null ? view.getContext().getTheme() : null;
+        } catch (Throwable t) {
+            return null;
+        }
+    }
     private Integer macapkResolveColorValue(String v) {
         return macapkResolveColorValue(v, null);
     }

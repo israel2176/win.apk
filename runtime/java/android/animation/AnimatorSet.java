@@ -26,9 +26,10 @@ import java.util.Map;
 import java.util.Set;
 
 public final class AnimatorSet extends Animator {
-    private final ArrayList<Animator> nodes = new ArrayList<>();
+    // Not final: clone() gives the copy its own.
+    private ArrayList<Animator> nodes = new ArrayList<>();
     // node -> the set of animators that must END before this node may start.
-    private final Map<Animator, Set<Animator>> deps = new HashMap<>();
+    private Map<Animator, Set<Animator>> deps = new HashMap<>();
     private boolean durationSet = false;
 
     private Animator ensureNode(Animator a) {
@@ -297,6 +298,36 @@ public final class AnimatorSet extends Animator {
     public void setCurrentPlayTime(long playTime) { }
 
     public void reverse() { }
+
+    /** AOSP AnimatorSet.clone(): declared to return AnimatorSet, and an app's
+     *  bytecode calls it by that descriptor. The copy gets copies of the child
+     *  animators, wired to each other as the originals are, so that playing
+     *  one set does not drive the other's children. */
+    @Override public AnimatorSet clone() {
+        final AnimatorSet anim = (AnimatorSet) super.clone();
+        anim.nodes = new ArrayList<>(nodes.size());
+        anim.deps = new HashMap<>();
+        anim.remaining = 0;
+        anim.mStartTimeMillis = -1;
+        final Map<Animator, Animator> copies = new HashMap<>();
+        for (Animator node : nodes) {
+            Animator copy = node.clone();
+            copies.put(node, copy);
+            anim.nodes.add(copy);
+        }
+        for (Animator node : nodes) {
+            Set<Animator> waitsFor = new LinkedHashSet<>();
+            Set<Animator> original = deps.get(node);
+            if (original != null) {
+                for (Animator dep : original) {
+                    Animator copy = copies.get(dep);
+                    if (copy != null) waitsFor.add(copy);
+                }
+            }
+            anim.deps.put(copies.get(node), waitsFor);
+        }
+        return anim;
+    }
 }
 
 

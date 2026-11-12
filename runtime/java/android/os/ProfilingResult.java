@@ -10,4 +10,6 @@ public final class ProfilingResult {
     public String getErrorMessage() { return "profiling not supported"; }
     public String getResultFilePath() { return null; }
     public String getTag() { return null; }
+    /** API 36: what set the profile off; none, for one the app asked for itself. */
+    public int getTriggerType() { return ProfilingTrigger.TRIGGER_TYPE_NONE; }
 }

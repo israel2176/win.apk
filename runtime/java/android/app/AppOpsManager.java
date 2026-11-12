@@ -838,6 +838,112 @@ public class AppOpsManager {
     // round-trips, because AOSP documents passing (null, null) to UNregister and
     // an app may do that unconditionally on teardown.
 
+    /** AOSP getPackagesForOps(String[]), a system API: the recorded state of the
+     *  given ops (null: all) for every package. This class keeps a mode per op
+     *  for the one app in the process and no history of who used what, so there
+     *  is no record to list; AOSP's answer for that is an empty list. */
+    public java.util.List<PackageOps> getPackagesForOps(String[] ops) {
+        return new java.util.ArrayList<PackageOps>();
+    }
+
+    /** AOSP AppOpsManager.PackageOps: one package's ops, an element of
+     *  getPackagesForOps. */
+    public static final class PackageOps implements android.os.Parcelable {
+        private final String mPackageName;
+        private final int mUid;
+        private final java.util.List<OpEntry> mEntries;
+
+        /** @hide in AOSP. */
+        public PackageOps(String packageName, int uid, java.util.List<OpEntry> entries) {
+            mPackageName = packageName;
+            mUid = uid;
+            mEntries = (entries == null) ? new java.util.ArrayList<OpEntry>() : entries;
+        }
+
+        public String getPackageName() { return mPackageName; }
+        public int getUid() { return mUid; }
+        public java.util.List<OpEntry> getOps() { return mEntries; }
+
+        @Override public int describeContents() { return 0; }
+        @Override public void writeToParcel(android.os.Parcel dest, int flags) {
+            dest.writeString(mPackageName);
+            dest.writeInt(mUid);
+            dest.writeTypedList(mEntries);
+        }
+        public static final android.os.Parcelable.Creator<PackageOps> CREATOR =
+                new android.os.Parcelable.Creator<PackageOps>() {
+            @Override public PackageOps createFromParcel(android.os.Parcel source) {
+                String packageName = source.readString();
+                int uid = source.readInt();
+                return new PackageOps(packageName, uid, source.createTypedArrayList(OpEntry.CREATOR));
+            }
+            @Override public PackageOps[] newArray(int size) { return new PackageOps[size]; }
+        };
+    }
+
+    /** AOSP AppOpsManager.OpEntry: one op of a package, its mode and when it
+     *  was last used or refused. Times are -1 for "never", as in AOSP. */
+    public static final class OpEntry implements android.os.Parcelable {
+        private final String mOpStr;
+        private final int mMode;
+        private final long mLastAccessTime;
+        private final long mLastRejectTime;
+        private final long mLastDuration;
+        private final boolean mRunning;
+
+        /** @hide in AOSP. */
+        public OpEntry(String opStr, int mode, long lastAccessTime, long lastRejectTime, long lastDuration,
+                boolean running) {
+            mOpStr = opStr;
+            mMode = mode;
+            mLastAccessTime = lastAccessTime;
+            mLastRejectTime = lastRejectTime;
+            mLastDuration = lastDuration;
+            mRunning = running;
+        }
+
+        public String getOpStr() { return mOpStr; }
+        public int getMode() { return mMode; }
+        /** @deprecated AOSP: use getLastAccessTime(int). */
+        @Deprecated public long getTime() { return mLastAccessTime; }
+        public long getLastAccessTime(int flags) { return mLastAccessTime; }
+        public long getLastAccessForegroundTime(int flags) { return mLastAccessTime; }
+        public long getLastAccessBackgroundTime(int flags) { return -1; }
+        /** @deprecated AOSP: use getLastRejectTime(int). */
+        @Deprecated public long getRejectTime() { return mLastRejectTime; }
+        public long getLastRejectTime(int flags) { return mLastRejectTime; }
+        public long getLastRejectForegroundTime(int flags) { return mLastRejectTime; }
+        public long getLastRejectBackgroundTime(int flags) { return -1; }
+        public boolean isRunning() { return mRunning; }
+        /** @deprecated AOSP: use getLastDuration(int). */
+        @Deprecated public long getDuration() { return mLastDuration; }
+        public long getLastDuration(int flags) { return mLastDuration; }
+        public long getLastForegroundDuration(int flags) { return mLastDuration; }
+        public long getLastBackgroundDuration(int flags) { return -1; }
+
+        @Override public int describeContents() { return 0; }
+        @Override public void writeToParcel(android.os.Parcel dest, int flags) {
+            dest.writeString(mOpStr);
+            dest.writeInt(mMode);
+            dest.writeLong(mLastAccessTime);
+            dest.writeLong(mLastRejectTime);
+            dest.writeLong(mLastDuration);
+            dest.writeInt(mRunning ? 1 : 0);
+        }
+        public static final android.os.Parcelable.Creator<OpEntry> CREATOR =
+                new android.os.Parcelable.Creator<OpEntry>() {
+            @Override public OpEntry createFromParcel(android.os.Parcel source) {
+                String opStr = source.readString();
+                int mode = source.readInt();
+                long lastAccessTime = source.readLong();
+                long lastRejectTime = source.readLong();
+                long lastDuration = source.readLong();
+                return new OpEntry(opStr, mode, lastAccessTime, lastRejectTime, lastDuration, source.readInt() != 0);
+            }
+            @Override public OpEntry[] newArray(int size) { return new OpEntry[size]; }
+        };
+    }
+
     /** AOSP AppOpsManager.OnOpNotedCallback: "Callback for notification of an
      *  app-op being noted." Abstract in AOSP, with all three hooks abstract. */
     public abstract static class OnOpNotedCallback {

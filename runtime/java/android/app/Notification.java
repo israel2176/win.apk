@@ -896,6 +896,10 @@ public class Notification implements android.os.Parcelable {
             public int getId() { return mId; }
             public Segment setColor(int color) { mColor = color; return this; }
             public int getColor() { return mColor; }
+            /** What the segment stands for (a hint for the system's colouring); stored. */
+            public Segment setSemanticStyle(int semanticStyle) { mSemanticStyle = semanticStyle; return this; }
+            public int getSemanticStyle() { return mSemanticStyle; }
+            private int mSemanticStyle = 0;
         }
 
         /** A point marker along the progress bar. */
@@ -909,6 +913,10 @@ public class Notification implements android.os.Parcelable {
             public int getId() { return mId; }
             public Point setColor(int color) { mColor = color; return this; }
             public int getColor() { return mColor; }
+            /** What the point stands for (a hint for the system's colouring); stored. */
+            public Point setSemanticStyle(int semanticStyle) { mSemanticStyle = semanticStyle; return this; }
+            public int getSemanticStyle() { return mSemanticStyle; }
+            private int mSemanticStyle = 0;
         }
     }
     public static class BigTextStyle extends Style {
@@ -1185,6 +1193,12 @@ public class Notification implements android.os.Parcelable {
         public int getSemanticAction() { return mSemanticAction; }
         public boolean isContextual() { return mContextual; }
         public boolean isAuthenticationRequired() { return mAuthRequired; }
+        /** How much the system should make the action stand out, and the style
+         *  to draw it in. 0, the default of both, for an action that set neither;
+         *  a toast draws every action alike. */
+        public int getEmphasisHint() { return mEmphasisHint; }
+        public int getStyleHint() { return mStyleHint; }
+        private int mEmphasisHint, mStyleHint;
 
         // ---- AOSP API-36 surface completion ----
 
