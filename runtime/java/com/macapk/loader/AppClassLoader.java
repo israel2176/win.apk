@@ -1056,6 +1056,19 @@ public final class AppClassLoader extends dalvik.system.PathClassLoader {
      *  loader-constraint LinkageError. We detect the wrapper because the app
      *  bundles the wrapper but NOT AssetPackManager itself (that is our
      *  shadow). See {@link #isGmsChildFirstFamily}. */
+    /** Whether the app carries its own Firebase (its FirebaseApp class); looked up once. */
+    private volatile int firebaseAppCache = -1;
+    private boolean appBundlesFirebase() {
+        int v = firebaseAppCache;
+        if (v >= 0) return v == 1;
+        boolean has = false;
+        try {
+            has = findResource("com/google/firebase/FirebaseApp.class") != null;
+        } catch (Throwable ignore) { /* treat as absent */ }
+        firebaseAppCache = has ? 1 : 0;
+        return has;
+    }
+
     private boolean appBundlesAssetPacks() {
         int v = padAppCache;
         if (v >= 0) return v == 1;
@@ -1163,6 +1176,17 @@ public final class AppClassLoader extends dalvik.system.PathClassLoader {
                         if (!QUIET_CLASSLOAD) NativeLog.i(TAG, "loadClass("
                             + normalised + ") child-first -> app's bundled copy");
                     } catch (ClassNotFoundException notInApp) {
+                        // An app that carries Firebase and asks for a Firebase class it
+                        // does not carry gets what a device gives it: no such class. Old
+                        // FirebaseApp.initializeApis probes its optional modules that way
+                        // (Class.forName("com.google.firebase.auth.FirebaseAuth") and
+                        // friends: "is not linked. Skipping initialization."), and with our
+                        // stand-in answering instead, its getMethod("getInstance",
+                        // <the app's FirebaseApp>) found nothing and threw "has been removed
+                        // by Proguard" out of the app's start (Home Front Command).
+                        if (normalised.startsWith("com.google.firebase.") && appBundlesFirebase()) {
+                            throw notInApp;
+                        }
                         // App didn't bundle it: fall back to our shadow via the
                         // normal parent-first delegation.
                         c = super.loadClass(normalised, false);
