@@ -56,6 +56,7 @@ public final class Probes {
         int w = Math.round(W_DP * density), h = Math.round(H_DP * density);
         themeValues(app, out);
         textLayouts(app, out);
+        defaultStyles(app, out);
         drawables(app, out);
         for (int i = 0; i < LAYOUTS.length; i++) {
             for (int dir = 0; dir < 2; dir++) {
@@ -95,6 +96,134 @@ public final class Probes {
             }
         }
         return out;
+    }
+
+    /** What a widget's constructor reads from its default style: for each default-style
+     *  attribute of the libraries' theme, the attributes widgets ask for, as
+     *  obtainStyledAttributes(null, {attr}, defStyleAttr, 0) answers them. A value that is a
+     *  reference to another theme attribute, to a drawable or to a colour list must come
+     *  out as on Android, or the widget takes its fallback and looks wrong everywhere. */
+    private static void defaultStyles(Context app, List<String> out) {
+        Context c = new ContextThemeWrapper(app, R.style.ProbeLibTheme);
+        String[][] reads = {
+            {"checkboxStyle", "buttonCompat", "android:button", "buttonTint", "android:background", "android:minHeight"},
+            {"radioButtonStyle", "buttonCompat", "android:button", "buttonTint", "android:background"},
+            {"switchStyle", "android:thumb", "track", "thumbTint", "trackTint", "switchMinWidth", "switchPadding",
+             "android:textOn", "showText", "thumbTextPadding"},
+            {"buttonStyle", "android:background", "android:textAppearance", "android:minHeight", "android:minWidth",
+             "android:textAllCaps", "backgroundTint"},
+            {"materialButtonStyle", "iconTint", "backgroundTint", "android:textColor", "cornerRadius", "iconPadding",
+             "rippleColor", "strokeColor", "android:insetTop", "android:paddingLeft", "android:textAppearance"},
+            {"editTextStyle", "android:background", "android:textColor", "android:textColorHint",
+             "android:textAppearance", "android:textCursorDrawable"},
+            {"toolbarStyle", "titleTextAppearance", "subtitleTextAppearance", "android:minHeight", "contentInsetStart",
+             "titleMargin", "maxButtonHeight", "buttonGravity", "navigationIcon", "android:paddingLeft"},
+            {"appBarLayoutStyle", "android:background", "elevation", "liftOnScroll"},
+            {"bottomNavigationStyle", "itemIconTint", "itemTextColor", "backgroundTint", "android:background",
+             "itemTextAppearanceActive", "labelVisibilityMode", "elevation", "itemRippleColor", "android:minHeight"},
+            {"tabStyle", "tabIndicatorColor", "tabTextColor", "tabIconTint", "tabTextAppearance", "tabIndicator",
+             "tabRippleColor", "android:background", "tabIndicatorHeight", "tabPaddingStart", "tabMinWidth"},
+            {"chipStyle", "chipBackgroundColor", "android:textColor", "chipMinHeight", "chipIconTint",
+             "android:textAppearance", "chipStrokeColor", "closeIconTint", "rippleColor", "checkedIcon", "chipStartPadding"},
+            {"textInputStyle", "boxBackgroundMode", "boxBackgroundColor", "hintTextColor", "boxStrokeColor",
+             "hintTextAppearance", "android:textColorHint", "shapeAppearance", "endIconTint", "boxCollapsedPaddingTop"},
+            {"floatingActionButtonStyle", "backgroundTint", "tint", "fabSize", "elevation", "rippleColor", "borderWidth",
+             "maxImageSize"},
+            {"extendedFloatingActionButtonStyle", "backgroundTint", "iconTint", "android:textColor", "iconSize",
+             "android:minHeight", "android:paddingStart"},
+            {"materialCardViewStyle", "cardBackgroundColor", "cardElevation", "strokeColor", "rippleColor",
+             "shapeAppearance", "checkedIconTint"},
+            {"cardViewStyle", "cardBackgroundColor", "cardCornerRadius", "cardElevation"},
+            {"snackbarStyle", "android:background", "backgroundTint", "actionTextColorAlpha", "maxActionInlineWidth"},
+            {"spinnerStyle", "android:background", "android:popupBackground", "android:dropDownSelector"},
+            {"seekBarStyle", "android:thumb", "android:progressDrawable", "tickMark", "android:splitTrack"},
+            {"android:progressBarStyleHorizontal", "android:progressDrawable", "android:indeterminateDrawable",
+             "android:minHeight", "android:maxHeight", "android:mirrorForRtl"},
+            {"android:progressBarStyle", "android:indeterminateDrawable", "android:minWidth", "android:indeterminateOnly"},
+            {"alertDialogStyle", "android:layout", "listLayout", "listItemLayout", "buttonIconDimen"},
+            {"actionBarStyle", "background", "titleTextStyle", "height", "elevation", "contentInsetStart", "displayOptions"},
+            {"actionButtonStyle", "android:background", "android:minWidth", "android:paddingLeft"},
+            {"actionOverflowButtonStyle", "srcCompat", "android:background", "android:minWidth"},
+            {"popupMenuStyle", "android:popupBackground", "overlapAnchor", "android:dropDownVerticalOffset"},
+            {"autoCompleteTextViewStyle", "android:background", "android:popupBackground", "android:dropDownSelector"},
+            {"checkedTextViewStyle", "android:textAppearance", "checkMarkCompat", "android:checkMark"},
+            {"navigationViewStyle", "itemIconTint", "itemTextColor", "android:background", "itemBackground",
+             "itemHorizontalPadding", "elevation"},
+            {"sliderStyle", "thumbColor", "trackColorActive", "trackColorInactive", "thumbRadius", "trackHeight",
+             "haloColor", "tickColorActive", "labelStyle"},
+            {"linearProgressIndicatorStyle", "indicatorColor", "trackColor", "trackThickness", "trackCornerRadius"},
+            {"circularProgressIndicatorStyle", "indicatorColor", "trackColor", "indicatorSize", "trackThickness"},
+            {"bottomSheetStyle", "backgroundTint", "shapeAppearance", "behavior_peekHeight", "behavior_hideable",
+             "android:elevation"},
+            {"badgeStyle", "backgroundColor", "badgeTextColor", "badgeRadius", "badgeWithTextRadius", "maxCharacterCount"},
+            {"materialToolbarStyle", "android:background", "titleTextColor", "navigationIconTint", "titleCentered"},
+            {"collapsingToolbarLayoutStyle", "collapsedTitleTextAppearance", "expandedTitleTextAppearance",
+             "statusBarScrim", "scrimAnimationDuration", "expandedTitleMargin"},
+            {"imageButtonStyle", "android:background", "android:scaleType"},
+            {"ratingBarStyle", "android:progressDrawable", "android:minHeight", "android:numStars"},
+            {"listViewStyle", "android:divider", "android:listSelector", "android:dividerHeight"},
+            {"dropDownListViewStyle", "android:divider", "android:listSelector", "android:dividerHeight"},
+            {"textAppearanceBody1", "android:textSize", "android:textColor", "fontFamily", "android:letterSpacing",
+             "android:textStyle", "android:fontFamily"},
+            {"textAppearanceButton", "android:textSize", "android:textColor", "android:textAllCaps", "android:letterSpacing"},
+            {"textAppearanceHeadline6", "android:textSize", "android:textColor", "fontFamily", "android:letterSpacing"},
+            {"textAppearanceCaption", "android:textSize", "android:textColor"},
+            {"shapeAppearanceSmallComponent", "cornerFamily", "cornerSize"},
+            {"shapeAppearanceMediumComponent", "cornerFamily", "cornerSize"},
+        };
+        out.add("case styles.lib");
+        for (String[] read : reads) {
+            int defStyle = attrId(c, read[0]);
+            for (int i = 1; i < read.length; i++) {
+                StringBuilder sb = new StringBuilder("  ").append(read[0]).append('/').append(read[i]);
+                try {
+                    int attr = attrId(c, read[i]);
+                    if (defStyle == 0 || attr == 0) {
+                        out.add(sb.append(" no such attribute").toString());
+                        continue;
+                    }
+                    android.content.res.TypedArray a = c.obtainStyledAttributes(null, new int[] {attr}, defStyle, 0);
+                    sb.append(" has=").append(a.hasValue(0));
+                    android.util.TypedValue v = a.peekValue(0);
+                    if (v == null) {
+                        sb.append(" value=null");
+                    } else {
+                        sb.append(" type=").append(v.type);
+                        int id = a.getResourceId(0, 0);
+                        if (id != 0) {
+                            sb.append(" res=").append(c.getResources().getResourceTypeName(id)).append('/')
+                              .append(c.getResources().getResourceEntryName(id));
+                        }
+                        if (v.type >= android.util.TypedValue.TYPE_FIRST_COLOR_INT
+                                && v.type <= android.util.TypedValue.TYPE_LAST_COLOR_INT) {
+                            sb.append(" colour=").append(hex(v.data));
+                        } else if (v.type == android.util.TypedValue.TYPE_DIMENSION) {
+                            sb.append(" dimen=").append(dp(a.getDimension(0, 0), c.getResources().getDisplayMetrics().density));
+                        } else if (v.type == android.util.TypedValue.TYPE_FLOAT) {
+                            sb.append(" float=").append(a.getFloat(0, 0));
+                        } else if (v.type >= android.util.TypedValue.TYPE_FIRST_INT
+                                && v.type <= android.util.TypedValue.TYPE_LAST_INT) {
+                            sb.append(" int=").append(v.data);
+                        }
+                        if (v.type == android.util.TypedValue.TYPE_STRING && id != 0
+                                && "color".equals(c.getResources().getResourceTypeName(id))) {
+                            android.content.res.ColorStateList l = a.getColorStateList(0);
+                            sb.append(" list=").append(l == null ? "null" : hex(l.getDefaultColor()));
+                        }
+                    }
+                    a.recycle();
+                } catch (Throwable t) {
+                    sb.append(" threw ").append(t.getClass().getSimpleName());
+                }
+                out.add(sb.toString());
+            }
+        }
+    }
+
+    private static int attrId(Context c, String name) {
+        return name.startsWith("android:")
+            ? c.getResources().getIdentifier(name.substring(8), "attr", "android")
+            : c.getResources().getIdentifier(name, "attr", c.getPackageName());
     }
 
     /** A line of text in a Layout wider than it, for each direction and alignment: where the

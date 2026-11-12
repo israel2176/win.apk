@@ -865,6 +865,39 @@ public class AccessibilityNodeInfo implements android.os.Parcelable {
         public int getTextSizeUnit() { return mTextSizeUnit; }
 
         public void setTextSizeUnit(int textSizeUnit) { mTextSizeUnit = textSizeUnit; }
+
+        /** Builds an ExtraRenderingInfo for a node an app describes itself
+         *  (setExtraRenderingInfo): the same three values, set before build(). */
+        public static final class Builder {
+            private android.util.Size mLayoutSize;
+            private float mTextSizeInPx = Float.NEGATIVE_INFINITY;
+            private int mTextSizeUnit = android.util.TypedValue.COMPLEX_UNIT_PX;
+
+            public Builder() { }
+
+            public Builder setLayoutSize(android.util.Size layoutSize) {
+                mLayoutSize = layoutSize;
+                return this;
+            }
+
+            public Builder setTextSizeInPx(float textSizeInPx) {
+                mTextSizeInPx = textSizeInPx;
+                return this;
+            }
+
+            public Builder setTextSizeUnit(int textSizeUnit) {
+                mTextSizeUnit = textSizeUnit;
+                return this;
+            }
+
+            public ExtraRenderingInfo build() {
+                ExtraRenderingInfo info = new ExtraRenderingInfo();
+                info.mLayoutSize = mLayoutSize;
+                info.mTextSizeInPx = mTextSizeInPx;
+                info.mTextSizeUnit = mTextSizeUnit;
+                return info;
+            }
+        }
     }
 
     // --- Selection (API 36) -------------------------------------------------

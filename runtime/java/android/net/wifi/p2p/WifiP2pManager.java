@@ -141,6 +141,56 @@ public class WifiP2pManager {
                 WifiP2pDevice srcDevice);
     }
 
+    /** AOSP (API 30): the answer to requestNetworkInfo. */
+    public interface NetworkInfoListener {
+        void onNetworkInfoAvailable(android.net.NetworkInfo networkInfo);
+    }
+
+    /** AOSP (API 33): an app that answers P2P connection requests of a peer in
+     *  the system's place hears of them through this. */
+    public interface ExternalApproverRequestListener {
+        int APPROVER_DETACH_REASON_REMOVE = 0;
+        int APPROVER_DETACH_REASON_FAILURE = 1;
+        int APPROVER_DETACH_REASON_REPLACE = 2;
+        int APPROVER_DETACH_REASON_CLOSE = 3;
+        int REQUEST_TYPE_NEGOTIATION = 0;
+        int REQUEST_TYPE_INVITATION = 1;
+        int REQUEST_TYPE_JOIN = 2;
+
+        void onAttached(android.net.MacAddress deviceAddress);
+        void onDetached(android.net.MacAddress deviceAddress, int reason);
+        void onConnectionRequested(int requestType, WifiP2pConfig config, WifiP2pDevice device);
+        void onPinGenerated(android.net.MacAddress deviceAddress, String pin);
+    }
+
+    /** AOSP connection request results, for setConnectionRequestResult. */
+    public static final int CONNECTION_REQUEST_ACCEPT = 0;
+    public static final int CONNECTION_REQUEST_REJECT = 1;
+    public static final int CONNECTION_REQUEST_DEFER_TO_SERVICE = 2;
+    public static final int CONNECTION_REQUEST_DEFER_SHOW_PIN_TO_SERVICE = 3;
+
+    /** A P2P network that is not connected: the only state there is with no
+     *  P2P interface. 13 is ConnectivityManager.TYPE_WIFI_P2P. */
+    public void requestNetworkInfo(Channel c, NetworkInfoListener listener) {
+        if (listener == null) return;
+        deliver(c, () -> listener.onNetworkInfoAvailable(
+                new android.net.NetworkInfo(13, android.net.NetworkInfo.State.DISCONNECTED)));
+    }
+
+    /** AOSP answers a request it cannot attach with onDetached(FAILURE), which
+     *  is every request here. */
+    public void addExternalApprover(Channel c, android.net.MacAddress deviceAddress,
+            ExternalApproverRequestListener listener) {
+        if (listener == null) return;
+        deliver(c, () -> listener.onDetached(deviceAddress,
+                ExternalApproverRequestListener.APPROVER_DETACH_REASON_FAILURE));
+    }
+
+    public void removeExternalApprover(Channel c, android.net.MacAddress deviceAddress,
+            ActionListener listener) {
+        failAction(c, listener);
+    }
+
     public WifiP2pManager() {}
 
     public WifiP2pManager(Context context) {}

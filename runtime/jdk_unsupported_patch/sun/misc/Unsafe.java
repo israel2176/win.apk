@@ -61,10 +61,6 @@
 // staticFieldOffset, defineClass, ...) would let a guest observe a surface no
 // device has.
 //
-// One exception since: staticFieldOffset / staticFieldBase. Apps ship direct
-// references to them (see "static fields" below), which is a NoSuchMethodError
-// wherever the code around them does run.
-//
 // HOW IT IS DELIVERED
 // -------------------
 // javac refuses `package sun.misc;` in the unnamed module ("package exists in
@@ -227,37 +223,6 @@ public final class Unsafe {
             throw new IllegalArgumentException("Valid for array classes only: " + clazz);
         }
         return theInternalUnsafe.arrayIndexScale(clazz);
-    }
-
-    // ---- static fields -------------------------------------------------
-    // The one departure from AOSP's surface (see the header: AOSP declares
-    // neither). Libraries built for both the JVM and Android (protobuf's
-    // UnsafeUtil, Guava, Kryo) carry direct calls to these two, and R8 keeps
-    // them; an app-compatibility scan of 50 apps found them referenced by 12.
-    // On a device the calls sit behind a probe that fails, so they never run;
-    // here the same probe (getMethod("staticFieldOffset", Field.class)) now
-    // succeeds, and what it guards must then work, so both are the host's.
-
-    /** The location of a static field, to be used with {@link #staticFieldBase}. */
-    public long staticFieldOffset(Field f) {
-        if (f == null) {
-            throw new NullPointerException();
-        }
-        if (!Modifier.isStatic(f.getModifiers())) {
-            throw new IllegalArgumentException("valid for static fields only");
-        }
-        return theInternalUnsafe.staticFieldOffset(f);
-    }
-
-    /** The object a static field's offset is relative to. */
-    public Object staticFieldBase(Field f) {
-        if (f == null) {
-            throw new NullPointerException();
-        }
-        if (!Modifier.isStatic(f.getModifiers())) {
-            throw new IllegalArgumentException("valid for static fields only");
-        }
-        return theInternalUnsafe.staticFieldBase(f);
     }
 
     // ---- compare-and-swap ----------------------------------------------

@@ -90,6 +90,7 @@ public class AccessibilityEvent extends AccessibilityRecord implements android.o
         e.mEventTime = event.mEventTime;
         e.mAction = event.mAction;
         e.mContentChangeTypes = event.mContentChangeTypes;
+        e.mTextChangeTypes = event.mTextChangeTypes;
         return e;
     }
 

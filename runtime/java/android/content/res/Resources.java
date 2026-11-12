@@ -4026,6 +4026,12 @@ public class Resources {
      *  `?attr`, names one; else a single-colour list. A tint must stay a LIST:
      *  ?attr/colorControlNormal is a selector in AppCompat themes, and its
      *  disabled row is what a disabled widget's tint shows. */
+    /** A drawable's android:tint as a colour state list (macapkColorStateListValue), for the
+     *  drawables that live outside this package. */
+    public android.content.res.ColorStateList macapkTintListFor(String v, Theme theme) {
+        return macapkColorStateListValue(v, theme);
+    }
+
     private android.content.res.ColorStateList macapkColorStateListValue(String v, Theme theme) {
         if (v == null) return null;
         v = v.trim();

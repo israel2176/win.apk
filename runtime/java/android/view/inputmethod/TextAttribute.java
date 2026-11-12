@@ -15,7 +15,14 @@ public final class TextAttribute implements android.os.Parcelable {
     private TextAttribute(Builder b) {
         mTextConversionSuggestions = b.mTextConversionSuggestions;
         mExtras = b.mExtras;
+        mTextSuggestionSelected = b.mTextSuggestionSelected;
     }
+
+    private final boolean mTextSuggestionSelected;
+
+    /** Whether the text is a suggestion the user picked from the IME's list,
+     *  not text they typed. False unless the IME said so. */
+    public boolean isTextSuggestionSelected() { return mTextSuggestionSelected; }
 
     /** AOSP: @NonNull, empty when the IME supplied none. */
     public java.util.List<String> getTextConversionSuggestions() {
@@ -28,6 +35,7 @@ public final class TextAttribute implements android.os.Parcelable {
     @Override public void writeToParcel(android.os.Parcel dest, int flags) {
         dest.writeStringList(mTextConversionSuggestions);
         dest.writePersistableBundle(mExtras);
+        dest.writeBoolean(mTextSuggestionSelected);
     }
 
     public static final android.os.Parcelable.Creator<TextAttribute> CREATOR =
@@ -38,6 +46,7 @@ public final class TextAttribute implements android.os.Parcelable {
             if (suggestions != null) b.setTextConversionSuggestions(suggestions);
             android.os.PersistableBundle extras = source.readPersistableBundle();
             if (extras != null) b.setExtras(extras);
+            b.setTextSuggestionSelected(source.readBoolean());
             return b.build();
         }
         @Override public TextAttribute[] newArray(int size) { return new TextAttribute[size]; }
@@ -57,6 +66,11 @@ public final class TextAttribute implements android.os.Parcelable {
         }
         public Builder setExtras(android.os.PersistableBundle extras) {
             mExtras = extras;
+            return this;
+        }
+        private boolean mTextSuggestionSelected;
+        public Builder setTextSuggestionSelected(boolean textSuggestionSelected) {
+            mTextSuggestionSelected = textSuggestionSelected;
             return this;
         }
         public TextAttribute build() { return new TextAttribute(this); }
