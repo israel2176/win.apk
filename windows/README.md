@@ -1489,6 +1489,20 @@ every such change is listed here:
   - `com/macapk/loader/AppClassLoader.java`: an app that carries Firebase
     gets no stand-in for a Firebase class it lacks (old `FirebaseApp` probes
     its optional modules by name).
+  - Theme threading: a colour file whose default row is a theme attribute
+    (`android:textColorPrimary` of Material and of the platform) and a layout
+    size written as a theme attribute (`?attr/actionBarSize`) are resolved
+    against the theme of the context asking, not the application's, and the
+    hand-built platform button and edit-text backgrounds take that theme's
+    colours. A dark activity in a light app had black text, a pale button and
+    a black underline; a Material 3 toolbar was 8dp short.
+  - `android/widget/TextView.java`: `maxWidth`, `maxHeight`, `width`,
+    `height`, `ems`, `maxEms`, `minEms`, line spacing, `minLines` and
+    `letterSpacing` are read over all the tiers; each paragraph takes its own
+    direction for its lines' side; a line-limited text's baseline and top
+    follow its gravity; a measured view with no text has its line.
+  - `android/widget/ImageView.java`: `getImageMatrix` is the configured
+    matrix; a newly set stateful drawable takes the view's state.
   - Platform members two or more of 50 apps name and the runtime lacked
     (`AccessibilityEvent.getTextChangeTypes`, `Network.CREATOR`,
     `OsConstants.PROT_READ`, `Context.bindService(.., BindServiceFlags)`,
