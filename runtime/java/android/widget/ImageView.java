@@ -435,7 +435,42 @@ public class ImageView extends View {
     public ScaleType getScaleType()        { return scaleType; }
     // v1.0.98: FAB chain reads + writes imageMatrix during init.
     private android.graphics.Matrix imageMatrix = new android.graphics.Matrix();
-    public android.graphics.Matrix getImageMatrix() { return imageMatrix; }
+    /** AOSP ImageView.getImageMatrix: the matrix the picture is drawn with (mDrawMatrix), the
+     *  identity when it needs none. Under ScaleType.MATRIX that is the one the app set; under
+     *  every other scale type it is what configureBounds works out from the picture's size
+     *  and the view's. This answered the app's (identity) matrix always, so code that reads
+     *  where the picture sits (zoomable image views, shared-element transitions, overlays
+     *  drawn over a photo) saw it unscaled at the corner. Drawing is not changed. */
+    public android.graphics.Matrix getImageMatrix() {
+        if (scaleType == ScaleType.MATRIX) return imageMatrix;
+        final android.graphics.Matrix m = new android.graphics.Matrix();
+        final android.graphics.drawable.Drawable d = getDrawable();
+        if (d == null) return m;
+        final int dw = d.getIntrinsicWidth(), dh = d.getIntrinsicHeight();
+        final int vw = getWidth() - getPaddingLeft() - getPaddingRight();
+        final int vh = getHeight() - getPaddingTop() - getPaddingBottom();
+        if (dw <= 0 || dh <= 0 || scaleType == ScaleType.FIT_XY || vw <= 0 || vh <= 0) return m;
+        if (vw == dw && vh == dh) return m;
+        if (scaleType == ScaleType.CENTER) {
+            m.setTranslate(Math.round((vw - dw) * 0.5f), Math.round((vh - dh) * 0.5f));
+        } else if (scaleType == ScaleType.CENTER_CROP) {
+            final float scale = dw * vh > vw * dh ? (float) vh / (float) dh : (float) vw / (float) dw;
+            m.setScale(scale, scale);
+            m.postTranslate(Math.round((vw - dw * scale) * 0.5f), Math.round((vh - dh * scale) * 0.5f));
+        } else if (scaleType == ScaleType.CENTER_INSIDE) {
+            final float scale = (dw <= vw && dh <= vh) ? 1.0f
+                : Math.min((float) vw / (float) dw, (float) vh / (float) dh);
+            m.setScale(scale, scale);
+            m.postTranslate(Math.round((vw - dw * scale) * 0.5f), Math.round((vh - dh * scale) * 0.5f));
+        } else {
+            final android.graphics.Matrix.ScaleToFit fit =
+                scaleType == ScaleType.FIT_START ? android.graphics.Matrix.ScaleToFit.START
+                : scaleType == ScaleType.FIT_END ? android.graphics.Matrix.ScaleToFit.END
+                : android.graphics.Matrix.ScaleToFit.CENTER;
+            m.setRectToRect(new android.graphics.RectF(0, 0, dw, dh), new android.graphics.RectF(0, 0, vw, vh), fit);
+        }
+        return m;
+    }
     public void setImageMatrix(android.graphics.Matrix m) {
         if (m == null) this.imageMatrix.reset();
         else this.imageMatrix.set(m);
