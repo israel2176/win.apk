@@ -5096,6 +5096,13 @@ public class Resources {
      *  gate for the 23-app recapture, not a supported mode). */
     private static final boolean MACAPK_ATTR_RESID_THEME =
         !"0".equals(System.getenv("MACAPK_ATTR_RESID_THEME"));
+    /** macapkResolveThemeAttrRaw for callers outside this package (the inflater's own
+     *  attribute readers): what `expr` ("?attr/x", "?android:attr/x", "?0x...") ends at in
+     *  `theme`'s cascade, or null. */
+    public static String macapkThemeAttrRawFor(String expr, Theme theme) {
+        return macapkResolveThemeAttrRaw(expr, theme);
+    }
+
     static String macapkResolveThemeAttrRaw(String expr, Theme theme) {
         if (theme == null || !MACAPK_ATTR_RESID_THEME) {
             return macapkResolveThemeAttrRaw(expr);

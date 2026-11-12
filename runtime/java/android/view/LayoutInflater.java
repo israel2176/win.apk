@@ -5996,6 +5996,19 @@ public class LayoutInflater {
                 if (MACAPK_PLATFORM_LAYOUTS && attr.startsWith("android:^attr-private/")) {
                     attr = "android:" + attr.substring("android:^attr-private/".length());
                 }
+                // The theme of the context being inflated into answers first: a size written
+                // "?attr/actionBarSize" is that theme's (64dp under Material 3, where the
+                // application theme's 56dp made every toolbar of such an activity 8dp short).
+                // The application-theme walk below stays for a context with no theme.
+                String themed = null;
+                try {
+                    android.content.res.Resources.Theme th = context != null ? context.getTheme() : null;
+                    if (th != null) themed = android.content.res.Resources.macapkThemeAttrRawFor(s, th);
+                } catch (Throwable ignored) { }
+                if (themed != null && !themed.isEmpty() && themed.charAt(0) != '?') {
+                    s = themed;
+                    continue;
+                }
                 String raw = macapkThemeAttrRaw(attr);
                 if (raw == null || raw.isEmpty()) return null;
                 s = raw;
