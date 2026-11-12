@@ -157,6 +157,9 @@ public final class Probes {
             sb.append(" pad=").append(pad).append(' ').append(dp(r.left, d)).append(',').append(dp(r.top, d))
               .append(',').append(dp(r.right, d)).append(',').append(dp(r.bottom, d));
             sb.append(" stateful=").append(dr.isStateful());
+            android.graphics.Insets in = dr.getOpticalInsets();
+            sb.append(" optical=").append(dp(in.left, d)).append(',').append(dp(in.top, d)).append(',')
+              .append(dp(in.right, d)).append(',').append(dp(in.bottom, d));
             sb.append(" min ").append(dp(dr.getMinimumWidth(), d)).append('x').append(dp(dr.getMinimumHeight(), d));
         } catch (Throwable t) {
             sb.append(" threw ").append(t.getClass().getSimpleName());

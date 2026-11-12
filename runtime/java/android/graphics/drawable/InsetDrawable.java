@@ -118,6 +118,14 @@ public class InsetDrawable extends DrawableWrapper {
     // poisons the rect with 9,9,9,9, and real Android answers "1 rect=13,13,13,13"
     // -- 9+4 on every side. Zeroing here answered 4,4,4,4 and hid the fact that a
     // null-child InsetDrawable does not own the rect.
+    /** AOSP InsetDrawable.getOpticalInsets: the child's optical insets plus the insets
+     *  themselves -- the band this drawable leaves empty is not part of what it shows. */
+    @Override public android.graphics.Insets getOpticalInsets() {
+        final android.graphics.Insets content = super.getOpticalInsets();
+        getInsets(mTmpInsetRect);
+        return android.graphics.Insets.of(content.left + mTmpInsetRect.left, content.top + mTmpInsetRect.top,
+                content.right + mTmpInsetRect.right, content.bottom + mTmpInsetRect.bottom);
+    }
     @Override public boolean getPadding(Rect padding) {
         if (padding == null) return false;
         final Drawable d = getDrawable();

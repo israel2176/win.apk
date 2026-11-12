@@ -1213,6 +1213,8 @@ public class Resources {
         final String ninePatchPath;
         /** A nine-patch's folder density (macapkResourceDensity), 0 when not to be scaled. */
         int sourceDensity;
+        /** A compiled nine-patch's npLb chunk: left, top, right, bottom; null when it has none. */
+        int[] opticalInsets;
         MacapkDrawableConstantState(android.graphics.Bitmap bitmap) {
             this.bitmap = bitmap;
             this.isNinePatch = false;
@@ -1231,6 +1233,9 @@ public class Resources {
             if (isNinePatch) {
                 android.graphics.drawable.NinePatchDrawable np = new android.graphics.drawable.NinePatchDrawable(
                     res, ninePatchContent, ninePatchChunk, ninePatchPadding, ninePatchPath);
+                if (opticalInsets != null) {
+                    np.macapkSetOpticalInsets(opticalInsets[0], opticalInsets[1], opticalInsets[2], opticalInsets[3]);
+                }
                 if (sourceDensity != 0 && res != null && res.metrics != null) {
                     np.macapkSetDensities(sourceDensity, res.metrics.densityDpi);
                 }
@@ -1717,9 +1722,17 @@ public class Resources {
             for (int i = 0; i < ny; i++) yDivs[i] = bb.getInt(yOff + i * 4);
             android.graphics.Rect padding =
                 new android.graphics.Rect(padLeft, padTop, padRight, padBottom);
-            return new MacapkDrawableConstantState(bm, bm,
+            MacapkDrawableConstantState state = new MacapkDrawableConstantState(bm, bm,
                 macapk9Chunk(xDivs, yDivs, padLeft, padRight, padTop, padBottom),
                 padding, macapkResourcePath(id));
+            // npLb: four int32 as aapt2 wrote them from memory (little-endian), which is how
+            // the device reads them back (NinePatchPeeker: memcpy into mOpticalInsets).
+            byte[] lb = macapkPngChunk(png, "npLb");
+            if (lb != null && lb.length == 16) {
+                java.nio.ByteBuffer l = java.nio.ByteBuffer.wrap(lb).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+                state.opticalInsets = new int[] {l.getInt(0), l.getInt(4), l.getInt(8), l.getInt(12)};
+            }
+            return state;
         } catch (Throwable t) {
             return null;
         }

@@ -62,6 +62,21 @@ public class NinePatchDrawable extends Drawable {
                          macapkScaled(mPadding.right), macapkScaled(mPadding.bottom));
         }
     }
+    /** The patch's layout bounds (the compiled PNG's npLb chunk: how far the picture's
+     *  shadow or glow reaches past what is to be lined up), in the patch's own pixels.
+     *  AOSP: NinePatch.InsetStruct.opticalRect, scaled with the patch. A switch sizes its
+     *  track by its thumb's (Switch.onMeasure, SwitchCompat through DrawableUtils). */
+    private android.graphics.Insets mMacapkOpticalInsets = android.graphics.Insets.NONE;
+    public void macapkSetOpticalInsets(int left, int top, int right, int bottom) {
+        mMacapkOpticalInsets = android.graphics.Insets.of(left, top, right, bottom);
+    }
+    @Override public android.graphics.Insets getOpticalInsets() {
+        final android.graphics.Insets in = mMacapkOpticalInsets;
+        if (mMacapkSourceDensity == 0 || in == android.graphics.Insets.NONE) return in;
+        return android.graphics.Insets.of(macapkScaled(in.left), macapkScaled(in.top),
+                macapkScaled(in.right), macapkScaled(in.bottom));
+    }
+
     /** Bitmap.scaleFromDensity. */
     private int macapkScaled(int size) {
         if (mMacapkSourceDensity == 0) return size;

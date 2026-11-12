@@ -100,6 +100,10 @@ public abstract class DrawableWrapper extends Drawable implements Drawable.Callb
     @Override public int getIntrinsicHeight() {
         return mDrawable != null ? mDrawable.getIntrinsicHeight() : -1;
     }
+    /** AOSP DrawableWrapper.getOpticalInsets: the wrapped drawable's. */
+    @Override public android.graphics.Insets getOpticalInsets() {
+        return mDrawable != null ? mDrawable.getOpticalInsets() : android.graphics.Insets.NONE;
+    }
     @Override public boolean getPadding(Rect padding) {
         return mDrawable != null && mDrawable.getPadding(padding);
     }
