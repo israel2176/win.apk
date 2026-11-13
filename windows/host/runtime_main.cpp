@@ -1555,7 +1555,10 @@ std::vector<std::string> jvm_options(const BootArgs& b) {
         const fs::path data_dir = android_root / "data" / "data" / b.app_dir.filename();
         fs::create_directories(data_dir, ec);
         wchar_t buf[MAX_PATH * 4];
-        const DWORD n = GetShortPathNameW(data_dir.c_str(), buf, MAX_PATH * 4);
+        // WINAPK_SHORT_DATA_DIR=0 keeps the long name: Wine makes short names up as it lists a
+        // folder and does not find a new file by one, so every save through a temporary file
+        // failed there (test/run_app_wine.sh and the sweep set it).
+        const DWORD n = env_var(L"WINAPK_SHORT_DATA_DIR") == L"0" ? 0 : GetShortPathNameW(data_dir.c_str(), buf, MAX_PATH * 4);
         if (n > 0 && n < MAX_PATH * 4) v.push_back("-Dwinapk.data.dir=" + jvm_path(fs::path(std::wstring(buf, n))));
     }
     // Win.apk's own language, for the screens it draws itself (the Google

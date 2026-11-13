@@ -153,6 +153,7 @@ def run_app(pkg, apk, args, out):
         cmd += ["--jdk", win_path(args.jdk, args.launcher)]
     env = dict(os.environ)
     env["WINAPK_HEADLESS"] = "1"
+    if args.launcher: env["WINAPK_SHORT_DATA_DIR"] = "0"  # Wine's made-up 8.3 names do not find new files
     env["WINAPK_HEADLESS_EXIT_AFTER_FRAMES"] = str(args.frames)
     env["WINAPK_HEADLESS_FRAME"] = win_path(frame_path, args.launcher)
     env.setdefault("WINEDEBUG", "-all")

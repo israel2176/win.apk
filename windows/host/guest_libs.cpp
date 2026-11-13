@@ -26,6 +26,7 @@
 #include "native_aaudio.h"
 #include "native_activity.h"
 #include "native_media.h"
+#include "native_sensor.h"
 #include "native_opensles.h"
 #include "native_window.h"
 
@@ -185,6 +186,7 @@ void* resolve_system(const char* name) {
     if (void* p = winapk::host::native_activity_resolve(name)) return p;
     if (void* p = winapk::host::native_aaudio_resolve(name)) return p;
     if (void* p = winapk::host::native_media_resolve(name)) return p;
+    if (void* p = winapk::host::native_sensor_resolve(name)) return p;
     if (void* p = winapk::host::native_opensles_resolve(name)) return p;
     return winapk::jnigraphics_resolve(name);
 }

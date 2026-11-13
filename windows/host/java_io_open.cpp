@@ -197,6 +197,16 @@ jint JNICALL rename_replace(JNIEnv* env, jclass, jstring from, jstring to) {
         error = GetLastError();
     }
     CloseHandle(h);
+    // Where the volume has no POSIX-semantics rename (FAT and exFAT, a network share: the user's
+    // folders behind shared storage can be on any of them; Wine), the request itself is refused,
+    // not this rename. The plain replacing rename then: it cannot replace a target another
+    // handle holds without FILE_SHARE_DELETE, and does everything else. The overlay's own
+    // fallback was Files.move on the Android path, which names no host file, so every save
+    // through a temporary file failed there (androidx DataStore: "Unable to rename ... .tmp").
+    if (error == ERROR_INVALID_PARAMETER || error == ERROR_INVALID_FUNCTION || error == ERROR_NOT_SUPPORTED ||
+        error == ERROR_INVALID_LEVEL) {
+        error = MoveFileExW(src.c_str(), win32_path(full).c_str(), MOVEFILE_REPLACE_EXISTING) ? 0 : GetLastError();
+    }
     return static_cast<jint>(error);
 }
 

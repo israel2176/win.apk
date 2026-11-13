@@ -332,7 +332,7 @@ if(WINAPK_JNI_INCLUDE)
     COMMENT "Extracting upstream's GL bindings")
   target_sources(winapk-runtime PRIVATE host/gl/gl_loader.cpp host/gl/gl_stubs.cpp host/gl/gl_bridges.cpp
                  host/gl/gl_surface.cpp host/gl/guest_gl.cpp host/native_window.cpp host/native_asset.cpp
-                 host/native_opensles.cpp host/native_aaudio.cpp host/native_media.cpp
+                 host/native_opensles.cpp host/native_aaudio.cpp host/native_media.cpp host/native_sensor.cpp
                  host/video_decode.cpp host/video_player.cpp host/native_media_video.cpp
                  host/media_encode.cpp host/mp4_writer.cpp host/native_media_codec.cpp
                  host/native_activity.cpp
