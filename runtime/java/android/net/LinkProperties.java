@@ -58,4 +58,6 @@ public class LinkProperties {
 
     // AOSP getNat64Prefix(): the NAT64 prefix for CLAT, or null when none.
     public IpPrefix getNat64Prefix() { return null; }
+    /** AOSP getDhcpServerAddress() (API 30): null where it is not known; the host does not say. */
+    public java.net.Inet4Address getDhcpServerAddress() { return null; }
 }

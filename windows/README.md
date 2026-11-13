@@ -1200,6 +1200,23 @@ every such change is listed here:
   does. The Play Store adds a language to itself with a session of one
   config split; installed as the whole app, the split replaced the Play
   Store, which was left with no code.
+- Framework members the most installed apps name and the tree did not have
+  (`windows/test/apicheck/ApiCheck.java` over 86 apps from APKPure), each a
+  `NoSuchMethodError`, `NoSuchFieldError` or `NoClassDefFoundError` where it
+  was reached: `PackageManager.getActivityIcon(Intent)` and
+  `getPackageInfo(VersionedPackage, ...)`; `NetworkInfo.State.SUSPENDED`
+  (and the enum in AOSP's order); `WifiManager`'s `is...Supported()` family,
+  `WifiInfo`'s Passpoint and link-ceiling getters, `ScanResult`'s
+  `venueName`, `operatorFriendlyName`, `centerFreq0/1` and
+  `getInformationElements()`; `LinkProperties.getDhcpServerAddress()`;
+  `BluetoothDevice.getAddressType()`; `android.system.Os.rename`, `remove`,
+  `unlink`, `mkdir`, `fsync`, `fdatasync`, `pread`, `pwrite`, `getppid`,
+  `geteuid`, `getegid`; every Linux errno in `OsConstants` (it had nine) and
+  the `RT_SCOPE_` values; `TelephonyManager.isMultiSimSupported()` returns
+  AOSP's `int` (it was declared `boolean`, which no caller links against);
+  `android.graphics.pdf.PdfRenderer` exists and refuses a document with an
+  `IOException` (there is no PDF engine yet), where 27 of the apps met a
+  missing class.
 - `runtime/java/com/macapk/dex/Translator.java` (`F_NEW_INSTANCE`): the label
   of an eagerly emitted `new` is recorded as owned by the writer it is marked
   in, as `labelFor`'s labels are. Without that `ownerOf()` answered the main

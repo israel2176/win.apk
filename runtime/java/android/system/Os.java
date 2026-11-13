@@ -136,6 +136,85 @@ public class Os {
         }
     }
 
+    // rename, remove, mkdir, fsync, pread, getppid: the libcore calls apps make in place of java.io
+    // (OkHttp's and Okio's file system, crash reporters, SQLite wrappers). They were missing, a
+    // NoSuchMethodError where an app reached one; each maps what failed to the errno a device gives.
+    private static int errnoOf(java.io.IOException e) {
+        if (e instanceof java.nio.file.NoSuchFileException) return OsConstants.ENOENT;
+        if (e instanceof java.nio.file.FileAlreadyExistsException) return OsConstants.EEXIST;
+        if (e instanceof java.nio.file.DirectoryNotEmptyException) return OsConstants.ENOTEMPTY;
+        if (e instanceof java.nio.file.NotDirectoryException) return OsConstants.ENOTDIR;
+        if (e instanceof java.nio.file.AccessDeniedException) return OsConstants.EACCES;
+        return OsConstants.EIO;
+    }
+    public static void rename(String oldPath, String newPath) throws ErrnoException {
+        if (oldPath == null || newPath == null) throw new ErrnoException("rename", OsConstants.EINVAL);
+        try {
+            java.nio.file.Files.move(java.nio.file.Paths.get(oldPath), java.nio.file.Paths.get(newPath),
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        } catch (java.io.IOException e) {
+            throw new ErrnoException("rename", errnoOf(e), e);
+        }
+    }
+    public static void remove(String path) throws ErrnoException {
+        if (path == null) throw new ErrnoException("remove", OsConstants.EINVAL);
+        try {
+            java.nio.file.Files.delete(java.nio.file.Paths.get(path));
+        } catch (java.io.IOException e) {
+            throw new ErrnoException("remove", errnoOf(e), e);
+        }
+    }
+    public static void unlink(String path) throws ErrnoException {
+        if (path != null && new java.io.File(path).isDirectory()) throw new ErrnoException("unlink", OsConstants.EISDIR);
+        try { remove(path); } catch (ErrnoException e) { throw new ErrnoException("unlink", e.errno, e); }
+    }
+    public static void mkdir(String path, int mode) throws ErrnoException {
+        if (path == null) throw new ErrnoException("mkdir", OsConstants.EINVAL);
+        try {
+            java.nio.file.Files.createDirectory(java.nio.file.Paths.get(path));
+        } catch (java.io.IOException e) {
+            throw new ErrnoException("mkdir", errnoOf(e), e);
+        }
+    }
+    public static void fsync(java.io.FileDescriptor fd) throws ErrnoException {
+        if (fd == null || !fd.valid()) throw new ErrnoException("fsync", OsConstants.EBADF);
+        try { fd.sync(); } catch (java.io.SyncFailedException e) { throw new ErrnoException("fsync", OsConstants.EIO, e); }
+    }
+    public static void fdatasync(java.io.FileDescriptor fd) throws ErrnoException {
+        try { fsync(fd); } catch (ErrnoException e) { throw new ErrnoException("fdatasync", e.errno, e); }
+    }
+    /** pread(2): a read at `offset` that leaves the descriptor's position where it was. */
+    public static int pread(java.io.FileDescriptor fd, byte[] bytes, int byteOffset, int byteCount, long offset)
+            throws ErrnoException, java.io.InterruptedIOException {
+        synchronized (fd) {
+            long at = lseek(fd, 0, OsConstants.SEEK_CUR);
+            lseek(fd, offset, OsConstants.SEEK_SET);
+            try {
+                return read(fd, bytes, byteOffset, byteCount);
+            } finally {
+                lseek(fd, at, OsConstants.SEEK_SET);
+            }
+        }
+    }
+    public static int pwrite(java.io.FileDescriptor fd, byte[] bytes, int byteOffset, int byteCount, long offset)
+            throws ErrnoException, java.io.InterruptedIOException {
+        synchronized (fd) {
+            long at = lseek(fd, 0, OsConstants.SEEK_CUR);
+            lseek(fd, offset, OsConstants.SEEK_SET);
+            try {
+                return write(fd, bytes, byteOffset, byteCount);
+            } finally {
+                lseek(fd, at, OsConstants.SEEK_SET);
+            }
+        }
+    }
+    /** The parent of an app process is the zygote; here whatever started the runtime, or 1 (init). */
+    public static int getppid() {
+        return ProcessHandle.current().parent().map(p -> (int) p.pid()).orElse(1);
+    }
+    public static int geteuid() { return getuid(); }
+    public static int getegid() { return getgid(); }
+
     public static void fchmod(java.io.FileDescriptor fd, int mode) throws ErrnoException {
         if (fd == null || !fd.valid()) throw new ErrnoException("fchmod", OsConstants.EBADF);
         // The descriptor names no path here; the bits would not apply anyway.

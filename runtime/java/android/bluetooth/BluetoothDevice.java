@@ -130,6 +130,8 @@ public class BluetoothDevice implements Parcelable {
     }
     public String getAlias() { return getName(); }
     public int getType() { return mType; }
+    /** AOSP getAddressType() (API 35): ADDRESS_TYPE_PUBLIC (0), which is what the host's addresses are. */
+    public int getAddressType() { return 0; }
     public int getBondState() { return mBonded ? BOND_BONDED : BOND_NONE; }
     public boolean createBond() { return false; }
     public BluetoothClass getBluetoothClass() { return mBonded ? new BluetoothClass(mClassOfDevice) : null; }
