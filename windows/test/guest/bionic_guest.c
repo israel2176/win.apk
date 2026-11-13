@@ -1848,6 +1848,9 @@ struct sysinfo {
 };
 int sysinfo(struct sysinfo*);
 int gethostbyname_r(const char*, void*, char*, size_t, void**, int*);
+void* gethostbyname(const char*);
+void* gethostbyname2(const char*, int);
+int* __get_h_errno(void);
 int ASharedMemory_create(const char*, size_t);
 size_t ASharedMemory_getSize(int);
 
@@ -2005,8 +2008,23 @@ static void test_missing_forms(const char* dir) {
     check("mremap fails with MAP_FAILED and ENOMEM", mremap(b, 4096, 8192, 1) == (void*)-1 && *__errno() == 12, 0);
     void* host = b;
     int herr = 0;
-    check("gethostbyname_r: no result, NO_RECOVERY",
-          gethostbyname_r("localhost", b, path, sizeof path, &host, &herr) == -1 && host == 0 && herr == 3, 0);
+    struct hostent_g { char* name; char** aliases; int addrtype, length; char** addrs; } he, *found = 0;
+    check("gethostbyname_r resolves a numeric address without a lookup",
+          gethostbyname_r("10.1.2.3", &he, path, sizeof path, &host, &herr) == 0 && host == (void*)&he && herr == 0 &&
+              he.addrtype == 2 && he.length == 4 && he.addrs[0] && he.addrs[1] == 0 &&
+              memcmp(he.addrs[0], "\x0a\x01\x02\x03", 4) == 0 && he.aliases && he.aliases[0] == 0 &&
+              strcmp(he.name, "10.1.2.3") == 0, 0);
+    check("gethostbyname_r in a buffer too small: ERANGE, NETDB_INTERNAL",
+          gethostbyname_r("10.1.2.3", &he, path, 8, &host, &herr) == 34 && host == 0 && herr == -1, 0);
+    found = (struct hostent_g*)gethostbyname("localhost");
+    check("gethostbyname(\"localhost\") is the loopback address",
+          found && found->addrtype == 2 && found->length == 4 && found->addrs[0] &&
+              (unsigned char)found->addrs[0][0] == 127, 0);
+    found = (struct hostent_g*)gethostbyname2("::1", 10);
+    check("gethostbyname2(AF_INET6) gives 16 bytes", found && found->addrtype == 10 && found->length == 16 &&
+                                                         found->addrs[0][15] == 1, 0);
+    check("gethostbyname2 for a family that has no hosts fails and sets h_errno: NO_RECOVERY",
+          gethostbyname2("10.1.2.3", 7) == 0 && *__get_h_errno() == 3, 0);
 
     // Signals waited for, not handled.
     const unsigned long usr1 = 1ul << 9;  // SIGUSR1 is 10

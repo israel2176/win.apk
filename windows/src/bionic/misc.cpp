@@ -2221,6 +2221,9 @@ WINAPK_GUEST_ABI glong g_ptrace(int, int, void*, void*) { return 0; }
 WINAPK_GUEST_ABI int g_setsid() { return static_cast<int>(GetCurrentProcessId()); }
 // syslog(3) goes nowhere on Android either (no syslogd); liblog is the log.
 WINAPK_GUEST_ABI void g_void0() {}
+// The real-time signals an app may use: Bionic keeps the first four for itself (32..35).
+WINAPK_GUEST_ABI int g_sigrtmin() { return 36; }
+WINAPK_GUEST_ABI int g_sigrtmax() { return 64; }
 // mincore: every page of the range is resident.
 WINAPK_GUEST_ABI int g_mincore(void*, size_t len, unsigned char* vec) {
     if (!vec) return *guest_errno() = kEFAULT, -1;
@@ -2263,6 +2266,8 @@ const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("posix_madvise", g_ok0),
     WINAPK_SHIM("__register_atfork", g_ok0),  // no fork here (fork fails), so no handler ever runs
     WINAPK_SHIM("mincore", g_mincore),
+    WINAPK_SHIM("__libc_current_sigrtmin", g_sigrtmin),
+    WINAPK_SHIM("__libc_current_sigrtmax", g_sigrtmax),
     WINAPK_SHIM("openlog", g_void0),
     WINAPK_SHIM("closelog", g_void0),
     WINAPK_SHIM("syslog", g_void0),

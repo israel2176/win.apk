@@ -1157,22 +1157,94 @@ WINAPK_GUEST_ABI int g_getaddrinfofornetwork(uint64_t, const char* node, const c
                                              const GuestAddrinfo* hints, GuestAddrinfo** out) {
     return g_getaddrinfo(node, service, hints, out);
 }
-// The reentrant gethostby* functions: no result, h_errno NO_RECOVERY (3), -1, as Bionic answers a
-// lookup that failed. The fallback's 0 was "found" with *result never written.
-// TODO(gethostbyname): gethostbyname, gethostbyaddr and these over getaddrinfo/getnameinfo, with
-// Bionic's struct hostent.
+// gethostbyname and its family, over the host's getaddrinfo, in Bionic's struct hostent. 19 of the
+// 56 most installed apps with native code import gethostbyname (older network SDKs, game engines);
+// missing, it answered null with h_errno never set, and the reentrant forms said NO_RECOVERY.
+struct GuestHostent {
+    char* h_name;
+    char** h_aliases;
+    int h_addrtype, h_length;
+    char** h_addr_list;
+};
+// h_errno, per thread (__get_h_errno): HOST_NOT_FOUND 1, TRY_AGAIN 2, NO_RECOVERY 3, NO_DATA 4,
+// NETDB_INTERNAL -1 (see errno).
+int* guest_h_errno() {
+    static thread_local int value = 0;
+    return &value;
+}
+WINAPK_GUEST_ABI int* g_get_h_errno() { return guest_h_errno(); }
+// Looks `name` up for the guest family `af` (AF_INET 2, AF_INET6 10) and lays the answer out in
+// `buf`: the two pointer arrays, the addresses, the name. 0, or -1 with *herr set (and the guest's
+// errno ERANGE when the buffer is too small, as Bionic's h_errno_to_result reports it).
+int lookup_hostent(const char* name, int af, GuestHostent* out, char* buf, size_t buflen, int* herr) {
+    winsock_init();
+    const size_t alen = af == 10 ? 16 : 4;
+    if (!name || (af != 2 && af != 10)) return *herr = 3, -1;
+    ADDRINFOA h{};
+    h.ai_family = host_family(af);
+    h.ai_socktype = SOCK_STREAM;
+    h.ai_flags = AI_CANONNAME;
+    ADDRINFOA* list = nullptr;
+    const int r = ::getaddrinfo(name, nullptr, &h, &list);
+    if (r != 0) return *herr = r == WSATRY_AGAIN ? 2 : r == WSAHOST_NOT_FOUND ? 1 : r == WSANO_DATA ? 4 : 3, -1;
+    size_t count = 0;
+    for (const ADDRINFOA* a = list; a; a = a->ai_next) count += a->ai_family == h.ai_family ? 1 : 0;
+    const char* canon = list && list->ai_canonname ? list->ai_canonname : name;
+    const size_t name_len = std::strlen(canon) + 1;
+    const size_t pad = (8 - reinterpret_cast<uintptr_t>(buf) % 8) % 8;  // the pointer arrays are aligned
+    const size_t need = pad + (count + 2) * sizeof(char*) + count * alen + name_len;
+    if (count == 0 || !buf || buflen < need) {
+        ::freeaddrinfo(list);
+        if (count == 0) return *herr = 4, -1;
+        *guest_errno() = kERANGE;
+        return *herr = -1, -1;
+    }
+    char** addrs = reinterpret_cast<char**>(buf + pad);
+    char** aliases = addrs + count + 1;
+    char* bytes = reinterpret_cast<char*>(aliases + 1);
+    size_t i = 0;
+    for (const ADDRINFOA* a = list; a; a = a->ai_next) {
+        if (a->ai_family != h.ai_family) continue;
+        const void* from = af == 10 ? static_cast<const void*>(&reinterpret_cast<const sockaddr_in6*>(a->ai_addr)->sin6_addr)
+                                    : static_cast<const void*>(&reinterpret_cast<const sockaddr_in*>(a->ai_addr)->sin_addr);
+        std::memcpy(bytes + i * alen, from, alen);
+        addrs[i] = bytes + i * alen;
+        ++i;
+    }
+    addrs[count] = nullptr;
+    aliases[0] = nullptr;
+    char* name_at = bytes + count * alen;
+    std::memcpy(name_at, canon, name_len);
+    ::freeaddrinfo(list);
+    *out = {name_at, aliases, af, static_cast<int>(alen), addrs};
+    return *herr = 0, 0;
+}
+WINAPK_GUEST_ABI int g_gethostbyname2_r(const char* name, int af, GuestHostent* out, char* buf, size_t buflen,
+                                        GuestHostent** result, int* h_errnop) {
+    int herr = 0;
+    const int r = lookup_hostent(name, af, out, buf, buflen, &herr);
+    if (result) *result = r == 0 ? out : nullptr;
+    if (h_errnop) *h_errnop = herr;
+    return r == 0 ? 0 : herr == -1 ? kERANGE : -1;
+}
+WINAPK_GUEST_ABI int g_gethostbyname_r(const char* name, GuestHostent* out, char* buf, size_t buflen,
+                                       GuestHostent** result, int* h_errnop) {
+    return g_gethostbyname2_r(name, 2, out, buf, buflen, result, h_errnop);
+}
+WINAPK_GUEST_ABI GuestHostent* g_gethostbyname2(const char* name, int af) {
+    static thread_local GuestHostent host;
+    static thread_local char buf[2048];
+    return lookup_hostent(name, af, &host, buf, sizeof buf, guest_h_errno()) == 0 ? &host : nullptr;
+}
+WINAPK_GUEST_ABI GuestHostent* g_gethostbyname(const char* name) { return g_gethostbyname2(name, 2); }
+// By address: still no result, h_errno NO_RECOVERY (3), -1, as Bionic answers a lookup that
+// failed (getnameinfo is implemented). The fallback's 0 was "found" with *result never written.
 int no_hostent(void** result, int* h_errnop) {
     static std::atomic<bool> said{false};
-    say_once(said, "gethostbyname_r()", "not implemented (getaddrinfo is); the lookup fails with NO_RECOVERY");
+    say_once(said, "gethostbyaddr_r()", "not implemented (getnameinfo is); the lookup fails with NO_RECOVERY");
     if (result) *result = nullptr;
     if (h_errnop) *h_errnop = 3;
     return -1;
-}
-WINAPK_GUEST_ABI int g_gethostbyname_r(const char*, void*, char*, size_t, void** result, int* h_errnop) {
-    return no_hostent(result, h_errnop);
-}
-WINAPK_GUEST_ABI int g_gethostbyname2_r(const char*, int, void*, char*, size_t, void** result, int* h_errnop) {
-    return no_hostent(result, h_errnop);
 }
 WINAPK_GUEST_ABI int g_gethostbyaddr_r(const void*, uint32_t, int, void*, char*, size_t, void** result,
                                        int* h_errnop) {
@@ -1185,6 +1257,9 @@ const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("__cmsg_nxthdr", g_cmsg_nxthdr),
     WINAPK_SHIM("android_getaddrinfofornetwork", g_getaddrinfofornetwork),
     WINAPK_SHIM("gethostbyname_r", g_gethostbyname_r),
+    WINAPK_SHIM("gethostbyname", g_gethostbyname),
+    WINAPK_SHIM("gethostbyname2", g_gethostbyname2),
+    WINAPK_SHIM("__get_h_errno", g_get_h_errno),
     WINAPK_SHIM("gethostbyname2_r", g_gethostbyname2_r),
     WINAPK_SHIM("gethostbyaddr_r", g_gethostbyaddr_r),
     WINAPK_SHIM("socket", g_socket),
