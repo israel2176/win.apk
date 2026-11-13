@@ -312,6 +312,12 @@ if(WINAPK_JNI_INCLUDE)
     endif()
   endif()
   target_include_directories(winapk-runtime SYSTEM PRIVATE ${WINAPK_WEBVIEW2_SDK}/include)
+  # WebView2.h includes "EventToken.h"; mingw-w64 names it eventtoken.h, which only a
+  # case-insensitive file system takes for the same file (the Linux build, README).
+  if(NOT CMAKE_HOST_WIN32)
+    file(WRITE ${CMAKE_BINARY_DIR}/case/EventToken.h "#include <eventtoken.h>\n")
+    target_include_directories(winapk-runtime SYSTEM PRIVATE ${CMAKE_BINARY_DIR}/case)
+  endif()
   target_compile_options(winapk-runtime PRIVATE -Wall -Wextra)
   # GL: upstream's android.opengl bindings, cut out of its Mac
   # native_methods.cpp at build time and compiled against the Khronos headers;

@@ -80,6 +80,15 @@ WINAPK_GUEST_ABI char* g_strndup(const char* s, size_t n) {
     return d;
 }
 WINAPK_GUEST_ABI int g_strcasecmp(const char* a, const char* b) { return _stricmp(a, b); }
+// Missing, this answered null through the loader's fallback: "not found", whatever the haystack held.
+WINAPK_GUEST_ABI char* g_strcasestr(const char* hay, const char* needle) {
+    const size_t n = std::strlen(needle);
+    if (n == 0) return const_cast<char*>(hay);
+    for (; *hay; ++hay) {
+        if (_strnicmp(hay, needle, n) == 0) return const_cast<char*>(hay);
+    }
+    return nullptr;
+}
 WINAPK_GUEST_ABI int g_strncasecmp(const char* a, const char* b, size_t n) { return _strnicmp(a, b, n); }
 WINAPK_GUEST_ABI int g_strcoll(const char* a, const char* b) { return std::strcmp(a, b); }  // C locale
 WINAPK_GUEST_ABI size_t g_strxfrm(char* d, const char* s, size_t n) {  // C locale: a copy
@@ -522,6 +531,7 @@ const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("strdup", g_strdup),
     WINAPK_SHIM("strndup", g_strndup),
     WINAPK_SHIM("strcasecmp", g_strcasecmp),
+    WINAPK_SHIM("strcasestr", g_strcasestr),
     WINAPK_SHIM("strncasecmp", g_strncasecmp),
     WINAPK_SHIM("strcoll", g_strcoll),
     WINAPK_SHIM("strtok", g_strtok),
