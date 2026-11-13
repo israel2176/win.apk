@@ -390,6 +390,15 @@ WINAPK_GUEST_ABI int h_snprintf_chk(char* b, size_t n, int fl, size_t dn, const 
 WINAPK_GUEST_ABI int h_android_log_print(int prio, const char* tag, const char* fmt, SysVVaList* va) {
     return g_android_log_vprint(prio, tag, fmt, va);
 }
+// The forms that name a log buffer (main, radio, events, system, crash): one log here. Missing,
+// they answered 0 and the line was lost; Unity and the Facebook apps log through them.
+WINAPK_GUEST_ABI int g_android_log_buf_write(int, int prio, const char* tag, const char* text) {
+    log_line(prio, tag, text);
+    return 1;
+}
+WINAPK_GUEST_ABI int h_android_log_buf_print(int, int prio, const char* tag, const char* fmt, SysVVaList* va) {
+    return g_android_log_vprint(prio, tag, fmt, va);
+}
 [[noreturn]] WINAPK_GUEST_ABI void h_android_log_assert(const char* cond, const char* tag, const char* fmt,
                                                          SysVVaList* va) {
     const std::string text = fmt ? format_string(fmt, va) : std::string("assertion failed: ") + (cond ? cond : "");
@@ -433,6 +442,8 @@ ShimTable printf_symbols() {
             {"__sprintf_chk", variadic(4, &h_sprintf_chk)},
             {"__snprintf_chk", variadic(5, &h_snprintf_chk)},
             {"__android_log_print", variadic(3, &h_android_log_print)},
+            WINAPK_SHIM("__android_log_buf_write", g_android_log_buf_write),
+            {"__android_log_buf_print", variadic(4, &h_android_log_buf_print)},
             {"__android_log_assert", variadic(3, &h_android_log_assert)},
         };
     }();

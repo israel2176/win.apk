@@ -106,6 +106,25 @@ public final class OsConstants {
     public static final int ENOSYS = 38;
     public static final int EOPNOTSUPP = 95;
     public static final int EBADF = 9;
+    // The rest of Linux's errno values (asm-generic/errno-base.h and errno.h), which AOSP has every
+    // one of: code that tells one failure from another names them (EAGAIN, EINTR, EPIPE,
+    // ECONNREFUSED, EROFS), and a missing one was a NoSuchFieldError where it was reached.
+    public static final int ESRCH = 3, EINTR = 4, ENXIO = 6, E2BIG = 7, ENOEXEC = 8, ECHILD = 10, EAGAIN = 11,
+            ENOMEM = 12, EFAULT = 14, EBUSY = 16, EXDEV = 18, ENODEV = 19, ENFILE = 23, EMFILE = 24, ENOTTY = 25,
+            ETXTBSY = 26, EFBIG = 27, ESPIPE = 29, EROFS = 30, EMLINK = 31, EPIPE = 32, EDOM = 33, ERANGE = 34,
+            EDEADLK = 35, ENAMETOOLONG = 36, ENOLCK = 37, ENOTEMPTY = 39, ELOOP = 40, ENOMSG = 42, EIDRM = 43,
+            ENOSTR = 60, ENODATA = 61, ETIME = 62, ENOSR = 63, ENONET = 64, ENOLINK = 67, EPROTO = 71,
+            EMULTIHOP = 72, EBADMSG = 74, EOVERFLOW = 75, EILSEQ = 84, EUSERS = 87, ENOTSOCK = 88,
+            EDESTADDRREQ = 89, EMSGSIZE = 90, EPROTOTYPE = 91, ENOPROTOOPT = 92, EPROTONOSUPPORT = 93,
+            ESOCKTNOSUPPORT = 94, EPFNOSUPPORT = 96, EAFNOSUPPORT = 97, EADDRINUSE = 98, EADDRNOTAVAIL = 99,
+            ENETDOWN = 100, ENETUNREACH = 101, ENETRESET = 102, ECONNABORTED = 103, ECONNRESET = 104,
+            ENOBUFS = 105, EISCONN = 106, ENOTCONN = 107, ESHUTDOWN = 108, ETIMEDOUT = 110, ECONNREFUSED = 111,
+            EHOSTDOWN = 112, EHOSTUNREACH = 113, EALREADY = 114, EINPROGRESS = 115, ESTALE = 116, EDQUOT = 122,
+            ECANCELED = 125, EOWNERDEAD = 130, ENOTRECOVERABLE = 131;
+    public static final int EWOULDBLOCK = EAGAIN, ENOTSUP = EOPNOTSUPP;
+    // rtnetlink's address scopes (RouteInfo, LinkAddress.getScope()).
+    public static final int RT_SCOPE_UNIVERSE = 0, RT_SCOPE_SITE = 200, RT_SCOPE_LINK = 253, RT_SCOPE_HOST = 254,
+            RT_SCOPE_NOWHERE = 255;
 
     // mmap(2) protections and the one signal apps name (Os.kill(pid, SIGKILL)):
     // Linux's values, as every constant here.

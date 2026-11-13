@@ -538,6 +538,10 @@ public class TelephonyManager {
 
     /** No modem is present, so the count of active modems is 0. */
     public int getActiveModemCount() { return 0; }
+    /** AOSP isMultiSimSupported() (API 29): one of the MULTISIM_ constants, an int. There is no
+     *  second modem: not by the hardware. Win.apk: it was declared boolean, so every caller
+     *  compiled against the SDK (`()I`) met NoSuchMethodError. */
+    public int isMultiSimSupported() { return MULTISIM_NOT_SUPPORTED_BY_HARDWARE; }
 
     /** AOSP returns the number of modems the device could support. */
     public int getSupportedModemCount() { return 0; }
@@ -545,10 +549,6 @@ public class TelephonyManager {
     /** @deprecated AOSP renamed this to {@link #getActiveModemCount()} in API 30. */
     @Deprecated public int getPhoneCount() { return 0; }
 
-    public boolean isMultiSimSupported() {
-        // AOSP's MULTISIM_NOT_SUPPORTED_BY_HARDWARE: there is no second modem.
-        return false;
-    }
 
     /** AOSP: whether switching the multi-SIM config requires a reboot. */
     public boolean doesSwitchMultiSimConfigTriggerReboot() { return false; }

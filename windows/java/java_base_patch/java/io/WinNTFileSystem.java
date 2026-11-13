@@ -706,7 +706,10 @@ final class WinNTFileSystem extends FileSystem {
                 }
                 if (error == 0) return true;
                 try {
-                    java.nio.file.Files.move(f1.toPath(), f2.toPath(),
+                    // The host files the two Android paths name: the JDK's move takes a path as
+                    // Windows spells it.
+                    java.nio.file.Files.move(java.nio.file.Path.of(WinApkPaths.hostPath(f1.getPath())),
+                                             java.nio.file.Path.of(WinApkPaths.hostPath(f2.getPath())),
                                              java.nio.file.StandardCopyOption.REPLACE_EXISTING,
                                              java.nio.file.StandardCopyOption.ATOMIC_MOVE);
                     return true;

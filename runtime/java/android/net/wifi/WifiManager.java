@@ -315,6 +315,42 @@ public class WifiManager {
      *  host's. */
     public boolean isStaConcurrencyForLocalOnlyConnectionsSupported() { return false; }
 
+    // What the radio can do, asked by connectivity and analytics libraries before anything else.
+    // The host's radio report (native_radios.cpp) says none of it, and an app can make no use of
+    // any of it here (one connection, the host's): "no", as for the two above. They were missing,
+    // a NoSuchMethodError in the nine of the popular apps that ask.
+    public boolean isTdlsSupported() { return false; }
+    public boolean isPreferredNetworkOffloadSupported() { return false; }
+    public boolean isEnhancedPowerReportingSupported() { return false; }
+    public boolean isDeviceToApRttSupported() { return false; }
+    public boolean is24GHzBandSupported() { return true; }
+    public boolean is6GHzBandSupported() { return false; }
+    public boolean is60GHzBandSupported() { return false; }
+    public boolean isWpa3SuiteBSupported() { return false; }
+    public boolean isEnhancedOpenSupported() { return false; }
+    public boolean isEasyConnectSupported() { return false; }
+    public boolean isWapiSupported() { return false; }
+    public boolean isPasspointTermsAndConditionsSupported() { return false; }
+    public boolean isWifiDisplayR2Supported() { return false; }
+    public boolean isDecoratedIdentitySupported() { return false; }
+    public boolean isWpaPersonalSupported() { return true; }
+    public boolean isWepSupported() { return false; }
+    public boolean isTlsV13Supported() { return false; }
+    public boolean isTlsMinimumVersionSupported() { return false; }
+    public boolean isTidToLinkMappingNegotiationSupported() { return false; }
+    public boolean isDualBandSimultaneousSupported() { return false; }
+    public boolean isD2dSupportedWhenInfraStaDisabled() { return false; }
+    public boolean isAggressiveRoamingModeSupported() { return false; }
+    public boolean isMakeBeforeBreakWifiSwitchingSupported() { return false; }
+    public boolean isStaApConcurrencySupported() { return false; }
+    public boolean isStaBridgedApConcurrencySupported() { return false; }
+    public boolean isBridgedApConcurrencySupported() { return false; }
+    public boolean isStaConcurrencyForMultiInternetSupported() { return false; }
+    public boolean isScanThrottleEnabled() { return true; }
+    public boolean isAutoWakeupEnabled() { return false; }
+    /** AOSP getMaxNumberOfChannelsPerNetworkSpecifierRequest() (API 34): 0 where the feature is absent. */
+    public int getMaxNumberOfChannelsPerNetworkSpecifierRequest() { return 0; }
+
     public static int calculateSignalLevel(int rssi, int numLevels) {
         if (rssi <= -100) return 0;
         if (rssi >= -55) return numLevels - 1;

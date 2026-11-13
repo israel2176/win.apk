@@ -4,7 +4,9 @@
 package android.net;
 
 public class NetworkInfo implements android.os.Parcelable {
-    public enum State { CONNECTED, CONNECTING, DISCONNECTED, DISCONNECTING, UNKNOWN }
+    // AOSP's six, in AOSP's order: SUSPENDED was missing, a NoSuchFieldError in the switch tables of
+    // the apps that name it (Telegram among them), and ordinal() differed from a device's.
+    public enum State { CONNECTING, CONNECTED, SUSPENDED, DISCONNECTING, DISCONNECTED, UNKNOWN }
 
     private final int type;
     private final State state;
@@ -40,6 +42,7 @@ public class NetworkInfo implements android.os.Parcelable {
         case CONNECTING: return DetailedState.CONNECTING;
         case DISCONNECTING: return DetailedState.DISCONNECTING;
         case DISCONNECTED: return DetailedState.DISCONNECTED;
+        case SUSPENDED: return DetailedState.SUSPENDED;
         case UNKNOWN: return DetailedState.IDLE;
         default: return DetailedState.CONNECTED;
         }

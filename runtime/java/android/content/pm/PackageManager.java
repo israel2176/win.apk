@@ -322,6 +322,21 @@ public abstract class PackageManager {
     // GET_ATTRIBUTIONS (0x80000000, which is already outside the positive int
     // range and is not interpreted anywhere in Mac.apk), so no request bit we
     // act on is lost. Revisit this cast if a high flag ever becomes meaningful.
+    /** AOSP getPackageInfo(VersionedPackage, int): the package, when the installed version is the
+     *  one asked for (VERSION_CODE_HIGHEST, -1, is any). Win.apk: both forms were missing. */
+    public PackageInfo getPackageInfo(VersionedPackage versionedPackage, int flags)
+            throws NameNotFoundException {
+        PackageInfo info = getPackageInfo(versionedPackage.getPackageName(), flags);
+        long want = versionedPackage.getLongVersionCode();
+        if (want != -1 && info != null && info.getLongVersionCode() != want) {
+            throw new NameNotFoundException(versionedPackage.toString());
+        }
+        return info;
+    }
+    public PackageInfo getPackageInfo(VersionedPackage versionedPackage, PackageInfoFlags flags)
+            throws NameNotFoundException {
+        return getPackageInfo(versionedPackage, (int) flags.getValue());
+    }
     public PackageInfo getPackageInfo(String packageName, PackageInfoFlags flags)
             throws NameNotFoundException {
         return getPackageInfo(packageName, (int) flags.getValue());
@@ -2727,6 +2742,23 @@ public abstract class PackageManager {
             if (ai.applicationInfo != null) return getApplicationIcon(ai.applicationInfo);
         }
         return getDefaultActivityIcon();
+    }
+    /** AOSP getActivityIcon(Intent): the icon of the activity the Intent names
+     *  or resolves to, as getActivityBanner(Intent) and getActivityLogo(Intent)
+     *  above; NameNotFoundException when it resolves to none. Win.apk: the
+     *  method was missing, a NoSuchMethodError where an app builds a share
+     *  sheet or a shortcut list of its own (YouTube, Outlook, Teams, Word,
+     *  Duolingo, X and Translate all name it). */
+    public android.graphics.drawable.Drawable getActivityIcon(Intent intent)
+            throws NameNotFoundException {
+        if (intent.getComponent() != null) {
+            return getActivityIcon(intent.getComponent());
+        }
+        ResolveInfo info = resolveActivity(intent, MATCH_DEFAULT_ONLY);
+        if (info != null && info.activityInfo != null) {
+            return info.activityInfo.loadIcon(this);
+        }
+        throw new NameNotFoundException(intent.toUri(0));
     }
     /** AOSP getDrawable(String, int, ApplicationInfo): the drawable resource
      *  `resid` out of the named package's Resources, null when unloadable.

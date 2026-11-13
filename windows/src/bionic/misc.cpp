@@ -2060,7 +2060,219 @@ WINAPK_GUEST_ABI size_t g_regerror(int, const void*, char* buf, size_t size) {
 }
 WINAPK_GUEST_ABI void g_regfree(void*) {}
 
+// ---- what popular apps import that nothing answered -----------------------------------------
+// Each of these went to the loader's missing-function stub, which returns 0: a quotient of 0
+// from div(), no processors from __sched_cpucount, a null string from ctime(), "success"
+// from getrusage() over a struct nobody filled. Found by listing the imports of the hundred
+// apps most installed in Israel against the shim's tables.
+
+// div_t is two ints (one register); ldiv_t and lldiv_t two 64-bit values (rax:rdx).
+struct GuestDiv { int quot, rem; };
+struct GuestLDiv { int64_t quot, rem; };
+WINAPK_GUEST_ABI GuestDiv g_div(int a, int b) { return {a / b, a % b}; }
+WINAPK_GUEST_ABI GuestLDiv g_ldiv(int64_t a, int64_t b) { return {a / b, a % b}; }
+WINAPK_GUEST_ABI int m_ilogbf(float x) { return std::ilogb(x); }
+
+// asctime's fixed form, "Thu Jan  1 00:00:00 1970\n" (26 bytes with the NUL).
+WINAPK_GUEST_ABI char* g_asctime_r(const GuestTm* g, char* buf) {
+    static const char kDays[] = "SunMonTueWedThuFriSat", kMonths[] = "JanFebMarAprMayJunJulAugSepOctNovDec";
+    if (!g || !buf || g->tm_wday < 0 || g->tm_wday > 6 || g->tm_mon < 0 || g->tm_mon > 11) {
+        *guest_errno() = kEINVAL;
+        return nullptr;
+    }
+    std::snprintf(buf, 26, "%.3s %.3s%3d %.2d:%.2d:%.2d %d\n", kDays + 3 * g->tm_wday, kMonths + 3 * g->tm_mon,
+                  g->tm_mday, g->tm_hour, g->tm_min, g->tm_sec, 1900 + g->tm_year);
+    return buf;
+}
+WINAPK_GUEST_ABI char* g_asctime(const GuestTm* g) {
+    static thread_local char buf[26];
+    return g_asctime_r(g, buf);
+}
+WINAPK_GUEST_ABI char* g_ctime_r(const int64_t* t, char* buf) {
+    GuestTm tm;
+    return g_localtime_r(t, &tm) ? g_asctime_r(&tm, buf) : nullptr;
+}
+WINAPK_GUEST_ABI char* g_ctime(const int64_t* t) {
+    static thread_local char buf[26];
+    return g_ctime_r(t, buf);
+}
+
+// getrusage and times: the process's (or the thread's) processor time, the peak working set
+// as ru_maxrss (kilobytes) and the page faults; what Windows does not count stays 0.
+struct GuestRusage {
+    GuestTimeval ru_utime, ru_stime;
+    int64_t ru_maxrss, ru_ixrss, ru_idrss, ru_isrss, ru_minflt, ru_majflt, ru_nswap, ru_inblock, ru_oublock,
+        ru_msgsnd, ru_msgrcv, ru_nsignals, ru_nvcsw, ru_nivcsw;
+};
+static_assert(sizeof(GuestRusage) == 144, "struct rusage on LP64");
+int64_t filetime_100ns(const FILETIME& f) { return (static_cast<int64_t>(f.dwHighDateTime) << 32) | f.dwLowDateTime; }
+// Kernel and user time, in 100 ns, of the process (who 0, or -1 for its children: none) or the thread (1).
+bool cpu_times(int who, int64_t* user, int64_t* kernel) {
+    FILETIME created, exited, k{}, u{};
+    if (who == -1) return *user = *kernel = 0, true;
+    const BOOL ok = who == 1 ? GetThreadTimes(GetCurrentThread(), &created, &exited, &k, &u)
+                             : GetProcessTimes(GetCurrentProcess(), &created, &exited, &k, &u);
+    *user = filetime_100ns(u);
+    *kernel = filetime_100ns(k);
+    return ok != 0;
+}
+WINAPK_GUEST_ABI int g_getrusage(int who, GuestRusage* out) {
+    if (who < -1 || who > 1) return *guest_errno() = kEINVAL, -1;
+    if (!out) return *guest_errno() = kEFAULT, -1;
+    std::memset(out, 0, sizeof *out);
+    int64_t user = 0, kernel = 0;
+    cpu_times(who, &user, &kernel);
+    out->ru_utime = {user / 10000000, user % 10000000 / 10};
+    out->ru_stime = {kernel / 10000000, kernel % 10000000 / 10};
+    if (who != -1) {
+        // psapi's PROCESS_MEMORY_COUNTERS, through the entry kernel32 has had since Windows 7.
+        struct Counters {
+            DWORD cb, PageFaultCount;
+            SIZE_T PeakWorkingSetSize, WorkingSetSize, QuotaPeakPagedPoolUsage, QuotaPagedPoolUsage,
+                QuotaPeakNonPagedPoolUsage, QuotaNonPagedPoolUsage, PagefileUsage, PeakPagefileUsage;
+        } c{};
+        using Fn = BOOL(WINAPI*)(HANDLE, Counters*, DWORD);
+        static const Fn fn = reinterpret_cast<Fn>(reinterpret_cast<void*>(
+            GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "K32GetProcessMemoryInfo")));
+        if (fn && fn(GetCurrentProcess(), &c, sizeof c)) {
+            out->ru_maxrss = static_cast<int64_t>(c.PeakWorkingSetSize / 1024);
+            out->ru_minflt = c.PageFaultCount;
+        }
+    }
+    return 0;
+}
+// times: clock ticks (sysconf(_SC_CLK_TCK) is 100) since an arbitrary point, and the four times in them.
+struct GuestTms { int64_t tms_utime, tms_stime, tms_cutime, tms_cstime; };
+WINAPK_GUEST_ABI int64_t g_times(GuestTms* out) {
+    if (out) {
+        int64_t user = 0, kernel = 0;
+        cpu_times(0, &user, &kernel);
+        *out = {user / 100000, kernel / 100000, 0, 0};
+    }
+    return static_cast<int64_t>(GetTickCount64() / 10);
+}
+
+// mallinfo: Bionic's struct of ten size_t, returned through a hidden pointer. The heap is the
+// CRT's, which keeps no such totals: zeros, as a fresh heap reports.
+struct GuestMallinfo { size_t arena, ordblks, smblks, hblks, hblkhd, usmblks, fsmblks, uordblks, fordblks, keepcost; };
+WINAPK_GUEST_ABI GuestMallinfo g_mallinfo() { return {}; }
+
+// The CPU sets of <sched.h>: __sched_cpucount is what CPU_COUNT() calls. Answered 0 it said
+// "no processors", and thread pools sized by it had no thread.
+WINAPK_GUEST_ABI int g_sched_cpucount(size_t size, const uint64_t* set) {
+    int n = 0;
+    for (size_t i = 0; set && i < size / 8; ++i) n += __builtin_popcountll(set[i]);
+    return n;
+}
+// Pinning threads is tuning: accepted, and the scheduler keeps its own counsel.
+WINAPK_GUEST_ABI int g_sched_setaffinity(int, size_t, const void*) { return 0; }
+WINAPK_GUEST_ABI int g_sched_getcpu() { return static_cast<int>(GetCurrentProcessorNumber()); }
+WINAPK_GUEST_ABI int g_sched_getparam(int, int* param) {
+    if (!param) return *guest_errno() = kEINVAL, -1;
+    *param = 0;  // sched_priority of SCHED_OTHER
+    return 0;
+}
+
+// The process's name, as an app process has it.
+const char kProgname[] = "app_process64";
+const char* g_progname_var = kProgname;  // __progname
+WINAPK_GUEST_ABI const char* g_getprogname() { return kProgname; }
+
+// Signal names: sys_signame[SIGSEGV] is "segv", sys_siglist and strsignal give the description.
+const char* kSigNames[65] = {
+    nullptr, "hup", "int", "quit", "ill", "trap", "abrt", "bus", "fpe", "kill", "usr1", "segv", "usr2", "pipe",
+    "alrm", "term", "stkflt", "chld", "cont", "stop", "tstp", "ttin", "ttou", "urg", "xcpu", "xfsz", "vtalrm",
+    "prof", "winch", "io", "pwr", "sys"};
+const char* kSigList[65] = {
+    nullptr, "Hangup", "Interrupt", "Quit", "Illegal instruction", "Trap", "Aborted", "Bus error",
+    "Floating point exception", "Killed", "User signal 1", "Segmentation fault", "User signal 2", "Broken pipe",
+    "Alarm clock", "Terminated", "Stack fault", "Child exited", "Continue", "Stopped (signal)", "Stopped",
+    "Stopped (tty input)", "Stopped (tty output)", "Urgent I/O condition", "CPU time limit exceeded",
+    "File size limit exceeded", "Virtual timer expired", "Profiling timer expired", "Window size changed",
+    "I/O possible", "Power failure", "Bad system call"};
+WINAPK_GUEST_ABI char* g_strsignal(int sig) {
+    static thread_local char buf[40];
+    if (sig >= 1 && sig < 32) return const_cast<char*>(kSigList[sig]);
+    std::snprintf(buf, sizeof buf, sig >= 32 && sig <= 64 ? "Real-time signal %d" : "Unknown signal %d",
+                  sig >= 32 && sig <= 64 ? sig - 32 : sig);
+    return buf;
+}
+
+// __system_property_foreach: every property, as the prop_info __system_property_find hands out.
+// The entries are copied out first: a callback may read or set properties, which takes the lock.
+using PropForeach = void(WINAPK_GUEST_ABI*)(const void*, void*);
+WINAPK_GUEST_ABI int g_property_foreach(PropForeach cb, void* cookie) {
+    std::vector<const void*> all;
+    {
+        std::lock_guard<std::mutex> hold(g_props_lock);
+        for (const auto& e : props()) all.push_back(&e);
+    }
+    for (const void* e : all) cb(e, cookie);
+    return 0;
+}
+WINAPK_GUEST_ABI const void* g_property_find_nth(unsigned) { return nullptr; }  // as Android 8 and later answer
+
+// Calls with no meaning for one app process on Windows, which Android lets an app make: owners,
+// sessions and process groups are the app's own already, niceness is tuning. Named here so that
+// the log does not report each as a function nobody implemented.
+WINAPK_GUEST_ABI int g_ok0() { return 0; }
+// ptrace(PTRACE_TRACEME) is how native code asks "is a debugger attached": 0 is "none".
+WINAPK_GUEST_ABI glong g_ptrace(int, int, void*, void*) { return 0; }
+WINAPK_GUEST_ABI int g_setsid() { return static_cast<int>(GetCurrentProcessId()); }
+// syslog(3) goes nowhere on Android either (no syslogd); liblog is the log.
+WINAPK_GUEST_ABI void g_void0() {}
+// The real-time signals an app may use: Bionic keeps the first four for itself (32..35).
+WINAPK_GUEST_ABI int g_sigrtmin() { return 36; }
+WINAPK_GUEST_ABI int g_sigrtmax() { return 64; }
+// mincore: every page of the range is resident.
+WINAPK_GUEST_ABI int g_mincore(void*, size_t len, unsigned char* vec) {
+    if (!vec) return *guest_errno() = kEFAULT, -1;
+    std::memset(vec, 1, (len + 4095) / 4096);
+    return 0;
+}
+
+
 const ShimSymbol kSymbols[] = {
+    WINAPK_SHIM("div", g_div),
+    WINAPK_SHIM("ldiv", g_ldiv),
+    WINAPK_SHIM("lldiv", g_ldiv),
+    WINAPK_SHIM("ilogbf", m_ilogbf),
+    WINAPK_SHIM("asctime", g_asctime),
+    WINAPK_SHIM("asctime_r", g_asctime_r),
+    WINAPK_SHIM("ctime", g_ctime),
+    WINAPK_SHIM("ctime_r", g_ctime_r),
+    WINAPK_SHIM("getrusage", g_getrusage),
+    WINAPK_SHIM("times", g_times),
+    WINAPK_SHIM("mallinfo", g_mallinfo),
+    WINAPK_SHIM("__sched_cpucount", g_sched_cpucount),
+    WINAPK_SHIM("sched_setaffinity", g_sched_setaffinity),
+    WINAPK_SHIM("sched_getcpu", g_sched_getcpu),
+    WINAPK_SHIM("sched_getparam", g_sched_getparam),
+    WINAPK_SHIM("__progname", g_progname_var),
+    WINAPK_SHIM("getprogname", g_getprogname),
+    WINAPK_SHIM("sys_signame", kSigNames),
+    WINAPK_SHIM("sys_siglist", kSigList),
+    WINAPK_SHIM("strsignal", g_strsignal),
+    WINAPK_SHIM("__system_property_foreach", g_property_foreach),
+    WINAPK_SHIM("__system_property_find_nth", g_property_find_nth),
+    WINAPK_SHIM("ptrace", g_ptrace),
+    WINAPK_SHIM("setsid", g_setsid),
+    WINAPK_SHIM("setpgid", g_ok0),
+    WINAPK_SHIM("killpg", g_ok0),
+    WINAPK_SHIM("nice", g_ok0),
+    WINAPK_SHIM("setuid", g_ok0),
+    WINAPK_SHIM("setgid", g_ok0),
+    WINAPK_SHIM("posix_fadvise", g_ok0),
+    WINAPK_SHIM("posix_madvise", g_ok0),
+    WINAPK_SHIM("__register_atfork", g_ok0),  // no fork here (fork fails), so no handler ever runs
+    WINAPK_SHIM("mincore", g_mincore),
+    WINAPK_SHIM("__libc_current_sigrtmin", g_sigrtmin),
+    WINAPK_SHIM("__libc_current_sigrtmax", g_sigrtmax),
+    WINAPK_SHIM("openlog", g_void0),
+    WINAPK_SHIM("closelog", g_void0),
+    WINAPK_SHIM("syslog", g_void0),
+    WINAPK_SHIM("vsyslog", g_void0),
+    WINAPK_SHIM("android_set_abort_message", g_void0),
     WINAPK_SHIM("tsearch", g_tsearch),
     WINAPK_SHIM("tfind", g_tfind),
     WINAPK_SHIM("tdelete", g_tdelete),

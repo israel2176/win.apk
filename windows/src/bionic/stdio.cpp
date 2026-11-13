@@ -817,6 +817,61 @@ WINAPK_GUEST_ABI int g_chmod(const char*, unsigned) { return 0; }
 WINAPK_GUEST_ABI int g_fchmod(int, unsigned) { return 0; }
 WINAPK_GUEST_ABI unsigned g_umask(unsigned) { return 022; }
 WINAPK_GUEST_ABI unsigned g_umask_chk(unsigned mode) { return g_umask(mode); }
+// Owners and modes are the app's own and stay so (chmod above): the *at and owner forms, which
+// went to the loader's missing-function stub and were logged as not implemented.
+WINAPK_GUEST_ABI int g_file_ok() { return 0; }
+
+// utimensat, futimens, utimes and utime: a file's access and modification times. Missing, they
+// answered 0 and changed nothing: a download kept "now" for the server's date, and a cache that
+// touches what it reads evicted in the wrong order.
+struct GuestTimespecFt { int64_t tv_sec, tv_nsec; };
+constexpr int64_t kUtimeNow = (1 << 30) - 1, kUtimeOmit = (1 << 30) - 2;
+// A timespec as a FILETIME; false for UTIME_OMIT (the time stays).
+bool to_filetime(const GuestTimespecFt* t, FILETIME* out) {
+    if (!t || t->tv_nsec == kUtimeNow) return GetSystemTimeAsFileTime(out), true;
+    if (t->tv_nsec == kUtimeOmit) return false;
+    const uint64_t v = static_cast<uint64_t>(t->tv_sec * 10000000LL + t->tv_nsec / 100 + 116444736000000000LL);
+    out->dwLowDateTime = static_cast<DWORD>(v);
+    out->dwHighDateTime = static_cast<DWORD>(v >> 32);
+    return true;
+}
+int set_times(HANDLE h, const GuestTimespecFt* times) {
+    FILETIME a, m;
+    const bool has_a = to_filetime(times ? &times[0] : nullptr, &a), has_m = to_filetime(times ? &times[1] : nullptr, &m);
+    if (SetFileTime(h, nullptr, has_a ? &a : nullptr, has_m ? &m : nullptr)) return 0;
+    set_errno_from_win32(GetLastError());
+    return -1;
+}
+int set_path_times(const char* path, const GuestTimespecFt* times) {
+    const HANDLE h = CreateFileW(host_path(path).c_str(), FILE_WRITE_ATTRIBUTES,
+                                 FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+                                 FILE_FLAG_BACKUP_SEMANTICS, nullptr);  // (a directory opens with it too)
+    if (h == INVALID_HANDLE_VALUE) return set_errno_from_win32(GetLastError()), -1;
+    const int r = set_times(h, times);
+    CloseHandle(h);
+    return r;
+}
+WINAPK_GUEST_ABI int g_futimens(int fd, const GuestTimespecFt* times) {
+    const HANDLE h = fd_object(fd) ? INVALID_HANDLE_VALUE : reinterpret_cast<HANDLE>(_get_osfhandle(fd));
+    if (h == INVALID_HANDLE_VALUE) return *guest_errno() = kEBADF, -1;
+    return set_times(h, times);
+}
+WINAPK_GUEST_ABI int g_utimensat(int dirfd, const char* path, const GuestTimespecFt* times, int) {
+    if (!path) return g_futimens(dirfd, times);  // Linux's extension, which futimens is made of
+    std::string full;
+    return at_path(dirfd, path, &full) ? set_path_times(full.c_str(), times) : -1;
+}
+// utimes takes two timevals (microseconds), utime two time_t.
+WINAPK_GUEST_ABI int g_utimes(const char* path, const int64_t* tv) {
+    if (!tv) return set_path_times(path, nullptr);
+    const GuestTimespecFt ts[2] = {{tv[0], tv[1] * 1000}, {tv[2], tv[3] * 1000}};
+    return set_path_times(path, ts);
+}
+WINAPK_GUEST_ABI int g_utime(const char* path, const int64_t* t) {
+    if (!t) return set_path_times(path, nullptr);
+    const GuestTimespecFt ts[2] = {{t[0], 0}, {t[1], 0}};
+    return set_path_times(path, ts);
+}
 
 // mkstemp/mkostemp: the template's trailing XXXXXX replaced until a new file
 // can be created (O_EXCL), as bionic does; the path goes through g_open, so
@@ -844,6 +899,22 @@ WINAPK_GUEST_ABI int g_mkstemp(char* tmpl) { return make_temp_file(tmpl, 0, 0); 
 // Missing, these two answered 0 through the loader's fallback: descriptor 0 as the new temporary file.
 WINAPK_GUEST_ABI int g_mkostemps(char* tmpl, int suffix, int flags) { return make_temp_file(tmpl, suffix, flags); }
 WINAPK_GUEST_ABI int g_mkstemps(char* tmpl, int suffix) { return make_temp_file(tmpl, suffix, 0); }
+// mkdtemp: the same names, for a directory. Missing, it answered null: "could not make one".
+WINAPK_GUEST_ABI char* g_mkdtemp(char* tmpl) {
+    const size_t n = tmpl ? std::strlen(tmpl) : 0;
+    if (n < 6 || std::strncmp(tmpl + n - 6, "XXXXXX", 6) != 0) return *guest_errno() = kEINVAL, nullptr;
+    static const char kChars[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    uint64_t seed = GetTickCount64() ^ (static_cast<uint64_t>(GetCurrentThreadId()) << 32);
+    for (int attempt = 0; attempt < 100; ++attempt) {
+        for (size_t i = n - 6; i < n; ++i) {
+            seed = seed * 6364136223846793005ull + 1442695040888963407ull;
+            tmpl[i] = kChars[(seed >> 33) % (sizeof kChars - 1)];
+        }
+        if (g_mkdir(tmpl, 0700) == 0) return tmpl;
+        if (*guest_errno() != kEEXIST) return nullptr;
+    }
+    return nullptr;
+}
 
 // ---- directories -------------------------------------------------------------------------
 // Bionic's struct dirent on x86_64.
@@ -2123,6 +2194,16 @@ WINAPK_GUEST_ABI size_t g_ASharedMemory_getSize(int fd) {
 WINAPK_GUEST_ABI int g_ASharedMemory_setProt(int, int) { return 0; }
 
 const ShimSymbol kSymbols[] = {
+    WINAPK_SHIM("utimensat", g_utimensat),
+    WINAPK_SHIM("futimens", g_futimens),
+    WINAPK_SHIM("utimes", g_utimes),
+    WINAPK_SHIM("utime", g_utime),
+    WINAPK_SHIM("mkdtemp", g_mkdtemp),
+    WINAPK_SHIM("fchmodat", g_file_ok),
+    WINAPK_SHIM("chown", g_file_ok),
+    WINAPK_SHIM("fchown", g_file_ok),
+    WINAPK_SHIM("lchown", g_file_ok),
+    WINAPK_SHIM("fchownat", g_file_ok),
     {"__sF", g_sF},
     {"stdin", &g_stdin_var},
     {"stdout", &g_stdout_var},

@@ -797,7 +797,8 @@ void open_on_thread(Tab* t) {
     } else {
         // Phone-shaped on the primary monitor, in its pixels (dpi_of(nullptr)
         // is 96 everywhere, which made the window small on a 150% screen).
-        MONITORINFO mi{sizeof(mi)};
+        MONITORINFO mi{};
+        mi.cbSize = sizeof(mi);
         GetMonitorInfoW(MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY), &mi);
         const RECT& work = mi.rcWork;
         const UINT dpi = monitor_dpi(MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY));

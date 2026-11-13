@@ -312,6 +312,12 @@ if(WINAPK_JNI_INCLUDE)
     endif()
   endif()
   target_include_directories(winapk-runtime SYSTEM PRIVATE ${WINAPK_WEBVIEW2_SDK}/include)
+  # WebView2.h includes "EventToken.h"; mingw-w64 names it eventtoken.h, which only a
+  # case-insensitive file system takes for the same file (the Linux build, README).
+  if(NOT CMAKE_HOST_WIN32)
+    file(WRITE ${CMAKE_BINARY_DIR}/case/EventToken.h "#include <eventtoken.h>\n")
+    target_include_directories(winapk-runtime SYSTEM PRIVATE ${CMAKE_BINARY_DIR}/case)
+  endif()
   target_compile_options(winapk-runtime PRIVATE -Wall -Wextra)
   # GL: upstream's android.opengl bindings, cut out of its Mac
   # native_methods.cpp at build time and compiled against the Khronos headers;
@@ -326,7 +332,7 @@ if(WINAPK_JNI_INCLUDE)
     COMMENT "Extracting upstream's GL bindings")
   target_sources(winapk-runtime PRIVATE host/gl/gl_loader.cpp host/gl/gl_stubs.cpp host/gl/gl_bridges.cpp
                  host/gl/gl_surface.cpp host/gl/guest_gl.cpp host/native_window.cpp host/native_asset.cpp
-                 host/native_opensles.cpp host/native_aaudio.cpp host/native_media.cpp
+                 host/native_opensles.cpp host/native_aaudio.cpp host/native_media.cpp host/native_sensor.cpp
                  host/video_decode.cpp host/video_player.cpp host/native_media_video.cpp
                  host/media_encode.cpp host/mp4_writer.cpp host/native_media_codec.cpp
                  host/native_activity.cpp

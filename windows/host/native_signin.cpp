@@ -634,7 +634,8 @@ void open_on_thread(Window* w) {
     const bool over_app = app && !IsIconic(app) && GetWindowRect(app, &r) && r.right - r.left > 100;
     POINT centre{0, 0};
     if (over_app) centre = {(r.left + r.right) / 2, (r.top + r.bottom) / 2};
-    MONITORINFO mi{sizeof(mi)};
+    MONITORINFO mi{};
+    mi.cbSize = sizeof(mi);
     GetMonitorInfoW(MonitorFromPoint(centre, MONITOR_DEFAULTTOPRIMARY), &mi);
     const RECT& work = mi.rcWork;
     if (!over_app) centre = {(work.left + work.right) / 2, (work.top + work.bottom) / 2};

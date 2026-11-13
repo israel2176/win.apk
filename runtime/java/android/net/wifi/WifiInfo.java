@@ -50,6 +50,16 @@ public class WifiInfo implements android.net.TransportInfo {
      *  int, 0 if unknown. */
     public int    getIpAddress()   { return mIpAddress; }
     public boolean getHiddenSSID() { return false; }
+    // Passpoint, the Wi-Fi generation and the link's ceilings: not in the host's report. AOSP's own
+    // answers for "not a Passpoint network" and "unknown".
+    public String getPasspointFqdn() { return null; }
+    public String getPasspointProviderFriendlyName() { return null; }
+    public String getPasspointUniqueId() { return null; }
+    public int getWifiStandard() { return ScanResult.WIFI_STANDARD_UNKNOWN; }
+    public int getMaxSupportedTxLinkSpeedMbps() { return LINK_SPEED_UNKNOWN; }
+    public int getMaxSupportedRxLinkSpeedMbps() { return LINK_SPEED_UNKNOWN; }
+    public int getSubscriptionId() { return -1; }
+    public boolean isRestricted() { return false; }
     /** AOSP SECURITY_TYPE_* (API 31), what getCurrentSecurityType() answers. */
     public static final int SECURITY_TYPE_UNKNOWN = -1;
     public static final int SECURITY_TYPE_OPEN = 0;

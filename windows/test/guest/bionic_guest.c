@@ -1848,6 +1848,9 @@ struct sysinfo {
 };
 int sysinfo(struct sysinfo*);
 int gethostbyname_r(const char*, void*, char*, size_t, void**, int*);
+void* gethostbyname(const char*);
+void* gethostbyname2(const char*, int);
+int* __get_h_errno(void);
 int ASharedMemory_create(const char*, size_t);
 size_t ASharedMemory_getSize(int);
 
@@ -2005,8 +2008,23 @@ static void test_missing_forms(const char* dir) {
     check("mremap fails with MAP_FAILED and ENOMEM", mremap(b, 4096, 8192, 1) == (void*)-1 && *__errno() == 12, 0);
     void* host = b;
     int herr = 0;
-    check("gethostbyname_r: no result, NO_RECOVERY",
-          gethostbyname_r("localhost", b, path, sizeof path, &host, &herr) == -1 && host == 0 && herr == 3, 0);
+    struct hostent_g { char* name; char** aliases; int addrtype, length; char** addrs; } he, *found = 0;
+    check("gethostbyname_r resolves a numeric address without a lookup",
+          gethostbyname_r("10.1.2.3", &he, path, sizeof path, &host, &herr) == 0 && host == (void*)&he && herr == 0 &&
+              he.addrtype == 2 && he.length == 4 && he.addrs[0] && he.addrs[1] == 0 &&
+              memcmp(he.addrs[0], "\x0a\x01\x02\x03", 4) == 0 && he.aliases && he.aliases[0] == 0 &&
+              strcmp(he.name, "10.1.2.3") == 0, 0);
+    check("gethostbyname_r in a buffer too small: ERANGE, NETDB_INTERNAL",
+          gethostbyname_r("10.1.2.3", &he, path, 8, &host, &herr) == 34 && host == 0 && herr == -1, 0);
+    found = (struct hostent_g*)gethostbyname("localhost");
+    check("gethostbyname(\"localhost\") is the loopback address",
+          found && found->addrtype == 2 && found->length == 4 && found->addrs[0] &&
+              (unsigned char)found->addrs[0][0] == 127, 0);
+    found = (struct hostent_g*)gethostbyname2("::1", 10);
+    check("gethostbyname2(AF_INET6) gives 16 bytes", found && found->addrtype == 10 && found->length == 16 &&
+                                                         found->addrs[0][15] == 1, 0);
+    check("gethostbyname2 for a family that has no hosts fails and sets h_errno: NO_RECOVERY",
+          gethostbyname2("10.1.2.3", 7) == 0 && *__get_h_errno() == 3, 0);
 
     // Signals waited for, not handled.
     const unsigned long usr1 = 1ul << 9;  // SIGUSR1 is 10
@@ -2061,6 +2079,144 @@ static void test_missing_forms(const char* dir) {
                                         si.mem_unit == 1, 0);
 }
 
+// What the apps most installed in Israel import that the shim did not have: each of these went to
+// the loader's missing-function stub, which returns 0.
+typedef struct { int quot, rem; } div_t;
+typedef struct { long quot, rem; } ldiv_t;
+div_t div(int, int);
+ldiv_t ldiv(long, long);
+ldiv_t lldiv(long, long);
+int ilogbf(float);
+char* strcasestr(const char*, const char*);
+struct tm_g { int sec, min, hour, mday, mon, year, wday, yday, isdst; long gmtoff; const char* zone; };
+struct tm_g* gmtime_r(const long*, struct tm_g*);
+char* asctime_r(const struct tm_g*, char*);
+char* ctime(const long*);
+struct rusage_g { long utime[2], stime[2], maxrss, rest[13]; };
+int getrusage(int, struct rusage_g*);
+long times(long*);
+int __sched_cpucount(size_t, const void*);
+int sched_setaffinity(int, size_t, const void*);
+int sched_getcpu(void);
+extern const char* __progname;
+const char* getprogname(void);
+extern const char* const sys_signame[];
+char* strsignal(int);
+int __system_property_foreach(void (*)(const void*, void*), void*);
+int __system_property_read(const void*, char*, char*);
+int utimensat(int, const char*, const struct timespec*, int);
+int futimens(int, const struct timespec*);
+int utimes(const char*, const long*);
+char* mkdtemp(char*);
+long ptrace(int, int, void*, void*);
+int fchmodat(int, const char*, unsigned, int);
+void syslog(int, const char*, ...);
+int __android_log_buf_write(int, int, const char*, const char*);
+int __android_log_buf_print(int, int, const char*, const char*, ...);
+struct mallinfo_g { size_t f[10]; };
+struct mallinfo_g mallinfo(void);
+
+static int props_seen, props_sdk;
+static void count_prop(const void* pi, void* cookie) {
+    char name[32], value[92];
+    __system_property_read(pi, name, value);
+    props_seen++;
+    if (strcmp(name, "ro.build.version.sdk") == 0 && atoi(value) > 0) props_sdk = 1;
+    *(int*)cookie += 1;
+}
+
+static void test_popular_imports(const char* dir) {
+    char b[512], path[512];
+    struct stat st;
+
+    const div_t d = div(-17, 5);
+    const ldiv_t l = ldiv(100000000007L, 10), ll = lldiv(-9000000000L, 7);
+    check("div / ldiv / lldiv give the quotient and the remainder",
+          d.quot == -3 && d.rem == -2 && l.quot == 10000000000L && l.rem == 7 && ll.quot == -1285714285L &&
+              ll.rem == -5, 0);
+    check("ilogbf", ilogbf(8.0f) == 3 && ilogbf(0.3f) == -2, 0);
+    const char* hay = "Content-Type: Text/HTML";
+    check("strcasestr finds without case, and says so when it does not",
+          strcasestr(hay, "text/html") == hay + 14 && strcasestr(hay, "") == hay && !strcasestr(hay, "json"), 0);
+
+    const long when = 86400L * 365 + 3723;  // 1971-01-01 01:02:03 UTC, a Friday
+    struct tm_g tm;
+    gmtime_r(&when, &tm);
+    check("asctime_r has the fixed form", asctime_r(&tm, b) == b && strcmp(b, "Fri Jan  1 01:02:03 1971\n") == 0, b);
+    const char* c = ctime(&when);
+    check("ctime is a date line of 25 characters", c && strlen(c) == 25 && c[24] == '\n', c);
+
+    struct rusage_g ru;
+    memset(&ru, 0xff, sizeof ru);
+    volatile double burn = 0;
+    for (int i = 0; i < 3000000; ++i) burn += i * 0.5;
+    check("getrusage fills the times and the peak memory",
+          getrusage(0, &ru) == 0 && ru.utime[0] >= 0 && ru.utime[1] >= 0 && ru.utime[1] < 1000000 &&
+              ru.maxrss > 1000 && ru.rest[12] == 0, 0);
+    check("getrusage refuses a `who` it does not know: EINVAL", getrusage(7, &ru) == -1 && *__errno() == 22, 0);
+    long tms[4] = {-1, -1, -1, -1};
+    check("times counts ticks and fills the struct", times(tms) > 0 && tms[0] >= 0 && tms[1] >= 0 && tms[2] == 0, 0);
+    const struct mallinfo_g mi = mallinfo();
+    check("mallinfo returns its struct", mi.f[0] == 0 && mi.f[9] == 0, 0);
+
+    unsigned long set[16];
+    memset(set, 0, sizeof set);
+    check("__sched_cpucount counts the processors sched_getaffinity names",
+          sched_getaffinity(0, sizeof set, set) == 0 && __sched_cpucount(sizeof set, set) >= 1, 0);
+    memset(set, 0, sizeof set);
+    set[0] = 0xf0f;
+    set[3] = 1;
+    check("__sched_cpucount counts bits", __sched_cpucount(sizeof set, set) == 9, 0);
+    check("sched_setaffinity is accepted, sched_getcpu names a processor",
+          sched_setaffinity(0, sizeof set, set) == 0 && sched_getcpu() >= 0, 0);
+
+    check("__progname and getprogname name the process",
+          __progname && strlen(__progname) > 0 && strcmp(getprogname(), __progname) == 0, __progname);
+    check("sys_signame and strsignal",
+          strcmp(sys_signame[11], "segv") == 0 && strcmp(strsignal(11), "Segmentation fault") == 0 &&
+              strstr(strsignal(40), "Real-time") && strstr(strsignal(99), "Unknown"), strsignal(11));
+    int cookie = 0;
+    props_seen = props_sdk = 0;
+    check("__system_property_foreach visits every property",
+          __system_property_foreach(count_prop, &cookie) == 0 && props_seen >= 5 && cookie == props_seen &&
+              props_sdk, 0);
+
+    snprintf(path, sizeof path, "%s/times.bin", dir);
+    put_file(path, "x");
+    const struct timespec ts[2] = {{1000000000, 0}, {1234567890, 500000000}};
+    check("utimensat sets the modification time", utimensat(-100, path, ts, 0) == 0 && stat(path, &st) == 0 &&
+                                                      st.mtime == 1234567890, 0);
+    const struct timespec keep[2] = {{0, (1 << 30) - 2}, {0, (1 << 30) - 2}};  // UTIME_OMIT
+    check("UTIME_OMIT leaves it", utimensat(-100, path, keep, 0) == 0 && stat(path, &st) == 0 &&
+                                      st.mtime == 1234567890, 0);
+    const long tv[4] = {1100000000, 0, 1111111111, 0};
+    check("utimes takes microseconds", utimes(path, tv) == 0 && stat(path, &st) == 0 && st.mtime == 1111111111, 0);
+    const int fd = open(path, 2, 0);
+    const struct timespec ts2[2] = {{1200000000, 0}, {1222222222, 0}};
+    check("futimens sets it through a descriptor", fd >= 0 && futimens(fd, ts2) == 0, 0);
+    close(fd);
+    check("and stat sees it", stat(path, &st) == 0 && st.mtime == 1222222222, 0);
+    check("utimensat(NULL times) is now", utimensat(-100, path, 0, 0) == 0 && stat(path, &st) == 0 &&
+                                              st.mtime > 1700000000, 0);
+    snprintf(path, sizeof path, "%s/nothing-here", dir);
+    check("utimensat on a missing file: ENOENT", utimensat(-100, path, ts, 0) == -1 && *__errno() == 2, 0);
+
+    snprintf(path, sizeof path, "%s/tmpdirXXXXXX", dir);
+    snprintf(b, sizeof b, "%s", path);
+    check("mkdtemp makes a directory and names it",
+          mkdtemp(path) == path && strcmp(path, b) != 0 && stat(path, &st) == 0 && (st.mode & 0170000) == 0040000,
+          path);
+    snprintf(path, sizeof path, "%s/tmpdir", dir);
+    check("mkdtemp refuses a template without XXXXXX: EINVAL", mkdtemp(path) == 0 && *__errno() == 22, 0);
+
+    check("ptrace(PTRACE_TRACEME) finds no debugger", ptrace(0, 0, 0, 0) == 0, 0);
+    check("fchmodat is accepted", fchmodat(-100, b, 0600, 0) == 0, 0);
+    syslog(3, "%s", "to nowhere");
+    check("__android_log_buf_write / _print log a line",
+          __android_log_buf_write(0, 4, "bionic_guest", "buf_write") == 1 &&
+              __android_log_buf_print(0, 4, "bionic_guest", "buf_print %d", 7) == 1, 0);
+}
+
 EXPORT int bionic_test(const char* dir) {
     printf("Bionic shim, from guest code\n");
     test_printf();
@@ -2082,5 +2238,6 @@ EXPORT int bionic_test(const char* dir) {
     test_signal_delivery();
     test_sweep_gaps(dir);
     test_missing_forms(dir);
+    test_popular_imports(dir);
     return failures;
 }

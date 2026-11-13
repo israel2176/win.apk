@@ -2458,6 +2458,13 @@ public final class Translator {
                     CodeWriter.Label here = out.newLabel();
                     out.mark(here);
                     newLabels.put(insn.offset, here);
+                    // Owned by the writer it is marked in, as labelFor's are: without
+                    // this ownerOf() answers mainWriter, and a frame in a chain part
+                    // that names this `new` (an uninitialized reference kept in a
+                    // register across a branch target) was taken for one that crossed
+                    // a part boundary. Telegram 12.10's ChatMessageCell.setMessageContent
+                    // is split in three, and the whole class was lost to that.
+                    labelOwner.put(here, out);
                     out.typeOp(CodeWriter.NEW,
                         DexFile.internalName(dex.typeDescriptor((int) insn.args[1])));
                     if (deferredNew.containsKey(insn.offset)) {

@@ -35,6 +35,32 @@ public final class ScanResult implements Parcelable {
     public int frequency;
     public int channelWidth = CHANNEL_WIDTH_20MHZ;
     public long timestamp;
+    // AOSP's remaining public fields, as a scan that learned none of it leaves them.
+    public int centerFreq0 = UNSPECIFIED;
+    public int centerFreq1 = UNSPECIFIED;
+    public CharSequence operatorFriendlyName = "";
+    public CharSequence venueName = "";
+
+    /** AOSP ScanResult.InformationElement: one element of the beacon. */
+    public static class InformationElement implements Parcelable {
+        private final int mId, mIdExt;
+        private final byte[] mBytes;
+        public InformationElement(int id, int idExt, byte[] bytes) {
+            mId = id; mIdExt = idExt; mBytes = bytes == null ? new byte[0] : bytes.clone();
+        }
+        public int getId() { return mId; }
+        public int getIdExt() { return mIdExt; }
+        public java.nio.ByteBuffer getBytes() { return java.nio.ByteBuffer.wrap(mBytes).asReadOnlyBuffer(); }
+        @Override public int describeContents() { return 0; }
+        @Override public void writeToParcel(Parcel dest, int flags) {
+            dest.writeInt(mId); dest.writeInt(mIdExt); dest.writeByteArray(mBytes);
+        }
+    }
+    /** The beacon's elements: the host's scan reports none. */
+    public java.util.List<InformationElement> getInformationElements() { return java.util.Collections.emptyList(); }
+    public boolean isPasspointNetwork() { return false; }
+    public boolean is80211azNtbResponder() { return false; }
+    public boolean isTwtResponder() { return false; }
 
     public ScanResult() {}
 

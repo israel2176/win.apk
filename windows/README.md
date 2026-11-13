@@ -125,11 +125,18 @@ and `-DWINAPK_JNI_INCLUDE=<windows-jdk>/include`. The scripts under
 
 | Script | What it does |
 |---|---|
-| `windows/test/run_poc_wine.sh` | Builds the loader and the guest libraries and runs the loader, linker, arm64 and crash-report tests under Wine. The toolchain file adds `-femulated-tls` and winpthreads, which GCC's mingw-w64 libstdc++ needs |
+| `windows/test/run_poc_wine.sh` | Builds the loader and the guest libraries and runs the loader, linker, arm64 and crash-report tests under Wine. The arm64 test libraries are translated first, as CI's step does, which takes a clang 19 or later (`clang-19`, `-20`, `-21`, or `WINAPK_AOT_CLANG`). The toolchain file adds `-femulated-tls` and winpthreads, which GCC's mingw-w64 libstdc++ needs |
 | `WINAPK_WIN_JDK=<windows-jdk> windows/test/run_e2e_wine.sh` | Builds and runs the real-JVM end-to-end test, with the x86_64 and the arm64 guest library (`WINAPK_HOST_JAVAC` picks the javac) |
 | `windows/test/aot_worker/run_aot_worker_wine.sh` | The background translation worker (`host/runtime_main.cpp`) alone, with a stand-in for clang, on generated arm64 libraries: parts, the stamp and the shared cache; a worker killed half way (no compiler outlives it, the next run goes on); failures and their waits; a library translated from its profile, at most once an hour; the Settings switch off; four apps' workers on one library and one cache at once; a worker killed at each step of a write (`WINAPK_AOT_FAULT`); a DLL or a cache entry cut short; a library dated in the future; stale temporary files. Needs wine64, mingw-w64 g++, and clang, lld and llvm-strip for the guest libraries |
 | `WINAPK_WIN_JDK=<windows-jdk> windows/test/run_app_wine.sh app.apk [frames]` | Stages the runtime and boots an APK headless (needs `curl` and `unzip` for the first resource build); leaves `windows/build/frame.bmp` and `boot.log` |
 | `windows/test/build_guest.sh [out]`, `build_e2e.sh <jni include> <javac> <out>` | Build the guest test libraries alone |
+
+Under Wine the paths, user-folders, translation-cache and GL tests fail where Wine differs from
+Windows (names with `|` or `:`, junctions, hard links between racing processes, no D3D11 for
+ANGLE), and an app that asks `ConnectivityManager` for the network ends in the JDK's
+`NetworkInterface` (below); the tests that link libstdc++ dynamically need
+`WINEPATH=/usr/lib/gcc/x86_64-w64-mingw32/<version>-posix`. `stage_runtime.sh` on Linux stages
+no `clang/` (there is no Windows clang to copy), so arm64 libraries run on the JIT there.
 
 To see a window under Wine, start `Xvfb :99` and run `winapk-runtime.exe`
 with `DISPLAY=:99` and without `WINAPK_HEADLESS`; `xdotool` and ImageMagick's
@@ -219,6 +226,7 @@ The user-facing ones (`WINAPK_PHONE_SIZE`, `WINAPK_RESIZABLE`,
 | `WINAPK_USER_FOLDER_TARGETS` | Names the Windows folders the shared-storage junctions point at (tests) |
 | `MACAPK_USER_FOLDERS=0`, `HKCU\Software\Win.apk\UserFolders=0` | Turn the shared-storage mapping off (the setting is what the launcher writes) |
 | `MACAPK_JVM_OPTS` | Extra JVM options, passed through after Win.apk's own (`-XX:TieredStopAtLevel=4` brings back the C2 compiler, which the runtime leaves out for a faster start) |
+| `WINAPK_SHORT_DATA_DIR=0` | The app's data directory by its long name, not the 8.3 one (`-Dwinapk.data.dir`). For Wine, which makes short names up and does not find a new file by one: without it every save through a temporary file fails there. `run_app_wine.sh` and the sweep under `--launcher wine` set it |
 | `WINAPK_CDS=0` or `base` | Class-data sharing (`host/cds.h`): `0` back to the old flags (`--patch-module`, no archive), `base` the JRE's archive without the framework archive. `WINAPK_CDS_DIR=<dir>` puts the framework archive elsewhere (tests share one), `WINAPK_CDS_CLASSLIST=<file>` dumps from another class list (`none`: only the start's own), `WINAPK_CDS_RECORD_DIR=<dir>` writes every app start's loaded classes to `<dir>\<app>.classlist` (for `scripts/merge_classlists.py`), `WINAPK_CDS_VERIFY=1` checks the archive whole at every start, `WINAPK_CDS_DUMP_DELAY_MS` (default 10000) is the wait after the first frame before the background dump |
 | `MACAPK_FRAMESPEED_DAMAGE=1` | Partial redraw (off by default): a frame that only invalidations asked for draws the view tree clipped to the area they damaged and hands the window only that rectangle, instead of redrawing and copying the whole window (`docs/ARCHITECTURE.md`, "The view tree's frames"). Unset or anything else, every frame is whole. `MACAPK_DAMAGE_VALIDATE=1` with it draws every frame whole but compares what changed with the area claimed: `[damage-validate] under-damage` names a frame that changed outside it, and the `M6:` line counts `validate: claimed= clean= under=`. `MACAPK_TRACE_DAMAGE=1` logs every 5 s what the frames' damage was (`[damage]`), `MACAPK_FRAME_PHASE_TRACE=1` a frame's time by phase (`[frame-phase]`) |
 | `MACAPK_QUIET_CLASSLOAD=0` | Logs a line for every class the app's class loader loads (the runtime sets it to 1, as upstream's launcher does: thousands of lines cost up to 0.4 s of a start) |
@@ -248,7 +256,7 @@ Every test is a program built by CMake; `ci.yml` runs each of them on
 | `winapk-thunk-test` | Native-method thunks with mixed, stack-overflowing and narrow arguments; the variadic entry stub's `va_list`; the tagged zero stub |
 | `winapk-jni-test`, `winapk-jni-variadic-test` | The guest `JNIEnv` against a mock JVM; the variadic bridge for all four call kinds and every argument type, through `...` and `va_list` |
 | `winapk-linker-test <dir>` | A four-library tree with a `DT_NEEDED` cycle and a runtime plugin: constructor order, symbol resolution and its order (libc at its place in `DT_NEEDED`, the global group before it), `dlsym` scopes, the guest's `dlopen`, `dlsym`, `dlerror` and `dladdr`, a library opened by its Android path |
-| `winapk-bionic-test <bionic_guest.so> <scratch dir>` | `test/guest/bionic_guest.c` exercises the shim from guest code: strings, printf and scanf through the System V `va_list`, threads and keys, files and directories, ELF TLS, system properties, locales, futex, an 8 GiB `PROT_NONE` reservation, pipes, eventfd, epoll, sockets, `ALooper`, clocks, `mmap`; the network (loopback only): a UDP datagram, socket options that are mapped, accepted as tuning or refused with `ENOPROTOOPT`, `SO_LINGER`, a multicast group joined with `IP_ADD_MEMBERSHIP` and with `MCAST_JOIN_GROUP` and a datagram received through each (skipped where the host has no multicast route), `if_nametoindex`/`if_indextoname`/`if_nameindex` against `getifaddrs`, edge-triggered epoll on a socket (`EPOLLOUT` once, then a 300 ms wait that takes 300 ms and no processor time; `EPOLLIN` once per arrival and read) and on an eventfd (every write), `EPOLLONESHOT`, `epoll_wait` and `poll` woken by another thread's send; `random(3)` against glibc's sequences (the same generator), `fts` walks, `link`, `popen`/`system` without a shell, `fscanf`, `strptime`, cleanup handlers run by `pthread_exit`, `sched_getaffinity`, FORTIFY's `FD_*`, the binary128 `lroundl` family; the calls the loader's missing-function stub used to answer with 0 (`test_missing_forms`): FORTIFY's `__pwrite_chk`, `__poll_chk`, `__getcwd_chk` and the string forms, `readv`/`writev`, `sendfile`, `truncate`, `renameat2`, `readdir_r`, `rewinddir`, `scandir`, `mkstemps`, `getc_unlocked`, `epoll_pwait2`, `sigwait`/`sigtimedwait`, `pthread_spin_lock`, `pthread_mutex_clocklock`, `sem_clockwait`, `ASharedMemory_create`, `sysinfo`, and that `posix_spawn`, `execv`, `wait4`, `openpty`, `inotify_init1`, `iconv_open`, `regcomp`, `mremap`, `symlink` and `gethostbyname_r` fail as Linux reports it |
+| `winapk-bionic-test <bionic_guest.so> <scratch dir>` | `test/guest/bionic_guest.c` exercises the shim from guest code: strings, printf and scanf through the System V `va_list`, threads and keys, files and directories, ELF TLS, system properties, locales, futex, an 8 GiB `PROT_NONE` reservation, pipes, eventfd, epoll, sockets, `ALooper`, clocks, `mmap`; the network (loopback only): a UDP datagram, socket options that are mapped, accepted as tuning or refused with `ENOPROTOOPT`, `SO_LINGER`, a multicast group joined with `IP_ADD_MEMBERSHIP` and with `MCAST_JOIN_GROUP` and a datagram received through each (skipped where the host has no multicast route), `if_nametoindex`/`if_indextoname`/`if_nameindex` against `getifaddrs`, edge-triggered epoll on a socket (`EPOLLOUT` once, then a 300 ms wait that takes 300 ms and no processor time; `EPOLLIN` once per arrival and read) and on an eventfd (every write), `EPOLLONESHOT`, `epoll_wait` and `poll` woken by another thread's send; `random(3)` against glibc's sequences (the same generator), `fts` walks, `link`, `popen`/`system` without a shell, `fscanf`, `strptime`, cleanup handlers run by `pthread_exit`, `sched_getaffinity`, FORTIFY's `FD_*`, the binary128 `lroundl` family; the calls the loader's missing-function stub used to answer with 0 (`test_missing_forms`): FORTIFY's `__pwrite_chk`, `__poll_chk`, `__getcwd_chk` and the string forms, `readv`/`writev`, `sendfile`, `truncate`, `renameat2`, `readdir_r`, `rewinddir`, `scandir`, `mkstemps`, `getc_unlocked`, `epoll_pwait2`, `sigwait`/`sigtimedwait`, `pthread_spin_lock`, `pthread_mutex_clocklock`, `sem_clockwait`, `ASharedMemory_create`, `sysinfo`, and that `posix_spawn`, `execv`, `wait4`, `openpty`, `inotify_init1`, `iconv_open`, `regcomp`, `mremap`, and `symlink` fail as Linux reports it, `gethostbyname`, `gethostbyname2` and `gethostbyname_r` on a numeric address, `localhost`, `::1`, a buffer too small (`ERANGE`) and a family with no hosts; and the ones the most installed apps import (`test_popular_imports`): `div`/`ldiv`/`lldiv`, `ilogbf`, `strcasestr`, `asctime_r`/`ctime`, `getrusage`, `times`, `mallinfo`, `__sched_cpucount`, `sched_setaffinity`/`sched_getcpu`, `__progname`/`getprogname`, `sys_signame`/`strsignal`, `__system_property_foreach`, `utimensat`/`futimens`/`utimes` (with `UTIME_OMIT` and a null `times`), `mkdtemp`, `ptrace`, `fchmodat`, `syslog`, `__android_log_buf_write`/`_print` |
 | `winapk-arm64-test <dir>` | The arm64 engines: `test/guest/arm64_isa.c` built for the host and for arm64 at three optimization levels must agree on every function, on the interpreter, the JIT and the AOT translation; then `arm64_bridge_guest.c` (calls in both directions, variadics, threads, atexit, `fts` filling arm64's `struct stat`, cleanup handlers); `arm64_flow_guest.c` (returns into an ancestor frame with RET and BR, coroutines, RETAA, deep recursion on a 1 MB thread, saturating conversions, FRECPS/FRSQRTS, an exclusive-monitor counter shared by translated code and the JIT, the STLR/LDAR litmus test) against values worked out by hand; `arm64_patch_guest.c` (a library patching its own code, and code patched by one thread while another runs it), `arm64_eh_guest.cpp` (C++ exceptions through the NDK's libc++ and unwinder, built when `ANDROID_NDK_HOME` names an NDK), a library unloaded with `dlclose`, one linked at another address, a translation cut short under a stamp that says it is sealed (refused) and the same one whole (loaded); 400 functions of random instructions from `gen_arm64_fuzz.py`, whose results on the JIT and the translation must match the interpreter's (`WINAPK_FUZZ_STATE=<i>` starts every function from function i's states, to bisect a difference); and `arm64_bench.c` (the speed ratios) |
 | `winapk-aot-stamp-test` | A library's translation stamp (`include/winapk/aot_stamp.h`), with no file behind it: each kind written and read back, an old stamp read as a short one, a newer build's word; what the loader refuses and when it asks for a sealed DLL; for each kind whether the worker has a step to take now (a changed library or translator, another CPU, the back-off after failures and its limit, a pass to finish, a profile that grew, the interval between two translations from a profile); which stamps the launcher takes for "translated by its profile" |
 | `winapk-applink-test` | The App Link sign-in window's decision (`host/applink_match.h`): the navigation that returns to the app is the `redirect_uri` without its query, exactly (scheme and host without case, a default port as none); another path, host, port, scheme, a subdomain, userinfo or the address inside a query is not |
@@ -317,6 +325,41 @@ configuration (a JRE, environment variables, another staged runtime such as
 `main`'s), one first start and then warm starts taken in turns, timed from
 outside to the `first frame presented` line, with the working set and private
 bytes read then. `docs/research/startup-cds.md` has its numbers.
+
+### What popular apps name that the runtime lacks
+
+The sweep runs open-source apps. For the apps people actually install, two static
+checks need no window and no Windows, only the repository built on Linux:
+
+```sh
+windows/test/compat/fetch_apkpure.sh                 # popular.txt, with apkeep, into windows/build/popular-apks
+python3 windows/test/compat/native_gaps.py . windows/build/popular-apks <report dir>
+java -cp windows/build/runtime/lib/macapk-loader.jar com.macapk.dex.Main \
+    --classpath windows/build/runtime/lib/android-framework.jar <app.xapk> <dir>/<app>/classes.jar
+java windows/test/apicheck/ApiCheck.java windows/build/runtime/lib <out.tsv> <dir>/*/classes.jar   # JDK 24+
+```
+
+`native_gaps.py` lists the system functions, variables and libraries the apps'
+native code imports that no table of the built `winapk-runtime.exe` names (each
+would go to the missing-function stub), ranked by the number of apps. The
+converter's own output says which classes it could not translate and which
+oversize methods it had to replace with a stub (`STUBBED oversize method`),
+and `ApiCheck` lists the framework classes, methods and fields the converted
+apps name that `android-framework.jar` does not have. `popular.txt` is the
+apps most installed in Israel and worldwide; APKPure's API serves about two
+thirds of them (few of the local Israeli apps), and a 32-bit split for some
+whatever is asked for. The files are for analysis only and are not committed.
+
+What the first pass (89 apps, 2026-11) left open: the NDK's `AMediaCodec`,
+`AMediaFormat` and `AMediaExtractor` (10 apps), `ASensorManager` (10) and
+`AHardwareBuffer` (mostly weak references); wide-character stdio (`swprintf`,
+`getwc`, in every statically linked libc++ but rarely called) and `<fenv.h>`;
+35 oversize methods in 10 apps the splitter cannot cut (PayPal has 25, most of
+them one `synchronized` block or one `try` from end to end; WhatsApp's
+`DeepLinkActivity.onCreate`, X's `Item$$serializer.deserialize`); and, on the
+Java side, `android.app.appsearch`, `android.icu`'s date-interval and list
+formatters, `ActivityGroup` / `TabActivity`, and a real PDF engine behind
+`PdfRenderer`.
 
 ## CI and releases
 
@@ -1193,6 +1236,33 @@ every such change is listed here:
   does. The Play Store adds a language to itself with a session of one
   config split; installed as the whole app, the split replaced the Play
   Store, which was left with no code.
+- Framework members the most installed apps name and the tree did not have
+  (`windows/test/apicheck/ApiCheck.java` over 86 apps from APKPure), each a
+  `NoSuchMethodError`, `NoSuchFieldError` or `NoClassDefFoundError` where it
+  was reached: `PackageManager.getActivityIcon(Intent)` and
+  `getPackageInfo(VersionedPackage, ...)`; `NetworkInfo.State.SUSPENDED`
+  (and the enum in AOSP's order); `WifiManager`'s `is...Supported()` family,
+  `WifiInfo`'s Passpoint and link-ceiling getters, `ScanResult`'s
+  `venueName`, `operatorFriendlyName`, `centerFreq0/1` and
+  `getInformationElements()`; `LinkProperties.getDhcpServerAddress()`;
+  `BluetoothDevice.getAddressType()`; `android.system.Os.rename`, `remove`,
+  `unlink`, `mkdir`, `fsync`, `fdatasync`, `pread`, `pwrite`, `getppid`,
+  `geteuid`, `getegid`; every Linux errno in `OsConstants` (it had nine) and
+  the `RT_SCOPE_` values; `TelephonyManager.isMultiSimSupported()` returns
+  AOSP's `int` (it was declared `boolean`, which no caller links against);
+  `android.graphics.pdf.PdfRenderer` exists and refuses a document with an
+  `IOException` (there is no PDF engine yet), where 27 of the apps met a
+  missing class.
+- `runtime/java/com/macapk/dex/Translator.java` (`F_NEW_INSTANCE`): the label
+  of an eagerly emitted `new` is recorded as owned by the writer it is marked
+  in, as `labelFor`'s labels are. Without that `ownerOf()` answered the main
+  writer for it, so in a method `MethodSplitter` had cut into parts, a frame
+  of a later part that names the `new` (an uninitialized reference kept in a
+  register across a branch target) was taken for one that "crossed a part
+  boundary", after the split had been committed, and the whole class was
+  dropped. Telegram 12.10's `ChatMessageCell` (it draws every message;
+  `setMessageContent` is split in three) was lost that way: the app's first
+  activity then failed with `NoClassDefFoundError`.
 - `runtime/java/com/macapk/dex/Translator.java`, `SuperInterfacePlan.java`: a
   non-virtual call (invoke-direct, invoke-super) to a final method of a
   superclass on a receiver that is not the current class is an

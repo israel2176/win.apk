@@ -110,20 +110,31 @@ patch_module() {  # patch_module <module> <out dir> <source dir>...
     local module="$1" dst="$2" src dirs="" sep=":"
     shift 2
     command -v cygpath > /dev/null 2>&1 && sep=";"  # javac on Windows splits on ';'
+    local win_system=""
+    if ! command -v cygpath > /dev/null 2>&1 && [[ "$module" == java.base && -f "${WINAPK_WIN_JDK:-}/lib/modules" ]]; then
+        win_system="$WINAPK_WIN_JDK"
+    fi
     : > "$WORK/$module.list"
     for src in "$@"; do
         [[ -d "$src" ]] || continue
         echo "[build_java] compiling ${src#"$RT"/} (--patch-module $module)..."
         # sun.nio.fs.Windows* patch the Windows JDK's own classes, which a
-        # JDK for another system does not have (a Linux build checks the rest).
-        find "$src" -name '*.java' | { if command -v cygpath > /dev/null 2>&1; then cat; else
+        # JDK for another system does not have. A Linux build compiles them
+        # against a Windows JDK's image when WINAPK_WIN_JDK names one (as
+        # test/run_app_wine.sh needs it anyway): without them java.nio does not
+        # map Android paths, and Files.move on "/data/user/0/..." (androidx
+        # DataStore's every save) finds no file. Without WINAPK_WIN_JDK they are
+        # left out and the rest is checked.
+        find "$src" -name '*.java' | { if command -v cygpath > /dev/null 2>&1 || [[ -n "$win_system" ]]; then cat; else
             grep -v '/sun/nio/fs/Windows'; fi; } | sort | native_paths >> "$WORK/$module.list"
         dirs="${dirs:+$dirs$sep}$(native_path "$src")"
     done
     [[ -s "$WORK/$module.list" ]] || return 0
     rm -rf "$dst"
     mkdir -p "$dst"
-    "$JAVAC" -nowarn --patch-module "$module=$dirs" -d "$dst" @"$WORK/$module.list"
+    "$JAVAC" -nowarn ${win_system:+--system "$win_system"} --patch-module "$module=$dirs" -d "$dst" @"$WORK/$module.list"
+    [[ -n "$win_system" || "$module" != java.base ]] || command -v cygpath > /dev/null 2>&1 ||
+        echo "[build_java] note: sun.nio.fs.Windows* left out (set WINAPK_WIN_JDK to a Windows JDK to build them)"
 }
 patch_module java.base "$LIB/java_base_patch" "$RT/java_base_patch" "$HERE/../java/java_base_patch"
 patch_module jdk.unsupported "$LIB/jdk_unsupported_patch" "$RT/jdk_unsupported_patch"
