@@ -60,8 +60,8 @@ for you, and installs a copy only when Google signed it.
    downloads the x86_64 variant of Google Services Framework, Google Play
    services and Google Play Store from APKPure, with the
    [apkeep](https://github.com/EFForg/apkeep) tool it ships, into
-   `%LOCALAPPDATA%\Win.apk\downloads\google\`, then checks each file and
-   installs it. APKPure has served altered apps before, so its copies are
+   `%LOCALAPPDATA%\Win.apk\downloads\google\`, one app at a time and up to
+   three tries each, then checks each file and installs it. APKPure has served altered apps before, so its copies are
    trusted no more than any other file: a copy that **Google did not sign**,
    or whose signature does not verify, is refused.
 3. When a download fails or its copy is refused, that app's button becomes

@@ -57,8 +57,8 @@ Google כאפליקציות. Win.apk לא כולל את האפליקציות ש�
    מוריד מ-APKPure את גרסת x86_64 של Google Services Framework, ‏Google Play
    services ו-Google Play Store, בעזרת הכלי
    [apkeep](https://github.com/EFForg/apkeep) שמגיע איתו, לתיקייה
-   `%LOCALAPPDATA%\Win.apk\downloads\google\`, ואז בודק כל קובץ ומתקין
-   אותו. ב-APKPure כבר נמצאו אפליקציות ששונו, ולכן לא סומכים על העותקים שלו
+   `%LOCALAPPDATA%\Win.apk\downloads\google\`, אפליקציה אחת בכל פעם ועד
+   שלושה ניסיונות לכל אחת, ואז בודק כל קובץ ומתקין אותו. ב-APKPure כבר נמצאו אפליקציות ששונו, ולכן לא סומכים על העותקים שלו
    יותר מאשר על כל קובץ אחר: עותק ש**Google לא חתמה עליו**, או שהחתימה שלו לא
    תקפה, נדחה.
 3. כשהורדה נכשלת או שהעותק נדחה, הכפתור של אותה אפליקציה הופך ל-**APKMirror**

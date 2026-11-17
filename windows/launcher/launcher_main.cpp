@@ -245,11 +245,12 @@ const wchar_t* tr(const wchar_t* en) {
         {L"The signature of {0} does not verify, so the file may have been changed after it was signed. Download it again from APKMirror.", L"החתימה של {0} אינה תקפה, ולכן ייתכן שהקובץ שונה אחרי שנחתם. יש להוריד אותו שוב מ-APKMirror."},
         {L"{0} is not signed by Google, so Win.apk does not trust it as Google's app. Download it from its APKMirror page.", L"{0} אינו חתום על ידי Google, ולכן Win.apk לא סומכת עליו כאפליקציה של Google. יש להוריד אותו מהדף שלו ב-APKMirror."},
         {L"Download all", L"הורדת הכול"},
+        {L"Waiting to download", L"ממתינה להורדה"},
         {L"APKMirror", L"APKMirror"},
         {L"From APKPure, the x86_64 variant.", L"מ-APKPure, גרסת x86_64."},
         {L"Win.apk downloads it and checks that Google signed it.", L"Win.apk מורידה אותה ובודקת ש-Google חתמה עליה."},
         {L"{0} could not be downloaded", L"לא ניתן היה להוריד את {0}"},
-        {L"APKPure did not give the app. Its row's button now opens the app's page on APKMirror, where you can download it yourself.", L"האפליקציה לא התקבלה מ-APKPure. הכפתור בשורה שלה פותח עכשיו את הדף שלה ב-APKMirror, שממנו אפשר להוריד אותה בעצמך."},
+        {L"APKPure did not give the app in three tries. Its row's button now opens the app's page on APKMirror, where you can download it yourself.", L"האפליקציה לא התקבלה מ-APKPure בשלושה ניסיונות. הכפתור בשורה שלה פותח עכשיו את הדף שלה ב-APKMirror, שממנו אפשר להוריד אותה בעצמך."},
         {L"Google services are ready", L"שירותי Google מוכנים"},
         {L"From now on the Play Store keeps itself and Play services up to date, as on a phone.", L"מעכשיו חנות Play מעדכנת את עצמה ואת שירותי Play, כמו בטלפון."},
         {L"Waiting for the downloads", L"ממתין להורדות"},
@@ -5752,7 +5753,9 @@ struct SetupState {
     std::deque<std::pair<fs::path, bool>> queue;       // files to check, dropped or not
     std::wstring checking;                             // the file being checked now
     std::map<std::string, std::wstring> installing;    // package: the library name its install has
-    std::set<std::string> fetching;                    // packages apkeep is downloading now
+    std::set<std::string> fetching;                    // packages apkeep is downloading, or queued to
+    std::deque<std::string> fetch_queue;               // packages waiting for their turn (one download at a time)
+    bool fetch_running = false;                        // a download thread is running
     std::set<std::string> fetch_failed;                // packages whose APKPure copy failed: APKMirror instead
     std::set<std::wstring> fetched;                    // files apkeep downloaded (their failures fall back)
 } g_setup;
@@ -5889,32 +5892,30 @@ bool apkeep_present() {
 struct SetupFetch {
     std::string pkg;
     fs::path file;
-    DWORD code = 1;
 };
 
-// Runs apkeep for one package into downloads\google\<pkg>.part\, its output appended to
-// logs\google-download.log, and keeps the file it leaves as downloads\google\<pkg>.<ext>.
-DWORD WINAPI setup_fetch_thread(void* param) {
-    auto* f = static_cast<SetupFetch*>(param);
-    std::error_code ec;
-    const fs::path dir = setup_downloads();
-    const fs::path part = dir / (utf8_to_wide(f->pkg) + L".part");
-    fs::remove_all(part, ec);
-    fs::create_directories(part, ec);
-    fs::create_directories(logs_dir(), ec);
-    SECURITY_ATTRIBUTES sa{sizeof(sa), nullptr, TRUE};
-    HANDLE log = CreateFileW(setup_download_log().c_str(), FILE_APPEND_DATA,
-                             FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, &sa, OPEN_ALWAYS,
-                             FILE_ATTRIBUTE_NORMAL, nullptr);
+// Appends one line to logs\google-download.log, prefixed with the local time.
+void fetch_log(HANDLE log, const std::string& line) {
+    if (log == INVALID_HANDLE_VALUE) return;
+    SYSTEMTIME t;
+    GetLocalTime(&t);
+    char stamp[32];
+    snprintf(stamp, sizeof stamp, "%04u-%02u-%02u %02u:%02u:%02u ", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute,
+             t.wSecond);
+    const std::string text = stamp + line + "\n";
+    DWORD n = 0;
+    WriteFile(log, text.data(), static_cast<DWORD>(text.size()), &n, nullptr);
+}
+
+// Runs apkeep once for `pkg` into the empty folder `part`, its output appended to `log`; the app file it left,
+// or empty. apkeep says why it skipped an app only on a console (indicatif's println is silent when its output
+// is a file) and exits 0 either way, so the file alone tells success.
+fs::path fetch_once(const std::string& pkg, const fs::path& part, HANDLE log, DWORD* code) {
     // apkeep's own guard: APKPure is refused unless the caller acknowledges what it has served before. Win.apk
     // does, because nothing installs here that Google did not sign (setup_checked).
-    std::wstring cmd = L"\"" + apkeep_exe().wstring() + L"\" -a " + utf8_to_wide(f->pkg) +
+    std::wstring cmd = L"\"" + apkeep_exe().wstring() + L"\" -a " + utf8_to_wide(pkg) +
                        L" -d apk-pure -o acknowledge_dangers=true,arch=x86_64 " + gms_arg(part.wstring());
-    if (log != INVALID_HANDLE_VALUE) {
-        const std::string head = "\n> " + wide_to_utf8(cmd) + "\n";
-        DWORD n = 0;
-        WriteFile(log, head.data(), static_cast<DWORD>(head.size()), &n, nullptr);
-    }
+    fetch_log(log, "> " + wide_to_utf8(cmd));
     SIZE_T attr_size = 0;
     InitializeProcThreadAttributeList(nullptr, 1, 0, &attr_size);
     std::vector<BYTE> attr_buf(attr_size);
@@ -5934,52 +5935,104 @@ DWORD WINAPI setup_fetch_thread(void* param) {
                                    (listed ? EXTENDED_STARTUPINFO_PRESENT : 0), nullptr, part.c_str(),
                                    &si.StartupInfo, &pi);
     if (listed) DeleteProcThreadAttributeList(attrs);
-    if (log != INVALID_HANDLE_VALUE) CloseHandle(log);
-    if (ok) {
-        CloseHandle(pi.hThread);
-        // A stalled download is given up after ten minutes; Play services is about 300 MB.
-        if (WaitForSingleObject(pi.hProcess, 10 * 60 * 1000) == WAIT_TIMEOUT) TerminateProcess(pi.hProcess, 1);
-        f->code = wait_exit(pi.hProcess);
-        for (fs::directory_iterator it(part, ec), end; !ec && it != end; it.increment(ec)) {
-            std::error_code fe;
-            if (!it->is_regular_file(fe) || !is_app_file(it->path())) continue;
-            // "com.google.android.gms@x86_64.xapk" -> "com.google.android.gms.xapk": the name install_name reads.
-            const fs::path keep = dir / (utf8_to_wide(f->pkg) + it->path().extension().wstring());
-            fs::remove(keep, fe);
-            fs::rename(it->path(), keep, fe);
-            if (!fe) f->file = keep;
-            break;
+    *code = ok ? 1 : GetLastError();
+    if (!ok) return {};
+    CloseHandle(pi.hThread);
+    // A stalled download is given up after ten minutes; Play services is about 300 MB.
+    if (WaitForSingleObject(pi.hProcess, 10 * 60 * 1000) == WAIT_TIMEOUT) TerminateProcess(pi.hProcess, 1);
+    *code = wait_exit(pi.hProcess);
+    std::error_code ec;
+    for (fs::directory_iterator it(part, ec), end; !ec && it != end; it.increment(ec)) {
+        std::error_code fe;
+        if (it->is_regular_file(fe) && is_app_file(it->path()) && fs::file_size(it->path(), fe) > 0) {
+            return it->path();
         }
     }
+    return {};
+}
+
+// Downloads one package, trying three times (APKPure fails now and then, and apkeep tries no further), into
+// downloads\google\<pkg>.part\, and keeps the file as downloads\google\<pkg>.<ext>. Every attempt and its
+// outcome is in logs\google-download.log.
+DWORD WINAPI setup_fetch_thread(void* param) {
+    auto* f = static_cast<SetupFetch*>(param);
+    std::error_code ec;
+    const fs::path dir = setup_downloads();
+    const fs::path part = dir / (utf8_to_wide(f->pkg) + L".part");
+    fs::create_directories(logs_dir(), ec);
+    SECURITY_ATTRIBUTES sa{sizeof(sa), nullptr, TRUE};
+    HANDLE log = CreateFileW(setup_download_log().c_str(), FILE_APPEND_DATA,
+                             FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, &sa, OPEN_ALWAYS,
+                             FILE_ATTRIBUTE_NORMAL, nullptr);
+    constexpr int kAttempts = 3;
+    for (int attempt = 1; attempt <= kAttempts && f->file.empty(); ++attempt) {
+        if (attempt > 1) Sleep(attempt == 2 ? 5000 : 20000);
+        fs::remove_all(part, ec);
+        fs::create_directories(part, ec);
+        DWORD code = 1;
+        const fs::path got = fetch_once(f->pkg, part, log, &code);
+        if (got.empty()) {
+            fetch_log(log, f->pkg + ": attempt " + std::to_string(attempt) + " of " + std::to_string(kAttempts) +
+                               " left no app file (apkeep exit code " + std::to_string(code) + ")");
+            continue;
+        }
+        // "com.google.android.gms@x86_64.xapk" -> "com.google.android.gms.xapk": the name install_name reads.
+        const fs::path keep = dir / (utf8_to_wide(f->pkg) + got.extension().wstring());
+        std::error_code fe;
+        fs::remove(keep, fe);
+        fs::rename(got, keep, fe);
+        if (fe) {
+            fetch_log(log, f->pkg + ": could not move " + wide_to_utf8(got.wstring()) + ": " + fe.message());
+            continue;
+        }
+        f->file = keep;
+        fetch_log(log, f->pkg + ": downloaded " + wide_to_utf8(keep.wstring()) + " (" +
+                           std::to_string(fs::file_size(keep, fe)) + " bytes)");
+    }
     fs::remove_all(part, ec);
+    if (log != INVALID_HANDLE_VALUE) CloseHandle(log);
     if (!PostMessageW(g_main, kSetupFetched, 0, reinterpret_cast<LPARAM>(f))) delete f;
     return 0;
 }
 
-// Download for one of Google's apps: apkeep from APKPure, or, without apkeep or after its copy failed, the
-// app's APKMirror page in the browser.
+// Starts the next queued download, one at a time: three at once from APKPure is the kind of burst it refuses.
+void setup_fetch_next() {
+    if (g_setup.fetch_running || g_setup.fetch_queue.empty()) return;
+    auto* f = new SetupFetch;
+    f->pkg = g_setup.fetch_queue.front();
+    g_setup.fetch_queue.pop_front();
+    HANDLE t = CreateThread(nullptr, 0, setup_fetch_thread, f, 0, nullptr);
+    if (!t) {
+        // No thread: the app's row offers APKMirror instead.
+        g_setup.fetching.erase(f->pkg);
+        g_setup.fetch_failed.insert(f->pkg);
+        delete f;
+        setup_fetch_next();
+        return;
+    }
+    CloseHandle(t);
+    g_setup.fetch_running = true;
+}
+
+// Download for one of Google's apps: apkeep from APKPure (queued behind any other), or, without apkeep or after
+// its copy failed, the app's APKMirror page in the browser.
 void setup_fetch(const GoogleApp& a) {
     if (g_setup.fetching.count(a.pkg)) return;
     if (!apkeep_present() || g_setup.fetch_failed.count(a.pkg)) {
         ShellExecuteW(nullptr, L"open", a.url, nullptr, nullptr, SW_SHOWNORMAL);
         return;
     }
-    auto* f = new SetupFetch;
-    f->pkg = a.pkg;
-    HANDLE t = CreateThread(nullptr, 0, setup_fetch_thread, f, 0, nullptr);
-    if (!t) {
-        delete f;
-        ShellExecuteW(nullptr, L"open", a.url, nullptr, nullptr, SW_SHOWNORMAL);
-        return;
-    }
-    CloseHandle(t);
     g_setup.fetching.insert(a.pkg);
+    g_setup.fetch_queue.push_back(a.pkg);
+    setup_fetch_next();
     if (g_view == kGmsSetupView) rebuild_page();
 }
 
 // apkeep finished: check its file as any other (setup_checked), or say it failed and offer APKMirror.
 void setup_fetched(std::unique_ptr<SetupFetch> f) {
     g_setup.fetching.erase(f->pkg);
+    g_setup.fetch_running = false;
+    setup_fetch_next();
     const GoogleApp* app = google_app(f->pkg);
     if (!f->file.empty()) {
         g_setup.fetched.insert(f->file.wstring());
@@ -5988,8 +6041,8 @@ void setup_fetched(std::unique_ptr<SetupFetch> f) {
     } else if (app) {
         g_setup.fetch_failed.insert(f->pkg);
         error_with_log(fmt(L"{0} could not be downloaded", {tr(app->name)}),
-                       tr(L"APKPure did not give the app. Its row's button now opens the app's page on APKMirror, "
-                          L"where you can download it yourself."),
+                       tr(L"APKPure did not give the app in three tries. Its row's button now opens the app's page on "
+                          L"APKMirror, where you can download it yourself."),
                        setup_download_log());
     }
     if (g_view == kGmsSetupView) rebuild_page();
@@ -6100,7 +6153,10 @@ std::vector<Section> gms_setup_sections() {
         } else if (inst != g_setup.installing.end() && is_pending(inst->second)) {
             apps.rows.push_back(text_row(tr(a.name), tr(L"Installing…"), utf8_to_wide(a.pkg)));
         } else if (g_setup.fetching.count(a.pkg)) {
-            apps.rows.push_back(text_row(tr(a.name), tr(L"Downloading…"), tr(L"From APKPure, the x86_64 variant.")));
+            const bool queued = std::find(g_setup.fetch_queue.begin(), g_setup.fetch_queue.end(), a.pkg) !=
+                                g_setup.fetch_queue.end();
+            apps.rows.push_back(text_row(tr(a.name), queued ? tr(L"Waiting to download") : tr(L"Downloading…"),
+                                         tr(L"From APKPure, the x86_64 variant.")));
         } else if (apkeep_present() && !g_setup.fetch_failed.count(a.pkg)) {
             const GoogleApp* ga = &a;
             apps.rows.push_back(button_row(tr(a.name), tr(L"Not installed.") + std::wstring(L" ") +
