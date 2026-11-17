@@ -121,7 +121,7 @@ final class HucFollow {
             if (d instanceof javax.net.ssl.HttpsURLConnection && n instanceof javax.net.ssl.HttpsURLConnection) {
                 javax.net.ssl.HttpsURLConnection a = (javax.net.ssl.HttpsURLConnection) d;
                 javax.net.ssl.HttpsURLConnection b = (javax.net.ssl.HttpsURLConnection) n;
-                b.setSSLSocketFactory(a.getSSLSocketFactory());
+                b.setSSLSocketFactory(SniSocketFactory.forHost(a.getSSLSocketFactory(), next.getHost()));
                 b.setHostnameVerifier(a.getHostnameVerifier());
             }
             boolean sameConnection = sameConnection(prev, next);

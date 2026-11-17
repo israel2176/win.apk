@@ -128,14 +128,16 @@ public final class NativeSignIn {
 
     /**
      * The sign-in for an app's AccountManager.addAccount while Google's own Play
-     * services is installed. With an Activity (`userAsked`, the Play Store's
-     * "Sign in" button) the user asked for it: it opens every time, as the
-     * authenticator's activity would; without one it is a background ask and
-     * keeps {@link #promptOnce}'s one-ask-per-launch latch. Never on the main
-     * thread, never over a window already open.
+     * services is installed. addAccount is the app asking to add an account (the
+     * Play Store's "Sign in"), and on a device its screen opens each time it is
+     * asked for: so does this window, unless one is already open, which it never
+     * stacks a second over. It is not {@link #promptOnce}'s one-ask-per-launch
+     * latch, which is for the background asks (getAuthToken, licence checks):
+     * through it, every "Sign in" after a closed window answered "cancelled" at
+     * once and the button seemed stuck. `userAsked` (an Activity was passed) no
+     * longer changes that; the Play Store passes none. Never on the main thread.
      */
     public static String signInForApp(boolean userAsked) {
-        if (!userAsked) return promptOnce();
         if (!available() || active() || onMainThread()) return null;
         return signInInteractive();
     }

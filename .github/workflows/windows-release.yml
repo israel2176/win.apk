@@ -52,6 +52,11 @@ jobs:
         with:
           path: thirdparty/angle-win
           key: angle-${{ hashFiles('windows/scripts/fetch_angle.sh') }}
+      # apkeep is built from source (fetch_apkeep.sh): only when its commit or a patch changes.
+      - uses: actions/cache@v4
+        with:
+          path: thirdparty/apkeep
+          key: apkeep-${{ hashFiles('windows/scripts/fetch_apkeep.sh', 'windows/scripts/apkeep-patches/**') }}
       - name: Stage and package
         run: |
           export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"

@@ -35,6 +35,7 @@ thirdparty/webview2-sdk/
 thirdparty/depot_tools/
 thirdparty/MoltenVK-build/
 thirdparty/framework-res/
+thirdparty/apkeep/
 
 # Signing and notarization settings. Never commit these.
 scripts/.release.env

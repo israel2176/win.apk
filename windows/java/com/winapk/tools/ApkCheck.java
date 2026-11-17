@@ -142,8 +142,17 @@ public final class ApkCheck {
         if (slash > 4) out.add(name.substring(4, slash));
     }
 
+    /** The API levels of the released Androids whose previews' codenames a minSdkVersion may name. */
+    static final java.util.Map<String, Integer> RELEASED_CODENAMES = java.util.Map.of(
+        "Q", 29, "R", 30, "S", 31, "Sv2", 32, "Tiramisu", 33, "UpsideDownCake", 34, "VanillaIceCream", 35,
+        "Baklava", 36);
+
     /** The minSdkVersion of an APK's <uses-sdk>, by name or by its resource id; 0 when there is none. A
-     *  preview's codename (a string) counts as newer than any release. */
+     *  preview's codename (a string) counts as the API level of the Android that preview became, once released
+     *  (Services Framework's newest on APKPure is Android 10's preview build, "Q": it runs on any Android from
+     *  10 on), and an unknown codename, a preview of an Android not released yet, as newer than any release.
+     *  A device's own installer refuses every codename on a release build; Win.apk presents released levels
+     *  only, so it reads the codename for the release it names instead. */
     static int minSdkOf(Path apk) throws IOException {
         byte[] axml;
         try (ZipFile zip = new ZipFile(apk.toFile())) {
@@ -187,7 +196,7 @@ public final class ApkCheck {
                         try {
                             return Integer.parseInt(v.trim());
                         } catch (NumberFormatException e) {
-                            return 10000;  // a codename: a preview's
+                            return RELEASED_CODENAMES.getOrDefault(v.trim(), 10000);  // a preview's codename
                         }
                     }
                     return 0;

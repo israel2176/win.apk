@@ -103,6 +103,10 @@ final class HucsConnection extends HttpsURLConnection {
     @Override public Optional<SSLSession> getSSLSession() { f.resolve(); return s().getSSLSession(); }
     @Override public void setHostnameVerifier(HostnameVerifier v) { s().setHostnameVerifier(v); }
     @Override public HostnameVerifier getHostnameVerifier() { return s().getHostnameVerifier(); }
-    @Override public void setSSLSocketFactory(SSLSocketFactory sf) { s().setSSLSocketFactory(sf); }
-    @Override public SSLSocketFactory getSSLSocketFactory() { return s().getSSLSocketFactory(); }
+    // The JDK connection holds the factory wrapped (SniSocketFactory); the app sees its own.
+    @Override public void setSSLSocketFactory(SSLSocketFactory sf) {
+        if (sf == null) throw new IllegalArgumentException("no SSLSocketFactory specified");
+        s().setSSLSocketFactory(SniSocketFactory.forHost(sf, f.d.getURL().getHost()));
+    }
+    @Override public SSLSocketFactory getSSLSocketFactory() { return SniSocketFactory.unwrap(s().getSSLSocketFactory()); }
 }
