@@ -254,6 +254,8 @@ public final class AospWindows {
         long layer;
         Object post;
         boolean drew;
+        /** Its view tree went to the run log (finishDrawing, a popup's or a dialog's first draw). */
+        boolean treeLogged;
 
         Win(IWindow window) {
             this.window = window;
@@ -486,11 +488,59 @@ public final class AospWindows {
 
         public void finishDrawing(IWindow window, SurfaceControl.Transaction postDrawTransaction, int seqId) {
             if (postDrawTransaction != null) postDrawTransaction.apply();
+            logTreeOnce(sWindows.get(window.asBinder()));
         }
 
         public boolean performHapticFeedback(int effectId, boolean always) { return false; }
 
         public boolean cancelDraw(IWindow window) { return false; }
+    }
+
+    /** A popup's or a dialog's views, with their bounds, go to the run log once, at the window's
+     *  first finished draw: what a menu drew where, for a report about one (the activity's own
+     *  window is left out: it is the app's whole screen, and WINAPK_DUMP_VIEWS is for that). */
+    static void logTreeOnce(Win w) {
+        if (w == null || w.treeLogged || w.attrs == null
+                || w.attrs.type == WindowManager.LayoutParams.TYPE_BASE_APPLICATION) {
+            return;
+        }
+        View root = null;
+        for (View v : WindowManagerGlobal.getInstance().getWindowViews()) {
+            if (v.getWindowToken() == w.window.asBinder()) { root = v; break; }
+        }
+        if (root == null || root.getWidth() <= 0 || root.getHeight() <= 0) return;
+        w.treeLogged = true;
+        StringBuilder sb = new StringBuilder(TAG).append("window tree (").append(w.attrs.getTitle())
+                .append(", ").append(root.getClass().getName()).append("):\n");
+        try {
+            appendTree(root, 1, sb);
+        } catch (Throwable t) {
+            sb.append("  (").append(t).append(")\n");
+        }
+        System.err.print(sb);
+    }
+
+    private static void appendTree(View v, int depth, StringBuilder sb) {
+        if (depth > 40) return;
+        for (int i = 0; i < depth; i++) sb.append("  ");
+        sb.append(v.getClass().getName()).append(' ').append(v.getLeft()).append(',').append(v.getTop())
+                .append(' ').append(v.getWidth()).append('x').append(v.getHeight());
+        if (v.getVisibility() != View.VISIBLE) sb.append(v.getVisibility() == View.GONE ? " gone" : " invisible");
+        if (v.getId() != View.NO_ID) {
+            try {
+                sb.append(" id=").append(v.getResources().getResourceEntryName(v.getId()));
+            } catch (RuntimeException noName) {
+                sb.append(" id=0x").append(Integer.toHexString(v.getId()));
+            }
+        }
+        if (v instanceof android.widget.TextView t && t.getText() != null && t.getText().length() > 0) {
+            String text = t.getText().toString().replace('\n', ' ');
+            sb.append(" \"").append(text.length() > 60 ? text.substring(0, 60) + "\u2026" : text).append('"');
+        }
+        sb.append('\n');
+        if (v instanceof android.view.ViewGroup g) {
+            for (int i = 0; i < g.getChildCount(); i++) appendTree(g.getChildAt(i), depth + 1, sb);
+        }
     }
 
     private static volatile Handler sMain;
