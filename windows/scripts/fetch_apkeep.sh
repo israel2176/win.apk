@@ -1,53 +1,82 @@
 #!/usr/bin/env bash
 # fetch_apkeep.sh -- apkeep (EFF, MIT), the command-line downloader the
-# Google services setup's Download runs: it fetches Google's three apps from
-# APKPure, x86_64 variant, into the setup's own folder, and the launcher
-# installs a file only once `--verify-apk` says Google signed it.
+# Google services setup's Download runs: it fetches Google Play services and
+# the Play Store from APKPure, x86_64 variant, into the setup's own folder, and
+# the launcher installs a file only once `--verify-apk` says Google signed it.
 #
 #   windows/scripts/fetch_apkeep.sh [bin dir]
 #
-# The Windows build of a pinned release, from the project's GitHub releases,
-# kept in thirdparty/apkeep/ (not in git) so a rebuild does not download it
-# again. With a bin dir it is copied to <bin>/tools/apkeep.exe and its licence
-# to <bin>/licenses/apkeep-LICENSE.txt.
+# Built from source, not taken from a release: apkeep 1.1.0 downloads the
+# first file APKPure lists for an app, and for "x86_64" APKPure lists x86 and
+# x86_64 builds alike (it reads the ABIs as what the device can run), so Play
+# services came as an x86-only build Win.apk cannot run. The source is the
+# fork's branch for EFForg/apkeep#258 and #259 (pick the variant that really
+# holds the requested ABI), pinned by commit, with windows/scripts/
+# apkeep-patches/ applied (Play services' version names hold spaces and
+# parentheses, which that branch did not read). Its dependencies are the
+# ones its Cargo.lock pins (--locked).
 #
-# SHA256 pins the file (taken from the first CI download of the release). Empty,
-# as when VERSION changes, the download is taken as it is and its hash
-# printed: copy it here, so every later build checks it.
+# Needs cargo (rustup's). On Windows (MSYS2) it builds for
+# x86_64-pc-windows-msvc with the Visual Studio tools rustup finds; elsewhere
+# it cross-compiles x86_64-pc-windows-gnu with mingw-w64. The result is kept
+# in thirdparty/apkeep/ (not in git) under a key of the commit and the
+# patches, so a rebuild does not build it again. With a bin dir it is copied
+# to <bin>/tools/apkeep.exe and its licence to
+# <bin>/licenses/apkeep-LICENSE.txt.
 
 set -euo pipefail
 
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
-VERSION=1.1.0
-SHA256=fb61e52fa48c321bbbb6d899dd06abf1705e3dbd74f07813bd2784279766ff6f
+REPO=https://github.com/israel2176/apkeep
+COMMIT=d325ad56b52bb3fae48eb45c77a9456fff9ddd36  # fix-apkpure-arch-variant-selection
+PATCHES=("$HERE"/apkeep-patches/*.patch)
 DIR="$HERE/../../thirdparty/apkeep"
-EXE="$DIR/apkeep-$VERSION.exe"
-ASSET=apkeep-x86_64-pc-windows-msvc.exe
+KEY=$( (echo "$COMMIT"; cat "${PATCHES[@]}") | sha256sum | cut -c1-16)
+EXE="$DIR/apkeep-$KEY.exe"
 
 mkdir -p "$DIR"
-check() { [[ -z "$SHA256" ]] || echo "$SHA256  $1" | sha256sum -c --status; }
-if [[ ! -f "$EXE" ]] || ! check "$EXE"; then
-    echo "[apkeep] downloading apkeep $VERSION"
-    ok=0
-    # The project has tagged releases both with and without a leading v.
-    for tag in "$VERSION" "v$VERSION"; do
-        if curl -sSfL -o "$EXE.part" "https://github.com/EFForg/apkeep/releases/download/$tag/$ASSET"; then
-            ok=1
-            break
-        fi
-    done
-    [[ $ok == 1 ]] || { echo "[apkeep] no $ASSET in release $VERSION" >&2; rm -f "$EXE.part"; exit 1; }
-    check "$EXE.part" || { echo "[apkeep] checksum mismatch" >&2; rm -f "$EXE.part"; exit 1; }
-    [[ -n "$SHA256" ]] || echo "[apkeep] not pinned yet: SHA256=$(sha256sum "$EXE.part" | cut -d' ' -f1)"
+if [[ ! -f "$EXE" || ! -f "$DIR/LICENSE-$KEY" ]]; then
+    echo "[apkeep] building apkeep ${COMMIT:0:12} + ${#PATCHES[@]} patch(es)"
+    cargo=$(command -v cargo || true)
+    [[ -n "$cargo" ]] || [[ ! -x "$HOME/.cargo/bin/cargo" ]] || cargo="$HOME/.cargo/bin/cargo"
+    if [[ -z "$cargo" && -n "${USERPROFILE:-}" ]] && command -v cygpath >/dev/null; then
+        c="$(cygpath -u "$USERPROFILE")/.cargo/bin/cargo.exe"
+        [[ -x "$c" ]] && cargo="$c"
+    fi
+    [[ -n "$cargo" ]] || { echo "[apkeep] cargo not found: install Rust (rustup)" >&2; exit 1; }
+    SRC="$DIR/src"
+    rm -rf "$SRC"
+    git init -q "$SRC"
+    git -C "$SRC" fetch -q --depth 1 "$REPO" "$COMMIT"
+    git -C "$SRC" -c advice.detachedHead=false checkout -q FETCH_HEAD
+    for p in "${PATCHES[@]}"; do git -C "$SRC" apply "$p"; done
+    case "$(uname -s)" in
+        MINGW*|MSYS*|CYGWIN*)
+            target=x86_64-pc-windows-msvc
+            # MSYS2's compiler variables would point the C parts (aws-lc, zstd) at clang with MSVC's target;
+            # the cc crate finds Visual Studio's cl by itself.
+            "$cargo" --version
+            (cd "$SRC" && env -u CC -u CXX -u AR -u CFLAGS -u CXXFLAGS -u LDFLAGS \
+                "$cargo" build -q --release --locked --target "$target")
+            ;;
+        *)
+            target=x86_64-pc-windows-gnu
+            rustup target add "$target" >/dev/null 2>&1 || true
+            (cd "$SRC" && CC_x86_64_pc_windows_gnu=x86_64-w64-mingw32-gcc-posix \
+                CXX_x86_64_pc_windows_gnu=x86_64-w64-mingw32-g++-posix \
+                AR_x86_64_pc_windows_gnu=x86_64-w64-mingw32-ar \
+                CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc-posix \
+                "$cargo" build -q --release --locked --target "$target")
+            ;;
+    esac
+    cp -f "$SRC/target/$target/release/apkeep.exe" "$EXE.part"
+    cp -f "$SRC/LICENSE" "$DIR/LICENSE-$KEY"
     mv "$EXE.part" "$EXE"
-fi
-if [[ ! -f "$DIR/LICENSE" ]]; then
-    curl -sSfL -o "$DIR/LICENSE" "https://raw.githubusercontent.com/EFForg/apkeep/$VERSION/LICENSE" \
-        || curl -sSfL -o "$DIR/LICENSE" "https://raw.githubusercontent.com/EFForg/apkeep/master/LICENSE"
+    rm -rf "$SRC"
 fi
 if [[ -n "${1:-}" ]]; then
     mkdir -p "$1/tools" "$1/licenses"
     cp -f "$EXE" "$1/tools/apkeep.exe"
-    cp -f "$DIR/LICENSE" "$1/licenses/apkeep-LICENSE.txt"
-    echo "[apkeep] apkeep.exe ($VERSION) in $1/tools"
+    cp -f "$DIR/LICENSE-$KEY" "$1/licenses/apkeep-LICENSE.txt"
+    echo "[apkeep] apkeep.exe (${COMMIT:0:12} + patches, $KEY) in $1/tools"
 fi

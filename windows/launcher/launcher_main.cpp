@@ -256,7 +256,7 @@ const wchar_t* tr(const wchar_t* en) {
         {L"Waiting for the downloads", L"ממתין להורדות"},
         {L"Checking {0}…", L"בודק את {0}…"},
         {L"To use Google Play, install the following apps as described.", L"כדי להפעיל את חנות Google Play, יש להתקין את האפליקציות הבאות לפי ההנחיות."},
-        {L"{0} has code only for ARM processors. On APKMirror, download its x86_64 variant.", L"ב-{0} יש קוד למעבדי ARM בלבד. יש להוריד מ-APKMirror את גרסת x86_64 שלו."},
+        {L"{0} has no code for x86_64 processors, only for {1}. On APKMirror, download its x86_64 variant.", L"ב-{0} אין קוד למעבדי x86_64, רק ל-{1}. יש להוריד מ-APKMirror את גרסת x86_64 שלו."},
         {L"{0} needs API level {1}, and Win.apk presents API level {2}. On APKMirror, download an older version of it.", L"{0} דורש רמת API ‏{1}, ו-Win.apk מציגה רמת API ‏{2}. יש להוריד מ-APKMirror גרסה ישנה יותר שלו."},
         {L"It's part of Google services.", L"היא חלק משירותי Google."},
         {L"Starting Google Play…", L"מפעיל את Google Play…"},
@@ -5697,16 +5697,20 @@ struct GoogleApp {
     const wchar_t* name;
     const wchar_t* url;   // APKMirror's page for the app: the user picks the release and variant there
     const wchar_t* pick;  // which variant to pick, in a sentence
+    // Download fetches it from APKPure with apkeep. Not for Services Framework: what APKPure lists as its
+    // newest ("9", inside "10") is an Android 10 preview build, minSdkVersion "Q", which Android refuses on
+    // any release and --verify-apk refuses too; the rest are for Android 8 and older. Its row opens APKMirror.
+    bool apkpure;
 };
 const GoogleApp kGoogleApps[] = {
     {"com.google.android.gsf", L"Google Services Framework",
      L"https://www.apkmirror.com/apk/google-inc/google-services-framework/",
-     L"Pick the newest version for Android 10 or later."},
+     L"Pick the newest version for Android 10 or later.", false},
     {"com.google.android.gms", L"Google Play services",
      L"https://www.apkmirror.com/apk/google-inc/google-play-services/",
-     L"Pick the x86_64 variant, nodpi, for Android 10 or later."},
+     L"Pick the x86_64 variant, nodpi, for Android 10 or later.", true},
     {"com.android.vending", L"Google Play Store", L"https://www.apkmirror.com/apk/google-inc/google-play-store/",
-     L"Pick the nodpi variant, for Android 10 or later."},
+     L"Pick the nodpi variant, for Android 10 or later.", true},
 };
 
 const GoogleApp* google_app(const std::string& pkg) {
@@ -6018,7 +6022,7 @@ void setup_fetch_next() {
 // its copy failed, the app's APKMirror page in the browser.
 void setup_fetch(const GoogleApp& a) {
     if (g_setup.fetching.count(a.pkg)) return;
-    if (!apkeep_present() || g_setup.fetch_failed.count(a.pkg)) {
+    if (!a.apkpure || !apkeep_present() || g_setup.fetch_failed.count(a.pkg)) {
         ShellExecuteW(nullptr, L"open", a.url, nullptr, nullptr, SW_SHOWNORMAL);
         return;
     }
@@ -6078,10 +6082,12 @@ void setup_checked(std::unique_ptr<SetupCheck> c) {
                            {file}),
                        setup_log());
     } else if (!c->abis.empty() && (L"," + c->abis + L",").find(L",x86_64,") == std::wstring::npos) {
-        // Native code for ARM only: Win.apk runs x86_64 code, and translating Play services is no way to run it.
+        // No x86_64 code (ARM's, or 32-bit x86's): Win.apk runs x86_64 code, and translating Play services is no
+        // way to run it.
         error_with_log(fmt(L"{0} was not installed", {tr(app->name)}),
-                       fmt(L"{0} has code only for ARM processors. On APKMirror, download its x86_64 variant.",
-                           {file}),
+                       fmt(L"{0} has no code for x86_64 processors, only for {1}. On APKMirror, download its x86_64 "
+                           L"variant.",
+                           {file, c->abis}),
                        setup_log());
     } else if (c->sdk > 0 && c->min_sdk > c->sdk) {
         error_with_log(fmt(L"{0} was not installed", {tr(app->name)}),
@@ -6126,7 +6132,7 @@ std::vector<Section> gms_setup_sections() {
                                                     if (app_of_package(a.pkg) ||
                                                         (inst != g_setup.installing.end() &&
                                                          is_pending(inst->second)) ||
-                                                        g_setup.fetch_failed.count(a.pkg)) {
+                                                        !a.apkpure || g_setup.fetch_failed.count(a.pkg)) {
                                                         continue;
                                                     }
                                                     setup_fetch(a);
@@ -6157,7 +6163,7 @@ std::vector<Section> gms_setup_sections() {
                                 g_setup.fetch_queue.end();
             apps.rows.push_back(text_row(tr(a.name), queued ? tr(L"Waiting to download") : tr(L"Downloading…"),
                                          tr(L"From APKPure, the x86_64 variant.")));
-        } else if (apkeep_present() && !g_setup.fetch_failed.count(a.pkg)) {
+        } else if (a.apkpure && apkeep_present() && !g_setup.fetch_failed.count(a.pkg)) {
             const GoogleApp* ga = &a;
             apps.rows.push_back(button_row(tr(a.name), tr(L"Not installed.") + std::wstring(L" ") +
                                                tr(L"Win.apk downloads it and checks that Google signed it."),

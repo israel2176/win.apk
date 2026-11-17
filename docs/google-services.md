@@ -57,15 +57,17 @@ for you, and installs a copy only when Google signed it.
    by itself (later: **Google Play** in the left pane, or the row under the
    switch).
 2. Click **Download all** (or **Download** on one app's row). Win.apk
-   downloads the x86_64 variant of Google Services Framework, Google Play
-   services and Google Play Store from APKPure, with the
-   [apkeep](https://github.com/EFForg/apkeep) tool it ships, into
-   `%LOCALAPPDATA%\Win.apk\downloads\google\`, one app at a time and up to
-   three tries each, then checks each file and installs it. APKPure has served altered apps before, so its copies are
-   trusted no more than any other file: a copy that **Google did not sign**,
-   or whose signature does not verify, is refused.
-3. When a download fails or its copy is refused, that app's button becomes
-   **APKMirror**: it opens the app's APKMirror page in your browser. Pick the
+   downloads the x86_64 variant of Google Play services and Google Play
+   Store from APKPure, with the [apkeep](https://github.com/EFForg/apkeep)
+   tool it ships, into `%LOCALAPPDATA%\Win.apk\downloads\google\`, one app
+   at a time and up to three tries each, then checks each file and installs
+   it. APKPure has served altered apps before, so its copies are trusted no
+   more than any other file: a copy that **Google did not sign**, or whose
+   signature does not verify, is refused.
+3. Google Services Framework's button is **APKMirror** from the start (what
+   APKPure has of it is an Android 10 preview build or a build for Android 8
+   and older), and so is any app's whose download failed or whose copy was
+   refused: it opens the app's APKMirror page in your browser. Pick the
    variant the row names (x86_64 or nodpi, for Android 10 or later) and use
    APKMirror's own download button. Keep the page open: Win.apk watches your
    Downloads folder (or take a file you drop on the page), checks it and

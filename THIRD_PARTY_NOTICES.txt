@@ -68,10 +68,13 @@ itself is not shipped: it is the one installed on the PC.
 
 apkeep -- bin\tools\apkeep.exe
 SPDX-License-Identifier: MIT
-The Electronic Frontier Foundation's APK downloader, the Windows build of its
-release 1.1.0, unmodified (windows/scripts/fetch_apkeep.sh). The Google
-services setup runs it to download Google's apps. Its licence ships as
-bin\licenses\apkeep-LICENSE.txt. Source: https://github.com/EFForg/apkeep .
+The Electronic Frontier Foundation's APK downloader, built from source by
+windows/scripts/fetch_apkeep.sh: a fork's branch of it (proposed upstream as
+EFForg/apkeep#258 and #259, choosing the APKPure build that holds the
+requested processor architecture), pinned by commit, with the changes in
+windows/scripts/apkeep-patches/. The Google services setup runs it to
+download Google's apps. Its licence ships as bin\licenses\apkeep-LICENSE.txt.
+Source: https://github.com/EFForg/apkeep , https://github.com/israel2176/apkeep .
 
 LLVM / clang and their run-time libraries -- clang\
 SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception

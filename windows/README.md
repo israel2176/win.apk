@@ -56,6 +56,9 @@ emits broken SEH unwind data for `sysv_abi` functions. CI builds on
 In an [MSYS2](https://www.msys2.org/) CLANG64 shell, with a JDK 21 installed
 and `JAVA_HOME` pointing at it:
 
+`stage_runtime.sh` also needs Rust's `cargo` (rustup, with the Visual Studio
+build tools it asks for): `fetch_apkeep.sh` builds apkeep from source.
+
 ```sh
 pacman -S mingw-w64-clang-x86_64-{clang,cmake,ninja,zlib,boost}
 cmake -S windows -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \

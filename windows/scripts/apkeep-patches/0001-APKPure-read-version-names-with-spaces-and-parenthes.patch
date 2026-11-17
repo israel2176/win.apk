@@ -1,0 +1,88 @@
+From 52db48453ab86bf1e2e959bd85da4485d70b128b Mon Sep 17 00:00:00 2001
+From: "Win.apk" <noreply@example.invalid>
+Date: Tue, 17 Nov 2026 19:34:10 +0000
+Subject: [PATCH] APKPure: read version names with spaces and parentheses
+
+Play services' version names ("26.43.30 (040700-1006944126)") did not match
+APKPURE_VERSION_REGEX, so select_variant found no versions and fell back to
+the first download URL: the x86 build when x86_64 was asked for. -l listed
+nothing for it either. The regex now allows spaces and parentheses, and the
+length byte before each name (the response is protobuf) marks where it
+starts.
+---
+ src/consts.rs                   |  4 +++-
+ src/download_sources/apkpure.rs | 30 ++++++++++++++++++++++--------
+ 2 files changed, 25 insertions(+), 9 deletions(-)
+
+diff --git a/src/consts.rs b/src/consts.rs
+index 83f19e5..b3c7bf9 100644
+--- a/src/consts.rs
++++ b/src/consts.rs
+@@ -1,6 +1,8 @@
+ pub const APKPURE_VERSIONS_URL_FORMAT: &str = "https://api.pureapk.com/m/v3/cms/app_version?hl=en-US&package_name=";
+ pub const APKPURE_DOWNLOAD_URL_REGEX: &str = r"(X?APKJ)..(https?://(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*))";
+-pub const APKPURE_VERSION_REGEX: &str = r"([[:alnum:]\.-]+):\([[:xdigit:]]{40,}";
++// A version name may hold spaces and parentheses ("26.43.30 (040700-1006944126)"); the byte before
++// it is its length, which `apkpure::version_names` uses to find where it starts.
++pub const APKPURE_VERSION_REGEX: &str = r"([[:alnum:]][[:alnum:] ._()+-]*):\([[:xdigit:]]{40,}";
+ pub const APKPURE_SPLIT_ABIS: &[(&str, &str)] = &[("arm64_v8a", "arm64-v8a"), ("armeabi_v7a", "armeabi-v7a"), ("armeabi", "armeabi"), ("x86", "x86"), ("x86_64", "x86_64"), ("mips", "mips"), ("mips64", "mips64")];
+ pub const FDROID_REPO: &str = "https://f-droid.org/repo";
+ pub const FDROID_INDEX_FINGERPRINT: &[u8] = &[67, 35, 141, 81, 44, 30, 94, 178, 214, 86, 159, 74, 58, 251, 245, 82, 52, 24, 184, 46, 10, 62, 209, 85, 39, 112, 171, 185, 169, 201, 204, 171];
+diff --git a/src/download_sources/apkpure.rs b/src/download_sources/apkpure.rs
+index 1a36a6a..d4e7f7f 100644
+--- a/src/download_sources/apkpure.rs
++++ b/src/download_sources/apkpure.rs
+@@ -212,10 +212,7 @@ enum VariantSelection {
+ async fn select_variant(http_client: &reqwest::Client, body: &str, arch: &str, app_version: Option<&str>) -> VariantSelection {
+     let version_re = Regex::new(crate::consts::APKPURE_VERSION_REGEX).unwrap();
+     let url_re = Regex::new(crate::consts::APKPURE_DOWNLOAD_URL_REGEX).unwrap();
+-    let versions: Vec<(usize, usize, &str)> = version_re.captures_iter(body).map(|caps| {
+-        let version = caps.get(1).unwrap();
+-        (caps.get(0).unwrap().start(), caps.get(0).unwrap().end(), version.as_str())
+-    }).collect();
++    let versions = version_names(&version_re, body);
+ 
+     // Group the variants by version, in the order they are listed (latest version first)
+     let mut version_variants: Vec<(&str, Vec<(String, String)>)> = Vec::new();
+@@ -265,6 +262,25 @@ async fn select_variant(http_client: &reqwest::Client, body: &str, arch: &str, a
+     VariantSelection::NotAvailable
+ }
+ 
++// The version names in an app_version response, with the start and end of each match.  The
++// response is protobuf, so a name is preceded by its length: where the matched text holds more than
++// the name (bytes of the field before it that happen to be printable), the name is the part whose
++// length the byte before it gives.
++fn version_names<'a>(version_re: &Regex, body: &'a str) -> Vec<(usize, usize, &'a str)> {
++    version_re.captures_iter(body).map(|caps| {
++        let version = caps.get(1).unwrap();
++        let mut start = version.start();
++        for (k, _) in version.as_str().char_indices() {
++            let at = version.start() + k;
++            if at > 0 && body.as_bytes()[at - 1] as usize == version.end() - at {
++                start = at;
++                break;
++            }
++        }
++        (start, caps.get(0).unwrap().end(), &body[start..version.end()])
++    }).collect()
++}
++
+ struct RemoteZipEntry {
+     name: String,
+     stored: bool,
+@@ -404,10 +420,8 @@ pub async fn list_versions(apps: Vec<(String, Option<String>)>, options: HashMap
+                 reqwest::StatusCode::OK => {
+                     let body = versions_response.text().await.unwrap();
+                     let mut versions = HashSet::new();
+-                    for caps in re.captures_iter(&body) {
+-                        if caps.len() >= 2 {
+-                            versions.insert(caps.get(1).unwrap().as_str().to_string());
+-                        }
++                    for (_, _, version) in version_names(&re, &body) {
++                        versions.insert(version.to_string());
+                     }
+                     let mut versions = versions.drain().collect::<Vec<String>>();
+                     versions.sort();
+-- 
+2.43.0
+
