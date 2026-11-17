@@ -11,14 +11,15 @@
 # again. With a bin dir it is copied to <bin>/tools/apkeep.exe and its licence
 # to <bin>/licenses/apkeep-LICENSE.txt.
 #
-# SHA256 pins the file. Empty, the download is taken as it is and its hash
-# printed: copy it here, so the next release checks it.
+# SHA256 pins the file (taken from the first CI download of the release). Empty,
+# as when VERSION changes, the download is taken as it is and its hash
+# printed: copy it here, so every later build checks it.
 
 set -euo pipefail
 
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 VERSION=1.1.0
-SHA256=
+SHA256=fb61e52fa48c321bbbb6d899dd06abf1705e3dbd74f07813bd2784279766ff6f
 DIR="$HERE/../../thirdparty/apkeep"
 EXE="$DIR/apkeep-$VERSION.exe"
 ASSET=apkeep-x86_64-pc-windows-msvc.exe
