@@ -47,9 +47,12 @@ if [[ ! -f "$EXE" || ! -f "$DIR/LICENSE-$KEY" ]]; then
     SRC="$DIR/src"
     rm -rf "$SRC"
     git init -q "$SRC"
+    # The source as committed, LF: Git for Windows' core.autocrlf would check it out with CRLF, and the
+    # patches (LF) would not apply.
+    git -C "$SRC" config core.autocrlf false
     git -C "$SRC" fetch -q --depth 1 "$REPO" "$COMMIT"
     git -C "$SRC" -c advice.detachedHead=false checkout -q FETCH_HEAD
-    for p in "${PATCHES[@]}"; do git -C "$SRC" apply "$p"; done
+    for p in "${PATCHES[@]}"; do tr -d '\r' < "$p" | git -C "$SRC" apply -; done
     case "$(uname -s)" in
         MINGW*|MSYS*|CYGWIN*)
             target=x86_64-pc-windows-msvc
