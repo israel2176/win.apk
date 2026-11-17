@@ -44,7 +44,7 @@ releases list, the newest non-draft release by version number, its
 `Win.apk-Setup.exe`; threads posting `kUpdate*`), theme + drawing helpers, state,
 layout, painting (the InfoBar replaces a status bar; `info()` may carry one link, e.g. "What's new"), dialogs, actions (install
 with Cancel, launch, Remove with "also remove accounts and data saved by the app"), pages
-(Settings, App details, a Store app's details, the Google services setup (`show_gms_setup`: Download fetches Play services and the Play Store with apkeep from APKPure (`setup_fetch`), APKMirror in the browser for Services Framework and when that fails, watches Downloads, installs only Google-signed copies; Google Play in the pane leads there or opens the Play Store): `Row`/`Section`/`Page`, drawn in
+(Settings, App details, a Store app's details, the Google services setup (`show_gms_setup`: Download fetches the three Google apps with apkeep from APKPure (`setup_fetch`), one at a time, its button disabled until it ends (`Row::disabled`), APKMirror in the browser when that fails, watches Downloads, installs only Google-signed copies; Google Play in the pane leads there or opens the Play Store): `Row`/`Section`/`Page`, drawn in
 the content layer by `paint_page`, `open_page`; Settings > Updates is
 `update_sections`, with the check's state in `g_update`, an `UpdateTracker` (`updates.h`)), install window, log window
 (RichEdit), the Threads window (debug mode: `show_debugger`, a ListView over `g_dv`; `debug_thread` looks once a second at every runtime's process tree and threads and asks each debug agent, posting `kDebugSnapshot`), launch splash, drag and drop (`IDropTarget`), main `wnd_proc`, the

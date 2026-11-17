@@ -246,6 +246,8 @@ const wchar_t* tr(const wchar_t* en) {
         {L"{0} is not signed by Google, so Win.apk does not trust it as Google's app. Download it from its APKMirror page.", L"{0} אינו חתום על ידי Google, ולכן Win.apk לא סומכת עליו כאפליקציה של Google. יש להוריד אותו מהדף שלו ב-APKMirror."},
         {L"Download all", L"הורדת הכול"},
         {L"Waiting to download", L"ממתינה להורדה"},
+        {L"Checking…", L"בודקת…"},
+        {L"Win.apk checks that Google signed it.", L"Win.apk בודקת ש-Google חתמה עליה."},
         {L"APKMirror", L"APKMirror"},
         {L"From APKPure, the x86_64 variant.", L"מ-APKPure, גרסת x86_64."},
         {L"Win.apk downloads it and checks that Google signed it.", L"Win.apk מורידה אותה ובודקת ש-Google חתמה עליה."},
@@ -5140,6 +5142,9 @@ struct Row {
     enum Kind { kText, kButton, kToggle, kChoice } kind = kText;
     std::wstring title, detail, value;  // value: the button's text, or the text on the right
     bool on = false, destructive = false, primary = false, check = false;
+    // A control whose action is under way (or cannot run now): drawn greyed, and neither clicked nor focused, so
+    // a second click cannot start it twice.
+    bool disabled = false;
     std::vector<std::wstring> choices;
     int choice = 0;
     std::function<void(int)> act;  // button: act(0), toggle: act(new state), choice: act(index)
@@ -5196,7 +5201,14 @@ SizeF control_size(Graphics& g, const Row& row) {
 
 void paint_control(Graphics& g, const Row& row, const RectF& r, bool hot) {
     switch (row.kind) {
-        case Row::kButton: draw_button(g, r, row.value, hot, row.primary, row.destructive); break;
+        case Row::kButton:
+            if (row.disabled) {
+                stroke_round(g, r, px(kRadiusControl), g_t.border);
+                draw_text(g, row.value, g_f.body.get(), g_t.text3, r, kCenter);
+                break;
+            }
+            draw_button(g, r, row.value, hot, row.primary, row.destructive);
+            break;
         case Row::kToggle: draw_switch(g, row.on, r, hot); break;
         case Row::kChoice: {
             fill_round(g, r, px(kRadiusControl), hot ? g_t.hover : g_t.card);
@@ -5280,7 +5292,7 @@ void paint_page(Graphics& g) {
             const float h = heights[ri];
             const RectF rr(m, ry, cw, h);
             // A switch takes the whole row (its label turns it too); a button or a list only itself.
-            const bool interactive = row.kind != Row::kText;
+            const bool interactive = row.kind != Row::kText && !row.disabled;
             const int index = static_cast<int>(s.targets.size());
             const bool hot = interactive && s.hot == index, focused = interactive && s.focus == index;
             if (row.kind == Row::kToggle && hot) {
@@ -5697,15 +5709,14 @@ struct GoogleApp {
     const wchar_t* name;
     const wchar_t* url;   // APKMirror's page for the app: the user picks the release and variant there
     const wchar_t* pick;  // which variant to pick, in a sentence
-    // Download fetches it from APKPure with apkeep. Not for Services Framework: what APKPure lists as its
-    // newest ("9", inside "10") is an Android 10 preview build, minSdkVersion "Q", which Android refuses on
-    // any release and --verify-apk refuses too; the rest are for Android 8 and older. Its row opens APKMirror.
+    // Download fetches it from APKPure with apkeep; false: its row opens APKMirror. (Services Framework's newest on
+    // APKPure is Android 10's preview build, minSdkVersion "Q", which --verify-apk reads as API level 29.)
     bool apkpure;
 };
 const GoogleApp kGoogleApps[] = {
     {"com.google.android.gsf", L"Google Services Framework",
      L"https://www.apkmirror.com/apk/google-inc/google-services-framework/",
-     L"Pick the newest version for Android 10 or later.", false},
+     L"Pick the newest version for Android 10 or later.", true},
     {"com.google.android.gms", L"Google Play services",
      L"https://www.apkmirror.com/apk/google-inc/google-play-services/",
      L"Pick the x86_64 variant, nodpi, for Android 10 or later.", true},
@@ -5762,6 +5773,7 @@ struct SetupState {
     bool fetch_running = false;                        // a download thread is running
     std::set<std::string> fetch_failed;                // packages whose APKPure copy failed: APKMirror instead
     std::set<std::wstring> fetched;                    // files apkeep downloaded (their failures fall back)
+    std::set<std::string> verifying;                   // packages whose download is being checked
 } g_setup;
 
 DWORD WINAPI setup_watch_thread(void* param) {
@@ -6040,6 +6052,7 @@ void setup_fetched(std::unique_ptr<SetupFetch> f) {
     const GoogleApp* app = google_app(f->pkg);
     if (!f->file.empty()) {
         g_setup.fetched.insert(f->file.wstring());
+        g_setup.verifying.insert(f->pkg);
         g_setup.queue.emplace_back(f->file, true);
         setup_next();
     } else if (app) {
@@ -6059,6 +6072,7 @@ void setup_checked(std::unique_ptr<SetupCheck> c) {
     const GoogleApp* app = google_app(c->pkg);
     const std::wstring file = c->file.filename().wstring();
     const bool fetched = g_setup.fetched.erase(c->file.wstring()) > 0;
+    if (fetched) g_setup.verifying.erase(wide_to_utf8(c->file.stem().wstring()));  // downloads\google\<pkg>.<ext>
     bool passed = false;
     if (c->code < 0) {
         error_with_log(tr(L"The file could not be checked"), tr(L"Win.apk's runtime did not start."), setup_log());
@@ -6125,7 +6139,7 @@ std::vector<Section> gms_setup_sections() {
                                                              : std::wstring(tr(L"Waiting for the downloads"));
         if (apkeep_present()) {
             // One click for the three: each that is neither installed nor on its way is downloaded.
-            state.rows.push_back(button_row(tr(L"To use Google Play, install the following apps as described."), now,
+            Row all = button_row(tr(L"To use Google Play, install the following apps as described."), now,
                                             tr(L"Download all"), [] {
                                                 for (const GoogleApp& a : kGoogleApps) {
                                                     const auto inst = g_setup.installing.find(a.pkg);
@@ -6137,7 +6151,12 @@ std::vector<Section> gms_setup_sections() {
                                                     }
                                                     setup_fetch(a);
                                                 }
-                                            }));
+                                            });
+            // One click starts it all; until every download, check and install has ended there is nothing to add.
+            all.disabled = !g_setup.fetching.empty() || !g_setup.verifying.empty() || !g_setup.checking.empty() ||
+                           std::any_of(g_setup.installing.begin(), g_setup.installing.end(),
+                                       [](const auto& e) { return is_pending(e.second); });
+            state.rows.push_back(std::move(all));
         } else {
             state.rows.push_back(
                 text_row(tr(L"To use Google Play, install the following apps as described."), L"", now));
@@ -6158,6 +6177,8 @@ std::vector<Section> gms_setup_sections() {
             apps.rows.push_back(r);
         } else if (inst != g_setup.installing.end() && is_pending(inst->second)) {
             apps.rows.push_back(text_row(tr(a.name), tr(L"Installing…"), utf8_to_wide(a.pkg)));
+        } else if (g_setup.verifying.count(a.pkg)) {
+            apps.rows.push_back(text_row(tr(a.name), tr(L"Checking…"), tr(L"Win.apk checks that Google signed it.")));
         } else if (g_setup.fetching.count(a.pkg)) {
             const bool queued = std::find(g_setup.fetch_queue.begin(), g_setup.fetch_queue.end(), a.pkg) !=
                                 g_setup.fetch_queue.end();
