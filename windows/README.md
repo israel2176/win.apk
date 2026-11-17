@@ -1441,11 +1441,12 @@ every such change is listed here:
   check-in through its own Conscrypt went out without SNI, got Google's
   `invalid2.invalid` certificate, and the Play Store stayed at android-id 0
   (DF-DFERH-01). The app still sees the factory it set.
-- `runtime/java/com/macapk/gms/NativeSignIn.java`: `signInForApp` counts an
-  `addAccount` that comes within 10 s of the user's own click or key as the
-  user's. The Play Store's Sign in passes no Activity, so after the first
-  window was closed the one-ask-per-launch latch answered every later click
-  with "cancelled" at once.
+- `runtime/java/com/macapk/gms/NativeSignIn.java`: `signInForApp` (a Google
+  `addAccount`) opens the sign-in window whenever none is open, as a device
+  opens the add-account screen each time it is asked for. It went through the
+  one-ask-per-launch latch of the background asks when the caller passed no
+  Activity, as the Play Store's Sign in does, so after the first window was
+  closed every later click answered "cancelled" at once.
 - `runtime/java/com/macapk/loader/WindowOverlayStack.java`, `ViewCanvasDriver.java`,
   `SystemServer.java`: a popup's or a dialog's view tree goes to the run log at
   its first draw, as the activity's does; the broker logs the first
