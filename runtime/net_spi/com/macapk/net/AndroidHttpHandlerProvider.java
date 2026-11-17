@@ -159,6 +159,9 @@ public final class AndroidHttpHandlerProvider extends URLStreamHandlerProvider {
         java.net.HttpURLConnection jdkConnection(URL u, Proxy proxy) throws IOException {
             URL viaBuiltin = new URL(null, u.toExternalForm(), builtin);
             URLConnection c = proxy == null ? viaBuiltin.openConnection() : viaBuiltin.openConnection(proxy);
+            if (c instanceof javax.net.ssl.HttpsURLConnection h) {
+                h.setSSLSocketFactory(SniSocketFactory.forHost(h.getSSLSocketFactory(), u.getHost()));
+            }
             return (java.net.HttpURLConnection) c;
         }
     }

@@ -2954,6 +2954,14 @@ every such change is listed here:
   value is null: Dynatrace (bit) took an NPE on it.
   `windows/test/java/com/macapk/net/HttpRequestPropertiesTest.java` (CI: "Run
   the HttpURLConnection request properties test").
+- `runtime/net_spi/com/macapk/net/SniSocketFactory.java` (new),
+  `AndroidHttpHandlerProvider.java`, `HucFollow.java`, `HucsConnection.java`:
+  an app's https `HttpURLConnection` names the host (SNI) on sockets from any
+  provider. The JDK names it only on its own sockets, or when the verifier is
+  its default, and Boot makes `OkHostnameVerifier` the default; Play services'
+  check-in through its own Conscrypt went out without SNI, got Google's
+  `invalid2.invalid` certificate, and the Play Store stayed at android-id 0
+  (DF-DFERH-01). The app still sees the factory it set.
 - `runtime/java/com/android/internal/graphics/drawable/AnimationScaleListDrawable.java`
   (new) and `android/content/res/Resources.java`: the platform's progress-bar
   styles root their indeterminate drawable in this @hide class; it now inflates
