@@ -114,6 +114,8 @@ page's Permissions rows, which stop a running app on revoke), single instance
   draw text with `draw_text` and images with `draw_image`, never directly.
   Layout and hit-testing code stays left-to-right.
 - Icons are glyphs from Segoe Fluent Icons / MDL2 Assets (`kGlyph*`).
+- A button that starts something stays disabled until it has ended
+  (`Row::disabled` on a page), so a second click cannot start it twice.
 
 ## Build and check
 
@@ -140,5 +142,14 @@ page's Permissions rows, which stop a running app on revoke), single instance
   hook, and add it to the list in `windows/README.md`.
 - Match the surrounding style: C++17, 120 columns, comments say why.
 - Don't add app-specific hacks; fix the framework, shim or host.
+- Before changing how something behaves, ask what Android does in that case and
+  do the same. Don't keep a Win.apk-only rule (a latch, a time window, a
+  heuristic) where Android has a plain one: a Google `addAccount` opens its
+  window each time unless one is open, as a device's add-account screen does,
+  not through a one-ask-per-launch latch with a 10 s input window to get round
+  it. Where Win.apk cannot do what Android does, say how it differs.
 - PRs go to `main`; CI must be green. Releases only via the manual
   `windows-release.yml` run.
+- After a push to a PR, once its CI run has finished, give the user the link to
+  that run's `winapk-setup` artifact (the installer) without being asked:
+  `https://github.com/<owner>/<repo>/actions/runs/<run>/artifacts/<id>`.
