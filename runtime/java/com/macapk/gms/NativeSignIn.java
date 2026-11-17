@@ -135,9 +135,23 @@ public final class NativeSignIn {
      * thread, never over a window already open.
      */
     public static String signInForApp(boolean userAsked) {
+        // The Play Store's own "Sign in" passes no Activity (it starts the
+        // authenticator's Intent itself), so the Activity alone does not tell a
+        // click from a background ask: one that comes right after the user's own
+        // click or key in this app is the user's. Without this the latch kept
+        // every "Sign in" after a closed window from opening one: it answered
+        // "cancelled" at once, and the button seemed stuck. The window is the
+        // same as ActivityHost's for a host URL (10 s): a click reaches here in
+        // milliseconds, a background poll much later.
+        if (!userAsked && recentUserInput()) userAsked = true;
         if (!userAsked) return promptOnce();
         if (!available() || active() || onMainThread()) return null;
         return signInInteractive();
+    }
+
+    private static boolean recentUserInput() {
+        long last = com.macapk.loader.TouchDispatcher.lastUserInputMillis();
+        return last != 0L && System.currentTimeMillis() - last <= 10_000L;
     }
 
     private static boolean onMainThread() {

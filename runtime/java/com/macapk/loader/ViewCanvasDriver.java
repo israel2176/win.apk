@@ -4726,6 +4726,13 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
     private static void dumpTree(View v, int depth, StringBuilder sb) {
         dumpTreeRec(v, depth, sb, new java.util.IdentityHashMap<>());
     }
+
+    /** The same dump for a window of WindowOverlayStack (a popup menu, a dialog), which the
+     *  activity's tree above does not reach: once, at its first draw, headed by its class. */
+    static void dumpWindowTree(View root, String what) {
+        NativeLog.i(TAG, "window tree (" + what + "):");
+        try { dumpTree(root, 1, new StringBuilder()); } catch (Throwable ignored) {}
+    }
     private static void dumpTreeRec(View v, int depth, StringBuilder sb,
                                     java.util.IdentityHashMap<View, Boolean> visited) {
         if (v == null) return;

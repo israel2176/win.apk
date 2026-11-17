@@ -45,6 +45,8 @@ public final class WindowOverlayStack {
          *  that drives presentForGl. See RERASTER_ON_RELAYOUT. */
         final Rect lastRasterBounds = new Rect();
         boolean lastRasterDrawn;
+        /** Its view tree went to the run log (drawWindow, at its first draw with a size). */
+        boolean treeLogged;
         Layer(View view, WindowManager.LayoutParams params) {
             this.view = view;
             this.params = params;
@@ -758,6 +760,12 @@ public final class WindowOverlayStack {
             try { drawWindowShadow(canvas, layer.view); } catch (Throwable ignored) { }
         }
         layer.view.draw(canvas);
+        // A popup's or a dialog's views, with their bounds, as the activity's own tree is logged: what a
+        // menu drew where (a Play Store menu showed its item's text at the bottom of a blank row).
+        if (!layer.treeLogged && layer.view.getWidth() > 0 && layer.view.getHeight() > 0) {
+            layer.treeLogged = true;
+            ViewCanvasDriver.dumpWindowTree(layer.view, layer.view.getClass().getName());
+        }
     }
 
     /** The shadow half of drawWindow; a no-op for a root with no Z, an empty
