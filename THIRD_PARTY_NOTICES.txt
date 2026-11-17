@@ -66,6 +66,13 @@ From the Microsoft.Web.WebView2 NuGet package, version 1.0.4314.35
 and ships as bin\licenses\WebView2-SDK-LICENSE.txt. The WebView2 Runtime
 itself is not shipped: it is the one installed on the PC.
 
+apkeep -- bin\tools\apkeep.exe
+SPDX-License-Identifier: MIT
+The Electronic Frontier Foundation's APK downloader, the Windows build of its
+release 1.1.0, unmodified (windows/scripts/fetch_apkeep.sh). The Google
+services setup runs it to download Google's apps. Its licence ships as
+bin\licenses\apkeep-LICENSE.txt. Source: https://github.com/EFForg/apkeep .
+
 LLVM / clang and their run-time libraries -- clang\
 SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 clang, lld and libc++ (LLVM), with the libraries they load: libffi (MIT),

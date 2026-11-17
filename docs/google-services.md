@@ -46,8 +46,8 @@ sees your password; it keeps the token Google hands back, only on this PC, in
 
 **Settings > Google account > Use Google services (experimental)** (off by
 default) runs Google's real Play services, Services Framework and Play Store
-as apps, once you have installed them yourself. Win.apk never ships or
-downloads Google's apps.
+as apps. Win.apk does not ship Google's apps: the setup page downloads them
+for you, and installs a copy only when Google signed it.
 
 ![The Google services setup page: a row for each of Google's three apps with a Download button](images/google-setup.png)
 
@@ -56,15 +56,24 @@ downloads Google's apps.
 1. Turn on **Use Google services**. The **Google services setup** page opens
    by itself (later: **Google Play** in the left pane, or the row under the
    switch).
-2. For each of the three apps, Google Services Framework, Google Play services
-   and Google Play Store, click **Download**. It opens the app's APKMirror page
-   in your browser. Pick the variant the row names (x86_64 or nodpi, for
-   Android 10 or later) and use APKMirror's own download button.
-3. Keep the page open. Win.apk watches your Downloads folder (or take a file
-   you drop on the page), checks it and installs it. A file is refused, with
-   the reason, when **Google did not sign it**, when it has native code but
-   none for x86_64 (download the x86_64 variant), or when it needs a newer
-   Android (API level) than Win.apk presents (download an older version).
+2. Click **Download all** (or **Download** on one app's row). Win.apk
+   downloads the x86_64 variant of Google Services Framework, Google Play
+   services and Google Play Store from APKPure, with the
+   [apkeep](https://github.com/EFForg/apkeep) tool it ships, into
+   `%LOCALAPPDATA%\Win.apk\downloads\google\`, then checks each file and
+   installs it. APKPure has served altered apps before, so its copies are
+   trusted no more than any other file: a copy that **Google did not sign**,
+   or whose signature does not verify, is refused.
+3. When a download fails or its copy is refused, that app's button becomes
+   **APKMirror**: it opens the app's APKMirror page in your browser. Pick the
+   variant the row names (x86_64 or nodpi, for Android 10 or later) and use
+   APKMirror's own download button. Keep the page open: Win.apk watches your
+   Downloads folder (or take a file you drop on the page), checks it and
+   installs it. A file is refused, with the reason, when **Google did not
+   sign it**, when it has native code but none for x86_64 (download the x86_64
+   variant), or when it needs a newer Android (API level) than Win.apk
+   presents (download an older version). apkeep's output is in
+   `logs\google-download.log`.
 4. When all three are ticked, **Google Play** in the left pane opens the Play
    Store inside the Win.apk window, where the library is, not in a window of
    its own. Switching to another tab keeps it running; **Google Play** shows

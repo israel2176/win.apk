@@ -532,6 +532,7 @@ and the launch window open the right log themselves when something fails.
 | `install-<app>.log` | That app's install or update |
 | `gms.log` | The Google account operations run from the settings |
 | `google-setup.log` | The checks of the Google services setup |
+| `google-download.log` | The Google services setup's downloads (apkeep, from APKPure) |
 | `system.log`, `services\` | With Google services on: the system broker, and the apps it starts for other apps |
 | `install-helper.log`, `package-backfill.log` | Installs an app itself asked for (F-Droid installing another app: Win.apk asks first; the Play Store Google signed: no question, as on a phone), and library maintenance |
 | `hs_err_pid<n>.log` | A crash report from the Java VM, if the VM itself crashed |
