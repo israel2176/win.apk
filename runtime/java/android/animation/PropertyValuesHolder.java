@@ -662,4 +662,67 @@ public class PropertyValuesHolder implements Cloneable {
         try { return (PropertyValuesHolder) super.clone(); }
         catch (CloneNotSupportedException e) { throw new AssertionError(e); }
     }
+
+    // ---- AOSP hides these; AOSP's AnimatedVectorDrawable names them (WINAPK_AOSP_GFX=1 puts it,
+    // lib/aosp-graphics.jar, before this framework: windows/README.md, "Milestone 2") ----
+
+    /** AOSP PropertyValuesHolder.PropertyValues: a property's values for the render thread's animator. */
+    public static class PropertyValues {
+        public String propertyName;
+        public Class type;
+        public Object startValue;
+        public Object endValue;
+        public DataSource dataSource = null;
+
+        /** AOSP PropertyValuesHolder.PropertyValues.DataSource. */
+        public interface DataSource {
+            Object getValueAtFraction(float fraction);
+        }
+
+        @Override public String toString() {
+            return "property name: " + propertyName + ", type: " + type + ", startValue: " + startValue
+                    + ", endValue: " + endValue;
+        }
+    }
+
+    /** AOSP getPropertyValues: the name, type and first and last values. */
+    public void getPropertyValues(PropertyValues values) {
+        values.propertyName = propertyName;
+        values.type = getValueType();
+        values.dataSource = null;
+        switch (type) {
+            case T_FLOAT:
+                if (floatValues != null && floatValues.length > 0) {
+                    values.startValue = floatValues[0];
+                    values.endValue = floatValues[floatValues.length - 1];
+                }
+                break;
+            case T_INT:
+                if (intValues != null && intValues.length > 0) {
+                    values.startValue = intValues[0];
+                    values.endValue = intValues[intValues.length - 1];
+                }
+                break;
+            case T_OBJECT:
+                if (objectValues != null && objectValues.length > 0) {
+                    values.startValue = objectValues[0];
+                    values.endValue = objectValues[objectValues.length - 1];
+                }
+                break;
+            default:
+                break;
+        }
+    }
+
+    /** AOSP getValueType: the type of the values animated. */
+    public Class getValueType() {
+        switch (type) {
+            case T_FLOAT: return float.class;
+            case T_INT: return int.class;
+            case T_OBJECT:
+                return objectValues != null && objectValues.length > 0 && objectValues[0] != null
+                        ? objectValues[0].getClass() : Object.class;
+            default: return Object.class;
+        }
+    }
 }

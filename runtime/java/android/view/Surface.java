@@ -181,7 +181,7 @@ public class Surface implements android.os.Parcelable {
         int w = sunk ? mSinkWidth : defaultWidth();
         int h = sunk ? mSinkHeight : defaultHeight();
         if (mDrawBitmap == null || mDrawBitmap.getWidth() != w || mDrawBitmap.getHeight() != h) {
-            mDrawBitmap = android.graphics.Bitmap.createBitmapWithCanvasBacking(w, h);
+            mDrawBitmap = com.macapk.loader.gfx.GfxBackend.get().createFrameBitmap(w, h);
             mDrawCanvas = new android.graphics.Canvas(mDrawBitmap);
         }
         mCanvasLocked = true;

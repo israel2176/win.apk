@@ -74,6 +74,14 @@ public class TextPaint extends Paint {
     public boolean setFontVariationSettings(String fontVariationSettings) {
         mFontVariationSettings = fontVariationSettings; return true;
     }
+
+    // AOSP hides this; AOSP's own graphics and text classes call it (WINAPK_AOSP_GFX=1 puts them,
+    // lib/aosp-graphics.jar, before this framework: windows/README.md, "Milestone 2").
+    /** AOSP TextPaint.setUnderlineText(int, float): an underline of this colour and thickness. */
+    public void setUnderlineText(int color, float thickness) {
+        underlineColor = color;
+        underlineThickness = thickness;
+    }
 }
 
 

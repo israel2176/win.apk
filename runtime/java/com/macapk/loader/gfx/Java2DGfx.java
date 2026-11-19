@@ -45,6 +45,10 @@ final class Java2DGfx implements GfxBackend {
 
     // ---- Present a frame ----
 
+    @Override public Bitmap createFrameBitmap(int width, int height) {
+        return Bitmap.createBitmapWithCanvasBacking(width, height);
+    }
+
     @Override public int[] argbBuffer(Bitmap bitmap) { return bitmap.macapkArgbBuffer(); }
 
     @Override public int[] liveArgbOrNull(Bitmap bitmap) { return bitmap.macapkLiveArgbOrNull(); }
@@ -187,6 +191,28 @@ final class Java2DGfx implements GfxBackend {
 
     @Override public int parseResourceColor(String s) { return Color.macapkParseResourceColor(s); }
 
+    @Override public Drawable vectorFromResource(android.content.res.Resources res, int id,
+                                                 android.content.res.Resources.Theme theme) {
+        return new VectorDrawable(res, id, theme);
+    }
+
+    @Override public Drawable vectorFromElement(org.w3c.dom.Element e, android.content.res.Resources.Theme theme,
+                                                android.content.res.Resources res) {
+        return new VectorDrawable(e, theme, res);
+    }
+
+    @Override public android.graphics.drawable.LayerDrawable layerDrawable() {
+        return new android.graphics.drawable.LayerDrawable();
+    }
+
+    @Override public android.graphics.drawable.RippleDrawable rippleDrawable() {
+        return new android.graphics.drawable.RippleDrawable();
+    }
+
+    @Override public android.graphics.drawable.RotateDrawable rotateDrawable(Drawable child) {
+        return new android.graphics.drawable.RotateDrawable(child);
+    }
+
     @Override public void setNinePatchDensities(NinePatchDrawable d, int source, int screen) {
         d.macapkSetDensities(source, screen);
     }
@@ -195,8 +221,10 @@ final class Java2DGfx implements GfxBackend {
         d.macapkSetOpticalInsets(left, top, right, bottom);
     }
 
-    @Override public void setAnimatedVectorInner(AnimatedVectorDrawable avd, Drawable inner) {
+    @Override public AnimatedVectorDrawable animatedVector(Drawable inner) {
+        AnimatedVectorDrawable avd = new AnimatedVectorDrawable();
         avd.macapkSetInner(inner);
+        return avd;
     }
 
     @Override public void setAnimatedImageBitmap(AnimatedImageDrawable aid, Bitmap bm) { aid.macapkSetBitmap(bm); }
@@ -206,6 +234,12 @@ final class Java2DGfx implements GfxBackend {
     }
 
     @Override public boolean getUseLevelForShape(GradientDrawable gd) { return gd.macapkGetUseLevelForShape(); }
+
+    @Override public boolean readsShapeRing() { return GradientDrawable.MACAPK_SHAPE_RING; }
+
+    @Override public boolean readsShapeTint() { return GradientDrawable.MACAPK_SHAPE_TINT; }
+
+    @Override public android.content.res.ColorStateList tintList(Drawable d) { return d.getTintList(); }
 
     @Override public boolean vectorPaintsNothing(VectorDrawable vd) { return vd.macapkPaintsNothing(); }
 

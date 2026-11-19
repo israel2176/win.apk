@@ -106,4 +106,19 @@ public class StateSet {
         }
         return sb.append(']').toString();
     }
+
+    // AOSP hides this; AOSP's own graphics and text classes call it (WINAPK_AOSP_GFX=1 puts them,
+    // lib/aosp-graphics.jar, before this framework: windows/README.md, "Milestone 2").
+    /** AOSP StateSet.containsAttribute: a spec of the set has the attribute, set or negated. */
+    public static boolean containsAttribute(int[][] stateSpecs, int attr) {
+        if (stateSpecs != null) {
+            for (int[] spec : stateSpecs) {
+                if (spec == null) break;
+                for (int specAttr : spec) {
+                    if (specAttr == attr || -specAttr == attr) return true;
+                }
+            }
+        }
+        return false;
+    }
 }

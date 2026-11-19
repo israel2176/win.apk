@@ -1510,7 +1510,7 @@ public class Resources {
         // lane layout, 2026-08-01: thread the inflating Theme into the
         // <vector> branch too, so `?attr` PATH FILLS resolve against the
         // runtime (setTheme'd) theme -- see VectorDrawable's 3-arg ctor.
-        return new android.graphics.drawable.VectorDrawable(this, id, theme);
+        return GfxBackend.get().vectorFromResource(this, id, theme);
     }
 
     /** Wave 5 F6 gate; see the colour-file branch in macapkGetDrawableImpl. */
@@ -1999,6 +1999,30 @@ public class Resources {
         return android.view.Gravity.parse(v);
     }
 
+    /** A drawable's XML as a DOM, read as macapkInflateXmlDrawable reads it (the platform files'
+     *  memo, compiled AXML or text), or null. For the drawables GfxBackend builds outside this
+     *  package (com.macapk.loader.gfx.AospGfx's vectors). */
+    public org.w3c.dom.Document macapkDrawableXml(int id) {
+        try {
+            org.w3c.dom.Document doc = macapkFwXmlDoc(id);
+            if (doc != null) return doc;
+            byte[] bytes;
+            try (java.io.InputStream in = openRawResource(id)) {
+                if (in == null) return null;
+                bytes = in.readAllBytes();
+            }
+            if (bytes.length >= 4 && bytes[0] == 0x03 && bytes[1] == 0x00
+                    && bytes[2] == 0x08 && bytes[3] == 0x00) {
+                return macapkParseCompiledXml(bytes);
+            }
+            javax.xml.parsers.DocumentBuilderFactory f = javax.xml.parsers.DocumentBuilderFactory.newInstance();
+            f.setNamespaceAware(true);
+            return f.newDocumentBuilder().parse(new java.io.ByteArrayInputStream(bytes));
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
     private android.graphics.drawable.Drawable macapkInflateXmlDrawable(int id, Theme theme) {
         if ("0".equals(System.getenv("MACAPK_XML_DRAWABLE"))) return null;
         int depth = sXmlDrawableDepth.get();
@@ -2056,6 +2080,12 @@ public class Resources {
             // correct and unchanged: there we know nothing about the file.
             return macapkUnhandledRootDrawable(macapkLocalTag(root));
         } catch (Throwable t) {
+            // WINAPK_AOSP_GFX=1: AOSP's drawable classes under Win.apk's inflater; say which did not
+            // take, rather than an empty vector standing in without a word.
+            if (GfxBackend.isAosp()) {
+                com.macapk.loader.NativeLog.w("Win.apk.Resources", "drawable 0x" + Integer.toHexString(id)
+                        + " did not inflate on AOSP's classes: " + t);
+            }
             return null;
         } finally {
             sXmlDrawableDepth.set(depth);
@@ -2125,7 +2155,7 @@ public class Resources {
             // `?attr` path fills resolve like the standalone-file path does.
             // `this` (the Resources) is required: without it the vector cannot
             // resolve aapt2 inline <gradient> fills or `@color/` path fills.
-            case "vector":   return new android.graphics.drawable.VectorDrawable(e, theme, this);
+            case "vector":   return GfxBackend.get().vectorFromElement(e, theme, this);
             // <bitmap> and <nine-patch> were UNHANDLED and fell to `default`.
             // See macapkInflateBitmap for why that was expensive to find.
             case "bitmap": case "nine-patch": return macapkInflateBitmap(e, theme);
@@ -2432,10 +2462,7 @@ public class Resources {
             org.w3c.dom.Element root, Theme theme) {
         android.graphics.drawable.Drawable inner = macapkWrapperChild(root, "drawable", theme);
         if (inner == null) return null;
-        android.graphics.drawable.AnimatedVectorDrawable avd =
-            new android.graphics.drawable.AnimatedVectorDrawable();
-        GfxBackend.get().setAnimatedVectorInner(avd, inner);
-        return avd;
+        return GfxBackend.get().animatedVector(inner);
     }
 
     /** AOSP AnimatedImageDrawable: {@code <animated-image android:src=...>}
@@ -2499,8 +2526,7 @@ public class Resources {
             org.w3c.dom.Element root, Theme theme) {
         android.graphics.drawable.Drawable child = macapkWrapperChild(root, "drawable", theme);
         if (child == null) return null;
-        android.graphics.drawable.RotateDrawable rd =
-            new android.graphics.drawable.RotateDrawable(child);
+        android.graphics.drawable.RotateDrawable rd = GfxBackend.get().rotateDrawable(child);
         rd.setFromDegrees(macapkFloatAttr(root, "fromDegrees", 0f));
         rd.setToDegrees(macapkFloatAttr(root, "toDegrees", 360f));
         String px = root.getAttributeNS(MACAPK_ANDROID_NS, "pivotX");
@@ -2842,8 +2868,7 @@ public class Resources {
     }
 
     private android.graphics.drawable.Drawable macapkInflateLayerList(org.w3c.dom.Element root, Theme theme) {
-        android.graphics.drawable.LayerDrawable ld =
-            new android.graphics.drawable.LayerDrawable();
+        android.graphics.drawable.LayerDrawable ld = GfxBackend.get().layerDrawable();
         macapkFillLayerList(root, theme, ld, false);
         return ld.getNumberOfLayers() > 0 ? ld : null;
     }
@@ -2931,8 +2956,7 @@ public class Resources {
         // `instanceof RippleDrawable` to set the colour or the radius skipped it (uiprobe:
         // abc_control_background_material, item_background_material, Material's ripples).
         // RippleDrawable.draw leaves the mask layer out with the gate off too.
-        android.graphics.drawable.RippleDrawable rd =
-            new android.graphics.drawable.RippleDrawable();
+        android.graphics.drawable.RippleDrawable rd = GfxBackend.get().rippleDrawable();
         // A single resolved colour rather than a real ColorStateList: our
         // <ripple android:color> values are `?attr/colorControlHighlight` or a
         // literal, and macapkResolveColorString is the resolver every other
@@ -4046,6 +4070,23 @@ public class Resources {
         return macapkColorStateListValue(v, theme);
     }
 
+    /** A drawable attribute's dimension in pixels, a literal ("24dp"), `@dimen/` or `?attr`, as
+     *  macapkDimAttr reads it but unrounded; `def` when it does not resolve. For the drawables that
+     *  live outside this package (com.macapk.loader.gfx.AospVector). */
+    public float macapkDimensionFor(String v, Theme theme, float def) {
+        if (v == null || v.trim().isEmpty()) return def;
+        v = v.trim();
+        Float px;
+        try {
+            if (v.startsWith("?")) px = macapkThemeDimenPx(v, theme);
+            else if (v.startsWith("@")) px = macapkResolveDimenRef(v);
+            else px = macapkParseDimenString(v);
+        } catch (Throwable t) {
+            px = null;
+        }
+        return px != null ? px : def;
+    }
+
     private android.content.res.ColorStateList macapkColorStateListValue(String v, Theme theme) {
         if (v == null) return null;
         v = v.trim();
@@ -4115,7 +4156,7 @@ public class Resources {
         // 120x120 back button: a square where the AVD draws a 100px disk).
         // `useLevel` here is the SHAPE's attribute; <gradient useLevel> is a
         // different field (mUseLevel) read with the gradient.
-        if (android.graphics.drawable.GradientDrawable.MACAPK_SHAPE_RING) {
+        if (GfxBackend.get().readsShapeRing()) {
             if ("ring".equals(shapeAttr == null ? null : shapeAttr.trim())) {
                 gd.setShape(android.graphics.drawable.GradientDrawable.RING);
             }
@@ -4154,7 +4195,7 @@ public class Resources {
         // ?attr/colorButtonNormal / ?attr/colorAccent) were white faces.
         // GradientDrawable composes the tint the AOSP way (a BlendModeColorFilter
         // over the fill and the stroke) under the same gate.
-        if (android.graphics.drawable.GradientDrawable.MACAPK_SHAPE_TINT) {
+        if (GfxBackend.get().readsShapeTint()) {
             android.graphics.PorterDuff.Mode mode = macapkParseTintMode(
                 root.getAttributeNS(MACAPK_ANDROID_NS, "tintMode"));
             if (mode != null) gd.setTintMode(mode);

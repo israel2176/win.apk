@@ -3947,7 +3947,7 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
             if (w <= 0 || h <= 0) { w = 800; h = 600; }   // sensible default
             if (drawBitmap == null || drawBitmap.getWidth() != w
                                        || drawBitmap.getHeight() != h) {
-                drawBitmap = android.graphics.Bitmap.createBitmapWithCanvasBacking(w, h);
+                drawBitmap = com.macapk.loader.gfx.GfxBackend.get().createFrameBitmap(w, h);
                 drawCanvas = new android.graphics.Canvas(drawBitmap);
             }
             return drawCanvas;

@@ -1450,6 +1450,75 @@ public class TextUtils {
             return mOriginal.codePointAt(offset);
         }
     }
+
+    // ---- AOSP's hidden helpers, for AOSP's android.text layout classes (WINAPK_AOSP_GFX=1 puts
+    // them, lib/aosp-graphics.jar, before this framework: windows/README.md, "Milestone 2") ----
+
+    /** AOSP TextUtils.couldAffectRtl: a character that may need the bidi algorithm. */
+    public static boolean couldAffectRtl(char c) {
+        return (0x0590 <= c && c <= 0x08FF)      // RTL scripts
+                || c == 0x200E || c == 0x200F    // LRM, RLM
+                || (0x202A <= c && c <= 0x202E)  // LRE, RLE, PDF, LRO, RLO
+                || (0x2066 <= c && c <= 0x2069)  // LRI, RLI, FSI, PDI
+                || (0xD800 <= c && c <= 0xDFFF)  // surrogates
+                || (0xFB1D <= c && c <= 0xFDFF)  // Hebrew and Arabic presentation forms
+                || (0xFE70 <= c && c <= 0xFEFE); // Arabic presentation forms B
+    }
+
+    /** AOSP TextUtils.doesNotNeedBidi. */
+    public static boolean doesNotNeedBidi(char[] text, int start, int len) {
+        final int end = start + len;
+        for (int i = start; i < end; i++) {
+            if (couldAffectRtl(text[i])) return false;
+        }
+        return true;
+    }
+
+    /** AOSP TextUtils.obtain: a scratch char array (AOSP keeps one; a new one each time is enough). */
+    static char[] obtain(int len) { return new char[len]; }
+
+    /** AOSP TextUtils.recycle. */
+    static void recycle(char[] temp) {}
+
+    /** AOSP TextUtils.getEllipsisString. */
+    public static String getEllipsisString(TruncateAt method) {
+        return method == TruncateAt.END_SMALL ? "\u2025" : "\u2026";
+    }
+
+    /** AOSP TextUtils.packRangeInLong. */
+    public static long packRangeInLong(int start, int end) { return (((long) start) << 32) | end; }
+
+    /** AOSP TextUtils.unpackRangeStartFromLong. */
+    public static int unpackRangeStartFromLong(long range) { return (int) (range >>> 32); }
+
+    /** AOSP TextUtils.unpackRangeEndFromLong. */
+    public static int unpackRangeEndFromLong(long range) { return (int) (range & 0x00000000FFFFFFFFL); }
+
+    /** AOSP TextUtils.removeEmptySpans: the spans that cover at least one character. */
+    @SuppressWarnings("unchecked")
+    public static <T> T[] removeEmptySpans(T[] spans, Spanned spanned, Class<T> klass) {
+        T[] copy = null;
+        int count = 0;
+        for (int i = 0; i < spans.length; i++) {
+            final T span = spans[i];
+            if (spanned.getSpanStart(span) == spanned.getSpanEnd(span)) {
+                if (copy == null) {
+                    copy = (T[]) java.lang.reflect.Array.newInstance(klass, spans.length - 1);
+                    System.arraycopy(spans, 0, copy, 0, i);
+                    count = i;
+                }
+            } else if (copy != null) {
+                copy[count++] = span;
+            }
+        }
+        if (copy == null) return spans;
+        T[] result = (T[]) java.lang.reflect.Array.newInstance(klass, count);
+        System.arraycopy(copy, 0, result, 0, count);
+        return result;
+    }
+
+    /** AOSP TextUtils.nullIfEmpty. */
+    public static String nullIfEmpty(String str) { return isEmpty(str) ? null : str; }
 }
 
 

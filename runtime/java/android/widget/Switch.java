@@ -147,11 +147,11 @@ public class Switch extends CompoundButton {
     /** The drawable, or any state of a selector, already has a tint. */
     private static boolean macapkCarriesTint(android.graphics.drawable.Drawable dr) {
         if (dr == null) return false;
-        if (dr.getTintList() != null) return true;
+        if (GfxBackend.get().tintList(dr) != null) return true;
         if (dr instanceof android.graphics.drawable.StateListDrawable sl) {
             for (int i = 0, n = sl.getStateCount(); i < n; i++) {
                 android.graphics.drawable.Drawable c = sl.getStateDrawable(i);
-                if (c != null && c.getTintList() != null) return true;
+                if (c != null && GfxBackend.get().tintList(c) != null) return true;
             }
         }
         return false;
