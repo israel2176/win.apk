@@ -331,13 +331,25 @@ sides' `ours.txt` and logs and regress.py's whole output.
   the base and on the head side by side (`run_ours.sh`, or `screens.sh
   --skip-oracle`, which reads `manifest.env` and needs no Android SDK). Both
   scripts end Win.apk once it has printed `PROBE done` (`run_until.py`: some
-  apps' processes hang at exit after it) and at a timeout; a run that stops
-  short (no `done`, or under 90% of Android's cases: `gate.py complete`) is run
-  once more on a fresh data folder, as a first run sometimes needs. Then
-  `gate.py report` runs regress.py and writes the summary. Expected: about 10
-  minutes after the build (the stage's download, then the slower of the two
-  runs); the job's limit is 25 minutes. Android's side, when cached, takes about
-  a minute and runs beside the Windows build; built afresh, about 15.
+  apps' processes hang at exit after it), when no new `PROBE` line has come for
+  `GATE_STALL` seconds (default 240: `RUN_UNTIL_STALL`) and at `GATE_TIMEOUT`
+  (default 480); a run that stops short (no `done`, or under 90% of Android's
+  cases: `gate.py complete`) is run once more on a fresh data folder, as a
+  first run sometimes needs. Then `gate.py report` runs regress.py and writes
+  the summary. A base whose `macapk-loader.jar` has no `LayoutSweep` (one from
+  before the sweep existed) ignores `MACAPK_LAYOUT_SWEEP` and runs the app
+  itself, which never ends: `gate_side.sh` sees that, runs nothing and exits 3,
+  and the job then checks only that the head's sweep finishes (`gate.py report
+  --no-base`, said in the summary). What it costs, from the first run (run
+  44569377329): the downloads about 25 s; each app's run about 30 s (Gallery
+  31 s, of it 11 s converting its DEX and 12 s to boot; Sudoku 23 s), base and
+  head at once on the one runner without slowing each other; the probe about
+  as long. So a job takes 1 to 2 minutes after the build; the limits make the
+  worst case (both tries of a side running to `GATE_TIMEOUT`) 16 minutes plus
+  that, under the job's 25. The DEX conversion runs on each side, as each
+  side's own converter would; at 10 s it is not worth sharing. Android's side,
+  when cached, takes about a minute and runs beside the Windows build; built
+  afresh, about 15.
 
 A pull request that changes what the probe or `LayoutSweep` prints changes the
 lines on one side only and fails the gate with `changed` and `MISSING` lines:
@@ -1047,8 +1059,9 @@ the staged runtime's `lib/` (or `SCREENS_LIB`); Robolectric fetches its Android
 into `~/.m2` (`SCREENS_M2`). `--skip-ours` with `SCREENS_LIB` and `-` for the
 exe runs Android's side alone, on any system; `--skip-oracle` then reads the
 `manifest.env` it left and needs no SDK. Win.apk's run is ended once it prints
-`PROBE done` (`test/uiprobe/run_until.py`; some apps' processes hang at exit)
-or after `SCREENS_TIMEOUT` seconds. What it cannot see: what code does after inflating (a list's
+`PROBE done` (`test/uiprobe/run_until.py`; some apps' processes hang at exit),
+after `SCREENS_TIMEOUT` seconds, or when `RUN_UNTIL_STALL` seconds pass with no
+new `PROBE` line (off unless set; the UI gate sets it). What it cannot see: what code does after inflating (a list's
 rows, texts from data, views shown or hidden), a `<fragment>` (there is no
 activity), and a custom view whose constructor wants state the app sets up at
 start; those throw alike on both sides, and only a difference counts.

@@ -8,10 +8,13 @@ lines of a pull request against its base, never further from Android.
         first run sometimes stops short; gate_side.sh runs it once more then.
 
     gate.py report <name> <oracle.txt> <base/ours.txt> <head/ours.txt> [--max N] [--note TEXT] [--out FILE]
+                   [--no-base WHY]
         regress.py on the three, as Markdown for the job summary: the counts,
         then the first N (default 40) REGRESSED / FARTHER / MISSING entries.
         regress.py's whole output goes to FILE. Exit status regress.py's: 1 on
-        any of those.
+        any of those. With --no-base (the base's runtime could not run the
+        target: gate_side.sh's exit 3) there is nothing to regress from: WHY,
+        and the head's run alone, which must finish (exit 1 if it did not).
 """
 import os
 import subprocess
@@ -69,10 +72,21 @@ def report(args):
     limit = int(opt(args, '--max', '40'))
     note = opt(args, '--note', '')
     full = opt(args, '--out', '')
+    no_base = opt(args, '--no-base', '')
     name, oracle, base, head = args
     md = [f'### {name}', '']
     if note:
         md += [note, '']
+    if no_base:
+        done = finished(head)
+        got = len(cases(head)) if os.path.exists(head) else 0
+        md += [no_base, '', f"Head: {got} of {len(cases(oracle))} of Android's cases, "
+               + ('finished.' if done else '**did not finish**.')]
+        if full:
+            with open(full, 'w', encoding='utf-8') as f:
+                f.write(no_base + '\n')
+        print('\n'.join(md))
+        return 0 if done else 1
     missing = [p for p in (base, head) if not os.path.exists(p)]
     if missing:
         md.append('No lines to compare: ' + ', '.join(f'`{p}`' for p in missing) + ' was not written.')
