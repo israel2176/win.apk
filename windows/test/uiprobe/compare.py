@@ -35,7 +35,7 @@ CLASS = re.compile(r'\b(?:AppCompat|Material)(?=[A-Z][a-z])')
 
 
 HEX = re.compile(r'=[0-9a-f]{8}(?![0-9a-f])')
-WIDE = re.compile(r' text=5\d{5}\.\d\.\.5\d{5}\.\d')
+WIDE = re.compile(r' text=[25]\d{5}\.\d\.\.[25]\d{5}\.\d')
 TEXT = re.compile(r' text=-?[\d.]+\.\.-?[\d.]+')
 
 
@@ -48,7 +48,8 @@ def same(a, b, tolerance):
     a, b = HEX.sub('=x', a), HEX.sub('=x', b)
     # A single line that scrolls sideways is laid out about a million pixels
     # wide on Android (VERY_WIDE); Win.apk lays it out at its own width. Where
-    # the text sits in such a layout is not a place on the screen.
+    # the text sits in such a layout (near 524288 dp at xhdpi, or half that when
+    # centred) is not a place on the screen.
     a, b = WIDE.sub('', a), WIDE.sub('', b)
     if 'text=' in a and 'text=' not in b or 'text=' in b and 'text=' not in a:
         a, b = TEXT.sub('', a), TEXT.sub('', b)
