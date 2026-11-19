@@ -505,7 +505,8 @@ app `NullPointerException` on a null a framework method returned, other than
 an Intent or Bundle getter); in the app's code it is mostly a screen opened
 without the extras or state its caller passes, listed apart as expected.
 A framework exception that reports the caller's own input (an SQL error in
-the app's statement) counts as the app's. `--intents` gives a screen its
+the app's statement, an activity no app has, a null the app passed as an
+argument) counts as the app's. `--intents` gives a screen its
 start, `{"<class>": {"action": ..., "data": ..., "extras": "k=v;k2=v2"}}`.
 Per app it writes `<out>/<package>/report.md`, `report.json`, `logs/` and
 `shots/`, and `<out>/report.md` and `report.json` across the apps.

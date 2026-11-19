@@ -240,7 +240,7 @@ STATE_EXC = ("NullPointerException", "IllegalArgumentException", "IllegalStateEx
              "ClassCastException", "UninitializedPropertyAccessException", "NoSuchElementException",
              "IndexOutOfBoundsException", "NumberFormatException")
 STATE_WORDS = re.compile(r"intent|extra|argument|bundle|must be (provided|set|passed)|missing|"
-                         r"required|not (initiali[sz]ed|set)|lateinit|null", re.I)
+                         r"required|mandatory|invalid|not (initiali[sz]ed|set)|lateinit|null", re.I)
 
 
 # Framework exceptions that report the caller's own bad input, the same on a
@@ -250,6 +250,8 @@ CALLER_INPUT = [
      re.compile(r"prepare failed|syntax error|duplicate column|no such (table|column)|already exists|"
                 r"constraint failed|UNIQUE|NOT NULL", re.I)),
     (re.compile(r"android\.content\.ActivityNotFoundException"), re.compile(r"")),
+    # A null the caller passed in: HotSpot names an unnamed parameter "<parameterN>".
+    (re.compile(r"java\.lang\.NullPointerException"), re.compile(r'because "<parameter\d+>" is null')),
 ]
 
 
@@ -305,9 +307,12 @@ def classify(trace, pkg):
     origin = next((f for f in frames if not f.startswith(NEUTRAL)), frames[0] if frames else "?")
     if origin.startswith(FRAMEWORK):
         caller = next((f for f in frames if not f.startswith(NEUTRAL + FRAMEWORK)), None)
-        if caller and any(e.fullmatch(root["exception"]) and m.search(root["message"]) for e, m in CALLER_INPUT):
-            return "app", caller, root
-        return "framework", origin, root
+        if not caller or not any(e.fullmatch(root["exception"]) and m.search(root["message"])
+                                 for e, m in CALLER_INPUT):
+            return "framework", origin, root
+        origin = caller
+        if not root["exception"].endswith("NullPointerException"):
+            return "app", origin, root  # the app's SQL, an activity it named that is not there
     exc = root["exception"].rsplit(".", 1)[-1]
     msg = root["message"]
     nulled = HELPFUL_NULL_RE.search(msg)
@@ -445,6 +450,8 @@ def run_activity(apk, pkg, activity, intent, args, app_out, index, timeout):
         if r["status"] == "drew" and sweep.bmp_colors(bmp) <= 2:
             r["status"] = "blank"
         os.remove(bmp)
+    if os.path.exists(bmp + ".part"):
+        os.remove(bmp + ".part")  # a frame being written when the run was stopped
     r["log"] = os.path.relpath(log_path, app_out)
     return r
 
