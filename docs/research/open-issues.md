@@ -43,7 +43,7 @@ the app); if it is still there, it is a bug in what replaced it.
 | 8 | Views a custom view inflates in its constructor get plain TextView/RadioButton, not the Material ones (lineHeight and tint lost) | nested inflater has no factory; cause not confirmed | Moovit | views |
 | 9 | Spinner / CheckedTextView miss their default background's padding; `CALCustomSeekBar` loses its right padding | not traced | Moovit, Cal | views |
 | 10 | Text in an app's own font: Cal's Ploni lines 0.5-2 dp shorter than Android; cause unknown (not the top/bottom clamp) | text metrics | Cal | graphics + text |
-| 11 | Multi-line TextView 2-2.5 dp per line short with `WINAPK_AOSP_GFX=1` (TextView's own arithmetic over AOSP's metrics) | `TextView` line code; WIP below | uiprobe | text |
+| 11 | ~~Multi-line TextView 2-2.5 dp per line short with `WINAPK_AOSP_GFX=1`~~ Fixed: with the switch on TextView lays out through AOSP's own Layout (`TextViewAospLayout`); all of lib_text_lines matches. Still Win.apk's with the switch off (Java2D) | `TextView` line code (Java2D path) | uiprobe | text |
 | 12 | `Html.fromHtml` ignores its flags (paragraph separators) and calls `TagHandler` only on close, for known tags, with a null XMLReader | `android/text/Html.java` ~68-78, ~230-250 | Waze | text |
 | 13 | Waze's location-permission screen shows "1. Select Precise" without the second step; Html/StaticLayout give all lines on a plain JVM, so Compose text or the app's choice; not found | | Waze | check |
 | 14 | Mercantile's login banner: its second line drawn wider than its box, first letter clipped (likely the typeface bug fixed in b82a102; verify) | | Mercantile | check |
@@ -110,19 +110,15 @@ the app); if it is still there, it is a bug in what replaced it.
   `StatusBarDriver`, `ViewCanvasDriver` and the README. The commit is
   `docs/research/pending/res-seam.patch` (`git am -3` it and resolve, then
   rerun the identical-output gate).
-- **AOSP text layout in TextView (item 11)**: stopped by the usage limit
-  mid-way. Its uncommitted diff, on 6bac0e4, is
-  `docs/research/pending/aosp-text-layout-wip.patch` (new
-  `TextViewAospLayout.java`; changes to `TextView`, `Layout`, `TextUtils`).
-  Goal: with `WINAPK_AOSP_GFX=1`, TextView measures, lays out and draws through
-  a real AOSP Layout built as AOSP's TextView builds it; switch off unchanged.
 - **AOSP graphics, what is missing** (README "Milestone 2"): AOSP drawables
   inflating themselves from XML (`com.android.internal.R.styleable`,
   `TypedArray.getComplexColor`), vector gradient fills, AnimatedVectorDrawable
   animators, `<animated-image>`, an app's own font families (`res/font`, only
   one file chosen), the one-copy present, Compose (`drawRenderNode` on a
   software canvas) and `SurfaceTexture` on native pixels. Probe with the switch
-  on: 1656 of 2104 lines match vs 1895 on Java2D (6bac0e4).
+  on: 1904 of 2104 lines match vs 1895 on Java2D (TextView on AOSP's Layout;
+  1656 before it). Left in the text rows: ExtendedFloatingActionButton's
+  `getGravity()` (11 where Android has START|CENTER_VERTICAL, both paths).
 - **Screens checks not finished**: Bank Leumi (stopped by the usage limit
   before its boot), Pango and Paybox (not on APKPure; the owner offered their
   other repository or a Play download).
