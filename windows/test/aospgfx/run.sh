@@ -61,11 +61,13 @@ fi
 
 echo "== the test classes"
 "$JAVA_HOME/bin/javac$EXE" -encoding UTF-8 -nowarn -Xlint:-options --release 21 -d "$(host "$OUT/classes")" \
-    -cp "$(host "$DEPS/android-all-14.jar")" $(find "$HERE/src" -name '*.java' | while read -r f; do host "$f"; done) \
+    -cp "$(host "$DEPS/android-all-14.jar")" \
+    $(find "$HERE/src" "$HERE/../../java/aosp_gfx" -name '*.java' | while read -r f; do host "$f"; done) \
     || exit 1
 
 # The stand-ins first: they replace android-all's own Log, Trace, SystemProperties, VMRuntime and
-# NativeAllocationRegistry, which are ART's.
+# NativeAllocationRegistry, which are ART's (the last, with RuntimeEnvironment, is the one that
+# ships, in aosp-graphics.jar: windows/java/aosp_gfx; the others are the framework's in Win.apk).
 CP="$(host "$OUT/classes")$SEP$(host "$DEPS/android-all-14.jar")"
 ARGS=("$(host "$AGENT")" "$(host "$NATIVE")" "$(host "$DEPS/nativeruntime/icu/icudt68l.dat")"
       "$(host "$DEPS/nativeruntime/fonts")" "$(host "$OUT")" "$@")

@@ -14,8 +14,9 @@
 // RESULT line with that benchmark's fields.
 //
 // Every class on the class path is android-all's except the stand-ins in this folder (Log, Trace,
-// SystemProperties, VMRuntime, NativeAllocationRegistry, RuntimeEnvironment): the parts of ART and
-// Robolectric the graphics classes call into. They go first on the class path.
+// SystemProperties, VMRuntime) and in windows/java/aosp_gfx (NativeAllocationRegistry,
+// RuntimeEnvironment, which ship in aosp-graphics.jar): the parts of ART and Robolectric the
+// graphics classes call into. They go first on the class path.
 
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
