@@ -2112,6 +2112,12 @@ every such change is listed here:
     `MacApkConscryptProvider` hands a service whose class java.base cannot reach
     (`jdk.crypto.ec`'s) to its own provider, so "EC" by name under "Conscrypt" or
     "GmsCore_OpenSSL" no longer throws IllegalAccessException.
+  - From bit: `RelativeLayout` keeps a wrap_content child that measured 0 at 0
+    (AOSP's `mBottom = mTop + getMeasuredHeight()`; it took the parent's whole
+    height and pushed the PIN screen off the window; `MACAPK_RL_ZERO_FILLS=1`
+    restores that), and `android.os.Build` and `CheckinClient` tell Windows by
+    the path separator, since Boot sets `os.name` to "Linux" first (a Windows run
+    reported BRAND "Apple", MODEL "Mac").
 - `runtime/java/com/macapk/loader/LayoutSweep.java` (new), `Boot.java`: the
   screens sweep's Win.apk side, a debug mode off unless `MACAPK_LAYOUT_SWEEP=1`
   (see [Every screen against Android](#every-screen-against-android)). Boot
