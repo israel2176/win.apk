@@ -237,6 +237,7 @@ The user-facing ones (`WINAPK_PHONE_SIZE`, `WINAPK_RESIZABLE`,
 | `MACAPK_ALL_PERMS_ASK=0` | Returns the permission groups beyond storage and location to the install-time rule (declared means held), the Mac's behaviour; `MACAPK_MEDIA_PERMS_ASK=0` and `MACAPK_ALLFILES_HONEST=0` keep their upstream meaning |
 | `MACAPK_GMS_PRESENT=0`, `MACAPK_GMS_FCM=0`, `MACAPK_GMS_SIGNIN=0`, `MACAPK_GMS_LOCATION=0`, `MACAPK_GMS_DIR` | Upstream's Play services switches and the state folder |
 | `MACAPK_GMS_GOOGLE_CERT=0` | Reports the platform certificate for `com.google.android.gms` and `com.android.vending` instead of Google's (apps then see Play services as invalid) |
+| `MACAPK_LAYOUT_SWEEP=1` | The screens sweep (`runtime/java/com/macapk/loader/LayoutSweep.java`, [Every screen against Android](#every-screen-against-android)): once `Application.onCreate` has returned, every layout resource of the app is inflated, measured, laid out and drawn at the screen's size, left to right and right to left, instead of the launcher activity starting; each view's place is printed as `PROBE <line>` on stdout, then `PROBE done`, and the process ends. `MACAPK_LAYOUT_SWEEP_THEME=<0x7f... or style/Name>` the theme (default the launcher activity's, else the application's), `MACAPK_LAYOUT_SWEEP_FILTER=<regex>` only the layouts whose name matches, `MACAPK_LAYOUT_SWEEP_PICTURES=<dir>` each case as a PNG |
 | `MACAPK_VIRTUAL_CAMERA=0`, `MACAPK_SV_OVERSIZE_HOLDER=0`, `MACAPK_MANIFEST_FEATURE_SPLITS=0`, `MACAPK_LIFECYCLE_*=0`, `MACAPK_CONTEXT_MCLASSLOADER=0` | Switch off individual framework fixes listed under [Changes to the upstream tree](#changes-to-the-upstream-tree) |
 
 The Java framework has many more `MACAPK_*` switches of upstream's; grep
@@ -534,6 +535,38 @@ hands its work to a helper can look shallow. The first run (2026-11, AndroidX
 and Material 1.12) found 164 `constant`, 126 `noop`, 8 `shallow` and 5 `missing`
 methods those libraries call; `View.setClipBounds` was one. Check a fix
 against Android with the UI probe (`windows/test/uiprobe`).
+
+### Every screen against Android
+
+`windows/test/uiprobe` compares a fixed probe APK. `windows/test/screens` does
+it for any app's own screens, including the ones reached only after a login,
+without logging in: their layouts are all in the APK. Every layout resource is
+inflated in the app's theme (through AppCompat's or Material's view inflater
+when the app has one, as an `AppCompatActivity` does), measured, laid out and
+drawn at 360x640 dp, left to right and right to left, once on Android's own
+framework (Robolectric, over the APK's resources and its classes converted with
+`com.macapk.dex.Main`) and once in Win.apk (`MACAPK_LAYOUT_SWEEP=1`), by the
+same code (`runtime/java/com/macapk/loader/LayoutSweep.java`, which prints the
+UI probe's lines):
+
+```sh
+WINE=wine64 windows/test/screens/screens.sh <app.apk> <out dir> <stage>/bin/winapk-runtime.exe \
+    [--theme 0x7f.. | style/Name] [--filter <regex>] [--pictures]
+```
+
+It writes `oracle.txt`, `ours.txt`, the UI probe's `compare.py` diff
+(`diff.txt`) and `summary.txt` (`summarize.py`): first the layouts that inflate
+on Android and throw in Win.apk, with the exception, its root cause and where
+it was thrown, then those that throw on one side or both, then the layouts with
+the most differing lines. Without `WINE` it runs the exe directly (Windows,
+MSYS2). The theme is the one most of the app's activities wear
+(`manifest_info.py`: a launcher activity is often a splash screen). It needs an
+Android SDK (aapt2, platform 34), a JDK 17 or later, Gradle 8.7 or later and
+the staged runtime's `lib/`; Robolectric fetches its Android into `~/.m2`
+(`SCREENS_M2`). What it cannot see: what code does after inflating (a list's
+rows, texts from data, views shown or hidden), a `<fragment>` (there is no
+activity), and a custom view whose constructor wants state the app sets up at
+start; those throw alike on both sides, and only a difference counts.
 
 ## CI and releases
 
@@ -1867,6 +1900,13 @@ every such change is listed here:
   curve and `start` gives it to every child, as AOSP's `initAnimation` does;
   Animator's no-op was inherited, so a set's curve was dropped
   (`FrameworkStubsTest`).
+- `runtime/java/com/macapk/loader/LayoutSweep.java` (new), `Boot.java`: the
+  screens sweep's Win.apk side, a debug mode off unless `MACAPK_LAYOUT_SWEEP=1`
+  (see [Every screen against Android](#every-screen-against-android)). Boot
+  runs it on the main thread once `Application.onCreate` has returned, instead
+  of starting the launcher activity, and it ends the process. It names only
+  `android.*`, so `windows/test/screens` compiles the same file into its
+  Robolectric oracle.
 
 ## License
 
