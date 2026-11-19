@@ -51,6 +51,10 @@ the app); if it is still there, it is a bug in what replaced it.
 | 16 | `Resources.getResourceEntryName/TypeName/Name` invent `id_0x...` for an unknown id instead of throwing `NotFoundException`; also answer for a land-only layout in portrait | `Resources.java` ~5626-5702 | all | resources |
 | 17 | `android.widget.DateTimeView` missing (notification templates become FrameLayouts) | | Waze, Hapoalim, Mercantile | views |
 | 18 | Maccabi `item_service_request_interaction` RTL: `NonScrollListView` at y=95.5 where Android has 10 (and 0 wide); moved 1 dp further after includeFontPadding | constraint direction (5) | Maccabi | views |
+| 19 | `LinearLayout.setGravity` stores the raw value; AOSP adds START / TOP when a direction is missing, so with `gravity="right"` `layoutHorizontal` takes its default branch and drops `layout_marginTop` (100+ cases) | `LinearLayout.java` ~191, ~1168 | Leumi | views |
+| 20 | `RelativeLayout` rule precedence backwards: ALIGN_PARENT_* applied first and overwritten by sibling rules; AOSP applies the parent rules last (a timeline line 0 dp tall, 59 on Android; 18 children in 17 layouts) | `RelativeLayout.java` ~908-940, ~1361-1380 | Leumi | views |
+| 21 | `View(Context, AttributeSet)` never sets the DataBinding tag (`"layout/..._0"`) from the element, so views that check `getTag()` keep a resource id Android replaces (two views with one id; 1,259 lines in 55 layouts). Part of item 3 | `View.java` ~227-233 | Leumi | views |
+| 22 | NumberPickers inside the framework DatePicker get margins 8,16,8,16 where AOSP's legacy layout has 1,0,1,0 | | Leumi | views |
 
 ## Bugs to fix on their own (not part of a layer)
 
@@ -76,6 +80,20 @@ the app); if it is still there, it is a bug in what replaced it.
   reads match Android; not found (bit).
 - **`HucsConnection.getRequestProperties`** returns the JDK's map with a
   null-key status line; Android's never has one (Dynatrace NPE, caught; bit).
+- **No `icu.dll`, a crash.** `HostIcu` throws "Windows' ICU (icu.dll) is not
+  available" (`windows/host/native_icu.cpp` ~77) and `MeasureFormat` has no
+  fallback, so a Hermes app calling `Intl.NumberFormat` dies (Leumi, under
+  Wine; Windows 10 before 1903 has no `icu.dll` either). Fall back to
+  `java.text`/ICU4J for plain number and unit skeletons. And the abort that
+  follows an uncaught C++ exception in arm64 code ends in an access violation
+  in the host (`winapk-runtime.exe+0x3551b7`, "a signal handler in an arm64
+  library cannot be called for an x86_64 fault"), not a clean abort.
+- **Reanimated reflects on ART's `Field.accessFlags`**, which HotSpot lacks
+  (`NoSuchFieldException`, caught; Leumi).
+- **Leumi's own React Native screens were not seen**: blocked by the ICU crash
+  under Wine. Re-run on Windows, or after the fallback. (The Hermes "Maximum
+  call stack size exceeded (native stack depth)" that left it blank before was
+  the arm64 guest-stack bug, fixed in 58c443a: it hit Flutter and Hermes alike.)
 - **Installer of record.** Bit and Bank Hapoalim stop at "reinstall from the
   store" because `getInstallSourceInfo()` names no store (correct for a
   sideloaded APK, as on Android). An idea, not decided: record
