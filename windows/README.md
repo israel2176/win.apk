@@ -1913,6 +1913,17 @@ every such change is listed here:
   Fossify Gallery's grid items and empty labels now match Android's (363
   differing lines to 335, none new); UI probe 227 to 219.
   `MACAPK_RL_MATCH_FILLS=1` restores the old placement.
+- `runtime/java/android/content/res/Resources.java` (`Theme.resolveDefStyleName`),
+  `android/view/LayoutInflater.java` (the default-style tier): a framework
+  widget's default-style attribute (`com.android.internal.R.attr.checkboxStyle`
+  and the like, every framework constructor passes one) is asked of the theme
+  as `android:X`, and so is a `?android:attr/X` hop; AOSP matches theme items by
+  attribute id, so the app's own bare `X` (Material 3's `checkboxStyle`, meant
+  for `MaterialCheckBox`, with a 48 dp touch target) never answers it. Asked
+  bare, it did: a plain `CheckBox` in a Material theme was 48x48 where Android
+  has 32x32. AppCompat's and Material's widgets still ask their library's
+  attribute. Screens sweep: Fossify Gallery 335 to 333, Open Sudoku 316 to 309
+  lines, none new. `MACAPK_DEFSTYLE_BARE=1` asks the bare name again.
 - `runtime/java/com/macapk/loader/LayoutSweep.java` (new), `Boot.java`: the
   screens sweep's Win.apk side, a debug mode off unless `MACAPK_LAYOUT_SWEEP=1`
   (see [Every screen against Android](#every-screen-against-android)). Boot

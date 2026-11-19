@@ -6861,6 +6861,11 @@ public class Resources {
          *  or defStyleRes (a style id) to the style's NAME, walking this Theme's
          *  applied-style cascade then the application theme (mirrors
          *  resolveAttribute). Returns null when no style is found. */
+        /** MACAPK_DEFSTYLE_BARE=1 asks a framework defStyleAttr by its bare name
+         *  again, as before resolveDefStyleName kept the `android:` namespace. */
+        private static final boolean MACAPK_DEFSTYLE_FW_NS =
+            !"1".equals(System.getenv("MACAPK_DEFSTYLE_BARE"));
+
         private String resolveDefStyleName(int defStyleAttr, int defStyleRes) {
             if (macapkResourceIndex == null) return null;
             try {
@@ -6907,6 +6912,20 @@ public class Resources {
                         if ((defStyleAttr >>> 24) != 0x01) {
                             styleRef = macapkResolveAppAttrExact(attrName);
                         }
+                        // A FRAMEWORK attribute (0x01xxxxxx: every framework widget's
+                        // constructor passes one, CheckBox com.android.internal.R.attr
+                        // .checkboxStyle) is asked as `android:X`. AOSP matches theme
+                        // items by attribute id, so the app's own bare `X` -- Material
+                        // 3's checkboxStyle, meant for MaterialCheckBox, with its 48 dp
+                        // minimum touch target -- can never answer it. Asked bare, it
+                        // did: every framework CheckBox and Switch in a Material theme
+                        // measured 48x48 where Android has 32x32 (the screens sweep).
+                        // resolveAttrInTheme("android:X") finds the leaf-most app
+                        // android:X first and the platform theme's value last.
+                        if (MACAPK_DEFSTYLE_FW_NS && (defStyleAttr >>> 24) == 0x01
+                                && !attrName.startsWith("android:")) {
+                            attrName = "android:" + attrName;
+                        }
                         if (styleRef == null) {
                             for (String style : appliedStyles) {
                                 Object r = mResolve.invoke(macapkResourceIndex, style, attrName);
@@ -6948,6 +6967,12 @@ public class Resources {
                         final boolean appHop = !refAttr.startsWith("android:");
                         if (refAttr.startsWith("attr/")) refAttr = refAttr.substring(5);
                         else if (refAttr.startsWith("android:attr/")) refAttr = refAttr.substring(13);
+                        // `?android:buttonStyle` names the framework attribute: ask it
+                        // as such (see MACAPK_DEFSTYLE_FW_NS above), not by the bare
+                        // name an app or library theme also uses.
+                        if (MACAPK_DEFSTYLE_FW_NS && !appHop && !refAttr.startsWith("android:")) {
+                            refAttr = "android:" + refAttr;
+                        }
                         String next = appHop ? macapkResolveAppAttrExact(refAttr) : null;
                         java.lang.reflect.Method mResolve2 = macapkResourceIndex.getClass()
                             .getMethod("resolveAttrInTheme", String.class, String.class);

@@ -3022,6 +3022,24 @@ public class LayoutInflater {
         return "firstBaselineToTopHeight".equals(name) || "lastBaselineToBottomHeight".equals(name);
     }
 
+    static final boolean MACAPK_DEFSTYLE_BARE = "1".equals(System.getenv("MACAPK_DEFSTYLE_BARE"));
+
+    /** A widget whose constructor passes a library attribute as its default
+     *  style (AppCompat's, the support library's, Material's): its class or an
+     *  ancestor lives in one of those packages. Everything else that reaches the
+     *  default-style tier is a framework widget or an app's subclass of one. */
+    private static boolean macapkLibraryWidget(Class<?> k) {
+        for (; k != null && k != View.class; k = k.getSuperclass()) {
+            String n = k.getName();
+            if (n.startsWith("androidx.") || n.startsWith("android.support.")
+                    || n.startsWith("com.google.android.material.")
+                    || k.getSimpleName().startsWith("AppCompat")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static boolean isAppCompatActivity(Class<?> k) {
         for (; k != null && k != android.app.Activity.class; k = k.getSuperclass()) {
             String n = k.getName();
@@ -4070,9 +4088,21 @@ public class LayoutInflater {
             Object appTheme = ri.getClass()
                 .getMethod("getApplicationThemeName").invoke(ri);
             if (!(appTheme instanceof String)) return;
-            Object sr = mResolve.invoke(ri, appTheme, defStyleAttr);
+            // The attribute's namespace follows the class, as each constructor
+            // picks it on a device: a framework widget (or an app's subclass of
+            // one that passes no style of its own) chains to
+            // com.android.internal.R.attr.<x>Style, i.e. android:<x>Style;
+            // AppCompat's and Material's widgets pass their library's R.attr.<x>Style.
+            // Asking the bare name for a framework CheckBox found the app theme's
+            // checkboxStyle, which Material 3 points at its MaterialCheckBox style
+            // (minimum touch target, 48 dp): every plain CheckBox and Switch came
+            // out 48x48 where Android has 32x32 (the screens sweep, Fossify's menus
+            // and preferences). MACAPK_DEFSTYLE_BARE=1 brings back the bare query.
+            final String queryAttr = !MACAPK_DEFSTYLE_BARE && !macapkLibraryWidget(view.getClass())
+                    ? "android:" + defStyleAttr : defStyleAttr;
+            Object sr = mResolve.invoke(ri, appTheme, queryAttr);
             if (trace) android.util.Log.i("Mac.apk.DefStyle",
-                "cn=" + cn + " appTheme=" + appTheme + " " + defStyleAttr + "=" + sr);
+                "cn=" + cn + " appTheme=" + appTheme + " " + queryAttr + "=" + sr);
             if (!(sr instanceof String)) return;
             String styleName = ((String) sr).trim();
             // ⚠ v1.0.871 BUG FIX. This used to `return` unless the name began
