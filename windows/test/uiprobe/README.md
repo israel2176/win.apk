@@ -22,6 +22,19 @@ windows/test/uiprobe/run_ours.sh <out> <winapk-runtime.exe> [--lib <dir>]   # <o
 python windows/test/uiprobe/compare.py <out>/oracle.txt <out>/ours.txt
 ```
 
+On Linux, the Win.apk side runs under Wine instead, on any staged runtime: a
+build's stage, or the `runtime-stage` artifact of a CI run (no Windows build
+needed). It needs wine64 and mingw-w64 gcc:
+
+```sh
+windows/test/uiprobe/run_ours_wine.sh <out> <stage dir>   # <stage>/bin/winapk-runtime.exe, lib/, jre/
+```
+
+To try a change to `runtime/java` without a full build, compile the changed
+class against the stage's `lib/android-framework.jar` (and `macapk-loader.jar`)
+with a JDK 21 `javac`, put it into a copy of that jar with `jar uf`, and run the
+probe on the copy.
+
 - `build.sh` is a Gradle build (AGP 8.5, `build.gradle` beside it): it copies
   the project to `<out>/project`, assembles the APK and runs the Robolectric
   test that writes the oracle. The libraries (AppCompat, Material,

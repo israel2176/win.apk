@@ -2966,6 +2966,63 @@ public class LayoutInflater {
         return null;
     }
 
+    /** MACAPK_APPCOMPAT_REWRITE_ANY=1 rewrites bare tags for every inflater of an
+     *  app that bundles AppCompat, as before appCompatRewriteApplies. */
+    static final boolean MACAPK_APPCOMPAT_REWRITE_ANY =
+        "1".equals(System.getenv("MACAPK_APPCOMPAT_REWRITE_ANY"));
+
+    /** Whether a bare tag becomes AppCompat's subclass here. On Android that is
+     *  the work of AppCompat's factory, which AppCompatActivity installs on its
+     *  inflater: a plain Activity's inflater has no factory, and its <ImageView>
+     *  stays an android.widget.ImageView -- app:tint ignored, no AppCompat
+     *  default style (the UI probe's lists: a plain-Activity row got
+     *  AppCompatImageView and colorControlNormal as its tint). The rewrite was
+     *  added before the factories were consulted (tryFactoryCreate), when it was
+     *  the only way an AppCompatActivity got its views. It stays where the
+     *  inflater has a factory (one that returned null for this tag), and inside
+     *  an AppCompatActivity whose inflater has none (AppCompat's should be
+     *  there); an Application's context, a plain Activity's and the wrappers
+     *  around them get the framework's own classes, as on Android. */
+    private boolean appCompatRewriteApplies() {
+        if (MACAPK_APPCOMPAT_REWRITE_ANY || !android.os.Looper.MACAPK_REAL_LOOPER) return true;
+        if (factory != null || factory2 != null) return true;
+        Context c = context;
+        for (int i = 0; c != null && i < 16; i++) {
+            if (c instanceof android.app.Activity) return isAppCompatActivity(c.getClass());
+            if (!(c instanceof android.content.ContextWrapper)) break;
+            c = ((android.content.ContextWrapper) c).getBaseContext();
+        }
+        return false;
+    }
+
+    /** app:tint and app:srcCompat belong to AppCompat's image views
+     *  (AppCompatImageHelper), not to android.widget.ImageView, which reads
+     *  android:tint and android:src only. applyAttribute matches by local name,
+     *  so without this a framework ImageView where Android has no AppCompat (an
+     *  Application's context, a plain Activity) took the app: tint and source
+     *  as if they were its own (the UI probe's list rows: tint=99000000 where
+     *  Android has none). Where AppCompat would be, they apply as before. */
+    private boolean macapkAppCompatOnlyAttr(View view, Node a, String localName) {
+        if (!"tint".equals(localName) && !"srcCompat".equals(localName)) return false;
+        Class<?> k = view.getClass();
+        if (k != android.widget.ImageView.class && k != android.widget.ImageButton.class) return false;
+        String ns = a.getNamespaceURI();
+        if (ns == null || MACAPK_ANDROID_NS.equals(ns)) return false;
+        return !appCompatRewriteApplies();
+    }
+
+    private static boolean isAppCompatActivity(Class<?> k) {
+        for (; k != null && k != android.app.Activity.class; k = k.getSuperclass()) {
+            String n = k.getName();
+            if (n.equals("androidx.appcompat.app.AppCompatActivity")
+                    || n.equals("android.support.v7.app.AppCompatActivity")
+                    || n.equals("android.support.v7.app.ActionBarActivity")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private View createViewByName(String name, Element elem) {
         if (name == null || name.isEmpty()) return null;
         // Tags like <View>, <ViewGroup>, <RelativeLayout$LayoutParams>
@@ -2974,8 +3031,9 @@ public class LayoutInflater {
         if (!fq.contains(".")) {
             // AppCompat rewrite FIRST, exactly as AOSP's factory does -- see the
             // block comment above. Falls straight through when the app bundles no
-            // AppCompat, so a non-AppCompat app is byte-identical to before.
-            Class<?> ac = appCompatClassFor(name);
+            // AppCompat, so a non-AppCompat app is byte-identical to before; and
+            // only where AppCompat's factory would have been (appCompatRewriteApplies).
+            Class<?> ac = appCompatRewriteApplies() ? appCompatClassFor(name) : null;
             if (ac != null) {
                 View v = instantiateView(ac, elem);
                 if (v != null) return v;
@@ -3731,6 +3789,7 @@ public class LayoutInflater {
             // An element's own lineHeight outranks a style item's, same rule as
             // padding above.
             if ("lineHeight".equals(localName)) { deferredLineHeight.put(localName, value); continue; }
+            if (macapkAppCompatOnlyAttr(view, a, localName)) continue;
             applyAttribute(view, localName, value);
         }
         // 2026-08-13 (opencalculator structural-offset lane): replay
