@@ -26,6 +26,13 @@ rm -rf "$OUT/project/src" "$OUT/project/res" "$OUT/project/oracle"
 mkdir -p "$OUT/project"
 cp -r "$HERE/src" "$HERE/res" "$HERE/oracle" "$HERE/AndroidManifest.xml" "$HERE/build.gradle"       "$HERE/settings.gradle" "$HERE/gradle.properties" "$OUT/project/"
 echo "sdk.dir=$(native "$SDK")" > "$OUT/project/local.properties"
+# Robolectric fetches the Android framework it runs into ~/.m2 (the test's
+# user.home is build/home): reuse one already fetched (UIPROBE_M2, default ~/.m2),
+# as screens.sh does, so a CI cache of ~/.m2 keeps it.
+M2="${UIPROBE_M2:-$HOME/.m2}"
+if [[ -d "$M2" && ! -e "$OUT/project/build/home/.m2" ]]; then
+    mkdir -p "$OUT/project/build/home" && ln -sfn "$M2" "$OUT/project/build/home/.m2"
+fi
 
 ( cd "$OUT/project" && "$GRADLE" -q --no-daemon assembleDebug testDebugUnitTest     "-Dprobe.out=$(native "$OUT/oracle.txt")" "-Dprobe.pictures=$(native "$OUT/oracle-pictures")" )
 cp -f "$OUT/project/build/outputs/apk/debug/"*-debug.apk "$OUT/probe.apk"

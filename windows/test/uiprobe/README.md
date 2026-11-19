@@ -57,6 +57,15 @@ files (`windows/test/screens`) go through it the same way:
 python windows/test/uiprobe/regress.py <oracle.txt> <before/ours.txt> <after/ours.txt> [--quiet]
 ```
 
+CI does this for every pull request that touches the framework or the host
+(`ci.yml`, the UI gate; `windows/README.md`, "The UI gate"): `gate_oracle.sh`
+makes Android's side on Linux, `gate_side.sh` runs Win.apk's at the base and at
+the head (a short run once more), and `gate.py report` runs regress.py and
+writes the job summary. `run_ours.sh` and `screens.sh` end Win.apk once it has
+printed `PROBE done` (`run_until.py`; some processes hang at exit after it) or
+at a timeout (`UIPROBE_TIMEOUT`, default 900 s); they need Python 3 (`PYTHON`,
+default `python3`).
+
 A new layout case is a file under `res/layout/` plus its name in
 `Probes.LAYOUTS`. A widget or a LayoutParams class of the probe's own
 (`ProbeLabel`, `ProbeLayout`) stands for what apps do that the framework's own
