@@ -3474,11 +3474,30 @@ public class LayoutInflater {
         }
         @Override public String getAttributeValue(int i) {
             if (i < 0 || i >= realAttrs().size()) return null;
-            return aospValue(realAttrs().get(i));
+            Node a = realAttrs().get(i);
+            if (com.macapk.loader.AppCaller.isApp(0)) {
+                String r = aospRef(a);
+                if (r != null) return r;
+            }
+            return aospValue(a);
         }
         @Override public String getAttributeValue(String ns, String name) {
             Node a = lookupAttr(ns, name);
+            if (a != null && com.macapk.loader.AppCaller.isApp(0)) {
+                String r = aospRef(a);
+                if (r != null) return r;
+            }
             return a != null ? aospValue(a) : lookup(ns, name);
+        }
+        /** A compiled reference's "@<id>" / "?<id>", as XmlBlock.Parser answers
+         *  the app (BinaryXmlParser.MACAPK_REF_NS); null when `a` is not one.
+         *  Only the app's own code is given it (AppCaller): our inflater and
+         *  widgets resolve the "@type/name" spelling. A custom view that parses
+         *  the number from getAttributeValue saw the name. */
+        private String aospRef(Node a) {
+            String key = com.macapk.loader.BinaryXmlParser.valueKey(a.getNodeName());
+            String ns = com.macapk.loader.BinaryXmlParser.MACAPK_REF_NS;
+            return elem.hasAttributeNS(ns, key) ? elem.getAttributeNS(ns, key) : null;
         }
         @Override public String macapkAttributeText(String ns, String name) {
             return lookup(ns, name);
