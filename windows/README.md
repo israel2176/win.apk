@@ -502,15 +502,21 @@ code logged. Stack traces are ranked by where they start, the first frame of
 the innermost cause past the Java library: in `android.*`, `com.android.*`
 or `com.macapk.*` it is Win.apk's to fix, first in the report (with an
 app `NullPointerException` on a null a framework method returned, other than
-an Intent or Bundle getter); in the app's code it is mostly a screen opened
-without the extras or state its caller passes, listed apart as expected.
+an Intent or Bundle getter, and a `NumberFormatException` on a resource
+name, an AttributeSet value a phone spells `@<id>`); in the app's code it is
+mostly a screen opened without the extras or state its caller passes, listed
+apart as expected.
 A framework exception that reports the caller's own input (an SQL error in
 the app's statement, an activity no app has, a null the app passed as an
 argument) counts as the app's. `--intents` gives a screen its
 start, `{"<class>": {"action": ..., "data": ..., "extras": "k=v;k2=v2"}}`.
 Per app it writes `<out>/<package>/report.md`, `report.json`, `logs/` and
 `shots/`, and `<out>/report.md` and `report.json` across the apps.
-`--reanalyze` rebuilds the reports from the kept logs.
+`--reanalyze` rebuilds the reports from the kept logs. A screen that is a
+fragment of a single-activity app (Navigation) is not an activity and is not
+reached this way. Under Wine a stopped run ends with `wineserver -k`, which
+ends every Wine process of the prefix: give a crawl a `WINEPREFIX` of its own
+when something else runs in it.
 
 `test/compat/startbench.py` measures starts instead: per app and per
 configuration (a JRE, environment variables, another staged runtime such as
