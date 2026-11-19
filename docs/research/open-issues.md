@@ -195,6 +195,18 @@ the app); if it is still there, it is a bug in what replaced it.
 - **Releases leave the AOSP files out** (`WINAPK_STAGE_AOSP_GFX=0` in
   `windows-release.yml`) until the switch draws apps as well as Java2D.
 
+## Deferred by the owner: a live comparison
+
+The screens sweep sees only layout XML files: Compose, Flutter and React
+Native screens are built by running code, so it cannot see them (Leumi's main
+screens, Bit's new ones, Maccabi's Flutter home). Agreed for later, after the
+engine change: a live comparison in CI, the same app run on an Android emulator
+(the reference) and in Win.apk on Windows, the same scripted steps (each
+reachable activity and deep link, taps), comparing screenshots and each
+screen's tree (React Native's real Views, Compose's semantics tree, Flutter's
+accessibility semantics). Limits: no account behind logins, server data must
+match, banking apps may refuse an emulator.
+
 ## Making the screens check work on an app (lessons)
 
 What every per-app check needed, worth folding into `windows/test/screens`:
