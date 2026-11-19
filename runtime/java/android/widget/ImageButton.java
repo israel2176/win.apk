@@ -22,9 +22,25 @@ import android.content.Context;
  *  which ctor the app uses; an explicit `android:scaleType` in XML still wins,
  *  because LayoutInflater.applyAttributes runs after construction. */
 public class ImageButton extends ImageView {
-    public ImageButton(Context c) { super(c); initImageButtonDefaults(); }
+    // AOSP ImageButton's constructors chain to the default-style one with
+    //     this(context, attrs, com.android.internal.R.attr.imageButtonStyle)
+    // (android14 ImageButton.java), so a plain ImageButton -- from XML or from
+    // code -- takes Widget.Material.ImageButton: its background and the padding
+    // that background brings. Ours called the two-argument ImageView constructor
+    // with no default style, so it took neither (the UI probe's lib_images
+    // ImageButton: 48 dp wide and unpadded where Android has 72 dp and
+    // 12,10,12,10). It went unseen while every bare <ImageButton> was swapped for
+    // AppCompatImageButton, which brings a style of its own; since that swap only
+    // happens where AppCompat's factory would, the framework widget needs its own.
+    // MACAPK_IMAGEBUTTON_NO_DEFSTYLE=1 restores the old two-argument chain.
+    private static final boolean NO_DEFSTYLE =
+        "1".equals(System.getenv("MACAPK_IMAGEBUTTON_NO_DEFSTYLE"));
+
+    public ImageButton(Context c) {
+        this(c, null);
+    }
     public ImageButton(Context c, android.util.AttributeSet a) {
-        super(c, a); initImageButtonDefaults();
+        super(c, a, NO_DEFSTYLE ? 0 : android.R.attr.imageButtonStyle); initImageButtonDefaults();
     }
     public ImageButton(Context c, android.util.AttributeSet a, int s) {
         super(c, a, s); initImageButtonDefaults();
