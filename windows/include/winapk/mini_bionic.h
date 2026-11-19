@@ -15,11 +15,16 @@
 #include <cstdint>
 #include <cstddef>
 #include <string>
+#include <vector>
 
 namespace winapk {
 
 // Host address of a shim export, or nullptr if the shim does not have it.
 void* mini_bionic_resolve(const char* name);
+// Every name that resolves to `addr`: one shim function can stand for several
+// names (no-op stubs do), which matters to a caller that rewrites a function's
+// arguments by its address (the arm64 bridge's va_list ones).
+std::vector<std::string> mini_bionic_names_of(const void* addr);
 
 // Runs the destructors guest code registered with __cxa_atexit, newest first.
 void mini_bionic_run_atexit();

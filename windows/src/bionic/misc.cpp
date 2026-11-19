@@ -2219,8 +2219,13 @@ WINAPK_GUEST_ABI int g_ok0() { return 0; }
 // ptrace(PTRACE_TRACEME) is how native code asks "is a debugger attached": 0 is "none".
 WINAPK_GUEST_ABI glong g_ptrace(int, int, void*, void*) { return 0; }
 WINAPK_GUEST_ABI int g_setsid() { return static_cast<int>(GetCurrentProcessId()); }
-// syslog(3) goes nowhere on Android either (no syslogd); liblog is the log.
+// syslog(3): not written anywhere (Bionic's goes to logcat; an app's own lines reach the log through liblog).
 WINAPK_GUEST_ABI void g_void0() {}
+// vsyslog is its own function, not g_void0: the arm64 bridge converts the va_list of a function it knows by
+// address, and with vsyslog on g_void0 it read every no-op call's third argument as one (openlog("libc++abi",
+// 0, 0) in libc++abi's abort path: a read of 0x18, a crash in the host instead of the abort).
+WINAPK_GUEST_ABI void g_vsyslog(int, const char*, void*) {}
+WINAPK_GUEST_ABI void g_android_set_abort_message(const char* message) { set_abort_message(message); }
 // The real-time signals an app may use: Bionic keeps the first four for itself (32..35).
 WINAPK_GUEST_ABI int g_sigrtmin() { return 36; }
 WINAPK_GUEST_ABI int g_sigrtmax() { return 64; }
@@ -2271,8 +2276,8 @@ const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("openlog", g_void0),
     WINAPK_SHIM("closelog", g_void0),
     WINAPK_SHIM("syslog", g_void0),
-    WINAPK_SHIM("vsyslog", g_void0),
-    WINAPK_SHIM("android_set_abort_message", g_void0),
+    WINAPK_SHIM("vsyslog", g_vsyslog),
+    WINAPK_SHIM("android_set_abort_message", g_android_set_abort_message),
     WINAPK_SHIM("tsearch", g_tsearch),
     WINAPK_SHIM("tfind", g_tfind),
     WINAPK_SHIM("tdelete", g_tdelete),

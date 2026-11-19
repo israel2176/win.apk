@@ -233,7 +233,7 @@ functions, every one declared with the System V calling convention
 | `looper.cpp` | The NDK's `ALooper` |
 | `misc.cpp` | Clocks and time, `strptime`, `mmap` on `VirtualAlloc` (with `PROT_NONE` as a reservation; a file mapped `MAP_SHARED`, or read-only, is a view of the file (`MapViewOfFile`), also `MAP_FIXED` into an untouched reservation, so writes reach the file and every mapping sees them; a writable private one is a copy), system properties, the guest environment (`setenv`, `putenv`, `clearenv`), `syscall` for futex and friends and for raw `mmap`, `mprotect` and `munmap` (Gecko's allocator), `sysconf`, `uname`, `getauxval`, `sched_getaffinity` (the process's affinity), `fork`/`vfork` (-1, `ENOSYS`: a Windows process cannot be copied) and `waitpid` (`ECHILD`), `random(3)` as Bionic's (NetBSD's) generator, libm (the `long double` rounding functions on binary128), libandroid's `ATrace` (tracing off) |
 | `locale.cpp` | The C and C.UTF-8 locales libc++ builds on, UTF-8 conversion, `wctype.h` |
-| `signal.cpp` | Signals delivered to guest handlers: a vectored exception handler maps access violations, illegal instructions, divide errors and breakpoints to SIGSEGV/SIGBUS/SIGILL/SIGFPE/SIGTRAP and calls the handler with Bionic's `siginfo_t` and `ucontext_t` (registers written back, so a handler can fix the fault or redirect `rip`); `SA_SIGINFO`, `SA_ONSTACK` with `sigaltstack`, `SA_RESETHAND`, `SA_NODEFER`, `sa_mask`; `raise`, `kill`, `tgkill`, `abort` synchronously, `pthread_kill` by suspending the target and injecting the call; a handler that declines three times leaves the fault to the crash report. Not delivered: faults in HotSpot or in Windows DLLs, faults in arm64 guest code, handlers in arm64 libraries. POSIX timers do not fire |
+| `signal.cpp` | Signals delivered to guest handlers: a vectored exception handler maps access violations, illegal instructions, divide errors and breakpoints to SIGSEGV/SIGBUS/SIGILL/SIGFPE/SIGTRAP and calls the handler with Bionic's `siginfo_t` and `ucontext_t` (registers written back, so a handler can fix the fault or redirect `rip`); `SA_SIGINFO`, `SA_ONSTACK` with `sigaltstack`, `SA_RESETHAND`, `SA_NODEFER`, `sa_mask`; `raise`, `kill`, `tgkill`, `abort` synchronously (`abort()`'s log line carries the message `android_set_abort_message` kept, libc++abi's "terminating due to uncaught exception ..." among them), `pthread_kill` by suspending the target and injecting the call; a handler that declines three times leaves the fault to the crash report. Not delivered: faults in HotSpot or in Windows DLLs, faults in arm64 guest code, handlers in arm64 libraries. POSIX timers do not fire |
 | `setjmp.cpp` | `setjmp` and `longjmp` for guest code |
 | `cacerts.cpp` | Android's `/system/etc/security/cacerts` built from the roots Windows trusts plus the JDK's |
 | `zlib.cpp` | `libz.so` on a statically linked zlib, with the guest's `z_stream` layout converted on every call |
@@ -411,7 +411,9 @@ The bridge (`arm64_guest.cpp`) gives each thread its CPU state, a guest stack
 Bionic's TLS slots; `pthread_getattr_np` answers guest code with that stack,
 the one its sp is on, as Bionic does (Dart, ART and V8 check their sp against
 it); converts AAPCS64 arguments and `va_list`s to System V
-for calls into the shim; and turns a host call into guest code (a callback)
+for calls into the shim (a `va_list` by the shim function's address, so a
+function that takes one is never a no-op shared with other names:
+`register_shim_functions` refuses one that is, with a log line); and turns a host call into guest code (a callback)
 into interpretation through an execute-fault handler, since arm64 text is
 never mapped executable.
 
@@ -566,7 +568,7 @@ how CI boots apps.
 | File and folder pickers | `IFileOpenDialog` / `IFileSaveDialog` | `native_picker.cpp` |
 | Game controllers | XInput, polled | `native_gamepad.cpp` |
 | Photos, wallpaper | The Pictures and Videos folders with shell thumbnails; the desktop wallpaper | `native_photos.cpp`, `native_wallpaper.cpp` |
-| ICU | Windows' `icu.dll` | `native_icu.cpp` |
+| ICU | Windows' `icu.dll` for what the JDK has no data for (`MeasureFormat`'s units, `LocaleData`); with no `icu.dll` (Windows 10 before 1903, Wine) `HostIcu` answers from Java instead (`IcuFallback`: the locale's number format, CLDR root's unit symbols and territory lists), never an exception | `native_icu.cpp`, `runtime/java/com/macapk/icu/` |
 | SQLite | Upstream's `NativeSqlite` compiled unchanged over the SQLite amalgamation | `runtime/src/native_sqlite.cpp`, `compat/CoreFoundation` |
 | `NativeActivity`, the NDK input queue, `AConfiguration` | A port of upstream's, over the guest linker and the shim's `ALooper` | `native_activity.cpp` |
 | Shared storage | The volume's Download, Pictures, Documents, Music and Movies are junctions to the user's Windows folders | `user_folders.cpp` |

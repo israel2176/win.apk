@@ -92,6 +92,8 @@ Google](google-services.md). רכישות מתוך אפליקציה ו-Play Inte
 | ‏`[win.apk] cannot load <library>` או `UnsatisfiedLinkError` | ספרייה מקורית לא נטענה: ARM של 32 ביט בלבד, ארוזה או מוצפנת, או למעבד אחר |
 | ‏`Exception` או `FATAL` | האפליקציה קרסה; השורות שאחרי אומרות איפה |
 | ‏`[win.apk] crash:` ו-`crash dump:` | הקוד המקורי קרס. נכתב קובץ Minidump ליד היומן (`crash-<app>-<time>.dmp`): כדאי לצרף גם אותו |
+| ‏`[win.apk] guest called abort(); abort message: <text>` | הקוד המקורי של האפליקציה סגר אותה בכוונה, והטקסט אומר למה (מה שאנדרואיד מציג כ-"Abort message" בדוח קריסה): `terminating due to uncaught exception of type ...` היא שגיאת C++ שאף אחד לא תפס. אחריה תופיע שורת `crash dump:` |
+| ‏`[win.apk] android.icu: Windows' ICU (icu.dll) is not available; ...` | ב-Windows הזה אין `icu.dll` (Windows 10 לפני גרסה 1903, או Wine). האפליקציות ממשיכות לעבוד: מספרים עדיין נכתבים לפי השפה, אבל יחידות נכתבות בסמלים הבינלאומיים שלהן ("5 km", "3 h") ולא במילים של השפה, וחלק מפרטי האזור כלליים |
 | ‏`[win.apk] arm64 AOT: off for this app` | אפליקציית ARM קרסה פעמיים עם התרגום, ולכן היא רצה על ה-JIT |
 | ‏`[win.apk]` | כל הודעה אחרת של Win.apk עצמו |
 

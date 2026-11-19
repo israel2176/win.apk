@@ -34,6 +34,12 @@ int pthread_create(pthread_t*, const void*, void* (*)(void*), void*);
 int pthread_join(pthread_t, void**);
 long strtol(const char*, char**, int);
 double strtod(const char*, char**);
+int vasprintf(char**, const char*, va_list);
+void android_set_abort_message(const char*);
+void openlog(const char*, int, int);
+void syslog(int, const char*, ...);
+void vsyslog(int, const char*, va_list);
+void closelog(void);
 
 #define EXPORT __attribute__((visibility("default")))
 
@@ -295,4 +301,33 @@ EXPORT int arm64_cleanup(void) {
     g_cleanup_sum = 0;
     if (pthread_create(&t, 0, cleanup_thread, 0) || pthread_join(t, &r)) return -1;
     return g_cleanup_sum * 10 + (int)(long)r;
+}
+
+// ---- libc++abi's abort_message, short of the abort ---------------------------------
+// What NDK libc++abi does before abort() when a C++ exception goes uncaught:
+// format the message, hand it to android_set_abort_message, then
+// openlog("libc++abi", 0, 0), syslog, closelog. The shim's no-op stood for
+// vsyslog too, so the bridge took openlog's third argument (0) for a va_list
+// and the host crashed reading 0x18 (Bank Leumi, under Bugsnag).
+static int abort_tail(const char* fmt, ...) {
+    char* buffer = 0;
+    va_list ap;
+    va_start(ap, fmt);
+    int n = vasprintf(&buffer, fmt, ap);
+    va_end(ap);
+    if (n < 0 || !buffer) return -1;
+    android_set_abort_message(buffer);
+    openlog("libc++abi", 0, 0);
+    syslog(2, "%s", buffer);
+    va_start(ap, fmt);
+    vsyslog(2, fmt, ap);
+    va_end(ap);
+    closelog();
+    int ok = strcmp(buffer, "terminating due to uncaught exception of type E: what") == 0;
+    free(buffer);
+    return ok ? 1 : -2;
+}
+
+EXPORT int arm64_abort_tail(void) {
+    return abort_tail("terminating due to uncaught exception of type %s: %s", "E", "what");
 }

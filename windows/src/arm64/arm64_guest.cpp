@@ -755,8 +755,30 @@ void register_shim_functions() {
         {"vdprintf", 2}, {"__vsprintf_chk", 4}, {"__vsnprintf_chk", 5}, {"__android_log_vprint", 3},
         {"vsscanf", 2}, {"vfscanf", 2}, {"vscanf", 1}, {"vsyslog", 2},
     };
+    // The rewrite goes by address, so a shim function that also stands for
+    // a name outside the list (a shared no-op) would have every call under
+    // that name rewritten too: say so and leave it alone. vsyslog on the
+    // shared no-op turned openlog(ident, 0, 0) into a read of 0x18.
+    auto shared = [](const char* name, void* p, auto&& listed) {
+        for (const std::string& other : mini_bionic_names_of(p)) {
+            if (!listed(other.c_str())) {
+                std::fprintf(stderr, "[win.apk] arm64: the shim function for %s also serves %s; its arguments are "
+                             "not rewritten\n", name, other.c_str());
+                return true;
+            }
+        }
+        return false;
+    };
     for (const auto& f : kVaList) {
-        if (void* p = mini_bionic_resolve(f.name)) register_va_list_function(p, f.index);
+        void* p = mini_bionic_resolve(f.name);
+        if (!p) continue;
+        const bool alone = !shared(f.name, p, [&](const char* other) {
+            for (const auto& g : kVaList) {
+                if (g.index == f.index && std::strcmp(g.name, other) == 0) return true;
+            }
+            return false;
+        });
+        if (alone) register_va_list_function(p, f.index);
     }
     // And those that take a guest callback, with its argument index.
     static const struct {
@@ -771,6 +793,13 @@ void register_shim_functions() {
     for (const auto& f : kCallbacks) {
         void* p = mini_bionic_resolve(f.name);
         if (!p) continue;
+        const bool is_shared = shared(f.name, p, [&](const char* other) {
+            for (const auto& g : kCallbacks) {
+                if (g.index == f.index && std::strcmp(g.name, other) == 0) return true;
+            }
+            return false;
+        });
+        if (is_shared) continue;
         AcquireSRWLockExclusive(&g_host_functions_lock);
         g_host_functions[reinterpret_cast<uint64_t>(p)].guest_fn_args |= static_cast<uint8_t>(1u << f.index);
         ReleaseSRWLockExclusive(&g_host_functions_lock);
