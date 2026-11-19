@@ -1924,6 +1924,14 @@ every such change is listed here:
   has 32x32. AppCompat's and Material's widgets still ask their library's
   attribute. Screens sweep: Fossify Gallery 335 to 333, Open Sudoku 316 to 309
   lines, none new. `MACAPK_DEFSTYLE_BARE=1` asks the bare name again.
+- `runtime/java/android/widget/ImageButton.java`: the constructors chain to
+  `android.R.attr.imageButtonStyle` as AOSP's do (`ImageButton(Context)` through
+  `this(context, null)`), so a plain `ImageButton` takes
+  `Widget.Material.ImageButton`'s background and padding. It took no default
+  style, which went unseen while every bare `<ImageButton>` became
+  `AppCompatImageButton` (UI probe `lib_images`: 48 dp and unpadded where
+  Android has 72 dp and 12,10,12,10; found by `test/uiprobe/regress.py`).
+  `MACAPK_IMAGEBUTTON_NO_DEFSTYLE=1` restores the old chain.
 - `runtime/java/com/macapk/loader/LayoutSweep.java` (new), `Boot.java`: the
   screens sweep's Win.apk side, a debug mode off unless `MACAPK_LAYOUT_SWEEP=1`
   (see [Every screen against Android](#every-screen-against-android)). Boot

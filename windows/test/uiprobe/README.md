@@ -46,6 +46,17 @@ probe on the copy.
 - Needs an Android SDK (build-tools and a platform), a JDK 17 and Gradle 8.9.
 - Win.apk's pictures are in `<out>/data/android/data/data/probe/files/probe`.
 
+A change meant to bring Win.apk closer to Android is checked with
+`regress.py`, which takes Android's lines and Win.apk's before and after it,
+and classes every line that moved: `fixed`, `closer`, or `REGRESSED` (matched
+Android before, not now), `FARTHER` (further from Android's numbers) and
+`MISSING` (a case no longer printed), which make it exit 1. The screens sweep's
+files (`windows/test/screens`) go through it the same way:
+
+```sh
+python windows/test/uiprobe/regress.py <oracle.txt> <before/ours.txt> <after/ours.txt> [--quiet]
+```
+
 A new layout case is a file under `res/layout/` plus its name in
 `Probes.LAYOUTS`. A widget or a LayoutParams class of the probe's own
 (`ProbeLabel`, `ProbeLayout`) stands for what apps do that the framework's own
