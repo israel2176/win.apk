@@ -951,8 +951,16 @@ public class LayoutInflater {
             && inflated.getParent() == null) {
             macapkAttach(root, inflated);
         }
+        // AOSP: `View result = root;` and the inflated view only when there is no
+        // root or attachToRoot is false. Returning the child broke a custom view that
+        // inflates into itself and casts the result to its own class (Hapoalim's
+        // SectionsList: a ClassCastException, then an empty FrameLayout in 61
+        // layouts). MACAPK_INFLATE_RETURNS_CHILD=1 restores the old answer.
+        if (root != null && attachToRoot && !INFLATE_RETURNS_CHILD) return root;
         return inflated;
     }
+    private static final boolean INFLATE_RETURNS_CHILD =
+        "1".equals(System.getenv("MACAPK_INFLATE_RETURNS_CHILD"));
 
     /** Attaches an inflated child as AOSP's inflate and rInflate do:
      *  addView(view, params), the two-argument overload, with the params
@@ -5422,9 +5430,16 @@ public class LayoutInflater {
                     // LinearLayout (and subclasses) for our LinearLayout.onMeasure
                     // + onLayout to consult.
                     if (view instanceof android.widget.LinearLayout ll) {
-                        int o = "vertical".equals(value)
-                            ? android.widget.LinearLayout.VERTICAL
-                            : android.widget.LinearLayout.HORIZONTAL;
+                        // AOSP reads it with a.getInt(LinearLayout_orientation): the
+                        // enum name, a number, or a reference to one (Material's
+                        // date picker header: @integer/mtrl_calendar_header_orientation).
+                        String ov = value.trim();
+                        int o = android.widget.LinearLayout.HORIZONTAL;
+                        if ("vertical".equals(ov)) o = android.widget.LinearLayout.VERTICAL;
+                        else if (ov.startsWith("@")) {
+                            Float n = macapkResolveNumberRef(ov);
+                            if (n != null && n.intValue() == 1) o = android.widget.LinearLayout.VERTICAL;
+                        } else if ("1".equals(ov)) o = android.widget.LinearLayout.VERTICAL;
                         ll.setOrientation(o);
                     }
                     return;
