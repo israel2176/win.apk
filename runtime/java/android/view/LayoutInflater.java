@@ -959,6 +959,10 @@ public class LayoutInflater {
         if (root != null && attachToRoot && !INFLATE_RETURNS_CHILD) return root;
         return inflated;
     }
+    /** MACAPK_INFLATE_TYPEFACE_AGAIN=1: the inflater applies textStyle, fontFamily
+     *  and textFontWeight after construction again (TextView.macapkCtorTypefaceRead). */
+    private static final boolean MACAPK_INFLATE_TYPEFACE_AGAIN =
+        "1".equals(System.getenv("MACAPK_INFLATE_TYPEFACE_AGAIN"));
     private static final boolean INFLATE_RETURNS_CHILD =
         "1".equals(System.getenv("MACAPK_INFLATE_RETURNS_CHILD"));
 
@@ -5280,7 +5284,8 @@ public class LayoutInflater {
                 case "textStyle":
                     // android:textStyle="bold|italic". F-Droid's summary is
                     // bold; without this it rendered regular weight.
-                    if (view instanceof android.widget.TextView tvst) {
+                    if (view instanceof android.widget.TextView tvst
+                            && (MACAPK_INFLATE_TYPEFACE_AGAIN || !tvst.macapkCtorTypefaceRead())) {
                         tvst.setMacapkTextStyle(parseTextStyle(value));
                     }
                     return;
@@ -5293,7 +5298,8 @@ public class LayoutInflater {
                     // TextView holds the NAME and resolves it together with
                     // textStyle, because the family is looked up at NORMAL and
                     // the style applied on top (AOSP setTypefaceFromAttrs).
-                    if (view instanceof android.widget.TextView tvff) {
+                    if (view instanceof android.widget.TextView tvff
+                            && (MACAPK_INFLATE_TYPEFACE_AGAIN || !tvff.macapkCtorTypefaceRead())) {
                         // A FONT RESOURCE takes precedence over a family name,
                         // matching AOSP's setTypefaceFromAttrs precedence.
                         android.graphics.Typeface fres = macapkResolveFontResource(value);
@@ -5316,7 +5322,8 @@ public class LayoutInflater {
                     // createAbsolute path -- the requested weight verbatim, no
                     // +300 and no synthetic bold -- so it is NOT interchangeable
                     // with textStyle. See TextView.macapkApplyTypefaceFromAttrs.
-                    if (view instanceof android.widget.TextView tvfw) {
+                    if (view instanceof android.widget.TextView tvfw
+                            && (MACAPK_INFLATE_TYPEFACE_AGAIN || !tvfw.macapkCtorTypefaceRead())) {
                         try { tvfw.setMacapkFontWeight(Integer.parseInt(value.trim())); }
                         catch (NumberFormatException ignored) {}
                     }
@@ -5346,6 +5353,24 @@ public class LayoutInflater {
                           :  View.VISIBLE;
                     view.setVisibility(vis);
                     return;
+                case "contentDescription":
+                    // AOSP View(Context, AttributeSet, ...): View_contentDescription ->
+                    // setContentDescription(a.getString(attr)). It was dropped, so a
+                    // view that reads its own description in its constructor or
+                    // init threw (Mercantile's AccountOpeningCustomNextButton:
+                    // getContentDescription().toString(), 5 screens replaced by an
+                    // empty FrameLayout), and screen readers had nothing.
+                    view.setContentDescription(resolveString(value));
+                    return;
+                case "importantForAccessibility": {
+                    // AOSP's enum: auto 0, yes 1, no 2, noHideDescendants 4.
+                    String v = value.trim();
+                    int mode = "yes".equals(v) ? 1 : "no".equals(v) ? 2
+                             : "noHideDescendants".equals(v) ? 4 : "auto".equals(v) ? 0 : -1;
+                    if (mode < 0) { try { mode = Integer.parseInt(v); } catch (NumberFormatException e) { mode = 0; } }
+                    view.setImportantForAccessibility(mode);
+                    return;
+                }
                 case "enabled":
                     // AOSP View(Context, AttributeSet, ...): View_enabled false ->
                     // DISABLED. It was dropped, so a button the layout disables drew
