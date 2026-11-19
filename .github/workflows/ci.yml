@@ -471,6 +471,19 @@ jobs:
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/stubs-test windows/test/java/FrameworkStubsTest.java
           MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -Djava.awt.headless=true \
             -cp "$cp;$(cygpath -w build/stubs-test)" FrameworkStubsTest
+      - name: Run the android.icu fallback test
+        run: |
+          # android.icu with no host ICU (no icu.dll: Windows 10 before 1903,
+          # Wine): a plain JVM registers no HostIcu native, and every call must
+          # answer from Java (IcuFallback) instead of throwing: MeasureFormat as
+          # Hermes' Intl.NumberFormat calls it, LocaleData.
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          cp="$(cygpath -w stage/lib/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          "$JAVA_HOME/bin/javac" -cp "$cp" -d build/icu-fallback-test \
+            windows/test/java/com/macapk/icu/HostIcuFallbackTest.java
+          "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/icu-fallback-test)" com.macapk.icu.HostIcuFallbackTest \
+            | tee icu-fallback-test.log
+          grep -q "ALL PASSED" icu-fallback-test.log
       - name: Run the permission model test
         run: |
           # SpecialAccessStore.GroupModel, the decision model behind every

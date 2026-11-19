@@ -16,8 +16,10 @@
 //                                       significant-digit window
 //   integer-width/*000, group-off, rounding-mode-*, sign-always
 // so the number, the plural form of the unit and the pattern all come from ICU.
-// Without the host bridge (a bare JVM) format() throws
-// UnsupportedOperationException rather than inventing a string.
+// Without a host ICU (no icu.dll on Windows, a bare JVM) HostIcu formats from
+// Java instead (com.macapk.icu.IcuFallback: the locale's number format, the
+// unit as CLDR's root locale writes it): Android never fails here, and an
+// exception would end a Hermes app.
 package android.icu.text;
 
 import android.icu.util.Measure;

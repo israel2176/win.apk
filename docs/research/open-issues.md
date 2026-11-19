@@ -86,18 +86,27 @@ the app); if it is still there, it is a bug in what replaced it.
   reads match Android; not found (bit).
 - **`HucsConnection.getRequestProperties`** returns the JDK's map with a
   null-key status line; Android's never has one (Dynatrace NPE, caught; bit).
-- **No `icu.dll`, a crash.** `HostIcu` throws "Windows' ICU (icu.dll) is not
-  available" (`windows/host/native_icu.cpp` ~77) and `MeasureFormat` has no
-  fallback, so a Hermes app calling `Intl.NumberFormat` dies (Leumi, under
-  Wine; Windows 10 before 1903 has no `icu.dll` either). Fall back to
-  `java.text`/ICU4J for plain number and unit skeletons. And the abort that
-  follows an uncaught C++ exception in arm64 code ends in an access violation
-  in the host (`winapk-runtime.exe+0x3551b7`, "a signal handler in an arm64
-  library cannot be called for an x86_64 fault"), not a clean abort.
+- **No `icu.dll`, a crash: fixed (both halves), Leumi to check again.**
+  `HostIcu` now answers from Java when the host has no ICU (`IcuFallback`:
+  the locale's `java.text` number, CLDR root's unit symbols and territory
+  lists; `windows/test/java/com/macapk/icu/HostIcuFallbackTest.java`), so
+  Hermes' `Intl.NumberFormat {style: "unit"}` no longer throws under Wine or
+  on Windows 10 before 1903. Units read "5 km" in every language there, not
+  the language's own words: right only with `icu.dll`. The access violation
+  after the uncaught C++ exception was not the abort at all: the shim's
+  `vsyslog` shared the no-op function with `openlog`, `syslog`, `closelog`
+  and `android_set_abort_message`, and the arm64 bridge converts a `va_list`
+  by the function's address, so libc++abi's `openlog("libc++abi", 0, 0)` had
+  its 0 read as a `va_list` (`gr_offs`, offset 0x18). `vsyslog` has its own
+  function now, `register_shim_functions` refuses a shared one, and `abort()`'s
+  line carries the abort message (`guest called abort(); abort message:
+  terminating due to uncaught exception of type ...`), then the minidump. Not
+  done: an arm64 library's own `SIGABRT` handler (Bugsnag's) is still not
+  called from x86_64 code (one log line).
 - **Reanimated reflects on ART's `Field.accessFlags`**, which HotSpot lacks
   (`NoSuchFieldException`, caught; Leumi).
 - **Leumi's own React Native screens were not seen**: blocked by the ICU crash
-  under Wine. Re-run on Windows, or after the fallback. (The Hermes "Maximum
+  under Wine, which the fallback above removes. Re-run the screens check. (The Hermes "Maximum
   call stack size exceeded (native stack depth)" that left it blank before was
   the arm64 guest-stack bug, fixed in 58c443a: it hit Flutter and Hermes alike.)
 - **Installer of record.** Bit and Bank Hapoalim stop at "reinstall from the

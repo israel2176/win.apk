@@ -236,6 +236,18 @@ void run_bridge(winapk::GuestLinker& linker, const char* file) {
     check("cleanup handlers: pop(1) and pthread_exit run guest routines", call0("arm64_cleanup") == 213,
           std::to_string(call0("arm64_cleanup")));
 
+    // The bridge converts a va_list by the host function's address: a shim
+    // function shared with another name would have that name's calls
+    // converted too (vsyslog on the shared no-op took openlog's 0 for one).
+    for (const char* name : {"vsnprintf", "vsprintf", "vasprintf", "vfprintf", "vprintf", "vdprintf", "vsscanf",
+                             "vfscanf", "vscanf", "vsyslog", "__android_log_vprint"}) {
+        const std::vector<std::string> names = winapk::mini_bionic_names_of(winapk::mini_bionic_resolve(name));
+        check((std::string("the shim's ") + name + " is no other name's function").c_str(),
+              names.size() == 1 && names[0] == name, std::to_string(names.size()) + " names");
+    }
+    check("libc++abi's abort path short of abort (vasprintf, android_set_abort_message, openlog, syslog, vsyslog)",
+          call0("arm64_abort_tail") == 1, std::to_string(call0("arm64_abort_tail")));
+
     const int exits_before = call0("arm64_exit_count");
     check("__cxa_atexit with a guest handler", call0("arm64_register_atexit") == 0);
     winapk::mini_bionic_run_atexit();

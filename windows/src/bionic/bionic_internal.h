@@ -193,4 +193,9 @@ void say_once(std::atomic<bool>& said, const char* call, const char* what);
 // Writes a guest log line the way liblog does: "<prio letter>/<tag>: <text>".
 void log_line(int prio, const char* tag, const char* text);
 
+// android_set_abort_message: the first message is kept (as Bionic keeps it for the tombstone), and abort()'s
+// line in the app's log carries it: libc++abi's "terminating due to uncaught exception of type ..." is one.
+void set_abort_message(const char* message);
+const char* abort_message();  // null when none was set
+
 }  // namespace winapk::bionic
