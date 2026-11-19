@@ -538,6 +538,9 @@ public class TextView extends View
      *  android:width on a TextView did nothing (a wrap_content label ran to the width of
      *  its parent, uiprobe lib_text_lines #i), and a widget style's includeFontPadding or
      *  line spacing (Material's Chip) never arrived. */
+    private static final boolean MACAPK_IGNORE_INCLUDE_PAD =
+        "1".equals(System.getenv("MACAPK_IGNORE_INCLUDE_FONT_PADDING"));
+
     private void macapkCtorSizeAttrs(Context context, android.util.AttributeSet attrs,
                                      int defStyleAttr, int defStyleRes) {
         if (context == null) return;
@@ -554,10 +557,12 @@ public class TextView extends View
                 if (a.hasValue(4)) { int v = a.getInt(4, -1); if (v >= 0) setEms(v); }
                 if (a.hasValue(5)) { int v = a.getInt(5, -1); if (v >= 0) setMaxEms(v); }
                 if (a.hasValue(6)) { int v = a.getInt(6, -1); if (v >= 0) setMinEms(v); }
-                // includeFontPadding (7) is left to the inflater: a line of Hebrew, drawn in a
-                // fallback font, is taller than the main font's ascent on Android, and without
-                // the font padding this layout does not yet give it that room (a Hebrew chip's
-                // baseline came out 2dp high).
+                // AOSP: TextView_includeFontPadding -> setIncludeFontPadding. A line drawn
+                // in a fallback font (Hebrew in a Latin font) still gets that font's room
+                // through macapkFallbackVertical. MACAPK_IGNORE_INCLUDE_FONT_PADDING=1 skips it.
+                if (a.hasValue(7) && !MACAPK_IGNORE_INCLUDE_PAD) {
+                    setIncludeFontPadding(a.getBoolean(7, true));
+                }
                 if (a.hasValue(8) || a.hasValue(9)) {
                     setLineSpacing(a.getDimensionPixelSize(8, 0), a.getFloat(9, 1.0f));
                 }
@@ -5511,8 +5516,19 @@ public class TextView extends View
         // (LinearLayout by default, RelativeLayout's alignBaseline,
         // ConstraintLayout's baseline constraints) set them at different
         // heights (uiprobe: 17 where Android has 30 for a 48dp centred line).
-        return getCompoundPaddingTop() + getVerticalOffset(true)
-             + (int) Math.ceil(macapkLineAscent(p.getFontMetricsInt()));
+        // The first line's own "above", as onDraw places it (macapkLineTopAbove): a
+        // line drawn in a fallback font (Hebrew in a Latin face) has that font's
+        // ascent, which is what Android's line metrics fold in. With font padding
+        // the top hid the difference; without it the baseline came out 2dp high
+        // (uiprobe lib_text_lines #j, Material chips). The first paragraph stands
+        // for the first line, which is a prefix of it.
+        CharSequence t = getText();
+        String first = t == null ? "" : t.toString();
+        int nl = first.indexOf('\n');
+        if (nl >= 0) first = first.substring(0, nl);
+        float above = macapkLineTopAbove(p.getFontMetricsInt(), 0,
+            java.util.Collections.singletonList(first), p);
+        return getCompoundPaddingTop() + getVerticalOffset(true) + (int) Math.ceil(-above);
     }
     // AOSP TextView.getBreakStrategy/setBreakStrategy and
     // getHyphenationFrequency/setHyphenationFrequency were `{}` / hardcoded 0

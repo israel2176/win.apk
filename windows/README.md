@@ -2073,6 +2073,33 @@ every such change is listed here:
   a number and threw `NumberFormatException` (found by
   `test/compat/screens_crawl.py`). `MACAPK_ATTR_TEXT_FOR_APPS=1` gives apps the
   names again.
+- Found by the Israeli-app screens checks (Maccabi, Cal), each read against AOSP:
+  - `android/view/LayoutInflater.java`: `android:weightSum` is read (it was set
+    only by `setWeightSum`, so a search field took half its row); a widget's
+    default style no longer installs an attribute the element sets itself, so an
+    element's own `android:background` leaves no padding of the default one behind
+    (12,10,12,10 on a button Android pads 0). `MACAPK_DEFSTYLE_UNDER_ELEMENT=1`
+    restores the old order.
+  - `com/macapk/loader/BinaryXmlParser.java`: a newline, return or tab in an
+    attribute is written as a character reference, so a two-line `android:text`
+    stays two lines (attribute-value normalization made it one).
+  - `android/widget/TextView.java`: `android:includeFontPadding` is read in the
+    constructor, from every tier (it was never applied from XML;
+    `MACAPK_IGNORE_INCLUDE_FONT_PADDING=1` skips it), and `getBaseline` takes the
+    first line's ascent as `onDraw` places it, widened for a fallback font, so a
+    Hebrew line without font padding is not 2 dp high.
+  - `android/graphics/Paint.java`: `getFontMetrics(Int)` clamp `top` to at most
+    `ascent` and `bottom` to at least `descent`, as hwui's `getMetricsInternal`
+    does; an app font whose bounding box sits inside its line metrics gave lines
+    up to 2 dp short. `MACAPK_NO_EXTENT_CLAMP=1` turns it off.
+  - `android/content/res/Resources.java`: a `<selector>` of colours under
+    `res/drawable` is a ColorStateList, as AOSP takes any file-backed value by
+    its root tag (a textColor of `@drawable/x` came out black: Cal's white
+    buttons were black on black). `MACAPK_NO_DRAWABLE_CSL=1` turns it off.
+  - `android/security/MacApkTrustProvider.java`: `KeyManagerFactory` "PKIX",
+    alias "X509", as Conscrypt names it, over the JDK's NewSunX509; an app that
+    loads its client certificate with `getInstance("X509")` got
+    `NoSuchAlgorithmException` and went without it (Cal).
 - `runtime/java/com/macapk/loader/LayoutSweep.java` (new), `Boot.java`: the
   screens sweep's Win.apk side, a debug mode off unless `MACAPK_LAYOUT_SWEEP=1`
   (see [Every screen against Android](#every-screen-against-android)). Boot
