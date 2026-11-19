@@ -91,8 +91,10 @@ public class Build {
     }
     public static final String USER        = macapkWindowsHost() ? "winapk" : "macapk";
     private static String macapkBrand() { return "Apple"; }
+    // By the path separator, not os.name: Boot sets os.name to "Linux" before this
+    // class loads, so a Windows run said BRAND "Apple", MODEL "Mac" (bit's Dynatrace).
     private static boolean macapkWindowsHost() {
-        return System.getProperty("os.name", "").startsWith("Windows");
+        return java.io.File.separatorChar == '\\';
     }
     /** The host hardware model the runtime exported (MACAPK_HOST_MODEL), or
      *  "Mac". Accepts only a short, printable, non-empty value: a model string

@@ -34,6 +34,8 @@ import android.view.ViewGroup;
 import com.macapk.loader.NativeLog;
 
 public class RelativeLayout extends ViewGroup {
+    private static final boolean RL_ZERO_FILLS = "1".equals(System.getenv("MACAPK_RL_ZERO_FILLS"));
+
     // Process-environment snapshots for the per-draw / per-frame / per-layout /
     // per-event sites below (debug/w9textdraw_verify/hoist_getenv.py). A
     // System.getenv call encodes the name and hashes it on every call; the
@@ -1245,10 +1247,14 @@ public class RelativeLayout extends ViewGroup {
                         // measures itself otherwise -- a square view passing its width
                         // spec as its height -- keeps its own size. Fill only when the
                         // measure gave nothing (see macapkMatchEnd).
+                        // A wrap_content child that measured 0 stays 0, as AOSP's
+                        // mBottom = mTop + getMeasuredHeight(); it took the parent's
+                        // whole height and pushed what follows off screen (bit's PIN
+                        // screen). MACAPK_RL_ZERO_FILLS=1 restores that.
                         int rpos = fillW ? macapkMatchEnd(lpos, cw, parentW - padRight - margR)
-                                         : (cw > 0 ? lpos + cw : parentW - padRight - margR);
+                                         : (cw > 0 || !RL_ZERO_FILLS ? lpos + cw : parentW - padRight - margR);
                         int bpos = fillH ? macapkMatchEnd(tpos, ch, parentH - padBottom - margB)
-                                         : (ch > 0 ? tpos + ch : parentH - padBottom - margB);
+                                         : (ch > 0 || !RL_ZERO_FILLS ? tpos + ch : parentH - padBottom - margB);
                         child.layout(lpos, tpos, rpos, bpos);
                         positioned[i] = true; hDone[i] = true;
                         positionedCount++;

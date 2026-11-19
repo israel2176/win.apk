@@ -40,6 +40,7 @@
 #include "native_window.h"
 #include "win32_window.h"
 #include "winapk/arm64_guest.h"
+#include "stub_hits.h"
 #include "winapk/mini_bionic.h"
 
 namespace winapk::host {
@@ -1386,6 +1387,7 @@ void JNICALL Cocoa_exitProcess(JNIEnv*, jclass, jint code, jstring relaunch) {
     aot_app_exiting();
     cds_before_exit();  // the framework archive this start still owes
     winapk::arm64::print_stats_if_enabled();  // TerminateProcess skips atexit
+    winapk::host::stub_hits_detail::print_summary();  // so does the stubs' summary
     std::fflush(stdout);
     std::fflush(stderr);
     TerminateProcess(GetCurrentProcess(), static_cast<UINT>(code));

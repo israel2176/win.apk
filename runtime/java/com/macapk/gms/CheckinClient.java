@@ -60,7 +60,7 @@ public final class CheckinClient {
      *  body already say "Mac.apk" (on Windows "Win.apk") -- a UA claiming to be
      *  a vbox86p emulator image would contradict the body it is attached to. */
     private static final String USER_AGENT = "Android-Checkin/2.0 ("
-            + (System.getProperty("os.name", "").startsWith("Windows") ? "Win.apk" : "Mac.apk") + "); gzip";
+            + (java.io.File.separatorChar == '\\' ? "Win.apk" : "Mac.apk") + "); gzip";
 
     /** microG SettingsContract.kt:120. The literal first-checkin digest; the
      *  server hands back a new one to echo on later requests. */

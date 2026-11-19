@@ -37,7 +37,11 @@ inline std::vector<StubHit*> g_all;  // never freed: a stub may run until the pr
 
 constexpr size_t kMaxListed = 40;
 
+inline std::atomic<bool> g_printed{false};
+
 inline void print_summary() {
+    // Once: from atexit, or from an exit path that skips it (TerminateProcess).
+    if (g_printed.exchange(true)) return;
     std::vector<std::pair<uint64_t, const StubHit*>> hit;
     {
         std::lock_guard<std::mutex> hold(g_lock);
