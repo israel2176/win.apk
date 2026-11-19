@@ -20,6 +20,8 @@
 // by resource id -- that wiring lives in Resources.java.
 package android.content.res;
 
+import com.macapk.loader.gfx.GfxBackend;
+
 public class ColorStateList implements android.os.Parcelable {
     // Parallel arrays: mStateSpecs[i] is the spec for color mColors[i].
     private final int[][] mStateSpecs;
@@ -606,7 +608,7 @@ public class ColorStateList implements android.os.Parcelable {
         value = value.trim();
         if (value.isEmpty()) return def;
         if (value.charAt(0) == '#') {
-            try { return android.graphics.Color.macapkParseResourceColor(value); }
+            try { return GfxBackend.get().parseResourceColor(value); }
             catch (Throwable t) { return def; }
         }
         // A `?attr` item colour with NO theme to chase it stays at the

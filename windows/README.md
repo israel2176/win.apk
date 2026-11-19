@@ -427,44 +427,68 @@ byte for byte on a stage with and without these files.
   Win.apk has from `native_sqlite.cpp`), `android.view.Surface` (21),
   `android.media.ImageReader` (9) and `android.animation.PropertyValuesHolder`
   (12), which must stay Win.apk's; those it should leave unregistered.
-- What blocks a straight swap: Win.apk's `android.graphics` / `android.text`
+- What blocked a straight swap: Win.apk's `android.graphics` / `android.text`
   declare 306 `macapk*` methods (156 private) and 10 `MacApk*` classes; the
-  rest of the framework calls 47 of those methods at 98 places in 20 files,
-  and names 6 of the classes 28 times. By the class they belong to:
-  - `SurfaceTexture` (16 methods, 32 calls: camera, video, `TextureView`, the GL window;
+  rest of the framework called 46 of those methods at 89 places, read or set
+  3 of their public fields (`Canvas.macapkDrawOps`,
+  `Outline.macapkPathShadowRadius`, `VectorDrawable.macapkUnresolvedStub`) at
+  14, and named 5 of the classes 18 times in code, in 21 files. Since step (1)
+  every one of them goes through `GfxBackend` (below). By the class they
+  belong to:
+  - `SurfaceTexture` (16 methods, 29 calls: camera, video, `TextureView`, the GL window;
     `macapkAttachCameraSource`, `macapkQueueFrame`, `macapkLatchBitmap`...).
     AOSP's are BufferQueue natives the DLL does not have: keep Win.apk's
     `SurfaceTexture` (and `Surface`) over the AOSP `Bitmap`.
-  - `Bitmap` (3 methods, 15 calls: `macapkArgbBuffer`, `macapkLiveArgbOrNull`, `macapkAwtImage`
+  - `Bitmap` (3 methods, 13 calls: `macapkArgbBuffer`, `macapkLiveArgbOrNull`, `macapkAwtImage`
     in `ViewCanvasDriver`, `Surface`, `SurfaceView`, `WindowOverlayStack`,
-    `GLUtils`). AOSP's pixels are native: the frame goes to the window through
+    `GLUtils`), and `Canvas.macapkDrawOps` (4, whether a frame drew ink).
+    AOSP's pixels are native: the frame goes to the window through
     `copyPixelsToBuffer` into a direct buffer (one copy, as
     `GetIntArrayElements` is today), and libjnigraphics (`src/jnigraphics.cpp`,
     `AndroidBitmap_*` on the `int[]`) needs the same, since the DLL exports
     no `AndroidBitmap_*`.
-  - `Canvas` / `RecordingCanvas` / `RenderNode` / `Outline` (7 methods, 18 calls:
-    `macapkClipChildRect`, `macapkQuickRejectChild`, `macapkGetCurrentTx/Ty`,
-    `macapkDeviceOrigin`, `macapkApplyTransform`,
-    `macapkClipPath`, in `View`, `ViewGroup`, `ImageView`, `TextureView`):
-    Win.apk's view drawing over its own display lists (`MacApkDisplayList`).
+  - `Canvas` / `Outline` (6 methods, 14 calls: `macapkClipChildRect`,
+    `macapkQuickRejectChild`, `macapkGetCurrentTx/Ty`, `macapkDeviceOrigin`,
+    `macapkClipPath`, in `View`, `ViewGroup`, `ImageView`, `ViewCanvasDriver`;
+    and `Outline.macapkPathShadowRadius`, 4, in `View` and
+    `WindowOverlayStack`): Win.apk's view drawing over its own display lists
+    (`MacApkDisplayList`; `View.macapkApplyTransform` is `View`'s own).
     AOSP's `View` draws through `RenderNode`/`RecordingCanvas` natives the DLL
     has (HWUI's, software pipeline), so these become the AOSP calls they
     stand for.
-  - Text (5 methods, 10 calls, and the 28 mentions of 6 classes): `TextView`
+  - Text (5 methods, 10 calls, and the 18 mentions of 5 classes): `TextView`
     names `MacApkFont`, `MacApkBidi`, `MacApkReplacement` and calls `Layout.macapkMeasureSpanned`,
     `Paint.macapkResolvedFont`; `Resources` builds fonts with `MacApkFont`,
     `MacApkFontFamilies`, `Typeface.macapkFromStream` / `macapkFromAppFamily`;
-    `Boot` and `NativeCocoa` set the system fonts up with `MacApkHostFonts` /
-    `MacApkSystemFonts`; `TextUtils.macapkIsLocaleRtl` (4, in `View` and
+    `Boot` sets the system fonts up with `MacApkSystemFonts` (which uses
+    `MacApkHostFonts`); `TextUtils.macapkIsLocaleRtl` (4, in `View` and
     `Configuration`).
   - Resources' drawable inflation (8 methods, 14 calls): `Color.macapkParseResourceColor` (4),
     `NinePatchDrawable.macapkSetDensities` / `macapkSetOpticalInsets`,
     `GradientDrawable.macapkSet/GetUseLevelForShape`,
     `AnimatedVectorDrawable.macapkSetInner`, `AnimatedImageDrawable.macapkSetBitmap`,
-    `VectorDrawable.macapkPaintsNothing` (4): AOSP inflates its drawables
-    itself from the XML, so most of these go away with `Resources`' shortcut.
+    `VectorDrawable.macapkPaintsNothing` (4) and `macapkUnresolvedStub` (6):
+    AOSP inflates its drawables itself from the XML, so most of these go away
+    with `Resources`' shortcut.
   - Debug dumps in `ViewCanvasDriver` (`macapkDump*`, `macapkStatsDump`: 8 methods, 9 calls):
     drop under the switch.
+- The seam (step 1, done). `runtime/java/com/macapk/loader/gfx/GfxBackend.java`
+  is the one interface those calls go through, `GfxBackend.get()` the backend
+  of the JVM, grouped as above: present a frame (a `Bitmap`'s pixels, the
+  draw-op count), fonts and `Typeface` creation (the system fonts, a `Typeface`
+  from a stream or an app's family, a font file's face as a neutral
+  `GfxBackend.FontFace`), the view's clip and transform, text (locale
+  direction, spanned measuring, the AWT font helpers `TextView`'s fallback
+  line spacing uses, bidi, replacement spans), `SurfaceTexture`, the drawable
+  setters, the debug dumps. `Java2DGfx` beside it is today's implementation:
+  each method calls the `macapk*` method or `MacApk*` class it stands for and
+  nothing else, so behaviour is unchanged (the UI probe, the screens sweep on
+  Fossify Gallery and Open Sudoku, `FrameworkStubsTest` and `DamageRectTest`
+  give identical output before and after). Inside `android.graphics` /
+  `android.text` the classes still call each other directly. A grep for
+  `macapk*` members of those two packages, or `MacApk*` classes, outside them
+  and `com/macapk/loader/gfx/` finds only comments and other classes'
+  members of the same name (`View.macapkApplyTransform`, `ImageReader`'s).
 - The order. The swap is all or nothing for the package (one `Canvas` per
   JVM), so the steps are about what has to be ready before the switch can
   draw a screen, and what after. (1) A seam, under Java2D, with no change in
@@ -472,7 +496,7 @@ byte for byte on a stage with and without these files.
   frame, set the system fonts up, a `Typeface` from a stream or an app's
   family, the view's clip and transform, the drawable setters), implemented
   today by the Java2D classes, so the AOSP side needs adapters and no patched
-  copies of AOSP classes. (2) Under the switch, a first screen: the frame
+  copies of AOSP classes. Done: `GfxBackend`, above. (2) Under the switch, a first screen: the frame
   presented from an AOSP `Bitmap`, the fonts from `fonts.xml`, `TextView` and
   `Layout` on AOSP's text (with `Paint`: they move together), `Resources`'
   colours and drawables (AOSP inflates its own from the XML), the view's
@@ -2056,6 +2080,20 @@ every such change is listed here:
   of starting the launcher activity, and it ends the process. It names only
   `android.*`, so `windows/test/screens` compiles the same file into its
   Robolectric oracle.
+- `runtime/java/com/macapk/loader/gfx/GfxBackend.java` (new), `Java2DGfx.java`
+  (new): step (1) of [milestone 2](#milestone-2-the-runtime-on-aosp-graphics),
+  the one seam between the framework and Win.apk's own `android.graphics` /
+  `android.text` plumbing. Every call from outside those packages to a
+  `macapk*` method or field of theirs, or to a `MacApk*` class, now goes
+  through it, with no change in behaviour: `android/content/res/Resources.java`,
+  `Configuration.java`, `TypedArray.java`, `ColorStateList.java`,
+  `android/view/View.java`, `ViewGroup.java`, `TextureView.java`,
+  `Surface.java`, `SurfaceView.java`, `LayoutInflater.java`,
+  `android/widget/TextView.java`, `ImageView.java`, `Switch.java`,
+  `android/hardware/Camera.java`, `camera2/CameraCaptureSessionImpl.java`,
+  `android/opengl/GLUtils.java`, `javax/microedition/khronos/egl/MacApkGlWindow.java`,
+  `com/macapk/loader/Boot.java`, `HostVideo.java`, `ViewCanvasDriver.java`,
+  `WindowOverlayStack.java`.
 
 ## License
 

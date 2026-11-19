@@ -50,6 +50,7 @@
 // so do we -- null, not a second producer fighting over the stream.
 package android.view;
 
+import com.macapk.loader.gfx.GfxBackend;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.Matrix;
@@ -158,7 +159,7 @@ public class TextureView extends View {
             // SurfaceTexture as the render target (harmless -- the frame
             // just latches into a Bitmap nobody draws -- but pointless work
             // and a misleading log if anyone traces it).
-            mSurfaceTexture.macapkUnregisterVideoTargetIfSelf();
+            GfxBackend.get().unregisterVideoTargetIfSelf(mSurfaceTexture);
         }
         if (mSurface != null) {
             try { mSurface.release(); } catch (Throwable ignored) {}
@@ -306,10 +307,10 @@ public class TextureView extends View {
 
     public android.graphics.Canvas lockCanvas(android.graphics.Rect dirty) {
         if (!mAvailable || mLockedCanvas != null) return null;
-        if (mSurfaceTexture != null && mSurfaceTexture.macapkHasCameraSource()) return null;
+        if (mSurfaceTexture != null && GfxBackend.get().hasCameraSource(mSurfaceTexture)) return null;
         // Same rule for a connected EGL window surface (the GL producer): the
         // stream has ONE producer, and nativeLockCanvas cannot connect a second.
-        if (mSurfaceTexture != null && mSurfaceTexture.macapkHasProducer()) return null;
+        if (mSurfaceTexture != null && GfxBackend.get().hasProducer(mSurfaceTexture)) return null;
         int w = Math.max(1, getWidth());
         int h = Math.max(1, getHeight());
         if (mCanvasBitmap == null
@@ -341,8 +342,8 @@ public class TextureView extends View {
         Bitmap frame = null;
         boolean fresh = false;
         if (mSurfaceTexture != null) {
-            frame = mSurfaceTexture.macapkLatchBitmap();
-            int gen = mSurfaceTexture.macapkLatchGeneration();
+            frame = GfxBackend.get().latchBitmap(mSurfaceTexture);
+            int gen = GfxBackend.get().latchGeneration(mSurfaceTexture);
             fresh = gen != mDrawnGeneration;
             mDrawnGeneration = gen;
         }

@@ -25,6 +25,7 @@
 // BISECT GATE: MACAPK_GLUTILS_PREMUL=0 restores the straight-alpha upload.
 package android.opengl;
 
+import com.macapk.loader.gfx.GfxBackend;
 import android.graphics.Bitmap;
 
 public final class GLUtils {
@@ -49,7 +50,7 @@ public final class GLUtils {
     public static void texImage2D(int target, int level, int internalformat,
                                   Bitmap bitmap, int type, int border) {
         if (bitmap == null) return;
-        byte[] rgba = argbBufferToRgbaBytes(bitmap.macapkArgbBuffer(),
+        byte[] rgba = argbBufferToRgbaBytes(GfxBackend.get().argbBuffer(bitmap),
                                             bitmap.getWidth(), bitmap.getHeight(),
                                             premultipliedMemory(bitmap));
         int format = internalformat == 0 ? GLES20.GL_RGBA : internalformat;
@@ -64,7 +65,7 @@ public final class GLUtils {
     public static void texSubImage2D(int target, int level, int xoffset, int yoffset,
                                      Bitmap bitmap, int format, int type) {
         if (bitmap == null) return;
-        byte[] rgba = argbBufferToRgbaBytes(bitmap.macapkArgbBuffer(),
+        byte[] rgba = argbBufferToRgbaBytes(GfxBackend.get().argbBuffer(bitmap),
                                             bitmap.getWidth(), bitmap.getHeight(),
                                             premultipliedMemory(bitmap));
         int f = format == 0 ? GLES20.GL_RGBA : format;

@@ -6,6 +6,7 @@
 // we add the resources.arsc parser.
 package android.content.res;
 
+import com.macapk.loader.gfx.GfxBackend;
 import android.util.DisplayMetrics;
 
 import java.io.IOException;
@@ -1234,10 +1235,11 @@ public class Resources {
                 android.graphics.drawable.NinePatchDrawable np = new android.graphics.drawable.NinePatchDrawable(
                     res, ninePatchContent, ninePatchChunk, ninePatchPadding, ninePatchPath);
                 if (opticalInsets != null) {
-                    np.macapkSetOpticalInsets(opticalInsets[0], opticalInsets[1], opticalInsets[2], opticalInsets[3]);
+                    GfxBackend.get().setNinePatchOpticalInsets(np, opticalInsets[0], opticalInsets[1],
+                            opticalInsets[2], opticalInsets[3]);
                 }
                 if (sourceDensity != 0 && res != null && res.metrics != null) {
-                    np.macapkSetDensities(sourceDensity, res.metrics.densityDpi);
+                    GfxBackend.get().setNinePatchDensities(np, sourceDensity, res.metrics.densityDpi);
                 }
                 return np;
             }
@@ -1342,7 +1344,7 @@ public class Resources {
             // the same type. See VectorDrawable.macapkUnresolvedStub.
             android.graphics.drawable.VectorDrawable stub =
                 new android.graphics.drawable.VectorDrawable();
-            stub.macapkUnresolvedStub = true;
+            GfxBackend.get().setUnresolvedStub(stub, true);
             return stub;
         }
 
@@ -2432,7 +2434,7 @@ public class Resources {
         if (inner == null) return null;
         android.graphics.drawable.AnimatedVectorDrawable avd =
             new android.graphics.drawable.AnimatedVectorDrawable();
-        avd.macapkSetInner(inner);
+        GfxBackend.get().setAnimatedVectorInner(avd, inner);
         return avd;
     }
 
@@ -2451,7 +2453,7 @@ public class Resources {
             if (bm != null) {
                 android.graphics.drawable.AnimatedImageDrawable aid =
                     new android.graphics.drawable.AnimatedImageDrawable();
-                aid.macapkSetBitmap(bm);
+                GfxBackend.get().setAnimatedImageBitmap(aid, bm);
                 return aid;
             }
         }
@@ -3810,7 +3812,7 @@ public class Resources {
         try { dr = getDrawable(fid, theme); }
         catch (Throwable t) { return null; }
         if (dr instanceof android.graphics.drawable.VectorDrawable vd
-                && (vd.macapkUnresolvedStub || vd.macapkPaintsNothing())) {
+                && (GfxBackend.get().isUnresolvedStub(vd) || GfxBackend.get().vectorPaintsNothing(vd))) {
             return null;
         }
         return dr;
@@ -3842,7 +3844,7 @@ public class Resources {
         if (ref.isEmpty()) return null;
         if (ref.startsWith("#")) {
             try { return new android.graphics.drawable.ColorDrawable(
-                android.graphics.Color.macapkParseResourceColor(ref)); }
+                GfxBackend.get().parseResourceColor(ref)); }
             catch (Throwable t) { return null; }
         }
         if (ref.startsWith("?")) {
@@ -4130,8 +4132,8 @@ public class Resources {
                     gd.setThicknessRatio(macapkFloatAttr(root, "thicknessRatio",
                         gd.getThicknessRatio()));
                 }
-                gd.macapkSetUseLevelForShape(macapkBoolAttr(root, "useLevel",
-                    gd.macapkGetUseLevelForShape()));
+                GfxBackend.get().setUseLevelForShape(gd, macapkBoolAttr(root, "useLevel",
+                    GfxBackend.get().getUseLevelForShape(gd)));
             }
         }
         // <shape android:tint / android:tintMode> (MACAPK_SHAPE_TINT). AOSP
@@ -4429,7 +4431,7 @@ public class Resources {
         v = v.trim();
         if (v.isEmpty()) return def;
         if (v.startsWith("#")) {
-            try { return android.graphics.Color.macapkParseResourceColor(v); }
+            try { return GfxBackend.get().parseResourceColor(v); }
             catch (Throwable t) { return def; }
         }
         if (v.startsWith("?")) {
@@ -7877,7 +7879,7 @@ public class Resources {
         // serves the installed apk's entry (v1.0.1590) or a decoded-tree file.
         try (java.io.InputStream in = openRawResource(id)) {
             if (in == null) return null;
-            return android.graphics.Typeface.Builder.macapkFromStream(in).build();
+            return GfxBackend.get().typefaceBuilderFromStream(in).build();
         } catch (Throwable t) {
             return null;
         }
@@ -7891,7 +7893,7 @@ public class Resources {
             int rid, int weight, boolean italic) {
         try (java.io.InputStream in = openRawResource(rid)) {
             if (in == null) return null;
-            return android.graphics.Typeface.Builder.macapkFromStream(in)
+            return GfxBackend.get().typefaceBuilderFromStream(in)
                 .setWeight(weight).setItalic(italic).build();
         } catch (Throwable t) {
             return null;
@@ -7966,9 +7968,9 @@ public class Resources {
                 if (rid == 0) continue;
                 String path = macapkResourcePath(rid);
                 if (path == null || path.endsWith(".xml")) continue;
-                android.graphics.MacApkFont.LoadedFace lf;
+                GfxBackend.FontFace lf;
                 try (java.io.InputStream fin = openRawResource(rid)) {
-                    lf = fin == null ? null : android.graphics.MacApkFont.loadFace(fin);
+                    lf = fin == null ? null : GfxBackend.get().loadFontFace(fin);
                 } catch (Throwable t) { lf = null; }
                 if (lf == null || lf.font == null) continue;
                 // An entry that DECLARES fontWeight/fontStyle wins over the
@@ -7995,8 +7997,8 @@ public class Resources {
                 }
             }
             if (faces.isEmpty()) return null;
-            String fam = android.graphics.MacApkFontFamilies.registerAppFamily(faces);
-            android.graphics.Typeface tf = android.graphics.Typeface.macapkFromAppFamily(fam);
+            String fam = GfxBackend.get().registerAppFamily(faces);
+            android.graphics.Typeface tf = GfxBackend.get().typefaceFromAppFamily(fam);
             if (tf != null) return tf;
             // Table gated off (MACAPK_FONT_FAMILY=0): fall back to the single
             // best default-style match, which is the pre-v936 behaviour.

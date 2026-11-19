@@ -4,6 +4,7 @@
 // available.
 package android.widget;
 
+import com.macapk.loader.gfx.GfxBackend;
 import android.content.Context;
 import android.util.AttributeSet;
 import android.view.Gravity;
@@ -139,7 +140,7 @@ public class Switch extends CompoundButton {
     private static boolean macapkUsable(android.graphics.drawable.Drawable dr) {
         if (dr == null) return false;
         if (dr instanceof android.graphics.drawable.VectorDrawable vd
-                && (vd.macapkUnresolvedStub || vd.macapkPaintsNothing())) return false;
+                && (GfxBackend.get().isUnresolvedStub(vd) || GfxBackend.get().vectorPaintsNothing(vd))) return false;
         return dr.getIntrinsicWidth() > 0 && dr.getIntrinsicHeight() > 0;
     }
 

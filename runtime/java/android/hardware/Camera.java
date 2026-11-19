@@ -93,6 +93,7 @@
 // scan) are mirrored from it; the ones that do are named at their site.
 package android.hardware;
 
+import com.macapk.loader.gfx.GfxBackend;
 import android.graphics.Bitmap;
 import android.graphics.ImageFormat;
 import android.graphics.Rect;
@@ -599,12 +600,12 @@ public class Camera {
         checkNotReleased();
         SurfaceTexture old = mPreviewTexture;
         if (old != null && old != surfaceTexture) {
-            old.macapkDetachCameraSource();
+            GfxBackend.get().detachCameraSource(old);
         }
         mPreviewTexture = surfaceTexture;
         if (surfaceTexture != null && mPreviewRunning) {
             int[] wh = currentSessionSize();
-            surfaceTexture.macapkAttachCameraSource(mSession, wh[0], wh[1]);
+            GfxBackend.get().attachCameraSource(surfaceTexture, mSession, wh[0], wh[1]);
         }
     }
 
@@ -842,7 +843,7 @@ public class Camera {
 
         SurfaceTexture st = mPreviewTexture;
         if (st != null) {
-            st.macapkAttachCameraSource(mSession, mSessionW, mSessionH);
+            GfxBackend.get().attachCameraSource(st, mSession, mSessionW, mSessionH);
         }
 
         mPreviewRunning = true;
@@ -876,7 +877,7 @@ public class Camera {
             }
         }
         SurfaceTexture st = mPreviewTexture;
-        if (st != null) st.macapkDetachCameraSource();
+        if (st != null) GfxBackend.get().detachCameraSource(st);
         if (mSession != CameraBridge.NO_SESSION) CameraBridge.stop(mSession);
     }
 
@@ -926,7 +927,7 @@ public class Camera {
                     long pts = CameraBridge.latestFrameTimestamp(mSession);
                     if (pts != 0 && pts != lastTexturePts) {
                         lastTexturePts = pts;
-                        st.macapkQueueFrame(pts, MTX_FLIP_V, 0);
+                        GfxBackend.get().queueFrame(st, pts, MTX_FLIP_V, 0);
                     }
                 }
 

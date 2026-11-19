@@ -14,6 +14,8 @@
 // styled, the activity reaches setContentView.
 package android.content.res;
 
+import com.macapk.loader.gfx.GfxBackend;
+
 public class TypedArray implements AutoCloseable {
     private final Resources resources;
     private final int[] data;       // length parallel to attrs[]
@@ -1572,7 +1574,7 @@ public class TypedArray implements AutoCloseable {
         if (v.startsWith("#")) {
             // macapkParseResourceColor handles the #RGB/#ARGB shorthand apktool can
             // re-emit, which the public Color.parseColor rejects as AOSP does.
-            try { return android.graphics.Color.macapkParseResourceColor(v); }
+            try { return GfxBackend.get().parseResourceColor(v); }
             catch (Throwable e) { return def; }
         }
         return def;

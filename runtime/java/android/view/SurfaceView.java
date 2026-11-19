@@ -25,6 +25,7 @@
 // that bypass our GLSurfaceView entirely.
 package android.view;
 
+import com.macapk.loader.gfx.GfxBackend;
 import android.content.Context;
 import com.macapk.loader.MetalSurfaceCallbacks;
 import com.macapk.loader.NativeCocoa;
@@ -3965,8 +3966,8 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
             // v1.0.1648: the canvas's own live pixels when available (no 24 MB copy
             // at a full-screen window); presentBitmap copies synchronously on this,
             // the drawing thread, which is the contract macapkLiveArgbOrNull states.
-            int[] pixels = drawBitmap.macapkLiveArgbOrNull();
-            if (pixels == null) pixels = drawBitmap.macapkArgbBuffer();
+            int[] pixels = GfxBackend.get().liveArgbOrNull(drawBitmap);
+            if (pixels == null) pixels = GfxBackend.get().argbBuffer(drawBitmap);
             if (pixels == null) return;
             int pw = drawBitmap.getWidth(), ph = drawBitmap.getHeight();
             if (owner != null) {

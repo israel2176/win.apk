@@ -1,4 +1,5 @@
 package android.widget;
+import com.macapk.loader.gfx.GfxBackend;
 import android.content.Context;
 import android.view.View;
 // AOSP: `public class TextView extends View implements
@@ -2220,7 +2221,7 @@ public class TextView extends View
         if (v == null) {
             try {
                 java.awt.font.LineMetrics lm =
-                    sized.getLineMetrics("Ag", android.graphics.MacApkFont.textFrc());
+                    sized.getLineMetrics("Ag", GfxBackend.get().textFontRenderContext());
                 v = new int[] { Math.round(-lm.getAscent()), Math.round(lm.getDescent()) };
             } catch (Throwable t) { return null; }
             sFallbackVerticalCache.put(sized, v);
@@ -2269,7 +2270,7 @@ public class TextView extends View
             return base;
         }
         java.awt.Font primary;
-        try { primary = paint.macapkResolvedFont(); } catch (Throwable t) { return base; }
+        try { primary = GfxBackend.get().resolvedFont(paint); } catch (Throwable t) { return base; }
         if (primary == null) return base;
         int asc = base[0], desc = base[1], top = base[2], bottom = base[3];
         boolean widened = false;
@@ -2279,12 +2280,12 @@ public class TextView extends View
             i += Character.charCount(cp);
             if (cp < 0x20) continue; // control chars: never a glyph, never a fallback trigger
             java.awt.Font fb;
-            try { fb = android.graphics.MacApkFont.fallbackBaseFor(cp, primary); }
+            try { fb = GfxBackend.get().fallbackFontFor(cp, primary); }
             catch (Throwable t) { continue; }
             if (fb == null) continue;
             java.awt.Font sized;
             try {
-                sized = android.graphics.MacApkFont.getFrom(fb, primary.getSize2D(), primary.getStyle());
+                sized = GfxBackend.get().deriveFont(fb, primary.getSize2D(), primary.getStyle());
             } catch (Throwable t) { continue; }
             int[] fv = macapkFallbackFontVertical(sized);
             if (fv == null) continue;
@@ -4748,7 +4749,7 @@ public class TextView extends View
                                  String line, int srcStart, int srcCount,
                                  float x, float baselineY, android.text.TextPaint p) {
         if (sp == null) {
-            if (android.text.MacApkBidi.hasRtl(line, 0, line.length())) {
+            if (GfxBackend.get().hasRtl(line, 0, line.length())) {
                 boolean paraRtl;
                 try { paraRtl = macapkParagraphRtl(macapkShownText(), srcStart); }
                 catch (Throwable t) { paraRtl = macapkParagraphRtl(line, 0); }
@@ -4764,7 +4765,7 @@ public class TextView extends View
         final int end = Math.min(srcStart + srcCount, sp.length());
         android.text.style.MetricAffectingSpan drawnRep = null;
         final int visLen = Math.max(0, Math.min(line.length(), Math.min(srcCount, end - srcStart)));
-        if (visLen > 0 && android.text.MacApkBidi.hasRtl(line, 0, visLen)) {
+        if (visLen > 0 && GfxBackend.get().hasRtl(line, 0, visLen)) {
             // Cut at every style run and every bidi level change, then paint the
             // pieces in visual order, each with its own direction (AOSP TextLine).
             int[] bounds = new int[line.length() + 1];
@@ -4775,7 +4776,7 @@ public class TextView extends View
                 bounds[nb++] = re - srcStart;
                 rs = re;
             }
-            int[] pieces = android.text.MacApkBidi.visualPieces(line.substring(0, visLen), bounds, nb,
+            int[] pieces = GfxBackend.get().bidiVisualPieces(line.substring(0, visLen), bounds, nb,
                     macapkParagraphRtl(sp, srcStart));
             for (int k = 0; k < pieces.length; k += 3) {
                 int rs = srcStart + pieces[k], re = srcStart + pieces[k + 1];
@@ -4792,13 +4793,13 @@ public class TextView extends View
                 // Replaced runs are painted by their span here too (AOSP
                 // TextLine.handleReplacement), once per span across bidi pieces.
                 android.text.style.MetricAffectingSpan bidiRepSpan =
-                        android.text.MacApkReplacement.covering(sp, rs, re);
+                        GfxBackend.get().replacementCovering(sp, rs, re);
                 if (bidiRepSpan != null) {
                     if (bidiRepSpan != drawnRep) {
                         drawnRep = bidiRepSpan;
                         int r0 = Math.max(sp.getSpanStart(bidiRepSpan), srcStart);
                         int r1 = Math.min(sp.getSpanEnd(bidiRepSpan), end);
-                        cx += android.text.MacApkReplacement.draw(canvas,
+                        cx += GfxBackend.get().drawReplacement(canvas,
                                 (android.text.style.ReplacementSpan) bidiRepSpan.getUnderlying(),
                                 sp, r0, r1, cx, baselineY, p);
                     }
@@ -4841,7 +4842,7 @@ public class TextView extends View
             // A ReplacementSpan's run is painted by the span, never as text
             // (AOSP TextLine.handleReplacement); see android.text.MacApkReplacement.
             android.text.style.MetricAffectingSpan repSpan =
-                    android.text.MacApkReplacement.covering(sp, runStart, runEnd);
+                    GfxBackend.get().replacementCovering(sp, runStart, runEnd);
             if (repSpan != null) {
                 // A style transition inside the replaced range splits it into
                 // several runs; the span paints once, on the first of them.
@@ -4849,7 +4850,7 @@ public class TextView extends View
                     drawnRep = repSpan;
                     int r0 = Math.max(sp.getSpanStart(repSpan), srcStart);
                     int r1 = Math.min(sp.getSpanEnd(repSpan), end);
-                    cx += android.text.MacApkReplacement.draw(canvas,
+                    cx += GfxBackend.get().drawReplacement(canvas,
                             (android.text.style.ReplacementSpan) repSpan.getUnderlying(),
                             sp, r0, r1, cx, baselineY, p);
                 }
@@ -4901,11 +4902,11 @@ public class TextView extends View
         switch (getTextDirection()) {
             case TEXT_DIRECTION_LTR: return false;
             case TEXT_DIRECTION_RTL: return true;
-            case TEXT_DIRECTION_FIRST_STRONG_LTR: return android.text.MacApkBidi.isRtlParagraph(s, pos, false);
-            case TEXT_DIRECTION_FIRST_STRONG_RTL: return android.text.MacApkBidi.isRtlParagraph(s, pos, true);
+            case TEXT_DIRECTION_FIRST_STRONG_LTR: return GfxBackend.get().isRtlParagraph(s, pos, false);
+            case TEXT_DIRECTION_FIRST_STRONG_RTL: return GfxBackend.get().isRtlParagraph(s, pos, true);
             case TEXT_DIRECTION_ANY_RTL:
-                return s != null && android.text.MacApkBidi.hasRtl(s, 0, s.length());
-            default: return android.text.MacApkBidi.isRtlParagraph(s, pos, isLayoutRtl());
+                return s != null && GfxBackend.get().hasRtl(s, 0, s.length());
+            default: return GfxBackend.get().isRtlParagraph(s, pos, isLayoutRtl());
         }
     }
     private float horizontalGravityOffset(int availW, float contentW) {
@@ -5017,7 +5018,7 @@ public class TextView extends View
                                         android.text.TextPaint work, boolean spanned) {
         if (spanned && p instanceof android.text.TextPaint) {
             try {
-                return android.text.Layout.macapkMeasureSpanned(src, start, end,
+                return GfxBackend.get().measureSpanned(src, start, end,
                            (android.text.TextPaint) p, work);
             } catch (Throwable ignored) { }
         }
@@ -6575,7 +6576,7 @@ public class TextView extends View
             if (en < 0) en = n;
             if (en > st) {
                 final float w = spanned
-                    ? android.text.Layout.macapkMeasureSpanned(src, st, en, lp, work)
+                    ? GfxBackend.get().measureSpanned(src, st, en, lp, work)
                     : lp.measureText(s, st, en);
                 if (w > max) max = w;
             }
