@@ -63,13 +63,16 @@ mkdir -p "$CLASSES"
 echo "[aosp-gfx] AOSP's classes from android-all 14"
 unzip -Z1 "$ALL" > "$WORK/all.txt"
 # The text classes go with Paint (measuring and drawing text must agree), FontConfig with
-# SystemFonts; .uau files are Robolectric's annotations, not classes.
-grep -E '^(android/graphics/.*|android/text/(Layout|StaticLayout|BoringLayout|DynamicLayout|MeasuredParagraph|PrecomputedText|TextLine|Hyphenator|FontConfig)([$].*)?|android/util/PathParser([$].*)?)\.class$' \
+# SystemFonts, and the platform's one drawable class of its own (AnimationScaleListDrawable, the
+# progress bars' indeterminate drawable, whose XML names it) with the DrawableContainer it extends;
+# .uau files are Robolectric's annotations, not classes.
+grep -E '^(android/graphics/.*|android/text/(Layout|StaticLayout|BoringLayout|DynamicLayout|MeasuredParagraph|PrecomputedText|TextLine|Hyphenator|FontConfig)([$].*)?|android/util/PathParser([$].*)?|com/android/internal/graphics/drawable/AnimationScaleListDrawable([$].*)?)\.class$' \
     "$WORK/all.txt" | grep -v '^android/graphics/SurfaceTexture' > "$WORK/take.txt"
 
 # What those classes name that Win.apk's framework (and the JDK) does not have: from android-all
 # too, until nothing is missing, so a class loads instead of failing on a NoClassDefFoundError.
-# Never these: com.android.internal.R holds AOSP's resource ids, not framework-res.apk's;
+# Never these: com.android.internal.R holds android-14's resource ids, not the shipped table's
+# (AospResIds.java writes the part the classes read, below);
 # android.app and android.animation are Win.apk's own (an inner class of AOSP's
 # PropertyValuesHolder beside Win.apk's outer one, or the system-service AIDL behind
 # IActivityManager, would be mixing two implementations).
@@ -103,8 +106,19 @@ for round in 1 2 3 4; do
     extract "$WORK/more.txt"
 done
 
+# AOSP's drawables read their XML through com.android.internal.R.styleable, and AdaptiveIconDrawable
+# has a private string's id compiled in: both linked to the platform table Win.apk ships (its private
+# ids are not android-14's), never android-all's R (AospResIds.java says how).
+FWRES="$OUT/bin/tools/framework-res.apk"
+[[ -f "$FWRES" ]] || { echo "[aosp-gfx] no $FWRES: run build_framework_res.sh first" >&2; exit 1; }
+echo "[aosp-gfx] com.android.internal.R and private ids, from $FWRES"
+mkdir -p "$WORK/gen"
+"$JAVA" "$(native_path "$HERE/AospResIds.java")" "$(native_path "$ALL")" "$(native_path "$CLASSES")" \
+    "$(native_path "$FWRES")" "$(native_path "$WORK/gen/R.java")"
+
 echo "[aosp-gfx] Win.apk's stand-ins (windows/java/aosp_gfx)"
-find "$HERE/../java/aosp_gfx" -name '*.java' | sort | while read -r f; do native_path "$f"; done > "$WORK/src.txt"
+{ find "$HERE/../java/aosp_gfx" -name '*.java'; echo "$WORK/gen/R.java"; } | sort |
+    while read -r f; do native_path "$f"; done > "$WORK/src.txt"
 "$JAVAC" -nowarn --release 21 -d "$CLASSES" -cp "$ALL" @"$WORK/src.txt"
 
 rm -f "$OUT/lib/aosp-graphics.jar"

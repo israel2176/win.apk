@@ -155,14 +155,23 @@ the app); if it is still there, it is a bug in what replaced it.
 
 ## Work started and not merged
 
-- **AOSP graphics, what is missing** (README "Milestone 2"): AOSP drawables
-  inflating themselves from XML (`com.android.internal.R.styleable`,
-  `TypedArray.getComplexColor`), vector gradient fills, AnimatedVectorDrawable
-  animators, `<animated-image>`, an app's own font families (`res/font`, only
-  one file chosen), the one-copy present, Compose (`drawRenderNode` on a
-  software canvas) and `SurfaceTexture` on native pixels. Probe with the switch
-  on: 1904 of 2104 lines match vs 1895 on Java2D (TextView on AOSP's Layout;
-  1656 before it). Left in the text rows: ExtendedFloatingActionButton's
+- **AOSP graphics, what is missing** (README "Milestone 2"): drawables now
+  inflate themselves on AOSP's classes (gradient fills and app font families
+  with them); left: AnimatedVectorDrawable's animators (Win.apk's
+  `ObjectAnimator.getValues()` is null, AOSP's AVD inflate throws, Win.apk's
+  inflater builds the base vector), fonts loaded through androidx
+  (`Font.Builder(Resources, int)` needs a native `AssetManager` asset: a host
+  native; Bank Hapoalim's `AnimatedButtonView` is a placeholder with the
+  switch on), `<animated-image>` (unchecked), the one-copy present, Compose
+  (`drawRenderNode` on a software canvas) and `SurfaceTexture` on native
+  pixels. Probe with the switch on: 1942 of 2104 lines match vs 1895 on
+  Java2D, no line further from Android's than Java2D's. Sweeps, lines
+  differing: Gallery 296 (Java2D 301), Sudoku 229 (275). Worse than Java2D:
+  Sudoku `preference_widget_light` (`?android:textColor` tint not resolved by
+  Win.apk's theme lookup; Java2D's grey stand-in hides it), Gallery
+  `activity_widget_config` (an empty TextView 5 dp narrow, only after earlier
+  layouts of the sweep) and `activity_video_player` (backdrop a shade
+  lighter). Left in the text rows: ExtendedFloatingActionButton's
   `getGravity()` (11 where Android has START|CENTER_VERTICAL, both paths).
 - **Screens checks not finished**: Bank Leumi (stopped by the usage limit
   before its boot), Pango and Paybox (not on APKPure; the owner offered their

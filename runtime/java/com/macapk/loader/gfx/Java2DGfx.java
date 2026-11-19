@@ -201,6 +201,18 @@ final class Java2DGfx implements GfxBackend {
         return new VectorDrawable(e, theme, res);
     }
 
+    // Win.apk's drawables do not read their own XML: Resources' inflater builds them.
+    @Override public Drawable inflateXmlDrawable(android.content.res.Resources res, org.w3c.dom.Element root,
+                                                 android.content.res.Resources.Theme theme, int id) {
+        return null;
+    }
+
+    @Override public android.content.res.ComplexColor gradientColor(android.content.res.Resources res,
+                                                                    org.w3c.dom.Element root,
+                                                                    android.content.res.Resources.Theme theme) {
+        return null;
+    }
+
     @Override public android.graphics.drawable.LayerDrawable layerDrawable() {
         return new android.graphics.drawable.LayerDrawable();
     }

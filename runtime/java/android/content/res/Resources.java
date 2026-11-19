@@ -234,6 +234,10 @@ public class Resources {
     }
     public InputStream openRawResource(int id, android.util.TypedValue value)
         throws android.content.res.Resources.NotFoundException {
+        // AOSP fills `value` first (getValue(id, value, true)): AOSP's NinePatchDrawable and
+        // BitmapDrawable decode the picture at the density it reports (WINAPK_AOSP_GFX=1; the
+        // Java2D side keeps the value as given).
+        if (value != null && GfxBackend.isAosp()) getValue(id, value, true);
         return openRawResource(id);
     }
 
@@ -770,6 +774,13 @@ public class Resources {
                 // followed, matching the app-side branch below and AOSP's
                 // out_last_reference behaviour.
                 macapkApplyChaseTerminus(outValue, resolveRefs);
+                // A platform file's density, from the configuration of the entry the table chose
+                // (its folder, "res/drawable-xhdpi-v4/..."), as AssetManager reports it: AOSP's
+                // BitmapDrawable and NinePatchDrawable scale the picture from it. WINAPK_AOSP_GFX=1
+                // only: Win.apk's own drawables take a platform picture's density elsewhere.
+                if (fwType == android.util.TypedValue.TYPE_STRING && GfxBackend.isAosp()) {
+                    outValue.density = macapkFolderDensity(outValue.string.toString());
+                }
                 return;
                 }
             }
@@ -1039,6 +1050,33 @@ public class Resources {
         } catch (Throwable t) {
             return 0;
         }
+    }
+
+    /** TypedValue.density of a file the table's path names ("res/drawable-xhdpi-v4/x.png"): its
+     *  folder's density qualifier; DENSITY_NONE for nodpi, DENSITY_DEFAULT (0, mdpi) for none or
+     *  anydpi, as the entry's configuration says on a device. */
+    static int macapkFolderDensity(String path) {
+        if (path == null) return 0;
+        int slash = path.lastIndexOf('/');
+        String dir = slash > 0 ? path.substring(path.lastIndexOf('/', slash - 1) + 1, slash) : "";
+        for (String q : dir.split("-")) {
+            switch (q) {
+                case "nodpi": return 0xffff;  // TypedValue.DENSITY_NONE
+                case "anydpi": return 0;
+                case "ldpi": return 120;
+                case "mdpi": return 160;
+                case "tvdpi": return 213;
+                case "hdpi": return 240;
+                case "xhdpi": return 320;
+                case "xxhdpi": return 480;
+                case "xxxhdpi": return 640;
+                default:
+                    if (q.endsWith("dpi") && q.length() > 3 && q.substring(0, q.length() - 3).chars().allMatch(Character::isDigit)) {
+                        return Integer.parseInt(q.substring(0, q.length() - 3));
+                    }
+            }
+        }
+        return 0;
     }
 
     private String macapkResourcePath(int id) {
@@ -2070,6 +2108,13 @@ public class Resources {
             }
             org.w3c.dom.Element root = doc.getDocumentElement();
             if (root == null) return null;
+            // WINAPK_AOSP_GFX=1: the drawable inflates itself, as on Android (AOSP's
+            // Drawable.createFromXmlInner, its DrawableInflater and each drawable's inflate()); null
+            // there (logged) leaves it to Win.apk's inflater below. Null always on Java2D.
+            if (GfxBackend.isAosp()) {
+                android.graphics.drawable.Drawable aosp = GfxBackend.get().inflateXmlDrawable(this, root, theme, id);
+                if (aosp != null) return aosp;
+            }
             android.graphics.drawable.Drawable d = macapkInflateDrawableElement(root, theme);
             if (d != null) return d;
             // We PARSED a root tag and still produced nothing. Returning null
@@ -6652,6 +6697,13 @@ public class Resources {
             }
             return ID_NULL;
         }
+        /** AOSP Theme.resolveAttributes (@hide): {@code values[i]} is the theme attribute that
+         *  {@code attrs[i]} referred to (TypedArray.extractThemeAttrs'), resolved in this theme; the
+         *  TypedArray keeps {@code attrs}' indices. (This TypedArray resolves theme attributes when
+         *  it is obtained, so AOSP's drawables find none left to apply.) */
+        public TypedArray resolveAttributes(int[] values, int[] attrs) {
+            return obtainStyledAttributes(values);
+        }
         /** API-3+ — get theme attribute count. */
         public TypedArray obtainStyledAttributes(int[] attrs) {
             // AOSP: `mThemeImpl.obtainStyledAttributes(this, null, attrs, 0, 0)`
@@ -6724,6 +6776,7 @@ public class Resources {
         }
         public TypedArray obtainStyledAttributes(android.util.AttributeSet set, int[] attrs,
                                                   int defStyleAttr, int defStyleRes) {
+            set = macapkSetAtObtain(set);
             // BIND the AttributeSet when present so the returned TypedArray
             // reads real per-attribute values from the inflated XML (same
             // as Resources.obtainAttributes / Context.obtainStyledAttributes,
@@ -7339,7 +7392,87 @@ public class Resources {
     /** AOSP Resources.obtainAttributes(AttributeSet, int[]): builds a
      *  TypedArray from the attribute set's values. */
     public TypedArray obtainAttributes(android.util.AttributeSet set, int[] attrs) {
-        return new TypedArray(this, attrs, set);
+        return new TypedArray(this, attrs, macapkSetAtObtain(set));
+    }
+
+    private static volatile java.lang.reflect.Method sAtCurrentElement;
+
+    /** The AttributeSet a TypedArray binds to. With WINAPK_AOSP_GFX=1, a resource XML pull parser
+     *  (com.macapk.loader.DomXmlResourceParser) is replaced by a copy that stays on its current
+     *  element: on Android the TypedArray's values are copied out when it is obtained, and AOSP's
+     *  drawables read theirs after their inflate() has moved the parser on to their children
+     *  (InsetDrawable, LayerDrawable...). This TypedArray reads its set when asked, so it needs the
+     *  copy. The Java2D side keeps the set as given. */
+    static android.util.AttributeSet macapkSetAtObtain(android.util.AttributeSet set) {
+        if (set == null || !GfxBackend.isAosp()
+                || !"com.macapk.loader.DomXmlResourceParser".equals(set.getClass().getName())) return set;
+        try {
+            java.lang.reflect.Method m = sAtCurrentElement;
+            if (m == null) sAtCurrentElement = m = set.getClass().getMethod("macapkAtCurrentElement");
+            Object frozen = m.invoke(set);
+            return frozen != null ? (android.util.AttributeSet) frozen : set;
+        } catch (Throwable t) {
+            return set;
+        }
+    }
+
+    /** AOSP Resources.obtainAttributes(Resources, Theme, AttributeSet, int[]) (@hide; AOSP's
+     *  drawables and GradientColor read their attributes with it): the theme's styled attributes
+     *  when there is a theme, else the Resources'. */
+    public static TypedArray obtainAttributes(Resources res, Theme theme, android.util.AttributeSet set,
+                                              int[] attrs) {
+        if (theme == null) return res.obtainAttributes(set, attrs);
+        return theme.obtainStyledAttributes(set, attrs, 0, 0);
+    }
+
+    private android.graphics.drawable.DrawableInflater mDrawableInflater;
+
+    /** AOSP Resources.getDrawableInflater (@hide): AOSP's Drawable.createFromXmlInner inflates
+     *  every element through it (WINAPK_AOSP_GFX=1: AOSP's DrawableInflater, lib/aosp-graphics.jar). */
+    public final android.graphics.drawable.DrawableInflater getDrawableInflater() {
+        if (mDrawableInflater == null) {
+            ClassLoader cl = getClassLoader();
+            mDrawableInflater = new android.graphics.drawable.DrawableInflater(this,
+                    cl != null ? cl : Resources.class.getClassLoader());
+        }
+        return mDrawableInflater;
+    }
+
+    /** A colour file's {@code <gradient>} as AOSP's GradientColor (TypedArray.getComplexColor's
+     *  gradient case, as AOSP's ResourcesImpl.loadComplexColorForCookie): only on AOSP's graphics
+     *  (GfxBackend), null for any other id. */
+    ComplexColor macapkGradientColor(int id, Theme theme) {
+        if (!GfxBackend.isAosp() || id == 0) return null;
+        try {
+            String path = macapkResourcePath(id);
+            if (path == null ? (id >>> 24) != 0x01 : !path.endsWith(".xml")) return null;
+            org.w3c.dom.Document doc = macapkDrawableXml(id);
+            org.w3c.dom.Element root = doc == null ? null : doc.getDocumentElement();
+            if (root == null || !"gradient".equals(macapkLocalTag(root))) return null;
+            return GfxBackend.get().gradientColor(this, root, theme);
+        } catch (Throwable t) {
+            com.macapk.loader.NativeLog.w("Win.apk.Resources", "gradient colour 0x" + Integer.toHexString(id)
+                    + ": " + t);
+            return null;
+        }
+    }
+
+    /** A pull parser and its AttributeSet positioned at the start of {@code e} (its own document),
+     *  as AOSP's XmlBlock parser stands when Drawable.createFromXmlInner is called: for the drawables
+     *  GfxBackend inflates on AOSP's classes. Null when one cannot be built. */
+    public org.xmlpull.v1.XmlPullParser macapkXmlParserAt(org.w3c.dom.Element e) {
+        Object parser = macapkParserForElement(e);
+        if (!(parser instanceof org.xmlpull.v1.XmlPullParser)) return null;
+        org.xmlpull.v1.XmlPullParser xpp = (org.xmlpull.v1.XmlPullParser) parser;
+        try {
+            int evt = xpp.getEventType();
+            while (evt != org.xmlpull.v1.XmlPullParser.START_TAG && evt != org.xmlpull.v1.XmlPullParser.END_DOCUMENT) {
+                evt = xpp.next();
+            }
+            return evt == org.xmlpull.v1.XmlPullParser.START_TAG ? xpp : null;
+        } catch (Throwable t) {
+            return null;
+        }
     }
 
     /** AOSP Resources.obtainTypedArray(int) (Resources.java:729): resolves an

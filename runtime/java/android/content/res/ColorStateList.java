@@ -22,7 +22,7 @@ package android.content.res;
 
 import com.macapk.loader.gfx.GfxBackend;
 
-public class ColorStateList implements android.os.Parcelable {
+public class ColorStateList extends ComplexColor implements android.os.Parcelable {
     // Parallel arrays: mStateSpecs[i] is the spec for color mColors[i].
     private final int[][] mStateSpecs;
     private final int[] mColors;
@@ -753,5 +753,18 @@ public class ColorStateList implements android.os.Parcelable {
 
     /** AOSP ColorStateList.getColors. */
     public int[] getColors() { return mColors; }
+
+    /** AOSP ColorStateList.getConstantState (a ComplexColor's; AOSP's VectorDrawable and
+     *  GradientDrawable keep it in their state): this list, which nothing here changes in place. */
+    @Override public ConstantState<ComplexColor> getConstantState() {
+        final ColorStateList self = this;
+        return new ConstantState<ComplexColor>() {
+            @Override public int getChangingConfigurations() { return self.getChangingConfigurations(); }
+            @Override public ComplexColor newInstance() { return self; }
+            @Override public ComplexColor newInstance(Resources res, Resources.Theme theme) {
+                return theme == null ? self : self.obtainForTheme(theme);
+            }
+        };
+    }
 }
 

@@ -210,6 +210,20 @@ public interface GfxBackend {
     Drawable vectorFromElement(org.w3c.dom.Element e, android.content.res.Resources.Theme theme,
                                android.content.res.Resources res);
 
+    /**
+     * A drawable resource's XML (its root element; {@code id} for the log) inflated by the drawable
+     * classes themselves, as on Android: AOSP's Drawable.createFromXmlInner, its DrawableInflater and
+     * each drawable's inflate(). Null leaves it to Resources' own inflater: always on Java2D, whose
+     * drawables do not read their XML.
+     */
+    Drawable inflateXmlDrawable(android.content.res.Resources res, org.w3c.dom.Element root,
+                                android.content.res.Resources.Theme theme, int id);
+
+    /** A colour file's {@code <gradient>} (its root) as AOSP's GradientColor, for
+     *  TypedArray.getComplexColor; null on Java2D, which has no GradientColor. */
+    android.content.res.ComplexColor gradientColor(android.content.res.Resources res, org.w3c.dom.Element root,
+                                                   android.content.res.Resources.Theme theme);
+
     /** An empty <layer-list> to add layers to (LayerDrawable(), which AOSP keeps to its package). */
     android.graphics.drawable.LayerDrawable layerDrawable();
 
