@@ -260,6 +260,12 @@ public final class BinaryXmlParser {
                 case '<':  sb.append("&lt;");   break;
                 case '>':  sb.append("&gt;");   break;
                 case '"':  sb.append("&quot;"); break;
+                // Character references: a literal newline, return or tab in an
+                // attribute would come back as a space (XML 1.0 3.3.3, attribute-
+                // value normalization), and a two-line android:text as one line.
+                case '\n': sb.append("&#10;"); break;
+                case '\r': sb.append("&#13;"); break;
+                case '\t': sb.append("&#9;");  break;
                 default:   sb.append(c);
             }
         }

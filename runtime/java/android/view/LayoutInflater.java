@@ -4058,6 +4058,9 @@ public class LayoutInflater {
      *  table about those styles first, and each family has DIFFERENT values
      *  (see macapkFrameworkButtonGeom's citation block) -- so that is a separate,
      *  separately-measured change, not a loop over more names here. */
+    private static final boolean MACAPK_DEFSTYLE_UNDER_ELEMENT =
+        "1".equals(System.getenv("MACAPK_DEFSTYLE_UNDER_ELEMENT"));
+
     private void applyWidgetDefaultStyle(View view, java.util.Map<String, String> sitems,
                                          Element elem) {
         try {
@@ -4223,6 +4226,15 @@ public class LayoutInflater {
                 // `viewInflaterClass` tier (theme -> MaterialComponentsViewInflater
                 // -> MaterialButton), not this.
                 if (sitems.containsKey(attr)) continue;   // app's style wins
+                // So does the element itself. AOSP's View constructor reads one
+                // merged set (element > style= > default style), so an element's
+                // own android:background means the default one is never made, and
+                // its padding (btn_default's insets, the EditText underline's) never
+                // applied. Installing it first and replacing it after left that
+                // padding behind: 12,10,12,10 on a button Android pads 0 (Cal,
+                // Maccabi). MACAPK_DEFSTYLE_UNDER_ELEMENT=1 restores that.
+                if (!MACAPK_DEFSTYLE_UNDER_ELEMENT && elem != null
+                        && elem.hasAttributeNS(MACAPK_ANDROID_NS, attr)) continue;
                 Object v = mResolve.invoke(ri, styleName, attr);
                 if (trace) android.util.Log.i("Mac.apk.DefStyle",
                     "  " + styleName + "." + attr + " = " + v);
@@ -5402,6 +5414,14 @@ public class LayoutInflater {
                             ? android.widget.LinearLayout.VERTICAL
                             : android.widget.LinearLayout.HORIZONTAL;
                         ll.setOrientation(o);
+                    }
+                    return;
+                case "weightSum":
+                    // AOSP LinearLayout's constructor: mWeightSum =
+                    // a.getFloat(R.styleable.LinearLayout_weightSum, -1).
+                    if (view instanceof android.widget.LinearLayout ll) {
+                        try { ll.setWeightSum(Float.parseFloat(value.trim())); }
+                        catch (NumberFormatException ignored) {}
                     }
                     return;
                 case "stretchColumns":

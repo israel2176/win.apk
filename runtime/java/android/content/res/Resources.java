@@ -5354,6 +5354,23 @@ public class Resources {
         }
         try {
             String[] tn = macapkTypeNameOf(id);
+            // AOSP's ResourcesImpl.loadColorStateList takes any file-backed .xml
+            // value and goes by its root tag, whatever the type: a textColor of
+            // @drawable/x where x is a <selector> of colours is a ColorStateList
+            // (Cal's buttons: white on black came out black on black).
+            if (tn != null && "drawable".equals(tn[0]) && !MACAPK_NO_DRAWABLE_CSL) {
+                byte[] xml = null;
+                java.io.InputStream in = macapkOpenResFileByName("drawable", tn[1]);
+                if (in != null) {
+                    try { xml = in.readAllBytes(); } finally { try { in.close(); } catch (Throwable ignored) {} }
+                }
+                if (xml != null && macapkIsColorSelector(xml)) {
+                    org.xmlpull.v1.XmlPullParser p = macapkNewPullParser(new java.io.ByteArrayInputStream(xml));
+                    if (p != null) {
+                        return android.content.res.ColorStateList.createFromXml(this, p, theme);
+                    }
+                }
+            }
             if (tn != null && "color".equals(tn[0])) {
                 java.io.InputStream in = macapkOpenResFileByName("color", tn[1]);
                 if (in != null) {
@@ -5368,6 +5385,36 @@ public class Resources {
         } catch (Throwable ignored) {}
         macapkCslFileMiss.add(id);
         return null;
+    }
+
+    /** MACAPK_NO_DRAWABLE_CSL=1: a drawable-typed <selector> is never a colour list. */
+    private static final boolean MACAPK_NO_DRAWABLE_CSL =
+        "1".equals(System.getenv("MACAPK_NO_DRAWABLE_CSL"));
+
+    /** A <selector> whose every <item> names an android:color: what AOSP's
+     *  ColorStateList inflates (an item without one is an error there). A
+     *  selector of drawables is not one. */
+    private static boolean macapkIsColorSelector(byte[] xml) {
+        try {
+            org.xmlpull.v1.XmlPullParser p = macapkNewPullParser(new java.io.ByteArrayInputStream(xml));
+            if (p == null) return false;
+            boolean root = true, any = false;
+            for (int ev = p.next(); ev != org.xmlpull.v1.XmlPullParser.END_DOCUMENT; ev = p.next()) {
+                if (ev != org.xmlpull.v1.XmlPullParser.START_TAG) continue;
+                if (root) {
+                    if (!"selector".equals(p.getName())) return false;
+                    root = false;
+                } else if ("item".equals(p.getName()) && p.getDepth() == 2) {
+                    if (p.getAttributeValue("http://schemas.android.com/apk/res/android", "color") == null) {
+                        return false;
+                    }
+                    any = true;
+                }
+            }
+            return any;
+        } catch (Throwable t) {
+            return false;
+        }
     }
 
     /** The platform <selector> behind framework colour `id`, or null when the id
