@@ -3003,12 +3003,23 @@ public class LayoutInflater {
      *  as if they were its own (the UI probe's list rows: tint=99000000 where
      *  Android has none). Where AppCompat would be, they apply as before. */
     private boolean macapkAppCompatOnlyAttr(View view, Node a, String localName) {
-        if (!"tint".equals(localName) && !"srcCompat".equals(localName)) return false;
         Class<?> k = view.getClass();
-        if (k != android.widget.ImageView.class && k != android.widget.ImageButton.class) return false;
+        if ("tint".equals(localName) || "srcCompat".equals(localName)) {
+            if (k != android.widget.ImageView.class && k != android.widget.ImageButton.class) return false;
+        } else if (macapkBaselineAttr(localName)) {
+            // app:firstBaselineToTopHeight is AppCompatTextView's (AppCompatTextHelper);
+            // a framework TextView reads only the android: one.
+            if (k != android.widget.TextView.class && k != android.widget.Button.class) return false;
+        } else {
+            return false;
+        }
         String ns = a.getNamespaceURI();
         if (ns == null || MACAPK_ANDROID_NS.equals(ns)) return false;
         return !appCompatRewriteApplies();
+    }
+
+    private static boolean macapkBaselineAttr(String name) {
+        return "firstBaselineToTopHeight".equals(name) || "lastBaselineToBottomHeight".equals(name);
     }
 
     private static boolean isAppCompatActivity(Class<?> k) {
@@ -3755,6 +3766,12 @@ public class LayoutInflater {
         // non-deterministically.
         java.util.LinkedHashMap<String, String> deferredLineHeight =
             new java.util.LinkedHashMap<>();
+        // firstBaselineToTopHeight / lastBaselineToBottomHeight move the padding
+        // from the font's metrics, so AOSP applies them after its attribute loop
+        // (TextView's constructor, once padding and textSize are in): replayed
+        // after the padding and the text size here too.
+        java.util.LinkedHashMap<String, String> deferredBaseline =
+            new java.util.LinkedHashMap<>();
         // An element's own android:background="@null" / "@empty" is AOSP's
         // TYPE_NULL record, and the XML attribute outranks every style tier, so
         // View's constructor installs NO background at all. Ours applied the
@@ -3775,6 +3792,7 @@ public class LayoutInflater {
             if (elemNullBg && "background".equals(name)) continue;
             if (name.startsWith("padding")) { deferredPadding.put(name, en.getValue()); continue; }
             if ("lineHeight".equals(name)) { deferredLineHeight.put(name, en.getValue()); continue; }
+            if (macapkBaselineAttr(name)) { deferredBaseline.put(name, en.getValue()); continue; }
             applyAttribute(view, name, en.getValue());
         }
         NamedNodeMap attrs = elem.getAttributes();
@@ -3790,6 +3808,7 @@ public class LayoutInflater {
             // padding above.
             if ("lineHeight".equals(localName)) { deferredLineHeight.put(localName, value); continue; }
             if (macapkAppCompatOnlyAttr(view, a, localName)) continue;
+            if (macapkBaselineAttr(localName)) { deferredBaseline.put(localName, value); continue; }
             applyAttribute(view, localName, value);
         }
         // 2026-08-13 (opencalculator structural-offset lane): replay
@@ -3880,6 +3899,9 @@ public class LayoutInflater {
         // Last, so it beats any lineSpacingMultiplier applied above -- AOSP
         // TextView.java:2014-2018.
         for (java.util.Map.Entry<String, String> en : deferredLineHeight.entrySet()) {
+            applyAttribute(view, en.getKey(), en.getValue());
+        }
+        for (java.util.Map.Entry<String, String> en : deferredBaseline.entrySet()) {
             applyAttribute(view, en.getKey(), en.getValue());
         }
         if (view instanceof android.widget.TextView tvSl) {
@@ -5436,6 +5458,18 @@ public class LayoutInflater {
                         // already converted sp/dp through the display metrics.
                         Float px = parseDimensionPx(value);
                         if (px != null && px > 0f) tv.setLineHeight(Math.round(px));
+                    }
+                    return;
+                }
+                case "firstBaselineToTopHeight":
+                case "lastBaselineToBottomHeight": {
+                    // Fed from the deferred replay in applyAttributes (deferredBaseline).
+                    if (view instanceof android.widget.TextView tv) {
+                        Float px = parseDimensionPx(value);
+                        if (px != null && px >= 0f) {
+                            if (attr.startsWith("first")) tv.setFirstBaselineToTopHeight(Math.round(px));
+                            else tv.setLastBaselineToBottomHeight(Math.round(px));
+                        }
                     }
                     return;
                 }
