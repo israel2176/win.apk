@@ -15,6 +15,7 @@ import android.content.pm.ResolveInfo;
 import android.content.pm.ServiceInfo;
 import android.content.pm.Signature;
 
+import com.macapk.loader.res.ResBackend;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -2392,11 +2393,9 @@ public final class MacApkPackageManager extends PackageManager {
                     // same theme as a raw "@0x01030007" and is handled by the
                     // hex branch above plus ResourceIndex.macapkTypeNameOf.
                     if ("style".equals(type.substring(colon + 1))) {
-                        Object fidx = android.content.res.Resources
-                            .macapkGetResourceIndex();
-                        if (fidx instanceof ResourceIndex) {
-                            return ((ResourceIndex) fidx)
-                                .idOfFrameworkStyleName(name);
+                        Object fidx = ResBackend.get().resourceIndex();
+                        if (ResBackend.get().isIndex(fidx)) {
+                            return ResBackend.get().indexIdOfFrameworkStyleName(fidx, name);
                         }
                     }
                     return 0;
@@ -2404,9 +2403,9 @@ public final class MacApkPackageManager extends PackageManager {
                 type = type.substring(colon + 1);
             }
         }
-        Object idx = android.content.res.Resources.macapkGetResourceIndex();
-        if (idx instanceof ResourceIndex) {
-            return ((ResourceIndex) idx).idOfName(name, type, null);
+        Object idx = ResBackend.get().resourceIndex();
+        if (ResBackend.get().isIndex(idx)) {
+            return ResBackend.get().indexIdOfName(idx, name, type, null);
         }
         return 0;
     }
@@ -3390,8 +3389,8 @@ public final class MacApkPackageManager extends PackageManager {
         String r = null;
         try {
             int id = resolveResRef(v, "string");
-            Object idx = android.content.res.Resources.macapkGetResourceIndex();
-            if (id != 0 && idx instanceof ResourceIndex) r = ((ResourceIndex) idx).stringForId(id);
+            Object idx = ResBackend.get().resourceIndex();
+            if (id != 0 && ResBackend.get().isIndex(idx)) r = ResBackend.get().indexStringForId(idx, id);
         } catch (Throwable ignored) {
             r = null;
         }
@@ -5497,9 +5496,9 @@ public final class MacApkPackageManager extends PackageManager {
         if (v.charAt(0) == '@') {
             try {
                 int id = resolveResRef(v, "bool");
-                Object idx = android.content.res.Resources.macapkGetResourceIndex();
-                if (id != 0 && idx instanceof ResourceIndex) {
-                    Boolean b = ((ResourceIndex) idx).getBoolById(id);
+                Object idx = ResBackend.get().resourceIndex();
+                if (id != 0 && ResBackend.get().isIndex(idx)) {
+                    Boolean b = ResBackend.get().indexBoolById(idx, id);
                     if (b != null) return b;
                 }
             } catch (Throwable ignored) {}
@@ -5590,7 +5589,7 @@ public final class MacApkPackageManager extends PackageManager {
         if (!macapkRtlLogged) {
             macapkRtlLogged = true;
             NativeLog.i("Mac.apk.PM", "supportsRtl=\"" + appAttr("supportsRtl") + "\" -> " + rtl
-                      + (android.content.res.Resources.macapkGetResourceIndex() == null ? " (no resource index yet)" : ""));
+                      + (ResBackend.get().resourceIndex() == null ? " (no resource index yet)" : ""));
         }
         // android:usesCleartextTraffic defaults to true BELOW targetSdk 28 and
         // false from 28 (Pie) on. Mac.apk enforces no cleartext policy, but the
@@ -5698,19 +5697,15 @@ public final class MacApkPackageManager extends PackageManager {
                     // FacebookSdk.loadDefaultsFromMetadata throws.
                     try {
                         int resId = (int) Long.parseLong(val.substring(3), 16);
-                        String rtype = android.content.res.Resources
-                            .macapkResourceTypeForId(resId);
+                        String rtype = ResBackend.get().resourceTypeForId(resId);
                         if ("string".equals(rtype)) {
-                            String sv = android.content.res.Resources
-                                .macapkStringForId(resId);
+                            String sv = ResBackend.get().stringForId(resId);
                             if (sv != null) { md.putString(key, sv); return; }
                         } else if ("bool".equals(rtype)) {
-                            Boolean bv = android.content.res.Resources
-                                .macapkBoolForId(resId);
+                            Boolean bv = ResBackend.get().boolForId(resId);
                             if (bv != null) { md.putBoolean(key, bv); return; }
                         } else if ("color".equals(rtype)) {
-                            Integer cv = android.content.res.Resources
-                                .macapkColorForId(resId);
+                            Integer cv = ResBackend.get().colorForId(resId);
                             if (cv != null) { md.putInt(key, cv); return; }  // ARGB
                         } else if ("dimen".equals(rtype) || "fraction".equals(rtype)) {
                             // AOSP DROPS resolved dimension/fraction meta-data (the
@@ -5721,8 +5716,7 @@ public final class MacApkPackageManager extends PackageManager {
                         // integer (and any type ResourceIndex resolves as an int):
                         // GMS's google_play_services_version = @integer/... reads
                         // this via getInt.
-                        Integer resolved = android.content.res.Resources
-                            .macapkIntegerForId(resId);
+                        Integer resolved = ResBackend.get().integerForId(resId);
                         md.putInt(key, resolved != null ? resolved : resId);
                         return;
                     } catch (Throwable ignored) { break; }
@@ -5731,8 +5725,7 @@ public final class MacApkPackageManager extends PackageManager {
             }
         }
         if (val != null && val.startsWith("@integer/")) {
-            Integer resolved = android.content.res.Resources
-                .macapkIntegerForName(val.substring("@integer/".length()));
+            Integer resolved = ResBackend.get().integerForName(val.substring("@integer/".length()));
             if (resolved != null) {
                 // putInt ONLY: our Bundle is a single map, so a putString on the
                 // same key would overwrite the Integer and make getInt() return

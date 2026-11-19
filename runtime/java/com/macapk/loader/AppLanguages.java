@@ -5,6 +5,7 @@ import android.app.LocaleConfig;
 import android.app.LocaleManager;
 import android.os.LocaleList;
 
+import com.macapk.loader.res.ResBackend;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -34,9 +35,9 @@ public final class AppLanguages {
                 }
             }
             if (out.isEmpty()) {
-                Object index = android.content.res.Resources.macapkGetResourceIndex();
-                if (index instanceof ResourceIndex) {
-                    out.addAll(((ResourceIndex) index).macapkResourceLocaleTags());
+                Object index = ResBackend.get().resourceIndex();
+                if (ResBackend.get().isIndex(index)) {
+                    out.addAll(ResBackend.get().indexResourceLocaleTags(index));
                 }
             }
         } catch (Throwable t) {

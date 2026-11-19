@@ -31,6 +31,7 @@ package com.macapk.loader;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.view.View;
+import com.macapk.loader.res.ResBackend;
 import com.macapk.loader.view.ViewHost;
 
 public final class StatusBarDriver {
@@ -733,12 +734,12 @@ public final class StatusBarDriver {
             android.content.Context c = (v != null) ? v.getContext() : null;
             android.content.res.Resources.Theme th = (c != null) ? c.getTheme() : null;
             if (th != null) {
-                int r = th.resolveAttrColor(attr, fallback);
+                int r = ResBackend.get().resolveAttrColor(th, attr, fallback);
                 if (r != fallback) return r;
             }
         } catch (Throwable ignored) {}
         try {
-            return android.content.res.Resources.macapkThemeColor(attr, fallback);
+            return ResBackend.get().themeColor(attr, fallback);
         } catch (Throwable ignored) {}
         return fallback;
     }
@@ -753,7 +754,7 @@ public final class StatusBarDriver {
             android.content.Context c = (v != null) ? v.getContext() : null;
             android.content.res.Resources.Theme th = (c != null) ? c.getTheme() : null;
             if (th != null) {
-                String raw = th.resolveAttrRaw(attr);
+                String raw = ResBackend.get().resolveAttrRaw(th, attr);
                 if (raw != null && !raw.isEmpty()) return "true".equalsIgnoreCase(raw.trim());
             }
         } catch (Throwable ignored) {}

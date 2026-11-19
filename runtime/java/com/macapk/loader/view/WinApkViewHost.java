@@ -123,6 +123,8 @@ final class WinApkViewHost implements ViewHost {
 
     @Override public int layoutGravity(ViewGroup.LayoutParams params) { return params.macapkGravity; }
 
+    @Override public int parseGravity(String text) { return android.view.Gravity.parse(text); }
+
     @Override public long nativeHandle(View view) { return view.getNativeHandle(); }
 
     // ---- Input ----

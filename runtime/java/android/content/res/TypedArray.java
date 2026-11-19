@@ -1464,7 +1464,7 @@ public class TypedArray implements AutoCloseable {
                 // Gravity.parse yields NO_GRAVITY for a string it does not
                 // recognise; report "no mapping" in that case so the caller's
                 // own default wins rather than a silent 0.
-                int g = android.view.Gravity.parse(v);
+                int g = com.macapk.loader.view.ViewHost.get().parseGravity(v);
                 return g != android.view.Gravity.NO_GRAVITY
                     ? g : Integer.MIN_VALUE;
             }

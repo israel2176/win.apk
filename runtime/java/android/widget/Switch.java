@@ -8,6 +8,7 @@ import com.macapk.loader.gfx.GfxBackend;
 import android.content.Context;
 import android.util.AttributeSet;
 import android.view.Gravity;
+import com.macapk.loader.res.ResBackend;
 
 public class Switch extends CompoundButton {
     // AOSP stores these labels; they back getTextOn/Off so a host querying
@@ -164,10 +165,10 @@ public class Switch extends CompoundButton {
         try {
             android.content.res.Resources.Theme t = context.getTheme();
             if (t == null) return null;
-            int accent = t.resolveAttrColor("android:colorControlActivated",
-                    t.resolveAttrColor("colorControlActivated", 0));
-            int normal = t.resolveAttrColor("android:colorSwitchThumbNormal",
-                    t.resolveAttrColor("colorSwitchThumbNormal", 0xFFF1F1F1));
+            int accent = ResBackend.get().resolveAttrColor(t, "android:colorControlActivated",
+                    ResBackend.get().resolveAttrColor(t, "colorControlActivated", 0));
+            int normal = ResBackend.get().resolveAttrColor(t, "android:colorSwitchThumbNormal",
+                    ResBackend.get().resolveAttrColor(t, "colorSwitchThumbNormal", 0xFFF1F1F1));
             if (accent == 0) return null;
             int disabled = (Math.round(((normal >>> 24) & 0xFF) * 0.3f) << 24) | (normal & 0x00FFFFFF);
             return new android.content.res.ColorStateList(
@@ -374,9 +375,9 @@ public class Switch extends CompoundButton {
         private int themeColor(String attr, int fallback) {
             try {
                 android.content.res.Resources.Theme t = ctx != null ? ctx.getTheme() : null;
-                if (t != null) return t.resolveAttrColor(attr, fallback);
+                if (t != null) return ResBackend.get().resolveAttrColor(t, attr, fallback);
             } catch (Throwable ignored) {}
-            return android.content.res.Resources.macapkThemeColor(attr, fallback);
+            return ResBackend.get().themeColor(attr, fallback);
         }
 
         private boolean dark() {

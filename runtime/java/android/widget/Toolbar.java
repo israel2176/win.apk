@@ -59,6 +59,7 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 
+import com.macapk.loader.res.ResBackend;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -287,7 +288,7 @@ public class Toolbar extends ViewGroup {
             // Package 0x01 is the platform; a parent reference names its own
             // package ("@android:style/..."), so later hops can tell by prefix.
             boolean framework = (styleId >>> 24) == 0x01;
-            Object ri = android.content.res.Resources.macapkGetResourceIndex();
+            Object ri = ResBackend.get().resourceIndex();
             for (int hop = 0; name != null && hop < 32; hop++) {
                 String n = name;
                 if (n.startsWith("@")) n = n.substring(1);
@@ -301,11 +302,10 @@ public class Toolbar extends ViewGroup {
                     return res.getIdentifier("Widget.Toolbar.Button.Navigation",
                                              "style", "android");
                 }
-                if (!(ri instanceof com.macapk.loader.ResourceIndex)) return 0;
+                if (!ResBackend.get().isIndex(ri)) return 0;
                 // The app table answers a bare name; "@android:style/" makes
                 // ResourceIndex.getStyleByName skip to the platform table.
-                com.macapk.loader.ResourceIndex.StyleDef sd =
-                    ((com.macapk.loader.ResourceIndex) ri).getStyleByName(
+                Object sd = ResBackend.get().indexStyleByName(ri,
                         framework ? "@android:style/" + n : n);
                 String parent;
                 if (sd == null) {
@@ -314,7 +314,7 @@ public class Toolbar extends ViewGroup {
                     int dot = n.lastIndexOf('.');
                     parent = dot > 0 ? n.substring(0, dot) : null;
                 } else {
-                    parent = sd.parent;
+                    parent = ResBackend.get().styleParent(sd);
                     if (parent == null) {
                         int dot = n.lastIndexOf('.');
                         parent = dot > 0 ? n.substring(0, dot) : null;

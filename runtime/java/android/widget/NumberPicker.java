@@ -56,6 +56,7 @@ import android.view.animation.DecelerateInterpolator;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodManager;
 
+import com.macapk.loader.res.ResBackend;
 import java.util.Locale;
 
 public class NumberPicker extends LinearLayout {
@@ -250,8 +251,8 @@ public class NumberPicker extends LinearLayout {
         try {
             android.content.res.Resources.Theme t = context.getTheme();
             if (t != null) {
-                int c = t.resolveAttrColor("android:" + attr, 0);
-                if (c == 0) c = t.resolveAttrColor(attr, 0);
+                int c = ResBackend.get().resolveAttrColor(t, "android:" + attr, 0);
+                if (c == 0) c = ResBackend.get().resolveAttrColor(t, attr, 0);
                 if (c != 0) return c;
             }
         } catch (Throwable ignored) { }

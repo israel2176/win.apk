@@ -9,6 +9,7 @@ import android.os.Looper;
 import android.os.SystemClock;
 import android.util.AttributeSet;
 import android.view.View;
+import com.macapk.loader.res.ResBackend;
 
 public class ProgressBar extends View {
     private static final String ANDROID_NS = "http://schemas.android.com/apk/res/android";
@@ -546,7 +547,7 @@ public class ProgressBar extends View {
             float left = (w - d) / 2f, top = (h - d) / 2f;
             mPaint.setStyle(android.graphics.Paint.Style.STROKE);
             mPaint.setStrokeWidth(Math.max(2f, d * 0.1f));
-            mPaint.setColor(android.content.res.Resources.macapkThemeColor(
+            mPaint.setColor(ResBackend.get().themeColor(
                 "colorPrimary", 0xFF1976D2));
             long phase = SystemClock.uptimeMillis() % INDETERMINATE_PERIOD_MS;
             float startAngle = phase * 360f / INDETERMINATE_PERIOD_MS;
@@ -563,7 +564,7 @@ public class ProgressBar extends View {
                 canvas.drawRect(0, 0, w * secFrac, h, mPaint);
             }
             if (progFrac > 0f) {
-                mPaint.setColor(android.content.res.Resources.macapkThemeColor(
+                mPaint.setColor(ResBackend.get().themeColor(
                     "colorPrimary", 0xFF1976D2));
                 canvas.drawRect(0, 0, w * progFrac, h, mPaint);
             }

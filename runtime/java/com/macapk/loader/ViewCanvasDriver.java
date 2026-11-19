@@ -23,6 +23,7 @@ import com.macapk.loader.gfx.GfxBackend;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.view.View;
+import com.macapk.loader.res.ResBackend;
 import com.macapk.loader.view.ViewHost;
 
 public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
@@ -4559,12 +4560,12 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
             android.content.Context c = (v != null) ? v.getContext() : null;
             android.content.res.Resources.Theme th = (c != null) ? c.getTheme() : null;
             if (th != null) {
-                int r = th.resolveAttrColor(attr, fallback);
+                int r = ResBackend.get().resolveAttrColor(th, attr, fallback);
                 if (r != fallback) return r;
             }
         } catch (Throwable ignored) {}
         try {
-            return android.content.res.Resources.macapkThemeColor(attr, fallback);
+            return ResBackend.get().themeColor(attr, fallback);
         } catch (Throwable ignored) {}
         return fallback;
     }

@@ -2,6 +2,7 @@ package android.widget;
 import com.macapk.loader.gfx.GfxBackend;
 import android.content.Context;
 import android.view.View;
+import com.macapk.loader.res.ResBackend;
 // AOSP: `public class TextView extends View implements
 // ViewTreeObserver.OnPreDrawListener`
 // (frameworks/base/core/java/android/widget/TextView.java). Free: onPreDraw() is
@@ -220,9 +221,9 @@ public class TextView extends View
                 // the attribute, where it is the difference between visible text and
                 // none. The fleet regressions in v1.0.867 are the nav-bar height
                 // change, not this.
-                int col = t.resolveAttrColor("android:textColor", 0);
-                if (col == 0) col = t.resolveAttrColor("android:textColorPrimary", 0);
-                if (col == 0) col = t.resolveAttrColor("textColorPrimary", 0);
+                int col = ResBackend.get().resolveAttrColor(t, "android:textColor", 0);
+                if (col == 0) col = ResBackend.get().resolveAttrColor(t, "android:textColorPrimary", 0);
+                if (col == 0) col = ResBackend.get().resolveAttrColor(t, "textColorPrimary", 0);
                 // Store the LIST as well as the int. AOSP's equivalent step is
                 // `setTextColor(attributes.mTextColor)` (:4350-4351), which writes
                 // both, so getTextColors() and getCurrentTextColor() always agree.
@@ -249,8 +250,8 @@ public class TextView extends View
             // actually declares it (an app whose theme is silent keeps AOSP's
             // documented mHintTextColor == null fallback to the text colour).
             if ((have & 2) == 0) {
-                int hc = t.resolveAttrColor("android:textColorHint", 0);
-                if (hc == 0) hc = t.resolveAttrColor("textColorHint", 0);
+                int hc = ResBackend.get().resolveAttrColor(t, "android:textColorHint", 0);
+                if (hc == 0) hc = ResBackend.get().resolveAttrColor(t, "textColorHint", 0);
                 if (hc != 0) {
                     this.hintTextColors = android.content.res.ColorStateList.valueOf(hc);
                     this.hintColor = hc;
@@ -263,8 +264,8 @@ public class TextView extends View
             // ClickableSpan.updateDrawState, which paints TextPaint.linkColor: without
             // it every link drew in TextPaint's placeholder default.
             if ((have & 4) == 0) {
-                int lc = t.resolveAttrColor("android:textColorLink", 0);
-                if (lc == 0) lc = t.resolveAttrColor("textColorLink", 0);
+                int lc = ResBackend.get().resolveAttrColor(t, "android:textColorLink", 0);
+                if (lc == 0) lc = ResBackend.get().resolveAttrColor(t, "textColorLink", 0);
                 if (lc != 0) {
                     this.mLinkTextColor = android.content.res.ColorStateList.valueOf(lc);
                     stored = true;
@@ -730,7 +731,7 @@ public class TextView extends View
                 // is a real value and still goes through.
                 // macapkPeekRecord, not peekValue: peekValue is null for every
                 // TYPE_NULL slot (AOSP), and this test needs the @empty data.
-                android.util.TypedValue rec = appearance.macapkPeekRecord(attr);
+                android.util.TypedValue rec = ResBackend.get().peekRecord(appearance, attr);
                 if (rec.type == android.util.TypedValue.TYPE_NULL
                         && rec.data != 1 /* TypedValue.DATA_NULL_EMPTY */) {
                     continue;
@@ -7679,7 +7680,7 @@ public class TextView extends View
         if (c == null) return null;
         if (ref == null) {
             android.content.res.Resources.Theme t = c.getTheme();
-            if (t != null) ref = t.resolveAttrRaw(themeAttr);
+            if (t != null) ref = ResBackend.get().resolveAttrRaw(t, themeAttr);
         }
         if (ref == null) return null;
         ref = ref.trim();
@@ -7725,7 +7726,7 @@ public class TextView extends View
         // was inflated with, not of the application's.
         try {
             android.content.res.Resources.Theme th = getContext() != null ? getContext().getTheme() : null;
-            d = res.macapkFrameworkDrawableByName(name, th);
+            d = ResBackend.get().frameworkDrawableByName(res, name, th);
         } catch (Throwable ignored) {}
         return d;
     }
@@ -7761,10 +7762,10 @@ public class TextView extends View
         try {
             android.content.res.Resources.Theme t = c.getTheme();
             if (t != null) {
-                tint = t.resolveAttrColor("android:colorControlActivated", 0);
-                if (tint == 0) tint = t.resolveAttrColor("colorControlActivated", 0);
-                if (tint == 0) tint = t.resolveAttrColor("android:colorAccent", 0);
-                if (tint == 0) tint = t.resolveAttrColor("colorAccent", 0);
+                tint = ResBackend.get().resolveAttrColor(t, "android:colorControlActivated", 0);
+                if (tint == 0) tint = ResBackend.get().resolveAttrColor(t, "colorControlActivated", 0);
+                if (tint == 0) tint = ResBackend.get().resolveAttrColor(t, "android:colorAccent", 0);
+                if (tint == 0) tint = ResBackend.get().resolveAttrColor(t, "colorAccent", 0);
             }
         } catch (Throwable ignored) {}
         if (tint == 0) tint = 0xFF009688;

@@ -2621,10 +2621,50 @@ every such change is listed here:
   that are `super()` calls (`Activity`'s and `Dialog`'s `Window` subclasses,
   `Dialog`'s anonymous `DecorView`), `GLSurfaceView`'s overrides of
   `macapkDrawFrame` / `macapkSurfaceChanged` / `macapkRendersOnOsMain` and their
-  `super.` calls, `Dialog`'s override of `macapkOwnInflater`, and
-  `Gravity.parse` in `android.content.res` (the resources seam's). The UI probe,
+  `super.` calls and `Dialog`'s override of `macapkOwnInflater`. `Gravity.parse`,
+  called from `android.content.res` (`TypedArray`, `Resources`), went through
+  `ViewHost.parseGravity` with the resources seam. The UI probe,
   the screens sweep on Fossify Gallery and Open Sudoku, `FrameworkStubsTest` and
   `DamageRectTest` give identical output before and after.
+- `runtime/java/com/macapk/loader/res/ResBackend.java` (new), `ArscRes.java`
+  (new): the resources half of step 0 of `docs/research/aosp-views.md`, the one
+  seam between the rest of the framework and Win.apk's own resources: the
+  members of `android.content.res` that AOSP 14's does not have (`macapk*`,
+  `MACAPK_ATTRSTYLE`, `Theme.resolveAttrColor` / `resolveAttrRaw`, five
+  `Configuration.CONFIG_*`) and `com.macapk.loader.ResourceIndex`. Every call
+  into them from outside the resources side (`android.content.res` and its
+  helpers `ResourceIndex`, `ArscReader`, `BinaryXmlParser`,
+  `DomXmlResourceParser`, `axml/`) now goes through it, the reflective ones
+  (`ri.getClass().getMethod("resolveAttrInTheme", ...)` and the like, in
+  `LayoutInflater`, `VectorDrawable`, `Button`, `Activity`, `AppClassLoader`,
+  `PreferenceDefaultsScanner`) included, with no change in behaviour. Grouped as
+  the interface is: the app's resource index (open one, `isIndex`, get and set
+  the process's, the framework table's prefetch, the package name), lookups on
+  an index (theme name, type and name of an id, ids by name, strings, integers,
+  bools, colours, dimens, a theme's attribute, styles as an opaque value with
+  `styleParent` / `styleItems`, file resources, the locales, the size
+  qualifiers), the current table's static lookups, theme colours and values for
+  Win.apk's chrome, framework drawables / tints / densities, `Configuration`
+  (phone defaults, screen layout, the system configuration's edit, the
+  `CONFIG_*` bits), `TypedArray`'s record and `@null` test. The index is
+  opaque (an `Object`, as `Resources.macapkGetResourceIndex` always handed it
+  out). `ArscRes` calls the member each method stands for and nothing else;
+  `ResourceIndex.prefetchFrameworkTable` became public for it, `Boot` holds the
+  index as an `Object`, and `LayoutInflater.macapkInstallButtonDrawable` lost
+  its reflective `Method` parameter. 224 sites in 27 files:
+  `android/app/Activity.java`, `AlertDialog.java`, `Dialog.java`,
+  `LocaleManager.java`, `android/graphics/BitmapFactory.java`,
+  `drawable/VectorDrawable.java`, `android/view/LayoutInflater.java`,
+  `View.java`, `android/widget/Button.java`, `CompoundButton.java`,
+  `NumberPicker.java`, `PopupMenu.java`, `ProgressBar.java`, `Switch.java`,
+  `TextView.java`, `Toolbar.java`, `com/macapk/loader/ActivityHost.java`,
+  `AppClassLoader.java`, `AppLanguages.java`, `Boot.java`,
+  `ComposeViewFallback.java`, `DisplayConfig.java`, `FrameworkWindowStyle.java`,
+  `MacApkPackageManager.java`, `PreferenceDefaultsScanner.java`,
+  `StatusBarDriver.java`, `ViewCanvasDriver.java`. The UI probe, the screens
+  sweep on Fossify Gallery and Open Sudoku, `FrameworkStubsTest` and
+  `DamageRectTest` give identical output before and after; a scan of the built classes finds no
+  reference to those members from outside the resources side but `ArscRes`.
 
 ## License
 

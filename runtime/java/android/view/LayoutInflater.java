@@ -30,6 +30,7 @@ import com.macapk.loader.gfx.GfxBackend;
 import android.content.Context;
 import com.macapk.loader.NativeLog;
 
+import com.macapk.loader.res.ResBackend;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.NamedNodeMap;
@@ -2257,14 +2258,12 @@ public class LayoutInflater {
     }
 
     /** Resolve a @dimen NAME to its raw declared string ("2.0dp") via
-     *  the ResourceIndex dimension table. Reflective so this framework
-     *  class stays decoupled from com.macapk.loader. */
+     *  the ResourceIndex dimension table, through ResBackend. */
     private String macapkDimenRaw(String name) {
         try {
-            Object ri = android.content.res.Resources.macapkGetResourceIndex();
+            Object ri = ResBackend.get().resourceIndex();
             if (ri == null) return null;
-            Object v = ri.getClass().getMethod("getDimenRaw", String.class)
-                .invoke(ri, name);
+            Object v = ResBackend.get().indexDimenRaw(ri, name);
             return v == null ? null : v.toString();
         } catch (Throwable t) { return null; }
     }
@@ -2273,8 +2272,7 @@ public class LayoutInflater {
      *  "actionBarSize") to its raw declared value through the active application
      *  theme cascade -- ResourceIndex.resolveAttrInTheme(applicationTheme, attr).
      *  Returns the raw value (often a `@dimen/...` reference the caller resolves
-     *  next), or null when the theme doesn't define the attr. Reflective so this
-     *  framework class stays decoupled from com.macapk.loader. */
+     *  next), or null when the theme doesn't define the attr. Through ResBackend. */
     /** Map an app:barrierDirection enum value (name or int) to the Barrier
      *  type int. Values per the ConstraintLayout attrs enum. */
     private int parseBarrierDirection(String v) {
@@ -2309,12 +2307,11 @@ public class LayoutInflater {
 
     private String macapkThemeAttrRaw(String attrName) {
         try {
-            Object ri = android.content.res.Resources.macapkGetResourceIndex();
+            Object ri = ResBackend.get().resourceIndex();
             if (ri == null) return null;
-            Object theme = ri.getClass().getMethod("getApplicationThemeName").invoke(ri);
+            Object theme = ResBackend.get().indexApplicationThemeName(ri);
             if (theme == null) return null;
-            Object v = ri.getClass().getMethod("resolveAttrInTheme", String.class, String.class)
-                .invoke(ri, theme.toString(), attrName);
+            Object v = ResBackend.get().indexResolveAttrInTheme(ri, theme.toString(), attrName);
             return v == null ? null : v.toString();
         } catch (Throwable t) { return null; }
     }
@@ -2325,10 +2322,9 @@ public class LayoutInflater {
      *  raw declared value or null. */
     private String macapkStyleAttrRaw(String styleName, String attrName) {
         try {
-            Object ri = android.content.res.Resources.macapkGetResourceIndex();
+            Object ri = ResBackend.get().resourceIndex();
             if (ri == null || styleName == null) return null;
-            Object v = ri.getClass().getMethod("resolveAttrInTheme", String.class, String.class)
-                .invoke(ri, styleName, attrName);
+            Object v = ResBackend.get().indexResolveAttrInTheme(ri, styleName, attrName);
             return v == null ? null : v.toString();
         } catch (Throwable t) { return null; }
     }
@@ -2395,9 +2391,9 @@ public class LayoutInflater {
                     String fw = com.macapk.loader.FrameworkAttrIds.name(id);
                     return (fw == null || fw.isEmpty()) ? null : "android:" + fw;
                 }
-                Object ri = android.content.res.Resources.macapkGetResourceIndex();
+                Object ri = ResBackend.get().resourceIndex();
                 if (ri == null) return null;
-                Object tn = ri.getClass().getMethod("macapkTypeNameOf", int.class).invoke(ri, id);
+                Object tn = ResBackend.get().indexTypeNameOf(ri, id);
                 if (tn instanceof String[] a && a.length >= 2 && "attr".equals(a[0])) return a[1];
             } catch (Throwable ignored) {}
             return null;
@@ -2439,14 +2435,13 @@ public class LayoutInflater {
             String raw = null;
             try {
                 if (theme != null) {
-                    raw = theme.resolveAttrRaw(attr);
+                    raw = ResBackend.get().resolveAttrRaw(theme, attr);
                 } else {
-                    Object ri = android.content.res.Resources.macapkGetResourceIndex();
+                    Object ri = ResBackend.get().resourceIndex();
                     Object app = ri == null ? null
-                        : ri.getClass().getMethod("getApplicationThemeName").invoke(ri);
+                        : ResBackend.get().indexApplicationThemeName(ri);
                     if (app != null) {
-                        Object v = ri.getClass().getMethod("resolveAttrInTheme",
-                            String.class, String.class).invoke(ri, app.toString(), attr);
+                        Object v = ResBackend.get().indexResolveAttrInTheme(ri, app.toString(), attr);
                         raw = v == null ? null : v.toString();
                     }
                 }
@@ -2497,10 +2492,9 @@ public class LayoutInflater {
             return null;   // "@dimen/x" and friends: not a style
         }
         try {
-            Object ri = android.content.res.Resources.macapkGetResourceIndex();
+            Object ri = ResBackend.get().resourceIndex();
             if (ri == null) return null;
-            Object n = ri.getClass().getMethod("styleNameForIdRefPublic", String.class)
-                .invoke(ri, "@0x" + Integer.toHexString(id));
+            Object n = ResBackend.get().indexStyleNameForIdRef(ri, "@0x" + Integer.toHexString(id));
             if (n == null) return null;
             String name = n.toString();
             return ((id >>> 24) == 0x01) ? "@android:style/" + name : name;
@@ -2541,10 +2535,9 @@ public class LayoutInflater {
         if (ref.startsWith("@style/")) return ref.substring(7);
         if (ref.startsWith("@")) {
             try {
-                Object ri = android.content.res.Resources.macapkGetResourceIndex();
+                Object ri = ResBackend.get().resourceIndex();
                 if (ri != null) {
-                    Object n = ri.getClass().getMethod("styleNameForIdRefPublic", String.class)
-                        .invoke(ri, ref);
+                    Object n = ResBackend.get().indexStyleNameForIdRef(ri, ref);
                     if (n != null) return n.toString();
                 }
             } catch (Throwable ignored) {}
@@ -3325,18 +3318,15 @@ public class LayoutInflater {
                     }
                     name = ref.substring(7);
                 }
-                Object ri = android.content.res.Resources
-                    .macapkGetResourceIndex();
+                Object ri = ResBackend.get().resourceIndex();
                 if (ri == null) return styleItemsCache;
-                java.lang.reflect.Method byName = ri.getClass()
-                    .getMethod("getStyleByName", String.class);
                 java.util.ArrayList<Object> chain = new java.util.ArrayList<>();
                 java.util.HashSet<String> seen = new java.util.HashSet<>();
                 while (name != null && seen.add(name)) {
-                    Object def = byName.invoke(ri, name);
+                    Object def = ResBackend.get().indexStyleByName(ri, name);
                     if (def == null) break;
                     chain.add(def);
-                    Object parent = def.getClass().getField("parent").get(def);
+                    Object parent = ResBackend.get().styleParent(def);
                     name = parent == null ? null : parent.toString();
                     if (name != null && name.startsWith("@style/")) {
                         name = name.substring(7);
@@ -3344,7 +3334,7 @@ public class LayoutInflater {
                 }
                 for (int i = chain.size() - 1; i >= 0; i--) {
                     Object def = chain.get(i);
-                    Object items = def.getClass().getField("items").get(def);
+                    Object items = ResBackend.get().styleItems(def);
                     if (items instanceof java.util.Map<?, ?> mp) {
                         for (java.util.Map.Entry<?, ?> en : mp.entrySet()) {
                             String k = String.valueOf(en.getKey());
@@ -4116,12 +4106,9 @@ public class LayoutInflater {
                 if (trace) android.util.Log.i("Mac.apk.DefStyle", "skip class=" + cn);
                 return;
             }
-            Object ri = android.content.res.Resources.macapkGetResourceIndex();
+            Object ri = ResBackend.get().resourceIndex();
             if (ri == null) return;
-            java.lang.reflect.Method mResolve = ri.getClass()
-                .getMethod("resolveAttrInTheme", String.class, String.class);
-            Object appTheme = ri.getClass()
-                .getMethod("getApplicationThemeName").invoke(ri);
+            Object appTheme = ResBackend.get().indexApplicationThemeName(ri);
             if (!(appTheme instanceof String)) return;
             // The attribute's namespace follows the class, as each constructor
             // picks it on a device: a framework widget (or an app's subclass of
@@ -4135,7 +4122,7 @@ public class LayoutInflater {
             // and preferences). MACAPK_DEFSTYLE_BARE=1 brings back the bare query.
             final String queryAttr = !MACAPK_DEFSTYLE_BARE && !macapkLibraryWidget(view.getClass())
                     ? "android:" + defStyleAttr : defStyleAttr;
-            Object sr = mResolve.invoke(ri, appTheme, queryAttr);
+            Object sr = ResBackend.get().indexResolveAttrInTheme(ri, (String) appTheme, queryAttr);
             if (trace) android.util.Log.i("Mac.apk.DefStyle",
                 "cn=" + cn + " appTheme=" + appTheme + " " + queryAttr + "=" + sr);
             if (!(sr instanceof String)) return;
@@ -4171,7 +4158,7 @@ public class LayoutInflater {
                 String a = styleName.substring(1);
                 if (a.startsWith("android:attr/")) a = a.substring(13);
                 else if (a.startsWith("attr/"))    a = a.substring(5);
-                Object nx = mResolve.invoke(ri, appTheme, a);
+                Object nx = ResBackend.get().indexResolveAttrInTheme(ri, (String) appTheme, a);
                 if (!(nx instanceof String)) return;
                 String next = ((String) nx).trim();
                 if (next.equals(styleName)) return;   // self-reference
@@ -4247,14 +4234,14 @@ public class LayoutInflater {
                 // Maccabi). MACAPK_DEFSTYLE_UNDER_ELEMENT=1 restores that.
                 if (!MACAPK_DEFSTYLE_UNDER_ELEMENT && elem != null
                         && elem.hasAttributeNS(MACAPK_ANDROID_NS, attr)) continue;
-                Object v = mResolve.invoke(ri, styleName, attr);
+                Object v = ResBackend.get().indexResolveAttrInTheme(ri, styleName, attr);
                 if (trace) android.util.Log.i("Mac.apk.DefStyle",
                     "  " + styleName + "." + attr + " = " + v);
                 if (v instanceof String && !((String) v).isEmpty()) {
                     sitems.put(attr, (String) v);
                 }
             }
-            if (compound) macapkInstallButtonDrawable(view, sitems, ri, mResolve, appTheme, trace, elem);
+            if (compound) macapkInstallButtonDrawable(view, sitems, ri, appTheme, trace, elem);
         } catch (Throwable ignored) {}
     }
 
@@ -4296,7 +4283,7 @@ public class LayoutInflater {
                 // `MACAPK_ATTRSTYLE=0`) so the fleet A/B for a change that touches
                 // EVERY EditText in every app comes from ONE binary rather than
                 // from two builds taken ~15 minutes apart.
-                return android.content.res.Resources.MACAPK_ATTRSTYLE
+                return ResBackend.get().attrStyleLane()
                     ? "editTextStyle" : null;
             default:                     return null;
         }
@@ -4319,16 +4306,17 @@ public class LayoutInflater {
      *  row by the drawable's 32dp intrinsic height, which is strictly worse than
      *  drawing nothing. So: no tint, no install.
      *
-     *  The six-argument form is the one the offline gates reflect on (and the one
-     *  the pinned pre-change control still has); it is this method with no layout
-     *  element, i.e. nothing is known about an android:button on the tag. */
+     *  The five-argument form is the one the offline gates reflect on (the
+     *  six-argument one, with the resolver as a reflective Method, before
+     *  ResBackend; the pinned pre-change control still has that); it is this
+     *  method with no layout element, i.e. nothing is known about an
+     *  android:button on the tag. */
     private void macapkInstallButtonDrawable(View view,
                                              java.util.Map<String, String> sitems,
                                              Object ri,
-                                             java.lang.reflect.Method mResolve,
                                              Object appTheme,
                                              boolean trace) {
-        macapkInstallButtonDrawable(view, sitems, ri, mResolve, appTheme, trace, null);
+        macapkInstallButtonDrawable(view, sitems, ri, appTheme, trace, null);
     }
 
     /** @param elem the layout element the view was inflated from, or null. Read
@@ -4337,7 +4325,6 @@ public class LayoutInflater {
     private void macapkInstallButtonDrawable(View view,
                                              java.util.Map<String, String> sitems,
                                              Object ri,
-                                             java.lang.reflect.Method mResolve,
                                              Object appTheme,
                                              boolean trace,
                                              Element elem) {
@@ -4353,7 +4340,7 @@ public class LayoutInflater {
                 String a = ref.substring(1);
                 if (a.startsWith("android:attr/")) a = a.substring(13);
                 else if (a.startsWith("attr/"))    a = a.substring(5);
-                Object nx = mResolve.invoke(ri, appTheme, a);
+                Object nx = ResBackend.get().indexResolveAttrInTheme(ri, (String) appTheme, a);
                 if (!(nx instanceof String) || ((String) nx).trim().equals(ref)) return;
                 ref = ((String) nx).trim();
             }
@@ -4431,7 +4418,7 @@ public class LayoutInflater {
                 String synth = (view instanceof android.widget.RadioButton)
                         ? "btn_radio_material" : "btn_check_material";
                 android.graphics.drawable.Drawable fb =
-                        r.macapkFrameworkDrawableByName(synth, macapkThemeOf(view));
+                        ResBackend.get().frameworkDrawableByName(r, synth, macapkThemeOf(view));
                 if (fb == null) return;
                 if (trace) android.util.Log.i("Mac.apk.DefStyle",
                     "  button=" + ref + " unresolved (did=" + did + " tintId=" + cid
@@ -4536,10 +4523,10 @@ public class LayoutInflater {
                     android.content.Context vc = cb.getContext();
                     if (vc != null) th = vc.getTheme();
                 } catch (Throwable ignored) {}
-                d = r.macapkFrameworkDrawableByName(name, th);
+                d = ResBackend.get().frameworkDrawableByName(r, name, th);
                 if (d == null) standIn = radio ? "btn_radio_material" : "btn_check_material";
             }
-            if (d == null) d = r.macapkFrameworkDrawableByName(standIn, macapkThemeOf(cb));
+            if (d == null) d = ResBackend.get().frameworkDrawableByName(r, standIn, macapkThemeOf(cb));
             if (d == null) return;
             if (trace) android.util.Log.i("Mac.apk.DefStyle",
                 "  button=@android:drawable/" + name + " -> "
@@ -4664,7 +4651,7 @@ public class LayoutInflater {
                 if (rawText == null || macapkResolveColorValue(rawText, vth) == null) {
                     Integer on = macapkMaterialOverlayColor(elem, "colorOnContainer");
                     if (on == null || (on >>> 24) == 0) {
-                        on = android.content.res.Resources.macapkThemeColor(
+                        on = ResBackend.get().themeColor(
                             "colorOnPrimary", 0xFFFFFFFF);
                     }
                     tv.setTextColor(on);
@@ -4775,11 +4762,9 @@ public class LayoutInflater {
      *  knows a selector name, a colour name or a package name. */
     private Integer macapkMaterialOverlayColor(Element elem, String targetAttr) {
         try {
-            Object ri = android.content.res.Resources.macapkGetResourceIndex();
+            Object ri = ResBackend.get().resourceIndex();
             if (ri == null) return null;
-            java.lang.reflect.Method mResolve = ri.getClass()
-                .getMethod("resolveAttrInTheme", String.class, String.class);
-            Object appTheme = ri.getClass().getMethod("getApplicationThemeName").invoke(ri);
+            Object appTheme = ResBackend.get().indexApplicationThemeName(ri);
             if (!(appTheme instanceof String)) return null;
             String theme = (String) appTheme;
             // Tier 2 then tier 3: the tag's own style=, else the theme's
@@ -4789,26 +4774,26 @@ public class LayoutInflater {
                 String attr = styleRef.substring(1);
                 int sl = attr.indexOf('/');
                 if (sl >= 0) attr = attr.substring(sl + 1);   // ?attr/x -> x
-                Object v = mResolve.invoke(ri, theme, attr);
+                Object v = ResBackend.get().indexResolveAttrInTheme(ri, theme, attr);
                 styleRef = (v instanceof String) ? (String) v : null;
             }
             if (styleRef == null) {
-                Object v = mResolve.invoke(ri, theme, "materialButtonStyle");
+                Object v = ResBackend.get().indexResolveAttrInTheme(ri, theme, "materialButtonStyle");
                 styleRef = (v instanceof String) ? (String) v : null;
             }
             String styleName = macapkStyleRefName(styleRef);
             if (styleName == null) return null;
             String raw = null;
-            Object ov = mResolve.invoke(ri, styleName, "materialThemeOverlay");
+            Object ov = ResBackend.get().indexResolveAttrInTheme(ri, styleName, "materialThemeOverlay");
             String overlay = macapkStyleRefName(ov instanceof String ? (String) ov : null);
             if (overlay != null) {
-                Object t = mResolve.invoke(ri, overlay, targetAttr);
+                Object t = ResBackend.get().indexResolveAttrInTheme(ri, overlay, targetAttr);
                 if (t instanceof String) raw = (String) t;
             }
             if (raw == null) {
                 // No overlay, or it does not carry the token: the Material baseline
                 // pattern puts the colour straight on the widget style.
-                Object t = mResolve.invoke(ri, styleName, targetAttr);
+                Object t = ResBackend.get().indexResolveAttrInTheme(ri, styleName, targetAttr);
                 if (t instanceof String) raw = (String) t;
             }
             if (raw == null) return null;
@@ -6218,7 +6203,7 @@ public class LayoutInflater {
                 String themed = null;
                 try {
                     android.content.res.Resources.Theme th = context != null ? context.getTheme() : null;
-                    if (th != null) themed = android.content.res.Resources.macapkThemeAttrRawFor(s, th);
+                    if (th != null) themed = ResBackend.get().themeAttrRawFor(s, th);
                 } catch (Throwable ignored) { }
                 if (themed != null && !themed.isEmpty() && themed.charAt(0) != '?') {
                     s = themed;
@@ -6400,7 +6385,7 @@ public class LayoutInflater {
                 String attr = cur.substring(1);
                 if (attr.startsWith("android:attr/")) attr = "android:" + attr.substring(13);
                 else if (attr.startsWith("attr/")) attr = attr.substring(5);
-                String raw = bgTheme.resolveAttrRaw(attr);
+                String raw = ResBackend.get().resolveAttrRaw(bgTheme, attr);
                 if (raw == null) break;
                 raw = raw.trim();
                 if (raw.isEmpty() || raw.equals(cur)) break;
@@ -6475,7 +6460,7 @@ public class LayoutInflater {
                 android.content.res.Resources r = view.getResources();
                 if (r == null) return;
                 android.graphics.drawable.Drawable fw =
-                    r.macapkFrameworkDrawableByName(value.substring(18), macapkThemeOf(view));
+                    ResBackend.get().frameworkDrawableByName(r, value.substring(18), macapkThemeOf(view));
                 if (fw != null) { view.setBackground(fw); return; }
             } catch (Throwable ignored) {}
             return;
@@ -6680,7 +6665,7 @@ public class LayoutInflater {
                 if (attr.startsWith("android:attr/")) attr = "android:" + attr.substring(13);
                 else if (attr.startsWith("attr/")) attr = attr.substring(5);
                 lastAttr = attr;
-                String raw = th.resolveAttrRaw(attr);
+                String raw = ResBackend.get().resolveAttrRaw(th, attr);
                 if (raw == null) break;
                 raw = raw.trim();
                 if (raw.isEmpty() || raw.equals(cur)) break;
@@ -6704,7 +6689,7 @@ public class LayoutInflater {
                 // synthesized Material indicator, as for an unresolved attr.
                 if ("btn_radio_material_anim".equals(fw)) fw = "btn_radio_material";
                 else if ("btn_check_material_anim".equals(fw)) fw = "btn_check_material";
-                dr = r.macapkFrameworkDrawableByName(fw, th);
+                dr = ResBackend.get().frameworkDrawableByName(r, fw, th);
             } else if (cur.startsWith("@0x") || cur.startsWith("@0X")) {
                 int id = (int) Long.parseLong(cur.substring(3), 16);
                 if (id != 0) dr = r.getDrawable(id, th);
@@ -6725,7 +6710,7 @@ public class LayoutInflater {
                          : a.startsWith("listChoiceIndicatorMultiple") ? "btn_check_material"
                          : null;
             if (synth != null) {
-                try { dr = r.macapkFrameworkDrawableByName(synth, th); } catch (Throwable ignored) {}
+                try { dr = ResBackend.get().frameworkDrawableByName(r, synth, th); } catch (Throwable ignored) {}
             }
         }
         return dr;
@@ -6768,11 +6753,9 @@ public class LayoutInflater {
         if (c != null) return c;
         if (v.startsWith("@color/")) {
             try {
-                Object ri = android.content.res.Resources.macapkGetResourceIndex();
+                Object ri = ResBackend.get().resourceIndex();
                 if (ri != null) {
-                    Object col = ri.getClass()
-                        .getMethod("getColorByName", String.class)
-                        .invoke(ri, v.substring(7));
+                    Object col = ResBackend.get().indexColorByName(ri, v.substring(7));
                     if (col instanceof Integer i) return i;
                 }
             } catch (Throwable ignored) {}
@@ -6792,7 +6775,7 @@ public class LayoutInflater {
             // (v868 the theme table vs its resolver, v870 this switch, v871 the
             // holo rows it was hiding). Deleting the shadow is the fix; making it
             // fall through was only a mitigation.
-            Integer fw = android.content.res.Resources.macapkResolveColorExpr(v);
+            Integer fw = ResBackend.get().resolveColorExpr(v);
             if (fw != null) return fw;
             return null;
         }
@@ -6806,8 +6789,8 @@ public class LayoutInflater {
             // uses -- so passing a theme can only ADD a resolution, never
             // remove one already working.
             int rc = (theme != null)
-                ? theme.resolveAttrColor(attr, 1 /* sentinel */)
-                : android.content.res.Resources.macapkThemeColor(attr, 1 /* sentinel */);
+                ? ResBackend.get().resolveAttrColor(theme, attr, 1 /* sentinel */)
+                : ResBackend.get().themeColor(attr, 1 /* sentinel */);
             return rc == 1 ? null : rc;
         }
         return null;
@@ -6845,7 +6828,7 @@ public class LayoutInflater {
                 if (attr.startsWith("android:attr/")) attr = "android:" + attr.substring(13);
                 else if (attr.startsWith("attr/")) attr = attr.substring(5);
                 String raw;
-                try { raw = th.resolveAttrRaw(attr); } catch (Throwable t) { raw = null; }
+                try { raw = ResBackend.get().resolveAttrRaw(th, attr); } catch (Throwable t) { raw = null; }
                 if (raw == null) return null;
                 raw = raw.trim();
                 if (raw.isEmpty() || raw.equals(cur)) return null;
@@ -6880,7 +6863,7 @@ public class LayoutInflater {
                 android.content.res.Resources r = (iv != null) ? iv.getResources() : null;
                 if (r != null) {
                     android.graphics.drawable.Drawable fw =
-                        r.macapkFrameworkDrawableByName(value.substring(18), macapkThemeOf(iv));
+                        ResBackend.get().frameworkDrawableByName(r, value.substring(18), macapkThemeOf(iv));
                     if (fw != null) iv.setImageDrawable(fw);
                 }
             } catch (Throwable ignored) {}

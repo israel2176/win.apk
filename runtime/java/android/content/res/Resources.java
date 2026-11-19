@@ -1996,7 +1996,7 @@ public class Resources {
     private static int macapkParseGravity(String v) {
         Integer n = macapkCompiledInt(v);
         if (n != null) return n;
-        return android.view.Gravity.parse(v);
+        return com.macapk.loader.view.ViewHost.get().parseGravity(v);
     }
 
     /** A drawable's XML as a DOM, read as macapkInflateXmlDrawable reads it (the platform files'

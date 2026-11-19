@@ -27,6 +27,7 @@ import android.app.Application;
 import android.content.Context;
 import android.content.SharedPreferences;
 
+import com.macapk.loader.res.ResBackend;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.NamedNodeMap;
@@ -83,10 +84,10 @@ public final class PreferenceDefaultsScanner {
         // served by the ResourceIndex (v1.0.1590; no decoded tree exists).
         java.util.List<Object[]> docs = new java.util.ArrayList<>();   // {label, InputStream}
         try {
-            Object ri = invokeStatic("android.content.res.Resources", "macapkGetResourceIndex");
-            if (ri instanceof ResourceIndex rix) {
-                for (int id : rix.macapkFileIdsOfType("xml")) {
-                    java.io.InputStream in = rix.openRaw(id);
+            Object ri = ResBackend.get().resourceIndex();
+            if (ResBackend.get().isIndex(ri)) {
+                for (int id : ResBackend.get().indexFileIdsOfType(ri, "xml")) {
+                    java.io.InputStream in = ResBackend.get().indexOpenRaw(ri, id);
                     if (in != null) docs.add(new Object[] { "0x" + Integer.toHexString(id), in });
                 }
             }
@@ -423,12 +424,6 @@ public final class PreferenceDefaultsScanner {
         }
     }
 
-    private static Object invokeStatic(String clsName, String method) throws Exception {
-        Class<?> cls = Class.forName(clsName);
-        java.lang.reflect.Method m = cls.getDeclaredMethod(method);
-        m.setAccessible(true);
-        return m.invoke(null);
-    }
     private static Object invoke(Object target, String method) throws Exception {
         java.lang.reflect.Method m = target.getClass().getDeclaredMethod(method);
         m.setAccessible(true);

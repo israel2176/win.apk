@@ -10,6 +10,7 @@ import android.content.Context;
 import android.content.DialogInterface;
 import android.view.KeyEvent;
 import android.view.View;
+import com.macapk.loader.res.ResBackend;
 
 // 2026-08-13 (type-identity audit, docs/type-identity-audit_2026-08-12.md):
 // AOSP's real declaration is `public class Dialog implements
@@ -935,12 +936,12 @@ public class Dialog implements DialogInterface, android.content.DialogInterface.
                     android.content.res.Resources.Theme th =
                             (c != null) ? c.getTheme() : null;
                     if (th != null) {
-                        fill = th.resolveAttrColor("colorBackgroundFloating", 0xFFFFFFFF);
+                        fill = ResBackend.get().resolveAttrColor(th, "colorBackgroundFloating", 0xFFFFFFFF);
                         gotFill = true;
                     }
                 } catch (Throwable ignored) {}
                 if (!gotFill) {
-                    fill = android.content.res.Resources.macapkThemeColor(
+                    fill = ResBackend.get().themeColor(
                             "colorBackgroundFloating", 0xFFFFFFFF);
                 }
                 float density = android.util.DisplayMetrics.macapkDeviceDensity();
@@ -1314,7 +1315,7 @@ public class Dialog implements DialogInterface, android.content.DialogInterface.
         android.content.res.Configuration c = new android.content.res.Configuration();
         c.screenWidthDp = (int) (availW / density + 0.5f);
         c.screenHeightDp = (int) (availH / density + 0.5f);
-        c.macapkDeriveScreenLayout();
+        ResBackend.get().deriveScreenLayout(c);
         return c.screenLayout & android.content.res.Configuration.SCREENLAYOUT_SIZE_MASK;
     }
 

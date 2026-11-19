@@ -41,6 +41,7 @@
 // validation behavior).
 package com.macapk.loader;
 
+import com.macapk.loader.res.ResBackend;
 import java.io.File;
 import java.io.IOException;
 import java.net.URL;
@@ -2167,14 +2168,9 @@ public final class AppClassLoader extends dalvik.system.PathClassLoader {
         if (!R_TYPES.contains(type)) return;
         Object idx;
         try {
-            idx = android.content.res.Resources.macapkGetResourceIndex();
+            idx = ResBackend.get().resourceIndex();
         } catch (Throwable t) { return; }
         if (idx == null) return;
-        java.lang.reflect.Method idOfName;
-        try {
-            idOfName = idx.getClass().getMethod(
-                "idOfName", String.class, String.class, String.class);
-        } catch (NoSuchMethodException e) { return; }
         int set = 0;
         for (java.lang.reflect.Field f : c.getDeclaredFields()) {
             int mods = f.getModifiers();
@@ -2182,7 +2178,7 @@ public final class AppClassLoader extends dalvik.system.PathClassLoader {
             if (java.lang.reflect.Modifier.isFinal(mods)) continue;
             if (f.getType() != int.class) continue;
             try {
-                Object id = idOfName.invoke(idx, f.getName(), type, null);
+                Object id = ResBackend.get().indexIdOfName(idx, f.getName(), type, null);
                 if (id instanceof Integer && (Integer) id != 0) {
                     f.setAccessible(true);
                     f.setInt(null, (Integer) id);

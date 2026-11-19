@@ -104,12 +104,6 @@ the app); if it is still there, it is a bug in what replaced it.
 
 ## Work started and not merged
 
-- **`ResBackend` seam (step 0, resources half)**: done and gated (identical
-  probe, Gallery and Sudoku output) on top of 45da016, but it conflicts with
-  the `ViewHost` seam (57a8987) in `AlertDialog`, `DisplayConfig`,
-  `StatusBarDriver`, `ViewCanvasDriver` and the README. The commit is
-  `docs/research/pending/res-seam.patch` (`git am -3` it and resolve, then
-  rerun the identical-output gate).
 - **AOSP graphics, what is missing** (README "Milestone 2"): AOSP drawables
   inflating themselves from XML (`com.android.internal.R.styleable`,
   `TypedArray.getComplexColor`), vector gradient fills, AnimatedVectorDrawable
