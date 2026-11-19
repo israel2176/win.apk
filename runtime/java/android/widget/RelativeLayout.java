@@ -1432,16 +1432,23 @@ public class RelativeLayout extends ViewGroup {
                 final boolean widthMatchParent  = (lp != null && lp.width  == ViewGroup.LayoutParams.MATCH_PARENT);
                 final boolean heightMatchParent = (lp != null && lp.height == ViewGroup.LayoutParams.MATCH_PARENT);
 
+                // AOSP positionAtEdge: the child sits at the start edge (the right
+                // one under RTL) at its MEASURED width, 0 included: an empty
+                // wrap_content TextView is 0 wide there. Win.apk stretched a 0-wide
+                // child across the parent and kept it on the left under RTL (the
+                // screens sweep: Fossify's empty settings_language, 328 dp where
+                // Android has 0). MACAPK_RL_MATCH_FILLS=1 restores that.
+                final boolean emptyFills = MACAPK_RL_MATCH_FILLS && childW <= 0;
                 if (leftPos == Integer.MIN_VALUE && rightPos == Integer.MIN_VALUE
-                        && macapkRtlDefault() && !widthMatchParent && childW > 0) {
+                        && macapkRtlDefault() && !widthMatchParent && !emptyFills) {
                     rightPos = parentW - padRight - margR;
-                    leftPos = rightPos - childW;
+                    leftPos = rightPos - Math.max(0, childW);
                 } else if (leftPos == Integer.MIN_VALUE && rightPos == Integer.MIN_VALUE) {
                     leftPos = padLeft + margL;
                     if (widthMatchParent) {
-                        rightPos = parentW - padRight - margR;
-                    } else if (childW > 0) {
-                        rightPos = leftPos + childW;
+                        rightPos = macapkMatchEnd(leftPos, childW, parentW - padRight - margR);
+                    } else if (childW > 0 || !emptyFills) {
+                        rightPos = leftPos + Math.max(0, childW);
                     } else {
                         rightPos = parentW - padRight - margR;
                     }
@@ -1456,7 +1463,7 @@ public class RelativeLayout extends ViewGroup {
                     leftPos = rightPos - childW;
                 } else if (rightPos == Integer.MIN_VALUE) {
                     rightPos = widthMatchParent
-                                ? parentW - padRight - margR
+                                ? macapkMatchEnd(leftPos, childW, parentW - padRight - margR)
                                 : leftPos + childW;
                 }
 
@@ -1482,11 +1489,13 @@ public class RelativeLayout extends ViewGroup {
                 }
 
                 if (topPos == Integer.MIN_VALUE && bottomPos == Integer.MIN_VALUE) {
+                    // AOSP positionAtEdge, as the horizontal twin above: the
+                    // measured height, 0 included.
                     topPos = padTop + margT;
                     if (heightMatchParent) {
-                        bottomPos = parentH - padBottom - margB;
-                    } else if (childH > 0) {
-                        bottomPos = topPos + childH;
+                        bottomPos = macapkMatchEnd(topPos, childH, parentH - padBottom - margB);
+                    } else if (childH > 0 || !MACAPK_RL_MATCH_FILLS) {
+                        bottomPos = topPos + Math.max(0, childH);
                     } else {
                         bottomPos = parentH - padBottom - margB;
                     }
@@ -1509,7 +1518,7 @@ public class RelativeLayout extends ViewGroup {
                     topPos = bottomPos - childH;
                 } else if (bottomPos == Integer.MIN_VALUE) {
                     bottomPos = heightMatchParent
-                                ? parentH - padBottom - margB
+                                ? macapkMatchEnd(topPos, childH, parentH - padBottom - margB)
                                 : topPos + childH;
                 }
 
