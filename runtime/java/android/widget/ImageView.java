@@ -90,7 +90,13 @@ public class ImageView extends View {
                 a, new int[]{0x01010119 /* android.R.attr.src */}, defStyleAttr, defStyleRes);
             int srcId = ta.getResourceId(0, 0);
             if (srcId != 0) {
-                android.graphics.drawable.Drawable d = c.getResources().getDrawable(srcId);
+                // AOSP reads it as `a.getDrawable(R.styleable.ImageView_src)`, which loads the
+                // drawable with the theme the attributes were obtained through, so a vector's
+                // `android:tint="?android:textColor"` resolves. Under the AOSP graphics switch
+                // only: there AOSP's drawables inflate themselves and read their ?attr values
+                // when inflated (the Java2D path keeps its theme-less load).
+                android.graphics.drawable.Drawable d = THEMED_DRAWABLES
+                        ? ta.getDrawable(0) : c.getResources().getDrawable(srcId);
                 if (d != null) setImageDrawable(d);
             }
             ta.recycle();
@@ -117,6 +123,8 @@ public class ImageView extends View {
      *  the attribute resolves, so an untinted ImageView is untouched; the
      *  inflater's direct XML case still runs afterwards and wins.
      *  MACAPK_IMAGEVIEW_THEME_TINT=0 restores the XML-only read. */
+    /** WINAPK_AOSP_GFX=1: the picture is loaded with the view's theme, as AOSP loads it. */
+    private static final boolean THEMED_DRAWABLES = GfxBackend.isAosp();
     static final boolean MACAPK_IMAGEVIEW_THEME_TINT =
         !"0".equals(System.getenv("MACAPK_IMAGEVIEW_THEME_TINT"));
     private void macapkApplyStyledTint(Context c, android.util.AttributeSet a,
@@ -426,8 +434,11 @@ public class ImageView extends View {
         // rather than crashing.
         try {
             if (getContext() != null && getContext().getResources() != null) {
-                android.graphics.drawable.Drawable d =
-                    getContext().getResources().getDrawable(resId);
+                // AOSP resolveUri: `mContext.getDrawable(mResource)`, with the view's theme
+                // (under the AOSP graphics switch; see macapkApplySrc).
+                android.graphics.drawable.Drawable d = THEMED_DRAWABLES
+                    ? getContext().getDrawable(resId)
+                    : getContext().getResources().getDrawable(resId);
                 if (d != null) setImageDrawable(d);
             }
         } catch (Throwable ignored) {}

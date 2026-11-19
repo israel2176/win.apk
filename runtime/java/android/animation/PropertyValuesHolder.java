@@ -119,6 +119,21 @@ public class PropertyValuesHolder implements Cloneable {
         p.type = T_PATH;
         return p;
     }
+    /** AnimatorInflater's path motion (AOSP:508-550: {@code android:pathData} with
+     *  {@code propertyXName} / {@code propertyYName}): the x or y of the point along `path` at the
+     *  fraction, as AOSP's PathKeyframes.createX/YFloatKeyframes give it, flattened with AOSP's
+     *  error (half the drawable's pixel size). */
+    static PropertyValuesHolder macapkOfPathCoordinate(String name, Path path, float error, final boolean x) {
+        PropertyValuesHolder p = new PropertyValuesHolder();
+        p.propertyName = name;
+        p.converter = new TypeConverter<PointF, Float>(PointF.class, Float.class) {
+            @Override public Float convert(PointF point) { return x ? point.x : point.y; }
+        };
+        p.pathData = path.approximate(error);
+        p.type = T_PATH;
+        return p;
+    }
+
     public static PropertyValuesHolder ofKeyframe(android.util.Property property, Keyframe... values) {
         PropertyValuesHolder p = new PropertyValuesHolder();
         p.property = property;
@@ -685,36 +700,35 @@ public class PropertyValuesHolder implements Cloneable {
         }
     }
 
-    /** AOSP getPropertyValues: the name, type and first and last values. */
+    /** AOSP getPropertyValues: the name, the type, the values at fractions 0 and 1 and, when there
+     *  are values between them (more than two keyframes or values), a source for the value at any
+     *  fraction. AOSP's AnimatedVectorDrawable reads its animators so (its render-thread animator's
+     *  init, VectorDrawableAnimatorRT.createRTAnimator). AOSP copies a PathData start and end out of
+     *  its evaluator's one mutable result; here they are the holder's own first and last values,
+     *  which the evaluator never writes. */
     public void getPropertyValues(PropertyValues values) {
         values.propertyName = propertyName;
         values.type = getValueType();
-        values.dataSource = null;
-        switch (type) {
-            case T_FLOAT:
-                if (floatValues != null && floatValues.length > 0) {
-                    values.startValue = floatValues[0];
-                    values.endValue = floatValues[floatValues.length - 1];
-                }
-                break;
-            case T_INT:
-                if (intValues != null && intValues.length > 0) {
-                    values.startValue = intValues[0];
-                    values.endValue = intValues[intValues.length - 1];
-                }
-                break;
-            case T_OBJECT:
-                if (objectValues != null && objectValues.length > 0) {
-                    values.startValue = objectValues[0];
-                    values.endValue = objectValues[objectValues.length - 1];
-                }
-                break;
-            default:
-                break;
+        if (type == T_OBJECT && objectValues != null && objectValues.length > 0) {
+            // Not through the evaluator: a PathData evaluator answers its one mutable result for both.
+            values.startValue = objectValues[0];
+            values.endValue = objectValues[objectValues.length - 1];
+        } else {
+            values.startValue = macapkValueAt(0f);
+            values.endValue = macapkValueAt(1f);
         }
+        // A path's points are values between the ends too (AOSP: PathKeyframes has a data source).
+        int stops = type == T_PATH ? 3
+                : type == T_KEYFRAME && keyframes != null ? keyframes.length
+                : type == T_FLOAT && floatValues != null ? floatValues.length
+                : type == T_INT && intValues != null ? intValues.length
+                : type == T_OBJECT && objectValues != null ? objectValues.length : 0;
+        values.dataSource = stops > 2 ? new PropertyValues.DataSource() {
+            @Override public Object getValueAtFraction(float fraction) { return macapkValueAt(fraction); }
+        } : null;
     }
 
-    /** AOSP getValueType: the type of the values animated. */
+    /** AOSP getValueType: the type of the values animated (for keyframes, the first keyframe's). */
     public Class getValueType() {
         switch (type) {
             case T_FLOAT: return float.class;
@@ -722,6 +736,11 @@ public class PropertyValuesHolder implements Cloneable {
             case T_OBJECT:
                 return objectValues != null && objectValues.length > 0 && objectValues[0] != null
                         ? objectValues[0].getClass() : Object.class;
+            case T_KEYFRAME:
+                return keyframes[0].getType() != null ? keyframes[0].getType() : Object.class;
+            case T_PATH:
+                // The converter's type (a float for a path coordinate), else the point itself.
+                return converter != null && converter.getToClass() != null ? converter.getToClass() : PointF.class;
             default: return Object.class;
         }
     }

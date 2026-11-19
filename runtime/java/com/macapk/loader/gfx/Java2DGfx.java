@@ -207,6 +207,15 @@ final class Java2DGfx implements GfxBackend {
         return null;
     }
 
+    @Override public android.animation.PropertyValuesHolder pathDataValues(String propertyName, String from,
+                                                                         String to) {
+        return null;
+    }
+
+    @Override public android.graphics.Path pathFromPathData(String pathData) {
+        return null;
+    }
+
     @Override public android.content.res.ComplexColor gradientColor(android.content.res.Resources res,
                                                                     org.w3c.dom.Element root,
                                                                     android.content.res.Resources.Theme theme) {

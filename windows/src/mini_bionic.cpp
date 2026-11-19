@@ -4,6 +4,7 @@
 
 #include "winapk/elf_tls.h"
 #include "winapk/guest_abi.h"
+#include "winapk/log_line.h"
 
 #include <atomic>
 #include <cerrno>
@@ -461,7 +462,8 @@ void log_line(int prio, const char* tag, const char* text) {
     // android_LogPriority: 2 VERBOSE .. 7 FATAL.
     static const char kLetters[] = "??VDIWEF";
     const char letter = (prio >= 0 && prio <= 7) ? kLetters[prio] : '?';
-    std::fprintf(stderr, "%c/%s: %s\n", letter, tag ? tag : "", text ? text : "");
+    // One write for the line (winapk/log_line.h): a "PROBE ..." line on stdout cannot land inside it.
+    write_stderr_line(std::string(1, letter) + "/" + (tag ? tag : "") + ": " + (text ? text : "") + "\n");
     std::fflush(stderr);
 }
 

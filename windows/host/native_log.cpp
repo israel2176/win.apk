@@ -1,10 +1,12 @@
 // native_log.cpp -- com.macapk.loader.NativeLog on Windows.
 
 #include "host_natives.h"
+#include "winapk/log_line.h"
 
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 
 #include <windows.h>
 
@@ -30,7 +32,10 @@ void JNICALL Log_print(JNIEnv* env, jclass, jint level, jstring tag_j, jstring m
     // Upstream's tags name the Mac port ("Mac.apk.ActivityHost"); the log the
     // user reads here is Win.apk's. Only the printed tag changes.
     const bool mac_tag = std::strncmp(tag, "Mac.apk", 7) == 0;
-    std::fprintf(stderr, "[%s] %s%s: %s\n", lv, mac_tag ? "Win.apk" : "", mac_tag ? tag + 7 : tag, msg);
+    // One write for the line (winapk/log_line.h): another thread's "PROBE ..." line on stdout
+    // cannot land inside it.
+    winapk::write_stderr_line(std::string("[") + lv + "] " + (mac_tag ? "Win.apk" : "") +
+                              (mac_tag ? tag + 7 : tag) + ": " + msg + "\n");
     // stderr is buffered (runtime_main.cpp, buffer_stderr): warnings and errors
     // go out at once, so the lines before a crash are on disk.
     if (level >= 5) std::fflush(stderr);
