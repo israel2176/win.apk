@@ -13,6 +13,7 @@
 package android.hardware.display;
 
 import android.view.Display;
+import com.macapk.loader.view.ViewHost;
 
 public class DisplayManager {
     /** AOSP DisplayManager.DisplayListener -- callers register to hear
@@ -23,7 +24,7 @@ public class DisplayManager {
         void onDisplayChanged(int displayId);
     }
 
-    private static final Display DEFAULT = new Display();
+    private static final Display DEFAULT = ViewHost.get().newDisplay();
 
     public DisplayManager() {}
 

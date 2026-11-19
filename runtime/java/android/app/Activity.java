@@ -32,6 +32,7 @@ import android.view.WindowManager;
 import com.macapk.loader.NativeCocoa;
 
 import java.io.File;
+import com.macapk.loader.view.ViewHost;
 
 // AOSP: `public class Activity extends ContextThemeWrapper implements
 // LayoutInflater.Factory2, Window.Callback, KeyEvent.Callback,
@@ -940,8 +941,8 @@ public class Activity extends ContextThemeWrapper
         if (sTouchDiag && sTouchDiagN < 40) { sTouchDiagN++;
             String cv = (contentView == null) ? "null"
                 : (contentView.getClass().getName()
-                   + " listener=" + (contentView.getOnTouchListener() == null ? "null"
-                        : contentView.getOnTouchListener().getClass().getName())
+                   + " listener=" + (ViewHost.get().onTouchListener(contentView) == null ? "null"
+                        : ViewHost.get().onTouchListener(contentView).getClass().getName())
                    + " tree=[" + macapkDescribeViewTree(contentView, 0) + "]");
             com.macapk.loader.NativeLog.i("Mac.apk.Touch",
                 "dispatchTouchEvent: fell through to activity.onTouchEvent (action="
@@ -1342,7 +1343,7 @@ public class Activity extends ContextThemeWrapper
                 // AOSP PhoneWindow.generateDecor: a DecorView holding this window
                 // (libraries find the root of a window by that class and field).
                 android.widget.FrameLayout d =
-                    new com.android.internal.policy.DecorView(activity, -1, this, getAttributes());
+                    ViewHost.get().newDecorView(activity, -1, this, getAttributes());
                 android.widget.FrameLayout c = new android.widget.FrameLayout(activity);
                 c.setId(0x01020002);  // android.R.id.content
                 d.addView(c);
@@ -2245,8 +2246,8 @@ public class Activity extends ContextThemeWrapper
                 // -- the per-window field the setter and generateLayout write.
                 return mStatusBarColor;
             }
-            int forced = Window.macapkForcedStatusBarColor();
-            return forced != Window.MACAPK_BAR_COLOR_UNSET ? forced : mStatusBarColor;
+            int forced = ViewHost.get().forcedStatusBarColor();
+            return forced != ViewHost.get().barColorUnset() ? forced : mStatusBarColor;
         }
         @Override public int getNavigationBarColor() {
             if (MACAPK_WINDOW_BAR_COLORS) {
@@ -2255,8 +2256,8 @@ public class Activity extends ContextThemeWrapper
                 //     return mNavigationBarColor;
                 return mEdgeToEdgeEnforced ? 0 : mNavigationBarColor;
             }
-            int forced = Window.macapkForcedNavigationBarColor();
-            return forced != Window.MACAPK_BAR_COLOR_UNSET ? forced : mNavigationBarColor;
+            int forced = ViewHost.get().forcedNavigationBarColor();
+            return forced != ViewHost.get().barColorUnset() ? forced : mNavigationBarColor;
         }
         /** android15 PhoneWindow.setStatusBarColor (:3970-3986): a no-op once
          *  edge-to-edge is enforced, else the colour becomes this window's and
@@ -2764,7 +2765,7 @@ public class Activity extends ContextThemeWrapper
                 // globals, which a window drag never updates.
                 int pxW = com.macapk.loader.DisplayConfig.realWidthPx();
                 int pxH = com.macapk.loader.DisplayConfig.realHeightPx();
-                android.view.SurfaceView.macapkSetOverlayDriver(overlay, pxW, pxH);
+                ViewHost.get().setOverlayDriver(overlay, pxW, pxH);
             }
         }
         if (viewHandle != 0) NativeCocoa.setContentView(sharedNativeWindow, viewHandle);
@@ -2791,7 +2792,7 @@ public class Activity extends ContextThemeWrapper
         if (BARE_SURFACE_ROOT_ATTACH) {
             if (prevBareSurfaceRoot != null && prevBareSurfaceRoot != view
                     && prevBareSurfaceRoot.isAttachedToWindow()) {
-                try { prevBareSurfaceRoot.macapkDispatchDetachedFromWindow(); }
+                try { ViewHost.get().dispatchDetachedFromWindow(prevBareSurfaceRoot); }
                 catch (Throwable t) {
                     com.macapk.loader.NativeLog.w("Mac.apk.Activity", "bare surface root detach failed: " + t);
                 }
@@ -2842,9 +2843,9 @@ public class Activity extends ContextThemeWrapper
     public void macapkAttachBareSurfaceRoot() {
         View v = bareSurfaceRoot;
         if (!BARE_SURFACE_ROOT_ATTACH || v == null || v != contentView) return;
-        if (v.macapkIsWindowRemoved() || v.isAttachedToWindow()) return;
+        if (ViewHost.get().isWindowRemoved(v) || v.isAttachedToWindow()) return;
         try {
-            v.macapkDispatchAttachedToWindow();
+            ViewHost.get().dispatchAttachedToWindow(v);
             com.macapk.loader.NativeLog.i("Mac.apk.Activity", "window-attached bare surface root "
                 + v.getClass().getName() + " (no ViewCanvasDriver owns it)");
         } catch (Throwable t) {
@@ -2896,7 +2897,7 @@ public class Activity extends ContextThemeWrapper
             Window w = getWindow();
             View d = (w != null) ? w.getDecorView() : null;
             if (d == null || d == installed) return;
-            d.macapkDispatchAttachedToWindow();
+            ViewHost.get().dispatchAttachedToWindow(d);
         } catch (Throwable t) {
             com.macapk.loader.NativeLog.w("Mac.apk.Activity",
                 "decor attach failed: " + t);
@@ -3076,7 +3077,7 @@ public class Activity extends ContextThemeWrapper
         if (REWIRE_KEEP_CANVAS && demoted != null) {
             int pxW = com.macapk.loader.DisplayConfig.realWidthPx();   // v1.0.1637, see above
             int pxH = com.macapk.loader.DisplayConfig.realHeightPx();
-            android.view.SurfaceView.macapkSetOverlayDriver(demoted, pxW, pxH);
+            ViewHost.get().setOverlayDriver(demoted, pxW, pxH);
             com.macapk.loader.NativeLog.i("Mac.apk.Activity",
                 "demoted canvas tree re-registered as the SurfaceView overlay ("
                 + pxW + "x" + pxH + "); the View tree keeps painting");
@@ -3085,7 +3086,7 @@ public class Activity extends ContextThemeWrapper
 
     private static long findNativeHandle(View root) {
         if (root == null) return 0;
-        if (root.getNativeHandle() != 0) return root.getNativeHandle();
+        if (ViewHost.get().nativeHandle(root) != 0) return ViewHost.get().nativeHandle(root);
         if (root instanceof ViewGroup vg) {
             for (int i = 0; i < vg.getChildCount(); ++i) {
                 long h = findNativeHandle(vg.getChildAt(i));

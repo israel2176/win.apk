@@ -68,6 +68,7 @@ package android.hardware.camera2.params;
 
 import android.util.Range;
 import android.util.Size;
+import com.macapk.loader.view.ViewHost;
 
 public final class StreamConfigurationMap {
 
@@ -230,7 +231,7 @@ public final class StreamConfigurationMap {
             return reader.getImageFormat() != android.graphics.ImageFormat.PRIVATE
                     && isOutputFormat(reader.getImageFormat());
         }
-        android.graphics.SurfaceTexture st = surface.macapkGetSurfaceTexture();
+        android.graphics.SurfaceTexture st = ViewHost.get().surfaceTexture(surface);
         return st != null && !st.isReleased();
     }
 

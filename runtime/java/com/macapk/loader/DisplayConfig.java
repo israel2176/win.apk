@@ -42,6 +42,7 @@ package com.macapk.loader;
 import android.content.res.Configuration;
 import android.content.res.Resources;
 import android.util.DisplayMetrics;
+import com.macapk.loader.view.ViewHost;
 
 public final class DisplayConfig {
     private static final String TAG = "Mac.apk.DisplayConfig";
@@ -124,9 +125,9 @@ public final class DisplayConfig {
                                boolean log) {
         final float density = (m.density > 0f) ? m.density
                 : android.util.DisplayMetrics.macapkDeviceDensity();
-        final int navW   = android.view.Display.macapkNavDecorWidthPx();
-        final int navH   = android.view.Display.macapkNavDecorHeightPx();
-        final int status = android.view.Display.macapkStatusDecorPx();
+        final int navW   = ViewHost.get().navDecorWidthPx();
+        final int navH   = ViewHost.get().navDecorHeightPx();
+        final int status = ViewHost.get().statusDecorPx();
         // DisplayMetrics = the APP area (v1.0.939): nav decor off the axis the
         // bar occupies (v1.0.997). Identical to Display.getWidth/getHeight.
         m.widthPixels  = realW - navW;
@@ -165,7 +166,7 @@ public final class DisplayConfig {
         // Display.getCurrentSizeRange's smallest.x.
         final int shortSide = Math.min(realW, realH), longSide = Math.max(realW, realH);
         final int sideNav = StatusBarDriver.navBarCanMove()
-                ? android.view.Display.macapkNavDecorPx() : 0;
+                ? ViewHost.get().navDecorPx() : 0;
         c.smallestScreenWidthDp =
             (int) (Math.min(shortSide, longSide - sideNav) / density + 0.5f);
         // screenLayout FOLLOWS the dp metrics (AOSP reduceScreenLayout).
@@ -412,7 +413,7 @@ public final class DisplayConfig {
         // 5. TRAVERSAL: a new configuration forces the next frame to measure
         //    and lay out (ViewRootImpl.updateConfiguration -> requestLayout).
         if (android.os.Looper.MACAPK_REAL_LOOPER) {
-            try { android.view.ViewRootImpl.scheduleLayout(); } catch (Throwable ignored) {}
+            try { ViewHost.get().scheduleLayout(); } catch (Throwable ignored) {}
         }
     }
 

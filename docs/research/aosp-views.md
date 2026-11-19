@@ -191,7 +191,25 @@ The way through is the one graphics took: seams first.
   `macapkTypeNameOf`), theme colours for Win.apk's chrome.
 - **`ViewHost`**: what drives a window's views. Attach, frame, damage, touch
   and key dispatch, the IME's active connection, drag, the status bar,
-  insets and the material chrome Win.apk paints.
+  insets and the material chrome Win.apk paints. **Done** (step 0, views
+  half): `com.macapk.loader.view.ViewHost`, implemented by `WinApkViewHost`.
+  Counted on the class files against android-all 14 (a member Win.apk's class
+  declares and AOSP's, with its superclasses and interfaces, does not, by name
+  and descriptor), plus constants javac inlines: 107 such members of
+  `android.view`, `android.widget` and `com.android.internal.policy` were used
+  from outside them at 208 sites in 33 files. 199 sites in 29 files now go
+  through `ViewHost` (by file: `TouchDispatcher` 40, `ViewCanvasDriver` 35,
+  `GLSurfaceView` 19, `StatusBarDriver` 16, `Activity` 15, `ActivityHost` 13,
+  `WindowOverlayStack` 7, `InputManager` 6, `HostVideo` 6, `MediaCodec` 5,
+  `MacApkEGL10` 5, `DisplayConfig` 5, and 1 to 3 in 17 more). Left direct, as
+  they cannot be routed or belong elsewhere: three `super()` constructor calls
+  (`Window()` from `Activity`'s and `Dialog`'s windows, `Dialog`'s anonymous
+  `DecorView`), `GLSurfaceView`'s three `super.` calls in the hooks it
+  overrides, `Gravity.parse` in `android.content.res` (2, for `ResBackend`),
+  and `ExtractEditText.setSelection` in `InputMethodService` (AOSP has it on
+  `EditText`). The UI probe, the screens sweep (Gallery, Sudoku),
+  `FrameworkStubsTest` and `DamageRectTest` give identical output before and
+  after (`windows/README.md`, "Changes to the upstream tree").
 
 Each seam has a Win.apk side (today's classes) and an AOSP side. With the
 switch off, every one of the 574 sites goes through a seam and nothing

@@ -2530,6 +2530,45 @@ every such change is listed here:
   `android/os/Parcel.java`, `android/animation/PropertyValuesHolder.java`.
   Under the switch only: `android/view/Gravity.java` places by AOSP's rules,
   and `Resources` logs a drawable that did not inflate.
+- `runtime/java/com/macapk/loader/view/ViewHost.java` (new), `WinApkViewHost.java`
+  (new): step 0 of `docs/research/aosp-views.md`, views half, the one seam
+  between the rest of the runtime and Win.apk's own `android.view` /
+  `android.widget` / `com.android.internal.policy` members that AOSP's classes
+  do not have (the `macapk*` methods and fields, `MacApkDragSession`,
+  `ViewRootImpl.getInstance`, Win.apk's constructors of `Display`,
+  `InputDevice`, `DecorView` and the in-process managers...). Every call from
+  outside those packages now goes through it, with no change in behaviour:
+  `WinApkViewHost` calls the member each method stands for on the same receiver
+  with the same arguments (a hook a subclass overrides is still called
+  virtually). Grouped as a window's root (attach, detach, remove, the window
+  records), the frame (traversals, damage, the tree observer, insets), input
+  (key fields, touch mode, hover, listeners, input devices), drag, the IME's
+  target, the display and the system bars, the view tree's owners, the
+  in-process services, dialog chrome, and `Surface` / `SurfaceView`'s GL, video
+  and encoder plumbing (`ViewHost.FrameSink` stands for `Surface.MacapkFrameSink`).
+  199 sites in 29 files: `android/app/Activity.java`, `AlertDialog.java`,
+  `Application.java`, `LocaleManager.java`, `NativeActivity.java`,
+  `android/content/Context.java`, `android/hardware/SensorManager.java`,
+  `camera2/CameraCaptureSessionImpl.java`, `camera2/params/StreamConfigurationMap.java`,
+  `display/DisplayManager.java`, `input/InputManager.java`,
+  `android/media/MediaCodec.java`, `android/opengl/GLSurfaceView.java`,
+  `android/webkit/WebView.java`, `javax/microedition/khronos/egl/MacApkEGL10.java`,
+  `MacApkGlWindow.java`, and in `com/macapk/loader/` `ActivityHost.java`,
+  `ComposeViewFallback.java`, `DisplayConfig.java`, `GamepadBridge.java`,
+  `HostVideo.java`, `InputRecorder.java`, `KeyLogPolicy.java`,
+  `MacApkWindowManager.java`, `StatusBarDriver.java`, `TouchDispatcher.java`,
+  `ViewCanvasDriver.java` (its reflective lookup of
+  `ViewRootImpl.macapkConsumeDamage` became the seam's call), `ViewTextDump.java`,
+  `WindowOverlayStack.java`. `android/view/SurfaceView.java`: the ten
+  `protected` GL hooks `GLSurfaceView` calls are `public` (still `final`), since
+  the seam calls them from another package. What stays direct: constructors
+  that are `super()` calls (`Activity`'s and `Dialog`'s `Window` subclasses,
+  `Dialog`'s anonymous `DecorView`), `GLSurfaceView`'s overrides of
+  `macapkDrawFrame` / `macapkSurfaceChanged` / `macapkRendersOnOsMain` and their
+  `super.` calls, `Dialog`'s override of `macapkOwnInflater`, and
+  `Gravity.parse` in `android.content.res` (the resources seam's). The UI probe,
+  the screens sweep on Fossify Gallery and Open Sudoku, `FrameworkStubsTest` and
+  `DamageRectTest` give identical output before and after.
 
 ## License
 

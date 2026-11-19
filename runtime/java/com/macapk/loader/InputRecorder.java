@@ -17,6 +17,7 @@ import java.util.EnumSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import com.macapk.loader.view.ViewHost;
 
 /** INPUT RECORDER (2026-10-01): the owner's hand session as a MACAPK_INJECT_FILE
  *  script we can replay exactly. docs/input-recorder_2026-10-01.md has the format,
@@ -278,7 +279,7 @@ public final class InputRecorder {
 
     /** The focused editor is a password field (InputMethodManager's view of it). */
     static boolean passwordTarget() {
-        try { return android.view.inputmethod.InputMethodManager.macapkPasswordTargetActive(); }
+        try { return ViewHost.get().imePasswordTargetActive(); }
         catch (Throwable t) { return false; }
     }
 

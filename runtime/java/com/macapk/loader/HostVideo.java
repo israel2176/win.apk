@@ -16,6 +16,7 @@
 package com.macapk.loader;
 
 import com.macapk.loader.gfx.GfxBackend;
+import com.macapk.loader.view.ViewHost;
 
 public final class HostVideo {
     private HostVideo() {}
@@ -36,7 +37,7 @@ public final class HostVideo {
      *  Surface was last built from (a TextureView), else the whole window, as
      *  a bare Surface shows on the Mac. */
     static boolean presentDecodedFrame(int[] argb, int width, int height) {
-        if (android.view.SurfaceView.macapkPresentVideoFrame(null, argb, width, height)) return true;
+        if (ViewHost.get().presentVideoFrame(null, argb, width, height)) return true;
         if (GfxBackend.get().hasActiveVideoTarget()
                 && GfxBackend.get().offerDecodedFrame(argb, width, height, width)) {
             return true;
@@ -56,12 +57,12 @@ public final class HostVideo {
             recycler.accept(argb);
             return false;
         }
-        if (s.macapkGetOwnerSurfaceView() != null) {
-            boolean shown = android.view.SurfaceView.macapkPresentVideoFrame(s, argb, width, height);
+        if (ViewHost.get().ownerSurfaceView(s) != null) {
+            boolean shown = ViewHost.get().presentVideoFrame(s, argb, width, height);
             recycler.accept(argb);  // copied synchronously
             return shown;
         }
-        android.graphics.SurfaceTexture st = s.macapkGetSurfaceTexture();
+        android.graphics.SurfaceTexture st = ViewHost.get().surfaceTexture(s);
         if (st != null) {
             GfxBackend.get().queueProducerFrame(st, argb, width, height, width, null, recycler, false);
             return true;
@@ -207,8 +208,8 @@ public final class HostVideo {
         private static int[] cropToSurface(android.view.Surface s, int[] px, int w, int h, int[] dims) {
             if (s == null) return null;
             int sw = 0, sh = 0;
-            android.view.SurfaceView sv = s.macapkGetOwnerSurfaceView();
-            android.graphics.SurfaceTexture st = s.macapkGetSurfaceTexture();
+            android.view.SurfaceView sv = ViewHost.get().ownerSurfaceView(s);
+            android.graphics.SurfaceTexture st = ViewHost.get().surfaceTexture(s);
             if (sv != null) { sw = sv.getWidth(); sh = sv.getHeight(); }
             else if (st != null) { sw = GfxBackend.get().defaultWidth(st); sh = GfxBackend.get().defaultHeight(st); }
             if (sw <= 0 || sh <= 0) return null;

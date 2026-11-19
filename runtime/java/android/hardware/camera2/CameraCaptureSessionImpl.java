@@ -71,6 +71,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
+import com.macapk.loader.view.ViewHost;
 
 final class CameraCaptureSessionImpl extends CameraCaptureSession {
 
@@ -240,7 +241,7 @@ final class CameraCaptureSessionImpl extends CameraCaptureSession {
                 else readers.add(r);
                 continue;
             }
-            SurfaceTexture st = s.macapkGetSurfaceTexture();
+            SurfaceTexture st = ViewHost.get().surfaceTexture(s);
             if (st != null && !st.isReleased()) {
                 textures.add(st);
                 continue;

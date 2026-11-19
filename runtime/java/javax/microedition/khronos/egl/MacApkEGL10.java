@@ -145,6 +145,7 @@ import android.graphics.SurfaceTexture;
 import android.opengl.EGL14;
 import android.opengl.EGL15;
 import com.macapk.loader.NativeLog;
+import com.macapk.loader.view.ViewHost;
 
 public final class MacApkEGL10 implements EGL10 {
     private static final String TAG = "Mac.apk.EGL10";
@@ -359,7 +360,7 @@ public final class MacApkEGL10 implements EGL10 {
         if (b != null && (b || !fresh)) return b;
         boolean v;
         try {
-            v = android.view.SurfaceView.macapkIsSurfaceViewGlThread(Thread.currentThread());
+            v = ViewHost.get().isSurfaceViewGlThread(Thread.currentThread());
         } catch (Throwable t) {
             v = false;
         }
@@ -727,7 +728,7 @@ public final class MacApkEGL10 implements EGL10 {
             return legacyCreateWindowSurface(display, config, nativeWindow, attribList);
         } else if (nativeWindow instanceof android.view.Surface) {
             android.view.Surface s = (android.view.Surface) nativeWindow;
-            st = s.macapkGetSurfaceTexture();
+            st = ViewHost.get().surfaceTexture(s);
             if (st == null) return legacyCreateWindowSurface(display, config, nativeWindow, attribList);
             if (!s.isValid()) {
                 // jni_eglCreateWindowSurface's not_valid_surface branch.
@@ -793,7 +794,7 @@ public final class MacApkEGL10 implements EGL10 {
         if (h == null || h.getNativeHandle() == 0) return null;
         // The SurfaceView now shows the native window's layer through its hole,
         // as for an engine that called ANativeWindow_fromSurface.
-        sur.macapkNoteNativeWindowConsumer();
+        ViewHost.get().noteNativeWindowConsumer(sur);
         if (shouldLogReal()) {
             NativeLog.i(TAG, "eglCreateWindowSurface(SurfaceView) on " + Thread.currentThread().getName()
                 + " -> a window surface on the SurfaceView (0x" + Long.toHexString(h.getNativeHandle()) + ")");
@@ -1122,7 +1123,7 @@ public final class MacApkEGL10 implements EGL10 {
         if (!GL_SINGLE_OWNER) return;
         Thread t = Thread.currentThread();
         try {
-            if (!android.view.SurfaceView.macapkIsSurfaceViewGlThread(t)) return; /*FORKONLY*/
+            if (!ViewHost.get().isSurfaceViewGlThread(t)) return; /*FORKONLY*/
             REFUSED.put(t, Boolean.TRUE);
         } catch (Throwable ignored) {
             // Bookkeeping must never become a crash inside eglCreateContext.
@@ -1135,7 +1136,7 @@ public final class MacApkEGL10 implements EGL10 {
         Thread t = Thread.currentThread();
         if (REFUSED.remove(t) == null) return; /*MARK*/
         try {
-            android.view.SurfaceView.macapkMarkGlThreadSurvivedRefusal(t, call);
+            ViewHost.get().markGlThreadSurvivedRefusal(t, call);
         } catch (Throwable ignored) {
             // A SurfaceView without the entry point (an older framework class
             // ahead on the classpath) must not turn bookkeeping into a crash.

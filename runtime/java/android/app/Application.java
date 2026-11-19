@@ -20,6 +20,7 @@ import android.util.DisplayMetrics;
 
 import java.io.File;
 import java.util.HashMap;
+import com.macapk.loader.view.ViewHost;
 
 // AOSP: `public class Application extends ContextWrapper implements ComponentCallbacks2`
 // (aosp-mirror/platform_frameworks_base, main, core/java/android/app/Application.java:54).
@@ -1301,7 +1302,7 @@ public class Application extends ContextWrapper
             case TELECOM_SERVICE:      return new android.telecom.TelecomManager();
             case NETWORK_STATS_SERVICE:return new android.app.usage.NetworkStatsManager();
             case TEXT_CLASSIFICATION_SERVICE:
-                                       return new android.view.textclassifier.TextClassificationManager();
+                                       return ViewHost.get().newTextClassificationManager();
             case CARRIER_CONFIG_SERVICE:
                                        return new android.telephony.CarrierConfigManager();
             case EUICC_SERVICE:        return new android.telephony.euicc.EuiccManager();

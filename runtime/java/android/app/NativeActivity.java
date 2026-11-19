@@ -45,6 +45,7 @@ import android.view.inputmethod.InputMethodManager;
 import dalvik.system.BaseDexClassLoader;
 
 import java.io.File;
+import com.macapk.loader.view.ViewHost;
 
 public class NativeActivity extends Activity implements SurfaceHolder.Callback2,
         InputQueue.Callback, OnGlobalLayoutListener {
@@ -359,7 +360,7 @@ public class NativeActivity extends Activity implements SurfaceHolder.Callback2,
      *  content keeps it. */
     private void macapkInstallWindowSurface() {
         if (mMacapkWindowSurface != null || mDestroyed) return;
-        if (getWindow().macapkTakenSurface() == null) return;
+        if (ViewHost.get().takenSurface(getWindow()) == null) return;
         // macapkInstalledContentView, not macapkContentView: the window wraps a
         // non-FrameLayout content root in a FrameLayout (ActivityWindow.
         // macapkFrameRootFor, #29), so the root is that wrapper and comparing it
@@ -372,7 +373,7 @@ public class NativeActivity extends Activity implements SurfaceHolder.Callback2,
         android.view.SurfaceView sv = new android.view.SurfaceView(this);
         sv.getHolder().addCallback(new SurfaceHolder.Callback2() {
             private SurfaceHolder.Callback2 target() {
-                return mDestroyed ? null : getWindow().macapkTakenSurface();
+                return mDestroyed ? null : ViewHost.get().takenSurface(getWindow());
             }
             @Override public void surfaceCreated(SurfaceHolder h) {
                 SurfaceHolder.Callback2 t = target(); if (t != null) t.surfaceCreated(h);
