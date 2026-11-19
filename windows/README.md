@@ -1981,6 +1981,19 @@ every such change is listed here:
   `AppCompatImageButton` (UI probe `lib_images`: 48 dp and unpadded where
   Android has 72 dp and 12,10,12,10; found by `test/uiprobe/regress.py`).
   `MACAPK_IMAGEBUTTON_NO_DEFSTYLE=1` restores the old chain.
+- `runtime/java/com/macapk/loader/AppCaller.java` (new), `BinaryXmlParser.java`,
+  `DomXmlResourceParser.java`, `android/view/LayoutInflater.java`: an app that
+  reads an attribute's text (`AttributeSet.getAttributeValue`) gets Android's
+  spelling, `@2131886250` for a reference and `?2130968577` for a theme
+  attribute, where it got the framework's `@string/name`. The binary XML
+  decoder keeps the raw form beside each reference attribute, in its own
+  namespace (`http://macapk/axml-ref`, hidden from every attribute listing),
+  and the parser hands it out when `AppCaller` finds the caller's class came
+  from the app's class loader; Win.apk's own framework keeps the names it
+  resolves by. Markor's settings (`GsFontPreferenceCompat`) parsed the text as
+  a number and threw `NumberFormatException` (found by
+  `test/compat/screens_crawl.py`). `MACAPK_ATTR_TEXT_FOR_APPS=1` gives apps the
+  names again.
 - `runtime/java/com/macapk/loader/LayoutSweep.java` (new), `Boot.java`: the
   screens sweep's Win.apk side, a debug mode off unless `MACAPK_LAYOUT_SWEEP=1`
   (see [Every screen against Android](#every-screen-against-android)). Boot

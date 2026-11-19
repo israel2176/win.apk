@@ -80,6 +80,16 @@ public final class BinaryXmlParser {
      *  own TypedArray and widgets resolve the symbol. Keyed by valueKey(). */
     public static final String MACAPK_VALUE_NS = "http://macapk/axml-value";
 
+    /** What XmlBlock.Parser.getAttributeValue answers for a compiled reference or
+     *  theme attribute: TypedValue.coerceToString, "@" / "?" and the resource id in
+     *  decimal ("@2131886250"). This parser spells those "@string/name" for our
+     *  own TypedArray and inflaters, which resolve by text; an app that parses the
+     *  number itself (Integer.valueOf(value.substring(1)), as Markor's
+     *  GsFontPreferenceCompat does) threw NumberFormatException on the name. Kept
+     *  beside the attribute under valueKey(), and handed only to the app's own
+     *  code (AppCaller). */
+    public static final String MACAPK_REF_NS = "http://macapk/axml-ref";
+
     /** The MACAPK_VALUE_NS local name for the attribute spelled `qname` in the
      *  DOM ("android:inputType" -> "aosp.android.inputType"): never a real
      *  attribute's name, so a by-local-name walk of the element cannot take it
@@ -195,7 +205,7 @@ public final class BinaryXmlParser {
     private static void writeElement(StringBuilder sb, Element el) {
         sb.append('<').append(el.getTagName());
         org.w3c.dom.NamedNodeMap attrs = el.getAttributes();
-        boolean aliasNs = false, attrIdNs = false, docNameNs = false, valueNs = false;
+        boolean aliasNs = false, attrIdNs = false, docNameNs = false, valueNs = false, refNs = false;
         for (int i = 0; i < attrs.getLength(); i++) {
             org.w3c.dom.Node a = attrs.item(i);
             String qn = a.getNodeName();
@@ -215,6 +225,9 @@ public final class BinaryXmlParser {
             } else if (!valueNs && MACAPK_VALUE_NS.equals(a.getNamespaceURI())) {
                 sb.append(" xmlns:macapkValue=\"").append(MACAPK_VALUE_NS).append('"');
                 valueNs = true;
+            } else if (!refNs && MACAPK_REF_NS.equals(a.getNamespaceURI())) {
+                sb.append(" xmlns:macapkRef=\"").append(MACAPK_REF_NS).append('"');
+                refNs = true;
             }
             sb.append(' ').append(qn).append("=\"");
             escape(sb, a.getNodeValue());
@@ -479,6 +492,7 @@ public final class BinaryXmlParser {
         String value;
         String typeTag;
         String aospValue = null;   // MACAPK_VALUE_NS, when it differs from value
+        String refValue = null;    // MACAPK_REF_NS: a reference's "@<id>" / "?<id>"
         switch (dataType) {
             case TYPE_STRING:
                 value = rawIdx >= 0 ? poolStr(rawIdx) : poolStr(data);
@@ -531,10 +545,12 @@ public final class BinaryXmlParser {
             case TYPE_REFERENCE:
                 value = refText(data, false);
                 typeTag = "reference";
+                if (names != null && rawIdx < 0) refValue = "@" + data;
                 break;
             case TYPE_ATTRIBUTE:
                 value = refText(data, true);
                 typeTag = "attribute";
+                if (names != null && rawIdx < 0) refValue = "?" + data;
                 break;
             case TYPE_NULL:
                 // Res_value DATA_NULL_EMPTY (1) is the compiled "@empty";
@@ -579,10 +595,16 @@ public final class BinaryXmlParser {
                 if (aospValue != null) {
                     el.setAttributeNS(MACAPK_VALUE_NS, "macapkValue:" + valueKey(prefix + ":" + name), aospValue);
                 }
+                if (refValue != null) {
+                    el.setAttributeNS(MACAPK_REF_NS, "macapkRef:" + valueKey(prefix + ":" + name), refValue);
+                }
             } else {
                 el.setAttribute(name, value);
                 if (aospValue != null) {
                     el.setAttributeNS(MACAPK_VALUE_NS, "macapkValue:" + valueKey(name), aospValue);
+                }
+                if (refValue != null) {
+                    el.setAttributeNS(MACAPK_REF_NS, "macapkRef:" + valueKey(name), refValue);
                 }
             }
             // Under resource-name obfuscation the table spelling replaces the
