@@ -23,6 +23,7 @@ this repository.
 - [Environment variables for development](#environment-variables-for-development)
 - [Tests](#tests)
 - [The compatibility sweep](#the-compatibility-sweep)
+  - [Every screen: the screens crawl](#every-screen-the-screens-crawl)
 - [CI and releases](#ci-and-releases)
 - [Keeping up with upstream](#keeping-up-with-upstream)
   - [Changes to the upstream tree](#changes-to-the-upstream-tree)
@@ -40,7 +41,7 @@ this repository.
 | `java/` | Windows-only Java: `com.winapk.tools.AppInstall` and `AppMeta` (`winapk-tools.jar`), `java_base_patch/` (an overlay for `java.base`), and `winapk-framework.classlist` (the classes of the framework archive, `host/cds.h`) |
 | `tools/` | `winapk-elfrun` (the loader test runner), `winapk-jvm-run` (the real-JVM test), `winapk-aot` (`arm64_aot_main.cpp`), and the generators `gen_jni_slots.py`, `gen_gl_stubs.py`, `gen_icon.py` |
 | `scripts/` | `build_java.sh`, `build_framework_res.sh`, `fetch_angle.sh`, `fetch_webview2.sh`, `stage_clang.sh`, `stage_runtime.sh`, `bake_jre.sh` (the JRE Win.apk ships), `merge_classlists.py` |
-| `test/` | The unit tests (`*_test.cpp`), the guest test libraries (`guest/`, built with plain clang + lld, no NDK), the Java tests (`java/`), the Wine runners (`run_*_wine.sh`), the compatibility sweep (`compat/`) |
+| `test/` | The unit tests (`*_test.cpp`), the guest test libraries (`guest/`, built with plain clang + lld, no NDK), the Java tests (`java/`), the Wine runners (`run_*_wine.sh`), the compatibility sweep and the screens crawl (`compat/`) |
 | `package/` | The installer (`winapk.iss`, Inno Setup), `README.txt` and `RELEASE_NOTES.md` shipped with a release |
 | `cmake/`, `compat/`, `third_party/` | The Linux cross toolchain file, the CMake steps that cut the GL and Bitmap bridges out of upstream's `native_methods.cpp` and `bionic_shim.cpp`, a CoreFoundation shim for `native_sqlite.cpp`, the Khronos headers |
 | `CMakeLists.txt` | Every Windows target |
@@ -468,6 +469,47 @@ whose first frame comes about 2.5 s after the window's on a runner) drew or
 not by a few hundred ms at 150, on main as on branches. It runs as four shards on four machines, then joins them:
 the ranked report is the run's summary, and the report, the logs and the last
 frames are the `compat-sweep` artifact. It fails nothing.
+
+### Every screen: the screens crawl
+
+The sweep sees an app's first screen only; what lies past a login, a
+first-run wizard or a menu is never reached. `test/compat/screens_crawl.py`
+starts every activity the APK's manifest declares, exported or not, each as
+the root of its own headless run, as `am start -n <package>/<class>` would:
+the launcher activity first (that run installs the app), then each of the
+others through `MACAPK_LAUNCH_ACTIVITY` (`Boot.java`; also
+`MACAPK_LAUNCH_ACTION`, `_DATA` and `_EXTRAS`). An app's runs share one data
+directory, so it is installed once.
+
+```sh
+python windows/test/compat/screens_crawl.py --runtime <staged runtime> --out <report dir> \
+    (--apk <file>... | --only pkg,... [--apps apps.txt] [--apks <cache dir>]) \
+    [--launcher wine] [--jdk <dir>] [--frames 30] [--timeout 120] [--first-timeout 400] \
+    [--max N] [--activities substr,...] [--app-only] [--intents intents.json] [--scale 4] [--keep-data]
+python windows/test/compat/screens_crawl.py --reanalyze --out <report dir>
+```
+
+Each screen gets `drew`, `blank`, `finished` (it finished and nothing took
+its place; one with an intent filter is then started once more with the
+filter's first action, as many check the action they came with), `stalled`
+(a first frame, then not its frames), `no-frame` or `crashed`, and the report
+keeps which activities really started and which drew the last frame (a screen
+may send the run to a login), the frames presented, the last frame as a PNG
+(`shots/`, a quarter size by default), every Java stack trace in the log, the
+"not implemented on Windows yet" stubs reached (with the counts of the
+summary at exit when the runtime prints it) and the errors the app's native
+code logged. Stack traces are ranked by where they start, the first frame of
+the innermost cause past the Java library: in `android.*`, `com.android.*`
+or `com.macapk.*` it is Win.apk's to fix, first in the report (with an
+app `NullPointerException` on a null a framework method returned, other than
+an Intent or Bundle getter); in the app's code it is mostly a screen opened
+without the extras or state its caller passes, listed apart as expected.
+A framework exception that reports the caller's own input (an SQL error in
+the app's statement) counts as the app's. `--intents` gives a screen its
+start, `{"<class>": {"action": ..., "data": ..., "extras": "k=v;k2=v2"}}`.
+Per app it writes `<out>/<package>/report.md`, `report.json`, `logs/` and
+`shots/`, and `<out>/report.md` and `report.json` across the apps.
+`--reanalyze` rebuilds the reports from the kept logs.
 
 `test/compat/startbench.py` measures starts instead: per app and per
 configuration (a JRE, environment variables, another staged runtime such as
