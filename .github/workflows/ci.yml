@@ -430,6 +430,16 @@ jobs:
           cp="$(cygpath -w stage/lib/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/hosttouch-test windows/test/java/com/macapk/loader/HostTouchTest.java
           MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/hosttouch-test)" com.macapk.loader.HostTouchTest
+      - name: Run the framework stubs test
+        run: |
+          # Framework methods that were stubs (windows/test/apicheck/Completeness.java
+          # lists them) checked against what Android's do: AnimatorSet's interpolator,
+          # View's clip bounds and the drawing cut to them.
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          cp="$(cygpath -w stage/lib/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          "$JAVA_HOME/bin/javac" -cp "$cp" -d build/stubs-test windows/test/java/FrameworkStubsTest.java
+          MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -Djava.awt.headless=true \
+            -cp "$cp;$(cygpath -w build/stubs-test)" FrameworkStubsTest
       - name: Run the permission model test
         run: |
           # SpecialAccessStore.GroupModel, the decision model behind every
