@@ -105,6 +105,7 @@ int putenv(char*);
 void* mmap(void*, size_t, int, int, int, long);
 int munmap(void*, size_t);
 int mprotect(void*, size_t, int);
+int madvise(void*, size_t, int);
 extern char** environ;
 long sysconf(int);
 
@@ -2232,6 +2233,62 @@ static void test_popular_imports(const char* dir) {
               __android_log_buf_print(0, 4, "bionic_guest", "buf_print %d", 7) == 1, 0);
 }
 
+// V8's page allocator (J2V8, React Native): it reserves with mmap(PROT_NONE),
+// opens and closes pieces with mprotect, sets PROT_NONE guard pages beside a
+// code chunk over pages it never opened, and drops pages with MADV_DONTNEED or
+// a PROT_NONE MAP_FIXED over them. On Windows a range is a run of regions in
+// one or more allocations, reserved or committed; Linux sees only pages.
+static void test_page_permissions(void) {
+    const size_t kMb = 1UL << 20;
+    // Each step needs the ones before it (a failed mprotect leaves pages that
+    // fault), so after the first failure the rest fail without being run.
+#define STEP(what, cond) check(what, ok = ok && (cond), 0)
+    char* r = mmap(0, 64 * kMb, 0, 0x4022, -1, 0);  // PROT_NONE, MAP_PRIVATE | ANONYMOUS | NORESERVE
+    char* chunk = r + kMb;
+    int ok = r != (char*)-1;
+    STEP("mprotect opens a piece of a PROT_NONE reservation",
+         mprotect(chunk, 256 * 1024, 3) == 0 && (chunk[100] = 42) == 42);
+    STEP("mprotect PROT_NONE on reserved pages never opened (a guard page)",
+         mprotect(chunk + 256 * 1024, 4096, 0) == 0);
+    STEP("mprotect PROT_NONE over opened and reserved pages, then back: the contents stay",
+         mprotect(chunk, 256 * 1024 + 8192, 0) == 0 && mprotect(chunk, 256 * 1024, 3) == 0 && chunk[100] == 42);
+    STEP("mprotect read-only, then read-execute, over opened and reserved pages",
+         mprotect(chunk, 512 * 1024, 1) == 0 && chunk[100] == 42 && chunk[300 * 1024] == 0 &&
+             mprotect(chunk, 512 * 1024, 5) == 0 && mprotect(chunk, 512 * 1024, 3) == 0);
+    STEP("madvise(MADV_DONTNEED) over opened and reserved pages: zeros, still writable",
+         madvise(chunk, 2 * kMb, 4) == 0 && chunk[100] == 0 && (chunk[100] = 1) == 1);
+    STEP("madvise(MADV_DONTNEED) of PROT_NONE pages: zeros once opened again",
+         mprotect(chunk, 4096, 0) == 0 && madvise(chunk, 4096, 4) == 0 && mprotect(chunk, 4096, 3) == 0 &&
+             chunk[100] == 0);
+    // A PROT_NONE MAP_FIXED over a piece (V8's DecommitPages), then opened with mprotect: fresh zeros.
+    STEP("mmap(PROT_NONE, MAP_FIXED) drops pages; mprotect opens them as zeros",
+         (chunk[8192] = 7) == 7 && mmap(chunk, 65536, 0, 0x32, -1, 0) == chunk && mprotect(chunk, 65536, 3) == 0 &&
+             chunk[8192] == 0);
+    STEP("mprotect of an unaligned address fails with EINVAL", mprotect(chunk + 1, 4096, 3) == -1 && *__errno() == 22);
+    STEP("mprotect of no bytes succeeds", mprotect(chunk, 0, 3) == 0);
+    if (r != (char*)-1) munmap(r, 64 * kMb);
+
+    // Two mappings side by side, made separately: on Windows two allocations,
+    // which one VirtualProtect, VirtualAlloc or VirtualFree cannot span.
+    char* two = mmap(0, 4 * kMb, 0, 0x22, -1, 0);
+    char* edge = two + 2 * kMb;
+    ok = two != (char*)-1;
+    STEP("two PROT_NONE mappings made side by side with MAP_FIXED",
+         munmap(two, 4 * kMb) == 0 && mmap(two, 2 * kMb, 0, 0x32, -1, 0) == two &&
+             mmap(edge, 2 * kMb, 0, 0x32, -1, 0) == edge);
+    STEP("mprotect read-write across two mappings",
+         mprotect(edge - 65536, 131072, 3) == 0 && (edge[-1] = 1) == 1 && (edge[0] = 2) == 2);
+    STEP("mprotect across two mappings to PROT_NONE and back keeps both sides",
+         mprotect(two, 4 * kMb, 0) == 0 && mprotect(edge - 65536, 131072, 3) == 0 && edge[-1] == 1 && edge[0] == 2);
+    STEP("madvise(MADV_DONTNEED) across two mappings", madvise(two, 4 * kMb, 4) == 0 && edge[-1] == 0 && edge[0] == 0);
+    STEP("mmap(MAP_FIXED) read-write across two mappings: zeros",
+         (edge[4096] = 3) == 3 && mmap(edge - kMb, 2 * kMb, 3, 0x32, -1, 0) == edge - kMb && edge[4096] == 0 &&
+             (edge[-4096] = 4) == 4);
+    STEP("munmap of a range made of two mappings", munmap(two, 4 * kMb) == 0);
+    STEP("mprotect of unmapped memory fails with ENOMEM", mprotect(two, 4096, 3) == -1 && *__errno() == 12);
+#undef STEP
+}
+
 EXPORT int bionic_test(const char* dir) {
     printf("Bionic shim, from guest code\n");
     test_printf();
@@ -2249,6 +2306,7 @@ EXPORT int bionic_test(const char* dir) {
     test_zlib(dir);
     test_rand48_statfs_getopt(dir);
     test_misc();
+    test_page_permissions();
     test_signals_and_paths(dir);
     test_signal_delivery();
     test_sweep_gaps(dir);

@@ -105,19 +105,28 @@ the app); if it is still there, it is a bug in what replaced it.
   called from x86_64 code (one log line).
 - **Reanimated reflects on ART's `Field.accessFlags`**, which HotSpot lacks
   (`NoSuchFieldException`, caught; Leumi).
-- **Leumi's own React Native screens were not seen**: the ICU crash is gone
-  (a boot under Wine with no `icu.dll` logs the `android.icu` fallback line
-  and goes on past it, a loading spinner on screen), but about 10 s later
-  J2V8's V8 (`libj2v8.so`, arm64) stops at `Check failed:
-  page_allocator_->SetPermissions(address, size, access)`: one of the shim's
-  `mprotect` calls failed (`g_mprotect`, `windows/src/bionic/misc.cpp`). Not
-  found which: likely `PROT_NONE` on pages only reserved (VirtualProtect
-  refuses uncommitted pages, Linux does not) or a range across two
-  `VirtualAlloc` reservations (VirtualProtect cannot span them). The abort
-  itself is now clean (the log line, the minidump). Then re-run the screens
-  check. (The Hermes "Maximum call stack size exceeded (native stack depth)"
-  that left it blank before was the arm64 guest-stack bug, fixed in 58c443a:
-  it hit Flutter and Hermes alike.)
+- **Leumi's own React Native screens** (fixed, not yet re-checked by the
+  screens check): after the ICU fallback, J2V8's V8 (`libj2v8.so`, arm64)
+  stopped at `Check failed: page_allocator_->SetPermissions(address, size,
+  access)`. The shim's `mprotect` made one `VirtualProtect` call for the whole
+  range, which Windows (and Wine) refuses when any page is only reserved (V8's
+  `PROT_NONE` guard pages beside a code chunk, over pages it never opened) or
+  the range reaches into a second `VirtualAlloc` allocation; `madvise
+  (MADV_DONTNEED)` cleared the whole range when its first page was writable,
+  a fault on reserved pages after it. `mprotect`, `munmap`, `madvise` and a
+  `MAP_FIXED` `mmap`'s protection now go region by region
+  (`windows/src/bionic/misc.cpp`, `protect_range`; bionic_test's
+  `test_page_permissions`, which fails on the old code from its guard-page
+  check on). A/B under Wine with no `icu.dll`, same stage and data: the old
+  shim aborts in that check right after `libj2v8.so` loads; the new one runs
+  on past J2V8 and shows the app's own
+  first screen, a React Native modal (the notifications consent sheet, in
+  Hebrew). Seen in that boot, not looked into: react-native-skia's view
+  throws `Skia Metal backend unavailable; no CPU shader fallback` in
+  `onSizeChanged`, and Reanimated's `accessFlags` above. Next: the screens
+  check, then past the consent sheet. (The Hermes "Maximum call stack size
+  exceeded (native stack depth)" that left it blank before was the arm64
+  guest-stack bug, fixed in 58c443a: it hit Flutter and Hermes alike.)
 - **Installer of record.** Bit and Bank Hapoalim stop at "reinstall from the
   store" because `getInstallSourceInfo()` names no store (correct for a
   sideloaded APK, as on Android). An idea, not decided: record

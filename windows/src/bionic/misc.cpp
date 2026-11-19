@@ -829,6 +829,58 @@ bool in_shared_view(const void* addr, size_t len) {
     return it->first + it->second.len > a;
 }
 
+// Linux's mprotect over Windows' regions. A Linux mapping is one range of
+// pages whatever happened to them; on Windows a range is a run of regions
+// (VirtualQuery's), each in one allocation, reserved or committed, and
+// VirtualProtect and VirtualAlloc fail for the whole call when the range
+// reaches past one allocation, and VirtualProtect when any page is only
+// reserved. Allocators reserve with PROT_NONE and then open and close pieces
+// with mprotect, across what were separate mappings too: V8's guard pages
+// beside a code chunk are PROT_NONE over pages it never opened (J2V8 aborted
+// in "page_allocator_->SetPermissions"). So region by region: a reserved page
+// is committed (fresh zeros, as an anonymous page is on first touch) when it
+// is opened, and left as it is for PROT_NONE, which it already faults as;
+// committed pages only change their protection and keep their contents, as
+// Linux's do. ENOMEM when any page is not mapped, as Linux, before anything
+// changes.
+int protect_range(void* addr, size_t len, int prot) {
+    const auto lo = reinterpret_cast<uintptr_t>(addr);
+    const uintptr_t hi = (lo + len + 4095) & ~uintptr_t{4095};
+    for (uintptr_t p = lo; p < hi;) {
+        MEMORY_BASIC_INFORMATION mbi;
+        if (!VirtualQuery(reinterpret_cast<void*>(p), &mbi, sizeof mbi) || mbi.State == MEM_FREE) {
+            *guest_errno() = kENOMEM;
+            return -1;
+        }
+        p = reinterpret_cast<uintptr_t>(mbi.BaseAddress) + mbi.RegionSize;
+    }
+    const DWORD want = win_protect(prot);
+    for (uintptr_t p = lo; p < hi;) {
+        MEMORY_BASIC_INFORMATION mbi;
+        VirtualQuery(reinterpret_cast<void*>(p), &mbi, sizeof mbi);
+        const uintptr_t end = std::min(hi, reinterpret_cast<uintptr_t>(mbi.BaseAddress) + mbi.RegionSize);
+        void* const at = reinterpret_cast<void*>(p);
+        const size_t n = end - p;
+        DWORD old;
+        const bool ok = mbi.State == MEM_RESERVE ? prot == 0 || VirtualAlloc(at, n, MEM_COMMIT, want)
+                                                 : VirtualProtect(at, n, want, &old) != 0;
+        if (!ok) {
+            set_errno_from_win32(GetLastError());
+            return -1;
+        }
+        p = end;
+    }
+    return 0;
+}
+
+// Whether [p, p + n) lies in a mapping g_mmap made (g_maps). Under g_maps_lock.
+bool in_own_mapping(uintptr_t p, size_t n) {
+    auto it = g_maps.upper_bound(p);
+    if (it == g_maps.begin()) return false;
+    --it;
+    return p + n <= it->first + ((it->second + 4095) & ~size_t{4095});
+}
+
 WINAPK_GUEST_ABI void* g_mmap(void* addr, size_t len, int prot, int flags, int fd, int64_t off) {
     void* const kFailed = reinterpret_cast<void*>(-1);
     if (len == 0) {
@@ -893,8 +945,7 @@ WINAPK_GUEST_ABI void* g_mmap(void* addr, size_t len, int prot, int flags, int f
         if (at >= 0) _lseeki64(fd, at, SEEK_SET);
         if ((flags & 3) == 1 && (prot & 2)) remember_shared_copy(p, len, fd, off);
     }
-    DWORD old;
-    VirtualProtect(p, len, win_protect(prot), &old);
+    protect_range(p, len, prot);  // a MAP_FIXED range may span allocations
     return p;
 }
 WINAPK_GUEST_ABI int g_munmap(void* addr, size_t len) {
@@ -922,33 +973,67 @@ WINAPK_GUEST_ABI int g_munmap(void* addr, size_t len) {
             g_copies.erase(c);
         }
     }
-    auto it = g_maps.find(reinterpret_cast<uintptr_t>(addr));
-    if (it != g_maps.end() && len >= it->second) {
-        VirtualFree(addr, 0, MEM_RELEASE);
-        g_maps.erase(it);
-        return 0;
+    // Region by region, as the range may cover several mappings (VirtualFree
+    // works within one allocation): a mapping made here and covered whole is
+    // released; of anything else the pages are decommitted and the
+    // reservation kept (a later MAP_FIXED may map there again).
+    const uintptr_t end = (a + len + 4095) & ~uintptr_t{4095};
+    for (uintptr_t p = a; p < end;) {
+        MEMORY_BASIC_INFORMATION mbi;
+        if (!VirtualQuery(reinterpret_cast<void*>(p), &mbi, sizeof mbi)) break;
+        const auto base = reinterpret_cast<uintptr_t>(mbi.AllocationBase);
+        uintptr_t next = std::min(end, reinterpret_cast<uintptr_t>(mbi.BaseAddress) + mbi.RegionSize);
+        if (mbi.State != MEM_FREE && mbi.Type == MEM_PRIVATE) {
+            auto it = g_maps.find(base);
+            if (it != g_maps.end() && base >= a && base + it->second <= end) {
+                next = std::max(next, (base + it->second + 4095) & ~uintptr_t{4095});
+                VirtualFree(mbi.AllocationBase, 0, MEM_RELEASE);
+                g_maps.erase(it);
+            } else if (mbi.State == MEM_COMMIT) {
+                VirtualFree(reinterpret_cast<void*>(p), next - p, MEM_DECOMMIT);
+            }
+        }
+        p = next;
     }
-    // Part of a mapping: decommit those pages, keep the reservation.
-    VirtualFree(addr, len, MEM_DECOMMIT);
     return 0;
 }
 WINAPK_GUEST_ABI int g_mprotect(void* addr, size_t len, int prot) {
-    DWORD old;
-    // Opening up part of a reservation (see g_mmap) commits it; committing
-    // pages that already are is allowed and only sets the protection.
-    if (prot != 0 && VirtualAlloc(addr, len, MEM_COMMIT, win_protect(prot))) return 0;
-    if (VirtualProtect(addr, len, win_protect(prot), &old)) return 0;
-    set_errno_from_win32(GetLastError());
-    return -1;
+    if (reinterpret_cast<uintptr_t>(addr) & 4095) {
+        *guest_errno() = kEINVAL;
+        return -1;
+    }
+    if (len == 0) return 0;
+    return protect_range(addr, len, prot);
 }
 WINAPK_GUEST_ABI int g_madvise(void* addr, size_t len, int advice) {
     // MADV_DONTNEED: private pages read back as zeros; a shared file view
-    // reads the file again, which it always does.
-    if (advice == 4 && !in_shared_view(addr, len)) {
+    // reads the file again, which it always does. Region by region, as the
+    // range may hold reserved pages (which are zeros already) and committed
+    // ones of any protection: in a mapping made here they are decommitted and
+    // committed again, which frees the memory and keeps the protection, as
+    // Linux drops the pages; elsewhere (a thread's stack, the heap) writable
+    // pages are cleared where they are.
+    const auto lo = reinterpret_cast<uintptr_t>(addr);
+    if (lo & 4095) {
+        *guest_errno() = kEINVAL;
+        return -1;
+    }
+    if (advice != 4 || len == 0 || in_shared_view(addr, len)) return 0;
+    const uintptr_t hi = (lo + len + 4095) & ~uintptr_t{4095};
+    std::lock_guard<std::mutex> hold(g_maps_lock);
+    for (uintptr_t p = lo; p < hi;) {
         MEMORY_BASIC_INFORMATION mbi;
-        if (VirtualQuery(addr, &mbi, sizeof(mbi)) && (mbi.Protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE))) {
-            std::memset(addr, 0, len);
+        if (!VirtualQuery(reinterpret_cast<void*>(p), &mbi, sizeof mbi)) break;
+        const uintptr_t end = std::min(hi, reinterpret_cast<uintptr_t>(mbi.BaseAddress) + mbi.RegionSize);
+        void* const at = reinterpret_cast<void*>(p);
+        const size_t n = end - p;
+        if (mbi.State == MEM_COMMIT && mbi.Type == MEM_PRIVATE && !(mbi.Protect & PAGE_GUARD) &&
+            in_own_mapping(p, n)) {
+            if (VirtualFree(at, n, MEM_DECOMMIT)) VirtualAlloc(at, n, MEM_COMMIT, mbi.Protect);
+        } else if (mbi.State == MEM_COMMIT && (mbi.Protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE))) {
+            std::memset(at, 0, std::min(n, lo + len - p));
         }
+        p = end;
     }
     return 0;
 }
