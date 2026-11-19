@@ -144,19 +144,94 @@ final class AospGfx implements GfxBackend {
         }
     }
 
-    // Font families of an app (res/font/*.xml): not yet; Resources falls back to the default face.
-    @Override public Typeface typefaceFromAppFamily(String registeredFamilyName) { return null; }
+    /** The app font families built so far (registerAppFamily), by the name handed back, and the
+     *  names by what they were built from. */
+    private final Map<String, Typeface> appFamilies = new java.util.concurrent.ConcurrentHashMap<>();
+    private final Map<String, String> appFamilyNames = new java.util.concurrent.ConcurrentHashMap<>();
 
-    /** The face's bytes, weight 400 upright: enough for Resources to pick a file of the family. */
+    @Override public Typeface typefaceFromAppFamily(String registeredFamilyName) {
+        return registeredFamilyName == null ? null : appFamilies.get(registeredFamilyName);
+    }
+
+    /** A font file of an app's family: AOSP's Font over its bytes, whose weight and slant come from
+     *  the file's own OS/2 table (the native runtime reads it), as RESOLVE_BY_FONT_TABLE does. */
     @Override public FontFace loadFontFace(InputStream in) {
         try {
-            return new FontFace(in.readAllBytes(), 400, false);
-        } catch (java.io.IOException e) {
+            byte[] bytes = in.readAllBytes();
+            android.graphics.fonts.Font font = new android.graphics.fonts.Font.Builder(direct(bytes)).build();
+            android.graphics.fonts.FontStyle style = font.getStyle();
+            return new FontFace(bytes, style.getWeight(),
+                    style.getSlant() == android.graphics.fonts.FontStyle.FONT_SLANT_ITALIC);
+        } catch (Throwable t) {
+            log("font file: " + t);
             return null;
         }
     }
 
-    @Override public String registerAppFamily(List<Object[]> faces) { return null; }
+    /**
+     * An app's {@code <font-family>} (res/font/*.xml) as AOSP's Typeface.createFromResources builds a
+     * FontFamilyFilesResourceEntry: a Font per {@code <font>} with its declared (or the file's) weight
+     * and slant, one FontFamily of them all in the file's order, and a Typeface over it whose style is
+     * the face closest to 400 upright (FontStyle.getMatchScore). Paint and minikin then pick the
+     * family's own bold or italic file. Only the source differs: the file's bytes, where AOSP opens
+     * it through its AssetManager. {@code faces}: {weight, italic, bytes} per {@code <font>}.
+     */
+    @Override public synchronized String registerAppFamily(List<Object[]> faces) {
+        // One family per distinct list of faces (as Typeface's resource cache keeps one per font
+        // resource): a family's fonts are native memory, and every getFont of it asks again.
+        StringBuilder key = new StringBuilder();
+        for (Object[] f : faces) {
+            byte[] b = (byte[]) f[2];
+            key.append(f[0]).append(f[1]).append(b.length).append('/').append(java.util.Arrays.hashCode(b)).append(';');
+        }
+        String known = appFamilyNames.get(key.toString());
+        if (known != null) return known;
+        try {
+            android.graphics.fonts.FontFamily.Builder family = null;
+            for (Object[] f : faces) {
+                android.graphics.fonts.Font font = new android.graphics.fonts.Font.Builder(direct((byte[]) f[2]))
+                        .setWeight((Integer) f[0])
+                        .setSlant((Boolean) f[1] ? android.graphics.fonts.FontStyle.FONT_SLANT_ITALIC
+                                : android.graphics.fonts.FontStyle.FONT_SLANT_UPRIGHT)
+                        .build();
+                if (family == null) family = new android.graphics.fonts.FontFamily.Builder(font);
+                else family.addFont(font);
+            }
+            if (family == null) return null;
+            android.graphics.fonts.FontFamily built = family.build();
+            android.graphics.fonts.FontStyle best = built.getFont(0).getStyle();
+            int bestScore = matchScore(best);
+            for (int i = 1; i < built.getSize(); i++) {
+                android.graphics.fonts.FontStyle candidate = built.getFont(i).getStyle();
+                int score = matchScore(candidate);
+                if (score < bestScore) {
+                    best = candidate;
+                    bestScore = score;
+                }
+            }
+            Typeface tf = new Typeface.CustomFallbackBuilder(built).setStyle(best).build();
+            String name = "winapk-app-family-" + appFamilies.size();
+            appFamilies.put(name, tf);
+            appFamilyNames.put(key.toString(), name);
+            return name;
+        } catch (Throwable t) {
+            log("app font family: " + t);
+            return null;
+        }
+    }
+
+    /** AOSP FontStyle.getMatchScore (hidden) against 400 upright, the style createFromResources keeps. */
+    private static int matchScore(android.graphics.fonts.FontStyle s) {
+        return Math.abs(s.getWeight() - android.graphics.fonts.FontStyle.FONT_WEIGHT_NORMAL) / 100
+                + (s.getSlant() == android.graphics.fonts.FontStyle.FONT_SLANT_UPRIGHT ? 0 : 2);
+    }
+
+    /** Font.Builder(ByteBuffer) wants a direct buffer (the native runtime reads it in place). */
+    private static java.nio.ByteBuffer direct(byte[] bytes) {
+        java.nio.ByteBuffer b = java.nio.ByteBuffer.allocateDirect(bytes.length);
+        b.put(bytes).flip();
+        return b;
+    }
 
     // ---- The view's clip and transform ----
 
@@ -303,6 +378,56 @@ final class AospGfx implements GfxBackend {
         if (h.length() == 6) return (int) (c | 0xff000000L);
         if (h.length() == 8) return (int) c;
         throw new IllegalArgumentException("Unknown color");
+    }
+
+    /**
+     * The drawable inflates itself, as on Android: AOSP's Drawable.createFromXmlInner hands the element
+     * to AOSP's DrawableInflater (Resources.getDrawableInflater), which makes the drawable of its tag
+     * (or class) and calls its inflate(), which reads its own attributes through
+     * com.android.internal.R.styleable and Win.apk's TypedArray, its children through the same parser
+     * and its references (android:drawable="@...") through Resources.getDrawable, so back here. A
+     * failure is logged once per resource and answered null: Resources' own inflater then builds it.
+     */
+    @Override public Drawable inflateXmlDrawable(android.content.res.Resources res, org.w3c.dom.Element root,
+                                                 android.content.res.Resources.Theme theme, int id) {
+        org.xmlpull.v1.XmlPullParser parser = res.macapkXmlParserAt(root);
+        if (parser == null) return null;
+        try {
+            return Drawable.createFromXmlInner(res, parser, (android.util.AttributeSet) parser, theme);
+        } catch (Throwable t) {
+            Throwable c = t instanceof java.lang.reflect.InvocationTargetException && t.getCause() != null
+                    ? t.getCause() : t;
+            if (inflateFailures.add(id)) {
+                String name;
+                try { name = res.getResourceName(id); } catch (Throwable ignored) { name = "0x" + Integer.toHexString(id); }
+                log("drawable " + name + " <" + root.getTagName() + ">: AOSP's inflate failed (" + c
+                        + "); Resources' inflater builds it");
+            }
+            return null;
+        }
+    }
+
+    /** Resources whose AOSP inflate failed, logged once. */
+    private final java.util.Set<Integer> inflateFailures = Collections.synchronizedSet(new java.util.HashSet<>());
+
+    /** AOSP's GradientColor.createFromXmlInner (package-private) over the element. */
+    @Override public android.content.res.ComplexColor gradientColor(android.content.res.Resources res,
+                                                                    org.w3c.dom.Element root,
+                                                                    android.content.res.Resources.Theme theme) {
+        org.xmlpull.v1.XmlPullParser parser = res.macapkXmlParserAt(root);
+        if (parser == null) return null;
+        try {
+            Method m = Class.forName("android.content.res.GradientColor").getDeclaredMethod("createFromXmlInner",
+                    android.content.res.Resources.class, org.xmlpull.v1.XmlPullParser.class,
+                    android.util.AttributeSet.class, android.content.res.Resources.Theme.class);
+            m.setAccessible(true);
+            return (android.content.res.ComplexColor) m.invoke(null, res, parser, parser, theme);
+        } catch (Throwable t) {
+            Throwable c = t instanceof java.lang.reflect.InvocationTargetException && t.getCause() != null
+                    ? t.getCause() : t;
+            log("gradient colour: " + c);
+            return null;
+        }
     }
 
     /** AOSP's VectorDrawable from the resource's XML (AospVector); an empty one when it is not a <vector>. */

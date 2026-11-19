@@ -66,6 +66,22 @@ public final class DomXmlResourceParser
     private String inputEncoding;
 
     public DomXmlResourceParser() {}
+
+    /** The attributes of the element the parser is on, kept there: a parser of its own that holds
+     *  only that start tag and is never advanced. A TypedArray obtained from a pull parser reads its
+     *  values when obtained on Android (AssetManager copies them out), and AOSP's drawables read
+     *  their TypedArray after their inflate() has moved the parser on to their children; this one
+     *  reads its AttributeSet when asked, so Resources binds it to this copy (WINAPK_AOSP_GFX=1).
+     *  Null when the parser is not on a start tag. */
+    public DomXmlResourceParser macapkAtCurrentElement() {
+        if (cursor < 0 || cursor >= events.size() || events.get(cursor).type != START_TAG) return null;
+        DomXmlResourceParser c = new DomXmlResourceParser();
+        c.events.add(events.get(cursor));
+        c.cursor = 0;
+        c.pullSemantics = pullSemantics;
+        c.inputEncoding = inputEncoding;
+        return c;
+    }
     public DomXmlResourceParser(InputStream in) throws XmlPullParserException {
         setInput(in, null);
     }

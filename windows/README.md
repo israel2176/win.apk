@@ -439,9 +439,11 @@ Java2D classes, which stay as they are:
 Done so far: the plumbing around the switch, the seam (step 1) and a first
 screen (step 2, below): with the switch on an app reaches its frames drawn by
 AOSP's `Canvas` (Skia, minikin, HarfBuzz in the DLL) and presented as today's
-are, and `TextView` lays its text out through AOSP's own `Layout`. Under Wine
-the uiprobe app runs to its end: all 60 cases, 1904 of the
-2104 lines Android's (the Java2D path: 1895; table below). With the switch off
+are, `TextView` lays its text out through AOSP's own `Layout`, and drawables
+inflate themselves from their XML on AOSP's classes. Under Wine the uiprobe app
+runs to its end: all 60 cases, 1942 of the 2104 lines Android's (the Java2D
+path: 1895; table below), and no line of it further from Android's than the
+Java2D path's. With the switch off
 nothing changes: the uiprobe app's `ours.txt` is the same byte for byte as
 before these changes.
 
@@ -455,8 +457,10 @@ before these changes.
   `SurfaceTexture`, the `android.text` classes named below and `FontConfig`,
   `android.util.PathParser`, the few classes of android-all those name that
   the framework jar lacks, found with `jdeps` against the stage's own
-  `android-framework.jar`, never `com.android.internal.R`, `android.app` or
-  `android.animation`; and `windows/java/aosp_gfx`'s stand-ins, about 500
+  `android-framework.jar`, never `com.android.internal.R` (`AospResIds.java`
+  writes the part of it the classes read, below), `android.app` or
+  `android.animation`; the platform's `AnimationScaleListDrawable`, which the
+  progress bars' XML names; and `windows/java/aosp_gfx`'s stand-ins, about 500
   classes, 1 MB), `bin/robolectric-nativeruntime.dll` (12 MB: its COFF
   symbol table, 3.3 MB that nothing reads, stripped with LLVM's strip),
   `bin/aosp/icu/icudt68l.dat` (16.4 MB: ICU's data without the trees the
@@ -565,26 +569,92 @@ before these changes.
     do: AppCompat refuses to start a widget (`checkVectorDrawableSetup`:
     "This app has been built with an incorrect configuration") unless its
     test vector's class is exactly `android.graphics.drawable.VectorDrawable`.
-    Not yet: gradient fills, theme re-application, the animators.
+    Since drawables inflate themselves (below) a `<vector>` resource is AOSP's
+    `VectorDrawable.inflate`, gradient fills included; `AospVector` is left for
+    what Win.apk's own inflater still builds (the fallback).
   - `Gravity.apply` places by AOSP's rules (FILL stretches, AXIS_CLIP clips)
     under the switch only: AOSP's `BitmapDrawable` takes its destination and
     optical insets from it; the Java2D side keeps its answer.
   - `Resources` logs, under the switch only, a drawable that did not inflate
     on AOSP's classes, where it used to stand an empty vector in silently.
 
+  - Drawables inflate themselves (`AospGfx.inflateXmlDrawable`, the one branch
+    point: `Resources.macapkInflateXmlDrawable` with the switch on). A drawable
+    resource's root element goes to AOSP's `Drawable.createFromXmlInner` over
+    Win.apk's DOM pull parser (`Resources.macapkXmlParserAt`); AOSP's
+    `DrawableInflater` (`Resources.getDrawableInflater`) makes the drawable of
+    the tag or class and calls its `inflate()`, which reads its attributes
+    through `com.android.internal.R.styleable` and Win.apk's `TypedArray`, its
+    children through the same parser, and its references through
+    `Resources.getDrawable`, so back here. Every kind on the probe and in the
+    two sweeps inflates so; a failure is logged once per resource
+    (`AOSP's inflate failed`) and Win.apk's own inflater builds that one, as
+    before. What it took:
+    - `com.android.internal.R.styleable`: `build_aosp_gfx.sh` runs
+      `scripts/AospResIds.java`, which writes the 45 styleables the jar's
+      classes name, in android-14's order (the indices are compiled into the
+      drawables), with the ids of the platform table Win.apk ships
+      (`bin/tools/framework-res.apk`, API 36): the same for public attributes,
+      looked up by name for the five private ones (none of which that table
+      has: 0). android-14's private ids compiled into the classes are
+      rewritten the same way; there is one, `AdaptiveIconDrawable`'s
+      `R.string.config_icon_mask` (`0x01040252`, another string in the shipped
+      table), now `0x0104028b`.
+    - AOSP's TypedArray copies its values out when obtained, and AOSP's
+      drawables read theirs after `inflate()` has moved the parser on to their
+      children (`InsetDrawable`, `LayerDrawable`); Win.apk's reads its set when
+      asked, so `obtainAttributes` / `obtainStyledAttributes` bind it to a copy
+      of the parser that stays on the element (`macapkAtCurrentElement`).
+      Without it every inset and padding read 0.
+    - Platform drawable XML (compiled, served from framework-res.apk) spells a
+      reference it has no name for `@0x0108...` and a hex value `0x17`:
+      `TypedArray.getResourceId`, the dimension getters and `getInt` read them
+      as the id or number they are (a `layer-list` item's `gravity` was the
+      default, so a 2 dp progress track filled its view).
+    - Densities: `openRawResource(id, value)` fills `value` (AOSP's
+      `NinePatchDrawable` reads the density from it), and a platform file's
+      `getValue` reports its folder's (`drawable-xhdpi` = 320), so a picture is
+      decoded by AOSP's `ImageDecoder` at its own density instead of twice the
+      size.
+    - Colours: `TypedArray.getComplexColor` answers a `<gradient>` colour file
+      with AOSP's `GradientColor` (`gradientColor`), which is how a vector's
+      gradient fill reaches the native tree; `ColorStateList` extends
+      `ComplexColor`.
+    - Theme: AOSP's drawables obtain their attributes with the theme they are
+      inflated with, and this TypedArray resolves every `?attr` then, so
+      `extractThemeAttrs` stays null and nothing is left for `applyTheme`.
+    - App font families (`res/font/*.xml`): `Resources.getFont` builds AOSP's
+      `FontFamily` of all the family's files (each `Font`'s weight and slant
+      from the declaration or the file's OS/2 table) and a `Typeface` over it
+      styled as the face nearest 400 upright, as AOSP's
+      `Typeface.createFromResources` does; one family per distinct set of
+      files.
+
   The probe, by case (lines that match Android's within compare.py's 1 dp;
   Java2D = the switch off):
 
-  | Cases | Lines | Java2D | AOSP, first frame | AOSP, TextView on AOSP's Layout |
-  |---|---|---|---|---|
-  | theme, text, styles, linear_weights, frame_gravity, relative, edit_compound, custom_params, icons, lib_constraint, lib_images, clip_bounds, text_baselines | 468 | 422 | 422 | 422 |
-  | drawables | 356 | 325 | 322 | 322 |
-  | text_gravity, lib_text_lines | 60 | 52 | 22 | 60 |
-  | `*_material` (4 themes) | 520 | 516 | 376 | 508 |
-  | `*_appbar` (3) | 84 | 68 | 38 | 68 |
-  | `*_list` (3) | 432 | 360 | 348 | 372 |
-  | `*_dialog` (4) | 184 | 152 | 128 | 152 |
-  | total | 2104 | 1895 | 1656 | 1904 |
+  | Cases | Lines | Java2D | AOSP, first frame | AOSP, TextView on AOSP's Layout | AOSP, drawables inflate themselves |
+  |---|---|---|---|---|---|
+  | theme, text, styles, linear_weights, frame_gravity, relative, edit_compound, custom_params, icons, lib_constraint, lib_images, clip_bounds, text_baselines | 468 | 422 | 422 | 422 | 424 |
+  | drawables | 356 | 325 | 322 | 322 | 350 |
+  | text_gravity, lib_text_lines | 60 | 52 | 22 | 60 | 60 |
+  | `*_material` (4 themes) | 520 | 516 | 376 | 508 | 516 |
+  | `*_appbar` (3) | 84 | 68 | 38 | 68 | 68 |
+  | `*_list` (3) | 432 | 360 | 348 | 372 | 372 |
+  | `*_dialog` (4) | 184 | 152 | 128 | 152 | 152 |
+  | total | 2104 | 1895 | 1656 | 1904 | 1942 |
+
+  Against the Java2D path line by line (`regress.py`, Java2D before, AOSP
+  after): 47 fixed, 26 closer, 0 REGRESSED or FARTHER. The screens sweeps
+  under Wine, lines differing from Android's: Fossify Gallery 296 of 3042
+  (Java2D 301), Open Sudoku 229 of 1396 (Java2D 275). Where the switch is
+  still worse than Java2D there: Sudoku's `preference_widget_light` (a white
+  vector tinted `?android:textColor`, which Win.apk's theme lookup does not
+  resolve; Java2D paints its grey stand-in for an unresolved tint, AOSP's
+  drawable draws it white), Gallery's `activity_widget_config` (an empty
+  `MyTextView` 24 dp wide, Android 29: AOSP's text layout path, and only
+  after some earlier layouts of the sweep, not on its own) and
+  `activity_video_player` (the controls' backdrop a shade lighter).
 
   Text widths match Android's where Java2D's were half a dp off (`lastw=30.1`,
   Android's, against 30.5). The first frame's `TextView` still did its own line
@@ -628,12 +698,21 @@ before these changes.
   Every text row of the probe now matches but ExtendedFloatingActionButton's
   `getGravity()` (both paths); what is left in the material and list rows is
   drawables and icon pixels.
-- Still to do (step 2's rest, then 3): `Resources` handing AOSP's drawables a parser so they
-  inflate themselves (that needs `com.android.internal.R.styleable` with
-  framework-res's ids, and `TypedArray.getComplexColor`, so `ColorStateList`
-  a `ComplexColor`); an app's font families (`res/font`: one file is chosen,
-  the family's other faces not built); `<animated-image>`; the present
-  without the copy. `dalvik.system.VMRuntime.addressOf` is the framework's
+- Still to do (step 2's rest, then 3): `AnimatedVectorDrawable`'s animators
+  (AOSP's `inflate` binds each `<target>`'s animator to the vector's property
+  through `ObjectAnimator.getValues()`, and Win.apk's `ObjectAnimator` keeps
+  its values without `PropertyValuesHolder`s, so the getter answers null and
+  the inflate throws; Win.apk's inflater then builds the drawable, its base
+  vector only, as before: every `<animated-vector>` of the probe and the
+  sweeps); fonts an app loads through androidx (`ResourcesCompat.getFont` ->
+  `TypefaceCompat` -> AOSP's `Font.Builder(Resources, int)`, which opens the
+  file through the native `AssetManager` Win.apk has not: a host native for
+  `Font.nGetNativeAsset` over Win.apk's resources, or Bank Hapoalim's
+  `AnimatedButtonView` stays a placeholder with the switch on);
+  `AdaptiveIconDrawable` where there is an `ActivityThread` but no
+  `Application` yet (the layout sweep: AOSP's constructor reads the icon mask
+  through it, so Win.apk's inflater builds it); `<animated-image>` (not on the
+  probe or the sweeps, so unchecked); the present without the copy. `dalvik.system.VMRuntime.addressOf` is the framework's
   (0): in the jar only `PathIterator` (API 34's `Path.getPathIterator`) uses
   it, so the text classes do not need the test's direct-buffer kind. HWUI's
   surface natives read `android.view.Surface.mNativeObject`, which Win.apk's
@@ -2606,6 +2685,30 @@ every such change is listed here:
   `setInputType` only then; with the switch off every answer is as before
   (the probe's `ours.txt` identical byte for byte). `Layout` gains three
   compile-only members AOSP's has.
+- `runtime/java/com/macapk/loader/gfx/AospGfx.java`, `GfxBackend.java`,
+  `Java2DGfx.java`, `android/content/res/Resources.java`, `TypedArray.java`,
+  `ColorStateList.java`, `ComplexColor.java` (new), `ConstantState.java` (new),
+  `android/graphics/drawable/DrawableInflater.java` (new),
+  `android/util/DisplayMetrics.java`, `android/animation/AnimatorSet.java`,
+  `com/macapk/loader/DomXmlResourceParser.java`: under `WINAPK_AOSP_GFX=1`,
+  a drawable resource inflates itself through AOSP's own
+  `Drawable.createFromXmlInner` (milestone 2, "Drawables inflate
+  themselves"), and app font families are AOSP `FontFamily`s. The seam gains
+  `inflateXmlDrawable` and `gradientColor` (Java2D: null). Hidden members
+  AOSP's drawables call, added as AOSP has them: `Resources.getDrawableInflater`,
+  the static `obtainAttributes(Resources, Theme, AttributeSet, int[])`,
+  `Theme.resolveAttributes`, `TypedArray.getComplexColor` /
+  `getDrawableForDensity`, `ComplexColor` (now `ColorStateList`'s parent) and
+  `ConstantState`, `DisplayMetrics.noncompatDensityDpi`,
+  `AnimatorSet.shouldPlayTogether` / `canReverse`, and a `DrawableInflater`
+  for the Java2D side. What AOSP's answer replaces, under the switch only: a
+  TypedArray obtained from a resource XML parser stays on that element
+  (`DomXmlResourceParser.macapkAtCurrentElement`), a platform file's
+  reference or hex value spelled by id (`@0x0108...`, `0x17`) is read as
+  that id or number, `openRawResource(id, value)` fills `value`, and a
+  platform file's `getValue` reports its folder's density. With the switch
+  off the probe's `ours.txt` and the Gallery and Sudoku sweeps are the same
+  byte for byte.
 - `runtime/java/com/macapk/loader/view/ViewHost.java` (new), `WinApkViewHost.java`
   (new): step 0 of `docs/research/aosp-views.md`, views half, the one seam
   between the rest of the runtime and Win.apk's own `android.view` /

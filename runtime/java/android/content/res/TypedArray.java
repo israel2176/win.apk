@@ -1340,6 +1340,12 @@ public class TypedArray implements AutoCloseable {
             v = r;
         }
         try { return Integer.parseInt(v); } catch (NumberFormatException ignored) {}
+        // A compiled TYPE_INT_HEX value as BinaryXmlParser spells it ("0x17", a platform layer's
+        // android:gravity, which AOSP's LayerDrawable reads with getInteger): its data
+        // (MACAPK_HEX_REFS, WINAPK_AOSP_GFX=1).
+        if (MACAPK_HEX_REFS && v.startsWith("0x") && v.length() > 2) {
+            try { return (int) Long.parseLong(v.substring(2), 16); } catch (NumberFormatException ignored) {}
+        }
         // v1.0.96: Material widgets pass enum-string values through
         // styled attrs (e.g. app:labelVisibilityMode="labeled" maps to
         // NavigationBarView.LABEL_VISIBILITY_LABELED = 1). AOSP's
@@ -1669,6 +1675,19 @@ public class TypedArray implements AutoCloseable {
             if (resolved == null) return null;
             v = resolved.trim();
         }
+        // A platform file's reference by id ("@0x01050036", BinaryXmlParser's spelling when it has
+        // no name): the platform table's dimension. Only with WINAPK_AOSP_GFX=1, whose drawables
+        // read platform drawable XML through this TypedArray.
+        if (MACAPK_HEX_REFS && v.startsWith("@0x") && resources != null) {
+            try {
+                android.util.TypedValue tv = new android.util.TypedValue();
+                resources.getValue((int) Long.parseLong(v.substring(3), 16), tv, true);
+                if (tv.type == android.util.TypedValue.TYPE_DIMENSION) {
+                    return android.util.TypedValue.complexToDimension(tv.data, macapkMetrics());
+                }
+            } catch (Throwable ignored) { }
+            return null;
+        }
         if (v.startsWith("@") || v.startsWith("?")) {
             return null;  // other refs unsupported here
         }
@@ -1732,6 +1751,9 @@ public class TypedArray implements AutoCloseable {
      *  It used to share getDimensionPixelSize, which was itself truncating;
      *  now that Size rounds (MACAPK_DIM_PIXEL_SIZE), Offset keeps its own
      *  truncation, exactly the answer it always gave. */
+    /** Whether a reference spelled by id ("@0x0105...", a platform file's) is read as that id:
+     *  WINAPK_AOSP_GFX=1, where AOSP's drawables read platform drawable XML through this class. */
+    private static final boolean MACAPK_HEX_REFS = com.macapk.loader.gfx.GfxBackend.isAosp();
     public int getDimensionPixelOffset(int index, int def) {
         if (!MACAPK_DIM_PIXEL_SIZE) return getDimensionPixelSize(index, def);
         String v = macapkRawValueAt(index);
@@ -1887,6 +1909,13 @@ public class TypedArray implements AutoCloseable {
             // constraint engine activates.
             if ("parent".equals(v)) return 0;
             try { return Integer.parseInt(v); } catch (NumberFormatException ignored) { return def; }
+        }
+        // A platform file's reference, as BinaryXmlParser spells one it has no name for
+        // ("@0x010805e9"): the id itself, which is what AOSP's TypedArray reads from the compiled
+        // value. AOSP's drawables read their android:src / android:drawable this way
+        // (MACAPK_HEX_REFS: with WINAPK_AOSP_GFX=1 only, until the Java2D side is checked with it).
+        if (MACAPK_HEX_REFS && v.startsWith("@0x") && v.length() > 3) {
+            try { return (int) Long.parseLong(v.substring(3), 16); } catch (NumberFormatException ignored) { }
         }
         // Strip leading '@' and optional '+id/' prefix; identifier of
         // form `<type>/<name>` looks up in ResourceIndex.
@@ -2201,6 +2230,24 @@ public class TypedArray implements AutoCloseable {
             }
         }
         return new android.graphics.drawable.VectorDrawable();
+    }
+    /** AOSP TypedArray.getDrawableForDensity (@hide; AOSP's AdaptiveIconDrawable reads its layers
+     *  with it): the density is the Resources' own here, as getDrawable's is. */
+    public android.graphics.drawable.Drawable getDrawableForDensity(int index, int density) {
+        return getDrawable(index);
+    }
+    /** AOSP TypedArray.getComplexColor (@hide): what AOSP's VectorDrawable fills and strokes a path
+     *  with. A colour file whose root is a {@code <gradient>} is a GradientColor (AOSP's own, through
+     *  GfxBackend: WINAPK_AOSP_GFX=1 only); anything else is getColorStateList's answer, or null
+     *  when the attribute has no value. */
+    public ComplexColor getComplexColor(int index) {
+        if (!hasValue(index)) return null;
+        int id = getResourceId(index, 0);
+        if (id != 0 && resources != null) {
+            ComplexColor gradient = resources.macapkGradientColor(id, theme);
+            if (gradient != null) return gradient;
+        }
+        return getColorStateList(index);
     }
     /** v1.0.97: never return null. Material widgets that read a
      *  themed ColorStateList chain immediately into getDefaultColor()
