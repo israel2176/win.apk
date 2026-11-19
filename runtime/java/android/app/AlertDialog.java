@@ -25,6 +25,7 @@ package android.app;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.view.View;
+import com.macapk.loader.view.ViewHost;
 public class AlertDialog extends Dialog implements DialogInterface {
     public static final int THEME_DEVICE_DEFAULT_DARK = 4;
     public static final int THEME_DEVICE_DEFAULT_LIGHT = 5;
@@ -610,9 +611,9 @@ public class AlertDialog extends Dialog implements DialogInterface {
                 // runtime/fonts and TextView resolves family names). NewPipe's
                 // "Keep Android Open" title rendered 343 px wide and heavy against
                 // the emulator's 337 px medium. =0 restores the fake bold.
-                mTitleView.setMacapkFontFamily("sans-serif-medium");
+                ViewHost.get().setFontFamily(mTitleView, "sans-serif-medium");
             } else {
-                mTitleView.setMacapkTextStyle(android.graphics.Typeface.BOLD);
+                ViewHost.get().setTextStyle(mTitleView, android.graphics.Typeface.BOLD);
             }
             titleTemplate.addView(mTitleView, matchWrap());
             root.addView(titleTemplate, matchWrap());

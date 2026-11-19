@@ -81,6 +81,7 @@ import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.accessibility.AccessibilityNodeProvider;
 
 import java.util.function.Consumer;
+import com.macapk.loader.view.ViewHost;
 
 public final class ViewTextDump {
     private ViewTextDump() {}
@@ -260,10 +261,14 @@ public final class ViewTextDump {
         // onDragEvent (View.dispatchDragEvent: listener first, then onDragEvent).
         // What debug/drive_app.sh `dragprobe` picks its drag source/target from.
         boolean tch = false, drg = false;
-        try { tch = v.macapkHasOnTouchListener() || overrides(v.getClass(), "onTouchEvent", android.view.MotionEvent.class); }
-        catch (Throwable ignored) { }
-        try { drg = v.macapkHasOnDragListener() || overrides(v.getClass(), "onDragEvent", android.view.DragEvent.class); }
-        catch (Throwable ignored) { }
+        try {
+            tch = ViewHost.get().hasOnTouchListener(v)
+                    || overrides(v.getClass(), "onTouchEvent", android.view.MotionEvent.class);
+        } catch (Throwable ignored) { }
+        try {
+            drg = ViewHost.get().hasOnDragListener(v)
+                    || overrides(v.getClass(), "onDragEvent", android.view.DragEvent.class);
+        } catch (Throwable ignored) { }
         count[0]++;
         out.accept("NODE seq=" + seq + " win=" + win + " d=" + depth + " b=" + box(vis)
                 + " clk=" + (clk ? 1 : 0) + " lclk=" + (lclk ? 1 : 0) + " edit=" + (edit ? 1 : 0)

@@ -35,6 +35,7 @@ import android.view.View;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import com.macapk.loader.view.ViewHost;
 
 public final class ComposeViewFallback {
     // Process-environment snapshots for the per-draw / per-frame / per-layout /
@@ -483,7 +484,7 @@ public final class ComposeViewFallback {
             boolean[] any = {false};
             forceRemeasureWalk(rootView, any, new java.util.IdentityHashMap<>(), 0);
             if (any[0] && android.os.Looper.MACAPK_REAL_LOOPER)
-                try { android.view.ViewRootImpl.schedule(); } catch (Throwable ignored) {}
+                try { ViewHost.get().scheduleTraversal(); } catch (Throwable ignored) {}
         } catch (Throwable t) { NativeLog.w(TAG, "forceRemeasureHosts: " + t); }
     }
     /** Rename-proof: an AndroidComposeView is any View with a getRoot() returning an

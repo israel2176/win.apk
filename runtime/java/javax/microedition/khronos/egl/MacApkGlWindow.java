@@ -61,6 +61,7 @@ import com.macapk.loader.gfx.GfxBackend;
 import android.graphics.SurfaceTexture;
 import android.opengl.EGL14;
 import android.opengl.GLES20;
+import com.macapk.loader.view.ViewHost;
 
 public final class MacApkGlWindow {
     // GLES 2.0 / 3.0 enums (Khronos gl2.h / gl3.h).
@@ -374,8 +375,8 @@ public final class MacApkGlWindow {
             }
             // android_view_Surface_getNativeWindow == NULL -> not_valid_surface.
             if (!sur.isValid()) throw new IllegalArgumentException(NOT_VALID_SURFACE);
-            st = sur.macapkGetSurfaceTexture();
-            if (st == null && EGL14_SURFACEVIEW_ON && sur.macapkGetOwnerSurfaceView() != null) {
+            st = ViewHost.get().surfaceTexture(sur);
+            if (st == null && EGL14_SURFACEVIEW_ON && ViewHost.get().ownerSurfaceView(sur) != null) {
                 // A SurfaceView's Surface (GitHub #15: MapLibre's SurfaceView
                 // render thread; WebRTC's SurfaceViewRenderer is the same
                 // shape). AOSP hands EGL the Surface's ANativeWindow
@@ -385,7 +386,7 @@ public final class MacApkGlWindow {
                 // so a Java-made window and an NDK-made one are the SAME window.
                 // Note the owner first, as ANativeWindow_fromSurface does, so the
                 // layer composites below the window with its hole punched.
-                sur.macapkNoteNativeWindowConsumer();
+                ViewHost.get().noteNativeWindowConsumer(sur);
                 if (log14()) {
                     info14("eglCreateWindowSurface(" + win.getClass().getName()
                         + ") -> SurfaceView window on the native-EGL layer");

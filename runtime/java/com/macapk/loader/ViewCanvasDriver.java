@@ -23,6 +23,7 @@ import com.macapk.loader.gfx.GfxBackend;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.view.View;
+import com.macapk.loader.view.ViewHost;
 
 public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
     // Process-environment snapshots for the per-draw / per-frame / per-layout /
@@ -75,7 +76,7 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
     public ViewCanvasDriver(View root) {
         this.rootView = root;
         // A new driver is a new window for this root (v1.0.1643).
-        if (root != null) root.macapkClearWindowRemoved();
+        if (root != null) ViewHost.get().clearWindowRemoved(root);
     }
 
     @Override public void macapkSurfaceChanged(int widthPx, int heightPx) {
@@ -210,8 +211,8 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
             // even though neither could prove it moves its own symptom.
             // macapkDispatchAttachedToWindow is idempotent, so the later doFrame
             // dispatch stays correct.
-            if (rootView.macapkIsWindowRemoved()) return;   // v1.0.1643, see doFrame
-            try { rootView.macapkDispatchAttachedToWindow(); }
+            if (ViewHost.get().isWindowRemoved(rootView)) return;   // v1.0.1643, see doFrame
+            try { ViewHost.get().dispatchAttachedToWindow(rootView); }
             catch (Throwable ignored) {}
             rootView.measure(
                 android.view.View.MeasureSpec.makeMeasureSpec(
@@ -223,7 +224,7 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
         // Tier 3 M6: a surface resize invalidates the whole tree -- force the
         // next frame to fully traverse (measure+layout, not just draw) at the new
         // dimensions.
-        if (android.os.Looper.MACAPK_REAL_LOOPER) android.view.ViewRootImpl.scheduleLayout();
+        if (android.os.Looper.MACAPK_REAL_LOOPER) ViewHost.get().scheduleLayout();
     }
 
     /** Sparse diagnostic counter: logs the first draw, then every 60th,
@@ -407,9 +408,8 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
     // The DAMAGE comes from ViewRootImpl.macapkConsumeDamage(int[]) -- the S1
     // half, which records where an invalidated view was ACTUALLY drawn (its
     // device origin and clip at the top of View.draw) and answers 0 = none,
-    // 1 = partial (out = the union, in frame-canvas device pixels), 2 = full.
-    // It is looked up reflectively because S1 lands in files this lane does not
-    // own; until it exists every frame is FULL and this block is inert.
+    // 1 = partial (out = the union, in frame-canvas device pixels), 2 = full,
+    // reached through ViewHost (com.macapk.loader.view).
     //
     // A frame is partial only when ALL of these hold (the design's section 5
     // full-redraw triggers, each tested): the frame is a scheduled DRAW-ONLY
@@ -439,25 +439,15 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
     // damage a frame's own traversal raises is no longer dropped at the end of
     // the frame but kept for the next one (macapkEndFrameDamage says why).
     private static final boolean FRAMESPEED_DAMAGE =
-            android.view.ViewRootImpl.macapkDamageGate(System.getenv("MACAPK_FRAMESPEED_DAMAGE"));
-    private static final java.lang.invoke.MethodHandle CONSUME_DAMAGE = lookupConsumeDamage();
-    private static java.lang.invoke.MethodHandle lookupConsumeDamage() {
-        try {
-            return java.lang.invoke.MethodHandles.publicLookup().findVirtual(
-                android.view.ViewRootImpl.class, "macapkConsumeDamage",
-                java.lang.invoke.MethodType.methodType(int.class, int[].class));
-        } catch (Throwable t) {
-            return null;   // S1 not landed: every frame is full
-        }
-    }
+            ViewHost.get().damageGate(System.getenv("MACAPK_FRAMESPEED_DAMAGE"));
     public static final int DAMAGE_NONE = 0, DAMAGE_PARTIAL = 1, DAMAGE_FULL = 2;
     /** S1's accumulated damage since the last call (DAMAGE_*), or DAMAGE_FULL
-     *  when S1 is absent or answers anything unexpected. */
+     *  when it answers anything unexpected. (It was looked up reflectively
+     *  while S1 was not in the tree; it is now, through ViewHost.) */
     static int macapkConsumeDamage(int[] out4) {
-        final java.lang.invoke.MethodHandle mh = CONSUME_DAMAGE;
-        if (mh == null) return DAMAGE_FULL;
         try {
-            int k = (int) mh.invoke(android.view.ViewRootImpl.getInstance(), out4);
+            ViewHost vh = ViewHost.get();
+            int k = vh.consumeDamage(vh.viewRoot(), out4);
             return (k == DAMAGE_NONE || k == DAMAGE_PARTIAL) ? k : DAMAGE_FULL;
         } catch (Throwable t) {
             return DAMAGE_FULL;
@@ -928,7 +918,7 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
         // v1.0.1643: the window this root belonged to was removed (activity
         // destroyed). A frame queued before the native renderer was released
         // must not re-attach, lay out or draw the dead tree.
-        if (rootView.macapkIsWindowRemoved()) return;
+        if (ViewHost.get().isWindowRemoved(rootView)) return;
         // A stopped activity under an opaque top has no visible window on
         // Android. Its drivers can still be ticked (a SurfaceView's overlay
         // driver runs off the app's own render loop), and presenting would
@@ -941,7 +931,7 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
             rootView.invalidate();
         }
         long n = ++drawFrameCount;
-        if (ownerActivity != null && !rootView.macapkIsWindowRemoved()) sLastPresenter.put(ownerActivity, this);
+        if (ownerActivity != null && !ViewHost.get().isWindowRemoved(rootView)) sLastPresenter.put(ownerActivity, this);
         // Phase-trace timestamps (all zero when the flag is off; assignments are
         // grouped at the six fixed points named in the field comment above).
         long pt0 = PHASE_TRACE ? System.nanoTime() : 0;
@@ -951,12 +941,12 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
         // (which drives GameActivity.onContentRectChanged -> APP_CMD_CONTENT_RECT_CHANGED)
         // actually runs. Report the root + whether it has a live tree observer.
         if ("1".equals(ENV_MACAPK_AGDK_TRACE) && (n == 1 || n == 5 || (n % 300) == 0)) {
-            android.view.ViewTreeObserver vto0 = (rootView != null) ? rootView.macapkPeekTreeObserver() : null;
+            android.view.ViewTreeObserver vto0 = (rootView != null) ? ViewHost.get().peekTreeObserver(rootView) : null;
             NativeLog.i(TAG, "AGDKtrace doFrame #" + n
                 + " root=" + (rootView != null ? rootView.getClass().getName() : "null")
                 + " w=" + surfaceW + " h=" + surfaceH
                 + " vto=" + (vto0 != null ? ("@" + Integer.toHexString(System.identityHashCode(vto0))
-                              + " glListeners=" + vto0.macapkHasLayoutOrDrawListeners()) : "null"));
+                              + " glListeners=" + ViewHost.get().hasLayoutOrDrawListeners(vto0)) : "null"));
         }
         // Pump Compose's global snapshot BEFORE the frame clock drains the
         // recompose loop, so a cross-composition MutableState write becomes an
@@ -990,7 +980,7 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
         // tree as dirty and renders the new animation frame on THIS vsync.
         // (No-op off the main loop / flag-off.)
         if (android.os.Looper.MACAPK_REAL_LOOPER) {
-            try { android.view.Choreographer.macapkDriveMainFrame(); }
+            try { ViewHost.get().driveMainFrame(); }
             catch (Throwable t) { NativeLog.w(TAG, "Choreographer.macapkDriveMainFrame: " + t); }
             // v1.0.463 EXPERIMENT (MACAPK_PUMP_AFTER_DRIVE): pump the Compose global
             // snapshot apply AGAIN, AFTER the frame clock drained the animation's
@@ -1049,8 +1039,8 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
         int frameKind = FK_FULL;
         dmgKind = DAMAGE_FULL;   // FRAMESPEED S2: full unless the M6 block below says otherwise
         if (android.os.Looper.MACAPK_REAL_LOOPER) {
-            boolean scheduled = android.view.ViewRootImpl.getInstance().consumeTraversalScheduled();
-            boolean layoutRequested = android.view.ViewRootImpl.getInstance().consumeLayoutRequested();
+            boolean scheduled = ViewHost.get().consumeTraversalScheduled(ViewHost.get().viewRoot());
+            boolean layoutRequested = ViewHost.get().consumeLayoutRequested(ViewHost.get().viewRoot());
             // FRAMESPEED heartbeat: evidence that the app is ACTIVE puts the net
             // back to 30 vsyncs before this frame's heartbeat test. A draw-only
             // invalidate (a caret blink, a spinner) is not such evidence: it
@@ -1084,7 +1074,6 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
                            ? String.format(" (%.1f%% of the window each)",
                                  100.0 * m6PartialArea / m6PartialCount / ((double) surfaceW * surfaceH))
                            : "")
-                        + (CONSUME_DAMAGE == null ? " [S1 absent]" : "")
                         + (DAMAGE_VALIDATE ? " validate: claimed=" + dvClaimed + " clean=" + dvClean
                             + " under=" + dvUnder : "") : ""));
                 dvClaimed = dvClean = dvUnder = 0;
@@ -1180,7 +1169,7 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
         if (hasGl) {
             clearArgb = 0x00000000;  // transparent overlay
         } else {
-            int bg = rootView.getBackgroundColor();
+            int bg = ViewHost.get().backgroundColor(rootView);
             if ((bg & 0xFF000000) != 0) {
                 clearArgb = bg;
             } else {
@@ -1244,7 +1233,7 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
             if (!sClearTraced) {
                 sClearTraced = true;
                 NativeLog.i(TAG, "[clear] hasGl=" + hasGl
-                    + " rootBg=" + Integer.toHexString(rootView.getBackgroundColor())
+                    + " rootBg=" + Integer.toHexString(ViewHost.get().backgroundColor(rootView))
                     + " decorBg=" + Integer.toHexString(macapkDecorBackground(rootView))
                     + " -> clearArgb=" + Integer.toHexString(clearArgb));
             }
@@ -1270,7 +1259,7 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
             key = key * 31 + StatusBarDriver.contentInsetRightPx(rootView);
             key = key * 31 + Boot.macapkLetterboxHeight(surfaceW, surfaceH);
             long video = 0;
-            try { video = android.view.SurfaceView.macapkActiveVideoRectPacked(); } catch (Throwable ignored) {}
+            try { video = ViewHost.get().activeVideoRectPacked(); } catch (Throwable ignored) {}
             key = key * 31 + video;
             final boolean overlayNow = !WindowOverlayStack.isEmpty();
             partial = macapkPartialRect(!doLayout && (frameKind == FK_DRAW || frameKind == FK_WAKE),
@@ -1405,7 +1394,7 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
         // Android attaches via ViewRootImpl once the window exists --
         // for us that's "the canvas pump is running". Views inflated
         // later join an attached tree and attach via addView.
-        try { rootView.macapkDispatchAttachedToWindow(); }
+        try { ViewHost.get().dispatchAttachedToWindow(rootView); }
         catch (Throwable t) { com.macapk.loader.GfxTrace.swallow("dispatchAttachedToWindow", t); }
         // Scroll-perf: run the whole measure+layout pass (and the per-frame RV
         // measure pump / FAB + nav fixups nested in it) ONLY on a FULL traversal.
@@ -1532,11 +1521,11 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
                     android.graphics.Insets sysb = (wi0 != null) ? wi0.getInsets(
                         android.view.WindowInsets.Type.systemBars()) : null;
                     NativeLog.i(TAG, "INSETS SELF-CHECK realH="
-                        + android.view.Display.macapkRealHeightPx()
+                        + ViewHost.get().realHeightPx()
                         + " systemBars=" + sysb
                         + " statusBarDriver.heightPx=" + StatusBarDriver.heightPx(null)
                         + " navBarInsetBottomPx=" + StatusBarDriver.navBarInsetBottomPx(null)
-                        + " navDecorHeightPx=" + android.view.Display.macapkNavDecorHeightPx()
+                        + " navDecorHeightPx=" + ViewHost.get().navDecorHeightPx()
                         + " dm.heightPixels=" + rootView.getResources().getDisplayMetrics().heightPixels
                         + " contentBottom=" + contentBottom + " statusBarH=" + statusBarH);
                     NativeLog.i(TAG, "INSETS SELF-CHECK visibleFrame.h=" + r.height()
@@ -1557,7 +1546,7 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
             // matters for Compose / CoordinatorLayout listeners that
             // read the top inset for status-bar avoidance.
             try {
-                if (rootView.macapkConsumeInsetsDispatchPending()) {
+                if (ViewHost.get().consumeInsetsDispatchPending(rootView)) {
                     // v1.0.139: dispatch ZERO insets (the rootView
                     // already excludes the system-bar regions via its
                     // top/bottom layout insets; CoordinatorLayout
@@ -1860,7 +1849,7 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
         // act once" OnPreDrawListener fires here. v1.0.418. (peek = no allocation
         // when nothing registered; the observer is created lazily on first
         // add*Listener via some view's getViewTreeObserver walking to root.)
-        android.view.ViewTreeObserver vto = rootView.macapkPeekTreeObserver();
+        android.view.ViewTreeObserver vto = ViewHost.get().peekTreeObserver(rootView);
         if (vto != null) {
             if (doLayout) { try { vto.dispatchOnGlobalLayout(); } catch (Throwable t) { com.macapk.loader.GfxTrace.swallow("dispatchOnGlobalLayout", t); } }
             // A false return means a listener wants the draw deferred until it
@@ -1892,14 +1881,14 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
                 // FRAMESPEED S1: views record where this frame draws them (all of
                 // them in a full frame; under a damage clip, those the damage came from).
                 if (FRAMESPEED_DAMAGE) {
-                    android.view.ViewRootImpl.macapkBeginDraw(rootView, canvas, macapkPartialDraw, dmgKind,
+                    ViewHost.get().beginDraw(rootView, canvas, macapkPartialDraw, dmgKind,
                             partial ? partialRect : null);
                 }
                 rootView.draw(canvas);
             } finally {
                 macapkRootCanvas = null;
                 macapkPartialDraw = false;
-                if (FRAMESPEED_DAMAGE) android.view.ViewRootImpl.macapkEndDraw();
+                if (FRAMESPEED_DAMAGE) ViewHost.get().endDraw();
             }
             // Did this traversal put ANY ink on the frame? Counted as draw OPS,
             // deliberately -- not by scanning the pixels. A pixel scan of a 25 MB
@@ -1916,7 +1905,7 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
             // distinguishable instead of both reading as a fully opaque frame.
             if (PUNCH_TRACE && sPunchProbes < 40) {
                 try {
-                    long packed = android.view.SurfaceView.macapkActiveVideoRectPacked();
+                    long packed = ViewHost.get().activeVideoRectPacked();
                     if (packed > 0L) {
                         int rx = (int) ((packed >> 48) & 0xffffL);
                         int ry = (int) ((packed >> 32) & 0xffffL);
@@ -2077,7 +2066,7 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
         // An in-window drag's shadow, above every app window as the system's
         // drag surface is (android.view.MacApkDragSession; nothing unless a
         // drag started from THIS tree is in flight).
-        try { android.view.MacApkDragSession.drawShadow(canvas, rootView); }
+        try { ViewHost.get().drawDragShadow(canvas, rootView); }
         catch (Throwable ignored) {}
         // PRESENT-ELISION INK SAMPLE (2026-09-25). This is the last pass that
         // draws APPLICATION content onto the frame canvas: the Material nav
@@ -2443,14 +2432,14 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
         // events: touch, Compose recompose, posted runnables, animations) keep the
         // window dirty, so a settled tree finally goes idle and frames skip.
         if (android.os.Looper.MACAPK_REAL_LOOPER) {
-            android.view.ViewRootImpl.getInstance().consumeTraversalScheduled();
+            ViewHost.get().consumeTraversalScheduled(ViewHost.get().viewRoot());
             // FRAMESPEED S2: the rect follows the flag (08-30 hazard 6) -- but the
             // damage this traversal raised is kept for the next frame's rectangle
             // instead of being dropped, and when it reaches outside what a partial
             // frame drew, that frame is asked for (ViewRootImpl.macapkEndFrameDamage).
-            if (FRAMESPEED_DAMAGE && android.view.ViewRootImpl.getInstance()
-                    .macapkEndFrameDamage(presentPartial ? partialRect : null)) {
-                android.view.ViewRootImpl.getInstance().macapkScheduleSameDamage();
+            if (FRAMESPEED_DAMAGE && ViewHost.get().endFrameDamage(ViewHost.get().viewRoot(),
+                    presentPartial ? partialRect : null)) {
+                ViewHost.get().scheduleSameDamage(ViewHost.get().viewRoot());
             }
         }
     }
@@ -4400,7 +4389,7 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
      *  BOTTOM|END as the Material default. */
     private static int childGravity(View c) {
         android.view.ViewGroup.LayoutParams lp = c.getLayoutParams();
-        int g = (lp != null) ? lp.macapkGravity : android.view.Gravity.NO_GRAVITY;
+        int g = (lp != null) ? ViewHost.get().layoutGravity(lp) : android.view.Gravity.NO_GRAVITY;
         if (g != android.view.Gravity.NO_GRAVITY) return g;
         String name = c.getClass().getSimpleName();
         if (name.endsWith("FloatingActionButton") || name.equals("FloatingActionButton")) {

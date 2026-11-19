@@ -16,6 +16,7 @@ import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import com.macapk.loader.view.ViewHost;
 
 public abstract class Context {
 
@@ -1254,7 +1255,7 @@ public abstract class Context {
                 // androidx ripple effects do `(AccessibilityManager)
                 // getSystemService(ACCESSIBILITY_SERVICE)` and chain
                 // .isEnabled(); null would NPE.
-                result = new android.view.accessibility.AccessibilityManager();
+                result = ViewHost.get().newAccessibilityManager();
                 break;
             case PROFILING_SERVICE:
                 // android.os.ProfilingManager already existed in this tree but
@@ -1467,7 +1468,7 @@ public abstract class Context {
                 result = new android.app.usage.StorageStatsManager(this);
                 break;
             case TEXT_SERVICES_MANAGER_SERVICE:
-                result = new android.view.textservice.TextServicesManager(this);
+                result = ViewHost.get().newTextServicesManager(this);
                 break;
             case HARDWARE_PROPERTIES_SERVICE:
                 result = new android.os.HardwarePropertiesManager(this);
@@ -1573,7 +1574,7 @@ public abstract class Context {
             case CAPTIONING_SERVICE:
                 // Media players do getSystemService(CaptioningManager.class)
                 // .isEnabled() unguarded; null NPEs before playback starts.
-                result = new android.view.accessibility.CaptioningManager();
+                result = ViewHost.get().newCaptioningManager();
                 break;
             case RESTRICTIONS_SERVICE:
                 // Unmanaged device: an empty restrictions Bundle, never null.

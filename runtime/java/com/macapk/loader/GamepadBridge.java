@@ -7,6 +7,7 @@ import android.view.KeyCharacterMap;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
+import com.macapk.loader.view.ViewHost;
 
 /**
  * HOST GAME CONTROLLERS -> Android gamepads (MACAPK_GAMEPAD, default ON;
@@ -176,7 +177,7 @@ public final class GamepadBridge {
             final int number = nextControllerNumber();
             pad = new Pad(handle, id, number, mask);
             final String devName = (name == null || name.isEmpty()) ? "Gamepad" : name;
-            device = new InputDevice(id, 0, number, devName, vendor, product,
+            device = ViewHost.get().newInputDevice(id, 0, number, devName, vendor, product,
                     descriptor(vendor, product, uniqueId, devName),
                     true,                                   // isExternal
                     SOURCES, InputDevice.KEYBOARD_TYPE_NON_ALPHABETIC,

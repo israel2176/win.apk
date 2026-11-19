@@ -5,6 +5,7 @@ package android.app;
 import android.os.LocaleList;
 
 import java.util.Locale;
+import com.macapk.loader.view.ViewHost;
 
 public class LocaleManager {
     private final android.content.Context context;
@@ -35,7 +36,7 @@ public class LocaleManager {
             app.dispatchConfigurationChanged(new android.content.res.Configuration(next));
             Activity top = com.macapk.loader.ActivityHost.peek();
             if (top != null) com.macapk.loader.DisplayConfig.deliverToActivity(top, next);
-            android.view.ViewRootImpl.scheduleLayout();
+            ViewHost.get().scheduleLayout();
         };
         android.os.Looper looper = android.os.Looper.getMainLooper();
         if (Thread.currentThread() == looper.getThread()) apply.run();

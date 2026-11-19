@@ -1264,7 +1264,8 @@ draw them pixel-identical.
 
 - Step 0: seams (`ResBackend`, `ViewHost`) for the 574 call sites into
   Win.apk's own members of those packages, with nothing changed (as
-  `GfxBackend` did for graphics).
+  `GfxBackend` did for graphics). The views half is done:
+  `com.macapk.loader.view.ViewHost`.
 - R1: resources on AOSP over Robolectric's Java port of libandroidfw
   (`WINAPK_AOSP_RES=1`). R2: libandroidfw built for Windows. The port's 0.9 to 1.4 s
   cold load of the framework table is the reason.

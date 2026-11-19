@@ -31,6 +31,7 @@ package com.macapk.loader;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.view.View;
+import com.macapk.loader.view.ViewHost;
 
 public final class StatusBarDriver {
     // Process-environment snapshots for the per-draw / per-frame / per-layout /
@@ -115,11 +116,11 @@ public final class StatusBarDriver {
         // exactly this. Returning 0 here covers every consumer at once --
         // ViewCanvasDriver's measure, its layout, and the bar painter itself --
         // rather than four separate call-site edits that could drift apart.
-        if (android.view.Window.macapkFullscreen()) return 0;
+        if (ViewHost.get().fullscreen()) return 0;
         // v1.0.939: WindowInsetsController.hide(statusBars()) means the same
         // thing FLAG_FULLSCREEN does -- the bar is gone, so it costs no inset.
         // Two APIs, one state, one answer.
-        if (android.view.Window.macapkBarHidden(
+        if (ViewHost.get().barHidden(
                 android.view.WindowInsets.Type.statusBars())) return 0;
         return heightPxRaw(root);
     }
@@ -207,7 +208,7 @@ public final class StatusBarDriver {
         // dispatch no WindowInsets, so dropping the strip slid content under a
         // bar that was still painted. Here the bar is removed, so there is
         // nothing to slide under.
-        if (android.view.Window.macapkBarHidden(
+        if (ViewHost.get().barHidden(
                 android.view.WindowInsets.Type.navigationBars())) return 0;
         // 48dp = AOSP navigation_bar_height (3-button). The 24dp value is
         // the GESTURE bar, which we no longer draw.
@@ -353,8 +354,8 @@ public final class StatusBarDriver {
      *  bar's own inset. */
     public static boolean navBarCanMove() {
         try {
-            final int wpx = android.view.Display.macapkRealWidthPx();
-            final int hpx = android.view.Display.macapkRealHeightPx();
+            final int wpx = ViewHost.get().realWidthPx();
+            final int hpx = ViewHost.get().realHeightPx();
             if (wpx <= 0 || hpx <= 0 || wpx == hpx) return false;
             final int swDp = Math.round(Math.min(wpx, hpx) / MACAPK_DISPLAY_DENSITY);
             return swDp < 600;
@@ -390,8 +391,8 @@ public final class StatusBarDriver {
             if (!navBarCanMove()) return NAV_BAR_BOTTOM;
             // The same width>height test Display.getRotation() uses to answer
             // ROTATION_90, and the same one AOSP applies here.
-            if (android.view.Display.macapkRealWidthPx()
-                    > android.view.Display.macapkRealHeightPx()) {
+            if (ViewHost.get().realWidthPx()
+                    > ViewHost.get().realHeightPx()) {
                 return NAV_BAR_RIGHT;
             }
         } catch (Throwable ignored) {}
@@ -471,7 +472,7 @@ public final class StatusBarDriver {
      *  immersive game -- gdlite, mindustry, unciv, subway, crossy -- gets a
      *  zero inset here and is byte-identical to the pre-v1.0.996 geometry. */
     public static int contentInsetBottomPx(View root) {
-        return android.view.Window.macapkDecorFitsSystemWindows()
+        return ViewHost.get().decorFitsSystemWindows()
                 ? navBarInsetBottomPx(root) : 0;
     }
 
@@ -489,7 +490,7 @@ public final class StatusBarDriver {
      *  still returns 0 for a hidden bar, so every immersive app gets 0 on all
      *  four edges and is byte-identical to the pre-change geometry. */
     public static int contentInsetRightPx(View root) {
-        return android.view.Window.macapkDecorFitsSystemWindows()
+        return ViewHost.get().decorFitsSystemWindows()
                 ? navBarInsetRightPx(root) : 0;
     }
 
@@ -497,7 +498,7 @@ public final class StatusBarDriver {
      *  navBarPosition never returns NAV_BAR_LEFT because we cannot tell
      *  ROTATION_270 from ROTATION_90. */
     public static int contentInsetLeftPx(View root) {
-        return android.view.Window.macapkDecorFitsSystemWindows()
+        return ViewHost.get().decorFitsSystemWindows()
                 ? navBarInsetLeftPx(root) : 0;
     }
 
@@ -810,7 +811,7 @@ public final class StatusBarDriver {
         // own precedence (generateLayout reads windowStatusBarColor only
         // `if (!mForcedStatusBarColor)`; the appearance bits work the same way).
         // -1 means "the app never set this bit", so the theme answers.
-        int forcedLight = android.view.Window.macapkBarAppearance(lightFlag);
+        int forcedLight = ViewHost.get().barAppearance(lightFlag);
         boolean light = (forcedLight >= 0)
                 ? (forcedLight == 1)
                 : macapkThemeAttrBool(root, statusBar ? "windowLightStatusBar"
@@ -829,9 +830,9 @@ public final class StatusBarDriver {
         // in code outranks its own theme. This is not an edge case on a modern
         // fleet -- Material's own EdgeToEdgeUtils calls setStatusBarColor, and
         // AntennaPod, Mastodon and AnkiDroid all reach it.
-        int declared = statusBar ? android.view.Window.macapkForcedStatusBarColor()
-                                 : android.view.Window.macapkForcedNavigationBarColor();
-        if (declared == android.view.Window.MACAPK_BAR_COLOR_UNSET) {
+        int declared = statusBar ? ViewHost.get().forcedStatusBarColor()
+                                 : ViewHost.get().forcedNavigationBarColor();
+        if (declared == ViewHost.get().barColorUnset()) {
             declared = macapkThemeAttrColor(root, statusBar ? "statusBarColor"
                                                             : "navigationBarColor",
                                             MACAPK_UNSET_COLOR);
@@ -923,7 +924,7 @@ public final class StatusBarDriver {
         // leaving the reserved right column showing window background. Paint
         // and layout must read the same predicate.
         if (canvas == null || surfaceWidth <= 0) return;
-        if (!android.view.Window.macapkDecorFitsSystemWindows()) return;
+        if (!ViewHost.get().decorFitsSystemWindows()) return;
         // navigation_bar_height and navigation_bar_width are both 48dp
         // (core/res/res/values/dimens.xml:49/53, android11-release), so one
         // dimension serves either edge.
@@ -1074,7 +1075,7 @@ public final class StatusBarDriver {
      *  15dp visual target would be far below the 48dp minimum. */
     public static int[] navButtonHitRect(View root, int surfaceW, int surfaceH, int slot) {
         if (surfaceW <= 0 || slot < 0 || slot > 2) return null;
-        if (!android.view.Window.macapkDecorFitsSystemWindows()) return null;
+        if (!ViewHost.get().decorFitsSystemWindows()) return null;
         int stripH = navBarInsetPx(root);
         if (stripH <= 0) return null;
         // v1.0.997: MIRRORS the painter's branch, and must keep doing so. If

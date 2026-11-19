@@ -1,6 +1,7 @@
 package com.macapk.loader;
 
 import android.view.KeyEvent;
+import com.macapk.loader.view.ViewHost;
 
 /** What the runtime log may say about a keystroke or about text the user typed.
  *
@@ -119,7 +120,7 @@ public final class KeyLogPolicy {
      *  the question cannot be answered, the answer is yes. Must be asked on the
      *  thread that delivers the key (see macapkPasswordTargetActive's THREAD note). */
     static boolean passwordTarget() {
-        try { return android.view.inputmethod.InputMethodManager.macapkPasswordTargetActive(); }
+        try { return ViewHost.get().imePasswordTargetActive(); }
         catch (Throwable t) { return true; }
     }
 
@@ -146,7 +147,7 @@ public final class KeyLogPolicy {
         if (text == null || text.length() == 0) return "";
         boolean password = false, editor = false;
         try {
-            password = tv.isAnyPasswordInputType() || tv.macapkHasPasswordTransformationMethod();
+            password = tv.isAnyPasswordInputType() || ViewHost.get().hasPasswordTransformationMethod(tv);
         } catch (Throwable t) { password = true; }
         if (!password) {
             try {

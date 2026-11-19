@@ -41,6 +41,7 @@
 // permanently-silent callback.
 package android.media;
 import java.nio.ByteBuffer;
+import com.macapk.loader.view.ViewHost;
 
 public final class MediaCodec {
     public static final int BUFFER_FLAG_KEY_FRAME = 1;
@@ -460,13 +461,13 @@ public final class MediaCodec {
         } else {
             mInputSurface = persistent;
         }
-        mInputSurface.macapkSetFrameSink(
+        ViewHost.get().setFrameSink(mInputSurface,
                 (argb, w, h, timestampNs) -> encodeSurfaceFrame(argb, w, h, timestampNs / 1000),
                 mEncWidth, mEncHeight);
     }
 
     private void detachInputSurface() {
-        if (mInputSurface != null) mInputSurface.macapkSetFrameSink(null, 0, 0);
+        if (mInputSurface != null) ViewHost.get().setFrameSink(mInputSurface, null, 0, 0);
         mInputSurface = null;
         if (mInputReader != null) { mInputReader.close(); mInputReader = null; }
         if (mInputThread != null) { mInputThread.quitSafely(); mInputThread = null; }
@@ -682,7 +683,7 @@ public final class MediaCodec {
             // Surfaces). Done at configure time because that is the moment
             // the codec-output-to-surface association exists on real Android.
             if (mHasSurface) {
-                android.view.SurfaceView.macapkRegisterVideoSink(surface);
+                ViewHost.get().registerVideoSink(surface);
             }
         } else {
             mVidMime = null;
@@ -798,7 +799,7 @@ public final class MediaCodec {
         mSurface = surface;
         mHasSurface = (surface != null && surface.isValid());
         if (mHasSurface) {
-            android.view.SurfaceView.macapkRegisterVideoSink(surface);
+            ViewHost.get().registerVideoSink(surface);
         }
     }
 
@@ -902,7 +903,7 @@ public final class MediaCodec {
         // codec's registration wins -- macapkUnregisterVideoSink compares the
         // Surface identity, so releasing an old codec after a new one bound
         // does not blank the new one's video).
-        android.view.SurfaceView.macapkUnregisterVideoSink(mSurface);
+        ViewHost.get().unregisterVideoSink(mSurface);
     }
     public void flush() {
         synchronized (mAsyncLock) {

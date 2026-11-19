@@ -14,6 +14,7 @@ import android.os.Handler;
 import java.lang.reflect.Method;
 import java.util.ArrayDeque;
 import java.util.Deque;
+import com.macapk.loader.view.ViewHost;
 
 public final class ActivityHost {
     private static final String TAG = "Mac.apk.ActivityHost";
@@ -632,8 +633,8 @@ public final class ActivityHost {
         try { WindowOverlayStack.closeAll(a); } catch (Throwable ignored) {}
         // Our own per-context registries must let go of a destroyed activity
         // (v1.0.1643: View's context-keyed owner tags held every activity).
-        try { android.view.View.macapkForgetContext(a); } catch (Throwable ignored) {}
-        try { android.view.LayoutInflater.macapkForgetContext(a); } catch (Throwable ignored) {}
+        try { ViewHost.get().forgetViewContext(a); } catch (Throwable ignored) {}
+        try { ViewHost.get().forgetInflaterContext(a); } catch (Throwable ignored) {}
         // AOSP scheduleFinalCleanup -> LoadedApk.removeContextRegistrations.
         try { android.content.Context.macapkRemoveContextRegistrations(a); } catch (Throwable ignored) {}
         // AOSP handleDestroyActivity then removes the window (wm.removeViewImmediate
@@ -645,14 +646,14 @@ public final class ActivityHost {
         // queued (keeping the activity reachable from the MessageQueue) and its
         // animations kept running for a screen nobody could see.
         {
-            try { android.view.WindowManagerGlobal.getInstance().macapkActivityWindowRemoved(a); }
+            try { ViewHost.get().activityWindowRemoved(a); }
             catch (Throwable ignored) { }
             try {
                 android.view.View content = a.macapkContentView();
-                if (content != null) content.macapkRemoveWindow();
+                if (content != null) ViewHost.get().removeWindow(content);
                 android.view.Window w = a.getWindow();
                 android.view.View decor = (w != null) ? w.peekDecorView() : null;
-                if (decor != null && decor != content) decor.macapkRemoveWindow();
+                if (decor != null && decor != content) ViewHost.get().removeWindow(decor);
             } catch (Throwable t) {
                 NativeLog.w(TAG, "detach of destroyed " + a.getClass().getName() + " threw: " + t);
             }
@@ -3634,7 +3635,7 @@ public final class ActivityHost {
     static void latchWindowAdded(Activity a, boolean reveal) {
         // The window joins WindowManagerGlobal's mViews/mParams, as
         // handleResumeActivity's wm.addView does. Idempotent per window.
-        try { android.view.WindowManagerGlobal.getInstance().macapkActivityWindowAdded(a); }
+        try { ViewHost.get().activityWindowAdded(a); }
         catch (Throwable t) { NativeLog.w(TAG, "window registry add failed: " + t); }
         // A window whose input queue was taken (NativeActivity) gets its
         // InputQueue here, after the resume, as ViewRootImpl.setView builds it
@@ -3643,7 +3644,7 @@ public final class ActivityHost {
         if (a != null && !a.isFinishing()) {
             try {
                 android.view.Window w = a.getWindow();
-                if (w != null) w.macapkOnWindowAddedForInput();
+                if (w != null) ViewHost.get().onWindowAddedForInput(w);
             } catch (Throwable t) {
                 NativeLog.w(TAG, "input queue for " + a.getClass().getName() + " failed: " + t);
             }
@@ -4506,15 +4507,15 @@ public final class ActivityHost {
             String pkg = null;
             try { pkg = activity.getPackageName(); } catch (Throwable ignore) {}
             int n = 0;
-            for (String[] family : android.view.View.MACAPK_VIEW_TREE_OWNERS) {
+            for (String[] family : ViewHost.get().viewTreeOwners()) {
                 String name = family[0];
                 int id = 0;
                 try { id = res.getIdentifier(name, "id", pkg); } catch (Throwable ignore) {}
                 if (id == 0) { try { id = res.getIdentifier(name, "id", null); } catch (Throwable ignore) {} }
-                if (id != 0) { android.view.View.macapkRegisterOwnerKey(id); n++; }
+                if (id != 0) { ViewHost.get().registerOwnerKey(id); n++; }
             }
             NativeLog.i(TAG, "registerViewTreeOwnerKeys: registered " + n + "/"
-                + android.view.View.MACAPK_VIEW_TREE_OWNERS.length
+                + ViewHost.get().viewTreeOwners().length
                 + " owner tag ids (pkg=" + pkg + ")");
         } catch (Throwable t) {
             NativeLog.w(TAG, "registerViewTreeOwnerKeys: " + t);
@@ -4537,7 +4538,7 @@ public final class ActivityHost {
         // that convention even though, being new in 2025, it has no legacy Java
         // API to stay binary-compatible with (androidx-main
         // navigationevent/.../ViewTreeNavigationEventDispatcherOwner.android.kt).
-        for (String[] family : android.view.View.MACAPK_VIEW_TREE_OWNERS) {
+        for (String[] family : ViewHost.get().viewTreeOwners()) {
             String setterCls = family[2], ownerIface = family[1];
             try {
                 Class<?> setterC = Class.forName(setterCls, true, cl);
@@ -5029,7 +5030,7 @@ public final class ActivityHost {
             while (!queue.isEmpty() && visited < 8000) {
                 android.view.View v = queue.poll();
                 visited++;
-                for (Object tagVal : v.macapkKeyedTagValues()) {
+                for (Object tagVal : ViewHost.get().keyedTagValues(v)) {
                     if (tagVal == null) continue;
                     // The ViewTreeLifecycleOwner tag value is a LifecycleOwner;
                     // it may BE a registry, or HOLD one in a field.
@@ -5059,7 +5060,7 @@ public final class ActivityHost {
         // (Conductor sets the owner only after its detached container joins the
         // decor). ensureCompositionCreated is idempotent, so this is a no-op
         // except for the views that were waiting on an owner.
-        try { android.view.View.macapkRetryComposeAttaches(); }
+        try { ViewHost.get().retryComposeAttaches(); }
         catch (Throwable t) { NativeLog.w(TAG, "compose-attach retry: " + t); }
     }
 
