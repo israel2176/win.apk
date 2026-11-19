@@ -743,5 +743,15 @@ public class ColorStateList implements android.os.Parcelable {
     }
 
     public int getChangingConfigurations() { return 0; }
+
+    // AOSP hides this; AOSP's own graphics and text classes call it (WINAPK_AOSP_GFX=1 puts them,
+    // lib/aosp-graphics.jar, before this framework: windows/README.md, "Milestone 2").
+    /** AOSP ColorStateList.hasFocusStateSpecified: a state spec names state_focused. */
+    public boolean hasFocusStateSpecified() {
+        return android.util.StateSet.containsAttribute(mStateSpecs, android.R.attr.state_focused);
+    }
+
+    /** AOSP ColorStateList.getColors. */
+    public int[] getColors() { return mColors; }
 }
 

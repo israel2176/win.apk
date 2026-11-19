@@ -1138,7 +1138,7 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
         if (bitmap == null || canvas == null
                               || bitmap.getWidth() != surfaceW
                               || bitmap.getHeight() != surfaceH) {
-            bitmap = Bitmap.createBitmapWithCanvasBacking(surfaceW, surfaceH);
+            bitmap = GfxBackend.get().createFrameBitmap(surfaceW, surfaceH);
             canvas = new Canvas(bitmap);
             presentForceFull = true;   // a new bitmap: nothing about the last present carries over
             hb.reset();                // FRAMESPEED heartbeat: a new surface re-proves quiet

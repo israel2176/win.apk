@@ -184,7 +184,8 @@ Id JNICALL lookup(JNIEnv* env, jclass c, const char* name, const char* sig) {
 
 // API 34 changed four signatures against the ones the library carries (it was built for an older
 // AOSP). Each adapter takes API 34's arguments and forwards the ones the library knows; what it
-// drops is new in 34 and has a default the library already uses.
+// drops is new in 34 and has a default the library already uses. A fifth (last) goes the other
+// way: the library has only a later API's form.
 using nbuild4_t = jlong(JNICALL*)(JNIEnv*, jclass, jlong, jstring, jint, jboolean);
 nbuild4_t g_nbuild4;
 // FontFamily.Builder.nBuild: + isDefaultFallback (only the system's own fallback list sets it).
@@ -212,6 +213,12 @@ jlong JNICALL mtbuild6(JNIEnv* e, jclass c, jlong b, jlong hint, jcharArray text
     return g_mtbuild5(e, c, b, hint, text, hyph, layout);
 }
 
+using elegant_t = void(JNICALL*)(JNIEnv*, jclass, jlong, jint);
+elegant_t g_elegant;
+// Paint.nSetElegantTextHeight: the library has only the newer int form (-1 unset, 0 off, 1 on),
+// API 34 passes a boolean. TextView sets it from every text appearance.
+void JNICALL elegant_bool(JNIEnv* e, jclass c, jlong paint, jboolean on) { g_elegant(e, c, paint, on ? 1 : 0); }
+
 struct Adapter {
     const char *name, *lib_sig, *aosp_sig;
     void** lib_fn;
@@ -226,6 +233,8 @@ const Adapter kAdapters[] = {
      reinterpret_cast<void*>(&styler7)},
     {"nBuildMeasuredText", "(JJ[CZZ)J", "(JJ[CZZZ)J", reinterpret_cast<void**>(&g_mtbuild5),
      reinterpret_cast<void*>(&mtbuild6)},
+    {"nSetElegantTextHeight", "(JI)V", "(JZ)V", reinterpret_cast<void**>(&g_elegant),
+     reinterpret_cast<void*>(&elegant_bool)},
 };
 
 jint JNICALL my_RegisterNatives(JNIEnv* env, jclass c, const JNINativeMethod* m, jint n) {

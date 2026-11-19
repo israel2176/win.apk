@@ -2418,5 +2418,14 @@ public class TypedArray implements AutoCloseable {
         if (r == null) return null;
         return r.getFont(id);   // throws NotFoundException when unresolvable
     }
+
+    // AOSP hides this; AOSP's own graphics and text classes call it (WINAPK_AOSP_GFX=1 puts them,
+    // lib/aosp-graphics.jar, before this framework: windows/README.md, "Milestone 2").
+    /** AOSP TypedArray.extractThemeAttrs: the theme attributes left to resolve; none here, since
+     *  this TypedArray resolves them when it is obtained. */
+    public int[] extractThemeAttrs() { return null; }
+
+    /** AOSP TypedArray.extractThemeAttrs(int[]). */
+    public int[] extractThemeAttrs(int[] scrap) { return null; }
 }
 

@@ -4484,7 +4484,7 @@ public final class Boot {
                 return;
             }
             final int sz = 192;                              // launcher tile resolution
-            android.graphics.Bitmap bmp = android.graphics.Bitmap.createBitmapWithCanvasBacking(sz, sz);
+            android.graphics.Bitmap bmp = GfxBackend.get().createFrameBitmap(sz, sz);
             android.graphics.Canvas c = new android.graphics.Canvas(bmp);
             d.setBounds(0, 0, sz, sz);
             d.draw(c);

@@ -913,4 +913,9 @@ public final class Choreographer {
             synchronized (mLock) { mCallbacksRunning = false; }
         }
     }
+
+    // AOSP hides this; AOSP's own graphics and text classes call it (WINAPK_AOSP_GFX=1 puts them,
+    // lib/aosp-graphics.jar, before this framework: windows/README.md, "Milestone 2").
+    /** AOSP Choreographer.getFrameIntervalNanos: the display's frame interval. */
+    public long getFrameIntervalNanos() { return frameIntervalNanos(); }
 }

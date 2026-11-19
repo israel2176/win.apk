@@ -42,10 +42,24 @@ import java.util.function.Function;
 
 public interface GfxBackend {
 
-    /** The backend of this JVM: chosen once, for the whole run. */
-    static GfxBackend get() { return Java2DGfx.INSTANCE; }
+    /** The backend of this JVM: chosen once, for the whole run (-Dwinapk.aosp.gfx=1: AospGfx). */
+    static GfxBackend get() { return Chosen.BACKEND; }
+
+    /** True when android.graphics is AOSP's (lib/aosp-graphics.jar first on the class path). */
+    static boolean isAosp() { return Chosen.AOSP; }
+
+    /** Holds the choice, so that it is made once, on first use. */
+    final class Chosen {
+        static final boolean AOSP = "1".equals(System.getProperty("winapk.aosp.gfx"));
+        static final GfxBackend BACKEND = AOSP ? AospGfx.INSTANCE : Java2DGfx.INSTANCE;
+
+        private Chosen() {}
+    }
 
     // ---- Present a frame: the pixels of a Bitmap, the draw-op counter ----
+
+    /** A bitmap a frame (or a Surface's canvas) draws into, ARGB 8888 (Bitmap.createBitmapWithCanvasBacking). */
+    Bitmap createFrameBitmap(int width, int height);
 
     /** The bitmap's ARGB pixels, a copy brought up to date (Bitmap.macapkArgbBuffer). */
     int[] argbBuffer(Bitmap bitmap);
@@ -189,17 +203,43 @@ public interface GfxBackend {
     /** A colour value of a resource ("#rgb", "#argb", "#rrggbb", "#aarrggbb") (Color.macapkParseResourceColor). */
     int parseResourceColor(String s);
 
+    /** A <vector> drawable from its resource file (VectorDrawable(Resources, int, Theme), Win.apk's). */
+    Drawable vectorFromResource(android.content.res.Resources res, int id, android.content.res.Resources.Theme theme);
+
+    /** A <vector> drawable from its element (VectorDrawable(Element, Theme, Resources), Win.apk's). */
+    Drawable vectorFromElement(org.w3c.dom.Element e, android.content.res.Resources.Theme theme,
+                               android.content.res.Resources res);
+
+    /** An empty <layer-list> to add layers to (LayerDrawable(), which AOSP keeps to its package). */
+    android.graphics.drawable.LayerDrawable layerDrawable();
+
+    /** An empty <ripple> to add layers to (RippleDrawable(), which AOSP keeps to its package). */
+    android.graphics.drawable.RippleDrawable rippleDrawable();
+
+    /** A <rotate> drawable around the child (RotateDrawable(Drawable), Win.apk's). */
+    android.graphics.drawable.RotateDrawable rotateDrawable(Drawable child);
+
     void setNinePatchDensities(NinePatchDrawable d, int source, int screen);
 
     void setNinePatchOpticalInsets(NinePatchDrawable d, int left, int top, int right, int bottom);
 
-    void setAnimatedVectorInner(AnimatedVectorDrawable avd, Drawable inner);
+    /** An <animated-vector> over its base drawable (AnimatedVectorDrawable.macapkSetInner). */
+    AnimatedVectorDrawable animatedVector(Drawable inner);
 
     void setAnimatedImageBitmap(AnimatedImageDrawable aid, Bitmap bm);
 
     void setUseLevelForShape(GradientDrawable gd, boolean useLevel);
 
     boolean getUseLevelForShape(GradientDrawable gd);
+
+    /** Whether Resources reads a <shape>'s ring attributes (GradientDrawable.MACAPK_SHAPE_RING). */
+    boolean readsShapeRing();
+
+    /** Whether Resources reads a <shape>'s tint and tintMode (GradientDrawable.MACAPK_SHAPE_TINT). */
+    boolean readsShapeTint();
+
+    /** The drawable's tint, or null (Drawable.getTintList, Win.apk's). */
+    android.content.res.ColorStateList tintList(Drawable d);
 
     /** True when the vector drawable will paint nothing (VectorDrawable.macapkPaintsNothing). */
     boolean vectorPaintsNothing(VectorDrawable vd);

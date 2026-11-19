@@ -79,6 +79,24 @@ for round in 1 2 3 4 5 6 7 8; do
     echo "[aosp-gfx]   + $(wc -l < "$WORK/more.txt") classes they need that the framework lacks"
     extract "$WORK/more.txt"
 done
+# jdeps leaves out what a class names in its own package, unless -filter:none; so a second pass
+# for those, in the packages taken above only: the text classes' helpers in android.text
+# (AutoGrowArray, SpanSet, AndroidBidi, PackedIntVector...) and nested classes of a class taken
+# (GradientColor's factory). A nested class of one of Win.apk's own (android.view.View's
+# AttachInfo, which ThreadedRenderer names) is never taken.
+for round in 1 2 3 4; do
+    (cd "$CLASSES" && find . -name '*.class' | sed 's#^[.]/##') > "$WORK/have.txt"
+    "$JDEPS" -verbose:class -filter:none -cp "$FRAMEWORK" "$CLASSES" 2> /dev/null | tr -d '\r' |
+        awk '$NF == "found" && $(NF-1) == "not" { f = $1; t = $3; sub(/[.][^.]*$/, "", f);
+             p = t; sub(/[.][^.]*$/, "", p); if (f == p) print t }' | sort -u |
+        grep -E '^android[.](text|graphics|content[.]res|util)[.]' | tr . / |
+        awk -v have="$WORK/have.txt" 'BEGIN { while ((getline l < have) > 0) h[l] = 1 }
+             { o = $0; sub(/[$].*/, "", o); if (o == $0 || h[o ".class"]) print $0 ".class" }' |
+        grep -xFf - "$WORK/all.txt" > "$WORK/more.txt" || true
+    [[ -s "$WORK/more.txt" ]] || break
+    echo "[aosp-gfx]   + $(wc -l < "$WORK/more.txt") classes of their own packages"
+    extract "$WORK/more.txt"
+done
 
 echo "[aosp-gfx] Win.apk's stand-ins (windows/java/aosp_gfx)"
 find "$HERE/../java/aosp_gfx" -name '*.java' | sort | while read -r f; do native_path "$f"; done > "$WORK/src.txt"

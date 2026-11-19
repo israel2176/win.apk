@@ -315,7 +315,7 @@ public class TextureView extends View {
         int h = Math.max(1, getHeight());
         if (mCanvasBitmap == null
                 || mCanvasBitmap.getWidth() != w || mCanvasBitmap.getHeight() != h) {
-            mCanvasBitmap = Bitmap.createBitmapWithCanvasBacking(w, h);
+            mCanvasBitmap = com.macapk.loader.gfx.GfxBackend.get().createFrameBitmap(w, h);
         }
         mLockedCanvas = new android.graphics.Canvas(mCanvasBitmap);
         return mLockedCanvas;
