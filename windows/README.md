@@ -507,6 +507,20 @@ byte for byte on a stage with and without these files.
   debug dumps are dropped under the switch. Each step is checked by the
   smoke set run both ways, and by this test's pixels.
 
+After graphics: AOSP's resources and views. The plan is in
+`docs/research/aosp-views.md` (`PORTING.md` M11). It covers what those layers
+need underneath, the seams for Win.apk's own additions, and the steps behind
+`WINAPK_AOSP_RES` and `WINAPK_AOSP_VIEWS`. Its spike is
+`test/aospviews/` (`fetch.sh`, `run.sh`; Linux, plain JDK 21, not in CI yet).
+It runs AOSP 14's `Resources` / `TypedArray` / `Theme` over Robolectric's Java
+port of libandroidfw, which the native runtime does not carry. The natives are
+rewritten at build time into Java calls, with no instrumentation at run time.
+AOSP's `LayoutInflater` and widgets then run on this test's graphics. Against
+the uiprobe oracle:
+
+- theme lines: 29 of 29 equal (Win.apk's framework: 19);
+- 8 layout cases: 44 of 44 lines equal and 8 of 8 pictures pixel-identical.
+
 ## The compatibility sweep
 
 `test/compat/sweep.py` boots every app of `test/compat/apps.txt` (open-source

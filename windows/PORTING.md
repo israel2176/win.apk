@@ -1250,6 +1250,36 @@ The original plan:
 
 Exit: one ARM-only game is playable at an acceptable speed.
 
+### M11. AOSP's resources and views (plan; after graphics milestone 2)
+
+Replace the app-process framework's `android.content.res`, `android.view`,
+`android.widget` and `android.text` with AOSP's own classes, layer by layer.
+Win.apk's own code stays where Android talks to the system: windows, input,
+files, Binder and services, Google services, ELF/ARM. The plan, the inventory
+and the measurements are in `docs/research/aosp-views.md`. The spike is
+`windows/test/aospviews/`. On a plain JDK 21, AOSP 14's resources resolve the
+uiprobe app's themes 29 of 29 as the oracle does (Win.apk's own: 19), and its
+LayoutInflater and widgets lay out 8 probe cases 44 of 44 lines exactly and
+draw them pixel-identical.
+
+- Step 0: seams (`ResBackend`, `ViewHost`) for the 574 call sites into
+  Win.apk's own members of those packages, with nothing changed (as
+  `GfxBackend` did for graphics).
+- R1: resources on AOSP over Robolectric's Java port of libandroidfw
+  (`WINAPK_AOSP_RES=1`). R2: libandroidfw built for Windows. The port's 0.9 to 1.4 s
+  cold load of the framework table is the reason.
+- T: `android.text` with graphics.
+- V1: views and the real `ViewRootImpl` over Win.apk's `IWindowSession` and
+  in-process system services (`WINAPK_AOSP_VIEWS=1`).
+- V2: input, IME and accessibility.
+- V3: HWUI's pipeline.
+
+Each step is gated by `uiprobe/regress.py` and the screens sweep: no line
+further from Android.
+
+Exit: the smoke apps and the screens sweep run with both switches on, with no
+line further from Android than today, and start no slower.
+
 ## 9. Development workflow
 
 ### Local setup on Linux
