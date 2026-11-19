@@ -19,6 +19,7 @@
 // overrides onDraw (the standard Android pattern).
 package com.macapk.loader;
 
+import com.macapk.loader.gfx.GfxBackend;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.view.View;
@@ -1282,7 +1283,7 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
             // The validator draws fully and only CLAIMS the rect (present bound).
             if (partial && !DAMAGE_VALIDATE) {
                 partialSave = canvas.save();
-                canvas.macapkClipChildRect(partialRect[0], partialRect[1],
+                GfxBackend.get().clipChildRect(canvas, partialRect[0], partialRect[1],
                                            partialRect[2], partialRect[3]);
             }
         }
@@ -1797,7 +1798,7 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
         // reference is held locally so a mid-frame surface reset (which nulls
         // the field) cannot NPE the sample or compare two different canvases.
         final android.graphics.Canvas inkCanvas = canvas;
-        final int inkOpsFrameStart = inkCanvas.macapkDrawOps;
+        final int inkOpsFrameStart = GfxBackend.get().drawOps(inkCanvas);
         try { paintNavSelectedPills(rootView, canvas, 0, 0,
                                     new java.util.IdentityHashMap<>()); }
         catch (Throwable ignored) {}
@@ -1886,7 +1887,7 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
             // finally so a throwing draw cannot leave a stale reference behind.
             macapkRootCanvas = canvas;
             macapkPartialDraw = partialSave >= 0;   // FRAMESPEED S2 (see the field)
-            final int opsBefore = canvas.macapkDrawOps;
+            final int opsBefore = GfxBackend.get().drawOps(canvas);
             try {
                 // FRAMESPEED S1: views record where this frame draws them (all of
                 // them in a full frame; under a damage clip, those the damage came from).
@@ -1906,7 +1907,7 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
             // would defeat the whole optimisation.
             // Only the MACAPK_COUNT_ALL_INK=0 bisect path decides here; the
             // default decides after the window-overlay pass below.
-            if (!INK_AFTER_ALL_PASSES) sFrameDrewInk = (canvas.macapkDrawOps != opsBefore);
+            if (!INK_AFTER_ALL_PASSES) sFrameDrewInk = (GfxBackend.get().drawOps(canvas) != opsBefore);
             canvas.restore();
             // MACAPK_PUNCH_TRACE=1: does the SurfaceView hole survive the draw?
             // Sampled HERE, immediately after rootView.draw and before the
@@ -1921,7 +1922,7 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
                         int ry = (int) ((packed >> 32) & 0xffffL);
                         int rw = (int) ((packed >> 16) & 0xffffL);
                         int rh = (int) (packed & 0xffffL);
-                        java.awt.image.BufferedImage img = bitmap.macapkAwtImage();
+                        java.awt.image.BufferedImage img = GfxBackend.get().awtImage(bitmap);
                         if (img != null) {
                             int clear = 0, samples = 0;
                             for (int yy = ry; yy < Math.min(ry + rh, img.getHeight()); yy += 8)
@@ -2096,7 +2097,7 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
         // published stayed frozen on the layer after dismiss, because the next
         // empty frame elided too. Same failure as the Candy Crush splash, on the
         // overlay path.
-        if (INK_AFTER_ALL_PASSES) sFrameDrewInk = (inkCanvas.macapkDrawOps != inkOpsFrameStart);
+        if (INK_AFTER_ALL_PASSES) sFrameDrewInk = (GfxBackend.get().drawOps(inkCanvas) != inkOpsFrameStart);
         // DIAGNOSTIC: per-frame global draw-op delta across ALL canvases (frame +
         // every RenderNode recording). Tells us if the Compose content issues ANY
         // draws this frame (0 => the composition produces no draw calls at all).
@@ -2143,8 +2144,8 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
         try {
             // One row is read (sampleRowDominant), so the live backing serves it
             // with no copy. See the present's pixel read below for why.
-            int[] sp = bitmap.macapkLiveArgbOrNull();
-            if (sp == null) sp = bitmap.macapkArgbBuffer();
+            int[] sp = GfxBackend.get().liveArgbOrNull(bitmap);
+            if (sp == null) sp = GfxBackend.get().argbBuffer(bitmap);
             if (sp != null) {
                 sbBgUnder = sampleRowDominant(sp, bitmap.getWidth(),
                     bitmap.getHeight(), statusBarH + 2);
@@ -2195,8 +2196,8 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
                 hb.reset();
             }
         }
-        int[] pixels = bitmap.macapkLiveArgbOrNull();
-        if (pixels == null) pixels = bitmap.macapkArgbBuffer();
+        int[] pixels = GfxBackend.get().liveArgbOrNull(bitmap);
+        if (pixels == null) pixels = GfxBackend.get().argbBuffer(bitmap);
         if (DAMAGE_VALIDATE && FRAMESPEED_DAMAGE) {
             macapkDamageValidate(pixels, bitmap.getWidth(), bitmap.getHeight(), presentPartial, partialRect);
         }
@@ -2251,7 +2252,7 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
                 // its content into RenderNodes that never replayed onto the
                 // frame canvas" -- the two halves of a Compose blank that look
                 // identical in the presented pixels. Self-gated no-op.
-                try { android.graphics.RenderNode.macapkStatsDump("frame#" + n); }
+                try { GfxBackend.get().renderNodeStatsDump("frame#" + n); }
                 catch (Throwable ignored) {}
                 // Diagnostic PNG dump on demand. Set MACAPK_DUMP_BITMAP_AT
                 // to a frame number (or 0 for "every dump frame"). Writes
@@ -4851,15 +4852,17 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
                             android.graphics.drawable.Drawable lyr = ld.getDrawable(li);
                             sb.append(li > 0 ? "," : "").append(lyr == null ? "null" : lyr.getClass().getSimpleName());
                             if (lyr instanceof android.graphics.drawable.GradientDrawable gd) {
-                                sb.append("{fill=0x").append(Integer.toHexString(gd.macapkDumpFillColor()))
-                                  .append(" has=").append(gd.macapkDumpHasFill())
-                                  .append(" tint=0x").append(Integer.toHexString(gd.macapkDumpTint()))
-                                  .append(" strk=0x").append(Integer.toHexString(gd.macapkDumpStroke())).append('}');
+                                sb.append("{fill=0x").append(Integer.toHexString(GfxBackend.get().dumpFillColor(gd)))
+                                  .append(" has=").append(GfxBackend.get().dumpHasFill(gd))
+                                  .append(" tint=0x").append(Integer.toHexString(GfxBackend.get().dumpTint(gd)))
+                                  .append(" strk=0x").append(Integer.toHexString(GfxBackend.get().dumpStroke(gd)))
+                                  .append('}');
                             } else if (lyr instanceof android.graphics.drawable.ShapeDrawable shd) {
-                                sb.append("{paint=0x").append(Integer.toHexString(shd.macapkDumpPaintColor()))
-                                  .append(" shape=").append(shd.macapkDumpShape())
-                                  .append(" a=").append(shd.macapkDumpAlpha())
-                                  .append(" tint=0x").append(Integer.toHexString(shd.macapkDumpTint())).append('}');
+                                sb.append("{paint=0x").append(Integer.toHexString(GfxBackend.get().dumpPaintColor(shd)))
+                                  .append(" shape=").append(GfxBackend.get().dumpShape(shd))
+                                  .append(" a=").append(GfxBackend.get().dumpAlpha(shd))
+                                  .append(" tint=0x").append(Integer.toHexString(GfxBackend.get().dumpTint(shd)))
+                                  .append('}');
                             }
                             // Show the layer's bounds too (a 0x0 layer never paints).
                             if (lyr != null) {

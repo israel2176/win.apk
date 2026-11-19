@@ -55,6 +55,7 @@
 // not asked for any.
 package android.hardware.camera2;
 
+import com.macapk.loader.gfx.GfxBackend;
 import android.graphics.ImageFormat;
 import android.graphics.SurfaceTexture;
 import android.media.ImageReader;
@@ -305,9 +306,9 @@ final class CameraCaptureSessionImpl extends CameraCaptureSession {
             }
         } else {
             for (SurfaceTexture st : textures) {
-                if (st.macapkGetDefaultWidth() > 0 && st.macapkGetDefaultHeight() > 0) {
-                    w = st.macapkGetDefaultWidth();
-                    h = st.macapkGetDefaultHeight();
+                if (GfxBackend.get().defaultWidth(st) > 0 && GfxBackend.get().defaultHeight(st) > 0) {
+                    w = GfxBackend.get().defaultWidth(st);
+                    h = GfxBackend.get().defaultHeight(st);
                     break;
                 }
             }
@@ -369,7 +370,7 @@ final class CameraCaptureSessionImpl extends CameraCaptureSession {
             r.macapkAttachCameraSource(mHandle, nw, nh);
         }
         for (SurfaceTexture st : textures) {
-            st.macapkAttachCameraSource(mHandle, nw, nh);
+            GfxBackend.get().attachCameraSource(st, mHandle, nw, nh);
         }
         mReaders = readers;
         mSurfaceTextures = textures;
@@ -823,7 +824,7 @@ final class CameraCaptureSessionImpl extends CameraCaptureSession {
         }
         mReaders = Collections.emptyList();
         for (SurfaceTexture st : mSurfaceTextures) {
-            st.macapkDetachCameraSource();
+            GfxBackend.get().detachCameraSource(st);
         }
         mSurfaceTextures = Collections.emptyList();
 
@@ -989,7 +990,7 @@ final class CameraCaptureSessionImpl extends CameraCaptureSession {
             long pts = CameraBridge.latestFrameTimestamp(mHandle);
             if (pts == 0) pts = timestampNs;
             for (SurfaceTexture st : textures) {
-                st.macapkQueueFrame(pts, MTX_FLIP_V, 0);
+                GfxBackend.get().queueFrame(st, pts, MTX_FLIP_V, 0);
             }
         }
 

@@ -26,6 +26,7 @@
 // in a later pass.
 package android.view;
 
+import com.macapk.loader.gfx.GfxBackend;
 import android.content.Context;
 import com.macapk.loader.NativeLog;
 
@@ -6643,7 +6644,7 @@ public class LayoutInflater {
             dr = null;
         }
         if (dr instanceof android.graphics.drawable.VectorDrawable vd
-                && (vd.macapkUnresolvedStub || vd.macapkPaintsNothing())) {
+                && (GfxBackend.get().isUnresolvedStub(vd) || GfxBackend.get().vectorPaintsNothing(vd))) {
             dr = null;
         }
         if (dr == null && lastAttr != null) {

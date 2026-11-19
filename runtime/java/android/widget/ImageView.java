@@ -1,4 +1,5 @@
 package android.widget;
+import com.macapk.loader.gfx.GfxBackend;
 import android.content.Context;
 import android.view.View;
 
@@ -673,8 +674,8 @@ public class ImageView extends View {
                                 + "@" + Integer.toHexString(System.identityHashCode(this))
                                 + " bounds=[" + getLeft() + "," + getTop()
                                 + "-" + getRight() + "," + getBottom() + "]"
-                                + " canvas-translate=(" + canvas.macapkGetCurrentTx()
-                                + "," + canvas.macapkGetCurrentTy() + ")"
+                                + " canvas-translate=(" + GfxBackend.get().currentTx(canvas)
+                                + "," + GfxBackend.get().currentTy(canvas) + ")"
                                 + " drawable=" + drawable.getClass().getSimpleName()
                                 + "@" + Integer.toHexString(System.identityHashCode(drawable))
                                 + " parents=" + parentChain);
@@ -847,7 +848,7 @@ public class ImageView extends View {
                     + " view=" + viewW + "x" + viewH
                     + " img=" + imgW + "x" + imgH
                     + " absTop=" + getTop() + " absBottom=" + getBottom()
-                    + " canvasTy=" + canvas.macapkGetCurrentTy());
+                    + " canvasTy=" + GfxBackend.get().currentTy(canvas));
             } catch (Throwable ignored) {}
         }
         switch (scaleType) {

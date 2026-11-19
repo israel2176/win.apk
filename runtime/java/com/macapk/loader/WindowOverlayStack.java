@@ -14,6 +14,7 @@
 // before the Activity. Both call into here so the ordering lives in one place.
 package com.macapk.loader;
 
+import com.macapk.loader.gfx.GfxBackend;
 import android.graphics.Rect;
 import android.view.Gravity;
 import android.view.View;
@@ -100,7 +101,7 @@ public final class WindowOverlayStack {
         if (OVERLAY_REUSE) {
             android.graphics.Bitmap b = sOverlayBmp;
             if (b != null && b.getWidth() == w && b.getHeight() == h) {
-                int[] live = b.macapkLiveArgbOrNull();
+                int[] live = GfxBackend.get().liveArgbOrNull(b);
                 if (live != null) {
                     java.util.Arrays.fill(live, 0);
                     return b;
@@ -788,7 +789,7 @@ public final class WindowOverlayStack {
             r.set(outline.mRect);
             radius = Math.max(0f, outline.mRadius);
         } else if (outline.mMode == android.graphics.Outline.MODE_PATH && outline.mPath != null
-                && !Float.isNaN(outline.macapkPathShadowRadius)) {
+                && !Float.isNaN(GfxBackend.get().outlinePathShadowRadius(outline))) {
             // A rect with mixed corner radii (GradientDrawable's radius array, a
             // usual popup-menu background): cast the round rect of its bounds and
             // its largest corner radius, which lies inside the shape, so the
@@ -797,7 +798,7 @@ public final class WindowOverlayStack {
             outline.mPath.computeBounds(pb, true);
             r.set(Math.round(pb.left), Math.round(pb.top), Math.round(pb.right), Math.round(pb.bottom));
             if (r.isEmpty()) return;
-            radius = Math.max(0f, outline.macapkPathShadowRadius);
+            radius = Math.max(0f, GfxBackend.get().outlinePathShadowRadius(outline));
         } else {
             // EMPTY casts nothing (AOSP too). Any other convex PATH is skipped
             // rather than approximated: a square shadow under a rounded panel
@@ -1032,7 +1033,7 @@ public final class WindowOverlayStack {
             // available (Bitmap.macapkLiveArgbOrNull: read-only, on this drawing
             // thread, before any further draw), and BEFORE recycle -- the native
             // present copies synchronously. The copying fallback is unchanged.
-            int[] pixels = bmp.macapkLiveArgbOrNull();
+            int[] pixels = GfxBackend.get().liveArgbOrNull(bmp);
             if (pixels == null) {
                 pixels = new int[surfaceW * surfaceH];
                 bmp.getPixels(pixels, 0, surfaceW, 0, 0, surfaceW, surfaceH);

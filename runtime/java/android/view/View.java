@@ -7,6 +7,7 @@
 // frameworks can subclass it without ClassCastException at runtime.
 package android.view;
 
+import com.macapk.loader.gfx.GfxBackend;
 import android.content.Context;
 import android.graphics.Rect;
 
@@ -3759,7 +3760,7 @@ public class View implements android.graphics.drawable.Drawable.Callback,
      *  clip bounds, if it has any. Called by the parent's child draw. */
     void macapkClipToClipBounds(android.graphics.Canvas canvas) {
         final android.graphics.Rect r = mClipBounds;
-        if (r != null) canvas.macapkClipChildRect(r.left, r.top, r.right, r.bottom);
+        if (r != null) GfxBackend.get().clipChildRect(canvas, r.left, r.top, r.right, r.bottom);
     }
     public void setClipToOutline(boolean clipToOutline) { mClipToOutline = clipToOutline; }
     public boolean getClipToOutline() { return mClipToOutline; }
@@ -4024,7 +4025,7 @@ public class View implements android.graphics.drawable.Drawable.Callback,
      *  same AWT-free table Configuration.setLayoutDirection(Locale) uses. */
     private static int layoutDirectionFromLocale(java.util.Locale loc) {
         try {
-            if (android.text.TextUtils.macapkIsLocaleRtl(loc)) {
+            if (GfxBackend.get().isLocaleRtl(loc)) {
                 return LAYOUT_DIRECTION_RTL;
             }
         } catch (Throwable ignored) {}
@@ -5674,7 +5675,7 @@ public class View implements android.graphics.drawable.Drawable.Callback,
         // No record under a matrix that is not a whole-pixel translation (the
         // clip's device box is then not a rectangle of this view), nor while a
         // View animation moves the view from frame to frame.
-        if (mCurrentAnimation != null || !canvas.macapkDeviceOrigin(o)) { mMacapkRecEpoch = 0; return; }
+        if (mCurrentAnimation != null || !GfxBackend.get().deviceOrigin(canvas, o)) { mMacapkRecEpoch = 0; return; }
         if (again) {
             if (mMacapkRecEpoch != epoch) return;       // the other draw had none: none it stays
             mMacapkRecL = Math.min(mMacapkRecL, o[2]); mMacapkRecT = Math.min(mMacapkRecT, o[3]);
@@ -5976,7 +5977,7 @@ public class View implements android.graphics.drawable.Drawable.Callback,
                     android.graphics.Outline o = new android.graphics.Outline();
                     outlineProvider.getOutline(this, o);
                     if (!o.isEmpty() && o.canClip()) {
-                        android.graphics.Path clip = o.macapkClipPath();
+                        android.graphics.Path clip = GfxBackend.get().outlineClipPath(o);
                         if (clip != null) {
                             macapkOutlineSave = canvas.save();
                             canvas.clipPath(clip);
@@ -6297,8 +6298,8 @@ public class View implements android.graphics.drawable.Drawable.Callback,
                     "macapkPaintMaterialChrome class=" + name
                     + " bounds=" + w + "x" + h
                     + " local=(" + left + "," + top + "-" + right + "," + bottom + ")"
-                    + " canvasTx=(" + canvas.macapkGetCurrentTx()
-                    + "," + canvas.macapkGetCurrentTy() + ")"
+                    + " canvasTx=(" + GfxBackend.get().currentTx(canvas)
+                    + "," + GfxBackend.get().currentTy(canvas) + ")"
                     + " full=" + getClass().getName());
             }
         }
@@ -6659,8 +6660,8 @@ public class View implements android.graphics.drawable.Drawable.Callback,
             // A rect with mixed corner radii is a PATH outline; its largest
             // radius gives a round rect inside it (Outline.macapkPathShadowRadius).
             if (o.mMode == android.graphics.Outline.MODE_PATH
-                    && o.macapkPathShadowRadius > 0f) {
-                return o.macapkPathShadowRadius;
+                    && GfxBackend.get().outlinePathShadowRadius(o) > 0f) {
+                return GfxBackend.get().outlinePathShadowRadius(o);
             }
         } catch (Throwable ignored) {}
         return -1f;
@@ -6850,7 +6851,7 @@ public class View implements android.graphics.drawable.Drawable.Callback,
      *  for a reference it could not resolve, i.e. nothing will paint. */
     protected boolean macapkBackgroundIsUnresolvedStub() {
         return backgroundDrawable instanceof android.graphics.drawable.VectorDrawable vd
-            && vd.macapkUnresolvedStub;
+            && GfxBackend.get().isUnresolvedStub(vd);
     }
     /** True when the background drawable exists but will paint NOTHING, so a
      *  synthetic stand-in is not covering anything up. See
@@ -6858,7 +6859,7 @@ public class View implements android.graphics.drawable.Drawable.Callback,
      *  is not enough. */
     protected boolean macapkBackgroundPaintsNothing() {
         return backgroundDrawable instanceof android.graphics.drawable.VectorDrawable vd
-            && vd.macapkPaintsNothing();
+            && GfxBackend.get().vectorPaintsNothing(vd);
     }
     // Vertical inset of that pill, in px. Material's button styles set
     // `android:insetTop`/`insetBottom` (m3_btn_inset = 4dp on Material3,
@@ -6982,7 +6983,7 @@ public class View implements android.graphics.drawable.Drawable.Callback,
             android.util.Log.i("Mac.apk.SetBg", "setBackgroundDrawable("
                 + (d == null ? "null" : d.getClass().getSimpleName()
                    + (d instanceof android.graphics.drawable.VectorDrawable vd
-                      ? " stub=" + vd.macapkUnresolvedStub : ""))
+                      ? " stub=" + GfxBackend.get().isUnresolvedStub(vd) : ""))
                 + ") on " + getClass().getName() + sb);
         }
         // AOSP's mBackground is ONE slot: installing null means the view has no
@@ -7440,7 +7441,7 @@ public class View implements android.graphics.drawable.Drawable.Callback,
         int alpha = Math.round(baseA * af);
         if (alpha <= 0) return;
         int save = canvas.save();
-        canvas.macapkClipChildRect(0, 0, w, h);     // keep the ripple inside the view
+        GfxBackend.get().clipChildRect(canvas, 0, 0, w, h);     // keep the ripple inside the view
         android.graphics.Paint p = new android.graphics.Paint();
         p.setAntiAlias(true);
         p.setStyle(android.graphics.Paint.Style.FILL);

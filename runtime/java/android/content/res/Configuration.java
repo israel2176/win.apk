@@ -3,6 +3,7 @@
 // read; the rest stay at sensible defaults.
 package android.content.res;
 
+import com.macapk.loader.gfx.GfxBackend;
 import java.util.Locale;
 
 public final class Configuration implements Comparable<Configuration>, android.os.Parcelable {
@@ -449,7 +450,7 @@ public final class Configuration implements Comparable<Configuration>, android.o
      *  nothing mirrored; a device sets the two together. */
     private static int macapkDefaultLayoutDir() {
         try {
-            return android.text.TextUtils.macapkIsLocaleRtl(Locale.getDefault())
+            return GfxBackend.get().isLocaleRtl(Locale.getDefault())
                 ? SCREENLAYOUT_LAYOUTDIR_RTL : SCREENLAYOUT_LAYOUTDIR_LTR;
         } catch (Throwable t) {
             return SCREENLAYOUT_LAYOUTDIR_LTR;
@@ -1035,7 +1036,7 @@ public final class Configuration implements Comparable<Configuration>, android.o
         if (dir == SCREENLAYOUT_LAYOUTDIR_UNDEFINED) {
             try {
                 Locale loc = locale;
-                if (android.text.TextUtils.macapkIsLocaleRtl(loc)) return 1;
+                if (GfxBackend.get().isLocaleRtl(loc)) return 1;
             } catch (Throwable ignored) {}
             return 0;
         }
@@ -1043,7 +1044,7 @@ public final class Configuration implements Comparable<Configuration>, android.o
     }
     public void setLayoutDirection(java.util.Locale loc) {
         boolean rtl = false;
-        try { rtl = android.text.TextUtils.macapkIsLocaleRtl(loc); }
+        try { rtl = GfxBackend.get().isLocaleRtl(loc); }
         catch (Throwable ignored) {}
         screenLayout = (screenLayout & ~SCREENLAYOUT_LAYOUTDIR_MASK)
                      | (rtl ? SCREENLAYOUT_LAYOUTDIR_RTL : SCREENLAYOUT_LAYOUTDIR_LTR);

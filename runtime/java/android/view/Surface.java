@@ -29,6 +29,8 @@
 // eventually asks whether a target is registered).
 package android.view;
 
+import com.macapk.loader.gfx.GfxBackend;
+
 public class Surface implements android.os.Parcelable {
     public static final int ROTATION_0   = 0;
     public static final int ROTATION_90  = 1;
@@ -94,7 +96,7 @@ public class Surface implements android.os.Parcelable {
         // never offered, since nothing calls macapkOfferDecodedFrame without
         // one actually decoding.
         if (surfaceTexture != null) {
-            surfaceTexture.macapkRegisterVideoTarget();
+            GfxBackend.get().registerVideoTarget(surfaceTexture);
         }
     }
     /** AOSP Surface(SurfaceControl) (API 29): a Surface that queues buffers to
@@ -208,8 +210,8 @@ public class Surface implements android.os.Parcelable {
         // v1.0.1648: the canvas's own live pixels when available (no 24 MB copy
         // at a full-screen window); presentBitmap copies synchronously on this,
         // the drawing thread, which is the contract macapkLiveArgbOrNull states.
-        int[] pixels = mDrawBitmap.macapkLiveArgbOrNull();
-        if (pixels == null) pixels = mDrawBitmap.macapkArgbBuffer();
+        int[] pixels = GfxBackend.get().liveArgbOrNull(mDrawBitmap);
+        if (pixels == null) pixels = GfxBackend.get().argbBuffer(mDrawBitmap);
         if (pixels == null) return;
         MacapkFrameSink sink = mFrameSink;
         if (sink != null) {

@@ -22,6 +22,7 @@
 //      via JNI as the user closes/opens windows.
 package com.macapk.loader;
 
+import com.macapk.loader.gfx.GfxBackend;
 import android.app.Activity;
 import android.app.Application;
 import android.content.Intent;
@@ -1981,7 +1982,7 @@ public final class Boot {
             // families come from the Mac's own Chinese / Hiragino / Apple SD
             // Gothic Neo (android.graphics.MacApkHostFonts).
             long sysFontsT0 = System.nanoTime();
-            String sysFonts = android.graphics.MacApkSystemFonts.materialize(ps -> {
+            String sysFonts = GfxBackend.get().materializeSystemFonts(ps -> {
                 try { return NativeCocoa.hostFontFile(ps); }
                 catch (Throwable t) { return null; }   // a runtime without the native
             });
