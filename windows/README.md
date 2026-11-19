@@ -439,7 +439,8 @@ Java2D classes, which stay as they are:
 Done so far: the plumbing around the switch, the seam (step 1) and a first
 screen (step 2, below): with the switch on an app reaches its frames drawn by
 AOSP's `Canvas` (Skia, minikin, HarfBuzz in the DLL) and presented as today's
-are. Under Wine the uiprobe app runs to its end: all 60 cases, 1656 of the
+are, and `TextView` lays its text out through AOSP's own `Layout`. Under Wine
+the uiprobe app runs to its end: all 60 cases, 1904 of the
 2104 lines Android's (the Java2D path: 1895; table below). With the switch off
 nothing changes: the uiprobe app's `ours.txt` is the same byte for byte as
 before these changes.
@@ -574,28 +575,60 @@ before these changes.
   The probe, by case (lines that match Android's within compare.py's 1 dp;
   Java2D = the switch off):
 
-  | Cases | Lines | Java2D | AOSP |
-  |---|---|---|---|
-  | theme, text, styles, linear_weights, frame_gravity, relative, edit_compound, custom_params, icons, lib_constraint, lib_images, clip_bounds, text_baselines | 468 | 422 | 422 |
-  | drawables | 356 | 325 | 322 |
-  | text_gravity, lib_text_lines | 60 | 52 | 22 |
-  | `*_material` (4 themes) | 520 | 516 | 376 |
-  | `*_appbar` (3) | 84 | 68 | 38 |
-  | `*_list` (3) | 432 | 360 | 348 |
-  | `*_dialog` (4) | 184 | 152 | 128 |
-  | total | 2104 | 1895 | 1656 |
+  | Cases | Lines | Java2D | AOSP, first frame | AOSP, TextView on AOSP's Layout |
+  |---|---|---|---|---|
+  | theme, text, styles, linear_weights, frame_gravity, relative, edit_compound, custom_params, icons, lib_constraint, lib_images, clip_bounds, text_baselines | 468 | 422 | 422 | 422 |
+  | drawables | 356 | 325 | 322 | 322 |
+  | text_gravity, lib_text_lines | 60 | 52 | 22 | 60 |
+  | `*_material` (4 themes) | 520 | 516 | 376 | 508 |
+  | `*_appbar` (3) | 84 | 68 | 38 | 68 |
+  | `*_list` (3) | 432 | 360 | 348 | 372 |
+  | `*_dialog` (4) | 184 | 152 | 128 | 152 |
+  | total | 2104 | 1895 | 1656 | 1904 |
 
-  Text widths now match Android's where Java2D's were half a dp off
-  (`lastw=30.1`, Android's, against 30.5), but a `TextView` with more than one
-  line measures 2 to 2.5 dp a line short (`size 344x85` for Android's 95,
-  while its `Layout`'s height, AOSP's `StaticLayout`, is 95): `TextView`'s own
-  line arithmetic over `Paint.getFontMetricsInt` against AOSP's metrics, and
-  its fallback line spacing is the AWT half (`resolvedFont` is null here).
-  Everything placed below such a view moves with it, which is most of the
-  text and material rows.
-- Still to do (step 2's rest, then 3): `TextView`'s line heights from AOSP's
-  per-line extents (`Paint.getFontMetricsInt(text, ...)`, or `TextView` on
-  `StaticLayout`); `Resources` handing AOSP's drawables a parser so they
+  Text widths match Android's where Java2D's were half a dp off (`lastw=30.1`,
+  Android's, against 30.5). The first frame's `TextView` still did its own line
+  arithmetic over AOSP's metrics and measured 2 to 2.5 dp a line short; now:
+  - `TextView` on AOSP's `Layout` (`android/widget/TextViewAospLayout.java`,
+    the one branch point: `TextView.macapkAosp()`, null with the switch off).
+    With the switch on, a `TextView` measures, lays out, draws, answers
+    `getLayout()`, `getLineCount()`, `getBaseline()`, `getLineBounds()`,
+    `getExtendedPaddingTop/Bottom()`, `getTotalPaddingTop/Bottom()` and the
+    hit test (`getOffsetForPosition`) through an AOSP `BoringLayout`,
+    `StaticLayout` or, for an `Editable` (or a `Spannable` under a movement
+    method or `BufferType.SPANNABLE`), `DynamicLayout`, built by AOSP 14's
+    `makeNewLayout` / `makeSingleLayout` ported line for line, with its
+    alignment, spacing, includePad, fallback line spacing (ALL from target 33,
+    StaticLayout only from 28), break strategy, hyphenation, justification,
+    line-break config, maxLines and ellipsize; `onMeasure` with `desired()`,
+    `getDesiredHeight`, the hint and the ems/px limits; `onDraw`'s clip and
+    translate around `Layout.draw`; `checkForRelayout` for `setText`. Win.apk's
+    setters call no `nullLayouts`, so each entry point compares what the
+    layout was built from (text, paint, parameters) and rebuilds at the old
+    widths when it moved. A horizontally scrolling view's layout is
+    `VERY_WIDE`, and the scroll AOSP's `onPreDraw` gives the view
+    (`bringTextIntoView`, or `bringPointIntoView` with a movement method,
+    horizontal half) is kept for the text only, not the `View`'s scroll.
+    No marquee, autosize, optical insets or vertical scroll. The caret (still
+    `TextView.macapkDrawCursor`) draws at the layout's origin.
+  - Inputs AOSP's layout reads that the Java2D path ignored, under the switch
+    only: `android:breakStrategy` and `hyphenationFrequency`,
+    `justificationMode`, `lineBreakStyle` / `lineBreakWordStyle` from the
+    style (`Widget.TextView` says high_quality: a long word now hyphenates and
+    wraps as on Android); `setHorizontallyScrolling`, and `setInputType`'s
+    layout half of `applySingleLine` (one line, sideways, newlines as spaces).
+  - `TextUtils.ellipsize`, which AOSP's `BoringLayout` ellipsizes a single
+    line with, is AOSP's own under the switch (the hidden 8-argument form,
+    verbatim, over AOSP's `MeasuredParagraph` by reflection): START and
+    MIDDLE cut where Android cuts.
+  - Compile-only members on Win.apk's `Layout` that AOSP's has:
+    `getHeight(boolean)`, `getDesiredWidthWithLimit(..., TextDirectionHeuristic,
+    float)`, `getPrimaryHorizontal(int, boolean)` (never called with the
+    switch off).
+  Every text row of the probe now matches but ExtendedFloatingActionButton's
+  `getGravity()` (both paths); what is left in the material and list rows is
+  drawables and icon pixels.
+- Still to do (step 2's rest, then 3): `Resources` handing AOSP's drawables a parser so they
   inflate themselves (that needs `com.android.internal.R.styleable` with
   framework-res's ids, and `TypedArray.getComplexColor`, so `ColorStateList`
   a `ComplexColor`); an app's font families (`res/font`: one file is chosen,
@@ -2543,6 +2576,16 @@ every such change is listed here:
   `android/os/Parcel.java`, `android/animation/PropertyValuesHolder.java`.
   Under the switch only: `android/view/Gravity.java` places by AOSP's rules,
   and `Resources` logs a drawable that did not inflate.
+- `runtime/java/android/widget/TextViewAospLayout.java` (new),
+  `TextView.java`, `android/text/TextUtils.java`, `Layout.java`: under
+  `WINAPK_AOSP_GFX=1` only, `TextView` lays its text out through AOSP's own
+  `Layout` classes as AOSP 14's TextView does (milestone 2, "TextView on
+  AOSP's `Layout`"), and `TextUtils.ellipsize` is AOSP's. `TextView` reads
+  `breakStrategy`, `hyphenationFrequency`, `justificationMode` and the
+  line-break styles and applies `applySingleLine`'s layout half in
+  `setInputType` only then; with the switch off every answer is as before
+  (the probe's `ours.txt` identical byte for byte). `Layout` gains three
+  compile-only members AOSP's has.
 - `runtime/java/com/macapk/loader/view/ViewHost.java` (new), `WinApkViewHost.java`
   (new): step 0 of `docs/research/aosp-views.md`, views half, the one seam
   between the rest of the runtime and Win.apk's own `android.view` /

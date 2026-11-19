@@ -1072,7 +1072,169 @@ public class TextUtils {
     }
     public static CharSequence ellipsize(CharSequence text, android.text.TextPaint p,
             float avail, TruncateAt where, boolean preserveLength, EllipsizeCallback callback) {
+        if (com.macapk.loader.gfx.GfxBackend.isAosp()) {
+            return ellipsize(text, p, avail, where, preserveLength, callback,
+                    TextDirectionHeuristics.FIRSTSTRONG_LTR, getEllipsisString(where));
+        }
         return ellipsize(text, (android.graphics.Paint) p, avail, where, preserveLength, callback);
+    }
+
+    /**
+     * AOSP's hidden ellipsize with a direction heuristic and an ellipsis string
+     * (android14-release TextUtils.java:1368-1462), verbatim. With the AOSP graphics switch on
+     * the 6-argument form above comes here, as on Android: it is the one AOSP's BoringLayout
+     * ellipsizes a single line with (TextView's singleLine + ellipsize), and it measures and
+     * breaks over AOSP's MeasuredParagraph, which is in lib/aosp-graphics.jar and not in this
+     * framework, so it is reached by reflection (AospMeasured). Called with the switch off it
+     * answers as the Paint form does.
+     */
+    public static CharSequence ellipsize(CharSequence text,
+            android.text.TextPaint paint,
+            float avail, TruncateAt where,
+            boolean preserveLength,
+            EllipsizeCallback callback,
+            TextDirectionHeuristic textDir, String ellipsis) {
+        if (!com.macapk.loader.gfx.GfxBackend.isAosp()) {
+            return ellipsize(text, (android.graphics.Paint) paint, avail, where, preserveLength, callback);
+        }
+        int len = text.length();
+
+        AospMeasured mt = null;
+        try {
+            mt = AospMeasured.buildForMeasurement(paint, text, 0, text.length(), textDir);
+            float width = mt.getWholeWidth();
+
+            if (width <= avail) {
+                if (callback != null) {
+                    callback.ellipsized(0, 0);
+                }
+
+                return text;
+            }
+
+            // XXX assumes ellipsis string does not require shaping and
+            // is unaffected by style
+            float ellipsiswid = paint.measureText(ellipsis);
+            avail -= ellipsiswid;
+
+            int left = 0;
+            int right = len;
+            if (avail < 0) {
+                // it all goes
+            } else if (where == TruncateAt.START) {
+                right = len - mt.breakText(len, false, avail);
+            } else if (where == TruncateAt.END || where == TruncateAt.END_SMALL) {
+                left = mt.breakText(len, true, avail);
+            } else {
+                right = len - mt.breakText(len, false, avail / 2);
+                avail -= mt.measure(right, len);
+                left = mt.breakText(right, true, avail);
+            }
+
+            if (callback != null) {
+                callback.ellipsized(left, right);
+            }
+
+            final char[] buf = mt.getChars();
+            Spanned sp = text instanceof Spanned ? (Spanned) text : null;
+
+            final int removed = right - left;
+            final int remaining = len - removed;
+            if (preserveLength) {
+                if (remaining > 0 && removed >= ellipsis.length()) {
+                    ellipsis.getChars(0, ellipsis.length(), buf, left);
+                    left += ellipsis.length();
+                } // else skip the ellipsis
+                for (int i = left; i < right; i++) {
+                    buf[i] = ELLIPSIS_FILLER;
+                }
+                String s = new String(buf, 0, len);
+                if (sp == null) {
+                    return s;
+                }
+                SpannableString ss = new SpannableString(s);
+                copySpansFrom(sp, 0, len, Object.class, ss, 0);
+                return ss;
+            }
+
+            if (remaining == 0) {
+                return "";
+            }
+
+            if (sp == null) {
+                StringBuilder sb = new StringBuilder(remaining + ellipsis.length());
+                sb.append(buf, 0, left);
+                sb.append(ellipsis);
+                sb.append(buf, right, len - right);
+                return sb.toString();
+            }
+
+            SpannableStringBuilder ssb = new SpannableStringBuilder();
+            ssb.append(text, 0, left);
+            ssb.append(ellipsis);
+            ssb.append(text, right, len);
+            return ssb;
+        } finally {
+            if (mt != null) {
+                mt.recycle();
+            }
+        }
+    }
+
+    /** AOSP's android.text.MeasuredParagraph, the members ellipsize uses, by reflection: the
+     *  class is lib/aosp-graphics.jar's, on the class path only with the AOSP graphics switch
+     *  on, and this framework has no copy to compile against. */
+    private static final class AospMeasured {
+        private static final java.lang.reflect.Method BUILD, WHOLE_WIDTH, BREAK_TEXT, MEASURE,
+                GET_CHARS, RECYCLE;
+        static {
+            try {
+                final Class<?> c = Class.forName("android.text.MeasuredParagraph");
+                BUILD = c.getDeclaredMethod("buildForMeasurement", android.text.TextPaint.class,
+                        CharSequence.class, int.class, int.class, TextDirectionHeuristic.class, c);
+                WHOLE_WIDTH = c.getDeclaredMethod("getWholeWidth");
+                BREAK_TEXT = c.getDeclaredMethod("breakText", int.class, boolean.class, float.class);
+                MEASURE = c.getDeclaredMethod("measure", int.class, int.class);
+                GET_CHARS = c.getDeclaredMethod("getChars");
+                RECYCLE = c.getDeclaredMethod("recycle");
+                for (java.lang.reflect.Method m : new java.lang.reflect.Method[] {
+                        BUILD, WHOLE_WIDTH, BREAK_TEXT, MEASURE, GET_CHARS, RECYCLE }) {
+                    m.setAccessible(true);
+                }
+            } catch (ReflectiveOperationException e) {
+                throw new ExceptionInInitializerError(e);
+            }
+        }
+
+        private final Object mp;
+
+        private AospMeasured(Object mp) { this.mp = mp; }
+
+        private static Object call(java.lang.reflect.Method m, Object target, Object... args) {
+            try {
+                return m.invoke(target, args);
+            } catch (java.lang.reflect.InvocationTargetException e) {
+                final Throwable t = e.getCause();
+                if (t instanceof RuntimeException) throw (RuntimeException) t;
+                if (t instanceof Error) throw (Error) t;
+                throw new RuntimeException(t);
+            } catch (IllegalAccessException e) {
+                throw new RuntimeException(e);
+            }
+        }
+
+        static AospMeasured buildForMeasurement(android.text.TextPaint paint, CharSequence text,
+                int start, int end, TextDirectionHeuristic textDir) {
+            return new AospMeasured(call(BUILD, null, paint, text, start, end, textDir, null));
+        }
+
+        float getWholeWidth() { return (Float) call(WHOLE_WIDTH, mp); }
+        int breakText(int limit, boolean forwards, float width) {
+            return (Integer) call(BREAK_TEXT, mp, limit, forwards, width);
+        }
+        float measure(int start, int limit) { return (Float) call(MEASURE, mp, start, limit); }
+        char[] getChars() { return (char[]) call(GET_CHARS, mp); }
+        void recycle() { call(RECYCLE, mp); }
     }
     public static CharSequence commaEllipsize(CharSequence text, android.text.TextPaint p,
             float avail, String oneMore, String more) {
