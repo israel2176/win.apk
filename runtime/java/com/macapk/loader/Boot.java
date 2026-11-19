@@ -2967,6 +2967,13 @@ public final class Boot {
                     try { NativeLog.nativeBoostCurrentThreadQos(); } catch (Throwable ignored) {}
                 }
                 try {
+                    // The layout sweep (MACAPK_LAYOUT_SWEEP=1, a debug mode): every
+                    // layout of the app inflated on this, the main thread, instead of
+                    // the launcher activity; it prints its lines and ends the process.
+                    if (LayoutSweep.enabled()) {
+                        if (android.os.Looper.myLooper() == null) android.os.Looper.prepareMainLooper();
+                        LayoutSweep.runFromBoot(application);
+                    }
                     // A service host was started by the broker to answer another
                     // app's bind: like a device's background process, it runs no
                     // activity (MACAPK_SERVICE_HOST=1; the window stays hidden).
