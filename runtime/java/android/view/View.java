@@ -3727,14 +3727,40 @@ public class View implements android.graphics.drawable.Drawable.Callback,
     }
 
     public int  getBaseline()           { return -1; }
+    // AOSP View.setClipBounds / getClipBounds (android-14 View.java): a rect in the
+    // view's own coordinates that its drawing is cut to, null for none. The
+    // setter did nothing and the getters answered the whole view, so what Material
+    // (an expanding card, a collapsing header), MotionLayout and the transitions
+    // cut away drew in full. The parent applies it where it clips the child to its
+    // bounds (macapkClipToClipBounds), as AOSP's RenderNode does, whether or not
+    // the parent clips its children.
+    private android.graphics.Rect mClipBounds;
     public boolean getClipBounds(android.graphics.Rect outRect) {
-        if (outRect != null) outRect.set(0, 0, getWidth(), getHeight());
-        return true;
+        if (mClipBounds != null) {
+            outRect.set(mClipBounds);
+            return true;
+        }
+        return false;
     }
     public android.graphics.Rect getClipBounds() {
-        return new android.graphics.Rect(0, 0, getWidth(), getHeight());
+        return mClipBounds != null ? new android.graphics.Rect(mClipBounds) : null;
     }
-    public void setClipBounds(android.graphics.Rect clipBounds) {}
+    public void setClipBounds(android.graphics.Rect clipBounds) {
+        if (clipBounds == mClipBounds || (clipBounds != null && clipBounds.equals(mClipBounds))) return;
+        if (clipBounds != null) {
+            if (mClipBounds == null) mClipBounds = new android.graphics.Rect(clipBounds);
+            else mClipBounds.set(clipBounds);
+        } else {
+            mClipBounds = null;
+        }
+        invalidate();
+    }
+    /** Cuts `canvas` (at this view's origin, before its scroll) to the view's
+     *  clip bounds, if it has any. Called by the parent's child draw. */
+    void macapkClipToClipBounds(android.graphics.Canvas canvas) {
+        final android.graphics.Rect r = mClipBounds;
+        if (r != null) canvas.macapkClipChildRect(r.left, r.top, r.right, r.bottom);
+    }
     public void setClipToOutline(boolean clipToOutline) { mClipToOutline = clipToOutline; }
     public boolean getClipToOutline() { return mClipToOutline; }
     private boolean mClipToOutline = false;

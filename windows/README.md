@@ -365,6 +365,32 @@ Java side, `android.app.appsearch`, `android.icu`'s date-interval and list
 formatters, `ActivityGroup` / `TabActivity`, and a real PDF engine behind
 `PdfRenderer`.
 
+### What the framework has but does not do
+
+`ApiCheck` finds what is absent. A method that exists but answers a constant,
+or does nothing where Android does something, fails later and quietly: a view
+drawn whole that should be cut, an icon missing, a state lost. `Completeness`
+compares every method of `android-framework.jar` with Android's own, from
+Robolectric's `android-all` (the plain one, not `-instrumented`), and weights
+each by how often the libraries apps are built from call it:
+
+```sh
+curl -fLO https://repo1.maven.org/maven2/org/robolectric/android-all/14-robolectric-10818077/android-all-14-robolectric-10818077.jar
+java windows/test/apicheck/Completeness.java windows/build/runtime/lib/android-framework.jar \
+    android-all-14-robolectric-10818077.jar <out.tsv> <AndroidX / Material classes.jar>...   # JDK 24+
+```
+
+The libraries' `classes.jar` are in Gradle's cache after the UI probe's build
+(`~/.gradle/caches/*/transforms/*/transformed/<library>/jars/classes.jar`);
+converted apps' `classes.jar` work too. Each row is `missing`, `constant` (returns
+without reading state or calling anything), `noop` (a void method that does
+nothing) or `shallow` (under a tenth of Android's bytecode), with how many
+references the given jars make to it. The body is measured alone: a method that
+hands its work to a helper can look shallow. The first run (2026-11, AndroidX
+and Material 1.12) found 164 `constant`, 126 `noop`, 8 `shallow` and 5 `missing`
+methods those libraries call; `View.setClipBounds` was one. Check a fix
+against Android with the UI probe (`windows/test/uiprobe`).
+
 ## CI and releases
 
 | Workflow | Trigger | What it does |
@@ -1676,6 +1702,14 @@ every such change is listed here:
   `ImageView` / `ImageButton` there. Before, any app that bundled AppCompat got
   AppCompat's classes, tints and default styles on every inflater (found by
   the UI probe). `MACAPK_APPCOMPAT_REWRITE_ANY=1` restores that.
+- `runtime/java/android/view/View.java`, `ViewGroup.java`: `setClipBounds` keeps
+  the rect and the parent cuts the child's drawing to it where it clips the
+  child to its bounds (all three child-draw paths), whatever the parent's
+  `clipChildren`; `getClipBounds` answers null (`false`) when none was set, as
+  AOSP does. The setter did nothing and the getters answered the whole view,
+  so whatever Material, MotionLayout or a transition cut away was drawn in full
+  (found by `Completeness`; the UI probe's `clip_bounds` case now matches
+  Android's).
 
 ## License
 

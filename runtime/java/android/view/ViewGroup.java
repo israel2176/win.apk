@@ -3076,6 +3076,7 @@ public class ViewGroup extends View implements ViewParent, ViewManager {
                 // per-child bounds clip IS the dispatchDraw contract.
                 canvas.macapkClipChildRect(0, 0, cw, ch);
             }
+            c.macapkClipToClipBounds(canvas);
             // Tier 3 M9 (alpha-in-draw): modulate the child by its effective
             // alpha = getAlpha() * getTransitionAlpha() -- the AOSP View.draw
             // software path (View.java: alpha = getAlpha()*getTransitionAlpha();
@@ -3919,6 +3920,7 @@ public class ViewGroup extends View implements ViewParent, ViewManager {
         if ((!fromDispatch || MACAPK_CLIP_CHILDREN_ENV) && clipChildren && cw > 0 && ch > 0) {
             canvas.macapkClipChildRect(0, 0, cw, ch);
         }
+        child.macapkClipToClipBounds(canvas);
         // Tier 3 M9: effective alpha = getAlpha() * getTransitionAlpha() * the
         // animation's alpha (AOSP View.java:24885-24890); zero = not drawn, partial =
         // one group-opacity layer so the subtree fades as a unit.
@@ -4004,6 +4006,7 @@ public class ViewGroup extends View implements ViewParent, ViewManager {
         int cw = child.getRight()  - child.getLeft();
         int ch = child.getBottom() - child.getTop();
         if (clipChildren && cw > 0 && ch > 0) canvas.macapkClipChildRect(0, 0, cw, ch);
+        child.macapkClipToClipBounds(canvas);
         if (android.os.Looper.MACAPK_REAL_LOOPER) {
             float a = child.getAlpha() * child.getTransitionAlpha() * animAlpha;
             if (a <= 0f) {
