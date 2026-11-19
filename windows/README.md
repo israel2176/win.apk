@@ -277,11 +277,154 @@ Every test is a program built by CMake; `ci.yml` runs each of them on
 | `test/java/FileSeparatorRewriteTest.java` | Guest code reads Android's `/` from `File.separator` while the JDK's own classes keep the backslash |
 | `winapk-binder-test <classpath> com.macapk.loader.BinderTransportTest` | `host/binder_win.cpp` between real JVMs in three processes (`test/java/com/macapk/loader/BinderTransportTest.java`): transact, the OS calling pid and the receiver-derived uid, oneway order, a nested callback, binder identity both ways, a Messenger and its replyTo with the sender's uid in `Message.sendingUid` and a PendingIntent's creator uid, fds both ways, death notification; then the system broker's checks: a process that is no installed app, or that claims another package, is refused, android:exported, the package uid; then the account service's Google accounts (`accounts` child, its own GmsStore folder): an account signed in or out by another process after the service started is mirrored into or removed from the accounts table, asked or not, with the master token as password and `GoogleUserId`, and a row it did not mirror stays |
 | `winapk-binder-test <classpath> FileShareDeleteTest` | java.io's opens as `host/java_io_open.cpp` binds them (`test/java/FileShareDeleteTest.java`, with the java.base overlay from `WINAPK_TEST_JAVA_BASE_PATCH`): a file renamed or deleted while a stream has it open, and renamed over a file a stream has open, as on Android; append, truncate, the `FileNotFoundException` text and the rest as the JDK has them |
+| `test/aospgfx/run.sh <deps> <out>` (CI job "AOSP graphics") | AOSP 14's own `android.graphics` / `android.text` (android-all, API 34) drawing through Robolectric's native runtime (Skia raster, minikin, HarfBuzz, FreeType, ICU, libpng: `robolectric-nativeruntime.dll`) inside `winapk-runtime.exe --java-main` on the staged JRE, bound by `test/aospgfx/redirect_agent.c`: more than 600 natives bound, the four API 34 signature adapters; rects, a linear gradient, a stroked cubic, `"Hello Skia"` + Hebrew (a font for Hebrew in the fallback chain, both runs inked), a PNG decoded by libpng and drawn scaled, a `BitmapShader` circle, `saveLayerAlpha`, pixels checked; `StaticLayout` lays the mixed line out with the Hebrew run right to left; the picture written as PNG and read back pixel for pixel; then a 1080x2340 list frame timed (a `RESULT` line). Artifact `aosp-graphics`: `aospgfx.png`, `aospgfx-bench.png`, the logs. See [AOSP graphics](#aosp-graphics-milestone-1) |
 | Headless boot, class-data sharing, window boot, service host, GMS CLI (CI steps) | The staged runtime boots the F-Droid Sudoku APK headless (30 frames); on the staged JRE, a first start records its classes and starts the framework archive's dump, and the next start maps it (`class-data sharing ON`); and in a window with a resize (`WINAPK_TEST_RESIZE=400x600`); started as a service host (`MACAPK_SERVICE_HOST=1`) and then opened, the open replaces the headless process and draws; `--gms selftest` and `--gms status` pass; `--verify-apk` answers 4 for a test-signed APK, 3 for an unsigned one and 1 for a file that is no app |
 
 The guest libraries are built with plain clang + lld (`test/build_guest.sh`,
 `test/build_e2e.sh`), so no NDK is needed; CI builds them on Ubuntu and
 hands them to the Windows job.
+
+## AOSP graphics (milestone 1)
+
+Win.apk draws with its own `android.graphics` on Java2D and lays text out
+with AWT. The plan is to draw with Android's own: AOSP's `android.graphics` /
+`android.text` classes over native Skia, minikin and HarfBuzz, as
+Robolectric's native runtime ships them (`org.robolectric:nativeruntime-dist-compat`:
+one library per OS, `robolectric-nativeruntime.dll` on Windows, built with
+clang, importing only KERNEL32, ADVAPI32 and the UCRT; software Skia, no GPU
+back end). Milestone 1 is `test/aospgfx/`: that library loads and draws inside
+`winapk-runtime.exe`'s JVM on Windows, checked by CI's "AOSP graphics" job.
+
+How it binds. The library's `JNI_OnLoad` registers its natives on
+Robolectric's `org/robolectric/nativeruntime/<X>Natives` classes. The
+redirect agent (`redirect_agent.c`, a C file built with the same clang)
+swaps two entries of the JNI function table over JVMTI while the library
+loads: `FindClass` maps those names back to AOSP's classes (loaded, not
+initialized), and `RegisterNatives` registers one method at a time, skipping
+a variant of another API level instead of failing the class and adapting the
+four signatures API 34 changed (`FontFamily.Builder.nBuild`,
+`BitmapShader.nativeCreate`, `MeasuredText.Builder.nAddStyleRun` and
+`nBuildMeasuredText`: each drops an argument new in 34). Loaded with
+`System.load` its `JNI_OnLoad` takes a JVMTI environment in the live phase,
+which is what the runtime itself would do; `-agentpath` works too. Then the
+original table goes back. The parts of ART the classes call
+(`VMRuntime`, `NativeAllocationRegistry` on `java.lang.ref.Cleaner`,
+`SystemProperties`, `Log`, `Trace`) and `RuntimeEnvironment.getApiLevel()`
+are small stand-ins in `test/aospgfx/src/`; the system fonts come from the
+runtime's own `fonts.xml` through `SystemFonts.getSystemFontConfigInternal`.
+
+Run it. `fetch.sh <deps> [linux|windows]` downloads android-all
+`14-robolectric-10818077` and nativeruntime-dist-compat 1.0.18 from Maven
+Central's Google mirror (SHA-256 checked, ~330 MB unpacked; CI caches the
+folder) and keeps only the platform's library, ICU's data and the fonts;
+`run.sh <deps> <out> [bench W H warmup frames]` builds the agent and the
+classes and runs the test, with `java` or, with `AOSPGFX_RUNTIME` set, in
+`winapk-runtime.exe --java-main` (`AOSPGFX_JRE` the JVM). On Linux it runs the
+`.so` through the same agent code. When it fails it runs again with every
+skipped native listed (`AGENT_VERBOSE=1`, `registered.txt`) and, in
+winapk-runtime, once more with plain `java.exe` of the same JRE, to tell the
+library's fault from the process's. Nothing of this ships: the test downloads
+it, so `THIRD_PARTY_NOTICES.txt` has no entry (milestone 2 would ship it:
+Skia BSD, HarfBuzz MIT, FreeType FTL, ICU Unicode, minikin/libhwui/AOSP
+Apache 2.0, libpng/zlib, the Noto/Roboto fonts OFL/Apache; the jar has no
+NOTICE file, so the entries are written by hand).
+
+What it measured (Linux, the 4-vCPU Xeon 2.1 GHz VM of the Skia benchmark,
+JDK 21, three runs; the frame is that benchmark's: header gradient, 40 list
+rows with a round avatar through a `BitmapShader`, an English and a
+Hebrew/mixed line, a cubic path, a sheet in a 75% layer):
+
+| | AOSP Canvas (this) | Win.apk's Canvas today | AWT Graphics2D | Skija, cached shaping |
+|---|---|---|---|---|
+| Frame 1080x2340, median (p90) | 3.4-4.0 ms (3.8-4.3) | 12.7-13.0 ms (15-18) | 10.9-11.2 ms | 3.7-3.9 ms |
+| Frame 1920x1080, median | 3.2-3.6 ms | 11.0 ms | 9.3 ms | 3.4 ms |
+| Allocated per frame | 3.8 KB | 2960 KB | 505 KB | 45 KB |
+
+Loading the library takes 54-119 ms (RSS +12 MB, most of it ICU), the system
+fonts (143 families, mapped) 128-291 ms (RSS +26-31 MB), the first
+`StaticLayout` 15-25 ms, the first frame 10-18 ms; the JVM's RSS goes from
+51 MB before the libraries to 104-133 MB after the benchmark (the 10 MB frame
+included). minikin caches shaped words, so its text is the "cached" kind.
+Under Wine, inside the staged `winapk-runtime.exe` with the Windows DLL, every
+check passes too (the agent built with MinGW there).
+
+### Milestone 2: the runtime on AOSP graphics
+
+Behind a switch (`WINAPK_AOSP_GFX=1`, default off), falling back to today's
+Java2D classes, which stay as they are:
+
+- Where the classes come from. One `android.graphics.Canvas` per JVM: the
+  app links against the name, so it is one implementation or the other for
+  the whole run, chosen at JVM start. With the switch on the runtime puts a
+  jar of AOSP's classes before `android-framework.jar` on the class path
+  (first wins): `android.graphics.**` (drawables, fonts, text and animation
+  included), the parts of `android.text` that measure and lay out (`Layout`,
+  `StaticLayout`, `BoringLayout`, `DynamicLayout`, `MeasuredParagraph`,
+  `PrecomputedText`, `TextLine`, `Hyphenator`) and `android.util.PathParser`,
+  taken from android-all 14 at build time, plus Win.apk's few patches.
+  Measuring and drawing text move together, or line breaks and glyphs would
+  disagree. `host/` loads the redirect (as `JNI_OnLoad` does here, on the
+  runtime's own JavaVM), then the DLL, from `bin/` beside ICU's data and the
+  fonts. Its class list must become an allowlist: the DLL also registers
+  natives for `android.database` and `android.database.sqlite` (46, which
+  Win.apk has from `native_sqlite.cpp`), `android.view.Surface` (21),
+  `android.media.ImageReader` (9) and `android.animation.PropertyValuesHolder`
+  (12), which must stay Win.apk's; those it should leave unregistered.
+- What blocks a straight swap: Win.apk's `android.graphics` / `android.text`
+  declare 306 `macapk*` methods (156 private) and 10 `MacApk*` classes; the
+  rest of the framework calls 47 of those methods at 98 places in 20 files,
+  and names 6 of the classes 28 times. By the class they belong to:
+  - `SurfaceTexture` (16 methods, 32 calls: camera, video, `TextureView`, the GL window;
+    `macapkAttachCameraSource`, `macapkQueueFrame`, `macapkLatchBitmap`...).
+    AOSP's are BufferQueue natives the DLL does not have: keep Win.apk's
+    `SurfaceTexture` (and `Surface`) over the AOSP `Bitmap`.
+  - `Bitmap` (3 methods, 15 calls: `macapkArgbBuffer`, `macapkLiveArgbOrNull`, `macapkAwtImage`
+    in `ViewCanvasDriver`, `Surface`, `SurfaceView`, `WindowOverlayStack`,
+    `GLUtils`). AOSP's pixels are native: the frame goes to the window through
+    `copyPixelsToBuffer` into a direct buffer (one copy, as
+    `GetIntArrayElements` is today), and libjnigraphics (`src/jnigraphics.cpp`,
+    `AndroidBitmap_*` on the `int[]`) needs the same, since the DLL exports
+    no `AndroidBitmap_*`.
+  - `Canvas` / `RecordingCanvas` / `RenderNode` / `Outline` (7 methods, 18 calls:
+    `macapkClipChildRect`, `macapkQuickRejectChild`, `macapkGetCurrentTx/Ty`,
+    `macapkDeviceOrigin`, `macapkApplyTransform`,
+    `macapkClipPath`, in `View`, `ViewGroup`, `ImageView`, `TextureView`):
+    Win.apk's view drawing over its own display lists (`MacApkDisplayList`).
+    AOSP's `View` draws through `RenderNode`/`RecordingCanvas` natives the DLL
+    has (HWUI's, software pipeline), so these become the AOSP calls they
+    stand for.
+  - Text (5 methods, 10 calls, and the 28 mentions of 6 classes): `TextView`
+    names `MacApkFont`, `MacApkBidi`, `MacApkReplacement` and calls `Layout.macapkMeasureSpanned`,
+    `Paint.macapkResolvedFont`; `Resources` builds fonts with `MacApkFont`,
+    `MacApkFontFamilies`, `Typeface.macapkFromStream` / `macapkFromAppFamily`;
+    `Boot` and `NativeCocoa` set the system fonts up with `MacApkHostFonts` /
+    `MacApkSystemFonts`; `TextUtils.macapkIsLocaleRtl` (4, in `View` and
+    `Configuration`).
+  - Resources' drawable inflation (8 methods, 14 calls): `Color.macapkParseResourceColor` (4),
+    `NinePatchDrawable.macapkSetDensities` / `macapkSetOpticalInsets`,
+    `GradientDrawable.macapkSet/GetUseLevelForShape`,
+    `AnimatedVectorDrawable.macapkSetInner`, `AnimatedImageDrawable.macapkSetBitmap`,
+    `VectorDrawable.macapkPaintsNothing` (4): AOSP inflates its drawables
+    itself from the XML, so most of these go away with `Resources`' shortcut.
+  - Debug dumps in `ViewCanvasDriver` (`macapkDump*`, `macapkStatsDump`: 8 methods, 9 calls):
+    drop under the switch.
+- The order. The swap is all or nothing for the package (one `Canvas` per
+  JVM), so the steps are about what has to be ready before the switch can
+  draw a screen, and what after. (1) A seam, under Java2D, with no change in
+  behaviour: every outside call above goes through one interface (present a
+  frame, set the system fonts up, a `Typeface` from a stream or an app's
+  family, the view's clip and transform, the drawable setters), implemented
+  today by the Java2D classes, so the AOSP side needs adapters and no patched
+  copies of AOSP classes. (2) Under the switch, a first screen: the frame
+  presented from an AOSP `Bitmap`, the fonts from `fonts.xml`, `TextView` and
+  `Layout` on AOSP's text (with `Paint`: they move together), `Resources`'
+  colours and drawables (AOSP inflates its own from the XML), the view's
+  clip and transform through AOSP's `RenderNode` and `RecordingCanvas`.
+  (3) What is not on a first screen: `SurfaceTexture` (kept Win.apk's, left
+  out of the AOSP jar, over the AOSP `Bitmap`: camera, video, `TextureView`),
+  libjnigraphics and `GLUtils` on native pixels, `PictureRecorder`/PDF. The
+  debug dumps are dropped under the switch. Each step is checked by the
+  smoke set run both ways, and by this test's pixels.
 
 ## The compatibility sweep
 
@@ -410,6 +553,7 @@ against Android with the UI probe (`windows/test/uiprobe`).
 | Unit tests | `windows-latest` | Guest libraries, Build | Every test program above, the arm64 AOT translation included |
 | Runtime tests | `windows-latest` | Guest libraries, Build | The tests that need the staged jars or ANGLE, the APK booted headless and in a window (`headless-boot` artifact), the GMS CLI |
 | App smoke test | `windows-latest` | Build | The ten apps of `test/compat/smoke.txt` (`--require-drew`) on the staged JRE with one framework archive made first (`--cds-prepare`): fails when one no longer draws (`smoke` artifact). The apps' classes, merged, are the `framework-classlist` artifact: copy it to `java/winapk-framework.classlist` when the framework or the smoke set has changed much |
+| AOSP graphics | `windows-latest` | Build | `test/aospgfx/`: AOSP's Canvas on Robolectric's native runtime in `winapk-runtime.exe` on the staged JRE (the agent built with MSYS2 CLANG64 clang; android-all and the DLL fetched from Maven Central and cached). Fails when a check fails; the `aosp-graphics` artifact has the picture, the benchmark frame and the logs. [AOSP graphics](#aosp-graphics-milestone-1) |
 | Sweep 1/4 to 4/4 | `windows-latest` × 4 | Build | Only by hand, with "Full compatibility sweep": a quarter of the corpus each (`--shard`), each with its own APK cache, on the staged JRE with one framework archive (`--cds-prepare`) |
 | Sweep report | Ubuntu | Sweep | `sweep.py --merge`: the run's summary and the `compat-sweep` artifact |
 | Package | `windows-latest` | Build | The staged folder with its JRE (`winapk-preview`) and the installer (`winapk-setup`); beside the tests, not after them |
