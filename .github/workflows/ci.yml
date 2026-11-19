@@ -3,6 +3,7 @@
 #   What changed ──┬─ Guest libraries (Ubuntu) ─────────┬─ Unit tests
 #                  ├─ Launcher check (Ubuntu, MinGW)    ├─ Runtime tests
 #                  └─ Build (Windows, ccache) ──────────┼─ App smoke test (10 apps)
+#                                                       ├─ AOSP graphics (Skia, minikin)
 #                                                       ├─ Package (preview + installer)
 #                                                       └─ Sweep 1/4 .. 4/4 ─ Sweep report  (only when asked)
 #
@@ -637,6 +638,70 @@ jobs:
             host.log
             replace.log
             frame.bmp
+
+  aosp-graphics:
+    # Milestone 1 of real Android graphics (windows/README.md, "AOSP graphics"):
+    # AOSP 14's android.graphics / android.text drawing through Robolectric's
+    # native runtime (Skia raster, minikin, HarfBuzz; robolectric-nativeruntime.dll)
+    # inside winapk-runtime.exe (--java-main) on the staged jre/, bound by the
+    # redirect agent (windows/test/aospgfx/redirect_agent.c, built here with
+    # clang). Draws, checks pixels and the bidi layout, times a list frame. The
+    # jars are downloaded (and cached), nothing of them ships.
+    name: AOSP graphics (Skia, minikin in winapk-runtime)
+    needs: [changes, build]
+    if: needs.changes.outputs.tests == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: CLANG64
+          install: curl
+          pacboy: clang:p
+      - uses: actions/download-artifact@v4
+        with:
+          name: runtime-stage
+          path: stage
+      # ~330 MB (android-all, the DLL, ICU's data, the fonts), saved as soon as
+      # it is fetched, so a failing test does not download it again.
+      - id: deps
+        uses: actions/cache/restore@v4
+        with:
+          path: aospgfx-deps
+          key: aospgfx-deps-windows-${{ hashFiles('windows/test/aospgfx/fetch.sh') }}
+      - name: Fetch android-all 14 and the native runtime (Maven Central)
+        run: |
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          windows/test/aospgfx/fetch.sh aospgfx-deps windows
+      - if: steps.deps.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: aospgfx-deps
+          key: ${{ steps.deps.outputs.cache-primary-key }}
+      - name: Draw with AOSP's Canvas inside winapk-runtime
+        run: |
+          # On failure run.sh runs it again with the agent's per-method log,
+          # then with plain java.exe of the same jre/ (outside Win.apk's
+          # process), and prints the tail of both and any hs_err file.
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          export AOSPGFX_JRE="$PWD/stage/jre" AOSPGFX_RUNTIME="$PWD/stage/bin/winapk-runtime.exe"
+          windows/test/aospgfx/run.sh aospgfx-deps build/aospgfx bench 1080 2340 30 100
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: aosp-graphics
+          path: |
+            build/aospgfx/*.png
+            build/aospgfx/*.log
+            build/aospgfx/registered.txt
 
   smoke:
     # One app of each kind (windows/test/compat/smoke.txt) booted headless;
