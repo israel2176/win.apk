@@ -176,8 +176,19 @@ public final class AnimatorSet extends Animator {
         }
     }
 
+    /** AOSP AnimatorSet.setInterpolator / getInterpolator: kept, and given to
+     *  every child when the set starts (AOSP initAnimation), so the children run
+     *  on the set's curve. Animator's no-op was inherited, so a set's curve was
+     *  dropped and each child kept its own (Material's motion sets theirs). */
+    private TimeInterpolator mInterpolator;
+    @Override public void setInterpolator(TimeInterpolator interpolator) { mInterpolator = interpolator; }
+    @Override public TimeInterpolator getInterpolator() { return mInterpolator; }
+
     @Override public void start() {
         mStartTimeMillis = android.os.SystemClock.uptimeMillis();
+        if (mInterpolator != null) {
+            for (Animator a : new ArrayList<>(nodes)) if (a != null) a.setInterpolator(mInterpolator);
+        }
         if (!android.os.Looper.MACAPK_REAL_LOOPER || nodes.isEmpty()) {
             // Legacy / flag-off: start every child (they snap to end). The end
             // state is identical to the graph walk, so flag-off is unchanged.
