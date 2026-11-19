@@ -1900,6 +1900,15 @@ every such change is listed here:
   curve and `start` gives it to every child, as AOSP's `initAnimation` does;
   Animator's no-op was inherited, so a set's curve was dropped
   (`FrameworkStubsTest`).
+- `runtime/java/android/widget/RelativeLayout.java`: a `MATCH_PARENT` child is laid
+  out at its measured size, as AOSP's `positionChildHorizontal` /
+  `positionChildVertical` place it (`MATCH_PARENT` only makes its measure spec
+  the parent's room); it was stretched to the parent's far edge whatever it
+  measured, so a square view (Fossify's `MySquareImageView`, which passes its
+  width spec as its height) filled the whole cell. The parent's edge is still
+  used when the child measured 0. Screens sweep: Fossify Gallery's grid items
+  now match Android's (363 differing lines to 341, none new); UI probe 227 to
+  219. `MACAPK_RL_MATCH_FILLS=1` restores the old placement.
 - `runtime/java/com/macapk/loader/LayoutSweep.java` (new), `Boot.java`: the
   screens sweep's Win.apk side, a debug mode off unless `MACAPK_LAYOUT_SWEEP=1`
   (see [Every screen against Android](#every-screen-against-android)). Boot
