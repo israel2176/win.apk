@@ -16,6 +16,8 @@ public final class Space extends View {
         super(context, attrs, defStyleAttr);
         // Space never draws; AOSP forces it non-drawing for performance.
         setWillNotDraw(true);
+        // AOSP Space: `if (getVisibility() == VISIBLE) setVisibility(INVISIBLE);`
+        if (getVisibility() == VISIBLE) setVisibility(INVISIBLE);
     }
     public Space(Context context, android.util.AttributeSet attrs, int defStyleAttr, int defStyleRes) {
         this(context, attrs, defStyleAttr);

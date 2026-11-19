@@ -18,9 +18,13 @@ public class ViewAnimator extends FrameLayout {
     private Animation mInAnimation;
     private Animation mOutAnimation;
 
-    public ViewAnimator(Context context) { super(context); }
+    // AOSP initViewAnimator: FrameLayout_measureAllChildren defaults to TRUE here, so
+    // the animator is as large as its largest page and keeps that size as pages
+    // switch (an XML measureAllChildren="false" is applied by the inflater after).
+    public ViewAnimator(Context context) { super(context); setMeasureAllChildren(true); }
     public ViewAnimator(Context context, android.util.AttributeSet attrs) {
         super(context, attrs);
+        setMeasureAllChildren(true);
     }
 
     public void setDisplayedChild(int whichChild) {

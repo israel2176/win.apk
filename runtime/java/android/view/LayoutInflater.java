@@ -5338,6 +5338,18 @@ public class LayoutInflater {
                           :  View.VISIBLE;
                     view.setVisibility(vis);
                     return;
+                case "enabled":
+                    // AOSP View(Context, AttributeSet, ...): View_enabled false ->
+                    // DISABLED. It was dropped, so a button the layout disables drew
+                    // enabled and took clicks (Moovit's continue/payment buttons).
+                    if ("false".equals(value)) view.setEnabled(false);
+                    return;
+                case "measureAllChildren":
+                    // AOSP FrameLayout's constructor (FrameLayout_measureAllChildren).
+                    if (view instanceof android.widget.FrameLayout fl) {
+                        fl.setMeasureAllChildren("true".equals(value));
+                    }
+                    return;
                 case "onClick":
                     wireOnClickHandler(view, value);
                     return;

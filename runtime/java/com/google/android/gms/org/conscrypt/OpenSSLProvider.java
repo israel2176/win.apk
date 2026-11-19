@@ -15,7 +15,7 @@ public final class OpenSSLProvider extends Provider {
 
     public OpenSSLProvider() {
         super(NAME, "1.0", "Win.apk: Play services' provider name over the JDK's JSSE/JCE");
-        MacApkConscryptProvider.copyPlatformServices(this);
+        MacApkConscryptProvider.copyPlatformServices(this, this::putService);
         android.security.MacApkConscryptTls.register(this);
     }
 }
