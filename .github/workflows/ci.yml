@@ -935,9 +935,11 @@ jobs:
     # The UI gate's second half: Win.apk's lines for one target (the probe, or
     # one app of gate.txt) at the base and at the head, side by side on one
     # runner (gate_side.sh: a short first run is run again, a run that hangs
-    # after its last line is ended), then regress.py. Any REGRESSED, FARTHER or
-    # MISSING line fails it; the job summary has the counts and the first of
-    # those lines, the artifact every line.
+    # after its last line, or prints no new line for 4 minutes, is ended; each
+    # run at most 8), then regress.py. Any REGRESSED, FARTHER or MISSING line
+    # fails it; the job summary has the counts and the first of those lines,
+    # the artifact every line. A base from before LayoutSweep cannot sweep an
+    # app: then only the head's run is checked (gate.py report --no-base).
     name: UI gate, ${{ matrix.target.name }}
     needs: [changes, build, ui-oracle]
     if: needs.changes.outputs.ui == 'true' && github.event_name != 'push' && needs.ui-oracle.outputs.same != 'true'
@@ -986,6 +988,8 @@ jobs:
           fi
           echo "BASE_NOTE=$note" | tee -a "$GITHUB_ENV"
       - name: Win.apk at the base and at the head
+        env:
+          BASE: ${{ needs.ui-oracle.outputs.base }}
         run: |
           t="oracle/${{ matrix.target.dir }}"
           bash windows/test/uiprobe/gate_side.sh "${{ matrix.target.kind }}" "$t" stage-base out/base > side-base.log 2>&1 &
@@ -997,10 +1001,16 @@ jobs:
           wait $h || rh=$?
           tail -n 8 side-base.log side-head.log
           echo "base: exit $rb, head: exit $rh"
+          # 3: the base's runtime predates LayoutSweep (it would run the app, never
+          # ending): there is no base to compare with, only the head's own run.
+          if [[ $rb == 3 ]]; then
+            echo "NO_BASE=The base's runtime has no layout sweep (LayoutSweep came after ${BASE:0:10}): nothing to compare with, so only the head's run is checked to finish." >> "$GITHUB_ENV"
+          fi
       - name: Only closer to Android (regress.py)
         run: |
           python windows/test/uiprobe/gate.py report "${{ matrix.target.name }}" "oracle/${{ matrix.target.dir }}/oracle.txt" \
-            out/base/ours.txt out/head/ours.txt --note "$BASE_NOTE" --out out/regress.txt | tee -a "$GITHUB_STEP_SUMMARY"
+            out/base/ours.txt out/head/ours.txt --note "$BASE_NOTE" ${NO_BASE:+--no-base "$NO_BASE"} \
+            --out out/regress.txt | tee -a "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

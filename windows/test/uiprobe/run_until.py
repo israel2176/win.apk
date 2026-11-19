@@ -9,8 +9,14 @@ waiting on a thread of the app. So once that line is in the log, the command
 gets a few seconds (RUN_UNTIL_GRACE, default 10) to exit by itself and is then
 ended, with every process it started. At the timeout it is ended too.
 
+RUN_UNTIL_STALL (seconds, default 0: off) also ends it when that long passes
+with no new "PROBE " line (counted from the start for the first one): a runtime
+that never starts the sweep (one older than LayoutSweep runs the app itself,
+which never ends) or a sweep stuck on one case is ended then, not at the
+timeout.
+
 Exit status: the command's own, 0 when it was ended after "PROBE done", 124 at
-the timeout (as timeout(1)).
+the timeout (as timeout(1)), 125 when it stalled.
 """
 import os
 import re
@@ -20,6 +26,7 @@ import sys
 import time
 
 DONE = re.compile(rb'^PROBE done\r?$', re.M)
+LINE = re.compile(rb'^PROBE ', re.M)
 
 
 def kill_tree(p):
@@ -38,18 +45,17 @@ def kill_tree(p):
 
 
 def done_in(path, offset):
-    """(seen, new offset): reads only what the log gained since the last look."""
-    start = max(0, offset - 16)  # the line may have been half written at the last look
+    """(done seen, a new PROBE line seen, new offset): reads only the whole lines the
+    log gained since the last look; offset is always just after a line's end."""
     try:
         with open(path, 'rb') as f:
-            f.seek(start)
+            f.seek(offset)
             data = f.read()
     except OSError:
-        return False, offset
-    end = start + len(data)
-    if start > 0:
-        data = data[data.find(b'\n') + 1:]  # from a line's start: '^' must not match mid-line
-    return bool(DONE.search(data)), end
+        return False, False, offset
+    whole = data.rfind(b'\n') + 1  # a line half written now is read whole at the next look
+    data = data[:whole]
+    return bool(DONE.search(data)), bool(LINE.search(data)), offset + whole
 
 
 def main(argv):
@@ -58,7 +64,9 @@ def main(argv):
         return 2
     log, timeout, cmd = argv[0], float(argv[1]), argv[3:]
     grace = float(os.environ.get('RUN_UNTIL_GRACE', '10'))
+    stall = float(os.environ.get('RUN_UNTIL_STALL', '0'))
     start = time.monotonic()
+    progress = start
     with open(log, 'wb') as out:
         kw = {} if os.name == 'nt' else {'start_new_session': True}
         p = subprocess.Popen(cmd, stdout=out, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, **kw)
@@ -71,13 +79,19 @@ def main(argv):
                 pass
             now = time.monotonic()
             if done_at is None:
-                seen, offset = done_in(log, offset)
+                seen, line, offset = done_in(log, offset)
+                if line:
+                    progress = now
                 if seen:
                     done_at = now
             if done_at is not None and now - done_at >= grace:
                 print(f'[run_until] done, but still running after {grace:.0f} s: ended', file=sys.stderr)
                 kill_tree(p)
                 return 0
+            if done_at is None and stall > 0 and now - progress >= stall:
+                print(f'[run_until] no new PROBE line for {stall:.0f} s: ended', file=sys.stderr)
+                kill_tree(p)
+                return 125
             if now - start >= timeout:
                 print(f'[run_until] timed out after {timeout:.0f} s: ended', file=sys.stderr)
                 kill_tree(p)

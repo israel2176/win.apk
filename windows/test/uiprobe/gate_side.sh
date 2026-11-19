@@ -11,6 +11,16 @@
 # Writes <out dir>/ours.txt. A run that stops short (no "done", or under 90%
 # of Android's cases: gate.py complete) is run once more on a fresh data
 # folder, as a first run sometimes is. Exit 1 when the second is short too.
+#
+# Each run is ended (run_until.py) after GATE_TIMEOUT seconds (default 480), or
+# once GATE_STALL seconds (default 240) pass with no new PROBE line: a sweep
+# takes a minute or less here (the DEX conversion ~10 s of it), so two tries
+# on each side, base and head at once, stay under the job's 25 minutes.
+#
+# Exit 3, having run nothing, when the runtime cannot run this kind: screens on
+# a runtime from before LayoutSweep (its macapk-loader.jar has no
+# com/macapk/loader/LayoutSweep.class), which ignores MACAPK_LAYOUT_SWEEP and
+# runs the app itself, a run that never ends. ci.yml then has no base for it.
 set -uo pipefail
 
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
@@ -21,6 +31,19 @@ OUT="${4:?out dir}"
 PY="${PYTHON:-python3}"
 mkdir -p "$OUT"
 OUT="$(cd -- "$OUT" && pwd)"
+export UIPROBE_TIMEOUT="${GATE_TIMEOUT:-480}" SCREENS_TIMEOUT="${GATE_TIMEOUT:-480}"
+export RUN_UNTIL_STALL="${GATE_STALL:-240}"
+native() { if command -v cygpath > /dev/null 2>&1; then cygpath -m "$1"; else printf '%s\n' "$1"; fi; }
+
+if [[ $KIND == screens ]] && ! "$PY" - "$(native "$STAGE/lib/macapk-loader.jar")" <<'PY'
+import sys, zipfile
+with zipfile.ZipFile(sys.argv[1]) as z:
+    sys.exit(0 if 'com/macapk/loader/LayoutSweep.class' in z.namelist() else 1)
+PY
+then
+    echo "[gate] $STAGE/lib/macapk-loader.jar has no LayoutSweep: this runtime cannot sweep an app's screens" >&2
+    exit 3
+fi
 
 for try in 1 2; do
     rm -rf "$OUT/data" "$OUT/ours.txt"

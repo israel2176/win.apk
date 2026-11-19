@@ -128,10 +128,19 @@ the app); if it is still there, it is a bug in what replaced it.
   other repository or a Play download).
 - **CI's UI gate** (b190783): its first run (run 44569377329, on 57a8987)
   passed for the UI probe (base and head identical), but the Gallery and
-  Sudoku jobs were cancelled at the 25-minute limit while "Win.apk at the base
-  and at the head" ran. Find out why (the sweep's hang at exit not ended by
-  `run_until.py`, the two sides too slow in parallel on one runner, or the
-  first-run retry) from the jobs' uploaded artifacts, and fix it. Then watch
+  Sudoku jobs were cancelled at the 25-minute limit. Cause: the base (`main`,
+  1ac1559) has no `LayoutSweep` (it came in this branch, 73a8623), so its
+  runtime ignored `MACAPK_LAYOUT_SWEEP` and ran the app itself (Gallery's
+  MainActivity, Sudoku's title screen; 0 `PROBE` lines, frame #87600 at the
+  cancel) with nothing to end it before `SCREENS_TIMEOUT`'s 3600 s. The head's
+  sweeps finished by themselves in 31 s and 23 s (DEX conversion 11 s and
+  9 s), so neither the exit hang, the conversion nor the two sides in
+  parallel cost the time. Fixed: `gate_side.sh` exits 3 for a runtime without
+  `LayoutSweep` and the job then checks the head alone (`gate.py report
+  --no-base`); every run is ended after 240 s with no new `PROBE` line
+  (`RUN_UNTIL_STALL`) and at 480 s. To verify on the next run: the two app
+  jobs finish in a few minutes, their summary says "no layout sweep" while
+  `main` lacks it, and compares base and head once `main` has it. Then watch
   for noise between two runs of the same code.
 - **Releases leave the AOSP files out** (`WINAPK_STAGE_AOSP_GFX=0` in
   `windows-release.yml`) until the switch draws apps as well as Java2D.
