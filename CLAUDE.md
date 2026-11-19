@@ -1,5 +1,10 @@
 # Win.apk: notes for Claude
 
+**The owner (Israel) reads Hebrew only. Everything shown to him is in Hebrew,
+with no English at all: replies, and also the short descriptions of tool
+calls and commands, which he sees. Code, commits and repository documents stay
+in English.**
+
 Runs Android apps on Windows x64 as normal Windows programs: Java on HotSpot,
 x86_64 `.so` files loaded by our own ELF loader over a Bionic shim, graphics on
 ANGLE (D3D11). Started as a port of Mac.apk; its `runtime/` comes from there.
