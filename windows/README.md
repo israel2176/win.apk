@@ -444,13 +444,17 @@ before these changes.
   the framework jar lacks, found with `jdeps` against the stage's own
   `android-framework.jar`, never `com.android.internal.R`, `android.app` or
   `android.animation`; and `windows/java/aosp_gfx`'s stand-ins, about 500
-  classes, 1 MB), `bin/robolectric-nativeruntime.dll` (15 MB),
-  `bin/aosp/icu/icudt68l.dat` (25 MB), `bin/aosp/fonts/` with `fonts.xml`
-  (160 MB, 126 MB of it Noto CJK), `bin/aosp/hyphen-data/` (2 MB) and the
-  licences (`bin/licenses/aosp-graphics/`). About 200 MB on disk; the
-  installer packs the stage whole (`[Files]` takes `bin\*`), so it grows by
-  what LZMA2 makes of that: about 105 MB (`xz -9e` of the same files, measured;
-  the fonts are most of it).
+  classes, 1 MB), `bin/robolectric-nativeruntime.dll` (12 MB: its COFF
+  symbol table, 3.3 MB that nothing reads, stripped with LLVM's strip),
+  `bin/aosp/icu/icudt68l.dat` (16.4 MB: ICU's data without the trees the
+  DLL cannot open, rewritten by `scripts/TrimIcuData.java`),
+  `bin/aosp/fonts/` with `fonts.xml` and only the fonts it names (47 MB, the
+  Noto CJK Regular 19 MB of it), `bin/aosp/hyphen-data/` (2 MB) and the
+  licences (`bin/licenses/aosp-graphics/`). 79 MB on disk, down from 210 MB
+  as the dist has them: what was left out is what the native runtime cannot
+  read, and the test's picture is the same byte for byte with and without it
+  ([Footprint](#footprint)). The installer packs the stage whole (`[Files]`
+  takes `bin\*`).
 - Host: `host/aosp_gfx.cpp` decides at an app's start (the files there, the
   DLL loads), puts the jar first on the class path and the ICU and font
   properties in, and after the host's natives and SQLite's are bound loads
@@ -703,6 +707,157 @@ the uiprobe oracle:
 - theme lines: 29 of 29 equal (Win.apk's framework: 19);
 - 8 layout cases: 44 of 44 lines equal and 8 of 8 pictures pixel-identical.
 
+Two rules for every AOSP layer, this one and those after it (resources,
+views...), so that moving onto AOSP's code does not make Win.apk heavy:
+
+- One shared copy of every AOSP file per install, in the program folder
+  (`bin\aosp\`, `bin\`, `lib\`), never one per app or per data folder; what
+  is made from them at run time (the class-data sharing archive, font caches)
+  is made once per data folder, like `cds\` and `cache\` today. Only what the
+  code can read is staged (the fonts `fonts.xml` names, the ICU trees the DLL
+  can open): see [Footprint](#footprint).
+- When an AOSP layer becomes the default, the Win.apk implementation it
+  replaces is deleted in that change (or the one right after), not kept
+  beside it behind a switch: two implementations are twice the disk, both
+  on the class path, and twice the tests. The switch lives only while the
+  AOSP side cannot yet draw what the old one does.
+
+## Footprint
+
+Win.apk has to stay light: a download and an install folder of a few hundred
+MB, and an app in a few hundred MB of RAM, on a PC with 4 GB. This is what it
+takes today, how it was measured, and the budget CI holds it to.
+
+On disk (November 2026, the files' sizes summed, MB = 10^6 bytes; a CI
+stage as the Package job packs it):
+
+| | Without the AOSP files (a release) | With them, as the dist ships them | With them, trimmed (now) |
+|---|---:|---:|---:|
+| Installed folder | 465 MB | 676 MB | 545 MB |
+| of it the AOSP graphics files | | 210 MB | 79 MB |
+| Installer (`Win.apk-Setup.exe`) | 125.5 MB | 233.1 MB | about 163 MB |
+
+The installer sizes are CI's `winapk-setup` artifacts (run 44545762483,
+before the AOSP files were staged, and 44557131107, after); the trimmed one
+is an estimate until CI packs it: `xz -9` makes 104.7 MB of the dist's files
+(the installer grew by 107.6 MB) and 36.6 MB of the trimmed ones, so about
+70 MB less. Release v0.8.0: installer 132.8 MB, zip 184.6 MB. Where the
+installed 545 MB go: `clang\` 233 MB (the arm64 translation's compiler:
+`libLLVM` 156 MB, `libclang-cpp` 63 MB), `jre\` 127 MB, the AOSP files 79 MB
+(fonts 47, ICU 16.4, the DLL 12, hyphenation 2, the jar 1), `bin\tools\`
+35 MB (`framework-res.apk` 22, `apkeep` 12), the rest of Win.apk about 70 MB.
+
+What a user's data folder adds: once, for all apps, `cds\` (the framework
+archive, 40 MB) and `cache\` (16 MB: `android-system-fonts\` 12,
+`fonts\` 4, `fwview\` 1); per app, its `apps\<name>\classes.jar` (the
+probe app 17 MB, Open Sudoku 5 MB), the installed copy under
+`android\data\app\` (the APK again, 6 and 19 MB, beside the library's own
+copy in `library\`) and, for an arm64-only app, its extracted libraries and
+their translations (Open Sudoku: its three libraries 38 MB, two
+translations 25 MB, hard links of the `aot-cache\` entries, which apps with
+the same library share; its 33 MB OpenCV library waits for a profile; 114 MB
+in `lib\arm64\` at the peak of a translation, its temporary files). The arm64
+translation's compiler runs as one or two `clang.exe` at about 400 MB each,
+in the background, after the first frame. The AOSP files add nothing to a data
+folder: with the switch on class-data sharing is off, so no second archive.
+
+Memory (under Wine 9, so relative numbers: Windows' own come from the smoke
+test now, below). The runtime's process, peak resident set polled every
+0.2 s (`VmHWM`), and the working set the runtime prints at the first frame:
+
+| Run | Peak | At the first frame |
+|---|---:|---:|
+| UI probe, switch off, archive made (a second start) | 377 MB | 377 MB |
+| UI probe, switch off, `WINAPK_CDS=0` | 370 MB | 368 MB |
+| UI probe, `WINAPK_AOSP_GFX=1`, up to its abort before the first frame (trimmed files: 322 MB) | 324 MB | (none) |
+| Open Sudoku (smoke set, arm64), first start | 413 MB | 408 MB |
+
+A first start also runs helpers as processes of their own, one after the
+other: the install helper (about 90 MB), the dex conversion (`--java-main`,
+0.4 to 1.4 GB at its peak in these runs: its heap is the JVM's default, a
+quarter of the RAM, so on this 16 GB machine it collects late; a limit of its
+own would hold it down on any PC), and after the first frame the archive
+dump (a JVM of about 0.4 GB, once per data folder) and the arm64 translation
+(26 MB, and its compilers, above). In AOSP's own test (`test/aospgfx`, on
+Linux) the native runtime adds 12 MB resident when it loads and setting the
+system fonts up from `fonts.xml` 31 MB (the fonts are mapped), the same with
+the trimmed files as without.
+
+What was cut, without changing what an app sees (`build_aosp_gfx.sh`):
+
+- Fonts, 160 to 47 MB: only those `fonts.xml` names. The dist also carries
+  fonts for Robolectric's older SDKs: NotoSansCJK's six other weights
+  (107 MB; a device has the Regular alone and minikin makes the bold),
+  `DroidSansFallback`, `NanumGothic`, Lato, Rubik, Arvo. `SystemFonts` opens
+  no file `fonts.xml` does not name.
+- ICU's data, 25.8 to 16.4 MB (`scripts/TrimIcuData.java`, what
+  `icupkg -r` does): ICU is linked into the DLL, so what it can open is
+  fixed. Gone are the trees it has no name for (`icudt68l-zone`, `-unit`,
+  `-rbnf`, `-translit` are not in it: time zone names, units, spelled-out
+  numbers, transliterators), the charset converters (`ucnv_open` and
+  `cnvalias` are not linked) and StringPrep and spoof data (`usprep`,
+  `uspoof` not linked). Kept: the break iterators, collation (SQLite's, should
+  that layer move), locale, language, region and currency names, the root
+  bundles (time zone rules among them) and the Unicode properties. The
+  script refuses a rule that drops nothing, so ICU data of another version
+  gets looked at again rather than trimmed blind.
+- The DLL's COFF symbol table, 3.3 MB, stripped with LLVM's strip (the
+  sections stay as lld wrote them; the exports the JVM binds by stay).
+
+Checked: `test/aospgfx/run.sh` (on Linux, the `.so` with the same data) draws
+the same picture byte for byte and prints the same lines with the dist's
+files and with the trimmed ones; the UI probe's `ours.txt` with the switch
+off is the same on a stage with either; with the switch on, a run gets as
+far with either (the DLL loads, 773 natives bound, the same abort).
+
+Not cut, and why:
+
+- Noto CJK Regular (19 MB) and Noto Color Emoji (9 MB). Windows 10 and 11
+  have CJK fonts of their own (Microsoft YaHei, Yu Gothic, Malgun Gothic) and
+  Segoe UI Emoji, but with other metrics: an app's Chinese, Japanese or
+  Korean text would wrap and measure differently from a phone. Latin,
+  Hebrew and Arabic keep Android's Roboto and Noto in any case. The next
+  step, if the 19 MB matter, is fetching the CJK font on first need into the
+  data folder (one copy for all apps, as above), which needs the framework's font
+  setup to wait for it; not done.
+- Windows' own ICU (`icu.dll`, Windows 10 1903+) cannot stand in: the DLL
+  links ICU 68 statically (`_68` symbols) and reads only its own `.dat`;
+  using the system's would mean rebuilding the native runtime.
+- The jar (1 MB) is already only what is referenced (`jdeps`).
+- The installer is LZMA2, solid, at `max` (`package/winapk.iss`); fonts and
+  ICU's data are mostly incompressible, so a bigger dictionary would gain
+  little, and the budget below would show what any change does.
+
+### The budget
+
+`scripts/footprint_check.py <stage> [installer]` sums the stage's files by
+part and fails when one is over its budget, listing its largest files; CI's
+Package job runs it on the stage and `Win.apk-Setup.exe` it just built
+(the run's summary shows the table):
+
+| Part | Today | Budget |
+|---|---:|---:|
+| AOSP graphics files (`bin\aosp\`, the DLL, the jar) | 79.2 MB | 90 MB |
+| Java runtime (`jre\`) | 127.3 MB | 140 MB |
+| The arm64 translation's compiler (`clang\`) | 232.9 MB | 250 MB |
+| Win.apk itself (the rest, `bin\tools\` included) | 105.1 MB | 120 MB |
+| Installed, in all | 544.5 MB | 600 MB |
+| Installer | about 163 MB | 175 MB |
+
+The CI stage has the AOSP files (`WINAPK_STAGE_AOSP_GFX` defaults to 1);
+a release leaves them out until the switch draws an app, so it is below
+these. To change a budget, edit `BUDGETS`, `TOTAL_BUDGET` or
+`INSTALLER_BUDGET` at the top of the script in the change that needs the
+room, say why in its description, and update this table. Raising it is a
+decision about the product, not a way to make CI green.
+
+Memory is recorded, not budgeted yet: the smoke test (`test/compat/sweep.py`)
+puts each app's peak working set and peak private bytes (the runtime's
+process over the whole run, `GetProcessMemoryInfo` every 0.5 s) and its
+working set at the first frame into `report.md` and the run's summary. Once
+a few runs show how much the numbers move between runners, a limit can go
+beside the others.
+
 ## The compatibility sweep
 
 `test/compat/sweep.py` boots every app of `test/compat/apps.txt` (open-source
@@ -724,8 +879,10 @@ content), `blank` (the last frame is one or two colors), `no-frame` (no frame
 before the timeout) or `crashed`. The report (`report.md`, `report.json`)
 collects the host natives called while still stubbed, the exceptions Java
 logged, HotSpot crash files, and for native code the system functions the shim
-lacks and the libraries that could not load. Each line of an app's log
-(`logs/<package>.log`) starts with the seconds since its start, so an app that
+lacks and the libraries that could not load, and each app's memory: the peak
+working set and peak private bytes of the runtime's process (on Windows) and
+the working set at the first frame (the runtime's own line, Wine too). Each
+line of an app's log (`logs/<package>.log`) starts with the seconds since its start, so an app that
 misses the frame budget shows where its time went. `--shard I/N` runs every Nth
 app from the Ith, and `--merge` joins the shards' report directories into one.
 `--only-from` runs only the packages a file lists, and `--require-drew` makes
@@ -914,13 +1071,13 @@ start; those throw alike on both sides, and only a difference counts.
 | Build | `windows-latest` | What changed | Every CMake target with MSYS2 CLANG64 through ccache (the cache is restored from the newest run, `main`'s for a pull request's first one), then `stage_runtime.sh build stage` and `bake_jre.sh` into `stage/jre`. Uploads `winapk-binaries` (every exe) and `runtime-stage` |
 | Unit tests | `windows-latest` | Guest libraries, Build | Every test program above, the arm64 AOT translation included |
 | Runtime tests | `windows-latest` | Guest libraries, Build | The tests that need the staged jars or ANGLE, the APK booted headless and in a window (`headless-boot` artifact), the GMS CLI |
-| App smoke test | `windows-latest` | Build | The ten apps of `test/compat/smoke.txt` (`--require-drew`) on the staged JRE with one framework archive made first (`--cds-prepare`): fails when one no longer draws (`smoke` artifact). The apps' classes, merged, are the `framework-classlist` artifact: copy it to `java/winapk-framework.classlist` when the framework or the smoke set has changed much |
+| App smoke test | `windows-latest` | Build | The ten apps of `test/compat/smoke.txt` (`--require-drew`) on the staged JRE with one framework archive made first (`--cds-prepare`): fails when one no longer draws (`smoke` artifact). Each app's peak working set and private bytes go in the report and the run's summary ([Footprint](#footprint)). The apps' classes, merged, are the `framework-classlist` artifact: copy it to `java/winapk-framework.classlist` when the framework or the smoke set has changed much |
 | AOSP graphics | `windows-latest` | Build | `test/aospgfx/`: AOSP's Canvas on Robolectric's native runtime in `winapk-runtime.exe` on the staged JRE (the agent built with MSYS2 CLANG64 clang; android-all and the DLL fetched from Maven Central and cached). Fails when a check fails; the `aosp-graphics` artifact has the picture, the benchmark frame and the logs. [AOSP graphics](#aosp-graphics-milestone-1) |
 | UI gate, Android's side and the base | Ubuntu | What changed | Android's lines for the UI probe and `test/screens/gate.txt`'s apps (`gate_oracle.sh`, cached by what they are made from), the base's commit, and the base's framework jars when `main` has no CI build of it left (`ui-oracle`, `ui-base-jars`). [The UI gate](#the-ui-gate-only-closer-to-android) |
 | UI gate, `<target>` | `windows-latest` × 3 | Build, UI gate's Android side | One per target: Win.apk at the base and at the head (`gate_side.sh`), then `regress.py`; fails on a `REGRESSED`, `FARTHER` or `MISSING` line, with the first of them in the summary (`ui-gate-<target>` artifact) |
 | Sweep 1/4 to 4/4 | `windows-latest` × 4 | Build | Only by hand, with "Full compatibility sweep": a quarter of the corpus each (`--shard`), each with its own APK cache, on the staged JRE with one framework archive (`--cds-prepare`) |
 | Sweep report | Ubuntu | Sweep | `sweep.py --merge`: the run's summary and the `compat-sweep` artifact |
-| Package | `windows-latest` | Build | The staged folder with its JRE (`winapk-preview`) and the installer (`winapk-setup`); beside the tests, not after them |
+| Package | `windows-latest` | Build | The staged folder with its JRE (`winapk-preview`) and the installer (`winapk-setup`); beside the tests, not after them. Then `scripts/footprint_check.py` fails the job when the installed folder or the installer is over its budget ([Footprint](#footprint)) |
 
 A new push to a pull request cancels its run in progress. Nothing is released
 automatically. The platform resource APK, ANGLE, the compile cache, the

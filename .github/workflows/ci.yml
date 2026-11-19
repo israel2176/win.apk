@@ -771,6 +771,17 @@ jobs:
             --apks apk-cache --out smoke --frames 150 --timeout 180 `
             --only-from windows/test/compat/smoke.txt --require-drew
           python windows/scripts/merge_classlists.py framework.classlist (Get-ChildItem classlists/*.classlist)
+      # Each app's status and memory (peak working set and private bytes of the runtime's process,
+      # sweep.py's MemoryWatch) in the run's summary: the report's first table, up to its sections.
+      - name: Memory per app, in the summary
+        if: always()
+        shell: pwsh
+        run: |
+          if (-not (Test-Path smoke/report.md)) { exit 0 }
+          $lines = Get-Content smoke/report.md
+          $end = ($lines | Select-String -Pattern '^## ' | Select-Object -First 1).LineNumber
+          if (-not $end) { $end = $lines.Count + 1 }
+          $lines[0..($end - 2)] | Add-Content $env:GITHUB_STEP_SUMMARY
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -1116,3 +1127,7 @@ jobs:
         with:
           name: winapk-setup
           path: Win.apk-Setup.exe
+      # The size budget (windows/README.md, "Footprint"): fails when the installed folder or the
+      # installer grew past it; after the uploads, so an over-budget build can still be looked at.
+      - name: Check the footprint against its budget
+        run: python windows/scripts/footprint_check.py stage Win.apk-Setup.exe

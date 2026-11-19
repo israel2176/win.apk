@@ -880,6 +880,15 @@ default; `--data` moves it for a direct run):
 | `staging\` | The install helper's staging area |
 | `updates\` | `releases.json` and `releases.etag` (GitHub's list of releases from the last update check), `Win.apk-Setup-<version>.exe` (a downloaded update, until it is installed) |
 
+What is shared and what is per app: `cds\` (about 40 MB) and `cache\` (about
+16 MB) are made once for all apps; each app adds its `apps\<name>\classes.jar`
+(a few MB to a few tens), its installed copy under `android\data\app\` (the
+APK again, and an arm64 app's extracted libraries) and its data. The program
+folder (`%LOCALAPPDATA%\Programs\Win.apk\`, about 465 MB, 545 MB with
+`WINAPK_AOSP_GFX`'s files) holds one copy of everything else, those files
+included: nothing of it is copied per app. `windows/README.md`, "Footprint",
+has the measurements and the budget CI holds them to.
+
 An app sees its files by Android's names, not by these: its data directory
 is `/data/user/0/<package>` (here `android\data\data\<folder>\`, by its 8.3
 short name), shared storage `/storage/emulated/0` and `/sdcard`
