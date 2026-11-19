@@ -25,6 +25,7 @@ package android.app;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.view.View;
+import com.macapk.loader.res.ResBackend;
 import com.macapk.loader.view.ViewHost;
 public class AlertDialog extends Dialog implements DialogInterface {
     public static final int THEME_DEVICE_DEFAULT_DARK = 4;
@@ -484,9 +485,9 @@ public class AlertDialog extends Dialog implements DialogInterface {
             android.content.res.Resources.Theme th =
                     (mContext != null) ? mContext.getTheme() : null;
             if (th != null) {
-                int v = th.resolveAttrColor(attr, fallback);
+                int v = ResBackend.get().resolveAttrColor(th, attr, fallback);
                 if (System.getenv("MACAPK_TRACE_WINDOW_FLAGS") != null) {
-                    int stat = android.content.res.Resources.macapkThemeColor(attr, fallback);
+                    int stat = ResBackend.get().themeColor(attr, fallback);
                     com.macapk.loader.NativeLog.i("Mac.apk.AlertDialog",
                         "attr=" + attr + " viaContext=#" + Integer.toHexString(v)
                         + " viaGlobal=#" + Integer.toHexString(stat)
@@ -496,7 +497,7 @@ public class AlertDialog extends Dialog implements DialogInterface {
                 return v;
             }
         } catch (Throwable ignored) {}
-        return android.content.res.Resources.macapkThemeColor(attr, fallback);
+        return ResBackend.get().themeColor(attr, fallback);
     }
 
     private void installContent() {
@@ -1543,7 +1544,7 @@ public class AlertDialog extends Dialog implements DialogInterface {
                 android.graphics.drawable.Drawable indicator = null;
                 try {
                     android.content.res.Resources r = mCtx == null ? null : mCtx.getResources();
-                    if (r != null) indicator = r.macapkFrameworkDrawableByName(
+                    if (r != null) indicator = ResBackend.get().frameworkDrawableByName(r,
                             mMode == SINGLE ? "btn_radio_material" : "btn_check_material");
                 } catch (Throwable ignored) {}
                 tv.setCompoundDrawablePadding(dp(20f));

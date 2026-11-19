@@ -1,6 +1,7 @@
 # AOSP's resources and views in Win.apk: plan and feasibility
 
-Status: plan and spike (`windows/test/aospviews/`). Nothing here ships yet.
+Status: plan and spike (`windows/test/aospviews/`). Step 0, the `ResBackend`
+and `ViewHost` seams, is done (below); nothing else here ships yet.
 The roadmap entry is `windows/PORTING.md`, M11.
 
 ## Why
@@ -186,9 +187,20 @@ Win.apk's own surface inside these packages:
 
 The way through is the one graphics took: seams first.
 
-- **`ResBackend`**: opening an APK's resources, the framework table, the
+- **`ResBackend`** (done): opening an APK's resources, the framework table, the
   resource index the loader reads (`macapkGetResourceIndex`,
   `macapkTypeNameOf`), theme colours for Win.apk's chrome.
+  `runtime/java/com/macapk/loader/res/ResBackend.java`, with `ArscRes` as
+  today's implementation. Measured against AOSP 14's `android.content.res`
+  (android-all), the resources side has 57 Win.apk-only members used from
+  outside it: 30 of `android.content.res`'s and 27 of `ResourceIndex`'s (with
+  its constructor and `StyleDef`'s two fields), 10 of them reached only by
+  reflection. All 224 call sites, in 27 files
+  (`android.app`, `android.graphics`, `android.view`, `android.widget` and
+  `com.macapk.loader`), now go through it; the two `Gravity.parse` calls
+  inside `android.content.res`, a views member, go through
+  `ViewHost.parseGravity`. `windows/README.md`, "Changes to the upstream
+  tree", has the groups.
 - **`ViewHost`**: what drives a window's views. Attach, frame, damage, touch
   and key dispatch, the IME's active connection, drag, the status bar,
   insets and the material chrome Win.apk paints. **Done** (step 0, views
@@ -205,9 +217,8 @@ The way through is the one graphics took: seams first.
   they cannot be routed or belong elsewhere: three `super()` constructor calls
   (`Window()` from `Activity`'s and `Dialog`'s windows, `Dialog`'s anonymous
   `DecorView`), `GLSurfaceView`'s three `super.` calls in the hooks it
-  overrides, `Gravity.parse` in `android.content.res` (2, for `ResBackend`),
-  and `ExtractEditText.setSelection` in `InputMethodService` (AOSP has it on
-  `EditText`). The UI probe, the screens sweep (Gallery, Sudoku),
+  overrides, and `ExtractEditText.setSelection` in `InputMethodService` (AOSP
+  has it on `EditText`). The UI probe, the screens sweep (Gallery, Sudoku),
   `FrameworkStubsTest` and `DamageRectTest` give identical output before and
   after (`windows/README.md`, "Changes to the upstream tree").
 
@@ -262,7 +273,7 @@ like aospgfx.
 
 | Step | What | Switch | Needs | Gate |
 |---|---|---|---|---|
-| 0 | `ResBackend` and `ViewHost` seams; the 574 sites routed through them | none | | `ours.txt` byte-identical |
+| 0 | `ResBackend` and `ViewHost` seams; the 574 sites routed through them. **Done** (`ResBackend` and `ViewHost`: the probe's `ours.txt`, the Gallery and Sudoku sweeps, `FrameworkStubsTest` and `DamageRectTest` byte-identical) | none | | `ours.txt` byte-identical |
 | R1 | Resources on AOSP: `android.content.res` from android-all with its natives on the libandroidfw port (the spike's bridge, our own code instead of shadow statics; Guava's `Ints` replaced); `framework-res` at API 34; `VMRuntime`'s address map | `WINAPK_AOSP_RES=1` | 0 | probe sections `theme`, `styles.lib`, `drawables`; screens sweep. Win.apk's views keep working on AOSP's `Resources` (public API + `ResBackend`) |
 | R2 | libandroidfw native: `libs/androidfw` + `core/jni/android_util_AssetManager.cpp` and its small closure (libziparchive, libutils / libbase pieces), built with clang for Windows as Robolectric builds HWUI; bound like aospgfx's DLL. Removes the 0.9 to 1.4 s and the Java heap the port holds | same switch | R1 | same lines; start time no worse than today |
 | T | `android.text` with graphics milestone 2 | `WINAPK_AOSP_GFX=1` | graphics | `text.layout` section |

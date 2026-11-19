@@ -31,6 +31,7 @@ import android.view.WindowManager;
 
 import com.macapk.loader.NativeCocoa;
 
+import com.macapk.loader.res.ResBackend;
 import java.io.File;
 import com.macapk.loader.view.ViewHost;
 
@@ -116,9 +117,9 @@ public class Activity extends ContextThemeWrapper
         super.setTheme(resid);
         if ("0".equals(System.getenv("MACAPK_ACTIVITY_THEME_ANCHOR"))) return;
         try {
-            Object ri = android.content.res.Resources.macapkGetResourceIndex();
+            Object ri = ResBackend.get().resourceIndex();
             if (ri == null || resid == 0) return;
-            Object tn = ri.getClass().getMethod("macapkTypeNameOf", int.class).invoke(ri, resid);
+            Object tn = ResBackend.get().indexTypeNameOf(ri, resid);
             if (!(tn instanceof String[])) {
                 com.macapk.loader.NativeLog.i("Mac.apk.Activity",
                     "setTheme(0x" + Integer.toHexString(resid) + ") -> no type name; not re-anchored");
@@ -131,7 +132,7 @@ public class Activity extends ContextThemeWrapper
                     + " name=" + (a.length > 1 ? a[1] : "?") + "; not re-anchored");
                 return;
             }
-            ri.getClass().getMethod("setApplicationThemeName", String.class).invoke(ri, a[1]);
+            ResBackend.get().indexSetApplicationThemeName(ri, a[1]);
             com.macapk.loader.NativeLog.i("Mac.apk.Activity",
                 "setTheme(0x" + Integer.toHexString(resid) + ") re-anchored the theme fallback to "
                 + a[1]);
@@ -2004,7 +2005,7 @@ public class Activity extends ContextThemeWrapper
                 String attr, boolean def) {
             if (th == null) return def;
             try {
-                String raw = th.resolveAttrRaw(attr);
+                String raw = ResBackend.get().resolveAttrRaw(th, attr);
                 if (raw != null) {
                     raw = raw.trim();
                     if ("true".equalsIgnoreCase(raw))  return true;
@@ -2115,8 +2116,8 @@ public class Activity extends ContextThemeWrapper
                 macapkGenerateBarColors();
             } else if (th != null) {
                 try {
-                    mStatusBarColor = th.resolveAttrColor("statusBarColor", 0xFF000000);
-                    mNavigationBarColor = th.resolveAttrColor("navigationBarColor", 0xFF000000);
+                    mStatusBarColor = ResBackend.get().resolveAttrColor(th, "statusBarColor", 0xFF000000);
+                    mNavigationBarColor = ResBackend.get().resolveAttrColor(th, "navigationBarColor", 0xFF000000);
                 } catch (Throwable ignored) {}
             } else {
                 mStatusBarColor = 0xFF000000;
@@ -2473,7 +2474,7 @@ public class Activity extends ContextThemeWrapper
         if (!forcedStatus && !e2e) {
             status = 0xFF000000;
             if (th != null) {
-                try { status = th.resolveAttrColor("statusBarColor", 0xFF000000); }
+                try { status = ResBackend.get().resolveAttrColor(th, "statusBarColor", 0xFF000000); }
                 catch (Throwable ignored) {}
             }
         }
@@ -2486,7 +2487,7 @@ public class Activity extends ContextThemeWrapper
             final int fallback = table[0] != 0 ? table[1] : 0xFF000000;
             int themeNav = fallback;
             if (th != null) {
-                try { themeNav = th.resolveAttrColor("navigationBarColor", fallback); }
+                try { themeNav = ResBackend.get().resolveAttrColor(th, "navigationBarColor", fallback); }
                 catch (Throwable ignored) {}
             }
             nav = macapkResolveNavigationBarColor(themeNav, table[0] != 0, table[1], table[2],

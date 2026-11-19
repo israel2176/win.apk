@@ -26,6 +26,7 @@ import android.content.Context;
 import android.graphics.drawable.Drawable;
 import android.util.AttributeSet;
 import android.view.Gravity;
+import com.macapk.loader.res.ResBackend;
 
 // AOSP (android11-release CompoundButton.java:61):
 //     public abstract class CompoundButton extends Button implements Checkable
@@ -151,7 +152,7 @@ public abstract class CompoundButton extends Button implements Checkable {
         try {
             final android.content.res.Resources r =
                     context == null ? null : context.getResources();
-            final Drawable d = r == null ? null : r.macapkFrameworkDrawableByName(name, context.getTheme());
+            final Drawable d = r == null ? null : ResBackend.get().frameworkDrawableByName(r, name, context.getTheme());
             if (d != null) setButtonDrawable(d);
         } catch (Throwable ignored) {
             // A missing indicator must never break construction.

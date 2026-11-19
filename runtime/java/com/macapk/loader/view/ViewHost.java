@@ -148,6 +148,9 @@ public interface ViewHost {
     /** The layout_gravity read from the XML (ViewGroup.LayoutParams.macapkGravity). */
     int layoutGravity(ViewGroup.LayoutParams params);
 
+    /** A gravity attribute's text ("bottom|end") as its flags; NO_GRAVITY when none (Gravity.parse). */
+    int parseGravity(String text);
+
     /** The view's native handle, 0 when none (View.getNativeHandle). */
     long nativeHandle(View view);
 

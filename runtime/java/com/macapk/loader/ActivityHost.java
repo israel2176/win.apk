@@ -11,6 +11,7 @@ import android.content.Intent;
 import android.os.Bundle;
 import android.os.Handler;
 
+import com.macapk.loader.res.ResBackend;
 import java.lang.reflect.Method;
 import java.util.ArrayDeque;
 import java.util.Deque;
@@ -130,7 +131,7 @@ public final class ActivityHost {
             int flags = FrameworkWindowStyle.flagsForTheme(resid);
             if (!FrameworkWindowStyle.occludesParent(flags)) {
                 final int unset = 0x00000001;   // not a legal opaque ARGB
-                int bg = a.getTheme().resolveAttrColor("windowBackground", unset);
+                int bg = ResBackend.get().resolveAttrColor(a.getTheme(), "windowBackground", unset);
                 see = bg == unset || (bg >>> 24) != 0xFF;
             }
         } catch (Throwable ignored) { }
@@ -4329,13 +4330,13 @@ public final class ActivityHost {
             android.content.res.Resources.Theme th = activity.getTheme();
             if (th != null) {
                 for (String attr : new String[]{"windowBackground", "colorBackground"}) {
-                    int c = th.resolveAttrColor(attr, UNSET);
+                    int c = ResBackend.get().resolveAttrColor(th, attr, UNSET);
                     if (c != UNSET && (c >>> 24) == 0xFF) { bg = c; break; }
                 }
             }
             if (bg == UNSET) {
                 for (String attr : new String[]{"windowBackground", "colorBackground"}) {
-                    int c = android.content.res.Resources.macapkThemeColor(attr, UNSET);
+                    int c = ResBackend.get().themeColor(attr, UNSET);
                     if (c != UNSET && (c >>> 24) == 0xFF) { bg = c; break; }
                 }
             }

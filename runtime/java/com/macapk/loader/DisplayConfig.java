@@ -42,6 +42,7 @@ package com.macapk.loader;
 import android.content.res.Configuration;
 import android.content.res.Resources;
 import android.util.DisplayMetrics;
+import com.macapk.loader.res.ResBackend;
 import com.macapk.loader.view.ViewHost;
 
 public final class DisplayConfig {
@@ -170,7 +171,7 @@ public final class DisplayConfig {
         c.smallestScreenWidthDp =
             (int) (Math.min(shortSide, longSide - sideNav) / density + 0.5f);
         // screenLayout FOLLOWS the dp metrics (AOSP reduceScreenLayout).
-        c.macapkDeriveScreenLayout();
+        ResBackend.get().deriveScreenLayout(c);
         c.orientation = (realW <= realH)
             ? Configuration.ORIENTATION_PORTRAIT : Configuration.ORIENTATION_LANDSCAPE;
         // The @hide windowConfiguration AndroidX Window reads reflectively:
@@ -355,13 +356,13 @@ public final class DisplayConfig {
         //    ResourcesImpl on the main thread: a one-off hitch at the end of a
         //    drag that crosses a bucket, and no window in which the new
         //    Configuration is served by resources selected for the old one.
-        Object liveIdx = Resources.macapkGetResourceIndex();
-        if (liveIdx instanceof ResourceIndex
-                && ((ResourceIndex) liveIdx).macapkSelectionChangesFor(next)) {
+        Object liveIdx = ResBackend.get().resourceIndex();
+        if (ResBackend.get().isIndex(liveIdx)
+                && ResBackend.get().indexSelectionChangesFor(liveIdx, next)) {
             long t0 = System.nanoTime();
-            ResourceIndex built = Boot.macapkNewResourceIndex(next);
+            Object built = Boot.macapkNewResourceIndex(next);
             if (built != null) {
-                Resources.macapkSetResourceIndex(built);
+                ResBackend.get().setResourceIndex(built);
                 NativeLog.i(TAG, "ResourceIndex rebuilt for "
                     + next.screenWidthDp + "x" + next.screenHeightDp + "dp "
                     + orientName(next.orientation) + " in "
@@ -382,7 +383,7 @@ public final class DisplayConfig {
         // display fields move, onto the system's own copy; the layout-direction
         // bits of screenLayout follow the locale, not the display, so the
         // system keeps its own.
-        Resources.macapkEditSystemConfiguration(sys -> {
+        ResBackend.get().editSystemConfiguration(sys -> {
             final int dir = sys.screenLayout & Configuration.SCREENLAYOUT_LAYOUTDIR_MASK;
             adoptDisplayFields(next, sys);
             sys.screenLayout = (sys.screenLayout & ~Configuration.SCREENLAYOUT_LAYOUTDIR_MASK) | dir;
@@ -446,8 +447,8 @@ public final class DisplayConfig {
         final int changes = filterDiff(sdk, serverDiff, lastReported, next, buckets, true);
         if ((changes & ~handled) != 0) {
             a.macapkSetLastReportedConfig(next);
-            boolean localeChanged = (changes & (Configuration.CONFIG_LOCALE
-                | Configuration.CONFIG_LAYOUT_DIRECTION)) != 0;
+            boolean localeChanged = (changes & (ResBackend.CONFIG_LOCALE
+                | ResBackend.CONFIG_LAYOUT_DIRECTION)) != 0;
             if ((RELAUNCH_ON || localeChanged) && ActivityHost.macapkRecreate(a)) {
                 NativeLog.i(TAG, "relaunching " + a.getClass().getName() + " (changed 0x"
                     + Integer.toHexString(changes) + " not declared in configChanges 0x"
@@ -576,9 +577,9 @@ public final class DisplayConfig {
     // ---- AOSP SizeConfigurationBuckets, per presented SDK ------------------------
 
     private static int[][] appBuckets() {
-        Object idx = Resources.macapkGetResourceIndex();
-        if (idx instanceof ResourceIndex) {
-            try { return ((ResourceIndex) idx).macapkAppSizeBuckets(); }
+        Object idx = ResBackend.get().resourceIndex();
+        if (ResBackend.get().isIndex(idx)) {
+            try { return ResBackend.get().indexAppSizeBuckets(idx); }
             catch (Throwable ignored) {}
         }
         return new int[][] { new int[0], new int[0], new int[0], new int[0], new int[] { 0 } };
@@ -599,24 +600,24 @@ public final class DisplayConfig {
     static int filterDiff(int sdk, int diff, Configuration oldC, Configuration newC,
                           int[][] b, boolean serverSide) {
         if (sdk <= 30 && !serverSide) return diff;
-        if ((diff & Configuration.CONFIG_SCREEN_SIZE) != 0) {
-            boolean crosses = ResourceIndex.macapkDpCrosses(b[0], oldC.screenWidthDp, newC.screenWidthDp)
-                || ResourceIndex.macapkDpCrosses(b[1], oldC.screenHeightDp, newC.screenHeightDp);
-            if (!crosses) diff &= ~Configuration.CONFIG_SCREEN_SIZE;
+        if ((diff & ResBackend.CONFIG_SCREEN_SIZE) != 0) {
+            boolean crosses = ResBackend.get().dpCrosses(b[0], oldC.screenWidthDp, newC.screenWidthDp)
+                || ResBackend.get().dpCrosses(b[1], oldC.screenHeightDp, newC.screenHeightDp);
+            if (!crosses) diff &= ~ResBackend.CONFIG_SCREEN_SIZE;
         }
-        if ((diff & Configuration.CONFIG_SMALLEST_SCREEN_SIZE) != 0) {
-            if (!ResourceIndex.macapkDpCrosses(b[2], oldC.smallestScreenWidthDp,
+        if ((diff & ResBackend.CONFIG_SMALLEST_SCREEN_SIZE) != 0) {
+            if (!ResBackend.get().dpCrosses(b[2], oldC.smallestScreenWidthDp,
                                                 newC.smallestScreenWidthDp)) {
-                diff &= ~Configuration.CONFIG_SMALLEST_SCREEN_SIZE;
+                diff &= ~ResBackend.CONFIG_SMALLEST_SCREEN_SIZE;
             }
         }
-        if (sdk >= 33 && (diff & Configuration.CONFIG_SCREEN_LAYOUT) != 0
+        if (sdk >= 33 && (diff & ResBackend.CONFIG_SCREEN_LAYOUT) != 0
                 && nonSizeLayoutFieldsUnchanged(oldC.screenLayout, newC.screenLayout)) {
             boolean longSet = b[4].length > 0 && b[4][0] != 0;
             if (!crossesScreenLayoutSizeThreshold(b[3], oldC, newC)
                     && !(longSet && (oldC.screenLayout & Configuration.SCREENLAYOUT_LONG_MASK)
                                  != (newC.screenLayout & Configuration.SCREENLAYOUT_LONG_MASK))) {
-                diff &= ~Configuration.CONFIG_SCREEN_LAYOUT;
+                diff &= ~ResBackend.CONFIG_SCREEN_LAYOUT;
             }
         }
         return diff;

@@ -32,6 +32,8 @@
 // debug/winpolicy_gate.sh fails when the two differ.
 package com.macapk.loader;
 
+import com.macapk.loader.res.ResBackend;
+
 public final class FrameworkWindowStyle {
     private FrameworkWindowStyle() {}
 
@@ -174,11 +176,10 @@ public final class FrameworkWindowStyle {
         if (themeResId == 0) return 0;
         if ((themeResId >>> 24) == 0x01) return frameworkFlags(themeResId);
         try {
-            Object idx = android.content.res.Resources.macapkGetResourceIndex();
-            if (!(idx instanceof ResourceIndex)) return 0;
-            ResourceIndex ri = (ResourceIndex) idx;
-            String name = ri.styleNameForIdRefPublic(String.format("@0x%08x", themeResId));
-            return walk(ri, name);
+            Object idx = ResBackend.get().resourceIndex();
+            if (!ResBackend.get().isIndex(idx)) return 0;
+            String name = ResBackend.get().indexStyleNameForIdRef(idx, String.format("@0x%08x", themeResId));
+            return walk(idx, name);
         } catch (Throwable t) {
             return 0;
         }
@@ -188,7 +189,7 @@ public final class FrameworkWindowStyle {
         "windowIsTranslucent", "windowIsFloating", "windowShowWallpaper", "windowNoDisplay" };
     private static final int[] BITS = { TRANSLUCENT, FLOATING, SHOW_WALLPAPER, NO_DISPLAY };
 
-    static int walk(ResourceIndex ri, String start) {
+    static int walk(Object ri, String start) {
         int flags = 0, known = 0;
         java.util.Set<String> seen = new java.util.HashSet<>();
         String cur = start;
@@ -201,24 +202,25 @@ public final class FrameworkWindowStyle {
             }
             String appName = cur;
             if (appName.startsWith("@0x") || appName.startsWith("@0X")) {
-                appName = ri.styleNameForIdRefPublic(appName);
+                appName = ResBackend.get().indexStyleNameForIdRef(ri, appName);
                 if (appName == null) break;
             } else if (appName.startsWith("@style/")) {
                 appName = appName.substring(7);
             }
-            ResourceIndex.StyleDef s = ri.getStyleByName(appName);
-            if (s == null || s.items == null) break;
+            Object s = ResBackend.get().indexStyleByName(ri, appName);
+            java.util.Map<String, String> items = s == null ? null : ResBackend.get().styleItems(s);
+            if (items == null) break;
             for (int i = 0; i < ATTRS.length; ++i) {
                 if ((known & BITS[i]) != 0) continue;
-                String v = s.items.get("android:" + ATTRS[i]);
-                if (v == null) v = s.items.get(ATTRS[i]);
+                String v = items.get("android:" + ATTRS[i]);
+                if (v == null) v = items.get(ATTRS[i]);
                 if (v == null) continue;
                 v = v.trim();
                 if ("true".equalsIgnoreCase(v)) { known |= BITS[i]; flags |= BITS[i]; }
                 else if ("false".equalsIgnoreCase(v)) { known |= BITS[i]; }
                 // A reference / ?attr value: undeclared here, the parent decides.
             }
-            cur = s.parent;
+            cur = ResBackend.get().styleParent(s);
         }
         return flags;
     }

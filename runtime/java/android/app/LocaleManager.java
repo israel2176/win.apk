@@ -4,6 +4,7 @@ package android.app;
 
 import android.os.LocaleList;
 
+import com.macapk.loader.res.ResBackend;
 import java.util.Locale;
 import com.macapk.loader.view.ViewHost;
 
@@ -64,12 +65,12 @@ public class LocaleManager {
         LocaleList effective = effectiveLocales();
         android.content.res.Configuration next = new android.content.res.Configuration(res.getConfiguration());
         next.setLocales(effective);
-        Object index = android.content.res.Resources.macapkGetResourceIndex();
-        if (index instanceof com.macapk.loader.ResourceIndex
-                && ((com.macapk.loader.ResourceIndex) index).macapkSelectionChangesFor(next)) {
+        Object index = ResBackend.get().resourceIndex();
+        if (ResBackend.get().isIndex(index)
+                && ResBackend.get().indexSelectionChangesFor(index, next)) {
             Object built = com.macapk.loader.Boot.macapkNewResourceIndex(next);
             if (built == null) throw new IllegalStateException("Unable to select application locale resources");
-            android.content.res.Resources.macapkSetResourceIndex(built);
+            ResBackend.get().setResourceIndex(built);
         }
         Locale.setDefault(effective.get(0));
         LocaleList.setDefault(effective);

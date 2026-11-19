@@ -10,6 +10,7 @@ package android.view;
 import com.macapk.loader.gfx.GfxBackend;
 import android.content.Context;
 import android.graphics.Rect;
+import com.macapk.loader.res.ResBackend;
 
 // AOSP: `public class View implements Drawable.Callback, KeyEvent.Callback,
 // AccessibilityEventSource`. The Drawable.Callback piece is load-bearing: a
@@ -283,7 +284,7 @@ public class View implements android.graphics.drawable.Drawable.Callback,
                 boolean declaredNullBg = false;
                 try {
                     if (a.hasValue(2)) styleBg = a.getDrawable(2);
-                    else declaredNullBg = a.macapkDeclaredTypeNull(2);
+                    else declaredNullBg = ResBackend.get().declaredTypeNull(a, 2);
                 } catch (Throwable ignored) {}
                 MacapkCtorPadding ctorPad = null;
                 if (readPad) {
@@ -6267,7 +6268,7 @@ public class View implements android.graphics.drawable.Drawable.Callback,
                     && getResources().getDisplayMetrics().density > 0f)
                     density = (int) getResources().getDisplayMetrics().density;
             } catch (Throwable ignored) {}
-            float radius = android.content.res.Resources.macapkThemeCornerDp(
+            float radius = ResBackend.get().themeCornerDp(
                 "shapeAppearanceMediumComponent", 12f) * density;
             if (radius <= 0f) return -1;
             android.graphics.Path cp = new android.graphics.Path();
@@ -6334,7 +6335,7 @@ public class View implements android.graphics.drawable.Drawable.Callback,
                     density = (int) this.getResources().getDisplayMetrics().density;
                 }
             } catch (Throwable ignored) {}
-            float radiusDp = android.content.res.Resources.macapkThemeCornerDp(
+            float radiusDp = ResBackend.get().themeCornerDp(
                 "shapeAppearanceMediumComponent", 12f);
             int radius = Math.round(radiusDp * density);
             // v1.0.406: paint the card shape at its FULL bounds, the AOSP way.
@@ -6375,7 +6376,7 @@ public class View implements android.graphics.drawable.Drawable.Callback,
             // for filled/elevated cards and matches the emulator exactly.
             int fill = backgroundColor;
             if ((fill & 0xFF000000) == 0) {
-                fill = android.content.res.Resources.macapkThemeColor(
+                fill = ResBackend.get().themeColor(
                     "colorSurfaceContainerLow", 0xFFFFFFFF);
             }
             android.graphics.Paint card = new android.graphics.Paint();
@@ -6387,7 +6388,7 @@ public class View implements android.graphics.drawable.Drawable.Callback,
                 radius, radius, card);
             // 1dp outline at colorOutlineVariant -- visible card border
             // that survives the clipChildren=ON parent clip.
-            int outlineColor = android.content.res.Resources.macapkThemeColor(
+            int outlineColor = ResBackend.get().themeColor(
                 "colorOutlineVariant", 0x33000000);
             android.graphics.Paint stroke = new android.graphics.Paint();
             stroke.setAntiAlias(true);
@@ -6452,7 +6453,7 @@ public class View implements android.graphics.drawable.Drawable.Callback,
             || name.endsWith("NavigationRailView")) {
             int fill = backgroundColor;
             if ((fill & 0xFF000000) == 0) {
-                fill = android.content.res.Resources.macapkThemeColor(
+                fill = ResBackend.get().themeColor(
                     "colorSurfaceContainer", 0xFFFFFBFE);
             }
             android.graphics.Paint nav = new android.graphics.Paint();
@@ -6460,7 +6461,7 @@ public class View implements android.graphics.drawable.Drawable.Callback,
             nav.setColor(fill);
             canvas.drawRect(0, 0, w, h, nav);
             // Top hairline -- 1dp divider, M3 outline-variant.
-            int hairColor = android.content.res.Resources.macapkThemeColor(
+            int hairColor = ResBackend.get().themeColor(
                 "colorOutlineVariant", 0x1F000000);
             android.graphics.Paint hair = new android.graphics.Paint();
             hair.setStyle(android.graphics.Paint.Style.FILL);
@@ -6492,7 +6493,7 @@ public class View implements android.graphics.drawable.Drawable.Callback,
             // feature graphic underneath shows through; painting the
             // surface-tone fallback there hid the top of the image.
             if (macapkBackgroundExplicitlySet) return;
-            fill = android.content.res.Resources.macapkThemeColor(
+            fill = ResBackend.get().themeColor(
                 "colorSurface", 0xFFFFFBFE);
             android.graphics.Paint ab = new android.graphics.Paint();
             ab.setStyle(android.graphics.Paint.Style.FILL);

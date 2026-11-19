@@ -603,7 +603,7 @@ public final class ResourceIndex {
      *  constructs a brand-new ResourceIndex in the same process. */
     private static volatile ArscReader macapkFwTableCache;
     /** Boot.prefetchFrameworkResources: index the platform table on a background thread. */
-    static void prefetchFrameworkTable() {
+    public static void prefetchFrameworkTable() {
         try { macapkFrameworkTable(); } catch (Throwable ignore) { }
     }
     private static ArscReader macapkFrameworkTable() {

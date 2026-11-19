@@ -33,6 +33,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.util.DisplayMetrics;
 
+import com.macapk.loader.res.ResBackend;
 import java.io.File;
 import java.lang.reflect.Method;
 import java.net.URL;
@@ -173,10 +174,10 @@ public final class Boot {
      *  same constructor on the same inputs (cfg is not touched by either side
      *  until the join, and Thread.start/FutureTask.get order everything before
      *  and after), and its exception, if any, is rethrown here unchanged. */
-    private static ResourceIndex buildResourceIndexWhileAwtInits(
+    private static Object buildResourceIndexWhileAwtInits(
             final Configuration cfg, final String apkPath) {
-        java.util.concurrent.FutureTask<ResourceIndex> task =
-            new java.util.concurrent.FutureTask<>(() -> new ResourceIndex(cfg, apkPath));
+        java.util.concurrent.FutureTask<Object> task =
+            new java.util.concurrent.FutureTask<>(() -> ResBackend.get().openIndex(cfg, apkPath));
         try {
             // 8 MB, the main thread's size: the index ran on the main thread
             // until now, so give it the same headroom.
@@ -185,7 +186,7 @@ public final class Boot {
             t.start();
         } catch (Throwable cannotStart) {
             initAwtOnAppKitMainThread();
-            return new ResourceIndex(cfg, apkPath);
+            return ResBackend.get().openIndex(cfg, apkPath);
         }
         initAwtOnAppKitMainThread();
         bootClock("AWT initialised (overlapped with the resource index)");
@@ -193,7 +194,7 @@ public final class Boot {
         try {
             while (true) {
                 try {
-                    ResourceIndex r = task.get();
+                    Object r = task.get();
                     bootClock("resource index joined");
                     return r;
                 } catch (InterruptedException ie) {
@@ -457,7 +458,7 @@ public final class Boot {
     private static void prefetchFrameworkResources() {
         if ("0".equals(System.getenv("MACAPK_FWRES_PREFETCH"))) return;
         try {
-            Thread t = new Thread(ResourceIndex::prefetchFrameworkTable, "macapk-fwres-prefetch");
+            Thread t = new Thread(() -> ResBackend.get().prefetchFrameworkTable(), "macapk-fwres-prefetch");
             t.setDaemon(true);
             t.start();
         } catch (Throwable ignore) {
@@ -507,7 +508,7 @@ public final class Boot {
             th.applyStyle(themeId, true);
             final int UNSET = 0x00000001;   // not a legal opaque ARGB
             for (String attr : new String[]{"windowBackground", "colorBackground"}) {
-                int c = th.resolveAttrColor(attr, UNSET);
+                int c = ResBackend.get().resolveAttrColor(th, attr, UNSET);
                 if (c != UNSET && (c >>> 24) == 0xFF) {
                     NativeCocoa.setStartingWindowColor(c);
                     NativeLog.i(TAG, String.format(
@@ -1640,7 +1641,7 @@ public final class Boot {
         // configuration; DisplayConfig.compute fills only the window-derived
         // fields, so the rest (font scale, locale, touch, keys, navigation,
         // layout direction) come from here.
-        Configuration cfg = Configuration.macapkPhoneDefaults();
+        Configuration cfg = ResBackend.get().phoneDefaults();
         DisplayConfig.compute(macapkRealW, macapkRealH, metrics, cfg, true);
         NativeLog.i(TAG, "display " + macapkRealW + "x" + macapkRealH + " px -> metrics "
             + metrics.widthPixels + "x" + metrics.heightPixels + ", "
@@ -1713,11 +1714,11 @@ public final class Boot {
         // >=700dp-tall screen selects the two-line display that carries the
         // live result preview). v1.0.445.
         bootClock("configuration + Resources built");
-        ResourceIndex resIdx = awtDeferred
+        Object resIdx = awtDeferred
             ? buildResourceIndexWhileAwtInits(cfg, apkPath)
-            : new ResourceIndex(cfg, apkPath);
+            : ResBackend.get().openIndex(cfg, apkPath);
         if (!awtDeferred) bootClock("resource index built");
-        Resources.macapkSetResourceIndex(resIdx);
+        ResBackend.get().setResourceIndex(resIdx);
         // v1.0.1047: keep the constructor input. A ResourceIndex bakes the
         // night qualifier at CONSTRUCTION (cfgNight is set once, and every
         // values-* family is ingested against it right after), so the only way
@@ -1731,7 +1732,7 @@ public final class Boot {
         // references (cards / bottom-nav / FAB chrome). Generic for any
         // APK that declares a theme.
         if (manifest.applicationTheme != null) {
-            resIdx.setApplicationThemeName(manifest.applicationTheme);
+            ResBackend.get().indexSetApplicationThemeName(resIdx, manifest.applicationTheme);
             sAppThemeName = manifest.applicationTheme;
         } else {
             // lane design 1, 2026-08-02: an app that declares NO theme still
@@ -1758,7 +1759,7 @@ public final class Boot {
                        : (t < 14)   ? "Theme.Holo"
                        : (t < 24)   ? "Theme.DeviceDefault"
                                     : "Theme.DeviceDefault.Light.DarkActionBar";
-            resIdx.setApplicationThemeName(def);
+            ResBackend.get().indexSetApplicationThemeName(resIdx, def);
             sAppThemeName = def;
             NativeLog.i(TAG, "no manifest theme; AOSP default for targetSdk="
                             + t + " -> " + def);
@@ -1766,7 +1767,7 @@ public final class Boot {
         // Let getResourcePackageName(0x7f...) return the running APK's
         // package -- AOSP behavior that some apps (HCR 1.43's onCreate
         // resource lookup, e.g.) depend on during init.
-        Resources.macapkSetPackageName(manifest.packageName);
+        ResBackend.get().setPackageName(manifest.packageName);
         // The "same app" test ContentProvider.macapkCallerIsSameApp runs against
         // every provider's ProviderInfo.packageName (also stamped from
         // manifest.packageName, below). Captured here -- once, from the parsed
@@ -3598,14 +3599,14 @@ public final class Boot {
     /** A ResourceIndex for `cfg`, rooted at the application theme exactly as
      *  run() roots the boot one. Shared by the appearance flip and the display
      *  resize commit (DisplayConfig). Throws on failure. */
-    private static ResourceIndex macapkBuildResourceIndex(Configuration cfg) {
-        ResourceIndex built = new ResourceIndex(cfg, sApkPath);
+    private static Object macapkBuildResourceIndex(Configuration cfg) {
+        Object built = ResBackend.get().openIndex(cfg, sApkPath);
         if (sAppThemeName != null && !sAppThemeName.isEmpty()) {
             // Re-root the cascade. Without this the new index has no
             // application theme at all and every `?attr/...` falls through to a
             // default, which reads as a WORSE regression than not flipping (see
             // ResourceIndex.setApplicationThemeName).
-            built.setApplicationThemeName(sAppThemeName);
+            ResBackend.get().indexSetApplicationThemeName(built, sAppThemeName);
         }
         return built;
     }
@@ -3613,7 +3614,7 @@ public final class Boot {
     /** Configuration-change entry: the rebuilt index, or null (logged) when there is
      *  no APK yet or the build fails -- the caller then keeps the live one,
      *  which is the same choice the appearance flip makes. */
-    public static ResourceIndex macapkNewResourceIndex(Configuration cfg) {
+    public static Object macapkNewResourceIndex(Configuration cfg) {
         if (sApkPath == null || cfg == null) return null;
         synchronized (sNightLock) {
             try {
@@ -3674,7 +3675,7 @@ public final class Boot {
             // needs the mirror deferred to swap time, which is a ResourceIndex
             // change; the alternative (rebuild on the main looper, as AOSP does)
             // trades the transient for a freeze of the whole rebuild duration.
-            ResourceIndex built;
+            Object built;
             long t0 = System.nanoTime();
             try {
                 built = macapkBuildResourceIndex(next);
@@ -3683,7 +3684,7 @@ public final class Boot {
                     + "keeping the current one: " + t);
                 return;
             }
-            final ResourceIndex idx = built;
+            final Object idx = built;
             NativeLog.i(TAG, "macOS appearance -> "
                 + (dark ? "DARK (UI_MODE_NIGHT_YES)" : "light (UI_MODE_NIGHT_NO)")
                 + "; ResourceIndex rebuilt in "
@@ -3709,16 +3710,16 @@ public final class Boot {
                     // the live configuration -- a flip changes uiMode only --
                     // and retain any locale selected while the worker ran.
                     // Rebuild if the index was selected for an older size or locale.
-                    ResourceIndex useIdx = idx;
+                    Object useIdx = idx;
                     Configuration live = res.getConfiguration();
                     DisplayConfig.adoptDisplayFields(live, next);
                     next.setLocales(live.getLocales());
-                    if (idx.macapkSelectionChangesFor(next)) {
-                        ResourceIndex again = macapkNewResourceIndex(next);
+                    if (ResBackend.get().indexSelectionChangesFor(idx, next)) {
+                        Object again = macapkNewResourceIndex(next);
                         if (again == null) return;
                         useIdx = again;
                     }
-                    Resources.macapkSetResourceIndex(useIdx);
+                    ResBackend.get().setResourceIndex(useIdx);
                     // The Application and every Activity share ONE Resources
                     // here (Activity.getResources() delegates to
                     // application.getResources(), and ContextWrapper delegates
@@ -3736,7 +3737,7 @@ public final class Boot {
                     // (Resources.macapkEditSystemConfiguration). A uiMode flip
                     // leaves the metrics alone, hence null.
                     final int nightBits = next.uiMode & Configuration.UI_MODE_NIGHT_MASK;
-                    Resources.macapkEditSystemConfiguration(sys -> sys.uiMode =
+                    ResBackend.get().editSystemConfiguration(sys -> sys.uiMode =
                         (sys.uiMode & ~Configuration.UI_MODE_NIGHT_MASK) | nightBits, null);
                     android.app.Activity top = ActivityHost.peek();
                     if (top != null) {
@@ -4343,7 +4344,7 @@ public final class Boot {
             metrics.heightPixels = 1280;  //   "        "        "         (640dp @ 2x retina)
             // run()'s process-configuration factory (macapkPhoneDefaults), not
             // the unset `new Configuration()` delta -- see run().
-            Configuration cfg = Configuration.macapkPhoneDefaults();
+            Configuration cfg = ResBackend.get().phoneDefaults();
             cfg.densityDpi = 320;         // xhdpi -- the same fixed value run() uses
             cfg.screenWidthDp = 360;
             cfg.screenHeightDp = 640;
@@ -4352,9 +4353,9 @@ public final class Boot {
             cfg.uiMode = TvMode.uiModeType()
                 | (macapkSystemIsDark() ? Configuration.UI_MODE_NIGHT_YES : Configuration.UI_MODE_NIGHT_NO);
             Resources resources = new Resources(assets, metrics, cfg);
-            ResourceIndex resIdx = new ResourceIndex(cfg, apkPath);
-            Resources.macapkSetResourceIndex(resIdx);
-            Resources.macapkSetPackageName(pkg);
+            Object resIdx = ResBackend.get().openIndex(cfg, apkPath);
+            ResBackend.get().setResourceIndex(resIdx);
+            ResBackend.get().setPackageName(pkg);
             writeLauncherIcon(resources, manifestPath, appDir, pkg, iconRaw, apkPath);
         } catch (Throwable t) {
             NativeLog.w(TAG, "extractIconOnly failed: " + t);

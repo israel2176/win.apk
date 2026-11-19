@@ -6,6 +6,7 @@
 // will hand the buffer to ANGLE via JNI.
 package android.graphics;
 
+import com.macapk.loader.res.ResBackend;
 import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
@@ -669,7 +670,7 @@ public class BitmapFactory {
             // the screen's (inScaled), so a picture shipped in one bucket has its size in dp
             // whatever the screen. decodeStream alone left it at its size in pixels.
             android.util.TypedValue value = new android.util.TypedValue();
-            value.density = res.macapkResourceDensity(id);
+            value.density = ResBackend.get().resourceDensity(res, id);
             Bitmap b = value.density != 0 ? decodeResourceStream(res, value, in, null, opts)
                                           : decodeStream(in, null, opts);
             if (trace) android.util.Log.i("Mac.apk.DecodeRes",
