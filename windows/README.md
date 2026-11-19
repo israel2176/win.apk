@@ -2132,6 +2132,12 @@ every such change is listed here:
     restores that), and `android.os.Build` and `CheckinClient` tell Windows by
     the path separator, since Boot sets `os.name` to "Linux" first (a Windows run
     reported BRAND "Apple", MODEL "Mac").
+  - From Bank Hapoalim and Waze: `LayoutInflater.inflate(res, root, true)` returns
+    `root`, as AOSP's does (it returned the child: a custom view that inflates into
+    itself and casts the result threw, and became an empty FrameLayout;
+    `MACAPK_INFLATE_RETURNS_CHILD=1` restores that); `android:orientation` given as
+    a number or an `@integer` reference is read (it was horizontal unless the
+    literal "vertical").
 - `runtime/java/com/macapk/loader/LayoutSweep.java` (new), `Boot.java`: the
   screens sweep's Win.apk side, a debug mode off unless `MACAPK_LAYOUT_SWEEP=1`
   (see [Every screen against Android](#every-screen-against-android)). Boot
