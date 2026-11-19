@@ -38,8 +38,9 @@ com.android.*, com.macapk.* or com.winapk.* it is Win.apk's (the framework
 is ours); in the app's code it is the app's, and those are mostly a screen
 opened without the extras or the state it expects -- expected, listed apart.
 An app NullPointerException whose message says a framework method returned
-null (not an Intent or Bundle getter) is ranked with Win.apk's: on a phone
-that method would have answered.
+null (not an Intent or Bundle getter), or a NumberFormatException on a
+resource name (an AttributeSet value a phone spells "@<id>"), is ranked with
+Win.apk's: on a phone that method would have answered otherwise.
 
 --intents names a JSON file of per-activity starts, `{"<class>": {"action":
 ..., "data": ..., "extras": "k=v;k2=v2"}}`, for screens that need them
@@ -235,6 +236,7 @@ FRAMEWORK = ("android.", "com.android.", "com.macapk.", "com.winapk.", "dalvik."
 # Getters whose null is an activity opened without what its caller passes.
 STATE_GETTERS = re.compile(r"android\.content\.Intent\.get|android\.os\.(Bundle|BaseBundle)\.get|"
                            r"getArguments|getIntent|getExtras|getParcelable|getSerializable")
+RES_NAME_INPUT_RE = re.compile(r'input string: "@?[?]?(\w+:)?[a-z]+/[\w.]+"')
 HELPFUL_NULL_RE = re.compile(r'because the return value of "([\w$.]+)\(')
 STATE_EXC = ("NullPointerException", "IllegalArgumentException", "IllegalStateException",
              "ClassCastException", "UninitializedPropertyAccessException", "NoSuchElementException",
@@ -250,6 +252,8 @@ CALLER_INPUT = [
      re.compile(r"prepare failed|syntax error|duplicate column|no such (table|column)|already exists|"
                 r"constraint failed|UNIQUE|NOT NULL", re.I)),
     (re.compile(r"android\.content\.ActivityNotFoundException"), re.compile(r"")),
+    # Asked about a component or package that is not there (or is disabled).
+    (re.compile(r"android\.content\.pm\.PackageManager\$NameNotFoundException"), re.compile(r"")),
     # A null the caller passed in: HotSpot names an unnamed parameter "<parameterN>".
     (re.compile(r"java\.lang\.NullPointerException"), re.compile(r'because "<parameter\d+>" is null')),
 ]
@@ -301,7 +305,7 @@ def parse_traces(lines):
 
 
 def classify(trace, pkg):
-    """('framework' | 'framework-null' | 'app-state' | 'app', origin frame, root block)."""
+    """('framework' | 'framework-value' | 'app-state' | 'app', origin frame, root block)."""
     root = trace["blocks"][-1]
     frames = root["frames"] or trace["blocks"][0]["frames"]
     origin = next((f for f in frames if not f.startswith(NEUTRAL)), frames[0] if frames else "?")
@@ -317,7 +321,11 @@ def classify(trace, pkg):
     msg = root["message"]
     nulled = HELPFUL_NULL_RE.search(msg)
     if nulled and nulled.group(1).startswith(FRAMEWORK) and not STATE_GETTERS.search(nulled.group(1)):
-        return "framework-null", origin, root
+        return "framework-value", origin, root
+    if exc == "NumberFormatException" and RES_NAME_INPUT_RE.search(msg):
+        # A device spells a reference in an AttributeSet "@<decimal id>", and
+        # apps parse that; a resource NAME here is Win.apk's spelling.
+        return "framework-value", origin, root
     near_state = any(STATE_GETTERS.search(f) for f in frames[:8])
     if exc in STATE_EXC or near_state or STATE_WORDS.search(msg):
         return "app-state", origin, root
@@ -439,8 +447,13 @@ def run_activity(apk, pkg, activity, intent, args, app_out, index, timeout):
                     proc.wait()
                     break
         reader.join(timeout=10)
-    if args.launcher and os.path.basename(args.launcher).startswith("wine"):
-        subprocess.run(["wineserver", "-k"], capture_output=True)
+    if (code is None or timed_out) and args.launcher and os.path.basename(args.launcher).startswith("wine"):
+        # A killed wine leaves the JVM behind in the wineserver. Not captured:
+        # a wineserver it starts would hold the pipe open, and the wait with it.
+        try:
+            subprocess.run(["wineserver", "-k"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=60)
+        except subprocess.TimeoutExpired:
+            pass
     seconds = round(time.time() - start, 1)
     text = open(log_path, encoding="utf-8", errors="replace").read()
     r = analyze(text, code, timed_out, flags["task_empty"], seconds, pkg, activity)
@@ -477,6 +490,11 @@ def group_traces(runs):
     return groups
 
 
+def severity(g):
+    """What crashed or broke a lifecycle callback first, then by the screens it showed on."""
+    return (not (g["fatal"] or g["lifecycle"]), -len(g["activities"]))
+
+
 def short(cls):
     return cls.rsplit(".", 1)[-1] if cls else "launcher"
 
@@ -490,8 +508,7 @@ def app_report(pkg, runs, app_out):
             s["calls"] += calls
             s["activities"].append(r["activity"] or r.get("launcher_class") or "launcher")
     report = {"package": pkg, "runs": runs,
-              "exceptions": {k: sorted(v.values(), key=lambda g: (-len(g["activities"]), not g["fatal"]))
-                             for k, v in groups.items()},
+              "exceptions": {k: sorted(v.values(), key=severity) for k, v in groups.items()},
               "stubs": dict(sorted(stubs.items(), key=lambda kv: (-len(kv[1]["activities"]), -kv[1]["calls"])))}
     with open(os.path.join(app_out, "report.json"), "w", encoding="utf-8") as f:
         json.dump(report, f, indent=2)
@@ -506,7 +523,8 @@ def app_report(pkg, runs, app_out):
             started += f" (finished on the bare start; run again with {r['retried_with']})"
         shot = f"[png]({r['shot']})" if r.get("shot") else "-"
         lines.append(f"| {i} | `{short(r['activity'] or r.get('launcher_class'))}` | "
-                     f"{'yes' if r.get('exported') else 'no'} | {r['status']}{' (JVM crash)' if r['jvm_crash'] else ''} | "
+                     f"{'yes' if r.get('exported') else 'no'}{'' if r.get('enabled', True) else ', disabled'} | "
+                     f"{r['status']}{' (JVM crash)' if r['jvm_crash'] else ''} | "
                      f"{r['frames']} | {r['last_frame_owner'] or '-'} | {started} | {len(r['traces'])} | {shot} |")
     lines += exception_sections(report["exceptions"])
     lines += ["", "## Not implemented on Windows yet, by screens that reached it", "",
@@ -527,7 +545,7 @@ def app_report(pkg, runs, app_out):
 
 TITLES = [
     ("framework", "Framework exceptions (Win.apk bugs: they start in android.* / com.macapk.*)"),
-    ("framework-null", "App exceptions on a null a framework method returned (likely Win.apk)"),
+    ("framework-value", "App exceptions on a value the framework answered unlike a phone (likely Win.apk)"),
     ("app-state", "App exceptions on missing intent extras or state (expected for a screen opened alone)"),
     ("app", "Other app exceptions"),
 ]
@@ -543,7 +561,8 @@ def exception_sections(exceptions, with_pkg=False):
             continue
         for g in items:
             where = ", ".join(f"`{short(a)}`" for a in g["activities"])
-            tags = [t for t, on in (("FATAL", g["fatal"]), ("lifecycle callback", g["lifecycle"])) if on]
+            tags = [t for t, on in (("FATAL", g["fatal"]), ("lifecycle callback", g["lifecycle"]),
+                                    ("caught and logged", not g["fatal"] and not g["lifecycle"])) if on]
             pkg = f"{g['package']}: " if with_pkg else ""
             lines.append(f"- {pkg}**`{g['exception']}`** at `{g['origin']}`"
                          f"{' (' + ', '.join(tags) + ')' if tags else ''} on {len(g['activities'])} screen(s): {where}")
@@ -577,12 +596,12 @@ def overall_report(reports, out):
              "|---|---|---|---|---|"]
     for r in reports:
         st = collections.Counter(x["status"] for x in r["runs"])
-        fw = len(r["exceptions"].get("framework", [])) + len(r["exceptions"].get("framework-null", []))
+        fw = len(r["exceptions"].get("framework", [])) + len(r["exceptions"].get("framework-value", []))
         lines.append(f"| {r['package']} | {len(r['runs'])} | "
                      + ", ".join(f"{n} {s}" for s, n in st.most_common())
                      + f" | {fw} | [report]({r['package']}/report.md) |")
     for cls in merged:
-        merged[cls].sort(key=lambda g: (-len(g["activities"]), not g["fatal"]))
+        merged[cls].sort(key=severity)
     lines += exception_sections(merged, with_pkg=True)
     lines += ["", "## Not implemented on Windows yet", "", "| Apps | Screens | Calls | Stub |", "|---|---|---|---|"]
     for name, s in sorted(stubs.items(), key=lambda kv: (-len(kv[1]["apps"]), -kv[1]["screens"])):
@@ -623,6 +642,7 @@ def crawl(apk, args, out, intents):
                          args.first_timeout if i == 0 else args.timeout)
         r["launcher_class"] = act["class"]
         r["exported"] = bool(act["exported"])
+        r["enabled"] = act["enabled"] is not False
         r["actions"] = act["actions"]
         if cls is None:
             r["activity"] = None
