@@ -22,6 +22,7 @@ this repository.
 - [Run an app from a build](#run-an-app-from-a-build)
 - [Environment variables for development](#environment-variables-for-development)
 - [Tests](#tests)
+  - [The UI gate: only closer to Android](#the-ui-gate-only-closer-to-android)
 - [The compatibility sweep](#the-compatibility-sweep)
   - [Every screen: the screens crawl](#every-screen-the-screens-crawl)
 - [CI and releases](#ci-and-releases)
@@ -286,6 +287,72 @@ Every test is a program built by CMake; `ci.yml` runs each of them on
 The guest libraries are built with plain clang + lld (`test/build_guest.sh`,
 `test/build_e2e.sh`), so no NDK is needed; CI builds them on Ubuntu and
 hands them to the Windows job.
+
+### The UI gate: only closer to Android
+
+A pull request that touches the framework (`runtime/java`, `java/`) or the
+host and loader under it (`host/`, `src/`, `include/`), or the gate itself, is
+held by `ci.yml` to "only closer to Android, never further": the UI probe
+(`test/uiprobe`) and the screens sweep ([Every screen against
+Android](#every-screen-against-android)) of the apps in `test/screens/gate.txt`
+(Fossify Gallery and Open Sudoku, each pinned by F-Droid version and SHA-256)
+run in Win.apk at the pull request's head and at its base, and
+`test/uiprobe/regress.py` compares the two against Android's lines. Any
+`REGRESSED`, `FARTHER` or `MISSING` line fails the job; its summary has the
+counts and the first 40 of those lines, its artifact (`ui-gate-<target>`) both
+sides' `ours.txt` and logs and regress.py's whole output.
+
+- **Android's side** (job "UI gate, Android's side and the base", Ubuntu):
+  `test/uiprobe/gate_oracle.sh` builds the probe APK and its `oracle.txt`
+  (`build.sh`) and each app's `oracle.txt` and `manifest.env` (`screens.sh
+  --skip-ours`, with the head's `build_java.sh` jars for the DEX converter).
+  Android does not change with a pull request, so the result is cached by what
+  it is made from (the probe's sources, `test/screens/`, `LayoutSweep.java`,
+  the DEX converter, the pinned APKs) and built again only when one of those
+  changes; Gradle's downloads and Robolectric's android-all are cached too, and
+  Maven Central is reached through Google's mirror first
+  (`.github/ci/maven-mirror.gradle`; `-Drobolectric.dependency.repo.url` for
+  Robolectric's own fetch), since Central rate-limits CI runners. A push to
+  `main` runs this job only to fill those caches for the pull requests after it.
+- **The base** is the commit the pull request merges into (the merge commit's
+  first parent; by hand, the merge base with `main`). When `main`'s own CI run
+  of exactly that commit still has its `runtime-stage` (kept 3 days), that is
+  the base: its natives and its jars. Otherwise the base is the head's build
+  with the base's `android-framework.jar` and `macapk-loader.jar`, built by the
+  base's own `build_java.sh` on Ubuntu (cached by the base's source trees).
+  That fallback always exists and needs no Windows build of the base, but it
+  compares only the Java side: a change to the host alone then compares equal,
+  and the job summary says which base it used. Waiting for or rebuilding a
+  Windows build of the base instead would double the gate's time, and the
+  newest `main` build of another commit would charge `main`'s own later changes
+  to the pull request.
+- **Win.apk's side** (job "UI gate, `<target>`", `windows-latest`, one job per
+  target, from `targets.json`): `test/uiprobe/gate_side.sh` runs the target on
+  the base and on the head side by side (`run_ours.sh`, or `screens.sh
+  --skip-oracle`, which reads `manifest.env` and needs no Android SDK). Both
+  scripts end Win.apk once it has printed `PROBE done` (`run_until.py`: some
+  apps' processes hang at exit after it) and at a timeout; a run that stops
+  short (no `done`, or under 90% of Android's cases: `gate.py complete`) is run
+  once more on a fresh data folder, as a first run sometimes needs. Then
+  `gate.py report` runs regress.py and writes the summary. Expected: about 10
+  minutes after the build (the stage's download, then the slower of the two
+  runs); the job's limit is 25 minutes. Android's side, when cached, takes about
+  a minute and runs beside the Windows build; built afresh, about 15.
+
+A pull request that changes what the probe or `LayoutSweep` prints changes the
+lines on one side only and fails the gate with `changed` and `MISSING` lines:
+read the artifact's `regress.txt` and say so in the pull request. A new app for
+the gate is a line in `gate.txt` (`.github/probe/fdroid_fetch.py <package>
+<versionCode> <out.apk>` and `sha256sum` give its fields).
+
+To check one app the same way without a machine of one's own, run
+`.github/workflows/ui-sweep.yml` by hand (Actions > UI sweep > Run workflow)
+with an F-Droid package (and a version) or an APK's URL (and its SHA-256), and
+a branch: the oracle on Ubuntu and Win.apk on Windows (the branch's newest CI
+build, else `main`'s, `.github/probe/stage.sh`) in parallel, with pictures;
+the `ui-sweep` artifact holds `oracle.txt`, `ours.txt`, `diff.txt`,
+`summary.txt` and both sides' pictures, and the run's summary shows
+`summary.txt`.
 
 ## AOSP graphics (milestone 1)
 
@@ -819,8 +886,12 @@ the most differing lines. Without `WINE` it runs the exe directly (Windows,
 MSYS2). The theme is the one most of the app's activities wear
 (`manifest_info.py`: a launcher activity is often a splash screen). It needs an
 Android SDK (aapt2, platform 34), a JDK 17 or later, Gradle 8.7 or later and
-the staged runtime's `lib/`; Robolectric fetches its Android into `~/.m2`
-(`SCREENS_M2`). What it cannot see: what code does after inflating (a list's
+the staged runtime's `lib/` (or `SCREENS_LIB`); Robolectric fetches its Android
+into `~/.m2` (`SCREENS_M2`). `--skip-ours` with `SCREENS_LIB` and `-` for the
+exe runs Android's side alone, on any system; `--skip-oracle` then reads the
+`manifest.env` it left and needs no SDK. Win.apk's run is ended once it prints
+`PROBE done` (`test/uiprobe/run_until.py`; some apps' processes hang at exit)
+or after `SCREENS_TIMEOUT` seconds. What it cannot see: what code does after inflating (a list's
 rows, texts from data, views shown or hidden), a `<fragment>` (there is no
 activity), and a custom view whose constructor wants state the app sets up at
 start; those throw alike on both sides, and only a difference counts.
@@ -829,14 +900,15 @@ start; those throw alike on both sides, and only a difference counts.
 
 | Workflow | Trigger | What it does |
 |---|---|---|
-| `.github/workflows/ci.yml` | Pull requests touching `windows/` or `runtime/`; by hand; a push to `main` (build only) | The pipeline below |
+| `.github/workflows/ci.yml` | Pull requests touching `windows/` or `runtime/`; by hand; a push to `main` (build only, and the UI gate's caches) | The pipeline below |
+| `.github/workflows/ui-sweep.yml` | By hand only: an F-Droid package or an APK URL, and a branch | The screens sweep of one app, Android's side on Ubuntu and Win.apk's on Windows, with pictures ([The UI gate](#the-ui-gate-only-closer-to-android)) |
 | `.github/workflows/windows-release.yml` | By hand only, with a tag such as `v0.2.0-preview` | Builds with `-DWINAPK_VERSION=<tag>`, stages, packages `Win.apk-windows-x64.zip` with the JRE from `bake_jre.sh` and `package/README.txt`, smoke-tests the package (boots an APK headless), builds `Win.apk-Setup.exe` with Inno Setup, and publishes both as a GitHub pre-release with `package/RELEASE_NOTES.md` as the notes |
 
 `ci.yml`'s jobs, in the order they can start:
 
 | Job | Runs on | Needs | What |
 |---|---|---|---|
-| What changed | Ubuntu | | Reads the pull request's files: docs alone run nothing; `launcher/` or `package/` alone build and package but run no app; anything else runs everything. By hand, everything; a push to `main`, the build alone |
+| What changed | Ubuntu | | Reads the pull request's files: docs alone run nothing; `launcher/` or `package/` alone build and package but run no app; anything else runs everything, and the UI gate when the framework, the host, the loader or the gate changed. By hand, everything; a push to `main`, the build alone (and the UI gate's caches) |
 | Guest libraries | Ubuntu | What changed | The x86_64 and arm64 test libraries and the end-to-end inputs (`test/build_guest.sh`, `test/build_e2e.sh`) |
 | Launcher check | Ubuntu | What changed | The launcher compiled with MinGW-w64, warnings as errors: an answer in about a minute |
 | Build | `windows-latest` | What changed | Every CMake target with MSYS2 CLANG64 through ccache (the cache is restored from the newest run, `main`'s for a pull request's first one), then `stage_runtime.sh build stage` and `bake_jre.sh` into `stage/jre`. Uploads `winapk-binaries` (every exe) and `runtime-stage` |
@@ -844,13 +916,15 @@ start; those throw alike on both sides, and only a difference counts.
 | Runtime tests | `windows-latest` | Guest libraries, Build | The tests that need the staged jars or ANGLE, the APK booted headless and in a window (`headless-boot` artifact), the GMS CLI |
 | App smoke test | `windows-latest` | Build | The ten apps of `test/compat/smoke.txt` (`--require-drew`) on the staged JRE with one framework archive made first (`--cds-prepare`): fails when one no longer draws (`smoke` artifact). The apps' classes, merged, are the `framework-classlist` artifact: copy it to `java/winapk-framework.classlist` when the framework or the smoke set has changed much |
 | AOSP graphics | `windows-latest` | Build | `test/aospgfx/`: AOSP's Canvas on Robolectric's native runtime in `winapk-runtime.exe` on the staged JRE (the agent built with MSYS2 CLANG64 clang; android-all and the DLL fetched from Maven Central and cached). Fails when a check fails; the `aosp-graphics` artifact has the picture, the benchmark frame and the logs. [AOSP graphics](#aosp-graphics-milestone-1) |
+| UI gate, Android's side and the base | Ubuntu | What changed | Android's lines for the UI probe and `test/screens/gate.txt`'s apps (`gate_oracle.sh`, cached by what they are made from), the base's commit, and the base's framework jars when `main` has no CI build of it left (`ui-oracle`, `ui-base-jars`). [The UI gate](#the-ui-gate-only-closer-to-android) |
+| UI gate, `<target>` | `windows-latest` × 3 | Build, UI gate's Android side | One per target: Win.apk at the base and at the head (`gate_side.sh`), then `regress.py`; fails on a `REGRESSED`, `FARTHER` or `MISSING` line, with the first of them in the summary (`ui-gate-<target>` artifact) |
 | Sweep 1/4 to 4/4 | `windows-latest` × 4 | Build | Only by hand, with "Full compatibility sweep": a quarter of the corpus each (`--shard`), each with its own APK cache, on the staged JRE with one framework archive (`--cds-prepare`) |
 | Sweep report | Ubuntu | Sweep | `sweep.py --merge`: the run's summary and the `compat-sweep` artifact |
 | Package | `windows-latest` | Build | The staged folder with its JRE (`winapk-preview`) and the installer (`winapk-setup`); beside the tests, not after them |
 
 A new push to a pull request cancels its run in progress. Nothing is released
-automatically. The platform resource APK, ANGLE, the compile cache and the
-sweep's APKs are cached between runs. The runtime is staged into `stage/`,
+automatically. The platform resource APK, ANGLE, the compile cache, the
+sweep's APKs and the UI gate's oracle are cached between runs. The runtime is staged into `stage/`,
 never `runtime/`, which is upstream's source tree.
 
 Pull requests: one topic each, CI green on Windows before merging, merged

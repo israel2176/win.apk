@@ -6,6 +6,8 @@
 #                                                       ├─ AOSP graphics (Skia, minikin)
 #                                                       ├─ Package (preview + installer)
 #                                                       └─ Sweep 1/4 .. 4/4 ─ Sweep report  (only when asked)
+#                  ┌─ UI gate: Android's side (Ubuntu) ─┐
+#                  └─ Build (Windows) ──────────────────┴─ UI gate: probe, apps (Windows, one job each)
 #
 # The Windows build runs once; every later job takes its output (the exes and
 # the staged runtime) as an artifact, so the tests and packaging run side by
@@ -22,6 +24,15 @@
 # cache (ccache) it leaves is there for the next pull request's first run; it
 # runs no tests and packages nothing. Releases come only from
 # windows-release.yml, run by hand.
+#
+# The UI gate holds a pull request that touches the framework or the host to
+# "only closer to Android, never further": the UI probe and the screens sweep
+# of windows/test/screens/gate.txt's apps run in Win.apk at the pull request's
+# head and at its base, and regress.py fails the gate on any line that matched
+# Android before and not now, moved further from it, or is no longer printed
+# (windows/README.md, "UI gate"). Android's side (Robolectric) is cached by what
+# it is made from; a push to main fills that cache and the base's jars for the
+# pull requests that follow.
 name: CI
 
 on:
@@ -31,6 +42,8 @@ on:
       - 'runtime/**'
       - 'scripts/build_framework_res.sh'
       - '.github/workflows/ci.yml'
+      - '.github/ci/**'
+      - '.github/probe/fdroid_fetch.py'
   push:
     branches: [main]
     paths:
@@ -38,6 +51,8 @@ on:
       - 'runtime/**'
       - 'scripts/build_framework_res.sh'
       - '.github/workflows/ci.yml'
+      - '.github/ci/**'
+      - '.github/probe/fdroid_fetch.py'
   workflow_dispatch:
     inputs:
       full_sweep:
@@ -62,6 +77,7 @@ jobs:
       launcher: ${{ steps.diff.outputs.launcher }}
       package: ${{ steps.diff.outputs.package }}
       full_sweep: ${{ steps.diff.outputs.full_sweep }}
+      ui: ${{ steps.diff.outputs.ui }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -69,18 +85,26 @@ jobs:
       - id: diff
         run: |
           case "${{ github.event_name }}" in
-            workflow_dispatch) build=true tests=true launcher=true ;;
-            push) build=true tests=false launcher=false ;;
+            workflow_dispatch) build=true tests=true launcher=true ui=true ;;
+            push) build=true tests=false launcher=false ui=false ;;
             *)
               # A pull request's checkout is its merge commit: the first parent
               # is the base branch, so this is exactly what the merge would add.
-              build=false tests=false launcher=false
+              build=false tests=false launcher=false ui=false
               while read -r f; do
                 case "$f" in
                   docs/*|*.md) ;;
                   windows/launcher/*) build=true launcher=true ;;
                   windows/package/*) build=true ;;
                   *) build=true tests=true ;;
+                esac
+                # The UI gate: what can move a view (the framework, the java.base
+                # overlay, the host and the loader under it) and the gate itself.
+                case "$f" in
+                  *.md) ;;
+                  runtime/java/*|windows/java/*|windows/host/*|windows/src/*|windows/include/*) ui=true ;;
+                  windows/test/uiprobe/*|windows/test/screens/*|windows/scripts/build_java.sh) ui=true ;;
+                  .github/workflows/ci.yml|.github/ci/*|.github/probe/fdroid_fetch.py) ui=true ;;
                 esac
               done < <(git diff --name-only HEAD^1 HEAD)
               ;;
@@ -90,8 +114,8 @@ jobs:
           # Only by hand: a pull request gets the smoke set instead.
           full_sweep=false
           [[ "${{ github.event_name }}" == workflow_dispatch && "${{ inputs.full_sweep }}" == true ]] && full_sweep=true
-          printf 'build=%s\ntests=%s\nlauncher=%s\npackage=%s\nfull_sweep=%s\n' \
-            "$build" "$tests" "$launcher" "$package" "$full_sweep" | tee -a "$GITHUB_OUTPUT"
+          printf 'build=%s\ntests=%s\nlauncher=%s\npackage=%s\nfull_sweep=%s\nui=%s\n' \
+            "$build" "$tests" "$launcher" "$package" "$full_sweep" "$ui" | tee -a "$GITHUB_OUTPUT"
 
   guest:
     name: Guest libraries (x86_64, arm64)
@@ -762,6 +786,222 @@ jobs:
           # when the framework or the smoke set changes much.
           name: framework-classlist
           path: framework.classlist
+
+  ui-oracle:
+    # The UI gate's first half, on Linux and beside the Windows build: Android's
+    # lines (the UI probe and gate.txt's apps on Robolectric, gate_oracle.sh) and
+    # the base the head is compared with. That base is main's own CI build of
+    # the commit the pull request merges into, while its runtime-stage has not
+    # expired (the base's natives and jars); otherwise the head's build with the
+    # base's two framework jars, built here by the base's own build_java.sh
+    # (then only the Java side is compared: a host-only change compares equal).
+    # Each is cached by what it is made from, so an unchanged oracle is not
+    # built again; on a push to main this job only fills those caches.
+    name: UI gate, Android's side and the base
+    needs: changes
+    if: needs.changes.outputs.ui == 'true' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      targets: ${{ steps.targets.outputs.targets }}
+      base: ${{ steps.base.outputs.sha }}
+      base_run: ${{ steps.base.outputs.run }}
+      same: ${{ steps.base.outputs.same }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Every commit, no file until it is needed: the base is the merge
+          # commit's first parent, or main's merge base when run by hand.
+          fetch-depth: 0
+          filter: blob:none
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Find the base
+        id: base
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          case "${{ github.event_name }}" in
+            pull_request) base=$(git rev-parse HEAD^1) ;;
+            push) base=$(git rev-parse HEAD) ;;  # what the next pull requests merge into
+            *) base=$(git merge-base HEAD origin/main) ;;
+          esac
+          same=false
+          [[ "${{ github.event_name }}" != push && "$base" == "$(git rev-parse HEAD)" ]] && same=true
+          # What build_java.sh makes the two jars from, at the base (tree and blob ids: no checkout).
+          key=$(for p in runtime/java runtime/net_spi runtime/thirdparty thirdparty windows/scripts/build_java.sh; do
+                  git rev-parse -q --verify "$base:$p" || echo "no $p"; done | sha256sum | cut -c1-40)
+          # main's CI build of exactly that commit, if its staged runtime is still there.
+          run=""
+          if [[ "${{ github.event_name }}" != push && $same == false ]]; then
+            for id in $(gh run list -R "$GITHUB_REPOSITORY" --workflow ci.yml --branch main --commit "$base" \
+                          --status success --json databaseId -q '.[].databaseId'); do
+              if gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id/artifacts" \
+                   -q '.artifacts[] | select(.name=="runtime-stage" and .expired==false) | .id' | grep -q .; then
+                run=$id
+                break
+              fi
+            done
+          fi
+          printf 'sha=%s\nsame=%s\nkey=%s\nrun=%s\n' "$base" "$same" "$key" "$run" | tee -a "$GITHUB_OUTPUT"
+      - id: base-jars
+        if: steps.base.outputs.run == '' && steps.base.outputs.same != 'true'
+        uses: actions/cache@v4
+        with:
+          path: ui-base-jars
+          key: ui-base-jars-v1-${{ steps.base.outputs.key }}
+      - name: Build the base's framework jars (its own build_java.sh)
+        if: steps.base.outputs.run == '' && steps.base.outputs.same != 'true' && steps.base-jars.outputs.cache-hit != 'true'
+        run: |
+          # Only the blobs the head's checkout lacks are fetched.
+          git worktree add --detach "$RUNNER_TEMP/base" "${{ steps.base.outputs.sha }}"
+          bash "$RUNNER_TEMP/base/windows/scripts/build_java.sh" "$RUNNER_TEMP/base-java"
+          mkdir -p ui-base-jars
+          cp "$RUNNER_TEMP/base-java/lib/android-framework.jar" "$RUNNER_TEMP/base-java/lib/macapk-loader.jar" ui-base-jars/
+          echo "${{ steps.base.outputs.sha }}" > ui-base-jars/commit.txt
+      # Android's side: built again only when what it is made from changed
+      # (the probe, the screens oracle, LayoutSweep, the DEX converter, the apps).
+      - id: oracle
+        uses: actions/cache@v4
+        with:
+          path: ui-oracle
+          key: >-
+            ui-oracle-v1-${{ hashFiles('windows/test/uiprobe/src/**', 'windows/test/uiprobe/res/**',
+            'windows/test/uiprobe/oracle/**', 'windows/test/uiprobe/AndroidManifest.xml', 'windows/test/uiprobe/*.gradle',
+            'windows/test/uiprobe/gradle.properties', 'windows/test/uiprobe/build.sh', 'windows/test/uiprobe/gate_oracle.sh',
+            'windows/test/screens/**', 'runtime/java/com/macapk/loader/LayoutSweep.java', 'runtime/java/com/macapk/dex/**',
+            '.github/probe/fdroid_fetch.py') }}
+      - if: steps.oracle.outputs.cache-hit != 'true'
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+          cache-disabled: true
+      # The Android Gradle plugin, the libraries, and the Android framework
+      # Robolectric runs (android-all, ~150 MB, fetched by Robolectric into ~/.m2).
+      - if: steps.oracle.outputs.cache-hit != 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches/modules-2
+            ~/.m2/repository/org/robolectric
+          key: ui-oracle-deps-v1-${{ hashFiles('windows/test/uiprobe/*.gradle', 'windows/test/screens/*.gradle') }}
+      - name: Android's lines (the probe and the apps on Robolectric)
+        if: steps.oracle.outputs.cache-hit != 'true'
+        run: |
+          # Maven Central through Google's mirror first: Central rate-limits CI runners.
+          mkdir -p ~/.gradle/init.d ~/.m2
+          cp .github/ci/maven-mirror.gradle ~/.gradle/init.d/
+          sdk="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          [[ -f "$ANDROID_HOME/platforms/android-34/android.jar" ]] || yes | "$sdk" "platforms;android-34" > /dev/null
+          ls "$ANDROID_HOME"/build-tools/*/aapt2 > /dev/null 2>&1 || yes | "$sdk" "build-tools;34.0.0" > /dev/null
+          # The head's DEX converter (macapk-loader.jar), which the head's runtime uses too.
+          windows/scripts/build_java.sh "$RUNNER_TEMP/head-java"
+          export JAVA_TOOL_OPTIONS="-Drobolectric.dependency.repo.url=https://maven-central.storage-download.googleapis.com/maven2/"
+          windows/test/uiprobe/gate_oracle.sh ui-oracle "$RUNNER_TEMP/head-java/lib"
+      - name: The gate's targets
+        id: targets
+        run: echo "targets=$(tr -d '\n' < ui-oracle/targets.json)" | tee -a "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        if: github.event_name != 'push' && steps.base.outputs.same != 'true'
+        with:
+          name: ui-oracle
+          path: ui-oracle/
+          retention-days: 3
+          compression-level: 1
+      - uses: actions/upload-artifact@v4
+        if: github.event_name != 'push' && steps.base.outputs.run == '' && steps.base.outputs.same != 'true'
+        with:
+          name: ui-base-jars
+          path: ui-base-jars/
+          retention-days: 3
+
+  ui-gate:
+    # The UI gate's second half: Win.apk's lines for one target (the probe, or
+    # one app of gate.txt) at the base and at the head, side by side on one
+    # runner (gate_side.sh: a short first run is run again, a run that hangs
+    # after its last line is ended), then regress.py. Any REGRESSED, FARTHER or
+    # MISSING line fails it; the job summary has the counts and the first of
+    # those lines, the artifact every line.
+    name: UI gate, ${{ matrix.target.name }}
+    needs: [changes, build, ui-oracle]
+    if: needs.changes.outputs.ui == 'true' && github.event_name != 'push' && needs.ui-oracle.outputs.same != 'true'
+    runs-on: windows-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.ui-oracle.outputs.targets || '[]') }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      PYTHON: python
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: runtime-stage
+          path: stage
+      - uses: actions/download-artifact@v4
+        with:
+          name: ui-oracle
+          path: oracle
+      - if: needs.ui-oracle.outputs.base_run == ''
+        uses: actions/download-artifact@v4
+        with:
+          name: ui-base-jars
+          path: base-jars
+      - name: The base's runtime
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE: ${{ needs.ui-oracle.outputs.base }}
+          BASE_RUN: ${{ needs.ui-oracle.outputs.base_run }}
+        run: |
+          if [[ -n "$BASE_RUN" ]]; then
+            gh run download "$BASE_RUN" -R "$GITHUB_REPOSITORY" -n runtime-stage -D stage-base
+            note="Base: main's own CI build of ${BASE:0:10} (run $BASE_RUN), natives and jars."
+          else
+            cp -r stage stage-base
+            cp -f base-jars/android-framework.jar base-jars/macapk-loader.jar stage-base/lib/
+            note="Base: this build with the framework jars of ${BASE:0:10} (main has no CI build of it left), so only the Java side is compared."
+          fi
+          echo "BASE_NOTE=$note" | tee -a "$GITHUB_ENV"
+      - name: Win.apk at the base and at the head
+        run: |
+          t="oracle/${{ matrix.target.dir }}"
+          bash windows/test/uiprobe/gate_side.sh "${{ matrix.target.kind }}" "$t" stage-base out/base > side-base.log 2>&1 &
+          b=$!
+          bash windows/test/uiprobe/gate_side.sh "${{ matrix.target.kind }}" "$t" stage out/head > side-head.log 2>&1 &
+          h=$!
+          rb=0 rh=0
+          wait $b || rb=$?
+          wait $h || rh=$?
+          tail -n 8 side-base.log side-head.log
+          echo "base: exit $rb, head: exit $rh"
+      - name: Only closer to Android (regress.py)
+        run: |
+          python windows/test/uiprobe/gate.py report "${{ matrix.target.name }}" "oracle/${{ matrix.target.dir }}/oracle.txt" \
+            out/base/ours.txt out/head/ours.txt --note "$BASE_NOTE" --out out/regress.txt | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ui-gate-${{ matrix.target.dir }}
+          retention-days: 7
+          path: |
+            out/regress.txt
+            out/*/ours.txt
+            out/*/ours*.log
+            out/*/diff.txt
+            out/*/summary.txt
+            side-*.log
 
   sweep:
     # The compatibility sweep (windows/test/compat/sweep.py): every app of

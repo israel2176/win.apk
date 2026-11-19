@@ -10,19 +10,25 @@
 #                                  activities wear, manifest_info.py)
 #   --filter <regex>               only layouts whose name matches
 #   --pictures                     also save every case as a PNG on both sides
-#   --skip-oracle / --skip-ours    reuse the side already in <out>
+#   --skip-oracle / --skip-ours    reuse the side already in <out> (with --skip-ours
+#                                  and SCREENS_LIB, <winapk-runtime.exe> may be -:
+#                                  Android's side alone, on any system)
 #
 # Writes <out>/oracle.txt, <out>/ours.txt, <out>/diff.txt (compare.py's) and
 # <out>/summary.txt (summarize.py's: layouts that throw only in Win.apk first,
-# then the layouts with the most differing lines).
+# then the layouts with the most differing lines), and <out>/manifest.env (what
+# the manifest says, below), which a later --skip-oracle run reads instead of
+# the APK, so that side needs no Android SDK.
 #
 # Needs: an Android SDK with build-tools (aapt2) and platform 34 (ANDROID_HOME),
-# a JDK 17+ (JAVA_HOME), Gradle 8.7+ (GRADLE, default gradle on PATH), Python 3.
-# Robolectric fetches its Android framework into SCREENS_M2 (default ~/.m2).
-# The runtime's lib/ beside its bin/ (a staged runtime) supplies the DEX
-# converter. On Linux set WINE to wine64 to run Win.apk under Wine
-# (WINEPREFIX as usual). <out> must be a path without spaces or non-ASCII
-# characters (Robolectric fails on those).
+# a JDK 17+ (JAVA_HOME), Gradle 8.7+ (GRADLE, default gradle on PATH), Python 3
+# (PYTHON, default python3). Robolectric fetches its Android framework into
+# SCREENS_M2 (default ~/.m2). The runtime's lib/ beside its bin/ (a staged
+# runtime), or SCREENS_LIB, supplies the DEX converter (macapk-loader.jar). On
+# Linux set WINE to wine64 to run Win.apk under Wine (WINEPREFIX as usual).
+# Win.apk's run is ended once it has printed its last line (some apps' exits
+# hang after it) or after SCREENS_TIMEOUT seconds (default 3600). <out> must be
+# a path without spaces or non-ASCII characters (Robolectric fails on those).
 set -euo pipefail
 
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
@@ -46,18 +52,24 @@ done
 mkdir -p "$OUT"
 OUT="$(cd -- "$OUT" && pwd)"
 APK="$(cd -- "$(dirname -- "$APK")" && pwd)/$(basename -- "$APK")"
-RUNTIME="$(cd -- "$(dirname -- "$RUNTIME")" && pwd)/$(basename -- "$RUNTIME")"
-STAGE_LIB="$(dirname -- "$(dirname -- "$RUNTIME")")/lib"
+[[ $RUNTIME == - ]] || RUNTIME="$(cd -- "$(dirname -- "$RUNTIME")" && pwd)/$(basename -- "$RUNTIME")"
+STAGE_LIB="${SCREENS_LIB:-$(dirname -- "$(dirname -- "$RUNTIME")")/lib}"
 SDK="${ANDROID_HOME:-${LOCALAPPDATA:-$HOME}/Android/Sdk}"
 GRADLE="${GRADLE:-gradle}"
 JAVA="${JAVA_HOME:+$JAVA_HOME/bin/}java"
-AAPT2="$(ls -d "$SDK"/build-tools/*/ | sort -V | tail -1)aapt2"
+PY="${PYTHON:-python3}"
 ANDROID_JAR="$SDK/platforms/android-34/android.jar"
 native() { if command -v cygpath > /dev/null 2>&1; then cygpath -m "$1"; else printf '%s\n' "$1"; fi; }
 log() { echo "[screens] $*"; }
 
 # ---- What the manifest says: the package, the theme, right to left ----
-eval "$(python3 "$HERE/manifest_info.py" "$AAPT2" "$APK" "$OUT/AndroidManifest.xml")"
+if [[ $SKIP_ORACLE == 1 && -s "$OUT/manifest.env" ]]; then
+    eval "$(cat "$OUT/manifest.env")"
+else
+    AAPT2="$(ls -d "$SDK"/build-tools/*/ | sort -V | tail -1)aapt2"
+    "$PY" "$HERE/manifest_info.py" "$AAPT2" "$APK" "$OUT/AndroidManifest.xml" > "$OUT/manifest.env"
+    eval "$(cat "$OUT/manifest.env")"
+fi
 THEME="${THEME_ARG:-$THEME}"
 log "$PACKAGE, theme $THEME${THEME_ARG:+ (given)}${THEME_ARG:- ($THEME_WHY)}, supportsRtl=$RTL"
 
@@ -69,7 +81,7 @@ if [[ $SKIP_ORACLE == 0 ]]; then
         # which routes Unsafe, System.exit and System.load to the runtime's own classes
         # (com.macapk.loader.MacApk*): on Android the app's calls go where it wrote them.
         log "converting the DEX to $OUT/classes.jar"
-        python3 - "$STAGE_LIB/macapk-loader.jar" "$OUT/dex2jvm.jar" <<'PY'
+        "$PY" - "$STAGE_LIB/macapk-loader.jar" "$OUT/dex2jvm.jar" <<'PY'
 import sys, zipfile
 with zipfile.ZipFile(sys.argv[1]) as src, zipfile.ZipFile(sys.argv[2], 'w', zipfile.ZIP_DEFLATED) as dst:
     for e in src.infolist():
@@ -121,7 +133,8 @@ if [[ $SKIP_OURS == 0 ]]; then
         run=("$WINE" "$RUNTIME")
     else
         wpath() { if command -v cygpath > /dev/null 2>&1; then cygpath -w "$1"; else printf '%s\n' "$1"; fi; }
-        run=("$RUNTIME")
+        # A native path: run_until.py starts it, and Windows' Python knows no /c/... path.
+        run=("$(wpath "$RUNTIME")")
     fi
     rm -rf "$OUT/ours-pictures"
     log "Win.apk: $OUT/ours.txt"
@@ -129,15 +142,17 @@ if [[ $SKIP_OURS == 0 ]]; then
     MACAPK_LAYOUT_SWEEP=1 MACAPK_LAYOUT_SWEEP_THEME="$THEME" MACAPK_LAYOUT_SWEEP_FILTER="$FILTER" \
     MACAPK_LAYOUT_SWEEP_PICTURES="$([[ $PICTURES == 1 ]] && wpath "$OUT/ours-pictures")" \
     WINAPK_HEADLESS=1 WINAPK_PHONE_SIZE=360x640 WINAPK_DENSITY=320 \
-        timeout "${SCREENS_TIMEOUT:-3600}" "${run[@]}" --apk "$(wpath "$APK")" --data "$(wpath "$OUT/data")" \
-        > "$OUT/ours.log" 2>&1 || true
+        "$PY" "$(native "$HERE/../uiprobe/run_until.py")" "$(native "$OUT/ours.log")" "${SCREENS_TIMEOUT:-3600}" -- \
+        "${run[@]}" --apk "$(wpath "$APK")" --data "$(wpath "$OUT/data")" || true
     grep '^PROBE ' "$OUT/ours.log" | sed 's/^PROBE //' | tr -d '\r' > "$OUT/ours.txt" || true
     grep -q '^done$' "$OUT/ours.txt" || { echo "[screens] Win.apk did not finish; see $OUT/ours.log" >&2; tail -20 "$OUT/ours.log" >&2; }
 fi
 
-# ---- The difference ----
-python3 "$REPO/windows/test/uiprobe/compare.py" "$OUT/oracle.txt" "$OUT/ours.txt" > "$OUT/diff.txt" || true
-python3 "$HERE/summarize.py" "$OUT/oracle.txt" "$OUT/ours.txt" > "$OUT/summary.txt"
-log "$OUT/diff.txt: $(tail -1 "$OUT/diff.txt")"
-log "$OUT/summary.txt"
-head -40 "$OUT/summary.txt"
+# ---- The difference (when both sides are there: --skip-ours may leave only Android's) ----
+if [[ -s "$OUT/oracle.txt" && -s "$OUT/ours.txt" ]]; then
+    "$PY" "$REPO/windows/test/uiprobe/compare.py" "$OUT/oracle.txt" "$OUT/ours.txt" > "$OUT/diff.txt" || true
+    "$PY" "$HERE/summarize.py" "$OUT/oracle.txt" "$OUT/ours.txt" > "$OUT/summary.txt"
+    log "$OUT/diff.txt: $(tail -1 "$OUT/diff.txt")"
+    log "$OUT/summary.txt"
+    head -40 "$OUT/summary.txt"
+fi
