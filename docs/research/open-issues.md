@@ -126,8 +126,13 @@ the app); if it is still there, it is a bug in what replaced it.
 - **Screens checks not finished**: Bank Leumi (stopped by the usage limit
   before its boot), Pango and Paybox (not on APKPure; the owner offered their
   other repository or a Play download).
-- **CI's UI gate** (b190783) had not completed a run on GitHub when this was
-  written; the biggest risk is noise between two runs of the same code.
+- **CI's UI gate** (b190783): its first run (run 44569377329, on 57a8987)
+  passed for the UI probe (base and head identical), but the Gallery and
+  Sudoku jobs were cancelled at the 25-minute limit while "Win.apk at the base
+  and at the head" ran. Find out why (the sweep's hang at exit not ended by
+  `run_until.py`, the two sides too slow in parallel on one runner, or the
+  first-run retry) from the jobs' uploaded artifacts, and fix it. Then watch
+  for noise between two runs of the same code.
 - **Releases leave the AOSP files out** (`WINAPK_STAGE_AOSP_GFX=0` in
   `windows-release.yml`) until the switch draws apps as well as Java2D.
 
