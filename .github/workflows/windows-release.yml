@@ -55,7 +55,7 @@ jobs:
       - name: Stage and package
         run: |
           export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
-          # WINAPK_AOSP_GFX's files (~105 MB in the installer) stay out of a
+          # WINAPK_AOSP_GFX's files (~37 MB in the installer) stay out of a
           # release until the switch draws apps as well as the Java2D path; CI's
           # stage carries them.
           WINAPK_STAGE_AOSP_GFX=0 windows/scripts/stage_runtime.sh build Win.apk

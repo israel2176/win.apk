@@ -11,9 +11,10 @@
 #                                           classes of android-all these name that Win.apk's
 #                                           framework lacks, and windows/java/aosp_gfx (the stand-ins
 #                                           for ART and Robolectric the native runtime calls)
-#   <out>/bin/robolectric-nativeruntime.dll Robolectric's native runtime (Skia, minikin, HarfBuzz...)
-#   <out>/bin/aosp/icu/icudt68l.dat         its ICU data
-#   <out>/bin/aosp/fonts/                   Android's fonts and fonts.xml
+#   <out>/bin/robolectric-nativeruntime.dll Robolectric's native runtime (Skia, minikin, HarfBuzz...),
+#                                           its COFF symbol table stripped (nothing reads it)
+#   <out>/bin/aosp/icu/icudt68l.dat         its ICU data, without the trees it cannot open
+#   <out>/bin/aosp/fonts/                   Android's fonts.xml and the fonts it names
 #   <out>/bin/aosp/hyphen-data/             the hyphenation patterns
 #   <out>/bin/licenses/aosp-graphics/       their licences (THIRD_PARTY_NOTICES.txt, section 2)
 #
@@ -25,6 +26,10 @@
 # Google mirror and checked against their SHA-256 by windows/test/aospgfx/fetch.sh.
 # Needs a JDK (JAVA_HOME: javac, jar, jdeps), curl and unzip. The jar is on no class path unless
 # WINAPK_AOSP_GFX=1; stage_runtime.sh runs this unless WINAPK_STAGE_AOSP_GFX=0.
+#
+# Every file here is one shared copy per install, never per app, and only what the native runtime
+# can read is staged (windows/README.md, "Footprint"): what is left out could not change a pixel.
+# windows/scripts/footprint_check.py holds the stage and the installer to a budget.
 
 set -euo pipefail
 
@@ -38,9 +43,9 @@ FRAMEWORK="$OUT/lib/android-framework.jar"
 [[ -f "$FRAMEWORK" ]] || { echo "[aosp-gfx] no $FRAMEWORK: run build_java.sh first" >&2; exit 1; }
 
 if [[ -n "${JAVA_HOME:-}" ]]; then
-    JAVAC="$JAVA_HOME/bin/javac" JAR="$JAVA_HOME/bin/jar" JDEPS="$JAVA_HOME/bin/jdeps"
+    JAVA="$JAVA_HOME/bin/java" JAVAC="$JAVA_HOME/bin/javac" JAR="$JAVA_HOME/bin/jar" JDEPS="$JAVA_HOME/bin/jdeps"
 else
-    JAVAC=javac JAR=jar JDEPS=jdeps
+    JAVA=java JAVAC=javac JAR=jar JDEPS=jdeps
 fi
 # javac reads an @file itself, so on MSYS2 (which translates only arguments) the paths in it
 # are Windows paths, as build_java.sh writes them.
@@ -108,11 +113,35 @@ echo "[aosp-gfx] $OUT/lib/aosp-graphics.jar: $(find "$CLASSES" -name '*.class' |
 
 echo "[aosp-gfx] the native runtime, ICU's data, the fonts"
 mkdir -p "$OUT/bin/aosp/icu" "$OUT/bin/licenses/aosp-graphics"
-cp -f "$NR/native/windows/x86_64/robolectric-nativeruntime.dll" "$OUT/bin/"
-cp -f "$NR/icu/icudt68l.dat" "$OUT/bin/aosp/icu/"
+# The DLL carries its COFF symbol table (3.3 MB): read by no loader and by nothing in Win.apk (its
+# exports, which the JVM binds by, stay). Only LLVM's strip (CLANG64's strip is LLVM's): it leaves
+# the sections as lld wrote them, where GNU strip writes the PE file anew.
+DLL="$OUT/bin/robolectric-nativeruntime.dll"
+STRIP=$(command -v llvm-strip || true)
+if [[ -z "$STRIP" ]] && command -v strip > /dev/null && strip --version 2>&1 | grep -q LLVM; then STRIP=strip; fi
+if [[ -z "$STRIP" ]] || ! "$STRIP" -o "$DLL" "$NR/native/windows/x86_64/robolectric-nativeruntime.dll"; then
+    echo "[aosp-gfx]   no LLVM strip: the native runtime staged with its symbol table" >&2
+    cp -f "$NR/native/windows/x86_64/robolectric-nativeruntime.dll" "$DLL"
+fi
+# ICU's data without the trees no code in the DLL can open (its ICU is linked in, so what it can
+# open is fixed): it has no time zone names, units, spelled-out numbers or transliterators (no
+# "icudt68l-zone", "-unit", "-rbnf" or "-translit" in it), no charset converters (ucnv_open and
+# "cnvalias" are not linked), no StringPrep or spoof checks (usprep, uspoof). Kept: the break
+# iterators, collation, the locale, language, region and currency names, the root bundles (the
+# time zone rules among them) and the Unicode properties. 25.8 MB -> 16.4 MB.
+"$JAVA" "$(native_path "$HERE/TrimIcuData.java")" "$(native_path "$NR/icu/icudt68l.dat")" \
+    "$(native_path "$OUT/bin/aosp/icu/icudt68l.dat")" \
+    zone/ unit/ rbnf/ translit/ '*.cnv' cnvalias.icu '*.spp' '*.cfu'
 rm -rf "$OUT/bin/aosp/fonts" "$OUT/bin/aosp/hyphen-data"
-cp -RL "$NR/fonts" "$OUT/bin/aosp/fonts"
-rm -f "$OUT/bin/aosp/fonts/fontsInSdk.txt"  # Robolectric's own list, not a font
+# Only the fonts fonts.xml names: SystemFonts opens nothing else, and a device has nothing else in
+# /system/fonts either. The dist carries more, for Robolectric's older SDKs: NotoSansCJK's six other
+# weights (107 MB; a device has only the Regular, and minikin makes the bold), DroidSansFallback,
+# NanumGothic, Lato, Rubik, Arvo... 160 MB -> 47 MB.
+mkdir -p "$OUT/bin/aosp/fonts"
+cp -f "$NR/fonts/fonts.xml" "$OUT/bin/aosp/fonts/"
+grep -oE '[A-Za-z0-9_.-]+[.](ttf|ttc|otf)' "$NR/fonts/fonts.xml" | sort -u | while read -r f; do
+    if [[ -f "$NR/fonts/$f" ]]; then cp -fL "$NR/fonts/$f" "$OUT/bin/aosp/fonts/"; fi
+done
 cp -RL "$NR/hyphen-data" "$OUT/bin/aosp/hyphen-data"
 cp -f "$HERE/../third_party/aosp_gfx_licenses/"*.txt "$OUT/bin/licenses/aosp-graphics/"
 rm -rf "$WORK"
