@@ -28,9 +28,13 @@
 //     advance. host_callable() gives the same entry without the fault, for hot
 //     paths such as native-method thunks.
 //
-// Each host thread that runs guest code gets its own CPU state, a 4 MiB guest
-// stack and bionic's TLS slot array (TPIDR_EL0, with the stack guard in slot 5),
-// created on first use and freed when the thread exits. Guest -> host -> guest
+// Each host thread that runs guest code gets its own CPU state, a guest stack
+// (4 MiB, or what pthread_create asked for when that is more, up to 64 MiB:
+// set_stack_request) and bionic's TLS slot array (TPIDR_EL0, with the stack
+// guard in slot 5), created on first use and freed when the thread exits.
+// Guest code runs on that stack, not the host thread's, so the shim's
+// pthread_getattr_np answers it to guest callers (current_guest_stack): Dart,
+// ART and V8 check their sp against the bounds it gives. Guest -> host -> guest
 // nesting (a qsort comparator inside qsort inside guest code) continues on the
 // same guest stack.
 //
@@ -68,6 +72,17 @@ uint64_t call(const void* fn, const uint64_t* args = nullptr, size_t nargs = 0);
 // A System V entry point for the guest function at `fn` (cached per address),
 // or `fn` itself if it is not arm64 code.
 void* host_callable(void* fn);
+
+// The stack size the calling thread's creator asked for (pthread_attr's), for
+// the guest stack it gets when it first enters guest code. Call it before
+// that; later calls change nothing.
+void set_stack_request(size_t bytes);
+
+// The calling thread's guest stack, [*lo, *hi) without its guard, when guest
+// code is running on the thread (the caller is guest code or a host function
+// it called); false otherwise, and for x86_64 guest code, which runs on the
+// host thread's own stack.
+bool current_guest_stack(uint64_t* lo, uint64_t* hi);
 
 // `host_fn` takes a va_list as argument number `index` (0-based); calls from
 // guest code get it converted from AAPCS64 to System V.
