@@ -1906,9 +1906,13 @@ every such change is listed here:
   the parent's room); it was stretched to the parent's far edge whatever it
   measured, so a square view (Fossify's `MySquareImageView`, which passes its
   width spec as its height) filled the whole cell. The parent's edge is still
-  used when the child measured 0. Screens sweep: Fossify Gallery's grid items
-  now match Android's (363 differing lines to 341, none new); UI probe 227 to
-  219. `MACAPK_RL_MATCH_FILLS=1` restores the old placement.
+  used when the child measured 0. A child with no rule on an axis sits at the
+  start edge (the right one under RTL) at its measured size, 0 included, as
+  AOSP's `positionAtEdge` puts it: an empty `wrap_content` TextView was
+  stretched across the parent and kept on the left under RTL. Screens sweep:
+  Fossify Gallery's grid items and empty labels now match Android's (363
+  differing lines to 335, none new); UI probe 227 to 219.
+  `MACAPK_RL_MATCH_FILLS=1` restores the old placement.
 - `runtime/java/com/macapk/loader/LayoutSweep.java` (new), `Boot.java`: the
   screens sweep's Win.apk side, a debug mode off unless `MACAPK_LAYOUT_SWEEP=1`
   (see [Every screen against Android](#every-screen-against-android)). Boot
