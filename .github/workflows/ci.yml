@@ -173,7 +173,7 @@ jobs:
       - uses: msys2/setup-msys2@v2
         with:
           msystem: CLANG64
-          install: unzip zip git
+          install: unzip zip git curl
           pacboy: >-
             clang:p
             cmake:p
@@ -195,6 +195,12 @@ jobs:
         with:
           path: thirdparty/angle-win
           key: angle-${{ hashFiles('windows/scripts/fetch_angle.sh') }}
+      # android-all 14 and Robolectric's native runtime (~200 MB unpacked), for
+      # WINAPK_AOSP_GFX=1's files in the stage (windows/scripts/build_aosp_gfx.sh).
+      - uses: actions/cache@v4
+        with:
+          path: thirdparty/aosp-gfx
+          key: aosp-gfx-${{ hashFiles('windows/test/aospgfx/fetch.sh') }}
       - name: Build (loader, thunks, JNI wrapper, runtime, launcher, tests)
         run: |
           ccache -z

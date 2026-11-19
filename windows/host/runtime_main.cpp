@@ -53,6 +53,7 @@
 // program (--java-main), not in java.exe, which reads its own location and
 // its arguments in the ANSI code page.
 
+#include "aosp_gfx.h"
 #include "aot_guard.h"
 #include "cds.h"
 #include "crash_report.h"
@@ -1476,7 +1477,11 @@ std::vector<std::string> jvm_options(const BootArgs& b) {
     const Options& o = b.options;
     std::error_code ec;
     std::vector<std::string> v;
-    v.push_back("-Djava.class.path=" + jvm_path(o.lib / "android-framework.jar") + ";" +
+    // WINAPK_AOSP_GFX=1 (aosp_gfx.h): AOSP's graphics classes first, so they win over the
+    // framework's own of the same name. Only an app's run asks (aosp_gfx_prepare in main).
+    const winapk::host::AospGfxFiles* aosp = winapk::host::aosp_gfx_files();
+    v.push_back("-Djava.class.path=" + (aosp ? jvm_path(aosp->jar) + ";" : std::string()) +
+                jvm_path(o.lib / "android-framework.jar") + ";" +
                 jvm_path(o.lib / "macapk-loader.jar") + ";" + jvm_path(o.lib / "bcprov-jdk18on-1.79.jar") +
                 (o.install_only || o.verify ? ";" + jvm_path(o.lib / "winapk-tools.jar") : std::string()));
     // Upstream's set (runtime/src/jvm_loader.cpp), minus the Mac-only parts.
@@ -1568,6 +1573,15 @@ std::vector<std::string> jvm_options(const BootArgs& b) {
     v.push_back("-Dmacapk.bundle.apk=" + jvm_path(o.apk));
     v.push_back("-Dmacapk.display.density=" + std::to_string(display_density_dpi()));
     v.push_back("-XX:ErrorFile=" + jvm_path(logs) + "\\hs_err_pid%p.log");
+    if (aosp) {
+        // What the DLL's JNI_OnLoad reads (ICU's data and its starting locale), and where the
+        // framework finds Android's fonts and hyphenation patterns.
+        v.push_back("-Dicu.data.path=" + jvm_path(aosp->icu_data));
+        v.push_back("-Dicu.locale.default=" + winapk::host::aosp_gfx_locale());
+        v.push_back("-Dwinapk.aosp.gfx=1");
+        v.push_back("-Dwinapk.aosp.fonts=" + jvm_path(aosp->fonts));
+        if (!aosp->hyphen.empty()) v.push_back("-Dwinapk.aosp.hyphen=" + jvm_path(aosp->hyphen));
+    }
     // Extra options, space-separated, as upstream reads them.
     const std::string extra = utf8(env_var(L"MACAPK_JVM_OPTS"));
     for (size_t i = 0; i < extra.size();) {
@@ -1576,7 +1590,13 @@ std::vector<std::string> jvm_options(const BootArgs& b) {
         i = j + 1;
     }
     // Class-data sharing (cds.h): last, so its key sees MACAPK_JVM_OPTS too.
-    // Only an app's own start records the classes it loads.
+    // Only an app's own start records the classes it loads. Not under WINAPK_AOSP_GFX: its class
+    // path would key an archive of its own, and dumping that one deletes the usual one (each
+    // dump drops the other keys'), so switching back and forth would dump at every start.
+    if (aosp) {
+        std::fprintf(stderr, "[win.apk] cds: off under WINAPK_AOSP_GFX=1 (the --patch-module flags)\n");
+        return v;
+    }
     winapk::host::cds_apply(&v, o.jdk, o.lib, o.data,
                             o.install_only ? std::wstring() : b.app_dir.filename().wstring());
     return v;
@@ -1836,6 +1856,9 @@ DWORD WINAPI boot_thread(void* param) {
     // Upstream's own NativeSqlite bridge replaces those stubs (see CMakeLists).
     macapk::sqlite::RegisterNativeSqliteMethods(env);
     check_exception(env, "RegisterNativeSqliteMethods");
+    // WINAPK_AOSP_GFX=1: Skia and the rest onto AOSP's classes, after Win.apk's own natives so
+    // that those it keeps (SQLite's, Surface's) stay bound as they are. Nothing when it is off.
+    winapk::host::aosp_gfx_load(vm, env);
 
     auto jstr = [&](const fs::path& p) { return jstring_of(env, p.wstring()); };
 
@@ -2254,6 +2277,8 @@ int wmain(int argc, wchar_t** argv) {
     }
     prepare_arm64(b.options, b.app_dir);
     if (!convert_dex(b.options, b.app_dir, &b.app_jar)) return 1;
+    // WINAPK_AOSP_GFX=1, an app's run only (aosp_gfx.h); with it unset this does nothing.
+    winapk::host::aosp_gfx_prepare(b.options.lib, exe_dir());
 
     // Upstream runs the JVM with -Xss16m; give the creating thread as much.
     HANDLE t = CreateThread(nullptr, 64 * 1024 * 1024, boot_thread, &b, STACK_SIZE_PARAM_IS_A_RESERVATION,

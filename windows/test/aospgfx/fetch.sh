@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
-# Fetches what windows/test/aospgfx needs into <deps dir>, once (CI caches the folder):
+# Fetches what windows/test/aospgfx and windows/scripts/build_aosp_gfx.sh need into <deps dir>,
+# once (CI caches the folder):
 #   android-all-14.jar   AOSP 14's framework classes (API 34), as Robolectric builds them
 #   nativeruntime/       from Robolectric's nativeruntime-dist-compat: the native library for this
-#                        platform (native/<os>/x86_64/), ICU's data (icu/icudt68l.dat) and the
-#                        Android fonts with their fonts.xml (fonts/)
+#                        platform (native/<os>/x86_64/), ICU's data (icu/icudt68l.dat), the
+#                        Android fonts with their fonts.xml (fonts/) and the hyphenation
+#                        patterns (hyphen-data/)
 # Both from Maven Central (its Google mirror: repo.maven.apache.org rate-limits CI), checked against
 # the SHA-256 below. Unpacked with the JDK's `jar`, so it needs only curl and a JDK ($JAVA_HOME).
 #
 #   windows/test/aospgfx/fetch.sh <deps dir> [linux|windows]
 #
-# Nothing of this ships: the test downloads it, the installer carries none of it.
+# The test downloads it; build_aosp_gfx.sh stages it into the runtime (WINAPK_AOSP_GFX=1).
 set -euo pipefail
 
 DEPS=${1:?usage: fetch.sh <deps dir> [linux|windows]}
@@ -44,15 +46,15 @@ case "$OS" in
     windows) LIB=native/windows/x86_64/robolectric-nativeruntime.dll ;;
     *) LIB=native/linux/x86_64/librobolectric-nativeruntime.so ;;
 esac
-if [[ ! -f "$NR/$LIB" || ! -f "$NR/icu/icudt68l.dat" || ! -f "$NR/fonts/fonts.xml" ]]; then
+if [[ ! -f "$NR/$LIB" || ! -f "$NR/icu/icudt68l.dat" || ! -f "$NR/fonts/fonts.xml" || ! -d "$NR/hyphen-data" ]]; then
     dist="$DEPS/nativeruntime-dist-compat-$DIST_VER.jar"
     fetch "$MAVEN/org/robolectric/nativeruntime-dist-compat/$DIST_VER/nativeruntime-dist-compat-$DIST_VER.jar" \
         "$dist" "$DIST_SHA"
     rm -rf "$NR" && mkdir -p "$NR"
     # `jar x` extracts into the current folder.
     abs_dist=$(cd "$(dirname "$dist")" && pwd)/$(basename "$dist")
-    (cd "$NR" && "$JAR" xf "$abs_dist" "$LIB" icu fonts)
-    rm -f "$dist"  # 159 MB; what the test needs is unpacked
+    (cd "$NR" && "$JAR" xf "$abs_dist" "$LIB" icu fonts hyphen-data)
+    rm -f "$dist"  # 159 MB; what the test and the stage need is unpacked
 fi
 ls -l "$DEPS/android-all-14.jar" "$NR/$LIB" "$NR/icu/icudt68l.dat"
 echo "fonts: $(ls "$NR/fonts" | wc -l) files"

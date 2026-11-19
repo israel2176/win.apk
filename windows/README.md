@@ -36,11 +36,11 @@ this repository.
 | `include/winapk/`, `src/` | The ELF loader (`elf_loader.cpp`), the guest linker (`linker.cpp`), dynamic ELF TLS (`elf_tls.cpp`), the `%fs` stack-guard patch (`fs_tls_patch.cpp`), the ABI thunks (`abi_thunk.cpp`), the guest `JNIEnv` (`guest_jni.cpp`, `jni_slots.inc`), the variadic JNI bridge (`jni_variadic.cpp`), native-method binding (`jni_bind.cpp`), libjnigraphics (`jnigraphics.cpp`) |
 | `src/mini_bionic.cpp`, `src/bionic/` | The Bionic shim: Android's libc, libdl, liblog, libm, libz and the NDK's `ALooper` and `ATrace` on the UCRT and Win32, about 900 System V functions |
 | `src/arm64/` | The arm64 engines: interpreter (`arm64_cpu.cpp`, `arm64_simd.cpp`), JIT (`arm64_jit.cpp`, dynarmic), ahead-of-time translator (`arm64_aot.cpp`) and the AAPCS64 bridge (`arm64_guest.cpp`, `arm64_abi.cpp`) |
-| `host/` | `winapk-runtime.exe` (`runtime_main.cpp`), the app window (`win32_window.cpp`), the host natives (`native_*.cpp`, one file per Java class; `host_natives.cpp` binds them), the GL layer (`gl/`), the app-library loading path (`guest_libs.cpp`, `guest_stub.cpp`, `translator_main.cpp`), shared storage (`user_folders.cpp`), java.io's file opens with `FILE_SHARE_DELETE` (`java_io_open.cpp`), class-data sharing (`cds.cpp`, `cds_util.cpp`) |
+| `host/` | `winapk-runtime.exe` (`runtime_main.cpp`), the app window (`win32_window.cpp`), the host natives (`native_*.cpp`, one file per Java class; `host_natives.cpp` binds them), the GL layer (`gl/`), the app-library loading path (`guest_libs.cpp`, `guest_stub.cpp`, `translator_main.cpp`), shared storage (`user_folders.cpp`), java.io's file opens with `FILE_SHARE_DELETE` (`java_io_open.cpp`), class-data sharing (`cds.cpp`, `cds_util.cpp`), `WINAPK_AOSP_GFX` (`aosp_gfx.cpp`, `aosp_gfx_redirect.cpp`) |
 | `launcher/` | `Win.apk.exe`, the app library, the install helper and the permission dialogs (`launcher_main.cpp`, `launcher.rc`, the icon), and its state machines, each a header the unit test drives (`app_runs.h`: an app's run; `installs.h`: an install; `updates.h`: the update check and download) |
-| `java/` | Windows-only Java: `com.winapk.tools.AppInstall` and `AppMeta` (`winapk-tools.jar`), `java_base_patch/` (an overlay for `java.base`), and `winapk-framework.classlist` (the classes of the framework archive, `host/cds.h`) |
+| `java/` | Windows-only Java: `com.winapk.tools.AppInstall` and `AppMeta` (`winapk-tools.jar`), `java_base_patch/` (an overlay for `java.base`), `aosp_gfx/` (the stand-ins in `aosp-graphics.jar`), and `winapk-framework.classlist` (the classes of the framework archive, `host/cds.h`) |
 | `tools/` | `winapk-elfrun` (the loader test runner), `winapk-jvm-run` (the real-JVM test), `winapk-aot` (`arm64_aot_main.cpp`), and the generators `gen_jni_slots.py`, `gen_gl_stubs.py`, `gen_icon.py` |
-| `scripts/` | `build_java.sh`, `build_framework_res.sh`, `fetch_angle.sh`, `fetch_webview2.sh`, `stage_clang.sh`, `stage_runtime.sh`, `bake_jre.sh` (the JRE Win.apk ships), `merge_classlists.py` |
+| `scripts/` | `build_java.sh`, `build_framework_res.sh`, `build_aosp_gfx.sh` (`WINAPK_AOSP_GFX`'s files), `fetch_angle.sh`, `fetch_webview2.sh`, `stage_clang.sh`, `stage_runtime.sh`, `bake_jre.sh` (the JRE Win.apk ships), `merge_classlists.py` |
 | `test/` | The unit tests (`*_test.cpp`), the guest test libraries (`guest/`, built with plain clang + lld, no NDK), the Java tests (`java/`), the Wine runners (`run_*_wine.sh`), the compatibility sweep and the screens crawl (`compat/`) |
 | `package/` | The installer (`winapk.iss`, Inno Setup), `README.txt` and `RELEASE_NOTES.md` shipped with a release |
 | `cmake/`, `compat/`, `third_party/` | The Linux cross toolchain file, the CMake steps that cut the GL and Bitmap bridges out of upstream's `native_methods.cpp` and `bionic_shim.cpp`, a CoreFoundation shim for `native_sqlite.cpp`, the Khronos headers |
@@ -232,6 +232,7 @@ The user-facing ones (`WINAPK_PHONE_SIZE`, `WINAPK_RESIZABLE`,
 | `MACAPK_JVM_OPTS` | Extra JVM options, passed through after Win.apk's own (`-XX:TieredStopAtLevel=4` brings back the C2 compiler, which the runtime leaves out for a faster start) |
 | `WINAPK_SHORT_DATA_DIR=0` | The app's data directory by its long name, not the 8.3 one (`-Dwinapk.data.dir`). For Wine, which makes short names up and does not find a new file by one: without it every save through a temporary file fails there. `run_app_wine.sh` and the sweep under `--launcher wine` set it |
 | `WINAPK_DEBUG=1` or `0` | Debug mode for this run, over the launcher's Settings > Troubleshooting > Debug mode (`HKCU\Software\Win.apk\DebugMode`): the runtime starts its thread agent (`host/debug_agent.cpp`), which answers the launcher's Threads window on `\\.\pipe\winapk-debug-<pid>` (`include/winapk/debug_protocol.h`): `threads` lists every Windows thread of the process with its kind (java, guest, jvm, runtime, system), Java name and state and where it started; `stack <tid> <jid>` gives one thread's Java frames, contended monitor and native stack. Only for a run of an app and the system broker, not an install |
+| `WINAPK_AOSP_GFX=1` | An app's run on AOSP's own graphics, milestone 2's switch (`host/aosp_gfx.h`; off by default, and then nothing changes; on, an app does not draw yet: the framework is still to be adapted, [Milestone 2](#milestone-2-the-runtime-on-aosp-graphics)): `lib\aosp-graphics.jar` goes before `android-framework.jar` on the class path, `-Dicu.data.path`, `-Dicu.locale.default`, `-Dwinapk.aosp.gfx=1`, `-Dwinapk.aosp.fonts` and `-Dwinapk.aosp.hyphen` are set, class-data sharing is off (the old `--patch-module` flags), and once the host's natives are bound `bin\robolectric-nativeruntime.dll` loads through `host/aosp_gfx_redirect.cpp`: its natives go onto the jar's classes, only `android.graphics.**`, `android.text.**`, `android.util.PathParser` and two helpers (an allowlist); those for `android.database(.sqlite)`, `android.view.Surface`, `android.media.ImageReader` and `PropertyValuesHolder` are refused, Win.apk's stay. One log line: `AOSP graphics: robolectric-nativeruntime.dll loaded in N ms: natives bound N (4 through API 34 adapters), skipped N, refused N ...`. A file missing, or the DLL not loading, and the run goes on with the switch off (`AOSP graphics: off, ...`). Only an app's run, not an install, `--gms`, `--system` or `--verify-apk`. `WINAPK_AOSP_GFX_VERBOSE=1` lists each skipped native and each class routed to the stand-in |
 | `WINAPK_CDS=0` or `base` | Class-data sharing (`host/cds.h`): `0` back to the old flags (`--patch-module`, no archive), `base` the JRE's archive without the framework archive. `WINAPK_CDS_DIR=<dir>` puts the framework archive elsewhere (tests share one), `WINAPK_CDS_CLASSLIST=<file>` dumps from another class list (`none`: only the start's own), `WINAPK_CDS_RECORD_DIR=<dir>` writes every app start's loaded classes to `<dir>\<app>.classlist` (for `scripts/merge_classlists.py`), `WINAPK_CDS_VERIFY=1` checks the archive whole at every start, `WINAPK_CDS_DUMP_DELAY_MS` (default 10000) is the wait after the first frame before the background dump |
 | `MACAPK_FRAMESPEED_DAMAGE=1` | Partial redraw (off by default): a frame that only invalidations asked for draws the view tree clipped to the area they damaged and hands the window only that rectangle, instead of redrawing and copying the whole window (`docs/ARCHITECTURE.md`, "The view tree's frames"). Unset or anything else, every frame is whole. `MACAPK_DAMAGE_VALIDATE=1` with it draws every frame whole but compares what changed with the area claimed: `[damage-validate] under-damage` names a frame that changed outside it, and the `M6:` line counts `validate: claimed= clean= under=`. `MACAPK_TRACE_DAMAGE=1` logs every 5 s what the frames' damage was (`[damage]`), `MACAPK_FRAME_PHASE_TRACE=1` a frame's time by phase (`[frame-phase]`) |
 | `MACAPK_QUIET_CLASSLOAD=0` | Logs a line for every class the app's class loader loads (the runtime sets it to 1, as upstream's launcher does: thousands of lines cost up to 0.4 s of a start) |
@@ -312,8 +313,10 @@ which is what the runtime itself would do; `-agentpath` works too. Then the
 original table goes back. The parts of ART the classes call
 (`VMRuntime`, `NativeAllocationRegistry` on `java.lang.ref.Cleaner`,
 `SystemProperties`, `Log`, `Trace`) and `RuntimeEnvironment.getApiLevel()`
-are small stand-ins in `test/aospgfx/src/`; the system fonts come from the
-runtime's own `fonts.xml` through `SystemFonts.getSystemFontConfigInternal`.
+are small stand-ins (`test/aospgfx/src/`; `NativeAllocationRegistry` and
+`RuntimeEnvironment`, which ship, in `windows/java/aosp_gfx/`); the system
+fonts come from the runtime's own `fonts.xml` through
+`SystemFonts.getSystemFontConfigInternal`.
 
 Run it. `fetch.sh <deps> [linux|windows]` downloads android-all
 `14-robolectric-10818077` and nativeruntime-dist-compat 1.0.18 from Maven
@@ -325,11 +328,10 @@ classes and runs the test, with `java` or, with `AOSPGFX_RUNTIME` set, in
 `.so` through the same agent code. When it fails it runs again with every
 skipped native listed (`AGENT_VERBOSE=1`, `registered.txt`) and, in
 winapk-runtime, once more with plain `java.exe` of the same JRE, to tell the
-library's fault from the process's. Nothing of this ships: the test downloads
-it, so `THIRD_PARTY_NOTICES.txt` has no entry (milestone 2 would ship it:
-Skia BSD, HarfBuzz MIT, FreeType FTL, ICU Unicode, minikin/libhwui/AOSP
-Apache 2.0, libpng/zlib, the Noto/Roboto fonts OFL/Apache; the jar has no
-NOTICE file, so the entries are written by hand).
+library's fault from the process's. The same downloads now ship, for
+milestone 2's switch (below); `THIRD_PARTY_NOTICES.txt` has their entries,
+written by hand (the jar and the library carry no notice file), and the
+licence texts are in `third_party/aosp_gfx_licenses/`.
 
 What it measured (Linux, the 4-vCPU Xeon 2.1 GHz VM of the Skia benchmark,
 JDK 21, three runs; the frame is that benchmark's: header gradient, 40 list
@@ -354,6 +356,59 @@ check passes too (the agent built with MinGW there).
 
 Behind a switch (`WINAPK_AOSP_GFX=1`, default off), falling back to today's
 Java2D classes, which stay as they are:
+
+Done so far: the plumbing around the switch. The framework (`runtime/java`)
+is not adapted yet, so with the switch on AOSP's classes replace Win.apk's
+and an app does not get to its first frame (under Wine the probe app ends in
+HWUI's `Assertion failed: src == nullptr && gDefaultTypeface == nullptr`: the
+framework sets the default typeface up its own way); the switch is for that
+work. With it off nothing changes: the uiprobe app's `ours.txt` is the same
+byte for byte on a stage with and without these files.
+
+- Build: `scripts/build_aosp_gfx.sh <stage> [deps]`, run by
+  `stage_runtime.sh` (`WINAPK_STAGE_AOSP_GFX=0` leaves it out, as
+  `windows-release.yml` does until the switch draws an app), fetches
+  android-all and the native runtime through `test/aospgfx/fetch.sh` (pinned,
+  SHA-256 checked; into `thirdparty/aosp-gfx/`, which CI caches) and stages
+  `lib/aosp-graphics.jar` (AOSP's `android.graphics.**` without
+  `SurfaceTexture`, the `android.text` classes named below and `FontConfig`,
+  `android.util.PathParser`, the few classes of android-all those name that
+  the framework jar lacks, found with `jdeps` against the stage's own
+  `android-framework.jar`, never `com.android.internal.R`, `android.app` or
+  `android.animation`; and `windows/java/aosp_gfx`'s stand-ins, about 500
+  classes, 1 MB), `bin/robolectric-nativeruntime.dll` (15 MB),
+  `bin/aosp/icu/icudt68l.dat` (25 MB), `bin/aosp/fonts/` with `fonts.xml`
+  (160 MB, 126 MB of it Noto CJK), `bin/aosp/hyphen-data/` (2 MB) and the
+  licences (`bin/licenses/aosp-graphics/`). About 200 MB on disk; the
+  installer packs the stage whole (`[Files]` takes `bin\*`), so it grows by
+  what LZMA2 makes of that: about 105 MB (`xz -9e` of the same files, measured;
+  the fonts are most of it).
+- Host: `host/aosp_gfx.cpp` decides at an app's start (the files there, the
+  DLL loads), puts the jar first on the class path and the ICU and font
+  properties in, and after the host's natives and SQLite's are bound loads
+  the DLL with `Runtime.load0` for a class of the jar (its `JNI_OnLoad` finds
+  classes through that class's loader) inside `host/aosp_gfx_redirect.cpp`'s
+  redirect: the test's agent made an allowlist. `FindClass` maps the
+  library's `<X>Natives` names to AOSP's classes only in the allowed
+  packages, and the real names of what Win.apk keeps (`android.database`,
+  `android.media.ImageReader`, `android.view.Surface`, `PropertyValuesHolder`,
+  `OperationCanceledException`) to a stand-in (`java.lang.Void`) whose
+  registrations are dropped and whose field and method lookups answer an ID
+  nothing uses: the library looks those classes' members up as it registers
+  and aborts the process when one is missing, and a method lookup would run
+  Win.apk's static initializer before `Boot`. A lookup on any other class of
+  Win.apk's that finds nothing is answered the same way and logged. On
+  Win.apk's framework (Linux, the `.so`, the same code): 773 natives bound
+  (4 through the adapters), 63 skipped, 95 refused, and a `Bitmap` drawn
+  through `Canvas` reads back its pixel.
+- Still to do in the framework (this section's order, from (1)): a class
+  that reads the properties (`winapk.aosp.gfx`, `winapk.aosp.fonts`,
+  `winapk.aosp.hyphen`), sets the system fonts up from `fonts.xml`, and
+  presents frames from an AOSP `Bitmap`. `dalvik.system.VMRuntime.addressOf`
+  is the framework's (0); AOSP's text classes need the test's direct-buffer
+  kind (`test/aospgfx/src/dalvik/system/VMRuntime.java`), and HWUI's surface
+  natives read `android.view.Surface.mNativeObject`, which Win.apk's
+  `Surface` has not (bound against the stand-in: not to be called).
 
 - Where the classes come from. One `android.graphics.Canvas` per JVM: the
   app links against the name, so it is one implementation or the other for
