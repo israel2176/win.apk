@@ -1667,6 +1667,15 @@ every such change is listed here:
   `data` extra; RESULT_CANCELED when the user cancels. Nothing resolved them
   before, so "take a photo" buttons were dead. `MACAPK_IMAGE_CAPTURE=0` leaves
   them unresolved.
+- `runtime/java/android/view/LayoutInflater.java`: a bare `<ImageView>`,
+  `<TextView>`, `<Button>`... becomes AppCompat's subclass only where Android's
+  AppCompat factory would make it: when the inflater has a factory, or inside an
+  `AppCompatActivity`. An Application's context, a plain `Activity` and the
+  wrappers around them get the framework's own classes, and `app:tint` /
+  `app:srcCompat` (AppCompat's attributes) no longer apply to the framework's
+  `ImageView` / `ImageButton` there. Before, any app that bundled AppCompat got
+  AppCompat's classes, tints and default styles on every inflater (found by
+  the UI probe). `MACAPK_APPCOMPAT_REWRITE_ANY=1` restores that.
 
 ## License
 
