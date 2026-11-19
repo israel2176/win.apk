@@ -23,7 +23,13 @@ agents' work folders were `/opt/uip/il-work/<app>/`, gone with the container).
   Actions (`ci.yml` UI gate, `ui-sweep.yml`), not the local machine.
 - Win.apk stays light (`windows/README.md` "Footprint", CI's budget): one copy
   of every AOSP file per install, and a replaced Win.apk layer is deleted.
-- The owner reads Hebrew only: answers to the owner are in Hebrew.
+- The owner reads Hebrew only: answers to the owner are in Hebrew, with no
+  English words at all where avoidable (not even "CI", "PR" or file names).
+- Order agreed (November 2026): AOSP drawables and icons under the switch,
+  and the missing-`icu.dll` crash; then make `WINAPK_AOSP_GFX` the default and
+  **remove the old Java2D graphics engine** (and the Win.apk code each AOSP
+  layer replaces). The PR is not merged soon: an engine change needs more
+  testing first (apps on real Windows, the UI gate on more apps).
 
 ## Check again after each AOSP layer lands
 
