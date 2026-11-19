@@ -419,9 +419,17 @@ public class ScrollView extends FrameLayout {
             getPaddingLeft() + getPaddingRight() + hMargins + widthUsed,
             lp != null ? lp.width
                        : android.view.ViewGroup.LayoutParams.MATCH_PARENT);
+        // AOSP: makeSafeMeasureSpec(max(0, parentHeight - padding - margins -
+        // heightUsed), UNSPECIFIED): the viewport stays a hint (targetSdk >= 23).
+        // Size 0 made a FlexboxLayout inside shrink its items below nothing.
+        int vMargins = 0;
+        if (lp instanceof android.view.ViewGroup.MarginLayoutParams mlp)
+            vMargins = mlp.topMargin + mlp.bottomMargin;
         int childHeightMeasureSpec =
             android.view.View.MeasureSpec.makeMeasureSpec(
-                0, android.view.View.MeasureSpec.UNSPECIFIED);
+                Math.max(0, android.view.View.MeasureSpec.getSize(parentHeightMeasureSpec)
+                    - getPaddingTop() - getPaddingBottom() - vMargins - heightUsed),
+                android.view.View.MeasureSpec.UNSPECIFIED);
         child.measure(childWidthMeasureSpec, childHeightMeasureSpec);
     }
 

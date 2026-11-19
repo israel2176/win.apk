@@ -68,7 +68,10 @@ public final class MacApkConscryptProvider extends Provider {
                 // Register the same impl class under our provider name. Using
                 // the string form keeps the JDK's own service-class wiring;
                 // the class is loaded by the same (boot/platform) loader.
-                put(key, svc.getClassName());
+                // A class java.base cannot reach is served by its own provider.
+                Provider.Service d = reachable(p, svc) ? null : delegate(this, svc);
+                if (d != null) putService(d);
+                else put(key, svc.getClassName());
             }
         }
     }
@@ -79,7 +82,40 @@ public final class MacApkConscryptProvider extends Provider {
      *  type and algorithm winning. A provider an app registered (Google Maps'
      *  Ssl_Guard, say) is left out: its classes are the app's, and copying them
      *  would make `target` hand out the app's engines. */
+    /** Whether java.base (Provider.Service.newInstance, which reflects from there)
+     *  can instantiate `svc`'s class: true unless it lives in a named module that
+     *  does not export its package to java.base (jdk.crypto.ec, jdk.crypto.mscapi).
+     *  Such a class registered by name under another provider threw
+     *  IllegalAccessException on getInstance ("SHA256withECDSA", "EC" by name). */
+    static boolean reachable(Provider owner, Provider.Service svc) {
+        // A service of its own kind (a delegate copied earlier) is reached only through it.
+        if (svc.getClass() != Provider.Service.class) return false;
+        Module m = owner.getClass().getModule();
+        if (!m.isNamed() || m == Object.class.getModule()) return true;
+        String cn = svc.getClassName();
+        int dot = cn.lastIndexOf('.');
+        return dot < 0 || m.isExported(cn.substring(0, dot), Object.class.getModule());
+    }
+
+    /** `svc` under `target`'s name, instantiated by its own provider. */
+    static Provider.Service delegate(Provider target, Provider.Service svc) {
+        return new Provider.Service(target, svc.getType(), svc.getAlgorithm(), svc.getClassName(),
+                null, null) {
+            @Override public Object newInstance(Object param) throws java.security.NoSuchAlgorithmException {
+                return svc.newInstance(param);
+            }
+            @Override public boolean supportsParameter(Object param) { return svc.supportsParameter(param); }
+        };
+    }
+
     public static void copyPlatformServices(Provider target) {
+        copyPlatformServices(target, null);
+    }
+
+    /** As above; `putService` (the target's own, it is protected) takes the
+     *  services java.base cannot instantiate, as delegates to their provider. */
+    public static void copyPlatformServices(Provider target,
+                                            java.util.function.Consumer<Provider.Service> putService) {
         ClassLoader framework = MacApkConscryptProvider.class.getClassLoader();
         for (Provider p : Security.getProviders()) {
             if (p instanceof MacApkConscryptProvider || p.getClass() == target.getClass()) continue;
@@ -87,7 +123,8 @@ public final class MacApkConscryptProvider extends Provider {
             if (!platform) continue;
             for (Provider.Service svc : p.getServices()) {
                 if (target.getService(svc.getType(), svc.getAlgorithm()) != null) continue;
-                target.put(svc.getType() + "." + svc.getAlgorithm(), svc.getClassName());
+                if (putService != null && !reachable(p, svc)) putService.accept(delegate(target, svc));
+                else target.put(svc.getType() + "." + svc.getAlgorithm(), svc.getClassName());
             }
         }
     }

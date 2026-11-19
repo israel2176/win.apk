@@ -2100,6 +2100,18 @@ every such change is listed here:
     alias "X509", as Conscrypt names it, over the JDK's NewSunX509; an app that
     loads its client certificate with `getInstance("X509")` got
     `NoSuchAlgorithmException` and went without it (Cal).
+  - From Moovit: `com/google/android/gms/common/GooglePlayServicesUtilLight.java`'s
+    `getRemoteContext`/`getRemoteResource` answer Play services' package context,
+    as Play services does, where they answered null while availability said
+    SUCCESS (a Maps client threw in `Application.onCreate`: a blank window);
+    `LayoutInflater` applies `android:enabled="false"` and
+    `android:measureAllChildren`; `ViewAnimator` measures all its children by
+    default and `Space` starts INVISIBLE, as AOSP's constructors do;
+    `ScrollView`/`HorizontalScrollView` give their child the viewport's size with
+    UNSPECIFIED (AOSP's `makeSafeMeasureSpec`), not 0; and
+    `MacApkConscryptProvider` hands a service whose class java.base cannot reach
+    (`jdk.crypto.ec`'s) to its own provider, so "EC" by name under "Conscrypt" or
+    "GmsCore_OpenSSL" no longer throws IllegalAccessException.
 - `runtime/java/com/macapk/loader/LayoutSweep.java` (new), `Boot.java`: the
   screens sweep's Win.apk side, a debug mode off unless `MACAPK_LAYOUT_SWEEP=1`
   (see [Every screen against Android](#every-screen-against-android)). Boot
