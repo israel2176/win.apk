@@ -116,6 +116,14 @@ mkdir -p "$WORK/gen"
 "$JAVA" "$(native_path "$HERE/AospResIds.java")" "$(native_path "$ALL")" "$(native_path "$CLASSES")" \
     "$(native_path "$FWRES")" "$(native_path "$WORK/gen/R.java")"
 
+# Where AOSP's code relies on what ART does and HotSpot does not, its call goes to a Win.apk method of
+# the same signature (windows/java/aosp_gfx, below; AospCallRedirect.java says how): Font$Builder reads
+# a font the APK holds compressed into a direct buffer's array().
+echo "[aosp-gfx] calls redirected to Win.apk's"
+"$JAVA" "$(native_path "$HERE/AospCallRedirect.java")" "$(native_path "$CLASSES")" 'android/graphics/fonts/Font$Builder' \
+    'android/graphics/fonts/Font$Builder' createBuffer '(Landroid/content/res/AssetManager;Ljava/lang/String;ZI)Ljava/nio/ByteBuffer;' \
+    com/winapk/aospgfx/FontBuffers
+
 echo "[aosp-gfx] Win.apk's stand-ins (windows/java/aosp_gfx)"
 { find "$HERE/../java/aosp_gfx" -name '*.java'; echo "$WORK/gen/R.java"; } | sort |
     while read -r f; do native_path "$f"; done > "$WORK/src.txt"

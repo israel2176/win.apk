@@ -945,6 +945,11 @@ public class Resources {
             // getValue was the one path that had not been converted, and the two
             // are required to agree.
             outValue.string = macapkArscRelativePath(path);
+            // TypedValue.assetCookie: the APK that holds the file, as AOSP reports it. AOSP's
+            // Font.Builder(Resources, int) (androidx's ResourcesCompat.getFont on API 29+) opens the
+            // file with it, openNonAssetFd(cookie, path): the default 1 named the framework's APK,
+            // which has no res/font/ of the app's, and every app font failed to load there.
+            if (assets != null) outValue.assetCookie = assets.macapkCookieOf(outValue.string.toString());
             // TypedValue.density: the folder's density, which decodeResourceStream scales from.
             { int fileDensity = macapkResourceDensity(id); if (fileDensity != 0) outValue.density = fileDensity; }
             outValue.data = 0;

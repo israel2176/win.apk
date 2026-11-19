@@ -155,24 +155,28 @@ the app); if it is still there, it is a bug in what replaced it.
 
 ## Work started and not merged
 
-- **AOSP graphics, what is missing** (README "Milestone 2"): drawables now
-  inflate themselves on AOSP's classes (gradient fills and app font families
-  with them); left: AnimatedVectorDrawable's animators (Win.apk's
-  `ObjectAnimator.getValues()` is null, AOSP's AVD inflate throws, Win.apk's
-  inflater builds the base vector), fonts loaded through androidx
-  (`Font.Builder(Resources, int)` needs a native `AssetManager` asset: a host
-  native; Bank Hapoalim's `AnimatedButtonView` is a placeholder with the
-  switch on), `<animated-image>` (unchecked), the one-copy present, Compose
+- **AOSP graphics, what is missing** (README "Milestone 2"): drawables
+  inflate themselves on AOSP's classes, `<animated-vector>` included, whose
+  animators now run on Win.apk's `android.animation` (checked with a test APK
+  under Wine, not in the repository: morph, colour keyframes, motion along a
+  path, the callbacks, the last frame); fonts androidx loads open (the
+  `assetCookie`, and a compressed font read into a direct buffer: HotSpot's
+  have no `array()`). Left: `AdaptiveIconDrawable` before the `Application`
+  exists (the window icon at boot; Win.apk's inflater builds it),
+  `<animated-image>` (unchecked), the one-copy present, Compose
   (`drawRenderNode` on a software canvas) and `SurfaceTexture` on native
   pixels. Probe with the switch on: 1942 of 2104 lines match vs 1895 on
   Java2D, no line further from Android's than Java2D's. Sweeps, lines
-  differing: Gallery 296 (Java2D 301), Sudoku 229 (275). Worse than Java2D:
-  Sudoku `preference_widget_light` (`?android:textColor` tint not resolved by
-  Win.apk's theme lookup; Java2D's grey stand-in hides it), Gallery
-  `activity_widget_config` (an empty TextView 5 dp narrow, only after earlier
-  layouts of the sweep) and `activity_video_player` (backdrop a shade
-  lighter). Left in the text rows: ExtendedFloatingActionButton's
+  differing: Gallery 295 (Java2D 301), Sudoku 225 (275); Bank Hapoalim's
+  `activity_contact_before_login` 7 of 102 (Java2D 7, the same lines;
+  before the font fix 70). Worse than Java2D: only Gallery
+  `activity_video_player`, three hidden buttons over the bottom gradient a
+  shade lighter, because both paths draw the backdrop under it grey where
+  Android has black (the `TextureView` with no video: a views/video item,
+  not the switch's). Left in the text rows: ExtendedFloatingActionButton's
   `getGravity()` (11 where Android has START|CENTER_VERTICAL, both paths).
+  Not yet run: the screens check of more apps with the switch on, and apps
+  on real Windows; then make the switch the default (the owner's order).
 - **Screens checks not finished**: Bank Leumi (stopped by the usage limit
   before its boot), Pango and Paybox (not on APKPure; the owner offered their
   other repository or a Play download).

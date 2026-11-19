@@ -140,6 +140,16 @@ public final class AnimatorSet extends Animator {
     }
 
     private int remaining;   // children not yet ended (real-loop path)
+    /** AOSP mStarted: from start() until the last child ends, or cancel() / end(). */
+    private boolean mStarted;
+
+    /** AOSP AnimatorSet.isStarted / isRunning (with no start delay of the set's own, as here): the
+     *  set is started and running from start() until it ends. The base class's flag is only up
+     *  inside its own start(), which the real-loop path does not call, so a set whose children were
+     *  still playing answered false: AOSP's AnimatedVectorDrawable (its UI-thread animator) redraws
+     *  each frame only while its set isStarted(), and froze after the first. */
+    @Override public boolean isStarted() { return mStarted || super.isStarted(); }
+    @Override public boolean isRunning() { return mStarted || super.isRunning(); }
 
     // Wall clock of the last start(), for getCurrentPlayTime(). -1 means "never
     // started", which AOSP reports as a play time of 0.
@@ -213,6 +223,7 @@ public final class AnimatorSet extends Animator {
         }
         // Real-loop path: dependency-graph sequencing.
         if (durationSet) for (Animator a : nodes) if (a != null) a.setDuration(getDuration());
+        mStarted = true;
         notifyStartListeners();
         // Invert deps -> successors, and count each node's unmet predecessors.
         final Map<Animator, Integer> unmet = new HashMap<>();
@@ -234,7 +245,11 @@ public final class AnimatorSet extends Animator {
                     unmet.put(s, u);
                     if (u == 0) startChild(s, this);
                 }
-                if (--remaining <= 0) AnimatorSet.this.notifyEndListeners();
+                if (--remaining <= 0) {
+                    // AOSP endAnimation: not started any more when the end listeners hear of it.
+                    mStarted = false;
+                    AnimatorSet.this.notifyEndListeners();
+                }
             }
         };
         // Start every root (no unmet predecessors). Snapshot first so a
@@ -274,6 +289,7 @@ public final class AnimatorSet extends Animator {
         for (Animator a : new ArrayList<>(nodes)) if (a != null) {
             try { a.cancel(); } catch (Throwable ignored) {}
         }
+        mStarted = false;
         notifyCancelListeners();
         notifyEndListeners();
     }
@@ -281,6 +297,7 @@ public final class AnimatorSet extends Animator {
         for (Animator a : new ArrayList<>(nodes)) if (a != null) {
             try { a.end(); } catch (Throwable ignored) {}
         }
+        mStarted = false;
         notifyEndListeners();
     }
 
@@ -332,6 +349,7 @@ public final class AnimatorSet extends Animator {
         anim.nodes = new ArrayList<>(nodes.size());
         anim.deps = new HashMap<>();
         anim.remaining = 0;
+        anim.mStarted = false;
         anim.mStartTimeMillis = -1;
         final Map<Animator, Animator> copies = new HashMap<>();
         for (Animator node : nodes) {

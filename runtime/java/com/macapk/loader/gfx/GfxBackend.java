@@ -224,6 +224,17 @@ public interface GfxBackend {
     android.content.res.ComplexColor gradientColor(android.content.res.Resources res, org.w3c.dom.Element root,
                                                    android.content.res.Resources.Theme theme);
 
+    /** An animator's {@code valueType="pathType"} values (AnimatorInflater): a holder of AOSP's
+     *  PathParser.PathData from {@code from} to {@code to} (either may be null) with AOSP's PathData
+     *  evaluator, as AOSP's AnimatorInflater.getPVH makes it. Null on Java2D, which has no PathParser
+     *  (its AnimatedVectorDrawable draws the base vector only). Throws as AOSP does when the two
+     *  paths cannot morph into each other. */
+    android.animation.PropertyValuesHolder pathDataValues(String propertyName, String from, String to);
+
+    /** A path from its SVG-like path data (AOSP's PathParser.createPathFromPathData), for an
+     *  animator's motion along a path; null on Java2D. */
+    android.graphics.Path pathFromPathData(String pathData);
+
     /** An empty <layer-list> to add layers to (LayerDrawable(), which AOSP keeps to its package). */
     android.graphics.drawable.LayerDrawable layerDrawable();
 

@@ -194,7 +194,7 @@ The user-facing ones (`WINAPK_PHONE_SIZE`, `WINAPK_RESIZABLE`,
 
 | Variable | Effect |
 |---|---|
-| `WINAPK_HEADLESS=1` | No window; `WINAPK_HEADLESS_FRAME=<file.bmp>` saves the last frame and `WINAPK_HEADLESS_EXIT_AFTER_FRAMES=<n>` exits after that many presented frames (an idle app counts too) |
+| `WINAPK_HEADLESS=1` | No window; `WINAPK_HEADLESS_FRAME=<file.bmp>` saves the last frame and `WINAPK_HEADLESS_EXIT_AFTER_FRAMES=<n>` exits after that many presented frames (an idle app counts too). stderr is unbuffered, and a log line of the framework's or of a guest library's goes out in one write (`include/winapk/log_line.h`), so the probe's and the layout sweep's `PROBE` lines on stdout never land inside one |
 | `WINAPK_TEST_WORKAREA=<w>x<h>[+<x>+<y>]` | Stands in for the monitor's work area, in pixels; `@file` reads the value from a file at every fit |
 | `MACAPK_BROKER=1` or `0` | Overrides the "Use Google services" setting for this run (the system broker and the real Google apps); `MACAPK_BROKER_IDLE_GRACE_S`, `MACAPK_BROKER_IDLE_EXIT=0` tune the broker's idle exit |
 | `WINAPK_TEST_ANDROID_ROOT=<dir>` | `winapk-binder-test` only: the android root its JVM gets (the broker checks' scratch data folder) |
@@ -439,8 +439,9 @@ Java2D classes, which stay as they are:
 Done so far: the plumbing around the switch, the seam (step 1) and a first
 screen (step 2, below): with the switch on an app reaches its frames drawn by
 AOSP's `Canvas` (Skia, minikin, HarfBuzz in the DLL) and presented as today's
-are, `TextView` lays its text out through AOSP's own `Layout`, and drawables
-inflate themselves from their XML on AOSP's classes. Under Wine the uiprobe app
+are, `TextView` lays its text out through AOSP's own `Layout`, drawables
+inflate themselves from their XML on AOSP's classes and animated vectors run
+their animators, and fonts androidx loads open. Under Wine the uiprobe app
 runs to its end: all 60 cases, 1942 of the 2104 lines Android's (the Java2D
 path: 1895; table below), and no line of it further from Android's than the
 Java2D path's. With the switch off
@@ -461,7 +462,8 @@ before these changes.
   writes the part of it the classes read, below), `android.app` or
   `android.animation`; the platform's `AnimationScaleListDrawable`, which the
   progress bars' XML names; and `windows/java/aosp_gfx`'s stand-ins, about 500
-  classes, 1 MB), `bin/robolectric-nativeruntime.dll` (12 MB: its COFF
+  classes, 1 MB; `Font$Builder`'s `createBuffer` calls go to the stand-in
+  `com.winapk.aospgfx.FontBuffers`, `scripts/AospCallRedirect.java`, below), `bin/robolectric-nativeruntime.dll` (12 MB: its COFF
   symbol table, 3.3 MB that nothing reads, stripped with LLVM's strip),
   `bin/aosp/icu/icudt68l.dat` (16.4 MB: ICU's data without the trees the
   DLL cannot open, rewritten by `scripts/TrimIcuData.java`),
@@ -587,7 +589,8 @@ before these changes.
     through `com.android.internal.R.styleable` and Win.apk's `TypedArray`, its
     children through the same parser, and its references through
     `Resources.getDrawable`, so back here. Every kind on the probe and in the
-    two sweeps inflates so; a failure is logged once per resource
+    two sweeps inflates so, `<animated-vector>` too (below); a failure is logged
+    once per resource
     (`AOSP's inflate failed`) and Win.apk's own inflater builds that one, as
     before. What it took:
     - `com.android.internal.R.styleable`: `build_aosp_gfx.sh` runs
@@ -629,6 +632,53 @@ before these changes.
       styled as the face nearest 400 upright, as AOSP's
       `Typeface.createFromResources` does; one family per distinct set of
       files.
+    - Animated vectors: AOSP's `AnimatedVectorDrawable.inflate` loads each
+      `<target>`'s animator (`AnimatorInflater`, Win.apk's) and binds it to
+      the vector's property through `ObjectAnimator.getValues()`, then runs it
+      on its UI-thread animator (`VectorDrawableAnimatorUI`: its draw on a
+      software canvas falls back from the render-thread one, whose natives
+      only record). What Win.apk's `android.animation` gives it now, as AOSP's
+      does: `getValues()` answers the holders `setValues` was given (the
+      inflater's) and `setPropertyName` / `setProperty` go onto the first of
+      them; an `<objectAnimator>` with several `<propertyValuesHolder>`s, or
+      one with no `android:propertyName`, writes every holder to its own
+      property, and a `Property` set on a holder is written through;
+      `getValueType` and `getPropertyValues` answer for keyframes and paths
+      (the type of the first keyframe; the values at 0 and 1 and a data
+      source when there are values between); a colour keyframe reads its
+      colour (`getInt` reads numbers only); `AnimatorSet.isStarted` /
+      `isRunning` are true while the set plays (AOSP's animator redraws the
+      drawable each frame only then). Under the switch only, through the seam
+      (`pathDataValues`, `pathFromPathData`, AOSP's `PathParser`, which the
+      Java2D side has not): `valueType="pathType"` values with AOSP's PathData
+      evaluator, and motion along `android:pathData` with `propertyXName` /
+      `propertyYName`. A test APK under Wine (not in the repository: a
+      `<vector>` whose path morphs, changes colour through three keyframes and
+      moves along a path) reads back AOSP's pixels changing over the second,
+      its `AnimationCallback`s and the last frame presented.
+    - A picture's theme: `ImageView`'s `android:src` and `setImageResource`
+      load the drawable with the view's theme, as AOSP's `a.getDrawable` and
+      `mContext.getDrawable` do, so a vector's `android:tint="?android:textColor"`
+      resolves (Sudoku's `preference_widget_light`: the theme's
+      `?attr/colorOnSurface`, where it was drawn untinted white).
+    - Nine-patch sizes: `setNinePatchDensities` works the drawable's size out
+      again after setting the bitmap's density. A picture decoded for the
+      first time was made at the decoder's density, and setting the target
+      density it already had did not recompute, so it kept its unscaled size
+      (an mdpi button background 29 px wide on an xhdpi screen, 58 from the
+      cache): Gallery's `activity_widget_config`, whose empty `MyTextView`
+      measured 24 dp instead of 29 whenever the cache had dropped the picture.
+    - Fonts androidx loads (`ResourcesCompat.getFont`, `TypefaceCompat` on API
+      29 and up: AOSP's `Font.Builder(Resources, int)`): `Resources.getValue`
+      reports a file's `assetCookie`, the APK that holds it (the default 1 named
+      the framework's APK), and a font the APK holds compressed (aapt2
+      compresses `.ttf` and `.otf`) is read into a direct buffer by
+      `FontBuffers`, since AOSP's own code reads it into
+      `allocateDirect(n).array()`, which an ART buffer has and a HotSpot one
+      throws on. Bank Hapoalim's `AnimatedButtonView` (and the `BottomBarView`
+      that casts to it) were placeholders and every text in its fonts measured
+      in the default face: its `activity_contact_before_login` now matches
+      Android in 95 of 102 lines, as the Java2D path does (32 before).
 
   The probe, by case (lines that match Android's within compare.py's 1 dp;
   Java2D = the switch off):
@@ -646,15 +696,15 @@ before these changes.
 
   Against the Java2D path line by line (`regress.py`, Java2D before, AOSP
   after): 47 fixed, 26 closer, 0 REGRESSED or FARTHER. The screens sweeps
-  under Wine, lines differing from Android's: Fossify Gallery 296 of 3042
-  (Java2D 301), Open Sudoku 229 of 1396 (Java2D 275). Where the switch is
-  still worse than Java2D there: Sudoku's `preference_widget_light` (a white
-  vector tinted `?android:textColor`, which Win.apk's theme lookup does not
-  resolve; Java2D paints its grey stand-in for an unresolved tint, AOSP's
-  drawable draws it white), Gallery's `activity_widget_config` (an empty
-  `MyTextView` 24 dp wide, Android 29: AOSP's text layout path, and only
-  after some earlier layouts of the sweep, not on its own) and
-  `activity_video_player` (the controls' backdrop a shade lighter).
+  under Wine, lines differing from Android's: Fossify Gallery 295 of 3042
+  (Java2D 301), Open Sudoku 225 of 1396 (Java2D 275); against the Java2D
+  path, Sudoku 50 fixed and nothing worse, Gallery 6 fixed, 4 closer and 6
+  FARTHER, all six in `activity_video_player`: three hidden buttons over the
+  bottom gradient read a shade lighter (3 of 9 where Java2D has 2 and
+  Android 0). Both paths draw the backdrop under it grey where Android's is
+  black (the `TextureView` with no video, 5 of 9 on both), and AOSP's
+  gradient over that grey is the lighter one; with the backdrop right both
+  would be black.
 
   Text widths match Android's where Java2D's were half a dp off (`lastw=30.1`,
   Android's, against 30.5). The first frame's `TextView` still did its own line
@@ -698,20 +748,10 @@ before these changes.
   Every text row of the probe now matches but ExtendedFloatingActionButton's
   `getGravity()` (both paths); what is left in the material and list rows is
   drawables and icon pixels.
-- Still to do (step 2's rest, then 3): `AnimatedVectorDrawable`'s animators
-  (AOSP's `inflate` binds each `<target>`'s animator to the vector's property
-  through `ObjectAnimator.getValues()`, and Win.apk's `ObjectAnimator` keeps
-  its values without `PropertyValuesHolder`s, so the getter answers null and
-  the inflate throws; Win.apk's inflater then builds the drawable, its base
-  vector only, as before: every `<animated-vector>` of the probe and the
-  sweeps); fonts an app loads through androidx (`ResourcesCompat.getFont` ->
-  `TypefaceCompat` -> AOSP's `Font.Builder(Resources, int)`, which opens the
-  file through the native `AssetManager` Win.apk has not: a host native for
-  `Font.nGetNativeAsset` over Win.apk's resources, or Bank Hapoalim's
-  `AnimatedButtonView` stays a placeholder with the switch on);
-  `AdaptiveIconDrawable` where there is an `ActivityThread` but no
-  `Application` yet (the layout sweep: AOSP's constructor reads the icon mask
-  through it, so Win.apk's inflater builds it); `<animated-image>` (not on the
+- Still to do (step 2's rest, then 3): `AdaptiveIconDrawable` before the
+  `Application` exists (the window's icon, loaded at boot: AOSP's constructor
+  reads the icon mask through `ActivityThread.getApplication()`, which a
+  device never reaches unbound; Win.apk's inflater builds that one); `<animated-image>` (not on the
   probe or the sweeps, so unchecked); the present without the copy. `dalvik.system.VMRuntime.addressOf` is the framework's
   (0): in the jar only `PathIterator` (API 34's `Path.getPathIterator`) uses
   it, so the text classes do not need the test's direct-buffer kind. HWUI's
@@ -2709,7 +2749,26 @@ every such change is listed here:
   platform file's `getValue` reports its folder's density. With the switch
   off the probe's `ours.txt` and the Gallery and Sudoku sweeps are the same
   byte for byte.
-- `runtime/java/com/macapk/loader/view/ViewHost.java` (new), `WinApkViewHost.java`
+- `runtime/java/android/animation/ObjectAnimator.java`, `PropertyValuesHolder.java`,
+  `AnimatorSet.java`, `AnimatorInflater.java`,
+  `android/content/res/Resources.java`, `AssetManager.java`,
+  `android/widget/ImageView.java`, `com/macapk/loader/gfx/AospGfx.java`,
+  `GfxBackend.java`, `Java2DGfx.java`: what milestone 2's switch still drew
+  worse than the Java2D path ("Drawables inflate themselves": animated
+  vectors, a picture's theme, nine-patch sizes, fonts androidx loads). AOSP's
+  `AnimatedVectorDrawable` gets its animators from Win.apk's
+  `android.animation`, which now answers as AOSP's does: `getValues()` with
+  the inflater's holders, `setPropertyName` / `setProperty` onto the first,
+  every holder of an `<objectAnimator>` written to its own property, a
+  holder's `Property` written through, `getValueType` / `getPropertyValues`
+  for keyframes and paths, a colour keyframe's colour, and
+  `AnimatorSet.isStarted` / `isRunning` while the set plays. The seam gains
+  `pathDataValues` and `pathFromPathData` (AOSP's `PathParser`; Java2D:
+  null, the inflater's deviation 2 as before). `Resources.getValue` reports a
+  file's `assetCookie` (`AssetManager.macapkCookieOf`). Under the switch
+  only: `ImageView` loads its picture with the view's theme, and
+  `AospGfx.setNinePatchDensities` works the size out again. The Java2D
+  side's sweeps and probe are the same byte for byte.- `runtime/java/com/macapk/loader/view/ViewHost.java` (new), `WinApkViewHost.java`
   (new): step 0 of `docs/research/aosp-views.md`, views half, the one seam
   between the rest of the runtime and Win.apk's own `android.view` /
   `android.widget` / `com.android.internal.policy` members that AOSP's classes

@@ -301,6 +301,19 @@ public final class AssetManager implements AutoCloseable {
         return null;
     }
 
+    /** The cookie of the mount that answers `zipPath` (the reverse-order search's), 0 when none
+     *  does: what AOSP's Resources.getValue reports in TypedValue.assetCookie for a file-backed
+     *  resource, and what AOSP's Font.Builder(Resources, int) opens the file with
+     *  (openNonAssetFd(cookie, path)). */
+    public int macapkCookieOf(String zipPath) {
+        zipPath = macapkEntryPath(zipPath);
+        ZipFile[] mounts = mApkAssets;
+        for (int i = mounts.length - 1; i >= 0; i--) {
+            if (mounts[i] != null && mounts[i].getEntry(zipPath) != null) return i + 1;
+        }
+        return 0;
+    }
+
     /** Cookie-scoped resolve. AOSP cookies are 1-based indices into the
      *  ApkAssets[]; cookie 0 means "any", which is the reverse-order search. */
     private Found macapkFind(int cookie, String zipPath) {

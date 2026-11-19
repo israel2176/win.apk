@@ -410,6 +410,69 @@ final class AospGfx implements GfxBackend {
     /** Resources whose AOSP inflate failed, logged once. */
     private final java.util.Set<Integer> inflateFailures = Collections.synchronizedSet(new java.util.HashSet<>());
 
+    /** AOSP's AnimatorInflater.getPVH for VALUE_TYPE_PATH, over AOSP's android.util.PathParser (in the
+     *  jar; Win.apk's framework has none, so by reflection). */
+    @Override public android.animation.PropertyValuesHolder pathDataValues(String propertyName, String from,
+                                                                         String to) {
+        try {
+            Class<?> parser = Class.forName("android.util.PathParser");
+            Class<?> data = Class.forName("android.util.PathParser$PathData");
+            java.lang.reflect.Constructor<?> fromString = data.getConstructor(String.class);
+            Object nodesFrom = from == null ? null : fromString.newInstance(from);
+            Object nodesTo = to == null ? null : fromString.newInstance(to);
+            if (nodesFrom == null && nodesTo == null) return null;
+            android.animation.TypeEvaluator<Object> evaluator = new PathDataEvaluator(parser, data);
+            if (nodesFrom != null && nodesTo != null) {
+                Method canMorph = parser.getMethod("canMorph", data, data);
+                if (!(Boolean) canMorph.invoke(null, nodesFrom, nodesTo)) {
+                    throw new android.view.InflateException(" Can't morph from " + from + " to " + to);
+                }
+                return android.animation.PropertyValuesHolder.ofObject(propertyName, evaluator, nodesFrom, nodesTo);
+            }
+            return android.animation.PropertyValuesHolder.ofObject(propertyName, evaluator,
+                    nodesFrom != null ? nodesFrom : nodesTo);
+        } catch (ReflectiveOperationException e) {
+            Throwable c = e instanceof java.lang.reflect.InvocationTargetException && e.getCause() != null
+                    ? e.getCause() : e;
+            if (c instanceof RuntimeException) throw (RuntimeException) c;
+            throw new android.view.InflateException("pathType values: " + c);
+        }
+    }
+
+    @Override public Path pathFromPathData(String pathData) {
+        try {
+            return (Path) Class.forName("android.util.PathParser").getMethod("createPathFromPathData", String.class)
+                    .invoke(null, pathData);
+        } catch (ReflectiveOperationException e) {
+            Throwable c = e instanceof java.lang.reflect.InvocationTargetException && e.getCause() != null
+                    ? e.getCause() : e;
+            if (c instanceof RuntimeException) throw (RuntimeException) c;
+            throw new android.view.InflateException("pathData: " + c);
+        }
+    }
+
+    /** AOSP AnimatorInflater.PathDataEvaluator: one PathData, interpolated into at each fraction. */
+    private static final class PathDataEvaluator implements android.animation.TypeEvaluator<Object> {
+        private final Object pathData;
+        private final Method interpolate;
+
+        PathDataEvaluator(Class<?> parser, Class<?> data) throws ReflectiveOperationException {
+            pathData = data.getConstructor().newInstance();
+            interpolate = parser.getMethod("interpolatePathData", data, data, data, float.class);
+        }
+
+        @Override public Object evaluate(float fraction, Object start, Object end) {
+            boolean ok;
+            try {
+                ok = (Boolean) interpolate.invoke(null, pathData, start, end, fraction);
+            } catch (ReflectiveOperationException e) {
+                throw new IllegalStateException(e);
+            }
+            if (!ok) throw new IllegalArgumentException("Can't interpolate between two incompatible pathData");
+            return pathData;
+        }
+    }
+
     /** AOSP's GradientColor.createFromXmlInner (package-private) over the element. */
     @Override public android.content.res.ComplexColor gradientColor(android.content.res.Resources res,
                                                                     org.w3c.dom.Element root,
@@ -468,7 +531,12 @@ final class AospGfx implements GfxBackend {
     }
 
     /** The picture's folder density on its bitmap, the screen's as the target: AOSP scales a nine-patch
-     *  (and its padding) from one to the other itself. */
+     *  (and its padding) from one to the other itself. The drawable was made over a bitmap that had
+     *  the decoder's density then, and works its size out once, as it is made and when its target
+     *  density changes: when the target is already the screen's, nothing would work it out again
+     *  and a bitmap decoded for the first time kept its size unscaled (an mdpi button background
+     *  29 px wide on an xhdpi screen, where every later load of the cached picture was 58), so it
+     *  is worked out here, as AOSP's own decode (bitmap density first, drawable after) has it. */
     @Override public void setNinePatchDensities(NinePatchDrawable d, int source, int screen) {
         try {
             Object state = field(d, "mNinePatchState");
@@ -478,23 +546,36 @@ final class AospGfx implements GfxBackend {
             log("nine-patch density: " + t);
         }
         d.setTargetDensity(screen);
+        computeNinePatchSize(d);
+    }
+
+    /** NinePatchDrawable.computeBitmapSize: its size, padding and insets from the bitmap's density to
+     *  the target's. */
+    private static void computeNinePatchSize(NinePatchDrawable d) {
+        try {
+            Method compute = NinePatchDrawable.class.getDeclaredMethod("computeBitmapSize");
+            compute.setAccessible(true);
+            compute.invoke(d);
+        } catch (Throwable t) {
+            log("nine-patch size: " + t);
+        }
     }
 
     @Override public void setNinePatchOpticalInsets(NinePatchDrawable d, int left, int top, int right, int bottom) {
         try {
             Object state = field(d, "mNinePatchState");
             setField(state, "mOpticalInsets", android.graphics.Insets.of(left, top, right, bottom));
-            // The drawable's own insets are the state's scaled to its density, made here.
-            Method compute = NinePatchDrawable.class.getDeclaredMethod("computeBitmapSize");
-            compute.setAccessible(true);
-            compute.invoke(d);
         } catch (Throwable t) {
             log("nine-patch optical insets: " + t);
+            return;
         }
+        // The drawable's own insets are the state's scaled to its density, made here.
+        computeNinePatchSize(d);
     }
 
     /** AOSP's AnimatedVectorDrawable drawing the base vector (its state's mVectorDrawable, which its
-     *  own inflate sets); the <target> animators are not read, as on the Java2D side. */
+     *  own inflate sets), for Resources' own inflater, which builds an <animated-vector> only when AOSP's
+     *  inflate failed: the <target> animators are not read, as on the Java2D side. */
     @Override public AnimatedVectorDrawable animatedVector(Drawable inner) {
         AnimatedVectorDrawable avd = new AnimatedVectorDrawable();
         if (inner instanceof VectorDrawable) {
