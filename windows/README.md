@@ -1710,6 +1710,14 @@ every such change is listed here:
   so whatever Material, MotionLayout or a transition cut away was drawn in full
   (found by `Completeness`; the UI probe's `clip_bounds` case now matches
   Android's).
+- `runtime/java/android/widget/TextView.java`, `android/view/LayoutInflater.java`:
+  `setFirstBaselineToTopHeight` / `setLastBaselineToBottomHeight` move the top
+  (bottom) padding as AOSP's do, and the inflater applies
+  `firstBaselineToTopHeight` / `lastBaselineToBottomHeight` after the padding
+  and the text size, where AOSP's TextView constructor does (the `app:` ones
+  only where AppCompat's views are, as the tint above). Both setters did
+  nothing, so Material's type styles and AppCompat's attributes left text where
+  the font put it (UI probe `text_baselines`).
 
 ## License
 

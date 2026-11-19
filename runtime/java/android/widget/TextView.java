@@ -6668,9 +6668,30 @@ public class TextView extends View
         }
     }
 
-    // First / last baseline (API 28+).
-    public void setFirstBaselineToTopHeight(int firstBaselineToTopHeight) {}
-    public void setLastBaselineToBottomHeight(int lastBaselineToBottomHeight) {}
+    // First / last baseline (API 28+), AOSP android-14 TextView.java: the distance
+    // asked for is made by moving the top (bottom) padding, from the font's top or
+    // ascent (bottom or descent) as includeFontPadding says, and only when it is
+    // more than the font's own. They did nothing, so AppCompat's
+    // firstBaselineToTopHeight / lastBaselineToBottomHeight (TextViewCompat calls
+    // these) and Material's type styles left the text where the font put it.
+    public void setFirstBaselineToTopHeight(int firstBaselineToTopHeight) {
+        if (firstBaselineToTopHeight < 0) throw new IllegalArgumentException("must be non-negative");
+        final android.graphics.Paint.FontMetricsInt fm = getPaint().getFontMetricsInt();
+        final int fontMetricsTop = getIncludeFontPadding() ? fm.top : fm.ascent;
+        if (firstBaselineToTopHeight > Math.abs(fontMetricsTop)) {
+            final int paddingTop = firstBaselineToTopHeight - (-fontMetricsTop);
+            setPadding(getPaddingLeft(), paddingTop, getPaddingRight(), getPaddingBottom());
+        }
+    }
+    public void setLastBaselineToBottomHeight(int lastBaselineToBottomHeight) {
+        if (lastBaselineToBottomHeight < 0) throw new IllegalArgumentException("must be non-negative");
+        final android.graphics.Paint.FontMetricsInt fm = getPaint().getFontMetricsInt();
+        final int fontMetricsBottom = getIncludeFontPadding() ? fm.bottom : fm.descent;
+        if (lastBaselineToBottomHeight > Math.abs(fontMetricsBottom)) {
+            final int paddingBottom = lastBaselineToBottomHeight - fontMetricsBottom;
+            setPadding(getPaddingLeft(), getPaddingTop(), getPaddingRight(), paddingBottom);
+        }
+    }
 
     // Font variation (API 26+).
     // AOSP TextView.setFontVariationSettings/getFontVariationSettings: the
@@ -7993,14 +8014,8 @@ public class TextView extends View
     /** AOSP :3901 / :3912 -- pure reads: the first baseline sits
      *  |fontMetrics.top| below the top padding, the last sits
      *  fontMetrics.bottom above the bottom padding. Exact, and safe.
-     *  ⚠ THE MATCHING SETTERS ARE NOT WIRED. AOSP's
-     *  setFirstBaselineToTopHeight/setLastBaselineToBottomHeight work by CALLING
-     *  setPadding() to make the requested distance come out; this file's two
-     *  setters (a few hundred lines up) are inert, and wiring them would change
-     *  padding and therefore measurement -- which this lane is explicitly not
-     *  touching. So these getters answer the view's ACTUAL baseline distance
-     *  (which is AOSP's definition) but will not reflect a preceding
-     *  setFirstBaselineToTopHeight() call. Reported as a known, deliberate gap. */
+     *  The setters (above) move the padding, so a preceding
+     *  setFirstBaselineToTopHeight() shows here, as on AOSP. */
     public int getFirstBaselineToTopHeight() {
         return getPaddingTop() - getPaint().getFontMetricsInt().top;
     }

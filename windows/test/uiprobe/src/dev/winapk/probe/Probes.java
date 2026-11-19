@@ -34,7 +34,7 @@ public final class Probes {
         R.layout.lib_text_lines, R.layout.lib_images, R.layout.lib_list, R.layout.lib_dialog,
         R.layout.lib_material, R.layout.lib_appbar, R.layout.lib_list, R.layout.lib_dialog,
         R.layout.lib_material, R.layout.lib_appbar, R.layout.lib_list, R.layout.lib_dialog,
-        R.layout.lib_material, R.layout.lib_dialog, R.layout.clip_bounds,
+        R.layout.lib_material, R.layout.lib_dialog, R.layout.clip_bounds, R.layout.text_baselines,
     };
     private static final String[] NAMES = {
         "text_gravity", "linear_weights", "frame_gravity", "relative", "edit_compound", "custom_params", "icons",
@@ -42,7 +42,7 @@ public final class Probes {
         "lib_text_lines", "lib_images", "lib_list", "lib_dialog",
         "dark_material", "dark_appbar", "dark_list", "dark_dialog",
         "m3_material", "m3_appbar", "m3_list", "m3_dialog",
-        "m3dark_material", "m3dark_dialog", "clip_bounds",
+        "m3dark_material", "m3dark_dialog", "clip_bounds", "text_baselines",
     };
 
     /** The platform's theme for the framework's own widgets, Material Components for the libraries'. */
