@@ -109,6 +109,11 @@ The framework's own natives are declared in about 40 Java classes
 where there is one, otherwise a stub that returns zero and logs its name the
 first time it is called (`windows/host/host_natives.cpp`). Those log lines
 (`native not implemented on Windows yet`) are how missing pieces are found.
+Every call to such a stub, and to the stubs that stand in for system functions
+a guest library imports (`windows/host/guest_libs.cpp`), is also counted
+(`windows/host/stub_hits.h`); when the process exits the log ends with the ones
+this run reached and how often, the busiest first, so a report says which
+missing piece an app kept asking for and not only which it touched once.
 
 Windows-only Java lives in `windows/java/`: `com.winapk.tools.AppInstall`
 (installing an APK or bundle in the device layout) and `AppMeta` (the icon
