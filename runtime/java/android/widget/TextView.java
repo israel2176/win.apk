@@ -659,10 +659,20 @@ public class TextView extends View
             if (macapkIsPasswordAttrs(attrs)) attributes.typefaceIndex = MACAPK_TF_MONOSPACE;
 
             macapkApplyTextAppearance(attributes);
+            macapkCtorTypefaceRead = true;
         } catch (Throwable ignored) {
             // Keep whatever the defaults and any partial application left.
         }
     }
+
+    /** The constructor read textStyle, fontFamily, typeface and textFontWeight
+     *  from every tier, the element's own included, as AOSP's constructor does
+     *  (setTypefaceFromAttrs, before a subclass's constructor body runs). The
+     *  inflater then leaves them alone: applying them again after construction
+     *  replaced a typeface the subclass set in its constructor with the default
+     *  family (Mercantile's DiscountFontTextView, ~490 labels in the wrong font). */
+    private boolean macapkCtorTypefaceRead;
+    public boolean macapkCtorTypefaceRead() { return macapkCtorTypefaceRead; }
 
     /** AOSP readTextAppearance (:4221-4347), for the attributes in
      *  MACAPK_APPEARANCE_ATTRS. AOSP walks getIndexCount()/getIndex(), i.e. only

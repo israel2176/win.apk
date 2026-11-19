@@ -2480,6 +2480,17 @@ every such change is listed here:
     `MACAPK_INFLATE_RETURNS_CHILD=1` restores that); `android:orientation` given as
     a number or an `@integer` reference is read (it was horizontal unless the
     literal "vertical").
+  - From Mercantile: `TextView`'s constructor already reads textStyle,
+    fontFamily, typeface and textFontWeight from every tier, as AOSP's does, so
+    the inflater no longer applies them again after construction, which replaced
+    a typeface a subclass set in its constructor with the default family
+    (`MACAPK_INFLATE_TYPEFACE_AGAIN=1` restores that); `LayoutInflater` applies
+    `android:contentDescription` and `android:importantForAccessibility` (a
+    view that read its description in its constructor threw and became an empty
+    FrameLayout); and `MacApkJobScheduler` calls the service's `onBind` once,
+    as JobServiceContext's bind does, before looking for a JobServiceEngine the
+    service makes there (IBM Trusteer's job was dropped; `MACAPK_JOB_NO_ONBIND=1`
+    skips it).
 - `runtime/java/com/macapk/loader/LayoutSweep.java` (new), `Boot.java`: the
   screens sweep's Win.apk side, a debug mode off unless `MACAPK_LAYOUT_SWEEP=1`
   (see [Every screen against Android](#every-screen-against-android)). Boot
