@@ -133,17 +133,17 @@ final class MacApkBitmapShaderPaint implements java.awt.Paint {
         final int c01 = texel(x0, y0 + 1), c11 = texel(x0 + 1, y0 + 1);
         final double w00 = (1 - ax) * (1 - ay), w10 = ax * (1 - ay);
         final double w01 = (1 - ax) * ay, w11 = ax * ay;
+        // The four texels unrolled, in the same order and arithmetic as before: this
+        // runs once per covered pixel, and the two small arrays it used to build per
+        // call were most of the frame's allocation where an app drew bitmaps through
+        // a shader (an avatar in every list row).
+        final double a00 = ((c00 >>> 24) & 0xff) * w00, a10 = ((c10 >>> 24) & 0xff) * w10;
+        final double a01 = ((c01 >>> 24) & 0xff) * w01, a11 = ((c11 >>> 24) & 0xff) * w11;
         double a = 0, r = 0, g = 0, b = 0;
-        final int[] cs = { c00, c10, c01, c11 };
-        final double[] ws = { w00, w10, w01, w11 };
-        for (int k = 0; k < 4; k++) {
-            final int c = cs[k];
-            final double ca = ((c >>> 24) & 0xff) * ws[k];
-            a += ca;
-            r += ((c >>> 16) & 0xff) * ca;
-            g += ((c >>> 8) & 0xff) * ca;
-            b += (c & 0xff) * ca;
-        }
+        a += a00; r += ((c00 >>> 16) & 0xff) * a00; g += ((c00 >>> 8) & 0xff) * a00; b += (c00 & 0xff) * a00;
+        a += a10; r += ((c10 >>> 16) & 0xff) * a10; g += ((c10 >>> 8) & 0xff) * a10; b += (c10 & 0xff) * a10;
+        a += a01; r += ((c01 >>> 16) & 0xff) * a01; g += ((c01 >>> 8) & 0xff) * a01; b += (c01 & 0xff) * a01;
+        a += a11; r += ((c11 >>> 16) & 0xff) * a11; g += ((c11 >>> 8) & 0xff) * a11; b += (c11 & 0xff) * a11;
         if (a <= 0) return 0;
         final int ia = (int) Math.round(a);
         final int ir = (int) Math.round(r / a), ig = (int) Math.round(g / a), ib = (int) Math.round(b / a);
@@ -163,13 +163,25 @@ final class MacApkBitmapShaderPaint implements java.awt.Paint {
     private final class Ctx implements PaintContext {
         private final AffineTransform inv;
         private final double[] pt = new double[2];
+        // Java2D asks for one tile after another; like its own TexturePaintContext,
+        // one raster is kept and handed back (a raster at least the size asked for
+        // is allowed), instead of a new one per tile.
+        private WritableRaster saved;
         Ctx(AffineTransform inv) { this.inv = inv; }
         @Override public void dispose() {}
         @Override public ColorModel getColorModel() { return ColorModel.getRGBdefault(); }
         @Override public Raster getRaster(int x, int y, int rw, int rh) {
-            final WritableRaster wr = getColorModel().createCompatibleWritableRaster(rw, rh);
+            WritableRaster wr = saved;
+            if (wr == null || wr.getWidth() < rw || wr.getHeight() < rh) {
+                wr = saved = getColorModel().createCompatibleWritableRaster(
+                        Math.max(rw, wr == null ? 0 : wr.getWidth()), Math.max(rh, wr == null ? 0 : wr.getHeight()));
+            }
             final int[] out = ((DataBufferInt) wr.getDataBuffer()).getData();
-            if (inv == null) return wr;   // all transparent
+            final int stride = wr.getWidth();
+            if (inv == null) {   // all transparent
+                for (int j = 0; j < rh; j++) java.util.Arrays.fill(out, j * stride, j * stride + rw, 0);
+                return wr;
+            }
             // Walk each row incrementally: one inverse-map per row start, then
             // add the inverse matrix's x column per pixel.
             final double sx = inv.getScaleX(), shy = inv.getShearY();
@@ -177,7 +189,7 @@ final class MacApkBitmapShaderPaint implements java.awt.Paint {
                 pt[0] = x + 0.5; pt[1] = y + j + 0.5;
                 inv.transform(pt, 0, pt, 0, 1);
                 double u = pt[0], v = pt[1];
-                final int row = j * rw;
+                final int row = j * stride;
                 for (int i = 0; i < rw; i++) {
                     out[row + i] = sample(u, v);
                     u += sx;
