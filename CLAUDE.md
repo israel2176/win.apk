@@ -12,6 +12,13 @@ or `windows/PORTING.md` (design decisions, findings and the milestone plan,
 docs must match the code: a change to a flag, a file name, a setting or what
 works is also a change to the document that names it.
 
+**Start every session by reading `docs/research/open-issues.md`**: the owner's
+decisions (no hand-tuned layout or text metrics: layers move onto AOSP's own
+code; answers to the owner in Hebrew), the bugs found and not fixed with what
+to check again after each AOSP layer lands, size items to decide, and work
+started and not merged (`docs/research/pending/*.patch`). Update it in the
+change that fixes, verifies or adds an item.
+
 ## Layout
 
 | Path | What |
