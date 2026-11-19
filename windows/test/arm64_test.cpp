@@ -21,7 +21,8 @@
 //   * Control flow and edge cases, with test/guest/arm64_flow_guest.c:
 //     returns into an ancestor frame (as an unwinder or longjmp written in
 //     guest code makes), coroutines, RETAA, a return through BR, deep
-//     recursion on a 1 MB thread, saturating conversions and FRECPS/FRSQRTS,
+//     recursion on a 1 MB thread, pthread_getattr_np's bounds against the
+//     guest stack (on this thread and an 8 MB one), saturating conversions and FRECPS/FRSQRTS,
 //     an exclusive-monitor counter shared by translated code and the JIT,
 //     the store-buffer litmus test; with arm64_patch_guest.c, a library
 //     patching its own code, and a library unloaded (dlclose) while
@@ -347,6 +348,10 @@ void run_flow(winapk::GuestLinker& linker, const char* file) {
     expect("recursion 20,000 deep through a function pointer", call("flow_deep_indirect", {depth}),
            deep_reference(depth));
     expect("both on a guest thread (1 MB stack)", call("flow_deep_thread", {depth}), deep_reference(depth) * 4);
+    // Guest code runs on a guest stack, not the host thread's: the bounds
+    // must be that stack's (Dart aborted on HasStackHeadroom() otherwise).
+    expect("pthread_getattr_np: the guest stack, on this thread and on an 8 MB guest thread",
+           call("flow_stack_bounds"), 0x77);
 
     {
         const double nan = std::nan("");

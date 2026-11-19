@@ -407,7 +407,10 @@ Three engines run arm64 code, behind one CPU state (`src/arm64/`):
   compares them.
 
 The bridge (`arm64_guest.cpp`) gives each thread its CPU state, a guest stack
-and Bionic's TLS slots; converts AAPCS64 arguments and `va_list`s to System V
+(4 MiB, or the size `pthread_create` asked for when larger, up to 64 MiB) and
+Bionic's TLS slots; `pthread_getattr_np` answers guest code with that stack,
+the one its sp is on, as Bionic does (Dart, ART and V8 check their sp against
+it); converts AAPCS64 arguments and `va_list`s to System V
 for calls into the shim; and turns a host call into guest code (a callback)
 into interpretation through an execute-fault handler, since arm64 text is
 never mapped executable.
