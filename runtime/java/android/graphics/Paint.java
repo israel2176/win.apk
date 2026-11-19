@@ -1205,10 +1205,6 @@ public class Paint {
      *  int[] must stay either way: getFontMetricsInt wants top FLOORED and
      *  bottom CEILED, which is exactly what it already returns, so only this
      *  float accessor would take the new sibling. */
-    /** MACAPK_NO_EXTENT_CLAMP=1: top/bottom straight from the bounding box again. */
-    private static final boolean MACAPK_NO_EXTENT_CLAMP =
-        "1".equals(System.getenv("MACAPK_NO_EXTENT_CLAMP"));
-
     public FontMetrics getFontMetrics() {
         FontMetrics m = new FontMetrics();
         m.ascent = ascent(); m.descent = descent();
@@ -1221,14 +1217,6 @@ public class Paint {
         float[] tbf = macapkVerticalExtentsF();
         if (tbf != null) { m.top = tbf[0]; m.bottom = tbf[1]; }
         else             { m.top = m.ascent - 2; m.bottom = m.descent + 2; }
-        // hwui Paint.cpp getMetricsInternal: fTop = min(fAscent, fTop), fBottom =
-        // max(fDescent, fBottom). A font whose bounding box sits inside its hhea
-        // ascent/descent (an app's own Hebrew font, yMin above the descent line)
-        // otherwise gave includeFontPadding's line box less room than Android's.
-        if (!MACAPK_NO_EXTENT_CLAMP) {
-            m.top = Math.min(m.top, m.ascent);
-            m.bottom = Math.max(m.bottom, m.descent);
-        }
         // v1.0.940: the face's REAL `hhea` lineGap, which is what Skia puts in
         // SkFontMetrics.fLeading and AOSP reports verbatim. This was pinned to
         // 0, and the pin was invisible because every font WE bundle has gap 0 --
@@ -1267,11 +1255,6 @@ public class Paint {
         int[] tb = macapkVerticalExtents();
         if (tb != null) { m.top = tb[0]; m.bottom = tb[1]; }
         else            { m.top = m.ascent - 2; m.bottom = m.descent + 2; }
-        // The clamp above, before the rounding: floor(min(a, t)) = min(floor a, floor t).
-        if (!MACAPK_NO_EXTENT_CLAMP) {
-            m.top = Math.min(m.top, (int) Math.floor(ascent()));
-            m.bottom = Math.max(m.bottom, (int) Math.ceil(descent()));
-        }
         // ROUND, per the rule documented above: hwui's getFontMetricsInt does
         // SkScalarRoundToInt(metrics.fLeading) (Paint.cpp:636), not floor/ceil.
         m.leading = Math.round(macapkLeading());

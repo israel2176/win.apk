@@ -2102,10 +2102,6 @@ every such change is listed here:
     `MACAPK_IGNORE_INCLUDE_FONT_PADDING=1` skips it), and `getBaseline` takes the
     first line's ascent as `onDraw` places it, widened for a fallback font, so a
     Hebrew line without font padding is not 2 dp high.
-  - `android/graphics/Paint.java`: `getFontMetrics(Int)` clamp `top` to at most
-    `ascent` and `bottom` to at least `descent`, as hwui's `getMetricsInternal`
-    does; an app font whose bounding box sits inside its line metrics gave lines
-    up to 2 dp short. `MACAPK_NO_EXTENT_CLAMP=1` turns it off.
   - `android/content/res/Resources.java`: a `<selector>` of colours under
     `res/drawable` is a ColorStateList, as AOSP takes any file-backed value by
     its root tag (a textColor of `@drawable/x` came out black: Cal's white
