@@ -4,6 +4,7 @@
 
 #include "java_io_open.h"
 #include "sqlite_paths.h"
+#include "stub_hits.h"
 #include "winapk/abi_thunk.h"
 #include "winapk/mini_bionic.h"
 
@@ -74,17 +75,13 @@ const char* const kHostClasses[] = {
 
 // ---- stubs -----------------------------------------------------------------
 
-struct StubTag {
-    std::string method;  // "com.macapk.loader.NativeCocoa.init()Z"
-    std::atomic<bool> reported{false};
-};
-
-// Called by every stub (make_tagged_zero_stub) before it returns zero.
+// Called by every stub (make_tagged_zero_stub) before it returns zero: counted
+// for the summary at exit (stub_hits.h), logged the first time.
 void report_stub(JNIEnv*, const void* tag) {
-    auto* t = static_cast<StubTag*>(const_cast<void*>(tag));
-    if (t->reported.exchange(true)) return;
+    auto* t = static_cast<StubHit*>(const_cast<void*>(tag));
+    if (!stub_hit(t)) return;
     std::fprintf(stderr, "[win.apk] native not implemented on Windows yet, returning 0: %s\n",
-                 t->method.c_str());
+                 t->name.c_str());
     std::fflush(stderr);
 }
 
@@ -207,8 +204,7 @@ bool register_host_natives(JNIEnv* env, jvmtiEnv* jvmti, NativeStats* stats) {
                         bind.push_back(*impl);
                         ++stats->implemented;
                     } else {
-                        auto* tag = new StubTag();
-                        tag->method = std::string(clazz) + "." + name + sig;
+                        StubHit* tag = stub_hit_register(std::string(clazz) + "." + name + sig, "native method");
                         void* stub = make_tagged_zero_stub(reinterpret_cast<void*>(&report_stub), tag);
                         strings.emplace_back(name);
                         char* name_copy = &strings.back()[0];

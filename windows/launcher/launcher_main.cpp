@@ -3903,9 +3903,10 @@ void paint_main(Graphics& g, float, float) {
     paint_infobar(g);
 }
 
+// Only what spins: an install's veil, the store's first load, Google Play starting. A running app's
+// badge is still, and its starting window keeps its own timer, so a run alone repaints nothing.
 void update_timer() {
-    if (any_pending() || any_runs() || (g_view == kStoreView && g_store.loading()) ||
-        g_play.state == PlayState::kStarting) {
+    if (any_pending() || (g_view == kStoreView && g_store.loading()) || g_play.state == PlayState::kStarting) {
         SetTimer(g_main, kAnimTimer, 16, nullptr);
     }
     else KillTimer(g_main, kAnimTimer);
