@@ -1019,6 +1019,7 @@ jobs:
           path: thirdparty/aosp-gfx
           key: aosp-gfx-${{ hashFiles('windows/test/aospgfx/fetch.sh') }}
       - name: Stage AOSP's resources and views
+        id: stage-aosp
         shell: msys2 {0}
         run: |
           export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
@@ -1036,8 +1037,11 @@ jobs:
             done
             echo ""
           } >> "$GITHUB_STEP_SUMMARY"
+      # Each check below runs when the staging did (a stage without the views jar would test the
+      # resources switch alone), the probe also when the smoke set failed.
       - name: Boot the smoke set with the switches on
         id: smoke
+        if: steps.stage-aosp.outcome == 'success'
         shell: pwsh
         env:
           WINAPK_AOSP_RES: '1'
@@ -1063,16 +1067,16 @@ jobs:
           }
           if ($rc -ne 0 -or $off) { exit 1 }
       - if: >-
-          !cancelled() && needs.ui-oracle.result == 'success' && github.event_name != 'push'
-          && needs.ui-oracle.outputs.same != 'true'
+          !cancelled() && steps.stage-aosp.outcome == 'success' && needs.ui-oracle.result == 'success'
+          && github.event_name != 'push' && needs.ui-oracle.outputs.same != 'true'
         uses: actions/download-artifact@v4
         with:
           name: ui-oracle
           path: oracle
       - name: The UI probe with the switches on, against Android's lines
         if: >-
-          !cancelled() && needs.ui-oracle.result == 'success' && github.event_name != 'push'
-          && needs.ui-oracle.outputs.same != 'true'
+          !cancelled() && steps.stage-aosp.outcome == 'success' && needs.ui-oracle.result == 'success'
+          && github.event_name != 'push' && needs.ui-oracle.outputs.same != 'true'
         shell: bash
         env:
           PYTHON: python
