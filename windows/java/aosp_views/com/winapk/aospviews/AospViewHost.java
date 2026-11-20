@@ -193,6 +193,28 @@ public final class AospViewHost implements ViewHost {
         AospWindows.ensureHostSurface(String.valueOf(activity.getTitle()));
         activity.getWindowManager().addView(decor, l);
         mAdded.put(activity, decor);
+        // A SurfaceView added or removed changes what the host shows under the window.
+        decor.getViewTreeObserver().addOnGlobalLayoutListener(() -> surfacesChanged(decor));
+        surfacesChanged(decor);
+    }
+
+    /** After a layout of an activity window: the native GL view of the first SurfaceView shown
+     *  in it goes under the window's frames (AospWindows.showSurfaceBelow). */
+    private void surfacesChanged(View decor) {
+        AospWindows.showSurfaceBelow(shownNativeHandle(decor));
+    }
+
+    private long shownNativeHandle(View v) {
+        if (v.getVisibility() != View.VISIBLE) return 0;
+        long h = nativeHandle(v);
+        if (h != 0) return h;
+        if (v instanceof ViewGroup g) {
+            for (int i = 0; i < g.getChildCount(); i++) {
+                h = shownNativeHandle(g.getChildAt(i));
+                if (h != 0) return h;
+            }
+        }
+        return 0;
     }
 
     /** handleDestroyActivity: wm.removeViewImmediate(decor). */
@@ -226,7 +248,13 @@ public final class AospViewHost implements ViewHost {
     }
 
     @Override public void scheduleTraversal() { for (View v : roots()) v.invalidate(); }
-    @Override public void scheduleLayout() { for (View v : roots()) v.requestLayout(); }
+    /** After a display commit (DisplayConfig.apply): the windows get the committed display's
+     *  frames (IWindow.resized), then lay out again. */
+    @Override public void scheduleLayout() {
+        AospWindows.resize(com.macapk.loader.DisplayConfig.realWidthPx(),
+                com.macapk.loader.DisplayConfig.realHeightPx());
+        for (View v : roots()) v.requestLayout();
+    }
     @Override public boolean consumeTraversalScheduled(ViewRootImpl root) { return false; }
     @Override public boolean consumeLayoutRequested(ViewRootImpl root) { return false; }
     @Override public boolean damageGate(String env) { return false; }

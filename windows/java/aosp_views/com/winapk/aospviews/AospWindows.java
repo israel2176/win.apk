@@ -476,8 +476,32 @@ public final class AospWindows {
             NativeCocoa.showWindow(window);
             sHostWindow = window;
             sHostView = view;
+            sShownView = view;
         } catch (UnsatisfiedLinkError e) {
             // A plain JVM (no host): the windows draw into memory only.
+        }
+    }
+
+    private static long sShownView;
+
+    /** What the host window shows under the windows' frames: the GL view (Win.apk's SurfaceViews
+     *  share one, NativeCocoa.getOrCreateSharedMetalSurfaceView) while a SurfaceView is in an
+     *  attached window's tree, else the render view. With the GL view as its content the host
+     *  composites each frame ViewRootImpl presents over the GL frame, as SurfaceFlinger puts a
+     *  window over the SurfaceView layer below it; the SurfaceView punches its hole in the
+     *  window, as AOSP's clearSurfaceViewPort does. */
+    /** Whether a SurfaceView's GL view is under the windows now. */
+    static synchronized boolean surfaceBelow() { return sShownView != 0 && sShownView != sHostView; }
+
+    static synchronized void showSurfaceBelow(long glView) {
+        if (sHostWindow == 0) return;
+        long view = glView != 0 ? glView : sHostView;
+        if (view == 0 || view == sShownView) return;
+        sShownView = view;
+        try {
+            NativeCocoa.setContentView(sHostWindow, view);
+        } catch (UnsatisfiedLinkError e) {
+            // A plain JVM.
         }
     }
 
@@ -485,21 +509,22 @@ public final class AospWindows {
      *  frames themselves are ViewRootImpl's, on Choreographer's clock. */
     static final class HostSurface implements MetalSurfaceCallbacks {
         @Override public void macapkSurfaceChanged(int widthPx, int heightPx) {
-            main().post(() -> resize(widthPx, heightPx));
+            main().post(() -> {
+                com.macapk.loader.DisplayConfig.commitPending();
+                resize(widthPx, heightPx);
+            });
         }
 
         @Override public void macapkDrawFrame() {}
     }
 
-    /** The display is now w x h px: every window gets its new frame, as WindowManagerService's
-     *  IWindow.resized does. */
+    /** The display is now w x h px: every window whose frame changes gets it, as
+     *  WindowManagerService's IWindow.resized does. Called with the host view's size and after
+     *  every display commit (DisplayConfig: a window resize or an app's requested orientation). */
     static void resize(int w, int h) {
         if (w <= 0 || h <= 0 || (w == sWidthPx && h == sHeightPx)) return;
-        boolean first = sWidthPx <= 0;
         sWidthPx = w;
         sHeightPx = h;
-        if (first) return;
-        com.macapk.loader.DisplayConfig.commitPending();
         configurationChanged();
         for (Win win : sWindows.values()) {
             try {
@@ -511,6 +536,8 @@ public final class AospWindows {
                         android.app.WindowConfiguration.WINDOWING_MODE_FULLSCREEN,
                         WindowLayout.UNSPECIFIED_LENGTH, WindowLayout.UNSPECIFIED_LENGTH,
                         win.requestedVisibleTypes, 1f, frames);
+                if (frames.frame.equals(win.frame)) continue;
+                win.frame.set(frames.frame);
                 MergedConfiguration merged = new MergedConfiguration();
                 merged.setConfiguration(globalConfiguration(), new Configuration());
                 win.window.resized(frames, false, merged, state, true, false, Display.DEFAULT_DISPLAY, -1, false);

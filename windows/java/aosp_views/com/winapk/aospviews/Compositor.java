@@ -130,7 +130,11 @@ final class Compositor {
             sCanvas = new Canvas(sFrame);
         }
         Canvas c = sCanvas;
-        c.drawColor(Color.BLACK, PorterDuff.Mode.SRC);
+        // Nothing under the windows is black, as SurfaceFlinger's empty display; but while a
+        // SurfaceView's GL view is under them (AospWindows.showSurfaceBelow) the frame starts
+        // clear, so the host shows that layer through the SurfaceView's hole.
+        if (AospWindows.surfaceBelow()) c.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR);
+        else c.drawColor(Color.BLACK, PorterDuff.Mode.SRC);
         for (AospWindows.Win w : order) {
             WindowManager.LayoutParams a = w.attrs;
             if ((a.flags & WindowManager.LayoutParams.FLAG_DIM_BEHIND) != 0 && a.dimAmount > 0f) {
