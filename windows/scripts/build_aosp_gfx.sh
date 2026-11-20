@@ -10,7 +10,8 @@
 #                                           Hyphenator, FontConfig), android.util.PathParser, the
 #                                           classes of android-all these name that Win.apk's
 #                                           framework lacks, and windows/java/aosp_gfx (the stand-ins
-#                                           for ART and Robolectric the native runtime calls)
+#                                           for ART and Robolectric the native runtime calls, and
+#                                           the API 35 methods added to AOSP 14's classes)
 #   <out>/bin/robolectric-nativeruntime.dll Robolectric's native runtime (Skia, minikin, HarfBuzz...),
 #                                           its COFF symbol table stripped (nothing reads it)
 #   <out>/bin/aosp/icu/icudt68l.dat         its ICU data, without the trees it cannot open
@@ -116,9 +117,11 @@ mkdir -p "$WORK/gen"
 "$JAVA" "$(native_path "$HERE/AospResIds.java")" "$(native_path "$ALL")" "$(native_path "$CLASSES")" \
     "$(native_path "$FWRES")" "$(native_path "$WORK/gen/R.java")"
 
-# Where AOSP's code relies on what ART does and HotSpot does not, its call goes to a Win.apk method of
-# the same signature (windows/java/aosp_gfx, below; AospCallRedirect.java says how): Font$Builder reads
-# a font the APK holds compressed into a direct buffer's array(); AdaptiveIconDrawable reads its mask
+# Where AOSP's code relies on what ART does and HotSpot does not, or on a native the native runtime
+# lacks, its call goes to a Win.apk method of the same signature (windows/java/aosp_gfx, below;
+# AospCallRedirect.java says how): Font$Builder reads a font the APK holds compressed into a direct
+# buffer's array(); the library has no Typeface.nativeRegisterLocaleList (Typeface's static initializer
+# calls it for the families of /system/etc/fonts.xml) and no nPunchHole (SurfaceView's punchHole); AdaptiveIconDrawable reads its mask
 # through the Application, which the app's icon at start is built before (IconMaskThread).
 echo "[aosp-gfx] calls redirected to Win.apk's"
 "$JAVA" "$(native_path "$HERE/AospCallRedirect.java")" "$(native_path "$CLASSES")" 'android/graphics/fonts/Font$Builder' \
@@ -127,11 +130,24 @@ echo "[aosp-gfx] calls redirected to Win.apk's"
 "$JAVA" "$(native_path "$HERE/AospCallRedirect.java")" "$(native_path "$CLASSES")" \
     android/graphics/drawable/AdaptiveIconDrawable android/app/ActivityThread currentActivityThread \
     '()Landroid/app/ActivityThread;' com/winapk/aospgfx/IconMaskThread
+for canvas in android/graphics/BaseCanvas android/graphics/BaseRecordingCanvas; do
+    "$JAVA" "$(native_path "$HERE/AospCallRedirect.java")" "$(native_path "$CLASSES")" "$canvas" "$canvas" \
+        nPunchHole '(JFFFFFFF)V' com/winapk/aospgfx/MissingNatives
+done
+"$JAVA" "$(native_path "$HERE/AospCallRedirect.java")" "$(native_path "$CLASSES")" android/graphics/Typeface \
+    android/graphics/Typeface nativeRegisterLocaleList '(Ljava/lang/String;)V' com/winapk/aospgfx/MissingNatives
 
 echo "[aosp-gfx] Win.apk's stand-ins (windows/java/aosp_gfx)"
 { find "$HERE/../java/aosp_gfx" -name '*.java'; echo "$WORK/gen/R.java"; } | sort |
     while read -r f; do native_path "$f"; done > "$WORK/src.txt"
 "$JAVAC" -nowarn --release 21 -d "$CLASSES" -cp "$ALL" @"$WORK/src.txt"
+
+# The methods AOSP 14's classes lack that apps built for the runtime's SDK level (35) call, and that
+# Win.apk's own framework calls on a class AOSP's replaces: each public static method of these helpers
+# becomes a method of its first parameter's class (AospAddMethods.java says how).
+echo "[aosp-gfx] methods added to AOSP's classes"
+"$JAVA" "$(native_path "$HERE/AospAddMethods.java")" "$(native_path "$CLASSES")" \
+    com/winapk/aospgfx/Api35 com/winapk/aospgfx/FrameworkMembers
 
 rm -f "$OUT/lib/aosp-graphics.jar"
 ( cd "$CLASSES" && "$JAR" --create --file "$OUT/lib/aosp-graphics.jar" . )
