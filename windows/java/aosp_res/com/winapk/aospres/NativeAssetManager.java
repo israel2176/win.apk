@@ -431,6 +431,14 @@ public final class NativeAssetManager {
 
   public static String nativeGetOverlayablesToString(long ptr, String packageName) { return ""; }
 
+  /** An asset path as APK entries spell it. On Windows java.io.File joins segments with a
+   *  backslash, and engines that build asset paths with File (libGDX's FileHandle) hand those to
+   *  open() and list(); on a device the separator is '/', the only one zip entries use (Win.apk's
+   *  own AssetManager does the same, macapkEntryPath). */
+  private static String entryPath(String path) {
+    return path.indexOf('\\') >= 0 ? path.replace('\\', '/') : path;
+  }
+
   // static jobjectArray NativeList(JNIEnv* env, jclass /*clazz*/, jlong ptr, jstring path) {
   public static String[] nativeList(long ptr, String path)
       throws IOException {
@@ -439,6 +447,7 @@ public final class NativeAssetManager {
       return null;
     }
 
+    path = entryPath(path);
     CppAssetManager2 assetmanager = AssetManagerFromLong(ptr);
     AssetDir asset_dir = assetmanager.OpenDir(path);
     if (asset_dir == null) {
@@ -479,6 +488,7 @@ public final class NativeAssetManager {
       return 0;
     }
 
+    asset_path = entryPath(asset_path);
     ATRACE_NAME(String.format("AssetManager::OpenAsset(%s)", asset_path));
 
     if (access_mode != Asset.AccessMode.ACCESS_UNKNOWN.mode()
@@ -505,6 +515,7 @@ public final class NativeAssetManager {
       return null;
     }
 
+    asset_path = entryPath(asset_path);
     ATRACE_NAME(String.format("AssetManager::OpenAssetFd(%s)", asset_path));
 
     CppAssetManager2 assetmanager = AssetManagerFromLong(ptr);
