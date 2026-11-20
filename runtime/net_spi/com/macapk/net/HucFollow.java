@@ -14,9 +14,11 @@ import java.net.ProtocolException;
 import java.net.Proxy;
 import java.net.URL;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
 
 @SuppressWarnings("deprecation")   // new URL(URL, String): see AndroidHttpHandlerProvider
 final class HucFollow {
@@ -33,6 +35,11 @@ final class HucFollow {
     // and a follow-up request needs them after the first one was sent.
     final LinkedHashMap<String, List<String>> reqProps = new LinkedHashMap<String, List<String>>();
     boolean streaming;
+    /** OkHttp HttpURLConnectionImpl.connected: set by connect(), getOutputStream()
+     *  and every response accessor, and never cleared. The JDK's own flag drops
+     *  back to false once the response is read (disconnectInternal), after which
+     *  its getRequestProperties() answers again, request line and all. */
+    boolean sent;
     private boolean resolved;
     private int followUps;
 
@@ -43,8 +50,11 @@ final class HucFollow {
     }
 
     void setRequestProperty(String k, String v) {
+        // OkHttp refuses for as long as the connection lives; the JDK only
+        // while its own flag is up (see sent).
+        if (sent) throw new IllegalStateException("Cannot set request property after connection is made");
         d.setRequestProperty(k, v);
-        if (k == null) return;
+        if (k == null || v == null) return;   // OkHttp ignores a null value (logs "Ignoring header")
         List<String> l = new ArrayList<String>(1);
         l.add(v);
         removeKey(k);
@@ -52,11 +62,51 @@ final class HucFollow {
     }
 
     void addRequestProperty(String k, String v) {
+        if (sent) throw new IllegalStateException("Cannot add request property after connection is made");
         d.addRequestProperty(k, v);
-        if (k == null) return;
+        if (k == null || v == null) return;
         String key = findKey(k);
         if (key == null) { key = k; reqProps.put(key, new ArrayList<String>(1)); }
         reqProps.get(key).add(v);
+    }
+
+    /** Android's getRequestProperty (OkHttp HttpURLConnectionImpl): the LAST
+     *  value the app gave the field, any case, before or after the request went
+     *  out; null for none. The JDK's answers from its own header list instead,
+     *  which hides Authorization and, once sent, holds the headers it added
+     *  (User-Agent, Host, Accept, Connection). */
+    String requestProperty(String k) {
+        if (k == null) return null;
+        String key = findKey(k);
+        if (key == null) return null;
+        List<String> l = reqProps.get(key);
+        return l.isEmpty() ? null : l.get(l.size() - 1);
+    }
+
+    /** OkHeaders.FIELD_NAME_COMPARATOR: case-insensitive, null first, so that
+     *  get(null) / containsKey(null) answer instead of throwing. */
+    private static final java.util.Comparator<String> FIELD_NAME_ORDER = (a, b) ->
+            a == b ? 0 : a == null ? -1 : b == null ? 1 : String.CASE_INSENSITIVE_ORDER.compare(a, b);
+
+    /** Android's getRequestProperties (OkHttp HttpURLConnectionImpl, OkHeaders
+     *  .toMultimap(requestHeaders, null)): IllegalStateException once the
+     *  request was sent; before, the fields the app set, in a case-insensitive
+     *  sorted map with no null key, unmodifiable. The JDK's map, read after its
+     *  response is drained, carries the request line under a null key, which
+     *  code written for Android does not expect (Dynatrace's NPE). */
+    Map<String, List<String>> requestProperties() {
+        if (sent) throw new IllegalStateException("Cannot access request header fields after connection is set");
+        TreeMap<String, List<String>> m = new TreeMap<String, List<String>>(FIELD_NAME_ORDER);
+        for (Map.Entry<String, List<String>> e : reqProps.entrySet()) {
+            m.put(e.getKey(), Collections.unmodifiableList(new ArrayList<String>(e.getValue())));
+        }
+        return Collections.unmodifiableMap(m);
+    }
+
+    /** Called first by every response accessor of the wrapper. */
+    void response() {
+        sent = true;
+        resolve();
     }
 
     private String findKey(String k) {

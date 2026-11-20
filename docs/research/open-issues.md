@@ -103,8 +103,13 @@ the app); if it is still there, it is a bug in what replaced it.
 - **AppsFlyer** looks up `com.appsflyer.internal.AFi1fSDKT861` where the class
   it loaded is `...T8615` (one character short); the framework values it
   reads match Android; not found (bit).
-- **`HucsConnection.getRequestProperties`** returns the JDK's map with a
-  null-key status line; Android's never has one (Dynatrace NPE, caught; bit).
+- ~~**`HucsConnection.getRequestProperties`** returns the JDK's map with a
+  null-key status line~~ Fixed: the JDK's map, after an error answer and
+  `disconnect()`, held its request line as a key with a null value; the
+  request side now answers as OkHttp's (`HucFollow.requestProperties`:
+  `IllegalStateException` once sent, the app's fields only;
+  `windows/test/java/com/macapk/net/HttpRequestPropertiesTest.java`). Bit to
+  check again (Dynatrace's NPE in its log).
 - **No `icu.dll`, a crash: fixed (both halves), Leumi to check again.**
   `HostIcu` now answers from Java when the host has no ICU (`IcuFallback`:
   the locale's `java.text` number, CLDR root's unit symbols and territory

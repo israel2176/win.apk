@@ -35,11 +35,11 @@ final class HucsConnection extends HttpsURLConnection {
     }
 
     // ---- request side: forwarded; the core records what a follow-up needs ----
-    @Override public void connect() throws IOException { f.d.connect(); connected = true; }
+    @Override public void connect() throws IOException { f.sent = true; f.d.connect(); connected = true; }
     @Override public void setRequestProperty(String k, String v) { f.setRequestProperty(k, v); }
     @Override public void addRequestProperty(String k, String v) { f.addRequestProperty(k, v); }
-    @Override public String getRequestProperty(String k) { return f.d.getRequestProperty(k); }
-    @Override public Map<String, List<String>> getRequestProperties() { return f.d.getRequestProperties(); }
+    @Override public String getRequestProperty(String k) { return f.requestProperty(k); }
+    @Override public Map<String, List<String>> getRequestProperties() { return f.requestProperties(); }
     @Override public void setFixedLengthStreamingMode(int n) { f.d.setFixedLengthStreamingMode(n); f.streaming = true; }
     @Override public void setFixedLengthStreamingMode(long n) { f.d.setFixedLengthStreamingMode(n); f.streaming = true; }
     @Override public void setChunkedStreamingMode(int n) { f.d.setChunkedStreamingMode(n); f.streaming = true; }
@@ -64,34 +64,34 @@ final class HucsConnection extends HttpsURLConnection {
     @Override public long getIfModifiedSince() { return f.d.getIfModifiedSince(); }
     @Override public void setDefaultUseCaches(boolean b) { f.d.setDefaultUseCaches(b); }
     @Override public boolean getDefaultUseCaches() { return f.d.getDefaultUseCaches(); }
-    @Override public OutputStream getOutputStream() throws IOException { return f.d.getOutputStream(); }
+    @Override public OutputStream getOutputStream() throws IOException { f.sent = true; return f.d.getOutputStream(); }
     @Override public Permission getPermission() throws IOException { return f.d.getPermission(); }
     @Override public boolean usingProxy() { return f.d.usingProxy(); }
     @Override public void disconnect() { f.d.disconnect(); }
     @Override public URL getURL() { return f.handler.rebind(f.d.getURL()); }
     @Override public String toString() { return f.d.toString(); }
 
-    // ---- response side: resolve() first (a no-op unless a body was streamed) ----
-    @Override public int getResponseCode() throws IOException { f.resolve(); return f.d.getResponseCode(); }
-    @Override public String getResponseMessage() throws IOException { f.resolve(); return f.d.getResponseMessage(); }
-    @Override public InputStream getInputStream() throws IOException { f.resolve(); return f.d.getInputStream(); }
-    @Override public InputStream getErrorStream() { f.resolve(); return f.d.getErrorStream(); }
-    @Override public String getHeaderField(String k) { f.resolve(); return f.d.getHeaderField(k); }
-    @Override public String getHeaderField(int n) { f.resolve(); return f.d.getHeaderField(n); }
-    @Override public String getHeaderFieldKey(int n) { f.resolve(); return f.d.getHeaderFieldKey(n); }
-    @Override public Map<String, List<String>> getHeaderFields() { f.resolve(); return f.d.getHeaderFields(); }
-    @Override public int getHeaderFieldInt(String k, int def) { f.resolve(); return f.d.getHeaderFieldInt(k, def); }
-    @Override public long getHeaderFieldLong(String k, long def) { f.resolve(); return f.d.getHeaderFieldLong(k, def); }
-    @Override public long getHeaderFieldDate(String k, long def) { f.resolve(); return f.d.getHeaderFieldDate(k, def); }
-    @Override public int getContentLength() { f.resolve(); return f.d.getContentLength(); }
-    @Override public long getContentLengthLong() { f.resolve(); return f.d.getContentLengthLong(); }
-    @Override public String getContentType() { f.resolve(); return f.d.getContentType(); }
-    @Override public String getContentEncoding() { f.resolve(); return f.d.getContentEncoding(); }
-    @Override public long getExpiration() { f.resolve(); return f.d.getExpiration(); }
-    @Override public long getDate() { f.resolve(); return f.d.getDate(); }
-    @Override public long getLastModified() { f.resolve(); return f.d.getLastModified(); }
-    @Override public Object getContent() throws IOException { f.resolve(); return f.d.getContent(); }
-    @Override public Object getContent(Class<?>[] classes) throws IOException { f.resolve(); return f.d.getContent(classes); }
+    // ---- response side: response() first (marks the request sent; follows only a streamed body's 300-303) ----
+    @Override public int getResponseCode() throws IOException { f.response(); return f.d.getResponseCode(); }
+    @Override public String getResponseMessage() throws IOException { f.response(); return f.d.getResponseMessage(); }
+    @Override public InputStream getInputStream() throws IOException { f.response(); return f.d.getInputStream(); }
+    @Override public InputStream getErrorStream() { f.response(); return f.d.getErrorStream(); }
+    @Override public String getHeaderField(String k) { f.response(); return f.d.getHeaderField(k); }
+    @Override public String getHeaderField(int n) { f.response(); return f.d.getHeaderField(n); }
+    @Override public String getHeaderFieldKey(int n) { f.response(); return f.d.getHeaderFieldKey(n); }
+    @Override public Map<String, List<String>> getHeaderFields() { f.response(); return f.d.getHeaderFields(); }
+    @Override public int getHeaderFieldInt(String k, int def) { f.response(); return f.d.getHeaderFieldInt(k, def); }
+    @Override public long getHeaderFieldLong(String k, long def) { f.response(); return f.d.getHeaderFieldLong(k, def); }
+    @Override public long getHeaderFieldDate(String k, long def) { f.response(); return f.d.getHeaderFieldDate(k, def); }
+    @Override public int getContentLength() { f.response(); return f.d.getContentLength(); }
+    @Override public long getContentLengthLong() { f.response(); return f.d.getContentLengthLong(); }
+    @Override public String getContentType() { f.response(); return f.d.getContentType(); }
+    @Override public String getContentEncoding() { f.response(); return f.d.getContentEncoding(); }
+    @Override public long getExpiration() { f.response(); return f.d.getExpiration(); }
+    @Override public long getDate() { f.response(); return f.d.getDate(); }
+    @Override public long getLastModified() { f.response(); return f.d.getLastModified(); }
+    @Override public Object getContent() throws IOException { f.response(); return f.d.getContent(); }
+    @Override public Object getContent(Class<?>[] classes) throws IOException { f.response(); return f.d.getContent(classes); }
 
     // ---- HttpsURLConnection ----
     private HttpsURLConnection s() { return (HttpsURLConnection) f.d; }

@@ -2334,6 +2334,19 @@ every such change is listed here:
   threw `UnsupportedEncodingException`. A `CharsetProvider` on the class path
   rather than a copy of `java.nio.charset.Charset` in `java_base_patch`: the
   JDK asks providers only after its own charsets miss.
+- `runtime/net_spi/com/macapk/net/HucFollow.java`, `HucConnection.java`,
+  `HucsConnection.java`: the request side of the `HttpURLConnection` an app
+  gets is Android's (OkHttp's `HttpURLConnectionImpl`), not the JDK's:
+  `getRequestProperties()` is the fields the app set (case-insensitive, sorted,
+  unmodifiable, no null value) and throws `IllegalStateException` from the
+  first `connect()`, `getOutputStream()` or response accessor on, for good;
+  `getRequestProperty` is the last value set, `Authorization` included and the
+  JDK's own `User-Agent`/`Host` not; setting a field after that throws. The
+  JDK lowers its connected flag on `disconnect()` after an error answer and
+  then answers with its whole header list, the request line as a key whose
+  value is null: Dynatrace (bit) took an NPE on it.
+  `windows/test/java/com/macapk/net/HttpRequestPropertiesTest.java` (CI: "Run
+  the HttpURLConnection request properties test").
 - `runtime/java/com/android/internal/graphics/drawable/AnimationScaleListDrawable.java`
   (new) and `android/content/res/Resources.java`: the platform's progress-bar
   styles root their indeterminate drawable in this @hide class; it now inflates

@@ -495,6 +495,19 @@ jobs:
           "$JAVA_HOME/bin/java" -Djava.awt.headless=true -cp "$cp;$(cygpath -w build/skia-test)" \
             com.macapk.graphics.MacApkSkiaTest | tee skia-test.log
           grep -q "ALL PASSED" skia-test.log
+      - name: Run the HttpURLConnection request properties test
+        run: |
+          # The request side of the connection an app gets (runtime/net_spi's
+          # HucConnection/HucsConnection) as Android's OkHttp has it: the app's
+          # fields, no request line under any key, IllegalStateException once
+          # sent, disconnect() or not. A loopback server.
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          cp="$(cygpath -w stage/lib/macapk-loader.jar)"
+          "$JAVA_HOME/bin/javac" -cp "$cp" -d build/huc-props-test windows/test/java/com/macapk/net/HttpRequestPropertiesTest.java
+          "$JAVA_HOME/bin/java" --add-exports java.base/sun.net.www.protocol.http=ALL-UNNAMED \
+            --add-exports java.base/sun.net.www.protocol.https=ALL-UNNAMED \
+            -cp "$cp;$(cygpath -w build/huc-props-test)" com.macapk.net.HttpRequestPropertiesTest | tee huc-props-test.log
+          grep -q "ALL PASSED" huc-props-test.log
       - name: Run the permission model test
         run: |
           # SpecialAccessStore.GroupModel, the decision model behind every
