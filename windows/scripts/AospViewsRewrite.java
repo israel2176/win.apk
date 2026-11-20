@@ -186,6 +186,7 @@ public class AospViewsRewrite {
             {"android/view/accessibility/IAccessibilityManager", PKG + "AccessibilityService"},
             {"android/app/INotificationManager", PKG + "ToastService"},
             {"com/android/internal/textservice/ITextServicesManager", PKG + "TextServicesService"},
+            {"android/hardware/input/IInputManager", PKG + "InputManagerService"},
     };
 
     /** com/winapk/aospviews/gen/<I>Impl extends <I>$Stub (a local Binder whose queryLocalInterface

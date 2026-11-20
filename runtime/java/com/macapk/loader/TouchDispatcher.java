@@ -1443,6 +1443,22 @@ public class TouchDispatcher {
      *  three commits, with no symptom but a tap in the wrong place. A fraction
      *  outside [0,1] is therefore REJECTED (it is a pixel coordinate written with
      *  the wrong verb), never posted: a mis-spelt verb must fail loudly. */
+    /** hostmouse's message -> NativeCocoa.postHostMouse's action (0-2 are hosttap's down, up and
+     *  move; win32_window.h PostedMouse), or -1 for a word it does not know. */
+    static int macapkHostMouseAction(String word) {
+        switch (word) {
+            case "ldown": return 0;
+            case "lup": return 1;
+            case "move": return 2;
+            case "rdown": return 3;
+            case "rup": return 4;
+            case "mdown": return 5;
+            case "mup": return 6;
+            case "leave": return 7;
+            default: return -1;
+        }
+    }
+
     static String macapkInjectRoute(String[] p) {
         final String v = p[0];
         final int n = p.length;
@@ -1465,6 +1481,9 @@ public class TouchDispatcher {
         if (v.equals("rotate") && n >= 5) return fractionsInRange(p, 2) ? "rotate" : "reject";
         if (v.equals("hostscroll") && n >= 5) return fractionsInRange(p, 2) ? "hostscroll" : "reject";
         if (v.equals("hostwheel") && n >= 4) return fractionsInRange(p, 2) ? "hostwheel" : "reject";
+        if (v.equals("hostmouse") && n >= 4) {
+            return fractionsInRange(p, 2) && macapkHostMouseAction(p[3]) >= 0 ? "hostmouse" : "reject";
+        }
         if (v.equals("close") || v.equals("quit") || v.equals("terminate")) return "quit";
         // Input-recorder events (InputRecorder; docs/input-recorder_2026-10-01.md):
         // the host entry points themselves, replayed with the recorded arguments.
@@ -1568,6 +1587,19 @@ public class TouchDispatcher {
                     NativeLog.w(TAG, "inject-driver: trackpad frame found no input view");
                 break;
             }
+            case "hostmouse":
+                // hostmouse <fx> <fy> <move|ldown|lup|rdown|rup|mdown|mup|leave>: one message of the
+                // host's mouse, posted to the window as a user's mouse makes it (Windows host: the
+                // right and middle buttons and hover are the mouse's own path; the left button is a
+                // finger, as hosttap). The same guard as hosttap: it is real user input.
+                if (!"0".equals(System.getenv("MACAPK_EXTERNAL_URLS"))) {
+                    NativeLog.w(TAG, "hostmouse refused: set MACAPK_EXTERNAL_URLS=0");
+                    break;
+                }
+                if (!NativeCocoa.postHostMouse(macapkHostMouseAction(p[3]), Float.parseFloat(p[1]),
+                        Float.parseFloat(p[2])))
+                    NativeLog.w(TAG, "inject-driver: hostmouse found no window");
+                break;
             case "hostwheel": {
                 // hostwheel <fx> <fy> <dyLines> [dxLines]: one classic mouse-wheel
                 // notch through the host scrollWheel: body (CocoaDebugTrackpad kind 2).

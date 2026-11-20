@@ -267,4 +267,13 @@ public interface ResBackend {
 
     /** Whether the index was declared @null (TypedArray.macapkDeclaredTypeNull). */
     boolean declaredTypeNull(TypedArray a, int index);
+
+    // ---- A context's configuration override ----
+
+    /** The Resources a context made by createConfigurationContext(override), or a
+     *  ContextThemeWrapper given applyOverrideConfiguration(override), reads: AOSP's ResourcesManager
+     *  hands out Resources for the base's configuration updated from the override, shared by every
+     *  context with the same override and kept up to date with the base's. `base` itself when the
+     *  override changes nothing (or the backend has one configuration only: Win.apk's own). */
+    Resources resourcesForConfiguration(Resources base, Configuration override);
 }

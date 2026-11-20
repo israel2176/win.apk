@@ -205,6 +205,10 @@ final class ArscRes implements ResBackend {
 
     @Override public void deriveScreenLayout(Configuration cfg) { cfg.macapkDeriveScreenLayout(); }
 
+    /** Win.apk's resources have one configuration, the application's: an override has no
+     *  Resources of its own (what createConfigurationContext always answered). */
+    @Override public Resources resourcesForConfiguration(Resources base, Configuration override) { return base; }
+
     @Override public void editSystemConfiguration(Consumer<Configuration> edit, DisplayMetrics metrics) {
         Resources.macapkEditSystemConfiguration(edit, metrics);
     }

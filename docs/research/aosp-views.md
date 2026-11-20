@@ -683,6 +683,12 @@ it runs: `ViewHost`'s defaults keep Win.apk's `TouchDispatcher`.
   Automation bridge yet, so `isEnabled()` is false, as with TalkBack off.
 - **Text services.** `TextServicesService`: no spell checker (an `EditText`
   asks on focus; a null service threw).
+- **Input devices and the pointer.** `InputManagerService` answers
+  `IInputManager` for AOSP's `InputManagerGlobal`: Win.apk's own
+  `InputDevice`s, no tablet-mode switch, and the pointer icon and capture
+  accepted and left alone (Windows draws its own cursor). `ViewRootImpl` asks it
+  on every mouse event (`updatePointerIcon`); without it a mouse's events threw
+  out of the input stage.
 - **AOSP code that input reaches,** each with LinkScan's count down by its
   entry: `RippleDrawable`'s patterned ripple is started only on a hardware
   canvas (AOSP skips drawing it on a software one, and building its
@@ -696,7 +702,15 @@ it runs: `ViewHost`'s defaults keep Win.apk's `TouchDispatcher`.
   `getId`, display ids, `isTouchEvent`...).
 - **Scripted input.** `MACAPK_INJECT_FILE`'s verbs (`tap`, `swipe`, `key`,
   `text`...) go through `AospInput` too (`InjectInput`), and `imetext <text>`
-  (new, both paths) composes and commits as Windows' IME does.
+  (new, both paths) composes and commits as Windows' IME does. The host's own
+  mouse verbs now work on Windows too, through the window's own messages
+  (`win32_window.cpp` `window_post_mouse`/`window_post_wheel`, so a script
+  takes the user's path: the window procedure, `pointer_input.h`, the
+  dispatcher): `hosttap`/`hostswipe` (the left button, a finger),
+  `hostmouse <fx> <fy> <move|ldown|lup|rdown|rup|mdown|mup|leave>` (new: the
+  other buttons and hover), `hostwheel <fx> <fy> <notches> [<h notches>]` and
+  `magnify <fx> <fy> <phase> <m>` (Ctrl+wheel, as many notches as zoom by
+  1 + m). They need a window: not headless.
 
 Checked (Wine, 360x640 dp at 320 dpi, Sudoku): a tap on the "Latest changes"
 dialog's OK removes the dialog's window; "Puzzle Lists", then the MENU key opens
@@ -704,7 +718,11 @@ the overflow menu (a `PopupWindow`, type 1002, over the activity); "Add folder"
 opens a dialog whose `EditText` takes focus; `text Hello` types through the
 key listeners and `imetext שלום` composes and commits Hebrew into the field
 (right to left after the Latin text); Save closes it; Settings, a
-`ListPreference` screen, picking an entry and BACK all work. `HostTouchTest` passes on both
+`ListPreference` screen, picking an entry and BACK all work. With a window
+(Xvfb), the host's mouse: hover lights the preference row under the pointer,
+two wheel notches scroll the settings list, a right click arrives as
+`DOWN`/`BUTTON_PRESS`/`BUTTON_RELEASE`/`UP` with `BUTTON_SECONDARY` from
+`SOURCE_MOUSE`, and `magnify` as a two-finger touchscreen gesture. `HostTouchTest` passes on both
 class paths. The probe and the Gallery and Sudoku sweeps are byte-identical to
 V1's, on and off (on, Sudoku's but for two `TypedValue@<hash>` names in stack
 traces, which change from run to run).
@@ -713,13 +731,44 @@ The editor actions come as with a phone's hardware keyboard: Enter in a
 single-line field is `TextView`'s own `onEditorAction` (not yet checked in an
 app). Left for V2: an on-screen keyboard (none: the host's keyboard is the
 input method), drag and drop, pointer capture and
-`PointerIcon` (the cursor stays the arrow), `InputEventSender` (not used by
+`PointerIcon` (the cursor stays Windows' own), `InputEventSender` (not used by
 apps), touch-mode changes reported to the window manager (`setInTouchMode` is
 answered empty), a UI Automation bridge for accessibility, spell checking.
-Seen in Sudoku and not chased: after picking Dark mode the settings screen
-recreates with light text on a white window background; its folder list stays
-empty after Save (its database upgrade fails at start, `duplicate column
-name: rating_level`, with the switch off too).
+Seen in Sudoku and not chased: its folder list stays empty after Save (its
+database upgrade fails at start, `duplicate column name: rating_level`, with
+the switch off too).
+
+**A context's configuration override.** Picking Dark mode in Sudoku came back
+with light text on a white window. AppCompat recreates the activity and, in
+`attachBaseContext2`, wraps its base in a `ContextThemeWrapper` with an override
+configuration (`uiMode` night); that wrapper's Resources are
+`createConfigurationContext(override).getResources()`. Win.apk's
+`createConfigurationContext` handed back the application's one Resources, and
+`Activity.getResources()` skipped its base for the application's: in
+`onCreate` the app read a day configuration and chose its light theme
+(`windowBackground` `?colorSurface`, white), then AppCompat moved the shared
+Resources to night, so its text resolved night's colours over the light theme.
+Now, as on Android: `createConfigurationContext` and a
+`ContextThemeWrapper` with `applyOverrideConfiguration` read
+`ResBackend.resourcesForConfiguration(base, override)`, which with AOSP's
+resources (`AospRes`) is what `ResourcesManager` hands out, Resources for the
+base's configuration updated from the override (its own `AssetManager` over the
+same `ApkAssets`), one per override and kept in step with the application's
+configuration through its `ComponentCallbacks`; and with `WINAPK_AOSP_RES=1`
+`Activity.getResources()` is its base's, `getAssets()` theirs. Win.apk's own
+resources have one configuration and answer the base, as before. Sudoku's
+settings and title screen come back on its AMOLED theme.
+
+**Class-data sharing with the switches on.** `--cds-prepare` with
+`WINAPK_AOSP_RES=1 WINAPK_AOSP_VIEWS=1` dumps
+`framework-aospviews-<key>.jsa` (41.4 MB; two classes, AOSP's `Dialog` and
+`AlertDialog`, fail verification at dump time and are left out, loaded at run
+time as before), the first start maps it whole (`-XX:+VerifySharedSpaces`) and
+marks it `.ok`, and later starts map it. Sudoku's first frame under Wine:
+11.66-11.86 s with it (three starts) against 15.9-20.9 s with `WINAPK_CDS=0`,
+the same frame byte for byte. The stage's JRE must be baked over the current
+`java.base` patch (`bake_jre.sh`), or the runtime keeps `--patch-module` and
+runs without CDS, and says so.
 
 ## 5. Size, start and memory
 
