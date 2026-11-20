@@ -26,7 +26,8 @@ agents' work folders were `/opt/uip/il-work/<app>/`, gone with the container).
 - Decided (November 2026): an app that comes as a bundle (.apkm/.xapk/.apks)
   is not kept whole in `library\` once installed: one copy of its APKs only.
   Fonts: Hebrew and English (Latin) matter most; the CJK font (19 MB) leaves
-  the install, with a fallback for CJK text.
+  the install, with a fallback for CJK text (done: Windows' own CJK fonts,
+  below).
 - The owner reads Hebrew only: answers to the owner are in Hebrew, with no
   English words at all where avoidable (not even "CI", "PR" or file names).
 - Order agreed (November 2026): AOSP drawables and icons under the switch,
@@ -240,31 +241,34 @@ the app); if it is still there, it is a bug in what replaced it.
   current; the launcher now removes it first). Left: a bundle's OBB files
   (`Android/obb/` in an `.xapk`) were never installed and now go with the
   bundle; a bundletool set's other whole-app alternatives go too.
-- **CJK and emoji fonts** (Noto CJK Regular 19 MB, Color Emoji 9 MB) fetched
-  on first need into the data folder: looked at, not done, because the font
-  setup cannot wait for a file. `AospGfx.materializeSystemFonts` builds the
-  system fallback chain once, before the first frame
-  (`SystemFonts.getSystemFontConfigInternal` over `bin\aosp\fonts\fonts.xml`,
-  then `buildSystemFallback`, `Typeface.setSystemFontMap`); AOSP's
-  `createFontFamily` skips a font file it cannot map, so a run that starts
-  without it has no CJK family to its end, and text already measured keeps
-  its boxes even if the map were rebuilt (minikin's layout cache, laid-out
-  `TextView`s). The same files are `/system/fonts` for native code
-  (Flutter's text reads them). A design that would work: (1) the first run
-  that needs the font (a CJK locale, or the first `.notdef` for a CJK code
-  point, counted where the text layer asks for glyphs) starts a background
-  download of NotoSansCJK-Regular.ttc (from the same android-all release, by
-  SHA-256) into `%LOCALAPPDATA%\Win.apk\fonts\`, as the update check
-  downloads, and the font shows from the next start; (2) at start, if the
-  file is there, `materializeSystemFonts` passes it through
-  `getSystemFontConfigInternal`'s `updatableFontMap` (the device's
-  `/data/fonts` mechanism: a font by name from another folder), and the
-  native `/system/fonts` view links it in. Until downloaded, CJK text draws
-  boxes for one run, which is what Android avoids by shipping the font. A
-  cheaper alternative with no download: Windows' own CJK fonts (Microsoft
-  YaHei, Yu Gothic, Malgun Gothic) as the fallback families, with other
-  metrics than a phone's. Saves 19 MB of the install (the CJK font compresses
-  little).
+- **CJK text is drawn with Windows' fonts** (done, November 2026, the
+  owner's decision above): Noto CJK Regular (19 MB, about 11 MB of the
+  installer) is no longer staged; `HostCjkFonts` puts Microsoft YaHei,
+  JhengHei, Yu Gothic and Malgun Gothic (then SimSun, MingLiU, Meiryo, MS
+  Gothic, Gulim) behind fonts.xml's four CJK families, in a fonts.xml of
+  `cache\aosp-fonts\` that Java (through `updatableFontMap`) and native code
+  (`/system/etc/fonts.xml`; `/system/fonts` finds a name in `bin\aosp\fonts`
+  and then in `%WINDIR%\Fonts`, `paths.cpp`) both read. Checked under Wine
+  with stand-in fonts carrying Windows' names (Wine has no CJK font) and
+  with none (boxes, no failure); the UI probe's lines are the same with and
+  without Noto CJK. **Check on real Windows**: that the PostScript names in
+  `HostCjkFonts.TABLE` match Windows 10 and 11's files (a mismatch still
+  takes the file's first face) and a Chinese, a Japanese and a Korean app.
+  Known difference: CJK lines measure as Windows' faces do (taller ascent and
+  descent than Noto CJK, other punctuation advances), so CJK text wraps and
+  spaces differently from a phone; Latin, Hebrew, Arabic and emoji are
+  untouched. Left as they were (proposal, not done): the other scripts, which
+  Windows also covers (Thai, the Indic scripts, Ethiopic, Tibetan, Khmer,
+  Myanmar, Sinhala and the historic ones, through Leelawadee UI, Nirmala UI,
+  Ebrima, Microsoft Himalaya, Khmer UI, Myanmar Text, Segoe UI Historic), are
+  154 files, 9.5 MB together, 0.004-0.5 MB each (the largest Egyptian
+  Hieroglyphs and Cuneiform): little per script, and each would measure
+  differently from a phone, so the same mechanism is not worth it yet; the
+  emoji font (9 MB) stays, Segoe UI Emoji draws other pictures. A download
+  of Noto CJK on first need (the earlier design: `updatableFontMap`, the
+  font from the next start) remains possible should exact CJK metrics be
+  wanted: `HostCjkFonts.setUp` already steps aside when
+  `NotoSansCJK-Regular.ttc` is in the fonts folder.
 - **Memory has no budget yet**: the smoke test records each app's peak working
   set; add a limit once a few CI runs show the spread.
 - **Frame time has only a collapse budget** (`windows/README.md` "Frame

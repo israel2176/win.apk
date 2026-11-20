@@ -21,13 +21,13 @@ import sys
 # the last part takes every file the others do not.
 BUDGETS = [
     ("AOSP graphics (the default; WINAPK_AOSP_GFX=0 is Java2D)",
-     ["bin/aosp/", "bin/robolectric-nativeruntime.dll", "lib/aosp-graphics.jar"], 90),
+     ["bin/aosp/", "bin/robolectric-nativeruntime.dll", "lib/aosp-graphics.jar"], 70),
     ("Java runtime (jre/)", ["jre/"], 140),
     ("ARM translation's compiler (clang/)", ["clang/"], 250),
     ("Win.apk itself (the rest, bin/tools/ included)", None, 120),
 ]
-TOTAL_BUDGET = 600       # the installed folder
-INSTALLER_BUDGET = 175   # Win.apk-Setup.exe
+TOTAL_BUDGET = 580       # the installed folder
+INSTALLER_BUDGET = 165   # Win.apk-Setup.exe
 
 
 def files(stage):

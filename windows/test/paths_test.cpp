@@ -41,6 +41,43 @@ void check(const char* what, const std::wstring& got, const std::wstring& want) 
 
 std::wstring host(const char* p) { return winapk::android_host_path(p); }
 
+// /system/fonts: one folder (the Java2D cache, or bin\aosp\fonts with Noto CJK), or AospGfx's
+// "<fonts.xml>|<Android's fonts>|<Windows' fonts>", where a font is the first folder's that has it.
+void fonts_search() {
+    winapk::set_system_fonts_dir("C:\\fonts\\");
+    check("fonts.xml, one folder", host("/system/etc/fonts.xml"), L"C:\\fonts\\fonts.xml");
+    check("font, one folder", host("/system/fonts/Roboto-Regular.ttf"), L"C:\\fonts\\Roboto-Regular.ttf");
+
+    wchar_t temp[MAX_PATH];
+    GetTempPathW(MAX_PATH, temp);
+    const std::wstring base = std::wstring(temp) + L"winapk-fonts-test-" + std::to_wstring(GetCurrentProcessId());
+    const std::wstring android = base + L"\\android", windows = base + L"\\windows";
+    CreateDirectoryW(base.c_str(), nullptr);
+    CreateDirectoryW(android.c_str(), nullptr);
+    CreateDirectoryW(windows.c_str(), nullptr);
+    for (const std::wstring& f : {android + L"\\Roboto-Regular.ttf", windows + L"\\msyh.ttc",
+                                  windows + L"\\Roboto-Regular.ttf"}) {
+        CloseHandle(CreateFileW(f.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, 0, nullptr));
+    }
+    char spec[MAX_PATH * 9];
+    WideCharToMultiByte(CP_UTF8, 0, (base + L"\\fonts-1.xml|" + android + L"|" + windows).c_str(), -1, spec,
+                        sizeof spec, nullptr, nullptr);
+    winapk::set_system_fonts_dir(spec);
+    check("fonts.xml, its own file", host("/system/etc/fonts.xml"), base + L"\\fonts-1.xml");
+    check("Android's font first", host("/system/fonts/Roboto-Regular.ttf"), android + L"\\Roboto-Regular.ttf");
+    check("Windows' CJK font", host("/system/fonts/msyh.ttc"), windows + L"\\msyh.ttc");
+    check("a font in neither", host("/system/fonts/NotoSansCJK-Regular.ttc"), android + L"\\NotoSansCJK-Regular.ttc");
+    check("the folder", host("/system/fonts"), android);
+    for (const std::wstring& f : {android + L"\\Roboto-Regular.ttf", windows + L"\\msyh.ttc",
+                                  windows + L"\\Roboto-Regular.ttf"}) {
+        DeleteFileW(f.c_str());
+    }
+    RemoveDirectoryW(android.c_str());
+    RemoveDirectoryW(windows.c_str());
+    RemoveDirectoryW(base.c_str());
+    winapk::set_system_fonts_dir("");
+}
+
 // The shim's own calls on real files, under a scratch Android root in %TEMP%:
 // a file whose name Windows forbids is created, found on disk under its
 // private-use name, listed by its Android name (by path and by descriptor),
@@ -193,6 +230,8 @@ int main() {
 
     // A generic Android absolute path with no special prefix nests under the root.
     check("generic /opt", host("/opt/thing"), L"C:\\root\\opt\\thing");
+
+    fonts_search();
 
     // Names Windows forbids: in the Android part each such character is stored
     // as U+F000 + the character (WSL's and Cygwin's mapping), and a listing

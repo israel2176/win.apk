@@ -92,7 +92,9 @@ final class AospGfx implements GfxBackend {
      * Typeface::resolveDefault(nullptr), which aborts the process ("Assertion failed: src ==
      * nullptr && gDefaultTypeface == nullptr"). So: the families of the runtime's own fonts.xml
      * (bin/aosp/fonts, -Dwinapk.aosp.fonts), as the aospgfx test does, and that folder is
-     * /system/fonts for native code too, so both read the same files.
+     * /system/fonts for native code too, so both read the same files. The install carries no CJK
+     * font: its four families are Windows' own (HostCjkFonts), in a fonts.xml of the cache that both
+     * read, with /system/fonts finding a name in the folder and then in %WINDIR%\Fonts.
      */
     @Override public String materializeSystemFonts(Function<String, String> hostFontFile) {
         String dir = System.getProperty("winapk.aosp.fonts");
@@ -102,12 +104,31 @@ final class AospGfx implements GfxBackend {
         }
         String d = dir.replace('\\', '/');
         if (!d.endsWith("/")) d += "/";
+        String xml = d + "fonts.xml";
+        Map<String, File> windowsFiles = new java.util.HashMap<>();
+        // What native code's /system/fonts is: the folder alone, or "<fonts.xml>|<folder>|<Windows'
+        // fonts>" when the CJK families are Windows' (paths.cpp, set_system_fonts_dir).
+        String published = new File(dir).getAbsolutePath();
+        try {
+            File windowsFonts = HostCjkFonts.windowsFontsDir();
+            HostCjkFonts.Result cjk = HostCjkFonts.setUp(new File(dir), windowsFonts,
+                    com.macapk.loader.HostAppSupport.file("cache/aosp-fonts"));
+            if (cjk != null) {
+                xml = cjk.fontsXml.getAbsolutePath().replace('\\', '/');
+                windowsFiles.putAll(cjk.files);
+                published = cjk.fontsXml.getAbsolutePath() + "|" + published
+                        + (windowsFonts != null ? "|" + windowsFonts.getAbsolutePath() : "");
+                log("CJK fonts from Windows: " + cjk.summary);
+            }
+        } catch (Throwable t) {
+            log("CJK fonts from Windows failed (CJK text draws boxes): " + t);
+        }
         // That folder is /system/fonts and /system/etc/fonts.xml before anything below touches
         // Typeface: its static initializer reads the device's config by those names
         // (SystemFonts.getSystemPreinstalledFontConfig), for the families' locales and the fonts it
         // preloads; Boot sets the same folder again from what this returns.
         try {
-            com.macapk.loader.NativeCocoa.setSystemFontsDir(new File(dir).getAbsolutePath());
+            com.macapk.loader.NativeCocoa.setSystemFontsDir(published);
         } catch (Throwable t) {
             log("/system/fonts not mapped: " + t);
         }
@@ -116,21 +137,23 @@ final class AospGfx implements GfxBackend {
             Method config = systemFonts.getDeclaredMethod("getSystemFontConfigInternal", String.class,
                     String.class, String.class, String.class, Map.class, long.class, int.class);
             config.setAccessible(true);
-            Object cfg = config.invoke(null, d + "fonts.xml", d, "/nonexistent.xml", "/nonexistent/",
-                    new java.util.HashMap<>(), 0L, 0);
+            // The Windows files by the PostScript name their elements carry: SystemFonts'
+            // updatableFontMap, the way a device's /data/fonts names a font outside /system/fonts.
+            Object cfg = config.invoke(null, xml, d, "/nonexistent.xml", "/nonexistent/",
+                    windowsFiles, 0L, 0);
             Class<?> fontConfig = Class.forName("android.text.FontConfig");
             Object fallback = systemFonts.getMethod("buildSystemFallback", fontConfig).invoke(null, cfg);
             Object map = systemFonts.getMethod("buildSystemTypefaces", fontConfig, Map.class)
                     .invoke(null, cfg, fallback);
             Typeface.class.getMethod("setSystemFontMap", Map.class).invoke(null, map);
-            log("system fonts from " + d + "fonts.xml: " + ((Map<?, ?>) map).size() + " families");
+            log("system fonts from " + xml + ": " + ((Map<?, ?>) map).size() + " families");
         } catch (Throwable t) {
             Throwable c = t instanceof java.lang.reflect.InvocationTargetException && t.getCause() != null
                     ? t.getCause() : t;
-            log("system fonts from " + d + "fonts.xml failed: " + c);
+            log("system fonts from " + xml + " failed: " + c);
             return null;
         }
-        return new File(dir).getAbsolutePath();
+        return published;
     }
 
     @Override public Typeface.Builder typefaceBuilderFromStream(InputStream in) {
