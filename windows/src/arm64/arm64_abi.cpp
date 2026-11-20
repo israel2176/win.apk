@@ -235,6 +235,34 @@ using Syscall = int64_t(WINAPK_GUEST_ABI*)(int64_t, int64_t, int64_t, int64_t, i
 using Fn3 = int64_t(WINAPK_GUEST_ABI*)(int64_t, int64_t, int64_t);
 using Fn4 = int64_t(WINAPK_GUEST_ABI*)(int64_t, int64_t, int64_t, int64_t);
 
+// Calls answered by the shim's libc function of the same name, whose arguments
+// arm64 lays out as x86_64 does (the shim's functions take x86_64's structs,
+// so only calls whose structs are the same on both are here). Protection and
+// runtime libraries make these as raw SVCs so that nothing hooking libc sees
+// them (Leumi's libe689.so maps its memory with SVC 222).
+struct LibcCall {
+    uint64_t nr;
+    const char* name;
+};
+constexpr LibcCall kLibcCalls[] = {
+    {17, "getcwd"},           {23, "dup"},               {24, "dup3"},              {25, "fcntl"},
+    {26, "inotify_init1"},    {27, "inotify_add_watch"}, {28, "inotify_rm_watch"},  {29, "ioctl"},
+    {34, "mkdirat"},          {35, "unlinkat"},          {46, "ftruncate"},         {59, "pipe2"},
+    {65, "readv"},            {66, "writev"},            {67, "pread64"},           {68, "pwrite64"},
+    {78, "readlinkat"},       {82, "fsync"},             {101, "nanosleep"},        {114, "clock_getres"},
+    {115, "clock_nanosleep"}, {117, "ptrace"},           {140, "setpriority"},      {141, "getpriority"},
+    {160, "uname"},           {165, "getrusage"},        {169, "gettimeofday"},     {173, "getppid"},
+    {174, "getuid"},          {175, "geteuid"},          {176, "getgid"},           {177, "getegid"},
+    {179, "sysinfo"},         {227, "msync"},            {232, "mincore"},          {261, "prlimit64"},
+};
+
+const char* libc_call(uint64_t nr) {
+    for (const auto& c : kLibcCalls) {
+        if (c.nr == nr) return mini_bionic_resolve(c.name) ? c.name : nullptr;
+    }
+    return nullptr;
+}
+
 bool known_syscall(uint64_t nr) {
     switch (nr) {
         case 98: case 178: case 172: case 124: case 278: case 113: case 233: case 283:   // via the shim's syscall()
@@ -242,9 +270,10 @@ bool known_syscall(uint64_t nr) {
         case 56: case 57: case 62: case 63: case 64: case 79: case 80: case 93: case 94:  // via libc functions
         case 96: case 132: case 134: case 135: case 167:
         case 48: case 129: case 130: case 131:  // faccessat; kill, tkill, tgkill
+        case 222: case 215: case 226: case 216:  // mmap, munmap, mprotect, mremap
             return true;
         default:
-            return false;
+            return libc_call(nr) != nullptr;
     }
 }
 
@@ -304,14 +333,35 @@ int64_t do_syscall(uint64_t nr, const uint64_t a[6]) {
         case 93: case 94:
             shim<void(WINAPK_GUEST_ABI*)(int64_t)>("_exit")(static_cast<int64_t>(a[0]));
             return 0;
-        default:  // sigaltstack, rt_sigaction, rt_sigprocmask, prctl
+        // Memory, through the wrappers the mmap/mprotect/munmap imports bind to, so that an executable
+        // mapping made by raw call is registered as guest code too.
+        case 222:
+            return reinterpret_cast<int64_t>(a64_mmap(reinterpret_cast<void*>(a[0]), static_cast<size_t>(a[1]),
+                                                      static_cast<int>(a[2]), static_cast<int>(a[3]),
+                                                      static_cast<int>(a[4]), static_cast<int64_t>(a[5])));
+        case 215: return a64_munmap(reinterpret_cast<void*>(a[0]), static_cast<size_t>(a[1]));
+        case 226:
+            return a64_mprotect(reinterpret_cast<void*>(a[0]), static_cast<size_t>(a[1]), static_cast<int>(a[2]));
+        case 216:  // mremap: the shim's answer (ENOMEM), on which callers map, copy and unmap themselves
+            return reinterpret_cast<int64_t>(shim<void*(WINAPK_GUEST_ABI*)()>("mremap")());
+        case 132: case 134: case 135: case 167:  // sigaltstack, rt_sigaction, rt_sigprocmask, prctl
+            return 0;
+        default:
+            if (const char* name = libc_call(nr)) {
+                return shim<Syscall>(name)(static_cast<int64_t>(a[0]), static_cast<int64_t>(a[1]),
+                                           static_cast<int64_t>(a[2]), static_cast<int64_t>(a[3]),
+                                           static_cast<int64_t>(a[4]), static_cast<int64_t>(a[5]));
+            }
             return 0;
     }
 }
 
-WINAPK_GUEST_ABI int64_t a64_syscall(int64_t nr, int64_t a0, int64_t a1, int64_t a2, int64_t a3, int64_t a4) {
+// a5 (mmap's offset) is the guest's x6, which the bridge passes on as the first stack argument; a caller
+// with fewer arguments leaves whatever x6 held, which only the calls that take six read.
+WINAPK_GUEST_ABI int64_t a64_syscall(int64_t nr, int64_t a0, int64_t a1, int64_t a2, int64_t a3, int64_t a4,
+                                     int64_t a5) {
     const uint64_t a[6] = {static_cast<uint64_t>(a0), static_cast<uint64_t>(a1), static_cast<uint64_t>(a2),
-                           static_cast<uint64_t>(a3), static_cast<uint64_t>(a4), 0};
+                           static_cast<uint64_t>(a3), static_cast<uint64_t>(a4), static_cast<uint64_t>(a5)};
     if (!known_syscall(static_cast<uint64_t>(nr))) {
         *shim<int*(WINAPK_GUEST_ABI*)()>("__errno")() = 38;  // ENOSYS
         return -1;

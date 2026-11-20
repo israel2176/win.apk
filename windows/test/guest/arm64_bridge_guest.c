@@ -331,3 +331,54 @@ static int abort_tail(const char* fmt, ...) {
 EXPORT int arm64_abort_tail(void) {
     return abort_tail("terminating due to uncaught exception of type %s: %s", "E", "what");
 }
+
+// ---- raw system calls -------------------------------------------------------------
+// Protection libraries (Leumi's libe689.so) make their calls as raw SVCs, by
+// arm64's numbers, so that nothing hooking libc sees them; others go through
+// syscall(). Each check is one bit of the result, so the test names a failure.
+long syscall(long, ...);
+int getpid(void);
+int gettid(void);
+int getuid(void);
+struct a64_timespec { long tv_sec, tv_nsec; };
+struct a64_utsname { char sysname[65], nodename[65], release[65], version[65], machine[65], domainname[65]; };
+
+static long svc6(long nr, long a0, long a1, long a2, long a3, long a4, long a5) {
+    register long x8 __asm__("x8") = nr;
+    register long x0 __asm__("x0") = a0;
+    register long x1 __asm__("x1") = a1;
+    register long x2 __asm__("x2") = a2;
+    register long x3 __asm__("x3") = a3;
+    register long x4 __asm__("x4") = a4;
+    register long x5 __asm__("x5") = a5;
+    __asm__ volatile("svc #0" : "+r"(x0) : "r"(x8), "r"(x1), "r"(x2), "r"(x3), "r"(x4), "r"(x5) : "memory");
+    return x0;
+}
+
+EXPORT int arm64_raw_syscalls(void) {
+    int bits = 0;
+    // SVC 222 mmap (1 MB, read/write, MAP_PRIVATE | MAP_ANONYMOUS), 226 mprotect, 215 munmap.
+    char* p = (char*)svc6(222, 0, 1 << 20, 3, 0x22, -1, 0);
+    if (p && (unsigned long)p < (unsigned long)-4096L) {
+        p[0] = 1;
+        p[(1 << 20) - 1] = 2;
+        if (p[1 << 19] == 0) bits |= 1;
+        if (svc6(226, (long)p, 65536, 1, 0, 0, 0) == 0) bits |= 2;
+        if (svc6(215, (long)p, 1 << 20, 0, 0, 0, 0) == 0) bits |= 4;
+    }
+    // The same three through the syscall() import: six arguments, the sixth on the bridge's stack.
+    char* q = (char*)syscall(222, 0L, 65536L, 3L, 0x22L, -1L, 0L);
+    if (q && q != (char*)-1) {
+        q[65535] = 5;
+        if (syscall(226, q, 65536L, 1L) == 0 && syscall(215, q, 65536L) == 0) bits |= 8;
+    }
+    if (svc6(172, 0, 0, 0, 0, 0, 0) == getpid() && svc6(178, 0, 0, 0, 0, 0, 0) == gettid()) bits |= 16;
+    if (svc6(174, 0, 0, 0, 0, 0, 0) == getuid()) bits |= 32;
+    struct a64_timespec ts = {0, 1000000};
+    if (svc6(101, (long)&ts, 0, 0, 0, 0, 0) == 0) bits |= 64;
+    struct a64_utsname u;
+    if (svc6(160, (long)&u, 0, 0, 0, 0, 0) == 0 && strcmp(u.sysname, "Linux") == 0) bits |= 128;
+    // A call the shim does not have: -ENOSYS in x0, as a kernel without it answers.
+    if (svc6(9999, 0, 0, 0, 0, 0, 0) == -38) bits |= 256;
+    return bits;
+}

@@ -248,6 +248,14 @@ void run_bridge(winapk::GuestLinker& linker, const char* file) {
     check("libc++abi's abort path short of abort (vasprintf, android_set_abort_message, openlog, syslog, vsyslog)",
           call0("arm64_abort_tail") == 1, std::to_string(call0("arm64_abort_tail")));
 
+    // Raw SVCs by arm64's numbers (arm64_abi.cpp's linux_syscall): mmap 222, mprotect 226 and munmap 215,
+    // also through syscall(); getpid, gettid, getuid, nanosleep, uname; an unknown one is -ENOSYS.
+    {
+        const int raw = call0("arm64_raw_syscalls");
+        check("raw arm64 system calls (mmap, mprotect, munmap, getpid, gettid, getuid, nanosleep, uname, ENOSYS)",
+              raw == 511, std::to_string(raw));
+    }
+
     const int exits_before = call0("arm64_exit_count");
     check("__cxa_atexit with a guest handler", call0("arm64_register_atexit") == 0);
     winapk::mini_bionic_run_atexit();
