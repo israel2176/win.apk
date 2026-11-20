@@ -61,7 +61,7 @@ the app); if it is still there, it is a bug in what replaced it.
 | 13 | Waze's location-permission screen shows "1. Select Precise" without the second step; Html/StaticLayout give all lines on a plain JVM, so Compose text or the app's choice; not found | | Waze | check |
 | 14 | Mercantile's login banner: its second line drawn wider than its box, first letter clipped (likely the typeface bug fixed in b82a102; verify) | | Mercantile | check |
 | 15 | Win.apk is lenient where Android throws: a missing `layout_width` gets a default, an unknown or R8-removed class becomes a FrameLayout, `View.measure` swallows an `onMeasure` exception, an unresolved `?attr` int is accepted. Hides real crashes. | `LayoutInflater` ~1253, ~1534; `View.java` ~5332-5360 | Waze, Bit | views |
-| 16 | `Resources.getResourceEntryName/TypeName/Name` invent `id_0x...` for an unknown id instead of throwing `NotFoundException`; also answer for a land-only layout in portrait | `Resources.java` ~5626-5702 | all | resources |
+| 16 | `Resources.getResourceEntryName/TypeName/Name` invent `id_0x...` for an unknown id instead of throwing `NotFoundException`; also answer for a land-only layout in portrait. **Gone with `WINAPK_AOSP_RES=1`** (Sudoku's sweep: throws, and 117 layouts instead of 118); still there with it off | `Resources.java` ~5626-5702 | all | resources |
 | 17 | ~~`android.widget.DateTimeView` missing (notification templates become FrameLayouts)~~ Added (AOSP 14's, `DateTimeViewTest`); the screens check to confirm the templates now inflate it | `android/widget/DateTimeView.java` | Waze, Hapoalim, Mercantile | views |
 | 18 | Maccabi `item_service_request_interaction` RTL: `NonScrollListView` at y=95.5 where Android has 10 (and 0 wide); moved 1 dp further after includeFontPadding | constraint direction (5) | Maccabi | views |
 | 19 | `LinearLayout.setGravity` stores the raw value; AOSP adds START / TOP when a direction is missing, so with `gravity="right"` `layoutHorizontal` takes its default branch and drops `layout_marginTop` (100+ cases) | `LinearLayout.java` ~191, ~1168 | Leumi | views |
@@ -434,6 +434,24 @@ the app); if it is still there, it is a bug in what replaced it.
   `GLUtils.texImage2D` (`GfxBackend.argbBuffer`: `getPixels`). Clipboard
   images: none on either path. The scan tool is not in the repository (a
   page of Java over the class files' constant pools); it found nothing more.
+- **AOSP resources, step R1, first part** (`WINAPK_AOSP_RES=1`, off by default;
+  `docs/research/aosp-views.md` "R1 as built"): AOSP 14's `android.content.res`
+  on Robolectric's libandroidfw port, android-all's API 34 table, a second
+  `ResBackend` (`windows/java/aosp_res`). Off is byte-identical (probe). On,
+  under Wine: the probe 146 lines from the oracle instead of 162, every
+  `theme`, `styles.lib` and `drawables` line equal to it, `regress.py` 16
+  fixed, 0 REGRESSED, 0 FARTHER, 0 MISSING (the first run's 2 REGRESSED lines
+  were `View.draw` tinting a background without `mutate()`, which recoloured
+  every drawable sharing the state AOSP's drawable cache hands out; fixed in
+  `View`); Gallery 279 -> 275
+  lines, Sudoku 225 -> 225, none worse; framework table 0.2 s, warm start
+  +0.3-0.6 s (both tables are read: Win.apk's name index still answers the
+  inflater). Left: the DOM inflater's name-based reads and
+  `AnimationUtils`/`AnimatorInflater` on AOSP's parsers (untested); sets made
+  up in code (no compiled form: AOSP reads no XML attributes for them); a
+  window resize (AOSP's `Resources` copies the configuration where Win.apk's
+  kept it by reference; untested); split APKs; CDS with the switch on; real
+  Windows; more apps. Then R2 (libandroidfw native) and V1.
 - **Screens checks not finished**: Bank Leumi (stopped by the usage limit
   before its boot), Pango and Paybox (not on APKPure; the owner offered their
   other repository or a Play download).

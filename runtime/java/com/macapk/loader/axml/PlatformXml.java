@@ -65,7 +65,7 @@ public final class PlatformXml {
     private static XmlResourceParser open(int id, boolean layoutOnly) {
         if ((id >>> 24) != 0x01) return null;
         try {
-            Object o = android.content.res.Resources.macapkGetResourceIndex();
+            Object o = com.macapk.loader.res.ResBackend.get().resourceIndex();
             if (!(o instanceof ResourceIndex ri)) return null;
             String path = pathOf(ri, id);
             if (path == null || MISSES.contains(path)) return null;

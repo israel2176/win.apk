@@ -784,7 +784,7 @@ public class LayoutInflater {
                 return macapkInflateDocument(doc, root, attachToRoot, resource);
             }
             try {
-                xmlStream = r.openRawResource(resource);
+                xmlStream = com.macapk.loader.res.ResBackend.get().openXmlText(r, resource);
             } catch (android.content.res.Resources.NotFoundException nf) {
                 xmlStream = null;   // -> the getLayout() path below
             }
@@ -793,6 +793,7 @@ public class LayoutInflater {
                 dbf.setNamespaceAware(true);
                 DocumentBuilder db = dbf.newDocumentBuilder();
                 doc = db.parse(xmlStream);
+                com.macapk.loader.res.ResBackend.get().markCompiledSource(doc, r, resource);
                 macapkDropAttrIdRecords(doc.getDocumentElement());
             } else {
                 // AOSP's inflate(int,...) reads the layout through
@@ -1164,7 +1165,7 @@ public class LayoutInflater {
                         return parent;
                     }
                 } else {
-                    java.io.InputStream s = r.openRawResource(layoutId);
+                    java.io.InputStream s = com.macapk.loader.res.ResBackend.get().openXmlText(r, layoutId);
                     if (s == null) {
                         NativeLog.w(TAG, "include: no resource for " + layoutRef);
                         return parent;
@@ -1173,6 +1174,7 @@ public class LayoutInflater {
                     dbf.setNamespaceAware(true);
                     DocumentBuilder db = dbf.newDocumentBuilder();
                     try { doc = db.parse(s); } finally { try { s.close(); } catch (Throwable ignored) {} }
+                    com.macapk.loader.res.ResBackend.get().markCompiledSource(doc, r, layoutId);
                     macapkDropAttrIdRecords(doc.getDocumentElement());
                 }
                 Element rootElem = doc.getDocumentElement();
@@ -3242,8 +3244,23 @@ public class LayoutInflater {
      *  Older code paths that instantiate views WITHOUT a DOM element
      *  (e.g. programmatic widget creation in app code) get the
      *  EmptyAttributeSet stub. */
-    private final class DomBackedAttributeSet implements android.util.AttributeSet {
+    private final class DomBackedAttributeSet implements android.util.AttributeSet,
+            com.macapk.loader.res.CompiledXml {
         private final Element elem;
+
+        /** Where the element came from, for AOSP's resources (CompiledXml; recorded only with
+         *  WINAPK_AOSP_RES=1). */
+        @Override public byte[] compiledXml() {
+            org.w3c.dom.Document d = elem.getOwnerDocument();
+            Object b = d == null ? null : d.getUserData(com.macapk.loader.BinaryXmlParser.COMPILED_KEY);
+            return b instanceof byte[] && elem.getUserData(com.macapk.loader.BinaryXmlParser.COMPILED_KEY)
+                    instanceof Integer ? (byte[]) b : null;
+        }
+
+        @Override public int startTagIndex() {
+            Object i = elem.getUserData(com.macapk.loader.BinaryXmlParser.COMPILED_KEY);
+            return i instanceof Integer ? (Integer) i : -1;
+        }
         /** The Context whose THEME resolves a `style="?attr"` on this element:
          *  the view's own context (the inflate context, which carries the
          *  element's `android:theme` overlay) for everything the view reads, and

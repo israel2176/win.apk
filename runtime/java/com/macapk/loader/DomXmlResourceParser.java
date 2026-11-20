@@ -717,7 +717,7 @@ public final class DomXmlResourceParser
         final boolean isAndroidNs = uri != null
             && uri.startsWith("http://schemas.android.com/apk/res/android");
         if (isAndroidNs) {
-            int id = android.content.res.ColorStateList.macapkFrameworkAttrId(local);
+            int id = com.macapk.loader.res.ResBackend.get().frameworkAttrId(local);
             if (id == 0) warnUnresolvedAttr("android", local);
             return id;
         }
@@ -730,7 +730,7 @@ public final class DomXmlResourceParser
         // No namespace declared: the app's own table first, framework second.
         int id = lookupResource("attr", local);
         if (id != 0) return id;
-        return android.content.res.ColorStateList.macapkFrameworkAttrId(local);
+        return com.macapk.loader.res.ResBackend.get().frameworkAttrId(local);
     }
     private static void warnUnresolvedAttr(String ns, String local) {
         if (!sUnresolvedAttrWarned.add(ns + ":" + local)) return;
@@ -833,7 +833,7 @@ public final class DomXmlResourceParser
      *  initialized yet. */
     private static int lookupResource(String type, String name) {
         try {
-            Object idx = android.content.res.Resources.macapkGetResourceIndex();
+            Object idx = com.macapk.loader.res.ResBackend.get().resourceIndex();
             if (idx == null) return 0;
             java.lang.reflect.Method m = idx.getClass()
                 .getMethod("idOfName", String.class, String.class, String.class);

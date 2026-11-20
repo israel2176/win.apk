@@ -208,9 +208,14 @@ bool per_launch(const std::string& o) {
 }
 
 std::string graphics_of(const std::vector<std::string>& opts) {
-    for (const std::string& o : opts)
-        if (o == "-Dwinapk.aosp.gfx=1") return "aosp";
-    return "java2d";
+    bool aosp = false;
+    for (const std::string& o : opts) {
+        // AOSP's resources too (aosp_gfx.h): an archive of their own, whose name no other's
+        // prefix ("framework-aosp-") matches, so neither deletes the other's.
+        if (o == "-Dwinapk.aosp.res=1") return "aospres";
+        if (o == "-Dwinapk.aosp.gfx=1") aosp = true;
+    }
+    return aosp ? "aosp" : "java2d";
 }
 
 bool stale_archive_file(const std::wstring& name, const std::wstring& stem) {

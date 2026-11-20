@@ -180,6 +180,21 @@ in full in bin\licenses\aosp-graphics\.
     compiled from TeX's hyph-utf8 patterns, each under the licence its
     pattern file states (permissive licences, MIT, LPPL), as AOSP ships them.
 
+AOSP resources (WINAPK_AOSP_RES=1; staged only with WINAPK_STAGE_AOSP_RES=1,
+not in the package yet) -- lib\aosp-resources.jar, bin\aosp\framework-res-34.apk
+Built by windows/scripts/build_aosp_res.sh from Robolectric's build of AOSP 14
+(org.robolectric:android-all 14-robolectric-10818077) and Robolectric 4.16's
+Java port of libandroidfw (org.robolectric:resources, utils, pluginapi 4.16),
+with Win.apk's own classes (windows/java/aosp_res, AGPL-3.0 as the rest of
+Win.apk; its Native*.java are adapted from Robolectric's shadows, Apache-2.0).
+  aosp-resources.jar: AOSP's android.content.res and the classes they name
+    (frameworks/base), Copyright (C) The Android Open Source Project; the
+    libandroidfw port, Copyright (C) Robolectric contributors. Apache-2.0
+    (section 5).
+  framework-res-34.apk: AOSP 14's framework resources (core/res) as
+    android-all carries them. Copyright (C) The Android Open Source Project.
+    Apache-2.0 (section 5).
+
 --------------------------------------------------------------------------------
 3. Components compiled into winapk-runtime.exe
 --------------------------------------------------------------------------------

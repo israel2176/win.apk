@@ -161,10 +161,18 @@ public final class BinaryXmlParser {
         String enumText(int attrResId, int dataType, int data);
     }
 
+    /** With AOSP's resources (WINAPK_AOSP_RES=1, com.macapk.loader.res.CompiledXml): the document
+     *  keeps the compiled bytes it was parsed from, and each element its start tag's place in them,
+     *  so that AOSP's attribute resolution can read the element's compiled attributes itself. Off,
+     *  nothing is recorded. */
+    public static final String COMPILED_KEY = "winapk.compiledXml";
+    private static final boolean KEEP_COMPILED = "1".equals(System.getProperty("winapk.aosp.res"));
+
     private final byte[] d;
     private final Names names;
     private String[] pool = new String[0];
     private int[] resourceMap = new int[0];
+    private int startTags;
 
     private BinaryXmlParser(byte[] data, Names names) { this.d = data; this.names = names; }
 
@@ -365,6 +373,11 @@ public final class BinaryXmlParser {
                         if (a + 20 > total) break;
                         setAttr(el, a, nsPrefix);
                     }
+                    if (KEEP_COMPILED) {
+                        if (startTags == 0) doc.setUserData(COMPILED_KEY, d, null);
+                        el.setUserData(COMPILED_KEY, startTags, null);
+                    }
+                    startTags++;
                     if (stack.isEmpty()) doc.appendChild(el);
                     else stack.peek().appendChild(el);
                     stack.push(el);

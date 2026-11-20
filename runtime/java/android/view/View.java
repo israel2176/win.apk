@@ -6107,6 +6107,19 @@ public class View implements android.graphics.drawable.Drawable.Callback,
                     // (green AC / blue operators / pink equals on the emulator)
                     // which never landed
                     // (docs/canvas-ab-analyst-report_2026-08-02.md item 2a).
+                    // AOSP's applyBackgroundTint mutates first (`mBackground =
+                    // mBackground.mutate()`): a drawable from Resources shares its
+                    // ConstantState with every other getDrawable of the same id, and
+                    // a tint set on the shared state recolours them all. With AOSP's
+                    // resources (WINAPK_AOSP_RES=1), whose drawable cache hands that
+                    // state out, a backgroundTint="#1a73e8" on one bg_oval turned
+                    // every later bg_oval blue (the UI probe's icons.rtl).
+                    if (macapkBackgroundTintList != null || macapkBackgroundTint != null) {
+                        try {
+                            android.graphics.drawable.Drawable own = backgroundDrawable.mutate();
+                            if (own != null) backgroundDrawable = own;
+                        } catch (Throwable ignored) {}
+                    }
                     if (macapkBackgroundTintList != null) {
                         // Pass the FULL list: the drawable resolves it against its
                         // own state (Drawable.setTintList + getColorForState, in
