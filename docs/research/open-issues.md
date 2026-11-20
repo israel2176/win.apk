@@ -57,7 +57,7 @@ far only by the UI probe (all 2104 lines equal to the oracle, from 146 with the
 resources switch alone) and the Gallery and Sudoku sweeps (279 -> 46 and
 249 -> 50 lines, the rest stack-trace naming and one layout the oracle cannot
 inflate): **not yet re-checked in the apps each item was found in**, and with
-the switch on, input, dialogs and the system bars are not there yet. Items 10-14
+the switch on, input is not there yet (dialogs, toasts and the system bars are, V1's second part). Items 10-14
 (text) are unchanged by it; 16 is the resources switch's.
 
 | # | What | Where today | Found in | Layer |
@@ -474,11 +474,17 @@ the switch on, input, dialogs and the system bars are not there yet. Items 10-14
   byte-identical (probe), and so is the resources switch alone. On, under Wine:
   the probe equal to the oracle in all 2104 lines (`regress.py` from the
   resources switch: 146 fixed, 0 REGRESSED, 0 FARTHER, 0 MISSING); Gallery
-  279 -> 46, Sudoku 249 -> 50 lines differing, none worse. Next: dialogs
-  (Win.apk's `Dialog` has a Win.apk `Window`; nothing shows), the system bars
-  as insets, GL `SurfaceView`s, resize and several windows, then V2 (input,
-  IME, accessibility) and V3 (HWUI). Not run: CDS with the switch, real
-  Windows, the smoke apps.
+  279 -> 46, Sudoku 249 -> 50 lines differing, none worse. Second part done:
+  dialogs and toasts on AOSP's own classes, every window drawn by its own
+  `ViewRootImpl` (the first part's frames were really Win.apk's canvas driver
+  drawing AOSP's decor: the session never said the app was visible) and
+  composed in the window manager's order with the dim layer, the system bars as
+  `InsetsState` sources (only with `MACAPK_SYSTEM_BARS=1`, Win.apk painting
+  their glyphs); probe, Gallery and Sudoku byte-identical to the first part
+  with the switch on and to the base with it off; Open Sudoku's dialog shows
+  as off. Next: GL `SurfaceView`s as layers, popups and menus (need input),
+  resize and several windows, then V2 (input, IME, accessibility) and V3
+  (HWUI). Not run: CDS with the switch, real Windows, the smoke apps.
 - **Screens checks not finished**: Bank Leumi (stopped by the usage limit
   before its boot), Pango and Paybox (not on APKPure; the owner offered their
   other repository or a Play download).

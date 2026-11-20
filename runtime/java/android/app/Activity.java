@@ -2647,6 +2647,10 @@ public class Activity extends ContextThemeWrapper
      *  Window.setContentView). Subclasses (AppCompatActivity) override
      *  setContentView but NOT this method. */
     public void macapkInstallContentDirect(View view) {
+        // With AOSP's views the window is AOSP's PhoneWindow, added to its window manager on resume
+        // (ViewHost.activityWindowAdded): Win.apk's own content root and its canvas driver are
+        // never made, or both would draw and present the same decor.
+        if (MACAPK_AOSP_WINDOWS) return;
         // AOSP installs the decor at the top of setContentView and puts the
         // content view INSIDE it. For a screen_title window that decor is what
         // renders (title bar + content frame), so it becomes the root here; for

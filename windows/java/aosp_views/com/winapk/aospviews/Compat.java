@@ -182,4 +182,9 @@ public final class Compat {
     public static boolean hasOnBackInvokedCallbackEnabled(android.content.pm.ActivityInfo info) { return false; }
     public static boolean isOnBackInvokedCallbackEnabled(android.content.pm.ActivityInfo info) { return false; }
     public static boolean isOnBackInvokedCallbackEnabled(android.content.pm.ApplicationInfo info) { return false; }
+
+    /** HardwareRenderer.isDrawingEnabled (ViewRootImpl.relayoutWindow): whether windows draw at all,
+     *  false only in a process that turned drawing off (HardwareRenderer.setDrawingEnabled). The
+     *  native runtime has no such native; drawing is on. */
+    public static boolean isDrawingEnabled() { return true; }
 }

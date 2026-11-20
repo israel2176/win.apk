@@ -85,6 +85,22 @@ public final class AospWindows {
         return h > 0 ? h : 1280;
     }
 
+    /** The notification manager service: its toast half (ToastService). */
+    static volatile android.app.INotificationManager sNotifications;
+
+    /** The application's context, for what the window manager makes itself (toasts). */
+    static Context context() { return sMetricsContext; }
+
+    /** The resources the bars' sizes come from (the application's: the framework's dimens). */
+    static android.content.res.Resources resources() {
+        Context c = sMetricsContext;
+        try {
+            return c != null ? c.getResources() : null;
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
     static DisplayMetrics metrics() {
         Context c = sMetricsContext;
         DisplayMetrics m = null;
@@ -113,8 +129,9 @@ public final class AospWindows {
         d.uniqueId = "local:0";
         d.logicalWidth = w;
         d.logicalHeight = h;
-        d.appWidth = w;
-        d.appHeight = h;
+        Rect app = Bars.appBounds();
+        d.appWidth = app.width();
+        d.appHeight = app.height();
         d.smallestNominalAppWidth = Math.min(w, h);
         d.smallestNominalAppHeight = Math.min(w, h);
         d.largestNominalAppWidth = Math.max(w, h);
@@ -153,6 +170,8 @@ public final class AospWindows {
         Services.register(Context.WINDOW_SERVICE, IWindowManager.class, new WindowManagerService());
         Services.register(Context.INPUT_METHOD_SERVICE, com.android.internal.view.IInputMethodManager.class,
                 new InputMethodService());
+        sNotifications = Services.register(Context.NOTIFICATION_SERVICE, android.app.INotificationManager.class,
+                new ToastService());
     }
 
     /** IDisplayManager, the calls DisplayManagerGlobal makes for the one display. */
@@ -212,17 +231,26 @@ public final class AospWindows {
 
     static final class Win {
         final IWindow window;
+        final long added;
         WindowManager.LayoutParams attrs;
         Rect frame = new Rect();
         SurfaceControl surface;
         int seq;
+        boolean visible;
+        int requestedVisibleTypes = android.view.WindowInsets.Type.defaultVisible();
+        /** The last frame its Surface posted (the Surface's own bitmap), for the compositor. */
+        android.graphics.Bitmap content;
 
-        Win(IWindow window) { this.window = window; }
+        Win(IWindow window) {
+            this.window = window;
+            this.added = sAddSeq.incrementAndGet();
+        }
     }
 
+    static final java.util.concurrent.atomic.AtomicLong sAddSeq = new java.util.concurrent.atomic.AtomicLong();
     static final Map<android.os.IBinder, Win> sWindows = new ConcurrentHashMap<>();
 
-    /** IWindowSession: what WindowManagerService does for a window, with no system bars. */
+    /** IWindowSession: what WindowManagerService does for a window. */
     public static final class WindowSession {
         private final WindowLayout mLayout = new WindowLayout();
 
@@ -241,23 +269,35 @@ public final class AospWindows {
             Win w = new Win(window);
             w.attrs = new WindowManager.LayoutParams();
             w.attrs.copyFrom(attrs);
+            w.requestedVisibleTypes = requestedVisibleTypes;
             sWindows.put(window.asBinder(), w);
+            System.err.println(TAG + "window added: " + w.attrs.getTitle() + " type=" + w.attrs.type
+                    + " " + w.attrs.width + "x" + w.attrs.height);
+            insetsChanged();
             fillInsets(outInsetsState);
             if (outAttachedFrame != null) outAttachedFrame.set(0, 0, -1, -1);  // not valid: no parent frame
             if (outSizeCompatScale != null && outSizeCompatScale.length > 0) outSizeCompatScale[0] = 1f;
-            return WindowManagerGlobal.ADD_OKAY;
+            // The app is visible (WindowManagerService: its activity token is), so ViewRootImpl
+            // relayouts the window with its view's own visibility.
+            return WindowManagerGlobal.ADD_OKAY | WindowManagerGlobal.ADD_FLAG_APP_VISIBLE
+                    | WindowManagerGlobal.ADD_FLAG_IN_TOUCH_MODE;
         }
 
         public int addToDisplayWithoutInputChannel(IWindow window, WindowManager.LayoutParams attrs,
                 int viewVisibility, int layerStackId, InsetsState outInsetsState, Rect outAttachedFrame,
                 float[] outSizeCompatScale) {
-            return addToDisplay(window, attrs, viewVisibility, layerStackId, 0, null, outInsetsState, null,
+            return addToDisplay(window, attrs, viewVisibility, layerStackId,
+                    android.view.WindowInsets.Type.defaultVisible(), null, outInsetsState, null,
                     outAttachedFrame, outSizeCompatScale);
         }
 
         public void remove(IWindow window) {
             Win w = sWindows.remove(window.asBinder());
-            if (w != null && w.surface != null) w.surface.release();
+            if (w == null) return;
+            System.err.println(TAG + "window removed: " + w.attrs.getTitle());
+            if (w.surface != null) w.surface.release();
+            // What was under it shows again.
+            main().post(() -> { insetsChanged(); Compositor.compose(); });
         }
 
         public int relayout(IWindow window, WindowManager.LayoutParams attrs, int requestedWidth,
@@ -273,35 +313,49 @@ public final class AospWindows {
             }
             if (attrs != null) w.attrs.copyFrom(attrs);
             w.seq = seq;
+            insetsChanged();
             InsetsState state = new InsetsState();
             fillInsets(state);
             Rect bounds = new Rect(0, 0, widthPx(), heightPx());
             ClientWindowFrames frames = outFrames != null ? outFrames : new ClientWindowFrames();
+            // WindowManagerService lays a window out with WindowLayout, the client's own class.
             mLayout.computeFrames(w.attrs, state, bounds, bounds,
                     android.app.WindowConfiguration.WINDOWING_MODE_FULLSCREEN, requestedWidth, requestedHeight,
-                    android.view.WindowInsets.Type.defaultVisible(), 1f, frames);
+                    w.requestedVisibleTypes, 1f, frames);
             w.frame.set(frames.frame);
+            if (Compositor.TRACE) {
+                System.err.println(TAG + "relayout " + w.attrs.getTitle() + " type=" + w.attrs.type + " requested "
+                        + requestedWidth + "x" + requestedHeight + " visibility=" + viewVisibility + " frame="
+                        + frames.frame);
+            }
             if (outMergedConfiguration != null) {
-                Configuration global = new Configuration(configuration());
-                global.windowConfiguration.setBounds(bounds);
-                global.windowConfiguration.setAppBounds(bounds);
-                global.windowConfiguration.setMaxBounds(bounds);
-                outMergedConfiguration.setConfiguration(global, new Configuration());
+                outMergedConfiguration.setConfiguration(globalConfiguration(), new Configuration());
             }
             if (outInsetsState != null) outInsetsState.set(state, true);
             int result = 0;
-            if (viewVisibility == android.view.View.VISIBLE && outSurfaceControl != null) {
-                int fw = Math.max(1, frames.frame.width()), fh = Math.max(1, frames.frame.height());
+            boolean wasVisible = w.visible;
+            w.visible = viewVisibility == android.view.View.VISIBLE;
+            if (w.visible && outSurfaceControl != null) {
+                // The layer's size: WindowLayout.computeSurfaceSize, the frame and the surface insets
+                // (a floating window's room for its shadow).
+                android.graphics.Point size = new android.graphics.Point();
+                WindowLayout.computeSurfaceSize(w.attrs, bounds, requestedWidth, requestedHeight, frames.frame,
+                        false, size);
+                int fw = Math.max(1, size.x), fh = Math.max(1, size.y);
                 if (w.surface == null || w.surface.getWidth() != fw || w.surface.getHeight() != fh) {
                     if (w.surface != null) w.surface.release();
+                    final Win win = w;
                     w.surface = new SurfaceControl.Builder().setName(w.attrs.getTitle() + "")
                             .setBufferSize(fw, fh).build();
+                    Compositor.attach(w.surface, win);
                     result |= WindowManagerGlobal.RELAYOUT_RES_SURFACE_CHANGED;
                 }
                 outSurfaceControl.copyFrom(w.surface, "relayout");
-            } else if (w.surface != null && viewVisibility != android.view.View.VISIBLE) {
-                w.surface.release();
+            } else if (!w.visible) {
+                if (w.surface != null) w.surface.release();
                 w.surface = null;
+                w.content = null;
+                if (wasVisible) main().post(Compositor::compose);
             }
             return result;
         }
@@ -309,7 +363,20 @@ public final class AospWindows {
         public void relayoutAsync(IWindow window, WindowManager.LayoutParams attrs, int requestedWidth,
                 int requestedHeight, int viewVisibility, int flags, int seq, int lastSyncSeqId) {
             Win w = sWindows.get(window.asBinder());
-            if (w != null && attrs != null) w.attrs.copyFrom(attrs);
+            if (w != null && attrs != null) {
+                w.attrs.copyFrom(attrs);
+                insetsChanged();
+            }
+        }
+
+        /** The window asks for the system bars shown or hidden (WindowInsetsController.show/hide,
+         *  FLAG_FULLSCREEN through ViewRootImpl's compatibility path): the window that controls the
+         *  bars gets its way, as InsetsPolicy gives it. */
+        public void updateRequestedVisibleTypes(IWindow window, int requestedVisibleTypes) {
+            Win w = sWindows.get(window.asBinder());
+            if (w == null) return;
+            w.requestedVisibleTypes = requestedVisibleTypes;
+            insetsChanged();
         }
 
         public boolean outOfMemory(IWindow window) { return false; }
@@ -321,6 +388,41 @@ public final class AospWindows {
         public boolean performHapticFeedback(int effectId, boolean always) { return false; }
 
         public boolean cancelDraw(IWindow window) { return false; }
+    }
+
+    private static volatile Handler sMain;
+
+    /** A handler on the main looper, made when first needed (Looper.getMainLooper pins the main
+     *  thread to its first caller, so never from a class initializer). */
+    static Handler main() {
+        Handler h = sMain;
+        if (h == null) sMain = h = new Handler(Looper.getMainLooper());
+        return h;
+    }
+
+    /** The configuration the window manager reports: the resources' own, with the window bounds
+     *  WindowManagerService sets (bounds and max bounds the display, app bounds the display less
+     *  the navigation bar, which DisplayPolicy counts as non-decor). */
+    private static Configuration sGlobal;
+
+    static synchronized Configuration globalConfiguration() {
+        // The window manager's configuration is its own state, changed by the display (a resize)
+        // or the bars, not re-read from a window's resources at every relayout: ViewRootImpl
+        // applies what it gets to those resources, and a configuration that moves under it at
+        // each relayout is a new one at each traversal.
+        if (sGlobal == null) sGlobal = makeGlobalConfiguration();
+        return new Configuration(sGlobal);
+    }
+
+    static synchronized void configurationChanged() { sGlobal = null; }
+
+    private static Configuration makeGlobalConfiguration() {
+        Configuration global = new Configuration(configuration());
+        Rect bounds = new Rect(0, 0, widthPx(), heightPx());
+        global.windowConfiguration.setBounds(bounds);
+        global.windowConfiguration.setAppBounds(Bars.appBounds());
+        global.windowConfiguration.setMaxBounds(bounds);
+        return global;
     }
 
     static Configuration configuration() {
@@ -335,11 +437,30 @@ public final class AospWindows {
         return cfg;
     }
 
-    /** The display's frame and nothing on it: no status bar, navigation bar or IME yet (V2). */
+    /** The display's frame and the system bars on it (Bars: none unless Win.apk paints them,
+     *  MACAPK_SYSTEM_BARS=1); no IME yet (V2). */
     static void fillInsets(InsetsState state) {
         if (state == null) return;
         Rect display = new Rect(0, 0, widthPx(), heightPx());
         state.setDisplayFrame(display);
+        Bars.addSources(state);
+    }
+
+    /** A window came, went or changed what it asks of the bars: when the bars' state is now
+     *  another, every window hears it (IWindow.insetsControlChanged, as WindowManagerService's
+     *  InsetsStateController sends it). */
+    static void insetsChanged() {
+        if (!Bars.update()) return;
+        configurationChanged();
+        for (Win w : sWindows.values()) {
+            InsetsState state = new InsetsState();
+            fillInsets(state);
+            try {
+                w.window.insetsControlChanged(state, new InsetsSourceControl[0]);
+            } catch (Throwable t) {
+                System.err.println(TAG + "insets to a window failed: " + t);
+            }
+        }
     }
 
     // ---- the host surface --------------------------------------------------------------------
@@ -372,10 +493,8 @@ public final class AospWindows {
     /** The host's callbacks for the render view: its size (a resize of the host window). The
      *  frames themselves are ViewRootImpl's, on Choreographer's clock. */
     static final class HostSurface implements MetalSurfaceCallbacks {
-        private final Handler mMain = new Handler(Looper.getMainLooper());
-
         @Override public void macapkSurfaceChanged(int widthPx, int heightPx) {
-            mMain.post(() -> resize(widthPx, heightPx));
+            main().post(() -> resize(widthPx, heightPx));
         }
 
         @Override public void macapkDrawFrame() {}
@@ -390,6 +509,7 @@ public final class AospWindows {
         sHeightPx = h;
         if (first) return;
         com.macapk.loader.DisplayConfig.commitPending();
+        configurationChanged();
         for (Win win : sWindows.values()) {
             try {
                 ClientWindowFrames frames = new ClientWindowFrames();
@@ -399,13 +519,9 @@ public final class AospWindows {
                 new WindowLayout().computeFrames(win.attrs, state, bounds, bounds,
                         android.app.WindowConfiguration.WINDOWING_MODE_FULLSCREEN,
                         WindowLayout.UNSPECIFIED_LENGTH, WindowLayout.UNSPECIFIED_LENGTH,
-                        android.view.WindowInsets.Type.defaultVisible(), 1f, frames);
+                        win.requestedVisibleTypes, 1f, frames);
                 MergedConfiguration merged = new MergedConfiguration();
-                Configuration global = new Configuration(configuration());
-                global.windowConfiguration.setBounds(bounds);
-                global.windowConfiguration.setAppBounds(bounds);
-                global.windowConfiguration.setMaxBounds(bounds);
-                merged.setConfiguration(global, new Configuration());
+                merged.setConfiguration(globalConfiguration(), new Configuration());
                 win.window.resized(frames, false, merged, state, true, false, Display.DEFAULT_DISPLAY, -1, false);
             } catch (Throwable t) {
                 System.err.println(TAG + "resize of a window failed: " + t);
