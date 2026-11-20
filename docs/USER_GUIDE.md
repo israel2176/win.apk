@@ -39,7 +39,10 @@ Win.apk installs four formats:
 
 A bundle holds a base APK and split APKs (languages, screen densities, CPU
 architectures). Win.apk picks the splits the app needs here, the way the
-Android installer does.
+Android installer does. Once the app is installed, the library keeps those
+APKs, not the bundle: `<app>.apk` and the folder `<app>.splits` beside it,
+the very files the app runs from, so the app takes its space on disk once.
+Keep the bundle you downloaded if you may want its other parts later.
 
 Any of these starts an install:
 
@@ -278,7 +281,7 @@ without an answer.
 | Shortcut | **Desktop shortcut**: adds or removes the app's desktop shortcut. The Start menu one is always there |
 | Performance | Only for an app with only ARM code: **Optimizing for this PC…** while its translation runs in the background (with the parts done so far), and **This app has only ARM code** when a library is too large to translate whole, so an x86_64 build of the app, if one exists, runs faster. See [ARM apps](arm-apps.md) |
 | Troubleshooting | **Log** (View the app's recent logs): **Show log** opens the log window on the app's last run (or its install, before the first run). **Report a problem** (opens a GitHub issue with the app's details and log): for a problem met inside the app; see [Reporting a problem](troubleshooting.md#reporting-a-problem). With **Debug mode** on in Settings, **Threads** opens the [Threads window](#debug-mode-the-threads-window) on this app |
-| Storage | **The app's file**: its size, and **Show** opens Explorer on it. **Run files**: what Win.apk prepared to run the app, its folder under `apps\`, and **Open** |
+| Storage | **The app's file** (**The app's files** for one that came as a bundle: its `.apk` and splits): its size, and **Show** opens Explorer on it. **Run files**: what Win.apk prepared to run the app, its folder under `apps\`, and **Open** |
 | Manage | **Stop** (while it runs) and **Remove** |
 
 Each action has one place: the details page, plus the right-click menu for
@@ -600,7 +603,7 @@ nothing is started in the apps: no agent, no pipe.
 | What | Where |
 |---|---|
 | Win.apk itself | `%LOCALAPPDATA%\Programs\Win.apk`, or the folder you unzipped |
-| Your copy of each APK | `%LOCALAPPDATA%\Win.apk\library\<app>.apk` |
+| Your copy of each APK | `%LOCALAPPDATA%\Win.apk\library\<app>.apk`, and for an app that came as a bundle its splits in `<app>.splits` beside it (the installed APKs themselves, not a second copy) |
 | Per-app choices beside the APK | `<app>.label` (name), `<app>.package` (package, version, manifest orientation), `<app>.orientation` (your choice), `<app>.window` (remembered window size) |
 | Each app's run files, icon and name | `%LOCALAPPDATA%\Win.apk\apps\<app>` (and `aot-guard.txt`, an ARM-only app's crashes with its translation) |
 | The Android file system: apps' data, the installed packages | `%LOCALAPPDATA%\Win.apk\android` |

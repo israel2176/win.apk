@@ -409,6 +409,17 @@ jobs:
           cp="$(cygpath -w stage/lib/macapk-loader.jar);$(cygpath -w build/sep-test)"
           "$JAVA_HOME/bin/java" -cp "$cp" FileSeparatorRewriteTest
           MACAPK_ANDROID_FILE_SEPARATOR=0 "$JAVA_HOME/bin/java" -cp "$cp" FileSeparatorRewriteTest off
+      - name: Run the app install test
+        run: |
+          # com.winapk.tools.AppInstall: a bundle installs as a device leaves it, and installs again from
+          # what the library keeps of it (<name>.apk + <name>.splits, hard links to the installed APKs:
+          # launcher/library_files.h), one copy on disk.
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          "$JAVA_HOME/bin/javac" -d build/appinstall-test windows/java/com/winapk/tools/AppInstall.java \
+            windows/test/java/com/winapk/tools/AppInstallTest.java
+          "$JAVA_HOME/bin/java" -cp "$(cygpath -w build/appinstall-test)" com.winapk.tools.AppInstallTest \
+            "$(cygpath -w "$RUNNER_TEMP/appinstall")" | tee appinstall-test.log
+          grep -q "ALL PASSED" appinstall-test.log
       - name: Run the File.renameTo test
         run: |
           # A file renamed onto an existing one replaces it, as on Android

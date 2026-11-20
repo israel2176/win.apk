@@ -14,14 +14,22 @@
 // The Threads window (launcher/debug_threads.h, include/winapk/debug_protocol.h): an agent's answer
 // survives its own writer and a cut-off reply; every thread Windows lists is a row with or without an
 // agent, and the agent's extra threads are rows too; CPU shares, the search and a sort that holds still.
+// The library's files (launcher/library_files.h, std::filesystem only), on real files: a bundle kept as hard
+// links to its installed APKs, that step done again over a cut-off one, an update's files set aside, then
+// dropped or put back, never written.
 
 #include <cstdio>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <string>
 #include <vector>
 
 #include "../launcher/app_runs.h"
 #include "../launcher/debug_threads.h"
 #include "../launcher/installs.h"
+#include "../launcher/library_files.h"
 #include "../launcher/updates.h"
 
 namespace {
@@ -606,6 +614,114 @@ void test_debug_threads() {
     check("sorted by thread id, downwards", rows[0].tid == 300 && rows[5].tid == 0);
 }
 
+// The library's files (launcher/library_files.h), on real files in a scratch folder: a bundle kept as links
+// to its installed APKs, that step redone over what a cut-off one left, an update's set-aside, kept and
+// put back, and what counts as the app's entries.
+void test_library_files() {
+    using namespace winapk::launcher;
+    namespace fs = std::filesystem;
+    std::printf("the library's files\n");
+    std::error_code ec;
+    const fs::path root = fs::temp_directory_path() / ("winapk-library-test-" + std::to_string(std::rand()));
+    fs::remove_all(root, ec);
+    const fs::path library = root / "library", copy = root / "android" / "app" / "com.example-Qm";
+    fs::create_directories(library);
+    fs::create_directories(copy);
+    auto write = [](const fs::path& p, const std::string& s) { std::ofstream(p, std::ios::binary) << s; };
+    auto read = [](const fs::path& p) {
+        std::ifstream f(p, std::ios::binary);
+        return std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    };
+    write(copy / "base.apk", "base v1");
+    write(copy / "split_config.arm64_v8a.apk", "abi v1");
+    write(copy / "split_config.xxhdpi.apk", "dpi v1");
+    write(copy / ".installed", "3 100:1700000000000\n");
+    const fs::path bundle = library / "App.xapk", apk = library / "App.apk", splits = library / "App.splits";
+    write(bundle, "the whole bundle");
+
+    check("bundles by extension, in any case", is_bundle_file("a.xapk") && is_bundle_file("a.APKM") &&
+                                                   is_bundle_file("a.apks") && !is_bundle_file("a.apk"));
+    check("stamp: same size and time", stamp_matches("3 100:1700000000000\n", 100, 1700000000000LL));
+    check("stamp: another time or size is not", !stamp_matches("3 100:1700000000000\n", 100, 1700000000001LL) &&
+                                                     !stamp_matches("3 100:1700000000000", 101, 1700000000000LL));
+    check("stamp: no stamp is not", !stamp_matches("", 0, 0) && !stamp_matches("garbage", 0, 0));
+
+    // Installed: the bundle becomes links to the installed APKs.
+    fs::path kept = keep_installed(bundle, copy);
+    check("kept as <name>.apk", kept == apk && fs::is_regular_file(apk, ec));
+    check("the bundle is gone", !fs::exists(bundle, ec));
+    check("<name>.apk is the installed base.apk", fs::equivalent(apk, copy / "base.apk", ec));
+    check("the splits are the installed ones", fs::equivalent(splits / "split_config.arm64_v8a.apk",
+                                                              copy / "split_config.arm64_v8a.apk", ec) &&
+                                                   fs::equivalent(splits / "split_config.xxhdpi.apk",
+                                                                  copy / "split_config.xxhdpi.apk", ec));
+    check("one copy: two names each", fs::hard_link_count(copy / "base.apk", ec) == 2 &&
+                                          fs::hard_link_count(copy / "split_config.xxhdpi.apk", ec) == 2);
+    check("nothing but the APKs in .splits",
+          std::distance(fs::directory_iterator(splits), fs::directory_iterator()) == 2);
+    check("nothing left half made", !fs::exists(library / "App.apk.new", ec) &&
+                                        !fs::exists(library / "App.splits.new", ec));
+
+    // Cut off before the bundle went, with a half-made attempt beside it: done again.
+    write(bundle, "the whole bundle");
+    write(library / "App.apk.new", "half");
+    fs::create_directory(library / "App.splits.new", ec);
+    kept = keep_installed(bundle, copy);
+    check("redone: the bundle goes", kept == apk && !fs::exists(bundle, ec) &&
+                                         !fs::exists(library / "App.apk.new", ec) &&
+                                         !fs::exists(library / "App.splits.new", ec));
+    check("redone: still one copy", fs::equivalent(apk, copy / "base.apk", ec) &&
+                                        fs::hard_link_count(copy / "base.apk", ec) == 2);
+
+    // No installed copy: the bundle stays.
+    write(library / "Other.xapk", "other");
+    check("no installed copy: the bundle stays", keep_installed(library / "Other.xapk", root / "nowhere").empty() &&
+                                                     fs::exists(library / "Other.xapk", ec));
+
+    // The app's entries, and only its own.
+    write(library / "App.extra.apk", "x");
+    write(library / "Apps.apk", "x");
+    write(library / "App.label", "x");
+    check("entries: the .apk and .splits only", app_entries(library, L"App", false).size() == 2);
+    check("entries: none set aside", app_entries(library, L"App", true).empty());
+    check("put back with nothing set aside: no", !put_back(library, L"App"));
+
+    // An update that goes through: the kept files set aside, never written, and dropped.
+    check("set aside", set_aside(library, L"App") && !fs::exists(apk, ec) && !fs::exists(splits, ec) &&
+                           fs::exists(library / "App.apk.previous", ec) &&
+                           fs::exists(library / "App.splits.previous", ec));
+    write(apk, "base v2");  // a plain APK's update
+    check("the installed copy was not written", read(copy / "base.apk") == "base v1");
+    drop_previous(library, L"App");
+    check("kept: the .previous ones go", app_entries(library, L"App", true).empty() && read(apk) == "base v2" &&
+                                             !fs::exists(splits, ec));
+    check("kept: the installed copy is no longer linked", fs::hard_link_count(copy / "base.apk", ec) == 1);
+
+    // An update that does not go through: what replaced the app goes, and the app is back.
+    fs::remove(apk, ec);
+    write(bundle, "bundle v1");
+    kept = keep_installed(bundle, copy);
+    check("set aside again", set_aside(library, L"App"));
+    write(library / "App.apks", "bundle v2, half copied");
+    check("put back", put_back(library, L"App"));
+    check("put back: the new file is gone", !fs::exists(library / "App.apks", ec));
+    check("put back: the kept files are back, still the installed copy",
+          fs::equivalent(apk, copy / "base.apk", ec) &&
+              fs::equivalent(splits / "split_config.xxhdpi.apk", copy / "split_config.xxhdpi.apk", ec) &&
+              app_entries(library, L"App", true).empty());
+
+    // A bundle of one APK: no .splits folder.
+    const fs::path single = root / "android" / "app" / "com.single-Qm";
+    fs::create_directories(single);
+    write(single / "base.apk", "single");
+    write(library / "Single.apkm", "bundle");
+    kept = keep_installed(library / "Single.apkm", single);
+    check("one APK: <name>.apk and no .splits", kept == library / "Single.apk" &&
+                                                    !fs::exists(library / "Single.splits", ec) &&
+                                                    !fs::exists(library / "Single.apkm", ec));
+    fs::remove_all(root, ec);
+}
+
 }  // namespace
 
 int main() {
@@ -613,6 +729,7 @@ int main() {
     test_installs();
     test_updates();
     test_debug_threads();
+    test_library_files();
     std::printf("%d failed\n", g_failures);
     return g_failures ? 1 : 0;
 }

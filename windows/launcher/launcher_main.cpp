@@ -19,7 +19,9 @@
 //   2. installed and converted once by winapk-runtime --install-only, which
 //      also writes the app's icon and name (apps\<name>\icon.png, label.txt;
 //      the name moves next to the APK as library\<name>.label, because the
-//      app's first run moves files it does not know out of apps\<name>);
+//      app's first run moves files it does not know out of apps\<name>); a
+//      bundle is then kept as library\<name>.apk and <name>.splits\, hard
+//      links to the APKs it installed, not whole (library_files.h);
 //   3. given a Start menu shortcut (Start > Win.apk Apps) and, unless turned
 //      off in the settings, a desktop shortcut, with the app's own icon, that
 //      start it through this program.
@@ -95,6 +97,7 @@
 #include "app_runs.h"
 #include "debug_threads.h"
 #include "installs.h"
+#include "library_files.h"
 #include "updates.h"
 #include "../host/window_fit.h"
 #include "../include/winapk/aot_stamp.h"
@@ -529,6 +532,7 @@ const wchar_t* tr(const wchar_t* en) {
         {L"The app is in Start > Win.apk Apps either way.", L"האפליקציה נמצאת בכל מקרה בתפריט התחל > Win.apk Apps."},
         {L"The app stopped with an error.", L"האפליקציה נעצרה עם שגיאה."},
         {L"The app's file  ·  {0}", L"קובץ האפליקציה  ·  {0}"},
+        {L"The app's files  ·  {0}", L"קובצי האפליקציה  ·  {0}"},
         {L"The install was cancelled.", L"ההתקנה בוטלה."},
         {L"The install was cancelled. The app stays as it was.", L"ההתקנה בוטלה. האפליקציה נשארת כפי שהייתה."},
         {L"They're in the Start menu.", L"הן בתפריט התחל."},
@@ -1067,6 +1071,8 @@ std::vector<App> library() {
         if (!e.is_regular_file(ec) || !is_app_file(e.path())) continue;
         const std::wstring name = e.path().stem().wstring();
         if (!fs::exists(label_file(name), ec)) continue;  // not installed (yet)
+        // A bundle beside the app's .apk was being replaced by it (library_files.h): the .apk is the app.
+        if (winapk::launcher::is_bundle_file(e.path()) && fs::exists(library_dir() / (name + L".apk"), ec)) continue;
         apps.push_back({name, label_of(name), e.path()});
     }
     std::sort(apps.begin(), apps.end(), [](const App& a, const App& b) {
@@ -1396,7 +1402,6 @@ void expect_run_end(const std::wstring& name) {
 struct InstallJob {
     fs::path source;
     std::wstring name;
-    fs::path replaces;  // the app's previous APK, when it is updated from one with another extension
     bool temporary;     // the store's download, removed once it is in the library
 };
 
@@ -1534,49 +1539,108 @@ struct InstallClaim {
     InstallClaim& operator=(const InstallClaim&) = delete;
 };
 
-// An update that was cut off (the process killed, the PC switched off) left the app's previous APK
-// beside it as <name><ext>.previous, and in its place a new one that may be half copied and was never
-// converted. Each such app gets its previous APK (and icon) back, as a failed update does. A new app
-// whose install was cut off left its APK in the library with no name beside it, and whatever the install
-// had made of it: those go, as after a failed install. An app whose install is alive in another process
-// is left to it. True when something was put back or removed.
+// The install's record (android\data\app\.<name>.installed: the installed base.apk's path, in UTF-8), which
+// the runtime writes once it has installed the app from its library file (runtime_main.cpp, install_app).
+fs::path install_record(const std::wstring& name) {
+    return data_dir() / L"android" / L"data" / L"app" / (L"." + name + L".installed");
+}
+
+// The installed copy the record names (the folder of its base.apk); empty when there is none.
+fs::path installed_copy(const std::wstring& name) {
+    std::ifstream f(install_record(name), std::ios::binary);
+    std::string path((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    if (path.empty()) return {};
+    const fs::path base(utf8_to_wide(path));
+    std::error_code ec;
+    return fs::is_regular_file(base, ec) ? base.parent_path() : fs::path();
+}
+
+// The bundle the app was installed from, replaced by hard links to its installed APKs (library_files.h)
+// when its installed copy was made from this very file: AppInstall's stamp names its size and time. A copy
+// made from another file (a failed update's, another library name's of the same package) is no copy of it.
+// Returns the app's file now: the .apk, or the bundle when it stays.
+fs::path keep_installed_apks(const std::wstring& name, const fs::path& bundle) {
+    const fs::path copy = installed_copy(name);
+    WIN32_FILE_ATTRIBUTE_DATA a;
+    if (copy.empty() || !GetFileAttributesExW(bundle.c_str(), GetFileExInfoStandard, &a)) return bundle;
+    const unsigned long long t =
+        (static_cast<unsigned long long>(a.ftLastWriteTime.dwHighDateTime) << 32) | a.ftLastWriteTime.dwLowDateTime;
+    const uintmax_t size = (static_cast<uintmax_t>(a.nFileSizeHigh) << 32) | a.nFileSizeLow;
+    std::string stamp;
+    {
+        std::ifstream f(copy / L".installed", std::ios::binary);
+        stamp.assign((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    }
+    // Java's FileTime.toMillis: milliseconds since 1970, rounded down.
+    if (t < kUnixEpochFiletime ||
+        !winapk::launcher::stamp_matches(stamp, size, static_cast<long long>((t - kUnixEpochFiletime) / 10000)))
+        return bundle;
+    const fs::path apk = winapk::launcher::keep_installed(bundle, copy);
+    return apk.empty() ? bundle : apk;
+}
+
+// An update that was cut off (the process killed, the PC switched off) left the app's previous files beside
+// the new ones as <entry>.previous (library_files.h), and in their place a new file that may be half copied
+// and was never converted. Each such app gets its previous files (and icon) back, as a failed update does,
+// and is installed again from them at its next start. A new app whose install was cut off left its file in
+// the library with no name beside it, and whatever the install had made of it: those go, as after a failed
+// install. An installed app still kept as a bundle (from a library older than library_files.h's layout, or
+// an install cut off while its links were made) is replaced by links to its installed APKs, once its
+// installed copy is of that bundle: else it stays until a start installs it again. An app whose install is
+// alive in another process is left to it, and a running app as it is. True when something changed.
 bool recover_interrupted_installs() {
     bool recovered = false;
     std::error_code ec;
-    std::vector<fs::path> kept, files;
+    std::set<std::wstring> set_aside;
+    std::vector<fs::path> files;
     for (const auto& e : fs::directory_iterator(library_dir(), ec)) {
-        if (e.path().extension() == L".previous") kept.push_back(e.path());
-        else if (e.is_regular_file(ec) && is_app_file(e.path())) files.push_back(e.path());
+        if (e.path().extension() == L".previous") {
+            fs::path entry = e.path();
+            entry.replace_extension();  // <name><ext>
+            set_aside.insert(entry.stem().wstring());
+        } else if (e.is_regular_file(ec) && is_app_file(e.path())) {
+            files.push_back(e.path());
+        }
     }
-    for (const fs::path& previous : kept) {
-        fs::path target = previous;
-        target.replace_extension();  // <name><ext>
-        const std::wstring name = target.stem().wstring();
+    for (const std::wstring& name : set_aside) {
         const InstallClaim claim(name, false);
         if (!claim.held) continue;
-        if (MoveFileExW(previous.c_str(), target.c_str(), MOVEFILE_REPLACE_EXISTING)) recovered = true;
+        if (winapk::launcher::put_back(library_dir(), name)) recovered = true;
+        fs::remove(install_record(name), ec);  // the installed copy may be the cut-off one's
         MoveFileExW((app_dir(name) / L"icon.png.previous").c_str(), (app_dir(name) / L"icon.png").c_str(),
                     MOVEFILE_REPLACE_EXISTING);
     }
     for (const fs::path& file : files) {
         const std::wstring name = file.stem().wstring();
-        if (fs::exists(label_file(name), ec)) continue;  // installed
+        if (!fs::exists(file, ec)) continue;  // a cut-off update's, removed above
+        if (fs::exists(label_file(name), ec)) {  // installed
+            if (!winapk::launcher::is_bundle_file(file)) continue;
+            const InstallClaim claim(name, false);
+            if (!claim.held || app_running(name)) continue;
+            const fs::path kept = keep_installed_apks(name, file);
+            if (kept == file) continue;
+            recovered = true;
+            const App app{name, label_of(name), kept};  // its shortcuts named the bundle
+            const fs::path desktop = known_folder(FOLDERID_Desktop) / (file_name_safe(app.label) + L".lnk");
+            make_app_shortcuts(app, fs::exists(desktop, ec));
+            continue;
+        }
         const InstallClaim claim(name, false);
         if (!claim.held) continue;
-        if (fs::remove(file, ec)) recovered = true;
+        for (const fs::path& p : winapk::launcher::app_entries(library_dir(), name, false)) fs::remove_all(p, ec);
+        recovered = true;
         remove_app_files(name);
     }
     return recovered;
 }
 
-// Copies `source` into the library as <name><ext> and installs it there: the
-// install, the code conversion, the name, icon and package, the shortcuts.
-// `replaces` is the app's previous APK, removed once the new one is in. An
-// app that is running is left alone (its files are in use): false, with
-// `*running` set. An update that fails or is cancelled puts the previous APK
-// back; a new app that does leaves nothing behind.
-bool install_into_library(const fs::path& source, const std::wstring& name, const fs::path& replaces,
-                          bool* running) {
+// Copies `source` into the library as <name><ext> and installs it there: the install, the code conversion,
+// the name, icon and package, the shortcuts. A bundle is then replaced by links to its installed APKs, so
+// the library keeps the app once (library_files.h). The app's files from before are set aside first and
+// removed once the new one is in, whatever its extension was. An app that is running is left alone (its
+// files are in use): false, with `*running` set. An update that fails or is cancelled puts the previous
+// files back; a new app that does leaves nothing behind.
+bool install_into_library(const fs::path& source, const std::wstring& name, bool* running) {
     *running = app_running(name) && !stop_google_app_for_install(name);
     if (*running) return false;
     const InstallClaim claim(name, true);  // until this returns: see recover_interrupted_installs
@@ -1584,11 +1648,14 @@ bool install_into_library(const fs::path& source, const std::wstring& name, cons
     fs::create_directories(library_dir(), ec);
     const fs::path target = library_dir() / (name + source.extension().wstring());
     const bool update = fs::exists(label_file(name), ec);
-    const fs::path kept = target.wstring() + L".previous";
+    // The library's own file again (opened from the library folder): installed again as it is, with its splits.
     const bool same = fs::equivalent(source, target, ec);
-    const bool backed_up = !same && fs::exists(target, ec) &&
-                           MoveFileExW(target.c_str(), kept.c_str(), MOVEFILE_REPLACE_EXISTING) != 0;
-    bool ok = same || CopyFileW(source.c_str(), target.c_str(), FALSE) != 0;
+    // The install must run: a record newer than the incoming file's date (a copy keeps the date it was
+    // downloaded on) would have the runtime take the installed copy for this file's.
+    fs::remove(install_record(name), ec);
+    // Never a write over a kept file: it is the installed APK itself (library_files.h).
+    bool ok = same || (winapk::launcher::set_aside(library_dir(), name) &&
+                       CopyFileW(source.c_str(), target.c_str(), TRUE) != 0);
     // The install writes the new version's icon first (so that it shows while the code is converted):
     // an update keeps the app's own beside it, to put back if the update does not go through.
     const fs::path icon = app_dir(name) / L"icon.png", icon_kept = app_dir(name) / L"icon.png.previous";
@@ -1621,13 +1688,17 @@ bool install_into_library(const fs::path& source, const std::wstring& name, cons
     if (icon_backed_up && !ok) MoveFileExW(icon_kept.c_str(), icon.c_str(), MOVEFILE_REPLACE_EXISTING);
     else if (icon_backed_up) fs::remove(icon_kept, ec);
     if (ok) {
-        if (backed_up) fs::remove(kept, ec);
-        if (!replaces.empty() && replaces != target) fs::remove(replaces, ec);
-        make_app_shortcuts({name, label_of(name), target}, setting(L"DesktopShortcut", 1) != 0);
+        const fs::path kept = winapk::launcher::is_bundle_file(target) ? keep_installed_apks(name, target) : target;
+        winapk::launcher::drop_previous(library_dir(), name);
+        make_app_shortcuts({name, label_of(name), kept}, setting(L"DesktopShortcut", 1) != 0);
     } else if (!same) {
-        fs::remove(target, ec);
-        if (backed_up) MoveFileExW(kept.c_str(), target.c_str(), MOVEFILE_REPLACE_EXISTING);
-        else if (!update) remove_app_files(name);
+        // Installed again from the files put back at their next start: the installed copy may be this one's.
+        fs::remove(install_record(name), ec);
+        if (!winapk::launcher::put_back(library_dir(), name)) {
+            for (const fs::path& p : winapk::launcher::app_entries(library_dir(), name, false))
+                fs::remove_all(p, ec);
+            if (!update) remove_app_files(name);
+        }
     }
     write_registry();
     return ok;
@@ -1643,7 +1714,7 @@ DWORD WINAPI install_thread(void* param) {
     ReleaseSRWLockExclusive(&g_installs_lock);
     if (started) {
         PostMessageW(g_main, kInstallStarted, 0, reinterpret_cast<LPARAM>(new std::wstring(job->name)));
-        ok = install_into_library(job->source, job->name, job->replaces, &running);
+        ok = install_into_library(job->source, job->name, &running);
     }
     AcquireSRWLockExclusive(&g_installs_lock);
     g_installs.ended(job->name, ok, running);
@@ -4519,7 +4590,7 @@ std::wstring install_name(const fs::path& source) {
 // Queues an install. The store's (`from_store`) installs a download it then
 // removes, and shows its progress on the app's card rather than in the
 // install window.
-void install(const fs::path& source, std::wstring name = L"", fs::path replaces = {}, bool from_store = false) {
+void install(const fs::path& source, std::wstring name = L"", bool from_store = false) {
     if (name.empty()) name = install_name(source);
     if (is_pending(name)) return;  // the same file twice
     if (!any_pending() && !g_install_wnd) g_jobs.clear();
@@ -4528,7 +4599,7 @@ void install(const fs::path& source, std::wstring name = L"", fs::path replaces 
     job.file = source.filename().wstring();
     job.update = find_app(name) != nullptr;
     g_jobs.push_back(job);
-    CloseHandle(CreateThread(nullptr, 0, install_thread, new InstallJob{source, name, replaces, from_store}, 0,
+    CloseHandle(CreateThread(nullptr, 0, install_thread, new InstallJob{source, name, from_store}, 0,
                              nullptr));
     update_timer();
     rebuild_tiles();
@@ -4713,7 +4784,8 @@ void remove_tree(const fs::path& dir) {
     RemoveDirectoryW(dir.c_str());
 }
 
-// The app's own files: its library entry, converted code and shortcuts' icon. What it saved stays.
+// The app's own files: its library entry, installed copy, converted code and shortcuts' icon. What it saved
+// stays.
 void remove_app_files(const std::wstring& name) {
     std::error_code ec;
     fs::remove(label_file(name), ec);
@@ -4723,7 +4795,20 @@ void remove_app_files(const std::wstring& name) {
     fs::remove(start_activity_file(name), ec);
     fs::remove(orientation_file(name), ec);
     remove_tree(app_dir(name));
-    fs::remove(data_dir() / L"android" / L"data" / L"app" / (L"." + name + L".installed"), ec);
+    // Its installed copy (android\data\app\~~<nonce>\<package>-<nonce>), as a phone's uninstall removes it. There
+    // is one per package, so it stays while another library name has the same package.
+    const fs::path copy = installed_copy(name);
+    fs::remove(install_record(name), ec);
+    if (!copy.empty()) {
+        const std::wstring dir = copy.filename().wstring();
+        const std::string pkg = wide_to_utf8(dir.substr(0, dir.rfind(L'-')));
+        bool other = false;
+        for (const App& a : library()) {
+            const std::vector<std::string> p = a.name == name ? std::vector<std::string>{} : package_of(a.name);
+            other = other || (!p.empty() && p[0] == pkg);
+        }
+        if (!other) remove_tree(copy);
+    }
 }
 
 // What the app saved, as Android's "Clear storage" and uninstall take it: its data folder
@@ -4781,7 +4866,7 @@ bool remove_app(const App& app, bool ask, bool with_data = false) {
         if (!other && with_data) remove_app_data(pkg[0]);
     }
     remove_app_shortcuts(copy);
-    fs::remove(copy.apk, ec);
+    for (const fs::path& p : winapk::launcher::app_entries(library_dir(), copy.name, false)) fs::remove_all(p, ec);
     remove_app_files(copy.name);
     write_registry();
     if (ask) {
@@ -4843,7 +4928,7 @@ void store_downloaded(const Download& d, bool ok) {
     const App* existing = it == g_store.installed.end() ? nullptr : find_app(it->second.first);
     const std::wstring name = existing ? existing->name : file_name_safe(utf8_to_wide(d.pkg));
     if (!existing) g_job_labels[name] = d.label;
-    install(d.file, name, existing ? existing->apk : fs::path(), true);
+    install(d.file, name, true);
 }
 
 // ---------------------------------------------------------------------------
@@ -6569,10 +6654,9 @@ fs::path desktop_shortcut(const App& a) {
 // The installed app's arm64 libraries: lib\arm64 next to the base.apk that the install's record
 // (android\data\app\.<name>.installed, its path in UTF-8) names. Empty when it has none.
 fs::path arm64_libs_of(const std::wstring& name) {
-    std::ifstream f(data_dir() / L"android" / L"data" / L"app" / (L"." + name + L".installed"), std::ios::binary);
-    std::string path((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-    if (path.empty()) return {};
-    const fs::path libs = fs::path(utf8_to_wide(path)).parent_path() / L"lib" / L"arm64";
+    const fs::path copy = installed_copy(name);
+    if (copy.empty()) return {};
+    const fs::path libs = copy / L"lib" / L"arm64";
     std::error_code ec;
     return fs::is_directory(libs, ec) ? libs : fs::path();
 }
@@ -6625,7 +6709,11 @@ AotState aot_state(const std::wstring& name) {
 void show_info(const App& app) {
     const App a = app;
     std::error_code ec;
-    const std::wstring apk_size = format_bytes(fs::file_size(a.apk, ec));
+    // A bundle's app is its .apk and the splits beside it (library_files.h): hard links to the installed APKs,
+    // so this is what the app takes on disk, once.
+    const fs::path splits = library_dir() / (a.name + L".splits");
+    const bool has_splits = fs::is_directory(splits, ec);
+    const std::wstring apk_size = format_bytes(fs::file_size(a.apk, ec) + (has_splits ? folder_size(splits) : 0));
     const std::wstring files_size = format_bytes(folder_size(app_dir(a.name)));
     const std::vector<std::string> pkg = package_of(a.name);
     Page p;
@@ -6635,7 +6723,7 @@ void show_info(const App& app) {
     p.sub += pkg.empty() ? a.name : utf8_to_wide(pkg[0]);
     p.back = true;
     p.from = kLibraryView;
-    p.build = [a, apk_size, files_size] {
+    p.build = [a, apk_size, has_splits, files_size] {
         std::vector<Section> out;
         // The orientation the app opens in: what its manifest fixes, or the user's choice for it over the settings'.
         std::vector<Row> window;
@@ -6749,7 +6837,9 @@ void show_info(const App& app) {
             out.push_back({tr(L"Troubleshooting"), std::move(trouble), L""});
         }
         out.push_back({tr(L"Storage"),
-                       {button_row(fmt(L"The app's file  ·  {0}", {apk_size}), a.apk.wstring(), tr(L"Show"),
+                       {button_row(fmt(has_splits ? L"The app's files  ·  {0}" : L"The app's file  ·  {0}",
+                                       {apk_size}),
+                                   a.apk.wstring(), tr(L"Show"),
                                    [a] { show_in_explorer(a.apk); }),
                         button_row(fmt(L"Run files  ·  {0}", {files_size}),
                                    fmt(L"What Win.apk prepared to run the app: {0}",  // a path reads left to right
@@ -10154,7 +10244,7 @@ int helper_main(int argc, wchar_t** argv) {
 
     const std::wstring name = update ? existing->name : file_name_safe(wpkg);
     bool running = false;
-    if (!install_into_library(apk, name, update ? existing->apk : fs::path(), &running)) {
+    if (!install_into_library(apk, name, &running)) {
         if (running) return helper_fail(5, "install", "the app is running; close it, then update it");
         return helper_fail(5, "install", "installing failed; the log is " +
                                              wide_to_utf8(install_log(name).wstring()));
