@@ -608,7 +608,8 @@ There is no sensor hardware behind `SensorManager`: the framework (upstream's Ja
 `Win.apk.exe` (`windows/launcher/launcher_main.cpp`, one file, GDI+; its state
 machines in headers beside it: `app_runs.h`, `installs.h`, `updates.h`) is the
 app library, the counterpart of upstream's Swift launcher. It installs APKs
-by copying them into `library\` and running `winapk-runtime --install-only`,
+by copying them into `library\` and running `winapk-runtime --install-only`
+(a bundle then kept as hard links to the APKs it installed, `library_files.h`),
 gives each app its shortcuts, runs apps (`winapk-runtime --apk`), shows
 their logs, and holds the Store (F-Droid's `index-v1.json` summarized to
 `store\catalog.tsv`, downloads checked against the index's SHA-256), the
@@ -780,12 +781,15 @@ tests the transport and the broker's checks across three processes.
    starts with one, as `com.waze_5.26.5.0-..._apkmirror.com.apkm` does, else
    the file name up to its version; a package already in the library keeps
    that app's name, so the install updates it), copies the file into
-   `library\<name>.apk` (an update moves the
-   previous APK aside, and puts it back if the install fails or is cancelled;
-   an install cut off by a crash or the power is undone the same way at the
-   launcher's next start, `recover_interrupted_installs`)
-   and starts `winapk-runtime --apk <that file> --install-only`, logging to
-   `logs\install-<name>.log`. The install window reads that log for its
+   `library\<name>.<ext>` (an update renames the app's files aside as
+   `<file>.previous`, whatever their extension, deletes them once the new one
+   is installed, and puts them back if the install fails or is cancelled; an
+   install cut off by a crash or the power is undone the same way at the
+   launcher's next start, `recover_interrupted_installs`; a kept file is never
+   written, since it is the installed APK itself: `launcher/library_files.h`),
+   removes the install's record so that the install runs whatever the file's
+   date, and starts `winapk-runtime --apk <that file> --install-only`, logging
+   to `logs\install-<name>.log`. The install window reads that log for its
    status line.
 2. `com.winapk.tools.AppInstall` (in a child JVM) unpacks the app into the
    device layout under `android\data\app\~~<nonce>\<package>-<nonce>\`:
@@ -818,6 +822,16 @@ tests the transport and the broker's checks across three processes.
    larger heap, and a jar is kept only when it is a whole zip, whatever the
    exit code says (under Wine a killed converter reported 0). The launcher then moves the label and
    `package.txt` beside the APK as `library\<name>.label` and `.package`.
+   A bundle (`.apkm`, `.xapk`, `.apks`) is then replaced by
+   `library\<name>.apk` and `library\<name>.splits\split_*.apk`: hard links to
+   the installed `base.apk` and splits, once AppInstall's stamp
+   (`<copy>\.installed`) says the installed copy was made from that very file,
+   so the library keeps one copy of the app (`keep_installed_apks`,
+   `launcher/library_files.h`). AppInstall, given an `.apk` with a `.splits`
+   folder beside it, links them all again, so a reinstall (a stale record,
+   `WINAPK_ABIS`) has the whole app. A library from before this layout moves
+   to it at the launcher's next start, app by app, once each app's installed
+   copy is of its bundle (else at the start after its next run).
 6. The launcher makes the Start menu shortcut (and the desktop one, if the
    setting is on) and adds the app to the library.
 
@@ -897,7 +911,7 @@ default; `--data` moves it for a direct run):
 
 | Path | What |
 |---|---|
-| `library\<name>.apk`, `.label`, `.package`, `.orientation`, `.window` | The user's copy of each app and the launcher's per-app files. A plain APK is also the installed `base.apk` under `android\data\app\` (a hard link, one copy on disk; an update copies the new file in beside the old one, which is renamed aside, so neither is written in place); a bundle (`.apkm`, `.xapk`, `.apks`) is kept whole here and its chosen APKs unpacked there, so it takes its size twice |
+| `library\<name>.apk`, `.splits\`, `.label`, `.package`, `.orientation`, `.window` | The user's copy of each app and the launcher's per-app files. The `.apk` is the installed `base.apk` under `android\data\app\` (a hard link, one copy on disk; an update renames the app's files aside and copies the new file in, so none is written in place); an app that came as a bundle (`.apkm`, `.xapk`, `.apks`) also has `<name>.splits\split_*.apk`, hard links to its installed splits. A bundle is in the library only while it installs: its members cannot be links, so keeping it took its size twice (a 191 MB Waze `.xapk` took about 380 MB). What goes with it is what was never installed: its `manifest.json` and icon, a bundletool set's whole-app alternatives |
 | `apps\<name>\` | `classes.jar`, `.macapk-dex-stamp`, `icon.png`, `label.txt`, `package.txt`; for an arm64-only app that crashed with its translation loaded, `aot-guard.txt` (the crash guard's count and whether translation is off) |
 | `android\` | The Android file system: `data\app\` (installed packages, with `lib\<isa>\` and the `.so.aot.*` translation files; `lib\arm64\.aot-tmp\<lib>\` holds an unfinished translation), `data\data\<package>\` (app data), `dev\socket\` (the socket files that stand for abstract-namespace `LocalSocket` names), the shared-storage volume |
 | `logs\` | `run-<name>.log` and `run-<name>.1.log`, `last-run.log` (a hard link to the newest run log), `install-<name>.log`, `gms.log`, `install-helper.log`, `package-backfill.log`, `hs_err_pid*.log` |

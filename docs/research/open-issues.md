@@ -222,24 +222,24 @@ the app); if it is still there, it is a bug in what replaced it.
   files. Options to weigh: a trimmed LLVM build with only the AArch64->x86_64
   pieces used, downloading it on the first arm64 app, or sharing one with
   the system.
-- **A bundle is stored twice** (a plain APK is not: its installed `base.apk`
-  is a hard link to `library\<name>.apk`, `AppInstall.link`; checked under
-  Wine, two links to one file. The "6-19 MB twice" measured earlier summed
-  both names of one file). An `.apkm`/`.xapk`/`.apks` stays whole in
-  `library\` and its chosen APKs are unpacked under `android\data\app\`:
-  a 191 MB Waze `.xapk` takes about 380 MB. A zip's members cannot be hard
-  links, so one copy means the library no longer keeps the bundle. A design
-  that keeps what the launcher sees: after a bundle installs, the launcher
-  replaces `library\<name>.<ext>` with `library\<name>.apk`, a hard link to
-  the installed `base.apk`, plus `library\<name>.splits\split_*.apk`, hard
-  links to the installed splits; `AppInstall` given an `.apk` with a
-  `.splits` folder beside it links them all, so a reinstall (a stale record,
-  `WINAPK_ABIS`) still has every split. To change with it: `is_app_file`,
-  `recover_interrupted_installs`, Remove (the `.splits` folder), the update's
-  `replaces` and `.previous` handling (rename aside, never write in place),
-  `make_app_shortcuts`. What is lost: the bundle's other splits (other ABIs
-  and densities), so a later ABI choice cannot be made from the library.
-  Not done; the owner to decide.
+- **A bundle was stored twice: done** (the owner's decision, November 2026).
+  Once installed, a bundle (`.apkm`, `.xapk`, `.apks`) is replaced in
+  `library\` by `<name>.apk` and `<name>.splits\split_*.apk`, hard links to
+  the installed `base.apk` and splits (`launcher/library_files.h`,
+  `keep_installed_apks`); `AppInstall` given an `.apk` with a `.splits` folder
+  links them all again. An update renames the app's files aside as
+  `.previous` and never writes a kept file; Remove now also deletes the
+  installed copy under `android\data\app\` (it was left behind). A library
+  from before moves to the layout at the launcher's next start, app by app,
+  once the app's installed copy is of its bundle (AppInstall's stamp: size and
+  date). Measured under Wine with Cal's 25 MB `.xapk`: library plus installed
+  copy 25 MB (was 50 MB); install, run, a stale record's reinstall, updates
+  from a bundle and from a plain APK, the migration and Remove checked. Found
+  on the way and fixed: an update whose file was dated before the last
+  install's record was not installed at all (the runtime took the record as
+  current; the launcher now removes it first). Left: a bundle's OBB files
+  (`Android/obb/` in an `.xapk`) were never installed and now go with the
+  bundle; a bundletool set's other whole-app alternatives go too.
 - **CJK and emoji fonts** (Noto CJK Regular 19 MB, Color Emoji 9 MB) fetched
   on first need into the data folder: looked at, not done, because the font
   setup cannot wait for a file. `AospGfx.materializeSystemFonts` builds the
