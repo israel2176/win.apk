@@ -1,8 +1,9 @@
-// aosp_gfx.h -- WINAPK_AOSP_GFX=1: an app's run on AOSP's own graphics (windows/README.md,
-// "Milestone 2: the runtime on AOSP graphics"). Off by default, and then nothing here does
-// anything: the class path, the JVM's options and the natives are as they were.
+// aosp_gfx.h -- an app's run on AOSP's own graphics (windows/README.md, "Milestone 2: the
+// runtime on AOSP graphics"), the default. WINAPK_AOSP_GFX=0 is the way back to Win.apk's own
+// Java2D classes while they exist: then nothing here does anything, and the class path, the
+// JVM's options and the natives are those of the Java2D path.
 //
-// What the switch needs, all staged by windows/scripts/build_aosp_gfx.sh:
+// What it needs, all staged by windows/scripts/build_aosp_gfx.sh:
 //   lib\aosp-graphics.jar               AOSP 14's android.graphics.**, the android.text classes that
 //                                       measure and lay out, android.util.PathParser, + Win.apk's
 //                                       stand-ins (windows/java/aosp_gfx); put before
@@ -12,7 +13,7 @@
 //   bin\aosp\fonts\fonts.xml + fonts    Android's fonts (-Dwinapk.aosp.fonts)
 //   bin\aosp\hyphen-data\               the hyphenation patterns (-Dwinapk.aosp.hyphen)
 // Any of them missing, or the DLL not loading in this process, and the run goes on with the
-// switch off, saying so in the log.
+// Java2D classes, saying so in the log.
 
 #pragma once
 
@@ -23,9 +24,13 @@
 
 namespace winapk::host {
 
-// Decides, once, before the JVM is made: WINAPK_AOSP_GFX=1 and every file in place (the DLL is
-// loaded here to find out). `lib` is the runtime's lib folder, `bin` winapk-runtime.exe's.
-// Logs one line either way when the switch was asked for; silent when it was not.
+// The CI's UI gate greps a base commit for this line to know which graphics that base runs by
+// default (.github/workflows/ci.yml, "Find the base"); it goes with the Java2D classes.
+constexpr bool kAospGfxByDefault = true;
+
+// Decides, once, before the JVM is made: on unless WINAPK_AOSP_GFX=0, and every file in place
+// (the DLL is loaded here to find out). `lib` is the runtime's lib folder, `bin`
+// winapk-runtime.exe's. Logs one line either way.
 bool aosp_gfx_prepare(const std::filesystem::path& lib, const std::filesystem::path& bin);
 
 struct AospGfxFiles {

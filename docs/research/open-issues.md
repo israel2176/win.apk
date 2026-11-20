@@ -29,7 +29,10 @@ agents' work folders were `/opt/uip/il-work/<app>/`, gone with the container).
   and the missing-`icu.dll` crash; then make `WINAPK_AOSP_GFX` the default and
   **remove the old Java2D graphics engine** (and the Win.apk code each AOSP
   layer replaces). The PR is not merged soon: an engine change needs more
-  testing first (apps on real Windows, the UI gate on more apps).
+  testing first (apps on real Windows, the UI gate on more apps). **The
+  default is flipped** on this branch (AOSP's graphics unless
+  `WINAPK_AOSP_GFX=0`), so that CI's smoke test and UI gate test the new
+  engine; deleting Java2D is the next step (below).
 
 ## Check again after each AOSP layer lands
 
@@ -176,7 +179,49 @@ the app); if it is still there, it is a bug in what replaced it.
   not the switch's). Left in the text rows: ExtendedFloatingActionButton's
   `getGravity()` (11 where Android has START|CENTER_VERTICAL, both paths).
   Not yet run: the screens check of more apps with the switch on, and apps
-  on real Windows; then make the switch the default (the owner's order).
+  on real Windows.
+- **AOSP graphics is the default** (`host/aosp_gfx.h`, `kAospGfxByDefault`;
+  `WINAPK_AOSP_GFX=0` is the way back, as is a stage without the files, each
+  with its `AOSP graphics: off` line). Class-data sharing is on for it now:
+  one archive per graphics, `cds\framework-aosp-<key>.jsa` and
+  `framework-java2d-<key>.jsa`, neither's dump deleting the other's
+  (`cds_util.h`, `stale_archive_file`; `cds_test`). `--cds-prepare` takes the
+  graphics an app's start would (the same key, checked under Wine). Releases
+  ship the files now (`windows-release.yml` no longer sets
+  `WINAPK_STAGE_AOSP_GFX=0`). Checked under Wine on a stage of this tree: the
+  probe with no variable is byte for byte the earlier switch-on run (1942 of
+  2104), with `WINAPK_AOSP_GFX=0` byte for byte Java2D's (1895); the second
+  start maps the AOSP archive; JVM to first frame 10.4-10.7 s with it, 11.8 s
+  with class-data sharing off as before (Java2D: 12.4 s, 13.3 s). **To see on
+  CI's next run**: the smoke test's ten apps all say `AOSP graphics: on` and
+  draw (the step fails otherwise); the runtime tests' archive step (AOSP's
+  archive made and mapped, a Java2D start making its own, AOSP's kept); the
+  UI gate's summary saying "base Java2D, head AOSP" (the old-vs-new
+  comparison) and what it calls REGRESSED, FARTHER or MISSING: each such line
+  is an AOSP-path bug to fix or a Java2D line that was right by accident to
+  look at, not a reason to flip back. Then the `framework-classlist`
+  artifact, recorded on AOSP's graphics, should replace
+  `windows/java/winapk-framework.classlist` (today's was recorded on Java2D:
+  for the probe it lists about 270 Java2D-only classes, `java.awt`, Marlin,
+  ImageIO, and misses about 235 of AOSP's; the first start on a machine adds
+  its own app's anyway, so only `--cds-prepare`'s archive is short).
+- **Next: delete the Java2D engine.** What must hold first: CI's smoke test
+  green on AOSP's graphics over a few runs, and the UI gate's lines no
+  further from Android than Java2D's (or each exception understood); the
+  Gallery `activity_video_player` backdrop and the other gaps in the item
+  above either fixed or accepted by the owner; the AOSP stand-ins for what
+  Win.apk's own classes still do only on Java2D (`AdaptiveIconDrawable`
+  before the `Application`, `<animated-image>`, Compose's `drawRenderNode`
+  on a software canvas, `SurfaceTexture` on native pixels) at least as good;
+  the processes with no app (`--gms`, `--system`, the install helper's icon
+  render) moved onto the AOSP class path too, since today they still run on
+  Java2D's and so map the `java2d` archive, which on a user's machine is made
+  only by an app start with `WINAPK_AOSP_GFX=0` (the system broker starts
+  without the framework archive meanwhile: the JRE's own still maps); and the
+  apps on real Windows (`app-probe.yml`) looked at. Then: `Java2DGfx`, the
+  Java2D `android.graphics`/`android.text` classes `aosp-graphics.jar`
+  shadows, `WINAPK_AOSP_GFX=0`, the `java2d` archive naming and this branch's
+  base-graphics step in `ci.yml` go; `GfxBackend` can then be folded away.
 - **Screens checks not finished**: Bank Leumi (stopped by the usage limit
   before its boot), Pango and Paybox (not on APKPure; the owner offered their
   other repository or a Play download).
@@ -196,8 +241,6 @@ the app); if it is still there, it is a bug in what replaced it.
   jobs finish in a few minutes, their summary says "no layout sweep" while
   `main` lacks it, and compares base and head once `main` has it. Then watch
   for noise between two runs of the same code.
-- **Releases leave the AOSP files out** (`WINAPK_STAGE_AOSP_GFX=0` in
-  `windows-release.yml`) until the switch draws apps as well as Java2D.
 
 ## Deferred by the owner: a live comparison
 

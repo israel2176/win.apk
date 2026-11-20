@@ -9,8 +9,8 @@
 #   <out>/bin/tools/framework-res.apk
 #   <out>/lib/*.jar, java_base_patch/, jdk_unsupported_patch/
 #   <out>/lib/aosp-graphics.jar, bin/robolectric-nativeruntime.dll, bin/aosp/ (ICU's data, the
-#                                     fonts) for WINAPK_AOSP_GFX=1 (build_aosp_gfx.sh; off at run
-#                                     time unless asked for). WINAPK_STAGE_AOSP_GFX=0 leaves them
+#                                     fonts): AOSP's graphics, what apps draw with unless
+#                                     WINAPK_AOSP_GFX=0 (build_aosp_gfx.sh). WINAPK_STAGE_AOSP_GFX=0 leaves them
 #                                     out; WINAPK_AOSP_GFX_DEPS names the download folder
 #                                     (default thirdparty/aosp-gfx)
 #

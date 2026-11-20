@@ -119,8 +119,8 @@ Fonts -- in lib\android-framework.jar (fonts/)
 As AOSP ships them. The Apache License and the SIL Open Font License are in
 section 5.
 
-AOSP graphics (used only with WINAPK_AOSP_GFX=1, off by default; in builds
-that carry these files, not yet in releases) --
+AOSP graphics (what apps draw with by default; WINAPK_AOSP_GFX=0 turns it
+off) --
 lib\aosp-graphics.jar, bin\robolectric-nativeruntime.dll, bin\aosp\
 Built by windows/scripts/build_aosp_gfx.sh from Robolectric's builds of AOSP 14
 (Maven Central: org.robolectric:android-all 14-robolectric-10818077 and

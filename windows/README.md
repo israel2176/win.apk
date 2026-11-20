@@ -41,7 +41,7 @@ this repository.
 | `launcher/` | `Win.apk.exe`, the app library, the install helper and the permission dialogs (`launcher_main.cpp`, `launcher.rc`, the icon), and its state machines, each a header the unit test drives (`app_runs.h`: an app's run; `installs.h`: an install; `updates.h`: the update check and download) |
 | `java/` | Windows-only Java: `com.winapk.tools.AppInstall` and `AppMeta` (`winapk-tools.jar`), `java_base_patch/` (an overlay for `java.base`), `aosp_gfx/` (the stand-ins in `aosp-graphics.jar`: ART's, Robolectric's, and an `android.icu.text.Bidi` on `java.text.Bidi`), and `winapk-framework.classlist` (the classes of the framework archive, `host/cds.h`) |
 | `tools/` | `winapk-elfrun` (the loader test runner), `winapk-jvm-run` (the real-JVM test), `winapk-aot` (`arm64_aot_main.cpp`), and the generators `gen_jni_slots.py`, `gen_gl_stubs.py`, `gen_icon.py` |
-| `scripts/` | `build_java.sh`, `build_framework_res.sh`, `build_aosp_gfx.sh` (`WINAPK_AOSP_GFX`'s files), `fetch_angle.sh`, `fetch_webview2.sh`, `stage_clang.sh`, `stage_runtime.sh`, `bake_jre.sh` (the JRE Win.apk ships), `merge_classlists.py` |
+| `scripts/` | `build_java.sh`, `build_framework_res.sh`, `build_aosp_gfx.sh` (AOSP graphics' files), `fetch_angle.sh`, `fetch_webview2.sh`, `stage_clang.sh`, `stage_runtime.sh`, `bake_jre.sh` (the JRE Win.apk ships), `merge_classlists.py` |
 | `test/` | The unit tests (`*_test.cpp`), the guest test libraries (`guest/`, built with plain clang + lld, no NDK), the Java tests (`java/`), the Wine runners (`run_*_wine.sh`), the compatibility sweep and the screens crawl (`compat/`) |
 | `package/` | The installer (`winapk.iss`, Inno Setup), `README.txt` and `RELEASE_NOTES.md` shipped with a release |
 | `cmake/`, `compat/`, `third_party/` | The Linux cross toolchain file, the CMake steps that cut the GL and Bitmap bridges out of upstream's `native_methods.cpp` and `bionic_shim.cpp`, a CoreFoundation shim for `native_sqlite.cpp`, the Khronos headers |
@@ -233,7 +233,7 @@ The user-facing ones (`WINAPK_PHONE_SIZE`, `WINAPK_RESIZABLE`,
 | `MACAPK_JVM_OPTS` | Extra JVM options, passed through after Win.apk's own (`-XX:TieredStopAtLevel=4` brings back the C2 compiler, which the runtime leaves out for a faster start) |
 | `WINAPK_SHORT_DATA_DIR=0` | The app's data directory by its long name, not the 8.3 one (`-Dwinapk.data.dir`). For Wine, which makes short names up and does not find a new file by one: without it every save through a temporary file fails there. `run_app_wine.sh` and the sweep under `--launcher wine` set it |
 | `WINAPK_DEBUG=1` or `0` | Debug mode for this run, over the launcher's Settings > Troubleshooting > Debug mode (`HKCU\Software\Win.apk\DebugMode`): the runtime starts its thread agent (`host/debug_agent.cpp`), which answers the launcher's Threads window on `\\.\pipe\winapk-debug-<pid>` (`include/winapk/debug_protocol.h`): `threads` lists every Windows thread of the process with its kind (java, guest, jvm, runtime, system), Java name and state and where it started; `stack <tid> <jid>` gives one thread's Java frames, contended monitor and native stack. Only for a run of an app and the system broker, not an install |
-| `WINAPK_AOSP_GFX=1` | An app's run on AOSP's own graphics, milestone 2's switch (`host/aosp_gfx.h`; off by default, and then nothing changes; on, an app draws through AOSP's `Canvas`, with the gaps [Milestone 2](#milestone-2-the-runtime-on-aosp-graphics) lists): `lib\aosp-graphics.jar` goes before `android-framework.jar` on the class path, `-Dicu.data.path`, `-Dicu.locale.default`, `-Dwinapk.aosp.gfx=1`, `-Dwinapk.aosp.fonts` and `-Dwinapk.aosp.hyphen` are set, class-data sharing is off (the old `--patch-module` flags), and once the host's natives are bound `bin\robolectric-nativeruntime.dll` loads through `host/aosp_gfx_redirect.cpp`: its natives go onto the jar's classes, only `android.graphics.**`, `android.text.**`, `android.util.PathParser` and two helpers (an allowlist); those for `android.database(.sqlite)`, `android.view.Surface`, `android.media.ImageReader` and `PropertyValuesHolder` are refused, Win.apk's stay. One log line: `AOSP graphics: robolectric-nativeruntime.dll loaded in N ms: natives bound N (5 through API 34 adapters), skipped N, refused N ...`. A file missing, or the DLL not loading, and the run goes on with the switch off (`AOSP graphics: off, ...`). Only an app's run, not an install, `--gms`, `--system` or `--verify-apk`. `WINAPK_AOSP_GFX_VERBOSE=1` lists each skipped native and each class routed to the stand-in |
+| `WINAPK_AOSP_GFX=0` | Win.apk's older Java2D graphics for this run instead of AOSP's own, the default (`host/aosp_gfx.h`; the way back while the Java2D classes exist; unset or `1` is the default). By default an app draws through AOSP's `Canvas`, with the gaps [Milestone 2](#milestone-2-the-runtime-on-aosp-graphics) lists: `lib\aosp-graphics.jar` goes before `android-framework.jar` on the class path, `-Dicu.data.path`, `-Dicu.locale.default`, `-Dwinapk.aosp.gfx=1`, `-Dwinapk.aosp.fonts` and `-Dwinapk.aosp.hyphen` are set, class-data sharing maps the `framework-aosp-<key>.jsa` archive (Java2D's is `framework-java2d-<key>.jsa`; each keeps the other), and once the host's natives are bound `bin\robolectric-nativeruntime.dll` loads through `host/aosp_gfx_redirect.cpp`: its natives go onto the jar's classes, only `android.graphics.**`, `android.text.**`, `android.util.PathParser` and two helpers (an allowlist); those for `android.database(.sqlite)`, `android.view.Surface`, `android.media.ImageReader` and `PropertyValuesHolder` are refused, Win.apk's stay. Log lines: `AOSP graphics: on (WINAPK_AOSP_GFX=0 turns it off): ...` or `AOSP graphics: off (WINAPK_AOSP_GFX=0): ...`, then `AOSP graphics: robolectric-nativeruntime.dll loaded in N ms: natives bound N (5 through API 34 adapters), skipped N, refused N ...`. A file missing, or the DLL not loading, and the run goes on with Java2D's (`AOSP graphics: off, ... is missing` / `does not load`). Only an app's run (and `--cds-prepare`, for its archive's key), not an install, `--gms`, `--system` or `--verify-apk`. `WINAPK_AOSP_GFX_VERBOSE=1` lists each skipped native and each class routed to the stand-in |
 | `WINAPK_CDS=0` or `base` | Class-data sharing (`host/cds.h`): `0` back to the old flags (`--patch-module`, no archive), `base` the JRE's archive without the framework archive. `WINAPK_CDS_DIR=<dir>` puts the framework archive elsewhere (tests share one), `WINAPK_CDS_CLASSLIST=<file>` dumps from another class list (`none`: only the start's own), `WINAPK_CDS_RECORD_DIR=<dir>` writes every app start's loaded classes to `<dir>\<app>.classlist` (for `scripts/merge_classlists.py`), `WINAPK_CDS_VERIFY=1` checks the archive whole at every start, `WINAPK_CDS_DUMP_DELAY_MS` (default 10000) is the wait after the first frame before the background dump |
 | `MACAPK_FRAMESPEED_DAMAGE=1` | Partial redraw (off by default): a frame that only invalidations asked for draws the view tree clipped to the area they damaged and hands the window only that rectangle, instead of redrawing and copying the whole window (`docs/ARCHITECTURE.md`, "The view tree's frames"). Unset or anything else, every frame is whole. `MACAPK_DAMAGE_VALIDATE=1` with it draws every frame whole but compares what changed with the area claimed: `[damage-validate] under-damage` names a frame that changed outside it, and the `M6:` line counts `validate: claimed= clean= under=`. `MACAPK_TRACE_DAMAGE=1` logs every 5 s what the frames' damage was (`[damage]`), `MACAPK_FRAME_PHASE_TRACE=1` a frame's time by phase (`[frame-phase]`) |
 | `MACAPK_QUIET_CLASSLOAD=0` | Logs a line for every class the app's class loader loads (the runtime sets it to 1, as upstream's launcher does: thousands of lines cost up to 0.4 s of a start) |
@@ -433,8 +433,20 @@ check passes too (the agent built with MinGW there).
 
 ### Milestone 2: the runtime on AOSP graphics
 
-Behind a switch (`WINAPK_AOSP_GFX=1`, default off), falling back to today's
-Java2D classes, which stay as they are:
+The default since the owner approved it (`host/aosp_gfx.h`,
+`kAospGfxByDefault`): an app's run draws on AOSP's classes unless
+`WINAPK_AOSP_GFX=0`, which, like a stage without the files, falls back to the
+Java2D classes, kept as they are until the next step deletes them
+(`docs/research/open-issues.md` says what must hold first). Below, "the
+switch on" is the default and "off" is `WINAPK_AOSP_GFX=0`; the sections that
+say `WINAPK_AOSP_GFX=1` were written while it was opt-in, and it still means on.
+Each graphics has its own class-data sharing archive
+(`framework-aosp-<key>.jsa`, `framework-java2d-<key>.jsa`, `host/cds.h`), so
+switching back and forth dumps neither again; under Wine the probe's first
+frame came 1.1-1.5 s sooner after the JVM was created with the AOSP archive
+than with class-data sharing off, as it was under the switch before (10.4-10.7 s
+against 11.8 s, one run each; Java2D 12.4 s and 13.3 s), and 1.8 s sooner from
+the process's start (17.0 s against 18.8 s, the DEX conversion included).
 
 Done so far: the plumbing around the switch, the seam (step 1) and a first
 screen (step 2, below): with the switch on an app reaches its frames drawn by
@@ -449,9 +461,8 @@ nothing changes: the uiprobe app's `ours.txt` is the same byte for byte as
 before these changes.
 
 - Build: `scripts/build_aosp_gfx.sh <stage> [deps]`, run by
-  `stage_runtime.sh` (`WINAPK_STAGE_AOSP_GFX=0` leaves it out, as
-  `windows-release.yml` does until the switch draws apps as well as the Java2D
-  path), fetches
+  `stage_runtime.sh` (`WINAPK_STAGE_AOSP_GFX=0` leaves it out; CI and
+  `windows-release.yml` stage it), fetches
   android-all and the native runtime through `test/aospgfx/fetch.sh` (pinned,
   SHA-256 checked; into `thirdparty/aosp-gfx/`, which CI caches) and stages
   `lib/aosp-graphics.jar` (AOSP's `android.graphics.**` without
@@ -922,8 +933,10 @@ translations 25 MB, hard links of the `aot-cache\` entries, which apps with
 the same library share; its 33 MB OpenCV library waits for a profile; 114 MB
 in `lib\arm64\` at the peak of a translation, its temporary files). The arm64
 translation's compiler runs as one or two `clang.exe` at about 400 MB each,
-in the background, after the first frame. The AOSP files add nothing to a data
-folder: with the switch on class-data sharing is off, so no second archive.
+in the background, after the first frame. Each graphics has its framework
+archive (`cds\framework-aosp-*.jsa`, the default, 41 MB for the probe under
+Wine; `framework-java2d-*.jsa`, 40 MB), so a data folder holds the second only
+once something ran with `WINAPK_AOSP_GFX=0`.
 
 Memory (under Wine 9, so relative numbers: Windows' own come from the smoke
 test now, below). The runtime's process, peak resident set polled every
@@ -1008,9 +1021,8 @@ Package job runs it on the stage and `Win.apk-Setup.exe` it just built
 | Installed, in all | 544.5 MB | 600 MB |
 | Installer | about 163 MB | 175 MB |
 
-The CI stage has the AOSP files (`WINAPK_STAGE_AOSP_GFX` defaults to 1);
-a release leaves them out until the switch draws an app, so it is below
-these. To change a budget, edit `BUDGETS`, `TOTAL_BUDGET` or
+The stage has the AOSP files (`WINAPK_STAGE_AOSP_GFX` defaults to 1), in
+CI and in a release alike: apps draw on them by default. To change a budget, edit `BUDGETS`, `TOTAL_BUDGET` or
 `INSTALLER_BUDGET` at the top of the script in the change that needs the
 room, say why in its description, and update this table. Raising it is a
 decision about the product, not a way to make CI green.

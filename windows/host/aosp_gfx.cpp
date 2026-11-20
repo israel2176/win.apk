@@ -25,10 +25,12 @@ std::string utf8(const std::wstring& w) {
     return s;
 }
 
-bool switch_asked() {
+// WINAPK_AOSP_GFX=0 turns it off; unset, 1 or anything else leaves the default.
+bool wanted() {
     wchar_t v[8];
     const DWORD n = GetEnvironmentVariableW(L"WINAPK_AOSP_GFX", v, 8);
-    return n == 1 && v[0] == L'1';
+    if (n == 1 && v[0] == L'0') return false;
+    return kAospGfxByDefault || (n == 1 && v[0] == L'1');
 }
 
 jstring jstring_of(JNIEnv* env, const std::wstring& s) {
@@ -39,7 +41,10 @@ jstring jstring_of(JNIEnv* env, const std::wstring& s) {
 
 bool aosp_gfx_prepare(const fs::path& lib, const fs::path& bin) {
     g_on = false;
-    if (!switch_asked()) return false;
+    if (!wanted()) {
+        std::fprintf(stderr, "[win.apk] AOSP graphics: off (WINAPK_AOSP_GFX=0): Win.apk's Java2D classes draw\n");
+        return false;
+    }
     AospGfxFiles f;
     f.jar = lib / "aosp-graphics.jar";
     f.dll = bin / "robolectric-nativeruntime.dll";
@@ -49,8 +54,9 @@ bool aosp_gfx_prepare(const fs::path& lib, const fs::path& bin) {
     std::error_code ec;
     for (const fs::path& p : {f.jar, f.dll, f.icu_data, f.fonts / "fonts.xml"}) {
         if (!fs::is_regular_file(p, ec)) {
-            std::fprintf(stderr, "[win.apk] AOSP graphics: off, %s is missing (WINAPK_AOSP_GFX=1 needs a runtime "
-                                 "staged with windows/scripts/build_aosp_gfx.sh)\n", utf8(p.wstring()).c_str());
+            std::fprintf(stderr, "[win.apk] AOSP graphics: off, %s is missing (a runtime staged without "
+                                 "windows/scripts/build_aosp_gfx.sh's files): Win.apk's Java2D classes draw\n",
+                         utf8(p.wstring()).c_str());
             return false;
         }
     }
@@ -59,13 +65,14 @@ bool aosp_gfx_prepare(const fs::path& lib, const fs::path& bin) {
     // old Windows) would otherwise leave AOSP's classes on the class path with no natives. It
     // stays loaded; System.load finds it so.
     if (!LoadLibraryExW(f.dll.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH)) {
-        std::fprintf(stderr, "[win.apk] AOSP graphics: off, %s does not load (error %lu)\n",
+        std::fprintf(stderr, "[win.apk] AOSP graphics: off, %s does not load (error %lu): Win.apk's Java2D "
+                             "classes draw\n",
                      utf8(f.dll.wstring()).c_str(), GetLastError());
         return false;
     }
     g_files = f;
     g_on = true;
-    std::fprintf(stderr, "[win.apk] AOSP graphics: on (WINAPK_AOSP_GFX=1): %s first on the class path\n",
+    std::fprintf(stderr, "[win.apk] AOSP graphics: on (WINAPK_AOSP_GFX=0 turns it off): %s first on the class path\n",
                  utf8(f.jar.wstring()).c_str());
     return true;
 }
