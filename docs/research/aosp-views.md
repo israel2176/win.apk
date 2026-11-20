@@ -606,8 +606,9 @@ Left for V1, in order:
   punches AOSP's hole (`clearSurfaceViewPort`'s condition), and the host
   composites the frame over the GL frame: Klooni (libGDX) and PPSSPP
   (NativeActivity) draw as with the switch off. It is not yet one layer of the
-  compositor's among the windows. SDL's native window (Tensy) stalls after its
-  rotation (`open-issues.md`); `TextureView` and video were not run.
+  compositor's among the windows. SDL's native window (Tensy) draws too
+  (`open-issues.md`: the host's render thread no longer uses GL while an app's
+  own EGL window surface lives); `TextureView` and video were not run.
 - Display commits (a window resize, an app's requested orientation) reach the
   windows: `ViewHost.scheduleLayout` sends `IWindow.resized` to each window
   whose frame changes; `ViewRootImpl.updateConfiguration` then needs

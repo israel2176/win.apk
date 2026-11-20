@@ -89,23 +89,24 @@ host's IME (V2) are there. Items 10-14
 **The smoke apps with AOSP's views (November 2026).** The ten apps of
 `windows/test/compat/smoke.txt` booted headless under Wine (the sweep, 150
 frames, CDS off, one stage), both switches on (`WINAPK_AOSP_RES=1
-WINAPK_AOSP_VIEWS=1`, on 2cd3771 with V1's dialogs and bars and V2) against
-both off. Off, all ten draw. The UI probe stays equal to the oracle in all 2104
+WINAPK_AOSP_VIEWS=1`, on 2cd3771 with V1's dialogs and bars and V2, then with
+the fixes below) against both off. Off, all ten draw; **on, all ten draw too**,
+each the same screen as off. The UI probe stays equal to the oracle in all 2104
 lines with both switches, 162 differing off and 146 with resources alone, as
 before.
 
 | App (kind) | Off | On, at cf583c9 | On, now | Left |
 |---|---|---|---|---|
-| Editor (Java views) | "Access all files" dialog over the dimmed editor | the editor, no dialog (old pipeline) | **draws**: the same dialog over "Untitled.txt" | the area under the dialog is lighter than off (the dim behind) |
+| Editor (Java views) | "Access all files" dialog over the dimmed editor | the editor, no dialog (old pipeline) | **draws**: the same dialog over "Untitled.txt" | the dim is AOSP's (below) |
 | Fossify Notes (Kotlin views) | draws | draws (old pipeline); spell checker NPE | **draws**, as off | none |
-| Jerboa (Compose) | "What's changed" dialog | blank (the dialog threw in `onCreate`) | **draws**: the home screen with a dialog | a different dialog is on top (the Google identity notice, not "What's changed"): the order of two dialogs; `View.setRequestedFrameRate` NoSuchMethodError |
+| Jerboa (Compose) | "What's changed" dialog | blank (the dialog threw in `onCreate`) | **draws**: "Support Jerboa / What's changed" over the Google notice, as off | none (the run of 2cd3771 caught the frame before the second dialog's first draw; the order is the window manager's, below) |
 | Sgt Puzzles (JNI, Canvas) | draws | title "GameChooser" | **draws**, pixel-identical to off | none |
 | Klooni (libGDX GL) | draws | blank: `skin\uiskin.json` not found | **draws**, the menu as off | none |
-| Tensy (SDL, native window) | draws, though its intro is black at some frame counts | blank: `DisplayDecorationSupport` NoClassDefFoundError | first native frame (portrait), then stalls after the rotation to landscape | ~12 native frames in 150-600 display frames (off: 177 in 150). At the stall the UI thread is idle in its looper, `SDLThread` is in `nativeRunMain`, focus is true and no pause or surface loss is logged. Before the rotation reached the activity (the `CONFIG_WINDOW_CONFIGURATION` fix) it drew the title at 400 frames. Not found yet |
+| Tensy (SDL, native window) | draws, though its intro is black at some frame counts | blank: `DisplayDecorationSupport` NoClassDefFoundError | **draws**, the title as off (five runs of five) | none. The "stall" was a crash in ANGLE (below) |
 | PPSSPP (NativeActivity, GL) | draws (logo) | blank (GL under an opaque window) | **draws**, the same logo screen | none |
 | Jitsi Meet (React Native) | draws (splash) | blank (dialog in `onCreate`) | **draws**, pixel-identical to off | none |
-| Jellyfin (WebView shell, Compose setup) | draws | blank: "Autofill service could not be located" | **draws**, as off | `View.setRequestedFrameRate(float)` NoSuchMethodError: an API 35 member AOSP 14's `View` lacks (the level question, `aosp-views.md` section 4) |
-| Open Sudoku (arm64) | "Latest changes" dialog | title "TitleScreenActivity", no dialog | **draws**: the dialog over the title screen | the margin around the dialog differs from off (dim and window background) |
+| Jellyfin (WebView shell, Compose setup) | draws | blank: "Autofill service could not be located" | **draws**, as off | none (`View.setRequestedFrameRate` is there now, below) |
+| Open Sudoku (arm64) | "Latest changes" dialog | title "TitleScreenActivity", no dialog | **draws**: the dialog over the title screen | the dim differs from off: AOSP's here (below) |
 
 Fixed at the root by this work (besides what ad53ceb and 2cd3771 fixed): the
 autofill manager as on a device without the service;
@@ -115,12 +116,42 @@ Resources hold the framework only); a SurfaceView's GL view under the windows
 with AOSP's hole; display commits to the windows (`IWindow.resized`);
 `CONFIG_WINDOW_CONFIGURATION` out of `DisplayConfig`'s relaunch and report
 decisions; `ResourcesManager`'s three members; `Handler.executeOrSendMessage`
-(AOSP's `InputMethodManager.showSoftInput`).
+(AOSP's `InputMethodManager.showSoftInput`); then:
 
-Left: Tensy's stall after a rotation; API 35 members missing from AOSP 14's
-views (Jerboa, Jellyfin); the dim behind dialogs and the order of two dialogs
-against the switch-off pictures (Editor, Open Sudoku, Jerboa) to compare with a
-device, not only with Win.apk's old pipeline.
+- **Tensy's "stall" was a crash** (found with `winedbg bt all` on the stalled
+  process; the minidump being written under Wine kept it alive): an access
+  violation in libGLESv2 inside SDL's `glDrawArrays`. SDL draws on its own
+  thread into an EGL window surface on the SurfaceView; the host's render
+  thread, ticking the shared GL view under it, made that view's pbuffer again
+  at the rotated size (and read it back) on the same ANGLE display, whose
+  Direct3D 11 device context is not safe from two threads. Off, the window
+  happens to rotate before SDL's first frame; with AOSP's views it rotates
+  after. `gl_tick` now leaves GL alone while an app's own window surface lives
+  (`guest_window_surface_held`, 1bb3e33). This is host code and runs off too:
+  there it only removes the same race (off, all ten still draw).
+- **API 35 members of the views** (994c7c0): the runtime reports SDK 35 and
+  the views are AOSP 14's; 45 of the 70 members android-35 adds to those
+  classes are added to them at build time (`aosp_views/Api35.java`, with
+  `AospAddMethods.java` as the graphics do): Compose's
+  `View.setRequestedFrameRate` threw in Jerboa and Jellyfin. The 25 left name
+  types AOSP 14 has no class of (credentials, `InputTransferToken`,
+  `ConnectionlessHandwritingCallback`) or are `WindowManager`'s (an interface).
+- **The dim behind dialogs** is AOSP's with the switches on: `PhoneWindow`
+  sets `FLAG_DIM_BEHIND` and `dimAmount` from the theme's
+  `backgroundDimAmount` (0.6 for the platform's `AlertDialog`, Editor; 0.32
+  for Material's, Open Sudoku), and the compositor draws SurfaceFlinger's dim
+  layer, black at `dimAmount` over everything below the window. Measured: the
+  white under Open Sudoku's dialog is 173 (255 x 0.68), Editor's content 100
+  (250 x 0.4). Win.apk's old path gives Open Sudoku 166, about 0.35, and a
+  darker grey round Editor's dialog than 0.6 over its editor would.
+- **The order of Jerboa's two dialogs** is the window manager's: both are
+  `TYPE_APPLICATION` windows on the activity's token, and a token keeps its
+  child windows in the order they were added, over its `TYPE_BASE_APPLICATION`
+  window (the compositor's order). The Google notice is added first and
+  "Support Jerboa" over it, as off.
+
+Left: comparing the dim and dialog pictures with a device, not only with
+Win.apk's old pipeline.
 
 ## Bugs to fix on their own (not part of a layer)
 
