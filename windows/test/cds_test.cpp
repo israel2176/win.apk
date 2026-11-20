@@ -152,6 +152,15 @@ int main(int argc, char** argv) {
     check(!stale_archive_file(L"framework-aospres-fedcba9876543210.jsa", stem) &&
               !stale_archive_file(L"framework-aosp-fedcba9876543210.jsa", L"framework-aospres-0123456789abcdef"),
           "AOSP's graphics and AOSP's resources keep each other's archive");
+    // AOSP's views (WINAPK_AOSP_VIEWS=1) likewise, whatever order the options come in.
+    check(graphics_of({"-Dwinapk.aosp.gfx=1", "-Dwinapk.aosp.res=1", "-Dwinapk.aosp.views=1"}) == "aospviews" &&
+              graphics_of({"-Dwinapk.aosp.views=1", "-Dwinapk.aosp.res=1", "-Dwinapk.aosp.gfx=1"}) == "aospviews" &&
+              graphics_of({"-Dwinapk.aosp.res=1", "-Dwinapk.aosp.gfx=1"}) == "aospres",
+          "-Dwinapk.aosp.views=1 has an archive of its own");
+    check(!stale_archive_file(L"framework-aospviews-fedcba9876543210.jsa", L"framework-aospres-0123456789abcdef") &&
+              !stale_archive_file(L"framework-aospres-fedcba9876543210.jsa", L"framework-aospviews-0123456789abcdef") &&
+              !stale_archive_file(L"framework-aosp-fedcba9876543210.jsa", L"framework-aospviews-0123456789abcdef"),
+          "AOSP's views keep the resources' and the graphics' archives, and they its");
 
     // The class lists.
     const std::string a =

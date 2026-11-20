@@ -45,6 +45,21 @@ Each of these differs from Android today and should disappear when the layer
 named moves onto AOSP's code. After the switch, check it (the screens sweep or
 the app); if it is still there, it is a bug in what replaced it.
 
+**Views, step V1 first part (`WINAPK_AOSP_VIEWS=1`, with `WINAPK_AOSP_RES=1`;
+`docs/research/aosp-views.md` "V1 as built"):** with the switch on, the Win.apk
+code that items 1-9, 15 (its inflater and `View.measure` half), 18-20 and 22
+name is not loaded at all: `View`, `ViewGroup`, `LayoutInflater`,
+`ImageView`, `LinearLayout`, `RelativeLayout`, `HorizontalScrollView`,
+`Spinner`, `CheckedTextView` and the rest are AOSP 14's own, constructed with
+their attributes as on Android (items 2, 3 and 21: the two-argument
+constructor reads the element's background, style and tag itself). Checked so
+far only by the UI probe (all 2104 lines equal to the oracle, from 146 with the
+resources switch alone) and the Gallery and Sudoku sweeps (279 -> 46 and
+249 -> 50 lines, the rest stack-trace naming and one layout the oracle cannot
+inflate): **not yet re-checked in the apps each item was found in**, and with
+the switch on, input, dialogs and the system bars are not there yet. Items 10-14
+(text) are unchanged by it; 16 is the resources switch's.
+
 | # | What | Where today | Found in | Layer |
 |---|---|---|---|---|
 | 1 | `ImageView` never sets a bitmap drawable's bounds (`getDrawable().getBounds()` 0x0; pixels right; AOSP `configureBounds`) | `android/widget/ImageView.java` bitmap path | all seven apps | views |
@@ -447,7 +462,23 @@ the app); if it is still there, it is a bug in what replaced it.
   up in code (no compiled form: AOSP reads no XML attributes for them); a
   window resize (AOSP's `Resources` copies the configuration where Win.apk's
   kept it by reference; untested); split APKs; CDS with the switch on; real
-  Windows; more apps. Then R2 (libandroidfw native) and V1.
+  Windows; more apps. Then R2 (libandroidfw native); V1 is started (below).
+- **AOSP views, step V1, first part** (`WINAPK_AOSP_VIEWS=1`, off by default,
+  only with `WINAPK_AOSP_RES=1`; `docs/research/aosp-views.md` "V1 as built"):
+  AOSP 14's `android.view`/`android.widget`/`com.android.internal.policy` in
+  `lib/aosp-views.jar` (`windows/scripts/build_aosp_views.sh`), a second
+  `ViewHost` (`windows/java/aosp_views`), an Activity's window AOSP's
+  `PhoneWindow` added to AOSP's `WindowManagerGlobal`, laid out and drawn in
+  software by AOSP's `ViewRootImpl` on Choreographer's frames over an
+  in-process window manager, session, display and IME service. Off is
+  byte-identical (probe), and so is the resources switch alone. On, under Wine:
+  the probe equal to the oracle in all 2104 lines (`regress.py` from the
+  resources switch: 146 fixed, 0 REGRESSED, 0 FARTHER, 0 MISSING); Gallery
+  279 -> 46, Sudoku 249 -> 50 lines differing, none worse. Next: dialogs
+  (Win.apk's `Dialog` has a Win.apk `Window`; nothing shows), the system bars
+  as insets, GL `SurfaceView`s, resize and several windows, then V2 (input,
+  IME, accessibility) and V3 (HWUI). Not run: CDS with the switch, real
+  Windows, the smoke apps.
 - **Screens checks not finished**: Bank Leumi (stopped by the usage limit
   before its boot), Pango and Paybox (not on APKPure; the owner offered their
   other repository or a Play download).

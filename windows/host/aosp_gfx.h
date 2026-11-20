@@ -60,6 +60,17 @@ bool aosp_res_prepare(const std::filesystem::path& lib, const std::filesystem::p
 // The files, once aosp_res_prepare said yes; null otherwise.
 const AospResFiles* aosp_res_files();
 
+// AOSP's own views (docs/research/aosp-views.md, step V1): WINAPK_AOSP_VIEWS=1 turns them on, off by
+// default. windows/scripts/build_aosp_views.sh stages lib\aosp-views.jar (AOSP 14's android.view,
+// android.widget, com.android.internal.{view,widget,policy} + windows/java/aosp_views: the second
+// ViewHost, the in-process window manager), put first on the class path, before the resources'.
+// They run with AOSP's resources only (and so with its graphics): with those off, or the jar
+// missing, this stays off and says so in the log. Pure Java: nothing to load here.
+// Decides, once, after aosp_res_prepare, for the same JVMs; logs one line when asked for.
+bool aosp_views_prepare(const std::filesystem::path& lib);
+// The jar, once aosp_views_prepare said yes; null otherwise.
+const std::filesystem::path* aosp_views_jar();
+
 // After the host's own natives (host_natives.h) and SQLite's are bound: binds the DLL's natives
 // onto aosp-graphics.jar's classes (aosp_gfx_redirect.h) and logs what it did. False when it could
 // not; the app still starts, but AOSP's classes then have no natives.

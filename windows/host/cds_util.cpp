@@ -208,14 +208,15 @@ bool per_launch(const std::string& o) {
 }
 
 std::string graphics_of(const std::vector<std::string>& opts) {
-    bool aosp = false;
+    bool aosp = false, res = false;
     for (const std::string& o : opts) {
-        // AOSP's resources too (aosp_gfx.h): an archive of their own, whose name no other's
-        // prefix ("framework-aosp-") matches, so neither deletes the other's.
-        if (o == "-Dwinapk.aosp.res=1") return "aospres";
+        // AOSP's views and resources too (aosp_gfx.h): archives of their own, whose names no
+        // other's prefix ("framework-aosp-", "framework-aospres-") matches, so none deletes another's.
+        if (o == "-Dwinapk.aosp.views=1") return "aospviews";
+        if (o == "-Dwinapk.aosp.res=1") res = true;
         if (o == "-Dwinapk.aosp.gfx=1") aosp = true;
     }
-    return aosp ? "aosp" : "java2d";
+    return res ? "aospres" : aosp ? "aosp" : "java2d";
 }
 
 bool stale_archive_file(const std::wstring& name, const std::wstring& stem) {

@@ -180,9 +180,10 @@ rm -rf "$TOOLS"
 mkdir -p "$TOOLS"
 # java_base_patch is an overlay of java.base (compiled above), not a tool; aosp_gfx goes into
 # aosp-graphics.jar (build_aosp_gfx.sh), first on an app's class path unless WINAPK_AOSP_GFX=0;
-# aosp_res into aosp-resources.jar (build_aosp_res.sh), first with WINAPK_AOSP_RES=1.
+# aosp_res into aosp-resources.jar (build_aosp_res.sh), first with WINAPK_AOSP_RES=1; aosp_views
+# into aosp-views.jar (build_aosp_views.sh), first with WINAPK_AOSP_VIEWS=1.
 find "$HERE/../java" -name '*.java' -not -path '*/java_base_patch/*' -not -path '*/aosp_gfx/*' \
-    -not -path '*/aosp_res/*' | sort | native_paths > "$WORK/tools.list"
+    -not -path '*/aosp_res/*' -not -path '*/aosp_views/*' | sort | native_paths > "$WORK/tools.list"
 # AppMeta calls into the framework and the loader, compiled into $TMP above.
 "$JAVAC" -d "$TOOLS" --release 21 -cp "$(native_path "$TMP")" @"$WORK/tools.list"
 ( cd "$TOOLS" && "$JAR" --create --file "$LIB/winapk-tools.jar" . )

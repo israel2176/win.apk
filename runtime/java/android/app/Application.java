@@ -1257,6 +1257,9 @@ public class Application extends ContextWrapper
         // and lost the guard, so `getSystemService(null)` NPE'd on the switch
         // instead of answering null. Probe row CTX.svc.nullName.
         if (name == null) return null;
+        // AOSP's views (WINAPK_AOSP_VIEWS=1) own their managers; Win.apk's view host answers null.
+        Object view = ViewHost.get().systemService(this, name);
+        if (view != null) return view;
         switch (name) {
             case ACTIVITY_SERVICE:     return new android.app.ActivityManager();
             case ALARM_SERVICE:        return new android.app.AlarmManager();

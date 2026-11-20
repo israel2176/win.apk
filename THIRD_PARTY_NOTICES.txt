@@ -193,6 +193,16 @@ Win.apk; its Native*.java are adapted from Robolectric's shadows, Apache-2.0).
     android-all carries them. Copyright (C) The Android Open Source Project.
     Apache-2.0 (section 5).
 
+AOSP views (WINAPK_AOSP_VIEWS=1; staged only with WINAPK_STAGE_AOSP_VIEWS=1,
+not in the package yet) -- lib\aosp-views.jar
+Built by windows/scripts/build_aosp_views.sh from Robolectric's build of AOSP 14
+(org.robolectric:android-all 14-robolectric-10818077), with Win.apk's own
+classes (windows/java/aosp_views, AGPL-3.0 as the rest of Win.apk).
+  aosp-views.jar: AOSP's android.view, android.widget,
+    com.android.internal.{view,widget,policy} and the classes they name
+    (frameworks/base), Copyright (C) The Android Open Source Project.
+    Apache-2.0 (section 5).
+
 --------------------------------------------------------------------------------
 3. Components compiled into winapk-runtime.exe
 --------------------------------------------------------------------------------

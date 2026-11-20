@@ -114,6 +114,38 @@ bool aosp_res_prepare(const fs::path& lib, const fs::path& bin) {
 
 const AospResFiles* aosp_res_files() { return g_res_on ? &g_res_files : nullptr; }
 
+namespace {
+std::filesystem::path g_views_jar;
+bool g_views_on = false;
+}  // namespace
+
+bool aosp_views_prepare(const fs::path& lib) {
+    g_views_on = false;
+    wchar_t v[8];
+    const DWORD n = GetEnvironmentVariableW(L"WINAPK_AOSP_VIEWS", v, 8);
+    if (n != 1 || v[0] != L'1') return false;  // off by default, and then silent
+    if (!g_res_on) {
+        std::fprintf(stderr, "[win.apk] AOSP views: off, they need AOSP's graphics and resources "
+                             "(WINAPK_AOSP_GFX, WINAPK_AOSP_RES=1)\n");
+        return false;
+    }
+    const fs::path jar = lib / "aosp-views.jar";
+    std::error_code ec;
+    if (!fs::is_regular_file(jar, ec)) {
+        std::fprintf(stderr, "[win.apk] AOSP views: off, %s is missing (a runtime staged without "
+                             "windows/scripts/build_aosp_views.sh's files)\n",
+                     utf8(jar.wstring()).c_str());
+        return false;
+    }
+    g_views_jar = jar;
+    g_views_on = true;
+    std::fprintf(stderr, "[win.apk] AOSP views: on (WINAPK_AOSP_VIEWS=1): %s first on the class path\n",
+                 utf8(jar.wstring()).c_str());
+    return true;
+}
+
+const std::filesystem::path* aosp_views_jar() { return g_views_on ? &g_views_jar : nullptr; }
+
 std::string aosp_gfx_locale() {
     wchar_t name[LOCALE_NAME_MAX_LENGTH];
     if (GetUserDefaultLocaleName(name, LOCALE_NAME_MAX_LENGTH) > 0) return utf8(name);

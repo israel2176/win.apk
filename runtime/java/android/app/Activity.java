@@ -1054,6 +1054,12 @@ public class Activity extends ContextThemeWrapper
 
     // ---- View / window ----
     public Window getWindow() {
+        // AOSP's own window root (WINAPK_AOSP_VIEWS=1, ViewHost.aospWindows): the PhoneWindow
+        // Activity.attach makes, with this activity as its callback and its own window manager.
+        if (MACAPK_AOSP_WINDOWS) {
+            if (mAospWindow == null) mAospWindow = ViewHost.get().newActivityWindow(this);
+            return mAospWindow;
+        }
         if (windowImpl == null) {
             windowImpl = new ActivityWindow(this);
             // AOSP Activity.attach() installs the Activity itself as the
@@ -1079,17 +1085,21 @@ public class Activity extends ContextThemeWrapper
         return windowImpl;
     }
     private ActivityWindow windowImpl;
+    /** With AOSP's views: AOSP's PhoneWindow (ViewHost.newActivityWindow), AOSP Activity's mWindow. */
+    private Window mAospWindow;
+    private static final boolean MACAPK_AOSP_WINDOWS = ViewHost.get().aospWindows();
     /** This activity's own window if one exists, WITHOUT creating it (unlike
      *  getWindow()). ActivityHost's FLAG_SECURE mirror reads the flag from here:
      *  AOSP keys FLAG_SECURE to each window (WindowState.isSecureLocked), and an
      *  activity's window is Activity.mWindow, never a Dialog's window that
      *  merely shares its Context. */
-    public final Window macapkPeekWindow() { return windowImpl; }
+    public final Window macapkPeekWindow() { return windowImpl != null ? windowImpl : mAospWindow; }
     // v1.0.98: return a real LayoutInflater so adapter binders can
     // inflate their tab content. F-Droid's LatestViewBinder etc.
     // call activity.getLayoutInflater().inflate(R.layout.main_tab_x,
     // frame, true) -- a null inflater NPEs the whole bind chain.
     public LayoutInflater getLayoutInflater() {
+        if (MACAPK_AOSP_WINDOWS) return getWindow().getLayoutInflater();  // AOSP's own body
         return android.view.LayoutInflater.from(this);
     }
 
@@ -1153,6 +1163,7 @@ public class Activity extends ContextThemeWrapper
      *  and several other engines call getWindowManager() directly
      *  during onCreate, so we expose it as a regular method too. */
     public WindowManager getWindowManager() {
+        if (MACAPK_AOSP_WINDOWS) return getWindow().getWindowManager();  // AOSP's mWindowManager
         Object svc = getSystemService(Context.WINDOW_SERVICE);
         return svc instanceof WindowManager ? (WindowManager) svc : null;
     }
@@ -2568,6 +2579,12 @@ public class Activity extends ContextThemeWrapper
     }
 
     public void setContentView(int layoutResID) {
+        if (MACAPK_AOSP_WINDOWS) {
+            // AOSP: getWindow().setContentView(layoutResID); initWindowDecorActionBar() (the
+            // platform action bar is not built yet with AOSP's views).
+            getWindow().setContentView(layoutResID);
+            return;
+        }
         // v1.0.69: real XML layout inflation. Until now this was a
         // no-op, which forced any layout-XML-using Activity (Bouncy,
         // F-Droid, Sgt Puzzles, ShatteredPD-settings, every non-game
@@ -2616,6 +2633,10 @@ public class Activity extends ContextThemeWrapper
         if (macapkInflatingContentLayout) macapkInflatingContent = frame;
     }
     public void setContentView(View view) {
+        if (MACAPK_AOSP_WINDOWS) {
+            getWindow().setContentView(view);
+            return;
+        }
         macapkInstallContentDirect(view);
     }
 
@@ -3096,8 +3117,16 @@ public class Activity extends ContextThemeWrapper
         }
         return 0;
     }
-    public void setContentView(View view, ViewGroup.LayoutParams params) { setContentView(view); }
-    public void addContentView(View view, ViewGroup.LayoutParams params) {}
+    public void setContentView(View view, ViewGroup.LayoutParams params) {
+        if (MACAPK_AOSP_WINDOWS) {
+            getWindow().setContentView(view, params);
+            return;
+        }
+        setContentView(view);
+    }
+    public void addContentView(View view, ViewGroup.LayoutParams params) {
+        if (MACAPK_AOSP_WINDOWS) getWindow().addContentView(view, params);
+    }
 
     /** Find a child view by its android:id. v1.0.69: now recursively
      *  walks the contentView tree (was: only matched the root). With
@@ -3105,6 +3134,7 @@ public class Activity extends ContextThemeWrapper
      *  typically a ViewGroup with many descendants -- ViewGroup's
      *  recursive findViewById handles the walk. */
     public View findViewById(int id) {
+        if (MACAPK_AOSP_WINDOWS) return getWindow().findViewById(id);
         // android.R.id.content (0x01020002): AOSP returns the content-host
         // FrameLayout that exists from DecorView creation -- BEFORE
         // setContentView. Apps call this in onCreate ahead of setContentView:
@@ -4605,7 +4635,33 @@ public class Activity extends ContextThemeWrapper
     // onStart).
     public void setShowWhenLocked(boolean showWhenLocked) {}
     public void setTurnScreenOn(boolean turnScreenOn) {}
-    public android.view.View getCurrentFocus() { return null; }
+    public android.view.View getCurrentFocus() {
+        if (MACAPK_AOSP_WINDOWS) return mAospWindow != null ? mAospWindow.getCurrentFocus() : null;
+        return null;
+    }
+
+    // ---- Window.Callback: AOSP's interface declares these abstract (Activity implements them);
+    // Win.apk's Window.Callback has them as defaults with these same bodies, so declaring them
+    // here changes nothing on Win.apk's views and lets AOSP's PhoneWindow call them. ----
+    public boolean dispatchTrackballEvent(MotionEvent event) { return false; }
+    public boolean dispatchPopulateAccessibilityEvent(android.view.accessibility.AccessibilityEvent event) {
+        return false;
+    }
+    public View onCreatePanelView(int featureId) { return null; }
+    public void onWindowAttributesChanged(WindowManager.LayoutParams params) {}
+    public void onContentChanged() {}
+    public void onAttachedToWindow() {}
+    public void onDetachedFromWindow() {}
+    public boolean onSearchRequested() { return false; }
+    public boolean onSearchRequested(android.view.SearchEvent searchEvent) { return false; }
+    public android.view.ActionMode onWindowStartingActionMode(android.view.ActionMode.Callback callback) {
+        return null;
+    }
+    public android.view.ActionMode onWindowStartingActionMode(android.view.ActionMode.Callback callback, int type) {
+        return null;
+    }
+    public void onActionModeStarted(android.view.ActionMode mode) {}
+    public void onActionModeFinished(android.view.ActionMode mode) {}
 
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {}
 

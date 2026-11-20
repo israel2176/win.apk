@@ -69,6 +69,21 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
 
     public SurfaceView(Context c) {
         super(c);
+        macapkInitSurface();
+    }
+
+    /** With AOSP's views (WINAPK_AOSP_VIEWS=1) View's constructor reads the element's attributes
+     *  itself (android:id, padding, visibility...), as Win.apk's inflater does after construction
+     *  for its own View; this SurfaceView, which stays Win.apk's there, hands them on. Win.apk's
+     *  View(Context, null) is View(Context). */
+    private static final boolean MACAPK_ATTRS_TO_VIEW = com.macapk.loader.view.ViewHost.get().aospWindows();
+
+    public SurfaceView(Context c, android.util.AttributeSet a) {
+        super(c, MACAPK_ATTRS_TO_VIEW ? a : null);
+        macapkInitSurface();
+    }
+
+    private void macapkInitSurface() {
         // Share the singleton MTKView. ANGLE binds to whatever native
         // MTKView's CAMetalLayer it sees first; if every SurfaceView
         // had its own, the visible one and the ANGLE-bound one could
@@ -84,7 +99,6 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
         if (handle != 0) NativeCocoa.setRenderer(handle, this);
         macapkRegisterLiveForEgl(this);
     }
-    public SurfaceView(Context c, android.util.AttributeSet a) { this(c); }
     /** AOSP API 21 four-argument constructor. AOSP's three-argument form is
      *  exactly this(context, attrs, defStyleAttr, 0), so delegating the other
      *  way is identical for defStyleRes == 0; a non-zero defStyleRes is
@@ -96,7 +110,7 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
             int defStyleRes) {
         this(context, attrs, defStyleAttr);
     }
-    public SurfaceView(Context c, android.util.AttributeSet a, int s) { this(c); }
+    public SurfaceView(Context c, android.util.AttributeSet a, int s) { this(c, a); }
 
     public SurfaceHolder getHolder() { return holder; }
     /** AOSP setZOrderOnTop (android14 SurfaceView.java:660) moves the surface's
