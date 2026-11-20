@@ -471,6 +471,17 @@ jobs:
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/stubs-test windows/test/java/FrameworkStubsTest.java
           MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -Djava.awt.headless=true \
             -cp "$cp;$(cygpath -w build/stubs-test)" FrameworkStubsTest
+      - name: Run the DateTimeView test
+        run: |
+          # android.widget.DateTimeView (a notification template's time) as
+          # AOSP 14 has it: the short time today, the short date outside it,
+          # relative "now", "5m", "in 2d" and the accessibility text.
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          cp="$(cygpath -w stage/lib/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          "$JAVA_HOME/bin/javac" -cp "$cp" -d build/datetimeview-test windows/test/java/DateTimeViewTest.java
+          MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -Djava.awt.headless=true -Duser.language=en -Duser.country=US \
+            -cp "$cp;$(cygpath -w build/datetimeview-test)" DateTimeViewTest | tee datetimeview-test.log
+          grep -q "ALL PASSED" datetimeview-test.log
       - name: Run the android.icu fallback test
         run: |
           # android.icu with no host ICU (no icu.dll: Windows 10 before 1903,

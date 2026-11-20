@@ -2334,6 +2334,17 @@ every such change is listed here:
   threw `UnsupportedEncodingException`. A `CharsetProvider` on the class path
   rather than a copy of `java.nio.charset.Charset` in `java_base_patch`: the
   JDK asks providers only after its own charsets miss.
+- `runtime/java/android/widget/DateTimeView.java` (new): AOSP 14's
+  `DateTimeView`, the `TextView` of a notification template's time
+  (`android:id/time`, `android:showRelative`): the short time today, the
+  short date outside it, relative "now"/"5m"/"in 2d" from the framework
+  table's `duration_*_shortest` strings (English when the table lacks one),
+  the accessibility text from `duration_*_relative` (its plural chosen here:
+  `android.icu.text.MessageFormat` has no plural), updated on `TIME_TICK`,
+  `TIME_SET`, `TIMEZONE_CHANGED` and `CONFIGURATION_CHANGED`. Without it the
+  framework's templates and apps' custom notification layouts inflated a
+  FrameLayout in its place (Waze, Hapoalim, Mercantile).
+  `windows/test/java/DateTimeViewTest.java` (CI: "Run the DateTimeView test").
 - `runtime/net_spi/com/macapk/net/HucFollow.java`, `HucConnection.java`,
   `HucsConnection.java`: the request side of the `HttpURLConnection` an app
   gets is Android's (OkHttp's `HttpURLConnectionImpl`), not the JDK's:
