@@ -195,6 +195,7 @@ The user-facing ones (`WINAPK_PHONE_SIZE`, `WINAPK_RESIZABLE`,
 | Variable | Effect |
 |---|---|
 | `WINAPK_HEADLESS=1` | No window; `WINAPK_HEADLESS_FRAME=<file.bmp>` saves the last frame and `WINAPK_HEADLESS_EXIT_AFTER_FRAMES=<n>` exits after that many presented frames (an idle app counts too). stderr is unbuffered, and a log line of the framework's or of a guest library's goes out in one write (`include/winapk/log_line.h`), so the probe's and the layout sweep's `PROBE` lines on stdout never land inside one |
+| `WINAPK_DEX_HEAP_MB=<n>` | The DEX converter's first heap, in MB, instead of 1024 (`host/runtime_main.cpp`, `dex_heap_mb`): a small one tests the retry, which converts again on the larger of 2 GB and a quarter of the RAM once the Java heap ran out (`--java-main` exits 77 then, also when the converter caught the error) |
 | `WINAPK_TEST_WORKAREA=<w>x<h>[+<x>+<y>]` | Stands in for the monitor's work area, in pixels; `@file` reads the value from a file at every fit |
 | `MACAPK_BROKER=1` or `0` | Overrides the "Use Google services" setting for this run (the system broker and the real Google apps); `MACAPK_BROKER_IDLE_GRACE_S`, `MACAPK_BROKER_IDLE_EXIT=0` tune the broker's idle exit |
 | `WINAPK_TEST_ANDROID_ROOT=<dir>` | `winapk-binder-test` only: the android root its JVM gets (the broker checks' scratch data folder) |
@@ -948,8 +949,12 @@ What a user's data folder adds: once, for all apps, `cds\` (the framework
 archive, 40 MB) and `cache\` (16 MB: `android-system-fonts\` 12,
 `fonts\` 4, `fwview\` 1); per app, its `apps\<name>\classes.jar` (the
 probe app 17 MB, Open Sudoku 5 MB), the installed copy under
-`android\data\app\` (the APK again, 6 and 19 MB, beside the library's own
-copy in `library\`) and, for an arm64-only app, its extracted libraries and
+`android\data\app\` (for a plain APK no space at all: `base.apk` is a hard
+link to the library's `library\<name>.apk`, checked under Wine with two
+links to one file, so a tool that sums files counts it twice; a bundle,
+`.apkm`, `.xapk` or `.apks`, is stored twice, the bundle in `library\` and
+the APKs chosen from it unpacked, e.g. a 191 MB Waze `.xapk` and about
+190 MB of `base.apk` and splits) and, for an arm64-only app, its extracted libraries and
 their translations (Open Sudoku: its three libraries 38 MB, two
 translations 25 MB, hard links of the `aot-cache\` entries, which apps with
 the same library share; its 33 MB OpenCV library waits for a profile; 114 MB
@@ -973,9 +978,13 @@ test now, below). The runtime's process, peak resident set polled every
 
 A first start also runs helpers as processes of their own, one after the
 other: the install helper (about 90 MB), the dex conversion (`--java-main`,
-0.4 to 1.4 GB at its peak in these runs: its heap is the JVM's default, a
-quarter of the RAM, so on this 16 GB machine it collects late; a limit of its
-own would hold it down on any PC), and after the first frame the archive
+0.4 to 1.4 GB at its peak in these runs while its heap was the JVM's default,
+a quarter of the RAM; now a heap of its own, 1 GB: the largest app at hand,
+Leumi with 81 MB of DEX, peaks at about 300 MB live on the converter's 8
+workers, converts in 384 MB with nine full collections and in 768 MB with
+none, where the default let the heap grow to 2.2 GB; an app that runs out
+is converted once more on the larger of 2 GB and a quarter of the RAM),
+and after the first frame the archive
 dump (a JVM of about 0.4 GB, once per data folder) and the arm64 translation
 (26 MB, and its compilers, above). In AOSP's own test (`test/aospgfx`, on
 Linux) the native runtime adds 12 MB resident when it loads and setting the
@@ -1015,10 +1024,13 @@ Not cut, and why:
   have CJK fonts of their own (Microsoft YaHei, Yu Gothic, Malgun Gothic) and
   Segoe UI Emoji, but with other metrics: an app's Chinese, Japanese or
   Korean text would wrap and measure differently from a phone. Latin,
-  Hebrew and Arabic keep Android's Roboto and Noto in any case. The next
-  step, if the 19 MB matter, is fetching the CJK font on first need into the
-  data folder (one copy for all apps, as above), which needs the framework's font
-  setup to wait for it; not done.
+  Hebrew and Arabic keep Android's Roboto and Noto in any case. Fetching the
+  CJK font on first need into the data folder was looked at and left: the
+  framework's font setup cannot wait for it (`AospGfx.materializeSystemFonts`
+  builds the fallback chain once, before the first frame, and skips a font
+  whose file is missing), so a run that finds no file draws boxes to its end.
+  The design that would work is in `docs/research/open-issues.md` ("CJK and
+  emoji fonts").
 - Windows' own ICU (`icu.dll`, Windows 10 1903+) cannot stand in: the DLL
   links ICU 68 statically (`_68` symbols) and reads only its own `.dat`;
   using the system's would mean rebuilding the native runtime.
