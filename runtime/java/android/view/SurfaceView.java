@@ -3872,6 +3872,11 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
                 NativeLog.i(TAG, "native window hole: first punch " + getWidth() + "x"
                     + getHeight() + " by " + getClass().getName() + " (MACAPK_SV_GUEST_BELOW)");
             }
+        } else if (MACAPK_ATTRS_TO_VIEW && !mZOrderOnTop && getNativeHandle() != 0) {
+            // AOSP's views: ViewRootImpl's window is composited over this view's GL frames
+            // (AospWindows.showSurfaceBelow), so the window gets AOSP's hole here, on its
+            // condition (draw() :512-521, `!isAboveParent()` -> clearSurfaceViewPort).
+            canvas.punchHole(0f, 0f, getWidth(), getHeight(), 0f, 0f, getAlpha());
         }
         super.draw(canvas);
     }
