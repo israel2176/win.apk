@@ -384,7 +384,17 @@ the app); if it is still there, it is a bug in what replaced it.
   the `aosp` archive like an app. Checked under Wine: `--install-only` of
   Gallery says `AOSP graphics: on` and writes its adaptive icon (`icon.png`,
   AOSP's `AdaptiveIconDrawable`), `--gms accounts` exits 0; the DLL's load
-  adds 0.25-0.5 s to each such process. `--system` not run. Then: `Java2DGfx`, the
+  adds 0.25-0.5 s to each such process (0.2-0.9 s seen). Also under Wine
+  (agent noapp-aosp): `--system` comes up (`[system] serving`, AOSP graphics
+  on, the DLL loaded), `--gms accounts` maps the `framework-aosp` archive
+  `--cds-prepare` made, and the install icons of Open Sudoku and Fossify
+  Gallery match the Java2D ones but for the adaptive mask's outline; CI's
+  runtime tests check the log lines, the broker, an `--install-only`'s
+  `icon.png` and the archive `--gms` maps. With `-Xlog:class+load` on
+  Java2D's path `--gms` and `--system` load `android.graphics.Bitmap`
+  (the host natives), so they did need moving; the processes with no
+  framework (DEX conversion, `--package-to`, `--aot-translate`, the
+  archive's dump) load no `android.graphics`. Then: `Java2DGfx`, the
   Java2D `android.graphics`/`android.text` classes `aosp-graphics.jar`
   shadows, `WINAPK_AOSP_GFX=0`, the `java2d` archive naming and this branch's
   base-graphics step in `ci.yml` go; `GfxBackend` can then be folded away.
