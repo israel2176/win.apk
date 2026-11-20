@@ -205,6 +205,15 @@ public class AospResRewrite {
                 }
 
                 @Override public void visitMethodInsn(int op, String owner, String n, String d, boolean itf) {
+                    if (owner.equals("android/app/ActivityThread") && n.equals("getSystemContext")
+                            && d.equals("()Landroid/app/ContextImpl;")) {
+                        // An AIDL Stub's default constructor (IPlatformCompat's): Win.apk has no
+                        // ContextImpl, so the class did not link; a Context instead.
+                        super.visitMethodInsn(Opcodes.INVOKESTATIC, COMPAT, "systemContext",
+                                "(Landroid/app/ActivityThread;)Landroid/content/Context;", false);
+                        count("calls to ActivityThread.getSystemContext answered with a Context");
+                        return;
+                    }
                     String key = owner + "." + n + d;
                     String to = STATIC_CALLS.get(key);
                     if (op == Opcodes.INVOKESTATIC && to != null) {

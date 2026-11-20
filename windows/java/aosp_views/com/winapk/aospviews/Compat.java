@@ -111,6 +111,17 @@ public final class Compat {
     // The audio service's volume-key preprocessing (the volume panel's long press): none on the host.
     public static void preDispatchKeyEvent(android.media.AudioManager a, android.view.KeyEvent e, int stream) {}
 
+    /** ActivityThread.getSystemContext (a ContextImpl on Android; AospViewsRewrite): the process's
+     *  Application, the one context an app process has here. An AIDL Stub's default constructor
+     *  hands it to PermissionEnforcer.fromContext; the in-process services use LocalEnforcer. */
+    public static Context systemContext(android.app.ActivityThread thread) {
+        try {  // Win.apk's Application.macapk_get (this jar compiles against android-all's Application)
+            return (Context) android.app.Application.class.getMethod("macapk_get").invoke(null);
+        } catch (ReflectiveOperationException e) {
+            return null;
+        }
+    }
+
     // ---- android.content.Context (hidden; ContextImpl's answers for an app's context) ----
     private static final java.util.concurrent.atomic.AtomicInteger sAutofillId =
             new java.util.concurrent.atomic.AtomicInteger(1073741824);

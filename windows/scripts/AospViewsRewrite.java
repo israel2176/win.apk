@@ -419,6 +419,16 @@ public class AospViewsRewrite {
             return new MethodVisitor(Opcodes.ASM9, out) {
                 @Override public void visitMethodInsn(int op, String owner, String n, String d, boolean itf) {
 
+                    if (owner.equals("android/app/ActivityThread") && n.equals("getSystemContext")
+                            && d.equals("()Landroid/app/ContextImpl;")) {
+                        // An AIDL Stub's default constructor: PermissionEnforcer.fromContext(the
+                        // system context). Win.apk has no ContextImpl, so the class did not link
+                        // (a CDS dump's verification); the call answers a Context instead.
+                        super.visitMethodInsn(Opcodes.INVOKESTATIC, COMPAT, "systemContext",
+                                "(Landroid/app/ActivityThread;)Landroid/content/Context;", false);
+                        count("calls to ActivityThread.getSystemContext answered with a Context");
+                        return;
+                    }
                     if (TO_COMPAT.contains(owner + "." + n + d)) {
                         String cd = op == Opcodes.INVOKESTATIC ? d : "(L" + owner + ";" + d.substring(1);
                         super.visitMethodInsn(Opcodes.INVOKESTATIC, COMPAT, n, cd, false);

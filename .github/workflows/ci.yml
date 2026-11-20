@@ -3,6 +3,7 @@
 #   What changed ──┬─ Guest libraries (Ubuntu) ─────────┬─ Unit tests
 #                  ├─ Launcher check (Ubuntu, MinGW)    ├─ Runtime tests
 #                  └─ Build (Windows, ccache) ──────────┼─ App smoke test (10 apps)
+#                                                       ├─ AOSP resources and views: smoke, probe (informational)
 #                                                       ├─ AOSP graphics (Skia, minikin)
 #                                                       ├─ Package (preview + installer)
 #                                                       └─ Sweep 1/4 .. 4/4 ─ Sweep report  (only when asked)
@@ -976,6 +977,128 @@ jobs:
           # when the framework or the smoke set changes much.
           name: framework-classlist
           path: framework.classlist
+
+  aosp-switches:
+    # AOSP's own resources and views (WINAPK_AOSP_RES=1 WINAPK_AOSP_VIEWS=1, docs/research/
+    # aosp-views.md), on real Windows, beside the other jobs. Informational while the switches are
+    # off by default: it fails nothing (continue-on-error), and its verdicts are in the summary.
+    # Their files are staged here over the build's stage (build_aosp_res.sh, build_aosp_views.sh),
+    # not in it, so the stage the other jobs and the installer take is unchanged; their sizes go
+    # in the summary. Then the smoke set with the switches on, with its own "draws" verdict and
+    # frames, and, when the UI gate runs, the UI probe with them, checked against Android's lines
+    # (compare.py: every line equal is the expected result).
+    name: AOSP resources and views (informational)
+    needs: [changes, build, ui-oracle]
+    if: >-
+      !cancelled() && needs.build.result == 'success' && needs.changes.outputs.tests == 'true'
+    continue-on-error: true
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: CLANG64
+          install: unzip zip curl
+      - uses: actions/download-artifact@v4
+        with:
+          name: runtime-stage
+          path: stage
+      - uses: actions/cache@v4
+        with:
+          path: apk-cache
+          key: compat-apks-smoke-${{ hashFiles('windows/test/compat/apps.txt', 'windows/test/compat/smoke.txt') }}
+      # android-all 14 and the jars the two scripts fetch (ASM, Robolectric's resources), as the
+      # build job caches them for AOSP's graphics.
+      - uses: actions/cache@v4
+        with:
+          path: thirdparty/aosp-gfx
+          key: aosp-gfx-${{ hashFiles('windows/test/aospgfx/fetch.sh') }}
+      - name: Stage AOSP's resources and views
+        shell: msys2 {0}
+        run: |
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          windows/scripts/build_aosp_res.sh stage
+          windows/scripts/build_aosp_views.sh stage
+          {
+            echo "### AOSP's resources and views: the files they add"
+            echo ""
+            echo "| File | Size (MB) | LZMA (MB, the installer's estimate) |"
+            echo "|---|---:|---:|"
+            for f in lib/aosp-resources.jar lib/aosp-views.jar bin/aosp/framework-res-34.apk; do
+              raw=$(stat -c %s "stage/$f")
+              xz=$(xz -9e -c "stage/$f" | wc -c)
+              awk -v f="$f" -v r="$raw" -v x="$xz" 'BEGIN { printf "| `%s` | %.1f | %.1f |\n", f, r / 1e6, x / 1e6 }'
+            done
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Boot the smoke set with the switches on
+        id: smoke
+        shell: pwsh
+        env:
+          WINAPK_AOSP_RES: '1'
+          WINAPK_AOSP_VIEWS: '1'
+        run: |
+          # Their own framework archive (framework-aospviews-<key>.jsa), made once and shared.
+          $env:WINAPK_CDS_DIR = "$PWD\cds"
+          ./stage/bin/winapk-runtime.exe --cds-prepare --data "$PWD\cds-prepare"
+          if ($LASTEXITCODE -ne 0) { Get-Content cds/dump.log -Tail 50 }
+          python windows/test/compat/sweep.py --runtime stage `
+            --apks apk-cache --out smoke-aosp --frames 150 --timeout 180 `
+            --only-from windows/test/compat/smoke.txt --require-drew
+          $rc = $LASTEXITCODE
+          $off = Get-ChildItem smoke-aosp/logs/*.log | Where-Object { -not (Select-String -Path $_ -SimpleMatch 'AOSP views: on' -Quiet) }
+          $verdict = if ($rc -eq 0 -and -not $off) { 'every app drew its first screen' } else { 'NOT every app drew (or ran without the switches)' }
+          "### Smoke set with WINAPK_AOSP_RES=1 WINAPK_AOSP_VIEWS=1: $verdict" | Add-Content $env:GITHUB_STEP_SUMMARY
+          if ($off) { "Not on AOSP's views: $($off.Name -join ', ')" | Add-Content $env:GITHUB_STEP_SUMMARY }
+          if (Test-Path smoke-aosp/report.md) {
+            $lines = Get-Content smoke-aosp/report.md
+            $end = ($lines | Select-String -Pattern '^## ' | Select-Object -First 1).LineNumber
+            if (-not $end) { $end = $lines.Count + 1 }
+            $lines[0..($end - 2)] | Add-Content $env:GITHUB_STEP_SUMMARY
+          }
+          if ($rc -ne 0 -or $off) { exit 1 }
+      - if: >-
+          !cancelled() && needs.ui-oracle.result == 'success' && github.event_name != 'push'
+          && needs.ui-oracle.outputs.same != 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: ui-oracle
+          path: oracle
+      - name: The UI probe with the switches on, against Android's lines
+        if: >-
+          !cancelled() && needs.ui-oracle.result == 'success' && github.event_name != 'push'
+          && needs.ui-oracle.outputs.same != 'true'
+        shell: bash
+        env:
+          PYTHON: python
+          WINAPK_AOSP_RES: '1'
+          WINAPK_AOSP_VIEWS: '1'
+        run: |
+          rc=0
+          bash windows/test/uiprobe/gate_side.sh probe oracle/probe stage probe-aosp > side-aosp.log 2>&1 || rc=$?
+          tail -n 8 side-aosp.log
+          result=$(python windows/test/uiprobe/compare.py oracle/probe/oracle.txt probe-aosp/ours.txt > probe-aosp/compare.txt 2>&1; tail -n 1 probe-aosp/compare.txt)
+          echo "### UI probe with WINAPK_AOSP_RES=1 WINAPK_AOSP_VIEWS=1: $result (Android's lines; expected: 0 differ)" >> "$GITHUB_STEP_SUMMARY"
+          grep -q '^0 of ' probe-aosp/compare.txt && [[ $rc == 0 ]]
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: aosp-switches
+          path: |
+            smoke-aosp/report.md
+            smoke-aosp/logs/
+            smoke-aosp/frames/
+            cds/dump.log
+            probe-aosp/ours.txt
+            probe-aosp/ours*.log
+            probe-aosp/compare.txt
+            side-aosp.log
+            stage/.build/aosp-views.links.txt
 
   ui-oracle:
     # The UI gate's first half, on Linux and beside the Windows build: Android's

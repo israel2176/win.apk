@@ -567,7 +567,12 @@ Win.apk's old pipeline.
   configuration override"). Class-data sharing with the switches on works
   (`framework-aospviews` archive, Sudoku's first frame 11.7 s against
   16-21 s without), and the host's mouse, wheel and pinch can be scripted
-  with a window (`hostmouse`, `hostwheel`, `magnify`). Next: GL `SurfaceView`s as layers,
+  with a window (`hostmouse`, `hostwheel`, `magnify`). CI runs the smoke set and the UI probe
+  with both switches on, informational (ci.yml "AOSP resources and views"); their files add 29.2 MB
+  installed, about 26.4 MB to the installer. A CDS dump's verification found classes that did not
+  link (Dialog without WindowDecorActionBar, RevealAnimator, ServiceNotFoundException, the AIDL
+  Stubs' ContextImpl): fixed; left behind services Win.apk lacks: augmented autofill, translation,
+  inline suggestions, LockPatternUtils. Next: GL `SurfaceView`s as layers,
   spinners and toasts seen in an app, resize and several windows, an on-screen
   keyboard and a UI Automation bridge, then V3 (HWUI). Not run: CDS with the
   switch, real Windows, the smoke apps (another agent's).
