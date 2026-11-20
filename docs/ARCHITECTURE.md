@@ -140,9 +140,11 @@ and upstream's `java.base`/`jdk.unsupported` overlays (`lib\java_base_patch`,
 `--patch-module` at each start, because HotSpot turns class-data sharing (CDS)
 off whenever a module is patched. Two archives then spare a start the parsing
 and linking of classes it loaded before: the JRE's own (`bin\server\classes.jsa`,
-the JDK's classes) and the framework archive (`<data>\cds\framework-<key>.jsa`:
+the JDK's classes) and the framework archive (`<data>\cds\framework-<graphics>-<key>.jsa`:
 the JDK's and the framework's classes, `android-framework.jar`,
-`macapk-loader.jar` and an unsigned bcprov, one for all apps). The runtime
+`macapk-loader.jar` and an unsigned bcprov, and with AOSP's graphics
+`aosp-graphics.jar`, one for all apps; `aosp` and `java2d` each have their
+own, so a start on the other graphics does not delete it). The runtime
 drops the `--patch-module` flags only when the JRE's
 `lib\winapk-baked-patches` records the same SHA-256 as the patch folders (a
 plain JDK, or a patch rebuilt since, keeps them and runs without CDS). The
@@ -150,7 +152,7 @@ framework archive is dumped by `java -Xshare:dump`, in the background after the
 first app start of each Win.apk and JRE version (`winapk-runtime --cds-dump`),
 from the class list Win.apk ships (`lib\winapk-framework.classlist`, the classes at
 least three of the ten smoke apps load) and the classes that start loaded. The key changes with the
-JRE, the jars, the shipped list and the JVM options; HotSpot itself checks the
+graphics, the JRE, the jars, the shipped list and the JVM options; HotSpot itself checks the
 JRE and the jars when it maps the file and otherwise starts without it. A new
 archive is checked whole (`-XX:+VerifySharedSpaces`) on its first use and
 after a crash; one that does not map is deleted and dumped again, twice at
@@ -451,7 +453,7 @@ Vulkan is not implemented.
 
 ### The view tree's frames
 
-The Java view tree is drawn in software (Java2D) into one bitmap that lives
+The Java view tree is drawn in software into one bitmap that lives
 from frame to frame, by `com.macapk.loader.ViewCanvasDriver`, once per display
 tick and only when something asked: `View.requestLayout` asks for a frame that
 measures, lays out and draws; `View.invalidate` for one that only draws. A
@@ -459,6 +461,14 @@ view that cannot be seen asks for nothing. Every half second an idle window is
 laid out and drawn once more, to catch a change nothing announced. The frame
 then goes to the window (`NativeCocoa.presentFrame`, `host/native_cocoa.cpp`),
 which copies it and blits it in `WM_PAINT`.
+
+What draws it is AOSP 14's own `android.graphics` and `android.text`
+(`Canvas`, `Paint`, `Layout`, the drawables), with Skia, minikin and HarfBuzz
+in Robolectric's native runtime (`lib\aosp-graphics.jar`,
+`bin\robolectric-nativeruntime.dll`, `host/aosp_gfx.h`; `windows/README.md`,
+"Milestone 2"). `WINAPK_AOSP_GFX=0`, or a runtime without those files, draws
+with Win.apk's older Java2D classes instead, until they are deleted; the rest
+of the framework reaches either through `com.macapk.loader.gfx.GfxBackend`.
 
 A draw-only frame redraws the whole tree. With `MACAPK_FRAMESPEED_DAMAGE=1`
 (off by default; `windows/README.md` lists it with its validator) it redraws
@@ -876,7 +886,7 @@ default; `--data` moves it for a direct run):
 | `app_uids.properties`, `system_ce\0\`, `installer-of-record.properties`, `run\system-ready` | With Google services on: per-package uids, the accounts service's store, which app installed which, the broker's readiness |
 | `logs\system.log`, `logs\services\` | The system broker and the apps it starts as service hosts |
 | `aot-cache\` | Whole arm64 translations shared between apps, `<key>.aot.dll` (kept under 2 GB, least recently used first); a `*.tmp` is a write in progress, or one a killed worker left (deleted when an hour old) |
-| `cds\` | The framework archive (`host/cds.h`): `framework-<key>.jsa`, `.ok` once it has mapped whole, `.fails` (failures in a row; at two it is not made again for that key), `dump.log` (the last dump), a `.classlist` while a first start records, and `patch-digests.txt` (the patch folders' digests under a stamp of their listing, so a start does not hash them again) |
+| `cds\` | The framework archive (`host/cds.h`): `framework-<graphics>-<key>.jsa` (`aosp`, the default, or `java2d`, each kept), `.ok` once it has mapped whole, `.fails` (failures in a row; at two it is not made again for that key), `dump.log` (the last dump), a `.classlist` while a first start records, and `patch-digests.txt` (the patch folders' digests under a stamp of their listing, so a start does not hash them again) |
 | `cache\` | The runtime's shared caches: `android-system-fonts\` (the `/system/fonts` and `fonts.xml` native text stacks such as Flutter's read), `fonts\`, `fwview\` (the framework's resolved resources), `monet\`, `apk-verify\` (APK signature verdicts), `applinks\<package>.properties` (App Link verdicts per domain, written only when a sign-in needed one: 7 days, an unreachable site 1 hour, dropped when the APK changes) |
 | `run\<package>.pid` | Each running app's run lock |
 | `staging\` | The install helper's staging area |
@@ -886,9 +896,9 @@ What is shared and what is per app: `cds\` (about 40 MB) and `cache\` (about
 16 MB) are made once for all apps; each app adds its `apps\<name>\classes.jar`
 (a few MB to a few tens), its installed copy under `android\data\app\` (the
 APK again, and an arm64 app's extracted libraries) and its data. The program
-folder (`%LOCALAPPDATA%\Programs\Win.apk\`, about 465 MB, 545 MB with
-`WINAPK_AOSP_GFX`'s files) holds one copy of everything else, those files
-included: nothing of it is copied per app. `windows/README.md`, "Footprint",
+folder (`%LOCALAPPDATA%\Programs\Win.apk\`, about 545 MB, 80 MB of it
+AOSP graphics' files) holds one copy of everything else:
+nothing of it is copied per app. `windows/README.md`, "Footprint",
 has the measurements and the budget CI holds them to.
 
 An app sees its files by Android's names, not by these: its data directory
@@ -938,7 +948,7 @@ The GitHub Actions workflows:
 
 | Workflow | When | What |
 |---|---|---|
-| `ci.yml` | Pull requests touching `windows/` or `runtime/`, and by hand; a push to `main` only builds (to leave its compile cache to pull requests) and fills the UI gate's caches | One pipeline of jobs. *What changed* decides which stages a pull request needs. The guest test libraries build on Ubuntu, and a launcher-only change gets a one-minute MinGW compile with warnings as errors. Everything else builds once on `windows-latest` (MSYS2 CLANG64, ccache) and stages the runtime. That output goes as artifacts to the jobs that run side by side: *Unit tests* (every test program), *Runtime tests* (the Java tests, GL, an APK booted headless and in a window, the GMS CLI), *App smoke test* (the ten apps of `windows/test/compat/smoke.txt`, one of each kind; it fails when one no longer draws), *AOSP graphics* (AOSP 14's `android.graphics` on Robolectric's native Skia and minikin inside `winapk-runtime.exe`, `windows/test/aospgfx/`: milestone 1 of drawing with Android's own graphics, in `windows/README.md`), and *Package* (a preview folder with the JRE the build baked and the installer). The smoke test and the sweep run on that JRE, with one framework archive made first (`--cds-prepare`) and shared by the apps, and the smoke test records the apps' classes into the `framework-classlist` artifact, the source of `windows/java/winapk-framework.classlist`. The whole compatibility sweep runs only by hand (Run workflow, "Full compatibility sweep"): split over four machines (`sweep.py --shard`) and joined by *Sweep report* into one ranked report. The *UI gate* holds a change to the framework, the host or the loader to "only closer to Android, never further": on Ubuntu, Android's lines for the UI probe and the apps of `windows/test/screens/gate.txt` (Robolectric; cached by what they are made from, so built again only when the probe, the screens oracle or the pinned APKs change) and the base commit's framework jars; then on Windows, one job per target, Win.apk's lines at the base (`main`'s own CI build of that commit while it is kept, else the head's build with the base's jars) and at the head, side by side, and `windows/test/uiprobe/regress.py`, which fails the job on a line that matched Android before and not now, moved further from it, or is gone. A new push cancels the run in progress |
+| `ci.yml` | Pull requests touching `windows/` or `runtime/`, and by hand; a push to `main` only builds (to leave its compile cache to pull requests) and fills the UI gate's caches | One pipeline of jobs. *What changed* decides which stages a pull request needs. The guest test libraries build on Ubuntu, and a launcher-only change gets a one-minute MinGW compile with warnings as errors. Everything else builds once on `windows-latest` (MSYS2 CLANG64, ccache) and stages the runtime. That output goes as artifacts to the jobs that run side by side: *Unit tests* (every test program), *Runtime tests* (the Java tests, GL, an APK booted headless and in a window, class-data sharing with an archive per graphics, the Java2D fallback (`WINAPK_AOSP_GFX=0`), the GMS CLI), *App smoke test* (the ten apps of `windows/test/compat/smoke.txt`, one of each kind, on AOSP's graphics; it fails when one no longer draws or ran on Java2D's), *AOSP graphics* (AOSP 14's `android.graphics` on Robolectric's native Skia and minikin inside `winapk-runtime.exe`, `windows/test/aospgfx/`: milestone 1 of drawing with Android's own graphics, in `windows/README.md`), and *Package* (a preview folder with the JRE the build baked and the installer). The smoke test and the sweep run on that JRE, with one framework archive made first (`--cds-prepare`) and shared by the apps, and the smoke test records the apps' classes into the `framework-classlist` artifact, the source of `windows/java/winapk-framework.classlist`. The whole compatibility sweep runs only by hand (Run workflow, "Full compatibility sweep"): split over four machines (`sweep.py --shard`) and joined by *Sweep report* into one ranked report. The *UI gate* holds a change to the framework, the host or the loader to "only closer to Android, never further": on Ubuntu, Android's lines for the UI probe and the apps of `windows/test/screens/gate.txt` (Robolectric; cached by what they are made from, so built again only when the probe, the screens oracle or the pinned APKs change) and the base commit's framework jars; then on Windows, one job per target, Win.apk's lines at the base (`main`'s own CI build of that commit while it is kept, else the head's build with the base's jars) and at the head, side by side, each on its commit's default graphics (the summary names which: Java2D at a base from before AOSP's became the default), and `windows/test/uiprobe/regress.py`, which fails the job on a line that matched Android before and not now, moved further from it, or is gone. A new push cancels the run in progress |
 | `windows-release.yml` | By hand only, with a tag | Builds (stamping the tag's version into `Win.apk.exe`), packages with the JRE `bake_jre.sh` makes from Temurin 21, smoke-tests the package, builds the installer and publishes a GitHub pre-release |
 | `app-probe.yml` | By hand only | Not a test: each F-Droid app of its list runs a minute in a window on the staged runtime of the branch's newest CI build (`main`'s when the branch has none); screenshots, the log and CPU samples are the artifacts (the dated rows of [Compatibility](APPS.md#apps-people-have-tried)) |
 | `ui-sweep.yml` | By hand only, with an F-Droid package or an APK URL, and a branch | Not a test: the screens sweep of one app (`windows/test/screens/screens.sh`), Android's side on Ubuntu and Win.apk's on Windows (the branch's newest CI build), compared; `oracle.txt`, `ours.txt`, `diff.txt`, `summary.txt` and both sides' pictures are the artifact |

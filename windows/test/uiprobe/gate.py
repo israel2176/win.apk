@@ -9,8 +9,10 @@ lines of a pull request against its base, never further from Android.
 
     gate.py report <name> <oracle.txt> <base/ours.txt> <head/ours.txt> [--max N] [--note TEXT] [--out FILE]
                    [--no-base WHY]
-        regress.py on the three, as Markdown for the job summary: the counts,
-        then the first N (default 40) REGRESSED / FARTHER / MISSING entries.
+        regress.py on the three, as Markdown for the job summary: which graphics
+        each side drew with (AOSP's or Java2D's, from the "AOSP graphics:" line of
+        the ours.log beside each ours.txt), the counts, then the first N (default
+        40) REGRESSED / FARTHER / MISSING entries.
         regress.py's whole output goes to FILE. Exit status regress.py's: 1 on
         any of those. With --no-base (the base's runtime could not run the
         target: gate_side.sh's exit 3) there is nothing to regress from: WHY,
@@ -68,6 +70,25 @@ def entries(text):
     return out
 
 
+def graphics(ours_txt):
+    """Which graphics drew a side's run, from the runtime's log beside its lines (ours.log):
+    host/aosp_gfx.cpp's "AOSP graphics:" line. A runtime from before that line drew with Java2D."""
+    log = os.path.join(os.path.dirname(ours_txt), 'ours.log')
+    try:
+        with open(log, encoding='utf-8', errors='replace') as f:
+            line = next((l for l in f if '[win.apk] AOSP graphics: o' in l), None)
+    except OSError:
+        return 'unknown (no ours.log)'
+    if line is None:
+        return 'Java2D'
+    said = line.split('AOSP graphics: ', 1)[1].strip()
+    if said.startswith('on'):
+        return 'AOSP'
+    why = ('a file of it is missing' if 'is missing' in said else 'its DLL does not load' if 'does not load' in said
+           else 'WINAPK_AOSP_GFX=0')
+    return f'Java2D (AOSP off: {why})'
+
+
 def report(args):
     limit = int(opt(args, '--max', '40'))
     note = opt(args, '--note', '')
@@ -77,6 +98,8 @@ def report(args):
     md = [f'### {name}', '']
     if note:
         md += [note, '']
+    md += [f'Graphics: head {graphics(head)}.' if no_base
+           else f'Graphics: base {graphics(base)}, head {graphics(head)}.', '']
     if no_base:
         done = finished(head)
         got = len(cases(head)) if os.path.exists(head) else 0

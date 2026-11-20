@@ -220,7 +220,7 @@ jobs:
           path: thirdparty/angle-win
           key: angle-${{ hashFiles('windows/scripts/fetch_angle.sh') }}
       # android-all 14 and Robolectric's native runtime (~200 MB unpacked), for
-      # WINAPK_AOSP_GFX=1's files in the stage (windows/scripts/build_aosp_gfx.sh).
+      # AOSP graphics' files in the stage (windows/scripts/build_aosp_gfx.sh), what apps draw with.
       - uses: actions/cache@v4
         with:
           path: thirdparty/aosp-gfx
@@ -577,27 +577,44 @@ jobs:
           timeout 600 ./stage/bin/winapk-runtime.exe --apk sudoku.apk --jdk "$JAVA_HOME" --data "$(cygpath -w "$PWD/appdata")" \
             > boot.log 2>&1 || { tail -n 200 boot.log; exit 1; }
           grep -E "first frame presented|frames presented" boot.log
+          # AOSP's graphics are the default, and the stage carries their files.
+          grep -F "AOSP graphics: on" boot.log
+          grep -E "AOSP graphics: robolectric-nativeruntime.dll loaded" boot.log
       - name: Class-data sharing on Win.apk's Java runtime
         run: |
           # The staged runtime with its own JRE (stage/jre, bake_jre.sh): the
           # patches are baked in, so the JRE's archive maps. The first start
           # has no framework archive yet: it records its classes and, at its
           # exit, starts the background dump; the next start maps the archive.
+          # Each graphics has its archive: AOSP's (the default) first, then a start on Java2D's
+          # (WINAPK_AOSP_GFX=0, the way back while it exists) makes its own and keeps AOSP's.
           export WINAPK_HEADLESS=1 WINAPK_HEADLESS_EXIT_AFTER_FRAMES=30
           data="$(cygpath -w "$PWD/cdsdata")"
+          wait_jsa() { for i in $(seq 1 90); do ls cdsdata/cds/framework-$1-*.jsa > /dev/null 2>&1 && break; sleep 2; done
+                       tail -n 5 cdsdata/cds/dump.log; ls -la cdsdata/cds; ls cdsdata/cds/framework-$1-*.jsa; }
           timeout 600 ./stage/bin/winapk-runtime.exe --apk sudoku.apk --data "$data" > cds1.log 2>&1 \
             || { tail -n 200 cds1.log; exit 1; }
-          grep -F "cds: no framework archive" cds1.log
+          grep -F "AOSP graphics: on" cds1.log
+          grep -F "cds: no framework archive for this Win.apk, Java runtime and graphics (aosp)" cds1.log
           grep -F "class-data sharing ON" cds1.log
-          for i in $(seq 1 90); do ls cdsdata/cds/framework-*.jsa > /dev/null 2>&1 && break; sleep 2; done
-          cat cdsdata/cds/dump.log | tail -n 5
-          ls -la cdsdata/cds
+          wait_jsa aosp
           timeout 600 ./stage/bin/winapk-runtime.exe --apk sudoku.apk --data "$data" > cds2.log 2>&1 \
             || { tail -n 200 cds2.log; exit 1; }
-          grep -F "cds: framework archive" cds2.log
+          grep -F "cds: framework archive" cds2.log | grep -F framework-aosp-
           grep -F "class-data sharing ON" cds2.log
           grep -E "frames presented" cds2.log
           if grep -F "did not map" cds2.log; then exit 1; fi
+          WINAPK_AOSP_GFX=0 timeout 600 ./stage/bin/winapk-runtime.exe --apk sudoku.apk --data "$data" > cds3.log 2>&1 \
+            || { tail -n 200 cds3.log; exit 1; }
+          grep -F "AOSP graphics: off (WINAPK_AOSP_GFX=0)" cds3.log
+          grep -F "graphics (java2d)" cds3.log
+          grep -E "frames presented" cds3.log
+          wait_jsa java2d
+          ls cdsdata/cds/framework-aosp-*.jsa
+          timeout 600 ./stage/bin/winapk-runtime.exe --apk sudoku.apk --data "$data" > cds4.log 2>&1 \
+            || { tail -n 200 cds4.log; exit 1; }
+          grep -F "cds: framework archive" cds4.log | grep -F framework-aosp-
+          if grep -F "did not map" cds4.log; then exit 1; fi
       - name: Start an app the broker runs as a service host
         run: |
           # The broker starts an app headless, with no window, to serve another
@@ -783,7 +800,13 @@ jobs:
           python windows/test/compat/sweep.py --runtime stage `
             --apks apk-cache --out smoke --frames 150 --timeout 180 `
             --only-from windows/test/compat/smoke.txt --require-drew
+          $rc = $LASTEXITCODE
           python windows/scripts/merge_classlists.py framework.classlist (Get-ChildItem classlists/*.classlist)
+          # Every app on AOSP's graphics, the default: a run that fell back to Java2D's (a file
+          # missing from the stage, the DLL not loading) is not the engine this test is for.
+          $java2d = Get-ChildItem smoke/logs/*.log | Where-Object { -not (Select-String -Path $_ -SimpleMatch 'AOSP graphics: on' -Quiet) }
+          if ($java2d) { "not on AOSP graphics: $($java2d.Name -join ', ')"; exit 1 }
+          exit $rc
       # Each app's status and memory (peak working set and private bytes of the runtime's process,
       # sweep.py's MemoryWatch) in the run's summary: the report's first table, up to its sections.
       - name: Memory per app, in the summary
@@ -833,6 +856,7 @@ jobs:
       targets: ${{ steps.targets.outputs.targets }}
       base: ${{ steps.base.outputs.sha }}
       base_run: ${{ steps.base.outputs.run }}
+      base_gfx: ${{ steps.base.outputs.gfx }}
       same: ${{ steps.base.outputs.same }}
     steps:
       - uses: actions/checkout@v4
@@ -872,7 +896,12 @@ jobs:
               fi
             done
           fi
-          printf 'sha=%s\nsame=%s\nkey=%s\nrun=%s\n' "$base" "$same" "$key" "$run" | tee -a "$GITHUB_OUTPUT"
+          # The graphics the base runs by default: AOSP's once its host/aosp_gfx.h says so, else
+          # Java2D's. The gate runs the base on them (WINAPK_AOSP_GFX=0 for Java2D's), also when its
+          # side is this build's runtime with the base's jars, so old and new engines compare.
+          gfx=java2d
+          git show "$base:windows/host/aosp_gfx.h" 2>/dev/null | grep -q "kAospGfxByDefault = true" && gfx=aosp
+          printf 'sha=%s\nsame=%s\nkey=%s\nrun=%s\ngfx=%s\n' "$base" "$same" "$key" "$run" "$gfx" | tee -a "$GITHUB_OUTPUT"
       - id: base-jars
         if: steps.base.outputs.run == '' && steps.base.outputs.same != 'true'
         uses: actions/cache@v4
@@ -1003,9 +1032,14 @@ jobs:
       - name: Win.apk at the base and at the head
         env:
           BASE: ${{ needs.ui-oracle.outputs.base }}
+          BASE_GFX: ${{ needs.ui-oracle.outputs.base_gfx }}
         run: |
           t="oracle/${{ matrix.target.dir }}"
-          bash windows/test/uiprobe/gate_side.sh "${{ matrix.target.kind }}" "$t" stage-base out/base > side-base.log 2>&1 &
+          # Each side on its own default graphics: the head on this build's (AOSP's), the base on
+          # its commit's (Java2D's until the default flipped there). gate.py report names both.
+          base_aosp=1
+          [[ "$BASE_GFX" == aosp ]] || base_aosp=0
+          WINAPK_AOSP_GFX=$base_aosp bash windows/test/uiprobe/gate_side.sh "${{ matrix.target.kind }}" "$t" stage-base out/base > side-base.log 2>&1 &
           b=$!
           bash windows/test/uiprobe/gate_side.sh "${{ matrix.target.kind }}" "$t" stage out/head > side-head.log 2>&1 &
           h=$!

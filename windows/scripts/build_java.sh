@@ -179,7 +179,7 @@ TOOLS="$WORK/tools"
 rm -rf "$TOOLS"
 mkdir -p "$TOOLS"
 # java_base_patch is an overlay of java.base (compiled above), not a tool; aosp_gfx goes into
-# aosp-graphics.jar (build_aosp_gfx.sh), on the class path only under WINAPK_AOSP_GFX=1.
+# aosp-graphics.jar (build_aosp_gfx.sh), first on an app's class path unless WINAPK_AOSP_GFX=0.
 find "$HERE/../java" -name '*.java' -not -path '*/java_base_patch/*' -not -path '*/aosp_gfx/*' | sort | native_paths > "$WORK/tools.list"
 # AppMeta calls into the framework and the loader, compiled into $TMP above.
 "$JAVAC" -d "$TOOLS" --release 21 -cp "$(native_path "$TMP")" @"$WORK/tools.list"

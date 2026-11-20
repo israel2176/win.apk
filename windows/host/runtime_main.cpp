@@ -1477,8 +1477,9 @@ std::vector<std::string> jvm_options(const BootArgs& b) {
     const Options& o = b.options;
     std::error_code ec;
     std::vector<std::string> v;
-    // WINAPK_AOSP_GFX=1 (aosp_gfx.h): AOSP's graphics classes first, so they win over the
-    // framework's own of the same name. Only an app's run asks (aosp_gfx_prepare in main).
+    // AOSP's graphics (aosp_gfx.h, the default; WINAPK_AOSP_GFX=0 is Java2D's): their classes
+    // first, so they win over the framework's own of the same name. Only an app's run, and
+    // --cds-prepare for it, asks (aosp_gfx_prepare in main).
     const winapk::host::AospGfxFiles* aosp = winapk::host::aosp_gfx_files();
     v.push_back("-Djava.class.path=" + (aosp ? jvm_path(aosp->jar) + ";" : std::string()) +
                 jvm_path(o.lib / "android-framework.jar") + ";" +
@@ -1590,13 +1591,8 @@ std::vector<std::string> jvm_options(const BootArgs& b) {
         i = j + 1;
     }
     // Class-data sharing (cds.h): last, so its key sees MACAPK_JVM_OPTS too.
-    // Only an app's own start records the classes it loads. Not under WINAPK_AOSP_GFX: its class
-    // path would key an archive of its own, and dumping that one deletes the usual one (each
-    // dump drops the other keys'), so switching back and forth would dump at every start.
-    if (aosp) {
-        std::fprintf(stderr, "[win.apk] cds: off under WINAPK_AOSP_GFX=1 (the --patch-module flags)\n");
-        return v;
-    }
+    // Only an app's own start records the classes it loads. AOSP's graphics and Java2D's each
+    // have an archive (cds_util.h, graphics_of), so a run on either keeps the other's.
     winapk::host::cds_apply(&v, o.jdk, o.lib, o.data,
                             o.install_only ? std::wstring() : b.app_dir.filename().wstring());
     return v;
@@ -1856,7 +1852,7 @@ DWORD WINAPI boot_thread(void* param) {
     // Upstream's own NativeSqlite bridge replaces those stubs (see CMakeLists).
     macapk::sqlite::RegisterNativeSqliteMethods(env);
     check_exception(env, "RegisterNativeSqliteMethods");
-    // WINAPK_AOSP_GFX=1: Skia and the rest onto AOSP's classes, after Win.apk's own natives so
+    // AOSP's graphics (aosp_gfx.h): Skia and the rest onto AOSP's classes, after Win.apk's own natives so
     // that those it keeps (SQLite's, Surface's) stay bound as they are. Nothing when it is off.
     winapk::host::aosp_gfx_load(vm, env);
 
@@ -2140,7 +2136,9 @@ int wmain(int argc, wchar_t** argv) {
     }
     if (!resolve_paths(&b.options)) return 2;
     if (b.options.cds_prepare) {
-        jvm_options(b);  // the options, and with them the archive's key, an app's start would have
+        // The options, and with them the archive's key, an app's start would have: its graphics too.
+        winapk::host::aosp_gfx_prepare(b.options.lib, exe_dir());
+        jvm_options(b);
         return winapk::host::cds_prepare();
     }
     // A crash from here on also leaves logs\crash-<app>-<time>.dmp.
@@ -2277,7 +2275,7 @@ int wmain(int argc, wchar_t** argv) {
     }
     prepare_arm64(b.options, b.app_dir);
     if (!convert_dex(b.options, b.app_dir, &b.app_jar)) return 1;
-    // WINAPK_AOSP_GFX=1, an app's run only (aosp_gfx.h); with it unset this does nothing.
+    // AOSP's graphics, an app's run only (aosp_gfx.h): on unless WINAPK_AOSP_GFX=0 or a file is missing.
     winapk::host::aosp_gfx_prepare(b.options.lib, exe_dir());
 
     // Upstream runs the JVM with -Xss16m; give the creating thread as much.

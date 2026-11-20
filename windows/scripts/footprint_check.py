@@ -10,8 +10,8 @@ job's summary) and exits 1 when any part is over, listing the largest files of t
 The budgets are today's sizes with some headroom, in MB (10^6 bytes), the files' own sizes summed
 (what the installer unpacks; NTFS adds a little per file). Raising one is a decision, not a fix:
 do it in the change that needs the room, say why in its description, and update the numbers in
-windows/README.md, "Footprint". The CI stage carries WINAPK_AOSP_GFX=1's files
-(build_aosp_gfx.sh), a release leaves them out, so a release is below these.
+windows/README.md, "Footprint". The stage carries AOSP graphics' files (build_aosp_gfx.sh), in
+CI as in a release: apps draw on them by default.
 """
 
 import os
@@ -20,7 +20,7 @@ import sys
 # (part, the paths it holds relative to the stage, budget in MB). A path ending in "/" is a folder;
 # the last part takes every file the others do not.
 BUDGETS = [
-    ("AOSP graphics (WINAPK_AOSP_GFX=1)",
+    ("AOSP graphics (the default; WINAPK_AOSP_GFX=0 is Java2D)",
      ["bin/aosp/", "bin/robolectric-nativeruntime.dll", "lib/aosp-graphics.jar"], 90),
     ("Java runtime (jre/)", ["jre/"], 140),
     ("ARM translation's compiler (clang/)", ["clang/"], 250),
