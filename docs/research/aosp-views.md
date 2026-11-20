@@ -599,9 +599,20 @@ dialog's layout detached, and those were already equal to the oracle.
 Left for V1, in order:
 
 - **SurfaceView, GLSurfaceView, TextureView, WebView** inside an AOSP view
-  tree: they inflate (Win.apk's `SurfaceView` gets the members it reads), but
-  the GL and video paths were not run; a `SurfaceView`'s own layer is not yet
-  one of the compositor's.
+  tree: a `SurfaceView`'s GL frames show under the windows. After each layout
+  of an activity window the host window's content is Win.apk's shared GL view
+  while a SurfaceView is shown in the tree (`AospWindows.showSurfaceBelow`),
+  the compositor's frame then starts clear instead of black, the SurfaceView
+  punches AOSP's hole (`clearSurfaceViewPort`'s condition), and the host
+  composites the frame over the GL frame: Klooni (libGDX) and PPSSPP
+  (NativeActivity) draw as with the switch off. It is not yet one layer of the
+  compositor's among the windows. SDL's native window (Tensy) stalls after its
+  rotation (`open-issues.md`); `TextureView` and video were not run.
+- Display commits (a window resize, an app's requested orientation) reach the
+  windows: `ViewHost.scheduleLayout` sends `IWindow.resized` to each window
+  whose frame changes; `ViewRootImpl.updateConfiguration` then needs
+  `android.app.ResourcesManager`'s three members, which the views jar has with
+  AOSP's bodies for a process with no activity override configurations.
 - Spinners' drop-downs and toasts in an app: windows like the dialog and the
   overflow menu (which V2 opened in Sudoku), not yet seen opening in an app.
   The platform action bar (`Activity.initWindowDecorActionBar`) is not made.
@@ -612,8 +623,8 @@ Left for V1, in order:
   `CompatChanges` answers true for every change, which is wrong for an app
   whose target SDK is below a change's. The other inset sources a phone has
   (tappable element, mandatory gestures, cutout) are not reported.
-- CDS with the switch on (`framework-aospviews-<key>.jsa`), real Windows, the
-  smoke apps.
+- CDS with the switch on (`framework-aospviews-<key>.jsa`), real Windows. The
+  smoke apps: `open-issues.md`, "The smoke apps with AOSP's views".
 
 V3: HWUI's own pipeline (`ThreadedRenderer`).
 
