@@ -202,7 +202,19 @@ public final class InstallerOfRecord {
             try (FileOutputStream out = new FileOutputStream(tmp)) {
                 p.store(out, "package=installer of record (PackageInstaller)");
             }
-            if (!tmp.renameTo(f)) tmp.delete();
+            // A replacing move, not File.renameTo: on Windows renameTo will not replace an existing
+            // file (only Win.apk's java.base overlay makes it), so on a stock JDK every write after
+            // the first was dropped -- a record could never be changed or removed -- and silently.
+            try {
+                java.nio.file.Files.move(tmp.toPath(), f.toPath(),
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                        java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+            } catch (java.nio.file.AtomicMoveNotSupportedException e) {
+                java.nio.file.Files.move(tmp.toPath(), f.toPath(),
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            } finally {
+                tmp.delete();  // nothing left behind when the move failed
+            }
         } catch (Throwable t) {
             NativeLog.e("InstallerOfRecord", "could not record installer of " + pkg + ": " + t);
         }
