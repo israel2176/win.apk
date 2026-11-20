@@ -2,8 +2,9 @@
 
 Status: plan and spike (`windows/test/aospviews/`). Step 0, the `ResBackend`
 and `ViewHost` seams, is done (below). Step R1, the first part, is built behind
-`WINAPK_AOSP_RES=1` (off by default; "R1 as built", after section 4); nothing
-else here ships yet.
+`WINAPK_AOSP_RES=1`, and step V1, the first part, behind `WINAPK_AOSP_VIEWS=1`
+(both off by default; "R1 as built" and "V1 as built", after section 4).
+Nothing else here ships yet.
 
 ## Why
 
@@ -278,7 +279,7 @@ like aospgfx.
 | R1 | **First part built** ("R1 as built", below). Resources on AOSP: `android.content.res` from android-all with its natives on the libandroidfw port (the spike's bridge, our own code instead of shadow statics; Guava's `Ints` replaced); `framework-res` at API 34; `VMRuntime`'s address map | `WINAPK_AOSP_RES=1` | 0 | probe sections `theme`, `styles.lib`, `drawables`; screens sweep. Win.apk's views keep working on AOSP's `Resources` (public API + `ResBackend`) |
 | R2 | libandroidfw native: `libs/androidfw` + `core/jni/android_util_AssetManager.cpp` and its small closure (libziparchive, libutils / libbase pieces), built with clang for Windows as Robolectric builds HWUI; bound like aospgfx's DLL. Removes the 0.9 to 1.4 s and the Java heap the port holds | same switch | R1 | same lines; start time no worse than today |
 | T | `android.text` with graphics milestone 2 | `WINAPK_AOSP_GFX=1` | graphics | `text.layout` section |
-| V1 | Views on AOSP: `android.view` / `android.widget` / `PhoneWindow` / `DecorView`, the real `ViewRootImpl` over Win.apk's `IWindowSession`, `IWindowManager` and `IAccessibilityManager` (as the spike's `Services`, with real answers), the settings provider, `DisplayEventReceiver` bridged to the host's frame clock; software drawing into the frame `Bitmap` that graphics milestone 2 presents | `WINAPK_AOSP_VIEWS=1` (needs R and graphics on) | R1, graphics M2 | all probe layouts, screens sweep, smoke apps |
+| V1 | **First part built** ("V1 as built", below). Views on AOSP: `android.view` / `android.widget` / `PhoneWindow` / `DecorView`, the real `ViewRootImpl` over Win.apk's `IWindowSession`, `IWindowManager` and `IAccessibilityManager` (as the spike's `Services`, with real answers), the settings provider, `DisplayEventReceiver` bridged to the host's frame clock; software drawing into the frame `Bitmap` that graphics milestone 2 presents | `WINAPK_AOSP_VIEWS=1` (needs R and graphics on) | R1, graphics M2 | all probe layouts, screens sweep, smoke apps |
 | V2 | Input and IME: `InputEventReceiver` / `InputChannel` natives on the host's queue, `IInputMethodManager` + `InputConnection` over Win.apk's IME host; accessibility service | same | V1 | input tests (`HostTouchTest`), the sweep's text-entry screens |
 | V3 | HWUI's own pipeline (`ThreadedRenderer` with `RenderNode` display lists), then GPU with graphics' later milestones | | V1 | frame time no worse |
 
@@ -374,6 +375,161 @@ AOSP reads no XML attributes for it); the resize path, untested (Win.apk's
 `Resources` kept the process `Configuration` by reference; AOSP's copies it); split APKs (added, not tested);
 CDS with the switch on (its own archive, `framework-aospres-<key>.jsa`, not
 run: no baked JRE here); real Windows; more apps than the probe and two sweeps.
+
+### V1 as built (first part)
+
+`WINAPK_AOSP_VIEWS=1` (with `WINAPK_AOSP_RES=1`; the host turns it off with a
+log line when AOSP's resources or graphics are off, or the jar is missing) puts
+`lib\aosp-views.jar` (6.0 MB, 3260 classes; made by
+`windows/scripts/build_aosp_views.sh`) first on the class path, before
+`aosp-resources.jar`, and sets `-Dwinapk.aosp.views=1`; `ViewHost` is then
+`com.winapk.aospviews.AospViewHost` (`windows/java/aosp_views`). Off, nothing
+changes: the probe's `ours.txt` is byte-identical with the switch off, and with
+`WINAPK_AOSP_RES=1` alone.
+
+- **AOSP's classes.** All of `android.view.**`, `android.widget.**` and
+  `com.android.internal.{view,widget,policy}.**` from android-all 14 (2645
+  classes), but the ones the host's plumbing is built on, which stay Win.apk's:
+  `Surface`, `SurfaceControl`, `SurfaceView`, `SurfaceHolder`, `TextureView`
+  (GL and video surfaces), `MotionEvent`, `KeyEvent`, `KeyCharacterMap`,
+  `VelocityTracker`, `InputDevice`, `InputQueue` (the host's input), and
+  `ThreadedRenderer` (aosp-graphics.jar's; its nested classes are android-all's).
+  A few classes outside those packages are AOSP's too, where the views need
+  members Win.apk's lack and nothing of Win.apk needs one AOSP's lacks:
+  `StateSet`, `android.R.styleable`, `AllCapsTransformationMethod`,
+  `android.text.Selection`, `android.window`'s back dispatch and
+  `SurfaceSyncGroup`. Then a jdeps closure of what they name that the
+  framework lacks, bounded to AOSP's own plumbing (`android.window`,
+  `com.android.internal.*`, `android.hardware.display`/`input`, the missing
+  `android.os`/`util`/`text` classes, `AnimationHandler`,
+  `PropertyInvalidatedCache`, `com.google.android.collect`; never
+  `android.app`, `android.content.pm`/`res`, ICU, media or telephony): about
+  600 classes. `android.animation` and `android.transition` stay Win.apk's for
+  now (its `ValueAnimator` runs on AOSP's `Choreographer`'s public API).
+- **Natives.** `DisplayEventReceiver`'s four run on a Java frame clock
+  (`NativeDisplayEventReceiver`: a `winapk-vsync` thread ticking at the host's
+  display rate, posting `dispatchVsync` to the receiver's looper as an
+  asynchronous message, so it passes `ViewRootImpl`'s traversal barrier, with
+  the frame's `VsyncEventData`). `InputEventReceiver`'s six record the window's
+  receiver (V2 feeds it). Nine release-only natives (`SurfaceSession`,
+  `InputChannel`, the input handles) answer zero; the rest
+  (`CompositionSamplingListener`, `MotionPredictor`, `InputEventSender`,
+  `ScreenCapture`, `TunnelModeEnabledListener`,
+  `SurfaceControlHdrLayerInfoListener`, one of `DisplayManagerGlobal`'s) throw
+  `UnsupportedOperationException` by name.
+- **The member gap** (`windows/scripts/LinkScan.java`, run by the build). What
+  AOSP's classes call that Win.apk's lack is sent at build time
+  (`AospViewsRewrite.java`) to `com.winapk.aospviews.Compat`: about 60 members,
+  `Context`'s hidden ones (display id, autofill and content-capture options,
+  `getNextAutofillId`...), `ApplicationInfo.hasRtlSupport`, `StrictMode`,
+  `Trace`, `TextUtils` and `Build` statics, `CompatChanges.isChangeEnabled`
+  (true: the app's target SDK is the presented one), `SystemProperties.find`
+  (no handle: `PropertyInvalidatedCache` queries every time),
+  `HardwareRenderer.setFPSDivisor` and `RenderNode`'s position listeners
+  (render-thread features of HWUI), `TextUtils.toUpperCase`; `new Surface()` is
+  made invalid until `copyFrom`, as AOSP's is. What Win.apk's own kept classes
+  need of AOSP's (its `SurfaceView` reads `View.nativeHandle`, `macapkAttached`
+  and `Display.macapkRealWidthPx`) is added to AOSP's classes at build time.
+  205 member references of AOSP's classes still do not link; they are on paths
+  the probe, the two sweeps and the two apps did not take (`RemoteViews`,
+  `LockPatternUtils`, translation, content capture, drag, `Magnifier`...), and
+  fail by name if one runs. On Win.apk's side (`android-framework.jar` and
+  `macapk-loader.jar` against the views jar), what is left unlinked is in
+  classes AOSP's replace, behind `ViewHost` (`WinApkViewHost`), or input's
+  (`TouchDispatcher`'s back dispatch, V2).
+- **System services**, registered by name in `ServiceManager` (which now keeps
+  what is added in the process): `window` (`IWindowManager`: `openSession`,
+  animator scale, touch mode, no navigation bar, no BLAST), its
+  `IWindowSession` (`addToDisplayAsUser`, `relayout`: the frame from AOSP's own
+  `WindowLayout.computeFrames` over the display, a `MergedConfiguration` with
+  the window bounds, and a Win.apk `SurfaceControl` of the frame's size),
+  `display` (`IDisplayManager`: the one display's `DisplayInfo`, so
+  `DisplayManagerGlobal` and `Display` are AOSP's) and `input_method`
+  (`IInputMethodManager`: no input methods yet). Each is a subclass of its AIDL
+  `Stub` generated at build time (16 of `IWindowManager`'s 144 methods
+  answered, 10 of `IWindowSession`'s 42, 4 of `IDisplayManager`'s 55, 3 of
+  `IInputMethodManager`'s 31); a method with no answer returns its type's zero
+  and logs `[aosp-views] <Service>.<method>: no answer in this process` once.
+  A `java.lang.reflect.Proxy`, as the spike used, cannot stand in: it loads
+  every type an interface names, and `IWindowManager` names classes no app
+  process has.
+- **The window.** `Activity` (Win.apk's) gets AOSP's `PhoneWindow` from
+  `ViewHost.newActivityWindow` (callback, private inflater factory, a local
+  window manager over `WindowManagerImpl`, not hardware accelerated) and hands
+  `setContentView`, `findViewById` and the rest to it, as AOSP's Activity does;
+  `ActivityHost`'s resume (`latchWindowAdded`) adds the decor to AOSP's
+  `WindowManagerGlobal` as `TYPE_BASE_APPLICATION`. `ViewRootImpl` then
+  relayouts through the session, copies its `Surface` from the control and
+  draws in software: `lockCanvas` is a `Canvas` on a frame `Bitmap` of the
+  frame's size (AOSP's graphics) and `unlockCanvasAndPost` presents it to the
+  host (`NativeCocoa.presentBitmap`), as a `SurfaceView`'s Surface already did.
+  The host window and its render view are made once (`AospWindows`), for the
+  size and the headless frame count; a resize goes to every window as
+  `IWindow.resized` (not tested). `getSystemService` asks
+  `ViewHost.systemService` first: `window`, `layout_inflater`
+  (`PhoneLayoutInflater`, one per context), `input_method`, `accessibility`,
+  `captioning`, `textclassification` and `textservices` are AOSP's managers.
+
+Measured under Wine (4-vCPU VM, CDS off: the stage's JRE was not baked), one
+stage, the UI probe and the screens sweep:
+
+| | switch off | `WINAPK_AOSP_RES=1` | `+ WINAPK_AOSP_VIEWS=1` |
+|---|---|---|---|
+| Probe lines differing from the oracle (of 2104) | 162 | 146 | **0** (`ours.txt` byte-identical to `oracle.txt`) |
+| `regress.py` to the views run | 162 fixed | 146 fixed | 0 REGRESSED, 0 FARTHER, 0 MISSING |
+| Screens sweep, Gallery (lines differing) | 279 of 3042 | 275 | **46 of 2970** (233 fixed, 17 changed, none worse) |
+| Screens sweep, Sudoku | 249 of 1396 | 249 | **50 of 1306** (199 fixed, 26 changed, none worse) |
+| Probe: `Application init returned` / first frame | 9.7 s / 19.5 s | 10.5 s / 22.2 s | 11.0 s / 19.0 s |
+| Open Sudoku started: first frame, working set | 10.5 s, 430 MB | | 11.8 s, 471 MB |
+
+Per section of the probe (lines differing, off / resources / views; every
+other section is 0 in all three): `theme.platform` 7 / 0 / 0, `styles.lib`
+3 / 0 / 0, `drawables.*` 6 / 0 / 0, `lib_images` 24 / 24 / 0, the three
+`*_list` 20 each / 20 / 0, the `*_dialog` four 11, 11, 5, 5 / the same / 0,
+the `*_appbar` three 6, 6, 4 / the same / 0, `edit_compound` 4 / 4 / 0,
+`icons` 4 / 4 / 0, `lib_constraint` 2 / 2 / 0, `m3dark_material` 4 / 4 / 0.
+The oracle is Robolectric on the same android-all, so this shows that the same
+code runs the same way inside Win.apk; it does not show that Robolectric
+matches a phone. The timings are one run each.
+
+What the sweeps still differ in: stack-trace lines where both sides throw
+alike (Robolectric's `__constructor__` names, the JDK's line numbers,
+`TypedValue.toString`: Win.apk's `TypedValue` is still its own) and, in
+Gallery, `pager_photo_item` (30 lines), which the oracle cannot inflate
+(Robolectric loads the app's arm64 `libpl_droidsonroids_gif.so`) and Win.apk
+does. `LayoutSweep.java` needed no change: it runs inside Win.apk on AOSP's
+views through their public API. The probe's activity window itself is drawn by
+`ViewRootImpl` (90 frames presented, "UI probe" at the top left of a 720x1280
+frame); Open Sudoku's title screen (toolbar, board, Material buttons) draws
+through it too.
+
+Left for V1's next parts, in order:
+
+- **Dialogs made by Win.apk's `android.app.Dialog`** (its window is a Win.apk
+  `Window` subclass): not shown with the switch on (Open Sudoku's "Latest
+  changes" dialog). AOSP's `Dialog`, `AlertDialog` and
+  `com.android.internal.app.AlertController` over the same window manager are
+  next. `PopupWindow`, `Toast` and AppCompat's own popups already go through
+  AOSP's `WindowManagerImpl`: untested.
+- **The system bars as insets** (`InsetsState` sources for the status and
+  navigation bars Win.apk paints, `StatusBarDriver`): with the switch on the
+  window has none, so content starts at the top; the platform action bar
+  (`Activity.initWindowDecorActionBar`) is not made.
+- **SurfaceView, GLSurfaceView, TextureView, WebView** inside an AOSP view
+  tree: they inflate (Win.apk's `SurfaceView` gets the members it reads), but
+  the GL and video paths were not run.
+- Resizing (`IWindow.resized`), several activity windows, an activity's finish
+  (`activityWindowRemoved`), configuration changes: written, not tested.
+  `CompatChanges` answers true for every change, which is wrong for an app
+  whose target SDK is below a change's.
+- CDS with the switch on (`framework-aospviews-<key>.jsa`), real Windows, the
+  smoke apps.
+
+V2 (input, IME, accessibility): the host's pointer and keys into the window's
+`InputEventReceiver` (recorded already) instead of `TouchDispatcher`, the IME
+service behind `IInputMethodManager` with Win.apk's IME host, predictive back
+(`OnBackInvokedCallback`: off here, the application answers "not enabled"),
+`IAccessibilityManager`. V3: HWUI's own pipeline (`ThreadedRenderer`).
 
 ## 5. Size, start and memory
 

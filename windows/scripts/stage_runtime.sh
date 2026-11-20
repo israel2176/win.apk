@@ -16,6 +16,9 @@
 #   <out>/lib/aosp-resources.jar, bin/aosp/framework-res-34.apk: AOSP's own resources, only with
 #                                     WINAPK_STAGE_AOSP_RES=1 (build_aosp_res.sh; the switch,
 #                                     WINAPK_AOSP_RES=1, is new and off by default)
+#   <out>/lib/aosp-views.jar:         AOSP's own views, only with WINAPK_STAGE_AOSP_RES=1 and
+#                                     WINAPK_STAGE_AOSP_VIEWS=1 (build_aosp_views.sh; the switch,
+#                                     WINAPK_AOSP_VIEWS=1, is new and off by default)
 #
 #   windows/scripts/stage_runtime.sh <cmake build dir> [out]
 #
@@ -37,6 +40,9 @@ if [[ "${WINAPK_STAGE_AOSP_GFX:-1}" != 0 ]]; then
     "$HERE/build_aosp_gfx.sh" "$OUT" "${WINAPK_AOSP_GFX_DEPS:-}"
     if [[ "${WINAPK_STAGE_AOSP_RES:-0}" == 1 ]]; then
         "$HERE/build_aosp_res.sh" "$OUT" "${WINAPK_AOSP_GFX_DEPS:-}"
+        if [[ "${WINAPK_STAGE_AOSP_VIEWS:-0}" == 1 ]]; then
+            "$HERE/build_aosp_views.sh" "$OUT" "${WINAPK_AOSP_GFX_DEPS:-}"
+        fi
     fi
 fi
 cp -f "$BUILD/winapk-runtime.exe" "$BUILD/macapk-translator.exe" "$BUILD/winapk-guest-stub.dll" "$OUT/bin/"

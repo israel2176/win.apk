@@ -10,9 +10,14 @@
 // SurfaceView's GL and video plumbing. Code outside those packages (the loader,
 // android.app, android.opengl, android.media...) calls them only through this
 // interface, so that running AOSP's own views later needs an implementation of
-// it, not patched copies of AOSP classes. Today the only implementation is
-// WinApkViewHost, which calls the member each method stands for, one for one,
-// with the same receiver and arguments: going through here changes nothing.
+// it, not patched copies of AOSP classes. WinApkViewHost calls the member each
+// method stands for, one for one, with the same receiver and arguments: going
+// through here changes nothing. With WINAPK_AOSP_VIEWS=1 (the host puts
+// lib/aosp-views.jar first on the class path and sets -Dwinapk.aosp.views=1)
+// the host is com.winapk.aospviews.AospViewHost (windows/java/aosp_views; step
+// V1 of the plan): AOSP's own PhoneWindow, WindowManagerGlobal and ViewRootImpl
+// over Win.apk's window, and the methods below its window root makes moot
+// answer as nothing is attached.
 //
 // Inside those packages the classes keep calling each other directly. A Win.apk
 // subclass outside them that overrides a hook (GLSurfaceView's macapkDrawFrame,
@@ -52,7 +57,46 @@ import java.util.List;
 public interface ViewHost {
 
     /** The view host of this JVM: chosen once, for the whole run. */
-    static ViewHost get() { return WinApkViewHost.INSTANCE; }
+    static ViewHost get() { return Chosen.HOST; }
+
+    /** Which one, decided when first asked. */
+    final class Chosen {
+        private Chosen() {}
+
+        static final ViewHost HOST = choose();
+
+        private static ViewHost choose() {
+            if (!"1".equals(System.getProperty("winapk.aosp.views"))) return WinApkViewHost.INSTANCE;
+            try {
+                return (ViewHost) Class.forName("com.winapk.aospviews.AospViewHost").getField("INSTANCE").get(null);
+            } catch (ReflectiveOperationException e) {
+                // The host sets the property only with the jar first on the class path, so this
+                // is a broken stage: AOSP's android.view is there without its host.
+                throw new IllegalStateException("winapk.aosp.views=1 without com.winapk.aospviews.AospViewHost", e);
+            }
+        }
+    }
+
+    /** Win.apk's own host, whatever this JVM chose: AOSP's host hands it what both share, the
+     *  classes that stay Win.apk's with AOSP's views (Surface, SurfaceView, KeyEvent,
+     *  InputDevice: the host's GL, video and input plumbing). */
+    static ViewHost winApk() { return WinApkViewHost.INSTANCE; }
+
+    // ---- AOSP's own window root (WINAPK_AOSP_VIEWS=1); Win.apk's answers "not mine" ----
+
+    /** True when an Activity's window, content and window manager are AOSP's (PhoneWindow,
+     *  DecorView, WindowManagerImpl over ViewRootImpl): Activity then hands setContentView,
+     *  findViewById and its window to them, as AOSP's Activity does, and draws nothing itself. */
+    default boolean aospWindows() { return false; }
+
+    /** Activity.attach's `mWindow = new PhoneWindow(this, window, activityConfigCallback)`, with
+     *  its callback and window manager set; null when Activity builds its own. */
+    default Window newActivityWindow(Activity activity) { return null; }
+
+    /** The manager the views own for a system service name (window, layout_inflater,
+     *  input_method, accessibility...), as SystemServiceRegistry hands out for `context`; null
+     *  when the name is not one of them, or Win.apk's own registry answers it. */
+    default Object systemService(Context context, String name) { return null; }
 
     // ---- A window's root: attach, detach, remove ----
 

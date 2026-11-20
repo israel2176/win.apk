@@ -112,6 +112,53 @@ public class Surface implements android.os.Parcelable {
     public boolean isValid() { return !mReleased; }
     public void release() { mReleased = true; }
 
+    /** AOSP's buffer size for a window's Surface: the layer it was copied from
+     *  (copyFrom), 0 when it was not; lockCanvas then falls back to the display. */
+    private int mLayerWidth, mLayerHeight;
+    private int mGenerationId;
+
+    /** AOSP copyFrom(SurfaceControl): this Surface now draws into the layer the
+     *  control names. On Android the window's buffers; here the window's frame
+     *  bitmap, of the layer's size, which unlockCanvasAndPost presents to the host
+     *  window (AOSP's ViewRootImpl, WINAPK_AOSP_VIEWS=1, copies its Surface from the
+     *  SurfaceControl the in-process window session's relayout sized). A new layer
+     *  is a new generation, as AOSP counts it. */
+    public void copyFrom(SurfaceControl other) {
+        if (other == null) throw new IllegalArgumentException("other must not be null");
+        if (!other.isValid()) throw new NullPointerException("null SurfaceControl native object. Are you using a released SurfaceControl?");
+        if (mReleased || mLayerWidth != other.getWidth() || mLayerHeight != other.getHeight()) mGenerationId++;
+        mLayerWidth = other.getWidth();
+        mLayerHeight = other.getHeight();
+        mReleased = false;
+    }
+
+    /** AOSP transferFrom(Surface other): this Surface takes other's layer, other is released. */
+    public void transferFrom(Surface other) {
+        if (other == null) throw new IllegalArgumentException("other must not be null");
+        if (other != this) {
+            mLayerWidth = other.mLayerWidth;
+            mLayerHeight = other.mLayerHeight;
+            mReleased = other.mReleased;
+            mGenerationId++;
+            other.mReleased = true;
+        }
+    }
+
+    public int getGenerationId() { return mGenerationId; }
+    /** AOSP destroy(): release(), and (on Android) the Surface's native object goes now. */
+    public void destroy() { release(); }
+
+    /** AOSP Surface.rotationToString. */
+    public static String rotationToString(int rotation) {
+        switch (rotation) {
+            case ROTATION_0: return "ROTATION_0";
+            case ROTATION_90: return "ROTATION_90";
+            case ROTATION_180: return "ROTATION_180";
+            case ROTATION_270: return "ROTATION_270";
+            default: return Integer.toString(rotation);
+        }
+    }
+
     /** The SurfaceTexture this Surface produces into, or null when it was not
      *  constructed from one. Mac.apk framework-internal (macapk prefix, same
      *  convention as ImageReader.macapkReaderForSurface): it is how the camera
@@ -178,8 +225,9 @@ public class Surface implements android.os.Parcelable {
             throw new IllegalArgumentException("Surface was already locked");
         }
         final boolean sunk = mFrameSink != null && mSinkWidth > 0 && mSinkHeight > 0;
-        int w = sunk ? mSinkWidth : defaultWidth();
-        int h = sunk ? mSinkHeight : defaultHeight();
+        final boolean layer = !sunk && mLayerWidth > 0 && mLayerHeight > 0;
+        int w = sunk ? mSinkWidth : layer ? mLayerWidth : defaultWidth();
+        int h = sunk ? mSinkHeight : layer ? mLayerHeight : defaultHeight();
         if (mDrawBitmap == null || mDrawBitmap.getWidth() != w || mDrawBitmap.getHeight() != h) {
             mDrawBitmap = com.macapk.loader.gfx.GfxBackend.get().createFrameBitmap(w, h);
             mDrawCanvas = new android.graphics.Canvas(mDrawBitmap);
