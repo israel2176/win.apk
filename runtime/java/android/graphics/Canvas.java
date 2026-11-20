@@ -4743,7 +4743,9 @@ public class Canvas {
                 // the first so the fill is approximately right rather than blank.
                 return awtPaintForShader(((ComposeShader) shader).macapkA(), p);
             }
-            if (shader instanceof RuntimeShader) {
+            // Without the Skia bridge (Windows) the paint's own colour: MacApkRuntimeShaderPaint's
+            // createContext would throw in the middle of a draw.
+            if (shader instanceof RuntimeShader && com.macapk.graphics.MacApkSkia.isAvailable()) {
                 return new MacApkRuntimeShaderPaint((RuntimeShader) shader, p);
             }
         } catch (Throwable t) {

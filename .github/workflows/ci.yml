@@ -484,6 +484,17 @@ jobs:
           "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/icu-fallback-test)" com.macapk.icu.HostIcuFallbackTest \
             | tee icu-fallback-test.log
           grep -q "ALL PASSED" icu-fallback-test.log
+      - name: Run the Skia-less RenderEffect test
+        run: |
+          # RenderEffect and RuntimeShader with no Skia bridge (Windows never
+          # has upstream's Mac one): MacApkSkia.isAvailable() answers false
+          # instead of throwing into the app, and the effects are made.
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          cp="$(cygpath -w stage/lib/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          "$JAVA_HOME/bin/javac" -cp "$cp" -d build/skia-test windows/test/java/com/macapk/graphics/MacApkSkiaTest.java
+          "$JAVA_HOME/bin/java" -Djava.awt.headless=true -cp "$cp;$(cygpath -w build/skia-test)" \
+            com.macapk.graphics.MacApkSkiaTest | tee skia-test.log
+          grep -q "ALL PASSED" skia-test.log
       - name: Run the permission model test
         run: |
           # SpecialAccessStore.GroupModel, the decision model behind every
