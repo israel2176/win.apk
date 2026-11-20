@@ -475,7 +475,8 @@ jobs:
         run: |
           # Framework methods that were stubs (windows/test/apicheck/Completeness.java
           # lists them) checked against what Android's do: AnimatorSet's interpolator,
-          # View's clip bounds and the drawing cut to them.
+          # View's clip bounds and the drawing cut to them, Process.getElapsedCpuTime
+          # and getUid/GidForName, ExpandableListView's packed positions.
           export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
           cp="$(cygpath -w stage/lib/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/stubs-test windows/test/java/FrameworkStubsTest.java

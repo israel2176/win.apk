@@ -104,7 +104,26 @@ public class Process {
     public static void setThreadPriority(int tid, int priority) {
         sThreadPrio.put(tid, priority);
     }
-    public static long getElapsedCpuTime() { return 0; }
+    /** AOSP android_os_Process_getElapsedCpuTime: the process's CPU time in ms
+     *  (clock_gettime(CLOCK_PROCESS_CPUTIME_ID)), never 0 in a running app. Was a
+     *  constant 0: AppsFlyer's obfuscated loader (bit) adds getElapsedCpuTime() > 0
+     *  into the length of a class name it decrypts, and looked up
+     *  "...AFi1fSDKT861" for "...AFi1fSDKT8615". The JVM's own count of the
+     *  process's CPU time (GetProcessTimes on Windows); the uptime when the JVM
+     *  has none, which keeps it positive. */
+    public static long getElapsedCpuTime() {
+        try {
+            java.lang.management.OperatingSystemMXBean b =
+                    java.lang.management.ManagementFactory.getOperatingSystemMXBean();
+            if (b instanceof com.sun.management.OperatingSystemMXBean) {
+                long ns = ((com.sun.management.OperatingSystemMXBean) b).getProcessCpuTime();
+                if (ns >= 0) return ns / 1_000_000L;
+            }
+        } catch (Throwable ignored) {
+            // no jdk.management: the fallback below
+        }
+        return SystemClock.uptimeMillis();
+    }
 
     // AOSP core/java/android/os/Process.java :800-810 -- these two fields plus
     // setStartTimes(), set from ActivityThread.handleBindApplication (L7420)
@@ -179,8 +198,97 @@ public class Process {
         return uid + (FIRST_SDK_SANDBOX_UID - FIRST_APPLICATION_UID);
     }
     public static boolean is64Bit() { return true; }
-    public static int  getUidForName(String name) { return 0; }
-    public static int  getGidForName(String name) { return 0; }
+    /** AOSP android_os_Process_getUidForName / getGidForName (core/jni/
+     *  android_util_Process.cpp): a null name throws NullPointerException; a name
+     *  of digits only is atoi'd; any other name goes to bionic's getpwnam /
+     *  getgrnam, which know only the AIDs (android_filesystem_config.h) and the
+     *  per-user names u<user>_a<n>, u<user>_i<n>, u<user>_<aid>; an unknown or
+     *  empty name is -1. Was 0 for every name: SDKs that fold
+     *  getGidForName("") into their arithmetic as a constant -1 (AppsFlyer's
+     *  obfuscated loader, in bit) computed another value than on a phone. */
+    public static int  getUidForName(String name) { return idForName(name); }
+    public static int  getGidForName(String name) { return idForName(name); }
+
+    private static int idForName(String name) {
+        if (name == null) throw new NullPointerException();
+        int n = name.length();
+        if (n == 0) return -1;
+        boolean digits = true;
+        for (int i = 0; i < n && digits; i++) digits = name.charAt(i) >= '0' && name.charAt(i) <= '9';
+        if (digits) {
+            // bionic's atoi is (int) strtol: saturated at LONG_MAX, then truncated.
+            long v = 0;
+            for (int i = 0; i < n; i++) {
+                int d = name.charAt(i) - '0';
+                if (v > (Long.MAX_VALUE - d) / 10) { v = Long.MAX_VALUE; break; }
+                v = v * 10 + d;
+            }
+            return (int) v;
+        }
+        Integer aid = ANDROID_IDS.get(name);
+        if (aid != null) return aid;
+        return appIdForName(name);
+    }
+
+    /** bionic's android_ids (from android_filesystem_config.h): the system ids
+     *  whose number has been stable since the early releases. */
+    private static final java.util.Map<String, Integer> ANDROID_IDS = new java.util.HashMap<>();
+    static {
+        String[] names = { "root", "system", "radio", "bluetooth", "graphics", "input", "audio",
+            "camera", "log", "compass", "mount", "wifi", "adb", "install", "media", "dhcp",
+            "sdcard_rw", "vpn", "keystore", "usb", "drm", "mdnsr", "gps" };
+        int[] ids = { 0, 1000, 1001, 1002, 1003, 1004, 1005, 1006, 1007, 1008, 1009, 1010, 1011,
+            1012, 1013, 1014, 1015, 1016, 1017, 1018, 1019, 1020, 1021 };
+        for (int i = 0; i < names.length; i++) ANDROID_IDS.put(names[i], ids[i]);
+        ANDROID_IDS.put("media_rw", 1023);
+        ANDROID_IDS.put("mtp", 1024);
+        ANDROID_IDS.put("drmrpc", 1026);
+        ANDROID_IDS.put("nfc", 1027);
+        ANDROID_IDS.put("sdcard_r", 1028);
+        ANDROID_IDS.put("clat", 1029);
+        ANDROID_IDS.put("shell", 2000);
+        ANDROID_IDS.put("cache", 2001);
+        ANDROID_IDS.put("diag", 2002);
+        ANDROID_IDS.put("net_bt_admin", 3001);
+        ANDROID_IDS.put("net_bt", 3002);
+        ANDROID_IDS.put("inet", 3003);
+        ANDROID_IDS.put("net_raw", 3004);
+        ANDROID_IDS.put("net_admin", 3005);
+        ANDROID_IDS.put("net_bw_stats", 3006);
+        ANDROID_IDS.put("net_bw_acct", 3007);
+        ANDROID_IDS.put("readproc", 3009);
+        ANDROID_IDS.put("wakelock", 3010);
+        ANDROID_IDS.put("everybody", 9997);
+        ANDROID_IDS.put("misc", 9998);
+        ANDROID_IDS.put("nobody", 9999);
+    }
+
+    /** bionic app_id_from_name: "u<user>_a<n>" is user * 100000 + 10000 + n,
+     *  "u<user>_i<n>" an isolated process (90000 + n), "u<user>_<aid>" that
+     *  AID in the user; anything else -1. */
+    private static int appIdForName(String name) {
+        if (name.length() < 4 || name.charAt(0) != 'u') return -1;
+        int us = name.indexOf('_');
+        if (us < 2) return -1;
+        int user;
+        try { user = Integer.parseInt(name.substring(1, us)); } catch (NumberFormatException e) { return -1; }
+        if (user < 0 || user > 21473) return -1;
+        String rest = name.substring(us + 1);
+        int appid = -1;
+        if (rest.length() > 1 && (rest.charAt(0) == 'a' || rest.charAt(0) == 'i')
+                && rest.substring(1).chars().allMatch(c -> c >= '0' && c <= '9') && rest.length() <= 10) {
+            long nr = Long.parseLong(rest.substring(1));
+            if (rest.charAt(0) == 'a' && nr <= LAST_APPLICATION_UID - FIRST_APPLICATION_UID) {
+                appid = (int) (FIRST_APPLICATION_UID + nr);
+            } else if (rest.charAt(0) == 'i' && nr <= 99999 - 90000) {
+                appid = (int) (90000 + nr);
+            }
+        } else {
+            Integer aid = ANDROID_IDS.get(rest);
+            if (aid != null) appid = aid;
+        }
+        return appid < 0 ? -1 : user * 100000 + appid;
+    }
     // ---- self-kill: the app asking for its OWN process to end ---------------
     //
     // AOSP, frameworks/base/core/java/android/os/Process.java (killProcess is

@@ -2334,6 +2334,20 @@ every such change is listed here:
   threw `UnsupportedEncodingException`. A `CharsetProvider` on the class path
   rather than a copy of `java.nio.charset.Charset` in `java_base_patch`: the
   JDK asks providers only after its own charsets miss.
+- `runtime/java/android/os/Process.java`, `android/widget/ExpandableListView.java`:
+  values AppsFlyer's obfuscated loader folds into the length of a class name
+  it decrypts, as Android has them. `getElapsedCpuTime()` is the process's CPU
+  time (the JVM's count), not 0; `getUidForName` / `getGidForName` answer as
+  bionic's `getpwnam`/`getgrnam` (digits, the AIDs, `u<user>_a<n>`; -1 for an
+  unknown or empty name), not 0; `ExpandableListView`'s packed positions keep
+  the type in bit 63 as AOSP's do (it was bit 62, so a child's packed position
+  was positive). With `getElapsedCpuTime() == 0` bit's AppsFlyer looked up
+  `com.appsflyer.internal.AFi1fSDKT861` for the `AFi1fSDKT8615` it had loaded
+  (`ClassNotFoundException`); the other two changed its loader's arithmetic
+  (the first attempt at its payload threw `ArrayIndexOutOfBoundsException`,
+  then decrypted garbage). Checked on a plain JVM over bit's converted classes
+  with a JDI trace of every framework value AppsFlyer reads;
+  `windows/test/java/FrameworkStubsTest.java` pins the three.
 - `runtime/java/android/widget/DateTimeView.java` (new): AOSP 14's
   `DateTimeView`, the `TextView` of a notification template's time
   (`android:id/time`, `android:showRelative`): the short time today, the
