@@ -9,7 +9,10 @@
 // runtime/translator/src/bionic_shim.cpp) solves the same problem the same way:
 //
 //   /system/etc/fonts.xml, /system/fonts/...  -> the fonts directory Boot wrote
-//                                                (setSystemFontsDir)
+//                                                (setSystemFontsDir); or its fonts.xml
+//                                                and folders, a font the first's that
+//                                                has it (Windows' CJK faces after
+//                                                Android's, AospGfx)
 //   /system/etc/security/cacerts,
 //   /apex/com.android.conscrypt/cacerts       -> the CA store cacerts.cpp builds
 //                                                from the roots Windows trusts
@@ -36,6 +39,7 @@
 #include <cstring>
 #include <mutex>
 #include <string>
+#include <vector>
 
 #include <windows.h>
 
@@ -47,7 +51,8 @@ namespace {
 
 std::mutex g_lock;
 std::wstring g_android_root;  // no trailing separator
-std::wstring g_fonts_dir;
+std::wstring g_fonts_xml;                // /system/etc/fonts.xml
+std::vector<std::wstring> g_fonts_dirs;  // /system/fonts: a font is the first of these that has it
 std::string g_app_package;     // the running app's package, for /data/user/0/<package>
 std::wstring g_app_data_dir;   // its data directory on the host (set_app_data)
 
@@ -223,10 +228,18 @@ std::wstring host_path(const char* p) {
     }
 
     std::lock_guard<std::mutex> hold(g_lock);
-    if (!g_fonts_dir.empty()) {
-        if (std::strcmp(p, "/system/etc/fonts.xml") == 0) return g_fonts_dir + L"\\fonts.xml";
+    if (!g_fonts_dirs.empty()) {
+        if (std::strcmp(p, "/system/etc/fonts.xml") == 0) return g_fonts_xml;
         if (starts_with(p, "/system/fonts") && (p[13] == '\0' || p[13] == '/')) {
-            return g_fonts_dir + host_names(p + 13, len - 13);
+            const std::wstring rest = host_names(p + 13, len - 13);
+            // A font is the first folder's that has it: Android's, then Windows' (the CJK faces
+            // the fonts.xml names, set_system_fonts_dir). The folder itself is Android's.
+            for (size_t i = 0; g_fonts_dirs.size() > 1 && p[13] != '\0' && i < g_fonts_dirs.size(); i++) {
+                if (GetFileAttributesW((g_fonts_dirs[i] + rest).c_str()) != INVALID_FILE_ATTRIBUTES) {
+                    return g_fonts_dirs[i] + rest;
+                }
+            }
+            return g_fonts_dirs[0] + rest;
         }
     }
     if (g_android_root.empty()) return to_wide(p, len);
@@ -257,8 +270,26 @@ std::wstring android_file_name(std::wstring host_name) {
     return host_name;
 }
 void set_system_fonts_dir(const char* dir) {
+    // "<folder>", or "<fonts.xml>|<folder>|<more folders>" ('|' is in no Windows path).
+    std::wstring spec = bionic::to_wide(dir, dir ? std::strlen(dir) : 0);
+    std::vector<std::wstring> parts;
+    for (size_t start = 0;;) {
+        const size_t bar = spec.find(L'|', start);
+        std::wstring part = bionic::trimmed(spec.substr(start, bar == std::wstring::npos ? bar : bar - start));
+        if (!part.empty()) parts.push_back(std::move(part));
+        if (bar == std::wstring::npos) break;
+        start = bar + 1;
+    }
     std::lock_guard<std::mutex> hold(bionic::g_lock);
-    bionic::g_fonts_dir = bionic::trimmed(bionic::to_wide(dir, dir ? std::strlen(dir) : 0));
+    bionic::g_fonts_dirs.clear();
+    bionic::g_fonts_xml.clear();
+    if (parts.size() == 1) {
+        bionic::g_fonts_xml = parts[0] + L"\\fonts.xml";
+        bionic::g_fonts_dirs = std::move(parts);
+    } else if (parts.size() > 1) {
+        bionic::g_fonts_xml = parts[0];
+        bionic::g_fonts_dirs.assign(parts.begin() + 1, parts.end());
+    }
 }
 
 std::wstring android_proc_file(const char* path) {

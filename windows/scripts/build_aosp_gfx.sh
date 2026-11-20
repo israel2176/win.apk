@@ -15,7 +15,8 @@
 #   <out>/bin/robolectric-nativeruntime.dll Robolectric's native runtime (Skia, minikin, HarfBuzz...),
 #                                           its COFF symbol table stripped (nothing reads it)
 #   <out>/bin/aosp/icu/icudt68l.dat         its ICU data, without the trees it cannot open
-#   <out>/bin/aosp/fonts/                   Android's fonts.xml and the fonts it names
+#   <out>/bin/aosp/fonts/                   Android's fonts.xml and the fonts it names, but Noto CJK
+#                                           (Windows' own CJK fonts stand in, HostCjkFonts)
 #   <out>/bin/aosp/hyphen-data/             the hyphenation patterns
 #   <out>/bin/licenses/aosp-graphics/       their licences (THIRD_PARTY_NOTICES.txt, section 2)
 #
@@ -179,11 +180,16 @@ rm -rf "$OUT/bin/aosp/fonts" "$OUT/bin/aosp/hyphen-data"
 # /system/fonts either. The dist carries more, for Robolectric's older SDKs: NotoSansCJK's six other
 # weights (107 MB; a device has only the Regular, and minikin makes the bold), DroidSansFallback,
 # NanumGothic, Lato, Rubik, Arvo... 160 MB -> 47 MB.
+# Nor Noto CJK Regular (19 MB, the owner's decision: Hebrew and Latin stay Android's, CJK leaves the
+# install): fonts.xml still names it, and at run time its four families (zh-Hans, zh-Hant, ja, ko) are
+# Windows' own CJK fonts instead (AospGfx.materializeSystemFonts, HostCjkFonts). 47 MB -> 29 MB.
+WINDOWS_FALLBACK='NotoSansCJK-Regular.ttc'
 mkdir -p "$OUT/bin/aosp/fonts"
 cp -f "$NR/fonts/fonts.xml" "$OUT/bin/aosp/fonts/"
-grep -oE '[A-Za-z0-9_.-]+[.](ttf|ttc|otf)' "$NR/fonts/fonts.xml" | sort -u | while read -r f; do
-    if [[ -f "$NR/fonts/$f" ]]; then cp -fL "$NR/fonts/$f" "$OUT/bin/aosp/fonts/"; fi
-done
+grep -oE '[A-Za-z0-9_.-]+[.](ttf|ttc|otf)' "$NR/fonts/fonts.xml" | sort -u | grep -vxF "$WINDOWS_FALLBACK" |
+    while read -r f; do
+        if [[ -f "$NR/fonts/$f" ]]; then cp -fL "$NR/fonts/$f" "$OUT/bin/aosp/fonts/"; fi
+    done
 cp -RL "$NR/hyphen-data" "$OUT/bin/aosp/hyphen-data"
 cp -f "$HERE/../third_party/aosp_gfx_licenses/"*.txt "$OUT/bin/licenses/aosp-graphics/"
 rm -rf "$WORK"

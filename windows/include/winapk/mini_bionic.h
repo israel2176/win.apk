@@ -62,7 +62,9 @@ int bionic_unsetenv(const char* name);
 
 // Where Android's absolute paths live (src/bionic/paths.cpp): "/x" is
 // <android root>/x, and /system/fonts and /system/etc/fonts.xml are the fonts
-// directory Boot writes. UTF-8 host paths.
+// directory Boot writes. UTF-8 host paths. The fonts may also be given as
+// "<fonts.xml>|<folder>|<folder>...": a font is then the first folder's that
+// has it (Android's fonts, then Windows' for the CJK families).
 void set_android_root(const char* dir);
 void set_system_fonts_dir(const char* dir);
 // The running app: /data/user/0/<package> and /data/data/<package> are

@@ -494,13 +494,13 @@ before these changes.
   symbol table, 3.3 MB that nothing reads, stripped with LLVM's strip),
   `bin/aosp/icu/icudt68l.dat` (16.4 MB: ICU's data without the trees the
   DLL cannot open, rewritten by `scripts/TrimIcuData.java`),
-  `bin/aosp/fonts/` with `fonts.xml` and only the fonts it names (47 MB, the
-  Noto CJK Regular 19 MB of it), `bin/aosp/hyphen-data/` (2 MB) and the
-  licences (`bin/licenses/aosp-graphics/`). 79 MB on disk, down from 210 MB
-  as the dist has them: what was left out is what the native runtime cannot
-  read, and the test's picture is the same byte for byte with and without it
-  ([Footprint](#footprint)). The installer packs the stage whole (`[Files]`
-  takes `bin\*`).
+  `bin/aosp/fonts/` with `fonts.xml` and only the fonts it names but Noto
+  CJK (29 MB; CJK text is Windows' own fonts, below), `bin/aosp/hyphen-data/`
+  (2 MB) and the licences (`bin/licenses/aosp-graphics/`). 61 MB on disk,
+  down from 210 MB as the dist has them: what was left out is what the native
+  runtime cannot read, and the test's picture is the same byte for byte with
+  and without it, and Noto CJK ([Footprint](#footprint)). The installer packs
+  the stage whole (`[Files]` takes `bin\*`).
 - Host: `host/aosp_gfx.cpp` decides at an app's start (the files there, the
   DLL loads), puts the jar first on the class path and the ICU and font
   properties in, and after the host's natives and SQLite's are bound loads
@@ -549,6 +549,22 @@ before these changes.
     `/system/fonts` and `/system/etc/fonts.xml` for native code and Java's
     files too, from before `Typeface` initializes (`NativeCocoa.setSystemFontsDir`),
     since its static initializer reads the device's config by those names.
+    Every family is Android's own font except the four CJK ones (zh-Hans,
+    zh-Hant, ja, ko): the install has no Noto CJK, so `HostCjkFonts` writes
+    `cache\aosp-fonts\fonts-<hash>.xml`, the same file with those families'
+    `<font>` on Windows' Microsoft YaHei, Microsoft JhengHei, Yu Gothic and
+    Malgun Gothic (then SimSun, MingLiU, Meiryo, MS Gothic, Gulim), each
+    by its index in the file and a `postScriptName` that keys the file in
+    `getSystemFontConfigInternal`'s `updatableFontMap`. Native code reads that
+    file as `/system/etc/fonts.xml`: `setSystemFontsDir` is then given
+    `<fonts.xml>|bin\aosp\fonts|%WINDIR%\Fonts`, and `/system/fonts/<name>` is
+    the first folder's that has it (`src/bionic/paths.cpp`). Log line:
+    `CJK fonts from Windows: zh-Hans: msyh.ttc#0 MicrosoftYaHei, ...` (`none`
+    for a family Windows has no font for: its text draws boxes). Text in
+    Latin, Hebrew, Arabic or emoji is drawn and measured as before; CJK text
+    measures as Windows' faces do, not a phone's (taller lines, other
+    punctuation advances). A fonts folder that has `NotoSansCJK-Regular.ttc`
+    is used as it is.
   - The frame: `ViewCanvasDriver` draws the view tree in software, as
     `View.draw(Canvas)` does into a bitmap on a device (Win.apk's `View` has no
     `RenderNode` display lists; HWUI's `RenderNode`/`RecordingCanvas` and its
@@ -990,25 +1006,27 @@ takes today, how it was measured, and the budget CI holds it to.
 On disk (November 2026, the files' sizes summed, MB = 10^6 bytes; a CI
 stage as the Package job packs it):
 
-| | Without the AOSP files (a release) | With them, as the dist ships them | With them, trimmed (now) |
-|---|---:|---:|---:|
-| Installed folder | 465 MB | 676 MB | 545 MB |
-| of it the AOSP graphics files | | 210 MB | 79 MB |
-| Installer (`Win.apk-Setup.exe`) | 125.5 MB | 233.1 MB | about 163 MB |
+| | Without the AOSP files (a release) | With them, as the dist ships them | With them, trimmed | Trimmed, without Noto CJK (now) |
+|---|---:|---:|---:|---:|
+| Installed folder | 465 MB | 676 MB | 545 MB | 526 MB |
+| of it the AOSP graphics files | | 210 MB | 79 MB | 61 MB |
+| Installer (`Win.apk-Setup.exe`) | 125.5 MB | 233.1 MB | about 163 MB | about 152 MB |
 
 The installer sizes are CI's `winapk-setup` artifacts (run 44545762483,
-before the AOSP files were staged, and 44557131107, after); the trimmed one
-is an estimate until CI packs it: `xz -9` makes 104.7 MB of the dist's files
+before the AOSP files were staged, and 44557131107, after); the trimmed ones
+are estimates until CI packs them: `xz -9` makes 104.7 MB of the dist's files
 (the installer grew by 107.6 MB) and 36.6 MB of the trimmed ones, so about
-70 MB less. Release v0.8.0: installer 132.8 MB, zip 184.6 MB. Where the
-installed 545 MB go: `clang\` 233 MB (the arm64 translation's compiler:
-`libLLVM` 156 MB, `libclang-cpp` 63 MB), `jre\` 127 MB, the AOSP files 79 MB
-(fonts 47, ICU 16.4, the DLL 12, hyphenation 2, the jar 1), `bin\tools\`
-35 MB (`framework-res.apk` 22, `apkeep` 12), the rest of Win.apk about 70 MB.
+70 MB less, and 10.9 MB of Noto CJK alone. Release v0.8.0: installer
+132.8 MB, zip 184.6 MB. Where the installed 526 MB go: `clang\` 233 MB (the
+arm64 translation's compiler: `libLLVM` 156 MB, `libclang-cpp` 63 MB), `jre\`
+127 MB, the AOSP files 61 MB (fonts 29, ICU 16.4, the DLL 12, hyphenation 2,
+the jar 1), `bin\tools\` 35 MB (`framework-res.apk` 22, `apkeep` 12), the
+rest of Win.apk about 70 MB.
 
 What a user's data folder adds: once, for all apps, `cds\` (the framework
 archive, 40 MB) and `cache\` (16 MB: `android-system-fonts\` 12,
-`fonts\` 4, `fwview\` 1); per app, its `apps\<name>\classes.jar` (the
+`fonts\` 4, `fwview\` 1; `aosp-fonts\`, the fonts.xml on Windows' CJK
+fonts, 30 KB); per app, its `apps\<name>\classes.jar` (the
 probe app 17 MB, Open Sudoku 5 MB), the installed copy under
 `android\data\app\` (no space at all: the library's `library\<name>.apk`
 is a hard link to the installed `base.apk`, and for an app that came as a
@@ -1075,25 +1093,33 @@ What was cut, without changing what an app sees (`build_aosp_gfx.sh`):
 - The DLL's COFF symbol table, 3.3 MB, stripped with LLVM's strip (the
   sections stay as lld wrote them; the exports the JVM binds by stay).
 
+And one cut that does change what an app sees, the owner's decision
+(Hebrew and Latin first): Noto CJK Regular, 19 MB (10.9 MB of `xz -9`),
+fonts 47 to 29 MB. Windows 10 and 11 have CJK fonts of their own, and the
+four CJK families of `fonts.xml` are those at run time (Milestone 2, "Fonts":
+`HostCjkFonts`): Chinese, Japanese and Korean text shows, measured as
+Windows' faces measure it (taller lines than Noto CJK, other punctuation
+advances), so it wraps and spaces differently from a phone. Every other
+script keeps Android's font. Fetching Noto CJK on first need was looked at
+and left: the font setup cannot wait for a file, so the first run would draw
+boxes (`docs/research/open-issues.md`).
+
 Checked: `test/aospgfx/run.sh` (on Linux, the `.so` with the same data) draws
 the same picture byte for byte and prints the same lines with the dist's
 files and with the trimmed ones; the UI probe's `ours.txt` with the switch
 off is the same on a stage with either; with the switch on, a run gets as
-far with either (the DLL loads, 773 natives bound, the same abort).
+far with either (the DLL loads, 773 natives bound, the same abort). Without
+Noto CJK (on AOSP graphics, under Wine): the UI probe's `ours.txt` is the same
+as with it, and a check app's Chinese, Japanese and Korean lines draw distinct
+glyphs with stand-ins for Windows' fonts in the prefix and boxes with none.
 
 Not cut, and why:
 
-- Noto CJK Regular (19 MB) and Noto Color Emoji (9 MB). Windows 10 and 11
-  have CJK fonts of their own (Microsoft YaHei, Yu Gothic, Malgun Gothic) and
-  Segoe UI Emoji, but with other metrics: an app's Chinese, Japanese or
-  Korean text would wrap and measure differently from a phone. Latin,
-  Hebrew and Arabic keep Android's Roboto and Noto in any case. Fetching the
-  CJK font on first need into the data folder was looked at and left: the
-  framework's font setup cannot wait for it (`AospGfx.materializeSystemFonts`
-  builds the fallback chain once, before the first frame, and skips a font
-  whose file is missing), so a run that finds no file draws boxes to its end.
-  The design that would work is in `docs/research/open-issues.md` ("CJK and
-  emoji fonts").
+- Noto Color Emoji (9 MB). Windows has Segoe UI Emoji, but its pictures are
+  not Android's, and emoji are in most apps' text. The fonts of the other
+  scripts (Thai, the Indic scripts, Ethiopic, Tibetan and more, 154 files,
+  9.5 MB) could fall back to Windows' fonts the same way, at a few hundred
+  KB each; left Android's (`docs/research/open-issues.md`).
 - Windows' own ICU (`icu.dll`, Windows 10 1903+) cannot stand in: the DLL
   links ICU 68 statically (`_68` symbols) and reads only its own `.dat`;
   using the system's would mean rebuilding the native runtime.
@@ -1111,12 +1137,12 @@ Package job runs it on the stage and `Win.apk-Setup.exe` it just built
 
 | Part | Today | Budget |
 |---|---:|---:|
-| AOSP graphics files (`bin\aosp\`, the DLL, the jar) | 79.2 MB | 90 MB |
+| AOSP graphics files (`bin\aosp\`, the DLL, the jar) | 60.5 MB | 70 MB |
 | Java runtime (`jre\`) | 127.3 MB | 140 MB |
 | The arm64 translation's compiler (`clang\`) | 232.9 MB | 250 MB |
-| Win.apk itself (the rest, `bin\tools\` included) | 105.1 MB | 120 MB |
-| Installed, in all | 544.5 MB | 600 MB |
-| Installer | about 163 MB | 175 MB |
+| Win.apk itself (the rest, `bin\tools\` included) | 105.2 MB | 120 MB |
+| Installed, in all | 525.9 MB | 580 MB |
+| Installer | about 152 MB | 165 MB |
 
 The stage has the AOSP files (`WINAPK_STAGE_AOSP_GFX` defaults to 1), in
 CI and in a release alike: apps draw on them by default. To change a budget, edit `BUDGETS`, `TOTAL_BUDGET` or
@@ -3033,6 +3059,13 @@ every such change is listed here:
   `FontsContract.getFontSync`, which AOSP's `Typeface` calls, added as AOSP has
   them; `AospGfx.materializeSystemFonts` maps `/system/fonts` before it touches
   `Typeface`. Java2D never calls them.
+- `runtime/java/com/macapk/loader/gfx/HostCjkFonts.java` (new), `AospGfx.java`:
+  the install carries no Noto CJK (the owner's decision), so the four CJK
+  families of `fonts.xml` are Windows' own fonts, in a fonts.xml written to
+  `cache\aosp-fonts\` (milestone 2, "Fonts"); `materializeSystemFonts` reads
+  that file and passes the Windows files as `updatableFontMap`, and gives
+  `setSystemFontsDir` `<fonts.xml>|<fonts folder>|<Windows' fonts>`
+  (`src/bionic/paths.cpp`). Java2D does not use it.
 - `runtime/java/com/macapk/loader/view/ViewHost.java` (new), `WinApkViewHost.java`
   (new): step 0 of `docs/research/aosp-views.md`, views half, the one seam
   between the rest of the runtime and Win.apk's own `android.view` /

@@ -162,20 +162,18 @@ in full in bin\licenses\aosp-graphics\.
       keeps its own, section 3).
     - LLVM libc++, statically linked. Apache-2.0 WITH LLVM-exception.
   bin\aosp\fonts\ (with fonts.xml) and bin\aosp\hyphen-data\: Android's
-    system fonts and hyphenation patterns as AOSP 14 ships them.
+    system fonts and hyphenation patterns as AOSP 14 ships them, without
+    Noto Sans CJK (Chinese, Japanese and Korean text uses the fonts Windows
+    has; none of them is shipped).
     Apache-2.0 (section 5): Roboto, Roboto Condensed (Copyright 2011 Google
-      Inc.), Droid Sans, Droid Sans Mono, Droid Sans Fallback (Copyright (c)
-      2005-2008 Google Corporation), Android Clock, Coming Soon (Copyright (c)
-      2010 by Open Window).
-    OFL-1.1 (section 5): the Noto fonts (Noto Sans and Serif for every script,
-      Noto Sans CJK, Noto Color Emoji; Copyright Google Inc. and Adobe
-      Systems Incorporated), Arbutus Slab (Karolina Lach), Arvo (Anton
-      Koovit), Carrois Gothic SC (Ralph du Carrois, Reserved Font Name
-      'Carrois'), Cutive Mono (vernon adams, Reserved Font Name 'Cutive'),
-      Dancing Script (Pablo Impallari, Reserved Font Name 'Dancing Script'),
-      Lato (Lukasz Dziedzic), Nanum Gothic (NHN Corporation), Rubik (Hubert
-      and Fischer), Source Sans Pro (Adobe Systems Incorporated, Reserved Font
-      Name 'Source').
+      Inc.), Droid Sans Mono (Copyright (c) 2007 Google Corporation), Coming
+      Soon (Copyright (c) 2010 by Open Window).
+    OFL-1.1 (section 5): the Noto fonts (Noto Sans and Serif for the scripts
+      fonts.xml names, but CJK; Noto Color Emoji; Copyright Google Inc.),
+      Carrois Gothic SC (Ralph du Carrois, Reserved Font Name 'Carrois'),
+      Cutive Mono (vernon adams, Reserved Font Name 'Cutive'), Dancing Script
+      (Pablo Impallari, Reserved Font Name 'Dancing Script'), Source Sans Pro
+      (Adobe Systems Incorporated, Reserved Font Name 'Source').
     The hyphenation patterns are AOSP's (external/hyphenation-patterns),
     compiled from TeX's hyph-utf8 patterns, each under the licence its
     pattern file states (permissive licences, MIT, LPPL), as AOSP ships them.
