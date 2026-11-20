@@ -144,7 +144,8 @@ the JDK's classes) and the framework archive (`<data>\cds\framework-<graphics>-<
 the JDK's and the framework's classes, `android-framework.jar`,
 `macapk-loader.jar` and an unsigned bcprov, and with AOSP's graphics
 `aosp-graphics.jar`, one for all apps; `aosp` and `java2d` each have their
-own, so a start on the other graphics does not delete it). The runtime
+own, so a start on the other graphics does not delete it; an install,
+`--gms` and the system broker map the one an app's start does). The runtime
 drops the `--patch-module` flags only when the JRE's
 `lib\winapk-baked-patches` records the same SHA-256 as the patch folders (a
 plain JDK, or a patch rebuilt since, keeps them and runs without CDS). The
@@ -484,6 +485,8 @@ in Robolectric's native runtime (`lib\aosp-graphics.jar`,
 "Milestone 2"). `WINAPK_AOSP_GFX=0`, or a runtime without those files, draws
 with Win.apk's older Java2D classes instead, until they are deleted; the rest
 of the framework reaches either through `com.macapk.loader.gfx.GfxBackend`.
+The runtime's processes with no app take the same graphics: the install's icon
+render (`icon.png`), `--gms`, `--verify-apk` and the system broker.
 
 A draw-only frame redraws the whole tree. With `MACAPK_FRAMESPEED_DAMAGE=1`
 (off by default; `windows/README.md` lists it with its validator) it redraws

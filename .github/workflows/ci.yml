@@ -641,6 +641,19 @@ jobs:
           # AOSP's graphics are the default, and the stage carries their files.
           grep -F "AOSP graphics: on" boot.log
           grep -E "AOSP graphics: robolectric-nativeruntime.dll loaded" boot.log
+      - name: Install an APK (the launcher's icon render)
+        run: |
+          # winapk-runtime --install-only, what the launcher's install runs: the app's icon and name
+          # (com.winapk.tools.AppMeta) drawn on AOSP's graphics as the app's run draws, with no app
+          # running (Boot.extractIconOnly), then its code converted.
+          timeout 600 ./stage/bin/winapk-runtime.exe --apk sudoku.apk --jdk "$JAVA_HOME" \
+            --data "$(cygpath -w "$PWD/installdata")" --install-only > install.log 2>&1 \
+            || { tail -n 200 install.log; exit 1; }
+          grep -F "AOSP graphics: on" install.log
+          grep -E "AOSP graphics: robolectric-nativeruntime.dll loaded" install.log
+          grep -F "launcher icon rendered" install.log
+          test -s installdata/apps/sudoku/icon.png
+          cp installdata/apps/sudoku/icon.png install-icon.png
       - name: Class-data sharing on Win.apk's Java runtime
         run: |
           # The staged runtime with its own JRE (stage/jre, bake_jre.sh): the
@@ -665,6 +678,11 @@ jobs:
           grep -F "class-data sharing ON" cds2.log
           grep -E "frames presented" cds2.log
           if grep -F "did not map" cds2.log; then exit 1; fi
+          # The JVMs with no app (here --gms) have an app's class path and graphics: the same archive maps.
+          timeout 300 ./stage/bin/winapk-runtime.exe --data "$data" --gms status > cds-gms.out 2> cds-gms.log \
+            || { cat cds-gms.out; tail -n 100 cds-gms.log; exit 1; }
+          grep -F "cds: framework archive" cds-gms.log | grep -F framework-aosp-
+          grep -F "class-data sharing ON" cds-gms.log
           WINAPK_AOSP_GFX=0 timeout 600 ./stage/bin/winapk-runtime.exe --apk sudoku.apk --data "$data" > cds3.log 2>&1 \
             || { tail -n 200 cds3.log; exit 1; }
           grep -F "AOSP graphics: off (WINAPK_AOSP_GFX=0)" cds3.log
@@ -707,6 +725,22 @@ jobs:
             > gms-status.log 2>> gms-err.log || { cat gms-status.log; tail -n 100 gms-err.log; exit 1; }
           cat gms-status.log
           grep -F "gms dir        : $data\\gms" gms-status.log
+          # The JVMs with no app take AOSP's graphics as an app's run does (host/aosp_gfx.h).
+          grep -F "AOSP graphics: on" gms-err.log
+          grep -E "AOSP graphics: robolectric-nativeruntime.dll loaded" gms-err.log
+      - name: Start the system broker
+        run: |
+          # winapk-runtime --system (com.macapk.loader.SystemServer), what Settings > Google account >
+          # "Use Google services" starts: it must come up serving, on AOSP's graphics as an app's run.
+          # It serves until it is idle; the step stops it once it has said so.
+          data="$(cygpath -w "$PWD/brokerdata")"
+          timeout 300 ./stage/bin/winapk-runtime.exe --jdk "$JAVA_HOME" --data "$data" --system > system.log 2>&1 &
+          for i in $(seq 1 120); do grep -q "\[system\] serving" system.log && break; sleep 2; done
+          kill $! 2> /dev/null || true
+          wait || true
+          grep -F "[system] serving" system.log || { tail -n 100 system.log; exit 1; }
+          grep -F "AOSP graphics: on" system.log
+          grep -E "AOSP graphics: robolectric-nativeruntime.dll loaded" system.log
       - name: Run the APK check verb
         run: |
           # winapk-runtime --verify-apk (com.winapk.tools.ApkCheck), what the
@@ -733,6 +767,7 @@ jobs:
           grep -q "^VERIFIED.0" verify.out && grep -q "^REASON." verify.out
           echo "not an app" > "$dir/not-an-app.apk"
           check "$dir/not-an-app.apk" 1
+          grep -F "AOSP graphics: on" verify-err.log
       - name: Boot an APK in a window
         run: |
           # The runner has a desktop session, so this exercises the Win32
@@ -791,6 +826,9 @@ jobs:
             frames-java2d.log
             host.log
             replace.log
+            system.log
+            install.log
+            install-icon.png
             frame.bmp
 
   aosp-graphics:
