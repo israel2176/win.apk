@@ -570,11 +570,13 @@ before these changes.
     `RenderNode` display lists; HWUI's `RenderNode`/`RecordingCanvas` and its
     `ThreadedRenderer` are not used), into `GfxBackend.createFrameBitmap`: an
     AOSP `Bitmap` (Skia raster, ARGB 8888) with a `Canvas` over it. It is
-    presented as today: `argbBuffer` copies the pixels out with
-    `Bitmap.getPixels` (unpremultiplied ARGB, the Java2D bitmap's layout;
-    `liveArgbOrNull` is null, so the copy is the path) and the host's
-    `presentBitmap` takes them. One copy per present; `copyPixelsToBuffer`
-    into a direct buffer and a premultiplied present would save it.
+    presented as today: `frameArgb` copies the pixels out as unpremultiplied
+    ARGB, the Java2D bitmap's layout (`liveArgbOrNull` is null, so the copy
+    is the path), into an array kept between frames, and the host's
+    `presentFrame` takes them. The copy is `copyPixelsToBuffer` (a memcpy of
+    Skia's premultiplied pixels into a direct buffer) with the pixels that
+    are not opaque unpremultiplied through a table `getPixels` filled once,
+    not `getPixels` itself, ten times as slow ([Frame time](#frame-time)).
     `Surface.lockCanvas`, `SurfaceView` and `TextureView` canvases, `Boot`'s
     and `GlideRescue`'s bitmaps take the same `createFrameBitmap`.
   - Members Win.apk's framework called that AOSP's classes have not, found by
@@ -1172,8 +1174,7 @@ either graphics engine (AOSP's, the default, or Java2D's with
 tree that reaches the present, in the phases the phase trace uses:
 `layout` (measure and layout), `draw` (the view tree's `draw` and the window
 overlays), `pixels` (the frame read out of its bitmap: on AOSP's graphics a
-`Bitmap.getPixels` copy, `GfxBackend.argbBuffer`; on Java2D's the live array,
-next to nothing), `present` (the host copying the pixels to the window, or in
+copy, `GfxBackend.frameArgb`; on Java2D's the live array, next to nothing), `present` (the host copying the pixels to the window, or in
 a headless run only to its frame file, if any) and `total` (the whole frame:
 the app's animation callbacks, layout, draw, the system bars' paint, which is
 in no other part, and the present). `FrameTimes.record` hands them to the
@@ -1204,25 +1205,43 @@ for a tight budget. Compare two runs' tables to see a change's effect, and
 tighten the budget once a few runs show the spread.
 
 Under Wine 9 (this Linux machine, relative numbers only; the frame bench at
-360x800 dp, 720x1600 px, 25 s, ms median / p90 / p99):
+360x800 dp, 720x1600 px, 25 s, ms median / p90 / p99), before and after the
+AOSP frame stopped being read out of its bitmap with `getPixels` (both on the
+same build of the runtime and machine, one after the other):
 
 | Run | Frames/s | Draw | Pixels | Present | Whole frame |
 |---|---:|---|---|---|---|
-| AOSP, headless | 33.6 | 1.62 / 1.93 / 2.73 | 12.32 / 14.32 / 19.98 | 1.88 / 2.17 / 3.67 | 29.12 / 35.02 / 46.08 |
-| AOSP, headless, again | 33.4 | 1.73 / 1.88 / 2.12 | 12.68 / 13.28 / 16.57 | 1.98 / 2.12 / 2.38 | 30.07 / 31.62 / 44.17 |
-| AOSP, in a window (Xvfb) | 30.4 | 1.77 / 2.27 / 5.78 | 12.57 / 14.32 / 23.02 | 2.77 / 5.28 / 8.22 | 31.18 / 39.52 / 55.73 |
-| Java2D, headless | 59.9 | 6.47 / 8.43 / 12.88 | 0.02 | 2.33 / 2.62 / 4.83 | 9.82 / 13.03 / 18.82 |
-| Java2D, headless, again | 60.0 | 6.53 / 7.47 / 10.88 | 0.03 | 2.38 / 2.62 / 3.33 | 10.03 / 12.18 / 17.38 |
-| Java2D, in a window (Xvfb) | 60.0 | 6.38 / 7.17 / 9.93 | 0.01 | 2.88 / 3.33 / 4.92 | 10.18 / 11.68 / 17.43 |
+| AOSP, headless, before | 28.4 | 1.77 / 2.38 / 4.03 | 14.28 / 16.73 / 23.48 | 2.02 / 2.52 / 3.33 | 33.42 / 40.33 / 53.17 |
+| AOSP, headless | 59.9 | 1.68 / 1.88 / 4.53 | 1.73 / 1.98 / 4.53 | 2.12 / 2.52 / 4.62 | 6.08 / 7.78 / 23.62 |
+| AOSP, headless, again | 59.8 | 1.68 / 1.93 / 3.98 | 1.73 / 2.02 / 4.22 | 2.17 / 2.52 / 5.28 | 6.12 / 7.62 / 23.98 |
+| AOSP, in a window (Xvfb), before | 29.5 | 1.68 / 2.23 / 3.02 | 13.82 / 14.93 / 18.23 | 2.62 / 2.83 / 3.67 | 32.88 / 35.98 / 51.02 |
+| AOSP, in a window (Xvfb) | 59.8 | 1.68 / 1.88 / 3.83 | 1.73 / 1.98 / 3.38 | 2.67 / 3.23 / 5.97 | 6.58 / 7.97 / 23.38 |
+| Java2D, headless, before | 59.9 | 7.22 / 9.07 / 13.43 | 0.03 | 2.08 / 2.58 / 4.38 | 10.38 / 13.32 / 21.12 |
+| Java2D, headless | 60.0 | 7.12 / 8.72 / 13.53 | 0.01 | 2.02 / 2.48 / 4.17 | 10.32 / 12.88 / 21.02 |
+| Java2D, headless, again | 60.0 | 7.08 / 8.22 / 13.72 | 0.00 | 2.17 / 2.52 / 4.53 | 10.32 / 12.53 / 20.12 |
+| Java2D, in a window (Xvfb), before | 60.0 | 7.03 / 7.97 / 12.97 | 0.00 | 2.88 / 3.27 / 5.28 | 11.03 / 12.93 / 20.68 |
+| Java2D, in a window (Xvfb) | 60.0 | 7.12 / 8.68 / 14.72 | 0.02 | 2.88 / 3.33 / 5.78 | 11.18 / 13.82 / 20.57 |
 
-AOSP's drawing is about 3.7 times as fast as Java2D's (1.7 ms against 6.4),
-as in the engine's own test, but its frames take three times as long and the
-bench runs at 33 frames a second where Java2D keeps 60: the frame's pixels are
-copied out of the AOSP bitmap twice a frame (`Bitmap.getPixels`, about 12 ms
-each at 720x1600 under Wine), once for the present (`pixels`) and once more for
-the status bar's one-row colour sample (`sampleRowDominant` through
-`GfxBackend.argbBuffer`, before `StatusBarDriver.paint`; the phase trace's
-`bar=12.3`). `docs/research/open-issues.md` has it.
+AOSP's drawing is about four times as fast as Java2D's (1.7 ms against 7.1),
+and its whole frame now takes 6 ms against Java2D's 10-11. Before, the frame
+took 29-33 ms and the bench ran at 28-33 frames a second: the frame's pixels
+were copied out of the AOSP bitmap with `Bitmap.getPixels` twice a frame,
+about 12-14 ms each under Wine (Skia's raster pipeline unpremultiplying every
+pixel), once for the present (`pixels`) and once more for the status bar's
+one-row colour sample (the phase trace's `bar`). The sample now reads its one
+row (`GfxBackend.argbRow`), and the present's copy (`GfxBackend.frameArgb`,
+`AospGfx.RawPixels`) is `copyPixelsToBuffer`, a memcpy of Skia's
+premultiplied pixels into a direct buffer kept between frames, read into an
+array kept between frames; the opaque pixels are the same either way, and the
+others are unpremultiplied through a table that `getPixels` itself filled
+once at the first frame, for every alpha and channel value, so each pixel is
+what `getPixels` gives. The table is checked as it is built (the channels
+alike, opaque pixels unchanged, Skia's channel order found from a probe
+pixel), and the first three frames are also read through `getPixels` and
+compared; a difference, an exception or a bitmap that is not premultiplied
+ARGB 8888 in sRGB goes back to `getPixels` (`raw pixel copy on` / `off` in
+the log). Layout's p99 is still 16 ms on AOSP against 7.5 on Java2D
+(`docs/research/open-issues.md`).
 
 ## The compatibility sweep
 
@@ -3173,6 +3192,17 @@ every such change is listed here:
   the drawable after `mutate()`, as AOSP's `applyBackgroundTint` does (a drawable from AOSP's
   drawable cache shares its state with every other of the same id; tinted unmutated, it recoloured
   them all: the probe's `icons.rtl`).
+- `runtime/java/com/macapk/loader/gfx/GfxBackend.java`, `AospGfx.java`,
+  `Java2DGfx.java`, `com/macapk/loader/ViewCanvasDriver.java`: a frame on
+  AOSP's graphics is read out of its bitmap once, not twice, and without
+  `getPixels` ([Frame time](#frame-time)). The seam gains `frameArgb` (the
+  present's pixels into an array kept between frames; Java2D: the live array
+  as before) and `argbRow` (the status bar's one-row sample; Java2D: that row
+  of the same array). The probe's `ours.txt` is the same before and after on
+  both engines, and so are the smoke apps' last frames but those that differ
+  between two runs of the same build too (a GL game, PPSSPP, Jerboa's
+  spinner); a build that compares every frame with `getPixels` found no
+  difference.
 
 ## License
 

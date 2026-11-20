@@ -299,6 +299,11 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
     // The next presentFrame must treat every pixel as changed: this driver's
     // first frame, and the first after the frame bitmap is (re)allocated.
     private boolean presentForceFull = true;
+    // The present's pixels on AOSP's graphics, reused frame to frame (GfxBackend.frameArgb):
+    // the host copies what it shows, so nothing holds on to them past the present.
+    private int[] framePixels;
+    // The row under the status bar its colour is sampled from (GfxBackend.argbRow).
+    private int[] sbRow;
 
     // ---- FRAMESPEED: the idle heartbeat backs off when it proves useless ----
     // (docs/frame-speed-canvas-hotspots_2026-09-26.md, section 1d; gate:
@@ -2133,13 +2138,14 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
         pt4 = System.nanoTime();   // draw = VTO dispatch + rootView.draw + window overlays
         int sbBgUnder = 0;
         try {
-            // One row is read (sampleRowDominant), so the live backing serves it
-            // with no copy. See the present's pixel read below for why.
-            int[] sp = GfxBackend.get().liveArgbOrNull(bitmap);
-            if (sp == null) sp = GfxBackend.get().argbBuffer(bitmap);
-            if (sp != null) {
-                sbBgUnder = sampleRowDominant(sp, bitmap.getWidth(),
-                    bitmap.getHeight(), statusBarH + 2);
+            // One row is read (sampleRowDominant), and only that row: on AOSP's
+            // graphics a whole-frame read was a second full copy of the frame
+            // (12 ms at 720x1600 under Wine, the phase trace's `bar`).
+            final int sy = statusBarH + 2, sw = bitmap.getWidth();
+            if (sy >= 0 && sy < bitmap.getHeight() && sw > 0) {
+                if (sbRow == null || sbRow.length != sw) sbRow = new int[sw];
+                GfxBackend.get().argbRow(bitmap, sy, sbRow);
+                sbBgUnder = sampleRowDominant(sbRow, sw, 1, 0);
             }
         } catch (Throwable ignored) {}
         try { StatusBarDriver.paint(canvas, rootView, surfaceW, statusBarH, sbBgUnder); }
@@ -2187,8 +2193,10 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
                 hb.reset();
             }
         }
-        int[] pixels = GfxBackend.get().liveArgbOrNull(bitmap);
-        if (pixels == null) pixels = GfxBackend.get().argbBuffer(bitmap);
+        // The live backing (Java2D's), or a copy into the array the last frame
+        // used (AOSP's: GfxBackend.frameArgb, AospGfx.RawPixels).
+        int[] pixels = GfxBackend.get().frameArgb(bitmap, framePixels);
+        framePixels = pixels;
         final long ptPixels = System.nanoTime();   // FrameTimes' `pixels`: the frame read out of the bitmap
         if (DAMAGE_VALIDATE && FRAMESPEED_DAMAGE) {
             macapkDamageValidate(pixels, bitmap.getWidth(), bitmap.getHeight(), presentPartial, partialRect);

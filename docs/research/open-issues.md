@@ -280,20 +280,11 @@ the app); if it is still there, it is a bug in what replaced it.
 
 ## Found by the frame-time record, not fixed
 
-- **AOSP's graphics draw 3.7x faster than Java2D's but their frames take 3x
-  as long** (the frame bench under Wine, `windows/README.md` "Frame time"):
-  draw 1.7 ms against 6.4, but the whole frame 29-31 ms against 10, so 33
-  frames a second against 60. Two full copies of the frame a frame, about
-  12 ms each at 720x1600: `GfxBackend.argbBuffer` (`AospGfx.liveArgbOrNull`
-  is null, so `Bitmap.getPixels`) for the present, and again for the status
-  bar's one-row colour sample (`ViewCanvasDriver`, before
-  `StatusBarDriver.paint`: the phase trace's `bar=12.3`). To fix: read one
-  row for the sample, and give the present the pixels without the
-  unpremultiplying copy (`copyPixelsToBuffer` into a direct buffer and a
-  premultiplied present, as Milestone 2 notes). Look at CI's numbers on real
-  Windows first; the bench's table shows the gain. Also: layout's p99 is
-  12.8 ms on AOSP against 6.4 on Java2D (the heartbeat's full traversals?),
-  not looked into.
+- **Layout's p99 is 16 ms on AOSP's graphics against 7.5 on Java2D's** (the
+  frame bench under Wine, `windows/README.md` "Frame time"; the heartbeat's
+  full traversals?), not looked into. The frame's two `getPixels` copies that
+  held AOSP's frames at 33 a second are gone (6 ms a frame, 60 a second);
+  look at CI's numbers on real Windows for what is left.
 
 ## Work started and not merged
 

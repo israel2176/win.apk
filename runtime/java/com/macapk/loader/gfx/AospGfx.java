@@ -73,13 +73,184 @@ final class AospGfx implements GfxBackend {
 
     /** Skia's pixels are native: one copy out, unpremultiplied ARGB as the Java2D bitmap holds them. */
     @Override public int[] argbBuffer(Bitmap bitmap) {
-        int w = bitmap.getWidth(), h = bitmap.getHeight();
-        int[] out = new int[w * h];
-        bitmap.getPixels(out, 0, w, 0, 0, w, h);
-        return out;
+        return frameArgb(bitmap, null);
     }
 
     @Override public int[] liveArgbOrNull(Bitmap bitmap) { return null; }
+
+    @Override public int[] frameArgb(Bitmap bitmap, int[] reuse) {
+        int w = bitmap.getWidth(), h = bitmap.getHeight();
+        int[] out = reuse != null && reuse.length == w * h ? reuse : new int[w * h];
+        if (!RawPixels.copy(bitmap, out)) bitmap.getPixels(out, 0, w, 0, 0, w, h);
+        return out;
+    }
+
+    /** One row: getPixels reads only the rectangle it is asked for. */
+    @Override public void argbRow(Bitmap bitmap, int y, int[] out) {
+        int w = bitmap.getWidth();
+        bitmap.getPixels(out, 0, w, 0, y, w, 1);
+    }
+
+    /**
+     * A bitmap's pixels as getPixels gives them, without getPixels. AOSP's getPixels is Skia's
+     * readPixels into unpremultiplied ARGB through its raster pipeline, about 10 ns a pixel under
+     * Wine: 12 ms for a 720x1600 frame, so a frame bench on AOSP's graphics ran at 33 frames a
+     * second against Java2D's 60 (windows/README.md, "Frame time"). copyPixelsToBuffer is a memcpy
+     * of Skia's own premultiplied pixels into a direct buffer kept between frames. An opaque pixel
+     * is the same either way; any other (a frame has few) is unpremultiplied through a table that
+     * getPixels itself filled once, for every alpha and channel value, so every pixel comes out as
+     * getPixels would give it. The table is checked as it is built (getPixels must treat the three
+     * channels alike and leave opaque pixels as they are), and the first frames are also read
+     * through getPixels and compared; anything off and this is not used again.
+     */
+    private static final class RawPixels {
+        private static final int CHECKED_FRAMES = 3;
+
+        private static boolean tried, on, swapRB;
+        private static byte[] unpremul;                      // [alpha << 8 | channel]
+        private static int checksLeft = CHECKED_FRAMES;
+        private static java.nio.ByteBuffer buf;
+        private static java.nio.IntBuffer ints;
+
+        private RawPixels() {}
+
+        /** Whether this applies: Skia's bytes are then premultiplied 8888 in sRGB, getPixels' too. */
+        private static boolean plain(Bitmap b) {
+            if (b.getConfig() != Bitmap.Config.ARGB_8888 || !b.isPremultiplied() || !b.hasAlpha()) return false;
+            android.graphics.ColorSpace cs = b.getColorSpace();
+            return cs != null && cs.equals(android.graphics.ColorSpace.get(android.graphics.ColorSpace.Named.SRGB));
+        }
+
+        /** Fills out (width x height) and says true, or says false and the caller uses getPixels. */
+        static synchronized boolean copy(Bitmap b, int[] out) {
+            if (!tried) {
+                tried = true;
+                on = init();
+            }
+            if (!on) return false;
+            try {
+                if (!plain(b)) return false;
+                int w = b.getWidth(), h = b.getHeight(), n = w * h;
+                if (buf == null || buf.capacity() < n * 4) {
+                    buf = java.nio.ByteBuffer.allocateDirect(n * 4).order(java.nio.ByteOrder.nativeOrder());
+                    ints = buf.asIntBuffer();
+                }
+                buf.clear();
+                b.copyPixelsToBuffer(buf);
+                ints.get(0, out, 0, n);
+                if (swapRB) unpremultiplySwapped(out, n);
+                else unpremultiply(out, n);
+                if (checksLeft > 0) {
+                    checksLeft--;
+                    int[] want = new int[n];
+                    b.getPixels(want, 0, w, 0, 0, w, h);
+                    int at = java.util.Arrays.mismatch(want, 0, n, out, 0, n);
+                    if (at >= 0) {
+                        on = false;
+                        log("raw pixel copy off: pixel " + at + " of a " + w + "x" + h + " frame is "
+                            + Integer.toHexString(out[at]) + ", getPixels gives " + Integer.toHexString(want[at]));
+                        System.arraycopy(want, 0, out, 0, n);
+                    }
+                }
+                return true;
+            } catch (Throwable t) {
+                on = false;
+                log("raw pixel copy off: " + t);
+                return false;
+            }
+        }
+
+        private static void unpremultiply(int[] px, int n) {
+            final byte[] tab = unpremul;
+            for (int i = 0; i < n; i++) {
+                int p = px[i];
+                if ((p >>> 24) != 255) px[i] = fromTable(tab, p);
+            }
+        }
+
+        private static void unpremultiplySwapped(int[] px, int n) {
+            final byte[] tab = unpremul;
+            for (int i = 0; i < n; i++) {
+                int p = px[i];
+                p = (p & 0xFF00FF00) | ((p >>> 16) & 0xFF) | ((p & 0xFF) << 16);
+                px[i] = (p >>> 24) != 255 ? fromTable(tab, p) : p;
+            }
+        }
+
+        private static int fromTable(byte[] tab, int p) {
+            int a = p >>> 24, row = a << 8;
+            return a << 24 | (tab[row | ((p >>> 16) & 0xFF)] & 0xFF) << 16
+                    | (tab[row | ((p >>> 8) & 0xFF)] & 0xFF) << 8 | (tab[row | (p & 0xFF)] & 0xFF);
+        }
+
+        /**
+         * Builds the table from a 256x257 bitmap whose row a holds (a, c, c, c) for every c, written
+         * as Skia's raw bytes, and one more pixel with three different channels that tells Skia's
+         * channel order. False when anything does not hold.
+         */
+        private static boolean init() {
+            Bitmap t = null;
+            try {
+                final int w = 256, h = 257, n = w * h;
+                t = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+                if (!plain(t)) return false;
+                java.nio.ByteBuffer src = java.nio.ByteBuffer.allocateDirect(n * 4)
+                        .order(java.nio.ByteOrder.nativeOrder());
+                java.nio.IntBuffer si = src.asIntBuffer();
+                for (int a = 0; a < 256; a++) {
+                    for (int c = 0; c < 256; c++) si.put(a << 8 | c, a << 24 | c << 16 | c << 8 | c);
+                }
+                final int probe = 0xFF102030;
+                si.put(w * 256, probe);
+                t.copyPixelsFromBuffer(src);
+                // The way back must give the same bytes, as the frame's copy relies on.
+                java.nio.ByteBuffer back = java.nio.ByteBuffer.allocateDirect(n * 4)
+                        .order(java.nio.ByteOrder.nativeOrder());
+                java.nio.IntBuffer bi = back.asIntBuffer();    // before the copy moves back's position
+                t.copyPixelsToBuffer(back);
+                int[] raw = new int[n], rawBack = new int[n];
+                si.get(0, raw, 0, n);
+                bi.get(0, rawBack, 0, n);
+                if (!java.util.Arrays.equals(raw, rawBack)) {
+                    log("raw pixel copy off: copyPixelsToBuffer does not give back copyPixelsFromBuffer's bytes");
+                    return false;
+                }
+                int[] px = new int[n];
+                t.getPixels(px, 0, w, 0, 0, w, h);
+                int got = px[w * 256];
+                if (got == probe) swapRB = false;
+                else if (got == 0xFF302010) swapRB = true;
+                else {
+                    log("raw pixel copy off: Skia's channel order unknown (" + Integer.toHexString(got) + ")");
+                    return false;
+                }
+                byte[] tab = new byte[256 * 256];
+                for (int a = 0; a < 256; a++) {
+                    for (int c = 0; c < 256; c++) {
+                        int p = px[a << 8 | c], v = p & 0xFF;
+                        boolean ok = (p >>> 24) == a && ((p >>> 16) & 0xFF) == v && ((p >>> 8) & 0xFF) == v
+                                && (a != 255 || v == c);
+                        if (!ok) {
+                            log("raw pixel copy off: getPixels gives " + Integer.toHexString(p) + " for alpha " + a
+                                + ", channels " + c);
+                            return false;
+                        }
+                        tab[a << 8 | c] = (byte) v;
+                    }
+                }
+                unpremul = tab;
+                log("raw pixel copy on (Skia's order " + (swapRB ? "RGBA" : "BGRA") + ")");
+                return true;
+            } catch (Throwable e) {
+                log("raw pixel copy off: " + e);
+                return false;
+            } finally {
+                if (t != null) {
+                    try { t.recycle(); } catch (Throwable ignored) {}
+                }
+            }
+        }
+    }
 
     @Override public int drawOps(Canvas canvas) { return ++ops; }
 
