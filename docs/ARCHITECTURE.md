@@ -809,7 +809,11 @@ tests the transport and the broker's checks across three processes.
    `apps\<name>\classes.jar`, reading the class hierarchy from
    `libndroid-framework.jar` (the framework the app links against, not an
    Android SDK the PC may have), with a stamp naming the converter and the APK
-   so a change to either converts again. The launcher then moves the label and
+   so a change to either converts again. It runs in a JVM of its own with a
+   1 GB heap; one that runs out of it (seen through JVMTI, even when the
+   converter caught the error and left a class out) converts again on a
+   larger heap, and a jar is kept only when it is a whole zip, whatever the
+   exit code says (under Wine a killed converter reported 0). The launcher then moves the label and
    `package.txt` beside the APK as `library\<name>.label` and `.package`.
 6. The launcher makes the Start menu shortcut (and the desktop one, if the
    setting is on) and adds the app to the library.
@@ -890,7 +894,7 @@ default; `--data` moves it for a direct run):
 
 | Path | What |
 |---|---|
-| `library\<name>.apk`, `.label`, `.package`, `.orientation`, `.window` | The user's copy of each app and the launcher's per-app files |
+| `library\<name>.apk`, `.label`, `.package`, `.orientation`, `.window` | The user's copy of each app and the launcher's per-app files. A plain APK is also the installed `base.apk` under `android\data\app\` (a hard link, one copy on disk; an update copies the new file in beside the old one, which is renamed aside, so neither is written in place); a bundle (`.apkm`, `.xapk`, `.apks`) is kept whole here and its chosen APKs unpacked there, so it takes its size twice |
 | `apps\<name>\` | `classes.jar`, `.macapk-dex-stamp`, `icon.png`, `label.txt`, `package.txt`; for an arm64-only app that crashed with its translation loaded, `aot-guard.txt` (the crash guard's count and whether translation is off) |
 | `android\` | The Android file system: `data\app\` (installed packages, with `lib\<isa>\` and the `.so.aot.*` translation files; `lib\arm64\.aot-tmp\<lib>\` holds an unfinished translation), `data\data\<package>\` (app data), `dev\socket\` (the socket files that stand for abstract-namespace `LocalSocket` names), the shared-storage volume |
 | `logs\` | `run-<name>.log` and `run-<name>.1.log`, `last-run.log` (a hard link to the newest run log), `install-<name>.log`, `gms.log`, `install-helper.log`, `package-backfill.log`, `hs_err_pid*.log` |

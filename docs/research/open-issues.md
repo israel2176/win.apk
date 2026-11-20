@@ -91,12 +91,10 @@ the app); if it is still there, it is a bug in what replaced it.
   import passes a sixth argument. `winapk-arm64-test`'s
   `arm64_raw_syscalls`. Not answered: `getdents64`, `clone`, sockets; what
   Leumi's library calls next is not known.
-- **DEX conversion's exit code.** An OOM-killed converter reported 0 under
-  Wine and the run failed with "cannot replace classes.jar (File not found)"
-  (`runtime_main.cpp` ~530-547): check that the temporary jar exists before
-  trusting rc 0.
-- **The dex conversion's heap is unlimited** (the JVM default, a quarter of
-  RAM): 0.4-1.4 GB on a 16 GB machine. Give it a limit of its own.
+- **DEX conversion: fixed** (heap of its own, 1 GB, `WINAPK_DEX_HEAP_MB`;
+  a JVMTI out-of-memory exit 77 retried with a larger heap; a bare exit 0
+  with no whole `classes.jar.tmp` is refused with a log line). Real Windows
+  not checked yet.
 - **The runtime's heap (`-Xmx1g`, `runtime_main.cpp` ~1492) filled after about
   3,100 layout inflations** in Mercantile's sweep: a leak in Win.apk or the
   app holding views; not found.
@@ -208,10 +206,49 @@ the app); if it is still there, it is a bug in what replaced it.
   files. Options to weigh: a trimmed LLVM build with only the AArch64->x86_64
   pieces used, downloading it on the first arm64 app, or sharing one with
   the system.
-- **Every app is stored twice**: `library\<name>.apk` and the installed copy
-  under `android\data\app\` (6-19 MB each in the measured apps).
-- **CJK and emoji fonts** (Noto CJK Regular 19 MB, Color Emoji 9 MB) could be
-  fetched on first need into the data folder.
+- **A bundle is stored twice** (a plain APK is not: its installed `base.apk`
+  is a hard link to `library\<name>.apk`, `AppInstall.link`; checked under
+  Wine, two links to one file. The "6-19 MB twice" measured earlier summed
+  both names of one file). An `.apkm`/`.xapk`/`.apks` stays whole in
+  `library\` and its chosen APKs are unpacked under `android\data\app\`:
+  a 191 MB Waze `.xapk` takes about 380 MB. A zip's members cannot be hard
+  links, so one copy means the library no longer keeps the bundle. A design
+  that keeps what the launcher sees: after a bundle installs, the launcher
+  replaces `library\<name>.<ext>` with `library\<name>.apk`, a hard link to
+  the installed `base.apk`, plus `library\<name>.splits\split_*.apk`, hard
+  links to the installed splits; `AppInstall` given an `.apk` with a
+  `.splits` folder beside it links them all, so a reinstall (a stale record,
+  `WINAPK_ABIS`) still has every split. To change with it: `is_app_file`,
+  `recover_interrupted_installs`, Remove (the `.splits` folder), the update's
+  `replaces` and `.previous` handling (rename aside, never write in place),
+  `make_app_shortcuts`. What is lost: the bundle's other splits (other ABIs
+  and densities), so a later ABI choice cannot be made from the library.
+  Not done; the owner to decide.
+- **CJK and emoji fonts** (Noto CJK Regular 19 MB, Color Emoji 9 MB) fetched
+  on first need into the data folder: looked at, not done, because the font
+  setup cannot wait for a file. `AospGfx.materializeSystemFonts` builds the
+  system fallback chain once, before the first frame
+  (`SystemFonts.getSystemFontConfigInternal` over `bin\aosp\fonts\fonts.xml`,
+  then `buildSystemFallback`, `Typeface.setSystemFontMap`); AOSP's
+  `createFontFamily` skips a font file it cannot map, so a run that starts
+  without it has no CJK family to its end, and text already measured keeps
+  its boxes even if the map were rebuilt (minikin's layout cache, laid-out
+  `TextView`s). The same files are `/system/fonts` for native code
+  (Flutter's text reads them). A design that would work: (1) the first run
+  that needs the font (a CJK locale, or the first `.notdef` for a CJK code
+  point, counted where the text layer asks for glyphs) starts a background
+  download of NotoSansCJK-Regular.ttc (from the same android-all release, by
+  SHA-256) into `%LOCALAPPDATA%\Win.apk\fonts\`, as the update check
+  downloads, and the font shows from the next start; (2) at start, if the
+  file is there, `materializeSystemFonts` passes it through
+  `getSystemFontConfigInternal`'s `updatableFontMap` (the device's
+  `/data/fonts` mechanism: a font by name from another folder), and the
+  native `/system/fonts` view links it in. Until downloaded, CJK text draws
+  boxes for one run, which is what Android avoids by shipping the font. A
+  cheaper alternative with no download: Windows' own CJK fonts (Microsoft
+  YaHei, Yu Gothic, Malgun Gothic) as the fallback families, with other
+  metrics than a phone's. Saves 19 MB of the install (the CJK font compresses
+  little).
 - **Memory has no budget yet**: the smoke test records each app's peak working
   set; add a limit once a few CI runs show the spread.
 - **Frame time has only a collapse budget** (`windows/README.md` "Frame
