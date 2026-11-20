@@ -100,9 +100,16 @@ the app); if it is still there, it is a bug in what replaced it.
 - **The runtime's heap (`-Xmx1g`, `runtime_main.cpp` ~1492) filled after about
   3,100 layout inflations** in Mercantile's sweep: a leak in Win.apk or the
   app holding views; not found.
-- **AppsFlyer** looks up `com.appsflyer.internal.AFi1fSDKT861` where the class
-  it loaded is `...T8615` (one character short); the framework values it
-  reads match Android; not found (bit).
+- ~~**AppsFlyer** looks up `com.appsflyer.internal.AFi1fSDKT861` where the class
+  it loaded is `...T8615`~~ Fixed: the name's length is `35 + (getElapsedCpuTime()
+  > 0)`, and `Process.getElapsedCpuTime()` was a constant 0. Found by running
+  bit's AppsFlyer loaders (`AFi1hSDK`, `AFa1jSDK` static init) on a plain JVM
+  over the converted classes with a JDI trace of every framework call they make;
+  the same trace found `Process.getGidForName("")` (0, Android -1) and
+  `ExpandableListView.getPackedPositionForChild` (type in bit 62, Android 63)
+  derailing `AFa1jSDK`'s payload. All three fixed (`FrameworkStubsTest`); with
+  them `AFi1hSDK.getCurrencyIso4217Code` returns `AFi1fSDKT8615`. Bit to check
+  again in a real run.
 - ~~**`HucsConnection.getRequestProperties`** returns the JDK's map with a
   null-key status line~~ Fixed: the JDK's map, after an error answer and
   `disconnect()`, held its request line as a key with a null value; the
