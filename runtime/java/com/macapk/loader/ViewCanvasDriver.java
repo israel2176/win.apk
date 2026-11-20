@@ -1914,13 +1914,12 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
                         int ry = (int) ((packed >> 32) & 0xffffL);
                         int rw = (int) ((packed >> 16) & 0xffffL);
                         int rh = (int) (packed & 0xffffL);
-                        java.awt.image.BufferedImage img = GfxBackend.get().awtImage(bitmap);
-                        if (img != null) {
+                        if (bitmap != null) {
                             int clear = 0, samples = 0;
-                            for (int yy = ry; yy < Math.min(ry + rh, img.getHeight()); yy += 8)
-                                for (int xx = rx; xx < Math.min(rx + rw, img.getWidth()); xx += 8) {
+                            for (int yy = ry; yy < Math.min(ry + rh, bitmap.getHeight()); yy += 8)
+                                for (int xx = rx; xx < Math.min(rx + rw, bitmap.getWidth()); xx += 8) {
                                     samples++;
-                                    if ((img.getRGB(xx, yy) >>> 24) == 0) clear++;
+                                    if ((bitmap.getPixel(xx, yy) >>> 24) == 0) clear++;
                                 }
                             sPunchProbes++;
                             NativeLog.i(TAG, "punch probe #" + sPunchProbes
@@ -2259,7 +2258,7 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
                 // 1440x2560 = 3.7 megapixels per frame; the chat
                 // display struggles to load PNGs that large for
                 // session-time visual verification. The chat-sized
-                // copy is downsized via SCALE_SMOOTH so glyphs stay
+                // copy is downsized with filtering so glyphs stay
                 // legible, then re-encoded -- typically 50-80% smaller
                 // on disk. The full-resolution PNG is still written
                 // for pixel-precise verification (jshell + getRGB).
@@ -2268,15 +2267,16 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
                     try {
                         long want = Long.parseLong(dumpAt);
                         if (want == 0 || want == n) {
-                            java.awt.image.BufferedImage img =
-                                new java.awt.image.BufferedImage(bitmap.getWidth(),
-                                    bitmap.getHeight(),
-                                    java.awt.image.BufferedImage.TYPE_INT_ARGB);
-                            img.setRGB(0, 0, bitmap.getWidth(), bitmap.getHeight(),
-                                       pixels, 0, bitmap.getWidth());
+                            // Bitmap.compress: the graphics' own PNG encoder (Skia's on
+                            // AOSP's graphics), no AWT.
+                            android.graphics.Bitmap img = android.graphics.Bitmap.createBitmap(
+                                pixels, bitmap.getWidth(), bitmap.getHeight(),
+                                android.graphics.Bitmap.Config.ARGB_8888);
                             java.io.File out = new java.io.File(
                                 "/tmp/macapk_frame_" + n + ".png");
-                            javax.imageio.ImageIO.write(img, "png", out);
+                            try (java.io.FileOutputStream f = new java.io.FileOutputStream(out)) {
+                                img.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, f);
+                            }
                             NativeLog.i(TAG, "dump bitmap -> " + out.getAbsolutePath());
                             // Chat-display companion: cap longer side
                             // at 2000 px for session-time PNG review.
@@ -5142,9 +5142,9 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
      *  the longer side at `maxLonger`. If `src` is already small
      *  enough, returns null and writes nothing (the caller has the
      *  full-resolution copy already; a duplicate would waste disk).
-     *  Uses Image.SCALE_SMOOTH (high-quality area-averaged) so glyphs
+     *  Filtered (bilinear) scaling so glyphs
      *  stay readable when reviewed inline in the chat. */
-    private static java.io.File writeChatSizedCopy(java.awt.image.BufferedImage src,
+    private static java.io.File writeChatSizedCopy(android.graphics.Bitmap src,
                                                     String path,
                                                     int maxLonger) throws java.io.IOException {
         if (src == null || path == null || maxLonger <= 0) return null;
@@ -5155,18 +5155,12 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
         float scale = maxLonger / (float) longer;
         int dw = Math.max(1, Math.round(w * scale));
         int dh = Math.max(1, Math.round(h * scale));
-        java.awt.Image scaled = src.getScaledInstance(dw, dh,
-            java.awt.Image.SCALE_SMOOTH);
-        java.awt.image.BufferedImage out = new java.awt.image.BufferedImage(
-            dw, dh, java.awt.image.BufferedImage.TYPE_INT_ARGB);
-        java.awt.Graphics2D g = out.createGraphics();
-        try {
-            g.drawImage(scaled, 0, 0, null);
-        } finally {
-            g.dispose();
-        }
+        // Filtered scaling (bilinear) keeps the glyphs readable.
+        android.graphics.Bitmap out = android.graphics.Bitmap.createScaledBitmap(src, dw, dh, true);
         java.io.File outFile = new java.io.File(path);
-        javax.imageio.ImageIO.write(out, "png", outFile);
+        try (java.io.FileOutputStream f = new java.io.FileOutputStream(outFile)) {
+            out.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, f);
+        }
         return outFile;
     }
 

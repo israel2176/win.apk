@@ -1478,8 +1478,7 @@ std::vector<std::string> jvm_options(const BootArgs& b) {
     std::error_code ec;
     std::vector<std::string> v;
     // AOSP's graphics (aosp_gfx.h, the default; WINAPK_AOSP_GFX=0 is Java2D's): their classes
-    // first, so they win over the framework's own of the same name. Only an app's run, and
-    // --cds-prepare for it, asks (aosp_gfx_prepare in main).
+    // first, so they win over the framework's own of the same name (aosp_gfx_prepare in main).
     const winapk::host::AospGfxFiles* aosp = winapk::host::aosp_gfx_files();
     v.push_back("-Djava.class.path=" + (aosp ? jvm_path(aosp->jar) + ";" : std::string()) +
                 jvm_path(o.lib / "android-framework.jar") + ";" +
@@ -1747,6 +1746,7 @@ DWORD WINAPI gms_thread(void* param) {
     }
     macapk::sqlite::RegisterNativeSqliteMethods(env);
     check_exception(env, "RegisterNativeSqliteMethods");
+    winapk::host::aosp_gfx_load(vm, env);  // as boot_thread: the graphics its class path has
 
     // --verify-apk is the same shape: com.winapk.tools.ApkCheck.run(String[])int, on the one file.
     const char* cls_name = o.verify ? "com/winapk/tools/ApkCheck" : "com/macapk/gms/GmsCli";
@@ -1802,6 +1802,7 @@ DWORD WINAPI system_thread(void* param) {
     }
     macapk::sqlite::RegisterNativeSqliteMethods(env);
     check_exception(env, "RegisterNativeSqliteMethods");
+    winapk::host::aosp_gfx_load(vm, env);  // as boot_thread: the graphics its class path has
     jclass server = env->FindClass("com/macapk/loader/SystemServer");
     jmethodID main = server ? env->GetStaticMethodID(server, "main", "([Ljava/lang/String;)V") : nullptr;
     if (!main) {
@@ -2135,9 +2136,12 @@ int wmain(int argc, wchar_t** argv) {
         return 2;
     }
     if (!resolve_paths(&b.options)) return 2;
+    // AOSP's graphics (aosp_gfx.h): on unless WINAPK_AOSP_GFX=0 or a file is missing, for every JVM
+    // this runtime makes: an app's run, --cds-prepare's key, the install's icon (AppMeta), --gms and
+    // --system, so that nothing runs on the Java2D classes but by asking.
+    winapk::host::aosp_gfx_prepare(b.options.lib, exe_dir());
     if (b.options.cds_prepare) {
         // The options, and with them the archive's key, an app's start would have: its graphics too.
-        winapk::host::aosp_gfx_prepare(b.options.lib, exe_dir());
         jvm_options(b);
         return winapk::host::cds_prepare();
     }
@@ -2275,8 +2279,6 @@ int wmain(int argc, wchar_t** argv) {
     }
     prepare_arm64(b.options, b.app_dir);
     if (!convert_dex(b.options, b.app_dir, &b.app_jar)) return 1;
-    // AOSP's graphics, an app's run only (aosp_gfx.h): on unless WINAPK_AOSP_GFX=0 or a file is missing.
-    winapk::host::aosp_gfx_prepare(b.options.lib, exe_dir());
 
     // Upstream runs the JVM with -Xss16m; give the creating thread as much.
     HANDLE t = CreateThread(nullptr, 64 * 1024 * 1024, boot_thread, &b, STACK_SIZE_PARAM_IS_A_RESERVATION,

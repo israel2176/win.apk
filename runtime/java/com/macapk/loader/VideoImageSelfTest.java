@@ -41,7 +41,6 @@ import android.media.MediaCodecList;
 import android.media.MediaFormat;
 import android.media.Image;
 
-import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.RandomAccessFile;
@@ -49,7 +48,6 @@ import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
 
-import javax.imageio.ImageIO;
 
 public final class VideoImageSelfTest {
     private static final String TAG = "VideoImageSelfTest";
@@ -150,9 +148,13 @@ public final class VideoImageSelfTest {
     }
 
     private static void writePng(int[] rgb, int w, int h, String path) throws Exception {
-        BufferedImage img = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
-        img.setRGB(0, 0, w, h, rgb, 0, w);
-        ImageIO.write(img, "png", new File(path));
+        int[] argb = new int[w * h];
+        for (int i = 0; i < argb.length; i++) argb[i] = 0xff000000 | rgb[i];
+        android.graphics.Bitmap img = android.graphics.Bitmap.createBitmap(argb, w, h,
+                android.graphics.Bitmap.Config.ARGB_8888);
+        try (java.io.FileOutputStream f = new java.io.FileOutputStream(path)) {
+            img.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, f);
+        }
     }
 
     // Mean absolute per-channel delta between two same-size RGB images.
@@ -310,9 +312,10 @@ public final class VideoImageSelfTest {
             double refDelta = -1;
             File refFile = new File(refPath);
             if (refFile.isFile()) {
-                BufferedImage ref = ImageIO.read(refFile);
+                android.graphics.Bitmap ref = android.graphics.BitmapFactory.decodeFile(refPath);
                 if (ref != null && ref.getWidth() == lastW && ref.getHeight() == lastH) {
-                    int[] refRgb = ref.getRGB(0, 0, lastW, lastH, null, 0, lastW);
+                    int[] refRgb = new int[lastW * lastH];
+                    ref.getPixels(refRgb, 0, lastW, 0, 0, lastW, lastH);
                     for (int i = 0; i < refRgb.length; i++) refRgb[i] &= 0xffffff; // strip alpha
                     refDelta = meanAbsDelta(chosenFrame, refRgb);
                 } else {

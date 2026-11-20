@@ -67,9 +67,6 @@ public interface GfxBackend {
     /** The bitmap's live ARGB backing when it has one, else null (Bitmap.macapkLiveArgbOrNull). */
     int[] liveArgbOrNull(Bitmap bitmap);
 
-    /** The bitmap as an AWT image (Bitmap.macapkAwtImage). */
-    java.awt.image.BufferedImage awtImage(Bitmap bitmap);
-
     /** How many draw ops the canvas has run (Canvas.macapkDrawOps): a frame drew ink when it moved. */
     int drawOps(Canvas canvas);
 

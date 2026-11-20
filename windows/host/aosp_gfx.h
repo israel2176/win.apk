@@ -1,7 +1,8 @@
-// aosp_gfx.h -- an app's run on AOSP's own graphics (windows/README.md, "Milestone 2: the
-// runtime on AOSP graphics"), the default. WINAPK_AOSP_GFX=0 is the way back to Win.apk's own
-// Java2D classes while they exist: then nothing here does anything, and the class path, the
-// JVM's options and the natives are those of the Java2D path.
+// aosp_gfx.h -- the runtime's JVMs (an app's run, an install, --gms, --system) on AOSP's own
+// graphics (windows/README.md, "Milestone 2: the runtime on AOSP graphics"), the default.
+// WINAPK_AOSP_GFX=0 is the way back to Win.apk's own Java2D classes while they exist: then nothing
+// here does anything, and the class path, the JVM's options and the natives are those of the
+// Java2D path.
 //
 // What it needs, all staged by windows/scripts/build_aosp_gfx.sh:
 //   lib\aosp-graphics.jar               AOSP 14's android.graphics.**, the android.text classes that

@@ -118,11 +118,15 @@ mkdir -p "$WORK/gen"
 
 # Where AOSP's code relies on what ART does and HotSpot does not, its call goes to a Win.apk method of
 # the same signature (windows/java/aosp_gfx, below; AospCallRedirect.java says how): Font$Builder reads
-# a font the APK holds compressed into a direct buffer's array().
+# a font the APK holds compressed into a direct buffer's array(); AdaptiveIconDrawable reads its mask
+# through the Application, which the app's icon at start is built before (IconMaskThread).
 echo "[aosp-gfx] calls redirected to Win.apk's"
 "$JAVA" "$(native_path "$HERE/AospCallRedirect.java")" "$(native_path "$CLASSES")" 'android/graphics/fonts/Font$Builder' \
     'android/graphics/fonts/Font$Builder' createBuffer '(Landroid/content/res/AssetManager;Ljava/lang/String;ZI)Ljava/nio/ByteBuffer;' \
     com/winapk/aospgfx/FontBuffers
+"$JAVA" "$(native_path "$HERE/AospCallRedirect.java")" "$(native_path "$CLASSES")" \
+    android/graphics/drawable/AdaptiveIconDrawable android/app/ActivityThread currentActivityThread \
+    '()Landroid/app/ActivityThread;' com/winapk/aospgfx/IconMaskThread
 
 echo "[aosp-gfx] Win.apk's stand-ins (windows/java/aosp_gfx)"
 { find "$HERE/../java/aosp_gfx" -name '*.java'; echo "$WORK/gen/R.java"; } | sort |

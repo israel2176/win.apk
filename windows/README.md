@@ -233,7 +233,7 @@ The user-facing ones (`WINAPK_PHONE_SIZE`, `WINAPK_RESIZABLE`,
 | `MACAPK_JVM_OPTS` | Extra JVM options, passed through after Win.apk's own (`-XX:TieredStopAtLevel=4` brings back the C2 compiler, which the runtime leaves out for a faster start) |
 | `WINAPK_SHORT_DATA_DIR=0` | The app's data directory by its long name, not the 8.3 one (`-Dwinapk.data.dir`). For Wine, which makes short names up and does not find a new file by one: without it every save through a temporary file fails there. `run_app_wine.sh` and the sweep under `--launcher wine` set it |
 | `WINAPK_DEBUG=1` or `0` | Debug mode for this run, over the launcher's Settings > Troubleshooting > Debug mode (`HKCU\Software\Win.apk\DebugMode`): the runtime starts its thread agent (`host/debug_agent.cpp`), which answers the launcher's Threads window on `\\.\pipe\winapk-debug-<pid>` (`include/winapk/debug_protocol.h`): `threads` lists every Windows thread of the process with its kind (java, guest, jvm, runtime, system), Java name and state and where it started; `stack <tid> <jid>` gives one thread's Java frames, contended monitor and native stack. Only for a run of an app and the system broker, not an install |
-| `WINAPK_AOSP_GFX=0` | Win.apk's older Java2D graphics for this run instead of AOSP's own, the default (`host/aosp_gfx.h`; the way back while the Java2D classes exist; unset or `1` is the default). By default an app draws through AOSP's `Canvas`, with the gaps [Milestone 2](#milestone-2-the-runtime-on-aosp-graphics) lists: `lib\aosp-graphics.jar` goes before `android-framework.jar` on the class path, `-Dicu.data.path`, `-Dicu.locale.default`, `-Dwinapk.aosp.gfx=1`, `-Dwinapk.aosp.fonts` and `-Dwinapk.aosp.hyphen` are set, class-data sharing maps the `framework-aosp-<key>.jsa` archive (Java2D's is `framework-java2d-<key>.jsa`; each keeps the other), and once the host's natives are bound `bin\robolectric-nativeruntime.dll` loads through `host/aosp_gfx_redirect.cpp`: its natives go onto the jar's classes, only `android.graphics.**`, `android.text.**`, `android.util.PathParser` and two helpers (an allowlist); those for `android.database(.sqlite)`, `android.view.Surface`, `android.media.ImageReader` and `PropertyValuesHolder` are refused, Win.apk's stay. Log lines: `AOSP graphics: on (WINAPK_AOSP_GFX=0 turns it off): ...` or `AOSP graphics: off (WINAPK_AOSP_GFX=0): ...`, then `AOSP graphics: robolectric-nativeruntime.dll loaded in N ms: natives bound N (5 through API 34 adapters), skipped N, refused N ...`. A file missing, or the DLL not loading, and the run goes on with Java2D's (`AOSP graphics: off, ... is missing` / `does not load`). Only an app's run (and `--cds-prepare`, for its archive's key), not an install, `--gms`, `--system` or `--verify-apk`. `WINAPK_AOSP_GFX_VERBOSE=1` lists each skipped native and each class routed to the stand-in |
+| `WINAPK_AOSP_GFX=0` | Win.apk's older Java2D graphics for this run instead of AOSP's own, the default (`host/aosp_gfx.h`; the way back while the Java2D classes exist; unset or `1` is the default). By default an app draws through AOSP's `Canvas`, with the gaps [Milestone 2](#milestone-2-the-runtime-on-aosp-graphics) lists: `lib\aosp-graphics.jar` goes before `android-framework.jar` on the class path, `-Dicu.data.path`, `-Dicu.locale.default`, `-Dwinapk.aosp.gfx=1`, `-Dwinapk.aosp.fonts` and `-Dwinapk.aosp.hyphen` are set, class-data sharing maps the `framework-aosp-<key>.jsa` archive (Java2D's is `framework-java2d-<key>.jsa`; each keeps the other), and once the host's natives are bound `bin\robolectric-nativeruntime.dll` loads through `host/aosp_gfx_redirect.cpp`: its natives go onto the jar's classes, only `android.graphics.**`, `android.text.**`, `android.util.PathParser` and two helpers (an allowlist); those for `android.database(.sqlite)`, `android.view.Surface`, `android.media.ImageReader` and `PropertyValuesHolder` are refused, Win.apk's stay. Log lines: `AOSP graphics: on (WINAPK_AOSP_GFX=0 turns it off): ...` or `AOSP graphics: off (WINAPK_AOSP_GFX=0): ...`, then `AOSP graphics: robolectric-nativeruntime.dll loaded in N ms: natives bound N (5 through API 34 adapters), skipped N, refused N ...`. A file missing, or the DLL not loading, and the run goes on with Java2D's (`AOSP graphics: off, ... is missing` / `does not load`). Every JVM the runtime makes: an app's run, `--cds-prepare` (for its archive's key), an install (`AppMeta`'s icon), `--gms`, `--system` and `--verify-apk`. `WINAPK_AOSP_GFX_VERBOSE=1` lists each skipped native and each class routed to the stand-in |
 | `WINAPK_CDS=0` or `base` | Class-data sharing (`host/cds.h`): `0` back to the old flags (`--patch-module`, no archive), `base` the JRE's archive without the framework archive. `WINAPK_CDS_DIR=<dir>` puts the framework archive elsewhere (tests share one), `WINAPK_CDS_CLASSLIST=<file>` dumps from another class list (`none`: only the start's own), `WINAPK_CDS_RECORD_DIR=<dir>` writes every app start's loaded classes to `<dir>\<app>.classlist` (for `scripts/merge_classlists.py`), `WINAPK_CDS_VERIFY=1` checks the archive whole at every start, `WINAPK_CDS_DUMP_DELAY_MS` (default 10000) is the wait after the first frame before the background dump |
 | `MACAPK_FRAMESPEED_DAMAGE=1` | Partial redraw (off by default): a frame that only invalidations asked for draws the view tree clipped to the area they damaged and hands the window only that rectangle, instead of redrawing and copying the whole window (`docs/ARCHITECTURE.md`, "The view tree's frames"). Unset or anything else, every frame is whole. `MACAPK_DAMAGE_VALIDATE=1` with it draws every frame whole but compares what changed with the area claimed: `[damage-validate] under-damage` names a frame that changed outside it, and the `M6:` line counts `validate: claimed= clean= under=`. `MACAPK_TRACE_DAMAGE=1` logs every 5 s what the frames' damage was (`[damage]`), `MACAPK_FRAME_PHASE_TRACE=1` a frame's time by phase (`[frame-phase]`, every 300 frames; the run's whole summary is the `frame times` line at exit, [Frame time](#frame-time)) |
 | `MACAPK_QUIET_CLASSLOAD=0` | Logs a line for every class the app's class loader loads (the runtime sets it to 1, as upstream's launcher does: thousands of lines cost up to 0.4 s of a start) |
@@ -475,7 +475,9 @@ before these changes.
   `android.animation`; the platform's `AnimationScaleListDrawable`, which the
   progress bars' XML names; and `windows/java/aosp_gfx`'s stand-ins, about 500
   classes, 1 MB; `Font$Builder`'s `createBuffer` calls go to the stand-in
-  `com.winapk.aospgfx.FontBuffers`, `scripts/AospCallRedirect.java`, below), `bin/robolectric-nativeruntime.dll` (12 MB: its COFF
+  `com.winapk.aospgfx.FontBuffers`, and `AdaptiveIconDrawable`'s
+  `currentActivityThread` calls to `com.winapk.aospgfx.IconMaskThread`,
+  `scripts/AospCallRedirect.java`, below), `bin/robolectric-nativeruntime.dll` (12 MB: its COFF
   symbol table, 3.3 MB that nothing reads, stripped with LLVM's strip),
   `bin/aosp/icu/icudt68l.dat` (16.4 MB: ICU's data without the trees the
   DLL cannot open, rewritten by `scripts/TrimIcuData.java`),
@@ -691,6 +693,22 @@ before these changes.
       that casts to it) were placeholders and every text in its fonts measured
       in the default face: its `activity_contact_before_login` now matches
       Android in 95 of 102 lines, as the Java2D path does (32 before).
+    - An app's adaptive icon built before its `Application` exists (the
+      window's icon at start, the install's `icon.png`): AOSP's
+      `AdaptiveIconDrawable` constructor reads the icon mask from
+      `currentActivityThread() == null ? Resources.getSystem() :
+      currentActivityThread().getApplication().getResources()`; Win.apk's
+      `ActivityThread` is there from the start with no `Application` yet, so it
+      threw a `NullPointerException` and Win.apk's inflater built the icon.
+      `IconMaskThread` answers null until there is an `Application`, which
+      takes AOSP's own other branch.
+    - A `TextureView` with nothing to show reads black when it is opaque (the
+      default), as AOSP's own code draws it on a software canvas:
+      `getLayerType()` is `LAYER_TYPE_HARDWARE`, so `View.draw(Canvas,
+      ViewGroup, long)` draws it through an opaque drawing cache that its
+      `draw()` leaves empty (`RGB_565`, all zero); `setOpaque(false)` makes it
+      transparent. Gallery's `activity_video_player` was grey there (the
+      bottom gradient over the white page), Android black.
 
   The probe, by case (lines that match Android's within compare.py's 1 dp;
   Java2D = the switch off):
@@ -713,10 +731,12 @@ before these changes.
   path, Sudoku 50 fixed and nothing worse, Gallery 6 fixed, 4 closer and 6
   FARTHER, all six in `activity_video_player`: three hidden buttons over the
   bottom gradient read a shade lighter (3 of 9 where Java2D has 2 and
-  Android 0). Both paths draw the backdrop under it grey where Android's is
+  Android 0). Both paths drew the backdrop under it grey where Android's is
   black (the `TextureView` with no video, 5 of 9 on both), and AOSP's
-  gradient over that grey is the lighter one; with the backdrop right both
-  would be black.
+  gradient over that grey is the lighter one. Fixed since: an opaque
+  `TextureView` with no frame reads black, as AOSP's software path draws it
+  (below): Gallery 279 lines differing, against 295 (16 fixed, 10 closer,
+  nothing worse), and nothing in it further from Android than Java2D's.
 
   Text widths match Android's where Java2D's were half a dp off (`lastw=30.1`,
   Android's, against 30.5). The first frame's `TextView` still did its own line
@@ -760,10 +780,7 @@ before these changes.
   Every text row of the probe now matches but ExtendedFloatingActionButton's
   `getGravity()` (both paths); what is left in the material and list rows is
   drawables and icon pixels.
-- Still to do (step 2's rest, then 3): `AdaptiveIconDrawable` before the
-  `Application` exists (the window's icon, loaded at boot: AOSP's constructor
-  reads the icon mask through `ActivityThread.getApplication()`, which a
-  device never reaches unbound; Win.apk's inflater builds that one); `<animated-image>` (not on the
+- Still to do (step 2's rest, then 3): `<animated-image>` (not on the
   probe or the sweeps, so unchecked); the present without the copy. `dalvik.system.VMRuntime.addressOf` is the framework's
   (0): in the jar only `PathIterator` (API 34's `Path.getPathIterator`) uses
   it, so the text classes do not need the test's direct-buffer kind. HWUI's
@@ -806,9 +823,13 @@ before these changes.
     `GLUtils`), and `Canvas.macapkDrawOps` (4, whether a frame drew ink).
     AOSP's pixels are native: the frame goes to the window through
     `copyPixelsToBuffer` into a direct buffer (one copy, as
-    `GetIntArrayElements` is today), and libjnigraphics (`src/jnigraphics.cpp`,
-    `AndroidBitmap_*` on the `int[]`) needs the same, since the DLL exports
-    no `AndroidBitmap_*`.
+    `GetIntArrayElements` is today). libjnigraphics (`src/jnigraphics.cpp`,
+    upstream's `AndroidBitmap_*` on Win.apk's `int[]`, `macapkArgbBuffer`)
+    takes an AOSP `Bitmap`'s pixels with `getPixels` into an `int[]` of its
+    own and runs upstream's conversion and merge over it, writing back with
+    `setPixels` when the guest changed a pixel: the DLL exports no
+    `AndroidBitmap_*`, and before this a native library's `lockPixels` on the
+    default graphics failed (`macapkArgbBuffer` is not on AOSP's class).
   - `Canvas` / `Outline` (6 methods, 14 calls: `macapkClipChildRect`,
     `macapkQuickRejectChild`, `macapkGetCurrentTx/Ty`, `macapkDeviceOrigin`,
     `macapkClipPath`, in `View`, `ViewGroup`, `ImageView`, `ViewCanvasDriver`;
@@ -2858,6 +2879,18 @@ every such change is listed here:
   `setInputType` only then; with the switch off every answer is as before
   (the probe's `ours.txt` identical byte for byte). `Layout` gains three
   compile-only members AOSP's has.
+- `runtime/java/android/view/TextureView.java`: an opaque `TextureView` paints
+  black under its frame, nothing over it, as AOSP's software path draws it
+  (milestone 2, "A `TextureView` with nothing to show"); `setOpaque` redraws.
+- Off Java2D where AOSP's graphics are the default (`docs/research/open-issues.md`,
+  "What still reaches Java2D"): `com/macapk/loader/Boot.java` does not bring
+  AWT up on AOSP's graphics (544-783 ms on the main thread under Wine, beside
+  the resource index); `android/provider/MediaStoreProvider.java` reads a
+  photo's size with `BitmapFactory`'s bounds decode, not ImageIO;
+  `com/macapk/loader/ViewCanvasDriver.java`'s debug dumps
+  (`MACAPK_DUMP_BITMAP_AT`, `MACAPK_PUNCH_TRACE`) and `VideoImageSelfTest.java`
+  write and read PNGs with `Bitmap.compress` / `BitmapFactory`, and
+  `GfxBackend.awtImage` is gone (`gfx/AospGfx.java`, `Java2DGfx.java`).
 - `runtime/java/com/macapk/loader/gfx/AospGfx.java`, `GfxBackend.java`,
   `Java2DGfx.java`, `android/content/res/Resources.java`, `TypedArray.java`,
   `ColorStateList.java`, `ComplexColor.java` (new), `ConstantState.java` (new),
