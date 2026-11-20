@@ -202,7 +202,8 @@ The user-facing ones (`WINAPK_PHONE_SIZE`, `WINAPK_RESIZABLE`,
 | `WINAPK_TEST_JAVA_BASE_PATCH=<dir>` | `winapk-binder-test` only: the java.base overlay its JVM runs with (`stage\lib\java_base_patch`) |
 | `WINAPK_JAVA_IO_SHARE_DELETE=0` | java.io opens files as the JDK does, without `FILE_SHARE_DELETE` (`host/java_io_open.cpp`), for comparing |
 | `WINAPK_DUMP_VIEWS=1` | Logs the top window's views (`[viewdump]` lines: class, id name, text, content description, clickable, enabled, bounds in the frame's pixels) each time its content changes and then holds still for half a second, with a Compose view's nodes from its accessibility provider, as uiautomator's dump does; a test finds and taps a button from them (`runtime/java/com/macapk/loader/ViewDump.java`) |
-| `WINAPK_TEST_INSTALLER=<package>` | Debugging only: `getInstallerPackageName` and `getInstallSourceInfo` answer that installer (e.g. `com.android.vending`, Google Play) for every app, as if a store installed it; nothing in Win.apk sets it (`runtime/java/com/macapk/loader/InstallerOfRecord.java`) |
+| `WINAPK_PLAY_INSTALLER=0`/`1` | Set by the runtime from Settings > Apps > "Report Google Play as the installer" (`PlayInstaller`, absent = 1) unless already set: `1` reports Google Play as the installer of an app the user installed with no installer of record, `0` reports none (`runtime/java/com/macapk/loader/InstallerOfRecord.java`) |
+| `WINAPK_TEST_INSTALLER=<package>` | Debugging only: `getInstallerPackageName` and `getInstallSourceInfo` answer that installer for every app, over the record and `WINAPK_PLAY_INSTALLER`; nothing in Win.apk sets it (`runtime/java/com/macapk/loader/InstallerOfRecord.java`) |
 | `WINAPK_TEST_RESIZE=<w>x<h>` | A second after the first frame, resizes the window to a client area of that many pixels (CI's "Boot an APK in a window") |
 | `MACAPK_APK_PATH` | Set by the runtime, not by hand: the installed APK, which `PresentedSdk` reads the app's targetSdk and minSdk from to choose the API level the app is presented (its targetSdk within 29..36, never below its minSdk); `MACAPK_SDK_INT=<n>` forces a level, `MACAPK_SDK_FROM_TARGET=0` presents 29 (still never below the minSdk) |
 | `MACAPK_BROKER_TRIGGER_CHECKIN=0` | The broker does not nudge Play services to check in at boot (it nudges at most three times, and not at all once Play services has broadcast `CHECKIN_COMPLETE`) |
@@ -1598,7 +1599,20 @@ every such change is listed here:
   beside `installed_apps.json`, not in a `Library\Application Support` folder
   under the user profile. On the Mac nothing changes. `InstallerOfRecord.get`
   also answers `WINAPK_TEST_INSTALLER`, a debugging override (see the
-  environment table).
+  environment table). `InstallerOfRecord.reported` (new) is what
+  `MacApkPackageManager.getInstallerPackageName` and `getInstallSourceInfo`
+  answer: the record when there is one, else Google Play for an app the user
+  installed (the running app, or a registry app the caller may see) while
+  `WINAPK_PLAY_INSTALLER` is not `0` (the owner's decision: bit and Bank
+  Hapoalim stop at "reinstall from the store" without a store as installer),
+  as `adb install -i com.android.vending` leaves it; not for Play, Play
+  services and GSF themselves, nor when no Play Store package is reported.
+  A Play answer has Play's Android 14 shape: installing and initiating Play
+  (with Play's certificate), no originating package, Play the update owner,
+  `PACKAGE_SOURCE_STORE`; `PackageManager.relinquishUpdateOwnership` then
+  succeeds for the owner. The runtime sets `WINAPK_PLAY_INSTALLER` from
+  `HKCU\Software\Win.apk PlayInstaller` (absent = 1). Tested by
+  `windows/test/java/com/macapk/loader/InstallerOfRecordTest.java` (CI).
 - `HostAppSupport` users that upstream spells with Mac paths: the caches
   (`MacApkSystemFonts`: the `/system/fonts` Flutter's Skia reads,
   `MacApkFontStore`, `ResourceIndex`'s framework view, `monet/Monet`) go to

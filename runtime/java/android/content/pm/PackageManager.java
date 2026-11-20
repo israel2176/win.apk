@@ -2113,12 +2113,10 @@ public abstract class PackageManager {
      *  to. "@throws SecurityException when the caller is not the active
      *  installer for the given package."
      *
-     *  Mac.apk records no installer of record -- getInstallerPackageName returns
-     *  null for every package (side-loaded, exactly as AOSP reports for an adb
-     *  install) -- so no caller is the active installer and the SecurityException
-     *  is the answer a device gives for the same call. The check is written out
-     *  rather than hardcoded so it starts succeeding the day an installer of
-     *  record is recorded. */
+     *  The installer is getInstallerPackageName's answer (InstallerOfRecord:
+     *  the recorded installer, or Google Play for an app the user installed
+     *  while Win.apk reports Play as the installer); any other caller gets the
+     *  SecurityException a device gives. */
     public void setApplicationCategoryHint(String packageName, int categoryHint) {
         String installer = getInstallerPackageName(packageName);
         android.app.Application app = android.app.Application.macapk_get();
@@ -2292,10 +2290,10 @@ public abstract class PackageManager {
      *  update ownership of a package. "@throws SecurityException if you are not
      *  the current update owner of the given package."
      *
-     *  Mac.apk grants update ownership to nobody -- InstallSourceInfo
-     *  .getUpdateOwnerPackageName() is always null, and SessionParams
-     *  .setRequestUpdateOwnership is recorded but never honoured -- so no caller
-     *  is the owner. AOSP's IllegalArgumentException branch ("if the given
+     *  The owner is InstallSourceInfo.getUpdateOwnerPackageName(): Google Play
+     *  for an app Win.apk reports Play installed (InstallerOfRecord), else
+     *  nobody. Win.apk enforces no ownership, so relinquishing is a no-op for
+     *  the owner. AOSP's IllegalArgumentException branch ("if the given
      *  package is invalid") covers an uninstalled name and is checked first. */
     public void relinquishUpdateOwnership(String targetPackage) {
         try {
@@ -2303,6 +2301,12 @@ public abstract class PackageManager {
         } catch (NameNotFoundException e) {
             throw new IllegalArgumentException("Unknown package " + targetPackage, e);
         }
+        String owner = null;
+        try { owner = getInstallSourceInfo(targetPackage).getUpdateOwnerPackageName(); }
+        catch (NameNotFoundException ignored) {}
+        android.app.Application app = android.app.Application.macapk_get();
+        String self = (app != null) ? app.getPackageName() : null;
+        if (owner != null && owner.equals(self)) return;
         throw new SecurityException("Caller is not the update owner of " + targetPackage);
     }
 

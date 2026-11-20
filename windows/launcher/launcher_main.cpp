@@ -216,6 +216,9 @@ const wchar_t* tr(const wchar_t* en) {
         {L"Speed up ARM apps", L"האצת אפליקציות ARM"},
         {L"Translates ARM code to your PC's code in the background so apps run faster. Runs at low priority.",
          L"ממיר ברקע קוד ARM לקוד של המחשב, כדי שהאפליקציות ירוצו מהר יותר. פועל בעדיפות נמוכה."},
+        {L"Report Google Play as the installer", L"דיווח על Google Play כמקור ההתקנה"},
+        {L"Apps you install appear to come from Google Play, as some banking apps require.",
+         L"האפליקציות שמתקינים נראות כאילו הותקנו מ-Google Play, כפי שחלק מאפליקציות הבנקים דורשות."},
         {L"Performance", L"ביצועים"},
         {L"Optimizing for this PC…", L"מבצע אופטימיזציה למחשב הזה…"},
         {L"{0} of {1} parts", L"{0} מתוך {1} חלקים"},
@@ -6441,6 +6444,14 @@ std::vector<Section> settings_sections() {
                     L"priority.");
     aot.on = setting(L"AotBackground", 1) != 0;
     aot.act = [](int on) { set_setting(L"AotBackground", static_cast<DWORD>(on)); };
+    // Read by the runtime when an app opens (runtime_main.cpp, play_installer_setting -> WINAPK_PLAY_INSTALLER,
+    // InstallerOfRecord.reported): apps such as bit refuse to run unless a store installed them.
+    Row play;
+    play.kind = Row::kToggle;
+    play.title = tr(L"Report Google Play as the installer");
+    play.detail = tr(L"Apps you install appear to come from Google Play, as some banking apps require.");
+    play.on = setting(L"PlayInstaller", 1) != 0;
+    play.act = [](int on) { set_setting(L"PlayInstaller", static_cast<DWORD>(on)); };
     Row desktop;
     desktop.kind = Row::kToggle;
     desktop.title = tr(L"Desktop shortcut for new apps");
@@ -6455,7 +6466,7 @@ std::vector<Section> settings_sections() {
         types = button_row(tr(L"Open .apk, .apkm, .xapk and .apks files with Win.apk"), L"", tr(L"Make default"),
                            [] { register_file_types(true); });
     }
-    out.push_back({tr(L"Apps"), {size, orient, folders, aot, desktop, types}, L""});
+    out.push_back({tr(L"Apps"), {size, orient, folders, aot, play, desktop, types}, L""});
 
     out.push_back(google_account_section());
 
