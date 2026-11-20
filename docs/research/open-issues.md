@@ -23,6 +23,10 @@ agents' work folders were `/opt/uip/il-work/<app>/`, gone with the container).
   Actions (`ci.yml` UI gate, `ui-sweep.yml`), not the local machine.
 - Win.apk stays light (`windows/README.md` "Footprint", CI's budget): one copy
   of every AOSP file per install, and a replaced Win.apk layer is deleted.
+- Decided (November 2026): an app that comes as a bundle (.apkm/.xapk/.apks)
+  is not kept whole in `library\` once installed: one copy of its APKs only.
+  Fonts: Hebrew and English (Latin) matter most; the CJK font (19 MB) leaves
+  the install, with a fallback for CJK text.
 - The owner reads Hebrew only: answers to the owner are in Hebrew, with no
   English words at all where avoidable (not even "CI", "PR" or file names).
 - Order agreed (November 2026): AOSP drawables and icons under the switch,
