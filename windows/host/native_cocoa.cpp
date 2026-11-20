@@ -1157,7 +1157,11 @@ void keep_tree_frame(const uint32_t* argb, int w, int h) {
 // lifecycle and frame, then the pixels for the window when it is the content.
 void gl_tick(JNIEnv* env, jlong view, Renderer& r, jobject callbacks, jmethodID changed, jmethodID draw,
              int w, int h) {
-    const bool ready = gl_frame_begin(view, w, h);
+    // Not while a producer of its own holds a window surface (guest_window_surface_held): its frames
+    // are the window's, and this view's pbuffer (made again at each size) and its read-back would
+    // put Direct3D work on the device its thread is drawing with. SDL's Tensy crashed in its
+    // glDrawArrays when its window rotated under it and this view's pbuffer was made again.
+    const bool ready = !guest_window_surface_held() && gl_frame_begin(view, w, h);
     if (r.announced_w != w || r.announced_h != h) {
         r.announced_w = w;
         r.announced_h = h;
