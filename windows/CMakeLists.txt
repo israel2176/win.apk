@@ -156,6 +156,11 @@ target_include_directories(winapk-aot-stamp-test PRIVATE include)
 add_executable(winapk-applink-test test/applink_match_test.cpp)
 target_include_directories(winapk-applink-test PRIVATE host)
 
+# The frame-time record (host/frame_times.h): percentiles and the line logged at exit. No
+# window. test/frame_times_test.cpp.
+add_executable(winapk-frame-times-test test/frame_times_test.cpp)
+target_include_directories(winapk-frame-times-test PRIVATE host)
+
 # The translation's crash guard (host/aot_guard.h) through the real crash path,
 # test/aot_guard_test.cpp. The DLL is its stand-in for a translation, and must
 # be next to it.

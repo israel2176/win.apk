@@ -537,7 +537,8 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
     private int m6SkipCount = 0;                          // skipped frames since the last heartbeat (diagnostic)
     private int m6DrawOnlyCount = 0;                      // draw-only (no relayout) frames since the last report (diagnostic)
 
-    // MACAPK_FRAME_PHASE_TRACE=1 (diagnostic, off by default; zero cost unset):
+    // MACAPK_FRAME_PHASE_TRACE=1 (diagnostic, off by default; unset it costs the
+    // six System.nanoTime() reads doFrame takes anyway for FrameTimes):
     // per-phase wall time of every PRESENTED frame, aggregated every 300 and
     // with an immediate line for any single frame over 33ms (two vsyncs -- the
     // "tab switch janks" shape). Added by the 2026-08-18 lag/smear lane so
@@ -933,9 +934,10 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
         }
         long n = ++drawFrameCount;
         if (ownerActivity != null && !ViewHost.get().isWindowRemoved(rootView)) sLastPresenter.put(ownerActivity, this);
-        // Phase-trace timestamps (all zero when the flag is off; assignments are
-        // grouped at the six fixed points named in the field comment above).
-        long pt0 = PHASE_TRACE ? System.nanoTime() : 0;
+        // Phase timestamps, at the six fixed points named in the field comment
+        // above. Taken on every frame: the frame-time record (FrameTimes, the
+        // `frame times` line at exit) reads three of them; the phase trace all.
+        long pt0 = System.nanoTime();
         long pt1 = 0, pt2 = 0, pt3 = 0, pt4 = 0, pt5 = 0;
         // v1.0.584 AGDK diagnostic (MACAPK_AGDK_TRACE): confirm the Canvas driver is
         // ticked for a native-EGL AGDK app (MCPE) so its per-frame dispatchOnGlobalLayout
@@ -995,7 +997,7 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
                 try { macapkPumpSnapshot(); } catch (Throwable ignored) {}
             }
         }
-        if (PHASE_TRACE) pt1 = System.nanoTime();   // pre = pump + probes + choreographer drive
+        pt1 = System.nanoTime();   // pre = pump + probes + choreographer drive
         if (rootView == null || surfaceW <= 0 || surfaceH <= 0) {
             if (n == 1 || n == 60 || n == 300 || (n % 600) == 0) {
                 NativeLog.i(TAG,
@@ -1404,7 +1406,7 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
         // straight to draw and reuse it -- mirroring AOSP performTraversals, which
         // gates performMeasure/performLayout on mLayoutRequested. `if (doLayout)
         // try {...}` keeps the existing try/catch as the guarded statement.
-        if (PHASE_TRACE) pt2 = System.nanoTime();   // prep = M6 gate + bitmap + clear + letterbox + attach
+        pt2 = System.nanoTime();   // prep = M6 gate + bitmap + clear + letterbox + attach
         if (doLayout) try {
             // v1.0.97: run an actual measure pass before layout. AOSP-shape
             // measure-then-layout cycle is what RecyclerView (and many
@@ -1824,7 +1826,7 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
                 centerNavItemContent(rootView);
         }
         catch (Throwable ignored) {}
-        if (PHASE_TRACE) pt3 = System.nanoTime();   // layout = measure + layout + RV pump (0-cost on draw-only)
+        pt3 = System.nanoTime();   // layout = measure + layout + RV pump (0-cost on draw-only)
         // v1.0.144: real fix lives in ComposeViewFallback.paint --
         // the threat-banner offset was a coordinate-frame bug in the
         // fallback's recursion (it double-counted rootView.getTop()
@@ -2129,7 +2131,7 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
             }
             return;
         }
-        if (PHASE_TRACE) pt4 = System.nanoTime();   // draw = VTO dispatch + rootView.draw + window overlays
+        pt4 = System.nanoTime();   // draw = VTO dispatch + rootView.draw + window overlays
         int sbBgUnder = 0;
         try {
             // One row is read (sampleRowDominant), so the live backing serves it
@@ -2150,7 +2152,7 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
         // generic across all themes via colorOnBackground.
         try { StatusBarDriver.paintSystemNavStrip(canvas, rootView, surfaceW, surfaceH); }
         catch (Throwable ignored) {}
-        if (PHASE_TRACE) pt5 = System.nanoTime();   // bar = status-bar sample + paint + nav strip
+        pt5 = System.nanoTime();   // bar = status-bar sample + paint + nav strip
         // Present fast path, step 1 (2026-09-25, P1.1 of
         // docs/canvas-present-cost-at-full-screen_2026-09-25.md): read the frame
         // bitmap's LIVE backing, not a copy. Bitmap.macapkArgbBuffer() bulk-
@@ -2188,6 +2190,7 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
         }
         int[] pixels = GfxBackend.get().liveArgbOrNull(bitmap);
         if (pixels == null) pixels = GfxBackend.get().argbBuffer(bitmap);
+        final long ptPixels = System.nanoTime();   // FrameTimes' `pixels`: the frame read out of the bitmap
         if (DAMAGE_VALIDATE && FRAMESPEED_DAMAGE) {
             macapkDamageValidate(pixels, bitmap.getWidth(), bitmap.getHeight(), presentPartial, partialRect);
         }
@@ -2213,7 +2216,7 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
                 // present bucket: every n%600 frame is also a heartbeat frame
                 // (600 is a multiple of 30), so it biased exactly the sparse
                 // heartbeat aggregates (~0.3-0.5 ms of Calculator's average).
-                final long ck0 = PHASE_TRACE ? System.nanoTime() : 0;
+                final long ck0 = System.nanoTime();
                 int nz = 0, opaque = 0, drawn = 0;
                 int clearArgb2 = clearArgb;
                 for (int p : pixels) {
@@ -2288,7 +2291,7 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
                         }
                     } catch (Throwable ignored) {}
                 }
-                if (PHASE_TRACE) ckNs = System.nanoTime() - ck0;
+                ckNs = System.nanoTime() - ck0;
             }
             // ---- ELIDE A PRESENT THAT PUBLISHES NOTHING -------------------
             //
@@ -2382,6 +2385,17 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
             // this traversal scheduled, and skipping it would leave the window
             // permanently dirty -- defeating the frame-skipping this elision
             // exists to help, and making pacing WORSE rather than better.
+            // The frame-time record: every frame that reached the present, in
+            // the phase trace's buckets (draw = pt3..pt4), with its present split
+            // in two: pixels (pt5..ptPixels, the frame read out of the bitmap)
+            // and present (the host's part, less the checkpoint block). Kept by
+            // the host and logged once at exit. The first M6_WARMUP_FRAMES vsyncs
+            // of a window are marked so the summary can leave start-up out.
+            {
+                final long ft6 = System.nanoTime();
+                FrameTimes.record(pt3 - pt2, pt4 - pt3, ptPixels - pt5, ft6 - ptPixels - ckNs,
+                                  ft6 - pt0 - ckNs, n <= M6_WARMUP_FRAMES);
+            }
             if (PHASE_TRACE) {
                 // present = the JNI hand-off + native premultiply/snapshot +
                 // CGImage build (the CALayer commit itself is async on the OS
