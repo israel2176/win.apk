@@ -169,7 +169,11 @@ public final class AospWindows {
         Services.register(Context.DISPLAY_SERVICE, IDisplayManager.class, new DisplayService());
         Services.register(Context.WINDOW_SERVICE, IWindowManager.class, new WindowManagerService());
         Services.register(Context.INPUT_METHOD_SERVICE, com.android.internal.view.IInputMethodManager.class,
-                new InputMethodService());
+                new ImeService());
+        Services.register(Context.ACCESSIBILITY_SERVICE, android.view.accessibility.IAccessibilityManager.class,
+                new AccessibilityService());
+        Services.register(Context.TEXT_SERVICES_MANAGER_SERVICE,
+                com.android.internal.textservice.ITextServicesManager.class, new TextServicesService());
         sNotifications = Services.register(Context.NOTIFICATION_SERVICE, android.app.INotificationManager.class,
                 new ToastService());
     }
@@ -211,22 +215,6 @@ public final class AospWindows {
         public int getDockedStackSide() { return -1; }
     }
 
-    /** IInputMethodManager: the IME service InputMethodManager asks for. No input method here yet
-     *  (V2 puts the host's IME behind it): no methods, no subtypes, no session to bind. */
-    public static final class InputMethodService {
-        public java.util.List<android.view.inputmethod.InputMethodInfo> getInputMethodList(int userId,
-                int directBootAwareness) {
-            return new java.util.ArrayList<>();
-        }
-        public java.util.List<android.view.inputmethod.InputMethodInfo> getEnabledInputMethodList(int userId) {
-            return new java.util.ArrayList<>();
-        }
-        public java.util.List<android.view.inputmethod.InputMethodSubtype> getEnabledInputMethodSubtypeList(
-                String imiId, boolean allowsImplicitlyEnabledSubtypes, int userId) {
-            return new java.util.ArrayList<>();
-        }
-    }
-
     // ---- a window's session ------------------------------------------------------------------
 
     static final class Win {
@@ -238,6 +226,8 @@ public final class AospWindows {
         int seq;
         boolean visible;
         int requestedVisibleTypes = android.view.WindowInsets.Type.defaultVisible();
+        /** The channel addToDisplay handed out: its receiver is the window's input (InputRouter). */
+        InputChannel inputChannel;
         /** The last frame its Surface posted (the Surface's own bitmap), for the compositor. */
         android.graphics.Bitmap content;
 
@@ -270,6 +260,7 @@ public final class AospWindows {
             w.attrs = new WindowManager.LayoutParams();
             w.attrs.copyFrom(attrs);
             w.requestedVisibleTypes = requestedVisibleTypes;
+            w.inputChannel = outInputChannel;
             sWindows.put(window.asBinder(), w);
             System.err.println(TAG + "window added: " + w.attrs.getTitle() + " type=" + w.attrs.type
                     + " " + w.attrs.width + "x" + w.attrs.height);

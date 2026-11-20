@@ -57,7 +57,8 @@ far only by the UI probe (all 2104 lines equal to the oracle, from 146 with the
 resources switch alone) and the Gallery and Sudoku sweeps (279 -> 46 and
 249 -> 50 lines, the rest stack-trace naming and one layout the oracle cannot
 inflate): **not yet re-checked in the apps each item was found in**, and with
-the switch on, input is not there yet (dialogs, toasts and the system bars are, V1's second part). Items 10-14
+the switch on, dialogs, toasts and the system bars (V1's second part) and input and the
+host's IME (V2) are there. Items 10-14
 (text) are unchanged by it; 16 is the resources switch's.
 
 | # | What | Where today | Found in | Layer |
@@ -482,9 +483,21 @@ the switch on, input is not there yet (dialogs, toasts and the system bars are, 
   `InsetsState` sources (only with `MACAPK_SYSTEM_BARS=1`, Win.apk painting
   their glyphs); probe, Gallery and Sudoku byte-identical to the first part
   with the switch on and to the base with it off; Open Sudoku's dialog shows
-  as off. Next: GL `SurfaceView`s as layers, popups and menus (need input),
-  resize and several windows, then V2 (input, IME, accessibility) and V3
-  (HWUI). Not run: CDS with the switch, real Windows, the smoke apps.
+  as off. V2 done ("V2 as built"): the host's touch, mouse, wheel, keys and
+  gamepad made as Android's InputReader makes them and dispatched to each
+  window's own `ViewRootImpl` (dialogs touch-modal, `ACTION_OUTSIDE` to
+  popups, keys to the focused window), an in-process `IInputMethodManager` that
+  binds the focused editor so Windows' IME composes and commits into it, AOSP's
+  own key listeners (`android.text.method`), `IAccessibilityManager` as with no
+  service on, `ITextServicesManager` with no spell checker. In Sudoku under
+  Wine, scripted: the dialog's OK, the overflow menu, a dialog's `EditText`
+  typed into with keys and with a Hebrew composition, a `ListPreference`, BACK;
+  probe, Gallery and Sudoku byte-identical to V1 with the switch on and off.
+  Seen and not chased: Sudoku's settings after picking Dark mode come back with
+  light text on a white window background. Next: GL `SurfaceView`s as layers,
+  spinners and toasts seen in an app, resize and several windows, an on-screen
+  keyboard and a UI Automation bridge, then V3 (HWUI). Not run: CDS with the
+  switch, real Windows, the smoke apps (another agent's).
 - **Screens checks not finished**: Bank Leumi (stopped by the usage limit
   before its boot), Pango and Paybox (not on APKPure; the owner offered their
   other repository or a Play download).

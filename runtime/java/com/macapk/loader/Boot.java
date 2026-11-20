@@ -2755,7 +2755,7 @@ public final class Boot {
         ActivityHost.init(application, appCl);
         // Touch dispatcher: Cocoa mouse events route here, then to the
         // active Activity's dispatchTouchEvent.
-        NativeCocoa.registerTouchDispatcher(new TouchDispatcher());
+        NativeCocoa.registerTouchDispatcher(com.macapk.loader.view.ViewHost.get().newTouchDispatcher());
         // Host game controllers (GameController.framework) as Android gamepads,
         // delivered through the same focused-window path (MACAPK_GAMEPAD,
         // default ON; docs/host-game-controllers_2026-10-02.md).

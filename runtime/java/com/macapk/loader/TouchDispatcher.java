@@ -43,7 +43,9 @@ import java.lang.reflect.Method;
 import java.util.concurrent.atomic.AtomicInteger;
 import com.macapk.loader.view.ViewHost;
 
-public final class TouchDispatcher {
+// Not final: with AOSP's views (WINAPK_AOSP_VIEWS=1) the host's entries are
+// com.winapk.aospviews.AospInput's, a subclass (ViewHost.newTouchDispatcher).
+public class TouchDispatcher {
 
     /** The registered dispatcher.
      *
@@ -1108,6 +1110,30 @@ public final class TouchDispatcher {
      *  never takes while a field holds input. Thread choice as injectText.
      *  Added 2026-09-29 (lane text-input) to commit a typed NumberPicker value
      *  headlessly. */
+    /** `imetext <text>`: the text as a Windows input method composes and commits it, through the
+     *  host's own entries in the order win32_window.cpp calls them (WM_IME_COMPOSITION): the
+     *  composition grows a character at a time (GCS_COMPSTR, dispatchHostComposingText), the
+     *  result takes its place (GCS_RESULTSTR, dispatchHostText), an empty composition follows,
+     *  then the composition ends (WM_IME_ENDCOMPOSITION, null). With no editor that shows a
+     *  composition itself (hostImeInline false) the host lets Windows draw it and the result
+     *  arrives as characters: that is `text`. */
+    public static void macapkInjectImeText(final String text) throws InterruptedException {
+        final TouchDispatcher d = macapkInstance();
+        if (d == null) { NativeLog.w(TAG, "injectImeText: no dispatcher"); return; }
+        if (!d.hostImeInline()) {
+            NativeLog.w(TAG, "injectImeText: no editor shows a composition; typed as characters");
+            macapkInjectText(text);
+            return;
+        }
+        for (int i = 1; i <= text.length(); i++) {
+            d.dispatchHostComposingText(text.substring(0, i));
+            Thread.sleep(30L);
+        }
+        d.dispatchHostText(text);
+        d.dispatchHostComposingText("");
+        d.dispatchHostComposingText(null);
+    }
+
     public static void macapkInjectHostKey(final int keyCode) {
         final TouchDispatcher d = macapkInstance();
         if (d == null) { NativeLog.w(TAG, "injectHostKey: no dispatcher"); return; }
@@ -1430,6 +1456,7 @@ public final class TouchDispatcher {
         if (v.equals("hostkeydown") && n >= 2) return "hostkeydown";
         if (v.equals("hostkeyup") && n >= 2) return "hostkeyup";
         if (v.equals("text") && n >= 2) return "text";
+        if (v.equals("imetext") && n >= 2) return "imetext";
         if (v.equals("sleep") && n >= 2) return "sleep";
         // Host trackpad (cocoa_bridge.mm CocoaDebugTrackpad): the NSTouch frame /
         // magnify body a real trackpad runs, entered below the NSEvent decode.
@@ -1468,6 +1495,9 @@ public final class TouchDispatcher {
     static void macapkDispatchInjectLine(String ln, InputRecorder.Sink sink) throws InterruptedException {
         final String[] p = ln.split("\\s+");
         final String r = macapkInjectRoute(p);
+        // With AOSP's views the view host delivers the input verbs itself (its windows' own
+        // input path); it answers false for the rest, and Win.apk's always does.
+        if (r != null && ViewHost.get().injectInput(r, p, ln)) return;
         if (r == null) {
             NativeLog.w(TAG, "inject-driver: ignored '" + KeyLogPolicy.injectLine(ln) + "' (unknown verb or too few arguments)");
             return;
@@ -1516,6 +1546,9 @@ public final class TouchDispatcher {
                 // Everything after "text " is the literal string, spaces
                 // included -- so split on the FIRST space only, not on every space.
                 macapkInjectText(ln.substring(ln.indexOf(' ') + 1));
+                break;
+            case "imetext":
+                macapkInjectImeText(ln.substring(ln.indexOf(' ') + 1));
                 break;
             case "sleep":
                 Thread.sleep(Long.parseLong(p[1]));
