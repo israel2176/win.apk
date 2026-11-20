@@ -109,8 +109,8 @@ echo "[aosp-views]   $(wc -l < "$WORK/take.txt") classes of android.view, androi
 # an error if the code that makes it runs (HotSpot links lazily); LinkScan lists them.
 ALLOW='^(com/google/android/collect/|android/app/PropertyInvalidatedCache|android/app/(INotificationManager|ITransientNotification|ITransientNotificationCallback)([$]|$)|android/animation/(AnimationHandler|RevealAnimator)|android/view/|android/widget/|android/window/|com/android/internal/|android/util/|android/text/|android/os/|android/hardware/display/|android/hardware/input/|android/hardware/graphics/common/|android/accessibilityservice/|android/content/|android/graphics/|android/sysprop/|android/service/autofill/|android/service/textclassifier/)'
 DENY='^(com/android/internal/(telephony|app|os/(Zygote|RuntimeInit)|content/om)|android/content/(pm|res)/|android/os/(Parcel|Binder|Looper|MessageQueue|Handler|Build|SystemProperties|Trace|Process)[$.])'
-unzip -Z1 "$RES" '*.class' > "$WORK/aosp-jars.txt"
-unzip -Z1 "$GFX" '*.class' >> "$WORK/aosp-jars.txt"
+# The other AOSP jars' classes (grep, not an unzip pattern: MSYS2's unzip matched no `*.class`).
+{ unzip -Z1 "$RES"; unzip -Z1 "$GFX"; } | tr -d '\r' | grep '\.class$' > "$WORK/aosp-jars.txt"
 for round in $(seq 1 30); do
     # A nested class goes with its outer one: taken when the outer is here or one of AOSP's in
     # aosp-resources.jar / aosp-graphics.jar (the same android-all 14: FastPrintWriter is the
