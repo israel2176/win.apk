@@ -108,15 +108,18 @@ the app); if it is still there, it is a bug in what replaced it.
   the same trace found `Process.getGidForName("")` (0, Android -1) and
   `ExpandableListView.getPackedPositionForChild` (type in bit 62, Android 63)
   derailing `AFa1jSDK`'s payload. All three fixed (`FrameworkStubsTest`); with
-  them `AFi1hSDK.getCurrencyIso4217Code` returns `AFi1fSDKT8615`. Bit to check
-  again in a real run.
+  them `AFi1hSDK.getCurrencyIso4217Code` returns `AFi1fSDKT8615`. A headless
+  boot of bit under Wine with these jars: `AFi1fSDKT8615` loaded and, for the
+  first time, AppsFlyer's second loader `AFa1cSDKSS` and its eleven classes
+  (none in the November screens run).
 - ~~**`HucsConnection.getRequestProperties`** returns the JDK's map with a
   null-key status line~~ Fixed: the JDK's map, after an error answer and
   `disconnect()`, held its request line as a key with a null value; the
   request side now answers as OkHttp's (`HucFollow.requestProperties`:
   `IllegalStateException` once sent, the app's fields only;
-  `windows/test/java/com/macapk/net/HttpRequestPropertiesTest.java`). Bit to
-  check again (Dynatrace's NPE in its log).
+  `windows/test/java/com/macapk/net/HttpRequestPropertiesTest.java`). In a
+  headless boot of bit under Wine Dynatrace now gets the exception, logs "can't
+  calculate request size" and goes on, as on a phone.
 - **No `icu.dll`, a crash: fixed (both halves), Leumi to check again.**
   `HostIcu` now answers from Java when the host has no ICU (`IcuFallback`:
   the locale's `java.text` number, CLDR root's unit symbols and territory
