@@ -105,7 +105,7 @@ echo "[aosp-views]   $(wc -l < "$WORK/take.txt") classes of android.view, androi
 # of). Not android.app, android.animation, android.content.pm/res, ICU, media or telephony, nor
 # android.os's core (Parcel, Binder, Looper...): Win.apk's own. A reference left unresolved is only
 # an error if the code that makes it runs (HotSpot links lazily); LinkScan lists them.
-ALLOW='^(com/google/android/collect/|android/app/PropertyInvalidatedCache|android/app/(INotificationManager|ITransientNotification|ITransientNotificationCallback)([$]|$)|android/animation/AnimationHandler|android/view/|android/widget/|android/window/|com/android/internal/|android/util/|android/text/|android/os/|android/hardware/display/|android/hardware/input/|android/accessibilityservice/|android/content/|android/graphics/|android/sysprop/|android/service/autofill/|android/service/textclassifier/)'
+ALLOW='^(com/google/android/collect/|android/app/PropertyInvalidatedCache|android/app/(INotificationManager|ITransientNotification|ITransientNotificationCallback)([$]|$)|android/animation/AnimationHandler|android/view/|android/widget/|android/window/|com/android/internal/|android/util/|android/text/|android/os/|android/hardware/display/|android/hardware/input/|android/hardware/graphics/common/|android/accessibilityservice/|android/content/|android/graphics/|android/sysprop/|android/service/autofill/|android/service/textclassifier/)'
 DENY='^(com/android/internal/(telephony|app|os/(Zygote|RuntimeInit)|content/om)|android/content/(pm|res)/|android/os/(Parcel|Binder|Looper|MessageQueue|Handler|Build|SystemProperties|Trace|Process)[$.])'
 for round in $(seq 1 30); do
     (cd "$CLASSES" && find . -name '*.class' | sed 's#^[.]/##') > "$WORK/have.txt"

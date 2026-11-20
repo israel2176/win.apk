@@ -140,6 +140,11 @@ public final class AospViewHost implements ViewHost {
                 return new TextClassificationManager(context);
             case Context.TEXT_SERVICES_MANAGER_SERVICE:
                 return newTextServicesManager(context);
+            case Context.AUTOFILL_MANAGER_SERVICE:
+                // SystemServiceRegistry: `new AutofillManager(ctx.getOuterContext(), service)` with the
+                // autofill binder, null on a device with no autofill service, which the manager
+                // answers itself (disabled). Compose's AndroidComposeView requires the manager.
+                return new android.view.autofill.AutofillManager(context, null);
             default:
                 return null;
         }
