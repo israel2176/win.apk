@@ -187,11 +187,15 @@ the app); if it is still there, it is a bug in what replaced it.
   check, then past the consent sheet. (The Hermes "Maximum call stack size
   exceeded (native stack depth)" that left it blank before was the arm64
   guest-stack bug, fixed in 58c443a: it hit Flutter and Hermes alike.)
-- **Installer of record.** Bit and Bank Hapoalim stop at "reinstall from the
-  store" because `getInstallSourceInfo()` names no store (correct for a
-  sideloaded APK, as on Android). An idea, not decided: record
-  `com.android.vending` for apps installed from the launcher's Google Play
-  panel.
+- **Installer of record: decided and done.** The owner's decision: Google
+  Play is reported as the installer of every app the user installs, as
+  `adb install -i com.android.vending` does, unless a real installer is
+  recorded; Settings > Apps > "Report Google Play as the installer"
+  (`PlayInstaller`, on by default) turns it off (`InstallerOfRecord.reported`,
+  `InstallerOfRecordTest` in CI). Check again on a run with real network:
+  whether bit and Bank Hapoalim get past their splash (the sandbox's firewall
+  stops them at "data not loaded"), and whether an app checks the initiating
+  installer's certificate against Play's real one.
 - **Bank Hapoalim shows its reinstall dialog three times** (three window
   backgrounds stacked); not checked whether Android does too.
 - **Cal's "error loading the app" page**: the KeyManagerFactory "X509" fix

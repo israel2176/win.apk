@@ -570,6 +570,19 @@ jobs:
           MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/applinks-test)" \
             com.macapk.loader.AppLinksTest "$(cygpath -w "$RUNNER_TEMP/applinks")" | tee applinks-test.log
           grep -q "ALL PASSED" applinks-test.log
+      - name: Run the installer of record test
+        run: |
+          # com.macapk.loader.InstallerOfRecord: Google Play reported as the
+          # installer of an app the user installed while Settings > Apps >
+          # "Report Google Play as the installer" (WINAPK_PLAY_INSTALLER) is on,
+          # nothing when off, a real record over both; PackageManager's
+          # getInstallerPackageName and getInstallSourceInfo give one answer.
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          cp="$(cygpath -w stage/lib/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          "$JAVA_HOME/bin/javac" -cp "$cp" -d build/installer-test windows/test/java/com/macapk/loader/InstallerOfRecordTest.java
+          MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/installer-test)" \
+            com.macapk.loader.InstallerOfRecordTest "$(cygpath -w "$RUNNER_TEMP/installer")" | tee installer-test.log
+          grep -q "ALL PASSED" installer-test.log
       - name: Run the scan record test
         run: |
           # android.bluetooth.le.ScanRecord's parser over the advertising bytes

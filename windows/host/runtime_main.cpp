@@ -131,6 +131,15 @@ bool google_services_setting() {
            value != 0;
 }
 
+// HKCU\Software\Win.apk PlayInstaller (absent = 1): the launcher's switch
+// Settings > Apps > "Report Google Play as the installer".
+bool play_installer_setting() {
+    DWORD value = 1, size = sizeof value;
+    return RegGetValueW(HKEY_CURRENT_USER, L"Software\\Win.apk", L"PlayInstaller", RRF_RT_REG_DWORD, nullptr,
+                        &value, &size) != ERROR_SUCCESS ||
+           value != 0;
+}
+
 fs::path exe_dir() {
     wchar_t buf[MAX_PATH * 4];
     const DWORD n = GetModuleFileNameW(nullptr, buf, MAX_PATH * 4);
@@ -2296,6 +2305,11 @@ int wmain(int argc, wchar_t** argv) {
         // MACAPK_BROKER, when set, wins either way.
         if (env_var(L"MACAPK_BROKER").empty() && google_services_setting())
             SetEnvironmentVariableW(L"MACAPK_BROKER", L"1");
+        // Settings > Apps > "Report Google Play as the installer" (PlayInstaller, absent = 1): an app the
+        // user installed names Google Play as its installer (InstallerOfRecord.reported). Set either way
+        // so the Java side reads one variable; WINAPK_PLAY_INSTALLER, when set, wins.
+        if (env_var(L"WINAPK_PLAY_INSTALLER").empty())
+            SetEnvironmentVariableW(L"WINAPK_PLAY_INSTALLER", play_installer_setting() ? L"1" : L"0");
     }
 
     // --system: the broker. One per user session: a second one exits at once.
