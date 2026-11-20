@@ -122,7 +122,10 @@ mkdir -p "$WORK/gen"
 # lacks, its call goes to a Win.apk method of the same signature (windows/java/aosp_gfx, below;
 # AospCallRedirect.java says how): Font$Builder reads a font the APK holds compressed into a direct
 # buffer's array(); the library has no Typeface.nativeRegisterLocaleList (Typeface's static initializer
-# calls it for the families of /system/etc/fonts.xml) and no nPunchHole (SurfaceView's punchHole); AdaptiveIconDrawable reads its mask
+# calls it for the families of /system/etc/fonts.xml), no nPunchHole (SurfaceView's punchHole) and no
+# Bitmap.nativeHasGainmap / nativeExtractGainmap / nativeSetGainmap (API 34's HDR gain maps:
+# createScaledBitmap and every createBitmap with a matrix ask for one, BitmapFactory clears an inBitmap's);
+# AdaptiveIconDrawable reads its mask
 # through the Application, which the app's icon at start is built before (IconMaskThread).
 echo "[aosp-gfx] calls redirected to Win.apk's"
 "$JAVA" "$(native_path "$HERE/AospCallRedirect.java")" "$(native_path "$CLASSES")" 'android/graphics/fonts/Font$Builder' \
@@ -137,6 +140,13 @@ for canvas in android/graphics/BaseCanvas android/graphics/BaseRecordingCanvas; 
 done
 "$JAVA" "$(native_path "$HERE/AospCallRedirect.java")" "$(native_path "$CLASSES")" android/graphics/Typeface \
     android/graphics/Typeface nativeRegisterLocaleList '(Ljava/lang/String;)V' com/winapk/aospgfx/MissingNatives
+"$JAVA" "$(native_path "$HERE/AospCallRedirect.java")" "$(native_path "$CLASSES")" android/graphics/Bitmap \
+    android/graphics/Bitmap nativeHasGainmap '(J)Z' com/winapk/aospgfx/MissingNatives \
+    nativeExtractGainmap '(J)Landroid/graphics/Gainmap;' nativeSetGainmap '(JJ)V'
+# The native runtime has no HEIF codec (a device's comes from its media stack): BitmapFactory's and
+# ImageDecoder's decoding natives go through HostImageDecode, which calls AOSP's and, when that fails on a
+# HEIF or AVIF file, decodes it with the host's WIC (NativeImageCodec), as Java2D's graphics did.
+"$HERE/redirect_decoders.sh" "$JAVA" "$(native_path "$CLASSES")"
 
 echo "[aosp-gfx] Win.apk's stand-ins (windows/java/aosp_gfx)"
 { find "$HERE/../java/aosp_gfx" -name '*.java'; echo "$WORK/gen/R.java"; } | sort |

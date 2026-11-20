@@ -41,7 +41,7 @@ this repository.
 | `launcher/` | `Win.apk.exe`, the app library, the install helper and the permission dialogs (`launcher_main.cpp`, `launcher.rc`, the icon), and its state machines, each a header the unit test drives (`app_runs.h`: an app's run; `installs.h`: an install; `updates.h`: the update check and download) |
 | `java/` | Windows-only Java: `com.winapk.tools.AppInstall` and `AppMeta` (`winapk-tools.jar`), `java_base_patch/` (an overlay for `java.base`), `aosp_gfx/` (the stand-ins in `aosp-graphics.jar`: ART's, Robolectric's, and an `android.icu.text.Bidi` on `java.text.Bidi`), and `winapk-framework.classlist` (the classes of the framework archive, `host/cds.h`) |
 | `tools/` | `winapk-elfrun` (the loader test runner), `winapk-jvm-run` (the real-JVM test), `winapk-aot` (`arm64_aot_main.cpp`), and the generators `gen_jni_slots.py`, `gen_gl_stubs.py`, `gen_icon.py` |
-| `scripts/` | `build_java.sh`, `build_framework_res.sh`, `build_aosp_gfx.sh` (AOSP graphics' files), `fetch_angle.sh`, `fetch_webview2.sh`, `stage_clang.sh`, `stage_runtime.sh`, `bake_jre.sh` (the JRE Win.apk ships), `merge_classlists.py` |
+| `scripts/` | `build_java.sh`, `build_framework_res.sh`, `build_aosp_gfx.sh` (AOSP graphics' files; `redirect_decoders.sh`, its HEIF/AVIF step), `fetch_angle.sh`, `fetch_webview2.sh`, `stage_clang.sh`, `stage_runtime.sh`, `bake_jre.sh` (the JRE Win.apk ships), `merge_classlists.py` |
 | `test/` | The unit tests (`*_test.cpp`), the guest test libraries (`guest/`, built with plain clang + lld, no NDK), the Java tests (`java/`), the Wine runners (`run_*_wine.sh`), the compatibility sweep and the screens crawl (`compat/`) |
 | `package/` | The installer (`winapk.iss`, Inno Setup), `README.txt` and `RELEASE_NOTES.md` shipped with a release |
 | `cmake/`, `compat/`, `third_party/` | The Linux cross toolchain file, the CMake steps that cut the GL and Bitmap bridges out of upstream's `native_methods.cpp` and `bionic_shim.cpp`, a CoreFoundation shim for `native_sqlite.cpp`, the Khronos headers |
@@ -287,6 +287,7 @@ Every test is a program built by CMake; `ci.yml` runs each of them on
 | `winapk-binder-test <classpath> com.macapk.loader.BinderTransportTest` | `host/binder_win.cpp` between real JVMs in three processes (`test/java/com/macapk/loader/BinderTransportTest.java`): transact, the OS calling pid and the receiver-derived uid, oneway order, a nested callback, binder identity both ways, a Messenger and its replyTo with the sender's uid in `Message.sendingUid` and a PendingIntent's creator uid, fds both ways, death notification; then the system broker's checks: a process that is no installed app, or that claims another package, is refused, android:exported, the package uid; then the account service's Google accounts (`accounts` child, its own GmsStore folder): an account signed in or out by another process after the service started is mirrored into or removed from the accounts table, asked or not, with the master token as password and `GoogleUserId`, and a row it did not mirror stays |
 | `winapk-binder-test <classpath> FileShareDeleteTest` | java.io's opens as `host/java_io_open.cpp` binds them (`test/java/FileShareDeleteTest.java`, with the java.base overlay from `WINAPK_TEST_JAVA_BASE_PATCH`): a file renamed or deleted while a stream has it open, and renamed over a file a stream has open, as on Android; append, truncate, the `FileNotFoundException` text and the rest as the JDK has them |
 | `test/aospgfx/run.sh <deps> <out>` (CI job "AOSP graphics") | AOSP 14's own `android.graphics` / `android.text` (android-all, API 34) drawing through Robolectric's native runtime (Skia raster, minikin, HarfBuzz, FreeType, ICU, libpng: `robolectric-nativeruntime.dll`) inside `winapk-runtime.exe --java-main` on the staged JRE, bound by `test/aospgfx/redirect_agent.c`: more than 600 natives bound, the four API 34 signature adapters; rects, a linear gradient, a stroked cubic, `"Hello Skia"` + Hebrew (a font for Hebrew in the fallback chain, both runs inked), a PNG decoded by libpng and drawn scaled, a `BitmapShader` circle, `saveLayerAlpha`, pixels checked; `StaticLayout` lays the mixed line out with the Hebrew run right to left; the picture written as PNG and read back pixel for pixel; then a 1080x2340 list frame timed (a `RESULT` line). Artifact `aosp-graphics`: `aospgfx.png`, `aospgfx-bench.png`, the logs. See [AOSP graphics](#aosp-graphics-milestone-1) |
+| `test/heif/run.sh <deps> <out>` (Linux, by hand; not in CI) | HEIF and AVIF through AOSP 14's `BitmapFactory` and `ImageDecoder` on the native runtime's `.so`, redirected to `HostImageDecode` as the build does, with libheif's `heif-convert` for WIC (`libheif-examples`, `libheif-plugin-libde265`, `libheif-plugin-dav1d`): the boxes (brand, `ispe`/`clap` size, `irot`), the turns and the sampling; a PNG still AOSP's own (and an app's mark and reset around a decode); a HEIC as bytes, a stream, bounds only (nothing decoded), sample size 2, `RGB_565`, density scaling, into an `inBitmap`, its `irot` 270 kept by `BitmapFactory` and turned upright by `ImageDecoder` (a buffer, a stream with a target size, a byte array cropped and post-processed), an AVIF; run three times: a decoder that turns by `irot`, one that does not, and none (null, `DecodeException`). Fixtures: 64x48 pictures made with `heif-enc` for the test |
 | Headless boot, install, class-data sharing, window boot, service host, GMS CLI, system broker (CI steps) | The staged runtime boots the F-Droid Sudoku APK headless (30 frames); `--install-only` writes its `icon.png` on AOSP's graphics; on the staged JRE, a first start records its classes and starts the framework archive's dump, and the next start maps it (`class-data sharing ON`), as does a `--gms status` after it (the same `framework-aosp-` archive); and in a window with a resize (`WINAPK_TEST_RESIZE=400x600`); started as a service host (`MACAPK_SERVICE_HOST=1`) and then opened, the open replaces the headless process and draws; `--gms selftest` and `--gms status` pass; the system broker (`--system`) starts serving; each of these logs `AOSP graphics: on` and the DLL loaded; `--verify-apk` answers 4 for a test-signed APK, 3 for an unsigned one and 1 for a file that is no app |
 
 The guest libraries are built with plain clang + lld (`test/build_guest.sh`,
@@ -487,8 +488,10 @@ before these changes.
   `scripts/AospCallRedirect.java`, below), `bin/robolectric-nativeruntime.dll` (12 MB: its COFF
   `com.winapk.aospgfx.FontBuffers`, and the calls to natives the library
   lacks (`BaseCanvas`/`BaseRecordingCanvas.nPunchHole`,
-  `Typeface.nativeRegisterLocaleList`) to `MissingNatives`,
-  `scripts/AospCallRedirect.java`; `scripts/AospAddMethods.java` gives AOSP
+  `Typeface.nativeRegisterLocaleList`, `Bitmap`'s gain map natives) to
+  `MissingNatives`, and `BitmapFactory`'s and `ImageDecoder`'s decoding
+  natives to `HostImageDecode` (HEIF and AVIF, below,
+  `scripts/redirect_decoders.sh`), `scripts/AospCallRedirect.java`; `scripts/AospAddMethods.java` gives AOSP
   14's classes the API 35 methods apps call and the members Win.apk's
   framework calls, `Api35` and `FrameworkMembers`, below), `bin/robolectric-nativeruntime.dll` (12 MB: its COFF
   symbol table, 3.3 MB that nothing reads, stripped with LLVM's strip),
@@ -661,6 +664,43 @@ before these changes.
       by the frame. `MissingNatives.nPunchHole` draws what hwui's
       `SkiaCanvas::punchHole` does, a black round rect at the alpha in
       `DST_OUT`, with `BaseCanvas`'s native `drawRoundRect`.
+    - Bitmap's HDR gain maps (API 34): the library predates them, so
+      `Bitmap.hasGainmap` threw `UnsatisfiedLinkError`, and with it
+      `createScaledBitmap`, every `createBitmap(source, ..., matrix, filter)`
+      and any `BitmapFactory` decode into an `inBitmap` (Options clears its
+      gain map first). `MissingNatives` answers none (`nativeHasGainmap`
+      false, `nativeExtractGainmap` null, `nativeSetGainmap` nothing).
+    - HEIF and AVIF pictures (a phone's photos): the library has no HEIF
+      codec (a device's comes from its media stack), so AOSP's
+      `BitmapFactory` gave null and `ImageDecoder` threw, where the Java2D
+      path handed the file to the host's `NativeImageCodec` (WIC: HEIF with
+      Windows' HEIF Image Extensions, AVIF with its AV1 Video Extension).
+      `BitmapFactory`'s `nativeDecodeByteArray`/`Stream`/`FileDescriptor`
+      and `ImageDecoder`'s `nCreate` (byte array, buffer, stream,
+      descriptor), `nDecodeBitmap`, `nGetSampledSize`, `nGetPadding`,
+      `nClose`, `nGetMimeType` and `nGetColorSpace` go to
+      `com.winapk.aospgfx.HostImageDecode` (`scripts/redirect_decoders.sh`),
+      which calls AOSP's native first; only when that fails on a file whose
+      `ftyp` brand is HEIF's (`heic`, `heix`, `hevc`, `mif1`...) or AVIF's
+      (`HeifContainer`) does `NativeImageCodec` decode it, and a `Bitmap` is
+      built from its pixels as Android's decoders would: `BitmapFactory`
+      with `inJustDecodeBounds` (the size from `ispe`/`clap`, nothing
+      decoded), `inSampleSize` (Skia's pixels), density scaling,
+      `inPreferredConfig` (`RGB_565` when opaque, `RGBA_F16`, else
+      `ARGB_8888`), `inMutable`, `inPremultiplied`, `inBitmap`,
+      `outMimeType` `image/heif` / `image/avif`, the picture as stored;
+      `ImageDecoder` turned upright by the file's `irot`/`imir`, its target
+      size, crop, post-processor and mutability, a decoder whose native
+      pointer is negative (the key of the decoded pixels; never animated).
+      A stream or a descriptor has its first 64 bytes read ahead (a stream
+      read by AOSP's decoder cannot be read again), a byte array or buffer
+      is looked at only after AOSP's decoder failed; every other format costs
+      that read-ahead at most. With no decoder in Windows the result is
+      Android's for a format it cannot read (null, AOSP's `DecodeException`)
+      and one log line, `HostImageDecode: HEIF picture: Windows has no
+      decoder for it ...`. Checked by `test/heif/run.sh` (Linux) and under
+      Wine (no HEIF in Wine's WIC: null, no crash); not on Windows with the
+      extension.
     - `/system/etc/fonts.xml`: AOSP's `Typeface` static initializer reads it
       (and preloads fonts) before `materializeSystemFonts` had mapped
       `/system/fonts`, so every run logged `FileNotFoundException` and the

@@ -55,6 +55,12 @@ ARM) ואז מריץ אותו, וחלק מהסורקים לא אוהבים את 
 Microsoft. שידור שהשמע שלו Opus, ‏Vorbis או FLAC מתנגן בלי קול באפליקציות
 ExoPlayer; וידאו מהקוד המקורי של אפליקציה (`AMediaCodec`) עוד לא נתמך.
 
+**תמונה מטלפון (HEIC) או תמונת AVIF לא מוצגת.** ‏Windows הוא שמפענח אותן:
+‏HEIC/HEIF צריך את HEIF Image Extensions של Microsoft, ו-AVIF את AV1 Video
+Extension, שתיהן מחנות Microsoft. בלעדיהן האפליקציה מקבלת תשובה שאי אפשר
+לקרוא את התמונה, וביומן כתוב `HostImageDecode: HEIF picture: Windows has no
+decoder for it`.
+
 **דפי אינטרנט בתוך האפליקציה ריקים, או שהכניסה עם Google לא נפתחת.** שניהם
 צריכים את Microsoft Edge WebView2 Runtime. אם הוא חסר במחשב, מתקינים אותו
 מ-Microsoft.

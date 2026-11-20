@@ -3,6 +3,7 @@ package com.winapk.aospgfx;
 import android.graphics.BaseCanvas;
 import android.graphics.BlendMode;
 import android.graphics.Color;
+import android.graphics.Gainmap;
 import android.graphics.Paint;
 
 import java.lang.reflect.Method;
@@ -23,6 +24,23 @@ public final class MissingNatives {
      * is the runtime's (AospGfx.materializeSystemFonts).
      */
     public static void nativeRegisterLocaleList(String locales) {}
+
+    /**
+     * Bitmap's HDR gain map (API 34): the library predates it, so Bitmap.hasGainmap threw, and with it
+     * Bitmap.createBitmap(source, x, y, width, height, matrix, filter) and createScaledBitmap, which ask
+     * the source for one. No bitmap here has one (none of the decoders makes one).
+     */
+    public static boolean nativeHasGainmap(long bitmap) { return false; }
+
+    /** Bitmap.getGainmap: none, as {@link #nativeHasGainmap} says. */
+    public static Gainmap nativeExtractGainmap(long bitmap) { return null; }
+
+    /**
+     * Bitmap.setGainmap: BitmapFactory clears the gain map of every Options.inBitmap before decoding into
+     * it (Options.nativeInBitmap), so decoding into a reused bitmap (Glide's pool) threw. There is none
+     * to clear, nor any to set (a Gainmap needs the library's natives too).
+     */
+    public static void nativeSetGainmap(long bitmap, long gainmap) {}
 
     private static Method drawRoundRect;
     private static final ThreadLocal<Paint> PAINT = ThreadLocal.withInitial(() -> {

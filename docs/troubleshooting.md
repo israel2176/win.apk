@@ -54,6 +54,12 @@ with AAC always; HEVC, VP9 and AV1 only with Microsoft's codec packs from the
 Microsoft Store. A stream whose audio is Opus, Vorbis or FLAC plays silent in an
 ExoPlayer app; video from an app's native code (`AMediaCodec`) is not there yet.
 
+**A phone photo (HEIC) or an AVIF picture does not show.** Windows decodes
+them: HEIC/HEIF needs Microsoft's HEIF Image Extensions, AVIF its AV1 Video
+Extension, both from the Microsoft Store. Without them the app is told the
+picture cannot be read, and its log says `HostImageDecode: HEIF picture:
+Windows has no decoder for it`.
+
 **An app cannot record, or its recording is empty.** Apps record sound as AAC
 and video as H.264 into MP4 files, with Windows' own encoders; a few Windows
 editions (N editions without the Media Feature Pack, some Server installs) have
