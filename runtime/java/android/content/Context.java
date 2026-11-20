@@ -368,19 +368,21 @@ public abstract class Context {
      *  recursion (see createConfigurationContext doc above), and
      *  getApplicationContext pins the global Application. */
     private static final class ConfigOverrideContext extends ContextWrapper {
-        // Stored for fidelity with AOSP (the override config shapes the
-        // returned context's Resources); Mac.apk's single-configuration
-        // Resources model has no consumer for it yet.
+        // The override config shapes the returned context's Resources
+        // (ResBackend.resourcesForConfiguration).
         private final android.content.res.Configuration overrideConfig;
         ConfigOverrideContext(Context origin, android.content.res.Configuration cfg) {
             super(origin);
             this.overrideConfig = cfg;
         }
         @Override public Resources getResources() {
-            // Skip the chain. Go straight to Application.
+            // Skip the chain. Go straight to Application. Then the override's own Resources, as
+            // AOSP's ContextImpl.createConfigurationContext gets from ResourcesManager (the
+            // application's own with Win.apk's single-configuration resources).
             android.app.Application app = android.app.Application.macapk_get();
-            return app != null ? app.getResourcesDirect()
-                               : getBaseContext().getResources();
+            Resources base = app != null ? app.getResourcesDirect() : getBaseContext().getResources();
+            return overrideConfig == null ? base
+                    : com.macapk.loader.res.ResBackend.get().resourcesForConfiguration(base, overrideConfig);
         }
         @Override public Context getApplicationContext() {
             return android.app.Application.macapk_get();

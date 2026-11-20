@@ -218,6 +218,16 @@ public class ContextThemeWrapper extends ContextWrapper {
      *  its state contract. */
     private android.content.res.Configuration macapkOverrideConfiguration;
 
+    /** AOSP ContextThemeWrapper.getResourcesInternal: the base's Resources, or with an override
+     *  configuration the Resources createConfigurationContext(override) has
+     *  (ResBackend.resourcesForConfiguration: the base's own with Win.apk's single-configuration
+     *  resources, so this answers what ContextWrapper's did). */
+    @Override public android.content.res.Resources getResources() {
+        android.content.res.Resources base = super.getResources();
+        if (macapkOverrideConfiguration == null || base == null) return base;
+        return com.macapk.loader.res.ResBackend.get().resourcesForConfiguration(base, macapkOverrideConfiguration);
+    }
+
     public void applyOverrideConfiguration(
             android.content.res.Configuration overrideConfiguration) {
         if (macapkOverrideConfiguration != null) {

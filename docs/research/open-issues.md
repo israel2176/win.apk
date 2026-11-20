@@ -529,8 +529,14 @@ device, not only with Win.apk's old pipeline.
   Wine, scripted: the dialog's OK, the overflow menu, a dialog's `EditText`
   typed into with keys and with a Hebrew composition, a `ListPreference`, BACK;
   probe, Gallery and Sudoku byte-identical to V1 with the switch on and off.
-  Seen and not chased: Sudoku's settings after picking Dark mode come back with
-  light text on a white window background. Next: GL `SurfaceView`s as layers,
+  Sudoku's settings after picking Dark mode came back with light text on a
+  white window: fixed, as Android does it, by Resources per configuration
+  override (`createConfigurationContext`, `applyOverrideConfiguration`,
+  `Activity.getResources()` following its base; aosp-views.md "A context's
+  configuration override"). Class-data sharing with the switches on works
+  (`framework-aospviews` archive, Sudoku's first frame 11.7 s against
+  16-21 s without), and the host's mouse, wheel and pinch can be scripted
+  with a window (`hostmouse`, `hostwheel`, `magnify`). Next: GL `SurfaceView`s as layers,
   spinners and toasts seen in an app, resize and several windows, an on-screen
   keyboard and a UI Automation bridge, then V3 (HWUI). Not run: CDS with the
   switch, real Windows, the smoke apps (another agent's).

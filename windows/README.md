@@ -3278,6 +3278,17 @@ every such change is listed here:
   `KeyEvent.java`: AOSP's members `ViewRootImpl` and `View` call (`copy`, `getId`, display ids,
   `cancel`, `split`, `isTouchEvent`, `isHoverEvent`, the dispatch location, the accessibility-focus
   flag...), unused by Win.apk's views. Off is unchanged (same checks as above).
+  A context's configuration override (`docs/research/aosp-views.md`, "A context's configuration
+  override"): `com/macapk/loader/res/ResBackend.java` gained `resourcesForConfiguration(base,
+  override)` (Win.apk's `ArscRes`: the base, its one configuration; AOSP's `AospRes`: the Resources
+  `ResourcesManager` would hand out for it); `android/content/Context.java`'s
+  `createConfigurationContext` and `android/view/ContextThemeWrapper.java` (a new `getResources`,
+  AOSP's `getResourcesInternal`, with `applyOverrideConfiguration`'s override) read it;
+  `android/app/Activity.java`: with `WINAPK_AOSP_RES=1`, `getResources()` and `getAssets()` are its
+  base context's, as AOSP's. `TouchDispatcher`: a `hostmouse` verb, posted through
+  `NativeCocoa.postHostMouse`'s new actions 3-7, which the Windows host now registers with
+  `debugTrackpad` (`hostwheel`, `magnify`). Off is unchanged (the probe's `ours.txt` and the Gallery
+  and Sudoku sweeps byte-identical to the base).
   After the smoke apps (`docs/research/open-issues.md`, "The smoke apps with AOSP's views"):
   `android/view/SurfaceView.java` punches its hole with AOSP's views when not on top (AOSP's
   `clearSurfaceViewPort`), as the windows are composited over its GL frames;

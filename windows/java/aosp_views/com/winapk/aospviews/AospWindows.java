@@ -172,6 +172,8 @@ public final class AospWindows {
                 new ImeService());
         Services.register(Context.ACCESSIBILITY_SERVICE, android.view.accessibility.IAccessibilityManager.class,
                 new AccessibilityService());
+        Services.register(Context.INPUT_SERVICE, android.hardware.input.IInputManager.class,
+                new InputManagerService());
         Services.register(Context.TEXT_SERVICES_MANAGER_SERVICE,
                 com.android.internal.textservice.ITextServicesManager.class, new TextServicesService());
         sNotifications = Services.register(Context.NOTIFICATION_SERVICE, android.app.INotificationManager.class,

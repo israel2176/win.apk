@@ -58,6 +58,7 @@ public final class AospRes implements ResBackend {
     private static volatile Object index;            // the ResourceIndex Boot publishes
     private static volatile String packageName = "";
     private static volatile AssetManager appAssets;  // what openAssets made for the app
+    private static volatile List<ApkAssets> appApkAssets = new ArrayList<>(); // the app's APKs, loaded once
     private static volatile Configuration appConfig; // the configuration the index was opened for
     private static volatile Resources appResources;  // over appAssets, for the chrome's theme lookups
     private static volatile Resources.Theme appTheme;
@@ -108,8 +109,11 @@ public final class AospRes implements ResBackend {
         installSystemAssets();
         long t0 = System.nanoTime();
         AssetManager.Builder b = new AssetManager.Builder();
-        for (File f : InstalledSplits.of(apkPath)) b.addApkAssets(ApkAssets.loadFromPath(f.getPath()));
+        List<ApkAssets> loaded = new ArrayList<>();
+        for (File f : InstalledSplits.of(apkPath)) loaded.add(ApkAssets.loadFromPath(f.getPath()));
+        for (ApkAssets a : loaded) b.addApkAssets(a);
         AssetManager am = b.build();
+        appApkAssets = loaded;
         appAssets = am;
         log(String.format("the app's resources (%s) up in %.0f ms", new File(apkPath).getName(),
                 (System.nanoTime() - t0) / 1e6));
@@ -624,4 +628,82 @@ public final class AospRes implements ResBackend {
     // AOSP's attribute resolution records no entry for an attribute written @null (TYPE_NULL with
     // DATA_NULL_UNDEFINED): it reads as absent, the same as one never written.
     @Override public boolean declaredTypeNull(TypedArray a, int index) { return false; }
+
+    // ---- A context's configuration override (ResourcesManager's part) ----
+
+    /** One override's Resources: what AOSP's ResourcesManager keeps per ResourcesKey (here the
+     *  base and the override; the APKs are the app's own), shared by every context asking for it. */
+    private static final class Overridden {
+        final Resources base;
+        final Configuration override;
+        final Resources res;
+        Overridden(Resources base, Configuration override, Resources res) {
+            this.base = base;
+            this.override = override;
+            this.res = res;
+        }
+    }
+
+    private static final List<Overridden> sOverridden = new ArrayList<>();
+    private static boolean sFollowing;
+
+    /** ResourcesManager.generateConfig: the base's configuration, updated from the override. */
+    private static Configuration merged(Resources base, Configuration override) {
+        Configuration c = new Configuration(base.getConfiguration());
+        c.updateFrom(override);
+        return c;
+    }
+
+    @Override public Resources resourcesForConfiguration(Resources base, Configuration override) {
+        if (base == null || override == null) return base;
+        Configuration want = merged(base, override);
+        if (want.equals(base.getConfiguration())) return base;
+        synchronized (sOverridden) {
+            for (Overridden o : sOverridden) {
+                if (o.base == base && o.override.equals(override)) return o.res;
+            }
+            // ResourcesManager.createResourcesImpl: an AssetManager of its own over the same
+            // ApkAssets (they are shared; only the configuration differs), and a ResourcesImpl for
+            // the merged configuration.
+            AssetManager.Builder b = new AssetManager.Builder();
+            for (ApkAssets a : appApkAssets) b.addApkAssets(a);
+            android.content.res.ResourcesImpl impl = new android.content.res.ResourcesImpl(b.build(),
+                    base.getDisplayMetrics(), want, base.getDisplayAdjustments());
+            Resources res = new Resources(base.getClassLoader());
+            res.setImpl(impl);
+            sOverridden.add(new Overridden(base, new Configuration(override), res));
+            followConfigurationChanges();
+            return res;
+        }
+    }
+
+    /** ResourcesManager.applyConfigurationToResources: when the application's configuration
+     *  changes (rotation, size, locale, night mode), each override's Resources take the new base
+     *  updated from their override. Win.apk tells the Application's callbacks after updating its
+     *  Resources, as ActivityThread does after ResourcesManager. */
+    private static void followConfigurationChanges() {
+        if (sFollowing) return;
+        android.content.Context app;
+        try {  // Win.apk's Application.macapk_get (this jar compiles against android-all's)
+            app = (android.content.Context) android.app.Application.class.getMethod("macapk_get").invoke(null);
+        } catch (ReflectiveOperationException e) {
+            return;
+        }
+        if (app == null) return;
+        sFollowing = true;
+        app.registerComponentCallbacks(new android.content.ComponentCallbacks() {
+            @Override public void onConfigurationChanged(Configuration newConfig) {
+                synchronized (sOverridden) {
+                    for (Overridden o : sOverridden) {
+                        Configuration want = merged(o.base, o.override);
+                        if (!want.equals(o.res.getConfiguration())) {
+                            o.res.updateConfiguration(want, o.base.getDisplayMetrics());
+                        }
+                    }
+                }
+            }
+
+            @Override public void onLowMemory() {}
+        });
+    }
 }

@@ -20,6 +20,7 @@
 
 #include "host_natives.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -592,6 +593,29 @@ jint JNICALL Cocoa_displayHz(JNIEnv*, jclass) { return 60; }
 jfloat JNICALL Cocoa_backingScale(JNIEnv* env, jclass) {
     static const float density = device_density(env);
     return density;
+}
+
+// The inject driver's host mouse (TouchDispatcher's hosttap, hostswipe, hostmouse): the
+// window's own messages, posted to it (win32_window.cpp). False headless: no window.
+jboolean JNICALL Cocoa_postHostMouse(JNIEnv*, jclass, jint action, jfloat fx, jfloat fy) {
+    return window_post_mouse(action, fx, fy) ? JNI_TRUE : JNI_FALSE;
+}
+
+// The inject driver's wheel and pinch: kind 2 `hostwheel fx fy dy [dx]` (notches; positive is
+// away from the user, or right), kind 1 `magnify fx fy phase m` (Ctrl+wheel, the window's pinch).
+// The Mac's other trackpad kinds (raw contacts, rotation, a touchpad's phased scroll) have no
+// message of their own on Windows: false.
+jboolean JNICALL Cocoa_debugTrackpad(JNIEnv* env, jclass, jint kind, jfloatArray a) {
+    const jsize n = a ? env->GetArrayLength(a) : 0;
+    float v[5] = {};
+    if (n > 0) env->GetFloatArrayRegion(a, 0, std::min<jsize>(n, 5), v);
+    if (kind == 2 && n >= 3) {
+        bool ok = v[2] == 0.0f || window_post_wheel(v[0], v[1], v[2], false, false);
+        if (n >= 4 && v[3] != 0.0f) ok = window_post_wheel(v[0], v[1], v[3], true, false) && ok;
+        return ok ? JNI_TRUE : JNI_FALSE;
+    }
+    if (kind == 1 && n >= 4) return window_post_magnify(v[0], v[1], v[3]) ? JNI_TRUE : JNI_FALSE;
+    return JNI_FALSE;
 }
 
 // Same rule as upstream: the short side stays the short side.
@@ -1622,6 +1646,8 @@ const HostMethod kMethods[] = {
     WINAPK_HOST_NATIVE(kCls, "phoneHeight", "()I", Cocoa_phoneHeight),
     WINAPK_HOST_NATIVE(kCls, "displayHz", "()I", Cocoa_displayHz),
     WINAPK_HOST_NATIVE(kCls, "backingScale", "()F", Cocoa_backingScale),
+    WINAPK_HOST_NATIVE(kCls, "postHostMouse", "(IFF)Z", Cocoa_postHostMouse),
+    WINAPK_HOST_NATIVE(kCls, "debugTrackpad", "(I[F)Z", Cocoa_debugTrackpad),
     WINAPK_HOST_NATIVE(kCls, "applyRequestedOrientation", "(Z)V", Cocoa_applyRequestedOrientation),
     WINAPK_HOST_NATIVE(kCls, "createWindow", "(Ljava/lang/String;)J", Cocoa_createWindow),
     WINAPK_HOST_NATIVE(kCls, "createMetalSurfaceView", "(II)J", Cocoa_createView),

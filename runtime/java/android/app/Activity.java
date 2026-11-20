@@ -4030,8 +4030,22 @@ public class Activity extends ContextThemeWrapper
     public void overridePendingTransition(int enterAnim, int exitAnim) {}
 
     @Override public ClassLoader getClassLoader() { return application != null ? application.getClassLoader() : super.getClassLoader(); }
-    @Override public AssetManager getAssets()     { return application != null ? application.getAssets() : null; }
-    @Override public Resources getResources()     { return application != null ? application.getResources() : null; }
+    @Override public AssetManager getAssets() {
+        if (MACAPK_CONTEXT_RESOURCES) {
+            Resources r = getResources();
+            return r != null ? r.getAssets() : null;
+        }
+        return application != null ? application.getAssets() : null;
+    }
+    /** AOSP: Activity's Resources are ContextThemeWrapper's, its base context's (which an app's
+     *  attachBaseContext may have wrapped: AppCompat's night mode and locales do, with an override
+     *  configuration) or its own override's. With AOSP's resources, which have a Resources per
+     *  configuration, that is what this answers; Win.apk's have one, the application's. */
+    @Override public Resources getResources() {
+        if (MACAPK_CONTEXT_RESOURCES && getBaseContext() != null) return super.getResources();
+        return application != null ? application.getResources() : null;
+    }
+    private static final boolean MACAPK_CONTEXT_RESOURCES = "1".equals(System.getProperty("winapk.aosp.res"));
     // A Context always knows its package on real Android -- never empty. If the
     // Application isn't wired yet, fall back to the process-wide Application
     // singleton's package (Unity caches this string as its app identifier for the

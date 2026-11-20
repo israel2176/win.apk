@@ -2021,6 +2021,63 @@ bool window_phone_rect(int* x, int* y, int* w, int* h) {
     return *w > 0 && *h > 0;
 }
 
+// The inject driver's mouse: the window's own messages, posted to it, so a script crosses the
+// path a user's mouse takes (window_proc, pointer_input.h, the registered dispatcher). The
+// point is a fraction of the phone's area; a message carries it as Windows would: client
+// pixels, mirrored in a mirrored window, screen pixels for the wheel.
+namespace {
+WPARAM g_posted_buttons = 0;  // the MK_* buttons the posted presses hold
+
+bool posted_point(float fx, float fy, POINT* client) {
+    if (!g_hwnd || !(fx >= 0.0f && fx <= 1.0f && fy >= 0.0f && fy <= 1.0f)) return false;
+    const RECT phone = client_app_rect(g_hwnd);
+    if (phone.right <= phone.left || phone.bottom <= phone.top) return false;
+    const int w = static_cast<int>(phone.right - phone.left), h = static_cast<int>(phone.bottom - phone.top);
+    const int x = static_cast<int>(phone.left) + std::min(static_cast<int>(fx * w), w - 1);
+    const int y = static_cast<int>(phone.top) + std::min(static_cast<int>(fy * h), h - 1);
+    *client = POINT{client_x(g_hwnd, x), y};  // client_x is its own inverse
+    return true;
+}
+}  // namespace
+
+bool window_post_mouse(int action, float fx, float fy) {
+    POINT p;
+    if (!posted_point(fx, fy, &p)) return false;
+    UINT msg = WM_MOUSEMOVE;
+    WPARAM held = g_posted_buttons;
+    switch (action) {
+        case kPostLeftDown: msg = WM_LBUTTONDOWN; held |= MK_LBUTTON; break;
+        case kPostLeftUp: msg = WM_LBUTTONUP; held &= ~static_cast<WPARAM>(MK_LBUTTON); break;
+        case kPostMove: break;
+        case kPostRightDown: msg = WM_RBUTTONDOWN; held |= MK_RBUTTON; break;
+        case kPostRightUp: msg = WM_RBUTTONUP; held &= ~static_cast<WPARAM>(MK_RBUTTON); break;
+        case kPostMiddleDown: msg = WM_MBUTTONDOWN; held |= MK_MBUTTON; break;
+        case kPostMiddleUp: msg = WM_MBUTTONUP; held &= ~static_cast<WPARAM>(MK_MBUTTON); break;
+        case kPostLeave: msg = WM_MOUSELEAVE; break;
+        default: return false;
+    }
+    g_posted_buttons = held;
+    return PostMessageW(g_hwnd, msg, held, msg == WM_MOUSELEAVE ? 0 : MAKELPARAM(p.x, p.y)) != 0;
+}
+
+bool window_post_wheel(float fx, float fy, float notches, bool horizontal, bool ctrl) {
+    POINT p;
+    if (!posted_point(fx, fy, &p)) return false;
+    ClientToScreen(g_hwnd, &p);
+    const WPARAM keys = g_posted_buttons | (ctrl ? MK_CONTROL : 0);
+    const short delta = static_cast<short>(std::lround(notches * WHEEL_DELTA));
+    return PostMessageW(g_hwnd, horizontal ? WM_MOUSEHWHEEL : WM_MOUSEWHEEL, MAKEWPARAM(keys, delta),
+                        MAKELPARAM(p.x, p.y)) != 0;
+}
+
+bool window_post_magnify(float fx, float fy, float magnification) {
+    // A pinch on Windows is Ctrl+wheel (send_wheel): as many notches as make the same zoom.
+    if (!(magnification > -1.0f)) return false;
+    if (magnification == 0.0f) return g_hwnd != nullptr;  // a gesture's begin or end: nothing to send
+    const float notches = std::log(1.0f + magnification) / std::log(PinchSynth::kZoomPerNotch);
+    return window_post_wheel(fx, fy, notches, false, true);
+}
+
 void window_hide() {
     if (g_hwnd) PostMessageW(g_hwnd, kMsgShowState, SW_HIDE, 0);
 }

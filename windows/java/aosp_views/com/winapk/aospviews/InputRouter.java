@@ -104,7 +104,18 @@ final class InputRouter {
     private static void deliver(AospWindows.Win w, InputEvent e) {
         InputEventReceiver r = NativeInputEventReceiver.receiverFor(w.inputChannel);
         if (r == null) return;
-        if (Compositor.TRACE && e instanceof KeyEvent) System.err.println(AospWindows.TAG + "key to " + w.attrs.getTitle() + ": " + e);
+        if (Compositor.TRACE && (e instanceof KeyEvent
+                || (e instanceof MotionEvent m && m.getActionMasked() != MotionEvent.ACTION_MOVE
+                        && m.getActionMasked() != MotionEvent.ACTION_HOVER_MOVE))) {
+            // Each key and each motion but the moves (a gesture's start, end and buttons).
+            System.err.println(AospWindows.TAG + "input to " + w.attrs.getTitle() + ": " + (e instanceof MotionEvent m
+                    ? MotionEvent.actionToString(m.getAction()) + " source=0x" + Integer.toHexString(m.getSource())
+                            + " buttons=" + m.getButtonState() + " pointers=" + m.getPointerCount()
+                            + " at " + m.getX() + "," + m.getY()
+                            + (m.getActionMasked() == MotionEvent.ACTION_SCROLL
+                                    ? " vscroll=" + m.getAxisValue(MotionEvent.AXIS_VSCROLL) : "")
+                    : e.toString()));
+        }
         try {
             NativeInputEventReceiver.dispatch(r, e);
         } catch (RuntimeException ex) {

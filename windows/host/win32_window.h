@@ -162,6 +162,18 @@ void* window_handle();
 // or a centred rect with the phone's aspect when the window has another shape
 // (maximized), with black bars around it. False when there is no window.
 bool window_phone_rect(int* x, int* y, int* w, int* h);
+// The inject driver's mouse (MACAPK_INJECT_FILE's hosttap, hostswipe, hostmouse, hostwheel and
+// magnify verbs): the window's own mouse messages posted to it, at (fx, fy), a fraction of the
+// phone's area. False with no window (headless) or a point outside [0,1].
+enum PostedMouse {
+    kPostLeftDown = 0, kPostLeftUp = 1, kPostMove = 2,  // NativeCocoa.postHostMouse's own three
+    kPostRightDown = 3, kPostRightUp = 4, kPostMiddleDown = 5, kPostMiddleUp = 6, kPostLeave = 7,
+};
+bool window_post_mouse(int action, float fx, float fy);
+// A wheel turned by `notches` (positive away from the user, or right), with Ctrl held: the pinch.
+bool window_post_wheel(float fx, float fy, float notches, bool horizontal, bool ctrl);
+// A trackpad's magnification (the scale grows by 1 + m) as the Ctrl+wheel notches that zoom as much.
+bool window_post_magnify(float fx, float fy, float magnification);
 // The app moved its task to the back or front (Activity.moveTaskToBack), or
 // is quitting.
 void window_minimize();
