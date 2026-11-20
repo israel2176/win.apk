@@ -181,6 +181,16 @@ public class Handler {
         return h;
     }
 
+    /** AOSP's hidden executeOrSendMessage (AOSP's InputMethodManager.showSoftInput calls it on its
+     *  H): the message is dispatched at once on this handler's thread, else sent to it. */
+    public final boolean executeOrSendMessage(Message msg) {
+        if (Looper.myLooper() == looper) {
+            dispatchMessage(msg);
+            return true;
+        }
+        return sendMessage(msg);
+    }
+
     /** AOSP's hidden runWithScissors: runs r on this handler's thread and waits for it (at most
      *  timeout ms, 0 = no limit); at once when already on it. */
     public final boolean runWithScissors(final Runnable r, long timeout) {
