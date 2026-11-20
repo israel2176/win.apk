@@ -21,6 +21,7 @@
 #include "host_natives.h"
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -35,7 +36,9 @@
 #include <mmsystem.h>
 #include <shellapi.h>
 
+#include "aosp_gfx.h"
 #include "cds.h"
+#include "frame_times.h"
 #include "gl/gl_surface.h"
 #include "native_window.h"
 #include "win32_window.h"
@@ -257,11 +260,23 @@ constexpr DWORD kCloseTeardownMs = 2000;
 constexpr DWORD kCloseGraceMs = 500;
 std::atomic<bool> g_closing{false};
 
+// The view tree's frame times (frame_times.h): recorded by FrameTimes.nativeRecord, logged once
+// by whichever exit path comes first. TerminateProcess skips atexit, so each path calls it.
+frame_times::Recorder g_frame_times;
+
+void print_frame_times() {
+    static std::atomic<bool> printed{false};
+    if (printed.exchange(true)) return;
+    const std::string line = g_frame_times.summary(aosp_gfx_files() ? "aosp" : "java2d");
+    if (!line.empty()) std::fprintf(stderr, "[win.apk] %s\n", line.c_str());
+}
+
 // Ends the process for a close, once: the caller that comes second waits for
 // the first to finish. `how` is the log line the CI and a bug report read.
 void end_close(const char* how) {
     static std::atomic<bool> ended{false};
     if (ended.exchange(true)) Sleep(INFINITE);
+    print_frame_times();
     std::fprintf(stderr, "[win.apk] close: %s; ended\n", how);
     std::fflush(stdout);
     std::fflush(stderr);
@@ -1387,6 +1402,7 @@ void JNICALL Cocoa_exitProcess(JNIEnv*, jclass, jint code, jstring relaunch) {
     aot_app_exiting();
     cds_before_exit();  // the framework archive this start still owes
     winapk::arm64::print_stats_if_enabled();  // TerminateProcess skips atexit
+    print_frame_times();                       // so does the frame-time line
     winapk::host::stub_hits_detail::print_summary();  // so does the stubs' summary
     std::fflush(stdout);
     std::fflush(stderr);
@@ -1588,10 +1604,19 @@ jint JNICALL Cocoa_presentFrame(JNIEnv* env, jclass cls, jintArray argb, jint w,
     return 1;
 }
 
+// com.macapk.loader.FrameTimes: one frame of the view tree (ViewCanvasDriver.doFrame), in ns.
+void JNICALL FrameTimes_record(JNIEnv*, jclass, jlong layout, jlong draw, jlong pixels, jlong present,
+                               jlong total, jboolean warmup) {
+    const int64_t now = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                            std::chrono::steady_clock::now().time_since_epoch()).count();
+    g_frame_times.add(layout, draw, pixels, present, total, warmup == JNI_TRUE, now);
+}
+
 constexpr const char* kCls = "com.macapk.loader.NativeCocoa";
 
 const HostMethod kMethods[] = {
     WINAPK_HOST_NATIVE(kCls, "init", "()Z", Cocoa_init),
+    WINAPK_HOST_NATIVE("com.macapk.loader.FrameTimes", "nativeRecord", "(JJJJJZ)V", FrameTimes_record),
     WINAPK_HOST_NATIVE(kCls, "setPhoneSize", "(II)V", Cocoa_setPhoneSize),
     WINAPK_HOST_NATIVE(kCls, "phoneWidth", "()I", Cocoa_phoneWidth),
     WINAPK_HOST_NATIVE(kCls, "phoneHeight", "()I", Cocoa_phoneHeight),

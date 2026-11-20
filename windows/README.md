@@ -235,7 +235,7 @@ The user-facing ones (`WINAPK_PHONE_SIZE`, `WINAPK_RESIZABLE`,
 | `WINAPK_DEBUG=1` or `0` | Debug mode for this run, over the launcher's Settings > Troubleshooting > Debug mode (`HKCU\Software\Win.apk\DebugMode`): the runtime starts its thread agent (`host/debug_agent.cpp`), which answers the launcher's Threads window on `\\.\pipe\winapk-debug-<pid>` (`include/winapk/debug_protocol.h`): `threads` lists every Windows thread of the process with its kind (java, guest, jvm, runtime, system), Java name and state and where it started; `stack <tid> <jid>` gives one thread's Java frames, contended monitor and native stack. Only for a run of an app and the system broker, not an install |
 | `WINAPK_AOSP_GFX=0` | Win.apk's older Java2D graphics for this run instead of AOSP's own, the default (`host/aosp_gfx.h`; the way back while the Java2D classes exist; unset or `1` is the default). By default an app draws through AOSP's `Canvas`, with the gaps [Milestone 2](#milestone-2-the-runtime-on-aosp-graphics) lists: `lib\aosp-graphics.jar` goes before `android-framework.jar` on the class path, `-Dicu.data.path`, `-Dicu.locale.default`, `-Dwinapk.aosp.gfx=1`, `-Dwinapk.aosp.fonts` and `-Dwinapk.aosp.hyphen` are set, class-data sharing maps the `framework-aosp-<key>.jsa` archive (Java2D's is `framework-java2d-<key>.jsa`; each keeps the other), and once the host's natives are bound `bin\robolectric-nativeruntime.dll` loads through `host/aosp_gfx_redirect.cpp`: its natives go onto the jar's classes, only `android.graphics.**`, `android.text.**`, `android.util.PathParser` and two helpers (an allowlist); those for `android.database(.sqlite)`, `android.view.Surface`, `android.media.ImageReader` and `PropertyValuesHolder` are refused, Win.apk's stay. Log lines: `AOSP graphics: on (WINAPK_AOSP_GFX=0 turns it off): ...` or `AOSP graphics: off (WINAPK_AOSP_GFX=0): ...`, then `AOSP graphics: robolectric-nativeruntime.dll loaded in N ms: natives bound N (5 through API 34 adapters), skipped N, refused N ...`. A file missing, or the DLL not loading, and the run goes on with Java2D's (`AOSP graphics: off, ... is missing` / `does not load`). Only an app's run (and `--cds-prepare`, for its archive's key), not an install, `--gms`, `--system` or `--verify-apk`. `WINAPK_AOSP_GFX_VERBOSE=1` lists each skipped native and each class routed to the stand-in |
 | `WINAPK_CDS=0` or `base` | Class-data sharing (`host/cds.h`): `0` back to the old flags (`--patch-module`, no archive), `base` the JRE's archive without the framework archive. `WINAPK_CDS_DIR=<dir>` puts the framework archive elsewhere (tests share one), `WINAPK_CDS_CLASSLIST=<file>` dumps from another class list (`none`: only the start's own), `WINAPK_CDS_RECORD_DIR=<dir>` writes every app start's loaded classes to `<dir>\<app>.classlist` (for `scripts/merge_classlists.py`), `WINAPK_CDS_VERIFY=1` checks the archive whole at every start, `WINAPK_CDS_DUMP_DELAY_MS` (default 10000) is the wait after the first frame before the background dump |
-| `MACAPK_FRAMESPEED_DAMAGE=1` | Partial redraw (off by default): a frame that only invalidations asked for draws the view tree clipped to the area they damaged and hands the window only that rectangle, instead of redrawing and copying the whole window (`docs/ARCHITECTURE.md`, "The view tree's frames"). Unset or anything else, every frame is whole. `MACAPK_DAMAGE_VALIDATE=1` with it draws every frame whole but compares what changed with the area claimed: `[damage-validate] under-damage` names a frame that changed outside it, and the `M6:` line counts `validate: claimed= clean= under=`. `MACAPK_TRACE_DAMAGE=1` logs every 5 s what the frames' damage was (`[damage]`), `MACAPK_FRAME_PHASE_TRACE=1` a frame's time by phase (`[frame-phase]`) |
+| `MACAPK_FRAMESPEED_DAMAGE=1` | Partial redraw (off by default): a frame that only invalidations asked for draws the view tree clipped to the area they damaged and hands the window only that rectangle, instead of redrawing and copying the whole window (`docs/ARCHITECTURE.md`, "The view tree's frames"). Unset or anything else, every frame is whole. `MACAPK_DAMAGE_VALIDATE=1` with it draws every frame whole but compares what changed with the area claimed: `[damage-validate] under-damage` names a frame that changed outside it, and the `M6:` line counts `validate: claimed= clean= under=`. `MACAPK_TRACE_DAMAGE=1` logs every 5 s what the frames' damage was (`[damage]`), `MACAPK_FRAME_PHASE_TRACE=1` a frame's time by phase (`[frame-phase]`, every 300 frames; the run's whole summary is the `frame times` line at exit, [Frame time](#frame-time)) |
 | `MACAPK_QUIET_CLASSLOAD=0` | Logs a line for every class the app's class loader loads (the runtime sets it to 1, as upstream's launcher does: thousands of lines cost up to 0.4 s of a start) |
 | `MACAPK_ALL_PERMS_ASK=0` | Returns the permission groups beyond storage and location to the install-time rule (declared means held), the Mac's behaviour; `MACAPK_MEDIA_PERMS_ASK=0` and `MACAPK_ALLFILES_HONEST=0` keep their upstream meaning |
 | `MACAPK_GMS_PRESENT=0`, `MACAPK_GMS_FCM=0`, `MACAPK_GMS_SIGNIN=0`, `MACAPK_GMS_LOCATION=0`, `MACAPK_GMS_DIR` | Upstream's Play services switches and the state folder |
@@ -267,6 +267,7 @@ Every test is a program built by CMake; `ci.yml` runs each of them on
 | `winapk-bionic-test <bionic_guest.so> <scratch dir>` | `test/guest/bionic_guest.c` exercises the shim from guest code: strings, printf and scanf through the System V `va_list`, threads and keys, files and directories, ELF TLS, system properties, locales, futex, an 8 GiB `PROT_NONE` reservation, V8's page permissions (`test_page_permissions`: `mprotect` to and from `PROT_NONE` over opened and only-reserved pages and across two mappings side by side, `MADV_DONTNEED`, `MAP_FIXED` over both, `EINVAL`/`ENOMEM` as Linux), pipes, eventfd, epoll, sockets, `ALooper`, clocks, `mmap`; the network (loopback only): a UDP datagram, socket options that are mapped, accepted as tuning or refused with `ENOPROTOOPT`, `SO_LINGER`, a multicast group joined with `IP_ADD_MEMBERSHIP` and with `MCAST_JOIN_GROUP` and a datagram received through each (skipped where the host has no multicast route), `if_nametoindex`/`if_indextoname`/`if_nameindex` against `getifaddrs`, edge-triggered epoll on a socket (`EPOLLOUT` once, then a 300 ms wait that takes 300 ms and no processor time; `EPOLLIN` once per arrival and read) and on an eventfd (every write), `EPOLLONESHOT`, `epoll_wait` and `poll` woken by another thread's send; `random(3)` against glibc's sequences (the same generator), `fts` walks, `link`, `popen`/`system` without a shell, `fscanf`, `strptime`, cleanup handlers run by `pthread_exit`, `sched_getaffinity`, FORTIFY's `FD_*`, the binary128 `lroundl` family; the calls the loader's missing-function stub used to answer with 0 (`test_missing_forms`): FORTIFY's `__pwrite_chk`, `__poll_chk`, `__getcwd_chk` and the string forms, `readv`/`writev`, `sendfile`, `truncate`, `renameat2`, `readdir_r`, `rewinddir`, `scandir`, `mkstemps`, `getc_unlocked`, `epoll_pwait2`, `sigwait`/`sigtimedwait`, `pthread_spin_lock`, `pthread_mutex_clocklock`, `sem_clockwait`, `ASharedMemory_create`, `sysinfo`, and that `posix_spawn`, `execv`, `wait4`, `openpty`, `inotify_init1`, `iconv_open`, `regcomp`, `mremap`, and `symlink` fail as Linux reports it, `gethostbyname`, `gethostbyname2` and `gethostbyname_r` on a numeric address, `localhost`, `::1`, a buffer too small (`ERANGE`) and a family with no hosts; and the ones the most installed apps import (`test_popular_imports`): `div`/`ldiv`/`lldiv`, `ilogbf`, `strcasestr`, `asctime_r`/`ctime`, `getrusage`, `times`, `mallinfo`, `__sched_cpucount`, `sched_setaffinity`/`sched_getcpu`, `__progname`/`getprogname`, `sys_signame`/`strsignal`, `__system_property_foreach`, `utimensat`/`futimens`/`utimes` (with `UTIME_OMIT` and a null `times`), `mkdtemp`, `ptrace`, `fchmodat`, `syslog`, `__android_log_buf_write`/`_print` |
 | `winapk-arm64-test <dir>` | The arm64 engines: `test/guest/arm64_isa.c` built for the host and for arm64 at three optimization levels must agree on every function, on the interpreter, the JIT and the AOT translation; then `arm64_bridge_guest.c` (calls in both directions, variadics, threads, atexit, `fts` filling arm64's `struct stat`, cleanup handlers, libc++abi's abort path short of the abort: `vasprintf`, `android_set_abort_message`, `openlog`/`syslog`/`vsyslog`/`closelog`; raw SVCs by arm64's numbers (`mmap` 222, `mprotect` 226, `munmap` 215, also through `syscall()`, `getpid`, `gettid`, `getuid`, `nanosleep`, `uname`, an unknown number's `-ENOSYS`); and that each shim function whose `va_list` the bridge converts serves no other name); `arm64_flow_guest.c` (returns into an ancestor frame with RET and BR, coroutines, RETAA, deep recursion on a 1 MB thread, `pthread_getattr_np`'s bounds against the guest stack the caller runs on (and an 8 MB thread's), saturating conversions, FRECPS/FRSQRTS, an exclusive-monitor counter shared by translated code and the JIT, the STLR/LDAR litmus test) against values worked out by hand; `arm64_patch_guest.c` (a library patching its own code, and code patched by one thread while another runs it), `arm64_eh_guest.cpp` (C++ exceptions through the NDK's libc++ and unwinder, built when `ANDROID_NDK_HOME` names an NDK), a library unloaded with `dlclose`, one linked at another address, a translation cut short under a stamp that says it is sealed (refused) and the same one whole (loaded); 400 functions of random instructions from `gen_arm64_fuzz.py`, whose results on the JIT and the translation must match the interpreter's (`WINAPK_FUZZ_STATE=<i>` starts every function from function i's states, to bisect a difference); and `arm64_bench.c` (the speed ratios) |
 | `winapk-aot-stamp-test` | A library's translation stamp (`include/winapk/aot_stamp.h`), with no file behind it: each kind written and read back, an old stamp read as a short one, a newer build's word; what the loader refuses and when it asks for a sealed DLL; for each kind whether the worker has a step to take now (a changed library or translator, another CPU, the back-off after failures and its limit, a pass to finish, a profile that grew, the interval between two translations from a profile); which stamps the launcher takes for "translated by its profile" |
+| `winapk-frame-times-test` | The frame-time record (`host/frame_times.h`): nearest-rank percentiles over its 50 us buckets, never above the exact max, a frame over 200 ms, the warm-up frames apart, and the `frame times` line logged at exit ([Frame time](#frame-time)) |
 | `winapk-applink-test` | The App Link sign-in window's decision (`host/applink_match.h`): the navigation that returns to the app is the `redirect_uri` without its query, exactly (scheme and host without case, a default port as none); another path, host, port, scheme, a subdomain, userinfo or the address inside a query is not |
 | `winapk-aot-cache-test <scratch dir>` | The arm64 translation's files (`include/winapk/aot_files.h`) in real processes, with `winapk-aot-test-dll.dll` as the translation: a seal against DLLs cut short, emptied, zeroed or changed; eight processes taking, making, putting and loading one cache entry at once (hard links and copies); writers killed at random moments and at each step of a write; broken cache entries deleted and replaced; eviction and replacement while another process has the DLL loaded; the clock (60 days, dates in the future, the size cap); stamps rewritten by four processes while another reads them |
 | `winapk-audio-test <test/audio>` | The WASAPI mixer and the decoders |
@@ -1034,6 +1035,73 @@ working set at the first frame into `report.md` and the run's summary. Once
 a few runs show how much the numbers move between runners, a limit can go
 beside the others.
 
+## Frame time
+
+Every run of an app ends its log with one line saying how fast its frames
+were drawn, so any change shows whether drawing got faster or slower, on
+either graphics engine (AOSP's, the default, or Java2D's with
+`WINAPK_AOSP_GFX=0`):
+
+```
+[win.apk] frame times (aosp graphics): 1404 frames in 23.4 s, 59.9/s, the first 1.5 s of each window left out; ms median/p90/p99/max: layout 0.05/0.10/0.30/1.20, draw 3.10/4.20/7.90/12.30, pixels 1.00/1.20/2.00/3.00, present 0.80/1.10/2.00/3.10, total 6.50/8.00/12.10/17.00
+```
+
+(numbers made up). `ViewCanvasDriver.doFrame` times each frame of the view
+tree that reaches the present, in the phases the phase trace uses:
+`layout` (measure and layout), `draw` (the view tree's `draw` and the window
+overlays), `pixels` (the frame read out of its bitmap: on AOSP's graphics a
+`Bitmap.getPixels` copy, `GfxBackend.argbBuffer`; on Java2D's the live array,
+next to nothing), `present` (the host copying the pixels to the window, or in
+a headless run only to its frame file, if any) and `total` (the whole frame:
+the app's animation callbacks, layout, draw, the system bars' paint, which is
+in no other part, and the present). `FrameTimes.record` hands them to the
+host, which keeps a 50 us histogram per part (`host/frame_times.h`, a lock and
+five increments a frame) and logs the line once, on whichever exit path ends the
+process (`exitProcess`, a close, `WINAPK_HEADLESS_EXIT_AFTER_FRAMES`); a
+process killed from outside logs none. The median, p90 and p99 are
+nearest-rank, each the middle of its bucket; max is exact. A window's first
+90 vsyncs (1.5 s: class loading, the JIT's first passes) are left out when
+later frames exist, else they are what the line reports, ending
+`(warm-up)`. An app that sits idle presents few frames (an unchanged window
+is not redrawn), so its line says little: the numbers mean something for a
+screen that keeps drawing.
+
+The workload: `test/framebench/` is a one-screen APK of plain framework views
+(200 rows of a coloured oval, two lines of text and a number on a rounded,
+bordered card) that scrolls itself on every frame and bounces at either end,
+so every vsync draws a whole new frame. `build.sh <out>` makes
+`framebench.apk` with an Android SDK's aapt2, d8 and apksigner (no Gradle,
+no library); run it for a fixed time with
+`WINAPK_HEADLESS_EXIT_AFTER_FRAMES=<vsyncs>` (60 a second), and
+`test/framebench/report.py <log>...` prints the lines as a table. CI's
+Runtime tests job runs it in a window for 25 s on each engine and puts the
+table in the run's summary; it fails only when a run has no line, drew fewer
+than 300 frames after its warm-up, or took over 50 ms (three vsyncs) at p90
+for the whole frame: a collapse, not a drift, since runners differ too much
+for a tight budget. Compare two runs' tables to see a change's effect, and
+tighten the budget once a few runs show the spread.
+
+Under Wine 9 (this Linux machine, relative numbers only; the frame bench at
+360x800 dp, 720x1600 px, 25 s, ms median / p90 / p99):
+
+| Run | Frames/s | Draw | Pixels | Present | Whole frame |
+|---|---:|---|---|---|---|
+| AOSP, headless | 33.6 | 1.62 / 1.93 / 2.73 | 12.32 / 14.32 / 19.98 | 1.88 / 2.17 / 3.67 | 29.12 / 35.02 / 46.08 |
+| AOSP, headless, again | 33.4 | 1.73 / 1.88 / 2.12 | 12.68 / 13.28 / 16.57 | 1.98 / 2.12 / 2.38 | 30.07 / 31.62 / 44.17 |
+| AOSP, in a window (Xvfb) | 30.4 | 1.77 / 2.27 / 5.78 | 12.57 / 14.32 / 23.02 | 2.77 / 5.28 / 8.22 | 31.18 / 39.52 / 55.73 |
+| Java2D, headless | 59.9 | 6.47 / 8.43 / 12.88 | 0.02 | 2.33 / 2.62 / 4.83 | 9.82 / 13.03 / 18.82 |
+| Java2D, headless, again | 60.0 | 6.53 / 7.47 / 10.88 | 0.03 | 2.38 / 2.62 / 3.33 | 10.03 / 12.18 / 17.38 |
+| Java2D, in a window (Xvfb) | 60.0 | 6.38 / 7.17 / 9.93 | 0.01 | 2.88 / 3.33 / 4.92 | 10.18 / 11.68 / 17.43 |
+
+AOSP's drawing is about 3.7 times as fast as Java2D's (1.7 ms against 6.4),
+as in the engine's own test, but its frames take three times as long and the
+bench runs at 33 frames a second where Java2D keeps 60: the frame's pixels are
+copied out of the AOSP bitmap twice a frame (`Bitmap.getPixels`, about 12 ms
+each at 720x1600 under Wine), once for the present (`pixels`) and once more for
+the status bar's one-row colour sample (`sampleRowDominant` through
+`GfxBackend.argbBuffer`, before `StatusBarDriver.paint`; the phase trace's
+`bar=12.3`). `docs/research/open-issues.md` has it.
+
 ## The compatibility sweep
 
 `test/compat/sweep.py` boots every app of `test/compat/apps.txt` (open-source
@@ -1247,7 +1315,7 @@ start; those throw alike on both sides, and only a difference counts.
 | Launcher check | Ubuntu | What changed | The launcher compiled with MinGW-w64, warnings as errors: an answer in about a minute |
 | Build | `windows-latest` | What changed | Every CMake target with MSYS2 CLANG64 through ccache (the cache is restored from the newest run, `main`'s for a pull request's first one), then `stage_runtime.sh build stage` and `bake_jre.sh` into `stage/jre`. Uploads `winapk-binaries` (every exe) and `runtime-stage` |
 | Unit tests | `windows-latest` | Guest libraries, Build | Every test program above, the arm64 AOT translation included |
-| Runtime tests | `windows-latest` | Guest libraries, Build | The tests that need the staged jars or ANGLE, the APK booted headless and in a window (`headless-boot` artifact), the GMS CLI |
+| Runtime tests | `windows-latest` | Guest libraries, Build | The tests that need the staged jars or ANGLE, the APK booted headless and in a window (`headless-boot` artifact), the GMS CLI, and the frame bench in a window on both graphics engines, its frame times in the run's summary ([Frame time](#frame-time)) |
 | App smoke test | `windows-latest` | Build | The ten apps of `test/compat/smoke.txt` (`--require-drew`) on the staged JRE with one framework archive made first (`--cds-prepare`): fails when one no longer draws (`smoke` artifact). Each app's peak working set and private bytes go in the report and the run's summary ([Footprint](#footprint)). The apps' classes, merged, are the `framework-classlist` artifact: copy it to `java/winapk-framework.classlist` when the framework or the smoke set has changed much |
 | AOSP graphics | `windows-latest` | Build | `test/aospgfx/`: AOSP's Canvas on Robolectric's native runtime in `winapk-runtime.exe` on the staged JRE (the agent built with MSYS2 CLANG64 clang; android-all and the DLL fetched from Maven Central and cached). Fails when a check fails; the `aosp-graphics` artifact has the picture, the benchmark frame and the logs. [AOSP graphics](#aosp-graphics-milestone-1) |
 | UI gate, Android's side and the base | Ubuntu | What changed | Android's lines for the UI probe and `test/screens/gate.txt`'s apps (`gate_oracle.sh`, cached by what they are made from), the base's commit, and the base's framework jars when `main` has no CI build of it left (`ui-oracle`, `ui-base-jars`). [The UI gate](#the-ui-gate-only-closer-to-android) |
@@ -2912,6 +2980,14 @@ every such change is listed here:
   sweep on Fossify Gallery and Open Sudoku, `FrameworkStubsTest` and
   `DamageRectTest` give identical output before and after; a scan of the built classes finds no
   reference to those members from outside the resources side but `ArscRes`.
+- `runtime/java/com/macapk/loader/FrameTimes.java` (new),
+  `ViewCanvasDriver.java`: the frame-time record ([Frame time](#frame-time)).
+  `doFrame` now takes its six phase timestamps on every frame, not only under
+  `MACAPK_FRAME_PHASE_TRACE=1`, and hands each frame that reached the present
+  to `FrameTimes.record` (layout, draw, reading the pixels, the present and the whole frame, and
+  whether it is one of the window's first 90 vsyncs); the host keeps them
+  (`host/frame_times.h`, bound in `native_cocoa.cpp`). A host without the
+  native (the Mac) throws `UnsatisfiedLinkError` once and the record is off.
 
 ## License
 

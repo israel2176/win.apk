@@ -320,6 +320,8 @@ jobs:
         run: ./build/winapk-aot-stamp-test.exe
       - name: Run the App Link sign-in window test (which navigation returns to the app)
         run: ./build/winapk-applink-test.exe
+      - name: Run the frame-time record test (percentiles, the line at exit)
+        run: ./build/winapk-frame-times-test.exe
       - name: Run the translation crash guard test (two crashes turn translation off, two on the JIT back on)
         run: |
           mkdir -p aot-guard-scratch
@@ -360,7 +362,7 @@ jobs:
     needs: [changes, guest, build]
     if: needs.changes.outputs.tests == 'true'
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     defaults:
       run:
         shell: msys2 {0}
@@ -734,6 +736,37 @@ jobs:
           grep -E "frames presented" window.log
           grep -E "\[win.apk\] (window|window resized|resize):" window.log
           grep -E "resize: the app drew at 400x600 px" window.log
+      - name: Frame time, both graphics engines (the frame bench, in a window)
+        id: framebench
+        run: |
+          # windows/README.md, "Frame time": windows/test/framebench's APK scrolls a list on every
+          # frame; 25 s of it in a window on the staged JRE, on AOSP's graphics and on Java2D's,
+          # each run ending with its `[win.apk] frame times` line (host/frame_times.h). The next
+          # step puts the numbers in the run's summary.
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          if ! windows/test/framebench/build.sh framebench; then
+            echo "::warning::the frame bench was not built (no Android SDK on the runner?); no frame times"
+            exit 0
+          fi
+          data="$(cygpath -w "$PWD/benchdata")"
+          for gfx in aosp java2d; do
+            [ "$gfx" = aosp ] && on=1 || on=0
+            WINAPK_AOSP_GFX=$on WINAPK_HEADLESS_EXIT_AFTER_FRAMES=1500 timeout 600 ./stage/bin/winapk-runtime.exe \
+              --apk framebench/framebench.apk --data "$data" > frames-$gfx.log 2>&1 \
+              || { tail -n 200 frames-$gfx.log; exit 1; }
+            grep -a "frame times (" frames-$gfx.log
+          done
+          echo "built=1" >> "$GITHUB_OUTPUT"
+      - name: Frame time, in the summary
+        if: steps.framebench.outputs.built == '1'
+        shell: pwsh
+        run: |
+          # Fails when a run has no line, kept drawing for fewer than 300 frames, or took over three
+          # vsyncs (50 ms) at p90 for the whole frame: only a collapse, the machines vary too much.
+          python windows/test/framebench/report.py frames-aosp.log frames-java2d.log | Tee-Object -Variable table
+          $rc = $LASTEXITCODE
+          $table | Add-Content $env:GITHUB_STEP_SUMMARY
+          exit $rc
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -741,6 +774,8 @@ jobs:
           path: |
             boot.log
             window.log
+            frames-aosp.log
+            frames-java2d.log
             host.log
             replace.log
             frame.bmp

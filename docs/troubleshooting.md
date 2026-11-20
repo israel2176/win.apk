@@ -121,6 +121,7 @@ before it is `run-<app>.1.log`). The most useful lines:
 | `[win.apk] close:` | The window was closed: `the app was paused, stopped and destroyed in <n> ms` is the normal end; `the app did not answer in time` means its main thread was busy or stuck, so it was ended without the chance to save |
 | `[win.apk] java.nio sockets: <folder> refuses AF_UNIX connections, using <folder>` | Windows would not connect the local sockets Java makes in the temporary folder (seen where a filter driver guards `%LOCALAPPDATA%`), so Win.apk pointed Java at another folder. Nothing to do; without it apps that use Ktor or another `java.nio` selector failed at start with `Unable to establish loopback connection` |
 | `[win.apk] startup:` | When the Java VM was up and when the first frame came, with the memory then |
+| `[win.apk] frame times (<graphics> graphics):` | At the end of the log: how many frames the app drew and how long they took, in milliseconds (the median, the slowest 10% and 1%, and the slowest): `layout` and `draw` are the app's screen being laid out and drawn, `pixels` and `present` reading the picture and copying it to the window, `total` the whole frame. The first second and a half of each window is left out. A slow or jerky app shows it here; include it when you report one. An app that was stopped by force ends without it |
 | `[win.apk]` | Any other message from Win.apk itself |
 
 The [user guide](USER_GUIDE.md#logs) lists every log file.

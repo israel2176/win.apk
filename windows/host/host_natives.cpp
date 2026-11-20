@@ -51,6 +51,7 @@ const char* const kHostClasses[] = {
     "com.macapk.loader.AudioInputBridge",
     "com.macapk.loader.CameraBridge",
     "com.macapk.loader.DocumentPickerHandler",
+    "com.macapk.loader.FrameTimes",
     "com.macapk.loader.GamepadBridge",
     "com.macapk.loader.HostBluetooth",
     "com.macapk.loader.HostBrowserTab",

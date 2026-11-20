@@ -214,6 +214,29 @@ the app); if it is still there, it is a bug in what replaced it.
   fetched on first need into the data folder.
 - **Memory has no budget yet**: the smoke test records each app's peak working
   set; add a limit once a few CI runs show the spread.
+- **Frame time has only a collapse budget** (`windows/README.md` "Frame
+  time"): every run logs a `frame times` line at exit, and CI's Runtime tests
+  run the frame bench (`windows/test/framebench`) on both engines into the
+  summary, failing only over 50 ms p90 for the whole frame. Once a few CI
+  runs show the spread on real Windows, tighten it (`report.py
+  --budget-ms`).
+
+## Found by the frame-time record, not fixed
+
+- **AOSP's graphics draw 3.7x faster than Java2D's but their frames take 3x
+  as long** (the frame bench under Wine, `windows/README.md` "Frame time"):
+  draw 1.7 ms against 6.4, but the whole frame 29-31 ms against 10, so 33
+  frames a second against 60. Two full copies of the frame a frame, about
+  12 ms each at 720x1600: `GfxBackend.argbBuffer` (`AospGfx.liveArgbOrNull`
+  is null, so `Bitmap.getPixels`) for the present, and again for the status
+  bar's one-row colour sample (`ViewCanvasDriver`, before
+  `StatusBarDriver.paint`: the phase trace's `bar=12.3`). To fix: read one
+  row for the sample, and give the present the pixels without the
+  unpremultiplying copy (`copyPixelsToBuffer` into a direct buffer and a
+  premultiplied present, as Milestone 2 notes). Look at CI's numbers on real
+  Windows first; the bench's table shows the gain. Also: layout's p99 is
+  12.8 ms on AOSP against 6.4 on Java2D (the heartbeat's full traversals?),
+  not looked into.
 
 ## Work started and not merged
 
