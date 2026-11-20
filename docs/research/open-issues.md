@@ -67,14 +67,30 @@ the app); if it is still there, it is a bug in what replaced it.
 
 ## Bugs to fix on their own (not part of a layer)
 
-- **Exit hangs.** After a guest library aborts in a `thread_local` destructor
-  at process exit (Realm: `GetEnv` on a detached thread), the process hangs;
-  Android runs no thread_local destructors at exit. Skip guest destructors
-  while the process is exiting (`windows/src/elf_tls.cpp` ~67
-  `free_thread_blocks`, check `RtlDllShutdownInProgress` or a flag set by the
-  exit paths). Also `LayoutSweep`'s `Runtime.halt(0)` goes through
-  ExitProcess; it could end through `NativeCocoa.exitProcess` (TerminateProcess)
-  like the runtime. Seen in bit, Waze, Maccabi sweeps.
+- **Exit hangs: fixed, the sweeps to check again** (bit, Waze, Maccabi). A
+  guest library aborted in a `thread_local` destructor at process exit
+  (Realm: `GetEnv` on a detached thread) and the process hung: `ExitProcess`
+  calls the exiting thread's FLS callbacks, and `elf_tls.cpp` ran the guest
+  destructors from there. Android runs no thread_local destructors at exit;
+  `free_thread_blocks` now does nothing once ntdll says the process is
+  shutting down (`RtlDllShutdownInProgress`, Wine's too) or the C runtime's
+  `exit()` began (it also took `g_lock` there, which a killed
+  thread may hold). `winapk-linker-test` starts itself twice with destructors
+  pending on two threads and leaves by `exit()` and by `ExitProcess`: the old
+  code printed the main thread's destructor, the new one none. A thread that
+  ends on its own still runs them. Not changed: `LayoutSweep`'s
+  `Runtime.halt(0)` still goes through ExitProcess (harmless now).
+- **Raw arm64 system calls: fixed, Leumi to check again.** Leumi's
+  protection library `libe689.so` (arm64) maps memory with a raw `SVC` 222
+  (`mmap`), which the bridge answered `-ENOSYS`. `arm64_abi.cpp`'s
+  `linux_syscall` now answers `mmap` 222, `munmap` 215, `mprotect` 226 (the
+  import wrappers, so executable mappings register as guest code), `mremap`
+  216 (ENOMEM, as the shim's) and the libc calls whose structs both ABIs
+  share (ids, clocks, sleeps, `readlinkat`, `pread64`, `fcntl`, `ioctl`,
+  `uname`, `ptrace`, `prlimit64`, `inotify_*`...), and the `syscall()`
+  import passes a sixth argument. `winapk-arm64-test`'s
+  `arm64_raw_syscalls`. Not answered: `getdents64`, `clone`, sockets; what
+  Leumi's library calls next is not known.
 - **DEX conversion's exit code.** An OOM-killed converter reported 0 under
   Wine and the run failed with "cannot replace classes.jar (File not found)"
   (`runtime_main.cpp` ~530-547): check that the temporary jar exists before
@@ -124,9 +140,14 @@ the app); if it is still there, it is a bug in what replaced it.
   shim aborts in that check right after `libj2v8.so` loads; the new one runs
   on past J2V8 and shows the app's own
   first screen, a React Native modal (the notifications consent sheet, in
-  Hebrew). Seen in that boot, not looked into: react-native-skia's view
-  throws `Skia Metal backend unavailable; no CPU shader fallback` in
-  `onSizeChanged`, and Reanimated's `accessFlags` above. Next: the screens
+  Hebrew). Seen in that boot: react-native-skia's view threw `Skia Metal
+  backend unavailable; no CPU shader fallback` in `onSizeChanged` (fixed: the
+  message was Win.apk's own, upstream's `MacApkSkia.isAvailable()` throwing on
+  its first call where there is no Mac Skia bridge, i.e. always on Windows;
+  it answers false now and `RenderEffect`/`RuntimeShader` are made, drawn
+  without Skia; only on the Java2D graphics, AOSP's have their own classes;
+  not a GL/EGL answer; `MacApkSkiaTest`), and Reanimated's `accessFlags`
+  above. Next: the screens
   check, then past the consent sheet. (The Hermes "Maximum call stack size
   exceeded (native stack depth)" that left it blank before was the arm64
   guest-stack bug, fixed in 58c443a: it hit Flutter and Hermes alike.)

@@ -206,7 +206,13 @@ what compiled code actually does:
 - **Dynamic ELF TLS** (`elf_tls.cpp`): `__tls_get_addr`, `DTPMOD64` and
   `DTPOFF64` relocations, with a block allocated per thread and module. This
   is what libraries built for API 29 and later use. Static TLS (`TPOFF64`) is
-  refused.
+  refused. C++ `thread_local` destructors run when their thread ends (an FLS
+  callback, or `pthread_exit`), not when the process exits: as on Android,
+  where `exit()` runs none, so the FLS callback that `ExitProcess` makes on
+  the exiting thread does nothing once ntdll says the process is shutting
+  down (`RtlDllShutdownInProgress`) or the C runtime's `exit()` has begun.
+  Realm's destructor called JNI on a thread the JVM had detached there and
+  the process hung.
 - **The stack-protector patch** (`fs_tls_patch.cpp`): Bionic's stack guard is
   read with `mov rax, fs:[0x28]`. The loader rewrites the segment prefix so
   the instruction reads `gs:[0x28]` instead, which on x64 Windows is
@@ -417,7 +423,16 @@ for calls into the shim (a `va_list` by the shim function's address, so a
 function that takes one is never a no-op shared with other names:
 `register_shim_functions` refuses one that is, with a log line); and turns a host call into guest code (a callback)
 into interpretation through an execute-fault handler, since arm64 text is
-never mapped executable.
+never mapped executable. A raw system call (`SVC #0`, or the `syscall()`
+import) carries arm64's numbers, which `arm64_abi.cpp` maps onto the shim:
+memory (`mmap` 222, `munmap` 215, `mprotect` 226, through the same wrappers
+as the imports, so an executable mapping becomes guest code; `mremap` fails
+as the shim's does), `futex`, the ids, clocks and sleeps, files (`openat`,
+`read`, `pread64`, `readlinkat`, `fstatat` with arm64's `struct stat`...),
+`uname`, `ptrace`, `prlimit64` and others whose structs both ABIs share; the
+signal calls answer 0; anything else is `-ENOSYS`, with one log line per
+number. Protection libraries make their calls this way so that nothing
+hooking libc sees them (Bank Leumi's `libe689.so` maps memory with SVC 222).
 
 Speed, on the project's own microbenchmark (`winapk-arm64-test` with
 `test/guest/arm64_bench.c`, ratios to native x64 code): translated integer
