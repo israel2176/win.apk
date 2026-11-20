@@ -83,7 +83,9 @@ KEEP='^android/view/((Surface|SurfaceControl|SurfaceView|SurfaceHolder|TextureVi
 # members of, where no Win.apk class needs one AOSP's lacks (checked with LinkScan): StateSet
 # (View's drawable states, StateSet.get and the VIEW_STATE_* sets),
 # android.R.styleable (the views read the framework's styleables through it; Win.apk's android.R
-# has none), AllCapsTransformationMethod (TextView builds it with a Context),
+# has none), android.text.method (TextView's key listeners and movement methods: a hardware
+# keyboard's keys become text through TextKeyListener/QwertyKeyListener, which Win.apk's leave to the
+# host's text path, and AllCapsTransformationMethod is built with a Context; CharacterPickerDialog),
 # android.text.Selection (Editor's PositionIterator), and android.window's back dispatch
 # (WindowOnBackInvokedDispatcher and its callbacks: ViewRootImpl's, the Win.apk copies lack what it
 # calls) and SurfaceSyncGroup (ViewRootImpl's draw syncs); Win.apk's SplashScreen,
@@ -92,7 +94,7 @@ KEEP='^android/view/((Surface|SurfaceControl|SurfaceView|SurfaceHolder|TextureVi
 # and time pickers' dialogs, Presentation, CharacterPickerDialog): a dialog is a PhoneWindow added
 # to the window manager, which Win.apk's Dialog (its own Window, drawn by its overlay stack)
 # cannot be under AOSP's ViewRootImpl. docs/research/aosp-views.md, "V1 as built".
-REPLACE='^(android/app/(Dialog|AlertDialog|ProgressDialog|DatePickerDialog|TimePickerDialog|Presentation)([$].*)?|android/text/method/CharacterPickerDialog([$].*)?|com/android/internal/app/(AlertController|MicroAlertController)([$].*)?|android/util/StateSet|android/R[$]styleable|android/text/method/AllCapsTransformationMethod|android/text/Selection([$].*)?|android/window/(WindowOnBackInvokedDispatcher|OnBackInvokedDispatcher|OnBackInvokedCallback|OnBackAnimationCallback|CompatOnBackInvokedCallback|BackEvent|SystemOnBackInvokedCallbacks|SurfaceSyncGroup)([$].*)?)\.class$'
+REPLACE='^(android/app/(Dialog|AlertDialog|ProgressDialog|DatePickerDialog|TimePickerDialog|Presentation)([$].*)?|android/text/method/[^/]*|com/android/internal/app/(AlertController|MicroAlertController)([$].*)?|android/util/StateSet|android/R[$]styleable|android/text/Selection([$].*)?|android/window/(WindowOnBackInvokedDispatcher|OnBackInvokedDispatcher|OnBackInvokedCallback|OnBackAnimationCallback|CompatOnBackInvokedCallback|BackEvent|SystemOnBackInvokedCallbacks|SurfaceSyncGroup)([$].*)?)\.class$'
 grep -E "$TAKE|$REPLACE" "$WORK/all.txt" | grep -vE "$KEEP" > "$WORK/take.txt"
 extract() { (cd "$CLASSES" && xargs -d '\n' unzip -qo "$1" < "$2"); }
 extract "$ALL" "$WORK/take.txt"
@@ -119,6 +121,12 @@ for round in $(seq 1 30); do
     extract "$ALL" "$WORK/more.txt"
     echo "[aosp-views]   + $(wc -l < "$WORK/more.txt") classes they need that the framework lacks"
 done
+
+# RippleDrawable (aosp-graphics.jar's): a pressed view's patterned ripple builds its RippleShader
+# even on a software canvas, which then skips drawing it; the native runtime's SkSL compiler is
+# older than AOSP 14's shader and refuses it, which threw out of the draw. The rewrite starts that
+# ripple on a hardware canvas only (AospViewsRewrite.java): what a software canvas shows is the same.
+(cd "$CLASSES" && unzip -qo "$GFX" 'android/graphics/drawable/RippleDrawable.class')
 
 echo "[aosp-views] windows/java/aosp_views"
 find "$HERE/../java/aosp_views" -name '*.java' | sort | while read -r f; do native_path "$f"; done > "$WORK/src.txt"

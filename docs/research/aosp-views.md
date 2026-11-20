@@ -2,8 +2,8 @@
 
 Status: plan and spike (`windows/test/aospviews/`). Step 0, the `ResBackend`
 and `ViewHost` seams, is done (below). Step R1, the first part, is built behind
-`WINAPK_AOSP_RES=1`, and step V1 but its surfaces and input (V2) behind `WINAPK_AOSP_VIEWS=1`
-(both off by default; "R1 as built" and "V1 as built", after section 4).
+`WINAPK_AOSP_RES=1`, and steps V1 (but its surfaces) and V2 behind `WINAPK_AOSP_VIEWS=1`
+(both off by default; "R1 as built", "V1 as built" and "V2 as built", after section 4).
 Nothing else here ships yet.
 
 ## Why
@@ -602,10 +602,9 @@ Left for V1, in order:
   tree: they inflate (Win.apk's `SurfaceView` gets the members it reads), but
   the GL and video paths were not run; a `SurfaceView`'s own layer is not yet
   one of the compositor's.
-- `PopupWindow`, `ListPopupWindow`, spinners' drop-downs, menus and toasts in
-  an app: they are windows like the dialog and go the same way, but were not
-  seen in an app yet (they open on input, V2). The platform action bar
-  (`Activity.initWindowDecorActionBar`) is not made.
+- Spinners' drop-downs and toasts in an app: windows like the dialog and the
+  overflow menu (which V2 opened in Sudoku), not yet seen opening in an app.
+  The platform action bar (`Activity.initWindowDecorActionBar`) is not made.
 - The compositor redraws the whole frame from every window's layer on each
   post (a full-frame blit per window), with no damage tracking.
 - Resizing (`IWindow.resized`), several activity windows, an activity's finish
@@ -616,11 +615,100 @@ Left for V1, in order:
 - CDS with the switch on (`framework-aospviews-<key>.jsa`), real Windows, the
   smoke apps.
 
-V2 (input, IME, accessibility): the host's pointer and keys into the window's
-`InputEventReceiver` (recorded already) instead of `TouchDispatcher`, the IME
-service behind `IInputMethodManager` with Win.apk's IME host, predictive back
-(`OnBackInvokedCallback`: off here, the application answers "not enabled"),
-`IAccessibilityManager`. V3: HWUI's own pipeline (`ThreadedRenderer`).
+V3: HWUI's own pipeline (`ThreadedRenderer`).
+
+### V2 as built
+
+Input, the input method and accessibility, with the switch on
+(`windows/java/aosp_views`: `AospInput`, `InputRouter`, `ImeService`,
+`AccessibilityService`, `TextServicesService`, `InjectInput`). Off, nothing of
+it runs: `ViewHost`'s defaults keep Win.apk's `TouchDispatcher`.
+
+- **The host's events, made as InputReader makes them.** `ViewHost.newTouchDispatcher`
+  gives `AospInput`, a `TouchDispatcher` subclass that `Boot` registers with the
+  window (`NativeCocoa.registerTouchDispatcher`), so `win32_window.cpp` calls the
+  same entries as before. Each builds the event Android's mappers would:
+  touch contacts as pointers of one `SOURCE_TOUCHSCREEN` gesture
+  (`TouchInputMapper`); the mouse as `SOURCE_MOUSE` with `DOWN` then
+  `BUTTON_PRESS`, `BUTTON_RELEASE` then `UP`, hover moves between and
+  `HOVER_EXIT` on leaving (`CursorInputMapper`); a wheel step `ACTION_SCROLL`
+  with `AXIS_VSCROLL`/`AXIS_HSCROLL`; Ctrl+wheel's pinch as a two-finger
+  gesture; keys from `VIRTUAL_KEYBOARD` with the down time a key's up keeps and
+  the repeat count (`KeyboardInputMapper`), the character the host's layout
+  made stamped on the event. Display pixels: the host's points flipped to a
+  top-left origin and times the backing scale. The gamepad
+  (`GamepadBridge`) hands its keys and sticks over through `ViewHost.deliverInput`.
+- **The window manager's dispatch** (`InputRouter`, what InputDispatcher does,
+  for one display): a touch gesture goes to the window it went down in, top
+  first in the compositor's order, where a window is a target when it is
+  touchable and contains the point or is touch-modal (a dialog takes every
+  touch; its own `Dialog.onTouchEvent` cancels it on one outside, as on a
+  phone); a window above that asked for `FLAG_WATCH_OUTSIDE_TOUCH` gets
+  `ACTION_OUTSIDE` (a `PopupWindow` dismisses on it). Hover and scroll go to the
+  window under the pointer; keys and joysticks to the focused window, the
+  topmost focusable one, which hears `onFocusEvent` when it changes (what
+  `ViewRootImpl` turns into `windowFocusChanged`, and the input method's start).
+  The event reaches the window's own `WindowInputEventReceiver` (recorded by
+  `NativeInputEventReceiver` per `InputChannel`, set in `addToDisplay`) through
+  `InputEventReceiver.dispatchInputEvent`, on the main looper, in the window's
+  coordinates: `ViewRootImpl`'s input stages, the decor, `Activity`'s
+  `Window.Callback` (`dispatchTouchEvent`, `dispatchKeyEvent`... now AOSP's
+  bodies under the switch: the window's `superDispatch*` first).
+- **The input method.** `ImeService` answers `IInputMethodManager` as a device
+  with no input method enabled does (`InputBindResult.NO_IME`, `showSoftInput`
+  false: no on-screen keyboard), and keeps the editor that
+  `startInputOrWindowGainedFocus` names and its `IRemoteInputConnection`. The
+  host's keyboard keys go to the focused view as a hardware keyboard's do, typed
+  by AOSP's own key listeners (`android.text.method` is AOSP's under the
+  switch: Win.apk's `QwertyKeyListener` leaves keys to its own text path).
+  Windows' IME (Hebrew, Chinese...) composes into the editor itself:
+  `hostImeInline` is true while an editor is bound, and the composition and the
+  result go to its `InputConnection` as an input method's `setComposingText`
+  and `commitText` (`RemoteInputConnectionImpl.getInputConnection`); the
+  candidate window goes under the caret (`hostImeAnchor`).
+- **Accessibility.** `AccessibilityService` answers `IAccessibilityManager` as
+  `AccessibilityManagerService` does with no service on: state 0, no services,
+  the focus highlight from the framework's resources. The host has no UI
+  Automation bridge yet, so `isEnabled()` is false, as with TalkBack off.
+- **Text services.** `TextServicesService`: no spell checker (an `EditText`
+  asks on focus; a null service threw).
+- **AOSP code that input reaches,** each with LinkScan's count down by its
+  entry: `RippleDrawable`'s patterned ripple is started only on a hardware
+  canvas (AOSP skips drawing it on a software one, and building its
+  `RuntimeShader` threw: the native runtime's SkSL is older than AOSP 14's);
+  `AudioManager`'s navigation sounds and fallback-key hooks, ICU's
+  `getCombiningClass` (read off `java.text.Normalizer`'s canonical reordering),
+  `hasBinaryProperty` (`Character`'s emoji data), `getIntPropertyValue`'s word
+  break (WordIterator), `getDecimalSeparatorString`, `getIcuDateFormatSymbols`
+  and API 29's `Spannable.removeSpan(Object, int)` (LinkMovementMethod) go to `Compat`. `MotionEvent` and `KeyEvent`
+  gained the members `ViewRootImpl` and `View` call (`copy`, `split`,
+  `getId`, display ids, `isTouchEvent`...).
+- **Scripted input.** `MACAPK_INJECT_FILE`'s verbs (`tap`, `swipe`, `key`,
+  `text`...) go through `AospInput` too (`InjectInput`), and `imetext <text>`
+  (new, both paths) composes and commits as Windows' IME does.
+
+Checked (Wine, 360x640 dp at 320 dpi, Sudoku): a tap on the "Latest changes"
+dialog's OK removes the dialog's window; "Puzzle Lists", then the MENU key opens
+the overflow menu (a `PopupWindow`, type 1002, over the activity); "Add folder"
+opens a dialog whose `EditText` takes focus; `text Hello` types through the
+key listeners and `imetext שלום` composes and commits Hebrew into the field
+(right to left after the Latin text); Save closes it; Settings, a
+`ListPreference` screen, picking an entry and BACK all work. `HostTouchTest` passes on both
+class paths. The probe and the Gallery and Sudoku sweeps are byte-identical to
+V1's, on and off (on, Sudoku's but for two `TypedValue@<hash>` names in stack
+traces, which change from run to run).
+
+The editor actions come as with a phone's hardware keyboard: Enter in a
+single-line field is `TextView`'s own `onEditorAction` (not yet checked in an
+app). Left for V2: an on-screen keyboard (none: the host's keyboard is the
+input method), drag and drop, pointer capture and
+`PointerIcon` (the cursor stays the arrow), `InputEventSender` (not used by
+apps), touch-mode changes reported to the window manager (`setInTouchMode` is
+answered empty), a UI Automation bridge for accessibility, spell checking.
+Seen in Sudoku and not chased: after picking Dark mode the settings screen
+recreates with light text on a white window background; its folder list stays
+empty after Save (its database upgrade fails at start, `duplicate column
+name: rating_level`, with the switch off too).
 
 ## 5. Size, start and memory
 

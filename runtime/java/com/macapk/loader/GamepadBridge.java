@@ -540,6 +540,7 @@ public final class GamepadBridge {
      *  synthetic d-pad stage below do not run -- the queue owns the event. */
     private static boolean deliverToFocusedWindow(Activity active, KeyEvent ev) {
         try {
+            if (ViewHost.get().deliverInput(ev)) return true;  // AOSP's views: the focused window
             int ov = WindowOverlayStack.deliverKeyResult(ev);
             if (ov != WindowOverlayStack.OVERLAY_NONE) return ov == WindowOverlayStack.OVERLAY_HANDLED;
             if (active == null) return false;
@@ -560,6 +561,7 @@ public final class GamepadBridge {
         final Activity active = ActivityHost.peek();
         boolean handled = false;
         try {
+            if (ViewHost.get().deliverInput(ev)) return;  // AOSP's views: the focused window
             int ov = WindowOverlayStack.deliverGenericMotion(ev);
             if (ov != WindowOverlayStack.OVERLAY_NONE) {
                 handled = ov == WindowOverlayStack.OVERLAY_HANDLED;

@@ -145,6 +145,25 @@ public final class AospViewHost implements ViewHost {
         }
     }
 
+    // ---- Input (step V2): the host's events into the windows' own input path ----
+
+    @Override public com.macapk.loader.TouchDispatcher newTouchDispatcher() { return new AospInput(); }
+
+    @Override public boolean deliverInput(android.view.InputEvent event) {
+        if (event instanceof android.view.KeyEvent k) {
+            AospWindows.main().post(() -> InputRouter.key(k));
+        } else if (event instanceof android.view.MotionEvent m) {
+            AospWindows.main().post(() -> InputRouter.motion(m));
+        } else {
+            return false;
+        }
+        return true;
+    }
+
+    @Override public boolean injectInput(String verb, String[] words, String line) {
+        return InjectInput.run(verb, words, line);
+    }
+
     // ---- A window's root ----
 
     @Override public void dispatchAttachedToWindow(View root) { moot("dispatchAttachedToWindow"); }
@@ -328,7 +347,7 @@ public final class AospViewHost implements ViewHost {
     // ---- The IME: AOSP's InputMethodManager; the host's IME bridge is V2 ----
 
     @Override public TextView imeActiveInput() { return null; }
-    @Override public InputConnection imeActiveConnection() { return null; }
+    @Override public InputConnection imeActiveConnection() { return ImeService.connection(); }
     @Override public TextView imeShowTarget() { return null; }
     @Override public String imeTraceFocused() { return ""; }
     @Override public int imeActionForEnter() { return 0; }

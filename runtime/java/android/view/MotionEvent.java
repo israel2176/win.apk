@@ -461,6 +461,119 @@ public class MotionEvent extends InputEvent implements Parcelable {
         return e;
     }
 
+    // ---- What AOSP's InputEvent declares abstract and AOSP's views call, with AOSP's bodies
+    // (WINAPK_AOSP_VIEWS=1 puts AOSP's InputEvent, ViewRootImpl and ViewGroup over this class;
+    // nothing of Win.apk's own calls them). ----
+
+    private int mDisplayId;
+    private final int mId = macapkNextId();
+    private static final java.util.concurrent.atomic.AtomicInteger sNextId =
+            new java.util.concurrent.atomic.AtomicInteger(1);
+    static int macapkNextId() { return sNextId.getAndIncrement(); }
+
+    public int getDisplayId() { return mDisplayId; }
+    public void setDisplayId(int displayId) { mDisplayId = displayId; }
+    public MotionEvent copy() { return obtain(this); }
+    public boolean isTainted() { return (flags & FLAG_TAINTED) != 0; }
+    public void setTainted(boolean tainted) { flags = tainted ? flags | FLAG_TAINTED : flags & ~FLAG_TAINTED; }
+    /** AOSP cancel(): the event becomes ACTION_CANCEL. */
+    public void cancel() { setAction(ACTION_CANCEL); }
+    public int getId() { return mId; }
+
+    public boolean isTargetAccessibilityFocus() { return (flags & FLAG_TARGET_ACCESSIBILITY_FOCUS) != 0; }
+    public void setTargetAccessibilityFocus(boolean targetsFocus) {
+        flags = targetsFocus ? flags | FLAG_TARGET_ACCESSIBILITY_FOCUS : flags & ~FLAG_TARGET_ACCESSIBILITY_FOCUS;
+    }
+
+    /** AOSP isTouchEvent (Input.cpp MotionEvent::isTouchEvent): a pointer source and a touch
+     *  action. */
+    public boolean isTouchEvent() {
+        if ((source & InputDevice.SOURCE_CLASS_POINTER) == 0) return false;
+        switch (getActionMasked()) {
+            case ACTION_DOWN: case ACTION_MOVE: case ACTION_UP: case ACTION_CANCEL:
+            case ACTION_POINTER_DOWN: case ACTION_POINTER_UP: case ACTION_OUTSIDE:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    public boolean isHoverEvent() {
+        int a = getActionMasked();
+        return a == ACTION_HOVER_ENTER || a == ACTION_HOVER_EXIT || a == ACTION_HOVER_MOVE;
+    }
+
+    /** AOSP isStylusPointer: one pointer, a stylus or an eraser, from a stylus source. */
+    public boolean isStylusPointer() {
+        final int actionIndex = getActionIndex();
+        return isFromSource(InputDevice.SOURCE_STYLUS)
+                && (getToolType(actionIndex) == TOOL_TYPE_STYLUS || getToolType(actionIndex) == TOOL_TYPE_ERASER);
+    }
+
+    public final int getPointerIdBits() {
+        int bits = 0;
+        for (int i = 0; i < pointerCount; i++) bits |= 1 << getPointerId(i);
+        return bits;
+    }
+
+    /** AOSP getX/YDispatchLocation: where the event is dispatched; a pointer's own position
+     *  (the mouse cursor's, which is the same here: no separate cursor position is kept). */
+    public float getXDispatchLocation(int pointerIndex) { return getX(pointerIndex); }
+    public float getYDispatchLocation(int pointerIndex) { return getY(pointerIndex); }
+
+    /** AOSP split(idBits) (MotionEvent.java): only the pointers in idBits, the action made one
+     *  of theirs (a POINTER_DOWN/UP of another pointer is a MOVE; of the only one left, a
+     *  DOWN/UP). */
+    public final MotionEvent split(int idBits) {
+        final int oldAction = getActionMasked();
+        final int oldActionIndex = getActionIndex();
+        final int oldActionPointerId = getPointerId(oldActionIndex);
+        int n = 0;
+        int newActionIndex = -1;
+        for (int i = 0; i < pointerCount; i++) {
+            if ((idBits & (1 << getPointerId(i))) != 0) {
+                if (i == oldActionIndex) newActionIndex = n;
+                n++;
+            }
+        }
+        if (n == 0) throw new IllegalArgumentException("idBits did not match any ids in the event");
+        int newAction;
+        if (oldAction == ACTION_POINTER_DOWN || oldAction == ACTION_POINTER_UP) {
+            if (newActionIndex < 0) {
+                newAction = ACTION_MOVE;
+            } else if (n == 1) {
+                newAction = oldAction == ACTION_POINTER_DOWN ? ACTION_DOWN : ACTION_UP;
+                if (oldAction == ACTION_POINTER_UP && (flags & FLAG_CANCELED) != 0) newAction = ACTION_CANCEL;
+            } else {
+                newAction = oldAction | (newActionIndex << ACTION_POINTER_INDEX_SHIFT);
+            }
+        } else {
+            newAction = oldAction;
+        }
+        MotionEvent e = copyOf(true);
+        int[] keep = new int[n];
+        for (int i = 0, k = 0; i < pointerCount; i++) {
+            if ((idBits & (1 << getPointerId(i))) != 0) keep[k++] = i;
+        }
+        e.pointerCount = n;
+        e.ids = new int[n];
+        e.toolTypes = new int[n];
+        for (int k = 0; k < n; k++) {
+            e.ids[k] = ids[keep[k]];
+            e.toolTypes[k] = toolTypes[keep[k]];
+        }
+        for (int smp = 0; smp < e.samples.length; smp++) {
+            PointerCoords[] row = new PointerCoords[n];
+            for (int k = 0; k < n; k++) row[k] = e.samples[smp][keep[k]];
+            e.samples[smp] = row;
+        }
+        e.action = newAction;
+        return e;
+    }
+
+    public static String buttonStateToString(int buttonState) { return "0x" + Integer.toHexString(buttonState); }
+    public static String toolTypeToString(int toolType) { return Integer.toString(toolType); }
+
     /** AOSP pools recycled events. We do not: recycle() is called on our own
      *  dispatch paths while a guest may still hold the reference, and handing
      *  the same event out twice is a far worse bug than not pooling. */

@@ -98,6 +98,18 @@ public interface ViewHost {
      *  when the name is not one of them, or Win.apk's own registry answers it. */
     default Object systemService(Context context, String name) { return null; }
 
+    /** The host's input entries (NativeCocoa.registerTouchDispatcher): Win.apk's TouchDispatcher,
+     *  or with AOSP's views a subclass that hands each event to the windows' own input path. */
+    default com.macapk.loader.TouchDispatcher newTouchDispatcher() { return new com.macapk.loader.TouchDispatcher(); }
+
+    /** An input event made outside the host's entries (a gamepad's keys and sticks,
+     *  GamepadBridge) for the focused window; false when Win.apk's own dispatch delivers it. */
+    default boolean deliverInput(android.view.InputEvent event) { return false; }
+
+    /** A MACAPK_INJECT_FILE verb (tap, swipe, key, text...) with its words; false when Win.apk's
+     *  own inject driver runs it. */
+    default boolean injectInput(String verb, String[] words, String line) { return false; }
+
     // ---- A window's root: attach, detach, remove ----
 
     /** Runs the attach pass over the tree (View.macapkDispatchAttachedToWindow). */

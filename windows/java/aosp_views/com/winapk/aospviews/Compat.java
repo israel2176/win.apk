@@ -28,6 +28,89 @@ public final class Compat {
     public static String formatSimple(String format, Object... args) { return String.format(format, args); }
     public static void noteResourceMismatch(Object tag) {}
 
+    // ---- android.text ----
+
+    /** Spannable.removeSpan(Object, int), API 29's default method, which Win.apk's interface lacks:
+     *  its default body (AOSP's Selection.removeSelection calls it, from LinkMovementMethod). */
+    public static void removeSpan(android.text.Spannable s, Object what, int flags) { s.removeSpan(what); }
+
+    // ---- ICU (Win.apk's android.icu is java.text's; what the key listeners ask of it) ----
+
+    /** UCharacter.getCombiningClass: the Unicode canonical combining class (BaseKeyListener's
+     *  backspace keeps a mark with its base: it only asks whether it is 0). java.text.Normalizer
+     *  has the Unicode data but no getter, so the class is read off canonical reordering: in NFD,
+     *  a mark of class c moves before a preceding mark of a higher class. U+0334 has class 1 and
+     *  U+0345 class 240, the lowest and highest a mark has; a precomposed character's class is
+     *  that of its decomposition's first character. Exact for zero or not, which is all it is
+     *  asked; a nonzero answer is 1, 230 or 240. */
+    public static int getCombiningClass(int cp) {
+        java.text.Normalizer.Form nfd = java.text.Normalizer.Form.NFD;
+        String c = new String(Character.toChars(
+                java.text.Normalizer.normalize(new String(Character.toChars(cp)), nfd).codePointAt(0)));
+        String lowAfter = "a" + c + "̴";   // c moves after U+0334 iff its class > 1
+        String highBefore = "aͅ" + c;      // c moves before U+0345 iff 0 < its class < 240
+        boolean above1 = !java.text.Normalizer.normalize(lowAfter, nfd).equals(lowAfter);
+        boolean below240 = !java.text.Normalizer.normalize(highBefore, nfd).equals(highBefore);
+        if (above1) return below240 ? 230 : 240;
+        return below240 ? 1 : 0;
+    }
+
+    /** UCharacter.hasBinaryProperty for the properties AOSP's text code asks (UProperty's numbers):
+     *  the emoji ones from java.lang.Character's own Unicode data (Java 21), the variation
+     *  selectors and regional indicators by their code points. Any other property: false. */
+    public static boolean hasBinaryProperty(int cp, int property) {
+        switch (property) {
+            case 36: return (cp >= 0x180B && cp <= 0x180D) || cp == 0x180F || (cp >= 0xFE00 && cp <= 0xFE0F)
+                    || (cp >= 0xE0100 && cp <= 0xE01EF);                       // VARIATION_SELECTOR
+            case 57: return Character.isEmoji(cp);                             // EMOJI
+            case 58: return Character.isEmojiPresentation(cp);                 // EMOJI_PRESENTATION
+            case 59: return Character.isEmojiModifier(cp);                     // EMOJI_MODIFIER
+            case 60: return Character.isEmojiModifierBase(cp);                 // EMOJI_MODIFIER_BASE
+            case 61: return Character.isEmojiComponent(cp);                    // EMOJI_COMPONENT
+            case 62: return cp >= 0x1F1E6 && cp <= 0x1F1FF;                    // REGIONAL_INDICATOR
+            case 64: return Character.isExtendedPictographic(cp);              // EXTENDED_PICTOGRAPHIC
+            default: return false;
+        }
+    }
+
+    /** UCharacter.getIntPropertyValue for what AOSP's text code asks: WORD_BREAK (4116), from
+     *  WordIterator.isMidWordPunctuation, which only tells MidLetter (4), MidNumLet (11) and
+     *  Single_Quote (15) from the rest; those are Unicode 15's WordBreakProperty.txt lists.
+     *  Anything else: 0 (Other). */
+    public static int getIntPropertyValue(int cp, int property) {
+        if (property != 4116) return 0;
+        switch (cp) {
+            case 0x003A: case 0x00B7: case 0x0387: case 0x055F: case 0x05F4: case 0x2027: case 0xFE13:
+            case 0xFE55: case 0xFF1A:
+                return 4;
+            case 0x002E: case 0x2018: case 0x2019: case 0x2024: case 0xFE52: case 0xFF07: case 0xFF0E:
+                return 11;
+            case 0x0027:
+                return 15;
+            default:
+                return 0;
+        }
+    }
+
+    /** DecimalFormatSymbols.getDecimalSeparatorString (DigitsKeyListener's locale's separator). */
+    public static String getDecimalSeparatorString(android.icu.text.DecimalFormatSymbols s) {
+        return String.valueOf(s.getDecimalSeparator());
+    }
+
+    /** DateFormat.getIcuDateFormatSymbols (NumberKeyListener's AM/PM characters, TimePicker). */
+    public static android.icu.text.DateFormatSymbols getIcuDateFormatSymbols(java.util.Locale locale) {
+        return android.icu.text.DateFormatSymbols.getInstance(locale);
+    }
+
+    // ---- android.media.AudioManager (hidden; on input, ViewRootImpl's sounds, the fallback keys) ----
+    // A phone's default config_navigationRepeatSoundEffectsEnabled is false: one click sound only.
+    public static boolean areNavigationRepeatSoundEffectsEnabled(android.media.AudioManager a) { return false; }
+    public static int getNthNavigationRepeatSoundEffect(android.media.AudioManager a, int n) {
+        return android.media.AudioManager.FX_KEY_CLICK;
+    }
+    // The audio service's volume-key preprocessing (the volume panel's long press): none on the host.
+    public static void preDispatchKeyEvent(android.media.AudioManager a, android.view.KeyEvent e, int stream) {}
+
     // ---- android.content.Context (hidden; ContextImpl's answers for an app's context) ----
     private static final java.util.concurrent.atomic.AtomicInteger sAutofillId =
             new java.util.concurrent.atomic.AtomicInteger(1073741824);

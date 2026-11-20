@@ -89,7 +89,7 @@ final class Compositor {
         compose();
     }
 
-    private static int band(int type) {
+    static int band(int type) {
         if (type >= WindowManager.LayoutParams.FIRST_SYSTEM_WINDOW) return 2;
         // An activity token's main window is the bottom of its windows (WindowToken keeps the
         // TYPE_BASE_APPLICATION window first), whenever its dialogs were added.
@@ -101,6 +101,7 @@ final class Compositor {
         for (AospWindows.Win w : AospWindows.sWindows.values()) {
             if (w.visible && w.content != null && w.attrs != null) order.add(w);
         }
+        InputRouter.windowsChanged();  // the focus follows the windows shown (step V2)
         if (order.isEmpty()) return;
         order.sort(Comparator.comparingInt((AospWindows.Win w) -> band(w.attrs.type))
                 .thenComparingLong(w -> w.added));

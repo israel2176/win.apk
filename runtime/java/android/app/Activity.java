@@ -894,6 +894,12 @@ public class Activity extends ContextThemeWrapper
     private static final boolean sTouchDiag = System.getenv("MACAPK_TOUCH_DIAG") != null;
     private static int sTouchDiagN = 0;
     public boolean dispatchTouchEvent(MotionEvent ev) {
+        if (MACAPK_AOSP_WINDOWS) {
+            // AOSP Activity.dispatchTouchEvent: the window's decor first, then onTouchEvent.
+            if (ev.getAction() == MotionEvent.ACTION_DOWN) onUserInteraction();
+            if (getWindow().superDispatchTouchEvent(ev)) return true;
+            return onTouchEvent(ev);
+        }
         // AOSP dispatchTouchEvent fires onUserInteraction() on ACTION_DOWN only
         // (the gesture-starting action), before any view-tree dispatch. Apps
         // hang idle-session timers, ad viewability tracking and
@@ -1033,6 +1039,16 @@ public class Activity extends ContextThemeWrapper
         com.macapk.loader.ActivityHost.onBackInvoked(this);
     }
     public boolean dispatchKeyEvent(KeyEvent ev) {
+        if (MACAPK_AOSP_WINDOWS) {
+            // AOSP Activity.dispatchKeyEvent: the window's decor (the focused view), then
+            // KeyEvent.dispatch to this activity with the decor's dispatcher state. (AOSP first
+            // lets the action bar take MENU; there is no platform action bar here yet.)
+            onUserInteraction();
+            Window win = getWindow();
+            if (win.superDispatchKeyEvent(ev)) return true;
+            View decor = win.peekDecorView();
+            return ev.dispatch(this, decor != null ? decor.getKeyDispatcherState() : null, this);
+        }
         // AOSP dispatchKeyEvent calls onUserInteraction() unconditionally,
         // first thing, before the window/view-tree dispatch below.
         onUserInteraction();
@@ -4618,6 +4634,10 @@ public class Activity extends ContextThemeWrapper
      *  FrameLayout. The decor is the fallback for a window with no content. */
     public boolean dispatchKeyShortcutEvent(android.view.KeyEvent event) {
         onUserInteraction();
+        if (MACAPK_AOSP_WINDOWS) {
+            if (getWindow().superDispatchKeyShortcutEvent(event)) return true;
+            return onKeyShortcut(event.getKeyCode(), event);
+        }
         View root = contentView;
         if (root == null && windowImpl != null) root = windowImpl.peekDecorView();
         if (root != null && root.dispatchKeyShortcutEvent(event)) return true;
@@ -4647,7 +4667,14 @@ public class Activity extends ContextThemeWrapper
     // ---- Window.Callback: AOSP's interface declares these abstract (Activity implements them);
     // Win.apk's Window.Callback has them as defaults with these same bodies, so declaring them
     // here changes nothing on Win.apk's views and lets AOSP's PhoneWindow call them. ----
-    public boolean dispatchTrackballEvent(MotionEvent event) { return false; }
+    public boolean dispatchTrackballEvent(MotionEvent event) {
+        if (MACAPK_AOSP_WINDOWS) {
+            onUserInteraction();
+            if (getWindow().superDispatchTrackballEvent(event)) return true;
+            return onTrackballEvent(event);
+        }
+        return false;
+    }
     public boolean dispatchPopulateAccessibilityEvent(android.view.accessibility.AccessibilityEvent event) {
         return false;
     }
@@ -4910,6 +4937,10 @@ public class Activity extends ContextThemeWrapper
      *  never saw a stick move. */
     public boolean dispatchGenericMotionEvent(android.view.MotionEvent ev) {
         onUserInteraction();
+        if (MACAPK_AOSP_WINDOWS) {
+            if (getWindow().superDispatchGenericMotionEvent(ev)) return true;
+            return onGenericMotionEvent(ev);
+        }
         // The window's view tree is entered at the content root, the same root
         // dispatchKeyEvent above uses: an app that hands its own view to
         // setContentView (libGDX's GLSurfaceView, for one) is installed

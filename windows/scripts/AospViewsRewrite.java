@@ -12,6 +12,9 @@
 //     name; an instance call passes the receiver first), static field reads to Compat's fields,
 //     DisplayMetrics' noncompat* fields to the plain ones (Win.apk never scales for compatibility).
 //   * `new Surface()` (Win.apk's class) is released at once: AOSP's is invalid until copyFrom.
+//   * RippleDrawable's patterned ripple is not started on a software canvas: AOSP builds its
+//     RippleShader and then skips drawing it there ("not supported for a non-hardware accelerated
+//     Canvas"); the native runtime's older SkSL refuses that shader, which threw out of the draw.
 //   * The in-process system services (SERVICES): for each AIDL interface, a generated subclass of
 //     its Stub that calls the answering class of windows/java/aosp_views.
 //
@@ -54,6 +57,15 @@ public class AospViewsRewrite {
      *  that runs on the way to a drawn window. */
     static final Set<String> TO_COMPAT = Set.of(
             "android/app/ActivityThread.isSystem()Z",
+            "android/text/Spannable.removeSpan(Ljava/lang/Object;I)V",
+            "android/icu/lang/UCharacter.getCombiningClass(I)I",
+            "android/icu/lang/UCharacter.hasBinaryProperty(II)Z",
+            "android/icu/lang/UCharacter.getIntPropertyValue(II)I",
+            "android/icu/text/DecimalFormatSymbols.getDecimalSeparatorString()Ljava/lang/String;",
+            "android/text/format/DateFormat.getIcuDateFormatSymbols(Ljava/util/Locale;)Landroid/icu/text/DateFormatSymbols;",
+            "android/media/AudioManager.areNavigationRepeatSoundEffectsEnabled()Z",
+            "android/media/AudioManager.getNthNavigationRepeatSoundEffect(I)I",
+            "android/media/AudioManager.preDispatchKeyEvent(Landroid/view/KeyEvent;I)V",
             "android/app/ActivityManager.isLowRamDeviceStatic()Z",
             "android/app/ActivityManager.isSystemReady()Z",
             "android/text/TextUtils.emptyIfNull(Ljava/lang/String;)Ljava/lang/String;",
@@ -170,8 +182,10 @@ public class AospViewsRewrite {
             {"android/view/IWindowManager", PKG + "AospWindows$WindowManagerService"},
             {"android/view/IWindowSession", PKG + "AospWindows$WindowSession"},
             {"android/hardware/display/IDisplayManager", PKG + "AospWindows$DisplayService"},
-            {"com/android/internal/view/IInputMethodManager", PKG + "AospWindows$InputMethodService"},
+            {"com/android/internal/view/IInputMethodManager", PKG + "ImeService"},
+            {"android/view/accessibility/IAccessibilityManager", PKG + "AccessibilityService"},
             {"android/app/INotificationManager", PKG + "ToastService"},
+            {"com/android/internal/textservice/ITextServicesManager", PKG + "TextServicesService"},
     };
 
     /** com/winapk/aospviews/gen/<I>Impl extends <I>$Stub (a local Binder whose queryLocalInterface
@@ -399,8 +413,11 @@ public class AospViewsRewrite {
                     }
                 };
             }
+            final boolean patterned = cls.equals("android/graphics/drawable/RippleDrawable")
+                    && name.equals("drawPatterned") && desc.equals("(Landroid/graphics/Canvas;)V");
             return new MethodVisitor(Opcodes.ASM9, out) {
                 @Override public void visitMethodInsn(int op, String owner, String n, String d, boolean itf) {
+
                     if (TO_COMPAT.contains(owner + "." + n + d)) {
                         String cd = op == Opcodes.INVOKESTATIC ? d : "(L" + owner + ";" + d.substring(1);
                         super.visitMethodInsn(Opcodes.INVOKESTATIC, COMPAT, n, cd, false);
@@ -420,6 +437,18 @@ public class AospViewsRewrite {
                 }
 
                 @Override public void visitFieldInsn(int op, String owner, String n, String d) {
+                    if (patterned && op == Opcodes.GETFIELD && n.equals("mAddRipple")) {
+                        // addRipple = mAddRipple && canvas.isHardwareAccelerated(): the patterned
+                        // ripple's session draws only on a hardware canvas (on a software one AOSP
+                        // logs "not supported" and skips it), so on a software canvas it is not made.
+                        super.visitFieldInsn(op, owner, n, d);
+                        super.visitVarInsn(Opcodes.ALOAD, 1);
+                        super.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "android/graphics/Canvas",
+                                "isHardwareAccelerated", "()Z", false);
+                        super.visitInsn(Opcodes.IAND);
+                        count("RippleDrawable's patterned ripple made only on a hardware canvas");
+                        return;
+                    }
                     String to = STATIC_FIELDS.get(owner + "." + n);
                     if (op == Opcodes.GETSTATIC && to != null) {
                         super.visitFieldInsn(op, to, n, d);
