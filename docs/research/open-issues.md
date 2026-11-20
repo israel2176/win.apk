@@ -86,6 +86,42 @@ host's IME (V2) are there. Items 10-14
 | 21 | `View(Context, AttributeSet)` never sets the DataBinding tag (`"layout/..._0"`) from the element, so views that check `getTag()` keep a resource id Android replaces (two views with one id; 1,259 lines in 55 layouts). Part of item 3 | `View.java` ~227-233 | Leumi | views |
 | 22 | NumberPickers inside the framework DatePicker get margins 8,16,8,16 where AOSP's legacy layout has 1,0,1,0 | | Leumi | views |
 
+**The smoke apps with AOSP's views (November 2026).** The ten apps of
+`windows/test/compat/smoke.txt` booted headless under Wine (the sweep, 150
+frames, CDS off, one stage), both switches on (`WINAPK_AOSP_RES=1
+WINAPK_AOSP_VIEWS=1`, on 2cd3771 with V1's dialogs and bars and V2) against
+both off. Off, all ten draw. The UI probe stays equal to the oracle in all 2104
+lines with both switches, 162 differing off and 146 with resources alone, as
+before.
+
+| App (kind) | Off | On, at cf583c9 | On, now | Left |
+|---|---|---|---|---|
+| Editor (Java views) | "Access all files" dialog over the dimmed editor | the editor, no dialog (old pipeline) | **draws**: the same dialog over "Untitled.txt" | the area under the dialog is lighter than off (the dim behind) |
+| Fossify Notes (Kotlin views) | draws | draws (old pipeline); spell checker NPE | **draws**, as off | none |
+| Jerboa (Compose) | "What's changed" dialog | blank (the dialog threw in `onCreate`) | **draws**: the home screen with a dialog | a different dialog is on top (the Google identity notice, not "What's changed"): the order of two dialogs; `View.setRequestedFrameRate` NoSuchMethodError |
+| Sgt Puzzles (JNI, Canvas) | draws | title "GameChooser" | **draws**, pixel-identical to off | none |
+| Klooni (libGDX GL) | draws | blank: `skin\uiskin.json` not found | **draws**, the menu as off | none |
+| Tensy (SDL, native window) | draws, though its intro is black at some frame counts | blank: `DisplayDecorationSupport` NoClassDefFoundError | first native frame (portrait), then stalls after the rotation to landscape | ~12 native frames in 150-600 display frames (off: 177 in 150). At the stall the UI thread is idle in its looper, `SDLThread` is in `nativeRunMain`, focus is true and no pause or surface loss is logged. Before the rotation reached the activity (the `CONFIG_WINDOW_CONFIGURATION` fix) it drew the title at 400 frames. Not found yet |
+| PPSSPP (NativeActivity, GL) | draws (logo) | blank (GL under an opaque window) | **draws**, the same logo screen | none |
+| Jitsi Meet (React Native) | draws (splash) | blank (dialog in `onCreate`) | **draws**, pixel-identical to off | none |
+| Jellyfin (WebView shell, Compose setup) | draws | blank: "Autofill service could not be located" | **draws**, as off | `View.setRequestedFrameRate(float)` NoSuchMethodError: an API 35 member AOSP 14's `View` lacks (the level question, `aosp-views.md` section 4) |
+| Open Sudoku (arm64) | "Latest changes" dialog | title "TitleScreenActivity", no dialog | **draws**: the dialog over the title screen | the margin around the dialog differs from off (dim and window background) |
+
+Fixed at the root by this work (besides what ad53ceb and 2cd3771 fixed): the
+autofill manager as on a device without the service;
+`android.hardware.graphics.common` in the views jar; the resources bridge's
+asset paths with backslashes; labels through `pm.getText` (AOSP's system
+Resources hold the framework only); a SurfaceView's GL view under the windows
+with AOSP's hole; display commits to the windows (`IWindow.resized`);
+`CONFIG_WINDOW_CONFIGURATION` out of `DisplayConfig`'s relaunch and report
+decisions; `ResourcesManager`'s three members; `Handler.executeOrSendMessage`
+(AOSP's `InputMethodManager.showSoftInput`).
+
+Left: Tensy's stall after a rotation; API 35 members missing from AOSP 14's
+views (Jerboa, Jellyfin); the dim behind dialogs and the order of two dialogs
+against the switch-off pictures (Editor, Open Sudoku, Jerboa) to compare with a
+device, not only with Win.apk's old pipeline.
+
 ## Bugs to fix on their own (not part of a layer)
 
 - **Exit hangs: fixed, the sweeps to check again** (bit, Waze, Maccabi). A
