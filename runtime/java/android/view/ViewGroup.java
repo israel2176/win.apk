@@ -5,6 +5,7 @@
 // they manage layout themselves.
 package android.view;
 
+import com.macapk.loader.gfx.GfxBackend;
 import android.content.Context;
 import android.graphics.Rect;
 import android.view.animation.Animation;
@@ -1692,7 +1693,7 @@ public class ViewGroup extends View implements ViewParent, ViewManager {
         try {
             // Canvas.quickReject with Skia's device-clip meaning (a clip-less
             // surface canvas still rejects what lies off the surface).
-            return canvas.macapkQuickRejectChild(dx, dy, dx + cw, dy + ch);
+            return GfxBackend.get().quickRejectChild(canvas, dx, dy, dx + cw, dy + ch);
         } catch (Throwable t) {
             return false;   // an app Canvas subclass that cannot answer: draw it
         }
@@ -3074,8 +3075,9 @@ public class ViewGroup extends View implements ViewParent, ViewManager {
                 // clipRect respects MACAPK_REAL_CLIP for emergency
                 // rollback; this internal entry does not, because the
                 // per-child bounds clip IS the dispatchDraw contract.
-                canvas.macapkClipChildRect(0, 0, cw, ch);
+                GfxBackend.get().clipChildRect(canvas, 0, 0, cw, ch);
             }
+            c.macapkClipToClipBounds(canvas);
             // Tier 3 M9 (alpha-in-draw): modulate the child by its effective
             // alpha = getAlpha() * getTransitionAlpha() -- the AOSP View.draw
             // software path (View.java: alpha = getAlpha()*getTransitionAlpha();
@@ -3917,8 +3919,9 @@ public class ViewGroup extends View implements ViewParent, ViewManager {
         // MACAPK_CLIP_CHILDREN=0 is the historical escape hatch the inline loop read
         // (and the old drawChild did not).
         if ((!fromDispatch || MACAPK_CLIP_CHILDREN_ENV) && clipChildren && cw > 0 && ch > 0) {
-            canvas.macapkClipChildRect(0, 0, cw, ch);
+            GfxBackend.get().clipChildRect(canvas, 0, 0, cw, ch);
         }
+        child.macapkClipToClipBounds(canvas);
         // Tier 3 M9: effective alpha = getAlpha() * getTransitionAlpha() * the
         // animation's alpha (AOSP View.java:24885-24890); zero = not drawn, partial =
         // one group-opacity layer so the subtree fades as a unit.
@@ -4003,7 +4006,8 @@ public class ViewGroup extends View implements ViewParent, ViewManager {
         }
         int cw = child.getRight()  - child.getLeft();
         int ch = child.getBottom() - child.getTop();
-        if (clipChildren && cw > 0 && ch > 0) canvas.macapkClipChildRect(0, 0, cw, ch);
+        if (clipChildren && cw > 0 && ch > 0) GfxBackend.get().clipChildRect(canvas, 0, 0, cw, ch);
+        child.macapkClipToClipBounds(canvas);
         if (android.os.Looper.MACAPK_REAL_LOOPER) {
             float a = child.getAlpha() * child.getTransitionAlpha() * animAlpha;
             if (a <= 0f) {

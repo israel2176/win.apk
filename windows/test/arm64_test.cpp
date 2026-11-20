@@ -21,7 +21,8 @@
 //   * Control flow and edge cases, with test/guest/arm64_flow_guest.c:
 //     returns into an ancestor frame (as an unwinder or longjmp written in
 //     guest code makes), coroutines, RETAA, a return through BR, deep
-//     recursion on a 1 MB thread, saturating conversions and FRECPS/FRSQRTS,
+//     recursion on a 1 MB thread, pthread_getattr_np's bounds against the
+//     guest stack (on this thread and an 8 MB one), saturating conversions and FRECPS/FRSQRTS,
 //     an exclusive-monitor counter shared by translated code and the JIT,
 //     the store-buffer litmus test; with arm64_patch_guest.c, a library
 //     patching its own code, and a library unloaded (dlclose) while
@@ -235,6 +236,26 @@ void run_bridge(winapk::GuestLinker& linker, const char* file) {
     check("cleanup handlers: pop(1) and pthread_exit run guest routines", call0("arm64_cleanup") == 213,
           std::to_string(call0("arm64_cleanup")));
 
+    // The bridge converts a va_list by the host function's address: a shim
+    // function shared with another name would have that name's calls
+    // converted too (vsyslog on the shared no-op took openlog's 0 for one).
+    for (const char* name : {"vsnprintf", "vsprintf", "vasprintf", "vfprintf", "vprintf", "vdprintf", "vsscanf",
+                             "vfscanf", "vscanf", "vsyslog", "__android_log_vprint"}) {
+        const std::vector<std::string> names = winapk::mini_bionic_names_of(winapk::mini_bionic_resolve(name));
+        check((std::string("the shim's ") + name + " is no other name's function").c_str(),
+              names.size() == 1 && names[0] == name, std::to_string(names.size()) + " names");
+    }
+    check("libc++abi's abort path short of abort (vasprintf, android_set_abort_message, openlog, syslog, vsyslog)",
+          call0("arm64_abort_tail") == 1, std::to_string(call0("arm64_abort_tail")));
+
+    // Raw SVCs by arm64's numbers (arm64_abi.cpp's linux_syscall): mmap 222, mprotect 226 and munmap 215,
+    // also through syscall(); getpid, gettid, getuid, nanosleep, uname; an unknown one is -ENOSYS.
+    {
+        const int raw = call0("arm64_raw_syscalls");
+        check("raw arm64 system calls (mmap, mprotect, munmap, getpid, gettid, getuid, nanosleep, uname, ENOSYS)",
+              raw == 511, std::to_string(raw));
+    }
+
     const int exits_before = call0("arm64_exit_count");
     check("__cxa_atexit with a guest handler", call0("arm64_register_atexit") == 0);
     winapk::mini_bionic_run_atexit();
@@ -347,6 +368,10 @@ void run_flow(winapk::GuestLinker& linker, const char* file) {
     expect("recursion 20,000 deep through a function pointer", call("flow_deep_indirect", {depth}),
            deep_reference(depth));
     expect("both on a guest thread (1 MB stack)", call("flow_deep_thread", {depth}), deep_reference(depth) * 4);
+    // Guest code runs on a guest stack, not the host thread's: the bounds
+    // must be that stack's (Dart aborted on HasStackHeadroom() otherwise).
+    expect("pthread_getattr_np: the guest stack, on this thread and on an 8 MB guest thread",
+           call("flow_stack_bounds"), 0x77);
 
     {
         const double nan = std::nan("");

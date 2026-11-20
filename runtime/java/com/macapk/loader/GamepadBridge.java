@@ -7,6 +7,7 @@ import android.view.KeyCharacterMap;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
+import com.macapk.loader.view.ViewHost;
 
 /**
  * HOST GAME CONTROLLERS -> Android gamepads (MACAPK_GAMEPAD, default ON;
@@ -176,7 +177,7 @@ public final class GamepadBridge {
             final int number = nextControllerNumber();
             pad = new Pad(handle, id, number, mask);
             final String devName = (name == null || name.isEmpty()) ? "Gamepad" : name;
-            device = new InputDevice(id, 0, number, devName, vendor, product,
+            device = ViewHost.get().newInputDevice(id, 0, number, devName, vendor, product,
                     descriptor(vendor, product, uniqueId, devName),
                     true,                                   // isExternal
                     SOURCES, InputDevice.KEYBOARD_TYPE_NON_ALPHABETIC,
@@ -539,6 +540,7 @@ public final class GamepadBridge {
      *  synthetic d-pad stage below do not run -- the queue owns the event. */
     private static boolean deliverToFocusedWindow(Activity active, KeyEvent ev) {
         try {
+            if (ViewHost.get().deliverInput(ev)) return true;  // AOSP's views: the focused window
             int ov = WindowOverlayStack.deliverKeyResult(ev);
             if (ov != WindowOverlayStack.OVERLAY_NONE) return ov == WindowOverlayStack.OVERLAY_HANDLED;
             if (active == null) return false;
@@ -559,6 +561,7 @@ public final class GamepadBridge {
         final Activity active = ActivityHost.peek();
         boolean handled = false;
         try {
+            if (ViewHost.get().deliverInput(ev)) return;  // AOSP's views: the focused window
             int ov = WindowOverlayStack.deliverGenericMotion(ev);
             if (ov != WindowOverlayStack.OVERLAY_NONE) {
                 handled = ov == WindowOverlayStack.OVERLAY_HANDLED;

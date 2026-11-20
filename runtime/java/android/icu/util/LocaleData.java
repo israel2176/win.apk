@@ -12,8 +12,9 @@
 // (the rg keyword, else the region subtag, else likely subtags: "en" -> US,
 // "my" -> MM). The JDK exposes none of that, so every lookup goes to the host's
 // own ICU4C (macOS libicucore) through com.macapk.icu.HostIcu: decision ladder
-// rung 1, the same engine and data family as Android's ICU4J. Nothing here is
-// hard-coded; a missing bridge throws UnsupportedOperationException, loudly.
+// rung 1, the same engine and data family as Android's ICU4J. Without a host
+// ICU (no icu.dll on Windows, a bare JVM) HostIcu answers from CLDR's
+// supplemental lists and root locale instead (com.macapk.icu.IcuFallback).
 package android.icu.util;
 
 import android.icu.text.UnicodeSet;

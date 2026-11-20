@@ -107,7 +107,7 @@ std::string java_version(const fs::path& jdk) {
 struct State {
     bool shared = false;  // the framework archive is on for this start
     JavaVM* vm = nullptr;
-    fs::path dir, jsa, ok, fails;  // <dir>\framework-<key>.jsa / .ok / .fails
+    fs::path dir, jsa, ok, fails;  // <dir>\framework-<graphics>-<key>.jsa / .ok / .fails
     bool using_archive = false;    // -XX:SharedArchiveFile is this start's
     // The dump this start owes (none when it maps an archive).
     bool dump_owed = false;
@@ -162,14 +162,13 @@ DWORD WINAPI dump_later(void*) {
     return 0;
 }
 
-// Removes the files of other keys: an archive another Win.apk or JRE made.
-// One still mapped by a running app cannot go yet; a later dump retries.
-void drop_stale(const fs::path& dir, const std::wstring& key) {
+// Removes the files of this graphics' other keys: an archive another Win.apk or JRE made
+// (cds::stale_archive_file; the other graphics' archive stays). One still mapped by a running
+// app cannot go yet; a later dump retries.
+void drop_stale(const fs::path& dir, const std::wstring& stem) {
     std::error_code ec;
-    for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
-        const std::wstring n = it->path().filename().wstring();
-        if (n.rfind(L"framework-", 0) == 0 && n.find(key) == std::wstring::npos) remove_file(it->path());
-    }
+    for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec))
+        if (cds::stale_archive_file(it->path().filename().wstring(), stem)) remove_file(it->path());
 }
 
 // The dump itself: merges the class lists, runs `java -Xshare:dump` and puts
@@ -180,8 +179,7 @@ int run_dump(const std::vector<std::wstring>& a) {
     if (a.size() < 5 || a[4] != L"--") return 2;
     const fs::path jsa = a[0], java = a[1], shipped = a[2], recorded = a[3];
     const fs::path dir = jsa.parent_path();
-    std::wstring key = jsa.stem().wstring();  // framework-<key>
-    key = key.substr(key.find(L'-') + 1);
+    const std::wstring stem = jsa.stem().wstring();  // framework-<graphics>-<key>
     HANDLE one = CreateMutexW(nullptr, FALSE, L"Local\\WinApk-cds-dump");
     if (one) {
         const DWORD w = WaitForSingleObject(one, 0);
@@ -230,7 +228,7 @@ int run_dump(const std::vector<std::wstring>& a) {
     // The recorded list was this key's; the dump has it now.
     if (!recorded.empty() && recorded.parent_path() == dir) remove_file(recorded);
     if (ok) {
-        drop_stale(dir, key);
+        drop_stale(dir, stem);
     } else {
         write_text(fails, std::to_string(read_count(fails) + 1));
     }
@@ -314,7 +312,11 @@ void cds_apply(std::vector<std::string>* opts, const fs::path& jdk, const fs::pa
     fs::path shipped = env_set(L"WINAPK_CDS_CLASSLIST", &shipped_w) ? fs::path(shipped_w)
                                                                      : lib / "winapk-framework.classlist";
     if (!shipped.empty() && !fs::exists(shipped, ec)) shipped.clear();
-    std::vector<std::string> parts = {"winapk-cds-1", java_version(jdk), cds::stamp(jdk / "lib" / "modules"),
+    // The graphics are in the key and in the file's name: AOSP's (lib\aosp-graphics.jar first on
+    // the class path, which the key has too) and Java2D's each keep an archive of their own.
+    const std::string graphics = cds::graphics_of(*opts);
+    std::vector<std::string> parts = {"winapk-cds-1", "graphics=" + graphics, java_version(jdk),
+                                      cds::stamp(jdk / "lib" / "modules"),
                                       cds::stamp(jdk / "bin" / "server" / "classes.jsa"),
                                       utf8(shipped.wstring()), shipped.empty() ? "" : cds::stamp(shipped)};
     std::string cp;
@@ -337,7 +339,7 @@ void cds_apply(std::vector<std::string>* opts, const fs::path& jdk, const fs::pa
         }
     }
     const std::string key = cds::key_of(parts);
-    const std::wstring stem = L"framework-" + wide(key);
+    const std::wstring stem = L"framework-" + wide(graphics) + L"-" + wide(key);
     g.jsa = g.dir / (stem + L".jsa");
     g.ok = g.dir / (stem + L".ok");
     g.fails = g.dir / (stem + L".fails");
@@ -384,9 +386,10 @@ void cds_apply(std::vector<std::string>* opts, const fs::path& jdk, const fs::pa
                          : g.dir / (stem + L"." + std::to_wstring(GetCurrentProcessId()) + L".classlist");
         opts->push_back("-XX:DumpLoadedClassList=" + utf8(g.recorded.wstring()));
         g.dump_owed = true;
-        std::fprintf(stderr, "[win.apk] cds: no framework archive for this Win.apk and Java runtime yet; this start "
-                             "records the classes it loads, and the archive is made in the background after its "
-                             "first frame (patches checked in %.0f ms)\n", digest_ms);
+        std::fprintf(stderr, "[win.apk] cds: no framework archive for this Win.apk, Java runtime and graphics (%s) "
+                             "yet; this start records the classes it loads, and the archive is made in the "
+                             "background after its first frame (patches checked in %.0f ms)\n",
+                     graphics.c_str(), digest_ms);
         return;
     }
     if (!record_to.empty()) opts->push_back("-XX:DumpLoadedClassList=" + utf8(record_to.wstring()));

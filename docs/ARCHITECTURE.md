@@ -109,6 +109,11 @@ The framework's own natives are declared in about 40 Java classes
 where there is one, otherwise a stub that returns zero and logs its name the
 first time it is called (`windows/host/host_natives.cpp`). Those log lines
 (`native not implemented on Windows yet`) are how missing pieces are found.
+Every call to such a stub, and to the stubs that stand in for system functions
+a guest library imports (`windows/host/guest_libs.cpp`), is also counted
+(`windows/host/stub_hits.h`); when the process exits the log ends with the ones
+this run reached and how often, the busiest first, so a report says which
+missing piece an app kept asking for and not only which it touched once.
 
 Windows-only Java lives in `windows/java/`: `com.winapk.tools.AppInstall`
 (installing an APK or bundle in the device layout) and `AppMeta` (the icon
@@ -135,9 +140,12 @@ and upstream's `java.base`/`jdk.unsupported` overlays (`lib\java_base_patch`,
 `--patch-module` at each start, because HotSpot turns class-data sharing (CDS)
 off whenever a module is patched. Two archives then spare a start the parsing
 and linking of classes it loaded before: the JRE's own (`bin\server\classes.jsa`,
-the JDK's classes) and the framework archive (`<data>\cds\framework-<key>.jsa`:
+the JDK's classes) and the framework archive (`<data>\cds\framework-<graphics>-<key>.jsa`:
 the JDK's and the framework's classes, `android-framework.jar`,
-`macapk-loader.jar` and an unsigned bcprov, one for all apps). The runtime
+`macapk-loader.jar` and an unsigned bcprov, and with AOSP's graphics
+`aosp-graphics.jar`, one for all apps; `aosp` and `java2d` each have their
+own, so a start on the other graphics does not delete it; an install,
+`--gms` and the system broker map the one an app's start does). The runtime
 drops the `--patch-module` flags only when the JRE's
 `lib\winapk-baked-patches` records the same SHA-256 as the patch folders (a
 plain JDK, or a patch rebuilt since, keeps them and runs without CDS). The
@@ -145,7 +153,7 @@ framework archive is dumped by `java -Xshare:dump`, in the background after the
 first app start of each Win.apk and JRE version (`winapk-runtime --cds-dump`),
 from the class list Win.apk ships (`lib\winapk-framework.classlist`, the classes at
 least three of the ten smoke apps load) and the classes that start loaded. The key changes with the
-JRE, the jars, the shipped list and the JVM options; HotSpot itself checks the
+graphics, the JRE, the jars, the shipped list and the JVM options; HotSpot itself checks the
 JRE and the jars when it maps the file and otherwise starts without it. A new
 archive is checked whole (`-XX:+VerifySharedSpaces`) on its first use and
 after a crash; one that does not map is deleted and dumped again, twice at
@@ -199,7 +207,13 @@ what compiled code actually does:
 - **Dynamic ELF TLS** (`elf_tls.cpp`): `__tls_get_addr`, `DTPMOD64` and
   `DTPOFF64` relocations, with a block allocated per thread and module. This
   is what libraries built for API 29 and later use. Static TLS (`TPOFF64`) is
-  refused.
+  refused. C++ `thread_local` destructors run when their thread ends (an FLS
+  callback, or `pthread_exit`), not when the process exits: as on Android,
+  where `exit()` runs none, so the FLS callback that `ExitProcess` makes on
+  the exiting thread does nothing once ntdll says the process is shutting
+  down (`RtlDllShutdownInProgress`) or the C runtime's `exit()` has begun.
+  Realm's destructor called JNI on a thread the JVM had detached there and
+  the process hung.
 - **The stack-protector patch** (`fs_tls_patch.cpp`): Bionic's stack guard is
   read with `mov rax, fs:[0x28]`. The loader rewrites the segment prefix so
   the instruction reads `gs:[0x28]` instead, which on x64 Windows is
@@ -226,9 +240,9 @@ functions, every one declared with the System V calling convention
 | `socket.cpp` | BSD sockets on Winsock with Linux's constants translated; `getaddrinfo`; `getifaddrs`, `if_nametoindex`, `if_indextoname` and `if_nameindex` over one list of the adapters that are up (Linux-shaped names, Windows' interface indexes). Socket options: the ones Winsock has are mapped, among them multicast membership in all its forms (`ip_mreq`, `ip_mreqn`, `MCAST_JOIN_GROUP` and the other RFC 3678 requests), `SO_LINGER`, `SO_REUSEPORT` on datagram sockets (Windows' `SO_REUSEADDR`), the TCP keep-alive times, `TCP_USER_TIMEOUT`, path-MTU discovery as "don't fragment"; options that only tune (`SO_PRIORITY`, `TCP_QUICKACK`, `IP_RECVTOS`...) succeed with one log line each; any other fails with `ENOPROTOOPT`, so code that asks for a feature (`UDP_SEGMENT`) takes its fallback |
 | `paths.cpp` | Android's absolute paths (`/data`, `/sdcard`, `/system/fonts`, `/dev/null`) under the Android root; `/proc/self` is `/proc/<pid>` there, where Boot writes the process's `cmdline`; the characters of an Android file name that Windows forbids, stored as U+F000 + the character as WSL does |
 | `looper.cpp` | The NDK's `ALooper` |
-| `misc.cpp` | Clocks and time, `strptime`, `mmap` on `VirtualAlloc` (with `PROT_NONE` as a reservation; a file mapped `MAP_SHARED`, or read-only, is a view of the file (`MapViewOfFile`), also `MAP_FIXED` into an untouched reservation, so writes reach the file and every mapping sees them; a writable private one is a copy), system properties, the guest environment (`setenv`, `putenv`, `clearenv`), `syscall` for futex and friends and for raw `mmap`, `mprotect` and `munmap` (Gecko's allocator), `sysconf`, `uname`, `getauxval`, `sched_getaffinity` (the process's affinity), `fork`/`vfork` (-1, `ENOSYS`: a Windows process cannot be copied) and `waitpid` (`ECHILD`), `random(3)` as Bionic's (NetBSD's) generator, libm (the `long double` rounding functions on binary128), libandroid's `ATrace` (tracing off) |
+| `misc.cpp` | Clocks and time, `strptime`, `mmap` on `VirtualAlloc` (with `PROT_NONE` as a reservation; a file mapped `MAP_SHARED`, or read-only, is a view of the file (`MapViewOfFile`), also `MAP_FIXED` into an untouched reservation, so writes reach the file and every mapping sees them; a writable private one is a copy); `mprotect`, `munmap` and `madvise(MADV_DONTNEED)` go region by region (`VirtualQuery`), as a range may hold reserved and committed pages of several allocations: opening a reserved page commits it, `PROT_NONE` leaves a reserved one as it is and keeps a committed one's contents, `MADV_DONTNEED` decommits and commits again in a mapping made here, system properties, the guest environment (`setenv`, `putenv`, `clearenv`), `syscall` for futex and friends and for raw `mmap`, `mprotect` and `munmap` (Gecko's allocator), `sysconf`, `uname`, `getauxval`, `sched_getaffinity` (the process's affinity), `fork`/`vfork` (-1, `ENOSYS`: a Windows process cannot be copied) and `waitpid` (`ECHILD`), `random(3)` as Bionic's (NetBSD's) generator, libm (the `long double` rounding functions on binary128), libandroid's `ATrace` (tracing off) |
 | `locale.cpp` | The C and C.UTF-8 locales libc++ builds on, UTF-8 conversion, `wctype.h` |
-| `signal.cpp` | Signals delivered to guest handlers: a vectored exception handler maps access violations, illegal instructions, divide errors and breakpoints to SIGSEGV/SIGBUS/SIGILL/SIGFPE/SIGTRAP and calls the handler with Bionic's `siginfo_t` and `ucontext_t` (registers written back, so a handler can fix the fault or redirect `rip`); `SA_SIGINFO`, `SA_ONSTACK` with `sigaltstack`, `SA_RESETHAND`, `SA_NODEFER`, `sa_mask`; `raise`, `kill`, `tgkill`, `abort` synchronously, `pthread_kill` by suspending the target and injecting the call; a handler that declines three times leaves the fault to the crash report. Not delivered: faults in HotSpot or in Windows DLLs, faults in arm64 guest code, handlers in arm64 libraries. POSIX timers do not fire |
+| `signal.cpp` | Signals delivered to guest handlers: a vectored exception handler maps access violations, illegal instructions, divide errors and breakpoints to SIGSEGV/SIGBUS/SIGILL/SIGFPE/SIGTRAP and calls the handler with Bionic's `siginfo_t` and `ucontext_t` (registers written back, so a handler can fix the fault or redirect `rip`); `SA_SIGINFO`, `SA_ONSTACK` with `sigaltstack`, `SA_RESETHAND`, `SA_NODEFER`, `sa_mask`; `raise`, `kill`, `tgkill`, `abort` synchronously (`abort()`'s log line carries the message `android_set_abort_message` kept, libc++abi's "terminating due to uncaught exception ..." among them), `pthread_kill` by suspending the target and injecting the call; a handler that declines three times leaves the fault to the crash report. Not delivered: faults in HotSpot or in Windows DLLs, faults in arm64 guest code, handlers in arm64 libraries. POSIX timers do not fire |
 | `setjmp.cpp` | `setjmp` and `longjmp` for guest code |
 | `cacerts.cpp` | Android's `/system/etc/security/cacerts` built from the roots Windows trusts plus the JDK's |
 | `zlib.cpp` | `libz.so` on a statically linked zlib, with the guest's `z_stream` layout converted on every call |
@@ -402,10 +416,24 @@ Three engines run arm64 code, behind one CPU state (`src/arm64/`):
   compares them.
 
 The bridge (`arm64_guest.cpp`) gives each thread its CPU state, a guest stack
-and Bionic's TLS slots; converts AAPCS64 arguments and `va_list`s to System V
-for calls into the shim; and turns a host call into guest code (a callback)
+(4 MiB, or the size `pthread_create` asked for when larger, up to 64 MiB) and
+Bionic's TLS slots; `pthread_getattr_np` answers guest code with that stack,
+the one its sp is on, as Bionic does (Dart, ART and V8 check their sp against
+it); converts AAPCS64 arguments and `va_list`s to System V
+for calls into the shim (a `va_list` by the shim function's address, so a
+function that takes one is never a no-op shared with other names:
+`register_shim_functions` refuses one that is, with a log line); and turns a host call into guest code (a callback)
 into interpretation through an execute-fault handler, since arm64 text is
-never mapped executable.
+never mapped executable. A raw system call (`SVC #0`, or the `syscall()`
+import) carries arm64's numbers, which `arm64_abi.cpp` maps onto the shim:
+memory (`mmap` 222, `munmap` 215, `mprotect` 226, through the same wrappers
+as the imports, so an executable mapping becomes guest code; `mremap` fails
+as the shim's does), `futex`, the ids, clocks and sleeps, files (`openat`,
+`read`, `pread64`, `readlinkat`, `fstatat` with arm64's `struct stat`...),
+`uname`, `ptrace`, `prlimit64` and others whose structs both ABIs share; the
+signal calls answer 0; anything else is `-ENOSYS`, with one log line per
+number. Protection libraries make their calls this way so that nothing
+hooking libc sees them (Bank Leumi's `libe689.so` maps memory with SVC 222).
 
 Speed, on the project's own microbenchmark (`winapk-arm64-test` with
 `test/guest/arm64_bench.c`, ratios to native x64 code): translated integer
@@ -441,7 +469,7 @@ Vulkan is not implemented.
 
 ### The view tree's frames
 
-The Java view tree is drawn in software (Java2D) into one bitmap that lives
+The Java view tree is drawn in software into one bitmap that lives
 from frame to frame, by `com.macapk.loader.ViewCanvasDriver`, once per display
 tick and only when something asked: `View.requestLayout` asks for a frame that
 measures, lays out and draws; `View.invalidate` for one that only draws. A
@@ -449,6 +477,16 @@ view that cannot be seen asks for nothing. Every half second an idle window is
 laid out and drawn once more, to catch a change nothing announced. The frame
 then goes to the window (`NativeCocoa.presentFrame`, `host/native_cocoa.cpp`),
 which copies it and blits it in `WM_PAINT`.
+
+What draws it is AOSP 14's own `android.graphics` and `android.text`
+(`Canvas`, `Paint`, `Layout`, the drawables), with Skia, minikin and HarfBuzz
+in Robolectric's native runtime (`lib\aosp-graphics.jar`,
+`bin\robolectric-nativeruntime.dll`, `host/aosp_gfx.h`; `windows/README.md`,
+"Milestone 2"). `WINAPK_AOSP_GFX=0`, or a runtime without those files, draws
+with Win.apk's older Java2D classes instead, until they are deleted; the rest
+of the framework reaches either through `com.macapk.loader.gfx.GfxBackend`.
+The runtime's processes with no app take the same graphics: the install's icon
+render (`icon.png`), `--gms`, `--verify-apk` and the system broker.
 
 A draw-only frame redraws the whole tree. With `MACAPK_FRAMESPEED_DAMAGE=1`
 (off by default; `windows/README.md` lists it with its validator) it redraws
@@ -558,7 +596,7 @@ how CI boots apps.
 | File and folder pickers | `IFileOpenDialog` / `IFileSaveDialog` | `native_picker.cpp` |
 | Game controllers | XInput, polled | `native_gamepad.cpp` |
 | Photos, wallpaper | The Pictures and Videos folders with shell thumbnails; the desktop wallpaper | `native_photos.cpp`, `native_wallpaper.cpp` |
-| ICU | Windows' `icu.dll` | `native_icu.cpp` |
+| ICU | Windows' `icu.dll` for what the JDK has no data for (`MeasureFormat`'s units, `LocaleData`); with no `icu.dll` (Windows 10 before 1903, Wine) `HostIcu` answers from Java instead (`IcuFallback`: the locale's number format, CLDR root's unit symbols and territory lists), never an exception | `native_icu.cpp`, `runtime/java/com/macapk/icu/` |
 | SQLite | Upstream's `NativeSqlite` compiled unchanged over the SQLite amalgamation | `runtime/src/native_sqlite.cpp`, `compat/CoreFoundation` |
 | `NativeActivity`, the NDK input queue, `AConfiguration` | A port of upstream's, over the guest linker and the shim's `ALooper` | `native_activity.cpp` |
 | Shared storage | The volume's Download, Pictures, Documents, Music and Movies are junctions to the user's Windows folders | `user_folders.cpp` |
@@ -570,7 +608,8 @@ There is no sensor hardware behind `SensorManager`: the framework (upstream's Ja
 `Win.apk.exe` (`windows/launcher/launcher_main.cpp`, one file, GDI+; its state
 machines in headers beside it: `app_runs.h`, `installs.h`, `updates.h`) is the
 app library, the counterpart of upstream's Swift launcher. It installs APKs
-by copying them into `library\` and running `winapk-runtime --install-only`,
+by copying them into `library\` and running `winapk-runtime --install-only`
+(a bundle then kept as hard links to the APKs it installed, `library_files.h`),
 gives each app its shortcuts, runs apps (`winapk-runtime --apk`), shows
 their logs, and holds the Store (F-Droid's `index-v1.json` summarized to
 `store\catalog.tsv`, downloads checked against the index's SHA-256), the
@@ -742,12 +781,15 @@ tests the transport and the broker's checks across three processes.
    starts with one, as `com.waze_5.26.5.0-..._apkmirror.com.apkm` does, else
    the file name up to its version; a package already in the library keeps
    that app's name, so the install updates it), copies the file into
-   `library\<name>.apk` (an update moves the
-   previous APK aside, and puts it back if the install fails or is cancelled;
-   an install cut off by a crash or the power is undone the same way at the
-   launcher's next start, `recover_interrupted_installs`)
-   and starts `winapk-runtime --apk <that file> --install-only`, logging to
-   `logs\install-<name>.log`. The install window reads that log for its
+   `library\<name>.<ext>` (an update renames the app's files aside as
+   `<file>.previous`, whatever their extension, deletes them once the new one
+   is installed, and puts them back if the install fails or is cancelled; an
+   install cut off by a crash or the power is undone the same way at the
+   launcher's next start, `recover_interrupted_installs`; a kept file is never
+   written, since it is the installed APK itself: `launcher/library_files.h`),
+   removes the install's record so that the install runs whatever the file's
+   date, and starts `winapk-runtime --apk <that file> --install-only`, logging
+   to `logs\install-<name>.log`. The install window reads that log for its
    status line.
 2. `com.winapk.tools.AppInstall` (in a child JVM) unpacks the app into the
    device layout under `android\data\app\~~<nonce>\<package>-<nonce>\`:
@@ -774,8 +816,22 @@ tests the transport and the broker's checks across three processes.
    `apps\<name>\classes.jar`, reading the class hierarchy from
    `libndroid-framework.jar` (the framework the app links against, not an
    Android SDK the PC may have), with a stamp naming the converter and the APK
-   so a change to either converts again. The launcher then moves the label and
+   so a change to either converts again. It runs in a JVM of its own with a
+   1 GB heap; one that runs out of it (seen through JVMTI, even when the
+   converter caught the error and left a class out) converts again on a
+   larger heap, and a jar is kept only when it is a whole zip, whatever the
+   exit code says (under Wine a killed converter reported 0). The launcher then moves the label and
    `package.txt` beside the APK as `library\<name>.label` and `.package`.
+   A bundle (`.apkm`, `.xapk`, `.apks`) is then replaced by
+   `library\<name>.apk` and `library\<name>.splits\split_*.apk`: hard links to
+   the installed `base.apk` and splits, once AppInstall's stamp
+   (`<copy>\.installed`) says the installed copy was made from that very file,
+   so the library keeps one copy of the app (`keep_installed_apks`,
+   `launcher/library_files.h`). AppInstall, given an `.apk` with a `.splits`
+   folder beside it, links them all again, so a reinstall (a stale record,
+   `WINAPK_ABIS`) has the whole app. A library from before this layout moves
+   to it at the launcher's next start, app by app, once each app's installed
+   copy is of its bundle (else at the start after its next run).
 6. The launcher makes the Start menu shortcut (and the desktop one, if the
    setting is on) and adds the app to the library.
 
@@ -855,7 +911,7 @@ default; `--data` moves it for a direct run):
 
 | Path | What |
 |---|---|
-| `library\<name>.apk`, `.label`, `.package`, `.orientation`, `.window` | The user's copy of each app and the launcher's per-app files |
+| `library\<name>.apk`, `.splits\`, `.label`, `.package`, `.orientation`, `.window` | The user's copy of each app and the launcher's per-app files. The `.apk` is the installed `base.apk` under `android\data\app\` (a hard link, one copy on disk; an update renames the app's files aside and copies the new file in, so none is written in place); an app that came as a bundle (`.apkm`, `.xapk`, `.apks`) also has `<name>.splits\split_*.apk`, hard links to its installed splits. A bundle is in the library only while it installs: its members cannot be links, so keeping it took its size twice (a 191 MB Waze `.xapk` took about 380 MB). What goes with it is what was never installed: its `manifest.json` and icon, a bundletool set's whole-app alternatives |
 | `apps\<name>\` | `classes.jar`, `.macapk-dex-stamp`, `icon.png`, `label.txt`, `package.txt`; for an arm64-only app that crashed with its translation loaded, `aot-guard.txt` (the crash guard's count and whether translation is off) |
 | `android\` | The Android file system: `data\app\` (installed packages, with `lib\<isa>\` and the `.so.aot.*` translation files; `lib\arm64\.aot-tmp\<lib>\` holds an unfinished translation), `data\data\<package>\` (app data), `dev\socket\` (the socket files that stand for abstract-namespace `LocalSocket` names), the shared-storage volume |
 | `logs\` | `run-<name>.log` and `run-<name>.1.log`, `last-run.log` (a hard link to the newest run log), `install-<name>.log`, `gms.log`, `install-helper.log`, `package-backfill.log`, `hs_err_pid*.log` |
@@ -866,11 +922,20 @@ default; `--data` moves it for a direct run):
 | `app_uids.properties`, `system_ce\0\`, `installer-of-record.properties`, `run\system-ready` | With Google services on: per-package uids, the accounts service's store, which app installed which, the broker's readiness |
 | `logs\system.log`, `logs\services\` | The system broker and the apps it starts as service hosts |
 | `aot-cache\` | Whole arm64 translations shared between apps, `<key>.aot.dll` (kept under 2 GB, least recently used first); a `*.tmp` is a write in progress, or one a killed worker left (deleted when an hour old) |
-| `cds\` | The framework archive (`host/cds.h`): `framework-<key>.jsa`, `.ok` once it has mapped whole, `.fails` (failures in a row; at two it is not made again for that key), `dump.log` (the last dump), a `.classlist` while a first start records, and `patch-digests.txt` (the patch folders' digests under a stamp of their listing, so a start does not hash them again) |
+| `cds\` | The framework archive (`host/cds.h`): `framework-<graphics>-<key>.jsa` (`aosp`, the default, or `java2d`, each kept), `.ok` once it has mapped whole, `.fails` (failures in a row; at two it is not made again for that key), `dump.log` (the last dump), a `.classlist` while a first start records, and `patch-digests.txt` (the patch folders' digests under a stamp of their listing, so a start does not hash them again) |
 | `cache\` | The runtime's shared caches: `android-system-fonts\` (the `/system/fonts` and `fonts.xml` native text stacks such as Flutter's read), `fonts\`, `fwview\` (the framework's resolved resources), `monet\`, `apk-verify\` (APK signature verdicts), `applinks\<package>.properties` (App Link verdicts per domain, written only when a sign-in needed one: 7 days, an unreachable site 1 hour, dropped when the APK changes) |
 | `run\<package>.pid` | Each running app's run lock |
 | `staging\` | The install helper's staging area |
 | `updates\` | `releases.json` and `releases.etag` (GitHub's list of releases from the last update check), `Win.apk-Setup-<version>.exe` (a downloaded update, until it is installed) |
+
+What is shared and what is per app: `cds\` (about 40 MB) and `cache\` (about
+16 MB) are made once for all apps; each app adds its `apps\<name>\classes.jar`
+(a few MB to a few tens), its installed copy under `android\data\app\` (the
+APK again, and an arm64 app's extracted libraries) and its data. The program
+folder (`%LOCALAPPDATA%\Programs\Win.apk\`, about 545 MB, 80 MB of it
+AOSP graphics' files) holds one copy of everything else:
+nothing of it is copied per app. `windows/README.md`, "Footprint",
+has the measurements and the budget CI holds them to.
 
 An app sees its files by Android's names, not by these: its data directory
 is `/data/user/0/<package>` (here `android\data\data\<folder>\`, by its 8.3
@@ -919,9 +984,10 @@ The GitHub Actions workflows:
 
 | Workflow | When | What |
 |---|---|---|
-| `ci.yml` | Pull requests touching `windows/` or `runtime/`, and by hand; a push to `main` only builds (to leave its compile cache to pull requests) | One pipeline of jobs. *What changed* decides which stages a pull request needs. The guest test libraries build on Ubuntu, and a launcher-only change gets a one-minute MinGW compile with warnings as errors. Everything else builds once on `windows-latest` (MSYS2 CLANG64, ccache) and stages the runtime. That output goes as artifacts to the jobs that run side by side: *Unit tests* (every test program), *Runtime tests* (the Java tests, GL, an APK booted headless and in a window, the GMS CLI), *App smoke test* (the ten apps of `windows/test/compat/smoke.txt`, one of each kind; it fails when one no longer draws), and *Package* (a preview folder with the JRE the build baked and the installer). The smoke test and the sweep run on that JRE, with one framework archive made first (`--cds-prepare`) and shared by the apps, and the smoke test records the apps' classes into the `framework-classlist` artifact, the source of `windows/java/winapk-framework.classlist`. The whole compatibility sweep runs only by hand (Run workflow, "Full compatibility sweep"): split over four machines (`sweep.py --shard`) and joined by *Sweep report* into one ranked report. A new push cancels the run in progress |
+| `ci.yml` | Pull requests touching `windows/` or `runtime/`, and by hand; a push to `main` only builds (to leave its compile cache to pull requests) and fills the UI gate's caches | One pipeline of jobs. *What changed* decides which stages a pull request needs. The guest test libraries build on Ubuntu, and a launcher-only change gets a one-minute MinGW compile with warnings as errors. Everything else builds once on `windows-latest` (MSYS2 CLANG64, ccache) and stages the runtime. That output goes as artifacts to the jobs that run side by side: *Unit tests* (every test program), *Runtime tests* (the Java tests, GL, an APK booted headless and in a window, class-data sharing with an archive per graphics, the Java2D fallback (`WINAPK_AOSP_GFX=0`), the GMS CLI), *App smoke test* (the ten apps of `windows/test/compat/smoke.txt`, one of each kind, on AOSP's graphics; it fails when one no longer draws or ran on Java2D's), *AOSP graphics* (AOSP 14's `android.graphics` on Robolectric's native Skia and minikin inside `winapk-runtime.exe`, `windows/test/aospgfx/`: milestone 1 of drawing with Android's own graphics, in `windows/README.md`), and *Package* (a preview folder with the JRE the build baked and the installer). The smoke test and the sweep run on that JRE, with one framework archive made first (`--cds-prepare`) and shared by the apps, and the smoke test records the apps' classes into the `framework-classlist` artifact, the source of `windows/java/winapk-framework.classlist`. The whole compatibility sweep runs only by hand (Run workflow, "Full compatibility sweep"): split over four machines (`sweep.py --shard`) and joined by *Sweep report* into one ranked report. The *UI gate* holds a change to the framework, the host or the loader to "only closer to Android, never further": on Ubuntu, Android's lines for the UI probe and the apps of `windows/test/screens/gate.txt` (Robolectric; cached by what they are made from, so built again only when the probe, the screens oracle or the pinned APKs change) and the base commit's framework jars; then on Windows, one job per target, Win.apk's lines at the base (`main`'s own CI build of that commit while it is kept, else the head's build with the base's jars) and at the head, side by side, each on its commit's default graphics (the summary names which: Java2D at a base from before AOSP's became the default), and `windows/test/uiprobe/regress.py`, which fails the job on a line that matched Android before and not now, moved further from it, or is gone. A new push cancels the run in progress |
 | `windows-release.yml` | By hand only, with a tag | Builds (stamping the tag's version into `Win.apk.exe`), packages with the JRE `bake_jre.sh` makes from Temurin 21, smoke-tests the package, builds the installer and publishes a GitHub pre-release |
 | `app-probe.yml` | By hand only | Not a test: each F-Droid app of its list runs a minute in a window on the staged runtime of the branch's newest CI build (`main`'s when the branch has none); screenshots, the log and CPU samples are the artifacts (the dated rows of [Compatibility](APPS.md#apps-people-have-tried)) |
+| `ui-sweep.yml` | By hand only, with an F-Droid package or an APK URL, and a branch | Not a test: the screens sweep of one app (`windows/test/screens/screens.sh`), Android's side on Ubuntu and Win.apk's on Windows (the branch's newest CI build), compared; `oracle.txt`, `ours.txt`, `diff.txt`, `summary.txt` and both sides' pictures are the artifact |
 | `pages.yml` | A push to `main` touching `site/`, `docs/images/` or the launcher's icon, and by hand | Deploys the project's web page (`site/`, with the screenshots and icon copied in) to GitHub Pages |
 
 [`windows/README.md`](../windows/README.md) has the commands.

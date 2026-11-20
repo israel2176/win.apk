@@ -54,6 +54,12 @@ with AAC always; HEVC, VP9 and AV1 only with Microsoft's codec packs from the
 Microsoft Store. A stream whose audio is Opus, Vorbis or FLAC plays silent in an
 ExoPlayer app; video from an app's native code (`AMediaCodec`) is not there yet.
 
+**A phone photo (HEIC) or an AVIF picture does not show.** Windows decodes
+them: HEIC/HEIF needs Microsoft's HEIF Image Extensions, AVIF its AV1 Video
+Extension, both from the Microsoft Store. Without them the app is told the
+picture cannot be read, and its log says `HostImageDecode: HEIF picture:
+Windows has no decoder for it`.
+
 **An app cannot record, or its recording is empty.** Apps record sound as AAC
 and video as H.264 into MP4 files, with Windows' own encoders; a few Windows
 editions (N editions without the Media Feature Pack, some Server installs) have
@@ -102,6 +108,7 @@ before it is `run-<app>.1.log`). The most useful lines:
 |---|---|
 | `native not implemented on Windows yet` | A piece of the Android host that is still missing |
 | `not implemented on Windows yet` (about a system function) | A C library function the app's native code needs |
+| `not implemented on Windows yet, called this run (<n>):` | At the end of the log: every missing piece the app reached in this run, with how many times it called it, the busiest first. The lines above name each one once, when it is first called; this list says which ones the app kept asking for. Include it when you report a problem. An app that was stopped by force (Task Manager, Stop) ends without it |
 | `there is no /system/bin/sh on Windows` | The app's native code ran a shell command (`popen`, `system`). There is no Android shell, so the command reports "not found" (exit status 127), as on a phone without one |
 | `fork(): the app tried to start a child process` (also `posix_spawn()`, `exec()`, `clone()`) | The app's native code tried to run part of itself in another process (Firefox-family browsers do). Win.apk does not support that yet, so such an app usually ends at start |
 | `[win.apk] <call>(): ... the call fails with <error>` | The app's native code used a C library call Win.apk does not do yet: a pseudo-terminal (`openpty()`), watching files (`inotify_init()`), `signalfd()`, `iconv_open()`, `regcomp()`, `symlink()`, `mremap()`, `glob()`, `nftw()`, `splice()`, `shmget()`, `gethostbyname_r()`. The call fails the way Android reports such a failure, and the line is written once. Most apps carry on another way; when the feature that needs it does not work, this line says why |
@@ -112,11 +119,15 @@ before it is `run-<app>.1.log`). The most useful lines:
 | `[win.apk] cannot load <library>` or `UnsatisfiedLinkError` | A native library did not load: 32-bit ARM only (`this is a 32-bit ARM library`), packed or encrypted, or for another CPU |
 | `Exception` or `FATAL` | The app crashed; the lines after it say where |
 | `[win.apk] crash:` and `crash dump:` | The app's native code crashed. A minidump was written next to the log (`crash-<app>-<time>.dmp`): attach it too |
+| `[win.apk] guest called abort(); abort message: <text>` | The app's native code ended the app on purpose, and the text says why (what Android shows as "Abort message" in a crash report): `terminating due to uncaught exception of type ...` is a C++ error nothing caught. A `crash dump:` line follows |
+| `[win.apk] android.icu: Windows' ICU (icu.dll) is not available; ...` | This Windows has no `icu.dll` (Windows 10 before version 1903, or Wine). Apps keep working: numbers are still written the language's way, but units are written with their international symbols ("5 km", "3 h") rather than in the language's own words, and some locale details are generic |
 | `[win.apk] arm64 AOT: off for this app` | An ARM-only app crashed twice with its translation, so it runs on the JIT ([details](arm-apps.md#if-an-arm-app-crashes)) |
+| `[win.apk] AOSP graphics:` | Which classes draw the app: `on` is Android's own graphics and text (the default); `off, ... is missing` or `does not load` means this copy of Win.apk lacks those files or could not load them, and the older drawing code is used instead. If an app looks wrong only one way, say which in your report. `WINAPK_AOSP_GFX=0` chooses the older drawing code for a test |
 | `[win.apk] cds:` and `[cds]` | Class-data sharing: which archives the start maps, and HotSpot's reason when one does not map (Win.apk then deletes it and makes it again; the start goes on without it). `WINAPK_CDS=0` turns it off |
 | `[win.apk] close:` | The window was closed: `the app was paused, stopped and destroyed in <n> ms` is the normal end; `the app did not answer in time` means its main thread was busy or stuck, so it was ended without the chance to save |
 | `[win.apk] java.nio sockets: <folder> refuses AF_UNIX connections, using <folder>` | Windows would not connect the local sockets Java makes in the temporary folder (seen where a filter driver guards `%LOCALAPPDATA%`), so Win.apk pointed Java at another folder. Nothing to do; without it apps that use Ktor or another `java.nio` selector failed at start with `Unable to establish loopback connection` |
 | `[win.apk] startup:` | When the Java VM was up and when the first frame came, with the memory then |
+| `[win.apk] frame times (<graphics> graphics):` | At the end of the log: how many frames the app drew and how long they took, in milliseconds (the median, the slowest 10% and 1%, and the slowest): `layout` and `draw` are the app's screen being laid out and drawn, `pixels` and `present` reading the picture and copying it to the window, `total` the whole frame. The first second and a half of each window is left out. A slow or jerky app shows it here; include it when you report one. An app that was stopped by force ends without it |
 | `[win.apk]` | Any other message from Win.apk itself |
 
 The [user guide](USER_GUIDE.md#logs) lists every log file.

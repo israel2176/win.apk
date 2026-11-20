@@ -18,7 +18,11 @@
 // own, so it runs this instead:
 //
 //  - A plain APK becomes base.apk as a hard link (a copy across volumes),
-//    as the Mac's APFS clone does without using space.
+//    as the Mac's APFS clone does without using space. So do the splits in
+//    a <name>.splits folder beside a <name>.apk: the launcher's library
+//    keeps an app that came as a bundle that way once it is installed, hard
+//    links to the APKs installed here (launcher/library_files.h), so that an
+//    install again (a stale record, WINAPK_ABIS) has the whole app.
 //  - A bundle (.apkm from APKMirror, .xapk from APKPure, .apks from
 //    bundletool) is unpacked; which APKs make up the app is decided exactly
 //    as upstream's SelectBundleApks decides it, and each split gets the name
@@ -120,6 +124,11 @@ public final class AppInstall {
                 Path base = staging.resolve("base.apk");
                 link(source, base);
                 members.add(base);
+                for (Path split : keptSplits(source)) {
+                    Path target = staging.resolve(split.getFileName().toString());
+                    link(split, target);
+                    members.add(target);
+                }
             } else if (!unpackBundle(source, staging, members)) {
                 return 3;
             }
@@ -167,6 +176,23 @@ public final class AppInstall {
         } finally {
             if (staging != null) deleteTree(staging);
         }
+    }
+
+    /** The splits the library keeps beside an app that came as a bundle: <name>.splits/split_*.apk next to
+     *  <name>.apk, hard links to the APKs an earlier install of the bundle installed (the launcher's
+     *  library_files.h). Sorted by name; empty for an APK with no such folder. */
+    static List<Path> keptSplits(Path apk) {
+        String file = apk.getFileName().toString();
+        Path dir = apk.resolveSibling(file.substring(0, file.length() - ".apk".length()) + ".splits");
+        List<Path> out = new ArrayList<>();
+        if (!Files.isDirectory(dir)) return out;
+        try (DirectoryStream<Path> kids = Files.newDirectoryStream(dir, "split_*.apk")) {
+            for (Path k : kids) if (Files.isRegularFile(k)) out.add(k);
+        } catch (IOException e) {
+            System.err.println("[install] cannot list " + dir + ": " + e);
+        }
+        out.sort(Comparator.comparing(p -> p.getFileName().toString()));
+        return out;
     }
 
     /** A hard link where the volume allows one, else a copy. */

@@ -1,5 +1,7 @@
 package android.hardware.input;
 
+import com.macapk.loader.view.ViewHost;
+
 // android.hardware.input.InputManager -- the SINGLE source of truth for which
 // input devices exist. Mirrors AOSP's role split
 // (frameworks/base/core/java/android/hardware/input/InputManager.java): the
@@ -254,7 +256,7 @@ public final class InputManager {
     }
 
     private static void buildDevices(int width, int height) {
-        final android.view.InputDevice keyboard = new android.view.InputDevice(
+        final android.view.InputDevice keyboard = ViewHost.get().newInputDevice(
                 android.view.KeyCharacterMap.VIRTUAL_KEYBOARD,
                 0,                       // generation
                 0,                       // controllerNumber: not a game controller
@@ -271,7 +273,7 @@ public final class InputManager {
                 false,                   // hasMicrophone
                 false);                  // hasButtonUnderPad
 
-        final android.view.InputDevice touchscreen = new android.view.InputDevice(
+        final android.view.InputDevice touchscreen = ViewHost.get().newInputDevice(
                 TOUCHSCREEN_ID,
                 0,
                 0,
@@ -333,7 +335,7 @@ public final class InputManager {
         // The host keyboard (see MACAPK_HOST_KEYBOARD): the Virtual device stays
         // registered alongside it, as on every Android device -- EventHub creates
         // it unconditionally (createVirtualKeyboardLocked) and IMEs keep using it.
-        final android.view.InputDevice hostKeyboard = new android.view.InputDevice(
+        final android.view.InputDevice hostKeyboard = ViewHost.get().newInputDevice(
                 HOST_KEYBOARD_ID,
                 0,                       // generation
                 0,                       // controllerNumber: not a game controller
@@ -359,7 +361,7 @@ public final class InputManager {
      *  window-less case (early boot, headless translation runs). */
     private static int[] displayExtent() {
         try {
-            android.view.Display d = new android.view.Display();
+            android.view.Display d = ViewHost.get().newDisplay();
             int w = d.getWidth();
             int h = d.getHeight();
             if (w > 0 && h > 0) return new int[] { w, h };
@@ -370,8 +372,8 @@ public final class InputManager {
         // whole panel, including under the navigation bar -- and since this
         // version DisplayMetrics reports the smaller app area, reading it here
         // would silently shrink the reported touch range by a nav strip.
-        int rw = android.view.Display.macapkRealWidthPx();
-        int rh = android.view.Display.macapkRealHeightPx();
+        int rw = ViewHost.get().realWidthPx();
+        int rh = ViewHost.get().realHeightPx();
         return new int[] { rw > 0 ? rw : dm.widthPixels, rh > 0 ? rh : dm.heightPixels };
     }
 

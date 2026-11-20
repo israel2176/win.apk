@@ -14,6 +14,7 @@
 // before the Activity. Both call into here so the ordering lives in one place.
 package com.macapk.loader;
 
+import com.macapk.loader.gfx.GfxBackend;
 import android.graphics.Rect;
 import android.view.Gravity;
 import android.view.View;
@@ -22,6 +23,7 @@ import android.view.WindowManager;
 
 import java.util.ArrayList;
 import java.util.List;
+import com.macapk.loader.view.ViewHost;
 
 public final class WindowOverlayStack {
 
@@ -100,7 +102,7 @@ public final class WindowOverlayStack {
         if (OVERLAY_REUSE) {
             android.graphics.Bitmap b = sOverlayBmp;
             if (b != null && b.getWidth() == w && b.getHeight() == h) {
-                int[] live = b.macapkLiveArgbOrNull();
+                int[] live = GfxBackend.get().liveArgbOrNull(b);
                 if (live != null) {
                     java.util.Arrays.fill(live, 0);
                     return b;
@@ -198,7 +200,7 @@ public final class WindowOverlayStack {
             }
             LAYERS.add(new Layer(view, wlp));
         }
-        android.view.WindowManagerGlobal.getInstance().macapkWindowAdded(view, wlp);
+        ViewHost.get().windowAdded(view, wlp);
         // Tell the view it is attached. A window we put on screen genuinely IS
         // attached, but only ViewCanvasDriver ever dispatched this, and only for
         // the content root -- so every Dialog, PopupWindow and Spinner popup
@@ -208,8 +210,8 @@ public final class WindowOverlayStack {
         // detached branch became REAL, and ProgressBar.setVisible(isShown())
         // would blank a spinner inside a dialog while popup anchoring and IME
         // cursor anchoring computed from 0,0.
-        view.macapkClearWindowRemoved();   // a new window for this root
-        try { view.macapkDispatchAttachedToWindow(); }
+        ViewHost.get().clearWindowRemoved(view);   // a new window for this root
+        try { ViewHost.get().dispatchAttachedToWindow(view); }
         catch (Throwable ignored) { /* a view that refuses to attach still shows */ }
         sDirty = true;
         try {
@@ -308,7 +310,7 @@ public final class WindowOverlayStack {
         // unknown view alone.
         if (found) {
             giveRootItsParams(view, wlp);
-            android.view.WindowManagerGlobal.getInstance().macapkWindowAdded(view, wlp);
+            ViewHost.get().windowAdded(view, wlp);
         }
     }
 
@@ -333,15 +335,15 @@ public final class WindowOverlayStack {
         // Scheduling a traversal here defeats the idle-skip for one frame, so
         // whichever compositor painted the overlay repaints without it.
         if (removed) {
-            android.view.WindowManagerGlobal.getInstance().macapkWindowRemoved(view);
+            ViewHost.get().windowRemoved(view);
             // AOSP WindowManagerGlobal.removeViewLocked -> ViewRootImpl.die ->
             // doDie -> dispatchDetachedFromWindow: a removed window's tree is
             // detached (Dialog.dismissDialog uses removeViewImmediate, so this is
             // synchronous). v1.0.1643: add() attached but remove() never
             // detached, so a dismissed dialog's ProgressBar kept ticking forever,
             // pinning its activity and forcing a traversal 20x a second.
-            try { view.macapkDispatchDetachedFromWindow(); } catch (Throwable ignored) { }
-            try { android.view.ViewRootImpl.schedule(); } catch (Throwable ignored) { }
+            try { ViewHost.get().dispatchDetachedFromWindow(view); } catch (Throwable ignored) { }
+            try { ViewHost.get().scheduleTraversal(); } catch (Throwable ignored) { }
         }
         // Symmetric with add()'s log above: unambiguous proof a dialog/overlay
         // was actually dismissed (vs. just not re-logged). Cheap (fires only on
@@ -788,7 +790,7 @@ public final class WindowOverlayStack {
             r.set(outline.mRect);
             radius = Math.max(0f, outline.mRadius);
         } else if (outline.mMode == android.graphics.Outline.MODE_PATH && outline.mPath != null
-                && !Float.isNaN(outline.macapkPathShadowRadius)) {
+                && !Float.isNaN(GfxBackend.get().outlinePathShadowRadius(outline))) {
             // A rect with mixed corner radii (GradientDrawable's radius array, a
             // usual popup-menu background): cast the round rect of its bounds and
             // its largest corner radius, which lies inside the shape, so the
@@ -797,7 +799,7 @@ public final class WindowOverlayStack {
             outline.mPath.computeBounds(pb, true);
             r.set(Math.round(pb.left), Math.round(pb.top), Math.round(pb.right), Math.round(pb.bottom));
             if (r.isEmpty()) return;
-            radius = Math.max(0f, outline.macapkPathShadowRadius);
+            radius = Math.max(0f, GfxBackend.get().outlinePathShadowRadius(outline));
         } else {
             // EMPTY casts nothing (AOSP too). Any other convex PATH is skipped
             // rather than approximated: a square shadow under a rounded panel
@@ -1032,7 +1034,7 @@ public final class WindowOverlayStack {
             // available (Bitmap.macapkLiveArgbOrNull: read-only, on this drawing
             // thread, before any further draw), and BEFORE recycle -- the native
             // present copies synchronously. The copying fallback is unchanged.
-            int[] pixels = bmp.macapkLiveArgbOrNull();
+            int[] pixels = GfxBackend.get().liveArgbOrNull(bmp);
             if (pixels == null) {
                 pixels = new int[surfaceW * surfaceH];
                 bmp.getPixels(pixels, 0, surfaceW, 0, 0, surfaceW, surfaceH);

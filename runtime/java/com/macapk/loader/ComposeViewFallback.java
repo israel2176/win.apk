@@ -33,8 +33,10 @@ import android.graphics.Paint;
 import android.graphics.RectF;
 import android.view.View;
 
+import com.macapk.loader.res.ResBackend;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import com.macapk.loader.view.ViewHost;
 
 public final class ComposeViewFallback {
     // Process-environment snapshots for the per-draw / per-frame / per-layout /
@@ -202,14 +204,14 @@ public final class ComposeViewFallback {
         // error-tinted Surface; the M3 token colorErrorContainer is
         // the AOSP convention for "tinted-warning surface."
         // Without that token resolving, fall back to a soft peach.
-        int bgColor = android.content.res.Resources.macapkThemeColor(
+        int bgColor = ResBackend.get().themeColor(
             "colorErrorContainer", 0xFFFFDAD6);
         // Many call-to-action banners use a softer tint than the full
         // error color; check colorTertiaryContainer too.
         if ((bgColor & 0xFFFFFF) == 0xFFFBFE) {
             bgColor = 0xFFFFDAD6; // M3 fallback peach
         }
-        int fgColor = android.content.res.Resources.macapkThemeColor(
+        int fgColor = ResBackend.get().themeColor(
             "colorOnErrorContainer", 0xFF410002);
 
         Paint bg = new Paint();
@@ -483,7 +485,7 @@ public final class ComposeViewFallback {
             boolean[] any = {false};
             forceRemeasureWalk(rootView, any, new java.util.IdentityHashMap<>(), 0);
             if (any[0] && android.os.Looper.MACAPK_REAL_LOOPER)
-                try { android.view.ViewRootImpl.schedule(); } catch (Throwable ignored) {}
+                try { ViewHost.get().scheduleTraversal(); } catch (Throwable ignored) {}
         } catch (Throwable t) { NativeLog.w(TAG, "forceRemeasureHosts: " + t); }
     }
     /** Rename-proof: an AndroidComposeView is any View with a getRoot() returning an

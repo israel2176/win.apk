@@ -8,6 +8,17 @@
 #   <out>/bin/WebView2Loader.dll      (WebView2, for web content; fetch_webview2.sh)
 #   <out>/bin/tools/framework-res.apk
 #   <out>/lib/*.jar, java_base_patch/, jdk_unsupported_patch/
+#   <out>/lib/aosp-graphics.jar, bin/robolectric-nativeruntime.dll, bin/aosp/ (ICU's data, the
+#                                     fonts): AOSP's graphics, what apps draw with unless
+#                                     WINAPK_AOSP_GFX=0 (build_aosp_gfx.sh). WINAPK_STAGE_AOSP_GFX=0 leaves them
+#                                     out; WINAPK_AOSP_GFX_DEPS names the download folder
+#                                     (default thirdparty/aosp-gfx)
+#   <out>/lib/aosp-resources.jar, bin/aosp/framework-res-34.apk: AOSP's own resources, only with
+#                                     WINAPK_STAGE_AOSP_RES=1 (build_aosp_res.sh; the switch,
+#                                     WINAPK_AOSP_RES=1, is new and off by default)
+#   <out>/lib/aosp-views.jar:         AOSP's own views, only with WINAPK_STAGE_AOSP_RES=1 and
+#                                     WINAPK_STAGE_AOSP_VIEWS=1 (build_aosp_views.sh; the switch,
+#                                     WINAPK_AOSP_VIEWS=1, is new and off by default)
 #
 #   windows/scripts/stage_runtime.sh <cmake build dir> [out]
 #
@@ -25,6 +36,15 @@ OUT="$(cd -- "$OUT" && pwd)"
 [[ -f "$BUILD/winapk-runtime.exe" ]] || { echo "[stage] no winapk-runtime.exe in $BUILD" >&2; exit 1; }
 "$HERE/build_java.sh" "$OUT"
 "$HERE/build_framework_res.sh" "$OUT/bin/tools/framework-res.apk"
+if [[ "${WINAPK_STAGE_AOSP_GFX:-1}" != 0 ]]; then
+    "$HERE/build_aosp_gfx.sh" "$OUT" "${WINAPK_AOSP_GFX_DEPS:-}"
+    if [[ "${WINAPK_STAGE_AOSP_RES:-0}" == 1 ]]; then
+        "$HERE/build_aosp_res.sh" "$OUT" "${WINAPK_AOSP_GFX_DEPS:-}"
+        if [[ "${WINAPK_STAGE_AOSP_VIEWS:-0}" == 1 ]]; then
+            "$HERE/build_aosp_views.sh" "$OUT" "${WINAPK_AOSP_GFX_DEPS:-}"
+        fi
+    fi
+fi
 cp -f "$BUILD/winapk-runtime.exe" "$BUILD/macapk-translator.exe" "$BUILD/winapk-guest-stub.dll" "$OUT/bin/"
 # The arm64 translator, and the clang it compiles with (clang\, beside bin\),
 # so no user has to install one.

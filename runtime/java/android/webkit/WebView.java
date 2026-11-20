@@ -36,6 +36,7 @@ import java.io.File;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.Executor;
+import com.macapk.loader.view.ViewHost;
 
 // AOSP fidelity: the deprecation usage below MIRRORS AOSP, which deprecates its
 // own APIs while continuing to implement them. Removing it would diverge
@@ -1062,7 +1063,7 @@ public class WebView extends android.widget.AbsoluteLayout
     private static boolean macapkHasHolePunchingSurface(android.view.View v, int depth) {
         if (v == null || depth > 64 || v.getVisibility() != android.view.View.VISIBLE) return false;
         if (v instanceof android.view.SurfaceView) {
-            return !((android.view.SurfaceView) v).macapkIsZOrderOnTop();
+            return !ViewHost.get().isZOrderOnTop((android.view.SurfaceView) v);
         }
         if (v instanceof android.view.ViewGroup) {
             android.view.ViewGroup g = (android.view.ViewGroup) v;
@@ -1409,8 +1410,8 @@ public class WebView extends android.widget.AbsoluteLayout
             // stretched from. (First cut used WindowMetrics bounds, which
             // measured ~3% narrower and left the web view that far short of
             // the window's right edge -- visible in the first wvtest capture.)
-            surfW = android.view.Display.macapkRealWidthPx();
-            surfH = android.view.Display.macapkRealHeightPx();
+            surfW = ViewHost.get().realWidthPx();
+            surfH = ViewHost.get().realHeightPx();
         } catch (Throwable ignored) {
         }
         if (surfW <= 0 || surfH <= 0) {

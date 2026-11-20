@@ -7,7 +7,8 @@
 //
 // Errors follow HostIcu's contract: an ICU failure throws
 // IllegalArgumentException(u_errorName), and no icu.dll throws
-// UnsupportedOperationException, never a made-up string.
+// UnsupportedOperationException, never a made-up string; HostIcu takes that
+// as "no host ICU" and answers from Java (IcuFallback), so an app never sees it.
 //
 // Also android.icu.util.LocaleData (measurement system, paper size, CLDR
 // version, exemplar sets, delimiters, the locale display pattern) through

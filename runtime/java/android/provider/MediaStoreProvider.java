@@ -2838,21 +2838,13 @@ public final class MediaStoreProvider extends android.content.ContentProvider {
     }
 
     private static int[] photosImageSize(File f) {
-        // Header-only read through the JDK's ImageIO readers: no pixels, no AWT
-        // toolkit. HEIC has no JDK reader and answers 0x0, an honest "unknown".
-        try (javax.imageio.stream.ImageInputStream in = javax.imageio.ImageIO.createImageInputStream(f)) {
-            if (in != null) {
-                java.util.Iterator<javax.imageio.ImageReader> it = javax.imageio.ImageIO.getImageReaders(in);
-                if (it.hasNext()) {
-                    javax.imageio.ImageReader r = it.next();
-                    try {
-                        r.setInput(in);
-                        return new int[]{r.getWidth(0), r.getHeight(0)};
-                    } finally {
-                        r.dispose();
-                    }
-                }
-            }
+        // Header-only: BitmapFactory's bounds decode, no pixels (Skia's codecs on AOSP's graphics,
+        // the default). A format it has no codec for (HEIC) answers 0x0, an honest "unknown".
+        try {
+            android.graphics.BitmapFactory.Options o = new android.graphics.BitmapFactory.Options();
+            o.inJustDecodeBounds = true;
+            android.graphics.BitmapFactory.decodeFile(f.getPath(), o);
+            if (o.outWidth > 0 && o.outHeight > 0) return new int[]{o.outWidth, o.outHeight};
         } catch (Throwable ignored) {}
         return new int[]{0, 0};
     }

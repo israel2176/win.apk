@@ -33,6 +33,7 @@ keeping a copy.
 | OpenGL ES | ✅ | GLES 1.1 to 3.2 and EGL 1.5, from Java (`GLSurfaceView`, libGDX) and from native code (SDL), on ANGLE over Direct3D 11; WARP or SwiftShader without a GPU | | `host/gl/` |
 | `NativeActivity` | ✅ | Games whose whole UI is native code get their window, input queue and configuration | | `native_activity.cpp` |
 | Vulkan | ❌ | | Not implemented | |
+| Pictures (`BitmapFactory`, `ImageDecoder`) | ✅ | PNG, JPEG, WebP, GIF, BMP and ICO by Android's own decoders; HEIF/HEIC (a phone's photos) and AVIF through Windows | HEIF needs Microsoft's HEIF Image Extensions, AVIF its AV1 Video Extension (Microsoft Store); without them such a picture does not open, as on a phone that cannot read it | `windows/java/aosp_gfx/` (`HostImageDecode`), `native_image.cpp` |
 | AudioTrack, SoundPool, MediaPlayer audio | ✅ | A WASAPI mixer; WAV, Ogg, MP3, AAC and what Windows decodes | | `native_audio.cpp` |
 | AAudio | ⚠️ | Output, in write and callback modes | No AAudio input | `native_aaudio.cpp` |
 | Microphone (`AudioRecord`) | ✅ | WASAPI capture | | `native_audio_input.cpp` |
@@ -85,10 +86,11 @@ issue has none yet; please open one before working on it.
 | 3 | 32-bit ARM code (`armeabi-v7a`) | Apps that ship only 32-bit ARM libraries do not run at all | |
 | 4 | Vulkan | Games that need Vulkan do not draw | |
 | 5 | Notification action buttons | Reply, mark as read and similar buttons are missing | |
-| 6 | Multi-touch | Pinch-to-zoom and two-finger gestures cannot be made | |
+| 6 | Multi-touch on real hardware | Touchscreen fingers, pen and the touchpad pinch are passed on as Android pointers, but are checked by unit tests only; with a mouse alone, Ctrl+wheel is the only two-finger gesture | |
 | 7 | Code signing | SmartScreen and some antivirus programs warn about the downloads | |
 | 8 | Real sensors | PCs with an accelerometer cannot steer tilt games | |
 | 9 | Bluetooth: discovery, pairing, GATT server, profiles | Apps that pair devices themselves or act as a Bluetooth peripheral | |
+| 10 | Child processes (`fork`, `posix_spawn`, `exec`) | Browsers that run their engine in separate processes (Firefox family) end at start | [#117](https://github.com/israel2176/win.apk/issues/117) |
 
 ## The automated sweep
 

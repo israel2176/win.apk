@@ -12,6 +12,7 @@ import android.view.MenuInflater;
 import android.view.View;
 import android.view.Menu;
 import android.view.MenuItem;
+import com.macapk.loader.res.ResBackend;
 
 public class PopupMenu {
     private final Context context;
@@ -79,9 +80,9 @@ public class PopupMenu {
         catch (Throwable ignored) { }
         final int padH   = Math.round(16f * density);
         final int minRow = Math.round(48f * density);
-        final int bg = android.content.res.Resources.macapkThemeColor(
+        final int bg = ResBackend.get().themeColor(
                 "colorBackground", 0xFFFAFAFA);
-        final int fg = android.content.res.Resources.macapkThemeColor(
+        final int fg = ResBackend.get().themeColor(
                 "textColorPrimary", 0xDE000000);
 
         LinearLayout content = new LinearLayout(context);

@@ -30,6 +30,49 @@ public final class SurfaceControl implements Parcelable {
         mHeight = height;
     }
 
+    /** AOSP's public SurfaceControl(): an empty handle, not valid until copyFrom or
+     *  readFromParcel points it at a layer (ViewRootImpl's mSurfaceControl, which
+     *  IWindowSession.relayout fills). */
+    public SurfaceControl() {
+        mName = "SurfaceControl";
+        mValid = false;
+    }
+
+    /** AOSP copyFrom(SurfaceControl other, String callsite): this handle now names the
+     *  same layer as `other` (the in-process window session's relayout answer). */
+    public void copyFrom(SurfaceControl other, String callsite) {
+        mName = other.mName;
+        mWidth = other.mWidth;
+        mHeight = other.mHeight;
+        mValid = other.mValid;
+        mLayerPost = other.mLayerPost;
+    }
+
+    /** Win.apk framework-internal: where a Surface copied from this layer hands each frame it
+     *  posts, in place of presenting it to the host window (the in-process window manager of
+     *  AOSP's views composes its windows' layers; WINAPK_AOSP_VIEWS=1). Null: the Surface
+     *  presents as before. Copied with the layer by copyFrom. */
+    private Surface.MacapkLayerPost mLayerPost;
+    public void macapkSetLayerPost(Surface.MacapkLayerPost post) { mLayerPost = post; }
+    public Surface.MacapkLayerPost macapkLayerPost() { return mLayerPost; }
+
+    private int mTransformHint;
+    /** AOSP's buffer transform hint: recorded, as there is no compositor to rotate for. */
+    public void setTransformHint(int transformHint) { mTransformHint = transformHint; }
+    public int getTransformHint() { return mTransformHint; }
+
+    /** AOSP SurfaceControl.rotationToBufferTransform: Surface.ROTATION_* to the
+     *  NATIVE_WINDOW_TRANSFORM_* a buffer is rotated by (0, ROT_90 4, ROT_180 3, ROT_270 7). */
+    public static int rotationToBufferTransform(int rotation) {
+        switch (rotation) {
+            case Surface.ROTATION_0: return 0;
+            case Surface.ROTATION_90: return 4;
+            case Surface.ROTATION_180: return 3;
+            case Surface.ROTATION_270: return 7;
+        }
+        return 0;
+    }
+
     public void release() { mValid = false; }
     public boolean isValid() { return mValid; }
     public String getName() { return mName; }

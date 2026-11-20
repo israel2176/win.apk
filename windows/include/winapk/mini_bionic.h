@@ -15,11 +15,16 @@
 #include <cstdint>
 #include <cstddef>
 #include <string>
+#include <vector>
 
 namespace winapk {
 
 // Host address of a shim export, or nullptr if the shim does not have it.
 void* mini_bionic_resolve(const char* name);
+// Every name that resolves to `addr`: one shim function can stand for several
+// names (no-op stubs do), which matters to a caller that rewrites a function's
+// arguments by its address (the arm64 bridge's va_list ones).
+std::vector<std::string> mini_bionic_names_of(const void* addr);
 
 // Runs the destructors guest code registered with __cxa_atexit, newest first.
 void mini_bionic_run_atexit();
@@ -57,7 +62,9 @@ int bionic_unsetenv(const char* name);
 
 // Where Android's absolute paths live (src/bionic/paths.cpp): "/x" is
 // <android root>/x, and /system/fonts and /system/etc/fonts.xml are the fonts
-// directory Boot writes. UTF-8 host paths.
+// directory Boot writes. UTF-8 host paths. The fonts may also be given as
+// "<fonts.xml>|<folder>|<folder>...": a font is then the first folder's that
+// has it (Android's fonts, then Windows' for the CJK families).
 void set_android_root(const char* dir);
 void set_system_fonts_dir(const char* dir);
 // The running app: /data/user/0/<package> and /data/data/<package> are

@@ -34,7 +34,7 @@ public final class Probes {
         R.layout.lib_text_lines, R.layout.lib_images, R.layout.lib_list, R.layout.lib_dialog,
         R.layout.lib_material, R.layout.lib_appbar, R.layout.lib_list, R.layout.lib_dialog,
         R.layout.lib_material, R.layout.lib_appbar, R.layout.lib_list, R.layout.lib_dialog,
-        R.layout.lib_material, R.layout.lib_dialog,
+        R.layout.lib_material, R.layout.lib_dialog, R.layout.clip_bounds, R.layout.text_baselines,
     };
     private static final String[] NAMES = {
         "text_gravity", "linear_weights", "frame_gravity", "relative", "edit_compound", "custom_params", "icons",
@@ -42,7 +42,7 @@ public final class Probes {
         "lib_text_lines", "lib_images", "lib_list", "lib_dialog",
         "dark_material", "dark_appbar", "dark_list", "dark_dialog",
         "m3_material", "m3_appbar", "m3_list", "m3_dialog",
-        "m3dark_material", "m3dark_dialog",
+        "m3dark_material", "m3dark_dialog", "clip_bounds", "text_baselines",
     };
 
     /** The platform's theme for the framework's own widgets, Material Components for the libraries'. */
@@ -65,6 +65,13 @@ public final class Probes {
 
     /** What code does after inflating: a list's rows, a dialog's words. */
     private static void fill(View root, Context c) {
+        View clipped = root.findViewById(R.id.clipped);
+        if (clipped != null) {
+            int q = Math.round(50 * c.getResources().getDisplayMetrics().density);
+            clipped.setClipBounds(new android.graphics.Rect(0, 0, q, q));
+            View unclipped = root.findViewById(R.id.unclipped);
+            unclipped.setClipBounds(null);
+        }
         int[] lists = {R.id.recycler, R.id.recycler_grid, R.id.recycler_strip};
         for (int i = 0; i < lists.length; i++) {
             View v = root.findViewById(lists[i]);
@@ -599,6 +606,11 @@ public final class Probes {
         if (v instanceof TextView) sb.append(" gravity=").append(Integer.toHexString(((TextView) v).getGravity()));
         if (v.getBackgroundTintList() != null) {
             sb.append(" bgtint=").append(hex(v.getBackgroundTintList().getColorForState(v.getDrawableState(), 0)));
+        }
+        android.graphics.Rect clip = v.getClipBounds();
+        if (clip != null) {
+            sb.append(" clip=").append(dp(clip.left, d)).append(',').append(dp(clip.top, d)).append(',')
+              .append(dp(clip.right, d)).append(',').append(dp(clip.bottom, d));
         }
         int x = ox + v.getLeft(), y = oy + v.getTop();
         if (picture != null && !(v instanceof ViewGroup) && v.getWidth() > 0 && v.getHeight() > 0) {

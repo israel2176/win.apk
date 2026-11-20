@@ -33,6 +33,7 @@ import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.PathMeasure;
 
+import com.macapk.loader.res.ResBackend;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.Node;
@@ -287,7 +288,8 @@ public class VectorDrawable extends Drawable {
         macapkXmlTintList = null;
         if (macapkTintDeclared && macapkRes != null && macapkTheme != null) {
             try {
-                android.content.res.ColorStateList list = macapkRes.macapkTintListFor(tintAttr, macapkTheme);
+                android.content.res.ColorStateList list =
+                    ResBackend.get().tintListFor(macapkRes, tintAttr, macapkTheme);
                 if (list != null && list.isStateful()) macapkXmlTintList = list;
             } catch (Throwable ignored) { }
         }
@@ -541,10 +543,9 @@ public class VectorDrawable extends Drawable {
      *  `_apkt/res/<type>-*` directories, which no longer exist. */
     private InputStream macapkOpenResFile(String type, String name) {
         try {
-            Object ri = Resources.macapkGetResourceIndex();
+            Object ri = ResBackend.get().resourceIndex();
             if (ri == null) return null;
-            Object in = ri.getClass().getMethod("openRawByName", String.class, String.class)
-                .invoke(ri, type, name);
+            Object in = ResBackend.get().indexOpenRawByName(ri, type, name);
             return in instanceof InputStream s ? s : null;
         } catch (Throwable ignored) {}
         return null;
@@ -1413,9 +1414,8 @@ public class VectorDrawable extends Drawable {
 
     private static String macapkResolveNumericRef(String s) {
         try {
-            Object ri = Resources.macapkGetResourceIndex();
+            Object ri = ResBackend.get().resourceIndex();
             if (ri == null) return s;
-            java.lang.reflect.Method m = ri.getClass().getMethod("getDimenRaw", String.class);
             String v = s;
             for (int hops = 0; hops < 8 && v != null && v.startsWith("@"); hops++) {
                 String name = null;
@@ -1431,27 +1431,24 @@ public class VectorDrawable extends Drawable {
                     // default 24 we fell back to drew the 52x32 track ~2x too wide
                     // and the thumb off the view's edge (ytdlnis 1.9.0, 2026-10-12).
                     if (!VD_INTEGER_REF) return v;
-                    Object r = ri.getClass().getMethod("integerForName", String.class)
-                        .invoke(ri, v.substring(9));
+                    Object r = ResBackend.get().indexIntegerForName(ri, v.substring(9));
                     return r instanceof Integer n ? Integer.toString(n) : s;
                 } else if (v.startsWith("@0x")) {
                     // BinaryXmlParser writes `@0x%08x` when it cannot name the
                     // id; recover type/name from the table.
                     int id = (int) Long.parseLong(v.substring(3), 16);
-                    Object tn = ri.getClass().getMethod("macapkTypeNameOf", int.class)
-                        .invoke(ri, id);
+                    Object tn = ResBackend.get().indexTypeNameOf(ri, id);
                     if (tn instanceof String[] a && a.length >= 2 && "dimen".equals(a[0])) {
                         name = a[1];
                     } else if (VD_INTEGER_REF && tn instanceof String[] a
                                && a.length >= 2 && "integer".equals(a[0])) {
                         // As the @integer/ branch above.
-                        Object r = ri.getClass().getMethod("integerForId", int.class)
-                            .invoke(ri, id);
+                        Object r = ResBackend.get().indexIntegerForId(ri, id);
                         return r instanceof Integer n ? Integer.toString(n) : s;
                     }
                 }
                 if (name == null) return v;
-                Object r = m.invoke(ri, name);
+                Object r = ResBackend.get().indexDimenRaw(ri, name);
                 if (!(r instanceof String)) return s;
                 v = ((String) r).trim();
             }
@@ -1500,7 +1497,7 @@ public class VectorDrawable extends Drawable {
     private static String macapkResolveStringRef(String ref) {
         if (ref == null || !ref.startsWith("@")) return null;
         try {
-            Object ri = Resources.macapkGetResourceIndex();
+            Object ri = ResBackend.get().resourceIndex();
             if (ri == null) return null;
             int id;
             if (ref.startsWith("@0x")) {
@@ -1513,12 +1510,11 @@ public class VectorDrawable extends Drawable {
                 String type = body.substring(0, slash), pkg = null;
                 int colon = type.indexOf(':');
                 if (colon >= 0) { pkg = type.substring(0, colon); type = type.substring(colon + 1); }
-                Object o = ri.getClass().getMethod("idOfName", String.class, String.class, String.class)
-                    .invoke(ri, body.substring(slash + 1), type, pkg);
+                Object o = ResBackend.get().indexIdOfName(ri, body.substring(slash + 1), type, pkg);
                 id = o instanceof Integer n ? n : 0;
             }
             if (id == 0) return null;
-            Object v = ri.getClass().getMethod("stringForId", int.class).invoke(ri, id);
+            Object v = ResBackend.get().indexStringForId(ri, id);
             return v instanceof String str && !str.isEmpty() ? str : null;
         } catch (Throwable t) {
             return null;
@@ -1563,11 +1559,9 @@ public class VectorDrawable extends Drawable {
                 String mapped = null;
                 try {
                     int aid = (int) Long.parseLong(attr.substring(2), 16);
-                    Object ri = Resources.macapkGetResourceIndex();
+                    Object ri = ResBackend.get().resourceIndex();
                     if (ri != null && (aid >>> 24) == 0x01) {
-                        Object tn = ri.getClass()
-                            .getMethod("macapkFwEntryTypeName", int.class)
-                            .invoke(ri, aid);
+                        Object tn = ResBackend.get().indexFwEntryTypeName(ri, aid);
                         if (tn instanceof String t && t.startsWith("attr/"))
                             mapped = "android:" + t.substring(5);
                     }
@@ -1576,8 +1570,8 @@ public class VectorDrawable extends Drawable {
                 attr = mapped;
             }
             if (macapkTheme != null)
-                return macapkTheme.resolveAttrColor(attr, def);
-            return android.content.res.Resources.macapkThemeColor(attr, def);
+                return ResBackend.get().resolveAttrColor(macapkTheme, attr, def);
+            return ResBackend.get().themeColor(attr, def);
         }
         if (s.startsWith("@")) {
             // lane layout A, 2026-08-02: RESOLVE `@color/...` path fills.
@@ -1592,11 +1586,9 @@ public class VectorDrawable extends Drawable {
             // shader instead.) See docs/canvas-ab-analyst-report-a_2026-08-02.md
             // item 5b.
             try {
-                Object ri = Resources.macapkGetResourceIndex();
+                Object ri = ResBackend.get().resourceIndex();
                 if (ri != null) {
-                    Object c = ri.getClass()
-                        .getMethod("macapkResolveColorExpr", String.class)
-                        .invoke(ri, s);
+                    Object c = ResBackend.get().indexResolveColorExpr(ri, s);
                     if (c instanceof Integer) return (Integer) c;
                 }
             } catch (Throwable ignored) {}

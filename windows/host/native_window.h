@@ -54,4 +54,10 @@ void* surface_view_window_create(void* dpy, void* config);
 int surface_view_window_swap(void* dpy, void* surface);
 void surface_view_window_destroyed(void* surface);
 
+// Whether a producer of its own (a native engine's EGL window surface, or a Java GL thread's on the
+// SurfaceView) holds a window surface now (guest_gl.cpp). Its GL runs on its own thread on the same
+// ANGLE display, whose Direct3D 11 device context is not safe to use from two threads at once, so
+// the host's render thread leaves GL alone while one does.
+bool guest_window_surface_held();
+
 }  // namespace winapk::host

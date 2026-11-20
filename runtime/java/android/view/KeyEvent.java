@@ -516,6 +516,19 @@ public class KeyEvent extends InputEvent implements Parcelable {
 
     /** AOSP copy constructor (KeyEvent.java:1662-1677): an EXACT copy, including
      *  the characters payload. */
+    // ---- What AOSP's InputEvent declares abstract and AOSP's views call, with AOSP's bodies
+    // (WINAPK_AOSP_VIEWS=1 puts AOSP's InputEvent and ViewRootImpl over this class; nothing of
+    // Win.apk's own calls them). ----
+    private int mDisplayId;
+    private final int mId = MotionEvent.macapkNextId();
+    public int getDisplayId() { return mDisplayId; }
+    public void setDisplayId(int displayId) { mDisplayId = displayId; }
+    public KeyEvent copy() { return new KeyEvent(this); }
+    public long getEventTimeNanos() { return eventTime * 1_000_000L; }
+    /** AOSP cancel(): FLAG_CANCELED. */
+    public void cancel() { flags |= FLAG_CANCELED; }
+    public int getId() { return mId; }
+
     public KeyEvent(KeyEvent origEvent) {
         this.downTime = origEvent.downTime;
         this.eventTime = origEvent.eventTime;

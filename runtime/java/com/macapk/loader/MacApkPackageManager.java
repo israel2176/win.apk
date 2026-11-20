@@ -15,6 +15,7 @@ import android.content.pm.ResolveInfo;
 import android.content.pm.ServiceInfo;
 import android.content.pm.Signature;
 
+import com.macapk.loader.res.ResBackend;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -1192,9 +1193,9 @@ public final class MacApkPackageManager extends PackageManager {
     //
     // DELIBERATELY NOT MIRRORED (conservative -- every omission here can only
     // HIDE a package a real device would show, never leak one the device
-    // would hide): the installer-of/installed-by relationship (Mac.apk's
-    // getInstallSourceInfo already reports no installer chain, so there is
-    // nothing to key this on); the four runtime-interaction grants (activity-
+    // would hide): the installer-of/installed-by relationship (the installer
+    // is mostly Google Play, InstallerOfRecord's default, which as a system
+    // app sees every package anyway); the four runtime-interaction grants (activity-
     // result/service-bind/provider-access/IME) -- Mac.apk hosts one APK's
     // process at a time, so there is no second live app to interact with;
     // <queries><intent>/<provider> matching -- doing this honestly means
@@ -2392,11 +2393,9 @@ public final class MacApkPackageManager extends PackageManager {
                     // same theme as a raw "@0x01030007" and is handled by the
                     // hex branch above plus ResourceIndex.macapkTypeNameOf.
                     if ("style".equals(type.substring(colon + 1))) {
-                        Object fidx = android.content.res.Resources
-                            .macapkGetResourceIndex();
-                        if (fidx instanceof ResourceIndex) {
-                            return ((ResourceIndex) fidx)
-                                .idOfFrameworkStyleName(name);
+                        Object fidx = ResBackend.get().resourceIndex();
+                        if (ResBackend.get().isIndex(fidx)) {
+                            return ResBackend.get().indexIdOfFrameworkStyleName(fidx, name);
                         }
                     }
                     return 0;
@@ -2404,9 +2403,9 @@ public final class MacApkPackageManager extends PackageManager {
                 type = type.substring(colon + 1);
             }
         }
-        Object idx = android.content.res.Resources.macapkGetResourceIndex();
-        if (idx instanceof ResourceIndex) {
-            return ((ResourceIndex) idx).idOfName(name, type, null);
+        Object idx = ResBackend.get().resourceIndex();
+        if (ResBackend.get().isIndex(idx)) {
+            return ResBackend.get().indexIdOfName(idx, name, type, null);
         }
         return 0;
     }
@@ -3390,8 +3389,8 @@ public final class MacApkPackageManager extends PackageManager {
         String r = null;
         try {
             int id = resolveResRef(v, "string");
-            Object idx = android.content.res.Resources.macapkGetResourceIndex();
-            if (id != 0 && idx instanceof ResourceIndex) r = ((ResourceIndex) idx).stringForId(id);
+            Object idx = ResBackend.get().resourceIndex();
+            if (id != 0 && ResBackend.get().isIndex(idx)) r = ResBackend.get().indexStringForId(idx, id);
         } catch (Throwable ignored) {
             r = null;
         }
@@ -4600,50 +4599,54 @@ public final class MacApkPackageManager extends PackageManager {
     }
 
     /**
-     * NULL -- we have no package installer, and we say so consistently.
+     * The installer: InstallerOfRecord.reported, ONE answer for getInstallerPackageName and every
+     * name of getInstallSourceInfo, as AOSP reads both from the same
+     * `installSource.installerPackageName` (PackageManagerService, android11-release :21228-21242 and
+     * :21249-21328). Answering the one question two ways is what v1.0.938 removed: before it this
+     * said "com.android.vending" while getInstallSourceInfo said null.
      *
-     * ⚠ v1.0.938, OWNER DECISION. This returned "com.android.vending" since
-     * v1.0.221 while `getInstallSourceInfo().getInstallingPackageName()` returned
-     * null, so we answered ONE question TWO ways. AOSP cannot: PackageManagerService
-     * reads both from the same `installSource.installerPackageName`
-     * (:21228-21242 and :21249-21328 at android11-release, the latter passing that
-     * very variable into the InstallSourceInfo constructor), and the SDK marks
-     * getInstallerPackageName `@Deprecated  use getInstallSourceInfo(String)`.
-     * We also threw NameNotFoundException for "com.android.vending" itself -- a
-     * load-bearing, settled part of the GMS device contract -- so we were claiming
-     * to be installed by a package we simultaneously reported as missing.
-     * `changelog.md:8681` already listed this among the four contradictory answers
-     * that made GMS behaviour a coin-flip before v847.
+     * What it is: the real record when an app installed the package through PackageInstaller;
+     * otherwise, for an app the user installed, Google Play while Settings > Apps > "Report Google
+     * Play as the installer" is on (the default, the owner's decision: bit and Bank Hapoalim refuse
+     * to run without a store as installer), as `adb install -i com.android.vending` leaves it; null
+     * when it is off, as for an adb install. Play is reported only while getPackageInfo finds
+     * com.android.vending (PlayServices.vendingPresent), so no app is told a missing store
+     * installed it.
      *
-     * ⚠ WHY IT WAS "com.android.vending", and why that is no longer the answer:
-     * v1.0.221 changed it from null because AppsFlyer's obfuscated AppsFlyerLib
-     * dereferences the result with no null check -> SIGSEGV (null+0x10) on a
-     * background thread, which took down HCR 1.43 on the arm64 path. But null is a
-     * LEGAL AOSP value that every app must already handle (the javadoc: "Null may
-     * be returned if the app was not installed by a package (e.g. a system app or
-     * an app installed via adb)"), so an SDK crashing on it is the SDK mishandling
-     * a legal value. Fabricating an installer identity to keep it alive is the
-     * kind of lie the no-shortcuts rule exists to prevent.
-     *
-     * The v1.0.221 crash was re-tested before this landed -- see the v1.0.938
-     * session entry for the measured result. If it ever returns, fix it at its own
-     * site (survive the deref) rather than reinstating the fabricated value.
-     *
-     * (NB: this value is NOT what gates Minecraft Bedrock's boot -- MC creates its
-     * GooglePlayStore + BillingClient regardless and the billing fast-fails
-     * cleanly; that blocker was an un-neutralized stack canary, fixed separately.)
+     * (v1.0.221 had answered "com.android.vending" to keep AppsFlyer from dereferencing null; null
+     * is a legal AOSP value apps must handle, and with the setting off it is what they get.)
      */
     @Override public String  getInstallerPackageName(String packageName) {
-        // v1.0.2335: null UNLESS an app really installed this package through
-        // PackageInstaller (InstallerOfRecord), which is what AOSP records. Still
-        // null for everything installed any other way; nothing is fabricated.
-        return InstallerOfRecord.get(packageName);
+        return InstallerOfRecord.reported(packageName, installerQueryInstalled(packageName));
     }
 
-    /** The recorded installer, for getInstallSourceInfo (null when none). */
+    /** `pkg` is installed for the installer question: the running app, or a registry app the
+     *  caller may see (AOSP reports no installer for a package it does not show the caller). */
+    private boolean installerQueryInstalled(String pkg) {
+        if (pkg == null || pkg.isEmpty()) return false;
+        if (pkg.equals(this.packageName)) return true;
+        return InstalledRegistry.enabled() && packageVisible(pkg) && InstalledRegistry.lookup(pkg) != null;
+    }
+
+    /**
+     * Who installed the package, from the same answer as getInstallerPackageName. Google Play on
+     * Android 14 installs as installing AND initiating package (it commits its own session), with no
+     * originating package, PACKAGE_SOURCE_STORE, and update ownership requested
+     * (SessionParams.setRequestUpdateOwnership), so the update owner is Play too; the initiating
+     * signing info is Play's certificate, the one getPackageInfo("com.android.vending") reports.
+     * Any other recorded installer keeps the plain shape: installing = initiating, nothing else.
+     */
     @Override public android.content.pm.InstallSourceInfo getInstallSourceInfo(String packageName)
             throws NameNotFoundException {
-        String installer = InstallerOfRecord.get(packageName);
+        String installer = getInstallerPackageName(packageName);
+        if (InstallerOfRecord.PLAY.equals(installer)) {
+            android.content.pm.SigningInfo signing = null;
+            if (PlayServices.vendingPresent()) {
+                try { signing = vendingPackageInfo().signingInfo; } catch (Throwable ignored) {}
+            }
+            return new android.content.pm.InstallSourceInfo(installer, signing, null, installer, installer,
+                    android.content.pm.PackageInstaller.SessionParams.PACKAGE_SOURCE_STORE);
+        }
         return new android.content.pm.InstallSourceInfo(installer, null, null, installer);
     }
 
@@ -5497,9 +5500,9 @@ public final class MacApkPackageManager extends PackageManager {
         if (v.charAt(0) == '@') {
             try {
                 int id = resolveResRef(v, "bool");
-                Object idx = android.content.res.Resources.macapkGetResourceIndex();
-                if (id != 0 && idx instanceof ResourceIndex) {
-                    Boolean b = ((ResourceIndex) idx).getBoolById(id);
+                Object idx = ResBackend.get().resourceIndex();
+                if (id != 0 && ResBackend.get().isIndex(idx)) {
+                    Boolean b = ResBackend.get().indexBoolById(idx, id);
                     if (b != null) return b;
                 }
             } catch (Throwable ignored) {}
@@ -5590,7 +5593,7 @@ public final class MacApkPackageManager extends PackageManager {
         if (!macapkRtlLogged) {
             macapkRtlLogged = true;
             NativeLog.i("Mac.apk.PM", "supportsRtl=\"" + appAttr("supportsRtl") + "\" -> " + rtl
-                      + (android.content.res.Resources.macapkGetResourceIndex() == null ? " (no resource index yet)" : ""));
+                      + (ResBackend.get().resourceIndex() == null ? " (no resource index yet)" : ""));
         }
         // android:usesCleartextTraffic defaults to true BELOW targetSdk 28 and
         // false from 28 (Pie) on. Mac.apk enforces no cleartext policy, but the
@@ -5698,19 +5701,15 @@ public final class MacApkPackageManager extends PackageManager {
                     // FacebookSdk.loadDefaultsFromMetadata throws.
                     try {
                         int resId = (int) Long.parseLong(val.substring(3), 16);
-                        String rtype = android.content.res.Resources
-                            .macapkResourceTypeForId(resId);
+                        String rtype = ResBackend.get().resourceTypeForId(resId);
                         if ("string".equals(rtype)) {
-                            String sv = android.content.res.Resources
-                                .macapkStringForId(resId);
+                            String sv = ResBackend.get().stringForId(resId);
                             if (sv != null) { md.putString(key, sv); return; }
                         } else if ("bool".equals(rtype)) {
-                            Boolean bv = android.content.res.Resources
-                                .macapkBoolForId(resId);
+                            Boolean bv = ResBackend.get().boolForId(resId);
                             if (bv != null) { md.putBoolean(key, bv); return; }
                         } else if ("color".equals(rtype)) {
-                            Integer cv = android.content.res.Resources
-                                .macapkColorForId(resId);
+                            Integer cv = ResBackend.get().colorForId(resId);
                             if (cv != null) { md.putInt(key, cv); return; }  // ARGB
                         } else if ("dimen".equals(rtype) || "fraction".equals(rtype)) {
                             // AOSP DROPS resolved dimension/fraction meta-data (the
@@ -5721,8 +5720,7 @@ public final class MacApkPackageManager extends PackageManager {
                         // integer (and any type ResourceIndex resolves as an int):
                         // GMS's google_play_services_version = @integer/... reads
                         // this via getInt.
-                        Integer resolved = android.content.res.Resources
-                            .macapkIntegerForId(resId);
+                        Integer resolved = ResBackend.get().integerForId(resId);
                         md.putInt(key, resolved != null ? resolved : resId);
                         return;
                     } catch (Throwable ignored) { break; }
@@ -5731,8 +5729,7 @@ public final class MacApkPackageManager extends PackageManager {
             }
         }
         if (val != null && val.startsWith("@integer/")) {
-            Integer resolved = android.content.res.Resources
-                .macapkIntegerForName(val.substring("@integer/".length()));
+            Integer resolved = ResBackend.get().integerForName(val.substring("@integer/".length()));
             if (resolved != null) {
                 // putInt ONLY: our Bundle is a single map, so a putString on the
                 // same key would overwrite the Integer and make getInt() return

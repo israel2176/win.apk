@@ -139,8 +139,9 @@ std::unique_ptr<ElfImage> ElfImage::map(const std::filesystem::path& path, std::
         *error = "not a shared object (e_type " + std::to_string(eh.e_type) + ")";
         return nullptr;
     }
-    if (eh.e_phentsize != sizeof(Phdr) ||
-        eh.e_phoff + static_cast<uint64_t>(eh.e_phnum) * sizeof(Phdr) > file.size()) {
+    // Written so that no sum can wrap: the offsets come from the file, which may be hostile.
+    if (eh.e_phentsize != sizeof(Phdr) || eh.e_phoff > file.size() ||
+        static_cast<uint64_t>(eh.e_phnum) * sizeof(Phdr) > file.size() - eh.e_phoff) {
         *error = "program header table out of bounds";
         return nullptr;
     }
@@ -154,7 +155,7 @@ std::unique_ptr<ElfImage> ElfImage::map(const std::filesystem::path& path, std::
         std::memcpy(&ph, file.data() + eh.e_phoff + i * sizeof(Phdr), sizeof(ph));
         img->phdrs_.push_back(ph);
         if (ph.p_type == kPtLoad) {
-            if (ph.p_filesz > ph.p_memsz || ph.p_offset + ph.p_filesz > file.size()) {
+            if (ph.p_filesz > ph.p_memsz || ph.p_offset > file.size() || ph.p_filesz > file.size() - ph.p_offset) {
                 *error = "PT_LOAD " + std::to_string(i) + " out of bounds";
                 return nullptr;
             }

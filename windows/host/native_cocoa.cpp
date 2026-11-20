@@ -20,7 +20,9 @@
 
 #include "host_natives.h"
 
+#include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -35,11 +37,14 @@
 #include <mmsystem.h>
 #include <shellapi.h>
 
+#include "aosp_gfx.h"
 #include "cds.h"
+#include "frame_times.h"
 #include "gl/gl_surface.h"
 #include "native_window.h"
 #include "win32_window.h"
 #include "winapk/arm64_guest.h"
+#include "stub_hits.h"
 #include "winapk/mini_bionic.h"
 
 namespace winapk::host {
@@ -256,11 +261,23 @@ constexpr DWORD kCloseTeardownMs = 2000;
 constexpr DWORD kCloseGraceMs = 500;
 std::atomic<bool> g_closing{false};
 
+// The view tree's frame times (frame_times.h): recorded by FrameTimes.nativeRecord, logged once
+// by whichever exit path comes first. TerminateProcess skips atexit, so each path calls it.
+frame_times::Recorder g_frame_times;
+
+void print_frame_times() {
+    static std::atomic<bool> printed{false};
+    if (printed.exchange(true)) return;
+    const std::string line = g_frame_times.summary(aosp_gfx_files() ? "aosp" : "java2d");
+    if (!line.empty()) std::fprintf(stderr, "[win.apk] %s\n", line.c_str());
+}
+
 // Ends the process for a close, once: the caller that comes second waits for
 // the first to finish. `how` is the log line the CI and a bug report read.
 void end_close(const char* how) {
     static std::atomic<bool> ended{false};
     if (ended.exchange(true)) Sleep(INFINITE);
+    print_frame_times();
     std::fprintf(stderr, "[win.apk] close: %s; ended\n", how);
     std::fflush(stdout);
     std::fflush(stderr);
@@ -576,6 +593,29 @@ jint JNICALL Cocoa_displayHz(JNIEnv*, jclass) { return 60; }
 jfloat JNICALL Cocoa_backingScale(JNIEnv* env, jclass) {
     static const float density = device_density(env);
     return density;
+}
+
+// The inject driver's host mouse (TouchDispatcher's hosttap, hostswipe, hostmouse): the
+// window's own messages, posted to it (win32_window.cpp). False headless: no window.
+jboolean JNICALL Cocoa_postHostMouse(JNIEnv*, jclass, jint action, jfloat fx, jfloat fy) {
+    return window_post_mouse(action, fx, fy) ? JNI_TRUE : JNI_FALSE;
+}
+
+// The inject driver's wheel and pinch: kind 2 `hostwheel fx fy dy [dx]` (notches; positive is
+// away from the user, or right), kind 1 `magnify fx fy phase m` (Ctrl+wheel, the window's pinch).
+// The Mac's other trackpad kinds (raw contacts, rotation, a touchpad's phased scroll) have no
+// message of their own on Windows: false.
+jboolean JNICALL Cocoa_debugTrackpad(JNIEnv* env, jclass, jint kind, jfloatArray a) {
+    const jsize n = a ? env->GetArrayLength(a) : 0;
+    float v[5] = {};
+    if (n > 0) env->GetFloatArrayRegion(a, 0, std::min<jsize>(n, 5), v);
+    if (kind == 2 && n >= 3) {
+        bool ok = v[2] == 0.0f || window_post_wheel(v[0], v[1], v[2], false, false);
+        if (n >= 4 && v[3] != 0.0f) ok = window_post_wheel(v[0], v[1], v[3], true, false) && ok;
+        return ok ? JNI_TRUE : JNI_FALSE;
+    }
+    if (kind == 1 && n >= 4) return window_post_magnify(v[0], v[1], v[3]) ? JNI_TRUE : JNI_FALSE;
+    return JNI_FALSE;
 }
 
 // Same rule as upstream: the short side stays the short side.
@@ -1117,7 +1157,11 @@ void keep_tree_frame(const uint32_t* argb, int w, int h) {
 // lifecycle and frame, then the pixels for the window when it is the content.
 void gl_tick(JNIEnv* env, jlong view, Renderer& r, jobject callbacks, jmethodID changed, jmethodID draw,
              int w, int h) {
-    const bool ready = gl_frame_begin(view, w, h);
+    // Not while a producer of its own holds a window surface (guest_window_surface_held): its frames
+    // are the window's, and this view's pbuffer (made again at each size) and its read-back would
+    // put Direct3D work on the device its thread is drawing with. SDL's Tensy crashed in its
+    // glDrawArrays when its window rotated under it and this view's pbuffer was made again.
+    const bool ready = !guest_window_surface_held() && gl_frame_begin(view, w, h);
     if (r.announced_w != w || r.announced_h != h) {
         r.announced_w = w;
         r.announced_h = h;
@@ -1386,6 +1430,8 @@ void JNICALL Cocoa_exitProcess(JNIEnv*, jclass, jint code, jstring relaunch) {
     aot_app_exiting();
     cds_before_exit();  // the framework archive this start still owes
     winapk::arm64::print_stats_if_enabled();  // TerminateProcess skips atexit
+    print_frame_times();                       // so does the frame-time line
+    winapk::host::stub_hits_detail::print_summary();  // so does the stubs' summary
     std::fflush(stdout);
     std::fflush(stderr);
     TerminateProcess(GetCurrentProcess(), static_cast<UINT>(code));
@@ -1586,15 +1632,26 @@ jint JNICALL Cocoa_presentFrame(JNIEnv* env, jclass cls, jintArray argb, jint w,
     return 1;
 }
 
+// com.macapk.loader.FrameTimes: one frame of the view tree (ViewCanvasDriver.doFrame), in ns.
+void JNICALL FrameTimes_record(JNIEnv*, jclass, jlong layout, jlong draw, jlong pixels, jlong present,
+                               jlong total, jboolean warmup) {
+    const int64_t now = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                            std::chrono::steady_clock::now().time_since_epoch()).count();
+    g_frame_times.add(layout, draw, pixels, present, total, warmup == JNI_TRUE, now);
+}
+
 constexpr const char* kCls = "com.macapk.loader.NativeCocoa";
 
 const HostMethod kMethods[] = {
     WINAPK_HOST_NATIVE(kCls, "init", "()Z", Cocoa_init),
+    WINAPK_HOST_NATIVE("com.macapk.loader.FrameTimes", "nativeRecord", "(JJJJJZ)V", FrameTimes_record),
     WINAPK_HOST_NATIVE(kCls, "setPhoneSize", "(II)V", Cocoa_setPhoneSize),
     WINAPK_HOST_NATIVE(kCls, "phoneWidth", "()I", Cocoa_phoneWidth),
     WINAPK_HOST_NATIVE(kCls, "phoneHeight", "()I", Cocoa_phoneHeight),
     WINAPK_HOST_NATIVE(kCls, "displayHz", "()I", Cocoa_displayHz),
     WINAPK_HOST_NATIVE(kCls, "backingScale", "()F", Cocoa_backingScale),
+    WINAPK_HOST_NATIVE(kCls, "postHostMouse", "(IFF)Z", Cocoa_postHostMouse),
+    WINAPK_HOST_NATIVE(kCls, "debugTrackpad", "(I[F)Z", Cocoa_debugTrackpad),
     WINAPK_HOST_NATIVE(kCls, "applyRequestedOrientation", "(Z)V", Cocoa_applyRequestedOrientation),
     WINAPK_HOST_NATIVE(kCls, "createWindow", "(Ljava/lang/String;)J", Cocoa_createWindow),
     WINAPK_HOST_NATIVE(kCls, "createMetalSurfaceView", "(II)J", Cocoa_createView),

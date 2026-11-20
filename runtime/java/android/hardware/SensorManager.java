@@ -46,6 +46,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
+import com.macapk.loader.view.ViewHost;
 
 public class SensorManager {
     public static final int SENSOR_DELAY_FASTEST = 0;
@@ -749,7 +750,7 @@ public class SensorManager {
     private static int macapkPoseRotation() {
         try {
             android.view.Display d = sRotationDisplay;
-            if (d == null) sRotationDisplay = d = new android.view.Display();
+            if (d == null) sRotationDisplay = d = ViewHost.get().newDisplay();
             return d.getRotation();
         } catch (Throwable t) {
             return android.view.Surface.ROTATION_0;

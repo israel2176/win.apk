@@ -493,7 +493,7 @@ public final class GlideRescue {
             if (w <= 0 || h <= 0) return src;
             int r = (radius < 0) ? Math.min(w, h) / 2 : Math.min(radius, Math.min(w, h) / 2);
             if (r <= 0) return src;
-            Bitmap out = Bitmap.createBitmapWithCanvasBacking(w, h);
+            Bitmap out = com.macapk.loader.gfx.GfxBackend.get().createFrameBitmap(w, h);
             android.graphics.Canvas c = new android.graphics.Canvas(out);
             android.graphics.Path clip = new android.graphics.Path();
             clip.addRoundRect(new android.graphics.RectF(0, 0, w, h), r, r,

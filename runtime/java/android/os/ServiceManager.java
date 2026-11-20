@@ -12,22 +12,41 @@ package android.os;
  * the class must exist for a caller that reflects getMethod("getService", ...)
  * and only catches ReflectiveOperationException.
  *
- * Everything returns null / empty: there are no binders to hand out, and a
- * null IBinder is the documented result for an absent service.
+ * Lookups answer null / empty: there are no system binders to hand out, and a
+ * null IBinder is the documented result for an absent service. The one
+ * exception is a service added in this process (addService): with AOSP's own
+ * views (WINAPK_AOSP_VIEWS=1) com.winapk.aospviews registers the in-process
+ * window manager, display manager and the like that their code looks up by
+ * name, local Binders whose queryLocalInterface answers the implementation.
+ * Without that switch nothing is ever added, and every lookup is null as before.
  */
 public final class ServiceManager {
     private ServiceManager() {}
 
-    public static IBinder getService(String name) { return null; }
-    public static IBinder checkService(String name) { return null; }
-    public static IBinder getServiceOrThrow(String name) throws Exception { return null; }
-    public static IBinder waitForService(String name) { return null; }
-    public static IBinder waitForDeclaredService(String name) { return null; }
-    public static void addService(String name, IBinder service) {}
-    public static void addService(String name, IBinder service, boolean allowIsolated) {}
-    public static void addService(String name, IBinder service, boolean allowIsolated, int dumpPriority) {}
-    public static String[] listServices() { return new String[0]; }
-    public static String[] listServices(int dumpPriority) { return new String[0]; }
+    private static final java.util.Map<String, IBinder> sAdded = new java.util.concurrent.ConcurrentHashMap<>();
+
+    public static IBinder getService(String name) { return name == null ? null : sAdded.get(name); }
+    public static IBinder checkService(String name) { return getService(name); }
+    public static IBinder getServiceOrThrow(String name) throws Exception { return getService(name); }
+    public static IBinder waitForService(String name) { return getService(name); }
+    public static IBinder waitForDeclaredService(String name) { return getService(name); }
+    public static void addService(String name, IBinder service) {
+        if (name != null && service != null) sAdded.put(name, service);
+    }
+    public static void addService(String name, IBinder service, boolean allowIsolated) { addService(name, service); }
+    public static void addService(String name, IBinder service, boolean allowIsolated, int dumpPriority) {
+        addService(name, service);
+    }
+    public static String[] listServices() { return sAdded.keySet().toArray(new String[0]); }
+
+    /** AOSP's: what getServiceOrThrow throws for a service nobody published. The class has to
+     *  exist for AOSP's managers that catch it (TextServicesManager, TextClassificationManager):
+     *  an exception leaving their try block resolves the handler's class, and a missing one is a
+     *  NoClassDefFoundError there (a CDS dump's verification found them). */
+    public static class ServiceNotFoundException extends Exception {
+        public ServiceNotFoundException(String name) { super("No service published for: " + name); }
+    }
+    public static String[] listServices(int dumpPriority) { return listServices(); }
     public static boolean isDeclared(String name) { return false; }
     public static String[] getDeclaredInstances(String iface) { return new String[0]; }
     public static void initServiceCache(java.util.Map<String, IBinder> cache) {}

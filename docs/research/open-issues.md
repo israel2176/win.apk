@@ -1,0 +1,623 @@
+# Open issues, decisions and unfinished work
+
+The memory between sessions: what was found and not fixed, what to check again
+once a layer moves onto AOSP's code, and work that was started and not merged.
+Read it at the start of a session on this project; update it in the same
+change that fixes, verifies or adds an item. Found by the screens checks of
+November 2026 (Maccabi, Cal, Moovit, Bit, Bank Hapoalim, Waze, Mercantile; the
+agents' work folders were `/opt/uip/il-work/<app>/`, gone with the container).
+
+## The owner's decisions (keep to them)
+
+- Win.apk stays a program on the PC, not a virtual machine or an emulator.
+- Positions, spacing and text metrics are **not hand-tuned**. They come right
+  by running Android's own code: the layers move onto AOSP one by one
+  (graphics and text: `windows/README.md` "Milestone 2"; resources and views:
+  `docs/research/aosp-views.md`). A spot fix is only for something that
+  breaks an app (a crash, an empty screen, a control that does not work), and
+  then it copies what AOSP does. A text-metric "fix" that matched one app and
+  broke another (the Paint top/bottom clamp, reverted in 75e88df) is the
+  example of what not to do.
+- Every change is gated: `windows/test/uiprobe/regress.py` (no REGRESSED,
+  FARTHER or MISSING line), now also CI's UI gate. Heavy runs go to GitHub
+  Actions (`ci.yml` UI gate, `ui-sweep.yml`), not the local machine.
+- Win.apk stays light (`windows/README.md` "Footprint", CI's budget): one copy
+  of every AOSP file per install, and a replaced Win.apk layer is deleted.
+- Decided (November 2026): an app that comes as a bundle (.apkm/.xapk/.apks)
+  is not kept whole in `library\` once installed: one copy of its APKs only.
+  Fonts: Hebrew and English (Latin) matter most; the CJK font (19 MB) leaves
+  the install, with a fallback for CJK text (done: Windows' own CJK fonts,
+  below).
+- The owner reads Hebrew only: answers to the owner are in Hebrew, with no
+  English words at all where avoidable (not even "CI", "PR" or file names).
+- Order agreed (November 2026): AOSP drawables and icons under the switch,
+  and the missing-`icu.dll` crash; then make `WINAPK_AOSP_GFX` the default and
+  **remove the old Java2D graphics engine** (and the Win.apk code each AOSP
+  layer replaces). The PR is not merged soon: an engine change needs more
+  testing first (apps on real Windows, the UI gate on more apps). **The
+  default is flipped** on this branch (AOSP's graphics unless
+  `WINAPK_AOSP_GFX=0`), so that CI's smoke test and UI gate test the new
+  engine; deleting Java2D is the next step (below).
+
+## Check again after each AOSP layer lands
+
+Each of these differs from Android today and should disappear when the layer
+named moves onto AOSP's code. After the switch, check it (the screens sweep or
+the app); if it is still there, it is a bug in what replaced it.
+
+**Views, step V1 first part (`WINAPK_AOSP_VIEWS=1`, with `WINAPK_AOSP_RES=1`;
+`docs/research/aosp-views.md` "V1 as built"):** with the switch on, the Win.apk
+code that items 1-9, 15 (its inflater and `View.measure` half), 18-20 and 22
+name is not loaded at all: `View`, `ViewGroup`, `LayoutInflater`,
+`ImageView`, `LinearLayout`, `RelativeLayout`, `HorizontalScrollView`,
+`Spinner`, `CheckedTextView` and the rest are AOSP 14's own, constructed with
+their attributes as on Android (items 2, 3 and 21: the two-argument
+constructor reads the element's background, style and tag itself). Checked so
+far only by the UI probe (all 2104 lines equal to the oracle, from 146 with the
+resources switch alone) and the Gallery and Sudoku sweeps (279 -> 46 and
+249 -> 50 lines, the rest stack-trace naming and one layout the oracle cannot
+inflate): **not yet re-checked in the apps each item was found in**, and with
+the switch on, dialogs, toasts and the system bars (V1's second part) and input and the
+host's IME (V2) are there. Items 10-14
+(text) are unchanged by it; 16 is the resources switch's.
+
+| # | What | Where today | Found in | Layer |
+|---|---|---|---|---|
+| 1 | `ImageView` never sets a bitmap drawable's bounds (`getDrawable().getBounds()` 0x0; pixels right; AOSP `configureBounds`) | `android/widget/ImageView.java` bitmap path | all seven apps | views |
+| 2 | The 2-argument `View(Context, AttributeSet)` constructor does not install the element's / `style=` background, so `Snackbar$SnackbarLayout` throws ("requires colorOnSurface") and becomes a FrameLayout; `Snackbar.make` would then hit a ClassCastException | `android/view/View.java` ~252, attributes applied by the inflater after construction | Maccabi, Cal, Bit, Mercantile | views |
+| 3 | Attributes applied after construction in general (the root of 2 and of the typeface bug fixed in b82a102) | `LayoutInflater.applyAttribute` | all | views |
+| 4 | `HorizontalScrollView.onLayout` in RTL: a scrollable TabLayout strip at x=-538 instead of 8 (AOSP: forceLeftGravity, `mScrollX = scrollRange` on first RTL layout) | `HorizontalScrollView.java` ~114 | Maccabi | views |
+| 5 | Layout direction resolved before the view is attached (dir=1 on never-measured views; a ConstraintLayout child with its own direction resolves start/end the other way on the first pass) | `View.java` ~3800-3830, ~3956; `ViewGroup.addView` does not reset RTL properties | Maccabi, Hapoalim | views |
+| 6 | `supportsRtl=false` RTL compatibility mode for margins missing (marginRight 20 + marginEnd 26: Android 20, Win.apk 26) | `ViewGroup.java` ~223 `resolveLayoutDirection` | Cal | views |
+| 7 | `marginLeft` + `marginEnd`: the inflater resolves relative margins at once and zeroes the left one (Android 77, Win.apk 0) | `LayoutInflater.applyMargins` ~1885-1902 | Hapoalim | views |
+| 8 | Views a custom view inflates in its constructor get plain TextView/RadioButton, not the Material ones (lineHeight and tint lost) | nested inflater has no factory; cause not confirmed | Moovit | views |
+| 9 | Spinner / CheckedTextView miss their default background's padding; `CALCustomSeekBar` loses its right padding | not traced | Moovit, Cal | views |
+| 10 | Text in an app's own font: Cal's Ploni lines 0.5-2 dp shorter than Android; cause unknown (not the top/bottom clamp) | text metrics | Cal | graphics + text |
+| 11 | ~~Multi-line TextView 2-2.5 dp per line short with `WINAPK_AOSP_GFX=1`~~ Fixed: with the switch on TextView lays out through AOSP's own Layout (`TextViewAospLayout`); all of lib_text_lines matches. Still Win.apk's with the switch off (Java2D) | `TextView` line code (Java2D path) | uiprobe | text |
+| 12 | `Html.fromHtml` ignores its flags (paragraph separators) and calls `TagHandler` only on close, for known tags, with a null XMLReader | `android/text/Html.java` ~68-78, ~230-250 | Waze | text |
+| 13 | Waze's location-permission screen shows "1. Select Precise" without the second step; Html/StaticLayout give all lines on a plain JVM, so Compose text or the app's choice; not found | | Waze | check |
+| 14 | Mercantile's login banner: its second line drawn wider than its box, first letter clipped (likely the typeface bug fixed in b82a102; verify) | | Mercantile | check |
+| 15 | Win.apk is lenient where Android throws: a missing `layout_width` gets a default, an unknown or R8-removed class becomes a FrameLayout, `View.measure` swallows an `onMeasure` exception, an unresolved `?attr` int is accepted. Hides real crashes. | `LayoutInflater` ~1253, ~1534; `View.java` ~5332-5360 | Waze, Bit | views |
+| 16 | `Resources.getResourceEntryName/TypeName/Name` invent `id_0x...` for an unknown id instead of throwing `NotFoundException`; also answer for a land-only layout in portrait. **Gone with `WINAPK_AOSP_RES=1`** (Sudoku's sweep: throws, and 117 layouts instead of 118); still there with it off | `Resources.java` ~5626-5702 | all | resources |
+| 17 | ~~`android.widget.DateTimeView` missing (notification templates become FrameLayouts)~~ Added (AOSP 14's, `DateTimeViewTest`); the screens check to confirm the templates now inflate it | `android/widget/DateTimeView.java` | Waze, Hapoalim, Mercantile | views |
+| 18 | Maccabi `item_service_request_interaction` RTL: `NonScrollListView` at y=95.5 where Android has 10 (and 0 wide); moved 1 dp further after includeFontPadding | constraint direction (5) | Maccabi | views |
+| 19 | `LinearLayout.setGravity` stores the raw value; AOSP adds START / TOP when a direction is missing, so with `gravity="right"` `layoutHorizontal` takes its default branch and drops `layout_marginTop` (100+ cases) | `LinearLayout.java` ~191, ~1168 | Leumi | views |
+| 20 | `RelativeLayout` rule precedence backwards: ALIGN_PARENT_* applied first and overwritten by sibling rules; AOSP applies the parent rules last (a timeline line 0 dp tall, 59 on Android; 18 children in 17 layouts) | `RelativeLayout.java` ~908-940, ~1361-1380 | Leumi | views |
+| 21 | `View(Context, AttributeSet)` never sets the DataBinding tag (`"layout/..._0"`) from the element, so views that check `getTag()` keep a resource id Android replaces (two views with one id; 1,259 lines in 55 layouts). Part of item 3 | `View.java` ~227-233 | Leumi | views |
+| 22 | NumberPickers inside the framework DatePicker get margins 8,16,8,16 where AOSP's legacy layout has 1,0,1,0 | | Leumi | views |
+
+**The smoke apps with AOSP's views (November 2026).** The ten apps of
+`windows/test/compat/smoke.txt` booted headless under Wine (the sweep, 150
+frames, CDS off, one stage), both switches on (`WINAPK_AOSP_RES=1
+WINAPK_AOSP_VIEWS=1`, on 2cd3771 with V1's dialogs and bars and V2, then with
+the fixes below) against both off. Off, all ten draw; **on, all ten draw too**,
+each the same screen as off. The UI probe stays equal to the oracle in all 2104
+lines with both switches, 162 differing off and 146 with resources alone, as
+before.
+
+| App (kind) | Off | On, at cf583c9 | On, now | Left |
+|---|---|---|---|---|
+| Editor (Java views) | "Access all files" dialog over the dimmed editor | the editor, no dialog (old pipeline) | **draws**: the same dialog over "Untitled.txt" | the dim is AOSP's (below) |
+| Fossify Notes (Kotlin views) | draws | draws (old pipeline); spell checker NPE | **draws**, as off | none |
+| Jerboa (Compose) | "What's changed" dialog | blank (the dialog threw in `onCreate`) | **draws**: "Support Jerboa / What's changed" over the Google notice, as off | none (the run of 2cd3771 caught the frame before the second dialog's first draw; the order is the window manager's, below) |
+| Sgt Puzzles (JNI, Canvas) | draws | title "GameChooser" | **draws**, pixel-identical to off | none |
+| Klooni (libGDX GL) | draws | blank: `skin\uiskin.json` not found | **draws**, the menu as off | none |
+| Tensy (SDL, native window) | draws, though its intro is black at some frame counts | blank: `DisplayDecorationSupport` NoClassDefFoundError | **draws**, the title as off (five runs of five) | none. The "stall" was a crash in ANGLE (below) |
+| PPSSPP (NativeActivity, GL) | draws (logo) | blank (GL under an opaque window) | **draws**, the same logo screen | none |
+| Jitsi Meet (React Native) | draws (splash) | blank (dialog in `onCreate`) | **draws**, pixel-identical to off | none |
+| Jellyfin (WebView shell, Compose setup) | draws | blank: "Autofill service could not be located" | **draws**, as off | none (`View.setRequestedFrameRate` is there now, below) |
+| Open Sudoku (arm64) | "Latest changes" dialog | title "TitleScreenActivity", no dialog | **draws**: the dialog over the title screen | the dim differs from off: AOSP's here (below) |
+
+Fixed at the root by this work (besides what ad53ceb and 2cd3771 fixed): the
+autofill manager as on a device without the service;
+`android.hardware.graphics.common` in the views jar; the resources bridge's
+asset paths with backslashes; labels through `pm.getText` (AOSP's system
+Resources hold the framework only); a SurfaceView's GL view under the windows
+with AOSP's hole; display commits to the windows (`IWindow.resized`);
+`CONFIG_WINDOW_CONFIGURATION` out of `DisplayConfig`'s relaunch and report
+decisions; `ResourcesManager`'s three members; `Handler.executeOrSendMessage`
+(AOSP's `InputMethodManager.showSoftInput`); then:
+
+- **Tensy's "stall" was a crash** (found with `winedbg bt all` on the stalled
+  process; the minidump being written under Wine kept it alive): an access
+  violation in libGLESv2 inside SDL's `glDrawArrays`. SDL draws on its own
+  thread into an EGL window surface on the SurfaceView; the host's render
+  thread, ticking the shared GL view under it, made that view's pbuffer again
+  at the rotated size (and read it back) on the same ANGLE display, whose
+  Direct3D 11 device context is not safe from two threads. Off, the window
+  happens to rotate before SDL's first frame; with AOSP's views it rotates
+  after. `gl_tick` now leaves GL alone while an app's own window surface lives
+  (`guest_window_surface_held`, 1bb3e33). This is host code and runs off too:
+  there it only removes the same race (off, all ten still draw).
+- **API 35 members of the views** (994c7c0): the runtime reports SDK 35 and
+  the views are AOSP 14's; 45 of the 70 members android-35 adds to those
+  classes are added to them at build time (`aosp_views/Api35.java`, with
+  `AospAddMethods.java` as the graphics do): Compose's
+  `View.setRequestedFrameRate` threw in Jerboa and Jellyfin. The 25 left name
+  types AOSP 14 has no class of (credentials, `InputTransferToken`,
+  `ConnectionlessHandwritingCallback`) or are `WindowManager`'s (an interface).
+- **The dim behind dialogs** is AOSP's with the switches on: `PhoneWindow`
+  sets `FLAG_DIM_BEHIND` and `dimAmount` from the theme's
+  `backgroundDimAmount` (0.6 for the platform's `AlertDialog`, Editor; 0.32
+  for Material's, Open Sudoku), and the compositor draws SurfaceFlinger's dim
+  layer, black at `dimAmount` over everything below the window. Measured: the
+  white under Open Sudoku's dialog is 173 (255 x 0.68), Editor's content 100
+  (250 x 0.4). Win.apk's old path gives Open Sudoku 166, about 0.35, and a
+  darker grey round Editor's dialog than 0.6 over its editor would.
+- **The order of Jerboa's two dialogs** is the window manager's: both are
+  `TYPE_APPLICATION` windows on the activity's token, and a token keeps its
+  child windows in the order they were added, over its `TYPE_BASE_APPLICATION`
+  window (the compositor's order). The Google notice is added first and
+  "Support Jerboa" over it, as off.
+
+Left: comparing the dim and dialog pictures with a device, not only with
+Win.apk's old pipeline.
+
+## Bugs to fix on their own (not part of a layer)
+
+- **Exit hangs: fixed, the sweeps to check again** (bit, Waze, Maccabi). A
+  guest library aborted in a `thread_local` destructor at process exit
+  (Realm: `GetEnv` on a detached thread) and the process hung: `ExitProcess`
+  calls the exiting thread's FLS callbacks, and `elf_tls.cpp` ran the guest
+  destructors from there. Android runs no thread_local destructors at exit;
+  `free_thread_blocks` now does nothing once ntdll says the process is
+  shutting down (`RtlDllShutdownInProgress`, Wine's too) or the C runtime's
+  `exit()` began (it also took `g_lock` there, which a killed
+  thread may hold). `winapk-linker-test` starts itself twice with destructors
+  pending on two threads and leaves by `exit()` and by `ExitProcess`: the old
+  code printed the main thread's destructor, the new one none. A thread that
+  ends on its own still runs them. Not changed: `LayoutSweep`'s
+  `Runtime.halt(0)` still goes through ExitProcess (harmless now).
+- **Raw arm64 system calls: fixed, Leumi to check again.** Leumi's
+  protection library `libe689.so` (arm64) maps memory with a raw `SVC` 222
+  (`mmap`), which the bridge answered `-ENOSYS`. `arm64_abi.cpp`'s
+  `linux_syscall` now answers `mmap` 222, `munmap` 215, `mprotect` 226 (the
+  import wrappers, so executable mappings register as guest code), `mremap`
+  216 (ENOMEM, as the shim's) and the libc calls whose structs both ABIs
+  share (ids, clocks, sleeps, `readlinkat`, `pread64`, `fcntl`, `ioctl`,
+  `uname`, `ptrace`, `prlimit64`, `inotify_*`...), and the `syscall()`
+  import passes a sixth argument. `winapk-arm64-test`'s
+  `arm64_raw_syscalls`. Not answered: `getdents64`, `clone`, sockets; what
+  Leumi's library calls next is not known.
+- **DEX conversion: fixed** (heap of its own, 1 GB, `WINAPK_DEX_HEAP_MB`;
+  a JVMTI out-of-memory exit 77 retried with a larger heap; a bare exit 0
+  with no whole `classes.jar.tmp` is refused with a log line). Real Windows
+  not checked yet.
+- **The runtime's heap (`-Xmx1g`, `runtime_main.cpp` ~1492) filled after about
+  3,100 layout inflations** in Mercantile's sweep: a leak in Win.apk or the
+  app holding views; not found.
+- ~~**AppsFlyer** looks up `com.appsflyer.internal.AFi1fSDKT861` where the class
+  it loaded is `...T8615`~~ Fixed: the name's length is `35 + (getElapsedCpuTime()
+  > 0)`, and `Process.getElapsedCpuTime()` was a constant 0. Found by running
+  bit's AppsFlyer loaders (`AFi1hSDK`, `AFa1jSDK` static init) on a plain JVM
+  over the converted classes with a JDI trace of every framework call they make;
+  the same trace found `Process.getGidForName("")` (0, Android -1) and
+  `ExpandableListView.getPackedPositionForChild` (type in bit 62, Android 63)
+  derailing `AFa1jSDK`'s payload. All three fixed (`FrameworkStubsTest`); with
+  them `AFi1hSDK.getCurrencyIso4217Code` returns `AFi1fSDKT8615`. A headless
+  boot of bit under Wine with these jars: `AFi1fSDKT8615` loaded and, for the
+  first time, AppsFlyer's second loader `AFa1cSDKSS` and its eleven classes
+  (none in the November screens run).
+- ~~**`HucsConnection.getRequestProperties`** returns the JDK's map with a
+  null-key status line~~ Fixed: the JDK's map, after an error answer and
+  `disconnect()`, held its request line as a key with a null value; the
+  request side now answers as OkHttp's (`HucFollow.requestProperties`:
+  `IllegalStateException` once sent, the app's fields only;
+  `windows/test/java/com/macapk/net/HttpRequestPropertiesTest.java`). In a
+  headless boot of bit under Wine Dynatrace now gets the exception, logs "can't
+  calculate request size" and goes on, as on a phone.
+- **No `icu.dll`, a crash: fixed (both halves), Leumi to check again.**
+  `HostIcu` now answers from Java when the host has no ICU (`IcuFallback`:
+  the locale's `java.text` number, CLDR root's unit symbols and territory
+  lists; `windows/test/java/com/macapk/icu/HostIcuFallbackTest.java`), so
+  Hermes' `Intl.NumberFormat {style: "unit"}` no longer throws under Wine or
+  on Windows 10 before 1903. Units read "5 km" in every language there, not
+  the language's own words: right only with `icu.dll`. The access violation
+  after the uncaught C++ exception was not the abort at all: the shim's
+  `vsyslog` shared the no-op function with `openlog`, `syslog`, `closelog`
+  and `android_set_abort_message`, and the arm64 bridge converts a `va_list`
+  by the function's address, so libc++abi's `openlog("libc++abi", 0, 0)` had
+  its 0 read as a `va_list` (`gr_offs`, offset 0x18). `vsyslog` has its own
+  function now, `register_shim_functions` refuses a shared one, and `abort()`'s
+  line carries the abort message (`guest called abort(); abort message:
+  terminating due to uncaught exception of type ...`), then the minidump. Not
+  done: an arm64 library's own `SIGABRT` handler (Bugsnag's) is still not
+  called from x86_64 code (one log line).
+- **Reanimated reflects on ART's `Field.accessFlags`**, which HotSpot lacks
+  (`NoSuchFieldException`, caught; Leumi). Looked into, not to be added; what
+  happens is harmless. Reanimated (`ReanimatedUIManagerFactory.create`,
+  `ReanimatedNativeHierarchyManager`'s constructor) clears FINAL in
+  `accessFlags` of React Native's `UIManagerModule.mUIImplementation` and
+  `NativeViewHierarchyManager.mLayoutAnimator` (private final instance
+  fields), catches the exception, prints its stack trace and then calls
+  `Field.set` anyway, which HotSpot allows after `setAccessible(true)` on a
+  final instance field of an ordinary class (only static finals and the
+  fields of records and hidden classes are trusted finals): the replacement is
+  made, the log has a stack trace. `windows/test/java/FinalFieldReflectionTest.java`
+  (CI) pins both halves. Why the overlay offers no `accessFlags`: HotSpot
+  finds `Field`'s fields by name (`javaClasses.cpp`: clazz, name, type, slot,
+  modifiers, trustedFinal, signature, annotations), so `modifiers` cannot be
+  renamed and an added `accessFlags` would be a second int, not ART's alias;
+  making it mean what ART's does (a write changes `getModifiers()`) would
+  have `getModifiers()` lie to the JDK's own field accessor factory, which
+  decides read-only from it, and still could not make a static final
+  writable (the method handle is resolved from the VM's flags). Every member
+  of `Field` is also hidden from reflection (`Reflection.fieldFilterMap`,
+  kept in the overlay), and `Field` is a VM well-known class in the shipped
+  JRE's class-data archive: a copy of JDK 21's `Field.java` in the overlay,
+  for no gain here. Not checked: whether Android 14's hidden-API lists block
+  `Field.accessFlags` for Leumi's target SDK too (then a phone throws the same
+  exception).
+- **Leumi's own React Native screens** (fixed, not yet re-checked by the
+  screens check): after the ICU fallback, J2V8's V8 (`libj2v8.so`, arm64)
+  stopped at `Check failed: page_allocator_->SetPermissions(address, size,
+  access)`. The shim's `mprotect` made one `VirtualProtect` call for the whole
+  range, which Windows (and Wine) refuses when any page is only reserved (V8's
+  `PROT_NONE` guard pages beside a code chunk, over pages it never opened) or
+  the range reaches into a second `VirtualAlloc` allocation; `madvise
+  (MADV_DONTNEED)` cleared the whole range when its first page was writable,
+  a fault on reserved pages after it. `mprotect`, `munmap`, `madvise` and a
+  `MAP_FIXED` `mmap`'s protection now go region by region
+  (`windows/src/bionic/misc.cpp`, `protect_range`; bionic_test's
+  `test_page_permissions`, which fails on the old code from its guard-page
+  check on). A/B under Wine with no `icu.dll`, same stage and data: the old
+  shim aborts in that check right after `libj2v8.so` loads; the new one runs
+  on past J2V8 and shows the app's own
+  first screen, a React Native modal (the notifications consent sheet, in
+  Hebrew). Seen in that boot: react-native-skia's view threw `Skia Metal
+  backend unavailable; no CPU shader fallback` in `onSizeChanged` (fixed: the
+  message was Win.apk's own, upstream's `MacApkSkia.isAvailable()` throwing on
+  its first call where there is no Mac Skia bridge, i.e. always on Windows;
+  it answers false now and `RenderEffect`/`RuntimeShader` are made, drawn
+  without Skia; only on the Java2D graphics, AOSP's have their own classes;
+  not a GL/EGL answer; `MacApkSkiaTest`), and Reanimated's `accessFlags`
+  above. Next: the screens
+  check, then past the consent sheet. (The Hermes "Maximum call stack size
+  exceeded (native stack depth)" that left it blank before was the arm64
+  guest-stack bug, fixed in 58c443a: it hit Flutter and Hermes alike.)
+- **Installer of record: decided and done.** The owner's decision: Google
+  Play is reported as the installer of every app the user installs, as
+  `adb install -i com.android.vending` does, unless a real installer is
+  recorded; Settings > Apps > "Report Google Play as the installer"
+  (`PlayInstaller`, on by default) turns it off (`InstallerOfRecord.reported`,
+  `InstallerOfRecordTest` in CI). Checked in a headless Wine boot of bit
+  6.19.1: on, it stays on its splash; off, it shows "Something went wrong,
+  reinstall bit from the app store". Check again on a run with real network:
+  whether bit and Bank Hapoalim get past their splash (the sandbox's firewall
+  stops them at "data not loaded"), and whether an app checks the initiating
+  installer's certificate against Play's real one.
+- **Compose text is blank on AOSP graphics when Compose calls API 35's
+  `StaticLayout.Builder.setUseBoundsForWidth`**: `aosp-graphics.jar` carries
+  android-all 14's (API 34) `android.text.StaticLayout`, which shadows ours
+  (which has the method), so `AndroidComposeView.onMeasure` throws
+  NoSuchMethodError and the screen paints empty (bit's reinstall screen
+  with the setting off; with `WINAPK_AOSP_GFX=0` it draws). Not fixed.
+- **Bank Hapoalim shows its reinstall dialog three times** (three window
+  backgrounds stacked); not checked whether Android does too.
+- **Cal's "error loading the app" page**: the KeyManagerFactory "X509" fix
+  (c4e09b8's batch) loads the client certificate; whether the page goes away
+  needs a run with real network (the sandbox's proxy breaks client-certificate
+  TLS).
+
+## Size and memory (decide later)
+
+- **The arm64 translation's compiler, `clang\`, is 233 MB** (`libLLVM` 156,
+  `libclang-cpp` 63): the largest part of the install, more than the AOSP
+  files. Options to weigh: a trimmed LLVM build with only the AArch64->x86_64
+  pieces used, downloading it on the first arm64 app, or sharing one with
+  the system.
+- **A bundle was stored twice: done** (the owner's decision, November 2026).
+  Once installed, a bundle (`.apkm`, `.xapk`, `.apks`) is replaced in
+  `library\` by `<name>.apk` and `<name>.splits\split_*.apk`, hard links to
+  the installed `base.apk` and splits (`launcher/library_files.h`,
+  `keep_installed_apks`); `AppInstall` given an `.apk` with a `.splits` folder
+  links them all again. An update renames the app's files aside as
+  `.previous` and never writes a kept file; Remove now also deletes the
+  installed copy under `android\data\app\` (it was left behind). A library
+  from before moves to the layout at the launcher's next start, app by app,
+  once the app's installed copy is of its bundle (AppInstall's stamp: size and
+  date). Measured under Wine with Cal's 25 MB `.xapk`: library plus installed
+  copy 25 MB (was 50 MB); install, run, a stale record's reinstall, updates
+  from a bundle and from a plain APK, the migration and Remove checked. Found
+  on the way and fixed: an update whose file was dated before the last
+  install's record was not installed at all (the runtime took the record as
+  current; the launcher now removes it first). Left: a bundle's OBB files
+  (`Android/obb/` in an `.xapk`) were never installed and now go with the
+  bundle; a bundletool set's other whole-app alternatives go too.
+- **CJK text is drawn with Windows' fonts** (done, November 2026, the
+  owner's decision above): Noto CJK Regular (19 MB, about 11 MB of the
+  installer) is no longer staged; `HostCjkFonts` puts Microsoft YaHei,
+  JhengHei, Yu Gothic and Malgun Gothic (then SimSun, MingLiU, Meiryo, MS
+  Gothic, Gulim) behind fonts.xml's four CJK families, in a fonts.xml of
+  `cache\aosp-fonts\` that Java (through `updatableFontMap`) and native code
+  (`/system/etc/fonts.xml`; `/system/fonts` finds a name in `bin\aosp\fonts`
+  and then in `%WINDIR%\Fonts`, `paths.cpp`) both read. Checked under Wine
+  with stand-in fonts carrying Windows' names (Wine has no CJK font) and
+  with none (boxes, no failure); the UI probe's lines are the same with and
+  without Noto CJK. **Check on real Windows**: that the PostScript names in
+  `HostCjkFonts.TABLE` match Windows 10 and 11's files (a mismatch still
+  takes the file's first face) and a Chinese, a Japanese and a Korean app.
+  Known difference: CJK lines measure as Windows' faces do (taller ascent and
+  descent than Noto CJK, other punctuation advances), so CJK text wraps and
+  spaces differently from a phone; Latin, Hebrew, Arabic and emoji are
+  untouched. Left as they were (proposal, not done): the other scripts, which
+  Windows also covers (Thai, the Indic scripts, Ethiopic, Tibetan, Khmer,
+  Myanmar, Sinhala and the historic ones, through Leelawadee UI, Nirmala UI,
+  Ebrima, Microsoft Himalaya, Khmer UI, Myanmar Text, Segoe UI Historic), are
+  154 files, 9.5 MB together, 0.004-0.5 MB each (the largest Egyptian
+  Hieroglyphs and Cuneiform): little per script, and each would measure
+  differently from a phone, so the same mechanism is not worth it yet; the
+  emoji font (9 MB) stays, Segoe UI Emoji draws other pictures. A download
+  of Noto CJK on first need (the earlier design: `updatableFontMap`, the
+  font from the next start) remains possible should exact CJK metrics be
+  wanted: `HostCjkFonts.setUp` already steps aside when
+  `NotoSansCJK-Regular.ttc` is in the fonts folder.
+- **Memory has no budget yet**: the smoke test records each app's peak working
+  set; add a limit once a few CI runs show the spread.
+- **Frame time has only a collapse budget** (`windows/README.md` "Frame
+  time"): every run logs a `frame times` line at exit, and CI's Runtime tests
+  run the frame bench (`windows/test/framebench`) on both engines into the
+  summary, failing only over 50 ms p90 for the whole frame. Once a few CI
+  runs show the spread on real Windows, tighten it (`report.py
+  --budget-ms`).
+
+## Found by the frame-time record, not fixed
+
+- **Layout's p99 is 16 ms on AOSP's graphics against 7.5 on Java2D's** (the
+  frame bench under Wine, `windows/README.md` "Frame time"; the heartbeat's
+  full traversals?), not looked into. The frame's two `getPixels` copies that
+  held AOSP's frames at 33 a second are gone (6 ms a frame, 60 a second);
+  look at CI's numbers on real Windows for what is left.
+
+## Work started and not merged
+
+- **AOSP graphics, what is missing** (README "Milestone 2"): drawables
+  inflate themselves on AOSP's classes, `<animated-vector>` included, whose
+  animators now run on Win.apk's `android.animation` (checked with a test APK
+  under Wine, not in the repository: morph, colour keyframes, motion along a
+  path, the callbacks, the last frame); fonts androidx loads open (the
+  `assetCookie`, and a compressed font read into a direct buffer: HotSpot's
+  have no `array()`); an adaptive icon built before the `Application`
+  exists (the window icon at start, the install's `icon.png`) is AOSP's too
+  (`IconMaskThread`: AOSP's constructor took the mask from
+  `getApplication().getResources()`, null then). Left:
+  `<animated-image>` (unchecked), the one-copy present, Compose
+  (`drawRenderNode` on a software canvas) and `SurfaceTexture` on native
+  pixels. Probe with the switch on: 1942 of 2104 lines match vs 1895 on
+  Java2D, no line further from Android's than Java2D's. Sweeps, lines
+  differing: Gallery 279 (Java2D 301), Sudoku 225 (275); Bank Hapoalim's
+  `activity_contact_before_login` 7 of 102 (Java2D 7, the same lines;
+  before the font fix 70). Gallery `activity_video_player`, the one screen
+  that was worse than Java2D (three hidden buttons over the bottom gradient a
+  shade lighter, the backdrop grey where Android has black): fixed, an
+  opaque `TextureView` with no frame reads black, as AOSP's own software path
+  draws it (its `LAYER_TYPE_HARDWARE` view goes through an opaque drawing
+  cache its `draw()` leaves empty; `setOpaque(false)`: transparent). On a
+  device's hardware path an empty layer draws nothing; the oracle and
+  Win.apk are both software. Under Wine, before -> after (`regress.py`):
+  Gallery 295 -> 279 lines differing (16 fixed, 10 closer, nothing worse:
+  the backdrop, the gradient, the hidden buttons and the toolbar over them
+  now 0 as Android), Sudoku 225 and the probe (1942 of 2104) unchanged, the
+  probe's `ours.txt` byte for byte. Left in the text rows: ExtendedFloatingActionButton's
+  `getGravity()` (11 where Android has START|CENTER_VERTICAL, both paths).
+  Not yet run: the screens check of more apps with the switch on, and apps
+  on real Windows.
+- **AOSP graphics is the default** (`host/aosp_gfx.h`, `kAospGfxByDefault`;
+  `WINAPK_AOSP_GFX=0` is the way back, as is a stage without the files, each
+  with its `AOSP graphics: off` line). Class-data sharing is on for it now:
+  one archive per graphics, `cds\framework-aosp-<key>.jsa` and
+  `framework-java2d-<key>.jsa`, neither's dump deleting the other's
+  (`cds_util.h`, `stale_archive_file`; `cds_test`). `--cds-prepare` takes the
+  graphics an app's start would (the same key, checked under Wine). Releases
+  ship the files now (`windows-release.yml` no longer sets
+  `WINAPK_STAGE_AOSP_GFX=0`). Checked under Wine on a stage of this tree: the
+  probe with no variable is byte for byte the earlier switch-on run (1942 of
+  2104), with `WINAPK_AOSP_GFX=0` byte for byte Java2D's (1895); the second
+  start maps the AOSP archive; JVM to first frame 10.4-10.7 s with it, 11.8 s
+  with class-data sharing off as before (Java2D: 12.4 s, 13.3 s). **To see on
+  CI's next run**: the smoke test's ten apps all say `AOSP graphics: on` and
+  draw (the step fails otherwise); the runtime tests' archive step (AOSP's
+  archive made and mapped, a Java2D start making its own, AOSP's kept); the
+  UI gate's summary saying "base Java2D, head AOSP" (the old-vs-new
+  comparison) and what it calls REGRESSED, FARTHER or MISSING: each such line
+  is an AOSP-path bug to fix or a Java2D line that was right by accident to
+  look at, not a reason to flip back. Then the `framework-classlist`
+  artifact, recorded on AOSP's graphics, should replace
+  `windows/java/winapk-framework.classlist` (today's was recorded on Java2D:
+  for the probe it lists about 270 Java2D-only classes, `java.awt`, Marlin,
+  ImageIO, and misses about 235 of AOSP's; the first start on a machine adds
+  its own app's anyway, so only `--cds-prepare`'s archive is short).
+- **CI's first smoke test on AOSP's graphics** (run 44643824110) failed:
+  PPSSPP and Jellyfin blank, an exception in every app. Fixed in this change
+  (README milestone 2, "The first smoke test on Windows"): AOSP's `Typeface`
+  called `AssetManager.getAssignedPackageIdentifiers` (PPSSPP's `onCreate`
+  threw), Compose called API 35's `StaticLayout.Builder.setUseBoundsForWidth`
+  on AOSP 14's builder (Jellyfin's screen did not measure), `nPunchHole` is not
+  in the native runtime (Tensy's `SurfaceView`), and `Typeface`'s static
+  initializer read `/system/etc/fonts.xml` before it was mapped. Checked under
+  Wine on a stage of this tree: Jellyfin draws its Connect screen with no
+  variable and with `WINAPK_AOSP_GFX=0`, Jerboa's Compose text draws, the
+  other seven draw too, and no `NoSuchMethodError`, `UnsatisfiedLinkError` or
+  `fonts.xml` line is in any of the ten apps' logs.
+  PPSSPP crashes under Wine in `GLRenderManager::ThreadFrame` on both
+  graphics (Wine's GL), so its frame is **to see on CI**: its `onCreate` no
+  longer throws. Left of Android 15's new members on the jar's classes (a
+  linkage scan of the jar against the framework, and of the ten apps' DEX
+  against the jar, finds no other caller): `Gainmap`'s, `LineBreakConfig`'s
+  hyphenation and `merge`, `PositionedGlyphs`' fake bold and overrides,
+  `BoringLayout.Metrics.getDrawingBoundingBox`, `Layout`'s other API 35
+  getters (`getMaxLines`, `getEllipsize`, the indents...), `Font` and
+  `FontFamily.Builder`'s variable-font ones; add each to `Api35` when an app
+  calls it. `android.view.RenderNode`'s `getRotation`/`setRotation`/`isValid`
+  are still missing on AOSP's `RenderNode`.
+- **Next: delete the Java2D engine.** What must hold first: CI's smoke test
+  green on AOSP's graphics over a few runs, and the UI gate's lines no
+  further from Android than Java2D's (or each exception understood); the
+  Gallery `activity_video_player` backdrop and the other gaps in the item
+  above either fixed or accepted by the owner; the AOSP stand-ins for what
+  Win.apk's own classes still do only on Java2D (`<animated-image>`,
+  Compose's `drawRenderNode` on a software canvas, `SurfaceTexture` on native
+  pixels) at least as good; the open rows of "What still reaches Java2D"
+  (below) closed; and the apps on real Windows (`app-probe.yml`) looked at.
+  Done: the adaptive icon before the `Application`; the processes with no app
+  (an install's icon render, `--gms`, `--system`, `--verify-apk`) run on
+  AOSP's class path too (`runtime_main.cpp` prepares the graphics for every
+  JVM and binds the DLL in `gms_thread` and `system_thread`), so they map
+  the `aosp` archive like an app. Checked under Wine: `--install-only` of
+  Gallery says `AOSP graphics: on` and writes its adaptive icon (`icon.png`,
+  AOSP's `AdaptiveIconDrawable`), `--gms accounts` exits 0; the DLL's load
+  adds 0.25-0.5 s to each such process (0.2-0.9 s seen). Also under Wine
+  (agent noapp-aosp): `--system` comes up (`[system] serving`, AOSP graphics
+  on, the DLL loaded), `--gms accounts` maps the `framework-aosp` archive
+  `--cds-prepare` made, and the install icons of Open Sudoku and Fossify
+  Gallery match the Java2D ones but for the adaptive mask's outline; CI's
+  runtime tests check the log lines, the broker, an `--install-only`'s
+  `icon.png` and the archive `--gms` maps. With `-Xlog:class+load` on
+  Java2D's path `--gms` and `--system` load `android.graphics.Bitmap`
+  (the host natives), so they did need moving; the processes with no
+  framework (DEX conversion, `--package-to`, `--aot-translate`, the
+  archive's dump) load no `android.graphics`. Then: `Java2DGfx`, the
+  Java2D `android.graphics`/`android.text` classes `aosp-graphics.jar`
+  shadows, `WINAPK_AOSP_GFX=0`, the `java2d` archive naming and this branch's
+  base-graphics step in `ci.yml` go; `GfxBackend` can then be folded away.
+- **What still reaches Java2D** (AWT, ImageIO, `MacApk*` graphics classes)
+  with AOSP's graphics the default. Found by a class-file scan of the staged
+  `android-framework.jar`, `macapk-loader.jar` and `winapk-tools.jar` against
+  `aosp-graphics.jar` (a class the jar shadows is Java2D's and never loads;
+  every other class's references to `java.awt`, `javax.imageio`, `sun.java2d`
+  and to members a shadowed class lacks): no reference to a member AOSP's
+  classes lack (a `NoSuchMethodError` waiting), and these direct uses:
+
+  | Caller | What for | Status |
+  |---|---|---|
+  | `Boot.initAwtOnAppKitMainThread` | brought AWT and its fonts up at every start (544-783 ms on the main thread under Wine, beside the resource index) | skipped on AOSP's graphics; goes with Java2D |
+  | `MediaStoreProvider.photosImageSize` | a photo's width and height (ImageIO header read) | `BitmapFactory` bounds decode (Skia's codecs: PNG, JPEG, WebP, GIF, BMP, ICO; HEIF and AVIF from their boxes, `HostImageDecode`) |
+  | `ViewCanvasDriver` `MACAPK_DUMP_BITMAP_AT`, `MACAPK_PUNCH_TRACE` | debug PNG dumps, the hole probe | `Bitmap.compress`, `createScaledBitmap`, `getPixel`; `GfxBackend.awtImage` removed |
+  | `VideoImageSelfTest` (`MACAPK_VIDEO_IMAGE_SELFTEST=1`) | writes and reads PNGs | `Bitmap.compress` / `BitmapFactory` |
+  | libjnigraphics (`src/jnigraphics.cpp`) | a native library's `AndroidBitmap_lockPixels` called `macapkArgbBuffer`, which AOSP's `Bitmap` has not: it failed on the default graphics | AOSP's `Bitmap` through `getPixels`/`setPixels` and upstream's conversion and merge; compiled, not run (no test lib under Wine on AOSP's class path: `winapk-jvm-run`'s test has Win.apk's `Bitmap`) |
+  | `TextView.macapkFallbackVertical`, `GfxBackend.resolvedFont` / `textFontRenderContext` / `fallbackFontFor` / `deriveFont` | Java2D's fallback line spacing | inert on AOSP (no AWT font: `TextViewAospLayout` lays out); goes with Java2D |
+  | `ClipboardManager` legacy path | text through AWT's clipboard | only with `MACAPK_CLIPBOARD_HOST=0` (a bisect gate; the host clipboard is native); text only, no images; to delete with Java2D so the JRE can lose `java.desktop` |
+  | `Boot` `MACAPK_AWT_PREWARM` | an old macOS experiment, off unless set | delete with Java2D |
+  | BitmapFactory on HEIC (and other WIC-only formats) | Java2D's `BitmapFactory` fell back to `NativeImageCodec` (libwebp, then WIC: HEIC with the HEIF extension) | **fixed**: `BitmapFactory`'s and `ImageDecoder`'s decoding natives go through `com.winapk.aospgfx.HostImageDecode` (`scripts/redirect_decoders.sh`): AOSP's native first, and only when it fails on a file whose ftyp brand is HEIF's or AVIF's (`HeifContainer`), `NativeImageCodec` (WIC) and a `Bitmap` from its pixels, with the Options (bounds from the boxes, sample size, density, config, mutable, inBitmap) and ImageDecoder's target size, crop, post-processor, turned upright by irot/imir (BitmapFactory: as stored, as Android). A stream or a descriptor has its first 64 bytes read ahead. No decoder in Windows (Wine; Windows without the HEIF Image Extensions / AV1 Video Extension): null / AOSP's `DecodeException`, one log line. Checked: `windows/test/heif/run.sh` (Linux, libheif standing in for WIC) and a probe APK under Wine (clean null, no crash). **Not checked**: on Windows with the extension (that WIC's HEIF decoder leaves irot to the app, as documented, and applies clap; a quarter turn it did apply is detected by size). TIFF, JPEG XR and other WIC-only formats stay undecoded, as on Android |
+  | `Bitmap.createScaledBitmap`, `createBitmap(source, ..., matrix, filter)`, `BitmapFactory` with `inBitmap` | API 34's gain map natives (`nativeHasGainmap`, `nativeExtractGainmap`, `nativeSetGainmap`), which the native runtime predates | **fixed** (found with the HEIF work): each threw `UnsatisfiedLinkError` on the default graphics (seen under Wine with the probe APK); now `MissingNatives` (no gain maps) |
+
+  Engine-neutral already (public `Bitmap`/`Canvas`/`BitmapFactory` API, so
+  AOSP's classes on the default graphics; static scan only, not each run
+  under Wine): image decoding (`BitmapFactory`, `ImageDecoder`: AOSP's, Skia
+  in the DLL), camera and video frames (`SurfaceTexture.macapkLatchBitmap`:
+  `Bitmap.setPixels`), the WebView's (WebView2 draws in its own window), the
+  launcher icon (`Boot.writeLauncherIcon`: `Canvas` + `compress`, now on AOSP
+  in the install process too), notification large icons (`HostNotifications`:
+  `compress`), wallpaper and Monet colours (`HostWallpaper`: the host decodes
+  to an ARGB `int[]`, no `Bitmap`), screenshots (`PixelCopy`, `View.draw`),
+  `GLUtils.texImage2D` (`GfxBackend.argbBuffer`: `getPixels`). Clipboard
+  images: none on either path. The scan tool is not in the repository (a
+  page of Java over the class files' constant pools); it found nothing more.
+- **AOSP resources, step R1, first part** (`WINAPK_AOSP_RES=1`, off by default;
+  `docs/research/aosp-views.md` "R1 as built"): AOSP 14's `android.content.res`
+  on Robolectric's libandroidfw port, android-all's API 34 table, a second
+  `ResBackend` (`windows/java/aosp_res`). Off is byte-identical (probe). On,
+  under Wine: the probe 146 lines from the oracle instead of 162, every
+  `theme`, `styles.lib` and `drawables` line equal to it, `regress.py` 16
+  fixed, 0 REGRESSED, 0 FARTHER, 0 MISSING (the first run's 2 REGRESSED lines
+  were `View.draw` tinting a background without `mutate()`, which recoloured
+  every drawable sharing the state AOSP's drawable cache hands out; fixed in
+  `View`); Gallery 279 -> 275
+  lines, Sudoku 225 -> 225, none worse; framework table 0.2 s, warm start
+  +0.3-0.6 s (both tables are read: Win.apk's name index still answers the
+  inflater). Left: the DOM inflater's name-based reads and
+  `AnimationUtils`/`AnimatorInflater` on AOSP's parsers (untested); sets made
+  up in code (no compiled form: AOSP reads no XML attributes for them); a
+  window resize (AOSP's `Resources` copies the configuration where Win.apk's
+  kept it by reference; untested); split APKs; CDS with the switch on; real
+  Windows; more apps. Then R2 (libandroidfw native); V1 is started (below).
+- **AOSP views, step V1, first part** (`WINAPK_AOSP_VIEWS=1`, off by default,
+  only with `WINAPK_AOSP_RES=1`; `docs/research/aosp-views.md` "V1 as built"):
+  AOSP 14's `android.view`/`android.widget`/`com.android.internal.policy` in
+  `lib/aosp-views.jar` (`windows/scripts/build_aosp_views.sh`), a second
+  `ViewHost` (`windows/java/aosp_views`), an Activity's window AOSP's
+  `PhoneWindow` added to AOSP's `WindowManagerGlobal`, laid out and drawn in
+  software by AOSP's `ViewRootImpl` on Choreographer's frames over an
+  in-process window manager, session, display and IME service. Off is
+  byte-identical (probe), and so is the resources switch alone. On, under Wine:
+  the probe equal to the oracle in all 2104 lines (`regress.py` from the
+  resources switch: 146 fixed, 0 REGRESSED, 0 FARTHER, 0 MISSING); Gallery
+  279 -> 46, Sudoku 249 -> 50 lines differing, none worse. Second part done:
+  dialogs and toasts on AOSP's own classes, every window drawn by its own
+  `ViewRootImpl` (the first part's frames were really Win.apk's canvas driver
+  drawing AOSP's decor: the session never said the app was visible) and
+  composed in the window manager's order with the dim layer, the system bars as
+  `InsetsState` sources (only with `MACAPK_SYSTEM_BARS=1`, Win.apk painting
+  their glyphs); probe, Gallery and Sudoku byte-identical to the first part
+  with the switch on and to the base with it off; Open Sudoku's dialog shows
+  as off. V2 done ("V2 as built"): the host's touch, mouse, wheel, keys and
+  gamepad made as Android's InputReader makes them and dispatched to each
+  window's own `ViewRootImpl` (dialogs touch-modal, `ACTION_OUTSIDE` to
+  popups, keys to the focused window), an in-process `IInputMethodManager` that
+  binds the focused editor so Windows' IME composes and commits into it, AOSP's
+  own key listeners (`android.text.method`), `IAccessibilityManager` as with no
+  service on, `ITextServicesManager` with no spell checker. In Sudoku under
+  Wine, scripted: the dialog's OK, the overflow menu, a dialog's `EditText`
+  typed into with keys and with a Hebrew composition, a `ListPreference`, BACK;
+  probe, Gallery and Sudoku byte-identical to V1 with the switch on and off.
+  Sudoku's settings after picking Dark mode came back with light text on a
+  white window: fixed, as Android does it, by Resources per configuration
+  override (`createConfigurationContext`, `applyOverrideConfiguration`,
+  `Activity.getResources()` following its base; aosp-views.md "A context's
+  configuration override"). Class-data sharing with the switches on works
+  (`framework-aospviews` archive, Sudoku's first frame 11.7 s against
+  16-21 s without), and the host's mouse, wheel and pinch can be scripted
+  with a window (`hostmouse`, `hostwheel`, `magnify`). CI runs the smoke set and the UI probe
+  with both switches on, informational (ci.yml "AOSP resources and views"); their files add 29.2 MB
+  installed, about 26.4 MB to the installer. A CDS dump's verification found classes that did not
+  link (Dialog without WindowDecorActionBar, RevealAnimator, ServiceNotFoundException, the AIDL
+  Stubs' ContextImpl): fixed; left behind services Win.apk lacks: augmented autofill, translation,
+  inline suggestions, LockPatternUtils. Next: GL `SurfaceView`s as layers,
+  spinners and toasts seen in an app, resize and several windows, an on-screen
+  keyboard and a UI Automation bridge, then V3 (HWUI). Not run: CDS with the
+  switch, real Windows, the smoke apps (another agent's).
+- **Screens checks not finished**: Bank Leumi (stopped by the usage limit
+  before its boot), Pango and Paybox (not on APKPure; the owner offered their
+  other repository or a Play download).
+- **CI's UI gate** (b190783): its first run (run 44569377329, on 57a8987)
+  passed for the UI probe (base and head identical), but the Gallery and
+  Sudoku jobs were cancelled at the 25-minute limit. Cause: the base (`main`,
+  1ac1559) has no `LayoutSweep` (it came in this branch, 73a8623), so its
+  runtime ignored `MACAPK_LAYOUT_SWEEP` and ran the app itself (Gallery's
+  MainActivity, Sudoku's title screen; 0 `PROBE` lines, frame #87600 at the
+  cancel) with nothing to end it before `SCREENS_TIMEOUT`'s 3600 s. The head's
+  sweeps finished by themselves in 31 s and 23 s (DEX conversion 11 s and
+  9 s), so neither the exit hang, the conversion nor the two sides in
+  parallel cost the time. Fixed: `gate_side.sh` exits 3 for a runtime without
+  `LayoutSweep` and the job then checks the head alone (`gate.py report
+  --no-base`); every run is ended after 240 s with no new `PROBE` line
+  (`RUN_UNTIL_STALL`) and at 480 s. To verify on the next run: the two app
+  jobs finish in a few minutes, their summary says "no layout sweep" while
+  `main` lacks it, and compares base and head once `main` has it. Then watch
+  for noise between two runs of the same code.
+
+## Deferred by the owner: a live comparison
+
+The screens sweep sees only layout XML files: Compose, Flutter and React
+Native screens are built by running code, so it cannot see them (Leumi's main
+screens, Bit's new ones, Maccabi's Flutter home). Agreed for later, after the
+engine change: a live comparison in CI, the same app run on an Android emulator
+(the reference) and in Win.apk on Windows, the same scripted steps (each
+reachable activity and deep link, taps), comparing screenshots and each
+screen's tree (React Native's real Views, Compose's semantics tree, Flutter's
+accessibility semantics). Limits: no account behind logins, server data must
+match, banking apps may refuse an emulator.
+
+## Making the screens check work on an app (lessons)
+
+What every per-app check needed, worth folding into `windows/test/screens`:
+split APKs (density and language splits hold drawables and dimens the base
+table lacks: add them to the oracle's AssetManager, run Win.apk on the
+`.xapk`); the oracle with a plain `Application` (apps' own `onCreate` fails
+under Robolectric); relocating library packages R8 merged into the app's jar
+(Guava, BouncyCastle, kotlin) away from Robolectric's; not instrumenting an
+app's own `android.support.*` classes; `LayoutSweep`'s AppCompat table trying
+`android.support.v7.widget.*`; a skipped oracle test reported as a failure;
+counting "LOADED but its constructor threw" as a throw; Compose views need an
+attached window to measure; the oracle in chunks and a smaller converter heap
+on a small machine.

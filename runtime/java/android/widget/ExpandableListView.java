@@ -325,29 +325,46 @@ public class ExpandableListView extends ListView {
     }
 
     // ---- Packed-position helpers (AOSP static utilities) ----
+    //
+    // AOSP's layout, bit for bit: the type in bit 63 (PACKED_POSITION_SHIFT_TYPE),
+    // the group in bits 62-32, the child in 31-0. The type used to sit in bit 62,
+    // so a child's packed position was 0x4000... where a phone's is 0x8000... (a
+    // negative long): code that keeps or compares packed positions saw another
+    // number, and AppsFlyer's obfuscated loader (bit), which folds
+    // getPackedPositionForChild(0, 0) < 0 into its arithmetic, decrypted garbage.
+    private static final long PACKED_POSITION_MASK_CHILD = 0x00000000FFFFFFFFL;
+    private static final long PACKED_POSITION_MASK_GROUP = 0x7FFFFFFF00000000L;
+    private static final long PACKED_POSITION_MASK_TYPE  = 0x8000000000000000L;
+    private static final long PACKED_POSITION_SHIFT_GROUP = 32;
+    private static final long PACKED_POSITION_SHIFT_TYPE  = 63;
+    private static final long PACKED_POSITION_INT_MASK_CHILD = 0xFFFFFFFF;   // an int: -1L once widened, as in AOSP
+    private static final long PACKED_POSITION_INT_MASK_GROUP = 0x7FFFFFFF;
 
     public static long getPackedPositionForChild(int groupPosition, int childPosition) {
-        return (((long) PACKED_POSITION_TYPE_CHILD) << 62)
-                | (((long) groupPosition & 0x7FFFFFFFL) << 32)
-                | (childPosition & 0xFFFFFFFFL);
+        return (((long) PACKED_POSITION_TYPE_CHILD) << PACKED_POSITION_SHIFT_TYPE)
+                | ((((long) groupPosition) & PACKED_POSITION_INT_MASK_GROUP) << PACKED_POSITION_SHIFT_GROUP)
+                | (childPosition & PACKED_POSITION_INT_MASK_CHILD);
     }
     public static long getPackedPositionForGroup(int groupPosition) {
-        return (((long) PACKED_POSITION_TYPE_GROUP) << 62)
-                | (((long) groupPosition & 0x7FFFFFFFL) << 32);
+        // No need to OR a type in since PACKED_POSITION_GROUP == 0
+        return ((((long) groupPosition) & PACKED_POSITION_INT_MASK_GROUP) << PACKED_POSITION_SHIFT_GROUP);
     }
     public static int getPackedPositionType(long packedPosition) {
         if (packedPosition == PACKED_POSITION_VALUE_NULL) return PACKED_POSITION_TYPE_NULL;
-        return (int) ((packedPosition & (0x4000000000000000L)) != 0
-                ? PACKED_POSITION_TYPE_CHILD : PACKED_POSITION_TYPE_GROUP);
+        return (packedPosition & PACKED_POSITION_MASK_TYPE) == PACKED_POSITION_MASK_TYPE
+                ? PACKED_POSITION_TYPE_CHILD : PACKED_POSITION_TYPE_GROUP;
     }
     public static int getPackedPositionGroup(long packedPosition) {
+        // Null
         if (packedPosition == PACKED_POSITION_VALUE_NULL) return -1;
-        return (int) ((packedPosition & 0x7FFFFFFF00000000L) >> 32);
+        return (int) ((packedPosition & PACKED_POSITION_MASK_GROUP) >> PACKED_POSITION_SHIFT_GROUP);
     }
     public static int getPackedPositionChild(long packedPosition) {
+        // Null
         if (packedPosition == PACKED_POSITION_VALUE_NULL) return -1;
-        if ((packedPosition & 0x4000000000000000L) == 0) return -1;
-        return (int) (packedPosition & 0xFFFFFFFFL);
+        // Group since a group type clears this bit
+        if ((packedPosition & PACKED_POSITION_MASK_TYPE) != PACKED_POSITION_MASK_TYPE) return -1;
+        return (int) (packedPosition & PACKED_POSITION_MASK_CHILD);
     }
 
     // ---- Listener interfaces (AOSP) ----

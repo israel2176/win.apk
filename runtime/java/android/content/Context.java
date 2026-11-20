@@ -16,6 +16,7 @@ import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import com.macapk.loader.view.ViewHost;
 
 public abstract class Context {
 
@@ -152,7 +153,7 @@ public abstract class Context {
                 // empty asset paths so the Theme has a valid back-ref
                 // (its getResources() lookup must not return null;
                 // Glide DrawableDecoderCompat.loadDrawableV7 needs it).
-                r = new Resources(null, null, null);
+                r = com.macapk.loader.res.ResBackend.get().placeholderResources();
             }
             // AOSP ContextImpl.getTheme (android11-release ContextImpl.java:
             // 378-390) selects a DEFAULT theme when setTheme() was never
@@ -367,19 +368,21 @@ public abstract class Context {
      *  recursion (see createConfigurationContext doc above), and
      *  getApplicationContext pins the global Application. */
     private static final class ConfigOverrideContext extends ContextWrapper {
-        // Stored for fidelity with AOSP (the override config shapes the
-        // returned context's Resources); Mac.apk's single-configuration
-        // Resources model has no consumer for it yet.
+        // The override config shapes the returned context's Resources
+        // (ResBackend.resourcesForConfiguration).
         private final android.content.res.Configuration overrideConfig;
         ConfigOverrideContext(Context origin, android.content.res.Configuration cfg) {
             super(origin);
             this.overrideConfig = cfg;
         }
         @Override public Resources getResources() {
-            // Skip the chain. Go straight to Application.
+            // Skip the chain. Go straight to Application. Then the override's own Resources, as
+            // AOSP's ContextImpl.createConfigurationContext gets from ResourcesManager (the
+            // application's own with Win.apk's single-configuration resources).
             android.app.Application app = android.app.Application.macapk_get();
-            return app != null ? app.getResourcesDirect()
-                               : getBaseContext().getResources();
+            Resources base = app != null ? app.getResourcesDirect() : getBaseContext().getResources();
+            return overrideConfig == null ? base
+                    : com.macapk.loader.res.ResBackend.get().resourcesForConfiguration(base, overrideConfig);
         }
         @Override public Context getApplicationContext() {
             return android.app.Application.macapk_get();
@@ -766,7 +769,7 @@ public abstract class Context {
             android.content.res.Resources.Theme t = getTheme();
             if (t != null) return t.obtainStyledAttributes(attrs);
         } catch (Throwable ignored) {}
-        return new android.content.res.TypedArray(getResources(), attrs);
+        return com.macapk.loader.res.ResBackend.get().themelessTypedArray(getResources(), attrs);
     }
     /** AOSP ContextThemeWrapper/Context: this overload delegates straight to
      *  `getTheme().obtainStyledAttributes(resid, attrs)` -- the STYLE named by
@@ -779,7 +782,7 @@ public abstract class Context {
             android.content.res.Resources.Theme t = getTheme();
             if (t != null) return t.obtainStyledAttributes(resId, attrs);
         } catch (Throwable ignored) {}
-        return new android.content.res.TypedArray(getResources(), attrs);
+        return com.macapk.loader.res.ResBackend.get().themelessTypedArray(getResources(), attrs);
     }
     public android.content.res.TypedArray obtainStyledAttributes(
             android.util.AttributeSet set, int[] attrs) {
@@ -798,7 +801,7 @@ public abstract class Context {
             android.content.res.Resources.Theme t = getTheme();
             if (t != null) return t.obtainStyledAttributes(set, attrs, 0, 0);
         } catch (Throwable ignored) {}
-        return new android.content.res.TypedArray(getResources(), attrs, set);
+        return com.macapk.loader.res.ResBackend.get().themelessTypedArray(getResources(), attrs, set);
     }
     public android.content.res.TypedArray obtainStyledAttributes(
             android.util.AttributeSet set, int[] attrs,
@@ -819,7 +822,7 @@ public abstract class Context {
         } catch (Throwable t) {
             macapkTraceThemelessOsa(defStyleAttr, t);
         }
-        return new android.content.res.TypedArray(getResources(), attrs, set);
+        return com.macapk.loader.res.ResBackend.get().themelessTypedArray(getResources(), attrs, set);
     }
     /** Diagnostic (MACAPK_TRACE_DEFSTYLE, zero cost unset): the 4-arg
      *  obtainStyledAttributes fell back to the THEME-LESS TypedArray --
@@ -1221,6 +1224,11 @@ public abstract class Context {
      *  `(JobScheduler) ctx.getSystemService(JOB_SCHEDULER_SERVICE)`. */
     public Object getSystemService(String name) {
         Object result;
+        // AOSP's views (WINAPK_AOSP_VIEWS=1) own their managers (window, layout_inflater,
+        // input_method, accessibility...); Win.apk's view host answers null for every name.
+        if (name != null && (result = com.macapk.loader.view.ViewHost.get().systemService(this, name)) != null) {
+            return result;
+        }
         if (name == null) {
             result = null;
         } else switch (name) {
@@ -1254,7 +1262,7 @@ public abstract class Context {
                 // androidx ripple effects do `(AccessibilityManager)
                 // getSystemService(ACCESSIBILITY_SERVICE)` and chain
                 // .isEnabled(); null would NPE.
-                result = new android.view.accessibility.AccessibilityManager();
+                result = ViewHost.get().newAccessibilityManager();
                 break;
             case PROFILING_SERVICE:
                 // android.os.ProfilingManager already existed in this tree but
@@ -1467,7 +1475,7 @@ public abstract class Context {
                 result = new android.app.usage.StorageStatsManager(this);
                 break;
             case TEXT_SERVICES_MANAGER_SERVICE:
-                result = new android.view.textservice.TextServicesManager(this);
+                result = ViewHost.get().newTextServicesManager(this);
                 break;
             case HARDWARE_PROPERTIES_SERVICE:
                 result = new android.os.HardwarePropertiesManager(this);
@@ -1573,7 +1581,7 @@ public abstract class Context {
             case CAPTIONING_SERVICE:
                 // Media players do getSystemService(CaptioningManager.class)
                 // .isEnabled() unguarded; null NPEs before playback starts.
-                result = new android.view.accessibility.CaptioningManager();
+                result = ViewHost.get().newCaptioningManager();
                 break;
             case RESTRICTIONS_SERVICE:
                 // Unmanaged device: an empty restrictions Bundle, never null.

@@ -17,6 +17,8 @@
 //     BR x30, tail calls through a function pointer;
 //   * recursion as deep as an Android thread's 1 MB stack allows, on the
 //     calling thread and on a guest thread;
+//   * pthread_getattr_np on the stack the code runs on (Dart checks its sp
+//     against it), and a guest thread's requested stack size;
 //   * floating point edge cases (saturating conversions, rounding, FRECPS
 //     and FRSQRTS on 0 and infinity, signed zeros);
 //   * an exclusive-monitor counter shared by a thread in a library and a
@@ -38,6 +40,13 @@ void* memcpy(void*, const void*, size_t);
 typedef long pthread_t;
 int pthread_create(pthread_t*, const void*, void* (*)(void*), void*);
 int pthread_join(pthread_t, void**);
+pthread_t pthread_self(void);
+typedef struct { long words[7]; } pthread_attr_t;  // Bionic's, 56 bytes
+int pthread_attr_init(pthread_attr_t*);
+int pthread_attr_setstacksize(pthread_attr_t*, size_t);
+int pthread_attr_getstack(const pthread_attr_t*, void**, size_t*);
+int pthread_attr_destroy(pthread_attr_t*);
+int pthread_getattr_np(pthread_t, pthread_attr_t*);
 int mprotect(void*, size_t, int);
 void* mmap(void*, size_t, int, int, int, long);
 int munmap(void*, size_t);
@@ -366,6 +375,43 @@ EXPORT uint64_t flow_deep_thread(uint64_t n) {
     void* r = 0;
     if (pthread_join(t, &r) != 0) return 0;
     return (uint64_t)r;
+}
+
+// ---- the stack pthread_getattr_np reports ----------------------------------------------
+// Dart's OSThread takes its stack bounds from pthread_getattr_np and aborts
+// unless its sp is inside them with headroom; ART and V8 do the same sums.
+// The bits: 1 the local is inside the reported stack, 2 with 64 KB below it,
+// 4 the stack is at least `want` bytes.
+static NOINLINE uint64_t stack_bits(size_t want) {
+    volatile int local = 0;
+    pthread_attr_t a;
+    void* base = 0;
+    size_t size = 0;
+    if (pthread_getattr_np(pthread_self(), &a) != 0) return 0;
+    pthread_attr_getstack(&a, &base, &size);
+    pthread_attr_destroy(&a);
+    const uintptr_t sp = (uintptr_t)&local, lo = (uintptr_t)base;
+    uint64_t bits = 0;
+    if (sp > lo && sp < lo + size) bits |= 1;
+    if (sp > lo + 64 * 1024) bits |= 2;
+    if (size >= want) bits |= 4;
+    return bits;
+}
+
+static void* stack_thread(void* arg) { return (void*)stack_bits((size_t)arg); }
+
+// The calling thread's bits, then (shifted by 4) those of a thread created
+// with an 8 MB stack, which must get one at least that size.
+EXPORT uint64_t flow_stack_bounds(void) {
+    const size_t big = 8u << 20;
+    pthread_attr_t a;
+    pthread_attr_init(&a);
+    pthread_attr_setstacksize(&a, big);
+    pthread_t t;
+    void* r = 0;
+    if (pthread_create(&t, &a, stack_thread, (void*)big) != 0 || pthread_join(t, &r) != 0) return 0;
+    pthread_attr_destroy(&a);
+    return stack_bits(0) | (uint64_t)r << 4;
 }
 
 // ---- variadic functions in guest code ----------------------------------------------------

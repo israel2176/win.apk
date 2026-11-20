@@ -326,9 +326,18 @@ public class HorizontalScrollView extends FrameLayout {
             getPaddingTop() + getPaddingBottom() + heightUsed,
             lp != null ? lp.height
                        : android.view.ViewGroup.LayoutParams.WRAP_CONTENT);
+        // AOSP: makeSafeMeasureSpec(max(0, parentWidth - padding - margins -
+        // widthUsed), UNSPECIFIED): the viewport stays a hint (targetSdk >= 23).
+        // Size 0 made a FlexboxLayout inside shrink its items below nothing
+        // (Moovit's PIN boxes, -1 wide).
+        int hMargins = 0;
+        if (lp instanceof android.view.ViewGroup.MarginLayoutParams mlp)
+            hMargins = mlp.leftMargin + mlp.rightMargin;
         int childWidthMeasureSpec =
             android.view.View.MeasureSpec.makeMeasureSpec(
-                0, android.view.View.MeasureSpec.UNSPECIFIED);
+                Math.max(0, android.view.View.MeasureSpec.getSize(parentWidthMeasureSpec)
+                    - getPaddingLeft() - getPaddingRight() - hMargins - widthUsed),
+                android.view.View.MeasureSpec.UNSPECIFIED);
         child.measure(childWidthMeasureSpec, childHeightMeasureSpec);
     }
 

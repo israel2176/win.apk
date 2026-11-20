@@ -31,9 +31,21 @@ public final class MacApkSkia {
         }
     }
 
+    /**
+     * Whether the Skia bridge is loaded; never throws. Every caller (RuntimeShader, RenderEffect,
+     * Canvas's filter pass) has a path without it, and Windows has no such bridge: the first call
+     * threw ensureLoaded's IllegalStateException into whatever app code made a RenderEffect or a
+     * RuntimeShader (Bank Leumi's react-native-skia view, from onSizeChanged), where Android
+     * returns an effect.
+     */
     public static boolean isAvailable() {
         if (!sLoaded && !sLoadFailed) {
-            ensureLoaded();
+            try {
+                ensureLoaded();
+            } catch (Throwable t) {
+                System.err.println("[W] Mac.apk: " + t.getMessage()
+                        + "; RuntimeShader and RenderEffect draw without Skia");
+            }
         }
         return sLoaded;
     }

@@ -20,7 +20,9 @@
 // by resource id -- that wiring lives in Resources.java.
 package android.content.res;
 
-public class ColorStateList implements android.os.Parcelable {
+import com.macapk.loader.gfx.GfxBackend;
+
+public class ColorStateList extends ComplexColor implements android.os.Parcelable {
     // Parallel arrays: mStateSpecs[i] is the spec for color mColors[i].
     private final int[][] mStateSpecs;
     private final int[] mColors;
@@ -606,7 +608,7 @@ public class ColorStateList implements android.os.Parcelable {
         value = value.trim();
         if (value.isEmpty()) return def;
         if (value.charAt(0) == '#') {
-            try { return android.graphics.Color.macapkParseResourceColor(value); }
+            try { return GfxBackend.get().parseResourceColor(value); }
             catch (Throwable t) { return def; }
         }
         // A `?attr` item colour with NO theme to chase it stays at the
@@ -741,5 +743,28 @@ public class ColorStateList implements android.os.Parcelable {
     }
 
     public int getChangingConfigurations() { return 0; }
+
+    // AOSP hides this; AOSP's own graphics and text classes call it (WINAPK_AOSP_GFX=1 puts them,
+    // lib/aosp-graphics.jar, before this framework: windows/README.md, "Milestone 2").
+    /** AOSP ColorStateList.hasFocusStateSpecified: a state spec names state_focused. */
+    public boolean hasFocusStateSpecified() {
+        return android.util.StateSet.containsAttribute(mStateSpecs, android.R.attr.state_focused);
+    }
+
+    /** AOSP ColorStateList.getColors. */
+    public int[] getColors() { return mColors; }
+
+    /** AOSP ColorStateList.getConstantState (a ComplexColor's; AOSP's VectorDrawable and
+     *  GradientDrawable keep it in their state): this list, which nothing here changes in place. */
+    @Override public ConstantState<ComplexColor> getConstantState() {
+        final ColorStateList self = this;
+        return new ConstantState<ComplexColor>() {
+            @Override public int getChangingConfigurations() { return self.getChangingConfigurations(); }
+            @Override public ComplexColor newInstance() { return self; }
+            @Override public ComplexColor newInstance(Resources res, Resources.Theme theme) {
+                return theme == null ? self : self.obtainForTheme(theme);
+            }
+        };
+    }
 }
 

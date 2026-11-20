@@ -1,0 +1,27 @@
+// Gradle init script for CI (gradle -I, or ~/.gradle/init.d/): Maven Central
+// through Google's mirror of it first, because Central rate-limits busy CI
+// address ranges (429). Central itself stays behind it as the fallback, and
+// google() and the plugin portal are untouched. Used by the UI gate's oracle
+// (ci.yml) and ui-sweep.yml.
+def mirror = 'https://maven-central.storage-download.googleapis.com/maven2/'
+
+def mirrorFirst = { RepositoryHandler repos ->
+    if (repos.isEmpty() || repos.findByName('CentralMirror') != null) return
+    def m = repos.maven {
+        name = 'CentralMirror'
+        url = mirror
+    }
+    repos.remove(m)
+    repos.addFirst(m)
+}
+
+settingsEvaluated { settings ->
+    mirrorFirst(settings.pluginManagement.repositories)
+    mirrorFirst(settings.dependencyResolutionManagement.repositories)
+}
+
+allprojects {
+    // After the build script has declared its own (an empty list means the
+    // settings' repositories apply, and adding one would hide them).
+    afterEvaluate { project -> mirrorFirst(project.repositories) }
+}

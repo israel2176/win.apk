@@ -57,9 +57,11 @@
 // in the bridge's header, and the egl14window gate's SHARED-DPY row watches it.
 package javax.microedition.khronos.egl;
 
+import com.macapk.loader.gfx.GfxBackend;
 import android.graphics.SurfaceTexture;
 import android.opengl.EGL14;
 import android.opengl.GLES20;
+import com.macapk.loader.view.ViewHost;
 
 public final class MacApkGlWindow {
     // GLES 2.0 / 3.0 enums (Khronos gl2.h / gl3.h).
@@ -124,11 +126,11 @@ public final class MacApkGlWindow {
         // AOSP: a second producer (another window surface, a camera, a decoder)
         // makes native_window_api_connect fail and eglCreateWindowSurface
         // return EGL_NO_SURFACE with EGL_BAD_ALLOC. An abandoned stream too.
-        if (!st.macapkConnectProducer(w)) return new Created(null, EGL10.EGL_BAD_ALLOC);
+        if (!GfxBackend.get().connectProducer(st, w)) return new Created(null, EGL10.EGL_BAD_ALLOC);
         int[] size = defaultSize(st);
         android.opengl.EGLSurface s = newPbuffer(dpy, cfg, size[0], size[1]);
         if (s == null) {
-            st.macapkDisconnectProducer(w);
+            GfxBackend.get().disconnectProducer(st, w);
             return new Created(null, 0);
         }
         w.mPbuffer = s;
@@ -138,7 +140,7 @@ public final class MacApkGlWindow {
     }
 
     private static int[] defaultSize(SurfaceTexture st) {
-        int w = st.macapkGetDefaultWidth(), h = st.macapkGetDefaultHeight();
+        int w = GfxBackend.get().defaultWidth(st), h = GfxBackend.get().defaultHeight(st);
         if (w <= 0 || h <= 0) { w = 1; h = 1; }   // BufferQueueCore's default
         return new int[] { w, h };
     }
@@ -243,7 +245,7 @@ public final class MacApkGlWindow {
         }
         // premultipliedSource=true: a GL consumer (updateTexImage) must see the
         // premultiplied bytes a device buffer holds, not our straight copy.
-        mSt.macapkQueueProducerFrame(argb, w, h, w, FLIP_V, mRecycler, true); /*GLPREMUL*/
+        GfxBackend.get().queueProducerFrame(mSt, argb, w, h, w, FLIP_V, mRecycler, true); /*GLPREMUL*/
         mFrames++;
     }
 
@@ -280,7 +282,7 @@ public final class MacApkGlWindow {
     boolean destroy() {
         if (mDestroyed) return true;
         mDestroyed = true;
-        mSt.macapkDisconnectProducer(this);
+        GfxBackend.get().disconnectProducer(mSt, this);
         mFree.clear();
         return EGL14.eglDestroySurface(mDpy, mPbuffer);
     }
@@ -373,8 +375,8 @@ public final class MacApkGlWindow {
             }
             // android_view_Surface_getNativeWindow == NULL -> not_valid_surface.
             if (!sur.isValid()) throw new IllegalArgumentException(NOT_VALID_SURFACE);
-            st = sur.macapkGetSurfaceTexture();
-            if (st == null && EGL14_SURFACEVIEW_ON && sur.macapkGetOwnerSurfaceView() != null) {
+            st = ViewHost.get().surfaceTexture(sur);
+            if (st == null && EGL14_SURFACEVIEW_ON && ViewHost.get().ownerSurfaceView(sur) != null) {
                 // A SurfaceView's Surface (GitHub #15: MapLibre's SurfaceView
                 // render thread; WebRTC's SurfaceViewRenderer is the same
                 // shape). AOSP hands EGL the Surface's ANativeWindow
@@ -384,7 +386,7 @@ public final class MacApkGlWindow {
                 // so a Java-made window and an NDK-made one are the SAME window.
                 // Note the owner first, as ANativeWindow_fromSurface does, so the
                 // layer composites below the window with its hole punched.
-                sur.macapkNoteNativeWindowConsumer();
+                ViewHost.get().noteNativeWindowConsumer(sur);
                 if (log14()) {
                     info14("eglCreateWindowSurface(" + win.getClass().getName()
                         + ") -> SurfaceView window on the native-EGL layer");

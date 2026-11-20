@@ -161,7 +161,7 @@ Everything in this section is merged on `main` and tested in CI on
 | `src/jni_variadic.cpp` | The `Call<T>Method`, `Call<T>MethodV` and `NewObject` families. Reads the argument stream against the method signature and calls HotSpot's `Call<T>MethodA` form |
 | `src/jni_bind.cpp` | Binds guest natives into HotSpot: the guest `RegisterNatives` slot wraps each function in a thunk, and a JVMTI `NativeMethodBind` hook swaps guest addresses for thunks. Thunks are cached per function and signature. Also the cached JVMTI signature provider |
 | `include/winapk/arm64_cpu.h`, `src/arm64/arm64_cpu.cpp`, `src/arm64/arm64_simd.cpp` | M10, stage 1: an AArch64 (A64) interpreter. The base integer ISA, branches (PAC and BTI hints as no-ops), every load/store form, exclusives as compare-and-swap, acquire/release, the LSE atomics, scalar FP with Arm's saturating conversions, and the Advanced SIMD forms compilers emit for C and C++. Unimplemented encodings stop the guest with their address |
-| `include/winapk/arm64_guest.h`, `src/arm64/arm64_guest.cpp` | The arm64 bridge: per-thread CPU state, a 4 MiB guest stack and bionic's TLS slots; guest calls to host (System V) functions with AAPCS64 arguments moved to System V registers and stack, and AAPCS64 `va_list`s rewritten for the functions that take one (the printf family, the JNI `...V` forms); host calls into guest code through an execute-fault handler, or `host_callable()` thunks |
+| `include/winapk/arm64_guest.h`, `src/arm64/arm64_guest.cpp` | The arm64 bridge: per-thread CPU state, a guest stack (4 MiB, or `pthread_create`'s size when larger, up to 64 MiB; what `pthread_getattr_np` reports to guest code) and bionic's TLS slots; guest calls to host (System V) functions with AAPCS64 arguments moved to System V registers and stack, and AAPCS64 `va_list`s rewritten for the functions that take one (the printf family, the JNI `...V` forms); host calls into guest code through an execute-fault handler, or `host_callable()` thunks |
 | `java/com/winapk/tools/AppInstall.java` | `winapk-tools.jar`: installs an APK or a split bundle (`.apkm`, `.xapk`, `.apks`) in the device layout upstream reads, `data/app/~~<nonce>/<package>-<nonce>/` with `base.apk` (a hard link for a plain APK), `split_<name>.apk` (chosen as upstream's `SelectBundleApks` does) and the host ABI's libraries in `lib/<isa>/` |
 | `host/guest_libs.cpp`, `host/guest_stub.cpp`, `host/translator_main.cpp` | An app's x86_64 native libraries (M4): `macapk-translator.exe` copies `winapk-guest-stub.dll` per library, the stub's `JNI_OnLoad` loads the ELF through the linker, `NativeLibrary.findEntry0` resolves natives by name, missing system functions become reporting stubs |
 | `host/runtime_main.cpp` | `winapk-runtime`, the host that runs an APK: installs the app first (above, once per input file), converts its DEX with upstream's converter (cached), creates the JVM in-process with upstream's options, binds the host natives and calls `Boot.run` |
@@ -182,7 +182,7 @@ Everything in this section is merged on `main` and tested in CI on
 | `winapk-jni-test` | The guest `JNIEnv` forwards correctly against a mock JVM, for several return types and argument shapes, and `JavaVM::GetEnv` hands back a guest env |
 | `winapk-jni-variadic-test` | The variadic bridge works for all four call kinds (virtual, static, nonvirtual, `NewObject`), for int, long, object, float and double arguments, through both `...` and `va_list` |
 | `winapk-linker-test` | A four-library tree (root, a `DT_NEEDED` cycle between two libraries, and a plugin opened at runtime) loads through the linker: constructors run dependencies first, symbols resolve across the cycle and in bionic's order (a library listed before `libc.so` interposes libc's names, one listed after does not, an `RTLD_GLOBAL` library comes first), `dlsym` on a library finds its dependencies' symbols, the registry tells guest from host addresses, and the guest's `dlopen`, `dlsym`, `dlerror` and `dladdr` behave like bionic's |
-| `winapk-bionic-test` | `test/guest/bionic_guest.c` exercises the shim from guest code: string and ctype functions, `strerror` with Linux numbering, `snprintf` through the System V `va_list` (integers, floats, strings, `%n`, `*` widths), `sscanf` (64-bit `%ld`, sets, skips), mutexes, condition variables and threads, keys with destructors, files and `stat`, directories, `FILE` I/O, ELF TLS across threads (`.tdata` and `.tbss`, local- and general-dynamic), system properties, UTF-8 conversion and locales, `syscall` (futex wait, wake and timeout), an 8 GiB `PROT_NONE` reservation opened by `mprotect`, `environ`, Android paths under the android root, pipes and eventfd with `poll` and `epoll` across threads, loopback TCP sockets, `socketpair`, `getaddrinfo`, `ALooper` callbacks and wakes, `setenv`/`getenv`, clocks, `mmap` and `sysconf` |
+| `winapk-bionic-test` | `test/guest/bionic_guest.c` exercises the shim from guest code: string and ctype functions, `strerror` with Linux numbering, `snprintf` through the System V `va_list` (integers, floats, strings, `%n`, `*` widths), `sscanf` (64-bit `%ld`, sets, skips), mutexes, condition variables and threads, keys with destructors, files and `stat`, directories, `FILE` I/O, ELF TLS across threads (`.tdata` and `.tbss`, local- and general-dynamic), system properties, UTF-8 conversion and locales, `syscall` (futex wait, wake and timeout), an 8 GiB `PROT_NONE` reservation opened by `mprotect`, V8's page permissions (guard pages over reserved pages, ranges across two mappings), `environ`, Android paths under the android root, pipes and eventfd with `poll` and `epoll` across threads, loopback TCP sockets, `socketpair`, `getaddrinfo`, `ALooper` callbacks and wakes, `setenv`/`getenv`, clocks, `mmap` and `sysconf` |
 | `winapk-jvm-run` | With a real HotSpot JVM: a library loaded through the linker runs its `JNI_OnLoad`, which registers `nativeMix` through the guest `RegisterNatives`; `nativeAdd` is handed to HotSpot as a raw guest address and the `NativeMethodBind` hook has to replace it. Both are called from Java, and `nativeAdd` calls back into Java through a variadic `CallStaticIntMethod` and through `CallStaticIntMethodV` with its own `va_list`. `nativeAdd(3, 4)` must return 19. CI runs it twice: with the x86_64 build of the library and with the arm64 build, through the interpreter |
 | `winapk-arm64-test` | The arm64 interpreter against the host: `test/guest/arm64_isa.c` (integer, bitfield, division, 128-bit, atomics with and without LSE, scalar FP and conversions, half precision, auto-vectorized NEON loops) is built into the test and into three arm64 libraries (-O2, -O3, -O3 with ARMv8.1), and every function must return the same bits both ways. Then `test/guest/arm64_bridge_guest.c`: constructors, the stack protector, libc calls, variadic `snprintf` with stack arguments, the guest's `va_list` given to `vsnprintf`, a guest comparator in host `qsort` (also nested), four `pthread_create` threads, `__cxa_atexit`, and calls with ten integer and two double arguments in both directions. Every check runs on the interpreter and on the JIT. Last, `test/guest/arm64_bench.c` (compute, float/NEON, indirect calls, a memory chase, small libc calls, a guest `qsort` comparator) natively and on the JIT: the ratio, the JIT's first-call translation cost, and the share of time in host functions with the transitions per run |
 | `winapk-gl-test` | ANGLE (WARP or SwiftShader on CI) makes a context through `gl_surface`, clears and scissor-clears a pbuffer, and the read-back frame has the right colors, top row first |
@@ -1227,8 +1227,11 @@ left:
   with the clang the package ships; `include/winapk/arm64_aot.h`). Still
   open: jump tables (BR into the function now leaves it), exclusives and LSE
   atomics without the interpreter, and coverage on real apps' libraries.
-- Raw `SVC` system calls, and signals (a guest `SIGSEGV` handler, Unity's and
-  Mono's null checks). ELF TLS through TLSDESC (libraries built for API 29 or
+- Signals (a guest `SIGSEGV` handler, Unity's and Mono's null checks). Raw
+  `SVC` system calls are answered by arm64's numbers (`arm64_abi.cpp`'s
+  `linux_syscall`: memory, futex, ids, clocks, files and the calls whose
+  structs both ABIs share; the rest `-ENOSYS`, logged once each); not done:
+  `clone`, `getdents64` and the socket calls. ELF TLS through TLSDESC (libraries built for API 29 or
   later that use `thread_local`) is done: `R_AARCH64_TLSDESC` points the
   descriptor at a bridge intrinsic that answers the offset from `TPIDR_EL0`
   through `elf_tls.cpp`'s blocks and changes only `x0`
@@ -1249,6 +1252,37 @@ The original plan:
   with AGPLv3 code.
 
 Exit: one ARM-only game is playable at an acceptable speed.
+
+### M11. AOSP's resources and views (plan; after graphics milestone 2)
+
+Replace the app-process framework's `android.content.res`, `android.view`,
+`android.widget` and `android.text` with AOSP's own classes, layer by layer.
+Win.apk's own code stays where Android talks to the system: windows, input,
+files, Binder and services, Google services, ELF/ARM. The plan, the inventory
+and the measurements are in `docs/research/aosp-views.md`. The spike is
+`windows/test/aospviews/`. On a plain JDK 21, AOSP 14's resources resolve the
+uiprobe app's themes 29 of 29 as the oracle does (Win.apk's own: 19), and its
+LayoutInflater and widgets lay out 8 probe cases 44 of 44 lines exactly and
+draw them pixel-identical.
+
+- Step 0: seams (`ResBackend`, `ViewHost`) for the 574 call sites into
+  Win.apk's own members of those packages, with nothing changed (as
+  `GfxBackend` did for graphics). Done: `com.macapk.loader.res.ResBackend`
+  (resources) and `com.macapk.loader.view.ViewHost` (views).
+- R1: resources on AOSP over Robolectric's Java port of libandroidfw
+  (`WINAPK_AOSP_RES=1`). R2: libandroidfw built for Windows. The port's 0.9 to 1.4 s
+  cold load of the framework table is the reason.
+- T: `android.text` with graphics.
+- V1: views and the real `ViewRootImpl` over Win.apk's `IWindowSession` and
+  in-process system services (`WINAPK_AOSP_VIEWS=1`).
+- V2: input, IME and accessibility.
+- V3: HWUI's pipeline.
+
+Each step is gated by `uiprobe/regress.py` and the screens sweep: no line
+further from Android.
+
+Exit: the smoke apps and the screens sweep run with both switches on, with no
+line further from Android than today, and start no slower.
 
 ## 9. Development workflow
 

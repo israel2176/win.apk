@@ -14,6 +14,7 @@ import com.macapk.loader.NativeLog;
 
 import javax.microedition.khronos.egl.EGLConfig;
 import javax.microedition.khronos.opengles.GL10;
+import com.macapk.loader.view.ViewHost;
 
 public class GLSurfaceView extends SurfaceView
         implements MetalSurfaceCallbacks, android.view.SurfaceHolder.Callback2 {
@@ -197,7 +198,7 @@ public class GLSurfaceView extends SurfaceView
         // a fallback + the real one when an app's onCreate threw partway),
         // the most-recently-set delegate wins -- matching setContentView's
         // "latest wins" semantics.
-        long handle = getNativeHandle();
+        long handle = ViewHost.get().nativeHandle(this);
         if (handle != 0) NativeCocoa.setRenderer(handle, this);
     }
     public GLSurfaceView(Context c, android.util.AttributeSet a) { this(c); }
@@ -277,7 +278,7 @@ public class GLSurfaceView extends SurfaceView
         // onSizeChanged has then run, which is what cocos2d-x / axmol read in
         // onSurfaceCreated. Checked before the size below, so a view laid out
         // smaller than its window is sized from that layout (bouncy).
-        if (lifecycleDeliveredTo != r && !macapkRendererMayStart(w, h)) return false;
+        if (lifecycleDeliveredTo != r && !ViewHost.get().rendererMayStart(this, w, h)) return false;
         // v1.0.996: the renderer gets the APP WINDOW's surface, not the display's.
         // lastWidthPx/lastHeightPx are the full DISPLAY drawable (that is what the
         // native one-shot publishes, and presentOverlayIfNeeded/WindowOverlayStack
@@ -295,10 +296,10 @@ public class GLSurfaceView extends SurfaceView
         // gives it (SurfaceView.updateSurface :985-988; bouncy's GLFieldView
         // under its ScoreView). MACAPK_SV_VIEW_SIZE_GL=0 restores the box.
         final int displayW = w, displayH = h;
-        int[] rendererSize = macapkRendererSurfaceSize(w, h);
+        int[] rendererSize = ViewHost.get().rendererSurfaceSize(this, w, h);
         w = rendererSize[0];
         h = rendererSize[1];
-        macapkWarnGlSizeSplit(w, h, displayW, displayH);
+        ViewHost.get().warnGlSizeSplit(this, w, h, displayW, displayH);
         try {
             // CRITICAL ORDER: populate the renderer's cached screen size
             // BEFORE onSurfaceCreated. cocos2d-x / axmol renderers (OpenGD's
@@ -313,7 +314,7 @@ public class GLSurfaceView extends SurfaceView
             // frame, overwriting the app's own fields; now the first
             // onSurfaceCreated waits for the view's frame, and the app's own
             // onSizeChanged has made the same call by then (AOSP order).
-            if (!macapkGlWaitFrame()) GLSurfaceView.tryInvokeSetScreenSize(r, w, h);
+            if (!ViewHost.get().glWaitFrame()) GLSurfaceView.tryInvokeSetScreenSize(r, w, h);
             final GL10 gl = wrappedGL();
             if (lifecycleDeliveredTo != r) {
                 // The renderer runs as the app's GLThread (no Looper):
@@ -378,9 +379,9 @@ public class GLSurfaceView extends SurfaceView
     private void macapkDrawFramePausable() {
         if (!macapkEnterRendererCall()) {
             if (!rendererDead) macapkRunQueuedGlEvents();
-            macapkDriveOverlayForCurrentSurface();
+            ViewHost.get().driveOverlayForCurrentSurface(this);
             presentOverlayIfNeeded();
-            macapkConvergeSurfaceLifecycle(lastWidthPx, lastHeightPx);
+            ViewHost.get().convergeSurfaceLifecycle(this, lastWidthPx, lastHeightPx);
             return;
         }
         try {
@@ -473,9 +474,9 @@ public class GLSurfaceView extends SurfaceView
                 // onDrawFrame (AOSP GLThread readyToDraw). The tree is still
                 // driven -- the overlay drive is what gets the view laid out --
                 // and the base convergence still runs, as on a drawn frame.
-                macapkDriveOverlayForCurrentSurface();
+                ViewHost.get().driveOverlayForCurrentSurface(this);
                 presentOverlayIfNeeded();
-                macapkConvergeSurfaceLifecycle(lastWidthPx, lastHeightPx);
+                ViewHost.get().convergeSurfaceLifecycle(this, lastWidthPx, lastHeightPx);
                 return;
             }
             // MACAPK_GLSV_RENDER_MODE: AOSP readyToDraw's last term. A withheld
@@ -498,12 +499,12 @@ public class GLSurfaceView extends SurfaceView
                         + renderer.getClass().getName() + ".onDrawFrame until requestRender()"
                         + " (AOSP readyToDraw; MACAPK_GLSV_RENDER_MODE)");
                 }
-                macapkDriveOverlayForCurrentSurface();
+                ViewHost.get().driveOverlayForCurrentSurface(this);
                 presentOverlayIfNeeded();
-                macapkConvergeSurfaceLifecycle(lastWidthPx, lastHeightPx);
+                ViewHost.get().convergeSurfaceLifecycle(this, lastWidthPx, lastHeightPx);
                 return;
             }
-            macapkDetectDrawBehindTop(renderer);
+            ViewHost.get().detectDrawBehindTop(this, renderer);
             long n = ++drawFrameCount;
             if (n == 1 || n == 60 || n == 600 || (n % 1800) == 0) {
                 NativeLog.i("GLSurfaceView",
@@ -514,7 +515,7 @@ public class GLSurfaceView extends SurfaceView
                 // AOSP-faithful: a GLThread that threw is DEAD and never
                 // calls onDrawFrame again (see the catch below). Only
                 // reachable when MACAPK_GL_RENDERER_THROW_FATAL=1.
-                macapkDriveOverlayForCurrentSurface();
+                ViewHost.get().driveOverlayForCurrentSurface(this);
                 presentOverlayIfNeeded();
                 return;
             }
@@ -609,7 +610,7 @@ public class GLSurfaceView extends SurfaceView
             // carrying them was never driven once. Measured discriminator:
             // `grep -c "ViewCanvasDriver.*fire #"` = sgtpuzzles 9, bouncy 0,
             // jetpackjoyride 0.
-            macapkDriveOverlayForCurrentSurface();
+            ViewHost.get().driveOverlayForCurrentSurface(this);
             presentOverlayIfNeeded();
             // v1.0.964: this branch returns WITHOUT calling super, so the base
             // class's once-per-frame surface/focus convergence never runs from
@@ -620,7 +621,7 @@ public class GLSurfaceView extends SurfaceView
             // the missing focus meant FieldDriver.start() never ran and the GL
             // table drew 560 zero-area triangles. Drawing and window focus are
             // unrelated on real Android; keep them unrelated here.
-            macapkConvergeSurfaceLifecycle(lastWidthPx, lastHeightPx);
+            ViewHost.get().convergeSurfaceLifecycle(this, lastWidthPx, lastHeightPx);
             return;
         }
         // super (SurfaceView.macapkDrawFrame) composites overlays for EVERY
@@ -707,7 +708,7 @@ public class GLSurfaceView extends SurfaceView
         // anything below can re-enter with a holder's size. From then on
         // SurfaceView no longer takes the per-frame converge size as the
         // display (SurfaceView.macapkNoteNativeDisplaySize).
-        macapkNoteNativeDisplaySize(widthPx, heightPx);
+        ViewHost.get().noteNativeDisplaySize(this, widthPx, heightPx);
         if (renderer != null && !rendererDead) macapkRunQueuedGlEvents();
         macapkSurfaceChangedBody(widthPx, heightPx);
     }
@@ -765,7 +766,7 @@ public class GLSurfaceView extends SurfaceView
             // and must still run -- otherwise an app that installs its
             // Renderer before the first surface callback never records a
             // pending surface size and never gets onWindowFocusChanged(true).
-            macapkConvergeSurfaceLifecycle(widthPx, heightPx);
+            ViewHost.get().convergeSurfaceLifecycle(this, widthPx, heightPx);
             return;
         }
         super.macapkSurfaceChanged(widthPx, heightPx);
@@ -976,7 +977,7 @@ public class GLSurfaceView extends SurfaceView
             // instrument either: that is exactly the draw into the top's EGL
             // surface this term exists to stop (the "gl" source then simply
             // does not claim, and the canvas / composite sources serve).
-            return com.macapk.loader.NativeCocoa.beginWithheldTick(!macapkOwnerStoppedUnderTop());
+            return com.macapk.loader.NativeCocoa.beginWithheldTick(!ViewHost.get().ownerStoppedUnderTop(this));
         } catch (UnsatisfiedLinkError e) {
             sWithheldNativeOk = false;
             return false;
@@ -1239,7 +1240,7 @@ public class GLSurfaceView extends SurfaceView
         // does. Re-run the delivery for the display this view already has; the
         // renderer's size follows from it. Before any display is known, and
         // with the gates off, the old path.
-        if (macapkHolderSizeIsBufferSize() && lastWidthPx > 0 && lastHeightPx > 0) {
+        if (ViewHost.get().holderSizeIsBufferSize() && lastWidthPx > 0 && lastHeightPx > 0) {
             macapkSurfaceChangedBody(lastWidthPx, lastHeightPx);
             return;
         }

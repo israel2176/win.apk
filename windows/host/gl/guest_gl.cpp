@@ -500,6 +500,11 @@ void surface_view_window_destroyed(void* surface) {
     g_window_surfaces.erase(surface);
 }
 
+bool guest_window_surface_held() {
+    std::lock_guard<std::mutex> hold(g_lock);
+    return !g_window_surfaces.empty();
+}
+
 void* guest_gl_resolve(const char* name) {
     if (!name || (std::strncmp(name, "gl", 2) != 0 && std::strncmp(name, "egl", 3) != 0)) return nullptr;
     auto it = symbols().find(name);

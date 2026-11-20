@@ -165,8 +165,22 @@ public class GooglePlayServicesUtilLight {
 
     public static Intent getGooglePlayServicesAvailabilityRecoveryIntent(int errorCode) { return null; }
 
-    public static Context   getRemoteContext(Context context)  { return null; }
-    public static Resources getRemoteResource(Context context) { return null; }
+    // Play services' own: createPackageContext("com.google.android.gms",
+    // INCLUDE_CODE | IGNORE_SECURITY), null only when the package is missing. This
+    // answered null while availability() says SUCCESS, and a Maps client that falls
+    // back to it threw in Application.onCreate (Moovit: a blank window).
+    public static Context getRemoteContext(Context context) {
+        try {
+            return context.createPackageContext("com.google.android.gms",
+                    Context.CONTEXT_INCLUDE_CODE | Context.CONTEXT_IGNORE_SECURITY);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+    public static Resources getRemoteResource(Context context) {
+        Context c = getRemoteContext(context);
+        return c == null ? null : c.getResources();
+    }
 
     public static boolean honorsDebugCertificates(Context context)               { return false; }
     public static boolean isGooglePlayServicesUid(Context context, int uid)      { return false; }

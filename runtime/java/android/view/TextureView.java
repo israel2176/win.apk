@@ -50,6 +50,7 @@
 // so do we -- null, not a second producer fighting over the stream.
 package android.view;
 
+import com.macapk.loader.gfx.GfxBackend;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.Matrix;
@@ -134,7 +135,11 @@ public class TextureView extends View {
     // TextureView renders only with hardware acceleration in AOSP. We do not
     // gate on that here.
     public boolean isOpaque() { return mOpaque; }
-    public void setOpaque(boolean opaque) { mOpaque = opaque; }
+    public void setOpaque(boolean opaque) {
+        if (opaque == mOpaque) return;
+        mOpaque = opaque;
+        invalidate();   // draw() paints black under an opaque view's frame
+    }
 
     // NOTE: View declares these hooks public in our framework (AOSP has them
     // protected), so the overrides must also be public to avoid narrowing.
@@ -158,7 +163,7 @@ public class TextureView extends View {
             // SurfaceTexture as the render target (harmless -- the frame
             // just latches into a Bitmap nobody draws -- but pointless work
             // and a misleading log if anyone traces it).
-            mSurfaceTexture.macapkUnregisterVideoTargetIfSelf();
+            GfxBackend.get().unregisterVideoTargetIfSelf(mSurfaceTexture);
         }
         if (mSurface != null) {
             try { mSurface.release(); } catch (Throwable ignored) {}
@@ -306,15 +311,15 @@ public class TextureView extends View {
 
     public android.graphics.Canvas lockCanvas(android.graphics.Rect dirty) {
         if (!mAvailable || mLockedCanvas != null) return null;
-        if (mSurfaceTexture != null && mSurfaceTexture.macapkHasCameraSource()) return null;
+        if (mSurfaceTexture != null && GfxBackend.get().hasCameraSource(mSurfaceTexture)) return null;
         // Same rule for a connected EGL window surface (the GL producer): the
         // stream has ONE producer, and nativeLockCanvas cannot connect a second.
-        if (mSurfaceTexture != null && mSurfaceTexture.macapkHasProducer()) return null;
+        if (mSurfaceTexture != null && GfxBackend.get().hasProducer(mSurfaceTexture)) return null;
         int w = Math.max(1, getWidth());
         int h = Math.max(1, getHeight());
         if (mCanvasBitmap == null
                 || mCanvasBitmap.getWidth() != w || mCanvasBitmap.getHeight() != h) {
-            mCanvasBitmap = Bitmap.createBitmapWithCanvasBacking(w, h);
+            mCanvasBitmap = com.macapk.loader.gfx.GfxBackend.get().createFrameBitmap(w, h);
         }
         mLockedCanvas = new android.graphics.Canvas(mCanvasBitmap);
         return mLockedCanvas;
@@ -336,17 +341,27 @@ public class TextureView extends View {
         // the render thread composites the SurfaceTexture's latest image. Our
         // render thread IS the Canvas pipeline, so this draw performs the
         // consumer latch + composite: newest producer frame (camera) first,
-        // else the lockCanvas content, else nothing (a stream with no frames
-        // paints nothing, honestly).
+        // else the lockCanvas content, over black when opaque (below).
         Bitmap frame = null;
         boolean fresh = false;
         if (mSurfaceTexture != null) {
-            frame = mSurfaceTexture.macapkLatchBitmap();
-            int gen = mSurfaceTexture.macapkLatchGeneration();
+            frame = GfxBackend.get().latchBitmap(mSurfaceTexture);
+            int gen = GfxBackend.get().latchGeneration(mSurfaceTexture);
             fresh = gen != mDrawnGeneration;
             mDrawnGeneration = gen;
         }
         if (frame == null) frame = mCanvasContent;
+        if (mOpaque && canvas != null && getWidth() > 0 && getHeight() > 0) {
+            // What AOSP's own code paints on a software canvas, which ours is:
+            // getLayerType() is LAYER_TYPE_HARDWARE, so View.draw(Canvas, ViewGroup,
+            // long) draws the view through its drawing cache, built opaque (RGB_565,
+            // or ARGB_8888 with setHasAlpha(false)) when isOpaque() and never erased,
+            // and draw() puts nothing in it: an opaque TextureView reads black, a
+            // setOpaque(false) one transparent (android14 View.java buildDrawingCacheImpl,
+            // TextureView.java draw/getLayerType). Robolectric shows the same black
+            // (Gallery's activity_video_player). A frame then covers it.
+            canvas.drawRect(0, 0, getWidth(), getHeight(), opaqueBackdrop());
+        }
         if (frame != null && canvas != null) {
             mSrcRect.set(0, 0, frame.getWidth(), frame.getHeight());
             mDstRect.set(0, 0, getWidth(), getHeight());
@@ -354,6 +369,17 @@ public class TextureView extends View {
         }
         if (fresh) applyUpdate();
         mMatrixChanged = false;
+    }
+
+    private static android.graphics.Paint sOpaqueBackdrop;
+
+    private static android.graphics.Paint opaqueBackdrop() {
+        if (sOpaqueBackdrop == null) {
+            android.graphics.Paint p = new android.graphics.Paint();
+            p.setColor(0xFF000000);
+            sOpaqueBackdrop = p;
+        }
+        return sOpaqueBackdrop;
     }
 
     private void applyUpdate() {

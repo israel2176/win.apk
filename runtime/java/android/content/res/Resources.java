@@ -6,6 +6,7 @@
 // we add the resources.arsc parser.
 package android.content.res;
 
+import com.macapk.loader.gfx.GfxBackend;
 import android.util.DisplayMetrics;
 
 import java.io.IOException;
@@ -233,6 +234,10 @@ public class Resources {
     }
     public InputStream openRawResource(int id, android.util.TypedValue value)
         throws android.content.res.Resources.NotFoundException {
+        // AOSP fills `value` first (getValue(id, value, true)): AOSP's NinePatchDrawable and
+        // BitmapDrawable decode the picture at the density it reports (WINAPK_AOSP_GFX=1; the
+        // Java2D side keeps the value as given).
+        if (value != null && GfxBackend.isAosp()) getValue(id, value, true);
         return openRawResource(id);
     }
 
@@ -769,6 +774,13 @@ public class Resources {
                 // followed, matching the app-side branch below and AOSP's
                 // out_last_reference behaviour.
                 macapkApplyChaseTerminus(outValue, resolveRefs);
+                // A platform file's density, from the configuration of the entry the table chose
+                // (its folder, "res/drawable-xhdpi-v4/..."), as AssetManager reports it: AOSP's
+                // BitmapDrawable and NinePatchDrawable scale the picture from it. WINAPK_AOSP_GFX=1
+                // only: Win.apk's own drawables take a platform picture's density elsewhere.
+                if (fwType == android.util.TypedValue.TYPE_STRING && GfxBackend.isAosp()) {
+                    outValue.density = macapkFolderDensity(outValue.string.toString());
+                }
                 return;
                 }
             }
@@ -933,6 +945,11 @@ public class Resources {
             // getValue was the one path that had not been converted, and the two
             // are required to agree.
             outValue.string = macapkArscRelativePath(path);
+            // TypedValue.assetCookie: the APK that holds the file, as AOSP reports it. AOSP's
+            // Font.Builder(Resources, int) (androidx's ResourcesCompat.getFont on API 29+) opens the
+            // file with it, openNonAssetFd(cookie, path): the default 1 named the framework's APK,
+            // which has no res/font/ of the app's, and every app font failed to load there.
+            if (assets != null) outValue.assetCookie = assets.macapkCookieOf(outValue.string.toString());
             // TypedValue.density: the folder's density, which decodeResourceStream scales from.
             { int fileDensity = macapkResourceDensity(id); if (fileDensity != 0) outValue.density = fileDensity; }
             outValue.data = 0;
@@ -1038,6 +1055,33 @@ public class Resources {
         } catch (Throwable t) {
             return 0;
         }
+    }
+
+    /** TypedValue.density of a file the table's path names ("res/drawable-xhdpi-v4/x.png"): its
+     *  folder's density qualifier; DENSITY_NONE for nodpi, DENSITY_DEFAULT (0, mdpi) for none or
+     *  anydpi, as the entry's configuration says on a device. */
+    static int macapkFolderDensity(String path) {
+        if (path == null) return 0;
+        int slash = path.lastIndexOf('/');
+        String dir = slash > 0 ? path.substring(path.lastIndexOf('/', slash - 1) + 1, slash) : "";
+        for (String q : dir.split("-")) {
+            switch (q) {
+                case "nodpi": return 0xffff;  // TypedValue.DENSITY_NONE
+                case "anydpi": return 0;
+                case "ldpi": return 120;
+                case "mdpi": return 160;
+                case "tvdpi": return 213;
+                case "hdpi": return 240;
+                case "xhdpi": return 320;
+                case "xxhdpi": return 480;
+                case "xxxhdpi": return 640;
+                default:
+                    if (q.endsWith("dpi") && q.length() > 3 && q.substring(0, q.length() - 3).chars().allMatch(Character::isDigit)) {
+                        return Integer.parseInt(q.substring(0, q.length() - 3));
+                    }
+            }
+        }
+        return 0;
     }
 
     private String macapkResourcePath(int id) {
@@ -1234,10 +1278,11 @@ public class Resources {
                 android.graphics.drawable.NinePatchDrawable np = new android.graphics.drawable.NinePatchDrawable(
                     res, ninePatchContent, ninePatchChunk, ninePatchPadding, ninePatchPath);
                 if (opticalInsets != null) {
-                    np.macapkSetOpticalInsets(opticalInsets[0], opticalInsets[1], opticalInsets[2], opticalInsets[3]);
+                    GfxBackend.get().setNinePatchOpticalInsets(np, opticalInsets[0], opticalInsets[1],
+                            opticalInsets[2], opticalInsets[3]);
                 }
                 if (sourceDensity != 0 && res != null && res.metrics != null) {
-                    np.macapkSetDensities(sourceDensity, res.metrics.densityDpi);
+                    GfxBackend.get().setNinePatchDensities(np, sourceDensity, res.metrics.densityDpi);
                 }
                 return np;
             }
@@ -1342,7 +1387,7 @@ public class Resources {
             // the same type. See VectorDrawable.macapkUnresolvedStub.
             android.graphics.drawable.VectorDrawable stub =
                 new android.graphics.drawable.VectorDrawable();
-            stub.macapkUnresolvedStub = true;
+            GfxBackend.get().setUnresolvedStub(stub, true);
             return stub;
         }
 
@@ -1508,7 +1553,7 @@ public class Resources {
         // lane layout, 2026-08-01: thread the inflating Theme into the
         // <vector> branch too, so `?attr` PATH FILLS resolve against the
         // runtime (setTheme'd) theme -- see VectorDrawable's 3-arg ctor.
-        return new android.graphics.drawable.VectorDrawable(this, id, theme);
+        return GfxBackend.get().vectorFromResource(this, id, theme);
     }
 
     /** Wave 5 F6 gate; see the colour-file branch in macapkGetDrawableImpl. */
@@ -1994,7 +2039,31 @@ public class Resources {
     private static int macapkParseGravity(String v) {
         Integer n = macapkCompiledInt(v);
         if (n != null) return n;
-        return android.view.Gravity.parse(v);
+        return com.macapk.loader.view.ViewHost.get().parseGravity(v);
+    }
+
+    /** A drawable's XML as a DOM, read as macapkInflateXmlDrawable reads it (the platform files'
+     *  memo, compiled AXML or text), or null. For the drawables GfxBackend builds outside this
+     *  package (com.macapk.loader.gfx.AospGfx's vectors). */
+    public org.w3c.dom.Document macapkDrawableXml(int id) {
+        try {
+            org.w3c.dom.Document doc = macapkFwXmlDoc(id);
+            if (doc != null) return doc;
+            byte[] bytes;
+            try (java.io.InputStream in = openRawResource(id)) {
+                if (in == null) return null;
+                bytes = in.readAllBytes();
+            }
+            if (bytes.length >= 4 && bytes[0] == 0x03 && bytes[1] == 0x00
+                    && bytes[2] == 0x08 && bytes[3] == 0x00) {
+                return macapkParseCompiledXml(bytes);
+            }
+            javax.xml.parsers.DocumentBuilderFactory f = javax.xml.parsers.DocumentBuilderFactory.newInstance();
+            f.setNamespaceAware(true);
+            return f.newDocumentBuilder().parse(new java.io.ByteArrayInputStream(bytes));
+        } catch (Throwable t) {
+            return null;
+        }
     }
 
     private android.graphics.drawable.Drawable macapkInflateXmlDrawable(int id, Theme theme) {
@@ -2044,6 +2113,13 @@ public class Resources {
             }
             org.w3c.dom.Element root = doc.getDocumentElement();
             if (root == null) return null;
+            // WINAPK_AOSP_GFX=1: the drawable inflates itself, as on Android (AOSP's
+            // Drawable.createFromXmlInner, its DrawableInflater and each drawable's inflate()); null
+            // there (logged) leaves it to Win.apk's inflater below. Null always on Java2D.
+            if (GfxBackend.isAosp()) {
+                android.graphics.drawable.Drawable aosp = GfxBackend.get().inflateXmlDrawable(this, root, theme, id);
+                if (aosp != null) return aosp;
+            }
             android.graphics.drawable.Drawable d = macapkInflateDrawableElement(root, theme);
             if (d != null) return d;
             // We PARSED a root tag and still produced nothing. Returning null
@@ -2054,6 +2130,12 @@ public class Resources {
             // correct and unchanged: there we know nothing about the file.
             return macapkUnhandledRootDrawable(macapkLocalTag(root));
         } catch (Throwable t) {
+            // WINAPK_AOSP_GFX=1: AOSP's drawable classes under Win.apk's inflater; say which did not
+            // take, rather than an empty vector standing in without a word.
+            if (GfxBackend.isAosp()) {
+                com.macapk.loader.NativeLog.w("Win.apk.Resources", "drawable 0x" + Integer.toHexString(id)
+                        + " did not inflate on AOSP's classes: " + t);
+            }
             return null;
         } finally {
             sXmlDrawableDepth.set(depth);
@@ -2123,7 +2205,7 @@ public class Resources {
             // `?attr` path fills resolve like the standalone-file path does.
             // `this` (the Resources) is required: without it the vector cannot
             // resolve aapt2 inline <gradient> fills or `@color/` path fills.
-            case "vector":   return new android.graphics.drawable.VectorDrawable(e, theme, this);
+            case "vector":   return GfxBackend.get().vectorFromElement(e, theme, this);
             // <bitmap> and <nine-patch> were UNHANDLED and fell to `default`.
             // See macapkInflateBitmap for why that was expensive to find.
             case "bitmap": case "nine-patch": return macapkInflateBitmap(e, theme);
@@ -2430,10 +2512,7 @@ public class Resources {
             org.w3c.dom.Element root, Theme theme) {
         android.graphics.drawable.Drawable inner = macapkWrapperChild(root, "drawable", theme);
         if (inner == null) return null;
-        android.graphics.drawable.AnimatedVectorDrawable avd =
-            new android.graphics.drawable.AnimatedVectorDrawable();
-        avd.macapkSetInner(inner);
-        return avd;
+        return GfxBackend.get().animatedVector(inner);
     }
 
     /** AOSP AnimatedImageDrawable: {@code <animated-image android:src=...>}
@@ -2451,7 +2530,7 @@ public class Resources {
             if (bm != null) {
                 android.graphics.drawable.AnimatedImageDrawable aid =
                     new android.graphics.drawable.AnimatedImageDrawable();
-                aid.macapkSetBitmap(bm);
+                GfxBackend.get().setAnimatedImageBitmap(aid, bm);
                 return aid;
             }
         }
@@ -2497,8 +2576,7 @@ public class Resources {
             org.w3c.dom.Element root, Theme theme) {
         android.graphics.drawable.Drawable child = macapkWrapperChild(root, "drawable", theme);
         if (child == null) return null;
-        android.graphics.drawable.RotateDrawable rd =
-            new android.graphics.drawable.RotateDrawable(child);
+        android.graphics.drawable.RotateDrawable rd = GfxBackend.get().rotateDrawable(child);
         rd.setFromDegrees(macapkFloatAttr(root, "fromDegrees", 0f));
         rd.setToDegrees(macapkFloatAttr(root, "toDegrees", 360f));
         String px = root.getAttributeNS(MACAPK_ANDROID_NS, "pivotX");
@@ -2840,8 +2918,7 @@ public class Resources {
     }
 
     private android.graphics.drawable.Drawable macapkInflateLayerList(org.w3c.dom.Element root, Theme theme) {
-        android.graphics.drawable.LayerDrawable ld =
-            new android.graphics.drawable.LayerDrawable();
+        android.graphics.drawable.LayerDrawable ld = GfxBackend.get().layerDrawable();
         macapkFillLayerList(root, theme, ld, false);
         return ld.getNumberOfLayers() > 0 ? ld : null;
     }
@@ -2929,8 +3006,7 @@ public class Resources {
         // `instanceof RippleDrawable` to set the colour or the radius skipped it (uiprobe:
         // abc_control_background_material, item_background_material, Material's ripples).
         // RippleDrawable.draw leaves the mask layer out with the gate off too.
-        android.graphics.drawable.RippleDrawable rd =
-            new android.graphics.drawable.RippleDrawable();
+        android.graphics.drawable.RippleDrawable rd = GfxBackend.get().rippleDrawable();
         // A single resolved colour rather than a real ColorStateList: our
         // <ripple android:color> values are `?attr/colorControlHighlight` or a
         // literal, and macapkResolveColorString is the resolver every other
@@ -3810,7 +3886,7 @@ public class Resources {
         try { dr = getDrawable(fid, theme); }
         catch (Throwable t) { return null; }
         if (dr instanceof android.graphics.drawable.VectorDrawable vd
-                && (vd.macapkUnresolvedStub || vd.macapkPaintsNothing())) {
+                && (GfxBackend.get().isUnresolvedStub(vd) || GfxBackend.get().vectorPaintsNothing(vd))) {
             return null;
         }
         return dr;
@@ -3842,7 +3918,7 @@ public class Resources {
         if (ref.isEmpty()) return null;
         if (ref.startsWith("#")) {
             try { return new android.graphics.drawable.ColorDrawable(
-                android.graphics.Color.macapkParseResourceColor(ref)); }
+                GfxBackend.get().parseResourceColor(ref)); }
             catch (Throwable t) { return null; }
         }
         if (ref.startsWith("?")) {
@@ -4044,6 +4120,23 @@ public class Resources {
         return macapkColorStateListValue(v, theme);
     }
 
+    /** A drawable attribute's dimension in pixels, a literal ("24dp"), `@dimen/` or `?attr`, as
+     *  macapkDimAttr reads it but unrounded; `def` when it does not resolve. For the drawables that
+     *  live outside this package (com.macapk.loader.gfx.AospVector). */
+    public float macapkDimensionFor(String v, Theme theme, float def) {
+        if (v == null || v.trim().isEmpty()) return def;
+        v = v.trim();
+        Float px;
+        try {
+            if (v.startsWith("?")) px = macapkThemeDimenPx(v, theme);
+            else if (v.startsWith("@")) px = macapkResolveDimenRef(v);
+            else px = macapkParseDimenString(v);
+        } catch (Throwable t) {
+            px = null;
+        }
+        return px != null ? px : def;
+    }
+
     private android.content.res.ColorStateList macapkColorStateListValue(String v, Theme theme) {
         if (v == null) return null;
         v = v.trim();
@@ -4113,7 +4206,7 @@ public class Resources {
         // 120x120 back button: a square where the AVD draws a 100px disk).
         // `useLevel` here is the SHAPE's attribute; <gradient useLevel> is a
         // different field (mUseLevel) read with the gradient.
-        if (android.graphics.drawable.GradientDrawable.MACAPK_SHAPE_RING) {
+        if (GfxBackend.get().readsShapeRing()) {
             if ("ring".equals(shapeAttr == null ? null : shapeAttr.trim())) {
                 gd.setShape(android.graphics.drawable.GradientDrawable.RING);
             }
@@ -4130,8 +4223,8 @@ public class Resources {
                     gd.setThicknessRatio(macapkFloatAttr(root, "thicknessRatio",
                         gd.getThicknessRatio()));
                 }
-                gd.macapkSetUseLevelForShape(macapkBoolAttr(root, "useLevel",
-                    gd.macapkGetUseLevelForShape()));
+                GfxBackend.get().setUseLevelForShape(gd, macapkBoolAttr(root, "useLevel",
+                    GfxBackend.get().getUseLevelForShape(gd)));
             }
         }
         // <shape android:tint / android:tintMode> (MACAPK_SHAPE_TINT). AOSP
@@ -4152,7 +4245,7 @@ public class Resources {
         // ?attr/colorButtonNormal / ?attr/colorAccent) were white faces.
         // GradientDrawable composes the tint the AOSP way (a BlendModeColorFilter
         // over the fill and the stroke) under the same gate.
-        if (android.graphics.drawable.GradientDrawable.MACAPK_SHAPE_TINT) {
+        if (GfxBackend.get().readsShapeTint()) {
             android.graphics.PorterDuff.Mode mode = macapkParseTintMode(
                 root.getAttributeNS(MACAPK_ANDROID_NS, "tintMode"));
             if (mode != null) gd.setTintMode(mode);
@@ -4429,7 +4522,7 @@ public class Resources {
         v = v.trim();
         if (v.isEmpty()) return def;
         if (v.startsWith("#")) {
-            try { return android.graphics.Color.macapkParseResourceColor(v); }
+            try { return GfxBackend.get().parseResourceColor(v); }
             catch (Throwable t) { return def; }
         }
         if (v.startsWith("?")) {
@@ -5352,6 +5445,23 @@ public class Resources {
         }
         try {
             String[] tn = macapkTypeNameOf(id);
+            // AOSP's ResourcesImpl.loadColorStateList takes any file-backed .xml
+            // value and goes by its root tag, whatever the type: a textColor of
+            // @drawable/x where x is a <selector> of colours is a ColorStateList
+            // (Cal's buttons: white on black came out black on black).
+            if (tn != null && "drawable".equals(tn[0]) && !MACAPK_NO_DRAWABLE_CSL) {
+                byte[] xml = null;
+                java.io.InputStream in = macapkOpenResFileByName("drawable", tn[1]);
+                if (in != null) {
+                    try { xml = in.readAllBytes(); } finally { try { in.close(); } catch (Throwable ignored) {} }
+                }
+                if (xml != null && macapkIsColorSelector(xml)) {
+                    org.xmlpull.v1.XmlPullParser p = macapkNewPullParser(new java.io.ByteArrayInputStream(xml));
+                    if (p != null) {
+                        return android.content.res.ColorStateList.createFromXml(this, p, theme);
+                    }
+                }
+            }
             if (tn != null && "color".equals(tn[0])) {
                 java.io.InputStream in = macapkOpenResFileByName("color", tn[1]);
                 if (in != null) {
@@ -5366,6 +5476,36 @@ public class Resources {
         } catch (Throwable ignored) {}
         macapkCslFileMiss.add(id);
         return null;
+    }
+
+    /** MACAPK_NO_DRAWABLE_CSL=1: a drawable-typed <selector> is never a colour list. */
+    private static final boolean MACAPK_NO_DRAWABLE_CSL =
+        "1".equals(System.getenv("MACAPK_NO_DRAWABLE_CSL"));
+
+    /** A <selector> whose every <item> names an android:color: what AOSP's
+     *  ColorStateList inflates (an item without one is an error there). A
+     *  selector of drawables is not one. */
+    private static boolean macapkIsColorSelector(byte[] xml) {
+        try {
+            org.xmlpull.v1.XmlPullParser p = macapkNewPullParser(new java.io.ByteArrayInputStream(xml));
+            if (p == null) return false;
+            boolean root = true, any = false;
+            for (int ev = p.next(); ev != org.xmlpull.v1.XmlPullParser.END_DOCUMENT; ev = p.next()) {
+                if (ev != org.xmlpull.v1.XmlPullParser.START_TAG) continue;
+                if (root) {
+                    if (!"selector".equals(p.getName())) return false;
+                    root = false;
+                } else if ("item".equals(p.getName()) && p.getDepth() == 2) {
+                    if (p.getAttributeValue("http://schemas.android.com/apk/res/android", "color") == null) {
+                        return false;
+                    }
+                    any = true;
+                }
+            }
+            return any;
+        } catch (Throwable t) {
+            return false;
+        }
     }
 
     /** The platform <selector> behind framework colour `id`, or null when the id
@@ -6562,6 +6702,13 @@ public class Resources {
             }
             return ID_NULL;
         }
+        /** AOSP Theme.resolveAttributes (@hide): {@code values[i]} is the theme attribute that
+         *  {@code attrs[i]} referred to (TypedArray.extractThemeAttrs'), resolved in this theme; the
+         *  TypedArray keeps {@code attrs}' indices. (This TypedArray resolves theme attributes when
+         *  it is obtained, so AOSP's drawables find none left to apply.) */
+        public TypedArray resolveAttributes(int[] values, int[] attrs) {
+            return obtainStyledAttributes(values);
+        }
         /** API-3+ — get theme attribute count. */
         public TypedArray obtainStyledAttributes(int[] attrs) {
             // AOSP: `mThemeImpl.obtainStyledAttributes(this, null, attrs, 0, 0)`
@@ -6634,6 +6781,7 @@ public class Resources {
         }
         public TypedArray obtainStyledAttributes(android.util.AttributeSet set, int[] attrs,
                                                   int defStyleAttr, int defStyleRes) {
+            set = macapkSetAtObtain(set);
             // BIND the AttributeSet when present so the returned TypedArray
             // reads real per-attribute values from the inflated XML (same
             // as Resources.obtainAttributes / Context.obtainStyledAttributes,
@@ -6861,6 +7009,11 @@ public class Resources {
          *  or defStyleRes (a style id) to the style's NAME, walking this Theme's
          *  applied-style cascade then the application theme (mirrors
          *  resolveAttribute). Returns null when no style is found. */
+        /** MACAPK_DEFSTYLE_BARE=1 asks a framework defStyleAttr by its bare name
+         *  again, as before resolveDefStyleName kept the `android:` namespace. */
+        private static final boolean MACAPK_DEFSTYLE_FW_NS =
+            !"1".equals(System.getenv("MACAPK_DEFSTYLE_BARE"));
+
         private String resolveDefStyleName(int defStyleAttr, int defStyleRes) {
             if (macapkResourceIndex == null) return null;
             try {
@@ -6907,6 +7060,20 @@ public class Resources {
                         if ((defStyleAttr >>> 24) != 0x01) {
                             styleRef = macapkResolveAppAttrExact(attrName);
                         }
+                        // A FRAMEWORK attribute (0x01xxxxxx: every framework widget's
+                        // constructor passes one, CheckBox com.android.internal.R.attr
+                        // .checkboxStyle) is asked as `android:X`. AOSP matches theme
+                        // items by attribute id, so the app's own bare `X` -- Material
+                        // 3's checkboxStyle, meant for MaterialCheckBox, with its 48 dp
+                        // minimum touch target -- can never answer it. Asked bare, it
+                        // did: every framework CheckBox and Switch in a Material theme
+                        // measured 48x48 where Android has 32x32 (the screens sweep).
+                        // resolveAttrInTheme("android:X") finds the leaf-most app
+                        // android:X first and the platform theme's value last.
+                        if (MACAPK_DEFSTYLE_FW_NS && (defStyleAttr >>> 24) == 0x01
+                                && !attrName.startsWith("android:")) {
+                            attrName = "android:" + attrName;
+                        }
                         if (styleRef == null) {
                             for (String style : appliedStyles) {
                                 Object r = mResolve.invoke(macapkResourceIndex, style, attrName);
@@ -6948,6 +7115,12 @@ public class Resources {
                         final boolean appHop = !refAttr.startsWith("android:");
                         if (refAttr.startsWith("attr/")) refAttr = refAttr.substring(5);
                         else if (refAttr.startsWith("android:attr/")) refAttr = refAttr.substring(13);
+                        // `?android:buttonStyle` names the framework attribute: ask it
+                        // as such (see MACAPK_DEFSTYLE_FW_NS above), not by the bare
+                        // name an app or library theme also uses.
+                        if (MACAPK_DEFSTYLE_FW_NS && !appHop && !refAttr.startsWith("android:")) {
+                            refAttr = "android:" + refAttr;
+                        }
                         String next = appHop ? macapkResolveAppAttrExact(refAttr) : null;
                         java.lang.reflect.Method mResolve2 = macapkResourceIndex.getClass()
                             .getMethod("resolveAttrInTheme", String.class, String.class);
@@ -7224,7 +7397,87 @@ public class Resources {
     /** AOSP Resources.obtainAttributes(AttributeSet, int[]): builds a
      *  TypedArray from the attribute set's values. */
     public TypedArray obtainAttributes(android.util.AttributeSet set, int[] attrs) {
-        return new TypedArray(this, attrs, set);
+        return new TypedArray(this, attrs, macapkSetAtObtain(set));
+    }
+
+    private static volatile java.lang.reflect.Method sAtCurrentElement;
+
+    /** The AttributeSet a TypedArray binds to. With WINAPK_AOSP_GFX=1, a resource XML pull parser
+     *  (com.macapk.loader.DomXmlResourceParser) is replaced by a copy that stays on its current
+     *  element: on Android the TypedArray's values are copied out when it is obtained, and AOSP's
+     *  drawables read theirs after their inflate() has moved the parser on to their children
+     *  (InsetDrawable, LayerDrawable...). This TypedArray reads its set when asked, so it needs the
+     *  copy. The Java2D side keeps the set as given. */
+    static android.util.AttributeSet macapkSetAtObtain(android.util.AttributeSet set) {
+        if (set == null || !GfxBackend.isAosp()
+                || !"com.macapk.loader.DomXmlResourceParser".equals(set.getClass().getName())) return set;
+        try {
+            java.lang.reflect.Method m = sAtCurrentElement;
+            if (m == null) sAtCurrentElement = m = set.getClass().getMethod("macapkAtCurrentElement");
+            Object frozen = m.invoke(set);
+            return frozen != null ? (android.util.AttributeSet) frozen : set;
+        } catch (Throwable t) {
+            return set;
+        }
+    }
+
+    /** AOSP Resources.obtainAttributes(Resources, Theme, AttributeSet, int[]) (@hide; AOSP's
+     *  drawables and GradientColor read their attributes with it): the theme's styled attributes
+     *  when there is a theme, else the Resources'. */
+    public static TypedArray obtainAttributes(Resources res, Theme theme, android.util.AttributeSet set,
+                                              int[] attrs) {
+        if (theme == null) return res.obtainAttributes(set, attrs);
+        return theme.obtainStyledAttributes(set, attrs, 0, 0);
+    }
+
+    private android.graphics.drawable.DrawableInflater mDrawableInflater;
+
+    /** AOSP Resources.getDrawableInflater (@hide): AOSP's Drawable.createFromXmlInner inflates
+     *  every element through it (WINAPK_AOSP_GFX=1: AOSP's DrawableInflater, lib/aosp-graphics.jar). */
+    public final android.graphics.drawable.DrawableInflater getDrawableInflater() {
+        if (mDrawableInflater == null) {
+            ClassLoader cl = getClassLoader();
+            mDrawableInflater = new android.graphics.drawable.DrawableInflater(this,
+                    cl != null ? cl : Resources.class.getClassLoader());
+        }
+        return mDrawableInflater;
+    }
+
+    /** A colour file's {@code <gradient>} as AOSP's GradientColor (TypedArray.getComplexColor's
+     *  gradient case, as AOSP's ResourcesImpl.loadComplexColorForCookie): only on AOSP's graphics
+     *  (GfxBackend), null for any other id. */
+    ComplexColor macapkGradientColor(int id, Theme theme) {
+        if (!GfxBackend.isAosp() || id == 0) return null;
+        try {
+            String path = macapkResourcePath(id);
+            if (path == null ? (id >>> 24) != 0x01 : !path.endsWith(".xml")) return null;
+            org.w3c.dom.Document doc = macapkDrawableXml(id);
+            org.w3c.dom.Element root = doc == null ? null : doc.getDocumentElement();
+            if (root == null || !"gradient".equals(macapkLocalTag(root))) return null;
+            return GfxBackend.get().gradientColor(this, root, theme);
+        } catch (Throwable t) {
+            com.macapk.loader.NativeLog.w("Win.apk.Resources", "gradient colour 0x" + Integer.toHexString(id)
+                    + ": " + t);
+            return null;
+        }
+    }
+
+    /** A pull parser and its AttributeSet positioned at the start of {@code e} (its own document),
+     *  as AOSP's XmlBlock parser stands when Drawable.createFromXmlInner is called: for the drawables
+     *  GfxBackend inflates on AOSP's classes. Null when one cannot be built. */
+    public org.xmlpull.v1.XmlPullParser macapkXmlParserAt(org.w3c.dom.Element e) {
+        Object parser = macapkParserForElement(e);
+        if (!(parser instanceof org.xmlpull.v1.XmlPullParser)) return null;
+        org.xmlpull.v1.XmlPullParser xpp = (org.xmlpull.v1.XmlPullParser) parser;
+        try {
+            int evt = xpp.getEventType();
+            while (evt != org.xmlpull.v1.XmlPullParser.START_TAG && evt != org.xmlpull.v1.XmlPullParser.END_DOCUMENT) {
+                evt = xpp.next();
+            }
+            return evt == org.xmlpull.v1.XmlPullParser.START_TAG ? xpp : null;
+        } catch (Throwable t) {
+            return null;
+        }
     }
 
     /** AOSP Resources.obtainTypedArray(int) (Resources.java:729): resolves an
@@ -7852,7 +8105,7 @@ public class Resources {
         // serves the installed apk's entry (v1.0.1590) or a decoded-tree file.
         try (java.io.InputStream in = openRawResource(id)) {
             if (in == null) return null;
-            return android.graphics.Typeface.Builder.macapkFromStream(in).build();
+            return GfxBackend.get().typefaceBuilderFromStream(in).build();
         } catch (Throwable t) {
             return null;
         }
@@ -7866,7 +8119,7 @@ public class Resources {
             int rid, int weight, boolean italic) {
         try (java.io.InputStream in = openRawResource(rid)) {
             if (in == null) return null;
-            return android.graphics.Typeface.Builder.macapkFromStream(in)
+            return GfxBackend.get().typefaceBuilderFromStream(in)
                 .setWeight(weight).setItalic(italic).build();
         } catch (Throwable t) {
             return null;
@@ -7941,9 +8194,9 @@ public class Resources {
                 if (rid == 0) continue;
                 String path = macapkResourcePath(rid);
                 if (path == null || path.endsWith(".xml")) continue;
-                android.graphics.MacApkFont.LoadedFace lf;
+                GfxBackend.FontFace lf;
                 try (java.io.InputStream fin = openRawResource(rid)) {
-                    lf = fin == null ? null : android.graphics.MacApkFont.loadFace(fin);
+                    lf = fin == null ? null : GfxBackend.get().loadFontFace(fin);
                 } catch (Throwable t) { lf = null; }
                 if (lf == null || lf.font == null) continue;
                 // An entry that DECLARES fontWeight/fontStyle wins over the
@@ -7970,8 +8223,8 @@ public class Resources {
                 }
             }
             if (faces.isEmpty()) return null;
-            String fam = android.graphics.MacApkFontFamilies.registerAppFamily(faces);
-            android.graphics.Typeface tf = android.graphics.Typeface.macapkFromAppFamily(fam);
+            String fam = GfxBackend.get().registerAppFamily(faces);
+            android.graphics.Typeface tf = GfxBackend.get().typefaceFromAppFamily(fam);
             if (tf != null) return tf;
             // Table gated off (MACAPK_FONT_FAMILY=0): fall back to the single
             // best default-style match, which is the pre-v936 behaviour.

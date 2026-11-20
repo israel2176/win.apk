@@ -26,6 +26,13 @@ gets one status:
     no-frame  ran until the timeout without presenting a frame
     crashed   the process ended on its own before that (exit code != 0)
 
+Each app's memory goes in the report too: the peak working set and the peak private
+bytes (commit) of the runtime's process over the whole run, sampled through
+GetProcessMemoryInfo on Windows, and the working set at the first frame, which
+the runtime prints itself (also under Wine, whose private bytes read 0). The
+install helpers and background workers the runtime starts (dex conversion, the
+arm64 translation, the CDS dump) are processes of their own and not counted.
+
 It then collects, per app, the host natives that were called while still
 stubbed, the exceptions Java logged, a HotSpot crash file if there was one,
 and for the app's own native code the system functions it called that the
@@ -60,6 +67,8 @@ THREW_RE = re.compile(r"threw ([\w.$]+(?:Exception|Error))(?::\s*(.*?))?(?: -- c
 # A bare stack-trace head: "java.lang.IllegalStateException: msg"
 TRACE_RE = re.compile(r"^([a-z][\w.]*\.[A-Z][\w$]*(?:Exception|Error))(?::\s*(.*))?$")
 FRAMES_RE = re.compile(r"\[win\.apk\] (\d+) frames presented")
+# host/cds.cpp, at the first frame.
+FIRST_FRAME_MEM_RE = re.compile(r"\[win\.apk\] startup: first frame at [\d.]+ s; working set (\d+) MB")
 # An app's own native code (host/guest_libs.cpp): a system function the shim
 # does not have yet, and a library that could not be loaded at all.
 GUEST_MISSING_RE = re.compile(
@@ -140,6 +149,61 @@ def bmp_colors(path, limit=16):
         return 0
 
 
+class MemoryWatch:
+    """The peak working set and peak private bytes (MB) of one process while it runs, polled with
+    GetProcessMemoryInfo; both are the process's own peaks, so a poll that misses the moment still
+    sees it. Nothing (None) off Windows: under Wine the process is not the one Popen started."""
+
+    def __init__(self, pid):
+        self.peak_ws = self.peak_private = None
+        self._stop = threading.Event()
+        self._thread = None
+        if sys.platform != "win32":
+            return
+        import ctypes
+        self._ctypes = ctypes
+        self._k32 = ctypes.WinDLL("kernel32")
+        self._k32.OpenProcess.restype = ctypes.c_void_p
+        self._h = self._k32.OpenProcess(0x1000 | 0x0010, False, pid)  # QUERY_LIMITED_INFORMATION | VM_READ
+        if self._h:
+            self._thread = threading.Thread(target=self._poll, daemon=True)
+            self._thread.start()
+
+    def _sample(self):
+        ctypes = self._ctypes
+
+        class Counters(ctypes.Structure):
+            _fields_ = [("cb", ctypes.c_ulong), ("PageFaultCount", ctypes.c_ulong),
+                        ("PeakWorkingSetSize", ctypes.c_size_t), ("WorkingSetSize", ctypes.c_size_t),
+                        ("QuotaPeakPagedPoolUsage", ctypes.c_size_t), ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                        ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t), ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                        ("PagefileUsage", ctypes.c_size_t), ("PeakPagefileUsage", ctypes.c_size_t)]
+
+        c = Counters()
+        c.cb = ctypes.sizeof(c)
+        try:
+            ok = self._k32.K32GetProcessMemoryInfo(ctypes.c_void_p(self._h), ctypes.byref(c), c.cb)
+        except Exception:
+            ok = False  # a number missing from the report, never a sweep that stops
+        if ok:
+            ws, private = round(c.PeakWorkingSetSize / 1048576), round(c.PeakPagefileUsage / 1048576)
+            if ws:  # an exited process reads all zero
+                self.peak_ws = max(self.peak_ws or 0, ws)
+                self.peak_private = max(self.peak_private or 0, private)
+
+    def _poll(self):
+        while not self._stop.wait(0.5):
+            self._sample()
+
+    def stop(self):
+        if self._thread:
+            self._stop.set()
+            self._thread.join()
+            self._thread = None
+            self._sample()
+            self._k32.CloseHandle(self._ctypes.c_void_p(self._h))
+
+
 def run_app(pkg, apk, args, out):
     log_path = os.path.join(out, "logs", f"{pkg}.log")
     frame_path = os.path.join(out, "frames", f"{pkg}.bmp")
@@ -175,14 +239,17 @@ def run_app(pkg, apk, args, out):
 
         reader = threading.Thread(target=copy, daemon=True)
         reader.start()
+        memory = MemoryWatch(proc.pid)
         try:
             code = proc.wait(timeout=args.timeout)
             timed_out = False
         except subprocess.TimeoutExpired:
+            memory.stop()  # before the kill: a killed process's counters are gone
             proc.kill()
             proc.wait()
             code = None
             timed_out = True
+        memory.stop()
         # A process the runtime started may still hold the pipe; never wait on it.
         reader.join(timeout=10)
     if args.launcher and os.path.basename(args.launcher).startswith("wine"):
@@ -190,7 +257,9 @@ def run_app(pkg, apk, args, out):
         subprocess.run(["wineserver", "-k"], capture_output=True)
     seconds = round(time.time() - start, 1)
     text = STAMP_RE.sub("", open(log_path, encoding="utf-8", errors="replace").read())
-    return analyze(pkg, text, code, timed_out, seconds, frame_path, out)
+    r = analyze(pkg, text, code, timed_out, seconds, frame_path, out)
+    r["peak_working_set_mb"], r["peak_private_mb"] = memory.peak_ws, memory.peak_private
+    return r
 
 
 def analyze(pkg, text, code, timed_out, seconds, frame_path, out):
@@ -210,6 +279,7 @@ def analyze(pkg, text, code, timed_out, seconds, frame_path, out):
     frames = max([int(n) for n in FRAMES_RE.findall(text)] or [0])
     first_frame = "first frame presented" in text
     hs_err = "A fatal error has been detected by the Java Runtime Environment" in text
+    first_frame_mem = FIRST_FRAME_MEM_RE.search(text)
     if frames > 0 and code == 0:
         colors = bmp_colors(frame_path)
         status = "drew" if colors > 2 else "blank"
@@ -226,6 +296,7 @@ def analyze(pkg, text, code, timed_out, seconds, frame_path, out):
         "seconds": seconds,
         "first_frame": first_frame,
         "frame_colors": colors,
+        "first_frame_working_set_mb": int(first_frame_mem.group(1)) if first_frame_mem else None,
         "jvm_crash": hs_err,
         "stubbed_natives": stubs,
         "guest_missing": guest_missing,
@@ -254,10 +325,24 @@ def write_report(results, out):
     lines = ["# Win.apk compatibility sweep", ""]
     lines.append(f"{len(results)} apps: " + ", ".join(
         f"{by_status[s]} {s}" for s in ("drew", "blank", "no-frame", "crashed") if by_status[s]))
-    lines += ["", "| App | Status | Seconds | Stubbed natives | Exceptions |", "|---|---|---|---|---|"]
+    lines += ["", "| App | Status | Seconds | Working set at first frame | Peak working set | Peak private | "
+              "Stubbed natives | Exceptions |", "|---|---|---|---:|---:|---:|---|---|"]
+
+    def mb(v):
+        return "" if v is None else f"{v} MB"
+
     for r in sorted(results, key=lambda r: (r["status"], r["package"])):
+        # .get: a report.json from before the memory columns, merged with --merge.
         lines.append(f"| {r['package']} | {r['status']}{' (JVM crash)' if r['jvm_crash'] else ''} | "
-                     f"{r['seconds']} | {len(r['stubbed_natives'])} | {len(r['exceptions'])} |")
+                     f"{r['seconds']} | {mb(r.get('first_frame_working_set_mb'))} | "
+                     f"{mb(r.get('peak_working_set_mb'))} | {mb(r.get('peak_private_mb'))} | "
+                     f"{len(r['stubbed_natives'])} | {len(r['exceptions'])} |")
+    peaks = [r.get("peak_working_set_mb") or r.get("first_frame_working_set_mb") for r in results]
+    peaks = sorted(p for p in peaks if p)
+    if peaks:
+        lines += ["", f"Memory: peak working set {peaks[0]}-{peaks[-1]} MB per app, median "
+                      f"{peaks[len(peaks) // 2]} MB (the runtime's own process; the working set at the first "
+                      "frame where no peak was sampled)."]
     stubs, _ = rank(results, "stubbed_natives")
     lines += ["", "## Stubbed natives, by number of apps that called them", "",
               "| Apps | Native |", "|---|---|"]
@@ -344,7 +429,9 @@ def main():
             print(f"[sweep] {pkg}: download failed", flush=True)
             continue
         r = run_app(pkg, apk, args, out)
-        print(f"[sweep] {pkg}: {r['status']} in {r['seconds']} s, {len(r['stubbed_natives'])} stubbed natives, "
+        print(f"[sweep] {pkg}: {r['status']} in {r['seconds']} s, peak working set {r['peak_working_set_mb']} MB "
+              f"(first frame {r['first_frame_working_set_mb']} MB), peak private {r['peak_private_mb']} MB, "
+              f"{len(r['stubbed_natives'])} stubbed natives, "
               f"{len(r['exceptions'])} exceptions, {len(r['guest_missing'])} missing system functions, "
               f"{len(r['guest_load_failures'])} libraries not loaded", flush=True)
         if args.require_drew and r["status"] != "drew":

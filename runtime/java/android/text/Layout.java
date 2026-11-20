@@ -965,6 +965,10 @@ public abstract class Layout {
      *  height IS the top of the one-past-the-end line, never an independent
      *  sum. That is the identity TXT.layout.*.heightIsLineTopOfCount asserts. */
     public int getHeight() { return getLineTop(getLineCount()); }
+    /** AOSP's hidden getHeight(boolean cap) (android14-release Layout.java): the base class
+     *  answers the whole height. Only TextView's AOSP-graphics path (TextViewAospLayout) calls
+     *  it, and there AOSP's own Layout is on the class path; here it lets that code compile. */
+    public int getHeight(boolean cap) { return getHeight(); }
 
     /** AOSP's `StaticLayout.generate()` collects the paragraph's LineHeightSpans
      *  and `out()` seeds a FontMetricsInt with the line's own above/below, calls
@@ -1594,6 +1598,12 @@ public abstract class Layout {
         float w = getDesiredWidth(text, start, end, paint);
         return Math.min(w, upperLimit);
     }
+    /** AOSP's hidden form with the direction heuristic, which TextView.onMeasure calls; as
+     *  getHeight(boolean): for TextViewAospLayout, which runs on AOSP's own Layout. */
+    public static float getDesiredWidthWithLimit(CharSequence text, int start, int end,
+            android.text.TextPaint paint, android.text.TextDirectionHeuristic textDir, float upperLimit) {
+        return getDesiredWidthWithLimit(text, start, end, paint, upperLimit);
+    }
 
     /** AOSP Layout.getRangeForRect (API 34): the text range whose segments (as
      *  found by `segmentFinder`) fall inside `area` per `inclusionStrategy`.
@@ -1676,6 +1686,11 @@ public abstract class Layout {
      *  getLineLeft() stands in for AOSP's getLineStartPos(line, left, right):
      *  for an LTR paragraph the two agree by definition, and it already
      *  carries this class's CENTER/RIGHT/OPPOSITE alignment handling. */
+    /** AOSP's hidden getPrimaryHorizontal(offset, clamped), which TextView.bringPointIntoView
+     *  calls; as getHeight(boolean): for TextViewAospLayout, on AOSP's own Layout. */
+    public float getPrimaryHorizontal(int offset, boolean clamped) {
+        return getPrimaryHorizontal(offset);
+    }
     public float getPrimaryHorizontal(int offset) {
         ensureLines();
         if (paint == null || text == null) return 0f;

@@ -55,6 +55,12 @@ ARM) ואז מריץ אותו, וחלק מהסורקים לא אוהבים את 
 Microsoft. שידור שהשמע שלו Opus, ‏Vorbis או FLAC מתנגן בלי קול באפליקציות
 ExoPlayer; וידאו מהקוד המקורי של אפליקציה (`AMediaCodec`) עוד לא נתמך.
 
+**תמונה מטלפון (HEIC) או תמונת AVIF לא מוצגת.** ‏Windows הוא שמפענח אותן:
+‏HEIC/HEIF צריך את HEIF Image Extensions של Microsoft, ו-AVIF את AV1 Video
+Extension, שתיהן מחנות Microsoft. בלעדיהן האפליקציה מקבלת תשובה שאי אפשר
+לקרוא את התמונה, וביומן כתוב `HostImageDecode: HEIF picture: Windows has no
+decoder for it`.
+
 **דפי אינטרנט בתוך האפליקציה ריקים, או שהכניסה עם Google לא נפתחת.** שניהם
 צריכים את Microsoft Edge WebView2 Runtime. אם הוא חסר במחשב, מתקינים אותו
 מ-Microsoft.
@@ -87,10 +93,13 @@ Google](google-services.md). רכישות מתוך אפליקציה ו-Play Inte
 |---|---|
 | ‏`native not implemented on Windows yet` | חלק בסביבת האנדרואיד שעוד חסר |
 | ‏`not implemented on Windows yet` (על פונקציית מערכת) | פונקציה בספריית C שהקוד המקורי של האפליקציה צריך |
+| ‏`not implemented on Windows yet, called this run (<n>):` | בסוף היומן: כל חלק חסר שהאפליקציה הגיעה אליו בהרצה הזו, וכמה פעמים קראה לו, מהעמוס ביותר. השורות שלמעלה מזכירות כל אחד פעם אחת, בקריאה הראשונה; הרשימה הזו אומרת לאילו האפליקציה המשיכה לבקש. כדאי לצרף אותה לדיווח על בעיה. אפליקציה שנעצרה בכוח (מנהל המשימות, עצירה) מסתיימת בלעדיה |
 | ‏`there is no /system/bin/sh on Windows` | הקוד המקורי של האפליקציה הריץ פקודת מעטפת (`popen`, `system`). אין מעטפת אנדרואיד, ולכן הפקודה מדווחת "לא נמצא" (קוד יציאה 127), כמו בטלפון שאין בו מעטפת |
 | ‏`[win.apk] cannot load <library>` או `UnsatisfiedLinkError` | ספרייה מקורית לא נטענה: ARM של 32 ביט בלבד, ארוזה או מוצפנת, או למעבד אחר |
 | ‏`Exception` או `FATAL` | האפליקציה קרסה; השורות שאחרי אומרות איפה |
 | ‏`[win.apk] crash:` ו-`crash dump:` | הקוד המקורי קרס. נכתב קובץ Minidump ליד היומן (`crash-<app>-<time>.dmp`): כדאי לצרף גם אותו |
+| ‏`[win.apk] guest called abort(); abort message: <text>` | הקוד המקורי של האפליקציה סגר אותה בכוונה, והטקסט אומר למה (מה שאנדרואיד מציג כ-"Abort message" בדוח קריסה): `terminating due to uncaught exception of type ...` היא שגיאת C++ שאף אחד לא תפס. אחריה תופיע שורת `crash dump:` |
+| ‏`[win.apk] android.icu: Windows' ICU (icu.dll) is not available; ...` | ב-Windows הזה אין `icu.dll` (Windows 10 לפני גרסה 1903, או Wine). האפליקציות ממשיכות לעבוד: מספרים עדיין נכתבים לפי השפה, אבל יחידות נכתבות בסמלים הבינלאומיים שלהן ("5 km", "3 h") ולא במילים של השפה, וחלק מפרטי האזור כלליים |
 | ‏`[win.apk] arm64 AOT: off for this app` | אפליקציית ARM קרסה פעמיים עם התרגום, ולכן היא רצה על ה-JIT |
 | ‏`[win.apk]` | כל הודעה אחרת של Win.apk עצמו |
 

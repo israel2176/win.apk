@@ -42,6 +42,8 @@ package com.macapk.loader;
 import android.content.res.Configuration;
 import android.content.res.Resources;
 import android.util.DisplayMetrics;
+import com.macapk.loader.res.ResBackend;
+import com.macapk.loader.view.ViewHost;
 
 public final class DisplayConfig {
     private static final String TAG = "Mac.apk.DisplayConfig";
@@ -124,9 +126,9 @@ public final class DisplayConfig {
                                boolean log) {
         final float density = (m.density > 0f) ? m.density
                 : android.util.DisplayMetrics.macapkDeviceDensity();
-        final int navW   = android.view.Display.macapkNavDecorWidthPx();
-        final int navH   = android.view.Display.macapkNavDecorHeightPx();
-        final int status = android.view.Display.macapkStatusDecorPx();
+        final int navW   = ViewHost.get().navDecorWidthPx();
+        final int navH   = ViewHost.get().navDecorHeightPx();
+        final int status = ViewHost.get().statusDecorPx();
         // DisplayMetrics = the APP area (v1.0.939): nav decor off the axis the
         // bar occupies (v1.0.997). Identical to Display.getWidth/getHeight.
         m.widthPixels  = realW - navW;
@@ -165,11 +167,11 @@ public final class DisplayConfig {
         // Display.getCurrentSizeRange's smallest.x.
         final int shortSide = Math.min(realW, realH), longSide = Math.max(realW, realH);
         final int sideNav = StatusBarDriver.navBarCanMove()
-                ? android.view.Display.macapkNavDecorPx() : 0;
+                ? ViewHost.get().navDecorPx() : 0;
         c.smallestScreenWidthDp =
             (int) (Math.min(shortSide, longSide - sideNav) / density + 0.5f);
         // screenLayout FOLLOWS the dp metrics (AOSP reduceScreenLayout).
-        c.macapkDeriveScreenLayout();
+        ResBackend.get().deriveScreenLayout(c);
         c.orientation = (realW <= realH)
             ? Configuration.ORIENTATION_PORTRAIT : Configuration.ORIENTATION_LANDSCAPE;
         // The @hide windowConfiguration AndroidX Window reads reflectively:
@@ -354,13 +356,13 @@ public final class DisplayConfig {
         //    ResourcesImpl on the main thread: a one-off hitch at the end of a
         //    drag that crosses a bucket, and no window in which the new
         //    Configuration is served by resources selected for the old one.
-        Object liveIdx = Resources.macapkGetResourceIndex();
-        if (liveIdx instanceof ResourceIndex
-                && ((ResourceIndex) liveIdx).macapkSelectionChangesFor(next)) {
+        Object liveIdx = ResBackend.get().resourceIndex();
+        if (ResBackend.get().isIndex(liveIdx)
+                && ResBackend.get().indexSelectionChangesFor(liveIdx, next)) {
             long t0 = System.nanoTime();
-            ResourceIndex built = Boot.macapkNewResourceIndex(next);
+            Object built = Boot.macapkNewResourceIndex(next);
             if (built != null) {
-                Resources.macapkSetResourceIndex(built);
+                ResBackend.get().setResourceIndex(built);
                 NativeLog.i(TAG, "ResourceIndex rebuilt for "
                     + next.screenWidthDp + "x" + next.screenHeightDp + "dp "
                     + orientName(next.orientation) + " in "
@@ -381,7 +383,7 @@ public final class DisplayConfig {
         // display fields move, onto the system's own copy; the layout-direction
         // bits of screenLayout follow the locale, not the display, so the
         // system keeps its own.
-        Resources.macapkEditSystemConfiguration(sys -> {
+        ResBackend.get().editSystemConfiguration(sys -> {
             final int dir = sys.screenLayout & Configuration.SCREENLAYOUT_LAYOUTDIR_MASK;
             adoptDisplayFields(next, sys);
             sys.screenLayout = (sys.screenLayout & ~Configuration.SCREENLAYOUT_LAYOUTDIR_MASK) | dir;
@@ -412,9 +414,12 @@ public final class DisplayConfig {
         // 5. TRAVERSAL: a new configuration forces the next frame to measure
         //    and lay out (ViewRootImpl.updateConfiguration -> requestLayout).
         if (android.os.Looper.MACAPK_REAL_LOOPER) {
-            try { android.view.ViewRootImpl.scheduleLayout(); } catch (Throwable ignored) {}
+            try { ViewHost.get().scheduleLayout(); } catch (Throwable ignored) {}
         }
     }
+
+    /** AOSP @hide ActivityInfo.CONFIG_WINDOW_CONFIGURATION (android14-release ActivityInfo.java:976). */
+    private static final int CONFIG_WINDOW_CONFIGURATION = 0x20000000;
 
     /** Apply AOSP's relaunch-then-report decision for ONE activity against the
      *  live Resources configuration. Safe to call with no pending change (it
@@ -429,9 +434,14 @@ public final class DisplayConfig {
         if (cur == null) cur = next;
         if (lastReported == null) lastReported = cur;
         final int sdk = PresentedSdk.get();
-        final int publicDiff = cur.diff(next);
+        // CONFIG_WINDOW_CONFIGURATION is out of both: ActivityRecord.getConfigurationChanges drops it
+        // ("We don't want window configuration to cause relaunches") and the client compares with
+        // diffPublicOnly. Win.apk's own Configuration.diff never sets it; AOSP's
+        // (WINAPK_AOSP_RES=1) does when the window bounds move, and a rotation then counted as
+        // undeclared: no relaunch, no onConfigurationChanged.
+        final int publicDiff = cur.diff(next) & ~CONFIG_WINDOW_CONFIGURATION;
         final boolean bounds = boundsDiffer(cur, next);
-        final int serverDiff = lastReported.diff(next);
+        final int serverDiff = lastReported.diff(next) & ~CONFIG_WINDOW_CONFIGURATION;
         if (publicDiff == 0 && !bounds && serverDiff == 0) return false;
         final int handled = a.macapkRealConfigChanged();
         final int[][] buckets = appBuckets();
@@ -445,8 +455,8 @@ public final class DisplayConfig {
         final int changes = filterDiff(sdk, serverDiff, lastReported, next, buckets, true);
         if ((changes & ~handled) != 0) {
             a.macapkSetLastReportedConfig(next);
-            boolean localeChanged = (changes & (Configuration.CONFIG_LOCALE
-                | Configuration.CONFIG_LAYOUT_DIRECTION)) != 0;
+            boolean localeChanged = (changes & (ResBackend.CONFIG_LOCALE
+                | ResBackend.CONFIG_LAYOUT_DIRECTION)) != 0;
             if ((RELAUNCH_ON || localeChanged) && ActivityHost.macapkRecreate(a)) {
                 NativeLog.i(TAG, "relaunching " + a.getClass().getName() + " (changed 0x"
                     + Integer.toHexString(changes) + " not declared in configChanges 0x"
@@ -575,9 +585,9 @@ public final class DisplayConfig {
     // ---- AOSP SizeConfigurationBuckets, per presented SDK ------------------------
 
     private static int[][] appBuckets() {
-        Object idx = Resources.macapkGetResourceIndex();
-        if (idx instanceof ResourceIndex) {
-            try { return ((ResourceIndex) idx).macapkAppSizeBuckets(); }
+        Object idx = ResBackend.get().resourceIndex();
+        if (ResBackend.get().isIndex(idx)) {
+            try { return ResBackend.get().indexAppSizeBuckets(idx); }
             catch (Throwable ignored) {}
         }
         return new int[][] { new int[0], new int[0], new int[0], new int[0], new int[] { 0 } };
@@ -598,24 +608,24 @@ public final class DisplayConfig {
     static int filterDiff(int sdk, int diff, Configuration oldC, Configuration newC,
                           int[][] b, boolean serverSide) {
         if (sdk <= 30 && !serverSide) return diff;
-        if ((diff & Configuration.CONFIG_SCREEN_SIZE) != 0) {
-            boolean crosses = ResourceIndex.macapkDpCrosses(b[0], oldC.screenWidthDp, newC.screenWidthDp)
-                || ResourceIndex.macapkDpCrosses(b[1], oldC.screenHeightDp, newC.screenHeightDp);
-            if (!crosses) diff &= ~Configuration.CONFIG_SCREEN_SIZE;
+        if ((diff & ResBackend.CONFIG_SCREEN_SIZE) != 0) {
+            boolean crosses = ResBackend.get().dpCrosses(b[0], oldC.screenWidthDp, newC.screenWidthDp)
+                || ResBackend.get().dpCrosses(b[1], oldC.screenHeightDp, newC.screenHeightDp);
+            if (!crosses) diff &= ~ResBackend.CONFIG_SCREEN_SIZE;
         }
-        if ((diff & Configuration.CONFIG_SMALLEST_SCREEN_SIZE) != 0) {
-            if (!ResourceIndex.macapkDpCrosses(b[2], oldC.smallestScreenWidthDp,
+        if ((diff & ResBackend.CONFIG_SMALLEST_SCREEN_SIZE) != 0) {
+            if (!ResBackend.get().dpCrosses(b[2], oldC.smallestScreenWidthDp,
                                                 newC.smallestScreenWidthDp)) {
-                diff &= ~Configuration.CONFIG_SMALLEST_SCREEN_SIZE;
+                diff &= ~ResBackend.CONFIG_SMALLEST_SCREEN_SIZE;
             }
         }
-        if (sdk >= 33 && (diff & Configuration.CONFIG_SCREEN_LAYOUT) != 0
+        if (sdk >= 33 && (diff & ResBackend.CONFIG_SCREEN_LAYOUT) != 0
                 && nonSizeLayoutFieldsUnchanged(oldC.screenLayout, newC.screenLayout)) {
             boolean longSet = b[4].length > 0 && b[4][0] != 0;
             if (!crossesScreenLayoutSizeThreshold(b[3], oldC, newC)
                     && !(longSet && (oldC.screenLayout & Configuration.SCREENLAYOUT_LONG_MASK)
                                  != (newC.screenLayout & Configuration.SCREENLAYOUT_LONG_MASK))) {
-                diff &= ~Configuration.CONFIG_SCREEN_LAYOUT;
+                diff &= ~ResBackend.CONFIG_SCREEN_LAYOUT;
             }
         }
         return diff;

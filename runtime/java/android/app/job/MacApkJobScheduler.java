@@ -805,6 +805,20 @@ final class MacApkJobScheduler extends JobScheduler {
             };
         }
         JobServiceEngine eng = JobServiceEngine.sEngines.get(svcName);
+        if (eng == null && !"1".equals(System.getenv("MACAPK_JOB_NO_ONBIND"))) {
+            // AOSP's JobServiceContext binds the service (bindServiceAsUser with
+            // the job's component), so onBind runs before any job does, and a
+            // service may make its JobServiceEngine only there (IBM Trusteer's
+            // TasService: onBind -> new engine). Ask it once, as that bind does.
+            try {
+                android.content.Intent bind = new android.content.Intent()
+                    .setComponent(new android.content.ComponentName(svc.getPackageName(), svcName));
+                svc.onBind(bind);
+            } catch (Throwable t) {
+                warn("onBind " + svcName + " for its job threw " + t);
+            }
+            eng = JobServiceEngine.sEngines.get(svcName);
+        }
         if (eng != null) {
             final JobServiceEngine e = eng;
             return new JobTarget() {

@@ -31,7 +31,9 @@ import android.view.WindowManager;
 
 import com.macapk.loader.NativeCocoa;
 
+import com.macapk.loader.res.ResBackend;
 import java.io.File;
+import com.macapk.loader.view.ViewHost;
 
 // AOSP: `public class Activity extends ContextThemeWrapper implements
 // LayoutInflater.Factory2, Window.Callback, KeyEvent.Callback,
@@ -115,9 +117,9 @@ public class Activity extends ContextThemeWrapper
         super.setTheme(resid);
         if ("0".equals(System.getenv("MACAPK_ACTIVITY_THEME_ANCHOR"))) return;
         try {
-            Object ri = android.content.res.Resources.macapkGetResourceIndex();
+            Object ri = ResBackend.get().resourceIndex();
             if (ri == null || resid == 0) return;
-            Object tn = ri.getClass().getMethod("macapkTypeNameOf", int.class).invoke(ri, resid);
+            Object tn = ResBackend.get().indexTypeNameOf(ri, resid);
             if (!(tn instanceof String[])) {
                 com.macapk.loader.NativeLog.i("Mac.apk.Activity",
                     "setTheme(0x" + Integer.toHexString(resid) + ") -> no type name; not re-anchored");
@@ -130,7 +132,7 @@ public class Activity extends ContextThemeWrapper
                     + " name=" + (a.length > 1 ? a[1] : "?") + "; not re-anchored");
                 return;
             }
-            ri.getClass().getMethod("setApplicationThemeName", String.class).invoke(ri, a[1]);
+            ResBackend.get().indexSetApplicationThemeName(ri, a[1]);
             com.macapk.loader.NativeLog.i("Mac.apk.Activity",
                 "setTheme(0x" + Integer.toHexString(resid) + ") re-anchored the theme fallback to "
                 + a[1]);
@@ -892,6 +894,12 @@ public class Activity extends ContextThemeWrapper
     private static final boolean sTouchDiag = System.getenv("MACAPK_TOUCH_DIAG") != null;
     private static int sTouchDiagN = 0;
     public boolean dispatchTouchEvent(MotionEvent ev) {
+        if (MACAPK_AOSP_WINDOWS) {
+            // AOSP Activity.dispatchTouchEvent: the window's decor first, then onTouchEvent.
+            if (ev.getAction() == MotionEvent.ACTION_DOWN) onUserInteraction();
+            if (getWindow().superDispatchTouchEvent(ev)) return true;
+            return onTouchEvent(ev);
+        }
         // AOSP dispatchTouchEvent fires onUserInteraction() on ACTION_DOWN only
         // (the gesture-starting action), before any view-tree dispatch. Apps
         // hang idle-session timers, ad viewability tracking and
@@ -940,8 +948,8 @@ public class Activity extends ContextThemeWrapper
         if (sTouchDiag && sTouchDiagN < 40) { sTouchDiagN++;
             String cv = (contentView == null) ? "null"
                 : (contentView.getClass().getName()
-                   + " listener=" + (contentView.getOnTouchListener() == null ? "null"
-                        : contentView.getOnTouchListener().getClass().getName())
+                   + " listener=" + (ViewHost.get().onTouchListener(contentView) == null ? "null"
+                        : ViewHost.get().onTouchListener(contentView).getClass().getName())
                    + " tree=[" + macapkDescribeViewTree(contentView, 0) + "]");
             com.macapk.loader.NativeLog.i("Mac.apk.Touch",
                 "dispatchTouchEvent: fell through to activity.onTouchEvent (action="
@@ -1031,6 +1039,16 @@ public class Activity extends ContextThemeWrapper
         com.macapk.loader.ActivityHost.onBackInvoked(this);
     }
     public boolean dispatchKeyEvent(KeyEvent ev) {
+        if (MACAPK_AOSP_WINDOWS) {
+            // AOSP Activity.dispatchKeyEvent: the window's decor (the focused view), then
+            // KeyEvent.dispatch to this activity with the decor's dispatcher state. (AOSP first
+            // lets the action bar take MENU; there is no platform action bar here yet.)
+            onUserInteraction();
+            Window win = getWindow();
+            if (win.superDispatchKeyEvent(ev)) return true;
+            View decor = win.peekDecorView();
+            return ev.dispatch(this, decor != null ? decor.getKeyDispatcherState() : null, this);
+        }
         // AOSP dispatchKeyEvent calls onUserInteraction() unconditionally,
         // first thing, before the window/view-tree dispatch below.
         onUserInteraction();
@@ -1052,6 +1070,12 @@ public class Activity extends ContextThemeWrapper
 
     // ---- View / window ----
     public Window getWindow() {
+        // AOSP's own window root (WINAPK_AOSP_VIEWS=1, ViewHost.aospWindows): the PhoneWindow
+        // Activity.attach makes, with this activity as its callback and its own window manager.
+        if (MACAPK_AOSP_WINDOWS) {
+            if (mAospWindow == null) mAospWindow = ViewHost.get().newActivityWindow(this);
+            return mAospWindow;
+        }
         if (windowImpl == null) {
             windowImpl = new ActivityWindow(this);
             // AOSP Activity.attach() installs the Activity itself as the
@@ -1077,17 +1101,21 @@ public class Activity extends ContextThemeWrapper
         return windowImpl;
     }
     private ActivityWindow windowImpl;
+    /** With AOSP's views: AOSP's PhoneWindow (ViewHost.newActivityWindow), AOSP Activity's mWindow. */
+    private Window mAospWindow;
+    private static final boolean MACAPK_AOSP_WINDOWS = ViewHost.get().aospWindows();
     /** This activity's own window if one exists, WITHOUT creating it (unlike
      *  getWindow()). ActivityHost's FLAG_SECURE mirror reads the flag from here:
      *  AOSP keys FLAG_SECURE to each window (WindowState.isSecureLocked), and an
      *  activity's window is Activity.mWindow, never a Dialog's window that
      *  merely shares its Context. */
-    public final Window macapkPeekWindow() { return windowImpl; }
+    public final Window macapkPeekWindow() { return windowImpl != null ? windowImpl : mAospWindow; }
     // v1.0.98: return a real LayoutInflater so adapter binders can
     // inflate their tab content. F-Droid's LatestViewBinder etc.
     // call activity.getLayoutInflater().inflate(R.layout.main_tab_x,
     // frame, true) -- a null inflater NPEs the whole bind chain.
     public LayoutInflater getLayoutInflater() {
+        if (MACAPK_AOSP_WINDOWS) return getWindow().getLayoutInflater();  // AOSP's own body
         return android.view.LayoutInflater.from(this);
     }
 
@@ -1151,6 +1179,7 @@ public class Activity extends ContextThemeWrapper
      *  and several other engines call getWindowManager() directly
      *  during onCreate, so we expose it as a regular method too. */
     public WindowManager getWindowManager() {
+        if (MACAPK_AOSP_WINDOWS) return getWindow().getWindowManager();  // AOSP's mWindowManager
         Object svc = getSystemService(Context.WINDOW_SERVICE);
         return svc instanceof WindowManager ? (WindowManager) svc : null;
     }
@@ -1342,7 +1371,7 @@ public class Activity extends ContextThemeWrapper
                 // AOSP PhoneWindow.generateDecor: a DecorView holding this window
                 // (libraries find the root of a window by that class and field).
                 android.widget.FrameLayout d =
-                    new com.android.internal.policy.DecorView(activity, -1, this, getAttributes());
+                    ViewHost.get().newDecorView(activity, -1, this, getAttributes());
                 android.widget.FrameLayout c = new android.widget.FrameLayout(activity);
                 c.setId(0x01020002);  // android.R.id.content
                 d.addView(c);
@@ -2003,7 +2032,7 @@ public class Activity extends ContextThemeWrapper
                 String attr, boolean def) {
             if (th == null) return def;
             try {
-                String raw = th.resolveAttrRaw(attr);
+                String raw = ResBackend.get().resolveAttrRaw(th, attr);
                 if (raw != null) {
                     raw = raw.trim();
                     if ("true".equalsIgnoreCase(raw))  return true;
@@ -2114,8 +2143,8 @@ public class Activity extends ContextThemeWrapper
                 macapkGenerateBarColors();
             } else if (th != null) {
                 try {
-                    mStatusBarColor = th.resolveAttrColor("statusBarColor", 0xFF000000);
-                    mNavigationBarColor = th.resolveAttrColor("navigationBarColor", 0xFF000000);
+                    mStatusBarColor = ResBackend.get().resolveAttrColor(th, "statusBarColor", 0xFF000000);
+                    mNavigationBarColor = ResBackend.get().resolveAttrColor(th, "navigationBarColor", 0xFF000000);
                 } catch (Throwable ignored) {}
             } else {
                 mStatusBarColor = 0xFF000000;
@@ -2245,8 +2274,8 @@ public class Activity extends ContextThemeWrapper
                 // -- the per-window field the setter and generateLayout write.
                 return mStatusBarColor;
             }
-            int forced = Window.macapkForcedStatusBarColor();
-            return forced != Window.MACAPK_BAR_COLOR_UNSET ? forced : mStatusBarColor;
+            int forced = ViewHost.get().forcedStatusBarColor();
+            return forced != ViewHost.get().barColorUnset() ? forced : mStatusBarColor;
         }
         @Override public int getNavigationBarColor() {
             if (MACAPK_WINDOW_BAR_COLORS) {
@@ -2255,8 +2284,8 @@ public class Activity extends ContextThemeWrapper
                 //     return mNavigationBarColor;
                 return mEdgeToEdgeEnforced ? 0 : mNavigationBarColor;
             }
-            int forced = Window.macapkForcedNavigationBarColor();
-            return forced != Window.MACAPK_BAR_COLOR_UNSET ? forced : mNavigationBarColor;
+            int forced = ViewHost.get().forcedNavigationBarColor();
+            return forced != ViewHost.get().barColorUnset() ? forced : mNavigationBarColor;
         }
         /** android15 PhoneWindow.setStatusBarColor (:3970-3986): a no-op once
          *  edge-to-edge is enforced, else the colour becomes this window's and
@@ -2472,7 +2501,7 @@ public class Activity extends ContextThemeWrapper
         if (!forcedStatus && !e2e) {
             status = 0xFF000000;
             if (th != null) {
-                try { status = th.resolveAttrColor("statusBarColor", 0xFF000000); }
+                try { status = ResBackend.get().resolveAttrColor(th, "statusBarColor", 0xFF000000); }
                 catch (Throwable ignored) {}
             }
         }
@@ -2485,7 +2514,7 @@ public class Activity extends ContextThemeWrapper
             final int fallback = table[0] != 0 ? table[1] : 0xFF000000;
             int themeNav = fallback;
             if (th != null) {
-                try { themeNav = th.resolveAttrColor("navigationBarColor", fallback); }
+                try { themeNav = ResBackend.get().resolveAttrColor(th, "navigationBarColor", fallback); }
                 catch (Throwable ignored) {}
             }
             nav = macapkResolveNavigationBarColor(themeNav, table[0] != 0, table[1], table[2],
@@ -2566,6 +2595,12 @@ public class Activity extends ContextThemeWrapper
     }
 
     public void setContentView(int layoutResID) {
+        if (MACAPK_AOSP_WINDOWS) {
+            // AOSP: getWindow().setContentView(layoutResID); initWindowDecorActionBar() (the
+            // platform action bar is not built yet with AOSP's views).
+            getWindow().setContentView(layoutResID);
+            return;
+        }
         // v1.0.69: real XML layout inflation. Until now this was a
         // no-op, which forced any layout-XML-using Activity (Bouncy,
         // F-Droid, Sgt Puzzles, ShatteredPD-settings, every non-game
@@ -2614,6 +2649,10 @@ public class Activity extends ContextThemeWrapper
         if (macapkInflatingContentLayout) macapkInflatingContent = frame;
     }
     public void setContentView(View view) {
+        if (MACAPK_AOSP_WINDOWS) {
+            getWindow().setContentView(view);
+            return;
+        }
         macapkInstallContentDirect(view);
     }
 
@@ -2624,6 +2663,10 @@ public class Activity extends ContextThemeWrapper
      *  Window.setContentView). Subclasses (AppCompatActivity) override
      *  setContentView but NOT this method. */
     public void macapkInstallContentDirect(View view) {
+        // With AOSP's views the window is AOSP's PhoneWindow, added to its window manager on resume
+        // (ViewHost.activityWindowAdded): Win.apk's own content root and its canvas driver are
+        // never made, or both would draw and present the same decor.
+        if (MACAPK_AOSP_WINDOWS) return;
         // AOSP installs the decor at the top of setContentView and puts the
         // content view INSIDE it. For a screen_title window that decor is what
         // renders (title bar + content frame), so it becomes the root here; for
@@ -2764,7 +2807,7 @@ public class Activity extends ContextThemeWrapper
                 // globals, which a window drag never updates.
                 int pxW = com.macapk.loader.DisplayConfig.realWidthPx();
                 int pxH = com.macapk.loader.DisplayConfig.realHeightPx();
-                android.view.SurfaceView.macapkSetOverlayDriver(overlay, pxW, pxH);
+                ViewHost.get().setOverlayDriver(overlay, pxW, pxH);
             }
         }
         if (viewHandle != 0) NativeCocoa.setContentView(sharedNativeWindow, viewHandle);
@@ -2791,7 +2834,7 @@ public class Activity extends ContextThemeWrapper
         if (BARE_SURFACE_ROOT_ATTACH) {
             if (prevBareSurfaceRoot != null && prevBareSurfaceRoot != view
                     && prevBareSurfaceRoot.isAttachedToWindow()) {
-                try { prevBareSurfaceRoot.macapkDispatchDetachedFromWindow(); }
+                try { ViewHost.get().dispatchDetachedFromWindow(prevBareSurfaceRoot); }
                 catch (Throwable t) {
                     com.macapk.loader.NativeLog.w("Mac.apk.Activity", "bare surface root detach failed: " + t);
                 }
@@ -2842,9 +2885,9 @@ public class Activity extends ContextThemeWrapper
     public void macapkAttachBareSurfaceRoot() {
         View v = bareSurfaceRoot;
         if (!BARE_SURFACE_ROOT_ATTACH || v == null || v != contentView) return;
-        if (v.macapkIsWindowRemoved() || v.isAttachedToWindow()) return;
+        if (ViewHost.get().isWindowRemoved(v) || v.isAttachedToWindow()) return;
         try {
-            v.macapkDispatchAttachedToWindow();
+            ViewHost.get().dispatchAttachedToWindow(v);
             com.macapk.loader.NativeLog.i("Mac.apk.Activity", "window-attached bare surface root "
                 + v.getClass().getName() + " (no ViewCanvasDriver owns it)");
         } catch (Throwable t) {
@@ -2896,7 +2939,7 @@ public class Activity extends ContextThemeWrapper
             Window w = getWindow();
             View d = (w != null) ? w.getDecorView() : null;
             if (d == null || d == installed) return;
-            d.macapkDispatchAttachedToWindow();
+            ViewHost.get().dispatchAttachedToWindow(d);
         } catch (Throwable t) {
             com.macapk.loader.NativeLog.w("Mac.apk.Activity",
                 "decor attach failed: " + t);
@@ -3076,7 +3119,7 @@ public class Activity extends ContextThemeWrapper
         if (REWIRE_KEEP_CANVAS && demoted != null) {
             int pxW = com.macapk.loader.DisplayConfig.realWidthPx();   // v1.0.1637, see above
             int pxH = com.macapk.loader.DisplayConfig.realHeightPx();
-            android.view.SurfaceView.macapkSetOverlayDriver(demoted, pxW, pxH);
+            ViewHost.get().setOverlayDriver(demoted, pxW, pxH);
             com.macapk.loader.NativeLog.i("Mac.apk.Activity",
                 "demoted canvas tree re-registered as the SurfaceView overlay ("
                 + pxW + "x" + pxH + "); the View tree keeps painting");
@@ -3085,7 +3128,7 @@ public class Activity extends ContextThemeWrapper
 
     private static long findNativeHandle(View root) {
         if (root == null) return 0;
-        if (root.getNativeHandle() != 0) return root.getNativeHandle();
+        if (ViewHost.get().nativeHandle(root) != 0) return ViewHost.get().nativeHandle(root);
         if (root instanceof ViewGroup vg) {
             for (int i = 0; i < vg.getChildCount(); ++i) {
                 long h = findNativeHandle(vg.getChildAt(i));
@@ -3094,8 +3137,16 @@ public class Activity extends ContextThemeWrapper
         }
         return 0;
     }
-    public void setContentView(View view, ViewGroup.LayoutParams params) { setContentView(view); }
-    public void addContentView(View view, ViewGroup.LayoutParams params) {}
+    public void setContentView(View view, ViewGroup.LayoutParams params) {
+        if (MACAPK_AOSP_WINDOWS) {
+            getWindow().setContentView(view, params);
+            return;
+        }
+        setContentView(view);
+    }
+    public void addContentView(View view, ViewGroup.LayoutParams params) {
+        if (MACAPK_AOSP_WINDOWS) getWindow().addContentView(view, params);
+    }
 
     /** Find a child view by its android:id. v1.0.69: now recursively
      *  walks the contentView tree (was: only matched the root). With
@@ -3103,6 +3154,7 @@ public class Activity extends ContextThemeWrapper
      *  typically a ViewGroup with many descendants -- ViewGroup's
      *  recursive findViewById handles the walk. */
     public View findViewById(int id) {
+        if (MACAPK_AOSP_WINDOWS) return getWindow().findViewById(id);
         // android.R.id.content (0x01020002): AOSP returns the content-host
         // FrameLayout that exists from DecorView creation -- BEFORE
         // setContentView. Apps call this in onCreate ahead of setContentView:
@@ -3978,8 +4030,22 @@ public class Activity extends ContextThemeWrapper
     public void overridePendingTransition(int enterAnim, int exitAnim) {}
 
     @Override public ClassLoader getClassLoader() { return application != null ? application.getClassLoader() : super.getClassLoader(); }
-    @Override public AssetManager getAssets()     { return application != null ? application.getAssets() : null; }
-    @Override public Resources getResources()     { return application != null ? application.getResources() : null; }
+    @Override public AssetManager getAssets() {
+        if (MACAPK_CONTEXT_RESOURCES) {
+            Resources r = getResources();
+            return r != null ? r.getAssets() : null;
+        }
+        return application != null ? application.getAssets() : null;
+    }
+    /** AOSP: Activity's Resources are ContextThemeWrapper's, its base context's (which an app's
+     *  attachBaseContext may have wrapped: AppCompat's night mode and locales do, with an override
+     *  configuration) or its own override's. With AOSP's resources, which have a Resources per
+     *  configuration, that is what this answers; Win.apk's have one, the application's. */
+    @Override public Resources getResources() {
+        if (MACAPK_CONTEXT_RESOURCES && getBaseContext() != null) return super.getResources();
+        return application != null ? application.getResources() : null;
+    }
+    private static final boolean MACAPK_CONTEXT_RESOURCES = "1".equals(System.getProperty("winapk.aosp.res"));
     // A Context always knows its package on real Android -- never empty. If the
     // Application isn't wired yet, fall back to the process-wide Application
     // singleton's package (Unity caches this string as its app identifier for the
@@ -4582,6 +4648,10 @@ public class Activity extends ContextThemeWrapper
      *  FrameLayout. The decor is the fallback for a window with no content. */
     public boolean dispatchKeyShortcutEvent(android.view.KeyEvent event) {
         onUserInteraction();
+        if (MACAPK_AOSP_WINDOWS) {
+            if (getWindow().superDispatchKeyShortcutEvent(event)) return true;
+            return onKeyShortcut(event.getKeyCode(), event);
+        }
         View root = contentView;
         if (root == null && windowImpl != null) root = windowImpl.peekDecorView();
         if (root != null && root.dispatchKeyShortcutEvent(event)) return true;
@@ -4603,7 +4673,40 @@ public class Activity extends ContextThemeWrapper
     // onStart).
     public void setShowWhenLocked(boolean showWhenLocked) {}
     public void setTurnScreenOn(boolean turnScreenOn) {}
-    public android.view.View getCurrentFocus() { return null; }
+    public android.view.View getCurrentFocus() {
+        if (MACAPK_AOSP_WINDOWS) return mAospWindow != null ? mAospWindow.getCurrentFocus() : null;
+        return null;
+    }
+
+    // ---- Window.Callback: AOSP's interface declares these abstract (Activity implements them);
+    // Win.apk's Window.Callback has them as defaults with these same bodies, so declaring them
+    // here changes nothing on Win.apk's views and lets AOSP's PhoneWindow call them. ----
+    public boolean dispatchTrackballEvent(MotionEvent event) {
+        if (MACAPK_AOSP_WINDOWS) {
+            onUserInteraction();
+            if (getWindow().superDispatchTrackballEvent(event)) return true;
+            return onTrackballEvent(event);
+        }
+        return false;
+    }
+    public boolean dispatchPopulateAccessibilityEvent(android.view.accessibility.AccessibilityEvent event) {
+        return false;
+    }
+    public View onCreatePanelView(int featureId) { return null; }
+    public void onWindowAttributesChanged(WindowManager.LayoutParams params) {}
+    public void onContentChanged() {}
+    public void onAttachedToWindow() {}
+    public void onDetachedFromWindow() {}
+    public boolean onSearchRequested() { return false; }
+    public boolean onSearchRequested(android.view.SearchEvent searchEvent) { return false; }
+    public android.view.ActionMode onWindowStartingActionMode(android.view.ActionMode.Callback callback) {
+        return null;
+    }
+    public android.view.ActionMode onWindowStartingActionMode(android.view.ActionMode.Callback callback, int type) {
+        return null;
+    }
+    public void onActionModeStarted(android.view.ActionMode mode) {}
+    public void onActionModeFinished(android.view.ActionMode mode) {}
 
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {}
 
@@ -4848,6 +4951,10 @@ public class Activity extends ContextThemeWrapper
      *  never saw a stick move. */
     public boolean dispatchGenericMotionEvent(android.view.MotionEvent ev) {
         onUserInteraction();
+        if (MACAPK_AOSP_WINDOWS) {
+            if (getWindow().superDispatchGenericMotionEvent(ev)) return true;
+            return onGenericMotionEvent(ev);
+        }
         // The window's view tree is entered at the content root, the same root
         // dispatchKeyEvent above uses: an app that hands its own view to
         // setContentView (libGDX's GLSurfaceView, for one) is installed

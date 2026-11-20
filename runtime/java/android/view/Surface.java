@@ -29,6 +29,8 @@
 // eventually asks whether a target is registered).
 package android.view;
 
+import com.macapk.loader.gfx.GfxBackend;
+
 public class Surface implements android.os.Parcelable {
     public static final int ROTATION_0   = 0;
     public static final int ROTATION_90  = 1;
@@ -94,7 +96,7 @@ public class Surface implements android.os.Parcelable {
         // never offered, since nothing calls macapkOfferDecodedFrame without
         // one actually decoding.
         if (surfaceTexture != null) {
-            surfaceTexture.macapkRegisterVideoTarget();
+            GfxBackend.get().registerVideoTarget(surfaceTexture);
         }
     }
     /** AOSP Surface(SurfaceControl) (API 29): a Surface that queues buffers to
@@ -109,6 +111,63 @@ public class Surface implements android.os.Parcelable {
     }
     public boolean isValid() { return !mReleased; }
     public void release() { mReleased = true; }
+
+    /** AOSP's buffer size for a window's Surface: the layer it was copied from
+     *  (copyFrom), 0 when it was not; lockCanvas then falls back to the display. */
+    private int mLayerWidth, mLayerHeight;
+    private int mGenerationId;
+
+    /** AOSP copyFrom(SurfaceControl): this Surface now draws into the layer the
+     *  control names. On Android the window's buffers; here the window's frame
+     *  bitmap, of the layer's size, which unlockCanvasAndPost presents to the host
+     *  window (AOSP's ViewRootImpl, WINAPK_AOSP_VIEWS=1, copies its Surface from the
+     *  SurfaceControl the in-process window session's relayout sized). A new layer
+     *  is a new generation, as AOSP counts it. */
+    public void copyFrom(SurfaceControl other) {
+        if (other == null) throw new IllegalArgumentException("other must not be null");
+        if (!other.isValid()) throw new NullPointerException("null SurfaceControl native object. Are you using a released SurfaceControl?");
+        if (mReleased || mLayerWidth != other.getWidth() || mLayerHeight != other.getHeight()) mGenerationId++;
+        mLayerWidth = other.getWidth();
+        mLayerHeight = other.getHeight();
+        mLayerPost = other.macapkLayerPost();
+        mReleased = false;
+    }
+
+    /** Win.apk framework-internal: takes each frame this Surface posts (the bitmap itself,
+     *  on the posting thread) instead of the host window, as a compositor takes a layer's
+     *  buffer (SurfaceControl.macapkSetLayerPost; with AOSP's views). */
+    public interface MacapkLayerPost {
+        void onPost(Surface surface, android.graphics.Bitmap frame);
+    }
+    private MacapkLayerPost mLayerPost;
+
+    /** AOSP transferFrom(Surface other): this Surface takes other's layer, other is released. */
+    public void transferFrom(Surface other) {
+        if (other == null) throw new IllegalArgumentException("other must not be null");
+        if (other != this) {
+            mLayerWidth = other.mLayerWidth;
+            mLayerHeight = other.mLayerHeight;
+            mLayerPost = other.mLayerPost;
+            mReleased = other.mReleased;
+            mGenerationId++;
+            other.mReleased = true;
+        }
+    }
+
+    public int getGenerationId() { return mGenerationId; }
+    /** AOSP destroy(): release(), and (on Android) the Surface's native object goes now. */
+    public void destroy() { release(); }
+
+    /** AOSP Surface.rotationToString. */
+    public static String rotationToString(int rotation) {
+        switch (rotation) {
+            case ROTATION_0: return "ROTATION_0";
+            case ROTATION_90: return "ROTATION_90";
+            case ROTATION_180: return "ROTATION_180";
+            case ROTATION_270: return "ROTATION_270";
+            default: return Integer.toString(rotation);
+        }
+    }
 
     /** The SurfaceTexture this Surface produces into, or null when it was not
      *  constructed from one. Mac.apk framework-internal (macapk prefix, same
@@ -176,11 +235,19 @@ public class Surface implements android.os.Parcelable {
             throw new IllegalArgumentException("Surface was already locked");
         }
         final boolean sunk = mFrameSink != null && mSinkWidth > 0 && mSinkHeight > 0;
-        int w = sunk ? mSinkWidth : defaultWidth();
-        int h = sunk ? mSinkHeight : defaultHeight();
+        final boolean layer = !sunk && mLayerWidth > 0 && mLayerHeight > 0;
+        int w = sunk ? mSinkWidth : layer ? mLayerWidth : defaultWidth();
+        int h = sunk ? mSinkHeight : layer ? mLayerHeight : defaultHeight();
         if (mDrawBitmap == null || mDrawBitmap.getWidth() != w || mDrawBitmap.getHeight() != h) {
-            mDrawBitmap = android.graphics.Bitmap.createBitmapWithCanvasBacking(w, h);
+            mDrawBitmap = com.macapk.loader.gfx.GfxBackend.get().createFrameBitmap(w, h);
             mDrawCanvas = new android.graphics.Canvas(mDrawBitmap);
+        }
+        if (mLayerPost != null) {
+            // A window's layer gives a canvas in its initial state at every lock, as AOSP's native
+            // lockCanvas does (a canvas on the new buffer): ViewRootImpl translates by the surface
+            // insets after each lock and never undoes it.
+            mDrawCanvas.restoreToCount(1);
+            mDrawCanvas.setMatrix(null);
         }
         mCanvasLocked = true;
         return mDrawCanvas;
@@ -205,11 +272,17 @@ public class Surface implements android.os.Parcelable {
         }
         mCanvasLocked = false;
         if (mDrawBitmap == null) return;
+        MacapkLayerPost post = mLayerPost;
+        if (post != null) {
+            // A window's layer: its compositor presents it with the others.
+            post.onPost(this, mDrawBitmap);
+            return;
+        }
         // v1.0.1648: the canvas's own live pixels when available (no 24 MB copy
         // at a full-screen window); presentBitmap copies synchronously on this,
         // the drawing thread, which is the contract macapkLiveArgbOrNull states.
-        int[] pixels = mDrawBitmap.macapkLiveArgbOrNull();
-        if (pixels == null) pixels = mDrawBitmap.macapkArgbBuffer();
+        int[] pixels = GfxBackend.get().liveArgbOrNull(mDrawBitmap);
+        if (pixels == null) pixels = GfxBackend.get().argbBuffer(mDrawBitmap);
         if (pixels == null) return;
         MacapkFrameSink sink = mFrameSink;
         if (sink != null) {

@@ -25,6 +25,7 @@
 // that bypass our GLSurfaceView entirely.
 package android.view;
 
+import com.macapk.loader.gfx.GfxBackend;
 import android.content.Context;
 import com.macapk.loader.MetalSurfaceCallbacks;
 import com.macapk.loader.NativeCocoa;
@@ -68,6 +69,21 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
 
     public SurfaceView(Context c) {
         super(c);
+        macapkInitSurface();
+    }
+
+    /** With AOSP's views (WINAPK_AOSP_VIEWS=1) View's constructor reads the element's attributes
+     *  itself (android:id, padding, visibility...), as Win.apk's inflater does after construction
+     *  for its own View; this SurfaceView, which stays Win.apk's there, hands them on. Win.apk's
+     *  View(Context, null) is View(Context). */
+    private static final boolean MACAPK_ATTRS_TO_VIEW = com.macapk.loader.view.ViewHost.get().aospWindows();
+
+    public SurfaceView(Context c, android.util.AttributeSet a) {
+        super(c, MACAPK_ATTRS_TO_VIEW ? a : null);
+        macapkInitSurface();
+    }
+
+    private void macapkInitSurface() {
         // Share the singleton MTKView. ANGLE binds to whatever native
         // MTKView's CAMetalLayer it sees first; if every SurfaceView
         // had its own, the visible one and the ANGLE-bound one could
@@ -83,7 +99,6 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
         if (handle != 0) NativeCocoa.setRenderer(handle, this);
         macapkRegisterLiveForEgl(this);
     }
-    public SurfaceView(Context c, android.util.AttributeSet a) { this(c); }
     /** AOSP API 21 four-argument constructor. AOSP's three-argument form is
      *  exactly this(context, attrs, defStyleAttr, 0), so delegating the other
      *  way is identical for defStyleRes == 0; a non-zero defStyleRes is
@@ -95,7 +110,7 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
             int defStyleRes) {
         this(context, attrs, defStyleAttr);
     }
-    public SurfaceView(Context c, android.util.AttributeSet a, int s) { this(c); }
+    public SurfaceView(Context c, android.util.AttributeSet a, int s) { this(c, a); }
 
     public SurfaceHolder getHolder() { return holder; }
     /** AOSP setZOrderOnTop (android14 SurfaceView.java:660) moves the surface's
@@ -150,7 +165,7 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
         return null;
     }
     /** Is this view's Activity STOPPED under another one (ActivityHost)? */
-    protected final boolean macapkOwnerStoppedUnderTop() {
+    public final boolean macapkOwnerStoppedUnderTop() {
         try {
             android.app.Activity a = macapkOwnerActivity();
             return a != null && com.macapk.loader.ActivityHost.macapkIsStoppedUnderTop(a);
@@ -158,7 +173,7 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
             return false;
         }
     }
-    protected final void macapkDetectDrawBehindTop(Object renderer) {
+    public final void macapkDetectDrawBehindTop(Object renderer) {
         if (macapkBehindTopSaid) return;
         if (macapkOwnerStoppedUnderTop()) {
             macapkBehindTopSaid = true;
@@ -412,7 +427,7 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
      *  holder's surfaceCreated (0 = none yet). v1.0.1637. */
     private int macapkConvergedW, macapkConvergedH;
 
-    protected final void macapkConvergeSurfaceLifecycle(int widthPx, int heightPx) {
+    public final void macapkConvergeSurfaceLifecycle(int widthPx, int heightPx) {
         // The renderer path (GLSurfaceView) never reaches macapkSurfaceChanged
         // below once it owns a Renderer, so until its native entry records the
         // display itself (macapkNoteNativeDisplaySize) this per-frame size is
@@ -720,6 +735,9 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
      * corrupting an engine's viewport into the bottom-left corner. It must
      * therefore exist exactly ONCE.
      *
+     * (Public since GLSurfaceView reaches it, and the other GL hooks it calls,
+     * through com.macapk.loader.view.ViewHost; still final.)
+     *
      * It needs to be reachable from GLSurfaceView because of the two-tier
      * renderer dispatch: when a subclass DID call setRenderer(),
      * GLSurfaceView.macapkDrawFrame handles the frame itself and returns
@@ -739,7 +757,7 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
      * hierarchy will take care of correctly compositing ... any siblings ...
      * that would normally appear on top of it."
      */
-    protected final int[] macapkDriveOverlayForCurrentSurface() {
+    public final int[] macapkDriveOverlayForCurrentSurface() {
         int overlayW, overlayH;
         if (macapkDisplayDecoupled()) {
             // MACAPK_SV_DISPLAY_SIZE (2026-09-26): the overlay is the WINDOW's
@@ -908,7 +926,7 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
         !"0".equals(System.getenv("MACAPK_GL_WAIT_FRAME"));
 
     /** For GLSurfaceView (another package): is MACAPK_GL_WAIT_FRAME on? */
-    protected static boolean macapkGlWaitFrame() { return sGlWaitFrameGate; }
+    public static boolean macapkGlWaitFrame() { return sGlWaitFrameGate; }
 
     private static boolean macapkDisplayDecoupled() {
         return sDisplaySizeGate || sViewSizeGate || sViewSizeGlGate;
@@ -935,7 +953,7 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
      *  (GLSurfaceView with a Renderer) calls this first, before anything it
      *  does can re-enter with a HOLDER's size, which under MACAPK_SV_VIEW_SIZE
      *  is the view's own size and not the window's. */
-    protected final void macapkNoteNativeDisplaySize(int w, int h) {
+    public final void macapkNoteNativeDisplaySize(int w, int h) {
         if (w > 0 && h > 0) {
             macapkNoteDisplaySize(w, h);
             macapkDisplayFromNative = true;
@@ -948,7 +966,7 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
      *  SurfaceHolder.Callback2) must then not take that size as the display.
      *  False with the gates off, where the holder reports the display (or a
      *  setFixedSize the app chose), as before. */
-    protected static boolean macapkHolderSizeIsBufferSize() {
+    public static boolean macapkHolderSizeIsBufferSize() {
         return macapkDisplayDecoupled();
     }
 
@@ -1064,7 +1082,7 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
      *  comment). displayW/H is the display surface, used only to size a view
      *  that has to lay itself out. Called from the render tick while waiting;
      *  always true with the gate off. */
-    protected final boolean macapkRendererMayStart(int displayW, int displayH) {
+    public final boolean macapkRendererMayStart(int displayW, int displayH) {
         if (!sGlWaitFrameGate || macapkHaveFrame || macapkFrameValveOpen) return true;
         int n = ++macapkFrameWaitTicks;
         if (n == 1) {
@@ -1303,7 +1321,7 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
      *  reflected path here and GLSurfaceView.ensureLifecycleDelivered, which
      *  used to read StatusBarDriver.contentBox* itself; with
      *  MACAPK_SV_VIEW_SIZE_GL=0 it is exactly that window box. */
-    protected final int[] macapkRendererSurfaceSize(int displayW, int displayH) {
+    public final int[] macapkRendererSurfaceSize(int displayW, int displayH) {
         int w = com.macapk.loader.StatusBarDriver.contentBoxWidthPx(this, displayW);
         int h = com.macapk.loader.StatusBarDriver.contentBoxHeightPx(this, displayH);
         if (sViewSizeGlGate && !holder.macapkFixedSize) {
@@ -1414,7 +1432,7 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
      *  (the renderer is told again once the layout lands), so it is not
      *  reported -- otherwise any window drag on any non-filling GL app, Flappy
      *  after the fix included, was flagged "touches land at the wrong point". */
-    protected final void macapkWarnGlSizeSplit(int toldW, int toldH, int displayW, int displayH) {
+    public final void macapkWarnGlSizeSplit(int toldW, int toldH, int displayW, int displayH) {
         LayoutSnap s = macapkLayoutSnap;
         if (s == null || !macapkAttached || s.w <= 0 || s.h <= 0) return;
         if (s.w == toldW && s.h == toldH) return;
@@ -3854,6 +3872,11 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
                 NativeLog.i(TAG, "native window hole: first punch " + getWidth() + "x"
                     + getHeight() + " by " + getClass().getName() + " (MACAPK_SV_GUEST_BELOW)");
             }
+        } else if (MACAPK_ATTRS_TO_VIEW && !mZOrderOnTop && getNativeHandle() != 0) {
+            // AOSP's views: ViewRootImpl's window is composited over this view's GL frames
+            // (AospWindows.showSurfaceBelow), so the window gets AOSP's hole here, on its
+            // condition (draw() :512-521, `!isAboveParent()` -> clearSurfaceViewPort).
+            canvas.punchHole(0f, 0f, getWidth(), getHeight(), 0f, 0f, getAlpha());
         }
         super.draw(canvas);
     }
@@ -3946,7 +3969,7 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
             if (w <= 0 || h <= 0) { w = 800; h = 600; }   // sensible default
             if (drawBitmap == null || drawBitmap.getWidth() != w
                                        || drawBitmap.getHeight() != h) {
-                drawBitmap = android.graphics.Bitmap.createBitmapWithCanvasBacking(w, h);
+                drawBitmap = com.macapk.loader.gfx.GfxBackend.get().createFrameBitmap(w, h);
                 drawCanvas = new android.graphics.Canvas(drawBitmap);
             }
             return drawCanvas;
@@ -3965,8 +3988,8 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
             // v1.0.1648: the canvas's own live pixels when available (no 24 MB copy
             // at a full-screen window); presentBitmap copies synchronously on this,
             // the drawing thread, which is the contract macapkLiveArgbOrNull states.
-            int[] pixels = drawBitmap.macapkLiveArgbOrNull();
-            if (pixels == null) pixels = drawBitmap.macapkArgbBuffer();
+            int[] pixels = GfxBackend.get().liveArgbOrNull(drawBitmap);
+            if (pixels == null) pixels = GfxBackend.get().argbBuffer(drawBitmap);
             if (pixels == null) return;
             int pw = drawBitmap.getWidth(), ph = drawBitmap.getHeight();
             if (owner != null) {

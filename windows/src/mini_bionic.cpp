@@ -4,6 +4,7 @@
 
 #include "winapk/elf_tls.h"
 #include "winapk/guest_abi.h"
+#include "winapk/log_line.h"
 
 #include <atomic>
 #include <cerrno>
@@ -149,7 +150,11 @@ WINAPK_GUEST_ABI int g_android_log_write(int prio, const char* tag, const char* 
 // first; if it returns, the default action ends the process through the
 // host's abort, which writes the crash report and the minidump.
 [[noreturn]] void guest_abort(const char* why) {
-    std::fprintf(stderr, "[win.apk] %s\n", why);
+    if (const char* message = bionic::abort_message()) {
+        std::fprintf(stderr, "[win.apk] %s; abort message: %s\n", why, message);
+    } else {
+        std::fprintf(stderr, "[win.apk] %s\n", why);
+    }
     std::fflush(stderr);
     bionic::signal_send(0, 6);  // SIGABRT
     std::abort();
@@ -437,18 +442,37 @@ void set_errno_from_win32(unsigned long e) {
     }
 }
 
+namespace {
+std::atomic<const char*> g_abort_message{nullptr};
+}  // namespace
+
+void set_abort_message(const char* message) {
+    if (!message || g_abort_message.load(std::memory_order_acquire)) return;
+    const size_t n = std::strlen(message);
+    char* copy = static_cast<char*>(std::malloc(n + 1));  // kept for the life of the process, as Bionic's
+    if (!copy) return;
+    std::memcpy(copy, message, n + 1);
+    const char* none = nullptr;
+    if (!g_abort_message.compare_exchange_strong(none, copy, std::memory_order_acq_rel)) std::free(copy);
+}
+
+const char* abort_message() { return g_abort_message.load(std::memory_order_acquire); }
+
 void log_line(int prio, const char* tag, const char* text) {
     // android_LogPriority: 2 VERBOSE .. 7 FATAL.
     static const char kLetters[] = "??VDIWEF";
     const char letter = (prio >= 0 && prio <= 7) ? kLetters[prio] : '?';
-    std::fprintf(stderr, "%c/%s: %s\n", letter, tag ? tag : "", text ? text : "");
+    // One write for the line (winapk/log_line.h): a "PROBE ..." line on stdout cannot land inside it.
+    write_stderr_line(std::string(1, letter) + "/" + (tag ? tag : "") + ": " + (text ? text : "") + "\n");
     std::fflush(stderr);
 }
 
 }  // namespace bionic
 
-void* mini_bionic_resolve(const char* name) {
-    // Every module's table, merged once; the core table above wins a clash.
+namespace {
+
+// Every module's table, merged once; the core table above wins a clash.
+const std::unordered_map<std::string, void*>& all_symbols() {
     static const std::unordered_map<std::string, void*> all = [] {
         std::unordered_map<std::string, void*> m;
         auto add = [&m](const ShimSymbol* syms, size_t n) {
@@ -464,8 +488,23 @@ void* mini_bionic_resolve(const char* name) {
         }
         return m;
     }();
+    return all;
+}
+
+}  // namespace
+
+void* mini_bionic_resolve(const char* name) {
+    const auto& all = all_symbols();
     auto it = all.find(name);
     return it == all.end() ? nullptr : it->second;
+}
+
+std::vector<std::string> mini_bionic_names_of(const void* addr) {
+    std::vector<std::string> names;
+    for (const auto& [name, at] : all_symbols()) {
+        if (at == addr) names.push_back(name);
+    }
+    return names;
 }
 
 void mini_bionic_run_atexit() { g_cxa_finalize(nullptr); }

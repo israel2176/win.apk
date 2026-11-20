@@ -1,0 +1,77 @@
+// The screens sweep's oracle: LayoutSweep on Robolectric over any APK. Not an
+// Android project: the APK is already built, so its resources go to Robolectric
+// as test_config.properties says (android_resource_apk) and its classes, converted
+// from DEX, go on the test's classpath. screens.sh copies this under <out>/oracle
+// and passes the -Pscreens.* properties.
+plugins {
+    id 'java'
+}
+
+repositories {
+    google()
+    mavenCentral()
+}
+
+def prop = { String name -> project.findProperty(name) ?: '' }
+def androidJar = prop('screens.androidJar')
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+}
+
+sourceSets {
+    test {
+        java.srcDirs = ['oracle', 'sweep']
+        resources.srcDirs = ['config']
+    }
+}
+
+dependencies {
+    // The app's own classes first: its AndroidX and Material, not anything a test library brings.
+    testRuntimeOnly files(prop('screens.appJar'))
+    // As the Android Gradle plugin's unit tests have it: JUnit reads @Config's defaults,
+    // which name android.* classes, outside Robolectric's sandbox.
+    testImplementation files(androidJar)
+    testImplementation 'org.robolectric:robolectric:4.16'
+    testImplementation 'junit:junit:4.13.2'
+}
+
+// Robolectric needs androidx.test's monitor, which comes as an Android library (.aar):
+// what the Android Gradle plugin does with one, its classes.jar on the classpath.
+abstract class AarClasses implements org.gradle.api.artifacts.transform.TransformAction<org.gradle.api.artifacts.transform.TransformParameters.None> {
+    @org.gradle.api.artifacts.transform.InputArtifact
+    abstract Provider<FileSystemLocation> getInputArtifact()
+
+    void transform(org.gradle.api.artifacts.transform.TransformOutputs outputs) {
+        File aar = inputArtifact.get().asFile
+        File jar = outputs.file(aar.name - '.aar' + '.jar')
+        new java.util.zip.ZipFile(aar).withCloseable { z ->
+            jar.withOutputStream { it << z.getInputStream(z.getEntry('classes.jar')) }
+        }
+    }
+}
+
+def artifactType = Attribute.of('artifactType', String)
+dependencies {
+    registerTransform(AarClasses) {
+        from.attribute(artifactType, 'aar')
+        to.attribute(artifactType, 'jar')
+    }
+}
+configurations.testCompileClasspath.attributes.attribute(artifactType, 'jar')
+configurations.testRuntimeClasspath.attributes.attribute(artifactType, 'jar')
+
+test {
+    systemProperty 'screens.out', prop('screens.out')
+    systemProperty 'screens.theme', prop('screens.theme')
+    systemProperty 'screens.filter', prop('screens.filter')
+    systemProperty 'screens.pictures', prop('screens.pictures')
+    // Robolectric keeps the framework it fetches in ~/.m2 and cannot load its native
+    // library from a home folder with a space in its name.
+    systemProperty 'user.home', "${buildDir}/home"
+    doFirst { file("${buildDir}/home").mkdirs() }
+    maxHeapSize = '4g'
+    outputs.upToDateWhen { false }
+    testLogging { showStandardStreams = false }
+}

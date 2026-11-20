@@ -39,7 +39,10 @@ Win.apk installs four formats:
 
 A bundle holds a base APK and split APKs (languages, screen densities, CPU
 architectures). Win.apk picks the splits the app needs here, the way the
-Android installer does.
+Android installer does. Once the app is installed, the library keeps those
+APKs, not the bundle: `<app>.apk` and the folder `<app>.splits` beside it,
+the very files the app runs from, so the app takes its space on disk once.
+Keep the bundle you downloaded if you may want its other parts later.
 
 Any of these starts an install:
 
@@ -278,7 +281,7 @@ without an answer.
 | Shortcut | **Desktop shortcut**: adds or removes the app's desktop shortcut. The Start menu one is always there |
 | Performance | Only for an app with only ARM code: **Optimizing for this PC…** while its translation runs in the background (with the parts done so far), and **This app has only ARM code** when a library is too large to translate whole, so an x86_64 build of the app, if one exists, runs faster. See [ARM apps](arm-apps.md) |
 | Troubleshooting | **Log** (View the app's recent logs): **Show log** opens the log window on the app's last run (or its install, before the first run). **Report a problem** (opens a GitHub issue with the app's details and log): for a problem met inside the app; see [Reporting a problem](troubleshooting.md#reporting-a-problem). With **Debug mode** on in Settings, **Threads** opens the [Threads window](#debug-mode-the-threads-window) on this app |
-| Storage | **The app's file**: its size, and **Show** opens Explorer on it. **Run files**: what Win.apk prepared to run the app, its folder under `apps\`, and **Open** |
+| Storage | **The app's file** (**The app's files** for one that came as a bundle: its `.apk` and splits): its size, and **Show** opens Explorer on it. **Run files**: what Win.apk prepared to run the app, its folder under `apps\`, and **Open** |
 | Manage | **Stop** (while it runs) and **Remove** |
 
 Each action has one place: the details page, plus the right-click menu for
@@ -299,6 +302,7 @@ its own. Each setting takes effect the next time an app opens unless noted.
 | Apps | **App window size** | The size apps open at, in dp (density-independent pixels, as on a phone). **Auto** is 360 × 800 dp, or the size given by `WINAPK_PHONE_SIZE` when that variable is set. Presets range from 320 × 480 to a 10-inch tablet. An app whose window you resized opens at its saved size |
 | Apps | **Default orientation** | Portrait or landscape, for every app that has no choice of its own. The default is landscape, the shape of a PC screen. Apps that require an orientation always open in it; an app's details page changes it for that app |
 | Apps | **Use my Windows folders** | On: apps' shared storage (Downloads, Pictures, Documents, Music, Movies) is your own Windows folders. Off: each is an empty folder of Win.apk's own, and your files stay where they are. See [Shared storage](#shared-storage) |
+| Apps | **Report Google Play as the installer** (on) | Apps you install are told Google Play installed them, as `adb install -i com.android.vending` does on a phone; some apps (banks such as bit and Bank Hapoalim) otherwise stop at "reinstall the app from the store". An app another store installed (F-Droid, Aurora) still names that store. Off: apps installed from Win.apk name no installer, as a sideloaded app. Takes effect the next time an app opens |
 | Apps | **Speed up ARM apps** (on) | Translates ARM code to your PC's code in the background, at low priority, so apps run faster. Off: no translation is started, one under way stops before its next part (and goes on where it was once this is on again), and translations already made are still used. See [ARM apps](arm-apps.md) |
 | Apps | **Desktop shortcut for new apps** | Every app gets a Start menu shortcut; this adds one on the desktop too |
 | Apps | **Open .apk, .apkm, .xapk and .apks files with Win.apk** | Makes Win.apk the default program for the four formats |
@@ -599,7 +603,7 @@ nothing is started in the apps: no agent, no pipe.
 | What | Where |
 |---|---|
 | Win.apk itself | `%LOCALAPPDATA%\Programs\Win.apk`, or the folder you unzipped |
-| Your copy of each APK | `%LOCALAPPDATA%\Win.apk\library\<app>.apk` |
+| Your copy of each APK | `%LOCALAPPDATA%\Win.apk\library\<app>.apk`, and for an app that came as a bundle its splits in `<app>.splits` beside it (the installed APKs themselves, not a second copy) |
 | Per-app choices beside the APK | `<app>.label` (name), `<app>.package` (package, version, manifest orientation), `<app>.orientation` (your choice), `<app>.window` (remembered window size) |
 | Each app's run files, icon and name | `%LOCALAPPDATA%\Win.apk\apps\<app>` (and `aot-guard.txt`, an ARM-only app's crashes with its translation) |
 | The Android file system: apps' data, the installed packages | `%LOCALAPPDATA%\Win.apk\android` |
@@ -611,7 +615,7 @@ nothing is started in the apps: no agent, no pipe.
 | The last update check and a downloaded update | `%LOCALAPPDATA%\Win.apk\updates` (`releases.json`, `Win.apk-Setup-<version>.exe`) |
 | Shared ARM translations | `%LOCALAPPDATA%\Win.apk\aot-cache` |
 | The runtime's caches (fonts, resources) | `%LOCALAPPDATA%\Win.apk\cache` |
-| The Java classes every app shares, ready to map (class-data sharing) | `%LOCALAPPDATA%\Win.apk\cds` (`framework-<key>.jsa`; delete the folder to have it made again) |
+| The Java classes every app shares, ready to map (class-data sharing) | `%LOCALAPPDATA%\Win.apk\cds` (`framework-aosp-<key>.jsa`, and `framework-java2d-<key>.jsa` when the older drawing code was used; delete the folder to have them made again) |
 | Settings | `HKEY_CURRENT_USER\Software\Win.apk` (`Theme`, `Language`, `PhoneSize`, `Landscape`, `DesktopShortcut`, `UserFolders`, `AotBackground`, `AutoUpdate`, `LastUpdateCheck`, `GoogleServices`, `DebugMode`, and the library window's size) |
 | With Google services on: app uids, the account service, the installer of record, the broker's readiness | `%LOCALAPPDATA%\Win.apk` (`app_uids.properties`, `system_ce\`, `installer-of-record.properties`, `run\`) |
 | Start menu shortcuts | `Start > Win.apk Apps` |

@@ -42,6 +42,21 @@ std::string stamp(const std::filesystem::path& p);
 // archive maps (-D..., -XX:ErrorFile=, -Xlog:...): left out of the key.
 bool per_launch(const std::string& option);
 
+// The graphics the JVM's options are for: "aosp" when they carry -Dwinapk.aosp.gfx=1 (host/aosp_gfx.h:
+// lib\aosp-graphics.jar first on the class path), "aospres" when AOSP's resources are on too
+// (-Dwinapk.aosp.res=1, lib\aosp-resources.jar before it), "aospviews" when AOSP's views are on as
+// well (-Dwinapk.aosp.views=1, lib\aosp-views.jar before both), "java2d" otherwise. Each has an
+// archive of its own, framework-<graphics>-<key>.jsa, so that a run on another one
+// (WINAPK_AOSP_GFX=0, WINAPK_AOSP_RES or WINAPK_AOSP_VIEWS unset, or a stage without AOSP's files)
+// does not delete this one.
+std::string graphics_of(const std::vector<std::string>& opts);
+
+// Whether the file `name` in the archive folder is a leftover that the dump of `stem`
+// ("framework-<graphics>-<key>") deletes: another key's files of the same graphics, and the
+// files of the old naming with no graphics in it ("framework-<16 hex digits>..."). The other
+// graphics' files, and anything not starting "framework-", stay.
+bool stale_archive_file(const std::wstring& name, const std::wstring& stem);
+
 // Class lists merged for -XX:SharedClassListFile: comments dropped, the
 // " id: <n>" of HotSpot's format dropped (ids are per file), the classes of
 // other loaders (lines with super:/source:) dropped, each line once, in order.

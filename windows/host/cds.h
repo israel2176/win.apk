@@ -15,17 +15,22 @@
 //   flag: that start runs without CDS, and says so.
 //
 //   The framework archive: one static archive of the JDK's and the framework's
-//   classes, shared by every app, <data>\cds\framework-<key>.jsa. The release
+//   classes, shared by every app, <data>\cds\framework-<graphics>-<key>.jsa: one per
+//   graphics, "aosp" (the default, lib\aosp-graphics.jar first on the class path) and
+//   "java2d" (WINAPK_AOSP_GFX=0, a stage without AOSP's files), so neither's dump deletes
+//   the other's; the JVMs with no app (install, --gms, --verify-apk, --system) take the
+//   graphics an app's run would, and so map its archive. The release
 //   ships the class list (lib\winapk-framework.classlist, the classes at least
 //   three of the smoke apps load); the first app start without an archive also
 //   records the classes it loads, and 10 s after its first frame (or at its exit) a background
 //   `winapk-runtime --cds-dump` runs `java -Xshare:dump` over both lists.
-//   Every later start of every app maps it. `--cds-prepare` builds it at once.
+//   Every later start of every app maps it. `--cds-prepare` builds the one an app's start
+//   would map (its graphics too), at once.
 //
-// <key> hashes what the archive depends on: the JRE (its version, lib\modules,
+// <key> hashes what the archive depends on: the graphics, the JRE (its version, lib\modules,
 // its own classes.jsa), the framework jars and the shipped class list (size
 // and time: a new Win.apk changes them), and the JVM options that are not per
-// launch. A new key dumps a new archive and deletes the old ones. The app's own
+// launch. A new key dumps a new archive and deletes its graphics' old ones. The app's own
 // classes are never archived: HotSpot verifies every class it dumps, and
 // dex-converted code often does not verify (docs/research/startup-cds.md).
 //
@@ -33,7 +38,7 @@
 // checking its header, the JRE and the class path, and otherwise runs without
 // it (-Xshare:auto). A new archive is mapped the first time with
 // -XX:+VerifySharedSpaces (a CRC of its content: a damaged file is refused,
-// not crashed on); once it mapped whole, framework-<key>.ok marks it. A start
+// not crashed on); once it mapped whole, framework-<graphics>-<key>.ok marks it. A start
 // whose archive did not map logs why, deletes it and counts the failure; after
 // two for the same key the archive is not made again for it.
 //

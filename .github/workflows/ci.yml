@@ -3,8 +3,12 @@
 #   What changed ──┬─ Guest libraries (Ubuntu) ─────────┬─ Unit tests
 #                  ├─ Launcher check (Ubuntu, MinGW)    ├─ Runtime tests
 #                  └─ Build (Windows, ccache) ──────────┼─ App smoke test (10 apps)
+#                                                       ├─ AOSP resources and views: smoke, probe (informational)
+#                                                       ├─ AOSP graphics (Skia, minikin)
 #                                                       ├─ Package (preview + installer)
 #                                                       └─ Sweep 1/4 .. 4/4 ─ Sweep report  (only when asked)
+#                  ┌─ UI gate: Android's side (Ubuntu) ─┐
+#                  └─ Build (Windows) ──────────────────┴─ UI gate: probe, apps (Windows, one job each)
 #
 # The Windows build runs once; every later job takes its output (the exes and
 # the staged runtime) as an artifact, so the tests and packaging run side by
@@ -21,6 +25,15 @@
 # cache (ccache) it leaves is there for the next pull request's first run; it
 # runs no tests and packages nothing. Releases come only from
 # windows-release.yml, run by hand.
+#
+# The UI gate holds a pull request that touches the framework or the host to
+# "only closer to Android, never further": the UI probe and the screens sweep
+# of windows/test/screens/gate.txt's apps run in Win.apk at the pull request's
+# head and at its base, and regress.py fails the gate on any line that matched
+# Android before and not now, moved further from it, or is no longer printed
+# (windows/README.md, "UI gate"). Android's side (Robolectric) is cached by what
+# it is made from; a push to main fills that cache and the base's jars for the
+# pull requests that follow.
 name: CI
 
 on:
@@ -30,6 +43,8 @@ on:
       - 'runtime/**'
       - 'scripts/build_framework_res.sh'
       - '.github/workflows/ci.yml'
+      - '.github/ci/**'
+      - '.github/probe/fdroid_fetch.py'
   push:
     branches: [main]
     paths:
@@ -37,6 +52,8 @@ on:
       - 'runtime/**'
       - 'scripts/build_framework_res.sh'
       - '.github/workflows/ci.yml'
+      - '.github/ci/**'
+      - '.github/probe/fdroid_fetch.py'
   workflow_dispatch:
     inputs:
       full_sweep:
@@ -61,6 +78,7 @@ jobs:
       launcher: ${{ steps.diff.outputs.launcher }}
       package: ${{ steps.diff.outputs.package }}
       full_sweep: ${{ steps.diff.outputs.full_sweep }}
+      ui: ${{ steps.diff.outputs.ui }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -68,18 +86,26 @@ jobs:
       - id: diff
         run: |
           case "${{ github.event_name }}" in
-            workflow_dispatch) build=true tests=true launcher=true ;;
-            push) build=true tests=false launcher=false ;;
+            workflow_dispatch) build=true tests=true launcher=true ui=true ;;
+            push) build=true tests=false launcher=false ui=false ;;
             *)
               # A pull request's checkout is its merge commit: the first parent
               # is the base branch, so this is exactly what the merge would add.
-              build=false tests=false launcher=false
+              build=false tests=false launcher=false ui=false
               while read -r f; do
                 case "$f" in
                   docs/*|*.md) ;;
                   windows/launcher/*) build=true launcher=true ;;
                   windows/package/*) build=true ;;
                   *) build=true tests=true ;;
+                esac
+                # The UI gate: what can move a view (the framework, the java.base
+                # overlay, the host and the loader under it) and the gate itself.
+                case "$f" in
+                  *.md) ;;
+                  runtime/java/*|windows/java/*|windows/host/*|windows/src/*|windows/include/*) ui=true ;;
+                  windows/test/uiprobe/*|windows/test/screens/*|windows/scripts/build_java.sh) ui=true ;;
+                  .github/workflows/ci.yml|.github/ci/*|.github/probe/fdroid_fetch.py) ui=true ;;
                 esac
               done < <(git diff --name-only HEAD^1 HEAD)
               ;;
@@ -89,8 +115,8 @@ jobs:
           # Only by hand: a pull request gets the smoke set instead.
           full_sweep=false
           [[ "${{ github.event_name }}" == workflow_dispatch && "${{ inputs.full_sweep }}" == true ]] && full_sweep=true
-          printf 'build=%s\ntests=%s\nlauncher=%s\npackage=%s\nfull_sweep=%s\n' \
-            "$build" "$tests" "$launcher" "$package" "$full_sweep" | tee -a "$GITHUB_OUTPUT"
+          printf 'build=%s\ntests=%s\nlauncher=%s\npackage=%s\nfull_sweep=%s\nui=%s\n' \
+            "$build" "$tests" "$launcher" "$package" "$full_sweep" "$ui" | tee -a "$GITHUB_OUTPUT"
 
   guest:
     name: Guest libraries (x86_64, arm64)
@@ -172,7 +198,7 @@ jobs:
       - uses: msys2/setup-msys2@v2
         with:
           msystem: CLANG64
-          install: unzip zip git
+          install: unzip zip git curl
           pacboy: >-
             clang:p
             cmake:p
@@ -194,6 +220,12 @@ jobs:
         with:
           path: thirdparty/angle-win
           key: angle-${{ hashFiles('windows/scripts/fetch_angle.sh') }}
+      # android-all 14 and Robolectric's native runtime (~200 MB unpacked), for
+      # AOSP graphics' files in the stage (windows/scripts/build_aosp_gfx.sh), what apps draw with.
+      - uses: actions/cache@v4
+        with:
+          path: thirdparty/aosp-gfx
+          key: aosp-gfx-${{ hashFiles('windows/test/aospgfx/fetch.sh') }}
       - name: Build (loader, thunks, JNI wrapper, runtime, launcher, tests)
         run: |
           ccache -z
@@ -289,6 +321,8 @@ jobs:
         run: ./build/winapk-aot-stamp-test.exe
       - name: Run the App Link sign-in window test (which navigation returns to the app)
         run: ./build/winapk-applink-test.exe
+      - name: Run the frame-time record test (percentiles, the line at exit)
+        run: ./build/winapk-frame-times-test.exe
       - name: Run the translation crash guard test (two crashes turn translation off, two on the JIT back on)
         run: |
           mkdir -p aot-guard-scratch
@@ -329,7 +363,7 @@ jobs:
     needs: [changes, guest, build]
     if: needs.changes.outputs.tests == 'true'
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     defaults:
       run:
         shell: msys2 {0}
@@ -376,6 +410,17 @@ jobs:
           cp="$(cygpath -w stage/lib/macapk-loader.jar);$(cygpath -w build/sep-test)"
           "$JAVA_HOME/bin/java" -cp "$cp" FileSeparatorRewriteTest
           MACAPK_ANDROID_FILE_SEPARATOR=0 "$JAVA_HOME/bin/java" -cp "$cp" FileSeparatorRewriteTest off
+      - name: Run the app install test
+        run: |
+          # com.winapk.tools.AppInstall: a bundle installs as a device leaves it, and installs again from
+          # what the library keeps of it (<name>.apk + <name>.splits, hard links to the installed APKs:
+          # launcher/library_files.h), one copy on disk.
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          "$JAVA_HOME/bin/javac" -d build/appinstall-test windows/java/com/winapk/tools/AppInstall.java \
+            windows/test/java/com/winapk/tools/AppInstallTest.java
+          "$JAVA_HOME/bin/java" -cp "$(cygpath -w build/appinstall-test)" com.winapk.tools.AppInstallTest \
+            "$(cygpath -w "$RUNNER_TEMP/appinstall")" | tee appinstall-test.log
+          grep -q "ALL PASSED" appinstall-test.log
       - name: Run the File.renameTo test
         run: |
           # A file renamed onto an existing one replaces it, as on Android
@@ -384,6 +429,16 @@ jobs:
           "$JAVA_HOME/bin/javac" -d build/rename-test windows/test/java/FileRenameTest.java
           "$JAVA_HOME/bin/java" --patch-module "java.base=$(cygpath -w stage/lib/java_base_patch)" \
             -cp "$(cygpath -w build/rename-test)" FileRenameTest
+      - name: Run the final field reflection test
+        run: |
+          # Reanimated's write of ART's Field.accessFlags: NoSuchFieldException
+          # on HotSpot (caught by Reanimated), and the Field.set on a private
+          # final instance field it then does still takes effect.
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          "$JAVA_HOME/bin/javac" -d build/final-field-test windows/test/java/FinalFieldReflectionTest.java
+          "$JAVA_HOME/bin/java" --patch-module "java.base=$(cygpath -w stage/lib/java_base_patch)" \
+            -cp "$(cygpath -w build/final-field-test)" FinalFieldReflectionTest | tee final-field-test.log
+          grep -q "ALL PASSED" final-field-test.log
       - name: Run the Android paths overlay test
         run: |
           # A '/'-rooted Android path keeps its '/' form (no drive, no backslash)
@@ -430,6 +485,65 @@ jobs:
           cp="$(cygpath -w stage/lib/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/hosttouch-test windows/test/java/com/macapk/loader/HostTouchTest.java
           MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/hosttouch-test)" com.macapk.loader.HostTouchTest
+      - name: Run the framework stubs test
+        run: |
+          # Framework methods that were stubs (windows/test/apicheck/Completeness.java
+          # lists them) checked against what Android's do: AnimatorSet's interpolator,
+          # View's clip bounds and the drawing cut to them, Process.getElapsedCpuTime
+          # and getUid/GidForName, ExpandableListView's packed positions.
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          cp="$(cygpath -w stage/lib/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          "$JAVA_HOME/bin/javac" -cp "$cp" -d build/stubs-test windows/test/java/FrameworkStubsTest.java
+          MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -Djava.awt.headless=true \
+            -cp "$cp;$(cygpath -w build/stubs-test)" FrameworkStubsTest
+      - name: Run the DateTimeView test
+        run: |
+          # android.widget.DateTimeView (a notification template's time) as
+          # AOSP 14 has it: the short time today, the short date outside it,
+          # relative "now", "5m", "in 2d" and the accessibility text.
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          cp="$(cygpath -w stage/lib/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          "$JAVA_HOME/bin/javac" -cp "$cp" -d build/datetimeview-test windows/test/java/DateTimeViewTest.java
+          MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -Djava.awt.headless=true -Duser.language=en -Duser.country=US \
+            -cp "$cp;$(cygpath -w build/datetimeview-test)" DateTimeViewTest | tee datetimeview-test.log
+          grep -q "ALL PASSED" datetimeview-test.log
+      - name: Run the android.icu fallback test
+        run: |
+          # android.icu with no host ICU (no icu.dll: Windows 10 before 1903,
+          # Wine): a plain JVM registers no HostIcu native, and every call must
+          # answer from Java (IcuFallback) instead of throwing: MeasureFormat as
+          # Hermes' Intl.NumberFormat calls it, LocaleData.
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          cp="$(cygpath -w stage/lib/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          "$JAVA_HOME/bin/javac" -cp "$cp" -d build/icu-fallback-test \
+            windows/test/java/com/macapk/icu/HostIcuFallbackTest.java
+          "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/icu-fallback-test)" com.macapk.icu.HostIcuFallbackTest \
+            | tee icu-fallback-test.log
+          grep -q "ALL PASSED" icu-fallback-test.log
+      - name: Run the Skia-less RenderEffect test
+        run: |
+          # RenderEffect and RuntimeShader with no Skia bridge (Windows never
+          # has upstream's Mac one): MacApkSkia.isAvailable() answers false
+          # instead of throwing into the app, and the effects are made.
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          cp="$(cygpath -w stage/lib/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          "$JAVA_HOME/bin/javac" -cp "$cp" -d build/skia-test windows/test/java/com/macapk/graphics/MacApkSkiaTest.java
+          "$JAVA_HOME/bin/java" -Djava.awt.headless=true -cp "$cp;$(cygpath -w build/skia-test)" \
+            com.macapk.graphics.MacApkSkiaTest | tee skia-test.log
+          grep -q "ALL PASSED" skia-test.log
+      - name: Run the HttpURLConnection request properties test
+        run: |
+          # The request side of the connection an app gets (runtime/net_spi's
+          # HucConnection/HucsConnection) as Android's OkHttp has it: the app's
+          # fields, no request line under any key, IllegalStateException once
+          # sent, disconnect() or not. A loopback server.
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          cp="$(cygpath -w stage/lib/macapk-loader.jar)"
+          "$JAVA_HOME/bin/javac" -cp "$cp" -d build/huc-props-test windows/test/java/com/macapk/net/HttpRequestPropertiesTest.java
+          "$JAVA_HOME/bin/java" --add-exports java.base/sun.net.www.protocol.http=ALL-UNNAMED \
+            --add-exports java.base/sun.net.www.protocol.https=ALL-UNNAMED \
+            -cp "$cp;$(cygpath -w build/huc-props-test)" com.macapk.net.HttpRequestPropertiesTest | tee huc-props-test.log
+          grep -q "ALL PASSED" huc-props-test.log
       - name: Run the permission model test
         run: |
           # SpecialAccessStore.GroupModel, the decision model behind every
@@ -468,6 +582,19 @@ jobs:
           MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/applinks-test)" \
             com.macapk.loader.AppLinksTest "$(cygpath -w "$RUNNER_TEMP/applinks")" | tee applinks-test.log
           grep -q "ALL PASSED" applinks-test.log
+      - name: Run the installer of record test
+        run: |
+          # com.macapk.loader.InstallerOfRecord: Google Play reported as the
+          # installer of an app the user installed while Settings > Apps >
+          # "Report Google Play as the installer" (WINAPK_PLAY_INSTALLER) is on,
+          # nothing when off, a real record over both; PackageManager's
+          # getInstallerPackageName and getInstallSourceInfo give one answer.
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          cp="$(cygpath -w stage/lib/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          "$JAVA_HOME/bin/javac" -cp "$cp" -d build/installer-test windows/test/java/com/macapk/loader/InstallerOfRecordTest.java
+          MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/installer-test)" \
+            com.macapk.loader.InstallerOfRecordTest "$(cygpath -w "$RUNNER_TEMP/installer")" | tee installer-test.log
+          grep -q "ALL PASSED" installer-test.log
       - name: Run the scan record test
         run: |
           # android.bluetooth.le.ScanRecord's parser over the advertising bytes
@@ -523,27 +650,62 @@ jobs:
           timeout 600 ./stage/bin/winapk-runtime.exe --apk sudoku.apk --jdk "$JAVA_HOME" --data "$(cygpath -w "$PWD/appdata")" \
             > boot.log 2>&1 || { tail -n 200 boot.log; exit 1; }
           grep -E "first frame presented|frames presented" boot.log
+          # AOSP's graphics are the default, and the stage carries their files.
+          grep -F "AOSP graphics: on" boot.log
+          grep -E "AOSP graphics: robolectric-nativeruntime.dll loaded" boot.log
+      - name: Install an APK (the launcher's icon render)
+        run: |
+          # winapk-runtime --install-only, what the launcher's install runs: the app's icon and name
+          # (com.winapk.tools.AppMeta) drawn on AOSP's graphics as the app's run draws, with no app
+          # running (Boot.extractIconOnly), then its code converted.
+          timeout 600 ./stage/bin/winapk-runtime.exe --apk sudoku.apk --jdk "$JAVA_HOME" \
+            --data "$(cygpath -w "$PWD/installdata")" --install-only > install.log 2>&1 \
+            || { tail -n 200 install.log; exit 1; }
+          grep -F "AOSP graphics: on" install.log
+          grep -E "AOSP graphics: robolectric-nativeruntime.dll loaded" install.log
+          grep -F "launcher icon rendered" install.log
+          test -s installdata/apps/sudoku/icon.png
+          cp installdata/apps/sudoku/icon.png install-icon.png
       - name: Class-data sharing on Win.apk's Java runtime
         run: |
           # The staged runtime with its own JRE (stage/jre, bake_jre.sh): the
           # patches are baked in, so the JRE's archive maps. The first start
           # has no framework archive yet: it records its classes and, at its
           # exit, starts the background dump; the next start maps the archive.
+          # Each graphics has its archive: AOSP's (the default) first, then a start on Java2D's
+          # (WINAPK_AOSP_GFX=0, the way back while it exists) makes its own and keeps AOSP's.
           export WINAPK_HEADLESS=1 WINAPK_HEADLESS_EXIT_AFTER_FRAMES=30
           data="$(cygpath -w "$PWD/cdsdata")"
+          wait_jsa() { for i in $(seq 1 90); do ls cdsdata/cds/framework-$1-*.jsa > /dev/null 2>&1 && break; sleep 2; done
+                       tail -n 5 cdsdata/cds/dump.log; ls -la cdsdata/cds; ls cdsdata/cds/framework-$1-*.jsa; }
           timeout 600 ./stage/bin/winapk-runtime.exe --apk sudoku.apk --data "$data" > cds1.log 2>&1 \
             || { tail -n 200 cds1.log; exit 1; }
-          grep -F "cds: no framework archive" cds1.log
+          grep -F "AOSP graphics: on" cds1.log
+          grep -F "cds: no framework archive for this Win.apk, Java runtime and graphics (aosp)" cds1.log
           grep -F "class-data sharing ON" cds1.log
-          for i in $(seq 1 90); do ls cdsdata/cds/framework-*.jsa > /dev/null 2>&1 && break; sleep 2; done
-          cat cdsdata/cds/dump.log | tail -n 5
-          ls -la cdsdata/cds
+          wait_jsa aosp
           timeout 600 ./stage/bin/winapk-runtime.exe --apk sudoku.apk --data "$data" > cds2.log 2>&1 \
             || { tail -n 200 cds2.log; exit 1; }
-          grep -F "cds: framework archive" cds2.log
+          grep -F "cds: framework archive" cds2.log | grep -F framework-aosp-
           grep -F "class-data sharing ON" cds2.log
           grep -E "frames presented" cds2.log
           if grep -F "did not map" cds2.log; then exit 1; fi
+          # The JVMs with no app (here --gms) have an app's class path and graphics: the same archive maps.
+          timeout 300 ./stage/bin/winapk-runtime.exe --data "$data" --gms status > cds-gms.out 2> cds-gms.log \
+            || { cat cds-gms.out; tail -n 100 cds-gms.log; exit 1; }
+          grep -F "cds: framework archive" cds-gms.log | grep -F framework-aosp-
+          grep -F "class-data sharing ON" cds-gms.log
+          WINAPK_AOSP_GFX=0 timeout 600 ./stage/bin/winapk-runtime.exe --apk sudoku.apk --data "$data" > cds3.log 2>&1 \
+            || { tail -n 200 cds3.log; exit 1; }
+          grep -F "AOSP graphics: off (WINAPK_AOSP_GFX=0)" cds3.log
+          grep -F "graphics (java2d)" cds3.log
+          grep -E "frames presented" cds3.log
+          wait_jsa java2d
+          ls cdsdata/cds/framework-aosp-*.jsa
+          timeout 600 ./stage/bin/winapk-runtime.exe --apk sudoku.apk --data "$data" > cds4.log 2>&1 \
+            || { tail -n 200 cds4.log; exit 1; }
+          grep -F "cds: framework archive" cds4.log | grep -F framework-aosp-
+          if grep -F "did not map" cds4.log; then exit 1; fi
       - name: Start an app the broker runs as a service host
         run: |
           # The broker starts an app headless, with no window, to serve another
@@ -575,6 +737,22 @@ jobs:
             > gms-status.log 2>> gms-err.log || { cat gms-status.log; tail -n 100 gms-err.log; exit 1; }
           cat gms-status.log
           grep -F "gms dir        : $data\\gms" gms-status.log
+          # The JVMs with no app take AOSP's graphics as an app's run does (host/aosp_gfx.h).
+          grep -F "AOSP graphics: on" gms-err.log
+          grep -E "AOSP graphics: robolectric-nativeruntime.dll loaded" gms-err.log
+      - name: Start the system broker
+        run: |
+          # winapk-runtime --system (com.macapk.loader.SystemServer), what Settings > Google account >
+          # "Use Google services" starts: it must come up serving, on AOSP's graphics as an app's run.
+          # It serves until it is idle; the step stops it once it has said so.
+          data="$(cygpath -w "$PWD/brokerdata")"
+          timeout 300 ./stage/bin/winapk-runtime.exe --jdk "$JAVA_HOME" --data "$data" --system > system.log 2>&1 &
+          for i in $(seq 1 120); do grep -q "\[system\] serving" system.log && break; sleep 2; done
+          kill $! 2> /dev/null || true
+          wait || true
+          grep -F "[system] serving" system.log || { tail -n 100 system.log; exit 1; }
+          grep -F "AOSP graphics: on" system.log
+          grep -E "AOSP graphics: robolectric-nativeruntime.dll loaded" system.log
       - name: Run the APK check verb
         run: |
           # winapk-runtime --verify-apk (com.winapk.tools.ApkCheck), what the
@@ -601,6 +779,7 @@ jobs:
           grep -q "^VERIFIED.0" verify.out && grep -q "^REASON." verify.out
           echo "not an app" > "$dir/not-an-app.apk"
           check "$dir/not-an-app.apk" 1
+          grep -F "AOSP graphics: on" verify-err.log
       - name: Boot an APK in a window
         run: |
           # The runner has a desktop session, so this exercises the Win32
@@ -617,6 +796,37 @@ jobs:
           grep -E "frames presented" window.log
           grep -E "\[win.apk\] (window|window resized|resize):" window.log
           grep -E "resize: the app drew at 400x600 px" window.log
+      - name: Frame time, both graphics engines (the frame bench, in a window)
+        id: framebench
+        run: |
+          # windows/README.md, "Frame time": windows/test/framebench's APK scrolls a list on every
+          # frame; 25 s of it in a window on the staged JRE, on AOSP's graphics and on Java2D's,
+          # each run ending with its `[win.apk] frame times` line (host/frame_times.h). The next
+          # step puts the numbers in the run's summary.
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          if ! windows/test/framebench/build.sh framebench; then
+            echo "::warning::the frame bench was not built (no Android SDK on the runner?); no frame times"
+            exit 0
+          fi
+          data="$(cygpath -w "$PWD/benchdata")"
+          for gfx in aosp java2d; do
+            [ "$gfx" = aosp ] && on=1 || on=0
+            WINAPK_AOSP_GFX=$on WINAPK_HEADLESS_EXIT_AFTER_FRAMES=1500 timeout 600 ./stage/bin/winapk-runtime.exe \
+              --apk framebench/framebench.apk --data "$data" > frames-$gfx.log 2>&1 \
+              || { tail -n 200 frames-$gfx.log; exit 1; }
+            grep -a "frame times (" frames-$gfx.log
+          done
+          echo "built=1" >> "$GITHUB_OUTPUT"
+      - name: Frame time, in the summary
+        if: steps.framebench.outputs.built == '1'
+        shell: pwsh
+        run: |
+          # Fails when a run has no line, kept drawing for fewer than 300 frames, or took over three
+          # vsyncs (50 ms) at p90 for the whole frame: only a collapse, the machines vary too much.
+          python windows/test/framebench/report.py frames-aosp.log frames-java2d.log | Tee-Object -Variable table
+          $rc = $LASTEXITCODE
+          $table | Add-Content $env:GITHUB_STEP_SUMMARY
+          exit $rc
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -624,9 +834,78 @@ jobs:
           path: |
             boot.log
             window.log
+            frames-aosp.log
+            frames-java2d.log
             host.log
             replace.log
+            system.log
+            install.log
+            install-icon.png
             frame.bmp
+
+  aosp-graphics:
+    # Milestone 1 of real Android graphics (windows/README.md, "AOSP graphics"):
+    # AOSP 14's android.graphics / android.text drawing through Robolectric's
+    # native runtime (Skia raster, minikin, HarfBuzz; robolectric-nativeruntime.dll)
+    # inside winapk-runtime.exe (--java-main) on the staged jre/, bound by the
+    # redirect agent (windows/test/aospgfx/redirect_agent.c, built here with
+    # clang). Draws, checks pixels and the bidi layout, times a list frame. The
+    # jars are downloaded (and cached), nothing of them ships.
+    name: AOSP graphics (Skia, minikin in winapk-runtime)
+    needs: [changes, build]
+    if: needs.changes.outputs.tests == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: CLANG64
+          install: curl
+          pacboy: clang:p
+      - uses: actions/download-artifact@v4
+        with:
+          name: runtime-stage
+          path: stage
+      # ~330 MB (android-all, the DLL, ICU's data, the fonts), saved as soon as
+      # it is fetched, so a failing test does not download it again.
+      - id: deps
+        uses: actions/cache/restore@v4
+        with:
+          path: aospgfx-deps
+          key: aospgfx-deps-windows-${{ hashFiles('windows/test/aospgfx/fetch.sh') }}
+      - name: Fetch android-all 14 and the native runtime (Maven Central)
+        run: |
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          windows/test/aospgfx/fetch.sh aospgfx-deps windows
+      - if: steps.deps.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: aospgfx-deps
+          key: ${{ steps.deps.outputs.cache-primary-key }}
+      - name: Draw with AOSP's Canvas inside winapk-runtime
+        run: |
+          # On failure run.sh runs it again with the agent's per-method log,
+          # then with plain java.exe of the same jre/ (outside Win.apk's
+          # process), and prints the tail of both and any hs_err file.
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          export AOSPGFX_JRE="$PWD/stage/jre" AOSPGFX_RUNTIME="$PWD/stage/bin/winapk-runtime.exe"
+          windows/test/aospgfx/run.sh aospgfx-deps build/aospgfx bench 1080 2340 30 100
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: aosp-graphics
+          path: |
+            build/aospgfx/*.png
+            build/aospgfx/*.log
+            build/aospgfx/registered.txt
 
   smoke:
     # One app of each kind (windows/test/compat/smoke.txt) booted headless;
@@ -665,7 +944,24 @@ jobs:
           python windows/test/compat/sweep.py --runtime stage `
             --apks apk-cache --out smoke --frames 150 --timeout 180 `
             --only-from windows/test/compat/smoke.txt --require-drew
+          $rc = $LASTEXITCODE
           python windows/scripts/merge_classlists.py framework.classlist (Get-ChildItem classlists/*.classlist)
+          # Every app on AOSP's graphics, the default: a run that fell back to Java2D's (a file
+          # missing from the stage, the DLL not loading) is not the engine this test is for.
+          $java2d = Get-ChildItem smoke/logs/*.log | Where-Object { -not (Select-String -Path $_ -SimpleMatch 'AOSP graphics: on' -Quiet) }
+          if ($java2d) { "not on AOSP graphics: $($java2d.Name -join ', ')"; exit 1 }
+          exit $rc
+      # Each app's status and memory (peak working set and private bytes of the runtime's process,
+      # sweep.py's MemoryWatch) in the run's summary: the report's first table, up to its sections.
+      - name: Memory per app, in the summary
+        if: always()
+        shell: pwsh
+        run: |
+          if (-not (Test-Path smoke/report.md)) { exit 0 }
+          $lines = Get-Content smoke/report.md
+          $end = ($lines | Select-String -Pattern '^## ' | Select-Object -First 1).LineNumber
+          if (-not $end) { $end = $lines.Count + 1 }
+          $lines[0..($end - 2)] | Add-Content $env:GITHUB_STEP_SUMMARY
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -681,6 +977,369 @@ jobs:
           # when the framework or the smoke set changes much.
           name: framework-classlist
           path: framework.classlist
+
+  aosp-switches:
+    # AOSP's own resources and views (WINAPK_AOSP_RES=1 WINAPK_AOSP_VIEWS=1, docs/research/
+    # aosp-views.md), on real Windows, beside the other jobs. Informational while the switches are
+    # off by default: it fails nothing (continue-on-error), and its verdicts are in the summary.
+    # Their files are staged here over the build's stage (build_aosp_res.sh, build_aosp_views.sh),
+    # not in it, so the stage the other jobs and the installer take is unchanged; their sizes go
+    # in the summary. Then the smoke set with the switches on, with its own "draws" verdict and
+    # frames, and, when the UI gate runs, the UI probe with them, checked against Android's lines
+    # (compare.py: every line equal is the expected result).
+    name: AOSP resources and views (informational)
+    needs: [changes, build, ui-oracle]
+    if: >-
+      !cancelled() && needs.build.result == 'success' && needs.changes.outputs.tests == 'true'
+    continue-on-error: true
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: CLANG64
+          install: unzip zip curl
+      - uses: actions/download-artifact@v4
+        with:
+          name: runtime-stage
+          path: stage
+      - uses: actions/cache@v4
+        with:
+          path: apk-cache
+          key: compat-apks-smoke-${{ hashFiles('windows/test/compat/apps.txt', 'windows/test/compat/smoke.txt') }}
+      # android-all 14 and the jars the two scripts fetch (ASM, Robolectric's resources), as the
+      # build job caches them for AOSP's graphics.
+      - uses: actions/cache@v4
+        with:
+          path: thirdparty/aosp-gfx
+          key: aosp-gfx-${{ hashFiles('windows/test/aospgfx/fetch.sh') }}
+      - name: Stage AOSP's resources and views
+        id: stage-aosp
+        shell: msys2 {0}
+        run: |
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          windows/scripts/build_aosp_res.sh stage
+          windows/scripts/build_aosp_views.sh stage
+          {
+            echo "### AOSP's resources and views: the files they add"
+            echo ""
+            echo "| File | Size (MB) | LZMA (MB, the installer's estimate) |"
+            echo "|---|---:|---:|"
+            for f in lib/aosp-resources.jar lib/aosp-views.jar bin/aosp/framework-res-34.apk; do
+              raw=$(stat -c %s "stage/$f")
+              xz=$(xz -9e -c "stage/$f" | wc -c)
+              awk -v f="$f" -v r="$raw" -v x="$xz" 'BEGIN { printf "| `%s` | %.1f | %.1f |\n", f, r / 1e6, x / 1e6 }'
+            done
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+      # Each check below runs when the staging did (a stage without the views jar would test the
+      # resources switch alone), the probe also when the smoke set failed.
+      - name: Boot the smoke set with the switches on
+        id: smoke
+        if: steps.stage-aosp.outcome == 'success'
+        shell: pwsh
+        env:
+          WINAPK_AOSP_RES: '1'
+          WINAPK_AOSP_VIEWS: '1'
+        run: |
+          # Their own framework archive (framework-aospviews-<key>.jsa), made once and shared.
+          $env:WINAPK_CDS_DIR = "$PWD\cds"
+          ./stage/bin/winapk-runtime.exe --cds-prepare --data "$PWD\cds-prepare"
+          if ($LASTEXITCODE -ne 0) { Get-Content cds/dump.log -Tail 50 }
+          python windows/test/compat/sweep.py --runtime stage `
+            --apks apk-cache --out smoke-aosp --frames 150 --timeout 180 `
+            --only-from windows/test/compat/smoke.txt --require-drew
+          $rc = $LASTEXITCODE
+          $off = Get-ChildItem smoke-aosp/logs/*.log | Where-Object { -not (Select-String -Path $_ -SimpleMatch 'AOSP views: on' -Quiet) }
+          $verdict = if ($rc -eq 0 -and -not $off) { 'every app drew its first screen' } else { 'NOT every app drew (or ran without the switches)' }
+          "### Smoke set with WINAPK_AOSP_RES=1 WINAPK_AOSP_VIEWS=1: $verdict" | Add-Content $env:GITHUB_STEP_SUMMARY
+          if ($off) { "Not on AOSP's views: $($off.Name -join ', ')" | Add-Content $env:GITHUB_STEP_SUMMARY }
+          if (Test-Path smoke-aosp/report.md) {
+            $lines = Get-Content smoke-aosp/report.md
+            $end = ($lines | Select-String -Pattern '^## ' | Select-Object -First 1).LineNumber
+            if (-not $end) { $end = $lines.Count + 1 }
+            $lines[0..($end - 2)] | Add-Content $env:GITHUB_STEP_SUMMARY
+          }
+          if ($rc -ne 0 -or $off) { exit 1 }
+      - if: >-
+          !cancelled() && steps.stage-aosp.outcome == 'success' && needs.ui-oracle.result == 'success'
+          && github.event_name != 'push' && needs.ui-oracle.outputs.same != 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: ui-oracle
+          path: oracle
+      - name: The UI probe with the switches on, against Android's lines
+        if: >-
+          !cancelled() && steps.stage-aosp.outcome == 'success' && needs.ui-oracle.result == 'success'
+          && github.event_name != 'push' && needs.ui-oracle.outputs.same != 'true'
+        shell: bash
+        env:
+          PYTHON: python
+          WINAPK_AOSP_RES: '1'
+          WINAPK_AOSP_VIEWS: '1'
+        run: |
+          rc=0
+          bash windows/test/uiprobe/gate_side.sh probe oracle/probe stage probe-aosp > side-aosp.log 2>&1 || rc=$?
+          tail -n 8 side-aosp.log
+          result=$(python windows/test/uiprobe/compare.py oracle/probe/oracle.txt probe-aosp/ours.txt > probe-aosp/compare.txt 2>&1; tail -n 1 probe-aosp/compare.txt)
+          echo "### UI probe with WINAPK_AOSP_RES=1 WINAPK_AOSP_VIEWS=1: $result (Android's lines; expected: 0 differ)" >> "$GITHUB_STEP_SUMMARY"
+          grep -q '^0 of ' probe-aosp/compare.txt && [[ $rc == 0 ]]
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: aosp-switches
+          path: |
+            smoke-aosp/report.md
+            smoke-aosp/logs/
+            smoke-aosp/frames/
+            cds/dump.log
+            probe-aosp/ours.txt
+            probe-aosp/ours*.log
+            probe-aosp/compare.txt
+            side-aosp.log
+            stage/.build/aosp-views.links.txt
+
+  ui-oracle:
+    # The UI gate's first half, on Linux and beside the Windows build: Android's
+    # lines (the UI probe and gate.txt's apps on Robolectric, gate_oracle.sh) and
+    # the base the head is compared with. That base is main's own CI build of
+    # the commit the pull request merges into, while its runtime-stage has not
+    # expired (the base's natives and jars); otherwise the head's build with the
+    # base's two framework jars, built here by the base's own build_java.sh
+    # (then only the Java side is compared: a host-only change compares equal).
+    # Each is cached by what it is made from, so an unchanged oracle is not
+    # built again; on a push to main this job only fills those caches.
+    name: UI gate, Android's side and the base
+    needs: changes
+    if: needs.changes.outputs.ui == 'true' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      targets: ${{ steps.targets.outputs.targets }}
+      base: ${{ steps.base.outputs.sha }}
+      base_run: ${{ steps.base.outputs.run }}
+      base_gfx: ${{ steps.base.outputs.gfx }}
+      same: ${{ steps.base.outputs.same }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Every commit, no file until it is needed: the base is the merge
+          # commit's first parent, or main's merge base when run by hand.
+          fetch-depth: 0
+          filter: blob:none
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Find the base
+        id: base
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          case "${{ github.event_name }}" in
+            pull_request) base=$(git rev-parse HEAD^1) ;;
+            push) base=$(git rev-parse HEAD) ;;  # what the next pull requests merge into
+            *) base=$(git merge-base HEAD origin/main) ;;
+          esac
+          same=false
+          [[ "${{ github.event_name }}" != push && "$base" == "$(git rev-parse HEAD)" ]] && same=true
+          # What build_java.sh makes the two jars from, at the base (tree and blob ids: no checkout).
+          key=$(for p in runtime/java runtime/net_spi runtime/thirdparty thirdparty windows/scripts/build_java.sh; do
+                  git rev-parse -q --verify "$base:$p" || echo "no $p"; done | sha256sum | cut -c1-40)
+          # main's CI build of exactly that commit, if its staged runtime is still there.
+          run=""
+          if [[ "${{ github.event_name }}" != push && $same == false ]]; then
+            for id in $(gh run list -R "$GITHUB_REPOSITORY" --workflow ci.yml --branch main --commit "$base" \
+                          --status success --json databaseId -q '.[].databaseId'); do
+              if gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id/artifacts" \
+                   -q '.artifacts[] | select(.name=="runtime-stage" and .expired==false) | .id' | grep -q .; then
+                run=$id
+                break
+              fi
+            done
+          fi
+          # The graphics the base runs by default: AOSP's once its host/aosp_gfx.h says so, else
+          # Java2D's. The gate runs the base on them (WINAPK_AOSP_GFX=0 for Java2D's), also when its
+          # side is this build's runtime with the base's jars, so old and new engines compare.
+          gfx=java2d
+          git show "$base:windows/host/aosp_gfx.h" 2>/dev/null | grep -q "kAospGfxByDefault = true" && gfx=aosp
+          printf 'sha=%s\nsame=%s\nkey=%s\nrun=%s\ngfx=%s\n' "$base" "$same" "$key" "$run" "$gfx" | tee -a "$GITHUB_OUTPUT"
+      - id: base-jars
+        if: steps.base.outputs.run == '' && steps.base.outputs.same != 'true'
+        uses: actions/cache@v4
+        with:
+          path: ui-base-jars
+          key: ui-base-jars-v1-${{ steps.base.outputs.key }}
+      - name: Build the base's framework jars (its own build_java.sh)
+        if: steps.base.outputs.run == '' && steps.base.outputs.same != 'true' && steps.base-jars.outputs.cache-hit != 'true'
+        run: |
+          # Only the blobs the head's checkout lacks are fetched.
+          git worktree add --detach "$RUNNER_TEMP/base" "${{ steps.base.outputs.sha }}"
+          bash "$RUNNER_TEMP/base/windows/scripts/build_java.sh" "$RUNNER_TEMP/base-java"
+          mkdir -p ui-base-jars
+          cp "$RUNNER_TEMP/base-java/lib/android-framework.jar" "$RUNNER_TEMP/base-java/lib/macapk-loader.jar" ui-base-jars/
+          echo "${{ steps.base.outputs.sha }}" > ui-base-jars/commit.txt
+      # Android's side: built again only when what it is made from changed
+      # (the probe, the screens oracle, LayoutSweep, the DEX converter, the apps).
+      - id: oracle
+        uses: actions/cache@v4
+        with:
+          path: ui-oracle
+          key: >-
+            ui-oracle-v1-${{ hashFiles('windows/test/uiprobe/src/**', 'windows/test/uiprobe/res/**',
+            'windows/test/uiprobe/oracle/**', 'windows/test/uiprobe/AndroidManifest.xml', 'windows/test/uiprobe/*.gradle',
+            'windows/test/uiprobe/gradle.properties', 'windows/test/uiprobe/build.sh', 'windows/test/uiprobe/gate_oracle.sh',
+            'windows/test/screens/**', 'runtime/java/com/macapk/loader/LayoutSweep.java', 'runtime/java/com/macapk/dex/**',
+            '.github/probe/fdroid_fetch.py') }}
+      - if: steps.oracle.outputs.cache-hit != 'true'
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+          cache-disabled: true
+      # The Android Gradle plugin, the libraries, and the Android framework
+      # Robolectric runs (android-all, ~150 MB, fetched by Robolectric into ~/.m2).
+      - if: steps.oracle.outputs.cache-hit != 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches/modules-2
+            ~/.m2/repository/org/robolectric
+          key: ui-oracle-deps-v1-${{ hashFiles('windows/test/uiprobe/*.gradle', 'windows/test/screens/*.gradle') }}
+      - name: Android's lines (the probe and the apps on Robolectric)
+        if: steps.oracle.outputs.cache-hit != 'true'
+        run: |
+          # Maven Central through Google's mirror first: Central rate-limits CI runners.
+          mkdir -p ~/.gradle/init.d ~/.m2
+          cp .github/ci/maven-mirror.gradle ~/.gradle/init.d/
+          sdk="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          [[ -f "$ANDROID_HOME/platforms/android-34/android.jar" ]] || yes | "$sdk" "platforms;android-34" > /dev/null
+          ls "$ANDROID_HOME"/build-tools/*/aapt2 > /dev/null 2>&1 || yes | "$sdk" "build-tools;34.0.0" > /dev/null
+          # The head's DEX converter (macapk-loader.jar), which the head's runtime uses too.
+          windows/scripts/build_java.sh "$RUNNER_TEMP/head-java"
+          export JAVA_TOOL_OPTIONS="-Drobolectric.dependency.repo.url=https://maven-central.storage-download.googleapis.com/maven2/"
+          windows/test/uiprobe/gate_oracle.sh ui-oracle "$RUNNER_TEMP/head-java/lib"
+      - name: The gate's targets
+        id: targets
+        run: echo "targets=$(tr -d '\n' < ui-oracle/targets.json)" | tee -a "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        if: github.event_name != 'push' && steps.base.outputs.same != 'true'
+        with:
+          name: ui-oracle
+          path: ui-oracle/
+          retention-days: 3
+          compression-level: 1
+      - uses: actions/upload-artifact@v4
+        if: github.event_name != 'push' && steps.base.outputs.run == '' && steps.base.outputs.same != 'true'
+        with:
+          name: ui-base-jars
+          path: ui-base-jars/
+          retention-days: 3
+
+  ui-gate:
+    # The UI gate's second half: Win.apk's lines for one target (the probe, or
+    # one app of gate.txt) at the base and at the head, side by side on one
+    # runner (gate_side.sh: a short first run is run again, a run that hangs
+    # after its last line, or prints no new line for 4 minutes, is ended; each
+    # run at most 8), then regress.py. Any REGRESSED, FARTHER or MISSING line
+    # fails it; the job summary has the counts and the first of those lines,
+    # the artifact every line. A base from before LayoutSweep cannot sweep an
+    # app: then only the head's run is checked (gate.py report --no-base).
+    name: UI gate, ${{ matrix.target.name }}
+    needs: [changes, build, ui-oracle]
+    if: needs.changes.outputs.ui == 'true' && github.event_name != 'push' && needs.ui-oracle.outputs.same != 'true'
+    runs-on: windows-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.ui-oracle.outputs.targets || '[]') }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      PYTHON: python
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: runtime-stage
+          path: stage
+      - uses: actions/download-artifact@v4
+        with:
+          name: ui-oracle
+          path: oracle
+      - if: needs.ui-oracle.outputs.base_run == ''
+        uses: actions/download-artifact@v4
+        with:
+          name: ui-base-jars
+          path: base-jars
+      - name: The base's runtime
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE: ${{ needs.ui-oracle.outputs.base }}
+          BASE_RUN: ${{ needs.ui-oracle.outputs.base_run }}
+        run: |
+          if [[ -n "$BASE_RUN" ]]; then
+            gh run download "$BASE_RUN" -R "$GITHUB_REPOSITORY" -n runtime-stage -D stage-base
+            note="Base: main's own CI build of ${BASE:0:10} (run $BASE_RUN), natives and jars."
+          else
+            cp -r stage stage-base
+            cp -f base-jars/android-framework.jar base-jars/macapk-loader.jar stage-base/lib/
+            note="Base: this build with the framework jars of ${BASE:0:10} (main has no CI build of it left), so only the Java side is compared."
+          fi
+          echo "BASE_NOTE=$note" | tee -a "$GITHUB_ENV"
+      - name: Win.apk at the base and at the head
+        env:
+          BASE: ${{ needs.ui-oracle.outputs.base }}
+          BASE_GFX: ${{ needs.ui-oracle.outputs.base_gfx }}
+        run: |
+          t="oracle/${{ matrix.target.dir }}"
+          # Each side on its own default graphics: the head on this build's (AOSP's), the base on
+          # its commit's (Java2D's until the default flipped there). gate.py report names both.
+          base_aosp=1
+          [[ "$BASE_GFX" == aosp ]] || base_aosp=0
+          WINAPK_AOSP_GFX=$base_aosp bash windows/test/uiprobe/gate_side.sh "${{ matrix.target.kind }}" "$t" stage-base out/base > side-base.log 2>&1 &
+          b=$!
+          bash windows/test/uiprobe/gate_side.sh "${{ matrix.target.kind }}" "$t" stage out/head > side-head.log 2>&1 &
+          h=$!
+          rb=0 rh=0
+          wait $b || rb=$?
+          wait $h || rh=$?
+          tail -n 8 side-base.log side-head.log
+          echo "base: exit $rb, head: exit $rh"
+          # 3: the base's runtime predates LayoutSweep (it would run the app, never
+          # ending): there is no base to compare with, only the head's own run.
+          if [[ $rb == 3 ]]; then
+            echo "NO_BASE=The base's runtime has no layout sweep (LayoutSweep came after ${BASE:0:10}): nothing to compare with, so only the head's run is checked to finish." >> "$GITHUB_ENV"
+          fi
+      - name: Only closer to Android (regress.py)
+        run: |
+          python windows/test/uiprobe/gate.py report "${{ matrix.target.name }}" "oracle/${{ matrix.target.dir }}/oracle.txt" \
+            out/base/ours.txt out/head/ours.txt --note "$BASE_NOTE" ${NO_BASE:+--no-base "$NO_BASE"} \
+            --out out/regress.txt | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ui-gate-${{ matrix.target.dir }}
+          retention-days: 7
+          path: |
+            out/regress.txt
+            out/*/ours.txt
+            out/*/ours*.log
+            out/*/diff.txt
+            out/*/summary.txt
+            side-*.log
 
   sweep:
     # The compatibility sweep (windows/test/compat/sweep.py): every app of
@@ -795,3 +1454,7 @@ jobs:
         with:
           name: winapk-setup
           path: Win.apk-Setup.exe
+      # The size budget (windows/README.md, "Footprint"): fails when the installed folder or the
+      # installer grew past it; after the uploads, so an over-budget build can still be looked at.
+      - name: Check the footprint against its budget
+        run: python windows/scripts/footprint_check.py stage Win.apk-Setup.exe

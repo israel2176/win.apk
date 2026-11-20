@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- View.setClipBounds: Probes.fill cuts `clipped` to its top-left quarter and `unclipped` to
+     nothing (null), so only the first draws less than its background. -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="120dp" android:background="#FFFFFFFF">
+    <View android:id="@+id/clipped" android:layout_width="100dp" android:layout_height="100dp"
+        android:layout_gravity="start|top" android:background="#FF000000" />
+    <View android:id="@+id/unclipped" android:layout_width="100dp" android:layout_height="100dp"
+        android:layout_gravity="end|top" android:background="#FF000000" />
+</FrameLayout>
