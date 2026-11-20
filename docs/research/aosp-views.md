@@ -2,7 +2,7 @@
 
 Status: plan and spike (`windows/test/aospviews/`). Step 0, the `ResBackend`
 and `ViewHost` seams, is done (below). Step R1, the first part, is built behind
-`WINAPK_AOSP_RES=1`, and step V1, the first part, behind `WINAPK_AOSP_VIEWS=1`
+`WINAPK_AOSP_RES=1`, and step V1 but its surfaces and input (V2) behind `WINAPK_AOSP_VIEWS=1`
 (both off by default; "R1 as built" and "V1 as built", after section 4).
 Nothing else here ships yet.
 
@@ -498,30 +498,121 @@ alike (Robolectric's `__constructor__` names, the JDK's line numbers,
 Gallery, `pager_photo_item` (30 lines), which the oracle cannot inflate
 (Robolectric loads the app's arm64 `libpl_droidsonroids_gif.so`) and Win.apk
 does. `LayoutSweep.java` needed no change: it runs inside Win.apk on AOSP's
-views through their public API. The probe's activity window itself is drawn by
-`ViewRootImpl` (90 frames presented, "UI probe" at the top left of a 720x1280
-frame); Open Sudoku's title screen (toolbar, board, Material buttons) draws
-through it too.
+views through their public API.
 
-Left for V1's next parts, in order:
+A correction to this first part, found while doing the second: the session's
+`addToDisplay` answered `ADD_OKAY` without `ADD_FLAG_APP_VISIBLE`, so every
+`ViewRootImpl` saw its app as not visible and relayouted its window `GONE`; the
+frames this part reported (the probe's "UI probe" window, Open Sudoku's title
+screen) were AOSP's `DecorView` drawn and presented by Win.apk's own canvas
+driver, which `ActivityHost`'s empty-window path still installed for an
+activity with no Win.apk content root. The probe's and the sweeps' lines were
+not affected (they inflate and draw detached views). Both are fixed below.
 
-- **Dialogs made by Win.apk's `android.app.Dialog`** (its window is a Win.apk
-  `Window` subclass): not shown with the switch on (Open Sudoku's "Latest
-  changes" dialog). AOSP's `Dialog`, `AlertDialog` and
-  `com.android.internal.app.AlertController` over the same window manager are
-  next. `PopupWindow`, `Toast` and AppCompat's own popups already go through
-  AOSP's `WindowManagerImpl`: untested.
-- **The system bars as insets** (`InsetsState` sources for the status and
-  navigation bars Win.apk paints, `StatusBarDriver`): with the switch on the
-  window has none, so content starts at the top; the platform action bar
-  (`Activity.initWindowDecorActionBar`) is not made.
+#### Second part: dialogs, the windows composed, the system bars
+
+- **The window really is `ViewRootImpl`'s.** `addToDisplay` answers
+  `ADD_OKAY | ADD_FLAG_APP_VISIBLE | ADD_FLAG_IN_TOUCH_MODE`, as
+  WindowManagerService does for a visible activity's window, and
+  `Activity.macapkInstallContentDirect` does nothing with the switch on, so no
+  Win.apk canvas driver draws the decor a second time. Every window draws in
+  software: `ThreadedRenderer.sRendererEnabled` is off for the process, as AOSP
+  turns it off for a low-end persistent process (`WindowManagerGlobal.addView`
+  gives an app's windows `FLAG_HARDWARE_ACCELERATED`, and `ViewRootImpl` would
+  otherwise make a `ThreadedRenderer`, step V3). `HardwareRenderer.isDrawingEnabled`
+  answers true (the native runtime has no such native). The window manager's
+  configuration is its own state, changed by a resize or the bars, not
+  re-read from a window's resources at each relayout (that made a new
+  configuration, and so a new traversal, every frame).
+- **Dialogs are AOSP's classes**, in `aosp-views.jar`: `android.app.Dialog`,
+  `AlertDialog`, `ProgressDialog`, `DatePickerDialog`, `TimePickerDialog`,
+  `Presentation`, `android.text.method.CharacterPickerDialog` and
+  `com.android.internal.app.AlertController` / `MicroAlertController`. The
+  choice: a dialog on Android is a `PhoneWindow` added to the window manager,
+  and Win.apk's `Dialog` is its own `Window` subclass drawn by Win.apk's
+  overlay stack, which cannot live under AOSP's `ViewRootImpl`; bridging it would
+  mean keeping that second window system alive. AOSP's take nothing new into the
+  closure (it stays bounded), and LinkScan finds nothing of Win.apk's that needs
+  a member they lack but Win.apk's own leftovers (`Dialog$DialogWindow`,
+  `AlertDialog$2`..., never loaded) and `WindowOverlayStack` (Win.apk's overlay
+  path, not used with the switch). AppCompat's and Material's dialogs
+  (`AppCompatDialog extends Dialog`) come with them.
+- **Toasts.** AOSP's `Toast` asks `INotificationManager`; `ToastService` answers
+  its toast half in the process as NotificationManagerService and SystemUI's
+  ToastUI do: one at a time, a text toast shown by AOSP's `ToastPresenter`
+  (a `TYPE_TOAST` window, gravity `config_toastDefaultGravity`, y offset
+  `toast_y_offset`), a custom toast by its own `TN`, for 2000 or 3500 ms.
+  (Without it, `Toast.show` of the first part failed: `INotificationManager`
+  was not in the jar.) Not checked in an app yet.
+- **The compositor** (`Compositor`). Each window's `SurfaceControl` carries a
+  `MacapkLayerPost` (Win.apk's `SurfaceControl`/`Surface`, copied with the layer
+  into `ViewRootImpl`'s Surface), so a window's posted frame comes here instead
+  of going to the host; the frame the host presents is then the windows bottom
+  to top, each at its frame less its surface insets, WindowManagerService's dim
+  layer (black at `dimAmount`, over the display) under a `FLAG_DIM_BEHIND`
+  window, and the bars' glyphs on top. Order: the activity's
+  `TYPE_BASE_APPLICATION` window first (its WindowToken keeps it at the bottom
+  of its windows, whenever its dialogs were added: Open Sudoku shows its dialog
+  in `onCreate`, before the activity's window is added), then the other
+  application windows and sub-windows in add order, then system types. One
+  window filling the display is presented as it is, as before. A window
+  layer's canvas comes back in its initial state at each lock, as AOSP's native
+  `lockCanvas` gives one (`ViewRootImpl` translates by the surface insets after
+  every lock; a floating window's content walked off its layer frame by frame).
+  The relayout sizes a layer with AOSP's `WindowLayout.computeSurfaceSize`
+  (a dialog's is its frame plus 64 px of surface insets each side).
+- **The system bars** (`Bars`). Which bars exist stays Win.apk's decision:
+  none by default (the owner's; `StatusBarDriver.systemBarsEnabled`), both with
+  `MACAPK_SYSTEM_BARS=1`. Their sizes are AOSP's own: the status bar
+  `SystemBarUtils.getStatusBarHeight` (`status_bar_height_default`, no cutout),
+  the navigation bar `navigation_bar_height` at the bottom, `navigation_bar_width`
+  on the side Win.apk puts it. They are `InsetsState` sources the session
+  reports to every window (addToDisplay, relayout, and
+  `IWindow.insetsControlChanged` when they change), each visible as the top
+  full-screen application window asks (`updateRequestedVisibleTypes`: `hide()`
+  and `FLAG_FULLSCREEN` arrive that way), so `WindowLayout`, `InsetsController`,
+  `DecorView` and the app's `fitsSystemWindows` / `WindowInsets` code compute
+  what they do on a phone; the configuration's app bounds and `DisplayInfo`'s
+  app size are the display less the navigation bar, and `ViewHost`'s decor
+  answers (which `DisplayConfig` subtracts for `screenHeightDp`) are the bars'
+  sizes. AOSP's `DecorView` draws the bars' background colour; Win.apk paints
+  only the glyphs over it (`StatusBarDriver.paintStatusGlyphs` /
+  `paintNavGlyphs`, `paint`'s and `paintSystemNavStrip`'s own second halves),
+  dark on the window's `APPEARANCE_LIGHT_*_BARS`, as SystemUI does. With
+  `MACAPK_SYSTEM_BARS=1` Open Sudoku's dialog is laid out between them
+  (frame `0,48 - 720,1184`: 24 dp and 48 dp at density 2), its activity window
+  edge to edge with the decor's insets.
+
+Measured under Wine, the base being the first part (cf583c9) on one stage:
+
+| | switch off | `WINAPK_AOSP_RES=1 WINAPK_AOSP_VIEWS=1` |
+|---|---|---|
+| Probe lines differing from the oracle (of 2104) | 162, `ours.txt` byte-identical to the base | 0, byte-identical to the base (and to `oracle.txt`) |
+| Gallery sweep | 279 of 3042, byte-identical to the base | 46 of 2970, byte-identical to the base |
+| Sudoku sweep | 249 of 1396, byte-identical to the base | 50 of 1306; `regress.py` base -> now: 0 REGRESSED, FARTHER or MISSING, 2 changed (an exception's `TypedValue@<hash>`, different in every run) |
+| Off with `MACAPK_SYSTEM_BARS=1` (Open Sudoku's frame) | pixel-identical to the base | |
+| Open Sudoku started | its "Latest changes" dialog over the dimmed title screen, as off | |
+
+The probe has no dialog lines of its own: its `*_dialog` cases inflate a
+dialog's layout detached, and those were already equal to the oracle.
+
+Left for V1, in order:
+
 - **SurfaceView, GLSurfaceView, TextureView, WebView** inside an AOSP view
   tree: they inflate (Win.apk's `SurfaceView` gets the members it reads), but
-  the GL and video paths were not run.
+  the GL and video paths were not run; a `SurfaceView`'s own layer is not yet
+  one of the compositor's.
+- `PopupWindow`, `ListPopupWindow`, spinners' drop-downs, menus and toasts in
+  an app: they are windows like the dialog and go the same way, but were not
+  seen in an app yet (they open on input, V2). The platform action bar
+  (`Activity.initWindowDecorActionBar`) is not made.
+- The compositor redraws the whole frame from every window's layer on each
+  post (a full-frame blit per window), with no damage tracking.
 - Resizing (`IWindow.resized`), several activity windows, an activity's finish
   (`activityWindowRemoved`), configuration changes: written, not tested.
   `CompatChanges` answers true for every change, which is wrong for an app
-  whose target SDK is below a change's.
+  whose target SDK is below a change's. The other inset sources a phone has
+  (tappable element, mandatory gestures, cutout) are not reported.
 - CDS with the switch on (`framework-aospviews-<key>.jsa`), real Windows, the
   smoke apps.
 

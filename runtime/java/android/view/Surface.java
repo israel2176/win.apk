@@ -129,8 +129,17 @@ public class Surface implements android.os.Parcelable {
         if (mReleased || mLayerWidth != other.getWidth() || mLayerHeight != other.getHeight()) mGenerationId++;
         mLayerWidth = other.getWidth();
         mLayerHeight = other.getHeight();
+        mLayerPost = other.macapkLayerPost();
         mReleased = false;
     }
+
+    /** Win.apk framework-internal: takes each frame this Surface posts (the bitmap itself,
+     *  on the posting thread) instead of the host window, as a compositor takes a layer's
+     *  buffer (SurfaceControl.macapkSetLayerPost; with AOSP's views). */
+    public interface MacapkLayerPost {
+        void onPost(Surface surface, android.graphics.Bitmap frame);
+    }
+    private MacapkLayerPost mLayerPost;
 
     /** AOSP transferFrom(Surface other): this Surface takes other's layer, other is released. */
     public void transferFrom(Surface other) {
@@ -138,6 +147,7 @@ public class Surface implements android.os.Parcelable {
         if (other != this) {
             mLayerWidth = other.mLayerWidth;
             mLayerHeight = other.mLayerHeight;
+            mLayerPost = other.mLayerPost;
             mReleased = other.mReleased;
             mGenerationId++;
             other.mReleased = true;
@@ -232,6 +242,13 @@ public class Surface implements android.os.Parcelable {
             mDrawBitmap = com.macapk.loader.gfx.GfxBackend.get().createFrameBitmap(w, h);
             mDrawCanvas = new android.graphics.Canvas(mDrawBitmap);
         }
+        if (mLayerPost != null) {
+            // A window's layer gives a canvas in its initial state at every lock, as AOSP's native
+            // lockCanvas does (a canvas on the new buffer): ViewRootImpl translates by the surface
+            // insets after each lock and never undoes it.
+            mDrawCanvas.restoreToCount(1);
+            mDrawCanvas.setMatrix(null);
+        }
         mCanvasLocked = true;
         return mDrawCanvas;
     }
@@ -255,6 +272,12 @@ public class Surface implements android.os.Parcelable {
         }
         mCanvasLocked = false;
         if (mDrawBitmap == null) return;
+        MacapkLayerPost post = mLayerPost;
+        if (post != null) {
+            // A window's layer: its compositor presents it with the others.
+            post.onPost(this, mDrawBitmap);
+            return;
+        }
         // v1.0.1648: the canvas's own live pixels when available (no 24 MB copy
         // at a full-screen window); presentBitmap copies synchronously on this,
         // the drawing thread, which is the contract macapkLiveArgbOrNull states.

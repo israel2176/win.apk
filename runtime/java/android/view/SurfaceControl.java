@@ -45,7 +45,16 @@ public final class SurfaceControl implements Parcelable {
         mWidth = other.mWidth;
         mHeight = other.mHeight;
         mValid = other.mValid;
+        mLayerPost = other.mLayerPost;
     }
+
+    /** Win.apk framework-internal: where a Surface copied from this layer hands each frame it
+     *  posts, in place of presenting it to the host window (the in-process window manager of
+     *  AOSP's views composes its windows' layers; WINAPK_AOSP_VIEWS=1). Null: the Surface
+     *  presents as before. Copied with the layer by copyFrom. */
+    private Surface.MacapkLayerPost mLayerPost;
+    public void macapkSetLayerPost(Surface.MacapkLayerPost post) { mLayerPost = post; }
+    public Surface.MacapkLayerPost macapkLayerPost() { return mLayerPost; }
 
     private int mTransformHint;
     /** AOSP's buffer transform hint: recorded, as there is no compositor to rotate for. */

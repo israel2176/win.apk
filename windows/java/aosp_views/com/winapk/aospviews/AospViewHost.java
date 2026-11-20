@@ -75,6 +75,12 @@ public final class AospViewHost implements ViewHost {
         System.err.println("[win.apk] AOSP views: AOSP 14's android.view and android.widget, PhoneWindow and"
                 + " ViewRootImpl over the in-process window manager");
         AospWindows.ensureServices();
+        // Every window draws in software into its Surface (HWUI's own pipeline is step V3): an app
+        // window gets FLAG_HARDWARE_ACCELERATED from WindowManagerGlobal.addView when the
+        // application is hardware accelerated, and ViewRootImpl then makes a ThreadedRenderer
+        // unless the renderer is off for the process, as AOSP turns it off for a low-end
+        // persistent process (ThreadedRenderer.initForSystemProcess).
+        android.view.ThreadedRenderer.sRendererEnabled = false;
     }
 
     private void moot(String what) {
@@ -332,19 +338,22 @@ public final class AospViewHost implements ViewHost {
         return view.getTransformationMethod() instanceof android.text.method.PasswordTransformationMethod;
     }
 
-    // ---- The display: one, the host window's box, no system bars yet ----
+    // ---- The display: one, the host window's box; its system bars are Bars' ----
 
     @Override public Display newDisplay() { return AospWindows.defaultDisplay(); }
     @Override public int realWidthPx() { return com.macapk.loader.DisplayConfig.realWidthPx(); }
     @Override public int realHeightPx() { return com.macapk.loader.DisplayConfig.realHeightPx(); }
-    @Override public int navDecorWidthPx() { return 0; }
-    @Override public int navDecorHeightPx() { return 0; }
-    @Override public int navDecorPx() { return 0; }
-    @Override public int statusDecorPx() { return 0; }
-    @Override public boolean fullscreen() { return false; }
-    @Override public boolean barHidden(int type) { return false; }
+    // The decor the configuration subtracts (DisplayConfig's ladder): the bars' sizes when there are
+    // bars, whatever a window asked of them, as DisplayPolicy's decor insets are.
+    @Override public int navDecorWidthPx() { Bars.update(); return Bars.navOnBottom() ? 0 : Bars.navThickness(); }
+    @Override public int navDecorHeightPx() { Bars.update(); return Bars.navOnBottom() ? Bars.navThickness() : 0; }
+    @Override public int navDecorPx() { Bars.update(); return Bars.navThickness(); }
+    @Override public int statusDecorPx() { Bars.update(); return Bars.statusHeight(); }
+    // Hidden bars and FLAG_FULLSCREEN are the controlling window's requested visibility (Bars).
+    @Override public boolean fullscreen() { return Bars.hidden(android.view.WindowInsets.Type.statusBars()); }
+    @Override public boolean barHidden(int type) { return Bars.hidden(type); }
     @Override public boolean decorFitsSystemWindows() { return true; }
-    @Override public int barAppearance(int bit) { return 0; }
+    @Override public int barAppearance(int bit) { return (Bars.appearance() & bit) != 0 ? 1 : 0; }
     @Override public int forcedStatusBarColor() { return barColorUnset(); }
     @Override public int forcedNavigationBarColor() { return barColorUnset(); }
     @Override public int barColorUnset() { return mWinApk.barColorUnset(); }

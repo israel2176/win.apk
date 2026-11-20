@@ -108,6 +108,8 @@ public class AospViewsRewrite {
             "android/os/SystemProperties.find(Ljava/lang/String;)Landroid/os/SystemProperties$Handle;",
             "android/graphics/HardwareRenderer.setFPSDivisor(I)V",
             "android/view/ThreadedRenderer.setFPSDivisor(I)V",
+            "android/graphics/HardwareRenderer.isDrawingEnabled()Z",
+            "android/view/ThreadedRenderer.isDrawingEnabled()Z",
             "android/text/TextUtils.toUpperCase(Ljava/util/Locale;Ljava/lang/CharSequence;Z)Ljava/lang/CharSequence;",
             "android/graphics/RenderNode.addPositionUpdateListener(Landroid/graphics/RenderNode$PositionUpdateListener;)V",
             "android/graphics/RenderNode.removePositionUpdateListener(Landroid/graphics/RenderNode$PositionUpdateListener;)V",
@@ -169,6 +171,7 @@ public class AospViewsRewrite {
             {"android/view/IWindowSession", PKG + "AospWindows$WindowSession"},
             {"android/hardware/display/IDisplayManager", PKG + "AospWindows$DisplayService"},
             {"com/android/internal/view/IInputMethodManager", PKG + "AospWindows$InputMethodService"},
+            {"android/app/INotificationManager", PKG + "ToastService"},
     };
 
     /** com/winapk/aospviews/gen/<I>Impl extends <I>$Stub (a local Binder whose queryLocalInterface

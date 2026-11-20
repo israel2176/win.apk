@@ -88,7 +88,11 @@ KEEP='^android/view/((Surface|SurfaceControl|SurfaceView|SurfaceHolder|TextureVi
 # (WindowOnBackInvokedDispatcher and its callbacks: ViewRootImpl's, the Win.apk copies lack what it
 # calls) and SurfaceSyncGroup (ViewRootImpl's draw syncs); Win.apk's SplashScreen,
 # SplashScreenView, InputTransferToken and TrustedPresentationThresholds stay.
-REPLACE='^(android/util/StateSet|android/R[$]styleable|android/text/method/AllCapsTransformationMethod|android/text/Selection([$].*)?|android/window/(WindowOnBackInvokedDispatcher|OnBackInvokedDispatcher|OnBackInvokedCallback|OnBackAnimationCallback|CompatOnBackInvokedCallback|BackEvent|SystemOnBackInvokedCallbacks|SurfaceSyncGroup)([$].*)?)\.class$'
+# Dialogs are AOSP's too (Dialog, AlertDialog and its AlertController, ProgressDialog, the date
+# and time pickers' dialogs, Presentation, CharacterPickerDialog): a dialog is a PhoneWindow added
+# to the window manager, which Win.apk's Dialog (its own Window, drawn by its overlay stack)
+# cannot be under AOSP's ViewRootImpl. docs/research/aosp-views.md, "V1 as built".
+REPLACE='^(android/app/(Dialog|AlertDialog|ProgressDialog|DatePickerDialog|TimePickerDialog|Presentation)([$].*)?|android/text/method/CharacterPickerDialog([$].*)?|com/android/internal/app/(AlertController|MicroAlertController)([$].*)?|android/util/StateSet|android/R[$]styleable|android/text/method/AllCapsTransformationMethod|android/text/Selection([$].*)?|android/window/(WindowOnBackInvokedDispatcher|OnBackInvokedDispatcher|OnBackInvokedCallback|OnBackAnimationCallback|CompatOnBackInvokedCallback|BackEvent|SystemOnBackInvokedCallbacks|SurfaceSyncGroup)([$].*)?)\.class$'
 grep -E "$TAKE|$REPLACE" "$WORK/all.txt" | grep -vE "$KEEP" > "$WORK/take.txt"
 extract() { (cd "$CLASSES" && xargs -d '\n' unzip -qo "$1" < "$2"); }
 extract "$ALL" "$WORK/take.txt"
@@ -99,7 +103,7 @@ echo "[aosp-views]   $(wc -l < "$WORK/take.txt") classes of android.view, androi
 # of). Not android.app, android.animation, android.content.pm/res, ICU, media or telephony, nor
 # android.os's core (Parcel, Binder, Looper...): Win.apk's own. A reference left unresolved is only
 # an error if the code that makes it runs (HotSpot links lazily); LinkScan lists them.
-ALLOW='^(com/google/android/collect/|android/app/PropertyInvalidatedCache|android/animation/AnimationHandler|android/view/|android/widget/|android/window/|com/android/internal/|android/util/|android/text/|android/os/|android/hardware/display/|android/hardware/input/|android/accessibilityservice/|android/content/|android/graphics/|android/sysprop/|android/service/autofill/|android/service/textclassifier/)'
+ALLOW='^(com/google/android/collect/|android/app/PropertyInvalidatedCache|android/app/(INotificationManager|ITransientNotification|ITransientNotificationCallback)([$]|$)|android/animation/AnimationHandler|android/view/|android/widget/|android/window/|com/android/internal/|android/util/|android/text/|android/os/|android/hardware/display/|android/hardware/input/|android/accessibilityservice/|android/content/|android/graphics/|android/sysprop/|android/service/autofill/|android/service/textclassifier/)'
 DENY='^(com/android/internal/(telephony|app|os/(Zygote|RuntimeInit)|content/om)|android/content/(pm|res)/|android/os/(Parcel|Binder|Looper|MessageQueue|Handler|Build|SystemProperties|Trace|Process)[$.])'
 for round in $(seq 1 30); do
     (cd "$CLASSES" && find . -name '*.class' | sed 's#^[.]/##') > "$WORK/have.txt"

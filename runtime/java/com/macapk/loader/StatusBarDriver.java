@@ -996,76 +996,84 @@ public final class StatusBarDriver {
             double luma = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255.0;
             int glyphColor = luma < 0.5 ? 0xFFFFFFFF : 0xFF1F1F1F;
 
-            Paint gp = new Paint();
-            gp.setAntiAlias(true);
-            gp.setStyle(Paint.Style.FILL);
-            gp.setColor(glyphColor);
-
-            // Geometry measured off the reference AVD (see navBarInsetPx): the
-            // three glyphs sit at 1/4, 1/2 and 3/4 of the bar's LONG axis,
-            // ~30px wide and ~32px tall at density 2 -- i.e. ~15dp x 16dp --
-            // centred across its thickness. Written in dp so it holds at any
-            // density.
-            float triW = 14f * density, triH = 16f * density;
-            float dia   = 15f * density;
-            float sq    = 15f * density, sqR = 2f * density;
-
-            if (navPos == NAV_BAR_BOTTOM) {
-                float cy = top + stripH / 2f;
-                // BACK: filled triangle pointing LEFT.
-                float bx = surfaceWidth * 0.25f;
-                android.graphics.Path tri = new android.graphics.Path();
-                tri.moveTo(bx - triW / 2f, cy);
-                tri.lineTo(bx + triW / 2f, cy - triH / 2f);
-                tri.lineTo(bx + triW / 2f, cy + triH / 2f);
-                tri.close();
-                canvas.drawPath(tri, gp);
-
-                // HOME: filled circle.
-                canvas.drawCircle(surfaceWidth * 0.5f, cy, dia / 2f, gp);
-
-                // RECENTS: filled, slightly-rounded square.
-                float rx = surfaceWidth * 0.75f;
-                canvas.drawRoundRect(rx - sq / 2f, cy - sq / 2f,
-                                     rx + sq / 2f, cy + sq / 2f, sqR, sqR, gp);
-            } else {
-                // NAV_BAR_RIGHT. The order is NOT a naive rotation of the row
-                // above, and the BACK glyph is NOT rotated with it. Both facts
-                // are MEASURED off the reference AVD capture
-                // (scratchpad/avd_playtube_landscape_1796x808.png, right 96
-                // columns of an 1796x808 landscape screen, re-measured
-                // independently 2026-08-19):
-                //
-                //   y189..218  ink width a constant 30px for 26 of 30 rows,
-                //              corners clipped by 2px  -> ROUNDED SQUARE (recents)
-                //   y390..417  ink width 8 -> 28 -> 8, symmetric  -> CIRCLE (home)
-                //   y587..618  ink RIGHT edge pinned at x=1759 for every row
-                //              while the LEFT edge sweeps 1757 -> 1732 -> 1757
-                //              -> TRIANGLE, flat edge vertical on the RIGHT,
-                //              apex pointing LEFT (the same shape the bottom bar
-                //              draws, unrotated)
-                //
-                // So top-to-bottom is RECENTS, HOME, BACK: the horizontal row
-                // [back, home, recents] rotates with the display, which puts
-                // what was leftmost at the BOTTOM.
-                float cx = surfaceWidth - stripH / 2f;
-                // RECENTS at 1/4 height. Measured centre 203.5 vs 808*0.25=202.
-                float ry = surfaceHeight * 0.25f;
-                canvas.drawRoundRect(cx - sq / 2f, ry - sq / 2f,
-                                     cx + sq / 2f, ry + sq / 2f, sqR, sqR, gp);
-                // HOME at 1/2. Measured centre 403.5 vs 808*0.50=404.
-                canvas.drawCircle(cx, surfaceHeight * 0.5f, dia / 2f, gp);
-                // BACK at 3/4, apex still LEFT. Measured centre 602.5 vs
-                // 808*0.75=606.
-                float by = surfaceHeight * 0.75f;
-                android.graphics.Path tri = new android.graphics.Path();
-                tri.moveTo(cx - triW / 2f, by);
-                tri.lineTo(cx + triW / 2f, by - triH / 2f);
-                tri.lineTo(cx + triW / 2f, by + triH / 2f);
-                tri.close();
-                canvas.drawPath(tri, gp);
-            }
+            paintNavGlyphs(canvas, surfaceWidth, surfaceHeight, top, stripH, navPos, glyphColor, density);
         } catch (Throwable ignored) {}
+    }
+
+    /** The three-button navigation bar's glyphs alone (back, home, recents) in `glyphColor`:
+     *  paintSystemNavStrip's second half, and with AOSP's views all there is to paint (AOSP's
+     *  DecorView draws the bar's background colour). `top` is the strip's top for a bottom bar. */
+    public static void paintNavGlyphs(Canvas canvas, int surfaceWidth, int surfaceHeight, int top, int stripH,
+                                      int navPos, int glyphColor, float density) {
+        Paint gp = new Paint();
+        gp.setAntiAlias(true);
+        gp.setStyle(Paint.Style.FILL);
+        gp.setColor(glyphColor);
+
+        // Geometry measured off the reference AVD (see navBarInsetPx): the
+        // three glyphs sit at 1/4, 1/2 and 3/4 of the bar's LONG axis,
+        // ~30px wide and ~32px tall at density 2 -- i.e. ~15dp x 16dp --
+        // centred across its thickness. Written in dp so it holds at any
+        // density.
+        float triW = 14f * density, triH = 16f * density;
+        float dia   = 15f * density;
+        float sq    = 15f * density, sqR = 2f * density;
+
+        if (navPos == NAV_BAR_BOTTOM) {
+            float cy = top + stripH / 2f;
+            // BACK: filled triangle pointing LEFT.
+            float bx = surfaceWidth * 0.25f;
+            android.graphics.Path tri = new android.graphics.Path();
+            tri.moveTo(bx - triW / 2f, cy);
+            tri.lineTo(bx + triW / 2f, cy - triH / 2f);
+            tri.lineTo(bx + triW / 2f, cy + triH / 2f);
+            tri.close();
+            canvas.drawPath(tri, gp);
+
+            // HOME: filled circle.
+            canvas.drawCircle(surfaceWidth * 0.5f, cy, dia / 2f, gp);
+
+            // RECENTS: filled, slightly-rounded square.
+            float rx = surfaceWidth * 0.75f;
+            canvas.drawRoundRect(rx - sq / 2f, cy - sq / 2f,
+                                 rx + sq / 2f, cy + sq / 2f, sqR, sqR, gp);
+        } else {
+            // NAV_BAR_RIGHT. The order is NOT a naive rotation of the row
+            // above, and the BACK glyph is NOT rotated with it. Both facts
+            // are MEASURED off the reference AVD capture
+            // (scratchpad/avd_playtube_landscape_1796x808.png, right 96
+            // columns of an 1796x808 landscape screen, re-measured
+            // independently 2026-08-19):
+            //
+            //   y189..218  ink width a constant 30px for 26 of 30 rows,
+            //              corners clipped by 2px  -> ROUNDED SQUARE (recents)
+            //   y390..417  ink width 8 -> 28 -> 8, symmetric  -> CIRCLE (home)
+            //   y587..618  ink RIGHT edge pinned at x=1759 for every row
+            //              while the LEFT edge sweeps 1757 -> 1732 -> 1757
+            //              -> TRIANGLE, flat edge vertical on the RIGHT,
+            //              apex pointing LEFT (the same shape the bottom bar
+            //              draws, unrotated)
+            //
+            // So top-to-bottom is RECENTS, HOME, BACK: the horizontal row
+            // [back, home, recents] rotates with the display, which puts
+            // what was leftmost at the BOTTOM.
+            float cx = surfaceWidth - stripH / 2f;
+            // RECENTS at 1/4 height. Measured centre 203.5 vs 808*0.25=202.
+            float ry = surfaceHeight * 0.25f;
+            canvas.drawRoundRect(cx - sq / 2f, ry - sq / 2f,
+                                 cx + sq / 2f, ry + sq / 2f, sqR, sqR, gp);
+            // HOME at 1/2. Measured centre 403.5 vs 808*0.50=404.
+            canvas.drawCircle(cx, surfaceHeight * 0.5f, dia / 2f, gp);
+            // BACK at 3/4, apex still LEFT. Measured centre 602.5 vs
+            // 808*0.75=606.
+            float by = surfaceHeight * 0.75f;
+            android.graphics.Path tri = new android.graphics.Path();
+            tri.moveTo(cx - triW / 2f, by);
+            tri.lineTo(cx + triW / 2f, by - triH / 2f);
+            tri.lineTo(cx + triW / 2f, by + triH / 2f);
+            tri.close();
+            canvas.drawPath(tri, gp);
+        }
     }
 
     /** Hit rect (surface px, top-origin) of one nav-bar glyph, or null when
@@ -1220,6 +1228,15 @@ public final class StatusBarDriver {
 
         // 14sp text size matches AOSP `Text.StatusBar.Clock` style.
         // Using a slightly bolder weight to mirror SystemUI's clock.
+        paintStatusGlyphs(canvas, surfaceWidth, barHeight, fgColor, density);
+    }
+
+    /** The status bar's glyphs alone (clock, battery), in `fgColor`, over whatever is beneath:
+     *  paint's own second half, and with AOSP's views (WINAPK_AOSP_VIEWS=1) all there is to
+     *  paint, as AOSP's DecorView draws the bar's background colour itself (the window
+     *  compositor of com.winapk.aospviews passes the light-bar appearance as the colour). */
+    public static void paintStatusGlyphs(Canvas canvas, int surfaceWidth, int barHeight, int fgColor,
+                                         float density) {
         float textSizePx = 14f * density;
         Paint textPaint = new Paint();
         textPaint.setAntiAlias(true);
