@@ -27,6 +27,30 @@ final class ArscRes implements ResBackend {
 
     private static ResourceIndex ri(Object index) { return (ResourceIndex) index; }
 
+    // ---- What the loader builds the app's resources with ----
+
+    @Override public android.content.res.AssetManager openAssets(String apkPath) throws java.io.IOException {
+        return new android.content.res.AssetManager(apkPath);
+    }
+
+    @Override public void updateSystemConfiguration(Configuration cfg, DisplayMetrics metrics) {
+        Resources.updateSystemConfiguration(cfg, metrics, null);
+    }
+
+    @Override public TypedArray themelessTypedArray(Resources res, int[] attrs) { return new TypedArray(res, attrs); }
+
+    @Override public TypedArray themelessTypedArray(Resources res, int[] attrs, android.util.AttributeSet set) {
+        return new TypedArray(res, attrs, set);
+    }
+
+    @Override public Resources placeholderResources() { return new Resources(null, null, null); }
+
+    @Override public int frameworkAttrId(String name) { return ColorStateList.macapkFrameworkAttrId(name); }
+
+    @Override public InputStream openXmlText(Resources res, int id) { return res.openRawResource(id); }
+
+    @Override public void markCompiledSource(org.w3c.dom.Document doc, Resources res, int id) {}
+
     // ---- The app's resource index ----
 
     @Override public Object openIndex(Configuration cfg, String apkPath) { return new ResourceIndex(cfg, apkPath); }

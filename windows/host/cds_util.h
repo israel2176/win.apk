@@ -43,9 +43,10 @@ std::string stamp(const std::filesystem::path& p);
 bool per_launch(const std::string& option);
 
 // The graphics the JVM's options are for: "aosp" when they carry -Dwinapk.aosp.gfx=1 (host/aosp_gfx.h:
-// lib\aosp-graphics.jar first on the class path), "java2d" otherwise. Each has an archive of its
-// own, framework-<graphics>-<key>.jsa, so that a run on the other one (WINAPK_AOSP_GFX=0, or a
-// stage without AOSP's files) does not delete this one.
+// lib\aosp-graphics.jar first on the class path), "aospres" when AOSP's resources are on too
+// (-Dwinapk.aosp.res=1, lib\aosp-resources.jar before it), "java2d" otherwise. Each has an archive
+// of its own, framework-<graphics>-<key>.jsa, so that a run on another one (WINAPK_AOSP_GFX=0,
+// WINAPK_AOSP_RES unset, or a stage without AOSP's files) does not delete this one.
 std::string graphics_of(const std::vector<std::string>& opts);
 
 // Whether the file `name` in the archive folder is a leftover that the dump of `stem`

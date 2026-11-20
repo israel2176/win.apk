@@ -1567,7 +1567,7 @@ public final class Boot {
         // ---- 3. AssetManager + Resources rooted at the original APK ----
         AssetManager assets;
         try {
-            assets = new AssetManager(apkPath);
+            assets = ResBackend.get().openAssets(apkPath);
         } catch (Throwable t) {
             NativeLog.e(TAG, "AssetManager open failed: " + t);
             return;
@@ -1708,7 +1708,7 @@ public final class Boot {
         // Solitaire CG sized its cards for a 720px screen.
         Configuration systemConfig = new Configuration(cfg);
         systemConfig.setLocales(android.os.LocaleList.macapkGetSystemLocales());
-        Resources.updateSystemConfiguration(systemConfig, metrics, null);
+        ResBackend.get().updateSystemConfiguration(systemConfig, metrics);
         // Wire the resource index so openRawResource(id) works. Since
         // v1.0.1589/1590 the index reads the installed apk set in place
         // (every member's resources.arsc + its file rows); apkPath is what
@@ -4340,7 +4340,7 @@ public final class Boot {
                     .compile("package=\"([^\"]*)\"").matcher(xml);
                 if (pm.find()) pkg = pm.group(1);
             }
-            AssetManager assets = new AssetManager(apkPath);
+            AssetManager assets = ResBackend.get().openAssets(apkPath);
             DisplayMetrics metrics = new DisplayMetrics();
             metrics.setToDefaults();
             metrics.widthPixels  = 720;   // run()'s own no-override default (360dp @ 2x retina)

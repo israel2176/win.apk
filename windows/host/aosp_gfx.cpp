@@ -79,6 +79,41 @@ bool aosp_gfx_prepare(const fs::path& lib, const fs::path& bin) {
 
 const AospGfxFiles* aosp_gfx_files() { return g_on ? &g_files : nullptr; }
 
+namespace {
+AospResFiles g_res_files;
+bool g_res_on = false;
+}  // namespace
+
+bool aosp_res_prepare(const fs::path& lib, const fs::path& bin) {
+    g_res_on = false;
+    wchar_t v[8];
+    const DWORD n = GetEnvironmentVariableW(L"WINAPK_AOSP_RES", v, 8);
+    if (n != 1 || v[0] != L'1') return false;  // off by default, and then silent
+    if (!g_on) {
+        std::fprintf(stderr, "[win.apk] AOSP resources: off, they need AOSP's graphics (WINAPK_AOSP_GFX)\n");
+        return false;
+    }
+    AospResFiles f;
+    f.jar = lib / "aosp-resources.jar";
+    f.framework = bin / "aosp" / "framework-res-34.apk";
+    std::error_code ec;
+    for (const fs::path& p : {f.jar, f.framework}) {
+        if (!fs::is_regular_file(p, ec)) {
+            std::fprintf(stderr, "[win.apk] AOSP resources: off, %s is missing (a runtime staged without "
+                                 "windows/scripts/build_aosp_res.sh's files)\n",
+                         utf8(p.wstring()).c_str());
+            return false;
+        }
+    }
+    g_res_files = f;
+    g_res_on = true;
+    std::fprintf(stderr, "[win.apk] AOSP resources: on (WINAPK_AOSP_RES=1): %s first on the class path\n",
+                 utf8(f.jar.wstring()).c_str());
+    return true;
+}
+
+const AospResFiles* aosp_res_files() { return g_res_on ? &g_res_files : nullptr; }
+
 std::string aosp_gfx_locale() {
     wchar_t name[LOCALE_NAME_MAX_LENGTH];
     if (GetUserDefaultLocaleName(name, LOCALE_NAME_MAX_LENGTH) > 0) return utf8(name);

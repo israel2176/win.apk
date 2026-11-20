@@ -1,8 +1,9 @@
 # AOSP's resources and views in Win.apk: plan and feasibility
 
 Status: plan and spike (`windows/test/aospviews/`). Step 0, the `ResBackend`
-and `ViewHost` seams, is done (below); nothing else here ships yet.
-The roadmap entry is `windows/PORTING.md`, M11.
+and `ViewHost` seams, is done (below). Step R1, the first part, is built behind
+`WINAPK_AOSP_RES=1` (off by default; "R1 as built", after section 4); nothing
+else here ships yet.
 
 ## Why
 
@@ -274,7 +275,7 @@ like aospgfx.
 | Step | What | Switch | Needs | Gate |
 |---|---|---|---|---|
 | 0 | `ResBackend` and `ViewHost` seams; the 574 sites routed through them. **Done** (`ResBackend` and `ViewHost`: the probe's `ours.txt`, the Gallery and Sudoku sweeps, `FrameworkStubsTest` and `DamageRectTest` byte-identical) | none | | `ours.txt` byte-identical |
-| R1 | Resources on AOSP: `android.content.res` from android-all with its natives on the libandroidfw port (the spike's bridge, our own code instead of shadow statics; Guava's `Ints` replaced); `framework-res` at API 34; `VMRuntime`'s address map | `WINAPK_AOSP_RES=1` | 0 | probe sections `theme`, `styles.lib`, `drawables`; screens sweep. Win.apk's views keep working on AOSP's `Resources` (public API + `ResBackend`) |
+| R1 | **First part built** ("R1 as built", below). Resources on AOSP: `android.content.res` from android-all with its natives on the libandroidfw port (the spike's bridge, our own code instead of shadow statics; Guava's `Ints` replaced); `framework-res` at API 34; `VMRuntime`'s address map | `WINAPK_AOSP_RES=1` | 0 | probe sections `theme`, `styles.lib`, `drawables`; screens sweep. Win.apk's views keep working on AOSP's `Resources` (public API + `ResBackend`) |
 | R2 | libandroidfw native: `libs/androidfw` + `core/jni/android_util_AssetManager.cpp` and its small closure (libziparchive, libutils / libbase pieces), built with clang for Windows as Robolectric builds HWUI; bound like aospgfx's DLL. Removes the 0.9 to 1.4 s and the Java heap the port holds | same switch | R1 | same lines; start time no worse than today |
 | T | `android.text` with graphics milestone 2 | `WINAPK_AOSP_GFX=1` | graphics | `text.layout` section |
 | V1 | Views on AOSP: `android.view` / `android.widget` / `PhoneWindow` / `DecorView`, the real `ViewRootImpl` over Win.apk's `IWindowSession`, `IWindowManager` and `IAccessibilityManager` (as the spike's `Services`, with real answers), the settings provider, `DisplayEventReceiver` bridged to the host's frame clock; software drawing into the frame `Bitmap` that graphics milestone 2 presents | `WINAPK_AOSP_VIEWS=1` (needs R and graphics on) | R1, graphics M2 | all probe layouts, screens sweep, smoke apps |
@@ -288,6 +289,91 @@ Robolectric publishes android-all for 15, 16 and 17 on Maven Central
 (`16-robolectric-13921718`, `17-robolectric-16653203`). The level is chosen
 once for graphics and views together, against what the native runtime binds;
 the spike ran only 14.
+
+### R1 as built (first part)
+
+`WINAPK_AOSP_RES=1` puts `lib\aosp-resources.jar` (1.3 MB, 579 classes; made by
+`windows/scripts/build_aosp_res.sh`) first on the class path, before
+`aosp-graphics.jar`, and the framework's resources are android-all 14's own
+table as `bin\aosp\framework-res-34.apk` (21 MB). It needs AOSP's graphics on
+(the default). Off, nothing changes: the probe's `ours.txt` is byte-identical.
+
+- **AOSP's classes.** All of `android.content.res` from android-all,
+  `android.app.WindowConfiguration` (Configuration's; no Win.apk class uses a
+  member AOSP's lacks), `com.android.internal.R` (android-all's, matching the
+  table) and `AdaptiveIconDrawable` (aosp-graphics.jar's copy has an API 36 id
+  compiled in), plus a jdeps closure of what they name that Win.apk lacks.
+- **Natives.** 92 of `AssetManager`, `ApkAssets`, `XmlBlock` and `StringBlock`
+  run on Robolectric's port through our own bridge
+  (`windows/java/aosp_res/com/winapk/aospres/Native*.java`, adapted from its
+  shadows without their plumbing); `nativeLoadEmpty` and
+  `nativeOpenXmlAssetFd` (loaders) throw by name. Guava is not shipped: the
+  port's 13 Guava types map to small stand-ins. `VMRuntime.addressOf` in these
+  classes gives a number per array and the bridge maps it back (Win.apk's
+  `VMRuntime` is untouched).
+- **The member scan.** Win.apk's framework calls no `android.content.res`
+  member AOSP lacks except through `ResBackend` (5 new methods for the
+  loader's `AssetManager`, the system configuration, a theme-less
+  `TypedArray`, a placeholder `Resources`, framework attribute ids, and 2 for
+  the XML text the DOM inflaters read). What AOSP's classes call that Win.apk's
+  lack is rewritten at build time (`windows/scripts/AospResRewrite.java`) to
+  `Compat` (`activityInfoConfigNativeToJava`, `RESOURCES_SDK_INT` = 34,
+  `noteResourceMismatch`, `TextUtils.emptyIfNull` / `formatSimple`,
+  `ActivityThread.isSystem`, `DisplayMetrics.noncompat*`), or added to Win.apk's
+  class where AOSP has it (`LocaleList`'s three).
+- **Attribute sets.** AOSP casts every `AttributeSet` to `XmlBlock.Parser`;
+  Win.apk's inflater hands views a set over a DOM element. Each element now
+  knows its compiled file and start tag (`com.macapk.loader.res.CompiledXml`),
+  and `AttrSets` opens an AOSP parser on the same start tag, so the compiled
+  attribute values are what AOSP resolves.
+- **Assets.** AOSP's decoders pass an `AssetInputStream`'s native `Asset*` to
+  the native runtime; the port's assets are Java objects, so the seven graphics
+  classes that test for one are copied in with the test made false
+  (`ImageDecoder.createFromAsset` reads the stream).
+- **What stays Win.apk's.** Its name-based index (`ResourceIndex`) still opens
+  and answers the index lookups the views and the DOM inflater make (style
+  items, raw values by name, the decoded layout text); theme colours for the
+  chrome are answered on an AOSP `Theme`. That half goes with V1.
+
+Measured under Wine (4-vCPU VM, CDS off: the stage's JRE was not baked):
+
+| | switch off | switch on |
+|---|---|---|
+| Probe lines differing from the oracle (of 2104) | 162 | **146** |
+| `theme.platform` (11 lines) / `theme.lib` (18) equal to the oracle | 4 / 18 | **11 / 18** |
+| `styles.lib` (227) | 224 | **227** |
+| `drawables.platform` / `.material` / `.appcompat` / `.probe` | 67 / 186 / 89 / 8 | **71 / 188 / 89 / 8** (all) |
+| `regress.py` off -> on | | 16 fixed, 0 REGRESSED, 0 FARTHER, 0 MISSING |
+| Screens sweep, Gallery (lines differing of 3042) | 279 | 275 (4 fixed, 2 closer, none worse) |
+| Screens sweep, Sudoku (of 1396) | 225 | 225 (none worse) |
+| Framework table load / app table | | 176-252 ms / 4-10 ms |
+| Warm start, to `Application init returned` | 3.29, 3.34 s | 3.63, 3.94 s |
+
+The port parses the framework table lazily here: 0.2 s, not the 0.9-1.4 s the
+spike measured for its whole first theme. The start still pays for both
+tables (AOSP's and Win.apk's index), about 0.3-0.6 s.
+
+A first run had 2 REGRESSED lines in `icons.rtl`: `ImageView#c`'s and `#k`'s
+orange `bg_oval` came out blue. Not a channel swap: `View#j` in the same layout
+draws `bg_oval` with `backgroundTint="#FF1A73E8"`, and Win.apk's `View.draw`
+set that tint on the drawable without `mutate()`. AOSP's drawable cache hands
+every `getDrawable` of an id the same `ConstantState`, so the tint recoloured
+every later `bg_oval` (Win.apk's own resources inflated a new one each time,
+which hid the bug). `View` now mutates before tinting, as AOSP's
+`applyBackgroundTint` does; with the switch off the probe is unchanged.
+
+Sudoku's sweep also shows two of `open-issues.md`'s item 16 gone:
+`getResourceEntryName` of an unknown id throws `NotFoundException`, and a
+land-only layout no longer answers in portrait.
+
+Left for R1's second part: the DOM inflater's own
+name-based reads (the index) and `AnimationUtils` / `AnimatorInflater`, whose
+parsers now come from AOSP's `getAnimation` (spelled as AOSP spells values,
+untested); `CompiledXml` for a set made up in code (`AttrSets` logs it and
+AOSP reads no XML attributes for it); the resize path, untested (Win.apk's
+`Resources` kept the process `Configuration` by reference; AOSP's copies it); split APKs (added, not tested);
+CDS with the switch on (its own archive, `framework-aospres-<key>.jsa`, not
+run: no baked JRE here); real Windows; more apps than the probe and two sweeps.
 
 ## 5. Size, start and memory
 

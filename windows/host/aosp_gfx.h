@@ -43,6 +43,23 @@ const AospGfxFiles* aosp_gfx_files();
 // The locale ICU starts in ("en-US"): the user's, as Windows has it.
 std::string aosp_gfx_locale();
 
+// AOSP's own resources (docs/research/aosp-views.md, step R1): WINAPK_AOSP_RES=1 turns them on,
+// off by default. windows/scripts/build_aosp_res.sh stages
+//   lib\aosp-resources.jar           AOSP 14's android.content.res on Robolectric's Java port of
+//                                    libandroidfw, + windows/java/aosp_res (its natives' bodies, the
+//                                    ResBackend); put first on the class path, before the graphics'
+//   bin\aosp\framework-res-34.apk    the framework's resources at the classes' level
+//                                    (-Dwinapk.aosp.res.framework)
+// They run with AOSP's graphics only (AOSP's Resources inflates AOSP's drawables): with those off,
+// or a file missing, this stays off and says so in the log. Pure Java: nothing to load here.
+struct AospResFiles {
+    std::filesystem::path jar, framework;
+};
+// Decides, once, after aosp_gfx_prepare, for the same JVMs; logs one line when asked for.
+bool aosp_res_prepare(const std::filesystem::path& lib, const std::filesystem::path& bin);
+// The files, once aosp_res_prepare said yes; null otherwise.
+const AospResFiles* aosp_res_files();
+
 // After the host's own natives (host_natives.h) and SQLite's are bound: binds the DLL's natives
 // onto aosp-graphics.jar's classes (aosp_gfx_redirect.h) and logs what it did. False when it could
 // not; the app still starts, but AOSP's classes then have no natives.

@@ -1567,7 +1567,11 @@ std::vector<std::string> jvm_options(const BootArgs& b) {
     // AOSP's graphics (aosp_gfx.h, the default; WINAPK_AOSP_GFX=0 is Java2D's): their classes
     // first, so they win over the framework's own of the same name (aosp_gfx_prepare in main).
     const winapk::host::AospGfxFiles* aosp = winapk::host::aosp_gfx_files();
-    v.push_back("-Djava.class.path=" + (aosp ? jvm_path(aosp->jar) + ";" : std::string()) +
+    // AOSP's resources (WINAPK_AOSP_RES=1, aosp_gfx.h) before them: that jar's com.android.internal.R
+    // matches its framework table, for the graphics' classes too.
+    const winapk::host::AospResFiles* aosp_res = winapk::host::aosp_res_files();
+    v.push_back("-Djava.class.path=" + (aosp_res ? jvm_path(aosp_res->jar) + ";" : std::string()) +
+                (aosp ? jvm_path(aosp->jar) + ";" : std::string()) +
                 jvm_path(o.lib / "android-framework.jar") + ";" +
                 jvm_path(o.lib / "macapk-loader.jar") + ";" + jvm_path(o.lib / "bcprov-jdk18on-1.79.jar") +
                 (o.install_only || o.verify ? ";" + jvm_path(o.lib / "winapk-tools.jar") : std::string()));
@@ -1668,6 +1672,10 @@ std::vector<std::string> jvm_options(const BootArgs& b) {
         v.push_back("-Dwinapk.aosp.gfx=1");
         v.push_back("-Dwinapk.aosp.fonts=" + jvm_path(aosp->fonts));
         if (!aosp->hyphen.empty()) v.push_back("-Dwinapk.aosp.hyphen=" + jvm_path(aosp->hyphen));
+    }
+    if (aosp_res) {
+        v.push_back("-Dwinapk.aosp.res=1");
+        v.push_back("-Dwinapk.aosp.res.framework=" + jvm_path(aosp_res->framework));
     }
     // Extra options, space-separated, as upstream reads them.
     const std::string extra = utf8(env_var(L"MACAPK_JVM_OPTS"));
@@ -2262,6 +2270,8 @@ int wmain(int argc, wchar_t** argv) {
     // this runtime makes: an app's run, --cds-prepare's key, the install's icon (AppMeta), --gms and
     // --system, so that nothing runs on the Java2D classes but by asking.
     winapk::host::aosp_gfx_prepare(b.options.lib, exe_dir());
+    // AOSP's resources (aosp_gfx.h), for the same JVMs: only with WINAPK_AOSP_RES=1 and the graphics on.
+    winapk::host::aosp_res_prepare(b.options.lib, exe_dir());
     if (b.options.cds_prepare) {
         // The options, and with them the archive's key, an app's start would have: its graphics too.
         jvm_options(b);

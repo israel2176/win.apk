@@ -3654,11 +3654,10 @@ public final class ResourceIndex {
         // The phone defaults, not the unset `new Configuration()` delta
         // (MACAPK_CONFIG_UNSET_CTOR): macapkDeriveScreenLayout keeps the
         // incoming layout-direction bits, and this path has always answered LTR.
-        android.content.res.Configuration c =
-            android.content.res.Configuration.macapkPhoneDefaults();
+        android.content.res.Configuration c = com.macapk.loader.res.ResBackend.get().phoneDefaults();
         c.screenWidthDp = wDp;
         c.screenHeightDp = hDp;
-        c.macapkDeriveScreenLayout();
+        com.macapk.loader.res.ResBackend.get().deriveScreenLayout(c);
         return c.screenLayout;
     }
 

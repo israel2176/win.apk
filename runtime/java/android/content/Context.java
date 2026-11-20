@@ -153,7 +153,7 @@ public abstract class Context {
                 // empty asset paths so the Theme has a valid back-ref
                 // (its getResources() lookup must not return null;
                 // Glide DrawableDecoderCompat.loadDrawableV7 needs it).
-                r = new Resources(null, null, null);
+                r = com.macapk.loader.res.ResBackend.get().placeholderResources();
             }
             // AOSP ContextImpl.getTheme (android11-release ContextImpl.java:
             // 378-390) selects a DEFAULT theme when setTheme() was never
@@ -767,7 +767,7 @@ public abstract class Context {
             android.content.res.Resources.Theme t = getTheme();
             if (t != null) return t.obtainStyledAttributes(attrs);
         } catch (Throwable ignored) {}
-        return new android.content.res.TypedArray(getResources(), attrs);
+        return com.macapk.loader.res.ResBackend.get().themelessTypedArray(getResources(), attrs);
     }
     /** AOSP ContextThemeWrapper/Context: this overload delegates straight to
      *  `getTheme().obtainStyledAttributes(resid, attrs)` -- the STYLE named by
@@ -780,7 +780,7 @@ public abstract class Context {
             android.content.res.Resources.Theme t = getTheme();
             if (t != null) return t.obtainStyledAttributes(resId, attrs);
         } catch (Throwable ignored) {}
-        return new android.content.res.TypedArray(getResources(), attrs);
+        return com.macapk.loader.res.ResBackend.get().themelessTypedArray(getResources(), attrs);
     }
     public android.content.res.TypedArray obtainStyledAttributes(
             android.util.AttributeSet set, int[] attrs) {
@@ -799,7 +799,7 @@ public abstract class Context {
             android.content.res.Resources.Theme t = getTheme();
             if (t != null) return t.obtainStyledAttributes(set, attrs, 0, 0);
         } catch (Throwable ignored) {}
-        return new android.content.res.TypedArray(getResources(), attrs, set);
+        return com.macapk.loader.res.ResBackend.get().themelessTypedArray(getResources(), attrs, set);
     }
     public android.content.res.TypedArray obtainStyledAttributes(
             android.util.AttributeSet set, int[] attrs,
@@ -820,7 +820,7 @@ public abstract class Context {
         } catch (Throwable t) {
             macapkTraceThemelessOsa(defStyleAttr, t);
         }
-        return new android.content.res.TypedArray(getResources(), attrs, set);
+        return com.macapk.loader.res.ResBackend.get().themelessTypedArray(getResources(), attrs, set);
     }
     /** Diagnostic (MACAPK_TRACE_DEFSTYLE, zero cost unset): the 4-arg
      *  obtainStyledAttributes fell back to the THEME-LESS TypedArray --

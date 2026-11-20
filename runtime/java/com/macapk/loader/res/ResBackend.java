@@ -6,9 +6,12 @@
 // unprefixed ones, such as Theme.resolveAttrColor) that AOSP's does not have, and
 // its resource table is Win.apk's own com.macapk.loader.ResourceIndex. Code
 // outside the resources side reaches them only through this interface, so that
-// putting AOSP's android.content.res in later needs an implementation of it, not
-// patched copies of AOSP classes. Today the only implementation is ArscRes, which
-// calls the member it stands for, one for one: going through here changes nothing.
+// putting AOSP's android.content.res in needs an implementation of it, not patched
+// copies of AOSP classes. ArscRes, the default, calls the member it stands for, one
+// for one: going through here changes nothing. With WINAPK_AOSP_RES=1 (the host puts
+// lib/aosp-resources.jar first on the class path and sets -Dwinapk.aosp.res=1) the
+// classes of android.content.res are AOSP 14's and the backend is that jar's
+// com.winapk.aospres.AospRes (windows/java/aosp_res; step R1 of the plan).
 //
 // The resources side, which keeps calling itself directly: android.content.res
 // and its Win.apk helpers in com.macapk.loader (ResourceIndex, ArscReader,
@@ -34,7 +37,53 @@ import java.util.function.Consumer;
 public interface ResBackend {
 
     /** The backend of this JVM: chosen once, for the whole run. */
-    static ResBackend get() { return ArscRes.INSTANCE; }
+    static ResBackend get() { return Chosen.BACKEND; }
+
+    /** Which one, decided when first asked. */
+    final class Chosen {
+        private Chosen() {}
+
+        static final ResBackend BACKEND = choose();
+
+        private static ResBackend choose() {
+            if (!"1".equals(System.getProperty("winapk.aosp.res"))) return ArscRes.INSTANCE;
+            try {
+                return (ResBackend) Class.forName("com.winapk.aospres.AospRes").getField("INSTANCE").get(null);
+            } catch (ReflectiveOperationException e) {
+                // The host sets the property only with the jar first on the class path, so this
+                // is a broken stage: AOSP's android.content.res is there without its backend.
+                throw new IllegalStateException("winapk.aosp.res=1 without com.winapk.aospres.AospRes", e);
+            }
+        }
+    }
+
+    // ---- What the loader builds the app's resources with ----
+
+    /** The app's AssetManager over its APK, the framework's resources first (new AssetManager(apkPath)). */
+    android.content.res.AssetManager openAssets(String apkPath) throws java.io.IOException;
+
+    /** Pushes the process configuration into the system Resources (Resources.updateSystemConfiguration). */
+    void updateSystemConfiguration(Configuration cfg, DisplayMetrics metrics);
+
+    /** A TypedArray with no theme behind it, for a Context whose theme failed (new TypedArray(res, attrs)). */
+    TypedArray themelessTypedArray(Resources res, int[] attrs);
+
+    /** The same over an attribute set (new TypedArray(res, attrs, set)). */
+    TypedArray themelessTypedArray(Resources res, int[] attrs, android.util.AttributeSet set);
+
+    /** A Resources for a theme to hang from when a Context has none (new Resources(null, null, null)). */
+    Resources placeholderResources();
+
+    /** A framework attribute's id by name, 0 if none (ColorStateList.macapkFrameworkAttrId). */
+    int frameworkAttrId(String name);
+
+    /** A compiled XML resource (a layout, a menu) as the decoded text Win.apk's inflaters parse
+     *  (Resources.openRawResource, which serves the index's text rendering). */
+    InputStream openXmlText(Resources res, int id);
+
+    /** After an inflater parsed openXmlText's text into doc: lets the backend tie each element to
+     *  its start tag in the compiled file (CompiledXml). Today's backend does nothing. */
+    void markCompiledSource(org.w3c.dom.Document doc, Resources res, int id);
 
     // ---- The app's resource index: open it, publish it, the package ----
 
