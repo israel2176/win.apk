@@ -698,6 +698,8 @@ public final class AospRes implements ResBackend {
                         Configuration want = merged(o.base, o.override);
                         if (!want.equals(o.res.getConfiguration())) {
                             o.res.updateConfiguration(want, o.base.getDisplayMetrics());
+                            log("an override's Resources follow the application's configuration: "
+                                    + Configuration.resourceQualifierString(o.res.getConfiguration()));
                         }
                     }
                 }

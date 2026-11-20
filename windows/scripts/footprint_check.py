@@ -20,6 +20,11 @@ import sys
 # (part, the paths it holds relative to the stage, budget in MB). A path ending in "/" is a folder;
 # the last part takes every file the others do not.
 BUDGETS = [
+    # Before AOSP graphics' part, whose bin/aosp/ would take the table. Staged only with
+    # WINAPK_STAGE_AOSP_RES=1 / WINAPK_STAGE_AOSP_VIEWS=1 (0 MB in a release today); November 2026:
+    # 1.4 + 6.7 + 21.2 MB, 26.4 MB under LZMA.
+    ("AOSP resources and views (WINAPK_AOSP_RES, WINAPK_AOSP_VIEWS; not shipped yet)",
+     ["lib/aosp-resources.jar", "lib/aosp-views.jar", "bin/aosp/framework-res-34.apk"], 32),
     ("AOSP graphics (the default; WINAPK_AOSP_GFX=0 is Java2D)",
      ["bin/aosp/", "bin/robolectric-nativeruntime.dll", "lib/aosp-graphics.jar"], 70),
     ("Java runtime (jre/)", ["jre/"], 140),

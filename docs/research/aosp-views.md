@@ -764,12 +764,34 @@ settings and title screen come back on its AMOLED theme.
 `WINAPK_AOSP_RES=1 WINAPK_AOSP_VIEWS=1` dumps
 `framework-aospviews-<key>.jsa` (41.4 MB; two classes, AOSP's `Dialog` and
 `AlertDialog`, fail verification at dump time and are left out, loaded at run
-time as before), the first start maps it whole (`-XX:+VerifySharedSpaces`) and
+time as before: see below), the first start maps it whole (`-XX:+VerifySharedSpaces`) and
 marks it `.ok`, and later starts map it. Sudoku's first frame under Wine:
 11.66-11.86 s with it (three starts) against 15.9-20.9 s with `WINAPK_CDS=0`,
 the same frame byte for byte. The stage's JRE must be baked over the current
 `java.base` patch (`bake_jre.sh`), or the runtime keeps `--patch-module` and
 runs without CDS, and says so.
+
+Why `Dialog` failed verification: a CDS dump verifies every class it archives, and an app's run
+does not (`-XX:-BytecodeVerificationRemote`), so a reference to a class nobody ships stays hidden
+until the code runs. A dump over every class of `aosp-views.jar` and `aosp-resources.jar`
+(Linux's JDK 21, the switches' class path) found 24 that did not link, for these reasons, each a
+real failure waiting for its code to run: `Dialog` and the dialogs over it named
+`com.android.internal.app.WindowDecorActionBar` (a dialog whose theme has an action bar,
+`Dialog.show`), now in `aosp-views.jar` with `NavItemSelectedListener`; `ViewAnimationUtils`
+(`createCircularReveal`) named `android.animation.RevealAnimator`, now taken; `TextServicesManager`
+and `TextClassificationManager` catch `ServiceManager.ServiceNotFoundException`, now in Win.apk's
+`ServiceManager`; `FastPrintWriter` (aosp-graphics.jar's) lacked its `DummyWriter`, now taken with
+it; and the AIDL Stubs (the in-process services' own: `INotificationManager`,
+`IInputMethodManager`, `IInputManager`, `IImeTracker`, `IPlatformCompat`) named
+`ActivityThread.getSystemContext()`'s `ContextImpl`, now a `Context` (`Compat.systemContext`, the
+Application) through both rewrites. Left, behind services Win.apk does not offer: augmented
+autofill (`AssistStructure$ViewNodeBuilder`), translation (`ITranslationCallback`), inline
+suggestions (`SurfaceControl$OnReparentListener`) and `LockPatternUtils` (`IStrongAuthTracker`).
+
+A rotation with an override's Resources: Sudoku in a window (Xvfb), Dark mode picked, then the
+window made landscape (1200x700): the night override's Resources follow the application's
+configuration (`[aosp-res] an override's Resources follow ... land-night ...`), and the settings
+screen lays out landscape on its AMOLED theme.
 
 ## 5. Size, start and memory
 

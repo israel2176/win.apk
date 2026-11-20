@@ -93,8 +93,10 @@ KEEP='^android/view/((Surface|SurfaceControl|SurfaceView|SurfaceHolder|TextureVi
 # Dialogs are AOSP's too (Dialog, AlertDialog and its AlertController, ProgressDialog, the date
 # and time pickers' dialogs, Presentation, CharacterPickerDialog): a dialog is a PhoneWindow added
 # to the window manager, which Win.apk's Dialog (its own Window, drawn by its overlay stack)
-# cannot be under AOSP's ViewRootImpl. docs/research/aosp-views.md, "V1 as built".
-REPLACE='^(android/app/(Dialog|AlertDialog|ProgressDialog|DatePickerDialog|TimePickerDialog|Presentation)([$].*)?|android/text/method/[^/]*|com/android/internal/app/(AlertController|MicroAlertController)([$].*)?|android/util/StateSet|android/R[$]styleable|android/text/Selection([$].*)?|android/window/(WindowOnBackInvokedDispatcher|OnBackInvokedDispatcher|OnBackInvokedCallback|OnBackAnimationCallback|CompatOnBackInvokedCallback|BackEvent|SystemOnBackInvokedCallbacks|SurfaceSyncGroup)([$].*)?)\.class$'
+# cannot be under AOSP's ViewRootImpl. docs/research/aosp-views.md, "V1 as built". With them
+# WindowDecorActionBar (and its NavItemSelectedListener): a dialog whose theme has an action bar
+# shows it (Dialog.show), and without the class Dialog did not link (a CDS dump's verification).
+REPLACE='^(android/app/(Dialog|AlertDialog|ProgressDialog|DatePickerDialog|TimePickerDialog|Presentation)([$].*)?|android/text/method/[^/]*|com/android/internal/app/(AlertController|MicroAlertController|WindowDecorActionBar|NavItemSelectedListener)([$].*)?|android/util/StateSet|android/R[$]styleable|android/text/Selection([$].*)?|android/window/(WindowOnBackInvokedDispatcher|OnBackInvokedDispatcher|OnBackInvokedCallback|OnBackAnimationCallback|CompatOnBackInvokedCallback|BackEvent|SystemOnBackInvokedCallbacks|SurfaceSyncGroup)([$].*)?)\.class$'
 grep -E "$TAKE|$REPLACE" "$WORK/all.txt" | grep -vE "$KEEP" > "$WORK/take.txt"
 extract() { (cd "$CLASSES" && xargs -d '\n' unzip -qo "$1" < "$2"); }
 extract "$ALL" "$WORK/take.txt"
@@ -105,10 +107,15 @@ echo "[aosp-views]   $(wc -l < "$WORK/take.txt") classes of android.view, androi
 # of). Not android.app, android.animation, android.content.pm/res, ICU, media or telephony, nor
 # android.os's core (Parcel, Binder, Looper...): Win.apk's own. A reference left unresolved is only
 # an error if the code that makes it runs (HotSpot links lazily); LinkScan lists them.
-ALLOW='^(com/google/android/collect/|android/app/PropertyInvalidatedCache|android/app/(INotificationManager|ITransientNotification|ITransientNotificationCallback)([$]|$)|android/animation/AnimationHandler|android/view/|android/widget/|android/window/|com/android/internal/|android/util/|android/text/|android/os/|android/hardware/display/|android/hardware/input/|android/hardware/graphics/common/|android/accessibilityservice/|android/content/|android/graphics/|android/sysprop/|android/service/autofill/|android/service/textclassifier/)'
+ALLOW='^(com/google/android/collect/|android/app/PropertyInvalidatedCache|android/app/(INotificationManager|ITransientNotification|ITransientNotificationCallback)([$]|$)|android/animation/(AnimationHandler|RevealAnimator)|android/view/|android/widget/|android/window/|com/android/internal/|android/util/|android/text/|android/os/|android/hardware/display/|android/hardware/input/|android/hardware/graphics/common/|android/accessibilityservice/|android/content/|android/graphics/|android/sysprop/|android/service/autofill/|android/service/textclassifier/)'
 DENY='^(com/android/internal/(telephony|app|os/(Zygote|RuntimeInit)|content/om)|android/content/(pm|res)/|android/os/(Parcel|Binder|Looper|MessageQueue|Handler|Build|SystemProperties|Trace|Process)[$.])'
+unzip -Z1 "$RES" '*.class' > "$WORK/aosp-jars.txt"
+unzip -Z1 "$GFX" '*.class' >> "$WORK/aosp-jars.txt"
 for round in $(seq 1 30); do
-    (cd "$CLASSES" && find . -name '*.class' | sed 's#^[.]/##') > "$WORK/have.txt"
+    # A nested class goes with its outer one: taken when the outer is here or one of AOSP's in
+    # aosp-resources.jar / aosp-graphics.jar (the same android-all 14: FastPrintWriter is the
+    # graphics', its DummyWriter came from nowhere and the class did not link).
+    { (cd "$CLASSES" && find . -name '*.class' | sed 's#^[.]/##'); cat "$WORK/aosp-jars.txt"; } > "$WORK/have.txt"
     "$JDEPS" --multi-release 21 -verbose:class -filter:none -cp "$(cp_of "$RES" "$GFX" "$FRAMEWORK" "$LOADER")" \
         "$CLASSES" 2> /dev/null |
         tr -d '\r' | awk '$NF == "found" && $(NF-1) == "not" { print $3 }' | sort -u |

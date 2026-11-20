@@ -38,6 +38,16 @@ public final class Compat {
         return output;
     }
 
+    /** ActivityThread.getSystemContext (a ContextImpl on Android; AospResRewrite): the process's
+     *  Application, the one context an app process has here. */
+    public static android.content.Context systemContext(android.app.ActivityThread thread) {
+        try {  // Win.apk's Application.macapk_get (this jar compiles against android-all's Application)
+            return (android.content.Context) android.app.Application.class.getMethod("macapk_get").invoke(null);
+        } catch (ReflectiveOperationException e) {
+            return null;
+        }
+    }
+
     /** StrictMode.noteResourceMismatch: Win.apk runs no StrictMode policy. */
     public static void noteResourceMismatch(Object tag) {}
 

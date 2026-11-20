@@ -38,6 +38,14 @@ public final class ServiceManager {
         addService(name, service);
     }
     public static String[] listServices() { return sAdded.keySet().toArray(new String[0]); }
+
+    /** AOSP's: what getServiceOrThrow throws for a service nobody published. The class has to
+     *  exist for AOSP's managers that catch it (TextServicesManager, TextClassificationManager):
+     *  an exception leaving their try block resolves the handler's class, and a missing one is a
+     *  NoClassDefFoundError there (a CDS dump's verification found them). */
+    public static class ServiceNotFoundException extends Exception {
+        public ServiceNotFoundException(String name) { super("No service published for: " + name); }
+    }
     public static String[] listServices(int dumpPriority) { return listServices(); }
     public static boolean isDeclared(String name) { return false; }
     public static String[] getDeclaredInstances(String iface) { return new String[0]; }

@@ -1066,6 +1066,13 @@ arm64 translation's compiler: `libLLVM` 156 MB, `libclang-cpp` 63 MB), `jre\`
 the jar 1), `bin\tools\` 35 MB (`framework-res.apk` 22, `apkeep` 12), the
 rest of Win.apk about 70 MB.
 
+AOSP's own resources and views (`WINAPK_AOSP_RES`, `WINAPK_AOSP_VIEWS`, off by default and not
+in a release yet) would add 29.2 MB installed: `bin\aosp\framework-res-34.apk` 21.2 MB (android-all
+14's table: beside `bin\tools\framework-res.apk`'s 22.9, which they would retire),
+`lib\aosp-views.jar` 6.7 and `lib\aosp-resources.jar` 1.4; under `xz -9e`, the installer's LZMA's
+estimate, 19.0 + 6.1 + 1.2 = 26.4 MB. `footprint_check.py` counts them as their own part (32 MB),
+and CI's informational "AOSP resources and views" job prints them each run.
+
 What a user's data folder adds: once, for all apps, `cds\` (the framework
 archive, 40 MB) and `cache\` (16 MB: `android-system-fonts\` 12,
 `fonts\` 4, `fwview\` 1; `aosp-fonts\`, the fonts.xml on Windows' CJK
@@ -1499,6 +1506,7 @@ start; those throw alike on both sides, and only a difference counts.
 | Unit tests | `windows-latest` | Guest libraries, Build | Every test program above, the arm64 AOT translation included |
 | Runtime tests | `windows-latest` | Guest libraries, Build | The tests that need the staged jars or ANGLE, the APK booted headless and in a window (`headless-boot` artifact), the GMS CLI, and the frame bench in a window on both graphics engines, its frame times in the run's summary ([Frame time](#frame-time)) |
 | App smoke test | `windows-latest` | Build | The ten apps of `test/compat/smoke.txt` (`--require-drew`) on the staged JRE with one framework archive made first (`--cds-prepare`): fails when one no longer draws (`smoke` artifact). Each app's peak working set and private bytes go in the report and the run's summary ([Footprint](#footprint)). The apps' classes, merged, are the `framework-classlist` artifact: copy it to `java/winapk-framework.classlist` when the framework or the smoke set has changed much |
+| AOSP resources and views (informational) | `windows-latest` | Build, UI gate's Android side | Fails nothing (`continue-on-error`): stages `build_aosp_res.sh` and `build_aosp_views.sh` over the build's stage (not into it: the installer and the other jobs keep theirs) with their sizes, raw and under LZMA, in the summary; then the smoke set with `WINAPK_AOSP_RES=1 WINAPK_AOSP_VIEWS=1` (their own framework archive first) and its own "draws" verdict, and, when the UI gate runs, the UI probe with them against Android's lines (`compare.py`: 0 differ expected). The `aosp-switches` artifact: the report, logs and frames, the probe's lines, LinkScan's list |
 | AOSP graphics | `windows-latest` | Build | `test/aospgfx/`: AOSP's Canvas on Robolectric's native runtime in `winapk-runtime.exe` on the staged JRE (the agent built with MSYS2 CLANG64 clang; android-all and the DLL fetched from Maven Central and cached). Fails when a check fails; the `aosp-graphics` artifact has the picture, the benchmark frame and the logs. [AOSP graphics](#aosp-graphics-milestone-1) |
 | UI gate, Android's side and the base | Ubuntu | What changed | Android's lines for the UI probe and `test/screens/gate.txt`'s apps (`gate_oracle.sh`, cached by what they are made from), the base's commit, and the base's framework jars when `main` has no CI build of it left (`ui-oracle`, `ui-base-jars`). [The UI gate](#the-ui-gate-only-closer-to-android) |
 | UI gate, `<target>` | `windows-latest` × 3 | Build, UI gate's Android side | One per target: Win.apk at the base and at the head (`gate_side.sh`), then `regress.py`; fails on a `REGRESSED`, `FARTHER` or `MISSING` line, with the first of them in the summary (`ui-gate-<target>` artifact) |
@@ -3288,7 +3296,8 @@ every such change is listed here:
   base context's, as AOSP's. `TouchDispatcher`: a `hostmouse` verb, posted through
   `NativeCocoa.postHostMouse`'s new actions 3-7, which the Windows host now registers with
   `debugTrackpad` (`hostwheel`, `magnify`). Off is unchanged (the probe's `ours.txt` and the Gallery
-  and Sudoku sweeps byte-identical to the base).
+  and Sudoku sweeps byte-identical to the base). `android/os/ServiceManager.java`: AOSP's
+  `ServiceNotFoundException`, which AOSP's managers catch (a missing handler class does not link).
   After the smoke apps (`docs/research/open-issues.md`, "The smoke apps with AOSP's views"):
   `android/view/SurfaceView.java` punches its hole with AOSP's views when not on top (AOSP's
   `clearSurfaceViewPort`), as the windows are composited over its GL frames;
