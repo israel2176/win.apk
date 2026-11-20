@@ -345,6 +345,29 @@ the app); if it is still there, it is a bug in what replaced it.
   for the probe it lists about 270 Java2D-only classes, `java.awt`, Marlin,
   ImageIO, and misses about 235 of AOSP's; the first start on a machine adds
   its own app's anyway, so only `--cds-prepare`'s archive is short).
+- **CI's first smoke test on AOSP's graphics** (run 44643824110) failed:
+  PPSSPP and Jellyfin blank, an exception in every app. Fixed in this change
+  (README milestone 2, "The first smoke test on Windows"): AOSP's `Typeface`
+  called `AssetManager.getAssignedPackageIdentifiers` (PPSSPP's `onCreate`
+  threw), Compose called API 35's `StaticLayout.Builder.setUseBoundsForWidth`
+  on AOSP 14's builder (Jellyfin's screen did not measure), `nPunchHole` is not
+  in the native runtime (Tensy's `SurfaceView`), and `Typeface`'s static
+  initializer read `/system/etc/fonts.xml` before it was mapped. Checked under
+  Wine on a stage of this tree: Jellyfin draws its Connect screen with no
+  variable and with `WINAPK_AOSP_GFX=0`, Jerboa's Compose text draws, the
+  other seven draw too, and no `NoSuchMethodError`, `UnsatisfiedLinkError` or
+  `fonts.xml` line is in any of the ten apps' logs.
+  PPSSPP crashes under Wine in `GLRenderManager::ThreadFrame` on both
+  graphics (Wine's GL), so its frame is **to see on CI**: its `onCreate` no
+  longer throws. Left of Android 15's new members on the jar's classes (a
+  linkage scan of the jar against the framework, and of the ten apps' DEX
+  against the jar, finds no other caller): `Gainmap`'s, `LineBreakConfig`'s
+  hyphenation and `merge`, `PositionedGlyphs`' fake bold and overrides,
+  `BoringLayout.Metrics.getDrawingBoundingBox`, `Layout`'s other API 35
+  getters (`getMaxLines`, `getEllipsize`, the indents...), `Font` and
+  `FontFamily.Builder`'s variable-font ones; add each to `Api35` when an app
+  calls it. `android.view.RenderNode`'s `getRotation`/`setRotation`/`isValid`
+  are still missing on AOSP's `RenderNode`.
 - **Next: delete the Java2D engine.** What must hold first: CI's smoke test
   green on AOSP's graphics over a few runs, and the UI gate's lines no
   further from Android than Java2D's (or each exception understood); the

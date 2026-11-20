@@ -135,6 +135,17 @@ public class FontsContract {
         return null;
     }
 
+    /**
+     * AOSP's hidden getFontSync, which AOSP's own Typeface.createFromResources (the
+     * default graphics, lib/aosp-graphics.jar) calls for a downloadable font
+     * (res/font/*.xml naming a provider). AOSP returns null when fetchFonts finds
+     * no provider, and the Typeface falls back to the default: the same here.
+     */
+    public static Typeface getFontSync(FontRequest request) {
+        java.util.Objects.requireNonNull(request, "request");
+        return null;
+    }
+
     /** Reports FAIL_REASON_PROVIDER_NOT_FOUND on the caller's Handler. */
     public static void requestFonts(Context context, FontRequest request, Handler handler,
             CancellationSignal cancellationSignal, FontRequestCallback callback) {

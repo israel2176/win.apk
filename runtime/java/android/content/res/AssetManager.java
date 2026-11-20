@@ -597,6 +597,28 @@ public final class AssetManager implements AutoCloseable {
         return getLocales();
     }
 
+    /** AOSP's hidden getAssignedPackageIdentifiers(): package id -> package name of
+     *  every table mounted. AOSP's own Typeface.Builder (the default graphics,
+     *  lib/aosp-graphics.jar) keys a font asset by it (createAssetUid), so
+     *  Typeface.createFromAsset threw NoSuchMethodError without it (PPSSPP).
+     *  The ids are the fixed ones: 0x01 the framework (every AssetManager has
+     *  it on a device), 0x7f the app. */
+    public android.util.SparseArray<String> getAssignedPackageIdentifiers() {
+        return getAssignedPackageIdentifiers(true, true);
+    }
+
+    public android.util.SparseArray<String> getAssignedPackageIdentifiers(boolean includeOverlays,
+            boolean includeLoaders) {
+        android.util.SparseArray<String> ids = new android.util.SparseArray<>();
+        ids.put(0x01, "android");
+        String pkg = null;
+        try { pkg = android.app.ActivityThread.currentPackageName(); } catch (Throwable ignored) { }
+        String[] paths = mApkAssetPaths;
+        if (pkg == null && paths != null && paths.length > 0) pkg = paths[paths.length - 1];
+        if (pkg != null) ids.put(0x7f, pkg);
+        return ids;
+    }
+
     /** v1.0.110: nested class Glide's Downsampler does
      *    if (is instanceof AssetManager.AssetInputStream) { ... }
      *  to skip its slow seek-rewind path when the stream is already

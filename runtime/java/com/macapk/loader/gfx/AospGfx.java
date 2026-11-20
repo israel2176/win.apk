@@ -102,6 +102,15 @@ final class AospGfx implements GfxBackend {
         }
         String d = dir.replace('\\', '/');
         if (!d.endsWith("/")) d += "/";
+        // That folder is /system/fonts and /system/etc/fonts.xml before anything below touches
+        // Typeface: its static initializer reads the device's config by those names
+        // (SystemFonts.getSystemPreinstalledFontConfig), for the families' locales and the fonts it
+        // preloads; Boot sets the same folder again from what this returns.
+        try {
+            com.macapk.loader.NativeCocoa.setSystemFontsDir(new File(dir).getAbsolutePath());
+        } catch (Throwable t) {
+            log("/system/fonts not mapped: " + t);
+        }
         try {
             Class<?> systemFonts = Class.forName("android.graphics.fonts.SystemFonts");
             Method config = systemFonts.getDeclaredMethod("getSystemFontConfigInternal", String.class,

@@ -480,6 +480,12 @@ before these changes.
   `com.winapk.aospgfx.FontBuffers`, and `AdaptiveIconDrawable`'s
   `currentActivityThread` calls to `com.winapk.aospgfx.IconMaskThread`,
   `scripts/AospCallRedirect.java`, below), `bin/robolectric-nativeruntime.dll` (12 MB: its COFF
+  `com.winapk.aospgfx.FontBuffers`, and the calls to natives the library
+  lacks (`BaseCanvas`/`BaseRecordingCanvas.nPunchHole`,
+  `Typeface.nativeRegisterLocaleList`) to `MissingNatives`,
+  `scripts/AospCallRedirect.java`; `scripts/AospAddMethods.java` gives AOSP
+  14's classes the API 35 methods apps call and the members Win.apk's
+  framework calls, `Api35` and `FrameworkMembers`, below), `bin/robolectric-nativeruntime.dll` (12 MB: its COFF
   symbol table, 3.3 MB that nothing reads, stripped with LLVM's strip),
   `bin/aosp/icu/icudt68l.dat` (16.4 MB: ICU's data without the trees the
   DLL cannot open, rewritten by `scripts/TrimIcuData.java`),
@@ -534,8 +540,10 @@ before these changes.
   - Fonts: `Boot`'s `materializeSystemFonts` builds the families of
     `bin\aosp\fonts\fonts.xml` (`SystemFonts.getSystemFontConfigInternal`,
     `buildSystemFallback`, `buildSystemTypefaces`) and hands them to
-    `Typeface.setSystemFontMap`, which sets the default; that folder is then
-    `/system/fonts` for native code too.
+    `Typeface.setSystemFontMap`, which sets the default; that folder is
+    `/system/fonts` and `/system/etc/fonts.xml` for native code and Java's
+    files too, from before `Typeface` initializes (`NativeCocoa.setSystemFontsDir`),
+    since its static initializer reads the device's config by those names.
   - The frame: `ViewCanvasDriver` draws the view tree in software, as
     `View.draw(Canvas)` does into a bitmap on a device (Win.apk's `View` has no
     `RenderNode` display lists; HWUI's `RenderNode`/`RecordingCanvas` and its
@@ -559,8 +567,10 @@ before these changes.
     `AnimatedVectorDrawable.macapkSetInner` (`animatedVector`).
     Left: `Canvas.sGlobal*` (a Compose trace under
     `MACAPK_TRACE_COMPOSE_FALLBACK`), `RippleDrawable.getColor` (`View`
-    catches it), `android.view.RenderNode` and `Layout.Builder` (no caller on
-    a first screen).
+    catches it) and `android.view.RenderNode`'s `getRotation`, `setRotation`
+    and `isValid` (a pre-10 hidden class). `Layout.Builder`'s three
+    `StaticLayout.Builder` options and `AnimationScaleListDrawable.addDrawable`
+    are added to AOSP's classes (below, "The first smoke test on Windows").
   - The other way, hidden members AOSP's classes call that the framework
     lacked, added as AOSP has them: `TextUtils` (`couldAffectRtl`,
     `doesNotNeedBidi`, `obtain`, `recycle`, `getEllipsisString`,
@@ -590,6 +600,51 @@ before these changes.
     Since drawables inflate themselves (below) a `<vector>` resource is AOSP's
     `VectorDrawable.inflate`, gradient fills included; `AospVector` is left for
     what Win.apk's own inflater still builds (the fallback).
+  - The first smoke test on Windows with AOSP's graphics the default (CI run
+    44643824110): PPSSPP and Jellyfin, which drew on Java2D, were blank, and
+    every app logged an exception. Four gaps, all of linkage between the
+    jar's AOSP 14 classes and what calls them:
+    - `Typeface.createFromAsset` (PPSSPP's `TextRenderer`, in `onCreate`):
+      AOSP's `Typeface.Builder.createAssetUid` calls the hidden
+      `AssetManager.getAssignedPackageIdentifiers()`, which Win.apk's
+      `AssetManager` lacked; `onCreate` threw `NoSuchMethodError`. Added as
+      AOSP has it (0x01 `android`, 0x7f the app), and with it
+      `FontsContract.getFontSync` (AOSP's `Typeface.createFromResources` for a
+      downloadable font: null, no provider, so the default face, as AOSP).
+    - Android 15's methods (the runtime reports SDK 35): Compose calls
+      `StaticLayout.Builder.setUseBoundsForWidth` behind `SDK_INT >= 35`, which
+      AOSP 14's builder has not, so Jellyfin's Compose screen failed to measure
+      (Jerboa, Fossify Notes and Puzzles call it too); Win.apk's own
+      `Layout.Builder` (API 35) calls three such options. Every public static
+      method of `windows/java/aosp_gfx`'s `com.winapk.aospgfx.Api35` and
+      `FrameworkMembers` becomes, at build time, an instance method of its
+      first parameter's class (`scripts/AospAddMethods.java`: the body calls
+      the helper with `this`; no branch, so no stack map): the
+      `StaticLayout`/`DynamicLayout`/`LineBreaker` builders'
+      `setUseBoundsForWidth`, `setShiftDrawingOffsetForStartOverhang`,
+      `setMinimumFontMetrics` (and `DynamicLayout.Builder.setLineBreakConfig`),
+      which keep AOSP 14's behaviour, `Layout`'s getters of them (that
+      default), `getLineSpacingAmount`/`Multiplier`,
+      `Paint.getFontMetrics(Int)ForLocale`, `Paint.FontMetricsInt.set`,
+      `Path.computeBounds(RectF)`, and `AnimationScaleListDrawable.addDrawable`
+      (Resources' own inflater, when AOSP's inflate failed). A method the class
+      already has stops the build. A scan of the ten apps' DEX against the jar
+      (every method and field they name on its classes) finds nothing else
+      missing; Android 15's other new members of these classes (Gainmap's,
+      `LineBreakConfig`'s hyphenation, `PositionedGlyphs`' fake bold...) are
+      not added.
+    - `SurfaceView` (Tensy's SDL surface) draws `Canvas.punchHole`, whose
+      native `nPunchHole` the library has not: `UnsatisfiedLinkError`, caught
+      by the frame. `MissingNatives.nPunchHole` draws what hwui's
+      `SkiaCanvas::punchHole` does, a black round rect at the alpha in
+      `DST_OUT`, with `BaseCanvas`'s native `drawRoundRect`.
+    - `/system/etc/fonts.xml`: AOSP's `Typeface` static initializer reads it
+      (and preloads fonts) before `materializeSystemFonts` had mapped
+      `/system/fonts`, so every run logged `FileNotFoundException` and the
+      families' locale lists were never registered. Mapped first now; the
+      initializer then calls `nativeRegisterLocaleList`, which the library
+      has not (it fills minikin's locale cache, which minikin fills on first
+      use anyway), now a no-op in `MissingNatives`.
   - `Gravity.apply` places by AOSP's rules (FILL stretches, AXIS_CLIP clips)
     under the switch only: AOSP's `BitmapDrawable` takes its destination and
     optical insets from it; the Java2D side keeps its answer.
@@ -2962,7 +3017,16 @@ every such change is listed here:
   file's `assetCookie` (`AssetManager.macapkCookieOf`). Under the switch
   only: `ImageView` loads its picture with the view's theme, and
   `AospGfx.setNinePatchDensities` works the size out again. The Java2D
-  side's sweeps and probe are the same byte for byte.- `runtime/java/com/macapk/loader/view/ViewHost.java` (new), `WinApkViewHost.java`
+  side's sweeps and probe are the same byte for byte.
+- `runtime/java/android/content/res/AssetManager.java`,
+  `android/provider/FontsContract.java`, `com/macapk/loader/gfx/AospGfx.java`:
+  what CI's first smoke test with AOSP's graphics the default found (milestone
+  2, "The first smoke test on Windows"): AOSP's hidden
+  `AssetManager.getAssignedPackageIdentifiers` (both forms) and
+  `FontsContract.getFontSync`, which AOSP's `Typeface` calls, added as AOSP has
+  them; `AospGfx.materializeSystemFonts` maps `/system/fonts` before it touches
+  `Typeface`. Java2D never calls them.
+- `runtime/java/com/macapk/loader/view/ViewHost.java` (new), `WinApkViewHost.java`
   (new): step 0 of `docs/research/aosp-views.md`, views half, the one seam
   between the rest of the runtime and Win.apk's own `android.view` /
   `android.widget` / `com.android.internal.policy` members that AOSP's classes
