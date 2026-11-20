@@ -192,10 +192,18 @@ the app); if it is still there, it is a bug in what replaced it.
   `adb install -i com.android.vending` does, unless a real installer is
   recorded; Settings > Apps > "Report Google Play as the installer"
   (`PlayInstaller`, on by default) turns it off (`InstallerOfRecord.reported`,
-  `InstallerOfRecordTest` in CI). Check again on a run with real network:
+  `InstallerOfRecordTest` in CI). Checked in a headless Wine boot of bit
+  6.19.1: on, it stays on its splash; off, it shows "Something went wrong,
+  reinstall bit from the app store". Check again on a run with real network:
   whether bit and Bank Hapoalim get past their splash (the sandbox's firewall
   stops them at "data not loaded"), and whether an app checks the initiating
   installer's certificate against Play's real one.
+- **Compose text is blank on AOSP graphics when Compose calls API 35's
+  `StaticLayout.Builder.setUseBoundsForWidth`**: `aosp-graphics.jar` carries
+  android-all 14's (API 34) `android.text.StaticLayout`, which shadows ours
+  (which has the method), so `AndroidComposeView.onMeasure` throws
+  NoSuchMethodError and the screen paints empty (bit's reinstall screen
+  with the setting off; with `WINAPK_AOSP_GFX=0` it draws). Not fixed.
 - **Bank Hapoalim shows its reinstall dialog three times** (three window
   backgrounds stacked); not checked whether Android does too.
 - **Cal's "error loading the app" page**: the KeyManagerFactory "X509" fix
