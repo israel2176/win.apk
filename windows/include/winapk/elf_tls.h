@@ -18,7 +18,9 @@
 // here too, next to the blocks their objects live in: a thread runs them,
 // newest first, before its blocks are freed. Each registration tells the
 // linker (tls_set_dso_hooks) which library it belongs to, so that library is
-// not unmapped while a thread still has one of its destructors to run.
+// not unmapped while a thread still has one of its destructors to run. None
+// runs while the process exits (ExitProcess calls the exiting thread's FLS
+// callbacks): Android's exit() runs no thread_local destructors either.
 //
 // Not supported: the static (initial-exec and local-exec) models, which read
 // %fs:0 directly and need R_X86_64_TPOFF64. Bionic only allows those in the

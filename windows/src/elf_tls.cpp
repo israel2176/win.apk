@@ -65,9 +65,30 @@ void run_dtors(ThreadBlocks* t) {
     }
 }
 
+// Set by the C runtime's exit(): its atexit handlers run before ExitProcess.
+std::atomic<bool> g_exiting{false};
+
+// Whether the process is ending. Android runs no thread_local destructors
+// then: Bionic's exit() runs the atexit handlers and _exit()s, and only a
+// thread that ends on its own runs its destructors. Windows' ExitProcess
+// does call the exiting thread's FLS callbacks, after the other threads were
+// killed wherever they were. A guest destructor run there meets a dead world:
+// Realm's calls JNI GetEnv on a thread the JVM has detached and aborts, and
+// g_lock may be held by a killed thread forever. ntdll answers for every exit
+// path (ExitProcess, a return from main, the JVM's own exit), Wine's too.
+bool process_exiting() {
+    if (g_exiting.load(std::memory_order_relaxed)) return true;
+    using ShutdownFn = BOOLEAN(NTAPI*)();
+    static const auto shutdown = reinterpret_cast<ShutdownFn>(
+        reinterpret_cast<void*>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "RtlDllShutdownInProgress")));
+    return shutdown && shutdown();
+}
+
 void WINAPI free_thread_blocks(void* p) {
     auto* t = static_cast<ThreadBlocks*>(p);
     if (!t) return;
+    // The blocks go with the process; nothing is freed or run.
+    if (process_exiting()) return;
     run_dtors(t);
     {
         std::lock_guard<std::mutex> hold(g_lock);
@@ -86,7 +107,10 @@ void WINAPI free_thread_blocks(void* p) {
 }
 
 DWORD fls_slot() {
-    static const DWORD slot = FlsAlloc(free_thread_blocks);
+    static const DWORD slot = [] {
+        std::atexit([] { g_exiting.store(true); });
+        return FlsAlloc(free_thread_blocks);
+    }();
     return slot;
 }
 
