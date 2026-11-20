@@ -1227,8 +1227,11 @@ left:
   with the clang the package ships; `include/winapk/arm64_aot.h`). Still
   open: jump tables (BR into the function now leaves it), exclusives and LSE
   atomics without the interpreter, and coverage on real apps' libraries.
-- Raw `SVC` system calls, and signals (a guest `SIGSEGV` handler, Unity's and
-  Mono's null checks). ELF TLS through TLSDESC (libraries built for API 29 or
+- Signals (a guest `SIGSEGV` handler, Unity's and Mono's null checks). Raw
+  `SVC` system calls are answered by arm64's numbers (`arm64_abi.cpp`'s
+  `linux_syscall`: memory, futex, ids, clocks, files and the calls whose
+  structs both ABIs share; the rest `-ENOSYS`, logged once each); not done:
+  `clone`, `getdents64` and the socket calls. ELF TLS through TLSDESC (libraries built for API 29 or
   later that use `thread_local`) is done: `R_AARCH64_TLSDESC` points the
   descriptor at a bridge intrinsic that answers the offset from `TPIDR_EL0`
   through `elf_tls.cpp`'s blocks and changes only `x0`
