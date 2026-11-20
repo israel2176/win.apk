@@ -3,11 +3,7 @@
 **The owner (Israel) reads Hebrew only. Everything shown to him is in Hebrew,
 with no English in the body: replies, and also the short descriptions of tool
 calls and commands, which he sees. Code, commits and repository documents stay
-in English.** He is learning English: end a reply to him (not every short
-one) with a small corner, "📘 מילים באנגלית", of 2-3 English words or short
-phrases from that reply's topic, each with its pronunciation in Hebrew letters
-and its meaning in Hebrew, simple and at a beginner's level, not repeating
-recent ones.
+in English.**
 
 Runs Android apps on Windows x64 as normal Windows programs: Java on HotSpot,
 x86_64 `.so` files loaded by our own ELF loader over a Bionic shim, graphics on
