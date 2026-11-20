@@ -138,6 +138,12 @@ find "$HERE/../java/aosp_views" -name '*.java' | sort | while read -r f; do nati
 echo "[aosp-views] the rewrite (AospViewsRewrite.java)"
 "$JAVA" -cp "$ASM" "$(native_path "$HERE/AospViewsRewrite.java")" "$(native_path "$CLASSES")"
 
+# Android 15's members of the views AOSP 14 lacks, which apps built for the runtime's SDK level (35)
+# call: each public static method of Api35 becomes a method of its first parameter's class
+# (AospAddMethods.java, as build_aosp_gfx.sh does for the graphics).
+echo "[aosp-views] API 35 methods added to AOSP's classes"
+"$JAVA" "$(native_path "$HERE/AospAddMethods.java")" "$(native_path "$CLASSES")" com/winapk/aospviews/Api35
+
 rm -f "$OUT/lib/aosp-views.jar"
 ( cd "$CLASSES" && "$JAR" --create --file "$OUT/lib/aosp-views.jar" . )
 echo "[aosp-views] $OUT/lib/aosp-views.jar: $(find "$CLASSES" -name '*.class' | wc -l) classes"
