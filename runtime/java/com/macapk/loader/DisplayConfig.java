@@ -418,6 +418,9 @@ public final class DisplayConfig {
         }
     }
 
+    /** AOSP @hide ActivityInfo.CONFIG_WINDOW_CONFIGURATION (android14-release ActivityInfo.java:976). */
+    private static final int CONFIG_WINDOW_CONFIGURATION = 0x20000000;
+
     /** Apply AOSP's relaunch-then-report decision for ONE activity against the
      *  live Resources configuration. Safe to call with no pending change (it
      *  returns at once), which is how restoreTop re-checks on reveal. */
@@ -431,9 +434,14 @@ public final class DisplayConfig {
         if (cur == null) cur = next;
         if (lastReported == null) lastReported = cur;
         final int sdk = PresentedSdk.get();
-        final int publicDiff = cur.diff(next);
+        // CONFIG_WINDOW_CONFIGURATION is out of both: ActivityRecord.getConfigurationChanges drops it
+        // ("We don't want window configuration to cause relaunches") and the client compares with
+        // diffPublicOnly. Win.apk's own Configuration.diff never sets it; AOSP's
+        // (WINAPK_AOSP_RES=1) does when the window bounds move, and a rotation then counted as
+        // undeclared: no relaunch, no onConfigurationChanged.
+        final int publicDiff = cur.diff(next) & ~CONFIG_WINDOW_CONFIGURATION;
         final boolean bounds = boundsDiffer(cur, next);
-        final int serverDiff = lastReported.diff(next);
+        final int serverDiff = lastReported.diff(next) & ~CONFIG_WINDOW_CONFIGURATION;
         if (publicDiff == 0 && !bounds && serverDiff == 0) return false;
         final int handled = a.macapkRealConfigChanged();
         final int[][] buckets = appBuckets();
