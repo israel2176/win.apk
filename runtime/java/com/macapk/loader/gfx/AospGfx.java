@@ -81,14 +81,6 @@ final class AospGfx implements GfxBackend {
 
     @Override public int[] liveArgbOrNull(Bitmap bitmap) { return null; }
 
-    @Override public java.awt.image.BufferedImage awtImage(Bitmap bitmap) {
-        int w = bitmap.getWidth(), h = bitmap.getHeight();
-        java.awt.image.BufferedImage img = new java.awt.image.BufferedImage(w, h,
-                java.awt.image.BufferedImage.TYPE_INT_ARGB);
-        img.setRGB(0, 0, w, h, argbBuffer(bitmap), 0, w);
-        return img;
-    }
-
     @Override public int drawOps(Canvas canvas) { return ++ops; }
 
     // ---- Fonts and Typeface creation ----

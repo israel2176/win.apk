@@ -53,7 +53,6 @@ final class Java2DGfx implements GfxBackend {
 
     @Override public int[] liveArgbOrNull(Bitmap bitmap) { return bitmap.macapkLiveArgbOrNull(); }
 
-    @Override public java.awt.image.BufferedImage awtImage(Bitmap bitmap) { return bitmap.macapkAwtImage(); }
 
     @Override public int drawOps(Canvas canvas) { return canvas.macapkDrawOps; }
 

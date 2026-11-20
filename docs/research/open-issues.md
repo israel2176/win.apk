@@ -246,19 +246,28 @@ the app); if it is still there, it is a bug in what replaced it.
   under Wine, not in the repository: morph, colour keyframes, motion along a
   path, the callbacks, the last frame); fonts androidx loads open (the
   `assetCookie`, and a compressed font read into a direct buffer: HotSpot's
-  have no `array()`). Left: `AdaptiveIconDrawable` before the `Application`
-  exists (the window icon at boot; Win.apk's inflater builds it),
+  have no `array()`); an adaptive icon built before the `Application`
+  exists (the window icon at start, the install's `icon.png`) is AOSP's too
+  (`IconMaskThread`: AOSP's constructor took the mask from
+  `getApplication().getResources()`, null then). Left:
   `<animated-image>` (unchecked), the one-copy present, Compose
   (`drawRenderNode` on a software canvas) and `SurfaceTexture` on native
   pixels. Probe with the switch on: 1942 of 2104 lines match vs 1895 on
   Java2D, no line further from Android's than Java2D's. Sweeps, lines
-  differing: Gallery 295 (Java2D 301), Sudoku 225 (275); Bank Hapoalim's
+  differing: Gallery 279 (Java2D 301), Sudoku 225 (275); Bank Hapoalim's
   `activity_contact_before_login` 7 of 102 (Java2D 7, the same lines;
-  before the font fix 70). Worse than Java2D: only Gallery
-  `activity_video_player`, three hidden buttons over the bottom gradient a
-  shade lighter, because both paths draw the backdrop under it grey where
-  Android has black (the `TextureView` with no video: a views/video item,
-  not the switch's). Left in the text rows: ExtendedFloatingActionButton's
+  before the font fix 70). Gallery `activity_video_player`, the one screen
+  that was worse than Java2D (three hidden buttons over the bottom gradient a
+  shade lighter, the backdrop grey where Android has black): fixed, an
+  opaque `TextureView` with no frame reads black, as AOSP's own software path
+  draws it (its `LAYER_TYPE_HARDWARE` view goes through an opaque drawing
+  cache its `draw()` leaves empty; `setOpaque(false)`: transparent). On a
+  device's hardware path an empty layer draws nothing; the oracle and
+  Win.apk are both software. Under Wine, before -> after (`regress.py`):
+  Gallery 295 -> 279 lines differing (16 fixed, 10 closer, nothing worse:
+  the backdrop, the gradient, the hidden buttons and the toolbar over them
+  now 0 as Android), Sudoku 225 and the probe (1942 of 2104) unchanged, the
+  probe's `ours.txt` byte for byte. Left in the text rows: ExtendedFloatingActionButton's
   `getGravity()` (11 where Android has START|CENTER_VERTICAL, both paths).
   Not yet run: the screens check of more apps with the switch on, and apps
   on real Windows.
@@ -292,18 +301,53 @@ the app); if it is still there, it is a bug in what replaced it.
   further from Android than Java2D's (or each exception understood); the
   Gallery `activity_video_player` backdrop and the other gaps in the item
   above either fixed or accepted by the owner; the AOSP stand-ins for what
-  Win.apk's own classes still do only on Java2D (`AdaptiveIconDrawable`
-  before the `Application`, `<animated-image>`, Compose's `drawRenderNode`
-  on a software canvas, `SurfaceTexture` on native pixels) at least as good;
-  the processes with no app (`--gms`, `--system`, the install helper's icon
-  render) moved onto the AOSP class path too, since today they still run on
-  Java2D's and so map the `java2d` archive, which on a user's machine is made
-  only by an app start with `WINAPK_AOSP_GFX=0` (the system broker starts
-  without the framework archive meanwhile: the JRE's own still maps); and the
-  apps on real Windows (`app-probe.yml`) looked at. Then: `Java2DGfx`, the
+  Win.apk's own classes still do only on Java2D (`<animated-image>`,
+  Compose's `drawRenderNode` on a software canvas, `SurfaceTexture` on native
+  pixels) at least as good; the open rows of "What still reaches Java2D"
+  (below) closed; and the apps on real Windows (`app-probe.yml`) looked at.
+  Done: the adaptive icon before the `Application`; the processes with no app
+  (an install's icon render, `--gms`, `--system`, `--verify-apk`) run on
+  AOSP's class path too (`runtime_main.cpp` prepares the graphics for every
+  JVM and binds the DLL in `gms_thread` and `system_thread`), so they map
+  the `aosp` archive like an app. Checked under Wine: `--install-only` of
+  Gallery says `AOSP graphics: on` and writes its adaptive icon (`icon.png`,
+  AOSP's `AdaptiveIconDrawable`), `--gms accounts` exits 0; the DLL's load
+  adds 0.25-0.5 s to each such process. `--system` not run. Then: `Java2DGfx`, the
   Java2D `android.graphics`/`android.text` classes `aosp-graphics.jar`
   shadows, `WINAPK_AOSP_GFX=0`, the `java2d` archive naming and this branch's
   base-graphics step in `ci.yml` go; `GfxBackend` can then be folded away.
+- **What still reaches Java2D** (AWT, ImageIO, `MacApk*` graphics classes)
+  with AOSP's graphics the default. Found by a class-file scan of the staged
+  `android-framework.jar`, `macapk-loader.jar` and `winapk-tools.jar` against
+  `aosp-graphics.jar` (a class the jar shadows is Java2D's and never loads;
+  every other class's references to `java.awt`, `javax.imageio`, `sun.java2d`
+  and to members a shadowed class lacks): no reference to a member AOSP's
+  classes lack (a `NoSuchMethodError` waiting), and these direct uses:
+
+  | Caller | What for | Status |
+  |---|---|---|
+  | `Boot.initAwtOnAppKitMainThread` | brought AWT and its fonts up at every start (544-783 ms on the main thread under Wine, beside the resource index) | skipped on AOSP's graphics; goes with Java2D |
+  | `MediaStoreProvider.photosImageSize` | a photo's width and height (ImageIO header read) | `BitmapFactory` bounds decode (Skia's codecs: PNG, JPEG, WebP, GIF, BMP, ICO) |
+  | `ViewCanvasDriver` `MACAPK_DUMP_BITMAP_AT`, `MACAPK_PUNCH_TRACE` | debug PNG dumps, the hole probe | `Bitmap.compress`, `createScaledBitmap`, `getPixel`; `GfxBackend.awtImage` removed |
+  | `VideoImageSelfTest` (`MACAPK_VIDEO_IMAGE_SELFTEST=1`) | writes and reads PNGs | `Bitmap.compress` / `BitmapFactory` |
+  | libjnigraphics (`src/jnigraphics.cpp`) | a native library's `AndroidBitmap_lockPixels` called `macapkArgbBuffer`, which AOSP's `Bitmap` has not: it failed on the default graphics | AOSP's `Bitmap` through `getPixels`/`setPixels` and upstream's conversion and merge; compiled, not run (no test lib under Wine on AOSP's class path: `winapk-jvm-run`'s test has Win.apk's `Bitmap`) |
+  | `TextView.macapkFallbackVertical`, `GfxBackend.resolvedFont` / `textFontRenderContext` / `fallbackFontFor` / `deriveFont` | Java2D's fallback line spacing | inert on AOSP (no AWT font: `TextViewAospLayout` lays out); goes with Java2D |
+  | `ClipboardManager` legacy path | text through AWT's clipboard | only with `MACAPK_CLIPBOARD_HOST=0` (a bisect gate; the host clipboard is native); text only, no images; to delete with Java2D so the JRE can lose `java.desktop` |
+  | `Boot` `MACAPK_AWT_PREWARM` | an old macOS experiment, off unless set | delete with Java2D |
+  | BitmapFactory on HEIC (and other WIC-only formats) | Java2D's `BitmapFactory` fell back to `NativeImageCodec` (libwebp, then WIC: HEIC with the HEIF extension) | **open**: AOSP's decodes in the DLL (no HEIF codec); HEIC is 0x0 / null on the default graphics. Plan: redirect `BitmapFactory`'s `nativeDecodeStream`/`nativeDecodeByteArray` (`AospCallRedirect`) to a stand-in that hands an `ftyp heic/heix/mif1/avif` header to `NativeImageCodec` and everything else to AOSP's native; `ImageDecoder` likewise |
+
+  Engine-neutral already (public `Bitmap`/`Canvas`/`BitmapFactory` API, so
+  AOSP's classes on the default graphics; static scan only, not each run
+  under Wine): image decoding (`BitmapFactory`, `ImageDecoder`: AOSP's, Skia
+  in the DLL), camera and video frames (`SurfaceTexture.macapkLatchBitmap`:
+  `Bitmap.setPixels`), the WebView's (WebView2 draws in its own window), the
+  launcher icon (`Boot.writeLauncherIcon`: `Canvas` + `compress`, now on AOSP
+  in the install process too), notification large icons (`HostNotifications`:
+  `compress`), wallpaper and Monet colours (`HostWallpaper`: the host decodes
+  to an ARGB `int[]`, no `Bitmap`), screenshots (`PixelCopy`, `View.draw`),
+  `GLUtils.texImage2D` (`GfxBackend.argbBuffer`: `getPixels`). Clipboard
+  images: none on either path. The scan tool is not in the repository (a
+  page of Java over the class files' constant pools); it found nothing more.
 - **Screens checks not finished**: Bank Leumi (stopped by the usage limit
   before its boot), Pango and Paybox (not on APKPure; the owner offered their
   other repository or a Play download).

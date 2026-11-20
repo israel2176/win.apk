@@ -189,7 +189,7 @@ public final class Boot {
             return ResBackend.get().openIndex(cfg, apkPath);
         }
         initAwtOnAppKitMainThread();
-        bootClock("AWT initialised (overlapped with the resource index)");
+        if (!com.macapk.loader.gfx.GfxBackend.isAosp()) bootClock("AWT initialised (overlapped with the resource index)");
         boolean interrupted = false;
         try {
             while (true) {
@@ -437,6 +437,9 @@ public final class Boot {
      *  MACAPK_AWT_MAIN_INIT=0 restores the lazy behaviour (A/B). */
     private static void initAwtOnAppKitMainThread() {
         if ("0".equals(System.getenv("MACAPK_AWT_MAIN_INIT"))) return;
+        // AOSP's graphics (the default) draw with Skia in the native runtime: nothing of an app's
+        // run touches AWT there, so bringing it up would only cost the start its time.
+        if (com.macapk.loader.gfx.GfxBackend.isAosp()) return;
         long t0 = System.nanoTime();
         try {
             java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment();

@@ -10,11 +10,13 @@
 // other references to <owner> (its own this_class, when <owner> is the class itself) stay. The count of
 // calls redirected is printed; none stops the build (the call it was written for is gone).
 //
-// The one use (build_aosp_gfx.sh): android.graphics.fonts.Font$Builder reads a font that is compressed
+// The uses (build_aosp_gfx.sh): android.graphics.fonts.Font$Builder reads a font that is compressed
 // in the APK (aapt2 compresses .ttf and .otf) into ByteBuffer.allocateDirect(n).array(), which ART's
 // direct buffers have and HotSpot's throw UnsupportedOperationException on; its createBuffer calls go to
 // windows/java/aosp_gfx's com.winapk.aospgfx.FontBuffers.createBuffer, which reads it the way ART ends up
-// with it.
+// with it. AdaptiveIconDrawable's constructor reads its mask through the Application, which Win.apk's
+// start builds the app's icon before: its ActivityThread.currentActivityThread calls go to
+// com.winapk.aospgfx.IconMaskThread, null until there is one (AOSP's own Resources.getSystem() branch).
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
