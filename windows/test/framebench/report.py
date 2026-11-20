@@ -11,9 +11,7 @@ frame, in ms. With both engines, a line comparing their medians follows.
 Exits 1 when a log has no such line (the record is broken, or the app drew nothing), when a run
 has fewer than --min-frames frames after its warm-up (the bench did not keep drawing: 300 by
 default, 5 s at 60 a second), or when a run's p90 of the whole frame is over --budget-ms (50 by
-default, three vsyncs: only a collapse, since CI's machines vary too much for a tight budget, and
-AOSP's graphics take 30-40 ms at p90 today under Wine, two copies of the frame's pixels a frame:
-docs/research/open-issues.md).
+default, three vsyncs: only a collapse, since CI's machines vary too much for a tight budget).
 """
 
 import argparse

@@ -67,6 +67,16 @@ public interface GfxBackend {
     /** The bitmap's live ARGB backing when it has one, else null (Bitmap.macapkLiveArgbOrNull). */
     int[] liveArgbOrNull(Bitmap bitmap);
 
+    /**
+     * A frame's pixels for the present: the same ARGB as argbBuffer, but the live backing when there
+     * is one, and otherwise written into {@code reuse} when it holds exactly width x height (else a new
+     * array), so a frame a vsync costs no 4 MB allocation. The caller keeps nothing past the present.
+     */
+    int[] frameArgb(Bitmap bitmap, int[] reuse);
+
+    /** Row {@code y} of the bitmap's ARGB pixels (as argbBuffer has them) into out[0, width). */
+    void argbRow(Bitmap bitmap, int y, int[] out);
+
     /** How many draw ops the canvas has run (Canvas.macapkDrawOps): a frame drew ink when it moved. */
     int drawOps(Canvas canvas);
 

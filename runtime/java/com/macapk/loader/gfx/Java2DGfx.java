@@ -53,6 +53,17 @@ final class Java2DGfx implements GfxBackend {
 
     @Override public int[] liveArgbOrNull(Bitmap bitmap) { return bitmap.macapkLiveArgbOrNull(); }
 
+    @Override public int[] frameArgb(Bitmap bitmap, int[] reuse) {
+        int[] live = bitmap.macapkLiveArgbOrNull();
+        return live != null ? live : bitmap.macapkArgbBuffer();
+    }
+
+    @Override public void argbRow(Bitmap bitmap, int y, int[] out) {
+        int w = bitmap.getWidth();
+        int[] px = bitmap.macapkLiveArgbOrNull();
+        if (px == null) px = bitmap.macapkArgbBuffer();
+        System.arraycopy(px, y * w, out, 0, w);
+    }
 
     @Override public int drawOps(Canvas canvas) { return canvas.macapkDrawOps; }
 
