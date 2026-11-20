@@ -128,7 +128,30 @@ the app); if it is still there, it is a bug in what replaced it.
   done: an arm64 library's own `SIGABRT` handler (Bugsnag's) is still not
   called from x86_64 code (one log line).
 - **Reanimated reflects on ART's `Field.accessFlags`**, which HotSpot lacks
-  (`NoSuchFieldException`, caught; Leumi).
+  (`NoSuchFieldException`, caught; Leumi). Looked into, not to be added; what
+  happens is harmless. Reanimated (`ReanimatedUIManagerFactory.create`,
+  `ReanimatedNativeHierarchyManager`'s constructor) clears FINAL in
+  `accessFlags` of React Native's `UIManagerModule.mUIImplementation` and
+  `NativeViewHierarchyManager.mLayoutAnimator` (private final instance
+  fields), catches the exception, prints its stack trace and then calls
+  `Field.set` anyway, which HotSpot allows after `setAccessible(true)` on a
+  final instance field of an ordinary class (only static finals and the
+  fields of records and hidden classes are trusted finals): the replacement is
+  made, the log has a stack trace. `windows/test/java/FinalFieldReflectionTest.java`
+  (CI) pins both halves. Why the overlay offers no `accessFlags`: HotSpot
+  finds `Field`'s fields by name (`javaClasses.cpp`: clazz, name, type, slot,
+  modifiers, trustedFinal, signature, annotations), so `modifiers` cannot be
+  renamed and an added `accessFlags` would be a second int, not ART's alias;
+  making it mean what ART's does (a write changes `getModifiers()`) would
+  have `getModifiers()` lie to the JDK's own field accessor factory, which
+  decides read-only from it, and still could not make a static final
+  writable (the method handle is resolved from the VM's flags). Every member
+  of `Field` is also hidden from reflection (`Reflection.fieldFilterMap`,
+  kept in the overlay), and `Field` is a VM well-known class in the shipped
+  JRE's class-data archive: a copy of JDK 21's `Field.java` in the overlay,
+  for no gain here. Not checked: whether Android 14's hidden-API lists block
+  `Field.accessFlags` for Leumi's target SDK too (then a phone throws the same
+  exception).
 - **Leumi's own React Native screens** (fixed, not yet re-checked by the
   screens check): after the ICU fallback, J2V8's V8 (`libj2v8.so`, arm64)
   stopped at `Check failed: page_allocator_->SetPermissions(address, size,
