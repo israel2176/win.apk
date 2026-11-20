@@ -16,11 +16,14 @@
 //
 // Exit code: the number of failed checks.
 
+#include "winapk/elf_tls.h"
 #include "winapk/guest_abi.h"
 #include "winapk/linker.h"
 #include "winapk/mini_bionic.h"
 
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <string>
 
 #include <windows.h>
@@ -84,9 +87,78 @@ DWORD WINAPI dtor_thread(void* p) {
     return 0;
 }
 
+// --exit-child crt|process: registers a thread_local destructor on the main
+// thread and on a second thread that is still running, then ends the process
+// by the C runtime's exit() or by ExitProcess alone (the JVM's exit, whose
+// C runtime is not ours); ExitProcess calls the main thread's FLS callbacks.
+// Android runs no thread_local destructors at exit, so a destructor that runs
+// says so on stdout (Realm's called JNI on a detached thread there and the
+// process hung).
+WINAPK_GUEST_ABI void exit_dtor(void* what) {
+    DWORD n = 0;
+    const char* text = static_cast<const char*>(what);
+    WriteFile(GetStdHandle(STD_OUTPUT_HANDLE), text, static_cast<DWORD>(std::strlen(text)), &n, nullptr);
+}
+
+DWORD WINAPI exit_child_thread(void* ready) {
+    winapk::tls_thread_atexit(reinterpret_cast<void*>(&exit_dtor), const_cast<char*>("thread dtor ran\n"), nullptr);
+    SetEvent(ready);
+    Sleep(INFINITE);
+    return 0;
+}
+
+int exit_child(bool crt) {
+    winapk::tls_thread_atexit(reinterpret_cast<void*>(&exit_dtor), const_cast<char*>("main dtor ran\n"), nullptr);
+    HANDLE ready = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    CreateThread(nullptr, 0, exit_child_thread, ready, 0, nullptr);
+    WaitForSingleObject(ready, 10000);
+    exit_dtor(const_cast<char*>("exiting\n"));
+    if (crt) std::exit(7);
+    ExitProcess(7);
+}
+
+// Runs this test as --exit-child and returns its exit code and output (-1 if it hung).
+int run_exit_child(const wchar_t* how, std::string* out) {
+    wchar_t self[MAX_PATH];
+    GetModuleFileNameW(nullptr, self, MAX_PATH);
+    std::wstring cmd = L"\"" + std::wstring(self) + L"\" --exit-child " + how;
+    SECURITY_ATTRIBUTES sa{sizeof(sa), nullptr, TRUE};
+    HANDLE rd = nullptr, wr = nullptr;
+    if (!CreatePipe(&rd, &wr, &sa, 0)) return -2;
+    SetHandleInformation(rd, HANDLE_FLAG_INHERIT, 0);
+    STARTUPINFOW si{};
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdOutput = wr;
+    si.hStdError = GetStdHandle(STD_ERROR_HANDLE);
+    si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+    PROCESS_INFORMATION pi{};
+    if (!CreateProcessW(nullptr, cmd.data(), nullptr, nullptr, TRUE, 0, nullptr, nullptr, &si, &pi)) {
+        CloseHandle(rd);
+        CloseHandle(wr);
+        return -2;
+    }
+    CloseHandle(wr);
+    DWORD code = static_cast<DWORD>(-1);
+    if (WaitForSingleObject(pi.hProcess, 30000) == WAIT_OBJECT_0) {
+        GetExitCodeProcess(pi.hProcess, &code);
+    } else {
+        TerminateProcess(pi.hProcess, 99);
+        WaitForSingleObject(pi.hProcess, 5000);
+    }
+    char buf[256];
+    DWORD n = 0;
+    while (ReadFile(rd, buf, sizeof buf, &n, nullptr) && n) out->append(buf, n);
+    CloseHandle(rd);
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    return static_cast<int>(code);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
+    if (argc >= 3 && std::strcmp(argv[1], "--exit-child") == 0) return exit_child(std::strcmp(argv[2], "crt") == 0);
     if (argc < 2) {
         std::fprintf(stderr, "usage: winapk-linker-test <dir with libwinapk_link_*.so>\n");
         return 2;
@@ -183,6 +255,13 @@ int main(int argc, char** argv) {
     check("the thread's exit runs the destructor and unloads the plugin (DT_FINI and __cxa_atexit ran)",
           !loaded(linker, kPlugin) && job.sink == 100 && fini == 11,
           "sink " + std::to_string(job.sink) + ", fini " + std::to_string(fini));
+    for (const wchar_t* how : {L"crt", L"process"}) {
+        std::string out;
+        const int code = run_exit_child(how, &out);
+        check(how[0] == L'c' ? "exit() runs no thread_local destructor, and the process ends"
+                             : "ExitProcess runs no thread_local destructor, and the process ends",
+              code == 7 && out == "exiting\n", "exit code " + std::to_string(code) + ", output \"" + out + "\"");
+    }
 
     // RTLD_NODELETE sticks.
     void* kept = linker.open(kPlugin, winapk::GuestLinker::kRtldNow | winapk::GuestLinker::kRtldNoDelete, &error);
