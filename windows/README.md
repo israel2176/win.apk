@@ -1611,7 +1611,9 @@ every such change is listed here:
   (with Play's certificate), no originating package, Play the update owner,
   `PACKAGE_SOURCE_STORE`; `PackageManager.relinquishUpdateOwnership` then
   succeeds for the owner. The runtime sets `WINAPK_PLAY_INSTALLER` from
-  `HKCU\Software\Win.apk PlayInstaller` (absent = 1). Tested by
+  `HKCU\Software\Win.apk PlayInstaller` (absent = 1). The record file is
+  replaced with `Files.move(REPLACE_EXISTING)`, not `File.renameTo`, which on
+  a stock Windows JDK does not replace an existing file. Tested by
   `windows/test/java/com/macapk/loader/InstallerOfRecordTest.java` (CI).
 - `HostAppSupport` users that upstream spells with Mac paths: the caches
   (`MacApkSystemFonts`: the `/system/fonts` Flutter's Skia reads,
