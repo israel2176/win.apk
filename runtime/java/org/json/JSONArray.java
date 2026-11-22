@@ -189,6 +189,15 @@ public class JSONArray {
         return stringer.toString();
     }
 
+    public String join(String separator) throws JSONException {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < items.size(); ++i) {
+            if (i > 0) sb.append(separator);
+            sb.append(JSONObject.formatValue(items.get(i)));
+        }
+        return sb.toString();
+    }
+
     /** AOSP package-private serialization used by JSONStringer. */
     void writeTo(JSONStringer stringer) throws JSONException {
         stringer.array();
