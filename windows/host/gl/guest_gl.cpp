@@ -26,6 +26,7 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include <GLES3/gl32.h>
@@ -402,6 +403,92 @@ WINAPK_EGL_EXT(EGLint, eglWaitSyncKHR, (EGLDisplay d, EGLSyncKHR s, EGLint f), (
 WINAPK_EGL_EXT(EGLBoolean, eglGetSyncAttribKHR, (EGLDisplay d, EGLSyncKHR s, EGLint a, EGLint* v), (d, s, a, v))
 #undef WINAPK_EGL_EXT
 
+// ---- the extension lists a guest is told ----
+// A driver on Android lists only the extensions it implements, and an app that
+// finds one listed asks eglGetProcAddress for its functions and counts on them:
+// Skia's GrGLInterface (Flutter's renderer) refuses the whole context when one
+// is missing ("Failed to set up Skia Gr context"). ANGLE reports its own and
+// Chromium's extensions besides the Khronos ones, more of them on a real GPU
+// than under Wine (GL_ANGLE_base_vertex_base_instance, whose four draw calls a
+// guest cannot get). So a guest is told only the extensions the Khronos headers
+// declare and whose every function it can get here (gen_gl_stubs.py's
+// WINAPK_GUEST_*_EXTENSIONS), in the driver's order.
+
+const std::unordered_set<std::string>& allowed_extensions() {
+    static const std::unordered_set<std::string> s = {WINAPK_GUEST_GL_EXTENSIONS WINAPK_GUEST_EGL_EXTENSIONS};
+    return s;
+}
+
+// `list` (space-separated names) without the ones a guest may not see.
+std::string filtered_list(const char* list) {
+    std::string out;
+    const char* p = list;
+    while (p && *p) {
+        while (*p == ' ') ++p;
+        const char* e = p;
+        while (*e && *e != ' ') ++e;
+        if (e > p) {
+            const std::string name(p, e);
+            if (allowed_extensions().count(name)) {
+                if (!out.empty()) out += ' ';
+                out += name;
+            }
+        }
+        p = e;
+    }
+    return out;
+}
+
+// The filtered copy of a driver string, kept for the life of the process as the
+// driver's own is (a guest holds the pointer). One copy per distinct string.
+const char* filtered_string(const char* list) {
+    static std::mutex lock;
+    static std::unordered_map<std::string, std::string> cache;
+    if (!list) return nullptr;
+    std::lock_guard<std::mutex> hold(lock);
+    auto it = cache.find(list);
+    if (it == cache.end()) it = cache.emplace(list, filtered_list(list)).first;
+    return it->second.c_str();
+}
+
+WINAPK_GUEST_ABI const GLubyte* guest_glGetString(GLenum name) {
+    const GLubyte* s = glGetString(name);
+    if (name != GL_EXTENSIONS || !s) return s;
+    return reinterpret_cast<const GLubyte*>(filtered_string(reinterpret_cast<const char*>(s)));
+}
+
+// The driver's indices of the extensions a guest may see, in order, for the current context.
+std::vector<GLuint> allowed_indices() {
+    GLint n = 0;
+    glGetIntegerv(GL_NUM_EXTENSIONS, &n);
+    std::vector<GLuint> out;
+    for (GLint i = 0; i < n; ++i) {
+        const GLubyte* e = glGetStringi(GL_EXTENSIONS, static_cast<GLuint>(i));
+        if (e && allowed_extensions().count(reinterpret_cast<const char*>(e))) out.push_back(static_cast<GLuint>(i));
+    }
+    return out;
+}
+
+WINAPK_GUEST_ABI const GLubyte* guest_glGetStringi(GLenum name, GLuint index) {
+    if (name != GL_EXTENSIONS) return glGetStringi(name, index);
+    const std::vector<GLuint> allowed = allowed_indices();
+    if (index >= allowed.size()) return glGetStringi(name, 0x7fffffff);  // the driver's GL_INVALID_VALUE
+    return glGetStringi(name, allowed[index]);
+}
+
+WINAPK_GUEST_ABI void guest_glGetIntegerv(GLenum pname, GLint* data) {
+    if (pname == GL_NUM_EXTENSIONS && data) {
+        *data = static_cast<GLint>(allowed_indices().size());
+        return;
+    }
+    glGetIntegerv(pname, data);
+}
+
+WINAPK_GUEST_ABI const char* guest_eglQueryString(EGLDisplay dpy, EGLint name) {
+    const char* s = eglQueryString(dpy, name);
+    return name == EGL_EXTENSIONS ? filtered_string(s) : s;
+}
+
 WINAPK_GUEST_ABI void guest_glDebugMessageCallback(GLDEBUGPROC, const void*) {}
 WINAPK_GUEST_ABI void guest_glDebugMessageCallbackKHR(GLDEBUGPROCKHR, const void*) {}
 
@@ -444,6 +531,10 @@ const std::unordered_map<std::string, void*>& symbols() {
         WINAPK_GUEST_GL(eglGetProcAddress),
         WINAPK_GUEST_GL(glDebugMessageCallback),
         WINAPK_GUEST_GL(glDebugMessageCallbackKHR),
+        WINAPK_GUEST_GL(glGetString),
+        WINAPK_GUEST_GL(glGetStringi),
+        WINAPK_GUEST_GL(glGetIntegerv),
+        WINAPK_GUEST_GL(eglQueryString),
     };
     return m;
 }
@@ -453,7 +544,13 @@ const std::unordered_map<std::string, void*>& symbols() {
 WINAPK_GUEST_ABI __eglMustCastToProperFunctionPointerType guest_eglGetProcAddress(const char* name) {
     if (!name) return nullptr;
     auto it = symbols().find(name);
-    return it == symbols().end() ? nullptr : reinterpret_cast<__eglMustCastToProperFunctionPointerType>(it->second);
+    if (it != symbols().end()) return reinterpret_cast<__eglMustCastToProperFunctionPointerType>(it->second);
+    // Each name once: what an app looked for and could not get is what to add next.
+    static std::mutex lock;
+    static std::unordered_set<std::string> told;
+    std::lock_guard<std::mutex> hold(lock);
+    if (told.insert(name).second) std::fprintf(stderr, "[win.apk] GL: eglGetProcAddress(%s): no such function here\n", name);
+    return nullptr;
 }
 
 }  // namespace
