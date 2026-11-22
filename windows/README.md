@@ -1072,7 +1072,12 @@ in a release yet) would add 29.2 MB installed: `bin\aosp\framework-res-34.apk` 2
 14's table: beside `bin\tools\framework-res.apk`'s 22.9, which they would retire),
 `lib\aosp-views.jar` 6.7 and `lib\aosp-resources.jar` 1.4; under `xz -9e`, the installer's LZMA's
 estimate, 19.0 + 6.1 + 1.2 = 26.4 MB. `footprint_check.py` counts them as their own part (32 MB),
-and CI's informational "AOSP resources and views" job prints them each run.
+and CI's informational "AOSP resources and views" job prints them each run. Made the default with
+Win.apk's copies they replace dropped (`bin\tools\framework-res.apk`, 22.9 MB, once its readers
+move; the 806 classes of `android-framework.jar` they shadow, 1.4 MB), the net is +4.9 MB
+installed and +5.0 MB in the installer; the Java2D fonts in `android-framework.jar` (6.9 MB, read
+only with `WINAPK_AOSP_GFX=0`) could go too (`docs/research/aosp-views.md`, "Making R1 and V1/V2
+the default").
 
 What a user's data folder adds: once, for all apps, `cds\` (the framework
 archive, 40 MB) and `cache\` (16 MB: `android-system-fonts\` 12,

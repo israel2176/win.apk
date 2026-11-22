@@ -599,7 +599,15 @@ with it, on and off alike.
   installed, about 26.4 MB to the installer. A CDS dump's verification found classes that did not
   link (Dialog without WindowDecorActionBar, RevealAnimator, ServiceNotFoundException, the AIDL
   Stubs' ContextImpl): fixed; left behind services Win.apk lacks: augmented autofill, translation,
-  inline suggestions, LockPatternUtils. Next: GL `SurfaceView`s as layers,
+  inline suggestions, LockPatternUtils. On real Windows (CI run 44734867981) all ten smoke apps
+  draw with both switches on and the UI probe equals Android's lines (0 of 2104); peak working set
+  about 50 MB more per app before this round's memory fixes (themes freed, the port's
+  `Theme::SetTo` fixed, the index opened once: Sudoku's live heap 103 -> 68.5 MB, off 46.4).
+  Size items to decide (aosp-views.md, "Making R1 and V1/V2 the default"): net +4.9 MB installed
+  and +5.0 MB installer once Win.apk's `framework-res.apk` and the shadowed classes go (its
+  readers first); the Java2D fonts (6.9 MB) and the AOSP table's wallpapers (7.5 MB) could go too;
+  the remaining memory cost is the second resource table (AOSP's arsc in the heap beside
+  Win.apk's index). Next: GL `SurfaceView`s as layers,
   spinners and toasts seen in an app, resize and several windows, an on-screen
   keyboard and a UI Automation bridge, then V3 (HWUI). Not run: CDS with the
   switch, real Windows, the smoke apps (another agent's).

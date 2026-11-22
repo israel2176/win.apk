@@ -793,6 +793,78 @@ window made landscape (1200x700): the night override's Resources follow the appl
 configuration (`[aosp-res] an override's Resources follow ... land-night ...`), and the settings
 screen lays out landscape on its AMOLED theme.
 
+### Making R1 and V1/V2 the default: disk, installer and memory (November 2026)
+
+Measured to prepare the switch, which stays off until the owner decides.
+
+**On real Windows** (CI run 44734867981, the informational job and the smoke job of the same
+build): all ten smoke apps draw with both switches on, and the UI probe's lines equal Android's
+(0 of 2104 differ). Peak working set per app, off / on (MB): Jerboa 412 / 447, Klooni 386 /
+393, SGT Puzzles 396 / 412, Editor 371 / 411, Fossify Notes 378 / 486, Jellyfin 392 /
+402, Jitsi 553 / 619, Open Sudoku 368 / 412, PPSSPP 420 / 483, Tensy 530 / 483: about 50 MB more
+for the median app, before the fixes below.
+
+**Why heavier, and what was fixed** (Wine, the Java heap's live objects after a full collection,
+from a heap dump taken by a script after scrolling; the process's private memory, `RssAnon`):
+
+| | Off | On, before | On, now |
+|---|---:|---:|---:|
+| Open Sudoku, live heap | 46.4 MB | 103.3 MB | 68.5 MB |
+| Open Sudoku, private memory | 412 MB | 474 MB | 432 MB |
+| Gallery, live heap | 62.0 MB | | 91.6 MB |
+| Gallery, private memory | 405 MB | | 441 MB |
+
+- **Themes were never freed.** AOSP frees a theme through `NativeAllocationRegistry` with a C
+  function; the port keeps themes in a Java registry and answered 0, so every theme ever made
+  stayed (`ThemeType` arrays: 15.9 MB in a minute of Sudoku). Its free function is now Java
+  code registered with Win.apk's `NativeAllocationRegistry` (aosp-graphics.jar) under a token,
+  run by the Cleaner once the theme is unreachable.
+- **Robolectric's port of `Theme::SetTo`** filled each package slot the source theme lacks with a
+  new empty package and its 256-slot type array, where AssetManager2 resets it: 254 of them, about
+  half a megabyte, per theme copied. `AospResRewrite` makes that branch store null, as the C++
+  does (every reader tests the slot).
+- **The resource index was built twice.** `AospRes.phoneDefaults` had no locales (AOSP's
+  `setToDefaults` leaves none), so Boot's index was opened, then opened again once
+  `LocaleManager` set them, and the first stayed alive (4 MB of rows). It now has the default
+  locales, as Win.apk's `macapkPhoneDefaults` does.
+- **What remains is the second resource table.** AOSP's resources hold android-14's
+  `resources.arsc` (16.4 MB) and the app's (Sudoku 1.7 MB, Gallery 5.4 MB) as Java byte arrays
+  (Robolectric's `FileMap` reads entries into a `byte[]`; Android maps the file), beside Win.apk's
+  own name-based index of the same tables (`ResourceIndex`: Sudoku 4 MB of rows, Gallery 14 MB,
+  and its framework view), which `AospRes` still opens for the code that asks by name. Retiring
+  that index with the switches on, or having it read the arsc AOSP's AssetManager already holds,
+  would take most of the difference back.
+
+**Disk and installer** if both switches become the default and Win.apk's copies they replace are
+dropped (MB, installed / under `xz -9`, the installer's LZMA's estimate):
+
+| | Installed | Installer |
+|---|---:|---:|
+| Added: `framework-res-34.apk`, `aosp-views.jar`, `aosp-resources.jar` | +29.2 | +26.4 |
+| Dropped: `bin\tools\framework-res.apk` (Win.apk's API-36 table) | -22.9 | -20.2 |
+| Dropped: the 806 classes of `android-framework.jar` the two jars shadow (never loaded with them on; 214 more are already aosp-graphics.jar's) | -1.4 | -1.3 |
+| **Net** | **+4.9** | **+5.0** |
+| Also possible: the Java2D fonts in `android-framework.jar` (only `WINAPK_AOSP_GFX=0` reads them) | -6.9 | -6.9 |
+
+Dropping Win.apk's `framework-res.apk` needs its readers moved first: `ResourceIndex`'s framework
+view (with the switches on it still parses it, for the code that asks by name),
+`MacApkPackageManager`'s "android" package, and `build_aosp_gfx.sh`'s `AospResIds`, which links
+aosp-graphics.jar's private framework ids to that table (with the resources switch on, the table
+is android-14's: those ids should come from `framework-res-34.apk` then). Classes beyond the 806
+that only Win.apk's views and resources use (its inflater helpers, `ViewCanvasDriver`, the
+index once retired) would go too; they were not counted.
+
+**`framework-res-34.apk` smaller?** Not without changing what an app can read:
+- Storing its entries uncompressed: 34.7 MB on disk (+13.5) for an installer 2 MB smaller; no.
+- Densities: Win.apk picks any density from 120 to 640 dpi by the window's scale
+  (`window_fit.h`), and a resize moves it, so every bucket from ldpi to xxxhdpi can be the best
+  match; dropping one would scale another's pixels, which aapt2's density splits only allow on a
+  device whose density never changes. None dropped.
+- Its three `default_wallpaper.png` (7.5 MB) are internal resources nothing in Win.apk or the
+  AOSP jars reads (Win.apk's `WallpaperManager` serves Windows' wallpaper); an app can reach them
+  only by name through `getIdentifier`. Dropping or shrinking them would save 7.5 MB on both
+  counts: the owner's call, not done here.
+
 ## 5. Size, start and memory
 
 Estimates, from the spike and the jars:
