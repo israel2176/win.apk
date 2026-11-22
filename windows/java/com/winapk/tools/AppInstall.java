@@ -120,7 +120,7 @@ public final class AppInstall {
         Files.createDirectories(staging);
         try {
             List<Path> members = new ArrayList<>();  // base first
-            if (source.getFileName().toString().toLowerCase().endsWith(".apk")) {
+            if (isApk(source)) {
                 Path base = staging.resolve("base.apk");
                 link(source, base);
                 members.add(base);
@@ -201,6 +201,18 @@ public final class AppInstall {
             Files.createLink(target, source.toAbsolutePath());
         } catch (IOException | UnsupportedOperationException e) {
             Files.copy(source, target, StandardCopyOption.REPLACE_EXISTING);
+        }
+    }
+
+    /** An APK, by its name or, for a file named as a bundle (.xapk, .apkm, .apks), by what it holds: its
+     *  own AndroidManifest.xml at the top, as Android's installer reads an APK whatever it is called
+     *  (a store's "XAPK" of an app with no splits is sometimes the APK itself). */
+    static boolean isApk(Path source) {
+        if (source.getFileName().toString().toLowerCase().endsWith(".apk")) return true;
+        try (ZipFile zip = new ZipFile(source.toFile())) {
+            return zip.getEntry("AndroidManifest.xml") != null;
+        } catch (IOException e) {
+            return false;
         }
     }
 
@@ -384,7 +396,7 @@ public final class AppInstall {
     /** The package of an APK or a bundle (whose base APK is unpacked to a
      *  scratch folder next to it and removed again). */
     static String packageOf(Path source) throws IOException {
-        if (source.getFileName().toString().toLowerCase().endsWith(".apk")) return packageName(source);
+        if (isApk(source)) return packageName(source);
         Path scratch = Files.createTempDirectory(source.toAbsolutePath().getParent(), ".package-");
         try {
             List<Path> members = new ArrayList<>();
