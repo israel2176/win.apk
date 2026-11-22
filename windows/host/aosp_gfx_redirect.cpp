@@ -182,10 +182,11 @@ Id JNICALL lookup(JNIEnv* env, jclass c, const char* name, const char* sig) {
     return fake_id<Id>();
 }
 
-// API 34 changed four signatures against the ones the library carries (it was built for an older
+// API 34 changed these signatures against the ones the library carries (it was built for an older
 // AOSP). Each adapter takes API 34's arguments and forwards the ones the library knows; what it
-// drops is new in 34 and has a default the library already uses. A fifth (last) goes the other
-// way: the library has only a later API's form.
+// drops is new in 34 and has a default the library already uses. A fifth goes the other way: the
+// library has only a later API's form; a sixth turns API 34's static native into the library's
+// instance one.
 using nbuild4_t = jlong(JNICALL*)(JNIEnv*, jclass, jlong, jstring, jint, jboolean);
 nbuild4_t g_nbuild4;
 // FontFamily.Builder.nBuild: + isDefaultFallback (only the system's own fallback list sets it).
@@ -219,6 +220,34 @@ elegant_t g_elegant;
 // API 34 passes a boolean. TextView sets it from every text appearance.
 void JNICALL elegant_bool(JNIEnv* e, jclass c, jlong paint, jboolean on) { g_elegant(e, c, paint, on ? 1 : 0); }
 
+using observer_t = jlong(JNICALL*)(JNIEnv*, jobject, jboolean);
+observer_t g_observer;
+// HardwareRendererObserver.nCreateObserver: the library's is an instance native of the observer,
+// (Z)J; API 34's is static and passes a WeakReference to it. The library's native observer keeps a
+// weak global reference to the observer and calls its notifyDataAvailable() from HWUI's RenderThread
+// when a frame's metrics are ready (API 34's Java has the same private method). Windows draw in
+// software here, so no frame ever reports and the observer only exists, as on a device whose window
+// is not hardware accelerated: View.addFrameMetricsListener makes one before the window is
+// attached (an ActivityLifecycleCallbacks' frame-metrics tracker, Firebase Performance's), and
+// that threw UnsatisfiedLinkError. The pointer it answers is the library's own
+// VirtualLightRefBase, which the allowlisted VirtualRefBasePtr's natives hold and release.
+jlong JNICALL observer_static(JNIEnv* e, jclass, jobject weak, jboolean wait) {
+    jclass ref = e->FindClass("java/lang/ref/Reference");
+    jmethodID get = ref ? e->GetMethodID(ref, "get", "()Ljava/lang/Object;") : nullptr;
+    jobject observer = get && weak ? e->CallObjectMethod(weak, get) : nullptr;
+    if (e->ExceptionCheck() || !observer) {
+        // Reachable only through the WeakReference the constructor has just made of itself.
+        if (!e->ExceptionCheck()) {
+            jclass npe = e->FindClass("java/lang/NullPointerException");
+            if (npe) e->ThrowNew(npe, "HardwareRendererObserver: no observer");
+        }
+        return 0;
+    }
+    const jlong native = g_observer(e, observer, wait);
+    e->DeleteLocalRef(observer);
+    return native;
+}
+
 struct Adapter {
     const char *name, *lib_sig, *aosp_sig;
     void** lib_fn;
@@ -235,6 +264,8 @@ const Adapter kAdapters[] = {
      reinterpret_cast<void*>(&mtbuild6)},
     {"nSetElegantTextHeight", "(JI)V", "(JZ)V", reinterpret_cast<void**>(&g_elegant),
      reinterpret_cast<void*>(&elegant_bool)},
+    {"nCreateObserver", "(Z)J", "(Ljava/lang/ref/WeakReference;Z)J", reinterpret_cast<void**>(&g_observer),
+     reinterpret_cast<void*>(&observer_static)},
 };
 
 jint JNICALL my_RegisterNatives(JNIEnv* env, jclass c, const JNINativeMethod* m, jint n) {
