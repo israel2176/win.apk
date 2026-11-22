@@ -46,7 +46,31 @@ GUEST_OVERRIDES = {
     "eglMakeCurrent", "eglGetCurrentSurface", "eglSurfaceAttrib", "eglBindTexImage", "eglReleaseTexImage",
     "eglCopyBuffers",
     "eglGetProcAddress", "glDebugMessageCallback", "glDebugMessageCallbackKHR",
+    # The extension lists, which name only what the guest can call (EXTENSION_SOURCES).
+    "glGetString", "glGetStringi", "glGetIntegerv", "eglQueryString",
 }
+
+# Extension entry points guest_gl.cpp writes by hand beyond GUEST_OVERRIDES (its
+# symbols() table), which a guest can get as well.
+GUEST_EXTRAS = {
+    "eglGetPlatformDisplayEXT", "eglCreatePlatformWindowSurfaceEXT", "eglSwapBuffersWithDamageKHR",
+    "eglSwapBuffersWithDamageEXT", "eglPresentationTimeANDROID", "eglSetDamageRegionKHR",
+    "eglDupNativeFenceFDANDROID", "eglCreateImageKHR", "eglDestroyImageKHR", "eglCreateSyncKHR",
+    "eglDestroySyncKHR", "eglClientWaitSyncKHR", "eglWaitSyncKHR", "eglGetSyncAttribKHR",
+}
+
+# Where an extension's name and its entry points are declared. An extension the
+# driver reports is passed on to the guest only when it is declared here and the
+# guest can get every one of its functions (they are in SOURCES): on Android a
+# driver lists only extensions it implements, and an app (Skia's GrGLInterface,
+# so Flutter) that finds one listed requires its functions, from
+# eglGetProcAddress, and gives up on GL when one is missing. ANGLE's and
+# Chromium's own extensions are in none of the Khronos headers, so they go.
+EXTENSION_SOURCES = [
+    ("GLES2/gl2ext.h", "GL_APICALL", "GL_APIENTRY", "GL"),
+    ("GLES/glext.h", "GL_API", "GL_APIENTRY", "GL"),
+    ("EGL/eglext.h", "EGLAPI", "EGLAPIENTRY", "EGL"),
+]
 
 
 def prototypes(path, api, entry):
@@ -64,6 +88,15 @@ def arg_names(params):
         m = re.search(r"(\w+)\s*(\[\s*\w*\s*\])?\s*$", p.strip())
         names.append(m.group(1))
     return names
+
+
+def extensions(path, api, entry, prefix):
+    """Each extension the header declares, with the functions it declares."""
+    text = open(os.path.join(KHR, path)).read()
+    block = re.compile(r"#ifndef (" + prefix + r"_\w+)\s*\n#define \1 1\n(.*?)#endif /\* \1 \*/", re.S)
+    proto = re.compile(api + r"\s+.+?\s*" + entry + r"\s+(\w+)\s*\(", re.S)
+    for name, body in block.findall(text):
+        yield name, proto.findall(body)
 
 
 def main():
@@ -114,6 +147,20 @@ def main():
         sig = params if params else "void"
         call = ("" if ret == "void" else "return ") + name + "(" + args + ");"
         guest += [f"WINAPK_GUEST_ABI {ret} guest_{name}({sig}) {{ {call} }}"]
+    callable_names = set(seen) | GUEST_OVERRIDES | GUEST_EXTRAS
+    for prefix in ("GL", "EGL"):
+        ok = set()
+        for path, api, entry, p in EXTENSION_SOURCES:
+            if p != prefix:
+                continue
+            for name, funcs in extensions(path, api, entry, p):
+                if all(f in callable_names for f in funcs):
+                    ok.add(name)
+        guest += ["", f"// The {prefix} extensions a guest may be told of (EXTENSION_SOURCES).",
+                  f"#define WINAPK_GUEST_{prefix}_EXTENSIONS \\"]
+        guest += [f'    "{n}", \\' for n in sorted(ok)]
+        guest += [""]
+        print(f"[gen_gl_stubs] {len(ok)} {prefix} extensions a guest may see")
     guest += ["", "#define WINAPK_GUEST_GL_SYMBOLS \\"]
     guest += [f"    {{\"{n}\", reinterpret_cast<void*>(&guest_{n})}}, \\" for n in names]
     guest += [""]
