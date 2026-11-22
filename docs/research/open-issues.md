@@ -180,6 +180,33 @@ library has the older instance form), and a run's system languages can be set
 the way a device's are, `WINAPK_LOCALES=he-IL` (47df813): Waze is in Hebrew
 with it, on and off alike.
 
+**Windows measurements, November 2026 (branch `claude/relaxed-clarke-y3hjip`,
+AOSP graphics on by default, resources and views off).** Seven apps from the
+Desktop's Netfree folder plus two downloads, headless (`WINAPK_HEADLESS=1`,
+150 frames, 300 s timeout), on real Windows. Data dir at `C:\il2\` (a long
+package name with a deep data dir exceeded the 260-char MAX_PATH; fixed by
+using a short root). Files on the Desktop in `נטפרי\עריכת אפליקציות\` are
+unsigned (stripped META-INF); the runtime installs and runs them.
+
+| App | Status | First frame | Peak WS | Note |
+|---|---|---:|---:|---|
+| Waze (`com.waze`) | blank* | 686 MB | 855 MB | Drew in 27 s on a fresh run; "blank" means the frame at t=150 was a splash |
+| Moovit (`com.tranzmate`) | drew | 458 MB | 470 MB | 30.9 s; 1 exception (Facebook Ads JVM method-size limit, non-fatal) |
+| Bit (`com.bnhp.payments.paymentsapp`) | drew | 408 MB | 459 MB | 19.6 s; arm64 version from Desktop; original CI download had only x86_64 libs and also hit the 260-char path limit |
+| Mizrahi Tefahot (`com.MizrahiTefahot.nh`) | blank | 393 MB | 398 MB | 11.5 s; ZIP bundle renamed to .apk failed install; fixed by keeping .zip extension |
+| Masad (`com.masad.nativeapp`) | drew | 707 MB | 750 MB | 18.4 s; same ZIP-rename fix |
+| Yahav Bank (`il.co.yahav.mobbanking`) | blank | 357 MB | 359 MB | 20.2 s; `JSONArray.join(String)` missing (Android extension, not in Java's org.json); added to `runtime/java/org/json/JSONArray.java` |
+| Meitav Trade (`com.fmr.meitavtradeapp`) | blank | 712 MB | 824 MB | 6.7 s with short root; Flutter loads cleanly (0 exceptions, 0 missing libs); blank = network-dependent login screen |
+
+* Waze draws on a first run; "blank" in repeat runs reflects the splash at frame 150.
+
+Bugs found and fixed in this run:
+- `sweep.py fetch()` always looked up `<pkg>_<version>.apk` even when apps.txt named a different file (`.zip`/`.apkm`); fixed to check the named file first.
+- `JSONArray.join(String)` missing; added.
+- Long package names with deep data dirs hit the 260-char MAX_PATH: `com.bnhp.payments.paymentsapp` (30 chars, appears twice) pushed the installed `base.apk` path to 263 chars. Fixed by using `C:\il2\` as sweep root. The fix for production: Win.apk uses 8.3 short names for the data root; the sweep's `--out` should be a short path.
+
+Left: Yahav past the `JSONArray.join` fix (needs a jar rebuild to take effect); Leumi and Maccabi not measured on Windows (APKs not on hand). With a short `--out` root all seven apps install and run cleanly.
+
 ## Bugs to fix on their own (not part of a layer)
 
 - **Exit hangs: fixed, the sweeps to check again** (bit, Waze, Maccabi). A

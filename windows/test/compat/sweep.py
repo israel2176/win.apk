@@ -106,6 +106,11 @@ def read_apps(path, only):
 
 def fetch(pkg, version, name, cache):
     os.makedirs(cache, exist_ok=True)
+    # When apps.txt names a non-default file (e.g. .zip/.apkm bundle), check
+    # for it in cache before falling back to the default <pkg>_<version>.apk.
+    named = os.path.join(cache, name)
+    if named != os.path.join(cache, f"{pkg}_{version}.apk") and os.path.exists(named):
+        return named
     path = os.path.join(cache, f"{pkg}_{version}.apk")
     if os.path.exists(path):
         return path
