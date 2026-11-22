@@ -574,6 +574,18 @@ public final class AospRes implements ResBackend {
         c.navigationHidden = Configuration.NAVIGATIONHIDDEN_YES;
         c.colorMode = 0;
         c.fontWeightAdjustment = 0;
+        // The default locales, as Win.apk's macapkPhoneDefaults gives them (Locale.getDefault()
+        // first, then the host's list): AOSP's setToDefaults leaves none, and the index Boot opens
+        // with this configuration was opened a second time once LocaleManager set them, the first
+        // one kept alive beside it (8 MB of rows).
+        java.util.Locale top = java.util.Locale.getDefault();
+        android.os.LocaleList host = android.os.LocaleList.getDefault();
+        java.util.List<java.util.Locale> locales = new ArrayList<>();
+        if (top != null) locales.add(top);
+        for (int i = 0; host != null && i < host.size(); i++) {
+            if (!host.get(i).equals(top)) locales.add(host.get(i));
+        }
+        if (!locales.isEmpty()) c.setLocales(new android.os.LocaleList(locales.toArray(new java.util.Locale[0])));
         return c;
     }
 

@@ -409,9 +409,26 @@ public final class NativeAssetManager {
   }
 
   // AOSP frees a theme through NativeAllocationRegistry with this C function. The port's themes
-  // live in a Java registry; 0 makes the registry skip the call (Win.apk's NativeAllocationRegistry
-  // never calls a free function of 0), so a Theme's entry stays: one per Theme made.
-  public static long nativeGetThemeFreeFunction() { return 0; }
+  // live in a Java registry, so the "function" is Java code registered with Win.apk's
+  // NativeAllocationRegistry (aosp-graphics.jar) under a token: once a Theme is unreachable its
+  // entry leaves the registry, as NativeThemeDestroy deletes it on ART. They used to stay, one per
+  // Theme ever made: thousands in a minute of an app, 20 MB and more of the Java heap.
+  private static final long THEME_FREE_TOKEN = 1L;  // no C function lives at address 1
+  private static final long THEME_FREE = registerThemeFree();
+
+  private static long registerThemeFree() {
+    try {
+      Class.forName("libcore.util.NativeAllocationRegistry")
+          .getMethod("registerJavaFreeFunction", long.class, java.util.function.LongConsumer.class)
+          .invoke(null, THEME_FREE_TOKEN,
+              (java.util.function.LongConsumer) p -> Registries.NATIVE_THEME9_REGISTRY.unregister(p));
+      return THEME_FREE_TOKEN;
+    } catch (ReflectiveOperationException | RuntimeException e) {
+      return 0;  // a registry without Java free functions: themes stay, as before
+    }
+  }
+
+  public static long nativeGetThemeFreeFunction() { return THEME_FREE; }
 
   /** AssetManager2's Theme::Rebase: the theme cleared, then the styles applied again in order. */
   public static void nativeThemeRebase(long ptr, long themePtr, int[] styleIds, boolean[] force, int count) {

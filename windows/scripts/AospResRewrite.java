@@ -104,11 +104,57 @@ public class AospResRewrite {
                 Set<String> bridge = NATIVE_CLASSES.contains(name) ? bridgeMethods(root, name) : null;
                 cv = new Rewriter(cv, name, bridge);
             }
+            if (name.equals(PORT_THEME)) cv = themeSetToResets(cv);
             cr.accept(cv, 0);
             byte[] out = cw.toByteArray();
             if (!java.util.Arrays.equals(in, out)) Files.write(f, out);
         }
         counts.forEach((k, v) -> System.out.println("[aosp-res]   " + v + " " + k));
+    }
+
+    static final String PORT_THEME = "org/robolectric/res/android/CppAssetManager2$Theme";
+    static final String PORT_THEME_PACKAGE = PORT_THEME + "$ThemePackage";
+
+    /** Robolectric's port of AssetManager2's Theme::SetTo: where the C++ resets a package slot the
+     *  source theme does not have (`packages_[p].reset()`, empty), the port puts a new, empty
+     *  ThemePackage in it, with its 256-slot type array: 254 of them per copy, 2 KB each, half a
+     *  megabyte for every theme copied (a context's, a DecorContext's...), most of the theme memory
+     *  an app's heap held. The first `new ThemePackage()` of SetTo, that branch's, becomes null,
+     *  as the C++ leaves it; every reader of a slot tests it for null (GetAttribute, ApplyStyle). */
+    static ClassVisitor themeSetToResets(ClassVisitor next) {
+        return new ClassVisitor(Opcodes.ASM9, next) {
+            @Override public MethodVisitor visitMethod(int acc, String name, String desc, String sig, String[] exc) {
+                MethodVisitor mv = super.visitMethod(acc, name, desc, sig, exc);
+                if (!name.equals("SetTo") || !desc.equals("(L" + PORT_THEME + ";)Z")) return mv;
+                return new MethodVisitor(Opcodes.ASM9, mv) {
+                    int seen;      // the `new ThemePackage` instructions met
+                    int skipping;  // its DUP, ACONST_NULL (the synthetic accessor's argument), <init>
+                    @Override public void visitTypeInsn(int op, String type) {
+                        if (op == Opcodes.NEW && type.equals(PORT_THEME_PACKAGE) && seen++ == 0) {
+                            super.visitInsn(Opcodes.ACONST_NULL);
+                            skipping = 3;
+                            count("empty theme packages Theme.SetTo made left null, as AssetManager2 does");
+                            return;
+                        }
+                        super.visitTypeInsn(op, type);
+                    }
+                    @Override public void visitInsn(int op) {
+                        if (skipping > 1 && (op == Opcodes.DUP || op == Opcodes.ACONST_NULL)) {
+                            skipping--;
+                            return;
+                        }
+                        super.visitInsn(op);
+                    }
+                    @Override public void visitMethodInsn(int op, String owner, String n, String d, boolean itf) {
+                        if (skipping == 1 && op == Opcodes.INVOKESPECIAL && owner.equals(PORT_THEME_PACKAGE)) {
+                            skipping = 0;
+                            return;
+                        }
+                        super.visitMethodInsn(op, owner, n, d, itf);
+                    }
+                };
+            }
+        };
     }
 
     static String bridgeOf(String cls) {
