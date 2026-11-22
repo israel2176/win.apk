@@ -15,10 +15,13 @@
 //     application theme applied;
 //   * TypedArray records, framework drawables, tints and densities, on AOSP's classes.
 //
-// Win.apk's own name-based resource index (com.macapk.loader.ResourceIndex over ArscReader) is
-// still opened and answers the index lookups (index*): the inflater and the views still read
-// style items and raw values by name from it. That is the part of today's resources the views
-// layer (V1) retires; here it stays, so Win.apk's views keep working on AOSP's Resources.
+// With AOSP's resources alone, Win.apk's own name-based resource index (com.macapk.loader
+// .ResourceIndex over ArscReader) is still opened and answers the index lookups (index*): Win.apk's
+// inflater and views read style items and raw values by name from it. With AOSP's views on too
+// (winapk.aosp.views=1) nothing of Win.apk's inflates any more, and the few lookups left by name
+// are answered from AOSP's own Resources and AssetManager (AospIndex): the app's table and the
+// platform's are not parsed a second time into Java rows (Sudoku 4 MB, Gallery 14 MB, and the
+// platform table's view of framework-res.apk).
 package com.winapk.aospres;
 
 import android.content.res.ApkAssets;
@@ -144,7 +147,8 @@ public final class AospRes implements ResBackend {
         Object i = index;
         InputStream in = null;
         try {
-            if (i != null) in = ri(i).openRaw(id);
+            if (i instanceof AospIndex) in = AospIndex.openXmlText(app(), id);
+            else if (i != null) in = ri(i).openRaw(id);
         } catch (FileNotFoundException e) {
             in = null;
         }
@@ -174,80 +178,152 @@ public final class AospRes implements ResBackend {
 
     private static ResourceIndex ri(Object index) { return (ResourceIndex) index; }
 
+    /** AOSP's views on: the index lookups answer from AOSP's tables (AospIndex). */
+    static final boolean VIEWS = "1".equals(System.getProperty("winapk.aosp.views"));
+
     @Override public Object openIndex(Configuration cfg, String apkPath) {
         appConfig = new Configuration(cfg);
-        return new ResourceIndex(cfg, apkPath);
+        return VIEWS ? new AospIndex(cfg) : new ResourceIndex(cfg, apkPath);
     }
 
-    @Override public boolean isIndex(Object o) { return o instanceof ResourceIndex; }
+    @Override public boolean isIndex(Object o) { return o instanceof ResourceIndex || o instanceof AospIndex; }
 
     @Override public Object resourceIndex() { return index; }
 
     @Override public void setResourceIndex(Object i) { index = i; }
 
-    @Override public void prefetchFrameworkTable() { ResourceIndex.prefetchFrameworkTable(); }
+    @Override public void prefetchFrameworkTable() {
+        if (!VIEWS) ResourceIndex.prefetchFrameworkTable();  // AOSP's views: AOSP's table only
+    }
 
     @Override public void setPackageName(String pkg) { packageName = pkg != null ? pkg : ""; }
 
-    @Override public String indexApplicationThemeName(Object i) { return ri(i).getApplicationThemeName(); }
-
-    @Override public void indexSetApplicationThemeName(Object i, String name) { ri(i).setApplicationThemeName(name); }
-
-    @Override public String[] indexTypeNameOf(Object i, int id) { return ri(i).macapkTypeNameOf(id); }
-
-    @Override public String indexFwEntryTypeName(Object i, int id) { return ri(i).macapkFwEntryTypeName(id); }
-
-    @Override public int indexIdOfName(Object i, String name, String type, String pkg) {
-        return ri(i).idOfName(name, type, pkg);
+    @Override public String indexApplicationThemeName(Object i) {
+        return i instanceof AospIndex x ? x.applicationThemeName : ri(i).getApplicationThemeName();
     }
 
-    @Override public int indexIdOfFrameworkStyleName(Object i, String name) { return ri(i).idOfFrameworkStyleName(name); }
+    @Override public void indexSetApplicationThemeName(Object i, String name) {
+        if (i instanceof AospIndex x) x.applicationThemeName = name;
+        else ri(i).setApplicationThemeName(name);
+    }
 
-    @Override public String indexStringForId(Object i, int id) { return ri(i).stringForId(id); }
+    @Override public String[] indexTypeNameOf(Object i, int id) {
+        return i instanceof AospIndex ? look(r -> AospIndex.typeNameOf(r, id)) : ri(i).macapkTypeNameOf(id);
+    }
 
-    @Override public Integer indexIntegerForName(Object i, String name) { return ri(i).integerForName(name); }
+    @Override public String indexFwEntryTypeName(Object i, int id) {
+        return i instanceof AospIndex ? look(r -> AospIndex.fwEntryTypeName(r, id)) : ri(i).macapkFwEntryTypeName(id);
+    }
 
-    @Override public Integer indexIntegerForId(Object i, int id) { return ri(i).integerForId(id); }
+    @Override public int indexIdOfName(Object i, String name, String type, String pkg) {
+        if (!(i instanceof AospIndex)) return ri(i).idOfName(name, type, pkg);
+        Integer id = look(r -> AospIndex.idOfName(r, name, type, pkg != null ? pkg : packageName));
+        return id == null ? 0 : id;
+    }
 
-    @Override public Boolean indexBoolById(Object i, int id) { return ri(i).getBoolById(id); }
+    @Override public int indexIdOfFrameworkStyleName(Object i, String name) {
+        if (!(i instanceof AospIndex)) return ri(i).idOfFrameworkStyleName(name);
+        Integer id = look(r -> AospIndex.idOfFrameworkStyleName(r, name));
+        return id == null ? 0 : id;
+    }
 
-    @Override public Integer indexColorByName(Object i, String name) { return ri(i).getColorByName(name); }
+    @Override public String indexStringForId(Object i, int id) { return i instanceof AospIndex ? stringForId(id) : ri(i).stringForId(id); }
 
-    @Override public String indexDimenRaw(Object i, String name) { return ri(i).getDimenRaw(name); }
+    @Override public Integer indexIntegerForName(Object i, String name) {
+        return i instanceof AospIndex ? integerForName(name) : ri(i).integerForName(name);
+    }
 
-    @Override public Integer indexResolveColorExpr(Object i, String raw) { return ri(i).macapkResolveColorExpr(raw); }
+    @Override public Integer indexIntegerForId(Object i, int id) { return i instanceof AospIndex ? integerForId(id) : ri(i).integerForId(id); }
+
+    @Override public Boolean indexBoolById(Object i, int id) { return i instanceof AospIndex ? boolForId(id) : ri(i).getBoolById(id); }
+
+    @Override public Integer indexColorByName(Object i, String name) {
+        if (!(i instanceof AospIndex)) return ri(i).getColorByName(name);
+        return name == null ? null : look(r -> {
+            int id = r.getIdentifier(name, "color", packageName);
+            return id == 0 ? null : r.getColor(id, null);
+        });
+    }
+
+    @Override public String indexDimenRaw(Object i, String name) {
+        return i instanceof AospIndex ? (name == null ? null : look(r -> AospIndex.dimenRaw(r, name, packageName)))
+                : ri(i).getDimenRaw(name);
+    }
+
+    @Override public Integer indexResolveColorExpr(Object i, String raw) {
+        return i instanceof AospIndex ? resolveColorExpr(raw) : ri(i).macapkResolveColorExpr(raw);
+    }
 
     @Override public String indexResolveAttrInTheme(Object i, String themeName, String attr) {
+        if (i instanceof AospIndex) {
+            return look(r -> {
+                Resources.Theme t = r.newTheme();
+                int id = styleId(r, themeName);
+                if (id != 0) t.applyStyle(id, true);
+                return resolveAttrRaw(t, attr);
+            });
+        }
         return ri(i).resolveAttrInTheme(themeName, attr);
     }
 
-    @Override public String indexStyleNameForIdRef(Object i, String ref) { return ri(i).styleNameForIdRefPublic(ref); }
+    @Override public String indexStyleNameForIdRef(Object i, String ref) {
+        return i instanceof AospIndex ? look(r -> AospIndex.styleNameForIdRef(r, ref)) : ri(i).styleNameForIdRefPublic(ref);
+    }
 
-    @Override public Object indexStyleByName(Object i, String name) { return ri(i).getStyleByName(name); }
+    @Override public Object indexStyleByName(Object i, String name) {
+        return i instanceof AospIndex ? look(r -> AospIndex.styleByName(r, styleId(r, name))) : ri(i).getStyleByName(name);
+    }
 
-    @Override public String styleParent(Object style) { return ((ResourceIndex.StyleDef) style).parent; }
+    @Override public String styleParent(Object style) {
+        return style instanceof AospIndex.Style ? null : ((ResourceIndex.StyleDef) style).parent;
+    }
 
-    @Override public Map<String, String> styleItems(Object style) { return ((ResourceIndex.StyleDef) style).items; }
+    @Override public Map<String, String> styleItems(Object style) {
+        return style instanceof AospIndex.Style s ? s.items : ((ResourceIndex.StyleDef) style).items;
+    }
 
-    @Override public InputStream indexOpenRaw(Object i, int id) throws FileNotFoundException { return ri(i).openRaw(id); }
+    @Override public InputStream indexOpenRaw(Object i, int id) throws FileNotFoundException {
+        return i instanceof AospIndex ? look(r -> AospIndex.openRaw(r, id)) : ri(i).openRaw(id);
+    }
 
     @Override public InputStream indexOpenRawByName(Object i, String type, String name) {
+        if (i instanceof AospIndex) {
+            return type == null || name == null ? null : look(r -> {
+                int id = r.getIdentifier(name, type, packageName);
+                return id == 0 ? null : AospIndex.openRaw(r, id);
+            });
+        }
         return ri(i).openRawByName(type, name);
     }
 
-    @Override public List<Integer> indexFileIdsOfType(Object i, String type) { return ri(i).macapkFileIdsOfType(type); }
-
-    @Override public List<String> indexResourceLocaleTags(Object i) { return ri(i).macapkResourceLocaleTags(); }
-
-    @Override public boolean indexSelectionChangesFor(Object i, Configuration next) {
-        return ri(i).macapkSelectionChangesFor(next);
+    @Override public List<Integer> indexFileIdsOfType(Object i, String type) {
+        if (!(i instanceof AospIndex)) return ri(i).macapkFileIdsOfType(type);
+        List<Integer> out = look(r -> AospIndex.fileIdsOfType(r, appPackageId(r), type));
+        return out != null ? out : new ArrayList<>();
     }
 
-    @Override public int[][] indexAppSizeBuckets(Object i) { return ri(i).macapkAppSizeBuckets(); }
+    @Override public List<String> indexResourceLocaleTags(Object i) {
+        if (!(i instanceof AospIndex)) return ri(i).macapkResourceLocaleTags();
+        AssetManager am = appAssets;
+        return am == null ? new ArrayList<>() : AospIndex.resourceLocaleTags(am);
+    }
+
+    @Override public boolean indexSelectionChangesFor(Object i, Configuration next) {
+        // AOSP's Resources select for every configuration themselves: nothing to rebuild.
+        return !(i instanceof AospIndex) && ri(i).macapkSelectionChangesFor(next);
+    }
+
+    @Override public int[][] indexAppSizeBuckets(Object i) {
+        if (!(i instanceof AospIndex)) return ri(i).macapkAppSizeBuckets();
+        AssetManager am = appAssets;
+        return am == null ? AospIndex.sizeBuckets(null) : AospIndex.sizeBuckets(am);
+    }
 
     @Override public boolean dpCrosses(int[] thresholds, int firstDp, int secondDp) {
         return ResourceIndex.macapkDpCrosses(thresholds, firstDp, secondDp);
     }
+
+
 
     // ---- The current app's table, on AOSP's Resources ----
 
@@ -265,6 +341,12 @@ public final class AospRes implements ResBackend {
             }
             return appResources;
         }
+    }
+
+    /** The app's package id (0x7f for an app). */
+    private static int appPackageId(Resources r) {
+        int id = r.getIdentifier("app_name", "string", packageName);
+        return id != 0 ? id >>> 24 : 0x7f;
     }
 
     private interface Lookup<T> { T get(Resources r) throws Resources.NotFoundException; }
@@ -298,7 +380,9 @@ public final class AospRes implements ResBackend {
 
     @Override public Integer resolveColorExpr(String raw) {
         Object i = index;
-        return i == null || raw == null ? null : ri(i).macapkResolveColorExpr(raw);
+        if (i == null || raw == null) return null;
+        if (i instanceof AospIndex) return look(r -> AospIndex.colorExpr(r, appTheme(), raw, packageName));
+        return ri(i).macapkResolveColorExpr(raw);
     }
 
     // ---- Theme colours and values for Win.apk's chrome ----
@@ -308,7 +392,7 @@ public final class AospRes implements ResBackend {
         Resources r = app();
         Object i = index;
         if (r == null || i == null) return null;
-        String name = ri(i).getApplicationThemeName();
+        String name = INSTANCE.indexApplicationThemeName(i);
         Resources.Theme t = appTheme;
         if (t != null && java.util.Objects.equals(name, appThemeName)) return t;
         t = r.newTheme();

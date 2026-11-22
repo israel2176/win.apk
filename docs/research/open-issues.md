@@ -606,7 +606,10 @@ with it, on and off alike.
   Size items to decide (aosp-views.md, "Making R1 and V1/V2 the default"): net +4.9 MB installed
   and +5.0 MB installer once Win.apk's `framework-res.apk` and the shadowed classes go (its
   readers first); the Java2D fonts (6.9 MB) and the AOSP table's wallpapers (7.5 MB) could go too;
-  the remaining memory cost is the second resource table (AOSP's arsc in the heap beside
+  the second resource table is retired with both switches on (AospIndex: Win.apk's lookups by name
+  answered from AOSP's tables; Sudoku private memory 269 MB on against 415 off, Gallery 259 against
+  406; live heap 47.2/46.4 and 53.8/62.0). Before that, the remaining memory cost was the second
+  resource table (AOSP's arsc in the heap beside
   Win.apk's index). Next: GL `SurfaceView`s as layers,
   spinners and toasts seen in an app, resize and several windows, an on-screen
   keyboard and a UI Automation bridge, then V3 (HWUI). Not run: CDS with the

@@ -827,13 +827,33 @@ from a heap dump taken by a script after scrolling; the process's private memory
   `setToDefaults` leaves none), so Boot's index was opened, then opened again once
   `LocaleManager` set them, and the first stayed alive (4 MB of rows). It now has the default
   locales, as Win.apk's `macapkPhoneDefaults` does.
-- **What remains is the second resource table.** AOSP's resources hold android-14's
-  `resources.arsc` (16.4 MB) and the app's (Sudoku 1.7 MB, Gallery 5.4 MB) as Java byte arrays
-  (Robolectric's `FileMap` reads entries into a `byte[]`; Android maps the file), beside Win.apk's
-  own name-based index of the same tables (`ResourceIndex`: Sudoku 4 MB of rows, Gallery 14 MB,
-  and its framework view), which `AospRes` still opens for the code that asks by name. Retiring
-  that index with the switches on, or having it read the arsc AOSP's AssetManager already holds,
-  would take most of the difference back.
+- **The second resource table, retired.** AOSP's resources hold android-14's `resources.arsc`
+  (16.4 MB) and the app's (Sudoku 1.7 MB, Gallery 5.4 MB) as Java byte arrays (Robolectric's
+  `FileMap` reads entries into a `byte[]`; Android maps the file). Beside them Win.apk's own
+  name-based index parsed the same tables again (`ResourceIndex`: Sudoku 4 MB of rows, Gallery
+  14 MB) and built its view of Win.apk's `framework-res.apk` (a 52 MB parse at start, whose
+  garbage left the heap committed far above what it holds). With both switches on the index is
+  now `AospIndex`: the lookups Win.apk's code still makes by name (a theme's window flags for
+  `FrameworkWindowStyle`, a style id's name, `R` fields by name for `AppClassLoader`, the
+  application theme's name, the app's size buckets for `DisplayConfig`, the locales it ships, a
+  file's ids of a type for `LayoutSweep`, a compiled XML as text) are answered from AOSP's
+  Resources and AssetManager, AOSP's way: `getIdentifier`, a style's merged bag
+  (`AssetManager.getStyleAttributes` through a theme, its parents' items included),
+  `getSizeConfigurations` (as `ActivityThread` reports them), `getNonSystemLocales`. Nothing parses
+  either table a second time, and the framework table is not read at all. With AOSP's resources
+  alone (views off) Win.apk's views still inflate through `ResourceIndex`, which stays for them.
+
+| After the index retired (Wine) | Off | On |
+|---|---:|---:|
+| Open Sudoku, live heap | 46.4 MB | 47.2 MB |
+| Open Sudoku, private memory after scrolling | 415 MB | 269 MB |
+| Gallery, live heap | 62.0 MB | 53.8 MB |
+| Gallery, private memory after scrolling | 406 MB | 259 MB |
+
+  The private memory falls further than the live heap: the index's start-up parse grew the
+  committed heap, which the collector does not hand back, and that is gone with the switches on.
+  The first frame came no later (Sudoku 10.8 s on, 11.2 s off; Gallery 16.3 and 13.6, one run
+  each).
 
 **Disk and installer** if both switches become the default and Win.apk's copies they replace are
 dropped (MB, installed / under `xz -9`, the installer's LZMA's estimate):
@@ -846,13 +866,18 @@ dropped (MB, installed / under `xz -9`, the installer's LZMA's estimate):
 | **Net** | **+4.9** | **+5.0** |
 | Also possible: the Java2D fonts in `android-framework.jar` (only `WINAPK_AOSP_GFX=0` reads them) | -6.9 | -6.9 |
 
-Dropping Win.apk's `framework-res.apk` needs its readers moved first: `ResourceIndex`'s framework
-view (with the switches on it still parses it, for the code that asks by name),
-`MacApkPackageManager`'s "android" package, and `build_aosp_gfx.sh`'s `AospResIds`, which links
-aosp-graphics.jar's private framework ids to that table (with the resources switch on, the table
-is android-14's: those ids should come from `framework-res-34.apk` then). Classes beyond the 806
-that only Win.apk's views and resources use (its inflater helpers, `ViewCanvasDriver`, the
-index once retired) would go too; they were not counted.
+Dropping Win.apk's `framework-res.apk`: with both switches on nothing reads it at run time any
+more (`AospIndex` above; `MacApkPackageManager`'s "android" package only names its path). Left are
+`build_aosp_gfx.sh`'s `AospResIds`, at build time, which links aosp-graphics.jar's private
+framework ids to that table, and Win.apk's own views (the switches off). Those ids are right with
+the resources switch on: `aosp-resources.jar` carries android-all's own `com.android.internal.R`
+and `AdaptiveIconDrawable` (the one class whose private id AospResIds rewrites), first on the class
+path, so the graphics classes read android-14's ids against android-14's table
+(`string/config_icon_mask` is `0x01040252` in `framework-res-34.apk`, as compiled in). Made the
+default, AospResIds would link to `framework-res-34.apk` and those two copies go. Classes beyond
+the 806 that only Win.apk's views and resources use (its inflater helpers, `ViewCanvasDriver`,
+`ResourceIndex` and `ArscReader` once the switches are the default) would go too; they were not
+counted.
 
 **`framework-res-34.apk` smaller?** Not without changing what an app can read:
 - Storing its entries uncompressed: 34.7 MB on disk (+13.5) for an installer 2 MB smaller; no.
