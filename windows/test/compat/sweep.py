@@ -217,6 +217,7 @@ def run_app(pkg, apk, args, out):
         cmd += ["--jdk", win_path(args.jdk, args.launcher)]
     env = dict(os.environ)
     env["WINAPK_HEADLESS"] = "1"
+    if args.locales: env["WINAPK_LOCALES"] = args.locales  # the device's system languages, ranked
     if args.launcher: env["WINAPK_SHORT_DATA_DIR"] = "0"  # Wine's made-up 8.3 names do not find new files
     if args.launcher: env.setdefault("WINEDLLOVERRIDES", "iphlpapi=n,b")  # test/wine_iphlpapi.sh, run once before
     env["WINAPK_HEADLESS_EXIT_AFTER_FRAMES"] = str(args.frames)
@@ -394,6 +395,8 @@ def main():
     ap.add_argument("--frames", type=int, default=60)
     ap.add_argument("--timeout", type=int, default=180)
     ap.add_argument("--launcher", default=None)
+    ap.add_argument("--locales", default="",
+                    help="the device's system languages for every run, ranked (WINAPK_LOCALES), e.g. he-IL,en-US")
     ap.add_argument("--only", default="")
     ap.add_argument("--shard", default="1/1", help="I/N: every Nth app from the Ith (1-based)")
     ap.add_argument("--merge", nargs="+", metavar="DIR", help="join these report directories into --out")

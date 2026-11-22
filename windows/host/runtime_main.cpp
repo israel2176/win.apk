@@ -1664,6 +1664,31 @@ std::vector<std::string> jvm_options(const BootArgs& b) {
     // Win.apk's own language, for the screens it draws itself (the Google
     // account chooser): its setting can differ from the Windows locale the app sees.
     v.push_back(std::string("-Dwinapk.ui.lang=") + (winapk::host::ui_hebrew() ? "he" : "en"));
+    // WINAPK_LOCALES=he-IL[,en-US]: the device's system languages, ranked, as a phone's Settings >
+    // System > Languages sets them, instead of Windows' locale (headless runs and tests). The first is
+    // the process's default locale (user.language/script/country: Locale.getDefault), as a device
+    // makes its first system language; the list is LocaleList's and Configuration.getLocales()'s
+    // (-Dwinapk.locales, android.os.LocaleList), and ICU's starting locale (aosp_gfx_locale).
+    const std::wstring locales = env_var(L"WINAPK_LOCALES");
+    if (!locales.empty()) {
+        const std::string list = utf8(locales);
+        v.push_back("-Dwinapk.locales=" + list);
+        std::string first = list.substr(0, list.find(','));
+        for (char& c : first) if (c == '_') c = '-';
+        std::string lang, script, region;
+        size_t start = 0;
+        for (int part = 0; start <= first.size(); ++part) {
+            const size_t end = std::min(first.find('-', start), first.size());
+            const std::string sub = first.substr(start, end - start);
+            if (part == 0) lang = sub;
+            else if (sub.size() == 4 && script.empty() && region.empty()) script = sub;
+            else if ((sub.size() == 2 || sub.size() == 3) && region.empty()) region = sub;
+            start = end + 1;
+        }
+        if (!lang.empty()) v.push_back("-Duser.language=" + lang);
+        v.push_back("-Duser.script=" + script);
+        v.push_back("-Duser.country=" + region);
+    }
     v.push_back("-Dmacapk.bundle.apk=" + jvm_path(o.apk));
     v.push_back("-Dmacapk.display.density=" + std::to_string(display_density_dpi()));
     v.push_back("-XX:ErrorFile=" + jvm_path(logs) + "\\hs_err_pid%p.log");
