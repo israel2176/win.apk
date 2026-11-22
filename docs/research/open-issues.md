@@ -159,7 +159,7 @@ past the sandbox's proxy, `WINAPK_PLAY_INSTALLER=1`, a fresh data folder per
 mode, the install included), `WINAPK_AOSP_RES=1 WINAPK_AOSP_VIEWS=1` against
 both off, on 29f911d. The system locale is the Wine prefix's (English); the
 Israeli apps choose Hebrew themselves, and Waze and Moovit were run again
-with `-Duser.language=he -Duser.country=IL`. No crash in either mode, no
+in Hebrew (`WINAPK_LOCALES=he-IL`). No crash in either mode, no
 login reached (no credentials typed; most stop where the network does).
 
 | App | Off | On | Compared |
@@ -174,10 +174,11 @@ login reached (no credentials typed; most stop where the network does).
 | Waze | "Give Waze access to your precise location" with both steps (item 13 above is gone in both) | the same text, **the illustration smaller, and on is Android's** | the picture is `drawable/location_permission`, a 288x288 xxhdpi PNG: at 320 dpi Android scales it to 192 px, as on does (168 px drawn, its margins trimmed); off draws it unscaled (252 px). In Hebrew the screen stays left to right in both, as Android does: Waze declares `supportsRtl="false"` |
 
 Left: Leumi's and Bit's screens past the network (a run with real network, on
-Windows); `HardwareRendererObserver.nCreateObserver` has no native in the
-runtime, so an `ActivityLifecycleCallbacks` that adds a frame-metrics listener
-before the decor is attached throws (Cal, Moovit: caught, the app goes on; on
-a device the observer is made and never fed in software rendering).
+Windows). Since then: `HardwareRendererObserver.nCreateObserver`, which Cal's and
+Moovit's frame-metrics trackers hit, is bound through an adapter (9f0196f; the
+library has the older instance form), and a run's system languages can be set
+the way a device's are, `WINAPK_LOCALES=he-IL` (47df813): Waze is in Hebrew
+with it, on and off alike.
 
 ## Bugs to fix on their own (not part of a layer)
 
