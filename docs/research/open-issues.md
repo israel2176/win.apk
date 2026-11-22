@@ -153,6 +153,32 @@ decisions; `ResourcesManager`'s three members; `Handler.executeOrSendMessage`
 Left: comparing the dim and dialog pictures with a device, not only with
 Win.apk's old pipeline.
 
+**The owner's apps with AOSP's views (November 2026).** The eight bundles of
+`/opt/uip/il/` headless under Wine (900 display frames, CDS off, no network
+past the sandbox's proxy, `WINAPK_PLAY_INSTALLER=1`, a fresh data folder per
+mode, the install included), `WINAPK_AOSP_RES=1 WINAPK_AOSP_VIEWS=1` against
+both off, on 29f911d. The system locale is the Wine prefix's (English); the
+Israeli apps choose Hebrew themselves, and Waze and Moovit were run again
+with `-Duser.language=he -Duser.country=IL`. No crash in either mode, no
+login reached (no credentials typed; most stop where the network does).
+
+| App | Off | On | Compared |
+|---|---|---|---|
+| Maccabi | "What's new in the app" in Hebrew, the app's Arabic notice under it | the same | pixel-identical |
+| Bank Leumi | blank (its React Native splash; the bundle loads, no screen within 900 frames) | the same | both blank; on presents only when something changes (1 frame against off's 116 repaints) |
+| Bit (`bnhp.payments`) | **did not install**, both modes: the ".xapk" is the APK itself (fixed, 29f911d: an APK by its content, as Android's installer reads one); then "המידע לא נטען, נסה שוב" over its splash | after the fix: Bank Hapoalim's full-screen promotion ("מיליון לקוחות מקבלים מיליון מניות") with its close button | the two runs stopped at different network answers, not a layout difference; Hebrew right to left in both |
+| Bank Hapoalim | the welcome screen, "כניסה לחשבון", the hoopoe illustration | the same | only the illustration's animation frame differs |
+| Mercantile | the login form (ID, password, code), right to left | the same | the logo's and the animated icon's edges only (3,906 px) |
+| Cal | "תקלה / ארעה תקלה בטעינת האפליקציה" (no network) | the same page | **the button differs, and on is Android's**: its style (`buttonBlackWithStateStyle`) sets 17sp and `@font/ploni_bold_aaa`; on draws it bold at 17sp, off regular and larger (Win.apk's old path drops the style's `fontFamily` and size here) |
+| Moovit | the English consent screen (the bundle has no Hebrew split, so English in Hebrew too) | the same | 747 px |
+| Waze | "Give Waze access to your precise location" with both steps (item 13 above is gone in both) | the same text, **the illustration smaller, and on is Android's** | the picture is `drawable/location_permission`, a 288x288 xxhdpi PNG: at 320 dpi Android scales it to 192 px, as on does (168 px drawn, its margins trimmed); off draws it unscaled (252 px). In Hebrew the screen stays left to right in both, as Android does: Waze declares `supportsRtl="false"` |
+
+Left: Leumi's and Bit's screens past the network (a run with real network, on
+Windows); `HardwareRendererObserver.nCreateObserver` has no native in the
+runtime, so an `ActivityLifecycleCallbacks` that adds a frame-metrics listener
+before the decor is attached throws (Cal, Moovit: caught, the app goes on; on
+a device the observer is made and never fed in software rendering).
+
 ## Bugs to fix on their own (not part of a layer)
 
 - **Exit hangs: fixed, the sweeps to check again** (bit, Waze, Maccabi). A
