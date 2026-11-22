@@ -203,6 +203,13 @@ public final class LocaleList implements Parcelable {
     // JVM's own single-locale Locale.getDefault(), this class's pre-existing
     // (and still correct-if-narrower) behavior.
     private static LocaleList readAppleLanguagesOrdered() {
+        // Win.apk: WINAPK_LOCALES, the device's ranked system languages the host passes as
+        // -Dwinapk.locales (windows/host/runtime_main.cpp), ahead of the host's own locale.
+        String winApk = System.getProperty("winapk.locales");
+        if (winApk != null && !winApk.isBlank()) {
+            LocaleList list = forLanguageTags(winApk.trim().replace('_', '-'));
+            if (list.size() > 0) return list;
+        }
         LocaleList override = readMacApkLanguageOverride();
         if (override != null) return override;
         try {

@@ -147,6 +147,11 @@ bool aosp_views_prepare(const fs::path& lib) {
 const std::filesystem::path* aosp_views_jar() { return g_views_on ? &g_views_jar : nullptr; }
 
 std::string aosp_gfx_locale() {
+    // WINAPK_LOCALES (runtime_main.cpp): the device's first system language over Windows'.
+    if (const char* l = std::getenv("WINAPK_LOCALES"); l && *l) {
+        const std::string s(l);
+        return s.substr(0, s.find(','));
+    }
     wchar_t name[LOCALE_NAME_MAX_LENGTH];
     if (GetUserDefaultLocaleName(name, LOCALE_NAME_MAX_LENGTH) > 0) return utf8(name);
     return "en-US";
