@@ -606,7 +606,13 @@ with it, on and off alike.
   Size items to decide (aosp-views.md, "Making R1 and V1/V2 the default"): net +4.9 MB installed
   and +5.0 MB installer once Win.apk's `framework-res.apk` and the shadowed classes go (its
   readers first); the Java2D fonts (6.9 MB) and the AOSP table's wallpapers (7.5 MB) could go too;
-  the second resource table is retired with both switches on (AospIndex: Win.apk's lookups by name
+  The launcher icon with the resources switch on: every adaptive icon threw (`writeLauncherIcon
+  failed: NotFoundException ... mipmap/ic_launcher`) because aosp-resources.jar's
+  `AdaptiveIconDrawable` (android-all's, for its private mask id) lacked aosp-graphics.jar's
+  `IconMaskThread` redirect; fixed in build_aosp_res.sh: Sudoku, Gallery, Fossify Notes, Jerboa
+  (adaptive) and Klooni (bitmap) render the same icon.png byte for byte as with the switches off, at
+  an app's start and at `--install-only`.
+  The second resource table is retired with both switches on (AospIndex: Win.apk's lookups by name
   answered from AOSP's tables; Sudoku private memory 269 MB on against 415 off, Gallery 259 against
   406; live heap 47.2/46.4 and 53.8/62.0). Before that, the remaining memory cost was the second
   resource table (AOSP's arsc in the heap beside

@@ -141,6 +141,16 @@ mkdir -p "$WORK/gfx"
 (cd "$WORK/gfx" && xargs -d '\n' cp --parents -t "$CLASSES" < "$WORK/asset-readers.txt")
 echo "[aosp-res]   + $(wc -l < "$WORK/asset-readers.txt") graphics classes that read a native asset"
 
+# AdaptiveIconDrawable is android-all's here (its private config_icon_mask id is this table's,
+# above), so it needs what build_aosp_gfx.sh does to aosp-graphics.jar's copy: its constructor reads
+# the mask through the Application, which Win.apk's start renders the app's launcher icon before
+# (Boot.writeLauncherIcon); its currentActivityThread calls go to aosp-graphics.jar's
+# IconMaskThread, which answers null until there is an Application (AOSP's Resources.getSystem()
+# branch). Without it every adaptive launcher icon threw with the switch on.
+"$JAVA" "$(native_path "$HERE/AospCallRedirect.java")" "$(native_path "$CLASSES")" \
+    android/graphics/drawable/AdaptiveIconDrawable android/app/ActivityThread currentActivityThread \
+    '()Landroid/app/ActivityThread;' com/winapk/aospgfx/IconMaskThread
+
 echo "[aosp-res] windows/java/aosp_res"
 find "$HERE/../java/aosp_res" -name '*.java' | sort | while read -r f; do native_path "$f"; done > "$WORK/src.txt"
 # AOSP's classes (android-all) before Win.apk's of the same name: the backend is written against
