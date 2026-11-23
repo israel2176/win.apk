@@ -896,17 +896,22 @@ New bugs found with AOSP views:
   (`framework-aospviews` archive, Sudoku's first frame 11.7 s against
   16-21 s without), and the host's mouse, wheel and pinch can be scripted
   with a window (`hostmouse`, `hostwheel`, `magnify`). CI runs the smoke set and the UI probe
-  with both switches on, informational (ci.yml "AOSP resources and views"); their files add 29.2 MB
-  installed, about 26.4 MB to the installer. A CDS dump's verification found classes that did not
+  with both switches on, informational (ci.yml "AOSP resources and views"); their files add 21.8 MB
+  installed, about 19.0 MB to the installer (29.2 and 26.4 before the wallpapers, below). A CDS dump's verification found classes that did not
   link (Dialog without WindowDecorActionBar, RevealAnimator, ServiceNotFoundException, the AIDL
   Stubs' ContextImpl): fixed; left behind services Win.apk lacks: augmented autofill, translation,
   inline suggestions, LockPatternUtils. On real Windows (CI run 44734867981) all ten smoke apps
   draw with both switches on and the UI probe equals Android's lines (0 of 2104); peak working set
   about 50 MB more per app before this round's memory fixes (themes freed, the port's
   `Theme::SetTo` fixed, the index opened once: Sudoku's live heap 103 -> 68.5 MB, off 46.4).
-  Size items to decide (aosp-views.md, "Making R1 and V1/V2 the default"): net +4.9 MB installed
-  and +5.0 MB installer once Win.apk's `framework-res.apk` and the shadowed classes go (its
-  readers first); the Java2D fonts (6.9 MB) and the AOSP table's wallpapers (7.5 MB) could go too;
+  Size items to decide (aosp-views.md, "Making R1 and V1/V2 the default"): net -2.5 MB installed
+  and -2.5 MB installer once Win.apk's `framework-res.apk` and the shadowed classes go (its
+  readers first); the Java2D fonts (6.9 MB) could go too. **Decided and done** (the owner,
+  November 2026: delete them if nothing needs them, keep them if deleting would cause errors): the
+  AOSP table's three `default_wallpaper.png` (7.4 MB). Nothing of Win.apk reads them, but an app
+  can by `getIdentifier("default_wallpaper", "drawable", "android")`, so `build_aosp_res.sh`
+  writes a 1x1 PNG over each, the table and its ids untouched: 7.4 MB less installed and under
+  `xz -9e`.
   The launcher icon with the resources switch on: every adaptive icon threw (`writeLauncherIcon
   failed: NotFoundException ... mipmap/ic_launcher`) because aosp-resources.jar's
   `AdaptiveIconDrawable` (android-all's, for its private mask id) lacked aosp-graphics.jar's

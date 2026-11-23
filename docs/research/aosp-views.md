@@ -860,10 +860,10 @@ dropped (MB, installed / under `xz -9`, the installer's LZMA's estimate):
 
 | | Installed | Installer |
 |---|---:|---:|
-| Added: `framework-res-34.apk`, `aosp-views.jar`, `aosp-resources.jar` | +29.2 | +26.4 |
+| Added: `framework-res-34.apk`, `aosp-views.jar`, `aosp-resources.jar` (the table's wallpapers 1x1, below) | +21.8 | +19.0 |
 | Dropped: `bin\tools\framework-res.apk` (Win.apk's API-36 table) | -22.9 | -20.2 |
 | Dropped: the 806 classes of `android-framework.jar` the two jars shadow (never loaded with them on; 214 more are already aosp-graphics.jar's) | -1.4 | -1.3 |
-| **Net** | **+4.9** | **+5.0** |
+| **Net** | **-2.5** | **-2.5** |
 | Also possible: the Java2D fonts in `android-framework.jar` (only `WINAPK_AOSP_GFX=0` reads them) | -6.9 | -6.9 |
 
 Dropping Win.apk's `framework-res.apk`: with both switches on nothing reads it at run time any
@@ -885,10 +885,14 @@ counted.
   (`window_fit.h`), and a resize moves it, so every bucket from ldpi to xxxhdpi can be the best
   match; dropping one would scale another's pixels, which aapt2's density splits only allow on a
   device whose density never changes. None dropped.
-- Its three `default_wallpaper.png` (7.5 MB) are internal resources nothing in Win.apk or the
-  AOSP jars reads (Win.apk's `WallpaperManager` serves Windows' wallpaper); an app can reach them
-  only by name through `getIdentifier`. Dropping or shrinking them would save 7.5 MB on both
-  counts: the owner's call, not done here.
+- Its three `default_wallpaper.png` (7.4 MB) are internal resources nothing in Win.apk or the
+  AOSP jars reads (Win.apk's `WallpaperManager` has no built-in wallpaper; AOSP's, which reads
+  `com.android.internal.R.drawable.default_wallpaper`, is in none of them); an app can reach them
+  only by name through `getIdentifier`. Done (the owner's call, November 2026): `build_aosp_res.sh`
+  writes a 1x1 PNG over each, so the table and every id stay as they are and such a read gets a
+  valid image instead of throwing; deleting the files would make it throw, and dropping their
+  entries would move the ids after them. 21.2 -> 13.7 MB installed, 19.0 -> 11.6 MB under
+  `xz -9e`.
 
 ## 5. Size, start and memory
 

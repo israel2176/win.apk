@@ -22,9 +22,10 @@ import sys
 BUDGETS = [
     # Before AOSP graphics' part, whose bin/aosp/ would take the table. Staged only with
     # WINAPK_STAGE_AOSP_RES=1 / WINAPK_STAGE_AOSP_VIEWS=1 (0 MB in a release today); November 2026:
-    # 1.4 + 6.7 + 21.2 MB, 26.4 MB under LZMA.
+    # 1.4 + 6.7 + 13.7 MB, 19.0 MB under LZMA (the table's three default_wallpaper PNGs are 1x1 since,
+    # build_aosp_res.sh: 7.4 MB less on both counts).
     ("AOSP resources and views (WINAPK_AOSP_RES, WINAPK_AOSP_VIEWS; not shipped yet)",
-     ["lib/aosp-resources.jar", "lib/aosp-views.jar", "bin/aosp/framework-res-34.apk"], 32),
+     ["lib/aosp-resources.jar", "lib/aosp-views.jar", "bin/aosp/framework-res-34.apk"], 25),
     ("AOSP graphics (the default; WINAPK_AOSP_GFX=0 is Java2D)",
      ["bin/aosp/", "bin/robolectric-nativeruntime.dll", "lib/aosp-graphics.jar"], 70),
     ("Java runtime (jre/)", ["jre/"], 140),

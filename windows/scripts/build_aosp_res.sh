@@ -169,6 +169,17 @@ echo "[aosp-res] the framework's resources at API 34"
 mkdir -p "$WORK/fwres" "$OUT/bin/aosp"
 grep -E '^(resources\.arsc|AndroidManifest\.xml|res/.+[^/])$' "$WORK/all.txt" > "$WORK/fwres.txt"
 (cd "$WORK/fwres" && xargs -d '\n' unzip -qo "$ALL" < "$WORK/fwres.txt")
+# The three default_wallpaper PNGs (7.4 MB, a third of the table) become a 1x1 black PNG each. Nothing of
+# Win.apk reads them: its WallpaperManager is its own (no built-in wallpaper: getBuiltInDrawable is null)
+# and no AOSP class that names the id is in its jars. But an app can still reach them by name
+# (getIdentifier("default_wallpaper", "drawable", "android")) through this table. Deleting the files
+# would make such a read throw, and dropping their entries from resources.arsc would move the ids after
+# them; a small valid image of the same format keeps the table as it is and the read working.
+for f in "$WORK"/fwres/res/drawable*/default_wallpaper.png; do
+    [[ -f "$f" ]] || continue
+    printf '%s' 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR42mNgYGAAAAAEAAHI6uv5AAAAAElFTkSuQmCC' |
+        base64 -d > "$f"
+done
 rm -f "$OUT/bin/aosp/framework-res-34.apk"
 "$JAR" --create --no-manifest --file "$OUT/bin/aosp/framework-res-34.apk" -C "$WORK/fwres" .
 rm -rf "$WORK"
