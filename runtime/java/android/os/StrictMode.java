@@ -130,5 +130,16 @@ public final class StrictMode {
      *  `NoSuchMethodException: android.os.StrictMode.disableDeathOnFileUriExposure()`.
      *  Declaring it turns that reflective probe from a miss into a hit. */
     public static void disableDeathOnFileUriExposure() {}
+    /** AOSP's critical-span marker (AbsListView's and ScrollView's flings call enterCriticalSpan):
+     *  on a user build it is the no-op span, as AOSP's own IS_USER_BUILD branch returns. */
+    public static class Span {
+        protected Span() {}
+        public void finish() {}
+    }
+    private static final Span NO_OP_SPAN = new Span();
+    public static Span enterCriticalSpan(String name) {
+        if (name == null || name.isEmpty()) throw new IllegalArgumentException("name must be non-null and non-empty");
+        return NO_OP_SPAN;
+    }
     private StrictMode() {}
 }
