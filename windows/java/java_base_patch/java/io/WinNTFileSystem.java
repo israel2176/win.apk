@@ -70,7 +70,6 @@ import java.nio.file.Path;
 import java.util.BitSet;
 import java.util.Locale;
 import java.util.Properties;
-import jdk.internal.misc.Blocker;
 import jdk.internal.util.WinApkPaths;
 import sun.security.action.GetPropertyAction;
 
@@ -524,11 +523,9 @@ final class WinNTFileSystem extends FileSystem {
                 return path;
             return "" + ((char) (c-32)) + ':' + '\\';
         }
-        var comp = Blocker.begin();
         try {
             return canonicalize0(path);
         } finally {
-            Blocker.end(comp);
         }
     }
 
@@ -540,55 +537,45 @@ final class WinNTFileSystem extends FileSystem {
 
     @Override
     public int getBooleanAttributes(File f) {
-        var comp = Blocker.begin();
         try {
             return getBooleanAttributes0(host(f));
         } finally {
-            Blocker.end(comp);
         }
     }
     private native int getBooleanAttributes0(File f);
 
     @Override
     public boolean checkAccess(File f, int access) {
-        var comp = Blocker.begin();
         try {
             return checkAccess0(host(f), access);
         } finally {
-            Blocker.end(comp);
         }
     }
     private native boolean checkAccess0(File f, int access);
 
     @Override
     public long getLastModifiedTime(File f) {
-        var comp = Blocker.begin();
         try {
             return getLastModifiedTime0(host(f));
         } finally {
-            Blocker.end(comp);
         }
     }
     private native long getLastModifiedTime0(File f);
 
     @Override
     public long getLength(File f) {
-        var comp = Blocker.begin();
         try {
             return getLength0(host(f));
         } finally {
-            Blocker.end(comp);
         }
     }
     private native long getLength0(File f);
 
     @Override
     public boolean setPermission(File f, int access, boolean enable, boolean owneronly) {
-        var comp = Blocker.begin();
         try {
             if (setPermission0(host(f), access, enable, owneronly)) return true;
         } finally {
-            Blocker.end(comp);
         }
         // Win.apk: the JDK changes the write bit of files only (the read-only attribute means
         // nothing on a Windows directory) and answers false for a directory, where chmod on
@@ -607,18 +594,15 @@ final class WinNTFileSystem extends FileSystem {
 
     @Override
     public boolean createFileExclusively(String path) throws IOException {
-        var comp = Blocker.begin();
         try {
             return createFileExclusively0(WinApkPaths.hostPath(path));
         } finally {
-            Blocker.end(comp);
         }
     }
     private native boolean createFileExclusively0(String path) throws IOException;
 
     @Override
     public String[] list(File f) {
-        var comp = Blocker.begin();
         try {
             String[] names = list0(host(f));
             // Win.apk: under an Android path the names are Android's (the characters Windows
@@ -628,40 +612,33 @@ final class WinNTFileSystem extends FileSystem {
             }
             return names;
         } finally {
-            Blocker.end(comp);
         }
     }
     private native String[] list0(File f);
 
     @Override
     public boolean createDirectory(File f) {
-        var comp = Blocker.begin();
         try {
             return createDirectory0(host(f));
         } finally {
-            Blocker.end(comp);
         }
     }
     private native boolean createDirectory0(File f);
 
     @Override
     public boolean setLastModifiedTime(File f, long time) {
-        var comp = Blocker.begin();
         try {
             return setLastModifiedTime0(host(f), time);
         } finally {
-            Blocker.end(comp);
         }
     }
     private native boolean setLastModifiedTime0(File f, long time);
 
     @Override
     public boolean setReadOnly(File f) {
-        var comp = Blocker.begin();
         try {
             if (setReadOnly0(host(f))) return true;
         } finally {
-            Blocker.end(comp);
         }
         return isDirectory(f);  // Win.apk: as setPermission, for a directory
     }
@@ -669,22 +646,18 @@ final class WinNTFileSystem extends FileSystem {
 
     @Override
     public boolean delete(File f) {
-        var comp = Blocker.begin();
         try {
             return delete0(host(f));
         } finally {
-            Blocker.end(comp);
         }
     }
     private native boolean delete0(File f);
 
     @Override
     public boolean rename(File f1, File f2) {
-        var comp = Blocker.begin();
         try {
             if (rename0(host(f1), host(f2))) return true;
         } finally {
-            Blocker.end(comp);
         }
         return renameOverFile(f1, f2);
     }
