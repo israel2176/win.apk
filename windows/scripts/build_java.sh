@@ -95,7 +95,7 @@ fi
 if [[ -d "$RT/net_spi" ]]; then
     find "$RT/net_spi" -name '*.java' ! -path '* [2-9].java' | sort | native_paths > "$WORK/net_spi.list"
     if [[ -s "$WORK/net_spi.list" ]]; then
-        "$JAVAC" -d "$TMP" -nowarn -Xlint:-options @"$WORK/net_spi.list"
+        "$JAVAC" -d "$TMP" --source 21 --target 21 -nowarn -Xlint:-options @"$WORK/net_spi.list"
     fi
     if [[ -d "$RT/net_spi/META-INF/services" ]]; then
         mkdir -p "$TMP/META-INF/services"
