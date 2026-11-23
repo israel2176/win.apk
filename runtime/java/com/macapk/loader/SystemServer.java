@@ -41,6 +41,12 @@
 //   PROVIDER_PACKAGE(authority) -> pkg      PMS resolveContentProvider: which
 //                                           package declares the authority (null:
 //                                           none); no process is started
+//   PACKAGE_CHANGED(op, pkg, apk, dataRemoved)
+//                                           Win.apk: PMS's commit of an install,
+//                                           an update or a removal, from the
+//                                           launcher only; the broker's package
+//                                           table follows it and the PACKAGE_*
+//                                           broadcasts go out (packageChanged)
 // and each app's thread (android.app.IMacApkApplicationThread):
 //   SCHEDULE_BIND(Intent) -> IBinder        run the bind on the app's main
 //                                           looper (ActivityThread.handleBindService)
@@ -101,7 +107,11 @@
 // it started, or one whose command line Windows recorded names an installed
 // APK of that package: WinIdentity), every caller-package argument must match
 // that record or the call is refused with a SecurityException and logged, and
-// the calling uid every app sees is derived from the same record.
+// the calling uid every app sees is derived from the same record. Its package
+// table is the registry (installed_apps.json) read once as it starts, then
+// every install, update and removal the launcher commits while it runs, which
+// the launcher tells it (PACKAGE_CHANGED) as PackageManagerService learns a
+// package at its commit; it then broadcasts PACKAGE_* to the running apps.
 package com.macapk.loader;
 
 import android.content.ComponentName;
@@ -159,6 +169,12 @@ public final class SystemServer {
     /** PMS resolveContentProvider for another package: (authority) -> the
      *  declaring package or null. Only the lookup; GET_PROVIDER is the acquire. */
     static final int TX_PROVIDER_PACKAGE = IBinder.FIRST_CALL_TRANSACTION + 24;
+    /** Win.apk: PackageManagerService's commit, (op, pkg, apk, dataRemoved) -> nothing; only the
+     *  launcher (and its install helper, the same program) may call it, by what Windows says the
+     *  calling process runs (WinProcesses.isLauncher). windows/include/winapk/package_events.h is
+     *  the caller and must agree with these numbers. */
+    static final int TX_PACKAGE_CHANGED = IBinder.FIRST_CALL_TRANSACTION + 25;
+    static final int PACKAGE_ADDED = 0, PACKAGE_REPLACED = 1, PACKAGE_REMOVED = 2;
     static final int TX_SCHEDULE_NOTIFY = IBinder.FIRST_CALL_TRANSACTION + 16;
     static final int TX_SCHEDULE_BIND = IBinder.FIRST_CALL_TRANSACTION + 10;
     static final int TX_ACQUIRE_PROVIDER = IBinder.FIRST_CALL_TRANSACTION + 11;
@@ -227,18 +243,25 @@ public final class SystemServer {
     // ---- packages ------------------------------------------------------------------
 
     void addPackage(String apkPath) {
+        PackageRecord pr = readPackage(apkPath);
+        if (pr == null) return;
+        packages.put(pr.pkg, pr);
+        log("package " + pr.pkg + " (" + pr.manifest.services.size() + " services) <- " + apkPath);
+        accounts().discover(pr);
+    }
+
+    /** The package an APK holds, from its manifest; null (logged) when it cannot be read. */
+    static PackageRecord readPackage(String apkPath) {
         try {
             Manifest m = Manifest.parse(new File(""), apkPath);
             if (m.packageName == null || m.packageName.isEmpty()) {
                 log("no package name in " + apkPath + "; skipped");
-                return;
+                return null;
             }
-            PackageRecord pr = new PackageRecord(m.packageName, apkPath, m);
-            packages.put(m.packageName, pr);
-            log("package " + m.packageName + " (" + m.services.size() + " services) <- " + apkPath);
-            accounts().discover(pr);
+            return new PackageRecord(m.packageName, apkPath, m);
         } catch (Throwable t) {
             log("cannot read " + apkPath + ": " + t);
+            return null;
         }
     }
 
@@ -496,32 +519,7 @@ public final class SystemServer {
         String apk = WinProcesses.apkArgument(pid);
         if (apk == null) return null;
         String pkg = packageOfApk(apk);
-        if (pkg == null && rereadInstalledPackages()) pkg = packageOfApk(apk);
         return pkg == null ? null : new String[] { pkg, null };
-    }
-
-    private long lastRegistryRead;
-
-    /** The broker reads the registry when it starts; an app installed while it runs (Gmail
-     *  installed after "Use Google services" was turned on) was then refused as "no installed
-     *  app". As PackageManagerService learns a package when it is installed, the registry is
-     *  read again when a process names an APK the broker does not know, at most once a second.
-     *  True when it was read. */
-    private synchronized boolean rereadInstalledPackages() {
-        if (System.getenv("MACAPK_BROKER_APKS") != null && !System.getenv("MACAPK_BROKER_APKS").isBlank()) {
-            return false;
-        }
-        long now = System.currentTimeMillis();
-        if (now - lastRegistryRead < 1000) return false;
-        lastRegistryRead = now;
-        for (MacApkPackageManager.InstalledRegistry.Row r : MacApkPackageManager.InstalledRegistry.rows()) {
-            if (r.pkg == null || r.apkPath == null || !new File(r.apkPath).isFile()) continue;
-            PackageRecord known = packages.get(r.pkg);
-            if (known != null && known.apkPath.equals(r.apkPath)) continue;  // only what is new or moved
-            addPackage(r.apkPath);
-            if (r.bundlePath != null) bundles.put(r.pkg, r.bundlePath);
-        }
-        return true;
     }
 
     /** The package whose installed APK is `apk` (same file, compared as paths). */
@@ -637,7 +635,23 @@ public final class SystemServer {
         Stub() { super(DESCRIPTOR); }
         @Override protected boolean onTransact(int code, Parcel data, Parcel reply, int flags)
                 throws RemoteException {
+            awaitInstalledPackages();
             switch (code) {
+                case TX_PACKAGE_CHANGED: {
+                    data.enforceInterface(DESCRIPTOR);
+                    int pid = Binder.getCallingPid();
+                    if (!osIdentity() || !WinProcesses.launcher(pid)) {
+                        log("REFUSED package change from pid " + pid + ": not the launcher");
+                        throw new SecurityException("only the launcher commits package changes");
+                    }
+                    int op = data.readInt();
+                    String pkg = data.readString();
+                    String apk = data.readString();
+                    boolean dataRemoved = data.readInt() != 0;
+                    packageChanged(op, pkg, apk, dataRemoved);
+                    reply.writeNoException();
+                    return true;
+                }
                 case TX_REGISTER: {
                     data.enforceInterface(DESCRIPTOR);
                     String pkg = data.readString();
@@ -757,6 +771,14 @@ public final class SystemServer {
                     Intent intent = data.readTypedObject(Intent.CREATOR);
                     // The sender's own process, which delivered to itself.
                     String callerProc = data.dataAvail() > 0 ? data.readString() : null;
+                    if (intent != null && intent.getAction() != null && osIdentity()
+                            && PACKAGE_ACTIONS.contains(intent.getAction())) {
+                        // AMS: a protected broadcast only the system sends ("Permission Denial: not
+                        // allowed to send broadcast"). The broker sends these from the launcher's
+                        // commit (packageChanged); an app's own announcement stays in its process.
+                        log("REFUSED broadcast " + intent.getAction() + " from " + caller + ": only the system sends it");
+                        intent = null;
+                    }
                     if (intent != null) {
                         final Intent fi = intent; final String fc = caller, fp = callerProc;
                         new Thread(() -> broadcast(fc, fp, fi), "broker-broadcast").start();
@@ -961,6 +983,139 @@ public final class SystemServer {
         } catch (Throwable t) {
             log("broadcast " + intent.getAction() + " -> " + app.proc + " FAILED: " + t);
         } finally { d.recycle(); }
+    }
+
+    // ---- package changes (Win.apk) ---------------------------------------------------------
+
+    /** The package-lifecycle broadcasts, which only the system sends (protected broadcasts). */
+    static final java.util.Set<String> PACKAGE_ACTIONS = java.util.Set.of(
+        Intent.ACTION_PACKAGE_ADDED, Intent.ACTION_PACKAGE_REPLACED, Intent.ACTION_MY_PACKAGE_REPLACED,
+        Intent.ACTION_PACKAGE_REMOVED, Intent.ACTION_PACKAGE_FULLY_REMOVED, Intent.ACTION_PACKAGE_CHANGED,
+        Intent.ACTION_PACKAGE_DATA_CLEARED, Intent.ACTION_PACKAGE_RESTARTED);
+
+    /** Implicit broadcasts Android still delivers to the manifest receivers of an app that targets
+     *  API 26 or later ("Implicit broadcast exceptions"): of the package ones, these two. */
+    static final java.util.Set<String> IMPLICIT_EXEMPT = java.util.Set.of(
+        Intent.ACTION_PACKAGE_FULLY_REMOVED, Intent.ACTION_PACKAGE_DATA_CLEARED);
+
+    /** Serialises the commits, and the first read of the registry before them. */
+    private final Object packagesLock = new Object();
+    /** Set by main while the registry is read for the first time; every call waits for that. */
+    private volatile java.util.concurrent.CountDownLatch installedRead;
+
+    private void awaitInstalledPackages() {
+        java.util.concurrent.CountDownLatch l = installedRead;
+        if (l == null) return;
+        try { l.await(); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+    }
+
+    /** PackageManagerService's commit and what ActivityManager does after it, told by the launcher
+     *  (TX_PACKAGE_CHANGED) once installed_apps.json holds the change. Added or replaced: the package
+     *  is read from `apk` and replaces the broker's record of it (its account authenticators too), so
+     *  a process of it is known when it attaches; then PACKAGE_ADDED (EXTRA_REPLACING on an update),
+     *  PACKAGE_REPLACED and MY_PACKAGE_REPLACED go out, as InstallPackageHelper sends them. Removed:
+     *  the record goes, then PACKAGE_REMOVED and, with the data, PACKAGE_FULLY_REMOVED. The processes
+     *  of a replaced or removed package are not stopped here: the launcher stops them before it
+     *  touches the app's files (the install's freeze), as Android kills them before the commit. */
+    void packageChanged(int op, String pkg, String apk, boolean dataRemoved) {
+        if (pkg == null || pkg.isEmpty() || apk == null || apk.isEmpty()
+                || op < PACKAGE_ADDED || op > PACKAGE_REMOVED) {
+            throw new IllegalArgumentException("package change " + op + " " + pkg + " " + apk);
+        }
+        int uid;
+        boolean replacing;
+        synchronized (packagesLock) {
+            PackageRecord old = packages.get(pkg);
+            if (op == PACKAGE_REMOVED) {
+                // Another copy of the package (a second library name) going is not the package going.
+                if (old == null || !sameFile(old.apkPath, apk)) {
+                    log("package " + pkg + ": " + apk + " removed, which is not its installed APK; nothing changes");
+                    return;
+                }
+                uid = AppUids.uidFor(pkg, old.manifest.sharedUserId);
+                packages.remove(pkg);
+                bundles.remove(pkg);
+                accounts().forget(pkg);
+                log("package " + pkg + " removed" + (dataRemoved ? " with its data" : ""));
+                replacing = false;
+            } else {
+                PackageRecord pr = readPackage(apk);
+                if (pr == null || !pr.pkg.equals(pkg)) {
+                    log("REFUSED package change: " + apk + " is " + (pr == null ? "unreadable" : pr.pkg)
+                            + ", not " + pkg);
+                    throw new IllegalArgumentException(apk + " is not " + pkg);
+                }
+                replacing = old != null || op == PACKAGE_REPLACED;
+                packages.put(pkg, pr);
+                bundles.put(pkg, apk);
+                accounts().forget(pkg);
+                accounts().discover(pr);
+                uid = AppUids.uidFor(pkg, pr.manifest.sharedUserId);
+                log("package " + pkg + (replacing ? " replaced" : " added") + " (" + pr.manifest.services.size()
+                        + " services) <- " + apk);
+            }
+        }
+        android.net.Uri data = android.net.Uri.fromParts("package", pkg, null);
+        if (op == PACKAGE_REMOVED) {
+            // The removed package does not hear its own removal (Intent.ACTION_PACKAGE_REMOVED).
+            Intent removed = packageIntent(Intent.ACTION_PACKAGE_REMOVED, data, uid);
+            removed.putExtra(Intent.EXTRA_DATA_REMOVED, dataRemoved);
+            broadcastPackageEvent(removed, pkg);
+            if (dataRemoved) {
+                Intent fully = packageIntent(Intent.ACTION_PACKAGE_FULLY_REMOVED, data, uid);
+                fully.putExtra(Intent.EXTRA_DATA_REMOVED, true);
+                broadcastPackageEvent(fully, pkg);
+            }
+            return;
+        }
+        Intent added = packageIntent(Intent.ACTION_PACKAGE_ADDED, data, uid);
+        if (replacing) added.putExtra(Intent.EXTRA_REPLACING, true);
+        broadcastPackageEvent(added, null);
+        if (!replacing) return;
+        Intent replaced = packageIntent(Intent.ACTION_PACKAGE_REPLACED, data, uid);
+        replaced.putExtra(Intent.EXTRA_REPLACING, true);
+        broadcastPackageEvent(replaced, null);
+        // To the updated package alone, with no data: explicit, so its manifest receiver hears it
+        // and its process is started for it (STARTING_ACTIONS). Not on the launcher's call, which
+        // must not wait for a process to start.
+        Intent mine = new Intent(Intent.ACTION_MY_PACKAGE_REPLACED).setPackage(pkg);
+        new Thread(() -> deliverToPackage(pkg, mine, true, true, null), "broker-package").start();
+    }
+
+    /** BroadcastHelper.doSendBroadcast's shape: package:<pkg> data, the package's uid, user 0. */
+    private static Intent packageIntent(String action, android.net.Uri data, int uid) {
+        Intent i = new Intent(action, data);
+        i.putExtra(Intent.EXTRA_UID, uid);
+        i.putExtra(Intent.EXTRA_USER_HANDLE, 0);
+        return i;
+    }
+
+    /** One implicit package broadcast from the system to every running process (but `skipPkg`'s): its
+     *  dynamic receivers always; its manifest receivers only where Android allows an implicit broadcast,
+     *  an app that targets API 25 or lower, or an exempt action (else the intent carries
+     *  FLAG_RECEIVER_REGISTERED_ONLY, which that process's delivery honours). A process that is not
+     *  running is not started for it, as Android leaves a stopped package out of a broadcast. Sent
+     *  oneway, before the launcher's call returns: the installing app hears it before its status. */
+    private void broadcastPackageEvent(Intent intent, String skipPkg) {
+        List<AppRecord> apps;
+        synchronized (this) { apps = new ArrayList<>(running.values()); }
+        boolean exempt = IMPLICIT_EXEMPT.contains(intent.getAction());
+        for (AppRecord app : apps) {
+            if (app.pkg.equals(skipPkg) || !app.thread.isBinderAlive()) continue;
+            PackageRecord pr = packages.get(app.pkg);
+            boolean manifestToo = exempt || (pr != null && pr.manifest.targetSdk < 26);
+            Intent i = new Intent(intent);
+            if (!manifestToo) i.addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY);
+            deliverTo(app, i, true);
+        }
+    }
+
+    private static boolean sameFile(String a, String b) {
+        try {
+            return new File(a).getCanonicalFile().equals(new File(b).getCanonicalFile());
+        } catch (Throwable t) {
+            return a.equalsIgnoreCase(b);
+        }
     }
 
     /** Processes that have had their boot broadcasts since this broker started
@@ -1482,17 +1637,25 @@ public final class SystemServer {
         if (name != null && !name.isEmpty()) sName = name;
         SystemServer s = new SystemServer();
         String apks = System.getenv("MACAPK_BROKER_APKS");
-        if (apks != null && !apks.isBlank()) {
-            for (String a : apks.split(":")) if (!a.isBlank()) s.addPackage(a.trim());
-        } else {
-            s.addInstalledPackages();
-        }
         readyFile().delete();   // a previous broker's readiness is not this one's
         MacApkBinderTransport.setThreadPoolSize(16);
         // Win.apk: Binder.getCallingUid() of a caller is its registered
         // package's uid, from the pid the OS reports (osIdentity).
         if (osIdentity()) MacApkBinderTransport.setUidResolver(s::uidOfPid);
+        // The name is served before the registry is read, and every call waits for that read
+        // (awaitInstalledPackages): an install the launcher commits while the broker starts either
+        // is in the file read below or reaches the broker after it (TX_PACKAGE_CHANGED), never
+        // falls between the two.
+        s.installedRead = new java.util.concurrent.CountDownLatch(1);
         MacApkBinderTransport.publish(sName, s.new Stub());
+        synchronized (s.packagesLock) {
+            if (apks != null && !apks.isBlank()) {
+                for (String a : apks.split(":")) if (!a.isBlank()) s.addPackage(a.trim());
+            } else {
+                s.addInstalledPackages();
+            }
+        }
+        s.installedRead.countDown();
         log("serving " + sName + " with " + s.packages.size() + " packages (pid "
                 + ProcessHandle.current().pid() + ")");
         s.bootSystemServices();

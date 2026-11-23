@@ -18,6 +18,18 @@
 //   the package of the process is what its command line (--apk) makes it; the
 //   android:exported check of a cross-package resolve; the uid of a process is
 //   its package's. The parent, which is no installed app, is refused too.
+// Package changes, "pkgevents" child -> "pkgbroker" child, from a copy of this
+//   program in <scratch>\inst\bin with another copy as <scratch>\inst\Win.apk.exe,
+//   the launcher (its --notify runs winapk/package_events.h, the launcher's code):
+//   a package added while the broker runs is known to it at once (its process
+//   is accepted on attach, refused before), and a running app's dynamic receiver
+//   hears PACKAGE_ADDED; an update sends PACKAGE_ADDED with EXTRA_REPLACING and
+//   PACKAGE_REPLACED to the others and MY_PACKAGE_REPLACED to the package alone;
+//   a removal drops it and sends PACKAGE_REMOVED and PACKAGE_FULLY_REMOVED, not
+//   to the removed package; manifest receivers of an app targeting API 26+ are
+//   left out of the implicit ones but FULLY_REMOVED; the change is refused from
+//   any caller but the launcher (another runtime, this program not named
+//   Win.apk.exe), and an app's own PACKAGE_ADDED broadcast is dropped.
 // Google accounts, "accounts" child with its own GmsStore folder: the broker's
 //   account service mirrors GmsStore's accounts into its table (master token as
 //   the password, the gaia id as GoogleUserId), sees an account another process
@@ -99,6 +111,9 @@ public final class BinderTransportTest {
         else if (args[0].equals("client")) rc = client(args);
         else if (args[0].equals("accounts")) rc = accounts();
         else if (args[0].equals("gms-write")) rc = gmsWrite(args);
+        else if (args[0].equals("pkgevents")) rc = packageEvents(args);
+        else if (args[0].equals("pkgbroker")) rc = packageBroker(args);
+        else if (args[0].equals("app")) rc = app(args);
         else rc = 2;
         System.out.flush();
         System.exit(rc);
@@ -359,6 +374,7 @@ public final class BinderTransportTest {
         check("a call to a dead process throws DeadObjectException", deadThrown, "");
 
         brokerChecks();
+        packageEventChecks();
         googleAccountChecks();
         System.out.println(failures == 0 ? "ALL PASSED" : failures + " FAILED");
         return failures == 0 ? 0 : 1;
@@ -504,6 +520,336 @@ public final class BinderTransportTest {
         int expected = AppUids.uidFor(GOOD, null);
         check("our uid is our package's", uid >= AppUids.FIRST && uid == expected, uid + " vs " + expected);
         return failures == 0 ? 0 : 1;
+    }
+
+    // ---- package changes: the launcher's commit ---------------------------------------
+
+    static final String LISTENER = "com.example.listener", ADDED = "com.example.added", FAKE = "com.example.fake";
+
+    /** The parent: a copy of this program in inst\bin (the runtime) and one as inst\Win.apk.exe (the
+     *  launcher above it); the checks run in a process of the bin copy, which may talk to a broker
+     *  started from that copy. */
+    static void packageEventChecks() throws Exception {
+        File dir = scratch("pkg");
+        File bin = new File(dir, "inst/bin");
+        bin.mkdirs();
+        java.nio.file.Path exe = java.nio.file.Paths.get(ProcessHandle.current().info().command().orElseThrow());
+        File runtime = new File(bin, "winapk-binder-test.exe"), launcher = new File(dir, "inst/Win.apk.exe");
+        Files.copy(exe, runtime.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        Files.copy(exe, launcher.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        runtime.deleteOnExit();
+        launcher.deleteOnExit();
+        List<String> cmd = new ArrayList<>(List.of(runtime.getPath(), System.getProperty("java.class.path"),
+                BinderTransportTest.class.getName(), "pkgevents", dir.getPath(), launcher.getPath()));
+        ProcessBuilder pb = new ProcessBuilder(cmd).inheritIO();
+        pb.environment().put("WINAPK_TEST_ANDROID_ROOT", new File(dir, "android").getPath());
+        Process p = pb.start();
+        boolean done = p.waitFor(400, TimeUnit.SECONDS);
+        if (!done) p.destroyForcibly();
+        int rc = done ? p.exitValue() : -1;
+        check("the package change checks (above) passed", rc == 0, "exit " + rc);
+    }
+
+    /** A binary AndroidManifest.xml as aapt2 writes one (UTF-16 string pool, no resource map):
+     *  `<manifest package><uses-sdk android:targetSdkVersion/><application>`, one exported receiver
+     *  per action, `</application></manifest>`. */
+    static byte[] axml(String pkg, int targetSdk, String... receiverActions) {
+        final String ns = "http://schemas.android.com/apk/res/android";
+        List<String> pool = new ArrayList<>();
+        java.util.function.ToIntFunction<String> idx = v -> {
+            int i = pool.indexOf(v);
+            if (i < 0) { pool.add(v); i = pool.size() - 1; }
+            return i;
+        };
+        java.io.ByteArrayOutputStream body = new java.io.ByteArrayOutputStream();
+        java.util.function.BiConsumer<java.io.ByteArrayOutputStream, Integer> i32 = (o, v) -> {
+            o.write(v); o.write(v >>> 8); o.write(v >>> 16); o.write(v >>> 24);
+        };
+        java.util.function.BiConsumer<java.io.ByteArrayOutputStream, Integer> u16 = (o, v) -> {
+            o.write(v); o.write(v >>> 8);
+        };
+        int android = idx.applyAsInt("android"), uri = idx.applyAsInt(ns);
+        // START_NAMESPACE
+        u16.accept(body, 0x0100); u16.accept(body, 16); i32.accept(body, 24);
+        i32.accept(body, 1); i32.accept(body, -1); i32.accept(body, android); i32.accept(body, uri);
+        java.util.function.BiConsumer<String, String[][]> start = (tag, attrs) -> {
+            u16.accept(body, 0x0102); u16.accept(body, 16); i32.accept(body, 16 + 20 + 20 * attrs.length);
+            i32.accept(body, 1); i32.accept(body, -1);
+            i32.accept(body, -1); i32.accept(body, idx.applyAsInt(tag));
+            u16.accept(body, 20); u16.accept(body, 20); u16.accept(body, attrs.length);
+            u16.accept(body, 0); u16.accept(body, 0); u16.accept(body, 0);
+            for (String[] a : attrs) {   // {name, value, "a" when in the android namespace}
+                int v = idx.applyAsInt(a[1]);
+                i32.accept(body, a.length > 2 ? uri : -1); i32.accept(body, idx.applyAsInt(a[0]));
+                i32.accept(body, v);
+                u16.accept(body, 8); body.write(0); body.write(0x03); i32.accept(body, v);
+            }
+        };
+        java.util.function.Consumer<String> end = tag -> {
+            u16.accept(body, 0x0103); u16.accept(body, 16); i32.accept(body, 24);
+            i32.accept(body, 1); i32.accept(body, -1); i32.accept(body, -1); i32.accept(body, idx.applyAsInt(tag));
+        };
+        start.accept("manifest", new String[][] { { "package", pkg } });
+        start.accept("uses-sdk", new String[][] { { "minSdkVersion", "21", "a" },
+                                                   { "targetSdkVersion", Integer.toString(targetSdk), "a" } });
+        end.accept("uses-sdk");
+        start.accept("application", new String[0][]);
+        int n = 0;
+        for (String action : receiverActions) {
+            start.accept("receiver", new String[][] { { "name", pkg + ".Receiver" + (n++), "a" },
+                                                      { "exported", "true", "a" } });
+            start.accept("intent-filter", new String[0][]);
+            start.accept("action", new String[][] { { "name", action, "a" } });
+            end.accept("action");
+            end.accept("intent-filter");
+            end.accept("receiver");
+        }
+        end.accept("application");
+        end.accept("manifest");
+        // END_NAMESPACE
+        u16.accept(body, 0x0101); u16.accept(body, 16); i32.accept(body, 24);
+        i32.accept(body, 1); i32.accept(body, -1); i32.accept(body, android); i32.accept(body, uri);
+
+        java.io.ByteArrayOutputStream strings = new java.io.ByteArrayOutputStream();
+        java.io.ByteArrayOutputStream offsets = new java.io.ByteArrayOutputStream();
+        for (String v : pool) {
+            i32.accept(offsets, strings.size());
+            u16.accept(strings, v.length());
+            for (char c : v.toCharArray()) u16.accept(strings, (int) c);
+            u16.accept(strings, 0);
+        }
+        while (strings.size() % 4 != 0) strings.write(0);
+        int poolSize = 28 + offsets.size() + strings.size();
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        u16.accept(out, 0x0003); u16.accept(out, 8); i32.accept(out, 8 + poolSize + body.size());
+        u16.accept(out, 0x0001); u16.accept(out, 28); i32.accept(out, poolSize);
+        i32.accept(out, pool.size()); i32.accept(out, 0); i32.accept(out, 0);
+        i32.accept(out, 28 + offsets.size()); i32.accept(out, 0);
+        out.writeBytes(offsets.toByteArray());
+        out.writeBytes(strings.toByteArray());
+        out.writeBytes(body.toByteArray());
+        return out.toByteArray();
+    }
+
+    /** An APK holding only that manifest. */
+    static File apkFile(File dir, String name, byte[] manifest) throws Exception {
+        File f = new File(dir, name);
+        try (java.util.zip.ZipOutputStream z = new java.util.zip.ZipOutputStream(new java.io.FileOutputStream(f))) {
+            z.putNextEntry(new java.util.zip.ZipEntry("AndroidManifest.xml"));
+            z.write(manifest);
+            z.closeEntry();
+        }
+        return f;
+    }
+
+    static String exe() { return ProcessHandle.current().info().command().orElseThrow(); }
+
+    /** One copy of this program on `args`, with the scenario's android root. */
+    static Process start(File dir, String... args) throws Exception {
+        ProcessBuilder pb = new ProcessBuilder(self(args)).inheritIO();
+        pb.environment().put("WINAPK_TEST_ANDROID_ROOT", new File(dir, "android").getPath());
+        pb.environment().put("MACAPK_BROKER_ROOT", new File(dir, "broker-root").getPath());
+        pb.environment().put("MACAPK_GMS_DIR", new File(dir, "gms").getPath());
+        pb.environment().remove("MACAPK_GMS_PRESENT");
+        return pb.start();
+    }
+
+    /** `exe --notify ...`: the launcher's call (or anyone else's), its exit code. */
+    static int notify(String exe, String name, int op, String pkg, File apk, boolean dataRemoved) throws Exception {
+        Process p = new ProcessBuilder(exe, "--notify", name, Integer.toString(op), pkg, apk.getPath(),
+                dataRemoved ? "1" : "0", exe()).inheritIO().start();
+        if (!p.waitFor(60, TimeUnit.SECONDS)) { p.destroyForcibly(); return -1; }
+        return p.exitValue();
+    }
+
+    /** The events an "app" child wrote, one line each: action, data, registered-only, replacing,
+     *  data removed, uid. */
+    static List<String[]> events(File f) {
+        List<String[]> out = new ArrayList<>();
+        try {
+            for (String l : Files.readAllLines(f.toPath(), StandardCharsets.UTF_8)) out.add(l.split("\t", -1));
+        } catch (Exception ignored) {}
+        return out;
+    }
+
+    static String[] waitEvent(File f, String action, String data, int skip) throws InterruptedException {
+        long deadline = System.currentTimeMillis() + 30_000;
+        while (System.currentTimeMillis() < deadline) {
+            int seen = 0;
+            for (String[] e : events(f)) {
+                if (e[0].equals(action) && e[1].equals(data) && seen++ == skip) return e;
+            }
+            Thread.sleep(200);
+        }
+        return null;
+    }
+
+    static int count(File f, String action, String data) {
+        int n = 0;
+        for (String[] e : events(f)) if (e[0].equals(action) && (data == null || e[1].equals(data))) n++;
+        return n;
+    }
+
+    static int packageEvents(String[] args) throws Exception {
+        File dir = new File(args[1]);
+        String launcher = args[2];
+        System.out.println("package change checks (pid " + myPid() + ", the launcher " + launcher + ")");
+        String name = "winapk-test-" + myPid() + "-pkg";
+        File listenerApk = apkFile(dir, "listener.apk",
+                axml(LISTENER, 34, Intent.ACTION_PACKAGE_ADDED, Intent.ACTION_PACKAGE_FULLY_REMOVED));
+        File addedApk = apkFile(dir, "added.apk", axml(ADDED, 34));
+        File listenerEvents = new File(dir, "listener.events"), addedEvents = new File(dir, "added.events");
+        Files.writeString(listenerEvents.toPath(), "");
+        Files.writeString(addedEvents.toPath(), "");
+
+        Process broker = start(dir, "pkgbroker", name, listenerApk.getPath());
+        IBinder sys = waitFor(name);
+        check("the broker is published", sys != null, "");
+        List<Process> apps = new ArrayList<>();
+        try {
+            if (sys == null) return 1;
+            apps.add(start(dir, "app", name, LISTENER, listenerEvents.getPath(), "-", "--apk", listenerApk.getPath()));
+            check("an app the broker knows attaches", waitEvent(listenerEvents, "registered", "", 0) != null, "");
+
+            Process early = start(dir, "app", name, ADDED, addedEvents.getPath(), "-", "--apk", addedApk.getPath());
+            boolean ended = early.waitFor(120, TimeUnit.SECONDS);
+            check("a package not installed yet is refused on attach", ended && early.exitValue() == 3,
+                    ended ? "exit " + early.exitValue() : "still running");
+
+            // Anyone but the launcher: this runtime by Binder, and this program by the launcher's own code.
+            Parcel d = Parcel.obtain();
+            d.writeInterfaceToken(SystemServer.DESCRIPTOR);
+            d.writeInt(SystemServer.PACKAGE_ADDED);
+            d.writeString(ADDED);
+            d.writeString(addedApk.getPath());
+            d.writeInt(0);
+            check("a package change from a runtime is refused", refused(sys, SystemServer.TX_PACKAGE_CHANGED, d), "");
+            int rc = notify(exe(), name, SystemServer.PACKAGE_ADDED, ADDED, addedApk, false);
+            check("a package change from a program that is not the launcher is refused", rc == 1, "exit " + rc);
+            check("so the package is still unknown", !hasPackage(sys, ADDED), "");
+
+            rc = notify(launcher, name, SystemServer.PACKAGE_ADDED, ADDED, addedApk, false);
+            check("the launcher's install commit is taken in", rc == 0, "exit " + rc);
+            check("the broker knows the added package at once", hasPackage(sys, ADDED), "");
+            String[] e = waitEvent(listenerEvents, Intent.ACTION_PACKAGE_ADDED, "package:" + ADDED, 0);
+            check("a running app's dynamic receiver gets PACKAGE_ADDED", e != null, "");
+            int uid = AppUids.uidFor(ADDED, null);
+            if (e != null) {
+                check("PACKAGE_ADDED of a new package: no EXTRA_REPLACING, its uid",
+                        e[3].equals("false") && e[5].equals(Integer.toString(uid)), String.join(" ", e));
+                check("an app targeting API 34 gets it for its registered receivers only", e[2].equals("1"), e[2]);
+            }
+
+            apps.add(start(dir, "app", name, ADDED, addedEvents.getPath(), "spoof", "--apk", addedApk.getPath()));
+            check("the added package's process is accepted on attach",
+                    waitEvent(addedEvents, "registered", "", 0) != null, "");
+
+            rc = notify(launcher, name, SystemServer.PACKAGE_REPLACED, ADDED, addedApk, false);
+            check("the launcher's update commit is taken in", rc == 0, "exit " + rc);
+            e = waitEvent(listenerEvents, Intent.ACTION_PACKAGE_ADDED, "package:" + ADDED, 1);
+            check("an update sends PACKAGE_ADDED with EXTRA_REPLACING", e != null && e[3].equals("true"),
+                    e == null ? "none" : String.join(" ", e));
+            e = waitEvent(listenerEvents, Intent.ACTION_PACKAGE_REPLACED, "package:" + ADDED, 0);
+            check("and PACKAGE_REPLACED", e != null && e[3].equals("true"), e == null ? "none" : String.join(" ", e));
+            e = waitEvent(addedEvents, Intent.ACTION_MY_PACKAGE_REPLACED, "", 0);
+            check("the updated package gets MY_PACKAGE_REPLACED", e != null, "");
+
+            rc = notify(launcher, name, SystemServer.PACKAGE_REMOVED, ADDED, addedApk, true);
+            check("the launcher's removal commit is taken in", rc == 0, "exit " + rc);
+            check("the broker forgets the removed package", !hasPackage(sys, ADDED), "");
+            e = waitEvent(listenerEvents, Intent.ACTION_PACKAGE_REMOVED, "package:" + ADDED, 0);
+            check("a running app gets PACKAGE_REMOVED with EXTRA_DATA_REMOVED", e != null && e[4].equals("true"),
+                    e == null ? "none" : String.join(" ", e));
+            e = waitEvent(listenerEvents, Intent.ACTION_PACKAGE_FULLY_REMOVED, "package:" + ADDED, 0);
+            check("and PACKAGE_FULLY_REMOVED, to its manifest receivers too (an exempt broadcast)",
+                    e != null && e[2].equals("0"), e == null ? "none" : String.join(" ", e));
+            check("MY_PACKAGE_REPLACED went to the updated package alone",
+                    count(listenerEvents, Intent.ACTION_MY_PACKAGE_REPLACED, null) == 0, "");
+            check("the removed package does not hear its own removal",
+                    count(addedEvents, Intent.ACTION_PACKAGE_REMOVED, null) == 0, "");
+            check("an app's own PACKAGE_ADDED broadcast reaches nobody",
+                    count(listenerEvents, Intent.ACTION_PACKAGE_ADDED, "package:" + FAKE) == 0, "");
+
+            Process late = start(dir, "app", name, ADDED, addedEvents.getPath(), "-", "--apk", addedApk.getPath());
+            ended = late.waitFor(120, TimeUnit.SECONDS);
+            check("a removed package is refused on attach again", ended && late.exitValue() == 3,
+                    ended ? "exit " + late.exitValue() : "still running");
+        } finally {
+            for (Process p : apps) p.destroyForcibly();
+            broker.destroyForcibly();
+        }
+        return failures == 0 ? 0 : 1;
+    }
+
+    static boolean hasPackage(IBinder sys, String pkg) throws Exception {
+        Parcel d = Parcel.obtain(), r = Parcel.obtain();
+        d.writeInterfaceToken(SystemServer.DESCRIPTOR);
+        d.writeString(pkg);
+        sys.transact(SystemServer.TX_HAS_PACKAGE, d, r, 0);
+        r.readException();
+        return r.readInt() != 0;
+    }
+
+    static int packageBroker(String[] args) throws Exception {
+        SystemServer s = new SystemServer();
+        s.addPackage(args[2]);
+        MacApkBinderTransport.setUidResolver(s::uidOfPid);
+        MacApkBinderTransport.publish(args[1], s.new Stub());
+        Thread.sleep(Long.MAX_VALUE);
+        return 0;
+    }
+
+    /** An app's process as the broker sees one: it registers an application thread that writes down
+     *  every broadcast scheduled on it (args: name, package, events file, "spoof" to send a
+     *  PACKAGE_ADDED of its own, --apk <apk>). Exit 3 when the registration is refused. */
+    static int app(String[] args) throws Exception {
+        String name = args[1], pkg = args[2];
+        File events = new File(args[3]);
+        IBinder sys = waitFor(name);
+        if (sys == null) return 1;
+        Binder thread = new Binder() {
+            @Override protected boolean onTransact(int code, Parcel data, Parcel reply, int flags) {
+                if (code != SystemServer.TX_SCHEDULE_BROADCAST) return false;
+                data.enforceInterface(SystemServer.THREAD_DESCRIPTOR);
+                Intent i = data.readTypedObject(Intent.CREATOR);
+                String line = i.getAction() + "\t" + (i.getData() == null ? "" : i.getData().toString()) + "\t"
+                        + ((i.getFlags() & Intent.FLAG_RECEIVER_REGISTERED_ONLY) != 0 ? "1" : "0") + "\t"
+                        + i.getBooleanExtra(Intent.EXTRA_REPLACING, false) + "\t"
+                        + i.getBooleanExtra(Intent.EXTRA_DATA_REMOVED, false) + "\t"
+                        + i.getIntExtra(Intent.EXTRA_UID, -1) + "\n";
+                synchronized (BinderTransportTest.class) {
+                    try {
+                        Files.writeString(events.toPath(), line, StandardCharsets.UTF_8,
+                                java.nio.file.StandardOpenOption.APPEND);
+                    } catch (Exception e) {
+                        throw new RuntimeException(e);
+                    }
+                }
+                return true;
+            }
+        };
+        Parcel d = Parcel.obtain(), r = Parcel.obtain();
+        d.writeInterfaceToken(SystemServer.DESCRIPTOR);
+        d.writeString(pkg);
+        d.writeStrongBinder(thread);
+        d.writeString(args[6]);
+        d.writeString(pkg);
+        sys.transact(SystemServer.TX_REGISTER, d, r, 0);
+        try { r.readException(); } catch (SecurityException e) { return 3; }
+        synchronized (BinderTransportTest.class) {
+            Files.writeString(events.toPath(), "registered\t\n", StandardCharsets.UTF_8,
+                    java.nio.file.StandardOpenOption.APPEND);
+        }
+        if (args[4].equals("spoof")) {
+            d = Parcel.obtain();
+            d.writeInterfaceToken(SystemServer.DESCRIPTOR);
+            d.writeString(pkg);
+            d.writeTypedObject(new Intent(Intent.ACTION_PACKAGE_ADDED, android.net.Uri.parse("package:" + FAKE)), 0);
+            d.writeString(pkg);
+            sys.transact(SystemServer.TX_BROADCAST, d, null, IBinder.FLAG_ONEWAY);
+        }
+        Thread.sleep(Long.MAX_VALUE);
+        return 0;
     }
 
     // ---- Google accounts -------------------------------------------------------------

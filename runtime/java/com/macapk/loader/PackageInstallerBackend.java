@@ -1410,7 +1410,7 @@ public final class PackageInstallerBackend {
      *  this too; two surfaces that announce differently is the same class of
      *  bug as two surfaces that stage differently. */
     public static void broadcastPackageInstalled(String pkg, boolean wasUpdate) {
-        if (pkg == null || pkg.isEmpty()) return;
+        if (pkg == null || pkg.isEmpty() || brokerAnnounces()) return;
         android.app.Application app;
         try { app = android.app.Application.getInstance(); }
         catch (Throwable t) { return; }
@@ -1497,7 +1497,7 @@ public final class PackageInstallerBackend {
      *  model no uid for any package other than the hosted one, and -1 is
      *  AOSP's own sentinel. */
     public static void broadcastPackageRemoved(String pkg, boolean dataRemoved) {
-        if (pkg == null || pkg.isEmpty()) return;
+        if (pkg == null || pkg.isEmpty() || brokerAnnounces()) return;
         android.app.Application app;
         try { app = android.app.Application.getInstance(); }
         catch (Throwable t) { return; }
@@ -1537,6 +1537,15 @@ public final class PackageInstallerBackend {
             try { capp.sendBroadcast(f); }
             catch (Throwable t) { NativeLog.w(TAG, "PACKAGE_FULLY_REMOVED broadcast failed: " + t); }
         });
+    }
+
+    /** Win.apk with Google services on: this process is attached to the system broker, which the
+     *  launcher tells of every install and removal at its commit (SystemServer.packageChanged) and
+     *  which broadcasts PACKAGE_* to every running app, this one included, as ActivityManager does.
+     *  Announcing here too would deliver each one twice (and the broker refuses an app's own). */
+    private static boolean brokerAnnounces() {
+        android.os.IBinder sys = WinProcesses.available() ? SystemClient.system() : null;
+        return sys != null && sys.isBinderAlive();
     }
 
     private static void sendPackageBroadcast(android.app.Application app, String action,

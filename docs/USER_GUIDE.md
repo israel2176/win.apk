@@ -96,7 +96,10 @@ Installs run one at a time, in a small install window:
 Two apps with the same library name (the app's label) cannot coexist: a
 second install of the same app replaces the first and keeps the app's data.
 To update an app, open or drop a newer file of it: there is no separate
-update button.
+update button. An app open in a window has to be closed first; what runs of
+it with no window (started in the background for another app, with Google
+services on, and Google's own apps) is stopped for the update, as Android
+stops an app it updates.
 
 ### Native code and CPU architectures
 

@@ -501,6 +501,27 @@ New bugs found with AOSP views:
   (c4e09b8's batch) loads the client certificate; whether the page goes away
   needs a run with real network (the sandbox's proxy breaks client-certificate
   TLS).
+- **An app installed while the system broker runs: fixed, as Android does it.**
+  Gmail installed with Google services already on was refused on attach
+  ("process N is not com.google.android.gm") and every Google API answered
+  API_UNAVAILABLE: the broker read `installed_apps.json` only at start. 9dad890
+  re-read the registry when an unknown APK attached; that is replaced. Every
+  commit (`install_into_library`: library, Store, Google setup, the install
+  helper; `remove_app`: Remove, the helper's uninstall; the package backfill)
+  now tells a running broker over Binder (`TX_PACKAGE_CHANGED`, launcher only,
+  checked by the OS pid's program), which updates its table and broadcasts
+  `PACKAGE_ADDED`/`REPLACED`/`MY_PACKAGE_REPLACED` or `PACKAGE_REMOVED`/
+  `FULLY_REMOVED` by AMS's rules; an update now also stops the app's windowless
+  processes (the broker's service hosts) instead of refusing the update as
+  "running". The broker serves its name before its first registry read and
+  holds every call until it is done, so nothing falls between. Verified under
+  Wine by `BinderTransportTest` (all passed; on one of two runs the old
+  "50 oneway calls arrive, in order" check saw 48: its COUNT call races the
+  oneway connection, unrelated). **Check on the owner's PC:** install Gmail
+  with Google services on while the Play Store is open, then open Gmail and
+  sign in (`logs\system.log`: "package com.google.android.gm added", no
+  REFUSED line). Not done: `PACKAGE_CHANGED` (no enable/disable of components
+  yet) and `PACKAGE_DATA_CLEARED` (no "Clear storage" path tells the broker).
 
 ## Size and memory (decide later)
 

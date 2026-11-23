@@ -10,12 +10,20 @@
 // that runs the same executable as this user.
 //
 //   winapk-binder-test <classpath> <main class> [args...]
+//   winapk-binder-test --notify <name> <op> <package> <apk> <data removed 0|1> <server image>
+//
+// --notify is the launcher's call to the system broker at an install's commit
+// (winapk/package_events.h, the very code Win.apk.exe runs), with no JVM: the
+// Java test runs a copy of this program named Win.apk.exe above a bin\ folder
+// to be the launcher, and this program from elsewhere to be anyone else. Exit
+// code 0 told, 1 refused, 2 no broker, 3 failed.
 //
 // jvm.dll is found on PATH or under JAVA_HOME\bin\server. Exit code: what the
 // Java main passes to System.exit (0 = every check passed).
 
 #include "host_natives.h"
 #include "java_io_open.h"
+#include "winapk/package_events.h"
 
 #include <cstdio>
 #include <string>
@@ -105,6 +113,12 @@ bool bind(JNIEnv* env, const winapk::host::HostMethod* m, size_t n) {
 }  // namespace
 
 int wmain(int argc, wchar_t** argv) {
+    if (argc == 8 && std::wstring(argv[1]) == L"--notify") {
+        namespace pe = winapk::package_events;
+        const pe::Told told = pe::tell_broker(static_cast<pe::Change>(_wtoi(argv[3])), argv[4], argv[5],
+                                              _wtoi(argv[6]) != 0, argv[7], argv[2]);
+        return told == pe::Told::kDone ? 0 : told == pe::Told::kRefused ? 1 : told == pe::Told::kNoBroker ? 2 : 3;
+    }
     if (argc < 3) return fail("usage: winapk-binder-test <classpath> <main class> [args...]");
     HMODULE jvm = LoadLibraryW(L"jvm.dll");
     if (!jvm && !env_var(L"JAVA_HOME").empty())

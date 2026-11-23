@@ -101,6 +101,7 @@
 #include "updates.h"
 #include "../host/window_fit.h"
 #include "../include/winapk/aot_stamp.h"
+#include "../include/winapk/package_events.h"
 
 namespace fs = std::filesystem;
 
@@ -1471,11 +1472,25 @@ void cancel_install(const std::wstring& name) {
 }
 
 void write_registry();
+fs::path registry_apk(const std::string& pkg);
+
+// The system broker (winapk-runtime --system, with Google services on) plays Android's system_server, and
+// learns a package as PackageManagerService does: at the commit. Each install, update and removal tells it
+// once the registry holds the change, with the APK the registry names for the package (a removal: the one
+// it named), and waits for it to take the change in (winapk/package_events.h). With no broker running this
+// does nothing: a broker reads the registry when it starts.
+void tell_broker(winapk::package_events::Change change, const std::string& pkg, const fs::path& removed_apk = {},
+                 bool data_removed = false) {
+    const fs::path apk = change == winapk::package_events::kRemoved ? removed_apk : registry_apk(pkg);
+    if (pkg.empty() || apk.empty()) return;
+    winapk::package_events::tell_broker(change, utf8_to_wide(pkg), apk.wstring(), data_removed,
+                                        runtime_exe().wstring());
+}
 
 // Whether the app is running: winapk-runtime holds a named mutex keyed on
 // the app's data folder for as long as it runs the app (claim_single_instance
 // in host/runtime_main.cpp; the key is made the same way here).
-bool app_running(const std::wstring& name) {
+std::wstring app_instance(const std::wstring& name) {
     std::error_code ec;
     std::wstring key = fs::absolute(app_dir(name), ec).lexically_normal().wstring();
     if (ec) key = app_dir(name).wstring();
@@ -1485,7 +1500,11 @@ bool app_running(const std::wstring& name) {
     for (const wchar_t c : key) h = (h ^ static_cast<uint16_t>(c)) * 1099511628211ull;
     wchar_t mutex[48];
     swprintf(mutex, 48, L"Local\\WinApk-app-%016llx", static_cast<unsigned long long>(h));
-    HANDLE m = OpenMutexW(SYNCHRONIZE, FALSE, mutex);
+    return mutex;
+}
+
+bool app_running(const std::wstring& name) {
+    HANDLE m = OpenMutexW(SYNCHRONIZE, FALSE, app_instance(name).c_str());
     if (!m) return false;
     const DWORD w = WaitForSingleObject(m, 0);
     if (w == WAIT_OBJECT_0 || w == WAIT_ABANDONED) ReleaseMutex(m);
@@ -1500,14 +1519,33 @@ namespace appops {
 bool stop_library_app(const std::wstring& name);
 }
 
-// Google's three apps are not in the library, so the user has no way to close
-// them: Play services in particular runs whenever an app or the Play Store uses
-// it. Installing a newer copy stops the running one first instead of asking.
-bool stop_google_app_for_install(const std::wstring& name) {
+// Whether the app's running process is one the system broker started with no window, to serve another
+// app's bind or broadcast: beside the instance mutex, the runtime's "-pid" mapping holds the holder's pid
+// and its flags (runtime_main.cpp claim_single_instance; 1 is kHolderServiceHost).
+bool runs_as_service_host(const std::wstring& name) {
+    HANDLE map = OpenFileMappingW(FILE_MAP_READ, FALSE, (app_instance(name) + L"-pid").c_str());
+    if (!map) return false;
+    DWORD flags = 0;
+    if (const auto* p = static_cast<const DWORD*>(MapViewOfFile(map, FILE_MAP_READ, 0, 0, 2 * sizeof(DWORD)))) {
+        flags = p[1];
+        UnmapViewOfFile(p);
+    }
+    CloseHandle(map);
+    return (flags & 1) != 0;
+}
+
+// Android kills every process of a package before an install replaces its code (the install's freeze), and
+// the install here would find a running copy's files in use. What runs with no window of the user's goes
+// first: a service host the system broker started (the app's main process or another android:process of
+// it), and Google's three apps, which are not in the library, so the user has no way to close them (Play
+// services runs whenever an app or the Play Store uses it). An app the user has open in a window is left
+// to the user, who closes it and then updates it: false.
+bool stop_app_for_install(const std::wstring& name) {
     std::string pkg;
     for (const wchar_t c : name) pkg += static_cast<char>(c < 0x80 ? c : '?');
-    if (!google_app(pkg) || !appops::stop_library_app(name)) return false;
-    expect_run_end(name);  // the Play Store in a window of its own: stopped for its update, not "an error"
+    if (app_running(name) && !google_app(pkg) && !runs_as_service_host(name)) return false;
+    if (appops::stop_library_app(name))
+        expect_run_end(name);  // the Play Store in a window of its own: stopped for its update, not "an error"
     for (int i = 0; i < 100 && app_running(name); ++i) Sleep(100);  // its mutex goes with the process
     return !app_running(name);
 }
@@ -1637,11 +1675,12 @@ bool recover_interrupted_installs() {
 // Copies `source` into the library as <name><ext> and installs it there: the install, the code conversion,
 // the name, icon and package, the shortcuts. A bundle is then replaced by links to its installed APKs, so
 // the library keeps the app once (library_files.h). The app's files from before are set aside first and
-// removed once the new one is in, whatever its extension was. An app that is running is left alone (its
-// files are in use): false, with `*running` set. An update that fails or is cancelled puts the previous
-// files back; a new app that does leaves nothing behind.
+// removed once the new one is in, whatever its extension was. An app open in a window is left alone (its
+// files are in use): false, with `*running` set; what runs of it with no window is stopped first
+// (stop_app_for_install). An update that fails or is cancelled puts the previous files back; a new app that
+// does leaves nothing behind. Once the registry has the app, a running system broker is told (tell_broker).
 bool install_into_library(const fs::path& source, const std::wstring& name, bool* running) {
-    *running = app_running(name) && !stop_google_app_for_install(name);
+    *running = !stop_app_for_install(name);
     if (*running) return false;
     const InstallClaim claim(name, true);  // until this returns: see recover_interrupted_installs
     std::error_code ec;
@@ -1701,6 +1740,11 @@ bool install_into_library(const fs::path& source, const std::wstring& name, bool
         }
     }
     write_registry();
+    if (ok) {
+        const std::vector<std::string> pkg = package_of(name);
+        if (!pkg.empty() && !pkg[0].empty())
+            tell_broker(update ? winapk::package_events::kReplaced : winapk::package_events::kAdded, pkg[0]);
+    }
     return ok;
 }
 
@@ -4856,8 +4900,9 @@ bool remove_app(const App& app, bool ask, bool with_data = false) {
     }
     // Its permissions go with it, unless another copy in the library is the same package.
     const std::vector<std::string> pkg = package_of(copy.name);
+    const fs::path registered = pkg.empty() ? fs::path() : registry_apk(pkg[0]);
+    bool other = false;
     if (!pkg.empty()) {
-        bool other = false;
         for (const App& a : library()) {
             const std::vector<std::string> p = a.name == copy.name ? std::vector<std::string>{} : package_of(a.name);
             other = other || (!p.empty() && p[0] == pkg[0]);
@@ -4869,6 +4914,9 @@ bool remove_app(const App& app, bool ask, bool with_data = false) {
     for (const fs::path& p : winapk::launcher::app_entries(library_dir(), copy.name, false)) fs::remove_all(p, ec);
     remove_app_files(copy.name);
     write_registry();
+    // The package stays when another copy in the library is it; the registry then names that copy.
+    if (!pkg.empty() && !other) tell_broker(winapk::package_events::kRemoved, pkg[0], registered, with_data);
+    else if (!pkg.empty() && registered == copy.apk) tell_broker(winapk::package_events::kReplaced, pkg[0]);
     if (ask) {
         refresh();
         if (g_view == kAppView) set_view(kLibraryView);
@@ -10058,6 +10106,16 @@ std::string iso_time(const fs::path& p) {
     return buf;
 }
 
+// The APK the registry names for `pkg`: of the library's copies of it, the first in library() order, as
+// write_registry picks it. Empty when the library has none.
+fs::path registry_apk(const std::string& pkg) {
+    for (const App& app : library()) {
+        const std::vector<std::string> p = package_of(app.name);
+        if (!p.empty() && p[0] == pkg) return app.apk;
+    }
+    return {};
+}
+
 // <data>\installed_apps.json, upstream's registry (launcher/InstallCore.swift
 // RegistryStore, schema 2) as MacApkPackageManager.InstalledRegistry reads
 // it: one row per library app whose package is known. Rewritten whole, to a
@@ -10101,16 +10159,29 @@ void write_registry() {
 DWORD WINAPI backfill_thread(void*) {
     bool changed = false;
     std::error_code ec;
+    std::set<std::string> registered, found;
     for (const App& app : library()) {
-        if (fs::exists(package_file(app.name), ec)) continue;
+        if (fs::exists(package_file(app.name), ec)) {
+            const std::vector<std::string> p = package_of(app.name);
+            if (!p.empty()) registered.insert(p[0]);
+            continue;
+        }
         HANDLE p = start_runtime(L"--apk \"" + app.apk.wstring() + L"\" --package-to \"" +
                                      package_file(app.name).wstring() + L"\"",
                                  logs_dir() / L"package-backfill.log");
-        if (p && wait_exit(p) == 0) changed = true;
-        else fs::remove(package_file(app.name), ec);
+        if (p && wait_exit(p) == 0) {
+            changed = true;
+            const std::vector<std::string> pkg = package_of(app.name);
+            if (!pkg.empty() && !pkg[0].empty()) found.insert(pkg[0]);
+        } else {
+            fs::remove(package_file(app.name), ec);
+        }
     }
     if (changed) {
         write_registry();
+        // A package the registry did not have until now was no app's to see, nor the broker's.
+        for (const std::string& pkg : found)
+            if (!registered.count(pkg)) tell_broker(winapk::package_events::kAdded, pkg);
         if (g_main) PostMessageW(g_main, kRefresh, 0, 0);  // the store sees these packages as installed
     }
     return 0;

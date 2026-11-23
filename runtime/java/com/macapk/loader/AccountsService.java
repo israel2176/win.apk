@@ -652,6 +652,13 @@ final class AccountsService extends Binder {
         }
     }
 
+    /** A package's authenticators go with it: removed, or before an update's are read again
+     *  (AccountAuthenticatorCache follows PACKAGE_REMOVED and PACKAGE_REPLACED). The accounts of
+     *  their types stay in the table. */
+    synchronized void forget(String pkg) {
+        authenticators.values().removeIf(a -> a.pkg.equals(pkg));
+    }
+
     private synchronized void registerAuthenticator(String pkg, String type, String service, boolean custom,
                                                     int label, int icon, int small, int prefs) {
         SystemServer.PackageRecord pr = system.packageRecord(pkg);

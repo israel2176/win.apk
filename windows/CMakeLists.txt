@@ -365,7 +365,7 @@ if(WINAPK_JNI_INCLUDE)
   # Cross-process Binder over named pipes (host/binder_win.cpp) between real
   # JVMs: test/binder_test.cpp runs test/java/com/macapk/loader/BinderTransportTest.
   add_executable(winapk-binder-test test/binder_test.cpp host/binder_win.cpp host/java_io_open.cpp)
-  target_include_directories(winapk-binder-test PRIVATE host "${WINAPK_JNI_INCLUDE}" "${WINAPK_JNI_INCLUDE}/win32")
+  target_include_directories(winapk-binder-test PRIVATE host include "${WINAPK_JNI_INCLUDE}" "${WINAPK_JNI_INCLUDE}/win32")
   target_link_libraries(winapk-binder-test PRIVATE advapi32 bcrypt)
   target_link_options(winapk-binder-test PRIVATE -static -municode)
 

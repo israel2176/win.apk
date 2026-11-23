@@ -2437,6 +2437,12 @@ public abstract class Context {
         // ACTION_MY_PACKAGE_REPLACED is manifest-only in BOTH stores we have),
         // and before this it could never hear one. See
         // PackageInstallerBackend.broadcastPackageInstalled.
+        //
+        // Except under FLAG_RECEIVER_REGISTERED_ONLY, which AMS honours by never
+        // collecting the manifest list (broadcastIntentLocked). Win.apk's system
+        // broker sets it on an implicit package broadcast to an app that targets
+        // API 26 or later, the receivers Android's background check skips there.
+        if ((intent.getFlags() & Intent.FLAG_RECEIVER_REGISTERED_ONLY) != 0) return;
         macapkDeliverToMatchingManifestReceivers(intent);
     }
 

@@ -705,6 +705,35 @@ the user installed run as apps, as upstream runs them on the Mac:
   the Play Store's services, for one), the new start stops the headless
   process and takes its place with a window; its clients bind again, as
   after Android stops a background process.
+- **Packages installed, updated or removed while the broker runs.** The
+  broker reads `installed_apps.json` once, as it starts (its name is served
+  first, and every call waits for that read). After that it learns a package
+  as PackageManagerService does, at the commit: once the registry holds the
+  change, `install_into_library` (every install and update: the library's,
+  the Store tab's, the Google services setup's, the install helper's for an
+  app that installs another) and `remove_app` (Remove, the helper's
+  uninstall) call `SystemServer`'s `TX_PACKAGE_CHANGED` with the package and
+  the APK the registry names (`windows/include/winapk/package_events.h`),
+  and wait for the broker to have it: an app started right after is known.
+  The broker takes that call only from the launcher, by what Windows says
+  the calling pid runs (`Win.apk.exe` above the runtime's `bin\`,
+  `WinProcesses.isLauncher`; the broker's pipe accepts that one program
+  besides the runtime). It then updates its package table, the bundles and
+  the account authenticators, and broadcasts as ActivityManager does:
+  `PACKAGE_ADDED` (`EXTRA_REPLACING` on an update), `PACKAGE_REPLACED` and
+  `MY_PACKAGE_REPLACED` (to the updated package alone, its process started
+  for a manifest receiver), or `PACKAGE_REMOVED` (not to the removed package)
+  and, with its data, `PACKAGE_FULLY_REMOVED`, with the package's uid. The
+  implicit ones reach running processes only: every dynamic receiver, and
+  the manifest receivers of an app that targets API 25 or lower, or for
+  `PACKAGE_FULLY_REMOVED`, an exempt action (otherwise the intent carries
+  `FLAG_RECEIVER_REGISTERED_ONLY`, which the app's delivery honours). An
+  app's own `PACKAGE_*` broadcast is refused, and an installing app attached
+  to the broker does not announce its install itself. A package's running
+  processes are stopped by the launcher before it touches the files: Remove
+  stops every runtime of the app; an update stops the ones with no window
+  (the broker's service hosts, Google's three apps) and waits for the user
+  to close an app open in a window. With no broker running nothing is sent.
 - **Google accounts with the broker.** The accounts service mirrors
   `gms\gms_state.properties` (Win.apk's one Google account store) into its
   table: the master token as the row's password and the gaia id as
@@ -729,7 +758,8 @@ the user installed run as apps, as upstream runs them on the Mac:
   user and SYSTEM, reject remote clients, claim their name with
   `FILE_FLAG_FIRST_PIPE_INSTANCE`, connect with `SECURITY_IDENTIFICATION`, and
   each end checks that the other is the same user's process of the same
-  executable. `android:exported` is enforced as upstream does.
+  executable (the broker also takes the launcher's package changes, above).
+  `android:exported` is enforced as upstream does.
 - **Google's packages.** `com.google.android.gms`, `.gsf` and
   `com.android.vending` get the system-app treatment (`FLAG_SYSTEM`, started
   at the broker's boot) only when their APKs' signature verifies and Google's
@@ -773,7 +803,10 @@ the user installed run as apps, as upstream runs them on the Mac:
   from passing itself off as another app; they are not a sandbox.
 
 `windows/test/binder_test.cpp` with `test/java/com/macapk/loader/BinderTransportTest.java`
-tests the transport and the broker's checks across three processes.
+tests the transport and the broker's checks across three processes, and the
+package changes with a copy of the test program as `Win.apk.exe` above a
+`bin\` copy: a package added while the broker runs, replaced, removed, and
+the change refused from anyone but the launcher.
 
 ## An install, step by step
 
@@ -833,7 +866,13 @@ tests the transport and the broker's checks across three processes.
    to it at the launcher's next start, app by app, once each app's installed
    copy is of its bundle (else at the start after its next run).
 6. The launcher makes the Start menu shortcut (and the desktop one, if the
-   setting is on) and adds the app to the library.
+   setting is on), adds the app to the library and writes the registry
+   (`installed_apps.json`). With a system broker running (Google services
+   on), it then tells the broker of the new or updated package
+   (`TX_PACKAGE_CHANGED`, above), which broadcasts `PACKAGE_ADDED`. Before
+   step 1 an update stops what runs of the app with no window (the broker's
+   service hosts, Google's apps); an app open in a window is left for the
+   user to close first.
 
 ## A run, step by step
 
