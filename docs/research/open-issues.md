@@ -390,7 +390,19 @@ New bugs found with AOSP views:
   landscape by default; a `layout-land` or other qualified copy may use
   `button_selector` where the device's does not) and at the XML itself
   (`aapt2 dump xmltree --file res/drawable/button_selector.xml`). The APK is
-  not on hand.
+  not on hand. Also checked, through the path a real app takes: an
+  `AppCompatActivity` inflating a `Button` subclass, an `AppCompatButton`
+  subclass and a plain `<Button>` with `android:background="@drawable/sel"`,
+  `sel`'s item `?attr/x` from the activity's theme, and `getDrawable(id,
+  theme)`, `ContextCompat`, `AppCompatResources`, `ResourcesCompat`. No layer
+  drops the theme: the View's TypedArray carries it to `Resources.loadDrawable`,
+  and AOSP's `ResourcesImpl.loadXmlDrawable` itself passes `null` to
+  `Drawable.createFromXmlForDensity` (android-all 14's bytecode), so every case
+  ends in `UnsupportedOperationException: Failed to resolve attribute ...
+  theme=null`, as on a device. Masad's error is a different one: the item's
+  `android:drawable` came back null, which a theme-less `?attr` never does (a
+  theme that lacks the attribute would, but none is there). Still the XML is
+  needed.
 
 - **Exit hangs: fixed, the sweeps to check again** (bit, Waze, Maccabi). A
   guest library aborted in a `thread_local` destructor at process exit
