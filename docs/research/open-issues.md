@@ -209,6 +209,23 @@ Left: Yahav past the `JSONArray.join` fix (needs a jar rebuild to take effect); 
 
 ## Bugs to fix on their own (not part of a layer)
 
+- **Meitav Trade black on a real PC (Flutter on Skia's GL): fixed in theory,
+  to check on Windows** (a5cc28c). "Failed to set up Skia Gr context": Skia's
+  GrGLInterface asks for every function of each extension GL_EXTENSIONS lists
+  and refuses the context when one is missing, and a guest saw ANGLE's whole
+  list, ANGLE's and Chromium's own extensions included (more of them on a real
+  GPU than under Wine). A guest is now told only the Khronos-declared
+  extensions whose functions it can get (gl2ext.h, GLES/glext.h, eglext.h;
+  `gen_gl_stubs.py`), and eglGetProcAddress logs any name it has no function
+  for (`GL: eglGetProcAddress(<name>): no such function here`): the owner's log
+  of the next run says what is still missing. The window surface stays the
+  presented pbuffer, which Flutter's Impeller (LocalSend) and SDL draw through.
+- **Paths past 260 characters: fixed for native code, to check on Windows**
+  (aaf043d). bionic's file calls and the ELF loader take the long-path form
+  near MAX_PATH, and both exes declare longPathAware; Java already did. Not
+  covered without the long-path policy: the C++ host's own std::filesystem
+  calls (the AOT cache, the install's staging), chdir.
+
 - **Exit hangs: fixed, the sweeps to check again** (bit, Waze, Maccabi). A
   guest library aborted in a `thread_local` destructor at process exit
   (Realm: `GetEnv` on a detached thread) and the process hung: `ExitProcess`
