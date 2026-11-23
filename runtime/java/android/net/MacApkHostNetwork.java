@@ -91,6 +91,8 @@ final class MacApkHostNetwork {
         final List<InetAddress> addresses;
         final List<LinkAddress> linkAddresses;
         final List<InetAddress> dnsServers;
+        /** Whether the host counts this network as metered (meteredOf). */
+        boolean metered;
 
         Snapshot(boolean connected, String interfaceName, int transport, int mtu,
                 List<InetAddress> addresses, List<LinkAddress> linkAddresses,
@@ -136,7 +138,9 @@ final class MacApkHostNetwork {
         // Windows: the host layer's own answer (see the top of the file).
         String[] host = com.macapk.loader.HostRadios.defaultNetwork();
         if (host != null) {
-            return fromHost(host, hostInterfaceName(host));
+            Snapshot snap = fromHost(host, hostInterfaceName(host));
+            snap.metered = meteredOf(com.macapk.loader.HostRadios.networkMetered(), snap);
+            return snap;
         }
 
         String iface = defaultRouteInterface();
@@ -185,6 +189,18 @@ final class MacApkHostNetwork {
 
         return new Snapshot(connected, iface, transportOf(iface), mtu, addrs, links,
                 dnsServers());
+    }
+
+    /**
+     * Whether the default network is metered: Windows' own answer
+     * (HostRadios.networkMetered: 1 metered, 0 not) when it gives one, else what
+     * Android assumes of the transport (a mobile network is metered, the rest are
+     * not). No host call in here, so a test can feed it any answer.
+     */
+    static boolean meteredOf(int host, Snapshot s) {
+        if (s == null || !s.connected) return false;
+        if (host >= 0) return host == 1;
+        return s.transport == TRANSPORT_CELLULAR;
     }
 
     /**

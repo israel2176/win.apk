@@ -186,6 +186,15 @@ public final class InstallIntentHandler {
                         "install helper missing");
                 return;
             }
+            // The same update gates as a session (no downgrade, the same signer or
+            // its lineage): PackageInstaller's own activity installs through PMS too.
+            PackageInstallerBackend.UpdateRefusal refusal =
+                    PackageInstallerBackend.updateRefusal(staged, null);
+            if (refusal != null) {
+                NativeLog.w(TAG, "install refused: " + refusal.message);
+                deliver(token, cover, Activity.RESULT_FIRST_USER, refusal.legacyStatus, refusal.message);
+                return;
+            }
             // ONE helper invocation for both install surfaces. A timeout comes
             // back as exit 5 exactly as this path's own runner used to report
             // it, so the mapping below is unchanged by the delegation.

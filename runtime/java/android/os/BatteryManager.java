@@ -118,7 +118,20 @@ public class BatteryManager {
         if (sCache != null && (now - sCacheTime) < CACHE_TTL_NANOS) return sCache;
         Snapshot s = new Snapshot();
         boolean present = false;
-        try {
+        Boolean hostBattery = com.macapk.loader.HostAppSupport.windowsHost()
+                ? com.macapk.loader.HostPower.hasBattery() : null;
+        if (hostBattery != null) {
+            // Win.apk: Windows' own power status (HostPower) instead of pmset. A PC
+            // with no battery reports as the battery-less device below.
+            if (hostBattery) {
+                present = true;
+                int pct = com.macapk.loader.HostPower.batteryPercent();
+                if (pct >= 0) s.capacity = pct;
+                boolean mains = com.macapk.loader.HostPower.charging();
+                s.status = !mains ? BATTERY_STATUS_DISCHARGING
+                        : pct >= 100 ? BATTERY_STATUS_FULL : BATTERY_STATUS_CHARGING;
+            }
+        } else try {
             // java.lang.Process, fully qualified: this package declares its
             // own android.os.Process (AOSP's pid/uid class), which shadows
             // the JDK subprocess type under the bare name "Process".

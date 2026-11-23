@@ -595,6 +595,21 @@ jobs:
           MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/installer-test)" \
             com.macapk.loader.InstallerOfRecordTest "$(cygpath -w "$RUNNER_TEMP/installer")" | tee installer-test.log
           grep -q "ALL PASSED" installer-test.log
+      - name: Run the job store and session update tests
+        run: |
+          # The broker's job store (BrokerJobs: a dead process's jobs held, started
+          # when due and their constraints hold, persisted across a reboot) and an
+          # update through PackageInstaller's session API with AOSP's update rules.
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          cp="$(cygpath -w stage/lib/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          "$JAVA_HOME/bin/javac" -cp "$cp" -d build/update-tests \
+            windows/test/java/com/macapk/loader/BrokerJobsTest.java windows/test/java/com/macapk/loader/SessionUpdateTest.java
+          MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/update-tests)" \
+            com.macapk.loader.BrokerJobsTest "$(cygpath -w "$RUNNER_TEMP/broker-jobs")" | tee broker-jobs-test.log
+          grep -q "ALL PASSED" broker-jobs-test.log
+          MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/update-tests)" \
+            com.macapk.loader.SessionUpdateTest "$(cygpath -w "$RUNNER_TEMP/session-update")" | tee session-update-test.log
+          grep -q "ALL PASSED" session-update-test.log
       - name: Run the scan record test
         run: |
           # android.bluetooth.le.ScanRecord's parser over the advertising bytes

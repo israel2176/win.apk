@@ -95,16 +95,74 @@ public final class PackageInstallerBackend {
     /** android14-release PackageManager.INSTALL_FAILED_UPDATE_INCOMPATIBLE. */
     private static final int INSTALL_FAILED_UPDATE_INCOMPATIBLE = -7;
 
-    /** Non-null (the AOSP message) when {@code artifact} is an update of an
-     *  installed package and shares NO signer with it. AOSP compares against
-     *  the installed SigningDetails, accepting any signer in its rotation
-     *  history (a v3 lineage), so this accepts a match against either the
-     *  installed signers or the installed history, and never requires the
-     *  arrays to be byte-equal as a whole. Unknown on either side (an archive
-     *  the parser cannot read, a registry row with no readable APK, a package
-     *  the caller cannot see) is NOT a conflict: the gate refuses only what
-     *  it can prove, so it cannot turn a legitimate update into a failure. */
-    static String updateSignerConflict(File artifact, java.util.Collection<File> blobs) {
+    /** android14-release PackageManager.INSTALL_FAILED_VERSION_DOWNGRADE. */
+    private static final int INSTALL_FAILED_VERSION_DOWNGRADE = -25;
+
+    /** Why an update is refused before any work: the public status, the legacy code
+     *  and AOSP's message. */
+    static final class UpdateRefusal {
+        final int status, legacyStatus;
+        final String message;
+        UpdateRefusal(int status, int legacyStatus, String message) {
+            this.status = status;
+            this.legacyStatus = legacyStatus;
+            this.message = message;
+        }
+        @Override public String toString() { return message; }
+    }
+
+    /** AOSP's two checks of an update against the installed package, as rules over
+     *  what both carry (no PackageManager here, so a test feeds them directly):
+     *
+     *  1. No downgrade (PackageManagerServiceUtils.checkDowngrade, from
+     *     InstallPackageHelper.preparePackageLI): an incoming versionCode below the
+     *     installed one fails INSTALL_FAILED_VERSION_DOWNGRADE (-25), which
+     *     installStatusToPublicStatus maps to STATUS_FAILURE_INCOMPATIBLE. AOSP
+     *     lets an installer ask for a downgrade only of a debuggable app on a
+     *     debuggable build (INSTALL_REQUEST_DOWNGRADE); no store gets one here.
+     *  2. The same signer (ReconcilePackageUtils: SigningDetails.checkCapability):
+     *     the update is signed by a signer of the installed package; or by a key
+     *     the installed package rotated away from (its lineage: a rollback); or by
+     *     a new key whose own v3 lineage names the installed signer (the rotation
+     *     an update ships, "signed by the new key, vouched for by the old one").
+     *     Else INSTALL_FAILED_UPDATE_INCOMPATIBLE (-7), STATUS_FAILURE_CONFLICT.
+     *     A capability bit of a lineage entry is not checked: SigningInfo does not
+     *     carry them, and refusing on a guess would fail a legitimate update.
+     *
+     *  Unknown on either side (0 for a version, empty or null signers) is not a
+     *  refusal: the gate refuses only what it can prove. */
+    static UpdateRefusal checkUpdate(String pkg, long installedVersion, android.content.pm.Signature[] installed,
+                                     android.content.pm.Signature[] installedHistory, long incomingVersion,
+                                     android.content.pm.Signature[] incoming,
+                                     android.content.pm.Signature[] incomingHistory) {
+        if (installedVersion > 0 && incomingVersion > 0 && incomingVersion < installedVersion) {
+            return new UpdateRefusal(PackageInstaller.STATUS_FAILURE_INCOMPATIBLE, INSTALL_FAILED_VERSION_DOWNGRADE,
+                    "INSTALL_FAILED_VERSION_DOWNGRADE: Downgrade detected: Update version code "
+                            + incomingVersion + " is older than current " + installedVersion);
+        }
+        if (installed == null || installed.length == 0 || incoming == null || incoming.length == 0) return null;
+        for (android.content.pm.Signature w : incoming) {
+            if (contains(installed, w) || contains(installedHistory, w)) return null;
+        }
+        for (android.content.pm.Signature h : installed) {
+            if (contains(incomingHistory, h)) return null;
+        }
+        return new UpdateRefusal(PackageInstaller.STATUS_FAILURE_CONFLICT, INSTALL_FAILED_UPDATE_INCOMPATIBLE,
+                "INSTALL_FAILED_UPDATE_INCOMPATIBLE: Package " + pkg
+                        + " signatures do not match newer version; ignoring!");
+    }
+
+    private static boolean contains(android.content.pm.Signature[] in, android.content.pm.Signature s) {
+        if (in == null || s == null) return false;
+        for (android.content.pm.Signature x : in) if (s.equals(x)) return true;
+        return false;
+    }
+
+    /** checkUpdate for a session's APKs against the installed package, as this
+     *  process's PackageManager reads both (the installed one is the registry's
+     *  installed APK, with its verified signers and lineage). Null for a fresh
+     *  install, an allowed update, or when either side cannot be read. */
+    static UpdateRefusal updateRefusal(File artifact, java.util.Collection<File> blobs) {
         try {
             android.app.Application app = android.app.Application.getInstance();
             if (app == null || artifact == null) return null;
@@ -126,27 +184,22 @@ public final class PackageInstallerBackend {
                     }
                 }
             }
-            if (incoming == null || incoming.packageName == null
-                    || incoming.signingInfo == null) return null;
+            if (incoming == null || incoming.packageName == null) return null;
             android.content.pm.PackageInfo installed;
             try { installed = pm.getPackageInfo(incoming.packageName, CERT); }
             catch (android.content.pm.PackageManager.NameNotFoundException e) {
                 return null;   // a fresh install: nothing to match
             }
-            if (installed == null || installed.signingInfo == null) return null;
-            android.content.pm.Signature[] have = installed.signingInfo.getApkContentsSigners();
-            android.content.pm.Signature[] past =
-                installed.signingInfo.getSigningCertificateHistory();
-            android.content.pm.Signature[] want = incoming.signingInfo.getApkContentsSigners();
-            if (have == null || have.length == 0 || want == null || want.length == 0) return null;
-            for (android.content.pm.Signature w : want) {
-                for (android.content.pm.Signature h : have) if (w.equals(h)) return null;
-                if (past != null) for (android.content.pm.Signature h : past) if (w.equals(h)) return null;
-            }
-            return "INSTALL_FAILED_UPDATE_INCOMPATIBLE: Package " + incoming.packageName
-                + " signatures do not match newer version; ignoring!";
+            if (installed == null) return null;
+            android.content.pm.SigningInfo have = installed.signingInfo, want = incoming.signingInfo;
+            return checkUpdate(incoming.packageName, installed.getLongVersionCode(),
+                    have != null ? have.getApkContentsSigners() : null,
+                    have != null ? have.getSigningCertificateHistory() : null,
+                    incoming.getLongVersionCode(),
+                    want != null ? want.getApkContentsSigners() : null,
+                    want != null ? want.getSigningCertificateHistory() : null);
         } catch (Throwable t) {
-            NativeLog.w(TAG, "update signer check could not run (" + t + "); not refusing");
+            NativeLog.w(TAG, "update check could not run (" + t + "); not refusing");
             return null;
         }
     }
@@ -760,24 +813,21 @@ public final class PackageInstallerBackend {
                         INSTALL_FAILED_INVALID_APK, "session contains no APK data");
                 return;
             }
-            // v1.0.1640: AOSP's update-signer gate, before any work. An update
-            // must be signed by a signer of the INSTALLED package, or the
-            // install fails INSTALL_FAILED_UPDATE_INCOMPATIBLE (-7), which
-            // installStatusToPublicStatus maps to STATUS_FAILURE_CONFLICT
-            // (android14 InstallPackageHelper.preparePackageLI ->
-            // ReconcilePackageUtils / PackageManagerServiceUtils
-            // .verifySignatures: "signatures do not match newer version").
+            // AOSP's update gates, before any work (checkUpdate): no downgrade
+            // (INSTALL_FAILED_VERSION_DOWNGRADE, STATUS_FAILURE_INCOMPATIBLE), and
+            // an update signed by a signer of the INSTALLED package or of its
+            // rotation lineage, either way (INSTALL_FAILED_UPDATE_INCOMPATIBLE,
+            // STATUS_FAILURE_CONFLICT: "signatures do not match newer version").
             // Load-bearing now that a store update REPLACES the installed app
-            // and inherits its data (InstallPipeline in-place update): a
-            // differently-signed APK must never adopt another signer's saves.
+            // and inherits its data: a differently-signed APK must never adopt
+            // another signer's saves, and a store must not roll an app back.
             // Read from the session's own APKs (the largest is the base of a
             // base+splits set), BEFORE assembleArtifact consumes them.
-            String signerConflict = updateSignerConflict(largest(blobs.values()), blobs.values());
-            if (signerConflict != null) {
-                NativeLog.w(TAG, "session " + s.id + " refused: " + signerConflict);
+            UpdateRefusal refusal = updateRefusal(largest(blobs.values()), blobs.values());
+            if (refusal != null) {
+                NativeLog.w(TAG, "session " + s.id + " refused: " + refusal.message);
                 deliverStatus(statusReceiver, s.id, s.appPackageName,
-                        PackageInstaller.STATUS_FAILURE_CONFLICT,
-                        INSTALL_FAILED_UPDATE_INCOMPATIBLE, signerConflict);
+                        refusal.status, refusal.legacyStatus, refusal.message);
                 return;
             }
             // STORAGE. The install writes the app once more into its bundle

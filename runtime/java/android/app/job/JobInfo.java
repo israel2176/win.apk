@@ -502,15 +502,22 @@ public class JobInfo implements android.os.Parcelable {
             return this;
         }
         /** AOSP setRequiredNetwork (API 28) takes a full NetworkRequest.
-         *  Mac.apk models one always-present unmetered WiFi transport
-         *  (ConnectivityManager), so any NetworkRequest a job can express
-         *  reduces to "a network is required": record it as NETWORK_TYPE_ANY
-         *  rather than discarding it, so the scheduler still knows the job
-         *  wants a Network handed to it. */
+         *  The host has one default network, so a NetworkRequest a job can
+         *  express reduces to "a network is required", or "an unmetered one"
+         *  when it asks for NET_CAPABILITY_NOT_METERED (which is exactly the
+         *  request AOSP's setRequiredNetworkType(NETWORK_TYPE_UNMETERED) builds):
+         *  recorded as the type rather than discarded, so the scheduler (and the
+         *  system broker, which receives the JobInfo without the request) still
+         *  knows what the job needs. */
         public Builder setRequiredNetwork(android.net.NetworkRequest networkRequest) {
             this.requiredNetwork = networkRequest;
             if (networkRequest != null && this.requiredNetworkType == NETWORK_TYPE_NONE) {
-                this.requiredNetworkType = NETWORK_TYPE_ANY;
+                boolean unmetered = false;
+                try {
+                    unmetered = networkRequest.hasCapability(
+                            android.net.NetworkCapabilities.NET_CAPABILITY_NOT_METERED);
+                } catch (Throwable ignored) {}
+                this.requiredNetworkType = unmetered ? NETWORK_TYPE_UNMETERED : NETWORK_TYPE_ANY;
             }
             return this;
         }

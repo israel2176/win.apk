@@ -99,6 +99,17 @@ public final class HostRadios {
         }
     }
 
+    /** Whether the host counts its internet connection as metered (Windows' Network
+     *  List Manager cost: Settings' "Metered connection", a mobile plan): 1 yes, 0 no,
+     *  -1 not known (no native: the Mac). */
+    public static int networkMetered() {
+        try {
+            return nativeNetworkMetered();
+        } catch (UnsatisfiedLinkError e) {
+            return -1;
+        }
+    }
+
     /** The host's Bluetooth radio, {name, address "AA:BB:..", "1" when on else
      *  "0"}, or null when there is none or it is not known. */
     public static String[] bluetoothRadio() {
@@ -126,6 +137,7 @@ public final class HostRadios {
     private static native int[] nativeWifiDhcp();
     private static native int nativeWifiEvent(int timeoutMs);
     private static native String[] nativeDefaultNetwork();
+    private static native int nativeNetworkMetered();
     private static native String[] nativeBluetoothRadio();
     private static native String[] nativeBluetoothBonded();
 }

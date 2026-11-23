@@ -381,6 +381,16 @@ public final class SystemClient {
                     reply.writeInt(js.enqueue(info, work));
                     return;
                 }
+                case SystemServer.JOB_RUN: {
+                    // A job the broker held while no process of ours was alive, due now
+                    // (BrokerJobs): run it at once.
+                    android.app.job.JobInfo info = data.readTypedObject(android.app.job.JobInfo.CREATOR);
+                    int rc = js.macapkRunNow(info);
+                    NativeLog.i(TAG, "job " + info.getId() + " handed over by the system broker (due); rc=" + rc);
+                    reply.writeNoException();
+                    reply.writeInt(rc);
+                    return;
+                }
                 case SystemServer.JOB_CANCEL:
                     js.cancel(data.readInt());
                     reply.writeNoException();
@@ -460,9 +470,10 @@ public final class SystemClient {
         } finally { d.recycle(); r.recycle(); }
     }
 
-    /** The app's pending jobs held by its OTHER processes (id < 0: all of them). */
+    /** The app's pending jobs held by its OTHER processes, and by the broker for a
+     *  process of ours that died (id < 0: all of them). */
     public static java.util.List<android.app.job.JobInfo> pendingJobsElsewhere(int jobId) {
-        if (IN_BROKER_JOB.get() != null || !hasSiblingProcesses()) return java.util.Collections.emptyList();
+        if (IN_BROKER_JOB.get() != null || sSystem == null) return java.util.Collections.emptyList();
         Parcel d = Parcel.obtain(), r = Parcel.obtain();
         try {
             d.writeInterfaceToken(SystemServer.DESCRIPTOR);
@@ -477,6 +488,72 @@ public final class SystemClient {
         } catch (Throwable t) {
             NativeLog.w(TAG, "remote pending jobs failed: " + t);
             return java.util.Collections.emptyList();
+        } finally { d.recycle(); r.recycle(); }
+    }
+
+    /** What the app's scheduler tells the broker about the jobs it holds (BrokerJobs):
+     *  scheduled or re-armed with the next run time, running or not, removed. */
+    public static final int JOB_REPORT_PUT = 0, JOB_REPORT_REMOVE = 1, JOB_REPORT_REMOVE_ALL = 2,
+            JOB_REPORT_RUNNING = 3;
+    /** JOB_REPORT_PUT flags: work is enqueued on it / it waits on a content change. */
+    public static final int JOB_FLAG_WORK = 1, JOB_FLAG_CONTENT_TRIGGER = 2;
+
+    /** One thread, so the broker hears a job's reports in the order they happened, and
+     *  the scheduler never waits on a binder call under its lock. */
+    private static final java.util.concurrent.ExecutorService sJobReports =
+            java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+                Thread t = new Thread(r, "job-reports");
+                t.setDaemon(true);
+                return t;
+            });
+
+    /** JobSchedulerService's view of this process's jobs (android.app.job.MacApkJobScheduler
+     *  calls it): the broker keeps a job when the process that held it dies, and starts
+     *  the process again when the job is due. `value`: the next run (wall-clock ms) for
+     *  PUT, 1/0 for RUNNING. Nothing happens without an attached broker. */
+    public static void reportJob(int op, android.app.job.JobInfo info, int jobId, long value, int flags) {
+        final IBinder sys = sSystem;
+        if (sys == null) return;
+        final String pkg = sPackage, proc = sProcess;
+        try {
+            sJobReports.execute(() -> {
+                Parcel d = Parcel.obtain();
+                try {
+                    d.writeInterfaceToken(SystemServer.DESCRIPTOR);
+                    d.writeString(pkg);
+                    d.writeString(proc);
+                    d.writeInt(op);
+                    d.writeInt(jobId);
+                    d.writeLong(value);
+                    d.writeInt(flags);
+                    d.writeTypedObject(op == JOB_REPORT_PUT ? info : null, 0);
+                    sys.transact(SystemServer.TX_JOB_REPORT, d, null, IBinder.FLAG_ONEWAY);
+                } catch (Throwable t) {
+                    NativeLog.w(TAG, "job report " + op + " for " + jobId + " failed: " + t);
+                } finally { d.recycle(); }
+            });
+        } catch (Throwable t) {
+            NativeLog.w(TAG, "job report " + op + " for " + jobId + " not queued: " + t);
+        }
+    }
+
+    /** Whether `pkg` has a process the user opened (an activity on screen: its window),
+     *  only a process the system started for it (a service or a job, headless), or none:
+     *  SystemServer.APP_*. APP_UNKNOWN with no broker. What InstallConstraints'
+     *  "app not foreground / not interacting / not top visible" ask of ActivityManager. */
+    public static int appState(String pkg) {
+        IBinder sys = broker();
+        if (sys == null || pkg == null) return SystemServer.APP_UNKNOWN;
+        Parcel d = Parcel.obtain(), r = Parcel.obtain();
+        try {
+            d.writeInterfaceToken(SystemServer.DESCRIPTOR);
+            d.writeString(pkg);
+            sys.transact(SystemServer.TX_APP_STATE, d, r, 0);
+            r.readException();
+            return r.readInt();
+        } catch (Throwable t) {
+            NativeLog.w(TAG, "app state of " + pkg + " failed: " + t);
+            return SystemServer.APP_UNKNOWN;
         } finally { d.recycle(); r.recycle(); }
     }
 

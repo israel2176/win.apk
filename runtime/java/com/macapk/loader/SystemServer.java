@@ -152,6 +152,16 @@ public final class SystemServer {
      *  fan out to the app's other processes. */
     static final int TX_JOB = IBinder.FIRST_CALL_TRANSACTION + 8;
     static final int JOB_SCHEDULE = 0, JOB_ENQUEUE = 1, JOB_CANCEL = 2, JOB_CANCEL_ALL = 3, JOB_PENDING = 4;
+    /** TX_SCHEDULE_JOB only: run this job now, the broker held it while no process of
+     *  the app was alive and it is due (BrokerJobs). */
+    static final int JOB_RUN = 5;
+    /** JobSchedulerService's store (BrokerJobs), oneway, from the process running the
+     *  jobs: (pkg, proc, op, jobId, value, flags, JobInfo or null); SystemClient.reportJob. */
+    static final int TX_JOB_REPORT = IBinder.FIRST_CALL_TRANSACTION + 27;
+    /** (pkg) -> APP_*: what ActivityManager knows of a package's processes, for
+     *  InstallConstraints (SystemClient.appState). */
+    static final int TX_APP_STATE = IBinder.FIRST_CALL_TRANSACTION + 28;
+    public static final int APP_UNKNOWN = -1, APP_NOT_RUNNING = 0, APP_BACKGROUND = 1, APP_OPEN = 2;
     static final int TX_SCHEDULE_STOP = IBinder.FIRST_CALL_TRANSACTION + 14;
     static final int TX_SCHEDULE_JOB = IBinder.FIRST_CALL_TRANSACTION + 15;
     static final int TX_SCHEDULE_BROADCAST = IBinder.FIRST_CALL_TRANSACTION + 13;
@@ -398,11 +408,16 @@ public final class SystemServer {
         }
     }
 
+    /** Tests: the command that starts `proc` of a package, instead of the runtime's. */
+    java.util.function.BiFunction<PackageRecord, String, List<String>> launchCommand;
+
     private void launch(PackageRecord pr, String proc) throws Exception {
         String runtime = System.getenv("MACAPK_BROKER_RUNTIME");
         String root = System.getenv("MACAPK_BROKER_ROOT");
         List<String> cmd = new ArrayList<>();
-        if (HostAppSupport.windowsHost()) {
+        if (launchCommand != null) {
+            cmd.addAll(launchCommand.apply(pr, proc));   // a test's stand-in for the runtime
+        } else if (HostAppSupport.windowsHost()) {
             // Win.apk: the app as the launcher starts it, with this broker's own
             // runtime, data folder, JDK and jars (runtime_main sets them).
             cmd.addAll(WindowsBroker.runtimeCommand());
@@ -557,6 +572,7 @@ public final class SystemServer {
                     lastClientMs = System.currentTimeMillis();   // the grace runs from the last close
                 }
                 log(proc + " (pid " + pid + ") died");
+                jobsProcessDied(pkg, proc);
                 reviveSystemApp(proc);
             }, 0);
         } catch (RemoteException e) {
@@ -829,6 +845,20 @@ public final class SystemServer {
                     job(data, reply);
                     return true;
                 }
+                case TX_JOB_REPORT: {
+                    data.enforceInterface(DESCRIPTOR);
+                    jobReport(data);
+                    if (reply != null) reply.writeNoException();
+                    return true;
+                }
+                case TX_APP_STATE: {
+                    data.enforceInterface(DESCRIPTOR);
+                    callerPackage(null);   // a registered app asks (an installer, about the app it updates)
+                    String pkg = data.readString();
+                    reply.writeNoException();
+                    reply.writeInt(appState(pkg));
+                    return true;
+                }
             }
             return super.onTransact(code, data, reply, flags);
         }
@@ -1036,6 +1066,7 @@ public final class SystemServer {
                 packages.remove(pkg);
                 bundles.remove(pkg);
                 accounts().forget(pkg);
+                jobs().removeAll(pkg);   // JobSchedulerService drops a removed package's jobs
                 log("package " + pkg + " removed" + (dataRemoved ? " with its data" : ""));
                 replacing = false;
             } else {
@@ -1284,14 +1315,19 @@ public final class SystemServer {
     }
 
     void bootSystemServices() {
-        if ("0".equals(System.getenv("MACAPK_BROKER_BOOT_SYSTEM"))) { writeReady(""); return; }
+        if ("0".equals(System.getenv("MACAPK_BROKER_BOOT_SYSTEM"))) { writeReady(""); bootDone = true; return; }
         java.util.List<String> bootNames = new ArrayList<>();
         java.util.List<Runnable> bootJobs = new ArrayList<>();
         final java.util.concurrent.CopyOnWriteArrayList<String> okNames = new java.util.concurrent.CopyOnWriteArrayList<>();
         final java.util.concurrent.CopyOnWriteArrayList<String> failedNames = new java.util.concurrent.CopyOnWriteArrayList<>();
         for (PackageRecord pr : new ArrayList<>(packages.values())) {
             if (!MacApkPackageManager.platformSystemApk(pr.pkg, pr.apkPath)) continue;
-            if (pr.manifest.launchableActivity != null) continue;
+            // A maintenance window boots the Play Store too: it has a window of its own,
+            // so an ordinary boot leaves it to its own launch, but with no app open its
+            // BOOT_COMPLETED is how it schedules its update jobs again after Windows
+            // restarted (on a phone every app with a boot receiver gets it at boot).
+            boolean launchable = pr.manifest.launchableActivity != null;
+            if (launchable && !MAINTENANCE) continue;
             // Every process that owns a boot receiver (AMS starts a receiver's
             // process for BOOT_COMPLETED). One process for a collapsed package.
             java.util.Set<String> bootProcs = new java.util.LinkedHashSet<>();
@@ -1306,7 +1342,7 @@ public final class SystemServer {
             // JVM to boot, and Play's own bind timeout fired first (owner,
             // 2026-11-02: Play failed to open on a cold broker, the services
             // appeared only after it had tried; the second launch worked).
-            bootProcs.add(mainProcessOf(pr));
+            if (!launchable) bootProcs.add(mainProcessOf(pr));
             for (String proc : bootProcs) {
                 bootNames.add(proc);
                 bootJobs.add(() -> {
@@ -1316,7 +1352,9 @@ public final class SystemServer {
                     for (int attempt = 1; attempt <= 3; attempt++) {
                         try {
                             ensureRunning(pr, proc);
-                            bootSupervised.put(proc, pr);
+                            // Revived if it dies; not the Play Store's, which the user may
+                            // open (its window replaces this headless process).
+                            if (!launchable) bootSupervised.put(proc, pr);
                             okNames.add(proc);
                             log("boot: started system app " + proc);
                             return;
@@ -1339,6 +1377,7 @@ public final class SystemServer {
         Thread ready = new Thread(() -> {
             try { done.await(); } catch (InterruptedException e) { return; }
             writeReady(String.join(" ", okNames), String.join(" ", failedNames));
+            bootDone = true;
             log("boot: system apps ready (" + okNames.size() + " of " + bootNames.size() + ")");
         }, "boot-ready");
         ready.setDaemon(true);
@@ -1504,6 +1543,13 @@ public final class SystemServer {
                             log("job op " + op + " -> " + app.proc + " FAILED: " + t);
                         } finally { d.recycle(); r.recycle(); }
                     }
+                    if (op == JOB_PENDING) {
+                        // Jobs the broker holds for a process of the caller's that died are
+                        // the app's pending jobs too (JobSchedulerService lists them).
+                        for (android.app.job.JobInfo held : jobs().heldOf(caller)) {
+                            if (id < 0 || held.getId() == id) pending.add(held);
+                        }
+                    }
                     reply.writeNoException();
                     if (op == JOB_PENDING) reply.writeTypedList(pending);
                     return;
@@ -1515,6 +1561,228 @@ public final class SystemServer {
             log("job op " + op + " from " + caller + " FAILED: " + t);
             reply.writeException(new IllegalStateException(String.valueOf(t)));
         }
+    }
+
+    // ---- JobSchedulerService (BrokerJobs) ---------------------------------------------
+
+    /** This broker is a maintenance window (`winapk-runtime --system --maintenance`, which
+     *  the launcher's scheduled task starts while no app is open): it boots the system
+     *  apps, runs the jobs that are due, and stops BrokerIdle.maintenanceGraceMs after
+     *  the last one instead of waiting for an app that is not coming. */
+    static final boolean MAINTENANCE = "1".equals(System.getenv("MACAPK_BROKER_MAINTENANCE"));
+    /** How often held jobs are looked at (AOSP is push-based; the host's network and
+     *  power state are polled here, as the app-side scheduler polls them). */
+    static final long JOBS_POLL_MS = Long.getLong("macapk.broker.jobsPollMs", 15_000L);
+
+    private BrokerJobs jobStore;
+    /** Tests: where the store is written instead of systemDir()/jobs.bin. */
+    File jobsFile;
+    /** Last time a job was handed out or reported running or finished. */
+    private volatile long lastJobActivityMs = System.currentTimeMillis();
+    private final Object jobsWake = new Object();
+    private volatile boolean jobsStarted;
+    /** Set once bootSystemServices has written readiness: held jobs wait for it, because
+     *  the Play Store's jobs talk to Play services, which the boot is starting. */
+    volatile boolean bootDone;
+
+    /** The store, read on first use. Its own lock, not the broker's: it is reached with the
+     *  broker's and the package table's locks held. */
+    BrokerJobs jobs() {
+        synchronized (jobsLoadLock) {
+            if (jobStore == null) {
+                File f = jobsFile != null ? jobsFile : new File(systemDir(), "jobs.bin");
+                jobStore = BrokerJobs.load(f, BrokerJobs.bootWallMs());
+                if (jobStore.size() > 0) log("jobs: " + jobStore.size() + " held from before (" + f + ")");
+            }
+            return jobStore;
+        }
+    }
+    private final Object jobsLoadLock = new Object();
+
+    void saveJobs() {
+        try { jobs().saveIfDirty(); } catch (Throwable t) { log("jobs: cannot write the store: " + t); }
+    }
+
+    private void wakeJobs() {
+        synchronized (jobsWake) { jobsWake.notifyAll(); }
+    }
+
+    /** Win.apk's app standby: the broker starts a process for a held job only for the
+     *  system apps (Google's Play Store, Play services, Services Framework: what keeps
+     *  apps updated and push messages flowing). Another app's held job runs when that
+     *  app runs, as a phone's rarely used apps get their jobs in the restricted bucket:
+     *  each started process is a JVM. WINAPK_JOBS_START_APPS=1 starts any app's. */
+    java.util.function.Predicate<String> mayStartForJob = pkg -> {
+        if ("1".equals(System.getenv("WINAPK_JOBS_START_APPS"))) return true;
+        PackageRecord pr = packages.get(pkg);
+        return pr != null && MacApkPackageManager.platformSystemApk(pr.pkg, pr.apkPath);
+    };
+
+    /** May held job `j` run now: its package may be started for it, or the process it
+     *  runs in is running anyway. */
+    boolean jobRunnable(BrokerJobs.Job j) {
+        if (mayStartForJob.test(j.pkg)) return true;
+        synchronized (this) {
+            AppRecord r = running.get(j.proc);
+            return r != null && r.thread.isBinderAlive();
+        }
+    }
+
+    /** A process died: the jobs it held are the broker's now. */
+    private void jobsProcessDied(String pkg, String proc) {
+        List<BrokerJobs.Job> held = jobs().processDied(pkg, proc, System.currentTimeMillis(), stopping);
+        if (!held.isEmpty()) {
+            log("jobs: " + proc + " died holding " + held.size() + " job(s); the system keeps them");
+            wakeJobs();
+        }
+    }
+
+    /** What a process says about the jobs it holds (SystemClient.reportJob). The package
+     *  is the OS's answer (callerPackage); a job is only ever its own package's, and its
+     *  process is the one the manifest puts its service in, never the caller's word. */
+    private void jobReport(Parcel data) {
+        String caller = callerPackage(data.readString());
+        data.readString();   // the reporting process: informative only
+        int op = data.readInt(), id = data.readInt();
+        long value = data.readLong();
+        int flags = data.readInt();
+        android.app.job.JobInfo info = data.readTypedObject(android.app.job.JobInfo.CREATOR);
+        long now = System.currentTimeMillis();
+        switch (op) {
+            case SystemClient.JOB_REPORT_PUT: {
+                ComponentName svc = info == null ? null : info.getService();
+                PackageRecord pr = packages.get(caller);
+                if (svc == null || pr == null || !caller.equals(svc.getPackageName())
+                        || !pr.manifest.services.containsKey(svc.getClassName())) {
+                    log("jobs: " + caller + " reported job " + id + " for a service it does not declare: " + svc);
+                    return;
+                }
+                jobs().put(caller, processOf(pr, svc.getClassName()), info, value, flags, now);
+                return;
+            }
+            case SystemClient.JOB_REPORT_REMOVE:
+                jobs().remove(caller, id);
+                return;
+            case SystemClient.JOB_REPORT_REMOVE_ALL:
+                jobs().removeAll(caller);
+                return;
+            case SystemClient.JOB_REPORT_RUNNING:
+                jobs().running(caller, id, value != 0, now);
+                lastJobActivityMs = now;
+                return;
+            default:
+                log("jobs: unknown report " + op + " from " + caller);
+        }
+    }
+
+    /** APP_*: a package's processes as ActivityManager sees them. The empty package
+     *  asks about every app: APP_OPEN while any app the user opened is (the PC in use,
+     *  InstallConstraints' "device idle"). */
+    synchronized int appState(String pkg) {
+        if (pkg == null || pkg.isEmpty()) return openApps() > 0 ? APP_OPEN : APP_NOT_RUNNING;
+        int state = APP_NOT_RUNNING;
+        for (AppRecord r : running.values()) {
+            if (!r.pkg.equals(pkg) || !r.thread.isBinderAlive()) continue;
+            if (!spawned.containsKey((long) r.pid)) return APP_OPEN;
+            state = APP_BACKGROUND;
+        }
+        return state;
+    }
+
+    /** The host's state, for AOSP's job constraint controllers. */
+    private final BrokerJobs.Conditions conditions = new BrokerJobs.Conditions() {
+        @Override public boolean networkUp() {
+            try { return new android.net.ConnectivityManager().getActiveNetworkInfo() != null; }
+            catch (Throwable t) { return true; }
+        }
+        @Override public boolean networkMetered() {
+            try { return new android.net.ConnectivityManager().isActiveNetworkMetered(); }
+            catch (Throwable t) { return false; }
+        }
+        @Override public boolean charging() { return HostPower.charging(); }
+        @Override public int batteryPercent() { return HostPower.batteryPercent(); }
+        @Override public long freeStorageBytes() {
+            File d = systemDir();
+            while (d != null && !d.exists()) d = d.getParentFile();
+            return d == null ? -1 : d.getUsableSpace();
+        }
+        @Override public boolean idle() {
+            synchronized (SystemServer.this) { return openApps() == 0; }
+        }
+    };
+
+    /** Tests: the conditions to use instead of the host's. */
+    BrokerJobs.Conditions conditionsOverride;
+
+    BrokerJobs.Conditions hostConditions() { return conditionsOverride != null ? conditionsOverride : conditions; }
+
+    /** The held-jobs loop: every JOBS_POLL_MS (or when a process dies), the held jobs
+     *  that are ready are handed to their process, started for them. */
+    void startJobs() {
+        if (jobsStarted) return;
+        jobsStarted = true;
+        jobs();
+        Thread t = new Thread(() -> {
+            long waitUntil = System.currentTimeMillis() + 5 * 60_000L;
+            while (!bootDone && System.currentTimeMillis() < waitUntil) {
+                try { Thread.sleep(1_000); } catch (InterruptedException e) { return; }
+            }
+            while (!stopping) {
+                for (BrokerJobs.Job j : jobs().takeReady(System.currentTimeMillis(), hostConditions(),
+                        this::jobRunnable)) {
+                    Thread d = new Thread(() -> dispatchJob(j), "job-" + j.pkg + "-" + j.id);
+                    d.setDaemon(true);
+                    d.start();
+                }
+                saveJobs();
+                synchronized (jobsWake) {
+                    try { jobsWake.wait(JOBS_POLL_MS); } catch (InterruptedException e) { return; }
+                }
+            }
+        }, "broker-jobs");
+        t.setDaemon(true);
+        t.start();
+    }
+
+    /** Start the process a held job's service lives in and hand it the job, as
+     *  JobSchedulerService binds a ready job's service, starting its process. */
+    void dispatchJob(BrokerJobs.Job j) {
+        lastJobActivityMs = System.currentTimeMillis();
+        PackageRecord pr = packages.get(j.pkg);
+        ComponentName svc = j.info.getService();
+        if (pr == null || svc == null || !pr.manifest.services.containsKey(svc.getClassName())) {
+            log("jobs: " + j.pkg + "#" + j.id + " names no installed service (" + svc + "); dropped");
+            jobs().remove(j.pkg, j.id);
+            return;
+        }
+        String proc = processOf(pr, svc.getClassName());
+        boolean wasRunning;
+        synchronized (this) {
+            AppRecord r = running.get(proc);
+            wasRunning = r != null && r.thread.isBinderAlive();
+        }
+        try {
+            AppRecord app = ensureRunning(pr, proc);
+            int rc;
+            Parcel d = Parcel.obtain(), r = Parcel.obtain();
+            try {
+                d.writeInterfaceToken(THREAD_DESCRIPTOR);
+                d.writeInt(JOB_RUN);
+                d.writeTypedObject(j.info, 0);
+                app.thread.transact(TX_SCHEDULE_JOB, d, r, 0);
+                r.readException();
+                rc = r.readInt();
+            } finally { d.recycle(); r.recycle(); }
+            if (rc == android.app.job.JobScheduler.RESULT_SUCCESS) jobs().dispatched(j);
+            else jobs().dispatchFailed(j, System.currentTimeMillis());
+            log("jobs: " + j.pkg + "#" + j.id + " (" + svc.getClassName() + ") is due -> " + proc
+                    + (wasRunning ? "" : " (started for it)") + " rc=" + rc);
+        } catch (Throwable t) {
+            jobs().dispatchFailed(j, System.currentTimeMillis());
+            log("jobs: " + j.pkg + "#" + j.id + " is due but " + proc + " did not take it: " + t);
+        }
+        lastJobActivityMs = System.currentTimeMillis();
+        saveJobs();
     }
 
     private void bind(String caller, Intent intent, Parcel reply) {
@@ -1579,13 +1847,20 @@ public final class SystemServer {
             while (true) {
                 try { Thread.sleep(5_000); } catch (InterruptedException e) { return; }
                 boolean stop;
+                long now = System.currentTimeMillis();
                 synchronized (this) {
                     int n = openApps();
-                    long now = System.currentTimeMillis();
                     if (n > 0) lastClientMs = now;
-                    stop = BrokerIdle.shouldStop(n, lastClientMs, now,
-                            sawOpenApp ? graceMs : BrokerIdle.firstAppGraceMs(graceMs));
+                    long grace = sawOpenApp ? graceMs
+                            : MAINTENANCE ? BrokerIdle.maintenanceGraceMs() : BrokerIdle.firstAppGraceMs(graceMs);
+                    // A maintenance window (no app open) counts from the last job it ran.
+                    long last = !sawOpenApp && MAINTENANCE ? Math.max(lastClientMs, lastJobActivityMs) : lastClientMs;
+                    stop = BrokerIdle.shouldStop(n, last, now, grace);
                 }
+                // A job the broker handed out, or one running, keeps it up (an update the
+                // Play Store is installing must not lose its process); in a maintenance
+                // window so does a held job that may start now.
+                if (stop && jobs().keepsBrokerUp(now, hostConditions(), MAINTENANCE, this::jobRunnable)) stop = false;
                 if (stop && stopIdle()) return;
             }
         }, "broker-idle");
@@ -1609,6 +1884,7 @@ public final class SystemServer {
         }
         booted.clear();      // a broker that starts again is a new boot: every
         bootKicked.clear();  // system app gets its boot broadcasts again
+        saveJobs();
         synchronized (this) {
             if (openApps() > 0) {
                 // An app attached while the services were coming down. Its bind
@@ -1659,7 +1935,9 @@ public final class SystemServer {
         log("serving " + sName + " with " + s.packages.size() + " packages (pid "
                 + ProcessHandle.current().pid() + ")");
         s.bootSystemServices();
+        s.startJobs();
         boolean product = apks == null || apks.isBlank();
+        if (MAINTENANCE) log("maintenance window: running the jobs that are due, then stopping");
         if (BrokerIdle.enabled(product)) {
             log("idle exit on: the broker stops " + (BrokerIdle.graceMs() / 1000) + "s after the last open app closes");
             s.watchIdle(BrokerIdle.graceMs());

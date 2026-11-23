@@ -95,6 +95,10 @@ Type: filesandordirs; Name: "{userprograms}\Win.apk Apps"
 [Run]
 Filename: "{app}\Win.apk.exe"; Description: "{cm:OpenWinApk}"; Flags: nowait postinstall skipifsilent
 
+[UninstallRun]
+; The background updates' scheduled task (Settings > Google account > "Update apps in the background").
+Filename: "{sys}\schtasks.exe"; Parameters: "/Delete /TN ""Win.apk\Background updates"" /F"; Flags: runhidden; RunOnceId: "DeleteBackgroundUpdatesTask"
+
 [Code]
 // Inno Setup's right-to-left forms flip their controls but not the title bar:
 // that takes WS_EX_LAYOUTRTL, which the VCL does not set (Setup.SetupForm.pas).

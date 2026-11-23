@@ -18,6 +18,10 @@
 //   the package of the process is what its command line (--apk) makes it; the
 //   android:exported check of a cross-package resolve; the uid of a process is
 //   its package's. The parent, which is no installed app, is refused too.
+// Jobs, "jobclient" child -> "jobbroker" child: a job reported by a process that then
+//   exits is kept by the broker (BrokerJobs) and, once due, handed to the package's
+//   process, which the broker starts for it ("jobhost"): JobScheduler running a job
+//   of an app that is not running, as the Play Store's update jobs run on a phone.
 // Package changes, "pkgevents" child -> "pkgbroker" child, from a copy of this
 //   program in <scratch>\inst\bin with another copy as <scratch>\inst\Win.apk.exe,
 //   the launcher (its --notify runs winapk/package_events.h, the launcher's code):
@@ -111,6 +115,9 @@ public final class BinderTransportTest {
         else if (args[0].equals("client")) rc = client(args);
         else if (args[0].equals("accounts")) rc = accounts();
         else if (args[0].equals("gms-write")) rc = gmsWrite(args);
+        else if (args[0].equals("jobbroker")) rc = jobBroker(args);
+        else if (args[0].equals("jobclient")) rc = jobClient(args);
+        else if (args[0].equals("jobhost")) rc = jobHost(args);
         else if (args[0].equals("pkgevents")) rc = packageEvents(args);
         else if (args[0].equals("pkgbroker")) rc = packageBroker(args);
         else if (args[0].equals("app")) rc = app(args);
@@ -375,6 +382,7 @@ public final class BinderTransportTest {
 
         brokerChecks();
         packageEventChecks();
+        jobChecks();
         googleAccountChecks();
         System.out.println(failures == 0 ? "ALL PASSED" : failures + " FAILED");
         return failures == 0 ? 0 : 1;
@@ -849,6 +857,151 @@ public final class BinderTransportTest {
             sys.transact(SystemServer.TX_BROADCAST, d, null, IBinder.FLAG_ONEWAY);
         }
         Thread.sleep(Long.MAX_VALUE);
+        return 0;
+    }
+
+    // ---- JobScheduler through the broker ---------------------------------------------
+
+    /** A job of a package whose process is gone runs when it is due: the "jobclient"
+     *  child reports a job to the broker and exits; the broker keeps it (BrokerJobs),
+     *  and once it is due starts the package's process ("jobhost", the stand-in for the
+     *  runtime the broker would start) and hands it the job (JOB_RUN). */
+    static void jobChecks() throws Exception {
+        File dir = scratch("jobs");
+        File good = new File(dir, "good.apk");
+        Files.writeString(good.toPath(), "not a real apk");
+        Files.writeString(new File(dir, "good.xml").toPath(), manifest(GOOD));
+        File marker = new File(dir, "job-ran.txt");
+        marker.delete();
+        String name = "winapk-test-" + myPid() + "-jobs";
+
+        Process broker = new ProcessBuilder(self("jobbroker", name, dir.getPath(), marker.getPath()))
+                .inheritIO().start();
+        IBinder sys = waitFor(name);
+        check("the jobs broker is published", sys != null, "");
+        if (sys == null) { broker.destroy(); return; }
+
+        Process client = new ProcessBuilder(self("jobclient", name, "--apk", good.getPath())).inheritIO().start();
+        boolean done = client.waitFor(120, TimeUnit.SECONDS);
+        int rc = done ? client.exitValue() : -1;
+        check("the client reported its job and exited", rc == 0, "exit " + rc);
+
+        long deadline = System.currentTimeMillis() + 120_000;
+        while (!marker.isFile() && System.currentTimeMillis() < deadline) Thread.sleep(200);
+        String ran = marker.isFile() ? Files.readString(marker.toPath()).trim() : "";
+        check("a job of a package with no process left runs when due: the broker starts the package for it",
+                ran.startsWith("op=" + SystemServer.JOB_RUN + " id=" + JOB_ID + " "), ran);
+        check("the job runs no earlier than it was due", ran.endsWith(" late=1"), ran);
+        broker.destroy();
+    }
+
+    static final int JOB_ID = 4242;
+
+    static int jobBroker(String[] args) throws Exception {
+        System.setProperty("macapk.broker.jobsPollMs", "300");
+        String name = args[1];
+        File dir = new File(args[2]);
+        String marker = args[3];
+        SystemServer s = new SystemServer();
+        java.lang.reflect.Field f = SystemServer.class.getDeclaredField("packages");
+        f.setAccessible(true);
+        @SuppressWarnings("unchecked")
+        java.util.Map<String, SystemServer.PackageRecord> packages =
+                (java.util.Map<String, SystemServer.PackageRecord>) f.get(s);
+        packages.put(GOOD, new SystemServer.PackageRecord(GOOD, new File(dir, "good.apk").getPath(),
+                Manifest.parse(new File(dir, "good.xml"), null)));
+        s.jobsFile = new File(dir, "jobs.bin");
+        // The runtime the broker would start for the package: a child of this test, told where to note the job.
+        s.launchCommand = (pr, proc) -> self("jobhost", name, pr.pkg, marker);
+        s.mayStartForJob = pkg -> true;
+        s.conditionsOverride = new BrokerJobs.Conditions() {
+            @Override public boolean networkUp() { return true; }
+            @Override public boolean networkMetered() { return false; }
+            @Override public boolean charging() { return true; }
+            @Override public int batteryPercent() { return -1; }
+            @Override public long freeStorageBytes() { return Long.MAX_VALUE; }
+            @Override public boolean idle() { return true; }
+        };
+        s.bootDone = true;
+        MacApkBinderTransport.setUidResolver(s::uidOfPid);
+        MacApkBinderTransport.publish(name, s.new Stub());
+        s.startJobs();
+        Thread.sleep(Long.MAX_VALUE);
+        return 0;
+    }
+
+    /** Registers as GOOD (its command line's --apk), reports one job due 1.5 s from now,
+     *  and exits: the broker now holds the job. */
+    static int jobClient(String[] args) throws Exception {
+        IBinder sys = waitFor(args[1]);
+        if (sys == null) return 1;
+        Parcel d = Parcel.obtain(), r = Parcel.obtain();
+        d.writeInterfaceToken(SystemServer.DESCRIPTOR);
+        d.writeString(GOOD);
+        d.writeStrongBinder(new Binder());
+        d.writeString(args[3]);
+        d.writeString(GOOD);
+        sys.transact(SystemServer.TX_REGISTER, d, r, 0);
+        r.readException();
+        android.app.job.JobInfo job = new android.app.job.JobInfo.Builder(JOB_ID,
+                new ComponentName(GOOD, GOOD + ".Private"))
+                .setPersisted(true).setRequiredNetworkType(android.app.job.JobInfo.NETWORK_TYPE_UNMETERED).build();
+        long due = System.currentTimeMillis() + 1500;
+        Files.writeString(new File(System.getProperty("java.io.tmpdir"), "winapk-job-due-" + JOB_ID).toPath(),
+                Long.toString(due));
+        d = Parcel.obtain();
+        d.writeInterfaceToken(SystemServer.DESCRIPTOR);
+        d.writeString(GOOD);
+        d.writeString(GOOD);
+        d.writeInt(SystemClient.JOB_REPORT_PUT);
+        d.writeInt(JOB_ID);
+        d.writeLong(due);
+        d.writeInt(0);
+        d.writeTypedObject(job, 0);
+        sys.transact(SystemServer.TX_JOB_REPORT, d, null, IBinder.FLAG_ONEWAY);
+        Thread.sleep(500);   // the oneway report is in before this process goes
+        return 0;
+    }
+
+    /** The package's process the broker started for the job: registers, and notes the
+     *  job the broker hands its application thread. */
+    static int jobHost(String[] args) throws Exception {
+        IBinder sys = waitFor(args[1]);
+        if (sys == null) return 1;
+        String pkg = args[2];
+        File marker = new File(args[3]);
+        Binder thread = new Binder() {
+            @Override protected boolean onTransact(int code, Parcel data, Parcel reply, int flags) {
+                if (code != SystemServer.TX_SCHEDULE_JOB) return false;
+                data.enforceInterface(SystemServer.THREAD_DESCRIPTOR);
+                int op = data.readInt();
+                android.app.job.JobInfo info = data.readTypedObject(android.app.job.JobInfo.CREATOR);
+                long due = 0;
+                try {
+                    due = Long.parseLong(Files.readString(new File(System.getProperty("java.io.tmpdir"),
+                            "winapk-job-due-" + JOB_ID).toPath()).trim());
+                } catch (Exception ignored) {}
+                boolean late = System.currentTimeMillis() >= due;
+                try {
+                    Files.writeString(marker.toPath(), "op=" + op + " id=" + (info != null ? info.getId() : -1)
+                            + " late=" + (late ? 1 : 0));
+                } catch (Exception e) {
+                    throw new IllegalStateException(e);
+                }
+                reply.writeNoException();
+                reply.writeInt(android.app.job.JobScheduler.RESULT_SUCCESS);
+                return true;
+            }
+        };
+        Parcel d = Parcel.obtain(), r = Parcel.obtain();
+        d.writeInterfaceToken(SystemServer.DESCRIPTOR);
+        d.writeString(pkg);
+        d.writeStrongBinder(thread);
+        d.writeString("");
+        d.writeString(pkg);
+        sys.transact(SystemServer.TX_REGISTER, d, r, 0);
+        r.readException();
+        Thread.sleep(60_000);   // alive while the broker hands over the job; the broker ends us
         return 0;
     }
 

@@ -16,7 +16,7 @@
 //   winapk-runtime --apk <app> --package-to <file>   (the launcher's install helper: the package name)
 //   winapk-runtime --verify-apk <app>   (the launcher's Google services setup: package and signer, below)
 //   winapk-runtime --java-main --jdk <dir> --cp <jar> [--max-heap-mb <n>] <class> [args...]   (internal: run_java)
-//   winapk-runtime [--data <dir>] [--jdk <dir>] [--lib <dir>] --system   (the system broker, below)
+//   winapk-runtime [--data <dir>] [--jdk <dir>] [--lib <dir>] --system [--maintenance]   (the system broker, below)
 //   winapk-runtime [--data <dir>] [--jdk <dir>] [--lib <dir>] --cds-prepare   (the framework archive now, cds.h)
 //   winapk-runtime --cds-dump ...   (internal: the framework archive's background dump)
 //
@@ -25,7 +25,10 @@
 // when Settings > Google account > "Use Google services" is on). It is started
 // by the first app that needs it (com.macapk.loader.WindowsBroker), is alone per
 // user session (the Local\WinApk-system mutex, then its pipe name), and exits
-// when no app has been open for a while.
+// when no app has been open for a while. With --maintenance it is a maintenance
+// window the launcher's scheduled task opens while no app is open (Win.apk.exe
+// maintenance): it runs the apps' jobs that are due, the Play Store's update
+// check among them, and exits a few minutes after the last.
 //
 // One runtime runs an app at a time, as on the Mac, where the app's stub holds
 // a lock and a second launch brings the running app forward: a second start
@@ -104,6 +107,7 @@ struct Options {
     bool gms = false;     // --gms <subcommand> [args]: com.macapk.gms.GmsCli, no app
     std::vector<std::wstring> gms_args;
     bool system = false;  // --system: the system broker, no app
+    bool maintenance = false;  // --maintenance (with --system): a maintenance window, the launcher's scheduled task
     bool cds_prepare = false;  // --cds-prepare: make the framework archive (cds.h) and stop
     bool verify = false;  // --verify-apk <app>: com.winapk.tools.ApkCheck on `apk`, no app run
 };
@@ -283,6 +287,7 @@ bool parse_args(int argc, wchar_t** argv, Options* o) {
         else if (a == L"--install-only") o->install_only = true;
         else if (a == L"--package-to") ok = value(&o->package_to);
         else if (a == L"--system") o->system = true;
+        else if (a == L"--maintenance") o->maintenance = true;
         else if (a == L"--cds-prepare") o->cds_prepare = true;
         else if (a == L"--verify-apk") {
             o->verify = true;
@@ -2289,7 +2294,7 @@ int wmain(int argc, wchar_t** argv) {
         std::fprintf(stderr, "usage: winapk-runtime --apk <file.apk|.apkm|.xapk|.apks> [--data <dir>] [--jdk <dir>] [--lib <dir>] "
                      "[--install-only] [--package-to <file>]\n"
                      "       winapk-runtime [--data <dir>] [--jdk <dir>] [--lib <dir>] --gms <subcommand> [args]\n"
-                     "       winapk-runtime [--data <dir>] [--jdk <dir>] [--lib <dir>] --system\n"
+                     "       winapk-runtime [--data <dir>] [--jdk <dir>] [--lib <dir>] --system [--maintenance]\n"
                      "       winapk-runtime [--data <dir>] [--jdk <dir>] [--lib <dir>] --verify-apk <app>\n"
                      "       winapk-runtime [--data <dir>] [--jdk <dir>] [--lib <dir>] --cds-prepare\n");
         return 2;
@@ -2362,6 +2367,9 @@ int wmain(int argc, wchar_t** argv) {
         }
         SetEnvironmentVariableW(L"MACAPK_BROKER", L"1");
         SetEnvironmentVariableW(L"MACAPK_APK_PATH", nullptr);  // the app that started it, not the broker's
+        // A maintenance window: no app is open; the broker runs the jobs that are due and stops a few minutes
+        // after the last (SystemServer.MAINTENANCE, BrokerJobs).
+        SetEnvironmentVariableW(L"MACAPK_BROKER_MAINTENANCE", b.options.maintenance ? L"1" : nullptr);
         if (env_var(L"MACAPK_BROKER_LOGDIR").empty()) {
             std::error_code lec;
             fs::create_directories(b.options.data / L"logs" / L"services", lec);
