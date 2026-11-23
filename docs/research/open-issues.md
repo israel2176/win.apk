@@ -196,7 +196,7 @@ unsigned (stripped META-INF); the runtime installs and runs them.
 | Mizrahi Tefahot (`com.MizrahiTefahot.nh`) | blank | 393 MB | 398 MB | 11.5 s; ZIP bundle renamed to .apk failed install; fixed by keeping .zip extension |
 | Masad (`com.masad.nativeapp`) | drew | 707 MB | 750 MB | 18.4 s; same ZIP-rename fix |
 | Yahav Bank (`il.co.yahav.mobbanking`) | blank | 357 MB | 359 MB | 20.2 s; `JSONArray.join(String)` missing (Android extension, not in Java's org.json); added to `runtime/java/org/json/JSONArray.java` |
-| Meitav Trade (`com.fmr.meitavtradeapp`) | blank | 712 MB | 824 MB | 6.7 s with short root; Flutter loads cleanly (0 exceptions, 0 missing libs); blank = network-dependent login screen |
+| Meitav Trade (`com.fmr.meitavtradeapp`) | blank | 712 MB | 824 MB | 6.7 s with short root; `Failed to set up Skia Gr context`: Flutter needs `EGL_WINDOW_BIT` but gets a `1024×1024 pbuffer`; `macapkDrawFrame nonzero=0%` — not network (see below) |
 
 * Waze draws on a first run; "blank" in repeat runs reflects the splash at frame 150.
 
@@ -206,6 +206,30 @@ Bugs found and fixed in this run:
 - Long package names with deep data dirs hit the 260-char MAX_PATH: `com.bnhp.payments.paymentsapp` (30 chars, appears twice) pushed the installed `base.apk` path to 263 chars. Fixed by using `C:\il2\` as sweep root. The fix for production: Win.apk uses 8.3 short names for the data root; the sweep's `--out` should be a short path.
 
 Left: Yahav past the `JSONArray.join` fix (needs a jar rebuild to take effect); Leumi and Maccabi not measured on Windows (APKs not on hand). With a short `--out` root all seven apps install and run cleanly.
+
+**Same seven apps in window mode, November 2026** (branch `claude/relaxed-clarke-y3hjip`;
+`WINAPK_PLAY_INSTALLER=1`, real network, screenshots by the owner). Five apps reached
+their first screen: Waze's location-permission activity, Moovit's home, Bit's
+force-update screen, Mizrahi Tefahot's main screen with its force-update popup, and
+Masad's update/dark screen. Two showed only a black window:
+
+- **Yahav (`il.co.yahav.mobbanking`):** `MainActivity.onCreate` reaches
+  `MAS.start()` → `ConfigurationManager.load()` → `JSONArray.join(String)` →
+  `NoSuchMethodError`; the fix (`0cd24a3`) is on the branch but the stage was
+  built before it. `runTolerant` catches the error and continues; Cordova's
+  initialization never ran, so the view tree has no children and the window shows
+  only the theme background (`#EBEEF3`; `macapkDrawFrame nonzero=100% drawn=0`).
+  What looks "black" is a dark gray-blue background — confirmed by pixel sampling.
+  With the fix rebuilt and real network, MAS will contact bank servers; expect a
+  login form or a network error.
+
+- **Meitav (`com.fmr.meitavtradeapp`):** Flutter fails: `Failed to set up Skia
+  Gr context` / `Failed to create platform view rendering surface`; Win.apk assigns
+  a `1024×1024 pbuffer` as the window surface, but Flutter's
+  `gpu_surface_gl_skia` needs an `EGL_WINDOW_BIT` surface as a `SurfaceView`
+  creates on Android. `macapkDrawFrame nonzero=0%` — truly black (no background
+  drawn at all). The headless table's earlier note "network-dependent login screen"
+  was wrong: the failure is a GL surface mismatch, present regardless of network.
 
 ## Bugs to fix on their own (not part of a layer)
 
