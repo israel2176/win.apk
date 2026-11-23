@@ -81,3 +81,24 @@ launcher in use; the other runtime's CI claims (taken from its docs).
   budget; no view-tree oracle. Win.apk 92 apps, smoke 10 per PR, footprint and UI gate in CI.
 - **Hebrew:** both full (the other runtime 231 keys, Win.apk 431).
 - **Package events/jobs:** the other runtime real PMS broadcasts and persisted jobs (written in place, no temp+rename).
+
+## Where Win.apk is ahead in user experience (code-checked, 2026-11-23)
+
+- App window: size from the monitor's work area and scaling, WM_DPICHANGED kept (window_fit.h,
+  win32_window.cpp); per-app orientation, remembered size/maximized, phone sizes, letterbox. the other runtime:
+  fixed 400x800 dp at 160 dpi, no monitor scaling, OTHER_DISPLAY env only.
+- Launcher: per-app Stop, details page with permissions (revoke stops the app), logs, Report a problem,
+  Threads, cancellable install queue, .apkm; splash at the window's size with a ready event. the other runtime's
+  PowerShell/WPF panel: device start/stop only, no per-app stop, no log viewer, install not cancellable,
+  launch through powershell + dalvikvm + system server, splash polls every 200 ms.
+- Failure: the splash shows the reason, Show log, Report a problem; the other runtime a message box.
+- Troubleshooting: minidumps (last three per app), stub-hit counts at exit, Threads view; the other runtime none.
+- Idle: nothing runs with Google services off; broker exits 60 s after the last app; the other runtime keeps its device
+  600 s. AOT worker at idle priority.
+- Input: gamepad, Ctrl+wheel/touchpad pinch; the other runtime neither.
+- F-Droid store tab with SHA-256 checks; interrupted-update recovery; one copy of bundles.
+- Google: real Play services/Play (higher ceiling, not yet proven) vs microG + Aurora.
+- Real commercial Israeli apps run on real Windows.
+
+the other runtime better here: UI Automation accessibility bridge, TSF text input + touch keyboard, per-APK icons in
+Explorer, proxy settings, one window per task, panel test suite.
