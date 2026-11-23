@@ -220,8 +220,11 @@ Masad's update/dark screen. Two showed only a black window:
   initialization never ran, so the view tree has no children and the window shows
   only the theme background (`#EBEEF3`; `macapkDrawFrame nonzero=100% drawn=0`).
   What looks "black" is a dark gray-blue background — confirmed by pixel sampling.
-  With the fix rebuilt and real network, MAS will contact bank servers; expect a
-  login form or a network error.
+  **Verified on Windows (Nov 2026, rebuilt stage):** with the fix in, the window
+  draws (100% nonzero). MAS completes; Cordova's WebView opens but fails with
+  `net::ERR_FAILED (file:///android_asset/www/app/index.html?cordova)` — WebView2
+  does not intercept `file:///android_asset/` and serve it from the APK. New bug:
+  see "Cordova `file:///android_asset/` not served" below.
 
 - **Meitav (`com.fmr.meitavtradeapp`):** Flutter fails: `Failed to set up Skia
   Gr context` / `Failed to create platform view rendering surface`; Win.apk assigns
@@ -230,25 +233,69 @@ Masad's update/dark screen. Two showed only a black window:
   creates on Android. `macapkDrawFrame nonzero=0%` — truly black (no background
   drawn at all). The headless table's earlier note "network-dependent login screen"
   was wrong: the failure is a GL surface mismatch, present regardless of network.
+  **Verified on Windows (Nov 2026):** draws — both the GL extensions fix (`02ee01d`)
+  and the net_spi class-version fix (`4e398e9`) were needed. The GL fix alone was
+  not enough: `net_spi` compiled by JDK 23 (class version 67) caused a
+  `ServiceLoader` failure during Flutter plugin registration, which detached
+  `FlutterFragment` before its renderer was set. Zero "no such function here" and
+  no `UnsupportedClassVersionError` with both fixes; `first frame presented (432×960)`.
 
 ## Bugs to fix on their own (not part of a layer)
 
-- **Meitav Trade black on a real PC (Flutter on Skia's GL): fixed in theory,
-  to check on Windows** (a5cc28c). "Failed to set up Skia Gr context": Skia's
+- **Meitav Trade black on a real PC (Flutter on Skia's GL): verified fixed on
+  Windows** (`02ee01d`, `4e398e9`). "Failed to set up Skia Gr context": Skia's
   GrGLInterface asks for every function of each extension GL_EXTENSIONS lists
   and refuses the context when one is missing, and a guest saw ANGLE's whole
   list, ANGLE's and Chromium's own extensions included (more of them on a real
   GPU than under Wine). A guest is now told only the Khronos-declared
   extensions whose functions it can get (gl2ext.h, GLES/glext.h, eglext.h;
-  `gen_gl_stubs.py`), and eglGetProcAddress logs any name it has no function
-  for (`GL: eglGetProcAddress(<name>): no such function here`): the owner's log
-  of the next run says what is still missing. The window surface stays the
-  presented pbuffer, which Flutter's Impeller (LocalSend) and SDL draw through.
-- **Paths past 260 characters: fixed for native code, to check on Windows**
-  (aaf043d). bionic's file calls and the ELF loader take the long-path form
-  near MAX_PATH, and both exes declare longPathAware; Java already did. Not
-  covered without the long-path policy: the C++ host's own std::filesystem
-  calls (the AOT cache, the install's staging), chdir.
+  `gen_gl_stubs.py`). Additionally, `net_spi` classes compiled by JDK 23 (class
+  version 67) caused a `ServiceLoader` failure during Flutter plugin registration
+  that detached `FlutterFragment` before rendering started; fixed by compiling
+  net_spi with `--source 21 --target 21`. Both fixes together: `first frame
+  presented`, `nonzero=432×960` on the pbuffer surface. The window surface stays
+  the presented pbuffer, which Flutter draws through fine.
+- **Paths past 260 characters: verified fixed on Windows** (`e9ad133`). bionic's
+  file calls and the ELF loader take the long-path form near MAX_PATH, and both
+  exes declare longPathAware; Java already did. Tested: Bit (`com.bnhp.payments.
+  paymentsapp`) with data dir at `%LOCALAPPDATA%\Win.apk\il2bit` (46 chars base),
+  draws cleanly. Not covered without the long-path policy: the C++ host's own
+  std::filesystem calls (the AOT cache, the install's staging), chdir.
+- **Cordova `file:///android_asset/` not served by WebView2** (new, Nov 2026).
+  Yahav Bank uses Cordova; its WebView loads `file:///android_asset/www/app/
+  index.html?cordova` but gets `net::ERR_FAILED`. On real Android the
+  `file:///android_asset/` scheme is intercepted by the WebView and served from
+  the APK's assets. Win.apk's WebView2 host (`native_webview.cpp`) needs a
+  `WebResourceRequested` handler that maps `file:///android_asset/<path>` to the
+  APK's `assets/<path>` and returns it. Affects all Cordova apps.
+
+**Seven apps with `WINAPK_AOSP_RES=1 WINAPK_AOSP_VIEWS=1`, November 2026**
+(same branch and stage; logged via stdout capture):
+
+| App | Normal mode | AOSP mode | Note |
+|---|---|---|---|
+| Waze | draws | draws | identical location-permission screen |
+| Moovit | draws | draws | home screen, looks same or better |
+| Bit | draws | draws | force-update screen, identical |
+| Mizrahi Tefahot | draws | draws | force-update dialog, identical |
+| Masad | draws | draws | InflateException on `base_dialog_fragment` (see below) |
+| Yahav | draws (Cordova ERR) | draws (Cordova ERR) | `Log.println_native` NoSuchMethodError spam (see below) |
+| Meitav | draws (Flutter SV) | first frame presented; canvas rndrr=null (Flutter SV draws) | canvas renderer not wired in AOSP-views path |
+
+New bugs found with AOSP views:
+- **`android.util.Log.println_native` arity (AOSP views):** AOSP 14's view classes call
+  `Log.println_native(int bufID, int priority, String tag, String msg)` (4 args), but
+  Win.apk's `android.util.Log` has the 3-arg form `(int priority, String tag, String msg)`.
+  `NoSuchMethodError` fires on every Choreographer frame in Yahav, filling the log with
+  thousands of repeated lines. Fix: add the 4-arg `println_native` to
+  `runtime/java/android/util/Log.java`, forwarding to the existing 3-arg native.
+- **`drawable/button_selector` NotFoundException (AOSP resources, Masad):**
+  `base_dialog_fragment` inflates `FibiFontButton` → its `button_selector.xml` has
+  `<item>` without a `drawable` attribute (uses `android:state_*` only) →
+  `XmlPullParserException: <item> tag requires a 'drawable' attribute`. AOSP's
+  `StateListDrawable` parser is stricter than Win.apk's. The app's drawable XML
+  is valid Android XML; AOSP's parser rejects it because the item has no src/drawable.
+  Found in: `com.masad.nativeapp:layout/base_dialog_fragment`. Likely affects other apps.
 
 - **Exit hangs: fixed, the sweeps to check again** (bit, Waze, Maccabi). A
   guest library aborted in a `thread_local` destructor at process exit
