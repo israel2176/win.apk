@@ -162,7 +162,7 @@ runtime/bin/winapk-runtime.exe [--jdk "$JAVA_HOME"] [--data <dir>] --verify-apk 
 development run away from the user's library. `--install-only` installs,
 converts and writes the icon and name, then exits (3 if the app is running).
 `--gms` runs upstream's `com.macapk.gms.GmsCli` (`status`, `selftest`,
-`accounts`, `signin-window`, `signout`, `checkin`, `license`, `gcmtoken`...)
+`accounts`, `signin-window`, `signout`, `checkin`, `device-id`, `license`, `gcmtoken`...)
 with no app; exit 0 done, 1 error, 2 cancelled or bad arguments.
 `--gms signin-master` adds a Google account from its e-mail and master token,
 read as two lines from standard input, after Google accepts the token; with
@@ -3428,6 +3428,16 @@ every such change is listed here:
   from `GetSystemPowerStatus`. On the Mac nothing changes but the update
   rules. Tests: `BrokerJobsTest`, `SessionUpdateTest`, `BinderTransportTest`'s
   job checks.
+- `runtime/java/com/macapk/gms/GmsCli.java`: the `device-id` verb, the ID
+  Google's page for uncertified devices takes
+  (google.com/android/uncertified): `DEVICE_ID<tab>id<tab>gsf|checkin`, the
+  real Services Framework's `android_id` from its `gservices.db` (table
+  `main`, read from a copy with its WAL through the runtime's SQLite, as
+  `InstallerOfRecord` reads Play's ledger) as a signed decimal, or, with no
+  GSF database, the layer's own checkin rendered as `GservicesProvider`
+  hands it to apps; no line when there is none. Settings > Google account's
+  **Device ID for Google** row asks it. Nothing changes on the Mac but the
+  new verb.
 
 ## License
 
