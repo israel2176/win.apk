@@ -646,7 +646,7 @@ WINAPK_GUEST_ABI const z_crc_t* g_get_crc_table() { return ::get_crc_table(); }
 // ---- gzip files -----------------------------------------------------------------------
 WINAPK_GUEST_ABI gzFile g_gzopen(const char* path, const char* mode) {
     if (!path || !mode) return nullptr;
-    gzFile f = ::gzopen_w(host_path(path).c_str(), mode);
+    gzFile f = ::gzopen_w(file_path(path).c_str(), mode);
     if (!f) set_errno_from_crt(errno);
     return f;
 }

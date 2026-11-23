@@ -112,6 +112,11 @@ std::string format_va(const char* fmt, SysVVaList* va);
 // paths.cpp: the host path for a guest path (Android's absolute paths are
 // mapped under the android root; see paths.cpp).
 std::wstring host_path(const char* guest_path);
+// host_path() as a Windows file call takes it: a path that reaches the Win32 limit
+// (MAX_PATH) in its long-path form, "\\?\C:\..." (the JDK's pathToNTPath does the
+// same for java.io), so an app's deep files open whatever the PC's long-path policy.
+// For the file calls only; a path an app is shown comes from host_path().
+std::wstring file_path(const char* guest_path);
 // Whether host_path() maps `guest_path` as an Android path; a host path it
 // leaves as it is.
 bool is_android_path(const char* guest_path);
