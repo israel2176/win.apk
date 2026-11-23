@@ -14,6 +14,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <cstdio>
 #include <iterator>
 #include <set>
@@ -177,6 +178,57 @@ void listing_round_trip() {
     }
 }
 
+// /proc/self/status: the fixed part Boot writes stays, and each mapping of the
+// path puts the changing lines after it from Windows' counters (VmRSS, Threads),
+// once, however often the path is mapped.
+void own_status() {
+    wchar_t temp[MAX_PATH];
+    GetTempPathW(MAX_PATH, temp);
+    const std::wstring scratch = std::wstring(temp) + L"winapk-status-test-" + std::to_wstring(GetCurrentProcessId());
+    const std::wstring dir = scratch + L"\\proc\\" + std::to_wstring(GetCurrentProcessId());
+    CreateDirectoryW(scratch.c_str(), nullptr);
+    CreateDirectoryW((scratch + L"\\proc").c_str(), nullptr);
+    CreateDirectoryW(dir.c_str(), nullptr);
+    char utf8[MAX_PATH * 3];
+    WideCharToMultiByte(CP_UTF8, 0, scratch.c_str(), -1, utf8, sizeof utf8, nullptr, nullptr);
+    winapk::set_android_root(utf8);
+    const std::wstring file = dir + L"\\status";
+    const std::string fixed = "Name:\tcom.example.app\nUid:\t10100\t10100\t10100\t10100\n";
+    auto read_all = [&]() {
+        std::string text;
+        if (FILE* f = _wfopen(file.c_str(), L"rb")) {
+            char buf[512];
+            for (size_t n; (n = std::fread(buf, 1, sizeof buf, f)) > 0;) text.append(buf, n);
+            std::fclose(f);
+        }
+        return text;
+    };
+    if (FILE* f = _wfopen(file.c_str(), L"wb")) {
+        std::fwrite(fixed.data(), 1, fixed.size(), f);
+        std::fclose(f);
+    }
+    check("status path", winapk::android_host_path("/proc/self/status"), file);
+    winapk::android_host_path(("/proc/" + std::to_string(GetCurrentProcessId()) + "/status").c_str());
+    const std::string text = read_all();
+    const auto count = [&](const char* key) {
+        size_t n = 0;
+        for (size_t at = text.find(key); at != std::string::npos; at = text.find(key, at + 1)) ++n;
+        return n;
+    };
+    const size_t rss = text.find("\nVmRSS:\t");
+    const size_t threads = text.find("\nThreads:\t");
+    if (text.compare(0, fixed.size(), fixed) != 0 || rss == std::string::npos || threads == std::string::npos ||
+        count("VmRSS:") != 1 || count("Threads:") != 1 || std::atoll(text.c_str() + rss + 8) <= 0 ||
+        std::atoi(text.c_str() + threads + 10) < 1) {
+        ++g_failed;
+        std::fprintf(stderr, "FAIL /proc/self/status:\n%s\n", text.c_str());
+    }
+    DeleteFileW(file.c_str());
+    RemoveDirectoryW(dir.c_str());
+    RemoveDirectoryW((scratch + L"\\proc").c_str());
+    RemoveDirectoryW(scratch.c_str());
+}
+
 }  // namespace
 
 int main() {
@@ -280,6 +332,7 @@ int main() {
     check("listed dot dot", winapk::android_file_name(L".."), L"..");
 
     listing_round_trip();
+    own_status();
 
     if (g_failed == 0) std::fprintf(stderr, "paths_test: all checks passed\n");
 

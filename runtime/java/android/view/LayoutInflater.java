@@ -1144,7 +1144,8 @@ public class LayoutInflater {
                 }
                 return parent;
             }
-            int layoutId = parseResourceId(layoutRef);
+            int layoutId = layoutRef.startsWith("?") ? macapkIncludeThemeLayout(layoutRef)
+                                                     : parseResourceId(layoutRef);
             if (layoutId == 0) {
                 NativeLog.w(TAG, "include: can't resolve layout " + layoutRef);
                 return parent;
@@ -2075,6 +2076,11 @@ public class LayoutInflater {
             int k = v.indexOf("APKTOOL_RENAMED_0x");
             if (k >= 0) {
                 id = (int) Long.parseLong(v.substring(k + 18), 16);
+            } else if (v.startsWith("@0x") || v.startsWith("@0X")) {
+                // The binary layout's own form of a reference (AXML TYPE_REFERENCE).
+                id = (int) Long.parseLong(v.substring(3), 16);
+            } else if (v.indexOf('/') < 0 && v.length() == 9) {
+                id = (int) Long.parseLong(v.substring(1), 16);   // "@7f070123"
             } else {
                 String body = v.substring(1);
                 int slash = body.indexOf('/');
@@ -2086,13 +2092,22 @@ public class LayoutInflater {
                 }
             }
             if (id == 0) return null;
-            try { return (float) r.getInteger(id); } catch (Throwable ignored) {}
+            // The value's own type first, as AOSP's TypedArray.getFloat reads it: a
+            // weight is often a float dimen (<item type="dimen" format="float">,
+            // setupdesign's GLIF landscape panes), and getInteger used to answer 0
+            // for one instead of throwing, so both of Gmail's account-setup panes
+            // got weight 0, measured 0 wide, and the page was white.
             android.util.TypedValue tv = new android.util.TypedValue();
-            r.getValue(id, tv, true);
+            try { r.getValue(id, tv, true); } catch (Throwable ignored) { tv.type = android.util.TypedValue.TYPE_NULL; }
             if (tv.type == android.util.TypedValue.TYPE_FLOAT) return tv.getFloat();
             if (tv.type >= android.util.TypedValue.TYPE_FIRST_INT
                     && tv.type <= android.util.TypedValue.TYPE_LAST_INT) return (float) tv.data;
-            if (tv.string != null) return Float.parseFloat(tv.string.toString().trim());
+            if (tv.string != null) {
+                try { return Float.parseFloat(tv.string.toString().trim()); }
+                catch (NumberFormatException ignored) {}
+            }
+            // Last, the decoded integers' own table (it has rows getValue may lack).
+            if (tv.type == android.util.TypedValue.TYPE_NULL) return (float) r.getInteger(id);
         } catch (Throwable ignored) {}
         return null;
     }
@@ -5949,6 +5964,36 @@ public class LayoutInflater {
             case "underline": return 0x0102005d;
             case "accessibilityActionScrollInDirection": return 0x0102005e;
             default: return 0;
+        }
+    }
+
+    /** `<include layout="?attr/name">`: the layout the theme's attribute names,
+     *  as AOSP's LayoutInflater.parseInclude finds it -- the attribute looked
+     *  up by name in the app's package (getIdentifier(value.substring(1),
+     *  "attr", package), which takes "attr/name" and "name" alike), then
+     *  theme.resolveAttribute(attr, value, true).resourceId. Also the compiled
+     *  numeric form ("?0x7f04001a"). 0 when either step finds nothing. Gmail's
+     *  conversation list includes its search bar this way
+     *  (`?agLayoutSearchBar`), and the bar was missing. */
+    private int macapkIncludeThemeLayout(String ref) {
+        try {
+            if (context == null || context.getResources() == null || context.getTheme() == null) return 0;
+            String body = ref.substring(1).trim();
+            int attr;
+            if (body.startsWith("0x") || body.startsWith("0X")) {
+                attr = (int) Long.parseLong(body.substring(2), 16);
+            } else {
+                String pkg = context.getPackageName();
+                if (body.startsWith("android:")) { pkg = "android"; body = body.substring(8); }
+                attr = context.getResources().getIdentifier(body, "attr", pkg);
+            }
+            if (attr == 0) return 0;
+            android.util.TypedValue tv = new android.util.TypedValue();
+            if (!context.getTheme().resolveAttribute(attr, tv, true)) return 0;
+            if (tv.resourceId != 0) return tv.resourceId;
+            return tv.type == android.util.TypedValue.TYPE_REFERENCE ? tv.data : 0;
+        } catch (Throwable t) {
+            return 0;
         }
     }
 

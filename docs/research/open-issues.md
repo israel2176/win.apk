@@ -76,7 +76,7 @@ host's IME (V2) are there. Items 10-14
 | 11 | ~~Multi-line TextView 2-2.5 dp per line short with `WINAPK_AOSP_GFX=1`~~ Fixed: with the switch on TextView lays out through AOSP's own Layout (`TextViewAospLayout`); all of lib_text_lines matches. Still Win.apk's with the switch off (Java2D) | `TextView` line code (Java2D path) | uiprobe | text |
 | 12 | `Html.fromHtml` ignores its flags (paragraph separators) and calls `TagHandler` only on close, for known tags, with a null XMLReader | `android/text/Html.java` ~68-78, ~230-250 | Waze | text |
 | 13 | Waze's location-permission screen shows "1. Select Precise" without the second step; Html/StaticLayout give all lines on a plain JVM, so Compose text or the app's choice; not found | | Waze | check |
-| 14 | Mercantile's login banner: its second line drawn wider than its box, first letter clipped (likely the typeface bug fixed in b82a102; verify) | | Mercantile | check |
+| 14 | Mercantile's login banner: its second line drawn wider than its box, first letter clipped (likely the typeface bug fixed in b82a102; verify). Gmail's welcome subtitle (Hebrew, centered) clipped at its start edge the same way, November 2026 | | Mercantile, Gmail | check |
 | 15 | Win.apk is lenient where Android throws: a missing `layout_width` gets a default, an unknown or R8-removed class becomes a FrameLayout, `View.measure` swallows an `onMeasure` exception, an unresolved `?attr` int is accepted. Hides real crashes. | `LayoutInflater` ~1253, ~1534; `View.java` ~5332-5360 | Waze, Bit | views |
 | 16 | `Resources.getResourceEntryName/TypeName/Name` invent `id_0x...` for an unknown id instead of throwing `NotFoundException`; also answer for a land-only layout in portrait. **Gone with `WINAPK_AOSP_RES=1`** (Sudoku's sweep: throws, and 117 layouts instead of 118); still there with it off | `Resources.java` ~5626-5702 | all | resources |
 | 17 | ~~`android.widget.DateTimeView` missing (notification templates become FrameLayouts)~~ Added (AOSP 14's, `DateTimeViewTest`); the screens check to confirm the templates now inflate it | `android/widget/DateTimeView.java` | Waze, Hapoalim, Mercantile | views |
@@ -242,6 +242,67 @@ Masad's update/dark screen. Two showed only a black window:
 
 ## Bugs to fix on their own (not part of a layer)
 
+- **Gmail on the owner's PC (November 2026, "Use Google services" on, a build
+  older than this branch).** Three logs: two Gmail runs and Play Store. In both
+  Gmail runs the broker refused the attach ("process N is not
+  com.google.android.gm", 9dad890's stopgap; install notifications are another
+  change), so every Google Play services bind and provider failed:
+  `GmsClient: unable to connect`, `API_UNAVAILABLE`, "auth.accounts provider is
+  not available", "Phenotype.API is not available". Play Store, attached, had
+  none of them. What is the broker's and what was Win.apk's own:
+  - *The error dialog on "add email address"* ("Gmail נתקלה בבעיה בשירותי
+    Google Play"): GoogleApiAvailability's dialog for ConnectionResult 16
+    (API_UNAVAILABLE), the `IllegalArgumentException` beside it is the stack
+    trace GMS logs on purpose. Only the refusal. **Check again** once the
+    broker learns installs.
+  - *The white page after OK*: `AccountSetupFinalGmail`, setupdesign's GLIF
+    landscape template, both panes `layout_width=0` with float-dimen weights;
+    `macapkResolveNumberRef` read them through `getInteger`, which answered 0,
+    so both panes were 0 wide. **Fixed** (LayoutInflater reads the value's own
+    type, the `@0x...` form too; `getInteger` throws for a non-integer as AOSP
+    does). Reasoned from the log's view tree, not run.
+  - *`Calendar.getWeekData()` NoSuchMethodError* (88 times; SapiUiProvider
+    "Unable to get Account", the message list's prefs). **Fixed**: the rest of
+    `android.icu.util.Calendar` and `GregorianCalendar`; `IcuCalendarTest`
+    passes with Android 14's ICU values.
+  - *`ExtendedFloatingActionButton` IllegalAccessError on `bbqp`* (the compose
+    button became a placeholder): a checkcast the translation adds names a
+    package-private class R8 moved to another package. **Fixed** in the
+    converter (CrossPackageTypes: such classes become public; Gallery: 2 of
+    7237 classes). Root cause reasoned, the cast site itself not seen (no
+    Gmail APK here); a synthetic dex checks only that the class is publicized.
+  - */proc/self/status not found* (Primes). **Fixed**: Boot writes the fixed
+    part, the path table adds VmSize/VmHWM/VmRSS/Threads per open (a Wine run
+    of paths.cpp alone; `winapk-paths-test` checks it).
+  - *`<include layout="?agLayoutSearchBar">` not resolved*. **Fixed** as AOSP's
+    parseInclude; not run.
+  - *"Font resource ID #0x7f090006 could not be retrieved"*: `gm3_ref_typeface_
+    plain_bold` -> `google_sans_text_bold_compat`, a downloadable font
+    (`com.google.android.gms.fonts`). ResourcesCompat.getFont with no callback
+    throws exactly this on Android when the provider does not resolve, and
+    with the broker refused `resolveContentProvider` finds no owner. The
+    broker's; nothing changed. **Check again**: with the broker attached the
+    fonts provider must resolve, pass the certificate check and serve the
+    file over `RemoteProviders.openFile`.
+  - *The welcome screen's Hebrew subtitle clipped at its start edge* (a):
+    not explained. The font failure alone gives no measure/draw mismatch (a
+    failed async font changes nothing; the TextView keeps one typeface), so it
+    is probably the same family as item 14 (Mercantile's first letter): Win.apk's
+    own TextView with AOSP's Layout. With `WINAPK_AOSP_RES=1
+    WINAPK_AOSP_VIEWS=1` the TextView is AOSP's and should not show it; not
+    run (no Gmail APK). Needs a reproduction: a centered `wrap_content` RTL
+    TextView with the GM3 body appearance (letterSpacing).
+  - Other lines, verdicts: the "cumq" `ExceptionInInitializerError` in the
+    earlier run (a static init's `Method.invoke(null, ...)` NPE: a method
+    static on Android is an instance one here, or a reflective lookup got
+    the wrong one; not identified, absent from the later run);
+    `/sys/devices/system/cpu/present` missing (WebRTC's CPU count: a real gap,
+    small); `openRawResource ... missed: type=color` (log noise from colour
+    lookups by name); `SplitRule#getSplitRatio` (WindowManager extensions'
+    API level, a warning); Play Store's `MacApkPackageManager.installExisting
+    Package`/`getHarmfulAppWarning`/`freeStorageAndNotify` NoSuchMethod and
+    `SafetyCenterManager` NoClassDefFound (hidden/system APIs Play probes by
+    reflection; Android throws too for a non-system app on most of them).
 - **Meitav Trade black on a real PC (Flutter on Skia's GL): verified fixed on
   Windows** (`02ee01d`, `4e398e9`). "Failed to set up Skia Gr context": Skia's
   GrGLInterface asks for every function of each extension GL_EXTENSIONS lists

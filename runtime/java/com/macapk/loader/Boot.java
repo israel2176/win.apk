@@ -3168,6 +3168,7 @@ public final class Boot {
                 }
                 if (other == pid || ProcessHandle.of(other).isPresent()) continue;
                 new File(entry, "cmdline").delete();
+                new File(entry, "status").delete();
                 entry.delete();
             }
         }
@@ -3179,6 +3180,37 @@ public final class Boot {
         try (java.io.FileOutputStream out = new java.io.FileOutputStream(new File(own, "cmdline"))) {
             out.write(name.getBytes(java.nio.charset.StandardCharsets.UTF_8));
             out.write(0);
+        }
+        writeProcStatus(own, name, pid);
+    }
+
+    /** Writes the fixed part of {@code <androidRoot>/proc/<pid>/status}, the
+     *  lines the kernel's file starts with: Name (the thread name the zygote's
+     *  child sets, the process name's last 15 characters as AndroidRuntime
+     *  .setArgv0 cuts it), Umask (an app's 0077), State, the ids, and Uid and
+     *  Gid (Process.myUid(), real, effective, saved, file system). The lines
+     *  that change (VmSize, VmHWM, VmRSS, Threads) are added after these at
+     *  every open by Win.apk's path table (windows/src/bionic/paths.cpp), from
+     *  Windows' own counters; without that table the file has these alone.
+     *  Google's Primes reads VmRSS there (Gmail logged "Error reading proc
+     *  status" at every start). */
+    private static void writeProcStatus(File own, String processName, long pid) throws java.io.IOException {
+        String comm = processName.length() > 15 ? processName.substring(processName.length() - 15) : processName;
+        long ppid = ProcessHandle.current().parent().map(ProcessHandle::pid).orElse(1L);
+        int uid = android.os.Process.myUid();
+        String ids = uid + "\t" + uid + "\t" + uid + "\t" + uid;
+        String text = "Name:\t" + comm + "\n"
+                + "Umask:\t0077\n"
+                + "State:\tR (running)\n"
+                + "Tgid:\t" + pid + "\n"
+                + "Ngid:\t0\n"
+                + "Pid:\t" + pid + "\n"
+                + "PPid:\t" + ppid + "\n"
+                + "TracerPid:\t0\n"
+                + "Uid:\t" + ids + "\n"
+                + "Gid:\t" + ids + "\n";
+        try (java.io.FileOutputStream out = new java.io.FileOutputStream(new File(own, "status"))) {
+            out.write(text.getBytes(java.nio.charset.StandardCharsets.UTF_8));
         }
     }
 

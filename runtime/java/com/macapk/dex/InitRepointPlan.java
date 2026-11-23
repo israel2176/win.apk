@@ -140,14 +140,30 @@ final class InitRepointPlan {
      * (class, descriptor) and only the nearer one may be clean.
      */
     private final Map<String, String> authorised;
+    /**
+     * Classes whose class file gets ACC_PUBLIC: see CrossPackageTypes. Carried
+     * here because it is found in this plan's pass over every method, and like
+     * the rest of the plan it is cross-class and must be known before any class
+     * is converted.
+     */
+    private final Set<String> publicized;
 
     private InitRepointPlan(Map<String, List<Forward>> synthesise,
                             Map<String, String> authorised) {
-        this.synthesise = synthesise;
-        this.authorised = authorised;
+        this(synthesise, authorised, Set.of());
     }
 
-    boolean isEmpty() { return authorised.isEmpty() && synthesise.isEmpty(); }
+    private InitRepointPlan(Map<String, List<Forward>> synthesise,
+                            Map<String, String> authorised, Set<String> publicized) {
+        this.synthesise = synthesise;
+        this.authorised = authorised;
+        this.publicized = publicized;
+    }
+
+    boolean isEmpty() { return authorised.isEmpty() && synthesise.isEmpty() && publicized.isEmpty(); }
+
+    /** Whether {@code internalName}'s class file must be public (CrossPackageTypes). */
+    boolean publicizes(String internalName) { return publicized.contains(internalName); }
 
     /**
      * Constructors to synthesise on {@code internalName}, sorted so the emitted
@@ -224,6 +240,7 @@ final class InitRepointPlan {
         // emitted method order must not depend on discovery order.
         Map<String, TreeMap<String, String>> synth = new HashMap<>();
         Builder b = new Builder(byName, synth);
+        Set<String> crossPackage = new java.util.HashSet<>();
         for (DexClass c : byName.values()) {
             // Released at the bottom of this iteration. transientCode below is
             // careful not to memoize a code_item for the same reason, but that
@@ -242,6 +259,7 @@ final class InitRepointPlan {
                     // on too; it must not take the whole plan down with it.
                     continue;
                 }
+                CrossPackageTypes.collect(byName, c, m, decoded, crossPackage);
                 scanMethod(decoded, m, code, (offset, uninitThis, allocated, ref) -> {
                     String start = uninitThis ? c.superclassName() : allocated;
                     if (start == null) return;
@@ -282,7 +300,7 @@ final class InitRepointPlan {
         for (DexClass c : byName.values()) {
             c.releaseMembers();
         }
-        if (authorised.isEmpty() && synth.isEmpty()) return NONE;
+        if (authorised.isEmpty() && synth.isEmpty() && crossPackage.isEmpty()) return NONE;
         // Freeze: read from every worker thread once conversion starts.
         Map<String, List<Forward>> frozen = new HashMap<>(synth.size() * 2);
         for (Map.Entry<String, TreeMap<String, String>> e : synth.entrySet()) {
@@ -293,7 +311,7 @@ final class InitRepointPlan {
             frozen.put(e.getKey(), Collections.unmodifiableList(out));
         }
         return new InitRepointPlan(Collections.unmodifiableMap(frozen),
-                                   Collections.unmodifiableMap(authorised));
+                                   Collections.unmodifiableMap(authorised), Set.copyOf(crossPackage));
     }
 
     /**

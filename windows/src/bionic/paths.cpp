@@ -36,12 +36,14 @@
 
 #include "bionic_internal.h"
 
+#include <cstdio>
 #include <cstring>
 #include <mutex>
 #include <string>
 #include <vector>
 
 #include <windows.h>
+#include <tlhelp32.h>
 
 #include "winapk/mini_bionic.h"
 
@@ -200,7 +202,94 @@ bool is_android_path(const char* p) {
     return p[0] == '/' && p[1] != '/';
 }
 
+namespace {
+
+// /proc/<this pid>/status, as the kernel makes it at each open: Boot writes its
+// fixed part (Name, Umask, State, the ids, Uid and Gid: what Java knows) when
+// the process starts, and every time the path is mapped -- an open, a stat --
+// the lines that change are put back after it, from Windows' own counters:
+// VmSize (the address space in use), VmHWM and VmRSS (the working set's peak
+// and size, Linux's resident set), Threads. Google's Primes reads VmRSS there
+// with a FileReader and logged "Error reading proc status" on every start.
+// No file from Boot (a process that is not an app's run), nothing written.
+void refresh_own_status(const std::wstring& file) {
+    HANDLE h = CreateFileW(file.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                           nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return;
+    std::string text;
+    char buf[4096];
+    DWORD got = 0;
+    while (ReadFile(h, buf, sizeof buf, &got, nullptr) && got > 0 && text.size() < 65536) text.append(buf, got);
+    CloseHandle(h);
+    // The fixed part is everything before the first line this function writes.
+    const size_t vm = text.find("\nVm");
+    if (vm != std::string::npos) text.resize(vm + 1);
+    const size_t threads = text.find("\nThreads:");
+    if (threads != std::string::npos) text.resize(threads + 1);
+    if (text.empty() || text.back() != '\n') text.push_back('\n');
+
+    MEMORYSTATUSEX mem{};
+    mem.dwLength = sizeof mem;
+    const unsigned long long vm_size =
+        GlobalMemoryStatusEx(&mem) ? (mem.ullTotalVirtual - mem.ullAvailVirtual) / 1024 : 0;
+    // psapi's PROCESS_MEMORY_COUNTERS, through the entry kernel32 has had since Windows 7 (misc.cpp's getrusage).
+    struct Counters {
+        DWORD cb, PageFaultCount;
+        SIZE_T PeakWorkingSetSize, WorkingSetSize, QuotaPeakPagedPoolUsage, QuotaPagedPoolUsage,
+            QuotaPeakNonPagedPoolUsage, QuotaNonPagedPoolUsage, PagefileUsage, PeakPagefileUsage;
+    } c{};
+    using Fn = BOOL(WINAPI*)(HANDLE, Counters*, DWORD);
+    static const Fn counters = reinterpret_cast<Fn>(reinterpret_cast<void*>(
+        GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "K32GetProcessMemoryInfo")));
+    if (counters) counters(GetCurrentProcess(), &c, sizeof c);
+    int thread_count = 0;
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    if (snap != INVALID_HANDLE_VALUE) {
+        THREADENTRY32 te{};
+        te.dwSize = sizeof te;
+        const DWORD self = GetCurrentProcessId();
+        for (BOOL ok = Thread32First(snap, &te); ok; ok = Thread32Next(snap, &te)) {
+            if (te.th32OwnerProcessID == self) ++thread_count;
+        }
+        CloseHandle(snap);
+    }
+    char lines[256];
+    std::snprintf(lines, sizeof lines, "VmSize:\t%8llu kB\nVmHWM:\t%8llu kB\nVmRSS:\t%8llu kB\nThreads:\t%d\n",
+                  vm_size, static_cast<unsigned long long>(c.PeakWorkingSetSize / 1024),
+                  static_cast<unsigned long long>(c.WorkingSetSize / 1024), thread_count);
+    text += lines;
+
+    // Written in place, not replaced: a reader that has the file open keeps its handle, and two
+    // opens at once each write a whole, current text.
+    h = CreateFileW(file.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                    OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return;
+    DWORD wrote = 0;
+    WriteFile(h, text.data(), static_cast<DWORD>(text.size()), &wrote, nullptr);
+    SetEndOfFile(h);
+    CloseHandle(h);
+}
+
+std::wstring mapped_path(const char* p);
+
+}  // namespace
+
 std::wstring host_path(const char* p) {
+    std::wstring host = mapped_path(p);
+    if (p && std::strncmp(p, "/proc/", 6) == 0) {
+        size_t len = std::strlen(p);
+        if (len > 7 && std::strcmp(p + len - 7, "/status") == 0) {
+            const std::string self = std::to_string(GetCurrentProcessId());
+            const std::string pid(p + 6, len - 13);
+            if (pid == "self" || pid == self) refresh_own_status(host);
+        }
+    }
+    return host;
+}
+
+namespace {
+
+std::wstring mapped_path(const char* p) {
     if (!p) return {};
     size_t len = std::strlen(p);
     p = meant_path(p, &len);
@@ -250,6 +339,8 @@ std::wstring host_path(const char* p) {
     }
     return g_android_root + host_names(p, len);
 }
+
+}  // namespace
 
 // A path near MAX_PATH by the long-path form of its full path (normalized first:
 // under "\\?\" Windows takes '/' and ".." as names); a shorter one as it is.

@@ -284,6 +284,7 @@ Every test is a program built by CMake; `ci.yml` runs each of them on
 | `winapk-jvm-run <jni_guest.so> <classes>` | A real HotSpot JVM loads a guest library through the linker: its `JNI_OnLoad` registers a native through the guest `RegisterNatives`, another native is bound by name through the `NativeMethodBind` hook, both are called from Java and call back through the variadic bridge. Run with the x86_64 and the arm64 build of the library, and again on the staged `android-framework.jar` for libjnigraphics |
 | `test/java/android/net/HostNetworkTest.java` | Run by hand against the built jars (`MACAPK_LOG_LEVEL=7`, no natives): what `ConnectivityManager` makes of the host's default network (`MacApkHostNetwork.fromHost`: the transport for each adapter type, addresses with prefix lengths, DNS servers, no default route, junk in the answer), and that `NsdManager`'s three failures are `FAILURE_INTERNAL_ERROR`, delivered after the call from its own thread |
 | `test/java/FrameworkStubsTest.java` | Framework methods that were stubs (`test/apicheck/Completeness.java` lists them) against what Android's do: `AnimatorSet`'s interpolator, `View`'s clip bounds and the drawing cut to them. One check per stub given a body |
+| `test/java/com/macapk/icu/IcuCalendarTest.java` | Run by hand against the built jars: `android.icu.util.Calendar` against the values Android 14's own ICU gives (week data per region, the weekend, the ICU-only fields and limits, set/clear, add/roll, `fieldDifference`, equality, `getInstance`'s class) |
 | `test/java/PermissionModelTest.java` | `SpecialAccessStore.GroupModel` against PermissionController's rules (grant, deny, deny twice, auto grant, background permissions, legacy targets, App info rows) |
 | `test/java/FileSeparatorRewriteTest.java` | Guest code reads Android's `/` from `File.separator` while the JDK's own classes keep the backslash |
 | `winapk-binder-test <classpath> com.macapk.loader.BinderTransportTest` | `host/binder_win.cpp` between real JVMs in three processes (`test/java/com/macapk/loader/BinderTransportTest.java`): transact, the OS calling pid and the receiver-derived uid, oneway order, a nested callback, binder identity both ways, a Messenger and its replyTo with the sender's uid in `Message.sendingUid` and a PendingIntent's creator uid, fds both ways, death notification; then the system broker's checks: a process that is no installed app, or that claims another package, is refused, android:exported, the package uid; then the account service's Google accounts (`accounts` child, its own GmsStore folder): an account signed in or out by another process after the service started is mirrored into or removed from the accounts table, asked or not, with the master token as password and `GoogleUserId`, and a row it did not mirror stays |
@@ -3326,6 +3327,44 @@ every such change is listed here:
   between two runs of the same build too (a GL game, PPSSPP, Jerboa's
   spinner); a build that compares every frame with `getPixels` found no
   difference.
+- `runtime/java/android/icu/util/Calendar.java`, `GregorianCalendar.java` (new):
+  the rest of the public `android.icu.util.Calendar`: `WeekData`,
+  `getWeekData`/`setWeekData`/`getWeekDataForRegion` (CLDR's week data as
+  Android 14's ICU answers it for every region), `isWeekend`, the ICU-only
+  fields 17-22 and their limits, the `set` overloads, `clear`/`isSet`,
+  `roll`, `fieldDifference`, `getActualMinimum`/`Maximum`, lenient and wall
+  time options, equality, `clone`, `getDateTimeFormat`, the zone-taking
+  `getInstance` (which ignored the zone), and the constants; `getInstance`
+  answers a `GregorianCalendar`, as ICU does. Gmail's message list died on
+  `getWeekData()` (NoSuchMethodError); `windows/test/java/com/macapk/icu/
+  IcuCalendarTest.java` holds the values Android's own ICU gives. Not
+  Windows-specific.
+- `runtime/java/com/macapk/dex/CrossPackageTypes.java` (new),
+  `InitRepointPlan.java`, `DexConverter.java` (`classAccessFlags`): a class
+  that is not public and whose name a member signature of another package
+  carries (a shrinker's repackaging: Gmail's `bbqp`, in the default package,
+  is the type of `ExtendedFloatingActionButton`'s fields and arguments) is
+  public in its class file. The checkcasts the translation adds where a
+  frame widens a slot name such a class, which ART never does, and HotSpot's
+  access check threw `IllegalAccessError` in a constructor ART runs. Found in
+  the pass `InitRepointPlan` already makes over every method; Fossify
+  Gallery has 2 such classes of 7237. Not Windows-specific.
+- `runtime/java/com/macapk/loader/Boot.java` (`writeProcStatus`): the fixed
+  part of `/proc/<pid>/status` (Name, Umask, State, the ids, Uid, Gid) beside
+  `cmdline`; `windows/src/bionic/paths.cpp` adds VmSize, VmHWM, VmRSS and
+  Threads from Windows' counters each time the path is mapped. Google's
+  Primes read `/proc/self/status` and found no file.
+- `runtime/java/android/view/LayoutInflater.java`: a `layout_weight` that is
+  a reference (`@0x7f...`, as a binary layout spells it, or a float dimen)
+  takes the value's own type, as `TypedArray.getFloat` does; both panes of
+  setupdesign's landscape GLIF template (`@dimen/..._weight`, floats) got
+  weight 0 and Gmail's account setup page was white. And `<include
+  layout="?attr/name">` resolves the theme attribute as AOSP's
+  `parseInclude` does (Gmail's `?agLayoutSearchBar`). Not Windows-specific.
+- `runtime/java/android/content/res/Resources.java`: `getInteger` of a value
+  that is no row of the decoded integers reads the value (any integer type)
+  and throws `NotFoundException` for another type, as AOSP; it answered 0.
+  Not Windows-specific.
 
 ## License
 
