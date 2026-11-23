@@ -234,7 +234,7 @@ Masad's update/dark screen. Two showed only a black window:
   drawn at all). The headless table's earlier note "network-dependent login screen"
   was wrong: the failure is a GL surface mismatch, present regardless of network.
   **Verified on Windows (Nov 2026):** draws — both the GL extensions fix (`02ee01d`)
-  and the net_spi class-version fix (`4e398e9`) were needed. The GL fix alone was
+  and the net_spi class-version fix (`97870b0`) were needed. The GL fix alone was
   not enough: `net_spi` compiled by JDK 23 (class version 67) caused a
   `ServiceLoader` failure during Flutter plugin registration, which detached
   `FlutterFragment` before its renderer was set. Zero "no such function here" and
@@ -327,13 +327,21 @@ Masad's update/dark screen. Two showed only a black window:
   paymentsapp`) with data dir at `%LOCALAPPDATA%\Win.apk\il2bit` (46 chars base),
   draws cleanly. Not covered without the long-path policy: the C++ host's own
   std::filesystem calls (the AOT cache, the install's staging), chdir.
-- **Cordova `file:///android_asset/` not served by WebView2** (new, Nov 2026).
-  Yahav Bank uses Cordova; its WebView loads `file:///android_asset/www/app/
-  index.html?cordova` but gets `net::ERR_FAILED`. On real Android the
-  `file:///android_asset/` scheme is intercepted by the WebView and served from
-  the APK's assets. Win.apk's WebView2 host (`native_webview.cpp`) needs a
-  `WebResourceRequested` handler that maps `file:///android_asset/<path>` to the
-  APK's `assets/<path>` and returns it. Affects all Cordova apps.
+- **Cordova `file:///android_asset/`: fixed, Yahav to check again on Windows.**
+  Yahav Bank (Cordova) got `net::ERR_FAILED (file:///android_asset/www/app/
+  index.html?cordova)`. Win.apk already serves such pages by copying the page's
+  asset folder to real files and navigating WebView2 there
+  (`MacApkWebViewBridge.macapkMaterializeAssetPage`, `materialize()` in
+  `native_webview.cpp`), but the copy returned null: it looked for the data
+  directory's host path while Win.apk gives the app its Android name
+  (`/data/user/0/<pkg>`). It now copies under the Android root's `/.macapk/` and
+  the host maps the answered paths before making the `file:` URL. Checked under
+  Wine with a test APK (the page and `../js/cordova.js` land on disk); WebView2
+  itself is not in the Wine prefix, so the page load is unchecked. If it still
+  fails, the run log's `WebView` lines around `loadUrl`, any `asset page copy
+  failed`, and Cordova's console errors say where. Not handled on Windows:
+  `file:///android_res/` (WebView2 raises no `WebResourceRequested` for `file:`;
+  it would need the same copy for resources).
 
 **Seven apps with `WINAPK_AOSP_RES=1 WINAPK_AOSP_VIEWS=1`, November 2026**
 (same branch and stage; logged via stdout capture):
@@ -355,13 +363,27 @@ New bugs found with AOSP views:
   `NoSuchMethodError` fires on every Choreographer frame in Yahav, filling the log with
   thousands of repeated lines. Fix: add the 4-arg `println_native` to
   `runtime/java/android/util/Log.java`, forwarding to the existing 3-arg native.
-- **`drawable/button_selector` NotFoundException (AOSP resources, Masad):**
-  `base_dialog_fragment` inflates `FibiFontButton` → its `button_selector.xml` has
-  `<item>` without a `drawable` attribute (uses `android:state_*` only) →
-  `XmlPullParserException: <item> tag requires a 'drawable' attribute`. AOSP's
-  `StateListDrawable` parser is stricter than Win.apk's. The app's drawable XML
-  is valid Android XML; AOSP's parser rejects it because the item has no src/drawable.
-  Found in: `com.masad.nativeapp:layout/base_dialog_fragment`. Likely affects other apps.
+- **`drawable/button_selector` NotFoundException (AOSP resources, Masad):
+  not a parser difference so far.** `base_dialog_fragment` inflates
+  `FibiFontButton`, whose `button_selector.xml` fails with `XmlPullParserException:
+  <item> tag requires a 'drawable' attribute`. With `WINAPK_AOSP_RES=1` that
+  parser is AOSP 14's own `StateListDrawable`, so a device throws the same for
+  the same XML: `ResourcesImpl.loadXmlDrawable` inflates with no theme, so an
+  item whose `android:drawable` is `@null`, missing, or `?attr/...` fails there
+  too (the theme-less load; `?attr` inside a child `<shape>` is fine, it is
+  applied after). A selector test APK (built with the SDK's tools) with child
+  drawables, `@drawable`/`@color`/`@mipmap`/CSL/vector/alias references,
+  `?attr` in items and in child shapes, `@null`, qualified copies (`ldrtl`,
+  `night`, `anydpi-v26`, `v21`), a color selector in `drawable/` used as
+  `textColor`, and obfuscated attribute names, gives AOSP's answer for every
+  case with the switches on. Off, Win.apk's own parser accepts the `@null` and
+  `?attr` items and answers a `drawable-night`-only drawable where AOSP finds none: the lenient side
+  is the old one. So on a device Masad's code path does not reach this XML:
+  look at which `base_dialog_fragment` the run picked (Win.apk's window is
+  landscape by default; a `layout-land` or other qualified copy may use
+  `button_selector` where the device's does not) and at the XML itself
+  (`aapt2 dump xmltree --file res/drawable/button_selector.xml`). The APK is
+  not on hand.
 
 - **Exit hangs: fixed, the sweeps to check again** (bit, Waze, Maccabi). A
   guest library aborted in a `thread_local` destructor at process exit
