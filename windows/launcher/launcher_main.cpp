@@ -133,6 +133,7 @@ constexpr UINT kUpdateDownloaded = WM_APP + 15;  // wParam: ok (complete and che
 constexpr UINT kSetupChanged = WM_APP + 16;   // the Downloads folder changed while the Google services setup is open
 constexpr UINT kSetupChecked = WM_APP + 17;   // lParam: new SetupCheck (winapk-runtime --verify-apk's answer)
 constexpr UINT kMaintenanceEnded = WM_APP + 18;  // the maintenance window the launcher opened ended
+constexpr UINT kGmsDeviceId = WM_APP + 19;    // lParam: new std::wstring (--gms device-id's id, or empty)
 constexpr UINT_PTR kInfoBarTimer = 2;  // the InfoBar closes itself
 constexpr UINT_PTR kUpdateTimer = 3;   // hourly: is the daily update check due?
 constexpr UINT_PTR kSetupScanTimer = 4;  // the Downloads folder settled: look for new files in it
@@ -298,6 +299,13 @@ const wchar_t* tr(const wchar_t* en) {
         {L"The account and its tokens are removed from this PC. Apps that used it will ask you to sign in again.",
          L"החשבון והאסימונים שלו יוסרו מהמחשב. אפליקציות שהשתמשו בו יבקשו להתחבר שוב."},
         {L"Signed out of {0}.", L"החשבון {0} נותק."},
+        {L"Device ID for Google", L"מזהה המכשיר עבור Google"},
+        {L"This device isn't Play Protect certified. Google lets you register it to your account so that Google "
+         L"apps sign in.",
+         L"המכשיר הזה אינו מאושר על ידי Play Protect. ‏Google מאפשרת לרשום אותו בחשבון שלך כדי שאפליקציות "
+         L"Google יאפשרו להתחבר."},
+        {L"Register this device", L"רישום המכשיר הזה"},
+        {L"Device ID copied.", L"מזהה המכשיר הועתק."},
         {L"Could not sign out", L"ההתנתקות נכשלה"},
         {L"Signed in to Google.", L"הכניסה ל-Google הושלמה."},
         {L"Signed in as {0}.", L"מחובר בתור {0}."},
@@ -5292,6 +5300,8 @@ struct Row {
     int choice = 0;
     std::function<void(int)> act;  // button: act(0), toggle: act(new state), choice: act(index)
     const char* key = nullptr;     // names a row that an event changes in place (update_progress)
+    std::wstring link;             // a text link under the detail: a way on that is not the row's action
+    std::function<void()> link_act;
 };
 
 struct Section {
@@ -5312,6 +5322,7 @@ struct Page {
     struct Target {
         RectF r;
         int section, row;
+        bool link = false;  // the row's link, not its control
     };
     std::vector<Target> targets;
     RectF back_r, thumb, view;
@@ -5415,6 +5426,7 @@ void paint_page(Graphics& g) {
             const float tw = cw - 2 * pad - (cs.Width > 0 ? cs.Width + px(16) : 0);
             float h = px(20);
             if (!row.detail.empty()) h += px(2) + text_height(g, row.detail, g_f.caption.get(), tw);
+            if (!row.link.empty()) h += px(24);
             heights.push_back((std::max)(px(56), h + px(24)));
             controls.push_back(cs);
             total += heights.back();
@@ -5445,7 +5457,8 @@ void paint_page(Graphics& g) {
             }
             const float tw = cw - 2 * pad - (cs.Width > 0 ? cs.Width + px(16) : 0);
             const float dh = row.detail.empty() ? 0 : px(2) + text_height(g, row.detail, g_f.caption.get(), tw);
-            const float ty = ry + (h - px(20) - dh) / 2;
+            const float lh = row.link.empty() ? 0 : px(24);
+            const float ty = ry + (h - px(20) - dh - lh) / 2;
             draw_text(g, row.title, g_f.body.get(), row.destructive && row.kind == Row::kText ? g_t.danger : g_t.text,
                       RectF(m + pad, ty, tw, px(20)));
             if (!row.detail.empty()) {
@@ -5458,6 +5471,15 @@ void paint_page(Graphics& g) {
                 if (focused) draw_focus_ring(g, cr, row.kind == Row::kToggle ? cr.Height / 2 : px(kRadiusControl));
                 if (interactive) s.targets.push_back({row.kind == Row::kToggle ? rr : cr, static_cast<int>(si),
                                                       static_cast<int>(ri)});
+            }
+            if (!row.link.empty()) {
+                // Accent text under the detail, as the install window's links (draw_link).
+                const int li = static_cast<int>(s.targets.size());
+                const RectF lr(m + pad, ty + px(22) + dh + px(2),
+                               (std::min)(tw, text_width(g, row.link, g_f.body.get()) + px(4)), px(22));
+                draw_text(g, row.link, g_f.body.get(), s.hot == li ? mix(g_t.accent, g_t.text, 0.3f) : g_t.accent, lr);
+                if (s.focus == li) draw_focus_ring(g, inset(lr, -px(3), -px(1)), px(kRadiusControl));
+                s.targets.push_back({lr, static_cast<int>(si), static_cast<int>(ri), true});
             }
             ry += h;
         }
@@ -5529,6 +5551,10 @@ void page_click(int hit) {
     if (hit < 0 || hit >= static_cast<int>(s.targets.size())) return;
     const Page::Target t = s.targets[static_cast<size_t>(hit)];
     const Row row = s.sections[static_cast<size_t>(t.section)].rows[static_cast<size_t>(t.row)];  // act may rebuild
+    if (t.link) {
+        if (row.link_act) row.link_act();
+        return;
+    }
     if (!row.act) return;
     const int generation = s.generation;
     if (row.kind == Row::kButton) {
@@ -5777,6 +5803,55 @@ void google_signout(const std::wstring& account) {
     }
 }
 
+// The device ID Google's page for uncertified devices takes (google.com/android/uncertified): the Services
+// Framework's android_id, as `--gms device-id` reads it from gservices.db with the runtime's own SQLite (or the
+// layer's own checkin without the real GSF). Win.apk is not a Play Protect certified device and never claims to
+// be; registering the ID is Google's own way on for such a device (custom ROMs and Waydroid use it). Asked on a
+// thread (a JVM start) once per opening of Settings, and posted to the library's window, which owns these.
+std::wstring g_device_id;
+bool g_device_id_asking = false;
+int g_device_id_page = -1;  // the page generation it was last asked for
+
+DWORD WINAPI device_id_thread(void*) {
+    std::wstring text;
+    auto* out = new std::wstring();
+    if (run_gms(L"device-id", &text) == 0) {
+        if (const size_t at = text.find(L"DEVICE_ID\t"); at != std::wstring::npos) {
+            const size_t end = text.find_first_of(L"\t\r\n", at + 10);
+            *out = text.substr(at + 10, end == std::wstring::npos ? std::wstring::npos : end - at - 10);
+        }
+    }
+    if (!PostMessageW(g_main, kGmsDeviceId, 0, reinterpret_cast<LPARAM>(out))) delete out;
+    return 0;
+}
+
+void ask_device_id() {
+    if (g_device_id_asking || g_device_id_page == g_page.generation) return;
+    g_device_id_page = g_page.generation;
+    g_device_id_asking = true;
+    HANDLE t = CreateThread(nullptr, 0, device_id_thread, nullptr, 0, nullptr);
+    if (t) CloseHandle(t);
+    else g_device_id_asking = false;
+}
+
+// The row: the ID, Copy, and the registration page as a link (the page is Google's, and the user signs in there).
+Row device_id_row() {
+    // Left to right in Hebrew too: a signed ID's minus stays in front of its digits.
+    Row r = button_row(tr(L"Device ID for Google"),
+                       L"\u202A" + g_device_id + L"\u202C\n" +
+                           tr(L"This device isn't Play Protect certified. Google lets you register it to your "
+                              L"account so that Google apps sign in."),
+                       tr(L"Copy"), [] {
+                           if (copy_text(g_main, g_device_id)) info(tr(L"Device ID copied."), kSuccess);
+                       });
+    r.link = tr(L"Register this device");
+    r.link_act = [] {
+        ShellExecuteW(nullptr, L"open", L"https://www.google.com/android/uncertified", nullptr, nullptr,
+                      SW_SHOWNORMAL);
+    };
+    return r;
+}
+
 bool google_apps_ready();
 bool background_updates_on();
 void maintenance_check();
@@ -5837,6 +5912,8 @@ Section google_account_section() {
                                                           : tr(L"Install Play services, Services Framework and "
                                                                L"Play Store from their downloads."),
                                       tr(L"Open"), [] { show_gms_setup(true); }));
+        ask_device_id();
+        if (!g_device_id.empty()) sec.rows.push_back(device_id_row());
     }
     sec.footer = tr(L"Sign-in takes place on Google's own page, in a separate window; Win.apk never sees your "
                     L"password. The account's tokens are stored only on this PC.");
@@ -10212,6 +10289,15 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             // An app may have added the account (its "Sign in with Google") or the user signed out.
             if (wp && google_account_present() != !g_account.empty()) refresh_account();
             break;
+        case kGmsDeviceId: {
+            std::unique_ptr<std::wstring> id(reinterpret_cast<std::wstring*>(lp));
+            g_device_id_asking = false;
+            if (*id != g_device_id) {
+                g_device_id = *id;
+                if (g_view == kSettingsView) rebuild_page();
+            }
+            return 0;
+        }
         case kGmsAccount: {
             std::unique_ptr<std::wstring> account(reinterpret_cast<std::wstring*>(lp));
             g_account = *account;

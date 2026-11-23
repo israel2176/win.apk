@@ -137,13 +137,41 @@ under **Manage apps & device**.
   be an older version; otherwise it is refused, as Android refuses it.
 - **What may not work.** Google decides what its servers send. The Play Store
   may refuse to download an app to a device it does not recognise as certified
-  (Win.apk is not, and will not pretend to be: see below), and some apps are
-  not offered at all for such a device. Then the update has to come as a file:
+  (Win.apk is not, and will not pretend to be: see
+  [Play Protect certification](#play-protect-certification)), and some apps
+  are not offered at all for such a device. Then the update has to come as a file:
   drop the newer APK on the library, as for any update.
 
 Logs: the Play Store's jobs in `logs\system.log` (`jobs:` lines),
 `logs\maintenance.log` (the last background window), the install itself in
 `logs\install-helper.log` and `logs\install-<app>.log`.
+
+### Play Protect certification
+
+Gmail, the Play Store and other Google apps may say **"This device isn't
+Play Protect certified"**. That is true: Google certifies phones and tablets
+whose makers had them tested, and Win.apk is not one of them. Win.apk does not
+fake a certification, and will not.
+
+Google has its own way on for devices like this (custom ROMs and Waydroid
+use it): you register the device's ID with your Google account, and Google
+apps then let that account sign in on it.
+
+1. Turn on **Settings > Google account > Use Google services**, set them up,
+   and open the Play Store once so Google services check in with Google.
+2. Under **Settings > Google account**, the row **Device ID for Google** shows
+   a long number (it may start with a minus sign). Press **Copy**.
+3. Press **Register this device**. Google's page opens in your browser; sign
+   in there with the same Google account, paste the number and press
+   **Register**.
+4. Wait: Google says it can take a few minutes, sometimes longer. Then close
+   the Google app and open it again.
+
+The number is the Google Services Framework's own ID (its `android_id`). Win.apk
+reads it from the Services Framework's data each time Settings opens; with no
+Services Framework it shows the ID Win.apk's own Google layer was given. No
+number, no row. Once the Services Framework's data is cleared or it is
+installed again, it gets a new ID, which has to be registered again.
 
 ### How it works and what it means for privacy
 

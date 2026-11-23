@@ -82,6 +82,14 @@ has not checked in with Google yet, so the store has no device id (its log says
 the line tagged `MacApkTrust` just before it names the server, the certificates
 it sent and who issued them, which is what to attach to a report.
 
+**Gmail or the Play Store says "This device isn't Play Protect certified".**
+Win.apk is not a certified device and does not pretend to be. Register its
+device ID with your Google account on Google's own page: **Settings > Google
+account > Device ID for Google**, **Copy**, then **Register this device**
+([the steps](google-services.md#play-protect-certification)). No such row:
+Google services are off, or have not checked in with Google yet (open the
+Play Store once).
+
 **The camera, location or Wi-Fi names are missing.** Windows' privacy switches
 apply: Settings > Privacy & security > Camera, Microphone or Location, with
 access for desktop apps on. Wi-Fi network names need location access too, as on

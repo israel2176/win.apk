@@ -599,6 +599,20 @@ New bugs found with AOSP views:
   - *Can't be fixed here*: Play may refuse downloads to an uncertified device
     or hide apps from it; Win.apk will not fake certification. Then the
     update comes as a file.
+  - **Play Protect: the registration path is built** (November 2026). Gmail
+    and Play say "This device isn't Play Protect certified"; Google's own way
+    on for such a device is registering the GSF `android_id` at
+    google.com/android/uncertified (the owner did it by hand, reading
+    `gservices.db`). Settings > Google account > **Device ID for Google**
+    (with Google services on, once there is an ID) shows it, with Copy and a
+    **Register this device** link; `winapk-runtime --gms device-id` reads it
+    (gservices.db through the runtime's SQLite; with no GSF database, the
+    layer's own checkin). *Verified*: the launcher compiles (MinGW), the Java
+    builds (`build_java.sh`), the verb's checkin path and its search for
+    `gservices.db` run on a plain JVM (the SQLite read needs winapk-runtime's
+    natives). *Not verified*: the row and the SQLite read on real Windows.
+    **The owner's check**: Settings > Google account shows the same number he
+    registered by hand; Copy, then the link opens Google's page.
   - **The owner's check on Windows** (Google services on and set up, signed
     in; a build with this change):
     1. Install an old Bit (`com.bnhp.payments.paymentsapp`) from a file. In
