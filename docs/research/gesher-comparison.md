@@ -45,3 +45,39 @@ evidence discipline (smoke vs functional, known failures); AppContainer isolatio
 
 the other runtime's exit hang; other bundle paths in the other runtime; AOT gains on the other runtime's dynarmic; Control Center vs the
 launcher in use; the other runtime's CI claims (taken from its docs).
+
+## Code-verified (2026-11-23, code only, the other runtime 52513f0)
+
+- **Bundles: confirmed.** Installer.java:410 suffix-only; no apkm/manifest.json/standalones anywhere;
+  extractZip flattens; base = first non-split in listFiles order; companionSplits only split_*/config.*;
+  an ".xapk" that is an APK throws. Win.apk's AppInstall handles all, but installs every bundletool split
+  (no toc.pb device selection) and takes the largest standalone, not the ABI's.
+- **arm64: confirmed.** the other runtime: dynarmic, in-memory only, exclusives via callbacks, exact NaN, whole-cache
+  clear on a generation bump, no IC IVAU handling, fastmem failure = guest crash. Win.apk: dynarmic JIT +
+  persistent clang AOT shared by code hash (2 GB, 60 days), crash guard, inline exclusives, 64-byte IC IVAU
+  invalidation broadcast. Not measured.
+- **Raw syscalls: mixed.** The 12 are ENOSYS in the other runtime; in Win.apk several are stubs: rt_sigaction/procmask
+  return 0 doing nothing, ptrace returns 0 (the other runtime's -ENOSYS is the more honest answer; ours should be
+  reviewed), setpriority no-op, getpriority 0, mincore all-resident, mremap ENOMEM, set_tid_address ignores
+  the address. Real: msync, clock_nanosleep (errno sign bug on the raw path), prlimit64 old limit.
+  the other runtime has, Win.apk lacks: xattr 5-16, epoll_ctl/pwait, flock, renameat, fdatasync, timerfd 85-87,
+  getrlimit, getcpu, socket, connect, mlock family, memfd_create. Win.apk raw getcwd returns the pointer,
+  openat only cwd/absolute.
+- **Exit hang: likely in the other runtime by another path.** compat/elf/tls.cc ArenaDestructor (FLS callback) takes
+  g_mutex with no exiting check; a thread killed at ExitProcess while holding g_mutex (dlopen, thread start)
+  blocks it. Win.apk's elf_tls.cpp process_exiting guard covers exactly this.
+- **WebView:** the other runtime serves android_asset/android_res on https://other-file.example via deferred
+  WebResourceRequested; Win.apk copies pages (48 MB cap), no android_res; both run shouldInterceptRequest
+  on a worker pool.
+- **OpenSL ES:** the other runtime real (players, recorders); Win.apk stub.
+- **Media:** the other runtime software libvpx/dav1d/libhevc/libavc, opus, libwebm, MP4/WebM/Ogg/ADTS muxers.
+  Win.apk decodes avc/hevc/vp8/vp9/av1/mp4v/h263/mpeg2 through Media Foundation only (needs the PC's
+  extensions), encoders are MF's, own MP4 writer.
+- **Update check:** Win.apk does verify size and sha256 digest (earlier claim wrong); missing vs the other runtime: no
+  digest -> size only, no product-version check, pre-releases not skipped, a cached copy re-run on size only.
+- **GL extensions:** Win.apk lists only callable extensions (safer; hides ANGLE_/CHROMIUM_); the other runtime exports
+  all, and a declared function ANGLE lacks aborts on call.
+- **Tests:** the other runtime e2e 10 apps incl. TIC-80 (SDL2); no Compose/Flutter/RN/libGDX/WebView-shell; no size
+  budget; no view-tree oracle. Win.apk 92 apps, smoke 10 per PR, footprint and UI gate in CI.
+- **Hebrew:** both full (the other runtime 231 keys, Win.apk 431).
+- **Package events/jobs:** the other runtime real PMS broadcasts and persisted jobs (written in place, no temp+rename).
