@@ -14,7 +14,7 @@ offers two levels of support.
 | Push messages (Firebase Cloud Messaging) | ✅ | ✅ from Google's Play services |
 | Firebase Analytics, fused location | ✅ | ✅ |
 | Apps that insist on Google's own Play services | ❌ | ⚠️ tried with a few apps |
-| The Play Store | ❌ | ⚠️ signs in, installs and updates free apps |
+| The Play Store | ❌ | ⚠️ signs in, installs and updates free apps, also in the background |
 | In-app purchases, Play Integrity, the Maps SDK's map | ❌ | ❌ |
 
 Start with the built-in level. Turn Google services on only for an app that
@@ -103,6 +103,44 @@ updating its own helper apps. The Play Store installs and updates without
 Win.apk asking again, as a phone's does: only the copy Google signed, checked
 each time. Any other app that installs one gets the question. Most apps have not been tried yet: please
 [report](troubleshooting.md#reporting-a-problem) what you find.
+
+### App updates from the Play Store
+
+As on a phone, the Play Store keeps your apps up to date, including apps you
+installed from a file: it updates an app that has an update in Play, unless
+you turned **Auto-update apps** off in the Play Store's own settings (its
+**Over Wi-Fi only** choice waits for a network Windows does not count as
+metered). An app that refuses to run until it is updated (some banking apps)
+can also be updated from its page in the Play Store, or with **Update all**
+under **Manage apps & device**.
+
+- **In the background.** The Play Store checks for updates with background
+  jobs, which Win.apk keeps when the Play Store is closed and starts the Play
+  Store for when they are due, without a window. While an Android app is
+  open that happens by itself. With **Settings > Google account > Update apps
+  in the background** on (it is, by default, once Google services are set
+  up), Windows also starts Google services for a few minutes every four hours
+  or so while no app is open, only when the PC is on mains power and has a
+  network, and never wakes it (a task named **Win.apk\Background updates** in
+  Windows' Task Scheduler; turning the setting or Google services off removes
+  it, and so does uninstalling Win.apk).
+- **An app you are using.** When the Play Store asks Android to wait until
+  the app is not in use (a "gentle update"), Win.apk waits until you close
+  its window. Otherwise, and for an update you start yourself in the Play
+  Store, the app is closed for its update, as on a phone. The library, the
+  app's shortcuts and its icon show the new version afterwards.
+- **Only a real update.** An update must be signed by the app's own developer
+  (or the developer's newer key, which the old one vouches for) and must not
+  be an older version; otherwise it is refused, as Android refuses it.
+- **What may not work.** Google decides what its servers send. The Play Store
+  may refuse to download an app to a device it does not recognise as certified
+  (Win.apk is not, and will not pretend to be: see below), and some apps are
+  not offered at all for such a device. Then the update has to come as a file:
+  drop the newer APK on the library, as for any update.
+
+Logs: the Play Store's jobs in `logs\system.log` (`jobs:` lines),
+`logs\maintenance.log` (the last background window), the install itself in
+`logs\install-helper.log` and `logs\install-<app>.log`.
 
 ### How it works and what it means for privacy
 

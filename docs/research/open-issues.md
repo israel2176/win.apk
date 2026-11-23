@@ -522,6 +522,70 @@ New bugs found with AOSP views:
   sign in (`logs\system.log`: "package com.google.android.gm added", no
   REFUSED line). Not done: `PACKAGE_CHANGED` (no enable/disable of components
   yet) and `PACKAGE_DATA_CLEARED` (no "Clear storage" path tells the broker).
+- **Google Play's automatic updates (November 2026): built, verified in
+  parts, not yet on real Windows with real Play.** What stood between the
+  real Play Store and a phone's auto-updates, and what was done:
+  - *What Play sees* was already right: `getInstalledPackages` and
+    `getPackageInfo` of other apps answer from the installed APK (its
+    versionCode, its verified signers and v3 lineage with
+    `GET_SIGNING_CERTIFICATES`), and the installer of record is Play
+    (`InstallerOfRecord`, its test). Nothing changed there.
+  - *Play's jobs died with its process* (the key gap): the app's JobScheduler
+    lives in the app. Now the broker keeps them (`BrokerJobs`, persisted in
+    `system_ce\0\jobs.bin`; a reboot of Windows drops the unpersisted ones)
+    and starts Play, Play services or GSF headless when one is due and its
+    constraints hold (network, unmetered from Windows' connection cost,
+    charging from `GetSystemPowerStatus`, idle = no app open). Other apps'
+    held jobs run only when the app runs (`WINAPK_JOBS_START_APPS=1` lifts
+    that): each process is a JVM.
+  - *Nothing runs while no app is open*: the owner's earlier rule (Google
+    services only while an app is open) is kept for the broker itself, but
+    Settings > Google account > "Update apps in the background" (on by
+    default once Google services are set up) adds a Windows scheduled task,
+    every ~4 h on mains power with a network, that opens a 3-minute
+    maintenance window (`--maintenance`), which also delivers the Play
+    Store's BOOT_COMPLETED. **The owner may want this off by default**:
+    decide.
+  - *Install path*: downgrades refused, key rotation accepted, the same rules
+    for `ACTION_INSTALL_PACKAGE`; `InstallConstraints` honoured (an app open
+    in a window is "interacting"; `GENTLE_UPDATE` is AOSP's;
+    `commitSessionAfterInstallConstraintsAreMet` waits, then times out); the
+    Play Store's update of an app open in a window stops it (exit 0, no
+    error splash), any other installer's leaves it to the user (9523dd3's
+    rule). Broadcasts and the broker's package table: 9523dd3.
+  - *Verified*: `BrokerJobsTest`, `SessionUpdateTest` (Linux and Wine), and
+    `BinderTransportTest`'s job checks under Wine (a job of a package whose
+    process exited is run by a process the broker started for it). Not
+    verified: the natives for metered and power (compiled only), the
+    scheduled task (no Task Scheduler under Wine), and everything with the
+    real Play Store.
+  - *Can't be fixed here*: Play may refuse downloads to an uncertified device
+    or hide apps from it; Win.apk will not fake certification. Then the
+    update comes as a file.
+  - **The owner's check on Windows** (Google services on and set up, signed
+    in; a build with this change):
+    1. Install an old Bit (`com.bnhp.payments.paymentsapp`) from a file. In
+       Settings > Apps, "Report Google Play as the installer" on.
+    2. Open Google Play once, let it settle a minute, close it. Then
+       `logs\system.log` should have `jobs: com.android.vending… died holding N
+       job(s); the system keeps them`. None: Play schedules no job with the
+       platform JobScheduler (look for `schedule id=` in
+       `logs\services\com.android.vending*.log` while Play runs) — report it.
+    3. Quick path: Play > Manage apps & device > Update all (or Bit's page >
+       Update). Expected: the download, then the install with no question,
+       Bit closes if open, the tile shows the new version (App details), and
+       `logs\install-helper.log` / `logs\install-bnhp…log` show the install.
+       Bit then opens past its "update required" screen.
+    4. Background path: with nothing open, wait (or run the task now: Task
+       Scheduler > Win.apk > Background updates > Run). `logs\maintenance.log`
+       shows the window (`maintenance window`, `boot: system apps ready`,
+       `jobs: … is due -> com.android.vending… (started for it)`), and a few
+       minutes later `idle: … stopping Google services`. Look in Task Manager
+       that winapk-runtime processes appear and go.
+    5. If Play downloads nothing: its own screen says why (device not
+       certified, "not compatible"). Note the words; do not work around it.
+    6. A refused update shows in `logs\services\com.android.vending*.log` as
+       `session N refused: INSTALL_FAILED_…`.
 
 ## Size and memory (decide later)
 
