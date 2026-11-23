@@ -128,7 +128,7 @@ public class Reflection {
         Module module = currentClass != null ?
                 currentClass.getModule() :
                 ClassLoader.getSystemClassLoader().getUnnamedModule();
-        SharedSecrets.getJavaLangAccess().ensureNativeAccess(module, owner, methodName);
+        SharedSecrets.getJavaLangAccess().ensureNativeAccess(module, owner, methodName, currentClass);
     }
 
     /**
