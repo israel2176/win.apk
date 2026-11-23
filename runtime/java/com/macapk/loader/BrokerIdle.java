@@ -50,8 +50,8 @@ final class BrokerIdle {
         return Math.max(graceMs, v);
     }
 
-    /** A maintenance window (SystemServer.MAINTENANCE: started by the launcher's
-     *  scheduled task, no app open) stops this long after the boot or the last job it
+    /** A maintenance window (SystemServer.MAINTENANCE: started by the launcher while
+     *  it runs, launcher/maintenance.h) stops this long after the boot or the last job it
      *  handed out, ran or saw finish: long enough for a job's follow-up work (the Play
      *  Store schedules the install of an update it found from the check's own job),
      *  short enough that Google services do not stay on for nothing.

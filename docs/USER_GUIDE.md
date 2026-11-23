@@ -309,7 +309,7 @@ its own. Each setting takes effect the next time an app opens unless noted.
 | Apps | **Speed up ARM apps** (on) | Translates ARM code to your PC's code in the background, at low priority, so apps run faster. Off: no translation is started, one under way stops before its next part (and goes on where it was once this is on again), and translations already made are still used. See [ARM apps](arm-apps.md) |
 | Apps | **Desktop shortcut for new apps** | Every app gets a Start menu shortcut; this adds one on the desktop too |
 | Apps | **Open .apk, .apkm, .xapk and .apks files with Win.apk** | Makes Win.apk the default program for the four formats |
-| Google account | **Sign in**, **Add another account**, **Sign out**; **Use Google services (experimental)** (off), and with it on **Update apps in the background** (on: every few hours, while no app is open and the PC is on mains power, Google services start for a few minutes so that the Play Store can update apps; a Windows scheduled task, *Win.apk\Background updates*) and **Google services setup** | See [Google account and Google services](google-services.md) |
+| Google account | **Sign in**, **Add another account**, **Sign out**; **Use Google services (experimental)** (off), and with it on **Update apps in the background** (on: every few hours while Win.apk is open, even with only an app or the install window showing, and the PC is on mains power with a network, Google services start for a few minutes so that the Play Store can update apps; nothing runs once Win.apk is closed: there is no scheduled task or service) and **Google services setup** | See [Google account and Google services](google-services.md) |
 | Troubleshooting | **Logs** | Opens the `logs` folder in Explorer, to attach files to a bug report |
 | Troubleshooting | **App data** | Opens `%LOCALAPPDATA%\Win.apk` |
 | Troubleshooting | **Debug mode** | Off by default. For developers: apps opened from now on report every thread they have, with its Java and native stack, to the [Threads window](#debug-mode-the-threads-window). With it on, a **Threads** row under it opens that window on every running app |
@@ -542,7 +542,7 @@ and the launch window open the right log themselves when something fails.
 | `gms.log` | The Google account operations run from the settings |
 | `google-setup.log` | The checks of the Google services setup |
 | `system.log`, `services\` | With Google services on: the system broker (its `jobs:` lines: the apps' background jobs it keeps and starts, the Play Store's update checks among them), and the apps it starts for other apps |
-| `maintenance.log` | With **Update apps in the background** on: the last background window, when no app was open |
+| `maintenance.log` | With **Update apps in the background** on: the last background window Win.apk opened |
 | `install-helper.log`, `package-backfill.log` | Installs an app itself asked for (F-Droid installing another app: Win.apk asks first; the Play Store Google signed: no question, as on a phone), and library maintenance |
 | `hs_err_pid<n>.log` | A crash report from the Java VM, if the VM itself crashed |
 | `crash-<app>-<date>.dmp` | A minidump of the app's process when its native code crashed (the last three per app); attach it to an issue with the log |

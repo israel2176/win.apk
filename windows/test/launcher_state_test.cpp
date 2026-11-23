@@ -17,6 +17,9 @@
 // The library's files (launcher/library_files.h, std::filesystem only), on real files: a bundle kept as hard
 // links to its installed APKs, that step done again over a cut-off one, an update's files set aside, then
 // dropped or put back, never written.
+// Background updates (launcher/maintenance.h): a maintenance window opens only with the setting on and the setup
+// done, never beside a running window or broker, once every four hours (and at once with none noted, or when the
+// clock went back), and waits while on battery, with no network or while an app starts.
 
 #include <cstdio>
 #include <cstdlib>
@@ -30,6 +33,7 @@
 #include "../launcher/debug_threads.h"
 #include "../launcher/installs.h"
 #include "../launcher/library_files.h"
+#include "../launcher/maintenance.h"
 #include "../launcher/updates.h"
 
 namespace {
@@ -724,12 +728,50 @@ void test_library_files() {
 
 }  // namespace
 
+void test_maintenance() {
+    std::printf("background updates' maintenance window\n");
+    namespace mw = winapk::launcher::maintenance;
+    using D = mw::Decision;
+    mw::Conditions ok;
+    ok.setting_on = ok.apps_ready = ok.on_mains = ok.on_network = true;
+    const int64_t now = 1'800'000'000, hour = 3600;
+    check("never run: due at once (the launcher's start)", mw::decide(now, 0, ok) == D::kStart);
+    check("four hours after the last: due", mw::decide(now, now - 4 * hour, ok) == D::kStart);
+    check("a minute short of four hours: not due", mw::decide(now, now - 4 * hour + 60, ok) == D::kNotDue);
+    check("just run: not due", mw::decide(now, now, ok) == D::kNotDue);
+    check("the clock went back past the last: due", mw::decide(now, now + hour, ok) == D::kStart);
+    mw::Conditions c = ok;
+    c.setting_on = false;
+    check("setting off: nothing", mw::decide(now, 0, c) == D::kOff);
+    c = ok;
+    c.apps_ready = false;
+    check("Google's three apps not all installed: nothing", mw::decide(now, 0, c) == D::kOff);
+    c = ok;
+    c.window_running = true;
+    check("a window this launcher opened runs: not a second", mw::decide(now, 0, c) == D::kRunning);
+    c = ok;
+    c.broker_running = true;
+    check("a broker runs (an app's, another launcher's): not a second", mw::decide(now, 0, c) == D::kRunning);
+    c = ok;
+    c.on_mains = false;
+    check("on battery: wait", mw::decide(now, 0, c) == D::kWait);
+    check("on battery, not due: not due", mw::decide(now, now, c) == D::kNotDue);
+    c = ok;
+    c.on_network = false;
+    check("no network: wait", mw::decide(now, 0, c) == D::kWait);
+    c = ok;
+    c.app_starting = true;
+    check("an app starting: wait", mw::decide(now, 0, c) == D::kWait);
+    check("off wins over everything", mw::decide(now, 0, mw::Conditions{}) == D::kOff);
+}
+
 int main() {
     test_runs();
     test_installs();
     test_updates();
     test_debug_threads();
     test_library_files();
+    test_maintenance();
     std::printf("%d failed\n", g_failures);
     return g_failures ? 1 : 0;
 }

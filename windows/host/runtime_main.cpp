@@ -26,8 +26,8 @@
 // by the first app that needs it (com.macapk.loader.WindowsBroker), is alone per
 // user session (the Local\WinApk-system mutex, then its pipe name), and exits
 // when no app has been open for a while. With --maintenance it is a maintenance
-// window the launcher's scheduled task opens while no app is open (Win.apk.exe
-// maintenance): it runs the apps' jobs that are due, the Play Store's update
+// window the launcher opens every few hours while it runs (launcher/maintenance.h,
+// when no broker runs): it runs the apps' jobs that are due, the Play Store's update
 // check among them, and exits a few minutes after the last.
 //
 // One runtime runs an app at a time, as on the Mac, where the app's stub holds
@@ -107,7 +107,7 @@ struct Options {
     bool gms = false;     // --gms <subcommand> [args]: com.macapk.gms.GmsCli, no app
     std::vector<std::wstring> gms_args;
     bool system = false;  // --system: the system broker, no app
-    bool maintenance = false;  // --maintenance (with --system): a maintenance window, the launcher's scheduled task
+    bool maintenance = false;  // --maintenance (with --system): a maintenance window, the launcher's
     bool cds_prepare = false;  // --cds-prepare: make the framework archive (cds.h) and stop
     bool verify = false;  // --verify-apk <app>: com.winapk.tools.ApkCheck on `apk`, no app run
 };

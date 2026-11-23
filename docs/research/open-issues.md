@@ -38,6 +38,13 @@ agents' work folders were `/opt/uip/il-work/<app>/`, gone with the container).
   default is flipped** on this branch (AOSP's graphics unless
   `WINAPK_AOSP_GFX=0`), so that CI's smoke test and UI gate test the new
   engine; deleting Java2D is the next step (below).
+- Decided (November 2026): "Update apps in the background" runs only while
+  Win.apk itself runs (the launcher, shown or hidden), never as a Windows
+  scheduled task or a service: nothing of Win.apk runs on its own. The
+  launcher opens the maintenance window every ~4 hours and at its start when
+  the last is older (`LastMaintenance`), and is not kept alive for it
+  (`maybe_quit` only waits for a window it opened). The task earlier builds
+  made is deleted once (`MaintenanceTaskRemoved`) and by the uninstaller.
 
 ## Check again after each AOSP layer lands
 
@@ -568,11 +575,13 @@ New bugs found with AOSP views:
   - *Nothing runs while no app is open*: the owner's earlier rule (Google
     services only while an app is open) is kept for the broker itself, but
     Settings > Google account > "Update apps in the background" (on by
-    default once Google services are set up) adds a Windows scheduled task,
-    every ~4 h on mains power with a network, that opens a 3-minute
-    maintenance window (`--maintenance`), which also delivers the Play
-    Store's BOOT_COMPLETED. **The owner may want this off by default**:
-    decide.
+    default once Google services are set up) has the launcher, while it runs
+    (shown or hidden), open a 3-minute maintenance window (`--maintenance`)
+    every ~4 h on mains power with a network when no broker runs
+    (`maintenance_check`, `launcher/maintenance.h`, its test in
+    `launcher_state_test`), which also delivers the Play Store's
+    BOOT_COMPLETED. It was a Windows scheduled task until the owner decided
+    against anything running on its own (above); that task is deleted.
   - *Install path*: downgrades refused, key rotation accepted, the same rules
     for `ACTION_INSTALL_PACKAGE`; `InstallConstraints` honoured (an app open
     in a window is "interacting"; `GENTLE_UPDATE` is AOSP's;
@@ -584,8 +593,9 @@ New bugs found with AOSP views:
     `BinderTransportTest`'s job checks under Wine (a job of a package whose
     process exited is run by a process the broker started for it). Not
     verified: the natives for metered and power (compiled only), the
-    scheduled task (no Task Scheduler under Wine), and everything with the
-    real Play Store.
+    launcher's maintenance timer and the old task's removal on real Windows
+    (the decision is unit-tested; the launcher only compiled), and everything
+    with the real Play Store.
   - *Can't be fixed here*: Play may refuse downloads to an uncertified device
     or hide apps from it; Win.apk will not fake certification. Then the
     update comes as a file.
@@ -603,8 +613,11 @@ New bugs found with AOSP views:
        Bit closes if open, the tile shows the new version (App details), and
        `logs\install-helper.log` / `logs\install-bnhp…log` show the install.
        Bit then opens past its "update required" screen.
-    4. Background path: with nothing open, wait (or run the task now: Task
-       Scheduler > Win.apk > Background updates > Run). `logs\maintenance.log`
+    4. Background path: with no app open, leave the library open (or hidden
+       behind an install) and wait; or set the registry value
+       `HKCU\Software\Win.apk\LastMaintenance` to 0 and start Win.apk, which
+       opens the window at once. Task Scheduler should have no
+       Win.apk > Background updates any more. `logs\maintenance.log`
        shows the window (`maintenance window`, `boot: system apps ready`,
        `jobs: … is due -> com.android.vending… (started for it)`), and a few
        minutes later `idle: … stopping Google services`. Look in Task Manager

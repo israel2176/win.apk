@@ -96,7 +96,8 @@ Type: filesandordirs; Name: "{userprograms}\Win.apk Apps"
 Filename: "{app}\Win.apk.exe"; Description: "{cm:OpenWinApk}"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
-; The background updates' scheduled task (Settings > Google account > "Update apps in the background").
+; The background updates' scheduled task earlier builds made (the launcher opens the windows itself now, while
+; it runs, and deletes the task once at its start; this removes it should that start never have come).
 Filename: "{sys}\schtasks.exe"; Parameters: "/Delete /TN ""Win.apk\Background updates"" /F"; Flags: runhidden; RunOnceId: "DeleteBackgroundUpdatesTask"
 
 [Code]

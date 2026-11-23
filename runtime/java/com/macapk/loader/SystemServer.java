@@ -1566,7 +1566,7 @@ public final class SystemServer {
     // ---- JobSchedulerService (BrokerJobs) ---------------------------------------------
 
     /** This broker is a maintenance window (`winapk-runtime --system --maintenance`, which
-     *  the launcher's scheduled task starts while no app is open): it boots the system
+     *  the launcher opens every few hours while it runs): it boots the system
      *  apps, runs the jobs that are due, and stops BrokerIdle.maintenanceGraceMs after
      *  the last one instead of waiting for an app that is not coming. */
     static final boolean MAINTENANCE = "1".equals(System.getenv("MACAPK_BROKER_MAINTENANCE"));

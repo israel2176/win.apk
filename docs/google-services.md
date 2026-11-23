@@ -119,11 +119,14 @@ under **Manage apps & device**.
   Store for when they are due, without a window. While an Android app is
   open that happens by itself. With **Settings > Google account > Update apps
   in the background** on (it is, by default, once Google services are set
-  up), Windows also starts Google services for a few minutes every four hours
-  or so while no app is open, only when the PC is on mains power and has a
-  network, and never wakes it (a task named **Win.apk\Background updates** in
-  Windows' Task Scheduler; turning the setting or Google services off removes
-  it, and so does uninstalling Win.apk).
+  up), Win.apk also starts Google services for a few minutes every four hours
+  or so while it is open, even when only an app or the install window is
+  showing, and only when the PC is on mains power and has a network. Nothing
+  runs once Win.apk is closed: there is no scheduled task or service, and
+  Win.apk does not stay open just for updates (it waits only for an update
+  window it has already started). Earlier versions made a task named
+  **Win.apk\Background updates** in Windows' Task Scheduler; Win.apk deletes
+  it the first time it starts.
 - **An app you are using.** When the Play Store asks Android to wait until
   the app is not in use (a "gentle update"), Win.apk waits until you close
   its window. Otherwise, and for an update you start yourself in the Play

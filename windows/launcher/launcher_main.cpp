@@ -77,6 +77,7 @@
 #include <tlhelp32.h>
 #include <wincrypt.h>
 #include <winternl.h>
+#include <netlistmgr.h>
 
 #include <algorithm>
 #include <cmath>
@@ -98,6 +99,7 @@
 #include "debug_threads.h"
 #include "installs.h"
 #include "library_files.h"
+#include "maintenance.h"
 #include "updates.h"
 #include "../host/window_fit.h"
 #include "../include/winapk/aot_stamp.h"
@@ -130,9 +132,11 @@ constexpr UINT kUpdateProgress = WM_APP + 14; // wParam: percent of Win.apk-Setu
 constexpr UINT kUpdateDownloaded = WM_APP + 15;  // wParam: ok (complete and checked)
 constexpr UINT kSetupChanged = WM_APP + 16;   // the Downloads folder changed while the Google services setup is open
 constexpr UINT kSetupChecked = WM_APP + 17;   // lParam: new SetupCheck (winapk-runtime --verify-apk's answer)
+constexpr UINT kMaintenanceEnded = WM_APP + 18;  // the maintenance window the launcher opened ended
 constexpr UINT_PTR kInfoBarTimer = 2;  // the InfoBar closes itself
 constexpr UINT_PTR kUpdateTimer = 3;   // hourly: is the daily update check due?
 constexpr UINT_PTR kSetupScanTimer = 4;  // the Downloads folder settled: look for new files in it
+constexpr UINT_PTR kMaintenanceTimer = 5;  // shown or hidden: is a maintenance window due? (maintenance.h)
 constexpr ULONG_PTR kCopyOpen = 0x57415031;  // WM_COPYDATA from another start of Win.apk.exe (forward_to_running)
 constexpr UINT_PTR kAnimTimer = 1;
 constexpr int kIdSearch = 100;
@@ -222,10 +226,10 @@ const wchar_t* tr(const wchar_t* en) {
          L"ממיר ברקע קוד ARM לקוד של המחשב, כדי שהאפליקציות ירוצו מהר יותר. פועל בעדיפות נמוכה."},
         {L"Report Google Play as the installer", L"דיווח על Google Play כמקור ההתקנה"},
         {L"Update apps in the background", L"עדכון אפליקציות ברקע"},
-        {L"Every few hours, while no app is open, Google services start for a few minutes so the Play Store can "
-         L"update your apps, as a phone does. Only on mains power.",
-         L"כל כמה שעות, כשאף אפליקציה אינה פתוחה, שירותי Google פועלים לכמה דקות כדי שחנות Play תוכל לעדכן את "
-         L"האפליקציות שלך, כמו בטלפון. רק כשהמחשב מחובר לחשמל."},
+        {L"While Win.apk is open, even in the background, Google services start for a few minutes every few hours "
+         L"so the Play Store can update your apps, as a phone does. Only on mains power.",
+         L"כל עוד Win.apk פתוח, גם ברקע, שירותי Google פועלים לכמה דקות כל כמה שעות כדי שחנות Play תוכל לעדכן "
+         L"את האפליקציות שלך, כמו בטלפון. רק כשהמחשב מחובר לחשמל."},
         {L"Apps you install appear to come from Google Play, as some banking apps require.",
          L"האפליקציות שמתקינים נראות כאילו הותקנו מ-Google Play, כפי שחלק מאפליקציות הבנקים דורשות."},
         {L"Performance", L"ביצועים"},
@@ -5775,7 +5779,7 @@ void google_signout(const std::wstring& account) {
 
 bool google_apps_ready();
 bool background_updates_on();
-void sync_maintenance_task();
+void maintenance_check();
 void show_gms_setup(bool from_settings);
 
 Section google_account_section() {
@@ -5806,21 +5810,22 @@ Section google_account_section() {
     gms.act = [](int on) {
         set_setting(L"GoogleServices", static_cast<DWORD>(on));
         rebuild_tiles();  // Google Play in the pane comes and goes with it
-        sync_maintenance_task();
+        maintenance_check();
         if (on && !google_apps_ready()) show_gms_setup(true);
     };
     sec.rows.push_back(gms);
-    // The scheduled task's maintenance windows (background_updates_on, sync_maintenance_task).
+    // The launcher's maintenance windows while it runs (background_updates_on, maintenance_check).
     if (gms.on) {
         Row bg;
         bg.kind = Row::kToggle;
         bg.title = tr(L"Update apps in the background");
-        bg.detail = tr(L"Every few hours, while no app is open, Google services start for a few minutes so the "
-                       L"Play Store can update your apps, as a phone does. Only on mains power.");
+        bg.detail = tr(L"While Win.apk is open, even in the background, Google services start for a few minutes "
+                       L"every few hours so the Play Store can update your apps, as a phone does. Only on mains "
+                       L"power.");
         bg.on = setting(L"BackgroundUpdates", 1) != 0;
         bg.act = [](int on) {
             set_setting(L"BackgroundUpdates", static_cast<DWORD>(on));
-            sync_maintenance_task();
+            maintenance_check();
         };
         sec.rows.push_back(bg);
     }
@@ -5895,14 +5900,24 @@ bool google_apps_ready() {
 // its daily jobs (an update check, then the installs), at times Android picks (doze's maintenance windows), on
 // mains power and an unmetered network. Win.apk's system broker holds the apps' jobs (BrokerJobs) and starts
 // the Play Store's process for a job that is due, but it runs only while an app is open. So with "Use Google
-// services" and Settings > Google account > "Update apps in the background" on, a Windows scheduled task opens
-// a maintenance window every few hours: `Win.apk.exe maintenance` starts `winapk-runtime --system
-// --maintenance`, which boots Google services, runs the jobs that are due (their own constraints decide:
-// network, unmetered, charging) and stops a few minutes after the last. The task's conditions are Android's
-// too: only on mains power, with a network, never waking the PC. Logs: logs\maintenance.log.
+// services" and Settings > Google account > "Update apps in the background" on, the launcher opens a
+// maintenance window every few hours while it runs, shown or hidden: `winapk-runtime --system --maintenance`
+// boots Google services, runs the jobs that are due (their own constraints decide: network, unmetered,
+// charging) and stops a few minutes after the last. The owner's rule: only while Win.apk runs, never from a
+// Windows scheduled task or a service; the launcher is not kept alive for it, but waits for a window it opened
+// (maybe_quit). When is decided in maintenance.h; the window's conditions are Android's too: only on mains
+// power, with a network. Logs: logs\maintenance.log.
 
+namespace mw = winapk::launcher::maintenance;
+
+DWORD unix_now();
+bool any_splash();
+
+// The scheduled task earlier builds made. Removed once, at the first start of a build without it; the
+// uninstaller removes it too (winapk.iss).
 constexpr wchar_t kMaintenanceTask[] = L"Win.apk\\Background updates";
-constexpr int kMaintenanceHours = 4;
+
+HANDLE g_maintenance = nullptr;  // the window this launcher opened, until kMaintenanceEnded
 
 bool background_updates_on() { return google_services_on() && setting(L"BackgroundUpdates", 1) != 0; }
 
@@ -5923,106 +5938,96 @@ long run_schtasks(const std::wstring& args) {
     return static_cast<long>(code);
 }
 
-std::wstring xml_escape(const std::wstring& s) {
-    std::wstring out;
-    for (const wchar_t c : s) {
-        if (c == L'&') out += L"&amp;";
-        else if (c == L'<') out += L"&lt;";
-        else if (c == L'>') out += L"&gt;";
-        else if (c == L'"') out += L"&quot;";
-        else out += c;
-    }
-    return out;
-}
-
-// The task's definition (Task Scheduler's schema 1.2): every kMaintenanceHours from ten minutes from now, run
-// late when the PC was off or asleep, only on mains power and with a network, never waking the PC; it runs
-// this program, which starts the window and exits.
-std::wstring maintenance_task_xml(const fs::path& launcher) {
-    SYSTEMTIME t{};
-    FILETIME ft{};
-    GetSystemTimeAsFileTime(&ft);
-    ULARGE_INTEGER u{};
-    u.LowPart = ft.dwLowDateTime;
-    u.HighPart = ft.dwHighDateTime;
-    u.QuadPart += 10ull * 60 * 10000000;  // ten minutes, in 100 ns
-    ft.dwLowDateTime = u.LowPart;
-    ft.dwHighDateTime = u.HighPart;
-    FILETIME local{};
-    FileTimeToLocalFileTime(&ft, &local);
-    FileTimeToSystemTime(&local, &t);
-    wchar_t start[32];
-    swprintf(start, 32, L"%04u-%02u-%02uT%02u:%02u:00", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute);
-    std::wstring x;
-    x += L"<?xml version=\"1.0\" encoding=\"UTF-16\"?>\r\n";
-    x += L"<Task version=\"1.2\" xmlns=\"http://schemas.microsoft.com/windows/2004/02/mit/task\">\r\n";
-    x += L"  <RegistrationInfo><Description>Win.apk: lets Google Play update your Android apps while none is "
-         L"open.</Description></RegistrationInfo>\r\n";
-    x += L"  <Triggers><TimeTrigger><Repetition><Interval>PT" + std::to_wstring(kMaintenanceHours) +
-         L"H</Interval><StopAtDurationEnd>false</StopAtDurationEnd></Repetition><StartBoundary>" + start +
-         L"</StartBoundary><Enabled>true</Enabled><RandomDelay>PT30M</RandomDelay></TimeTrigger></Triggers>\r\n";
-    x += L"  <Principals><Principal id=\"Author\"><LogonType>InteractiveToken</LogonType>"
-         L"<RunLevel>LeastPrivilege</RunLevel></Principal></Principals>\r\n";
-    x += L"  <Settings><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>"
-         L"<DisallowStartIfOnBatteries>true</DisallowStartIfOnBatteries>"
-         L"<StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><AllowHardTerminate>true</AllowHardTerminate>"
-         L"<StartWhenAvailable>true</StartWhenAvailable><RunOnlyIfNetworkAvailable>true</RunOnlyIfNetworkAvailable>"
-         L"<AllowStartOnDemand>true</AllowStartOnDemand><Enabled>true</Enabled><Hidden>false</Hidden>"
-         L"<RunOnlyIfIdle>false</RunOnlyIfIdle><WakeToRun>false</WakeToRun>"
-         L"<ExecutionTimeLimit>PT10M</ExecutionTimeLimit><Priority>7</Priority></Settings>\r\n";
-    x += L"  <Actions Context=\"Author\"><Exec><Command>" + xml_escape(launcher.wstring()) +
-         L"</Command><Arguments>maintenance</Arguments></Exec></Actions>\r\n";
-    x += L"</Task>\r\n";
-    return x;
-}
-
-// The scheduled task exists while background updates are on, and not otherwise. A task that exists is left as
-// it is (its schedule keeps running from when it was made). Off the library's thread: schtasks takes a moment.
-DWORD WINAPI sync_maintenance_task_thread(void*) {
-    const bool want = background_updates_on() && google_apps_ready();
-    const std::wstring name = std::wstring(L"/TN \"") + kMaintenanceTask + L"\"";
-    const bool have = run_schtasks(L"/Query " + name) == 0;
-    if (want == have) return 0;
-    if (!want) {
-        run_schtasks(L"/Delete " + name + L" /F");
-        return 0;
-    }
-    wchar_t self[MAX_PATH] = {};
-    GetModuleFileNameW(nullptr, self, MAX_PATH);
-    std::error_code ec;
-    fs::create_directories(data_dir() / L"staging", ec);
-    const fs::path xml = data_dir() / L"staging" / L"background-updates-task.xml";
-    {
-        const std::wstring text = maintenance_task_xml(self);
-        std::ofstream f(xml, std::ios::binary | std::ios::trunc);
-        const unsigned char bom[2] = {0xFF, 0xFE};  // UTF-16 LE, as Task Scheduler writes its own
-        f.write(reinterpret_cast<const char*>(bom), 2);
-        f.write(reinterpret_cast<const char*>(text.data()), static_cast<std::streamsize>(text.size() * sizeof(wchar_t)));
-    }
-    const long rc = run_schtasks(L"/Create " + name + L" /XML \"" + xml.wstring() + L"\" /F");
-    fs::remove(xml, ec);
-    if (rc != 0) {
-        std::ofstream log(logs_dir() / L"maintenance.log", std::ios::binary | std::ios::app);
-        log << "[launcher] could not create the scheduled task (schtasks exit " << rc << ")\n";
-    }
+// Off the library's thread: schtasks takes a moment. Noted as done once schtasks ran, whether or not there was
+// a task (it exits 1 when there is none).
+DWORD WINAPI remove_maintenance_task_thread(void*) {
+    if (run_schtasks(std::wstring(L"/Delete /TN \"") + kMaintenanceTask + L"\" /F") >= 0)
+        set_setting(L"MaintenanceTaskRemoved", 1);
     return 0;
 }
 
-void sync_maintenance_task() {
-    if (HANDLE t = CreateThread(nullptr, 0, sync_maintenance_task_thread, nullptr, 0, nullptr)) CloseHandle(t);
+void remove_maintenance_task() {
+    if (setting(L"MaintenanceTaskRemoved", 0)) return;
+    if (HANDLE t = CreateThread(nullptr, 0, remove_maintenance_task_thread, nullptr, 0, nullptr)) CloseHandle(t);
 }
 
-// `Win.apk.exe maintenance`, the scheduled task's: open a maintenance window, unless background updates were
-// turned off meanwhile (then the task is removed). The broker starts detached; a broker already running (an
-// app is open) makes this one exit at once, and runs the jobs itself.
-int maintenance_main() {
-    if (!background_updates_on()) {
-        sync_maintenance_task_thread(nullptr);
-        return 0;
+// Not on battery: AC online, or a PC that does not know (a desktop with no battery reports online already).
+bool on_mains_power() {
+    SYSTEM_POWER_STATUS s{};
+    return !GetSystemPowerStatus(&s) || s.ACLineStatus != 0;
+}
+
+// Connected to some network, as the scheduled task's RunOnlyIfNetworkAvailable was. Network List Manager is
+// asked on the library's thread, where COM is up (OleInitialize); when it cannot be asked, the window is not
+// held back: the broker's jobs check their own network constraints.
+bool on_network() {
+    INetworkListManager* nlm = nullptr;
+    if (FAILED(CoCreateInstance(CLSID_NetworkListManager, nullptr, CLSCTX_ALL, IID_INetworkListManager,
+                                reinterpret_cast<void**>(&nlm))) ||
+        !nlm)
+        return true;
+    // GetConnectivity: the one name MinGW's header and the SDK's agree on (IsConnected is get_IsConnected there).
+    NLM_CONNECTIVITY connectivity = NLM_CONNECTIVITY_DISCONNECTED;
+    const bool asked = SUCCEEDED(nlm->GetConnectivity(&connectivity));
+    nlm->Release();
+    return !asked || connectivity != NLM_CONNECTIVITY_DISCONNECTED;
+}
+
+// A system broker runs in this user session: an app's, or a window another launcher opened. Its mutex is the
+// runtime's own (runtime_main.cpp, --system).
+bool broker_running() {
+    HANDLE m = OpenMutexW(SYNCHRONIZE, FALSE, L"Local\\WinApk-system");
+    if (!m) return false;
+    CloseHandle(m);
+    return true;
+}
+
+// Waits for the window's broker, then tells the library (kMaintenanceEnded), which forgets it.
+DWORD WINAPI maintenance_wait_thread(void* p) {
+    WaitForSingleObject(static_cast<HANDLE>(p), INFINITE);
+    if (g_main) PostMessageW(g_main, kMaintenanceEnded, 0, 0);
+    return 0;
+}
+
+// At the launcher's start, every mw::kCheckMinutes, and when the setting or the setup changes: opens a
+// maintenance window when one is due and may run now. The library's thread only.
+void maintenance_check() {
+    if (!g_main) return;
+    mw::Conditions c;
+    c.setting_on = background_updates_on();
+    c.apps_ready = c.setting_on && google_apps_ready();
+    c.window_running = g_maintenance != nullptr;
+    c.app_starting = any_splash();
+    if (c.setting_on && c.apps_ready && !c.window_running) {
+        c.broker_running = broker_running();
+        c.on_mains = on_mains_power();
+        c.on_network = on_network();
     }
+    const DWORD now = unix_now();
+    if (mw::decide(now, setting(L"LastMaintenance", 0), c) != mw::Decision::kStart) return;
     HANDLE p = start_runtime(L"--system --maintenance", logs_dir() / L"maintenance.log");
-    if (!p) return 1;
-    CloseHandle(p);
+    if (!p) return;
+    set_setting(L"LastMaintenance", now);
+    HANDLE t = CreateThread(nullptr, 0, maintenance_wait_thread, p, 0, nullptr);
+    if (!t) {
+        CloseHandle(p);  // not waited for: the launcher does not hold its exit for it
+        return;
+    }
+    CloseHandle(t);
+    g_maintenance = p;
+}
+
+// kMaintenanceEnded: the window's broker exited.
+void maintenance_ended() {
+    if (g_maintenance) CloseHandle(g_maintenance);
+    g_maintenance = nullptr;
+    maybe_quit();
+}
+
+// `Win.apk.exe maintenance`, which the scheduled task of earlier builds ran: that task should not be there, so
+// it is removed and no window is opened (the launcher opens them now, while it runs).
+int maintenance_main() {
+    remove_maintenance_task_thread(nullptr);
     return 0;
 }
 
@@ -9021,6 +9026,8 @@ struct Splash {
 };
 
 std::map<std::wstring, std::unique_ptr<Splash>> g_splashes;
+
+bool any_splash() { return !g_splashes.empty(); }
 enum { kSplashClose = 1, kSplashLog = 2, kSplashCancel = 3, kSplashReport = 4 };
 constexpr UINT kFitSplash = WM_APP + 21;
 
@@ -9661,6 +9668,7 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             refresh();
             refresh_account();
             SetTimer(hwnd, kUpdateTimer, 3600 * 1000, nullptr);
+            SetTimer(hwnd, kMaintenanceTimer, mw::kCheckMinutes * 60 * 1000, nullptr);
             return 0;
         }
         case WM_SIZE:
@@ -9767,6 +9775,7 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             }
             if (wp == kInfoBarTimer) info(L"", kInfo);
             if (wp == kUpdateTimer) auto_update_check();
+            if (wp == kMaintenanceTimer) maintenance_check();
             if (wp == kSetupScanTimer) {
                 KillTimer(hwnd, kSetupScanTimer);
                 if (g_view == kGmsSetupView) {
@@ -10012,13 +10021,16 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         }
+        case kMaintenanceEnded:
+            maintenance_ended();
+            return 0;
         case kInstalled: {
             std::unique_ptr<std::wstring> name(reinterpret_cast<std::wstring*>(lp));
             const InstallEnd end = finish_install(*name);
             const InstallEnd::Kind how = end.kind();
             refresh();
             // The last of Google's three apps installed: background updates can start.
-            if (how == InstallEnd::kDone && background_updates_on()) sync_maintenance_task();
+            if (how == InstallEnd::kDone) maintenance_check();
             for (Job& j : g_jobs) {
                 if (j.name != *name || (j.state != Job::kInstalling && j.state != Job::kWaiting)) continue;
                 j.state = how == InstallEnd::kCancelled ? Job::kCancelled
@@ -11916,10 +11928,11 @@ void show_library(int show) {
 }
 
 // When the library is not shown, the process lives only for what it is doing: an install window,
-// a splash, an app it started (to report how it ended), the log window.
+// a splash, an app it started (to report how it ended), the log window, a maintenance window it opened.
 void maybe_quit() {
     if (!g_main || IsWindowVisible(g_main)) return;
     if (g_install_wnd || g_log_wnd || g_debug_wnd || !g_splashes.empty() || any_runs() || any_pending()) return;
+    if (g_maintenance) return;  // a maintenance window it opened: waits for its end (kMaintenanceEnded)
     DestroyWindow(g_main);
 }
 
@@ -11932,7 +11945,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
     int argc = 0;
     wchar_t** argv = CommandLineToArgvW(GetCommandLineW(), &argc);
 
-    // The scheduled task's maintenance window (background updates).
+    // Earlier builds' scheduled task for background updates, should it run before the launcher removed it.
     if (argc >= 2 && wcscmp(argv[1], L"maintenance") == 0) {
         const int code = maintenance_main();
         LocalFree(argv);
@@ -12002,7 +12015,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
         refresh_app_shortcuts();
         write_registry();  // apps installed before the registry existed, or by an older launcher
         if (HANDLE t = CreateThread(nullptr, 0, backfill_thread, nullptr, 0, nullptr)) CloseHandle(t);
-        sync_maintenance_task();  // the background updates' scheduled task, as the settings are now
+        remove_maintenance_task();  // earlier builds' scheduled task: background updates are the launcher's now
     }
     theme_menus();
 
@@ -12051,6 +12064,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
     } else {
         show_library(show);
     }
+    // At start, after the first thing asked for is under way: a window, if the last one is kIntervalSeconds old.
+    maintenance_check();
     LocalFree(argv);
 
     MSG m;
