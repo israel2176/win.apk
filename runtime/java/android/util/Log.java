@@ -73,6 +73,28 @@ public final class Log {
         return LOG_WRITE_OK;
     }
 
+    // AOSP's log buffers and the hidden writers its own framework classes call (Slog, the
+    // views and widgets in aosp-views.jar): there is one log here, so each buffer writes to it.
+    public static final int LOG_ID_MAIN = 0;
+    public static final int LOG_ID_RADIO = 1;
+    public static final int LOG_ID_EVENTS = 2;
+    public static final int LOG_ID_SYSTEM = 3;
+    public static final int LOG_ID_CRASH = 4;
+
+    public static int println_native(int bufID, int priority, String tag, String msg) {
+        return println(priority, tag, msg);
+    }
+
+    public static int logToRadioBuffer(int priority, String tag, String message) {
+        return println_native(LOG_ID_RADIO, priority, tag, message);
+    }
+
+    public static int printlns(int bufID, int priority, String tag, String msg, Throwable tr) {
+        return println_native(bufID, priority, tag, tr == null ? msg : msg + '\n' + getStackTraceString(tr));
+    }
+
+    public static int wtfStack(String tag, String msg) { return wtf(tag, msg, new Throwable("stack dump")); }
+
     // AOSP's real isLoggable defaults a tag's level to INFO (VERBOSE/DEBUG
     // suppressed unless a developer raises log.tag.<TAG>) -- verified from
     // aosp-mirror/platform_frameworks_base core/java/android/util/Log.java's
