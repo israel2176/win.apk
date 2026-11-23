@@ -400,23 +400,12 @@ public class Resources {
                 if (v instanceof Integer) return (Integer) v;
             } catch (Throwable ignored) {}
         }
-        // Not an integers.xml row: AOSP's getInteger reads the value itself and
-        // takes any integer type (an @integer alias, a bool or color an app names
-        // this way), and throws for a value of another type -- a float dimen
-        // answered 0 here, which LayoutInflater took for a layout_weight.
-        android.util.TypedValue tv = new android.util.TypedValue();
-        try { getValue(id, tv, true); } catch (Throwable notFound) { return 0; }
-        if (tv.type >= android.util.TypedValue.TYPE_FIRST_INT
-                && tv.type <= android.util.TypedValue.TYPE_LAST_INT) return tv.data;
-        if (tv.type == android.util.TypedValue.TYPE_STRING && tv.string != null) {
-            // A decoded-tree value kept as its text ("5"): the integer it spells.
-            try { return Integer.decode(tv.string.toString().trim()); }
-            catch (NumberFormatException notInteger) { /* a real string: not valid, below */ }
-        }
-        if (tv.type != android.util.TypedValue.TYPE_NULL) {
-            throw new NotFoundException("Resource ID #0x" + Integer.toHexString(id) + " type #0x"
-                    + Integer.toHexString(tv.type) + " is not valid");
-        }
+        // Not read through getValue, as AOSP's is: this class's getValue answers
+        // an integer row, and a value it cannot type, by calling back here, so
+        // that read recursed until the stack ran out (93 s before Sgt Puzzles
+        // drew) and a value read as text threw where callers expect 0. A caller
+        // that needs the value's own type asks getValue itself (LayoutInflater's
+        // layout_weight).
         return 0;
     }
 

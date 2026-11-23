@@ -259,8 +259,13 @@ Masad's update/dark screen. Two showed only a black window:
     landscape template, both panes `layout_width=0` with float-dimen weights;
     `macapkResolveNumberRef` read them through `getInteger`, which answered 0,
     so both panes were 0 wide. **Fixed** (LayoutInflater reads the value's own
-    type, the `@0x...` form too; `getInteger` throws for a non-integer as AOSP
-    does). Reasoned from the log's view tree, not run.
+    type, the `@0x...` form too). Reasoned from the log's view tree, not run.
+    A first version also made `Resources.getInteger` read the value and throw
+    for a non-integer, as AOSP; Win.apk's own `getValue` calls `getInteger`
+    for values it cannot type, so that recursed and threw for drawables
+    (Notes blank, Sgt Puzzles slow in CI's smoke test) and was reverted.
+    Win.apk's `getInteger` still answers 0 where AOSP throws (item 15's
+    family).
   - *`Calendar.getWeekData()` NoSuchMethodError* (88 times; SapiUiProvider
     "Unable to get Account", the message list's prefs). **Fixed**: the rest of
     `android.icu.util.Calendar` and `GregorianCalendar`; `IcuCalendarTest`

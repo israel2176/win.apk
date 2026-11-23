@@ -3385,10 +3385,13 @@ every such change is listed here:
   weight 0 and Gmail's account setup page was white. And `<include
   layout="?attr/name">` resolves the theme attribute as AOSP's
   `parseInclude` does (Gmail's `?agLayoutSearchBar`). Not Windows-specific.
-- `runtime/java/android/content/res/Resources.java`: `getInteger` of a value
-  that is no row of the decoded integers reads the value (any integer type)
-  and throws `NotFoundException` for another type, as AOSP; it answered 0.
-  Not Windows-specific.
+- `runtime/java/android/content/res/Resources.java` (`getInteger`, comment
+  only): why it does not read the value through `getValue` as AOSP's does.
+  This class's `getValue` answers an integer row, and a value it cannot type
+  (a drawable), by calling `getInteger`; reading back through it recursed and
+  threw `NotFoundException` for a drawable read as text (Fossify Notes'
+  toolbar a placeholder, Sgt Puzzles 93 s to draw: reverted in the same
+  branch).
 - Google Play's updates with nothing on screen (JobSchedulerService in the
   broker): `runtime/java/com/macapk/loader/BrokerJobs.java` (new) is the job
   store that outlives an app's process; `android/app/job/MacApkJobScheduler.java`
