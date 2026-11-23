@@ -132,7 +132,7 @@ patch_module() {  # patch_module <module> <out dir> <source dir>...
     [[ -s "$WORK/$module.list" ]] || return 0
     rm -rf "$dst"
     mkdir -p "$dst"
-    "$JAVAC" -nowarn ${win_system:+--system "$win_system"} ${win_system:---release 21} --patch-module "$module=$dirs" -d "$dst" @"$WORK/$module.list"
+    "$JAVAC" -nowarn --source 21 --target 21 ${win_system:+--system "$win_system"} --patch-module "$module=$dirs" -d "$dst" @"$WORK/$module.list"
     [[ -n "$win_system" || "$module" != java.base ]] || command -v cygpath > /dev/null 2>&1 ||
         echo "[build_java] note: sun.nio.fs.Windows* left out (set WINAPK_WIN_JDK to a Windows JDK to build them)"
 }
