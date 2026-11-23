@@ -524,7 +524,7 @@ final class WinNTFileSystem extends FileSystem {
                 return path;
             return "" + ((char) (c-32)) + ':' + '\\';
         }
-        long comp = Blocker.begin();
+        var comp = Blocker.begin();
         try {
             return canonicalize0(path);
         } finally {
@@ -540,7 +540,7 @@ final class WinNTFileSystem extends FileSystem {
 
     @Override
     public int getBooleanAttributes(File f) {
-        long comp = Blocker.begin();
+        var comp = Blocker.begin();
         try {
             return getBooleanAttributes0(host(f));
         } finally {
@@ -551,7 +551,7 @@ final class WinNTFileSystem extends FileSystem {
 
     @Override
     public boolean checkAccess(File f, int access) {
-        long comp = Blocker.begin();
+        var comp = Blocker.begin();
         try {
             return checkAccess0(host(f), access);
         } finally {
@@ -562,7 +562,7 @@ final class WinNTFileSystem extends FileSystem {
 
     @Override
     public long getLastModifiedTime(File f) {
-        long comp = Blocker.begin();
+        var comp = Blocker.begin();
         try {
             return getLastModifiedTime0(host(f));
         } finally {
@@ -573,7 +573,7 @@ final class WinNTFileSystem extends FileSystem {
 
     @Override
     public long getLength(File f) {
-        long comp = Blocker.begin();
+        var comp = Blocker.begin();
         try {
             return getLength0(host(f));
         } finally {
@@ -584,7 +584,7 @@ final class WinNTFileSystem extends FileSystem {
 
     @Override
     public boolean setPermission(File f, int access, boolean enable, boolean owneronly) {
-        long comp = Blocker.begin();
+        var comp = Blocker.begin();
         try {
             if (setPermission0(host(f), access, enable, owneronly)) return true;
         } finally {
@@ -607,7 +607,7 @@ final class WinNTFileSystem extends FileSystem {
 
     @Override
     public boolean createFileExclusively(String path) throws IOException {
-        long comp = Blocker.begin();
+        var comp = Blocker.begin();
         try {
             return createFileExclusively0(WinApkPaths.hostPath(path));
         } finally {
@@ -618,7 +618,7 @@ final class WinNTFileSystem extends FileSystem {
 
     @Override
     public String[] list(File f) {
-        long comp = Blocker.begin();
+        var comp = Blocker.begin();
         try {
             String[] names = list0(host(f));
             // Win.apk: under an Android path the names are Android's (the characters Windows
@@ -635,7 +635,7 @@ final class WinNTFileSystem extends FileSystem {
 
     @Override
     public boolean createDirectory(File f) {
-        long comp = Blocker.begin();
+        var comp = Blocker.begin();
         try {
             return createDirectory0(host(f));
         } finally {
@@ -646,7 +646,7 @@ final class WinNTFileSystem extends FileSystem {
 
     @Override
     public boolean setLastModifiedTime(File f, long time) {
-        long comp = Blocker.begin();
+        var comp = Blocker.begin();
         try {
             return setLastModifiedTime0(host(f), time);
         } finally {
@@ -657,7 +657,7 @@ final class WinNTFileSystem extends FileSystem {
 
     @Override
     public boolean setReadOnly(File f) {
-        long comp = Blocker.begin();
+        var comp = Blocker.begin();
         try {
             if (setReadOnly0(host(f))) return true;
         } finally {
@@ -669,7 +669,7 @@ final class WinNTFileSystem extends FileSystem {
 
     @Override
     public boolean delete(File f) {
-        long comp = Blocker.begin();
+        var comp = Blocker.begin();
         try {
             return delete0(host(f));
         } finally {
@@ -680,7 +680,7 @@ final class WinNTFileSystem extends FileSystem {
 
     @Override
     public boolean rename(File f1, File f2) {
-        long comp = Blocker.begin();
+        var comp = Blocker.begin();
         try {
             if (rename0(host(f1), host(f2))) return true;
         } finally {
