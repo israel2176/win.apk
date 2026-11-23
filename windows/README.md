@@ -3338,6 +3338,9 @@ every such change is listed here:
   `PackageItemInfo.java` read a label through `pm.getText` when the system Resources do not have
   it, only with `WINAPK_AOSP_RES=1`; `android/os/Handler.java`: AOSP's hidden
   `executeOrSendMessage`. All inert with the switches off.
+- `runtime/java/android/webkit/MacApkWebViewBridge.java`: `macapkMaterializeAssetPage` takes a data
+  directory by its Android name (`/data/user/0/<package>`) and copies the asset tree under the Android
+  root's `/.macapk/webassets`; `windows/host/native_webview.cpp` maps the answer to the host files.
 - `runtime/java/android/os/LocaleList.java`: the system languages come from `-Dwinapk.locales`
   (`WINAPK_LOCALES`) first, when the host passes it; otherwise as before.
 - `runtime/java/com/macapk/loader/gfx/GfxBackend.java`, `AospGfx.java`,

@@ -61,6 +61,7 @@
 #include <shlwapi.h>
 
 #include "host_natives.h"
+#include "winapk/mini_bionic.h"
 #include "webview2_host.h"
 #include "win32_window.h"
 
@@ -1414,7 +1415,19 @@ std::wstring materialize(int id, const std::wstring& url, std::wstring* prefix) 
     if (!wv2::check_java(env, "macapkMaterializeAssetPage") && r && env->GetArrayLength(r) >= 3) {
         auto page = static_cast<jstring>(env->GetObjectArrayElement(r, 0));
         auto base = static_cast<jstring>(env->GetObjectArrayElement(r, 2));
-        const std::wstring p = wv2::from_jstring(env, page), b = wv2::from_jstring(env, base);
+        std::wstring p = wv2::from_jstring(env, page), b = wv2::from_jstring(env, base);
+        // The helper answers the copies by their Android names ("/.macapk/webassets/..."), as the
+        // app's java.io sees them; WebView2 takes the host files they name (paths.cpp's table).
+        auto host = [](const std::wstring& w) {
+            if (w.empty() || w[0] != L'/') return w;
+            const int n = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), static_cast<int>(w.size()), nullptr, 0, nullptr,
+                                              nullptr);
+            std::string u(static_cast<size_t>(n), '\0');
+            WideCharToMultiByte(CP_UTF8, 0, w.c_str(), static_cast<int>(w.size()), &u[0], n, nullptr, nullptr);
+            return winapk::android_host_path(u.c_str());
+        };
+        p = host(p);
+        b = host(b);
         wchar_t buf[4096];
         DWORD n = 4096;
         if (SUCCEEDED(UrlCreateFromPathW(p.c_str(), buf, &n, 0))) {

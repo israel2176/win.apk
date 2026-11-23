@@ -471,11 +471,23 @@ final class MacApkWebViewBridge {
             android.content.Context ctx = macapkAppContext(viewId);
             if (ctx == null) return null;
             java.io.File dataDir = ctx.getDataDir();
-            java.io.File dd = dataDir != null ? dataDir.getParentFile() : null;   // <root>/data/data
-            java.io.File d = dd != null ? dd.getParentFile() : null;                // <root>/data
-            java.io.File root = d != null ? d.getParentFile() : null;               // <root>
-            if (root == null || !"data".equals(dd.getName()) || !"data".equals(d.getName()))
-                return null;
+            java.io.File root;
+            String dataPath = dataDir != null ? dataDir.getPath().replace('\\', '/') : "";
+            if (dataPath.startsWith("/data/user/0/") || dataPath.startsWith("/data/data/")) {
+                // Win.apk: the app sees its data directory by its Android name (the java.base
+                // overlay's WinApkPaths), so the copies go under the Android root's "/.macapk",
+                // which java.io writes to <android root>\.macapk and the host maps back
+                // (native_webview.cpp, materialize). Before this every page fell through here
+                // ("/data/user/0" is no <root>/data/data) and WebView2 was sent to the
+                // unchanged file:///android_asset/ URL: net::ERR_FAILED (Yahav, Cordova).
+                root = new java.io.File("/");
+            } else {
+                java.io.File dd = dataDir != null ? dataDir.getParentFile() : null;   // <root>/data/data
+                java.io.File d = dd != null ? dd.getParentFile() : null;                // <root>/data
+                root = d != null ? d.getParentFile() : null;                            // <root>
+                if (root == null || !"data".equals(dd.getName()) || !"data".equals(d.getName()))
+                    return null;
+            }
             java.io.File base = new java.io.File(root,
                     ".macapk/webassets/" + dataDir.getName() + "/android_asset");
             // Copy the page's TOP-LEVEL asset directory (www/ for www/pages/a.html), so
