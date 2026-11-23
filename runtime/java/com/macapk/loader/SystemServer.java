@@ -496,7 +496,32 @@ public final class SystemServer {
         String apk = WinProcesses.apkArgument(pid);
         if (apk == null) return null;
         String pkg = packageOfApk(apk);
+        if (pkg == null && rereadInstalledPackages()) pkg = packageOfApk(apk);
         return pkg == null ? null : new String[] { pkg, null };
+    }
+
+    private long lastRegistryRead;
+
+    /** The broker reads the registry when it starts; an app installed while it runs (Gmail
+     *  installed after "Use Google services" was turned on) was then refused as "no installed
+     *  app". As PackageManagerService learns a package when it is installed, the registry is
+     *  read again when a process names an APK the broker does not know, at most once a second.
+     *  True when it was read. */
+    private synchronized boolean rereadInstalledPackages() {
+        if (System.getenv("MACAPK_BROKER_APKS") != null && !System.getenv("MACAPK_BROKER_APKS").isBlank()) {
+            return false;
+        }
+        long now = System.currentTimeMillis();
+        if (now - lastRegistryRead < 1000) return false;
+        lastRegistryRead = now;
+        for (MacApkPackageManager.InstalledRegistry.Row r : MacApkPackageManager.InstalledRegistry.rows()) {
+            if (r.pkg == null || r.apkPath == null || !new File(r.apkPath).isFile()) continue;
+            PackageRecord known = packages.get(r.pkg);
+            if (known != null && known.apkPath.equals(r.apkPath)) continue;  // only what is new or moved
+            addPackage(r.apkPath);
+            if (r.bundlePath != null) bundles.put(r.pkg, r.bundlePath);
+        }
+        return true;
     }
 
     /** The package whose installed APK is `apk` (same file, compared as paths). */
