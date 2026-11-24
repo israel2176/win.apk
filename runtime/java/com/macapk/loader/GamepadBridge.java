@@ -439,7 +439,7 @@ public final class GamepadBridge {
         final Activity active = ActivityHost.peek();
         boolean toLoop = false;
         if (android.os.Looper.MACAPK_REAL_LOOPER && active != null) {
-            View root = active.macapkContentView();
+            View root = com.macapk.loader.ActivityHost.contentRoot(active);
             toLoop = root != null && !TouchDispatcher.hostInputTree(root);
         }
         if (toLoop) {
@@ -591,7 +591,7 @@ public final class GamepadBridge {
     private static String focusNote(Activity active) {
         try {
             if (active == null) return " (no activity)";
-            View root = active.macapkContentView();
+            View root = com.macapk.loader.ActivityHost.contentRoot(active);
             View f = root != null ? root.findFocus() : null;
             return " focus=" + (f == null ? "none" : f.getClass().getName());
         } catch (Throwable t) {

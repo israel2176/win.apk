@@ -1144,8 +1144,6 @@ public class View implements android.graphics.drawable.Drawable.Callback,
         // is infrequent and the drive is debounced, so this is cheap. See
         // ActivityHost.macapkScheduleViewTreeLifecycleDrive.
         if (macapkAttached && t != null) {
-            try { com.macapk.loader.ActivityHost.macapkScheduleViewTreeLifecycleDrive(); }
-            catch (Throwable ignored) {}
         }
     }
     /** Context-scoped tag registry: mirror of setTag(int, Object)
@@ -2079,8 +2077,6 @@ public class View implements android.graphics.drawable.Drawable.Callback,
         // attach -> blank). Schedule a debounced re-drive. Gated on keyed tags
         // so plain views (RecyclerView items during scroll) don't churn it.
         if (keyedTags != null && !keyedTags.isEmpty()) {
-            try { com.macapk.loader.ActivityHost.macapkScheduleViewTreeLifecycleDrive(); }
-            catch (Throwable ignored) {}
         }
     }
     // v1.0.437: ComposeViews whose onAttachedToWindow threw because no
@@ -2099,8 +2095,6 @@ public class View implements android.graphics.drawable.Drawable.Callback,
             com.macapk.loader.NativeLog.i("View",
                 "compose-attach retry REGISTERED on " + v.getClass().getName());
         }
-        try { com.macapk.loader.ActivityHost.macapkScheduleViewTreeLifecycleDrive(); }
-        catch (Throwable ignored) {}
     }
     /** Re-run onAttachedToWindow on ComposeViews that earlier failed to find a
      *  ViewTreeLifecycleOwner. ensureCompositionCreated is idempotent, so a view

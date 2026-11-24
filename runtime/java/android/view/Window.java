@@ -7,6 +7,10 @@ import android.content.Context;
 import android.graphics.drawable.Drawable;
 
 public abstract class Window {
+    /** @hide AOSP's: what AOSP's Activity implements (aosp-views.jar has the class itself). */
+    public interface OnWindowDismissedCallback {
+        void onWindowDismissed(boolean finishTask, boolean suppressWindowTransition);
+    }
     // AOSP core/java/android/view/Window.java :70-165 (android-11.0.0_r48).
     // The five values between CUSTOM_TITLE and ACTIVITY_TRANSITIONS were
     // missing. They are compile-time constants, so an app compiled against the
@@ -469,7 +473,6 @@ public abstract class Window {
             & WindowManager.LayoutParams.FLAG_SECURE) != 0;
         if (now == mMacapkSecureSeen) return;
         mMacapkSecureSeen = now;
-        com.macapk.loader.ActivityHost.macapkPushSecureContent();
     }
 
     public abstract void setTitle(CharSequence title);

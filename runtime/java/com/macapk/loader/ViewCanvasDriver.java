@@ -753,11 +753,7 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
      *  Package-private: the offline gate (debug/touchinput_gate.sh, W3) calls it. */
     static void layoutDetachedDecor(android.app.Activity owner, android.view.View rootView,
                                     int contentLeft, int contentRight, int contentBottom) {
-        if (owner == null || rootView == null) return;
-        try {
-            owner.macapkLayoutDetachedDecor(rootView, Math.max(0, contentRight - contentLeft),
-                                            contentBottom);
-        } catch (Throwable ignored) {}
+        // Win.apk's own Activity laid its decor out here; AOSP's ViewRootImpl lays out its window.
     }
     private static volatile int sSnapPumpState = SNAP_UNRESOLVED;
     // v1.0.438: GENERIC, AOSP-faithful Compose global-snapshot pump. Real Android's
@@ -880,8 +876,10 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
      *  Waze's translucent sign-in steps showed an empty window. */
     private void drawActivityBelow() {
         try {
-            if (ownerActivity == null || !ActivityHost.macapkSeesThrough(ownerActivity)) return;
-            android.app.Activity below = ActivityHost.macapkBelow(ownerActivity);
+            // Which activity is below was Win.apk's own activity stack's to say; AOSP's views
+            // compose the windows themselves (Compositor), so this driver draws none below.
+            if (ownerActivity == null) return;
+            android.app.Activity below = null;
             ViewCanvasDriver d = below != null ? sLastPresenter.get(below) : null;
             Bitmap b = d != null && d != this ? d.bitmap : null;
             if (b == null || b.getWidth() != surfaceW || b.getHeight() != surfaceH) return;
@@ -913,7 +911,8 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
                 }
                 if (c instanceof android.app.Activity) ownerActivity = (android.app.Activity) c;
             }
-            return ownerActivity != null && ActivityHost.macapkIsHiddenUnderTop(ownerActivity);
+            // Win.apk's own activity stack answered; AOSP's window manager hides a covered window.
+            return false;
         } catch (Throwable t) {
             return false;
         }
@@ -1962,11 +1961,8 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
         // measure+layout+draw has completed (the window is really up).
         // ActivityHost dedups per-activity, so this fires effectively
         // once; the flag just avoids the per-frame call.
-        if (!hasGl && !windowFocusDelivered && n >= 2) {
-            windowFocusDelivered = true;
-            try { com.macapk.loader.ActivityHost.macapkDeliverWindowFocus(); }
-            catch (Throwable ignored) {}
-        }
+        // (Window focus is the window manager's to give, with AOSP's app layer and views.)
+        if (!hasGl && !windowFocusDelivered && n >= 2) windowFocusDelivered = true;
         // v1.0.134: ComposeView fallback. Walks the tree for
         // ComposeView instances whose Compose runtime didn't paint
         // (kotlinx-coroutines / Compose frame scheduler don't fully

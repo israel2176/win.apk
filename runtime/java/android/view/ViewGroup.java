@@ -587,8 +587,6 @@ public class ViewGroup extends View implements ViewParent, ViewManager {
         // Real Android composites continuously, so the surface would still
         // go live; mirror that by letting Activity re-evaluate the window
         // wiring. No-ops immediately unless a canvas-only wiring is active.
-        try { android.app.Activity.macapkMaybeRewireNativeSurface(child); }
-        catch (Throwable ignored) {}
         macapkDragChildAdded(child);
     }
     /** AOSP ViewGroup.resolveRtlPropertiesIfNeeded (android13-release

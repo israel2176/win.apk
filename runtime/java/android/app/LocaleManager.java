@@ -6,7 +6,6 @@ import android.os.LocaleList;
 
 import com.macapk.loader.res.ResBackend;
 import java.util.Locale;
-import com.macapk.loader.view.ViewHost;
 
 public class LocaleManager {
     private final android.content.Context context;
@@ -29,23 +28,20 @@ public class LocaleManager {
                 throw new IllegalStateException("Unable to persist application locales");
             }
         }
-        Runnable apply = () -> {
-            Application app = com.macapk.loader.app.Apps.current();
-            if (app == null || prefs != com.macapk.loader.SharedPrefsImpl.macapkGet(
-                    app, "macapk.application_locales")) return;
-            android.content.res.Configuration next = applyToResources(app.getResourcesDirect());
-            app.dispatchConfigurationChanged(new android.content.res.Configuration(next));
-            Activity top = com.macapk.loader.ActivityHost.peek();
-            if (top != null) com.macapk.loader.DisplayConfig.deliverToActivity(top, next);
-            ViewHost.get().scheduleLayout();
-        };
-        android.os.Looper looper = android.os.Looper.getMainLooper();
-        if (Thread.currentThread() == looper.getThread()) apply.run();
-        else {
-            android.os.Handler handler = android.os.Looper.MACAPK_REAL_LOOPER
-                ? android.os.Handler.macapkCreateOwnerOnly(looper) : new android.os.Handler(looper);
-            handler.post(apply);
-        }
+        // LocaleManagerService's change: the app's configuration gets the new locales, which the
+        // activity task manager sends to the process and its activities (onConfigurationChanged, or
+        // a relaunch for an activity that does not declare locale).
+        com.macapk.loader.app.AppHost host = com.macapk.loader.app.AppHost.get();
+        Application app = com.macapk.loader.app.Apps.current();
+        if (host == null || !host.started() || app == null || prefs != com.macapk.loader.SharedPrefsImpl.macapkGet(
+                app, "macapk.application_locales")) return;
+        LocaleList effective = effectiveLocales();
+        android.content.res.Configuration next =
+                new android.content.res.Configuration(app.getResources().getConfiguration());
+        next.setLocales(effective);
+        Locale.setDefault(effective.get(0));
+        LocaleList.setDefault(effective);
+        host.configurationChanged(next);
     }
 
     public LocaleList getApplicationLocales() {

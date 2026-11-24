@@ -2168,6 +2168,12 @@ public final class Boot {
             try { NativeCocoa.moveTaskToBack(); } catch (Throwable t) { NativeLog.w(TAG, "moveTaskToBack: " + t); }
         };
         start.hostStart = ActivityHost::macapkStartOnHost;
+        start.orientation = o -> {
+            try { NativeCocoa.applyWindowOrientation(o); } catch (Throwable t) { NativeLog.w(TAG, "orientation " + o + ": " + t); }
+        };
+        start.userOrientation = () -> {
+            try { NativeCocoa.restoreUserOrientation(); } catch (Throwable t) { NativeLog.w(TAG, "user orientation: " + t); }
+        };
         start.hostPermissions = (perms, sink) -> SpecialAccessHandler.requestPermissions(
                 android.app.ActivityThread.currentApplication(), perms, sink, ActivityHost.hostCover(false));
         start.moveToBack = () -> {
@@ -2773,44 +2779,6 @@ public final class Boot {
     private static volatile boolean sNightApplied;
     private static final Object sNightLock = new Object();
 
-    /** Entry point for the Cocoa layer's AppleInterfaceStyle observer: macOS
-     *  has just told us the effective appearance is `dark`.
-     *
-     *  THREADING. This is called on the AppKit main thread, which is NOT
-     *  Android's main thread here -- Mac.apk's Android main thread is the
-     *  "macapk-activity" worker that run() pins as Looper's main-thread identity
-     *  (see the long note at the top of run()). Everything downstream of a
-     *  configuration change is main-thread-confined on Android and androidx
-     *  asserts it (LifecycleRegistry.enforceMainThreadIfNeeded,
-     *  LiveData.assertMainThread, both routed through
-     *  DefaultTaskExecutor.isMainThread(), which compares against
-     *  Looper.getMainLooper().getThread()). So the apply half is posted to the
-     *  main Looper and nothing user-visible is touched on the AppKit thread.
-     *
-     *  The heavy half -- constructing the replacement ResourceIndex, which
-     *  DOM-parses the app's whole decoded values tree -- runs on a short-lived
-     *  worker instead of on the main Looper, so a slow app's resource tree
-     *  cannot stall the frame loop mid-flip. Only the swap and the dispatch run
-     *  on the main thread.
-     *
-     *  Idempotent and cheap: the caller is free to fire on every KVO
-     *  notification, including redundant ones. */
-    /** Does this activity declare android:configChanges="uiMode"? AOSP treats a
-     *  declared bit as "the activity handles this itself"; anything undeclared
-     *  relaunches the activity. Missing data answers TRUE (i.e. do NOT relaunch),
-     *  so an unparsed manifest can never turn this into a surprise teardown. */
-    private static boolean macapkActivityHandlesUiMode(android.app.Activity a) {
-        try {
-            if (sManifest == null || a == null) return true;
-            Manifest.ActivityEntry e = sManifest.activities.get(a.getClass().getName());
-            if (e == null) return true;
-            return (e.configChanges
-                & android.content.pm.ActivityInfo.CONFIG_UI_MODE) != 0;
-        } catch (Throwable t) {
-            return true;
-        }
-    }
-
     /** A ResourceIndex for `cfg`, rooted at the application theme exactly as
      *  run() roots the boot one. Shared by the appearance flip and the display
      *  resize commit (DisplayConfig). Throws on failure. */
@@ -2854,160 +2822,28 @@ public final class Boot {
         t.start();
     }
 
-    /** Build the replacement ResourceIndex for `dark` and hand the swap to the
-     *  Android main thread. Runs on the flip worker. */
+    /** The system's light or dark appearance changed: a configuration change of the night mode bits,
+     *  which the activity task manager sends to the process and its activities (AOSP's
+     *  UiModeManagerService, through ActivityTaskManagerService.updateConfiguration): each activity
+     *  that does not declare configChanges=uiMode is relaunched, the others get
+     *  onConfigurationChanged, and AOSP's ResourcesManager picks the -night resources. Runs on
+     *  the flip worker. */
     private static void macapkApplySystemAppearance(final boolean dark) {
         synchronized (sNightLock) {
-            // Re-check under the lock: two flips in quick succession both pass
-            // the cheap gate above, and the loser must not rebuild.
             if (dark == sNightApplied) return;
             final android.app.Application app = com.macapk.loader.app.Apps.current();
-            final Resources res = (app != null) ? app.getResources() : null;
-            if (res == null || sApkPath == null) {
-                // The flip beat boot to it. run() samples the appearance itself,
-                // so dropping this one loses nothing.
-                NativeLog.i(TAG, "appearance flip before resources exist; ignored");
+            final com.macapk.loader.app.AppHost host = com.macapk.loader.app.AppHost.get();
+            if (app == null || host == null || !host.started()) {
+                NativeLog.i(TAG, "appearance flip before the app is bound; ignored");
                 return;
             }
-            Configuration cur = res.getConfiguration();
-            if (cur == null) return;
-            // AOSP hands ActivityThread a WHOLE new Configuration, never a
-            // mutation of the live one, because the live object is treated as
-            // immutable in many places ("NOTE: Make sure the configurations are
-            // not modified, as they are treated as immutable in many places" --
-            // ActivityThread.java:6076). Copy, then flip only the night bits.
-            Configuration next = new Configuration(cur);
-            next.uiMode = (cur.uiMode & ~Configuration.UI_MODE_NIGHT_MASK)
+            Configuration next = new Configuration(app.getResources().getConfiguration());
+            next.uiMode = (next.uiMode & ~Configuration.UI_MODE_NIGHT_MASK)
                 | (dark ? Configuration.UI_MODE_NIGHT_YES : Configuration.UI_MODE_NIGHT_NO);
-            // ⚠ KNOWN TRANSIENT of building off the main thread. ResourceIndex's
-            // ctor sets its STATIC night mirror (macapkCfgNightStatic,
-            // ResourceIndex.java:251) as its first act, and that static is what
-            // the framework-theme table consults for `.DayNight` polarity. So
-            // for the duration of the rebuild the STILL-LIVE old index answers
-            // framework .DayNight styles with the NEW polarity while its app
-            // values stay old, i.e. a frame or two of mixed chrome on a
-            // user-initiated toggle. It self-corrects at the swap. Removing it
-            // needs the mirror deferred to swap time, which is a ResourceIndex
-            // change; the alternative (rebuild on the main looper, as AOSP does)
-            // trades the transient for a freeze of the whole rebuild duration.
-            Object built;
-            long t0 = System.nanoTime();
-            try {
-                built = macapkBuildResourceIndex(next);
-            } catch (Throwable t) {
-                NativeLog.w(TAG, "appearance flip: ResourceIndex rebuild failed, "
-                    + "keeping the current one: " + t);
-                return;
-            }
-            final Object idx = built;
-            NativeLog.i(TAG, "macOS appearance -> "
-                + (dark ? "DARK (UI_MODE_NIGHT_YES)" : "light (UI_MODE_NIGHT_NO)")
-                + "; ResourceIndex rebuilt in "
-                + ((System.nanoTime() - t0) / 1000000L) + "ms");
-            // Mark applied here, inside the lock, so a flip BACK queues behind
-            // this one rather than racing it. The posts below land on the main
-            // Looper in the same order, so the last one to run is the last one
-            // published here.
             sNightApplied = dark;
-            Runnable swap = new Runnable() {
-                @Override public void run() {
-                    // `macapk.nightMode` is what UiModeManager.getNightMode
-                    // answers with, so it flips WITH the index, not before it:
-                    // an app polling during the rebuild would otherwise be told
-                    // the new polarity while every resource it can read is still
-                    // the old one, and a failed rebuild returns above without
-                    // having lied at all.
-                    System.setProperty("macapk.nightMode", dark ? "yes" : "no");
-                    // v1.0.1637: the display may have been RESIZED while this
-                    // index was building (DisplayConfig commits on this same
-                    // thread). `next` was copied before that, so applying it as
-                    // is would revert the new size. Take the display fields from
-                    // the live configuration -- a flip changes uiMode only --
-                    // and retain any locale selected while the worker ran.
-                    // Rebuild if the index was selected for an older size or locale.
-                    Object useIdx = idx;
-                    Configuration live = res.getConfiguration();
-                    DisplayConfig.adoptDisplayFields(live, next);
-                    next.setLocales(live.getLocales());
-                    if (ResBackend.get().indexSelectionChangesFor(idx, next)) {
-                        Object again = macapkNewResourceIndex(next);
-                        if (again == null) return;
-                        useIdx = again;
-                    }
-                    ResBackend.get().setResourceIndex(useIdx);
-                    // The Application and every Activity share ONE Resources
-                    // here (Activity.getResources() delegates to
-                    // application.getResources(), and ContextWrapper delegates
-                    // to its base), so this single update IS the
-                    // application-context update that
-                    // AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM reads.
-                    res.updateConfiguration(next, null);
-                    // AOSP pushes EVERY global configuration change into the
-                    // system Resources too (ConfigurationController
-                    // .handleConfigurationChanged -> applyConfigurationToResources
-                    // -> Resources.updateSystemConfiguration). The change is the
-                    // night bits and nothing else, so only they move, onto the
-                    // SYSTEM's own configuration: `next` is the app's, and would
-                    // carry an app-set locale into getSystem()
-                    // (Resources.macapkEditSystemConfiguration). A uiMode flip
-                    // leaves the metrics alone, hence null.
-                    final int nightBits = next.uiMode & Configuration.UI_MODE_NIGHT_MASK;
-                    ResBackend.get().editSystemConfiguration(sys -> sys.uiMode =
-                        (sys.uiMode & ~Configuration.UI_MODE_NIGHT_MASK) | nightBits, null);
-                    android.app.Activity top = ActivityHost.peek();
-                    if (top != null) {
-                        // AOSP: an activity that does NOT declare the changed
-                        // bit in android:configChanges is DESTROYED AND
-                        // RECREATED, not merely notified (ActivityThread
-                        // .handleRelaunchActivity). Only an activity that DOES
-                        // declare it gets onConfigurationChanged and is expected
-                        // to re-style itself in place.
-                        //
-                        // We only ever did the second half, for everybody. That
-                        // is why a live light/dark flip repainted whatever
-                        // re-resolves a colour dynamically and left every
-                        // ALREADY-INFLATED background alone: nothing re-inflated.
-                        // Measured on F-Droid, which declares uiMode nowhere
-                        // (only keyboardHidden|orientation and
-                        // locale|layoutDirection), so on a device every one of
-                        // its activities would be recreated by this flip.
-                        boolean handled = macapkActivityHandlesUiMode(top);
-                        if (!handled && ActivityHost.macapkRecreate(top)) {
-                            // Relaunch scheduled. AOSP does NOT also deliver
-                            // onConfigurationChanged to an activity it is
-                            // recreating; the new instance reads the new
-                            // Configuration in onCreate instead.
-                            NativeLog.i(TAG, "appearance flip: relaunching "
-                                + top.getClass().getName()
-                                + " (does not declare configChanges=uiMode)");
-                        } else {
-                            top.dispatchConfigurationChanged(next);
-                        }
-                    } else if (app != null) {
-                        // No activity yet: AOSP still delivers the change to the
-                        // process-wide ComponentCallbacks
-                        // (ActivityThread.handleConfigurationChanged ->
-                        // mConfigurationController -> callbacks).
-                        app.dispatchConfigurationChanged(next);
-                    }
-                }
-            };
-            try {
-                // v1.0.1637: OWNER-ONLY on the real-looper path. The swap mutates
-                // Resources and dispatches into the view tree, so it must not
-                // run on the OS-main drain during the lifecycle handshake -- the
-                // same cross-thread hazard v1.0.1636 closed for doFrame.
-                android.os.Looper main = android.os.Looper.getMainLooper();
-                android.os.Handler h = android.os.Looper.MACAPK_REAL_LOOPER
-                    ? android.os.Handler.macapkCreateOwnerOnly(main)
-                    : new android.os.Handler(main);
-                if (!h.post(swap)) swap.run();
-            } catch (Throwable t) {
-                // No Looper yet (or it is gone). Applying inline is still better
-                // than dropping the flip; nothing is drawing without a Looper.
-                NativeLog.w(TAG, "appearance flip: no main Looper, applying inline: " + t);
-                try { swap.run(); } catch (Throwable ignored) {}
-            }
+            System.setProperty("macapk.nightMode", dark ? "yes" : "no");
+            NativeLog.i(TAG, "system appearance -> " + (dark ? "dark (UI_MODE_NIGHT_YES)" : "light (UI_MODE_NIGHT_NO)"));
+            host.configurationChanged(next);
         }
     }
 

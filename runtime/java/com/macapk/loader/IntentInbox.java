@@ -134,7 +134,6 @@ public final class IntentInbox {
      *  ActivityHost's side table -- never in the intent's extras, which the
      *  app can see. */
     private static void noteReferrer(IntentEnvelope e) {
-        ActivityHost.macapkNoteReferrer(e.intent, e.senderPackage != null ? e.senderPackage : "");
     }
 
     /** Read, validate and DELETE every envelope; the valid ones, oldest first. */

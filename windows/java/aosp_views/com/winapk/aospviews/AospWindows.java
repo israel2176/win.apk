@@ -242,6 +242,29 @@ public final class AospWindows {
     }
 
     static final java.util.concurrent.atomic.AtomicLong sAddSeq = new java.util.concurrent.atomic.AtomicLong();
+
+    /** FLAG_SECURE (WindowState.isSecureLocked): while a shown window of the app has it, the host
+     *  window is kept out of screenshots and screen capture (NativeCocoa.setSecureContent); pushed on
+     *  a change only. -1: not pushed yet. */
+    private static int sSecure = -1;
+
+    static synchronized void secureChanged() {
+        boolean secure = false;
+        for (Win w : sWindows.values()) {
+            if (w.visible && w.attrs != null && (w.attrs.flags & WindowManager.LayoutParams.FLAG_SECURE) != 0) {
+                secure = true;
+                break;
+            }
+        }
+        int v = secure ? 1 : 0;
+        if (v == sSecure || (sSecure == -1 && !secure)) return;
+        sSecure = v;
+        try {
+            NativeCocoa.setSecureContent(secure);
+        } catch (Throwable t) {
+            System.err.println(TAG + "FLAG_SECURE not mirrored on the host window: " + t);
+        }
+    }
     static final Map<android.os.IBinder, Win> sWindows = new ConcurrentHashMap<>();
 
     /** The windows a screen reader reads (com.macapk.loader.HostAccessibility), bottom to top as
@@ -324,6 +347,7 @@ public final class AospWindows {
             if (w == null) return;
             System.err.println(TAG + "window removed: " + w.attrs.getTitle());
             if (w.surface != null) w.surface.release();
+            secureChanged();
             // What was under it shows again.
             main().post(() -> { insetsChanged(); Compositor.compose(); });
         }
@@ -363,6 +387,7 @@ public final class AospWindows {
             int result = 0;
             boolean wasVisible = w.visible;
             w.visible = viewVisibility == android.view.View.VISIBLE;
+            secureChanged();
             if (w.visible && outSurfaceControl != null) {
                 // The layer's size: WindowLayout.computeSurfaceSize, the frame and the surface insets
                 // (a floating window's room for its shadow).

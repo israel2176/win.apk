@@ -36,7 +36,8 @@
 // canvas fit goes back to the raw visible frame (cocoa_bridge.mm
 // content_budget_for_visible reads the same variable), which reproduces the
 // old portrait launch metrics exactly (418x906dp for an 808x1796 surface).
-// MACAPK_RESIZE_RELAUNCH=1 enables Stage 2 (see RELAUNCH_ON).
+// A change goes to AOSP's app layer (AppHost.configurationChanged), which relaunches an activity
+// whose android:configChanges does not cover it, as ActivityRecord.shouldRelaunchLocked does.
 package com.macapk.loader;
 
 import android.content.res.Configuration;
@@ -52,18 +53,6 @@ public final class DisplayConfig {
 
     static final boolean RESIZE_ON =
         !"0".equals(System.getenv("MACAPK_RESIZE_CONFIG"));
-
-    /** STAGE 2: relaunch an activity whose changed, bucket-filtered config bits
-     *  are not all declared in android:configChanges, the way AOSP's
-     *  ActivityRecord.shouldRelaunchLocked does. Default OFF until measured:
-     *  the relaunch path (ActivityHost.macapkRecreate) is exercised by the
-     *  light/dark flip on AppCompat apps, but a relaunch of a native-engine
-     *  activity (the cocos2d-x GD titles are the corpus's at-risk case) has
-     *  never been run. With it off, such an activity keeps its instance, gets
-     *  no onConfigurationChanged (which AOSP would not send it either), and
-     *  its view tree still learns the new configuration. */
-    static final boolean RELAUNCH_ON =
-        "1".equals(System.getenv("MACAPK_RESIZE_RELAUNCH"));
 
     // ---- the committed display ------------------------------------------------
 
@@ -271,54 +260,13 @@ public final class DisplayConfig {
         }
     }
 
-    /** WINDOW POLICY PHASE 3 (owner thread): commit the app box an activity
-     *  transition just gave the window -- the incoming activity's box, BEFORE it
-     *  is attached (ActivityHost.performLaunch), or the revealed one's, before
-     *  it resumes (ActivityHost.restoreTop) -- synchronously, so the activity is
-     *  created with (or comes back to) its own configuration instead of being
-     *  reconfigured a frame later (docs/window-policy-per-activity-orientation_
-     *  2026-09-25.md R8).
-     *
-     *  NOT delivered to the top activity and no traversal scheduled: on a device
-     *  the covered and revealed records never change (each ActivityRecord owns
-     *  its configuration); only the PROCESS follows the new top
-     *  (WindowProcessController.updateActivityConfigurationListener,
-     *  android16-release WindowProcessController.java:1624-1644), which is the
-     *  Application dispatch apply() still does. The incoming activity attaches
-     *  with this configuration; a revealed one is diffed by restoreTop's
-     *  deliverPendingTo right after, which finds nothing unless its box really
-     *  changed. The frame that later reports this drawable size then finds it
-     *  committed (macapkNoteSurfaceSize answers true at once), so there is ONE
-     *  commit per transition. A no-op before Boot has seeded the display. */
-    public static void macapkCommitPolicyBox(int w, int h) {
-        if (!RESIZE_ON || w <= 0 || h <= 0) return;
-        if (sRealW <= 0 || sRealH <= 0) return;
-        synchronized (sLock) {
-            sPendingW = w;
-            sPendingH = h;
-            sApplying = true;
-        }
-        try {
-            if (w == sRealW && h == sRealH) return;
-            apply(w, h, true);
-        } catch (Throwable t) {
-            NativeLog.w(TAG, "policy box commit " + w + "x" + h + " threw: " + t);
-        } finally {
-            synchronized (sLock) { sApplying = false; }
-        }
-    }
-
     // ---- the commit ---------------------------------------------------------------
 
-    private static void apply(int w, int h) { apply(w, h, false); }
-
-    /** @param activityTransition a window-policy activity transition's box
-     *  (macapkCommitPolicyBox): no delivery to the top activity, no traversal. */
-    private static void apply(int w, int h, boolean activityTransition) {
+    private static void apply(int w, int h) {
         final int oldW = sRealW, oldH = sRealH;
         // A host window resize / rotate is not input, so not in a recording: note it
         // (a replay refuses at the next `window` line unless the size comes back).
-        if (InputRecorder.ON && !activityTransition && oldW > 0 && oldH > 0 && (oldW != w || oldH != h))
+        if (InputRecorder.ON && oldW > 0 && oldH > 0 && (oldW != w || oldH != h))
             InputRecorder.unrecorded("host display resize " + oldW + "x" + oldH + " -> " + w + "x" + h + " px");
         // Commit first: Display/WindowManager (and the decor accessors compute()
         // reads) answer the new display from here on, as DisplayInfo does on a
@@ -345,185 +293,20 @@ public final class DisplayConfig {
             + " -> " + next.screenWidthDp + "x" + next.screenHeightDp + "dp sw"
             + next.smallestScreenWidthDp + " " + orientName(next.orientation)
             + " diff=0x" + Integer.toHexString(diff) + (bounds ? " +bounds" : "")
-            + (activityTransition ? " (activity transition)" : "")
             + " [owner=" + android.os.Looper.macapkIsActivityThread() + "]");
         if (diff == 0 && !bounds && !metricsChanged) return;
 
-        // The app's process is AOSP's (com.macapk.loader.app.AppHost): its activity task manager
-        // sends the configuration to the process and its activities (onConfigurationChanged, or a
-        // relaunch), and AOSP's ResourcesManager updates every Resources, the system's included.
+        // The activity task manager (com.macapk.loader.app.AppHost) sends the configuration to the
+        // process and its activities (onConfigurationChanged, or a relaunch), and AOSP's
+        // ResourcesManager updates every Resources, the system's included.
         com.macapk.loader.app.AppHost appHost = com.macapk.loader.app.AppHost.get();
-        if (appHost != null && appHost.started()) {
-            appHost.configurationChanged(next);
-            try { android.hardware.display.DisplayManager.macapkNotifyDisplayChanged(0); }
-            catch (Throwable t) { NativeLog.w(TAG, "display listener dispatch threw: " + t); }
-            if (!activityTransition && android.os.Looper.MACAPK_REAL_LOOPER) {
-                try { ViewHost.get().scheduleLayout(); } catch (Throwable ignored) {}
-            }
-            return;
-        }
-
-        // 1. RESOURCES. The index bakes qualifiers at construction, so build a
-        //    new one only when an app or framework threshold (or orientation) is
-        //    actually crossed; a drag that stays inside every bucket reuses it.
-        //    Synchronous on the owner thread, as AOSP builds the new
-        //    ResourcesImpl on the main thread: a one-off hitch at the end of a
-        //    drag that crosses a bucket, and no window in which the new
-        //    Configuration is served by resources selected for the old one.
-        Object liveIdx = ResBackend.get().resourceIndex();
-        if (ResBackend.get().isIndex(liveIdx)
-                && ResBackend.get().indexSelectionChangesFor(liveIdx, next)) {
-            long t0 = System.nanoTime();
-            Object built = Boot.macapkNewResourceIndex(next);
-            if (built != null) {
-                ResBackend.get().setResourceIndex(built);
-                NativeLog.i(TAG, "ResourceIndex rebuilt for "
-                    + next.screenWidthDp + "x" + next.screenHeightDp + "dp "
-                    + orientName(next.orientation) + " in "
-                    + ((System.nanoTime() - t0) / 1_000_000L) + "ms");
-            }
-        }
-        res.updateConfiguration(next, m);
-        // AOSP ResourcesManager.applyConfigurationToResources (android14-release
-        // :1337-1369) pushes the PROCESS configuration + app-area display metrics
-        // into Resources.getSystem() on every global change as well. The gap this
-        // comment used to record is closed: Boot seeds getSystem() at bind, so a
-        // resize moves it from the real boot size to the real new one, and the
-        // GMS checkin no longer reads getSystem() (CheckinClient
-        // .checkinProfileMetrics). Gated by MACAPK_SYSTEM_RES_FOLLOW in Resources.
-        // NOT `next` itself: it is copied from the APP's Resources, so it carries
-        // anything the app wrote there with updateConfiguration (a per-app
-        // locale, most often), and the system configuration must not. Only the
-        // display fields move, onto the system's own copy; the layout-direction
-        // bits of screenLayout follow the locale, not the display, so the
-        // system keeps its own.
-        ResBackend.get().editSystemConfiguration(sys -> {
-            final int dir = sys.screenLayout & Configuration.SCREENLAYOUT_LAYOUTDIR_MASK;
-            adoptDisplayFields(next, sys);
-            sys.screenLayout = (sys.screenLayout & ~Configuration.SCREENLAYOUT_LAYOUTDIR_MASK) | dir;
-        }, m);
-
-        // 2. THE PROCESS. A display change is a GLOBAL configuration change:
-        //    Application.onConfigurationChanged + every registered
-        //    ComponentCallbacks, once (ConfigurationController
-        //    .handleConfigurationChanged). Services/providers are not tracked
-        //    as callbacks here yet.
-        if (diff != 0 && app != null) {
-            try { app.dispatchConfigurationChanged(new Configuration(next)); }
-            catch (Throwable t) { NativeLog.w(TAG, "Application config dispatch threw: " + t); }
-        }
-        // 3. DISPLAY LISTENERS, once.
+        if (appHost == null || !appHost.started()) return;
+        appHost.configurationChanged(next);
         try { android.hardware.display.DisplayManager.macapkNotifyDisplayChanged(0); }
         catch (Throwable t) { NativeLog.w(TAG, "display listener dispatch threw: " + t); }
-
-        // An activity transition stops here: see macapkCommitPolicyBox.
-        if (activityTransition) return;
-
-        // 4. THE TOP ACTIVITY. Buried activities are checked when revealed
-        //    (ActivityHost.restoreTop -> deliverToActivity), which is when AOSP
-        //    sends a stopped activity its pending configuration.
-        android.app.Activity top = ActivityHost.peek();
-        if (top != null) deliverToActivity(top, next);
-
-        // 5. TRAVERSAL: a new configuration forces the next frame to measure
-        //    and lay out (ViewRootImpl.updateConfiguration -> requestLayout).
         if (android.os.Looper.MACAPK_REAL_LOOPER) {
             try { ViewHost.get().scheduleLayout(); } catch (Throwable ignored) {}
         }
-    }
-
-    /** AOSP @hide ActivityInfo.CONFIG_WINDOW_CONFIGURATION (android14-release ActivityInfo.java:976). */
-    private static final int CONFIG_WINDOW_CONFIGURATION = 0x20000000;
-
-    /** Apply AOSP's relaunch-then-report decision for ONE activity against the
-     *  live Resources configuration. Safe to call with no pending change (it
-     *  returns at once), which is how restoreTop re-checks on reveal. */
-    /** @return true when a RELAUNCH was scheduled (Stage 2), in which case the
-     *  caller must not keep driving this instance (AOSP relaunches INSTEAD of
-     *  resuming). */
-    public static boolean deliverToActivity(android.app.Activity a, Configuration next) {
-        if (a == null || next == null || a.isFinishing()) return false;
-        Configuration cur = a.macapkCurrentConfig();
-        Configuration lastReported = a.macapkLastReportedConfig();
-        if (cur == null) cur = next;
-        if (lastReported == null) lastReported = cur;
-        final int sdk = PresentedSdk.get();
-        // CONFIG_WINDOW_CONFIGURATION is out of both: ActivityRecord.getConfigurationChanges drops it
-        // ("We don't want window configuration to cause relaunches") and the client compares with
-        // diffPublicOnly. Win.apk's own Configuration.diff never sets it; AOSP's
-        // (-Dwinapk.aosp.res=1) does when the window bounds move, and a rotation then counted as
-        // undeclared: no relaunch, no onConfigurationChanged.
-        final int publicDiff = cur.diff(next) & ~CONFIG_WINDOW_CONFIGURATION;
-        final boolean bounds = boundsDiffer(cur, next);
-        final int serverDiff = lastReported.diff(next) & ~CONFIG_WINDOW_CONFIGURATION;
-        if (publicDiff == 0 && !bounds && serverDiff == 0) return false;
-        final int handled = a.macapkRealConfigChanged();
-        final int[][] buckets = appBuckets();
-
-        // SERVER SIDE FIRST (ActivityRecord.ensureActivityConfiguration): the
-        // activity is relaunched when a changed bit that survives the bucket
-        // filter is not declared. android11-release ActivityRecord
-        // getConfigurationChanges filters only screenSize/smallestWidth;
-        // android14-release uses SizeConfigurationBuckets.filterDiff, which
-        // android13 extended to screenLayout.
-        final int changes = filterDiff(sdk, serverDiff, lastReported, next, buckets, true);
-        if ((changes & ~handled) != 0) {
-            a.macapkSetLastReportedConfig(next);
-            boolean localeChanged = (changes & (ResBackend.CONFIG_LOCALE
-                | ResBackend.CONFIG_LAYOUT_DIRECTION)) != 0;
-            if ((RELAUNCH_ON || localeChanged) && ActivityHost.macapkRecreate(a)) {
-                NativeLog.i(TAG, "relaunching " + a.getClass().getName() + " (changed 0x"
-                    + Integer.toHexString(changes) + " not declared in configChanges 0x"
-                    + Integer.toHexString(handled) + ")");
-                return true;
-            }
-            // Stage 2 off: keep the instance. AOSP never reports a change to an
-            // activity it relaunches, so no callback; the window still learns.
-            NativeLog.i(TAG, "config change 0x" + Integer.toHexString(changes)
-                + " not declared by " + a.getClass().getName() + " (declared 0x"
-                + Integer.toHexString(handled) + "); AOSP relaunches it, Mac.apk keeps "
-                + "the instance (MACAPK_RESIZE_RELAUNCH=1 to relaunch)");
-            a.macapkSetCurrentConfig(next);
-            a.macapkDeliverConfigToWindow(next, false);
-            return false;
-        }
-        a.macapkSetLastReportedConfig(next);
-
-        // CLIENT SIDE (ActivityThread.performActivityConfigurationChanged).
-        boolean report;
-        boolean updateCurrent;
-        if (sdk <= 30) {
-            // android11: report iff every public changed bit is declared.
-            report = publicDiff != 0 && (~handled & publicDiff) == 0;
-            updateCurrent = publicDiff != 0;
-        } else if (sdk <= 32) {
-            // android12: diff is bucket-filtered first; an all-filtered change
-            // with unchanged bounds returns before anything is recorded.
-            int f = filterDiff(sdk, publicDiff, cur, next, buckets, false);
-            report = f != 0 && (~handled & f) == 0;
-            updateCurrent = f != 0 || bounds;
-        } else if (sdk == 33) {
-            // android13 shouldReportChange: the filtered diff, or the raw one
-            // when filtering removed everything.
-            int f = filterDiff(sdk, publicDiff, cur, next, buckets, false);
-            int d = (f != 0) ? f : publicDiff;
-            report = publicDiff != 0 && (~handled & d) == 0;
-            updateCurrent = publicDiff != 0 || bounds;
-        } else {
-            // android14 shouldReportChange: a window-bounds change is ALWAYS
-            // reported; otherwise as 13. mCurrentConfig moves only on report.
-            int f = filterDiff(sdk, publicDiff, cur, next, buckets, false);
-            int d = (f != 0) ? f : publicDiff;
-            report = bounds || (publicDiff != 0 && (~handled & d) == 0);
-            updateCurrent = report;
-        }
-        if (updateCurrent) a.macapkSetCurrentConfig(next);
-        NativeLog.i(TAG, a.getClass().getName() + ": config 0x"
-            + Integer.toHexString(publicDiff) + (bounds ? "+bounds" : "")
-            + " declared 0x" + Integer.toHexString(handled) + " api" + sdk
-            + (report ? " -> onConfigurationChanged" : " -> resources only"));
-        a.macapkDeliverConfigToWindow(new Configuration(next), report);
-        return false;
     }
 
     /** Copy the DISPLAY-derived fields of `from` into `to` (dp sizes,
@@ -551,122 +334,6 @@ public final class DisplayConfig {
         to.windowConfiguration.setAppBounds(from.windowConfiguration.getAppBounds());
         to.windowConfiguration.setMaxBounds(from.windowConfiguration.getMaxBounds());
         return true;
-    }
-
-    /** Re-check on reveal (ActivityHost.restoreTop): a buried activity is sent
-     *  the configuration it missed while it was not on top. */
-    public static boolean deliverPendingTo(android.app.Activity a) {
-        try {
-            android.app.Application app = com.macapk.loader.app.Apps.current();
-            Resources res = (app != null) ? app.getResources() : null;
-            Configuration live = (res != null) ? res.getConfiguration() : null;
-            if (live != null) return deliverToActivity(a, new Configuration(live));
-        } catch (Throwable t) {
-            NativeLog.w(TAG, "reveal config re-check threw: " + t);
-        }
-        return false;
-    }
-
-    /** v1.0.2308: would a user window resize reach this activity as
-     *  onConfigurationChanged? Replays the deliverToActivity decision on a
-     *  synthetic half-width display (a window-manager tile is that big a change),
-     *  with no side effects. An activity that would be relaunched, or that gets
-     *  "resources only" (android12 bucket filtering drops screenSize for an app
-     *  with no size qualifiers), is never told its window changed, so a free
-     *  resize leaves it drawing a layout it latched at launch (Geometry Jump
-     *  Lite). The native window keeps the aspect lock for those. */
-    public static boolean wouldReportWindowResize(android.app.Activity a) {
-        if (a == null) return false;
-        final Configuration cur = a.macapkCurrentConfig();
-        if (cur == null) return false;
-        final Configuration next = new Configuration(cur);
-        next.screenWidthDp = Math.max(1, cur.screenWidthDp / 2);
-        next.smallestScreenWidthDp = Math.min(next.screenWidthDp, cur.screenHeightDp);
-        final int sdk = PresentedSdk.get();
-        final int publicDiff = cur.diff(next);
-        final int handled = a.macapkRealConfigChanged();
-        final int[][] buckets = appBuckets();
-        final int changes = filterDiff(sdk, publicDiff, cur, next, buckets, true);
-        if ((changes & ~handled) != 0) return false;        // would relaunch
-        if (sdk <= 30) return publicDiff != 0 && (~handled & publicDiff) == 0;
-        final int f = filterDiff(sdk, publicDiff, cur, next, buckets, false);
-        if (sdk <= 32) return f != 0 && (~handled & f) == 0;
-        final int d = (f != 0) ? f : publicDiff;
-        if (sdk >= 34) return true;                         // bounds changed: always reported
-        return publicDiff != 0 && (~handled & d) == 0;
-    }
-
-    // ---- AOSP SizeConfigurationBuckets, per presented SDK ------------------------
-
-    private static int[][] appBuckets() {
-        Object idx = ResBackend.get().resourceIndex();
-        if (ResBackend.get().isIndex(idx)) {
-            try { return ResBackend.get().indexAppSizeBuckets(idx); }
-            catch (Throwable ignored) {}
-        }
-        return new int[][] { new int[0], new int[0], new int[0], new int[0], new int[] { 0 } };
-    }
-
-    /** SizeConfigurationBuckets.filterDiff with the release differences that
-     *  matter here (buckets are never null in this model -- an app with no size
-     *  qualifiers has EMPTY buckets, which is what reportSizeConfigurations
-     *  builds from an empty configuration list):
-     *    API <= 30  server side only (android11 ActivityRecord
-     *               getConfigurationChanges): screenSize + smallestWidth are
-     *               dropped unless a threshold is crossed; screenLayout is not
-     *               filtered. The API-30 client does not filter at all.
-     *    API 31-32  android12 filterDiff: screenSize + smallestWidth only.
-     *    API 33+    android13/14 filterDiff: also screenLayout, when its
-     *               non-size fields are unchanged and neither the size bucket
-     *               (shrinking always counts) nor a declared long/notlong flips. */
-    static int filterDiff(int sdk, int diff, Configuration oldC, Configuration newC,
-                          int[][] b, boolean serverSide) {
-        if (sdk <= 30 && !serverSide) return diff;
-        if ((diff & ResBackend.CONFIG_SCREEN_SIZE) != 0) {
-            boolean crosses = ResBackend.get().dpCrosses(b[0], oldC.screenWidthDp, newC.screenWidthDp)
-                || ResBackend.get().dpCrosses(b[1], oldC.screenHeightDp, newC.screenHeightDp);
-            if (!crosses) diff &= ~ResBackend.CONFIG_SCREEN_SIZE;
-        }
-        if ((diff & ResBackend.CONFIG_SMALLEST_SCREEN_SIZE) != 0) {
-            if (!ResBackend.get().dpCrosses(b[2], oldC.smallestScreenWidthDp,
-                                                newC.smallestScreenWidthDp)) {
-                diff &= ~ResBackend.CONFIG_SMALLEST_SCREEN_SIZE;
-            }
-        }
-        if (sdk >= 33 && (diff & ResBackend.CONFIG_SCREEN_LAYOUT) != 0
-                && nonSizeLayoutFieldsUnchanged(oldC.screenLayout, newC.screenLayout)) {
-            boolean longSet = b[4].length > 0 && b[4][0] != 0;
-            if (!crossesScreenLayoutSizeThreshold(b[3], oldC, newC)
-                    && !(longSet && (oldC.screenLayout & Configuration.SCREENLAYOUT_LONG_MASK)
-                                 != (newC.screenLayout & Configuration.SCREENLAYOUT_LONG_MASK))) {
-                diff &= ~ResBackend.CONFIG_SCREEN_LAYOUT;
-            }
-        }
-        return diff;
-    }
-
-    /** android14-release SizeConfigurationBuckets.areNonSizeLayoutFieldsUnchanged. */
-    private static boolean nonSizeLayoutFieldsUnchanged(int oldL, int newL) {
-        final int nonSize = Configuration.SCREENLAYOUT_LAYOUTDIR_MASK
-            | Configuration.SCREENLAYOUT_ROUND_MASK | Configuration.SCREENLAYOUT_COMPAT_NEEDED;
-        return (oldL & nonSize) == (newL & nonSize);
-    }
-
-    /** android14-release SizeConfigurationBuckets.crossesScreenLayoutSizeThreshold. */
-    private static boolean crossesScreenLayoutSizeThreshold(int[] sizes, Configuration a,
-                                                            Configuration b) {
-        final int aSize = a.screenLayout & Configuration.SCREENLAYOUT_SIZE_MASK;
-        final int bSize = b.screenLayout & Configuration.SCREENLAYOUT_SIZE_MASK;
-        if (aSize == bSize) return false;
-        // "Any time the new layout size is smaller than the old layout size, the
-        // activity has crossed a size threshold."
-        if (!b.isLayoutSizeAtLeast(aSize)) return true;
-        if (sizes != null) {
-            for (int s : sizes) {
-                if (a.isLayoutSizeAtLeast(s) != b.isLayoutSizeAtLeast(s)) return true;
-            }
-        }
-        return false;
     }
 
     /** android14-release ConfigurationHelper.shouldUpdateWindowMetricsBounds. */

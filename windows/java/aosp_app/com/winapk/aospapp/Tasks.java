@@ -68,7 +68,10 @@ public final class Tasks {
         final List<ResultInfo> results = new ArrayList<>();
         /** Intents delivered to it while it was not resumed (onNewIntent before onResume). */
         final List<com.android.internal.content.ReferrerIntent> newIntents = new ArrayList<>();
-        int requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;
+        /** ActivityRecord's orientation: the manifest's, until the activity requests its own. */
+        int requestedOrientation;
+        /** Its theme hides what is below, or it started an empty task: it owns the window's box. */
+        boolean ownsBox;
         /** The configuration the activity last got (ActivityRecord's last reported one). */
         Configuration reported;
 
@@ -79,6 +82,7 @@ public final class Tasks {
             this.resultTo = resultTo;
             this.resultWho = resultWho;
             this.requestCode = requestCode;
+            this.requestedOrientation = info.screenOrientation;
         }
 
         ComponentName component() { return new ComponentName(info.packageName, info.name); }
@@ -145,22 +149,57 @@ public final class Tasks {
         start(ai, i, sender, null, null, -1);
     }
 
+    /** The activities of a process that died (MacApkProcessExit): finished, as
+     *  ActivityTaskManagerService removes a dead process's records. */
+    void finishActivities(java.util.Set<String> classNames) {
+        for (int i = task.size() - 1; i >= 0; i--) {
+            Record r = task.get(i);
+            if (!r.finishing && classNames.contains(r.info.name)) {
+                finish(r, android.app.Activity.RESULT_CANCELED, null);
+            }
+        }
+    }
+
+    /** The starts not launched yet: records waiting for the top to pause. */
+    java.util.List<Intent> pendingStarts() {
+        java.util.List<Intent> out = new ArrayList<>();
+        for (Record r : task) if (!r.launched && !r.finishing) out.add(new Intent(r.intent));
+        return out;
+    }
+
     // ---- What the host asks (the window) ----
 
-    /** ActivityTaskManagerService.removeTask for the window's close: every activity is destroyed,
-     *  top first, from whatever state it is in (the executor passes through onPause and onStop);
+    /** ActivityTaskManagerService.removeTask for the window's close. The visible top is paused
+     *  first, as ActivityRecord.finishIfPossible pauses a resumed activity before it goes
+     *  (`topPaused` then runs: the host may take its window off screen); then every activity is
+     *  destroyed, top first, from whatever state it is in (the executor passes through onStop).
      *  `done` counts down once the task is empty. */
-    void terminate(java.util.concurrent.CountDownLatch done) {
+    void terminate(java.util.concurrent.CountDownLatch done, Runnable topPaused) {
         terminating = true;
         terminated = done;
         pendingLaunch = null;
         if (task.isEmpty()) {
+            if (topPaused != null) topPaused.run();
             done.countDown();
             return;
         }
+        for (Record r : task) r.finishing = true;
+        Record t = task.get(task.size() - 1);
+        if (t.state == State.RESUMED || t.state == State.PAUSING) {
+            terminatePaused = topPaused != null ? topPaused : () -> {};
+            if (t.state == State.RESUMED) pause(t, false);
+            return;
+        }
+        if (topPaused != null) topPaused.run();
+        destroyAll();
+    }
+
+    /** What runs once the top paused on the way out (terminate). */
+    private Runnable terminatePaused;
+
+    private void destroyAll() {
         for (int i = task.size() - 1; i >= 0; i--) {
             Record r = task.get(i);
-            r.finishing = true;
             if (r.state != State.DESTROYING && r.state != State.DESTROYED) destroy(r);
         }
     }
@@ -392,6 +431,7 @@ public final class Tasks {
         }
         Record r = new Record(info, intent, from, resultTo, resultWho, requestCode);
         Record prev = top();
+        windowOnStart(r, prev == null);
         task.add(r);
         if (prev != null && prev.state == State.RESUMED) {
             pendingLaunch = r;
@@ -469,6 +509,7 @@ public final class Tasks {
     /** TaskFragment.resumeTopActivity for an activity already launched: its pending results, then
      *  resume (the executor passes through onRestart and onStart from stopped). */
     private void resume(Record r) {
+        windowOnRevealed();
         if (!r.launched) {
             realStart(r);
             return;
@@ -570,12 +611,109 @@ public final class Tasks {
         schedule(tx);
     }
 
+    // ---- The host window's orientation (DisplayContent.updateOrientation, for one window) ----
+
+    /** The record whose box the window shows. */
+    private Record boxOwner;
+
+    /** The topmost live record that owns a box. */
+    private Record topBoxOwner() {
+        for (int i = task.size() - 1; i >= 0; i--) {
+            Record c = task.get(i);
+            if (!c.finishing && c.ownsBox) return c;
+        }
+        return null;
+    }
+
+    /** A starting activity whose theme hides what is below (or the first of an empty task) owns the
+     *  box: the window takes its orientation. A translucent one inherits the box below. */
+    private void windowOnStart(Record r, boolean emptyTask) {
+        r.ownsBox = emptyTask || occludesParent(r.info);
+        if (!r.ownsBox) return;
+        boxOwner = r;
+        if (owner.orientation != null) owner.orientation.accept(r.requestedOrientation);
+    }
+
+    /** An activity revealed as the box owner (the one above it finished): a fixed side is applied
+     *  again, a free one returns the window to the user's rotation when the one that went had fixed
+     *  the side. */
+    private void windowOnRevealed() {
+        Record o = topBoxOwner();
+        Record was = boxOwner;
+        if (o == null || o == was) return;
+        boxOwner = o;
+        if (fixedSide(o.requestedOrientation)) {
+            if (owner.orientation != null) owner.orientation.accept(o.requestedOrientation);
+        } else if (was != null && fixedSide(was.requestedOrientation) && owner.userOrientation != null) {
+            owner.userOrientation.run();
+        }
+    }
+
+    /** Activity.setRequestedOrientation (ActivityRecord.setRequestedOrientation): on its record, and
+     *  on the window when the record shows the box, or is on top of it. */
+    void requestOrientation(Record r, int orientation) {
+        r.requestedOrientation = orientation;
+        if (r.finishing || owner.orientation == null) return;
+        Record o = topBoxOwner();
+        if (r == o || r == top()) owner.orientation.accept(orientation);
+    }
+
+    /** ActivityRecord.occludesParent from its theme (AttributeCache's Window entry,
+     *  ActivityInfo.isTranslucentOrFloating): not translucent, floating, swipe-to-dismiss or
+     *  no-display. Read through the application's resources, which hold the app's styles. */
+    static boolean occludesParent(ActivityInfo info) {
+        int theme = info.getThemeResource();
+        android.app.Application app = android.app.ActivityThread.currentApplication();
+        if (theme == 0 || app == null) return true;
+        try {
+            android.content.res.Resources.Theme t = app.getResources().newTheme();
+            t.applyStyle(theme, true);
+            android.content.res.TypedArray a = t.obtainStyledAttributes(new int[] {
+                    android.R.attr.windowIsTranslucent, android.R.attr.windowIsFloating,
+                    android.R.attr.windowSwipeToDismiss, android.R.attr.windowNoDisplay});
+            boolean translucent = a.getBoolean(0, false);
+            boolean floating = a.getBoolean(1, false);
+            boolean swipeToDismiss = a.getBoolean(2, false) && !a.hasValue(0);
+            boolean noDisplay = a.getBoolean(3, false);
+            a.recycle();
+            return !translucent && !floating && !swipeToDismiss && !noDisplay;
+        } catch (RuntimeException e) {
+            return true;   // a theme the resources cannot read: opaque, AOSP's default
+        }
+    }
+
+    /** The landscape and portrait families: the values that fix a side. */
+    static boolean fixedSide(int o) {
+        switch (o) {
+            case ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE:
+            case ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE:
+            case ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE:
+            case ActivityInfo.SCREEN_ORIENTATION_USER_LANDSCAPE:
+            case ActivityInfo.SCREEN_ORIENTATION_PORTRAIT:
+            case ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT:
+            case ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT:
+            case ActivityInfo.SCREEN_ORIENTATION_USER_PORTRAIT:
+                return true;
+            default:
+                return false;
+        }
+    }
+
     // ---- What the app reports (IActivityClientController) ----
 
     void paused(IBinder token) {
         Record r = find(token);
         if (r == null) return;
         r.state = State.PAUSED;
+        if (terminating) {
+            Runnable p = terminatePaused;
+            terminatePaused = null;
+            if (p != null) {
+                p.run();
+                destroyAll();
+            }
+            return;
+        }
         if (pendingLaunch != null) {
             Record next = pendingLaunch;
             pendingLaunch = null;

@@ -1596,8 +1596,9 @@ std::vector<std::string> jvm_options(const BootArgs& b) {
     const winapk::host::AospResFiles* aosp_res = o.java_test ? nullptr : winapk::host::aosp_res_files();
     // AOSP's views (aosp_gfx.h, always likewise) before both: android.view and android.widget.
     const std::filesystem::path* aosp_views = o.java_test ? nullptr : winapk::host::aosp_views_jar();
-    // AOSP's app layer (aosp_gfx.h, always) before all three: android.app's lifecycle.
-    const std::filesystem::path* aosp_app = o.java_test ? nullptr : winapk::host::aosp_app_jar();
+    // AOSP's app layer (aosp_gfx.h, always) before all three: android.app's lifecycle. --java-test
+    // too: the framework has no Activity or Application of its own.
+    const std::filesystem::path* aosp_app = winapk::host::aosp_app_jar();
     v.push_back("-Djava.class.path=" + (aosp_app ? jvm_path(*aosp_app) + ";" : std::string()) +
                 (aosp_views ? jvm_path(*aosp_views) + ";" : std::string()) +
                 (aosp_res ? jvm_path(aosp_res->jar) + ";" : std::string()) +

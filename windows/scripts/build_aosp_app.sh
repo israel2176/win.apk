@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# build_aosp_app.sh -- AOSP 14's own app layer (WINAPK_AOSP_APP=1, off by default and not yet read by
-# the host; docs/research/aosp-app.md, step A1), into a staged runtime:
+# build_aosp_app.sh -- AOSP 14's own app layer, every app's process (docs/research/aosp-app.md), into
+# a staged runtime:
 #
 #   <out>/lib/aosp-app.jar   AOSP 14's android.app lifecycle and its drivers: ActivityThread (with
 #                            its H, ApplicationThread and ActivityClientRecord), the client
@@ -37,8 +37,9 @@
 # or a named UnsupportedOperationException, sends what they call that Win.apk's classes lack to
 # com.winapk.aospapp.Compat, and generates the in-process services (AIDL Stub subclasses).
 # LinkScan.java then lists every member reference that would still not link
-# (<out>/.build/aosp-app.links.txt, printed as a count). Not staged by stage_runtime.sh, and no host
-# switch reads the jar yet: windows/test/aospapp runs it on a plain JVM.
+# (<out>/.build/aosp-app.links.txt, printed as a count). stage_runtime.sh stages it; the host puts it
+# first on the class path of every JVM with the framework (host/aosp_gfx.h, aosp_app_prepare), and
+# windows/test/aospapp runs it on a plain JVM.
 
 set -euo pipefail
 
@@ -103,13 +104,11 @@ mkdir -p "$CLASSES"
 
 echo "[aosp-app] AOSP's classes from android-all 14"
 unzip -Z1 "$ALL" > "$WORK/all.txt"
-# The lifecycle and what drives it in the app's process. A nested class goes with its outer one, but
-# for ActivityManager's TaskDescription (AOSP's Activity builds one from its theme; Win.apk's lacks
-# its setters), taken alone: Win.apk's ActivityManager stays. ToolbarActionBar is Activity's
-# setActionBar(Toolbar): without it the verifier cannot check Activity, and the framework's
-# class-data sharing archive leaves Activity out.
-TAKE='^(com/android/internal/app/ToolbarActionBar([$].*)?|android/app/servertransaction/.*|android/app/ActivityManager[$]TaskDescription([$].*)?|android/app/(ActionBar|ActivityThread|ActivityThreadInternal|ClientTransactionHandler|ConfigurationController|Activity|ActivityClient|ActivityTaskManager|Instrumentation|ContextImpl|ReceiverRestrictedContext|LoadedApk|Application|ResourcesManager|IActivityManager|IActivityTaskManager|IActivityClientController|IApplicationThread|IAppTask|IServiceConnection|IIntentReceiver|IInstrumentationWatcher|IUiAutomationConnection|ProfilerInfo|ResultInfo|ActivityTransitionState|ActivityTransitionCoordinator|EnterTransitionCoordinator|ExitTransitionCoordinator|SharedElementCallback|Fragment|FragmentController|FragmentHostCallback|FragmentContainer|FragmentManager|FragmentManagerImpl|FragmentManagerState|FragmentManagerNonConfig|FragmentState|FragmentTransaction|FragmentTransition|FragmentBreadCrumbs|BackStackRecord|BackStackState|LoaderManager|LoaderManagerImpl|DialogFragment|ListFragment|ListActivity|ExpandableListActivity|AliasActivity|LauncherActivity|ActivityGroup|LocalActivityManager|TabActivity|ActivityOptions|ComponentOptions|TaskStackBuilder|VoiceInteractor|DirectAction|PictureInPictureParams|PictureInPictureUiState)([$].*)?)\.class$'
-grep -E "$TAKE" "$WORK/all.txt" > "$WORK/take.txt"
+# The lifecycle and what drives it in the app's process: aosp_app_take.sh's list, which build_java.sh
+# compiles the framework against.
+# shellcheck source=aosp_app_take.sh
+source "$HERE/aosp_app_take.sh"
+aosp_app_take "$WORK/all.txt" > "$WORK/take.txt"
 extract() { (cd "$CLASSES" && xargs -d '\n' unzip -qo "$1" < "$2"); }
 extract "$ALL" "$WORK/take.txt"
 echo "[aosp-app]   $(wc -l < "$WORK/take.txt") classes of android.app's lifecycle"
