@@ -519,6 +519,14 @@ jobs:
           cp="$(cygpath -w stage/lib/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/hosttouch-test windows/test/java/com/macapk/loader/HostTouchTest.java
           MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/hosttouch-test)" com.macapk.loader.HostTouchTest
+      - name: Run the text services' edits test
+        run: |
+          # A TSF text service's edits (composition, replacement, selection) as
+          # HostTextInput applies them to an InputConnection, on a plain JVM.
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          cp="$(cygpath -w stage/lib/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          "$JAVA_HOME/bin/javac" -cp "$cp" -d build/hosttext-test windows/test/java/com/macapk/loader/HostTextInputTest.java
+          MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/hosttext-test)" com.macapk.loader.HostTextInputTest
       - name: Run the framework stubs test
         run: |
           # Framework methods that were stubs (windows/test/apicheck/Completeness.java
