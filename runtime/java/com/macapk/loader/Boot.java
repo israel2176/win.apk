@@ -2965,6 +2965,13 @@ public final class Boot {
                     NativeLog.e(TAG, "the app's start failed: " + t);
                     t.printStackTrace();
                 }
+                // A service host (the broker's start for another app's bind) runs no activity but
+                // the main loop, where the application's bind and every service, bind and broadcast
+                // arrive, as ActivityThread.main ends in Looper.loop(). The broker and CI wait for
+                // this line.
+                if (SystemClient.isServiceHost()) {
+                    NativeLog.i(TAG, "service host: entering main loop on the main thread (no activity)");
+                }
                 android.os.Looper.loop();
             });
         } catch (InterruptedException ie) {
