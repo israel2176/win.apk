@@ -73,6 +73,15 @@ bool aosp_views_prepare(const std::filesystem::path& lib);
 // The jar, once aosp_views_prepare said yes; null otherwise.
 const std::filesystem::path* aosp_views_jar();
 
+// AOSP's own app layer (docs/research/aosp-app.md): windows/scripts/build_aosp_app.sh stages
+// lib\aosp-app.jar (AOSP 14's ActivityThread, client transactions, Instrumentation, ContextImpl,
+// LoadedApk, Application, Activity + windows/java/aosp_app: the in-process activity manager and task
+// manager), put first on the class path, before the views'. It runs on AOSP's views only.
+// Decides, once, after aosp_views_prepare, for the same JVMs; logs one line.
+bool aosp_app_prepare(const std::filesystem::path& lib);
+// The jar, once aosp_app_prepare said yes; null otherwise.
+const std::filesystem::path* aosp_app_jar();
+
 // After the host's own natives (host_natives.h) and SQLite's are bound: binds the DLL's natives
 // onto aosp-graphics.jar's classes (aosp_gfx_redirect.h) and logs what it did. False when it could
 // not: AOSP's classes then have no natives, so the caller stops instead of running a JVM that

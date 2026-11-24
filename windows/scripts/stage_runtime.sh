@@ -15,7 +15,8 @@
 #                                     thirdparty/aosp-gfx), which build_java.sh reads too
 #   <out>/lib/aosp-resources.jar, bin/aosp/framework-res-34.apk, lib/aosp-views.jar: AOSP's own
 #                                     resources and views, the only ones apps run on, staged with the
-#                                     graphics (build_aosp_res.sh, build_aosp_views.sh). The classes
+#                                     graphics (build_aosp_res.sh, build_aosp_views.sh), and
+#                                     lib/aosp-app.jar, AOSP's app layer (build_aosp_app.sh). The classes
 #                                     of lib/android-framework.jar they shadow are then dropped from
 #                                     it (never loaded: the AOSP jars come first on the class path);
 #                                     the jar as compiled stays in <cmake build dir>/java/ for the
@@ -40,6 +41,7 @@ OUT="$(cd -- "$OUT" && pwd)"
 "$HERE/build_aosp_gfx.sh" "$OUT" "${WINAPK_AOSP_GFX_DEPS:-}"
 "$HERE/build_aosp_res.sh" "$OUT" "${WINAPK_AOSP_GFX_DEPS:-}"
 "$HERE/build_aosp_views.sh" "$OUT" "${WINAPK_AOSP_GFX_DEPS:-}"
+"$HERE/build_aosp_app.sh" "$OUT" "${WINAPK_AOSP_GFX_DEPS:-}"
 # The framework as compiled, for the tests that run Win.apk's own views and resources (ci.yml,
 # "Runtime tests"): on a plain JVM, or in winapk-runtime --java-test, which binds AOSP's graphics.
 mkdir -p "$BUILD/java"
@@ -52,11 +54,11 @@ cp -f "$OUT/lib/android-framework.jar" "$BUILD/java/android-framework.jar"
 DROP="$OUT/.build/aosp-shadowed.txt"
 mkdir -p "$OUT/.build/drop/META-INF"
 # Both listings sorted the same way (LC_ALL=C) and without carriage returns, for comm.
-for j in aosp-resources aosp-views; do unzip -Z1 "$OUT/lib/$j.jar"; done | tr -d '\r' | grep '\.class$' |
+for j in aosp-resources aosp-views aosp-app; do unzip -Z1 "$OUT/lib/$j.jar"; done | tr -d '\r' | grep '\.class$' |
     LC_ALL=C sort -u > "$OUT/.build/aosp-shadowing.txt"
 unzip -Z1 "$OUT/lib/android-framework.jar" | tr -d '\r' | LC_ALL=C sort > "$OUT/.build/framework-entries.txt"
 LC_ALL=C comm -12 "$OUT/.build/aosp-shadowing.txt" "$OUT/.build/framework-entries.txt" > "$DROP"
-echo "[stage] android-framework.jar: $(wc -l < "$DROP") classes AOSP's resources and views shadow, dropped"
+echo "[stage] android-framework.jar: $(wc -l < "$DROP") classes AOSP's resources, views and app layer shadow, dropped"
 if [[ ! -s "$DROP" ]]; then
     echo "[stage] none found: the AOSP jars ($(wc -l < "$OUT/.build/aosp-shadowing.txt") classes) and the framework" \
          "($(wc -l < "$OUT/.build/framework-entries.txt") entries) share no name; first of each:" >&2

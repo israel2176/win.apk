@@ -28,6 +28,9 @@ BUDGETS = [
     # 1x1, build_aosp_res.sh).
     ("AOSP resources and views", ["lib/aosp-resources.jar", "lib/aosp-views.jar", "bin/aosp/framework-res-34.apk"],
      25),
+    # AOSP's app layer (ActivityThread, Activity, ContextImpl...: docs/research/aosp-app.md), 1.3 MB,
+    # about 1.25 MB under LZMA; Win.apk's own android.app classes it shadows left the framework jar.
+    ("AOSP app layer", ["lib/aosp-app.jar"], 2),
     ("AOSP graphics (what everything draws with)",
      ["bin/aosp/", "bin/robolectric-nativeruntime.dll", "lib/aosp-graphics.jar"], 70),
     ("Java runtime (jre/)", ["jre/"], 140),
@@ -37,8 +40,8 @@ BUDGETS = [
     # android-framework.jar (its classes, and the fonts it bundled: 6.9 MB of the jar).
     ("Win.apk itself (the rest, bin/tools/ included)", None, 92),
 ]
-TOTAL_BUDGET = 572       # the installed folder
-INSTALLER_BUDGET = 158   # Win.apk-Setup.exe
+TOTAL_BUDGET = 574       # the installed folder (572 until AOSP's app layer, +1.3 MB)
+INSTALLER_BUDGET = 160   # Win.apk-Setup.exe (158 until AOSP's app layer, +1.25 MB)
 
 
 def files(stage):

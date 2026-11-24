@@ -134,6 +134,34 @@ bool aosp_views_prepare(const fs::path& lib) {
 
 const std::filesystem::path* aosp_views_jar() { return g_views_on ? &g_views_jar : nullptr; }
 
+namespace {
+std::filesystem::path g_app_jar;
+bool g_app_on = false;
+}  // namespace
+
+bool aosp_app_prepare(const fs::path& lib) {
+    g_app_on = false;
+    if (!g_views_on) {
+        std::fprintf(stderr, "[win.apk] AOSP app layer: off, it needs AOSP's views: an app cannot start "
+                             "without it\n");
+        return false;
+    }
+    const fs::path jar = lib / "aosp-app.jar";
+    std::error_code ec;
+    if (!fs::is_regular_file(jar, ec)) {
+        std::fprintf(stderr, "[win.apk] AOSP app layer: off, %s is missing (a runtime staged without "
+                             "windows/scripts/build_aosp_app.sh's jar): an app cannot start without it\n",
+                     utf8(jar.wstring()).c_str());
+        return false;
+    }
+    g_app_jar = jar;
+    g_app_on = true;
+    std::fprintf(stderr, "[win.apk] AOSP app layer: on: %s first on the class path\n", utf8(jar.wstring()).c_str());
+    return true;
+}
+
+const std::filesystem::path* aosp_app_jar() { return g_app_on ? &g_app_jar : nullptr; }
+
 std::string aosp_gfx_locale() {
     // WINAPK_LOCALES (runtime_main.cpp): the device's first system language over Windows'.
     if (const char* l = std::getenv("WINAPK_LOCALES"); l && *l) {

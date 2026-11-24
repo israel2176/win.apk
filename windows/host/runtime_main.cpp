@@ -1596,7 +1596,10 @@ std::vector<std::string> jvm_options(const BootArgs& b) {
     const winapk::host::AospResFiles* aosp_res = o.java_test ? nullptr : winapk::host::aosp_res_files();
     // AOSP's views (aosp_gfx.h, always likewise) before both: android.view and android.widget.
     const std::filesystem::path* aosp_views = o.java_test ? nullptr : winapk::host::aosp_views_jar();
-    v.push_back("-Djava.class.path=" + (aosp_views ? jvm_path(*aosp_views) + ";" : std::string()) +
+    // AOSP's app layer (aosp_gfx.h, always) before all three: android.app's lifecycle.
+    const std::filesystem::path* aosp_app = o.java_test ? nullptr : winapk::host::aosp_app_jar();
+    v.push_back("-Djava.class.path=" + (aosp_app ? jvm_path(*aosp_app) + ";" : std::string()) +
+                (aosp_views ? jvm_path(*aosp_views) + ";" : std::string()) +
                 (aosp_res ? jvm_path(aosp_res->jar) + ";" : std::string()) +
                 (aosp ? jvm_path(aosp->jar) + ";" : std::string()) +
                 jvm_path(o.lib / "android-framework.jar") + ";" +
@@ -2364,6 +2367,7 @@ int wmain(int argc, wchar_t** argv) {
     // AOSP's resources and views (aosp_gfx.h), for the same JVMs: the only ones the stage has.
     winapk::host::aosp_res_prepare(b.options.lib, exe_dir());
     winapk::host::aosp_views_prepare(b.options.lib);
+    winapk::host::aosp_app_prepare(b.options.lib);
     if (b.options.cds_prepare) {
         // The options, and with them the archive's key, an app's start would have: its graphics too.
         jvm_options(b);
