@@ -804,6 +804,34 @@ New bugs found with AOSP views:
   layout (categories and suggested versions differ). The repository's
   timestamp is not yet compared with the last one read (F-Droid's client
   refuses an older index).
+- **Explorer's thumbnails of the app files (November 2026, from the other runtime).**
+  `bin\winapk-shell.dll` (`windows/shell/`, about 0.3 MB): each `.apk`,
+  `.apkm`, `.xapk`, `.apks` shows its own icon, parsed natively. *Verified*:
+  `winapk-apk-icon-test` (made-up APKs and bundles, truncated and corrupted
+  copies, under ASan/UBSan on Linux) and real F-Droid APKs (F-Droid, NewPipe,
+  Termux, Fossify Gallery, OpenSudoku, a stored `.apks` and a deflated
+  `.xapk` around them) through the DLL's COM object under Wine, with an
+  adaptive icon of a color and a picture layer. *Not verified*: Explorer on
+  real Windows (the registration, the surrogate process, the cache, the
+  installer replacing a DLL the surrogate still holds: Inno's Restart Manager
+  should close it); an APKMirror `.apkm`. *Gaps*: a vector icon (or an
+  adaptive one with a vector layer) shows only when the same package is
+  installed (its `apps\<name>\icon.png`), else Win.apk's file icon; WebP
+  needs Windows' codec (missing on some N/LTSC editions; Wine has none);
+  small icons and the details view keep the type's icon (an `IExtractIcon`
+  handler would be needed, as the other runtime's).
+- **Proxy (November 2026).** Apps now follow Windows' proxy
+  (`-Djava.net.useSystemProxies=true`, `runtime_main.cpp`); before, the JDK's
+  default selector went direct whatever Windows said (checked under Wine: a
+  manual proxy is returned and `<local>` bypassed only with the flag).
+  *Not verified*: a PAC script or WPAD on real Windows (WinHTTP's auto-proxy
+  service answers; the first lookup may take a moment). *Still differs from
+  Android*: `ConnectivityManager.getDefaultProxy()` and `Proxy.getDefaultHost()`
+  report none (they read `http.proxyHost`, which Android sets from its global
+  proxy and Win.apk does not); the push connection (MCS) goes direct unless
+  `WINAPK_PROXY`; upstream's per-app `HostProxy` file is not wired on Windows
+  (its `initialize` runs only lazily from the GMS clients). No per-app proxy
+  setting (the other runtime has one): decide only if an owner's need appears.
 
 ## Size and memory (decide later)
 
