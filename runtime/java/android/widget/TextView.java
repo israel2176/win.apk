@@ -8442,4 +8442,63 @@ public class TextView extends View
         }
         android.util.Log.d("View", output);
     }
+
+    // ---- Accessibility: AOSP TextView (android-14), the part a screen reader reads
+    //      (HostAccessibility): the text as shown (a password's dots), the hint while it shows,
+    //      an editor's ACTION_SET_TEXT. ----
+
+    @Override
+    public void onInitializeAccessibilityNodeInfoInternal(android.view.accessibility.AccessibilityNodeInfo info) {
+        super.onInitializeAccessibilityNodeInfoInternal(info);
+        final boolean isPassword =
+                getTransformationMethod() instanceof android.text.method.PasswordTransformationMethod;
+        info.setPassword(isPassword);
+        info.setText(getTextForAccessibility());
+        info.setHintText(getHint());
+        info.setShowingHintText(android.text.TextUtils.isEmpty(getText()) && !android.text.TextUtils.isEmpty(getHint()));
+        if (macapkEditableForAccessibility()) {
+            info.setEditable(true);
+            if (isEnabled()) info.addAction(android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction.ACTION_SET_TEXT);
+            info.setInputType(getInputType());
+            info.setMultiLine(macapkIsMultilineInputType(getInputType()));
+        }
+    }
+
+    /** AOSP TextView.getTextForAccessibility: the hint when there is no text, else the text as
+     *  it is shown (its transformation: a password's dots). */
+    public CharSequence getTextForAccessibility() {
+        CharSequence t = getText();
+        if (android.text.TextUtils.isEmpty(t)) return getHint();
+        android.text.method.TransformationMethod tm = getTransformationMethod();
+        if (tm != null) {
+            try {
+                CharSequence shown = tm.getTransformation(t, this);
+                if (shown != null) t = shown;
+            } catch (RuntimeException ignored) {
+                // The raw text, as before a transformation.
+            }
+        }
+        return t;
+    }
+
+    /** AOSP's `mBufferType == BufferType.EDITABLE`: an EditText, or a TextView made an editor. */
+    private boolean macapkEditableForAccessibility() {
+        return getDefaultEditable() || onCheckIsTextEditor();
+    }
+
+    @Override
+    public boolean performAccessibilityActionInternal(int action, android.os.Bundle arguments) {
+        if (action == android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction.ACTION_SET_TEXT.getId()) {
+            if (!isEnabled() || !macapkEditableForAccessibility()) return false;
+            CharSequence text = arguments != null
+                    ? arguments.getCharSequence("ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE") : null;
+            setText(text);
+            CharSequence now = getText();
+            if (now != null && now.length() > 0 && now instanceof android.text.Spannable) {
+                android.text.Selection.setSelection((android.text.Spannable) now, now.length());
+            }
+            return true;
+        }
+        return super.performAccessibilityActionInternal(action, arguments);
+    }
 }

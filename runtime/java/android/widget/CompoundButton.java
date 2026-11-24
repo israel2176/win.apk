@@ -538,4 +538,13 @@ public abstract class CompoundButton extends Button implements Checkable {
         setButtonTintMode(MacApkBlendModes.toPorterDuff(blendMode));
     }
     public android.graphics.BlendMode getButtonTintBlendMode() { return mButtonBlendMode; }
+
+    // ---- Accessibility: AOSP CompoundButton (android-14), for a screen reader ----
+
+    @Override
+    public void onInitializeAccessibilityNodeInfoInternal(android.view.accessibility.AccessibilityNodeInfo info) {
+        super.onInitializeAccessibilityNodeInfoInternal(info);
+        info.setCheckable(true);
+        info.setChecked(isChecked());
+    }
 }

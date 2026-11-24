@@ -2653,7 +2653,29 @@ public class View implements android.graphics.drawable.Drawable.Callback,
     private int mAccessibilityLiveRegion = ACCESSIBILITY_LIVE_REGION_NONE;
     public void setAccessibilityLiveRegion(int mode) { mAccessibilityLiveRegion = mode; }
     public int  getAccessibilityLiveRegion() { return mAccessibilityLiveRegion; }
-    public void announceForAccessibility(CharSequence text) {}
+    /** AOSP View.announceForAccessibility: a TYPE_ANNOUNCEMENT event while an accessibility
+     *  service (here the host's screen reader, HostAccessibility) is on. */
+    public void announceForAccessibility(CharSequence text) {
+        if (text == null || !accessibilityEnabled()) return;
+        android.view.accessibility.AccessibilityEvent event = android.view.accessibility.AccessibilityEvent.obtain(
+                android.view.accessibility.AccessibilityEvent.TYPE_ANNOUNCEMENT);
+        onInitializeAccessibilityEvent(event);
+        event.getText().add(text);
+        event.setContentDescription(null);
+        sendToAccessibilityManager(event);
+    }
+    /** Win.apk: AccessibilityManager.getInstance(mContext).isEnabled(), true while the host's
+     *  screen reader reads the app (HostAccessibility). */
+    private boolean accessibilityEnabled() {
+        return com.macapk.loader.HostAccessibility.active();
+    }
+    private void sendToAccessibilityManager(android.view.accessibility.AccessibilityEvent event) {
+        try {
+            android.view.accessibility.AccessibilityManager.getInstance(mContext).sendAccessibilityEvent(event);
+        } catch (Throwable ignored) {
+            // No manager yet: nothing listens.
+        }
+    }
 
     // ---- AOSP accessibility hook pairs (View.java:8951-11805) ----
     // Every public hook first offers the installed AccessibilityDelegate the
@@ -2677,9 +2699,11 @@ public class View implements android.graphics.drawable.Drawable.Callback,
     }
     public void sendAccessibilityEventInternal(int eventType) {
         // AOSP: `if (AccessibilityManager.getInstance(mContext).isEnabled())
-        // sendAccessibilityEventUnchecked(...)`. Our manager is always disabled
-        // (no screen reader bridged), so the event is never built -- same as a
-        // real device with no accessibility service enabled.
+        // sendAccessibilityEventUnchecked(...)`: built only while the host's
+        // screen reader reads the app, as on a device with TalkBack on.
+        if (accessibilityEnabled()) {
+            sendAccessibilityEventUnchecked(android.view.accessibility.AccessibilityEvent.obtain(eventType));
+        }
     }
     public void sendAccessibilityEventUnchecked(android.view.accessibility.AccessibilityEvent event) {
         if (accessibilityDelegate != null) {
@@ -2693,9 +2717,9 @@ public class View implements android.graphics.drawable.Drawable.Callback,
         if (event == null || !isShown()) return;
         onInitializeAccessibilityEvent(event);
         dispatchPopulateAccessibilityEvent(event);
-        // AOSP then hands the event to AccessibilityManager; ours is disabled,
-        // so the event is dropped here exactly as it would be on a device with
-        // no a11y service listening.
+        // AOSP then hands the event up to ViewRootImpl and AccessibilityManager;
+        // it reaches the host's screen reader only while one reads the app.
+        if (accessibilityEnabled()) sendToAccessibilityManager(event);
     }
     public boolean dispatchPopulateAccessibilityEvent(
             android.view.accessibility.AccessibilityEvent event) {
@@ -2758,8 +2782,62 @@ public class View implements android.graphics.drawable.Drawable.Callback,
         info.setSelected(isSelected());
         Rect bounds = new Rect();
         getBoundsOnScreen(bounds);
+        // AOSP getBoundsOnScreen(bounds, true): clipped by the parents, so a view scrolled
+        // half out of its list is as large as the part the user sees.
+        Rect visible = new Rect();
+        if (isAttachedToWindow() && getGlobalVisibleRect(visible)) bounds.set(visible);
         info.setBoundsInScreen(bounds);
         info.setBoundsInParent(new Rect(getLeft(), getTop(), getRight(), getBottom()));
+        // The rest of AOSP's View.onInitializeAccessibilityNodeInfoInternal (android-14): what a
+        // screen reader reads of any view, and the actions any view takes.
+        info.setVisibleToUser(isVisibleToUser());
+        info.setImportantForAccessibility(isImportantForAccessibility());
+        try {
+            if (mContext != null) info.setPackageName(mContext.getPackageName());
+        } catch (Throwable ignored) {}
+        if (this.id != NO_ID && (this.id >>> 24) != 0) {  // Resources.resourceHasPackage
+            try {
+                info.setViewIdResourceName(getResources().getResourceName(this.id));
+            } catch (Throwable ignored) {}
+        }
+        info.setStateDescription(getStateDescription());
+        info.setScreenReaderFocusable(isScreenReaderFocusable());
+        info.setLiveRegion(getAccessibilityLiveRegion());
+        info.setPaneTitle(getAccessibilityPaneTitle());
+        info.setHeading(isAccessibilityHeading());
+        CharSequence tooltip = getTooltipText();
+        if (tooltip != null) info.setTooltipText(tooltip);
+        info.addAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_SELECT);
+        info.addAction(A11Y_ACTION_CLEAR_SELECTION);
+        if (isFocusable()) {
+            info.addAction(isFocused() ? android.view.accessibility.AccessibilityNodeInfo.ACTION_CLEAR_FOCUS
+                    : android.view.accessibility.AccessibilityNodeInfo.ACTION_FOCUS);
+        }
+        if (isClickable() && isEnabled()) info.addAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK);
+        if (isLongClickable() && isEnabled()) {
+            info.addAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_LONG_CLICK);
+        }
+        info.addAction(android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN);
+    }
+    /** AOSP View.isVisibleToUser(): attached, shown (no ancestor gone, invisible or
+     *  transparent) and with some part inside the window. */
+    protected boolean isVisibleToUser() {
+        if (!isAttachedToWindow()) return false;
+        View current = this;
+        for (int guard = 0; guard < 256 && current != null; guard++) {
+            if (current.getAlpha() <= 0 || current.getTransitionAlpha() <= 0
+                    || current.getVisibility() != VISIBLE) {
+                return false;
+            }
+            ViewParent p = current.getParent();
+            current = p instanceof View ? (View) p : null;
+        }
+        return getGlobalVisibleRect(new Rect());
+    }
+    /** AOSP View.includeForAccessibility(): a view a screen reader reads as a node of its own
+     *  (ViewGroup.addChildrenForAccessibility); no service here asks for the unimportant ones. */
+    public boolean includeForAccessibility() {
+        return isAttachedToWindow() && isImportantForAccessibility();
     }
     /** AOSP View.createAccessibilityNodeInfo() (View.java:9341): build a node
      *  for this view, letting the delegate substitute its own. */
@@ -2832,10 +2910,36 @@ public class View implements android.graphics.drawable.Drawable.Callback,
             case A11Y_ACTION_CLEAR_SELECTION:
                 if (isSelected()) { setSelected(false); return !isSelected(); }
                 break;
+            case A11Y_ACTION_SHOW_ON_SCREEN:
+                if (isAttachedToWindow()) {
+                    Rect r = new Rect();
+                    getDrawingRect(r);
+                    return accessibilityRectangleOnScreen(r);
+                }
+                break;
             default:
                 break;
         }
         return false;
+    }
+    private static final int A11Y_ACTION_SHOW_ON_SCREEN = 0x01020036;
+    /** AOSP View.requestRectangleOnScreen(rect, true)'s walk: every parent is asked to bring the
+     *  rectangle into view (a ScrollView scrolls to it). For ACTION_SHOW_ON_SCREEN only: Win.apk's
+     *  requestRectangleOnScreen stays as it is for apps. */
+    private boolean accessibilityRectangleOnScreen(Rect rectangle) {
+        View child = this;
+        android.graphics.RectF position = new android.graphics.RectF(rectangle);
+        ViewParent parent = getParent();
+        boolean scrolled = false;
+        for (int guard = 0; guard < 256 && parent != null; guard++) {
+            rectangle.set((int) position.left, (int) position.top, (int) position.right, (int) position.bottom);
+            scrolled |= parent.requestChildRectangleOnScreen(child, rectangle, true);
+            if (!(parent instanceof View)) break;
+            position.offset(child.getLeft() - child.getScrollX(), child.getTop() - child.getScrollY());
+            child = (View) parent;
+            parent = child.getParent();
+        }
+        return scrolled;
     }
     /** AOSP View.setLabelFor/getLabelFor (View.java:12171/12182): the id of the
      *  view this one labels, for a11y input/label pairing. AOSP assigns this view

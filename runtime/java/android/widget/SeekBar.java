@@ -98,4 +98,42 @@ public class SeekBar extends AbsSeekBar {
             listener.onProgressChanged(this, getProgress(), false);
         }
     }
+
+    // ---- Accessibility: AOSP AbsSeekBar (android-14), for a screen reader ----
+
+    @Override
+    public void onInitializeAccessibilityNodeInfoInternal(android.view.accessibility.AccessibilityNodeInfo info) {
+        super.onInitializeAccessibilityNodeInfoInternal(info);
+        if (isEnabled()) {
+            final int progress = getProgress();
+            if (progress > getMin()) info.addAction(android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_BACKWARD);
+            if (progress < getMax()) info.addAction(android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_FORWARD);
+            info.addAction(android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction.ACTION_SET_PROGRESS);
+        }
+    }
+
+    /** AOSP AbsSeekBar.performAccessibilityActionInternal: a step of a twentieth of the range
+     *  (its default key increment), or the value given; the listener hears it as the user's. */
+    @Override
+    public boolean performAccessibilityActionInternal(int action, android.os.Bundle arguments) {
+        if (super.performAccessibilityActionInternal(action, arguments)) return true;
+        if (!isEnabled()) return false;
+        if (action == android.view.accessibility.AccessibilityNodeInfo.ACTION_SCROLL_FORWARD || action == android.view.accessibility.AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD) {
+            int increment = Math.max(1, Math.round((getMax() - getMin()) / 20f));
+            if (action == android.view.accessibility.AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD) increment = -increment;
+            int target = Math.max(getMin(), Math.min(getMax(), getProgress() + increment));
+            if (target == getProgress()) return false;
+            setProgressInternal(target, true);
+            return true;
+        }
+        if (action == android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction.ACTION_SET_PROGRESS.getId()) {
+            final String key = "android.view.accessibility.action.ARGUMENT_PROGRESS_VALUE";
+            if (arguments == null || !arguments.containsKey(key)) return false;
+            int target = Math.max(getMin(), Math.min(getMax(), (int) arguments.getFloat(key)));
+            if (target == getProgress()) return false;
+            setProgressInternal(target, true);
+            return true;
+        }
+        return false;
+    }
 }

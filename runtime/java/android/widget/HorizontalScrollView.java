@@ -506,4 +506,49 @@ public class HorizontalScrollView extends FrameLayout {
         if (child == null) return false;
         return child.getWidth() > getWidth() - getPaddingLeft() - getPaddingRight();
     }
+
+    // ---- Accessibility: AOSP HorizontalScrollView (android-14), for a screen reader ----
+
+    @Override
+    public void onInitializeAccessibilityNodeInfoInternal(android.view.accessibility.AccessibilityNodeInfo info) {
+        super.onInitializeAccessibilityNodeInfoInternal(info);
+        final int scrollRange = macapkScrollRangeX();
+        if (scrollRange > 0) {
+            info.setScrollable(true);
+            if (isEnabled() && getScrollX() > 0) {
+                info.addAction(android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_BACKWARD);
+                info.addAction(android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_LEFT);
+            }
+            if (isEnabled() && getScrollX() < scrollRange) {
+                info.addAction(android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_FORWARD);
+                info.addAction(android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_RIGHT);
+            }
+        }
+    }
+
+    @Override
+    public boolean performAccessibilityActionInternal(int action, android.os.Bundle arguments) {
+        if (super.performAccessibilityActionInternal(action, arguments)) return true;
+        if (!isEnabled()) return false;
+        final int viewportWidth = getWidth() - getPaddingLeft() - getPaddingRight();
+        if (action == android.view.accessibility.AccessibilityNodeInfo.ACTION_SCROLL_FORWARD
+                || action == android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_RIGHT.getId()) {
+            final int targetScrollX = Math.min(getScrollX() + viewportWidth, macapkScrollRangeX());
+            if (targetScrollX != getScrollX()) {
+                smoothScrollTo(targetScrollX, 0);
+                return true;
+            }
+            return false;
+        }
+        if (action == android.view.accessibility.AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD
+                || action == android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_LEFT.getId()) {
+            final int targetScrollX = Math.max(0, getScrollX() - viewportWidth);
+            if (targetScrollX != getScrollX()) {
+                smoothScrollTo(targetScrollX, 0);
+                return true;
+            }
+            return false;
+        }
+        return false;
+    }
 }

@@ -2756,6 +2756,9 @@ public final class Boot {
         // Touch dispatcher: Cocoa mouse events route here, then to the
         // active Activity's dispatchTouchEvent.
         NativeCocoa.registerTouchDispatcher(com.macapk.loader.view.ViewHost.get().newTouchDispatcher());
+        // Screen readers (Windows' UI Automation): the host may call in from now on; nothing
+        // runs until a screen reader asks for the window's views (HostAccessibility).
+        HostAccessibility.install();
         // Host game controllers (GameController.framework) as Android gamepads,
         // delivered through the same focused-window path (MACAPK_GAMEPAD,
         // default ON; docs/host-game-controllers_2026-10-02.md).

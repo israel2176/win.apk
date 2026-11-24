@@ -11,31 +11,89 @@ import java.util.List;
 public class AccessibilityManager {
     public AccessibilityManager() {}
 
-    public boolean isEnabled() { return false; }
+    // Win.apk: a host screen reader (Windows' UI Automation, com.macapk.loader.HostAccessibility)
+    // turns accessibility on while it reads the app, as TalkBack does on a device: isEnabled(),
+    // the enabled service list, the state listeners. One state for the process, as the
+    // service's; touch exploration stays off (a screen reader on a PC does not explore by touch).
+    private static volatile boolean sHostEnabled;
+    private static final java.util.concurrent.CopyOnWriteArrayList<Object[]> sStateListeners =
+            new java.util.concurrent.CopyOnWriteArrayList<>();
+    private static final java.util.concurrent.CopyOnWriteArrayList<java.lang.ref.WeakReference<AccessibilityManager>>
+            sManagers = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+    /** HostAccessibility (main thread): a screen reader started or stopped reading the app.
+     *  AOSP's setStateLocked: the listeners hear the change, each on its handler. */
+    public static void macapkSetHostEnabled(boolean on) {
+        if (sHostEnabled == on) return;
+        sHostEnabled = on;
+        for (Object[] entry : sStateListeners) {
+            final AccessibilityStateChangeListener l = (AccessibilityStateChangeListener) entry[0];
+            final android.os.Handler h = (android.os.Handler) entry[1];
+            if (h != null) h.post(() -> l.onAccessibilityStateChanged(on));
+            else l.onAccessibilityStateChanged(on);
+        }
+        for (java.lang.ref.WeakReference<AccessibilityManager> ref : sManagers) {
+            AccessibilityManager m = ref.get();
+            if (m == null) {
+                sManagers.remove(ref);
+                continue;
+            }
+            for (AccessibilityServicesStateChangeListener l : new ArrayList<>(m.mServicesStateListeners)) {
+                l.onAccessibilityServicesStateChanged(m);
+            }
+        }
+    }
+
+    public boolean isEnabled() { return sHostEnabled; }
     public boolean isTouchExplorationEnabled() { return false; }
     public boolean isHighTextContrastEnabled() { return false; }
     public int getRecommendedTimeoutMillis(int original, int flags) { return original; }
 
     // AOSP: true only when the CURRENT AccessibilityNodeInfo request came from
     // a caller flagged isAccessibilityTool() (AccessibilityManager.java:1115,
-    // backed by mRequestFromAccessibilityTool). Mac.apk has no live
-    // AccessibilityService-binding infrastructure (see
-    // getInstalledAccessibilityServiceList below), so no request is ever
-    // attributed to one; false is the honest, always-correct answer here.
+    // backed by mRequestFromAccessibilityTool). No request is attributed to one
+    // here; false is the honest answer.
     public boolean isRequestFromAccessibilityTool() { return false; }
 
+    /** The host screen reader, while it reads, as the one enabled service: spoken feedback that
+     *  retrieves window content, as TalkBack's info says (Compose, among others, reads this list
+     *  to decide whether to build its semantics tree). */
     public List<Object> getEnabledAccessibilityServiceList(int feedbackTypeFlags) {
-        return Collections.emptyList();
+        if (!sHostEnabled) return Collections.emptyList();
+        android.accessibilityservice.AccessibilityServiceInfo info =
+                new android.accessibilityservice.AccessibilityServiceInfo();
+        info.feedbackType = android.accessibilityservice.AccessibilityServiceInfo.FEEDBACK_SPOKEN;
+        if ((feedbackTypeFlags & info.feedbackType) == 0) return Collections.emptyList();
+        info.eventTypes = AccessibilityEvent.TYPES_ALL_MASK;
+        List<Object> out = new ArrayList<>();
+        out.add(info);
+        return out;
     }
     public List<Object> getInstalledAccessibilityServiceList() {
-        return Collections.emptyList();
+        return getEnabledAccessibilityServiceList(
+                android.accessibilityservice.AccessibilityServiceInfo.FEEDBACK_ALL_MASK);
     }
 
     public void interrupt() {}
-    public void sendAccessibilityEvent(Object event) {}
+    public void sendAccessibilityEvent(Object event) {
+        if (event instanceof AccessibilityEvent) sendAccessibilityEvent((AccessibilityEvent) event);
+    }
 
-    public boolean addAccessibilityStateChangeListener(AccessibilityStateChangeListener listener) { return false; }
-    public boolean removeAccessibilityStateChangeListener(AccessibilityStateChangeListener listener) { return false; }
+    public boolean addAccessibilityStateChangeListener(AccessibilityStateChangeListener listener) {
+        return addStateListener(listener, null);
+    }
+    public boolean removeAccessibilityStateChangeListener(AccessibilityStateChangeListener listener) {
+        for (Object[] entry : sStateListeners) {
+            if (entry[0] == listener) return sStateListeners.remove(entry);
+        }
+        return false;
+    }
+    private static boolean addStateListener(AccessibilityStateChangeListener listener, android.os.Handler handler) {
+        if (listener == null) return false;
+        for (Object[] entry : sStateListeners) if (entry[0] == listener) return true;
+        sStateListeners.add(new Object[] {listener, handler});
+        return true;
+    }
     public boolean addTouchExplorationStateChangeListener(TouchExplorationStateChangeListener listener) { return false; }
     public boolean removeTouchExplorationStateChangeListener(TouchExplorationStateChangeListener listener) { return false; }
 
@@ -47,6 +105,7 @@ public class AccessibilityManager {
     // changes because none is ever enabled.
     private final ArrayList<AccessibilityServicesStateChangeListener> mServicesStateListeners =
             new ArrayList<AccessibilityServicesStateChangeListener>();
+    { sManagers.add(new java.lang.ref.WeakReference<>(this)); }
 
     public void addAccessibilityServicesStateChangeListener(AccessibilityServicesStateChangeListener listener) {
         if (listener != null && !mServicesStateListeners.contains(listener)) mServicesStateListeners.add(listener);
@@ -75,7 +134,17 @@ public class AccessibilityManager {
     /** AOSP AccessibilityManager.sendAccessibilityEvent (API 4), correctly typed
      *  (an older loose Object overload also exists). No a11y client consumes
      *  events in Mac.apk, so the event is accepted and dropped. */
-    public void sendAccessibilityEvent(android.view.accessibility.AccessibilityEvent event) { }
+    /** AOSP: the event goes to the enabled services; here to the host screen reader. */
+    public void sendAccessibilityEvent(android.view.accessibility.AccessibilityEvent event) {
+        if (event == null || !sHostEnabled) return;
+        StringBuilder text = new StringBuilder();
+        for (CharSequence t : event.getText()) {
+            if (t == null) continue;
+            if (text.length() > 0) text.append(' ');
+            text.append(t);
+        }
+        com.macapk.loader.HostAccessibility.onEvent(event.getEventType(), text, false);
+    }
 
 
     private static AccessibilityManager sInstance;
@@ -101,6 +170,7 @@ public class AccessibilityManager {
      *  already answers `false` from (nothing to register with). */
     public void addAccessibilityStateChangeListener(AccessibilityStateChangeListener listener,
             android.os.Handler handler) {
+        addStateListener(listener, handler);
     }
 
     /** AOSP AccessibilityManager.addTouchExplorationStateChangeListener(listener,

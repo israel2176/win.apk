@@ -924,4 +924,15 @@ public class ProgressBar extends View {
         }
         return drawable;
     }
+
+    // ---- Accessibility: AOSP ProgressBar (android-14), for a screen reader ----
+
+    @Override
+    public void onInitializeAccessibilityNodeInfoInternal(android.view.accessibility.AccessibilityNodeInfo info) {
+        super.onInitializeAccessibilityNodeInfoInternal(info);
+        if (!isIndeterminate()) {
+            info.setRangeInfo(android.view.accessibility.AccessibilityNodeInfo.RangeInfo.obtain(android.view.accessibility.AccessibilityNodeInfo.RangeInfo.RANGE_TYPE_INT, getMin(), getMax(),
+                    getProgress()));
+        }
+    }
 }

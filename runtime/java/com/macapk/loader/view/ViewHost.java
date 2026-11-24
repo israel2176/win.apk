@@ -354,6 +354,14 @@ public interface ViewHost {
     /** Win.apk's constructor. */
     AccessibilityManager newAccessibilityManager();
 
+    /** The windows a screen reader reads (com.macapk.loader.HostAccessibility), bottom to top:
+     *  each one's root view, as AccessibilityWindowInfo lists them on a device. */
+    default List<View> accessibilityRoots() { return java.util.Collections.emptyList(); }
+
+    /** A screen reader started (true) or stopped reading the app: AccessibilityManager.isEnabled()
+     *  follows, and its listeners hear it, as when TalkBack is turned on or off. */
+    default void accessibilityEnabled(boolean on) {}
+
     /** Win.apk's constructor. */
     CaptioningManager newCaptioningManager();
 

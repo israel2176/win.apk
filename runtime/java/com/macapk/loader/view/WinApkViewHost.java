@@ -239,6 +239,8 @@ final class WinApkViewHost implements ViewHost {
     // ---- System services ----
 
     @Override public AccessibilityManager newAccessibilityManager() { return new AccessibilityManager(); }
+    @Override public List<View> accessibilityRoots() { return WindowManagerGlobal.getInstance().getWindowViews(); }
+    @Override public void accessibilityEnabled(boolean on) { AccessibilityManager.macapkSetHostEnabled(on); }
 
     @Override public CaptioningManager newCaptioningManager() { return new CaptioningManager(); }
 
