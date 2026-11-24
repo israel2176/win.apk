@@ -5,7 +5,7 @@
 // (accessibility_focus_highlight_stroke_width and _color, which the service reads).
 //
 // While a host screen reader reads the app (Windows' UI Automation: com.macapk.loader.
-// HostAccessibility, which reads the views' AccessibilityNodeInfo directly), it is the one enabled
+// HostAccessibility, which reads the views' AccessibilityNodeInfo in process: AccessibilityTree), it is the one enabled
 // service, as TalkBack is on a phone: every client hears the state ACCESSIBILITY_ENABLED and every
 // event type as relevant (AccessibilityManagerService.onUserStateChangedLocked ->
 // scheduleUpdateClientsIfNeeded), getEnabledAccessibilityServiceList lists it (spoken feedback),
@@ -59,15 +59,11 @@ public final class AccessibilityService {
 
     public boolean removeClient(IAccessibilityManagerClient client, int userId) { return sClients.remove(client); }
 
+    /** The views' events go to the host screen reader: each says the tree changed (a snapshot
+     *  follows), an announcement is spoken. */
     public void sendAccessibilityEvent(AccessibilityEvent event, int userId) {
         if (event == null || !sHostEnabled) return;
-        StringBuilder text = new StringBuilder();
-        for (CharSequence t : event.getText()) {
-            if (t == null) continue;
-            if (text.length() > 0) text.append(' ');
-            text.append(t);
-        }
-        com.macapk.loader.HostAccessibility.onEvent(event.getEventType(), text, false);
+        com.macapk.loader.HostAccessibility.onEvent(event);
     }
 
     /** The host screen reader, while it reads, as the one service: what TalkBack's info says. */

@@ -365,6 +365,18 @@ public interface ViewHost {
      *  follows, and its listeners hear it, as when TalkBack is turned on or off. */
     default void accessibilityEnabled(boolean on) {}
 
+    /** What a screen reader is told of every shown window, as windows/host/uia_tree.h reads it:
+     *  each window's AccessibilityNodeInfo tree, virtual nodes included. Null when this host
+     *  cannot tell. Main thread (com.macapk.loader.HostAccessibility). */
+    default String accessibilitySnapshot() { return null; }
+
+    /** AccessibilityNodeInfo.performAction on a node the last snapshot named: an action id with
+     *  ACTION_SET_TEXT's text, ACTION_SET_SELECTION's start and end, ACTION_SET_PROGRESS's value.
+     *  False when the node is gone or refused it. Main thread. */
+    default boolean accessibilityPerform(long nodeId, int action, CharSequence text, int arg1, int arg2, float value) {
+        return false;
+    }
+
     /** Win.apk's constructor. */
     CaptioningManager newCaptioningManager();
 
