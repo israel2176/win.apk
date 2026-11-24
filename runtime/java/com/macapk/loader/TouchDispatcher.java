@@ -3197,6 +3197,57 @@ public class TouchDispatcher {
         if (routeToLoop(ActivityHost.peek())) loopHandler().post(r); else r.run();
     }
 
+    // ---- Windows' text services and touch keyboard (Win.apk; HostTextInput) -----------------
+    // AospInput answers these for AOSP's views.
+
+    /** The window: a TSF text service edited the focused editor's document. */
+    public void hostImeEdit(int kind, String text, int start, int end, int epoch, int revision) {
+        HostTextInput.edit(this, kind, text, start, end, epoch, revision);
+    }
+
+    /** The window: a key, a character or a touch went to the app; the editor may have changed. */
+    public void hostImeSync() { HostTextInput.requestSync(this); }
+
+    /** The focused editor's InputConnection an input method works on, or null: none, or a
+     *  TextView on the soft-key route, which shows no composition (hostImeInline). On the
+     *  editor's thread. */
+    public android.view.inputmethod.InputConnection hostImeConnection() {
+        try {
+            if (ViewHost.get().imeActiveInput() != null) return null;
+            return ViewHost.get().imeActiveConnection();
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /** The EditorInfo of the editor hostImeConnection answers for. */
+    public android.view.inputmethod.EditorInfo hostImeEditorInfo() {
+        try {
+            return android.view.inputmethod.InputMethodManager.macapkCurrentEditorInfo();
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /** The editor as a TextView, for its Layout (the caret, the characters' boxes); null when
+     *  it is none (a Compose field). */
+    public android.widget.TextView hostImeTextView() {
+        try {
+            return ViewHost.get().imeShowTarget();
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /** Where the editor's window starts on the surface: view coordinates are the content's,
+     *  and the surface has the status bar above (hostImeAnchor). */
+    public float hostImeSurfaceTop() { return StatusBarDriver.heightPx(null); }
+
+    /** Runs `r` on the thread the editor's input runs on, as dispatchHostText does. */
+    public void hostImePost(Runnable r) {
+        if (routeToLoop(ActivityHost.peek())) loopHandler().post(r); else r.run();
+    }
+
     /** Where a host input method's candidate window belongs: under the caret of
      *  the TextView that has (or would get) the keyboard, in surface pixels
      *  packed as (x << 32) | y, or -1 when there is no such view (a Compose

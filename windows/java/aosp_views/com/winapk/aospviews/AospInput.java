@@ -258,4 +258,22 @@ public final class AospInput extends TouchDispatcher {
     /** Where the host's candidate window goes: under the caret of the focused editor, in display
      *  pixels, x in the high half; -1 with none. */
     @Override public long hostImeAnchor() { return ImeService.anchor(); }
+
+    // ---- Windows' text services (HostTextInput): the editor ImeService bound -----------------
+
+    @Override public android.view.inputmethod.InputConnection hostImeConnection() {
+        return ImeService.bound() ? ImeService.connection() : null;
+    }
+
+    @Override public android.view.inputmethod.EditorInfo hostImeEditorInfo() { return ImeService.editor(); }
+
+    @Override public android.widget.TextView hostImeTextView() {
+        android.view.View v = InputRouter.focusedView();
+        return v instanceof android.widget.TextView t ? t : null;
+    }
+
+    /** AOSP's windows lay themselves out on the display: view coordinates are display pixels. */
+    @Override public float hostImeSurfaceTop() { return 0f; }
+
+    @Override public void hostImePost(Runnable r) { main().post(r); }
 }

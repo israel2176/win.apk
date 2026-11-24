@@ -7896,11 +7896,14 @@ public class TextView extends View
         // view moves the caret to the tapped offset via
         // Editor.onTouchUpEvent -> getOffsetForPosition -> Selection.setSelection.
         // The AOSP guard's `mText instanceof Spannable` is carried by
-        // getEditableText() here. The showSoftInput half is left to the IME path.
+        // getEditableText() here. The showSoftInput half is Windows' touch keyboard
+        // (Win.apk's HostTextInput), not InputMethodManager.showSoftInput, whose
+        // soft-key route would take the field off its InputConnection.
         if (ed != null && ev != null
                 && ev.getActionMasked() == android.view.MotionEvent.ACTION_UP
                 && isFocused() && isEnabled() && getLayout() != null && isTextEditable()) {
             try { ed.onTouchUpEvent(ev); } catch (Throwable ignored) {}
+            if (getShowSoftInputOnFocus()) com.macapk.loader.HostTextInput.softInput(true);
             handled = true;
         }
         return handled;
