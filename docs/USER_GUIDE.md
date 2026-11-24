@@ -427,7 +427,10 @@ is running, as Android does.
 
 Granting a permission does not create the data behind it: a PC has no
 contacts, SIM, SMS or sensors, so an app that is granted those finds them
-empty. The camera and microphone use the PC's webcam and microphone, behind
+empty. Apps are told of no sensor at all (no accelerometer, gyroscope,
+compass, light or step sensor), as on a phone without them: a tilt-steered
+game finds none, and an app that needs one says so or leaves that part out.
+The camera and microphone use the PC's webcam and microphone, behind
 Windows' own privacy switches (Settings > Privacy). An app that asks the
 system camera for a picture (a "take a photo" button) gets Win.apk's camera
 window: the webcam's picture, **Take photo**, then **Use photo** or

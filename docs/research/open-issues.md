@@ -69,6 +69,14 @@ agents' work folders were `/opt/uip/il-work/<app>/`, gone with the container).
   an Android device without one (`CameraOrientationTest` checks the null and
   the feature). Tilt games find no sensor. Optional, not done: Windows' own
   sensor API (the accelerometer of 2-in-1s) reported truthfully.
+- Decided (November 2026): **no made-up sensors at all.** The gyroscope that
+  reported 0,0,0 (upstream kept it: "a laptop on a desk does not turn") is
+  gone too: a PC has none. `SensorManager`'s catalog is empty, so
+  `getDefaultSensor` is null for every type (gyroscope, magnetometer, rotation
+  vectors, light, proximity, step counter...), `getSensorList(TYPE_ALL)` is
+  empty and no `android.hardware.sensor.*` feature is declared; the NDK's
+  sensor manager (`native_sensor.cpp`) agrees. A sensor comes back only when a
+  real Windows sensor backs it (`CameraOrientationTest` checks).
 
 ## Check again after each AOSP layer lands
 
@@ -606,9 +614,9 @@ New bugs found with AOSP views:
   both the SurfaceTexture transform and `setTransform`, so a TextureView
   preview stays upright either way; with AOSP's views a TextureView applies
   both, which then cancel as on a phone (to check).
-- **What is still synthetic in the camera and sensors (for the owner):** the
-  gyroscope reports 0,0,0 (upstream's decision, kept: a PC on a desk does not
-  turn; a PC has no gyroscope either); Tilt Control (`TiltControl`, never in
+- **What is still synthetic in the camera and sensors (for the owner):** no
+  sensor is (the gyroscope that reported 0,0,0 is gone, the owner's
+  decision); Tilt Control (`TiltControl`, never in
   Win.apk's UI, `MACAPK_TILT_CONTROL=1` only) drove the removed sensors and
   now does nothing; with no webcam, `CameraBridge`'s virtual camera delivers
   dark-grey frames (`MACAPK_VIRTUAL_CAMERA=0` turns it off) so preview screens

@@ -601,7 +601,7 @@ how CI boots apps.
 | `NativeActivity`, the NDK input queue, `AConfiguration` | A port of upstream's, over the guest linker and the shim's `ALooper` | `native_activity.cpp` |
 | Shared storage | The volume's Download, Pictures, Documents, Music and Movies are junctions to the user's Windows folders | `user_folders.cpp` |
 
-There is no sensor hardware behind `SensorManager`: no accelerometer is reported (nor gravity, rotation vectors or orientation, which are fused from one), as on an Android device without one, and the gyroscope reports zero. The owner decided against the synthetic "phone held upright" gravity the framework used to report.
+There is no sensor hardware behind `SensorManager`: no accelerometer is reported (nor gravity, rotation vectors or orientation, which are fused from one), as on an Android device without one, and no gyroscope or other sensor either: the list is empty, for Java and for the NDK's sensor manager (`native_sensor.cpp`). The owner decided against the synthetic "phone held upright" gravity and the zero-reporting gyroscope the framework used to report.
 
 ### The launcher
 
