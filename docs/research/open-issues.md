@@ -1062,3 +1062,11 @@ app's own `android.support.*` classes; `LayoutSweep`'s AppCompat table trying
 counting "LOADED but its constructor threw" as a throw; Compose views need an
 attached window to measure; the oracle in chunks and a smaller converter heap
 on a small machine.
+
+## Contribution to the other runtime, ready for the owner to submit (2026-11-24)
+
+`docs/research/pending/installer-bundles/`: six patches against the other runtime's origin/main 54be6270
+(content-based APK/bundle detection, manifest-based split names, other apps' splits left out, bundletool
+APK sets by toc.pb with bundletool's matching rules, XAPK manifest.json + OBB reported + encrypted APKM
+refused clearly, ADR 0091) and PR.md. `git am` applies cleanly; tools/test_package_bundles.py passes (37).
+Not run: their Windows/ART tests, real bundletool output, real XAPK/APKM files. The owner submits it.

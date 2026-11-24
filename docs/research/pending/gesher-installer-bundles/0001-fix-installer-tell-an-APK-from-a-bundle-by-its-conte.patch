@@ -1,0 +1,292 @@
+From d89fca997152cdad52da1ac40f6bd2a6d98b0b7f Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 24 Nov 2026 00:22:30 +0000
+Subject: [PATCH 1/6] fix(installer): tell an APK from a bundle by its content,
+ not its suffix
+
+PackageBundles.isBundle decided by the file name alone (.apks, .xapk,
+.apkm, .apk+). A single APK that a download site saved as .xapk was then
+unpacked as an archive, found no .apk entry and failed with "No base APK",
+and a ZIP of APKs saved as .apk went to the APK parser and failed there.
+The icon handler's IconApks made the same choice.
+
+Decide by content instead, as the package parser itself does: an APK is a
+ZIP with AndroidManifest.xml at its root; a bundle has none there and holds
+.apk entries. A file that is not a ZIP is not a bundle, so the APK parser
+reports it as before.
+
+tests/package/PackageBundlesTest.java runs the production class on real
+ZIP files (tools/test_package_bundles.py, in its own small workflow as the
+application storage contracts are). SplitPackageContractTest installs a
+base APK saved as .xapk, and IconBundleTest reads an APK named .xapk and a
+bundle named .apk.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_0185vQkPNo1ENZ3Mi9zALKd2
+---
+ .../workflows/package-bundle-contracts.yml    | 33 ++++++++++
+ app/java/com/other/app/PackageBundles.java   | 28 +++++++--
+ docs/installer.md                             |  6 +-
+ .../com/other/app/shell/IconBundleTest.java  | 18 +++++-
+ .../services/SplitPackageContractTest.java    |  6 ++
+ tests/package/PackageBundlesTest.java         | 62 +++++++++++++++++++
+ tools/test_package_bundles.py                 | 32 ++++++++++
+ 7 files changed, 177 insertions(+), 8 deletions(-)
+ create mode 100644 .github/workflows/package-bundle-contracts.yml
+ create mode 100644 tests/package/PackageBundlesTest.java
+ create mode 100644 tools/test_package_bundles.py
+
+diff --git a/.github/workflows/package-bundle-contracts.yml b/.github/workflows/package-bundle-contracts.yml
+new file mode 100644
+index 00000000..04d928a9
+--- /dev/null
++++ b/.github/workflows/package-bundle-contracts.yml
+@@ -0,0 +1,33 @@
++name: Package bundle contracts
++
++on:
++  pull_request:
++    paths:
++      - 'app/java/com/other/app/PackageBundles.java'
++      - 'tests/package/PackageBundlesTest.java'
++      - 'tools/test_package_bundles.py'
++      - '.github/workflows/package-bundle-contracts.yml'
++  push:
++    branches: [main]
++    paths:
++      - 'app/java/com/other/app/PackageBundles.java'
++      - 'tests/package/PackageBundlesTest.java'
++      - 'tools/test_package_bundles.py'
++      - '.github/workflows/package-bundle-contracts.yml'
++  workflow_dispatch:
++
++permissions:
++  contents: read
++
++jobs:
++  bundles:
++    runs-on: ubuntu-latest
++    timeout-minutes: 5
++    steps:
++      - uses: actions/checkout@v4
++      - uses: actions/setup-java@v4
++        with:
++          distribution: temurin
++          java-version: '21'
++      - name: Classify and select the APKs of real bundle archives
++        run: python3 tools/test_package_bundles.py
+diff --git a/app/java/com/other/app/PackageBundles.java b/app/java/com/other/app/PackageBundles.java
+index 4c3676a5..f3c22167 100644
+--- a/app/java/com/other/app/PackageBundles.java
++++ b/app/java/com/other/app/PackageBundles.java
+@@ -4,15 +4,33 @@
+ package com.other.app;
+ 
+ import java.io.File;
+-import java.util.Locale;
++import java.io.IOException;
++import java.util.Enumeration;
++import java.util.zip.ZipEntry;
++import java.util.zip.ZipException;
++import java.util.zip.ZipFile;
+ 
+ /** ZIP containers holding the APKs for a single app installation. */
+ public final class PackageBundles {
+     private PackageBundles() {}
+ 
+-    public static boolean isBundle(File file) {
+-        String name = file.getName().toLowerCase(Locale.ROOT);
+-        return name.endsWith(".apks") || name.endsWith(".xapk")
+-                || name.endsWith(".apkm") || name.endsWith(".apk+");
++    /**
++     * Whether {@code file} is a ZIP of APKs (an APK set, .xapk, .apkm, .apk+) rather than an
++     * APK, by its content: an APK is a ZIP with {@code AndroidManifest.xml} at its root, a
++     * bundle has none there and holds {@code .apk} entries. The file name is not consulted,
++     * so a single APK saved as {@code .xapk} installs as the APK it is. A file that is not a
++     * ZIP is not a bundle; the APK parser reports it.
++     */
++    public static boolean isBundle(File file) throws IOException {
++        try (ZipFile zip = new ZipFile(file)) {
++            if (zip.getEntry("AndroidManifest.xml") != null) return false;
++            for (Enumeration<? extends ZipEntry> e = zip.entries(); e.hasMoreElements(); ) {
++                ZipEntry entry = e.nextElement();
++                if (!entry.isDirectory() && entry.getName().endsWith(".apk")) return true;
++            }
++            return false;
++        } catch (ZipException notZip) {
++            return false;
++        }
+     }
+ }
+diff --git a/docs/installer.md b/docs/installer.md
+index a031f3f8..4b8f06c5 100644
+--- a/docs/installer.md
++++ b/docs/installer.md
+@@ -318,8 +318,10 @@ long form).
+ User-supplied paths are not rewritten: the APK given to `other-app` (`install`,
+ `launch`, a double-clicked APK or split APK bundle) and the dex given to `other`
+ are passed in long form (`UserPath`), so the installer still sees the real file
+-name, recognizes APK bundles by their suffix and finds a `.dm` file
+-beside the APK.
++name and finds a `.dm` file beside the APK. Whether a file is an APK or a
++bundle is decided by its content, not its suffix: an APK has
++`AndroidManifest.xml` at its root, a bundle is a ZIP of `.apk` files. A single
++APK saved as `.xapk` installs as that APK.
+ 
+ Limitations:
+ 
+diff --git a/tests/dex-services/com/other/app/shell/IconBundleTest.java b/tests/dex-services/com/other/app/shell/IconBundleTest.java
+index d9a8397f..d291dec8 100644
+--- a/tests/dex-services/com/other/app/shell/IconBundleTest.java
++++ b/tests/dex-services/com/other/app/shell/IconBundleTest.java
+@@ -168,7 +168,23 @@ public final class IconBundleTest {
+         tooMany[0] = "base.apk";
+         for (int i = 1; i < tooMany.length; i++) tooMany[i] = "config." + i + ".apk";
+         zip(bad, tooMany); rejects(bad);
+-        Files.write(bad.toPath(), new byte[] {1, 2, 3}); rejects(bad);
++        // Content, not the suffix, makes a bundle: these are single APK inputs.
++        Files.write(bad.toPath(), new byte[] {1, 2, 3});
++        try (Inputs single = Inputs.open(bad)) {
++            check(single.paths.length == 1 && single.base.equals(bad.getAbsolutePath()),
++                    "a file that is not a ZIP is read as an APK, not a bundle");
++        }
++        File plainXapk = new File(output, "plain.xapk");
++        Files.copy(full.toPath(), plainXapk.toPath());
++        try (Inputs single = Inputs.open(plainXapk)) {
++            check(single.paths.length == 1 && single.base.equals(plainXapk.getAbsolutePath()),
++                    "an APK saved as .xapk is read as the APK it is");
++        }
++        check(color(ico(plainXapk, new File(output, "plain.xapk.ico"))) == red, "APK named .xapk draws its icon");
++        File bundleApk = new File(output, "icon-bundle-saved-as.apk");
++        Files.copy(new File(fixtures, "icon-bundle.xapk").toPath(), bundleApk.toPath());
++        check(color(bundleIco(bundleApk, new File(output, "bundle-as-apk.ico"))) == red,
++                "a bundle saved as .apk is read as the bundle it is");
+         File temporary;
+         try (Inputs inputs = Inputs.open(nested)) {
+             temporary = new File(inputs.base).getParentFile();
+diff --git a/tests/dex-services/other/services/SplitPackageContractTest.java b/tests/dex-services/other/services/SplitPackageContractTest.java
+index 7d908d08..6bd05925 100644
+--- a/tests/dex-services/other/services/SplitPackageContractTest.java
++++ b/tests/dex-services/other/services/SplitPackageContractTest.java
+@@ -298,6 +298,12 @@ public final class SplitPackageContractTest {
+             result = (String[]) install.invoke(installer, equivalent.getPath());
+             require("unchanged".equals(result[1]), extension + " changed identical installed APKs");
+         }
++        // The content, not the suffix, decides: a lone base APK saved as .xapk is that APK.
++        File plainNamedBundle = new File(data, "base-only.xapk");
++        Files.write(plainNamedBundle.toPath(), inputs.get("base"));
++        result = (String[]) install.invoke(installer, plainNamedBundle.getPath());
++        require("unchanged".equals(result[1]), "A base APK saved as .xapk was not installed as that APK");
++        metadata(pm.get(PACKAGE));
+         Map<String, byte[]> arbitraryNames = new LinkedHashMap<>();
+         arbitraryNames.put("apks/display.apk", inputs.get("entry"));
+         arbitraryNames.put("apks/assets.apk", inputs.get("core"));
+diff --git a/tests/package/PackageBundlesTest.java b/tests/package/PackageBundlesTest.java
+new file mode 100644
+index 00000000..8f206251
+--- /dev/null
++++ b/tests/package/PackageBundlesTest.java
+@@ -0,0 +1,62 @@
++/* Copyright (C) 2026 its authors; SPDX-License-Identifier: Apache-2.0 */
++package com.other.app;
++
++import java.io.File;
++import java.io.IOException;
++import java.nio.file.Files;
++import java.util.LinkedHashMap;
++import java.util.Map;
++import java.util.zip.ZipEntry;
++import java.util.zip.ZipOutputStream;
++
++/** The production bundle classification on real ZIP files; no APK parser or device. */
++public final class PackageBundlesTest {
++    private static int checks;
++    private static void check(boolean ok, String message) {
++        if (!ok) throw new AssertionError(message);
++        checks++;
++    }
++    private static File zip(File dir, String name, Map<String, byte[]> entries) throws IOException {
++        File file = new File(dir, name);
++        try (ZipOutputStream out = new ZipOutputStream(Files.newOutputStream(file.toPath()))) {
++            for (Map.Entry<String, byte[]> entry : entries.entrySet()) {
++                out.putNextEntry(new ZipEntry(entry.getKey()));
++                out.write(entry.getValue());
++                out.closeEntry();
++            }
++        }
++        return file;
++    }
++    private static Map<String, byte[]> entries(String... names) {
++        Map<String, byte[]> map = new LinkedHashMap<>();
++        for (String name : names) map.put(name, name.endsWith("/") ? new byte[0] : new byte[] {7});
++        return map;
++    }
++
++    public static void main(String[] args) throws Exception {
++        File work = new File(args[0]);
++        Files.createDirectories(work.toPath());
++        detection(work);
++        System.out.println("PackageBundlesTest all passed: " + checks + " checks");
++    }
++
++    private static void detection(File work) throws Exception {
++        Map<String, byte[]> apk = entries("AndroidManifest.xml", "classes.dex", "assets/inner.apk");
++        check(!PackageBundles.isBundle(zip(work, "plain.apk", apk)), "An APK is not a bundle");
++        check(!PackageBundles.isBundle(zip(work, "plain.xapk", apk)),
++                "An APK saved as .xapk was classified by its suffix");
++        check(!PackageBundles.isBundle(zip(work, "plain.apks", apk)),
++                "An APK saved as .apks was classified by its suffix");
++        check(PackageBundles.isBundle(zip(work, "set.apk", entries("base.apk", "split_config.xxhdpi.apk"))),
++                "A ZIP of APKs saved as .apk was not recognized as a bundle");
++        check(PackageBundles.isBundle(zip(work, "set.apkm", entries("info.json", "base.apk"))),
++                "An APKM was not recognized as a bundle");
++        check(PackageBundles.isBundle(zip(work, "set.apks", entries("toc.pb", "splits/base-master.apk"))),
++                "A bundletool APK set was not recognized as a bundle");
++        check(!PackageBundles.isBundle(zip(work, "empty.xapk", entries("manifest.json", "dir.apk/"))),
++                "A ZIP without APK files was classified as a bundle");
++        File notZip = new File(work, "garbage.apkm");
++        Files.write(notZip.toPath(), new byte[] {1, 2, 3});
++        check(!PackageBundles.isBundle(notZip), "A file that is not a ZIP was classified as a bundle");
++    }
++}
+diff --git a/tools/test_package_bundles.py b/tools/test_package_bundles.py
+new file mode 100644
+index 00000000..a4bdb14c
+--- /dev/null
++++ b/tools/test_package_bundles.py
+@@ -0,0 +1,32 @@
++#!/usr/bin/env python3
++"""Compile and run the production APK bundle classification and selection on real ZIP files."""
++from __future__ import annotations
++import argparse
++import os
++from pathlib import Path
++import shutil
++import subprocess
++import tempfile
++
++ROOT = Path(__file__).resolve().parents[1]
++
++
++def main() -> None:
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument("--java-home", type=Path, default=os.environ.get("JAVA_HOME"))
++    args = parser.parse_args()
++    java = str(args.java_home / "bin/java") if args.java_home else shutil.which("java")
++    javac = str(args.java_home / "bin/javac") if args.java_home else shutil.which("javac")
++    if not java or not javac:
++        parser.error("JDK 17+ is required")
++    with tempfile.TemporaryDirectory(prefix="other-package-bundles-") as directory:
++        work = Path(directory)
++        sources = sorted(str(p) for p in (ROOT / "app/java/com/other/app").glob("PackageBundles*.java"))
++        subprocess.run([javac, "--release", "17", "-d", str(work / "classes"), *sources,
++                        str(ROOT / "tests/package/PackageBundlesTest.java")], check=True)
++        subprocess.run([java, "-cp", str(work / "classes"), "com.other.app.PackageBundlesTest",
++                        str(work / "data")], check=True, timeout=90)
++
++
++if __name__ == "__main__":
++    main()
+-- 
+2.43.0
+

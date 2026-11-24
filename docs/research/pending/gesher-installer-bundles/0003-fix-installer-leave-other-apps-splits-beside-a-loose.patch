@@ -1,0 +1,104 @@
+From e93fde6013d779896d148f15c3be88bdc98c20cf Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 24 Nov 2026 00:24:51 +0000
+Subject: [PATCH 3/6] fix(installer): leave other apps' splits beside a loose
+ APK out of its install
+
+A loose APK takes the split_*.apk and config.*.apk files in its folder as
+its companions. In a shared folder such as Downloads those include other
+apps' splits (a config.arm64_v8a.apk kept from an earlier bundle), and
+the install then failed on their signatures or the cluster check, though
+nothing of the APK being installed was wrong.
+
+Keep only the companions whose manifest names the base's package and log
+the others. A companion of the same package is still checked as before,
+so a same-package split with another signer is still refused
+(InstallerSigningTest), and an archive's entries are not filtered.
+
+SplitPackageContractTest puts another package's split beside an installed
+base and expects the install to be unchanged.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_0185vQkPNo1ENZ3Mi9zALKd2
+---
+ app/java/com/other/server/ApkPackage.java    |  5 +++++
+ app/java/com/other/server/Installer.java     | 21 +++++++++++++++++++
+ .../services/SplitPackageContractTest.java    |  7 +++++++
+ 3 files changed, 33 insertions(+)
+
+diff --git a/app/java/com/other/server/ApkPackage.java b/app/java/com/other/server/ApkPackage.java
+index 513af8d4..b9346c89 100644
+--- a/app/java/com/other/server/ApkPackage.java
++++ b/app/java/com/other/server/ApkPackage.java
+@@ -304,6 +304,11 @@ public final class ApkPackage {
+         return splitName(file) == null;
+     }
+ 
++    /** The manifest's package name of {@code file}, a base or a split APK. */
++    public static String packageName(File file) throws IOException {
++        return codeApkLite(file).getPackageName();
++    }
++
+     /** The manifest's {@code split} name of {@code file}; null for a base APK. */
+     public static String splitName(File file) throws IOException {
+         return codeApkLite(file).getSplitName();
+diff --git a/app/java/com/other/server/Installer.java b/app/java/com/other/server/Installer.java
+index 863c9297..f8abe2d6 100644
+--- a/app/java/com/other/server/Installer.java
++++ b/app/java/com/other/server/Installer.java
+@@ -327,6 +327,26 @@ final class Installer {
+                 && name.endsWith(".apk") && !name.equals(apk.getName()));
+     }
+ 
++    /**
++     * The companions of {@code pkg} among a loose APK's {@code companions}: a folder such as
++     * Downloads also holds other apps' split_*.apk and config.*.apk files, which are not part
++     * of this install and are left out rather than failing it.
++     */
++    private static File[] companionsOf(String pkg, File[] companions) throws IOException {
++        if (companions == null) return null;
++        List<File> own = new ArrayList<>();
++        for (File companion : companions) {
++            String owner = ApkPackage.packageName(companion);
++            if (pkg.equals(owner)) {
++                own.add(companion);
++            } else {
++                SystemServer.log("install " + pkg + ": ignoring " + companion.getName()
++                        + " beside it, an APK of " + owner);
++            }
++        }
++        return own.toArray(new File[0]);
++    }
++
+     /**
+      * Whether the installed splits are {@code splits}, by name and content: installing
+      * an .xapk over the same base.apk installed alone adds its splits (its ABI split's
+@@ -428,6 +448,7 @@ final class Installer {
+             ApkPackage parsed = ApkPackage.parse(source.getAbsolutePath());
+             ContactsProviderSupport.checkPackageAdmission(parsed);
+             String pkg = parsed.packageName;
++            if (tempDir == null) incomingSplits = companionsOf(pkg, incomingSplits);
+             File metadata = dexMetadata(source);
+             if (metadata.isFile()) {
+                 ParseResult<?> result = DexMetadataHelper.validateDexMetadataFile(
+diff --git a/tests/dex-services/other/services/SplitPackageContractTest.java b/tests/dex-services/other/services/SplitPackageContractTest.java
+index 7c2ca7a9..33d9e224 100644
+--- a/tests/dex-services/other/services/SplitPackageContractTest.java
++++ b/tests/dex-services/other/services/SplitPackageContractTest.java
+@@ -421,6 +421,13 @@ public final class SplitPackageContractTest {
+         metadata(pm.get(PACKAGE));
+         require(base.length() == baseLength && base.lastModified() == baseTimestamp,
+                 "Cache regression accidentally modified the base source");
++        // Another app's split beside the base (a shared Downloads folder) is not a companion.
++        File unrelated = new File(source, "config.unrelated.apk");
++        Files.write(unrelated.toPath(), inputs.get("foreign"));
++        result = (String[]) install.invoke(installer, base.getPath());
++        require("unchanged".equals(result[1]), "Another package's split beside the base joined its install");
++        metadata(pm.get(PACKAGE));
++        Files.delete(unrelated.toPath());
+ 
+         Files.delete(core.toPath());
+         Files.delete(entry.toPath());
+-- 
+2.43.0
+
