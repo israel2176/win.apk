@@ -105,11 +105,38 @@ public class AospResRewrite {
                 cv = new Rewriter(cv, name, bridge);
             }
             if (name.equals(PORT_THEME)) cv = themeSetToResets(cv);
+            if (name.equals(PORT_PACKAGE)) cv = collectConfigurationsFixed(cv);
             cr.accept(cv, 0);
             byte[] out = cw.toByteArray();
             if (!java.util.Arrays.equals(in, out)) Files.write(f, out);
         }
         counts.forEach((k, v) -> System.out.println("[aosp-res]   " + v + " " + k));
+    }
+
+    static final String PORT_PACKAGE = "org/robolectric/res/android/LoadedArsc$LoadedPackage";
+
+    /** The port's LoadedPackage.CollectConfigurations walks its type map by the indexes 0..size-1,
+     *  not by its keys (type ids, from 1), and dereferences the missing ones: every call threw, and
+     *  AOSP's ActivityThread asks for the size configurations at each activity launch. Its body
+     *  becomes windows/java/aosp_res's PortFixes.collectConfigurations, the C++'s loop. */
+    static ClassVisitor collectConfigurationsFixed(ClassVisitor next) {
+        return new ClassVisitor(Opcodes.ASM9, next) {
+            @Override public MethodVisitor visitMethod(int acc, String name, String desc, String sig, String[] exc) {
+                MethodVisitor mv = super.visitMethod(acc, name, desc, sig, exc);
+                if (!name.equals("CollectConfigurations") || !desc.equals("(ZLjava/util/Set;)V")) return mv;
+                mv.visitCode();
+                mv.visitVarInsn(Opcodes.ALOAD, 0);
+                mv.visitVarInsn(Opcodes.ILOAD, 1);
+                mv.visitVarInsn(Opcodes.ALOAD, 2);
+                mv.visitMethodInsn(Opcodes.INVOKESTATIC, "org/robolectric/res/android/PortFixes",
+                        "collectConfigurations", "(L" + PORT_PACKAGE + ";ZLjava/util/Set;)V", false);
+                mv.visitInsn(Opcodes.RETURN);
+                mv.visitMaxs(0, 0);
+                mv.visitEnd();
+                count("LoadedPackage.CollectConfigurations made the C++'s loop");
+                return null;
+            }
+        };
     }
 
     static final String PORT_THEME = "org/robolectric/res/android/CppAssetManager2$Theme";
