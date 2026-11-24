@@ -33,6 +33,7 @@ on:
     paths:
       - '.github/workflows/comparison'
       - '.github/compare/**'
+      - '.github/probe/stage.sh'
 
 concurrency:
   group: comparison-${{ github.ref }}
