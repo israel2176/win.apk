@@ -3,7 +3,7 @@
 // the app-visible type is the abstract CameraDevice and the implementation is
 // android.hardware.camera2.impl.CameraDeviceImpl.
 //
-// This is the object that owns a native AVFoundation capture session
+// This is the object that owns a native capture session
 // (com.macapk.loader.CameraBridge) for its whole lifetime: opened here, handed
 // to at most one CameraCaptureSessionImpl at a time, closed here.
 //
@@ -11,20 +11,18 @@
 // WHY OPEN IS ASYNCHRONOUS, AND WHY IT MUST BE
 // ---------------------------------------------------------------------------
 // AOSP's openCamera is documented asynchronous: it returns immediately and the
-// device arrives through StateCallback.onOpened. We need that latitude for a
-// reason AOSP does not have -- macOS TCC. An Android app has already shown its
-// own permission dialog before it calls openCamera (Activity.requestPermissions
-// at launch), but macOS has not yet been asked anything, so the system prompt
-// has to be raised HERE and the open has to wait for the user to answer it.
+// device arrives through StateCallback.onOpened. Upstream (Mac.apk) needed
+// that latitude for macOS's camera prompt, raised at open and waited for. On
+// Windows nothing is asked (the privacy switches allow a desktop program or
+// not), but opening the device still takes time, so it stays off the caller's
+// thread.
 //
 // That wait happens on a short-lived background thread, never on the caller's
 // thread, for two separate reasons -- either one alone would be sufficient:
 //   * The caller is normally the app's main thread. Blocking it for the
 //     lifetime of a permission dialog is a 30-second freeze.
-//   * The macOS TCC panel is presented by the system on behalf of this process
-//     and needs the AppKit main run loop to keep pumping. Blocking the main
-//     thread waiting for an answer to a dialog that cannot appear until the
-//     main thread is free is a deadlock, not a delay.
+//   * (Upstream) macOS's permission panel needed the AppKit main run loop
+//     to keep pumping; blocking it would have deadlocked.
 //
 // ---------------------------------------------------------------------------
 // WHAT AN APP SEES WHEN IT CANNOT HAVE THE CAMERA
@@ -32,11 +30,11 @@
 //   already denied  -> SecurityException from CameraManager.openCamera,
 //                      synchronously. That is what real Android throws when an
 //                      app calls openCamera without the CAMERA permission, and
-//                      a macOS TCC denial is the same fact.
+//                      Windows' camera privacy switch is the same fact.
 //   denied at the   -> StateCallback.onError(device, ERROR_CAMERA_DISABLED).
 //   prompt             AOSP's ERROR_CAMERA_DISABLED is "the camera device could
 //                      not be opened due to a device policy", which is the
-//                      closest true statement about a TCC refusal.
+//                      closest true statement about a refusal by the host.
 //   open failed     -> StateCallback.onError(device, ERROR_CAMERA_DEVICE).
 //
 // In every one of those, onError is handed a REAL CameraDevice, never null. Its
@@ -61,6 +59,9 @@ final class CameraDeviceImpl extends CameraDevice {
 
     private final String mCameraId;
     private final int mDeviceIndex;
+
+    /** The CameraBridge index behind this device (its focus and torch). */
+    int deviceIndex() { return mDeviceIndex; }
     private final CameraCharacteristics mCharacteristics;
     private final CameraDevice.StateCallback mStateCallback;
     private final CameraDispatch mStateDispatch;
@@ -108,8 +109,8 @@ final class CameraDeviceImpl extends CameraDevice {
 
         if (!CameraBackend.awaitAuthorization()) {
             CameraBackend.warn("openCamera(" + mCameraId
-                    + ") FAILED: macOS did not grant camera access."
-                    + " Grant it in System Settings > Privacy & Security > Camera,"
+                    + ") FAILED: the host did not grant camera access."
+                    + " Turn it on in Windows Settings > Privacy & security > Camera,"
                     + " then relaunch.");
             dispatchError(StateCallback.ERROR_CAMERA_DISABLED);
             return;
@@ -118,7 +119,7 @@ final class CameraDeviceImpl extends CameraDevice {
         long handle = CameraBridge.open(mDeviceIndex);
         if (handle == CameraBridge.NO_SESSION) {
             // The native layer already printed why (no such device, denied,
-            // AVFoundation refused the input). This line names the camera2-level
+            // the device would not open). This line names the camera2-level
             // consequence so a reader of the log can connect the two.
             CameraBackend.warn("openCamera(" + mCameraId
                     + ") FAILED: the capture backend could not open device index "
@@ -197,7 +198,7 @@ final class CameraDeviceImpl extends CameraDevice {
             throw new IllegalArgumentException("Template type " + templateType
                     + " is not supported on this device.");
         }
-        return new CaptureRequest.Builder(templateType);
+        return new CaptureRequest.Builder(templateType, CameraBridge.hasAutofocus(mDeviceIndex));
     }
 
     @Override
@@ -324,7 +325,7 @@ final class CameraDeviceImpl extends CameraDevice {
     //
     // Each of these is answered from what this backend can actually do, and
     // each throw below is the exception AOSP's own javadoc names for that
-    // condition -- not an invented failure. The AVFoundation path advertises no
+    // condition -- not an invented failure. The webcam path advertises no
     // reprocessing, no constrained-high-speed and no logical multi-camera, so
     // an app that asks for one of those gets the same rejection it would get
     // from a device whose HAL lacks the capability.
@@ -445,7 +446,7 @@ final class CameraDeviceImpl extends CameraDevice {
      * support high speed video capability".
      *
      * REQUEST_AVAILABLE_CAPABILITIES does not include
-     * CONSTRAINED_HIGH_SPEED_VIDEO for this backend: AVFoundation exposes
+     * CONSTRAINED_HIGH_SPEED_VIDEO for this backend: Media Foundation exposes
      * high-frame-rate formats per device, but nothing in this path configures
      * one, and a session that reported onConfigured then delivered 30fps would
      * silently ruin the app's slow-motion recording. So the capability is
@@ -526,7 +527,7 @@ final class CameraDeviceImpl extends CameraDevice {
      * API 30. Mute system sound / vibration while the camera is open.
      *
      * The mode is validated and remembered, and getCameraAudioRestriction below
-     * reports it back, so the API's own round-trip contract holds. What macOS
+     * reports it back, so the API's own round-trip contract holds. What the host
      * does NOT provide is the effect: there is no supported way for one
      * application to silence another application's or the system's sounds, so
      * nothing is actually muted. That gap is announced on the log rather than
@@ -548,7 +549,7 @@ final class CameraDeviceImpl extends CameraDevice {
         if (mode != AUDIO_RESTRICTION_NONE && !sWarnedAudioRestriction) {
             sWarnedAudioRestriction = true;
             CameraBackend.warn("setCameraAudioRestriction(" + mode
-                    + ") recorded, but macOS provides no way to mute system sounds or"
+                    + ") recorded, but the host provides no way to mute system sounds or"
                     + " vibration on another application's behalf, so nothing is muted.");
         }
     }

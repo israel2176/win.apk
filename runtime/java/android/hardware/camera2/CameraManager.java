@@ -1,5 +1,5 @@
 // android.hardware.camera2.CameraManager -- the camera2 entry point.
-// Mac.apk has no camera, which in AOSP terms is exactly the
+// With no camera at all, Win.apk is in what AOSP calls the
 // CameraManagerGlobal.sCameraServiceDisabled state, and AOSP has a precise
 // contract for it: getCameraIdList returns an empty array, and every id-taking
 // entry point throws IllegalArgumentException("No cameras available on
@@ -10,13 +10,14 @@
 // device.
 //
 // The "no cameras" decision itself now lives in ONE place -- the package-private
-// CameraBackend -- so that wiring a real AVFoundation capture backend is a
-// change to that class rather than an audit of every throw site in this
+// CameraBackend -- so that the capture backend (CameraBridge) is a change to
+// that class rather than an audit of every throw site in this
 // package. The AOSP citations below are preserved because they are why each
 // site throws what it throws.
 package android.hardware.camera2;
 
 import android.os.Handler;
+import com.macapk.loader.CameraBridge;
 import java.util.Collections;
 import java.util.Set;
 import java.util.concurrent.Executor;
@@ -59,7 +60,7 @@ public final class CameraManager {
         // failure that crashes on a real device, hiding the bug instead of
         // reproducing it.
         CameraBackend.requireKnownCameraId(cameraId);
-        // Built from the AVFoundation device behind this id: facing, sensor
+        // Built from the webcam behind this id: facing, sensor
         // orientation, the advertised sizes and frame-rate ranges, and the
         // StreamConfigurationMap. Cached per device, so repeated calls (which
         // apps make on every preview-size recalculation) cost nothing.
@@ -101,14 +102,11 @@ public final class CameraManager {
      * CameraDeviceImpl a real device object for every failure that happens
      * after there IS one.
      *
-     * PERMISSION. A macOS TCC denial is the same fact as a missing Android
-     * CAMERA permission, and real Android answers that with a SecurityException
-     * from openCamera -- thrown by the camera service before any callback
-     * exists. So an already-denied camera throws here, synchronously, with a
-     * message naming where the user can change it. A NOT-yet-decided one goes
-     * asynchronous, because the macOS prompt has to be raised and answered, and
-     * blocking this thread (usually the app's main thread, and the very thread
-     * AppKit needs to present the panel) would deadlock rather than delay.
+     * PERMISSION. Camera access denied in Windows' privacy settings is the same
+     * fact as a missing Android CAMERA permission, and real Android answers that
+     * with a SecurityException from openCamera -- thrown by the camera service
+     * before any callback exists. So a denied camera throws here, synchronously,
+     * with a message naming where the user can change it.
      */
     private void openCameraImpl(String cameraId, CameraDevice.StateCallback callback,
             CameraDispatch dispatch) {
@@ -130,8 +128,8 @@ public final class CameraManager {
         }
         if (CameraBackend.authDecidedDenied()) {
             CameraBackend.warn("openCamera(" + cameraId
-                    + ") refused: macOS camera access is denied for this application."
-                    + " Enable it in System Settings > Privacy & Security > Camera.");
+                    + ") refused: camera access is off for desktop apps."
+                    + " Turn it on in Windows Settings > Privacy & security > Camera.");
             throw new SecurityException("Lacking privileges to access camera service");
         }
 
@@ -164,8 +162,8 @@ public final class CameraManager {
      * AOSP checks null first, then bails out if sCameraServiceDisabled OR the
      * id is absent from getCameraIdList(), throwing IllegalArgumentException
      * "Camera ID '<id>' not available on device." (CameraManager.java:961-975).
-     * Mac.apk is permanently in that first state, so this reaches the identical
-     * throw by the identical route.
+     * With no camera Win.apk is in that first state, so this reaches the
+     * identical throw by the identical route.
      */
     public boolean isCameraDeviceSetupSupported(String cameraId) throws CameraAccessException {
         CameraBackend.requireKnownCameraIdNamed(cameraId);
@@ -207,49 +205,55 @@ public final class CameraManager {
     public void registerTorchCallback(Executor executor, TorchCallback callback) {}
     public void unregisterTorchCallback(TorchCallback callback) {}
 
+    /**
+     * AOSP: IllegalArgumentException "if cameraId was null, cameraId doesn't
+     * match any currently or previously available camera device, or the camera
+     * device doesn't have a flash unit" (the camera service's message: Camera
+     * "id" does not have a flash unit). A camera whose driver has a torch
+     * (FLASH_INFO_AVAILABLE) lights it: CameraBackend keeps the camera open
+     * while the torch is on, as the camera service holds the torch's device.
+     */
     public void setTorchMode(String cameraId, boolean enabled) throws CameraAccessException {
-        // AOSP setTorchMode (CameraManager.java:1552-1554) checks
-        // sCameraServiceDisabled first and throws the UNCHECKED
-        // IllegalArgumentException; CameraAccessException is reserved for a
-        // camera that exists but cannot be reached.
         CameraBackend.requireKnownCameraId(cameraId);
+        requireFlashUnit(cameraId);
+        CameraBackend.setTorch(cameraId, enabled);
+    }
+
+    private static void requireFlashUnit(String cameraId) {
+        if (!CameraBridge.hasTorch(CameraBackend.deviceIndexForId(cameraId))) {
+            throw new IllegalArgumentException("Camera \"" + cameraId + "\" does not have a flash unit.");
+        }
     }
 
     /**
      * API 33. The torch's CURRENT brightness level, 1..FLASH_TORCH_STRENGTH_MAX_LEVEL.
      *
-     * AOSP (CameraManager.java getTorchStrengthLevel) throws
-     * IllegalArgumentException("No camera available on device.") first when the
-     * camera service is disabled, and its javadoc adds IllegalArgumentException
-     * "if cameraId was null, or if the camera device doesn't have a flash unit".
-     *
-     * Both throws are reachable and both are honest here. Every camera this
-     * backend exposes sets FLASH_INFO_AVAILABLE to false
-     * (CameraBackend.java:246) because AVFoundation exposes no torch control on
-     * macOS -- AVCaptureDevice.torchMode is an iOS-only API -- so a camera that
-     * exists still has no flash unit and takes the second throw. Returning a
-     * fabricated level would tell an app the torch is on at brightness N when
-     * nothing is lit.
+     * AOSP throws IllegalArgumentException "if cameraId was null, or if the
+     * camera device doesn't have a flash unit". A torch here has no strength
+     * control (FLASH_INFO_STRENGTH_MAXIMUM_LEVEL is absent), which AOSP
+     * reports as the single default level, 1.
      */
     public int getTorchStrengthLevel(String cameraId) throws CameraAccessException {
         CameraBackend.requireKnownCameraId(cameraId);
-        throw new IllegalArgumentException(
-                "Camera " + cameraId + " does not have a flash unit");
+        requireFlashUnit(cameraId);
+        return 1;
     }
 
     /**
-     * API 33. Turn the torch on at a specific brightness level.
-     *
-     * Same contract and same reasoning as getTorchStrengthLevel above: AOSP's
-     * javadoc names IllegalArgumentException "if cameraId was null, or if the
-     * camera device doesn't have a flash unit or if the torch strength level is
-     * not within the valid range". There is no flash unit on any camera here.
+     * API 33. Turn the torch on at a specific brightness level. AOSP:
+     * IllegalArgumentException "if the camera device doesn't have a flash unit
+     * or if the torch strength level is not within the valid range" -- here 1
+     * only.
      */
     public void turnOnTorchWithStrengthLevel(String cameraId, int torchStrength)
             throws CameraAccessException {
         CameraBackend.requireKnownCameraId(cameraId);
-        throw new IllegalArgumentException(
-                "Camera " + cameraId + " does not have a flash unit");
+        requireFlashUnit(cameraId);
+        if (torchStrength != 1) {
+            throw new IllegalArgumentException("Torch strength level " + torchStrength
+                    + " is not within the valid range");
+        }
+        CameraBackend.setTorch(cameraId, true);
     }
 
     /**

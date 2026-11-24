@@ -20,7 +20,7 @@
 //
 //   * writeImage rejects any Image whose format is not ImageFormat.RAW_SENSOR
 //     -- AOSP's own first check. Nothing in this runtime produces a RAW_SENSOR
-//     Image: the AVFoundation capture path delivers RGBA/YUV frames, and
+//     Image: the webcam capture path delivers RGBA/YUV frames, and
 //     StreamConfigurationMap advertises no RAW output.
 //   * writeByteBuffer and writeInputStream reach AOSP's native
 //     validateDngHeader / NativeContext::setup, which fail with
@@ -326,7 +326,7 @@ public final class DngCreator implements AutoCloseable {
 
     private String unreachableEncoderMessage() {
         return "DngCreator: this camera reports every DNG metadata tag, but the TIFF/EP encoder"
-                + " is not implemented in Mac.apk. Refusing rather than writing a malformed .dng.";
+                + " is not implemented in Win.apk. Refusing rather than writing a malformed .dng.";
     }
 
     private void checkNotClosed() {

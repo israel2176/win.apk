@@ -25,29 +25,29 @@
 //   L967-971   isCameraDeviceSetupSupported
 //                                        -> "Camera ID '<id>' not available on device."
 //
-// Mac.apk is in exactly that state whenever AVFoundation reports no capture
-// device, so the types and message text below are copied from those sites: an
+// Win.apk is in exactly that state whenever the host reports no capture
+// device (and CameraBridge's virtual camera is off), so the types and message text below are copied from those sites: an
 // app cannot tell us apart from a real device whose camera service is
 // unavailable, which is the whole point.
 //
 // ---------------------------------------------------------------------------
 // THE ID MAPPING: index, not uniqueID
 // ---------------------------------------------------------------------------
-// The camera id string is the DEVICE INDEX ("0", "1", ...), not AVFoundation's
-// uniqueID. Two reasons, both load-bearing:
+// The camera id string is the DEVICE INDEX ("0", "1", ...), not the host's
+// device id. Two reasons, both load-bearing:
 //   * AOSP guarantees the built-in cameras are ids "0" and "1" (CameraManager
 //     getCameraIdList javadoc: "The camera ids of the built-in cameras are
 //     0 and 1"), and a large amount of real app code hardcodes "0".
 //   * The whole native API below camera2 is index-keyed
 //     (CameraBridge.open(int), getDeviceFacing(int), ...), so index -> id maps
 //     1:1 with no lookup table to keep coherent.
-// The uniqueID is a UUID; it is kept for LOGGING only, so a trace names the
+// The device id (a symbolic link) is kept for LOGGING only, so a trace names the
 // physical device the user recognises.
 //
 // ---------------------------------------------------------------------------
 // HONESTY
 // ---------------------------------------------------------------------------
-// Nothing here reports a camera that AVFoundation did not report, and nothing
+// Nothing here reports a camera that the host did not report, and nothing
 // reports a capability we cannot actually deliver. An app that is handed a
 // camera id and then never receives a frame fails deeper and more confusingly
 // than one that is told there is no camera, so: no fabricated ids, no
@@ -78,12 +78,9 @@ final class CameraBackend {
 
     // ---- Tracing ---------------------------------------------------------
     //
-    // Same gate as the native layer (camera_capture.mm trace_on() reads
-    // MACAPK_CAMERA_TRACE), so one env var turns on the whole subsystem's
-    // narration and the Java and native lines interleave in one log. The
-    // prefix differs ("[camera2]" here, "[camera]" natively) so it is always
-    // obvious which layer produced a line -- that is the point of the split
-    // when the owner reports "it said X".
+    // MACAPK_CAMERA_TRACE turns on this layer's narration. The native layer
+    // logs its own "[camera]" lines always; the prefix differs ("[camera2]"
+    // here) so it is obvious which layer produced a line.
 
     private static final boolean TRACE = System.getenv("MACAPK_CAMERA_TRACE") != null;
 
@@ -103,11 +100,11 @@ final class CameraBackend {
 
     // ---- Enumeration -----------------------------------------------------
 
-    /** The ids this device exposes, one per AVFoundation capture device.
-     *  Empty -- and therefore identical to AOSP's sCameraServiceDisabled answer
-     *  (CameraManager.java L2596) -- when there is no camera, when the runtime
-     *  was built without the capture backend, or when macOS has already denied
-     *  camera access (AVCaptureDevice discovery returns nothing then). */
+    /** The ids this device exposes, one per CameraBridge camera (each webcam
+     *  twice: a back and a front role). Empty -- and therefore identical to
+     *  AOSP's sCameraServiceDisabled answer (CameraManager.java L2596) -- when
+     *  there is no camera, or when Windows' privacy settings deny camera
+     *  access (the native layer then reports none). */
     static String[] cameraIdList() {
         int n = CameraBridge.getDeviceCount();
         if (n <= 0) return new String[0];
@@ -169,9 +166,12 @@ final class CameraBackend {
 
     // Cached per device index. A camera's capabilities do not change while it
     // is plugged in, and building the map walks every advertised format, which
-    // an app may ask for once per preview-size recalculation. The uniqueID is
+    // an app may ask for once per preview-size recalculation. The device id is
     // part of the key so that unplugging device 0 and plugging a different one
-    // in cannot serve the old device's formats under the new device's index.
+    // in cannot serve the old device's formats under the new device's index,
+    // and so is the sensor orientation, which follows the display rotation
+    // (CameraBridge.getSensorOrientation): an activity of the other shape gets
+    // characteristics that describe it.
     private static final Map<String, CameraCharacteristics> sCharCache = new HashMap<>();
 
     static CameraCharacteristics characteristics(String cameraId) {
@@ -184,13 +184,14 @@ final class CameraBackend {
         }
 
         String unique = CameraBridge.getDeviceId(index);
-        String key = index + "|" + (unique != null ? unique : "");
+        int orientation = CameraBridge.getSensorOrientation(index);
+        String key = index + "|" + (unique != null ? unique : "") + "|" + orientation;
         synchronized (sCharCache) {
             CameraCharacteristics cached = sCharCache.get(key);
             if (cached != null) return cached;
         }
 
-        CameraCharacteristics built = buildCharacteristics(cameraId, index, unique);
+        CameraCharacteristics built = buildCharacteristics(cameraId, index, unique, orientation);
         synchronized (sCharCache) {
             sCharCache.put(key, built);
         }
@@ -198,32 +199,32 @@ final class CameraBackend {
     }
 
     private static CameraCharacteristics buildCharacteristics(String cameraId, int index,
-            String unique) {
+            String unique, int orientation) {
         Formats fmt = formats(index);
 
         Map<CameraCharacteristics.Key<?>, Object> p = new LinkedHashMap<>();
 
-        // LENS_FACING comes straight from the native layer, which reports FRONT
-        // for a built-in camera (a MacBook's points at the user) and EXTERNAL
-        // for a USB/UVC one -- which is what Android itself reports for a UVC
-        // camera. Never BACK: there is no rear-facing camera on this hardware,
-        // and claiming one would send a camera app looking for a lens that
-        // cannot be opened.
+        // LENS_FACING comes straight from the native layer: every webcam is
+        // offered twice, BACK (even index) and FRONT (odd). The owner's
+        // decision: a PC's camera serves both roles, so apps that ask for the
+        // rear camera (cheque scanners, CameraX's DEFAULT_BACK_CAMERA) work.
+        // (AOSP itself reports a USB camera as EXTERNAL; see
+        // docs/research/open-issues.md for what that would mean here.)
         int facing = CameraBridge.getDeviceFacing(index);
         if (facing < 0) facing = CameraCharacteristics.LENS_FACING_EXTERNAL;
         p.put(CameraCharacteristics.LENS_FACING, Integer.valueOf(facing));
 
-        // SENSOR_ORIENTATION is 0 on a Mac: the sensor does not rotate with the
-        // device, so the app must apply no preview rotation. This is the value
-        // apps feed into their display-rotation maths, so a wrong one shows a
-        // sideways preview -- it is behaviour, not documentation.
-        p.put(CameraCharacteristics.SENSOR_ORIENTATION,
-                Integer.valueOf(CameraBridge.getSensorOrientation(index)));
+        // SENSOR_ORIENTATION: the display rotation for a back camera, its
+        // mirror for a front one (CameraBridge.getSensorOrientation), so the
+        // upright webcam picture needs no turn in the app's display-rotation
+        // maths (CameraX's rotationDegrees comes out 0). It is behaviour, not
+        // documentation: a wrong one shows a sideways preview.
+        p.put(CameraCharacteristics.SENSOR_ORIENTATION, Integer.valueOf(orientation));
 
         // INFO_SUPPORTED_HARDWARE_LEVEL = LEGACY. AOSP's own definition of
         // LEGACY is a camera "operating in backward compatibility mode ...
         // implemented on top of the older camera API, with limited
-        // capabilities" -- which is a precise description of an AVFoundation
+        // capabilities" -- which is a precise description of a webcam's
         // capture session dressed as camera2. We support preview requests into
         // YUV_420_888 and SurfaceTexture outputs and stills into a JPEG output
         // (what a LEGACY device guarantees), and nothing else: no per-frame
@@ -240,19 +241,35 @@ final class CameraBackend {
         p.put(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES,
                 new int[] { CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_BACKWARD_COMPATIBLE });
 
-        // No Mac has a camera torch, and the native layer exposes no torch
-        // control, so FLASH_INFO_AVAILABLE is false and CameraManager
-        // .setTorchMode stays a no-op for a known id (AOSP throws only for an
-        // unknown one).
-        p.put(CameraCharacteristics.FLASH_INFO_AVAILABLE, Boolean.FALSE);
+        // The torch: only where the driver has one (CameraBridge.hasTorch, the
+        // extended TORCHMODE control); a request's FLASH_MODE_TORCH and
+        // CameraManager.setTorchMode drive it. Without one,
+        // FLASH_INFO_AVAILABLE is false and setTorchMode throws, as AOSP does
+        // for a camera without a flash unit.
+        boolean torch = CameraBridge.hasTorch(index);
+        p.put(CameraCharacteristics.FLASH_INFO_AVAILABLE, Boolean.valueOf(torch));
 
-        // AF: we do not drive focus. AVFoundation may be autofocusing the
-        // device itself, but camera2's CONTROL_AF_MODE describes what the APP
-        // can ask for, and the honest answer is "nothing" -- which AOSP spells
-        // CONTROL_AF_MODE_OFF, the mode a fixed-focus camera reports. Zero AF
-        // metering regions for the same reason.
-        p.put(CameraCharacteristics.CONTROL_AF_AVAILABLE_MODES,
-                new int[] { CameraMetadata.CONTROL_AF_MODE_OFF });
+        // AF: what the webcam's driver lets us drive (CameraBridge
+        // .hasAutofocus: a one-shot focus that can be started and seen to end,
+        // and the camera's own continuous focus). With it, OFF (the lens held),
+        // AUTO, CONTINUOUS_VIDEO and CONTINUOUS_PICTURE, and CONTROL_AF_STATE
+        // follows AOSP's state machine from the driver's answers
+        // (CameraCaptureSessionImpl). Without it, a fixed-focus camera: OFF
+        // only, and LENS_INFO_MINIMUM_FOCUS_DISTANCE 0, camera2's definition of
+        // fixed focus. With autofocus the distance is left out (it is optional):
+        // no webcam driver gives one (native_camera.cpp, "focus and torch").
+        // No AF regions: none is passed to the driver.
+        boolean autofocus = CameraBridge.hasAutofocus(index);
+        if (autofocus) {
+            p.put(CameraCharacteristics.CONTROL_AF_AVAILABLE_MODES, new int[] {
+                    CameraMetadata.CONTROL_AF_MODE_OFF, CameraMetadata.CONTROL_AF_MODE_AUTO,
+                    CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_VIDEO,
+                    CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_PICTURE });
+        } else {
+            p.put(CameraCharacteristics.CONTROL_AF_AVAILABLE_MODES,
+                    new int[] { CameraMetadata.CONTROL_AF_MODE_OFF });
+            p.put(CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE, Float.valueOf(0f));
+        }
         p.put(CameraCharacteristics.CONTROL_MAX_REGIONS_AF, Integer.valueOf(0));
 
         // AE: auto-exposure is always on and is not under app control, so the
@@ -337,8 +354,8 @@ final class CameraBackend {
                 new Size[] { new Size(0, 0), new Size(160, 120), new Size(320, 240) });
 
         // Deliberately ABSENT: LENS_INFO_AVAILABLE_FOCAL_LENGTHS and
-        // SENSOR_INFO_PHYSICAL_SIZE. AVFoundation does not tell us the focal
-        // length or the sensor's physical dimensions, and those two are
+        // SENSOR_INFO_PHYSICAL_SIZE. Media Foundation does not tell us a
+        // webcam's focal length or the sensor's physical dimensions, and those two are
         // multiplied together to compute field of view -- a fabricated pair
         // would put a plausible-looking but wrong FOV in front of the user.
         // get() returns null for an absent key, which is what a real device
@@ -366,6 +383,11 @@ final class CameraBackend {
         requestKeys.add(CaptureRequest.JPEG_QUALITY);
         requestKeys.add(CaptureRequest.JPEG_THUMBNAIL_SIZE);
         requestKeys.add(CaptureRequest.JPEG_THUMBNAIL_QUALITY);
+        if (autofocus) {
+            requestKeys.add(CaptureRequest.CONTROL_AF_MODE);
+            requestKeys.add(CaptureRequest.CONTROL_AF_TRIGGER);
+        }
+        if (torch) requestKeys.add(CaptureRequest.FLASH_MODE);
 
         // The result keys the capture session actually fills in: every
         // CaptureResult carries SENSOR_TIMESTAMP, and one that produced a still
@@ -374,6 +396,8 @@ final class CameraBackend {
         resultKeys.add(CaptureResult.SENSOR_TIMESTAMP);
         resultKeys.add(CaptureResult.JPEG_ORIENTATION);
         resultKeys.add(CaptureResult.JPEG_QUALITY);
+        resultKeys.add(CaptureResult.CONTROL_AF_MODE);
+        resultKeys.add(CaptureResult.CONTROL_AF_STATE);
 
         trace("characteristics id=" + cameraId + " index=" + index
                 + " unique=" + unique
@@ -384,6 +408,36 @@ final class CameraBackend {
                 + " fpsRanges=" + fmt.fpsRanges.length);
 
         return new CameraCharacteristics(p, requestKeys, resultKeys);
+    }
+
+    // ---- The torch outside a capture session ------------------------------
+
+    /** Camera id -> the session holding a torch on (CameraManager.setTorchMode). */
+    private static final Map<String, Long> sTorches = new HashMap<>();
+
+    /** CameraManager.setTorchMode on a camera with a torch: the driver's torch
+     *  needs the device open, so a small capture runs while it is on. */
+    static void setTorch(String cameraId, boolean on) throws CameraAccessException {
+        synchronized (sTorches) {
+            Long held = sTorches.get(cameraId);
+            if (!on) {
+                if (held != null) {
+                    CameraBridge.setTorch(held, false);
+                    CameraBridge.close(held);
+                    sTorches.remove(cameraId);
+                }
+                return;
+            }
+            if (held != null) return;
+            long h = CameraBridge.open(deviceIndexForId(cameraId));
+            if (h == CameraBridge.NO_SESSION || !CameraBridge.configure(h, 1, 1, 15)
+                    || !CameraBridge.start(h) || !CameraBridge.setTorch(h, true)) {
+                if (h != CameraBridge.NO_SESSION) CameraBridge.close(h);
+                throw new CameraAccessException(CameraAccessException.CAMERA_ERROR,
+                        "The torch of camera " + cameraId + " could not be turned on");
+            }
+            sTorches.put(cameraId, h);
+        }
     }
 
     // ---- Format enumeration ----------------------------------------------
@@ -408,7 +462,7 @@ final class CameraBackend {
     static Formats formats(int index) {
         int n = CameraBridge.getFormatCount(index);
 
-        // LinkedHashSet, not a list: AVFoundation advertises one entry per
+        // LinkedHashSet, not a list: the device may advertise one entry per
         // (resolution, frame-rate range) pair, so the same resolution appears
         // many times. camera2's getOutputSizes must not repeat a size.
         LinkedHashSet<Size> sizes = new LinkedHashSet<>();
@@ -425,7 +479,7 @@ final class CameraBackend {
                 if ((long) w * h > (long) maxW * maxH) { maxW = w; maxH = h; }
             }
 
-            // Android FPS ranges are integers; AVFoundation's are doubles.
+            // Android FPS ranges are integers; Media Foundation's are ratios.
             // Round the low bound UP and the high bound DOWN so the range we
             // advertise is one the device can actually hold for its whole
             // width -- rounding outwards would advertise a rate the hardware
@@ -457,30 +511,19 @@ final class CameraBackend {
 
     // ---- Authorization ---------------------------------------------------
     //
-    // macOS TCC has no Android equivalent that lines up exactly, so the mapping
-    // is spelled out here rather than at the call sites:
+    // The host's camera access (CameraBridge AUTH_*) mapped onto Android's:
     //
     //   AUTH_AUTHORIZED      -> open proceeds.
-    //   AUTH_DENIED          -> the user said no. On real Android an app that
-    //   AUTH_RESTRICTED         calls openCamera without the CAMERA permission
-    //                           gets a SecurityException from the camera
-    //                           service, so that is what CameraManager throws.
-    //   AUTH_NOT_DETERMINED  -> nobody has been asked yet. Android has already
-    //                           shown its own permission dialog by this point
-    //                           (the app requested CAMERA at launch), so the
-    //                           macOS prompt has to be raised HERE, at open,
-    //                           and the open has to wait for the answer. That
-    //                           wait happens on a background thread and the
-    //                           result arrives through StateCallback, which is
-    //                           exactly the shape of AOSP's asynchronous
-    //                           openCamera.
-    //
-    // The prompt only appears for a process whose bundle declares
-    // NSCameraUsageDescription; launcher/Info.plist does. A HEADLESS runtime
-    // run is attributed to the terminal instead, so the outcome there depends
-    // on the terminal's own TCC state -- see camera_capture.h PERMISSIONS.
+    //   AUTH_DENIED          -> Windows' privacy settings deny desktop programs
+    //   AUTH_RESTRICTED         the camera. On real Android an app that calls
+    //                           openCamera without the CAMERA permission gets a
+    //                           SecurityException from the camera service, so
+    //                           that is what CameraManager throws.
+    //   AUTH_NOT_DETERMINED  -> upstream's (macOS's prompt, raised at open and
+    //                           waited for on the background open thread).
+    //                           Windows never reports it: nothing is asked.
 
-    /** How long openCamera waits for the user to answer the macOS prompt
+    /** How long openCamera waits for the user to answer a host prompt
      *  before giving up and reporting an error through StateCallback. Long
      *  enough for a human to read a dialog, bounded so a dismissed prompt does
      *  not leave the app waiting forever with no callback at all. */
@@ -499,8 +542,8 @@ final class CameraBackend {
     /**
      * Bring authorization to a decision, prompting if nobody has been asked.
      * BLOCKS, so it must only ever be called from the background open thread --
-     * never from an app's UI thread, and never from the AppKit main thread,
-     * which has to keep pumping for the TCC panel to appear at all.
+     * never from an app's UI thread (upstream: nor from the AppKit main
+     * thread, which had to keep pumping for the macOS panel to appear).
      *
      * @return true if the camera may be opened.
      */
@@ -509,7 +552,7 @@ final class CameraBackend {
         if (st == CameraBridge.AUTH_AUTHORIZED) return true;
         if (st == CameraBridge.AUTH_DENIED || st == CameraBridge.AUTH_RESTRICTED) return false;
 
-        trace("authorization not determined; raising the macOS prompt");
+        trace("authorization not determined; asking the host");
         CameraBridge.requestAuth();
 
         long deadline = System.nanoTime() + AUTH_WAIT_MS * 1_000_000L;
@@ -520,7 +563,7 @@ final class CameraBackend {
                 return true;
             }
             if (st == CameraBridge.AUTH_DENIED || st == CameraBridge.AUTH_RESTRICTED) {
-                warn("camera access denied by macOS privacy settings");
+                warn("camera access denied by the host's privacy settings");
                 return false;
             }
             try {
@@ -531,7 +574,7 @@ final class CameraBackend {
             }
         }
         warn("timed out after " + (AUTH_WAIT_MS / 1000)
-                + "s waiting for the macOS camera permission prompt to be answered");
+                + "s waiting for the host's camera permission prompt to be answered");
         return false;
     }
 

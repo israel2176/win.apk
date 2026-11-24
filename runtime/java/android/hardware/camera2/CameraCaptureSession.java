@@ -1,7 +1,6 @@
 // android.hardware.camera2.CameraCaptureSession -- a configured capture
-// session on an open CameraDevice. Abstract in AOSP. Mac.apk never
-// creates one (no camera), but the type + nested callbacks must exist
-// for apps to compile.
+// session on an open CameraDevice. Abstract in AOSP; the concrete one is
+// CameraCaptureSessionImpl.
 package android.hardware.camera2;
 
 import android.os.Handler;
