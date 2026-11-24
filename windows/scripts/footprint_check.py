@@ -11,8 +11,8 @@ The budgets are today's sizes with some headroom, in MB (10^6 bytes), the files'
 (what the installer unpacks; NTFS adds a little per file). Raising one is a decision, not a fix:
 do it in the change that needs the room, say why in its description, and update the numbers in
 windows/README.md, "Footprint". The stage carries AOSP's graphics, resources and views
-(build_aosp_gfx.sh, build_aosp_res.sh, build_aosp_views.sh), in CI as in a release: apps run on
-them.
+(build_aosp_gfx.sh, build_aosp_res.sh, build_aosp_views.sh), in CI as in a release: they are the
+only ones the framework has.
 """
 
 import os
@@ -28,15 +28,17 @@ BUDGETS = [
     # 1x1, build_aosp_res.sh).
     ("AOSP resources and views", ["lib/aosp-resources.jar", "lib/aosp-views.jar", "bin/aosp/framework-res-34.apk"],
      25),
-    ("AOSP graphics (the default; WINAPK_AOSP_GFX=0 is Java2D)",
+    ("AOSP graphics (what everything draws with)",
      ["bin/aosp/", "bin/robolectric-nativeruntime.dll", "lib/aosp-graphics.jar"], 70),
     ("Java runtime (jre/)", ["jre/"], 140),
     ("ARM translation's compiler (clang/)", ["clang/"], 250),
-    # 120 until November 2026; 24 MB less since (the API-36 table and the framework's shadowed classes).
-    ("Win.apk itself (the rest, bin/tools/ included)", None, 100),
+    # 120 until November 2026; 24 MB less since (the API-36 table and the framework's shadowed classes),
+    # and 7.5 MB less again (about 7.4 MB under LZMA) with Win.apk's Java2D graphics gone from
+    # android-framework.jar (its classes, and the fonts it bundled: 6.9 MB of the jar).
+    ("Win.apk itself (the rest, bin/tools/ included)", None, 92),
 ]
-TOTAL_BUDGET = 580       # the installed folder
-INSTALLER_BUDGET = 165   # Win.apk-Setup.exe
+TOTAL_BUDGET = 572       # the installed folder
+INSTALLER_BUDGET = 158   # Win.apk-Setup.exe
 
 
 def files(stage):
