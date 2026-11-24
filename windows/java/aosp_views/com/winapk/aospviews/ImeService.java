@@ -5,8 +5,10 @@
 // Windows' IME, through AospInput): startInputOrWindowGainedFocus keeps the editor that has the
 // focus and its connection, and the host's text and composition go to that connection's
 // InputConnection on the main looper, as an input method's calls arrive there through
-// RemoteInputConnectionImpl. There is no on-screen keyboard: the answer is "no input method"
-// (InputBindResult.NO_IME, as on a device with none enabled), showSoftInput shows nothing, and
+// RemoteInputConnectionImpl; Windows' text services work on that connection too (Win.apk's
+// HostTextInput). There is no on-screen keyboard: the answer is "no input method"
+// (InputBindResult.NO_IME, as on a device with none enabled), showSoftInput shows nothing in the
+// app (Windows' touch keyboard on a PC with a touchscreen: HostTextInput.softInput), and
 // the editor's own key handling takes the keyboard's keys, as on a phone with a hardware keyboard.
 package com.winapk.aospviews;
 
@@ -46,20 +48,28 @@ public final class ImeService {
         // service unbinds the served view.
         sConnection = inputConnection;
         sEditor = inputConnection != null ? editorInfo : null;
+        com.macapk.loader.HostTextInput.editorChanged();  // Windows' text services follow the editor
         return InputBindResult.NO_IME;
     }
 
     public boolean showSoftInput(IInputMethodClient client, IBinder windowToken,
             android.view.inputmethod.ImeTracker.Token statsToken, int flags, int lastClickToolType,
             ResultReceiver resultReceiver, int reason) {
+        // Windows' touch keyboard stands for the soft keyboard (HostTextInput); there is still
+        // no Android input method, so nothing is shown in the app's window.
+        com.macapk.loader.HostTextInput.softInput(true);
         return false;
     }
 
     public boolean hideSoftInput(IInputMethodClient client, IBinder windowToken,
             android.view.inputmethod.ImeTracker.Token statsToken, int flags, ResultReceiver resultReceiver,
             int reason) {
+        com.macapk.loader.HostTextInput.softInput(false);
         return false;
     }
+
+    /** The bound editor's EditorInfo, or null. */
+    static EditorInfo editor() { return sEditor; }
 
     /** The bound editor's InputConnection, or null: RemoteInputConnectionImpl.getInputConnection
      *  (null once the connection is finished). */

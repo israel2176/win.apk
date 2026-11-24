@@ -1378,12 +1378,14 @@ bool tsf_takes_key(const MSG& m) {
     return eaten || paired;
 }
 
-// Whether a message may have changed the focused editor (a key, a character, a press let go).
+// Whether a message may have changed the focused editor: while one has the focus, a key or a
+// character; always, a press let go or a key released (the focus may have moved to an editor).
 bool may_change_editor(UINT msg) {
     switch (msg) {
-        case WM_KEYDOWN: case WM_KEYUP: case WM_SYSKEYDOWN: case WM_CHAR: case WM_UNICHAR:
-        case WM_LBUTTONUP: case WM_POINTERUP: case WM_IME_ENDCOMPOSITION:
+        case WM_LBUTTONUP: case WM_POINTERUP: case WM_KEYUP:
             return true;
+        case WM_KEYDOWN: case WM_SYSKEYDOWN: case WM_CHAR: case WM_UNICHAR: case WM_IME_ENDCOMPOSITION:
+            return g_text_active;
         default:
             return false;
     }
@@ -1941,7 +1943,7 @@ DWORD WINAPI ui_thread(void* param) {
         if (tsf_takes_key(msg)) continue;  // an input method's key (see "text services")
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
-        if (g_text_active && g_input && msg.hwnd == g_hwnd && may_change_editor(msg.message)) g_input->text_sync();
+        if (g_input && msg.hwnd == g_hwnd && may_change_editor(msg.message)) g_input->text_sync();
     }
     retire_tsf();
     return 0;

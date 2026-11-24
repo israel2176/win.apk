@@ -140,6 +140,8 @@ public class InputMethodManager {
         } catch (Throwable t) {
             sServedView = view; sActiveConnection = null; sCurrentEditorInfo = null;
         }
+        // Win.apk: Windows' text services follow the served editor (HostTextInput).
+        com.macapk.loader.HostTextInput.editorChanged();
     }
 
     private static boolean safeIsEditor(View v) {
@@ -391,6 +393,7 @@ public class InputMethodManager {
         if (view != null) view.requestFocus();
         sSoftInputShown = true;
         sHideSuppressed = null;
+        com.macapk.loader.HostTextInput.softInput(true);  // Win.apk: Windows' touch keyboard
         return true;
     }
     public boolean showSoftInput(View view, int flags, android.os.ResultReceiver r) {
@@ -433,6 +436,8 @@ public class InputMethodManager {
         sHideSuppressed = sServedView != null ? sServedView : sActiveInput;
         sActiveInput = null; sActiveConnection = null; sServedView = null;
         sCurrentEditorInfo = null; sSoftInputShown = false;
+        com.macapk.loader.HostTextInput.softInput(false);  // Win.apk: Windows' touch keyboard
+        com.macapk.loader.HostTextInput.editorChanged();
     }
     /** AOSP toggleSoftInput: "If the input method is currently shown, hide it;
      *  otherwise show it for the currently focused view." (Deprecated at API 31
