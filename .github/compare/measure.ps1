@@ -57,8 +57,13 @@ if (-not ('CmpWin' -as [type])) {
   $drawing = @([Drawing.Bitmap].Assembly.Location, [Drawing.Rectangle].Assembly.Location) | Sort-Object -Unique
   # Naming any assembly replaces Add-Type's defaults, so the facades the code's other namespaces
   # (List<>, Marshal, DllImport) compile against are named too.
-  $refs = @($drawing) + @('System.Runtime', 'System.Collections', 'System.Runtime.InteropServices',
-                          'System.Console', 'System.Linq')
+  # And what System.Drawing's own types name (.NET 10: System.Private.Windows.GdiPlus' IGraphics).
+  $drawingDeps = foreach ($a in [Drawing.Bitmap].Assembly.GetReferencedAssemblies()) {
+    try { [Reflection.Assembly]::Load($a).Location } catch { }
+  }
+  $refs = @($drawing) + @($drawingDeps | Where-Object { $_ }) +
+          @('System.Runtime', 'System.Collections', 'System.Runtime.InteropServices', 'System.Console', 'System.Linq')
+  $refs = $refs | Sort-Object -Unique
   Add-Type -ReferencedAssemblies $refs -TypeDefinition @'
 using System;
 using System.Collections.Generic;
