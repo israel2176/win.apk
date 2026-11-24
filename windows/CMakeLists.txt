@@ -298,6 +298,7 @@ if(WINAPK_JNI_INCLUDE)
   # runtime.
   add_executable(winapk-runtime host/runtime_main.cpp host/host_natives.cpp host/native_log.cpp
                               host/native_cocoa.cpp host/win32_window.cpp host/guest_libs.cpp host/java_io_open.cpp
+                              host/tsf_text_store.cpp host/tsf_text_service.cpp host/touch_keyboard.cpp
                               host/gl/egl10_window.cpp
                               host/sqlite_paths.cpp
                               host/native_os.cpp host/native_image.cpp
@@ -435,7 +436,8 @@ if(WINAPK_JNI_INCLUDE)
 
   # The app window's geometry: the box the app draws in and how a frame is
   # shown in it (test/window_test.cpp), without a window.
-  add_executable(winapk-window-test test/window_test.cpp host/win32_window.cpp host/uia_provider.cpp)
+  add_executable(winapk-window-test test/window_test.cpp host/win32_window.cpp host/uia_provider.cpp
+                 host/tsf_text_store.cpp host/tsf_text_service.cpp host/touch_keyboard.cpp)
   target_link_libraries(winapk-window-test PRIVATE windowscodecs ole32 oleaut32 uuid gdi32 user32)
   target_link_options(winapk-window-test PRIVATE -static)
 
