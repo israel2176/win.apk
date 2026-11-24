@@ -379,6 +379,15 @@ if(WINAPK_JNI_INCLUDE)
   target_link_libraries(winapk-audio-test PRIVATE winapk_stb_vorbis ole32 mfplat mfreadwrite mfuuid shlwapi)
   target_link_options(winapk-audio-test PRIVATE -static)
 
+  # libOpenSLES on that backend, called as guest code calls it (test/opensles_test.cpp).
+  add_executable(winapk-opensles-test test/opensles_test.cpp host/native_opensles.cpp host/audio_engine.cpp
+                 host/audio_decode.cpp host/native_audio_input.cpp)
+  target_include_directories(winapk-opensles-test PRIVATE host include "${WINAPK_JNI_INCLUDE}"
+                             "${WINAPK_JNI_INCLUDE}/win32")
+  target_link_libraries(winapk-opensles-test PRIVATE winapk_stb_vorbis ole32 mfplat mfreadwrite mfuuid shlwapi uuid
+                        advapi32)
+  target_link_options(winapk-opensles-test PRIVATE -static)
+
   # Video on Media Foundation without a JVM (test/video_test.cpp): the
   # converter, the decoder, the source and the player on test/video/color.mp4,
   # then the encoders, the MP4 writer and the demuxer on what they make.
