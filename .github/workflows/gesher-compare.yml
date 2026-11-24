@@ -25,6 +25,12 @@ on:
         description: 'the other runtime release tag, "latest", or "ci" (the installer of its newest green CI run on main)'
         required: false
         default: 'latest'
+  # Also when the comparison's own files change on a pull request (with the defaults above), so a
+  # change to it is run once before it reaches main, where workflow_dispatch can first see it.
+  pull_request:
+    paths:
+      - '.github/workflows/comparison'
+      - '.github/compare/**'
 
 concurrency:
   group: comparison-${{ github.ref }}
@@ -58,8 +64,8 @@ jobs:
       matrix: ${{ fromJSON(needs.apps.outputs.matrix) }}
     env:
       GH_TOKEN: ${{ github.token }}
-      SECONDS_PER_RUN: ${{ inputs.seconds }}
-      DISPLAY_DP: ${{ inputs.display }}
+      SECONDS_PER_RUN: ${{ inputs.seconds || '60' }}
+      DISPLAY_DP: ${{ inputs.display || '360x640' }}
     steps:
       - uses: actions/checkout@v4
       - name: Win.apk's staged runtime (this branch's build, else main's)
@@ -68,7 +74,7 @@ jobs:
       - name: the other runtime's installer
         shell: bash
         env:
-          OTHER: ${{ inputs.other }}
+          OTHER: ${{ inputs.other || 'latest' }}
         run: bash .github/compare/other_fetch.sh "$OTHER" other
       - name: The app's APK
         shell: bash
