@@ -32,6 +32,9 @@ AppVersion={#AppVersion}
 AppVerName=Win.apk {#AppVersion}
 AppPublisher=Win.apk
 VersionInfoVersion={#AppNumber}
+; The full version (0.2.0-preview) as the installer's ProductVersion: the launcher's updater runs a downloaded
+; installer only when this is the release's version (launcher/updates.h judge_setup).
+VersionInfoProductTextVersion={#AppVersion}
 DefaultDirName={localappdata}\Programs\Win.apk
 DisableProgramGroupPage=yes
 DisableDirPage=yes

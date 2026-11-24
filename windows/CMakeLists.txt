@@ -457,7 +457,10 @@ target_include_directories(winapk-launcher PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/
 message(STATUS "Win.apk version ${WINAPK_VERSION_TEXT}")
 target_compile_definitions(winapk-launcher PRIVATE UNICODE _UNICODE _WIN32_WINNT=0x0A00 WINVER=0x0A00)
 target_link_options(winapk-launcher PRIVATE -municode -static)
-target_link_libraries(winapk-launcher PRIVATE comctl32 shell32 ole32 uuid gdiplus dwmapi uxtheme gdi32 winhttp bcrypt crypt32)
+# wintrust: the update's Authenticode check; version: its installer's ProductVersion; zlib: the Store's signed
+# F-Droid index (launcher/signed_jar.h), the same static zlib the loader links.
+target_link_libraries(winapk-launcher PRIVATE comctl32 shell32 ole32 uuid gdiplus dwmapi uxtheme gdi32 winhttp bcrypt crypt32
+                      wintrust version ZLIB::ZLIB)
 
 # The launcher's state machines (launcher/app_runs.h, installs.h, updates.h, maintenance.h): no lock and no Windows call in them, so the test drives
 # each step as the library's thread and a worker's would. test/launcher_state_test.cpp.
