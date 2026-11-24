@@ -1,4 +1,4 @@
-From 14ebfbb71be032ce6d7b835a64ef3fd36e500e3a Mon Sep 17 00:00:00 2001
+From 5e36f5f7a7d838f4e52e0e366e56029336e5fadf Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Tue, 24 Nov 2026 00:32:05 +0000
 Subject: [PATCH 6/6] docs: record which APKs of a bundle an install takes (ADR

@@ -1,4 +1,4 @@
-From 3beb6f54218d3fb0feb132fba1928004591956f1 Mon Sep 17 00:00:00 2001
+From d11e0361145680fec5f4ba44eebd9472accf1c72 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Tue, 24 Nov 2026 00:29:47 +0000
 Subject: [PATCH 4/6] feat(installer): install from a bundletool APK set what

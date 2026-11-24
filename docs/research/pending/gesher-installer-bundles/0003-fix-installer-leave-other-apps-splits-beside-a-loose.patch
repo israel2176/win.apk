@@ -1,4 +1,4 @@
-From e93fde6013d779896d148f15c3be88bdc98c20cf Mon Sep 17 00:00:00 2001
+From 8dc70f5437b785ee2c07e05d4fa2dda807486591 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Tue, 24 Nov 2026 00:24:51 +0000
 Subject: [PATCH 3/6] fix(installer): leave other apps' splits beside a loose

@@ -1,4 +1,4 @@
-From 97706c40e6b85b016d2c224cf89c22678b61fbb6 Mon Sep 17 00:00:00 2001
+From 5661a00e408f1e0d9e3162b940d3d4859c9f9079 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Tue, 24 Nov 2026 00:24:16 +0000
 Subject: [PATCH 2/6] fix(installer): name a bundle's files by their manifests,

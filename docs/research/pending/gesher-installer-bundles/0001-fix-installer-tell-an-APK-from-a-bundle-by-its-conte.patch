@@ -1,4 +1,4 @@
-From d89fca997152cdad52da1ac40f6bd2a6d98b0b7f Mon Sep 17 00:00:00 2001
+From 74deef7b8774724f4d17d8799a2a72667e4a4f63 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Tue, 24 Nov 2026 00:22:30 +0000
 Subject: [PATCH 1/6] fix(installer): tell an APK from a bundle by its content,

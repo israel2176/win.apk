@@ -1,6 +1,6 @@
 Title: Install app bundles as Android would: content detection, bundletool APK sets, XAPK manifests
 
-Base: `main` at 54be6270 (after #385, "Support APKM and APK+ split packages in Windows").
+Base: `main` at 2dd7d10d (after #385, "Support APKM and APK+ split packages in Windows").
 Branch: `installer-bundles`, six commits; patches 0001-0006 in this folder.
 
 ## Change and purpose

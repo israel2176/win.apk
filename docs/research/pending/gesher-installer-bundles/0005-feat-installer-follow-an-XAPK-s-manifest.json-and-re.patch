@@ -1,4 +1,4 @@
-From 7c099b3808fc454e7a148ef0b14fa7e3cdac14b5 Mon Sep 17 00:00:00 2001
+From abf51ae6c2aed945d2ded74918d2272f850a0bea Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Tue, 24 Nov 2026 00:31:28 +0000
 Subject: [PATCH 5/6] feat(installer): follow an XAPK's manifest.json and
