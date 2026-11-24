@@ -79,6 +79,16 @@ agents' work folders were `/opt/uip/il-work/<app>/`, gone with the container).
   an Android device without one (`CameraOrientationTest` checks the null and
   the feature). Tilt games find no sensor. Optional, not done: Windows' own
   sensor API (the accelerometer of 2-in-1s) reported truthfully.
+- Decided (November 2026): **no switches.** A change is a change: a layer lands as the
+  only path, not behind an opt-in variable, and the Win.apk code it replaces is deleted in
+  the same work (AOSP's resources and views, Java2D's graphics deleted, `WINAPK_TSF` gone;
+  the app layer is being finished the same way).
+- Decided (November 2026): **no code of the other runtime's.** What was adapted from the other runtime (text
+  input, screen readers, OpenSL ES, the software codecs, Explorer's thumbnails, the update
+  rules, the WebView file origin, the GL stub generator's parser) was rewritten clean room,
+  from Microsoft's, Khronos', the libraries' and AOSP's own documentation and code, as
+  Win.apk's own; its credit left THIRD_PARTY_NOTICES.txt with it. New work does not copy
+  the other runtime's code.
 - Decided (November 2026): **no made-up sensors at all.** The gyroscope that
   reported 0,0,0 (upstream kept it: "a laptop on a desk does not turn") is
   gone too: a PC has none. `SensorManager`'s catalog is empty, so
