@@ -100,26 +100,7 @@ Android Open Source Project. Copyright (C) The Android Open Source Project.
 Source: https://source.android.com/ . The platform resource table is AOSP's
 own (bin\aosp\framework-res-34.apk, under "AOSP resources" below).
 
-Fonts -- in lib\android-framework.jar (fonts/)
-  Roboto, Roboto Condensed: Copyright 2011 Google Inc. Apache-2.0.
-  Droid Sans Mono: Digitized data copyright (c) 2007, Google Corporation.
-    Apache-2.0.
-  Coming Soon: Copyright (c) 2010 by Open Window. Apache-2.0.
-  Noto Sans Hebrew, Noto Serif: Copyright 2012 Google Inc.; Noto Sans Symbols:
-    Copyright 2013 Google Inc. OFL-1.1.
-  Carrois Gothic SC: Copyright (c) 2011 by Ralph du Carrois, with Reserved
-    Font Name 'Carrois'. OFL-1.1.
-  Cutive Mono: Copyright (c) 2012, vernon adams, with Reserved Font Names
-    'Cutive'. OFL-1.1.
-  Dancing Script: Copyright (c) 2011, Pablo Impallari, with Reserved Font Name
-    'Dancing Script'. OFL-1.1.
-  Source Sans Pro: Copyright 2010, 2012, 2014 Adobe Systems Incorporated, with
-    Reserved Font Name 'Source'. OFL-1.1.
-As AOSP ships them. The Apache License and the SIL Open Font License are in
-section 5.
-
-AOSP graphics (what apps draw with by default; WINAPK_AOSP_GFX=0 turns it
-off) --
+AOSP graphics (what apps draw with) --
 lib\aosp-graphics.jar, bin\robolectric-nativeruntime.dll, bin\aosp\
 Built by windows/scripts/build_aosp_gfx.sh from Robolectric's builds of AOSP 14
 (Maven Central: org.robolectric:android-all 14-robolectric-10818077 and
@@ -274,9 +255,9 @@ Source: https://llvm.org/ , https://www.mingw-w64.org/ .
 
 ................................................................................
 Apache License 2.0 (AOSP code and resources, apksig, org.apache.http.legacy,
-SwiftShader, the Vulkan loader, Roboto, Droid Sans Mono, Coming Soon; and the
-AOSP graphics files: aosp-graphics.jar, robolectric-nativeruntime.dll, the
-Apache-licensed fonts of bin\aosp\fonts)
+SwiftShader, the Vulkan loader; and the AOSP graphics files:
+aosp-graphics.jar, robolectric-nativeruntime.dll, the Apache-licensed fonts of
+bin\aosp\fonts: Roboto, Droid Sans Mono, Coming Soon and others)
 ................................................................................
 
                                  Apache License
@@ -457,8 +438,8 @@ Apache-licensed fonts of bin\aosp\fonts)
    END OF TERMS AND CONDITIONS
 
 ................................................................................
-SIL Open Font License 1.1 (Noto, Carrois Gothic SC, Cutive Mono, Dancing
-Script, Source Sans Pro; and the OFL fonts of bin\aosp\fonts)
+SIL Open Font License 1.1 (the OFL fonts of bin\aosp\fonts: Noto, Carrois
+Gothic SC, Cutive Mono, Dancing Script, Source Sans Pro and others)
 ................................................................................
 
 SIL OPEN FONT LICENSE Version 1.1 - 26 February 2007
