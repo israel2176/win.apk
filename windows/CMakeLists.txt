@@ -312,7 +312,7 @@ if(WINAPK_JNI_INCLUDE)
                               host/native_camera.cpp host/native_radios.cpp host/native_bluetooth.cpp
                               host/native_location.cpp
                               host/native_signin.cpp host/native_notifications.cpp
-                              host/native_accessibility.cpp host/uia_provider.cpp
+                              host/native_accessibility.cpp host/uia_provider.cpp host/uia_tree.cpp
                               host/binder_win.cpp
                               host/user_folders.cpp host/unix_socket_dir.cpp host/crash_report.cpp host/aot_guard.cpp host/cds.cpp host/cds_util.cpp
                               host/debug_agent.cpp host/aosp_gfx.cpp host/aosp_gfx_redirect.cpp
@@ -437,14 +437,19 @@ if(WINAPK_JNI_INCLUDE)
 
   # The app window's geometry: the box the app draws in and how a frame is
   # shown in it (test/window_test.cpp), without a window.
-  add_executable(winapk-window-test test/window_test.cpp host/win32_window.cpp host/uia_provider.cpp
+  add_executable(winapk-window-test test/window_test.cpp host/win32_window.cpp host/uia_provider.cpp host/uia_tree.cpp
                  host/text_input_model.cpp host/tsf_store.cpp host/tsf_session.cpp host/input_pane.cpp)
   target_link_libraries(winapk-window-test PRIVATE windowscodecs ole32 oleaut32 uuid gdi32 user32)
   target_link_options(winapk-window-test PRIVATE -static)
 
-  # Screen readers: the app window's UI Automation provider (host/uia_provider.h) read by a UI
-  # Automation client, IUIAutomation, over a snapshot the test publishes (test/uia_test.cpp).
-  add_executable(winapk-uia-test test/uia_test.cpp host/uia_provider.cpp)
+  # Screen readers. What the views are for UI Automation, with no window: names, control types,
+  # patterns, the events between snapshots, the Text pattern's units (test/uia_tree_test.cpp).
+  add_executable(winapk-uia-tree-test test/uia_tree_test.cpp host/uia_tree.cpp)
+  target_include_directories(winapk-uia-tree-test PRIVATE host)
+  target_link_options(winapk-uia-tree-test PRIVATE -static)
+  # The app window's UI Automation provider (host/uia_provider.h): its providers and patterns
+  # called directly, then read by a UI Automation client, IUIAutomation (test/uia_test.cpp).
+  add_executable(winapk-uia-test test/uia_test.cpp host/uia_provider.cpp host/uia_tree.cpp)
   target_include_directories(winapk-uia-test PRIVATE host)
   target_link_libraries(winapk-uia-test PRIVATE ole32 oleaut32 uuid user32)
   target_link_options(winapk-uia-test PRIVATE -static)
