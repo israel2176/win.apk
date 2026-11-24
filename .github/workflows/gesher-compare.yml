@@ -25,9 +25,11 @@ on:
         description: 'the other runtime release tag, "latest", or "ci" (the installer of its newest green CI run on main)'
         required: false
         default: 'latest'
-  # Also when the comparison's own files change on a pull request (with the defaults above), so a
-  # change to it is run once before it reaches main, where workflow_dispatch can first see it.
-  pull_request:
+  # Also on a push that changes the comparison's own files (with the defaults above), so a change to
+  # it runs once before it reaches main, where workflow_dispatch can first see it. Not pull_request:
+  # its paths are the whole pull request's against main, so it would run on every push.
+  push:
+    branches-ignore: [main]
     paths:
       - '.github/workflows/comparison'
       - '.github/compare/**'

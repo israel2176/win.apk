@@ -48,7 +48,7 @@ def main():
     src, out = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
     out.mkdir(parents=True, exist_ok=True)
     apps = []
-    for d in sorted(p for p in src.iterdir() if p.is_dir()):
+    for d in sorted(p for p in src.iterdir() if p.is_dir()) if src.is_dir() else []:  # none when every job was cancelled
         meta = load(d / "app.json") or {"pkg": d.name.removeprefix("compare-")}
         runs = {f"{rt}-{ph}": load(d / f"{rt}-{ph}.json") for rt, _ in RUNTIMES for ph in ("install", "cold", "warm")}
         apps.append({"app": meta, "runs": runs})
