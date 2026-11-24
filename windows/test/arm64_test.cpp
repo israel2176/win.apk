@@ -254,7 +254,8 @@ void run_bridge(winapk::GuestLinker& linker, const char* file) {
         const int raw = call0("arm64_raw_syscalls");
         check("raw arm64 system calls (mmap, mprotect, munmap, getpid, gettid, getuid, nanosleep, uname, ENOSYS)",
               raw == 511, std::to_string(raw));
-        // The calls added from the other runtime's list and the stubs fixed: one bit each (arm64_bridge_guest.c).
+        // The calls the raw table answers beyond those, and the stubs that misreported: one bit each, by the
+        // kernel's convention for each (arm64_bridge_guest.c).
         const uint64_t dir[1] = {reinterpret_cast<uint64_t>(g_lib_dir.c_str())};
         const int raw2 = static_cast<int>(winapk::arm64::call(fn("arm64_raw_syscalls2"), dir, 1));
         check("raw arm64 system calls by the kernel's conventions (getcwd, rt_sigaction, rt_sigprocmask, "

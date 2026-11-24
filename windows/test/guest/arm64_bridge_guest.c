@@ -383,7 +383,8 @@ EXPORT int arm64_raw_syscalls(void) {
     return bits;
 }
 
-// The calls added from the other runtime's list and the stubs that misreported, by the kernel's conventions.
+// The raw table's further calls and the stubs that misreported, each by the kernel's convention as its man
+// page gives it (getcwd(2), getpriority(2), clock_nanosleep(2), rt_sigaction(2), mremap(2), ptrace(2)...).
 struct a64_ksigaction { void* handler; unsigned long flags; void* restorer; unsigned long mask; };
 struct a64_epoll_event { unsigned events; unsigned long data; };  // 16 bytes on arm64
 struct a64_rlimit { unsigned long cur, max; };

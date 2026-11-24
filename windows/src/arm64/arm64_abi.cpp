@@ -234,8 +234,10 @@ WINAPK_GUEST_ABI int a64_munmap(void* addr, size_t len) {
 // raw entry points where the kernel's interface differs from libc's
 // (rt_sigaction's struct, set_tid_address, getpriority's 20 - nice, getcwd's
 // length, clock_nanosleep's error number). A call nothing here answers is
-// ENOSYS, as from a kernel without it. the other runtime's table
-// (compat/arm64/dll/guest_libc.cc, kSyscalls) was the list of what to add.
+// ENOSYS, as from a kernel without it. The numbers are asm-generic's
+// (include/uapi/asm-generic/unistd.h, which arch/arm64 uses), and each raw
+// call returns as the kernel does, -errno in x0, with the results its man
+// page's "C library/kernel differences" give where libc's differ.
 
 using Syscall = int64_t(WINAPK_GUEST_ABI*)(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t);
 using Fn3 = int64_t(WINAPK_GUEST_ABI*)(int64_t, int64_t, int64_t);

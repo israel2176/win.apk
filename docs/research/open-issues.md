@@ -494,7 +494,7 @@ New bugs found with AOSP views:
   import passes a sixth argument. `winapk-arm64-test`'s
   `arm64_raw_syscalls`. Not answered: `getdents64`, `clone`, sockets; what
   Leumi's library calls next is not known.
-  Since (2026-11-24, from the other runtime's list): the raw table also answers the
+  Since 2026-11-24 the raw table also answers the
   xattr calls (`ENOTSUP`), `eventfd2`, `epoll_create1/ctl/pwait` (arm64's
   event), `flock`, `renameat`, `fdatasync`, `timerfd`, `getrlimit`,
   `getcpu`, `socket`, `connect`, the `mlock` family, `memfd_create`; the

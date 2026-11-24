@@ -2183,8 +2183,10 @@ WINAPK_GUEST_ABI void g_tdestroy(void* root, TFree free_node) { tdestroy_from(st
 // old range must be one mapping (here: one state and one protection throughout), else EFAULT. A file's
 // view, or the private copy that stands for a shared file mapping, cannot move or grow (another
 // mapping of the file would no longer see it): ENOMEM, on which callers map, copy and unmap themselves.
-// (The approach follows the other runtime's compat/posix/src/mman.cc mremap; this is Win.apk's own code over its
-// own mappings.)
+// The flags' rules and the errors are mremap(2)'s and the kernel's (mm/mremap.c): EINVAL for an address off
+// a page, new_len 0, unknown flags, MREMAP_FIXED or MREMAP_DONTUNMAP without MREMAP_MAYMOVE, DONTUNMAP with a
+// change of size, a fixed destination overlapping the source, and old_len 0 on private memory (only a shared
+// mapping can be duplicated that way).
 constexpr int kMremapMaymove = 1, kMremapFixed = 2, kMremapDontunmap = 4;
 
 // Sets Windows protection `prot` over [p, p + n), region by region (a MAP_FIXED range may span several).
@@ -2549,7 +2551,8 @@ WINAPK_GUEST_ABI int g_ok0() { return 0; }
 //     an app (system/sepolicy public/app.te: neverallow { domain -appdomain -crash_dump ... }
 //     appdomain:process ptrace, a CTS-checked rule), so the call fails with EACCES and changes nothing:
 //     every call does. Anti-debugging code reads EPERM as "a debugger holds me"; EACCES is a refusal.
-//     (0, as before, was a device that let the zygote trace its apps; the other runtime answers 0 then EPERM.)
+//     (0, as before, was a device that let the zygote trace its apps. ptrace(2): "EPERM ... the process is
+//     already being traced", which a TRACEME that succeeded would make true of every later one.)
 //   - PTRACE_ATTACH, PTRACE_SEIZE: EPERM for this process's own threads (the kernel refuses its own thread
 //     group) and for any other live process (no permission on Windows' side), ESRCH for none.
 //   - Anything else asks for a tracee this process does not have: ESRCH, as the kernel's
