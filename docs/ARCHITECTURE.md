@@ -427,13 +427,24 @@ into interpretation through an execute-fault handler, since arm64 text is
 never mapped executable. A raw system call (`SVC #0`, or the `syscall()`
 import) carries arm64's numbers, which `arm64_abi.cpp` maps onto the shim:
 memory (`mmap` 222, `munmap` 215, `mprotect` 226, through the same wrappers
-as the imports, so an executable mapping becomes guest code; `mremap` fails
-as the shim's does), `futex`, the ids, clocks and sleeps, files (`openat`,
-`read`, `pread64`, `readlinkat`, `fstatat` with arm64's `struct stat`...),
-`uname`, `ptrace`, `prlimit64` and others whose structs both ABIs share; the
-signal calls answer 0; anything else is `-ENOSYS`, with one log line per
-number. Protection libraries make their calls this way so that nothing
-hooking libc sees them (Bank Leumi's `libe689.so` maps memory with SVC 222).
+as the imports, so an executable mapping becomes guest code; `mremap` 216,
+which moves a private mapping by copying it), `futex`, the ids, clocks and
+sleeps, files (`openat` relative to a directory descriptor, with arm64's
+`O_DIRECTORY`/`O_NOFOLLOW` values, which the `open`/`openat` imports convert
+too; `read`, `pread64`, `readlinkat`, `fstatat` with arm64's `struct stat`,
+`flock`, `renameat`, `fdatasync`, the xattr calls 5-16, `ENOTSUP`...),
+`epoll` with arm64's 16-byte `struct epoll_event`, `eventfd2`, `timerfd`,
+`memfd_create`, `socket`, `connect`, `getrlimit`, `getcpu`, the `mlock`
+family, `mincore`, `uname`, `ptrace`, `prlimit64` and others whose structs
+both ABIs share. Where the kernel's interface is not libc's the kernel's is
+kept: `getcwd` returns the length, `getpriority` 20 - nice, `clock_nanosleep`
+`-errno`, `rt_sigaction` takes the kernel's `struct sigaction` and
+`rt_sigaction`/`rt_sigprocmask` act on the shim's signal state, and
+`set_tid_address` clears and wakes its word when the thread ends. A
+shim function that returns an `int` is read as one. Anything else is
+`-ENOSYS`, with one log line per number. Protection libraries make their
+calls this way so that nothing hooking libc sees them (Bank Leumi's
+`libe689.so` maps memory with SVC 222).
 
 Speed, on the project's own microbenchmark (`winapk-arm64-test` with
 `test/guest/arm64_bench.c`, ratios to native x64 code): translated integer

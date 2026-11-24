@@ -254,6 +254,15 @@ void run_bridge(winapk::GuestLinker& linker, const char* file) {
         const int raw = call0("arm64_raw_syscalls");
         check("raw arm64 system calls (mmap, mprotect, munmap, getpid, gettid, getuid, nanosleep, uname, ENOSYS)",
               raw == 511, std::to_string(raw));
+        // The calls added from the other runtime's list and the stubs fixed: one bit each (arm64_bridge_guest.c).
+        const uint64_t dir[1] = {reinterpret_cast<uint64_t>(g_lib_dir.c_str())};
+        const int raw2 = static_cast<int>(winapk::arm64::call(fn("arm64_raw_syscalls2"), dir, 1));
+        check("raw arm64 system calls by the kernel's conventions (getcwd, rt_sigaction, rt_sigprocmask, "
+              "getpriority, clock_nanosleep, openat, epoll, getrlimit, getcpu, timerfd, memfd, mlock, mincore, "
+              "mremap, ptrace, xattr)",
+              raw2 == 65535, std::to_string(raw2));
+        check("set_tid_address: the word is cleared when the thread ends", call0("arm64_set_tid_address") == 3,
+              std::to_string(call0("arm64_set_tid_address")));
     }
 
     const int exits_before = call0("arm64_exit_count");

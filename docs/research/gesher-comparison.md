@@ -62,7 +62,10 @@ launcher in use; the other runtime's CI claims (taken from its docs).
   the address. Real: msync, clock_nanosleep (errno sign bug on the raw path), prlimit64 old limit.
   the other runtime has, Win.apk lacks: xattr 5-16, epoll_ctl/pwait, flock, renameat, fdatasync, timerfd 85-87,
   getrlimit, getcpu, socket, connect, mlock family, memfd_create. Win.apk raw getcwd returns the pointer,
-  openat only cwd/absolute.
+  openat only cwd/absolute. **Imported 2026-11-24:** all of these are in Win.apk's raw table, and the
+  stubs above are real (ptrace's TRACEME now EACCES, as SELinux answers on a device: neither Win.apk's
+  old 0 nor the other runtime's 0-then-EPERM); see open-issues.md. the other runtime's NTFS-EA `user.*` xattrs
+  (compat/posix/src/xattr.cc) were not ported: Win.apk's xattr calls still answer ENOTSUP.
 - **Exit hang: likely in the other runtime by another path.** compat/elf/tls.cc ArenaDestructor (FLS callback) takes
   g_mutex with no exiting check; a thread killed at ExitProcess while holding g_mutex (dlopen, thread start)
   blocks it. Win.apk's elf_tls.cpp process_exiting guard covers exactly this.

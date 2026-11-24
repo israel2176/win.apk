@@ -475,6 +475,24 @@ New bugs found with AOSP views:
   import passes a sixth argument. `winapk-arm64-test`'s
   `arm64_raw_syscalls`. Not answered: `getdents64`, `clone`, sockets; what
   Leumi's library calls next is not known.
+  Since (2026-11-24, from the other runtime's list): the raw table also answers the
+  xattr calls (`ENOTSUP`), `eventfd2`, `epoll_create1/ctl/pwait` (arm64's
+  event), `flock`, `renameat`, `fdatasync`, `timerfd`, `getrlimit`,
+  `getcpu`, `socket`, `connect`, the `mlock` family, `memfd_create`; the
+  stubs that misreported are real (`rt_sigaction`/`rt_sigprocmask` on the
+  shim's signal state, `set_tid_address` cleared at thread end, priorities,
+  `mincore` from the working set, `mremap` by copy, `getcwd`'s length,
+  `clock_nanosleep`'s sign, `openat` with a directory and arm64's open
+  flags, int results read as int); `winapk-arm64-test`'s
+  `arm64_raw_syscalls2`. To check again on Leumi and on any app with a
+  protection library: **`ptrace(PTRACE_TRACEME)` now fails with `EACCES`**
+  (it returned 0): the kernel asks SELinux whether the parent, the zygote,
+  may trace the app, and AOSP's `public/app.te` neverallows that for every
+  domain but `crash_dump`, so a device refuses it. Read from the kernel and
+  the policy, not seen on a device; if an app's anti-debugging check turns
+  out to take `EACCES` for a debugger, compare with a device before
+  changing it. Not changed: raw `exit` 93 ends the process, not the
+  thread; `tkill`/`tgkill` answer 0 without delivering.
 - **DEX conversion: fixed** (heap of its own, 1 GB, `WINAPK_DEX_HEAP_MB`;
   a JVMTI out-of-memory exit 77 retried with a larger heap; a bare exit 0
   with no whole `classes.jar.tmp` is refused with a log line). Real Windows
