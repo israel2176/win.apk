@@ -20,6 +20,7 @@ import android.graphics.Color;
 import android.graphics.PorterDuff;
 import android.view.WindowManager;
 
+import com.macapk.loader.FrameTimes;
 import com.macapk.loader.NativeCocoa;
 import com.macapk.loader.gfx.GfxBackend;
 
@@ -96,7 +97,27 @@ final class Compositor {
         return type == WindowManager.LayoutParams.TYPE_BASE_APPLICATION ? 0 : 1;
     }
 
+    // The frame-time record (com.macapk.loader.FrameTimes, host/frame_times.h): every composed frame
+    // that reaches the present. AOSP's ViewRootImpl does the layout and the draw inside the
+    // Choreographer frame, before its Surface hands the layer here, so "draw" is the frame's start
+    // (the vsync time Choreographer gives it) to the compose, layout included, and "layout" is 0;
+    // "pixels" the frame read out of its bitmap, "present" the host's copy. The first
+    // kWarmupFrames composes are warm-up, as Win.apk's own views marked the first 90 vsyncs.
+    private static final int kWarmupFrames = 90;
+    private static int sComposed;
+
+    private static long frameStartNs(long now) {
+        try {
+            long t = android.view.Choreographer.getInstance().getFrameTimeNanos();
+            return t > 0 && t <= now ? t : now;
+        } catch (RuntimeException e) {
+            return now;  // not inside a frame callback (an insets change, a layer posted off a frame)
+        }
+    }
+
     static void compose() {
+        final long composeNs = System.nanoTime();
+        final long startNs = frameStartNs(composeNs);
         List<AospWindows.Win> order = new ArrayList<>();
         for (AospWindows.Win w : AospWindows.sWindows.values()) {
             if (w.visible && w.content != null && w.attrs != null) order.add(w);
@@ -121,7 +142,7 @@ final class Compositor {
             Bitmap b = w.content;
             if (w.frame.left == 0 && w.frame.top == 0 && b.getWidth() == width && b.getHeight() == height
                     && w.attrs.surfaceInsets.left == 0 && w.attrs.surfaceInsets.top == 0) {
-                present(b);  // one window filling the display: its own frame, as before
+                present(b, startNs, composeNs);  // one window filling the display: its own frame, as before
                 return;
             }
         }
@@ -155,18 +176,23 @@ final class Compositor {
                 }
             }
         }
-        present(sFrame);
+        present(sFrame, startNs, composeNs);
     }
 
-    /** The frame to the host window, as Win.apk's Surface presents one. */
-    private static void present(Bitmap b) {
+    /** The frame to the host window, as Win.apk's Surface presents one, and its times recorded. */
+    private static void present(Bitmap b, long startNs, long composeNs) {
+        final long pixelsStart = System.nanoTime();
         int[] pixels = GfxBackend.get().liveArgbOrNull(b);
         if (pixels == null) pixels = GfxBackend.get().argbBuffer(b);
         if (pixels == null) return;
+        final long pixelsEnd = System.nanoTime();
         try {
             NativeCocoa.presentBitmap(pixels, b.getWidth(), b.getHeight());
         } catch (UnsatisfiedLinkError e) {
-            // A plain JVM (no host): nothing to show it on.
+            return;  // A plain JVM (no host): nothing to show it on, nothing to time.
         }
+        final long end = System.nanoTime();
+        FrameTimes.record(0, composeNs - startNs, pixelsEnd - pixelsStart, end - pixelsEnd, end - startNs,
+                          ++sComposed <= kWarmupFrames);
     }
 }
