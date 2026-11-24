@@ -384,6 +384,14 @@ phone.
   **Open .apk, .apkm, .xapk and .apks files with Win.apk** extends that to the
   other three, and takes the `.apk` association back if another program took
   it. Double-clicking such a file opens the install window.
+- In Explorer's medium, large and extra large icons, and in its preview pane,
+  each of these files shows its own app's icon, read from the file without
+  installing or running anything (a bundle's own `icon.png` first, else its
+  base APK's launcher icon). An icon Android draws as a vector shows the icon
+  Win.apk made when the same app was installed, or else Win.apk's file icon;
+  WebP icons need Windows' WebP support (the Webp Image Extensions, built
+  into Windows 10 1809 and later). Small icons and the details view show
+  Win.apk's file icon.
 - When Win.apk is updated, it writes every app's Start menu and desktop
   shortcuts again once, so they carry what the new version needs.
 
@@ -535,6 +543,17 @@ Firewall may first ask whether to let Win.apk through). Android's built-in
 service discovery (`NsdManager`, mDNS) is not available yet: an app that
 relies on it alone finds nothing.
 
+Apps use Windows' proxy, as a phone's apps use the one its Wi-Fi settings
+name: whatever **Windows Settings > Network & internet > Proxy** says (a
+proxy server and its exceptions, a setup script, or automatic detection)
+applies to every app's connections made through Android's Java networking
+(`HttpURLConnection`, OkHttp and the libraries built on them), and Win.apk
+has no proxy setting of its own. An app that picks its own proxy keeps it.
+Not covered: an app whose native code opens its own connections, and the
+push connection, which takes `WINAPK_PROXY` ([Command line](#command-line)).
+Web pages inside apps (WebView, the Google sign-in window) follow Windows'
+proxy through Edge's WebView2.
+
 ## Shared storage
 
 On a phone, apps share folders such as Download and Pictures. Here those
@@ -627,7 +646,7 @@ nothing is started in the apps: no agent, no pipe.
 - **Settings > Troubleshooting > Clear library** uninstalls every app of the
   library and removes its shortcuts (app data is kept).
 - Uninstalling Win.apk (Windows Settings > Apps) removes the program, the
-  Start menu shortcuts and the `.apk` association, and keeps
+  Start menu shortcuts, the `.apk` association and the app files' thumbnails, and keeps
   `%LOCALAPPDATA%\Win.apk`. Delete that folder to remove the apps, their data,
   the Store's catalog and the Google account.
 

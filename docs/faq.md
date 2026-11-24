@@ -60,6 +60,11 @@ folders an app sees (Download, Pictures, Documents, Music, Movies) are your
 own Windows folders, behind the storage permission; Settings > Apps > Use my
 Windows folders turns that off.
 
+**Do apps go through my proxy?**
+Yes: apps use the proxy set in Windows Settings > Network & internet > Proxy,
+as a phone's apps use the one in its network settings. Win.apk has no proxy
+setting of its own. [User guide](USER_GUIDE.md#wi-fi-and-bluetooth).
+
 **How do I report a problem?**
 Use **Report a problem** in Win.apk, or open an issue with the app's log.
 [Troubleshooting](troubleshooting.md#reporting-a-problem). Hebrew is welcome.
