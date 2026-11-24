@@ -18,6 +18,6 @@
 
 ## Known limitations
 - Apps with only 32-bit ARM (`armeabi-v7a`) code do not run.
-- No in-app purchases, Play Integrity or Vulkan; OpenSL ES sound is missing; sensors report a phone lying still.
+- No in-app purchases, Play Integrity or Vulkan; OpenSL ES sound is missing; no accelerometer or other motion sensor is reported.
 
 [Getting started](https://github.com/israel2176/win.apk/blob/main/docs/getting-started.md) · [What works](https://github.com/israel2176/win.apk/blob/main/docs/APPS.md) · [User guide](https://github.com/israel2176/win.apk/blob/main/docs/USER_GUIDE.md) · [עברית](https://github.com/israel2176/win.apk/blob/main/README.he.md). Found a problem? Use **Report a problem** in Win.apk, or [open an issue](https://github.com/israel2176/win.apk/issues/new/choose) ([how](https://github.com/israel2176/win.apk/blob/main/docs/troubleshooting.md#reporting-a-problem)).
