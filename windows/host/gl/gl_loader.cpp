@@ -37,7 +37,7 @@ void* gl_proc(const char* name, GlLib lib) {
     HMODULE m = lib == GlLib::Egl ? egl() : gles();
     if (!m) return nullptr;
     if (FARPROC p = GetProcAddress(m, name)) return reinterpret_cast<void*>(p);
-    if (lib == GlLib::Gles && egl()) {
+    if (egl()) {
         using GetProc = void*(__stdcall*)(const char*);
         static const auto get = reinterpret_cast<GetProc>(GetProcAddress(egl(), "eglGetProcAddress"));
         if (get) return get(name);

@@ -11,7 +11,7 @@ namespace winapk::host {
 enum class GlLib { Egl, Gles };
 
 // The ANGLE function `name`, or nullptr when ANGLE is not installed or does
-// not have it. GLES names not exported by libGLESv2 (extensions) are asked of
+// not have it. Names the DLL does not export (extensions) are asked of
 // eglGetProcAddress.
 void* gl_proc(const char* name, GlLib lib);
 
