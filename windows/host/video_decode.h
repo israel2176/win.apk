@@ -5,13 +5,16 @@
 //  - Decoder: an elementary-stream decoder (MediaCodec's shape, through
 //    com.macapk.loader.NativeMedia): access units in, pictures out, on the
 //    synchronous decoder MFTs Windows registers (H.264 always; HEVC, VP9, VP8
-//    and AV1 when their codec packs are installed).
-//  - AudioDecoder: the same for AAC and MP3 (MediaCodec's audio shape).
+//    and AV1 when their codec packs are installed), else on the software
+//    decoders built in (soft_codecs.h: VP8, VP9, AV1).
+//  - AudioDecoder: the same for AAC and MP3 (Media Foundation's) and Opus
+//    (libopus, soft_codecs.h): MediaCodec's audio shape.
 //  - Source: a file, URL or memory buffer demuxed and decoded by an
 //    IMFSourceReader (MediaPlayer's shape): video pictures and float PCM in
 //    presentation order, with seeking.
 //  - Demuxer: a file or URL demuxed and not decoded (MediaExtractor's shape):
-//    every track's format and its access units, as MediaCodec takes them.
+//    every track's format and its access units, as MediaCodec takes them;
+//    a WebM or Matroska file through mkvparser (webm_demux.h).
 // Pictures come out as ARGB ints (0xAARRGGBB, alpha 0xff, row stride =
 // width), the layout the Java side presents, with any rotation the container
 // asks for already applied.
@@ -46,8 +49,11 @@ void i420_to_argb(const uint8_t* y, int y_stride, const uint8_t* u, const uint8_
                   int height, bool bt709, bool full_range, uint32_t* out);
 
 // The video mimes (AOSP's names: "video/avc", "video/hevc", ...) a decoder
-// exists for on this machine, probed once by trying to create each one.
+// exists for on this machine, probed once by trying to create each one, and
+// the ones a built-in software decoder takes.
 const std::vector<std::string>& supported_mimes();
+// Whether Media Foundation itself has a decoder for the mime on this machine.
+bool media_foundation_decodes(const std::string& mime);
 
 class Decoder {
 public:
@@ -73,13 +79,16 @@ public:
 private:
     struct Impl;
     explicit Decoder(std::unique_ptr<Impl> impl);
+    static std::unique_ptr<Impl> open_mf(const std::string& mime, int width, int height,
+                                         const std::vector<uint8_t>& csd0, const std::vector<uint8_t>& csd1);
     std::unique_ptr<Impl> impl_;
 };
 
 class AudioDecoder {
 public:
     // format_id as MediaCodec.java numbers them: 1 AAC (csd0 = the
-    // AudioSpecificConfig), 2 MP3. Null for the others.
+    // AudioSpecificConfig), 2 MP3, 3 Opus (csd0 = the OpusHead; the output is
+    // 48 kHz). Null for the others.
     static std::unique_ptr<AudioDecoder> open(int format_id, int sample_rate, int channels,
                                               const std::vector<uint8_t>& csd0);
     ~AudioDecoder();
@@ -163,7 +172,9 @@ public:
     };
     enum SeekMode { kPreviousSync = 0, kNextSync = 1, kClosestSync = 2 };  // MediaExtractor's numbers
 
-    // A host path or an http(s) URL. Null when Media Foundation cannot read it.
+    // A host path or an http(s) URL. A file that starts with an EBML header
+    // (WebM, Matroska) is read by webm_demux.h, anything else by Media
+    // Foundation. Null when neither can read it.
     static std::unique_ptr<Demuxer> open(const std::wstring& path_or_url);
     ~Demuxer();
 

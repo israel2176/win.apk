@@ -21,9 +21,11 @@ import com.macapk.loader.view.ViewHost;
 public final class HostVideo {
     private HostVideo() {}
 
-    /** Whether VP8/VP9 decoders are built into the runtime (upstream's
-     *  libvpx, always there) rather than the host's own, which
-     *  NativeMedia.nativeVideoSupportedMimes lists when present. */
+    /** Whether VP8/VP9 decoders are built into the runtime as upstream's
+     *  libvpx (always there, listed by MediaCodecList.LibvpxDecoders) rather
+     *  than listed by NativeMedia.nativeVideoSupportedMimes: on Windows the
+     *  latter, Media Foundation's decoders else the host's built-in libvpx
+     *  (windows/host/soft_codecs.h). */
     public static boolean vpxBuiltIn() {
         try {
             return nativeVpxBuiltIn();

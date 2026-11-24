@@ -38,7 +38,7 @@ function(winapk_fetch_codec name url sha256 dir)
 endfunction()
 
 # Third-party code: their warnings are not ours.
-set(_codec_flags -w -O2)
+set(_codec_flags -w -O2 -DNDEBUG)
 
 # --- libvpx 1.15.2: VP8 and VP9 decoding -----------------------------------------------------
 # Debian's copy of the release tarball (the same bytes as the tag's archive on GitHub).

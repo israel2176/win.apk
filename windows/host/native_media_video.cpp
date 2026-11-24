@@ -21,6 +21,7 @@
 #include <string>
 #include <vector>
 
+#include "soft_codecs.h"
 #include "video_decode.h"
 #include "video_player.h"
 #include "winapk/mini_bionic.h"
@@ -99,8 +100,23 @@ jobjectArray JNICALL Vid_supportedMimes(JNIEnv* env, jclass) {
 }
 // The decoders used are the synchronous (software) MFTs; see video_decode.cpp.
 jboolean JNICALL Vid_isHardware(JNIEnv*, jclass, jstring) { return JNI_FALSE; }
-// No measured profile/level table: MediaCodecList keeps its declared ranges.
-jintArray JNICALL Vid_capabilities(JNIEnv*, jclass, jstring) { return nullptr; }
+// A mime a built-in software decoder serves gets AOSP's table for that same
+// decoder (soft_codecs.h), so that ExoPlayer sees its profiles; when Media
+// Foundation decodes it as well, the sizes are its (MediaCodecList's 4096,
+// 65536 blocks), the larger. No table for the rest: MediaCodecList keeps its
+// declared ranges.
+jintArray JNICALL Vid_capabilities(JNIEnv* env, jclass, jstring mime) {
+    const std::string m = utf8_of(env, mime);
+    std::vector<int> table = vd::soft::video_capabilities(m);
+    if (table.empty()) return nullptr;
+    if (vd::media_foundation_decodes(m)) {
+        table[0] = table[1] = 4096;
+        table[2] = 65536;
+    }
+    jintArray out = env->NewIntArray(static_cast<jsize>(table.size()));
+    if (out) env->SetIntArrayRegion(out, 0, static_cast<jsize>(table.size()), reinterpret_cast<const jint*>(table.data()));
+    return out;
+}
 
 jlong JNICALL Vid_open(JNIEnv* env, jclass, jstring mime, jint w, jint h, jbyteArray csd0, jbyteArray csd1, jboolean) {
     auto dec = vd::Decoder::open(utf8_of(env, mime), w, h, bytes_of(env, csd0), bytes_of(env, csd1));
@@ -265,8 +281,10 @@ std::shared_ptr<vd::Player> player_of(jlong h) {
     return it == g_players.end() ? nullptr : it->second.player;
 }
 
-// VP8 and VP9 come from Media Foundation here, when its codec packs are
-// installed, not from a decoder built into the runtime.
+// False although libvpx is built in: upstream's answer lists VP8 and VP9 a
+// second time (MediaCodecList.LibvpxDecoders, with upstream's narrower
+// table), and here nativeVideoSupportedMimes already lists them, served by
+// Media Foundation or else by libvpx (video_decode.h's Decoder).
 jboolean JNICALL Hv_vpxBuiltIn(JNIEnv*, jclass) { return JNI_FALSE; }
 
 // A path or URL, else the bytes; 0 when it cannot be opened or has no video

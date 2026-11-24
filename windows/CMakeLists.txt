@@ -286,6 +286,14 @@ if(WINAPK_JNI_INCLUDE)
   add_library(winapk_stb_vorbis STATIC ${WINAPK_STB_VORBIS})
   target_compile_options(winapk_stb_vorbis PRIVATE -w)
 
+  # The software codecs MediaCodec and MediaExtractor fall back on where Media
+  # Foundation has nothing (host/soft_codecs.h, host/webm_demux.h): libvpx
+  # (VP8, VP9), dav1d (AV1), libopus and libwebm's mkvparser, release tarballs
+  # checked against their SHA-256; about 1.4 MB of the runtime (cmake/soft_codecs.cmake).
+  include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/soft_codecs.cmake)
+  set(WINAPK_SOFT_CODEC_SOURCES host/soft_codecs.cpp host/webm_demux.cpp host/yuv_convert.cpp)
+  set(WINAPK_SOFT_CODEC_LIBS winapk_vpx winapk_dav1d winapk_opus winapk_mkvparser)
+
   # The host that runs an APK. Like winapk-jvm-run it loads jvm.dll at
   # runtime.
   add_executable(winapk-runtime host/runtime_main.cpp host/host_natives.cpp host/native_log.cpp
@@ -349,9 +357,12 @@ if(WINAPK_JNI_INCLUDE)
                  host/video_decode.cpp host/video_player.cpp host/native_media_video.cpp
                  host/media_encode.cpp host/mp4_writer.cpp host/native_media_codec.cpp
                  host/native_activity.cpp
+                 ${WINAPK_SOFT_CODEC_SOURCES}
                  ${WINAPK_GL_UPSTREAM})
   target_include_directories(winapk-runtime PRIVATE host third_party/khronos ${CMAKE_BINARY_DIR}/gl
                              ${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src)
+  target_include_directories(winapk-runtime SYSTEM PRIVATE ${WINAPK_SOFT_CODEC_INCLUDES})
+  target_link_libraries(winapk-runtime PRIVATE ${WINAPK_SOFT_CODEC_LIBS})
   target_compile_definitions(winapk-runtime PRIVATE KHRONOS_STATIC GL_GLEXT_PROTOTYPES=0)
   # Upstream's code, upstream's warnings.
   set_source_files_properties(host/gl/gl_bridges.cpp PROPERTIES COMPILE_OPTIONS "-w")
@@ -395,9 +406,17 @@ if(WINAPK_JNI_INCLUDE)
   # converter, the decoder, the source and the player on test/video/color.mp4,
   # then the encoders, the MP4 writer and the demuxer on what they make.
   add_executable(winapk-video-test test/video_test.cpp host/video_decode.cpp host/video_player.cpp
-                 host/audio_engine.cpp host/media_encode.cpp host/mp4_writer.cpp)
-  target_link_libraries(winapk-video-test PRIVATE ole32 mf mfplat mfreadwrite mfuuid shlwapi)
+                 host/audio_engine.cpp host/media_encode.cpp host/mp4_writer.cpp ${WINAPK_SOFT_CODEC_SOURCES})
+  target_include_directories(winapk-video-test SYSTEM PRIVATE ${WINAPK_SOFT_CODEC_INCLUDES})
+  target_link_libraries(winapk-video-test PRIVATE ${WINAPK_SOFT_CODEC_LIBS} ole32 mf mfplat mfreadwrite mfuuid shlwapi)
   target_link_options(winapk-video-test PRIVATE -static)
+
+  # The built-in software decoders and the WebM demuxer without Media
+  # Foundation (test/soft_codecs_test.cpp), on test/video's WebM files.
+  add_executable(winapk-soft-codecs-test test/soft_codecs_test.cpp ${WINAPK_SOFT_CODEC_SOURCES})
+  target_include_directories(winapk-soft-codecs-test SYSTEM PRIVATE ${WINAPK_SOFT_CODEC_INCLUDES})
+  target_link_libraries(winapk-soft-codecs-test PRIVATE ${WINAPK_SOFT_CODEC_LIBS})
+  target_link_options(winapk-soft-codecs-test PRIVATE -static)
 
   # The shared-folder junctions on a scratch volume (test/user_folders_test.cpp).
   add_executable(winapk-user-folders-test test/user_folders_test.cpp host/user_folders.cpp)
