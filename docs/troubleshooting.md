@@ -46,8 +46,10 @@ translation is ready; on a busy PC a large app's first translation can take an
 hour or more. Leave the PC alone for a while, or install an x86_64 build.
 `logs\aot-<app>.log` shows the progress. [More](arm-apps.md#how-arm-only-apps-run)
 
-**No sound in a native game.** Its engine plays sound through OpenSL ES, which
-is not implemented yet. AAudio and Java audio work.
+**No sound in a native game.** AAudio, OpenSL ES and Java audio all play
+through Windows' default output device. If a game is still silent, look in its
+log for `[opensles]` or `[aaudio]` lines that say what it asked for and did not
+get (an http stream, an effect), and report it with the log.
 
 **A video does not play, or plays silent.** Windows decodes the video: H.264
 with AAC always; HEVC, VP9 and AV1 only with Microsoft's codec packs from the

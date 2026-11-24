@@ -578,7 +578,7 @@ how CI boots apps.
 |---|---|---|
 | AudioTrack, SoundPool, MediaPlayer (audio) | A WASAPI mixer; WAV and Ogg Vorbis decoded in-process, MP3, AAC and whatever Windows has through Media Foundation | `native_audio.cpp`, `audio_engine.cpp`, `audio_decode.cpp` |
 | AAudio (native) | A port of upstream's AAudio on the same mixer; write and callback modes, no capture | `native_aaudio.cpp` |
-| OpenSL ES (native) | Not implemented: `slCreateEngine` reports the feature unsupported, so engines fall back to silence. The interface IDs are real | `native_opensles.cpp` |
+| OpenSL ES (native) | Adapted from the other runtime's: the engine and output mix; buffer-queue players feed a stream of the same mixer from the app's queued PCM (24- and 32-bit converted to float), calling the queue's callback on the player's own thread as each buffer is taken; fd and file-URI players decode the whole file and play it as a clip voice (head-at-end, seek, loop); recorders fill the app's queued buffers from the microphone's capture (`audio_capture.h`) after the RECORD_AUDIO check AudioRecord makes (`SpecialAccessStore.holds`). Guest callbacks through `arm64::host_callable`. No http(s) players, effects or MIDI | `native_opensles.cpp` |
 | Microphone (AudioRecord) | WASAPI capture, resampled to the app's format | `native_audio_input.cpp` |
 | Video: MediaPlayer, VideoView | `HostVideo.Player` over `video_player.cpp`: an `IMFSourceReader` demuxes and decodes (NV12, or P010 for 10-bit; own YUV-to-ARGB conversion, aperture crop, container rotation), the audio goes into the audio engine, and a Java thread pulls each picture when the audio clock says it is due and presents it on the SurfaceView's layer, the TextureView's SurfaceTexture, or the window | `video_player.cpp`, `video_decode.cpp`, `native_media_video.cpp` |
 | Video: MediaCodec | `NativeMedia`'s video natives on the synchronous decoder MFTs: H.264 always, HEVC/VP9/VP8/AV1/MPEG-4 when a decoder is installed (`nativeVideoSupportedMimes` lists what `MFTEnumEx` really creates); AAC and MP3 audio decoders too. The NDK media API (`AMediaCodec`, `AMediaExtractor`) is not implemented; `native_media.cpp` holds only the `AMEDIAFORMAT_KEY_*` strings so libraries link | `native_media_video.cpp`, `video_decode.cpp` |
@@ -1043,7 +1043,7 @@ sets from its tag; a `ci.yml` build is the newest release tag + `-dev.<run>`
 
 ## What is not there
 
-As of this writing: the NDK media API, OpenSL ES, Vulkan, real sensor input,
+As of this writing: the NDK media API, Vulkan, real sensor input,
 signal delivery for faults in arm64 guest code and handlers in arm64
 libraries, POSIX timers, static ELF TLS, W^X thunk pools with unwind tables,
 code signing, 32-bit ARM, notification action buttons,

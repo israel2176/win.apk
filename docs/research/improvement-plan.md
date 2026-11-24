@@ -59,7 +59,7 @@ The plan, in order:
 
 | Order | Gap | Where | Approach | Size |
 |---|---|---|---|---|
-| 1 | OpenSL ES | `native_opensles.cpp` | Port upstream's OpenSL ES output onto `audio_engine.h`'s WASAPI mixer (#132) | M |
+| 1 | OpenSL ES | `native_opensles.cpp` | Done: the other runtime's OpenSL ES adapted onto `audio_engine.h`'s WASAPI mixer and the microphone's capture (#132) | M |
 | 2 | NDK `AMediaCodec` / `AMediaExtractor` | `native_media.cpp` | Bridge the NDK ABI onto the Java path's working demuxer and Media Foundation codecs (#133) | M |
 | 3 | Opus, Vorbis, FLAC in `MediaCodec` | `native_media_codec.cpp`, `video_decode.cpp` | Add the three decoders beside AAC and MP3: every ExoPlayer app | M |
 | 4 | `libbinder_ndk.so` exports nothing | `windows/src/linker.cpp` | Port upstream's `bionic_shim_binder_ndk.cpp` (local in-process binder) into `windows/src/bionic/`; a library calling it from `init_array` aborts today | M |

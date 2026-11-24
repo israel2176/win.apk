@@ -43,7 +43,7 @@ Adding and running apps
 What works, and what does not yet: docs/APPS.md in the repository, one table
 checked against the code. In short, Java and Kotlin apps, OpenGL ES games,
 sound and video, WebView, webcams, location, Bluetooth, notifications and
-Google sign-in work; 32-bit ARM code, Vulkan, OpenSL ES sound, the NDK media
+Google sign-in work; 32-bit ARM code, Vulkan, the NDK media
 API, real sensors, in-app purchases and Play Integrity do not.
 
 Where things are
