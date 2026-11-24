@@ -39,6 +39,11 @@ struct Frame {
 // are in bytes; the chroma plane is half the height, with interleaved Cb,Cr.
 void yuv420_to_argb(const uint8_t* y, int y_stride, const uint8_t* uv, int uv_stride, int width, int height,
                     bool sixteen_bit, bool bt709, bool full_range, int rotation, uint32_t* out);
+// The same for an 8-bit I420 picture (separate Cb and Cr planes, each half the
+// width and height), unrotated: the software decoders' output (soft_codecs.h).
+// Both live in yuv_convert.cpp.
+void i420_to_argb(const uint8_t* y, int y_stride, const uint8_t* u, const uint8_t* v, int uv_stride, int width,
+                  int height, bool bt709, bool full_range, uint32_t* out);
 
 // The video mimes (AOSP's names: "video/avc", "video/hevc", ...) a decoder
 // exists for on this machine, probed once by trying to create each one.
@@ -144,9 +149,10 @@ public:
         double frame_rate = 0;
         int sample_rate = 0, channels = 0;
         int bitrate = 0;  // bits per second, 0 = unsaid
-        // MediaFormat's "csd-0" / "csd-1": H.264's SPS and PPS and HEVC's
-        // parameter sets (in csd0) with start codes, AAC's AudioSpecificConfig.
-        std::vector<uint8_t> csd0, csd1;
+        // MediaFormat's "csd-0" / "csd-1" / "csd-2": H.264's SPS and PPS and
+        // HEVC's parameter sets (in csd0) with start codes, AAC's
+        // AudioSpecificConfig, and what webm_demux.h gives a WebM's tracks.
+        std::vector<uint8_t> csd0, csd1, csd2;
         std::string language;
     };
     struct Sample {
