@@ -55,14 +55,18 @@
 #include "winapk/linker.h"
 #include "winapk/mini_bionic.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <map>
 #include <mutex>
+#include <vector>
 
 #include <windows.h>
+#include <tlhelp32.h>
 
 namespace winapk::bionic {
 
@@ -1069,8 +1073,153 @@ WINAPK_GUEST_ABI int g_timer_delete(void*) { return 0; }
 WINAPK_GUEST_ABI int g_timer_getoverrun(void*) { return 0; }
 
 // ---- scheduling priority ----------------------------------------------------------------
-WINAPK_GUEST_ABI int g_setpriority(int, int, int) { return 0; }
-WINAPK_GUEST_ABI int g_getpriority(int, int) { return 0; }
+// setpriority/getpriority: a thread's nice value, -20 (most favoured) to 19. On Linux PRIO_PROCESS names
+// one thread by its tid (0: the caller; the pid is the main thread), which is how Android sets a
+// thread's priority (androidSetThreadPriority, Process.setThreadPriority: THREAD_PRIORITY_AUDIO -16,
+// DISPLAY -4, BACKGROUND 10, LOWEST 19); PRIO_PGRP and PRIO_USER name every thread of the process group
+// or the user, which here are this process's threads. An app may lower its nice value too: Android's
+// init gives every process RLIMIT_NICE 40. The value becomes the Windows thread priority nearest to it
+// (never time-critical, which would starve the desktop), and is kept per thread, so getpriority reads
+// back what was set; a thread nobody set reads the value its Windows priority stands for. getpriority
+// returns the nice value (the kernel's own call returns 20 - nice, which the arm64 raw call path
+// converts to).
+constexpr int kPrioProcess = 0, kPrioPgrp = 1, kPrioUser = 2;
+
+int windows_priority(int nice) {
+    if (nice <= -16) return THREAD_PRIORITY_HIGHEST;
+    if (nice <= -4) return THREAD_PRIORITY_ABOVE_NORMAL;
+    if (nice <= 2) return THREAD_PRIORITY_NORMAL;
+    if (nice <= 9) return THREAD_PRIORITY_BELOW_NORMAL;
+    if (nice <= 18) return THREAD_PRIORITY_LOWEST;
+    return THREAD_PRIORITY_IDLE;
+}
+int nice_of_windows(int priority) {
+    if (priority >= THREAD_PRIORITY_TIME_CRITICAL) return -20;
+    if (priority >= THREAD_PRIORITY_HIGHEST) return -16;
+    if (priority >= THREAD_PRIORITY_ABOVE_NORMAL) return -8;
+    if (priority >= THREAD_PRIORITY_NORMAL) return 0;
+    if (priority >= THREAD_PRIORITY_BELOW_NORMAL) return 5;
+    if (priority >= THREAD_PRIORITY_LOWEST) return 10;
+    return 19;
+}
+
+// What was set, by thread id, with the Windows priority it became: a thread id Windows reuses for a new
+// thread, whose priority no longer matches, reads its Windows priority instead.
+struct NiceRecord {
+    int nice;
+    int windows;
+};
+SRWLOCK g_nice_lock = SRWLOCK_INIT;
+std::map<DWORD, NiceRecord>& nice_records() {
+    static auto* m = new std::map<DWORD, NiceRecord>();  // never freed: threads may ask during exit
+    return *m;
+}
+
+// This process's threads, by id (Toolhelp's snapshot); the main thread first (the oldest).
+std::vector<DWORD> process_threads() {
+    std::vector<std::pair<uint64_t, DWORD>> found;
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    if (snap == INVALID_HANDLE_VALUE) return {};
+    THREADENTRY32 e{};
+    e.dwSize = sizeof e;
+    const DWORD pid = GetCurrentProcessId();
+    for (BOOL ok = Thread32First(snap, &e); ok; ok = Thread32Next(snap, &e)) {
+        if (e.th32OwnerProcessID != pid) continue;
+        uint64_t created = ~uint64_t{0};
+        if (HANDLE t = OpenThread(THREAD_QUERY_LIMITED_INFORMATION, FALSE, e.th32ThreadID)) {
+            FILETIME c, x, k, u;
+            if (GetThreadTimes(t, &c, &x, &k, &u)) created = (uint64_t{c.dwHighDateTime} << 32) | c.dwLowDateTime;
+            CloseHandle(t);
+        }
+        found.emplace_back(created, e.th32ThreadID);
+    }
+    CloseHandle(snap);
+    std::sort(found.begin(), found.end());
+    std::vector<DWORD> ids;
+    for (const auto& f : found) ids.push_back(f.second);
+    return ids;
+}
+
+// The threads `which`/`who` names, or an errno value.
+int priority_targets(int which, int who, std::vector<DWORD>* out) {
+    const DWORD pid = GetCurrentProcessId();
+    switch (which) {
+        case kPrioProcess: {
+            if (who == 0 || static_cast<DWORD>(who) == GetCurrentThreadId()) {
+                out->push_back(GetCurrentThreadId());
+                return 0;
+            }
+            if (who < 0) return kESRCH;
+            if (static_cast<DWORD>(who) == pid) {  // the main thread
+                const std::vector<DWORD> all = process_threads();
+                if (all.empty()) return kESRCH;
+                out->push_back(all.front());
+                return 0;
+            }
+            HANDLE t = OpenThread(THREAD_QUERY_LIMITED_INFORMATION, FALSE, static_cast<DWORD>(who));
+            if (!t) return kESRCH;
+            const DWORD owner = GetProcessIdOfThread(t);
+            CloseHandle(t);
+            if (owner != pid) return kESRCH;  // another process's thread: not one this app may see
+            out->push_back(static_cast<DWORD>(who));
+            return 0;
+        }
+        case kPrioPgrp:
+            if (who != 0 && static_cast<DWORD>(who) != pid) return kESRCH;  // the process group is the process
+            *out = process_threads();
+            return out->empty() ? kESRCH : 0;
+        case kPrioUser:
+            if (who != 0 && static_cast<uint32_t>(who) != kAppUid) return kESRCH;
+            *out = process_threads();
+            return out->empty() ? kESRCH : 0;
+        default:
+            return kEINVAL;
+    }
+}
+
+int nice_of_thread(DWORD tid) {
+    HANDLE t = tid == GetCurrentThreadId() ? GetCurrentThread() : OpenThread(THREAD_QUERY_LIMITED_INFORMATION, FALSE, tid);
+    if (!t) return 0;
+    const int windows = GetThreadPriority(t);
+    if (t != GetCurrentThread()) CloseHandle(t);
+    AcquireSRWLockShared(&g_nice_lock);
+    const auto& m = nice_records();
+    const auto it = m.find(tid);
+    const bool kept = it != m.end() && it->second.windows == windows;
+    const int nice = kept ? it->second.nice : nice_of_windows(windows);
+    ReleaseSRWLockShared(&g_nice_lock);
+    return nice;
+}
+
+WINAPK_GUEST_ABI int g_setpriority(int which, int who, int nice) {
+    std::vector<DWORD> threads;
+    if (const int err = priority_targets(which, who, &threads)) return *guest_errno() = err, -1;
+    nice = nice < -20 ? -20 : nice > 19 ? 19 : nice;
+    const int windows = windows_priority(nice);
+    bool any = false;
+    for (DWORD tid : threads) {
+        const bool self = tid == GetCurrentThreadId();
+        HANDLE t = self ? GetCurrentThread() : OpenThread(THREAD_SET_LIMITED_INFORMATION | THREAD_QUERY_LIMITED_INFORMATION, FALSE, tid);
+        if (!t) continue;
+        const bool ok = SetThreadPriority(t, windows) != 0;
+        if (!self) CloseHandle(t);
+        if (!ok) continue;
+        any = true;
+        AcquireSRWLockExclusive(&g_nice_lock);
+        nice_records()[tid] = NiceRecord{nice, windows};
+        ReleaseSRWLockExclusive(&g_nice_lock);
+    }
+    if (!any) return *guest_errno() = kEACCES, -1;
+    return 0;
+}
+// -1 is a valid nice value: callers clear errno first and check it after, as POSIX says.
+WINAPK_GUEST_ABI int g_getpriority(int which, int who) {
+    std::vector<DWORD> threads;
+    if (const int err = priority_targets(which, who, &threads)) return *guest_errno() = err, -1;
+    int best = 19;  // of several threads, the most favoured, as Linux answers
+    for (DWORD tid : threads) best = std::min(best, nice_of_thread(tid));
+    return best;
+}
 
 const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("sigemptyset", g_sigemptyset),
@@ -1164,5 +1313,42 @@ void guest_signals_install() {
     std::call_once(once, [] { AddVectoredExceptionHandler(0, bionic::fault_handler); });
 }
 void guest_signal_altstack_for_current_thread() { bionic::signal_altstack_for_current_thread(); }
+
+// The kernel's struct sigaction, which rt_sigaction takes on x86_64 and arm64 alike (both define
+// SA_RESTORER): the handler first, then the flags as a long, the restorer, the mask. Bionic's own (the
+// shim's) puts the flags first, as an int.
+struct KernelSigaction {
+    void* handler;
+    uint64_t flags;
+    void* restorer;
+    uint64_t mask;
+};
+static_assert(sizeof(KernelSigaction) == 32, "the kernel's struct sigaction on LP64");
+
+int raw_rt_sigaction(int sig, const void* act, void* old, size_t sigsetsize) {
+    if (sigsetsize != sizeof(uint64_t)) return *bionic::guest_errno() = bionic::kEINVAL, -1;
+    bionic::GuestSigaction in{}, prev{};
+    if (act) {
+        const auto* k = static_cast<const KernelSigaction*>(act);
+        in.flags = static_cast<int32_t>(k->flags);
+        in.handler = k->handler;
+        in.mask = k->mask;
+        in.restorer = k->restorer;
+    }
+    const int r = bionic::g_sigaction(sig, act ? &in : nullptr, old ? &prev : nullptr);
+    if (r == 0 && old) {
+        auto* k = static_cast<KernelSigaction*>(old);
+        k->handler = prev.handler;
+        k->flags = static_cast<uint32_t>(prev.flags);
+        k->restorer = prev.restorer;
+        k->mask = prev.mask;
+    }
+    return r;
+}
+
+int raw_rt_sigprocmask(int how, const uint64_t* set, uint64_t* old, size_t sigsetsize) {
+    if (sigsetsize != sizeof(uint64_t)) return *bionic::guest_errno() = bionic::kEINVAL, -1;
+    return bionic::g_sigprocmask(how, set, old);
+}
 
 }  // namespace winapk

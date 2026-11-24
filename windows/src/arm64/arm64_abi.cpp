@@ -5,7 +5,8 @@
 // x86_64 path needs. Most of bionic's LP64 structs are the same on arm64, but
 // not all: struct stat (x86_64: 144 bytes, st_nlink before st_mode; arm64:
 // 128, asm-generic order) and struct epoll_event (packed to 12 bytes on
-// x86_64, 16 on arm64). Passing an arm64 caller's struct to the x86_64
+// x86_64, 16 on arm64); open(2)'s flags differ too (O_DIRECTORY is
+// x86_64's O_DIRECT). Passing an arm64 caller's struct to the x86_64
 // function writes past the end of it -- a stack object in the caller's
 // frame, so saved registers and the stack protector's canary go first. An
 // arm64 library's imports of these names bind to the wrappers here, which
@@ -22,6 +23,8 @@
 #include <mutex>
 #include <set>
 #include <vector>
+
+#include <windows.h>
 
 namespace winapk::arm64 {
 
@@ -226,10 +229,13 @@ WINAPK_GUEST_ABI int a64_munmap(void* addr, size_t len) {
 // The shim's syscall() takes x86_64's numbers (futex 202, gettid 186...), and
 // arm64 uses asm-generic's (futex 98, gettid 178...): an arm64 library's
 // syscall(SYS_futex, ...) named another call. Both its syscall() import and
-// its raw SVCs come here, are renumbered for the shim, and a few calls the
-// shim's syscall() does not take go to its libc functions. The signal calls
-// answer 0, as the shim's sigaction() family does: there are no guest
-// signals yet.
+// its raw SVCs come here, are renumbered for the shim, and the calls the
+// shim's syscall() does not take go to its libc functions, or to the shim's
+// raw entry points where the kernel's interface differs from libc's
+// (rt_sigaction's struct, set_tid_address, getpriority's 20 - nice, getcwd's
+// length, clock_nanosleep's error number). A call nothing here answers is
+// ENOSYS, as from a kernel without it. the other runtime's table
+// (compat/arm64/dll/guest_libc.cc, kSyscalls) was the list of what to add.
 
 using Syscall = int64_t(WINAPK_GUEST_ABI*)(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t);
 using Fn3 = int64_t(WINAPK_GUEST_ABI*)(int64_t, int64_t, int64_t);
@@ -239,26 +245,43 @@ using Fn4 = int64_t(WINAPK_GUEST_ABI*)(int64_t, int64_t, int64_t, int64_t);
 // arm64 lays out as x86_64 does (the shim's functions take x86_64's structs,
 // so only calls whose structs are the same on both are here). Protection and
 // runtime libraries make these as raw SVCs so that nothing hooking libc sees
-// them (Leumi's libe689.so maps its memory with SVC 222).
+// them (Leumi's libe689.so maps its memory with SVC 222). `wide`: the function
+// returns a long (ssize_t); the others return an int, whose upper half of rax
+// the System V ABI leaves undefined, so only the low half is the result
+// (read whole, -1 came back as 4294967295 and its errno was lost).
 struct LibcCall {
     uint64_t nr;
     const char* name;
+    bool wide;
 };
 constexpr LibcCall kLibcCalls[] = {
-    {17, "getcwd"},           {23, "dup"},               {24, "dup3"},              {25, "fcntl"},
-    {26, "inotify_init1"},    {27, "inotify_add_watch"}, {28, "inotify_rm_watch"},  {29, "ioctl"},
-    {34, "mkdirat"},          {35, "unlinkat"},          {46, "ftruncate"},         {59, "pipe2"},
-    {65, "readv"},            {66, "writev"},            {67, "pread64"},           {68, "pwrite64"},
-    {78, "readlinkat"},       {82, "fsync"},             {101, "nanosleep"},        {114, "clock_getres"},
-    {115, "clock_nanosleep"}, {117, "ptrace"},           {140, "setpriority"},      {141, "getpriority"},
-    {160, "uname"},           {165, "getrusage"},        {169, "gettimeofday"},     {173, "getppid"},
-    {174, "getuid"},          {175, "geteuid"},          {176, "getgid"},           {177, "getegid"},
-    {179, "sysinfo"},         {227, "msync"},            {232, "mincore"},          {261, "prlimit64"},
+    {5, "setxattr", false},        {6, "lsetxattr", false},        {7, "fsetxattr", false},
+    {8, "getxattr", true},         {9, "lgetxattr", true},         {10, "fgetxattr", true},
+    {11, "listxattr", true},       {12, "llistxattr", true},       {13, "flistxattr", true},
+    {14, "removexattr", false},    {15, "lremovexattr", false},    {16, "fremovexattr", false},
+    {19, "eventfd", false},        {20, "epoll_create1", false},   {23, "dup", false},
+    {24, "dup3", false},           {25, "fcntl", false},           {26, "inotify_init1", false},
+    {27, "inotify_add_watch", false}, {28, "inotify_rm_watch", false}, {29, "ioctl", false},
+    {32, "flock", false},          {34, "mkdirat", false},         {35, "unlinkat", false},
+    {38, "renameat", false},       {46, "ftruncate", false},       {59, "pipe2", false},
+    {65, "readv", true},           {66, "writev", true},           {67, "pread64", true},
+    {68, "pwrite64", true},        {78, "readlinkat", true},       {82, "fsync", false},
+    {83, "fdatasync", false},      {85, "timerfd_create", false},  {86, "timerfd_settime", false},
+    {87, "timerfd_gettime", false}, {101, "nanosleep", false},     {114, "clock_getres", false},
+    {117, "ptrace", true},         {132, "sigaltstack", false},    {140, "setpriority", false},
+    {160, "uname", false},         {163, "getrlimit", false},      {165, "getrusage", false},
+    {167, "prctl", false},         {169, "gettimeofday", false},   {173, "getppid", false},
+    {174, "getuid", false},        {175, "geteuid", false},        {176, "getgid", false},
+    {177, "getegid", false},       {179, "sysinfo", false},        {198, "socket", false},
+    {203, "connect", false},       {227, "msync", false},          {228, "mlock", false},
+    {229, "munlock", false},       {230, "mlockall", false},       {231, "munlockall", false},
+    {232, "mincore", false},       {261, "prlimit64", false},      {279, "memfd_create", false},
+    {284, "mlock2", false},
 };
 
-const char* libc_call(uint64_t nr) {
+const LibcCall* libc_call(uint64_t nr) {
     for (const auto& c : kLibcCalls) {
-        if (c.nr == nr) return mini_bionic_resolve(c.name) ? c.name : nullptr;
+        if (c.nr == nr) return mini_bionic_resolve(c.name) ? &c : nullptr;
     }
     return nullptr;
 }
@@ -268,13 +291,77 @@ bool known_syscall(uint64_t nr) {
         case 98: case 178: case 172: case 124: case 278: case 113: case 233: case 283:   // via the shim's syscall()
         case 123:
         case 56: case 57: case 62: case 63: case 64: case 79: case 80: case 93: case 94:  // via libc functions
-        case 96: case 132: case 134: case 135: case 167:
+        case 96: case 134: case 135:  // set_tid_address, rt_sigaction, rt_sigprocmask
+        case 17: case 115: case 141: case 168:  // getcwd, clock_nanosleep, getpriority, getcpu
+        case 21: case 22:  // epoll_ctl, epoll_pwait (arm64's struct epoll_event)
         case 48: case 129: case 130: case 131:  // faccessat; kill, tkill, tgkill
         case 222: case 215: case 226: case 216:  // mmap, munmap, mprotect, mremap
             return true;
         default:
             return libc_call(nr) != nullptr;
     }
+}
+
+// open(2)'s flags where arm64's differ from x86_64's, which the shim takes: O_DIRECTORY, O_NOFOLLOW,
+// O_DIRECT, O_LARGEFILE (arch/arm64/include/uapi/asm/fcntl.h against asm-generic's).
+int x86_open_flags(int arm64_flags) {
+    constexpr int kA64Directory = 040000, kA64Nofollow = 0100000, kA64Direct = 0200000, kA64Largefile = 0400000;
+    constexpr int kX86Directory = 0200000, kX86Nofollow = 0400000, kX86Direct = 040000, kX86Largefile = 0100000;
+    int f = arm64_flags & ~(kA64Directory | kA64Nofollow | kA64Direct | kA64Largefile);
+    if (arm64_flags & kA64Directory) f |= kX86Directory;
+    if (arm64_flags & kA64Nofollow) f |= kX86Nofollow;
+    if (arm64_flags & kA64Direct) f |= kX86Direct;
+    if (arm64_flags & kA64Largefile) f |= kX86Largefile;
+    return f;
+}
+
+using Open = int(WINAPK_GUEST_ABI*)(const char*, int, unsigned);
+using Openat = int(WINAPK_GUEST_ABI*)(int, const char*, int, unsigned);
+
+// An arm64 library's open/openat imports bind here (abi_override): the same calls with x86_64's flags.
+WINAPK_GUEST_ABI int a64_open(const char* path, int flags, unsigned mode) {
+    static const auto fn = shim<Open>("open");
+    return fn(path, x86_open_flags(flags), mode);
+}
+WINAPK_GUEST_ABI int a64_open_2(const char* path, int flags) { return a64_open(path, flags, 0); }
+WINAPK_GUEST_ABI int a64_openat(int dirfd, const char* path, int flags, unsigned mode) {
+    static const auto fn = shim<Openat>("openat");
+    return fn(dirfd, path, x86_open_flags(flags), mode);
+}
+WINAPK_GUEST_ABI int a64_openat_2(int dirfd, const char* path, int flags) { return a64_openat(dirfd, path, flags, 0); }
+
+// mremap: the shim's, and an executable range the bridge runs as guest code follows it to where it moved.
+using Mremap = void*(WINAPK_GUEST_ABI*)(void*, size_t, size_t, int, void*);
+WINAPK_GUEST_ABI void* a64_mremap(void* old_addr, size_t old_len, size_t new_len, int flags, void* new_addr) {
+    static const auto fn = shim<Mremap>("mremap");
+    void* p = fn(old_addr, old_len, new_len, flags, new_addr);
+    if (p == reinterpret_cast<void*>(-1)) return p;
+    bool was_exec;
+    {
+        std::lock_guard<std::mutex> hold(g_exec_lock);
+        was_exec = g_exec_ranges.count(reinterpret_cast<uint64_t>(old_addr) & ~(kPage - 1)) != 0;
+    }
+    if (was_exec && p != old_addr) {
+        if (!(flags & 4)) track_exec(old_addr, old_len, 0);  // moved away (not MREMAP_DONTUNMAP)
+        track_exec(p, new_len, kProtExec);
+    } else if (was_exec && new_len != old_len) {
+        track_exec(old_addr, old_len, 0);
+        track_exec(p, new_len, kProtExec);
+    }
+    return p;
+}
+
+// getcpu(cpu, node, cache): the processor the thread runs on now, its NUMA node; the cache argument is
+// unused since Linux 2.6.24.
+int64_t a64_getcpu(uint32_t* cpu, uint32_t* node) {
+    PROCESSOR_NUMBER pn{};
+    GetCurrentProcessorNumberEx(&pn);
+    if (cpu) *cpu = static_cast<uint32_t>(pn.Group) * 64 + pn.Number;
+    if (node) {
+        USHORT n = 0;
+        *node = GetNumaProcessorNodeEx(&pn, &n) ? n : 0;
+    }
+    return 0;
 }
 
 // libc's convention: -1 and errno on failure.
@@ -298,31 +385,62 @@ int64_t do_syscall(uint64_t nr, const uint64_t a[6]) {
         case 113: return via(228);  // clock_gettime
         case 233: return via(28);   // madvise
         case 283: return via(324);  // membarrier
-        case 96: return via(186);   // set_tid_address: returns the caller's tid
+        case 96: return set_tid_address(reinterpret_cast<uint32_t*>(a[0]));  // cleared and woken at thread end
+        case 134:  // rt_sigaction(sig, act, old, sigsetsize): the kernel's struct sigaction
+            return raw_rt_sigaction(static_cast<int>(a[0]), reinterpret_cast<const void*>(a[1]),
+                                    reinterpret_cast<void*>(a[2]), static_cast<size_t>(a[3]));
+        case 135:  // rt_sigprocmask(how, set, old, sigsetsize)
+            return raw_rt_sigprocmask(static_cast<int>(a[0]), reinterpret_cast<const uint64_t*>(a[1]),
+                                      reinterpret_cast<uint64_t*>(a[2]), static_cast<size_t>(a[3]));
+        case 17: {  // getcwd: the kernel returns the length, with the terminating NUL; libc returns the buffer
+            const auto f = shim<char*(WINAPK_GUEST_ABI*)(char*, size_t)>("getcwd");
+            char* buf = reinterpret_cast<char*>(a[0]);
+            if (!buf) return *shim<int*(WINAPK_GUEST_ABI*)()>("__errno")() = 14, -1;  // EFAULT (libc would allocate)
+            return f(buf, static_cast<size_t>(a[1])) ? static_cast<int64_t>(std::strlen(buf) + 1) : -1;
+        }
+        case 115: {  // clock_nanosleep returns its error number (POSIX), not -1 and errno
+            const auto f = shim<int(WINAPK_GUEST_ABI*)(int, int, const void*, void*)>("clock_nanosleep");
+            const int err = f(static_cast<int>(a[0]), static_cast<int>(a[1]), reinterpret_cast<const void*>(a[2]),
+                              reinterpret_cast<void*>(a[3]));
+            if (err == 0) return 0;
+            *shim<int*(WINAPK_GUEST_ABI*)()>("__errno")() = err;
+            return -1;
+        }
+        case 141: {  // getpriority: the kernel returns 20 - nice (1..40), so that no answer looks like an error
+            const auto f = shim<int(WINAPK_GUEST_ABI*)(int, int)>("getpriority");
+            int* err = shim<int*(WINAPK_GUEST_ABI*)()>("__errno")();
+            const int saved = *err;
+            *err = 0;
+            const int nice = f(static_cast<int>(a[0]), static_cast<int>(a[1]));
+            if (nice == -1 && *err != 0) return -1;
+            *err = saved;
+            return 20 - nice;
+        }
+        case 168: return a64_getcpu(reinterpret_cast<uint32_t*>(a[0]), reinterpret_cast<uint32_t*>(a[1]));
+        case 21:
+            return a64_epoll_ctl(static_cast<int>(a[0]), static_cast<int>(a[1]), static_cast<int>(a[2]),
+                                 reinterpret_cast<Arm64EpollEvent*>(a[3]));
+        case 22:  // epoll_pwait(epfd, events, max, timeout, sigmask, sigsetsize)
+            return a64_epoll_pwait(static_cast<int>(a[0]), reinterpret_cast<Arm64EpollEvent*>(a[1]),
+                                   static_cast<int>(a[2]), static_cast<int>(a[3]), reinterpret_cast<const void*>(a[4]));
         case 48: {  // faccessat
-            const auto f = shim<int64_t(WINAPK_GUEST_ABI*)(int64_t, int64_t, int64_t, int64_t)>("faccessat");
-            return f(static_cast<int64_t>(a[0]), static_cast<int64_t>(a[1]), static_cast<int64_t>(a[2]),
-                     static_cast<int64_t>(a[3]));
+            const auto f = shim<int(WINAPK_GUEST_ABI*)(int, const char*, int, int)>("faccessat");
+            return f(static_cast<int>(a[0]), reinterpret_cast<const char*>(a[1]), static_cast<int>(a[2]),
+                     static_cast<int>(a[3]));
         }
         case 129: {  // kill
-            const auto f = shim<int64_t(WINAPK_GUEST_ABI*)(int64_t, int64_t)>("kill");
-            return f(static_cast<int64_t>(a[0]), static_cast<int64_t>(a[1]));
+            const auto f = shim<int(WINAPK_GUEST_ABI*)(int, int)>("kill");
+            return f(static_cast<int>(a[0]), static_cast<int>(a[1]));
         }
         // tkill(tid, sig), tgkill(tgid, tid, sig): the threads are this
         // process's own, and no signal is delivered on Windows (sigaction
         // records handlers, it does not install them); signal 0, the check
         // that a thread is alive, is the common use and is answered yes.
         case 130: case 131: return 0;
-        case 56: {  // openat: as open() for AT_FDCWD or an absolute path (the shim has no openat)
-            const char* path = reinterpret_cast<const char*>(a[1]);
-            if (static_cast<int>(a[0]) != -100 && !(path && path[0] == '/')) {
-                *shim<int*(WINAPK_GUEST_ABI*)()>("__errno")() = 38;  // ENOSYS
-                return -1;
-            }
-            const auto f = shim<Fn3>("open");
-            return f(static_cast<int64_t>(a[1]), static_cast<int64_t>(a[2]), static_cast<int64_t>(a[3]));
-        }
-        case 57: return shim<int64_t(WINAPK_GUEST_ABI*)(int64_t)>("close")(static_cast<int64_t>(a[0]));
+        case 56:  // openat(dirfd, path, flags, mode): relative to a directory descriptor too
+            return a64_openat(static_cast<int>(a[0]), reinterpret_cast<const char*>(a[1]), static_cast<int>(a[2]),
+                              static_cast<unsigned>(a[3]));
+        case 57: return shim<int(WINAPK_GUEST_ABI*)(int)>("close")(static_cast<int>(a[0]));
         case 62: return fn3("lseek");
         case 63: return fn3("read");
         case 64: return fn3("write");
@@ -342,17 +460,19 @@ int64_t do_syscall(uint64_t nr, const uint64_t a[6]) {
         case 215: return a64_munmap(reinterpret_cast<void*>(a[0]), static_cast<size_t>(a[1]));
         case 226:
             return a64_mprotect(reinterpret_cast<void*>(a[0]), static_cast<size_t>(a[1]), static_cast<int>(a[2]));
-        case 216:  // mremap: the shim's answer (ENOMEM), on which callers map, copy and unmap themselves
-            return reinterpret_cast<int64_t>(shim<void*(WINAPK_GUEST_ABI*)()>("mremap")());
-        case 132: case 134: case 135: case 167:  // sigaltstack, rt_sigaction, rt_sigprocmask, prctl
-            return 0;
+        case 216:  // mremap(old, old_len, new_len, flags, new)
+            return reinterpret_cast<int64_t>(a64_mremap(reinterpret_cast<void*>(a[0]), static_cast<size_t>(a[1]),
+                                                        static_cast<size_t>(a[2]), static_cast<int>(a[3]),
+                                                        reinterpret_cast<void*>(a[4])));
         default:
-            if (const char* name = libc_call(nr)) {
-                return shim<Syscall>(name)(static_cast<int64_t>(a[0]), static_cast<int64_t>(a[1]),
-                                           static_cast<int64_t>(a[2]), static_cast<int64_t>(a[3]),
-                                           static_cast<int64_t>(a[4]), static_cast<int64_t>(a[5]));
+            if (const LibcCall* c = libc_call(nr)) {
+                const int64_t r = shim<Syscall>(c->name)(static_cast<int64_t>(a[0]), static_cast<int64_t>(a[1]),
+                                                         static_cast<int64_t>(a[2]), static_cast<int64_t>(a[3]),
+                                                         static_cast<int64_t>(a[4]), static_cast<int64_t>(a[5]));
+                return c->wide ? r : static_cast<int32_t>(r);
             }
-            return 0;
+            *shim<int*(WINAPK_GUEST_ABI*)()>("__errno")() = 38;  // ENOSYS (known_syscall said yes: not reached)
+            return -1;
     }
 }
 
@@ -401,6 +521,13 @@ void* abi_override(const char* name) {
         {"mmap64", reinterpret_cast<void*>(&a64_mmap)},
         {"mprotect", reinterpret_cast<void*>(&a64_mprotect)},
         {"munmap", reinterpret_cast<void*>(&a64_munmap)},
+        {"mremap", reinterpret_cast<void*>(&a64_mremap)},
+        {"open", reinterpret_cast<void*>(&a64_open)},
+        {"open64", reinterpret_cast<void*>(&a64_open)},
+        {"__open_2", reinterpret_cast<void*>(&a64_open_2)},
+        {"openat", reinterpret_cast<void*>(&a64_openat)},
+        {"openat64", reinterpret_cast<void*>(&a64_openat)},
+        {"__openat_2", reinterpret_cast<void*>(&a64_openat_2)},
     };
     for (const auto& o : kOverrides) {
         if (std::strcmp(o.name, name) == 0) return mini_bionic_resolve(name) ? o.fn : nullptr;

@@ -102,4 +102,15 @@ struct GuestThread {
 };
 size_t guest_threads(GuestThread* out, size_t max);
 
+// set_tid_address(2) for the calling thread: when it ends, 0 is written to `clear_child_tid` and one
+// futex waiter on it woken, as the kernel does (null: nothing). Returns the caller's tid. The raw
+// system call paths (the shim's syscall(), the arm64 bridge's SVCs) come here.
+int64_t set_tid_address(uint32_t* clear_child_tid);
+
+// rt_sigaction(2) and rt_sigprocmask(2) as the kernel takes them (the kernel's struct sigaction, a
+// sigsetsize that must be 8), over the shim's signal state (src/bionic/signal.cpp): what sigaction and
+// sigprocmask record and deliver by. -1 and the guest's errno on failure.
+int raw_rt_sigaction(int sig, const void* kernel_act, void* kernel_old, size_t sigsetsize);
+int raw_rt_sigprocmask(int how, const uint64_t* set, uint64_t* old, size_t sigsetsize);
+
 }  // namespace winapk

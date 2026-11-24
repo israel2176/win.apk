@@ -1054,8 +1054,119 @@ WINAPK_GUEST_ABI int g_msync(void* addr, size_t len, int) {
     }
     return 0;
 }
-WINAPK_GUEST_ABI int g_mlock(const void*, size_t) { return 0; }
-WINAPK_GUEST_ABI int g_munlock(const void*, size_t) { return 0; }
+// mlock(2) family on VirtualLock. Linux pins the pages of the range in memory
+// (ENOMEM when part of it is not mapped, or when it would pass what the
+// process may lock); Windows pins pages in the working set, as many as the
+// process's minimum working set allows, so a lock that does not fit raises
+// that minimum by the range and tries again before it answers ENOMEM, as the
+// kernel answers over RLIMIT_MEMLOCK. Pages only reserved (a PROT_NONE
+// mapping) or with no access have nothing to pin and are skipped: Linux
+// marks them locked without faulting them in. munlock of pages that were
+// never locked succeeds, as on Linux.
+std::mutex g_lock_lock;
+std::map<uintptr_t, size_t> g_locked;  // ranges mlock pinned, by start (for munlockall)
+
+// Page-aligned [lo, hi) of a range, or false (EINVAL) when it wraps.
+bool lock_range(const void* addr, size_t len, uintptr_t* lo, uintptr_t* hi) {
+    const auto a = reinterpret_cast<uintptr_t>(addr);
+    if (len > UINTPTR_MAX - a - 4095) return false;
+    *lo = a & ~uintptr_t{4095};
+    *hi = (a + len + 4095) & ~uintptr_t{4095};
+    return true;
+}
+
+// Whether every page of [lo, hi) is mapped (reserved or committed).
+bool all_mapped(uintptr_t lo, uintptr_t hi) {
+    for (uintptr_t p = lo; p < hi;) {
+        MEMORY_BASIC_INFORMATION mbi;
+        if (!VirtualQuery(reinterpret_cast<void*>(p), &mbi, sizeof mbi) || mbi.State == MEM_FREE) return false;
+        p = reinterpret_cast<uintptr_t>(mbi.BaseAddress) + mbi.RegionSize;
+    }
+    return true;
+}
+
+// Runs `fn(at, n)` over the committed, accessible regions of [lo, hi).
+template <typename Fn> bool each_lockable(uintptr_t lo, uintptr_t hi, Fn fn) {
+    for (uintptr_t p = lo; p < hi;) {
+        MEMORY_BASIC_INFORMATION mbi;
+        if (!VirtualQuery(reinterpret_cast<void*>(p), &mbi, sizeof mbi)) return false;
+        const uintptr_t end = std::min(hi, reinterpret_cast<uintptr_t>(mbi.BaseAddress) + mbi.RegionSize);
+        if (mbi.State == MEM_COMMIT && !(mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD)) &&
+            !fn(reinterpret_cast<void*>(p), end - p)) {
+            return false;
+        }
+        p = end;
+    }
+    return true;
+}
+
+bool pin(void* at, size_t n) {
+    if (VirtualLock(at, n)) return true;
+    if (GetLastError() != ERROR_WORKING_SET_QUOTA) return false;
+    SIZE_T min_ws = 0, max_ws = 0;
+    if (!GetProcessWorkingSetSize(GetCurrentProcess(), &min_ws, &max_ws)) return false;
+    // The maximum is a soft limit unless the process asked for a hard one; it has to stay above the minimum.
+    if (!SetProcessWorkingSetSize(GetCurrentProcess(), min_ws + n, std::max<SIZE_T>(max_ws, min_ws + n + (1u << 20)))) {
+        return false;
+    }
+    return VirtualLock(at, n) != 0;
+}
+
+WINAPK_GUEST_ABI int g_mlock(const void* addr, size_t len) {
+    uintptr_t lo, hi;
+    if (!lock_range(addr, len, &lo, &hi)) return *guest_errno() = kEINVAL, -1;
+    if (lo == hi) return 0;
+    if (!all_mapped(lo, hi)) return *guest_errno() = kENOMEM, -1;
+    if (!each_lockable(lo, hi, pin)) return *guest_errno() = kENOMEM, -1;
+    std::lock_guard<std::mutex> hold(g_lock_lock);
+    size_t& n = g_locked[lo];
+    n = std::max(n, static_cast<size_t>(hi - lo));
+    return 0;
+}
+// mlock2(addr, len, flags): MLOCK_ONFAULT (1) locks pages as they are touched; pinning them now is the
+// same for what the caller sees.
+WINAPK_GUEST_ABI int g_mlock2(const void* addr, size_t len, unsigned flags) {
+    if (flags & ~1u) return *guest_errno() = kEINVAL, -1;
+    return g_mlock(addr, len);
+}
+WINAPK_GUEST_ABI int g_munlock(const void* addr, size_t len) {
+    uintptr_t lo, hi;
+    if (!lock_range(addr, len, &lo, &hi)) return *guest_errno() = kEINVAL, -1;
+    if (lo == hi) return 0;
+    if (!all_mapped(lo, hi)) return *guest_errno() = kENOMEM, -1;
+    each_lockable(lo, hi, [](void* at, size_t n) {
+        VirtualUnlock(at, n);  // ERROR_NOT_LOCKED for pages that were not: Linux does not mind
+        return true;
+    });
+    std::lock_guard<std::mutex> hold(g_lock_lock);
+    // Ranges inside [lo, hi) are forgotten; one that only overlaps it stays listed (munlockall's
+    // VirtualUnlock of pages no longer locked is harmless).
+    for (auto it = g_locked.lower_bound(lo); it != g_locked.end() && it->first + it->second <= hi;) {
+        it = g_locked.erase(it);
+    }
+    return 0;
+}
+// mlockall: MCL_CURRENT 1, MCL_FUTURE 2, MCL_ONFAULT 4 (only with one of the others). Every page the
+// process has, or with MCL_FUTURE every page it maps later, is more than Windows lets a process pin, so
+// the call fails as Linux's does when the locked memory would pass the process's limit: ENOMEM, with
+// nothing locked.
+WINAPK_GUEST_ABI int g_mlockall(int flags) {
+    if (flags == 0 || (flags & ~7) || flags == 4) return *guest_errno() = kEINVAL, -1;
+    static std::atomic<bool> said{false};
+    say_once(said, "mlockall()", "Windows cannot pin all of a process's memory; the call fails with ENOMEM");
+    return *guest_errno() = kENOMEM, -1;
+}
+WINAPK_GUEST_ABI int g_munlockall() {
+    std::lock_guard<std::mutex> hold(g_lock_lock);
+    for (const auto& [lo, n] : g_locked) {
+        each_lockable(lo, lo + n, [](void* at, size_t m) {
+            VirtualUnlock(at, m);
+            return true;
+        });
+    }
+    g_locked.clear();
+    return 0;
+}
 
 // ---- system properties ---------------------------------------------------------------
 std::mutex g_props_lock;
@@ -1486,6 +1597,13 @@ WINAPK_GUEST_ABI int64_t g_syscall(int64_t nr, int64_t a, int64_t b, int64_t c, 
         case 202: return guest_futex(reinterpret_cast<uint32_t*>(a), static_cast<int>(b), static_cast<uint32_t>(c),
                                      reinterpret_cast<const GuestTimespec*>(d));
         case 186: return static_cast<int64_t>(GetCurrentThreadId());  // gettid
+        case 218: return set_tid_address(reinterpret_cast<uint32_t*>(a));  // pthread.cpp
+        case 13:
+            return raw_rt_sigaction(static_cast<int>(a), reinterpret_cast<const void*>(b), reinterpret_cast<void*>(c),
+                                    static_cast<size_t>(d));
+        case 14:
+            return raw_rt_sigprocmask(static_cast<int>(a), reinterpret_cast<const uint64_t*>(b),
+                                      reinterpret_cast<uint64_t*>(c), static_cast<size_t>(d));
         case 39: return g_getpid();
         case 200: return g_tkill(static_cast<int>(a), static_cast<int>(b));
         case 234: return g_tgkill(static_cast<int>(a), static_cast<int>(b), static_cast<int>(c));
@@ -2055,14 +2173,136 @@ WINAPK_GUEST_ABI void g_tdestroy(void* root, TFree free_node) { tdestroy_from(st
 // See the same heading in stdio.cpp: the loader's fallback answers 0, which for these is "done" or a
 // valid-looking result. Each now fails as Linux reports the failure, the unsupported ones saying so once.
 
-// mremap: MAP_FAILED with ENOMEM, on which callers allocate, copy and unmap themselves. (0 was a
-// mapping at address 0.)
-// TODO(mremap): grow in place when the pages after the mapping are free; MREMAP_MAYMOVE as mmap + copy.
-WINAPK_GUEST_ABI void* g_mremap() {
-    static std::atomic<bool> said{false};
-    say_once(said, "mremap()", "not supported; the call fails with ENOMEM");
-    *guest_errno() = kENOMEM;
-    return reinterpret_cast<void*>(~uintptr_t{0});
+// mremap(old, old_len, new_len, flags[, new]) for private memory (anonymous mappings, a thread's or the
+// heap's pages). Windows cannot move pages to another address, so a move copies: the new mapping gets
+// the old one's bytes and protection, and the old one is unmapped, or with MREMAP_DONTUNMAP stays
+// mapped and reads back as zeros, as a private anonymous mapping's pages do after the move. Shrinking
+// unmaps the tail in place. Growing in place takes the free address space right after the mapping when
+// Windows can allocate there (an allocation starts on a 64 KiB boundary); otherwise MREMAP_MAYMOVE
+// moves, and without it the answer is ENOMEM, Linux's when the next pages are taken. As on Linux, the
+// old range must be one mapping (here: one state and one protection throughout), else EFAULT. A file's
+// view, or the private copy that stands for a shared file mapping, cannot move or grow (another
+// mapping of the file would no longer see it): ENOMEM, on which callers map, copy and unmap themselves.
+// (The approach follows the other runtime's compat/posix/src/mman.cc mremap; this is Win.apk's own code over its
+// own mappings.)
+constexpr int kMremapMaymove = 1, kMremapFixed = 2, kMremapDontunmap = 4;
+
+// Sets Windows protection `prot` over [p, p + n), region by region (a MAP_FIXED range may span several).
+void protect_regions(uintptr_t p, size_t n, DWORD prot) {
+    const uintptr_t end = p + n;
+    while (p < end) {
+        MEMORY_BASIC_INFORMATION mbi;
+        if (!VirtualQuery(reinterpret_cast<void*>(p), &mbi, sizeof mbi)) return;
+        const uintptr_t next = std::min(end, reinterpret_cast<uintptr_t>(mbi.BaseAddress) + mbi.RegionSize);
+        DWORD old;
+        if (mbi.State == MEM_COMMIT) VirtualProtect(reinterpret_cast<void*>(p), next - p, prot, &old);
+        p = next;
+    }
+}
+
+bool in_shared_copy(uintptr_t a, size_t len) {
+    std::lock_guard<std::mutex> hold(g_maps_lock);
+    auto it = g_copies.lower_bound(a + len);
+    if (it == g_copies.begin()) return false;
+    --it;
+    return it->first + it->second.len > a;
+}
+
+WINAPK_GUEST_ABI void* g_mremap(void* old_addr, size_t old_len, size_t new_len, int flags, void* new_addr) {
+    void* const kFailed = reinterpret_cast<void*>(-1);
+    const auto a = reinterpret_cast<uintptr_t>(old_addr);
+    const bool may_move = flags & kMremapMaymove, fixed = flags & kMremapFixed, dont_unmap = flags & kMremapDontunmap;
+    if ((a & 4095) || new_len == 0 || (flags & ~7) || (fixed && !may_move) ||
+        (dont_unmap && (!may_move || old_len != new_len)) || old_len > UINTPTR_MAX - a - 4095 ||
+        new_len > UINTPTR_MAX - 4095) {
+        return *guest_errno() = kEINVAL, kFailed;
+    }
+    old_len = (old_len + 4095) & ~size_t{4095};
+    new_len = (new_len + 4095) & ~size_t{4095};
+    // old_len 0 makes a second mapping of shared memory on Linux; there is none of that here.
+    if (old_len == 0) return *guest_errno() = kEINVAL, kFailed;
+
+    // The old range: one state and protection throughout, private memory.
+    MEMORY_BASIC_INFORMATION first{};
+    if (!VirtualQuery(old_addr, &first, sizeof first) || first.State == MEM_FREE) {
+        return *guest_errno() = kEFAULT, kFailed;
+    }
+    for (uintptr_t p = a; p < a + old_len;) {
+        MEMORY_BASIC_INFORMATION mbi;
+        if (!VirtualQuery(reinterpret_cast<void*>(p), &mbi, sizeof mbi) || mbi.State == MEM_FREE ||
+            mbi.State != first.State || (mbi.State == MEM_COMMIT && mbi.Protect != first.Protect)) {
+            return *guest_errno() = kEFAULT, kFailed;
+        }
+        p = reinterpret_cast<uintptr_t>(mbi.BaseAddress) + mbi.RegionSize;
+    }
+    if (first.Type != MEM_PRIVATE || in_shared_view(old_addr, old_len) || in_shared_copy(a, old_len)) {
+        if (!fixed && !dont_unmap && new_len == old_len) return old_addr;
+        static std::atomic<bool> said{false};
+        say_once(said, "mremap() of a file mapping", "a file's mapping cannot move or grow; the call fails with ENOMEM");
+        return *guest_errno() = kENOMEM, kFailed;
+    }
+    const bool committed = first.State == MEM_COMMIT;
+
+    if (!fixed && !dont_unmap) {
+        if (new_len <= old_len) {
+            if (new_len < old_len) g_munmap(reinterpret_cast<void*>(a + new_len), old_len - new_len);
+            return old_addr;
+        }
+        // Growing in place: free address space right after, on an allocation boundary.
+        const uintptr_t tail = a + old_len;
+        const size_t extra = new_len - old_len;
+        MEMORY_BASIC_INFORMATION next{};
+        SYSTEM_INFO si;
+        GetSystemInfo(&si);
+        if (tail % si.dwAllocationGranularity == 0 && VirtualQuery(reinterpret_cast<void*>(tail), &next, sizeof next) &&
+            next.State == MEM_FREE && next.RegionSize >= extra) {
+            void* got = VirtualAlloc(reinterpret_cast<void*>(tail), extra, committed ? MEM_RESERVE | MEM_COMMIT : MEM_RESERVE,
+                                     committed ? first.Protect : PAGE_NOACCESS);
+            if (got == reinterpret_cast<void*>(tail)) {
+                std::lock_guard<std::mutex> hold(g_maps_lock);
+                g_maps[tail] = extra;
+                return old_addr;
+            }
+            if (got) VirtualFree(got, 0, MEM_RELEASE);
+        }
+        if (!may_move) return *guest_errno() = kENOMEM, kFailed;
+    }
+
+    // Moving: a fresh mapping, at `new_addr` with MREMAP_FIXED, the bytes copied over.
+    if (fixed) {
+        const auto n = reinterpret_cast<uintptr_t>(new_addr);
+        if ((n & 4095) || n > UINTPTR_MAX - new_len || (n < a + old_len && a < n + new_len)) {
+            return *guest_errno() = kEINVAL, kFailed;
+        }
+    }
+    const int map_flags = 0x22 | (fixed ? 0x10 : 0);  // MAP_PRIVATE | MAP_ANONYMOUS [| MAP_FIXED]
+    void* dest = g_mmap(fixed ? new_addr : nullptr, new_len, committed ? 3 : 0, map_flags, -1, 0);
+    if (dest == kFailed) return kFailed;
+    if (committed) {
+        // Pages the guest cannot read (PROT_NONE or execute-only, committed) still hold bytes to carry over.
+        const DWORD readable = PAGE_READONLY | PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READ |
+                               PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY;
+        const bool open = (first.Protect & readable) && !(first.Protect & PAGE_GUARD);
+        DWORD old;
+        if (!open) VirtualProtect(old_addr, old_len, PAGE_READONLY, &old);
+        std::memcpy(dest, old_addr, std::min(old_len, new_len));
+        if (!open) VirtualProtect(old_addr, old_len, first.Protect, &old);
+        protect_regions(reinterpret_cast<uintptr_t>(dest), new_len, first.Protect);
+    }
+    if (dont_unmap) {
+        if (committed) {
+            // Fresh zero pages under the same protection: decommitted and committed again.
+            DWORD old;
+            if (VirtualFree(old_addr, old_len, MEM_DECOMMIT)) VirtualAlloc(old_addr, old_len, MEM_COMMIT, first.Protect);
+            else if (VirtualProtect(old_addr, old_len, PAGE_READWRITE, &old)) {
+                std::memset(old_addr, 0, old_len);
+                VirtualProtect(old_addr, old_len, old, &old);
+            }
+        }
+    } else {
+        g_munmap(old_addr, old_len);
+    }
+    return dest;
 }
 // System V shared memory: ENOSYS, as on Android, whose kernels are built without it. shmat's failure
 // is (void*)-1, not null.
@@ -2301,8 +2541,38 @@ WINAPK_GUEST_ABI const void* g_property_find_nth(unsigned) { return nullptr; }  
 // sessions and process groups are the app's own already, niceness is tuning. Named here so that
 // the log does not report each as a function nobody implemented.
 WINAPK_GUEST_ABI int g_ok0() { return 0; }
-// ptrace(PTRACE_TRACEME) is how native code asks "is a debugger attached": 0 is "none".
-WINAPK_GUEST_ABI glong g_ptrace(int, int, void*, void*) { return 0; }
+// ptrace: what an app gets on a device, where nothing may trace an app and an app traces nothing.
+//   - PTRACE_TRACEME: the kernel (ptrace_traceme) answers EPERM when the process is traced already, and
+//     otherwise asks the security module whether the *parent* may trace it (security_ptrace_traceme;
+//     SELinux checks the parent's domain for process:ptrace on the caller's). An app's parent is the
+//     zygote, and AOSP's policy forbids every domain but crash_dump (and llkd on debug builds) to ptrace
+//     an app (system/sepolicy public/app.te: neverallow { domain -appdomain -crash_dump ... }
+//     appdomain:process ptrace, a CTS-checked rule), so the call fails with EACCES and changes nothing:
+//     every call does. Anti-debugging code reads EPERM as "a debugger holds me"; EACCES is a refusal.
+//     (0, as before, was a device that let the zygote trace its apps; the other runtime answers 0 then EPERM.)
+//   - PTRACE_ATTACH, PTRACE_SEIZE: EPERM for this process's own threads (the kernel refuses its own thread
+//     group) and for any other live process (no permission on Windows' side), ESRCH for none.
+//   - Anything else asks for a tracee this process does not have: ESRCH, as the kernel's
+//     ptrace_check_attach answers.
+WINAPK_GUEST_ABI glong g_ptrace(int request, int pid, void*, void*) {
+    constexpr int kTraceme = 0, kAttach = 16, kSeize = 0x4206;
+    if (request == kTraceme) return *guest_errno() = kEACCES, -1;
+    if (request == kAttach || request == kSeize) {
+        if (pid <= 0) return *guest_errno() = kESRCH, -1;
+        const DWORD id = static_cast<DWORD>(pid);
+        if (id == GetCurrentProcessId()) return *guest_errno() = kEPERM, -1;
+        if (HANDLE t = OpenThread(THREAD_QUERY_LIMITED_INFORMATION, FALSE, id)) {
+            CloseHandle(t);
+            return *guest_errno() = kEPERM, -1;
+        }
+        if (HANDLE p = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, id)) {
+            CloseHandle(p);
+            return *guest_errno() = kEPERM, -1;
+        }
+        return *guest_errno() = (GetLastError() == ERROR_ACCESS_DENIED ? kEPERM : kESRCH), -1;
+    }
+    return *guest_errno() = kESRCH, -1;
+}
 WINAPK_GUEST_ABI int g_setsid() { return static_cast<int>(GetCurrentProcessId()); }
 // syslog(3): not written anywhere (Bionic's goes to logcat; an app's own lines reach the log through liblog).
 WINAPK_GUEST_ABI void g_void0() {}
@@ -2314,10 +2584,50 @@ WINAPK_GUEST_ABI void g_android_set_abort_message(const char* message) { set_abo
 // The real-time signals an app may use: Bionic keeps the first four for itself (32..35).
 WINAPK_GUEST_ABI int g_sigrtmin() { return 36; }
 WINAPK_GUEST_ABI int g_sigrtmax() { return 64; }
-// mincore: every page of the range is resident.
-WINAPK_GUEST_ABI int g_mincore(void*, size_t len, unsigned char* vec) {
+// mincore: whether each page of the range is in memory. Linux answers from the page tables: a page is
+// resident when it is in RAM, whether or not the process touched it lately. Windows' nearest answer is
+// the working set (QueryWorkingSetEx's Valid bit: the page is mapped in RAM for this process now); a
+// page trimmed from the working set but still in the standby list reads 0 here where Linux would say 1,
+// and a page only reserved, or committed and never touched, reads 0 as an untouched anonymous page does.
+// EINVAL for an address off a page, ENOMEM when any page of the range is not mapped, as Linux.
+struct WorkingSetEx {
+    void* address;
+    ULONG_PTR attributes;  // bit 0: Valid
+};
+WINAPK_GUEST_ABI int g_mincore(void* addr, size_t len, unsigned char* vec) {
+    const auto lo = reinterpret_cast<uintptr_t>(addr);
+    if (lo & 4095) return *guest_errno() = kEINVAL, -1;
+    if (len > UINTPTR_MAX - lo - 4095) return *guest_errno() = kENOMEM, -1;
+    const uintptr_t hi = (lo + len + 4095) & ~uintptr_t{4095};
+    for (uintptr_t p = lo; p < hi;) {
+        MEMORY_BASIC_INFORMATION mbi;
+        if (!VirtualQuery(reinterpret_cast<void*>(p), &mbi, sizeof mbi) || mbi.State == MEM_FREE) {
+            return *guest_errno() = kENOMEM, -1;
+        }
+        p = reinterpret_cast<uintptr_t>(mbi.BaseAddress) + mbi.RegionSize;
+    }
     if (!vec) return *guest_errno() = kEFAULT, -1;
-    std::memset(vec, 1, (len + 4095) / 4096);
+    using QueryEx = BOOL(WINAPI*)(HANDLE, void*, DWORD);
+    static const auto query = reinterpret_cast<QueryEx>(
+        reinterpret_cast<void*>(GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "K32QueryWorkingSetEx")));
+    constexpr size_t kBatch = 512;
+    WorkingSetEx batch[kBatch];
+    for (uintptr_t p = lo; p < hi;) {
+        const size_t n = std::min<size_t>(kBatch, (hi - p) / 4096);
+        for (size_t i = 0; i < n; ++i) batch[i] = {reinterpret_cast<void*>(p + i * 4096), 0};
+        const bool known = query && query(GetCurrentProcess(), batch, static_cast<DWORD>(n * sizeof(WorkingSetEx)));
+        for (size_t i = 0; i < n; ++i) {
+            unsigned char resident = 0;
+            if (known) {
+                resident = batch[i].attributes & 1;
+            } else {  // no working-set query (old Wine): committed pages count as resident
+                MEMORY_BASIC_INFORMATION mbi;
+                resident = VirtualQuery(batch[i].address, &mbi, sizeof mbi) && mbi.State == MEM_COMMIT;
+            }
+            vec[(p - lo) / 4096 + i] = resident;
+        }
+        p += n * 4096;
+    }
     return 0;
 }
 
@@ -2402,6 +2712,9 @@ const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("msync", g_msync),
     WINAPK_SHIM("mlock", g_mlock),
     WINAPK_SHIM("munlock", g_munlock),
+    WINAPK_SHIM("mlock2", g_mlock2),
+    WINAPK_SHIM("mlockall", g_mlockall),
+    WINAPK_SHIM("munlockall", g_munlockall),
     WINAPK_SHIM("__system_property_get", g_property_get),
     WINAPK_SHIM("__system_property_find", g_property_find),
     WINAPK_SHIM("__system_property_read", g_property_read),
