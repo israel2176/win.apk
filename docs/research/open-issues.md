@@ -977,7 +977,7 @@ New bugs found with AOSP views:
     `Activity`, `Looper`, `Handler`, `MessageQueue`, `SurfaceView`,
     `TextureView` and the GL classes, which are not shadowed.
   - **The plain-JVM tests** (`DamageRectTest`, `FrameworkStubsTest`'s view
-    half, `DateTimeViewTest`, `AccessibilityTreeTest`, `HostTextInputTest`,
+    half, `DateTimeViewTest`, `AccessibilityTreeTest`, `WindowsTextInputTest`,
     run by CI on `build/java/android-framework.jar`, the jar as compiled):
     they still test Win.apk's own views, which no app runs. To move onto
     AOSP's classes they need AOSP's natives outside `winapk-runtime`; or
@@ -1064,31 +1064,35 @@ nor a run with `WINAPK_AOSP_VIEWS=1` and a screen reader. To check then:
   each activity's destroy removes its window): check the smoke apps' and
   sweeps' runs with the views switch for anything that changed.
 
-- **TSF text input and the touch keyboard (November 2026, from the other runtime's
-  `compat/input/text_store`, `text_service`, `touch_keyboard`).** The focused
-  editor is the window's TSF document (`windows/host/tsf_text_store.h`, the
-  copy made by `runtime/java/com/macapk/loader/HostTextInput.java`), keys go to
-  the text services first, their edits come back through the
-  `InputConnection`; `showSoftInput`, a tap on an editable `TextView` and
-  `hideSoftInput` show and hide Windows' touch keyboard. IMM32 stays for when
-  TSF cannot be set up (`WINAPK_TSF=0` forces it). Checked: `winapk-tsf-test`
-  (the store's contract, a Hebrew composition, the text service attached to
-  Wine's thread manager), `HostTextInputTest` (the edits on an
-  `InputConnection`), and Fossify Notes under Wine with both views (Win.apk's
-  and `WINAPK_AOSP_VIEWS=1`): the document attaches, follows typing in English
-  and Hebrew with the caret and the characters' boxes, and keys still type.
-  **Not checked, needs real Windows:** a real TSF IME composing (Microsoft
-  Japanese, Pinyin, Korean) and reconverting, its candidate window placed by
-  the characters' boxes (and in a right-to-left window), handwriting and
-  dictation, an IMM32-only IME through TSF's compatibility layer, the touch
-  keyboard on a touchscreen PC (shown, declined with a keyboard attached,
-  hidden when the field goes), Compose fields (no Layout: the candidate window
-  at the last pointer). Found on the way and changed: a TextView the app
-  called `showSoftInput` for (the soft-key route) now has its connection
-  served to the text services, and a tap on an editable field after the app
-  hid the keyboard serves it again (Win.apk's hide unbinds the editor, where
-  Android keeps it served); watch the UI gate and the smoke apps for typing
-  that changed.
+- **TSF text input and the touch keyboard: Win.apk's own (November 2026).**
+  The the other runtime-derived text store, text service, touch keyboard and
+  `HostTextInput` were replaced by a clean-room implementation from
+  Microsoft's TSF documentation and AOSP 14's input method semantics:
+  `windows/host/text_input_model.h` (the rules, no Windows call),
+  `tsf_store.h` (ITextStoreACP and ITextStoreACP2: TSF's lock and lock-queue
+  rules, one edit per write lock, compositions and reconversion, display
+  attributes read in `ITfTextEditSink::OnEndEdit` and drawn as spans,
+  `GetTextExt` from `Layout.fillCharacterBounds`, `TS_E_NOLAYOUT` while an
+  edit is on its way, the field's input scopes from `EditorInfo.inputType`,
+  the touch keyboard's prediction and correction flags), `tsf_session.h` (TSF
+  made at the first focused editor, a document per editor, a password's
+  keyboard disabled and IMM32 off), `input_pane.h`, and
+  `runtime/java/com/macapk/loader/WindowsTextInput.java` (no polling: an
+  `Editable`'s watchers and the view tree's listeners). `WINAPK_TSF` is gone.
+  Checked: `winapk-text-input-test` (natively), `winapk-tsf-test` under Wine 9
+  (the store driven as TSF drives it, and the session on Wine's TSF),
+  `WindowsTextInputTest` on Win.apk's framework jar, the runtime's sources
+  cross-compiled with MinGW. **Not checked, needs real Windows:** a real TSF
+  IME composing (Microsoft Japanese, Pinyin, Korean) and reconverting, its
+  display attributes, its candidate window placed by the characters' boxes
+  (and in a right-to-left window), `ITextStoreACP2` being the interface TSF
+  takes, handwriting and dictation, an IMM32-only IME through TSF's
+  compatibility layer, the touch keyboard on a touchscreen PC (shown, declined
+  with a keyboard attached, hidden when the field goes) and its layout for each
+  input scope, Compose fields (no `Editable` to watch: copies after each key and
+  touch; no `Layout`: the candidate window at the editor's bounds), the
+  smoke apps' typing. `WindowsTextInputTest` runs on Win.apk's own
+  `BaseInputConnection` (the jar as compiled), not AOSP's, which apps run.
 
 - **AOSP graphics, what is missing** (README "Milestone 2"): drawables
   inflate themselves on AOSP's classes, `<animated-vector>` included, whose
