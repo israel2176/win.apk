@@ -321,6 +321,8 @@ jobs:
         run: ./build/winapk-aot-stamp-test.exe
       - name: Run the App Link sign-in window test (which navigation returns to the app)
         run: ./build/winapk-applink-test.exe
+      - name: Run the WebView file URL test (the file origin both ways, which pages may read it)
+        run: ./build/winapk-webview-urls-test.exe
       - name: Run the frame-time record test (percentiles, the line at exit)
         run: ./build/winapk-frame-times-test.exe
       - name: Run the translation crash guard test (two crashes turn translation off, two on the JIT back on)

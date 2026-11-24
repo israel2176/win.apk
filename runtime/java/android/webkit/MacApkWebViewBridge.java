@@ -471,23 +471,11 @@ final class MacApkWebViewBridge {
             android.content.Context ctx = macapkAppContext(viewId);
             if (ctx == null) return null;
             java.io.File dataDir = ctx.getDataDir();
-            java.io.File root;
-            String dataPath = dataDir != null ? dataDir.getPath().replace('\\', '/') : "";
-            if (dataPath.startsWith("/data/user/0/") || dataPath.startsWith("/data/data/")) {
-                // Win.apk: the app sees its data directory by its Android name (the java.base
-                // overlay's WinApkPaths), so the copies go under the Android root's "/.macapk",
-                // which java.io writes to <android root>\.macapk and the host maps back
-                // (native_webview.cpp, materialize). Before this every page fell through here
-                // ("/data/user/0" is no <root>/data/data) and WebView2 was sent to the
-                // unchanged file:///android_asset/ URL: net::ERR_FAILED (Yahav, Cordova).
-                root = new java.io.File("/");
-            } else {
-                java.io.File dd = dataDir != null ? dataDir.getParentFile() : null;   // <root>/data/data
-                java.io.File d = dd != null ? dd.getParentFile() : null;                // <root>/data
-                root = d != null ? d.getParentFile() : null;                            // <root>
-                if (root == null || !"data".equals(dd.getName()) || !"data".equals(d.getName()))
-                    return null;
-            }
+            java.io.File dd = dataDir != null ? dataDir.getParentFile() : null;   // <root>/data/data
+            java.io.File d = dd != null ? dd.getParentFile() : null;                // <root>/data
+            java.io.File root = d != null ? d.getParentFile() : null;               // <root>
+            if (root == null || !"data".equals(dd.getName()) || !"data".equals(d.getName()))
+                return null;
             java.io.File base = new java.io.File(root,
                     ".macapk/webassets/" + dataDir.getName() + "/android_asset");
             // Copy the page's TOP-LEVEL asset directory (www/ for www/pages/a.html), so
@@ -694,6 +682,77 @@ final class MacApkWebViewBridge {
             return macapkLooksBinary(data) ? "application/octet-stream" : "text/plain";
         }
         return "application/octet-stream";
+    }
+
+    // ---- file: URLs served by an engine that cannot read them (Win.apk) ----
+    //
+    // WebView2 neither reads an APK nor lets the host see file: requests, so
+    // windows/host/native_webview.cpp loads file:///X on a synthetic https
+    // origin and answers each request there with this, after the app's
+    // shouldInterceptRequest has passed on it, as Chromium's
+    // AndroidProtocolHandler answers after the app's interceptor. The Mac's
+    // engine does not call it.
+
+    /** Called by native on a "WebViewIntercept" thread. Never null: {meta, body}
+     *  as macapkInterceptRequest answers; a file that is missing, or that
+     *  WebSettings does not let the page read, is a 404 with no body. */
+    static Object[] macapkServeFile(int viewId, String url) {
+        macapkDropAssetCopies(viewId);
+        byte[] data = null;
+        String mime = null;
+        android.net.Uri uri = macapkVerifyUrl(url);
+        String path = uri != null && "file".equals(uri.getScheme()) ? uri.getPath() : null;
+        if (path != null) {
+            if (path.startsWith(ANDROID_ASSET_PATH) || path.startsWith(ANDROID_RES_PATH)) {
+                data = macapkReadAsset(viewId, url);
+            } else if (macapkAllowsFileAccess(viewId)) {
+                // WebSettings.setAllowFileAccess: any file the app itself can read,
+                // by the name the app knows it (java.io maps /data/user/0/... to the host).
+                java.io.File f = new java.io.File(path);
+                try {
+                    if (f.isFile()) data = java.nio.file.Files.readAllBytes(f.toPath());
+                } catch (java.io.IOException | RuntimeException e) {
+                    data = null;
+                }
+            }
+        }
+        if (data != null) {
+            // By the name (android_res/raw/x.css is text/css, as its file is), then
+            // the asset handler's sniffing.
+            mime = macapkGuessContentTypeFromName(path);
+            if (mime == null) mime = macapkWellKnownMimeType(path);
+            if (mime == null) mime = macapkAssetMime(url, data);
+        }
+        if (data == null) {
+            return new Object[] { "404\nNot Found\nCache-Control: no-store\r\n", new byte[0] };
+        }
+        // no-cache: WebView2 keeps its HTTP cache across runs, and an updated app's
+        // assets must not come from an older copy.
+        return new Object[] { "200\nOK\nContent-Type: " + mime + "\r\nCache-Control: no-cache\r\n", data };
+    }
+
+    private static boolean macapkAllowsFileAccess(int viewId) {
+        WebView wv = viewFor(viewId);
+        WebSettings s = wv != null ? wv.getSettings() : null;
+        return s != null && s.getAllowFileAccess();
+    }
+
+    private static volatile boolean sDroppedAssetCopies;
+
+    /** Development builds of Win.apk copied asset pages under the Android root's
+     *  /.macapk/webassets/<package>; they are served from the APK now, so the
+     *  copies go, once per run. */
+    private static void macapkDropAssetCopies(int viewId) {
+        if (sDroppedAssetCopies) return;
+        sDroppedAssetCopies = true;
+        try {
+            android.content.Context ctx = macapkAppContext(viewId);
+            java.io.File dataDir = ctx != null ? ctx.getDataDir() : null;
+            if (dataDir == null) return;
+            java.io.File copies = new java.io.File("/.macapk/webassets/" + dataDir.getName());
+            if (copies.exists()) macapkDeleteTree(copies);
+        } catch (Throwable ignored) {
+        }
     }
 
     private static android.content.Context macapkAppContext(int viewId) {
