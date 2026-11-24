@@ -5,7 +5,7 @@
 // framework table on a plain JVM, so the strings are the English ones AOSP's
 // default locale has.
 //
-//   javac -cp "<runtime>/lib/android-framework.jar;<runtime>/lib/macapk-loader.jar" -d out \
+//   javac -cp "<runtime>/lib/aosp-graphics.jar;<runtime>/lib/android-framework.jar;<runtime>/lib/macapk-loader.jar" -d out \
 //         windows/test/java/DateTimeViewTest.java
 //   MACAPK_LOG_LEVEL=7 java -Djava.awt.headless=true -Duser.language=en -Duser.country=US \
 //         -cp "<runtime>/lib/android-framework.jar;<runtime>/lib/macapk-loader.jar;out" DateTimeViewTest

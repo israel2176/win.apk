@@ -6,15 +6,16 @@
 // rectangle, clear, bracket root.draw with macapkBeginDraw / macapkEndDraw, and
 // end the frame with macapkEndFrameDamage.
 //
-//   javac -cp "<runtime>/lib/android-framework.jar;<runtime>/lib/macapk-loader.jar" -d out \
+//   javac -cp "<runtime>/lib/aosp-graphics.jar;<runtime>/lib/android-framework.jar;<runtime>/lib/macapk-loader.jar" -d out \
 //         windows/test/java/DamageRectTest.java
-//   MACAPK_FRAMESPEED_DAMAGE=1 MACAPK_LOG_LEVEL=7 java -Djava.awt.headless=true \
-//         -cp "<runtime>/lib/android-framework.jar;<runtime>/lib/macapk-loader.jar;out" DamageRectTest
+//   MACAPK_FRAMESPEED_DAMAGE=1 MACAPK_LOG_LEVEL=7 winapk-runtime --data <scratch dir> --java-test out DamageRectTest
+//
+// In winapk-runtime (--java-test: the framework's JVM, AOSP's graphics bound), since the framework
+// has no graphics of its own and a plain java.exe has no natives for AOSP's.
 //
 // Exits 0 when every check passes (and at once, with a note, when the flag is
 // not set: partial frames are then off and there is nothing to check). No
-// window, no native runtime: MACAPK_LOG_LEVEL=7 keeps the framework from
-// logging, which needs the runtime's NativeLog.
+// window.
 
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
@@ -108,7 +109,7 @@ public final class DamageRectTest {
                 && Math.min(W, dmg[2]) > Math.max(0, dmg[0]) && Math.min(H, dmg[3]) > Math.max(0, dmg[1]);
         final int[] rect = { Math.max(0, dmg[0]), Math.max(0, dmg[1]), Math.min(W, dmg[2]), Math.min(H, dmg[3]) };
         final int save = canvas.save();
-        if (partial) canvas.macapkClipChildRect(rect[0], rect[1], rect[2], rect[3]);
+        if (partial) com.macapk.loader.gfx.GfxBackend.get().clipChildRect(canvas, rect[0], rect[1], rect[2], rect[3]);
         canvas.drawColor(CLEAR);
         ViewRootImpl.macapkBeginDraw(root, canvas, partial, lastKind, partial ? rect : null);
         try { root.draw(canvas); } finally { ViewRootImpl.macapkEndDraw(); }
@@ -122,15 +123,15 @@ public final class DamageRectTest {
 
     /** The tree drawn whole on a canvas of its own (no record is touched). */
     static int[] reference() {
-        Bitmap b = Bitmap.createBitmapWithCanvasBacking(W, H);
+        Bitmap b = com.macapk.loader.gfx.GfxBackend.get().createFrameBitmap(W, H);
         Canvas c = new Canvas(b);
         c.drawColor(CLEAR);
         root.draw(c);
-        return b.macapkArgbBuffer().clone();
+        return com.macapk.loader.gfx.GfxBackend.get().argbBuffer(b).clone();
     }
 
     static boolean framePixelsAre(int[] want, String what) {
-        int[] got = frame.macapkArgbBuffer();
+        int[] got = com.macapk.loader.gfx.GfxBackend.get().argbBuffer(frame);
         int bad = 0, x0 = W, y0 = H, x1 = -1, y1 = -1;
         for (int i = 0; i < W * H; i++) {
             if (got[i] != want[i]) {
@@ -174,13 +175,16 @@ public final class DamageRectTest {
     }
 
     public static void main(String[] args) throws Exception {
+        // The framework draws on AOSP's graphics (lib/aosp-graphics.jar, under winapk-runtime
+        // --java-test): the system fonts, as Boot sets them up for an app, before any text.
+        com.macapk.loader.gfx.GfxBackend.get().materializeSystemFonts(ps -> null);
         if (!ViewRootImpl.MACAPK_DAMAGE) {
             System.out.println("DamageRectTest: MACAPK_FRAMESPEED_DAMAGE is not 1, partial frames are off;"
                     + " nothing to check");
             return;
         }
         android.os.Looper.prepareMainLooper();
-        frame = Bitmap.createBitmapWithCanvasBacking(W, H);
+        frame = com.macapk.loader.gfx.GfxBackend.get().createFrameBitmap(W, H);
         canvas = new Canvas(frame);
 
         root = group(null, 0xff202840, 0, 0, W, H);
