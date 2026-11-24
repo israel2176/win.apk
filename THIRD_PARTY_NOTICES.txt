@@ -189,25 +189,25 @@ libwebp 1.5.0 (decoder) -- WebP images
 SPDX-License-Identifier: BSD-3-Clause
 Copyright (c) 2010, Google Inc. Source: https://chromium.googlesource.com/webm/libwebp .
 
-libvpx 1.15.2 (VP8 and VP9 decoders) -- VP8 and VP9 video
+libvpx 1.17.0 (VP8 and VP9 decoders) -- VP8 and VP9 video
 SPDX-License-Identifier: BSD-3-Clause
 Copyright (c) 2010, The WebM Project authors, with Google's patent licence
 (PATENTS in its source). Source: https://chromium.googlesource.com/webm/libvpx .
 Licence in section 5.
 
-dav1d 1.5.1 -- AV1 video
+dav1d 1.5.5 -- AV1 video
 SPDX-License-Identifier: BSD-2-Clause
-Copyright (c) 2018-2019, VideoLAN and dav1d authors. Source:
+Copyright (c) 2018-2025, VideoLAN and dav1d authors. Source:
 https://code.videolan.org/videolan/dav1d . Licence in section 5.
 
-Opus 1.5.2 (libopus, the decoder) -- Opus audio
+Opus 1.6.1 (libopus, the decoder) -- Opus audio
 SPDX-License-Identifier: BSD-3-Clause
 Copyright 2001-2023 Xiph.Org, Skype Limited, Octasic, Jean-Marc Valin, Timothy
 B. Terriberry, CSIRO, Gregory Maxwell, Mark Borgerding, Erik de Castro Lopo,
 Mozilla, Amazon; with the royalty-free patent licences its licence names.
 Source: https://opus-codec.org/ . Licence in section 5.
 
-libwebm 1.0.0.31 (mkvparser) -- WebM and Matroska files
+libwebm 1.0.0.32 (mkvparser) -- WebM and Matroska files
 SPDX-License-Identifier: BSD-3-Clause
 Copyright (c) 2010, Google Inc. Source: https://chromium.googlesource.com/webm/libwebm .
 Its licence is libwebp's, in section 5.
@@ -620,7 +620,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 dav1d (BSD-2-Clause)
 ................................................................................
 
-Copyright (c) 2018-2019, VideoLAN and dav1d authors
+Copyright (c) 2018-2025, VideoLAN and dav1d authors
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
