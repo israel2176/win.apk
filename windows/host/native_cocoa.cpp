@@ -1661,8 +1661,9 @@ void JNICALL FrameTimes_record(JNIEnv*, jclass, jlong layout, jlong draw, jlong 
 // com.macapk.loader.HostTextInput: the focused editor for the window's TSF document and the
 // touch keyboard (win32_window.h, "text input"). Positions from the editor side are surface
 // pixels; the window takes them as fractions of the app's box.
-void JNICALL TextInput_focus(JNIEnv*, jclass, jboolean active, jboolean ime, jint epoch) {
+jboolean JNICALL TextInput_focus(JNIEnv*, jclass, jboolean active, jboolean ime, jint epoch) {
     window_text_input(active == JNI_TRUE, ime == JNI_TRUE, epoch);
+    return window_handle() ? JNI_TRUE : JNI_FALSE;
 }
 
 void JNICALL TextInput_document(JNIEnv* env, jclass, jstring text, jint start, jint end, jint offset, jint epoch,
@@ -1715,7 +1716,7 @@ constexpr const char* kTextInputCls = "com.macapk.loader.HostTextInput";
 const HostMethod kMethods[] = {
     WINAPK_HOST_NATIVE(kCls, "init", "()Z", Cocoa_init),
     WINAPK_HOST_NATIVE("com.macapk.loader.FrameTimes", "nativeRecord", "(JJJJJZ)V", FrameTimes_record),
-    WINAPK_HOST_NATIVE(kTextInputCls, "nativeFocus", "(ZZI)V", TextInput_focus),
+    WINAPK_HOST_NATIVE(kTextInputCls, "nativeFocus", "(ZZI)Z", TextInput_focus),
     WINAPK_HOST_NATIVE(kTextInputCls, "nativeDocument", "(Ljava/lang/String;IIIIIZZ[FI[F)V", TextInput_document),
     WINAPK_HOST_NATIVE(kTextInputCls, "nativeSoftInput", "(Z)V", TextInput_softInput),
     WINAPK_HOST_NATIVE(kCls, "setPhoneSize", "(II)V", Cocoa_setPhoneSize),

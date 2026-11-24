@@ -52,7 +52,8 @@ public final class HostTextInput {
     static final int EDIT_REPLACE = 0, EDIT_SELECT = 1, EDIT_COMPOSITION_RANGE = 2, EDIT_COMPOSITION_END = 3,
             EDIT_COMPOSITION_TEXT = 4;
 
-    private static native void nativeFocus(boolean active, boolean ime, int epoch);
+    /** False when there is no window to type in (headless): nothing more is sent then. */
+    private static native boolean nativeFocus(boolean active, boolean ime, int epoch);
     private static native void nativeDocument(String text, int start, int end, int offset, int epoch, int applied,
             boolean available, boolean reversed, float[] caret, int geometryStart, float[] geometry);
     private static native void nativeSoftInput(boolean show);
@@ -62,7 +63,7 @@ public final class HostTextInput {
 
     // The editor thread's.
     private static InputConnection sConnection;
-    private static boolean sActive, sIme, sPolling;
+    private static boolean sActive, sIme, sPolling, sWindow;
     private static int sEpoch, sApplied;
     private static Object[] sLast;  // the last copy sent, to send only a changed one
     private static Handler sPoll;
@@ -187,10 +188,12 @@ public final class HostTextInput {
                 NativeLog.i(TAG, active ? "editor " + sEpoch + ": " + ic.getClass().getName()
                         + (ime ? ", takes compositions" : ", no compositions (inputType 0x"
                         + Integer.toHexString(ei != null ? ei.inputType : 0) + ")") : "no editor");
-                nativeFocus(active, ime, sEpoch);
+                sWindow = nativeFocus(active, ime, sEpoch);
+            } else if (!sWindow && active) {
+                sWindow = nativeFocus(active, ime, sEpoch);  // the window came after the editor
             }
-            poll(d, active && ime);
-            if (!ime) return;
+            poll(d, active && ime && sWindow);
+            if (!ime || !sWindow) return;
             sendDocument(d, ic);
         } catch (UnsatisfiedLinkError e) {
             sNoHost = true;
