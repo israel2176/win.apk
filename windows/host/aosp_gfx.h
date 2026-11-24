@@ -43,30 +43,36 @@ const AospGfxFiles* aosp_gfx_files();
 // The locale ICU starts in ("en-US"): the user's, as Windows has it.
 std::string aosp_gfx_locale();
 
-// AOSP's own resources (docs/research/aosp-views.md, step R1): WINAPK_AOSP_RES=1 turns them on,
-// off by default. windows/scripts/build_aosp_res.sh stages
+// The UI gate greps a base commit for this line to know whether that base runs AOSP's resources
+// and views by default (.github/workflows/ci.yml, "Find the base"): from this commit on there is
+// no other way, as Win.apk's own views and resources are no longer shipped.
+[[maybe_unused]] constexpr bool kAospViewsByDefault = true;
+
+// AOSP's own resources (docs/research/aosp-views.md, step R1), always: Win.apk's own
+// android.content.res is no longer in the shipped android-framework.jar (stage_runtime.sh drops
+// the classes this jar and the views' shadow). windows/scripts/build_aosp_res.sh stages
 //   lib\aosp-resources.jar           AOSP 14's android.content.res on Robolectric's Java port of
 //                                    libandroidfw, + windows/java/aosp_res (its natives' bodies, the
 //                                    ResBackend); put first on the class path, before the graphics'
 //   bin\aosp\framework-res-34.apk    the framework's resources at the classes' level
-//                                    (-Dwinapk.aosp.res.framework)
-// They run with AOSP's graphics only (AOSP's Resources inflates AOSP's drawables): with those off,
-// or a file missing, this stays off and says so in the log. Pure Java: nothing to load here.
+//                                    (-Dwinapk.aosp.res.framework), the only platform table shipped
+// They run with AOSP's graphics only (AOSP's Resources inflates AOSP's drawables). With those off,
+// or a file missing, this logs that an app cannot start (a broken stage) and adds nothing. Pure
+// Java: nothing to load here. WINAPK_AOSP_RES, the switch while they were new, is ignored.
 struct AospResFiles {
     std::filesystem::path jar, framework;
 };
-// Decides, once, after aosp_gfx_prepare, for the same JVMs; logs one line when asked for.
+// Decides, once, after aosp_gfx_prepare, for the same JVMs; logs one line.
 bool aosp_res_prepare(const std::filesystem::path& lib, const std::filesystem::path& bin);
 // The files, once aosp_res_prepare said yes; null otherwise.
 const AospResFiles* aosp_res_files();
 
-// AOSP's own views (docs/research/aosp-views.md, step V1): WINAPK_AOSP_VIEWS=1 turns them on, off by
-// default. windows/scripts/build_aosp_views.sh stages lib\aosp-views.jar (AOSP 14's android.view,
-// android.widget, com.android.internal.{view,widget,policy} + windows/java/aosp_views: the second
+// AOSP's own views (docs/research/aosp-views.md, steps V1 and V2), always, likewise.
+// windows/scripts/build_aosp_views.sh stages lib\aosp-views.jar (AOSP 14's android.view,
+// android.widget, com.android.internal.{view,widget,policy} + windows/java/aosp_views: the
 // ViewHost, the in-process window manager), put first on the class path, before the resources'.
-// They run with AOSP's resources only (and so with its graphics): with those off, or the jar
-// missing, this stays off and says so in the log. Pure Java: nothing to load here.
-// Decides, once, after aosp_res_prepare, for the same JVMs; logs one line when asked for.
+// They run with AOSP's resources only (and so with its graphics). WINAPK_AOSP_VIEWS is ignored.
+// Decides, once, after aosp_res_prepare, for the same JVMs; logs one line.
 bool aosp_views_prepare(const std::filesystem::path& lib);
 // The jar, once aosp_views_prepare said yes; null otherwise.
 const std::filesystem::path* aosp_views_jar();

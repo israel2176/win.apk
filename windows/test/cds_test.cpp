@@ -146,21 +146,15 @@ int main(int argc, char** argv) {
     check(stale_archive_file(L"framework-0123456789abcdef.jsa", L"framework-java2d-0123456789abcdef") &&
               !stale_archive_file(L"framework-aosp-0123456789abcdef.jsa", L"framework-java2d-0123456789abcdef"),
           "a Java2D dump drops the old naming and keeps AOSP's");
-    // AOSP's resources (WINAPK_AOSP_RES=1) have their own archive, beside the graphics' two.
-    check(graphics_of({"-Dwinapk.aosp.gfx=1", "-Dwinapk.aosp.res=1"}) == "aospres",
-          "-Dwinapk.aosp.res=1 has an archive of its own");
-    check(!stale_archive_file(L"framework-aospres-fedcba9876543210.jsa", stem) &&
-              !stale_archive_file(L"framework-aosp-fedcba9876543210.jsa", L"framework-aospres-0123456789abcdef"),
-          "AOSP's graphics and AOSP's resources keep each other's archive");
-    // AOSP's views (WINAPK_AOSP_VIEWS=1) likewise, whatever order the options come in.
-    check(graphics_of({"-Dwinapk.aosp.gfx=1", "-Dwinapk.aosp.res=1", "-Dwinapk.aosp.views=1"}) == "aospviews" &&
-              graphics_of({"-Dwinapk.aosp.views=1", "-Dwinapk.aosp.res=1", "-Dwinapk.aosp.gfx=1"}) == "aospviews" &&
-              graphics_of({"-Dwinapk.aosp.res=1", "-Dwinapk.aosp.gfx=1"}) == "aospres",
-          "-Dwinapk.aosp.views=1 has an archive of its own");
-    check(!stale_archive_file(L"framework-aospviews-fedcba9876543210.jsa", L"framework-aospres-0123456789abcdef") &&
-              !stale_archive_file(L"framework-aospres-fedcba9876543210.jsa", L"framework-aospviews-0123456789abcdef") &&
-              !stale_archive_file(L"framework-aosp-fedcba9876543210.jsa", L"framework-aospviews-0123456789abcdef"),
-          "AOSP's views keep the resources' and the graphics' archives, and they its");
+    // AOSP's resources and views come with AOSP's graphics: one archive; theirs from while they
+    // were switches go, whichever graphics dumps.
+    check(graphics_of({"-Dwinapk.aosp.gfx=1", "-Dwinapk.aosp.res=1", "-Dwinapk.aosp.views=1"}) == "aosp" &&
+              graphics_of({"-Dwinapk.aosp.views=1", "-Dwinapk.aosp.res=1", "-Dwinapk.aosp.gfx=1"}) == "aosp",
+          "AOSP's resources and views share the graphics' archive");
+    check(stale_archive_file(L"framework-aospres-fedcba9876543210.jsa", stem) &&
+              stale_archive_file(L"framework-aospviews-0123456789abcdef.ok", stem) &&
+              stale_archive_file(L"framework-aospviews-0123456789abcdef.jsa", L"framework-java2d-0123456789abcdef"),
+          "the archives of the resources' and the views' switches go");
 
     // The class lists.
     const std::string a =

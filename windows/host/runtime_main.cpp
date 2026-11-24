@@ -1572,10 +1572,10 @@ std::vector<std::string> jvm_options(const BootArgs& b) {
     // AOSP's graphics (aosp_gfx.h, the default; WINAPK_AOSP_GFX=0 is Java2D's): their classes
     // first, so they win over the framework's own of the same name (aosp_gfx_prepare in main).
     const winapk::host::AospGfxFiles* aosp = winapk::host::aosp_gfx_files();
-    // AOSP's resources (WINAPK_AOSP_RES=1, aosp_gfx.h) before them: that jar's com.android.internal.R
-    // matches its framework table, for the graphics' classes too.
+    // AOSP's resources (aosp_gfx.h, always: Win.apk's own are not shipped) before them: that jar's
+    // com.android.internal.R matches its framework table, for the graphics' classes too.
     const winapk::host::AospResFiles* aosp_res = winapk::host::aosp_res_files();
-    // AOSP's views (WINAPK_AOSP_VIEWS=1, aosp_gfx.h) before both: android.view and android.widget.
+    // AOSP's views (aosp_gfx.h, always likewise) before both: android.view and android.widget.
     const std::filesystem::path* aosp_views = winapk::host::aosp_views_jar();
     v.push_back("-Djava.class.path=" + (aosp_views ? jvm_path(*aosp_views) + ";" : std::string()) +
                 (aosp_res ? jvm_path(aosp_res->jar) + ";" : std::string()) +
@@ -2310,9 +2310,8 @@ int wmain(int argc, wchar_t** argv) {
     // this runtime makes: an app's run, --cds-prepare's key, the install's icon (AppMeta), --gms and
     // --system, so that nothing runs on the Java2D classes but by asking.
     winapk::host::aosp_gfx_prepare(b.options.lib, exe_dir());
-    // AOSP's resources (aosp_gfx.h), for the same JVMs: only with WINAPK_AOSP_RES=1 and the graphics on.
+    // AOSP's resources and views (aosp_gfx.h), for the same JVMs: the only ones the stage has.
     winapk::host::aosp_res_prepare(b.options.lib, exe_dir());
-    // AOSP's views (aosp_gfx.h): only with WINAPK_AOSP_VIEWS=1 and the resources on.
     winapk::host::aosp_views_prepare(b.options.lib);
     if (b.options.cds_prepare) {
         // The options, and with them the archive's key, an app's start would have: its graphics too.

@@ -86,11 +86,15 @@ bool g_res_on = false;
 
 bool aosp_res_prepare(const fs::path& lib, const fs::path& bin) {
     g_res_on = false;
-    wchar_t v[8];
-    const DWORD n = GetEnvironmentVariableW(L"WINAPK_AOSP_RES", v, 8);
-    if (n != 1 || v[0] != L'1') return false;  // off by default, and then silent
+    // The switch is gone (aosp_gfx.h): say so to whoever still sets it, once.
+    if (GetEnvironmentVariableW(L"WINAPK_AOSP_RES", nullptr, 0) > 0 ||
+        GetEnvironmentVariableW(L"WINAPK_AOSP_VIEWS", nullptr, 0) > 0) {
+        std::fprintf(stderr, "[win.apk] WINAPK_AOSP_RES and WINAPK_AOSP_VIEWS are ignored: AOSP's resources and views "
+                             "are the only ones\n");
+    }
     if (!g_on) {
-        std::fprintf(stderr, "[win.apk] AOSP resources: off, they need AOSP's graphics (WINAPK_AOSP_GFX)\n");
+        std::fprintf(stderr, "[win.apk] AOSP resources: off, they need AOSP's graphics (WINAPK_AOSP_GFX): an app "
+                             "cannot start without them\n");
         return false;
     }
     AospResFiles f;
@@ -100,15 +104,14 @@ bool aosp_res_prepare(const fs::path& lib, const fs::path& bin) {
     for (const fs::path& p : {f.jar, f.framework}) {
         if (!fs::is_regular_file(p, ec)) {
             std::fprintf(stderr, "[win.apk] AOSP resources: off, %s is missing (a runtime staged without "
-                                 "windows/scripts/build_aosp_res.sh's files)\n",
+                                 "windows/scripts/build_aosp_res.sh's files): an app cannot start without them\n",
                          utf8(p.wstring()).c_str());
             return false;
         }
     }
     g_res_files = f;
     g_res_on = true;
-    std::fprintf(stderr, "[win.apk] AOSP resources: on (WINAPK_AOSP_RES=1): %s first on the class path\n",
-                 utf8(f.jar.wstring()).c_str());
+    std::fprintf(stderr, "[win.apk] AOSP resources: on: %s first on the class path\n", utf8(f.jar.wstring()).c_str());
     return true;
 }
 
@@ -121,26 +124,22 @@ bool g_views_on = false;
 
 bool aosp_views_prepare(const fs::path& lib) {
     g_views_on = false;
-    wchar_t v[8];
-    const DWORD n = GetEnvironmentVariableW(L"WINAPK_AOSP_VIEWS", v, 8);
-    if (n != 1 || v[0] != L'1') return false;  // off by default, and then silent
     if (!g_res_on) {
-        std::fprintf(stderr, "[win.apk] AOSP views: off, they need AOSP's graphics and resources "
-                             "(WINAPK_AOSP_GFX, WINAPK_AOSP_RES=1)\n");
+        std::fprintf(stderr, "[win.apk] AOSP views: off, they need AOSP's graphics and resources: an app cannot "
+                             "start without them\n");
         return false;
     }
     const fs::path jar = lib / "aosp-views.jar";
     std::error_code ec;
     if (!fs::is_regular_file(jar, ec)) {
         std::fprintf(stderr, "[win.apk] AOSP views: off, %s is missing (a runtime staged without "
-                             "windows/scripts/build_aosp_views.sh's files)\n",
+                             "windows/scripts/build_aosp_views.sh's files): an app cannot start without them\n",
                      utf8(jar.wstring()).c_str());
         return false;
     }
     g_views_jar = jar;
     g_views_on = true;
-    std::fprintf(stderr, "[win.apk] AOSP views: on (WINAPK_AOSP_VIEWS=1): %s first on the class path\n",
-                 utf8(jar.wstring()).c_str());
+    std::fprintf(stderr, "[win.apk] AOSP views: on: %s first on the class path\n", utf8(jar.wstring()).c_str());
     return true;
 }
 

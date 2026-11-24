@@ -5,8 +5,8 @@
 //
 // A screen reader (Narrator, NVDA, JAWS) or any UI Automation client reads an Android app's
 // views as UIA elements, the way TalkBack reads them on a phone: from AccessibilityNodeInfo,
-// which every view (Win.apk's own, AOSP's under WINAPK_AOSP_VIEWS=1, an app's own and a virtual
-// hierarchy behind an AccessibilityNodeProvider such as Compose's) describes itself with. The
+// which every view (AOSP's own, an app's own and a virtual hierarchy behind an
+// AccessibilityNodeProvider such as Compose's) describes itself with. The
 // Java side (runtime/java/com/macapk/loader/HostAccessibility.java) walks the window's view tree
 // on the app's main thread and publishes it here as a snapshot; the providers answer UIA from
 // that snapshot alone, so UIA's threads never wait on Java, and a call into the app (a click, a

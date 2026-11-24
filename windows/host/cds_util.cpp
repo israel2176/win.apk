@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <cwchar>
 #include <cwctype>
 #include <fstream>
 #include <sstream>
@@ -208,20 +209,20 @@ bool per_launch(const std::string& o) {
 }
 
 std::string graphics_of(const std::vector<std::string>& opts) {
-    bool aosp = false, res = false;
-    for (const std::string& o : opts) {
-        // AOSP's views and resources too (aosp_gfx.h): archives of their own, whose names no
-        // other's prefix ("framework-aosp-", "framework-aospres-") matches, so none deletes another's.
-        if (o == "-Dwinapk.aosp.views=1") return "aospviews";
-        if (o == "-Dwinapk.aosp.res=1") res = true;
-        if (o == "-Dwinapk.aosp.gfx=1") aosp = true;
-    }
-    return res ? "aospres" : aosp ? "aosp" : "java2d";
+    // AOSP's resources and views always come with AOSP's graphics now (aosp_gfx.h): one archive for
+    // the three, whose jars the key has from the class path.
+    for (const std::string& o : opts)
+        if (o == "-Dwinapk.aosp.gfx=1") return "aosp";
+    return "java2d";
 }
 
 bool stale_archive_file(const std::wstring& name, const std::wstring& stem) {
     const std::wstring prefix = L"framework-";
     if (name.compare(0, prefix.size(), prefix) != 0 || name.compare(0, stem.size(), stem) == 0) return false;
+    // The archives of AOSP's resources and views while they were switches of their own
+    // (framework-aospres-..., framework-aospviews-...): no run makes them any more.
+    for (const wchar_t* gone : {L"framework-aospres-", L"framework-aospviews-"})
+        if (name.compare(0, std::wcslen(gone), gone) == 0) return true;
     // This graphics' own prefix, the stem up to its key ("framework-aosp-"): another key's file.
     const size_t dash = stem.rfind(L'-');
     if (dash != std::wstring::npos && dash >= prefix.size() && name.compare(0, dash + 1, stem, 0, dash + 1) == 0)
