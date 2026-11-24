@@ -62,7 +62,9 @@ public class AospResRewrite {
             "android/os/StrictMode.noteResourceMismatch(Ljava/lang/Object;)V", COMPAT,
             "android/text/TextUtils.emptyIfNull(Ljava/lang/String;)Ljava/lang/String;", COMPAT,
             "android/text/TextUtils.formatSimple(Ljava/lang/String;[Ljava/lang/Object;)Ljava/lang/String;", COMPAT,
-            "android/app/ActivityThread.isSystem()Z", COMPAT);
+            "android/app/ActivityThread.isSystem()Z", COMPAT,
+            "android/util/Xml.newFastSerializer()Lcom/android/modules/utils/TypedXmlSerializer;", COMPAT,
+            "android/util/Xml.newFastPullParser()Lcom/android/modules/utils/TypedXmlPullParser;", COMPAT);
     /** owner.name+desc of an instance call -> a static on Compat taking the receiver first. */
     static final Map<String, String> INSTANCE_CALLS = Map.of(
             "dalvik/system/VMRuntime.addressOf(Ljava/lang/Object;)J", "addressOf");
