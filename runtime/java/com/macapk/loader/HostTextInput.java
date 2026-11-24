@@ -184,6 +184,9 @@ public final class HostTextInput {
                 sEpoch++;
                 sApplied = 0;
                 sLast = null;
+                NativeLog.i(TAG, active ? "editor " + sEpoch + ": " + ic.getClass().getName()
+                        + (ime ? ", takes compositions" : ", no compositions (inputType 0x"
+                        + Integer.toHexString(ei != null ? ei.inputType : 0) + ")") : "no editor");
                 nativeFocus(active, ime, sEpoch);
             }
             poll(d, active && ime);
