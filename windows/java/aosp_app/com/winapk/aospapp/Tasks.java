@@ -66,7 +66,11 @@ public final class Tasks {
         Bundle icicle;
         PersistableBundle persistentState;
         final List<ResultInfo> results = new ArrayList<>();
+        /** Intents delivered to it while it was not resumed (onNewIntent before onResume). */
+        final List<com.android.internal.content.ReferrerIntent> newIntents = new ArrayList<>();
         int requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;
+        /** The configuration the activity last got (ActivityRecord's last reported one). */
+        Configuration reported;
 
         Record(ActivityInfo info, Intent intent, String from, Record resultTo, String resultWho, int requestCode) {
             this.info = info;
@@ -165,6 +169,45 @@ public final class Tasks {
 
     boolean inBackground() { return inBackground; }
 
+    /** ActivityTaskManagerService.updateGlobalConfigurationLocked, then each activity's
+     *  ActivityRecord.ensureActivityConfiguration: the process gets the configuration
+     *  (ConfigurationChangeItem: its Resources, the Application's onConfigurationChanged); an
+     *  activity that declares every change in its configChanges gets it too
+     *  (ActivityConfigurationChangeItem: onConfigurationChanged), any other is relaunched
+     *  (ActivityRelaunchItem: destroyed and made again with its saved state) and brought back to the
+     *  state it was in. */
+    void configurationChanged(Configuration next) {
+        if (config != null && config.diff(next) == 0 && config.equals(next)) return;
+        config = new Configuration(next);
+        ClientTransaction process = ClientTransaction.obtain(app, null);
+        process.addCallback(android.app.servertransaction.ConfigurationChangeItem.obtain(new Configuration(next), 0));
+        schedule(process);
+        for (Record r : new ArrayList<>(task)) {
+            if (!r.launched || r.finishing || r.state == State.DESTROYING || r.state == State.DESTROYED) continue;
+            Configuration last = r.reported != null ? r.reported : next;
+            int changes = last.diff(next) & ~CONFIG_WINDOW_CONFIGURATION;
+            r.reported = new Configuration(next);
+            if (changes == 0) continue;
+            ClientTransaction tx = ClientTransaction.obtain(app, r.token);
+            if ((changes & ~Compat.getRealConfigChanged(r.info)) != 0) {
+                tx.addCallback(android.app.servertransaction.ActivityRelaunchItem.obtain(null, null, changes,
+                        new android.util.MergedConfiguration(new Configuration(next), new Configuration()), true));
+                tx.setLifecycleStateRequest(r.state == State.RESUMED
+                        ? ResumeActivityItem.obtain(false, false)
+                        : r.state == State.PAUSED || r.state == State.PAUSING
+                                ? PauseActivityItem.obtain()
+                                : StopActivityItem.obtain(0));
+            } else {
+                tx.addCallback(android.app.servertransaction.ActivityConfigurationChangeItem.obtain(
+                        new Configuration(next)));
+            }
+            schedule(tx);
+        }
+    }
+
+    /** ActivityInfo.CONFIG_WINDOW_CONFIGURATION (hidden): never a reason to relaunch. */
+    private static final int CONFIG_WINDOW_CONFIGURATION = 0x20000000;
+
     Record find(IBinder token) {
         for (Record r : task) if (r.token == token) return r;
         for (Record r : stopping) if (r.token == token) return r;
@@ -229,6 +272,7 @@ public final class Tasks {
                 clientController, r.shareableToken, false /* launchedFromBubble */, null /* taskFragmentToken */));
         r.results.clear();
         tx.setLifecycleStateRequest(ResumeActivityItem.obtain(true /* isForward */, false));
+        r.reported = new Configuration(config);
         r.launched = true;
         r.state = State.RESUMED;
         schedule(tx);
@@ -253,9 +297,70 @@ public final class Tasks {
             tx.addCallback(ActivityResultItem.obtain(new ArrayList<>(r.results)));
             r.results.clear();
         }
+        if (!r.newIntents.isEmpty()) {
+            tx.addCallback(android.app.servertransaction.NewIntentItem.obtain(new ArrayList<>(r.newIntents), true));
+            r.newIntents.clear();
+        }
         tx.setLifecycleStateRequest(ResumeActivityItem.obtain(false /* isForward */, false));
         r.state = State.RESUMED;
         schedule(tx);
+    }
+
+    // ---- Up navigation (Task.navigateUpTo, ActivityRecord.shouldUpRecreateTaskLocked) ----
+
+    /** Whether Up from `r` must make a new task: only when the destination's affinity is not the
+     *  task's (every activity of the app shares the app's here; a document task is not made). */
+    boolean shouldUpRecreateTask(Record r, String destAffinity) {
+        if (destAffinity == null) return true;
+        String taskAffinity = owner.info.taskAffinity != null ? owner.info.taskAffinity : owner.info.packageName;
+        return !destAffinity.equals(taskAffinity);
+    }
+
+    /** Task.navigateUpTo: the parent is the destination's record below `r` if there is one, else
+     *  the activity under `r`; everything from `r` down to it finishes, the first with r's result;
+     *  a parent found gets the intent (onNewIntent, for singleTop/singleTask/singleInstance or
+     *  FLAG_ACTIVITY_CLEAR_TOP) or is replaced by a new instance started from it. */
+    boolean navigateUpTo(Record r, Intent destIntent, int resultCode, Intent resultData) {
+        int at = task.indexOf(r);
+        if (at < 0) return false;
+        ComponentName dest = destIntent != null ? destIntent.getComponent() : null;
+        Record parent = below(r);
+        boolean found = false;
+        if (at > 0 && dest != null) {
+            for (int i = at - 1; i >= 0; i--) {
+                Record c = task.get(i);
+                if (!c.finishing && c.info.packageName.equals(dest.getPackageName())
+                        && c.info.name.equals(dest.getClassName())) {
+                    parent = c;
+                    found = true;
+                    break;
+                }
+            }
+        }
+        int code = resultCode;
+        Intent data = resultData;
+        for (int i = at; i >= 0; i--) {
+            Record c = task.get(i);
+            if (c == parent) break;
+            if (c.finishing) continue;
+            finish(c, code, data);
+            code = android.app.Activity.RESULT_CANCELED;
+            data = null;
+        }
+        if (parent != null && found) {
+            int mode = parent.info.launchMode;
+            if (mode == ActivityInfo.LAUNCH_SINGLE_INSTANCE || mode == ActivityInfo.LAUNCH_SINGLE_TASK
+                    || mode == ActivityInfo.LAUNCH_SINGLE_TOP
+                    || (destIntent.getFlags() & Intent.FLAG_ACTIVITY_CLEAR_TOP) != 0) {
+                parent.newIntents.add(new com.android.internal.content.ReferrerIntent(destIntent, r.info.packageName));
+            } else {
+                ActivityInfo ai = owner.resolver.resolveActivity(destIntent, null);
+                if (ai == null) return false;
+                start(ai, new Intent(destIntent), r.info.packageName, null, null, -1);
+                finish(parent, code, data);
+            }
+        }
+        return found;
     }
 
     // ---- Finishing ----
