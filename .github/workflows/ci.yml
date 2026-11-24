@@ -470,6 +470,17 @@ jobs:
           cp="$(cygpath -w stage/lib/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/camera2-test windows/test/java/Camera2StillTest.java
           "$JAVA_HOME/bin/java" -Djava.awt.headless=true -cp "$cp;$(cygpath -w build/camera2-test)" Camera2StillTest
+      - name: Run the camera orientation test
+        run: |
+          # The camera's orientation as apps compute with it (Scanovate's
+          # cheque scanner, camera1's formula, CameraX), AOSP's buffer
+          # transforms, a fixed-focus camera without a torch, and no
+          # synthetic accelerometer; on a plain JVM.
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          cp="$(cygpath -w stage/lib/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          "$JAVA_HOME/bin/javac" -cp "$cp" -d build/camera-orientation-test windows/test/java/CameraOrientationTest.java
+          MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -Djava.awt.headless=true \
+            -cp "$cp;$(cygpath -w build/camera-orientation-test)" CameraOrientationTest
       - name: Run the host network test
         run: |
           # What ConnectivityManager makes of the host's default-route adapter

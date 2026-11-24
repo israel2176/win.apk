@@ -267,6 +267,7 @@ Every test is a program built by CMake; `ci.yml` runs each of them on
 | `winapk-bluetooth-test` | The Bluetooth host's pure parts without a radio: SHA-1 against the FIPS vectors, the parameterized WinRT interface ids derived from type signatures against five published ones, UUID and address conversions, advertisement bytes |
 | `ScanRecordTest` (`test/java/`) | `ScanRecord`'s advertisement parser and `ScanFilter` against the built jars |
 | `Camera2StillTest` (`test/java/`) | A camera2 still on the virtual camera against the built jars (run by hand, no natives): JPEG sizes in the stream map, a `TEMPLATE_STILL_CAPTURE` into an `ImageReader(JPEG)` giving a one-plane Image that `javax.imageio` decodes at the reader's size, EXIF orientation and thumbnail, one timestamp across Image and result, callback order, `maxImages`, a still beside a repeating YUV reader, a recorder-only session failing to configure |
+| `CameraOrientationTest` (`test/java/`) | The camera's orientation as apps compute with it, on a plain JVM (`MACAPK_LOG_LEVEL=7`): Scanovate's cheque-scanner angle `(orientation - rotation*90) mod 360` is 0 in a landscape and a portrait window, so are camera1's documented formula and CameraX's `rotationDegrees` at every rotation, back and front; AOSP's `degToTransform`, `getRotationTransform` and GLConsumer's matrix; the virtual camera as a fixed-focus camera without a torch (`setParameters` refusing "auto" and "torch", `autoFocus` answering true, camera2's AF OFF only, minimum focus distance 0, `setTorchMode` throwing); no accelerometer in `SensorManager` or the features |
 | `winapk-video-test <test/video dir>` | The Media Foundation video backend without a JVM: the YUV converter, a decoder MFT, the source reader and the player on `test/video/color.mp4` (1 s of H.264 + AAC); decoder checks are skipped where no H.264 MFT exists. Then what recording and `MediaExtractor` stand on: the demuxer on that file (tracks, csd, samples into the decoders), the H.264 and AAC encoders (codec config first, key frames, times; decoded back), and the MP4 writer (its file read back by the demuxer and the source reader). It prints the encoder MFTs the machine has and skips what needs a missing one |
 | `winapk-thunk-test` | Native-method thunks with mixed, stack-overflowing and narrow arguments; the variadic entry stub's `va_list`; the tagged zero stub |
 | `winapk-jni-test`, `winapk-jni-variadic-test` | The guest `JNIEnv` against a mock JVM; the variadic bridge for all four call kinds and every argument type, through `...` and `va_list` |
@@ -3438,6 +3439,35 @@ every such change is listed here:
   hands it to apps; no line when there is none. Settings > Google account's
   **Device ID for Google** row asks it. Nothing changes on the Mac but the
   new verb.
+- `runtime/java/com/macapk/loader/CameraBridge.java`,
+  `android/hardware/Camera.java`, `camera2/CameraBackend.java`,
+  `CameraCaptureSessionImpl.java`, `CameraDeviceImpl.java`,
+  `CaptureRequest.java`, `CameraManager.java`: the camera's orientation, focus
+  and torch, from `windows/host/native_camera.cpp`. `CameraInfo.orientation`
+  and `SENSOR_ORIENTATION` are the display rotation for a back camera (90 in a
+  landscape window, 0 in portrait) and its mirror for a front one, read when
+  asked, so the upright webcam picture needs no turn in apps' arithmetic
+  (Scanovate's cheque scanner, camera1's formula, CameraX). The preview is
+  turned and mirrored as AOSP's `degToTransform` / `getRotationTransform`
+  say (`CameraBridge.consumerMatrix`, GLConsumer's). Autofocus where the
+  driver has a focus that can be started and observed (`IAMCameraControl`'s
+  focus with its auto flag and a readable position, or the extended
+  `FOCUSMODE` + `FOCUSSTATE`): camera1's "auto" and continuous modes with a
+  real one-shot `autoFocus`, camera2's AF modes and AOSP's AF state machine,
+  `android.hardware.camera.autofocus`; otherwise "fixed" and a minimum focus
+  distance of 0. A torch only with the extended `TORCHMODE` control (flash
+  "off"/"torch", `FLASH_MODE_TORCH`, `setTorchMode`, `.camera.flash`).
+  `setParameters` refuses an unsupported focus or flash mode as AOSP's camera
+  service does. `MacApkPackageManager.java` declares `android.hardware.camera`
+  (every webcam is also a back camera, the owner's decision). Comments no
+  longer describe a Mac. Test: `CameraOrientationTest`.
+- `runtime/java/android/hardware/SensorManager.java`: no synthetic
+  accelerometer (the owner's decision): the "phone held upright" gravity pose
+  and the sensors derived from it (gravity, linear acceleration, rotation
+  vectors, orientation) are gone, so `getDefaultSensor(TYPE_ACCELEROMETER)` is
+  null and `android.hardware.sensor.accelerometer` is not declared, as on an
+  Android device without one. The gyroscope (0,0,0) stays. Tilt Control
+  (`TiltControl`, never in Win.apk's UI) has nothing left to drive.
 
 ## License
 
