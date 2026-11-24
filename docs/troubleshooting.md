@@ -49,7 +49,7 @@ hour or more. Leave the PC alone for a while, or install an x86_64 build.
 **No sound in a native game.** AAudio, OpenSL ES and Java audio all play
 through Windows' default output device. If a game is still silent, look in its
 log for `[opensles]` or `[aaudio]` lines that say what it asked for and did not
-get (an http stream, an effect), and report it with the log.
+get (an effect, a MIDI player), and report it with the log.
 
 **A video does not play, or plays silent.** Windows decodes the video: H.264
 with AAC always; HEVC only with Microsoft's codec pack from the Microsoft Store.

@@ -265,7 +265,7 @@ implements in `runtime/src`; on Windows `windows/host/native_*.cpp`):
 | `bionic_shim_forkwatch.cpp`, `_elfexec.cpp`, `elfexec_main.cpp` | 1,471 | forked and shipped executables | later (M5) | not started |
 | `media_ndk.cpp` | 701 | NDK `AMediaCodec` | port with `NativeMedia`; `host/native_media.cpp` has the `AMEDIAFORMAT_KEY_*` strings | keys only |
 | `bionic_shim.cpp`: `ANativeWindow_*`, `AAssetManager_*` | - | libandroid's native window and assets | `host/native_window.cpp`, `host/native_asset.cpp` (assets through Java's AssetManager; no native APK index yet) | done |
-| `bionic_shim.cpp`: OpenSL ES | - | libOpenSLES on the audio mixer | `host/native_opensles.cpp`: adapted from the other runtime's `compat/media/ndk/opensles.cc` instead (players, file players, recorders), on `audio_engine.h` and `audio_capture.h` | done |
+| `bionic_shim.cpp`: OpenSL ES | - | libOpenSLES on the audio mixer | `host/native_opensles.cpp`: Win.apk's own instead, from the 1.0.1 spec and AOSP's behaviour (players pulled by the mixer, file and http players, decoding to a queue, recorders), on `audio_engine.h`, `audio_pcm.h` and `audio_capture.h` | done |
 | `bionic_shim.cpp`: libjnigraphics | - | `AndroidBitmap_*` | `src/jnigraphics.cpp`: upstream's section, extracted at build time | done |
 | `pairip_*`, `art_jni_offsets.h` | 5,286 | Play Integrity emulation | later | - |
 | `arm32_lifter.cpp`, `bionic_shim_arm32*.cpp`, `bionic_shim_gles1.cpp`, `elf_reader.cpp`, `elf64_reader.cpp` | 19,296 | ARM translation | n/a (D8: the ARM stage) | - |
@@ -1131,7 +1131,7 @@ engine runtime, load and initialize.
 
 Status: guest EGL and GLES (`host/gl/guest_gl.cpp`), `NativeActivity`
 (`host/native_activity.cpp`), AAudio (`host/native_aaudio.cpp`) and OpenSL ES
-(`host/native_opensles.cpp`, adapted from the other runtime's) are done.
+(`host/native_opensles.cpp`, Win.apk's own) are done.
 Still planned: Vulkan, sensors, `GameActivity`.
 
 - Guest EGL and GLES bridged to ANGLE, using upstream's generated GLES bridge

@@ -75,7 +75,7 @@ launcher in use; the other runtime's CI claims (taken from its docs).
 - **WebView:** the other runtime serves android_asset/android_res on https://other-file.example via deferred
   WebResourceRequested; Win.apk (since 21cfd06) serves them on https://winapk-file.example the same way, android_res included; both run shouldInterceptRequest
   on a worker pool.
-- **OpenSL ES:** the other runtime real (players, recorders); Win.apk stub. Since imported: `native_opensles.cpp` is the other runtime's, adapted (no http players).
+- **OpenSL ES:** the other runtime real (players, recorders); Win.apk stub. Since: `native_opensles.cpp` is Win.apk's own, written from the spec and AOSP's behaviour (players pulled by the mixer, http players, decoding to a queue).
 - **Media:** the other runtime software libvpx/dav1d/libhevc/libavc, opus, libwebm, MP4/WebM/Ogg/ADTS muxers.
   Win.apk decodes avc/hevc/vp8/vp9/av1/mp4v/h263/mpeg2 through Media Foundation only (needs the PC's
   extensions), encoders are MF's, own MP4 writer.
