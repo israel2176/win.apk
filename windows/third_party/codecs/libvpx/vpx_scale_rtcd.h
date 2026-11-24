@@ -1,5 +1,5 @@
 /*
- *  Copyright (c) 2026 The WebM project authors. All Rights Reserved.
+ *  Copyright (c) 2017 The WebM project authors. All Rights Reserved.
  *
  *  Use of this source code is governed by a BSD-style license
  *  that can be found in the LICENSE file in the root of the source
@@ -65,11 +65,14 @@ void vpx_yv12_copy_y_c(const struct yv12_buffer_config *src_ybc, struct yv12_buf
 
 void vpx_scale_rtcd(void);
 
-#include "vpx_config.h"
-
 #ifdef RTCD_C
+#include "vpx_ports/x86.h"
 static void setup_rtcd_internal(void)
 {
+    int flags = x86_simd_caps();
+
+    (void)flags;
+
 }
 #endif
 

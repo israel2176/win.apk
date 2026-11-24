@@ -203,6 +203,7 @@ jobs:
             clang:p
             cmake:p
             ninja:p
+            nasm:p
             boost:p
             ccache:p
       # Every run saves its own entry and starts from the newest one: main's

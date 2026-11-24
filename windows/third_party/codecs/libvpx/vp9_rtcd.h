@@ -1,5 +1,5 @@
 /*
- *  Copyright (c) 2026 The WebM project authors. All Rights Reserved.
+ *  Copyright (c) 2017 The WebM project authors. All Rights Reserved.
  *
  *  Use of this source code is governed by a BSD-style license
  *  that can be found in the LICENSE file in the root of the source
@@ -26,6 +26,9 @@
 #include "vp9/common/vp9_common.h"
 #include "vp9/common/vp9_enums.h"
 #include "vp9/common/vp9_filter.h"
+#if !CONFIG_REALTIME_ONLY && CONFIG_VP9_ENCODER
+#include "vp9/encoder/vp9_temporal_filter.h"
+#endif
 
 struct macroblockd;
 
@@ -44,30 +47,45 @@ extern "C" {
 #endif
 
 void vp9_highbd_iht16x16_256_add_c(const tran_low_t *input, uint16_t *dest, int stride, int tx_type, int bd);
-#define vp9_highbd_iht16x16_256_add vp9_highbd_iht16x16_256_add_c
+void vp9_highbd_iht16x16_256_add_sse4_1(const tran_low_t *input, uint16_t *dest, int stride, int tx_type, int bd);
+RTCD_EXTERN void (*vp9_highbd_iht16x16_256_add)(const tran_low_t *input, uint16_t *dest, int stride, int tx_type, int bd);
 
 void vp9_highbd_iht4x4_16_add_c(const tran_low_t *input, uint16_t *dest, int stride, int tx_type, int bd);
-#define vp9_highbd_iht4x4_16_add vp9_highbd_iht4x4_16_add_c
+void vp9_highbd_iht4x4_16_add_sse4_1(const tran_low_t *input, uint16_t *dest, int stride, int tx_type, int bd);
+RTCD_EXTERN void (*vp9_highbd_iht4x4_16_add)(const tran_low_t *input, uint16_t *dest, int stride, int tx_type, int bd);
 
 void vp9_highbd_iht8x8_64_add_c(const tran_low_t *input, uint16_t *dest, int stride, int tx_type, int bd);
-#define vp9_highbd_iht8x8_64_add vp9_highbd_iht8x8_64_add_c
+void vp9_highbd_iht8x8_64_add_sse4_1(const tran_low_t *input, uint16_t *dest, int stride, int tx_type, int bd);
+RTCD_EXTERN void (*vp9_highbd_iht8x8_64_add)(const tran_low_t *input, uint16_t *dest, int stride, int tx_type, int bd);
 
 void vp9_iht16x16_256_add_c(const tran_low_t *input, uint8_t *dest, int stride, int tx_type);
-#define vp9_iht16x16_256_add vp9_iht16x16_256_add_c
+void vp9_iht16x16_256_add_sse2(const tran_low_t *input, uint8_t *dest, int stride, int tx_type);
+#define vp9_iht16x16_256_add vp9_iht16x16_256_add_sse2
 
 void vp9_iht4x4_16_add_c(const tran_low_t *input, uint8_t *dest, int stride, int tx_type);
-#define vp9_iht4x4_16_add vp9_iht4x4_16_add_c
+void vp9_iht4x4_16_add_sse2(const tran_low_t *input, uint8_t *dest, int stride, int tx_type);
+#define vp9_iht4x4_16_add vp9_iht4x4_16_add_sse2
 
 void vp9_iht8x8_64_add_c(const tran_low_t *input, uint8_t *dest, int stride, int tx_type);
-#define vp9_iht8x8_64_add vp9_iht8x8_64_add_c
+void vp9_iht8x8_64_add_sse2(const tran_low_t *input, uint8_t *dest, int stride, int tx_type);
+#define vp9_iht8x8_64_add vp9_iht8x8_64_add_sse2
 
 void vp9_rtcd(void);
 
-#include "vpx_config.h"
-
 #ifdef RTCD_C
+#include "vpx_ports/x86.h"
 static void setup_rtcd_internal(void)
 {
+    int flags = x86_simd_caps();
+
+    (void)flags;
+
+    vp9_highbd_iht16x16_256_add = vp9_highbd_iht16x16_256_add_c;
+    if (flags & HAS_SSE4_1) vp9_highbd_iht16x16_256_add = vp9_highbd_iht16x16_256_add_sse4_1;
+    vp9_highbd_iht4x4_16_add = vp9_highbd_iht4x4_16_add_c;
+    if (flags & HAS_SSE4_1) vp9_highbd_iht4x4_16_add = vp9_highbd_iht4x4_16_add_sse4_1;
+    vp9_highbd_iht8x8_64_add = vp9_highbd_iht8x8_64_add_c;
+    if (flags & HAS_SSE4_1) vp9_highbd_iht8x8_64_add = vp9_highbd_iht8x8_64_add_sse4_1;
 }
 #endif
 
