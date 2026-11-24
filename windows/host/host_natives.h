@@ -66,6 +66,7 @@ HostMethods native_media_codec_methods(); // native_media_codec.cpp (HostMedia: 
 HostMethods native_notifications_methods();  // native_notifications.cpp
 HostMethods native_binder_methods();    // binder_win.cpp (MacApkBinderTransport, WinProcesses)
 HostMethods native_accessibility_methods(); // native_accessibility.cpp (HostAccessibility: screen readers)
+HostMethods native_text_input_methods();    // native_text_input.cpp (WindowsTextInput: input methods, touch keyboard)
 
 // The app's directory under the data directory, where Boot renders the
 // launcher icon (icon.png) that becomes the window's icon. native_cocoa.cpp.

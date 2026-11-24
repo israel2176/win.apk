@@ -298,7 +298,8 @@ if(WINAPK_JNI_INCLUDE)
   # runtime.
   add_executable(winapk-runtime host/runtime_main.cpp host/host_natives.cpp host/native_log.cpp
                               host/native_cocoa.cpp host/win32_window.cpp host/guest_libs.cpp host/java_io_open.cpp
-                              host/tsf_text_store.cpp host/tsf_text_service.cpp host/touch_keyboard.cpp
+                              host/text_input_model.cpp host/tsf_store.cpp host/tsf_session.cpp
+                              host/input_pane.cpp host/native_text_input.cpp
                               host/gl/egl10_window.cpp
                               host/sqlite_paths.cpp
                               host/native_os.cpp host/native_image.cpp
@@ -437,7 +438,7 @@ if(WINAPK_JNI_INCLUDE)
   # The app window's geometry: the box the app draws in and how a frame is
   # shown in it (test/window_test.cpp), without a window.
   add_executable(winapk-window-test test/window_test.cpp host/win32_window.cpp host/uia_provider.cpp
-                 host/tsf_text_store.cpp host/tsf_text_service.cpp host/touch_keyboard.cpp)
+                 host/text_input_model.cpp host/tsf_store.cpp host/tsf_session.cpp host/input_pane.cpp)
   target_link_libraries(winapk-window-test PRIVATE windowscodecs ole32 oleaut32 uuid gdi32 user32)
   target_link_options(winapk-window-test PRIVATE -static)
 
@@ -448,11 +449,19 @@ if(WINAPK_JNI_INCLUDE)
   target_link_libraries(winapk-uia-test PRIVATE ole32 oleaut32 uuid user32)
   target_link_options(winapk-uia-test PRIVATE -static)
 
-  # The focused editor as a TSF document (test/tsf_test.cpp): ITextStoreACP's contract with a
-  # stand-in sink, then the text service on the system's TSF when there is one.
-  add_executable(winapk-tsf-test test/tsf_test.cpp host/tsf_text_store.cpp host/tsf_text_service.cpp)
+  # Text input's rules with no window (test/text_input_model_test.cpp): what each Android field
+  # is to Windows, the document the text services edit and the edits the editor gets, display
+  # attributes, where characters are. Plain C++.
+  add_executable(winapk-text-input-test test/text_input_model_test.cpp host/text_input_model.cpp)
+  target_include_directories(winapk-text-input-test PRIVATE host)
+  target_link_options(winapk-text-input-test PRIVATE -static)
+
+  # The focused editor as a TSF text store (test/tsf_test.cpp): ITextStoreACP and ITextStoreACP2's
+  # contract driven as TSF drives it, with a stand-in sink; then the session on the system's TSF.
+  add_executable(winapk-tsf-test test/tsf_test.cpp host/text_input_model.cpp host/tsf_store.cpp
+                 host/tsf_session.cpp)
   target_include_directories(winapk-tsf-test PRIVATE host)
-  target_link_libraries(winapk-tsf-test PRIVATE ole32 uuid gdi32 user32)
+  target_link_libraries(winapk-tsf-test PRIVATE ole32 oleaut32 uuid gdi32 user32)
   target_link_options(winapk-tsf-test PRIVATE -static)
 
   # An app's native libraries (host/guest_libs.h): the stub DLL

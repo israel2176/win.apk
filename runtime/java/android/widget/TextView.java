@@ -7900,7 +7900,7 @@ public class TextView extends View
         // served again even when the app hid the soft input before (a hide here
         // unbinds it, where on a device the editor stays served and only the
         // keyboard goes), and Windows' touch keyboard stands for the soft
-        // keyboard (Win.apk's HostTextInput). Not InputMethodManager.showSoftInput,
+        // keyboard (Win.apk's WindowsTextInput). Not InputMethodManager.showSoftInput,
         // whose soft-key route would take the field off its InputConnection.
         if (ed != null && ev != null
                 && ev.getActionMasked() == android.view.MotionEvent.ACTION_UP
@@ -7909,7 +7909,7 @@ public class TextView extends View
             if (getShowSoftInputOnFocus()) {
                 android.view.inputmethod.InputMethodManager.macapkClearHideSuppressed();
                 android.view.inputmethod.InputMethodManager.macapkOnViewFocusChanged(this, true);
-                com.macapk.loader.HostTextInput.softInput(true);
+                com.macapk.loader.WindowsTextInput.softInput(true);
             }
             handled = true;
         }

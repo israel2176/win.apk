@@ -352,6 +352,8 @@ jobs:
         run: ./build/winapk-window-test.exe
       - name: Run the screen-reader (UI Automation) test
         run: ./build/winapk-uia-test.exe
+      - name: Run the text input rules test
+        run: ./build/winapk-text-input-test.exe
       - name: Run the TSF text store test
         run: ./build/winapk-tsf-test.exe
       - name: Run the launcher's state test
@@ -527,12 +529,13 @@ jobs:
           MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/hosttouch-test)" com.macapk.loader.HostTouchTest
       - name: Run the text services' edits test
         run: |
-          # A TSF text service's edits (composition, replacement, selection) as
-          # HostTextInput applies them to an InputConnection, on a plain JVM.
+          # The text services' edits (compositions, commits, reconversion, their look) as
+          # WindowsTextInput applies them to an InputConnection, and the copy of the editor
+          # it sends back, on a plain JVM.
           export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
           cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/aosp-graphics.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
-          "$JAVA_HOME/bin/javac" -cp "$cp" -d build/hosttext-test windows/test/java/com/macapk/loader/HostTextInputTest.java
-          MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/hosttext-test)" com.macapk.loader.HostTextInputTest
+          "$JAVA_HOME/bin/javac" -cp "$cp" -d build/textinput-test windows/test/java/com/macapk/loader/WindowsTextInputTest.java
+          MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/textinput-test)" com.macapk.loader.WindowsTextInputTest
       - name: Run the framework stubs test
         run: |
           # Framework methods that were stubs (windows/test/apicheck/Completeness.java
