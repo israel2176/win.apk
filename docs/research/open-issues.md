@@ -815,7 +815,7 @@ New bugs found with AOSP views:
   layout (categories and suggested versions differ). The repository's
   timestamp is not yet compared with the last one read (F-Droid's client
   refuses an older index).
-- **Explorer's thumbnails of the app files (November 2026, from the other runtime).**
+- **Explorer's thumbnails of the app files (November 2026).**
   `bin\winapk-shell.dll` (`windows/shell/`, about 0.3 MB): each `.apk`,
   `.apkm`, `.xapk`, `.apks` shows its own icon, parsed natively. *Verified*:
   `winapk-apk-icon-test` (made-up APKs and bundles, truncated and corrupted
@@ -830,7 +830,17 @@ New bugs found with AOSP views:
   installed (its `apps\<name>\icon.png`), else Win.apk's file icon; WebP
   needs Windows' codec (missing on some N/LTSC editions; Wine has none);
   small icons and the details view keep the type's icon (an `IExtractIcon`
-  handler would be needed, as the other runtime's).
+  handler would be needed). *Rewritten* (2026-11-24) from Microsoft's
+  `IThumbnailProvider`/`IInitializeWithStream` documentation: the DLL unloads
+  when COM asks and nothing holds it, the IIDs come from the SDK headers
+  (`__uuidof`), pixels premultiplied while scaled and composed, straight
+  `WTSAT_ARGB` out, at most 1024 px, reads through a 64 KB block cache,
+  adaptive icons under AOSP's default circle mask. Checked under Wine through
+  the DLL's COM object (a harness, not in the tree): 9 of 12 F-Droid APKs
+  drawn at 16, 256 and 1024 px, the other three (WebP or vector) refused, one
+  of them (Fossify Notes) then drawn from a stand-in installed `icon.png`; truncated, random and 3 GB sparse files
+  refused in 1 ms; `DllCanUnloadNow` S_FALSE while a factory lives, S_OK
+  after.
 - **Proxy (November 2026).** Apps now follow Windows' proxy
   (`-Djava.net.useSystemProxies=true`, `runtime_main.cpp`); before, the JDK's
   default selector went direct whatever Windows said (checked under Wine: a
