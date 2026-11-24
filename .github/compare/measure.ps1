@@ -55,7 +55,11 @@ Add-Type -AssemblyName System.Drawing
 if (-not ('CmpWin' -as [type])) {
   # By location: PowerShell 7 does not resolve System.Drawing's facade by name for the compiler.
   $drawing = @([Drawing.Bitmap].Assembly.Location, [Drawing.Rectangle].Assembly.Location) | Sort-Object -Unique
-  Add-Type -ReferencedAssemblies $drawing -TypeDefinition @'
+  # Naming any assembly replaces Add-Type's defaults, so the facades the code's other namespaces
+  # (List<>, Marshal, DllImport) compile against are named too.
+  $refs = @($drawing) + @('System.Runtime', 'System.Collections', 'System.Runtime.InteropServices',
+                          'System.Console', 'System.Linq')
+  Add-Type -ReferencedAssemblies $refs -TypeDefinition @'
 using System;
 using System.Collections.Generic;
 using System.Drawing;
