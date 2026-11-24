@@ -29,14 +29,6 @@ int64_t nano_time() {
 }
 
 // ---- the mixer -------------------------------------------------------------------------
-class Source {
-public:
-    virtual ~Source() = default;
-    // Adds `frames` stereo frames at `out_rate` into `out`. False: finished,
-    // drop me.
-    virtual bool mix(float* out, size_t frames, int out_rate) = 0;
-};
-
 namespace {
 
 template <typename T>
@@ -65,12 +57,18 @@ public:
         sources_.push_back(std::move(s));
     }
     void remove(const Source* s) {
-        std::lock_guard<std::mutex> hold(lock_);
-        sources_.erase(std::remove_if(sources_.begin(), sources_.end(),
-                                      [s](const std::shared_ptr<Source>& x) { return x.get() == s; }),
-                       sources_.end());
+        {
+            std::lock_guard<std::mutex> hold(lock_);
+            sources_.erase(std::remove_if(sources_.begin(), sources_.end(),
+                                          [s](const std::shared_ptr<Source>& x) { return x.get() == s; }),
+                           sources_.end());
+        }
+        // The cycle in progress may still hold `s` in its copy of the list:
+        // wait for it to end, so the caller may free what s->mix() reads.
+        if (std::this_thread::get_id() != thread_.load()) std::lock_guard<std::mutex> cycle(cycle_);
     }
     int rate() const { return rate_.load(); }
+    size_t period() const { return period_.load(); }
 
 private:
     Mixer() {
@@ -79,6 +77,7 @@ private:
 
     void mix(float* out, size_t frames) {
         std::fill(out, out + frames * 2, 0.0f);
+        std::lock_guard<std::mutex> cycle(cycle_);
         std::vector<std::shared_ptr<Source>> now;
         {
             std::lock_guard<std::mutex> hold(lock_);
@@ -91,6 +90,7 @@ private:
     }
 
     void run() {
+        thread_ = std::this_thread::get_id();
         CoInitializeEx(nullptr, COINIT_MULTITHREADED);
         if (!run_device()) run_silent();
     }
@@ -122,6 +122,10 @@ private:
                         SUCCEEDED(client->SetEventHandle(ready)) && SUCCEEDED(client->GetBufferSize(&buffer_frames)) &&
                         SUCCEEDED(client->GetService(IID_PPV_ARGS(&render))) && SUCCEEDED(client->Start());
         rate_ = static_cast<int>(fmt->nSamplesPerSec);
+        REFERENCE_TIME device_period = 0;  // 100 ns units
+        if (ok && SUCCEEDED(client->GetDevicePeriod(&device_period, nullptr)) && device_period > 0) {
+            period_ = static_cast<size_t>(device_period * rate_.load() / 10000000LL);
+        }
         CoTaskMemFree(fmt);
         if (!ok) {
             CloseHandle(ready);
@@ -159,6 +163,7 @@ private:
     // No device: consume audio at real time, discarding it.
     void run_silent() {
         if (rate_.load() <= 0) rate_ = 48000;
+        period_ = static_cast<size_t>(rate_.load() / 100);  // the 10 ms sleep below
         std::vector<float> mixbuf;
         int64_t last = nano_time();
         for (;;) {
@@ -173,8 +178,11 @@ private:
     }
 
     std::mutex lock_;
+    std::mutex cycle_;  // held through one mix cycle (remove waits on it)
     std::vector<std::shared_ptr<Source>> sources_;
     std::atomic<int> rate_{48000};
+    std::atomic<size_t> period_{480};
+    std::atomic<std::thread::id> thread_{};
 };
 
 }  // namespace
@@ -395,6 +403,12 @@ void stream_params(Stream* s, float* speed, float* pitch) { s->params(speed, pit
 size_t stream_capacity(Stream* s) { return s->capacity(); }
 size_t stream_set_buffer_size(Stream* s, size_t frames) { return s->set_buffer_size(frames); }
 int64_t stream_underruns(Stream* s) { return s->underruns(); }
+
+// ---- pulled sources ----------------------------------------------------------------------
+void source_add(std::shared_ptr<Source> s) { Mixer::get().add(std::move(s)); }
+void source_remove(const Source* s) { Mixer::get().remove(s); }
+int output_rate() { return Mixer::get().rate(); }
+size_t output_period_frames() { return Mixer::get().period(); }
 
 // ---- clip voices -------------------------------------------------------------------------
 class Voice final : public Source {
