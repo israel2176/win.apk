@@ -1250,8 +1250,21 @@ void tsf_layout(HWND hwnd, const WindowTextDocument& d) {
     RECT caret{};
     if (d.has_caret) {
         caret = box_to_client(hwnd, d.caret);
-        MapWindowPoints(hwnd, nullptr, reinterpret_cast<POINT*>(&caret), 2);
+    } else {
+        // A field the app draws itself (Compose) has no Layout to ask: the candidate window
+        // goes where the user last pointed, as with IMM32 (place_ime).
+        RECT client{};
+        GetClientRect(hwnd, &client);
+        const RECT box = app_rect(client);
+        const float w = static_cast<float>(box.right - box.left), h = static_cast<float>(box.bottom - box.top);
+        if (w > 0 && h > 0) {
+            const float x = g_mouse_at.x >= 0 ? static_cast<float>(g_mouse_at.x) : 0.0f;
+            const float y = g_mouse_at.x >= 0 ? static_cast<float>(g_mouse_at.y) : h * 0.75f;
+            const float r[4] = {x / w, y / h, x / w, y / h};
+            caret = box_to_client(hwnd, r);
+        }
     }
+    if (caret.bottom > caret.top) MapWindowPoints(hwnd, nullptr, reinterpret_cast<POINT*>(&caret), 2);
     g_tsf->Caret(caret);
     tsf::TextGeometry g;
     g.epoch = d.epoch;
