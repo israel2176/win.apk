@@ -8,8 +8,10 @@
 // device cannot be opened, which AudioRecord reports as an init failure.
 //
 // A capture thread converts the device's frames to the app's rate and channel
-// count (linear resampling) into a buffer the reads drain.
+// count (linear resampling) into a buffer the reads drain. OpenSL ES's
+// recorders (native_opensles.cpp) use the same capture, through audio_capture.h.
 
+#include "audio_capture.h"
 #include "host_natives.h"
 
 #include <algorithm>
@@ -29,11 +31,10 @@
 #include <audioclient.h>
 #include <mmdeviceapi.h>
 
-namespace winapk::host {
+namespace winapk::audio {
 
 namespace {
 
-constexpr jint kPermGranted = 1, kPermDenied = 2;
 const GUID kSubtypeFloat = {0x00000003, 0x0000, 0x0010, {0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71}};
 
 template <typename T>
@@ -45,6 +46,8 @@ struct Com {
     T** operator&() { return &p; }
     T* operator->() { return p; }
 };
+
+}  // namespace
 
 bool microphone_allowed() {
     wchar_t value[32] = {};
@@ -220,6 +223,35 @@ private:
     std::mutex data_lock_;
     std::condition_variable data_cv_;
     std::deque<float> buf_;
+};
+
+std::shared_ptr<Capture> capture_create(int rate, int channels, int buffer_frames) {
+    if (rate <= 0 || channels <= 0) return nullptr;
+    return std::make_shared<Capture>(rate, channels, buffer_frames);
+}
+bool capture_start(Capture* c) { return c->start(); }
+void capture_stop(Capture* c) { c->stop(); }
+size_t capture_read(Capture* c, float* out, size_t n, bool blocking) { return c->read(out, n, blocking); }
+
+}  // namespace winapk::audio
+
+namespace winapk::host {
+
+namespace {
+
+using audio::Capture;
+using audio::microphone_allowed;
+
+constexpr jint kPermGranted = 1, kPermDenied = 2;
+
+template <typename T>
+struct Com {
+    T* p = nullptr;
+    ~Com() {
+        if (p) p->Release();
+    }
+    T** operator&() { return &p; }
+    T* operator->() { return p; }
 };
 
 std::mutex g_lock;
