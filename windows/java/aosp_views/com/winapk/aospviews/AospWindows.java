@@ -242,6 +242,23 @@ public final class AospWindows {
     static final java.util.concurrent.atomic.AtomicLong sAddSeq = new java.util.concurrent.atomic.AtomicLong();
     static final Map<android.os.IBinder, Win> sWindows = new ConcurrentHashMap<>();
 
+    /** The windows a screen reader reads (com.macapk.loader.HostAccessibility), bottom to top as
+     *  the compositor stacks them: each shown window's root view (its window token is the
+     *  IWindow it was added with). Main thread. */
+    static java.util.List<android.view.View> accessibilityRoots() {
+        java.util.List<Object[]> shown = new java.util.ArrayList<>();
+        for (android.view.View root : WindowManagerGlobal.getInstance().getWindowViews()) {
+            android.os.IBinder token = root.getWindowToken();
+            Win w = token != null ? sWindows.get(token) : null;
+            if (w != null && w.visible && w.attrs != null) shown.add(new Object[] {w, root});
+        }
+        shown.sort(java.util.Comparator.comparingInt((Object[] e) -> Compositor.band(((Win) e[0]).attrs.type))
+                .thenComparingLong(e -> ((Win) e[0]).added));
+        java.util.List<android.view.View> out = new java.util.ArrayList<>(shown.size());
+        for (Object[] e : shown) out.add((android.view.View) e[1]);
+        return out;
+    }
+
     /** IWindowSession: what WindowManagerService does for a window. */
     public static final class WindowSession {
         private final WindowLayout mLayout = new WindowLayout();

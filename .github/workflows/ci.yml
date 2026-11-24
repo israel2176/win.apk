@@ -489,6 +489,17 @@ jobs:
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/camera-orientation-test windows/test/java/CameraOrientationTest.java
           MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -Djava.awt.headless=true \
             -cp "$cp;$(cygpath -w build/camera-orientation-test)" CameraOrientationTest
+      - name: Run the accessibility tree test
+        run: |
+          # What a screen reader is given of the views (HostAccessibility's
+          # snapshot for UI Automation): names in Hebrew, AOSP's reading order
+          # (right to left too), states, and actions reaching the views; on a
+          # plain JVM.
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          cp="$(cygpath -w stage/lib/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          "$JAVA_HOME/bin/javac" -cp "$cp" -d build/a11y-test windows/test/java/com/macapk/loader/AccessibilityTreeTest.java
+          MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -Djava.awt.headless=true \
+            -cp "$cp;$(cygpath -w build/a11y-test)" com.macapk.loader.AccessibilityTreeTest
       - name: Run the host network test
         run: |
           # What ConnectivityManager makes of the host's default-route adapter
