@@ -91,6 +91,16 @@ foreach(f IN LISTS WINAPK_VPX_C_SOURCES WINAPK_VPX_ASM_SOURCES)
   endforeach()
 endforeach()
 add_library(winapk_vpx STATIC ${vpx_sources})
+if(WIN32)
+  # libvpx's threads on Windows: vpx_util/vpx_thread.h's own Win32 ones (CRITICAL_SECTION,
+  # CONDITION_VARIABLE, _beginthreadex) when HAVE_PTHREAD_H is 0, not winpthreads, which
+  # winapk-runtime does not link (its guests' pthread_* are the Bionic shim's).
+  file(READ ${WINAPK_CODECS_SRC}/libvpx/vpx_config.h winapk_vpx_config)
+  string(REPLACE "#define HAVE_PTHREAD_H 1" "#define HAVE_PTHREAD_H 0" winapk_vpx_config "${winapk_vpx_config}")
+  file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/codecs-win/vpx_config.h "${winapk_vpx_config}")
+  target_include_directories(winapk_vpx BEFORE PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/codecs-win)
+  target_compile_definitions(winapk_vpx PRIVATE _WIN32_WINNT=0x0A00)  # vpx_pthread.h needs Vista's
+endif()
 target_include_directories(winapk_vpx PRIVATE ${WINAPK_CODECS_SRC}/libvpx ${vpx})
 target_include_directories(winapk_vpx SYSTEM INTERFACE ${vpx})
 target_compile_options(winapk_vpx PRIVATE $<$<COMPILE_LANGUAGE:C>:${winapk_codec_cflags}>)
