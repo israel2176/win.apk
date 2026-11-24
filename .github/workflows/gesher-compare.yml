@@ -96,6 +96,9 @@ jobs:
           $p = Start-Process $setup -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait -PassThru
           "the other runtime setup: exit $($p.ExitCode)"
           if (-not (Test-Path "$env:LOCALAPPDATA\Programs\the other runtime\other-app.cmd")) { throw 'the other runtime did not install' }
+          # robocopy's 1 ("files copied") is still $LASTEXITCODE here (Start-Process sets none), and the
+          # runner exits the step with it.
+          $global:LASTEXITCODE = 0
       - name: Run both
         shell: pwsh
         env:
