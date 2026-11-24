@@ -1,7 +1,11 @@
 // AospResIds.java -- links AOSP's graphics classes (build_aosp_gfx.sh's) to the platform resource
-// table Win.apk ships (bin/tools/framework-res.apk), whose private ids are not android-14's.
+// table Win.apk ships. That is android-14's own now (bin/aosp/framework-res-34.apk, made from
+// android-all's resources.arsc, which build_aosp_gfx.sh passes), so every id stays as compiled; it
+// was API 36's (bin/tools/framework-res.apk), whose private ids are not android-14's, and this
+// keeps working for any table.
 //
-//   java AospResIds.java <android-all.jar> <classes dir> <framework-res.apk> <R.java out>
+//   java AospResIds.java <android-all.jar> <classes dir> <framework-res.apk or any zip with a
+//                        resources.arsc> <R.java out>
 //
 // AOSP's drawables read their XML through com.android.internal.R.styleable's arrays of attribute ids
 // (GradientDrawable, VectorDrawablePath...) and javac put the index constants into their code, so

@@ -791,6 +791,11 @@ public final class ResourceIndex {
                 }
             }
         } catch (Throwable ignored) { /* fall through */ }
+        // Win.apk (November 2026) ships no API-36 table any more: AOSP's resources and views read
+        // android-14's own (bin/aosp/framework-res-34.apk, -Dwinapk.aosp.res.framework), and so does
+        // whatever still asks this index for the platform's, rather than nothing.
+        String aosp = System.getProperty("winapk.aosp.res.framework");
+        if (aosp != null && new File(aosp).isFile()) return new File(aosp);
         NativeLog.e(TAG, "framework resource apk NOT FOUND: MACAPK_FW_RES_APK is unset/invalid and no"
             + " tools/framework-res.apk sits next to the runtime's jars -- this build is incomplete"
             + " (runtime/scripts/build.sh stages it); every @android: reference will fail");

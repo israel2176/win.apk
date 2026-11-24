@@ -77,6 +77,9 @@ Name: desktopicon; Description: "{cm:DesktopIcon}"
 ; The Java runtime is replaced whole: files an older one had and this one has
 ; not (other modules' DLLs, a second CDS archive) would otherwise stay.
 Type: filesandordirs; Name: "{app}\jre"
+; Win.apk's own API-36 platform table, which earlier builds shipped: AOSP's resources read
+; bin\aosp\framework-res-34.apk now, and nothing reads this one (22.9 MB).
+Type: files; Name: "{app}\bin\tools\framework-res.apk"
 
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion createallsubdirs
