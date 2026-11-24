@@ -126,4 +126,8 @@ bool publish(const std::wstring& text);
 // An announcement (View.announceForAccessibility): a UIA notification.
 void announce(const std::wstring& text, bool assertive);
 
+// The provider of one node (0: the window's root), as UIA gets it: for test/uia_test.cpp, which
+// checks the patterns themselves where a client (Wine's) lacks them. A new reference.
+IUnknown* provider_for(HWND hwnd, int64_t id);
+
 }  // namespace winapk::host::uia

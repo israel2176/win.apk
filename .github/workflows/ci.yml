@@ -349,6 +349,8 @@ jobs:
         run: ./build/winapk-user-folders-test.exe "$(cygpath -w "$PWD")"
       - name: Run the window geometry test
         run: ./build/winapk-window-test.exe
+      - name: Run the screen-reader (UI Automation) test
+        run: ./build/winapk-uia-test.exe
       - name: Run the launcher's state test
         run: ./build/winapk-launcher-state-test.exe
       - name: Run the app file icon test (Explorer's thumbnails, windows/shell)
