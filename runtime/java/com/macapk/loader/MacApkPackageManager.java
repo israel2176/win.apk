@@ -4153,6 +4153,8 @@ public final class MacApkPackageManager extends PackageManager {
     // recording all work. The declarations below are backed by observed frames
     // and observed audio, not by code landing.
     private static final java.util.Set<String> SYSTEM_FEATURES;
+    private static final String FEATURE_CAMERA_AUTOFOCUS_NAME = "android.hardware.camera.autofocus";
+    private static final String FEATURE_CAMERA_FLASH_NAME = "android.hardware.camera.flash";
     static {
         java.util.LinkedHashSet<String> f = new java.util.LinkedHashSet<>();
         // FEATURE_TOUCHSCREEN. The device Mac.apk presents has a finger
@@ -4161,24 +4163,17 @@ public final class MacApkPackageManager extends PackageManager {
         // real ACTION_DOWN / MOVE / UP MotionEvents down the ordinary View +
         // TouchDispatcher path, so every test an app can run observes one.
         f.add("android.hardware.touchscreen");
-        // ---- Camera (v1.0.942) ------------------------------------------
-        // ⚠ FEATURE_CAMERA is deliberately NOT here, and that is not an
-        // oversight. AOSP's FEATURE_CAMERA means a camera facing AWAY from the
-        // screen (a rear camera); FEATURE_CAMERA_FRONT means one facing the
-        // user; FEATURE_CAMERA_ANY means at least one in any direction. A
-        // MacBook has exactly one built-in camera and it faces the user, which
-        // the capture layer reports as LENS_FACING_FRONT. So FRONT and ANY are
-        // true and the rear-camera claim stays false -- an app that gated a
-        // "flip camera" control or a document-scanner flow on FEATURE_CAMERA
-        // would otherwise take a branch this hardware cannot serve.
-        //
-        // ⚠ KNOWN INCOMPLETENESS behind these flags, notated rather than hidden:
-        // only ImageReader outputs receive frames. A capture session whose only
-        // targets are SurfaceView / TextureView / MediaRecorder fails LOUDLY at
-        // onConfigureFailed rather than showing a black rectangle, but it does
-        // fail, and TextureView preview is what a typical camera app reaches for
-        // first. android.hardware.Camera (the legacy camera1 API) still reports
-        // zero cameras. Both are real work, not adjudications.
+        // ---- Camera ------------------------------------------------------
+        // FEATURE_CAMERA (a camera facing away from the screen), _FRONT and
+        // _ANY. The owner's decision: a PC's camera serves both roles, so apps
+        // that ask for the rear camera (cheque scanners) work. Every webcam is
+        // offered as a back and a front camera (native_camera.cpp,
+        // kRolesPerDevice; CameraBridge's virtual camera, with no webcam, is a
+        // back one), so all three are true and camera1's open(), camera2's
+        // LENS_FACING_BACK and this flag agree.
+        // android.hardware.camera.autofocus and .flash are not in this static
+        // set: they depend on the webcam (hasSystemFeature asks CameraBridge).
+        f.add("android.hardware.camera");
         f.add("android.hardware.camera.any");
         f.add("android.hardware.camera.front");
         // ---- Microphone (v1.0.942) --------------------------------------
@@ -4358,6 +4353,14 @@ public final class MacApkPackageManager extends PackageManager {
         if (version <= 0 && "android.hardware.bluetooth_le".equals(name)) {
             has = BluetoothBridge.available();
         }
+        // AOSP declares these from the device's camera HAL; here, only when a
+        // webcam really autofocuses / has a torch (CameraBridge asks the driver).
+        if (version <= 0 && FEATURE_CAMERA_AUTOFOCUS_NAME.equals(name)) {
+            has = CameraBridge.anyCameraHasAutofocus();
+        }
+        if (version <= 0 && FEATURE_CAMERA_FLASH_NAME.equals(name)) {
+            has = CameraBridge.anyCameraHasTorch();
+        }
         // Guest Vulkan (Boot.noteGuestVulkan / bionic_shim_vulkan.cpp): an app
         // that gets libvulkan.so also sees the features that announce it, with
         // AOSP's version encodings -- vulkan.version is the VK_API_VERSION the
@@ -4411,6 +4414,16 @@ public final class MacApkPackageManager extends PackageManager {
                 fi.name = tv;
                 res.add(fi);
             }
+        }
+        if (CameraBridge.anyCameraHasAutofocus()) {
+            android.content.pm.FeatureInfo af = new android.content.pm.FeatureInfo();
+            af.name = FEATURE_CAMERA_AUTOFOCUS_NAME;
+            res.add(af);
+        }
+        if (CameraBridge.anyCameraHasTorch()) {
+            android.content.pm.FeatureInfo fl = new android.content.pm.FeatureInfo();
+            fl.name = FEATURE_CAMERA_FLASH_NAME;
+            res.add(fl);
         }
         if (BluetoothBridge.available()) {
             android.content.pm.FeatureInfo ble = new android.content.pm.FeatureInfo();

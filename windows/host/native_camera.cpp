@@ -50,6 +50,7 @@
 #include <mferror.h>
 #include <mfidl.h>
 #include <mfreadwrite.h>
+#include <strmif.h>
 
 #include "win32_window.h"
 
@@ -140,6 +141,7 @@ struct Device {
     std::string id, name;
     bool probed = false;
     std::vector<Format> formats;  // distinct sizes, largest first
+    jint controls = 0;            // kCtl* bits, probed with the formats
 };
 
 std::mutex g_devices_lock;
@@ -195,15 +197,207 @@ bool open_reader(const std::wstring& link, Com<IMFMediaSource>& source, Com<IMFS
     return true;
 }
 
+// ---- focus and torch --------------------------------------------------------
+//
+// What a webcam lets a program steer, asked of the driver, never assumed:
+//
+//  * IAMCameraControl's CameraControl_Focus, the UVC focus control
+//    (CT_FOCUS_ABSOLUTE / CT_FOCUS_AUTO): GetRange's flags say whether the
+//    camera focuses by itself (CameraControl_Flags_Auto), and Get reads the lens
+//    position while it does. Most autofocus webcams have this and nothing else.
+//  * The extended camera controls (KSPROPERTYSETID_ExtendedCameraControl, the
+//    Windows 8.1 camera driver model): FOCUSMODE with a one-shot (AUTO | LOCK)
+//    and a continuous mode, FOCUSSTATE (searching / focused / failed), and
+//    TORCHMODE. Tablets' and 2-in-1s' built-in cameras have these.
+//
+// A camera is reported as autofocusing (camera1's "auto", camera2's AF modes,
+// android.hardware.camera.autofocus) only when a focus can be both started and
+// observed: the extended one-shot with its focus state, or the UVC auto flag
+// with a readable lens position. A torch only with TORCHMODE's ON capability.
+// Everything else is a fixed-focus camera without a flash, which is what the
+// app is told.
+//
+// No distance comes out of either: UVC's focus unit is nominally millimetres
+// but webcams report their own scale (0..255 is common), so camera2's
+// LENS_INFO_MINIMUM_FOCUS_DISTANCE would be invented and is left out for an
+// autofocus camera (it is optional in AOSP), and 0 (fixed focus) otherwise.
+
+// CameraBridge.CONTROL_* bits.
+constexpr jint kCtlAutofocus = 1, kCtlTorch = 2;
+// CameraBridge.FOCUS_HOLD / FOCUS_CONTINUOUS.
+constexpr int kFocusHold = 0, kFocusContinuous = 1;
+
+// The extended controls' wire format, from the Windows SDK's ksmedia.h (not in
+// MinGW's): the property set, the ids used here, the header every extended
+// property starts with, and the flags.
+const GUID kExtendedCameraControl = {0x1CB79112, 0xC0D2, 0x4213, {0x9C, 0xA6, 0xCD, 0x4F, 0xDB, 0x92, 0x79, 0x72}};
+constexpr ULONG kExtTorchMode = 8, kExtFocusMode = 13, kExtFocusState = 20;
+constexpr ULONG kExtFilterScope = 0xFFFFFFFF;
+constexpr ULONGLONG kVideoProcAuto = 0x1, kVideoProcLock = 0x4;
+constexpr ULONGLONG kExtFocusContinuous = 0x100, kFocusRangeFull = 0x40000;
+constexpr ULONGLONG kTorchOff = 0x0, kTorchOn = 0x1;
+enum : ULONGLONG {
+    kFocusStateUninitialized,
+    kFocusStateLost,
+    kFocusStateSearching,
+    kFocusStateFocused,
+    kFocusStateFailed
+};
+constexpr ULONG kKsGet = 0x1, kKsSet = 0x2;  // KSPROPERTY_TYPE_GET / _SET
+
+struct KsIdentifier {  // KSPROPERTY
+    GUID set;
+    ULONG id;
+    ULONG flags;
+};
+struct ExtHeader {  // KSCAMERA_EXTENDEDPROP_HEADER
+    ULONG version, pin_id, size, result;
+    ULONGLONG flags, capability;
+};
+struct ExtVideoProc {  // KSCAMERA_EXTENDEDPROP_VIDEOPROCSETTING
+    ULONG mode;
+    LONG min, max, step;
+    ULONGLONG value;
+    ULONGLONG reserved;
+};
+static_assert(sizeof(ExtHeader) == 32 && sizeof(ExtVideoProc) == 32, "ksmedia.h layouts");
+
+// IKsControl as ks.h declares it (ks.h itself pulls in the kernel-streaming
+// headers' NTSTATUS world; the vtable is all that matters here).
+struct IKsControlMin : public IUnknown {
+    virtual LONG STDMETHODCALLTYPE KsProperty(KsIdentifier*, ULONG, void*, ULONG, ULONG*) = 0;
+    virtual LONG STDMETHODCALLTYPE KsMethod(KsIdentifier*, ULONG, void*, ULONG, ULONG*) = 0;
+    virtual LONG STDMETHODCALLTYPE KsEvent(KsIdentifier*, ULONG, void*, ULONG, ULONG*) = 0;
+};
+const IID kIID_IKsControl = {0x28F54685, 0x06FD, 0x11D2, {0xB2, 0x7A, 0x00, 0xA0, 0xC9, 0x22, 0x31, 0x96}};
+const IID kIID_IAMCameraControl = {0xC6E13370, 0x30AC, 0x11D0, {0xA1, 0x8C, 0x00, 0xA0, 0xC9, 0x11, 0x89, 0x56}};
+
+// GET of an extended property: the header and `payload_size` bytes after it.
+bool ext_get(IKsControlMin* ks, ULONG id, ExtHeader* hdr, void* payload, ULONG payload_size) {
+    std::vector<uint8_t> buf(sizeof(ExtHeader) + payload_size);
+    KsIdentifier prop{kExtendedCameraControl, id, kKsGet};
+    ULONG got = 0;
+    if (ks->KsProperty(&prop, sizeof(prop), buf.data(), static_cast<ULONG>(buf.size()), &got) < 0 ||
+        got < sizeof(ExtHeader)) {
+        return false;
+    }
+    std::memcpy(hdr, buf.data(), sizeof(ExtHeader));
+    if (payload) std::memcpy(payload, buf.data() + sizeof(ExtHeader), payload_size);
+    return true;
+}
+
+bool ext_set(IKsControlMin* ks, ULONG id, ULONGLONG flags, const void* payload, ULONG payload_size) {
+    std::vector<uint8_t> buf(sizeof(ExtHeader) + payload_size);
+    ExtHeader hdr{};
+    hdr.version = 1;
+    hdr.pin_id = kExtFilterScope;
+    hdr.size = static_cast<ULONG>(buf.size());
+    hdr.flags = flags;
+    std::memcpy(buf.data(), &hdr, sizeof(hdr));
+    if (payload) std::memcpy(buf.data() + sizeof(hdr), payload, payload_size);
+    KsIdentifier prop{kExtendedCameraControl, id, kKsSet};
+    ULONG got = 0;
+    return ks->KsProperty(&prop, sizeof(prop), buf.data(), static_cast<ULONG>(buf.size()), &got) >= 0;
+}
+
+// The controls of one open media source. Used on an MTA thread only.
+struct Controls {
+    Com<IAMCameraControl> uvc;
+    Com<IKsControlMin> ks;
+    bool uvc_auto = false;    // the camera focuses by itself
+    bool uvc_manual = false;  // and can be held where it is
+    bool uvc_read = false;    // Get reports the lens position
+    bool ext_focus = false;   // extended FOCUSMODE: one-shot and continuous
+    bool ext_state = false;   // extended FOCUSSTATE
+    bool ext_torch = false;   // extended TORCHMODE with ON
+
+    void open(IMFMediaSource* source) {
+        if (SUCCEEDED(source->QueryInterface(kIID_IAMCameraControl, reinterpret_cast<void**>(&uvc.p)))) {
+            long mn = 0, mx = 0, step = 0, def = 0, caps = 0, value = 0, flags = 0;
+            if (SUCCEEDED(uvc->GetRange(CameraControl_Focus, &mn, &mx, &step, &def, &caps))) {
+                uvc_auto = (caps & CameraControl_Flags_Auto) != 0;
+                uvc_manual = (caps & CameraControl_Flags_Manual) != 0 && mx > mn;
+                uvc_read = SUCCEEDED(uvc->Get(CameraControl_Focus, &value, &flags));
+            }
+        }
+        if (SUCCEEDED(source->QueryInterface(kIID_IKsControl, reinterpret_cast<void**>(&ks.p)))) {
+            ExtHeader h{};
+            ExtVideoProc vp{};
+            ext_focus = ext_get(ks.p, kExtFocusMode, &h, &vp, sizeof(vp)) && (h.capability & kVideoProcAuto) &&
+                        (h.capability & kVideoProcLock) && (h.capability & kExtFocusContinuous);
+            ULONGLONG v = 0;
+            ext_state = ext_get(ks.p, kExtFocusState, &h, &v, sizeof(v));
+            ext_torch = ext_get(ks.p, kExtTorchMode, &h, &v, sizeof(v)) && (h.capability & kTorchOn);
+        }
+    }
+
+    // A focus that can be started and seen to finish.
+    bool use_ext() const { return ext_focus && ext_state; }
+    bool autofocus() const { return use_ext() || (uvc_auto && uvc_read); }
+    jint mask() const { return (autofocus() ? kCtlAutofocus : 0) | (ext_torch ? kCtlTorch : 0); }
+
+    bool lens(long* value) {
+        long flags = 0;
+        return uvc_read && SUCCEEDED(uvc->Get(CameraControl_Focus, value, &flags));
+    }
+    // Lets the camera focus by itself, continuously.
+    void continuous() {
+        if (use_ext()) {
+            ExtVideoProc vp{};
+            ext_set(ks.p, kExtFocusMode, kExtFocusContinuous | kFocusRangeFull, &vp, sizeof(vp));
+        } else if (uvc_auto) {
+            long v = 0;
+            lens(&v);
+            uvc->Set(CameraControl_Focus, v, CameraControl_Flags_Auto);
+        }
+    }
+    // Keeps the lens where it is.
+    void hold() {
+        if (use_ext()) {
+            ExtVideoProc vp{};
+            ext_set(ks.p, kExtFocusMode, kVideoProcLock, &vp, sizeof(vp));
+        } else if (uvc_manual) {
+            long v = 0;
+            if (lens(&v)) uvc->Set(CameraControl_Focus, v, CameraControl_Flags_Manual);
+        }
+    }
+    // Starts a one-shot focus: the extended AUTO | LOCK (the driver converges
+    // and locks), or UVC's auto focus, which hold() locks once the lens settles.
+    void single() {
+        if (use_ext()) {
+            ExtVideoProc vp{};
+            ext_set(ks.p, kExtFocusMode, kVideoProcAuto | kVideoProcLock | kFocusRangeFull, &vp, sizeof(vp));
+        } else {
+            continuous();
+        }
+    }
+    ULONGLONG focus_state() {
+        ExtHeader h{};
+        ULONGLONG v = 0;
+        return ext_state && ext_get(ks.p, kExtFocusState, &h, &v, sizeof(v)) ? h.flags : kFocusStateUninitialized;
+    }
+    bool torch(bool on) {
+        if (!ext_torch) return false;
+        ULONGLONG power = on ? 100 : 0;
+        return ext_set(ks.p, kExtTorchMode, on ? kTorchOn : kTorchOff, &power, sizeof(power));
+    }
+};
+
 // The sizes and frame-rate ranges the device advertises. Opening the device is
 // the only way Media Foundation lists them, so it is done once per device, on
 // demand, and also serves as open()'s proof that the device can be opened.
-std::vector<Format> probe_formats(const std::wstring& link) {
+std::vector<Format> probe_formats(const std::wstring& link, jint* controls) {
     std::vector<Format> out;
+    *controls = 0;
     on_mta([&] {
         Com<IMFMediaSource> source;
         Com<IMFSourceReader> reader;
         if (!open_reader(link, source, reader)) return;
+        {
+            Controls c;
+            c.open(source.p);
+            *controls = c.mask();
+        }
         for (DWORD i = 0;; ++i) {
             Com<IMFMediaType> t;
             if (FAILED(reader->GetNativeMediaType(kStream, i, &t))) break;
@@ -281,6 +475,7 @@ void refresh_devices(bool force) {
             if (old.link == d.link) {
                 d.probed = old.probed;
                 d.formats = std::move(old.formats);
+                d.controls = old.controls;
             }
         }
     }
@@ -309,7 +504,7 @@ bool device_at(int index, Device* out) {
     if (phys < 0) return false;
     Device& d = g_devices[static_cast<size_t>(phys)];
     if (!d.probed) {
-        d.formats = probe_formats(d.link);
+        d.formats = probe_formats(d.link, &d.controls);
         // A device that failed to open (in use exclusively, unplugged) is
         // probed again next time rather than remembered as format-less.
         d.probed = !d.formats.empty();
@@ -438,7 +633,170 @@ public:
         return latest_;
     }
 
+    // ---- focus and torch ----
+    //
+    // The device's controls belong to the capture thread's media source, so the
+    // calls below only post a request; the capture thread carries it out between
+    // frames (control_tick) and answers. Without a running capture there is no
+    // source to steer: AOSP's autoFocus is only valid between startPreview and
+    // stopPreview, and camera2 focuses as part of a running request.
+    jint controls() const { return controls_.load(); }
+
+    // kFocusHold: the lens stays where it is. kFocusContinuous: the camera
+    // keeps focusing by itself. Remembered, and applied when capture starts.
+    void set_focus_mode(int mode) {
+        std::lock_guard<std::mutex> hold(ctl_lock_);
+        focus_mode_ = mode;
+        ++focus_mode_gen_;
+    }
+
+    // A one-shot focus: 1 focused (and the lens then held), 0 not focused,
+    // -1 not possible (no autofocus, not capturing) or cancelled.
+    int autofocus(int timeout_ms) {
+        std::unique_lock<std::mutex> wait(ctl_lock_);
+        if (!capturing_ || !(controls_.load() & kCtlAutofocus)) return -1;
+        const uint64_t gen = ++af_req_gen_;
+        af_timeout_ms_ = std::max(timeout_ms, 100);
+        const bool answered = ctl_cv_.wait_for(wait, std::chrono::milliseconds(af_timeout_ms_ + 2000),
+                                               [&] { return af_done_gen_ >= gen || !capturing_; });
+        return answered && af_done_gen_ >= gen ? af_result_ : -1;
+    }
+
+    void cancel_autofocus() {
+        std::lock_guard<std::mutex> hold(ctl_lock_);
+        ++af_cancel_gen_;
+    }
+
+    // 0 unknown, 1 searching, 2 focused, 3 failed: what the camera reports
+    // while it focuses by itself (the extended focus state), or, for a UVC
+    // webcam, whether its lens position is moving (searching) or has settled.
+    int focus_state() const { return focus_state_.load(); }
+
+    bool set_torch(bool on) {
+        std::unique_lock<std::mutex> wait(ctl_lock_);
+        if (!capturing_ || !(controls_.load() & kCtlTorch)) return false;
+        torch_want_ = on;
+        const uint64_t gen = ++torch_gen_;
+        ctl_cv_.wait_for(wait, std::chrono::seconds(2), [&] { return torch_done_gen_ >= gen || !capturing_; });
+        return torch_done_gen_ >= gen && torch_ok_;
+    }
+
 private:
+    // The capture thread's side of the requests above, once per frame.
+    void control_tick(Controls& c, std::chrono::steady_clock::time_point now) {
+        using std::chrono::milliseconds;
+        uint64_t mode_gen, req_gen, cancel_gen, torch_gen;
+        int mode, timeout_ms;
+        bool torch_want;
+        {
+            std::lock_guard<std::mutex> hold(ctl_lock_);
+            mode_gen = focus_mode_gen_;
+            mode = focus_mode_;
+            req_gen = af_req_gen_;
+            cancel_gen = af_cancel_gen_;
+            timeout_ms = af_timeout_ms_;
+            torch_gen = torch_gen_;
+            torch_want = torch_want_;
+        }
+        if (torch_gen != torch_applied_gen_) {
+            torch_applied_gen_ = torch_gen;
+            const bool ok = c.torch(torch_want);
+            std::lock_guard<std::mutex> hold(ctl_lock_);
+            torch_ok_ = ok;
+            torch_done_gen_ = torch_gen;
+            ctl_cv_.notify_all();
+        }
+        if (cancel_gen != af_cancel_seen_) {
+            af_cancel_seen_ = cancel_gen;
+            if (af_running_) {
+                af_running_ = false;
+                finish_autofocus(-1);
+            }
+            mode_applied_gen_ = 0;  // back to the requested mode
+        }
+        if (mode_gen != mode_applied_gen_ && !af_running_) {
+            mode_applied_gen_ = mode_gen;
+            if (mode == kFocusContinuous) c.continuous(); else c.hold();
+            moved_at_ = now;
+        }
+        if (req_gen != af_started_gen_) {
+            af_started_gen_ = req_gen;
+            if (!c.autofocus()) {
+                finish_autofocus(-1);
+            } else {
+                af_running_ = true;
+                af_moved_ = af_seen_search_ = false;
+                af_start_ = now;
+                c.single();
+            }
+        }
+        long lens = 0;
+        const bool have_lens = c.lens(&lens);
+        if (have_lens && lens != last_lens_) {
+            last_lens_ = lens;
+            moved_at_ = now;
+            if (af_running_) af_moved_ = true;
+        }
+        const ULONGLONG st = c.focus_state();
+        int passive = 0;
+        if (c.use_ext()) {
+            passive = st == kFocusStateSearching ? 1
+                      : st == kFocusStateFocused ? 2
+                      : st == kFocusStateFailed || st == kFocusStateLost ? 3 : 0;
+        } else if (have_lens) {
+            passive = now - moved_at_ < milliseconds(300) ? 1 : 2;
+        }
+        focus_state_ = passive;
+        if (!af_running_) return;
+        const auto elapsed = now - af_start_;
+        int result = -2;  // still focusing
+        if (c.use_ext()) {
+            // The state can still read FOCUSED from before the request for a
+            // moment; a search seen, or 300 ms, makes it this focus's answer.
+            if (st == kFocusStateSearching) af_seen_search_ = true;
+            const bool current = af_seen_search_ || elapsed >= milliseconds(300);
+            if (current && st == kFocusStateFocused) result = 1;
+            else if (current && (st == kFocusStateFailed || st == kFocusStateLost)) result = 0;
+        } else if (af_moved_ ? now - moved_at_ >= milliseconds(300) : elapsed >= milliseconds(600)) {
+            // The lens moved and has stopped, or never had to move.
+            result = 1;
+        }
+        if (result == -2 && elapsed >= milliseconds(timeout_ms)) result = 0;
+        if (result != -2) {
+            af_running_ = false;
+            c.hold();  // AOSP: the lens stays put after autoFocus until cancelAutoFocus
+            finish_autofocus(result);
+        }
+    }
+
+    void finish_autofocus(int result) {
+        std::lock_guard<std::mutex> hold(ctl_lock_);
+        af_result_ = result;
+        af_done_gen_ = af_started_gen_;
+        ctl_cv_.notify_all();
+    }
+
+    void set_capturing(bool on) {
+        std::lock_guard<std::mutex> hold(ctl_lock_);
+        capturing_ = on;
+        if (on) {
+            // A new capture: the mode is applied afresh; nothing is pending.
+            mode_applied_gen_ = 0;
+            af_started_gen_ = af_req_gen_;
+            af_cancel_seen_ = af_cancel_gen_;
+            torch_applied_gen_ = torch_gen_;
+            af_running_ = false;
+            moved_at_ = std::chrono::steady_clock::now();
+        } else {
+            // A request the thread will never see is answered here.
+            af_done_gen_ = af_req_gen_;
+            af_result_ = -1;
+            torch_done_gen_ = torch_gen_;
+            torch_ok_ = false;
+        }
+        ctl_cv_.notify_all();
+    }
+
     void choose(int w, int h, int fps) {
         const long long want = static_cast<long long>(std::max(w, 1)) * std::max(h, 1);
         const Format* best = nullptr;
@@ -550,8 +908,15 @@ private:
         std::fprintf(stderr, "[camera] start %ls: %s %dx%d @%.0ffps%s\n", device_name().c_str(),
                      ok ? "streaming" : "FAILED", w, h, fps, ok && video_range ? " (expanding video range)" : "");
         std::fflush(stderr);
+        Controls ctl;
+        if (ok) {
+            ctl.open(source.p);
+            controls_ = ctl.mask();
+            set_capturing(true);
+        }
         signal(ok);
         while (ok && !stopping_) {
+            control_tick(ctl, std::chrono::steady_clock::now());
             DWORD index = 0, flags = 0;
             LONGLONG ts = 0;
             Com<IMFSample> sample;
@@ -566,6 +931,9 @@ private:
             }
             if (sample) deliver(sample.p, w, h, stride, video_range);
         }
+        set_capturing(false);
+        ctl.uvc.reset();
+        ctl.ks.reset();
         reader.reset();
         {
             std::lock_guard<std::mutex> hold(state_lock_);
@@ -713,6 +1081,23 @@ private:
     std::condition_variable state_cv_;
     bool opened_ = false, failed_ = false, done_ = false;
     IMFMediaSource* source_ = nullptr;  // the capture thread's, for stop's shutdown; under state_lock_
+
+    // Focus and torch requests (under ctl_lock_) and the capture thread's own
+    // bookkeeping (capture thread only).
+    std::atomic<jint> controls_{0};
+    std::atomic<int> focus_state_{0};
+    std::mutex ctl_lock_;
+    std::condition_variable ctl_cv_;
+    bool capturing_ = false;
+    int focus_mode_ = kFocusHold;
+    uint64_t focus_mode_gen_ = 1, af_req_gen_ = 0, af_done_gen_ = 0, af_cancel_gen_ = 0;
+    int af_result_ = -1, af_timeout_ms_ = 3000;
+    bool torch_want_ = false, torch_ok_ = false;
+    uint64_t torch_gen_ = 0, torch_done_gen_ = 0;
+    uint64_t mode_applied_gen_ = 0, af_started_gen_ = 0, af_cancel_seen_ = 0, torch_applied_gen_ = 0;
+    bool af_running_ = false, af_moved_ = false, af_seen_search_ = false;
+    long last_lens_ = 0;
+    std::chrono::steady_clock::time_point af_start_, moved_at_;
 };
 
 std::mutex g_sessions_lock;
@@ -766,8 +1151,19 @@ jint JNICALL Cam_deviceFacing(JNIEnv*, jclass, jint index) {
     if (physical_index(index) < 0) return -1;
     return index % kRolesPerDevice == 0 ? kFacingBack : kFacingFront;
 }
-// The sensor does not turn with the screen, so no preview rotation is implied.
+// How the webcam's picture sits on the PC's own screen: Windows' capture
+// pipeline hands out frames upright for the display they are watched on (an
+// integrated camera's mounting rotation is applied by the camera stack), so 0.
+// This is not camera2's SENSOR_ORIENTATION: that is relative to the virtual
+// phone's natural (portrait) orientation, which CameraBridge.getSensorOrientation
+// adds from the display rotation the app is told.
 jint JNICALL Cam_sensorOrientation(JNIEnv*, jclass, jint) { return 0; }
+
+// kCtl* bits for camera `index` (probing it once if need be).
+jint JNICALL Cam_deviceControls(JNIEnv*, jclass, jint index) {
+    Device d;
+    return device_at(index, &d) ? d.controls : 0;
+}
 
 jint JNICALL Cam_formatCount(JNIEnv*, jclass, jint index) {
     Device d;
@@ -840,6 +1236,27 @@ void JNICALL Cam_close(JNIEnv*, jclass, jlong h) {
     s->release();
     s->stop();
 }
+void JNICALL Cam_setFocusMode(JNIEnv*, jclass, jlong h, jint mode) {
+    if (auto s = session(h)) s->set_focus_mode(mode == kFocusContinuous ? kFocusContinuous : kFocusHold);
+}
+// Blocks for up to timeout_ms (plus a margin): CameraBridge calls it off the
+// app's threads.
+jint JNICALL Cam_autoFocus(JNIEnv*, jclass, jlong h, jint timeout_ms) {
+    auto s = session(h);
+    return s ? s->autofocus(timeout_ms) : -1;
+}
+void JNICALL Cam_cancelAutoFocus(JNIEnv*, jclass, jlong h) {
+    if (auto s = session(h)) s->cancel_autofocus();
+}
+jint JNICALL Cam_focusState(JNIEnv*, jclass, jlong h) {
+    auto s = session(h);
+    return s ? s->focus_state() : 0;
+}
+jboolean JNICALL Cam_setTorch(JNIEnv*, jclass, jlong h, jboolean on) {
+    auto s = session(h);
+    return s && s->set_torch(on == JNI_TRUE) ? JNI_TRUE : JNI_FALSE;
+}
+
 jlong JNICALL Cam_framesDelivered(JNIEnv*, jclass, jlong h) {
     auto s = session(h);
     return s ? s->delivered() : 0;
@@ -1576,6 +1993,12 @@ const HostMethod kMethods[] = {
     WINAPK_HOST_NATIVE(kCls, "nativeDeviceName", "(I)Ljava/lang/String;", Cam_deviceName),
     WINAPK_HOST_NATIVE(kCls, "nativeDeviceFacing", "(I)I", Cam_deviceFacing),
     WINAPK_HOST_NATIVE(kCls, "nativeDeviceSensorOrientation", "(I)I", Cam_sensorOrientation),
+    WINAPK_HOST_NATIVE(kCls, "nativeDeviceControls", "(I)I", Cam_deviceControls),
+    WINAPK_HOST_NATIVE(kCls, "nativeSetFocusMode", "(JI)V", Cam_setFocusMode),
+    WINAPK_HOST_NATIVE(kCls, "nativeAutoFocus", "(JI)I", Cam_autoFocus),
+    WINAPK_HOST_NATIVE(kCls, "nativeCancelAutoFocus", "(J)V", Cam_cancelAutoFocus),
+    WINAPK_HOST_NATIVE(kCls, "nativeFocusState", "(J)I", Cam_focusState),
+    WINAPK_HOST_NATIVE(kCls, "nativeSetTorch", "(JZ)Z", Cam_setTorch),
     WINAPK_HOST_NATIVE(kCls, "nativeFormatCount", "(I)I", Cam_formatCount),
     WINAPK_HOST_NATIVE(kCls, "nativeFormatWidth", "(II)I", Cam_formatWidth),
     WINAPK_HOST_NATIVE(kCls, "nativeFormatHeight", "(II)I", Cam_formatHeight),
