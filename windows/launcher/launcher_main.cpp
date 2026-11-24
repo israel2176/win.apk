@@ -962,15 +962,17 @@ void apply_runtime_env(const std::wstring& name) {
 // ---------------------------------------------------------------------------
 // Windows integration: file types and shortcuts
 
-void set_reg_default(const std::wstring& sub, const std::wstring& value) {
+// A string value of HKCU\<sub> (its default value when name is null).
+void set_reg_string(const std::wstring& sub, const wchar_t* name, const std::wstring& value) {
     HKEY key = nullptr;
     if (RegCreateKeyExW(HKEY_CURRENT_USER, sub.c_str(), 0, nullptr, 0, KEY_SET_VALUE, nullptr, &key, nullptr) ==
         ERROR_SUCCESS) {
-        RegSetValueExW(key, nullptr, 0, REG_SZ, reinterpret_cast<const BYTE*>(value.c_str()),
+        RegSetValueExW(key, name, 0, REG_SZ, reinterpret_cast<const BYTE*>(value.c_str()),
                        static_cast<DWORD>((value.size() + 1) * sizeof(wchar_t)));
         RegCloseKey(key);
     }
 }
+void set_reg_default(const std::wstring& sub, const std::wstring& value) { set_reg_string(sub, nullptr, value); }
 
 std::wstring reg_default(const std::wstring& sub) {
     wchar_t buf[256] = {};
@@ -993,6 +995,20 @@ void register_file_types(bool force) {
         const std::wstring key = std::wstring(L"Software\\Classes\\") + ext;
         const std::wstring current = reg_default(key);
         if (force || current.empty() || current == L"WinApk.Package") set_reg_default(key, L"WinApk.Package");
+    }
+    // Each file's own app icon as its thumbnail (bin\winapk-shell.dll, windows/shell/apk_thumbnail.cpp), on the
+    // file type so it goes with it; per user, and run by the shell in its isolated surrogate process (no
+    // DisableProcessIsolation). The installer writes the same keys (winapk.iss).
+    const fs::path shell_dll = root() / L"bin" / L"winapk-shell.dll";
+    std::error_code ec;
+    if (fs::exists(shell_dll, ec)) {
+        const std::wstring clsid = L"{B5A3C1E2-7D4F-4C8B-9E61-2F0A8D3C5B17}";
+        const std::wstring server = L"Software\\Classes\\CLSID\\" + clsid;
+        set_reg_default(server, L"Win.apk app file thumbnails");
+        set_reg_default(server + L"\\InprocServer32", shell_dll.wstring());
+        set_reg_string(server + L"\\InprocServer32", L"ThreadingModel", L"Apartment");
+        // IThumbnailProvider's handler key.
+        set_reg_default(L"Software\\Classes\\WinApk.Package\\ShellEx\\{e357fccd-a995-4576-b01f-234630154e96}", clsid);
     }
     SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);
 }

@@ -90,6 +90,13 @@ Root: HKCU; Subkey: "Software\Classes\.apk"; ValueType: string; ValueData: "WinA
 Root: HKCU; Subkey: "Software\Classes\WinApk.Package"; ValueType: string; ValueData: "{cm:FileTypeName}"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\WinApk.Package\DefaultIcon"; ValueType: string; ValueData: """{app}\Win.apk.exe"",0"
 Root: HKCU; Subkey: "Software\Classes\WinApk.Package\shell\open\command"; ValueType: string; ValueData: """{app}\Win.apk.exe"" ""%1"""
+; Each app file's own icon as its thumbnail in Explorer (bin\winapk-shell.dll, windows/shell/apk_thumbnail.cpp): the
+; IThumbnailProvider key on the file type (removed with it), and its COM server, per user. The launcher writes the
+; same keys at its start (register_file_types). No DisableProcessIsolation: the shell runs it in its own surrogate.
+Root: HKCU; Subkey: "Software\Classes\WinApk.Package\ShellEx\{{e357fccd-a995-4576-b01f-234630154e96}"; ValueType: string; ValueData: "{{B5A3C1E2-7D4F-4C8B-9E61-2F0A8D3C5B17}"
+Root: HKCU; Subkey: "Software\Classes\CLSID\{{B5A3C1E2-7D4F-4C8B-9E61-2F0A8D3C5B17}"; ValueType: string; ValueData: "Win.apk app file thumbnails"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\CLSID\{{B5A3C1E2-7D4F-4C8B-9E61-2F0A8D3C5B17}\InprocServer32"; ValueType: string; ValueData: "{app}\bin\winapk-shell.dll"
+Root: HKCU; Subkey: "Software\Classes\CLSID\{{B5A3C1E2-7D4F-4C8B-9E61-2F0A8D3C5B17}\InprocServer32"; ValueType: string; ValueName: "ThreadingModel"; ValueData: "Apartment"
 
 [UninstallDelete]
 ; The apps' shortcuts the library made (Start > Win.apk Apps).

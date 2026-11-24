@@ -467,3 +467,17 @@ target_link_libraries(winapk-launcher PRIVATE comctl32 shell32 ole32 uuid gdiplu
 # The launcher's state machines (launcher/app_runs.h, installs.h, updates.h, maintenance.h): no lock and no Windows call in them, so the test drives
 # each step as the library's thread and a worker's would. test/launcher_state_test.cpp.
 add_executable(winapk-launcher-state-test test/launcher_state_test.cpp)
+
+# winapk-shell.dll, the thumbnail handler of the app files (shell/apk_thumbnail.cpp): Explorer shows each
+# .apk/.apkm/.xapk/.apks file's own app icon, parsed from the file (shell/apk_icon.cpp), never run. The launcher
+# and the installer register it for WinApk.Package. test/apk_icon_test.cpp: the parsing, on damaged files too.
+add_library(winapk-shell SHARED shell/apk_thumbnail.cpp shell/apk_icon.cpp shell/winapk_shell.def)
+set_target_properties(winapk-shell PROPERTIES PREFIX "")
+target_compile_definitions(winapk-shell PRIVATE UNICODE _UNICODE _WIN32_WINNT=0x0A00)
+target_link_libraries(winapk-shell PRIVATE ZLIB::ZLIB ole32 gdi32 uuid)
+target_link_options(winapk-shell PRIVATE -static -s)
+add_executable(winapk-apk-icon-test test/apk_icon_test.cpp shell/apk_icon.cpp)
+target_include_directories(winapk-apk-icon-test PRIVATE shell)
+target_link_libraries(winapk-apk-icon-test PRIVATE ZLIB::ZLIB)
+target_link_options(winapk-apk-icon-test PRIVATE -static)
+add_dependencies(winapk-launcher winapk-shell)
