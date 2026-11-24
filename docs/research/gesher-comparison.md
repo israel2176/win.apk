@@ -67,7 +67,7 @@ launcher in use; the other runtime's CI claims (taken from its docs).
   g_mutex with no exiting check; a thread killed at ExitProcess while holding g_mutex (dlopen, thread start)
   blocks it. Win.apk's elf_tls.cpp process_exiting guard covers exactly this.
 - **WebView:** the other runtime serves android_asset/android_res on https://other-file.example via deferred
-  WebResourceRequested; Win.apk copies pages (48 MB cap), no android_res; both run shouldInterceptRequest
+  WebResourceRequested; Win.apk (since 21cfd06) serves them on https://winapk-file.example the same way, android_res included; both run shouldInterceptRequest
   on a worker pool.
 - **OpenSL ES:** the other runtime real (players, recorders); Win.apk stub.
 - **Media:** the other runtime software libvpx/dav1d/libhevc/libavc, opus, libwebm, MP4/WebM/Ogg/ADTS muxers.
