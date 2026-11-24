@@ -1,7 +1,6 @@
 // android.hardware.camera2.CameraAccessException -- thrown when a
 // camera operation fails. Mirrors AOSP's checked-exception + reason
-// codes. Mac.apk has no camera, so operations that would touch a real
-// device throw this with CAMERA_DISCONNECTED.
+// codes: a camera that exists but cannot be reached.
 package android.hardware.camera2;
 
 import android.util.AndroidException;

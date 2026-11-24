@@ -1,9 +1,7 @@
 // android.hardware.camera2.CaptureRequest -- an immutable package of
 // settings + outputs for one capture. Built via Builder (obtained from
-// CameraDevice.createCaptureRequest). Mac.apk never submits one to real
-// hardware, but the type + Builder + Key set must exist for camera apps
-// to compile and run their setup code. Key<T> is a typed metadata key
-// per AOSP.
+// CameraDevice.createCaptureRequest) and served by CameraCaptureSessionImpl.
+// Key<T> is a typed metadata key per AOSP.
 package android.hardware.camera2;
 
 import android.view.Surface;
@@ -164,23 +162,30 @@ public final class CaptureRequest extends CameraMetadata<CaptureRequest.Key<?>>
          * mode if the template is empty, and takes the wrong branch.
          *
          * The values below are the ones this backend can actually stand behind.
-         * AVFoundation runs its own auto-exposure and auto-white-balance and
+         * The webcam runs its own auto-exposure and auto-white-balance and
          * does not let us drive them per frame, so AUTO/ON is the truth rather
-         * than an aspiration; AF is OFF because CameraCharacteristics
-         * .CONTROL_AF_AVAILABLE_MODES advertises only OFF (we do not drive
-         * focus); FLASH_MODE is OFF because there is no torch on this hardware.
-         * CONTROL_CAPTURE_INTENT is the one value that genuinely varies with
-         * the template, so it is the one thing the template argument changes.
+         * than an aspiration. AF: for a camera that autofocuses
+         * (CameraBridge.hasAutofocus), AOSP's legacy templates
+         * (LegacyMetadataMapper.createRequestTemplate): CONTINUOUS_VIDEO for
+         * recording, CONTINUOUS_PICTURE otherwise; OFF for a fixed-focus one,
+         * the only mode it lists. FLASH_MODE starts OFF.
+         * CONTROL_CAPTURE_INTENT varies with the template too.
          */
-        Builder(int templateType) {
+        Builder(int templateType, boolean autofocus) {
             settings.put(CONTROL_MODE,
                     Integer.valueOf(CameraMetadata.CONTROL_MODE_AUTO));
             settings.put(CONTROL_AE_MODE,
                     Integer.valueOf(CameraMetadata.CONTROL_AE_MODE_ON));
             settings.put(CONTROL_AWB_MODE,
                     Integer.valueOf(CameraMetadata.CONTROL_AWB_MODE_AUTO));
-            settings.put(CONTROL_AF_MODE,
-                    Integer.valueOf(CameraMetadata.CONTROL_AF_MODE_OFF));
+            int af = CameraMetadata.CONTROL_AF_MODE_OFF;
+            if (autofocus) {
+                af = templateType == CameraDevice.TEMPLATE_RECORD
+                        || templateType == CameraDevice.TEMPLATE_VIDEO_SNAPSHOT
+                        ? CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_VIDEO
+                        : CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_PICTURE;
+            }
+            settings.put(CONTROL_AF_MODE, Integer.valueOf(af));
             settings.put(FLASH_MODE,
                     Integer.valueOf(CameraMetadata.FLASH_MODE_OFF));
             settings.put(CONTROL_CAPTURE_INTENT,

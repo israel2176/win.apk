@@ -1,9 +1,7 @@
 // android.hardware.camera2.CameraCharacteristics -- immutable per-camera
 // capability metadata returned by CameraManager.getCameraCharacteristics.
-// Mac.apk has no camera, so getCameraCharacteristics throws
-// CameraAccessException and this is never handed out -- but the type +
-// Key constants must exist for camera apps to compile (they reference
-// keys like LENS_FACING / SENSOR_ORIENTATION even before opening).
+// Built by CameraBackend from the webcam behind a camera id (CameraBridge);
+// with no camera, getCameraCharacteristics throws and none is handed out.
 package android.hardware.camera2;
 
 import android.graphics.Rect;
@@ -97,7 +95,7 @@ public final class CameraCharacteristics extends CameraMetadata<CameraCharacteri
     CameraCharacteristics() { this(null, null, null); }
     CameraCharacteristics(Map<Key<?>, Object> properties) { this(properties, null, null); }
 
-    /** The populated form, built by CameraBackend from a real AVFoundation
+    /** The populated form, built by CameraBackend from a real webcam
      *  device. `requestKeys` is the set of CaptureRequest keys the capture
      *  session ACTS on and `resultKeys` the set it actually FILLS IN -- not
      *  every key an app may legally set or read. See the two getters below for
@@ -131,7 +129,7 @@ public final class CameraCharacteristics extends CameraMetadata<CameraCharacteri
     }
 
     /** The result keys this camera fills in -- SENSOR_TIMESTAMP and nothing
-     *  else. The AVFoundation capture path carries no per-frame exposure time,
+     *  else. The webcam capture path carries no per-frame exposure time,
      *  ISO or 3A state, and a key listed here but absent from every
      *  CaptureResult would send an app looking for metadata that never
      *  arrives. */
@@ -176,7 +174,7 @@ public final class CameraCharacteristics extends CameraMetadata<CameraCharacteri
     // AOSP (core/java/android/hardware/camera2/CameraCharacteristics.java, fetched
     // verbatim via raw.githubusercontent.com): `public Set<String>
     // getPhysicalCameraIds() { return mProperties.getPhysicalCameraIds(); }` -- the set
-    // of physical camera ids backing a logical multi-camera device. Mac.apk exposes no
+    // of physical camera ids backing a logical multi-camera device. Win.apk exposes no
     // cameras at all (getCameraIdList() is honestly empty), so there are never any
     // physical camera ids to report; Collections.emptySet() is the correct answer for
     // that state, not a placeholder guess.
@@ -209,7 +207,7 @@ public final class CameraCharacteristics extends CameraMetadata<CameraCharacteri
      * otherwise returns null when the camera published no recommendations. Its
      * javadoc is explicit that null is a normal answer.
      *
-     * The AVFoundation backend publishes none: a recommendation is the HAL's
+     * The webcam backend publishes none: a recommendation is the HAL's
      * opinion about which sizes are cheap on that silicon, and inventing one
      * would send an app to a resolution nothing measured. So the range check is
      * reproduced exactly and the answer is null, which is the branch every app

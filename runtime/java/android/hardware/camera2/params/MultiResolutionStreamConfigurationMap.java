@@ -15,7 +15,7 @@
 // getters, which behave exactly as AOSP's do, including
 // Collections.emptyList() for a format with no entries.
 //
-// Nothing constructs one today: the AVFoundation backend advertises no logical
+// Nothing constructs one today: the webcam backend advertises no logical
 // multi-camera, so SCALER_MULTI_RESOLUTION_STREAM_CONFIGURATION_MAP resolves to
 // null and an app takes its "no multi-resolution support" branch -- which is
 // what a real single-camera device gives it too.

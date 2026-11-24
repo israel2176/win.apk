@@ -3,8 +3,8 @@
 // type is the abstract CameraCaptureSession and the implementation is
 // android.hardware.camera2.impl.CameraCaptureSessionImpl.
 //
-// This class is the join between camera2's request model and the AVFoundation
-// capture engine. It owns three things:
+// This class is the join between camera2's request model and the host's
+// capture engine (CameraBridge; on Windows, Media Foundation). It owns three things:
 //   1. the CONFIGURATION step (which outputs, what geometry, what frame rate),
 //   2. the FRAME PUMP that notices the native layer has produced a frame,
 //   3. the CALLBACK DISPATCH that turns a frame into onImageAvailable +
@@ -15,8 +15,8 @@
 // ---------------------------------------------------------------------------
 // Two output shapes are real consumers:
 //
-//   * ImageReader-backed Surfaces: the reader pulls the locked CVPixelBuffer's
-//     YUV planes directly (ImageReader.macapkAttachCameraSource).
+//   * ImageReader-backed Surfaces: the reader pulls the held frame's YUV
+//     planes directly (ImageReader.macapkAttachCameraSource).
 //   * ImageReader(JPEG)-backed Surfaces, the still-capture output: a request
 //     that targets one gets the frame it is served by encoded as a JPEG
 //     (JpegStill) and queued on the reader (ImageReader.macapkQueueJpeg). Only
@@ -42,8 +42,8 @@
 // WHY THERE IS A POLLING PUMP RATHER THAN A CALLBACK
 // ---------------------------------------------------------------------------
 // The native seam (com.macapk.loader.CameraBridge) is deliberately pull-only:
-// its AVFoundation delegate runs on a private dispatch queue and does no JNI at
-// all, which is what keeps the capture queue from ever blocking on the JVM.
+// its capture thread does no JNI at all, which is what keeps capture from ever
+// blocking on the JVM.
 // The only liveness signal it exposes is framesDelivered(), a counter. So the
 // pump watches that counter from a daemon thread and turns each advance into
 // the callbacks camera2 owes the app. Poll interval is derived from the
@@ -106,26 +106,20 @@ final class CameraCaptureSessionImpl extends CameraCaptureSession {
 
     /**
      * The transform matrix handed to SurfaceTexture consumers with every
-     * frame: AOSP's mtxFlipV, verbatim from
-     * frameworks/native/libs/gui/GLConsumerUtils.cpp (android-14), where it is
-     * composed unconditionally: "GLConsumer uses the GL convention where
-     * (0, 0) is the bottom-left corner ... Add an additional vertical flip
-     * after all other transforms to map from GL convention to buffer queue
-     * memory layout, where (0, 0) is the top-left corner."
-     *
-     * Our RGBA copies put the image's top row at buffer row 0 (the buffer
-     * queue memory layout), the Mac's sensor is unrotated
-     * (SENSOR_ORIENTATION 0, so no rotation term), and there is no crop, so
-     * pure flip-V is the exact AOSP answer, not an approximation. Column-major
-     * for glUniformMatrix4fv, per the SurfaceTexture.getTransformMatrix
-     * contract. macapkQueueFrame clones it, so sharing one instance is safe.
+     * frame: what AOSP's camera service sets on a preview output
+     * (CameraUtils::getRotationTransform: the sensor orientation undone, a
+     * front camera mirrored) turned into GLConsumer's matrix, with its final
+     * flip-V from GL convention to buffer memory layout
+     * (CameraBridge.consumerMatrix). Worked out per frame because the sensor
+     * orientation follows the display rotation. Column-major for
+     * glUniformMatrix4fv; macapkQueueFrame clones it.
      */
-    private static final float[] MTX_FLIP_V = {
-        1f,  0f, 0f, 0f,
-        0f, -1f, 0f, 0f,
-        0f,  0f, 1f, 0f,
-        0f,  1f, 0f, 1f,
-    };
+    private float[] outputMatrix() {
+        int index = mDevice.deviceIndex();
+        boolean front = CameraBridge.getDeviceFacing(index) == CameraBridge.FACING_FRONT;
+        return CameraBridge.consumerMatrix(
+                CameraBridge.outputTransform(CameraBridge.getSensorOrientation(index), front));
+    }
 
     private volatile boolean mConfigured;
     private volatile boolean mClosed;
@@ -198,7 +192,7 @@ final class CameraCaptureSessionImpl extends CameraCaptureSession {
     /** Configure on a background thread. AOSP's createCaptureSession returns
      *  immediately and reports through onConfigured/onConfigureFailed, and the
      *  work here genuinely blocks: the native configure() takes the device's
-     *  configuration lock and start() blocks until AVFoundation has the session
+     *  configuration lock and start() blocks until the capture thread has the session
      *  running. */
     void configureAsync() {
         Thread t = new Thread(this::doConfigure, "macapk-camera-config");
@@ -359,7 +353,7 @@ final class CameraCaptureSessionImpl extends CameraCaptureSession {
 
         if (!CameraBridge.start(mHandle)) {
             CameraBackend.warn("createCaptureSession FAILED: the capture backend could not"
-                    + " start the AVFoundation session");
+                    + " start the capture session");
             return false;
         }
 
@@ -610,7 +604,7 @@ final class CameraCaptureSessionImpl extends CameraCaptureSession {
      * done.
      *
      * Both halves are real here. The validation is AOSP's, verbatim. The
-     * pre-allocation itself has nothing to do: the AVFoundation path writes
+     * pre-allocation itself has nothing to do: the capture path writes
      * into the consumer's own single buffer slot and allocates nothing ahead of
      * time, so the work is genuinely finished the moment it is asked for. What
      * matters is that the CALLBACK still fires -- an app that waits for
@@ -829,7 +823,7 @@ final class CameraCaptureSessionImpl extends CameraCaptureSession {
         }
         mSurfaceTextures = Collections.emptyList();
 
-        // Stop the AVFoundation session but leave the device open: AOSP's
+        // Stop the capture session but leave the device open: AOSP's
         // session close does not close the CameraDevice, and an app may
         // immediately create another session on it. Stopping also turns the
         // camera indicator light off, which the user is entitled to see.
@@ -865,6 +859,160 @@ final class CameraCaptureSessionImpl extends CameraCaptureSession {
         }
         mAppliedFps = fps;
         CameraBackend.trace("applied CONTROL_AE_TARGET_FPS_RANGE -> " + fps + "fps");
+    }
+
+    // ---- Focus and torch -------------------------------------------------
+
+    /** The repeating request last served, so its trigger acts only once. */
+    private CaptureRequest mLastServedRepeating;
+
+    private final Af mAf = new Af();
+
+    /** CameraBridge's CONTROL_* bits for this camera, read once (the native
+     *  side probes them with the formats and they do not change while the
+     *  device is plugged in); -1 until read. */
+    private int mControls = -1;
+
+    private int controls() {
+        if (mControls < 0) mControls = CameraBridge.getControls(mDevice.deviceIndex());
+        return mControls;
+    }
+
+    private boolean hasAutofocus() { return (controls() & CameraBridge.CONTROL_AUTOFOCUS) != 0; }
+
+    private boolean hasTorch() { return (controls() & CameraBridge.CONTROL_TORCH) != 0; }
+
+    /** Requested torch state last told to the webcam (null: not yet). */
+    private Boolean mTorchApplied;
+
+    /** FLASH_MODE_TORCH on a camera with a torch turns it on; any other mode
+     *  turns it off. Told to the webcam only when it changes. */
+    private void applyTorch(CaptureRequest req) {
+        if (req == null || !hasTorch()) return;
+        Integer mode = req.get(CaptureRequest.FLASH_MODE);
+        Boolean on = Boolean.valueOf(mode != null && mode.intValue() == CameraMetadata.FLASH_MODE_TORCH);
+        if (on.equals(mTorchApplied)) return;
+        mTorchApplied = on;
+        if (!CameraBridge.setTorch(mHandle, on.booleanValue())) {
+            CameraBackend.warn("the camera refused to turn its torch " + (on.booleanValue() ? "on" : "off"));
+        }
+    }
+
+    /**
+     * CONTROL_AF_STATE, by AOSP's state machine (CaptureResult.CONTROL_AF_STATE
+     * javadoc's transition tables), driven by the webcam's real focus:
+     *
+     *   OFF            INACTIVE; the lens held where it is.
+     *   AUTO           INACTIVE until AF_TRIGGER_START, then ACTIVE_SCAN while
+     *                  the webcam focuses once (CameraBridge.autoFocus), then
+     *                  FOCUSED_LOCKED or NOT_FOCUSED_LOCKED by its answer;
+     *                  AF_TRIGGER_CANCEL back to INACTIVE.
+     *   CONTINUOUS_*   the webcam focuses by itself: PASSIVE_SCAN while it
+     *                  searches, PASSIVE_FOCUSED / PASSIVE_UNFOCUSED when it
+     *                  stops (CameraBridge.focusState); AF_TRIGGER_START locks
+     *                  at once when passively focused, else after a one-shot
+     *                  scan; AF_TRIGGER_CANCEL resumes the continuous focus.
+     *
+     * A camera without autofocus lists OFF only and reports INACTIVE.
+     */
+    private final class Af {
+        private int mode = -1;
+        private int state = CameraMetadata.CONTROL_AF_STATE_INACTIVE;
+        private boolean locked;
+        /** Bumped by a cancel or a mode change: a scan of an older generation
+         *  answers nobody. */
+        private final java.util.concurrent.atomic.AtomicInteger generation =
+                new java.util.concurrent.atomic.AtomicInteger();
+        private volatile boolean scanning;
+        private volatile int scanResult = Integer.MIN_VALUE;
+
+        void onRequest(CaptureRequest req, boolean fresh, Map<CaptureResult.Key<?>, Object> results) {
+            boolean autofocus = hasAutofocus();
+            Integer m = req != null ? req.get(CaptureRequest.CONTROL_AF_MODE) : null;
+            int want = m != null && autofocus ? m.intValue() : CameraMetadata.CONTROL_AF_MODE_OFF;
+            if (want != mode) {
+                mode = want;
+                reset();
+            }
+            Integer t = req != null && fresh ? req.get(CaptureRequest.CONTROL_AF_TRIGGER) : null;
+            int trigger = t != null ? t.intValue() : CameraMetadata.CONTROL_AF_TRIGGER_IDLE;
+            if (trigger == CameraMetadata.CONTROL_AF_TRIGGER_CANCEL) {
+                reset();
+            } else if (trigger == CameraMetadata.CONTROL_AF_TRIGGER_START
+                    && mode != CameraMetadata.CONTROL_AF_MODE_OFF) {
+                if (continuous() && state == CameraMetadata.CONTROL_AF_STATE_PASSIVE_FOCUSED) {
+                    lock(CameraMetadata.CONTROL_AF_STATE_FOCUSED_LOCKED);
+                } else {
+                    scan();
+                }
+            }
+            if (scanning) {
+                // Still focusing: AUTO says so; a continuous mode keeps its
+                // passive scan until the lock.
+                state = continuous() ? CameraMetadata.CONTROL_AF_STATE_PASSIVE_SCAN
+                        : CameraMetadata.CONTROL_AF_STATE_ACTIVE_SCAN;
+            } else if (scanResult != Integer.MIN_VALUE) {
+                int r = scanResult;
+                scanResult = Integer.MIN_VALUE;
+                lock(r == CameraBridge.AF_FOCUSED ? CameraMetadata.CONTROL_AF_STATE_FOCUSED_LOCKED
+                        : CameraMetadata.CONTROL_AF_STATE_NOT_FOCUSED_LOCKED);
+            } else if (continuous() && !locked) {
+                switch (CameraBridge.focusState(mHandle)) {
+                    case CameraBridge.FOCUS_STATE_SEARCHING:
+                        state = CameraMetadata.CONTROL_AF_STATE_PASSIVE_SCAN; break;
+                    case CameraBridge.FOCUS_STATE_FOCUSED:
+                        state = CameraMetadata.CONTROL_AF_STATE_PASSIVE_FOCUSED; break;
+                    case CameraBridge.FOCUS_STATE_FAILED:
+                        state = CameraMetadata.CONTROL_AF_STATE_PASSIVE_UNFOCUSED; break;
+                    default: break;
+                }
+            }
+            results.put(CaptureResult.CONTROL_AF_MODE, Integer.valueOf(mode));
+            results.put(CaptureResult.CONTROL_AF_STATE, Integer.valueOf(state));
+        }
+
+        private boolean continuous() {
+            return mode == CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_PICTURE
+                    || mode == CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_VIDEO;
+        }
+
+        /** Back to the mode's resting state: a scan cancelled, the lens held
+         *  (OFF, AUTO) or focusing by itself (continuous). */
+        private void reset() {
+            generation.incrementAndGet();
+            if (scanning) CameraBridge.cancelAutoFocus(mHandle);
+            scanning = false;
+            scanResult = Integer.MIN_VALUE;
+            locked = false;
+            state = CameraMetadata.CONTROL_AF_STATE_INACTIVE;
+            if (hasAutofocus()) {
+                CameraBridge.setFocusMode(mHandle,
+                        continuous() ? CameraBridge.FOCUS_CONTINUOUS : CameraBridge.FOCUS_HOLD);
+            }
+        }
+
+        private void lock(int lockedState) {
+            locked = true;
+            state = lockedState;
+            CameraBridge.setFocusMode(mHandle, CameraBridge.FOCUS_HOLD);
+        }
+
+        /** A one-shot focus on a thread of its own (it blocks until the
+         *  webcam answers); the next result reports its outcome. */
+        private void scan() {
+            if (scanning) return;
+            scanning = true;
+            locked = false;
+            final int gen = generation.get();
+            Thread t = new Thread(() -> {
+                int r = CameraBridge.autoFocus(mHandle, 3000);
+                if (generation.get() != gen) return;
+                scanResult = r;
+                scanning = false;
+            }, "winapk-camera2-af");
+            t.setDaemon(true);
+            t.start();
+        }
     }
 
     // ---- The frame pump --------------------------------------------------
@@ -939,11 +1087,11 @@ final class CameraCaptureSessionImpl extends CameraCaptureSession {
                 // The one thing this subsystem must never do is look like it is
                 // working while producing nothing. If the counter has not moved
                 // the camera is not delivering, and the log has to say so.
-                CameraBackend.warn("capture is running but AVFoundation has delivered 0 frames"
+                CameraBackend.warn("capture is running but the camera has delivered 0 frames"
                         + " after " + (FIRST_FRAME_WARN_MS / 1000) + "s."
                         + " The session is open and configured, so this is NOT a camera2 setup"
-                        + " problem: check macOS camera permission and whether another app has"
-                        + " the camera. Run with MACAPK_CAMERA_TRACE=1 for the native log.");
+                        + " problem: check Windows' camera privacy settings and whether another"
+                        + " app has the camera. Run with MACAPK_CAMERA_TRACE=1 for more.");
             }
 
             try {
@@ -963,15 +1111,15 @@ final class CameraCaptureSessionImpl extends CameraCaptureSession {
      * callbacks.
      */
     private void dispatchFrame(long deliveredCount) {
-        // The timestamp camera2 hands to onCaptureStarted. AVFoundation's
-        // CMSampleBuffer PTS and System.nanoTime() are both derived from
-        // mach_absolute_time on macOS, so this is the SAME monotonic domain as
-        // the frame's own presentation timestamp -- it is the instant the pump
-        // OBSERVED the frame, later than exposure by up to one poll interval,
-        // not a different clock and not a fabricated value.
+        // The timestamp camera2 hands to onCaptureStarted. The native frame
+        // stamps and System.nanoTime() both read QueryPerformanceCounter, so
+        // this is the SAME monotonic domain as the frame's own timestamp -- it
+        // is the instant the pump OBSERVED the frame, later than capture by up
+        // to one poll interval, not a different clock and not a fabricated
+        // value.
         //
-        // The exact per-frame PTS is available where apps actually read it:
-        // Image.getTimestamp(), which comes straight from the CMSampleBuffer.
+        // The exact per-frame stamp is available where apps actually read it:
+        // Image.getTimestamp(), which comes straight from the native frame.
         // camera2 reports TIMESTAMP_SOURCE_UNKNOWN for this device, whose whole
         // meaning is "monotonic, but not comparable with other subsystems".
         final long timestampNs = System.nanoTime();
@@ -990,8 +1138,9 @@ final class CameraCaptureSessionImpl extends CameraCaptureSession {
         if (!textures.isEmpty()) {
             long pts = CameraBridge.latestFrameTimestamp(mHandle);
             if (pts == 0) pts = timestampNs;
+            float[] matrix = outputMatrix();
             for (SurfaceTexture st : textures) {
-                GfxBackend.get().queueFrame(st, pts, MTX_FLIP_V, 0);
+                GfxBackend.get().queueFrame(st, pts, matrix, 0);
             }
         }
 
@@ -1001,8 +1150,10 @@ final class CameraCaptureSessionImpl extends CameraCaptureSession {
         int sequenceId;
         boolean endsSequence = false;
 
+        boolean fresh;
         synchronized (mLock) {
             OneShot shot = mOneShots.poll();
+            fresh = shot != null;
             if (shot != null) {
                 request = shot.request;
                 callback = shot.callback;
@@ -1033,6 +1184,14 @@ final class CameraCaptureSessionImpl extends CameraCaptureSession {
             return;
         }
 
+        // A trigger acts once per submission: every one-shot capture, and a
+        // repeating request when it is first served (AOSP's triggers are
+        // one-shot; an app sends them with capture(), not the repeating one).
+        if (!fresh) {
+            fresh = request != mLastServedRepeating;
+            mLastServedRepeating = request;
+        }
+
         final CaptureRequest req = request;
         final CaptureCallback cb = (callback != null && dispatch != null) ? callback : null;
         final CameraDispatch d = dispatch;
@@ -1044,12 +1203,16 @@ final class CameraCaptureSessionImpl extends CameraCaptureSession {
         }
 
         // The result carries only what we measured or did. SENSOR_TIMESTAMP is
-        // the observation instant described above; exposure time, sensitivity
-        // and the 3A states are absent because AVFoundation does not report
-        // them per frame through this path, and a plausible-looking fabricated
-        // value is worse than a null an app can test for.
+        // the observation instant described above; CONTROL_AF_MODE and
+        // CONTROL_AF_STATE what the focus state machine did with the webcam
+        // (Af, below). Exposure time, sensitivity and the AE/AWB states are
+        // absent because the webcam does not report them per frame, and a
+        // plausible-looking fabricated value is worse than a null an app can
+        // test for.
         Map<CaptureResult.Key<?>, Object> results = new HashMap<>();
         results.put(CaptureResult.SENSOR_TIMESTAMP, Long.valueOf(timestampNs));
+        mAf.onRequest(req, fresh, results);
+        applyTorch(req);
 
         // Stills: after onCaptureStarted (the shutter moment, which must not
         // wait for an encoder) and before onCaptureCompleted. The pump waits

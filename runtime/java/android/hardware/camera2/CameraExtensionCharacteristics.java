@@ -11,8 +11,7 @@
 // ---------------------------------------------------------------------------
 // On a real device this class binds to the OEM's camera-extensions service; the
 // answer is empty for any device without one, which includes the great majority
-// of Android devices. Mac.apk has no camera at all, so it is empty for the
-// stronger reason. getSupportedExtensions() returning an empty list is the
+// of Android devices, and of a webcam. getSupportedExtensions() returning an empty list is the
 // single answer everything else follows from -- an app that respects it never
 // calls the size/latency queries, and an app that ignores it gets the same
 // empty/false answers a real extension-less device gives.
@@ -21,7 +20,7 @@
 // list: the app would configure an extension session, and fail past the point
 // where its no-extension fallback exists.
 //
-// Note that even when AVFoundation capture lands, this stays empty unless
+// Having a camera does not change this: it stays empty unless
 // someone implements a vendor extension pipeline -- extensions are an OEM HAL
 // feature, not a consequence of having a camera.
 //
