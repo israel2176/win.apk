@@ -203,6 +203,18 @@ public final class MediaExtractor {
             float fps = 0;
             try { fps = Float.parseFloat(info.getOrDefault("frame-rate", "0")); } catch (NumberFormatException ignore) { }
             if (fps > 0) f.setInteger(MediaFormat.KEY_FRAME_RATE, Math.max(1, Math.round(fps)));
+            // The container's colour (a WebM's Colour element), as MatroskaExtractor reports it.
+            int standard = intOf(info, "color-standard"), range = intOf(info, "color-range");
+            int transfer = intOf(info, "color-transfer");
+            if (standard > 0) f.setInteger(MediaFormat.KEY_COLOR_STANDARD, standard);
+            if (range > 0) f.setInteger(MediaFormat.KEY_COLOR_RANGE, range);
+            if (transfer > 0) f.setInteger(MediaFormat.KEY_COLOR_TRANSFER, transfer);
+            String hdr = info.get("hdr-static-info");
+            if (hdr != null && hdr.length() == 50) {
+                byte[] b = new byte[25];
+                for (int i = 0; i < 25; i++) b[i] = (byte) Integer.parseInt(hdr.substring(2 * i, 2 * i + 2), 16);
+                f.setByteBuffer(MediaFormat.KEY_HDR_STATIC_INFO, ByteBuffer.wrap(b));
+            }
             // What a decoder's input buffer must hold: AOSP's extractors state
             // it; the estimate is media3's (see MediaCodec.resolveInputCapacity).
             f.setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, Math.max(1 << 16, w * h * 3 / 4));
