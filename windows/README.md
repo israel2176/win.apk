@@ -1062,11 +1062,12 @@ the uiprobe oracle:
 After resources and views: AOSP's app layer (`android.app`'s lifecycle and what
 drives it: `ActivityThread`, the client transactions, `Instrumentation`,
 `ContextImpl`, `LoadedApk`, `Application`, `Activity`). The plan, with its
-measurements, is `docs/research/aosp-app.md`. Step A1's first part is built
-and tested on a plain JVM, not yet in the runtime (no host switch reads it):
-`scripts/build_aosp_app.sh <stage>` makes `lib/aosp-app.jar` (601 classes,
-1.3 MB) with the rewrite `scripts/AospAppRewrite.java` and the in-process
-activity manager, task manager and client controller of `java/aosp_app`, and
+measurements, is `docs/research/aosp-app.md`. Every app's process starts on
+it, with no switch (Boot through `com.macapk.loader.app.AppHost`):
+`scripts/build_aosp_app.sh <stage>` makes `lib/aosp-app.jar` (about 600 classes,
+1.3 MB, first on the class path, staged by `stage_runtime.sh`) with the
+rewrite `scripts/AospAppRewrite.java` and the in-process activity manager,
+task manager and client controller of `java/aosp_app`, and
 `test/aospapp/run.sh <stage> <deps> [out] [whole android-framework.jar]` (the
 last for a `stage_runtime.sh` stage, whose framework jar lacks what AOSP's
 resources and views shadow: `<build>/java/android-framework.jar`) runs AOSP's

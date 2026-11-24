@@ -1076,29 +1076,24 @@ app on real Windows; to check then:
 
 ## Work started and not merged
 
-- **AOSP's app layer, step A1's first part (November 2026; the owner approved
-  the layer).** The plan with its measurements is `docs/research/aosp-app.md`.
-  Built: `windows/scripts/build_aosp_app.sh` (`lib/aosp-app.jar`, 601 classes,
-  1.3 MB: AOSP 14's `ActivityThread`, client transactions, `Instrumentation`,
-  `ContextImpl`, `LoadedApk`, `Application`, `Activity`), its rewrite
-  `AospAppRewrite.java`, the in-process activity manager, task manager and
-  client controller (`windows/java/aosp_app`), and `windows/test/aospapp`:
-  AOSP's `ActivityThread` runs an application and two activities through
-  start-for-result, result, finish and the task's end in Android's order on a
-  plain JVM with AOSP's graphics, resources and views (CI: "AOSP app layer",
-  Ubuntu, informational). **Not yet:** the host switch (`WINAPK_AOSP_APP`,
-  named, not read by `host/aosp_gfx.cpp`) and `Boot` starting an app through
-  `AospApp.start` (A1's second part), so nothing of it runs in
-  `winapk-runtime.exe`; then the `AppHost` seam (A0: 116 Win.apk call sites
-  into members AOSP's `Activity`/`Application` lack, 230 into
-  `ActivityHost`), launch modes, the task to back and front, relaunch (A2),
-  services, receivers, providers (A3). Found on the way and fixed for the
-  resources and views switches too: the libandroidfw port's
-  `CollectConfigurations` threw for every APK (`getSizeConfigurations`), and
-  `AnimationHandler` called a member Win.apk's `Animator` lacks whenever a
-  window was removed (`ViewRootImpl.doDie`; seen in the lifecycle test, where
-  each activity's destroy removes its window): check the smoke apps' and
-  sweeps' runs with the views switch for anything that changed.
+- **AOSP's app layer (November 2026; the owner approved the layer, and decided:
+  no switch).** Every app's process starts on AOSP 14's own `ActivityThread`
+  (`lib/aosp-app.jar`, staged and shipped; `com.macapk.loader.app.AppHost`;
+  `docs/research/aosp-app.md` "A1 as built"). Under Wine all ten smoke apps
+  draw and the UI probe's lines are unchanged. Done of A2: `startActivities`,
+  Up navigation, Back at the root, minimize and restore, configuration
+  changes to the process and each activity (relaunch or
+  `onConfigurationChanged`; written, not yet run with a resized window).
+  **Left:** launch modes and intent flags, the host's hand-offs (intents to
+  other apps, the browser, the permission prompt and its result, the
+  document picker, the camera), results across them (A2); services,
+  broadcasts and providers through `ActivityThread` with the broker (A3);
+  deleting Win.apk's own `Activity`, `Application`, `ActivityHost` lifecycle
+  code and the classes the jar shadows (A4). Found on the way and fixed: the
+  libandroidfw port's `CollectConfigurations` threw for every APK
+  (`getSizeConfigurations`), `AnimationHandler` called a member Win.apk's
+  `Animator` lacks at each window's removal, `XmlUtils` called Xml's typed
+  members Win.apk's lacks (SharedPreferences' file).
 
 - **TSF text input and the touch keyboard: Win.apk's own (November 2026).**
   The the other runtime-derived text store, text service, touch keyboard and
