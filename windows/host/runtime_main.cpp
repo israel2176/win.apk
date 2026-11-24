@@ -1624,6 +1624,12 @@ std::vector<std::string> jvm_options(const BootArgs& b) {
     v.push_back("--add-opens=java.base/jdk.internal.loader=ALL-UNNAMED");
     v.push_back("--add-exports=java.base/sun.net.www.protocol.http=ALL-UNNAMED");
     v.push_back("--add-exports=java.base/sun.net.www.protocol.https=ALL-UNNAMED");
+    // Windows' proxy, as a phone's apps follow the one its network settings name: java.net's default
+    // ProxySelector (HttpURLConnection, OkHttp and whatever else asks it) asks WinHTTP for each address, which
+    // answers from Settings > Network & internet > Proxy: a proxy server with its exceptions, a setup script
+    // (PAC) or automatic detection (WPAD). Without it the JDK goes direct. An app's own choice
+    // (ProxySelector.setDefault, http.proxyHost) still comes first, as on Android.
+    v.push_back("-Djava.net.useSystemProxies=true");
     if (fs::is_directory(o.lib / "java_base_patch", ec))
         v.push_back("--patch-module=java.base=" + jvm_path(o.lib / "java_base_patch"));
     if (fs::is_directory(o.lib / "jdk_unsupported_patch", ec))

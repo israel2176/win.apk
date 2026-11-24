@@ -605,6 +605,7 @@ how CI boots apps.
 | Camera (camera2, Camera, CameraX) | Media Foundation capture, each webcam offered as a back and a front camera (the owner's decision); a virtual camera when there is none. The sensor orientation is the display rotation (back) or its mirror (front), read when asked, and previews get AOSP's rotation and mirror transforms. Focus and torch are the driver's: `IAMCameraControl`'s focus or the extended `FOCUSMODE`/`FOCUSSTATE`/`TORCHMODE` controls, run on the capture thread between frames; without them a fixed-focus camera with no flash. Preview and analysis frames, and stills as JPEG (encoded in Java from the captured frame); no video recording. `ACTION_IMAGE_CAPTURE` opens the host's camera window (`CameraCaptureHandler`, `nativeCapture`: a Win32 window on its own thread, owned by the app's and disabling it; WIC encodes the JPEG, which Java writes to `EXTRA_OUTPUT`) | `native_camera.cpp` |
 | Location | `Windows.Devices.Geolocation`; Windows' privacy settings are the authorization | `native_location.cpp` |
 | Connectivity | `ConnectivityManager`, `NetworkCapabilities` and `LinkProperties` answer from the adapter that carries the default route (`HostRadios.defaultNetwork`: `GetBestInterfaceEx` for a public address, then that adapter in `GetAdaptersAddresses`): Ethernet, Wi-Fi, mobile broadband or a tunnel as the transport and the legacy network type, its addresses, DNS servers, MTU and the JDK's name for it; no default route is "no network". Polled every two seconds for `NetworkCallback`. "Validated" means only that there is a default route, and no connection is reported as metered. `NsdManager` (mDNS service discovery) is not implemented: every request reports `FAILURE_INTERNAL_ERROR` to its listener | `native_radios.cpp` |
+| Proxy | Windows' own: the JVM runs with `java.net.useSystemProxies=true`, so java.net's default `ProxySelector` asks WinHTTP per address (a manual proxy with its exceptions, a PAC script, WPAD); an app's own selector or `http.proxyHost` comes first. `ConnectivityManager.getDefaultProxy` reports none | `runtime_main.cpp` (`jvm_options`) |
 | Wi-Fi | `HostRadios` over the Native Wifi API: state, the current connection (SSID, BSSID, RSSI, frequency, link speed), the DHCP configuration from `GetAdaptersAddresses`, scans, and `WlanRegisterNotification` events pumped by one Java thread into the state, connection, signal and scan-results broadcasts. Network names need Windows' location access, as Android needs the location permission | `native_radios.cpp` |
 | Bluetooth | `HostBluetooth`: the paired devices (bluetoothapis), RFCOMM sockets both ways on Winsock `AF_BTH` (the SDP query for the channel, `WSASetService` for a server's record), LE scans on the `BluetoothLEAdvertisementWatcher` and the GATT client (services, reads, writes, notifications through the CCCD, MTU) on the WinRT `Windows.Devices.Bluetooth` APIs through their C ABI, declared in the file. Permissions as AOSP's service: `BLUETOOTH_CONNECT` / `BLUETOOTH_SCAN`, location for scan results unless `neverForLocation`. Not there: classic discovery and pairing, LE advertising and the GATT server, profiles, L2CAP | `native_bluetooth.cpp`, `bluetooth_util.h` |
 | Clipboard | Text, HTML, URLs, with the concealed formats for sensitive clips | `native_clipboard.cpp` |
@@ -641,6 +642,20 @@ The library window is created hidden and shown only when asked for: an APK
 opened from Explorer shows only the install window, a shortcut only the
 splash. A process whose library is hidden exits once it has nothing left to
 show or wait for.
+
+The app file type (`WinApk.Package`) carries a thumbnail handler,
+`bin\winapk-shell.dll` (`windows/shell/`), registered per user by the
+installer and by the launcher at each start: Explorer shows each `.apk`,
+`.apkm`, `.xapk` and `.apks` file's own app icon. It parses the file itself
+(`apk_icon.cpp`: the zip's directory, the binary manifest's
+`<application android:icon>`, `resources.arsc`'s files for that resource per
+density, an adaptive icon's two layers when they are pictures or colors; a
+bundle's `icon.png` or its base APK), bounded in what it reads, and decodes
+with WIC; nothing of the APK runs and no JVM starts, and the shell runs it in
+its isolated surrogate process. A vector icon, which only Android's code
+draws, falls back to the `apps\<name>\icon.png` the install rendered for the
+same package. the other runtime's handler (`compat/shell/other_shellext.cc`, whose COM
+shape it keeps) starts its runtime per file instead.
 
 ### The install helper and the installed-apps registry
 
