@@ -100,7 +100,9 @@ unzip -Z1 "$ALL" > "$WORK/all.txt"
 # aosp-graphics.jar's classes too, whose own R is generated for Win.apk's API 36 table).
 # AdaptiveIconDrawable too: aosp-graphics.jar's copy has a private string id of Win.apk's API 36
 # table compiled in (AospResIds.java); android-all's has the 34 table's, the one staged here.
-grep -E '^(android/content/res/.*|android/app/WindowConfiguration([$].*)?|com/android/internal/R([$].*)?|android/graphics/drawable/AdaptiveIconDrawable([$].*)?)\.class$' \
+# FastXmlSerializer and TypedXmlSerializer: Xml.newFastSerializer's (XmlUtils writes a map with it,
+# SharedPreferencesImpl's file; AospResRewrite sends XmlUtils' calls of Xml's hidden members to Compat).
+grep -E '^(android/content/res/.*|android/app/WindowConfiguration([$].*)?|com/android/internal/R([$].*)?|android/graphics/drawable/AdaptiveIconDrawable([$].*)?|com/android/internal/util/FastXmlSerializer|com/android/modules/utils/TypedXml(Serializer|PullParser))\.class$' \
     "$WORK/all.txt" > "$WORK/take.txt"
 extract() { (cd "$CLASSES" && xargs -d '\n' unzip -qo "$1" < "$2"); }
 extract "$ALL" "$WORK/take.txt"

@@ -62,6 +62,19 @@ public final class Compat {
     /** ActivityThread.isSystem: an app's process is never the system server. */
     public static boolean isSystem() { return false; }
 
+    // ---- android.util.Xml (Win.apk's, without AOSP's hidden typed XML members) ----
+
+    /** Xml.newFastSerializer: AOSP's text serializer, typed (XmlUtils.writeMapXml, the file of
+     *  SharedPreferencesImpl). */
+    public static com.android.modules.utils.TypedXmlSerializer newFastSerializer() {
+        return com.android.internal.util.XmlUtils.makeTyped(new com.android.internal.util.FastXmlSerializer());
+    }
+
+    /** Xml.newFastPullParser: the platform's pull parser, typed. */
+    public static com.android.modules.utils.TypedXmlPullParser newFastPullParser() {
+        return com.android.internal.util.XmlUtils.makeTyped(android.util.Xml.newPullParser());
+    }
+
     // TypedArray hands AssetManager.nativeApplyStyle the addresses of its two int[]s (ART's
     // non-movable arrays); the Java bodies of the natives write into the arrays themselves. Win.apk's
     // VMRuntime has no addresses (addressOf is 0 there), so the resources classes' calls come here:
