@@ -778,23 +778,34 @@ New bugs found with AOSP views:
     6. A refused update shows in `logs\services\com.android.vending*.log` as
        `session N refused: INSTALL_FAILED_…`.
 
-- **OpenSL ES (#132): real since the the other runtime import, not yet heard in a game.**
-  `host/native_opensles.cpp` is the other runtime's `compat/media/ndk/opensles.cc`
-  adapted (buffer-queue players into `audio_engine.h` streams, fd/file players
-  as clip voices, recorders on `audio_capture.h`). `winapk-opensles-test`
-  passes under Wine (no audio device: the mixer's silent clock). Not checked:
-  any real app (no runtime build was run with it), an arm64 library's
-  callbacks (the same `host_callable` path as AAudio's), the recorder filling
-  buffers from a real microphone (Wine has no capture device), and the
-  RECORD_AUDIO JNI call (`record_audio_held`: `SpecialAccessStore.holds` from a
-  guest thread, attached as a daemon when it is not a Java thread). **Check**
-  with the corpus apps that may use it: `org.ppsspp.ppsspp` (its OpenSL ES
-  audio backend), `com.retroarch` (the `opensl` audio driver), and
+- **OpenSL ES (#132): Win.apk's own (November 2026), not yet heard in a game.**
+  `host/native_opensles.cpp` was rewritten from the OpenSL ES 1.0.1 spec and
+  AOSP 14's frameworks/wilhelm behaviour (clean room: the earlier adapted code
+  was not read): players pulled by `audio_engine.h`'s mixer from a ~25 ms
+  ring with no thread per player, one callback thread per engine running every
+  callback in order with no lock held, every Android PCM format converted and
+  resampled by `audio_pcm.h`, file/http players prepared on first PAUSED or
+  PLAYING with Android's prefetch events, decoding to a buffer queue, recorders
+  gated on RECORD_AUDIO (`audio::record_audio_permitted`). `winapk-opensles-test`
+  passes under Wine (no audio device: the mixer's silent clock; a fake
+  microphone; built locally with the Opus decoder stubbed, so Ogg Opus and
+  Media Foundation's MP3/AAC were not decoded there; an http download checked
+  against a local server). Not checked: any real app (no runtime build was run
+  with it), an arm64 library's callbacks (the same `host_callable` path as
+  AAudio's), a real microphone, the RECORD_AUDIO JNI call from a guest thread
+  (`record_audio_permitted`, attached as a daemon), and how it sounds on a real
+  device (the resampler is measured, not listened to). **Check** with the
+  corpus apps that may use it: `org.ppsspp.ppsspp` (its OpenSL ES audio
+  backend), `com.retroarch` (the `opensl` audio driver), and
   `net.minetest.minetest` (OpenAL Soft, whose Android backend is OpenSL ES or
-  AAudio): sound plays, the log has `[opensles] CreateAudioPlayer` lines and no
-  `SL_RESULT` refusals. Not done, as in the other runtime: http(s) URI players, effects
-  (reverb, equalizer, virtualizer), playback rate, MIDI, the prefetch
-  callback, record markers.
+  AAudio): sound plays without crackle, the log has `[opensles]
+  CreateAudioPlayer` lines and no `refused` ones. Not done (reported as
+  unsupported, as the interface tables say): effects (reverb, equalizer,
+  virtualizer, bass boost, effect sends), MIDI, 3D, the engine's I/O device and
+  codec capabilities, the recorder's AEC/AGC/NS interfaces, the MPEG-2 TS and
+  AAC ADTS Android buffer queue sources; an http stream without an end does not
+  play (the file is downloaded whole first, up to 128 MB). The stream type and
+  recording preset are kept and answered but change nothing on the host.
 - **Download integrity (November 2026): built, partly
   verified.** The update offers no draft, and a pre-release only while the
   list has no full release; downloads the installer only with GitHub's
