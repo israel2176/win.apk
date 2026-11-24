@@ -1,0 +1,172 @@
+# A head-to-head, not a test: the same F-Droid apps in Win.apk and in the other runtime
+# (https://example.invalid/other-runtime) on the same Windows runner, each app in both
+# runtimes in turn, with the same display, the same time and the same measuring script
+# (.github/compare/measure.ps1). Win.apk is the branch's newest CI stage; the other runtime is its newest
+# public release, installed by its own installer as its users and its e2e job install it.
+# docs/research/comparison notes, "Running both", says what each column means.
+name: comparison
+
+on:
+  workflow_dispatch:
+    inputs:
+      apps:
+        description: 'Packages of .github/compare/apps.txt (spaces or commas; empty: all), or package:versionCode for others'
+        required: false
+        default: ''
+      seconds:
+        description: 'Seconds each run lasts (cold and warm, in each runtime)'
+        required: false
+        default: '60'
+      display:
+        description: 'The phone, WxH in dp at 160 dpi (1 dp = 1 px on the runner''s 100% screen)'
+        required: false
+        default: '360x640'
+      other:
+        description: 'the other runtime release tag, "latest", or "ci" (the installer of its newest green CI run on main)'
+        required: false
+        default: 'latest'
+
+concurrency:
+  group: comparison-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  apps:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.m.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/compare
+      - id: m
+        env:
+          APPS: ${{ inputs.apps }}
+        run: echo "matrix=$(python3 -I .github/compare/matrix.py .github/compare/apps.txt "$APPS")" >> "$GITHUB_OUTPUT"
+
+  app:
+    name: ${{ matrix.pkg }}
+    needs: apps
+    runs-on: windows-latest
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.apps.outputs.matrix) }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SECONDS_PER_RUN: ${{ inputs.seconds }}
+      DISPLAY_DP: ${{ inputs.display }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Win.apk's staged runtime (this branch's build, else main's)
+        shell: bash
+        run: bash .github/probe/stage.sh "${{ github.ref_name }}" stage 2>&1 | tee winapk-source.txt
+      - name: the other runtime's installer
+        shell: bash
+        env:
+          OTHER: ${{ inputs.other }}
+        run: bash .github/compare/other_fetch.sh "$OTHER" other
+      - name: The app's APK
+        shell: bash
+        run: python -I .github/probe/fdroid_fetch.py "${{ matrix.pkg }}" "${{ matrix.version }}" app.apk "${{ matrix.sha256 }}" | tee fetch.out
+      - name: Both runtimes on C:, where the other runtime installs
+        shell: pwsh
+        run: |
+          # the other runtime installs per user in %LOCALAPPDATA%\Programs\the other runtime and needs the APK on its drive
+          # (other-app.ps1); Win.apk's runtime and data go on the same disk, so neither gets the
+          # runner's faster D: alone.
+          New-Item -ItemType Directory -Force C:\cmp | Out-Null
+          robocopy stage C:\cmp\winapk /E /NFL /NDL /NJH /NJS /NP | Out-Null
+          if ($LASTEXITCODE -ge 8) { exit $LASTEXITCODE }
+          Copy-Item app.apk C:\cmp\app.apk
+          # the other runtime's own e2e installs it so (tests/e2e/run-e2e.ps1): every default task, nothing optional added.
+          $setup = (Get-ChildItem other\other-setup-*.exe).FullName
+          $p = Start-Process $setup -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait -PassThru
+          "the other runtime setup: exit $($p.ExitCode)"
+          if (-not (Test-Path "$env:LOCALAPPDATA\Programs\the other runtime\other-app.cmd")) { throw 'the other runtime did not install' }
+      - name: Run both
+        shell: pwsh
+        env:
+          FIRST: ${{ matrix.first }}
+          PKG: ${{ matrix.pkg }}
+          VERSION: ${{ matrix.version }}
+          SHA256: ${{ matrix.sha256 }}
+          KIND: ${{ matrix.kind }}
+        run: |
+          $out = "$PWD\cmp"
+          New-Item -ItemType Directory -Force $out | Out-Null
+          # The same phone for both: Win.apk's in dp, the other runtime's in pixels at 160 dpi, which on the
+          # runner's 100% screen are the same size.
+          $env:WINAPK_PHONE_SIZE = $env:DISPLAY_DP
+          $env:OTHER_DISPLAY = "$($env:DISPLAY_DP)@160"
+          Remove-Item Env:OTHER_LAUNCH_DETACH -ErrorAction SilentlyContinue
+          $order = if ($env:FIRST -eq 'other') { 'other', 'winapk' } else { 'winapk', 'other' }
+          $other = "$env:LOCALAPPDATA\Programs\the other runtime\other-app.cmd"
+          foreach ($rt in $order) {
+            $m = @{ Runtime = $rt; Apk = 'C:\cmp\app.apk'; Package = $env:PKG; Out = $out; Seconds = [int]$env:SECONDS_PER_RUN }
+            # One step failing must not keep the other runtime from its turn.
+            function Step($phase) { try { & .github/compare/measure.ps1 @m -Phase $phase } catch { "$rt $phase failed: $_" } }
+            if ($rt -eq 'other') { & $other shutdown 2>&1 | Out-Null }
+            Step install
+            # Cold: no device running (other-app install starts one); Win.apk has none to stop.
+            if ($rt -eq 'other') { & $other shutdown 2>&1 | Out-Null }
+            Step cold
+            Start-Sleep 5
+            Step warm
+            if ($rt -eq 'other') {
+              & $other shutdown 2>&1 | Out-Null
+              Copy-Item "$env:LOCALAPPDATA\the other runtime\logs\system_server*.log" $out -ErrorAction SilentlyContinue
+            } else {
+              Get-Process winapk-runtime -ErrorAction SilentlyContinue | Stop-Process -Force
+              if (Test-Path C:\cmp\winapk-data\logs) { Copy-Item -Recurse C:\cmp\winapk-data\logs "$out\winapk-data-logs" }
+            }
+            Start-Sleep 5
+          }
+          $os = (Get-CimInstance Win32_OperatingSystem).Caption
+          $cpu = (Get-CimInstance Win32_Processor | Select-Object -First 1).Name
+          [ordered]@{
+            pkg = $env:PKG; version = $env:VERSION; sha256 = $env:SHA256; kind = $env:KIND
+            first = $env:FIRST; seconds = [int]$env:SECONDS_PER_RUN; display = $env:DISPLAY_DP
+            runner = "$os, $cpu, $([Environment]::ProcessorCount) logical CPUs, $([Math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB)) GB"
+            fetched = (Get-Content fetch.out -Raw).Trim()
+            winapk_source = 'Win.apk: ' + ((Select-String -Path winapk-source.txt -Pattern '^runtime-stage of run').Line)
+            other_source = (Get-Content other\other-source.txt -Raw).Trim()
+          } | ConvertTo-Json | Set-Content -Encoding utf8 "$out\app.json"
+      - name: Summary
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force all\compare-app | Out-Null
+          if (Test-Path cmp) { Copy-Item cmp\*.json all\compare-app }
+          python -I .github/compare/summary.py all table
+          if (Test-Path table\compare.md) { Get-Content table\compare.md | Add-Content $env:GITHUB_STEP_SUMMARY }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: compare-${{ matrix.pkg }}
+          path: cmp/
+
+  table:
+    needs: app
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/compare
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: compare-*
+          path: all
+      - name: The table
+        run: |
+          python3 -I .github/compare/summary.py all table
+          cat table/compare.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: comparison
+          path: table/
