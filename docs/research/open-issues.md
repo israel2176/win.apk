@@ -977,10 +977,12 @@ New bugs found with AOSP views:
     `Activity`, `Looper`, `Handler`, `MessageQueue`, `SurfaceView`,
     `TextureView` and the GL classes, which are not shadowed.
   - **The plain-JVM tests** (`DamageRectTest`, `FrameworkStubsTest`'s view
-    half, `DateTimeViewTest`, `AccessibilityTreeTest`, `WindowsTextInputTest`,
+    half, `DateTimeViewTest`, `WindowsTextInputTest`,
     run by CI on `build/java/android-framework.jar`, the jar as compiled):
     they still test Win.apk's own views, which no app runs. To move onto
-    AOSP's classes they need AOSP's natives outside `winapk-runtime`; or
+    AOSP's classes they need AOSP's natives outside `winapk-runtime`, as
+    `AccessibilityTreeTest` did (`windows/test/accessibility`: an activity on
+    `windows/test/aospapp`'s harness, AOSP's app layer, views and graphics); or
     retire the ones whose subject is gone (`DamageRectTest`: AOSP's
     `ViewRootImpl` does its own dirty area; `DateTimeViewTest`: AOSP's
     `DateTimeView` is in `aosp-views.jar`).
@@ -1013,30 +1015,37 @@ New bugs found with AOSP views:
 
 ## Screen readers (UI Automation), to check
 
-Adapted from the other runtime's `uia_bridge.cc` (November 2026): `windows/host/uia_provider.cpp`,
-`native_accessibility.cpp`, `runtime/java/com/macapk/loader/HostAccessibility.java`
-(windows/README.md, the runtime list). Checked: `winapk-uia-test` under Wine 9 (its
-client stubs properties and patterns, so those were checked on the providers
-directly; the client's own checks run on CI's Windows), `AccessibilityTreeTest` on a
-JVM over Win.apk's views, `aosp_views` compiled against android-all 14. **Not yet
-checked:** Narrator, NVDA or JAWS on a real app on real Windows (names, the reading
-order, focus following Tab, a Compose app's semantics, a Hebrew voice from Culture),
-nor a run with `WINAPK_AOSP_VIEWS=1` and a screen reader. To check then:
+Win.apk's own (November 2026), written from Microsoft's UI Automation documentation
+and AOSP 14's accessibility model in place of the first, imported version: `windows/host/uia_tree.h` (what each node is, the events, the
+Text pattern's units; no Windows call), `uia_provider.cpp`, `native_accessibility.cpp`,
+`runtime/java/com/macapk/loader/HostAccessibility.java`,
+`windows/java/aosp_views/com/winapk/aospviews/AccessibilityTree.java`. Checked:
+`winapk-uia-tree-test` on Linux; `winapk-uia-test` under Wine 9 (every provider and
+pattern; its client's checks are reported, not counted: Wine's client lacks them, so
+they are first checked on CI's Windows); `windows/test/accessibility/run.sh` on AOSP's
+views in an activity on a plain JVM (the snapshot, every action reaching the views, a
+live region and an announcement by the views' own events, the throttle, then the
+snapshot read by `uia_tree.h`). **Not yet checked:** Narrator, NVDA or JAWS on a real
+app on real Windows; to check then:
 
-- Win.apk's own widgets give AOSP's node info only where it was ported (`View`,
-  `ViewGroup`'s reading order, `TextView`, `CompoundButton`, `ProgressBar`, `SeekBar`,
-  `ScrollView`, `HorizontalScrollView`); others (`AbsListView`'s scroll actions,
-  `Spinner`, `RatingBar`, `TabHost`) give the base view's. With AOSP's views they are
-  AOSP's own; these ports go with Win.apk's views.
-- Win.apk's `SeekBar` is not focusable without the theme's `Widget.SeekBar` style, so
-  a plain one is not important for accessibility (AOSP's style makes it focusable).
-- No UIA Text pattern (reading by character, word or line; the caret), no
-  ExpandCollapse or Selection patterns, headings all level 2 (Android has no level).
+- The names: a clickable row speaks the texts inside it, which leave UIA's control and
+  content views (`IsControlElement`/`IsContentElement` false). Check that Narrator's
+  scan mode and NVDA's browse mode read each once, and that a row whose text is in a
+  child with its own click listener still reads the child.
+- Reading a field by character, word and line (the Text pattern: the `Layout`'s lines,
+  `BreakIterator`'s words, `GetCaretRange`), and that the caret follows typing: the
+  caret moves by snapshot (at most every 100 ms), not by the key.
+- Focus following Tab, a dialog said to be one (`IsDialog`), a toast and a live region
+  spoken once, a Compose app's semantics, a Hebrew voice from `Culture`.
+- Events are raised for properties a client advised when any advice came
+  (`IRawElementProviderAdviseEvents`), else for all: check that NVDA, which listens
+  globally, still hears value and name changes.
 - A WebView's page is read through WebView2's own UIA tree (its child window), not
-  placed at the WebView's node as the other runtime does with an override provider.
-- The `pane` items UIA shows for each window's root (the `DecorView`) and for layouts
-  that are important only because they are clickable are named after their text, as
-  TalkBack joins them; check that Narrator does not read things twice.
+  placed at the WebView's node.
+- Not given: scroll positions (Android tells a screen reader none: `ScrollPattern`
+  says `NoScroll`), heading levels (Android has none: all level 2), the text's
+  formatting attributes (one run: culture, read-only, direction only), MSAA clients
+  that do not use UI Automation (`OBJID_CLIENT` is left to Windows' default).
 
 ## Work started and not merged
 
