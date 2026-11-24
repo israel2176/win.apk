@@ -97,8 +97,8 @@ Android libraries are out of scope.
 
 `runtime/java/` is upstream's reimplementation of the Android framework
 (`android.*`), its DEX-to-JVM converter (`com.macapk.dex`), and the boot
-loader (`com.macapk.loader`: `Boot`, `ActivityHost`, the package manager, the
-class loader). It compiles unchanged with a stock JDK 21 and runs on Windows
+loader (`com.macapk.loader`: `Boot`, `ActivityHost` (the host's side of an
+app's starts and its window), the package manager, the class loader). It compiles unchanged with a stock JDK 21 and runs on Windows
 with a handful of hooks, each listed in `windows/README.md`.
 
 Three of its layers are AOSP 14's own classes instead, each in a jar put
@@ -938,9 +938,10 @@ the change refused from anyone but the launcher.
    requests spawn the launcher's dialogs; a resize re-lays the app out.
 8. Closing the window (`WM_CLOSE`; `WM_ENDSESSION` at sign-out or shutdown)
    hides it at once and runs upstream's close path on a thread of its own
-   (`native_cocoa.cpp`, `close_thread`): `ActivityHost.macapkTerminate` posts
-   the teardown to the app's main thread, `onPause`, `onStop` and `onDestroy`
-   for every activity from the top down, and waits up to two seconds; then
+   (`native_cocoa.cpp`, `close_thread`): `ActivityHost.macapkTerminate` has
+   the task manager remove the task (the top paused first, then `onStop` and
+   `onDestroy` for every activity from the top down), and waits up to two
+   seconds, ticking the renderer meanwhile; then
    the process ends, and the run log says
    `[win.apk] close: the app was paused, stopped and destroyed in <n> ms; ended`.
    An app whose main thread is stuck gets
@@ -960,7 +961,10 @@ the change refused from anyone but the launcher.
    whose in-process activity manager and task manager send it the client
    transactions system_server would (`docs/research/aosp-app.md`); the
    `ActivityHost` entries above hand the window's close, minimize and restore
-   to that task manager.
+   to that task manager. The framework has no `Activity`, `Application` or
+   `ActivityThread` of its own: it is compiled against AOSP's
+   (`windows/scripts/aosp_app_take.sh`), and asks the process's Application
+   through `com.macapk.loader.app.Apps`.
 
 ## Data on disk
 
