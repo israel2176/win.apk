@@ -312,8 +312,9 @@ void cds_apply(std::vector<std::string>* opts, const fs::path& jdk, const fs::pa
     fs::path shipped = env_set(L"WINAPK_CDS_CLASSLIST", &shipped_w) ? fs::path(shipped_w)
                                                                      : lib / "winapk-framework.classlist";
     if (!shipped.empty() && !fs::exists(shipped, ec)) shipped.clear();
-    // The graphics are in the key and in the file's name: AOSP's (lib\aosp-graphics.jar first on
-    // the class path, which the key has too) and Java2D's each keep an archive of their own.
+    // The framework is in the key and in the file's name: AOSP's graphics alone, or with AOSP's
+    // resources or views (their jars first on the class path, which the key has too), each keep
+    // an archive of their own.
     const std::string graphics = cds::graphics_of(*opts);
     std::vector<std::string> parts = {"winapk-cds-1", "graphics=" + graphics, java_version(jdk),
                                       cds::stamp(jdk / "lib" / "modules"),

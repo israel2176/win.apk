@@ -123,10 +123,8 @@ int main(int argc, char** argv) {
     check(!per_launch("-Djava.class.path=a.jar") && !per_launch("-Xmx1g") && !per_launch("--add-opens=x"),
           "the class path and the JVM's flags are in it");
 
-    // One archive per graphics: AOSP's (the default) and Java2D's do not delete each other.
-    check(graphics_of({"-Xrs", "-Dwinapk.aosp.gfx=1"}) == "aosp", "-Dwinapk.aosp.gfx=1 is AOSP's graphics");
-    check(graphics_of({"-Xrs"}) == "java2d" && graphics_of({"-Dwinapk.aosp.gfx=0"}) == "java2d",
-          "anything else is Java2D's");
+    // One archive per framework: AOSP's graphics alone (every JVM), with AOSP's resources, with its views.
+    check(graphics_of({"-Xrs"}) == "aosp", "AOSP's graphics alone are \"aosp\"");
     const std::wstring stem = L"framework-aosp-0123456789abcdef";
     check(!stale_archive_file(stem + L".jsa", stem) && !stale_archive_file(stem + L".ok", stem) &&
               !stale_archive_file(stem + L".123.classlist", stem),
@@ -134,27 +132,21 @@ int main(int argc, char** argv) {
     check(stale_archive_file(L"framework-aosp-fedcba9876543210.jsa", stem) &&
               stale_archive_file(L"framework-aosp-fedcba9876543210.fails", stem),
           "the same graphics' other keys go");
-    check(!stale_archive_file(L"framework-java2d-fedcba9876543210.jsa", stem) &&
-              !stale_archive_file(L"framework-java2d-0123456789abcdef.ok", stem),
-          "the other graphics' archive stays");
     check(stale_archive_file(L"framework-fedcba9876543210.jsa", stem) &&
               stale_archive_file(L"framework-0123456789abcdef.77.classlist", stem),
           "the old naming, with no graphics, goes");
     check(!stale_archive_file(L"dump.log", stem) && !stale_archive_file(L"patch-digests.txt", stem) &&
               !stale_archive_file(L"framework-x.jsa", stem),
           "other files stay");
-    check(stale_archive_file(L"framework-0123456789abcdef.jsa", L"framework-java2d-0123456789abcdef") &&
-              !stale_archive_file(L"framework-aosp-0123456789abcdef.jsa", L"framework-java2d-0123456789abcdef"),
-          "a Java2D dump drops the old naming and keeps AOSP's");
     // AOSP's resources and views come with AOSP's graphics: one archive; theirs from while they
-    // were switches go, whichever graphics dumps.
+    // were switches go, and Java2D's (deleted) too.
     check(graphics_of({"-Dwinapk.aosp.gfx=1", "-Dwinapk.aosp.res=1", "-Dwinapk.aosp.views=1"}) == "aosp" &&
-              graphics_of({"-Dwinapk.aosp.views=1", "-Dwinapk.aosp.res=1", "-Dwinapk.aosp.gfx=1"}) == "aosp",
+              graphics_of({"-Dwinapk.aosp.views=1", "-Dwinapk.aosp.res=1"}) == "aosp",
           "AOSP's resources and views share the graphics' archive");
     check(stale_archive_file(L"framework-aospres-fedcba9876543210.jsa", stem) &&
               stale_archive_file(L"framework-aospviews-0123456789abcdef.ok", stem) &&
-              stale_archive_file(L"framework-aospviews-0123456789abcdef.jsa", L"framework-java2d-0123456789abcdef"),
-          "the archives of the resources' and the views' switches go");
+              stale_archive_file(L"framework-java2d-0123456789abcdef.jsa", stem),
+          "the archives of the resources' and the views' switches, and Java2D's, go");
 
     // The class lists.
     const std::string a =

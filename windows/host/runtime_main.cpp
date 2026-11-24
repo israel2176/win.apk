@@ -1569,8 +1569,8 @@ std::vector<std::string> jvm_options(const BootArgs& b) {
     const Options& o = b.options;
     std::error_code ec;
     std::vector<std::string> v;
-    // AOSP's graphics (aosp_gfx.h, the default; WINAPK_AOSP_GFX=0 is Java2D's): their classes
-    // first, so they win over the framework's own of the same name (aosp_gfx_prepare in main).
+    // AOSP's graphics (aosp_gfx.h): their classes before the framework's, which has no
+    // android.graphics of its own (aosp_gfx_prepare in main made sure they are there).
     const winapk::host::AospGfxFiles* aosp = winapk::host::aosp_gfx_files();
     // AOSP's resources (aosp_gfx.h, always: Win.apk's own are not shipped) before them: that jar's
     // com.android.internal.R matches its framework table, for the graphics' classes too.
@@ -1708,7 +1708,6 @@ std::vector<std::string> jvm_options(const BootArgs& b) {
         // framework finds Android's fonts and hyphenation patterns.
         v.push_back("-Dicu.data.path=" + jvm_path(aosp->icu_data));
         v.push_back("-Dicu.locale.default=" + winapk::host::aosp_gfx_locale());
-        v.push_back("-Dwinapk.aosp.gfx=1");
         v.push_back("-Dwinapk.aosp.fonts=" + jvm_path(aosp->fonts));
         if (!aosp->hyphen.empty()) v.push_back("-Dwinapk.aosp.hyphen=" + jvm_path(aosp->hyphen));
     }
@@ -1725,8 +1724,8 @@ std::vector<std::string> jvm_options(const BootArgs& b) {
         i = j + 1;
     }
     // Class-data sharing (cds.h): last, so its key sees MACAPK_JVM_OPTS too.
-    // Only an app's own start records the classes it loads. AOSP's graphics and Java2D's each
-    // have an archive (cds_util.h, graphics_of), so a run on either keeps the other's.
+    // Only an app's own start records the classes it loads. AOSP's resources and views have
+    // archives of their own (cds_util.h, graphics_of), so a run with either keeps the other's.
     winapk::host::cds_apply(&v, o.jdk, o.lib, o.data,
                             o.install_only ? std::wstring() : b.app_dir.filename().wstring());
     return v;
@@ -1916,7 +1915,7 @@ DWORD WINAPI gms_thread(void* param) {
     }
     macapk::sqlite::RegisterNativeSqliteMethods(env);
     check_exception(env, "RegisterNativeSqliteMethods");
-    winapk::host::aosp_gfx_load(vm, env);  // as boot_thread: the graphics its class path has
+    if (!winapk::host::aosp_gfx_load(vm, env)) return 1;  // as boot_thread: it said why
 
     // --verify-apk is the same shape: com.winapk.tools.ApkCheck.run(String[])int, on the one file.
     const char* cls_name = o.verify ? "com/winapk/tools/ApkCheck" : "com/macapk/gms/GmsCli";
@@ -1972,7 +1971,7 @@ DWORD WINAPI system_thread(void* param) {
     }
     macapk::sqlite::RegisterNativeSqliteMethods(env);
     check_exception(env, "RegisterNativeSqliteMethods");
-    winapk::host::aosp_gfx_load(vm, env);  // as boot_thread: the graphics its class path has
+    if (!winapk::host::aosp_gfx_load(vm, env)) return 1;  // as boot_thread: it said why
     jclass server = env->FindClass("com/macapk/loader/SystemServer");
     jmethodID main = server ? env->GetStaticMethodID(server, "main", "([Ljava/lang/String;)V") : nullptr;
     if (!main) {
@@ -2024,8 +2023,9 @@ DWORD WINAPI boot_thread(void* param) {
     macapk::sqlite::RegisterNativeSqliteMethods(env);
     check_exception(env, "RegisterNativeSqliteMethods");
     // AOSP's graphics (aosp_gfx.h): Skia and the rest onto AOSP's classes, after Win.apk's own natives so
-    // that those it keeps (SQLite's, Surface's) stay bound as they are. Nothing when it is off.
-    winapk::host::aosp_gfx_load(vm, env);
+    // that those it keeps (SQLite's, Surface's) stay bound as they are. Without them nothing draws, so
+    // the run stops here (aosp_gfx_load logged why) rather than show a window that stays empty.
+    if (!winapk::host::aosp_gfx_load(vm, env)) return 1;
 
     auto jstr = [&](const fs::path& p) { return jstring_of(env, p.wstring()); };
 
@@ -2306,10 +2306,14 @@ int wmain(int argc, wchar_t** argv) {
         return 2;
     }
     if (!resolve_paths(&b.options)) return 2;
-    // AOSP's graphics (aosp_gfx.h): on unless WINAPK_AOSP_GFX=0 or a file is missing, for every JVM
-    // this runtime makes: an app's run, --cds-prepare's key, the install's icon (AppMeta), --gms and
-    // --system, so that nothing runs on the Java2D classes but by asking.
-    winapk::host::aosp_gfx_prepare(b.options.lib, exe_dir());
+    // AOSP's graphics (aosp_gfx.h), for every JVM with the framework this runtime makes: an app's run,
+    // --cds-prepare's key, the install's icon (AppMeta), --gms, --verify-apk and --system. The framework
+    // has no other graphics, so a file missing or a DLL that does not load stops all of them here, with
+    // the line aosp_gfx_prepare logged; only --package-to (AppInstall, no framework) goes on.
+    if (!winapk::host::aosp_gfx_prepare(b.options.lib, exe_dir()) && b.options.package_to.empty()) {
+        std::fprintf(stderr, "[win.apk] cannot start: AOSP's graphics are not usable (the error above)\n");
+        return 1;
+    }
     // AOSP's resources and views (aosp_gfx.h), for the same JVMs: the only ones the stage has.
     winapk::host::aosp_res_prepare(b.options.lib, exe_dir());
     winapk::host::aosp_views_prepare(b.options.lib);

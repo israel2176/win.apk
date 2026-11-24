@@ -37,7 +37,6 @@
 #include <mmsystem.h>
 #include <shellapi.h>
 
-#include "aosp_gfx.h"
 #include "cds.h"
 #include "frame_times.h"
 #include "gl/gl_surface.h"
@@ -269,7 +268,7 @@ frame_times::Recorder g_frame_times;
 void print_frame_times() {
     static std::atomic<bool> printed{false};
     if (printed.exchange(true)) return;
-    const std::string line = g_frame_times.summary(aosp_gfx_files() ? "aosp" : "java2d");
+    const std::string line = g_frame_times.summary("aosp");
     if (!line.empty()) std::fprintf(stderr, "[win.apk] %s\n", line.c_str());
 }
 
