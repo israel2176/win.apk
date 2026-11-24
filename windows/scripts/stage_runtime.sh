@@ -4,6 +4,7 @@
 #   <out>/Win.apk.exe                 the app library (launcher/)
 #   <out>/bin/winapk-runtime.exe
 #   <out>/bin/macapk-translator.exe, winapk-guest-stub.dll (app native libraries)
+#   <out>/bin/winapk-shell.dll       (Explorer's thumbnails of the app files)
 #   <out>/bin/libEGL.dll, libGLESv2.dll, ... (ANGLE, for GL; fetch_angle.sh)
 #   <out>/bin/WebView2Loader.dll      (WebView2, for web content; fetch_webview2.sh)
 #   <out>/bin/tools/framework-res.apk
@@ -46,6 +47,8 @@ if [[ "${WINAPK_STAGE_AOSP_GFX:-1}" != 0 ]]; then
     fi
 fi
 cp -f "$BUILD/winapk-runtime.exe" "$BUILD/macapk-translator.exe" "$BUILD/winapk-guest-stub.dll" "$OUT/bin/"
+# Explorer's thumbnails of the app files (shell/apk_thumbnail.cpp), registered by the launcher and the installer.
+cp -f "$BUILD/winapk-shell.dll" "$OUT/bin/"
 # The arm64 translator, and the clang it compiles with (clang\, beside bin\),
 # so no user has to install one.
 if [[ -f "$BUILD/winapk-aot.exe" ]]; then

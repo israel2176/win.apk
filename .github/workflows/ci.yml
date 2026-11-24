@@ -351,6 +351,8 @@ jobs:
         run: ./build/winapk-window-test.exe
       - name: Run the launcher's state test
         run: ./build/winapk-launcher-state-test.exe
+      - name: Run the app file icon test (Explorer's thumbnails, windows/shell)
+        run: ./build/winapk-apk-icon-test.exe
       - name: Run the Bluetooth host test
         run: ./build/winapk-bluetooth-test.exe
       - name: Run the real-JVM end-to-end test
