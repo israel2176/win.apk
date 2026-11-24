@@ -99,9 +99,23 @@ Android libraries are out of scope.
 (`android.*`), its DEX-to-JVM converter (`com.macapk.dex`), and the boot
 loader (`com.macapk.loader`: `Boot`, `ActivityHost`, the package manager, the
 class loader). It compiles unchanged with a stock JDK 21 and runs on Windows
-with a handful of hooks, each listed in `windows/README.md`. Java needs a
-platform resource APK (`framework-res.apk`, built from AOSP sources with
-`aapt2`) for every `@android:` resource reference.
+with a handful of hooks, each listed in `windows/README.md`.
+
+Three of its layers are AOSP 14's own classes instead, each in a jar put
+before `android-framework.jar` on the class path, so that its classes win over
+Win.apk's of the same names: the graphics (`lib\aosp-graphics.jar`, below),
+the resources (`lib\aosp-resources.jar`: `android.content.res` on Robolectric's
+Java port of libandroidfw, with android-14's own platform table,
+`bin\aosp\framework-res-34.apk`, for every `@android:` reference) and the views
+(`lib\aosp-views.jar`: `android.view`, `android.widget`, `PhoneWindow`,
+`ViewRootImpl`, the dialogs, over an in-process window manager,
+`windows/java/aosp_views`). `windows/scripts/build_aosp_gfx.sh`,
+`build_aosp_res.sh` and `build_aosp_views.sh` make them from android-all 14;
+`docs/research/aosp-views.md` has how the last two were built. Since November
+2026 the resources and views are the only ones: Win.apk's own classes of those
+packages are dropped from the shipped `android-framework.jar` (their sources
+stay, as the rest of the framework compiles against them), and the rest of the
+framework reaches what differs through two seams, `ResBackend` and `ViewHost`.
 
 The framework's own natives are declared in about 40 Java classes
 (`NativeCocoa`, `NativeAudio`, `NativeSqlite`, `MacApkWebViewBridge`,
@@ -143,8 +157,9 @@ and linking of classes it loaded before: the JRE's own (`bin\server\classes.jsa`
 the JDK's classes) and the framework archive (`<data>\cds\framework-<graphics>-<key>.jsa`:
 the JDK's and the framework's classes, `android-framework.jar`,
 `macapk-loader.jar` and an unsigned bcprov, and with AOSP's graphics
-`aosp-graphics.jar`, one for all apps; `aosp` and `java2d` each have their
-own, so a start on the other graphics does not delete it; an install,
+`aosp-graphics.jar`, `aosp-resources.jar` and `aosp-views.jar`, one for all
+apps; `aosp` and `java2d` each have their own, so a start on the other
+graphics does not delete it; an install,
 `--gms` and the system broker map the one an app's start does). The runtime
 drops the `--patch-module` flags only when the JRE's
 `lib\winapk-baked-patches` records the same SHA-256 as the patch folders (a
@@ -484,69 +499,29 @@ Vulkan is not implemented.
 
 ### The view tree's frames
 
-The Java view tree is drawn in software into one bitmap that lives
-from frame to frame, by `com.macapk.loader.ViewCanvasDriver`, once per display
-tick and only when something asked: `View.requestLayout` asks for a frame that
-measures, lays out and draws; `View.invalidate` for one that only draws. A
-view that cannot be seen asks for nothing. Every half second an idle window is
-laid out and drawn once more, to catch a change nothing announced. The frame
-then goes to the window (`NativeCocoa.presentFrame`, `host/native_cocoa.cpp`),
-which copies it and blits it in `WM_PAINT`.
+Every window of an app (the activity's, a dialog's, a popup's, a toast's) is
+AOSP's `PhoneWindow` added to AOSP's `WindowManagerGlobal`, and its
+`ViewRootImpl` measures, lays out and draws it on `Choreographer`'s frames, as on
+a phone: `requestLayout` and `invalidate` schedule a traversal, and a view that
+cannot be seen asks for nothing. The frames come from a Java vsync clock at the
+host display's rate (`NativeDisplayEventReceiver`). Each window draws in
+software (`ThreadedRenderer` is off for the process, as AOSP turns it off for a
+low-end process): its `Surface` is a `Canvas` on a frame `Bitmap` of AOSP's
+graphics, and posting it hands the bitmap to `Compositor`
+(`windows/java/aosp_views`), which puts the windows' layers together bottom to
+top as WindowManagerService orders them, with the dim layer under a
+`FLAG_DIM_BEHIND` window and the system bars' glyphs on top, into the one frame
+the host presents (`NativeCocoa.presentBitmap`, `host/native_cocoa.cpp`), which
+copies it and blits it in `WM_PAINT`. The window's size and insets come from an
+in-process window session (`IWindowSession.relayout` through AOSP's own
+`WindowLayout.computeFrames`). `docs/research/aosp-views.md`, "V1 as built" and
+"V2 as built", has the details and what is not there yet.
 
-What draws it is AOSP 14's own `android.graphics` and `android.text`
-(`Canvas`, `Paint`, `Layout`, the drawables), with Skia, minikin and HarfBuzz
-in Robolectric's native runtime (`lib\aosp-graphics.jar`,
-`bin\robolectric-nativeruntime.dll`, `host/aosp_gfx.h`; `windows/README.md`,
-"Milestone 2"). `WINAPK_AOSP_GFX=0`, or a runtime without those files, draws
-with Win.apk's older Java2D classes instead, until they are deleted; the rest
-of the framework reaches either through `com.macapk.loader.gfx.GfxBackend`.
-The runtime's processes with no app take the same graphics: the install's icon
-render (`icon.png`), `--gms`, `--verify-apk` and the system broker.
-
-A draw-only frame redraws the whole tree. With `MACAPK_FRAMESPEED_DAMAGE=1`
-(off by default; `windows/README.md` lists it with its validator) it redraws
-only what the invalidations damaged, as AOSP's software renderer does with
-`Surface.lockCanvas(dirty)`:
-
-- **What a view damages** (`android.view.ViewRootImpl`, "FRAMESPEED S1";
-  `View.macapkReportDamage`). `ViewGroup.drawChild` records, for each child it
-  draws on the frame, the clip the child is drawn under, in frame pixels.
-  Everything the child and its subtree draw lies inside that clip, whatever
-  transforms, `clipChildren` settings or overlapping siblings are involved. An
-  invalidation damages the view's recorded clip when the view and all its
-  ancestors are still where the record was taken (a signature of bounds,
-  transform, alpha, elevation and parent says so; no setter has to). A view
-  that has moved, faded or changed size, that was not drawn, or that has
-  elevation (its parent draws the shadow) damages its parent's clip instead,
-  which holds its old place and its new one; a view that has only scrolled
-  damages its own. `invalidate(Rect)` damages the whole view, as on a device
-  since API 21. There is no rectangle, and the frame is whole, for
-  `requestLayout`, a visibility change, attaching, anything that asks for a
-  frame without going through `View.invalidate`, an invalidation from another
-  thread, a view something other than its parent drew, a tree with no record
-  (a dialog's), and while a drag shadow is shown.
-- **The frame** (`ViewCanvasDriver`, "FRAMESPEED S2"). When a draw-only frame's
-  damage is one rectangle, the canvas is clipped to it and the normal draw
-  runs under that clip, so siblings and translucent views over and under the
-  damage are drawn as in a whole frame. The frame is whole whenever something
-  outside the tree changed too: a new bitmap, a dialog or popup on show, the
-  status bar's height, minute or the row it takes its color from, the
-  letterbox, a surface's rectangle. A frame drawn whole records every view's
-  clip; one drawn under the damage clip records again only the views inside
-  the ones that were damaged, whose clip it sees uncut. What a frame's own
-  draw invalidates asks for no new frame, as before, but is added to the next
-  frame's damage; when a partial frame was changed from within, outside its
-  rectangle (an `OnPreDrawListener`, `computeScroll`), one more frame follows.
-- **The window** (`Cocoa_presentFrame`, `window_present_rect`). Of a partial
-  frame only the damaged rows are read from the bitmap, patched into the
-  window's copy and invalidated, so the blit is that rectangle too. A frame
-  with GL or surface content under it, or shown scaled, goes whole.
-
-`MACAPK_DAMAGE_VALIDATE=1` is the proof that a partial frame equals a whole
-one: every frame is drawn whole, and each pixel that changed outside the
-rectangle the frame would have been clipped to is reported
-(`[damage-validate] under-damage`). `windows/test/java/DamageRectTest.java`
-checks the same on the JVM with the real `View` classes.
+Win.apk's own view classes, which apps ran before, drew the tree into one
+bitmap through `com.macapk.loader.ViewCanvasDriver` and could redraw only what
+invalidations damaged (`MACAPK_FRAMESPEED_DAMAGE=1`, checked by
+`windows/test/java/DamageRectTest.java` on a plain JVM). Neither runs in an app
+any more; AOSP's software renderer redraws the dirty area its own way.
 
 ### The window and the display
 

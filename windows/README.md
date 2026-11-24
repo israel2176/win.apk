@@ -37,7 +37,7 @@ this repository.
 | `include/winapk/`, `src/` | The ELF loader (`elf_loader.cpp`), the guest linker (`linker.cpp`), dynamic ELF TLS (`elf_tls.cpp`), the `%fs` stack-guard patch (`fs_tls_patch.cpp`), the ABI thunks (`abi_thunk.cpp`), the guest `JNIEnv` (`guest_jni.cpp`, `jni_slots.inc`), the variadic JNI bridge (`jni_variadic.cpp`), native-method binding (`jni_bind.cpp`), libjnigraphics (`jnigraphics.cpp`) |
 | `src/mini_bionic.cpp`, `src/bionic/` | The Bionic shim: Android's libc, libdl, liblog, libm, libz and the NDK's `ALooper` and `ATrace` on the UCRT and Win32, about 900 System V functions |
 | `src/arm64/` | The arm64 engines: interpreter (`arm64_cpu.cpp`, `arm64_simd.cpp`), JIT (`arm64_jit.cpp`, dynarmic), ahead-of-time translator (`arm64_aot.cpp`) and the AAPCS64 bridge (`arm64_guest.cpp`, `arm64_abi.cpp`) |
-| `host/` | `winapk-runtime.exe` (`runtime_main.cpp`), the app window (`win32_window.cpp`), the host natives (`native_*.cpp`, one file per Java class; `host_natives.cpp` binds them), the GL layer (`gl/`), the app-library loading path (`guest_libs.cpp`, `guest_stub.cpp`, `translator_main.cpp`), shared storage (`user_folders.cpp`), java.io's file opens with `FILE_SHARE_DELETE` (`java_io_open.cpp`), class-data sharing (`cds.cpp`, `cds_util.cpp`), `WINAPK_AOSP_GFX` and `WINAPK_AOSP_RES` (`aosp_gfx.cpp`, `aosp_gfx_redirect.cpp`) |
+| `host/` | `winapk-runtime.exe` (`runtime_main.cpp`), the app window (`win32_window.cpp`), the host natives (`native_*.cpp`, one file per Java class; `host_natives.cpp` binds them), the GL layer (`gl/`), the app-library loading path (`guest_libs.cpp`, `guest_stub.cpp`, `translator_main.cpp`), shared storage (`user_folders.cpp`), java.io's file opens with `FILE_SHARE_DELETE` (`java_io_open.cpp`), class-data sharing (`cds.cpp`, `cds_util.cpp`), `WINAPK_AOSP_GFX`, and AOSP's resources and views on the class path (`aosp_gfx.cpp`, `aosp_gfx_redirect.cpp`) |
 | `launcher/` | `Win.apk.exe`, the app library, the install helper and the permission dialogs (`launcher_main.cpp`, `launcher.rc`, the icon), and its state machines, each a header the unit test drives (`app_runs.h`: an app's run; `installs.h`: an install; `updates.h`: the update check and download) |
 | `java/` | Windows-only Java: `com.winapk.tools.AppInstall` and `AppMeta` (`winapk-tools.jar`), `java_base_patch/` (an overlay for `java.base`), `aosp_gfx/` (the stand-ins in `aosp-graphics.jar`: ART's, Robolectric's, and an `android.icu.text.Bidi` on `java.text.Bidi`), and `winapk-framework.classlist` (the classes of the framework archive, `host/cds.h`) |
 | `tools/` | `winapk-elfrun` (the loader test runner), `winapk-jvm-run` (the real-JVM test), `winapk-aot` (`arm64_aot_main.cpp`), and the generators `gen_jni_slots.py`, `gen_gl_stubs.py`, `gen_icon.py` |
@@ -84,8 +84,13 @@ windows/scripts/bake_jre.sh "$JAVA_HOME" runtime/lib runtime/jre
 - `stage_runtime.sh <build dir> [out]` assembles a runnable folder (default
   `windows/build/runtime`): `Win.apk.exe`, `bin/` (the runtime, the
   translator and stub DLL, `winapk-aot`, ANGLE from `fetch_angle.sh`,
-  `WebView2Loader.dll` from `fetch_webview2.sh`, `tools/framework-res.apk`),
-  `lib/` (the jars from `build_java.sh`) and `clang/` (from
+  `WebView2Loader.dll` from `fetch_webview2.sh`; AOSP's graphics', resources'
+  and views' files from `build_aosp_gfx.sh`, `build_aosp_res.sh` and
+  `build_aosp_views.sh`), `lib/` (the jars from `build_java.sh` and those
+  scripts: the classes of `android-framework.jar` that `aosp-resources.jar` and
+  `aosp-views.jar` shadow, never loaded, are then dropped from it, and the jar
+  as compiled is kept in `<build dir>/java/` for the plain-JVM tests) and
+  `clang/` (from
   `stage_clang.sh`, the compiler the arm64 translation uses). The JDK is not
   copied: the runtime uses `<out>/jre` if present, else `WINAPK_JAVA_HOME` or
   `JAVA_HOME`. A plain JDK works, but without class-data sharing (the run log
@@ -108,10 +113,10 @@ windows/scripts/bake_jre.sh "$JAVA_HOME" runtime/lib runtime/jre
   Android's own `org.apache.http.legacy` (Apache-2.0, converted to JVM classes
   in `thirdparty/apache-http-legacy/`) is unpacked into
   `android-framework.jar`, as upstream's build does.
-- `build_framework_res.sh [out.apk]` builds the platform resource APK from
-  AOSP sources with Google's standalone `aapt2` (9.x or later), through
-  upstream's `scripts/build_framework_res.sh`. The result is cached under
-  `thirdparty/framework-res`.
+- The platform resource table is android-14's own, `bin/aosp/framework-res-34.apk`
+  (`build_aosp_res.sh`, from android-all). Win.apk's API-36 one
+  (`bin/tools/framework-res.apk`, built by upstream's
+  `scripts/build_framework_res.sh`) is no longer built or shipped (November 2026).
 
 ## Build on Linux and run under Wine
 
@@ -239,8 +244,7 @@ The user-facing ones (`WINAPK_PHONE_SIZE`, `WINAPK_RESIZABLE`,
 | `WINAPK_SHORT_DATA_DIR=0` | The app's data directory by its long name, not the 8.3 one (`-Dwinapk.data.dir`). For Wine, which makes short names up and does not find a new file by one: without it every save through a temporary file fails there. `run_app_wine.sh` and the sweep under `--launcher wine` set it |
 | `WINAPK_DEBUG=1` or `0` | Debug mode for this run, over the launcher's Settings > Troubleshooting > Debug mode (`HKCU\Software\Win.apk\DebugMode`): the runtime starts its thread agent (`host/debug_agent.cpp`), which answers the launcher's Threads window on `\\.\pipe\winapk-debug-<pid>` (`include/winapk/debug_protocol.h`): `threads` lists every Windows thread of the process with its kind (java, guest, jvm, runtime, system), Java name and state and where it started; `stack <tid> <jid>` gives one thread's Java frames, contended monitor and native stack. Only for a run of an app and the system broker, not an install |
 | `WINAPK_AOSP_GFX=0` | Win.apk's older Java2D graphics for this run instead of AOSP's own, the default (`host/aosp_gfx.h`; the way back while the Java2D classes exist; unset or `1` is the default). By default an app draws through AOSP's `Canvas`, with the gaps [Milestone 2](#milestone-2-the-runtime-on-aosp-graphics) lists: `lib\aosp-graphics.jar` goes before `android-framework.jar` on the class path, `-Dicu.data.path`, `-Dicu.locale.default`, `-Dwinapk.aosp.gfx=1`, `-Dwinapk.aosp.fonts` and `-Dwinapk.aosp.hyphen` are set, class-data sharing maps the `framework-aosp-<key>.jsa` archive (Java2D's is `framework-java2d-<key>.jsa`; each keeps the other), and once the host's natives are bound `bin\robolectric-nativeruntime.dll` loads through `host/aosp_gfx_redirect.cpp`: its natives go onto the jar's classes, only `android.graphics.**`, `android.text.**`, `android.util.PathParser` and two helpers (an allowlist); those for `android.database(.sqlite)`, `android.view.Surface`, `android.media.ImageReader` and `PropertyValuesHolder` are refused, Win.apk's stay. Log lines: `AOSP graphics: on (WINAPK_AOSP_GFX=0 turns it off): ...` or `AOSP graphics: off (WINAPK_AOSP_GFX=0): ...`, then `AOSP graphics: robolectric-nativeruntime.dll loaded in N ms: natives bound N (6 through API 34 adapters), skipped N, refused N ...`. A file missing, or the DLL not loading, and the run goes on with Java2D's (`AOSP graphics: off, ... is missing` / `does not load`). Every JVM with the framework takes them as an app's run does, the class path, the options and the DLL's natives: the install's icon render (`--install-only`, so `icon.png` is drawn by the classes that draw the app), `--gms`, `--verify-apk`, `--system` and `--cds-prepare`; all load `android.graphics` (the host natives' `Bitmap` at least) and so map the same `framework-aosp-<key>.jsa`. The processes without the framework (the DEX conversion's `java`, `--package-to`, `--aot-translate`, the archive's dump) load none and are left as they are. `WINAPK_AOSP_GFX_VERBOSE=1` lists each skipped native and each class routed to the stand-in |
-| `WINAPK_AOSP_RES=1` | This run on AOSP 14's own `android.content.res` (step R1 of `docs/research/aosp-views.md`, "R1 as built"; off by default, and only with AOSP's graphics on): `lib\aosp-resources.jar` (Resources, ResourcesImpl, AssetManager over ApkAssets, TypedArray, Theme, ColorStateList inflation; their natives on Robolectric's Java port of libandroidfw) goes first on the class path, `-Dwinapk.aosp.res=1` and `-Dwinapk.aosp.res.framework=bin\aosp\framework-res-34.apk` are set, and `ResBackend` is `com.winapk.aospres.AospRes` (`windows/java/aosp_res`). Class-data sharing keeps an archive of its own, `framework-aospres-<key>.jsa`. Log lines: `AOSP resources: on (WINAPK_AOSP_RES=1): ...`, then `[aosp-res] the framework's resources (framework-res-34.apk) up in N ms`; `AOSP resources: off, ... is missing` or `off, they need AOSP's graphics`. Staged by `windows/scripts/build_aosp_res.sh <stage>` (`stage_runtime.sh` runs it only with `WINAPK_STAGE_AOSP_RES=1`). Like the graphics, it applies to every JVM the runtime makes with them on (an app's run, `--cds-prepare`'s key, the install's icon render, `--gms`, `--system`, `--verify-apk`), so they all map the same `aospres` archive |
-| `WINAPK_AOSP_VIEWS=1` | This run on AOSP 14's own `android.view` / `android.widget` (step V1 of `docs/research/aosp-views.md`, "V1 as built"; off by default, and only with AOSP's resources on, so `WINAPK_AOSP_RES=1` too): `lib\aosp-views.jar` (View, ViewGroup, LayoutInflater, the layouts and widgets, PhoneWindow, DecorView, ViewRootImpl, Choreographer, WindowManagerGlobal, `com.android.internal.{view,widget,policy}`) goes first on the class path, `-Dwinapk.aosp.views=1` is set and `ViewHost` is `com.winapk.aospviews.AospViewHost` (`windows/java/aosp_views`): an Activity's window is AOSP's `PhoneWindow`, added to AOSP's `WindowManagerGlobal` on resume, and AOSP's `ViewRootImpl` lays it out and draws it in software on Choreographer's frames over an in-process window manager and session. Android 15's members of these classes that AOSP 14 lacks (`View.setRequestedFrameRate` and 44 more, `aosp_views/Api35.java`) are added to them at build time, as the graphics' are. Dialogs are AOSP's too (`Dialog`, `AlertDialog`, `AlertController`, the picker dialogs, `Presentation`): each window is its own `ViewRootImpl`, and an in-process compositor (`Compositor`) puts their layers into the one frame the host presents, in the window manager's order, with the dim layer under a `FLAG_DIM_BEHIND` window; text and custom toasts go through an in-process `INotificationManager` and AOSP's `ToastPresenter`. The system bars are `InsetsState` sources from the window session (none by default, as Win.apk paints none; both with `MACAPK_SYSTEM_BARS=1`, sized from AOSP's own dimens, shown or hidden as the top full-screen window asks), and Win.apk paints their glyphs over AOSP's `DecorView` (`StatusBarDriver.paintStatusGlyphs`/`paintNavGlyphs`). Input (step V2, "V2 as built") goes into the windows' own input path: the host's touch, mouse, wheel, keys and gamepad are made into events as Android's InputReader makes them (`AospInput`) and an in-process dispatcher (`InputRouter`) hands each to the right window's `ViewRootImpl` in the compositor's order (a dialog takes every touch, `ACTION_OUTSIDE` to a popup, keys to the focused window); an in-process `IInputMethodManager` (`ImeService`) binds the focused editor, so Windows' IME composes and commits into it (Hebrew too), and keys are typed by AOSP's own key listeners; `IAccessibilityManager` answers as with no service on until a screen reader reads the app (then as with one on: `HostAccessibility`), `ITextServicesManager` with no spell checker. A `SurfaceView`'s GL frames show under the windows (the host composites the frame over them, the SurfaceView punching AOSP's hole). Windows' text services work on the bound editor through a TSF document and Windows' touch keyboard stands for the soft keyboard (`ImeService` tells `HostTextInput`; `WINAPK_TSF` above). Not yet: an Android on-screen keyboard, drag and drop, pointer icons. `WINAPK_AOSP_VIEWS_TRACE=1` logs each relayout, each window's first frame and each new window order (with `WINAPK_AOSP_VIEWS_TRACE_DIR=<dir>` also as PNGs). Win.apk's own name-based resource index (`ResourceIndex`, and its view of `bin\tools\framework-res.apk`) is not opened: the lookups Win.apk still makes by name are answered from AOSP's Resources and AssetManager (`com.winapk.aospres.AospIndex`). Class-data sharing keeps an archive of its own, `framework-aospviews-<key>.jsa`. Log lines: `AOSP views: on (WINAPK_AOSP_VIEWS=1): ...`, `AOSP views: AOSP 14's android.view and android.widget, ...`, and `[aosp-views] <Service>.<method>: no answer in this process` once for each service call answered empty; `AOSP views: off, ... is missing` or `off, they need AOSP's graphics and resources`. Staged by `windows/scripts/build_aosp_views.sh <stage>` (`stage_runtime.sh` runs it only with `WINAPK_STAGE_AOSP_RES=1` and `WINAPK_STAGE_AOSP_VIEWS=1`) |
+| `WINAPK_AOSP_RES`, `WINAPK_AOSP_VIEWS` | Gone (November 2026): ignored, with the log line `WINAPK_AOSP_RES and WINAPK_AOSP_VIEWS are ignored: AOSP's resources and views are the only ones`. Every JVM the runtime makes with AOSP's graphics (an app's run, `--cds-prepare`'s key, the install's icon render, `--gms`, `--system`, `--verify-apk`) runs AOSP 14's own `android.content.res` (step R1 of `docs/research/aosp-views.md`, "R1 as built": `lib\aosp-resources.jar`, Resources, ResourcesImpl, AssetManager over ApkAssets, TypedArray, Theme, ColorStateList inflation, their natives on Robolectric's Java port of libandroidfw; `-Dwinapk.aosp.res=1`, `-Dwinapk.aosp.res.framework=bin\aosp\framework-res-34.apk`, `ResBackend` is `com.winapk.aospres.AospRes`) and `android.view` / `android.widget` (V1 and V2, "V1 as built", "V2 as built": `lib\aosp-views.jar` (View, ViewGroup, LayoutInflater, the layouts and widgets, PhoneWindow, DecorView, ViewRootImpl, Choreographer, WindowManagerGlobal, `com.android.internal.{view,widget,policy}`) goes first on the class path, `-Dwinapk.aosp.views=1` is set and `ViewHost` is `com.winapk.aospviews.AospViewHost` (`windows/java/aosp_views`): an Activity's window is AOSP's `PhoneWindow`, added to AOSP's `WindowManagerGlobal` on resume, and AOSP's `ViewRootImpl` lays it out and draws it in software on Choreographer's frames over an in-process window manager and session. Android 15's members of these classes that AOSP 14 lacks (`View.setRequestedFrameRate` and 44 more, `aosp_views/Api35.java`) are added to them at build time, as the graphics' are. Dialogs are AOSP's too (`Dialog`, `AlertDialog`, `AlertController`, the picker dialogs, `Presentation`): each window is its own `ViewRootImpl`, and an in-process compositor (`Compositor`) puts their layers into the one frame the host presents, in the window manager's order, with the dim layer under a `FLAG_DIM_BEHIND` window; text and custom toasts go through an in-process `INotificationManager` and AOSP's `ToastPresenter`. The system bars are `InsetsState` sources from the window session (none by default, as Win.apk paints none; both with `MACAPK_SYSTEM_BARS=1`, sized from AOSP's own dimens, shown or hidden as the top full-screen window asks), and Win.apk paints their glyphs over AOSP's `DecorView` (`StatusBarDriver.paintStatusGlyphs`/`paintNavGlyphs`). Input (step V2, "V2 as built") goes into the windows' own input path: the host's touch, mouse, wheel, keys and gamepad are made into events as Android's InputReader makes them (`AospInput`) and an in-process dispatcher (`InputRouter`) hands each to the right window's `ViewRootImpl` in the compositor's order (a dialog takes every touch, `ACTION_OUTSIDE` to a popup, keys to the focused window); an in-process `IInputMethodManager` (`ImeService`) binds the focused editor, so Windows' IME composes and commits into it (Hebrew too), and keys are typed by AOSP's own key listeners; `IAccessibilityManager` answers as with no service on until a screen reader reads the app (then as with one on: `HostAccessibility`), `ITextServicesManager` with no spell checker. A `SurfaceView`'s GL frames show under the windows (the host composites the frame over them, the SurfaceView punching AOSP's hole). Windows' text services work on the bound editor through a TSF document and Windows' touch keyboard stands for the soft keyboard (`ImeService` tells `HostTextInput`; `WINAPK_TSF` above). Not yet: an Android on-screen keyboard, drag and drop, pointer icons. `WINAPK_AOSP_VIEWS_TRACE=1` logs each relayout, each window's first frame and each new window order (with `WINAPK_AOSP_VIEWS_TRACE_DIR=<dir>` also as PNGs). Win.apk's own name-based resource index (`ResourceIndex`) is not opened: the lookups Win.apk still makes by name are answered from AOSP's Resources and AssetManager (`com.winapk.aospres.AospIndex`)). Win.apk's own classes of those packages are not in the shipped `android-framework.jar` (`stage_runtime.sh` drops them; their sources stay, as the rest of the framework compiles against them), so there is no way back. They share the graphics' class-data sharing archive, `framework-aosp-<key>.jsa` (the dump deletes the `framework-aospres-*` and `framework-aospviews-*` ones of the switches' days). Log lines: `AOSP resources: on: ...`, `[aosp-res] the framework's resources (framework-res-34.apk) up in N ms`, `AOSP views: on: ...`, `AOSP views: AOSP 14's android.view and android.widget, ...`, and `[aosp-views] <Service>.<method>: no answer in this process` once for each service call answered empty; `AOSP resources: off, ... is missing` / `AOSP views: off, ...` (with "an app cannot start without them") is a broken stage, as is the graphics being off |
 | `WINAPK_TSF=0` | No TSF document for the focused editor (`host/tsf_text_store.h`): every input method goes through IMM32's `WM_IME_*` messages, as before (the runtime falls back to that by itself when TSF cannot be set up: the log says `text input: no TSF (0x...)`). On by default: while an editor that takes compositions has the focus, Windows' text services (the Japanese, Chinese and Korean IMEs, handwriting, dictation, the touch keyboard's suggestions) read and edit a copy of it (`HostTextInput.java`), and keys reach them before the app. Log lines: `text input: the focused editor is a TSF document`, `Win.apk.TextInput: editor <n>: <connection class>, takes compositions` (or `no compositions`, `no editor`), `touch keyboard: shown` / `Windows declined` / `not available` |
 | `WINAPK_CDS=0` or `base` | Class-data sharing (`host/cds.h`): `0` back to the old flags (`--patch-module`, no archive), `base` the JRE's archive without the framework archive. `WINAPK_CDS_DIR=<dir>` puts the framework archive elsewhere (tests share one), `WINAPK_CDS_CLASSLIST=<file>` dumps from another class list (`none`: only the start's own), `WINAPK_CDS_RECORD_DIR=<dir>` writes every app start's loaded classes to `<dir>\<app>.classlist` (for `scripts/merge_classlists.py`), `WINAPK_CDS_VERIFY=1` checks the archive whole at every start, `WINAPK_CDS_DUMP_DELAY_MS` (default 10000) is the wait after the first frame before the background dump |
 | `MACAPK_FRAMESPEED_DAMAGE=1` | Partial redraw (off by default): a frame that only invalidations asked for draws the view tree clipped to the area they damaged and hands the window only that rectangle, instead of redrawing and copying the whole window (`docs/ARCHITECTURE.md`, "The view tree's frames"). Unset or anything else, every frame is whole. `MACAPK_DAMAGE_VALIDATE=1` with it draws every frame whole but compares what changed with the area claimed: `[damage-validate] under-damage` names a frame that changed outside it, and the `M6:` line counts `validate: claimed= clean= under=`. `MACAPK_TRACE_DAMAGE=1` logs every 5 s what the frames' damage was (`[damage]`), `MACAPK_FRAME_PHASE_TRACE=1` a frame's time by phase (`[frame-phase]`, every 300 frames; the run's whole summary is the `frame times` line at exit, [Frame time](#frame-time)) |
@@ -346,7 +350,13 @@ sides' `ours.txt` and logs and regress.py's whole output.
   and the job summary says which base it used. Waiting for or rebuilding a
   Windows build of the base instead would double the gate's time, and the
   newest `main` build of another commit would charge `main`'s own later changes
-  to the pull request.
+  to the pull request. Each side runs on its own defaults: the graphics its
+  `host/aosp_gfx.h` names (`kAospGfxByDefault`), and Win.apk's own views and
+  resources for a base without `kAospViewsByDefault` (from before AOSP's became
+  the only ones, November 2026). Such a base needs its own stage (its API-36
+  table, its framework jar whole), so with `main`'s build of it expired there is
+  no base: only the head's run is checked (`gate.py report --no-base`, said in
+  the summary).
 - **Win.apk's side** (job "UI gate, `<target>`", `windows-latest`, one job per
   target, from `targets.json`): `test/uiprobe/gate_side.sh` runs the target on
   the base and on the head side by side (`run_ours.sh`, or `screens.sh
@@ -485,8 +495,8 @@ nothing changes: the uiprobe app's `ours.txt` is the same byte for byte as
 before these changes.
 
 - Build: `scripts/build_aosp_gfx.sh <stage> [deps]`, run by
-  `stage_runtime.sh` (`WINAPK_STAGE_AOSP_GFX=0` leaves it out; CI and
-  `windows-release.yml` stage it), fetches
+  `stage_runtime.sh` (`WINAPK_STAGE_AOSP_GFX=0` leaves it out, and AOSP's
+  resources and views with it; CI and `windows-release.yml` stage it), fetches
   android-all and the native runtime through `test/aospgfx/fetch.sh` (pinned,
   SHA-256 checked; into `thirdparty/aosp-gfx/`, which CI caches) and stages
   `lib/aosp-graphics.jar` (AOSP's `android.graphics.**` without
@@ -1027,8 +1037,8 @@ before these changes.
 
 After graphics: AOSP's resources and views. The plan is in
 `docs/research/aosp-views.md` (`PORTING.md` M11). It covers what those layers
-need underneath, the seams for Win.apk's own additions, and the steps behind
-`WINAPK_AOSP_RES` and `WINAPK_AOSP_VIEWS`. Its spike is
+need underneath, the seams for Win.apk's own additions, and the steps (R1,
+V1 and V2 built, and since November 2026 what every app runs). Its spike is
 `test/aospviews/` (`fetch.sh`, `run.sh`; Linux, plain JDK 21, not in CI yet).
 It runs AOSP 14's `Resources` / `TypedArray` / `Theme` over Robolectric's Java
 port of libandroidfw, which the native runtime does not carry. The natives are
@@ -1080,21 +1090,19 @@ arm64 translation's compiler: `libLLVM` 156 MB, `libclang-cpp` 63 MB), `jre\`
 the jar 1), `bin\tools\` 35 MB (`framework-res.apk` 22, `apkeep` 12), the
 rest of Win.apk about 70 MB.
 
-AOSP's own resources and views (`WINAPK_AOSP_RES`, `WINAPK_AOSP_VIEWS`, off by default and not
-in a release yet) would add 21.8 MB installed: `bin\aosp\framework-res-34.apk` 13.7 MB (android-all
-14's table: beside `bin\tools\framework-res.apk`'s 22.9, which they would retire),
-`lib\aosp-views.jar` 6.7 and `lib\aosp-resources.jar` 1.4; under `xz -9e`, the installer's LZMA's
-estimate, 11.6 + 6.1 + 1.2 = about 19.0 MB. The table was 21.2 MB (19.0 under `xz -9e`) until its
-three `default_wallpaper.png` (7.4 MB) became a 1x1 PNG each (`build_aosp_res.sh`): nothing of
-Win.apk reads them (its `WallpaperManager` has no built-in wallpaper, and no AOSP class that names
-the id is in its jars), but an app can by name (`getIdentifier`), so the table and its ids are
-untouched and such a read still gets an image. `footprint_check.py` counts these files as their own
-part (25 MB), and CI's informational "AOSP resources and views" job prints them each run. Made the
-default with Win.apk's copies they replace dropped (`bin\tools\framework-res.apk`, 22.9 MB, once
-its readers move; the 806 classes of `android-framework.jar` they shadow, 1.4 MB), the net is
--2.5 MB installed and -2.5 MB in the installer; the Java2D fonts in `android-framework.jar`
-(6.9 MB, read only with `WINAPK_AOSP_GFX=0`) could go too (`docs/research/aosp-views.md`, "Making
-R1 and V1/V2 the default").
+AOSP's own resources and views, what every app runs since November 2026, add 21.8 MB installed:
+`bin\aosp\framework-res-34.apk` 13.7 MB (android-all 14's table), `lib\aosp-views.jar` 6.7 and
+`lib\aosp-resources.jar` 1.4; under `xz -9e`, the installer's LZMA's estimate, 11.6 + 6.1 + 1.2 =
+about 19.0 MB. The table was 21.2 MB (19.0 under `xz -9e`) until its three `default_wallpaper.png`
+(7.4 MB) became a 1x1 PNG each (`build_aosp_res.sh`): nothing of Win.apk reads them (its
+`WallpaperManager` has no built-in wallpaper, and no AOSP class that names the id is in its jars),
+but an app can by name (`getIdentifier`), so the table and its ids are untouched and such a read
+still gets an image. `footprint_check.py` counts these files as their own part (25 MB). What they
+replace went in the same change: `bin\tools\framework-res.apk` (Win.apk's API-36 table, 22.9 MB
+installed, about 20 MB of the installer) and the 812 classes of `android-framework.jar` they shadow
+(15.6 -> 14.2 MB, 1.3 MB less under `xz -9`): net about -2.5 MB installed and in the installer. The
+Java2D fonts in `android-framework.jar` (6.9 MB, read only with `WINAPK_AOSP_GFX=0`) go with Java2D
+(`docs/research/aosp-views.md`, "Making R1 and V1/V2 the default").
 
 The built-in software codecs (`host/soft_codecs.h`, `host/webm_demux.h`,
 `cmake/soft_codecs.cmake`) are compiled into `winapk-runtime.exe`; what each
@@ -1236,12 +1244,12 @@ Package job runs it on the stage and `Win.apk-Setup.exe` it just built
 | AOSP graphics files (`bin\aosp\`, the DLL, the jar) | 60.5 MB | 70 MB |
 | Java runtime (`jre\`) | 127.3 MB | 140 MB |
 | The arm64 translation's compiler (`clang\`) | 232.9 MB | 250 MB |
-| Win.apk itself (the rest, `bin\tools\` included) | 105.2 MB | 120 MB |
+| Win.apk itself (the rest, `bin\tools\` included) | 105.2 MB, about 81 MB without the API-36 table and the shadowed classes | 100 MB |
 | Installed, in all | 525.9 MB | 580 MB |
 | Installer | about 152 MB | 165 MB |
 
 The stage has the AOSP files (`WINAPK_STAGE_AOSP_GFX` defaults to 1), in
-CI and in a release alike: apps draw on them by default. To change a budget, edit `BUDGETS`, `TOTAL_BUDGET` or
+CI and in a release alike: apps run on them. To change a budget, edit `BUDGETS`, `TOTAL_BUDGET` or
 `INSTALLER_BUDGET` at the top of the script in the change that needs the
 room, say why in its description, and update this table. Raising it is a
 decision about the product, not a way to make CI green.
@@ -1548,11 +1556,10 @@ start; those throw alike on both sides, and only a difference counts.
 | What changed | Ubuntu | | Reads the pull request's files: docs alone run nothing; `launcher/` or `package/` alone build and package but run no app; anything else runs everything, and the UI gate when the framework, the host, the loader or the gate changed. By hand, everything; a push to `main`, the build alone (and the UI gate's caches) |
 | Guest libraries | Ubuntu | What changed | The x86_64 and arm64 test libraries and the end-to-end inputs (`test/build_guest.sh`, `test/build_e2e.sh`) |
 | Launcher check | Ubuntu | What changed | The launcher compiled with MinGW-w64, warnings as errors: an answer in about a minute |
-| Build | `windows-latest` | What changed | Every CMake target with MSYS2 CLANG64 through ccache (the cache is restored from the newest run, `main`'s for a pull request's first one), then `stage_runtime.sh build stage` and `bake_jre.sh` into `stage/jre`. Uploads `winapk-binaries` (every exe) and `runtime-stage` |
+| Build | `windows-latest` | What changed | Every CMake target with MSYS2 CLANG64 through ccache (the cache is restored from the newest run, `main`'s for a pull request's first one), then `stage_runtime.sh build stage` and `bake_jre.sh` into `stage/jre`. Uploads `winapk-binaries` (every exe, and `build/java/android-framework.jar`) and `runtime-stage` |
 | Unit tests | `windows-latest` | Guest libraries, Build | Every test program above, the arm64 AOT translation included |
-| Runtime tests | `windows-latest` | Guest libraries, Build | The tests that need the staged jars or ANGLE, the APK booted headless and in a window (`headless-boot` artifact), the GMS CLI, and the frame bench in a window on both graphics engines, its frame times in the run's summary ([Frame time](#frame-time)) |
+| Runtime tests | `windows-latest` | Guest libraries, Build | The tests that need the staged jars or ANGLE, the APK booted headless and in a window (`headless-boot` artifact), the GMS CLI, and the frame bench in a window, its frame times in the run's summary ([Frame time](#frame-time)). The tests on a plain JVM take `build/java/android-framework.jar` (the framework as compiled, uploaded with the binaries): the stage's lacks what AOSP's views and resources shadow, whose own classes need natives only `winapk-runtime` binds |
 | App smoke test | `windows-latest` | Build | The ten apps of `test/compat/smoke.txt` (`--require-drew`) on the staged JRE with one framework archive made first (`--cds-prepare`): fails when one no longer draws (`smoke` artifact). Each app's peak working set and private bytes go in the report and the run's summary ([Footprint](#footprint)). The apps' classes, merged, are the `framework-classlist` artifact: copy it to `java/winapk-framework.classlist` when the framework or the smoke set has changed much |
-| AOSP resources and views (informational) | `windows-latest` | Build, UI gate's Android side | Fails nothing (`continue-on-error`): stages `build_aosp_res.sh` and `build_aosp_views.sh` over the build's stage (not into it: the installer and the other jobs keep theirs) with their sizes, raw and under LZMA, in the summary; then the smoke set with `WINAPK_AOSP_RES=1 WINAPK_AOSP_VIEWS=1` (their own framework archive first) and its own "draws" verdict, and, when the UI gate runs, the UI probe with them against Android's lines (`compare.py`: 0 differ expected). The `aosp-switches` artifact: the report, logs and frames, the probe's lines, LinkScan's list |
 | AOSP graphics | `windows-latest` | Build | `test/aospgfx/`: AOSP's Canvas on Robolectric's native runtime in `winapk-runtime.exe` on the staged JRE (the agent built with MSYS2 CLANG64 clang; android-all and the DLL fetched from Maven Central and cached). Fails when a check fails; the `aosp-graphics` artifact has the picture, the benchmark frame and the logs. [AOSP graphics](#aosp-graphics-milestone-1) |
 | UI gate, Android's side and the base | Ubuntu | What changed | Android's lines for the UI probe and `test/screens/gate.txt`'s apps (`gate_oracle.sh`, cached by what they are made from), the base's commit, and the base's framework jars when `main` has no CI build of it left (`ui-oracle`, `ui-base-jars`). [The UI gate](#the-ui-gate-only-closer-to-android) |
 | UI gate, `<target>` | `windows-latest` × 3 | Build, UI gate's Android side | One per target: Win.apk at the base and at the head (`gate_side.sh`), then `regress.py`; fails on a `REGRESSED`, `FARTHER` or `MISSING` line, with the first of them in the summary (`ui-gate-<target>` artifact) |
@@ -2296,7 +2303,7 @@ every such change is listed here:
   editable, `ACTION_SET_TEXT`), `CompoundButton` (checkable, checked), `ProgressBar`
   (`RangeInfo`), `SeekBar` (`ACTION_SET_PROGRESS`, steps), `ScrollView` and
   `HorizontalScrollView` (scroll actions); `AccessibilityNodeInfo.addAction(int)` puts
-  the standard actions in the action list. Under `WINAPK_AOSP_VIEWS=1` the in-process
+  the standard actions in the action list. With AOSP's views (every app since November 2026) the in-process
   `IAccessibilityManager` (`aosp_views/AccessibilityService.java`) sets every client's
   state and relevant events, lists the service and takes the app's events. Tests:
   `winapk-uia-test` (a UI Automation client), `AccessibilityTreeTest.java` (the
@@ -3549,6 +3556,15 @@ every such change is listed here:
   well (the owner's decision): the catalog is empty, so no sensor and no
   `android.hardware.sensor.*` feature is reported. Tilt Control
   (`TiltControl`, never in Win.apk's UI) has nothing left to drive.
+- AOSP's resources and views the default, then the only ones (November 2026, the owner's
+  decision): the switches are gone and Win.apk's own `android.content.res`, `android.view` and
+  `android.widget` classes leave the shipped `android-framework.jar` (`stage_runtime.sh`; their
+  sources stay, the rest compiles against them). `com/macapk/loader/ResourceIndex.java`: should
+  anything still ask it for the platform's table, it finds `-Dwinapk.aosp.res.framework`
+  (`bin/aosp/framework-res-34.apk`), since `bin/tools/framework-res.apk` is no longer shipped.
+  `res/ResBackend.java`, `view/ViewHost.java` and the comments that named `WINAPK_AOSP_RES=1` /
+  `WINAPK_AOSP_VIEWS=1` now name the properties the code reads (`-Dwinapk.aosp.res=1`,
+  `-Dwinapk.aosp.views=1`).
 
 ## License
 
