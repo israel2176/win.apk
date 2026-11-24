@@ -225,6 +225,37 @@ private:
     std::deque<float> buf_;
 };
 
+bool record_audio_permitted() {
+    using GetVms = jint(JNICALL*)(JavaVM**, jsize, jsize*);
+    HMODULE jvm = GetModuleHandleW(L"jvm.dll");
+    auto get_vms = jvm ? reinterpret_cast<GetVms>(GetProcAddress(jvm, "JNI_GetCreatedJavaVMs")) : nullptr;
+    JavaVM* vm = nullptr;
+    jsize count = 0;
+    if (!get_vms || get_vms(&vm, 1, &count) != JNI_OK || count < 1 || !vm) return true;
+    JNIEnv* env = nullptr;
+    if (vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) != JNI_OK) {
+        JavaVMAttachArgs args{JNI_VERSION_1_6, const_cast<char*>("winapk-audio-permission"), nullptr};
+        if (vm->AttachCurrentThreadAsDaemon(reinterpret_cast<void**>(&env), &args) != JNI_OK) return true;
+    }
+    bool held = true;
+    jclass store = env->FindClass("com/macapk/loader/SpecialAccessStore");
+    jmethodID holds =
+        store ? env->GetStaticMethodID(store, "holds", "(Ljava/lang/String;)Ljava/lang/Boolean;") : nullptr;
+    jstring perm = holds ? env->NewStringUTF("android.permission.RECORD_AUDIO") : nullptr;
+    jobject answer = perm ? env->CallStaticObjectMethod(store, holds, perm) : nullptr;
+    if (answer && !env->ExceptionCheck()) {
+        jclass boolean = env->FindClass("java/lang/Boolean");
+        jmethodID value = boolean ? env->GetMethodID(boolean, "booleanValue", "()Z") : nullptr;
+        if (value) held = env->CallBooleanMethod(answer, value) != JNI_FALSE;
+        if (boolean) env->DeleteLocalRef(boolean);
+    }
+    if (env->ExceptionCheck()) env->ExceptionClear();
+    if (answer) env->DeleteLocalRef(answer);
+    if (perm) env->DeleteLocalRef(perm);
+    if (store) env->DeleteLocalRef(store);
+    return held;
+}
+
 std::shared_ptr<Capture> capture_create(int rate, int channels, int buffer_frames) {
     if (rate <= 0 || channels <= 0) return nullptr;
     return std::make_shared<Capture>(rate, channels, buffer_frames);
