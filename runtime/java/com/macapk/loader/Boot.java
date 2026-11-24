@@ -1967,6 +1967,21 @@ public final class Boot {
         final ClassLoader appClFinal = appCl;
         activityThread.setContextClassLoader(appClFinal);
 
+        // ---- 4-6. The app's process on AOSP's own ActivityThread (docs/research/aosp-app.md) ----
+        // The Application, its providers and onCreate, the first activity and every later lifecycle
+        // step are AOSP's (aosp-app.jar), driven by the in-process activity manager and task manager
+        // through com.macapk.loader.app.AppHost; this thread then pumps the host's window.
+        com.macapk.loader.app.AppHost appHost = com.macapk.loader.app.AppHost.get();
+        if (appHost != null) {
+            startOnAospActivityThread(appHost, manifest, appCl, apkPath, appDir, appDataDir, resources,
+                    activityTask);
+            bootClock("entering the Cocoa runloop (AppKit pumps from here)");
+            NativeLog.i(TAG, "entering Cocoa runloop");
+            NativeCocoa.runLoop();
+            NativeLog.i(TAG, "runloop returned -- shutting down");
+            return;
+        }
+
         // ---- 4. Application ----
         // AOSP mirror (fetched aosp-mirror/platform_frameworks_base, main,
         // core/java/android/app/ActivityThread.java): ActivityThread.main()
@@ -2833,6 +2848,126 @@ public final class Boot {
         NativeLog.i(TAG, "entering Cocoa runloop");
         NativeCocoa.runLoop();
         NativeLog.i(TAG, "runloop returned -- shutting down");
+    }
+
+    /** Steps 4 to 6 on AOSP's ActivityThread: what system_server knows about the app (its
+     *  ApplicationInfo and the package manager that resolves its intents, MacApkPackageManager),
+     *  the host's input and accessibility bridges, the first activity's intent (the launcher's, an
+     *  override, or what another app or a URL handed over), then AppHost.start and the main looper
+     *  on the app's main thread. The app's providers are installed as handleBindApplication installs
+     *  them, right before Application.onCreate. */
+    private static void startOnAospActivityThread(com.macapk.loader.app.AppHost appHost, Manifest manifest,
+            ClassLoader appCl, String apkPath, String appDir, File appDataDir, Resources resources,
+            java.util.concurrent.SynchronousQueue<Runnable> activityTask) {
+        java.util.Map<String, Manifest.ProviderEntry> providerMap = new java.util.HashMap<>();
+        for (Manifest.ProviderEntry p : manifest.providers) providerMap.put(p.name, p);
+        File nativeLibDir = resolveNativeLibraryDir(apkPath, appDir);
+        MacApkPackageManager pm = new MacApkPackageManager(manifest.packageName, apkPath, appDir,
+                nativeLibDir != null ? nativeLibDir.getAbsolutePath() : null,
+                manifest.applicationMetaData, manifest.services, providerMap);
+        pm.macapkSetApplicationMetaTypes(manifest.applicationMetaDataTypes);
+        pm.macapkSetVersionInfo(manifest.minSdk, manifest.targetSdk, manifest.versionNameRaw, manifest.versionCode);
+        pm.macapkSetReportedDataDir(appDataDir.getAbsolutePath());
+        android.content.pm.ApplicationInfo ai;
+        try {
+            ai = pm.getApplicationInfo(manifest.packageName, 0);
+        } catch (android.content.pm.PackageManager.NameNotFoundException e) {
+            throw new IllegalStateException("the app's own ApplicationInfo", e);
+        }
+        if (manifest.applicationClass != null && !manifest.applicationClass.isEmpty()) {
+            ai.className = manifest.applicationClass;
+        }
+        if (ai.processName == null) ai.processName = manifest.packageName;
+        android.os.Process.setStartTimes(android.os.SystemClock.elapsedRealtime(),
+                android.os.SystemClock.uptimeMillis());
+
+        try { RunLock.ensureHeld(); } catch (Throwable t) { NativeLog.w(TAG, "run lock: " + t); }
+        NativeCocoa.registerTouchDispatcher(com.macapk.loader.view.ViewHost.get().newTouchDispatcher());
+        HostAccessibility.install();
+        GamepadBridge.macapkStart();
+        try { InputRecorder.start(manifest.packageName); }
+        catch (Throwable t) { NativeLog.w(TAG, "input recorder: " + t); }
+        try { TouchDispatcher.macapkStartInjectDriver(); }
+        catch (Throwable t) { NativeLog.w(TAG, "inject driver: " + t); }
+
+        Intent launch = new Intent(Intent.ACTION_MAIN);
+        if (manifest.launchableCategory != null) launch.addCategory(manifest.launchableCategory);
+        if (manifest.launchableActivity != null) launch.setClassName(manifest.packageName, manifest.launchableActivity);
+        String ovAct = System.getenv("MACAPK_LAUNCH_ACTIVITY");
+        if (ovAct != null && !ovAct.isEmpty()) {
+            // The launcher's choice for an app with no launcher activity, as `am start -n` would.
+            String cls = ovAct.startsWith(".") ? manifest.packageName + ovAct : ovAct;
+            String action = System.getenv("MACAPK_LAUNCH_ACTION");
+            launch = new Intent(action != null && !action.isEmpty() ? action : Intent.ACTION_MAIN);
+            launch.setClassName(manifest.packageName, cls);
+            String extras = System.getenv("MACAPK_LAUNCH_EXTRAS");
+            if (extras != null && !extras.isEmpty()) {
+                for (String pair : extras.split(";")) {
+                    int eq = pair.indexOf('=');
+                    if (eq > 0) launch.putExtra(pair.substring(0, eq), pair.substring(eq + 1));
+                }
+            }
+            String data = System.getenv("MACAPK_LAUNCH_DATA");
+            if (data != null && !data.isEmpty()) launch.setData(android.net.Uri.parse(data));
+            NativeLog.i(TAG, "launch override -> " + cls);
+        }
+        Intent first = launch;
+        try {
+            Intent arrival = IntentInbox.bootTakeRoot(manifest.packageName, pm);
+            if (arrival == null) arrival = HostUrlIntake.bootTakeRoot(manifest.packageName, pm);
+            if (arrival != null) first = arrival;
+        } catch (Throwable t) {
+            NativeLog.w(TAG, "an intent handed over at start was unreadable (" + t + "); launching normally");
+        }
+        HostUrlIntake.registerAsync(manifest.packageName, manifest);
+        AppLinks.init(manifest.packageName, manifest, pm);
+
+        final boolean sweep = LayoutSweep.enabled();
+        com.macapk.loader.app.AppHost.Start start = new com.macapk.loader.app.AppHost.Start();
+        start.info = ai;
+        start.config = resources.getConfiguration();
+        start.packageManager = pm;
+        start.classLoader = appCl;
+        start.launch = sweep || SystemClient.isServiceHost() ? null : first;
+        start.beforeApplicationOnCreate = application -> {
+            ActivityHost.init(application, appCl);
+            installAutoInitProviders(application, manifest.providers, appCl);
+            installSystemProviders(application);
+            SystemClient.attach(application, manifest.packageName);
+        };
+        start.taskEmpty = () -> {
+            NativeLog.i(TAG, "task is empty (last activity finished) -> hiding the app; the launcher activity"
+                    + " starts again when it is brought back");
+            try { NativeCocoa.moveTaskToBack(); } catch (Throwable t) { NativeLog.w(TAG, "moveTaskToBack: " + t); }
+        };
+        start.moveToBack = () -> {
+            try { NativeCocoa.moveTaskToBack(); } catch (Throwable t) { NativeLog.w(TAG, "moveTaskToBack: " + t); }
+        };
+        awaitSystemReady();
+        try {
+            activityTask.put(() -> {
+                if (!"1".equals(System.getenv("MACAPK_SKIP_QOS_BOOST"))) {
+                    try { NativeLog.nativeBoostCurrentThreadQos(); } catch (Throwable ignored) {}
+                }
+                if (android.os.Looper.myLooper() == null) android.os.Looper.prepareMainLooper();
+                try {
+                    appHost.start(start);
+                    if (sweep) {
+                        // After handleBindApplication (Application.onCreate), the next message.
+                        new android.os.Handler(android.os.Looper.getMainLooper()).post(() ->
+                                LayoutSweep.runFromBoot(android.app.Application.macapk_get()));
+                    }
+                    if (SystemClient.isServiceHost()) NativeLog.i(TAG, "service host: no launcher activity");
+                } catch (Throwable t) {
+                    NativeLog.e(TAG, "the app's start failed: " + t);
+                    t.printStackTrace();
+                }
+                android.os.Looper.loop();
+            });
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            NativeLog.e(TAG, "interrupted handing the app's start to its main thread");
+        }
     }
 
     /** Fixed, EXACT-13-BYTE alias for {@code /proc/meminfo} (also 13

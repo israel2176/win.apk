@@ -243,6 +243,10 @@ public final class ActivityHost {
         // macapk_terminate_now -> ::_exit, which runs no Java shutdown hook, so this
         // is the one place a normal quit can close the recording.
         if (processExits && InputRecorder.ON) InputRecorder.close();
+        // The app's process is AOSP's (com.macapk.loader.app.AppHost): its task manager removes the
+        // task, every activity destroyed from the top down.
+        com.macapk.loader.app.AppHost appHost = com.macapk.loader.app.AppHost.get();
+        if (appHost != null && appHost.started()) return appHost.terminate(timeoutMs);
         sTerminating = true;
         // "The top of THIS teardown has paused": a previous teardown in the same
         // process (killProcess(myPid()) under MACAPK_PROCESS_SELF_KILL=1) left it
@@ -1096,6 +1100,11 @@ public final class ActivityHost {
      *  and not covered (a launch under way, a host dialog over it) is taken
      *  down: anything else stays as it is, as before. */
     public static void macapkHostMinimized() {
+        com.macapk.loader.app.AppHost appHost = com.macapk.loader.app.AppHost.get();
+        if (appHost != null && appHost.started()) {
+            appHost.hostMinimized();
+            return;
+        }
         if (sTaskInBackground || sTerminating) return;
         if (android.os.Looper.getMainLooper() == null) return;
         sHostMinimized = true;
@@ -1119,6 +1128,11 @@ public final class ActivityHost {
     /** Called by the native unhide observer (AppKit thread) when the app is
      *  brought back. A no-op unless WE sent the task to the back. */
     public static void macapkTaskToFront() {
+        com.macapk.loader.app.AppHost appHost = com.macapk.loader.app.AppHost.get();
+        if (appHost != null && appHost.started()) {
+            appHost.taskToFront();
+            return;
+        }
         sHostMinimized = false;
         if (!sTaskInBackground) return;
         // Not input, so not in a recording: say so (a replay will not re-activate).
