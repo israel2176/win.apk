@@ -38,9 +38,15 @@
 //    app's method runs on a "WebViewIntercept" thread; its response is served
 //    instead of the network. Cordova/Capacitor apps load from it.
 //
-//  * file:///android_asset/ pages are copied to real files by
-//    MacApkWebViewBridge.macapkMaterializeAssetPage (upstream's own helper)
-//    and loaded from there; URLs that go back to Java are mapped back.
+//  * file: URLs. WebView2 neither reads an APK nor raises WebResourceRequested
+//    for file:, so file:///X is loaded as https://winapk-file.example/X (the
+//    "file origin") and every request there is answered from Java
+//    (MacApkWebViewBridge.macapkServeFile): file:///android_asset/ from the
+//    APK's assets, file:///android_res/ from its resources, other paths from
+//    the app's files when WebSettings allows file access -- after the app's own
+//    shouldInterceptRequest, as on a device. Every URL that goes back to Java
+//    is the file:/// one. The mapping and the rule for which pages may read
+//    it are webview_file_urls.h's.
 
 #include <atomic>
 #include <chrono>
@@ -59,10 +65,11 @@
 
 #include <windows.h>
 #include <shlwapi.h>
+#include <wincrypt.h>
 
 #include "host_natives.h"
-#include "winapk/mini_bionic.h"
 #include "webview2_host.h"
+#include "webview_file_urls.h"
 #include "win32_window.h"
 
 namespace winapk::host {
@@ -100,7 +107,7 @@ constexpr UINT_PTR kFollowTimer = 1;
 // ---- Java -------------------------------------------------------------------
 
 jclass g_bridge = nullptr;
-jmethodID g_on_event = nullptr, g_on_real_input = nullptr, g_on_js_bridge = nullptr, g_materialize = nullptr;
+jmethodID g_on_event = nullptr, g_on_real_input = nullptr, g_on_js_bridge = nullptr, g_serve_file = nullptr;
 jmethodID g_wants_intercept = nullptr, g_on_intercept = nullptr;
 jclass g_tab_cls = nullptr;
 jmethodID g_data_folder = nullptr;
@@ -118,8 +125,9 @@ void resolve_java(JNIEnv* env) {
                                                 "(IILjava/lang/String;Ljava/lang/String;Ljava/lang/String;I)V");
             g_on_real_input = env->GetStaticMethodID(g_bridge, "onRealInput", "()V");
             g_on_js_bridge = env->GetStaticMethodID(g_bridge, "onJsBridgeCall", "(ILjava/lang/String;)Ljava/lang/String;");
-            g_materialize = env->GetStaticMethodID(g_bridge, "macapkMaterializeAssetPage",
-                                                   "(ILjava/lang/String;)[Ljava/lang/String;");
+            g_serve_file = env->GetStaticMethodID(g_bridge, "macapkServeFile",
+                                                  "(ILjava/lang/String;)[Ljava/lang/Object;");
+            if (env->ExceptionCheck()) env->ExceptionClear();
             // Absent on a runtime without them: requests then go to the network.
             g_wants_intercept = env->GetStaticMethodID(g_bridge, "macapkWantsIntercept", "(I)Z");
             if (env->ExceptionCheck()) env->ExceptionClear();
@@ -212,12 +220,22 @@ struct View {
     int own_navs = 0;          // navigations this side started, not yet seen
     UINT64 own_nav_id = 0;
     std::wstring last_url;
-    // loadDataWithBaseURL with a web base: the document to answer for it
+    // loadDataWithBaseURL with a web or file: base: the document to answer for it
     std::wstring data_base;
     std::string data_bytes;
     std::wstring data_mime;
-    // a materialized file:///android_asset/ tree: file URL prefix -> asset URL prefix
-    std::wstring asset_file_prefix, asset_url_prefix = L"file:///android_asset/";
+    // The file origin's gate (file_request_allowed): whether the top document
+    // may load file: URLs -- a file: page, or the app's loadDataWithBaseURL
+    // page (AwContents' setCanLoadLocalResources) -- and that page's own
+    // origin when its base is a web URL. Set when a top-level navigation starts.
+    bool file_ok = false;
+    std::wstring data_origin;
+    // The next own navigation is a data page's: 1 loadDataWithBaseURL's, 2 loadData's.
+    int data_pending = 0;
+    std::wstring data_pending_origin;
+    // A file: document that was not there: its load is reported as Android
+    // reports it (ERROR_FILE_NOT_FOUND), not as an HTTP 404.
+    std::wstring missing_doc;
     // Navigations the app took (shouldOverrideUrlLoading true): WebView2 may
     // already be sending their request when the cancel lands, so the document
     // request is answered here instead (204, nothing loads), as on a device,
@@ -253,20 +271,19 @@ void drain(View* v) {
     }
 }
 
-// URLs the Java side sees: a materialized asset page maps back to
-// file:///android_asset/, as on a device.
-std::wstring guest_url(const View* v, const std::wstring& u) {
-    if (!v->asset_file_prefix.empty() && u.size() >= v->asset_file_prefix.size() &&
-        _wcsnicmp(u.c_str(), v->asset_file_prefix.c_str(), v->asset_file_prefix.size()) == 0) {
-        return v->asset_url_prefix + u.substr(v->asset_file_prefix.size());
-    }
-    return u;
-}
+// ---- the file origin (webview_file_urls.h) ---------------------------------------
+
+using wvfile::engine_url;
+using wvfile::guest_url;
+using wvfile::on_file_origin;
+using wvfile::origin_of;
+using wvfile::request_form;
+using wvfile::rewrite_file_refs;
 
 std::wstring current_url(View* v) {
     LPWSTR raw = nullptr;
     if (v->wv) v->wv->get_Source(&raw);
-    return guest_url(v, wv2::take_co_string(raw));
+    return guest_url(wv2::take_co_string(raw));
 }
 
 // ---- placement ------------------------------------------------------------------
@@ -451,7 +468,7 @@ bool app_overrides(View* v, const std::wstring& url, bool redirect, bool gesture
     std::wstring flags = L"main";
     if (redirect) flags += L",redirect";
     if (gesture) flags += L",gesture";
-    post_event(v->id, EV_SHOULD_OVERRIDE, guest_url(v, url), L"GET", flags, id);
+    post_event(v->id, EV_SHOULD_OVERRIDE, guest_url(url), L"GET", flags, id);
     const DWORD r = WaitForSingleObject(done, kDecisionWaitMs);
     bool allow = true;
     {
@@ -537,15 +554,22 @@ void queue_bridge_call(int view, int dialog, std::wstring payload) {
 // request is deferred, the app's method runs on one of a few "WebViewIntercept"
 // threads, and the answer completes the deferral on the WebView2 thread. Only
 // views whose client overrides the method are asked, so other pages load as
-// fast as before.
+// fast as before. A request on the file origin is deferred for every view:
+// what the app does not answer, macapkServeFile does on the same thread.
 
 struct InterceptCall {
     int id;
     int view;
     std::wstring url, method, headers;
     bool main_frame;
+    bool ask_app;  // the view's client overrides shouldInterceptRequest
+    bool file;     // a file: URL: served by macapkServeFile when the app does not
 };
 struct PendingIntercept {
+    int view = 0;
+    std::wstring uri;        // as WebView2 asked for it
+    bool document = false;
+    bool null_origin = false;  // a CORS request from an opaque page (loadDataWithBaseURL's about:blank)
     ComPtr<ICoreWebView2WebResourceRequestedEventArgs> args;
     ComPtr<ICoreWebView2Deferral> deferral;
     ComPtr<ICoreWebView2Environment> env;
@@ -560,6 +584,7 @@ constexpr int kInterceptThreads = 4;
 // The app's answer: none (go to the network), or a whole response.
 struct InterceptAnswer {
     bool have = false;
+    bool missing = false;  // macapkServeFile's: the file is not there
     int status = 200;
     std::wstring reason = L"OK", headers;
     std::string body;
@@ -571,10 +596,20 @@ void finish_intercept(int id, const InterceptAnswer& ans) {
     PendingIntercept p = it->second;
     g_intercepts.erase(it);
     if (ans.have && p.env) {
+        if (ans.missing && p.document) {
+            if (View* v = find_view(p.view)) v->missing_doc = p.uri;
+        }
         IStream* body = SHCreateMemStream(reinterpret_cast<const BYTE*>(ans.body.data()),
                                           static_cast<UINT>(ans.body.size()));
+        std::wstring headers = ans.headers;
+        // The page's own about:blank (loadDataWithBaseURL with no base) has an
+        // opaque origin; Android's page reads the app's assets in CORS mode
+        // (a module script, fetch) all the same.
+        if (p.null_origin && headers.find(L"Access-Control-Allow-Origin") == std::wstring::npos) {
+            headers += L"Access-Control-Allow-Origin: *\r\n";
+        }
         ComPtr<ICoreWebView2WebResourceResponse> resp;
-        p.env->CreateWebResourceResponse(body, ans.status, ans.reason.c_str(), ans.headers.c_str(), resp.put());
+        p.env->CreateWebResourceResponse(body, ans.status, ans.reason.c_str(), headers.c_str(), resp.put());
         if (body) body->Release();
         if (resp) p.args->put_Response(resp.get());
     }
@@ -620,7 +655,7 @@ void intercept_thread() {
             g_intercept_calls.pop_front();
         }
         InterceptAnswer ans;
-        if (g_on_intercept) {
+        if (call.ask_app && g_on_intercept) {
             jstring u = wv2::to_jstring(env, call.url);
             jstring m = wv2::to_jstring(env, call.method);
             jstring h = wv2::to_jstring(env, call.headers);
@@ -631,6 +666,24 @@ void intercept_thread() {
             env->DeleteLocalRef(m);
             env->DeleteLocalRef(h);
             if (r) env->DeleteLocalRef(r);
+        }
+        // Then a file: URL is the WebView's own to answer, as Chromium's
+        // AndroidProtocolHandler answers it after the app's interceptor.
+        if (!ans.have && call.file) {
+            if (g_serve_file) {
+                jstring u = wv2::to_jstring(env, call.url);
+                auto r = static_cast<jobjectArray>(env->CallStaticObjectMethod(g_bridge, g_serve_file, call.view, u));
+                if (!wv2::check_java(env, "MacApkWebViewBridge.macapkServeFile")) ans = read_answer(env, r);
+                env->DeleteLocalRef(u);
+                if (r) env->DeleteLocalRef(r);
+            }
+            // Never the network: the file origin is not a real host.
+            if (!ans.have) {
+                ans.have = true;
+                ans.status = 404;
+                ans.reason = L"Not Found";
+            }
+            ans.missing = ans.status == 404;
         }
         const int id = call.id;
         wv2::post([id, ans] { finish_intercept(id, ans); });
@@ -665,26 +718,53 @@ std::wstring request_headers(ICoreWebView2WebResourceRequest* req) {
     return out;
 }
 
-// Offers the request to the app; true when it was deferred for that.
+// One request header's value, empty when absent.
+std::wstring request_header(ICoreWebView2WebResourceRequest* req, const wchar_t* name) {
+    ComPtr<ICoreWebView2HttpRequestHeaders> h;
+    if (!req || FAILED(req->get_Headers(h.put())) || !h) return std::wstring();
+    BOOL has = FALSE;
+    if (FAILED(h->Contains(name, &has)) || !has) return std::wstring();
+    LPWSTR value = nullptr;
+    if (FAILED(h->GetHeader(name, &value))) return std::wstring();
+    return wv2::take_co_string(value);
+}
+
+// May this request read the file origin? (webview_file_urls.h)
+bool file_request_allowed(View* v, ICoreWebView2WebResourceRequest* req) {
+    return wvfile::file_request_allowed(v->file_ok, v->data_origin, request_header(req, L"Origin"),
+                                        request_header(req, L"Referer"));
+}
+
+// Defers the request for the app's shouldInterceptRequest and, for the file
+// origin, macapkServeFile; true when it was deferred.
 bool offer_to_app(View* v, ICoreWebView2WebResourceRequestedEventArgs* a, ICoreWebView2WebResourceRequest* req,
                   const std::wstring& uri, bool main_frame, ICoreWebView2Environment* env) {
     const std::wstring scheme = wv2::scheme_of(uri);
     if (scheme != L"http" && scheme != L"https" && scheme != L"file") return false;
-    if (!wants_intercept(v->id)) return false;
+    const bool file = on_file_origin(uri);
+    const bool ask_app = wants_intercept(v->id);
+    if (!ask_app && !file) return false;
+    if (file && !g_vm) return false;
     PendingIntercept p;
+    p.view = v->id;
+    p.uri = uri;
+    p.document = main_frame;
+    p.null_origin = file && request_header(req, L"Origin") == L"null";
     p.args = ComPtr<ICoreWebView2WebResourceRequestedEventArgs>::retain(a);
     p.env = ComPtr<ICoreWebView2Environment>::retain(env);
     if (FAILED(a->GetDeferral(p.deferral.put())) || !p.deferral) return false;
     InterceptCall call;
     call.id = g_next_intercept.fetch_add(1);
     call.view = v->id;
-    call.url = guest_url(v, uri);
+    call.url = guest_url(uri);
     LPWSTR method = nullptr;
     if (req) req->get_Method(&method);
     call.method = wv2::take_co_string(method);
     if (call.method.empty()) call.method = L"GET";
     call.headers = request_headers(req);
     call.main_frame = main_frame;
+    call.ask_app = ask_app;
+    call.file = file;
     g_intercepts[call.id] = p;
     static std::once_flag once;
     std::call_once(once, [] {
@@ -716,19 +796,31 @@ void hook(View* v) {
                 a->get_IsRedirected(&redirected);
                 a->get_IsUserInitiated(&user);
                 if (user) note_real_input();
-                bool ask = true;
+                bool ask = true, own = false, new_document = true, reload = false;
                 if (v->own_navs > 0 && !redirected) {
                     // loadUrl / loadData / reload / history: the app's own.
                     --v->own_navs;
                     v->own_nav_id = nav;
                     ask = false;
+                    own = true;
                 }
                 if (auto a3 = ComPtr<ICoreWebView2NavigationStartingEventArgs>::retain(a)
                                   .query<ICoreWebView2NavigationStartingEventArgs3>(
                                       IID_ICoreWebView2NavigationStartingEventArgs3)) {
                     COREWEBVIEW2_NAVIGATION_KIND kind = COREWEBVIEW2_NAVIGATION_KIND_NEW_DOCUMENT;
                     a3->get_NavigationKind(&kind);
-                    if (kind != COREWEBVIEW2_NAVIGATION_KIND_NEW_DOCUMENT && !redirected) ask = false;
+                    new_document = kind == COREWEBVIEW2_NAVIGATION_KIND_NEW_DOCUMENT;
+                    reload = kind == COREWEBVIEW2_NAVIGATION_KIND_RELOAD;
+                    if (!new_document && !redirected) ask = false;
+                }
+                const bool file = on_file_origin(uri);
+                if (file && !own && new_document && !v->file_ok) {
+                    // A web page (or its redirect) going to a file: URL: a device
+                    // refuses it ("Not allowed to load local resource").
+                    std::fprintf(stderr, "[win.apk] webview %d: a web page may not open %s\n", id,
+                                 wv2::redact(guest_url(uri)).c_str());
+                    a->put_Cancel(TRUE);
+                    return S_OK;
                 }
                 const std::wstring scheme = wv2::scheme_of(uri);
                 if (scheme == L"about" || scheme == L"data" || scheme == L"blob" || scheme == L"javascript") {
@@ -746,6 +838,15 @@ void hook(View* v) {
                     a->put_Cancel(TRUE);
                     post_event(id, EV_RECEIVED_ERROR, L"net::ERR_UNKNOWN_URL_SCHEME", uri, L"main", -10);
                     return S_OK;
+                }
+                // The new top document: may it load file: URLs?
+                if (own && v->data_pending) {
+                    v->file_ok = v->data_pending == 1;
+                    v->data_origin = v->data_pending_origin;
+                    v->data_pending = 0;
+                } else if (!reload) {  // a reload keeps its page's answer
+                    v->file_ok = file;
+                    v->data_origin.clear();
                 }
                 post_event(id, EV_PROGRESS, L"", L"", L"", 10);
                 return S_OK;
@@ -786,7 +887,16 @@ void hook(View* v) {
                                              IID_ICoreWebView2NavigationCompletedEventArgs2)) {
                     int http = 0;
                     a2->get_HttpStatusCode(&http);
-                    if (http >= 400) post_event(id, EV_HTTP_ERROR, url, L"", L"", http);
+                    LPWSTR src = nullptr;
+                    v->wv->get_Source(&src);
+                    const bool missing = !v->missing_doc.empty() && wv2::take_co_string(src) == v->missing_doc;
+                    v->missing_doc.clear();
+                    if (missing && http == 404) {
+                        // A file: page that is not there: AndroidProtocolHandler had no stream.
+                        post_event(id, EV_RECEIVED_ERROR, L"net::ERR_FILE_NOT_FOUND", url, L"main", -14);
+                    } else if (http >= 400) {
+                        post_event(id, EV_HTTP_ERROR, url, L"", L"", http);
+                    }
                 }
                 post_event(id, EV_PROGRESS, L"", L"", L"", 100);
                 post_event(id, EV_PAGE_FINISHED, url);
@@ -891,7 +1001,7 @@ void hook(View* v) {
                 a->get_DefaultText(&def);
                 a->get_Uri(&u);
                 const std::wstring msg = wv2::take_co_string(m), dflt = wv2::take_co_string(def),
-                                   url = guest_url(v, wv2::take_co_string(u));
+                                   url = guest_url(wv2::take_co_string(u));
                 Dialog d;
                 d.view = id;
                 d.args = ComPtr<ICoreWebView2ScriptDialogOpeningEventArgs>::retain(a);
@@ -925,9 +1035,10 @@ void hook(View* v) {
                 .get(),
             &tok);
     }
-    // A loadDataWithBaseURL document with a web base is served for that URL,
-    // so the page has the base's origin, as on a device; then the app's
-    // shouldInterceptRequest (see offer_to_app).
+    // A loadDataWithBaseURL document with a web or file: base is served for
+    // that URL, so the page has the base's origin and its relative URLs, as on
+    // a device; then the app's shouldInterceptRequest and the file origin (see
+    // offer_to_app).
     v->wv->add_WebResourceRequested(
         wv2::handler<ICoreWebView2WebResourceRequestedEventHandler>(
             IID_ICoreWebView2WebResourceRequestedEventHandler,
@@ -945,8 +1056,18 @@ void hook(View* v) {
                 if (auto v2 = v->wv.query<ICoreWebView2_2>(IID_ICoreWebView2_2)) v2->get_Environment(env.put());
                 if (!env) return S_OK;
                 const bool document = ctx == COREWEBVIEW2_WEB_RESOURCE_CONTEXT_DOCUMENT;
+                // The file origin, for a page a device would not let read it.
+                auto refuse_file = [&]() {
+                    if (!on_file_origin(uri) || file_request_allowed(v, req.get())) return false;
+                    std::fprintf(stderr, "[win.apk] webview %d: not allowed to load local resource %s\n", id,
+                                 wv2::redact(guest_url(uri)).c_str());
+                    ComPtr<ICoreWebView2WebResourceResponse> no;
+                    env->CreateWebResourceResponse(nullptr, 403, L"Forbidden", L"", no.put());
+                    if (no) a->put_Response(no.get());
+                    return true;
+                };
                 if (!document) {
-                    offer_to_app(v, a, req.get(), uri, false, env.get());
+                    if (!refuse_file()) offer_to_app(v, a, req.get(), uri, false, env.get());
                     return S_OK;
                 }
                 for (auto r = v->refused.begin(); r != v->refused.end(); ++r) {
@@ -958,7 +1079,7 @@ void hook(View* v) {
                     return S_OK;
                 }
                 if (v->data_base.empty() || uri != v->data_base) {
-                    offer_to_app(v, a, req.get(), uri, true, env.get());
+                    if (!refuse_file()) offer_to_app(v, a, req.get(), uri, true, env.get());
                     return S_OK;
                 }
                 IStream* body = SHCreateMemStream(reinterpret_cast<const BYTE*>(v->data_bytes.data()),
@@ -1398,51 +1519,8 @@ void JNICALL Wv_nativeApplySettings(JNIEnv* env, jclass, jint id, jboolean js, j
     });
 }
 
+// File access is decided per request: macapkServeFile reads the view's WebSettings.
 void JNICALL Wv_nativeSetFileUrlAccess(JNIEnv*, jclass, jint, jboolean, jstring) {}
-
-// file:///android_asset/...: upstream's helper copies the page's tree to real
-// files once (MacApkWebViewBridge.macapkMaterializeAssetPage); the page then
-// loads from them, and its URLs map back for the Java side. Returns the URL
-// to navigate to, and sets *prefix to the copied tree's file: URL. WebView2
-// thread.
-std::wstring materialize(int id, const std::wstring& url, std::wstring* prefix) {
-    JNIEnv* env = wv2::env();
-    if (!env || !g_materialize || _wcsnicmp(url.c_str(), L"file:///android_asset/", 22) != 0) return url;
-    jstring ju = wv2::to_jstring(env, url);
-    auto r = static_cast<jobjectArray>(env->CallStaticObjectMethod(g_bridge, g_materialize, id, ju));
-    env->DeleteLocalRef(ju);
-    std::wstring out = url;
-    if (!wv2::check_java(env, "macapkMaterializeAssetPage") && r && env->GetArrayLength(r) >= 3) {
-        auto page = static_cast<jstring>(env->GetObjectArrayElement(r, 0));
-        auto base = static_cast<jstring>(env->GetObjectArrayElement(r, 2));
-        std::wstring p = wv2::from_jstring(env, page), b = wv2::from_jstring(env, base);
-        // The helper answers the copies by their Android names ("/.macapk/webassets/..."), as the
-        // app's java.io sees them; WebView2 takes the host files they name (paths.cpp's table).
-        auto host = [](const std::wstring& w) {
-            if (w.empty() || w[0] != L'/') return w;
-            const int n = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), static_cast<int>(w.size()), nullptr, 0, nullptr,
-                                              nullptr);
-            std::string u(static_cast<size_t>(n), '\0');
-            WideCharToMultiByte(CP_UTF8, 0, w.c_str(), static_cast<int>(w.size()), &u[0], n, nullptr, nullptr);
-            return winapk::android_host_path(u.c_str());
-        };
-        p = host(p);
-        b = host(b);
-        wchar_t buf[4096];
-        DWORD n = 4096;
-        if (SUCCEEDED(UrlCreateFromPathW(p.c_str(), buf, &n, 0))) {
-            const size_t q = url.find_first_of(L"?#");  // the asset URL's query and fragment stay
-            out = std::wstring(buf, n) + (q == std::wstring::npos ? L"" : url.substr(q));
-            wchar_t bbuf[4096];
-            DWORD bn = 4096;
-            if (SUCCEEDED(UrlCreateFromPathW(b.c_str(), bbuf, &bn, 0))) *prefix = std::wstring(bbuf, bn) + L"/";
-        }
-        if (page) env->DeleteLocalRef(page);
-        if (base) env->DeleteLocalRef(base);
-    }
-    if (r) env->DeleteLocalRef(r);
-    return out;
-}
 
 void JNICALL Wv_nativeLoadUrl(JNIEnv* env, jclass, jint id, jstring jurl, jobjectArray headers) {
     const std::wstring url = wv2::from_jstring(env, jurl);
@@ -1459,10 +1537,11 @@ void JNICALL Wv_nativeLoadUrl(JNIEnv* env, jclass, jint id, jstring jurl, jobjec
     }
     wv2::post([id, url, hdr] {
         run_or_queue(id, [url, hdr](View* v) {
-            std::wstring prefix;
-            const std::wstring target = materialize(v->id, url, &prefix);
-            if (!prefix.empty()) v->asset_file_prefix = prefix;
+            // file:///android_asset/www/index.html?x loads as the file origin's
+            // /android_asset/www/index.html?x (see "the file origin").
+            const std::wstring target = engine_url(url);
             ++v->own_navs;
+            v->data_pending = 0;
             if (!hdr.empty()) {
                 ComPtr<ICoreWebView2Environment> env;
                 auto v2 = v->wv.query<ICoreWebView2_2>(IID_ICoreWebView2_2);
@@ -1493,29 +1572,51 @@ void JNICALL Wv_nativeLoadData(JNIEnv* env, jclass, jint id, jstring jbase, jstr
     wv2::post([=] {
         run_or_queue(id, [=](View* v) {
             ++v->own_navs;
-            const std::wstring scheme = wv2::scheme_of(base);
+            const bool b64 = _wcsicmp(enc.c_str(), L"base64") == 0;
+            // loadDataWithBaseURL (WebView.java passes "about:blank" for an empty
+            // base): the page may load the app's file: URLs; loadData's may not.
+            const bool with_base = !base.empty();
+            const std::wstring page_base = engine_url(base);  // a file: base is the file origin
+            const std::wstring scheme = wv2::scheme_of(page_base);
+            v->data_pending = with_base ? 1 : 2;
+            v->data_pending_origin = on_file_origin(page_base) ? std::wstring() : origin_of(page_base);
             if (scheme == L"http" || scheme == L"https") {
-                // Served for the base URL: the page gets the base's origin.
-                v->data_base = base;
-                v->data_bytes = utf8_of(data);
+                // Served for the base URL: the page gets the base's origin and
+                // resolves its relative URLs against it.
+                v->data_base = request_form(page_base);
+                v->data_bytes = b64 ? std::string() : utf8_of(rewrite_file_refs(data));
+                if (b64) {
+                    // The document itself, decoded, as AwContents loads it.
+                    DWORD n = 0;
+                    const std::string in = utf8_of(data);
+                    if (CryptStringToBinaryA(in.c_str(), static_cast<DWORD>(in.size()), CRYPT_STRING_BASE64, nullptr,
+                                             &n, nullptr, nullptr)) {
+                        v->data_bytes.resize(n);
+                        CryptStringToBinaryA(in.c_str(), static_cast<DWORD>(in.size()), CRYPT_STRING_BASE64,
+                                             reinterpret_cast<BYTE*>(&v->data_bytes[0]), &n, nullptr, nullptr);
+                        v->data_bytes.resize(n);
+                    }
+                }
                 v->data_mime = mime + L"; charset=utf-8";
-                v->wv->Navigate(base.c_str());
+                v->wv->Navigate(page_base.c_str());
                 return;
             }
-            if (!base.empty() && _wcsicmp(enc.c_str(), L"base64") != 0 && mime == L"text/html") {
+            if (with_base && !b64 && mime == L"text/html") {
                 // about:blank (or a base WebView2 cannot serve): the document as
-                // a string.
-                v->wv->NavigateToString(data.c_str());
+                // a string, its file:/// references made the file origin's.
+                v->wv->NavigateToString(rewrite_file_refs(data).c_str());
                 return;
             }
             // loadData(): a data: URL, built as AwContents.loadData builds it
             // (the data as the app gave it).
-            const bool b64 = _wcsicmp(enc.c_str(), L"base64") == 0;
             const std::wstring url = L"data:" + mime + (b64 ? L";base64," : L";charset=utf-8,") + data;
             if (SUCCEEDED(v->wv->Navigate(url.c_str()))) return;
-            if (!b64) v->wv->NavigateToString(data.c_str());
-            else --v->own_navs;
-            return;
+            if (!b64) {
+                v->wv->NavigateToString(data.c_str());
+            } else {
+                --v->own_navs;
+                v->data_pending = 0;
+            }
         });
     });
 }
