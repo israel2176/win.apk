@@ -43,6 +43,12 @@ mkdir -p "$DEPS"
 DEPS="$(cd -- "$DEPS" && pwd)"
 FRAMEWORK="$OUT/lib/android-framework.jar"
 [[ -f "$FRAMEWORK" ]] || { echo "[aosp-gfx] no $FRAMEWORK: run build_java.sh first" >&2; exit 1; }
+# The closure below is what the whole framework lacks: a framework stage_runtime.sh has already
+# dropped the classes AOSP's resources and views shadow from would make it take those too.
+if unzip -Z1 "$FRAMEWORK" META-INF/winapk-aosp-shadowed.txt > /dev/null 2>&1; then
+    echo "[aosp-gfx] $FRAMEWORK lacks the classes stage_runtime.sh dropped: run build_java.sh again" >&2
+    exit 1
+fi
 
 if [[ -n "${JAVA_HOME:-}" ]]; then
     JAVA="$JAVA_HOME/bin/java" JAVAC="$JAVA_HOME/bin/javac" JAR="$JAVA_HOME/bin/jar" JDEPS="$JAVA_HOME/bin/jdeps"

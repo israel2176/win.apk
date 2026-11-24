@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# build_aosp_views.sh -- what AOSP's own views need (WINAPK_AOSP_VIEWS=1, off by default;
+# build_aosp_views.sh -- what AOSP's own views, the only ones apps run on, need (host/aosp_gfx.h;
 # docs/research/aosp-views.md, step V1; windows/README.md, "AOSP views"), into a staged runtime:
 #
 #   <out>/lib/aosp-views.jar   AOSP 14's android.view.** (View, ViewGroup, LayoutInflater,
@@ -15,8 +15,8 @@
 #   windows/scripts/build_aosp_views.sh <out> [deps dir]
 #
 # <out> is a runtime staged by build_java.sh, build_aosp_gfx.sh and build_aosp_res.sh (AOSP's views
-# run on AOSP's graphics and resources: the host turns this off when either is off). The deps dir
-# (default thirdparty/aosp-gfx) is the one build_aosp_res.sh fills (android-all 14, ASM).
+# run on AOSP's graphics and resources). The deps dir (default thirdparty/aosp-gfx) is the one
+# build_aosp_res.sh fills (android-all 14, ASM).
 #
 # Kept Win.apk's (not taken from android-all), as the graphics work and the host need them: Surface,
 # SurfaceControl, SurfaceView, TextureView, SurfaceHolder (the host's GL and video surfaces);
@@ -28,8 +28,7 @@
 # Java bodies (com.winapk.aospviews.Native<Class>, or a named UnsupportedOperationException), and
 # sends what AOSP's classes call that Win.apk's lack to com.winapk.aospviews.Compat. LinkScan.java
 # then lists every member reference that would still not link (lib/aosp-views.links.txt in the
-# build's scratch folder, printed as a count). Not staged by stage_runtime.sh unless
-# WINAPK_STAGE_AOSP_VIEWS=1.
+# build's scratch folder, printed as a count). stage_runtime.sh runs this after build_aosp_res.sh.
 
 set -euo pipefail
 
@@ -46,6 +45,12 @@ RES="$OUT/lib/aosp-resources.jar"
 for f in "$FRAMEWORK" "$LOADER"; do
     [[ -f "$f" ]] || { echo "[aosp-views] no $f: run build_java.sh first" >&2; exit 1; }
 done
+# The closure below is what the whole framework lacks: a framework stage_runtime.sh has already
+# dropped the classes AOSP's resources and views shadow from would make it take those too.
+if unzip -Z1 "$FRAMEWORK" META-INF/winapk-aosp-shadowed.txt > /dev/null 2>&1; then
+    echo "[aosp-views] $FRAMEWORK lacks the classes stage_runtime.sh dropped: run build_java.sh again" >&2
+    exit 1
+fi
 [[ -f "$GFX" ]] || { echo "[aosp-views] no $GFX: run build_aosp_gfx.sh first" >&2; exit 1; }
 [[ -f "$RES" ]] || { echo "[aosp-views] no $RES: run build_aosp_res.sh first" >&2; exit 1; }
 
