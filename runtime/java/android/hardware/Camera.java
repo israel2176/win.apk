@@ -1,28 +1,7 @@
-// android.hardware.Camera -- the deprecated (pre-camera2) camera API, WIRED to
-// the real AVFoundation capture layer as of this change.
-//
-// =============================================================================
-// WHY THIS FILE STOPPED REPORTING ZERO CAMERAS
-// =============================================================================
-// From v1.0.942 until now this class reported getNumberOfCameras() == 0 with a
-// documented rationale: the capture layer (runtime/src/camera_capture.mm, live
-// since v1.0.940) delivered frames only through camera2's ImageReader and
-// SurfaceTexture seams, so an app told "1 camera" here would have called open()
-// and then setPreviewDisplay() into nothing. That reasoning was sound, and its
-// own REMOVAL CONDITION was stated: "bind Camera(int) to
-// com.macapk.loader.CameraBridge and deliver frames to the preview callback,
-// then return the real device count." This change does exactly that, so the
-// zero goes.
-//
-// It had also become the single worst kind of wrong answer -- an INCONSISTENT
-// one. android.hardware.camera2 reports the Mac's real cameras (see
-// CameraBackend), and MacApkPackageManager declares FEATURE_CAMERA_ANY and
-// FEATURE_CAMERA_FRONT. So a device that says "yes, there is a camera" through
-// the feature flags and through camera2 was saying "there are zero cameras"
-// through camera1, and an app that consults more than one of those (very many
-// do: feature flag to decide whether to show the button, camera1 to open it)
-// got a device that contradicted itself. There is no branch an app can take
-// that makes that coherent.
+// android.hardware.Camera -- the deprecated (pre-camera2) camera API, wired to
+// the host's capture layer through com.macapk.loader.CameraBridge (on Windows:
+// windows/host/native_camera.cpp over Media Foundation; upstream Mac.apk's was
+// AVFoundation).
 //
 // =============================================================================
 // WHAT IS ACTUALLY DELIVERED, AND WHAT IS NOT
@@ -31,7 +10,14 @@
 //   * getNumberOfCameras / getCameraInfo -- straight from CameraBridge, so
 //     camera1 and camera2 enumerate the SAME devices in the SAME order (both
 //     key on the device INDEX; see CameraBackend's "THE ID MAPPING" note).
-//   * open(int) -- a real AVFoundation session.
+//     Every webcam is offered twice, as a back and a front camera: the owner's
+//     decision, a PC's camera serves both roles, so apps that ask for the rear
+//     camera (cheque scanners, open()) work.
+//   * CameraInfo.orientation -- the display rotation for a back camera, its
+//     mirror for a front one (CameraBridge.getSensorOrientation), so the
+//     documented setDisplayOrientation arithmetic comes out at 0 for the
+//     upright webcam picture.
+//   * open(int) -- a real capture session.
 //   * Parameters -- populated from the device's advertised formats: real
 //     supported preview/picture sizes, real fps ranges. Nothing in the bag is
 //     invented; a capability we cannot honour is simply absent, which is the
@@ -40,49 +26,40 @@
 //     setPreviewCallbackWithBuffer -- real frames, converted to the requested
 //     preview format (NV21 by default, YV12 if asked). This is the path the
 //     large legacy population of scanner apps (ZXing/ZBar barcode and QR
-//     readers, OCR, card scanners) uses, and it is the one that matters most.
+//     readers, OCR, card and cheque scanners) uses.
 //   * setPreviewTexture -- attaches the SurfaceTexture to the same native frame
-//     source camera2 uses, so a TextureView preview draws.
-//   * setPreviewDisplay -- blits each frame onto the SurfaceHolder's canvas
-//     (lockCanvas/unlockCanvasAndPost, which SurfaceView really does present).
-//     Note camera2 has NO equivalent for a plain SurfaceView, so this path is
-//     something camera1 supports here that camera2 does not.
-//   * takePicture -- a real JPEG of a real frame, encoded from the captured
-//     pixels.
+//     source camera2 uses, with AOSP's preview transform as its matrix.
+//   * setPreviewDisplay -- blits each frame onto the SurfaceHolder's canvas,
+//     turned by setDisplayOrientation and mirrored for a front camera.
+//   * takePicture -- a real JPEG of a real frame.
+//   * autofocus -- where the webcam's driver offers a focus that can be
+//     started and observed (CameraBridge.hasAutofocus): "auto",
+//     "continuous-picture" and "continuous-video", autoFocus() a real one-shot
+//     focus with the driver's answer, AutoFocusMoveCallback from its state.
+//     Otherwise "fixed" only, and autoFocus() calls back at once with true
+//     (AOSP's documented answer for a camera without auto-focus).
+//   * flash -- "off" and "torch" where the driver has a torch
+//     (CameraBridge.hasTorch); otherwise getSupportedFlashModes() is null.
+//     setParameters refuses an unsupported focus or flash mode as AOSP's
+//     camera service does (RuntimeException "setParameters failed").
 //
 // NOT delivered, and reported as unsupported rather than faked:
-//   * flash (no torch on a Mac's camera): getSupportedFlashModes() is null.
 //   * zoom and smooth zoom: isZoomSupported()/isSmoothZoomSupported() false.
 //   * face detection: getMaxNumDetectedFaces() is 0, and startFaceDetection()
 //     throws IllegalArgumentException exactly as AOSP does when unsupported.
-//   * autofocus: only FOCUS_MODE_FIXED is advertised. AOSP's documented
-//     behaviour for a fixed-focus camera is that autoFocus() calls back
-//     immediately with success=TRUE ("a fake value of success set to true"),
-//     which is what happens here -- the previous `false` was wrong for a camera
-//     that is always in focus.
 //   * exposure compensation, white-balance and antibanding CONTROL: the
 //     capability keys are absent, so the AOSP getters return their documented
 //     "unsupported" values (0 / null) on their own.
 //
 // =============================================================================
-// PERMISSION (macOS TCC), AND THE ONE PLACE THIS DIVERGES FROM AOSP
+// PERMISSION
 // =============================================================================
-// Opening the camera is what raises the macOS permission panel. camera2 can
-// wait for the user's answer because openCamera is ASYNCHRONOUS -- it does the
-// waiting on a background thread. camera1's open(int) is SYNCHRONOUS by
-// contract, so there is no background thread to wait on, and blocking the main
-// looper is not an option: camera_capture's own notes say the AppKit main
-// thread has to keep pumping for the panel to work at all, so blocking there
-// would deadlock the very prompt we are waiting for.
-//
-// So: off the main looper, open() waits (bounded) for the answer, which is the
-// AOSP-shaped synchronous behaviour. ON the main looper it raises the prompt
-// and then fails THIS attempt with RuntimeException("Fail to connect to camera
-// service") -- which is precisely what AOSP's open(int) does on a device when
-// the app has not been granted CAMERA permission yet, and every camera app
-// already handles it, because that is the ordinary "request permission, then
-// open in the result callback / in onResume" flow. A loud line is logged so the
-// case is diagnosable rather than mysterious.
+// open() needs the app's CAMERA permission (SpecialAccessStore) and the host's
+// camera access. On Windows there is no prompt to wait for: the privacy
+// switches either allow a desktop program or not (CameraBridge AUTH_*), and a
+// denied camera fails open() with RuntimeException("Fail to connect to camera
+// service"), as AOSP's open(int) does without the permission. The waiting
+// below is upstream's, for macOS's prompt, and is not reached on Windows.
 //
 // =============================================================================
 // AOSP SOURCE
@@ -163,6 +140,14 @@ public class Camera {
     private OnZoomChangeListener mZoomListener;
     private FaceDetectionListener mFaceListener;
     private boolean mFaceDetectionRunning;
+    /** A front-role camera: its preview is mirrored (AOSP degToTransform). */
+    private boolean mFront;
+    /** Bumped by cancelAutoFocus, so a focus it cancelled calls nobody back
+     *  (AOSP: "the callback will not be called" after cancelAutoFocus). */
+    private final java.util.concurrent.atomic.AtomicInteger mAfGeneration =
+            new java.util.concurrent.atomic.AtomicInteger();
+    /** The focus-moving state last told to the AutoFocusMoveCallback. */
+    private boolean mAfMoving;
     private int mDisplayOrientation;
     private boolean mShutterSoundEnabled = true;
 
@@ -174,9 +159,9 @@ public class Camera {
     /**
      * AOSP's `Camera(int cameraId)` runs native_setup and throws when the
      * camera service cannot be reached; that RuntimeException is what open(int)
-     * is documented to raise. Here the equivalent failure is "AVFoundation
-     * would not give us a session", which covers a bad index, a camera already
-     * in use by another app, and a denied or not-yet-answered TCC prompt.
+     * is documented to raise. Here the equivalent failure is "the host would
+     * not give us a session", which covers a bad index, a camera already in
+     * use exclusively, and camera access denied in Windows' privacy settings.
      */
     private Camera(int cameraId) {
         Looper looper = Looper.myLooper();
@@ -195,6 +180,7 @@ public class Camera {
         }
         mCameraId = cameraId;
         mSession = session;
+        mFront = CameraBridge.getDeviceFacing(cameraId) == CameraBridge.FACING_FRONT;
         populateBag(cameraId);
     }
 
@@ -214,16 +200,16 @@ public class Camera {
         int st = CameraBridge.getAuthStatus();
         if (st == CameraBridge.AUTH_AUTHORIZED) return true;
         if (st == CameraBridge.AUTH_DENIED || st == CameraBridge.AUTH_RESTRICTED) {
-            System.err.println("[" + TAG + "] camera access denied by macOS privacy settings");
+            System.err.println("[" + TAG + "] camera access denied by the host's privacy settings");
             return false;
         }
 
         CameraBridge.requestAuth();
 
-        // Never block the main looper: the AppKit run loop has to keep pumping
-        // for the TCC panel, so waiting there would deadlock the prompt.
+        // Upstream (macOS): never block the main looper while the system's
+        // permission panel is up. Windows never gets here (AUTH_* above).
         if (Looper.myLooper() != null && Looper.myLooper() == Looper.getMainLooper()) {
-            System.err.println("[" + TAG + "] raised the macOS camera permission prompt;"
+            System.err.println("[" + TAG + "] raised the host's camera permission prompt;"
                     + " this open() fails (as it would on Android without the CAMERA"
                     + " permission) -- open again once the prompt is answered");
             return false;
@@ -234,7 +220,7 @@ public class Camera {
             st = CameraBridge.getAuthStatus();
             if (st == CameraBridge.AUTH_AUTHORIZED) return true;
             if (st == CameraBridge.AUTH_DENIED || st == CameraBridge.AUTH_RESTRICTED) {
-                System.err.println("[" + TAG + "] camera access denied by macOS privacy settings");
+                System.err.println("[" + TAG + "] camera access denied by the host's privacy settings");
                 return false;
             }
             try {
@@ -244,7 +230,7 @@ public class Camera {
                 return false;
             }
         }
-        System.err.println("[" + TAG + "] timed out waiting for the macOS camera"
+        System.err.println("[" + TAG + "] timed out waiting for the host's camera"
                 + " permission prompt to be answered");
         return false;
     }
@@ -262,9 +248,8 @@ public class Camera {
      * is done HERE rather than at each call site:
      *   CameraBridge.FACING_FRONT (0) -> CameraInfo.CAMERA_FACING_FRONT (1)
      *   CameraBridge.FACING_BACK  (1) -> CameraInfo.CAMERA_FACING_BACK  (0)
-     * -- note they are inverted, so passing one through unchanged would report
-     * every Mac's built-in camera as REAR-facing and mirror every preview the
-     * wrong way.
+     * -- note they are inverted, so passing one through unchanged would swap
+     * every camera's role and mirror the wrong previews.
      *
      * FACING_EXTERNAL (a USB/UVC camera) has no camera1 equivalent at all;
      * camera1 predates external cameras and CameraInfo.facing is a two-valued
@@ -283,7 +268,7 @@ public class Camera {
         cameraInfo.facing = (facing == CameraBridge.FACING_FRONT)
                 ? CameraInfo.CAMERA_FACING_FRONT : CameraInfo.CAMERA_FACING_BACK;
         cameraInfo.orientation = CameraBridge.getSensorOrientation(cameraId);
-        // AOSP: "whether the shutter sound can be disabled". A Mac plays no
+        // AOSP: "whether the shutter sound can be disabled". Win.apk plays no
         // shutter sound at all, so there is nothing to forbid disabling.
         cameraInfo.canDisableShutterSound = true;
     }
@@ -293,11 +278,10 @@ public class Camera {
      * on the device. If the device does not have a back-facing camera, this
      * returns null." The scan is AOSP's, verbatim.
      *
-     * On a Mac with only its built-in camera this correctly returns NULL -- the
-     * built-in camera is front-facing, exactly as on an Android tablet that has
-     * no rear camera. That is not a shortfall: an app that needs a rear camera
-     * genuinely does not have one here, and null is the answer it is written to
-     * handle. Apps that enumerate and open by id get the real camera.
+     * Every webcam is offered as a back camera first (the owner's decision: a
+     * PC's camera serves both roles, so apps that ask for the rear camera --
+     * cheque scanners -- work), so this opens the first webcam. Null only when
+     * there is no camera at all.
      */
     public static Camera open() {
         int numberOfCameras = getNumberOfCameras();
@@ -485,11 +469,28 @@ public class Camera {
         mBag.put(KEY_JPEG_THUMBNAIL_WIDTH, "0");
         mBag.put(KEY_JPEG_THUMBNAIL_HEIGHT, "0");
 
-        // AVFoundation keeps the camera in continuous auto-focus and gives us
-        // no focus control, so the only mode we can HONESTLY offer is FIXED --
-        // the app cannot drive focus, which is what "fixed" tells it.
-        mBag.put(KEY_FOCUS_MODE, Parameters.FOCUS_MODE_FIXED);
-        mBag.put(KEY_FOCUS_MODE + SUPPORTED_VALUES_SUFFIX, Parameters.FOCUS_MODE_FIXED);
+        // Focus: what the webcam's driver lets us drive (CameraBridge
+        // .hasAutofocus: a one-shot focus that can be started and seen to end).
+        // With it, AOSP's camera1-over-camera2 list for an AF camera
+        // (Parameters.cpp: auto and the continuous modes from
+        // CONTROL_AF_AVAILABLE_MODES) and its default, "auto". Without it, a
+        // fixed-focus camera: "fixed" only, as on a phone without AF.
+        if (CameraBridge.hasAutofocus(cameraId)) {
+            mBag.put(KEY_FOCUS_MODE, Parameters.FOCUS_MODE_AUTO);
+            mBag.put(KEY_FOCUS_MODE + SUPPORTED_VALUES_SUFFIX, Parameters.FOCUS_MODE_AUTO + ","
+                    + Parameters.FOCUS_MODE_CONTINUOUS_PICTURE + "," + Parameters.FOCUS_MODE_CONTINUOUS_VIDEO);
+        } else {
+            mBag.put(KEY_FOCUS_MODE, Parameters.FOCUS_MODE_FIXED);
+            mBag.put(KEY_FOCUS_MODE + SUPPORTED_VALUES_SUFFIX, Parameters.FOCUS_MODE_FIXED);
+        }
+        // Flash: a torch only where the driver has one (the extended TORCHMODE
+        // control); a webcam has no photo flash, so "off" and "torch". Without
+        // one the keys stay absent and getSupportedFlashModes() is null.
+        if (CameraBridge.hasTorch(cameraId)) {
+            mBag.put(KEY_FLASH_MODE, Parameters.FLASH_MODE_OFF);
+            mBag.put(KEY_FLASH_MODE + SUPPORTED_VALUES_SUFFIX,
+                    Parameters.FLASH_MODE_OFF + "," + Parameters.FLASH_MODE_TORCH);
+        }
 
         // Explicit falsehoods, because these accessors compare against "true"
         // and an absent key would read the same as "false" only by accident.
@@ -512,12 +513,13 @@ public class Camera {
         mBag.put(KEY_EXPOSURE_COMPENSATION, "0");
         mBag.put(KEY_EXPOSURE_COMPENSATION_STEP, "0");
         // Deliberately ABSENT, each meaning "unsupported" to its AOSP getter:
-        // flash-mode(-values), scene-mode(-values), whitebalance(-values),
-        // effect(-values), antibanding(-values), zoom-ratios, focus-distances,
-        // focal-length, horizontal/vertical-view-angle. AVFoundation does not
-        // report a focal length or field of view through the enumeration we
-        // use, and a guessed 4mm/60deg would be a fabrication an app cannot
-        // detect (AR and measurement apps compute distances from these).
+        // flash-mode(-values) without a torch, scene-mode(-values),
+        // whitebalance(-values), effect(-values), antibanding(-values),
+        // zoom-ratios, focus-distances, focal-length,
+        // horizontal/vertical-view-angle. Media Foundation does not report a
+        // focal length, a field of view or focus distances for a webcam, and a
+        // guessed 4mm/60deg would be a fabrication an app cannot detect (AR and
+        // measurement apps compute distances from these).
     }
 
     private static boolean containsToken(String csv, String token) {
@@ -543,7 +545,7 @@ public class Camera {
 
     /** AOSP Camera.java:653 -- `protected void finalize() { release(); }`.
      *  Kept because it is the only thing that frees a session an app leaked,
-     *  and a leaked AVFoundation session keeps the camera's privacy indicator
+     *  and a leaked capture session keeps the camera's privacy indicator
      *  lit until the process exits. */
     @Override protected void finalize() {
         try {
@@ -563,7 +565,7 @@ public class Camera {
     }
 
     /** AOSP lock()/unlock() hand the camera between this process and the media
-     *  server for MediaRecorder. Mac.apk records in-process, so there is no
+     *  server for MediaRecorder. Win.apk records in-process, so there is no
      *  ownership to transfer and these are genuinely no-ops -- not stubs. */
     public void lock() { }
     public void unlock() { }
@@ -610,8 +612,9 @@ public class Camera {
     }
 
     /** AOSP: rotate the PREVIEW only; it does not affect the byte[] handed to
-     *  onPreviewFrame, nor the JPEG. Recorded so getDisplayOrientation-style
-     *  app logic stays coherent; the preview blit applies it. */
+     *  onPreviewFrame, nor the JPEG. The preview (the SurfaceHolder blit and a
+     *  SurfaceTexture's transform) applies it, with a front camera mirrored,
+     *  as AOSP's degToTransform does. */
     public void setDisplayOrientation(int degrees) {
         if (degrees != 0 && degrees != 90 && degrees != 180 && degrees != 270) {
             throw new IllegalArgumentException("Invalid display orientation: " + degrees);
@@ -670,30 +673,93 @@ public class Camera {
     /**
      * AOSP: "If the camera does not support auto-focus, this is a no-op and
      * onAutoFocus will be called immediately with a fake value of success set
-     * to true." AVFoundation keeps the camera focused and gives us no manual
-     * control, so that is exactly this device -- hence TRUE, not the false
-     * this file used to report when there was no camera at all.
+     * to true" -- which is what the fixed-focus modes get (a webcam whose
+     * driver offers no focus control, or an app that chose "fixed").
      *
-     * Delivered through the event handler rather than inline: AOSP posts it,
-     * and an app that sets state right after calling autoFocus() must not
-     * observe the callback nested inside that call.
+     * In "auto" and the continuous modes the webcam really focuses once
+     * (CameraBridge.autoFocus: the driver's one-shot focus, or its own
+     * autofocus watched until the lens settles), the lens is then held, as
+     * AOSP holds it until cancelAutoFocus, and the callback gets the driver's
+     * answer. The wait runs on a thread of its own; the callback is posted to
+     * the event handler, as AOSP posts it.
      */
     public void autoFocus(final AutoFocusCallback cb) {
         checkNotReleased();
-        if (cb == null) return;
-        post(new Runnable() {
-            @Override public void run() { cb.onAutoFocus(true, Camera.this); }
-        });
+        String mode;
+        synchronized (this) { mode = mBag.get(KEY_FOCUS_MODE); }
+        if (!isDrivenFocusMode(mode)) {
+            if (cb == null) return;
+            post(new Runnable() {
+                @Override public void run() { cb.onAutoFocus(true, Camera.this); }
+            });
+            return;
+        }
+        final int generation = mAfGeneration.get();
+        final long session = mSession;
+        Thread t = new Thread(new Runnable() {
+            @Override public void run() {
+                int r = CameraBridge.autoFocus(session, AUTOFOCUS_TIMEOUT_MS);
+                if (cb == null || mAfGeneration.get() != generation || mReleased) return;
+                final boolean ok = r == CameraBridge.AF_FOCUSED;
+                post(new Runnable() {
+                    @Override public void run() {
+                        if (mAfGeneration.get() == generation) cb.onAutoFocus(ok, Camera.this);
+                    }
+                });
+            }
+        }, "winapk-camera1-autofocus");
+        t.setDaemon(true);
+        t.start();
     }
 
-    /** AOSP: cancels an in-progress autofocus. Nothing is ever in progress on
-     *  a fixed-focus camera, so there is nothing to cancel. */
-    public void cancelAutoFocus() { }
+    /** How long a one-shot focus may take before it is reported as failed. */
+    private static final int AUTOFOCUS_TIMEOUT_MS = 3000;
+
+    /** The modes in which the webcam's own focus is driven. */
+    private static boolean isDrivenFocusMode(String mode) {
+        return Parameters.FOCUS_MODE_AUTO.equals(mode) || Parameters.FOCUS_MODE_MACRO.equals(mode)
+                || Parameters.FOCUS_MODE_CONTINUOUS_PICTURE.equals(mode)
+                || Parameters.FOCUS_MODE_CONTINUOUS_VIDEO.equals(mode);
+    }
+
+    private static boolean isContinuousFocusMode(String mode) {
+        return Parameters.FOCUS_MODE_CONTINUOUS_PICTURE.equals(mode)
+                || Parameters.FOCUS_MODE_CONTINUOUS_VIDEO.equals(mode);
+    }
+
+    /** AOSP: cancels an in-progress autofocus, and in a continuous mode lets
+     *  the camera focus by itself again. A cancelled focus calls nobody back. */
+    public void cancelAutoFocus() {
+        mAfGeneration.incrementAndGet();
+        if (mSession != CameraBridge.NO_SESSION) {
+            CameraBridge.cancelAutoFocus(mSession);
+            applyFocusMode();
+        }
+    }
+
+    /** The bag's focus mode, told to the webcam: continuous for the
+     *  continuous modes, the lens held otherwise ("auto" moves it only on
+     *  autoFocus). */
+    private void applyFocusMode() {
+        String mode;
+        synchronized (this) { mode = mBag.get(KEY_FOCUS_MODE); }
+        if (CameraBridge.hasAutofocus(mCameraId)) {
+            CameraBridge.setFocusMode(mSession, isContinuousFocusMode(mode)
+                    ? CameraBridge.FOCUS_CONTINUOUS : CameraBridge.FOCUS_HOLD);
+        }
+    }
+
+    /** The bag's flash mode, told to the torch while the preview runs. */
+    private void applyFlashMode() {
+        if (!mPreviewRunning || !CameraBridge.hasTorch(mCameraId)) return;
+        String mode;
+        synchronized (this) { mode = mBag.get(KEY_FLASH_MODE); }
+        CameraBridge.setTorch(mSession, Parameters.FLASH_MODE_TORCH.equals(mode));
+    }
 
     public void setAutoFocusMoveCallback(AutoFocusMoveCallback cb) {
-        // AOSP only ever invokes this in the CONTINUOUS_* focus modes. We
-        // advertise only FOCUS_MODE_FIXED, so it is correctly never called;
-        // stored so a later focus implementation has the callback in hand.
+        // AOSP only ever invokes this in the CONTINUOUS_* focus modes; the
+        // preview loop reports the webcam's own searching there.
         mAutoFocusMoveCallback = cb;
     }
 
@@ -724,7 +790,7 @@ public class Camera {
      * already running". Both checks are here, in AOSP's order (the
      * already-running check first).
      *
-     * We do no face detection: AVFoundation can do it, but wiring it would
+     * We do no face detection: wiring it would
      * mean reporting face rectangles in camera1's (-1000..1000) sensor space
      * with the app's display orientation applied, and we do not do that work
      * -- so getMaxNumDetectedFaces() honestly reports 0 and this throws, which
@@ -747,7 +813,7 @@ public class Camera {
     public void setErrorCallback(ErrorCallback cb) { mErrorCallback = cb; }
 
     /** AOSP returns false when the shutter sound cannot be disabled (a legal
-     *  requirement in some regions). A Mac plays no shutter sound, so there is
+     *  requirement in some regions). Win.apk plays no shutter sound, so there is
      *  nothing to refuse. */
     public boolean enableShutterSound(boolean enabled) {
         mShutterSoundEnabled = enabled;
@@ -778,9 +844,39 @@ public class Camera {
         if (params == null) {
             throw new NullPointerException("parameters is null");
         }
+        String focus, flash;
+        boolean focusChanged, flashChanged;
         synchronized (this) {
+            focus = params.mMap.get(KEY_FOCUS_MODE);
+            flash = params.mMap.get(KEY_FLASH_MODE);
+            focusChanged = !java.util.Objects.equals(focus, mBag.get(KEY_FOCUS_MODE));
+            flashChanged = !java.util.Objects.equals(flash, mBag.get(KEY_FLASH_MODE));
+            // AOSP's camera service validates a CHANGED focus or flash mode
+            // against what the camera supports (libcameraservice api1/client2
+            // Parameters::set: "Requested focus mode ... is not supported",
+            // "Requested flash mode ... is not supported: No flash on device")
+            // and fails the whole call with BAD_VALUE, which the JNI layer
+            // throws as RuntimeException("setParameters failed"); nothing is
+            // applied. A flash mode of "off" (or none) on a camera without a
+            // flash is accepted, as there.
+            if (focusChanged && focus != null
+                    && !containsToken(mBag.get(KEY_FOCUS_MODE + SUPPORTED_VALUES_SUFFIX), focus)) {
+                System.err.println("[" + TAG + "] setParameters: focus mode \"" + focus + "\" is not supported");
+                throw new RuntimeException("setParameters failed");
+            }
+            if (flashChanged && flash != null && !Parameters.FLASH_MODE_OFF.equals(flash)
+                    && !containsToken(mBag.get(KEY_FLASH_MODE + SUPPORTED_VALUES_SUFFIX), flash)) {
+                System.err.println("[" + TAG + "] setParameters: flash mode \"" + flash + "\" is not supported");
+                throw new RuntimeException("setParameters failed");
+            }
             mBag.putAll(params.mMap);
         }
+        if (focusChanged) {
+            mAfGeneration.incrementAndGet();  // a new mode ends a pending focus
+            CameraBridge.cancelAutoFocus(mSession);
+            applyFocusMode();
+        }
+        if (flashChanged) applyFlashMode();
     }
 
     // ---- preview pump ----------------------------------------------------
@@ -837,6 +933,7 @@ public class Camera {
                 mBag.put(KEY_PICTURE_SIZE, mSessionW + "x" + mSessionH);
             }
         }
+        applyFocusMode();
         if (!CameraBridge.start(mSession)) {
             throw new RuntimeException("startPreview failed");
         }
@@ -847,6 +944,8 @@ public class Camera {
         }
 
         mPreviewRunning = true;
+        mAfMoving = false;
+        applyFlashMode();
         Thread t = new Thread(new Runnable() {
             @Override public void run() { previewLoop(); }
         }, "macapk-camera1-preview");
@@ -927,7 +1026,8 @@ public class Camera {
                     long pts = CameraBridge.latestFrameTimestamp(mSession);
                     if (pts != 0 && pts != lastTexturePts) {
                         lastTexturePts = pts;
-                        GfxBackend.get().queueFrame(st, pts, MTX_FLIP_V, 0);
+                        GfxBackend.get().queueFrame(st, pts, CameraBridge.consumerMatrix(
+                                CameraBridge.previewTransform(mDisplayOrientation, mFront)), 0);
                     }
                 }
 
@@ -936,6 +1036,8 @@ public class Camera {
                 //    because lockCanvas/unlockCanvasAndPost is designed for a
                 //    dedicated drawing thread (it is how SurfaceView's own
                 //    renderer path works).
+                reportFocusMoving();
+
                 SurfaceHolder holder = mPreviewHolder;
                 if (holder != null && mSessionW > 0 && mSessionH > 0) {
                     int need = mSessionW * mSessionH;
@@ -980,17 +1082,23 @@ public class Camera {
         }
     }
 
-    /** Transform for SurfaceTexture consumers. Identical to
-     *  CameraCaptureSessionImpl's MTX_FLIP_V and for the same reason: the
-     *  capture buffer is top-down where GL is bottom-up, the Mac's sensor is
-     *  unrotated, and there is no crop, so pure flip-V is exact. Column-major
-     *  for glUniformMatrix4fv. */
-    private static final float[] MTX_FLIP_V = {
-        1f,  0f, 0f, 0f,
-        0f, -1f, 0f, 0f,
-        0f,  0f, 1f, 0f,
-        0f,  1f, 0f, 1f,
-    };
+    /** AOSP calls the AutoFocusMoveCallback in the continuous modes when the
+     *  camera starts and stops searching for focus; the webcam's own state
+     *  (CameraBridge.focusState) says when. */
+    private void reportFocusMoving() {
+        final AutoFocusMoveCallback cb = mAutoFocusMoveCallback;
+        if (cb == null) return;
+        String mode;
+        synchronized (this) { mode = mBag.get(KEY_FOCUS_MODE); }
+        boolean moving = isContinuousFocusMode(mode)
+                && CameraBridge.focusState(mSession) == CameraBridge.FOCUS_STATE_SEARCHING;
+        if (moving == mAfMoving) return;
+        mAfMoving = moving;
+        final boolean start = moving;
+        post(new Runnable() {
+            @Override public void run() { cb.onAutoFocusMoving(start, Camera.this); }
+        });
+    }
 
     private void blitToHolder(SurfaceHolder holder, Bitmap frame) {
         android.graphics.Canvas c = holder.lockCanvas();
@@ -1001,9 +1109,13 @@ public class Camera {
             if (dst.right <= 0 || dst.bottom <= 0) {
                 dst = new Rect(src);
             }
-            if (mDisplayOrientation != 0) {
+            // AOSP's preview transform (degToTransform): a front camera's
+            // picture mirrored, then turned by the display orientation. The
+            // canvas applies the last-concatenated operation first.
+            if (mDisplayOrientation != 0 || mFront) {
                 c.save();
                 c.rotate(mDisplayOrientation, dst.right / 2f, dst.bottom / 2f);
+                if (mFront) c.scale(-1f, 1f, dst.right / 2f, dst.bottom / 2f);
                 c.drawBitmap(frame, src, dst, null);
                 c.restore();
             } else {

@@ -182,6 +182,85 @@ public final class CameraBridge {
         }
     }
 
+    // ---- Buffer transforms -------------------------------------------------
+    //
+    // How a camera's frames are turned on their way to a preview, as AOSP's
+    // camera service tells the consumer (NATIVE_WINDOW_TRANSFORM_* flags, which
+    // a SurfaceTexture hands on as its transform matrix and SurfaceView's
+    // compositor applies). Flips come before the rotation.
+
+    public static final int TRANSFORM_FLIP_H = 1, TRANSFORM_FLIP_V = 2, TRANSFORM_ROT_90 = 4,
+            TRANSFORM_ROT_180 = 3, TRANSFORM_ROT_270 = 7;
+
+    /** camera1's preview transform for setDisplayOrientation(degrees):
+     *  frameworks/av services/camera/libcameraservice/api1/client2/
+     *  Parameters.cpp degToTransform, a front camera mirrored. */
+    public static int previewTransform(int degrees, boolean front) {
+        if (!front) {
+            switch (degrees) {
+                case 90: return TRANSFORM_ROT_90;
+                case 180: return TRANSFORM_ROT_180;
+                case 270: return TRANSFORM_ROT_270;
+                default: return 0;
+            }
+        }
+        switch (degrees) {
+            case 90: return TRANSFORM_FLIP_H | TRANSFORM_ROT_90;
+            case 180: return TRANSFORM_FLIP_V;
+            case 270: return TRANSFORM_FLIP_V | TRANSFORM_ROT_90;
+            default: return TRANSFORM_FLIP_H;
+        }
+    }
+
+    /** camera2's transform for a preview output (SurfaceView, SurfaceTexture)
+     *  with the default MIRROR_MODE_AUTO: frameworks/av camera/CameraUtils.cpp
+     *  getRotationTransform. The sensor orientation is undone and a front
+     *  camera is mirrored. */
+    public static int outputTransform(int sensorOrientation, boolean front) {
+        if (!front) {
+            switch (sensorOrientation) {
+                case 90: return TRANSFORM_ROT_90;
+                case 180: return TRANSFORM_ROT_180;
+                case 270: return TRANSFORM_ROT_270;
+                default: return 0;
+            }
+        }
+        switch (sensorOrientation) {
+            case 90: return TRANSFORM_FLIP_H ^ TRANSFORM_ROT_270;
+            case 180: return TRANSFORM_FLIP_H ^ TRANSFORM_ROT_180;
+            case 270: return TRANSFORM_FLIP_H ^ TRANSFORM_ROT_90;
+            default: return TRANSFORM_FLIP_H;
+        }
+    }
+
+    /** The SurfaceTexture transform matrix for a buffer with these transform
+     *  flags and no crop: libgui GLConsumer::computeTransformMatrix (column
+     *  major, for glUniformMatrix4fv). The final flip-V maps GL's bottom-up
+     *  texture onto the buffer's top-down rows. */
+    public static float[] consumerMatrix(int transform) {
+        final float[] flipH = { -1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 1 };
+        final float[] flipV = { 1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1, 0, 0, 1, 0, 1 };
+        final float[] rot90 = { 0, 1, 0, 0, -1, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 1 };
+        float[] x = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
+        if ((transform & TRANSFORM_FLIP_H) != 0) x = mul(x, flipH);
+        if ((transform & TRANSFORM_FLIP_V) != 0) x = mul(x, flipV);
+        if ((transform & TRANSFORM_ROT_90) != 0) x = mul(x, rot90);
+        return mul(flipV, x);
+    }
+
+    /** a * b, both column-major 4x4 (GLConsumer's mtxMul). */
+    private static float[] mul(float[] a, float[] b) {
+        float[] r = new float[16];
+        for (int col = 0; col < 4; col++) {
+            for (int row = 0; row < 4; row++) {
+                float v = 0;
+                for (int k = 0; k < 4; k++) v += a[k * 4 + row] * b[col * 4 + k];
+                r[col * 4 + row] = v;
+            }
+        }
+        return r;
+    }
+
     // ---- Focus and torch ---------------------------------------------------
     //
     // What the driver says the webcam can do (native_camera.cpp, "focus and
