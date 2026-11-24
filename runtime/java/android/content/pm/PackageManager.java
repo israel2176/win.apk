@@ -482,7 +482,7 @@ public abstract class PackageManager {
     public List<android.content.pm.PackageInfo> getInstalledPackages(int flags) {
         java.util.ArrayList<android.content.pm.PackageInfo> out = new java.util.ArrayList<>();
         try {
-            android.app.Application app = android.app.Application.macapk_get();
+            android.app.Application app = com.macapk.loader.app.Apps.current();
             if (app != null) {
                 android.content.pm.PackageInfo self =
                     getPackageInfo(app.getPackageName(), flags);
@@ -505,7 +505,7 @@ public abstract class PackageManager {
     public List<android.content.pm.ApplicationInfo> getInstalledApplications(int flags) {
         java.util.ArrayList<android.content.pm.ApplicationInfo> out = new java.util.ArrayList<>();
         try {
-            android.app.Application app = android.app.Application.macapk_get();
+            android.app.Application app = com.macapk.loader.app.Apps.current();
             if (app != null) {
                 android.content.pm.ApplicationInfo self =
                     getApplicationInfo(app.getPackageName(), flags);
@@ -551,7 +551,7 @@ public abstract class PackageManager {
             if (p != null) return p[0];
             return null;
         }
-        android.app.Application app = android.app.Application.macapk_get();
+        android.app.Application app = com.macapk.loader.app.Apps.current();
         return (app != null) ? app.getPackageName() : null;
     }
 
@@ -567,7 +567,7 @@ public abstract class PackageManager {
             String[] p = com.macapk.loader.AppUids.packagesFor(uid);
             if (p != null) return p;
         }
-        android.app.Application app = android.app.Application.macapk_get();
+        android.app.Application app = com.macapk.loader.app.Apps.current();
         if (app == null) return null;
         int selfUid = android.os.Process.myUid();
         try {
@@ -616,7 +616,7 @@ public abstract class PackageManager {
         }
         // Fill ApplicationInfo from the calling app's known info.
         try {
-            android.app.Application app = android.app.Application.macapk_get();
+            android.app.Application app = com.macapk.loader.app.Apps.current();
             if (app != null) {
                 info.applicationInfo = app.getApplicationInfo();
             }
@@ -1036,7 +1036,7 @@ public abstract class PackageManager {
      *  Context.getResources() to get a Resources independent of Context state. */
     public android.content.res.Resources getResourcesForApplication(String appPackageName)
             throws NameNotFoundException {
-        android.app.Application app = android.app.Application.macapk_get();
+        android.app.Application app = com.macapk.loader.app.Apps.current();
         if (app == null || appPackageName == null) throw new NameNotFoundException(appPackageName);
         // The platform package "android" (framework-res.apk): a device returns a
         // Resources over the framework AssetManager, which Resources.getSystem()
@@ -1755,7 +1755,7 @@ public abstract class PackageManager {
      *  they cannot be read. */
     private PermissionInfo[] selfDeclaredPermissions() {
         try {
-            android.app.Application app = android.app.Application.macapk_get();
+            android.app.Application app = com.macapk.loader.app.Apps.current();
             if (app == null) return null;
             PackageInfo info = getPackageInfo(app.getPackageName(), GET_PERMISSIONS);
             return (info != null) ? info.permissions : null;
@@ -2119,7 +2119,7 @@ public abstract class PackageManager {
      *  SecurityException a device gives. */
     public void setApplicationCategoryHint(String packageName, int categoryHint) {
         String installer = getInstallerPackageName(packageName);
-        android.app.Application app = android.app.Application.macapk_get();
+        android.app.Application app = com.macapk.loader.app.Apps.current();
         String self = (app != null) ? app.getPackageName() : null;
         if (installer == null || self == null || !installer.equals(self)) {
             throw new SecurityException("Calling package " + self
@@ -2196,7 +2196,7 @@ public abstract class PackageManager {
             launch.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         }
         android.app.PendingIntent pi = android.app.PendingIntent.getActivity(
-                android.app.Application.macapk_get(), 0, launch,
+                com.macapk.loader.app.Apps.current(), 0, launch,
                 android.app.PendingIntent.FLAG_IMMUTABLE);
         return pi.getIntentSender();
     }
@@ -2304,7 +2304,7 @@ public abstract class PackageManager {
         String owner = null;
         try { owner = getInstallSourceInfo(targetPackage).getUpdateOwnerPackageName(); }
         catch (NameNotFoundException ignored) {}
-        android.app.Application app = android.app.Application.macapk_get();
+        android.app.Application app = com.macapk.loader.app.Apps.current();
         String self = (app != null) ? app.getPackageName() : null;
         if (owner != null && owner.equals(self)) return;
         throw new SecurityException("Caller is not the update owner of " + targetPackage);
@@ -2496,7 +2496,7 @@ public abstract class PackageManager {
                     "null path", null);
         }
         try {
-            android.app.Application app = android.app.Application.macapk_get();
+            android.app.Application app = com.macapk.loader.app.Apps.current();
             ApplicationInfo self = (app != null) ? app.getApplicationInfo() : null;
             String selfApk = (self != null) ? self.sourceDir : null;
             if (selfApk != null

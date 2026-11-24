@@ -520,7 +520,7 @@ public class PackageInstaller {
     private static void sendQuietly(android.content.IntentSender sender,
                                     android.content.Intent fillIn) {
         try {
-            sender.sendIntent(android.app.Application.macapk_get(), 0, fillIn, null, null);
+            sender.sendIntent(com.macapk.loader.app.Apps.current(), 0, fillIn, null, null);
         } catch (Throwable ignored) {
             // AOSP swallows a dead IntentSender the same way (the caller is
             // gone; there is nobody left to tell).
@@ -757,7 +757,7 @@ public class PackageInstaller {
 
     private static void requireInstalled(String packageName)
             throws PackageManager.NameNotFoundException {
-        android.app.Application app = android.app.Application.macapk_get();
+        android.app.Application app = com.macapk.loader.app.Apps.current();
         String self = (app != null) ? app.getPackageName() : null;
         if (packageName == null || self == null || !packageName.equals(self)) {
             throw new PackageManager.NameNotFoundException(String.valueOf(packageName));
@@ -1173,7 +1173,7 @@ public class PackageInstaller {
          *  silently keeping the session while reporting success would leave the
          *  caller waiting for an install the new owner will never commit. */
         public void transfer(String packageName) throws PackageManager.NameNotFoundException {
-            android.app.Application app = android.app.Application.macapk_get();
+            android.app.Application app = com.macapk.loader.app.Apps.current();
             String self = (app != null) ? app.getPackageName() : null;
             if (packageName != null && packageName.equals(self)) {
                 throw new IllegalArgumentException(

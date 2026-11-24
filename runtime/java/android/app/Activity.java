@@ -1011,7 +1011,7 @@ public class Activity extends ContextThemeWrapper
     private int macapkTargetSdk() {
         try {
             android.content.pm.ApplicationInfo ai = getApplicationInfo();
-            if (ai != null && Application.macapkTargetSdkKnown(ai.targetSdkVersion)) {
+            if (ai != null && com.macapk.loader.app.Apps.targetSdkKnown(ai.targetSdkVersion)) {
                 return ai.targetSdkVersion;
             }
         } catch (Throwable ignored) {}
@@ -2228,7 +2228,7 @@ public class Activity extends ContextThemeWrapper
         private boolean macapkTargetPreL() {
             try {
                 android.content.pm.ApplicationInfo ai = activity.getApplicationInfo();
-                if (ai != null && Application.macapkTargetSdkKnown(ai.targetSdkVersion)) {
+                if (ai != null && com.macapk.loader.app.Apps.targetSdkKnown(ai.targetSdkVersion)) {
                     return ai.targetSdkVersion < 21;
                 }
             } catch (Throwable ignored) {}
@@ -2240,7 +2240,7 @@ public class Activity extends ContextThemeWrapper
         private boolean macapkTargetPreHoneycomb() {
             try {
                 android.content.pm.ApplicationInfo ai = activity.getApplicationInfo();
-                if (ai != null && Application.macapkTargetSdkKnown(ai.targetSdkVersion)) {
+                if (ai != null && com.macapk.loader.app.Apps.targetSdkKnown(ai.targetSdkVersion)) {
                     return ai.targetSdkVersion < 11;
                 }
             } catch (Throwable ignored) {}
@@ -4056,7 +4056,7 @@ public class Activity extends ContextThemeWrapper
             String p = application.getPackageName();
             if (p != null && !p.isEmpty()) return p;
         }
-        android.app.Application a = android.app.Application.macapk_get();
+        android.app.Application a = com.macapk.loader.app.Apps.current();
         String p = (a != null) ? a.getPackageName() : null;
         return (p != null) ? p : "";
     }
@@ -4465,7 +4465,7 @@ public class Activity extends ContextThemeWrapper
     public final int macapkRealConfigChanged() {
         int handled = macapkHandledConfigChanges();
         int t = macapkAppTargetSdk();
-        if (Application.macapkTargetSdkKnown(t) && t < 13) {
+        if (com.macapk.loader.app.Apps.targetSdkKnown(t) && t < 13) {
             handled |= ActivityInfo.CONFIG_SCREEN_SIZE | ActivityInfo.CONFIG_SMALLEST_SCREEN_SIZE;
         }
         return handled;
@@ -4719,7 +4719,7 @@ public class Activity extends ContextThemeWrapper
      *  0 means "not resolvable yet" -- our ApplicationInfo can be asked before
      *  the loader has parsed the manifest, which is a state AOSP never has --
      *  OR the app's real 0 (no <uses-sdk>); callers tell the two apart with
-     *  Application.macapkTargetSdkKnown. Callers decide the fallback; see the
+     *  com.macapk.loader.app.Apps.targetSdkKnown. Callers decide the fallback; see the
      *  convention note on View.macapkCompatTargetSdk. */
     final int macapkAppTargetSdk() {
         try {
@@ -4786,7 +4786,7 @@ public class Activity extends ContextThemeWrapper
             return;
         }
         final int targetSdkVersion = macapkAppTargetSdk();
-        if (Application.macapkTargetSdkKnown(targetSdkVersion)
+        if (com.macapk.loader.app.Apps.targetSdkKnown(targetSdkVersion)
                 && targetSdkVersion < android.os.Build.VERSION_CODES.M) {
             try {
                 onRequestPermissionsResult(requestCode, new String[0], new int[0]);
@@ -4832,7 +4832,7 @@ public class Activity extends ContextThemeWrapper
     /** The pre-S5 requestPermissions body, verbatim (MACAPK_MEDIA_PERMS_ASK=0). */
     private void macapkRequestPermissionsPreS5(String[] permissions, int requestCode) {
         final int targetSdkVersion = macapkAppTargetSdk();
-        if (Application.macapkTargetSdkKnown(targetSdkVersion)
+        if (com.macapk.loader.app.Apps.targetSdkKnown(targetSdkVersion)
                 && targetSdkVersion < android.os.Build.VERSION_CODES.M) {
             try {
                 onRequestPermissionsResult(requestCode, new String[0], new int[0]);

@@ -202,7 +202,7 @@ public abstract class Context {
      *  An UNRESOLVED targetSdk means our ApplicationInfo stub answered (real
      *  Android always populates it); treat as modern, matching Boot.java's
      *  default application-theme selection for a theme-less manifest. A REAL
-     *  0 (no <uses-sdk>, Application.macapkTargetSdkKnown) is below 11 and
+     *  0 (no <uses-sdk>, com.macapk.loader.app.Apps.targetSdkKnown) is below 11 and
      *  takes R.style.Theme, as AOSP's selectSystemTheme does. */
     private int macapkSelectDefaultTheme() {
         int targetSdk = 0;
@@ -210,7 +210,7 @@ public abstract class Context {
             android.content.pm.ApplicationInfo ai = getApplicationInfo();
             if (ai != null) targetSdk = ai.targetSdkVersion;
         } catch (Throwable ignored) {}
-        if (!android.app.Application.macapkTargetSdkKnown(targetSdk)) return 0x0103013f;
+        if (!com.macapk.loader.app.Apps.targetSdkKnown(targetSdk)) return 0x0103013f;
         if (targetSdk < 11)  return 0x01030005;
         if (targetSdk < 14)  return 0x0103006b;
         if (targetSdk < 24)  return 0x01030128;
@@ -379,13 +379,13 @@ public abstract class Context {
             // Skip the chain. Go straight to Application. Then the override's own Resources, as
             // AOSP's ContextImpl.createConfigurationContext gets from ResourcesManager (the
             // application's own with Win.apk's single-configuration resources).
-            android.app.Application app = android.app.Application.macapk_get();
+            android.app.Application app = com.macapk.loader.app.Apps.current();
             Resources base = app != null ? app.getResourcesDirect() : getBaseContext().getResources();
             return overrideConfig == null ? base
                     : com.macapk.loader.res.ResBackend.get().resourcesForConfiguration(base, overrideConfig);
         }
         @Override public Context getApplicationContext() {
-            return android.app.Application.macapk_get();
+            return com.macapk.loader.app.Apps.current();
         }
     }
 
@@ -1879,7 +1879,7 @@ public abstract class Context {
 
     /** The APP's own declared targetSdkVersion as seen from this Context, or 0
      *  when it cannot be read. The one input a targetSdk compat gate may use;
-     *  see android.app.Application.macapkAppTargetSdk for the convention. */
+     *  see com.macapk.loader.app.Apps.targetSdk for the convention. */
     public static int macapkTargetSdkOf(Context ctx) {
         try {
             android.content.pm.ApplicationInfo ai =
@@ -1899,7 +1899,7 @@ public abstract class Context {
     public SharedPreferences getSharedPreferences(String name, int mode) {
         if (name == null) {
             int targetSdkVersion = macapkTargetSdkOf(this);
-            if (android.app.Application.macapkTargetSdkKnown(targetSdkVersion)
+            if (com.macapk.loader.app.Apps.targetSdkKnown(targetSdkVersion)
                     && targetSdkVersion < android.os.Build.VERSION_CODES.KITKAT) {
                 name = "null";
             }
@@ -2955,11 +2955,11 @@ public abstract class Context {
      *  Before this, the no-op silently dropped Compose's image-vector cache
      *  and Glide's memory-trim listener registrations. */
     public void registerComponentCallbacks(android.content.ComponentCallbacks cb) {
-        android.app.Application app = android.app.Application.macapk_get();
+        android.app.Application app = com.macapk.loader.app.Apps.current();
         if (app != null && app != this) app.registerComponentCallbacks(cb);
     }
     public void unregisterComponentCallbacks(android.content.ComponentCallbacks cb) {
-        android.app.Application app = android.app.Application.macapk_get();
+        android.app.Application app = com.macapk.loader.app.Apps.current();
         if (app != null && app != this) app.unregisterComponentCallbacks(cb);
     }
 

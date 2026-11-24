@@ -164,7 +164,7 @@ public final class PackageInstallerBackend {
      *  install, an allowed update, or when either side cannot be read. */
     static UpdateRefusal updateRefusal(File artifact, java.util.Collection<File> blobs) {
         try {
-            android.app.Application app = android.app.Application.getInstance();
+            android.app.Application app = com.macapk.loader.app.Apps.current();
             if (app == null || artifact == null) return null;
             android.content.pm.PackageManager pm = app.getPackageManager();
             int CERT = android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES;
@@ -341,7 +341,7 @@ public final class PackageInstallerBackend {
             throw new NullPointerException("statusReceiver must not be null");
         }
         android.app.Application app = null;
-        try { app = android.app.Application.getInstance(); }
+        try { app = com.macapk.loader.app.Apps.current(); }
         catch (Throwable ignored) {}
         if (app != null) {
             boolean enforce = false;
@@ -985,7 +985,7 @@ public final class PackageInstallerBackend {
             return;
         }
         android.app.Application app = null;
-        try { app = android.app.Application.getInstance(); }
+        try { app = com.macapk.loader.app.Apps.current(); }
         catch (Throwable ignored) {}
         String selfPkg = null;
         try { selfPkg = app != null ? app.getPackageName() : null; }
@@ -1139,7 +1139,7 @@ public final class PackageInstallerBackend {
         fillIn.putExtra(PackageInstaller.EXTRA_STATUS_MESSAGE, message);
         fillIn.putExtra(PackageInstaller.EXTRA_LEGACY_STATUS, legacyStatus);
         try {
-            sender.sendIntent(android.app.Application.getInstance(), 0, fillIn, null, null);
+            sender.sendIntent(com.macapk.loader.app.Apps.current(), 0, fillIn, null, null);
         } catch (Throwable t) {
             NativeLog.e(TAG, "uninstall status delivery failed for " + pkg + ": " + t);
         }
@@ -1287,7 +1287,7 @@ public final class PackageInstallerBackend {
         final String pkg = s.appPackageName;
         if (pkg == null || pkg.isEmpty()) return out;
         try {
-            android.content.pm.ApplicationInfo ai = android.app.Application.getInstance()
+            android.content.pm.ApplicationInfo ai = com.macapk.loader.app.Apps.current()
                     .getPackageManager().getApplicationInfo(pkg, 0);
             java.util.HashSet<String> replaced = new java.util.HashSet<>();
             java.util.LinkedHashSet<String> scratch = new java.util.LinkedHashSet<>();
@@ -1402,7 +1402,7 @@ public final class PackageInstallerBackend {
         NativeLog.i(TAG, "session " + sessionId + " status=" + status
                 + " pkg=" + pkg + " (" + message + ")");
         try {
-            sender.sendIntent(android.app.Application.getInstance(), 0, fillIn, null, null);
+            sender.sendIntent(com.macapk.loader.app.Apps.current(), 0, fillIn, null, null);
         } catch (Throwable t) {
             NativeLog.e(TAG, "session " + sessionId + " status delivery failed: " + t);
         }
@@ -1462,7 +1462,7 @@ public final class PackageInstallerBackend {
     public static void broadcastPackageInstalled(String pkg, boolean wasUpdate) {
         if (pkg == null || pkg.isEmpty() || brokerAnnounces()) return;
         android.app.Application app;
-        try { app = android.app.Application.getInstance(); }
+        try { app = com.macapk.loader.app.Apps.current(); }
         catch (Throwable t) { return; }
         if (app == null) return;
 
@@ -1549,7 +1549,7 @@ public final class PackageInstallerBackend {
     public static void broadcastPackageRemoved(String pkg, boolean dataRemoved) {
         if (pkg == null || pkg.isEmpty() || brokerAnnounces()) return;
         android.app.Application app;
-        try { app = android.app.Application.getInstance(); }
+        try { app = com.macapk.loader.app.Apps.current(); }
         catch (Throwable t) { return; }
         if (app == null) return;
 
@@ -2133,7 +2133,7 @@ public final class PackageInstallerBackend {
      *  surface names the requestor the same way this one does. */
     public static String requestorLabel() {
         try {
-            android.app.Application app = android.app.Application.getInstance();
+            android.app.Application app = com.macapk.loader.app.Apps.current();
             if (app != null) {
                 String pkg = app.getPackageName();
                 if (pkg != null && !pkg.isEmpty()) return pkg;

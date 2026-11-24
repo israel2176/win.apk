@@ -263,7 +263,7 @@ public final class InstallIntentHandler {
      *  FileProvider.openFile. file:// rides the same resolver entry point. */
     private static java.io.File stage(Uri data) throws java.io.IOException {
         if (data == null) return null;
-        android.app.Application app = android.app.Application.getInstance();
+        android.app.Application app = com.macapk.loader.app.Apps.current();
         if (app == null) {
             NativeLog.e(TAG, "no Application context; cannot stage " + data);
             return null;

@@ -87,7 +87,7 @@ public final class MacApkPackageManager extends PackageManager {
     private int    minSdk      = 1;
     // targetSdk defaults to 0 = UNKNOWN, deliberately, and it is the BINDING half
     // of the pair. The targetSdk compat gates read a 0 as "not resolved yet"
-    // through android.app.Application.macapkTargetSdkKnown (they used to test
+    // through com.macapk.loader.app.Apps.targetSdkKnown (they used to test
     // `targetSdkVersion > 0`), and several LATCH process-wide, so a wrong first
     // read is permanent. With this at 1 the sentinel could never fire: 1 is also
     // a legitimate declared value (Android 1.0). A REAL 0 -- a manifest with no
@@ -1538,7 +1538,7 @@ public final class MacApkPackageManager extends PackageManager {
             if (bm == null) return null;
             sRegistryIcons.put(key, new Object[] { mt, bm });
         }
-        android.app.Application app = android.app.Application.macapk_get();
+        android.app.Application app = com.macapk.loader.app.Apps.current();
         return new android.graphics.drawable.BitmapDrawable(
                 app != null ? app.getResources() : null, bm);
     }
@@ -2512,7 +2512,7 @@ public final class MacApkPackageManager extends PackageManager {
         try {
             android.net.Uri d = outer.getData();
             if (d == null || !"content".equals(d.getScheme())) return null;
-            android.app.Application app = android.app.Application.macapk_get();
+            android.app.Application app = com.macapk.loader.app.Apps.current();
             android.content.ContentResolver cr = app != null ? app.getContentResolver() : null;
             return cr != null ? outer.resolveTypeIfNeeded(cr) : null;
         } catch (Throwable ignored) {
@@ -3983,7 +3983,7 @@ public final class MacApkPackageManager extends PackageManager {
         }
         if (!LocationBridge.available()) return null;
         if (!declaredPermissions().contains(permName)) return Boolean.FALSE;
-        if (android.app.Application.macapkTargetSdkKnown(targetSdk) && targetSdk < 23) return Boolean.TRUE;
+        if (com.macapk.loader.app.Apps.targetSdkKnown(targetSdk) && targetSdk < 23) return Boolean.TRUE;
         if (SpecialAccessStore.mediaPermsAsk() && !SpecialAccessStore.locationGranted(permName)) {
             return Boolean.FALSE;
         }

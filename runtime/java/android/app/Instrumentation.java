@@ -68,12 +68,12 @@ public class Instrumentation {
     /** AOSP returns the Context of the instrumentation package; we hand back
      *  the running Application context (single-package model). */
     public Context getContext() {
-        return mInstrContext != null ? mInstrContext : Application.macapk_get();
+        return mInstrContext != null ? mInstrContext : com.macapk.loader.app.Apps.current();
     }
     public ComponentName getComponentName() { return mComponent; }
     /** The Context of the app being instrumented (same as getContext() here). */
     public Context getTargetContext() {
-        return mAppContext != null ? mAppContext : Application.macapk_get();
+        return mAppContext != null ? mAppContext : com.macapk.loader.app.Apps.current();
     }
     public String getProcessName() { return Application.getProcessName(); }
 
@@ -344,7 +344,7 @@ public class Instrumentation {
         } catch (Exception e) {
             throw new InstantiationException(e.toString());
         }
-        if (application == null) application = Application.macapk_get();
+        if (application == null) application = com.macapk.loader.app.Apps.current();
         activity.macapkAttach(application, intent);
         return activity;
     }
@@ -363,7 +363,7 @@ public class Instrumentation {
         } catch (Exception e) {
             throw new InstantiationException(e.toString());
         }
-        activity.macapkAttach(Application.macapk_get(), intent);
+        activity.macapkAttach(com.macapk.loader.app.Apps.current(), intent);
         return activity;
     }
 

@@ -325,7 +325,7 @@ public final class DisplayConfig {
         // device before the configuration change is delivered.
         sRealW = w;
         sRealH = h;
-        final android.app.Application app = android.app.Application.macapk_get();
+        final android.app.Application app = com.macapk.loader.app.Apps.current();
         final Resources res = (app != null) ? app.getResources() : null;
         final Configuration cur = (res != null) ? res.getConfiguration() : null;
         if (cur == null) {
@@ -557,7 +557,7 @@ public final class DisplayConfig {
      *  the configuration it missed while it was not on top. */
     public static boolean deliverPendingTo(android.app.Activity a) {
         try {
-            android.app.Application app = android.app.Application.macapk_get();
+            android.app.Application app = com.macapk.loader.app.Apps.current();
             Resources res = (app != null) ? app.getResources() : null;
             Configuration live = (res != null) ? res.getConfiguration() : null;
             if (live != null) return deliverToActivity(a, new Configuration(live));

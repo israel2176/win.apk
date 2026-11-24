@@ -15,7 +15,7 @@ public class LocaleManager {
     public LocaleManager(android.content.Context context) { this.context = context; }
 
     private android.content.SharedPreferences preferences() {
-        android.content.Context owner = context != null ? context : Application.macapk_get();
+        android.content.Context owner = context != null ? context : com.macapk.loader.app.Apps.current();
         return com.macapk.loader.SharedPrefsImpl.macapkGet(owner, "macapk.application_locales");
     }
 
@@ -30,7 +30,7 @@ public class LocaleManager {
             }
         }
         Runnable apply = () -> {
-            Application app = Application.macapk_get();
+            Application app = com.macapk.loader.app.Apps.current();
             if (app == null || prefs != com.macapk.loader.SharedPrefsImpl.macapkGet(
                     app, "macapk.application_locales")) return;
             android.content.res.Configuration next = applyToResources(app.getResourcesDirect());

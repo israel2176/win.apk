@@ -286,7 +286,7 @@ public final class LicensingService extends android.app.Service {
 
     private static String runningPackage() {
         try {
-            android.app.Application app = android.app.Application.getInstance();
+            android.app.Application app = com.macapk.loader.app.Apps.current();
             if (app != null) {
                 String p = app.getPackageName();
                 if (p != null && !p.isEmpty()) return p;
@@ -303,7 +303,7 @@ public final class LicensingService extends android.app.Service {
      *  A wrong version asks Google about a different build of the app. */
     private static int versionCode() {
         try {
-            android.app.Application app = android.app.Application.getInstance();
+            android.app.Application app = com.macapk.loader.app.Apps.current();
             if (app != null) {
                 android.content.pm.PackageInfo pi = app.getPackageManager()
                         .getPackageInfo(app.getPackageName(), 0);

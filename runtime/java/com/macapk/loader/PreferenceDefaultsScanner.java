@@ -78,7 +78,7 @@ public final class PreferenceDefaultsScanner {
             return;
         }
         // Locate the app's apkt res/xml directory via Boot's known
-        // app dir. Boot exposes the dir via Application.macapk_get().
+        // app dir. Boot exposes the dir via com.macapk.loader.app.Apps.current().
         // We dig it out of the app's class-loader-cached path.
         // The XML resources are the installed apk set's `xml` file rows,
         // served by the ResourceIndex (v1.0.1590; no decoded tree exists).

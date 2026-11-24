@@ -29,7 +29,7 @@ public class ContextWrapper extends Context {
         // A real Context always has a package name; fall back to the process
         // Application singleton rather than "" (Unity caches this as its app
         // identifier; an empty one crashes its PlayerPrefs path build).
-        android.app.Application a = android.app.Application.macapk_get();
+        android.app.Application a = com.macapk.loader.app.Apps.current();
         String p = (a != null) ? a.getPackageName() : null;
         return (p != null) ? p : "";
     }

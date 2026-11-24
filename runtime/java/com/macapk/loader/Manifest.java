@@ -54,7 +54,7 @@ public final class Manifest {
      *  reports targetSdkVersion 0, AOSP's DEFAULT_TARGET_SDK_VERSION, instead
      *  of the 1 this parser used to synthesise; and a process whose manifest
      *  says 0 treats a 0 read as that REAL value rather than as "not resolved
-     *  yet" (android.app.Application.macapkTargetSdkKnown). =0 restores the
+     *  yet" (com.macapk.loader.app.Apps.targetSdkKnown). =0 restores the
      *  pre-change path exactly: the old synthesis below, and every guard back
      *  to its plain `> 0` test. Research, the per-site audit and the corpus
      *  reach: docs/targetsdk-zero-default-and-guard-audit_2026-09-26.md. */
@@ -362,7 +362,7 @@ public final class Manifest {
             String raw = authorities;
             if (raw == null || !raw.startsWith("@")) return raw;
             if (res == null) {
-                android.app.Application app = android.app.Application.getInstance();
+                android.app.Application app = com.macapk.loader.app.Apps.current();
                 res = app != null ? app.getResources() : null;
                 if (res == null) return raw;
             }

@@ -110,7 +110,7 @@ public final class Message implements Parcelable {
     private static volatile boolean gCheckRecycleResolved = false;
 
     public static void updateCheckRecycle(int targetSdkVersion) {
-        if (!android.app.Application.macapkTargetSdkKnown(targetSdkVersion)) return;   // unresolved: keep the default
+        if (!com.macapk.loader.app.Apps.targetSdkKnown(targetSdkVersion)) return;   // unresolved: keep the default
         if (targetSdkVersion < Build.VERSION_CODES.LOLLIPOP) {
             gCheckRecycle = false;
         }
@@ -119,7 +119,7 @@ public final class Message implements Parcelable {
 
     private static boolean macapkCheckRecycle() {
         if (!gCheckRecycleResolved) {
-            updateCheckRecycle(android.app.Application.macapkAppTargetSdk());
+            updateCheckRecycle(com.macapk.loader.app.Apps.targetSdk());
         }
         return gCheckRecycle;
     }

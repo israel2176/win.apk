@@ -831,7 +831,7 @@ public class ClipboardManager extends android.text.ClipboardManager {
             android.app.Application app = null;
             String label = null;
             try {
-                app = android.app.Application.macapk_get();
+                app = com.macapk.loader.app.Apps.current();
                 if (app != null) {
                     CharSequence l = app.getPackageManager().getApplicationLabel(app.getApplicationInfo());
                     if (l != null && l.length() > 0) label = l.toString();

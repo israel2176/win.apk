@@ -93,7 +93,7 @@ public final class VMRuntime {
      *  AOSP marks this synchronized (paired with setTargetSdkVersion). */
     public synchronized int getTargetSdkVersion() {
         if (!targetSdkVersionSet) {
-            int t = android.app.Application.macapkAppTargetSdk();
+            int t = com.macapk.loader.app.Apps.targetSdk();
             if (t > 0) {
                 targetSdkVersion = t;
                 targetSdkVersionSet = true;

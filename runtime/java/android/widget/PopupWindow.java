@@ -636,7 +636,7 @@ public class PopupWindow {
                 android.content.Context c = macapkContext();
                 android.content.pm.ApplicationInfo ai =
                         (c != null) ? c.getApplicationInfo() : null;
-                if (ai != null && android.app.Application.macapkTargetSdkKnown(ai.targetSdkVersion)) {
+                if (ai != null && com.macapk.loader.app.Apps.targetSdkKnown(ai.targetSdkVersion)) {
                     return ai.targetSdkVersion
                             >= android.os.Build.VERSION_CODES.HONEYCOMB;
                 }

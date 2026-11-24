@@ -89,7 +89,7 @@ public class AnimationSet extends Animation {
         try {
             android.content.pm.ApplicationInfo ai =
                     (context != null) ? context.getApplicationInfo() : null;
-            if (ai != null && android.app.Application.macapkTargetSdkKnown(ai.targetSdkVersion)) targetSdkVersion = ai.targetSdkVersion;
+            if (ai != null && com.macapk.loader.app.Apps.targetSdkKnown(ai.targetSdkVersion)) targetSdkVersion = ai.targetSdkVersion;
         } catch (Throwable ignored) { }
         if (targetSdkVersion >= android.os.Build.VERSION_CODES.ICE_CREAM_SANDWICH) {
             if (AnimationUtils.hasAttr(attrs, "duration")) mFlags |= PROPERTY_DURATION_MASK;

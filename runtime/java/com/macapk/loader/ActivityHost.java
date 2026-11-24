@@ -1559,10 +1559,10 @@ public final class ActivityHost {
      *  the state is UNDEFINED and the result runs where the activity stands --
      *  still STOPPED -- before the resume request's onRestart/onStart/onResume.
      *  An unresolved targetSdk (0) takes the modern branch, this class's
-     *  convention; a REAL 0 (no <uses-sdk>, Application.macapkTargetSdkKnown)
+     *  convention; a REAL 0 (no <uses-sdk>, com.macapk.loader.app.Apps.targetSdkKnown)
      *  is <= S and takes the old one. */
     static boolean resultBeforeResume(int targetSdk) {
-        return !android.app.Application.macapkTargetSdkKnown(targetSdk) || targetSdk > 31;
+        return !com.macapk.loader.app.Apps.targetSdkKnown(targetSdk) || targetSdk > 31;
     }
 
     private static int targetSdkOf(Activity a) {
@@ -1986,7 +1986,7 @@ public final class ActivityHost {
         if (ai == null) return 0;
         int cc = ai.configChanges;
         int t = (ai.applicationInfo != null) ? ai.applicationInfo.targetSdkVersion : 0;
-        if (android.app.Application.macapkTargetSdkKnown(t) && t < 13) {
+        if (com.macapk.loader.app.Apps.targetSdkKnown(t) && t < 13) {
             cc |= android.content.pm.ActivityInfo.CONFIG_SCREEN_SIZE
                 | android.content.pm.ActivityInfo.CONFIG_SMALLEST_SCREEN_SIZE;
         }
@@ -3258,7 +3258,7 @@ public final class ActivityHost {
         try {
             int t = app != null && app.getApplicationInfo() != null
                     ? app.getApplicationInfo().targetSdkVersion : -1;
-            return android.app.Application.macapkTargetSdkKnown(t) && t >= 34;
+            return com.macapk.loader.app.Apps.targetSdkKnown(t) && t >= 34;
         } catch (Throwable t) {
             return false;
         }
