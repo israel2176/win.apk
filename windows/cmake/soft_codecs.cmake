@@ -100,6 +100,8 @@ if(WIN32)
   file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/codecs-win/vpx_config.h "${winapk_vpx_config}")
   target_include_directories(winapk_vpx BEFORE PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/codecs-win)
   target_compile_definitions(winapk_vpx PRIVATE _WIN32_WINNT=0x0A00)  # vpx_pthread.h needs Vista's
+  # vpx_pthread.h's Win32 branch returns EBUSY without including errno.h (MSVC's headers bring it).
+  target_compile_options(winapk_vpx PRIVATE $<$<COMPILE_LANGUAGE:C>:-include$<SEMICOLON>errno.h>)
 endif()
 target_include_directories(winapk_vpx PRIVATE ${WINAPK_CODECS_SRC}/libvpx ${vpx})
 target_include_directories(winapk_vpx SYSTEM INTERFACE ${vpx})
