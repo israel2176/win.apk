@@ -232,6 +232,14 @@ void offsets_and_emoji() {
     auto e = d.take_edit();
     check(e && e->start == 103 && e->end == 103 && e->text.size() == 2 && e->caret == 105,
           "an emoji is two units, at the editor's positions: " + (e ? show(*e) : "none"));
+    // Text written right at an empty composition's start goes into it (the start stays).
+    Document g;
+    g.reset(snap(9, 0, 0, u"ab", 2, 2));
+    g.compose(2, 2);
+    g.replace(2, 2, u"x");
+    check(g.comp_start() == 2 && g.comp_end() == 3 && g.sel_start() == 3, "a composition grows from its start");
+    g.replace(0, 0, u"Z");
+    check(g.comp_start() == 3 && g.comp_end() == 4, "and moves with text put before it");
     // Hebrew after Hebrew, composed (a Hebrew handwriting panel or dictation composes too).
     Document h;
     h.reset(snap(8, 0, 0, u"שלום ", 5, 5));
