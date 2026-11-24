@@ -122,6 +122,29 @@ public final class Tasks {
         start(ai, i, owner.info.packageName, null, null, -1);
     }
 
+    /** A start from outside the task (another app's, a URL the host hands over), as ActivityStarter
+     *  takes one: a MAIN/LAUNCHER intent for a task with activities brings it to the front, as the
+     *  home screen's icon does; anything else starts as a start from inside would, its launch mode
+     *  and flags deciding, with the task in front. */
+    void arrive(Intent intent, String sender) {
+        if (terminating) return;
+        boolean launcher = Intent.ACTION_MAIN.equals(intent.getAction())
+                && intent.hasCategory(Intent.CATEGORY_LAUNCHER);
+        if (launcher && top() != null) {
+            toFront();
+            return;
+        }
+        ActivityInfo ai = owner.resolver.resolveActivity(intent, intent.getType());
+        if (ai == null) {
+            System.err.println("[aosp-app] a start from " + sender + " resolves to no activity: " + intent);
+            return;
+        }
+        Intent i = new Intent(intent);
+        i.setComponent(new ComponentName(ai.packageName, ai.name));
+        inBackground = false;
+        start(ai, i, sender, null, null, -1);
+    }
+
     // ---- What the host asks (the window) ----
 
     /** ActivityTaskManagerService.removeTask for the window's close: every activity is destroyed,

@@ -359,6 +359,17 @@ lifecycle test passes.
   covering the task meanwhile (`AppHost.hostCover`). `requestPermissions`
   (`ACTION_REQUEST_PERMISSIONS`) asks the launcher's prompt and answers with
   the result intent Android's permission controller gives.
+- **Starts from outside.** A URL the host hands over (a sign-in's redirect
+  from the browser tab, `HostUrlIntake`) or another app's start
+  (`IntentInbox`) reaches `AppHost.deliver`: a MAIN/LAUNCHER intent brings the
+  task to the front, anything else starts as `ActivityStarter` starts it,
+  with the host's window in front. One that opened the app is the first
+  activity's intent; the launcher's stays the one an emptied task starts.
+- **Before the Application.** On the main thread before the bind, as
+  `handleBindApplication`'s `setupGraphicsSupport`: `TMPDIR` and
+  `java.io.tmpdir` on the app's cache, then pairip's gate; before its
+  `onCreate`: a SoLoader superpack's libraries exposed, the providers, the
+  FCM channel when Win.apk's push backend is on, the broker attached.
 - **Receivers, broadcasts and services** (A3, the first part): AOSP's
   `ContextImpl` hands `registerReceiver`, `sendBroadcast` and its ordered and
   sticky kinds, `startService`, `bindService` and their overloads to Win.apk's

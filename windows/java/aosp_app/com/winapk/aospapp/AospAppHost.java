@@ -70,6 +70,13 @@ public final class AospAppHost implements AppHost {
         app.tasks.handler.post(() -> app.tasks.configurationChanged(copy));
     }
 
+    @Override public void deliver(android.content.Intent intent, String sender) {
+        AospApp app = AospApp.get();
+        if (app == null) return;
+        android.content.Intent copy = new android.content.Intent(intent);
+        app.tasks.handler.post(() -> app.tasks.arrive(copy, sender));
+    }
+
     @Override public void taskToFront() {
         AospApp app = AospApp.get();
         if (app != null) app.tasks.handler.post(app.tasks::toFront);
