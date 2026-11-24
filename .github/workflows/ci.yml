@@ -3,7 +3,6 @@
 #   What changed ──┬─ Guest libraries (Ubuntu) ─────────┬─ Unit tests
 #                  ├─ Launcher check (Ubuntu, MinGW)    ├─ Runtime tests
 #                  └─ Build (Windows, ccache) ──────────┼─ App smoke test (10 apps)
-#                                                       ├─ AOSP resources and views: smoke, probe (informational)
 #                                                       ├─ AOSP graphics (Skia, minikin)
 #                                                       ├─ Package (preview + installer)
 #                                                       └─ Sweep 1/4 .. 4/4 ─ Sweep report  (only when asked)
@@ -103,6 +102,7 @@ jobs:
                   *.md) ;;
                   runtime/java/*|windows/java/*|windows/host/*|windows/src/*|windows/include/*) ui=true ;;
                   windows/test/uiprobe/*|windows/test/screens/*|windows/scripts/build_java.sh) ui=true ;;
+                  windows/scripts/build_aosp_*.sh|windows/scripts/Aosp*.java|windows/scripts/stage_runtime.sh) ui=true ;;
                   .github/workflows/ci.yml|.github/ci/*|.github/probe/fdroid_fetch.py) ui=true ;;
                 esac
               done < <(git diff --name-only HEAD^1 HEAD)
@@ -251,10 +251,13 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: winapk-binaries
+          # build/java/android-framework.jar: the framework as compiled (stage_runtime.sh), for the
+          # tests that run it on a plain JVM; the stage's lacks what AOSP's views and resources shadow.
           path: |
             build/*.exe
             build/winapk-aot-test-dll.dll
             build/winapk-aot-guard-dll.dll
+            build/java/android-framework.jar
           compression-level: 1
 
   unit-tests:
@@ -396,13 +399,18 @@ jobs:
         with:
           name: runtime-stage
           path: stage
+      # The tests on a plain JVM (no winapk-runtime) take build/java/android-framework.jar, the
+      # framework as compiled: the stage's has no android.view, android.widget or
+      # android.content.res (AOSP's jars, first on an app's class path, shadow them), and AOSP's
+      # classes need natives only winapk-runtime binds. So these still run Win.apk's own views and
+      # resources, which no app runs any more (docs/research/open-issues.md).
       - name: Run the real-JVM test on the runtime's Bitmap
         run: |
           # libjnigraphics (AndroidBitmap_*) on android.graphics.Bitmap, which
           # the staged android-framework.jar provides; the unit tests' run
           # without it skips that check.
           export PATH="$(cygpath -u "$JAVA_HOME")/bin/server:$(cygpath -u "$JAVA_HOME")/bin:$PATH"
-          cp="guest/e2e/classes;$(cygpath -w stage/lib/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          cp="guest/e2e/classes;$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
           ./build/winapk-jvm-run.exe guest/e2e/libwinapk_jni_guest.so "$cp" | tee jvm-bitmap.log
           grep -q "\[PASS\] AndroidBitmap" jvm-bitmap.log
       - name: Run the File.separator rewrite test
@@ -463,7 +471,7 @@ jobs:
           # has the pixels of a frame drawn whole (partial redraw, off by
           # default: MACAPK_FRAMESPEED_DAMAGE=1). The real View classes, no window.
           export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
-          cp="$(cygpath -w stage/lib/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/damage-test windows/test/java/DamageRectTest.java
           MACAPK_FRAMESPEED_DAMAGE=1 MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -Djava.awt.headless=true \
             -cp "$cp;$(cygpath -w build/damage-test)" DamageRectTest
@@ -473,7 +481,7 @@ jobs:
           # advertised, a still is a real JPEG of the reader's size with its
           # EXIF orientation, the callbacks come in order.
           export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
-          cp="$(cygpath -w stage/lib/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/camera2-test windows/test/java/Camera2StillTest.java
           "$JAVA_HOME/bin/java" -Djava.awt.headless=true -cp "$cp;$(cygpath -w build/camera2-test)" Camera2StillTest
       - name: Run the camera orientation test
@@ -483,7 +491,7 @@ jobs:
           # transforms, a fixed-focus camera without a torch, and no
           # synthetic accelerometer; on a plain JVM.
           export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
-          cp="$(cygpath -w stage/lib/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/camera-orientation-test windows/test/java/CameraOrientationTest.java
           MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -Djava.awt.headless=true \
             -cp "$cp;$(cygpath -w build/camera-orientation-test)" CameraOrientationTest
@@ -494,7 +502,7 @@ jobs:
           # (right to left too), states, and actions reaching the views; on a
           # plain JVM.
           export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
-          cp="$(cygpath -w stage/lib/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/a11y-test windows/test/java/com/macapk/loader/AccessibilityTreeTest.java
           MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -Djava.awt.headless=true \
             -cp "$cp;$(cygpath -w build/a11y-test)" com.macapk.loader.AccessibilityTreeTest
@@ -503,14 +511,14 @@ jobs:
           # What ConnectivityManager makes of the host's default-route adapter
           # (its type, addresses, DNS servers), on a plain JVM.
           export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
-          cp="$(cygpath -w stage/lib/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/hostnet-test windows/test/java/android/net/HostNetworkTest.java
           MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/hostnet-test)" android.net.HostNetworkTest
       - name: Run the host touch test
         run: |
           # The MotionEvents touchscreen and pen contacts become, on a plain JVM.
           export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
-          cp="$(cygpath -w stage/lib/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/hosttouch-test windows/test/java/com/macapk/loader/HostTouchTest.java
           MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/hosttouch-test)" com.macapk.loader.HostTouchTest
       - name: Run the text services' edits test
@@ -518,7 +526,7 @@ jobs:
           # A TSF text service's edits (composition, replacement, selection) as
           # HostTextInput applies them to an InputConnection, on a plain JVM.
           export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
-          cp="$(cygpath -w stage/lib/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/hosttext-test windows/test/java/com/macapk/loader/HostTextInputTest.java
           MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/hosttext-test)" com.macapk.loader.HostTextInputTest
       - name: Run the framework stubs test
@@ -528,7 +536,7 @@ jobs:
           # View's clip bounds and the drawing cut to them, Process.getElapsedCpuTime
           # and getUid/GidForName, ExpandableListView's packed positions.
           export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
-          cp="$(cygpath -w stage/lib/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/stubs-test windows/test/java/FrameworkStubsTest.java
           MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -Djava.awt.headless=true \
             -cp "$cp;$(cygpath -w build/stubs-test)" FrameworkStubsTest
@@ -538,7 +546,7 @@ jobs:
           # AOSP 14 has it: the short time today, the short date outside it,
           # relative "now", "5m", "in 2d" and the accessibility text.
           export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
-          cp="$(cygpath -w stage/lib/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/datetimeview-test windows/test/java/DateTimeViewTest.java
           MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -Djava.awt.headless=true -Duser.language=en -Duser.country=US \
             -cp "$cp;$(cygpath -w build/datetimeview-test)" DateTimeViewTest | tee datetimeview-test.log
@@ -550,7 +558,7 @@ jobs:
           # answer from Java (IcuFallback) instead of throwing: MeasureFormat as
           # Hermes' Intl.NumberFormat calls it, LocaleData.
           export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
-          cp="$(cygpath -w stage/lib/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/icu-fallback-test \
             windows/test/java/com/macapk/icu/HostIcuFallbackTest.java
           "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/icu-fallback-test)" com.macapk.icu.HostIcuFallbackTest \
@@ -562,7 +570,7 @@ jobs:
           # has upstream's Mac one): MacApkSkia.isAvailable() answers false
           # instead of throwing into the app, and the effects are made.
           export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
-          cp="$(cygpath -w stage/lib/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/skia-test windows/test/java/com/macapk/graphics/MacApkSkiaTest.java
           "$JAVA_HOME/bin/java" -Djava.awt.headless=true -cp "$cp;$(cygpath -w build/skia-test)" \
             com.macapk.graphics.MacApkSkiaTest | tee skia-test.log
@@ -587,7 +595,7 @@ jobs:
           # PermissionController's rules (grant, deny, deny twice, auto grant,
           # background permissions, legacy targets, App info rows).
           export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
-          cp="$(cygpath -w stage/lib/macapk-loader.jar);$(cygpath -w stage/lib/android-framework.jar)"
+          cp="$(cygpath -w stage/lib/macapk-loader.jar);$(cygpath -w build/java/android-framework.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/perm-test windows/test/java/PermissionModelTest.java
           "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/perm-test)" PermissionModelTest
       - name: Run the APK signature verification test
@@ -601,7 +609,7 @@ jobs:
           # split sets and bundles; the cache. Also a bundle's string resources
           # and PresentedSdk's minSdk floor.
           export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
-          cp="$(cygpath -w stage/lib/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/apkverify-test windows/test/java/com/macapk/loader/ApkVerificationTest.java
           MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/apkverify-test)" \
             com.macapk.loader.ApkVerificationTest "$(cygpath -w stage/bin/aosp/framework-res-34.apk)" \
@@ -613,7 +621,7 @@ jobs:
           # redirect host checked on its own, its verdict cached per APK (TTLs,
           # a new APK drops it). No network: the fetch is the test's.
           export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
-          cp="$(cygpath -w stage/lib/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/applinks-test windows/test/java/com/macapk/loader/AppLinksTest.java
           MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/applinks-test)" \
             com.macapk.loader.AppLinksTest "$(cygpath -w "$RUNNER_TEMP/applinks")" | tee applinks-test.log
@@ -626,7 +634,7 @@ jobs:
           # nothing when off, a real record over both; PackageManager's
           # getInstallerPackageName and getInstallSourceInfo give one answer.
           export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
-          cp="$(cygpath -w stage/lib/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/installer-test windows/test/java/com/macapk/loader/InstallerOfRecordTest.java
           MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/installer-test)" \
             com.macapk.loader.InstallerOfRecordTest "$(cygpath -w "$RUNNER_TEMP/installer")" | tee installer-test.log
@@ -637,7 +645,7 @@ jobs:
           # when due and their constraints hold, persisted across a reboot) and an
           # update through PackageInstaller's session API with AOSP's update rules.
           export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
-          cp="$(cygpath -w stage/lib/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/update-tests \
             windows/test/java/com/macapk/loader/BrokerJobsTest.java windows/test/java/com/macapk/loader/SessionUpdateTest.java
           MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/update-tests)" \
@@ -651,7 +659,7 @@ jobs:
           # android.bluetooth.le.ScanRecord's parser over the advertising bytes
           # the LE scan delivers, and ScanFilter over the result.
           export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
-          cp="$(cygpath -w stage/lib/android-framework.jar)"
+          cp="$(cygpath -w build/java/android-framework.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/scan-test windows/test/java/ScanRecordTest.java
           "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/scan-test)" ScanRecordTest
       - name: Run the cross-process Binder test
@@ -663,7 +671,7 @@ jobs:
           # refused; android:exported), and the Google account mirror.
           export PATH="$(cygpath -u "$JAVA_HOME")/bin/server:$(cygpath -u "$JAVA_HOME")/bin:$PATH"
           jh="$(cygpath -u "$JAVA_HOME")"
-          cp="$(cygpath -w stage/lib/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
           "$jh/bin/javac" -cp "$cp" -d build/binder-test windows/test/java/com/macapk/loader/BinderTransportTest.java
           ./build/winapk-binder-test.exe "$cp;$(cygpath -w build/binder-test)" com.macapk.loader.BinderTransportTest \
             | tee binder-test.log
@@ -677,7 +685,7 @@ jobs:
           export PATH="$(cygpath -u "$JAVA_HOME")/bin/server:$(cygpath -u "$JAVA_HOME")/bin:$PATH"
           # The test host binds the Binder transport's natives too, so the
           # framework jars are on the classpath.
-          cp="$(cygpath -w stage/lib/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
           "$(cygpath -u "$JAVA_HOME")/bin/javac" -d build/share-delete-test windows/test/java/FileShareDeleteTest.java
           WINAPK_TEST_JAVA_BASE_PATCH="$(cygpath -w stage/lib/java_base_patch)" \
             ./build/winapk-binder-test.exe "$cp;$(cygpath -w build/share-delete-test)" FileShareDeleteTest \
@@ -701,8 +709,9 @@ jobs:
           timeout 600 ./stage/bin/winapk-runtime.exe --apk sudoku.apk --jdk "$JAVA_HOME" --data "$(cygpath -w "$PWD/appdata")" \
             > boot.log 2>&1 || { tail -n 200 boot.log; exit 1; }
           grep -E "first frame presented|frames presented" boot.log
-          # AOSP's graphics are the default, and the stage carries their files.
+          # AOSP's graphics, resources and views: the stage carries their files.
           grep -F "AOSP graphics: on" boot.log
+          grep -F "AOSP views: on" boot.log
           grep -E "AOSP graphics: robolectric-nativeruntime.dll loaded" boot.log
       - name: Install an APK (the launcher's icon render)
         run: |
@@ -723,8 +732,9 @@ jobs:
           # patches are baked in, so the JRE's archive maps. The first start
           # has no framework archive yet: it records its classes and, at its
           # exit, starts the background dump; the next start maps the archive.
-          # Each graphics has its archive: AOSP's (the default) first, then a start on Java2D's
-          # (WINAPK_AOSP_GFX=0, the way back while it exists) makes its own and keeps AOSP's.
+          # AOSP's graphics, resources and views share one archive (framework-aosp-<key>.jsa). A start
+          # on Java2D's (WINAPK_AOSP_GFX=0) cannot run an app any more: Win.apk's own views and
+          # resources, which it needs, are not in the stage.
           export WINAPK_HEADLESS=1 WINAPK_HEADLESS_EXIT_AFTER_FRAMES=30
           data="$(cygpath -w "$PWD/cdsdata")"
           wait_jsa() { for i in $(seq 1 90); do ls cdsdata/cds/framework-$1-*.jsa > /dev/null 2>&1 && break; sleep 2; done
@@ -746,17 +756,6 @@ jobs:
             || { cat cds-gms.out; tail -n 100 cds-gms.log; exit 1; }
           grep -F "cds: framework archive" cds-gms.log | grep -F framework-aosp-
           grep -F "class-data sharing ON" cds-gms.log
-          WINAPK_AOSP_GFX=0 timeout 600 ./stage/bin/winapk-runtime.exe --apk sudoku.apk --data "$data" > cds3.log 2>&1 \
-            || { tail -n 200 cds3.log; exit 1; }
-          grep -F "AOSP graphics: off (WINAPK_AOSP_GFX=0)" cds3.log
-          grep -F "graphics (java2d)" cds3.log
-          grep -E "frames presented" cds3.log
-          wait_jsa java2d
-          ls cdsdata/cds/framework-aosp-*.jsa
-          timeout 600 ./stage/bin/winapk-runtime.exe --apk sudoku.apk --data "$data" > cds4.log 2>&1 \
-            || { tail -n 200 cds4.log; exit 1; }
-          grep -F "cds: framework archive" cds4.log | grep -F framework-aosp-
-          if grep -F "did not map" cds4.log; then exit 1; fi
       - name: Start an app the broker runs as a service host
         run: |
           # The broker starts an app headless, with no window, to serve another
@@ -847,26 +846,24 @@ jobs:
           grep -E "frames presented" window.log
           grep -E "\[win.apk\] (window|window resized|resize):" window.log
           grep -E "resize: the app drew at 400x600 px" window.log
-      - name: Frame time, both graphics engines (the frame bench, in a window)
+      - name: Frame time (the frame bench, in a window)
         id: framebench
         run: |
           # windows/README.md, "Frame time": windows/test/framebench's APK scrolls a list on every
-          # frame; 25 s of it in a window on the staged JRE, on AOSP's graphics and on Java2D's,
-          # each run ending with its `[win.apk] frame times` line (host/frame_times.h). The next
-          # step puts the numbers in the run's summary.
+          # frame; 25 s of it in a window on the staged JRE, on AOSP's graphics, resources and views
+          # (Java2D's cannot run an app any more: the stage has no views for them), ending with its
+          # `[win.apk] frame times` line (host/frame_times.h). The next step puts the numbers in the
+          # run's summary.
           export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
           if ! windows/test/framebench/build.sh framebench; then
             echo "::warning::the frame bench was not built (no Android SDK on the runner?); no frame times"
             exit 0
           fi
           data="$(cygpath -w "$PWD/benchdata")"
-          for gfx in aosp java2d; do
-            [ "$gfx" = aosp ] && on=1 || on=0
-            WINAPK_AOSP_GFX=$on WINAPK_HEADLESS_EXIT_AFTER_FRAMES=1500 timeout 600 ./stage/bin/winapk-runtime.exe \
-              --apk framebench/framebench.apk --data "$data" > frames-$gfx.log 2>&1 \
-              || { tail -n 200 frames-$gfx.log; exit 1; }
-            grep -a "frame times (" frames-$gfx.log
-          done
+          WINAPK_HEADLESS_EXIT_AFTER_FRAMES=1500 timeout 600 ./stage/bin/winapk-runtime.exe \
+            --apk framebench/framebench.apk --data "$data" > frames-aosp.log 2>&1 \
+            || { tail -n 200 frames-aosp.log; exit 1; }
+          grep -a "frame times (" frames-aosp.log
           echo "built=1" >> "$GITHUB_OUTPUT"
       - name: Frame time, in the summary
         if: steps.framebench.outputs.built == '1'
@@ -874,7 +871,7 @@ jobs:
         run: |
           # Fails when a run has no line, kept drawing for fewer than 300 frames, or took over three
           # vsyncs (50 ms) at p90 for the whole frame: only a collapse, the machines vary too much.
-          python windows/test/framebench/report.py frames-aosp.log frames-java2d.log | Tee-Object -Variable table
+          python windows/test/framebench/report.py frames-aosp.log | Tee-Object -Variable table
           $rc = $LASTEXITCODE
           $table | Add-Content $env:GITHUB_STEP_SUMMARY
           exit $rc
@@ -886,7 +883,6 @@ jobs:
             boot.log
             window.log
             frames-aosp.log
-            frames-java2d.log
             host.log
             replace.log
             system.log
@@ -997,10 +993,12 @@ jobs:
             --only-from windows/test/compat/smoke.txt --require-drew
           $rc = $LASTEXITCODE
           python windows/scripts/merge_classlists.py framework.classlist (Get-ChildItem classlists/*.classlist)
-          # Every app on AOSP's graphics, the default: a run that fell back to Java2D's (a file
-          # missing from the stage, the DLL not loading) is not the engine this test is for.
+          # Every app on AOSP's graphics, resources and views: a run without them (a file missing
+          # from the stage, the DLL not loading) is not what users run.
           $java2d = Get-ChildItem smoke/logs/*.log | Where-Object { -not (Select-String -Path $_ -SimpleMatch 'AOSP graphics: on' -Quiet) }
           if ($java2d) { "not on AOSP graphics: $($java2d.Name -join ', ')"; exit 1 }
+          $noviews = Get-ChildItem smoke/logs/*.log | Where-Object { -not (Select-String -Path $_ -SimpleMatch 'AOSP views: on' -Quiet) }
+          if ($noviews) { "not on AOSP views: $($noviews.Name -join ', ')"; exit 1 }
           exit $rc
       # Each app's status and memory (peak working set and private bytes of the runtime's process,
       # sweep.py's MemoryWatch) in the run's summary: the report's first table, up to its sections.
@@ -1029,132 +1027,6 @@ jobs:
           name: framework-classlist
           path: framework.classlist
 
-  aosp-switches:
-    # AOSP's own resources and views (WINAPK_AOSP_RES=1 WINAPK_AOSP_VIEWS=1, docs/research/
-    # aosp-views.md), on real Windows, beside the other jobs. Informational while the switches are
-    # off by default: it fails nothing (continue-on-error), and its verdicts are in the summary.
-    # Their files are staged here over the build's stage (build_aosp_res.sh, build_aosp_views.sh),
-    # not in it, so the stage the other jobs and the installer take is unchanged; their sizes go
-    # in the summary. Then the smoke set with the switches on, with its own "draws" verdict and
-    # frames, and, when the UI gate runs, the UI probe with them, checked against Android's lines
-    # (compare.py: every line equal is the expected result).
-    name: AOSP resources and views (informational)
-    needs: [changes, build, ui-oracle]
-    if: >-
-      !cancelled() && needs.build.result == 'success' && needs.changes.outputs.tests == 'true'
-    continue-on-error: true
-    runs-on: windows-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '21'
-      - uses: msys2/setup-msys2@v2
-        with:
-          msystem: CLANG64
-          install: unzip zip curl
-      - uses: actions/download-artifact@v4
-        with:
-          name: runtime-stage
-          path: stage
-      - uses: actions/cache@v4
-        with:
-          path: apk-cache
-          key: compat-apks-smoke-${{ hashFiles('windows/test/compat/apps.txt', 'windows/test/compat/smoke.txt') }}
-      # android-all 14 and the jars the two scripts fetch (ASM, Robolectric's resources), as the
-      # build job caches them for AOSP's graphics.
-      - uses: actions/cache@v4
-        with:
-          path: thirdparty/aosp-gfx
-          key: aosp-gfx-${{ hashFiles('windows/test/aospgfx/fetch.sh') }}
-      - name: Stage AOSP's resources and views
-        id: stage-aosp
-        shell: msys2 {0}
-        run: |
-          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
-          windows/scripts/build_aosp_res.sh stage
-          windows/scripts/build_aosp_views.sh stage
-          {
-            echo "### AOSP's resources and views: the files they add"
-            echo ""
-            echo "| File | Size (MB) | LZMA (MB, the installer's estimate) |"
-            echo "|---|---:|---:|"
-            for f in lib/aosp-resources.jar lib/aosp-views.jar bin/aosp/framework-res-34.apk; do
-              raw=$(stat -c %s "stage/$f")
-              xz=$(xz -9e -c "stage/$f" | wc -c)
-              awk -v f="$f" -v r="$raw" -v x="$xz" 'BEGIN { printf "| `%s` | %.1f | %.1f |\n", f, r / 1e6, x / 1e6 }'
-            done
-            echo ""
-          } >> "$GITHUB_STEP_SUMMARY"
-      # Each check below runs when the staging did (a stage without the views jar would test the
-      # resources switch alone), the probe also when the smoke set failed.
-      - name: Boot the smoke set with the switches on
-        id: smoke
-        if: steps.stage-aosp.outcome == 'success'
-        shell: pwsh
-        env:
-          WINAPK_AOSP_RES: '1'
-          WINAPK_AOSP_VIEWS: '1'
-        run: |
-          # Their own framework archive (framework-aospviews-<key>.jsa), made once and shared.
-          $env:WINAPK_CDS_DIR = "$PWD\cds"
-          ./stage/bin/winapk-runtime.exe --cds-prepare --data "$PWD\cds-prepare"
-          if ($LASTEXITCODE -ne 0) { Get-Content cds/dump.log -Tail 50 }
-          python windows/test/compat/sweep.py --runtime stage `
-            --apks apk-cache --out smoke-aosp --frames 150 --timeout 180 `
-            --only-from windows/test/compat/smoke.txt --require-drew
-          $rc = $LASTEXITCODE
-          $off = Get-ChildItem smoke-aosp/logs/*.log | Where-Object { -not (Select-String -Path $_ -SimpleMatch 'AOSP views: on' -Quiet) }
-          $verdict = if ($rc -eq 0 -and -not $off) { 'every app drew its first screen' } else { 'NOT every app drew (or ran without the switches)' }
-          "### Smoke set with WINAPK_AOSP_RES=1 WINAPK_AOSP_VIEWS=1: $verdict" | Add-Content $env:GITHUB_STEP_SUMMARY
-          if ($off) { "Not on AOSP's views: $($off.Name -join ', ')" | Add-Content $env:GITHUB_STEP_SUMMARY }
-          if (Test-Path smoke-aosp/report.md) {
-            $lines = Get-Content smoke-aosp/report.md
-            $end = ($lines | Select-String -Pattern '^## ' | Select-Object -First 1).LineNumber
-            if (-not $end) { $end = $lines.Count + 1 }
-            $lines[0..($end - 2)] | Add-Content $env:GITHUB_STEP_SUMMARY
-          }
-          if ($rc -ne 0 -or $off) { exit 1 }
-      - if: >-
-          !cancelled() && steps.stage-aosp.outcome == 'success' && needs.ui-oracle.result == 'success'
-          && github.event_name != 'push' && needs.ui-oracle.outputs.same != 'true'
-        uses: actions/download-artifact@v4
-        with:
-          name: ui-oracle
-          path: oracle
-      - name: The UI probe with the switches on, against Android's lines
-        if: >-
-          !cancelled() && steps.stage-aosp.outcome == 'success' && needs.ui-oracle.result == 'success'
-          && github.event_name != 'push' && needs.ui-oracle.outputs.same != 'true'
-        shell: bash
-        env:
-          PYTHON: python
-          WINAPK_AOSP_RES: '1'
-          WINAPK_AOSP_VIEWS: '1'
-        run: |
-          rc=0
-          bash windows/test/uiprobe/gate_side.sh probe oracle/probe stage probe-aosp > side-aosp.log 2>&1 || rc=$?
-          tail -n 8 side-aosp.log
-          result=$(python windows/test/uiprobe/compare.py oracle/probe/oracle.txt probe-aosp/ours.txt > probe-aosp/compare.txt 2>&1; tail -n 1 probe-aosp/compare.txt)
-          echo "### UI probe with WINAPK_AOSP_RES=1 WINAPK_AOSP_VIEWS=1: $result (Android's lines; expected: 0 differ)" >> "$GITHUB_STEP_SUMMARY"
-          grep -q '^0 of ' probe-aosp/compare.txt && [[ $rc == 0 ]]
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: aosp-switches
-          path: |
-            smoke-aosp/report.md
-            smoke-aosp/logs/
-            smoke-aosp/frames/
-            cds/dump.log
-            probe-aosp/ours.txt
-            probe-aosp/ours*.log
-            probe-aosp/compare.txt
-            side-aosp.log
-            stage/.build/aosp-views.links.txt
-
   ui-oracle:
     # The UI gate's first half, on Linux and beside the Windows build: Android's
     # lines (the UI probe and gate.txt's apps on Robolectric, gate_oracle.sh) and
@@ -1178,6 +1050,7 @@ jobs:
       base: ${{ steps.base.outputs.sha }}
       base_run: ${{ steps.base.outputs.run }}
       base_gfx: ${{ steps.base.outputs.gfx }}
+      base_views: ${{ steps.base.outputs.views }}
       same: ${{ steps.base.outputs.same }}
     steps:
       - uses: actions/checkout@v4
@@ -1222,7 +1095,12 @@ jobs:
           # side is this build's runtime with the base's jars, so old and new engines compare.
           gfx=java2d
           git show "$base:windows/host/aosp_gfx.h" 2>/dev/null | grep -q "kAospGfxByDefault = true" && gfx=aosp
-          printf 'sha=%s\nsame=%s\nkey=%s\nrun=%s\ngfx=%s\n' "$base" "$same" "$key" "$run" "$gfx" | tee -a "$GITHUB_OUTPUT"
+          # The views the base runs: AOSP's once its aosp_gfx.h says so, else Win.apk's own, which
+          # this build's stage no longer has (the base's own CI stage has them).
+          views=winapk
+          git show "$base:windows/host/aosp_gfx.h" 2>/dev/null | grep -q "kAospViewsByDefault = true" && views=aosp
+          printf 'sha=%s\nsame=%s\nkey=%s\nrun=%s\ngfx=%s\nviews=%s\n' "$base" "$same" "$key" "$run" "$gfx" "$views" \
+            | tee -a "$GITHUB_OUTPUT"
       - id: base-jars
         if: steps.base.outputs.run == '' && steps.base.outputs.same != 'true'
         uses: actions/cache@v4
@@ -1340,10 +1218,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           BASE: ${{ needs.ui-oracle.outputs.base }}
           BASE_RUN: ${{ needs.ui-oracle.outputs.base_run }}
+          BASE_VIEWS: ${{ needs.ui-oracle.outputs.base_views }}
         run: |
           if [[ -n "$BASE_RUN" ]]; then
             gh run download "$BASE_RUN" -R "$GITHUB_REPOSITORY" -n runtime-stage -D stage-base
             note="Base: main's own CI build of ${BASE:0:10} (run $BASE_RUN), natives and jars."
+          elif [[ "$BASE_VIEWS" != aosp ]]; then
+            # The base runs Win.apk's own views and resources, which need the base's own stage (its
+            # API-36 platform table, its framework jar whole); this build's has neither, and putting
+            # AOSP's in front would not be the base. Nothing to compare with, as for a base from
+            # before LayoutSweep: only the head's run is checked.
+            echo "NO_BASE=The base (${BASE:0:10}) runs Win.apk's own views, and main's CI build of it has expired: nothing like for like to compare with, so only the head's run is checked." >> "$GITHUB_ENV"
+            note="Base: none (its own CI build has expired, and this build cannot run its views)."
           else
             cp -r stage stage-base
             cp -f base-jars/android-framework.jar base-jars/macapk-loader.jar stage-base/lib/
@@ -1360,14 +1246,17 @@ jobs:
           # its commit's (Java2D's until the default flipped there). gate.py report names both.
           base_aosp=1
           [[ "$BASE_GFX" == aosp ]] || base_aosp=0
-          WINAPK_AOSP_GFX=$base_aosp bash windows/test/uiprobe/gate_side.sh "${{ matrix.target.kind }}" "$t" stage-base out/base > side-base.log 2>&1 &
-          b=$!
+          b=
+          if [[ -z "${NO_BASE:-}" ]]; then
+            WINAPK_AOSP_GFX=$base_aosp bash windows/test/uiprobe/gate_side.sh "${{ matrix.target.kind }}" "$t" stage-base out/base > side-base.log 2>&1 &
+            b=$!
+          fi
           bash windows/test/uiprobe/gate_side.sh "${{ matrix.target.kind }}" "$t" stage out/head > side-head.log 2>&1 &
           h=$!
           rb=0 rh=0
-          wait $b || rb=$?
+          [[ -z "$b" ]] || wait $b || rb=$?
           wait $h || rh=$?
-          tail -n 8 side-base.log side-head.log
+          tail -n 8 side-*.log
           echo "base: exit $rb, head: exit $rh"
           # 3: the base's runtime predates LayoutSweep (it would run the app, never
           # ending): there is no base to compare with, only the head's own run.
