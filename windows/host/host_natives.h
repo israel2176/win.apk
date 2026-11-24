@@ -65,6 +65,7 @@ HostMethods native_media_video_methods(); // native_media_video.cpp (NativeMedia
 HostMethods native_media_codec_methods(); // native_media_codec.cpp (HostMedia: demuxer, encoders, MP4 writer)
 HostMethods native_notifications_methods();  // native_notifications.cpp
 HostMethods native_binder_methods();    // binder_win.cpp (MacApkBinderTransport, WinProcesses)
+HostMethods native_accessibility_methods(); // native_accessibility.cpp (HostAccessibility: screen readers)
 
 // The app's directory under the data directory, where Boot renders the
 // launcher icon (icon.png) that becomes the window's icon. native_cocoa.cpp.

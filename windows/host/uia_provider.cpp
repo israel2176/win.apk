@@ -245,7 +245,7 @@ bool parse_snapshot(const std::wstring& text, Snapshot* out) {
     for (size_t i = 1; i < lines.size(); ++i) {
         if (lines[i].empty()) continue;
         std::vector<std::wstring> f = split(lines[i], L'\t');
-        if (f.size() < 14) return false;
+        if (f.size() < 13) return false;
         Node n;
         n.id = to_id(f[0]);
         n.parent = to_id(f[1]);
@@ -964,6 +964,10 @@ void announce(const std::wstring& text, bool assertive) {
         SysFreeString(id);
         root->Release();
     });
+}
+
+IUnknown* provider_for(HWND hwnd, int64_t id) {
+    return static_cast<IRawElementProviderSimple*>(new Element(hwnd, id));
 }
 
 }  // namespace winapk::host::uia

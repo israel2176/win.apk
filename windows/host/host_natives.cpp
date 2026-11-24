@@ -53,6 +53,7 @@ const char* const kHostClasses[] = {
     "com.macapk.loader.DocumentPickerHandler",
     "com.macapk.loader.FrameTimes",
     "com.macapk.loader.GamepadBridge",
+    "com.macapk.loader.HostAccessibility",
     "com.macapk.loader.HostBluetooth",
     "com.macapk.loader.HostBrowserTab",
     "com.macapk.loader.HostNotifications",
@@ -115,6 +116,7 @@ const HostMethods kProviders[] = {
     native_media_codec_methods(),
     native_notifications_methods(),
     native_binder_methods(),
+    native_accessibility_methods(),
 };
 
 const JNINativeMethod* implementation_of(const char* clazz, const char* name, const char* sig) {

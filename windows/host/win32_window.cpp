@@ -2,6 +2,7 @@
 
 #include "win32_window.h"
 
+#include "uia_provider.h"
 #include "window_fit.h"
 
 #include <algorithm>
@@ -94,6 +95,14 @@ int g_frame_w = 0, g_frame_h = 0;
 std::vector<uint32_t> g_overlay;  // empty: none
 int g_overlay_w = 0, g_overlay_h = 0;
 std::vector<uint32_t> g_composed;
+// Where paint() last put the frame: a frame pixel (x, y) is at client (ox + x * sx, oy + y * sy),
+// left to right. For screen readers (uia_provider.h), which ask from their own threads.
+struct Shown {
+    int ox = 0, oy = 0;
+    double sx = 0, sy = 0;
+    bool ok = false;
+};
+Shown g_shown;  // under g_frame_lock
 
 // The frame with the overlay blended over it ("source over", straight alpha).
 // Both are drawn at the surface size, so they match; one from before a resize
@@ -599,6 +608,8 @@ void paint(HWND hwnd) {
                 StretchDIBits(dc, box.left, box.top, bw, bh, 0, 0, g_frame_w, g_frame_h, px, &bi, DIB_RGB_COLORS,
                               SRCCOPY);
                 drawn = box;
+                g_shown = Shown{box.left, box.top, static_cast<double>(bw) / g_frame_w,
+                                static_cast<double>(bh) / g_frame_h, true};
             } else {
                 // Exact: centred (the box may be a pixel or two larger or
                 // smaller from rounding; a row of it is then cut or left to
@@ -613,6 +624,7 @@ void paint(HWND hwnd) {
                 const uint32_t* start = px + static_cast<size_t>(y0 - y) * g_frame_w + (x0 - x);
                 blit_frame(dc, x0, y0, dw, dh, start);
                 drawn = RECT{x0, y0, x0 + dw, y0 + dh};
+                g_shown = Shown{x, y, 1.0, 1.0, true};
             }
             if (how != FramePresent::kStale && g_followed_at != 0) {
                 const ULONGLONG took = GetTickCount64() - g_followed_at;
@@ -1187,8 +1199,63 @@ bool started_without_activation() {
     }
 }
 
+// ---- screen readers ---------------------------------------------------------
+//
+// The views' bounds come in the app's frame pixels (uia_provider.h); UI Automation wants the
+// screen's. The frame is where paint() last put it. A mirrored (right-to-left) window paints
+// unmirrored, so its frame runs left to right from the client area's left edge on the screen.
+
+bool client_left_top_on_screen(HWND hwnd, POINT* out) {
+    RECT c{};
+    if (!GetClientRect(hwnd, &c)) return false;
+    MapWindowPoints(hwnd, nullptr, reinterpret_cast<POINT*>(&c), 2);
+    out->x = std::min(c.left, c.right);
+    out->y = std::min(c.top, c.bottom);
+    return true;
+}
+
+bool frame_to_screen(const RECT& f, RECT* out) {
+    const HWND hwnd = g_hwnd;
+    Shown s;
+    {
+        std::lock_guard<std::mutex> hold(g_frame_lock);
+        s = g_shown;
+    }
+    POINT o{};
+    if (!hwnd || !s.ok || !client_left_top_on_screen(hwnd, &o)) return false;
+    out->left = o.x + s.ox + static_cast<LONG>(std::lround(f.left * s.sx));
+    out->top = o.y + s.oy + static_cast<LONG>(std::lround(f.top * s.sy));
+    out->right = o.x + s.ox + static_cast<LONG>(std::lround(f.right * s.sx));
+    out->bottom = o.y + s.oy + static_cast<LONG>(std::lround(f.bottom * s.sy));
+    return true;
+}
+
+bool screen_to_frame(POINT p, POINT* out) {
+    const HWND hwnd = g_hwnd;
+    Shown s;
+    {
+        std::lock_guard<std::mutex> hold(g_frame_lock);
+        s = g_shown;
+    }
+    POINT o{};
+    if (!hwnd || !s.ok || s.sx <= 0 || s.sy <= 0 || !client_left_top_on_screen(hwnd, &o)) return false;
+    out->x = static_cast<LONG>(std::floor((p.x - o.x - s.ox) / s.sx));
+    out->y = static_cast<LONG>(std::floor((p.y - o.y - s.oy) / s.sy));
+    return true;
+}
+
 LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
+        // A screen reader (any UI Automation client) asks for the app's views: uia_provider.h.
+        // Nothing of it runs before this.
+        case WM_GETOBJECT: {
+            LRESULT r = 0;
+            if (uia::on_get_object(hwnd, wp, lp, &r)) return r;
+            break;
+        }
+        case WM_DESTROY:
+            uia::detach(hwnd);
+            break;
         case WM_PAINT:
             paint(hwnd);
             return 0;
@@ -1631,7 +1698,10 @@ DWORD WINAPI ui_thread(void* param) {
         fit_window(g_hwnd, g_plan.monitor ? g_plan.monitor : MonitorFromWindow(g_hwnd, MONITOR_DEFAULTTONEAREST),
                    window_dpi(g_hwnd), &wr, true);
     }
-    if (g_hwnd) touch_setup(g_hwnd);
+    if (g_hwnd) {
+        touch_setup(g_hwnd);
+        uia::attach(g_hwnd, uia::Geometry{frame_to_screen, screen_to_frame});
+    }
     args->ok = g_hwnd != nullptr;
     SetEvent(args->ready);
     if (!g_hwnd) return 1;
@@ -2108,6 +2178,7 @@ void window_present(const uint32_t* argb, int w, int h) {
         g_frame_w = w;
         g_frame_h = h;
     }
+    uia::note_frame();
     InvalidateRect(g_hwnd, nullptr, FALSE);
     if (first && GetEnvironmentVariableW(L"WINAPK_TEST_RESIZE", nullptr, 0) > 0) {
         PostMessageW(g_hwnd, kMsgTestResize, 0, 0);
@@ -2125,6 +2196,7 @@ bool window_present_rect(const uint32_t* rows, int w, int h, int l, int t, int r
                       g_frame.data() + static_cast<size_t>(y) * static_cast<size_t>(w) + static_cast<size_t>(l));
         }
     }
+    uia::note_frame();
     // Where paint() puts those pixels. Only for a frame shown pixel for pixel in
     // a window that is not mirrored; a scaled or stale one is painted whole.
     RECT client{};
@@ -2150,6 +2222,7 @@ void window_set_overlay(const uint32_t* argb, int w, int h) {
         g_overlay_w = w;
         g_overlay_h = h;
     }
+    uia::note_frame();
     InvalidateRect(g_hwnd, nullptr, FALSE);
 }
 
