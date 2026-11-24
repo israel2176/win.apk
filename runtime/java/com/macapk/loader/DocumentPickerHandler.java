@@ -65,11 +65,11 @@ public final class DocumentPickerHandler {
     static final int MODE_OPEN = 0, MODE_SAVE = 1, MODE_TREE = 2;
 
     private static final class Pending {
-        final Activity.MacApkHostResult token;
+        final com.macapk.loader.app.HostResult token;
         final SpecialAccessHandler.Cover cover;
         final String action;
         final String[] acceptMimes;
-        Pending(Activity.MacApkHostResult token, SpecialAccessHandler.Cover cover, String action,
+        Pending(com.macapk.loader.app.HostResult token, SpecialAccessHandler.Cover cover, String action,
                 String[] acceptMimes) {
             this.token = token; this.cover = cover; this.action = action; this.acceptMimes = acceptMimes;
         }
@@ -186,7 +186,7 @@ public final class DocumentPickerHandler {
     /** Claim the caller's result synchronously (inside startActivityForResult's
      *  try), cover it like the full-screen DocumentsUI, and show the panel. */
     static boolean handle(Intent outer, Intent real, SpecialAccessHandler.Cover cover) {
-        final Activity.MacApkHostResult token = Activity.macapkClaimHostResult(outer);
+        final com.macapk.loader.app.HostResult token = com.macapk.loader.app.HostResults.claim(outer);
         final SpecialAccessHandler.Cover c = SpecialAccessHandler.RESULT_ORDER_AOSP ? cover : null;
         final String action = real.getAction();
         final boolean create = Intent.ACTION_CREATE_DOCUMENT.equals(action);

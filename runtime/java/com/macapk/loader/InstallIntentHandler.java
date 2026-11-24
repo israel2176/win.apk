@@ -155,7 +155,7 @@ public final class InstallIntentHandler {
      */
     static boolean handle(Intent outer, Intent real, SpecialAccessHandler.Cover cover) {
         final Uri data = real.getData();
-        final Activity.MacApkHostResult token = Activity.macapkClaimHostResult(outer);
+        final com.macapk.loader.app.HostResult token = com.macapk.loader.app.HostResults.claim(outer);
         final SpecialAccessHandler.Cover c = SpecialAccessHandler.RESULT_ORDER_AOSP ? cover : null;
         NativeLog.i(TAG, "install intent received: action=" + real.getAction()
                 + " data=" + data + " type=" + real.getType()
@@ -168,7 +168,7 @@ public final class InstallIntentHandler {
 
     // ---- the slow half, on the macapk-install thread ----
 
-    private static void performInstall(Uri data, Activity.MacApkHostResult token,
+    private static void performInstall(Uri data, com.macapk.loader.app.HostResult token,
                                        SpecialAccessHandler.Cover cover) {
         java.io.File staged = null;
         try {
@@ -320,7 +320,7 @@ public final class InstallIntentHandler {
     /** Ship the result back through the ordinary activity-result delivery
      *  (main-looper post). No-op when the intent came through plain
      *  startActivity -- there is nobody to answer. */
-    private static void deliver(Activity.MacApkHostResult token, SpecialAccessHandler.Cover cover,
+    private static void deliver(com.macapk.loader.app.HostResult token, SpecialAccessHandler.Cover cover,
                                 int resultCode, int installResult, String why) {
         if (token == null) {
             NativeLog.i(TAG, "install finished (" + why + "), no result requested");

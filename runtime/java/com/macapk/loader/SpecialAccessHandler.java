@@ -172,7 +172,7 @@ public final class SpecialAccessHandler {
 
     /** Hand a host-produced result back and bring the caller up, in the order
      *  the gate selects. `token` null (a plain startActivity) only uncovers. */
-    static void finishWithResult(Cover cover, final Activity.MacApkHostResult token,
+    static void finishWithResult(Cover cover, final com.macapk.loader.app.HostResult token,
                                  final int resultCode, final Intent data) {
         if (RESULT_ORDER_AOSP) {
             cover.uncoverWithResult(token == null ? null
@@ -344,7 +344,7 @@ public final class SpecialAccessHandler {
      * real activity start is.
      */
     static boolean handle(Intent outer, Intent real, final String op, final Cover cover) {
-        final Activity.MacApkHostResult token = Activity.macapkClaimHostResult(outer);
+        final com.macapk.loader.app.HostResult token = com.macapk.loader.app.HostResults.claim(outer);
         final String self = selfPackage();
         String target = null;
         Uri data = real.getData();
@@ -382,7 +382,7 @@ public final class SpecialAccessHandler {
     }
 
     /** The slow half, on the macapk-special-access thread. */
-    private static void perform(String op, String self, Activity.MacApkHostResult token,
+    private static void perform(String op, String self, com.macapk.loader.app.HostResult token,
                                 Cover cover) throws Exception {
         if (isInfoOp(op)) {
             // Nothing to grant or read back: the dialog only tells the user
@@ -454,7 +454,7 @@ public final class SpecialAccessHandler {
     /** A covered Settings round-trip ends: RESULT_CANCELED + null data (none of
      *  these screens calls setResult) and the caller comes back up, in the
      *  order MACAPK_RESULT_ORDER_AOSP selects. */
-    private static void finishCancelled(Activity.MacApkHostResult token, Cover cover) {
+    private static void finishCancelled(com.macapk.loader.app.HostResult token, Cover cover) {
         if (token != null) {
             NativeLog.i(TAG, "result: requestCode=" + token.requestCode()
                     + " resultCode=RESULT_CANCELED data=null"
@@ -466,7 +466,7 @@ public final class SpecialAccessHandler {
     /** ManageExternalStorageDetails never calls setResult: RESULT_CANCELED with
      *  null data, through the ordinary main-looper result delivery. Used where
      *  nothing was covered (a request answered without opening the screen). */
-    private static void deliverCancelled(Activity.MacApkHostResult token) {
+    private static void deliverCancelled(com.macapk.loader.app.HostResult token) {
         if (token == null) return;
         NativeLog.i(TAG, "result delivered: requestCode=" + token.requestCode()
                 + " resultCode=RESULT_CANCELED data=null");
@@ -516,7 +516,7 @@ public final class SpecialAccessHandler {
      * permissions at a time", Activity.java :5476-5481). (A device queues a
      * platform-Fragment request instead; we cancel it. Stated, not hidden.)
      */
-    public static void requestPermissions(final Activity requester, String[] permissions,
+    public static void requestPermissions(final android.content.Context requester, String[] permissions,
                                           final PermissionSink sink, final Cover cover) {
         final String[] req = permissions == null ? new String[0] : permissions.clone();
         if (!PERM_IN_FLIGHT.compareAndSet(false, true)) {
@@ -552,7 +552,7 @@ public final class SpecialAccessHandler {
 
     /** The slow half, on the macapk-special-access thread: run each planned
      *  dialog through the helper, then read the answers back. */
-    static int[] performPermissionRequest(Activity requester, String[] req) throws Exception {
+    static int[] performPermissionRequest(android.content.Context requester, String[] req) throws Exception {
         int lvl;
         try { lvl = android.os.Build.VERSION.SDK_INT; } catch (Throwable t) { lvl = 30; }
         askLocation(requester, req, lvl);
@@ -600,7 +600,7 @@ public final class SpecialAccessHandler {
 
     /** TCC owns the Bluetooth decision. This runs on the permission worker,
      *  so the native queue and the app's UI remain free while the user answers. */
-    private static void askBluetooth(Activity requester, String[] permissions) {
+    private static void askBluetooth(android.content.Context requester, String[] permissions) {
         if (!BluetoothBridge.available()) return;
         for (String permission : permissions) {
             if (MacApkPackageManager.isBluetoothRuntimePermission(permission)) {
@@ -637,7 +637,7 @@ public final class SpecialAccessHandler {
      *     only after this app was allowed, and waited for on this thread (never
      *     the AppKit thread, which shows it).
      *  A pre-M app never gets here (Activity answers it first). */
-    static void askLocation(Activity requester, String[] req, int level) {
+    static void askLocation(android.content.Context requester, String[] req, int level) {
         if (!LocationBridge.available()) return;
         java.util.List<String> perms = new java.util.ArrayList<>();
         for (String p : req) {
@@ -777,7 +777,7 @@ public final class SpecialAccessHandler {
         }
     }
 
-    private static boolean declares(Activity requester, String perm) throws Exception {
+    private static boolean declares(android.content.Context requester, String perm) throws Exception {
         android.content.pm.PackageInfo pi = requester.getPackageManager().getPackageInfo(
                 requester.getPackageName(), android.content.pm.PackageManager.GET_PERMISSIONS);
         if (pi.requestedPermissions == null) return false;
@@ -822,7 +822,7 @@ public final class SpecialAccessHandler {
 
     /** GrantPermissionsActivity's result: pm.checkPermission of every
      *  permission as originally requested (order and duplicates kept). */
-    static int[] currentGrants(Activity requester, String[] req) {
+    static int[] currentGrants(android.content.Context requester, String[] req) {
         SpecialAccessStore.invalidate();
         int[] g = new int[req.length];
         for (int i = 0; i < req.length; i++) {
@@ -949,7 +949,7 @@ public final class SpecialAccessHandler {
      *  shape as handle(); `cover` is opaque (Settings is a full-screen
      *  activity). */
     static boolean handleAppDetails(Intent outer, Intent real, final Cover cover) {
-        final Activity.MacApkHostResult token = Activity.macapkClaimHostResult(outer);
+        final com.macapk.loader.app.HostResult token = com.macapk.loader.app.HostResults.claim(outer);
         final String self = selfPackage();
         Uri data = real.getData();
         String target = data != null ? data.getSchemeSpecificPart() : null;
@@ -1016,7 +1016,7 @@ public final class SpecialAccessHandler {
         return argv;
     }
 
-    private static void performAppDetails(String self, Activity.MacApkHostResult token,
+    private static void performAppDetails(String self, com.macapk.loader.app.HostResult token,
                                           Cover cover) throws Exception {
         SpecialAccessStore.invalidate();
         SpecialAccessStore.PermModel m = SpecialAccessStore.liveModel();
