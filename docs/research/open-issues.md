@@ -123,7 +123,7 @@ host's IME (V2) are there. Items 10-14
 | 8 | Views a custom view inflates in its constructor get plain TextView/RadioButton, not the Material ones (lineHeight and tint lost) | nested inflater has no factory; cause not confirmed | Moovit | views |
 | 9 | Spinner / CheckedTextView miss their default background's padding; `CALCustomSeekBar` loses its right padding | not traced | Moovit, Cal | views |
 | 10 | Text in an app's own font: Cal's Ploni lines 0.5-2 dp shorter than Android; cause unknown (not the top/bottom clamp) | text metrics | Cal | graphics + text |
-| 11 | ~~Multi-line TextView 2-2.5 dp per line short with `WINAPK_AOSP_GFX=1`~~ Fixed: with the switch on TextView lays out through AOSP's own Layout (`TextViewAospLayout`); all of lib_text_lines matches. Still Win.apk's with the switch off (Java2D) | `TextView` line code (Java2D path) | uiprobe | text |
+| 11 | ~~Multi-line TextView 2-2.5 dp per line short with `WINAPK_AOSP_GFX=1`~~ Fixed: with the switch on TextView lays out through AOSP's own Layout (`TextViewAospLayout`); all of lib_text_lines matches. (The Java2D path is deleted) | `TextView` line code | uiprobe | text |
 | 12 | `Html.fromHtml` ignores its flags (paragraph separators) and calls `TagHandler` only on close, for known tags, with a null XMLReader | `android/text/Html.java` ~68-78, ~230-250 | Waze | text |
 | 13 | Waze's location-permission screen shows "1. Select Precise" without the second step; Html/StaticLayout give all lines on a plain JVM, so Compose text or the app's choice; not found | | Waze | check |
 | 14 | Mercantile's login banner: its second line drawn wider than its box, first letter clipped (likely the typeface bug fixed in b82a102; verify). Gmail's welcome subtitle (Hebrew, centered) clipped at its start edge the same way, November 2026 | | Mercantile, Gmail | check |
@@ -962,8 +962,8 @@ New bugs found with AOSP views:
   set; add a limit once a few CI runs show the spread.
 - **Frame time has only a collapse budget** (`windows/README.md` "Frame
   time"): every run logs a `frame times` line at exit, and CI's Runtime tests
-  run the frame bench (`windows/test/framebench`) on both engines into the
-  summary, failing only over 50 ms p90 for the whole frame. Once a few CI
+  run the frame bench (`windows/test/framebench`, AOSP's graphics; Java2D's
+  went with them) into the summary, failing only over 50 ms p90 for the whole frame. Once a few CI
   runs show the spread on real Windows, tighten it (`report.py
   --budget-ms`).
 
@@ -1109,7 +1109,43 @@ nor a run with `WINAPK_AOSP_VIEWS=1` and a screen reader. To check then:
   `FontFamily.Builder`'s variable-font ones; add each to `Api35` when an app
   calls it. `android.view.RenderNode`'s `getRotation`/`setRotation`/`isValid`
   are still missing on AOSP's `RenderNode`.
-- **Next: delete the Java2D engine.** What must hold first: CI's smoke test
+- **Java2D's graphics deleted** (November 2026, approved by the owner;
+  `windows/README.md` "Milestone 2", "Changes to the upstream tree"). Gone:
+  `Java2DGfx`, the 123 `android.graphics`/`android.text` classes
+  `aosp-graphics.jar` shadowed, the Java2D-only `MacApk*` helpers,
+  `MacApkSkia`, `runtime/fonts` (`android-framework.jar` 15.6 -> 8.2 MB,
+  installer about 7.4 MB less; `footprint_check.py` budgets lowered),
+  `WINAPK_AOSP_GFX=0`, `WINAPK_STAGE_AOSP_GFX=0`, the `java2d` CDS archive,
+  Boot's AWT start. The framework compiles against android-all 14's graphics
+  classes (`aosp_gfx_take.sh`), which found four calls that failed at run time
+  on AOSP's graphics (`android.view.RenderNode`, `RippleDrawable.getColor`,
+  `ID_MASK`, a debug trace), fixed. A stage without the files or a DLL that
+  does not load stops with `error: AOSP graphics` (CI checks it). The tests
+  that draw run in `winapk-runtime --java-test`. Checked under Wine with a
+  runtime built from that branch: Open Sudoku draws its "Latest changes"
+  dialog (775 natives bound, no linkage error in the log), `--install-only`
+  writes Gallery's `icon.png`, `--gms accounts`, `--verify-apk` and
+  `--system` come up, a missing ICU file stops with the line,
+  `Camera2StillTest`, `FrameworkStubsTest`, `AccessibilityTreeTest`,
+  `DateTimeViewTest`, `CameraOrientationTest`, cds_test and frame_times_test
+  pass. **To see on CI**: the smoke set and the UI gate (not run here), the
+  CDS step without the Java2D archive, `--java-test` on real Windows. Left:
+  `GfxBackend` (folded away once the views and resources are AOSP's: their
+  callers still branch on `isAosp()`, now always true, and call its AWT font
+  helpers, now inert); `ClipboardManager`'s AWT path
+  (`MACAPK_CLIPBOARD_HOST=0`) and `jnigraphics.cpp`'s branch for Win.apk's
+  old `Bitmap`, both still compiled; the real-JVM libjnigraphics test is
+  gone from CI with Win.apk's `Bitmap` (AOSP's: still compiled, not run);
+  a user's data folder keeps `cache\android-system-fonts\` and
+  `cache\fonts\`, which nothing reads any more (not cleaned up; a
+  `framework-java2d-*.jsa` is deleted by the next archive dump).
+- **Win.apk's views' partial frames do not work on AOSP's graphics**
+  (`MACAPK_FRAMESPEED_DAMAGE=1`, off by default): `DamageRectTest` in
+  `--java-test` (Win.apk's views from `build/java`) finds every damage empty
+  and every frame drawn whole (34 checks fail); it passed only on the Java2D
+  classes (`GfxBackend.deviceOrigin` is false on AOSP's). No app runs
+  Win.apk's views any more, so CI runs it informational; it goes with them.
+- **Before Java2D was deleted** (kept for the record), what had to hold first: CI's smoke test
   green on AOSP's graphics over a few runs, and the UI gate's lines no
   further from Android than Java2D's (or each exception understood); the
   Gallery `activity_video_player` backdrop and the other gaps in the item
@@ -1149,14 +1185,14 @@ nor a run with `WINAPK_AOSP_VIEWS=1` and a screen reader. To check then:
 
   | Caller | What for | Status |
   |---|---|---|
-  | `Boot.initAwtOnAppKitMainThread` | brought AWT and its fonts up at every start (544-783 ms on the main thread under Wine, beside the resource index) | skipped on AOSP's graphics; goes with Java2D |
+  | `Boot.initAwtOnAppKitMainThread` | brought AWT and its fonts up at every start (544-783 ms on the main thread under Wine, beside the resource index) | deleted with Java2D |
   | `MediaStoreProvider.photosImageSize` | a photo's width and height (ImageIO header read) | `BitmapFactory` bounds decode (Skia's codecs: PNG, JPEG, WebP, GIF, BMP, ICO; HEIF and AVIF from their boxes, `HostImageDecode`) |
   | `ViewCanvasDriver` `MACAPK_DUMP_BITMAP_AT`, `MACAPK_PUNCH_TRACE` | debug PNG dumps, the hole probe | `Bitmap.compress`, `createScaledBitmap`, `getPixel`; `GfxBackend.awtImage` removed |
   | `VideoImageSelfTest` (`MACAPK_VIDEO_IMAGE_SELFTEST=1`) | writes and reads PNGs | `Bitmap.compress` / `BitmapFactory` |
   | libjnigraphics (`src/jnigraphics.cpp`) | a native library's `AndroidBitmap_lockPixels` called `macapkArgbBuffer`, which AOSP's `Bitmap` has not: it failed on the default graphics | AOSP's `Bitmap` through `getPixels`/`setPixels` and upstream's conversion and merge; compiled, not run (no test lib under Wine on AOSP's class path: `winapk-jvm-run`'s test has Win.apk's `Bitmap`) |
-  | `TextView.macapkFallbackVertical`, `GfxBackend.resolvedFont` / `textFontRenderContext` / `fallbackFontFor` / `deriveFont` | Java2D's fallback line spacing | inert on AOSP (no AWT font: `TextViewAospLayout` lays out); goes with Java2D |
-  | `ClipboardManager` legacy path | text through AWT's clipboard | only with `MACAPK_CLIPBOARD_HOST=0` (a bisect gate; the host clipboard is native); text only, no images; to delete with Java2D so the JRE can lose `java.desktop` |
-  | `Boot` `MACAPK_AWT_PREWARM` | an old macOS experiment, off unless set | delete with Java2D |
+  | `TextView.macapkFallbackVertical`, `GfxBackend.resolvedFont` / `textFontRenderContext` / `fallbackFontFor` / `deriveFont` | Java2D's fallback line spacing | inert on AOSP (no AWT font: `TextViewAospLayout` lays out); kept while Win.apk's `TextView` calls it |
+  | `ClipboardManager` legacy path | text through AWT's clipboard | only with `MACAPK_CLIPBOARD_HOST=0` (a bisect gate; the host clipboard is native); text only, no images; still there after Java2D's deletion (not graphics); delete it, with Win.apk's `View`/`TextView` AWT font calls and `GfxBackend`'s, so the JRE can lose `java.desktop` (nothing else in the framework imports `java.awt` or `javax.imageio`) |
+  | `Boot` `MACAPK_AWT_PREWARM` | an old macOS experiment, off unless set | deleted with Java2D |
   | BitmapFactory on HEIC (and other WIC-only formats) | Java2D's `BitmapFactory` fell back to `NativeImageCodec` (libwebp, then WIC: HEIC with the HEIF extension) | **fixed**: `BitmapFactory`'s and `ImageDecoder`'s decoding natives go through `com.winapk.aospgfx.HostImageDecode` (`scripts/redirect_decoders.sh`): AOSP's native first, and only when it fails on a file whose ftyp brand is HEIF's or AVIF's (`HeifContainer`), `NativeImageCodec` (WIC) and a `Bitmap` from its pixels, with the Options (bounds from the boxes, sample size, density, config, mutable, inBitmap) and ImageDecoder's target size, crop, post-processor, turned upright by irot/imir (BitmapFactory: as stored, as Android). A stream or a descriptor has its first 64 bytes read ahead. No decoder in Windows (Wine; Windows without the HEIF Image Extensions / AV1 Video Extension): null / AOSP's `DecodeException`, one log line. Checked: `windows/test/heif/run.sh` (Linux, libheif standing in for WIC) and a probe APK under Wine (clean null, no crash). **Not checked**: on Windows with the extension (that WIC's HEIF decoder leaves irot to the app, as documented, and applies clap; a quarter turn it did apply is detected by size). TIFF, JPEG XR and other WIC-only formats stay undecoded, as on Android |
   | `Bitmap.createScaledBitmap`, `createBitmap(source, ..., matrix, filter)`, `BitmapFactory` with `inBitmap` | API 34's gain map natives (`nativeHasGainmap`, `nativeExtractGainmap`, `nativeSetGainmap`), which the native runtime predates | **fixed** (found with the HEIF work): each threw `UnsatisfiedLinkError` on the default graphics (seen under Wine with the probe APK); now `MissingNatives` (no gain maps) |
 
