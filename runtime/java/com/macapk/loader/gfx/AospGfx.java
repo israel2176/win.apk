@@ -1,15 +1,14 @@
-// AospGfx -- GfxBackend on AOSP's own android.graphics / android.text (WINAPK_AOSP_GFX=1,
-// windows/README.md, "Milestone 2: the runtime on AOSP graphics", step 2).
+// AospGfx -- GfxBackend on AOSP's own android.graphics / android.text, the only graphics the
+// framework has (windows/README.md, "Milestone 2: the runtime on AOSP graphics").
 //
-// With the switch on, lib/aosp-graphics.jar is first on the class path, so android.graphics.Canvas,
-// Paint, Bitmap, Typeface... are AOSP's, drawn by Skia in robolectric-nativeruntime.dll; the rest of
-// the framework (View, TextView, Resources) is still Win.apk's and draws through the public API in
-// software, as View.draw(Canvas) does into a bitmap on a device. This class answers the seam with
-// the AOSP equivalents and touches no macapk* member or MacApk* graphics class: those are not there
-// (NoSuchMethodError). It compiles against Win.apk's android.graphics, so whatever only AOSP has
-// (Typeface.setSystemFontMap, SystemFonts, a drawable's state fields) is reached by reflection.
-// The methods whose Java2D answer uses only classes the jar does not replace (bidi, replacement
-// spans, SurfaceTexture, which stays Win.apk's) go to Java2DGfx.
+// lib/aosp-graphics.jar is first on the class path, so android.graphics.Canvas, Paint, Bitmap,
+// Typeface... are AOSP's, drawn by Skia in robolectric-nativeruntime.dll; the rest of the framework
+// (View, TextView, Resources) is Win.apk's and draws through the public API in software, as
+// View.draw(Canvas) does into a bitmap on a device. This class answers the seam with the AOSP
+// equivalents. It was written while it compiled against Win.apk's own android.graphics (since
+// deleted), so what only AOSP has (Typeface.setSystemFontMap, SystemFonts, a drawable's state
+// fields) is still reached by reflection. Bidi, replacement spans and SurfaceTexture are Win.apk's
+// own classes, which the jar does not replace (MacApkBidi, MacApkReplacement, SurfaceTexture).
 package com.macapk.loader.gfx;
 
 import android.content.res.ColorStateList;
@@ -51,8 +50,6 @@ final class AospGfx implements GfxBackend {
 
     private static final String TAG = "Win.apk.AospGfx";
 
-    private final GfxBackend j2d = Java2DGfx.INSTANCE;
-
     /** VectorDrawables Resources made to stand in for a reference that did not resolve. */
     private final Map<VectorDrawable, Boolean> stubs = Collections.synchronizedMap(new WeakHashMap<>());
 
@@ -71,7 +68,7 @@ final class AospGfx implements GfxBackend {
         return Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
     }
 
-    /** Skia's pixels are native: one copy out, unpremultiplied ARGB as the Java2D bitmap holds them. */
+    /** Skia's pixels are native: one copy out, unpremultiplied ARGB, as the host's present takes them. */
     @Override public int[] argbBuffer(Bitmap bitmap) {
         return frameArgb(bitmap, null);
     }
@@ -470,7 +467,7 @@ final class AospGfx implements GfxBackend {
 
     // ---- Text ----
 
-    @Override public boolean isLocaleRtl(Locale locale) { return j2d.isLocaleRtl(locale); }
+    @Override public boolean isLocaleRtl(Locale locale) { return android.text.TextUtils.macapkIsLocaleRtl(locale); }
 
     /** AOSP's Layout.getDesiredWidth: TextLine over the spans, as a line is measured for drawing. */
     @Override public float measureSpanned(CharSequence src, int start, int end, TextPaint base, TextPaint work) {
@@ -491,72 +488,74 @@ final class AospGfx implements GfxBackend {
         return base.deriveFont(awtStyle, sizePx);
     }
 
-    @Override public boolean hasRtl(CharSequence s, int start, int end) { return j2d.hasRtl(s, start, end); }
+    @Override public boolean hasRtl(CharSequence s, int start, int end) {
+        return android.text.MacApkBidi.hasRtl(s, start, end);
+    }
 
     @Override public boolean isRtlParagraph(CharSequence s, int pos, boolean defaultRtl) {
-        return j2d.isRtlParagraph(s, pos, defaultRtl);
+        return android.text.MacApkBidi.isRtlParagraph(s, pos, defaultRtl);
     }
 
     @Override public int[] bidiVisualPieces(String line, int[] bounds, int n, boolean paraRtl) {
-        return j2d.bidiVisualPieces(line, bounds, n, paraRtl);
+        return android.text.MacApkBidi.visualPieces(line, bounds, n, paraRtl);
     }
 
     @Override public MetricAffectingSpan replacementCovering(Spanned sp, int start, int end) {
-        return j2d.replacementCovering(sp, start, end);
+        return android.text.MacApkReplacement.covering(sp, start, end);
     }
 
     @Override public float drawReplacement(Canvas canvas, ReplacementSpan r, Spanned sp, int start, int end,
                                            float x, float baselineY, TextPaint p) {
-        return j2d.drawReplacement(canvas, r, sp, start, end, x, baselineY, p);
+        return android.text.MacApkReplacement.draw(canvas, r, sp, start, end, x, baselineY, p);
     }
 
     // ---- SurfaceTexture: Win.apk's, left out of the AOSP jar ----
 
-    @Override public int defaultWidth(SurfaceTexture st) { return j2d.defaultWidth(st); }
+    @Override public int defaultWidth(SurfaceTexture st) { return st.macapkGetDefaultWidth(); }
 
-    @Override public int defaultHeight(SurfaceTexture st) { return j2d.defaultHeight(st); }
+    @Override public int defaultHeight(SurfaceTexture st) { return st.macapkGetDefaultHeight(); }
 
     @Override public void attachCameraSource(SurfaceTexture st, long sessionHandle, int width, int height) {
-        j2d.attachCameraSource(st, sessionHandle, width, height);
+        st.macapkAttachCameraSource(sessionHandle, width, height);
     }
 
-    @Override public void detachCameraSource(SurfaceTexture st) { j2d.detachCameraSource(st); }
+    @Override public void detachCameraSource(SurfaceTexture st) { st.macapkDetachCameraSource(); }
 
-    @Override public boolean hasCameraSource(SurfaceTexture st) { return j2d.hasCameraSource(st); }
+    @Override public boolean hasCameraSource(SurfaceTexture st) { return st.macapkHasCameraSource(); }
 
     @Override public void queueFrame(SurfaceTexture st, long timestampNanos, float[] transform, int dataSpace) {
-        j2d.queueFrame(st, timestampNanos, transform, dataSpace);
+        st.macapkQueueFrame(timestampNanos, transform, dataSpace);
     }
 
     @Override public boolean connectProducer(SurfaceTexture st, Object producer) {
-        return j2d.connectProducer(st, producer);
+        return st.macapkConnectProducer(producer);
     }
 
     @Override public void disconnectProducer(SurfaceTexture st, Object producer) {
-        j2d.disconnectProducer(st, producer);
+        st.macapkDisconnectProducer(producer);
     }
 
-    @Override public boolean hasProducer(SurfaceTexture st) { return j2d.hasProducer(st); }
+    @Override public boolean hasProducer(SurfaceTexture st) { return st.macapkHasProducer(); }
 
     @Override public void queueProducerFrame(SurfaceTexture st, int[] argb, int width, int height,
                                              int strideInPixels, float[] transform, Consumer<int[]> recycler,
                                              boolean premultipliedSource) {
-        j2d.queueProducerFrame(st, argb, width, height, strideInPixels, transform, recycler, premultipliedSource);
+        st.macapkQueueProducerFrame(argb, width, height, strideInPixels, transform, recycler, premultipliedSource);
     }
 
-    @Override public void registerVideoTarget(SurfaceTexture st) { j2d.registerVideoTarget(st); }
+    @Override public void registerVideoTarget(SurfaceTexture st) { st.macapkRegisterVideoTarget(); }
 
-    @Override public void unregisterVideoTargetIfSelf(SurfaceTexture st) { j2d.unregisterVideoTargetIfSelf(st); }
+    @Override public void unregisterVideoTargetIfSelf(SurfaceTexture st) { st.macapkUnregisterVideoTargetIfSelf(); }
 
-    @Override public boolean hasActiveVideoTarget() { return j2d.hasActiveVideoTarget(); }
+    @Override public boolean hasActiveVideoTarget() { return SurfaceTexture.macapkHasActiveVideoTarget(); }
 
     @Override public boolean offerDecodedFrame(int[] argb, int width, int height, int strideInPixels) {
-        return j2d.offerDecodedFrame(argb, width, height, strideInPixels);
+        return SurfaceTexture.macapkOfferDecodedFrame(argb, width, height, strideInPixels);
     }
 
-    @Override public Bitmap latchBitmap(SurfaceTexture st) { return j2d.latchBitmap(st); }
+    @Override public Bitmap latchBitmap(SurfaceTexture st) { return st.macapkLatchBitmap(); }
 
-    @Override public int latchGeneration(SurfaceTexture st) { return j2d.latchGeneration(st); }
+    @Override public int latchGeneration(SurfaceTexture st) { return st.macapkLatchGeneration(); }
 
     // ---- Resources' colours and drawable setters ----
 
@@ -831,7 +830,7 @@ final class AospGfx implements GfxBackend {
         if (stub) stubs.put(vd, Boolean.TRUE); else stubs.remove(vd);
     }
 
-    // ---- Debug dumps: Java2D's only ----
+    // ---- Debug dumps: Win.apk's old graphics had them; AOSP's classes keep no such counters ----
 
     @Override public void renderNodeStatsDump(String where) {}
 

@@ -115,7 +115,7 @@ public class DisplayMetrics {
     public float xdpi          = DENSITY_DEVICE_STABLE;
     public float ydpi          = DENSITY_DEVICE_STABLE;
     /** AOSP's (@hide): the density before compatibility mode scales it, which AOSP's ImageDecoder
-     *  (WINAPK_AOSP_GFX=1) compares a picture's with. Win.apk has no compatibility mode, and 0 sends
+     *  (lib/aosp-graphics.jar) compares a picture's with. Win.apk has no compatibility mode, and 0 sends
      *  ImageDecoder on to the display's own density, the same answer. */
     public int   noncompatDensityDpi;
 

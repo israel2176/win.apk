@@ -2225,8 +2225,8 @@ public final class Parcel {
             @Override public String[] newArray(int size) { return new String[size]; }
         };
 
-    // AOSP hides this; AOSP's own graphics and text classes call it (WINAPK_AOSP_GFX=1 puts them,
-    // lib/aosp-graphics.jar, before this framework: windows/README.md, "Milestone 2").
+    // AOSP hides this; AOSP's own graphics and text classes call it (lib/aosp-graphics.jar, before
+    // this framework on the class path: windows/README.md, "Milestone 2").
     /** AOSP Parcel.writeString8: one string encoding here. */
     public void writeString8(String val) { writeString(val); }
 

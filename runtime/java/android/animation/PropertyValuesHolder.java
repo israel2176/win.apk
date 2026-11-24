@@ -678,8 +678,8 @@ public class PropertyValuesHolder implements Cloneable {
         catch (CloneNotSupportedException e) { throw new AssertionError(e); }
     }
 
-    // ---- AOSP hides these; AOSP's AnimatedVectorDrawable names them (WINAPK_AOSP_GFX=1 puts it,
-    // lib/aosp-graphics.jar, before this framework: windows/README.md, "Milestone 2") ----
+    // ---- AOSP hides these; AOSP's AnimatedVectorDrawable names them (lib/aosp-graphics.jar, before
+    // this framework on the class path: windows/README.md, "Milestone 2") ----
 
     /** AOSP PropertyValuesHolder.PropertyValues: a property's values for the render thread's animator. */
     public static class PropertyValues {
