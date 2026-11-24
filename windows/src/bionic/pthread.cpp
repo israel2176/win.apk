@@ -847,6 +847,42 @@ ShimTable pthread_symbols() { return WINAPK_SHIM_TABLE(kSymbols); }
 
 namespace winapk {
 
+namespace {
+
+// set_tid_address(2)'s clear_child_tid: when the thread ends, the kernel writes 0 there and wakes one
+// futex waiter on it (mm_release), so that another thread waiting on it knows the thread is gone. A
+// fiber-local slot, whose callback Windows runs as each thread that set one ends, does the same. Not
+// at process exit (ntdll's shutdown, the C runtime's exit()): the other threads are gone then, as after
+// Linux's exit_group, and nobody waits. The word is written only while it is still writable memory:
+// the kernel's put_user ignores a fault there.
+void WINAPI clear_child_tid(void* p) {
+    if (!p) return;
+    using ShutdownFn = BOOLEAN(NTAPI*)();
+    static const auto shutdown = reinterpret_cast<ShutdownFn>(
+        reinterpret_cast<void*>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "RtlDllShutdownInProgress")));
+    if (shutdown && shutdown()) return;
+    MEMORY_BASIC_INFORMATION mbi;
+    if (!VirtualQuery(p, &mbi, sizeof mbi) || mbi.State != MEM_COMMIT || (mbi.Protect & PAGE_GUARD) ||
+        !(mbi.Protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_WRITECOPY))) {
+        return;
+    }
+    reinterpret_cast<std::atomic<uint32_t>*>(p)->store(0, std::memory_order_release);
+    WakeByAddressSingle(p);  // the shim's futex waits are WaitOnAddress on the word
+}
+
+DWORD clear_tid_slot() {
+    static const DWORD slot = FlsAlloc(clear_child_tid);
+    return slot;
+}
+
+}  // namespace
+
+int64_t set_tid_address(uint32_t* clear_child_tid_word) {
+    const DWORD slot = clear_tid_slot();
+    if (slot != FLS_OUT_OF_INDEXES) FlsSetValue(slot, clear_child_tid_word);
+    return static_cast<int64_t>(GetCurrentThreadId());
+}
+
 size_t guest_threads(GuestThread* out, size_t max) {
     AcquireSRWLockShared(&bionic::g_started_lock);
     const auto& v = bionic::started_threads();
