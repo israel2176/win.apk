@@ -2,11 +2,13 @@
 // access units. AOSP frameworks/base media/java/android/media/MediaExtractor.java.
 //
 // Backed by the host's demuxer (com.macapk.loader.HostMedia; on Windows Media
-// Foundation's source reader, windows/host/video_decode.h's Demuxer): every
-// audio and video track of what the host can read (MP4/3GP/M4A/MOV, MP3,
-// ADTS, and what its installed codec packs add), with the samples in the form
-// MediaCodec takes -- H.264 and HEVC as Annex-B with the parameter sets in
-// csd-0/csd-1, AAC raw with the AudioSpecificConfig in csd-0. A path and an
+// Foundation's source reader, and libwebm's mkvparser for WebM and Matroska,
+// windows/host/video_decode.h's Demuxer): every audio and video track of what
+// the host can read (MP4/3GP/M4A/MOV, MP3, ADTS, WebM/MKV, and what its
+// installed codec packs add), with the samples in the form MediaCodec takes
+// -- H.264 and HEVC as Annex-B with the parameter sets in csd-0/csd-1, AAC raw
+// with the AudioSpecificConfig in csd-0, Opus with its OpusHead, codec delay
+// and seek pre-roll in csd-0/1/2, Vorbis with its headers in csd-0/1. A path and an
 // http(s) URL are opened as they are; a FileDescriptor range, a content://
 // Uri and a MediaDataSource are copied to a temporary file first, because the
 // host's reader opens names, not descriptors.
@@ -214,7 +216,7 @@ public final class MediaExtractor {
         f.setString(MediaFormat.KEY_LANGUAGE, language == null || language.isEmpty() ? "und" : language);
         long dur = com.macapk.loader.HostMedia.nativeDemuxDurationUs(mHandle);
         if (dur > 0) f.setLong(MediaFormat.KEY_DURATION, dur);
-        for (int i = 0; i < 2; i++) {
+        for (int i = 0; i < 3; i++) {
             byte[] csd = com.macapk.loader.HostMedia.nativeDemuxTrackCsd(mHandle, index, i);
             if (csd != null && csd.length > 0) f.setByteBuffer("csd-" + i, ByteBuffer.wrap(csd));
         }

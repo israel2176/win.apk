@@ -20,7 +20,7 @@ public final class HostMedia {
     /** "key=value" lines: mime, video (0/1), width, height, rotation,
      *  frame-rate, sample-rate, channel-count, bitrate, language. */
     public static native String nativeDemuxTrackInfo(long h, int track);
-    /** csd-0 (which = 0) or csd-1 (1) as MediaFormat carries them, or null. */
+    /** csd-0 (which = 0), csd-1 (1) or csd-2 (2) as MediaFormat carries them, or null. */
     public static native byte[] nativeDemuxTrackCsd(long h, int track, int which);
     public static native long nativeDemuxDurationUs(long h);
     public static native void nativeDemuxSelect(long h, int track, boolean on);

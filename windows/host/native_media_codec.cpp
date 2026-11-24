@@ -145,7 +145,7 @@ jbyteArray JNICALL Demux_trackCsd(JNIEnv* env, jclass, jlong h, jint index, jint
     std::lock_guard<std::mutex> hold(s->lock);
     if (!s->object || index < 0 || index >= s->object->track_count()) return nullptr;
     const vd::Demuxer::Track& t = s->object->track(index);
-    const std::vector<uint8_t>& csd = which == 0 ? t.csd0 : t.csd1;
+    const std::vector<uint8_t>& csd = which == 0 ? t.csd0 : which == 1 ? t.csd1 : t.csd2;
     return csd.empty() ? nullptr : array_of(env, csd);
 }
 

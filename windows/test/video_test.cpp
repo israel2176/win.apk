@@ -364,6 +364,63 @@ void test_demuxer(const std::wstring& path) {
     check("demuxer seeks", dm->seek(0, vd::Demuxer::kPreviousSync) && dm->read(&s) && s.pts_us < 100000);
 }
 
+// color.webm (VP9 and Opus) through MediaExtractor's and MediaCodec's shapes:
+// mkvparser demuxes it, and the decoders are Media Foundation's VP9 when its
+// codec pack is installed, else libvpx, and libopus. Needs no Media
+// Foundation codec, so it runs under Wine too.
+void test_webm(const std::wstring& path) {
+    auto dm = vd::Demuxer::open(path);
+    check("demuxer opens the WebM", dm != nullptr);
+    if (!dm) return;
+    int video = -1, audio = -1;
+    for (int i = 0; i < dm->track_count(); ++i) {
+        if (dm->track(i).mime == "video/x-vnd.on2.vp9") video = i;
+        if (dm->track(i).mime == "audio/opus") audio = i;
+    }
+    check("it has a VP9 and an Opus track", video >= 0 && audio >= 0);
+    if (video < 0 || audio < 0) return;
+    const vd::Demuxer::Track& vt = dm->track(video);
+    const vd::Demuxer::Track& at = dm->track(audio);
+    const std::vector<std::string>& mimes = vd::supported_mimes();
+    check("VP9, VP8 and AV1 are listed as decodable",
+          std::find(mimes.begin(), mimes.end(), "video/x-vnd.on2.vp9") != mimes.end() &&
+              std::find(mimes.begin(), mimes.end(), "video/x-vnd.on2.vp8") != mimes.end() &&
+              std::find(mimes.begin(), mimes.end(), "video/av01") != mimes.end());
+    auto vdec = vd::Decoder::open(vt.mime, vt.width, vt.height, vt.csd0, vt.csd1);
+    auto adec = vd::AudioDecoder::open(3, at.sample_rate, at.channels, at.csd0);
+    check("a VP9 and an Opus decoder open", vdec != nullptr && adec != nullptr);
+    if (!vdec || !adec) return;
+    check("Opus comes out at 48 kHz", adec->sample_rate() == 48000 && adec->channels() == 1);
+    dm->select(video, true);
+    dm->select(audio, true);
+    vd::Demuxer::Sample s;
+    int pictures = 0;
+    bool colours = true;
+    size_t pcm = 0;
+    while (dm->read(&s)) {
+        if (s.track == video) {
+            vdec->decode(s.data.data(), s.data.size(), s.pts_us, false);
+        } else {
+            pcm += adec->decode(s.data.data(), s.data.size(), false).size();
+        }
+        bool eos = false;
+        while (auto f = vdec->poll(&eos)) {
+            ++pictures;
+            colours = colours && red_over_blue(*f);
+        }
+    }
+    vdec->decode(nullptr, 0, 0, true);
+    bool eos = false;
+    while (auto f = vdec->poll(&eos)) {
+        ++pictures;
+        colours = colours && red_over_blue(*f);
+    }
+    check("25 VP9 pictures, red over blue", pictures == 25 && colours, std::to_string(pictures));
+    check("about a second of Opus sound", pcm > 46000 && pcm < 50000, std::to_string(pcm) + " samples");
+    check("the WebM seeks to a key frame", dm->seek(500000, vd::Demuxer::kPreviousSync) && dm->read(&s) &&
+                                               s.pts_us <= 500000);
+}
+
 // A 320x240 NV12 picture, red over blue (BT.601, limited range), with a
 // bar that moves so that the frames differ.
 std::vector<uint8_t> test_picture(int w, int h, int n) {
@@ -620,6 +677,8 @@ int main(int argc, char** argv) {
     const std::wstring path(dir.begin(), dir.end());
     std::printf("YUV conversion\n");
     test_conversion();
+    std::printf("WebM: demuxer, VP9 and Opus decoders\n");
+    test_webm(path + L"\\color.webm");
     // Wine's Media Foundation needs GStreamer for H.264 and AAC, which a bare
     // container lacks; Windows has both.
     if (GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "wine_get_version")) {
