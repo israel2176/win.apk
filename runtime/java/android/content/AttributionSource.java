@@ -111,7 +111,7 @@ public final class AttributionSource implements Parcelable {
             uid = android.os.Process.SYSTEM_UID;
         }
         String pkg = null;
-        android.app.Application app = android.app.Application.macapk_get();
+        android.app.Application app = com.macapk.loader.app.Apps.current();
         if (app != null) pkg = app.getPackageName();
         return new AttributionSource(uid, android.os.Process.myPid(), DEVICE_ID_DEFAULT,
                                      pkg, null, null);

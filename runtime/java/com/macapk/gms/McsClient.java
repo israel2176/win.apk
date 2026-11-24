@@ -471,7 +471,7 @@ public final class McsClient {
             // for an app that is not running can be consumed by one that is.
             String self = null;
             try {
-                android.app.Application app = android.app.Application.getInstance();
+                android.app.Application app = com.macapk.loader.app.Apps.current();
                 if (app != null) self = app.getPackageName();
             } catch (Throwable ignored) {}
             if (self != null && !self.equals(category)) {

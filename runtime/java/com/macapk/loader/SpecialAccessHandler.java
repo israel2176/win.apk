@@ -830,7 +830,7 @@ public final class SpecialAccessHandler {
             try {
                 if (req[i] != null) {
                     v = requester != null ? requester.checkSelfPermission(req[i])
-                      : android.app.Application.getInstance().checkSelfPermission(req[i]);
+                      : com.macapk.loader.app.Apps.current().checkSelfPermission(req[i]);
                 }
             } catch (Throwable ignored) {}
             g[i] = v;

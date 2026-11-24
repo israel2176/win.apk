@@ -190,7 +190,7 @@ public final class CameraCaptureHandler {
                 try (OutputStream out = new FileOutputStream(f)) { out.write(jpeg); }
                 return true;
             }
-            android.app.Application app = android.app.Application.macapk_get();
+            android.app.Application app = com.macapk.loader.app.Apps.current();
             if (app == null) throw new IllegalStateException("no application");
             try (OutputStream out = app.getContentResolver().openOutputStream(uri, "w")) {
                 if (out == null) throw new java.io.IOException("no stream for " + uri);

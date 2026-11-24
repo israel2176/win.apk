@@ -27,7 +27,7 @@ public final class AppLanguages {
     public static String[] supportedTags() {
         List<String> out = new ArrayList<>();
         try {
-            Application app = Application.macapk_get();
+            Application app = com.macapk.loader.app.Apps.current();
             if (app != null) {
                 LocaleList declared = new LocaleConfig(app).getSupportedLocales();
                 if (declared != null && declared.size() > 0) {

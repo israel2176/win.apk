@@ -253,7 +253,7 @@ public class WebView extends android.widget.AbsoluteLayout
             // AwContents.loadUrl: below KITKAT the text after "javascript:" is
             // evaluated as-is; from KITKAT it goes through URL canonicalisation
             // and Blink's decode.
-            String src = (android.app.Application.macapkTargetSdkKnown(tsdk) && tsdk < 19 && url.startsWith("javascript:"))
+            String src = (com.macapk.loader.app.Apps.targetSdkKnown(tsdk) && tsdk < 19 && url.startsWith("javascript:"))
                 ? url.substring(11) : macapkJavascriptUrlSource(url);
             if (MacApkWebViewBridge.macapkTrace()) {
                 android.util.Log.i("Mac.apk.WebView", "id=" + macapkViewId
@@ -906,7 +906,7 @@ public class WebView extends android.widget.AbsoluteLayout
         try {
             android.content.Context c = getContext();
             if (c != null && c.getApplicationInfo() != null
-                    && android.app.Application.macapkTargetSdkKnown(c.getApplicationInfo().targetSdkVersion)
+                    && com.macapk.loader.app.Apps.targetSdkKnown(c.getApplicationInfo().targetSdkVersion)
                     && c.getApplicationInfo().targetSdkVersion < 17) {
                 annotatedOnly = false;
             }

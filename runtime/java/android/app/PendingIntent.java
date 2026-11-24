@@ -209,7 +209,7 @@ public final class PendingIntent implements Parcelable {
         if (canceled) return RES_OK;
         if (mRemote != null) return sendRemote(overrideIntent);
         Context ctx = dispatchContext != null ? dispatchContext
-                    : (creatorContext != null ? creatorContext : Application.getInstance());
+                    : (creatorContext != null ? creatorContext : com.macapk.loader.app.Apps.current());
         if (ctx == null) return RES_OK;
         try {
             switch (type) {
@@ -436,7 +436,7 @@ public final class PendingIntent implements Parcelable {
         // marker records that one EXISTED so the reader can restore the only
         // correct in-process answer instead of silently producing a token whose
         // getCreatorPackage() is null and whose dispatch() has no Context.
-        // Mac.apk hosts exactly one app, so Application.getInstance() IS the
+        // Mac.apk hosts exactly one app, so com.macapk.loader.app.Apps.current() IS the
         // creator's context; on AOSP the creator may be another process, which
         // is why AOSP carries a binder instead.
         // That condition held until apps got their own processes (2026-10-30):
@@ -460,7 +460,7 @@ public final class PendingIntent implements Parcelable {
             p.type = s.readInt();
             p.requestCode = s.readInt();
             p.flags = s.readInt();
-            if (s.readInt() != 0) p.creatorContext = Application.getInstance();
+            if (s.readInt() != 0) p.creatorContext = com.macapk.loader.app.Apps.current();
             p.intent = s.readTypedObject(Intent.CREATOR);
             p.intents = s.createTypedArray(Intent.CREATOR);
             p.canceled = s.readInt() != 0;

@@ -1163,7 +1163,7 @@ public class ImageView extends View {
             final android.content.pm.ApplicationInfo ai = c != null ? c.getApplicationInfo() : null;
             if (ai != null) targetSdkVersion = ai.targetSdkVersion;
         } catch (Throwable ignored) { }
-        if (!android.app.Application.macapkTargetSdkKnown(targetSdkVersion)) return;   // never latch an unresolved read
+        if (!com.macapk.loader.app.Apps.targetSdkKnown(targetSdkVersion)) return;   // never latch an unresolved read
         sCompatAdjustViewBounds =
                 targetSdkVersion <= android.os.Build.VERSION_CODES.JELLY_BEAN_MR1;
         sCompatAdjustDone = true;

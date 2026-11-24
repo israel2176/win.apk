@@ -92,12 +92,6 @@ public class AospAppRewrite {
             "android/content/pm/PackageManager.getPackageInfoAsUserCached(Ljava/lang/String;JI)Landroid/content/pm/PackageInfo;",
             "android/content/pm/PackageManager.getApplicationInfoAsUserCached(Ljava/lang/String;JI)Landroid/content/pm/ApplicationInfo;");
 
-    /** Taken class -> helper class: each public static method of the helper becomes a public static
-     *  method of the class, same name and descriptor, calling the helper (what Win.apk's own classes
-     *  call statically on a class AOSP's replaces). */
-    static final Map<String, String> STATIC_FORWARDS = Map.of(
-            "android/app/Application", PKG + "ApplicationStatics");
-
     /** Instance methods added to a taken class, answering their type's zero (null, false, nothing): the hidden ContextWrapper members AOSP's
      *  own views (aosp-views.jar, not rewritten here) call on an Application, which Win.apk's
      *  ContextWrapper lacks. AOSP's answer the base ContextImpl's options, which ActivityThread sets from
@@ -300,11 +294,6 @@ public class AospAppRewrite {
             String name = name(root, f);
             if (name.startsWith(PKG + "Native")) bridges.put(name, statics(f));
         }
-        Map<String, Set<String>> forwards = new HashMap<>();
-        for (Map.Entry<String, String> e : STATIC_FORWARDS.entrySet()) {
-            Path h = root.resolve(e.getValue() + ".class");
-            if (Files.exists(h)) forwards.put(e.getKey(), statics(h));
-        }
         Set<String> unbodied = new TreeSet<>();
         for (Path f : files) {
             String name = name(root, f);
@@ -314,8 +303,7 @@ public class AospAppRewrite {
             ClassReader cr = new ClassReader(in);
             ClassWriter cw = new ClassWriter(cr, ClassWriter.COMPUTE_MAXS);
             String bridge = PKG + "Native" + name.substring(name.lastIndexOf('/') + 1).replace('$', '_');
-            cr.accept(new Rewriter(cw, name, bridge, bridges.getOrDefault(bridge, Set.of()), compat,
-                    forwards.getOrDefault(name, Set.of()), unbodied), 0);
+            cr.accept(new Rewriter(cw, name, bridge, bridges.getOrDefault(bridge, Set.of()), compat, unbodied), 0);
             byte[] out = cw.toByteArray();
             if (!java.util.Arrays.equals(in, out)) Files.write(f, out);
         }
@@ -449,16 +437,15 @@ public class AospAppRewrite {
 
     static final class Rewriter extends ClassVisitor {
         final String cls, bridge;
-        final Set<String> bridged, compat, forwarded, unbodied;
+        final Set<String> bridged, compat, unbodied;
 
         Rewriter(ClassVisitor cv, String cls, String bridge, Set<String> bridged, Set<String> compat,
-                 Set<String> forwarded, Set<String> unbodied) {
+                 Set<String> unbodied) {
             super(Opcodes.ASM9, cv);
             this.cls = cls;
             this.bridge = bridge;
             this.bridged = bridged;
             this.compat = compat;
-            this.forwarded = forwarded;
             this.unbodied = unbodied;
         }
 
@@ -495,21 +482,6 @@ public class AospAppRewrite {
                 mv.visitMaxs(0, 0);
                 mv.visitEnd();
                 count("methods answering zero added to " + cls.substring(cls.lastIndexOf('/') + 1));
-            }
-            for (String m : forwarded) {
-                String n = m.substring(0, m.indexOf('(')), d = m.substring(m.indexOf('('));
-                MethodVisitor mv = super.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, n, d, null, null);
-                mv.visitCode();
-                int slot = 0;
-                for (Type t : Type.getArgumentTypes(d)) {
-                    mv.visitVarInsn(t.getOpcode(Opcodes.ILOAD), slot);
-                    slot += t.getSize();
-                }
-                mv.visitMethodInsn(Opcodes.INVOKESTATIC, STATIC_FORWARDS.get(cls), n, d, false);
-                mv.visitInsn(Type.getReturnType(d).getOpcode(Opcodes.IRETURN));
-                mv.visitMaxs(0, 0);
-                mv.visitEnd();
-                count("static methods Win.apk's classes call added to " + cls.substring(cls.lastIndexOf('/') + 1));
             }
             super.visitEnd();
         }

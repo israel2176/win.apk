@@ -174,7 +174,7 @@ public class LinearLayout extends ViewGroup {
         try {
             android.content.pm.ApplicationInfo ai =
                     (context != null) ? context.getApplicationInfo() : null;
-            if (ai != null && android.app.Application.macapkTargetSdkKnown(ai.targetSdkVersion)) {
+            if (ai != null && com.macapk.loader.app.Apps.targetSdkKnown(ai.targetSdkVersion)) {
                 targetSdkVersion = ai.targetSdkVersion;
                 resolved = true;
             }

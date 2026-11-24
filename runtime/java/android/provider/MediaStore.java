@@ -953,7 +953,7 @@ public final class MediaStore {
                 new java.util.ArrayList<Uri>(uris == null
                         ? java.util.Collections.<Uri>emptyList() : uris));
         return android.app.PendingIntent.getActivity(
-                android.app.Application.getInstance(), op.hashCode(), intent,
+                com.macapk.loader.app.Apps.current(), op.hashCode(), intent,
                 android.app.PendingIntent.FLAG_IMMUTABLE
                         | android.app.PendingIntent.FLAG_UPDATE_CURRENT);
     }

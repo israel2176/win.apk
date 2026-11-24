@@ -2231,8 +2231,8 @@ public class TextView extends View
                 android.content.pm.ApplicationInfo ai = (c != null) ? c.getApplicationInfo() : null;
                 // A REAL 0 (no <uses-sdk>) is below P and latches false, as on
                 // AOSP; only an unresolved read keeps the modern default
-                // (android.app.Application.macapkTargetSdkKnown, MACAPK_TARGETSDK_ZERO).
-                if (ai != null && android.app.Application.macapkTargetSdkKnown(ai.targetSdkVersion)) {
+                // (com.macapk.loader.app.Apps.targetSdkKnown, MACAPK_TARGETSDK_ZERO).
+                if (ai != null && com.macapk.loader.app.Apps.targetSdkKnown(ai.targetSdkVersion)) {
                     sUseFallbackLineSpacing = ai.targetSdkVersion >= android.os.Build.VERSION_CODES.P;
                     sFallbackLineSpacingDone = true;
                 }
@@ -3567,7 +3567,7 @@ public class TextView extends View
         int target = android.os.Build.VERSION_CODES.TIRAMISU;
         try {
             final android.content.pm.ApplicationInfo ai = getContext().getApplicationInfo();
-            if (ai != null && android.app.Application.macapkTargetSdkKnown(ai.targetSdkVersion)) {
+            if (ai != null && com.macapk.loader.app.Apps.targetSdkKnown(ai.targetSdkVersion)) {
                 target = ai.targetSdkVersion;
             }
         } catch (Throwable ignored) { }

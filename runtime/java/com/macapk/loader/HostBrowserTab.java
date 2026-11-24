@@ -155,7 +155,7 @@ public final class HostBrowserTab {
 
     static File userDataFolder() {
         try {
-            android.app.Application app = android.app.Application.macapk_get();
+            android.app.Application app = com.macapk.loader.app.Apps.current();
             File data = app != null ? app.getDataDir() : null;
             return data != null ? new File(data, "app_webview2") : null;
         } catch (Throwable t) {
@@ -170,7 +170,7 @@ public final class HostBrowserTab {
     static boolean macapkClaims(String url) {
         if (!HostUrlIntake.ON || url == null) return false;
         try {
-            android.app.Application app = android.app.Application.macapk_get();
+            android.app.Application app = com.macapk.loader.app.Apps.current();
             if (app == null) return false;
             String own = app.getPackageName();
             PackageManager pm = app.getPackageManager();

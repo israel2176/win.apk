@@ -8,7 +8,7 @@
 //
 // Reflective callers expect THESE specific static methods to exist
 // and return non-null values. We satisfy that with a minimal shim
-// that returns our singleton Application via Application.macapk_get().
+// that returns our singleton Application via com.macapk.loader.app.Apps.current().
 package android.app;
 
 import android.content.Context;
@@ -148,7 +148,7 @@ public final class ActivityThread {
         // this manifest identity before loading any Application subclass.
         String bootPackage = com.macapk.loader.Boot.packageName();
         if (bootPackage != null) return bootPackage;
-        Application app = Application.macapk_get();
+        Application app = com.macapk.loader.app.Apps.current();
         return app != null ? app.getPackageName() : "";
     }
     public static String currentProcessName() {
@@ -174,11 +174,11 @@ public final class ActivityThread {
     /** Returns the per-process Application. Equivalent to
      *  `currentActivityThread().getApplication()`. */
     public static Application currentApplication() {
-        return Application.macapk_get();
+        return com.macapk.loader.app.Apps.current();
     }
 
     public Application getApplication() {
-        return Application.macapk_get();
+        return com.macapk.loader.app.Apps.current();
     }
 
     /** AOSP ActivityThread.getProcessName() (INSTANCE method, core/java/android/app/
@@ -197,7 +197,7 @@ public final class ActivityThread {
      *  context -- callers typically use it for getSharedPreferences or
      *  resource lookups, both of which work fine through our App. */
     public Context getSystemContext() {
-        return Application.macapk_get();
+        return com.macapk.loader.app.Apps.current();
     }
 
     /** AOSP method: returns the ApplicationThread Binder. Many apps

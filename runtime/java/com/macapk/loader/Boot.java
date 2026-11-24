@@ -1540,7 +1540,7 @@ public final class Boot {
             // never "unresolved": it is AOSP's no-<uses-sdk> default and takes
             // R.style.Theme like any level below 11 (Resources.selectSystemTheme
             // :216, android14). This runs BEFORE macapkInitVersion binds it, so
-            // it tests the gate directly instead of Application.macapkTargetSdkKnown.
+            // it tests the gate directly instead of com.macapk.loader.app.Apps.targetSdkKnown.
             // MACAPK_TARGETSDK_ZERO=0 restores `t <= 0` (dead then: the old
             // synthesis never produced 0).
             boolean unresolved = Manifest.TARGETSDK_ZERO ? t < 0 : t <= 0;
@@ -2192,7 +2192,7 @@ public final class Boot {
                     if (sweep) {
                         // After handleBindApplication (Application.onCreate), the next message.
                         new android.os.Handler(android.os.Looper.getMainLooper()).post(() ->
-                                LayoutSweep.runFromBoot(android.app.Application.macapk_get()));
+                                LayoutSweep.runFromBoot(com.macapk.loader.app.Apps.current()));
                     }
                     if (SystemClient.isServiceHost()) NativeLog.i(TAG, "service host: no launcher activity");
                 } catch (Throwable t) {
@@ -2861,7 +2861,7 @@ public final class Boot {
             // Re-check under the lock: two flips in quick succession both pass
             // the cheap gate above, and the loser must not rebuild.
             if (dark == sNightApplied) return;
-            final android.app.Application app = android.app.Application.macapk_get();
+            final android.app.Application app = com.macapk.loader.app.Apps.current();
             final Resources res = (app != null) ? app.getResources() : null;
             if (res == null || sApkPath == null) {
                 // The flip beat boot to it. run() samples the appearance itself,

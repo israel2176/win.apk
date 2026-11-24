@@ -340,7 +340,7 @@ public class LayoutInflater {
             Context fallback = null;
             try {
                 android.app.Activity top = com.macapk.loader.ActivityHost.macapkTopActivity();
-                fallback = (top != null) ? top : android.app.Application.macapk_get();
+                fallback = (top != null) ? top : com.macapk.loader.app.Apps.current();
             } catch (Throwable ignored) { /* fall through to the null return */ }
             if (fallback == null) return null;   // nothing exists yet: pre-Boot
             NativeLog.w(TAG, "from(null Context) -- AOSP never returns null here;"

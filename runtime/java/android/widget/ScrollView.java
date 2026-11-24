@@ -325,13 +325,13 @@ public class ScrollView extends FrameLayout {
     /** The app's OWN declared targetSdkVersion, or the MODERN answer
      *  (Integer.MAX_VALUE) when it cannot be read. Unresolved never latches and
      *  never guesses legacy -- the convention stated on
-     *  android.app.Application.macapkAppTargetSdk. */
+     *  com.macapk.loader.app.Apps.targetSdk. */
     private int macapkTargetSdk() {
         try {
             android.content.Context c = getContext();
             android.content.pm.ApplicationInfo ai =
                     (c != null) ? c.getApplicationInfo() : null;
-            if (ai != null && android.app.Application.macapkTargetSdkKnown(ai.targetSdkVersion)) return ai.targetSdkVersion;
+            if (ai != null && com.macapk.loader.app.Apps.targetSdkKnown(ai.targetSdkVersion)) return ai.targetSdkVersion;
         } catch (Throwable ignored) { }
         return Integer.MAX_VALUE;
     }

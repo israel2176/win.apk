@@ -480,7 +480,7 @@ public final class GoogleSignInBroker {
             String pkg = null;
             try { pkg = android.app.ActivityThread.currentPackageName(); } catch (Throwable ignored) { }
             if (pkg == null) {
-                android.app.Application a = android.app.Application.getInstance();
+                android.app.Application a = com.macapk.loader.app.Apps.current();
                 if (a != null) pkg = a.getPackageName();
             }
             disableAutoSignIn(pkg);

@@ -879,9 +879,9 @@ public class ViewGroup extends View implements ViewParent, ViewManager {
         // Answer the modern default -- the same call
         // Context.macapkSelectDefaultTheme makes -- but do NOT memo, so a
         // later query re-resolves against the real value. A REAL 0 (no
-        // <uses-sdk>, android.app.Application.macapkTargetSdkKnown under
+        // <uses-sdk>, com.macapk.loader.app.Apps.targetSdkKnown under
         // MACAPK_TARGETSDK_ZERO) is below HONEYCOMB and memoises OFF, as AOSP.
-        if (!android.app.Application.macapkTargetSdkKnown(targetSdk)) return true;
+        if (!com.macapk.loader.app.Apps.targetSdkKnown(targetSdk)) return true;
         boolean on = targetSdk >= android.os.Build.VERSION_CODES.HONEYCOMB;
         sSplitDefault = on ? SPLIT_ON : SPLIT_OFF;
         return on;

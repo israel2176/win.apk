@@ -114,7 +114,7 @@ public abstract class AsyncTask<Params, Progress, Result> {
     // equivalent: nothing can run an AsyncTask before the app's own
     // Application object exists, which is the same moment AOSP binds. It is
     // also why the resolution must not latch on an unresolved read -- see
-    // Application.macapkAppTargetSdk for the convention.
+    // com.macapk.loader.app.Apps.targetSdk for the convention.
     private static volatile Executor sDefaultExecutor = SERIAL_EXECUTOR;
     private static volatile boolean sDefaultExecutorResolved;
 
@@ -133,8 +133,8 @@ public abstract class AsyncTask<Params, Progress, Result> {
 
     private static synchronized void macapkResolveDefaultExecutor() {
         if (sDefaultExecutorResolved) return;
-        int targetSdkVersion = android.app.Application.macapkAppTargetSdk();
-        if (!android.app.Application.macapkTargetSdkKnown(targetSdkVersion)) {
+        int targetSdkVersion = com.macapk.loader.app.Apps.targetSdk();
+        if (!com.macapk.loader.app.Apps.targetSdkKnown(targetSdkVersion)) {
             // Unresolved: keep AOSP's modern default (SERIAL_EXECUTOR) and do
             // NOT latch, so a later call still gets the app's real answer.
             return;

@@ -192,7 +192,7 @@ public class View implements android.graphics.drawable.Drawable.Callback,
         try {
             android.content.pm.ApplicationInfo ai =
                     (context != null) ? context.getApplicationInfo() : null;
-            if (ai != null && android.app.Application.macapkTargetSdkKnown(ai.targetSdkVersion)) {
+            if (ai != null && com.macapk.loader.app.Apps.targetSdkKnown(ai.targetSdkVersion)) {
                 targetSdkVersion = ai.targetSdkVersion;
                 resolved = true;
             }
@@ -1582,7 +1582,7 @@ public class View implements android.graphics.drawable.Drawable.Callback,
             // conservative clamp applies.
             android.content.pm.ApplicationInfo ai =
                 (c != null) ? c.getApplicationInfo() : null;
-            if (ai != null && android.app.Application.macapkTargetSdkKnown(ai.targetSdkVersion)) {
+            if (ai != null && com.macapk.loader.app.Apps.targetSdkKnown(ai.targetSdkVersion)) {
                 sThrowOnInvalidFloatProperties =
                     ai.targetSdkVersion >= android.os.Build.VERSION_CODES.P;
                 sFloatPropertyLatchDone = true;
@@ -1863,7 +1863,7 @@ public class View implements android.graphics.drawable.Drawable.Callback,
             android.content.Context c = getContext();
             android.content.pm.ApplicationInfo ai = c == null ? null : c.getApplicationInfo();
             int t = ai == null ? 0 : ai.targetSdkVersion;
-            return android.app.Application.macapkTargetSdkKnown(t)
+            return com.macapk.loader.app.Apps.targetSdkKnown(t)
                 && t < android.os.Build.VERSION_CODES.P;
         } catch (Throwable t) {
             return false;

@@ -267,7 +267,7 @@ public class RelativeLayout extends ViewGroup {
         }
         public LayoutParams(Context c, android.util.AttributeSet attrs) {
             final int targetSdkVersion = macapkTargetSdkOf(c);
-            mIsRtlCompatibilityMode = android.app.Application.macapkTargetSdkKnown(targetSdkVersion)
+            mIsRtlCompatibilityMode = com.macapk.loader.app.Apps.targetSdkKnown(targetSdkVersion)
                     && targetSdkVersion < android.os.Build.VERSION_CODES.JELLY_BEAN_MR1;
         }
 
@@ -278,7 +278,7 @@ public class RelativeLayout extends ViewGroup {
          *              !c.getApplicationInfo().hasRtlSupport());
          *  It selects between the two halves of resolveRules (:1556 vs :1610).
          *  Unresolved targetSdk (0) takes the MODERN half, matching the
-         *  convention on android.app.Application.macapkAppTargetSdk -- note this
+         *  convention on com.macapk.loader.app.Apps.targetSdk -- note this
          *  is the opposite fallback from View.isRtlCompatibilityMode, which
          *  reads a bare 0 as legacy; that inconsistency is inventoried in
          *  docs/legacy-compat-audit_2026-08-24.md 5.3 and is not resolved here.
@@ -450,14 +450,14 @@ public class RelativeLayout extends ViewGroup {
      *  wrap size = max child right/bottom + padding clamped to the spec). */
     /** The app's OWN declared targetSdkVersion, or the MODERN answer
      *  (Integer.MAX_VALUE) when it cannot be read yet. Never latched, never
-     *  guessed backwards -- see android.app.Application.macapkAppTargetSdk for
+     *  guessed backwards -- see com.macapk.loader.app.Apps.targetSdk for
      *  the convention every compat gate in this tree cites. */
     private int macapkTargetSdk() {
         try {
             android.content.Context c = getContext();
             android.content.pm.ApplicationInfo ai =
                     (c != null) ? c.getApplicationInfo() : null;
-            if (ai != null && android.app.Application.macapkTargetSdkKnown(ai.targetSdkVersion)) return ai.targetSdkVersion;
+            if (ai != null && com.macapk.loader.app.Apps.targetSdkKnown(ai.targetSdkVersion)) return ai.targetSdkVersion;
         } catch (Throwable ignored) { }
         return Integer.MAX_VALUE;
     }

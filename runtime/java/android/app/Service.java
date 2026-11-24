@@ -137,7 +137,7 @@ public abstract class Service extends ContextWrapper
     public final Application getApplication() {
         android.content.Context base = getApplicationContext();
         if (base instanceof Application) return (Application) base;
-        return Application.getInstance();
+        return com.macapk.loader.app.Apps.current();
     }
 
     public final void stopSelf() { ServiceRegistry.remove(this); }

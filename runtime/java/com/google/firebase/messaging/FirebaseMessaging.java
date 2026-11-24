@@ -98,7 +98,7 @@ public final class FirebaseMessaging {
         Thread t = new Thread(new Runnable() {
             @Override public void run() {
                 try {
-                    android.app.Application app = android.app.Application.getInstance();
+                    android.app.Application app = com.macapk.loader.app.Apps.current();
                     String pkg = (app != null) ? app.getPackageName() : null;
                     FirebaseOptions opts = (app != null) ? FirebaseOptions.fromResource(app) : null;
                     String senderId = (opts != null) ? opts.getGcmSenderId() : null;

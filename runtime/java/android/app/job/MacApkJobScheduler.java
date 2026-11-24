@@ -1380,7 +1380,7 @@ final class MacApkJobScheduler extends JobScheduler {
     }
 
     private static Context appContext() {
-        try { return android.app.Application.getInstance(); }
+        try { return com.macapk.loader.app.Apps.current(); }
         catch (Throwable t) { return null; }
     }
 

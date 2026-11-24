@@ -269,7 +269,7 @@ public final class ServiceRegistry {
     private static String resolveImplicit(Intent intent) {
         if (intent.getAction() == null) return null;
         try {
-            Context ctx = Application.getInstance();
+            Context ctx = com.macapk.loader.app.Apps.current();
             if (ctx == null) return null;
             android.content.pm.PackageManager pm = ctx.getPackageManager();
             if (pm == null) return null;
@@ -524,7 +524,7 @@ public final class ServiceRegistry {
             // context; fall back to the singleton Application.
             Context base = null;
             if (ctx != null) { try { base = ctx.getApplicationContext(); } catch (Throwable ignored) {} }
-            if (base == null) base = Application.getInstance();
+            if (base == null) base = com.macapk.loader.app.Apps.current();
             // Creating from attach on: ActivityThread.handleCreateService runs
             // instantiate, attach and onCreate as one message, so a start of
             // this component issued from attachBaseContext is queued behind it
@@ -580,7 +580,7 @@ public final class ServiceRegistry {
     private static boolean macapkIsDeclaredButDisabled(Context ctx, String cls) {
         if (cls == null || cls.isEmpty()) return false;
         try {
-            Context c = (ctx != null) ? ctx : Application.getInstance();
+            Context c = (ctx != null) ? ctx : com.macapk.loader.app.Apps.current();
             if (c == null) return false;
             android.content.pm.PackageManager pm = c.getPackageManager();
             if (pm == null) return false;

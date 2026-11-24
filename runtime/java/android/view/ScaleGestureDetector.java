@@ -80,12 +80,12 @@ public class ScaleGestureDetector {
 
     /** The app's OWN declared targetSdkVersion, or the MODERN answer
      *  (Integer.MAX_VALUE) when it cannot be read yet. Never latched, never
-     *  guessed backwards -- see android.app.Application.macapkAppTargetSdk. */
+     *  guessed backwards -- see com.macapk.loader.app.Apps.targetSdk. */
     private static int macapkTargetSdk(Context context) {
         try {
             android.content.pm.ApplicationInfo ai =
                     (context != null) ? context.getApplicationInfo() : null;
-            if (ai != null && android.app.Application.macapkTargetSdkKnown(ai.targetSdkVersion)) return ai.targetSdkVersion;
+            if (ai != null && com.macapk.loader.app.Apps.targetSdkKnown(ai.targetSdkVersion)) return ai.targetSdkVersion;
         } catch (Throwable ignored) { }
         return Integer.MAX_VALUE;
     }

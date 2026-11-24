@@ -31,7 +31,7 @@ public final class HostBluetooth {
     // ---- permissions ---------------------------------------------------------
 
     private static boolean granted(String permission) {
-        android.app.Application app = android.app.Application.getInstance();
+        android.app.Application app = com.macapk.loader.app.Apps.current();
         return app != null
                 && app.checkSelfPermission(permission) == android.content.pm.PackageManager.PERMISSION_GRANTED;
     }
@@ -56,7 +56,7 @@ public final class HostBluetooth {
      *  31+ and declares BLUETOOTH_SCAN with neverForLocation. Without it a
      *  scan runs and finds nothing, as on a device. */
     public static boolean scanResultsAllowed() {
-        android.app.Application app = android.app.Application.getInstance();
+        android.app.Application app = com.macapk.loader.app.Apps.current();
         if (app == null) return false;
         int target = app.getApplicationInfo() != null ? app.getApplicationInfo().targetSdkVersion : 0;
         if (target >= 31 && neverForLocation(app)) return true;

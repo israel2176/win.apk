@@ -673,7 +673,7 @@ public final class SpecialAccessStore {
         if ("false".equalsIgnoreCase(raw)) return Boolean.FALSE;
         if (!raw.startsWith("@")) return null;
         try {
-            android.app.Application app = android.app.Application.getInstance();
+            android.app.Application app = com.macapk.loader.app.Apps.current();
             if (app == null) return null;
             android.content.res.Resources r = app.getResources();
             if (r == null) return null;
@@ -925,7 +925,7 @@ public final class SpecialAccessStore {
             // bound yet" from a real 0 on its own, so it asks the process-wide
             // predicate (a 0 is real only once the manifest has bound it).
             this(level, target, declaredAll, state, pickerPromptEnabled,
-                 android.app.Application.macapkTargetSdkKnown(target));
+                 com.macapk.loader.app.Apps.targetSdkKnown(target));
         }
 
         /** `targetResolved` says whether `target` is a REAL answer. liveModel
