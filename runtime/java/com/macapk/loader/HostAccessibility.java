@@ -200,10 +200,14 @@ public final class HostAccessibility {
     }
 
     static String snapshot() {
+        return snapshot(ViewHost.get().accessibilityRoots());
+    }
+
+    /** The snapshot of these windows' roots, bottom to top (a test gives its own). */
+    static String snapshot(List<View> roots) {
         sTargets.clear();
         Walk w = new Walk();
         StringBuilder top = new StringBuilder();
-        List<View> roots = ViewHost.get().accessibilityRoots();
         for (View root : roots) {
             if (root == null || root.getVisibility() != View.VISIBLE || !root.isAttachedToWindow()) continue;
             long id = addView(w, root, 0);
@@ -417,7 +421,8 @@ public final class HostAccessibility {
 
     // ---- Actions (main thread) ----
 
-    private static boolean doPerform(long id, int action, String text) {
+    /** perform's work, on the calling thread (the main thread; a test's). */
+    static boolean doPerform(long id, int action, String text) {
         Target t = sTargets.get(id);
         if (t == null) return false;
         int a;

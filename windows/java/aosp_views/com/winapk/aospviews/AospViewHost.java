@@ -439,6 +439,8 @@ public final class AospViewHost implements ViewHost {
     }
 
     @Override public AccessibilityManager newAccessibilityManager() { return AccessibilityManager.getInstance(app()); }
+    @Override public List<View> accessibilityRoots() { return AospWindows.accessibilityRoots(); }
+    @Override public void accessibilityEnabled(boolean on) { AccessibilityService.setHostEnabled(on); }
     @Override public CaptioningManager newCaptioningManager() { return new CaptioningManager(app()); }
 
     @Override public TextServicesManager newTextServicesManager(Context context) {
