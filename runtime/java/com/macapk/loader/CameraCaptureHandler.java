@@ -51,10 +51,10 @@ public final class CameraCaptureHandler {
     private static final int INLINE_MAX = 640;
 
     private static final class Pending {
-        final Activity.MacApkHostResult token;
+        final com.macapk.loader.app.HostResult token;
         final SpecialAccessHandler.Cover cover;
         final Uri output;
-        Pending(Activity.MacApkHostResult token, SpecialAccessHandler.Cover cover, Uri output) {
+        Pending(com.macapk.loader.app.HostResult token, SpecialAccessHandler.Cover cover, Uri output) {
             this.token = token; this.cover = cover; this.output = output;
         }
     }
@@ -113,7 +113,7 @@ public final class CameraCaptureHandler {
     /** Claim the caller's result synchronously, cover it as the full-screen
      *  camera activity would, and show the host's screen. */
     static boolean handle(Intent outer, Intent real, SpecialAccessHandler.Cover cover) {
-        final Activity.MacApkHostResult token = Activity.macapkClaimHostResult(outer);
+        final com.macapk.loader.app.HostResult token = com.macapk.loader.app.HostResults.claim(outer);
         final SpecialAccessHandler.Cover c = SpecialAccessHandler.RESULT_ORDER_AOSP ? cover : null;
         final Uri output = outputOf(real);
         final long id = sSeq.getAndIncrement();
