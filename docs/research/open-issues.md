@@ -366,7 +366,7 @@ Masad's update/dark screen. Two showed only a black window:
   GPU than under Wine). A guest is now told only the extensions whose
   functions it can call: declared by the Khronos headers or ANGLE's
   `gl2ext_angle.h` (whose `GL_ANGLE_*`/`GL_CHROMIUM_*` functions are forwarded
-  too, as the other runtime does: Skia's `glBindUniformLocationCHROMIUM`, WebRender's
+  too: Skia's `glBindUniformLocationCHROMIUM`, WebRender's
   `glProvokingVertexANGLE`), and every function resolving in the ANGLE loaded
   (`gen_gl_stubs.py`, `host/gl/guest_gl_extensions.cpp`; `winapk-gl-test`
   checks it: under Wine 120 of ANGLE's 124 pass, 30 of them ANGLE's or
