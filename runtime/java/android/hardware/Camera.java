@@ -251,11 +251,13 @@ public class Camera {
      * -- note they are inverted, so passing one through unchanged would swap
      * every camera's role and mirror the wrong previews.
      *
-     * FACING_EXTERNAL (a USB/UVC camera) has no camera1 equivalent at all;
-     * camera1 predates external cameras and CameraInfo.facing is a two-valued
-     * field. AOSP's own camera1 shim for an external camera reports it as
-     * BACK-facing, because BACK is the "not mirrored, not a selfie camera"
-     * answer and mirroring an external camera's image is the visible mistake.
+     * FACING_EXTERNAL (a USB/UVC camera) has no camera1 equivalent;
+     * CameraInfo.facing is two-valued. AOSP's camera service maps an external
+     * camera to FRONT for the legacy API (CameraProviderManager
+     * getCameraInfoLocked: "Map external to front for legacy API"). Win.apk
+     * reports no EXTERNAL camera: every webcam is a BACK and a FRONT role (the
+     * owner's decision, docs/research/open-issues.md), so the mapping below
+     * only ever sees those two.
      */
     public static void getCameraInfo(int cameraId, CameraInfo cameraInfo) {
         if (cameraInfo == null) {

@@ -45,6 +45,30 @@ agents' work folders were `/opt/uip/il-work/<app>/`, gone with the container).
   the last is older (`LastMaintenance`), and is not kept alive for it
   (`maybe_quit` only waits for a window it opened). The task earlier builds
   made is deleted once (`MaintenanceTaskRemoved`) and by the uninstaller.
+- Decided (November 2026): **every webcam is offered as both a back and a
+  front camera** (`native_camera.cpp` `kRolesPerDevice`: camera 2k is BACK,
+  2k+1 FRONT, one device). The owner's decision: a PC's camera serves both
+  roles, so apps that ask for the rear camera (cheque scanners: camera 0,
+  `Camera.open()`, CameraX's `DEFAULT_BACK_CAMERA`) work. So
+  `android.hardware.camera` (a back camera), `.camera.front` and `.camera.any`
+  are declared. What AOSP itself would do with a USB webcam, for the record:
+  camera2 reports it as `LENS_FACING_EXTERNAL` (with
+  `INFO_SUPPORTED_HARDWARE_LEVEL_EXTERNAL`), and the camera service maps
+  EXTERNAL to **FRONT** for the legacy API (`CameraProviderManager::
+  getCameraInfoLocked`: "Map external to front for legacy API"), so camera1's
+  `open()` (the first back camera) returns null and `FEATURE_CAMERA` is not
+  declared on a device with only a USB camera. Copying that would break every
+  app that wants the rear camera, which is why the owner chose two roles.
+  (The old `Camera.java` comment saying AOSP maps EXTERNAL to BACK was wrong
+  and is corrected.)
+- Decided (November 2026): **no synthetic accelerometer.** The made-up "phone
+  held upright" gravity (`SensorManager`'s `POSE_ACCEL_*`, from upstream) and
+  everything derived from it are gone: no `TYPE_ACCELEROMETER`, `GRAVITY`,
+  `LINEAR_ACCELERATION`, `ROTATION_VECTOR`, `GAME_ROTATION_VECTOR`,
+  `ORIENTATION`, and no `android.hardware.sensor.accelerometer` feature, as on
+  an Android device without one (`CameraOrientationTest` checks the null and
+  the feature). Tilt games find no sensor. Optional, not done: Windows' own
+  sensor API (the accelerometer of 2-in-1s) reported truthfully.
 
 ## Check again after each AOSP layer lands
 
@@ -543,6 +567,47 @@ New bugs found with AOSP views:
   with the setting off; with `WINAPK_AOSP_GFX=0` it draws). Not fixed.
 - **Bank Hapoalim shows its reinstall dialog three times** (three window
   backgrounds stacked); not checked whether Android does too.
+- **Cheque deposit (Scanovate) and the camera's orientation, focus and torch:
+  written, not tried on a real webcam.** Hapoalim, Leumi and Mercantile scan
+  cheques with Scanovate's scanner on the legacy `Camera` API (camera 0, a
+  SurfaceView preview, NV21 callbacks, a landscape-fixed activity,
+  `pictureAngle = (orientation - rotation*90) mod 360` into
+  `setDisplayOrientation`, autofocus only with
+  `android.hardware.camera.autofocus` and "auto" listed, 1280×720 preferred,
+  blurry frames rejected natively). Done: `CameraInfo.orientation` /
+  `SENSOR_ORIENTATION` are the display rotation (back) or its mirror (front)
+  at the moment they are asked, so the angle is 0 in both orientations
+  (`CameraOrientationTest`); focus and torch come from the driver
+  (`IAMCameraControl`'s focus, the extended `FOCUSMODE`/`FOCUSSTATE`/
+  `TORCHMODE`; `native_camera.cpp` "focus and torch"). Why the orientation
+  follows the rotation instead of being fixed per device as on Android: the
+  window's shape is fixed per activity, a cheque scanner goes from a portrait
+  activity to a landscape-fixed one, and a value latched at the first would
+  turn the second's picture by 270°; an app that keeps the value across its
+  own rotation computes with a stale one, as with a stale display rotation
+  on a phone. To check on Windows with a real webcam: (1) a UVC autofocus
+  webcam (a Logitech C920-class) reports `kCtlAutofocus` (the log's
+  `open(...)` line; `MACAPK_CAMERA_TRACE=1`), `autoFocus` answers within 3 s,
+  and its lens position really moves under `CameraControl_Flags_Auto`
+  (if a driver reports a constant position the one-shot answers "focused"
+  after 600 ms without knowing: then use the extended state only); (2) a
+  2-in-1's built-in camera with the extended controls: the one-shot
+  (`AUTO|LOCK`) completes and FOCUSSTATE reads SEARCHING then FOCUSED; its
+  TORCHMODE turns a real light on; (3) one bank app end to end: the scan
+  screen upright, focus, a cheque accepted. Not done: the AF state of a
+  continuous mode on a UVC webcam is "lens moving / settled", not a sharpness
+  measure; LENS_INFO_MINIMUM_FOCUS_DISTANCE is left out for an autofocus
+  camera (no driver gives a distance). Win.apk's own `TextureView` ignores
+  both the SurfaceTexture transform and `setTransform`, so a TextureView
+  preview stays upright either way; with AOSP's views a TextureView applies
+  both, which then cancel as on a phone (to check).
+- **What is still synthetic in the camera and sensors (for the owner):** the
+  gyroscope reports 0,0,0 (upstream's decision, kept: a PC on a desk does not
+  turn; a PC has no gyroscope either); Tilt Control (`TiltControl`, never in
+  Win.apk's UI, `MACAPK_TILT_CONTROL=1` only) drove the removed sensors and
+  now does nothing; with no webcam, `CameraBridge`'s virtual camera delivers
+  dark-grey frames (`MACAPK_VIRTUAL_CAMERA=0` turns it off) so preview screens
+  open.
 - **Cal's "error loading the app" page**: the KeyManagerFactory "X509" fix
   (c4e09b8's batch) loads the client certificate; whether the page goes away
   needs a run with real network (the sandbox's proxy breaks client-certificate

@@ -427,7 +427,14 @@ Windows' own privacy switches (Settings > Privacy). An app that asks the
 system camera for a picture (a "take a photo" button) gets Win.apk's camera
 window: the webcam's picture, **Take photo**, then **Use photo** or
 **Retake**; **Choose a file…** sends a picture file instead, for a PC with no
-camera or one that faces you. Location comes from
+camera or one that faces you. Every webcam is offered to apps both as the
+phone's back camera and as its front one, so an app that wants the rear
+camera finds one. An app sees the webcam's autofocus and light only when the
+webcam's driver offers them; otherwise it is a fixed-focus camera without a
+flash. **Cheque scanning** in the banks' apps (Hapoalim, Leumi, Mercantile)
+needs a webcam that autofocuses at short range and does 1280×720: the
+scanner rejects blurry pictures, and most fixed-focus webcams cannot focus
+on a cheque held close. Location comes from
 Windows' location service; when Windows denies it, Win.apk opens the Windows
 location settings page once per run.
 
