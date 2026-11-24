@@ -604,6 +604,16 @@ std::vector<int16_t> AudioDecoder::decode(const uint8_t* au, size_t size, bool e
     return pcm;
 }
 
+void AudioDecoder::flush() {
+    Impl& d = *impl_;
+    if (d.opus) {
+        d.opus->flush();
+        return;
+    }
+    d.mft->ProcessMessage(MFT_MESSAGE_COMMAND_FLUSH, 0);
+    d.mft->ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0);
+}
+
 int AudioDecoder::sample_rate() const { return impl_->rate; }
 int AudioDecoder::channels() const { return impl_->channels; }
 

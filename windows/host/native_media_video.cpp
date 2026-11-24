@@ -77,11 +77,20 @@ std::wstring host_source_of(JNIEnv* env, jstring s) {
     return winapk::android_host_path(utf8_of(env, s).c_str());
 }
 
-// The picture as a Java int[] (ARGB, as Bitmap.setPixels takes it).
+// The picture as a Java int[] (ARGB, as Bitmap.setPixels takes it), converted straight into the
+// array: a software decoder's picture goes from its own planes to Java with no copy between.
 jintArray argb_array(JNIEnv* env, const vd::Frame& f) {
-    const jsize n = static_cast<jsize>(f.argb.size());
+    const jsize n = static_cast<jsize>(static_cast<size_t>(f.width) * f.height);
+    if (n <= 0) return nullptr;
     jintArray a = env->NewIntArray(n);
-    if (a) env->SetIntArrayRegion(a, 0, n, reinterpret_cast<const jint*>(f.argb.data()));
+    if (!a) return nullptr;
+    void* px = env->GetPrimitiveArrayCritical(a, nullptr);
+    const bool ok = px && vd::frame_to_argb(f, static_cast<uint32_t*>(px));
+    if (px) env->ReleasePrimitiveArrayCritical(a, px, 0);
+    if (!ok) {
+        env->DeleteLocalRef(a);
+        return nullptr;
+    }
     return a;
 }
 
@@ -209,10 +218,12 @@ jint JNICALL Vid_frameBgra(JNIEnv* env, jclass, jlong handle, jbyteArray out, ji
     if (!f || !out || !whs || env->GetArrayLength(whs) < 3) return -1;
     const jint dims[3] = {f->width, f->height, f->width * 4};
     env->SetIntArrayRegion(whs, 0, 3, dims);
-    const jsize need = static_cast<jsize>(f->argb.size() * 4);
-    if (env->GetArrayLength(out) < need) return -1;
-    env->SetByteArrayRegion(out, 0, need, reinterpret_cast<const jbyte*>(f->argb.data()));
-    return 0;
+    const jsize need = static_cast<jsize>(static_cast<size_t>(f->width) * f->height * 4);
+    if (need <= 0 || env->GetArrayLength(out) < need) return -1;
+    void* px = env->GetPrimitiveArrayCritical(out, nullptr);
+    const bool ok = px && vd::frame_to_argb(*f, static_cast<uint32_t*>(px));
+    if (px) env->ReleasePrimitiveArrayCritical(out, px, 0);
+    return ok ? 0 : -1;
 }
 
 void JNICALL Vid_flush(JNIEnv*, jclass, jlong h) {
