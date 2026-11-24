@@ -7,6 +7,7 @@ package com.winapk.aospapp;
 
 import android.app.IActivityManager;
 import android.app.LoadedApk;
+import android.content.Intent;
 import android.os.ServiceManager;
 
 public final class Compat {
@@ -269,5 +270,25 @@ public final class Compat {
     /** StructStat.st_mtim: the modification time as a timespec, from st_mtime (whole seconds). */
     public static android.system.StructTimespec st_mtim(android.system.StructStat stat) {
         return new android.system.StructTimespec(stat.st_mtime, 0);
+    }
+
+    // ---- android.content.pm.PackageManager (hidden; the permission prompt) ----
+
+    /** PackageManager.buildRequestPermissionsIntent: ACTION_REQUEST_PERMISSIONS with the names, for
+     *  the permission controller (the task manager hands it to the host's prompt). */
+    public static Intent buildRequestPermissionsIntent(android.content.pm.PackageManager pm, String[] permissions) {
+        Intent intent = new Intent(android.content.pm.PackageManager.ACTION_REQUEST_PERMISSIONS);
+        intent.putExtra(android.content.pm.PackageManager.EXTRA_REQUEST_PERMISSIONS_NAMES, permissions);
+        return intent;
+    }
+
+    /** PackageManager.shouldShowRequestPermissionRationale: the grant store's answer (false when
+     *  granted, or never asked, or fixed by the user). */
+    public static boolean shouldShowRequestPermissionRationale(android.content.pm.PackageManager pm, String permission) {
+        try {
+            return com.macapk.loader.SpecialAccessStore.shouldShowRationale(permission);
+        } catch (RuntimeException e) {
+            return false;
+        }
     }
 }

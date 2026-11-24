@@ -37,12 +37,24 @@ public interface AppHost {
         /** The app moved its task behind (Activity.moveTaskToBack, Back at the launcher's root
          *  activity): the window goes behind, as the home screen comes over it. */
         public Runnable moveToBack;
+        /** A start no activity of the app resolves, offered to the host (its hand-offs to the
+         *  browser, mail, the share sheet, an install, a settings page, a picker, the camera):
+         *  true when the host took it, its result (if any) to the HostResult HostResults offers. */
+        public java.util.function.Predicate<Intent> hostStart;
+        /** The permission prompt (the permission controller's GrantPermissionsActivity on a
+         *  device): asks the user for the permissions, the answer to the sink. */
+        public java.util.function.BiConsumer<String[], com.macapk.loader.SpecialAccessHandler.PermissionSink>
+                hostPermissions;
     }
 
     /** ActivityThread.main's work on the calling thread, the main looper's: the system services
      *  in this process, ActivityThread attached, the application bound, the first activity
      *  launched as messages on the main looper. The caller loops. */
     void start(Start s);
+
+    /** The task's top activity that has been launched (its instance in ActivityThread), or null:
+     *  where the loader's input injection, gamepad and dumps send what they send to the app. */
+    android.app.Activity topActivity();
 
     /** Whether start ran (the app's process is AOSP's). */
     boolean started();
@@ -57,6 +69,10 @@ public interface AppHost {
 
     /** The window came back: the task comes to the front (restarted, started, resumed). */
     void taskToFront();
+
+    /** The cover a host window puts over the app (a prompt, a picker): the top activity paused,
+     *  and stopped too when the window hides it, until the host brings it back, with a result. */
+    com.macapk.loader.SpecialAccessHandler.Cover hostCover(boolean opaque);
 
     /** The display's configuration changed (the window resized or turned, the system's language
      *  or night mode): the process's, then each activity's, as WindowManagerService sends them. */
