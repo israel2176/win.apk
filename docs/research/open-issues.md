@@ -1004,6 +1004,30 @@ nor a run with `WINAPK_AOSP_VIEWS=1` and a screen reader. To check then:
 
 ## Work started and not merged
 
+- **AOSP's app layer, step A1's first part (November 2026; the owner approved
+  the layer).** The plan with its measurements is `docs/research/aosp-app.md`.
+  Built: `windows/scripts/build_aosp_app.sh` (`lib/aosp-app.jar`, 601 classes,
+  1.3 MB: AOSP 14's `ActivityThread`, client transactions, `Instrumentation`,
+  `ContextImpl`, `LoadedApk`, `Application`, `Activity`), its rewrite
+  `AospAppRewrite.java`, the in-process activity manager, task manager and
+  client controller (`windows/java/aosp_app`), and `windows/test/aospapp`:
+  AOSP's `ActivityThread` runs an application and two activities through
+  start-for-result, result, finish and the task's end in Android's order on a
+  plain JVM with AOSP's graphics, resources and views (CI: "AOSP app layer",
+  Ubuntu, informational). **Not yet:** the host switch (`WINAPK_AOSP_APP`,
+  named, not read by `host/aosp_gfx.cpp`) and `Boot` starting an app through
+  `AospApp.start` (A1's second part), so nothing of it runs in
+  `winapk-runtime.exe`; then the `AppHost` seam (A0: 116 Win.apk call sites
+  into members AOSP's `Activity`/`Application` lack, 230 into
+  `ActivityHost`), launch modes, the task to back and front, relaunch (A2),
+  services, receivers, providers (A3). Found on the way and fixed for the
+  resources and views switches too: the libandroidfw port's
+  `CollectConfigurations` threw for every APK (`getSizeConfigurations`), and
+  `AnimationHandler` called a member Win.apk's `Animator` lacks whenever a
+  window was removed (`ViewRootImpl.doDie`; seen in the lifecycle test, where
+  each activity's destroy removes its window): check the smoke apps' and
+  sweeps' runs with the views switch for anything that changed.
+
 - **TSF text input and the touch keyboard (November 2026, from the other runtime's
   `compat/input/text_store`, `text_service`, `touch_keyboard`).** The focused
   editor is the window's TSF document (`windows/host/tsf_text_store.h`, the

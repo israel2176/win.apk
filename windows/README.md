@@ -1058,6 +1058,19 @@ the uiprobe oracle:
 - theme lines: 29 of 29 equal (Win.apk's framework: 19);
 - 8 layout cases: 44 of 44 lines equal and 8 of 8 pictures pixel-identical.
 
+After resources and views: AOSP's app layer (`android.app`'s lifecycle and what
+drives it: `ActivityThread`, the client transactions, `Instrumentation`,
+`ContextImpl`, `LoadedApk`, `Application`, `Activity`). The plan, with its
+measurements, is `docs/research/aosp-app.md`. Step A1's first part is built
+and tested on a plain JVM, not yet in the runtime (no host switch reads it):
+`scripts/build_aosp_app.sh <stage>` makes `lib/aosp-app.jar` (601 classes,
+1.3 MB) with the rewrite `scripts/AospAppRewrite.java` and the in-process
+activity manager, task manager and client controller of `java/aosp_app`, and
+`test/aospapp/run.sh <stage> <deps>` runs AOSP's `ActivityThread` through an
+application and two activities' whole lifecycle in Android's order (the
+graphics bound by the host's own redirect, `host/aosp_gfx_redirect.cpp`, built
+into the test's library); CI runs it on Ubuntu (informational).
+
 Two rules for every AOSP layer, this one and those after it (resources,
 views...), so that moving onto AOSP's code does not make Win.apk heavy:
 
@@ -1573,6 +1586,7 @@ start; those throw alike on both sides, and only a difference counts.
 | Unit tests | `windows-latest` | Guest libraries, Build | Every test program above, the arm64 AOT translation included |
 | Runtime tests | `windows-latest` | Guest libraries, Build | The tests that need the staged jars or ANGLE, the APK booted headless and in a window (`headless-boot` artifact), the GMS CLI, and the frame bench in a window, its frame times in the run's summary ([Frame time](#frame-time)). The tests on a plain JVM take `build/java/android-framework.jar` (the framework as compiled, uploaded with the binaries): the stage's lacks what AOSP's views and resources shadow, whose own classes need natives only `winapk-runtime` binds |
 | App smoke test | `windows-latest` | Build | The ten apps of `test/compat/smoke.txt` (`--require-drew`) on the staged JRE with one framework archive made first (`--cds-prepare`): fails when one no longer draws (`smoke` artifact). Each app's peak working set and private bytes go in the report and the run's summary ([Footprint](#footprint)). The apps' classes, merged, are the `framework-classlist` artifact: copy it to `java/winapk-framework.classlist` when the framework or the smoke set has changed much |
+| AOSP app layer (informational) | Ubuntu | Build | Fails nothing (`continue-on-error`): `build_aosp_app.sh` over the build's stage (which has AOSP's resources and views) on Linux, then `test/aospapp/run.sh` (AOSP's `ActivityThread` through an application's and two activities' lifecycle on a plain JVM); its verdict, the jar's size and LinkScan's count in the summary, the log and LinkScan's list in the `aosp-app` artifact |
 | AOSP graphics | `windows-latest` | Build | `test/aospgfx/`: AOSP's Canvas on Robolectric's native runtime in `winapk-runtime.exe` on the staged JRE (the agent built with MSYS2 CLANG64 clang; android-all and the DLL fetched from Maven Central and cached). Fails when a check fails; the `aosp-graphics` artifact has the picture, the benchmark frame and the logs. [AOSP graphics](#aosp-graphics-milestone-1) |
 | UI gate, Android's side and the base | Ubuntu | What changed | Android's lines for the UI probe and `test/screens/gate.txt`'s apps (`gate_oracle.sh`, cached by what they are made from), the base's commit, and the base's framework jars when `main` has no CI build of it left (`ui-oracle`, `ui-base-jars`). [The UI gate](#the-ui-gate-only-closer-to-android) |
 | UI gate, `<target>` | `windows-latest` × 3 | Build, UI gate's Android side | One per target: Win.apk at the base and at the head (`gate_side.sh`), then `regress.py`; fails on a `REGRESSED`, `FARTHER` or `MISSING` line, with the first of them in the summary (`ui-gate-<target>` artifact) |
