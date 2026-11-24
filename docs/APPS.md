@@ -34,7 +34,7 @@ keeping a copy.
 | `NativeActivity` | ✅ | Games whose whole UI is native code get their window, input queue and configuration | | `native_activity.cpp` |
 | Vulkan | ❌ | | Not implemented | |
 | Pictures (`BitmapFactory`, `ImageDecoder`) | ✅ | PNG, JPEG, WebP, GIF, BMP and ICO by Android's own decoders; HEIF/HEIC (a phone's photos) and AVIF through Windows | HEIF needs Microsoft's HEIF Image Extensions, AVIF its AV1 Video Extension (Microsoft Store); without them such a picture does not open, as on a phone that cannot read it | `windows/java/aosp_gfx/` (`HostImageDecode`), `native_image.cpp` |
-| AudioTrack, SoundPool, MediaPlayer audio | ✅ | A WASAPI mixer; WAV, Ogg, MP3, AAC and what Windows decodes | | `native_audio.cpp` |
+| AudioTrack, SoundPool, MediaPlayer audio | ✅ | A WASAPI mixer; WAV, Ogg Vorbis, Ogg Opus (libopus), MP3, AAC and what Windows decodes | | `native_audio.cpp`, `audio_decode.cpp` |
 | AAudio | ⚠️ | Output, in write and callback modes | No AAudio input | `native_aaudio.cpp` |
 | Microphone (`AudioRecord`) | ✅ | WASAPI capture | | `native_audio_input.cpp` |
 | OpenSL ES | ⚠️ | Buffer-queue PCM players (8, 16, 24 and 32-bit, float), players of a file descriptor (an asset's) or a file, volume, seek and loop; recorders on the microphone, with `RECORD_AUDIO` | No http(s) players, effects (reverb, equalizer, virtualizer), playback rate or MIDI. Checked by a unit test, not yet with a game (#132) | `native_opensles.cpp` |

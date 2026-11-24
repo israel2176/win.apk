@@ -591,7 +591,7 @@ how CI boots apps.
 
 | Android API | Windows implementation | Source |
 |---|---|---|
-| AudioTrack, SoundPool, MediaPlayer (audio) | A WASAPI mixer; WAV and Ogg Vorbis decoded in-process, MP3, AAC and whatever Windows has through Media Foundation | `native_audio.cpp`, `audio_engine.cpp`, `audio_decode.cpp` |
+| AudioTrack, SoundPool, MediaPlayer (audio) | A WASAPI mixer; WAV, Ogg Vorbis (stb_vorbis) and Ogg Opus (libopus, `soft_codecs.h`; pre-skip and end trimmed) decoded in-process, MP3, AAC and whatever Windows has through Media Foundation | `native_audio.cpp`, `audio_engine.cpp`, `audio_decode.cpp` |
 | AAudio (native) | A port of upstream's AAudio on the same mixer; write and callback modes, no capture | `native_aaudio.cpp` |
 | OpenSL ES (native) | Adapted from the other runtime's: the engine and output mix; buffer-queue players feed a stream of the same mixer from the app's queued PCM (24- and 32-bit converted to float), calling the queue's callback on the player's own thread as each buffer is taken; fd and file-URI players decode the whole file and play it as a clip voice (head-at-end, seek, loop); recorders fill the app's queued buffers from the microphone's capture (`audio_capture.h`) after the RECORD_AUDIO check AudioRecord makes (`SpecialAccessStore.holds`). Guest callbacks through `arm64::host_callable`. No http(s) players, effects or MIDI | `native_opensles.cpp` |
 | Microphone (AudioRecord) | WASAPI capture, resampled to the app's format | `native_audio_input.cpp` |

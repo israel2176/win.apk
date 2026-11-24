@@ -1,5 +1,5 @@
-// audio_decode.cpp -- audio_engine.h's decode(): WAV and Ogg Vorbis here,
-// everything else through Media Foundation.
+// audio_decode.cpp -- audio_engine.h's decode(): WAV, Ogg Vorbis and Ogg Opus
+// here, everything else through Media Foundation.
 
 #include "audio_engine.h"
 
@@ -12,6 +12,8 @@
 #include <mfidl.h>
 #include <mfreadwrite.h>
 #include <shlwapi.h>
+
+#include "soft_codecs.h"
 
 extern "C" int stb_vorbis_decode_memory(const unsigned char* mem, int len, int* channels, int* sample_rate,
                                         short** output);
@@ -117,6 +119,68 @@ std::shared_ptr<Clip> decode_vorbis(const uint8_t* d, size_t n) {
     return clip;
 }
 
+// Ogg Opus (RFC 7845; a ".opus" file), which Windows has no decoder for:
+// libopus through soft_codecs.h. The first logical stream's packets are put
+// together from the pages; the OpusHead opens the decoder (which drops its
+// pre-skip) and the last page's granule position trims the end, as a player
+// must.
+std::shared_ptr<Clip> decode_opus(const uint8_t* d, size_t n) {
+    if (n < 4 || std::memcmp(d, "OggS", 4)) return nullptr;
+    std::vector<std::vector<uint8_t>> packets;
+    std::vector<uint8_t> partial;
+    uint32_t serial = 0;
+    bool have_serial = false;
+    int64_t last_granule = -1;
+    for (size_t at = 0; at + 27 <= n && std::memcmp(d + at, "OggS", 4) == 0;) {
+        const uint8_t* page = d + at;
+        const size_t segments = page[26];
+        if (at + 27 + segments > n) break;
+        size_t body = 0;
+        for (size_t i = 0; i < segments; ++i) body += page[27 + i];
+        if (at + 27 + segments + body > n) break;
+        const uint32_t this_serial = le32(page + 14);
+        if (!have_serial) {
+            serial = this_serial;
+            have_serial = true;
+        }
+        if (this_serial == serial) {
+            int64_t granule = 0;
+            for (int i = 7; i >= 0; --i) granule = (granule << 8) | page[6 + i];
+            if (granule >= 0) last_granule = granule;
+            const uint8_t* p = page + 27 + segments;
+            for (size_t i = 0; i < segments; ++i) {
+                const size_t len = page[27 + i];
+                partial.insert(partial.end(), p, p + len);
+                p += len;
+                if (len < 255) {  // the packet ends here; 255 continues it
+                    packets.push_back(std::move(partial));
+                    partial.clear();
+                }
+            }
+        }
+        at += 27 + segments + body;
+    }
+    if (packets.size() < 3 || packets[0].size() < 19 || std::memcmp(packets[0].data(), "OpusHead", 8)) return nullptr;
+    auto dec = video::soft::OpusDecoder::open(packets[0], 0);
+    if (!dec) return nullptr;
+    const int channels = dec->channels();
+    const int pre_skip = le16(&packets[0][10]);
+    auto clip = std::make_shared<Clip>();
+    clip->rate = video::soft::OpusDecoder::kSampleRate;
+    std::vector<float> f;
+    for (size_t i = 2; i < packets.size(); ++i) {  // [1] is OpusTags
+        const std::vector<int16_t> pcm = dec->decode(packets[i].data(), packets[i].size());
+        f.resize(pcm.size());
+        for (size_t s = 0; s < pcm.size(); ++s) f[s] = pcm[s] / 32768.0f;
+        append_stereo(clip.get(), f.data(), pcm.size() / static_cast<size_t>(channels), channels);
+    }
+    // The stream's true length: its final granule position, less the pre-skip.
+    if (last_granule > pre_skip && static_cast<size_t>(last_granule - pre_skip) < clip->frames()) {
+        clip->samples.resize(static_cast<size_t>(last_granule - pre_skip) * 2);
+    }
+    return clip->samples.empty() ? nullptr : clip;
+}
+
 // Media Foundation: MP3, AAC/M4A, WMA, and any codec Windows has installed.
 std::shared_ptr<Clip> decode_mf(const uint8_t* d, size_t n) {
     static const bool started = SUCCEEDED(MFStartup(MF_VERSION, MFSTARTUP_LITE));
@@ -171,6 +235,7 @@ std::shared_ptr<const Clip> decode(const uint8_t* data, size_t size) {
     if (!data || size == 0) return nullptr;
     if (auto c = decode_wav(data, size)) return c;
     if (auto c = decode_vorbis(data, size)) return c;
+    if (auto c = decode_opus(data, size)) return c;
     return decode_mf(data, size);
 }
 

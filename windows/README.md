@@ -280,7 +280,7 @@ Every test is a program built by CMake; `ci.yml` runs each of them on
 | `winapk-webview-urls-test` | The app's `file:` URLs on WebView2 (`host/webview_file_urls.h`): `file:///X` to the file origin `https://winapk-file.example/X` and back (query kept, host without case, a share and web URLs left alone, a look-alike host not the origin); a `loadDataWithBaseURL` page's `file:///` references made the origin's where an attribute, a string or `url(` starts, not in its text; a base's request form; who may read the origin: a `file:` page, the app's data page (`Origin: null`, or its web base), not a web page, a web frame in a `file:` page, nor another origin's CORS request |
 | `winapk-applink-test` | The App Link sign-in window's decision (`host/applink_match.h`): the navigation that returns to the app is the `redirect_uri` without its query, exactly (scheme and host without case, a default port as none); another path, host, port, scheme, a subdomain, userinfo or the address inside a query is not |
 | `winapk-aot-cache-test <scratch dir>` | The arm64 translation's files (`include/winapk/aot_files.h`) in real processes, with `winapk-aot-test-dll.dll` as the translation: a seal against DLLs cut short, emptied, zeroed or changed; eight processes taking, making, putting and loading one cache entry at once (hard links and copies); writers killed at random moments and at each step of a write; broken cache entries deleted and replaced; eviction and replacement while another process has the DLL loaded; the clock (60 days, dates in the future, the size cap); stamps rewritten by four processes while another reads them |
-| `winapk-audio-test <test/audio>` | The WASAPI mixer and the decoders |
+| `winapk-audio-test <test/audio>` | The WASAPI mixer and the decoders: WAV, Ogg Vorbis, Ogg Opus (libopus) and MP3 (skipped under Wine) |
 | `winapk-opensles-test <test/audio>` | libOpenSLES (`host/native_opensles.cpp`) through its exports and vtables, System V, as guest code calls it: the engine and output mix, a buffer-queue player whose callback re-enqueues (position, queue state, stop clears the queue), a 24-bit one, a required interface it lacks, a player destroyed from its own callback, an fd and a file-URI player of `tone.wav` (duration, position, the head-at-end event, paused at the end), an http URI refused, a recorder (realized only where there is a capture device) |
 | `winapk-user-folders-test <dir>` | The shared-storage junction rules |
 | `winapk-window-test` | The window geometry decisions (the letterbox, how a frame is shown) without a window, and the size a window opens at (`host/window_fit.h`: the monitor's scale, made to fit the work area at a whole density), which the launcher's starting window takes too. And the window's input decisions (`host/pointer_input.h`): a client position in the app's box, mirrored or not; the Android pointer stream a touchscreen's contacts become (ids, indices, one MOVE per frame, CANCEL); the pinch a Ctrl+wheel becomes; which characters go out with a key (dead keys, AltGr, surrogate pairs) and what a release sends. `windows/test/java/com/macapk/loader/HostTouchTest.java` reads the resulting multi-pointer `MotionEvent`s back on a JVM (by hand: `javac`/`java` with `android-framework.jar` and `macapk-loader.jar`; no CI step runs it yet) |
@@ -1108,9 +1108,10 @@ the installer's LZMA's estimate:
 | libwebm 1.0.0.31, mkvparser (with libstdc++ parts the runtime has anyway) | 0.19 MB | 0.08 MB |
 | In all, at most | 1.5 MB | 0.6 MB |
 
-They are C without assembly or intrinsics, as Android and the other runtime build them
-for x86-64: libvpx's x86 SIMD and dav1d's AVX2 assembly would make them
-several times faster at about twice the size, and need nasm in the build. Not
+They are C without assembly or intrinsics, as the other runtime builds them (and Android
+builds dav1d for x86-64): libvpx's x86 SIMD and dav1d's AVX2 assembly would
+make them several times faster, at a size not measured here, and need nasm in
+the build. Not
 taken: libhevc (H.265, the other runtime has it): Media Foundation's HEVC decoder comes
 with Microsoft's codec pack, the source has no release tarball to pin, and
 HEVC's patent pool covers a decoder shipped with an app, which the free

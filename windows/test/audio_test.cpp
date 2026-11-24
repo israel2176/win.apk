@@ -1,9 +1,10 @@
 // audio_test.cpp -- winapk-audio-test: the NativeAudio backend without a JVM.
 //
-//   winapk-audio-test <dir with tone.wav, tone.ogg, tone.mp3>
+//   winapk-audio-test <dir with tone.wav, tone.ogg, tone.opus, tone.mp3>
 //
-// The three files are the same half-second 440 Hz tone at ffmpeg's default
-// amplitude of 1/8 (test/audio, made with ffmpeg's sine source). Checks: each
+// The four files are the same half-second 440 Hz tone at ffmpeg's default
+// amplitude of 1/8 (test/audio, made with ffmpeg's sine source; tone.opus is
+// Ogg Opus, which libopus decodes, not Windows). Checks: each
 // decodes to about 0.5 s; an AudioTrack-style stream
 // takes a blocking write, plays it out and reports position and timestamps;
 // a clip voice finishes on time. Without an audio device the mixer keeps time
@@ -59,13 +60,14 @@ void check_decode(const std::string& dir, const char* name, int rate) {
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        std::fprintf(stderr, "usage: winapk-audio-test <dir with tone.wav, tone.ogg, tone.mp3>\n");
+        std::fprintf(stderr, "usage: winapk-audio-test <dir with tone.wav, tone.ogg, tone.opus, tone.mp3>\n");
         return 2;
     }
     const std::string dir = argv[1];
     std::printf("NativeAudio backend\n");
     check_decode(dir, "tone.wav", 16000);
     check_decode(dir, "tone.ogg", 22050);
+    check_decode(dir, "tone.opus", 48000);
     // Wine's Media Foundation needs GStreamer for MP3, which a bare container
     // lacks; Windows always has the decoder.
     if (GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "wine_get_version")) {

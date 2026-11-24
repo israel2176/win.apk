@@ -891,12 +891,14 @@ New bugs found with AOSP views:
   dav1d, libopus and libwebm's mkvparser in `winapk-runtime.exe`, about 1.5 MB
   installed and 0.6 MB in the installer (`windows/README.md` "Footprint").
   `MediaCodec` opens Media Foundation's decoder first and these where it has
-  none or refuses the stream; `MediaExtractor` reads WebM/MKV files.
-  Checked: `winapk-soft-codecs-test` on Linux (ASan) and under Wine, the
+  none or refuses the stream; `MediaExtractor` reads WebM/MKV files;
+  SoundPool and `MediaPlayer`'s audio play Ogg Opus (`.opus`).
+  Checked: `winapk-soft-codecs-test` on Linux (ASan) and under Wine,
+  `winapk-video-test`'s WebM part and `winapk-audio-test` under Wine, the
   wiring compiled with MinGW clang. **Not checked**: an app on real Windows
   (ExoPlayer with a VP9/Opus WebM stream; NewPipe); the speed of the C-only
   decoders at 1080p (decide then whether libvpx's SIMD and dav1d's assembly,
-  about twice the size and nasm in the build, are worth it). **Left**:
+  larger by an amount not measured, and nasm in the build, are worth it). **Left**:
   `MediaPlayer`/`VideoView` (Media Foundation's player alone: no WebM, no
   VP9/AV1 without the codec packs); a WebM from an http(s) URL in
   `MediaExtractor`; Vorbis and FLAC in `MediaCodec` (advertised by
