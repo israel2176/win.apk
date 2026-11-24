@@ -120,6 +120,21 @@ public final class ActivityClientService {
 
     public boolean willActivityBeVisible(IBinder token) { return true; }
 
+    public boolean shouldUpRecreateTask(IBinder token, String destAffinity) {
+        return ask(() -> {
+            Tasks.Record r = tasks().find(token);
+            return r == null || tasks().shouldUpRecreateTask(r, destAffinity);
+        });
+    }
+
+    public boolean navigateUpTo(IBinder token, Intent destIntent, String resolvedType, int resultCode,
+            Intent resultData) {
+        return ask(() -> {
+            Tasks.Record r = tasks().find(token);
+            return r != null && tasks().navigateUpTo(r, destIntent, resultCode, resultData);
+        });
+    }
+
     /** ActivityClientController.onBackPressed: Back at the root activity of a task the launcher
      *  started (ACTION_MAIN, CATEGORY_LAUNCHER) moves the task behind instead of finishing it
      *  (Android 12's behaviour); any other activity is asked to finish (the callback runs

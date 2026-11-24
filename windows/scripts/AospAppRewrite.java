@@ -45,7 +45,10 @@ public class AospAppRewrite {
     /** Natives with nothing behind them here: they answer zero / null / false / nothing. */
     static final Set<String> INERT = Set.of(
             "android/app/ActivityThread.nPurgePendingResources",
-            "android/app/ActivityThread.nInitZygoteChildHeapProfiling");
+            "android/app/ActivityThread.nInitZygoteChildHeapProfiling",
+            // The dynamic linker's warning about the app's native libraries (Activity.performStart
+            // shows it in a dialog on a debuggable build): Win.apk's loader has none to give.
+            "android/app/Activity.getDlWarning");
 
     /** owner.name+desc of a call (static or instance) -> Compat, same name; an instance call passes
      *  the receiver first. What AOSP's app layer calls that Win.apk's classes lack, on the way to a
