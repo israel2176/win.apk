@@ -22,19 +22,17 @@
 //
 // checked() also answers what the InfoBar says about the check, so that the rule is in one place.
 //
-// Beside the tracker, the rules a release and its installer are held to before the installer runs (adapted from
-// the other runtime's updater, below): which release of GitHub's list is offered (pick_release), whether its installer may be
-// downloaded at all (installer_checkable: GitHub's SHA-256 digest of it is required, a size alone is not enough),
-// and whether a downloaded or kept installer may run (judge_setup: its size, its SHA-256, its Authenticode
-// signature and its product version).
-//
-// The release rules are adapted from the other runtime (https://example.invalid/other-runtime),
-// tools/package/other-update.ps1 (ConvertTo-the other runtimeUpdateRelease, Assert-the other runtimeUpdateInstaller),
-// Copyright (C) 2026 its authors, SPDX-License-Identifier: Apache-2.0. Modified for Win.apk.
+// Beside the tracker, the rules a release and its installer are held to before the installer runs: which release
+// of GitHub's list is offered (pick_release), whether its installer may be downloaded at all (installer_checkable:
+// GitHub's SHA-256 digest of it is required, a size alone is not enough), and whether a downloaded or kept
+// installer may run (judge_setup: its size, its SHA-256, its Authenticode signature and its product version). They
+// read the fields GitHub's REST API documents for a release and its assets; the facts about the file on disk are
+// gathered by the launcher (WinVerifyTrust, GetFileVersionInfo, BCrypt's SHA-256).
 
 #pragma once
 
 #include <algorithm>
+#include <cctype>
 #include <cstdint>
 #include <cwctype>
 #include <optional>
@@ -67,56 +65,68 @@ inline int compare_versions(const std::wstring& a, const std::wstring& b) {
     }
     return 0;
 }
-
 // One release of GitHub's list, as far as choosing it goes, with its Win.apk-Setup.exe asset when it has one.
+// The fields are the REST API's ("List releases", GET /repos/{owner}/{repo}/releases): a release's `tag_name`,
+// `draft` and `prerelease`, and of its asset (`assets[]`) `state`, `size` and `digest`.
 struct ListedRelease {
     std::wstring tag;
     bool draft = false, prerelease = false;
     bool asset = false;       // the release has the installer asset
-    std::string asset_state;  // GitHub's "state": "uploaded" once the upload is whole
-    std::string digest;       // GitHub's "digest": "sha256:<64 hex>"
+    std::string asset_state;  // the asset's "state": "uploaded" once whole, "open" while an upload runs
+    std::string digest;       // the asset's "digest": "<algorithm>:<hex>", GitHub's hash of what it stores
     uint64_t size = 0;        // the asset's bytes
 };
 
-// The lower-case hex of a "sha256:<64 hex>" digest; empty when it is not one.
+// The largest installer believed: Win.apk-Setup.exe is a few hundred MB; GitHub takes assets up to 2 GiB.
+constexpr uint64_t kMaxSetupBytes = 2ull << 30;
+
+// The SHA-256 in an asset's digest, as 64 lower-case hex digits; empty when the digest is of another algorithm, or
+// malformed. GitHub writes "sha256:" and lower case; any case is read.
 inline std::string asset_sha256(const std::string& digest) {
-    if (digest.size() != 7 + 64 || digest.compare(0, 7, "sha256:") != 0) return {};
-    std::string hex = digest.substr(7);
-    for (char& c : hex) {
-        if (c >= 'A' && c <= 'F') c = static_cast<char>(c - 'A' + 'a');
-        else if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return {};
+    static const char kPrefix[] = "sha256:";
+    constexpr size_t kPrefixLen = sizeof(kPrefix) - 1;
+    if (digest.size() != kPrefixLen + 64) return {};
+    for (size_t i = 0; i < kPrefixLen; ++i)
+        if (std::tolower(static_cast<unsigned char>(digest[i])) != kPrefix[i]) return {};
+    std::string hex;
+    hex.reserve(64);
+    for (size_t i = kPrefixLen; i < digest.size(); ++i) {
+        const char c = static_cast<char>(std::tolower(static_cast<unsigned char>(digest[i])));
+        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return {};
+        hex += c;
     }
     return hex;
 }
 
-// The largest installer Win.apk downloads: anything bigger is not one of its installers.
-constexpr uint64_t kMaxSetupBytes = 2ull << 30;
-
-// Whether the release's installer may be downloaded: uploaded whole, of a sane size, with GitHub's SHA-256 of it
-// to check the download against. A release without one is still shown, with its page instead of Update.
+// Whether a release's installer may be downloaded at all: it is there, its upload finished, its size is believable,
+// and GitHub gives its SHA-256, which the download is then held to. A size alone proves nothing about the bytes, so
+// a release with no digest (assets uploaded before GitHub kept them) is offered by its page, not downloaded.
 inline bool installer_checkable(const ListedRelease& r) {
-    return r.asset && r.asset_state == "uploaded" && r.size > 0 && r.size <= kMaxSetupBytes &&
-           !asset_sha256(r.digest).empty();
+    if (!r.asset || r.asset_state != "uploaded") return false;
+    if (r.size == 0 || r.size > kMaxSetupBytes) return false;
+    return !asset_sha256(r.digest).empty();
 }
 
-// The release to offer, an index into `list`, or -1: the highest version that is not a draft. Pre-releases count
-// only while the list has no full release: stable builds are offered stable releases, as the other runtime's updater does,
-// but every Win.apk release so far is a pre-release (windows-release.yml publishes with --prerelease), and an
-// updater that skipped them all would never offer anything.
+// The index in `list` of the release to offer, or -1. Drafts never (the API lists them only to the repository's
+// writers, and they are not published). Among the rest, only full releases while there is one, else only
+// pre-releases: a build is never offered a pre-release once a full release exists. The highest version number
+// wins, whatever the list's order (GitHub sorts by creation date, not version); on equal numbers the one listed
+// first, the newer. A tag with no version number is no release.
 inline int pick_release(const std::vector<ListedRelease>& list) {
-    auto usable = [](const ListedRelease& r) { return !r.draft && !version_numbers(r.tag).empty(); };
-    bool any_stable = false;
-    for (const ListedRelease& r : list) any_stable = any_stable || (usable(r) && !r.prerelease);
+    bool any_full = false;
+    for (const ListedRelease& r : list)
+        if (!r.draft && !r.prerelease && !version_numbers(r.tag).empty()) any_full = true;
     int best = -1;
     for (size_t i = 0; i < list.size(); ++i) {
         const ListedRelease& r = list[i];
-        if (!usable(r) || (any_stable && r.prerelease)) continue;
+        if (r.draft || version_numbers(r.tag).empty()) continue;
+        if (any_full && r.prerelease) continue;
         if (best < 0 || compare_versions(r.tag, list[static_cast<size_t>(best)].tag) > 0) best = static_cast<int>(i);
     }
     return best;
 }
 
-// An installer's Authenticode signature, as WinVerifyTrust judged it.
+// An installer's Authenticode signature, as WinVerifyTrust judges it.
 enum class Signature { kUnsigned, kValid, kInvalid };
 
 // What was found of an installer on disk.
@@ -125,7 +135,7 @@ struct SetupFacts {
     std::string sha256;            // lower-case hex
     std::wstring product_version;  // its version resource's ProductVersion string
     Signature signature = Signature::kUnsigned;
-    std::wstring signer;           // the signing certificate's name, when kValid
+    std::wstring signer;           // who signed it, when kValid (the launcher's authenticode())
 };
 
 enum class SetupVerdict {
@@ -141,24 +151,91 @@ enum class SetupVerdict {
 
 inline bool setup_runs(SetupVerdict v) { return v == SetupVerdict::kOk || v == SetupVerdict::kOkUnsigned; }
 
+// A version as written in a tag or a version resource, compared as text: without a leading v and without the
+// blanks and NULs around it (Inno Setup pads ProductVersion with spaces; a resource string may keep its NUL).
+inline std::wstring plain_version(const std::wstring& v) {
+    size_t b = 0, e = v.size();
+    auto blank = [](wchar_t c) { return c == L' ' || c == L'\t' || c == L'\0'; };
+    while (b < e && blank(v[b])) ++b;
+    while (e > b && blank(v[e - 1])) --e;
+    if (b < e && (v[b] == L'v' || v[b] == L'V')) ++b;
+    return v.substr(b, e - b);
+}
+
 // Whether an installer may run as the update to `version`, whose asset GitHub lists with `size` bytes and the
-// SHA-256 `sha256`. `own_signer`: the name on this build's own signature, empty when it has none. A signed build
-// takes only an installer signed by the same name; an unsigned build takes an unsigned installer on its SHA-256,
-// but never one whose signature is broken. Inno Setup pads ProductVersion with spaces; they are not part of it.
+// SHA-256 `sha256`. `own_signer`: who signed this build, empty when nobody did. The checks go from the cheapest
+// to the one that matters most for trust: the size (a cut-off download), the SHA-256 (the very bytes GitHub
+// serves), the signature (a broken one is refused even by an unsigned build; a signed build takes only its own
+// signer's), then the version inside (an older installer replayed under a newer release's name). The version is
+// compared as text, suffix and all: 0.9.0-preview is not 0.9.0.
 inline SetupVerdict judge_setup(const SetupFacts& f, uint64_t size, const std::string& sha256,
                                 const std::wstring& version, const std::wstring& own_signer) {
-    if (f.size != size || size == 0) return SetupVerdict::kSize;
+    if (size == 0 || f.size != size) return SetupVerdict::kSize;
     if (sha256.size() != 64 || f.sha256 != sha256) return SetupVerdict::kDigest;
     if (f.signature == Signature::kInvalid) return SetupVerdict::kBadSignature;
-    if (!own_signer.empty() && f.signature != Signature::kValid) return SetupVerdict::kNotSigned;
-    if (!own_signer.empty() && f.signer != own_signer) return SetupVerdict::kSignerChanged;
-    std::wstring pv = f.product_version;
-    while (!pv.empty() && (pv.back() == L' ' || pv.back() == L'\0')) pv.pop_back();
-    if (!pv.empty() && (pv[0] == L'v' || pv[0] == L'V')) pv.erase(0, 1);
-    std::wstring want = version;
-    if (!want.empty() && (want[0] == L'v' || want[0] == L'V')) want.erase(0, 1);
-    if (want.empty() || pv != want) return SetupVerdict::kVersion;
+    if (!own_signer.empty()) {
+        if (f.signature != Signature::kValid) return SetupVerdict::kNotSigned;
+        if (f.signer != own_signer) return SetupVerdict::kSignerChanged;
+    }
+    const std::wstring want = plain_version(version);
+    if (want.empty() || plain_version(f.product_version) != want) return SetupVerdict::kVersion;
     return f.signature == Signature::kValid ? SetupVerdict::kOk : SetupVerdict::kOkUnsigned;
+}
+
+// What a response's body must come to, so that a download cut off is never kept as whole (the launcher's
+// http_get, for every download). From HTTP's framing rules (RFC 9110 section 8.6, RFC 9112 section 6.3):
+//   - with a Transfer-Encoding the body is framed by it (chunked: WinHTTP fails the read of a body cut short) and
+//     any Content-Length is ignored;
+//   - Content-Length is one or more decimal digits; a header repeated, or a list, counts only when every value is
+//     the same number, and anything else makes the response unusable (a recipient must not guess);
+//   - a body under a Content-Encoding other than identity that the client inflates (`decoded`) comes to some other
+//     number of bytes than the length, which then counts for nothing.
+struct BodyLength {
+    enum Kind { kUnknown, kExact, kBroken } kind = kUnknown;
+    uint64_t bytes = 0;  // when kExact
+    bool exact() const { return kind == kExact; }
+    // Whether `got` bytes are the whole body.
+    bool whole(uint64_t got) const { return kind == kUnknown || (kind == kExact && got == bytes); }
+};
+
+inline BodyLength expected_body(const std::wstring& content_length, const std::wstring& content_encoding,
+                                const std::wstring& transfer_encoding, bool decoded) {
+    auto trim = [](const std::wstring& s, size_t b, size_t e) {
+        while (b < e && (s[b] == L' ' || s[b] == L'\t')) ++b;
+        while (e > b && (s[e - 1] == L' ' || s[e - 1] == L'\t')) --e;
+        return s.substr(b, e - b);
+    };
+    BodyLength out;
+    if (!trim(transfer_encoding, 0, transfer_encoding.size()).empty()) return out;
+    if (trim(content_length, 0, content_length.size()).empty()) return out;
+    bool first = true;
+    uint64_t n = 0;
+    for (size_t b = 0; b <= content_length.size();) {
+        size_t e = content_length.find(L',', b);
+        if (e == std::wstring::npos) e = content_length.size();
+        const std::wstring v = trim(content_length, b, e);
+        uint64_t x = 0;
+        bool ok = !v.empty() && v.size() <= 19;  // 19 digits always fit in 64 bits
+        for (size_t i = 0; ok && i < v.size(); ++i) {
+            ok = v[i] >= L'0' && v[i] <= L'9';
+            x = x * 10 + static_cast<unsigned>(v[i] - L'0');
+        }
+        if (!ok || (!first && x != n)) {
+            out.kind = BodyLength::kBroken;
+            return out;
+        }
+        n = x;
+        first = false;
+        b = e + 1;
+    }
+    const std::wstring encoding = trim(content_encoding, 0, content_encoding.size());
+    bool identity = encoding.size() == 8;
+    for (size_t i = 0; identity && i < 8; ++i)
+        identity = static_cast<wchar_t>(std::towlower(encoding[i])) == L"identity"[i];
+    if (decoded && !encoding.empty() && !identity) return out;
+    out.kind = BodyLength::kExact;
+    out.bytes = n;
+    return out;
 }
 
 // One check's result, as its thread reports it.

@@ -12,8 +12,9 @@
 // InfoBar says of it (once per release); a failed check keeps a newer version found before; the
 // download's progress. The release offered (never a draft; a pre-release only while there is no full release),
 // an installer downloaded only with GitHub's SHA-256 of it, and run only at the release's size, SHA-256, version
-// and signer. The Store's signed index (launcher/signed_jar.h): the jar's directory, its one-signer layout and its
-// manifests' digests (the signature itself is checked under Windows, against f-droid.org's real index-v1.jar).
+// and signer; a download's body kept only at the length HTTP announced. The Store's signed index
+// (launcher/signed_jar.h): the jar's directory, its one-signer layout and its manifests' digests (the signature
+// itself is checked under Windows, against f-droid.org's real index-v1.jar).
 // The Threads window (launcher/debug_threads.h, include/winapk/debug_protocol.h): an agent's answer
 // survives its own writer and a cut-off reply; every thread Windows lists is a row with or without an
 // agent, and the agent's extra threads are rows too; CPU shares, the search and a sort that holds still.
@@ -506,18 +507,24 @@ void test_updates() {
     }
 }
 
-// The rules a release and its installer are held to (updates.h, after the other runtime's updater).
+// The rules a release, its installer and a download's body are held to (updates.h): GitHub's release fields, the
+// file's facts, HTTP's framing.
 void test_update_integrity() {
     using namespace winapk::launcher;
     std::printf("the release and its installer\n");
     check("versions: v0.10.0 > 0.9.1, 0.2 = 0.2.0, the suffix not counted",
           compare_versions(L"v0.10.0", L"0.9.1") > 0 && compare_versions(L"0.2", L"0.2.0") == 0 &&
               compare_versions(L"0.3.0-preview", L"0.3.0") == 0 && version_numbers(L"preview").empty());
+
     const std::string hex(64, 'a');
-    check("a digest is sha256: and 64 hex digits, upper case taken",
+    check("a digest: sha256: and 64 hex digits, read in any case, given in lower case",
           asset_sha256("sha256:" + hex) == hex && asset_sha256("sha256:" + std::string(64, 'A')) == hex &&
-              asset_sha256("sha1:" + hex).empty() && asset_sha256("sha256:" + hex.substr(1)).empty() &&
-              asset_sha256("sha256:" + std::string(63, 'a') + "g").empty() && asset_sha256("").empty());
+              asset_sha256("SHA256:" + hex) == hex);
+    check("another algorithm, a digit short or long, a letter past f, nothing: no SHA-256",
+          asset_sha256("sha1:" + hex).empty() && asset_sha256("sha512:" + hex).empty() &&
+              asset_sha256("sha256:" + hex.substr(1)).empty() && asset_sha256("sha256:" + hex + "a").empty() &&
+              asset_sha256("sha256:" + std::string(63, 'a') + "g").empty() && asset_sha256("sha256:").empty() &&
+              asset_sha256("").empty() && asset_sha256(" sha256:" + hex.substr(1)).empty());
 
     auto rel = [&](const wchar_t* tag, bool draft, bool pre) {
         ListedRelease r;
@@ -530,33 +537,52 @@ void test_update_integrity() {
         r.size = 1000;
         return r;
     };
-    check("an installer with GitHub's SHA-256, uploaded whole: downloaded", installer_checkable(rel(L"v1", 0, 0)));
+    check("an installer uploaded whole, of a believable size, with GitHub's SHA-256: downloaded",
+          installer_checkable(rel(L"v1", 0, 0)));
     {
         ListedRelease r = rel(L"v1", 0, 0);
         r.digest.clear();
-        check("no SHA-256: not downloaded, even with its size", !installer_checkable(r));
+        check("no digest: not downloaded, its size known or not", !installer_checkable(r));
+        r.digest = "sha1:" + std::string(40, 'a');
+        check("a digest of another algorithm: not downloaded", !installer_checkable(r));
         r = rel(L"v1", 0, 0);
-        r.asset_state = "starter";
-        check("an upload not finished: not downloaded", !installer_checkable(r));
+        r.asset_state = "open";
+        check("an upload still running: not downloaded", !installer_checkable(r));
+        r.asset_state.clear();
+        check("no state at all: not downloaded", !installer_checkable(r));
         r = rel(L"v1", 0, 0);
         r.size = 0;
-        check("no size: not downloaded", !installer_checkable(r));
+        check("a size of 0: not downloaded", !installer_checkable(r));
+        r.size = kMaxSetupBytes;
+        check("the largest size believed: downloaded", installer_checkable(r));
         r.size = kMaxSetupBytes + 1;
-        check("larger than any installer: not downloaded", !installer_checkable(r));
+        check("past it: not downloaded", !installer_checkable(r));
         r = rel(L"v1", 0, 0);
         r.asset = false;
-        check("no installer at all: nothing to download", !installer_checkable(r));
+        check("no installer asset: nothing to download", !installer_checkable(r));
     }
+
     check("an empty list offers nothing", pick_release({}) == -1);
-    check("the highest version, not the first listed",
+    check("the highest version wins, wherever it is listed",
           pick_release({rel(L"v0.8.0", 0, 0), rel(L"v0.10.0", 0, 0), rel(L"v0.9.0", 0, 0)}) == 1);
-    check("a draft never", pick_release({rel(L"v0.8.0", 0, 0), rel(L"v0.9.0", 1, 0)}) == 0 &&
-                               pick_release({rel(L"v0.9.0", 1, 0)}) == -1);
-    check("pre-releases only: the highest is offered (every release so far is one)",
+    check("equal numbers: the one listed first (GitHub lists the newest first)",
+          pick_release({rel(L"v1.0.0", 0, 0), rel(L"1.0", 0, 0)}) == 0);
+    check("never a draft, even the highest", pick_release({rel(L"v0.8.0", 0, 0), rel(L"v0.9.0", 1, 0)}) == 0 &&
+                                                pick_release({rel(L"v0.9.0", 1, 0)}) == -1);
+    check("only pre-releases: the highest of them",
           pick_release({rel(L"v0.7.0", 0, 1), rel(L"v0.8.0", 0, 1)}) == 1);
-    check("with a full release listed, a newer pre-release is not offered",
-          pick_release({rel(L"v1.1.0-beta", 0, 1), rel(L"v1.0.0", 0, 0)}) == 1);
-    check("a tag that is no version is not a release", pick_release({rel(L"nightly", 0, 0)}) == -1);
+    check("a full release listed: no pre-release, newer or not",
+          pick_release({rel(L"v1.1.0-beta", 0, 1), rel(L"v1.0.0", 0, 0)}) == 1 &&
+              pick_release({rel(L"v2.0.0", 0, 1), rel(L"v0.1.0", 0, 0), rel(L"v0.9.0", 0, 1)}) == 1);
+    check("a full release that is a draft does not hide the pre-releases",
+          pick_release({rel(L"v1.0.0", 1, 0), rel(L"v0.9.0", 0, 1)}) == 1);
+    check("a full release whose tag is no version does not hide them either",
+          pick_release({rel(L"nightly", 0, 0), rel(L"v0.9.0", 0, 1)}) == 1);
+    check("a tag that is no version is never offered", pick_release({rel(L"nightly", 0, 0)}) == -1);
+
+    check("a version as text: no v, no padding, no NUL",
+          plain_version(L"v0.9.0") == L"0.9.0" && plain_version(L"  0.9.0-preview   ") == L"0.9.0-preview" &&
+              plain_version(std::wstring(L"1.0\0", 4)) == L"1.0" && plain_version(L"   ").empty());
 
     SetupFacts f;
     f.size = 1000;
@@ -564,35 +590,80 @@ void test_update_integrity() {
     f.product_version = L"0.9.0-preview   ";  // Inno Setup pads it
     f.signature = Signature::kUnsigned;
     const std::wstring v = L"0.9.0-preview";
-    check("unsigned build, unsigned installer of the right size, SHA-256 and version: runs, said unsigned",
+    check("unsigned build, unsigned installer of the release's size, SHA-256 and version: runs, said unsigned",
           judge_setup(f, 1000, hex, v, L"") == SetupVerdict::kOkUnsigned && setup_runs(SetupVerdict::kOkUnsigned));
-    check("the version may be asked as the tag", judge_setup(f, 1000, hex, L"v0.9.0-preview", L"") ==
-                                                     SetupVerdict::kOkUnsigned);
-    check("cut off or longer: refused", judge_setup(f, 999, hex, v, L"") == SetupVerdict::kSize &&
-                                            !setup_runs(SetupVerdict::kSize));
+    check("the version asked as the tag", judge_setup(f, 1000, hex, L"v0.9.0-preview", L"") ==
+                                              SetupVerdict::kOkUnsigned);
+    check("shorter or longer than the release's asset: refused",
+          judge_setup(f, 999, hex, v, L"") == SetupVerdict::kSize &&
+              judge_setup(f, 1001, hex, v, L"") == SetupVerdict::kSize && !setup_runs(SetupVerdict::kSize));
+    check("the size is judged first: a wrong size with a wrong SHA-256 says size",
+          judge_setup(f, 999, std::string(64, 'b'), v, L"") == SetupVerdict::kSize);
+    check("an asset of no size never matches", [&] {
+        SetupFacts e = f;
+        e.size = 0;
+        return judge_setup(e, 0, hex, v, L"") == SetupVerdict::kSize;
+    }());
     check("another SHA-256: refused", judge_setup(f, 1000, std::string(64, 'b'), v, L"") == SetupVerdict::kDigest);
-    check("no SHA-256 to check against: refused", judge_setup(f, 1000, "", v, L"") == SetupVerdict::kDigest);
+    check("no SHA-256 to hold it to: refused", judge_setup(f, 1000, "", v, L"") == SetupVerdict::kDigest);
     {
         SetupFacts g = f;
         g.product_version = L"0.8.0";
         check("another version inside: refused", judge_setup(g, 1000, hex, v, L"") == SetupVerdict::kVersion);
+        g.product_version = L"0.9.0";
+        check("the same numbers without the suffix: refused",
+              judge_setup(g, 1000, hex, v, L"") == SetupVerdict::kVersion);
         g.product_version.clear();
         check("no version inside: refused", judge_setup(g, 1000, hex, v, L"") == SetupVerdict::kVersion);
+        check("no version asked: refused", judge_setup(f, 1000, hex, L"", L"") == SetupVerdict::kVersion);
         g = f;
         g.signature = Signature::kInvalid;
-        check("a broken signature: refused, signed build or not",
+        check("a broken signature: refused, by a signed build or not",
               judge_setup(g, 1000, hex, v, L"") == SetupVerdict::kBadSignature &&
-                  judge_setup(g, 1000, hex, v, L"Win.apk") == SetupVerdict::kBadSignature);
+                  judge_setup(g, 1000, hex, v, L"CN=Win.apk | CN=CA") == SetupVerdict::kBadSignature);
         g = f;
         g.signature = Signature::kValid;
-        g.signer = L"Win.apk";
-        check("signed, unsigned build: runs", judge_setup(g, 1000, hex, v, L"") == SetupVerdict::kOk);
-        check("signed by this build's signer: runs", judge_setup(g, 1000, hex, v, L"Win.apk") == SetupVerdict::kOk);
+        g.signer = L"CN=Win.apk | CN=CA";
+        check("signed, by an unsigned build: runs", judge_setup(g, 1000, hex, v, L"") == SetupVerdict::kOk);
+        check("signed by this build's signer: runs",
+              judge_setup(g, 1000, hex, v, L"CN=Win.apk | CN=CA") == SetupVerdict::kOk);
+        check("the same name from another authority: refused",
+              judge_setup(g, 1000, hex, v, L"CN=Win.apk | CN=Other CA") == SetupVerdict::kSignerChanged);
         check("signed by another: refused",
-              judge_setup(g, 1000, hex, v, L"Someone else") == SetupVerdict::kSignerChanged);
-        check("signed build, unsigned installer: refused",
-              judge_setup(f, 1000, hex, v, L"Win.apk") == SetupVerdict::kNotSigned);
+              judge_setup(g, 1000, hex, v, L"CN=Someone else | CN=CA") == SetupVerdict::kSignerChanged);
+        check("a signed build, an unsigned installer: refused",
+              judge_setup(f, 1000, hex, v, L"CN=Win.apk | CN=CA") == SetupVerdict::kNotSigned);
+        g.product_version = L"0.8.0";
+        check("signed as it should be but another version inside: refused",
+              judge_setup(g, 1000, hex, v, L"CN=Win.apk | CN=CA") == SetupVerdict::kVersion);
     }
+
+    std::printf("a download's body\n");
+    auto body = [](const wchar_t* length, const wchar_t* encoding = L"", const wchar_t* transfer = L"") {
+        return expected_body(length, encoding, transfer, true);
+    };
+    check("no Content-Length: any length is whole", body(L"").kind == BodyLength::kUnknown && body(L"").whole(5));
+    check("a Content-Length: exactly that many bytes",
+          body(L"1000").exact() && body(L"1000").bytes == 1000 && body(L"1000").whole(1000) &&
+              !body(L"1000").whole(999) && !body(L"1000").whole(1001));
+    check("past 4 GB", body(L"5000000000").exact() && body(L"5000000000").bytes == 5000000000ull);
+    check("a repeated header of one value counts; of two, the response is broken",
+          body(L"1000, 1000").exact() && body(L"1000, 1000").bytes == 1000 &&
+              body(L"1000, 999").kind == BodyLength::kBroken && !body(L"1000, 999").whole(1000));
+    check("a value that is no number, signed, empty in a list or too long: broken",
+          body(L"abc").kind == BodyLength::kBroken && body(L"-1").kind == BodyLength::kBroken &&
+              body(L"+1").kind == BodyLength::kBroken && body(L"1000,").kind == BodyLength::kBroken &&
+              body(L"12 34").kind == BodyLength::kBroken &&
+              body(L"99999999999999999999").kind == BodyLength::kBroken);
+    check("padding around it is not part of it", body(L" 1000 ").exact() && body(L" 1000 ").bytes == 1000);
+    check("an encoding the client inflates: the length counts for nothing",
+          body(L"1000", L"gzip").kind == BodyLength::kUnknown && body(L"1000", L"gzip").whole(3000));
+    check("identity is no encoding", body(L"1000", L"Identity").exact());
+    check("an encoding left as it came: the length holds",
+          expected_body(L"1000", L"gzip", L"", false).exact());
+    check("a Transfer-Encoding frames the body: the length is ignored, broken or not",
+          body(L"1000", L"", L"chunked").kind == BodyLength::kUnknown &&
+              body(L"1000, 5", L"", L"chunked").kind == BodyLength::kUnknown);
 }
 
 // A zip of stored entries, as a jar holds them, for the signed index's layout rules (signed_jar.h).

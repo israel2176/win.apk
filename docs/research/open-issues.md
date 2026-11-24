@@ -787,7 +787,7 @@ New bugs found with AOSP views:
   `SL_RESULT` refusals. Not done, as in the other runtime: http(s) URI players, effects
   (reverb, equalizer, virtualizer), playback rate, MIDI, the prefetch
   callback, record markers.
-- **Download integrity (November 2026, from the other runtime's updater): built, partly
+- **Download integrity (November 2026): built, partly
   verified.** The update offers no draft, and a pre-release only while the
   list has no full release; downloads the installer only with GitHub's
   `sha256:` digest of it (a release without one opens its page); keeps a
@@ -800,8 +800,15 @@ New bugs found with AOSP views:
   Settings > Updates). The Store reads `index-v1.jar`, its JAR signature
   verified against f-droid.org's certificate (SHA-256 `43238d51…c9ccab`,
   `kFdroidSigner`, `launcher/signed_jar.h`), no longer the unsigned
-  `index-v1.json`. *Verified*: `launcher_state_test` (the rules, the jar's
-  layout and manifests); under Wine, `verify_signed_jar` accepts f-droid.org's
+  `index-v1.json`. Rewritten (2026-11-24) from GitHub's REST API and
+  Windows' documentation: the signer is the leaf certificate's subject and
+  issuer as X.500 names (the same name from another authority is refused),
+  WinVerifyTrust fetches nothing from the network, the ProductVersion is read
+  in every language the resource lists, a file of the wrong size is refused
+  before it is hashed, and a response whose Content-Length is malformed or
+  contradictory is refused (RFC 9110; `updates.h` `expected_body`). *Verified*:
+  `launcher_state_test` (the rules, a download's framing, the jar's layout and
+  manifests); under Wine, `verify_signed_jar` accepts f-droid.org's
   real `index-v1.jar` (SHA1 digests) and `entry.jar` (SHA-256) and refuses a
   jar with the index changed or a file added; WinVerifyTrust reports an
   unsigned exe as unsigned and the ProductVersion reads. *Not verified*: on
