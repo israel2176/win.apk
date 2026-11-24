@@ -51,8 +51,18 @@ cp -f "$OUT/lib/android-framework.jar" "$BUILD/java/android-framework.jar"
 # computed against the whole framework).
 DROP="$OUT/.build/aosp-shadowed.txt"
 mkdir -p "$OUT/.build/drop/META-INF"
-for j in aosp-resources aosp-views; do unzip -Z1 "$OUT/lib/$j.jar"; done | grep '\.class$' | sort -u |
-    comm -12 - <(unzip -Z1 "$OUT/lib/android-framework.jar" | sort) > "$DROP"
+# Both listings sorted the same way (LC_ALL=C) and without carriage returns, for comm.
+for j in aosp-resources aosp-views; do unzip -Z1 "$OUT/lib/$j.jar"; done | tr -d '\r' | grep '\.class$' |
+    LC_ALL=C sort -u > "$OUT/.build/aosp-shadowing.txt"
+unzip -Z1 "$OUT/lib/android-framework.jar" | tr -d '\r' | LC_ALL=C sort > "$OUT/.build/framework-entries.txt"
+LC_ALL=C comm -12 "$OUT/.build/aosp-shadowing.txt" "$OUT/.build/framework-entries.txt" > "$DROP"
+echo "[stage] android-framework.jar: $(wc -l < "$DROP") classes AOSP's resources and views shadow, dropped"
+if [[ ! -s "$DROP" ]]; then
+    echo "[stage] none found: the AOSP jars ($(wc -l < "$OUT/.build/aosp-shadowing.txt") classes) and the framework" \
+         "($(wc -l < "$OUT/.build/framework-entries.txt") entries) share no name; first of each:" >&2
+    head -n 3 "$OUT/.build/aosp-shadowing.txt" "$OUT/.build/framework-entries.txt" >&2
+    exit 1
+fi
 zip -q -nw -d "$OUT/lib/android-framework.jar" -@ < "$DROP"
 cp "$DROP" "$OUT/.build/drop/META-INF/winapk-aosp-shadowed.txt"
 ( cd "$OUT/.build/drop" && zip -q -X "$OUT/lib/android-framework.jar" META-INF/winapk-aosp-shadowed.txt )
