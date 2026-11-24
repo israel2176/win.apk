@@ -42,8 +42,7 @@ SOURCES = [
     ("GLES/gl.h", "GL_API", "GL_APIENTRY", "gl"),
     ("EGL/egl.h", "EGLAPI", "EGLAPIENTRY", "egl"),
     # The extensions ANGLE adds beyond the Khronos headers (GL_ANGLE_*,
-    # GL_CHROMIUM_*), forwarded as the other runtime forwards them
-    # (compat/bionic/gen_gl_thunks.py): Skia's GrGLInterface (Flutter) wants
+    # GL_CHROMIUM_*), forwarded like the rest: Skia's GrGLInterface (Flutter) wants
     # glBindUniformLocationCHROMIUM for GL_CHROMIUM_bind_uniform_location,
     # WebRender glProvokingVertexANGLE for GL_ANGLE_provoking_vertex.
     (ANGLE_EXT, "GL_APICALL", "GL_APIENTRY", "gl"),
@@ -123,38 +122,146 @@ EXTENSION_SOURCES = [
 ]
 
 
-def prototypes(path, api, entry):
-    text = open(os.path.join(KHR, path)).read()
-    pat = re.compile(api + r"\s+(.+?)\s*" + entry + r"\s+(\w+)\s*\(([^;]*?)\)\s*;", re.S)
-    for ret, name, params in pat.findall(text):
-        yield " ".join(ret.split()), name, named(" ".join(params.split()))
+# ---- reading the headers ---------------------------------------------------
+#
+# The Khronos and ANGLE headers declare each entry point on its own as
+#
+#     <API macro> <return type> <ENTRY macro> <name> (<parameters>);
+#
+# e.g. `GL_APICALL const GLubyte *GL_APIENTRY glGetString (GLenum name);`, inside `#ifdef GL_GLEXT_PROTOTYPES`
+# blocks and among `typedef ... (GL_APIENTRYP PFN...)` pointer types, which do not start with the API macro. The text
+# is read as C tokens with its comments and preprocessor lines taken out, and a declaration is the tokens from the
+# API macro to the next `;` that have that shape; the return type and the parameters are kept as the header spells
+# them, blanks folded.
+
+C_TOKEN = re.compile(r"[A-Za-z_]\w*|\d\w*|\.\.\.|\S")
+TYPE_WORDS = {"void", "char", "short", "int", "long", "float", "double", "signed", "unsigned", "const", "volatile",
+              "struct", "enum", "union"}
 
 
-# A parameter given only by its type (gl2ext_angle.h's `glLogicOpANGLE (GLenum)`):
-# one type name, maybe const, maybe pointers. (The pattern is the other runtime's, from
-# compat/bionic/gen_gl_thunks.py, Copyright (C) 2026 its authors, Apache-2.0.)
-UNNAMED = re.compile(r"(?:const\s+)?\w+(?:\s*\*\s*(?:const\b)?)*\s*")
-
-
-def named(params):
-    """`params` with a name for each parameter the header leaves unnamed."""
-    if params in ("", "void"):
-        return params
+def code_text(text):
+    """The header without its comments and preprocessor lines (each replaced by
+    blanks, so offsets keep their meaning for the declarations found)."""
     out = []
-    for i, p in enumerate(params.split(",")):
-        p = p.strip()
-        out.append(f"{p} a{i}" if UNNAMED.fullmatch(p) else p)
-    return ", ".join(out)
+    i, n = 0, len(text)
+    line_start = True
+    while i < n:
+        c = text[i]
+        if text.startswith("/*", i):
+            j = text.find("*/", i + 2)
+            j = n if j < 0 else j + 2
+            out.append(re.sub(r"[^\n]", " ", text[i:j]))
+            i = j
+        elif text.startswith("//", i):
+            j = text.find("\n", i)
+            j = n if j < 0 else j
+            out.append(" " * (j - i))
+            i = j
+        elif line_start and c == "#":
+            # A directive runs to the end of its line, and on past a backslash at the end of one.
+            j = i
+            while True:
+                k = text.find("\n", j)
+                if k < 0:
+                    j = n
+                    break
+                if text[k - 1] == "\\":
+                    j = k + 1
+                    continue
+                j = k
+                break
+            out.append(re.sub(r"[^\n]", " ", text[i:j]))
+            i = j
+        else:
+            out.append(c)
+            if c == "\n":
+                line_start = True
+            elif not c.isspace():
+                line_start = False
+            i += 1
+    return "".join(out)
+
+
+def fold(s):
+    return " ".join(s.split())
+
+
+def declarations(text, api, entry):
+    """(return type, name, parameter text) of each entry point declared in
+    `text`, in order; the parameter text is "" for none, `(void)`."""
+    code = code_text(text)
+    toks = [(m.group(), m.start(), m.end()) for m in C_TOKEN.finditer(code)]
+    i = 0
+    while i < len(toks):
+        if toks[i][0] != api:
+            i += 1
+            continue
+        # The declaration's tokens, to its `;`.
+        j = i + 1
+        while j < len(toks) and toks[j][0] != ";":
+            j += 1
+        decl = toks[i + 1:j]
+        i = j + 1
+        at = next((k for k, t in enumerate(decl) if t[0] == entry), None)
+        # API ret... ENTRY name ( params ) ;
+        if at is None or at == 0 or at + 3 > len(decl) or decl[at + 2][0] != "(" or decl[-1][0] != ")":
+            continue
+        name = decl[at + 1][0]
+        if not re.fullmatch(r"[A-Za-z_]\w*", name):
+            continue
+        ret = fold(code[decl[0][1]:decl[at - 1][2]])
+        params = fold(code[decl[at + 2][2]:decl[-1][1]])
+        if params == "void":
+            params = ""
+        yield ret, name, params
+
+
+def split_params(params):
+    """The parameters one by one; commas inside parentheses (a function pointer's
+    own parameters) do not split."""
+    out, depth, cur = [], 0, ""
+    for c in params:
+        if c == "," and depth == 0:
+            out.append(cur.strip())
+            cur = ""
+            continue
+        depth += c == "("
+        depth -= c == ")"
+        cur += c
+    if cur.strip():
+        out.append(cur.strip())
+    return out
+
+
+def param_name(param):
+    """The name a parameter declares, or None when it declares only a type
+    (`GLenum`, `const void *`, `GLuint *const`)."""
+    toks = C_TOKEN.findall(param)
+    if toks and toks[-1] == "]":  # an array: the name is before its bound
+        toks = toks[:toks.index("[")] if "[" in toks else toks
+    if len(toks) < 2:
+        return None
+    last = toks[-1]
+    if not re.fullmatch(r"[A-Za-z_]\w*", last) or last in TYPE_WORDS:
+        return None
+    return last
+
+
+def prototypes(path, api, entry):
+    """(return type, name, parameters) of each entry point of a header, every
+    parameter named: one declared by type only gets a0, a1... by its place, so
+    a forwarder can pass it on."""
+    text = open(os.path.join(KHR, path)).read()
+    for ret, name, params in declarations(text, api, entry):
+        parts = split_params(params)
+        for k, p in enumerate(parts):
+            if param_name(p) is None:
+                parts[k] = p + ("" if p.endswith("*") else " ") + f"a{k}"
+        yield ret, name, ", ".join(parts)
 
 
 def arg_names(params):
-    if params in ("", "void"):
-        return []
-    names = []
-    for p in params.split(","):
-        m = re.search(r"(\w+)\s*(\[\s*\w*\s*\])?\s*$", p.strip())
-        names.append(m.group(1))
-    return names
+    return [param_name(p) for p in split_params(params)]
 
 
 def extensions(path, api, entry, prefix):
@@ -163,11 +270,10 @@ def extensions(path, api, entry, prefix):
     `#endif /* NAME */`: gl2ext_angle.h leaves some unnamed or misnamed)."""
     text = open(os.path.join(KHR, path)).read()
     start = re.compile(r"^#ifndef (" + prefix + r"_\w+)[ \t]*\n#define \1 1[ \t]*$", re.M)
-    proto = re.compile(api + r"\s+.+?\s*" + entry + r"\s+(\w+)\s*\(", re.S)
     marks = list(start.finditer(text))
     for i, m in enumerate(marks):
         end = marks[i + 1].start() if i + 1 < len(marks) else len(text)
-        yield m.group(1), proto.findall(text[m.end():end])
+        yield m.group(1), [name for _, name, _ in declarations(text[m.end():end], api, entry)]
 
 
 def takes_callback(ret, params):
