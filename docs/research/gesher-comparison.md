@@ -1,5 +1,8 @@
 # Win.apk and the other runtime: what each can give the other (2026-11-23)
 
+The sections below compare code only. To compare the two running, see
+[Running both](#running-both-comparisonyml) at the end.
+
 the other runtime (https://example.invalid/other-runtime, read at 52513f0) runs real ART ported to Windows,
 Android 16's own framework.jar, HWUI+Skia on ANGLE, real Binder with servicemanager and its own system
 server, and microG. Read-only comparison (code and docs; nothing of the other runtime was built or run here).
@@ -114,3 +117,51 @@ itself where the other runtime's icon handler runs its runtime per file), and ap
 added: Windows' proxy setting is the one place, as a phone's network settings are.
 Imported since too: the other runtime's UI Automation accessibility bridge (`windows/host/uia_provider.cpp`,
 `HostAccessibility.java`; providers answer from a snapshot the main thread publishes).
+
+## Running both (`comparison`)
+
+`.github/workflows/comparison` (Actions, "comparison", Run workflow; by hand only, gates
+nothing) runs the same apps in both runtimes on one `windows-latest` runner per app. Inputs: `apps`
+(packages of `.github/compare/apps.txt`, empty for all, or `package:versionCode|latest` for others),
+`seconds` per run (60), `display` (360x640 dp) and `other` (a release tag, `latest`, or `ci`).
+
+- **Win.apk**: the branch's newest CI `runtime-stage` (`.github/probe/stage.sh`, as the app probe),
+  with its own JRE, run as the launcher runs it: `winapk-runtime --apk <apk> --data <dir>`, after
+  `--install-only`; `WINAPK_PHONE_SIZE=<display>`.
+- **the other runtime**: `other-setup-<version>.exe` and `SHA256SUMS.txt` of its newest public release (what
+  `publish-release.yml` publishes, `tools/ci/publish_release.py`; GitHub's "latest", no drafts or
+  pre-releases), checked against each other (`.github/compare/other_fetch.sh`). With no release, the
+  same two files from the `other-setup` artifact of its newest green `ci.yml` run on `main` (the
+  installer its e2e job tests). Installed as its e2e installs it (`/VERYSILENT /SUPPRESSMSGBOXES
+  /NORESTART`, default tasks), then `other-app install <apk>` and `other-app launch <package> --window`
+  (the Start menu shortcut's command, `tools/package/other-app.ps1`), `OTHER_DISPLAY=<display>@160`.
+  Nothing of the other runtime is built or changed.
+- **Apps** (`.github/compare/apps.txt`, F-Droid, version and SHA-256 pinned): Java views (Editor,
+  Currency), Kotlin views (Fossify Notes), Compose (Jerboa), Flutter (LocalSend), React Native (Jitsi
+  Meet), a WebView shell (Jellyfin), JNI C on a Canvas (Puzzles), libGDX (Klooni), SDL2 (Tensy),
+  NativeActivity (PPSSPP), arm64-only (OpenSudoku). Editor, Currency and Puzzles are in the other runtime's own
+  e2e set with the same SHA-256. F-Droid has no bundles, so bundle installs are not compared.
+
+Per app the job installs, then runs **cold** (nothing of the runtime running: the other runtime's device shut
+down after the install started it) and **warm** (again right after the cold run closed: the other runtime's
+device still up, as within its 600 s idle timeout; Win.apk with the class-data archive and arm64
+translations its first run left). Which runtime goes first alternates from app to app, so neither
+always meets the colder disk cache. Both are on C: (the other runtime installs per user there and wants the APK
+on its drive), both get the same window size, the same seconds and the same measuring script,
+`.github/compare/measure.ps1`. The table (`compare.md`, `compare.json`, the job summary; per app
+screenshots and logs in `compare-<package>`) has, cold / warm:
+
+| Column | What |
+|---|---|
+| Installs | The install command's exit 0 (the other runtime: and its "installed <package>" line, as its e2e checks) and its seconds |
+| Draws (cold) | At the end of the cold run, the app's window (the largest visible window of the run's processes) read back with PrintWindow and from the screen: the larger share of pixels away from its most common color; "yes" from 0.5%, the other runtime's e2e threshold. "exited" when the runtime ended by itself |
+| First frame | Seconds from the launch command to the runtime's own first-frame log line (Win.apk `[win.apk] first frame presented`; the other runtime `first frame drawn (N presented)`) |
+| First non-blank | Seconds to the first 1-second sample whose window read back non-blank: the same measure for both, coarser |
+| Peak MB | The highest sum, over 1-second samples, of the working sets of every process whose image is in the runtime's folder and of their descendants (WebView2's included). the other runtime's device processes count; its waiting launcher (the `com.other.app.Launcher` VM, which a Start menu launch detaches and ends) is kept apart as `peak_launcher_mb` in the JSON |
+| Idle CPU % | The same processes' CPU time over the last 30 s of the run, in % of one core; empty when the app ended before |
+| Closes on WM_CLOSE | The launch command ended within 20 s of WM_CLOSE to the app's windows |
+
+What stays unequal: an app whose manifest fixes landscape turns in Win.apk and not in
+the other runtime (it does not rotate windows yet); the other runtime's cold start boots its device, Win.apk has none; the
+runner's screen is at 100%, so 1 dp is 1 pixel in both. Nobody uses the apps: a drawn first screen
+is not a working app.
