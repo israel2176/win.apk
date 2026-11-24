@@ -4521,9 +4521,70 @@ public class ViewGroup extends View implements ViewParent, ViewManager {
         requestLayout();
     }
 
-    // No cross-process a11y connection; AOSP populates the array from children
-    // that are important for accessibility, which for us collapses to nothing.
-    public void addChildrenForAccessibility(java.util.ArrayList<View> outChildren) { }
+    /** AOSP ViewGroup.addChildrenForAccessibility (android-14): the children a screen reader
+     *  reads (com.macapk.loader.HostAccessibility), in reading order -- each visible child that is
+     *  important for accessibility, else its own such children in its place. */
+    public void addChildrenForAccessibility(java.util.ArrayList<View> outChildren) {
+        if (getAccessibilityNodeProvider() != null) return;
+        java.util.List<View> children = childrenInAccessibilityOrder();
+        for (int i = 0; i < children.size(); i++) {
+            View child = children.get(i);
+            if (child.getVisibility() == VISIBLE) {
+                if (child.includeForAccessibility()) {
+                    outChildren.add(child);
+                } else {
+                    child.addChildrenForAccessibility(outChildren);
+                }
+            }
+        }
+    }
+
+    /** AOSP ChildListForAccessibility.obtain(parent, true): the children sorted by
+     *  ViewLocationHolder, top to bottom in stripes, then from the start edge (the left, or the
+     *  right in a right-to-left layout), then the larger first; a sort the comparison cannot
+     *  order (IllegalArgumentException) falls back to plain location order, as AOSP's does. */
+    private java.util.List<View> childrenInAccessibilityOrder() {
+        final int count = getChildCount();
+        java.util.ArrayList<View> children = new java.util.ArrayList<>(count);
+        java.util.ArrayList<Object[]> holders = new java.util.ArrayList<>(count);
+        final boolean rtl = getLayoutDirection() == LAYOUT_DIRECTION_RTL;
+        for (int i = 0; i < count; i++) {
+            View child = getChildAt(i);
+            android.graphics.Rect location = new android.graphics.Rect();
+            child.getDrawingRect(location);
+            offsetDescendantRectToMyCoords(child, location);
+            holders.add(new Object[] {child, location});
+        }
+        try {
+            holders.sort((a, b) -> compareForAccessibility(a, b, rtl, true));
+        } catch (IllegalArgumentException e) {
+            holders.sort((a, b) -> compareForAccessibility(a, b, rtl, false));
+        }
+        for (Object[] h : holders) children.add((View) h[0]);
+        return children;
+    }
+
+    /** AOSP ViewLocationHolder.compareBoundsOfTree, without its descent into the children (a
+     *  stable sort keeps the drawing order for the ties it would break). */
+    private static int compareForAccessibility(Object[] a, Object[] b, boolean rtl, boolean stripes) {
+        android.graphics.Rect l1 = (android.graphics.Rect) a[1], l2 = (android.graphics.Rect) b[1];
+        if (stripes) {
+            if (l1.bottom - l2.top <= 0) return -1;  // the first is above the second
+            if (l1.top - l2.bottom >= 0) return 1;   // the first is below the second
+        }
+        if (!rtl) {
+            final int left = l1.left - l2.left;
+            if (left != 0) return left;
+        } else {
+            final int right = l1.right - l2.right;
+            if (right != 0) return -right;
+        }
+        final int top = l1.top - l2.top;
+        if (top != 0) return top;
+        final int height = l1.height() - l2.height();
+        if (height != 0) return -height;
+        return -(l1.width() - l2.width());
+    }
 
     // No ActionMode host in the Mac.apk window; AOSP returns null when no
     // ancestor starts one, which is our state.
