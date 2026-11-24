@@ -33,7 +33,6 @@
 package com.macapk.loader;
 
 import android.app.Application;
-import android.app.ServiceRegistry;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
@@ -304,7 +303,7 @@ public final class SystemClient {
                 // ActivityThread.handleServiceArgs: on the main looper; the
                 // broker does not wait for onStartCommand.
                 new Handler(Looper.getMainLooper()).post(() -> {
-                    try { ServiceRegistry.start(sApp, intent, false); }
+                    try { sApp.startService(intent); }
                     catch (Throwable t) { NativeLog.w(TAG, "start " + intent + " threw " + t); }
                 });
                 reply.writeNoException();
@@ -315,7 +314,7 @@ public final class SystemClient {
                 final Intent intent = data.readTypedObject(Intent.CREATOR);
                 // Context.stopService in the process that hosts the service.
                 boolean stopped = false;
-                try { stopped = ServiceRegistry.stop(intent); }
+                try { stopped = sApp.stopService(intent); }
                 catch (Throwable t) { NativeLog.w(TAG, "stop " + intent + " threw " + t); }
                 reply.writeNoException();
                 reply.writeInt(stopped ? 1 : 0);
@@ -333,11 +332,16 @@ public final class SystemClient {
             final AtomicReference<Throwable> err = new AtomicReference<>();
             final CountDownLatch done = new CountDownLatch(1);
             // ActivityThread.handleBindService: on the main looper.
-            new Handler(Looper.getMainLooper()).post(() -> {
-                try { out.set(ServiceRegistry.bind(sApp, intent)); }
+            // ActivityThread.handleBindService through the activity manager, which waits for the
+            // service's binder (this is the broker's binder thread, not the main one).
+            new Thread(() -> {
+                try {
+                    com.macapk.loader.app.AppHost host = com.macapk.loader.app.AppHost.get();
+                    out.set(host != null ? host.bindServiceNow(intent) : null);
+                }
                 catch (Throwable t) { err.set(t); }
                 finally { done.countDown(); }
-            });
+            }, "broker-bind").start();
             try {
                 if (!done.await(60, TimeUnit.SECONDS)) {
                     throw new IllegalStateException("bind of " + intent.getComponent() + " timed out on the main looper");

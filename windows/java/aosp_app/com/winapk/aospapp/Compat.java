@@ -291,4 +291,10 @@ public final class Compat {
             return false;
         }
     }
+
+    /** TextUtils.formatSimple (Win.apk's TextUtils lacks it): String.format's %s, %d, %b, %x, %c,
+     *  which is all formatSimple supports. */
+    public static String formatSimple(String format, Object... args) {
+        return String.format(java.util.Locale.ROOT, format, args);
+    }
 }

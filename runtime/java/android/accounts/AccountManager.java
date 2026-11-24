@@ -1243,7 +1243,7 @@ public class AccountManager {
     // Activity and keeps waiting for the real answer, and onError maps CANCELED /
     // USER_RESTRICTED / MANAGEMENT_DISABLED to a cancel and the rest through
     // convertErrorToException (:2614). The app hosts its own authenticator here, so the "bind"
-    // is ServiceRegistry.bind on the main thread (Service lifecycle runs there) and the call is
+    // is AppHost.bindServiceNow (the Service's lifecycle runs on the main thread) and the call is
     // direct; the authenticator's Transport behaviour (a non-null return IS the result, an
     // exception goes through handleException) is reproduced in runSession.
 
@@ -1483,18 +1483,10 @@ public class AccountManager {
         final Context ctx = appContext();
         if (ctx == null || service == null) return null;
         final Intent bind = new Intent(ACTION_AUTHENTICATOR_INTENT).setComponent(service);
-        java.util.concurrent.Callable<android.os.IBinder> doBind =
-                () -> android.app.ServiceRegistry.bind(ctx, bind);
-        android.os.Looper main = android.os.Looper.getMainLooper();
-        android.os.IBinder b;
-        if (main == null || main == android.os.Looper.myLooper()) {
-            b = doBind.call();
-        } else {
-            java.util.concurrent.FutureTask<android.os.IBinder> t =
-                    new java.util.concurrent.FutureTask<>(doBind);
-            new Handler(main).post(t);
-            b = t.get(30, TimeUnit.SECONDS);
-        }
+        // The app's own authenticator service, bound through the activity manager (AppHost: created
+        // and bound on the main thread, waited for from any other).
+        com.macapk.loader.app.AppHost host = com.macapk.loader.app.AppHost.get();
+        android.os.IBinder b = host != null ? host.bindServiceNow(bind) : null;
         return AbstractAccountAuthenticator.forBinder(b);
     }
 

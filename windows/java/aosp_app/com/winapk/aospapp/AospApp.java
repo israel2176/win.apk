@@ -57,6 +57,9 @@ public final class AospApp {
     final Tasks tasks;
     final IActivityClientController clientController;
     final Intent launch;
+    /** The process's ApplicationThread once attached: what the system sends client transactions to. */
+    volatile IApplicationThread appThread;
+    final ActiveServices services = new ActiveServices(this);
     private Intent first;
     private String firstSender;
     private final Runnable onTaskEmpty;
@@ -152,6 +155,7 @@ public final class AospApp {
     /** The activity manager bound the application: the task manager starts the launch activity, as
      *  ActivityTaskManagerService.attachApplication does with the process's first activity. */
     void attached(IApplicationThread appThread) {
+        this.appThread = appThread;
         tasks.handler.post(() -> {
             tasks.attach(this, appThread, clientController, config);
             if (first != null) tasks.arrive(first, firstSender);

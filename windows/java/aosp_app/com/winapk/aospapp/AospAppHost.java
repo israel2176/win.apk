@@ -69,6 +69,26 @@ public final class AospAppHost implements AppHost {
         app.tasks.handler.post(() -> app.tasks.configurationChanged(copy));
     }
 
+    @Override public android.os.IBinder bindServiceNow(android.content.Intent intent) {
+        AospApp app = AospApp.get();
+        return app != null ? app.services.bindNow(intent) : null;
+    }
+
+    @Override public android.app.Service jobBind(android.content.ComponentName service) {
+        AospApp app = AospApp.get();
+        return app != null ? app.services.jobBind(service) : null;
+    }
+
+    @Override public boolean jobUnbind(android.content.ComponentName service) {
+        AospApp app = AospApp.get();
+        return app != null && app.services.jobUnbind(service);
+    }
+
+    @Override public android.app.Service peekService(String className) {
+        AospApp app = AospApp.get();
+        return app != null ? app.services.peek(className) : null;
+    }
+
     @Override public void finishActivities(java.util.Set<String> classNames) {
         AospApp app = AospApp.get();
         if (app != null) app.tasks.handler.post(() -> app.tasks.finishActivities(classNames));

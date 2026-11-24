@@ -37,6 +37,35 @@ public class AospAppLifecycleTest {
     static final List<String> log = new ArrayList<>();
     static final String PING = PKG + ".PING";
     static volatile String heard;
+    /** The services' callbacks, in their own order (each service's is Android's; between the two
+     *  services and the activities it is the main queue's), checked once at the end. */
+    static final List<String> svc = java.util.Collections.synchronizedList(new ArrayList<>());
+
+    /** A started service that stops itself (ActivityThread.handleCreateService, handleServiceArgs,
+     *  handleStopService through the in-process activity manager). */
+    public static class Started extends android.app.Service {
+        @Override public void onCreate() { svc.add("Started.onCreate"); }
+        @Override public int onStartCommand(Intent i, int flags, int startId) {
+            svc.add("Started.onStartCommand " + startId + " " + i.getStringExtra("s"));
+            stopSelf(startId);
+            return START_NOT_STICKY;
+        }
+        @Override public void onDestroy() { svc.add("Started.onDestroy"); }
+        @Override public android.os.IBinder onBind(Intent i) { return null; }
+    }
+
+    /** A bound service (handleBindService, publishService, the connection, handleUnbindService). */
+    public static class Bound extends android.app.Service {
+        final android.os.Binder binder = new android.os.Binder();
+        @Override public void onCreate() { svc.add("Bound.onCreate"); }
+        @Override public android.os.IBinder onBind(Intent i) { svc.add("Bound.onBind"); return binder; }
+        @Override public boolean onUnbind(Intent i) { svc.add("Bound.onUnbind"); return false; }
+        @Override public void onDestroy() { svc.add("Bound.onDestroy"); }
+    }
+
+    static final List<String> SVC_EXPECTED = List.of(
+            "Started.onCreate", "Started.onStartCommand 1 go", "Started.onDestroy",
+            "Bound.onCreate", "Bound.onBind", "connected to Bound", "Bound.onUnbind", "Bound.onDestroy");
 
     static synchronized void note(String s) {
         log.add(s);
@@ -80,6 +109,14 @@ public class AospAppLifecycleTest {
                 started = true;
                 note("First: getApplication() is App: " + (getApplication() instanceof App));
                 sendBroadcast(new Intent(PING).setPackage(PKG).putExtra("v", "pong"));
+                startService(new Intent(this, Started.class).putExtra("s", "go"));
+                bindService(new Intent(this, Bound.class), new android.content.ServiceConnection() {
+                    @Override public void onServiceConnected(android.content.ComponentName n, android.os.IBinder b) {
+                        svc.add("connected to " + n.getClassName().substring(n.getClassName().lastIndexOf('$') + 1));
+                        unbindService(this);
+                    }
+                    @Override public void onServiceDisconnected(android.content.ComponentName n) {}
+                }, BIND_AUTO_CREATE);
                 startActivityForResult(new Intent(this, Second.class).putExtra("x", 7), 42);
             }
         }
@@ -255,6 +292,16 @@ public class AospAppLifecycleTest {
         }
         if (!"pong".equals(heard)) {
             System.out.println("FAILED: the application's receiver heard " + heard + ", not the activity's broadcast");
+            System.exit(1);
+        }
+        // Each service's own order: Started's callbacks and Bound's, interleaved as the queue has them.
+        List<String> started = new ArrayList<>(), bound = new ArrayList<>();
+        synchronized (svc) {
+            for (String e : svc) (e.startsWith("Started") ? started : bound).add(e);
+        }
+        List<String> want = SVC_EXPECTED;
+        if (!started.equals(want.subList(0, 3)) || !bound.equals(want.subList(3, want.size()))) {
+            System.out.println("FAILED: the services gave " + svc + ", Android gives " + want);
             System.exit(1);
         }
         System.out.println("ALL PASSED");

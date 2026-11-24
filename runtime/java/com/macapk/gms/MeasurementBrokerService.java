@@ -118,7 +118,8 @@ public final class MeasurementBrokerService extends android.app.Service {
             // the class lives in the APP's loader; the calling thread is
             // whichever one the client connected from.
             t.setContextClassLoader(getClassLoader());
-            IBinder b = android.app.ServiceRegistry.bind(this,
+            com.macapk.loader.app.AppHost host = com.macapk.loader.app.AppHost.get();
+            IBinder b = host == null ? null : host.bindServiceNow(
                     new Intent(ACTION).setClassName(getPackageName(), LOCAL_SERVICE));
             com.macapk.loader.NativeLog.i("gms-measurement",
                     "getService -> " + (b != null ? LOCAL_SERVICE : "no local service (INTERNAL_ERROR)"));
