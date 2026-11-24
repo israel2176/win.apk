@@ -631,8 +631,12 @@ bundle's `icon.png` or its base APK), bounded in what it reads, and decodes
 with WIC; nothing of the APK runs and no JVM starts, and the shell runs it in
 its isolated surrogate process. A vector icon, which only Android's code
 draws, falls back to the `apps\<name>\icon.png` the install rendered for the
-same package. the other runtime's handler (`compat/shell/other_shellext.cc`, whose COM
-shape it keeps) starts its runtime per file instead.
+same package, as does a picture no installed WIC codec reads. An adaptive
+icon is composed as AOSP's `AdaptiveIconDrawable` draws it (the middle 72 of
+108 dp, under the platform's default circle mask), premultiplied while scaled
+and composed, and handed back as a straight-alpha `WTSAT_ARGB` bitmap of at
+most 1024 px (`apk_thumbnail.cpp`, from Microsoft's thumbnail handler
+documentation).
 
 ### The install helper and the installed-apps registry
 
