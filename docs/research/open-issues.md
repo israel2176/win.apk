@@ -740,6 +740,34 @@ New bugs found with AOSP views:
   `SL_RESULT` refusals. Not done, as in the other runtime: http(s) URI players, effects
   (reverb, equalizer, virtualizer), playback rate, MIDI, the prefetch
   callback, record markers.
+- **Download integrity (November 2026, from the other runtime's updater): built, partly
+  verified.** The update offers no draft, and a pre-release only while the
+  list has no full release; downloads the installer only with GitHub's
+  `sha256:` digest of it (a release without one opens its page); keeps a
+  download only at its Content-Length (`http_get`, for every download whose
+  body is not content-encoded); runs an installer, also one kept from before,
+  only when `updates.h` `judge_setup` passes: size, SHA-256, ProductVersion
+  (`winapk.iss` now writes `VersionInfoProductTextVersion={#AppVersion}`) and
+  Authenticode (WinVerifyTrust: a broken signature is refused; a code-signed
+  build takes only an installer by its own signer; unsigned is said in
+  Settings > Updates). The Store reads `index-v1.jar`, its JAR signature
+  verified against f-droid.org's certificate (SHA-256 `43238d51…c9ccab`,
+  `kFdroidSigner`, `launcher/signed_jar.h`), no longer the unsigned
+  `index-v1.json`. *Verified*: `launcher_state_test` (the rules, the jar's
+  layout and manifests); under Wine, `verify_signed_jar` accepts f-droid.org's
+  real `index-v1.jar` (SHA1 digests) and `entry.jar` (SHA-256) and refuses a
+  jar with the index changed or a file added; WinVerifyTrust reports an
+  unsigned exe as unsigned and the ProductVersion reads. *Not verified*: on
+  real Windows; a real Inno installer's ProductVersion (the first release built
+  with the new `.iss`; one built before it would be refused, as v0.8.0's would);
+  a signed installer (no build is signed). *For the owner*: every release is
+  published with `--prerelease` (`windows-release.yml`); once a full release
+  exists, pre-releases are no longer offered to anyone. *Later*: F-Droid's
+  `index-v1.jar` is signed over SHA-1 digests; `entry.jar` + `index-v2.json`
+  is SHA-256 throughout but needs the catalog's parser moved to index v2's
+  layout (categories and suggested versions differ). The repository's
+  timestamp is not yet compared with the last one read (F-Droid's client
+  refuses an older index).
 
 ## Size and memory (decide later)
 

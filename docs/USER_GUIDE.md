@@ -130,6 +130,11 @@ open-source apps, usually Java-only and a good place to start. It lists the
 apps that can run here: those without native code, with an x86_64 build, or
 with an arm64-v8a build (translated). Where F-Droid offers one build per CPU
 architecture, the x86_64 one is used. Type to search, or pick a category.
+The catalog is read from F-Droid's signed index (`index-v1.jar`): Win.apk
+uses it only when its signature verifies and was made by f-droid.org's own
+key, as F-Droid's app does, so the SHA-256 hashes the downloads are checked
+against are F-Droid's. An index that does not verify is not used: the Store
+keeps the catalog it had, or says it could not load.
 
 - **Install** downloads the APK from f-droid.org, checks it against the
   SHA-256 hash in F-Droid's index (a file that does not match is not
@@ -497,9 +502,17 @@ When a newer version is out, the InfoBar says so with **What's new**, which
 opens Settings at Updates: the new version's row with **Update**, and its
 release notes as plain text under **What's new in** that version, with a link
 to its page on GitHub. **Update** downloads `Win.apk-Setup.exe` from the
-release (the button shows how far it is), checks that it is complete (its
-size, and its SHA-256 when GitHub gives one), runs it and closes Win.apk so
-that the installer can replace it. Your apps and their data are kept. The
+release (the button shows how far it is), checks it, runs it and closes
+Win.apk so that the installer can replace it. The installer runs only when
+its size, its SHA-256 checksum and the version written inside it are the ones
+GitHub lists for the release; otherwise it is deleted and the InfoBar says
+why. Win.apk's installers are not code-signed yet, and Settings > Updates
+says so; a code-signed build of Win.apk will take only an installer signed
+by the same signer. A release whose installer has no SHA-256 checksum on
+GitHub is not downloaded: its row opens the release page instead. Drafts are
+never offered, and pre-releases only while Win.apk has no full release (every
+release so far is a pre-release). An installer downloaded earlier is checked
+again in the same way before it runs. Your apps and their data are kept. The
 update does not start while an app is running or an install is under way:
 close the app or wait, then press **Update** again. A downloaded installer is
 kept in `%LOCALAPPDATA%\Win.apk\updates` until the update has been installed.

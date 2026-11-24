@@ -611,7 +611,9 @@ app library, the counterpart of upstream's Swift launcher. It installs APKs
 by copying them into `library\` and running `winapk-runtime --install-only`
 (a bundle then kept as hard links to the APKs it installed, `library_files.h`),
 gives each app its shortcuts, runs apps (`winapk-runtime --apk`), shows
-their logs, and holds the Store (F-Droid's `index-v1.json` summarized to
+their logs, and holds the Store (F-Droid's `index-v1.json`, read only out of
+`index-v1.jar` whose JAR signature verifies against f-droid.org's pinned
+signing certificate, `launcher/signed_jar.h`, summarized to
 `store\catalog.tsv`, downloads checked against the index's SHA-256), the
 settings and each app's details. Every user-visible string is in English and
 Hebrew, and in Hebrew the windows are laid out right to left.
@@ -1032,12 +1034,17 @@ The GitHub Actions workflows:
 [`windows/README.md`](../windows/README.md) has the commands.
 
 The launcher's update check (Settings > Updates) reads that list of releases
-from GitHub's API, takes the highest version that is not a draft (they are
-all pre-releases, so `/releases/latest` would find none), and compares it with
-the version in its own resource; **Update** downloads the release's
-`Win.apk-Setup.exe`, checks its size (and SHA-256 when GitHub lists one), runs
-it and quits so that the installer (`CloseApplications=yes`) can replace the
-files. The version comes from `WINAPK_VERSION`, which the release workflow
+from GitHub's API, takes the highest version that is not a draft (and not a
+pre-release once there is a full release; they are all pre-releases so far, so
+`/releases/latest` would find none), and compares it with the version in its
+own resource; **Update** downloads the release's `Win.apk-Setup.exe` only when
+GitHub lists its SHA-256 digest, keeps the download only at its
+Content-Length, and runs it (a copy kept from before too) only when its size,
+SHA-256 and ProductVersion (`VersionInfoProductTextVersion`, the full version)
+are the release's and its Authenticode signature, if it has one, verifies (a
+code-signed build takes only an installer by the same signer;
+`launcher/updates.h` `judge_setup`, after the other runtime's updater), then quits so that
+the installer (`CloseApplications=yes`) can replace the files. The version comes from `WINAPK_VERSION`, which the release workflow
 sets from its tag; a `ci.yml` build is the newest release tag + `-dev.<run>`
 (compared as that release); a local build is 0.1.0.
 
