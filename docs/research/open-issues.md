@@ -38,6 +38,16 @@ agents' work folders were `/opt/uip/il-work/<app>/`, gone with the container).
   default is flipped** on this branch (AOSP's graphics unless
   `WINAPK_AOSP_GFX=0`), so that CI's smoke test and UI gate test the new
   engine; deleting Java2D is the next step (below).
+- Decided (November 2026): **AOSP resources and views are the default;
+  Win.apk's replaced code deleted.** Done on this branch: the switches
+  (`WINAPK_AOSP_RES`, `WINAPK_AOSP_VIEWS`, `WINAPK_STAGE_AOSP_RES`/`_VIEWS`) are
+  gone, the stage and the installer carry `aosp-resources.jar`,
+  `aosp-views.jar` and `framework-res-34.apk`, the 812 classes of
+  `android-framework.jar` they shadow are dropped from the shipped jar, and
+  Win.apk's API-36 table (`bin\tools\framework-res.apk`) is no longer built or
+  shipped. What of Win.apk's own could not go yet, and why, is under "Size and
+  memory". With them, `WINAPK_AOSP_GFX=0` cannot run an app any more (there are
+  no views without AOSP's graphics): the Java2D removal finishes that.
 - Decided (November 2026): "Update apps in the background" runs only while
   Win.apk itself runs (the launcher, shown or hidden), never as a Windows
   scheduled task or a service: nothing of Win.apk runs on its own. The
@@ -85,7 +95,8 @@ named moves onto AOSP's code. After the switch, check it (the screens sweep or
 the app); if it is still there, it is a bug in what replaced it.
 
 **Views, step V1 first part (`WINAPK_AOSP_VIEWS=1`, with `WINAPK_AOSP_RES=1`;
-`docs/research/aosp-views.md` "V1 as built"):** with the switch on, the Win.apk
+`docs/research/aosp-views.md` "V1 as built"; since November 2026 what every app
+runs, the switches gone):** with the switch on, the Win.apk
 code that items 1-9, 15 (its inflater and `View.measure` half), 18-20 and 22
 name is not loaded at all: `View`, `ViewGroup`, `LayoutInflater`,
 `ImageView`, `LinearLayout`, `RelativeLayout`, `HorizontalScrollView`,
@@ -904,6 +915,49 @@ New bugs found with AOSP views:
   `MediaExtractor`; Vorbis and FLAC in `MediaCodec` (advertised by
   `MediaCodecList`, fail at `start()`); WebM/Ogg/Opus encoding (the other runtime has
   mkvmuxer and an Opus encoder); libhevc not taken (see "Footprint").
+- **Win.apk's own resources and views, after AOSP's became the only ones**
+  (November 2026). Gone from the package: the 812 classes of
+  `android-framework.jar` that `aosp-resources.jar` and `aosp-views.jar`
+  shadow (dropped by `stage_runtime.sh`; LinkScan over the host's class path
+  gives the same 306 lines with and without them) and `bin\tools\framework-res.apk`
+  (22.9 MB; `build_aosp_gfx.sh`'s `AospResIds` reads android-all's table, the
+  one `framework-res-34.apk` is made from). Kept, and why:
+  - **Their sources** (`runtime/java/android/view`, `android/widget`,
+    `android/content/res`): the rest of `runtime/java` compiles against them
+    (`Activity`, `Dialog`'s callers, the loader name `View`, `Resources`...),
+    and `aosp-views.jar`'s and `aosp-resources.jar`'s closures are computed
+    against the whole framework. Deleting them means compiling the framework
+    against android-all's classes instead, a build change of its own.
+  - **`ResourceIndex`, `ArscReader`, `ArscRes`**: `AospRes` still calls
+    `ResourceIndex`'s static helpers and casts to its style type, and
+    `Manifest`, `AppClassLoader`, `DisplayConfig`, `PresentedSdk`, `Monet`,
+    `MacApkPackageManager` and `Boot` name it; `ApkVerificationTest` reads a
+    table with `ArscReader`; `ArscRes` is what the plain-JVM tests run.
+    With AOSP's views nothing opens an index (`AospIndex` answers); should
+    anything ask it for the platform's table, it finds `framework-res-34.apk`.
+  - **`WinApkViewHost`, `ViewCanvasDriver`**: `AospViewHost` hands what both
+    share to `ViewHost.winApk()` (Surface, SurfaceView, KeyEvent,
+    InputDevice, which stay Win.apk's); `ViewCanvasDriver` is named by
+    `Activity`, `Looper`, `Handler`, `MessageQueue`, `SurfaceView`,
+    `TextureView` and the GL classes, which are not shadowed.
+  - **The plain-JVM tests** (`DamageRectTest`, `FrameworkStubsTest`'s view
+    half, `DateTimeViewTest`, `AccessibilityTreeTest`, `HostTextInputTest`,
+    run by CI on `build/java/android-framework.jar`, the jar as compiled):
+    they still test Win.apk's own views, which no app runs. To move onto
+    AOSP's classes they need AOSP's natives outside `winapk-runtime`; or
+    retire the ones whose subject is gone (`DamageRectTest`: AOSP's
+    `ViewRootImpl` does its own dirty area; `DateTimeViewTest`: AOSP's
+    `DateTimeView` is in `aosp-views.jar`).
+  - **The framework class list** (`windows/java/winapk-framework.classlist`)
+    was recorded with Win.apk's views: refresh it from CI's
+    `framework-classlist` artifact so the archive holds AOSP's view classes.
+  - **`cache\fwview\`**, `ResourceIndex`'s framework view, is no longer
+    written; an older install's stays on disk until deleted.
+  - Left for the Java2D change: the 214 classes `aosp-graphics.jar` shadows
+    and the Java2D fonts (6.9 MB), the same `stage_runtime.sh` step can drop.
+  Not verified here: a Windows build and run (CI after the push); sizes from
+  the local stage (Linux): `android-framework.jar` 15.6 -> 14.2 MB, LinkScan
+  and `ApkVerificationTest` on `framework-res-34.apk` checked.
 - **Memory has no budget yet**: the smoke test records each app's peak working
   set; add a limit once a few CI runs show the spread.
 - **Frame time has only a collapse budget** (`windows/README.md` "Frame
@@ -1202,7 +1256,9 @@ nor a run with `WINAPK_AOSP_VIEWS=1` and a screen reader. To check then:
   Win.apk's index). Next: GL `SurfaceView`s as layers,
   spinners and toasts seen in an app, resize and several windows, an on-screen
   keyboard and a UI Automation bridge, then V3 (HWUI). Not run: CDS with the
-  switch, real Windows, the smoke apps (another agent's).
+  switch, real Windows, the smoke apps (another agent's). **Made the default,
+  then the only ones (November 2026)**: the owner's decision above; what is
+  left of Win.apk's own is under "Size and memory".
 - **Screens checks not finished**: Bank Leumi (stopped by the usage limit
   before its boot), Pango and Paybox (not on APKPure; the owner offered their
   other repository or a Play download).

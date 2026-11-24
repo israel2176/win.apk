@@ -444,7 +444,9 @@ nobody has to find them again.
   `--feature-flags`. Without apktool's table as a reference, internal
   resource ids are assigned by `aapt2` rather than matching upstream's.
 - The runtime finds jars and the resource APK relative to each other
-  (`<lib>/../bin/tools/framework-res.apk`), and the Android file system under
+  (`<lib>/../bin/tools/framework-res.apk`; since November 2026 android-14's
+  own, `bin/aosp/framework-res-34.apk`, which the host passes to AOSP's
+  resources), and the Android file system under
   the `macapk.android.root` property, which the host points at
   `%LOCALAPPDATA%\Win.apk\android`.
 - `TouchDispatcher.dispatch(action, x, y, viewW, viewH)` takes AppKit view
@@ -1270,19 +1272,22 @@ draw them pixel-identical.
   `GfxBackend` did for graphics). Done: `com.macapk.loader.res.ResBackend`
   (resources) and `com.macapk.loader.view.ViewHost` (views).
 - R1: resources on AOSP over Robolectric's Java port of libandroidfw
-  (`WINAPK_AOSP_RES=1`). R2: libandroidfw built for Windows. The port's 0.9 to 1.4 s
+  (built; the default, then the only resources, November 2026). R2: libandroidfw built for Windows. The port's 0.9 to 1.4 s
   cold load of the framework table is the reason.
 - T: `android.text` with graphics.
 - V1: views and the real `ViewRootImpl` over Win.apk's `IWindowSession` and
-  in-process system services (`WINAPK_AOSP_VIEWS=1`).
-- V2: input, IME and accessibility.
+  in-process system services (built; the default, then the only views, November 2026).
+- V2: input, IME and accessibility (built).
 - V3: HWUI's pipeline.
 
 Each step is gated by `uiprobe/regress.py` and the screens sweep: no line
 further from Android.
 
 Exit: the smoke apps and the screens sweep run with both switches on, with no
-line further from Android than today, and start no slower.
+line further from Android than today, and start no slower. Met for R1, V1 and
+V2 (November 2026: the ten smoke apps draw, the UI probe's 2104 lines equal
+Android's, less memory): the switches are gone, Win.apk's own classes of
+those packages and its API-36 platform table leave the package.
 
 ## 9. Development workflow
 

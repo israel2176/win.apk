@@ -1,10 +1,13 @@
 # AOSP's resources and views in Win.apk: plan and feasibility
 
-Status: plan and spike (`windows/test/aospviews/`). Step 0, the `ResBackend`
-and `ViewHost` seams, is done (below). Step R1, the first part, is built behind
-`WINAPK_AOSP_RES=1`, and steps V1 (but its surfaces) and V2 behind `WINAPK_AOSP_VIEWS=1`
-(both off by default; "R1 as built", "V1 as built" and "V2 as built", after section 4).
-Nothing else here ships yet.
+Status: step 0, the `ResBackend` and `ViewHost` seams, is done; step R1's first
+part and steps V1 (but its surfaces) and V2 are built ("R1 as built", "V1 as
+built" and "V2 as built", after section 4) and, since November 2026, are what
+every app runs: the switches they were built behind (`WINAPK_AOSP_RES=1`,
+`WINAPK_AOSP_VIEWS=1`) are gone, and Win.apk's own classes of those packages and
+its API-36 platform table left the package ("Made the default", after "Making
+R1 and V1/V2 the default"). The text below the status keeps the switches'
+names as they were while each step was built.
 
 ## Why
 
@@ -803,7 +806,8 @@ screen lays out landscape on its AMOLED theme.
 
 ### Making R1 and V1/V2 the default: disk, installer and memory (November 2026)
 
-Measured to prepare the switch, which stays off until the owner decides.
+Measured to prepare the switch, which stayed off until the owner decided (he did: "Made the default",
+below).
 
 **On real Windows** (CI run 44734867981, the informational job and the smoke job of the same
 build): all ten smoke apps draw with both switches on, and the UI probe's lines equal Android's
@@ -901,6 +905,44 @@ counted.
   valid image instead of throwing; deleting the files would make it throw, and dropping their
   entries would move the ids after them. 21.2 -> 13.7 MB installed, 19.0 -> 11.6 MB under
   `xz -9e`.
+
+### Made the default (November 2026)
+
+The owner's decision: AOSP's resources and views are the default, and the Win.apk code they replace is
+deleted. What was done:
+
+- **The host** (`host/aosp_gfx.cpp`): `aosp_res_prepare` and `aosp_views_prepare` no longer read an
+  environment variable; with AOSP's graphics on and the files staged, every JVM the runtime makes puts
+  `aosp-views.jar` and `aosp-resources.jar` first and sets `-Dwinapk.aosp.res=1`,
+  `-Dwinapk.aosp.res.framework` and `-Dwinapk.aosp.views=1` (the Java code chooses by these, as before).
+  `WINAPK_AOSP_RES`/`WINAPK_AOSP_VIEWS` set get one line saying they are ignored. Without AOSP's
+  graphics, or with a file missing, the log says an app cannot start: there is no other implementation
+  in the package any more. `kAospViewsByDefault` (aosp_gfx.h) tells the UI gate which bases run AOSP's
+  views.
+- **Class-data sharing**: one archive with the graphics, `framework-aosp-<key>.jsa` (the jars are in
+  its key through the class path); a dump deletes the `framework-aospres-*` and `framework-aospviews-*`
+  archives of the switches' days.
+- **The stage** (`stage_runtime.sh`): `build_aosp_res.sh` and `build_aosp_views.sh` run after
+  `build_aosp_gfx.sh`, always. Then the classes of `android-framework.jar` that the two jars shadow
+  (812: the 806 counted above and 6 graphics classes `aosp-resources.jar` carries as well) are dropped
+  from the shipped jar, 15.6 -> 14.2 MB (1.3 MB less under `xz -9`), the list kept in the jar
+  (`META-INF/winapk-aosp-shadowed.txt`); the `build_aosp_*.sh` scripts refuse such a jar. LinkScan
+  over the class path as the host builds it gives the same 306 lines with and without them. The jar
+  as compiled stays in `<build>/java/` for the tests on a plain JVM.
+- **The API-36 table**: `bin\tools\framework-res.apk` and `windows/scripts/build_framework_res.sh` are
+  gone (CI's and the release's caches too); `AospResIds` reads android-all's own `resources.arsc`, the
+  table `framework-res-34.apk` is made from, so no private id is rewritten any more; `ResourceIndex`,
+  should anything ask it for the platform's table, finds `framework-res-34.apk`; the installer deletes
+  the file an earlier install left. `ApkVerificationTest` signs from `framework-res-34.apk`.
+- **CI**: the smoke test, the headless boots and the UI gate's head run them from the stage; the
+  informational job is gone. The UI gate's base runs on its own defaults: a base from before (no
+  `kAospViewsByDefault`) is compared through its own CI stage, as it shipped; with that expired there
+  is no like-for-like base and only the head's run is checked. No run on Java2D's graphics is left
+  in CI (they have no views to run now).
+
+What could not go yet, and why (their sources, `ResourceIndex`/`ArscReader`/`ArscRes`,
+`WinApkViewHost`/`ViewCanvasDriver`, the plain-JVM tests that still exercise Win.apk's own views):
+`open-issues.md`, "Size and memory".
 
 ## 5. Size, start and memory
 
