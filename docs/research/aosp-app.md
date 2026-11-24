@@ -1,13 +1,11 @@
 # AOSP's app layer in Win.apk: plan and first step
 
-Status: plan, and step A1's first part built and tested on a plain JVM only
-("A1 as built", after section 4): `windows/scripts/build_aosp_app.sh` makes
-`lib/aosp-app.jar`, and `windows/test/aospapp` runs AOSP 14's own
-`ActivityThread` through an application's and two activities' whole lifecycle
-on it, in Android's order. **No host switch reads the jar yet**:
-`WINAPK_AOSP_APP` is the name this plan gives the switch, not yet in
-`host/aosp_gfx.cpp`, because `Boot` does not start an app through it (step A1's
-second part). Nothing here ships.
+Status: steps A0 and A1 built ("A1 as built", after section 4), A2 begun: every
+app's process starts on AOSP 14's own `ActivityThread` (`lib/aosp-app.jar`,
+staged by `stage_runtime.sh` and shipped), through the `AppHost` seam, with no
+switch (the owner's decision: a layer lands as the only path). Win.apk's own
+`Activity`, `Application`, `ActivityHost` lifecycle code is off the path and
+is deleted in step A4.
 
 The model is `aosp-views.md` (resources and views). This layer comes after
 them and assumes AOSP's graphics, resources and views are all on, as they are
@@ -290,6 +288,51 @@ first runs showed are AOSP's own behaviour, kept: an activity on
 `Theme.NoDisplay` that does not finish before `onResume` ends throws
 (`performResume`), and an activity whose successor finishes before it is idle
 is never stopped.
+
+## A1 as built (second part): every app on it
+
+- **The seam (A0).** `com.macapk.loader.app.AppHost` (in the loader) is the
+  runtime's door into the app layer, `com.winapk.aospapp.AospAppHost` (in the
+  jar) its one implementation: `start`, and the host window's entries (closed:
+  every activity destroyed top first, waited for; minimized: the task behind;
+  restored: in front, or the launcher activity again on an empty task),
+  `configurationChanged`. `ActivityHost.macapkTerminate`,
+  `macapkHostMinimized` and `macapkTaskToFront`, which `native_cocoa.cpp`
+  calls, hand over to it; `DisplayConfig` hands it the display's changes.
+- **The start.** `Boot` builds the app's `ApplicationInfo` and its
+  `MacApkPackageManager` (which resolves every intent the task manager is
+  asked to start), the host's input, accessibility and gamepad bridges, and
+  the first intent (the launcher's, `MACAPK_LAUNCH_ACTIVITY`, or one another
+  app or a URL handed over), then `AppHost.start` on the app's main thread and
+  the main looper. The app's providers are installed by Win.apk's installer
+  right before `Application.onCreate`, where `handleBindApplication` installs
+  them (step A3 makes them AOSP's). The layout sweep (`MACAPK_LAYOUT_SWEEP`)
+  runs after the bind, with no activity.
+- **The host.** `aosp_app_prepare` (`host/aosp_gfx.cpp`) puts
+  `lib\aosp-app.jar` first on the class path of every JVM with the framework;
+  `stage_runtime.sh` builds it and drops the classes it shadows from the
+  shipped `android-framework.jar`; the installer takes it with the stage
+  (`footprint_check.py`: a part of its own, 2 MB).
+- **The windows.** An activity's window is added by AOSP's
+  `handleResumeActivity` straight to the window manager: the views' window
+  session now makes the host surface for the first application window and
+  follows an activity window's SurfaceViews (GL frames under the windows).
+- **What a real app's start reached**, each answered as AOSP's would be:
+  BlockGuard's policies (none), `FileUtils.sync`, `StructStat.st_mtim`,
+  `Activity.getDlWarning`, Android's typed XML for SharedPreferences' file
+  (`Xml.newFastSerializer`, in the resources' rewrite), `startActivities`
+  (SGT Puzzles), Up navigation (`navigateUpTo`, `shouldUpRecreateTask`), Back
+  at a launcher-started root (the task behind, as Android 12 does).
+
+Checked under Wine (the runtime built from the tree with clang-mingw, a stage
+of its own, headless, 150 frames): all ten smoke apps draw their first screen
+(Jerboa's notice dialog, Klooni's menu over its GL view, SGT Puzzles' chooser,
+Editor's dialog, Fossify Notes, Jellyfin, Jitsi's splash, PPSSPP's logo,
+Tensy, Open Sudoku's "Latest changes"), the UI probe's lines are byte for byte
+those of the same probe on a stage without the app layer, and the plain-JVM
+lifecycle test passes. Not yet run: a window resized or turned (the
+configuration path), the host's hand-offs to other apps and the system
+(A2), services, receivers and providers through `ActivityThread` (A3).
 
 ## 5. Size, start and memory
 

@@ -955,6 +955,12 @@ the change refused from anyone but the launcher.
    `onResume`), the same transitions as Back at the task's root. The exit
    code is 0 unless the app or the VM failed (always 0 once the user closed
    the window); a VM crash leaves `logs\hs_err_pid<n>.log`.
+   The lifecycle itself is AOSP's: `Boot` starts the app on AOSP 14's own
+   `ActivityThread` (`lib\aosp-app.jar`) through `com.macapk.loader.app.AppHost`,
+   whose in-process activity manager and task manager send it the client
+   transactions system_server would (`docs/research/aosp-app.md`); the
+   `ActivityHost` entries above hand the window's close, minimize and restore
+   to that task manager.
 
 ## Data on disk
 
