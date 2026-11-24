@@ -208,9 +208,9 @@ mkdir -p "$TOOLS"
 # aosp-graphics.jar (build_aosp_gfx.sh), first on every framework JVM's class path;
 # aosp_res into aosp-resources.jar (build_aosp_res.sh) and aosp_views into aosp-views.jar
 # (build_aosp_views.sh), always first: stage_runtime.sh then drops what they shadow from
-# android-framework.jar.
+# android-framework.jar; aosp_app into aosp-app.jar (build_aosp_app.sh, not staged yet).
 find "$HERE/../java" -name '*.java' -not -path '*/java_base_patch/*' -not -path '*/aosp_gfx/*' \
-    -not -path '*/aosp_res/*' -not -path '*/aosp_views/*' | sort | native_paths > "$WORK/tools.list"
+    -not -path '*/aosp_res/*' -not -path '*/aosp_views/*' -not -path '*/aosp_app/*' | sort | native_paths > "$WORK/tools.list"
 # AppMeta calls into the framework and the loader, compiled into $TMP above, and the graphics.
 "$JAVAC" -d "$TOOLS" --release 21 -cp "$(native_path "$TMP")$CP_SEP$(native_path "$GFX_API")" @"$WORK/tools.list"
 ( cd "$TOOLS" && "$JAR" --create --file "$LIB/winapk-tools.jar" . )
