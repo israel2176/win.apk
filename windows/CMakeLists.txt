@@ -389,16 +389,20 @@ if(WINAPK_JNI_INCLUDE)
   target_link_options(winapk-binder-test PRIVATE -static -municode)
 
   # NativeAudio's backend on its own (test/audio_test.cpp).
-  add_executable(winapk-audio-test test/audio_test.cpp host/audio_engine.cpp host/audio_decode.cpp)
-  target_link_libraries(winapk-audio-test PRIVATE winapk_stb_vorbis ole32 mfplat mfreadwrite mfuuid shlwapi)
+  add_executable(winapk-audio-test test/audio_test.cpp host/audio_engine.cpp host/audio_decode.cpp
+                 ${WINAPK_SOFT_CODEC_SOURCES})
+  target_include_directories(winapk-audio-test SYSTEM PRIVATE ${WINAPK_SOFT_CODEC_INCLUDES})
+  target_link_libraries(winapk-audio-test PRIVATE winapk_stb_vorbis ${WINAPK_SOFT_CODEC_LIBS} ole32 mfplat mfreadwrite
+                        mfuuid shlwapi)
   target_link_options(winapk-audio-test PRIVATE -static)
 
   # libOpenSLES on that backend, called as guest code calls it (test/opensles_test.cpp).
   add_executable(winapk-opensles-test test/opensles_test.cpp host/native_opensles.cpp host/audio_engine.cpp
-                 host/audio_decode.cpp host/native_audio_input.cpp)
+                 host/audio_decode.cpp host/native_audio_input.cpp ${WINAPK_SOFT_CODEC_SOURCES})
   target_include_directories(winapk-opensles-test PRIVATE host include "${WINAPK_JNI_INCLUDE}"
                              "${WINAPK_JNI_INCLUDE}/win32")
-  target_link_libraries(winapk-opensles-test PRIVATE winapk_stb_vorbis ole32 mfplat mfreadwrite mfuuid shlwapi uuid
+  target_include_directories(winapk-opensles-test SYSTEM PRIVATE ${WINAPK_SOFT_CODEC_INCLUDES})
+  target_link_libraries(winapk-opensles-test PRIVATE winapk_stb_vorbis ${WINAPK_SOFT_CODEC_LIBS} ole32 mfplat mfreadwrite mfuuid shlwapi uuid
                         advapi32)
   target_link_options(winapk-opensles-test PRIVATE -static)
 
