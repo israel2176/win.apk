@@ -1,7 +1,8 @@
-// android.view.accessibility.AccessibilityManager -- accessibility
-// service stub. We don't surface VoiceOver/screen-reader features to
-// the macOS host; the service exists so getSystemService doesn't NPE
-// and isEnabled-style queries return sane defaults. v1.0.98.
+// android.view.accessibility.AccessibilityManager -- the accessibility
+// service's client. Off (isEnabled() false, no services) unless a host screen
+// reader reads the app (Windows' UI Automation: com.macapk.loader.
+// HostAccessibility), as TalkBack turns it on on a device; the Mac's host has
+// none, so it stays off there.
 package android.view.accessibility;
 
 import java.util.ArrayList;

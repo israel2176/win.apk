@@ -105,10 +105,12 @@ launcher in use; the other runtime's CI claims (taken from its docs).
 - Google: real Play services/Play (higher ceiling, not yet proven) vs microG + Aurora.
 - Real commercial Israeli apps run on real Windows.
 
-the other runtime better here: UI Automation accessibility bridge, TSF text input + touch keyboard, a proxy per app
+the other runtime better here: TSF text input + touch keyboard, a proxy per app
 (its panel and command line), one window per task, panel test suite.
 
 Imported since: per-APK icons in Explorer (`windows/shell/`, a thumbnail handler that parses the file
 itself where the other runtime's icon handler runs its runtime per file), and apps follow Windows' proxy
 (`java.net.useSystemProxies`; before it they went direct whatever Windows said). A per-app proxy was not
 added: Windows' proxy setting is the one place, as a phone's network settings are.
+Imported since too: the other runtime's UI Automation accessibility bridge (`windows/host/uia_provider.cpp`,
+`HostAccessibility.java`; providers answer from a snapshot the main thread publishes).

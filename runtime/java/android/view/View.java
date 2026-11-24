@@ -2684,12 +2684,13 @@ public class View implements android.graphics.drawable.Drawable.Callback,
     // getter; nothing in the tree ever read it, so an installed delegate was
     // silently inert.
     //
-    // The ...Internal bodies are deliberately minimal: Mac.apk bridges no
-    // accessibility service to NSAccessibility, and AccessibilityManager
-    // .isEnabled() is false, which is precisely the branch AOSP's
-    // sendAccessibilityEventInternal early-returns on when no a11y service is
-    // running. The node/event POPULATION paths do real work, because app and
-    // androidx overrides chain through them (super.onInitializeAccessibilityNodeInfo).
+    // AccessibilityManager.isEnabled() is false unless a host screen reader
+    // reads the app (Windows' UI Automation, com.macapk.loader.HostAccessibility),
+    // which is the branch AOSP's sendAccessibilityEventInternal early-returns on
+    // when no a11y service is running: events are built only while one reads.
+    // The node/event POPULATION paths do real work, because the screen reader
+    // reads them and app and androidx overrides chain through them
+    // (super.onInitializeAccessibilityNodeInfo).
     public void sendAccessibilityEvent(int eventType) {
         if (accessibilityDelegate != null) {
             accessibilityDelegate.sendAccessibilityEvent(this, eventType);

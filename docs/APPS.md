@@ -63,6 +63,7 @@ keeping a copy.
 | Notifications | ⚠️ | Windows notifications with the app's name and icon, text, large icon and progress; a click opens the app while it runs | Action buttons are not shown | `native_notifications.cpp` |
 | Storage | ✅ | Files, SharedPreferences, SQLite. Downloads, Pictures, Documents, Music and Movies are your Windows folders (a setting turns this off) | | `user_folders.cpp` |
 | Permissions | ✅ | Android's dialogs for every dangerous group and special access, remembered per app | | `launcher_main.cpp` (`appops`) |
+| Screen readers | ⚠️ | Narrator, NVDA and other UI Automation readers read an app's views from Android's accessibility nodes (names, roles, states, values, Compose's semantics), in Android's reading order and the app's language, and can press, toggle, type, set a slider and scroll | Checked by unit tests and a UI Automation client; not yet tried with Narrator on real apps. No text navigation by character or word (UIA's Text pattern), no expand or collapse | `uia_provider.cpp`, `HostAccessibility.java` |
 | Hebrew and right to left | ⚠️ | Win.apk itself and its installer are fully Hebrew and mirrored. Apps see the Windows language and region, and the framework lays out right-to-left apps as Android does | Few Hebrew apps have been tried by hand | `launcher_main.cpp` (`tr()`) |
 
 ### Google and app stores

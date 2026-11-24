@@ -903,6 +903,33 @@ New bugs found with AOSP views:
   held AOSP's frames at 33 a second are gone (6 ms a frame, 60 a second);
   look at CI's numbers on real Windows for what is left.
 
+## Screen readers (UI Automation), to check
+
+Adapted from the other runtime's `uia_bridge.cc` (November 2026): `windows/host/uia_provider.cpp`,
+`native_accessibility.cpp`, `runtime/java/com/macapk/loader/HostAccessibility.java`
+(windows/README.md, the runtime list). Checked: `winapk-uia-test` under Wine 9 (its
+client stubs properties and patterns, so those were checked on the providers
+directly; the client's own checks run on CI's Windows), `AccessibilityTreeTest` on a
+JVM over Win.apk's views, `aosp_views` compiled against android-all 14. **Not yet
+checked:** Narrator, NVDA or JAWS on a real app on real Windows (names, the reading
+order, focus following Tab, a Compose app's semantics, a Hebrew voice from Culture),
+nor a run with `WINAPK_AOSP_VIEWS=1` and a screen reader. To check then:
+
+- Win.apk's own widgets give AOSP's node info only where it was ported (`View`,
+  `ViewGroup`'s reading order, `TextView`, `CompoundButton`, `ProgressBar`, `SeekBar`,
+  `ScrollView`, `HorizontalScrollView`); others (`AbsListView`'s scroll actions,
+  `Spinner`, `RatingBar`, `TabHost`) give the base view's. With AOSP's views they are
+  AOSP's own; these ports go with Win.apk's views.
+- Win.apk's `SeekBar` is not focusable without the theme's `Widget.SeekBar` style, so
+  a plain one is not important for accessibility (AOSP's style makes it focusable).
+- No UIA Text pattern (reading by character, word or line; the caret), no
+  ExpandCollapse or Selection patterns, headings all level 2 (Android has no level).
+- A WebView's page is read through WebView2's own UIA tree (its child window), not
+  placed at the WebView's node as the other runtime does with an override provider.
+- The `pane` items UIA shows for each window's root (the `DecorView`) and for layouts
+  that are important only because they are clickable are named after their text, as
+  TalkBack joins them; check that Narrator does not read things twice.
+
 ## Work started and not merged
 
 - **AOSP graphics, what is missing** (README "Milestone 2"): drawables

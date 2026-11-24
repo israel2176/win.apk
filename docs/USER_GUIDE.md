@@ -373,6 +373,24 @@ An app's window follows Windows' reading layout for right-to-left users: its
 title bar is mirrored, while the app draws its own layout as it would on a
 phone.
 
+## Screen readers
+
+Narrator, NVDA, JAWS and any other UI Automation tool can read an app's
+window: its buttons, texts, fields, check boxes, sliders and lists, as
+TalkBack reads them on a phone. Each view is named by its description or its
+text (a field by its hint, with its text as the value), in the order Android
+reads them (right to left in a Hebrew layout), and in the app's language, so
+the screen reader picks a Hebrew voice for a Hebrew app. The reader can press
+a button, check a box, type into a field, move a slider and scroll a list, and
+it follows the keyboard focus and hears what the app announces. Apps built
+with Compose, and other views that describe themselves to accessibility
+services, are read the same way.
+
+Nothing of this runs until a screen reader asks for the window: then the app
+is told an accessibility service is on, as when TalkBack is turned on, and the
+log says `accessibility: a screen reader is reading the app`. After a minute
+in which no screen reader asks, it is turned off again.
+
 ## Shortcuts and file types
 
 - Every installed app gets a shortcut in **Start > Win.apk Apps** with its
