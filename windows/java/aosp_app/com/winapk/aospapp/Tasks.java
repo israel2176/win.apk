@@ -89,16 +89,81 @@ public final class Tasks {
     private IApplicationThread app;
     private IActivityClientController clientController;
     private Configuration config;
-    private Runnable onTaskEmpty;
+    private AospApp owner;
+    /** The task is behind (the window minimized, or moved back by the app or Back at its root). */
+    private boolean inBackground;
+    /** The window was closed: every activity goes, and the empty task ends the process. */
+    private boolean terminating;
+    private java.util.concurrent.CountDownLatch terminated;
 
     Tasks(Handler handler) { this.handler = handler; }
 
-    void attach(IApplicationThread thread, IActivityClientController controller, Configuration cfg, Runnable empty) {
+    void attach(AospApp owner, IApplicationThread thread, IActivityClientController controller, Configuration cfg) {
+        this.owner = owner;
         app = thread;
         clientController = controller;
         config = cfg;
-        onTaskEmpty = empty;
     }
+
+    /** The process's first activity, or the launcher activity again when the window comes back to
+     *  an empty task. */
+    void startLaunch(Intent launch) {
+        ActivityInfo ai = owner.resolver.resolveActivity(launch, null);
+        if (ai == null) {
+            System.err.println("[aosp-app] the launch intent resolves to no activity: " + launch);
+            return;
+        }
+        Intent i = new Intent(launch);
+        i.setComponent(new ComponentName(ai.packageName, ai.name));
+        start(ai, i, owner.info.packageName, null, null, -1);
+    }
+
+    // ---- What the host asks (the window) ----
+
+    /** ActivityTaskManagerService.removeTask for the window's close: every activity is destroyed,
+     *  top first, from whatever state it is in (the executor passes through onPause and onStop);
+     *  `done` counts down once the task is empty. */
+    void terminate(java.util.concurrent.CountDownLatch done) {
+        terminating = true;
+        terminated = done;
+        pendingLaunch = null;
+        if (task.isEmpty()) {
+            done.countDown();
+            return;
+        }
+        for (int i = task.size() - 1; i >= 0; i--) {
+            Record r = task.get(i);
+            r.finishing = true;
+            if (r.state != State.DESTROYING && r.state != State.DESTROYED) destroy(r);
+        }
+    }
+
+    /** The task moved behind (Task.moveTaskToBack): the resumed top is paused and stopped. */
+    void toBack() {
+        if (inBackground || terminating) return;
+        inBackground = true;
+        Record r = top();
+        if (r == null || r.state != State.RESUMED) return;
+        r.state = State.STOPPING;
+        ClientTransaction tx = ClientTransaction.obtain(app, r.token);
+        tx.setLifecycleStateRequest(StopActivityItem.obtain(0));
+        schedule(tx);
+    }
+
+    /** The task came to the front: its top restarted, started and resumed; an empty task starts its
+     *  launcher activity again, as the home screen's icon would. */
+    void toFront() {
+        if (!inBackground || terminating) return;
+        inBackground = false;
+        Record r = top();
+        if (r == null) {
+            if (owner.launch != null) startLaunch(owner.launch);
+            return;
+        }
+        if (r.state == State.STOPPED || r.state == State.STOPPING || r.state == State.PAUSED) resume(r);
+    }
+
+    boolean inBackground() { return inBackground; }
 
     Record find(IBinder token) {
         for (Record r : task) if (r.token == token) return r;
@@ -128,6 +193,22 @@ public final class Tasks {
     void start(ActivityInfo info, Intent intent, String from, Record resultTo, String resultWho, int requestCode) {
         Record r = new Record(info, intent, from, resultTo, resultWho, requestCode);
         Record prev = top();
+        task.add(r);
+        if (prev != null && prev.state == State.RESUMED) {
+            pendingLaunch = r;
+            pause(prev, true);
+        } else {
+            realStart(r);
+        }
+    }
+
+    /** startActivities: every record on the task in order, the last one started as a start is (the
+     *  resumed activity paused first); the others wait, not launched, until revealed. */
+    void startAll(ActivityInfo[] infos, Intent[] intents, String from) {
+        Record prev = top();
+        int last = infos.length - 1;
+        for (int i = 0; i < last; i++) task.add(new Record(infos[i], intents[i], from, null, null, -1));
+        Record r = new Record(infos[last], intents[last], from, null, null, -1);
         task.add(r);
         if (prev != null && prev.state == State.RESUMED) {
             pendingLaunch = r;
@@ -258,7 +339,13 @@ public final class Tasks {
         r.state = State.DESTROYED;
         task.remove(r);
         stopping.remove(r);
-        if (task.isEmpty() && onTaskEmpty != null) onTaskEmpty.run();
+        if (!task.isEmpty()) return;
+        if (terminating) {
+            if (terminated != null) terminated.countDown();
+        } else {
+            inBackground = true;
+            owner.taskEmpty();
+        }
     }
 
     private void schedule(ClientTransaction tx) {

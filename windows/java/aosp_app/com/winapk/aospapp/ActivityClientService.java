@@ -119,4 +119,43 @@ public final class ActivityClientService {
     }
 
     public boolean willActivityBeVisible(IBinder token) { return true; }
+
+    /** ActivityClientController.onBackPressed: Back at the root activity of a task the launcher
+     *  started (ACTION_MAIN, CATEGORY_LAUNCHER) moves the task behind instead of finishing it
+     *  (Android 12's behaviour); any other activity is asked to finish (the callback runs
+     *  finishAfterTransition on the app's side). */
+    public void onBackPressed(IBinder token, android.app.IRequestFinishCallback callback) {
+        tasks().handler.post(() -> {
+            Tasks.Record r = tasks().find(token);
+            if (r == null) return;
+            Intent base = r.intent;
+            boolean launcherRoot = tasks().isRoot(r) && base != null && Intent.ACTION_MAIN.equals(base.getAction())
+                    && base.hasCategory(Intent.CATEGORY_LAUNCHER);
+            if (launcherRoot) {
+                moveToBack();
+                return;
+            }
+            try {
+                callback.requestFinish();
+            } catch (android.os.RemoteException e) {
+                throw new IllegalStateException(e);
+            }
+        });
+    }
+
+    /** ActivityClientController.moveActivityTaskToBack: refused for an activity that is not the
+     *  task's root unless nonRoot. */
+    public boolean moveActivityTaskToBack(IBinder token, boolean nonRoot) {
+        return ask(() -> {
+            Tasks.Record r = tasks().find(token);
+            if (r == null || !nonRoot && !tasks().isRoot(r)) return false;
+            moveToBack();
+            return true;
+        });
+    }
+
+    private void moveToBack() {
+        tasks().toBack();
+        app.movedToBack();
+    }
 }
