@@ -1425,6 +1425,15 @@ bool uia_screen_to_frame(POINT p, POINT* out) {
     return true;
 }
 
+// The same mapping for the text services' rectangles (tsf_session.h), in frame pixels.
+bool frame_to_screen(const RECT& f, RECT* out) {
+    return uia_frame_to_screen(uia::Box{static_cast<int32_t>(f.left), static_cast<int32_t>(f.top),
+                                        static_cast<int32_t>(f.right), static_cast<int32_t>(f.bottom)},
+                               out);
+}
+
+bool screen_to_frame(POINT p, POINT* out) { return uia_screen_to_frame(p, out); }
+
 LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
         // A screen reader (any UI Automation client) asks for the app's views: uia_provider.h.
