@@ -4,6 +4,8 @@
 
 #include <cstdint>
 
+#include <unknwn.h>  // IUnknown, and rpcndr.h's boolean: not under WIN32_LEAN_AND_MEAN's windows.h
+
 namespace winapk::host::input_pane {
 
 namespace {
