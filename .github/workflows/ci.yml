@@ -173,6 +173,25 @@ jobs:
           g++ -std=c++17 -Wall -Wextra -Werror windows/test/launcher_state_test.cpp -o "$RUNNER_TEMP/launcher-state-test"
           "$RUNNER_TEMP/launcher-state-test"
 
+  codecs:
+    # The software codecs, the picture conversions and the WebM reader need no Windows call: their
+    # test also runs here under AddressSanitizer and UndefinedBehaviorSanitizer, on the same
+    # libraries cmake/soft_codecs.cmake builds for Windows (the Windows build runs it too).
+    name: Software codecs (Linux, ASan)
+    needs: changes
+    if: needs.changes.outputs.tests == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install nasm and ninja
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends nasm ninja-build
+      - name: Build
+        run: |
+          cmake -S windows/test/soft_codecs -B "$RUNNER_TEMP/codecs" -G Ninja -DCMAKE_BUILD_TYPE=Release -DWINAPK_SANITIZE=ON
+          cmake --build "$RUNNER_TEMP/codecs"
+      - name: Run winapk-soft-codecs-test
+        run: '"$RUNNER_TEMP/codecs/winapk-soft-codecs-test" windows/test/video'
+
   build:
     name: Build (Windows x64)
     needs: changes
