@@ -3,7 +3,7 @@
 #   What changed ──┬─ Guest libraries (Ubuntu) ─────────┬─ Unit tests
 #                  ├─ Launcher check (Ubuntu, MinGW)    ├─ Runtime tests
 #                  └─ Build (Windows, ccache) ──────────┼─ App smoke test (10 apps)
-#                                                       ├─ AOSP app layer: lifecycle test (Ubuntu, informational)
+#                                                       ├─ AOSP app layer: lifecycle, accessibility tree (Ubuntu, informational)
 #                                                       ├─ AOSP graphics (Skia, minikin)
 #                                                       ├─ Package (preview + installer)
 #                                                       └─ Sweep 1/4 .. 4/4 ─ Sweep report  (only when asked)
@@ -501,19 +501,6 @@ jobs:
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/camera-orientation-test windows/test/java/CameraOrientationTest.java
           MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -Djava.awt.headless=true \
             -cp "$cp;$(cygpath -w build/camera-orientation-test)" CameraOrientationTest
-      - name: Run the accessibility tree test
-        run: |
-          # What a screen reader is given of the views (HostAccessibility's
-          # snapshot for UI Automation): names in Hebrew, AOSP's reading order
-          # (right to left too), states, and actions reaching the views; on a
-          # plain JVM.
-          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
-          # In winapk-runtime (--java-test): the framework as compiled (build/java, Win.apk's own views and
-          # resources, which these tests exercise) with AOSP's graphics bound, the only graphics it has.
-          cp="$(cygpath -w stage/lib/aosp-graphics.jar);$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
-          "$JAVA_HOME/bin/javac" -cp "$cp" -d build/a11y-test windows/test/java/com/macapk/loader/AccessibilityTreeTest.java
-          MACAPK_LOG_LEVEL=7 ./stage/bin/winapk-runtime.exe --data "$(cygpath -w "$PWD/jtdata")" \
-            --java-test "$(cygpath -w build/java/android-framework.jar);$(cygpath -w build/a11y-test)" com.macapk.loader.AccessibilityTreeTest
       - name: Run the host network test
         run: |
           # What ConnectivityManager makes of the host's default-route adapter
@@ -1089,12 +1076,27 @@ jobs:
             echo "$(grep -E 'do not link' aospapp.log | head -n 1)"
           } >> "$GITHUB_STEP_SUMMARY"
           exit $rc
+      - name: The accessibility tree test
+        if: always()
+        run: |
+          # What a screen reader is given of AOSP's views and what it can do with them
+          # (HostAccessibility, com.winapk.aospviews.AccessibilityTree), in an activity this app
+          # layer runs; then the last snapshot read by the host's own model (host/uia_tree.h).
+          set -o pipefail
+          rc=0
+          windows/test/accessibility/run.sh stage thirdparty/aosp-gfx-linux a11y-out build/java/android-framework.jar \
+            2>&1 | tee a11y.log || rc=$?
+          echo "### Accessibility tree: $(grep -cE '^  ok ' a11y.log) checks passed, $(grep -cE '^  FAIL ' a11y.log) failed" \
+            >> "$GITHUB_STEP_SUMMARY"
+          exit $rc
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: aosp-app
           path: |
             aospapp.log
+            a11y.log
+            a11y-out/snapshot.txt
             stage/.build/aosp-app.links.txt
 
   ui-oracle:
