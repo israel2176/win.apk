@@ -5,9 +5,11 @@ Status: steps A0 and A1 built ("A1 as built", after section 4), A2 built
 dispatch through AOSP's `ContextImpl`): every
 app's process starts on AOSP 14's own `ActivityThread` (`lib/aosp-app.jar`,
 staged by `stage_runtime.sh` and shipped), through the `AppHost` seam, with no
-switch (the owner's decision: a layer lands as the only path). Win.apk's own
-`Activity`, `Application`, `ActivityHost` lifecycle code is off the path and
-is deleted in step A4.
+switch (the owner's decision: a layer lands as the only path). A4 begun:
+`Boot`'s own start (Win.apk's `Application` made, attached and created, the
+first activity through `ActivityHost`) is deleted, and a runtime without
+`aosp-app.jar` does not start an app. Win.apk's own `Activity`,
+`Application` and `ActivityHost` lifecycle code is off the path and goes next.
 
 The model is `aosp-views.md` (resources and views). This layer comes after
 them and assumes AOSP's graphics, resources and views are all on, as they are
