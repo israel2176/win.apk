@@ -37,6 +37,7 @@ jobs:
             clang:p
             cmake:p
             ninja:p
+            nasm:p
             boost:p
       - name: Build
         run: |

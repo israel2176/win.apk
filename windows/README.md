@@ -59,7 +59,7 @@ In an [MSYS2](https://www.msys2.org/) CLANG64 shell, with a JDK 21 installed
 and `JAVA_HOME` pointing at it:
 
 ```sh
-pacman -S mingw-w64-clang-x86_64-{clang,cmake,ninja,zlib,boost}
+pacman -S mingw-w64-clang-x86_64-{clang,cmake,ninja,nasm,zlib,boost}
 cmake -S windows -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
   -DWINAPK_JNI_INCLUDE="$JAVA_HOME/include" -DWINAPK_ARM64_JIT=ON
 cmake --build build

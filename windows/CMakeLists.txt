@@ -288,8 +288,8 @@ if(WINAPK_JNI_INCLUDE)
 
   # The software codecs MediaCodec and MediaExtractor fall back on where Media
   # Foundation has nothing (host/soft_codecs.h, host/webm_demux.h): libvpx
-  # (VP8, VP9), dav1d (AV1), libopus and libwebm's mkvparser, release tarballs
-  # checked against their SHA-256; about 1.4 MB of the runtime (cmake/soft_codecs.cmake).
+  # (VP8, VP9), dav1d (AV1), libopus and libwebm's mkvparser, decoders only,
+  # with libvpx's and dav1d's x86-64 SIMD (nasm); cmake/soft_codecs.cmake.
   include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/soft_codecs.cmake)
   set(WINAPK_SOFT_CODEC_SOURCES host/soft_codecs.cpp host/webm_demux.cpp host/yuv_convert.cpp)
   set(WINAPK_SOFT_CODEC_LIBS winapk_vpx winapk_dav1d winapk_opus winapk_mkvparser)

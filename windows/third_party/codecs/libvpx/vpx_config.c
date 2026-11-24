@@ -6,5 +6,5 @@
 /* in the file PATENTS.  All contributing project authors may */
 /* be found in the AUTHORS file in the root of the source tree. */
 #include "vpx/vpx_codec.h"
-static const char* const cfg = "--target=generic-gnu --disable-vp8-encoder --disable-vp9-encoder --enable-vp8-decoder --enable-vp9-decoder --disable-examples --disable-tools --disable-docs --disable-unit-tests --enable-vp9-highbitdepth --disable-vp9-postproc --disable-postproc --disable-webm-io --disable-libyuv --enable-multithread --size-limit=16384x16384";
+static const char* const cfg = "--target=x86_64-linux-gcc --as=nasm --enable-runtime-cpu-detect --enable-vp9-highbitdepth --disable-vp8-encoder --disable-vp9-encoder --disable-postproc --disable-vp9-postproc --disable-examples --disable-tools --disable-docs --disable-unit-tests --disable-install-docs --disable-install-bins --disable-install-libs --disable-install-srcs --disable-libyuv --disable-webm-io --disable-avx512 --size-limit=8192x8192";
 const char *vpx_codec_build_config(void) {return cfg;}
