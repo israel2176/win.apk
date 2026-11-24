@@ -380,9 +380,12 @@ part), and the deletions (A4).
   Win.apk classes it replaces 0.11 MB compressed, plus `ActivityHost` and the
   lifecycle parts of `Boot` at A4 (not measured). Net about +1.1 MB.
 - **Start.** The test's bind and two activities take 0.64 s cold without CDS
-  on Linux (measured); in `winapk-runtime.exe` with the framework archive the
-  111 classes are archived like the rest (`--cds-prepare` under the switch, an
-  archive name of its own: estimated, not measured). `handleBindApplication`
+  on Linux (measured); in `winapk-runtime.exe` the framework archive takes
+  the jar's classes like the rest (the jar is on the class path its key is
+  made of): under Wine, a third start of Fossify Notes mapped an archive
+  holding `ActivityThread`, the client transactions and `com.winapk.aospapp`.
+  The dump verifies every class it archives, so a class AOSP's `Activity`
+  names must be there: `ToolbarActionBar` is taken for that. `handleBindApplication`
   does more than Win.apk's start (a system context, `ResourcesManager`'s
   bookkeeping); expected under 0.1 s warm, to be measured on Windows.
 - **Memory.** 42 MB of heap after the first collection in the test, with the
