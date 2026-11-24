@@ -239,4 +239,35 @@ public final class Compat {
     public static boolean isValidVirtualDeviceId(android.companion.virtual.VirtualDeviceManager vdm, int deviceId) {
         return false;
     }
+
+    // ---- android.app.Instrumentation ----
+
+    private static boolean sBeforeOnCreateRan;
+
+    /** Instrumentation.callApplicationOnCreate, with the host's work right before the first one
+     *  (AppHost.Start.beforeApplicationOnCreate: the app's providers, where handleBindApplication
+     *  installs them, until they are AOSP's own, step A3). */
+    public static void callApplicationOnCreate(android.app.Instrumentation instr, android.app.Application app) {
+        AospApp a = AospApp.get();
+        if (!sBeforeOnCreateRan && a != null && a.beforeOnCreate != null) {
+            sBeforeOnCreateRan = true;
+            a.beforeOnCreate.accept(app);
+        }
+        instr.callApplicationOnCreate(app);
+    }
+
+    /** FileUtils.sync: the file's data to the disk, false when that failed. */
+    public static boolean sync(java.io.FileOutputStream stream) {
+        try {
+            if (stream != null) stream.getFD().sync();
+            return true;
+        } catch (java.io.IOException e) {
+            return false;
+        }
+    }
+
+    /** StructStat.st_mtim: the modification time as a timespec, from st_mtime (whole seconds). */
+    public static android.system.StructTimespec st_mtim(android.system.StructStat stat) {
+        return new android.system.StructTimespec(stat.st_mtime, 0);
+    }
 }

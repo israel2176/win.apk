@@ -36,5 +36,25 @@ public final class ActivityTaskService {
         return ActivityManager.START_SUCCESS;
     }
 
+    /** ActivityTaskManagerService.startActivities (TaskStackBuilder, Context.startActivities): each
+     *  intent resolved first (one that resolves to nothing fails them all), then the whole stack
+     *  started in order, the last on top: only it is launched, the ones under it are made when the
+     *  user comes back to them, as ActivityStarter does with each record but the top. */
+    public int startActivities(IApplicationThread caller, String callingPackage, String callingFeatureId,
+            Intent[] intents, String[] resolvedTypes, IBinder resultTo, Bundle options, int userId) {
+        if (intents == null || intents.length == 0) return ActivityManager.START_SUCCESS;
+        ActivityInfo[] infos = new ActivityInfo[intents.length];
+        Intent[] copies = new Intent[intents.length];
+        for (int i = 0; i < intents.length; i++) {
+            infos[i] = app.resolver.resolveActivity(intents[i],
+                    resolvedTypes != null && i < resolvedTypes.length ? resolvedTypes[i] : null);
+            if (infos[i] == null) return ActivityManager.START_INTENT_NOT_RESOLVED;
+            copies[i] = new Intent(intents[i]);
+            copies[i].setComponent(new android.content.ComponentName(infos[i].packageName, infos[i].name));
+        }
+        app.tasks.handler.post(() -> app.tasks.startAll(infos, copies, callingPackage));
+        return ActivityManager.START_SUCCESS;
+    }
+
     public IActivityClientController getActivityClientController() { return app.clientController; }
 }

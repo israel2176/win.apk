@@ -52,6 +52,7 @@ public class AospAppRewrite {
      *  launched, resumed, paused, stopped and destroyed activity (LinkScan lists the rest). */
     static final Set<String> TO_COMPAT = Set.of(
             "android/app/ActivityManager.getService()Landroid/app/IActivityManager;",
+            "android/app/Instrumentation.callApplicationOnCreate(Landroid/app/Application;)V",
             "android/app/compat/CompatChanges.isChangeEnabled(J)Z",
             "android/graphics/Compatibility.setTargetSdkVersion(I)V",
             "android/app/ActivityManager.isStartResultFatalError(I)Z",
@@ -82,6 +83,7 @@ public class AospAppRewrite {
             "android/companion/virtual/VirtualDeviceManager.isValidVirtualDeviceId(I)Z",
             "android/app/SystemServiceRegistry.createServiceCache()[Ljava/lang/Object;",
             "android/os/storage/StorageManager.mkdirs(Ljava/io/File;)V",
+            "android/os/FileUtils.sync(Ljava/io/FileOutputStream;)Z",
             "android/content/pm/PackageManager.getPackageInfoAsUserCached(Ljava/lang/String;JI)Landroid/content/pm/PackageInfo;",
             "android/content/pm/PackageManager.getApplicationInfoAsUserCached(Ljava/lang/String;JI)Landroid/content/pm/ApplicationInfo;");
 
@@ -133,6 +135,9 @@ public class AospAppRewrite {
             "android/os/GraphicsEnvironment",
             "android/renderscript/RenderScriptCacheDir",
             "android/os/TransactionTracker",
+            // StrictMode's VM policy hook in libcore (each private file path a context makes is
+            // reported to it): no StrictMode VM policy is set in an app's run here.
+            "dalvik/system/BlockGuard", "dalvik/system/BlockGuard$VmPolicy", "dalvik/system/BlockGuard$Policy",
             // The process's compat-change state (the change ids system_server disables for the app's
             // target SDK): Win.apk's CompatChanges answers every change enabled (aosp-views.md).
             "android/app/AppCompatCallbacks",
@@ -211,6 +216,12 @@ public class AospAppRewrite {
             "android/content/pm/InstrumentationInfo.secondaryCpuAbi",
             "android/content/pm/InstrumentationInfo.secondaryNativeLibraryDir",
             "android/content/pm/InstrumentationInfo.nativeLibraryDir");
+
+    /** Hidden fields Win.apk's classes lack whose value follows from what they have: a read becomes a
+     *  call of Compat's static of the same name, the object passed (StructStat.st_mtim, the
+     *  modification time SharedPreferencesImpl compares, from st_mtime and st_mtime_nsec). */
+    static final Set<String> FIELDS_TO_COMPAT = Set.of(
+            "android/system/StructStat.st_mtim");
 
     /** ContextImpl's methods whose bodies become Win.apk's Context's: the lookups of system services
      *  (its managers are the host's; SystemServiceRegistry's fetchers are clients of system_server's),
@@ -623,6 +634,15 @@ public class AospAppRewrite {
                 }
 
                 @Override public void visitFieldInsn(int op, String owner, String n, String d) {
+                    if (op == Opcodes.GETFIELD && FIELDS_TO_COMPAT.contains(owner + "." + n)) {
+                        String cd = "(L" + owner + ";)" + d;
+                        if (!compat.contains(n + cd)) {
+                            throw new IllegalStateException("Compat has no public static " + n + cd);
+                        }
+                        super.visitMethodInsn(Opcodes.INVOKESTATIC, COMPAT, n, cd, false);
+                        count("reads of " + owner.substring(owner.lastIndexOf('/') + 1) + "." + n + " sent to Compat");
+                        return;
+                    }
                     if (INERT_FIELDS.contains(owner + "." + n)
                             && (op == Opcodes.GETFIELD || op == Opcodes.PUTFIELD)) {
                         Type t = Type.getType(d);
