@@ -59,8 +59,11 @@ bool near_color(uint32_t px, int r, int g, int b, int tol = 24) {
 // Red over blue, as the file is: top rows red, bottom rows blue.
 bool red_over_blue(const vd::Frame& f) {
     if (f.width < 2 || f.height < 4) return false;
-    const uint32_t top = f.argb[static_cast<size_t>(f.height / 4) * f.width + f.width / 2];
-    const uint32_t bottom = f.argb[static_cast<size_t>(f.height * 3 / 4) * f.width + f.width / 2];
+    // Media Foundation's frames are ARGB already; a software decoder's are its own planes.
+    const std::vector<uint32_t> px = vd::frame_argb(f);
+    if (px.size() != static_cast<size_t>(f.width) * f.height) return false;
+    const uint32_t top = px[static_cast<size_t>(f.height / 4) * f.width + f.width / 2];
+    const uint32_t bottom = px[static_cast<size_t>(f.height * 3 / 4) * f.width + f.width / 2];
     return near_color(top, 255, 0, 0) && near_color(bottom, 0, 0, 255);
 }
 
