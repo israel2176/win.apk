@@ -7,11 +7,13 @@
 // its resource table is Win.apk's own com.macapk.loader.ResourceIndex. Code
 // outside the resources side reaches them only through this interface, so that
 // putting AOSP's android.content.res in needs an implementation of it, not patched
-// copies of AOSP classes. ArscRes, the default, calls the member it stands for, one
-// for one: going through here changes nothing. With WINAPK_AOSP_RES=1 (the host puts
-// lib/aosp-resources.jar first on the class path and sets -Dwinapk.aosp.res=1) the
-// classes of android.content.res are AOSP 14's and the backend is that jar's
-// com.winapk.aospres.AospRes (windows/java/aosp_res; step R1 of the plan).
+// copies of AOSP classes. Every app runs with -Dwinapk.aosp.res=1 (the host puts
+// lib/aosp-resources.jar first on the class path; Win.apk's own android.content.res
+// is not in the shipped jar, November 2026): the classes of android.content.res are
+// AOSP 14's and the backend is that jar's com.winapk.aospres.AospRes
+// (windows/java/aosp_res; step R1 of the plan). ArscRes, which calls the member it
+// stands for one for one, is left for the tests that run Win.apk's framework as
+// compiled on a plain JVM.
 //
 // The resources side, which keeps calling itself directly: android.content.res
 // and its Win.apk helpers in com.macapk.loader (ResourceIndex, ArscReader,

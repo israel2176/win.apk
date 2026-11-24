@@ -161,7 +161,7 @@ public final class BinaryXmlParser {
         String enumText(int attrResId, int dataType, int data);
     }
 
-    /** With AOSP's resources (WINAPK_AOSP_RES=1, com.macapk.loader.res.CompiledXml): the document
+    /** With AOSP's resources (-Dwinapk.aosp.res=1, com.macapk.loader.res.CompiledXml): the document
      *  keeps the compiled bytes it was parsed from, and each element its start tag's place in them,
      *  so that AOSP's attribute resolution can read the element's compiled attributes itself. Off,
      *  nothing is recorded. */

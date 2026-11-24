@@ -3,7 +3,7 @@
 //
 // AOSP's resources code reads an element's attributes from the compiled file itself (the
 // XmlBlock.Parser standing on it), not through the AttributeSet interface. Win.apk's inflater
-// hands views a set over a DOM element instead; with AOSP's resources (WINAPK_AOSP_RES=1) the
+// hands views a set over a DOM element instead; with AOSP's resources (-Dwinapk.aosp.res=1) the
 // set says where its element came from (BinaryXmlParser records it), and the AOSP side opens a
 // parser on the same start tag (windows/java/aosp_res, AttrSets). Off, nothing calls this.
 package com.macapk.loader.res;

@@ -10,7 +10,7 @@
 // reading order, right to left in a right-to-left layout), each one's AccessibilityNodeInfo
 // (View.createAccessibilityNodeInfo, or its AccessibilityNodeProvider's nodes: Compose, a
 // WebView, any virtual hierarchy), and its actions through performAccessibilityAction. Works
-// the same on Win.apk's own views and on AOSP's (WINAPK_AOSP_VIEWS=1): only public framework
+// the same on Win.apk's own views and on AOSP's (-Dwinapk.aosp.views=1): only public framework
 // API and ViewHost's windows.
 //
 // Lazy, as Android is with no accessibility service on: nothing here runs until the host says a

@@ -72,7 +72,7 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
         macapkInitSurface();
     }
 
-    /** With AOSP's views (WINAPK_AOSP_VIEWS=1) View's constructor reads the element's attributes
+    /** With AOSP's views (-Dwinapk.aosp.views=1) View's constructor reads the element's attributes
      *  itself (android:id, padding, visibility...), as Win.apk's inflater does after construction
      *  for its own View; this SurfaceView, which stays Win.apk's there, hands them on. Win.apk's
      *  View(Context, null) is View(Context). */

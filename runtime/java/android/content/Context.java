@@ -1224,7 +1224,7 @@ public abstract class Context {
      *  `(JobScheduler) ctx.getSystemService(JOB_SCHEDULER_SERVICE)`. */
     public Object getSystemService(String name) {
         Object result;
-        // AOSP's views (WINAPK_AOSP_VIEWS=1) own their managers (window, layout_inflater,
+        // AOSP's views (-Dwinapk.aosp.views=1) own their managers (window, layout_inflater,
         // input_method, accessibility...); Win.apk's view host answers null for every name.
         if (name != null && (result = com.macapk.loader.view.ViewHost.get().systemService(this, name)) != null) {
             return result;

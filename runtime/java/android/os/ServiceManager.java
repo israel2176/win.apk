@@ -15,7 +15,7 @@ package android.os;
  * Lookups answer null / empty: there are no system binders to hand out, and a
  * null IBinder is the documented result for an absent service. The one
  * exception is a service added in this process (addService): with AOSP's own
- * views (WINAPK_AOSP_VIEWS=1) com.winapk.aospviews registers the in-process
+ * views (-Dwinapk.aosp.views=1) com.winapk.aospviews registers the in-process
  * window manager, display manager and the like that their code looks up by
  * name, local Binders whose queryLocalInterface answers the implementation.
  * Without that switch nothing is ever added, and every lookup is null as before.

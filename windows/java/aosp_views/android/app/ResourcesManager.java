@@ -1,4 +1,4 @@
-// The part of AOSP's android.app.ResourcesManager that AOSP's views call (WINAPK_AOSP_VIEWS=1):
+// The part of AOSP's android.app.ResourcesManager that AOSP's views call (-Dwinapk.aosp.views=1):
 // ViewRootImpl.updateInternalDisplay after every configuration change of a window,
 // ConfigurationHelper and WindowMetricsController. Win.apk's resources are made by its own
 // ResBackend, not by a ResourcesManager, and AOSP's whole class (its ResourcesImpl caches and

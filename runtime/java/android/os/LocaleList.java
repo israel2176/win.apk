@@ -29,7 +29,7 @@ public final class LocaleList implements Parcelable {
     }
 
     /** AOSP (@hide): topLocale first, then otherLocales without it. AOSP's ResourcesImpl calls it
-     *  (WINAPK_AOSP_RES=1) to put the best-supported locale of several first. */
+     *  (-Dwinapk.aosp.res=1) to put the best-supported locale of several first. */
     public LocaleList(Locale topLocale, LocaleList otherLocales) {
         final int inputLength = otherLocales == null ? 0 : otherLocales.locales.length;
         int topIndex = -1;

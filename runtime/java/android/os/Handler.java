@@ -162,7 +162,7 @@ public class Handler {
     }
     public Handler(Looper looper, Callback callback) { this(looper, callback, false); }
     /** AOSP's hidden public Handler(Looper, Callback, boolean async) (AOSP's own views make
-     *  their asynchronous handlers so, WINAPK_AOSP_VIEWS=1); createAsync's body. */
+     *  their asynchronous handlers so, -Dwinapk.aosp.views=1); createAsync's body. */
     public Handler(Looper looper, Callback callback, boolean async) {
         this.looper = looper;
         this.callback = callback;

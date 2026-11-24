@@ -6216,7 +6216,7 @@ public class View implements android.graphics.drawable.Drawable.Callback,
                     // mBackground.mutate()`): a drawable from Resources shares its
                     // ConstantState with every other getDrawable of the same id, and
                     // a tint set on the shared state recolours them all. With AOSP's
-                    // resources (WINAPK_AOSP_RES=1), whose drawable cache hands that
+                    // resources (-Dwinapk.aosp.res=1), whose drawable cache hands that
                     // state out, a backgroundTint="#1a73e8" on one bg_oval turned
                     // every later bg_oval blue (the UI probe's icons.rtl).
                     if (macapkBackgroundTintList != null || macapkBackgroundTint != null) {

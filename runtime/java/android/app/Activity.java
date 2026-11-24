@@ -1070,7 +1070,7 @@ public class Activity extends ContextThemeWrapper
 
     // ---- View / window ----
     public Window getWindow() {
-        // AOSP's own window root (WINAPK_AOSP_VIEWS=1, ViewHost.aospWindows): the PhoneWindow
+        // AOSP's own window root (-Dwinapk.aosp.views=1, ViewHost.aospWindows): the PhoneWindow
         // Activity.attach makes, with this activity as its callback and its own window manager.
         if (MACAPK_AOSP_WINDOWS) {
             if (mAospWindow == null) mAospWindow = ViewHost.get().newActivityWindow(this);
