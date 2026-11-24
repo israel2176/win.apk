@@ -58,6 +58,7 @@ const char* const kHostClasses[] = {
     "com.macapk.loader.HostBrowserTab",
     "com.macapk.loader.HostNotifications",
     "com.macapk.loader.HostRadios",
+    "com.macapk.loader.HostTextInput",
     "com.macapk.loader.HostVideo",
     "com.macapk.loader.LocationBridge",
     "com.macapk.loader.NativeAudio",

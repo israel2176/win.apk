@@ -3208,12 +3208,12 @@ public class TouchDispatcher {
     /** The window: a key, a character or a touch went to the app; the editor may have changed. */
     public void hostImeSync() { HostTextInput.requestSync(this); }
 
-    /** The focused editor's InputConnection an input method works on, or null: none, or a
-     *  TextView on the soft-key route, which shows no composition (hostImeInline). On the
+    /** The focused editor's InputConnection an input method works on, or null. A TextView the
+     *  app showed the soft input for (the soft-key route) has one too: the keyboard's keys go
+     *  to it as keys, a text service's edits through the connection, as on a device. On the
      *  editor's thread. */
     public android.view.inputmethod.InputConnection hostImeConnection() {
         try {
-            if (ViewHost.get().imeActiveInput() != null) return null;
             return ViewHost.get().imeActiveConnection();
         } catch (Throwable t) {
             return null;
