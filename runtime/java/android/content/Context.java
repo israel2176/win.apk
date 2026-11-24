@@ -1979,7 +1979,7 @@ public abstract class Context {
     private Context applicationForStarts() {
         Context app = com.macapk.loader.app.Apps.current();
         if (app == null || app == this) {
-            throw new android.util.AndroidRuntimeException("startActivity from a context with no application");
+            throw new android.util.AndroidRuntimeException("a start or bind from a context with no application");
         }
         return app;
     }
@@ -2883,22 +2883,6 @@ public abstract class Context {
                 } catch (Throwable ignored) {}
             }
         }
-        synchronized (sBoundConnections) {
-            java.util.Iterator<java.util.Map.Entry<ServiceConnection, Context>> it =
-                sBoundBy.entrySet().iterator();
-            while (it.hasNext()) {
-                java.util.Map.Entry<ServiceConnection, Context> en = it.next();
-                if (macapkWraps(en.getValue(), dead)) {
-                    sBoundConnections.remove(en.getKey());
-                    it.remove();
-                    try {
-                        com.macapk.loader.NativeLog.w("Context", "Activity " + who
-                            + " has leaked ServiceConnection " + en.getKey()
-                            + " that was originally bound here");
-                    } catch (Throwable ignored) {}
-                }
-            }
-        }
     }
 
     /** Whether `c` is `target` or a ContextWrapper chain around it. */
@@ -2931,283 +2915,47 @@ public abstract class Context {
         if (app != null && app != this) app.unregisterComponentCallbacks(cb);
     }
 
-    /** Live bindings, keyed by ServiceConnection identity (AOSP keys its
-     *  ServiceDispatchers the same way, per (Context, ServiceConnection)).
-     *  One connection may be bound to several components at once, hence the
-     *  set of ComponentNames. */
-    private static final java.util.Map<ServiceConnection, java.util.HashSet<ComponentName>>
-        sBoundConnections = new java.util.IdentityHashMap<>();
-    /** Which Context bound each live connection (guarded by sBoundConnections),
-     *  so macapkRemoveContextRegistrations can unbind a destroyed activity's. */
-    private static final java.util.Map<ServiceConnection, Context> sBoundBy =
-        new java.util.IdentityHashMap<>();
-    /** Connections whose bind is queued on the main looper and has not run yet
-     *  (guarded by sBoundConnections). unbindService removes the entry, and the
-     *  queued bind then does nothing. */
-    private static final java.util.Map<ServiceConnection, Boolean> sPendingBinds =
-        new java.util.IdentityHashMap<>();
-
-    /** AOSP bindService. Once the target Service's onBind() returns, the
-     *  IBinder is delivered through LoadedApk.ServiceDispatcher: connected()
-     *  posts a RunConnection to the caller's Handler (or Executor) and
-     *  doConnected() calls mConnection.onServiceConnected(name, binder). The
-     *  callback is ASYNCHRONOUS -- it is never delivered inline out of
-     *  bindService(). (frameworks/base/core/java/android/app/LoadedApk.java,
-     *  ServiceDispatcher.connected / doConnected.)
-     *
-     *  This used to return false unconditionally and never touch the
-     *  ServiceConnection, so every bound-service client sat waiting forever
-     *  for a callback that could not arrive. Mac.apk is single-process, so
-     *  there is nothing to fake: the IBinder that
-     *  android.app.ServiceRegistry.bind() returns IS the Service's own
-     *  onBind() result and the client can call straight through it.
-     *
-     *  Flags: AOSP only brings the Service up when BIND_AUTO_CREATE is set.
-     *  ServiceRegistry exposes no "is this component already live" query, so
-     *  we always ensure+bind. The effect is that the rare non-AUTO_CREATE
-     *  bind creates the Service slightly earlier than Android would -- over
-     *  eager, not a different answer. */
+    // Services. Android: abstract; ContextImpl's (AOSP's) go to the activity manager, which runs
+    // the app's services through ActivityThread (com.winapk.aospapp.ActiveServices) or hands
+    // another app's to the system broker. A context of Win.apk's own with no base of that kind
+    // starts, binds and stops through the application's, as it starts activities.
     public boolean bindService(Intent intent, ServiceConnection conn, int flags) {
-        return bindService(intent, flags, null, conn);
+        return applicationForStarts().bindService(intent, conn, flags);
     }
-    /** AOSP bindServiceAsUser(Intent, ServiceConnection, int, UserHandle): bind
-     *  on behalf of another user. It is a SystemApi guarded by
-     *  INTERACT_ACROSS_USERS, and apps that call it (Signal does) are built to
-     *  run as a device/profile owner where it is granted.
-     *
-     *  Mac.apk models exactly one user -- UserHandle is always the single
-     *  running user, and `UserManager` reports one profile -- so a cross-user
-     *  bind and a same-user bind are the same operation here. Delegating is
-     *  therefore the faithful answer rather than a shortcut: there is no other
-     *  user whose service we could fail to reach. The alternative, returning
-     *  false, would tell the app the bind failed when the service it wanted is
-     *  in fact running. */
+    /** AOSP bindServiceAsUser: one user here, so bindService. */
     public boolean bindServiceAsUser(Intent intent, ServiceConnection conn, int flags,
                                      android.os.UserHandle user) {
-        return bindService(intent, conn, flags);
+        return applicationForStarts().bindService(intent, conn, flags);
     }
-    /** AOSP API-34 overloads taking Context.BindServiceFlags, the long form
-     *  of the BIND_* mask. Every flag this runtime acts on is in the low 32
-     *  bits, so they are the int overloads with the value narrowed. */
     public boolean bindService(Intent intent, ServiceConnection conn, BindServiceFlags flags) {
-        return bindService(intent, conn, (flags != null) ? (int) flags.getValue() : 0);
+        return applicationForStarts().bindService(intent, conn, flags);
     }
     public boolean bindService(Intent intent, BindServiceFlags flags,
                                java.util.concurrent.Executor executor,
                                ServiceConnection conn) {
-        return bindService(intent, (flags != null) ? (int) flags.getValue() : 0, executor, conn);
+        return applicationForStarts().bindService(intent, flags, executor, conn);
     }
     /** AOSP startActivityAsUser(Intent, UserHandle), a system API. There is one
      *  user (see bindServiceAsUser), so it is startActivity. */
     public void startActivityAsUser(Intent intent, android.os.UserHandle user) {
         startActivity(intent);
     }
-    /** AOSP API-29 overload: the ServiceConnection callbacks are delivered on
-     *  the supplied Executor rather than the caller's main-thread Handler
-     *  (LoadedApk.ServiceDispatcher.connected prefers mActivityExecutor when
-     *  one was registered). */
     public boolean bindService(Intent intent, int flags,
                                java.util.concurrent.Executor executor,
                                ServiceConnection conn) {
-        // AOSP ContextImpl.bindServiceCommon treats a null connection as an
-        // IllegalArgumentException, not a quiet false.
-        if (conn == null) throw new IllegalArgumentException("connection is null");
-        if (intent == null) return false;
-        // Another package running in ANOTHER process (each Mac.apk app has its
-        // own): AMS-style, through the system broker, delivering a real
-        // cross-process IBinder. A package the broker does not know keeps every
-        // in-process path below unchanged. See com.macapk.loader.SystemClient.
-        if (com.macapk.loader.SystemClient.bindsRemotely(this, intent)) {
-            return com.macapk.loader.SystemClient.bindRemote(this, intent, flags, executor, conn);
-        }
-        // AOSP bindService only resolves and returns: CREATE_SERVICE and
-        // BIND_SERVICE are main-looper messages that run after the caller has
-        // unwound (ActivityThread.H handleCreateService / handleBindService). We
-        // created + bound inline, so a Hilt @Singleton whose constructor binds
-        // (media3 MediaController.buildAsync in Libro.fm) had the Service's
-        // onCreate inject that singleton mid-construction and Dagger threw
-        // "Scoped provider was invoked recursively" -> black screen (issue #7).
-        // Resolve now (the return value), create + bind on the main looper.
-        if (android.app.ServiceRegistry.BIND_ASYNC) {
-            if (!android.app.ServiceRegistry.resolves(this, intent)) return false;
-            final Intent fi = intent; final int ff = flags;
-            final java.util.concurrent.Executor fe = executor; final ServiceConnection fc = conn;
-            synchronized (sBoundConnections) { sPendingBinds.put(fc, Boolean.TRUE); }
-            new android.os.Handler(getMainLooper()).post(() -> {
-                // unbindService before the bind ran: AOSP drops the dispatcher,
-                // so the connection never hears onServiceConnected.
-                synchronized (sBoundConnections) { if (sPendingBinds.remove(fc) == null) return; }
-                if (!macapkBindNow(fi, ff, fe, fc)) macapkDeliverNullBinding(fi, fe, fc);
-            });
-            return true;
-        }
-        // A bind to a Service that is inside its own onCreate (it binds to
-        // itself, as a media3 MediaSessionService building a MediaController for
-        // its own SessionToken does) is a BIND_SERVICE message queued behind
-        // CREATE_SERVICE on a device, so onBind runs on the published instance
-        // after onCreate returns. Binding inline here re-entered onCreate on a
-        // second instance. The target is being created, so it resolved: true.
-        if (android.app.ServiceRegistry.isCreating(intent)) {
-            final Intent fi = intent; final int ff = flags;
-            final java.util.concurrent.Executor fe = executor; final ServiceConnection fc = conn;
-            new android.os.Handler(getMainLooper()).post(() -> macapkBindNow(fi, ff, fe, fc));
-            return true;
-        }
-        return macapkBindNow(intent, flags, executor, conn);
+        return applicationForStarts().bindService(intent, flags, executor, conn);
     }
-
-    /** AOSP LoadedApk.ServiceDispatcher.doConnected with a null binder: the
-     *  component resolved but its onBind() returned null, so bindService said
-     *  true and the connection hears onNullBinding (API 26+), never
-     *  onServiceConnected. */
-    private void macapkDeliverNullBinding(Intent intent,
-                                          java.util.concurrent.Executor executor,
-                                          final ServiceConnection conn) {
-        ComponentName c = intent.getComponent();
-        if (c == null) {
-            try {
-                android.content.pm.ResolveInfo ri = getPackageManager().resolveService(intent, 0);
-                if (ri != null && ri.serviceInfo != null && ri.serviceInfo.name != null) {
-                    c = new ComponentName(ri.serviceInfo.packageName != null
-                            ? ri.serviceInfo.packageName : getPackageName(), ri.serviceInfo.name);
-                }
-            } catch (Throwable ignored) {}
-        }
-        final ComponentName name = c;
-        Runnable deliver = () -> {
-            try { conn.onNullBinding(name); }
-            catch (Throwable t) {
-                try { com.macapk.loader.NativeLog.w("ctx", "onNullBinding(" + name + ") threw " + t); }
-                catch (Throwable ignored) {}
-            }
-        };
-        if (executor != null) executor.execute(deliver);
-        else new android.os.Handler(getMainLooper()).post(deliver);
+    public void unbindService(ServiceConnection conn) {
+        applicationForStarts().unbindService(conn);
     }
-
-    /** bindService's inline half: bring the Service up, onBind, record the
-     *  connection and post onServiceConnected. */
-    private boolean macapkBindNow(Intent intent, int flags,
-                                  java.util.concurrent.Executor executor,
-                                  ServiceConnection conn) {
-        final android.os.IBinder binder = android.app.ServiceRegistry.bind(this, intent);
-        if (binder == null) {
-            // Two AOSP cases collapse to null here: the Intent names no
-            // resolvable Service (AOSP returns false), or the Service's
-            // onBind() legitimately returned null (AOSP returns true and calls
-            // ServiceConnection.onNullBinding). ServiceRegistry cannot tell
-            // them apart and our ServiceConnection has no onNullBinding to
-            // call, so report the "couldn't find the service" answer: a client
-            // told false takes its no-service path instead of blocking on a
-            // callback that cannot come.
-            return false;
-        }
-        // AOSP ALWAYS hands onServiceConnected a real ComponentName: the one the
-        // intent RESOLVED to, not the one the caller happened to write. For an
-        // implicit bind (setPackage + action, which is how every Firebase/GMS
-        // client binds) getComponent() is null, so we used to deliver
-        // onServiceConnected(null, binder). Most SDKs ignore the argument, but a
-        // null there is a latent NPE for any that does not -- and it also
-        // collapsed every implicit connection onto ONE key in sBoundConnections
-        // below, so two different implicit binds looked like a duplicate and the
-        // second was dropped by the "already have this one" check.
-        // Resolving it became possible at v1.0.1177, when the PackageManager
-        // learned to answer an implicit service action at all.
-        ComponentName resolved = intent.getComponent();
-        if (resolved == null) {
-            try {
-                android.content.pm.ResolveInfo ri = getPackageManager().resolveService(intent, 0);
-                if (ri != null && ri.serviceInfo != null && ri.serviceInfo.name != null) {
-                    String rp = ri.serviceInfo.packageName != null
-                              ? ri.serviceInfo.packageName : getPackageName();
-                    resolved = new ComponentName(rp, ri.serviceInfo.name);
-                }
-            } catch (Throwable ignored) {
-                // A context without a PackageManager keeps the old behaviour
-                // rather than failing the bind: null is what it delivered before.
-            }
-        }
-        final ComponentName name = resolved;
-        synchronized (sBoundConnections) {
-            java.util.HashSet<ComponentName> bound = sBoundConnections.get(conn);
-            if (bound == null) {
-                bound = new java.util.HashSet<>();
-                sBoundConnections.put(conn, bound);
-            }
-            sBoundBy.putIfAbsent(conn, this);
-            // AOSP doConnected() early-returns when this connection already
-            // holds this binder ("Huh, already have this one").
-            if (!bound.add(name)) return true;
-        }
-        final ServiceConnection target = conn;
-        Runnable deliver = new Runnable() {
-            @Override public void run() {
-                try { target.onServiceConnected(name, binder); }
-                catch (Throwable t) {
-                    try {
-                        com.macapk.loader.NativeLog.w("ctx",
-                            "onServiceConnected(" + name + ") threw " + t);
-                    } catch (Throwable ignored) {}
-                }
-            }
-        };
-        if (executor != null) executor.execute(deliver);
-        else new android.os.Handler(getMainLooper()).post(deliver);
-        return true;
-    }
-    /** AOSP unbindService drops the ServiceDispatcher for this connection and
-     *  does NOT call onServiceDisconnected -- that fires only on unexpected
-     *  service death (LoadedApk.ServiceDispatcher.doDeath). ContextImpl also
-     *  throws IllegalArgumentException("Service not registered") for a
-     *  connection it never handed out; we deliberately do not, because our
-     *  bind path returns false (and therefore records nothing) in cases where
-     *  AOSP would have returned true, so a faithful throw here would invent a
-     *  crash real Android never produces. */
-    public void    unbindService(ServiceConnection conn) {
-        // A connection to another app's process: drop it there (SystemClient).
-        if (conn != null && com.macapk.loader.SystemClient.unbindRemote(conn)) return;
-        if (conn == null) return;
-        synchronized (sBoundConnections) {
-            sBoundConnections.remove(conn); sBoundBy.remove(conn); sPendingBinds.remove(conn);
-        }
-    }
-    /** AOSP startService: instantiate (once) + drive the target Service's
-     *  onCreate/onStartCommand. v1.0: was a no-op returning null, so
-     *  Context.startService and PendingIntent.getService never ran the
-     *  service. Now backed by android.app.ServiceRegistry (single-process
-     *  Service host), keyed on the Intent's ComponentName -- generic, no
-     *  package-name branch. Returns the started ComponentName or null
-     *  when the Intent names no resolvable component. */
     public android.content.ComponentName startService(Intent service) {
-        // Another app's service in another process: through the broker
-        // (com.macapk.loader.SystemClient), as bindService does.
-        if (com.macapk.loader.SystemClient.bindsRemotely(this, service)) {
-            return com.macapk.loader.SystemClient.startRemote(service);
-        }
-        return android.app.ServiceRegistry.start(this, service, false);
+        return applicationForStarts().startService(service);
     }
-    /** AOSP API-26+: same contract as startService except the service
-     *  is started in the foreground (allowed to bypass background
-     *  execution limits for the first 5 seconds while it calls
-     *  startForeground). Called by ContextCompat.startForegroundService
-     *  inside WorkManager's Processor.startForeground when a Worker
-     *  publishes ForegroundInfo via setForegroundAsync. We don't
-     *  display notifications, so we just no-op-return null; the
-     *  caller (WorkForegroundUpdater) completes its future
-     *  regardless. */
     public android.content.ComponentName startForegroundService(Intent service) {
-        if (com.macapk.loader.SystemClient.bindsRemotely(this, service)) {
-            return com.macapk.loader.SystemClient.startRemote(service);
-        }
-        return android.app.ServiceRegistry.start(this, service, true);
+        return applicationForStarts().startForegroundService(service);
     }
     public boolean stopService(Intent service) {
-        // A service another process hosts (another app's, or this app's in its
-        // own android:process): stopped there, through the broker.
-        if (com.macapk.loader.SystemClient.bindsRemotely(this, service)) {
-            return com.macapk.loader.SystemClient.stopRemote(service);
-        }
-        return android.app.ServiceRegistry.stop(service);
+        return applicationForStarts().stopService(service);
     }
     /** AOSP permission checks. ContextImpl funnels every one of these
      *  through a SINGLE per-UID granted-permission set:
@@ -3422,46 +3170,19 @@ public abstract class Context {
     }
     public void revokeSelfPermissionsOnKill(java.util.Collection<String> permissions) { }
 
-    /** AOSP API-29 -- reorder a bound service's process within its LRU group.
-     *  A pure memory-management hint to the ActivityManager, with no return
-     *  value and no observable effect on the binding. Mac.apk runs one process
-     *  and never kills it for memory, so there is no group to move it in.
-     *  AOSP's own IllegalArgumentException for an unbound connection is kept
-     *  -- it is the one thing a caller can get wrong. */
     public void updateServiceGroup(ServiceConnection conn, int group, int importance) {
-        if (conn == null) throw new IllegalArgumentException("connection is null");
+        applicationForStarts().updateServiceGroup(conn, group, importance);
     }
-
-    /** AOSP bindIsolatedService (API 29) -- "Variation of bindService() that,
-     *  in the specific case of ISOLATED services, allows the caller to
-     *  generate multiple instances of the service from a single component
-     *  declaration", distinguished by instanceName.
-     *
-     *  ⚠ STATED DIVERGENCE. The bind itself is real: it goes through the same
-     *  ServiceRegistry path bindService() uses, so the caller gets a live
-     *  binder and its onServiceConnected fires. What Mac.apk cannot provide is
-     *  the two properties in the method's name. There is one process, so the
-     *  service is not isolated (a service asking Process.isIsolated() gets
-     *  false -- as it does for every service here). And ServiceRegistry keys
-     *  instances by COMPONENT, so two different instanceNames resolve to the
-     *  same instance rather than two.
-     *
-     *  Binding anyway rather than returning false, because a false would leave
-     *  a caller with no service at all, while the properties it loses are ones
-     *  nothing in a single-process runtime could have supplied under any
-     *  answer. The null-instanceName check is AOSP's. */
     public boolean bindIsolatedService(Intent service, int flags, String instanceName,
                                        java.util.concurrent.Executor executor,
                                        ServiceConnection conn) {
-        if (instanceName == null) throw new NullPointerException("null instanceName");
-        return bindService(service, flags, executor, conn);
+        return applicationForStarts().bindIsolatedService(service, flags, instanceName, executor, conn);
     }
     public boolean bindIsolatedService(Intent service, BindServiceFlags flags,
                                        String instanceName,
                                        java.util.concurrent.Executor executor,
                                        ServiceConnection conn) {
-        return bindIsolatedService(service, (flags != null) ? (int) flags.getValue() : 0,
-                                   instanceName, executor, conn);
+        return applicationForStarts().bindIsolatedService(service, flags, instanceName, executor, conn);
     }
 
     /** AOSP Context.BindServiceFlags (API 34) -- a long-width wrapper around

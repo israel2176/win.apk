@@ -59,6 +59,7 @@ public class AospAppRewrite {
             "android/app/compat/CompatChanges.isChangeEnabled(J)Z",
             "android/graphics/Compatibility.setTargetSdkVersion(I)V",
             "android/app/ActivityManager.isStartResultFatalError(I)Z",
+            "android/text/TextUtils.formatSimple(Ljava/lang/String;[Ljava/lang/Object;)Ljava/lang/String;",
             "android/os/FileUtils.newFileOrNull(Ljava/lang/String;)Ljava/io/File;",
             "android/os/FileUtils.listOrEmpty(Ljava/io/File;)[Ljava/lang/String;",
             "android/os/FileUtils.listFilesOrEmpty(Ljava/io/File;Ljava/io/FilenameFilter;)[Ljava/io/File;",
@@ -100,6 +101,10 @@ public class AospAppRewrite {
             "android/app/Application", List.of(
                     "getAutofillOptions()Landroid/content/AutofillOptions;",
                     "getContentCaptureOptions()Landroid/content/ContentCaptureOptions;"),
+            "android/app/Service", List.of(
+                    "getContentCaptureOptions()Landroid/content/ContentCaptureOptions;",
+                    "setContentCaptureOptions(Landroid/content/ContentCaptureOptions;)V",
+                    "updateDeviceId(I)V"),
             "android/app/Activity", List.of(
                     "setAutofillOptions(Landroid/content/AutofillOptions;)V",
                     "isAutofillCompatibilityEnabled()Z"));
@@ -154,6 +159,9 @@ public class AospAppRewrite {
      *  the parcel hooks of an Intent crossing a process (none crosses here), and the autofill /
      *  content-capture options system_server hands an app (none: no such services). */
     static final Set<String> INERT_METHODS = Set.of(
+            // A service's foreground tracing (Service.startForeground's track events).
+            "android/os/Trace.asyncTraceForTrackBegin", "android/os/Trace.asyncTraceForTrackEnd",
+            "android/os/Trace.instantForTrack",
             "dalvik/system/VMRuntime.registerSensitiveThread", "dalvik/system/VMRuntime.setProcessPackageName",
             "dalvik/system/VMRuntime.updateProcessState", "dalvik/system/VMRuntime.clampGrowthLimit",
             "dalvik/system/VMRuntime.clearGrowthLimit", "dalvik/system/VMRuntime.registerAppInfo",
@@ -236,9 +244,8 @@ public class AospAppRewrite {
             "enforcePermission(Ljava/lang/String;IILjava/lang/String;)V",
             "enforceCallingPermission(Ljava/lang/String;Ljava/lang/String;)V",
             "enforceCallingOrSelfPermission(Ljava/lang/String;Ljava/lang/String;)V",
-            // Receivers, broadcasts and services: Win.apk's dispatch (its receiver registry, the
-            // host's broadcasts, ServiceRegistry and the broker's services), until they are
-            // ActivityThread's over the in-process activity manager (step A3).
+            // Receivers and broadcasts: Win.apk's dispatch (its receiver registry, the host's
+            // broadcasts), until they are ActivityThread's over the in-process activity manager.
             "registerReceiver(Landroid/content/BroadcastReceiver;Landroid/content/IntentFilter;)Landroid/content/Intent;",
             "registerReceiver(Landroid/content/BroadcastReceiver;Landroid/content/IntentFilter;I)Landroid/content/Intent;",
             "registerReceiver(Landroid/content/BroadcastReceiver;Landroid/content/IntentFilter;Ljava/lang/String;Landroid/os/Handler;)Landroid/content/Intent;",
@@ -255,18 +262,7 @@ public class AospAppRewrite {
             "sendOrderedBroadcast(Landroid/content/Intent;Ljava/lang/String;Ljava/lang/String;Landroid/content/BroadcastReceiver;Landroid/os/Handler;ILjava/lang/String;Landroid/os/Bundle;)V",
             "sendStickyBroadcast(Landroid/content/Intent;)V",
             "sendStickyBroadcast(Landroid/content/Intent;Landroid/os/Bundle;)V",
-            "removeStickyBroadcast(Landroid/content/Intent;)V",
-            "startService(Landroid/content/Intent;)Landroid/content/ComponentName;",
-            "startForegroundService(Landroid/content/Intent;)Landroid/content/ComponentName;",
-            "stopService(Landroid/content/Intent;)Z",
-            "bindService(Landroid/content/Intent;ILjava/util/concurrent/Executor;Landroid/content/ServiceConnection;)Z",
-            "bindService(Landroid/content/Intent;Landroid/content/Context$BindServiceFlags;Ljava/util/concurrent/Executor;Landroid/content/ServiceConnection;)Z",
-            "bindService(Landroid/content/Intent;Landroid/content/ServiceConnection;I)Z",
-            "bindService(Landroid/content/Intent;Landroid/content/ServiceConnection;Landroid/content/Context$BindServiceFlags;)Z",
-            "bindIsolatedService(Landroid/content/Intent;ILjava/lang/String;Ljava/util/concurrent/Executor;Landroid/content/ServiceConnection;)Z",
-            "bindIsolatedService(Landroid/content/Intent;Landroid/content/Context$BindServiceFlags;Ljava/lang/String;Ljava/util/concurrent/Executor;Landroid/content/ServiceConnection;)Z",
-            "unbindService(Landroid/content/ServiceConnection;)V",
-            "updateServiceGroup(Landroid/content/ServiceConnection;II)V");
+            "removeStickyBroadcast(Landroid/content/Intent;)V");
 
     /** The in-process system services: AIDL interface -> the plain class that answers it
      *  (windows/java/aosp_app). */

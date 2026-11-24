@@ -26,7 +26,7 @@ public class VpnService extends Service {
 
     @Override public android.os.IBinder onBind(Intent intent) {
         // AOSP returns its internal Callback binder only for SERVICE_INTERFACE.
-        return super.onBind(intent);
+        return null;
     }
 
     /** AOSP prepare(): returns a consent Intent if the user has not authorized

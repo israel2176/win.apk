@@ -92,6 +92,22 @@ public interface AppHost {
      *  a process that leaves now still owes, which the next process starts. */
     java.util.List<Intent> pendingStarts();
 
+    /** A service of the app's bound for the host, which waits for its binder: one the system broker
+     *  binds into this app for another, an account authenticator, the measurement service. The
+     *  service is created if it was not and the binding held for the process's life; null when
+     *  nothing of the app's answers or its onBind returned null. Any thread. */
+    android.os.IBinder bindServiceNow(Intent intent);
+
+    /** JobServiceContext's bind for one execution of a job: the service's instance (created if
+     *  needed), on the main thread. */
+    android.app.Service jobBind(android.content.ComponentName service);
+
+    /** The end of that execution: true when it destroyed the service (nothing else held it). */
+    boolean jobUnbind(android.content.ComponentName service);
+
+    /** The live instance of the app's service `className`, or null. */
+    android.app.Service peekService(String className);
+
     /** Another app's start of one of this app's activities, or a URL the host hands over, while the
      *  process runs: started as ActivityStarter starts an intent from outside the task. */
     void deliver(Intent intent, String sender);

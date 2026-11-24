@@ -217,4 +217,71 @@ public class ContextWrapper extends Context {
         return baseContext != null ? baseContext.createCredentialProtectedStorageContext()
                                    : super.createCredentialProtectedStorageContext();
     }
+
+    // ---- AOSP ContextWrapper: starts, services and binds are the base context's (ContextImpl's,
+    // which go to the activity manager). With no base yet, Context's own (the application's).
+    @Override public void startActivity(Intent intent) {
+        if (baseContext != null) baseContext.startActivity(intent);
+        else super.startActivity(intent);
+    }
+    @Override public void startActivity(Intent intent, android.os.Bundle options) {
+        if (baseContext != null) baseContext.startActivity(intent, options);
+        else super.startActivity(intent, options);
+    }
+    @Override public void startActivities(Intent[] intents) {
+        if (baseContext != null) baseContext.startActivities(intents);
+        else super.startActivities(intents);
+    }
+    @Override public void startActivities(Intent[] intents, android.os.Bundle options) {
+        if (baseContext != null) baseContext.startActivities(intents, options);
+        else super.startActivities(intents, options);
+    }
+    @Override public ComponentName startService(Intent service) {
+        if (baseContext != null) return baseContext.startService(service);
+        else return super.startService(service);
+    }
+    @Override public ComponentName startForegroundService(Intent service) {
+        if (baseContext != null) return baseContext.startForegroundService(service);
+        else return super.startForegroundService(service);
+    }
+    @Override public boolean stopService(Intent service) {
+        if (baseContext != null) return baseContext.stopService(service);
+        else return super.stopService(service);
+    }
+    @Override public boolean bindService(Intent service, ServiceConnection conn, int flags) {
+        if (baseContext != null) return baseContext.bindService(service, conn, flags);
+        else return super.bindService(service, conn, flags);
+    }
+    @Override public boolean bindService(Intent service, ServiceConnection conn, BindServiceFlags flags) {
+        if (baseContext != null) return baseContext.bindService(service, conn, flags);
+        else return super.bindService(service, conn, flags);
+    }
+    @Override public boolean bindService(Intent service, int flags, java.util.concurrent.Executor executor, ServiceConnection conn) {
+        if (baseContext != null) return baseContext.bindService(service, flags, executor, conn);
+        else return super.bindService(service, flags, executor, conn);
+    }
+    @Override public boolean bindService(Intent service, BindServiceFlags flags, java.util.concurrent.Executor executor, ServiceConnection conn) {
+        if (baseContext != null) return baseContext.bindService(service, flags, executor, conn);
+        else return super.bindService(service, flags, executor, conn);
+    }
+    @Override public boolean bindIsolatedService(Intent service, int flags, String instanceName, java.util.concurrent.Executor executor, ServiceConnection conn) {
+        if (baseContext != null) return baseContext.bindIsolatedService(service, flags, instanceName, executor, conn);
+        else return super.bindIsolatedService(service, flags, instanceName, executor, conn);
+    }
+    @Override public boolean bindIsolatedService(Intent service, BindServiceFlags flags, String instanceName, java.util.concurrent.Executor executor, ServiceConnection conn) {
+        if (baseContext != null) return baseContext.bindIsolatedService(service, flags, instanceName, executor, conn);
+        else return super.bindIsolatedService(service, flags, instanceName, executor, conn);
+    }
+    @Override public boolean bindServiceAsUser(Intent service, ServiceConnection conn, int flags, android.os.UserHandle user) {
+        if (baseContext != null) return baseContext.bindServiceAsUser(service, conn, flags, user);
+        else return super.bindServiceAsUser(service, conn, flags, user);
+    }
+    @Override public void unbindService(ServiceConnection conn) {
+        if (baseContext != null) baseContext.unbindService(conn);
+        else super.unbindService(conn);
+    }
+    @Override public void updateServiceGroup(ServiceConnection conn, int group, int importance) {
+        if (baseContext != null) baseContext.updateServiceGroup(conn, group, importance);
+        else super.updateServiceGroup(conn, group, importance);
+    }
 }

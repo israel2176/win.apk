@@ -683,7 +683,8 @@ final class MacApkJobScheduler extends JobScheduler {
         try {
             // JobServiceContext's BIND_AUTO_CREATE bind for this execution;
             // releaseExecution() is its unbind (ServiceRegistry.jobBind).
-            svc = android.app.ServiceRegistry.jobBind(appContext(), svcName);
+            com.macapk.loader.app.AppHost host = com.macapk.loader.app.AppHost.get();
+            svc = host != null ? host.jobBind(comp) : null;
         } catch (Throwable t) {
             warn("ensureLive " + svcName + " threw " + t);
             return;
@@ -707,7 +708,7 @@ final class MacApkJobScheduler extends JobScheduler {
             warn("fireJob " + svcName + " is a Service but neither a JobService nor the host"
                     + " of a JobServiceEngine; dropping job " + id);
             dropLocked(id);
-            android.app.ServiceRegistry.jobUnbind(svcName);
+            jobUnbind(svcName);
             return;
         }
 
@@ -788,7 +789,7 @@ final class MacApkJobScheduler extends JobScheduler {
         String svc;
         synchronized (mBound) { svc = mBound.remove(params); }
         if (svc == null) return;
-        if (android.app.ServiceRegistry.jobUnbind(svc)) {
+        if (jobUnbind(svc)) {
             log("service " + svc + " unbound after job " + params.getJobId()
                     + " and not otherwise needed: destroyed (next job gets a fresh instance)");
         }
@@ -1379,6 +1380,14 @@ final class MacApkJobScheduler extends JobScheduler {
         catch (Throwable t) { return null; }
     }
 
+    /** JobServiceContext's unbind at the end of an execution (AppHost.jobUnbind). */
+    private static boolean jobUnbind(String className) {
+        com.macapk.loader.app.AppHost host = com.macapk.loader.app.AppHost.get();
+        Context ctx = appContext();
+        if (host == null || ctx == null) return false;
+        return host.jobUnbind(new ComponentName(ctx.getPackageName(), className));
+    }
+
     private static Context appContext() {
         try { return com.macapk.loader.app.Apps.current(); }
         catch (Throwable t) { return null; }
@@ -1389,7 +1398,8 @@ final class MacApkJobScheduler extends JobScheduler {
     private static JobTarget liveTargetFor(JobRecord rec) {
         try {
             String cls = rec.info.getService().getClassName();
-            Service s = android.app.ServiceRegistry.peekLive(cls);
+            com.macapk.loader.app.AppHost host = com.macapk.loader.app.AppHost.get();
+            Service s = host != null ? host.peekService(cls) : null;
             return s != null ? targetFor(s, cls) : null;
         } catch (Throwable t) {
             return null;
