@@ -1906,22 +1906,26 @@ int http_get(const std::wstring& url, const fs::path& out, const std::wstring& e
                             WINHTTP_HEADER_NAME_BY_INDEX, &code, &size, WINHTTP_NO_HEADER_INDEX);
         status = static_cast<int>(code);
         if (status == 200) {
-            // Content-Length as text (a number query stops at 4 GB), and whether the body comes encoded: WinHTTP
-            // then inflates it, and the length is the encoded one's, not the bytes read.
-            uint64_t total = 0;
-            wchar_t text[32] = {};
-            size = sizeof(text) - sizeof(wchar_t);
-            if (WinHttpQueryHeaders(request, WINHTTP_QUERY_CONTENT_LENGTH, WINHTTP_HEADER_NAME_BY_INDEX, text, &size,
-                                    WINHTTP_NO_HEADER_INDEX)) {
-                total = wcstoull(text, nullptr, 10);
-            }
-            wchar_t encoding[64] = {};
-            size = sizeof(encoding) - sizeof(wchar_t);
-            const bool encoded = WinHttpQueryHeaders(request, WINHTTP_QUERY_CONTENT_ENCODING,
-                                                     WINHTTP_HEADER_NAME_BY_INDEX, encoding, &size,
-                                                     WINHTTP_NO_HEADER_INDEX) &&
-                                 encoding[0] && _wcsicmp(encoding, L"identity") != 0;
-            const uint64_t length = encoded ? 0 : total;  // what the body must come to, 0 when unknown
+            // What the body must come to (updates.h expected_body): the framing headers read as text, whole (a
+            // number query stops at 4 GB, and a repeated header comes joined with commas). The session inflates
+            // gzip and deflate, so an encoded body's Content-Length is not the bytes read.
+            auto header = [request](DWORD query) {
+                DWORD bytes = 0;
+                WinHttpQueryHeaders(request, query, WINHTTP_HEADER_NAME_BY_INDEX, WINHTTP_NO_OUTPUT_BUFFER, &bytes,
+                                    WINHTTP_NO_HEADER_INDEX);
+                if (GetLastError() != ERROR_INSUFFICIENT_BUFFER || bytes == 0 || bytes > 64 * 1024)
+                    return std::wstring();
+                std::wstring s(bytes / sizeof(wchar_t) + 1, L'\0');
+                if (!WinHttpQueryHeaders(request, query, WINHTTP_HEADER_NAME_BY_INDEX, s.data(), &bytes,
+                                         WINHTTP_NO_HEADER_INDEX))
+                    return std::wstring();
+                s.resize(bytes / sizeof(wchar_t));
+                return s;
+            };
+            const winapk::launcher::BodyLength body = winapk::launcher::expected_body(
+                header(WINHTTP_QUERY_CONTENT_LENGTH), header(WINHTTP_QUERY_CONTENT_ENCODING),
+                header(WINHTTP_QUERY_TRANSFER_ENCODING), /*decoded=*/true);
+            const uint64_t total = body.exact() ? body.bytes : 0;  // for progress: 0 when unknown
             if (new_etag) {
                 wchar_t tag[256] = {};
                 size = sizeof(tag);
@@ -1935,20 +1939,25 @@ int http_get(const std::wstring& url, const fs::path& out, const std::wstring& e
             const fs::path part = out.wstring() + L".part";
             HANDLE f =
                 CreateFileW(part.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-            bool ok = f != INVALID_HANDLE_VALUE;
+            bool ok = f != INVALID_HANDLE_VALUE && body.kind != winapk::launcher::BodyLength::kBroken;
             uint64_t got = 0;
             std::vector<char> buf(1 << 16);
-            for (DWORD n = 0; ok; got += n) {
+            while (ok) {
+                DWORD n = 0;
                 ok = WinHttpReadData(request, buf.data(), static_cast<DWORD>(buf.size()), &n) != 0;
                 if (!ok || n == 0) break;
+                got += n;
+                // More than the server announced: not the file asked for; stop reading it at once.
+                if (body.exact() && got > body.bytes) ok = false;
                 DWORD written = 0;
-                ok = WriteFile(f, buf.data(), n, &written, nullptr) && written == n;
-                if (ok && progress) progress(got + n, encoded ? 0 : total);
-                if (length && got + n > length) ok = false;  // more than the server said: not the file asked for
+                ok = ok && WriteFile(f, buf.data(), n, &written, nullptr) && written == n;
+                if (ok && progress) progress(got, total);
             }
             if (f != INVALID_HANDLE_VALUE) CloseHandle(f);
-            // A body that broke off short of its Content-Length is not kept (as the other runtime's updater refuses it).
-            ok = ok && got > 0 && (!length || got == length) && MoveFileExW(part.c_str(), out.c_str(), MOVEFILE_REPLACE_EXISTING) != 0;
+            // Kept only whole: never empty, and at the announced length when there is one (a connection closed
+            // early ends a read without an error).
+            ok = ok && got > 0 && body.whole(got) &&
+                 MoveFileExW(part.c_str(), out.c_str(), MOVEFILE_REPLACE_EXISTING) != 0;
             if (!ok) {
                 fs::remove(part, ec);
                 status = 0;
@@ -2665,7 +2674,8 @@ DWORD WINAPI update_check_thread(void* param) {
             etag = utf8_to_wide(s);
         }
         const int status = http_get(kReleasesUrl, releases_file(), etag, &new_etag, {},
-                                    L"Accept: application/vnd.github+json", updater_session());
+                                    L"Accept: application/vnd.github+json\r\nX-GitHub-Api-Version: 2022-11-28",
+                                    updater_session());
         if (status == 200) {
             std::ofstream(releases_etag_file(), std::ios::binary | std::ios::trunc) << wide_to_utf8(new_etag);
         }
@@ -2682,90 +2692,131 @@ DWORD WINAPI update_check_thread(void* param) {
     return 0;
 }
 
-// A file's Authenticode signature (WinVerifyTrust, no revocation fetch), and the signer's name when it verifies.
+// A file's Authenticode signature, as WinVerifyTrust judges it with the generic verify action (WINTRUST_ACTION_
+// GENERIC_VERIFY_V2), and who signed it when it verifies. No revocation check and nothing fetched from the network
+// (WTD_CACHE_ONLY_URL_RETRIEVAL): the answer does not wait on a CRL server. Per WinVerifyTrust's documentation,
+// TRUST_E_NOSIGNATURE, TRUST_E_SUBJECT_FORM_UNKNOWN and TRUST_E_PROVIDER_UNKNOWN mean the file carries no
+// signature this provider knows; every other failure (a bad digest, an untrusted root, an explicit distrust, a
+// signature policy) is a signature that does not hold. The signer is the leaf certificate's subject and issuer as
+// X.500 names: a name alone could be had from another authority, a thumbprint would change at every renewal.
 winapk::launcher::Signature authenticode(const fs::path& file, std::wstring* signer) {
     using winapk::launcher::Signature;
-    WINTRUST_FILE_INFO fi{};
-    fi.cbStruct = sizeof(fi);
-    fi.pcwszFilePath = file.c_str();
-    WINTRUST_DATA wd{};
-    wd.cbStruct = sizeof(wd);
-    wd.dwUIChoice = WTD_UI_NONE;
-    wd.fdwRevocationChecks = WTD_REVOKE_NONE;
-    wd.dwUnionChoice = WTD_CHOICE_FILE;
-    wd.pFile = &fi;
-    wd.dwStateAction = WTD_STATEACTION_VERIFY;
-    wd.dwProvFlags = WTD_CACHE_ONLY_URL_RETRIEVAL;
+    if (signer) signer->clear();
+    const std::wstring path = file.wstring();
+    WINTRUST_FILE_INFO info{};
+    info.cbStruct = sizeof(info);
+    info.pcwszFilePath = path.c_str();
+    WINTRUST_DATA data{};
+    data.cbStruct = sizeof(data);
+    data.dwUIChoice = WTD_UI_NONE;
+    data.fdwRevocationChecks = WTD_REVOKE_NONE;
+    data.dwUnionChoice = WTD_CHOICE_FILE;
+    data.pFile = &info;
+    data.dwStateAction = WTD_STATEACTION_VERIFY;
+    data.dwProvFlags = WTD_CACHE_ONLY_URL_RETRIEVAL | WTD_REVOCATION_CHECK_NONE;
     GUID action = WINTRUST_ACTION_GENERIC_VERIFY_V2;
-    const LONG status = WinVerifyTrust(static_cast<HWND>(INVALID_HANDLE_VALUE), &action, &wd);
-    const DWORD error = GetLastError();
-    Signature out = Signature::kInvalid;
+    const LONG status = WinVerifyTrust(static_cast<HWND>(INVALID_HANDLE_VALUE), &action, &data);
+    Signature out;
     if (status == ERROR_SUCCESS) {
         out = Signature::kValid;
-        if (CRYPT_PROVIDER_DATA* pd = WTHelperProvDataFromStateData(wd.hWVTStateData)) {
-            CRYPT_PROVIDER_SGNR* sg = WTHelperGetProvSignerFromChain(pd, 0, FALSE, 0);
-            if (sg && sg->csCertChain && sg->pasCertChain[0].pCert) {
-                wchar_t name[512] = {};
-                CertGetNameStringW(sg->pasCertChain[0].pCert, CERT_NAME_SIMPLE_DISPLAY_TYPE, 0, nullptr, name, 512);
-                if (signer) *signer = name;
-            }
-        }
-    } else if (status == TRUST_E_NOSIGNATURE &&
-               (error == static_cast<DWORD>(TRUST_E_NOSIGNATURE) ||
-                error == static_cast<DWORD>(TRUST_E_SUBJECT_FORM_UNKNOWN) ||
-                error == static_cast<DWORD>(TRUST_E_PROVIDER_UNKNOWN))) {
-        out = Signature::kUnsigned;  // no signature at all; any other failure is a signature that does not hold
+    } else if (status == TRUST_E_NOSIGNATURE || status == TRUST_E_SUBJECT_FORM_UNKNOWN ||
+               status == TRUST_E_PROVIDER_UNKNOWN) {
+        out = Signature::kUnsigned;
+    } else {
+        out = Signature::kInvalid;
     }
-    wd.dwStateAction = WTD_STATEACTION_CLOSE;
-    WinVerifyTrust(static_cast<HWND>(INVALID_HANDLE_VALUE), &action, &wd);
-    if (out == Signature::kValid && signer && signer->empty()) out = Signature::kInvalid;  // a signer with no name
+    if (out == Signature::kValid && signer) {
+        // The state WinVerifyTrust kept (WTD_STATEACTION_VERIFY) holds the chain it built: its first signer's
+        // first certificate is the one that signed.
+        CRYPT_PROVIDER_DATA* prov = WTHelperProvDataFromStateData(data.hWVTStateData);
+        CRYPT_PROVIDER_SGNR* sgnr = prov ? WTHelperGetProvSignerFromChain(prov, 0, FALSE, 0) : nullptr;
+        const CERT_CONTEXT* cert = sgnr && sgnr->csCertChain > 0 && sgnr->pasCertChain
+                                       ? sgnr->pasCertChain[0].pCert
+                                       : nullptr;
+        auto name = [cert](DWORD flags) {
+            if (!cert) return std::wstring();
+            DWORD type = CERT_X500_NAME_STR | CERT_NAME_STR_REVERSE_FLAG;
+            const DWORD n = CertGetNameStringW(cert, CERT_NAME_RDN_TYPE, flags, &type, nullptr, 0);
+            if (n <= 1) return std::wstring();
+            std::wstring s(n, L'\0');
+            CertGetNameStringW(cert, CERT_NAME_RDN_TYPE, flags, &type, s.data(), n);
+            s.resize(n - 1);
+            return s;
+        };
+        const std::wstring subject = name(0), issuer = name(CERT_NAME_ISSUER_FLAG);
+        if (subject.empty() || issuer.empty()) {
+            out = Signature::kInvalid;  // verified, yet with no certificate to name: not a signer to trust
+        } else {
+            *signer = subject + L" | " + issuer;
+        }
+    }
+    data.dwStateAction = WTD_STATEACTION_CLOSE;
+    WinVerifyTrust(static_cast<HWND>(INVALID_HANDLE_VALUE), &action, &data);
     return out;
 }
 
-// The name on Win.apk.exe's own signature; empty when this build is not code-signed (no build is, so far).
+// Who signed Win.apk.exe itself; empty when this build is not code-signed (no build is, so far). Asked once.
 const std::wstring& own_signer() {
-    static const std::wstring name = [] {
-        wchar_t self[MAX_PATH * 4] = {};
-        GetModuleFileNameW(nullptr, self, static_cast<DWORD>(std::size(self)));
-        std::wstring who;
-        return authenticode(self, &who) == winapk::launcher::Signature::kValid ? who : std::wstring();
+    static const std::wstring who = [] {
+        std::wstring self(32768, L'\0');
+        const DWORD n = GetModuleFileNameW(nullptr, self.data(), static_cast<DWORD>(self.size()));
+        if (n == 0 || n >= self.size()) return std::wstring();
+        self.resize(n);
+        std::wstring name;
+        return authenticode(self, &name) == winapk::launcher::Signature::kValid ? name : std::wstring();
     }();
-    return name;
+    return who;
 }
 
-// The ProductVersion string of a file's version resource, in its first language; empty without one.
+// The ProductVersion string of a file's version resource; empty when it has none. The languages the resource
+// lists (\VarFileInfo\Translation) are tried in order, then US English in Unicode and in Windows-1252, which is
+// how resources without a translation table are usually labelled.
 std::wstring product_version(const fs::path& file) {
-    DWORD ignored = 0;
-    const DWORD n = GetFileVersionInfoSizeW(file.c_str(), &ignored);
-    if (!n) return {};
-    std::vector<BYTE> data(n);
-    if (!GetFileVersionInfoW(file.c_str(), 0, n, data.data())) return {};
-    struct Lang {
-        WORD language, codepage;
-    }* langs = nullptr;
+    DWORD unused = 0;
+    const DWORD size = GetFileVersionInfoSizeW(file.c_str(), &unused);
+    if (size == 0) return {};
+    std::vector<BYTE> block(size);
+    if (!GetFileVersionInfoW(file.c_str(), 0, size, block.data())) return {};
+    std::vector<DWORD> langs;
+    struct LangCodepage {
+        WORD lang, codepage;
+    };
+    LangCodepage* table = nullptr;
     UINT bytes = 0;
-    if (!VerQueryValueW(data.data(), L"\\VarFileInfo\\Translation", reinterpret_cast<void**>(&langs), &bytes) ||
-        bytes < sizeof(Lang)) {
-        return {};
+    if (VerQueryValueW(block.data(), L"\\VarFileInfo\\Translation", reinterpret_cast<void**>(&table), &bytes) &&
+        table) {
+        for (UINT i = 0; i < bytes / sizeof(LangCodepage); ++i)
+            langs.push_back(static_cast<DWORD>(table[i].lang) << 16 | table[i].codepage);
     }
-    wchar_t key[64];
-    swprintf(key, std::size(key), L"\\StringFileInfo\\%04x%04x\\ProductVersion", langs[0].language, langs[0].codepage);
-    wchar_t* value = nullptr;
-    UINT chars = 0;
-    if (!VerQueryValueW(data.data(), key, reinterpret_cast<void**>(&value), &chars) || !value) return {};
-    return std::wstring(value, wcsnlen(value, chars));
+    langs.push_back(0x040904b0);
+    langs.push_back(0x040904e4);
+    for (DWORD lc : langs) {
+        wchar_t key[64];
+        swprintf(key, 64, L"\\StringFileInfo\\%08lx\\ProductVersion", static_cast<unsigned long>(lc));
+        wchar_t* value = nullptr;
+        UINT chars = 0;
+        if (VerQueryValueW(block.data(), key, reinterpret_cast<void**>(&value), &chars) && value && chars > 0) {
+            std::wstring s(value, chars);
+            while (!s.empty() && s.back() == L'\0') s.pop_back();
+            return s;
+        }
+    }
+    return {};
 }
 
-// Whether the installer at `file` may run as the update to `r` (updates.h judge_setup).
+// Whether the installer at `file` may run as the update to `r` (updates.h judge_setup). Its size is looked at
+// first: a file of another size is refused without being hashed or verified.
 winapk::launcher::SetupVerdict judge_setup_file(const fs::path& file, const Release& r) {
     winapk::launcher::SetupFacts f;
     std::error_code ec;
     f.size = fs::file_size(file, ec);
     if (ec) f.size = 0;
-    if (f.size == r.size) {  // the rest only for a file of the right size
+    if (f.size != 0 && f.size == r.size) {
         f.sha256 = sha256_of(file);
-        f.signature = authenticode(file, &f.signer);
-        f.product_version = product_version(file);
+        if (!f.sha256.empty() && f.sha256 == r.sha256) {
+            f.signature = authenticode(file, &f.signer);
+            f.product_version = product_version(file);
+        }
     }
     return winapk::launcher::judge_setup(f, r.size, r.sha256, r.version, own_signer());
 }

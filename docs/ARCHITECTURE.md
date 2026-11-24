@@ -1051,11 +1051,13 @@ pre-release once there is a full release; they are all pre-releases so far, so
 `/releases/latest` would find none), and compares it with the version in its
 own resource; **Update** downloads the release's `Win.apk-Setup.exe` only when
 GitHub lists its SHA-256 digest, keeps the download only at its
-Content-Length, and runs it (a copy kept from before too) only when its size,
+Content-Length (a malformed or contradictory one refuses the response,
+`updates.h` `expected_body`), and runs it (a copy kept from before too) only when its size,
 SHA-256 and ProductVersion (`VersionInfoProductTextVersion`, the full version)
 are the release's and its Authenticode signature, if it has one, verifies (a
 code-signed build takes only an installer by the same signer;
-`launcher/updates.h` `judge_setup`, after the other runtime's updater), then quits so that
+`launcher/updates.h` `judge_setup`: the signer is the certificate's subject and
+issuer), then quits so that
 the installer (`CloseApplications=yes`) can replace the files. The version comes from `WINAPK_VERSION`, which the release workflow
 sets from its tag; a `ci.yml` build is the newest release tag + `-dev.<run>`
 (compared as that release); a local build is 0.1.0.
