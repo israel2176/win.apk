@@ -358,6 +358,22 @@ void conversions() {
     check("4:4:4 chroma averaged to 4:2:0", b444[static_cast<size_t>(l444.stride) * l444.slice_height] == 110,
           std::to_string(b444[static_cast<size_t>(l444.stride) * l444.slice_height]));
 
+    // A picture of a million pixels or more is converted in bands on several threads: every row
+    // comes out as it would on its own.
+    {
+        const int w = 1280, h = 1024;
+        auto big = flat_frame(w, h, 8, 16, 128, 128, C::kBt709, C::kLimited);
+        auto* bp = const_cast<TestPicture*>(static_cast<const TestPicture*>(big->picture.get()));
+        for (int y = 0; y < h; ++y) std::fill_n(bp->y8.begin() + static_cast<ptrdiff_t>(y) * w, w, 16 + y % 220);
+        const std::vector<uint32_t> all = vd::frame_argb(*big);
+        bool rows = all.size() == static_cast<size_t>(w) * h;
+        for (int y = 0; y < h && rows; ++y) {
+            const uint32_t want = one(*flat_frame(2, 2, 8, 16 + y % 220, 128, 128, C::kBt709, C::kLimited));
+            rows = all[static_cast<size_t>(y) * w] == want && all[static_cast<size_t>(y) * w + w - 1] == want;
+        }
+        check("a large picture, converted in bands, row for row", rows);
+    }
+
     // An ARGB frame (Media Foundation's) to I420: BT.601 limited, as frame_color says.
     vd::Frame argb;
     argb.width = argb.height = 2;

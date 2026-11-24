@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstring>
+#include <thread>
 #include <vector>
 
 #include "video_decode.h"
@@ -93,19 +94,93 @@ const T* row(const uint8_t* plane, int stride, int y) {
     return reinterpret_cast<const T*>(plane + static_cast<ptrdiff_t>(stride) * y);
 }
 
+// One conversion's per-sample terms, for every value a sample of the picture's depth can take, so
+// that a pixel costs table reads and additions: what row_to_argb computes, precomputed. Kept per
+// thread for the last colour, range and depth seen (a stream keeps them).
+struct Tables {
+    int key = -1;
+    std::vector<int> y, rv, gu, gv, bu;
+};
+
+const Tables& tables_for(int standard, bool full, int depth) {
+    thread_local Tables t;
+    const int key = standard << 8 | (full ? 1 << 7 : 0) | depth;
+    if (t.key == key) return t;
+    const Matrix m(standard, full, depth);
+    const size_t n = size_t{1} << depth;
+    const int widen = 16 - depth;
+    t.y.resize(n), t.rv.resize(n), t.gu.resize(n), t.gv.resize(n), t.bu.resize(n);
+    for (size_t v = 0; v < n; ++v) {
+        const int sample = static_cast<int>(v) << widen;
+        const int c = sample - 32768;
+        t.y[v] = m.ymul * (sample - m.yoff);
+        t.rv[v] = m.rv * c;
+        t.gu[v] = m.gu * c;
+        t.gv[v] = m.gv * c;
+        t.bu[v] = m.bu * c;
+    }
+    t.key = key;
+    return t;
+}
+
+inline uint32_t argb_of(int r, int g, int b, int add) {
+    return 0xff000000u | static_cast<uint32_t>(clamp8((r + add) >> kFrac)) << 16 |
+           static_cast<uint32_t>(clamp8((g + add) >> kFrac)) << 8 | clamp8((b + add) >> kFrac);
+}
+
+// Rows [first, end) of a picture to ARGB.
+template <typename T>
+void rows_to_argb(const Picture& p, int first, int end, uint32_t* out) {
+    const int depth = sizeof(T) == 1 ? 8 : p.bit_depth;
+    const Tables& t = tables_for(p.color.standard, p.color.range == ColorAspects::kFull, depth);
+    const int top = (1 << depth) - 1;
+    // A corrupt 16-bit sample beyond the depth reads the table's last entry, not past it.
+    auto at = [top](T v) { return sizeof(T) == 1 ? static_cast<int>(v) : std::min<int>(v, top); };
+    const bool dither = depth > 8;
+    for (int y = first; y < end; ++y) {
+        int add[4];
+        for (int i = 0; i < 4; ++i) add[i] = rounding(dither, i, y);
+        const T* yr = row<T>(p.plane[0], p.stride[0], y);
+        uint32_t* dst = out + static_cast<size_t>(y) * p.width;
+        if (p.monochrome) {
+            for (int x = 0; x < p.width; ++x) {
+                const int l = t.y[static_cast<size_t>(at(yr[x]))];
+                dst[x] = argb_of(l, l, l, add[x & 3]);
+            }
+            continue;
+        }
+        const int cy = y >> p.chroma_shift_y;
+        const T* ur = row<T>(p.plane[1], p.stride[1], cy);
+        const T* vr = row<T>(p.plane[2], p.stride[2], cy);
+        const int sx = p.chroma_shift_x;
+        for (int x = 0; x < p.width; ++x) {
+            const int cx = x >> sx;
+            const size_t u = static_cast<size_t>(at(ur[cx])), v = static_cast<size_t>(at(vr[cx]));
+            const int l = t.y[static_cast<size_t>(at(yr[x]))];
+            dst[x] = argb_of(l + t.rv[v], l - t.gu[u] - t.gv[v], l + t.bu[u], add[x & 3]);
+        }
+    }
+}
+
+// A large picture is converted in bands on up to four threads (a 1080p one takes about 6 ms on
+// one core, a 4K one four times that: too long for a frame at 60 per second).
 template <typename T>
 void picture_to_argb(const Picture& p, uint32_t* out) {
-    const bool full = p.color.range == ColorAspects::kFull;
-    const Matrix m(p.color.standard, full, p.bit_depth);
-    const int widen = 16 - (sizeof(T) == 1 ? 8 : p.bit_depth);
-    const bool dither = p.bit_depth > 8;
-    for (int y = 0; y < p.height; ++y) {
-        const int cy = y >> p.chroma_shift_y;
-        const T* u = p.monochrome ? nullptr : row<T>(p.plane[1], p.stride[1], cy);
-        const T* v = p.monochrome ? nullptr : row<T>(p.plane[2], p.stride[2], cy);
-        row_to_argb(m, row<T>(p.plane[0], p.stride[0], y), u, v, p.chroma_shift_x, widen, p.width, y, dither,
-                    out + static_cast<size_t>(y) * p.width);
+    const int64_t pixels = static_cast<int64_t>(p.width) * p.height;
+    const int bands =
+        pixels < (1 << 20) ? 1 : static_cast<int>(std::clamp(std::thread::hardware_concurrency(), 1u, 4u));
+    if (bands == 1) {
+        rows_to_argb<T>(p, 0, p.height, out);
+        return;
     }
+    std::vector<std::thread> helpers;
+    const int step = (p.height + bands - 1) / bands;
+    for (int b = 1; b < bands; ++b) {
+        const int first = b * step, end = std::min(p.height, first + step);
+        if (first < end) helpers.emplace_back([&p, first, end, out] { rows_to_argb<T>(p, first, end, out); });
+    }
+    rows_to_argb<T>(p, 0, std::min(p.height, step), out);
+    for (std::thread& h : helpers) h.join();
 }
 
 // One plane of samples to 8 bits: copied, or dithered down from more.
