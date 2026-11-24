@@ -53,7 +53,6 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
     private static final String ENV_MACAPK_RV_VISIBLE_INDEX = System.getenv("MACAPK_RV_VISIBLE_INDEX");
     private static final String ENV_MACAPK_SCROLL_DRAW_ONLY = System.getenv("MACAPK_SCROLL_DRAW_ONLY");
     private static final String ENV_MACAPK_TRACE_BARRIER = System.getenv("MACAPK_TRACE_BARRIER");
-    private static final String ENV_MACAPK_TRACE_COMPOSE_FALLBACK = System.getenv("MACAPK_TRACE_COMPOSE_FALLBACK");
     private static final String ENV_MACAPK_TRACE_FULLFILL = System.getenv("MACAPK_TRACE_FULLFILL");
     private static final String ENV_MACAPK_TRACE_INSETS = System.getenv("MACAPK_TRACE_INSETS");
     private static final String ENV_MACAPK_TRACE_NAV = System.getenv("MACAPK_TRACE_NAV");
@@ -64,7 +63,6 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
     private static boolean sClearTraced;   // MACAPK_TRACE_FULLFILL one-shot, see the [clear] line
 
     private final View rootView;
-    private static long sPrevGlobalDrawOps = 0;
     /** Reused fill for the FLAG_DIM_BEHIND scrim; allocating a Paint per dialog
      *  per frame would be pure garbage at 60fps. Single-threaded (the draw
      *  pass), so no synchronization. */
@@ -2094,19 +2092,6 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
         // empty frame elided too. Same failure as the Candy Crush splash, on the
         // overlay path.
         if (INK_AFTER_ALL_PASSES) sFrameDrewInk = (GfxBackend.get().drawOps(inkCanvas) != inkOpsFrameStart);
-        // DIAGNOSTIC: per-frame global draw-op delta across ALL canvases (frame +
-        // every RenderNode recording). Tells us if the Compose content issues ANY
-        // draws this frame (0 => the composition produces no draw calls at all).
-        if (ENV_MACAPK_TRACE_COMPOSE_FALLBACK != null && (n % 60) == 31) {
-            long now = android.graphics.Canvas.sGlobalDrawOps;
-            long delta = now - sPrevGlobalDrawOps;
-            sPrevGlobalDrawOps = now;
-            NativeLog.i("Mac.apk.DrawDelta", "frame#" + n + " draw-ops=" + delta
-                + " text=" + android.graphics.Canvas.sGlobalText
-                + " bitmap=" + android.graphics.Canvas.sGlobalBitmap
-                + " path=" + android.graphics.Canvas.sGlobalPath
-                + " roundRect=" + android.graphics.Canvas.sGlobalRoundRect);
-        }
         // v1.0.134: status bar overlays the very top of the canvas
         // AFTER rootView.draw -- AOSP-correct because real SystemUI
         // composites over the Activity decor, never under it.

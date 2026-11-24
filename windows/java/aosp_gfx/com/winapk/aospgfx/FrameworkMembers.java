@@ -1,6 +1,8 @@
 package com.winapk.aospgfx;
 
+import android.content.res.ColorStateList;
 import android.graphics.drawable.Drawable;
+import android.graphics.drawable.RippleDrawable;
 
 import com.android.internal.graphics.drawable.AnimationScaleListDrawable;
 
@@ -18,6 +20,7 @@ public final class FrameworkMembers {
 
     private static Field state;
     private static Method add;
+    private static Field rippleState, rippleColor;
 
     /**
      * Resources' own inflater (where AOSP's inflate of an {@code <animation-scale-list>} failed) adds
@@ -37,6 +40,28 @@ public final class FrameworkMembers {
             add.invoke(state.get(d), item);
         } catch (ReflectiveOperationException e) {
             throw new IllegalStateException("AnimationScaleListDrawable.addDrawable", e);
+        }
+    }
+
+    /**
+     * View's ripple (Win.apk's own, over the background) takes its colour from the background's
+     * RippleDrawable: the colour AOSP's keeps in its state (mState.mColor, the android:color it was
+     * inflated or made with), which AOSP's class has no getter for. Null when there is none.
+     */
+    public static ColorStateList getColor(RippleDrawable d) {
+        try {
+            if (rippleColor == null) {
+                Field f = RippleDrawable.class.getDeclaredField("mState");
+                f.setAccessible(true);
+                Field c = f.getType().getDeclaredField("mColor");
+                c.setAccessible(true);
+                rippleState = f;
+                rippleColor = c;
+            }
+            Object s = rippleState.get(d);
+            return s == null ? null : (ColorStateList) rippleColor.get(s);
+        } catch (ReflectiveOperationException | ClassCastException e) {
+            return null;
         }
     }
 }

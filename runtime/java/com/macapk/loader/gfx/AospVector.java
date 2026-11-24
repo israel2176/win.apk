@@ -1,5 +1,4 @@
-// AospVector -- AOSP's own VectorDrawable, built from a <vector> element for AospGfx
-// (WINAPK_AOSP_GFX=1).
+// AospVector -- AOSP's own VectorDrawable, built from a <vector> element for AospGfx.
 //
 // Win.apk's Resources inflates drawables from a DOM of the XML itself, and its VectorDrawable has
 // constructors over that DOM which AOSP's has not; AOSP's inflate() needs

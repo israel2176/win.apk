@@ -9,12 +9,14 @@
 # Both from Maven Central (its Google mirror: repo.maven.apache.org rate-limits CI), checked against
 # the SHA-256 below. Unpacked with the JDK's `jar`, so it needs only curl and a JDK ($JAVA_HOME).
 #
-#   windows/test/aospgfx/fetch.sh <deps dir> [linux|windows]
+#   windows/test/aospgfx/fetch.sh <deps dir> [linux|windows|jar]
 #
-# The test downloads it; build_aosp_gfx.sh stages it into the runtime (WINAPK_AOSP_GFX=1).
+# The test downloads it; build_aosp_gfx.sh stages it into the runtime; build_java.sh compiles the
+# framework against android-all's graphics classes and asks for the jar alone ("jar": no native
+# runtime).
 set -euo pipefail
 
-DEPS=${1:?usage: fetch.sh <deps dir> [linux|windows]}
+DEPS=${1:?usage: fetch.sh <deps dir> [linux|windows|jar]}
 OS=${2:-}
 if [[ -z "$OS" ]]; then
     case "$(uname -s)" in MINGW* | MSYS* | CYGWIN*) OS=windows ;; *) OS=linux ;; esac
@@ -40,6 +42,7 @@ fetch() {  # url file sha256
 }
 
 fetch "$MAVEN/org/robolectric/android-all/$ALL_VER/android-all-$ALL_VER.jar" "$DEPS/android-all-14.jar" "$ALL_SHA"
+[[ "$OS" == jar ]] && exit 0
 
 NR="$DEPS/nativeruntime"
 case "$OS" in

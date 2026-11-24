@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# build_aosp_gfx.sh -- what AOSP's graphics, the default, need (windows/README.md, "Milestone 2: the runtime
-# on AOSP graphics"; host/aosp_gfx.h), into a staged runtime:
+# build_aosp_gfx.sh -- what AOSP's graphics, the only graphics the framework has, need (windows/README.md,
+# "Milestone 2: the runtime on AOSP graphics"; host/aosp_gfx.h), into a staged runtime:
 #
 #   <out>/lib/aosp-graphics.jar             AOSP 14's android.graphics.** (drawables, fonts, text,
 #                                           animation, pdf; SurfaceTexture left out: Win.apk keeps
@@ -26,8 +26,9 @@
 # classes go in). The deps dir (default thirdparty/aosp-gfx, CI caches it) holds android-all
 # 14-robolectric-10818077 and nativeruntime-dist-compat 1.0.18, fetched from Maven Central's
 # Google mirror and checked against their SHA-256 by windows/test/aospgfx/fetch.sh.
-# Needs a JDK (JAVA_HOME: javac, jar, jdeps), curl and unzip. The jar is first on an app's class path
-# unless WINAPK_AOSP_GFX=0; stage_runtime.sh runs this unless WINAPK_STAGE_AOSP_GFX=0.
+# Needs a JDK (JAVA_HOME: javac, jar, jdeps), curl and unzip. The jar is first on the class path of every
+# JVM with the framework, which cannot start without these files (host/aosp_gfx.h); stage_runtime.sh runs
+# this always.
 #
 # Every file here is one shared copy per install, never per app, and only what the native runtime
 # can read is staged (windows/README.md, "Footprint"): what is left out could not change a pixel.
@@ -70,12 +71,10 @@ mkdir -p "$CLASSES"
 
 echo "[aosp-gfx] AOSP's classes from android-all 14"
 unzip -Z1 "$ALL" > "$WORK/all.txt"
-# The text classes go with Paint (measuring and drawing text must agree), FontConfig with
-# SystemFonts, and the platform's one drawable class of its own (AnimationScaleListDrawable, the
-# progress bars' indeterminate drawable, whose XML names it) with the DrawableContainer it extends;
-# .uau files are Robolectric's annotations, not classes.
-grep -E '^(android/graphics/.*|android/text/(Layout|StaticLayout|BoringLayout|DynamicLayout|MeasuredParagraph|PrecomputedText|TextLine|Hyphenator|FontConfig)([$].*)?|android/util/PathParser([$].*)?|com/android/internal/graphics/drawable/AnimationScaleListDrawable([$].*)?)\.class$' \
-    "$WORK/all.txt" | grep -v '^android/graphics/SurfaceTexture' > "$WORK/take.txt"
+# The one list of what is taken, which build_java.sh compiles the framework against too.
+# shellcheck source=aosp_gfx_take.sh
+source "$HERE/aosp_gfx_take.sh"
+aosp_gfx_take "$WORK/all.txt" > "$WORK/take.txt"
 
 # What those classes name that Win.apk's framework (and the JDK) does not have: from android-all
 # too, until nothing is missing, so a class loads instead of failing on a NoClassDefFoundError.

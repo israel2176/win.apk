@@ -2984,7 +2984,7 @@ public class Resources {
             int id = v.startsWith("0x") || v.startsWith("0X")
                 ? Integer.parseUnsignedInt(v.substring(2), 16)
                 : Integer.parseInt(v);
-            return id == android.graphics.drawable.RippleDrawable.ID_MASK;
+            return id == android.R.id.mask;
         } catch (Throwable t) { return false; }
     }
 
@@ -3086,7 +3086,7 @@ public class Resources {
             android.graphics.drawable.Drawable layer = macapkInflateItemDrawable(item, theme);
             if (layer == null) continue;
             int idx = ld.addLayer(layer);
-            if (isMask) ld.setId(idx, android.graphics.drawable.RippleDrawable.ID_MASK);
+            if (isMask) ld.setId(idx, android.R.id.mask);
             else if (MACAPK_LAYER_ITEM_IDS) {
                 int rid = macapkLayerItemId(idv);
                 if (rid != 0) ld.setId(idx, rid);

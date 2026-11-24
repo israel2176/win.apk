@@ -439,8 +439,8 @@ public class SpannableStringBuilder implements CharSequence, Spannable, Editable
         for (SpanEntry e : spans) if (e.what == what) return e.flags;
         return 0;
     }
-    // AOSP hides this; AOSP's own graphics and text classes call it (WINAPK_AOSP_GFX=1 puts them,
-    // lib/aosp-graphics.jar, before this framework: windows/README.md, "Milestone 2").
+    // AOSP hides this; AOSP's own graphics and text classes call it (lib/aosp-graphics.jar, before
+    // this framework on the class path: windows/README.md, "Milestone 2").
     public <T> T[] getSpans(int queryStart, int queryEnd, Class<T> kind, boolean sortByInsertionOrder) {
         return getSpans(queryStart, queryEnd, kind);
     }

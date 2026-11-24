@@ -111,26 +111,9 @@ public final class Boot {
      *  takes min(AWT, index) off the critical path to the starting window, the
      *  Application and the first frame.
      *
-     *  WHAT KEEPS THE AWT INVARIANT (Boot.initAwtOnAppKitMainThread): the init
-     *  still runs on the AppKit main thread and still completes before any
-     *  thread is handed work that could touch AWT -- the activity thread only
-     *  parks in take() until the Application task, which is queued after this.
-     *  The threads alive during the init (the platform-table prefetch, the
-     *  BouncyCastle construction, and now the index) load NO java.awt / sun.awt /
-     *  sun.java2d / sun.font / sun.lwawt class: debug/bootspeed_gate.sh runs the
-     *  exact pre-AWT steps on the corpus under -Xlog:class+load and requires zero,
-     *  with a positive control (Paint.measureText) that must load 100+ (363
-     *  measured). Its thread tripwire (debug/bootspeed_verify/thread_span.py)
-     *  fails the gate if run() starts any thread not reviewed for this before
-     *  the deferred init -- ADDING one here means adding it to that allowlist
-     *  with the reason it cannot touch AWT.
-     *  The init now runs AFTER the os.name/os.version spoof, where it ran for
-     *  years before v1.0.1643 (and still runs under MACAPK_AWT_MAIN_INIT=0).
-     *  java.desktop reads those properties at init in exactly one place that
-     *  matters, FontConfiguration.findFontConfigFile, and it resolves to the
-     *  same lib/fontconfig.bfc under either name (no OS-specific fontconfig file
-     *  ships in the JDK or the bundled JRE); FontUtilities keys isMacOSX on the
-     *  build-time OperatingSystem, not the property. */
+     *  Win.apk's Java2D graphics, and with them the AWT init, are gone: AOSP's
+     *  graphics bring no AWT up, so the index now builds beside nothing on this
+     *  thread; the gate stays for the self-tests' order (Boot.run). */
     static final boolean BOOTSPEED_OVERLAP = !"0".equals(System.getenv("MACAPK_BOOTSPEED_OVERLAP"));
 
     /** MACAPK_BOOTSPEED_ICON -- default ON; "0" restores the render on every
@@ -185,11 +168,8 @@ public final class Boot {
             t.setDaemon(true);
             t.start();
         } catch (Throwable cannotStart) {
-            initAwtOnAppKitMainThread();
             return ResBackend.get().openIndex(cfg, apkPath);
         }
-        initAwtOnAppKitMainThread();
-        if (!com.macapk.loader.gfx.GfxBackend.isAosp()) bootClock("AWT initialised (overlapped with the resource index)");
         boolean interrupted = false;
         try {
             while (true) {
@@ -408,56 +388,6 @@ public final class Boot {
      *  behind a volatile cache, so this only changes WHEN the one parse happens: the main thread
      *  later finds it ready, or waits on the same monitor for the parse already in flight.
      *  MACAPK_FWRES_PREFETCH=0 turns it off (A/B). */
-    /** v1.0.1643: bring up AWT / Java2D ONCE, on the AppKit main thread, before any other
-     *  thread exists that could touch it.
-     *
-     *  THE DEADLOCK THIS RETIRES (measured, Hill Climb Racing 1.8.1, jstack): the FIRST touch of
-     *  BufferedImage.createGraphics / Font.getLineMetrics runs CGraphicsEnvironment's static init
-     *  (GraphicsEnvironment$LocalGE.<clinit>) -> CGraphicsDevice -> MTLGraphicsConfig
-     *  .tryLoadMetalLibrary, which does `[ThreadUtilities performOnMainThreadWaiting:YES ...]`
-     *  (OpenJDK 21 MTLGraphicsConfig.m) -- i.e. it WAITS FOR THE APPKIT MAIN THREAD while holding
-     *  the class-init lock. When that first touch happens on the Android main thread (our
-     *  ViewCanvasDriver's first Canvas) while the AppKit main thread is itself inside Java measuring
-     *  text (WindowOverlayStack.presentForGl laying out a Dialog shown in onResume -- HCR's
-     *  every-8th-launch rating prompt), the main thread blocks on that class-init lock and the
-     *  initializer blocks on the main thread: frame 2 never ends, the window stays black. The
-     *  sweep scored this as `hcr181 REGRESS` and, at v1.0.827, as a "still-booting" false regress.
-     *
-     *  WHY ON MAIN, AND WHY THIS EARLY. OpenJDK 21's ThreadUtilities.performOnMainThreadWaiting
-     *  runs the block INLINE when `[NSThread isMainThread] && wait == YES`, and AWTStarter.start
-     *  only waits on its AppKit-started condition `if (!headless && !onMainThread)`
-     *  (LWCToolkit.m); its starter block is queued (waiting:NO) and runs, embedded, once [NSApp run]
-     *  pumps. So on the main thread nothing here waits for the run loop -- which is what refuted the
-     *  earlier BACKGROUND pre-warm (MACAPK_AWT_PREWARM, below): off-main, it parked holding the
-     *  Toolkit lock until [NSApp run], starving every other thread. Done here, before the
-     *  macapk-activity thread is created, no other thread can be mid-init when the main thread
-     *  first needs AWT, so the whole class of AWT-init/AppKit deadlocks is closed rather than one
-     *  entry point at a time. See docs/mcpe-black-launch-clipboard-appkit-deadlock_2026-08-31.md
-     *  for the earlier member of this family.
-     *  MACAPK_AWT_MAIN_INIT=0 restores the lazy behaviour (A/B). */
-    private static void initAwtOnAppKitMainThread() {
-        if ("0".equals(System.getenv("MACAPK_AWT_MAIN_INIT"))) return;
-        // AOSP's graphics (the default) draw with Skia in the native runtime: nothing of an app's
-        // run touches AWT there, so bringing it up would only cost the start its time.
-        if (com.macapk.loader.gfx.GfxBackend.isAosp()) return;
-        long t0 = System.nanoTime();
-        try {
-            java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment();
-            java.awt.image.BufferedImage bi =
-                new java.awt.image.BufferedImage(1, 1, java.awt.image.BufferedImage.TYPE_INT_ARGB);
-            java.awt.Graphics2D g = bi.createGraphics();
-            // The font manager takes its OWN monitors (SunFontManager / CFontManager), separate
-            // from the GraphicsEnvironment init, so warm that path too.
-            g.getFontMetrics(new java.awt.Font(java.awt.Font.SANS_SERIF, java.awt.Font.PLAIN, 12));
-            g.dispose();
-            NativeLog.i(TAG, "AWT initialised on the AppKit main thread (" + Thread.currentThread().getName()
-                + ") in " + ((System.nanoTime() - t0) / 1_000_000L) + " ms");
-        } catch (Throwable t) {
-            // Never fatal: the lazy path is what ran before this existed.
-            NativeLog.w(TAG, "AWT main-thread init skipped: " + t);
-        }
-    }
-
     private static void prefetchFrameworkResources() {
         if ("0".equals(System.getenv("MACAPK_FWRES_PREFETCH"))) return;
         try {
@@ -915,21 +845,15 @@ public final class Boot {
         bootClock("Boot.run entered");
         HostTrust.install();
         prefetchFrameworkResources();
-        // MACAPK_BOOTSPEED_OVERLAP defers the AWT init to the resource-index
-        // build below (buildResourceIndexWhileAwtInits) so the two overlap. Not
-        // for the paths that can put ANOTHER thread on AWT before that point:
-        // the opt-in background pre-warm (it would become the initialiser from
-        // off the main thread -- the exact deadlock) and the diagnostic self-tests,
-        // which return or spawn threads before the index exists.
+        // MACAPK_BOOTSPEED_OVERLAP builds the resource index on a worker
+        // (buildResourceIndexWhileAwtInits). It overlapped the AWT init of
+        // Win.apk's old Java2D graphics; AOSP's graphics bring no AWT up, so
+        // nothing runs beside it now. The diagnostic self-tests, which return or
+        // spawn threads before the index exists, keep the index on this thread.
         final boolean awtDeferred = BOOTSPEED_OVERLAP
-            && System.getenv("MACAPK_AWT_PREWARM") == null
             && System.getenv("MACAPK_AUDIO_SELFTEST") == null
             && !"1".equals(System.getenv("MACAPK_MEDIA_SELFTEST"))
             && !"1".equals(System.getenv("MACAPK_VIDEO_IMAGE_SELFTEST"));
-        if (!awtDeferred) {
-            initAwtOnAppKitMainThread();
-            bootClock("AWT initialised");
-        }
         prewarmInvokeDynamic();
         installShutdownDump();
         // MACAPK_TRACE_JNI: patch the process-wide JNIEnv vtable to log JNI
@@ -1211,106 +1135,6 @@ public final class Boot {
         // process alive on its own.
         bcProviderThread.setDaemon(true);
         bcProviderThread.start();
-
-        // ---- AWT/AppKit pre-warm (v1.0.1134) --------------------------------
-        // Retires a whole DEADLOCK CLASS, of which the v1.0.1134 ClipboardManager
-        // bug was one member (it black-screened ~half of all Minecraft Bedrock
-        // launches; see docs/mcpe-black-launch-clipboard-appkit-deadlock_2026-08-31.md).
-        //
-        // On macOS the FIRST touch of several ordinary AWT entry points constructs
-        // sun.lwawt.macosx.LWCToolkit, whose ctor calls the native initAppkit and
-        // BLOCKS until the AppKit (Cocoa) main thread services it -- while holding
-        // the java.awt.Toolkit CLASS-INIT lock (and, on the font path, two
-        // SunFontManager/CFontManager monitors as well). Measured against this
-        // machine's own openjdk@21, by probe rather than by assumption:
-        //     BufferedImage.createGraphics()   -> FORCES it
-        //         (BufferedImage.java -> GraphicsEnvironment
-        //          .getLocalGraphicsEnvironment -> CGraphicsEnvironment.<clinit>,
-        //          which is literally `static { Toolkit.getDefaultToolkit(); }`)
-        //     Font.getLineMetrics(...)         -> FORCES it (even for a logical font)
-        //     ComponentOrientation.getOrientation -> does NOT
-        //     ImageIO decode                   -> does NOT
-        // Our Canvas/Bitmap/TextView/Layout paths all reach the first two, so any
-        // app doing Java-side drawing or text measurement in onCreate can hit it.
-        //
-        // Why it deadlocks rather than merely stalling: the Cocoa main thread
-        // legitimately PARKS during boot inside the guest's window handshake
-        // (drawInMTKView -> surfaceCreated -> AGDK android_app_set_window, which
-        // waits for the guest game thread). Anything blocking on AppKit inside
-        // that window waits for a thread that is itself waiting -- and if a third
-        // thread is queued behind the class-init lock on the path that would
-        // release the handshake, the cycle closes permanently.
-        //
-        // ⚠ CORRECTED 2026-09-24 (v1.0.1643): "it must be a background thread ...
-        // inline would block boot outright" (below) is FALSE, by OpenJDK 21's own
-        // source and by measurement. On the main thread AWTStarter.start does not wait
-        // for AppKit and performOnMainThreadWaiting:YES runs inline, so the init now
-        // runs ON THE MAIN THREAD at the top of Boot.run (initAwtOnAppKitMainThread,
-        // 545 ms, no warm-TTR cost over 5 apps x 2). That retires this whole family;
-        // this background variant stays default-OFF and is kept only as history.
-        //
-        // The pre-warm does the blocking init ONCE, EARLY, on a BACKGROUND thread,
-        // in the window where the main thread is still free. It must be a
-        // background thread: Boot.run executes on the process main thread and does
-        // not reach NativeCocoa.runLoop (-> [NSApp run]) until much later, so doing
-        // this inline here would block boot outright. The pre-warm thread simply
-        // waits until AppKit starts pumping and then completes, long before any
-        // surface -- and therefore any handshake park -- exists.
-        //
-        // App-invisible: it touches only JDK-internal state an app cannot observe,
-        // so this is not an app-visible behaviour change and not a per-APK lie.
-        // ⛔⛔ REFUTED AS IMPLEMENTED, AND DEFAULT-OFF (measured 2026-08-31, v1.0.1134).
-        // Turning this ON **BREAKS THE FLEET**: `scripts/sweep.sh` collapsed from
-        // all-PASS to gdlite/mindustry/unciv/bouncy/crossy/subway all `colors=0`
-        // (plus a unciv VOID_JETSAM), and a same-app one-env-var bisect pinned it
-        // to this block: gdlite `colors=0` with the pre-warm vs **87856** with
-        // MACAPK_NO_AWT_PREWARM=1, against an 87818 baseline from earlier the same
-        // day. So the gate is INVERTED: opt IN with MACAPK_AWT_PREWARM=1.
-        //
-        // WHY IT BACKFIRES -- and it is the same bug it was meant to prevent, moved
-        // earlier. The pre-warm blocks on AppKit, but `Boot.run` executes on the
-        // process main thread and does not reach `NativeCocoa.runLoop` (-> [NSApp
-        // run]) until MUCH later, so for that whole stretch NOTHING is pumping the
-        // main queue. The pre-warm thread therefore sits holding the
-        // java.awt.Toolkit class-init lock (and, after the Font call, the
-        // SunFontManager monitors) for the entire remainder of boot, and every
-        // other thread that touches AWT -- ViewCanvasDriver's first BufferedImage,
-        // any TextView measure -- queues behind a thread that cannot proceed. For a
-        // Canvas/GL app that is fatal, which is exactly what the six zeroes were.
-        //
-        // The ANALYSIS behind it still stands and is worth keeping (probed against
-        // this machine's openjdk@21): `BufferedImage.createGraphics()` and
-        // `Font.getLineMetrics` DO force the blocking LWCToolkit init, while
-        // `ComponentOrientation.getOrientation` and ImageIO do not. What is refuted
-        // is the PLACEMENT, not the hazard. If a future session wants this, it must
-        // run AFTER [NSApp run] is pumping (e.g. posted from the first
-        // drawInMTKView, or from CocoaRunLoop just after `[g_app run]` begins), not
-        // from Boot.run before it. Do not simply re-enable this gate as-is.
-        if (System.getenv("MACAPK_AWT_PREWARM") != null) {
-            final long awtWarmStartNanos = System.nanoTime();
-            Thread awtWarmThread = new Thread(() -> {
-                try {
-                    java.awt.Toolkit.getDefaultToolkit();
-                    java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment();
-                    // Force the font-manager path too: it takes DIFFERENT monitors
-                    // (CFontManager.waitForFontsToBeLoaded + SunFontManager's own)
-                    // than the Toolkit class-init lock, so warming the Toolkit
-                    // alone would leave the second, independent hazard live.
-                    new java.awt.Font(java.awt.Font.SANS_SERIF, java.awt.Font.PLAIN, 12)
-                        .getLineMetrics("x", new java.awt.font.FontRenderContext(null, false, false));
-                    NativeLog.i(TAG, "AWT/AppKit pre-warmed in "
-                        + ((System.nanoTime() - awtWarmStartNanos) / 1_000_000L)
-                        + "ms on background thread macapk-awt-prewarm");
-                } catch (Throwable t) {
-                    // A headless/odd host simply keeps the old lazy behaviour; the
-                    // pre-warm is an optimisation of WHEN the init happens, never a
-                    // correctness dependency.
-                    NativeLog.w(TAG, "AWT pre-warm skipped: " + t);
-                }
-            }, "macapk-awt-prewarm");
-            awtWarmThread.setDaemon(true);
-            awtWarmThread.start();
-        }
 
         // Audio backend self-test (MACAPK_AUDIO_SELFTEST=1): drive the
         // REAL android.media.AudioTrack -> NativeAudio -> CoreAudio path with

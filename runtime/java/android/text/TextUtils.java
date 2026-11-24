@@ -1072,21 +1072,17 @@ public class TextUtils {
     }
     public static CharSequence ellipsize(CharSequence text, android.text.TextPaint p,
             float avail, TruncateAt where, boolean preserveLength, EllipsizeCallback callback) {
-        if (com.macapk.loader.gfx.GfxBackend.isAosp()) {
-            return ellipsize(text, p, avail, where, preserveLength, callback,
-                    TextDirectionHeuristics.FIRSTSTRONG_LTR, getEllipsisString(where));
-        }
-        return ellipsize(text, (android.graphics.Paint) p, avail, where, preserveLength, callback);
+        return ellipsize(text, p, avail, where, preserveLength, callback,
+                TextDirectionHeuristics.FIRSTSTRONG_LTR, getEllipsisString(where));
     }
 
     /**
      * AOSP's hidden ellipsize with a direction heuristic and an ellipsis string
-     * (android14-release TextUtils.java:1368-1462), verbatim. With the AOSP graphics switch on
-     * the 6-argument form above comes here, as on Android: it is the one AOSP's BoringLayout
-     * ellipsizes a single line with (TextView's singleLine + ellipsize), and it measures and
-     * breaks over AOSP's MeasuredParagraph, which is in lib/aosp-graphics.jar and not in this
-     * framework, so it is reached by reflection (AospMeasured). Called with the switch off it
-     * answers as the Paint form does.
+     * (android14-release TextUtils.java:1368-1462), verbatim. The 6-argument form above comes
+     * here, as on Android: it is the one AOSP's BoringLayout ellipsizes a single line with
+     * (TextView's singleLine + ellipsize), and it measures and breaks over AOSP's
+     * MeasuredParagraph, which is in lib/aosp-graphics.jar and not in this framework, so it is
+     * reached by reflection (AospMeasured).
      */
     public static CharSequence ellipsize(CharSequence text,
             android.text.TextPaint paint,
@@ -1094,9 +1090,6 @@ public class TextUtils {
             boolean preserveLength,
             EllipsizeCallback callback,
             TextDirectionHeuristic textDir, String ellipsis) {
-        if (!com.macapk.loader.gfx.GfxBackend.isAosp()) {
-            return ellipsize(text, (android.graphics.Paint) paint, avail, where, preserveLength, callback);
-        }
         int len = text.length();
 
         AospMeasured mt = null;
@@ -1613,8 +1606,8 @@ public class TextUtils {
         }
     }
 
-    // ---- AOSP's hidden helpers, for AOSP's android.text layout classes (WINAPK_AOSP_GFX=1 puts
-    // them, lib/aosp-graphics.jar, before this framework: windows/README.md, "Milestone 2") ----
+    // ---- AOSP's hidden helpers, for AOSP's android.text layout classes (lib/aosp-graphics.jar,
+    // before this framework on the class path: windows/README.md, "Milestone 2") ----
 
     /** AOSP TextUtils.couldAffectRtl: a character that may need the bidi algorithm. */
     public static boolean couldAffectRtl(char c) {

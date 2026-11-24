@@ -24,7 +24,7 @@
 //     propertyYName path-along-a-curve mode (AOSP:508-550) are not built. Both are
 //     AnimatedVectorDrawable features. Fleet exposure measured 2026-08-09: 2 of
 //     3689 valueType occurrences and 1 of 3676 objectAnimators. Those degrade to
-//     a value-less animator rather than throwing. With WINAPK_AOSP_GFX=1 (AOSP's
+//     a value-less animator rather than throwing. On AOSP's graphics (AOSP's
 //     PathParser and AnimatedVectorDrawable) both are built as AOSP builds them,
 //     through GfxBackend.pathDataValues / pathFromPathData.
 //  3. Animator.appendChangingConfigurations()/createConstantState() do not exist
@@ -649,8 +649,7 @@ public class AnimatorInflater {
         }
         if (valueType == VALUE_TYPE_PATH) {
             // AOSP:290-330: the two paths as PathParser.PathData with its PathData evaluator, when the
-            // graphics are AOSP's (WINAPK_AOSP_GFX=1, whose AnimatedVectorDrawable animates them);
-            // deviation 2, no values, on the Java2D side.
+            // graphics are AOSP's (whose AnimatedVectorDrawable animates them).
             return com.macapk.loader.gfx.GfxBackend.get().pathDataValues(propertyName,
                     styledAttributes.getString(valueFromId), styledAttributes.getString(valueToId));
         }

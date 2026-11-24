@@ -62,8 +62,8 @@ public final class AnimatorSet extends Animator {
     public Builder play(Animator anim) { ensureNode(anim); return new Builder(anim); }
     public ArrayList<Animator> getChildAnimations() { return nodes; }
 
-    // AOSP hides these two; AOSP's AnimatedVectorDrawable calls them (WINAPK_AOSP_GFX=1:
-    // lib/aosp-graphics.jar, windows/README.md "Milestone 2").
+    // AOSP hides these two; AOSP's AnimatedVectorDrawable calls them (lib/aosp-graphics.jar,
+    // windows/README.md "Milestone 2").
     /** AOSP AnimatorSet.shouldPlayTogether: every child starts as the set does (none waits on another). */
     public boolean shouldPlayTogether() {
         for (Animator a : nodes) {

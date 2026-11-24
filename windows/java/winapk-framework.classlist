@@ -2206,7 +2206,6 @@ java/lang/invoke/VarHandleByteArrayAsChars$ArrayHandle
 java/lang/invoke/VarHandleByteArrayAsInts$ByteArrayViewVarHandle
 java/lang/invoke/VarHandleByteArrayAsInts$ArrayHandle
 @lambda-proxy android/graphics/ColorSpace applyAsDouble ()Ljava/util/function/DoubleUnaryOperator; (D)D REF_invokeStatic android/graphics/ColorSpace lambda$static$5 (D)D (D)D
-android/graphics/ColorSpace$OkLab
 java/lang/invoke/VarHandleByteArrayAsFloats$ByteArrayViewVarHandle
 android/graphics/ColorSpace$Adaptation
 java/lang/invoke/VarHandleByteArrayAsFloats$ArrayHandle
@@ -3340,7 +3339,6 @@ android/graphics/PorterDuffColorFilter
 org/xmlpull/v1/XmlPullParserException
 android/graphics/drawable/AnimatedStateListDrawable
 android/graphics/drawable/Drawable$ConstantState
-android/graphics/drawable/Drawable$MacapkSelfConstantState
 android/graphics/drawable/ColorDrawable$ColorState
 android/util/StateSet
 android/graphics/PorterDuff$Mode
@@ -3361,7 +3359,6 @@ android/graphics/Path
 java/awt/geom/Path2D$Double
 android/graphics/Path$FillType
 java/awt/geom/Point2D$Double
-android/graphics/drawable/VectorDrawable$PathSpec
 android/graphics/RectF
 android/graphics/RectF$1
 java/awt/geom/NoninvertibleTransformException
@@ -3373,15 +3370,12 @@ android/graphics/Gainmap
 sun/reflect/misc/ReflectUtil
 android/graphics/Bitmap$1
 android/graphics/Canvas
-android/graphics/Canvas$1
 java/lang/MatchException
-android/graphics/Canvas$Layer
 sun/awt/AppContext
 sun/awt/AppContext$GetAppContextLock
 jdk/internal/access/JavaAWTAccess
 sun/awt/AppContext$6
 java/util/IdentityHashMap$ValueIterator
-android/graphics/MacApkFont
 java/awt/FontFormatException
 android/graphics/Path$Direction
 java/awt/geom/RoundRectangle2D
@@ -3551,13 +3545,7 @@ dalvik/system/VMRuntime
 @lambda-proxy com/macapk/loader/AppClassLoader accept ()Ljava/io/FilenameFilter; (Ljava/io/File;Ljava/lang/String;)Z REF_invokeStatic com/macapk/loader/AppClassLoader lambda$prepareDirectDlopenLibs$0 (Ljava/io/File;Ljava/lang/String;)Z (Ljava/io/File;Ljava/lang/String;)Z
 java/net/URLClassLoader$2
 @lambda-proxy com/macapk/loader/Boot apply ()Ljava/util/function/Function; (Ljava/lang/Object;)Ljava/lang/Object; REF_invokeStatic com/macapk/loader/Boot lambda$run$7 (Ljava/lang/String;)Ljava/lang/String; (Ljava/lang/String;)Ljava/lang/String;
-android/graphics/MacApkSystemFonts
 java/nio/file/DirectoryNotEmptyException
-android/graphics/MacApkHostFonts
-android/graphics/MacApkHostFonts$Family
-android/graphics/MacApkFontFamilies
-android/graphics/MacApkFontFamilies$Face
-android/graphics/MacApkFontFamilies$Resolved
 @lambda-form-invoker [LF_RESOLVE] java.lang.invoke.DirectMethodHandle$Holder invokeSpecial LLJL_L
 @lambda-form-invoker [LF_RESOLVE] java.lang.invoke.Invokers$Holder linkToTargetMethod JLL_L
 sun/nio/fs/Globs
@@ -3568,7 +3556,6 @@ sun/nio/fs/WindowsFileSystem$2
 java/nio/file/Files$1
 java/nio/file/AccessMode
 @lambda-form-invoker [LF_RESOLVE] java.lang.invoke.DirectMethodHandle$Holder invokeStatic LL_I
-@lambda-proxy android/graphics/MacApkHostFonts test ()Ljava/util/function/Predicate; (Ljava/lang/Object;)Z REF_invokeStatic android/graphics/MacApkHostFonts lambda$indexAll$0 (Landroid/graphics/MacApkHostFonts$Family;)Z (Landroid/graphics/MacApkHostFonts$Family;)Z
 @lambda-form-invoker [LF_RESOLVE] java.lang.invoke.DirectMethodHandle$Holder invokeStatic LD_L
 @lambda-form-invoker [LF_RESOLVE] java.lang.invoke.DirectMethodHandle$Holder invokeSpecial L3D_L
 @lambda-form-invoker [LF_RESOLVE] java.lang.invoke.Invokers$Holder linkToTargetMethod LDL_L
@@ -4763,15 +4750,11 @@ android/text/TextDirectionHeuristics$TextDirectionHeuristicLocale
 android/text/Layout$TextInclusionStrategy
 android/text/Layout$Directions
 android/text/Layout$1
-android/text/Layout$2
-android/text/Layout$3
 android/text/style/UpdateAppearance
 android/text/style/UpdateLayout
 android/text/style/MetricAffectingSpan
 @lambda-form-invoker [LF_RESOLVE] java.lang.invoke.DirectMethodHandle$Holder invokeSpecial LLJLLII_J
 @lambda-form-invoker [LF_RESOLVE] java.lang.invoke.DirectMethodHandle$Holder invokeSpecial L3II_J
-android/graphics/MacApkFontStore
-android/graphics/MacApkFont$Selection
 sun/font/CMap$CMapFormat12
 java/text/Bidi
 jdk/internal/icu/text/BidiBase
@@ -4810,7 +4793,6 @@ sun/font/StandardGlyphVector
 sun/font/DelegatingShape
 sun/font/StandardGlyphVector$GlyphStrike
 java/awt/font/GlyphMetrics
-android/graphics/MacApkFont$Quantized
 @lambda-proxy sun/util/locale/provider/JRELocaleProviderAdapter run (Lsun/util/locale/provider/JRELocaleProviderAdapter;)Ljava/security/PrivilegedAction; ()Ljava/lang/Object; REF_invokeVirtual sun/util/locale/provider/JRELocaleProviderAdapter lambda$getBreakIteratorProvider$0 ()Ljava/text/spi/BreakIteratorProvider; ()Ljava/text/spi/BreakIteratorProvider;
 sun/util/locale/provider/BreakIteratorProviderImpl
 sun/util/locale/provider/BreakIteratorProviderImpl$GraphemeBreakIterator
@@ -4823,7 +4805,6 @@ android/text/Layout$Alignment
 android/text/StaticLayout$Builder
 android/graphics/text/LineBreakConfig
 android/graphics/text/LineBreakConfig$Builder
-android/graphics/text/LineBreakConfig$1
 sun/text/resources/BreakIteratorInfo
 sun/util/resources/BreakIteratorResourceBundle
 sun/text/resources/BreakIteratorResources
@@ -4938,7 +4919,6 @@ sun/awt/image/ShortComponentRaster
 android/content/res/Resources$MacapkDrawableConstantState
 sun/awt/AppContext$PostShutdownEventRunnable
 sun/awt/AWTAutoShutdown$1
-android/graphics/Canvas$SbJob
 @lambda-proxy com/macapk/loader/AppClassLoader accept ()Ljava/io/FilenameFilter; (Ljava/io/File;Ljava/lang/String;)Z REF_invokeStatic com/macapk/loader/AppClassLoader lambda$preloadAllApkLibs$6 (Ljava/io/File;Ljava/lang/String;)Z (Ljava/io/File;Ljava/lang/String;)Z
 @lambda-proxy com/macapk/loader/AppClassLoader accept ()Ljava/io/FilenameFilter; (Ljava/io/File;Ljava/lang/String;)Z REF_invokeStatic com/macapk/loader/AppClassLoader lambda$ensureLibBiases$3 (Ljava/io/File;Ljava/lang/String;)Z (Ljava/io/File;Ljava/lang/String;)Z
 com/macapk/loader/AppClassLoader$1Job
