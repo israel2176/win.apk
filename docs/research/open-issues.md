@@ -391,8 +391,8 @@ Masad's update/dark screen. Two showed only a black window:
   Yahav Bank (Cordova) got `net::ERR_FAILED (file:///android_asset/www/app/
   index.html?cordova)`. The page's asset folder used to be copied to disk (up
   to 48 MB) and the copy loaded. Now nothing is copied: `file:///X` loads as
-  `https://winapk-file.example/X` (`host/webview_file_urls.h`, after the other runtime's
-  `FileUrls`) and each request there is answered from the APK after the app's
+  `https://winapk-file.example/X` (`host/webview_file_urls.h`, an origin of
+  its own as androidx's `WebViewAssetLoader` has) and each request there is answered from the APK after the app's
   `shouldInterceptRequest` (`MacApkWebViewBridge.macapkServeFile`), so
   `file:///android_res/`, a `loadDataWithBaseURL` page with a `file:` base
   and its `file:///` references load too. The URL mapping and the rule for
@@ -406,7 +406,15 @@ Masad's update/dark screen. Two showed only a black window:
   `location.origin` for `file://`, measured on DOFUS Touch on the Mac) takes
   its non-file path. Not done: a `file:///` URL a script builds at run time in
   a page served from the APK stays `file:` and loads nothing; a large asset
-  (a video) is read whole into memory before it is served.
+  (a video) is read whole into memory before it is served. Since 2026-11-24
+  (the header rewritten from WebView2's and RFC 9110's documentation): a
+  `Range` request to the file origin gets 206 with its bytes or 416, and a
+  whole answer says `Accept-Ranges: bytes`, so `<video>` and `<audio>` can
+  seek (cut on the worker thread, the body's stream made there too: the
+  WebView2 thread copies nothing); `file://localhost/` and `file:/` map like
+  `file:///`; origins are compared as browsers write them (default port
+  dropped). Unit-tested; the media seek itself is unchecked (no WebView2 under
+  Wine).
 
 **Seven apps with `WINAPK_AOSP_RES=1 WINAPK_AOSP_VIEWS=1`, November 2026**
 (same branch and stage; logged via stdout capture):
