@@ -318,7 +318,7 @@ if(WINAPK_JNI_INCLUDE)
                               host/runtime.rc)
   target_link_libraries(winapk-runtime PRIVATE winapk_jni winapk_sqlite webpdecoder winapk_stb_vorbis windowscodecs
                         ole32 oleaut32 mf mfplat mfreadwrite mfuuid shlwapi advapi32 shell32 uuid wlanapi iphlpapi
-                        bthprops winmm bcrypt psapi)
+                        bthprops winmm bcrypt psapi winhttp)
   target_include_directories(winapk-runtime PRIVATE ${WINAPK_WEBP_DIR}/src)
   # WebView2 (host/webview2_host.h): the SDK's header to build against, from
   # scripts/fetch_webview2.sh; its WebView2Loader.dll is staged next to the
@@ -397,14 +397,14 @@ if(WINAPK_JNI_INCLUDE)
                         mfuuid shlwapi)
   target_link_options(winapk-audio-test PRIVATE -static)
 
-  # libOpenSLES on that backend, called as guest code calls it (test/opensles_test.cpp).
+  # libOpenSLES on that backend and its PCM conversion and resampler, called as
+  # guest code calls it, with a fake microphone (test/opensles_test.cpp).
   add_executable(winapk-opensles-test test/opensles_test.cpp host/native_opensles.cpp host/audio_engine.cpp
-                 host/audio_decode.cpp host/native_audio_input.cpp ${WINAPK_SOFT_CODEC_SOURCES})
-  target_include_directories(winapk-opensles-test PRIVATE host include "${WINAPK_JNI_INCLUDE}"
-                             "${WINAPK_JNI_INCLUDE}/win32")
+                 host/audio_decode.cpp ${WINAPK_SOFT_CODEC_SOURCES})
+  target_include_directories(winapk-opensles-test PRIVATE host include)
   target_include_directories(winapk-opensles-test SYSTEM PRIVATE ${WINAPK_SOFT_CODEC_INCLUDES})
-  target_link_libraries(winapk-opensles-test PRIVATE winapk_stb_vorbis ${WINAPK_SOFT_CODEC_LIBS} ole32 mfplat mfreadwrite mfuuid shlwapi uuid
-                        advapi32)
+  target_link_libraries(winapk-opensles-test PRIVATE winapk_stb_vorbis ${WINAPK_SOFT_CODEC_LIBS} ole32 mfplat mfreadwrite
+                        mfuuid shlwapi uuid advapi32 winhttp)
   target_link_options(winapk-opensles-test PRIVATE -static)
 
   # Video on Media Foundation without a JVM (test/video_test.cpp): the
