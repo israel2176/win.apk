@@ -67,10 +67,10 @@ int main() {
     {
         auto* r = new Recorder;
         for (int i = 0; i < 90; ++i) r->add(1'000'000, 50'000'000, 2'000'000, 1'000'000, 60'000'000, true, i * 16'666'667LL);
-        std::string warm = r->summary("java2d");
+        std::string warm = r->summary("aosp");
         std::printf("    %s\n", warm.c_str());
         check("only warm-up frames: reported, and said so",
-              warm.find("frame times (java2d graphics): 90 frames") == 0 &&
+              warm.find("frame times (aosp graphics): 90 frames") == 0 &&
                   warm.find("(warm-up)") != std::string::npos);
         // 61 steady frames 1/60 s apart: 60 intervals in 1.0 s.
         for (int i = 0; i <= 60; ++i) {

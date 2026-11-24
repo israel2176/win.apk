@@ -25,14 +25,6 @@ std::string utf8(const std::wstring& w) {
     return s;
 }
 
-// WINAPK_AOSP_GFX=0 turns it off; unset, 1 or anything else leaves the default.
-bool wanted() {
-    wchar_t v[8];
-    const DWORD n = GetEnvironmentVariableW(L"WINAPK_AOSP_GFX", v, 8);
-    if (n == 1 && v[0] == L'0') return false;
-    return kAospGfxByDefault || (n == 1 && v[0] == L'1');
-}
-
 jstring jstring_of(JNIEnv* env, const std::wstring& s) {
     return env->NewString(reinterpret_cast<const jchar*>(s.c_str()), static_cast<jsize>(s.size()));
 }
@@ -41,10 +33,6 @@ jstring jstring_of(JNIEnv* env, const std::wstring& s) {
 
 bool aosp_gfx_prepare(const fs::path& lib, const fs::path& bin) {
     g_on = false;
-    if (!wanted()) {
-        std::fprintf(stderr, "[win.apk] AOSP graphics: off (WINAPK_AOSP_GFX=0): Win.apk's Java2D classes draw\n");
-        return false;
-    }
     AospGfxFiles f;
     f.jar = lib / "aosp-graphics.jar";
     f.dll = bin / "robolectric-nativeruntime.dll";
@@ -54,8 +42,9 @@ bool aosp_gfx_prepare(const fs::path& lib, const fs::path& bin) {
     std::error_code ec;
     for (const fs::path& p : {f.jar, f.dll, f.icu_data, f.fonts / "fonts.xml"}) {
         if (!fs::is_regular_file(p, ec)) {
-            std::fprintf(stderr, "[win.apk] AOSP graphics: off, %s is missing (a runtime staged without "
-                                 "windows/scripts/build_aosp_gfx.sh's files): Win.apk's Java2D classes draw\n",
+            std::fprintf(stderr, "[win.apk] error: AOSP graphics: %s is missing (a runtime staged without "
+                                 "windows/scripts/build_aosp_gfx.sh's files, or a damaged install: reinstall "
+                                 "Win.apk); nothing can draw without it\n",
                          utf8(p.wstring()).c_str());
             return false;
         }
@@ -65,14 +54,14 @@ bool aosp_gfx_prepare(const fs::path& lib, const fs::path& bin) {
     // old Windows) would otherwise leave AOSP's classes on the class path with no natives. It
     // stays loaded; System.load finds it so.
     if (!LoadLibraryExW(f.dll.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH)) {
-        std::fprintf(stderr, "[win.apk] AOSP graphics: off, %s does not load (error %lu): Win.apk's Java2D "
-                             "classes draw\n",
+        std::fprintf(stderr, "[win.apk] error: AOSP graphics: %s does not load (error %lu: a damaged install, "
+                             "or a Windows without the Universal C Runtime); nothing can draw without it\n",
                      utf8(f.dll.wstring()).c_str(), GetLastError());
         return false;
     }
     g_files = f;
     g_on = true;
-    std::fprintf(stderr, "[win.apk] AOSP graphics: on (WINAPK_AOSP_GFX=0 turns it off): %s first on the class path\n",
+    std::fprintf(stderr, "[win.apk] AOSP graphics: on: %s first on the class path\n",
                  utf8(f.jar.wstring()).c_str());
     return true;
 }
@@ -93,8 +82,8 @@ bool aosp_res_prepare(const fs::path& lib, const fs::path& bin) {
                              "are the only ones\n");
     }
     if (!g_on) {
-        std::fprintf(stderr, "[win.apk] AOSP resources: off, they need AOSP's graphics (WINAPK_AOSP_GFX): an app "
-                             "cannot start without them\n");
+        std::fprintf(stderr, "[win.apk] AOSP resources: off, they need AOSP's graphics: an app cannot start "
+                             "without them\n");
         return false;
     }
     AospResFiles f;
@@ -161,7 +150,7 @@ bool aosp_gfx_load(JavaVM* vm, JNIEnv* env) {
     const auto t0 = std::chrono::steady_clock::now();
     jvmtiEnv* jvmti = nullptr;
     if (vm->GetEnv(reinterpret_cast<void**>(&jvmti), JVMTI_VERSION_1_2) != JNI_OK || !jvmti) {
-        std::fprintf(stderr, "[win.apk] AOSP graphics: no JVMTI; the DLL's natives are not bound\n");
+        std::fprintf(stderr, "[win.apk] error: AOSP graphics: no JVMTI; the DLL's natives are not bound\n");
         return false;
     }
     // The library's JNI_OnLoad finds classes through the class loader of the class that loads it,
@@ -178,12 +167,13 @@ bool aosp_gfx_load(JavaVM* vm, JNIEnv* env) {
     if (!from || !load0 || !runtime) {
         if (env->ExceptionCheck()) env->ExceptionDescribe();
         env->ExceptionClear();
-        std::fprintf(stderr, "[win.apk] AOSP graphics: cannot load the DLL (no %s); its natives are not bound\n",
+        std::fprintf(stderr, "[win.apk] error: AOSP graphics: cannot load the DLL (no %s); its natives are not bound\n",
                      !from ? "org.robolectric.RuntimeEnvironment" : "Runtime.load0");
         return false;
     }
     if (!aosp_gfx::redirect_begin(jvmti, env)) {
-        std::fprintf(stderr, "[win.apk] AOSP graphics: the JNI function table cannot be swapped; natives not bound\n");
+        std::fprintf(stderr, "[win.apk] error: AOSP graphics: the JNI function table cannot be swapped; natives not "
+                             "bound\n");
         return false;
     }
     env->CallVoidMethod(runtime, load0, from, jstring_of(env, g_files.dll.wstring()));

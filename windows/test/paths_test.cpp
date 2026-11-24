@@ -42,7 +42,7 @@ void check(const char* what, const std::wstring& got, const std::wstring& want) 
 
 std::wstring host(const char* p) { return winapk::android_host_path(p); }
 
-// /system/fonts: one folder (the Java2D cache, or bin\aosp\fonts with Noto CJK), or AospGfx's
+// /system/fonts: one folder (bin\aosp\fonts with Noto CJK), or AospGfx's
 // "<fonts.xml>|<Android's fonts>|<Windows' fonts>", where a font is the first folder's that has it.
 void fonts_search() {
     winapk::set_system_fonts_dir("C:\\fonts\\");

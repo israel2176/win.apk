@@ -15,11 +15,11 @@
 //   flag: that start runs without CDS, and says so.
 //
 //   The framework archive: one static archive of the JDK's and the framework's
-//   classes, shared by every app, <data>\cds\framework-<graphics>-<key>.jsa: one per
-//   graphics, "aosp" (the default, lib\aosp-graphics.jar first on the class path) and
-//   "java2d" (WINAPK_AOSP_GFX=0, a stage without AOSP's files), so neither's dump deletes
-//   the other's; the JVMs with no app (install, --gms, --verify-apk, --system) take the
-//   graphics an app's run would, and so map its archive. The release
+//   classes, shared by every app, <data>\cds\framework-<graphics>-<key>.jsa: "aosp"
+//   (lib\aosp-graphics.jar first on the class path), or "aospres" / "aospviews" with AOSP's
+//   resources or views on (cds_util.h, graphics_of), so no one's dump deletes another's;
+//   the JVMs with no app (install, --gms, --verify-apk, --system) take the framework an
+//   app's run would, and so map its archive. The release
 //   ships the class list (lib\winapk-framework.classlist, the classes at least
 //   three of the smoke apps load); the first app start without an archive also
 //   records the classes it loads, and 10 s after its first frame (or at its exit) a background

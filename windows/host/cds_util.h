@@ -42,11 +42,9 @@ std::string stamp(const std::filesystem::path& p);
 // archive maps (-D..., -XX:ErrorFile=, -Xlog:...): left out of the key.
 bool per_launch(const std::string& option);
 
-// The graphics the JVM's options are for: "aosp" when they carry -Dwinapk.aosp.gfx=1 (host/aosp_gfx.h:
-// lib\aosp-graphics.jar first on the class path, and AOSP's resources and views before it, whose jars
-// the key has), "java2d" otherwise. Each has an archive of its own, framework-<graphics>-<key>.jsa,
-// so that a run on the other one (WINAPK_AOSP_GFX=0, or a stage without AOSP's files) does not
-// delete this one.
+// The framework the JVM's options are for: "aosp", always now (host/aosp_gfx.h: AOSP's graphics,
+// resources and views, their jars first on the class path, which the key has). Kept as a function for
+// the archive's name, framework-<graphics>-<key>.jsa.
 std::string graphics_of(const std::vector<std::string>& opts);
 
 // Whether the file `name` in the archive folder is a leftover that the dump of `stem`

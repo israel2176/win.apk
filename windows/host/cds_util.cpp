@@ -209,19 +209,19 @@ bool per_launch(const std::string& o) {
 }
 
 std::string graphics_of(const std::vector<std::string>& opts) {
-    // AOSP's resources and views always come with AOSP's graphics now (aosp_gfx.h): one archive for
-    // the three, whose jars the key has from the class path.
-    for (const std::string& o : opts)
-        if (o == "-Dwinapk.aosp.gfx=1") return "aosp";
-    return "java2d";
+    // One framework: AOSP's graphics, resources and views always come together now (aosp_gfx.h), whose
+    // jars the key has from the class path; the options no longer tell anything apart.
+    (void)opts;
+    return "aosp";
 }
 
 bool stale_archive_file(const std::wstring& name, const std::wstring& stem) {
     const std::wstring prefix = L"framework-";
     if (name.compare(0, prefix.size(), prefix) != 0 || name.compare(0, stem.size(), stem) == 0) return false;
     // The archives of AOSP's resources and views while they were switches of their own
-    // (framework-aospres-..., framework-aospviews-...): no run makes them any more.
-    for (const wchar_t* gone : {L"framework-aospres-", L"framework-aospviews-"})
+    // (framework-aospres-..., framework-aospviews-...) and of Win.apk's deleted Java2D graphics
+    // (framework-java2d-...): no run makes them any more.
+    for (const wchar_t* gone : {L"framework-aospres-", L"framework-aospviews-", L"framework-java2d-"})
         if (name.compare(0, std::wcslen(gone), gone) == 0) return true;
     // This graphics' own prefix, the stem up to its key ("framework-aosp-"): another key's file.
     const size_t dash = stem.rfind(L'-');

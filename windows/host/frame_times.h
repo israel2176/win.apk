@@ -1,8 +1,8 @@
 // frame_times.h -- how long the app's frames take, kept for the whole run and logged once at exit
 // (windows/README.md, "Frame time").
 //
-// The view tree's frames are drawn in software into a bitmap and copied to the window, on either
-// graphics engine (AOSP's, the default, or Java2D's with WINAPK_AOSP_GFX=0). ViewCanvasDriver
+// The view tree's frames are drawn in software into a bitmap and copied to the window, on AOSP's
+// graphics (Skia, through the native runtime). ViewCanvasDriver
 // times each frame that reaches the present and hands the times over (com.macapk.loader.FrameTimes,
 // native_cocoa.cpp): layout (measure and layout), draw (the view tree's draw), pixels (the frame
 // read out of its bitmap: on AOSP's graphics a Bitmap.getPixels copy), present (the host copying
@@ -89,7 +89,7 @@ struct Recorder {
     }
 
     // The line (without the "[win.apk] " prefix), or empty when no frame was recorded. `graphics`
-    // names the engine ("aosp", "java2d").
+    // names the engine ("aosp", the only one now; the line keeps the name for the logs' readers).
     std::string summary(const char* graphics) {
         std::lock_guard<std::mutex> hold(lock);
         const bool use_steady = steady.frames > 0;
