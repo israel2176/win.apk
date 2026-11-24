@@ -2,9 +2,10 @@
 // (windows/README.md, "Frame time").
 //
 // The view tree's frames are drawn in software into a bitmap and copied to the window, on AOSP's
-// graphics (Skia, through the native runtime). ViewCanvasDriver
+// graphics (Skia, through the native runtime). AOSP's views' compositor (aosp_views' Compositor)
 // times each frame that reaches the present and hands the times over (com.macapk.loader.FrameTimes,
-// native_cocoa.cpp): layout (measure and layout), draw (the view tree's draw), pixels (the frame
+// native_cocoa.cpp): layout (0 there: ViewRootImpl's layout is inside draw), draw (the frame's
+// vsync to the compose: the view tree's layout and draw), pixels (the frame
 // read out of its bitmap: on AOSP's graphics a Bitmap.getPixels copy), present (the host copying
 // it to the window) and total (the whole frame, the app's animation callbacks and the system bars
 // included). They go into fixed histograms, a few hundred kilobytes of address space

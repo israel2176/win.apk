@@ -18,7 +18,7 @@ public final class FrameTimes {
 
     /** One frame, in nanoseconds. warmup: one of the first frames of its window (class loading
      *  and the JIT's first passes), which the summary leaves out when later frames exist. */
-    static void record(long layoutNs, long drawNs, long pixelsNs, long presentNs, long totalNs,
+    public static void record(long layoutNs, long drawNs, long pixelsNs, long presentNs, long totalNs,
                        boolean warmup) {
         if (sUnavailable) return;
         try {
