@@ -183,62 +183,6 @@ bool create_decoder(const GUID& category, const GUID& subtype, IMFTransform** ou
 
 }  // namespace
 
-// ---- yuv420_to_argb ----------------------------------------------------------------------
-
-void yuv420_to_argb(const uint8_t* y, int y_stride, const uint8_t* uv, int uv_stride, int width, int height,
-                    bool sixteen_bit, bool bt709, bool full_range, int rotation, uint32_t* out) {
-    // 16.16 fixed point. Limited range scales Y by 255/219 and chroma by
-    // 255/224 (ITU-R BT.601 / BT.709 conversion, as every player does).
-    const int ys = full_range ? 65536 : 76309;
-    int rv, gu, gv, bu;
-    if (bt709) {
-        rv = full_range ? 103206 : 117506;
-        gu = full_range ? 12277 : 13959;
-        gv = full_range ? 30679 : 34925;
-        bu = full_range ? 121609 : 138438;
-    } else {
-        rv = full_range ? 91881 : 104597;
-        gu = full_range ? 22554 : 25675;
-        gv = full_range ? 46802 : 53279;
-        bu = full_range ? 116130 : 132201;
-    }
-    const int ybias = full_range ? 0 : 16;
-    const int out_w = (rotation == 90 || rotation == 270) ? height : width;
-    auto clamp = [](int v) { return static_cast<uint32_t>(v < 0 ? 0 : v > 255 ? 255 : v); };
-    for (int row = 0; row < height; ++row) {
-        const uint8_t* yr = y + static_cast<size_t>(row) * y_stride;
-        const uint8_t* uvr = uv + static_cast<size_t>(row / 2) * uv_stride;
-        // Where this row's pixels land, and how far apart: the four rotations
-        // are one base and one step each.
-        uint32_t* p;
-        ptrdiff_t step;
-        switch (rotation) {
-            case 90: p = out + (height - 1 - row); step = out_w; break;
-            case 180: p = out + static_cast<size_t>(height - 1 - row) * out_w + (width - 1); step = -1; break;
-            case 270: p = out + static_cast<size_t>(width - 1) * out_w + row; step = -out_w; break;
-            default: p = out + static_cast<size_t>(row) * out_w; step = 1; break;
-        }
-        for (int col = 0; col < width; ++col, p += step) {
-            int yv, u, v;
-            if (sixteen_bit) {
-                yv = yr[col * 2 + 1];  // the top 8 of the 10 bits: the byte above the low one
-                u = uvr[(col & ~1) * 2 + 1];
-                v = uvr[(col & ~1) * 2 + 3];
-            } else {
-                yv = yr[col];
-                u = uvr[col & ~1];
-                v = uvr[(col & ~1) + 1];
-            }
-            const int yy = (yv - ybias) * ys;
-            const int du = u - 128, dv = v - 128;
-            const uint32_t r = clamp((yy + rv * dv + 32768) >> 16);
-            const uint32_t g = clamp((yy - gu * du - gv * dv + 32768) >> 16);
-            const uint32_t b = clamp((yy + bu * du + 32768) >> 16);
-            *p = 0xff000000u | (r << 16) | (g << 8) | b;
-        }
-    }
-}
-
 // ---- supported_mimes ---------------------------------------------------------------------
 
 const std::vector<std::string>& supported_mimes() {
