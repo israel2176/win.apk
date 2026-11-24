@@ -448,6 +448,13 @@ if(WINAPK_JNI_INCLUDE)
   target_link_libraries(winapk-uia-test PRIVATE ole32 oleaut32 uuid user32)
   target_link_options(winapk-uia-test PRIVATE -static)
 
+  # The focused editor as a TSF document (test/tsf_test.cpp): ITextStoreACP's contract with a
+  # stand-in sink, then the text service on the system's TSF when there is one.
+  add_executable(winapk-tsf-test test/tsf_test.cpp host/tsf_text_store.cpp host/tsf_text_service.cpp)
+  target_include_directories(winapk-tsf-test PRIVATE host)
+  target_link_libraries(winapk-tsf-test PRIVATE ole32 uuid gdi32 user32)
+  target_link_options(winapk-tsf-test PRIVATE -static)
+
   # An app's native libraries (host/guest_libs.h): the stub DLL
   # that stands for each one and the translator that copies it. Built with the
   # runtime, which loads them.
