@@ -360,19 +360,24 @@ Masad's update/dark screen. Two showed only a black window:
   std::filesystem calls (the AOT cache, the install's staging), chdir.
 - **Cordova `file:///android_asset/`: fixed, Yahav to check again on Windows.**
   Yahav Bank (Cordova) got `net::ERR_FAILED (file:///android_asset/www/app/
-  index.html?cordova)`. Win.apk already serves such pages by copying the page's
-  asset folder to real files and navigating WebView2 there
-  (`MacApkWebViewBridge.macapkMaterializeAssetPage`, `materialize()` in
-  `native_webview.cpp`), but the copy returned null: it looked for the data
-  directory's host path while Win.apk gives the app its Android name
-  (`/data/user/0/<pkg>`). It now copies under the Android root's `/.macapk/` and
-  the host maps the answered paths before making the `file:` URL. Checked under
-  Wine with a test APK (the page and `../js/cordova.js` land on disk); WebView2
-  itself is not in the Wine prefix, so the page load is unchecked. If it still
-  fails, the run log's `WebView` lines around `loadUrl`, any `asset page copy
-  failed`, and Cordova's console errors say where. Not handled on Windows:
-  `file:///android_res/` (WebView2 raises no `WebResourceRequested` for `file:`;
-  it would need the same copy for resources).
+  index.html?cordova)`. The page's asset folder used to be copied to disk (up
+  to 48 MB) and the copy loaded. Now nothing is copied: `file:///X` loads as
+  `https://winapk-file.example/X` (`host/webview_file_urls.h`, after the other runtime's
+  `FileUrls`) and each request there is answered from the APK after the app's
+  `shouldInterceptRequest` (`MacApkWebViewBridge.macapkServeFile`), so
+  `file:///android_res/`, a `loadDataWithBaseURL` page with a `file:` base
+  and its `file:///` references load too. The URL mapping and the rule for
+  which pages may read the origin have a unit test (`winapk-webview-urls-test`);
+  WebView2 itself is not in the Wine prefix, so the page load is unchecked: on
+  Windows, check Yahav, and that `../js/cordova.js` loads. If it fails, the run
+  log's `WebView` lines (`not allowed to load local resource`, `a web page may
+  not open`) and Cordova's console errors say where. Known difference: the
+  page's script sees `location.protocol` `https:`, not `file:`; an app that
+  branches on it (cordova-plugin-file's `Entry.toURL` checks
+  `location.origin` for `file://`, measured on DOFUS Touch on the Mac) takes
+  its non-file path. Not done: a `file:///` URL a script builds at run time in
+  a page served from the APK stays `file:` and loads nothing; a large asset
+  (a video) is read whole into memory before it is served.
 
 **Seven apps with `WINAPK_AOSP_RES=1 WINAPK_AOSP_VIEWS=1`, November 2026**
 (same branch and stage; logged via stdout capture):
