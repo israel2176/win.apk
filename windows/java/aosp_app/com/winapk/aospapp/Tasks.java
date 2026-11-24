@@ -304,6 +304,67 @@ public final class Tasks {
     /** ActivityStarter.startActivityInner, for the standard launch mode in one task: the record goes
      *  on top; the resumed activity is paused first. */
     void start(ActivityInfo info, Intent intent, String from, Record resultTo, String resultWho, int requestCode) {
+        int flags = intent.getFlags();
+        int mode = info.launchMode;
+        // ActivityStarter.computeLaunchingTaskFlags / startActivityInner, for the one task: what is
+        // reused instead of a new record on top.
+        if ((flags & Intent.FLAG_ACTIVITY_NEW_TASK) != 0 && (flags & Intent.FLAG_ACTIVITY_CLEAR_TASK) != 0) {
+            // A new task in place of this one: everything in it finishes first.
+            for (int i = task.size() - 1; i >= 0; i--) {
+                Record c = task.get(i);
+                if (!c.finishing) finish(c, android.app.Activity.RESULT_CANCELED, null);
+            }
+        } else {
+            Record existing = null;
+            boolean singleTaskLike = mode == ActivityInfo.LAUNCH_SINGLE_TASK
+                    || mode == ActivityInfo.LAUNCH_SINGLE_INSTANCE;
+            if ((flags & Intent.FLAG_ACTIVITY_CLEAR_TOP) != 0 || singleTaskLike
+                    || (flags & Intent.FLAG_ACTIVITY_REORDER_TO_FRONT) != 0) {
+                for (int i = task.size() - 1; i >= 0; i--) {
+                    Record c = task.get(i);
+                    if (!c.finishing && c.info.name.equals(info.name)) {
+                        existing = c;
+                        break;
+                    }
+                }
+            }
+            if (existing != null && (flags & Intent.FLAG_ACTIVITY_REORDER_TO_FRONT) != 0
+                    && (flags & Intent.FLAG_ACTIVITY_CLEAR_TOP) == 0 && !singleTaskLike) {
+                // Task.moveActivityToFront: the instance on top with the intent (onNewIntent).
+                task.remove(existing);
+                task.add(existing);
+                existing.newIntents.add(new com.android.internal.content.ReferrerIntent(intent, from));
+                bringToTop(existing);
+                return;
+            }
+            if (existing != null) {
+                // Task.performClearTop: everything above it finishes; a standard activity without
+                // FLAG_ACTIVITY_SINGLE_TOP is itself finished and made again, any other gets the
+                // intent (deliverNewIntent).
+                for (int i = task.size() - 1; i >= 0; i--) {
+                    Record c = task.get(i);
+                    if (c == existing) break;
+                    if (!c.finishing) finish(c, android.app.Activity.RESULT_CANCELED, null);
+                }
+                boolean reuse = mode != ActivityInfo.LAUNCH_MULTIPLE
+                        || (flags & Intent.FLAG_ACTIVITY_SINGLE_TOP) != 0;
+                if (reuse) {
+                    existing.newIntents.add(new com.android.internal.content.ReferrerIntent(intent, from));
+                    bringToTop(existing);
+                    return;
+                }
+                finish(existing, android.app.Activity.RESULT_CANCELED, null);
+            } else {
+                Record t = top();
+                if (t != null && t.info.name.equals(info.name) && (mode == ActivityInfo.LAUNCH_SINGLE_TOP
+                        || (flags & Intent.FLAG_ACTIVITY_SINGLE_TOP) != 0)) {
+                    // singleTop: the top instance gets the intent instead.
+                    t.newIntents.add(new com.android.internal.content.ReferrerIntent(intent, from));
+                    bringToTop(t);
+                    return;
+                }
+            }
+        }
         Record r = new Record(info, intent, from, resultTo, resultWho, requestCode);
         Record prev = top();
         task.add(r);
@@ -313,6 +374,31 @@ public final class Tasks {
         } else {
             realStart(r);
         }
+    }
+
+    /** A record already in the task is the top again with its new intents: delivered now when it is
+     *  resumed (NewIntentItem pauses and resumes it around onNewIntent), else at its resume (after
+     *  the finishing ones above it pause). */
+    private void bringToTop(Record r) {
+        if (r.state == State.RESUMED && !r.newIntents.isEmpty()) {
+            ClientTransaction tx = ClientTransaction.obtain(app, r.token);
+            tx.addCallback(android.app.servertransaction.NewIntentItem.obtain(new ArrayList<>(r.newIntents), true));
+            r.newIntents.clear();
+            schedule(tx);
+            return;
+        }
+        Record t = topResumedOther(r);
+        if (t != null) {
+            // The one above is finishing and pausing: `r` resumes when it reports paused.
+            return;
+        }
+        if (r.state != State.RESUMED) resume(r);
+    }
+
+    /** A resumed record other than `r` (one being paused on the way). */
+    private Record topResumedOther(Record r) {
+        for (Record c : task) if (c != r && (c.state == State.RESUMED || c.state == State.PAUSING)) return c;
+        return null;
     }
 
     /** startActivities: every record on the task in order, the last one started as a start is (the
