@@ -189,6 +189,35 @@ std::vector<IUIAutomationElement*> children(IUIAutomation* client, IUIAutomation
     return out;
 }
 
+// What a list of elements is, for a failed check: each one's control type, class and name.
+void describe(const char* what, const std::vector<IUIAutomationElement*>& v) {
+    std::printf("    %s: %zu element%s\n", what, v.size(), v.size() == 1 ? "" : "s");
+    for (IUIAutomationElement* e : v) {
+        BSTR cls = nullptr;
+        e->get_CurrentClassName(&cls);
+        std::printf("      type %d, class \"%ls\", name \"%ls\"\n", static_cast<int>(type_of(e)), cls ? cls : L"",
+                    name_of(e).c_str());
+        SysFreeString(cls);
+    }
+}
+
+// The window's app content: its children less the ones Windows' own HWND providers add to a
+// top-level window (the non-client area's title bar, with its system menu and buttons, and
+// any menu or scroll bars). Real UI Automation merges those in beside the fragment root's
+// children; Wine's has no non-client provider, so there the two lists are the same.
+std::vector<IUIAutomationElement*> view_roots(IUIAutomation* client, IUIAutomationElement* window) {
+    std::vector<IUIAutomationElement*> all = children(client, window), out;
+    for (IUIAutomationElement* e : all) {
+        const CONTROLTYPEID t = type_of(e);
+        if (t == UIA_TitleBarControlTypeId || t == UIA_MenuBarControlTypeId || t == UIA_ScrollBarControlTypeId) {
+            e->Release();
+        } else {
+            out.push_back(e);
+        }
+    }
+    return out;
+}
+
 template <typename T>
 T* pattern(IUIAutomationElement* e, PATTERNID id) {
     T* p = nullptr;
@@ -404,11 +433,17 @@ int main() {
     check("the window is an element", window != nullptr);
     check("asking turned the app's accessibility on", g_app.activations.load() >= 1 && uia::active());
 
-    std::vector<IUIAutomationElement*> top = children(client, window);
+    std::vector<IUIAutomationElement*> top = view_roots(client, window);
     check("the window holds its one view root", top.size() == 1);
+    if (top.size() != 1) {
+        std::vector<IUIAutomationElement*> raw = children(client, window);
+        describe("the window's children", raw);
+        release_all(raw);
+    }
     std::vector<IUIAutomationElement*> kids = top.empty() ? std::vector<IUIAutomationElement*>{}
                                                           : children(client, top[0]);
     check("the root holds its six views, in the app's order", kids.size() == 6);
+    if (kids.size() != 6) describe("the root's children", kids);
     if (kids.size() == 6) {
         check("a heading's Hebrew text is its name", name_of(kids[0]) == L"שלום עולם");
         check("a TextView is Text", type_of(kids[0]) == UIA_TextControlTypeId);
@@ -493,9 +528,10 @@ int main() {
     // The app draws a new screen: the button's name changes and the scroll view goes.
     g_app.current = tree(L"שמור", false);
     uia::publish(g_app.current);
-    top = children(client, window);
+    top = view_roots(client, window);
     kids = top.empty() ? std::vector<IUIAutomationElement*>{} : children(client, top[0]);
     check("a new snapshot replaces the old one", kids.size() == 5 && name_of(kids[1]) == L"שמור");
+    if (kids.size() != 5) describe("the root's children after the new snapshot", kids);
     release_all(kids);
     release_all(top);
 
