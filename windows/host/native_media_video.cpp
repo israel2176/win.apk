@@ -226,6 +226,35 @@ jint JNICALL Vid_frameBgra(JNIEnv* env, jclass, jlong handle, jbyteArray out, ji
     return ok ? 0 : -1;
 }
 
+// MediaCodec's ByteBuffer and Image output (NativeMedia.nativeVidFrameYuv): the picture in the
+// layout video_decode.h's YuvLayout describes, written straight into the app's direct buffer.
+jint JNICALL Vid_frameYuv(JNIEnv* env, jclass, jlong handle, jobject out, jint format, jintArray info) {
+    std::shared_ptr<vd::Frame> f = frame_of(handle);
+    if (!f || f->width <= 0 || f->height <= 0) return -1;
+    const vd::YuvLayout l = vd::YuvLayout::of(*f, format == 1 ? vd::YuvLayout::kP010 : vd::YuvLayout::kI420);
+    const vd::ColorAspects c = vd::frame_color(*f);
+    if (info && env->GetArrayLength(info) >= 9) {
+        const jint v[9] = {l.width, l.height, l.stride, l.slice_height, static_cast<jint>(l.format),
+                           c.standard, c.range, c.transfer, f->picture ? f->picture->bit_depth : 8};
+        env->SetIntArrayRegion(info, 0, 9, v);
+    }
+    const size_t need = l.size();
+    if (need > static_cast<size_t>(INT32_MAX)) return -1;
+    void* dst = out ? env->GetDirectBufferAddress(out) : nullptr;
+    if (!dst || env->GetDirectBufferCapacity(out) < static_cast<jlong>(need)) return static_cast<jint>(need);
+    return vd::frame_to_yuv(*f, l, static_cast<uint8_t*>(dst)) ? 0 : -1;
+}
+
+jbyteArray JNICALL Vid_frameHdr(JNIEnv* env, jclass, jlong handle) {
+    std::shared_ptr<vd::Frame> f = frame_of(handle);
+    if (!f) return nullptr;
+    const std::vector<uint8_t> hdr = vd::frame_color(*f).hdr_static_info;
+    if (hdr.empty()) return nullptr;
+    jbyteArray a = env->NewByteArray(static_cast<jsize>(hdr.size()));
+    if (a) env->SetByteArrayRegion(a, 0, static_cast<jsize>(hdr.size()), reinterpret_cast<const jbyte*>(hdr.data()));
+    return a;
+}
+
 void JNICALL Vid_flush(JNIEnv*, jclass, jlong h) {
     if (auto dec = decoder_of(h)) dec->flush();
 }
@@ -271,6 +300,10 @@ jint JNICALL Dec_outSampleRate(JNIEnv*, jclass, jlong h) {
 jint JNICALL Dec_outChannels(JNIEnv*, jclass, jlong h) {
     auto dec = audio_decoder_of(h);
     return dec ? dec->channels() : 0;
+}
+
+void JNICALL Dec_flush(JNIEnv*, jclass, jlong h) {
+    if (auto dec = audio_decoder_of(h)) dec->flush();
 }
 
 void JNICALL Dec_close(JNIEnv*, jclass, jlong h) {
@@ -410,6 +443,8 @@ const HostMethod kMethods[] = {
     WINAPK_HOST_NATIVE(kMedia, "nativeVidRender", "(JII)V", Vid_render),
     WINAPK_HOST_NATIVE(kMedia, "nativeVidReleaseFrame", "(J)V", Vid_releaseFrame),
     WINAPK_HOST_NATIVE(kMedia, "nativeVidFrameBgra", "(J[B[I)I", Vid_frameBgra),
+    WINAPK_HOST_NATIVE(kMedia, "nativeVidFrameYuv", "(JLjava/nio/ByteBuffer;I[I)I", Vid_frameYuv),
+    WINAPK_HOST_NATIVE(kMedia, "nativeVidFrameHdr", "(J)[B", Vid_frameHdr),
     WINAPK_HOST_NATIVE(kMedia, "nativeVidFlush", "(J)V", Vid_flush),
     WINAPK_HOST_NATIVE(kMedia, "nativeVidClose", "(J)V", Vid_close),
     // Upstream decodes VP8 and VP9 with libvpx behind separate natives of
@@ -428,6 +463,7 @@ const HostMethod kMethods[] = {
     WINAPK_HOST_NATIVE(kMedia, "nativeDecDecode", "(J[BZ)[B", Dec_decode),
     WINAPK_HOST_NATIVE(kMedia, "nativeDecOutSampleRate", "(J)I", Dec_outSampleRate),
     WINAPK_HOST_NATIVE(kMedia, "nativeDecOutChannels", "(J)I", Dec_outChannels),
+    WINAPK_HOST_NATIVE(kMedia, "nativeDecFlush", "(J)V", Dec_flush),
     WINAPK_HOST_NATIVE(kMedia, "nativeDecClose", "(J)V", Dec_close),
     WINAPK_HOST_NATIVE(kHost, "nativeVpxBuiltIn", "()Z", Hv_vpxBuiltIn),
     WINAPK_HOST_NATIVE(kHost, "nativeOpen", "(Ljava/lang/String;[B)J", Hv_open),

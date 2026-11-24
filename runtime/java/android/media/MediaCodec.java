@@ -19,12 +19,11 @@
 // inside queueInputBuffer -- see dequeueOutputBuffer/tryDequeueOutputLocked.
 // releaseOutputBuffer(index, true) composites the frame onto the configured
 // Surface for real (video_toolbox.mm -> cocoa_bridge.mm's
-// CocoaPresentVideoFrame); with no Surface configured, getOutputImage
-// returns a real YUV_420_888 Image (3 planes, real per-plane row/pixel
-// strides, real per-frame geometry and timestamp -- see NativeVideoImage),
-// converted in Java from the same decoded BGRA VideoToolbox already produces
-// for the Surface path, because that is the only pixel format the shared
-// native session hands out today. CLEAR (unencrypted) content only:
+// CocoaPresentVideoFrame); with no Surface configured, getOutputBuffer and
+// getOutputImage give the picture as Android's software decoders do (8-bit
+// I420, or P010 when configure asked for COLOR_FormatYUVP010), with its
+// stride, slice height, crop and colour in getOutputFormat -- see
+// videoOutputLocked and NativeVideoImage. CLEAR (unencrypted) content only:
 // queueSecureInputBuffer here does not decrypt anything, matching this
 // project's no-DRM-circumvention boundary.
 //
@@ -313,6 +312,23 @@ public final class MediaCodec {
     // contract -- and even without a surface there is no meaningful ByteBuffer
     // view of an opaque native pixel buffer, see getOutputImage instead).
     private long[] mOutPixbuf;
+    // Win.apk: the no-Surface output (getOutputBuffer/getOutputImage), the
+    // picture written by NativeMedia.nativeVidFrameYuv into a direct buffer
+    // kept per slot (mOutYuvOf: the frame it holds), in P010 when configure
+    // asked for COLOR_FormatYUVP010. mVidInfo is the newest frame's layout and
+    // colour (nativeVidFrameYuv's info), mVidHdr its HDR static metadata;
+    // mCfg* what configure's format said of the colour, for what the stream
+    // leaves unsaid. A frame whose size or colour differs from what was
+    // reported waits in mPendingPolled behind an INFO_OUTPUT_FORMAT_CHANGED.
+    private ByteBuffer[] mOutYuv;
+    private long[] mOutYuvOf;
+    private boolean mVidP010;
+    private int[] mVidInfo = new int[9];
+    private byte[] mVidHdr, mCfgHdr;
+    private int mCfgStandard, mCfgRange, mCfgTransfer;
+    private long[] mPendingPolled;
+    private static final int COLOR_FORMAT_P010 = 54;  // CodecCapabilities.COLOR_FormatYUVP010
+    private static final int IMAGE_FORMAT_P010 = 0x36;  // ImageFormat.YCBCR_P010
     // Parallel to mOutPixbuf: the presentation timestamp (microseconds, from
     // nativeVidPoll) of whichever frame currently occupies that slot, so
     // getOutputImage can hand it to Image.getTimestamp() instead of the
@@ -668,10 +684,24 @@ public final class MediaCodec {
             if (csd1 != null) { c1 = new byte[csd1.remaining()]; csd1.duplicate().get(c1); }
             mCsd0 = packVorbisCsd(c0, c1);
         }
+        if (mFormatId == 3) {
+            // Opus: csd-1 and csd-2 (codec delay, seek pre-roll) travel with
+            // the OpusHead in Android's marked layout, the one buffer
+            // nativeDecOpen takes (host/soft_codecs.h).
+            mCsd0 = packOpusCsd(mCsd0, format.getByteBuffer("csd-1", null), format.getByteBuffer("csd-2", null));
+        }
         if (mIsVideo) {
             mVidMime = mime;
             mVidWidth  = format.getInteger(MediaFormat.KEY_WIDTH, 0);
             mVidHeight = format.getInteger(MediaFormat.KEY_HEIGHT, 0);
+            mVidP010 = format.getInteger(MediaFormat.KEY_COLOR_FORMAT, 0) == COLOR_FORMAT_P010;
+            mCfgStandard = format.getInteger(MediaFormat.KEY_COLOR_STANDARD, 0);
+            mCfgRange = format.getInteger(MediaFormat.KEY_COLOR_RANGE, 0);
+            mCfgTransfer = format.getInteger(MediaFormat.KEY_COLOR_TRANSFER, 0);
+            ByteBuffer hdr = format.getByteBuffer(MediaFormat.KEY_HDR_STATIC_INFO, null);
+            mCfgHdr = hdr != null ? bufToBytes(hdr) : null;
+            mVidInfo = new int[9];
+            mVidHdr = null;
             ByteBuffer c0 = format.getByteBuffer("csd-0", null);
             mCsd0Vid = c0 != null ? bufToBytes(c0) : null;
             ByteBuffer c1 = format.getByteBuffer("csd-1", null);
@@ -690,6 +720,24 @@ public final class MediaCodec {
             mSurface = null;
             mHasSurface = false;
         }
+    }
+    // Android's marked Opus csd (its OpusHeader.cpp): "AOPUSHDR", "AOPUSDLY",
+    // "AOPUSPRL", each followed by an 8-byte little-endian length and its
+    // body. A csd-0 already in that form is kept as it is.
+    private static byte[] packOpusCsd(byte[] head, ByteBuffer csd1, ByteBuffer csd2) {
+        if (head == null || head.length < 8) return head;
+        if (new String(head, 0, 8, java.nio.charset.StandardCharsets.ISO_8859_1).equals("AOPUSHDR")) return head;
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        markOpus(out, "AOPUSHDR", head);
+        if (csd1 != null && csd1.remaining() == 8) markOpus(out, "AOPUSDLY", bufToBytes(csd1));
+        if (csd2 != null && csd2.remaining() == 8) markOpus(out, "AOPUSPRL", bufToBytes(csd2));
+        return out.toByteArray();
+    }
+    private static void markOpus(java.io.ByteArrayOutputStream out, String tag, byte[] body) {
+        out.write(tag.getBytes(java.nio.charset.StandardCharsets.ISO_8859_1), 0, 8);
+        long n = body.length;
+        for (int i = 0; i < 8; i++) out.write((int) (n >>> (8 * i)) & 0xff);
+        out.write(body, 0, body.length);
     }
     private static byte[] bufToBytes(ByteBuffer b) {
         byte[] out = new byte[b.remaining()];
@@ -909,6 +957,7 @@ public final class MediaCodec {
         synchronized (mAsyncLock) {
             mOutQ.clear();
             releasePendingVideoFrames();
+            if (mDec != 0) com.macapk.loader.NativeMedia.nativeDecFlush(mDec);
             if (mVidDec != 0) {
                 if (isVp8()) com.macapk.loader.NativeMedia.nativeVp8Flush(mVidDec);
                 else if (isVp9()) com.macapk.loader.NativeMedia.nativeVp9Flush(mVidDec);
@@ -1012,6 +1061,10 @@ public final class MediaCodec {
     private void releasePendingVideoFrames() {
         resetReorder();
         drainTimedFrames(false);
+        if (mPendingPolled != null) {
+            if (mPendingPolled[0] != 0) com.macapk.loader.NativeMedia.nativeVidReleaseFrame(mPendingPolled[0]);
+            mPendingPolled = null;
+        }
         if (mOutPixbuf == null) return;
         for (int i = 0; i < mOutPixbuf.length; i++) {
             if (mOutPixbuf[i] != 0) {
@@ -1139,135 +1192,126 @@ public final class MediaCodec {
     public ByteBuffer[] getInputBuffers()  { return mIn  != null ? mIn  : new ByteBuffer[0]; }
     public ByteBuffer[] getOutputBuffers() { return mOut != null ? mOut : new ByteBuffer[0]; }
     public ByteBuffer getInputBuffer(int index)  { return (mIn  != null && index >= 0 && index < mIn.length)  ? mIn[index]  : null; }
-    // AOSP: "the ByteBuffer... will be null if configured with an output
-    // surface". Even without a surface our video output is an opaque native
-    // pixel buffer with no meaningful ByteBuffer view -- use getOutputImage.
+    // AOSP: "the ByteBuffer ... will be null if configured with an output
+    // surface". Without one, a video decoder's output buffer holds the picture
+    // as Android's software decoders give it: 8-bit I420 (Y, then Cb, then
+    // Cr), or P010 when configure asked for COLOR_FormatYUVP010, its stride,
+    // slice height, crop and colour in getOutputFormat (host/video_decode.h's
+    // YuvLayout, through NativeMedia.nativeVidFrameYuv: a 10-bit picture is
+    // dithered down to I420, an 8-bit one widened to P010).
     public ByteBuffer getOutputBuffer(int index) {
-        if (mIsVideo) return null;
-        return (mOut != null && index >= 0 && index < mOut.length) ? mOut[index] : null;
+        if (!mIsVideo) return (mOut != null && index >= 0 && index < mOut.length) ? mOut[index] : null;
+        if (mHasSurface) return null;
+        synchronized (mAsyncLock) {
+            ByteBuffer b = videoOutputLocked(index);
+            return b == null ? null : b.duplicate().order(java.nio.ByteOrder.LITTLE_ENDIAN);
+        }
     }
     public Image getInputImage(int index) { return null; }
     public Image getOutputImage(int index) {
-        if (!mIsVideo || mOutPixbuf == null || index < 0 || index >= mOutPixbuf.length) return null;
-        long pb = mOutPixbuf[index];
-        if (pb == 0) return null;
-        long ptsUs = (mOutPts != null) ? mOutPts[index] : 0;
-        return new NativeVideoImage(pb, ptsUs, mVidWidth, mVidHeight);
+        if (!mIsVideo || mHasSurface) return null;
+        synchronized (mAsyncLock) {
+            ByteBuffer b = videoOutputLocked(index);
+            if (b == null) return null;
+            long ptsUs = (mOutPts != null) ? mOutPts[index] : 0;
+            return new NativeVideoImage(b, mVidInfo.clone(), ptsUs);
+        }
     }
 
-    // android.media.Image backed by a polled, not-yet-released decoded video
-    // frame: a real, spec-shaped YUV_420_888 image (3 planes, 4:2:0
-    // subsampling, real per-plane row/pixel strides, real per-frame geometry
-    // and crop, real timestamp), not a shape-only stand-in.
-    //
-    // WHERE THE BYTES COME FROM, AND WHY THIS CONVERTS RATHER THAN EXPOSING
-    // NATIVE PLANES DIRECTLY. Every VideoToolbox session -- Surface or not --
-    // is opened with a packed-BGRA destination pixel format
-    // (kCVPixelFormatType_32BGRA; see video_toolbox.mm's
-    // CreateSessionInternal), because the Surface-composite path
-    // (releaseOutputBuffer(index, true) -> nativeVidRender ->
-    // CocoaPresentVideoFrame) wants exactly that packed-RGB shape for Metal
-    // compositing. A BGRA CVPixelBuffer is genuinely non-planar
-    // (CVPixelBufferGetPlaneCount == 0): there is no Y/Cb/Cr plane to hand
-    // out directly, so producing YUV_420_888 here means converting.
-    //
-    // This class converts in Java, from the SAME raw BGRA bytes the Surface
-    // path already reads via NativeMedia.nativeVidFrameBgra (that native
-    // method itself is unchanged). The forward matrix is the standard
-    // ITU-R BT.601 full-range RGB->YCbCr transform -- the exact algebraic
-    // inverse of the BT.601 full-range YCbCr->RGB transform
-    // android.graphics.YuvImage already uses elsewhere in this codebase (see
-    // that file's yuvToArgb: r=y+1.402v, g=y-0.344136u-0.714136v,
-    // b=y+1.772u): Y=0.299R+0.587G+0.114B, Cb=-0.168736R-0.331264G+0.5B+128,
-    // Cr=0.5R-0.418688G-0.081312B+128 (see y601/cb601/cr601 below). Chroma is
-    // a genuine 2x2 box average of the source pixels, not a point-sampled
-    // skip: because the matrix is affine, averaging the four source R/G/B
-    // triples first and running the Cb/Cr formula once is exactly equal to
-    // averaging four independently-computed Cb/Cr pairs, so this loses
-    // nothing in exchange for 3 additions instead of 6.
-    //
-    // WHAT IS STILL APPROXIMATE, NAMED PLAINLY: the planes are DERIVED from
-    // VideoToolbox's own internal YUV->RGB conversion rather than being its
-    // native planar output, so there is a second 8-bit quantization step
-    // this class cannot avoid without changing video_toolbox.mm's
-    // destination pixel format -- which this session does not touch (a
-    // concurrently-active sibling lane owns that file this turn; see
-    // CLAUDE.md's per-turn file ownership). The exact, zero-extra-loss fix
-    // is a one-line change to CreateSessionInternal's destAttrs: request
-    // kCVPixelFormatType_420YpCbCr8BiPlanarFullRange (matching this class's
-    // full-range choice) instead of BGRA, then read
-    // CVPixelBufferGetBaseAddressOfPlane(0)/(1) +
-    // GetBytesPerRowOfPlane(0)/(1) directly for the two planes -- exactly
-    // the pattern camera_capture.mm already uses to feed ImageReader's own
-    // YUV_420_888 CameraImage (see that class's "PLANE LAYOUT" doc in
-    // ImageReader.java, verified by debug/yuv_map_test.sh). Once that lands,
-    // this class's conversion loop collapses to a straight copy of the real
-    // planes and the two accompanying attempt-then-retry buffer sizing and
-    // the colour-matrix math below can both go.
-    //
-    // ROW STRIDE. The SOURCE bgra[] is read using the REAL CoreVideo-reported
-    // stride (whs[2] from nativeVidFrameBgra == CVPixelBufferGetBytesPerRow)
-    // -- never assumed from width, since CoreVideo pads rows and an assumed
-    // stride silently shears the image. (The PRIOR version of this class had
-    // exactly that bug: it read nativeVidFrameBgra's real stride into whs[2]
-    // and then discarded it, reporting getRowStride()==mW*4 regardless.) The
-    // OUTPUT planes are freshly allocated, tightly packed buffers -- no
-    // padding exists to preserve, because nothing maps them onto native
-    // memory -- so their reported row strides are simply the true byte width
-    // of a packed row: truthful by construction, not a second guess.
-    //
-    // GEOMETRY / CROPPING. Width/height start as the configure()-time
-    // MediaFormat values (the only thing known before any frame has
-    // decoded) and are OVERWRITTEN, the first time getPlanes() actually
-    // reads a frame, with the real CVPixelBufferGetWidth/Height CoreVideo
-    // reports for that buffer. That is what makes getCropRect() (inherited
-    // from Image, defaults to the full width/height) reflect the real
-    // display size rather than a possibly-padded coded size.
-    //
-    // COLOUR RANGE. getOutputFormat() reports this class's choice (full
-    // range, BT.601) via KEY_COLOR_RANGE/KEY_COLOR_STANDARD/
-    // KEY_COLOR_TRANSFER for the no-Surface case only -- meaningless for the
-    // Surface path, which never runs this conversion.
-    //
-    // LIFETIME. Does NOT own the native pixel buffer -- releaseOutputBuffer
-    // (index, ...), not close(), is what frees IT (matching MediaCodec's
-    // real ownership model, where the index rather than the Image is the
-    // handle the codec tracks). close() only drops this instance's OWN
-    // derived buffer, so it is collectible right away instead of pinned for
-    // whatever remains of this MediaCodec's life, and makes further access
-    // throw like AOSP's own Image does post-close.
-    private final class NativeVideoImage extends Image {
-        private final long mPixbuf;
+    /** The slot's picture in its direct buffer, written once per frame (the
+     *  buffer is the slot's, reused while big enough). With mAsyncLock held. */
+    private ByteBuffer videoOutputLocked(int index) {
+        if (mOutPixbuf == null || index < 0 || index >= mOutPixbuf.length) return null;
+        long pb = mOutPixbuf[index];
+        if (pb == 0) return null;
+        if (mOutYuv == null || mOutYuv.length != mOutPixbuf.length) {
+            mOutYuv = new ByteBuffer[mOutPixbuf.length];
+            mOutYuvOf = new long[mOutPixbuf.length];
+        }
+        if (mOutYuvOf[index] == pb && mOutYuv[index] != null) return mOutYuv[index];
+        int fmt = mVidP010 ? 1 : 0;
+        int need = com.macapk.loader.NativeMedia.nativeVidFrameYuv(pb, null, fmt, mVidInfo);
+        if (need <= 0) return null;
+        ByteBuffer b = mOutYuv[index];
+        if (b == null || b.capacity() < need) b = ByteBuffer.allocateDirect(need);
+        b.clear();
+        if (com.macapk.loader.NativeMedia.nativeVidFrameYuv(pb, b, fmt, mVidInfo) != 0) return null;
+        b.limit(need);
+        mOutYuv[index] = b;
+        mOutYuvOf[index] = pb;
+        return b;
+    }
+
+    /** Whether a newly polled frame's size or colour differs from what the
+     *  output format said; it becomes what the output format says. */
+    private boolean videoFormatChanged(long pb) {
+        int[] info = new int[9];
+        if (com.macapk.loader.NativeMedia.nativeVidFrameYuv(pb, null, mVidP010 ? 1 : 0, info) < 0) return false;
+        boolean changed = info[0] != mVidWidth || info[1] != mVidHeight
+            || (info[5] != 0 && info[5] != mVidInfo[5]) || (info[6] != 0 && info[6] != mVidInfo[6])
+            || (info[7] != 0 && info[7] != mVidInfo[7]);
+        if (!changed && mVidInfo[2] != 0) return false;
+        mVidInfo = info;
+        mVidWidth = info[0];
+        mVidHeight = info[1];
+        mVidHdr = com.macapk.loader.NativeMedia.nativeVidFrameHdr(pb);
+        return changed;
+    }
+
+    // android.media.Image over a slot's output buffer (videoOutputLocked):
+    // YUV_420_888 for I420, three planes of pixel stride 1; YCBCR_P010 for
+    // P010, the luma plane of pixel stride 2 and the chroma ones two views of
+    // the interleaved CbCr rows, pixel stride 4, the Cr view 2 bytes on, as
+    // AOSP's MediaImage describes a P010 buffer. Valid until the buffer is
+    // released, as AOSP's; close() only drops this view.
+    private static final class NativeVideoImage extends Image {
+        private final ByteBuffer mData;
+        private final int[] mInfo;  // nativeVidFrameYuv's info
         private final long mTimestampUs;
-        private int mW, mH;        // corrected to the real decoded size once known
-        private Plane[] mPlanes;   // materialized lazily, once, on first getPlanes()
+        private Plane[] mPlanes;
         private boolean mClosed;
 
-        NativeVideoImage(long pixbuf, long timestampUs, int w, int h) {
-            mPixbuf = pixbuf;
+        NativeVideoImage(ByteBuffer data, int[] info, long timestampUs) {
+            mData = data;
+            mInfo = info;
             mTimestampUs = timestampUs;
-            mW = Math.max(1, w);
-            mH = Math.max(1, h);
         }
 
         private void checkOpen() {
-            // Mirrors ImageReader.CameraImage's own checkOpen() (this
-            // codebase's established convention for this exact message) and
-            // AOSP's Image.throwISEIfImageIsInvalid(): plane buffers point
-            // at memory whose lifetime is not this Image's own past close(),
-            // so a getter that kept answering after close() could hand the
-            // app a window onto freed or reused memory.
+            // AOSP's Image.throwISEIfImageIsInvalid: the planes' memory is not
+            // this Image's own once it is closed.
             if (mClosed) throw new IllegalStateException("Image is already closed");
         }
 
-        @Override public int getFormat() { checkOpen(); return android.graphics.ImageFormat.YUV_420_888; }
-        @Override public int getWidth()  { checkOpen(); return mW; }
-        @Override public int getHeight() { checkOpen(); return mH; }
-        @Override public long getTimestamp() { checkOpen(); return mTimestampUs; }
+        @Override public int getFormat() {
+            checkOpen();
+            return mInfo[4] == 1 ? IMAGE_FORMAT_P010 : android.graphics.ImageFormat.YUV_420_888;
+        }
+        @Override public int getWidth()  { checkOpen(); return mInfo[0]; }
+        @Override public int getHeight() { checkOpen(); return mInfo[1]; }
+        @Override public long getTimestamp() { checkOpen(); return mTimestampUs * 1000; }
 
         @Override public Plane[] getPlanes() {
             checkOpen();
-            if (mPlanes == null) materialize();
+            if (mPlanes == null) {
+                final int stride = mInfo[2], slice = mInfo[3];
+                final int luma = stride * slice;
+                if (mInfo[4] == 1) {
+                    final int chroma = stride * (slice / 2);
+                    mPlanes = new Plane[] {
+                        plane(sliceAt(0, luma), stride, 2),
+                        plane(sliceAt(luma, chroma), stride, 4),
+                        plane(sliceAt(luma + 2, chroma - 2), stride, 4),
+                    };
+                } else {
+                    final int cstride = stride / 2, chroma = cstride * (slice / 2);
+                    mPlanes = new Plane[] {
+                        plane(sliceAt(0, luma), stride, 1),
+                        plane(sliceAt(luma, chroma), cstride, 1),
+                        plane(sliceAt(luma + chroma, chroma), cstride, 1),
+                    };
+                }
+            }
             return mPlanes;
         }
 
@@ -1276,127 +1320,21 @@ public final class MediaCodec {
             mPlanes = null;
         }
 
-        // Reads the real decoded BGRA pixels (via the existing, unchanged
-        // NativeMedia.nativeVidFrameBgra), converts to planar YUV_420_888,
-        // and builds the 3 direct-ByteBuffer Plane views. Runs at most once
-        // per Image; a second call to getPlanes() is the normal AOSP
-        // "you may call this more than once" case and must not recompute.
-        private void materialize() {
-            byte[] bgra = null;
-            int[] whs = new int[3];
-            int rc = -1;
-            // CoreVideo/IOSurface may pad each row past width*4 bytes, and
-            // the native readout (macapk_vtb_frame_copy_bgra, see its own
-            // doc) reports failure with no size hint when the buffer is too
-            // small -- so this rounds generously up front (a page's worth of
-            // per-row headroom, negligible next to any real frame) and only
-            // falls back to a second, much larger attempt if even that was
-            // short. Belt and suspenders, not a guess dressed up as a fact:
-            // either attempt reads back the REAL stride in whs[2] on
-            // success, which is what every byte offset below actually uses.
-            for (int attempt = 0; attempt < 2 && rc != 0; attempt++) {
-                int stride = ((mW * 4) + 4095) & ~4095;
-                if (attempt == 1) stride *= 4;
-                byte[] tryBuf = new byte[stride * mH];
-                rc = com.macapk.loader.NativeMedia.nativeVidFrameBgra(mPixbuf, tryBuf, whs);
-                if (rc == 0) bgra = tryBuf;
-            }
-            if (rc != 0 || bgra == null || whs[0] <= 0 || whs[1] <= 0) {
-                mPlanes = new Plane[0];
-                return;
-            }
-            final int srcW = whs[0], srcH = whs[1], srcStride = whs[2];
-            mW = srcW;
-            mH = srcH;
-
-            final int chromaW = (srcW + 1) / 2;
-            final int chromaH = (srcH + 1) / 2;
-            final int ySize = srcW * srcH;
-            final int cSize = chromaW * chromaH * 2;
-            final byte[] yuv = new byte[ySize + cSize];
-
-            for (int by = 0; by < srcH; by += 2) {
-                final int bh = Math.min(2, srcH - by);
-                for (int bx = 0; bx < srcW; bx += 2) {
-                    final int bw = Math.min(2, srcW - bx);
-                    long sumR = 0, sumG = 0, sumB = 0;
-                    int cnt = 0;
-                    for (int dy = 0; dy < bh; dy++) {
-                        final int row = by + dy;
-                        final int rowOff = row * srcStride;
-                        for (int dx = 0; dx < bw; dx++) {
-                            final int col = bx + dx;
-                            final int off = rowOff + col * 4;
-                            final int b = bgra[off]     & 0xff;
-                            final int g = bgra[off + 1] & 0xff;
-                            final int r = bgra[off + 2] & 0xff;
-                            yuv[row * srcW + col] = (byte) y601(r, g, b);
-                            sumR += r; sumG += g; sumB += b; cnt++;
-                        }
-                    }
-                    final double ar = sumR / (double) cnt, ag = sumG / (double) cnt, ab = sumB / (double) cnt;
-                    final int cIdx = ySize + ((by / 2) * chromaW + (bx / 2)) * 2;
-                    yuv[cIdx]     = (byte) cb601(ar, ag, ab);
-                    yuv[cIdx + 1] = (byte) cr601(ar, ag, ab);
-                }
-            }
-
-            final ByteBuffer direct = ByteBuffer.allocateDirect(yuv.length);
-            direct.put(yuv);
-            direct.rewind();
-
-            // Three planes over one shared allocation: the same
-            // position/limit/slice technique AOSP's own internal MediaImage
-            // uses over one native buffer, and the same semiplanar
-            // convention this codebase's ImageReader.CameraImage already
-            // documents for camera frames -- plane 0 is Y; planes 1 and 2
-            // are two interleaved views of the SAME chroma region, one byte
-            // apart, each with pixelStride 2. Cr's slice is one byte shorter
-            // than Cb's so its view (which starts one byte later) never
-            // reads past the allocation's true end.
-            final ByteBuffer yView  = sliceAt(direct, 0, ySize);
-            final ByteBuffer cbView = sliceAt(direct, ySize, cSize);
-            final ByteBuffer crView = sliceAt(direct, ySize + 1, cSize - 1);
-            final int cRowStride = chromaW * 2;
-
-            mPlanes = new Plane[] {
-                plane(yView, srcW, 1),
-                plane(cbView, cRowStride, 2),
-                plane(crView, cRowStride, 2),
-            };
-        }
-
-        private ByteBuffer sliceAt(ByteBuffer base, int offset, int length) {
-            ByteBuffer d = base.duplicate();
+        private ByteBuffer sliceAt(int offset, int length) {
+            ByteBuffer d = mData.duplicate();
             d.clear();
             d.position(offset);
             d.limit(offset + length);
-            return d.slice();
+            return d.slice().order(java.nio.ByteOrder.LITTLE_ENDIAN);
         }
 
-        private Plane plane(final ByteBuffer buf, final int rowStride, final int pixelStride) {
+        private static Plane plane(final ByteBuffer buf, final int rowStride, final int pixelStride) {
             return new Plane() {
-                @Override public ByteBuffer getBuffer() { return buf.duplicate(); }
+                @Override public ByteBuffer getBuffer() { return buf.duplicate().order(java.nio.ByteOrder.LITTLE_ENDIAN); }
                 @Override public int getPixelStride() { return pixelStride; }
                 @Override public int getRowStride() { return rowStride; }
             };
         }
-
-        // Standard ITU-R BT.601 full-range RGB -> YCbCr. KR=0.299, KB=0.114
-        // (identical for the COLOR_STANDARD_BT601_PAL and _NTSC MediaFormat
-        // constants -- they differ only in line count, 625 vs 525, not
-        // colourimetry, per AOSP MediaFormat.java's own javadoc on those two
-        // fields, both "KR = 0.299, KB = 0.114").
-        private int y601(int r, int g, int b) {
-            return clamp255((int) Math.round(0.299 * r + 0.587 * g + 0.114 * b));
-        }
-        private int cb601(double r, double g, double b) {
-            return clamp255((int) Math.round(-0.168736 * r - 0.331264 * g + 0.5 * b + 128));
-        }
-        private int cr601(double r, double g, double b) {
-            return clamp255((int) Math.round(0.5 * r - 0.418688 * g - 0.081312 * b + 128));
-        }
-        private int clamp255(int v) { return v < 0 ? 0 : (v > 255 ? 255 : v); }
     }
 
     public int dequeueInputBuffer(long timeoutUs) {
@@ -1491,13 +1429,23 @@ public final class MediaCodec {
         if (!mFormatReported) { mFormatReported = true; return INFO_OUTPUT_FORMAT_CHANGED; }
         if (mVidDec != 0) {
             if (mOutFree.isEmpty()) return INFO_TRY_AGAIN_LATER;
-            long[] polled = isVp8()
-                ? com.macapk.loader.NativeMedia.nativeVp8Poll(mVidDec)
-                : isVp9()
-                ? com.macapk.loader.NativeMedia.nativeVp9Poll(mVidDec)
-                : VIDEO_REORDER ? reorderPoll()
-                : com.macapk.loader.NativeMedia.nativeVidPoll(mVidDec);
-            if (polled == null) return INFO_TRY_AGAIN_LATER;
+            long[] polled = mPendingPolled;
+            mPendingPolled = null;
+            if (polled == null) {
+                polled = isVp8()
+                    ? com.macapk.loader.NativeMedia.nativeVp8Poll(mVidDec)
+                    : isVp9()
+                    ? com.macapk.loader.NativeMedia.nativeVp9Poll(mVidDec)
+                    : VIDEO_REORDER ? reorderPoll()
+                    : com.macapk.loader.NativeMedia.nativeVidPoll(mVidDec);
+                if (polled == null) return INFO_TRY_AGAIN_LATER;
+                // AOSP reports a new output format ahead of the first buffer
+                // whose size or colour differs from what it reported.
+                if (polled[0] != 0 && videoFormatChanged(polled[0])) {
+                    mPendingPolled = polled;
+                    return INFO_OUTPUT_FORMAT_CHANGED;
+                }
+            }
             int oi = mOutFree.poll();
             if (PRESENT_TRACE) traceOut();
             mOutPixbuf[oi] = polled[0];
@@ -1507,7 +1455,9 @@ public final class MediaCodec {
             // consumers treat size==0 as "nothing to render" regardless of
             // flags) and 0 for the synthetic end-of-stream-only marker
             // (polled[0]==0, see video_toolbox.mm's eos handling).
-            int sz = polled[0] != 0 ? Math.max(1, mVidWidth * mVidHeight * 4) : 0;
+            int sz = polled[0] == 0 ? 0
+                : mHasSurface ? Math.max(1, mVidWidth * mVidHeight * 4)
+                : Math.max(1, com.macapk.loader.NativeMedia.nativeVidFrameYuv(polled[0], null, mVidP010 ? 1 : 0, null));
             info.set(0, sz, polled[1], (int) polled[2]);
             return oi;
         }
@@ -1734,18 +1684,29 @@ public final class MediaCodec {
         }
         if (mIsVideo) {
             MediaFormat f = MediaFormat.createVideoFormat(mVidMime, mVidWidth, mVidHeight);
-            f.setInteger(MediaFormat.KEY_COLOR_FORMAT,
-                mHasSurface ? MediaFormat.COLOR_FormatSurface : MediaFormat.COLOR_FormatYUV420Flexible);
-            if (!mHasSurface) {
-                // Describes NativeVideoImage's OWN derived conversion, not
-                // VideoToolbox's internal decode colourimetry -- meaningless
-                // for the Surface path, which composites VideoToolbox's raw
-                // BGRA directly and never runs that conversion. See that
-                // class's doc for the exact matrix these three keys name.
-                f.setInteger(MediaFormat.KEY_COLOR_RANGE, MediaFormat.COLOR_RANGE_FULL);
-                f.setInteger(MediaFormat.KEY_COLOR_STANDARD, MediaFormat.COLOR_STANDARD_BT601_NTSC);
-                f.setInteger(MediaFormat.KEY_COLOR_TRANSFER, MediaFormat.COLOR_TRANSFER_SDR_VIDEO);
+            f.setInteger(MediaFormat.KEY_COLOR_FORMAT, mHasSurface ? MediaFormat.COLOR_FormatSurface
+                : mVidP010 ? COLOR_FORMAT_P010 : MediaFormat.COLOR_FormatYUV420Flexible);
+            if (!mHasSurface && mVidInfo[2] > 0) {
+                // The output buffer's layout (videoOutputLocked), and the
+                // visible picture inside it, as AOSP's codecs report theirs.
+                f.setInteger("stride", mVidInfo[2]);
+                f.setInteger("slice-height", mVidInfo[3]);
+                f.setInteger("crop-left", 0);
+                f.setInteger("crop-top", 0);
+                f.setInteger("crop-right", mVidInfo[0] - 1);
+                f.setInteger("crop-bottom", mVidInfo[1] - 1);
             }
+            // The colour: what the stream says (its own bitstream; for a
+            // Media Foundation picture converted to I420, BT.601 limited),
+            // else what configure's format said.
+            int standard = mVidInfo[5] != 0 ? mVidInfo[5] : mCfgStandard;
+            int range = mVidInfo[6] != 0 ? mVidInfo[6] : mCfgRange;
+            int transfer = mVidInfo[7] != 0 ? mVidInfo[7] : mCfgTransfer;
+            if (standard != 0) f.setInteger(MediaFormat.KEY_COLOR_STANDARD, standard);
+            if (range != 0) f.setInteger(MediaFormat.KEY_COLOR_RANGE, range);
+            if (transfer != 0) f.setInteger(MediaFormat.KEY_COLOR_TRANSFER, transfer);
+            byte[] hdr = mVidHdr != null ? mVidHdr : mCfgHdr;
+            if (hdr != null) f.setByteBuffer(MediaFormat.KEY_HDR_STATIC_INFO, ByteBuffer.wrap(hdr.clone()));
             return f;
         }
         int sr = mDec != 0 ? com.macapk.loader.NativeMedia.nativeDecOutSampleRate(mDec) : mSampleRate;
