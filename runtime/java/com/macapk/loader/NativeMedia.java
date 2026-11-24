@@ -40,6 +40,9 @@ public final class NativeMedia {
     public static native int  nativeDecOutSampleRate(long h);
     public static native int  nativeDecOutChannels(long h);
     public static native void nativeDecClose(long h);
+    /** Win.apk: MediaCodec.flush() of an audio decoder: drops what is in
+     *  flight (Opus then drops its seek pre-roll, as Android's does). */
+    public static native void nativeDecFlush(long h);
 
     // ---- Video decoder (backs MediaCodec video mimes): VideoToolbox ----
     //
@@ -107,6 +110,19 @@ public final class NativeMedia {
      *  `outWidthHeightStride` is a caller-allocated int[3], filled with
      *  {width, height, rowStrideBytes} on success. Returns 0 on success. */
     public static native int nativeVidFrameBgra(long pixbufHandle, byte[] out, int[] outWidthHeightStride);
+    /** Win.apk: a polled frame as MediaCodec's ByteBuffer and Image output
+     *  (host/video_decode.h's YuvLayout): format 0 = 8-bit I420 (Y, then Cb,
+     *  then Cr), 1 = P010 (Y, then interleaved CbCr, 16-bit samples with the
+     *  value in the top 10 bits). Fills info (9 ints): width, height, stride
+     *  (bytes, luma), slice height (luma rows), format, then the colour as
+     *  MediaFormat's KEY_COLOR_STANDARD, _RANGE, _TRANSFER (0 = unsaid), then
+     *  the stream's bit depth. With `out` null or smaller than the picture,
+     *  returns the bytes it needs; 0 when written into `out` (a direct
+     *  buffer, from its position 0); -1 for no such frame. */
+    public static native int nativeVidFrameYuv(long pixbufHandle, java.nio.ByteBuffer out, int format, int[] info);
+    /** Win.apk: the frame's HDR static metadata (MediaFormat's
+     *  KEY_HDR_STATIC_INFO, 25 bytes), or null when the stream has none. */
+    public static native byte[] nativeVidFrameHdr(long pixbufHandle);
     /** MediaCodec.flush(): drops every queued-but-undelivered output frame
      *  (freeing their native memory) and anything still in flight inside
      *  VideoToolbox, matching AOSP's "all output buffers are immediately
