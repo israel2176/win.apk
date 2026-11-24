@@ -1,502 +1,631 @@
-// Adapted from the other runtime (https://example.invalid/other-runtime), probes/windows4/text_store_probe.cc,
-// Copyright (C) 2026 its authors, SPDX-License-Identifier: Apache-2.0. Modified for Win.apk.
+// tsf_test.cpp -- the focused editor as a TSF text store (host/tsf_store.h), driven as TSF's
+// manager drives one: a stand-in ITextStoreACPSink takes the locks and makes the calls a text
+// service's edit session makes, and a stand-in composition view stands for TSF's ranges. Checks
+// the lock rules (one lock at a time, TS_E_SYNCHRONOUS, the asynchronous queue and a read
+// lock's way to write, TS_E_NOLOCK), one edit per write lock for the editor, compositions,
+// reconversion, a reversed selection, the editor's own changes as notifications outside locks
+// and never for the text services' own edits, a stale copy dropped, GetTextExt and
+// GetACPFromPoint from the editor's character boxes (TS_E_NOLAYOUT while the edit is on its
+// way), a password's read-only empty document, the input scope attribute and GetFormattedText.
+// Then the session on the system's TSF, where there is one (Windows; Wine 9's is partial).
 //
-// tsf_test.cpp -- the TSF document over the focused editor (host/tsf_text_store.h) against
-// ITextStoreACP's contract, with a sink standing in for TSF's manager: locks, reads and writes,
-// the edits it hands the editor (epochs, revisions, composition, UTF-16 positions, Hebrew), the
-// copies an editor sends after them, layout, and, at the end, the window-owned text service
-// attached to a real TSF thread manager when the system has one (Windows; Wine's is partial:
-// a failure to attach is reported, not failed, as the runtime then falls back to IMM32).
-// Win.apk's changes: the namespace, the other runtime's test-service DLL left out, the caret fallback of
-// GetTextExt, and the Hebrew and right-to-left checks.
+// Exits 0 when every check passes.
 
+#include "tsf_session.h"
+#include "tsf_store.h"
+
+#include <inputscope.h>
+#include <olectl.h>
 #include <windows.h>
+
 #include <cstdio>
-#include <climits>
 #include <cstring>
 #include <functional>
 #include <string>
 #include <vector>
-#include "tsf_text_service.h"
-#include "tsf_text_store.h"
+
+using namespace winapk::host;
+using textinput::Box;
 
 namespace {
-using winapk::host::tsf::DocumentEdit;
-using winapk::host::tsf::TextDocument;
-using winapk::host::tsf::TextStore;
+
 int failures = 0;
-void Check(bool okay, const char* label) {
-  std::printf("%s  tsf: %s\n", okay ? "PASS" : "FAIL", label);
-  std::fflush(stdout);
-  if (!okay) ++failures;
-}
-class Sink final : public ITextStoreACPSink {
- public:
-  HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void** out) override {
-    if (!out) return E_POINTER;
-    *out = nullptr;
-    if (IsEqualIID(iid, IID_IUnknown) || IsEqualIID(iid, IID_ITextStoreACPSink)) {
-      *out = static_cast<ITextStoreACPSink*>(this); AddRef(); return S_OK;
-    }
-    return E_NOINTERFACE;
-  }
-  ULONG STDMETHODCALLTYPE AddRef() override { return InterlockedIncrement(&references_); }
-  ULONG STDMETHODCALLTYPE Release() override {
-    LONG count = InterlockedDecrement(&references_);
-    if (count == 0) delete this;
-    return static_cast<ULONG>(count);
-  }
-  HRESULT STDMETHODCALLTYPE OnTextChange(DWORD, const TS_TEXTCHANGE*) override { ++text; if (requesting) ++nested_notifications; return S_OK; }
-  HRESULT STDMETHODCALLTYPE OnSelectionChange() override { ++selection; if (requesting) ++nested_notifications; return S_OK; }
-  HRESULT STDMETHODCALLTYPE OnLayoutChange(TsLayoutCode, TsViewCookie) override { ++layout; if (requesting) ++nested_notifications; if (layout_action) layout_action(); return S_OK; }
-  HRESULT STDMETHODCALLTYPE OnStatusChange(DWORD) override { ++status; if (requesting) ++nested_notifications; return S_OK; }
-  HRESULT STDMETHODCALLTYPE OnAttrsChange(LONG, LONG, ULONG, const TS_ATTRID*) override { return S_OK; }
-  HRESULT STDMETHODCALLTYPE OnLockGranted(DWORD flags) override { ++locks; return action ? action(flags) : S_OK; }
-  HRESULT STDMETHODCALLTYPE OnStartEditTransaction() override { return S_OK; }
-  HRESULT STDMETHODCALLTYPE OnEndEditTransaction() override { return S_OK; }
-  HRESULT Lock(TextStore* store, DWORD flags = TS_LF_SYNC | TS_LF_READWRITE) {
-    HRESULT session = E_FAIL;
-    requesting = true;
-    HRESULT result = store->RequestLock(flags, &session);
-    requesting = false;
-    return FAILED(result) ? result : session;
-  }
-  void Clear() { text = selection = layout = status = nested_notifications = 0; }
-  std::function<HRESULT(DWORD)> action;
-  std::function<void()> layout_action;
-  int text = 0, selection = 0, layout = 0, status = 0, locks = 0, nested_notifications = 0;
-  bool requesting = false;
- private:
-  LONG references_ = 1;
-};
-std::u16string Text(TextStore* store, Sink* sink) {
-  std::u16string result;
-  sink->action = [&](DWORD) -> HRESULT {
-    WCHAR buffer[256]; ULONG count = 0, runs = 0; LONG next = 0; TS_RUNINFO run;
-    HRESULT status = store->GetText(0, -1, buffer, 256, &count, &run, 1, &runs, &next);
-    if (SUCCEEDED(status)) result.assign(buffer, buffer + count);
-    return status;
-  };
-  if (FAILED(sink->Lock(store, TS_LF_SYNC | TS_LF_READ))) ++failures;
-  sink->action = nullptr;
-  return result;
-}
+
+void check(bool ok, const char* what) {
+    std::printf("%s  %s\n", ok ? "PASS" : "FAIL", what);
+    if (!ok) failures++;
 }
 
+// ---- stand-ins --------------------------------------------------------------------------------
+
+class Sink final : public ITextStoreACPSink {
+public:
+    std::function<void(DWORD)> on_lock;
+    std::vector<TS_TEXTCHANGE> text_changes;
+    int selection_changes = 0, layout_changes = 0;
+    ITextStoreACP* store = nullptr;
+    bool saw_lock_in_notification = false;
+
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** out) override {
+        if (riid == IID_IUnknown || riid == IID_ITextStoreACPSink) {
+            *out = static_cast<ITextStoreACPSink*>(this);
+            AddRef();
+            return S_OK;
+        }
+        *out = nullptr;
+        return E_NOINTERFACE;
+    }
+    ULONG STDMETHODCALLTYPE AddRef() override { return ++refs; }
+    ULONG STDMETHODCALLTYPE Release() override { return --refs; }
+    HRESULT STDMETHODCALLTYPE OnTextChange(DWORD, const TS_TEXTCHANGE* c) override {
+        text_changes.push_back(*c);
+        probe_lock();
+        return S_OK;
+    }
+    HRESULT STDMETHODCALLTYPE OnSelectionChange() override {
+        selection_changes++;
+        probe_lock();
+        return S_OK;
+    }
+    HRESULT STDMETHODCALLTYPE OnLayoutChange(TsLayoutCode, TsViewCookie) override {
+        layout_changes++;
+        return S_OK;
+    }
+    HRESULT STDMETHODCALLTYPE OnStatusChange(DWORD) override { return S_OK; }
+    HRESULT STDMETHODCALLTYPE OnAttrsChange(LONG, LONG, ULONG, const TS_ATTRID*) override { return S_OK; }
+    HRESULT STDMETHODCALLTYPE OnLockGranted(DWORD flags) override {
+        // A copy: the lock's body may set the next lock's (a queued request).
+        const std::function<void(DWORD)> body = on_lock;
+        if (body) body(flags);
+        return S_OK;
+    }
+    HRESULT STDMETHODCALLTYPE OnStartEditTransaction() override { return S_OK; }
+    HRESULT STDMETHODCALLTYPE OnEndEditTransaction() override { return S_OK; }
+    void clear() {
+        text_changes.clear();
+        selection_changes = layout_changes = 0;
+    }
+    LONG refs = 1;
+
+private:
+    // A notification never comes inside a lock: the store's methods refuse without one.
+    void probe_lock() {
+        LONG end = 0;
+        if (store && store->GetEndACP(&end) != TS_E_NOLOCK) saw_lock_in_notification = true;
+    }
+};
+
+// A composition's range as TSF's, standing for ITfRangeACP: only its extent is asked.
+class Range final : public ITfRangeACP {
+public:
+    LONG start = 0, end = 0;
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** out) override {
+        if (riid == IID_IUnknown || riid == IID_ITfRange || riid == IID_ITfRangeACP) {
+            *out = static_cast<ITfRangeACP*>(this);
+            AddRef();
+            return S_OK;
+        }
+        *out = nullptr;
+        return E_NOINTERFACE;
+    }
+    ULONG STDMETHODCALLTYPE AddRef() override { return 2; }
+    ULONG STDMETHODCALLTYPE Release() override { return 1; }
+    HRESULT STDMETHODCALLTYPE GetExtent(LONG* a, LONG* n) override {
+        *a = start;
+        *n = end - start;
+        return S_OK;
+    }
+    HRESULT STDMETHODCALLTYPE SetExtent(LONG, LONG) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE GetText(TfEditCookie, DWORD, WCHAR*, ULONG, ULONG*) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE SetText(TfEditCookie, DWORD, const WCHAR*, LONG) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE GetFormattedText(TfEditCookie, IDataObject**) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE GetEmbedded(TfEditCookie, REFGUID, REFIID, IUnknown**) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE InsertEmbedded(TfEditCookie, DWORD, IDataObject*) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE ShiftStart(TfEditCookie, LONG, LONG*, const TF_HALTCOND*) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE ShiftEnd(TfEditCookie, LONG, LONG*, const TF_HALTCOND*) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE ShiftStartToRange(TfEditCookie, ITfRange*, TfAnchor) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE ShiftEndToRange(TfEditCookie, ITfRange*, TfAnchor) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE ShiftStartRegion(TfEditCookie, TfShiftDir, WINBOOL*) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE ShiftEndRegion(TfEditCookie, TfShiftDir, WINBOOL*) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE IsEmpty(TfEditCookie, WINBOOL*) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE Collapse(TfEditCookie, TfAnchor) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE IsEqualStart(TfEditCookie, ITfRange*, TfAnchor, WINBOOL*) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE IsEqualEnd(TfEditCookie, ITfRange*, TfAnchor, WINBOOL*) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE CompareStart(TfEditCookie, ITfRange*, TfAnchor, LONG*) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE CompareEnd(TfEditCookie, ITfRange*, TfAnchor, LONG*) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE AdjustForInsert(TfEditCookie, ULONG, WINBOOL*) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE GetGravity(TfGravity*, TfGravity*) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE SetGravity(TfEditCookie, TfGravity, TfGravity) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE Clone(ITfRange**) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE GetContext(ITfContext**) override { return E_NOTIMPL; }
+};
+
+class View final : public ITfCompositionView {
+public:
+    Range range;
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** out) override {
+        if (riid == IID_IUnknown || riid == IID_ITfCompositionView) {
+            *out = static_cast<ITfCompositionView*>(this);
+            AddRef();
+            return S_OK;
+        }
+        *out = nullptr;
+        return E_NOINTERFACE;
+    }
+    ULONG STDMETHODCALLTYPE AddRef() override { return 2; }
+    ULONG STDMETHODCALLTYPE Release() override { return 1; }
+    HRESULT STDMETHODCALLTYPE GetOwnerClsid(CLSID* c) override {
+        *c = CLSID_NULL;
+        return S_OK;
+    }
+    HRESULT STDMETHODCALLTYPE GetRange(ITfRange** r) override {
+        *r = &range;
+        return S_OK;
+    }
+};
+
+// The window: frame pixels are screen pixels moved by (1000, 500).
+class Owner final : public tsf::StoreOwner {
+public:
+    std::vector<textinput::Edit> edits;
+    HWND window() override { return nullptr; }
+    void edit(const textinput::Edit& e) override { edits.push_back(e); }
+    bool to_screen(const Box& f, RECT* s) override {
+        *s = RECT{static_cast<LONG>(f.left) + 1000, static_cast<LONG>(f.top) + 500, static_cast<LONG>(f.right) + 1000,
+                  static_cast<LONG>(f.bottom) + 500};
+        return true;
+    }
+    bool from_screen(POINT p, float* x, float* y) override {
+        *x = static_cast<float>(p.x - 1000);
+        *y = static_cast<float>(p.y - 500);
+        return true;
+    }
+    uint32_t sys_color(int) override { return 0xff336699u; }
+};
+
+textinput::Snapshot snap(int epoch, int acked, const std::u16string& text, int anchor, int caret) {
+    textinput::Snapshot s;
+    s.epoch = epoch;
+    s.acked = acked;
+    s.text = text;
+    s.anchor = anchor;
+    s.caret = caret;
+    return s;
+}
+
+std::u16string text_of(ITextStoreACP* store) {
+    WCHAR buf[256] = {};
+    ULONG got = 0, runs = 0;
+    LONG next = 0;
+    TS_RUNINFO run{};
+    if (FAILED(store->GetText(0, -1, buf, 256, &got, &run, 1, &runs, &next))) return u"<error>";
+    return std::u16string(reinterpret_cast<const char16_t*>(buf), got);
+}
+
+// Takes a lock of `flags` and runs `body` in it.
+HRESULT lock(tsf::Store* store, Sink& sink, DWORD flags, const std::function<void(DWORD)>& body) {
+    sink.on_lock = body;
+    HRESULT session = E_FAIL;
+    const HRESULT hr = store->RequestLock(flags, &session);
+    sink.on_lock = nullptr;
+    return FAILED(hr) ? hr : session;
+}
+
+tsf::Store* make(Owner& owner, Sink& sink, const textinput::FieldPolicy& policy, const textinput::Snapshot& s) {
+    auto* store = new tsf::Store(&owner, policy, s);
+    ITextStoreACP* acp = store;
+    acp->AdviseSink(IID_ITextStoreACPSink, &sink, TS_AS_ALL_SINKS);
+    sink.store = acp;
+    return store;
+}
+
+// ---- the checks -------------------------------------------------------------------------------
+
+void interfaces() {
+    Owner owner;
+    Sink sink;
+    tsf::Store* store = make(owner, sink, textinput::field_policy(1, 0), snap(1, 0, u"abc", 3, 3));
+    ITextStoreACP* acp = store;
+    void* p = nullptr;
+    check(SUCCEEDED(acp->QueryInterface(tsf::kIID_ITextStoreACP2, &p)) && p, "ITextStoreACP2 is there");
+    if (p) static_cast<IUnknown*>(p)->Release();
+    p = nullptr;
+    check(SUCCEEDED(acp->QueryInterface(IID_ITfContextOwnerCompositionSink, &p)) && p,
+          "the composition sink is there");
+    if (p) static_cast<IUnknown*>(p)->Release();
+    p = nullptr;
+    check(SUCCEEDED(acp->QueryInterface(IID_ITfTextEditSink, &p)) && p, "the text edit sink is there");
+    if (p) static_cast<IUnknown*>(p)->Release();
+    Sink other;
+    check(acp->AdviseSink(IID_ITextStoreACPSink, &other, TS_AS_ALL_SINKS) == CONNECT_E_ADVISELIMIT,
+          "a second sink is refused");
+    TS_STATUS status{};
+    acp->GetStatus(&status);
+    check((status.dwDynamicFlags & TS_SD_INPUTPANEMANUALDISPLAYENABLE) && !(status.dwDynamicFlags & TS_SD_READONLY) &&
+              (status.dwStaticFlags & TS_SS_TKBPREDICTIONENABLE) && !(status.dwStaticFlags & TS_SS_TKBAUTOCORRECTENABLE),
+          "a text field: writable, the app shows the touch keyboard, suggestions on");
+    check(acp->UnadviseSink(&sink) == S_OK, "the sink goes");
+    acp->Release();
+}
+
+void locks() {
+    Owner owner;
+    Sink sink;
+    tsf::Store* store = make(owner, sink, textinput::field_policy(1, 0), snap(1, 0, u"hello", 5, 5));
+    ITextStoreACP* acp = store;
+    LONG end = 0;
+    check(acp->GetEndACP(&end) == TS_E_NOLOCK, "no lock, no reading");
+    HRESULT inner = S_OK, write_in_read = S_OK, granted_order = S_OK;
+    std::vector<DWORD> grants;
+    const HRESULT hr = lock(store, sink, TS_LF_READ | TS_LF_SYNC, [&](DWORD flags) {
+        grants.push_back(flags);
+        check(acp->GetEndACP(&end) == S_OK && end == 5, "a read lock reads");
+        write_in_read = acp->SetText(0, 0, 0, L"x", 1, nullptr);
+        HRESULT s = S_OK;
+        acp->RequestLock(TS_LF_READWRITE | TS_LF_SYNC, &s);
+        inner = s;
+        // The read lock's holder asks to write, later: queued, granted when this lock ends.
+        sink.on_lock = [&](DWORD f) {
+            grants.push_back(f);
+            granted_order = acp->SetText(0, 5, 5, L"!", 1, nullptr);
+        };
+        acp->RequestLock(TS_LF_READWRITE, &s);
+        check(s == TS_S_ASYNC, "an asynchronous request inside a lock is queued (TS_S_ASYNC)");
+    });
+    check(hr == S_OK, "a synchronous read lock is granted at once");
+    check(write_in_read == TS_E_NOLOCK, "a read lock does not write");
+    check(inner == TS_E_SYNCHRONOUS, "a synchronous request inside a lock fails (TS_E_SYNCHRONOUS)");
+    check(grants.size() == 2 && grants[0] == TS_LF_READ && grants[1] == TS_LF_READWRITE && granted_order == S_OK,
+          "the queued write lock is granted after the read lock ends, and writes");
+    check(text_of(acp) == u"<error>", "the lock is gone after it was granted");
+    check(owner.edits.size() == 1 && owner.edits[0].text == u"!" && owner.edits[0].start == 5,
+          "the write lock's change is one edit for the editor");
+    check(sink.text_changes.empty(), "no notification of the text services' own change");
+    acp->Release();
+}
+
+void edits() {
+    Owner owner;
+    Sink sink;
+    tsf::Store* store = make(owner, sink, textinput::field_policy(1, 0), snap(1, 0, u"ab", 2, 2));
+    ITextStoreACP* acp = store;
+    // Two writes in one lock: one edit.
+    lock(store, sink, TS_LF_READWRITE | TS_LF_SYNC, [&](DWORD) {
+        TS_TEXTCHANGE c{};
+        acp->SetText(0, 0, 1, L"A", 1, &c);
+        check(c.acpStart == 0 && c.acpOldEnd == 1 && c.acpNewEnd == 1, "SetText reports its change");
+        LONG s = 0, e = 0;
+        acp->InsertTextAtSelection(TS_IAS_QUERYONLY, L"cd", 2, &s, &e, nullptr);
+        check(s == 2 && e == 4 && text_of(acp) == u"Ab", "a query inserts nothing");
+        acp->InsertTextAtSelection(0, L"cd", 2, &s, &e, &c);
+        check(s == 2 && e == 4 && text_of(acp) == u"Abcd", "InsertTextAtSelection inserts at the selection");
+        TS_SELECTION_ACP sel{};
+        ULONG got = 0;
+        acp->GetSelection(TS_DEFAULT_SELECTION, 1, &sel, &got);
+        check(got == 1 && sel.acpStart == 4 && sel.acpEnd == 4, "and leaves the caret after it");
+        check(acp->SetText(0, 3, 9, L"x", 1, nullptr) == TS_E_INVALIDPOS, "a range past the end is refused");
+    });
+    check(owner.edits.size() == 1 && owner.edits[0].start == 0 && owner.edits[0].end == 2 &&
+              owner.edits[0].text == u"Abcd" && owner.edits[0].caret == 4 && owner.edits[0].seq == 1,
+          "two writes in a lock are one edit");
+    // A reversed selection: the caret at its start, as Android's selection end.
+    lock(store, sink, TS_LF_READWRITE | TS_LF_SYNC, [&](DWORD) {
+        TS_SELECTION_ACP sel{};
+        sel.acpStart = 1;
+        sel.acpEnd = 3;
+        sel.style.ase = TS_AE_START;
+        acp->SetSelection(1, &sel);
+    });
+    check(owner.edits.size() == 2 && owner.edits[1].anchor == 3 && owner.edits[1].caret == 1 &&
+              owner.edits[1].text.empty(),
+          "a selection made backwards reaches the editor backwards, nothing replaced");
+    lock(store, sink, TS_LF_READ | TS_LF_SYNC, [&](DWORD) {
+        TS_SELECTION_ACP sel{};
+        ULONG got = 0;
+        acp->GetSelection(0, 1, &sel, &got);
+        check(sel.style.ase == TS_AE_START, "and reads back so");
+        // GetText's limits: part of the text, the run info, the next position.
+        WCHAR buf[2] = {};
+        ULONG n = 0, runs = 0;
+        LONG next = 0;
+        TS_RUNINFO run{};
+        acp->GetText(1, -1, buf, 2, &n, &run, 1, &runs, &next);
+        check(n == 2 && buf[0] == L'b' && runs == 1 && run.uCount == 2 && run.type == TS_RT_PLAIN && next == 3,
+              "GetText stops at the buffer's size");
+        check(acp->GetText(5, 9, buf, 2, &n, &run, 1, &runs, &next) == TS_E_INVALIDPOS, "and past the end fails");
+    });
+    acp->Release();
+}
+
+void compositions() {
+    Owner owner;
+    Sink sink;
+    tsf::Store* store = make(owner, sink, textinput::field_policy(1, 0), snap(4, 0, u"ab", 2, 2));
+    ITextStoreACP* acp = store;
+    ITfContextOwnerCompositionSink* comp = store;
+    View view;
+    // A Japanese composition: started, written, grown, converted, committed.
+    lock(store, sink, TS_LF_READWRITE | TS_LF_SYNC, [&](DWORD) {
+        BOOL ok = FALSE;
+        view.range.start = view.range.end = 2;
+        comp->OnStartComposition(&view, &ok);
+        check(ok == TRUE, "a text field takes a composition");
+        acp->SetText(0, 2, 2, L"に", 1, nullptr);  // に
+        view.range.end = 3;
+        comp->OnUpdateComposition(&view, &view.range);
+        TS_SELECTION_ACP sel{3, 3, {TS_AE_NONE, FALSE}};
+        acp->SetSelection(1, &sel);
+    });
+    check(owner.edits.size() == 1 && owner.edits[0].comp_start == 2 && owner.edits[0].comp_end == 3 &&
+              owner.edits[0].text == u"に",
+          "a composition's first lock: its text, composing");
+    lock(store, sink, TS_LF_READWRITE | TS_LF_SYNC, [&](DWORD) {
+        acp->SetText(0, 2, 3, L"日本", 2, nullptr);  // 日本
+        view.range.end = 4;
+        TS_SELECTION_ACP sel{4, 4, {TS_AE_NONE, FALSE}};
+        acp->SetSelection(1, &sel);
+    });
+    check(owner.edits.size() == 2 && owner.edits[1].start == 2 && owner.edits[1].end == 3 &&
+              owner.edits[1].comp_end == 4 && owner.edits[1].text == u"日本",
+          "a conversion: the composition read from its view at the lock's end");
+    lock(store, sink, TS_LF_READWRITE | TS_LF_SYNC, [&](DWORD) { comp->OnEndComposition(&view); });
+    check(owner.edits.size() == 3 && owner.edits[2].comp_start == -1 && owner.edits[2].text.empty(),
+          "its end commits it: nothing replaced, no composition");
+    // A composition ended by TSF outside a lock (the context going) still reaches the editor.
+    lock(store, sink, TS_LF_READWRITE | TS_LF_SYNC, [&](DWORD) {
+        BOOL ok = FALSE;
+        view.range.start = 0;
+        view.range.end = 2;
+        comp->OnStartComposition(&view, &ok);  // reconversion: "ab" composed again, unchanged
+    });
+    check(owner.edits.size() == 4 && owner.edits[3].start == 0 && owner.edits[3].end == 2 &&
+              owner.edits[3].text == u"ab" && owner.edits[3].comp_start == 0 && owner.edits[3].comp_end == 2,
+          "reconversion makes committed text the composition, in place");
+    comp->OnEndComposition(&view);
+    check(owner.edits.size() == 5 && owner.edits[4].comp_start == -1, "a composition ended outside a lock");
+    acp->Release();
+}
+
+void editor_changes() {
+    Owner owner;
+    Sink sink;
+    tsf::Store* store = make(owner, sink, textinput::field_policy(1, 0), snap(2, 0, u"hi", 2, 2));
+    ITextStoreACP* acp = store;
+    // The editor's own change: told to the text services, outside any lock.
+    store->Update(snap(2, 0, u"hi!", 3, 3));
+    check(sink.text_changes.size() == 1 && sink.text_changes[0].acpStart == 2 && sink.text_changes[0].acpOldEnd == 2 &&
+              sink.text_changes[0].acpNewEnd == 3 && sink.selection_changes == 1 && !sink.saw_lock_in_notification,
+          "a character the editor took from a key: OnTextChange and OnSelectionChange, outside a lock");
+    sink.clear();
+    // A copy that arrives inside a lock waits for its end.
+    lock(store, sink, TS_LF_READ | TS_LF_SYNC, [&](DWORD) {
+        store->Update(snap(2, 0, u"hi!?", 4, 4));
+        check(sink.text_changes.empty(), "not during a lock");
+    });
+    check(sink.text_changes.size() == 1 && sink.text_changes[0].acpStart == 3, "but when it ends");
+    sink.clear();
+    // An edit on its way: an older copy of the editor would undo it, and is dropped.
+    lock(store, sink, TS_LF_READWRITE | TS_LF_SYNC, [&](DWORD) { acp->SetText(0, 4, 4, L"x", 1, nullptr); });
+    store->Update(snap(2, 0, u"hi!?", 4, 4));
+    check(sink.text_changes.empty() && text_of(acp) == u"<error>", "a copy older than the edit is dropped");
+    lock(store, sink, TS_LF_READ | TS_LF_SYNC, [&](DWORD) { check(text_of(acp) == u"hi!?x", "the edit stays"); });
+    store->Update(snap(2, 1, u"hi!?x", 5, 5));
+    check(sink.text_changes.empty() && sink.selection_changes == 0, "the editor's answer to the edit changes nothing");
+    // The app took less than was typed (a filter): the text services hear of it.
+    lock(store, sink, TS_LF_READWRITE | TS_LF_SYNC, [&](DWORD) { acp->SetText(0, 5, 5, L"yz", 2, nullptr); });
+    store->Update(snap(2, 2, u"hi!?xy", 6, 6));
+    check(sink.text_changes.size() == 1 && sink.text_changes[0].acpStart == 6 && sink.text_changes[0].acpOldEnd == 7 &&
+              sink.text_changes[0].acpNewEnd == 6,
+          "a filtered edit comes back as a deletion");
+    store->Update(snap(3, 0, u"other", 0, 0));
+    check(sink.text_changes.size() == 1, "another editor's copy is not this document's");
+    acp->Release();
+}
+
+void geometry() {
+    Owner owner;
+    Sink sink;
+    tsf::Store* store = make(owner, sink, textinput::field_policy(1, 0), snap(5, 0, u"abשל", 4, 4));
+    ITextStoreACP* acp = store;
+    textinput::Layout l;
+    l.epoch = 5;
+    l.has_editor = true;
+    l.editor = Box{0, 0, 200, 40};
+    l.has_caret = true;
+    l.caret = Box{40, 5, 41, 25};
+    l.first = 0;
+    l.boxes = {Box{10, 5, 20, 25}, Box{20, 5, 30, 25}, Box{50, 5, 60, 25}, Box{40, 5, 50, 25}};
+    l.rtl = {false, false, true, true};
+    store->Relayout(l);
+    check(sink.layout_changes == 1, "a new layout: OnLayoutChange");
+    store->Relayout(l);
+    check(sink.layout_changes == 1, "the same layout again: nothing");
+    lock(store, sink, TS_LF_READ | TS_LF_SYNC, [&](DWORD) {
+        RECT r{};
+        BOOL clipped = TRUE;
+        acp->GetTextExt(tsf::Store::kView, 0, 2, &r, &clipped);
+        check(r.left == 1010 && r.right == 1030 && r.top == 505 && r.bottom == 525 && !clipped,
+              "GetTextExt: the characters' boxes, on the screen");
+        acp->GetTextExt(tsf::Store::kView, 2, 4, &r, &clipped);
+        check(r.left == 1040 && r.right == 1060, "a Hebrew word's box");
+        acp->GetTextExt(tsf::Store::kView, 2, 2, &r, &clipped);
+        check(r.left == 1060 && r.right == 1061, "the caret before a Hebrew letter: its right edge, a sliver");
+        LONG at = -1;
+        POINT p{1058, 510};
+        acp->GetACPFromPoint(tsf::Store::kView, &p, GXFPF_ROUND_NEAREST, &at);
+        check(at == 2, "a point on a Hebrew letter's right half is its start");
+        p = POINT{1500, 900};
+        check(acp->GetACPFromPoint(tsf::Store::kView, &p, 0, &at) == TS_E_INVALIDPOINT, "a point on nothing");
+        RECT screen{};
+        acp->GetScreenExt(tsf::Store::kView, &screen);
+        check(screen.left == 1000 && screen.right == 1200, "GetScreenExt: the editor");
+        HWND w = reinterpret_cast<HWND>(1);
+        check(acp->GetWnd(tsf::Store::kView, &w) == S_OK && w == nullptr, "GetWnd: the owner's window");
+    });
+    // A composition grows past what the editor measured: no layout until it answers.
+    lock(store, sink, TS_LF_READWRITE | TS_LF_SYNC, [&](DWORD) { acp->SetText(0, 4, 4, L"ab", 2, nullptr); });
+    lock(store, sink, TS_LF_READ | TS_LF_SYNC, [&](DWORD) {
+        RECT r{};
+        BOOL clipped = FALSE;
+        check(acp->GetTextExt(tsf::Store::kView, 5, 6, &r, &clipped) == TS_E_NOLAYOUT,
+              "characters on their way to the editor: TS_E_NOLAYOUT");
+    });
+    store->Update(snap(5, 1, u"abשלab", 6, 6));
+    l.acked = 1;
+    l.boxes.push_back(Box{60, 5, 70, 25});
+    l.boxes.push_back(Box{70, 5, 80, 25});
+    l.rtl.push_back(false);
+    l.rtl.push_back(false);
+    sink.clear();
+    store->Relayout(l);
+    check(sink.layout_changes == 1, "the editor measured them: OnLayoutChange, to ask again");
+    lock(store, sink, TS_LF_READ | TS_LF_SYNC, [&](DWORD) {
+        RECT r{};
+        BOOL clipped = FALSE;
+        check(acp->GetTextExt(tsf::Store::kView, 5, 6, &r, &clipped) == S_OK && r.left == 1070, "and now they are there");
+    });
+    sink.clear();
+    store->Moved();
+    check(sink.layout_changes == 1, "the window moved: OnLayoutChange");
+    acp->Release();
+}
+
+void password() {
+    Owner owner;
+    Sink sink;
+    const textinput::FieldPolicy p = textinput::field_policy(1 | 0x80, 0);  // TYPE_TEXT_VARIATION_PASSWORD
+    tsf::Store* store = make(owner, sink, p, snap(6, 0, u"secret", 6, 6));
+    ITextStoreACP* acp = store;
+    ITfContextOwnerCompositionSink* comp = store;
+    TS_STATUS status{};
+    acp->GetStatus(&status);
+    check((status.dwDynamicFlags & TS_SD_READONLY) && !(status.dwStaticFlags & TS_SS_TKBPREDICTIONENABLE),
+          "a password: read-only, no suggestions");
+    lock(store, sink, TS_LF_READWRITE | TS_LF_SYNC, [&](DWORD) {
+        check(text_of(acp).empty(), "its text is not shown to the text services");
+        check(acp->SetText(0, 0, 0, L"x", 1, nullptr) == TS_E_READONLY, "nor written by them");
+        View view;
+        BOOL ok = TRUE;
+        comp->OnStartComposition(&view, &ok);
+        check(ok == FALSE, "and no composition starts in it");
+    });
+    store->Update(snap(6, 0, u"secret!", 7, 7));
+    check(sink.text_changes.empty(), "a password's text never reaches them");
+    check(owner.edits.empty(), "nothing edited");
+    acp->Release();
+}
+
+void attributes() {
+    Owner owner;
+    Sink sink;
+    const textinput::FieldPolicy p = textinput::field_policy(1 | 0x10, 0);  // TYPE_TEXT_VARIATION_URI
+    tsf::Store* store = make(owner, sink, p, snap(7, 0, u"é\U0001F600B", 0, 0));
+    ITextStoreACP* acp = store;
+    const TS_ATTRID wanted[] = {tsf::kGUID_PROP_INPUTSCOPE, GUID_PROP_ATTRIBUTE};
+    acp->RequestSupportedAttrs(TS_ATTR_FIND_WANT_VALUE, 2, wanted);
+    TS_ATTRVAL values[2] = {};
+    ULONG got = 0;
+    acp->RetrieveRequestedAttrs(2, values, &got);
+    bool url = false;
+    if (got == 1 && values[0].varValue.vt == VT_UNKNOWN && values[0].varValue.punkVal) {
+        ITfInputScope* scope = nullptr;
+        values[0].varValue.punkVal->QueryInterface(__uuidof(ITfInputScope), reinterpret_cast<void**>(&scope));
+        InputScope* list = nullptr;
+        UINT n = 0;
+        if (scope && SUCCEEDED(scope->GetInputScopes(&list, &n)) && n >= 1) url = list[0] == IS_URL;
+        if (list) CoTaskMemFree(list);
+        if (scope) scope->Release();
+    }
+    for (ULONG i = 0; i < got; ++i) VariantClear(&values[i].varValue);
+    check(got == 1 && url, "GUID_PROP_INPUTSCOPE: an ITfInputScope with IS_URL for a URL field");
+    acp->RequestSupportedAttrs(0, 1, &wanted[1]);
+    acp->RetrieveRequestedAttrs(2, values, &got);
+    check(got == 0, "an attribute the field has not: none");
+    lock(store, sink, TS_LF_READ | TS_LF_SYNC, [&](DWORD) {
+        IDataObject* data = nullptr;
+        acp->GetFormattedText(0, -1, &data);
+        FORMATETC f{CF_UNICODETEXT, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL};
+        STGMEDIUM m{};
+        bool same = false;
+        if (data && SUCCEEDED(data->GetData(&f, &m))) {
+            const auto* t = static_cast<const char16_t*>(GlobalLock(m.hGlobal));
+            same = t && std::u16string(t) == u"é\U0001F600B";
+            GlobalUnlock(m.hGlobal);
+            ReleaseStgMedium(&m);
+        }
+        if (data) data->Release();
+        check(same, "GetFormattedText: the text, an emoji's two units with it");
+    });
+    acp->Release();
+}
+
+// ---- on the system's TSF ------------------------------------------------------------------------
+
+bool under_wine() {
+    HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+    return ntdll && GetProcAddress(ntdll, "wine_get_version");
+}
+
+void system_session() {
+    if (FAILED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED))) {
+        check(false, "COM on the test's thread");
+        return;
+    }
+    WNDCLASSW wc{};
+    wc.lpfnWndProc = DefWindowProcW;
+    wc.hInstance = GetModuleHandleW(nullptr);
+    wc.lpszClassName = L"WinApkTsfTest";
+    RegisterClassW(&wc);
+    HWND w = CreateWindowExW(0, wc.lpszClassName, L"tsf", WS_OVERLAPPEDWINDOW, 0, 0, 300, 200, nullptr, nullptr,
+                             wc.hInstance, nullptr);
+    std::vector<textinput::Edit> edits;
+    tsf::SessionHost host;
+    host.edit = [&](const textinput::Edit& e) { edits.push_back(e); };
+    host.to_screen = [](const Box&, RECT*) { return false; };
+    host.from_screen = [](POINT, float*, float*) { return false; };
+    HRESULT why = S_OK;
+    auto session = tsf::Session::Create(w, host, &why);
+    if (!session) {
+        std::printf("note  no TSF thread manager here (0x%08lx)%s\n", static_cast<unsigned long>(why),
+                    under_wine() ? ", as under Wine" : "");
+        check(under_wine(), "Windows has TSF");
+    } else {
+        check(true, "the session activates the system's TSF");
+        const bool focused = session->Focus(textinput::field_policy(1, 0), snap(9, 0, u"abc", 3, 3));
+        check(focused == session->focused() && (focused || under_wine()), "a document for the focused editor");
+        session->Update(snap(9, 0, u"abcd", 4, 4));
+        MSG m{};
+        m.hwnd = w;
+        m.message = WM_KEYDOWN;
+        m.wParam = 'A';
+        m.lParam = 1;
+        check(!session->Key(m), "a plain key with no input method composing is the app's");
+        session->Blur();
+        check(!session->focused(), "the editor goes, its document with it");
+        check(session->Focus(textinput::field_policy(1 | 0x80, 0), snap(10, 0, u"pw", 2, 2)) == session->focused(),
+              "a password's document, its keyboard disabled for the text services");
+        check(!session->Focus(textinput::field_policy(0, 0), snap(11, 0, u"", 0, 0)) && !session->focused(),
+              "TYPE_NULL: no document");
+        session.reset();
+        check(edits.empty(), "nothing was edited by a text service");
+    }
+    DestroyWindow(w);
+    CoUninitialize();
+}
+
+}  // namespace
 
 int main() {
-  HWND window = CreateWindowExW(0, L"STATIC", L"Win.apk TSF test", WS_OVERLAPPED,
-                               0, 0, 400, 800, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
-  if (!window) return 1;
-  std::vector<DocumentEdit> edits;
-  std::function<void(const DocumentEdit&)> host_feedback;
-  int scheduled = 0;
-  auto* store = new TextStore(window, [&](DocumentEdit edit) { edits.push_back(edit); if (host_feedback) host_feedback(edit); }, [&] { ++scheduled; });
-  auto* sink = new Sink();
-  Check(SUCCEEDED(store->AdviseSink(IID_ITextStoreACPSink, sink, TS_AS_ALL_SINKS)), "real ITextStoreACPSink subscription");
-  void* identity = nullptr; void* composition = nullptr; void* identity2 = nullptr;
-  store->QueryInterface(IID_IUnknown, &identity);
-  store->QueryInterface(IID_ITfContextOwnerCompositionSink, &composition);
-  static_cast<ITfContextOwnerCompositionSink*>(composition)->QueryInterface(IID_IUnknown, &identity2);
-  Check(identity == identity2, "ACP and composition interfaces share canonical IUnknown identity");
-  static_cast<IUnknown*>(identity)->Release(); static_cast<IUnknown*>(identity2)->Release();
-  static_cast<ITfContextOwnerCompositionSink*>(composition)->Release();
-
-  TextDocument original; original.available = true; original.epoch = 1;
-  original.text = u"before \u05e9\u05dc\u05d5\u05dd"; original.start = 7; original.end = 11;
-  store->Update(original);
-  // Independent immutable object and medium ownership, exercised through the real ACP lock callback.
-  TextDocument formatted; formatted.available = true; formatted.epoch = 1;
-  formatted.text = u"A\u00e9\U0001f600B";
-  store->Update(formatted);
-  IDataObject* snapshot = nullptr;
-  TextDocument with_nul = formatted; with_nul.text = std::u16string(u"A\0B", 3);
-  store->Update(with_nul);
-  sink->action = [&](DWORD) -> HRESULT {
-    IDataObject* rejected = reinterpret_cast<IDataObject*>(1);
-    Check(store->GetFormattedText(0, 3, &rejected) == E_FAIL && !rejected, "embedded NUL range rejected");
-    IDataObject* suffix = nullptr;
-    Check(store->GetFormattedText(2, 3, &suffix) == S_OK && suffix, "range excluding NUL accepted");
-    if (suffix) suffix->Release();
-    return S_OK;
-  };
-  Check(sink->Lock(store) == S_OK, "NUL policy checked under lock");
-  sink->action = nullptr;
-  Check(Text(store, sink) == with_nul.text, "NUL rejection preserves document");
-  store->Update(formatted);
-  Check(store->GetFormattedText(0, 1, &snapshot) == TS_E_NOLOCK && !snapshot, "formatted text requires lock");
-  sink->action = [&](DWORD) -> HRESULT {
-    Check(store->GetFormattedText(0, 1, &snapshot) == TS_E_NOLOCK && !snapshot, "read lock is insufficient for formatted text");
-    return S_OK;
-  };
-  sink->Lock(store, TS_LF_SYNC | TS_LF_READ);
-  sink->action = [&](DWORD) -> HRESULT {
-    IDataObject* one = nullptr; IDataObject* empty = nullptr;
-    Check(store->GetFormattedText(0, 1, &one) == S_OK && one, "end one selects exactly one unit");
-    Check(store->GetFormattedText(2, 2, &empty) == S_OK && empty, "empty range accepted");
-    FORMATETC f = {CF_UNICODETEXT, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL};
-    if (one && empty) {
-      STGMEDIUM m1 = {}, m2 = {};
-      bool ok1 = one->GetData(&f, &m1) == S_OK;
-      bool ok2 = empty->GetData(&f, &m2) == S_OK;
-      const char16_t* t1 = ok1 ? static_cast<const char16_t*>(GlobalLock(m1.hGlobal)) : nullptr;
-      const char16_t* t2 = ok2 ? static_cast<const char16_t*>(GlobalLock(m2.hGlobal)) : nullptr;
-      Check(t1 && t2 && t1[0] == u'A' && t1[1] == 0 && t2[0] == 0, "one unit and empty exact terminators");
-      if (t1) GlobalUnlock(m1.hGlobal);
-      if (t2) GlobalUnlock(m2.hGlobal);
-      if (ok1) ReleaseStgMedium(&m1);
-      if (ok2) ReleaseStgMedium(&m2);
-    }
-    if (one) one->Release();
-    if (empty) empty->Release();
-    Check(store->GetFormattedText(3, 2, &snapshot) == TS_E_INVALIDPOS && !snapshot, "invalid range rejected");
-    return store->GetFormattedText(1, -1, &snapshot);
-  };
-  Check(sink->Lock(store) == S_OK && snapshot, "partial snapshot created under write lock");
-  sink->action = nullptr;
-  if (snapshot) {
-    FORMATETC format = {CF_UNICODETEXT, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL};
-    Check(snapshot->QueryGetData(&format) == S_OK, "unicode text advertised");
-    FORMATETC bad = format; bad.cfFormat = CF_TEXT;
-    Check(snapshot->QueryGetData(&bad) == DV_E_FORMATETC, "unsupported format rejected");
-    bad = format; bad.lindex = 0; Check(snapshot->QueryGetData(&bad) == DV_E_LINDEX, "index rejected");
-    bad = format; bad.dwAspect = DVASPECT_ICON; Check(snapshot->QueryGetData(&bad) == DV_E_DVASPECT, "aspect rejected");
-    bad = format; bad.tymed = TYMED_ISTREAM; Check(snapshot->QueryGetData(&bad) == DV_E_TYMED, "medium rejected");
-    DVTARGETDEVICE device = {}; bad = format; bad.ptd = &device;
-    Check(snapshot->QueryGetData(&bad) == DV_E_FORMATETC, "target device rejected");
-    STGMEDIUM failed = {}; failed.tymed = TYMED_HGLOBAL; failed.hGlobal = reinterpret_cast<HGLOBAL>(1);
-    Check(snapshot->GetData(&bad, &failed) == DV_E_FORMATETC && failed.tymed == TYMED_NULL && !failed.hGlobal && !failed.pUnkForRelease, "failed GetData clears medium");
-    STGMEDIUM a = {}, b = {}; IEnumFORMATETC* enumeration = nullptr; IEnumFORMATETC* clone = nullptr;
-    Check(snapshot->GetDataHere(&format, &a) == E_NOTIMPL, "GetDataHere unsupported");
-    Check(snapshot->EnumFormatEtc(DATADIR_GET, &enumeration) == S_OK && enumeration, "format enumerator");
-    if (enumeration) {
-      FORMATETC found = {}; ULONG fetched = 0;
-      Check(enumeration->Clone(&clone) == S_OK && clone, "independent enumerator clone");
-      Check(enumeration->Next(1, &found, &fetched) == S_OK && fetched == 1 && found.cfFormat == CF_UNICODETEXT, "enumerates text");
-      Check(enumeration->Next(1, &found, &fetched) == S_FALSE && fetched == 0, "enumeration ends");
-      IEnumFORMATETC* at_end = nullptr;
-      Check(enumeration->Clone(&at_end) == S_OK && at_end, "clone at end");
-      if (at_end) { Check(at_end->Next(1, &found, &fetched) == S_FALSE && fetched == 0, "clone preserves cursor"); at_end->Release(); }
-      Check(enumeration->Reset() == S_OK && enumeration->Skip(1) == S_OK && enumeration->Skip(1) == S_FALSE, "reset and skip cursor");
-      Check(enumeration->Reset() == S_OK && enumeration->Skip(2) == S_FALSE && enumeration->Next(1, &found, &fetched) == S_FALSE, "partial skip reaches end");
-      if (clone) { Check(clone->Next(1, &found, &fetched) == S_OK, "clone cursor independent"); clone->Release(); }
-      enumeration->Release();
-    }
-    Check(snapshot->GetData(&format, &a) == S_OK, "first consumer medium");
-    store->Disconnect();
-    Check(store->Release() == 0, "source store destroyed");
-    store = nullptr;
-    Check(snapshot->GetData(&format, &b) == S_OK && a.hGlobal != b.hGlobal, "independent medium after source teardown");
-    snapshot->AddRef(); snapshot->Release(); snapshot->Release(); snapshot = nullptr;
-    const char16_t expected[] = u"\u00e9\U0001f600B";
-    if (a.hGlobal && b.hGlobal) {
-      const void* first = GlobalLock(a.hGlobal); const void* second = GlobalLock(b.hGlobal);
-      Check(first && second && GlobalSize(a.hGlobal) >= sizeof(expected) && GlobalSize(b.hGlobal) >= sizeof(expected)
-          && std::memcmp(first, expected, sizeof(expected)) == 0 && std::memcmp(second, expected, sizeof(expected)) == 0,
-          "exact UTF-16 and terminator survive source teardown");
-      if (first) GlobalUnlock(a.hGlobal);
-      if (second) GlobalUnlock(b.hGlobal);
-    }
-    if (a.tymed != TYMED_NULL) ReleaseStgMedium(&a);
-    if (b.tymed != TYMED_NULL) ReleaseStgMedium(&b);
-  }
-  // Restore a fresh store after testing teardown; keep the rest of the existing fixture intact.
-  if (store) store->Release();
-  store = new TextStore(window, [&](DocumentEdit edit) { edits.push_back(edit); if (host_feedback) host_feedback(edit); }, [&] { ++scheduled; });
-  Check(SUCCEEDED(store->AdviseSink(IID_ITextStoreACPSink, sink, TS_AS_ALL_SINKS)), "subscribe after snapshot teardown");
-  store->Update(original);
-  LONG end = 0;
-  Check(store->GetEndACP(&end) == TS_E_NOLOCK && Text(store, sink) == original.text,
-        "UTF-16 document access requires a granted read lock");
-  sink->action = [&](DWORD) -> HRESULT {
-    TS_SELECTION_ACP selection; ULONG fetched = 0;
-    HRESULT result = store->GetSelection(TS_DEFAULT_SELECTION, 1, &selection, &fetched);
-    Check(SUCCEEDED(result) && fetched == 1 && selection.acpStart == 7 && selection.acpEnd == 11,
-          "selection uses UTF-16 ACP positions");
-    WCHAR buffer[2]; ULONG copied = 0, returned = 0; LONG next = 0; TS_RUNINFO run;
-    result = store->GetText(7, -1, buffer, 2, &copied, &run, 1, &returned, &next);
-    Check(SUCCEEDED(result) && copied == 2 && returned == 1 && run.uCount == 2 && next == 9,
-          "bounded GetText returns a matching run and next ACP");
-    TS_TEXTCHANGE change;
-    Check(store->SetText(0, 7, 11, L"x", 1, &change) == TS_E_NOLOCK,
-          "a read lock cannot mutate the document");
-    HRESULT upgrade = E_FAIL;
-    result = store->RequestLock(TS_LF_SYNC | TS_LF_READWRITE, &upgrade);
-    Check(SUCCEEDED(result) && upgrade == TS_E_SYNCHRONOUS, "nested synchronous write locks are refused");
-    return S_OK;
-  };
-  sink->Lock(store, TS_LF_SYNC | TS_LF_READ); sink->action = nullptr;
-  sink->Clear();
-  sink->action = [&](DWORD flags) -> HRESULT {
-    if ((flags & TS_LF_READWRITE) == TS_LF_READWRITE) {
-      TS_TEXTCHANGE change;
-      HRESULT result = store->SetText(0, 7, 11, L"\u65e5\u672c", 2, &change);
-      Check(SUCCEEDED(result) && change.acpStart == 7 && change.acpOldEnd == 11 && change.acpNewEnd == 9,
-            "a real write grant replaces the selected document range");
-      return result;
-    }
-    HRESULT session = E_FAIL;
-    HRESULT result = store->RequestLock(TS_LF_READWRITE, &session);
-    Check(SUCCEEDED(result) && session == TS_S_ASYNC, "read-to-write upgrade is asynchronous");
-    return S_OK;
-  };
-  sink->Lock(store, TS_LF_SYNC | TS_LF_READ);
-  Check(edits.empty() && scheduled > 0, "the upgrade does not run inside the original RequestLock");
-  store->Pump(); sink->action = nullptr;
-  Check(edits.size() == 1 && edits[0].text == u"\u65e5\u672c" && edits[0].start == 7 && edits[0].end == 11
-          && edits[0].epoch == 1 && edits[0].revision == 1 && sink->text == 0 && sink->selection == 0,
-        "TSF edits carry exact replacement/revision and do not echo change notifications");
-  Check(Text(store, sink) == u"before \u65e5\u672c", "subsequent TSF reads observe the accepted edit");
-  store->Update(original);
-  Check(Text(store, sink) == u"before \u65e5\u672c", "an older asynchronous InputConnection reply cannot erase TSF edits");
-
-  TextDocument accepted = original; accepted.text = u"before \u65e5\u672c"; accepted.start = accepted.end = 9; accepted.applied_revision = 1;
-  store->Update(accepted);
-  sink->Clear();
-  sink->action = [&](DWORD) -> HRESULT {
-    TextDocument next = accepted; next.text = u"external"; next.start = next.end = 8;
-    store->Update(next);
-    RECT caret = {10, 20, 11, 42}; store->Caret(caret);
-    return S_OK;
-  };
-  sink->Lock(store, TS_LF_SYNC | TS_LF_READ); sink->action = nullptr;
-  Check(sink->text == 0 && sink->layout == 0, "application document/layout changes are deferred outside RequestLock");
-  store->Pump();
-  Check(sink->text == 1 && sink->selection == 1 && sink->layout == 1 && sink->nested_notifications == 0,
-        "deferred application text, selection and layout notifications are delivered once");
-  sink->Clear();
-  const size_t before_feedback = edits.size();
-  RECT stable_caret = {20, 20, 21, 42};
-  host_feedback = [&](const DocumentEdit&) { store->Caret(stable_caret); };
-  sink->action = [&](DWORD) -> HRESULT {
-    TS_SELECTION_ACP current; ULONG fetched = 0;
-    HRESULT result = store->GetSelection(TS_DEFAULT_SELECTION, 1, &current, &fetched);
-    return SUCCEEDED(result) && fetched == 1 ? store->SetSelection(1, &current) : E_FAIL;
-  };
-  sink->layout_action = [&] { sink->Lock(store); };
-  store->Caret(stable_caret);
-  for (int attempt = 0; attempt < 5; ++attempt) store->Pump();
-  store->Caret(stable_caret); store->Pump();
-  Check(sink->layout == 1 && edits.size() == before_feedback,
-        "layout/identical-selection/host-caret COM feedback settles after one notification with no redundant edit");
-  sink->layout_action = nullptr; host_feedback = nullptr; sink->action = nullptr;
-  sink->action = [&](DWORD) -> HRESULT {
-    TS_SELECTION_ACP reversed = {0, 4, {TS_AE_START, FALSE}};
-    return store->SetSelection(1, &reversed);
-  };
-  sink->Lock(store); sink->Lock(store); sink->action = nullptr;
-  Check(edits.size() == before_feedback + 1 && edits.back().kind == DocumentEdit::kSelect
-          && edits.back().start == 4 && edits.back().end == 0,
-        "a changed reverse selection emits once while an identical repeated selection is silent");
-  TextDocument restricted; restricted.epoch = 2; restricted.text = u"must not leak"; restricted.available = false;
-  store->Update(restricted);
-  TS_STATUS status; store->GetStatus(&status);
-  Check((status.dwDynamicFlags & TS_SD_READONLY) != 0 && Text(store, sink).empty(),
-        "a restricted editor is read-only and retains no document text");
-  store->Update(accepted);
-  Check(Text(store, sink).empty(), "a reply from an old focused editor cannot expose its document");
-  TextDocument composing; composing.available = true; composing.epoch = 3; composing.offset = 40;
-  composing.text = u"A\U0001f600B"; composing.start = 1; composing.end = 3;
-  store->Update(composing);
-  size_t composition_edits = edits.size();
-  sink->action = [&](DWORD) -> HRESULT {
-    BOOL allowed = FALSE; TS_TEXTCHANGE change;
-    HRESULT result = store->OnStartComposition(nullptr, &allowed);
-    if (SUCCEEDED(result) && allowed) result = store->SetText(0, 1, 3, L"\u306b", 1, &change);
-    LONG first = 0, last = 0;
-    if (SUCCEEDED(result)) result = store->QueryInsert(1, 1, 4, &first, &last);
-    if (SUCCEEDED(result)) result = store->SetText(0, 2, 2, L"\u307b\u3093", 2, &change);
-    if (SUCCEEDED(result)) result = store->OnEndComposition(nullptr);
-    return result;
-  };
-  HRESULT composed = sink->Lock(store); sink->action = nullptr;
-  Check(SUCCEEDED(composed) && edits.size() == composition_edits + 3
-          && edits[composition_edits].kind == DocumentEdit::kCompositionText
-          && edits[composition_edits].start == 41 && edits[composition_edits].end == 43
-          && edits[composition_edits].text == u"\u306b"
-          && edits[composition_edits + 1].kind == DocumentEdit::kCompositionText
-          && edits[composition_edits + 1].start == 41 && edits[composition_edits + 1].end == 42
-          && edits[composition_edits + 1].text == u"\u306b\u307b\u3093"
-          && edits.back().kind == DocumentEdit::kCompositionEnd
-          && edits.back().text == u"\u306b\u307b\u3093",
-        "TSF composition transactions preserve full composing text, UTF-16 replacement ranges, offsets and the native final commit");
-  winapk::host::tsf::TextGeometry geometry; geometry.epoch = 3; geometry.start = 41;
-  geometry.text = u"\u306b\u307b\u3093";
-  geometry.characters = {{41, 20, 20, 30, 42, false}, {42, 30, 20, 40, 42, false},
-      {43, 40, 20, 50, 42, false}};
-  store->Geometry(geometry);
-  sink->action = [&](DWORD) -> HRESULT {
-    RECT rectangle{}; BOOL clipped = TRUE;
-    POINT expected{20, 20}; ClientToScreen(window, &expected);
-    HRESULT result = store->GetTextExt(0, 1, 4, &rectangle, &clipped);
-    Check(SUCCEEDED(result) && !clipped && rectangle.left == expected.x && rectangle.top == expected.y
-            && rectangle.right == expected.x + 30 && rectangle.bottom == expected.y + 22,
-        "TSF composing-range extents use actual measured UTF-16 character bounds in screen coordinates");
-    POINT second{35, 30}; ClientToScreen(window, &second); LONG acp = -1;
-    Check(store->GetACPFromPoint(0, &second, 0, &acp) == S_OK && acp == 2,
-        "measured character hit testing preserves ExtractedText offset and ACP indices");
-    LONG first = 0, last = 0;
-    Check(store->QueryInsert(0, 0, static_cast<ULONG>(LONG_MAX), &first, &last) == TS_E_INVALIDPOS,
-        "replacement limits include the absolute extracted-text offset without integer overflow");
-    return S_OK;
-  };
-  sink->Lock(store); sink->action = nullptr;
-  auto clipped_geometry = geometry;
-  clipped_geometry.characters.back().right = 500;
-  store->Geometry(clipped_geometry);
-  sink->action = [&](DWORD) -> HRESULT {
-    RECT rectangle{}, client{}; BOOL clipped = FALSE;
-    GetClientRect(window, &client); POINT edge{client.right, 0}; ClientToScreen(window, &edge);
-    HRESULT result = store->GetTextExt(0, 1, 4, &rectangle, &clipped);
-    Check(SUCCEEDED(result) && clipped && rectangle.right == edge.x,
-        "measured TSF range extents report actual client clipping without invented off-window geometry");
-    return S_OK;
-  };
-  sink->Lock(store); sink->action = nullptr;
-  auto missing_geometry = geometry;
-  missing_geometry.characters.pop_back(); store->Geometry(missing_geometry);
-  sink->action = [&](DWORD) -> HRESULT {
-    RECT rectangle{}; BOOL clipped = FALSE;
-    Check(store->GetTextExt(0, 1, 4, &rectangle, &clipped) == TS_E_NOLAYOUT,
-        "a range missing any measured UTF-16 character returns TS_E_NOLAYOUT");
-    return S_OK;
-  };
-  sink->Lock(store); sink->action = nullptr;
-  geometry.text = u"old"; store->Geometry(geometry);
-  sink->action = [&](DWORD) -> HRESULT {
-    RECT rectangle{}; BOOL clipped = FALSE;
-    Check(store->GetTextExt(0, 1, 4, &rectangle, &clipped) == TS_E_NOLAYOUT,
-        "stale measured text never supplies invented TSF range geometry");
-    return S_OK;
-  };
-  sink->Lock(store); sink->action = nullptr;
-  TextDocument partial; partial.available = true; partial.epoch = 4;
-  partial.text = u"abcd"; partial.start = 0; partial.end = 4;
-  store->Update(partial);
-  size_t partial_edits = edits.size();
-  sink->action = [&](DWORD) -> HRESULT {
-    BOOL allowed = FALSE; TS_TEXTCHANGE change;
-    HRESULT result = store->OnStartComposition(nullptr, &allowed);
-    if (SUCCEEDED(result) && allowed) result = store->SetText(0, 1, 2, L"X", 1, &change);
-    if (SUCCEEDED(result)) result = store->OnEndComposition(nullptr);
-    return result;
-  };
-  HRESULT partial_result = sink->Lock(store); sink->action = nullptr;
-  Check(SUCCEEDED(partial_result) && edits.size() == partial_edits + 3
-          && edits[partial_edits].kind == DocumentEdit::kCompositionText
-          && edits[partial_edits].text == u"aXcd"
-          && edits[partial_edits + 1].kind == DocumentEdit::kSelect
-          && edits[partial_edits + 1].start == 2 && edits[partial_edits + 1].end == 2
-          && edits.back().kind == DocumentEdit::kCompositionEnd && edits.back().text == u"aXcd",
-        "a partial edit inside a TSF composition restores the native insertion caret after publishing the full composing text");
-  TextDocument live; live.available = true; live.epoch = 5; live.text = u"abc"; live.start = live.end = 3;
-  store->Update(live);
-  RECT live_caret{20, 20, 22, 42};
-  MapWindowPoints(window, nullptr, reinterpret_cast<POINT*>(&live_caret), 2);
-  store->Caret(live_caret);
-  TextDocument unavailable; unavailable.epoch = 5;
-  store->Update(unavailable);
-  sink->action = [&](DWORD) -> HRESULT {
-    RECT rectangle{}; BOOL clipped = FALSE; LONG position = -1;
-    POINT old_point{live_caret.left, live_caret.top};
-    Check(store->GetTextExt(0, 0, 0, &rectangle, &clipped) == TS_E_NOLAYOUT
-            && store->GetACPFromPoint(0, &old_point, 0, &position) == TS_E_NOLAYOUT,
-        "an unavailable editor exposes neither the previous caret nor measured range geometry");
-    return S_OK;
-  };
-  sink->Lock(store); sink->action = nullptr;
-  live.epoch = 6; live.text = u"XYZ"; store->Update(live);
-  geometry.epoch = 6; geometry.start = 0; geometry.text = u"XYZ";
-  geometry.characters = {{0, 20, 20, 30, 42, false}, {1, 30, 20, 40, 42, false}, {2, 40, 20, 50, 42, false}};
-  store->Geometry(geometry); store->Caret(live_caret);
-  sink->action = [&](DWORD) -> HRESULT {
-    RECT rectangle{}; BOOL clipped = TRUE;
-    Check(store->GetTextExt(0, 0, 3, &rectangle, &clipped) == S_OK && !clipped
-            && rectangle.left == live_caret.left && rectangle.right == live_caret.left + 30,
-        "a new editor epoch recovers only from its own fresh text and geometry");
-    return S_OK;
-  };
-  sink->Lock(store); sink->action = nullptr;
-  ITextStoreACP* held = nullptr;
-  HRESULT retained = store->QueryInterface(IID_ITextStoreACP, reinterpret_cast<void**>(&held));
-  store->Disconnect();
-  sink->action = [&](DWORD) -> HRESULT {
-    RECT rectangle{}; BOOL clipped = FALSE; LONG position = -1;
-    POINT old_point{live_caret.left, live_caret.top};
-    Check(SUCCEEDED(retained) && held != nullptr
-            && held->GetTextExt(0, 0, 0, &rectangle, &clipped) == TS_E_NOLAYOUT
-            && held->GetACPFromPoint(0, &old_point, 0, &position) == TS_E_NOLAYOUT,
-        "a retained COM interface cannot expose a retired editor's caret or text geometry after Disconnect");
-    return S_OK;
-  };
-  sink->Lock(store); sink->action = nullptr;
-  if (held != nullptr) held->Release();
-  Check(SUCCEEDED(store->UnadviseSink(sink)), "the actual sink can unsubscribe by canonical COM identity");
-  store->Release(); sink->Release();
-  {
-    // Win.apk: GetTextExt with no laid-out characters answers with the caret when it is known,
-    // and Hebrew (right-to-left) text is plain UTF-16 to the document.
-    std::vector<DocumentEdit> rtl_edits;
-    auto* rtl = new TextStore(window, [&](DocumentEdit edit) { rtl_edits.push_back(edit); }, [] {});
-    auto* rtl_sink = new Sink();
-    rtl->AdviseSink(IID_ITextStoreACPSink, rtl_sink, TS_AS_ALL_SINKS);
-    TextDocument hebrew; hebrew.available = true; hebrew.epoch = 1; hebrew.offset = 3;
-    hebrew.text = u"שלום"; hebrew.start = hebrew.end = 4;
-    rtl->Update(hebrew);
-    rtl_sink->action = [&](DWORD) -> HRESULT {
-      RECT r{}; BOOL clipped = TRUE;
-      Check(rtl->GetTextExt(0, 0, 2, &r, &clipped) == TS_E_NOLAYOUT, "no caret and no layout: TS_E_NOLAYOUT");
-      return S_OK;
-    };
-    rtl_sink->Lock(rtl);
-    RECT caret{100, 50, 101, 70};
-    rtl->Caret(caret); rtl->Pump();
-    rtl_sink->action = [&](DWORD) -> HRESULT {
-      RECT r{}; BOOL clipped = TRUE;
-      HRESULT hr = rtl->GetTextExt(0, 0, 2, &r, &clipped);
-      Check(hr == S_OK && EqualRect(&r, &caret) && !clipped, "a range with no laid-out characters is at the caret");
-      TS_TEXTCHANGE change;
-      BOOL allowed = FALSE;
-      hr = rtl->OnStartComposition(nullptr, &allowed);
-      if (SUCCEEDED(hr) && allowed) hr = rtl->SetText(0, 4, 4, L"א", 1, &change);
-      if (SUCCEEDED(hr)) hr = rtl->OnEndComposition(nullptr);
-      return hr;
-    };
-    HRESULT composed = rtl_sink->Lock(rtl);
-    rtl_sink->action = nullptr;
-    Check(SUCCEEDED(composed) && rtl_edits.size() == 2 && rtl_edits[0].kind == DocumentEdit::kCompositionText &&
-              rtl_edits[0].start == 7 && rtl_edits[0].end == 7 && rtl_edits[0].text == u"א" &&
-              rtl_edits[1].kind == DocumentEdit::kCompositionEnd && rtl_edits[1].text == u"א",
-          "a Hebrew composition at the end of Hebrew text: the editor's positions, the offset added");
-    Check(Text(rtl, rtl_sink) == u"שלוםא", "the document holds the composed Hebrew");
-    rtl->Disconnect();
-    rtl->UnadviseSink(rtl_sink);
-    rtl->Release();
-    rtl_sink->Release();
-  }
-  HRESULT initialized = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-  if (SUCCEEDED(initialized)) {
-    std::vector<DocumentEdit> attached_edits;
-    TextDocument initial = original; initial.epoch = 20;
-    HRESULT attached = E_FAIL;
-    auto service = winapk::host::tsf::TextService::Attach(window, initial,
-        [&](DocumentEdit edit) { attached_edits.push_back(std::move(edit)); }, [] {}, &attached);
-    if (service == nullptr) {
-      std::printf("SKIP  tsf: no TSF thread manager here (0x%08lx): the runtime falls back to IMM32\n",
-                  static_cast<unsigned long>(attached));
-    } else {
-      service->Focus(true);
-      TextDocument next = initial; next.text = u"שלום world"; next.start = next.end = 4;
-      service->Update(next);
-      service->Pump();
-      service->Retire();
-      service->Update(initial);  // a retired service takes nothing more
-      service.reset();
-      Check(attached_edits.empty(), "an attached document makes no edit of its own, and retires and detaches cleanly");
-    }
-    CoUninitialize();
-  } else { Check(false, "the test's STA initializes for the window-owned text service"); }
-  DestroyWindow(window);
-  std::printf("%d TSF check(s) failed\n", failures);
-  return failures;
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
+    interfaces();
+    locks();
+    edits();
+    compositions();
+    editor_changes();
+    geometry();
+    password();
+    attributes();
+    system_session();
+    std::printf("%d TSF check(s) failed\n", failures);
+    return failures == 0 ? 0 : 1;
 }
