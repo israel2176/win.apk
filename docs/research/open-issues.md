@@ -723,6 +723,24 @@ New bugs found with AOSP views:
     6. A refused update shows in `logs\services\com.android.vending*.log` as
        `session N refused: INSTALL_FAILED_…`.
 
+- **OpenSL ES (#132): real since the the other runtime import, not yet heard in a game.**
+  `host/native_opensles.cpp` is the other runtime's `compat/media/ndk/opensles.cc`
+  adapted (buffer-queue players into `audio_engine.h` streams, fd/file players
+  as clip voices, recorders on `audio_capture.h`). `winapk-opensles-test`
+  passes under Wine (no audio device: the mixer's silent clock). Not checked:
+  any real app (no runtime build was run with it), an arm64 library's
+  callbacks (the same `host_callable` path as AAudio's), the recorder filling
+  buffers from a real microphone (Wine has no capture device), and the
+  RECORD_AUDIO JNI call (`record_audio_held`: `SpecialAccessStore.holds` from a
+  guest thread, attached as a daemon when it is not a Java thread). **Check**
+  with the corpus apps that may use it: `org.ppsspp.ppsspp` (its OpenSL ES
+  audio backend), `com.retroarch` (the `opensl` audio driver), and
+  `net.minetest.minetest` (OpenAL Soft, whose Android backend is OpenSL ES or
+  AAudio): sound plays, the log has `[opensles] CreateAudioPlayer` lines and no
+  `SL_RESULT` refusals. Not done, as in the other runtime: http(s) URI players, effects
+  (reverb, equalizer, virtualizer), playback rate, MIDI, the prefetch
+  callback, record markers.
+
 ## Size and memory (decide later)
 
 - **The arm64 translation's compiler, `clang\`, is 233 MB** (`libLLVM` 156,

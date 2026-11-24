@@ -37,7 +37,7 @@ keeping a copy.
 | AudioTrack, SoundPool, MediaPlayer audio | ✅ | A WASAPI mixer; WAV, Ogg, MP3, AAC and what Windows decodes | | `native_audio.cpp` |
 | AAudio | ⚠️ | Output, in write and callback modes | No AAudio input | `native_aaudio.cpp` |
 | Microphone (`AudioRecord`) | ✅ | WASAPI capture | | `native_audio_input.cpp` |
-| OpenSL ES | ❌ | | The engine reports itself unsupported, so native games that use it are silent (#132) | `native_opensles.cpp` |
+| OpenSL ES | ⚠️ | Buffer-queue PCM players (8, 16, 24 and 32-bit, float), players of a file descriptor (an asset's) or a file, volume, seek and loop; recorders on the microphone, with `RECORD_AUDIO` | No http(s) players, effects (reverb, equalizer, virtualizer), playback rate or MIDI. Checked by a unit test, not yet with a game (#132) | `native_opensles.cpp` |
 | `MediaPlayer`, `VideoView` | ✅ | MP4, MOV, MKV with H.264 and AAC always; HEVC, VP9 and AV1 with Microsoft's codec packs; from a file or an http(s) URL | | `video_player.cpp` |
 | `MediaCodec` (ExoPlayer and others) | ⚠️ | Decoding: H.264 video (and the codec packs' formats), AAC and MP3 audio. Encoding: H.264 and AAC-LC on Windows' software encoders, from byte buffers, a camera2 session or a Canvas on the input Surface | Opus, Vorbis and FLAC audio (such a stream plays silent). No OpenGL ES input to an encoder, so screen and game recorders and GL filter pipelines record nothing. The encoders have run only in the unit test | `native_media_video.cpp`, `native_media_codec.cpp`, `media_encode.cpp` |
 | `MediaExtractor`, `MediaMuxer`, `MediaRecorder` | ⚠️ | Extractor: MP4, MOV, MKV tracks with H.264, HEVC, AAC, MP3 from a file, URL, descriptor or `content://`. Muxer: MP4 and 3GPP with H.264 and AAC. Recorder: the microphone to AAC, a Surface (camera2) to H.264 | WebM and Ogg output; AMR, Opus; the old `Camera` API as a recorder's source; tags and embedded pictures in `MediaMetadataRetriever` | `video_decode.cpp`, `mp4_writer.cpp` |
@@ -82,16 +82,15 @@ issue has none yet; please open one before working on it.
 
 | # | Gap | Effect | Issue |
 |---|---|---|---|
-| 1 | OpenSL ES | Games whose engine plays sound through OpenSL ES are silent | |
-| 2 | The NDK media API, `MediaExtractor`, Opus/Vorbis/FLAC in `MediaCodec` | Video from native code does not play; some streams play without sound | |
-| 3 | 32-bit ARM code (`armeabi-v7a`) | Apps that ship only 32-bit ARM libraries do not run at all | |
-| 4 | Vulkan | Games that need Vulkan do not draw | |
-| 5 | Notification action buttons | Reply, mark as read and similar buttons are missing | |
-| 6 | Multi-touch on real hardware | Touchscreen fingers, pen and the touchpad pinch are passed on as Android pointers, but are checked by unit tests only; with a mouse alone, Ctrl+wheel is the only two-finger gesture | |
-| 7 | Code signing | SmartScreen and some antivirus programs warn about the downloads | |
-| 8 | Real sensors | PCs with an accelerometer cannot steer tilt games | |
-| 9 | Bluetooth: discovery, pairing, GATT server, profiles | Apps that pair devices themselves or act as a Bluetooth peripheral | |
-| 10 | Child processes (`fork`, `posix_spawn`, `exec`) | Browsers that run their engine in separate processes (Firefox family) end at start | [#117](https://github.com/israel2176/win.apk/issues/117) |
+| 1 | The NDK media API, `MediaExtractor`, Opus/Vorbis/FLAC in `MediaCodec` | Video from native code does not play; some streams play without sound | |
+| 2 | 32-bit ARM code (`armeabi-v7a`) | Apps that ship only 32-bit ARM libraries do not run at all | |
+| 3 | Vulkan | Games that need Vulkan do not draw | |
+| 4 | Notification action buttons | Reply, mark as read and similar buttons are missing | |
+| 5 | Multi-touch on real hardware | Touchscreen fingers, pen and the touchpad pinch are passed on as Android pointers, but are checked by unit tests only; with a mouse alone, Ctrl+wheel is the only two-finger gesture | |
+| 6 | Code signing | SmartScreen and some antivirus programs warn about the downloads | |
+| 7 | Real sensors | PCs with an accelerometer cannot steer tilt games | |
+| 8 | Bluetooth: discovery, pairing, GATT server, profiles | Apps that pair devices themselves or act as a Bluetooth peripheral | |
+| 9 | Child processes (`fork`, `posix_spawn`, `exec`) | Browsers that run their engine in separate processes (Firefox family) end at start | [#117](https://github.com/israel2176/win.apk/issues/117) |
 
 ## The automated sweep
 
@@ -132,7 +131,6 @@ what to look for in the app or in its log.
 |---|---|---|
 | The APK has only `lib/armeabi-v7a` | 32-bit ARM code, which Win.apk cannot run | Find an x86_64 or arm64-v8a build ([which build](arm-apps.md#which-build-to-install)) |
 | The APK has only `lib/arm64-v8a` | Runs, slowly at first, while it is translated | Give it a few minutes on its first runs |
-| A native game has no sound | OpenSL ES | None yet |
 | A video plays without sound in an ExoPlayer app | Opus, Vorbis or FLAC audio | Pick a stream with AAC audio, if the app lets you |
 | "Sign in with Google" fails, or the app says Play services are missing | The app checks for Google's own Play services | Try [Google services](google-services.md) (experimental) |
 | In-app purchases, a Play Integrity error, a blank Google map | Not available | Use an open-source build without Play services, where there is one |
