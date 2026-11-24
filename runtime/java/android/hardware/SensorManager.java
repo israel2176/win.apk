@@ -13,12 +13,12 @@
 //
 //  (2) The instance side hands back real Sensor objects for the sensors
 //      this device has, and delivers their events. A PC has none of a
-//      phone's motion or environment sensors. Only the GYROSCOPE is in the
-//      catalog, reporting 0,0,0 (a PC at rest on a desk); there is no
+//      phone's motion or environment sensors, so the catalog is EMPTY: no
 //      accelerometer and nothing fused from one (gravity, linear
-//      acceleration, rotation vectors, orientation): the owner's decision of
-//      November 2026 removed the synthetic "phone held upright" pose these
-//      used to report. getDefaultSensor returns null for every type not in
+//      acceleration, rotation vectors, orientation), no gyroscope, no
+//      magnetometer, light, proximity or step counter. The owner's decisions
+//      of November 2026 removed the synthetic "phone held upright" pose and
+//      then the gyroscope that reported 0,0,0. getDefaultSensor returns null for every type not in
 //      the catalog and PackageManager's sensor features are derived from it,
 //      the answer an Android device without the hardware gives.
 //      A single daemon timer ticks all registered listeners at their
@@ -135,8 +135,10 @@ public class SensorManager {
     //     found no reachable ALS service on this machine, so there is nothing to
     //     wire yet. Absent is the truthful answer until there is; see
     //     docs/future_implementations.md.
-    //   * GYROSCOPE STAYS, reporting 0,0,0. For a laptop sitting on a desk that
-    //     is not a fabrication, it is the correct reading.
+    //   * GYROSCOPE STAYED upstream, reporting 0,0,0 ("a laptop on a desk does
+    //     not turn"). Win.apk, November 2026 (the owner's decision): GONE as
+    //     well. A PC has no gyroscope, and a gyroscope that can only report
+    //     zero is a made-up sensor; Android without one returns null.
     //   * Win.apk, November 2026 (the owner's decision): the MOTION family
     //     (ACCELEROMETER, GRAVITY, LINEAR_ACCELERATION, ROTATION_VECTOR,
     //     GAME_ROTATION_VECTOR, ORIENTATION) is GONE too. It reported a
@@ -159,12 +161,11 @@ public class SensorManager {
     protected SensorManager() {
         // Synthesize the "device still" sensor set. Continuous sensors carry a
         // 10000us (100Hz) minDelay like a typical phone.
-        // The gyroscope alone: see makeEvent and the header. No accelerometer
-        // and nothing fused from one (gravity, linear acceleration, rotation
-        // vectors, orientation): a PC has none.
-        mSensors.add(new Sensor(Sensor.TYPE_GYROSCOPE, "Win.apk Gyroscope",
-            Sensor.STRING_TYPE_GYROSCOPE, 8.7f, 0.001f, 0.1f,
-            10000, Sensor.REPORTING_MODE_CONTINUOUS));
+        // No sensor at all: see makeEvent and the header. A PC has no
+        // accelerometer (and so nothing fused from one), no gyroscope, no
+        // magnetometer, light or proximity sensor. When Windows' own sensor
+        // API is wired (a 2-in-1's real accelerometer), its sensors are added
+        // here and to MACAPK_CATALOG_TYPES together.
         // No TYPE_STEP_COUNTER / TYPE_STEP_DETECTOR: a Mac has no pedometer.
         // getDefaultSensor(TYPE_STEP_COUNTER) is THE feature-detection idiom
         // ("non-null means this device counts steps"), and an Android device
@@ -324,9 +325,7 @@ public class SensorManager {
     /** The one place the catalog's membership is written down. The instance
      *  constructor builds its Sensor objects from these same types, so adding or
      *  removing a sensor moves BOTH the catalog and the advertised features. */
-    static final int[] MACAPK_CATALOG_TYPES = {
-        Sensor.TYPE_GYROSCOPE,
-    };
+    static final int[] MACAPK_CATALOG_TYPES = {};
 
     // ---- the ORIGINAL (API 1) SensorListener API -------------------------
     //
@@ -586,9 +585,8 @@ public class SensorManager {
         }
     }
 
-    // Build an event for the given sensor. Only the gyroscope is in the
-    // catalog, and a PC at rest on a desk turns at 0 rad/s; every other type
-    // has no sensor behind it and gets no event.
+    // Build an event for the given sensor. The catalog is empty, so there is
+    // no sensor behind any type and none gets an event.
     //
     // The owner's decision (November 2026): no synthetic accelerometer. The
     // made-up "phone held upright" gravity vector this file used to report
@@ -598,17 +596,14 @@ public class SensorManager {
     // getDefaultSensor(TYPE_ACCELEROMETER) is null, the list has none, and
     // PackageManager has no android.hardware.sensor.accelerometer (derived from
     // MACAPK_CATALOG_TYPES). Tilt Control (TiltControl) drove those sensors and
-    // has nothing to drive now; Win.apk never exposed it in its UI.
+    // has nothing to drive now; Win.apk never exposed it in its UI. The
+    // gyroscope that reported 0,0,0 went the same way (the owner's decision,
+    // November 2026): a PC has none.
     private SensorEvent makeEvent(Sensor s, long nowNanos) {
-        SensorEvent ev;
-        switch (s.getType()) {
-            case Sensor.TYPE_GYROSCOPE:
-                ev = SensorEvent.macapkNew(3);
-                ev.values[0] = 0f; ev.values[1] = 0f; ev.values[2] = 0f;
-                break;
-            default:
-                return null;
-        }
+        float[] values = readingOf(s);
+        if (values == null) return null;
+        SensorEvent ev = SensorEvent.macapkNew(values.length);
+        System.arraycopy(values, 0, ev.values, 0, values.length);
         ev.sensor = s;
         ev.accuracy = SENSOR_STATUS_ACCURACY_HIGH;
         // AOSP frameworks/base/core/java/android/hardware/SensorEvent.java :834-836:
@@ -617,6 +612,13 @@ public class SensorManager {
         ev.timestamp = android.os.SystemClock.AOSP_CLOCKS
                 ? android.os.SystemClock.elapsedRealtimeNanos() : nowNanos;
         return ev;
+    }
+
+    /** The sensor's current reading, or null when nothing measures it. Every
+     *  type is null now: the catalog is empty. A sensor backed by Windows'
+     *  sensor API answers here with what the hardware reads. */
+    private static float[] readingOf(Sensor s) {
+        return null;
     }
 
     // --- TriggerEventListener (one-shot sensors) -------------------------

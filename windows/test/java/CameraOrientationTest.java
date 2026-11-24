@@ -21,8 +21,9 @@
 //    "auto" focus and "torch" as AOSP's camera service does; autoFocus answers
 //    true at once; camera2 lists AF OFF only, a minimum focus distance of 0,
 //    no flash unit, and setTorchMode throws.
-//  * No synthetic accelerometer: getDefaultSensor(TYPE_ACCELEROMETER) is null
-//    and no accelerometer feature is derived from the catalog.
+//  * No made-up sensors: getDefaultSensor is null for the accelerometer, the
+//    gyroscope and every other type, the list is empty, and no
+//    android.hardware.sensor.* feature is derived from the catalog.
 // Exits 0 when every check passes.
 
 import android.hardware.Camera;
@@ -195,6 +196,17 @@ public final class CameraOrientationTest {
                 "nothing fused from one (gravity, rotation vector, orientation)");
         check(!SensorManager.macapkSensorFeatures().contains("android.hardware.sensor.accelerometer"),
                 "no android.hardware.sensor.accelerometer feature");
+        check(sm.getDefaultSensor(Sensor.TYPE_GYROSCOPE) == null
+                        && sm.getDefaultSensor(Sensor.TYPE_GYROSCOPE_UNCALIBRATED) == null,
+                "no gyroscope");
+        check(sm.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD) == null
+                        && sm.getDefaultSensor(Sensor.TYPE_GAME_ROTATION_VECTOR) == null
+                        && sm.getDefaultSensor(Sensor.TYPE_LIGHT) == null
+                        && sm.getDefaultSensor(Sensor.TYPE_PROXIMITY) == null
+                        && sm.getDefaultSensor(Sensor.TYPE_STEP_COUNTER) == null,
+                "no magnetometer, game rotation vector, light, proximity or step counter");
+        check(sm.getSensorList(Sensor.TYPE_ALL).isEmpty(), "the sensor list is empty");
+        check(SensorManager.macapkSensorFeatures().isEmpty(), "no android.hardware.sensor.* feature");
         check(!sm.registerListener(new android.hardware.SensorEventListener() {
                     @Override public void onSensorChanged(android.hardware.SensorEvent e) {}
                     @Override public void onAccuracyChanged(Sensor s, int a) {}
