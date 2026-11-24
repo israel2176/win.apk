@@ -564,6 +564,7 @@ struct InterceptCall {
     bool main_frame;
     bool ask_app;  // the view's client overrides shouldInterceptRequest
     bool file;     // a file: URL: served by macapkServeFile when the app does not
+    std::wstring range;  // a file: URL's Range header, empty when none
 };
 struct PendingIntercept {
     int view = 0;
@@ -588,19 +589,46 @@ struct InterceptAnswer {
     int status = 200;
     std::wstring reason = L"OK", headers;
     std::string body;
+    // The body as the stream WebView2 reads, made on the worker thread so that the WebView2 thread copies nothing;
+    // owned by the answer until finish_intercept hands it over.
+    IStream* stream = nullptr;
 };
 
+// A file: answer cut to the request's byte range (webview_file_urls.h byte_range): 206 with the range's bytes, or
+// 416 when none of them is in the file; a whole answer says it takes ranges, so a media element seeks with them.
+// On the worker thread, before the body becomes a stream.
+void apply_range(InterceptAnswer* ans, const std::wstring& range) {
+    if (ans->status != 200 || ans->headers.find(L"Content-Range:") != std::wstring::npos) return;
+    const uint64_t size = ans->body.size();
+    const wvfile::ByteRange r = wvfile::byte_range(range, size);
+    if (r.kind == wvfile::ByteRange::kPart && !(r.first == 0 && r.last + 1 == size)) {
+        ans->status = 206;
+        ans->reason = L"Partial Content";
+        ans->body = ans->body.substr(static_cast<size_t>(r.first), static_cast<size_t>(r.last - r.first + 1));
+        ans->headers += L"Content-Range: bytes " + std::to_wstring(r.first) + L"-" + std::to_wstring(r.last) + L"/" +
+                        std::to_wstring(size) + L"\r\n";
+    } else if (r.kind == wvfile::ByteRange::kUnsatisfiable) {
+        ans->status = 416;
+        ans->reason = L"Range Not Satisfiable";
+        ans->body.clear();
+        ans->headers += L"Content-Range: bytes */" + std::to_wstring(size) + L"\r\n";
+    }
+    ans->headers += L"Accept-Ranges: bytes\r\n";
+}
+
 void finish_intercept(int id, const InterceptAnswer& ans) {
+    IStream* body = ans.stream;
     auto it = g_intercepts.find(id);
-    if (it == g_intercepts.end()) return;
+    if (it == g_intercepts.end()) {
+        if (body) body->Release();
+        return;
+    }
     PendingIntercept p = it->second;
     g_intercepts.erase(it);
     if (ans.have && p.env) {
         if (ans.missing && p.document) {
             if (View* v = find_view(p.view)) v->missing_doc = p.uri;
         }
-        IStream* body = SHCreateMemStream(reinterpret_cast<const BYTE*>(ans.body.data()),
-                                          static_cast<UINT>(ans.body.size()));
         std::wstring headers = ans.headers;
         // The page's own about:blank (loadDataWithBaseURL with no base) has an
         // opaque origin; Android's page reads the app's assets in CORS mode
@@ -610,9 +638,9 @@ void finish_intercept(int id, const InterceptAnswer& ans) {
         }
         ComPtr<ICoreWebView2WebResourceResponse> resp;
         p.env->CreateWebResourceResponse(body, ans.status, ans.reason.c_str(), headers.c_str(), resp.put());
-        if (body) body->Release();
         if (resp) p.args->put_Response(resp.get());
     }
+    if (body) body->Release();
     p.deferral->Complete();
 }
 
@@ -676,6 +704,7 @@ void intercept_thread() {
                 if (!wv2::check_java(env, "MacApkWebViewBridge.macapkServeFile")) ans = read_answer(env, r);
                 env->DeleteLocalRef(u);
                 if (r) env->DeleteLocalRef(r);
+                if (ans.have) apply_range(&ans, call.range);
             }
             // Never the network: the file origin is not a real host.
             if (!ans.have) {
@@ -685,8 +714,14 @@ void intercept_thread() {
             }
             ans.missing = ans.status == 404;
         }
+        if (ans.have) {
+            ans.stream = SHCreateMemStream(reinterpret_cast<const BYTE*>(ans.body.data()),
+                                           static_cast<UINT>(ans.body.size()));
+            std::string().swap(ans.body);  // the stream holds its own copy; none is carried to the WebView2 thread
+        }
         const int id = call.id;
-        wv2::post([id, ans] { finish_intercept(id, ans); });
+        IStream* stream = ans.stream;
+        if (!wv2::post([id, ans] { finish_intercept(id, ans); }) && stream) stream->Release();
     }
 }
 
@@ -765,6 +800,7 @@ bool offer_to_app(View* v, ICoreWebView2WebResourceRequestedEventArgs* a, ICoreW
     call.main_frame = main_frame;
     call.ask_app = ask_app;
     call.file = file;
+    if (file) call.range = request_header(req, L"Range");
     g_intercepts[call.id] = p;
     static std::once_flag once;
     std::call_once(once, [] {
