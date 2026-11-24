@@ -950,6 +950,32 @@ nor a run with `WINAPK_AOSP_VIEWS=1` and a screen reader. To check then:
 
 ## Work started and not merged
 
+- **TSF text input and the touch keyboard (November 2026, from the other runtime's
+  `compat/input/text_store`, `text_service`, `touch_keyboard`).** The focused
+  editor is the window's TSF document (`windows/host/tsf_text_store.h`, the
+  copy made by `runtime/java/com/macapk/loader/HostTextInput.java`), keys go to
+  the text services first, their edits come back through the
+  `InputConnection`; `showSoftInput`, a tap on an editable `TextView` and
+  `hideSoftInput` show and hide Windows' touch keyboard. IMM32 stays for when
+  TSF cannot be set up (`WINAPK_TSF=0` forces it). Checked: `winapk-tsf-test`
+  (the store's contract, a Hebrew composition, the text service attached to
+  Wine's thread manager), `HostTextInputTest` (the edits on an
+  `InputConnection`), and Fossify Notes under Wine with both views (Win.apk's
+  and `WINAPK_AOSP_VIEWS=1`): the document attaches, follows typing in English
+  and Hebrew with the caret and the characters' boxes, and keys still type.
+  **Not checked, needs real Windows:** a real TSF IME composing (Microsoft
+  Japanese, Pinyin, Korean) and reconverting, its candidate window placed by
+  the characters' boxes (and in a right-to-left window), handwriting and
+  dictation, an IMM32-only IME through TSF's compatibility layer, the touch
+  keyboard on a touchscreen PC (shown, declined with a keyboard attached,
+  hidden when the field goes), Compose fields (no Layout: the candidate window
+  at the last pointer). Found on the way and changed: a TextView the app
+  called `showSoftInput` for (the soft-key route) now has its connection
+  served to the text services, and a tap on an editable field after the app
+  hid the keyboard serves it again (Win.apk's hide unbinds the editor, where
+  Android keeps it served); watch the UI gate and the smoke apps for typing
+  that changed.
+
 - **AOSP graphics, what is missing** (README "Milestone 2"): drawables
   inflate themselves on AOSP's classes, `<animated-vector>` included, whose
   animators now run on Win.apk's `android.animation` (checked with a test APK
