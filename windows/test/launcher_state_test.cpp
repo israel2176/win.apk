@@ -10,7 +10,10 @@
 // copied, while the runtime converts it, once it is being kept and after its end; the queue's order.
 // The update check and download: one check at a time; what each result leaves known and what the
 // InfoBar says of it (once per release); a failed check keeps a newer version found before; the
-// download's progress.
+// download's progress. The release offered (never a draft; a pre-release only while there is no full release),
+// an installer downloaded only with GitHub's SHA-256 of it, and run only at the release's size, SHA-256, version
+// and signer. The Store's signed index (launcher/signed_jar.h): the jar's directory, its one-signer layout and its
+// manifests' digests (the signature itself is checked under Windows, against f-droid.org's real index-v1.jar).
 // The Threads window (launcher/debug_threads.h, include/winapk/debug_protocol.h): an agent's answer
 // survives its own writer and a cut-off reply; every thread Windows lists is a row with or without an
 // agent, and the agent's extra threads are rows too; CPU shares, the search and a sort that holds still.
@@ -34,6 +37,7 @@
 #include "../launcher/installs.h"
 #include "../launcher/library_files.h"
 #include "../launcher/maintenance.h"
+#include "../launcher/signed_jar.h"
 #include "../launcher/updates.h"
 
 namespace {
@@ -502,6 +506,185 @@ void test_updates() {
     }
 }
 
+// The rules a release and its installer are held to (updates.h, after the other runtime's updater).
+void test_update_integrity() {
+    using namespace winapk::launcher;
+    std::printf("the release and its installer\n");
+    check("versions: v0.10.0 > 0.9.1, 0.2 = 0.2.0, the suffix not counted",
+          compare_versions(L"v0.10.0", L"0.9.1") > 0 && compare_versions(L"0.2", L"0.2.0") == 0 &&
+              compare_versions(L"0.3.0-preview", L"0.3.0") == 0 && version_numbers(L"preview").empty());
+    const std::string hex(64, 'a');
+    check("a digest is sha256: and 64 hex digits, upper case taken",
+          asset_sha256("sha256:" + hex) == hex && asset_sha256("sha256:" + std::string(64, 'A')) == hex &&
+              asset_sha256("sha1:" + hex).empty() && asset_sha256("sha256:" + hex.substr(1)).empty() &&
+              asset_sha256("sha256:" + std::string(63, 'a') + "g").empty() && asset_sha256("").empty());
+
+    auto rel = [&](const wchar_t* tag, bool draft, bool pre) {
+        ListedRelease r;
+        r.tag = tag;
+        r.draft = draft;
+        r.prerelease = pre;
+        r.asset = true;
+        r.asset_state = "uploaded";
+        r.digest = "sha256:" + hex;
+        r.size = 1000;
+        return r;
+    };
+    check("an installer with GitHub's SHA-256, uploaded whole: downloaded", installer_checkable(rel(L"v1", 0, 0)));
+    {
+        ListedRelease r = rel(L"v1", 0, 0);
+        r.digest.clear();
+        check("no SHA-256: not downloaded, even with its size", !installer_checkable(r));
+        r = rel(L"v1", 0, 0);
+        r.asset_state = "starter";
+        check("an upload not finished: not downloaded", !installer_checkable(r));
+        r = rel(L"v1", 0, 0);
+        r.size = 0;
+        check("no size: not downloaded", !installer_checkable(r));
+        r.size = kMaxSetupBytes + 1;
+        check("larger than any installer: not downloaded", !installer_checkable(r));
+        r = rel(L"v1", 0, 0);
+        r.asset = false;
+        check("no installer at all: nothing to download", !installer_checkable(r));
+    }
+    check("an empty list offers nothing", pick_release({}) == -1);
+    check("the highest version, not the first listed",
+          pick_release({rel(L"v0.8.0", 0, 0), rel(L"v0.10.0", 0, 0), rel(L"v0.9.0", 0, 0)}) == 1);
+    check("a draft never", pick_release({rel(L"v0.8.0", 0, 0), rel(L"v0.9.0", 1, 0)}) == 0 &&
+                               pick_release({rel(L"v0.9.0", 1, 0)}) == -1);
+    check("pre-releases only: the highest is offered (every release so far is one)",
+          pick_release({rel(L"v0.7.0", 0, 1), rel(L"v0.8.0", 0, 1)}) == 1);
+    check("with a full release listed, a newer pre-release is not offered",
+          pick_release({rel(L"v1.1.0-beta", 0, 1), rel(L"v1.0.0", 0, 0)}) == 1);
+    check("a tag that is no version is not a release", pick_release({rel(L"nightly", 0, 0)}) == -1);
+
+    SetupFacts f;
+    f.size = 1000;
+    f.sha256 = hex;
+    f.product_version = L"0.9.0-preview   ";  // Inno Setup pads it
+    f.signature = Signature::kUnsigned;
+    const std::wstring v = L"0.9.0-preview";
+    check("unsigned build, unsigned installer of the right size, SHA-256 and version: runs, said unsigned",
+          judge_setup(f, 1000, hex, v, L"") == SetupVerdict::kOkUnsigned && setup_runs(SetupVerdict::kOkUnsigned));
+    check("the version may be asked as the tag", judge_setup(f, 1000, hex, L"v0.9.0-preview", L"") ==
+                                                     SetupVerdict::kOkUnsigned);
+    check("cut off or longer: refused", judge_setup(f, 999, hex, v, L"") == SetupVerdict::kSize &&
+                                            !setup_runs(SetupVerdict::kSize));
+    check("another SHA-256: refused", judge_setup(f, 1000, std::string(64, 'b'), v, L"") == SetupVerdict::kDigest);
+    check("no SHA-256 to check against: refused", judge_setup(f, 1000, "", v, L"") == SetupVerdict::kDigest);
+    {
+        SetupFacts g = f;
+        g.product_version = L"0.8.0";
+        check("another version inside: refused", judge_setup(g, 1000, hex, v, L"") == SetupVerdict::kVersion);
+        g.product_version.clear();
+        check("no version inside: refused", judge_setup(g, 1000, hex, v, L"") == SetupVerdict::kVersion);
+        g = f;
+        g.signature = Signature::kInvalid;
+        check("a broken signature: refused, signed build or not",
+              judge_setup(g, 1000, hex, v, L"") == SetupVerdict::kBadSignature &&
+                  judge_setup(g, 1000, hex, v, L"Win.apk") == SetupVerdict::kBadSignature);
+        g = f;
+        g.signature = Signature::kValid;
+        g.signer = L"Win.apk";
+        check("signed, unsigned build: runs", judge_setup(g, 1000, hex, v, L"") == SetupVerdict::kOk);
+        check("signed by this build's signer: runs", judge_setup(g, 1000, hex, v, L"Win.apk") == SetupVerdict::kOk);
+        check("signed by another: refused",
+              judge_setup(g, 1000, hex, v, L"Someone else") == SetupVerdict::kSignerChanged);
+        check("signed build, unsigned installer: refused",
+              judge_setup(f, 1000, hex, v, L"Win.apk") == SetupVerdict::kNotSigned);
+    }
+}
+
+// A zip of stored entries, as a jar holds them, for the signed index's layout rules (signed_jar.h).
+std::string stored_zip(const std::vector<std::pair<std::string, std::string>>& files) {
+    std::string zip, dir;
+    auto u16 = [](std::string* s, unsigned v) {
+        s->push_back(static_cast<char>(v & 255));
+        s->push_back(static_cast<char>(v >> 8 & 255));
+    };
+    auto u32 = [&u16](std::string* s, unsigned v) {
+        u16(s, v & 0xFFFF);
+        u16(s, v >> 16);
+    };
+    for (const auto& [name, data] : files) {
+        const unsigned at = static_cast<unsigned>(zip.size()), n = static_cast<unsigned>(data.size());
+        u32(&zip, 0x04034b50);
+        u16(&zip, 10), u16(&zip, 0), u16(&zip, 0), u16(&zip, 0), u16(&zip, 0);
+        u32(&zip, 0), u32(&zip, n), u32(&zip, n);
+        u16(&zip, static_cast<unsigned>(name.size())), u16(&zip, 0);
+        zip += name + data;
+        u32(&dir, 0x02014b50);
+        u16(&dir, 20), u16(&dir, 10), u16(&dir, 0), u16(&dir, 0), u16(&dir, 0), u16(&dir, 0);
+        u32(&dir, 0), u32(&dir, n), u32(&dir, n);
+        u16(&dir, static_cast<unsigned>(name.size())), u16(&dir, 0), u16(&dir, 0), u16(&dir, 0), u16(&dir, 0);
+        u32(&dir, 0), u32(&dir, at);
+        dir += name;
+    }
+    const unsigned dir_at = static_cast<unsigned>(zip.size());
+    zip += dir;
+    u32(&zip, 0x06054b50);
+    u16(&zip, 0), u16(&zip, 0);
+    u16(&zip, static_cast<unsigned>(files.size())), u16(&zip, static_cast<unsigned>(files.size()));
+    u32(&zip, static_cast<unsigned>(dir.size())), u32(&zip, dir_at);
+    u16(&zip, 0);
+    return zip;
+}
+
+void test_signed_jar() {
+    using namespace winapk::launcher;
+    std::printf("the Store's signed index\n");
+    const std::string zip = stored_zip({{"META-INF/MANIFEST.MF", "m"}, {"META-INF/CIARANG.SF", "s"},
+                                        {"META-INF/CIARANG.RSA", "r"}, {"index-v1.json", "{}"}});
+    std::vector<ZipEntry> e;
+    check("the zip's directory reads", zip_entries(zip, &e) && e.size() == 4 && e[3].name == "index-v1.json" &&
+                                           e[3].usize == 2 && e[3].method == 0);
+    check("and an entry's data is where its local header says",
+          e.size() == 4 && zip_data_at(zip, e[3]) && zip.compare(zip_data_at(zip, e[3]), 2, "{}") == 0);
+    JarLayout l;
+    check("one signer, its manifest and the index: the layout holds",
+          jar_layout(e, "index-v1.json", &l) && l.payload == 3 && l.manifest == 0 && l.sf == 1 && l.signature == 2);
+    check("a jar without the index is not one", !jar_layout(e, "entry.json", &l));
+    std::vector<ZipEntry> more = e;
+    more.push_back(more[3]);
+    more.back().name = "evil.txt";
+    check("a file beside the signed one: refused", !jar_layout(more, "index-v1.json", &l));
+    more = e;
+    more.push_back(more[1]);
+    more.back().name = "META-INF/OTHER.SF";
+    check("a second signer: refused", !jar_layout(more, "index-v1.json", &l));
+    more = e;
+    more[2].name = "META-INF/OTHER.RSA";
+    check("a signature block of another name than its .SF: refused", !jar_layout(more, "index-v1.json", &l));
+    more = e;
+    more.push_back(more[3]);
+    check("the index twice: refused", !jar_layout(more, "index-v1.json", &l));
+    check("not a zip", !zip_entries("not a zip at all, nothing like one", &e) && !zip_entries("", &e));
+    std::string cut = zip;
+    cut.resize(cut.size() - 30);
+    check("a zip cut short does not read", !zip_entries(cut, &e));
+
+    const auto m = manifest_sections(
+        "Manifest-Version: 1.0\r\nCreated-By: 17\r\n\r\nName: index-v1.json\r\nSHA1-Digest: abc=\r\n\r\n"
+        "Name: a-very-long-name-that-jarsigner-wraps-at-seventy-two-bytes-per-line-so-it\r\n continues.json\r\n"
+        "SHA-256-Digest: def=\r\nSHA1-Digest: ghi=\r\n");
+    ManifestDigest d;
+    check("a manifest's sections, by name",
+          m.size() == 3 && m.at("").at("Manifest-Version") == "1.0" && m.count("index-v1.json"));
+    check("a section's digest: SHA1 when that is all",
+          pick_digest(m.at("index-v1.json"), "-Digest", &d) && d.alg == "SHA1" && d.base64 == "abc=");
+    const std::string wrapped = "a-very-long-name-that-jarsigner-wraps-at-seventy-two-bytes-per-line-so-itcontinues.json";
+    check("a continued line joins the one before, and SHA-256 is preferred",
+          m.count(wrapped) && pick_digest(m.at(wrapped), "-Digest", &d) && d.alg == "SHA-256" && d.base64 == "def=");
+    check("no digest: none", !pick_digest(m.at(""), "-Digest-Manifest", &d));
+    const auto sf = manifest_sections("Signature-Version: 1.0\nSHA1-Digest-Manifest: xyz=\n\nName: index-v1.json\n"
+                                      "SHA1-Digest: q=\n");
+    check("a .SF's digest of the whole manifest, with LF lines",
+          sf.count("") && pick_digest(sf.at(""), "-Digest-Manifest", &d) && d.base64 == "xyz=");
+    check("two sections of one name: the manifest is refused",
+          manifest_sections("A: 1\n\nName: x\nB: 2\n\nName: x\nB: 3\n").empty());
+    check("a line that is no attribute: refused", manifest_sections("Manifest-Version 1.0\n").empty());
+}
+
 void test_debug_threads() {
     using namespace winapk::launcher;
     namespace dbg = winapk::debug;
@@ -769,6 +952,8 @@ int main() {
     test_runs();
     test_installs();
     test_updates();
+    test_update_integrity();
+    test_signed_jar();
     test_debug_threads();
     test_library_files();
     test_maintenance();

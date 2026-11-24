@@ -40,7 +40,8 @@
 // fixes its launched activity's orientation always gets that one.
 //
 // The Store tab, next to the library, is F-Droid's catalog (f-droid.org,
-// free and open-source apps): its index is fetched in the background and
+// free and open-source apps): its index is fetched in the background, read
+// only out of index-v1.jar signed by F-Droid's pinned key (signed_jar.h), and
 // kept as store\catalog.tsv, searchable and by category. Install downloads
 // the APK, checks it against the index's SHA-256 and installs it as above;
 // an app the library already has (by package) is updated in place.
@@ -78,6 +79,8 @@
 #include <wincrypt.h>
 #include <winternl.h>
 #include <netlistmgr.h>
+#include <softpub.h>
+#include <wintrust.h>
 
 #include <algorithm>
 #include <cmath>
@@ -100,6 +103,7 @@
 #include "installs.h"
 #include "library_files.h"
 #include "maintenance.h"
+#include "signed_jar.h"
 #include "updates.h"
 #include "../host/window_fit.h"
 #include "../include/winapk/aot_stamp.h"
@@ -129,7 +133,7 @@ constexpr UINT kRunReady = WM_APP + 11;       // the app's window is up; lParam:
 constexpr UINT kGmsAccount = WM_APP + 12;     // lParam: new std::wstring (the signed-in account, or empty)
 constexpr UINT kUpdateChecked = WM_APP + 13;  // lParam: new UpdateCheck (the check, with its result)
 constexpr UINT kUpdateProgress = WM_APP + 14; // wParam: percent of Win.apk-Setup.exe downloaded
-constexpr UINT kUpdateDownloaded = WM_APP + 15;  // wParam: ok (complete and checked)
+constexpr UINT kUpdateDownloaded = WM_APP + 15;  // wParam: 0 broke off, else updates.h SetupVerdict + 1
 constexpr UINT kSetupChanged = WM_APP + 16;   // the Downloads folder changed while the Google services setup is open
 constexpr UINT kSetupChecked = WM_APP + 17;   // lParam: new SetupCheck (winapk-runtime --verify-apk's answer)
 constexpr UINT kMaintenanceEnded = WM_APP + 18;  // the maintenance window the launcher opened ended
@@ -613,6 +617,12 @@ const wchar_t* tr(const wchar_t* en) {
         {L"Downloading Win.apk {0}…", L"מוריד את Win.apk {0}…"},
         {L"Downloading… {0}%", L"מוריד… {0}%"},
         {L"Couldn't download the update. Check the internet connection.", L"לא ניתן היה להוריד את העדכון. בדוק את החיבור לאינטרנט."},
+        {L"Checking the Win.apk {0} installer…", L"בודק את תוכנית ההתקנה של Win.apk {0}…"},
+        {L"The downloaded installer is not the one GitHub lists (its SHA-256 differs). It was deleted and not run.", L"תוכנית ההתקנה שהורדה אינה זו ש-GitHub מפרט (סיכום הביקורת SHA-256 שלה שונה). היא נמחקה ולא הופעלה."},
+        {L"The downloaded installer is not of the version offered. It was deleted and not run.", L"תוכנית ההתקנה שהורדה אינה של הגרסה שהוצעה. היא נמחקה ולא הופעלה."},
+        {L"The downloaded installer's signature does not hold. It was deleted and not run.", L"החתימה של תוכנית ההתקנה שהורדה אינה תקפה. היא נמחקה ולא הופעלה."},
+        {L"GitHub gives no SHA-256 checksum of this release's installer, so Win.apk does not download it; its page on GitHub has its files.", L"GitHub אינו מפרסם סיכום ביקורת SHA-256 לתוכנית ההתקנה של גרסה זו, ולכן Win.apk אינה מורידה אותה; הקבצים שלה נמצאים בדף הגרסה ב-GitHub."},
+        {L"Win.apk's installers are not code-signed: an update runs only when its size, its SHA-256 checksum and its version are the ones GitHub lists for the release.", L"תוכניות ההתקנה של Win.apk אינן חתומות בחתימת קוד: עדכון מופעל רק כשהגודל שלו, סיכום הביקורת SHA-256 שלו והגרסה שלו הם אלה ש-GitHub מפרט לגרסה."},
         {L"Wait for the installs to finish, then update Win.apk.", L"המתן לסיום ההתקנות, ולאחר מכן עדכן את Win.apk."},
         {L"Close {0} first: the update replaces files it uses.", L"סגור תחילה את {0}: העדכון מחליף קבצים שהיא משתמשת בהם."},
         {L"Close the running apps first: the update replaces files they use.", L"סגור תחילה את האפליקציות הפועלות: העדכון מחליף קבצים שהן משתמשות בהם."},
@@ -1802,6 +1812,9 @@ DWORD WINAPI install_thread(void* param) {
 // The store: F-Droid's catalog, its icons and its APKs
 
 constexpr wchar_t kRepo[] = L"https://f-droid.org/repo/";
+// The SHA-256 of the certificate f-droid.org's repository signs its index with: the fingerprint F-Droid's client
+// pins for this repository (its default_repos.xml), and the one f-droid.org/docs publishes.
+constexpr char kFdroidSigner[] = "43238d512c1e5eb2d6569f4a3afbf5523418b82e0a3ed1552770abb9a9c9ccab";
 // In 100 ns units; f-droid.org publishes a few times a day.
 constexpr unsigned long long kCatalogMaxAge = 6ull * 3600 * 10000000;
 
@@ -1877,10 +1890,22 @@ int http_get(const std::wstring& url, const fs::path& out, const std::wstring& e
                             WINHTTP_HEADER_NAME_BY_INDEX, &code, &size, WINHTTP_NO_HEADER_INDEX);
         status = static_cast<int>(code);
         if (status == 200) {
-            DWORD total = 0;
-            size = sizeof(total);
-            WinHttpQueryHeaders(request, WINHTTP_QUERY_CONTENT_LENGTH | WINHTTP_QUERY_FLAG_NUMBER,
-                                WINHTTP_HEADER_NAME_BY_INDEX, &total, &size, WINHTTP_NO_HEADER_INDEX);
+            // Content-Length as text (a number query stops at 4 GB), and whether the body comes encoded: WinHTTP
+            // then inflates it, and the length is the encoded one's, not the bytes read.
+            uint64_t total = 0;
+            wchar_t text[32] = {};
+            size = sizeof(text) - sizeof(wchar_t);
+            if (WinHttpQueryHeaders(request, WINHTTP_QUERY_CONTENT_LENGTH, WINHTTP_HEADER_NAME_BY_INDEX, text, &size,
+                                    WINHTTP_NO_HEADER_INDEX)) {
+                total = wcstoull(text, nullptr, 10);
+            }
+            wchar_t encoding[64] = {};
+            size = sizeof(encoding) - sizeof(wchar_t);
+            const bool encoded = WinHttpQueryHeaders(request, WINHTTP_QUERY_CONTENT_ENCODING,
+                                                     WINHTTP_HEADER_NAME_BY_INDEX, encoding, &size,
+                                                     WINHTTP_NO_HEADER_INDEX) &&
+                                 encoding[0] && _wcsicmp(encoding, L"identity") != 0;
+            const uint64_t length = encoded ? 0 : total;  // what the body must come to, 0 when unknown
             if (new_etag) {
                 wchar_t tag[256] = {};
                 size = sizeof(tag);
@@ -1902,10 +1927,12 @@ int http_get(const std::wstring& url, const fs::path& out, const std::wstring& e
                 if (!ok || n == 0) break;
                 DWORD written = 0;
                 ok = WriteFile(f, buf.data(), n, &written, nullptr) && written == n;
-                if (ok && progress) progress(got + n, total);
+                if (ok && progress) progress(got + n, encoded ? 0 : total);
+                if (length && got + n > length) ok = false;  // more than the server said: not the file asked for
             }
             if (f != INVALID_HANDLE_VALUE) CloseHandle(f);
-            ok = ok && got > 0 && MoveFileExW(part.c_str(), out.c_str(), MOVEFILE_REPLACE_EXISTING) != 0;
+            // A body that broke off short of its Content-Length is not kept (as the other runtime's updater refuses it).
+            ok = ok && got > 0 && (!length || got == length) && MoveFileExW(part.c_str(), out.c_str(), MOVEFILE_REPLACE_EXISTING) != 0;
             if (!ok) {
                 fs::remove(part, ec);
                 status = 0;
@@ -2323,17 +2350,21 @@ DWORD WINAPI catalog_thread(void* param) {
             std::getline(f, s);
             etag = utf8_to_wide(s);
         }
-        const fs::path raw = store_dir() / L"index-v1.json";
+        const fs::path jar = store_dir() / L"index-v1.jar", raw = store_dir() / L"index-v1.json";
         ULONGLONG last = 0;
-        const int status = http_get(std::wstring(kRepo) + L"index-v1.json", raw, etag, &new_etag,
+        const int status = http_get(std::wstring(kRepo) + L"index-v1.jar", jar, etag, &new_etag,
                                     [&](uint64_t got, uint64_t) {
                                         if (GetTickCount64() - last < 100) return;
                                         last = GetTickCount64();
                                         PostMessageW(g_main, kStoreProgress, static_cast<WPARAM>(got >> 10), 0);
                                     });
+        // The index is read only out of the jar F-Droid's key signed (signed_jar.h); a catalog from anything
+        // else would name APKs, and their SHA-256s, that no one vouched for.
+        const bool verified =
+            status == 200 && winapk::launcher::verify_signed_jar(jar, "index-v1.json", kFdroidSigner, raw, nullptr);
         if (status == 304) {
             touch(catalog_file());
-        } else if (status == 200 && convert_index(raw, catalog_file())) {
+        } else if (verified && convert_index(raw, catalog_file())) {
             std::ofstream(catalog_etag_file(), std::ios::binary | std::ios::trunc) << wide_to_utf8(new_etag);
             PostMessageW(g_main, kStoreCatalog, kCatalogList,
                          reinterpret_cast<LPARAM>(new std::vector<StoreApp>(read_catalog())));
@@ -2341,6 +2372,7 @@ DWORD WINAPI catalog_thread(void* param) {
             result = kCatalogFailed;
         }
         fs::remove(raw, ec);
+        fs::remove(jar, ec);
     }
     PostMessageW(g_main, kStoreCatalog, result, 0);
     return 0;
@@ -2417,7 +2449,11 @@ DWORD WINAPI download_thread(void* param) {
 // Software updates: the newest release on GitHub and its installer
 //
 // Releases are pre-releases tagged v0.2.0-preview, so /releases/latest (which
-// skips them) will not do: the list is read and its highest version taken.
+// skips them) will not do: the list is read and its highest version taken
+// (updates.h pick_release: never a draft, a pre-release only while there is no
+// full release). Its installer is downloaded only with GitHub's SHA-256 of it,
+// and runs only when its size, SHA-256, signature and version are the
+// release's (updates.h judge_setup), also a copy downloaded before.
 // The request says nothing about the user, and its answer is kept with its ETag:
 // a check that finds nothing new costs GitHub a 304, and the library shows the
 // last result at start without asking again within the day.
@@ -2441,29 +2477,7 @@ HINTERNET updater_session() {
     return session;
 }
 
-// 0.2.0 of "v0.2.0-preview": the numbers before any -suffix or +build.
-std::vector<unsigned> version_numbers(const std::wstring& v) {
-    std::vector<unsigned> out;
-    size_t i = !v.empty() && (v[0] == L'v' || v[0] == L'V') ? 1 : 0;
-    while (i < v.size() && iswdigit(v[i])) {
-        unsigned n = 0;
-        while (i < v.size() && iswdigit(v[i])) n = n * 10 + static_cast<unsigned>(v[i++] - L'0');
-        out.push_back(n);
-        if (i >= v.size() || v[i] != L'.') break;
-        ++i;
-    }
-    return out;
-}
-
-// <0, 0, >0 as a is older than, the same as or newer than b; missing numbers count as 0 (0.2 = 0.2.0).
-int compare_versions(const std::wstring& a, const std::wstring& b) {
-    const std::vector<unsigned> x = version_numbers(a), y = version_numbers(b);
-    for (size_t i = 0; i < (std::max)(x.size(), y.size()); ++i) {
-        const unsigned p = i < x.size() ? x[i] : 0, q = i < y.size() ? y[i] : 0;
-        if (p != q) return p < q ? -1 : 1;
-    }
-    return 0;
-}
+using winapk::launcher::compare_versions;  // updates.h: the version rules, tested there
 
 // Release notes in Markdown as plain text: no headings' #, no ** or `, "• " for list items,
 // [text](link) as its text, and no runs of blank lines.
@@ -2521,8 +2535,9 @@ std::string markdown_to_text(const std::string& md) {
 
 struct Release {
     std::wstring tag, version, notes, page;  // version: the tag without its v; notes: plain text
-    std::wstring url;                        // Win.apk-Setup.exe's download, empty when the release has none
-    std::string digest;                      // the asset's "sha256:<hex>", when GitHub gives one
+    std::wstring url;                        // Win.apk-Setup.exe's download, empty when there is none to check
+    std::string sha256;                      // GitHub's SHA-256 of the asset, lower-case hex
+    bool unchecked = false;                  // the release has an installer, but GitHub gives no SHA-256 of it
     uint64_t size = 0;                       // the asset's bytes
     FILETIME published{};
 };
@@ -2540,27 +2555,30 @@ FILETIME iso_filetime(const std::string& s) {
     return ft;
 }
 
-// The newest release in GitHub's list that is not a draft, with its installer asset; `found` says whether there
-// is one. Returns whether the list could be read.
+// The release to offer from GitHub's list (updates.h pick_release), with its installer asset when GitHub lists
+// a SHA-256 of it; `found` says whether there is one. Returns whether the list could be read.
 bool newest_release(const std::string& json, Release* best, bool* found_out) {
+    using winapk::launcher::ListedRelease;
     Json j{json.data(), json.data() + json.size()};
-    bool found = false;
     auto text = [&j](std::string* out) {  // a string, or skips a null
         j.ws();
         if (j.p < j.end && *j.p == '"') j.str(out);
         else j.skip();
     };
+    std::vector<Release> releases;
+    std::vector<ListedRelease> listed;
     j.array([&] {
         Release r;
-        bool draft = false;
+        ListedRelease l;
+        std::wstring url;
         j.object([&](const std::string& key) {
             std::string v;
-            if (key == "draft") {
+            if (key == "draft" || key == "prerelease") {
                 j.scalar(&v);
-                draft = v == "true";
+                (key == "draft" ? l.draft : l.prerelease) = v == "true";
             } else if (key == "tag_name") {
                 text(&v);
-                r.tag = utf8_to_wide(v);
+                r.tag = l.tag = utf8_to_wide(v);
             } else if (key == "body") {
                 text(&v);
                 r.notes = utf8_to_wide(markdown_to_text(v));
@@ -2572,32 +2590,42 @@ bool newest_release(const std::string& json, Release* best, bool* found_out) {
                 r.published = iso_filetime(v);
             } else if (key == "assets") {
                 j.array([&] {
-                    std::string name, url, size, digest;
+                    std::string name, link, size, digest, state;
                     j.object([&](const std::string& k) {
                         if (k == "name") text(&name);
-                        else if (k == "browser_download_url") text(&url);
+                        else if (k == "browser_download_url") text(&link);
                         else if (k == "size") j.scalar(&size);
                         else if (k == "digest") text(&digest);
+                        else if (k == "state") text(&state);
                         else j.skip();
                     });
-                    if (utf8_to_wide(name) == kSetupAsset && !url.empty()) {
-                        r.url = utf8_to_wide(url);
-                        r.size = std::strtoull(size.c_str(), nullptr, 10);
-                        r.digest = digest;
+                    if (utf8_to_wide(name) == kSetupAsset && !link.empty() && !l.asset) {
+                        l.asset = true;
+                        l.asset_state = state;
+                        l.digest = digest;
+                        l.size = std::strtoull(size.c_str(), nullptr, 10);
+                        url = utf8_to_wide(link);
                     }
                 });
             } else {
                 j.skip();
             }
         });
-        if (!j.ok || draft || version_numbers(r.tag).empty()) return;
-        if (!found || compare_versions(r.tag, best->tag) > 0) {
-            r.version = r.tag.substr(r.tag[0] == L'v' || r.tag[0] == L'V' ? 1 : 0);
-            *best = std::move(r);
-            found = true;
+        if (!j.ok) return;
+        r.version = r.tag.substr(!r.tag.empty() && (r.tag[0] == L'v' || r.tag[0] == L'V') ? 1 : 0);
+        if (winapk::launcher::installer_checkable(l)) {
+            r.url = url;
+            r.sha256 = winapk::launcher::asset_sha256(l.digest);
+            r.size = l.size;
+        } else {
+            r.unchecked = l.asset;  // an installer Win.apk cannot check is not downloaded: its page is offered
         }
+        releases.push_back(std::move(r));
+        listed.push_back(std::move(l));
     });
-    *found_out = j.ok && found;
+    const int pick = j.ok ? winapk::launcher::pick_release(listed) : -1;
+    if (pick >= 0) *best = std::move(releases[static_cast<size_t>(pick)]);
+    *found_out = pick >= 0;
     return j.ok;
 }
 
@@ -2638,12 +2666,111 @@ DWORD WINAPI update_check_thread(void* param) {
     return 0;
 }
 
-// Downloads the release's Win.apk-Setup.exe to updates\, and keeps it only when it is whole: the size GitHub
-// gives, and its SHA-256 when GitHub gives that too.
+// A file's Authenticode signature (WinVerifyTrust, no revocation fetch), and the signer's name when it verifies.
+winapk::launcher::Signature authenticode(const fs::path& file, std::wstring* signer) {
+    using winapk::launcher::Signature;
+    WINTRUST_FILE_INFO fi{};
+    fi.cbStruct = sizeof(fi);
+    fi.pcwszFilePath = file.c_str();
+    WINTRUST_DATA wd{};
+    wd.cbStruct = sizeof(wd);
+    wd.dwUIChoice = WTD_UI_NONE;
+    wd.fdwRevocationChecks = WTD_REVOKE_NONE;
+    wd.dwUnionChoice = WTD_CHOICE_FILE;
+    wd.pFile = &fi;
+    wd.dwStateAction = WTD_STATEACTION_VERIFY;
+    wd.dwProvFlags = WTD_CACHE_ONLY_URL_RETRIEVAL;
+    GUID action = WINTRUST_ACTION_GENERIC_VERIFY_V2;
+    const LONG status = WinVerifyTrust(static_cast<HWND>(INVALID_HANDLE_VALUE), &action, &wd);
+    const DWORD error = GetLastError();
+    Signature out = Signature::kInvalid;
+    if (status == ERROR_SUCCESS) {
+        out = Signature::kValid;
+        if (CRYPT_PROVIDER_DATA* pd = WTHelperProvDataFromStateData(wd.hWVTStateData)) {
+            CRYPT_PROVIDER_SGNR* sg = WTHelperGetProvSignerFromChain(pd, 0, FALSE, 0);
+            if (sg && sg->csCertChain && sg->pasCertChain[0].pCert) {
+                wchar_t name[512] = {};
+                CertGetNameStringW(sg->pasCertChain[0].pCert, CERT_NAME_SIMPLE_DISPLAY_TYPE, 0, nullptr, name, 512);
+                if (signer) *signer = name;
+            }
+        }
+    } else if (status == TRUST_E_NOSIGNATURE &&
+               (error == static_cast<DWORD>(TRUST_E_NOSIGNATURE) ||
+                error == static_cast<DWORD>(TRUST_E_SUBJECT_FORM_UNKNOWN) ||
+                error == static_cast<DWORD>(TRUST_E_PROVIDER_UNKNOWN))) {
+        out = Signature::kUnsigned;  // no signature at all; any other failure is a signature that does not hold
+    }
+    wd.dwStateAction = WTD_STATEACTION_CLOSE;
+    WinVerifyTrust(static_cast<HWND>(INVALID_HANDLE_VALUE), &action, &wd);
+    if (out == Signature::kValid && signer && signer->empty()) out = Signature::kInvalid;  // a signer with no name
+    return out;
+}
+
+// The name on Win.apk.exe's own signature; empty when this build is not code-signed (no build is, so far).
+const std::wstring& own_signer() {
+    static const std::wstring name = [] {
+        wchar_t self[MAX_PATH * 4] = {};
+        GetModuleFileNameW(nullptr, self, static_cast<DWORD>(std::size(self)));
+        std::wstring who;
+        return authenticode(self, &who) == winapk::launcher::Signature::kValid ? who : std::wstring();
+    }();
+    return name;
+}
+
+// The ProductVersion string of a file's version resource, in its first language; empty without one.
+std::wstring product_version(const fs::path& file) {
+    DWORD ignored = 0;
+    const DWORD n = GetFileVersionInfoSizeW(file.c_str(), &ignored);
+    if (!n) return {};
+    std::vector<BYTE> data(n);
+    if (!GetFileVersionInfoW(file.c_str(), 0, n, data.data())) return {};
+    struct Lang {
+        WORD language, codepage;
+    }* langs = nullptr;
+    UINT bytes = 0;
+    if (!VerQueryValueW(data.data(), L"\\VarFileInfo\\Translation", reinterpret_cast<void**>(&langs), &bytes) ||
+        bytes < sizeof(Lang)) {
+        return {};
+    }
+    wchar_t key[64];
+    swprintf(key, std::size(key), L"\\StringFileInfo\\%04x%04x\\ProductVersion", langs[0].language, langs[0].codepage);
+    wchar_t* value = nullptr;
+    UINT chars = 0;
+    if (!VerQueryValueW(data.data(), key, reinterpret_cast<void**>(&value), &chars) || !value) return {};
+    return std::wstring(value, wcsnlen(value, chars));
+}
+
+// Whether the installer at `file` may run as the update to `r` (updates.h judge_setup).
+winapk::launcher::SetupVerdict judge_setup_file(const fs::path& file, const Release& r) {
+    winapk::launcher::SetupFacts f;
+    std::error_code ec;
+    f.size = fs::file_size(file, ec);
+    if (ec) f.size = 0;
+    if (f.size == r.size) {  // the rest only for a file of the right size
+        f.sha256 = sha256_of(file);
+        f.signature = authenticode(file, &f.signer);
+        f.product_version = product_version(file);
+    }
+    return winapk::launcher::judge_setup(f, r.size, r.sha256, r.version, own_signer());
+}
+
+// A copy kept from before is checked again as a download is; if it does not hold, or there is none, the release's
+// Win.apk-Setup.exe is downloaded to updates\ and kept only when judge_setup says it may run. wParam of
+// kUpdateDownloaded: 0 when the download broke off, else the verdict + 1.
 DWORD WINAPI update_download_thread(void* param) {
     std::unique_ptr<Release> r(static_cast<Release*>(param));
-    int shown = -1;
+    using winapk::launcher::SetupVerdict;
     const fs::path file = setup_file(r->version);
+    std::error_code ec;
+    if (fs::exists(file, ec)) {
+        const SetupVerdict kept = judge_setup_file(file, *r);
+        if (winapk::launcher::setup_runs(kept)) {
+            PostMessageW(g_main, kUpdateDownloaded, static_cast<WPARAM>(kept) + 1, 0);
+            return 0;
+        }
+        fs::remove(file, ec);
+    }
+    int shown = -1;
     const int status = http_get(r->url, file, L"", nullptr, [&](uint64_t got, uint64_t total) {
         if (!total) total = r->size;
         const int pct = total ? static_cast<int>((std::min)(got * 100 / total, uint64_t{99})) : 0;
@@ -2651,11 +2778,15 @@ DWORD WINAPI update_download_thread(void* param) {
         shown = pct;
         PostMessageW(g_main, kUpdateProgress, static_cast<WPARAM>(pct), 0);
     }, L"", updater_session());
-    std::error_code ec;
-    bool ok = status == 200 && r->size > 0 && fs::file_size(file, ec) == r->size && !ec;
-    if (ok && r->digest.rfind("sha256:", 0) == 0) ok = "sha256:" + sha256_of(file) == r->digest;
-    if (!ok) fs::remove(file, ec);
-    PostMessageW(g_main, kUpdateDownloaded, ok, 0);
+    WPARAM result = 0;
+    if (status == 200) {
+        const SetupVerdict v = judge_setup_file(file, *r);
+        result = static_cast<WPARAM>(v) + 1;
+        if (!winapk::launcher::setup_runs(v)) fs::remove(file, ec);
+    } else {
+        fs::remove(file, ec);
+    }
+    PostMessageW(g_main, kUpdateDownloaded, result, 0);
     return 0;
 }
 
@@ -6674,26 +6805,41 @@ void start_update() {
     }
     if (!update_can_start()) return;
     std::error_code ec;
-    if (fs::file_size(setup_file(r.version), ec) == r.size && !ec) {  // downloaded and checked before
-        run_installer();
-        return;
-    }
+    // A copy downloaded before is checked again on the thread, as a new download is, before it runs.
+    const bool kept = fs::exists(setup_file(r.version), ec);
     remove_old_setups();
     fs::create_directories(updates_dir(), ec);
     auto* job = new Release(r);
     if (HANDLE t = CreateThread(nullptr, 0, update_download_thread, job, 0, nullptr)) {
         CloseHandle(t);
         g_update.begin_download();
-        info(fmt(L"Downloading Win.apk {0}…", {r.version}), kInfo);
+        info(kept ? fmt(L"Checking the Win.apk {0} installer…", {r.version})
+                  : fmt(L"Downloading Win.apk {0}…", {r.version}),
+             kInfo);
     } else {
         delete job;
     }
 }
 
-void update_downloaded(bool ok) {
+// The download thread is back: `result` is 0 when the download broke off, else updates.h's SetupVerdict + 1.
+void update_downloaded(int result) {
+    using winapk::launcher::SetupVerdict;
     g_update.downloaded();
-    if (ok && run_installer()) return;  // the library is gone
-    if (!ok) info(tr(L"Couldn't download the update. Check the internet connection."), kError);
+    const auto verdict = static_cast<SetupVerdict>(result - 1);
+    if (result > 0 && winapk::launcher::setup_runs(verdict) && run_installer()) return;  // the library is gone
+    if (result == 0 || verdict == SetupVerdict::kSize) {
+        info(tr(L"Couldn't download the update. Check the internet connection."), kError);
+    } else if (!winapk::launcher::setup_runs(verdict)) {
+        // Not the release's installer: it was deleted, and nothing ran.
+        const wchar_t* why = verdict == SetupVerdict::kDigest
+                                 ? L"The downloaded installer is not the one GitHub lists (its SHA-256 differs). It was "
+                                   L"deleted and not run."
+                             : verdict == SetupVerdict::kVersion
+                                 ? L"The downloaded installer is not of the version offered. It was deleted and not "
+                                   L"run."
+                                 : L"The downloaded installer's signature does not hold. It was deleted and not run.";
+        info(tr(why), kError);
+    }
     if (g_view == kSettingsView) rebuild_page();
 }
 
@@ -6747,15 +6893,22 @@ std::vector<Section> update_sections() {
                                                                    {std::to_wstring(g_update.percent())})
                                                              : tr(L"Update");
         Row up = button_row(fmt(L"Win.apk {0}", {r.version}),
-                            r.url.empty() ? tr(L"This release has no installer; its page on GitHub has its files.")
-                                          : tr(L"Win.apk closes and the installer replaces it. Your apps and their "
-                                               L"data are kept."),
+                            r.unchecked     ? tr(L"GitHub gives no SHA-256 checksum of this release's installer, so "
+                                                 L"Win.apk does not download it; its page on GitHub has its files.")
+                            : r.url.empty() ? tr(L"This release has no installer; its page on GitHub has its files.")
+                                            : tr(L"Win.apk closes and the installer replaces it. Your apps and their "
+                                                 L"data are kept."),
                             button, [] { start_update(); });
         up.primary = true;
         up.key = "update";
         sec.rows.push_back(up);
     }
     sec.footer = tr(L"The check reads the list of releases on GitHub. Nothing about you or your apps is sent.");
+    // Said as it is: no Win.apk build is code-signed yet, so the installer is held to GitHub's checksum.
+    if (own_signer().empty()) {
+        sec.footer += std::wstring(L" ") + tr(L"Win.apk's installers are not code-signed: an update runs only when its size, its "
+                                L"SHA-256 checksum and its version are the ones GitHub lists for the release.");
+    }
     out.push_back(std::move(sec));
     if (newer) {
         const bool dated = r.published.dwHighDateTime || r.published.dwLowDateTime;
@@ -10266,7 +10419,7 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         }
         case kUpdateProgress: update_progress(static_cast<int>(wp)); return 0;
-        case kUpdateDownloaded: update_downloaded(wp != 0); return 0;
+        case kUpdateDownloaded: update_downloaded(static_cast<int>(wp)); return 0;
         case WM_GETMINMAXINFO:
             reinterpret_cast<MINMAXINFO*>(lp)->ptMinTrackSize = {ipx(680), ipx(520)};
             return 0;
