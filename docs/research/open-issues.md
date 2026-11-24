@@ -933,24 +933,41 @@ New bugs found with AOSP views:
   font from the next start) remains possible should exact CJK metrics be
   wanted: `HostCjkFonts.setUp` already steps aside when
   `NotoSansCJK-Regular.ttc` is in the fonts folder.
-- **Built-in VP8/VP9/AV1/Opus decoders and WebM demuxing** (November 2026,
-  from the other runtime's `soft_video.cc` and `media_video_codecs.cmake`): libvpx,
-  dav1d, libopus and libwebm's mkvparser in `winapk-runtime.exe`, about 1.5 MB
-  installed and 0.6 MB in the installer (`windows/README.md` "Footprint").
-  `MediaCodec` opens Media Foundation's decoder first and these where it has
-  none or refuses the stream; `MediaExtractor` reads WebM/MKV files;
-  SoundPool and `MediaPlayer`'s audio play Ogg Opus (`.opus`).
-  Checked: `winapk-soft-codecs-test` on Linux (ASan) and under Wine,
-  `winapk-video-test`'s WebM part and `winapk-audio-test` under Wine, the
-  wiring compiled with MinGW clang. **Not checked**: an app on real Windows
-  (ExoPlayer with a VP9/Opus WebM stream; NewPipe); the speed of the C-only
-  decoders at 1080p (decide then whether libvpx's SIMD and dav1d's assembly,
-  larger by an amount not measured, and nasm in the build, are worth it). **Left**:
-  `MediaPlayer`/`VideoView` (Media Foundation's player alone: no WebM, no
-  VP9/AV1 without the codec packs); a WebM from an http(s) URL in
-  `MediaExtractor`; Vorbis and FLAC in `MediaCodec` (advertised by
-  `MediaCodecList`, fail at `start()`); WebM/Ogg/Opus encoding (the other runtime has
-  mkvmuxer and an Opus encoder); libhevc not taken (see "Footprint").
+- **Built-in VP8/VP9/AV1/Opus decoders and WebM demuxing** (November 2026;
+  rewritten 2026-11-24 as Win.apk's own, clean room: the owner's decision that
+  code adapted from the other runtime be replaced; nothing of the other runtime's was read for it,
+  only the files' interfaces and callers): libvpx 1.17.0, dav1d 1.5.5, libopus
+  1.6.1 and libwebm 1.0.0.32's mkvparser in `winapk-runtime.exe`, built with
+  libvpx's and dav1d's x86-64 SIMD (nasm in the build), about 2.9 MB installed
+  and 1.0 MB in the installer (`windows/README.md` "Footprint": 1.4 and 0.4 MB
+  more than the C-only build before). `MediaCodec` opens Media Foundation's
+  decoder first and these where it has none or refuses the stream;
+  `MediaExtractor` reads WebM/MKV files (now with their Colour element);
+  SoundPool and `MediaPlayer`'s audio play Ogg Opus (`.opus`). What the rewrite
+  changed: decoding on every core (VP9 row and tile threads, dav1d frame
+  threads); pictures not copied out of the decoder (VP9 into pools this side
+  owns, dav1d's pictures by reference; only VP8 copied, into pooled memory);
+  the stream's matrix, range, transfer and HDR metadata reported; 10-bit
+  dithered to 8 instead of truncated; MediaCodec without a Surface now gives
+  real output buffers and Images, I420 or P010 on request, with stride, crop
+  and colour in the output format (it gave no buffer before); Opus surround in
+  Android's channel order, csd-1/csd-2 and the seek pre-roll after a flush
+  (MediaCodec's `flush()` now reaches the audio decoder). Measured on 4 cores at
+  1080p with the ARGB conversion: VP9 107 frames a second, VP9 10-bit 93, AV1
+  121. Checked: `winapk-soft-codecs-test` on Linux under ASan/UBSan and as a
+  MinGW build under Wine (all pass); `MediaCodec.java`, `MediaExtractor.java`
+  and `NativeMedia.java` compiled against a staged framework; the host's changed
+  files syntax-checked with MinGW g++. **Not checked**: the full Windows build
+  with clang and `winapk-video-test`/`winapk-audio-test` (CI's); an app on real
+  Windows (ExoPlayer with a VP9/Opus WebM stream; NewPipe; an app decoding to
+  ByteBuffers or asking for P010); HDR shown as SDR, not tone-mapped (so the
+  HDR profiles are not declared). **Left**: `MediaPlayer`/`VideoView` (Media
+  Foundation's player alone: no WebM, no VP9/AV1 without the codec packs); a
+  WebM from an http(s) URL in `MediaExtractor`; Vorbis and FLAC in
+  `MediaCodec` (advertised by `MediaCodecList`, fail at `start()`); WebM/Ogg/Opus
+  encoding; libhevc not taken (see "Footprint"); mkvparser keeps every block
+  entry it has parsed, so an hour of 60 fps video costs some tens of MB of
+  index while it plays (as Android's MatroskaExtractor on the same library).
 - **Win.apk's own resources and views, after AOSP's became the only ones**
   (November 2026). Gone from the package: the 812 classes of
   `android-framework.jar` that `aosp-resources.jar` and `aosp-views.jar`
