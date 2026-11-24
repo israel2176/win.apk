@@ -81,4 +81,26 @@ bool voice_finished(Voice* v);    // played to its end, or stopped: the mixer dr
 // Monotonic nanoseconds in System.nanoTime()'s timebase (QueryPerformanceCounter).
 int64_t nano_time();
 
+// ---- sources the mixer pulls from (OpenSL ES players) ----------------------------
+// A source that keeps its own buffering and resampling: the mixer calls mix()
+// on its thread once per cycle. AudioTrack streams and clip voices are
+// Sources too, made above.
+class Source {
+public:
+    virtual ~Source() = default;
+    // Adds `frames` stereo frames at `out_rate` into `out`. False: finished,
+    // drop me. Runs on the mixer's thread: it must not block or call app code.
+    virtual bool mix(float* out, size_t frames, int out_rate) = 0;
+};
+void source_add(std::shared_ptr<Source> s);
+// Takes `s` out of the mix. Once it returns, the mixer is not inside
+// s->mix() and never calls it again (called from inside a mix() it only
+// stops the calls after this cycle).
+void source_remove(const Source* s);
+// The output's rate in Hz: the device's mix format, or the silent clock's.
+int output_rate();
+// The frames one mixer cycle renders in steady state (the device period), so
+// a pulled source knows how far ahead to keep its buffer filled.
+size_t output_period_frames();
+
 }  // namespace winapk::audio
