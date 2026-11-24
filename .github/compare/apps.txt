@@ -1,0 +1,16 @@
+# The apps comparison runs in Win.apk and in the other runtime, one of each kind, from F-Droid.
+# <package> <versionCode> <SHA-256 of the APK>   # kind
+# Editor, Currency and Puzzles are in the other runtime's own e2e set (tests/e2e/apps.json) with the same pins.
+# F-Droid has no app bundles, so no bundle install is compared.
+org.billthefarmer.editor 198 343d17e11d0914e1a7708df2781580a0413e52501c0a41d91f7ef725d9615fe9 # Java views, no native code
+org.billthefarmer.currency 158 fb2583289e09bea7f1c8c3ed742db3a118769f7dc9df312adcb88a3d198a21aa # Java views, network
+org.fossify.notes 13 5a56e0e39cc488e1f3b947d3801006d3b7450ec73c67f03195c64c5fd3b6bced # Kotlin views
+com.jerboa 88 70c18bd6cc9eafdfbdad3973cb3f728eadaead5548318002c13929c58aaa5824 # Jetpack Compose
+org.localsend.localsend_app 641 93e30ddbf84121ad2048c5a61763f2b37738f593699a9f0cf39a8404177aa05b # Flutter, x86_64 build
+org.jitsi.meet 26000004 72aab4912b08431a2340fc1fb1f181be3a07e8b7ac607e0bb9e4c3814c2e4248 # React Native (Hermes), x86_64 build
+org.jellyfin.mobile 2070399 f9f4b3ab46cc9434df811194c2d4351417f4db83a4c1a0facd0a662d69533f7f # WebView shell
+name.boyle.chris.sgtpuzzles 149 6b36d5537984523c57984a784156eb853a92c940fded286483687484f3d652e4 # JNI C, Canvas
+dev.lonami.klooni 860 55641cdb5dba7f30c1d229cf8a34f390a8ff6b3f60cdff9b45d277919f33ce24 # libGDX game, OpenGL ES from Java
+se.voxelmanip.tensy 2 a0c63c3d20f02fac72bbc19dda24d16b9f6ba2a2f686a87885cd0e5f195d9bc3 # SDL2 game, OpenGL ES from native code
+org.ppsspp.ppsspp 119030000 44e1ecb9268702fb65adcee14cffb6cdc3607e87abcf409004c9bdb6b2543f6c # NativeActivity, OpenGL ES
+org.moire.opensudoku 20261008 ac4c6c8d0bc9058c1cc8d8f4570dc51977b3bc51577a82a12b94e6ec7714b9f0 # arm64-v8a only: the ARM translation
