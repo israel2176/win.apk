@@ -10,8 +10,9 @@ job's summary) and exits 1 when any part is over, listing the largest files of t
 The budgets are today's sizes with some headroom, in MB (10^6 bytes), the files' own sizes summed
 (what the installer unpacks; NTFS adds a little per file). Raising one is a decision, not a fix:
 do it in the change that needs the room, say why in its description, and update the numbers in
-windows/README.md, "Footprint". The stage carries AOSP graphics' files (build_aosp_gfx.sh), in
-CI as in a release: apps draw on them by default.
+windows/README.md, "Footprint". The stage carries AOSP's graphics, resources and views
+(build_aosp_gfx.sh, build_aosp_res.sh, build_aosp_views.sh), in CI as in a release: apps run on
+them.
 """
 
 import os
@@ -20,12 +21,12 @@ import sys
 # (part, the paths it holds relative to the stage, budget in MB). A path ending in "/" is a folder;
 # the last part takes every file the others do not.
 BUDGETS = [
-    # Before AOSP graphics' part, whose bin/aosp/ would take the table. Staged only with
-    # WINAPK_STAGE_AOSP_RES=1 / WINAPK_STAGE_AOSP_VIEWS=1 (0 MB in a release today); November 2026:
-    # 1.4 + 6.7 + 13.7 MB, 19.0 MB under LZMA (the table's three default_wallpaper PNGs are 1x1 since,
-    # build_aosp_res.sh: 7.4 MB less on both counts).
-    ("AOSP resources and views (WINAPK_AOSP_RES, WINAPK_AOSP_VIEWS; not shipped yet)",
-     ["lib/aosp-resources.jar", "lib/aosp-views.jar", "bin/aosp/framework-res-34.apk"], 25),
+    # Before AOSP graphics' part, whose bin/aosp/ would take the table. AOSP's resources and views,
+    # the only ones apps run on since November 2026 (Win.apk's own left android-framework.jar):
+    # 1.4 + 6.7 + 13.7 MB, about 19.0 MB under LZMA (the table's three default_wallpaper PNGs are
+    # 1x1, build_aosp_res.sh).
+    ("AOSP resources and views", ["lib/aosp-resources.jar", "lib/aosp-views.jar", "bin/aosp/framework-res-34.apk"],
+     25),
     ("AOSP graphics (the default; WINAPK_AOSP_GFX=0 is Java2D)",
      ["bin/aosp/", "bin/robolectric-nativeruntime.dll", "lib/aosp-graphics.jar"], 70),
     ("Java runtime (jre/)", ["jre/"], 140),

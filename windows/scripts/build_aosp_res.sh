@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# build_aosp_res.sh -- what AOSP's own resources need (WINAPK_AOSP_RES=1, off by default;
+# build_aosp_res.sh -- what AOSP's own resources, the only ones apps run on, need (host/aosp_gfx.h;
 # docs/research/aosp-views.md, step R1; windows/README.md, "AOSP resources"), into a staged runtime:
 #
 #   <out>/lib/aosp-resources.jar          AOSP 14's android.content.res.** (Resources, ResourcesImpl,
@@ -24,9 +24,8 @@
 #
 # At build time AospResRewrite.java (beside this script) gives the natives Java bodies, points
 # AOSP's casts to XmlBlock.Parser at AttrSets, sends the calls Win.apk's classes cannot answer to
-# Compat, and maps the port's Guava types to small stand-ins. Not staged by stage_runtime.sh unless
-# WINAPK_STAGE_AOSP_RES=1: the switch is new, and the table adds to the footprint (windows/README.md,
-# "Footprint").
+# Compat, and maps the port's Guava types to small stand-ins. stage_runtime.sh runs this after
+# build_aosp_gfx.sh.
 
 set -euo pipefail
 
@@ -42,6 +41,12 @@ GFX="$OUT/lib/aosp-graphics.jar"
 for f in "$FRAMEWORK" "$LOADER"; do
     [[ -f "$f" ]] || { echo "[aosp-res] no $f: run build_java.sh first" >&2; exit 1; }
 done
+# The closure below is what the whole framework lacks: a framework stage_runtime.sh has already
+# dropped the classes AOSP's resources and views shadow from would make it take those too.
+if unzip -Z1 "$FRAMEWORK" META-INF/winapk-aosp-shadowed.txt > /dev/null 2>&1; then
+    echo "[aosp-res] $FRAMEWORK lacks the classes stage_runtime.sh dropped: run build_java.sh again" >&2
+    exit 1
+fi
 [[ -f "$GFX" ]] || { echo "[aosp-res] no $GFX: run build_aosp_gfx.sh first" >&2; exit 1; }
 
 if [[ -n "${JAVA_HOME:-}" ]]; then
