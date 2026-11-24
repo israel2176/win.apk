@@ -27,6 +27,7 @@
 #pragma once
 
 #include <windows.h>
+#include <unknwn.h>  // IUnknown (provider_for), which WIN32_LEAN_AND_MEAN leaves out
 
 #include <cstdint>
 #include <string>
