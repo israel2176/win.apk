@@ -263,7 +263,8 @@ by index and threw for every APK (`AssetManager.getSizeConfigurations`, which
 `Animator.getBackgroundPauseDelay`, which Win.apk's `Animator` lacks, at every
 window's removal (`ViewRootImpl.doDie`).
 
-`windows/test/aospapp/run.sh <stage> <deps>` builds the jar, the test's host
+`windows/test/aospapp/run.sh <stage> <deps> [out] [whole framework jar]` (the
+last for a stage `stage_runtime.sh` filtered) builds the jar, the test's host
 library (`plainjvm_host.cpp`: the log funnel, `setenv`, a headless 360x640 dp
 display, and the host's own graphics redirect, `host/aosp_gfx_redirect.cpp`,
 binding Robolectric's Linux native runtime onto AOSP's graphics as
