@@ -1381,44 +1381,45 @@ bool started_without_activation() {
 
 // ---- screen readers ---------------------------------------------------------
 //
-// The views' bounds come in the app's frame pixels (uia_provider.h); UI Automation wants the
-// screen's. The frame is where paint() last put it. A mirrored (right-to-left) window paints
-// unmirrored, so its frame runs left to right from the client area's left edge on the screen.
+// UI Automation asks where a view is on the screen, and which view is at a screen point, from its
+// own threads (uia_provider.h). Views are in the app's frame pixels; the frame is where paint() last
+// put it (g_shown), and the client area where Windows has it now, so a moved window or a changed
+// DPI is right at once. A mirrored (Hebrew) window paints the frame unmirrored: it runs left to
+// right from the client area's leftmost screen pixel.
 
-bool client_left_top_on_screen(HWND hwnd, POINT* out) {
+// The client area's top-left pixel on the screen, mirrored or not.
+bool client_origin_on_screen(HWND hwnd, POINT* out) {
     RECT c{};
     if (!GetClientRect(hwnd, &c)) return false;
-    MapWindowPoints(hwnd, nullptr, reinterpret_cast<POINT*>(&c), 2);
-    out->x = std::min(c.left, c.right);
-    out->y = std::min(c.top, c.bottom);
+    POINT corners[2] = {{c.left, c.top}, {c.right, c.bottom}};
+    if (!ClientToScreen(hwnd, &corners[0]) || !ClientToScreen(hwnd, &corners[1])) return false;
+    out->x = std::min(corners[0].x, corners[1].x);
+    out->y = std::min(corners[0].y, corners[1].y);
     return true;
 }
 
-bool frame_to_screen(const RECT& f, RECT* out) {
-    const HWND hwnd = g_hwnd;
+bool shown_now(Shown* out) {
+    std::lock_guard<std::mutex> hold(g_frame_lock);
+    *out = g_shown;
+    return out->ok && out->sx > 0 && out->sy > 0;
+}
+
+bool uia_frame_to_screen(const uia::Box& f, RECT* out) {
     Shown s;
-    {
-        std::lock_guard<std::mutex> hold(g_frame_lock);
-        s = g_shown;
-    }
     POINT o{};
-    if (!hwnd || !s.ok || !client_left_top_on_screen(hwnd, &o)) return false;
-    out->left = o.x + s.ox + static_cast<LONG>(std::lround(f.left * s.sx));
-    out->top = o.y + s.oy + static_cast<LONG>(std::lround(f.top * s.sy));
-    out->right = o.x + s.ox + static_cast<LONG>(std::lround(f.right * s.sx));
-    out->bottom = o.y + s.oy + static_cast<LONG>(std::lround(f.bottom * s.sy));
+    const HWND hwnd = g_hwnd;
+    if (!hwnd || !shown_now(&s) || !client_origin_on_screen(hwnd, &o)) return false;
+    auto x = [&](int32_t v) { return static_cast<LONG>(o.x + s.ox + std::lround(v * s.sx)); };
+    auto y = [&](int32_t v) { return static_cast<LONG>(o.y + s.oy + std::lround(v * s.sy)); };
+    *out = RECT{x(f.l), y(f.t), x(f.r), y(f.b)};
     return true;
 }
 
-bool screen_to_frame(POINT p, POINT* out) {
-    const HWND hwnd = g_hwnd;
+bool uia_screen_to_frame(POINT p, POINT* out) {
     Shown s;
-    {
-        std::lock_guard<std::mutex> hold(g_frame_lock);
-        s = g_shown;
-    }
     POINT o{};
-    if (!hwnd || !s.ok || s.sx <= 0 || s.sy <= 0 || !client_left_top_on_screen(hwnd, &o)) return false;
+    const HWND hwnd = g_hwnd;
+    if (!hwnd || !shown_now(&s) || !client_origin_on_screen(hwnd, &o)) return false;
     out->x = static_cast<LONG>(std::floor((p.x - o.x - s.ox) / s.sx));
     out->y = static_cast<LONG>(std::floor((p.y - o.y - s.oy) / s.sy));
     return true;
@@ -1885,7 +1886,7 @@ DWORD WINAPI ui_thread(void* param) {
     }
     if (g_hwnd) {
         touch_setup(g_hwnd);
-        uia::attach(g_hwnd, uia::Geometry{frame_to_screen, screen_to_frame});
+        uia::attach(g_hwnd, uia::Geometry{uia_frame_to_screen, uia_screen_to_frame});
     }
     args->ok = g_hwnd != nullptr;
     SetEvent(args->ready);

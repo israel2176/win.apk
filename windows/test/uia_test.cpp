@@ -1,545 +1,711 @@
-// uia_test.cpp -- winapk-uia-test: what a screen reader sees of an app window
-// (host/uia_provider.h), read through UI Automation's own client (IUIAutomation), as
-// Narrator, NVDA or JAWS read it.
+// uia_test.cpp -- the app window's UI Automation provider (host/uia_provider.h) on a real window.
 //
-//   winapk-uia-test
-//
-// A window of its own thread stands in for the app's, and a fake app side publishes a view
-// tree the way HostAccessibility.java does (Hebrew names, a right-to-left locale). Checked:
-// nothing runs before a client asks (the app is not told, nothing is due); the tree's shape,
-// names, control types, bounds, focus and culture; Invoke, Value, Toggle, RangeValue, Scroll
-// and ScrollItem reaching the app as Android actions; a new snapshot replacing the old one;
-// the snapshot parser's refusals. Exit code 0 when every check passes.
-
+// A window on its own thread answers WM_GETOBJECT as the app's does; a stand-in app records what
+// the provider asks of it. The test publishes a snapshot (host/uia_tree.h) and then:
+//   1. calls the providers directly, as UIA core would: laziness (nothing before the first call),
+//      navigation, properties, every control pattern and what each sends to the app, the Text
+//      pattern's ranges, hit-testing and focus, an element whose node is gone;
+//   2. reads the window as a client does, through IUIAutomation: finds elements by name, reads a
+//      value, invokes a pattern. Wine's UI Automation client lacks much of this; under Wine the
+//      client's checks are reported and not counted (CI runs them on Windows).
 #include <windows.h>
 #include <ole2.h>
 #include <oleauto.h>
 #include <uiautomation.h>
 
-#include <atomic>
+#include <cmath>
 #include <condition_variable>
 #include <cstdio>
 #include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include "uia_provider.h"
 
-namespace uia = winapk::host::uia;
+using namespace winapk::host;
+using namespace winapk::host::uia;
 
 namespace {
 
 int g_failures = 0;
+bool g_lenient = false;  // the client's checks under Wine
 
-void check(const char* what, bool ok) {
-    std::printf("  [%s] %s\n", ok ? "PASS" : "FAIL", what);
-    if (!ok) ++g_failures;
+void check(bool ok, const char* what) {
+    if (ok) return;
+    if (g_lenient) {
+        std::printf("  (Wine's client) not: %s\n", what);
+        return;
+    }
+    std::printf("FAIL: %s\n", what);
+    ++g_failures;
 }
 
-// ---- The app's side -------------------------------------------------------------------------
-
-// A DecorView with a heading, a button, a field, a check box, a seek bar and a scroll view, in
-// Hebrew. Frame pixels are client pixels here (the geometry below is the identity).
-std::wstring tree(const wchar_t* button_name, bool with_scroll) {
-    std::wstring s = L"W1\t4\the-IL\t1\n";
-    s += L"1\t0\tcom.android.internal.policy.DecorView\t\t\t\t257\t0,0,400,600\t2,3,4,5,6";
-    s += with_scroll ? L",7" : L"";
-    s += L"\t\t0\t\t0\n";
-    s += L"2\t1\tandroid.widget.TextView\tשלום עולם\t\t\t1281\t"
-         L"10,10,390,40\t\tapp:id/title\t256\t\t1\n";
-    s += std::wstring(L"3\t1\tandroid.widget.Button\t") + button_name +
-         L"\t\t\t267\t20,50,200,90\t\tapp:id/ok\t768\t\t0\n";
-    s += L"4\t1\tandroid.widget.EditText\tשם\tabc\tהקלד\t327\t20,100,380,140\t\t"
-         L"app:id/name\t384\t\t0\n";
-    s += L"5\t1\tandroid.widget.CheckBox\tתזכורת\t\t\t315\t20,150,200,190\t\t\t768\t\t0\n";
-    s += L"6\t1\tandroid.widget.SeekBar\tעוצמה\t\t\t8451\t20,200,380,230\t\t\t67\t"
-         L"0,100,30\t0\n";
-    if (with_scroll) s += L"7\t1\tandroid.widget.ScrollView\t\t\t\t771\t0,250,400,600\t\t\t265\t\t0\n";
-    return s;
+bool under_wine() {
+    HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+    return ntdll && GetProcAddress(ntdll, "wine_get_version");
 }
 
-struct Performed {
-    int64_t id = 0;
-    int action = 0;
+// ---- The stand-in app --------------------------------------------------------------------------
+
+struct Call {
+    int64_t id;
+    int action;
     std::wstring text;
+    int a1, a2;
+    double value;
 };
 
-class FakeApp : public uia::AppSide {
+class FakeApp final : public AppSide {
 public:
-    std::atomic<int> activations{0}, refreshes{0};
-    std::wstring current = tree(L"אישור", true);
-
     void activate(bool on) override {
-        if (on) {
-            ++activations;
-            uia::publish(current);
-        }
+        std::lock_guard<std::mutex> hold(m);
+        (on ? activations : deactivations)++;
     }
     void refresh() override {
-        ++refreshes;
-        uia::publish(current);
+        std::lock_guard<std::mutex> hold(m);
+        refreshes++;
     }
-    void perform(int64_t id, int action, const std::wstring& text) override {
-        std::lock_guard<std::mutex> hold(lock_);
-        last_ = Performed{id, action, text};
-        ++count_;
-        done_.notify_all();
+    void perform(int64_t id, int action, const std::wstring& text, int a1, int a2, double value) override {
+        std::lock_guard<std::mutex> hold(m);
+        calls.push_back(Call{id, action, text, a1, a2, value});
     }
-    // The next action after `before` actions, waited for a while.
-    bool next(int before, Performed* out) {
-        std::unique_lock<std::mutex> hold(lock_);
-        if (!done_.wait_for(hold, std::chrono::seconds(5), [&] { return count_ > before; })) return false;
-        *out = last_;
-        return true;
+    // The calls since the last take.
+    std::vector<Call> take() {
+        flush();
+        std::lock_guard<std::mutex> hold(m);
+        std::vector<Call> out;
+        out.swap(calls);
+        return out;
     }
-    int count() {
-        std::lock_guard<std::mutex> hold(lock_);
-        return count_;
-    }
-
-private:
-    std::mutex lock_;
-    std::condition_variable done_;
-    Performed last_;
-    int count_ = 0;
+    std::mutex m;
+    int activations = 0, deactivations = 0, refreshes = 0;
+    std::vector<Call> calls;
 };
 
 FakeApp g_app;
 
-// ---- The window -----------------------------------------------------------------------------
+bool called(const std::vector<Call>& calls, int64_t id, int action) {
+    for (const Call& c : calls) {
+        if (c.id == id && c.action == action) return true;
+    }
+    return false;
+}
 
-HWND g_hwnd = nullptr;
+// ---- Geometry: the frame drawn at (100, 200) on the screen, pixel for pixel -----------------------
 
-bool to_screen(const RECT& f, RECT* out) {
-    POINT a{f.left, f.top}, b{f.right, f.bottom};
-    if (!ClientToScreen(g_hwnd, &a) || !ClientToScreen(g_hwnd, &b)) return false;
-    *out = RECT{a.x, a.y, b.x, b.y};
+bool to_screen(const Box& f, RECT* out) {
+    *out = RECT{f.l + 100, f.t + 200, f.r + 100, f.b + 200};
     return true;
 }
 
 bool to_frame(POINT p, POINT* out) {
-    if (!ScreenToClient(g_hwnd, &p)) return false;
-    *out = p;
+    *out = POINT{p.x - 100, p.y - 200};
     return true;
 }
 
-LRESULT CALLBACK proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+// ---- The snapshot ----------------------------------------------------------------------------------
+
+Node node(int64_t id, int64_t parent, const wchar_t* cls, uint32_t flags, Box b) {
+    Node n;
+    n.id = id;
+    n.parent = parent;
+    n.class_name = cls;
+    n.flags = flags | kEnabled | kVisible;
+    n.bounds = b;
+    return n;
+}
+
+void act(Node* n, int id) { n->action_ids.push_back(id); }
+
+Tree screen(bool with_pears = true, bool focused_editor = true) {
+    Tree t;
+    t.focused = focused_editor ? 40 : 0;
+    t.locale = L"he-IL";
+    t.windows.push_back(Window{1, 1, L"Settings", true});
+    Node root = node(1, 0, L"com.android.internal.policy.DecorView", 0, Box{0, 0, 720, 1280});
+    root.children = {10, 20, 30, 40, 50, 60, 80, 90};
+    Node heading = node(10, 1, L"android.widget.TextView", kHeading, Box{0, 0, 720, 60});
+    heading.text = L"Network";
+    heading.live = 1;
+    Node row = node(20, 1, L"android.widget.LinearLayout", kClickable | kFocusable, Box{0, 60, 720, 160});
+    act(&row, action::kClick);
+    row.children = {21, 22, 23};
+    Node title = node(21, 20, L"android.widget.TextView", 0, Box{0, 60, 300, 110});
+    title.text = L"Wi-Fi";
+    Node summary = node(22, 20, L"android.widget.TextView", 0, Box{0, 110, 300, 160});
+    summary.text = L"Connected";
+    Node sw = node(23, 20, L"android.widget.Switch", kCheckable | kChecked | kClickable | kFocusable,
+                   Box{600, 80, 700, 140});
+    act(&sw, action::kClick);
+    Node label = node(30, 1, L"android.widget.TextView", 0, Box{0, 160, 720, 200});
+    label.text = L"Name";
+    Node edit = node(40, 1, L"android.widget.EditText", kEditable | kFocusable | kFocused | kClickable | kMultiLine,
+                     Box{0, 200, 720, 300});
+    edit.text = L"one two\nthree";
+    edit.hint = L"Your name";
+    edit.labeled_by = 30;
+    edit.sel_start = 4;
+    edit.sel_end = 7;
+    edit.line_starts = {0, 8};
+    edit.line_boxes = {Box{10, 210, 210, 250}, Box{10, 250, 160, 290}};
+    for (int i = 0; i <= 13; ++i) edit.char_x.push_back(10 + 20 * (i < 8 ? i : i - 8));
+    edit.word_breaks = {0, 3, 4, 7, 8, 13};
+    for (int a : {action::kSetText, action::kSetSelection, action::kClick, action::kShowOnScreen}) act(&edit, a);
+    Node seek = node(50, 1, L"android.widget.SeekBar", kFocusable, Box{0, 300, 720, 360});
+    seek.range = RangeInfo{true, 0, 0, 100, 40};
+    act(&seek, action::kSetProgress);
+    Node list = node(60, 1, L"androidx.recyclerview.widget.RecyclerView", kScrollable, Box{0, 360, 720, 600});
+    list.collection = CollectionInfo{true, 2, 1, 1, false};
+    act(&list, action::kScrollForward);
+    act(&list, action::kScrollDown);
+    list.children = with_pears ? std::vector<int64_t>{61, 62} : std::vector<int64_t>{61};
+    Node apples = node(61, 60, L"android.widget.FrameLayout", kClickable, Box{0, 360, 720, 480});
+    apples.item = ItemInfo{true, 0, 1, 0, 1, false, true};
+    apples.text = L"Apples";
+    act(&apples, action::kClick);
+    act(&apples, action::kShowOnScreen);
+    Node pears = node(62, 60, L"android.widget.FrameLayout", kClickable, Box{0, 480, 720, 600});
+    pears.item = ItemInfo{true, 1, 1, 0, 1, false, false};
+    pears.text = L"Pears";
+    act(&pears, action::kClick);
+    Node more = node(80, 1, L"android.widget.ImageButton", kClickable, Box{0, 600, 100, 700});
+    more.description = L"More";
+    act(&more, action::kClick);
+    act(&more, action::kExpand);
+    Node off = node(90, 1, L"android.widget.Button", kClickable, Box{100, 600, 300, 700});
+    off.flags &= ~kEnabled;
+    off.text = L"Disabled";
+    act(&off, action::kClick);
+    t.nodes = {root, heading, row, title, summary, sw, label, edit, seek, list, apples};
+    if (with_pears) t.nodes.push_back(pears);
+    t.nodes.push_back(more);
+    t.nodes.push_back(off);
+    derive(&t);
+    return t;
+}
+
+// ---- The window, on its own thread -----------------------------------------------------------------
+
+HWND g_hwnd = nullptr;
+
+LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     if (msg == WM_GETOBJECT) {
         LRESULT r = 0;
-        if (uia::on_get_object(hwnd, wp, lp, &r)) return r;
+        if (on_get_object(hwnd, wp, lp, &r)) return r;
+    } else if (msg == WM_DESTROY) {
+        detach(hwnd);
+        PostQuitMessage(0);
+        return 0;
     }
-    if (msg == WM_DESTROY) uia::detach(hwnd);
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
 
-void window_thread(HANDLE ready) {
+void window_thread(std::mutex* m, std::condition_variable* cv) {
     WNDCLASSW wc{};
-    wc.lpfnWndProc = proc;
+    wc.lpfnWndProc = wnd_proc;
     wc.hInstance = GetModuleHandleW(nullptr);
     wc.lpszClassName = L"WinApkUiaTest";
     RegisterClassW(&wc);
-    RECT r{0, 0, 400, 600};
-    AdjustWindowRect(&r, WS_OVERLAPPEDWINDOW, FALSE);
-    g_hwnd = CreateWindowExW(WS_EX_TOPMOST, wc.lpszClassName, L"Win.apk UIA test", WS_OVERLAPPEDWINDOW, 40, 40,
-                             r.right - r.left, r.bottom - r.top, nullptr, nullptr, wc.hInstance, nullptr);
-    if (g_hwnd) {
-        uia::attach(g_hwnd, uia::Geometry{to_screen, to_frame});
-        ShowWindow(g_hwnd, SW_SHOWNOACTIVATE);
+    HWND hwnd = CreateWindowExW(0, wc.lpszClassName, L"UIA test", WS_OVERLAPPEDWINDOW, 100, 100, 400, 600, nullptr,
+                                nullptr, wc.hInstance, nullptr);
+    attach(hwnd, Geometry{to_screen, to_frame});
+    {
+        std::lock_guard<std::mutex> hold(*m);
+        g_hwnd = hwnd;
     }
-    SetEvent(ready);
-    MSG m;
-    while (GetMessageW(&m, nullptr, 0, 0) > 0) {
-        TranslateMessage(&m);
-        DispatchMessageW(&m);
+    cv->notify_one();
+    MSG msg;
+    while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
+        TranslateMessage(&msg);
+        DispatchMessageW(&msg);
     }
 }
 
-// ---- The client side ------------------------------------------------------------------------
+// ---- Helpers over the providers ---------------------------------------------------------------------
 
-std::wstring name_of(IUIAutomationElement* e) {
+template <typename T>
+T* as(IUnknown* u, REFIID iid) {
+    T* out = nullptr;
+    if (u) u->QueryInterface(iid, reinterpret_cast<void**>(&out));
+    return out;
+}
+
+IRawElementProviderSimple* element(int64_t id) {
+    IUnknown* u = provider_for(g_hwnd, id);
+    IRawElementProviderSimple* s = as<IRawElementProviderSimple>(u, IID_IRawElementProviderSimple);
+    if (u) u->Release();
+    return s;
+}
+
+std::wstring string_property(IRawElementProviderSimple* e, PROPERTYID p) {
+    VARIANT v;
+    VariantInit(&v);
+    std::wstring out;
+    if (e && SUCCEEDED(e->GetPropertyValue(p, &v)) && v.vt == VT_BSTR) out.assign(v.bstrVal, SysStringLen(v.bstrVal));
+    VariantClear(&v);
+    return out;
+}
+
+long long int_property(IRawElementProviderSimple* e, PROPERTYID p, long long absent = -999) {
+    VARIANT v;
+    VariantInit(&v);
+    long long out = absent;
+    if (e && SUCCEEDED(e->GetPropertyValue(p, &v))) {
+        if (v.vt == VT_I4) out = v.lVal;
+        if (v.vt == VT_BOOL) out = v.boolVal ? 1 : 0;
+    }
+    VariantClear(&v);
+    return out;
+}
+
+template <typename T>
+T* pattern(IRawElementProviderSimple* e, PATTERNID id, REFIID iid) {
+    IUnknown* u = nullptr;
+    if (!e || FAILED(e->GetPatternProvider(id, &u)) || !u) return nullptr;
+    T* p = as<T>(u, iid);
+    u->Release();
+    return p;
+}
+
+int64_t id_of(IRawElementProviderFragment* f) {
+    if (!f) return 0;
+    SAFEARRAY* sa = nullptr;
+    int64_t id = 0;
+    if (SUCCEEDED(f->GetRuntimeId(&sa)) && sa) {
+        LONG i = 1, j = 2;
+        int hi = 0, lo = 0;
+        SafeArrayGetElement(sa, &i, &hi);
+        SafeArrayGetElement(sa, &j, &lo);
+        id = (static_cast<int64_t>(static_cast<uint32_t>(hi)) << 32) | static_cast<uint32_t>(lo);
+        SafeArrayDestroy(sa);
+    }
+    return id;
+}
+
+int64_t navigate(IRawElementProviderSimple* e, NavigateDirection d) {
+    IRawElementProviderFragment* f = as<IRawElementProviderFragment>(e, IID_IRawElementProviderFragment);
+    if (!f) return -1;
+    IRawElementProviderFragment* to = nullptr;
+    f->Navigate(d, &to);
+    f->Release();
+    if (!to) return 0;
+    int64_t id = id_of(to);
+    to->Release();
+    return id;
+}
+
+std::wstring range_text(ITextRangeProvider* r) {
     BSTR b = nullptr;
     std::wstring out;
-    if (e && SUCCEEDED(e->get_CurrentName(&b)) && b) out.assign(b, SysStringLen(b));
+    if (r && SUCCEEDED(r->GetText(-1, &b)) && b) out.assign(b, SysStringLen(b));
     SysFreeString(b);
     return out;
 }
 
-CONTROLTYPEID type_of(IUIAutomationElement* e) {
-    CONTROLTYPEID t = 0;
-    if (e) e->get_CurrentControlType(&t);
-    return t;
-}
+// ---- 1. The providers -------------------------------------------------------------------------------
 
-// An element's children, every one (a true condition: the raw view), as FindAll gives them.
-std::vector<IUIAutomationElement*> children(IUIAutomation* client, IUIAutomationElement* parent) {
-    std::vector<IUIAutomationElement*> out;
-    IUIAutomationCondition* all = nullptr;
-    if (!parent || FAILED(client->CreateTrueCondition(&all)) || !all) return out;
-    IUIAutomationElementArray* found = nullptr;
-    if (SUCCEEDED(parent->FindAll(TreeScope_Children, all, &found)) && found) {
-        int n = 0;
-        found->get_Length(&n);
-        for (int i = 0; i < n; ++i) {
-            IUIAutomationElement* e = nullptr;
-            if (SUCCEEDED(found->GetElement(i, &e)) && e) out.push_back(e);
-        }
-        found->Release();
+void test_lazy() {
+    check(!active(), "nothing runs before a client asks");
+    check(!publish(encode(screen())), "a snapshot before any client is refused");
+    IUnknown* root = provider_for(g_hwnd, 0);
+    check(root != nullptr, "the root provider");
+    flush();
+    check(active(), "a client's first call turns reading on");
+    {
+        std::lock_guard<std::mutex> hold(g_app.m);
+        check(g_app.activations == 1, "and tells the app");
     }
-    all->Release();
-    return out;
+    check(publish(encode(screen())), "now a snapshot is taken");
+    flush();
+    if (root) root->Release();
 }
 
-// What a list of elements is, for a failed check: each one's control type, class and name.
-void describe(const char* what, const std::vector<IUIAutomationElement*>& v) {
-    std::printf("    %s: %zu element%s\n", what, v.size(), v.size() == 1 ? "" : "s");
-    for (IUIAutomationElement* e : v) {
-        BSTR cls = nullptr;
-        e->get_CurrentClassName(&cls);
-        std::printf("      type %d, class \"%ls\", name \"%ls\"\n", static_cast<int>(type_of(e)), cls ? cls : L"",
-                    name_of(e).c_str());
-        SysFreeString(cls);
-    }
-}
+void test_navigation_and_properties() {
+    IUnknown* r = provider_for(g_hwnd, 0);
+    IRawElementProviderSimple* root = as<IRawElementProviderSimple>(r, IID_IRawElementProviderSimple);
+    if (r) r->Release();
+    check(navigate(root, NavigateDirection_FirstChild) == 1, "the root's first child is the window's root");
+    if (root) root->Release();
 
-// The window's app content: its children less the ones Windows' own HWND providers add to a
-// top-level window (the non-client area's title bar, with its system menu and buttons, and
-// any menu or scroll bars). Real UI Automation merges those in beside the fragment root's
-// children; Wine's has no non-client provider, so there the two lists are the same.
-std::vector<IUIAutomationElement*> view_roots(IUIAutomation* client, IUIAutomationElement* window) {
-    std::vector<IUIAutomationElement*> all = children(client, window), out;
-    for (IUIAutomationElement* e : all) {
-        const CONTROLTYPEID t = type_of(e);
-        if (t == UIA_TitleBarControlTypeId || t == UIA_MenuBarControlTypeId || t == UIA_ScrollBarControlTypeId) {
-            e->Release();
-        } else {
-            out.push_back(e);
-        }
-    }
-    return out;
-}
+    IRawElementProviderSimple* win = element(1);
+    check(string_property(win, UIA_NamePropertyId) == L"Settings", "the window's root is named by its title");
+    check(int_property(win, UIA_IsDialogPropertyId) == 0, "an activity's window is not a dialog");
+    check(navigate(win, NavigateDirection_FirstChild) == 10 && navigate(win, NavigateDirection_LastChild) == 90,
+          "the window's first and last children");
+    if (win) win->Release();
 
-template <typename T>
-T* pattern(IUIAutomationElement* e, PATTERNID id) {
-    T* p = nullptr;
-    if (e) e->GetCurrentPatternAs(id, __uuidof(T), reinterpret_cast<void**>(&p));
-    return p;
-}
+    IRawElementProviderSimple* row = element(20);
+    check(string_property(row, UIA_NamePropertyId) == L"Wi-Fi, Connected", "a row's name");
+    check(int_property(row, UIA_ControlTypePropertyId) == UIA_ButtonControlTypeId, "a row is a button");
+    check(navigate(row, NavigateDirection_Parent) == 1, "its parent");
+    check(navigate(row, NavigateDirection_NextSibling) == 30 && navigate(row, NavigateDirection_PreviousSibling) == 10,
+          "its siblings");
+    IRawElementProviderFragment* f = as<IRawElementProviderFragment>(row, IID_IRawElementProviderFragment);
+    UiaRect rect{};
+    if (f) f->get_BoundingRectangle(&rect);
+    check(rect.left == 100 && rect.top == 260 && rect.width == 720 && rect.height == 100,
+          "its bounds on the screen, where the window draws the frame");
+    if (f) f->Release();
+    if (row) row->Release();
 
-void release_all(std::vector<IUIAutomationElement*>& v) {
-    for (auto* e : v) e->Release();
-    v.clear();
-}
+    IRawElementProviderSimple* title = element(21);
+    check(int_property(title, UIA_IsControlElementPropertyId) == 0 && int_property(title, UIA_IsContentElementPropertyId) == 0,
+          "a text its row speaks is in neither the control nor the content view");
+    if (title) title->Release();
 
-void parser_checks() {
-    uia::Snapshot s;
-    check("parser: refuses text that is not a snapshot", !uia::parse_snapshot(L"hello", &s));
-    check("parser: refuses a node line with fields missing", !uia::parse_snapshot(L"W1\t0\t\t1\n1\t0\tX", &s));
-    const bool ok = uia::parse_snapshot(tree(L"OK", true), &s);
-    check("parser: reads the test tree", ok && s.nodes.size() == 7 && s.top.size() == 1 && s.focused == 4);
-    const uia::Node* seek = ok ? s.find(6) : nullptr;
-    check("parser: a SeekBar with a range it can set is a slider",
-          seek && seek->control_type == UIA_SliderControlTypeId && seek->range_max == 100 && seek->range_now == 30);
-    const uia::Node* title = ok ? s.find(2) : nullptr;
-    check("parser: a heading's flags, its live region and its view id",
-          title && (title->flags & uia::kHeading) && title->live == 1 && title->automation_id == L"app:id/title");
-    check("parser: Hebrew's LCID from the locale", ok && s.lcid == 0x040D);
-}
+    IRawElementProviderSimple* heading = element(10);
+    check(int_property(heading, UIA_HeadingLevelPropertyId) == 80052, "a heading");
+    check(int_property(heading, UIA_LiveSettingPropertyId) == Polite, "a polite live region");
+    check(int_property(heading, UIA_CulturePropertyId) == 0x040D, "the culture: Hebrew (Israel)");
+    if (heading) heading->Release();
 
-// A node's provider, as UIA holds it, asked directly.
-template <typename T>
-T* provider_pattern(int64_t id, PATTERNID pattern_id) {
-    IUnknown* u = uia::provider_for(g_hwnd, id);
-    IRawElementProviderSimple* simple = nullptr;
-    T* out = nullptr;
-    if (u && SUCCEEDED(u->QueryInterface(__uuidof(IRawElementProviderSimple), reinterpret_cast<void**>(&simple)))) {
-        IUnknown* p = nullptr;
-        if (SUCCEEDED(simple->GetPatternProvider(pattern_id, &p)) && p) {
-            p->QueryInterface(__uuidof(T), reinterpret_cast<void**>(&out));
-            p->Release();
-        }
-        simple->Release();
-    }
-    if (u) u->Release();
-    return out;
-}
-
-VARIANT provider_property(int64_t id, PROPERTYID property) {
+    IRawElementProviderSimple* edit = element(40);
+    check(string_property(edit, UIA_NamePropertyId) == L"Name", "an editor is named by its label");
+    check(string_property(edit, UIA_HelpTextPropertyId) == L"Your name", "its hint is its help text");
     VARIANT v;
     VariantInit(&v);
-    IUnknown* u = uia::provider_for(g_hwnd, id);
-    IRawElementProviderSimple* simple = nullptr;
-    if (u && SUCCEEDED(u->QueryInterface(__uuidof(IRawElementProviderSimple), reinterpret_cast<void**>(&simple)))) {
-        simple->GetPropertyValue(property, &v);
-        simple->Release();
+    bool labelled = false;
+    if (edit && SUCCEEDED(edit->GetPropertyValue(UIA_LabeledByPropertyId, &v)) && v.vt == VT_UNKNOWN && v.punkVal) {
+        IRawElementProviderFragment* lf = as<IRawElementProviderFragment>(v.punkVal, IID_IRawElementProviderFragment);
+        labelled = id_of(lf) == 30;
+        if (lf) lf->Release();
     }
-    if (u) u->Release();
-    return v;
+    VariantClear(&v);
+    check(labelled, "LabeledBy is the label's element");
+    if (edit) edit->Release();
+
+    IRawElementProviderSimple* pears = element(62);
+    check(int_property(pears, UIA_PositionInSetPropertyId) == 2 && int_property(pears, UIA_SizeOfSetPropertyId) == 2,
+          "a list's item: 2 of 2");
+    if (pears) pears->Release();
+
+    IRawElementProviderSimple* off = element(90);
+    check(int_property(off, UIA_IsEnabledPropertyId) == 0, "a disabled button");
+    IInvokeProvider* invoke = pattern<IInvokeProvider>(off, UIA_InvokePatternId, IID_IInvokeProvider);
+    check(invoke && invoke->Invoke() == static_cast<HRESULT>(UIA_E_ELEMENTNOTENABLED), "invoking it is refused");
+    if (invoke) invoke->Release();
+    if (off) off->Release();
+    g_app.take();
 }
 
-std::wstring provider_name(IUnknown* u) {
-    std::wstring out;
-    IRawElementProviderSimple* simple = nullptr;
-    if (u && SUCCEEDED(u->QueryInterface(__uuidof(IRawElementProviderSimple), reinterpret_cast<void**>(&simple)))) {
+void test_patterns() {
+    IRawElementProviderSimple* row = element(20);
+    IInvokeProvider* invoke = pattern<IInvokeProvider>(row, UIA_InvokePatternId, IID_IInvokeProvider);
+    check(invoke != nullptr, "a row invokes");
+    if (invoke) invoke->Invoke();
+    check(called(g_app.take(), 20, action::kClick), "Invoke clicks");
+    check(pattern<IToggleProvider>(row, UIA_TogglePatternId, IID_IToggleProvider) == nullptr, "a row does not toggle");
+    if (invoke) invoke->Release();
+    if (row) row->Release();
+
+    IRawElementProviderSimple* sw = element(23);
+    IToggleProvider* toggle = pattern<IToggleProvider>(sw, UIA_TogglePatternId, IID_IToggleProvider);
+    ToggleState state = ToggleState_Indeterminate;
+    if (toggle) toggle->get_ToggleState(&state);
+    check(state == ToggleState_On, "a checked switch is on");
+    if (toggle) toggle->Toggle();
+    check(called(g_app.take(), 23, action::kClick), "Toggle clicks");
+    if (toggle) toggle->Release();
+    if (sw) sw->Release();
+
+    IRawElementProviderSimple* edit = element(40);
+    IValueProvider* value = pattern<IValueProvider>(edit, UIA_ValuePatternId, IID_IValueProvider);
+    BSTR b = nullptr;
+    if (value) value->get_Value(&b);
+    check(b && std::wstring(b) == L"one two\nthree", "an editor's value");
+    SysFreeString(b);
+    WINBOOL ro = TRUE;
+    if (value) value->get_IsReadOnly(&ro);
+    check(!ro, "it is not read-only");
+    if (value) value->SetValue(L"hello");
+    std::vector<Call> calls = g_app.take();
+    check(calls.size() == 1 && calls[0].action == action::kSetText && calls[0].text == L"hello", "SetValue sets the text");
+    if (value) value->Release();
+
+    IRawElementProviderSimple* seek = element(50);
+    IRangeValueProvider* range = pattern<IRangeValueProvider>(seek, UIA_RangeValuePatternId, IID_IRangeValueProvider);
+    double now = 0, small = 0;
+    if (range) {
+        range->get_Value(&now);
+        range->get_SmallChange(&small);
+    }
+    check(now == 40 && small == 5, "a seek bar's value, and a twentieth of its range as a step");
+    check(range && range->SetValue(500) == E_INVALIDARG, "a value outside the range is refused");
+    if (range) range->SetValue(60);
+    calls = g_app.take();
+    check(calls.size() == 1 && calls[0].action == action::kSetProgress && calls[0].value == 60, "SetValue sets the progress");
+    if (range) range->Release();
+    if (seek) seek->Release();
+
+    IRawElementProviderSimple* list = element(60);
+    IScrollProvider* scroll = pattern<IScrollProvider>(list, UIA_ScrollPatternId, IID_IScrollProvider);
+    WINBOOL vert = FALSE, horiz = TRUE;
+    if (scroll) {
+        scroll->get_VerticallyScrollable(&vert);
+        scroll->get_HorizontallyScrollable(&horiz);
+    }
+    check(vert && !horiz, "a list scrolls vertically");
+    check(scroll && SUCCEEDED(scroll->Scroll(ScrollAmount_NoAmount, ScrollAmount_LargeIncrement)), "a page down");
+    check(called(g_app.take(), 60, action::kScrollDown), "a page down is ACTION_SCROLL_DOWN");
+    check(scroll && scroll->Scroll(ScrollAmount_NoAmount, ScrollAmount_SmallDecrement) ==
+                        static_cast<HRESULT>(UIA_E_INVALIDOPERATION),
+          "no way up: refused");
+    if (scroll) scroll->Release();
+    ISelectionProvider* selection = pattern<ISelectionProvider>(list, UIA_SelectionPatternId, IID_ISelectionProvider);
+    SAFEARRAY* sa = nullptr;
+    if (selection) selection->GetSelection(&sa);
+    LONG lo = 0, hi = -1;
+    if (sa) {
+        SafeArrayGetLBound(sa, 1, &lo);
+        SafeArrayGetUBound(sa, 1, &hi);
+    }
+    check(sa && hi - lo + 1 == 1, "the list's selection: one item");
+    if (sa) SafeArrayDestroy(sa);
+    if (selection) selection->Release();
+    if (list) list->Release();
+
+    IRawElementProviderSimple* apples = element(61);
+    ISelectionItemProvider* item = pattern<ISelectionItemProvider>(apples, UIA_SelectionItemPatternId,
+                                                                   IID_ISelectionItemProvider);
+    WINBOOL selected = FALSE;
+    if (item) item->get_IsSelected(&selected);
+    check(selected, "the selected item");
+    if (item) item->Release();
+    IScrollItemProvider* into = pattern<IScrollItemProvider>(apples, UIA_ScrollItemPatternId, IID_IScrollItemProvider);
+    if (into) into->ScrollIntoView();
+    check(called(g_app.take(), 61, action::kShowOnScreen), "ScrollIntoView is ACTION_SHOW_ON_SCREEN");
+    if (into) into->Release();
+    if (apples) apples->Release();
+    IRawElementProviderSimple* pears = element(62);
+    item = pattern<ISelectionItemProvider>(pears, UIA_SelectionItemPatternId, IID_ISelectionItemProvider);
+    if (item) item->Select();
+    check(called(g_app.take(), 62, action::kClick), "selecting an item with no select action taps it");
+    if (item) item->Release();
+    if (pears) pears->Release();
+
+    IRawElementProviderSimple* more = element(80);
+    IExpandCollapseProvider* ec = pattern<IExpandCollapseProvider>(more, UIA_ExpandCollapsePatternId,
+                                                                   IID_IExpandCollapseProvider);
+    ExpandCollapseState st = ExpandCollapseState_LeafNode;
+    if (ec) ec->get_ExpandCollapseState(&st);
+    check(st == ExpandCollapseState_Collapsed, "a node that can expand is collapsed");
+    if (ec) ec->Expand();
+    check(called(g_app.take(), 80, action::kExpand), "Expand is ACTION_EXPAND");
+    check(ec && ec->Collapse() == static_cast<HRESULT>(UIA_E_INVALIDOPERATION), "it cannot collapse");
+    if (ec) ec->Release();
+    if (more) more->Release();
+    if (edit) edit->Release();
+}
+
+void test_text() {
+    IRawElementProviderSimple* edit = element(40);
+    ITextProvider2* text = pattern<ITextProvider2>(edit, UIA_TextPattern2Id, IID_ITextProvider2);
+    check(text != nullptr, "an editor has the Text pattern");
+    if (!text) {
+        if (edit) edit->Release();
+        return;
+    }
+    ITextRangeProvider* doc = nullptr;
+    text->get_DocumentRange(&doc);
+    check(range_text(doc) == L"one two\nthree", "the document range");
+    ITextRangeProvider* r = nullptr;
+    if (doc) doc->Clone(&r);
+    if (r) {
+        r->MoveEndpointByRange(TextPatternRangeEndpoint_End, r, TextPatternRangeEndpoint_Start);
+        int moved = 0;
+        r->Move(TextUnit_Word, 1, &moved);
+        r->ExpandToEnclosingUnit(TextUnit_Word);
+        check(moved == 1 && range_text(r) == L"two\n", "the second word");
+        r->ExpandToEnclosingUnit(TextUnit_Line);
+        check(range_text(r) == L"one two\n", "its line");
+        r->Move(TextUnit_Line, 1, &moved);
+        check(moved == 1 && range_text(r) == L"three", "the next line");
+        SAFEARRAY* rects = nullptr;
+        r->GetBoundingRectangles(&rects);
+        LONG hi = -1;
+        double x = 0, y = 0;
+        if (rects) {
+            SafeArrayGetUBound(rects, 1, &hi);
+            LONG i0 = 0, i1 = 1;
+            SafeArrayGetElement(rects, &i0, &x);
+            SafeArrayGetElement(rects, &i1, &y);
+            SafeArrayDestroy(rects);
+        }
+        check(hi == 3 && x == 110 && y == 450, "the line's rectangle on the screen");
+        r->Select();
+        std::vector<Call> calls = g_app.take();
+        check(calls.size() == 1 && calls[0].action == action::kSetSelection && calls[0].a1 == 8 && calls[0].a2 == 13,
+              "Select sets the selection");
+        ITextRangeProvider* found = nullptr;
+        doc->FindText(SysAllocString(L"TWO"), FALSE, TRUE, &found);
+        int cmp = -1;
+        if (found) found->CompareEndpoints(TextPatternRangeEndpoint_Start, doc, TextPatternRangeEndpoint_Start, &cmp);
+        check(found && cmp == 4, "FindText, ignoring case");
+        if (found) found->Release();
         VARIANT v;
         VariantInit(&v);
-        if (SUCCEEDED(simple->GetPropertyValue(UIA_NamePropertyId, &v)) && v.vt == VT_BSTR && v.bstrVal) {
-            out.assign(v.bstrVal, SysStringLen(v.bstrVal));
+        r->GetAttributeValue(40015, &v);  // UIA_IsReadOnlyAttributeId
+        check(v.vt == VT_BOOL && v.boolVal == VARIANT_FALSE, "an editor's text is not read-only");
+        VariantClear(&v);
+        r->Release();
+    }
+    SAFEARRAY* sel = nullptr;
+    text->GetSelection(&sel);
+    ITextRangeProvider* s = nullptr;
+    if (sel) {
+        LONG i = 0;
+        SafeArrayGetElement(sel, &i, &s);
+        SafeArrayDestroy(sel);
+    }
+    check(range_text(s) == L"two", "the selection");
+    if (s) s->Release();
+    WINBOOL caret_active = FALSE;
+    ITextRangeProvider* caret = nullptr;
+    text->GetCaretRange(&caret_active, &caret);
+    int at = -1;
+    if (caret) caret->CompareEndpoints(TextPatternRangeEndpoint_Start, doc, TextPatternRangeEndpoint_Start, &at);
+    check(caret && caret_active && at == 7, "the caret at the selection's end, active in the focused editor");
+    if (caret) caret->Release();
+    ITextRangeProvider* p = nullptr;
+    text->RangeFromPoint(UiaPoint{100 + 51, 200 + 260}, &p);
+    at = -1;
+    if (p) p->CompareEndpoints(TextPatternRangeEndpoint_Start, doc, TextPatternRangeEndpoint_Start, &at);
+    check(at == 10, "the offset at a point on the second line");
+    if (p) p->Release();
+    if (doc) doc->Release();
+    text->Release();
+    if (edit) edit->Release();
+}
+
+void test_hit_and_focus() {
+    IUnknown* r = provider_for(g_hwnd, 0);
+    IRawElementProviderFragmentRoot* root = as<IRawElementProviderFragmentRoot>(r, IID_IRawElementProviderFragmentRoot);
+    if (r) r->Release();
+    IRawElementProviderFragment* hit = nullptr;
+    if (root) root->ElementProviderFromPoint(100 + 650, 200 + 100, &hit);
+    check(id_of(hit) == 23, "the switch is under its point, over its row");
+    if (hit) hit->Release();
+    hit = nullptr;
+    if (root) root->ElementProviderFromPoint(100 + 10, 200 + 400, &hit);
+    check(id_of(hit) == 61, "an item under its point");
+    if (hit) hit->Release();
+    IRawElementProviderFragment* focus = nullptr;
+    if (root) root->GetFocus(&focus);
+    check(id_of(focus) == 40, "the focused editor");
+    if (focus) focus->Release();
+    if (root) root->Release();
+}
+
+void test_gone() {
+    IRawElementProviderSimple* pears = element(62);
+    check(pears != nullptr, "an item's provider");
+    publish(encode(screen(false)));
+    flush();
+    VARIANT v;
+    VariantInit(&v);
+    check(pears && pears->GetPropertyValue(UIA_NamePropertyId, &v) == static_cast<HRESULT>(UIA_E_ELEMENTNOTAVAILABLE),
+          "once its node is gone, its provider says so");
+    check(element(62) == nullptr, "and no new one is made for it");
+    if (pears) pears->Release();
+    IRawElementProviderSimple* list = element(60);
+    check(navigate(list, NavigateDirection_LastChild) == 61, "the list's children follow the snapshot");
+    if (list) list->Release();
+    publish(encode(screen()));
+    flush();
+}
+
+// ---- 2. A client ---------------------------------------------------------------------------------
+
+void test_client() {
+    IUIAutomation* ua = nullptr;
+    if (FAILED(CoCreateInstance(CLSID_CUIAutomation, nullptr, CLSCTX_INPROC_SERVER, IID_IUIAutomation,
+                                reinterpret_cast<void**>(&ua))) || !ua) {
+        check(false, "a UI Automation client");
+        return;
+    }
+    IUIAutomationElement* window = nullptr;
+    ua->ElementFromHandle(g_hwnd, &window);
+    check(window != nullptr, "the window's element");
+    // By name and control type (a label and the editor it names share a name).
+    auto find = [&](const wchar_t* name, CONTROLTYPEID type) -> IUIAutomationElement* {
+        IUIAutomationElement* out = nullptr;
+        if (!window) return out;
+        VARIANT v, t;
+        v.vt = VT_BSTR;
+        v.bstrVal = SysAllocString(name);
+        t.vt = VT_I4;
+        t.lVal = type;
+        IUIAutomationCondition *by_name = nullptr, *by_type = nullptr, *both = nullptr;
+        ua->CreatePropertyCondition(UIA_NamePropertyId, v, &by_name);
+        ua->CreatePropertyCondition(UIA_ControlTypePropertyId, t, &by_type);
+        if (by_name && by_type) ua->CreateAndCondition(by_name, by_type, &both);
+        if (both) window->FindFirst(TreeScope_Descendants, both, &out);
+        for (IUIAutomationCondition* c : {by_name, by_type, both}) {
+            if (c) c->Release();
         }
         VariantClear(&v);
-        simple->Release();
-    }
-    return out;
+        return out;
+    };
+    // Real Windows puts the title bar's elements beside ours; find by name, not by position.
+    IUIAutomationElement* row = find(L"Wi-Fi, Connected", UIA_ButtonControlTypeId);
+    check(row != nullptr, "the client finds the row by its name");
+    CONTROLTYPEID ct = 0;
+    if (row) row->get_CurrentControlType(&ct);
+    check(ct == UIA_ButtonControlTypeId, "the client sees a button");
+    IUIAutomationInvokePattern* invoke = nullptr;
+    if (row) row->GetCurrentPatternAs(UIA_InvokePatternId, IID_IUIAutomationInvokePattern, reinterpret_cast<void**>(&invoke));
+    if (invoke) invoke->Invoke();
+    check(called(g_app.take(), 20, action::kClick), "the client's Invoke reaches the app");
+    if (invoke) invoke->Release();
+    if (row) row->Release();
+    IUIAutomationElement* edit = find(L"Name", UIA_EditControlTypeId);
+    IUIAutomationValuePattern* value = nullptr;
+    if (edit) edit->GetCurrentPatternAs(UIA_ValuePatternId, IID_IUIAutomationValuePattern, reinterpret_cast<void**>(&value));
+    BSTR b = nullptr;
+    if (value) value->get_CurrentValue(&b);
+    check(b && std::wstring(b) == L"one two\nthree", "the client reads the editor's value");
+    SysFreeString(b);
+    if (value) value->Release();
+    if (edit) edit->Release();
+    if (window) window->Release();
+    ua->Release();
 }
-
-// The patterns and properties as the providers give them to any client.
-void provider_checks() {
-    VARIANT v = provider_property(2, UIA_CulturePropertyId);
-    check("provider: the views speak the app's language (Hebrew, 1037)", v.vt == VT_I4 && v.lVal == 0x040D);
-    v = provider_property(2, UIA_HeadingLevelPropertyId);
-    check("provider: a heading is a heading", v.vt == VT_I4 && v.lVal != 0);
-    v = provider_property(2, UIA_LiveSettingPropertyId);
-    check("provider: a polite live region is Polite", v.vt == VT_I4 && v.lVal == 1);
-    v = provider_property(2, UIA_AutomationIdPropertyId);
-    check("provider: a view's id is its AutomationId",
-          v.vt == VT_BSTR && v.bstrVal && std::wstring(v.bstrVal) == L"app:id/title");
-    VariantClear(&v);
-    v = provider_property(4, UIA_HasKeyboardFocusPropertyId);
-    check("provider: the focused field has the keyboard focus", v.vt == VT_BOOL && v.boolVal == VARIANT_TRUE);
-    v = provider_property(2, UIA_IsOffscreenPropertyId);
-    check("provider: a view the user sees is on screen", v.vt == VT_BOOL && v.boolVal == VARIANT_FALSE);
-    check("provider: a TextView that does nothing cannot be invoked",
-          provider_pattern<IInvokeProvider>(2, UIA_InvokePatternId) == nullptr);
-
-    Performed p;
-    int before = g_app.count();
-    if (IInvokeProvider* invoke = provider_pattern<IInvokeProvider>(3, UIA_InvokePatternId)) {
-        invoke->Invoke();
-        invoke->Release();
-        check("provider: Invoke clicks the button", g_app.next(before, &p) && p.id == 3 && p.action == uia::kActClick);
-    } else {
-        check("provider: a button can be invoked", false);
-    }
-    before = g_app.count();
-    if (IValueProvider* value = provider_pattern<IValueProvider>(4, UIA_ValuePatternId)) {
-        BSTR b = nullptr;
-        value->get_Value(&b);
-        check("provider: the field's value is its text", b && std::wstring(b) == L"abc");
-        SysFreeString(b);
-        value->SetValue(L"דנה");
-        value->Release();
-        check("provider: SetValue sets the field's Hebrew text",
-              g_app.next(before, &p) && p.id == 4 && p.action == uia::kActSetText && p.text == L"דנה");
-    } else {
-        check("provider: a field has a value", false);
-    }
-    before = g_app.count();
-    if (IToggleProvider* toggle = provider_pattern<IToggleProvider>(5, UIA_TogglePatternId)) {
-        ToggleState state = ToggleState_Off;
-        toggle->get_ToggleState(&state);
-        check("provider: the check box is checked", state == ToggleState_On);
-        toggle->Toggle();
-        toggle->Release();
-        check("provider: Toggle clicks the check box", g_app.next(before, &p) && p.id == 5 && p.action == uia::kActClick);
-    } else {
-        check("provider: a check box toggles", false);
-    }
-    before = g_app.count();
-    if (IRangeValueProvider* range = provider_pattern<IRangeValueProvider>(6, UIA_RangeValuePatternId)) {
-        double now = 0, max = 0;
-        range->get_Value(&now);
-        range->get_Maximum(&max);
-        check("provider: the seek bar is at 30 of 100", now == 30 && max == 100);
-        check("provider: a value past the range is refused", range->SetValue(101) == E_INVALIDARG);
-        range->SetValue(55);
-        range->Release();
-        check("provider: SetValue sets the progress",
-              g_app.next(before, &p) && p.id == 6 && p.action == uia::kActSetProgress && p.text == L"55");
-    } else {
-        check("provider: a seek bar has a range", false);
-    }
-    before = g_app.count();
-    if (IScrollProvider* scroll = provider_pattern<IScrollProvider>(7, UIA_ScrollPatternId)) {
-        BOOL vertical = FALSE, across = TRUE;
-        scroll->get_VerticallyScrollable(&vertical);
-        scroll->get_HorizontallyScrollable(&across);
-        check("provider: a ScrollView scrolls vertically only", vertical && !across);
-        scroll->Scroll(ScrollAmount_NoAmount, ScrollAmount_LargeIncrement);
-        scroll->Release();
-        check("provider: a page down scrolls it down (ACTION_SCROLL_DOWN)",
-              g_app.next(before, &p) && p.id == 7 && p.action == uia::kActScrollDown);
-    } else {
-        check("provider: a scroll view scrolls", false);
-    }
-    before = g_app.count();
-    if (IScrollItemProvider* item = provider_pattern<IScrollItemProvider>(2, UIA_ScrollItemPatternId)) {
-        item->ScrollIntoView();
-        item->Release();
-        check("provider: ScrollIntoView shows the view on screen",
-              g_app.next(before, &p) && p.id == 2 && p.action == uia::kActShowOnScreen);
-    } else {
-        check("provider: a view can be scrolled into view", false);
-    }
-
-    // The root: the element at a point, and the focus.
-    IUnknown* u = uia::provider_for(g_hwnd, 0);
-    IRawElementProviderFragmentRoot* root = nullptr;
-    if (u && SUCCEEDED(u->QueryInterface(__uuidof(IRawElementProviderFragmentRoot), reinterpret_cast<void**>(&root)))) {
-        POINT center{110, 70};
-        ClientToScreen(g_hwnd, &center);
-        IRawElementProviderFragment* at = nullptr;
-        root->ElementProviderFromPoint(center.x, center.y, &at);
-        check("provider: the element at the button's centre is the button",
-              provider_name(at) == L"אישור");
-        if (at) at->Release();
-        IRawElementProviderFragment* focus = nullptr;
-        root->GetFocus(&focus);
-        check("provider: the root's focus is the focused field", provider_name(focus) == L"שם");
-        if (focus) focus->Release();
-        root->Release();
-    } else {
-        check("provider: the window's root is a fragment root", false);
-    }
-    if (u) u->Release();
-}
-
 
 }  // namespace
 
 int main() {
-    std::printf("winapk-uia-test\n");
-    parser_checks();
-
-    uia::set_app(&g_app);
-    HANDLE ready = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-    std::thread(window_thread, ready).detach();
-    WaitForSingleObject(ready, 10000);
-    if (!g_hwnd) {
-        std::printf("  [FAIL] no window\n");
-        return 1;
-    }
-    check("lazy: the app is not told before a client asks", g_app.activations.load() == 0);
-    check("lazy: nothing is due before a client asks", !uia::active() && !uia::due());
-
     CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-    IUIAutomation* client = nullptr;
-    HRESULT h = CoCreateInstance(__uuidof(CUIAutomation), nullptr, CLSCTX_INPROC_SERVER, __uuidof(IUIAutomation),
-                                 reinterpret_cast<void**>(&client));
-    if (FAILED(h) || !client) {
-        std::printf("  [FAIL] no UI Automation client (0x%08lx)\n", static_cast<unsigned long>(h));
+    set_app(&g_app);
+    std::mutex m;
+    std::condition_variable cv;
+    std::thread t(window_thread, &m, &cv);
+    {
+        std::unique_lock<std::mutex> hold(m);
+        cv.wait(hold, [] { return g_hwnd != nullptr; });
+    }
+    test_lazy();
+    test_navigation_and_properties();
+    test_patterns();
+    test_text();
+    test_hit_and_focus();
+    test_gone();
+    g_lenient = under_wine();
+    test_client();
+    g_lenient = false;
+    PostMessageW(g_hwnd, WM_CLOSE, 0, 0);
+    t.join();
+    flush();
+    check(!active(), "a destroyed window is no longer read");
+    {
+        std::lock_guard<std::mutex> hold(g_app.m);
+        check(g_app.deactivations == 1, "and the app is told");
+    }
+    CoUninitialize();
+    if (g_failures) {
+        std::printf("%d FAILED\n", g_failures);
         return 1;
     }
-    IUIAutomationElement* window = nullptr;
-    client->ElementFromHandle(g_hwnd, &window);
-    check("the window is an element", window != nullptr);
-    check("asking turned the app's accessibility on", g_app.activations.load() >= 1 && uia::active());
-
-    std::vector<IUIAutomationElement*> top = view_roots(client, window);
-    check("the window holds its one view root", top.size() == 1);
-    if (top.size() != 1) {
-        std::vector<IUIAutomationElement*> raw = children(client, window);
-        describe("the window's children", raw);
-        release_all(raw);
-    }
-    std::vector<IUIAutomationElement*> kids = top.empty() ? std::vector<IUIAutomationElement*>{}
-                                                          : children(client, top[0]);
-    check("the root holds its six views, in the app's order", kids.size() == 6);
-    if (kids.size() != 6) describe("the root's children", kids);
-    if (kids.size() == 6) {
-        check("a heading's Hebrew text is its name", name_of(kids[0]) == L"שלום עולם");
-        check("a TextView is Text", type_of(kids[0]) == UIA_TextControlTypeId);
-        check("a Button is a button named in Hebrew",
-              type_of(kids[1]) == UIA_ButtonControlTypeId && name_of(kids[1]) == L"אישור");
-        check("an EditText is Edit", type_of(kids[2]) == UIA_EditControlTypeId);
-        check("a CheckBox is a check box", type_of(kids[3]) == UIA_CheckBoxControlTypeId);
-        check("a SeekBar is a slider", type_of(kids[4]) == UIA_SliderControlTypeId);
-        check("a ScrollView is a pane", type_of(kids[5]) == UIA_PaneControlTypeId);
-
-        RECT want{20, 50, 200, 90}, got{};
-        to_screen(want, &want);
-        kids[1]->get_CurrentBoundingRectangle(&got);
-        check("the button's bounds are where it is drawn on the screen", EqualRect(&want, &got) != FALSE);
-
-
-        // What Wine's client lacks (properties, patterns, ElementFromPoint) answers E_NOTIMPL
-        // there: those checks are skipped, and provider_checks reads the same from the
-        // providers themselves.
-        VARIANT v;
-        VariantInit(&v);
-        if (kids[0]->GetCurrentPropertyValue(UIA_CulturePropertyId, &v) == E_NOTIMPL) {
-            std::printf("  [SKIP] this UI Automation client reads no properties or patterns (Wine)\n");
-        } else {
-            check("client: the views speak the app's language (Hebrew, 1037)", v.vt == VT_I4 && v.lVal == 0x040D);
-            VariantClear(&v);
-            BOOL focus = FALSE;
-            kids[2]->get_CurrentHasKeyboardFocus(&focus);
-            check("client: the focused field has the keyboard focus", focus != FALSE);
-            const int before = g_app.count();
-            Performed p;
-            IUIAutomationInvokePattern* invoke = pattern<IUIAutomationInvokePattern>(kids[1], UIA_InvokePatternId);
-            check("client: a button can be invoked", invoke != nullptr);
-            if (invoke) {
-                invoke->Invoke();
-                invoke->Release();
-                check("client: Invoke clicks the view",
-                      g_app.next(before, &p) && p.id == 3 && p.action == uia::kActClick);
-            }
-            IUIAutomationValuePattern* value = pattern<IUIAutomationValuePattern>(kids[2], UIA_ValuePatternId);
-            check("client: a field has a value", value != nullptr);
-            if (value) {
-                BSTR b = nullptr;
-                value->get_CurrentValue(&b);
-                check("client: the field's value is its text", b && std::wstring(b) == L"abc");
-                SysFreeString(b);
-                value->Release();
-            }
-            IUIAutomationRangeValuePattern* range =
-                pattern<IUIAutomationRangeValuePattern>(kids[4], UIA_RangeValuePatternId);
-            check("client: a seek bar has a range", range != nullptr);
-            if (range) {
-                double now = 0;
-                range->get_CurrentValue(&now);
-                check("client: the seek bar is at 30", now == 30);
-                range->Release();
-            }
-            IUIAutomationTogglePattern* toggle = pattern<IUIAutomationTogglePattern>(kids[3], UIA_TogglePatternId);
-            check("client: a check box toggles", toggle != nullptr);
-            if (toggle) toggle->Release();
-            IUIAutomationScrollPattern* scroll = pattern<IUIAutomationScrollPattern>(kids[5], UIA_ScrollPatternId);
-            check("client: a scroll view scrolls", scroll != nullptr);
-            if (scroll) scroll->Release();
-            POINT center{110, 70};
-            ClientToScreen(g_hwnd, &center);
-            if (WindowFromPoint(center) == g_hwnd) {
-                IUIAutomationElement* at = nullptr;
-                client->ElementFromPoint(center, &at);
-                check("client: the element at the button's centre is the button",
-                      name_of(at) == L"אישור");
-                if (at) at->Release();
-            } else {
-                std::printf("  [SKIP] another window covers the test window: no point check\n");
-            }
-        }
-    }
-    release_all(kids);
-    release_all(top);
-
-    provider_checks();
-
-    // The app draws a new screen: the button's name changes and the scroll view goes.
-    g_app.current = tree(L"שמור", false);
-    uia::publish(g_app.current);
-    top = view_roots(client, window);
-    kids = top.empty() ? std::vector<IUIAutomationElement*>{} : children(client, top[0]);
-    check("a new snapshot replaces the old one", kids.size() == 5 && name_of(kids[1]) == L"שמור");
-    if (kids.size() != 5) describe("the root's children after the new snapshot", kids);
-    release_all(kids);
-    release_all(top);
-
-    if (window) window->Release();
-    client->Release();
-    PostMessageW(g_hwnd, WM_CLOSE, 0, 0);
-    std::printf("%s (%d failure%s)\n", g_failures ? "FAILED" : "ok", g_failures, g_failures == 1 ? "" : "s");
-    std::fflush(stdout);
-    // The provider's worker never ends; the test does.
-    ExitProcess(g_failures ? 1 : 0);
+    std::printf("uia: ALL PASSED\n");
+    return 0;
 }
