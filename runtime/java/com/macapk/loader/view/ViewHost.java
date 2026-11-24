@@ -12,12 +12,15 @@
 // interface, so that running AOSP's own views later needs an implementation of
 // it, not patched copies of AOSP classes. WinApkViewHost calls the member each
 // method stands for, one for one, with the same receiver and arguments: going
-// through here changes nothing. With WINAPK_AOSP_VIEWS=1 (the host puts
-// lib/aosp-views.jar first on the class path and sets -Dwinapk.aosp.views=1)
-// the host is com.winapk.aospviews.AospViewHost (windows/java/aosp_views; step
-// V1 of the plan): AOSP's own PhoneWindow, WindowManagerGlobal and ViewRootImpl
-// over Win.apk's window, and the methods below its window root makes moot
-// answer as nothing is attached.
+// through here changes nothing. Every app runs with -Dwinapk.aosp.views=1 (the
+// host puts lib/aosp-views.jar first on the class path; Win.apk's own view
+// classes are not in the shipped jar, November 2026): the host is then
+// com.winapk.aospviews.AospViewHost (windows/java/aosp_views; step V1 of the
+// plan): AOSP's own PhoneWindow, WindowManagerGlobal and ViewRootImpl over
+// Win.apk's window, and the methods below its window root makes moot answer as
+// nothing is attached. WinApkViewHost stays for what both share (Surface,
+// SurfaceView, KeyEvent, InputDevice, which stay Win.apk's) and for the tests
+// that run Win.apk's framework as compiled on a plain JVM.
 //
 // Inside those packages the classes keep calling each other directly. A Win.apk
 // subclass outside them that overrides a hook (GLSurfaceView's macapkDrawFrame,
@@ -82,7 +85,7 @@ public interface ViewHost {
      *  InputDevice: the host's GL, video and input plumbing). */
     static ViewHost winApk() { return WinApkViewHost.INSTANCE; }
 
-    // ---- AOSP's own window root (WINAPK_AOSP_VIEWS=1); Win.apk's answers "not mine" ----
+    // ---- AOSP's own window root (-Dwinapk.aosp.views=1); Win.apk's answers "not mine" ----
 
     /** True when an Activity's window, content and window manager are AOSP's (PhoneWindow,
      *  DecorView, WindowManagerImpl over ViewRootImpl): Activity then hands setContentView,

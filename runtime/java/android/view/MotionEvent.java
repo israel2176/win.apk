@@ -462,7 +462,7 @@ public class MotionEvent extends InputEvent implements Parcelable {
     }
 
     // ---- What AOSP's InputEvent declares abstract and AOSP's views call, with AOSP's bodies
-    // (WINAPK_AOSP_VIEWS=1 puts AOSP's InputEvent, ViewRootImpl and ViewGroup over this class;
+    // (-Dwinapk.aosp.views=1 puts AOSP's InputEvent, ViewRootImpl and ViewGroup over this class;
     // nothing of Win.apk's own calls them). ----
 
     private int mDisplayId;

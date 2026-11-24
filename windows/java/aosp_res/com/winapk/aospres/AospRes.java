@@ -1,4 +1,4 @@
-// AospRes -- ResBackend on AOSP 14's own android.content.res (WINAPK_AOSP_RES=1; docs/research/
+// AospRes -- ResBackend on AOSP 14's own android.content.res (-Dwinapk.aosp.res=1; docs/research/
 // aosp-views.md, step R1).
 //
 // With the switch on, lib/aosp-resources.jar is first on the class path: Resources, ResourcesImpl,

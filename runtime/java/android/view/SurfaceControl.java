@@ -50,7 +50,7 @@ public final class SurfaceControl implements Parcelable {
 
     /** Win.apk framework-internal: where a Surface copied from this layer hands each frame it
      *  posts, in place of presenting it to the host window (the in-process window manager of
-     *  AOSP's views composes its windows' layers; WINAPK_AOSP_VIEWS=1). Null: the Surface
+     *  AOSP's views composes its windows' layers; -Dwinapk.aosp.views=1). Null: the Surface
      *  presents as before. Copied with the layer by copyFrom. */
     private Surface.MacapkLayerPost mLayerPost;
     public void macapkSetLayerPost(Surface.MacapkLayerPost post) { mLayerPost = post; }

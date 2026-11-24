@@ -173,7 +173,7 @@ public final class CameraBridge {
      *  same committed size and the same rule: a landscape display is
      *  ROTATION_90), ROTATION_0 when there is none yet (a plain JVM). Read
      *  from DisplayConfig rather than a Display, so it holds whichever
-     *  android.view classes are loaded (WINAPK_AOSP_VIEWS). */
+     *  android.view classes are loaded (-Dwinapk.aosp.views=1). */
     static int displayRotation() {
         try {
             return DisplayConfig.realWidthPx() > DisplayConfig.realHeightPx() ? 1 : 0;

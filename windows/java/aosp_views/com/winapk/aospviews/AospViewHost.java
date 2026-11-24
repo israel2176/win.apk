@@ -1,5 +1,5 @@
 // The second ViewHost (runtime/java/com/macapk/loader/view/ViewHost.java): the runtime's door into
-// android.view when the views are AOSP 14's own (WINAPK_AOSP_VIEWS=1; docs/research/aosp-views.md,
+// android.view when the views are AOSP 14's own (-Dwinapk.aosp.views=1; docs/research/aosp-views.md,
 // step V1). An Activity's window is AOSP's PhoneWindow, its decor AOSP's DecorView, and it is added
 // to AOSP's WindowManagerGlobal on resume, as ActivityThread.handleResumeActivity does: AOSP's
 // ViewRootImpl then measures, lays out and draws it on Choreographer's frames, over the in-process

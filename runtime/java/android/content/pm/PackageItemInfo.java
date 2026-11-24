@@ -110,7 +110,7 @@ public class PackageItemInfo {
         isArchived = source.readBoolean();
     }
 
-    /** AOSP's resources (WINAPK_AOSP_RES=1): only then is a label read the AOSP way too. */
+    /** AOSP's resources (-Dwinapk.aosp.res=1): only then is a label read the AOSP way too. */
     private static final boolean AOSP_RES = "1".equals(System.getProperty("winapk.aosp.res"));
 
     // AOSP PackageItemInfo.loadLabel(PackageManager): returns the explicit
@@ -138,7 +138,7 @@ public class PackageItemInfo {
                 }
             } catch (Throwable ignored) {}
             // AOSP's own way (loadUnsafeLabel): pm.getText out of the package's Resources. AOSP's
-            // system Resources (WINAPK_AOSP_RES=1) hold the framework's table only, as on a device.
+            // system Resources (-Dwinapk.aosp.res=1) hold the framework's table only, as on a device.
             try {
                 CharSequence t = pm != null && AOSP_RES ? pm.getText(packageName, labelRes,
                         this instanceof ApplicationInfo ai ? ai : null) : null;

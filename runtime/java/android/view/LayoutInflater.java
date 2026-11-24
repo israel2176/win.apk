@@ -3264,7 +3264,7 @@ public class LayoutInflater {
         private final Element elem;
 
         /** Where the element came from, for AOSP's resources (CompiledXml; recorded only with
-         *  WINAPK_AOSP_RES=1). */
+         *  -Dwinapk.aosp.res=1). */
         @Override public byte[] compiledXml() {
             org.w3c.dom.Document d = elem.getOwnerDocument();
             Object b = d == null ? null : d.getUserData(com.macapk.loader.BinaryXmlParser.COMPILED_KEY);

@@ -1,4 +1,4 @@
-// The resource "index" with AOSP's views on too (WINAPK_AOSP_RES=1 and WINAPK_AOSP_VIEWS=1):
+// The resource "index" with AOSP's views on too (-Dwinapk.aosp.res=1 and -Dwinapk.aosp.views=1):
 // what Win.apk's code still asks by name (ResBackend's index* calls: the window policy of a theme,
 // a style id's name, R fields by name, the app's size buckets...) answered from AOSP's own
 // Resources and AssetManager, the tables they already hold, instead of Win.apk's ResourceIndex,

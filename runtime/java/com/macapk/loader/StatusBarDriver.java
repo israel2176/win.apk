@@ -1232,7 +1232,7 @@ public final class StatusBarDriver {
     }
 
     /** The status bar's glyphs alone (clock, battery), in `fgColor`, over whatever is beneath:
-     *  paint's own second half, and with AOSP's views (WINAPK_AOSP_VIEWS=1) all there is to
+     *  paint's own second half, and with AOSP's views (-Dwinapk.aosp.views=1) all there is to
      *  paint, as AOSP's DecorView draws the bar's background colour itself (the window
      *  compositor of com.winapk.aospviews passes the light-bar appearance as the colour). */
     public static void paintStatusGlyphs(Canvas canvas, int surfaceWidth, int barHeight, int fgColor,

@@ -6,7 +6,7 @@ import java.util.function.LongConsumer;
 // libcore's registry runs the native free function through sun.misc.Cleaner, which HotSpot does not
 // have; java.lang.ref.Cleaner does the same job. applyFreeFunction is bound by the native runtime.
 // A free function of 0 is never called. A free function registered here as Java code
-// (registerJavaFreeFunction) runs in place of a C one: AOSP's resources (WINAPK_AOSP_RES=1) keep
+// (registerJavaFreeFunction) runs in place of a C one: AOSP's resources (-Dwinapk.aosp.res=1) keep
 // their themes in a Java registry, and a Theme's entry is dropped there once the Theme is
 // unreachable, as ART frees the native theme (windows/java/aosp_res, NativeAssetManager).
 public class NativeAllocationRegistry {

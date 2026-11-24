@@ -43,7 +43,7 @@ import java.lang.reflect.Method;
 import java.util.concurrent.atomic.AtomicInteger;
 import com.macapk.loader.view.ViewHost;
 
-// Not final: with AOSP's views (WINAPK_AOSP_VIEWS=1) the host's entries are
+// Not final: with AOSP's views (-Dwinapk.aosp.views=1) the host's entries are
 // com.winapk.aospviews.AospInput's, a subclass (ViewHost.newTouchDispatcher).
 public class TouchDispatcher {
 

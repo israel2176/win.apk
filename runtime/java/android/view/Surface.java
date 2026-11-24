@@ -120,7 +120,7 @@ public class Surface implements android.os.Parcelable {
     /** AOSP copyFrom(SurfaceControl): this Surface now draws into the layer the
      *  control names. On Android the window's buffers; here the window's frame
      *  bitmap, of the layer's size, which unlockCanvasAndPost presents to the host
-     *  window (AOSP's ViewRootImpl, WINAPK_AOSP_VIEWS=1, copies its Surface from the
+     *  window (AOSP's ViewRootImpl, -Dwinapk.aosp.views=1, copies its Surface from the
      *  SurfaceControl the in-process window session's relayout sized). A new layer
      *  is a new generation, as AOSP counts it. */
     public void copyFrom(SurfaceControl other) {

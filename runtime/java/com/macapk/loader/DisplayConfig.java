@@ -437,7 +437,7 @@ public final class DisplayConfig {
         // CONFIG_WINDOW_CONFIGURATION is out of both: ActivityRecord.getConfigurationChanges drops it
         // ("We don't want window configuration to cause relaunches") and the client compares with
         // diffPublicOnly. Win.apk's own Configuration.diff never sets it; AOSP's
-        // (WINAPK_AOSP_RES=1) does when the window bounds move, and a rotation then counted as
+        // (-Dwinapk.aosp.res=1) does when the window bounds move, and a rotation then counted as
         // undeclared: no relaunch, no onConfigurationChanged.
         final int publicDiff = cur.diff(next) & ~CONFIG_WINDOW_CONFIGURATION;
         final boolean bounds = boundsDiffer(cur, next);
