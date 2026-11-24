@@ -4,9 +4,12 @@
 // the reader. The camera is CameraBridge's virtual one (what a PC without a
 // webcam has), which needs no capture natives, so this runs on a plain JVM.
 //
-//   javac -cp "<runtime>/lib/android-framework.jar;<runtime>/lib/macapk-loader.jar" -d out \
-//         windows/test/java/Camera2StillTest.java
-//   java  -cp "<runtime>/lib/android-framework.jar;<runtime>/lib/macapk-loader.jar;out" Camera2StillTest
+//   javac -cp "<runtime>/lib/aosp-graphics.jar;<runtime>/lib/android-framework.jar;<runtime>/lib/macapk-loader.jar" \
+//         -d out windows/test/java/Camera2StillTest.java
+//   winapk-runtime --data <scratch dir> --java-test out Camera2StillTest
+//
+// In winapk-runtime (--java-test): the JPEG is a Bitmap's compress, AOSP's graphics, whose natives a
+// plain java.exe does not have.
 //
 // Checks: the stream map lists JPEG (and PRIVATE) sizes; a still arrives as a
 // one-plane JPEG Image of the reader's size that javax.imageio decodes, with
@@ -163,6 +166,9 @@ public final class Camera2StillTest {
     }
 
     public static void main(String[] args) throws Exception {
+        // The framework draws on AOSP's graphics (lib/aosp-graphics.jar, under winapk-runtime
+        // --java-test): the system fonts, as Boot sets them up for an app, before any text.
+        com.macapk.loader.gfx.GfxBackend.get().materializeSystemFonts(ps -> null);
         CameraManager manager = new CameraManager();
         String[] ids = manager.getCameraIdList();
         check(ids.length >= 1, "a camera is listed (" + ids.length + ")");

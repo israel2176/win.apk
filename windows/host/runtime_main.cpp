@@ -18,6 +18,7 @@
 //   winapk-runtime --java-main --jdk <dir> --cp <jar> [--max-heap-mb <n>] <class> [args...]   (internal: run_java)
 //   winapk-runtime [--data <dir>] [--jdk <dir>] [--lib <dir>] --system [--maintenance]   (the system broker, below)
 //   winapk-runtime [--data <dir>] [--jdk <dir>] [--lib <dir>] --cds-prepare   (the framework archive now, cds.h)
+//   winapk-runtime [--data <dir>] [--jdk <dir>] [--lib <dir>] --java-test <class path> <class> [args...]   (tests)
 //   winapk-runtime --cds-dump ...   (internal: the framework archive's background dump)
 //
 // --system runs upstream's system broker (com.macapk.loader.SystemServer: how
@@ -110,6 +111,14 @@ struct Options {
     bool maintenance = false;  // --maintenance (with --system): a maintenance window, the launcher's
     bool cds_prepare = false;  // --cds-prepare: make the framework archive (cds.h) and stop
     bool verify = false;  // --verify-apk <app>: com.winapk.tools.ApkCheck on `apk`, no app run
+    // --java-test <class path> <class> [args...]: <class>.main in a JVM made as --gms makes it (the
+    // framework on AOSP's graphics, the host natives bound) with <class path> after the framework's:
+    // CI's tests of framework code that draws, which a plain java.exe cannot run since the framework
+    // has no graphics of its own. The exit code is 0, or 1 when main throws, or System.exit's.
+    bool java_test = false;
+    std::wstring java_test_cp;
+    std::string java_test_class;  // binary name with '/'
+    std::vector<std::wstring> java_test_args;
 };
 
 std::string utf8(const std::wstring& w) {
@@ -299,16 +308,24 @@ bool parse_args(int argc, wchar_t** argv, Options* o) {
             o->gms = true;
             for (int j = i + 1; j < argc; ++j) o->gms_args.emplace_back(argv[j]);
             break;
+        } else if (a == L"--java-test") {
+            if (i + 2 >= argc) return false;
+            o->java_test = true;
+            o->java_test_cp = argv[i + 1];
+            o->java_test_class = utf8(argv[i + 2]);
+            std::replace(o->java_test_class.begin(), o->java_test_class.end(), '.', '/');
+            for (int j = i + 3; j < argc; ++j) o->java_test_args.emplace_back(argv[j]);
+            break;
         } else ok = false;
         if (!ok) return false;
     }
-    return !o->apk.empty() || o->gms || o->system || o->cds_prepare;
+    return !o->apk.empty() || o->gms || o->system || o->cds_prepare || o->java_test;
 }
 
 // Fills in whatever the command line left out, and checks it exists.
 bool resolve_paths(Options* o) {
     std::error_code ec;
-    if (!o->gms && !o->system && !o->cds_prepare) {
+    if (!o->gms && !o->system && !o->cds_prepare && !o->java_test) {
         o->apk = fs::absolute(o->apk, ec);
         if (!fs::is_regular_file(o->apk, ec)) {
             std::fprintf(stderr, "[win.apk] no such APK: %s\n", utf8(o->apk.wstring()).c_str());
@@ -1574,15 +1591,18 @@ std::vector<std::string> jvm_options(const BootArgs& b) {
     const winapk::host::AospGfxFiles* aosp = winapk::host::aosp_gfx_files();
     // AOSP's resources (aosp_gfx.h, always: Win.apk's own are not shipped) before them: that jar's
     // com.android.internal.R matches its framework table, for the graphics' classes too.
-    const winapk::host::AospResFiles* aosp_res = winapk::host::aosp_res_files();
+    // --java-test leaves both out: the framework tests exercise Win.apk's own views and resources,
+    // which their class path brings back (the build's whole android-framework.jar), on AOSP's graphics.
+    const winapk::host::AospResFiles* aosp_res = o.java_test ? nullptr : winapk::host::aosp_res_files();
     // AOSP's views (aosp_gfx.h, always likewise) before both: android.view and android.widget.
-    const std::filesystem::path* aosp_views = winapk::host::aosp_views_jar();
+    const std::filesystem::path* aosp_views = o.java_test ? nullptr : winapk::host::aosp_views_jar();
     v.push_back("-Djava.class.path=" + (aosp_views ? jvm_path(*aosp_views) + ";" : std::string()) +
                 (aosp_res ? jvm_path(aosp_res->jar) + ";" : std::string()) +
                 (aosp ? jvm_path(aosp->jar) + ";" : std::string()) +
                 jvm_path(o.lib / "android-framework.jar") + ";" +
                 jvm_path(o.lib / "macapk-loader.jar") + ";" + jvm_path(o.lib / "bcprov-jdk18on-1.79.jar") +
-                (o.install_only || o.verify ? ";" + jvm_path(o.lib / "winapk-tools.jar") : std::string()));
+                (o.install_only || o.verify ? ";" + jvm_path(o.lib / "winapk-tools.jar") : std::string()) +
+                (o.java_test ? ";" + utf8(o.java_test_cp) : std::string()));
     // Upstream's set (runtime/src/jvm_loader.cpp), minus the Mac-only parts.
     v.push_back("-Xrs");
     v.push_back("-Djava.library.path=");
@@ -1916,6 +1936,31 @@ DWORD WINAPI gms_thread(void* param) {
     macapk::sqlite::RegisterNativeSqliteMethods(env);
     check_exception(env, "RegisterNativeSqliteMethods");
     if (!winapk::host::aosp_gfx_load(vm, env)) return 1;  // as boot_thread: it said why
+
+    if (o.java_test) {
+        jclass cls = env->FindClass(o.java_test_class.c_str());
+        jmethodID main = cls ? env->GetStaticMethodID(cls, "main", "([Ljava/lang/String;)V") : nullptr;
+        if (!main) {
+            check_exception(env, "the test class's main lookup");
+            std::fprintf(stderr, "[win.apk] no main method in %s\n", o.java_test_class.c_str());
+            std::fflush(stderr);
+            TerminateProcess(GetCurrentProcess(), 1);
+        }
+        jobjectArray args = env->NewObjectArray(static_cast<jsize>(o.java_test_args.size()),
+                                                env->FindClass("java/lang/String"), nullptr);
+        for (size_t i = 0; i < o.java_test_args.size(); ++i) {
+            env->SetObjectArrayElement(args, static_cast<jsize>(i), jstring_of(env, o.java_test_args[i]));
+        }
+        env->CallStaticVoidMethod(cls, main, args);
+        const bool threw = env->ExceptionCheck();
+        if (threw) {
+            env->ExceptionDescribe();
+            env->ExceptionClear();
+        }
+        std::fflush(stdout);
+        std::fflush(stderr);
+        TerminateProcess(GetCurrentProcess(), threw ? 1 : 0);
+    }
 
     // --verify-apk is the same shape: com.winapk.tools.ApkCheck.run(String[])int, on the one file.
     const char* cls_name = o.verify ? "com/winapk/tools/ApkCheck" : "com/macapk/gms/GmsCli";
@@ -2302,7 +2347,9 @@ int wmain(int argc, wchar_t** argv) {
                      "       winapk-runtime [--data <dir>] [--jdk <dir>] [--lib <dir>] --gms <subcommand> [args]\n"
                      "       winapk-runtime [--data <dir>] [--jdk <dir>] [--lib <dir>] --system [--maintenance]\n"
                      "       winapk-runtime [--data <dir>] [--jdk <dir>] [--lib <dir>] --verify-apk <app>\n"
-                     "       winapk-runtime [--data <dir>] [--jdk <dir>] [--lib <dir>] --cds-prepare\n");
+                     "       winapk-runtime [--data <dir>] [--jdk <dir>] [--lib <dir>] --cds-prepare\n"
+                     "       winapk-runtime [--data <dir>] [--jdk <dir>] [--lib <dir>] --java-test <class path> <class> "
+                     "[args...]\n");
         return 2;
     }
     if (!resolve_paths(&b.options)) return 2;
@@ -2393,8 +2440,8 @@ int wmain(int argc, wchar_t** argv) {
     }
 
     // --gms: a JVM, the GMS classes and no app. Before anything APK-shaped.
-    // --verify-apk too: it only reads the file.
-    if (b.options.gms || b.options.verify) {
+    // --verify-apk too: it only reads the file; and --java-test, a test's main.
+    if (b.options.gms || b.options.verify || b.options.java_test) {
         SetEnvironmentVariableW(L"MACAPK_APK_PATH", nullptr);
         HANDLE t = CreateThread(nullptr, 64 * 1024 * 1024, gms_thread, &b, STACK_SIZE_PARAM_IS_A_RESERVATION,
                                 nullptr);

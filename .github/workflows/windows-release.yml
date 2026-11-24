@@ -56,8 +56,8 @@ jobs:
       - name: Stage and package
         run: |
           export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
-          # With AOSP's graphics', resources' and views' files (build_aosp_{gfx,res,views}.sh): apps
-          # run on them.
+          # With AOSP's graphics', resources' and views' files (build_aosp_{gfx,res,views}.sh): the
+          # only ones the framework has.
           windows/scripts/stage_runtime.sh build Win.apk
           test -f Win.apk/lib/aosp-graphics.jar && test -f Win.apk/bin/robolectric-nativeruntime.dll
           test -f Win.apk/lib/aosp-resources.jar && test -f Win.apk/lib/aosp-views.jar

@@ -6,11 +6,12 @@
 // view left out, a check box's state, a field's value and hint, a seek bar's range, and actions
 // reaching the views (a click, a new text, a progress).
 //
-//   javac -cp "<runtime>/lib/android-framework.jar;<runtime>/lib/macapk-loader.jar" -d out \
+//   javac -cp "<runtime>/lib/aosp-graphics.jar;<runtime>/lib/android-framework.jar;<runtime>/lib/macapk-loader.jar" -d out \
 //         windows/test/java/com/macapk/loader/AccessibilityTreeTest.java
-//   MACAPK_LOG_LEVEL=7 java -Djava.awt.headless=true \
-//         -cp "<runtime>/lib/android-framework.jar;<runtime>/lib/macapk-loader.jar;out" \
-//         com.macapk.loader.AccessibilityTreeTest
+//   MACAPK_LOG_LEVEL=7 winapk-runtime --data <scratch dir> --java-test out com.macapk.loader.AccessibilityTreeTest
+//
+// In winapk-runtime (--java-test: the framework's JVM, AOSP's graphics bound): the views measure
+// their text with AOSP's Paint, whose natives a plain java.exe does not have.
 //
 // Exits 0 when every check passes.
 package com.macapk.loader;
@@ -74,6 +75,9 @@ public final class AccessibilityTreeTest {
     }
 
     public static void main(String[] args) {
+        // The framework draws on AOSP's graphics (lib/aosp-graphics.jar, under winapk-runtime
+        // --java-test): the system fonts, as Boot sets them up for an app, before any text.
+        com.macapk.loader.gfx.GfxBackend.get().materializeSystemFonts(ps -> null);
         FrameLayout root = new FrameLayout(null);
         // A plain layout: not important for accessibility, so its children are the root's.
         RtlRow row = new RtlRow();

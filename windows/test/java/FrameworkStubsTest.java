@@ -3,10 +3,12 @@
 // do something), checked against what Android's do, so that none quietly turns back into one.
 // One check per method fixed; add the next one here when another stub gets its body.
 //
-//   javac -cp "<runtime>/lib/android-framework.jar;<runtime>/lib/macapk-loader.jar" -d out \
+//   javac -cp "<runtime>/lib/aosp-graphics.jar;<runtime>/lib/android-framework.jar;<runtime>/lib/macapk-loader.jar" -d out \
 //         windows/test/java/FrameworkStubsTest.java
-//   MACAPK_LOG_LEVEL=7 java -Djava.awt.headless=true \
-//         -cp "<runtime>/lib/android-framework.jar;<runtime>/lib/macapk-loader.jar;out" FrameworkStubsTest
+//   MACAPK_LOG_LEVEL=7 winapk-runtime --data <scratch dir> --java-test out FrameworkStubsTest
+//
+// In winapk-runtime (--java-test: the framework's JVM, AOSP's graphics bound), since the framework
+// has no graphics of its own and a plain java.exe has no natives for AOSP's.
 //
 // Exits 0 when every check passes. No window, no native runtime: MACAPK_LOG_LEVEL=7 keeps the
 // framework from logging, which needs the runtime's NativeLog. (TextView's baseline setters
@@ -88,7 +90,7 @@ public final class FrameworkStubsTest {
                       View.MeasureSpec.makeMeasureSpec(100, View.MeasureSpec.EXACTLY));
         child.layout(20, 20, 120, 120);
         child.setClipBounds(new Rect(0, 0, 50, 50));
-        Bitmap bmp = Bitmap.createBitmapWithCanvasBacking(200, 200);
+        Bitmap bmp = Bitmap.createBitmap(200, 200, Bitmap.Config.ARGB_8888);
         root.draw(new Canvas(bmp));
         check((bmp.getPixel(30, 30) & 0xffffff) == 0x000000, "inside the clip bounds the child draws");
         check((bmp.getPixel(100, 100) & 0xffffff) == 0xffffff, "outside the clip bounds the child does not draw");
@@ -145,6 +147,9 @@ public final class FrameworkStubsTest {
     }
 
     public static void main(String[] args) {
+        // The framework draws on AOSP's graphics (lib/aosp-graphics.jar, under winapk-runtime
+        // --java-test): the system fonts, as Boot sets them up for an app, before any text.
+        com.macapk.loader.gfx.GfxBackend.get().materializeSystemFonts(ps -> null);
         animatorSetInterpolator();
         viewClipBounds();
         processElapsedCpuTime();

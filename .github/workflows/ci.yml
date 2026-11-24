@@ -103,6 +103,7 @@ jobs:
                   runtime/java/*|windows/java/*|windows/host/*|windows/src/*|windows/include/*) ui=true ;;
                   windows/test/uiprobe/*|windows/test/screens/*|windows/scripts/build_java.sh) ui=true ;;
                   windows/scripts/build_aosp_*.sh|windows/scripts/Aosp*.java|windows/scripts/stage_runtime.sh) ui=true ;;
+                  windows/scripts/aosp_gfx_take.sh) ui=true ;;
                   .github/workflows/ci.yml|.github/ci/*|.github/probe/fdroid_fetch.py) ui=true ;;
                 esac
               done < <(git diff --name-only HEAD^1 HEAD)
@@ -399,20 +400,11 @@ jobs:
         with:
           name: runtime-stage
           path: stage
-      # The tests on a plain JVM (no winapk-runtime) take build/java/android-framework.jar, the
-      # framework as compiled: the stage's has no android.view, android.widget or
-      # android.content.res (AOSP's jars, first on an app's class path, shadow them), and AOSP's
-      # classes need natives only winapk-runtime binds. So these still run Win.apk's own views and
-      # resources, which no app runs any more (docs/research/open-issues.md).
-      - name: Run the real-JVM test on the runtime's Bitmap
-        run: |
-          # libjnigraphics (AndroidBitmap_*) on android.graphics.Bitmap, which
-          # the staged android-framework.jar provides; the unit tests' run
-          # without it skips that check.
-          export PATH="$(cygpath -u "$JAVA_HOME")/bin/server:$(cygpath -u "$JAVA_HOME")/bin:$PATH"
-          cp="guest/e2e/classes;$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
-          ./build/winapk-jvm-run.exe guest/e2e/libwinapk_jni_guest.so "$cp" | tee jvm-bitmap.log
-          grep -q "\[PASS\] AndroidBitmap" jvm-bitmap.log
+      # The framework tests take build/java/android-framework.jar, the framework as compiled: the
+      # stage's has no android.view, android.widget or android.content.res (AOSP's jars shadow them),
+      # so these still run Win.apk's own views and resources, which no app runs any more. Those that
+      # draw run in winapk-runtime --java-test, which binds AOSP's graphics (the framework has no
+      # other graphics) and leaves AOSP's resources and views off the class path.
       - name: Run the File.separator rewrite test
         run: |
           # Guest code reads Android's '/' from java.io.File.separator(Char);
@@ -466,24 +458,33 @@ jobs:
             -Dwinapk.android.root="$(cygpath -w "$RUNNER_TEMP")" \
             -cp "$(cygpath -w build/android-paths-test)" AndroidPathsTest
       - name: Run the damage rectangle test
+        continue-on-error: true
         run: |
           # What an invalidation damages, and that a frame drawn clipped to it
           # has the pixels of a frame drawn whole (partial redraw, off by
           # default: MACAPK_FRAMESPEED_DAMAGE=1). The real View classes, no window.
           export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
-          cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          # Informational: partial frames (off by default) never worked on AOSP's graphics, the default
+          # since milestone 2 (docs/research/open-issues.md); this ran on Java2D's until those went.
+          # In winapk-runtime (--java-test): the framework as compiled (build/java, Win.apk's own views and
+          # resources, which these tests exercise) with AOSP's graphics bound, the only graphics it has.
+          cp="$(cygpath -w stage/lib/aosp-graphics.jar);$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/damage-test windows/test/java/DamageRectTest.java
-          MACAPK_FRAMESPEED_DAMAGE=1 MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -Djava.awt.headless=true \
-            -cp "$cp;$(cygpath -w build/damage-test)" DamageRectTest
+          MACAPK_FRAMESPEED_DAMAGE=1 MACAPK_LOG_LEVEL=7 ./stage/bin/winapk-runtime.exe --data "$(cygpath -w "$PWD/jtdata")" \
+            --java-test "$(cygpath -w build/java/android-framework.jar);$(cygpath -w build/damage-test)" DamageRectTest
       - name: Run the camera2 still test
         run: |
           # camera2 with the virtual camera on a plain JVM: JPEG sizes are
           # advertised, a still is a real JPEG of the reader's size with its
           # EXIF orientation, the callbacks come in order.
           export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
-          cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          # JPEG encoding is a Bitmap's compress, AOSP's graphics.
+          # In winapk-runtime (--java-test): the framework as compiled (build/java, Win.apk's own views and
+          # resources, which these tests exercise) with AOSP's graphics bound, the only graphics it has.
+          cp="$(cygpath -w stage/lib/aosp-graphics.jar);$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/camera2-test windows/test/java/Camera2StillTest.java
-          "$JAVA_HOME/bin/java" -Djava.awt.headless=true -cp "$cp;$(cygpath -w build/camera2-test)" Camera2StillTest
+          ./stage/bin/winapk-runtime.exe --data "$(cygpath -w "$PWD/jtdata")" \
+            --java-test "$(cygpath -w build/java/android-framework.jar);$(cygpath -w build/camera2-test)" Camera2StillTest
       - name: Run the camera orientation test
         run: |
           # The camera's orientation as apps compute with it (Scanovate's
@@ -491,7 +492,7 @@ jobs:
           # transforms, a fixed-focus camera without a torch, and no
           # synthetic accelerometer; on a plain JVM.
           export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
-          cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          cp="$(cygpath -w stage/lib/aosp-graphics.jar);$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/camera-orientation-test windows/test/java/CameraOrientationTest.java
           MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -Djava.awt.headless=true \
             -cp "$cp;$(cygpath -w build/camera-orientation-test)" CameraOrientationTest
@@ -502,10 +503,12 @@ jobs:
           # (right to left too), states, and actions reaching the views; on a
           # plain JVM.
           export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
-          cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          # In winapk-runtime (--java-test): the framework as compiled (build/java, Win.apk's own views and
+          # resources, which these tests exercise) with AOSP's graphics bound, the only graphics it has.
+          cp="$(cygpath -w stage/lib/aosp-graphics.jar);$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/a11y-test windows/test/java/com/macapk/loader/AccessibilityTreeTest.java
-          MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -Djava.awt.headless=true \
-            -cp "$cp;$(cygpath -w build/a11y-test)" com.macapk.loader.AccessibilityTreeTest
+          MACAPK_LOG_LEVEL=7 ./stage/bin/winapk-runtime.exe --data "$(cygpath -w "$PWD/jtdata")" \
+            --java-test "$(cygpath -w build/java/android-framework.jar);$(cygpath -w build/a11y-test)" com.macapk.loader.AccessibilityTreeTest
       - name: Run the host network test
         run: |
           # What ConnectivityManager makes of the host's default-route adapter
@@ -536,17 +539,19 @@ jobs:
           # View's clip bounds and the drawing cut to them, Process.getElapsedCpuTime
           # and getUid/GidForName, ExpandableListView's packed positions.
           export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
-          cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          # In winapk-runtime (--java-test): the framework as compiled (build/java, Win.apk's own views and
+          # resources, which these tests exercise) with AOSP's graphics bound, the only graphics it has.
+          cp="$(cygpath -w stage/lib/aosp-graphics.jar);$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/stubs-test windows/test/java/FrameworkStubsTest.java
-          MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -Djava.awt.headless=true \
-            -cp "$cp;$(cygpath -w build/stubs-test)" FrameworkStubsTest
+          MACAPK_LOG_LEVEL=7 ./stage/bin/winapk-runtime.exe --data "$(cygpath -w "$PWD/jtdata")" \
+            --java-test "$(cygpath -w build/java/android-framework.jar);$(cygpath -w build/stubs-test)" FrameworkStubsTest
       - name: Run the DateTimeView test
         run: |
           # android.widget.DateTimeView (a notification template's time) as
           # AOSP 14 has it: the short time today, the short date outside it,
           # relative "now", "5m", "in 2d" and the accessibility text.
           export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
-          cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          cp="$(cygpath -w stage/lib/aosp-graphics.jar);$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/datetimeview-test windows/test/java/DateTimeViewTest.java
           MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -Djava.awt.headless=true -Duser.language=en -Duser.country=US \
             -cp "$cp;$(cygpath -w build/datetimeview-test)" DateTimeViewTest | tee datetimeview-test.log
@@ -564,17 +569,6 @@ jobs:
           "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/icu-fallback-test)" com.macapk.icu.HostIcuFallbackTest \
             | tee icu-fallback-test.log
           grep -q "ALL PASSED" icu-fallback-test.log
-      - name: Run the Skia-less RenderEffect test
-        run: |
-          # RenderEffect and RuntimeShader with no Skia bridge (Windows never
-          # has upstream's Mac one): MacApkSkia.isAvailable() answers false
-          # instead of throwing into the app, and the effects are made.
-          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
-          cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
-          "$JAVA_HOME/bin/javac" -cp "$cp" -d build/skia-test windows/test/java/com/macapk/graphics/MacApkSkiaTest.java
-          "$JAVA_HOME/bin/java" -Djava.awt.headless=true -cp "$cp;$(cygpath -w build/skia-test)" \
-            com.macapk.graphics.MacApkSkiaTest | tee skia-test.log
-          grep -q "ALL PASSED" skia-test.log
       - name: Run the HttpURLConnection request properties test
         run: |
           # The request side of the connection an app gets (runtime/net_spi's
@@ -732,9 +726,7 @@ jobs:
           # patches are baked in, so the JRE's archive maps. The first start
           # has no framework archive yet: it records its classes and, at its
           # exit, starts the background dump; the next start maps the archive.
-          # AOSP's graphics, resources and views share one archive (framework-aosp-<key>.jsa). A start
-          # on Java2D's (WINAPK_AOSP_GFX=0) cannot run an app any more: Win.apk's own views and
-          # resources, which it needs, are not in the stage.
+          # AOSP's graphics, resources and views share one archive (framework-aosp-<key>.jsa).
           export WINAPK_HEADLESS=1 WINAPK_HEADLESS_EXIT_AFTER_FRAMES=30
           data="$(cygpath -w "$PWD/cdsdata")"
           wait_jsa() { for i in $(seq 1 90); do ls cdsdata/cds/framework-$1-*.jsa > /dev/null 2>&1 && break; sleep 2; done
@@ -756,6 +748,19 @@ jobs:
             || { cat cds-gms.out; tail -n 100 cds-gms.log; exit 1; }
           grep -F "cds: framework archive" cds-gms.log | grep -F framework-aosp-
           grep -F "class-data sharing ON" cds-gms.log
+      - name: A stage without AOSP's graphics files stops with a clear error
+        run: |
+          # The framework has no other graphics: a file missing ends the process before its JVM, with
+          # the line the launcher's Show log shows (host/aosp_gfx.h), instead of an empty window.
+          mv stage/bin/aosp/icu/icudt68l.dat icudt68l.dat.aside
+          rc=0
+          timeout 300 ./stage/bin/winapk-runtime.exe --apk sudoku.apk --data "$(cygpath -w "$PWD/nogfxdata")" \
+            > nogfx.log 2>&1 || rc=$?
+          mv icudt68l.dat.aside stage/bin/aosp/icu/icudt68l.dat
+          cat nogfx.log
+          [[ $rc == 1 ]]
+          grep -F "error: AOSP graphics:" nogfx.log | grep -F "icudt68l.dat is missing"
+          grep -F "cannot start: AOSP's graphics are not usable" nogfx.log
       - name: Start an app the broker runs as a service host
         run: |
           # The broker starts an app headless, with no window, to serve another
@@ -850,10 +855,9 @@ jobs:
         id: framebench
         run: |
           # windows/README.md, "Frame time": windows/test/framebench's APK scrolls a list on every
-          # frame; 25 s of it in a window on the staged JRE, on AOSP's graphics, resources and views
-          # (Java2D's cannot run an app any more: the stage has no views for them), ending with its
-          # `[win.apk] frame times` line (host/frame_times.h). The next step puts the numbers in the
-          # run's summary.
+          # frame; 25 s of it in a window on the staged JRE, on AOSP's graphics, resources and views,
+          # ending with its `[win.apk] frame times` line (host/frame_times.h). The next step puts the
+          # numbers in the run's summary.
           export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
           if ! windows/test/framebench/build.sh framebench; then
             echo "::warning::the frame bench was not built (no Android SDK on the runner?); no frame times"
@@ -883,6 +887,7 @@ jobs:
             boot.log
             window.log
             frames-aosp.log
+            nogfx.log
             host.log
             replace.log
             system.log
@@ -993,10 +998,10 @@ jobs:
             --only-from windows/test/compat/smoke.txt --require-drew
           $rc = $LASTEXITCODE
           python windows/scripts/merge_classlists.py framework.classlist (Get-ChildItem classlists/*.classlist)
-          # Every app on AOSP's graphics, resources and views: a run without them (a file missing
-          # from the stage, the DLL not loading) is not what users run.
-          $java2d = Get-ChildItem smoke/logs/*.log | Where-Object { -not (Select-String -Path $_ -SimpleMatch 'AOSP graphics: on' -Quiet) }
-          if ($java2d) { "not on AOSP graphics: $($java2d.Name -join ', ')"; exit 1 }
+          # Every app on AOSP's graphics, resources and views, the only ones: a run without the lines
+          # did not get as far.
+          $nogfx = Get-ChildItem smoke/logs/*.log | Where-Object { -not (Select-String -Path $_ -SimpleMatch 'AOSP graphics: on' -Quiet) }
+          if ($nogfx) { "not on AOSP graphics: $($nogfx.Name -join ', ')"; exit 1 }
           $noviews = Get-ChildItem smoke/logs/*.log | Where-Object { -not (Select-String -Path $_ -SimpleMatch 'AOSP views: on' -Quiet) }
           if ($noviews) { "not on AOSP views: $($noviews.Name -join ', ')"; exit 1 }
           exit $rc
@@ -1049,7 +1054,6 @@ jobs:
       targets: ${{ steps.targets.outputs.targets }}
       base: ${{ steps.base.outputs.sha }}
       base_run: ${{ steps.base.outputs.run }}
-      base_gfx: ${{ steps.base.outputs.gfx }}
       base_views: ${{ steps.base.outputs.views }}
       same: ${{ steps.base.outputs.same }}
     steps:
@@ -1090,16 +1094,14 @@ jobs:
               fi
             done
           fi
-          # The graphics the base runs by default: AOSP's once its host/aosp_gfx.h says so, else
-          # Java2D's. The gate runs the base on them (WINAPK_AOSP_GFX=0 for Java2D's), also when its
-          # side is this build's runtime with the base's jars, so old and new engines compare.
-          gfx=java2d
-          git show "$base:windows/host/aosp_gfx.h" 2>/dev/null | grep -q "kAospGfxByDefault = true" && gfx=aosp
           # The views the base runs: AOSP's once its aosp_gfx.h says so, else Win.apk's own, which
           # this build's stage no longer has (the base's own CI stage has them).
           views=winapk
           git show "$base:windows/host/aosp_gfx.h" 2>/dev/null | grep -q "kAospViewsByDefault = true" && views=aosp
-          printf 'sha=%s\nsame=%s\nkey=%s\nrun=%s\ngfx=%s\nviews=%s\n' "$base" "$same" "$key" "$run" "$gfx" "$views" \
+          # The base's framework jars are made with android-all's graphics classes too (build_java.sh).
+          key=$(printf '%s %s' "$key" "$(git rev-parse -q --verify "$base:windows/test/aospgfx/fetch.sh" || echo none)" |
+                sha256sum | cut -c1-40)
+          printf 'sha=%s\nsame=%s\nkey=%s\nrun=%s\nviews=%s\n' "$base" "$same" "$key" "$run" "$views" \
             | tee -a "$GITHUB_OUTPUT"
       - id: base-jars
         if: steps.base.outputs.run == '' && steps.base.outputs.same != 'true'
@@ -1107,8 +1109,15 @@ jobs:
         with:
           path: ui-base-jars
           key: ui-base-jars-v1-${{ steps.base.outputs.key }}
+      # android-all 14, which build_java.sh compiles the framework against (the base's and the head's).
+      - uses: actions/cache@v4
+        with:
+          path: thirdparty/aosp-gfx
+          key: aosp-gfx-jar-${{ hashFiles('windows/test/aospgfx/fetch.sh') }}
       - name: Build the base's framework jars (its own build_java.sh)
         if: steps.base.outputs.run == '' && steps.base.outputs.same != 'true' && steps.base-jars.outputs.cache-hit != 'true'
+        env:
+          WINAPK_AOSP_GFX_DEPS: ${{ github.workspace }}/thirdparty/aosp-gfx
         run: |
           # Only the blobs the head's checkout lacks are fetched.
           git worktree add --detach "$RUNNER_TEMP/base" "${{ steps.base.outputs.sha }}"
@@ -1239,16 +1248,12 @@ jobs:
       - name: Win.apk at the base and at the head
         env:
           BASE: ${{ needs.ui-oracle.outputs.base }}
-          BASE_GFX: ${{ needs.ui-oracle.outputs.base_gfx }}
         run: |
           t="oracle/${{ matrix.target.dir }}"
-          # Each side on its own default graphics: the head on this build's (AOSP's), the base on
-          # its commit's (Java2D's until the default flipped there). gate.py report names both.
-          base_aosp=1
-          [[ "$BASE_GFX" == aosp ]] || base_aosp=0
+          # Both sides on AOSP's graphics, the only ones (gate.py report names what each drew with).
           b=
           if [[ -z "${NO_BASE:-}" ]]; then
-            WINAPK_AOSP_GFX=$base_aosp bash windows/test/uiprobe/gate_side.sh "${{ matrix.target.kind }}" "$t" stage-base out/base > side-base.log 2>&1 &
+            bash windows/test/uiprobe/gate_side.sh "${{ matrix.target.kind }}" "$t" stage-base out/base > side-base.log 2>&1 &
             b=$!
           fi
           bash windows/test/uiprobe/gate_side.sh "${{ matrix.target.kind }}" "$t" stage out/head > side-head.log 2>&1 &

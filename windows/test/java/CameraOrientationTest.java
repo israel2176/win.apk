@@ -3,7 +3,7 @@
 // JVM: the camera is CameraBridge's virtual one (a back camera with neither),
 // and there is no window, so the display rotation is ROTATION_0.
 //
-//   javac -cp "<runtime>/lib/android-framework.jar;<runtime>/lib/macapk-loader.jar" -d out \
+//   javac -cp "<runtime>/lib/aosp-graphics.jar;<runtime>/lib/android-framework.jar;<runtime>/lib/macapk-loader.jar" -d out \
 //         windows/test/java/CameraOrientationTest.java
 //   java  -cp "<runtime>/lib/android-framework.jar;<runtime>/lib/macapk-loader.jar;out" CameraOrientationTest
 //

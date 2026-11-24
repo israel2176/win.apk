@@ -6,7 +6,7 @@
 Reads the `[win.apk] frame times (<graphics> graphics): ...` line each run's log ends with
 (host/frame_times.h) and prints a Markdown table, one row per log: frames, frames a second, and
 the median / p90 / p99 / max of layout, draw, reading the pixels, the present and the whole
-frame, in ms. With both engines, a line comparing their medians follows.
+frame, in ms.
 
 Exits 1 when a log has no such line (the record is broken, or the app drew nothing), when a run
 has fewer than --min-frames frames after its warm-up (the bench did not keep drawing: 300 by
@@ -63,13 +63,6 @@ def main():
             v = r["parts"].get(name)
             cells.append(" / ".join(f"{x:.2f}" for x in v) if v else "-")
         print(f"| {r['gfx']} | {r['frames']} | {r['rate']} | " + " | ".join(cells) + " |")
-    by = {r["gfx"]: r for r in runs}
-    if "aosp" in by and "java2d" in by:
-        a_draw, j_draw = by["aosp"]["parts"]["draw"][0], by["java2d"]["parts"]["draw"][0]
-        a_tot, j_tot = by["aosp"]["parts"]["total"][0], by["java2d"]["parts"]["total"][0]
-        if a_draw > 0 and a_tot > 0:
-            print(f"\nMedian draw: Java2D {j_draw / a_draw:.2f}x AOSP's; median whole frame: "
-                  f"Java2D {j_tot / a_tot:.2f}x AOSP's.")
     if failures:
         print("\n**Failed:**\n")
         for f in failures:
