@@ -57,10 +57,9 @@ public final class CheckinClient {
     /** microG sends this hard-coded UA rather than deriving one from Build
      *  (CheckinClient.java:60). We send OURS, because the whole point of this
      *  request is to say what this device is, and the Build fields inside the
-     *  body already say "Mac.apk" (on Windows "Win.apk") -- a UA claiming to be
-     *  a vbox86p emulator image would contradict the body it is attached to. */
-    private static final String USER_AGENT = "Android-Checkin/2.0 ("
-            + (java.io.File.separatorChar == '\\' ? "Win.apk" : "Mac.apk") + "); gzip";
+     *  body already say "Mac.apk" -- a UA claiming to be a vbox86p emulator
+     *  image would contradict the body it is attached to. */
+    private static final String USER_AGENT = "Android-Checkin/2.0 (Mac.apk); gzip";
 
     /** microG SettingsContract.kt:120. The literal first-checkin digest; the
      *  server hands back a new one to echo on later requests. */
