@@ -52,9 +52,15 @@ ARM) ואז מריץ אותו, וחלק מהסורקים לא אוהבים את 
 `[aaudio]` שאומרות מה הוא ביקש ולא קיבל (זרם http, אפקט), ומדווחים עם היומן.
 
 **וידאו לא מתנגן, או מתנגן בלי קול.** ‏Windows הוא שמפענח את הווידאו: H.264
-עם AAC תמיד; HEVC, ‏VP9 ו-AV1 רק עם חבילות ה-Codec של Microsoft מחנות
-Microsoft. שידור שהשמע שלו Opus, ‏Vorbis או FLAC מתנגן בלי קול באפליקציות
-ExoPlayer; וידאו מהקוד המקורי של אפליקציה (`AMediaCodec`) עוד לא נתמך.
+עם AAC תמיד; HEVC רק עם חבילת ה-Codec של Microsoft מחנות Microsoft.
+באפליקציות שמפענחות בעצמן (ExoPlayer ואחרות), וידאו VP8, ‏VP9 ו-AV1 וקול Opus
+מתנגנים גם בלי חבילת Codec, במפענחים שמובנים ב-Win.apk; הם איטיים יותר
+מחבילות ה-Codec, ולכן וידאו VP9 או AV1 ב-1080p עלול לקפוץ במחשב איטי (ביומן
+כתוב `decoding with libvpx VP9` או `dav1d AV1`). וידאו שמתנגן דרך
+`MediaPlayer` או `VideoView` עדיין צריך את חבילות ה-Codec בשביל VP9 ו-AV1,
+ולא מתנגן מקובץ WebM. שידור שהשמע שלו Vorbis או FLAC מתנגן בלי קול
+באפליקציות ExoPlayer; וידאו מהקוד המקורי של אפליקציה (`AMediaCodec`) עוד לא
+נתמך.
 
 **תמונה מטלפון (HEIC) או תמונת AVIF לא מוצגת.** ‏Windows הוא שמפענח אותן:
 ‏HEIC/HEIF צריך את HEIF Image Extensions של Microsoft, ו-AVIF את AV1 Video
