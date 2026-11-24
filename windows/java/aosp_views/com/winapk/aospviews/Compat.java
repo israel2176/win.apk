@@ -30,6 +30,36 @@ public final class Compat {
      *  ViewRootImpl.doDie asks). */
     public static long getBackgroundPauseDelay() { return 1000; }
 
+    // ---- android.view.SurfaceControl.Transaction (Win.apk's; the compositor here is Compositor) ----
+    // What AOSP's views ask of a transaction that Win.apk's lacks, none of which the in-process
+    // compositor has: a sync group's transaction made safe for another process (sanitize), blur
+    // regions, shadows, dimming, the display's decoration, a frame timeline, a frame-rate vote.
+
+    public static void sanitize(android.view.SurfaceControl.Transaction t, int pid, int uid) {}
+
+    public static void clear(android.view.SurfaceControl.Transaction t) {}
+
+    public static android.view.SurfaceControl.Transaction remove(android.view.SurfaceControl.Transaction t,
+            android.view.SurfaceControl sc) { return t; }
+
+    public static android.view.SurfaceControl.Transaction setBlurRegions(android.view.SurfaceControl.Transaction t,
+            android.view.SurfaceControl sc, float[][] regions) { return t; }
+
+    public static android.view.SurfaceControl.Transaction setDefaultFrameRateCompatibility(
+            android.view.SurfaceControl.Transaction t, android.view.SurfaceControl sc, int compatibility) { return t; }
+
+    public static android.view.SurfaceControl.Transaction setDimmingEnabled(android.view.SurfaceControl.Transaction t,
+            android.view.SurfaceControl sc, boolean enabled) { return t; }
+
+    public static android.view.SurfaceControl.Transaction setDisplayDecoration(
+            android.view.SurfaceControl.Transaction t, android.view.SurfaceControl sc, boolean on) { return t; }
+
+    public static android.view.SurfaceControl.Transaction setFrameTimelineVsync(
+            android.view.SurfaceControl.Transaction t, long vsyncId) { return t; }
+
+    public static android.view.SurfaceControl.Transaction setShadowRadius(android.view.SurfaceControl.Transaction t,
+            android.view.SurfaceControl sc, float radius) { return t; }
+
     // ---- android.text.TextUtils / android.os.StrictMode (hidden) ----
     public static String emptyIfNull(String s) { return s == null ? "" : s; }
     public static String formatSimple(String format, Object... args) { return String.format(format, args); }
