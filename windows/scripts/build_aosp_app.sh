@@ -16,11 +16,15 @@
 #                            windows/java/aosp_app: the in-process activity manager, activity task
 #                            manager and activity client controller that answer them, and Compat
 #
-#   windows/scripts/build_aosp_app.sh <out> [deps dir]
+#   windows/scripts/build_aosp_app.sh <out> [deps dir] [full android-framework.jar]
 #
 # <out> is a runtime staged by build_java.sh, build_aosp_gfx.sh, build_aosp_res.sh and
 # build_aosp_views.sh: the app layer runs on AOSP's graphics, resources and views. The deps dir
-# (default thirdparty/aosp-gfx) is the one build_aosp_res.sh fills (android-all 14, ASM).
+# (default thirdparty/aosp-gfx) gets android-all 14 and ASM here if it lacks them. The closure,
+# the bridge's compilation and LinkScan need the framework as compiled: a stage made by
+# stage_runtime.sh has dropped the classes AOSP's resources and views shadow from its
+# lib/android-framework.jar (marked by META-INF/winapk-aosp-shadowed.txt), so give the whole jar,
+# which stage_runtime.sh leaves in <cmake build dir>/java/ (CI: the winapk-binaries artifact).
 #
 # Kept Win.apk's (not taken from android-all) for this step: android.content (Context, Intent...),
 # ActivityManager (the public API of the activity service: memory, processes, tasks; AOSP's static
@@ -34,17 +38,17 @@
 # com.winapk.aospapp.Compat, and generates the in-process services (AIDL Stub subclasses).
 # LinkScan.java then lists every member reference that would still not link
 # (<out>/.build/aosp-app.links.txt, printed as a count). Not staged by stage_runtime.sh, and no host
-# switch reads the jar yet: windows/test/java/AospAppLifecycleTest.java runs it on a plain JVM.
+# switch reads the jar yet: windows/test/aospapp runs it on a plain JVM.
 
 set -euo pipefail
 
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
-OUT="${1:?usage: build_aosp_app.sh <staged runtime> [deps dir]}"
+OUT="${1:?usage: build_aosp_app.sh <staged runtime> [deps dir] [full android-framework.jar]}"
 DEPS="${2:-$HERE/../../thirdparty/aosp-gfx}"
 OUT="$(cd -- "$OUT" && pwd)"
 mkdir -p "$DEPS"
 DEPS="$(cd -- "$DEPS" && pwd)"
-FRAMEWORK="$OUT/lib/android-framework.jar"
+FRAMEWORK="${3:-$OUT/lib/android-framework.jar}"
 LOADER="$OUT/lib/macapk-loader.jar"
 GFX="$OUT/lib/aosp-graphics.jar"
 RES="$OUT/lib/aosp-resources.jar"
@@ -52,6 +56,13 @@ VIEWS="$OUT/lib/aosp-views.jar"
 for f in "$FRAMEWORK" "$LOADER"; do
     [[ -f "$f" ]] || { echo "[aosp-app] no $f: run build_java.sh first" >&2; exit 1; }
 done
+# By the listing, not zipinfo's exit code (MSYS2's answers 0 for a name that is not there); no grep -q,
+# whose early exit would kill unzip with SIGPIPE under pipefail.
+if unzip -Z1 "$FRAMEWORK" | grep -x "META-INF/winapk-aosp-shadowed.txt" > /dev/null; then
+    echo "[aosp-app] $FRAMEWORK lacks the classes stage_runtime.sh dropped: give the whole jar" \
+         "(<cmake build dir>/java/android-framework.jar) as the third argument" >&2
+    exit 1
+fi
 [[ -f "$GFX" ]] || { echo "[aosp-app] no $GFX: run build_aosp_gfx.sh first" >&2; exit 1; }
 [[ -f "$RES" ]] || { echo "[aosp-app] no $RES: run build_aosp_res.sh first" >&2; exit 1; }
 [[ -f "$VIEWS" ]] || { echo "[aosp-app] no $VIEWS: run build_aosp_views.sh first" >&2; exit 1; }
@@ -65,14 +76,25 @@ native_path() { if command -v cygpath > /dev/null 2>&1; then cygpath -m "$1"; el
 if command -v cygpath > /dev/null 2>&1; then PS=';'; else PS=':'; fi
 cp_of() { local out="" p; for p in "$@"; do out="${out:+$out$PS}$(native_path "$p")"; done; printf '%s' "$out"; }
 
-"$HERE/../test/aospgfx/fetch.sh" "$DEPS" windows > /dev/null
+# android-all only ("jar"): the native runtime in the deps dir, whichever platform's, is left alone.
+"$HERE/../test/aospgfx/fetch.sh" "$DEPS" jar > /dev/null
 ALL="$DEPS/android-all-14.jar"
-ASM_JAR="$DEPS/jars/asm-9.8.jar"
-ASM_COMMONS="$DEPS/jars/asm-commons-9.8.jar"
-for f in "$ASM_JAR" "$ASM_COMMONS"; do
-    [[ -f "$f" ]] || { echo "[aosp-app] no $f: build_aosp_res.sh fetches it" >&2; exit 1; }
-done
-ASM="$(cp_of "$ASM_JAR" "$ASM_COMMONS")"
+MAVEN=https://maven-central.storage-download.googleapis.com/maven2
+mkdir -p "$DEPS/jars"
+fetch() {  # group-path artifact version sha256 (as build_aosp_res.sh)
+    local f="$DEPS/jars/$2-$3.jar"
+    if [[ -f "$f" ]] && echo "$4  $f" | sha256sum -c --status; then return 0; fi
+    echo "[aosp-app] fetching $2-$3"
+    curl -fL --retry 5 --retry-delay 5 --retry-all-errors -sS -o "$f.part" "$MAVEN/$1/$2/$3/$2-$3.jar"
+    if ! echo "$4  $f.part" | sha256sum -c --status; then
+        echo "[aosp-app] SHA-256 mismatch for $2-$3: got $(sha256sum "$f.part" | cut -d' ' -f1)" >&2
+        exit 1
+    fi
+    mv "$f.part" "$f"
+}
+fetch org/ow2/asm asm 9.8 876eab6a83daecad5ca67eb9fcabb063c97b5aeb8cf1fca7a989ecde17522051
+fetch org/ow2/asm asm-commons 9.8 3301a1c1cb4c59fcc5292648dac1d7c5aed4c0f067dfbe88873b8cdfe77404f4
+ASM="$(cp_of "$DEPS/jars/asm-9.8.jar" "$DEPS/jars/asm-commons-9.8.jar")"
 
 WORK="$OUT/.build/aosp-app"
 CLASSES="$WORK/classes"

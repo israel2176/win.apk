@@ -3,25 +3,28 @@
 # lib/aosp-app.jar over a staged runtime, the host library (plainjvm_host.cpp: two host natives and
 # the host's graphics redirect) and AospAppLifecycleTest.java, and runs it.
 #
-#   windows/test/aospapp/run.sh <stage> <deps> [out]
+#   windows/test/aospapp/run.sh <stage> <deps> [out] [full android-framework.jar]
 #
 # <stage> has the four other jars and bin/aosp/ (build_java.sh, build_aosp_gfx.sh, build_aosp_res.sh,
-# build_aosp_views.sh; or CI's runtime-stage with the last two run over it); <deps> is the folder
-# windows/test/aospgfx/fetch.sh <deps> linux fills (android-all 14, Robolectric's native runtime for
-# this platform, ICU's data, the fonts) and build_aosp_res.sh adds ASM to. Linux; prints the
+# build_aosp_views.sh, or stage_runtime.sh; CI: the runtime-stage artifact). A stage_runtime.sh
+# stage's android-framework.jar lacks the classes AOSP's resources and views shadow: then the last
+# argument is the whole jar (<cmake build dir>/java/android-framework.jar; CI: winapk-binaries'),
+# which build_aosp_app.sh compiles and links against; the test runs on the stage's, as an app would.
+# <deps> is the folder windows/test/aospgfx/fetch.sh <deps> linux fills (android-all 14,
+# Robolectric's native runtime for this platform, ICU's data); build_aosp_app.sh adds ASM. Linux; prints the
 # callbacks and ends with "ALL PASSED" (exit 0) or the first difference from Android's order.
 set -euo pipefail
 
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
-STAGE="$(cd -- "${1:?usage: run.sh <stage> <deps> [out]}" && pwd)"
-DEPS="$(cd -- "${2:?usage: run.sh <stage> <deps> [out]}" && pwd)"
+STAGE="$(cd -- "${1:?usage: run.sh <stage> <deps> [out] [full android-framework.jar]}" && pwd)"
+DEPS="$(cd -- "${2:?usage: run.sh <stage> <deps> [out] [full android-framework.jar]}" && pwd)"
 OUT="${3:-$STAGE/.build/aospapp-test}"
 mkdir -p "$OUT"
 OUT="$(cd -- "$OUT" && pwd)"
 JAVA_HOME="${JAVA_HOME:-$(dirname "$(dirname "$(readlink -f "$(command -v javac)")")")}"
 CXX="${CXX:-$(command -v clang++ || command -v c++)}"
 
-"$HERE/../../scripts/build_aosp_app.sh" "$STAGE" "$DEPS"
+"$HERE/../../scripts/build_aosp_app.sh" "$STAGE" "$DEPS" ${4:+"$4"}
 
 NR="$DEPS/nativeruntime"
 RUNTIME="$NR/native/linux/x86_64/librobolectric-nativeruntime.so"
