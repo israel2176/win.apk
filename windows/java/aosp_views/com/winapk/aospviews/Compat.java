@@ -23,6 +23,13 @@ public final class Compat {
     public static boolean isLowRamDeviceStatic() { return false; }
     public static boolean isSystemReady() { return true; }
 
+    // ---- android.animation (Win.apk's) ----
+
+    /** Animator.getBackgroundPauseDelay: how long AnimationHandler waits, once no window wants
+     *  animators, before pausing them (AOSP's default, Animator.sBackgroundPauseDelay; a window's
+     *  ViewRootImpl.doDie asks). */
+    public static long getBackgroundPauseDelay() { return 1000; }
+
     // ---- android.text.TextUtils / android.os.StrictMode (hidden) ----
     public static String emptyIfNull(String s) { return s == null ? "" : s; }
     public static String formatSimple(String format, Object... args) { return String.format(format, args); }

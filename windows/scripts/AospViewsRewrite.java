@@ -57,6 +57,7 @@ public class AospViewsRewrite {
      *  that runs on the way to a drawn window. */
     static final Set<String> TO_COMPAT = Set.of(
             "android/app/ActivityThread.isSystem()Z",
+            "android/animation/Animator.getBackgroundPauseDelay()J",
             "android/text/Spannable.removeSpan(Ljava/lang/Object;I)V",
             "android/icu/lang/UCharacter.getCombiningClass(I)I",
             "android/icu/lang/UCharacter.hasBinaryProperty(II)Z",
